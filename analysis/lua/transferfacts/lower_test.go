@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
@@ -241,6 +242,94 @@ func TestLowerOrdinaryAssignmentsSplitsRootAndStaticPathWrites(t *testing.T) {
 	}
 }
 
+func TestLowerObjectLiteralSidecarUsesAssignmentExprRef(t *testing.T) {
+	leafValue := number("1")
+	stringValue := number("2")
+	dynamicValue := number("3")
+	table := &ast.TableExpr{Fields: []*ast.Field{
+		{Key: stringLit("leaf"), KeySyntax: ast.AttrKeyDot, Value: leafValue},
+		{Key: stringLit("key"), KeySyntax: ast.AttrKeyIndex, Value: stringValue},
+		{Key: ident("dynamic"), KeySyntax: ast.AttrKeyIndex, Value: dynamicValue},
+	}}
+	local := localAssign([]string{"t"}, table)
+	stmts := []ast.Stmt{local}
+	bindings := bind.BindChunk(stmts, bind.Options{})
+	built := cfgbuild.BuildChunk(stmts, bindings)
+	result, err := semantics.ExtractChunk(stmts, bindings, built)
+	if err != nil {
+		t.Fatalf("ExtractChunk: %v", err)
+	}
+
+	facts := Lower(result, built.Graph)
+	assertNoCompilerASTTypes(t, reflect.TypeOf(facts))
+
+	point := requireStmtPoints(t, built, local, 1)[0]
+	localFact, ok := facts.LocalAssignment(point)
+	if !ok {
+		t.Fatalf("missing local assignment fact")
+	}
+	source := localFact.Source()
+	if source.Kind != transfer.ValueSourceExpression || !source.HasExpr || source.ExprRef == 0 {
+		t.Fatalf("local source = %#v, want expression source with expr ref", source)
+	}
+	literal, ok := facts.ObjectLiteral(source.ExprRef)
+	if !ok {
+		t.Fatalf("missing object literal sidecar for assignment expr ref %d", source.ExprRef)
+	}
+	entries := literal.Entries()
+	if len(entries) != 2 {
+		t.Fatalf("literal entries = %#v, want two static entries", entries)
+	}
+	assertLoweredObjectEntry(t, entries[0], fieldSuffix("leaf"), transfer.ValueSourceExpression)
+	assertLoweredObjectEntry(t, entries[1], stringSuffix("key"), transfer.ValueSourceExpression)
+	if entries[0].Source().ExprRef == source.ExprRef || entries[1].Source().ExprRef == source.ExprRef {
+		t.Fatalf("entry source expr refs reused table expr ref: source=%#v entries=%#v", source, entries)
+	}
+}
+
+func TestLowerNestedObjectLiteralEntriesUnderAssignmentExprRef(t *testing.T) {
+	rootLeaf := number("1")
+	nestedLeaf := number("2")
+	dynamicValue := number("3")
+	nested := &ast.TableExpr{Fields: []*ast.Field{
+		{Key: stringLit("b"), KeySyntax: ast.AttrKeyDot, Value: nestedLeaf},
+		{Key: ident("dynamic"), KeySyntax: ast.AttrKeyIndex, Value: dynamicValue},
+	}}
+	table := &ast.TableExpr{Fields: []*ast.Field{
+		{Key: stringLit("x"), KeySyntax: ast.AttrKeyDot, Value: rootLeaf},
+		{Key: stringLit("a"), KeySyntax: ast.AttrKeyDot, Value: nested},
+	}}
+	local := localAssign([]string{"t"}, table)
+	stmts := []ast.Stmt{local}
+	bindings := bind.BindChunk(stmts, bind.Options{})
+	built := cfgbuild.BuildChunk(stmts, bindings)
+	result, err := semantics.ExtractChunk(stmts, bindings, built)
+	if err != nil {
+		t.Fatalf("ExtractChunk: %v", err)
+	}
+
+	facts := Lower(result, built.Graph)
+	assertNoCompilerASTTypes(t, reflect.TypeOf(facts))
+
+	point := requireStmtPoints(t, built, local, 1)[0]
+	localFact, ok := facts.LocalAssignment(point)
+	if !ok {
+		t.Fatalf("missing local assignment fact")
+	}
+	source := localFact.Source()
+	literal, ok := facts.ObjectLiteral(source.ExprRef)
+	if !ok {
+		t.Fatalf("missing object literal sidecar for assignment expr ref %d", source.ExprRef)
+	}
+	entries := literal.Entries()
+	if len(entries) != 3 {
+		t.Fatalf("literal entries = %#v, want root, nested root, and nested leaf", entries)
+	}
+	assertLoweredObjectEntry(t, entries[0], fieldSuffix("x"), transfer.ValueSourceExpression)
+	assertLoweredObjectEntry(t, entries[1], fieldSuffix("a"), transfer.ValueSourceExpression)
+	assertLoweredObjectEntry(t, entries[2], fieldChainSuffix("a", "b"), transfer.ValueSourceExpression)
+}
+
 func TestLowerSkipsMemberOrdinaryCallTargets(t *testing.T) {
 	l := lowerer{exprs: make(map[any]transfer.ExprRef)}
 	targetSym := symbol.ID(99)
@@ -255,6 +344,33 @@ func TestLowerSkipsMemberOrdinaryCallTargets(t *testing.T) {
 	if _, ok := l.callResultTarget(memberTarget); ok {
 		t.Fatalf("member ordinary call target lowered as root target")
 	}
+}
+
+func assertLoweredObjectEntry(t *testing.T, entry transfer.ObjectEntry, wantSuffix path.Path, wantKind transfer.ValueSourceKind) {
+	t.Helper()
+	if !entry.Suffix().Equal(wantSuffix) {
+		t.Fatalf("entry suffix = %#v, want %#v", entry.Suffix(), wantSuffix)
+	}
+	source := entry.Source()
+	if source.Kind != wantKind || !source.HasExpr || source.ExprRef == 0 {
+		t.Fatalf("entry source = %#v, want kind %v with expr ref", source, wantKind)
+	}
+}
+
+func fieldSuffix(name string) path.Path {
+	return path.Path{Segments: []segment.Segment{{Kind: segment.SegmentField, Name: name}}}
+}
+
+func fieldChainSuffix(names ...string) path.Path {
+	segments := make([]segment.Segment, len(names))
+	for i, name := range names {
+		segments[i] = segment.Segment{Kind: segment.SegmentField, Name: name}
+	}
+	return path.Path{Segments: segments}
+}
+
+func stringSuffix(name string) path.Path {
+	return path.Path{Segments: []segment.Segment{{Kind: segment.SegmentIndexString, Name: name}}}
 }
 
 func ident(name string) *ast.IdentExpr {

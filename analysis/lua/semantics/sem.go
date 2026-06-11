@@ -42,6 +42,7 @@ type Result struct {
 	ordinaryAssignments map[cfg.Point]OrdinaryAssignmentFact
 	calls               map[cfg.Point]CallFact
 	returns             map[cfg.Point]ReturnFact
+	objectLiterals      map[ast.Expr]ObjectLiteralFact
 	branches            map[cfg.Point]BranchConditionFact
 	typeDefinitions     map[cfg.Point]TypeDefinitionFact
 	functionDefinitions map[cfg.Point]FunctionDefinitionFact
@@ -119,6 +120,21 @@ type ReturnFact struct {
 	Stmt    *ast.ReturnStmt
 	Exprs   []ast.Expr
 	Sources []ValueSource
+}
+
+type ObjectLiteralFact struct {
+	Expr    ast.Expr
+	Table   *ast.TableExpr
+	Entries []ObjectEntryFact
+}
+
+type ObjectEntryFact struct {
+	Field  *ast.Field
+	Index  int
+	Key    ast.Expr
+	Value  ast.Expr
+	Suffix path.Path
+	Source ValueSource
 }
 
 type BranchConditionFact struct {
@@ -278,6 +294,17 @@ func (r *Result) Return(point cfg.Point) (ReturnFact, bool) {
 	return copyReturnFact(fact), true
 }
 
+func (r *Result) ObjectLiteral(expr ast.Expr) (ObjectLiteralFact, bool) {
+	if r == nil || expr == nil {
+		return ObjectLiteralFact{}, false
+	}
+	fact, ok := r.objectLiterals[expr]
+	if !ok {
+		return ObjectLiteralFact{}, false
+	}
+	return copyObjectLiteralFact(fact), true
+}
+
 func (r *Result) BranchCondition(point cfg.Point) (BranchConditionFact, bool) {
 	if r == nil {
 		return BranchConditionFact{}, false
@@ -347,6 +374,7 @@ func newResult(fn *ast.FunctionExpr) *Result {
 		ordinaryAssignments: make(map[cfg.Point]OrdinaryAssignmentFact),
 		calls:               make(map[cfg.Point]CallFact),
 		returns:             make(map[cfg.Point]ReturnFact),
+		objectLiterals:      make(map[ast.Expr]ObjectLiteralFact),
 		branches:            make(map[cfg.Point]BranchConditionFact),
 		typeDefinitions:     make(map[cfg.Point]TypeDefinitionFact),
 		functionDefinitions: make(map[cfg.Point]FunctionDefinitionFact),
@@ -439,6 +467,7 @@ func (r *Result) extractLocalAssign(stmt *ast.LocalAssignStmt, bindings *bind.Re
 	sources := assignmentValueSources(stmt.Exprs, len(stmt.Names), callPointsByExprIndex(calls, points))
 	exprs := copyExprs(stmt.Exprs)
 	types := copyTypeExprs(stmt.Types)
+	r.extractObjectLiterals(stmt.Exprs)
 	for i, name := range stmt.Names {
 		id, hasSymbol := symbol.ID(0), false
 		if bindings != nil {
@@ -476,6 +505,7 @@ func (r *Result) extractAssign(stmt *ast.AssignStmt, bindings *bind.Result, poin
 	sources := assignmentValueSources(stmt.Rhs, len(stmt.Lhs), callPointsByExprIndex(calls, points))
 	lhs := copyExprs(stmt.Lhs)
 	rhs := copyExprs(stmt.Rhs)
+	r.extractObjectLiterals(stmt.Rhs)
 	for i, target := range stmt.Lhs {
 		id, hasSymbol := symbol.ID(0), false
 		if ident, ok := target.(*ast.IdentExpr); ok && bindings != nil {
@@ -798,6 +828,23 @@ func copyReturnFact(fact ReturnFact) ReturnFact {
 	fact.Exprs = copyExprs(fact.Exprs)
 	fact.Sources = copyValueSources(fact.Sources)
 	return fact
+}
+
+func copyObjectLiteralFact(fact ObjectLiteralFact) ObjectLiteralFact {
+	fact.Entries = copyObjectEntries(fact.Entries)
+	return fact
+}
+
+func copyObjectEntries(in []ObjectEntryFact) []ObjectEntryFact {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]ObjectEntryFact, len(in))
+	for i := range in {
+		out[i] = in[i]
+		out[i].Suffix = copyPath(in[i].Suffix)
+	}
+	return out
 }
 
 func copyGenericForFact(fact GenericForFact) GenericForFact {

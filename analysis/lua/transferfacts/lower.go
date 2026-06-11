@@ -11,8 +11,8 @@ import (
 
 // Lower converts Lua semantic facts into the generic transfer fact DTOs consumed
 // by the engine. It intentionally lowers only syntax facts already represented
-// by transfer.Facts; higher semantic layers add branch, iterator, table,
-// interproc, and diagnostic facts separately.
+// by transfer.Facts; higher semantic layers add branch, iterator, interproc,
+// and diagnostic facts separately.
 func Lower(result *semantics.Result, graph cfg.Graph) transfer.Facts {
 	if result == nil || graph == nil {
 		return transfer.NewFacts(transfer.FactsInput{})
@@ -26,18 +26,22 @@ func Lower(result *semantics.Result, graph cfg.Graph) transfer.Facts {
 		PathAssignments:     make(map[cfg.Point]transfer.PathAssignment),
 		Returns:             make(map[cfg.Point]transfer.Return),
 		Calls:               make(map[cfg.Point]transfer.CallProducer),
+		ObjectLiterals:      make(map[transfer.ExprRef]transfer.ObjectLiteral),
 	}
 	for _, point := range graph.RPO() {
 		if fact, ok := result.LocalAssignment(point); ok {
 			if lowered, ok := l.localAssignment(fact); ok {
 				input.LocalAssignments[point] = lowered
+				l.addObjectLiteral(&input, result, fact.Source)
 			}
 		}
 		if fact, ok := result.OrdinaryAssignment(point); ok {
 			if lowered, ok := l.pathAssignment(fact); ok {
 				input.PathAssignments[point] = lowered
+				l.addObjectLiteral(&input, result, fact.Source)
 			} else if lowered, ok := l.ordinaryAssignment(fact); ok {
 				input.OrdinaryAssignments[point] = lowered
+				l.addObjectLiteral(&input, result, fact.Source)
 			}
 		}
 		if fact, ok := result.Return(point); ok {
@@ -112,6 +116,33 @@ func (l *lowerer) callProducer(fact semantics.CallFact) (transfer.CallProducer, 
 		Adjusted:      fact.Adjusted,
 		OpenTail:      fact.OpenTail,
 	}), true
+}
+
+func (l *lowerer) addObjectLiteral(input *transfer.FactsInput, result *semantics.Result, source semantics.ValueSource) {
+	fact, ok := result.ObjectLiteral(source.Expr)
+	if !ok {
+		return
+	}
+	exprRef, hasExpr := l.exprRef(fact.Expr)
+	if !hasExpr {
+		return
+	}
+	lowered := l.objectLiteral(fact)
+	if len(lowered.Entries()) == 0 {
+		return
+	}
+	if input.ObjectLiterals == nil {
+		input.ObjectLiterals = make(map[transfer.ExprRef]transfer.ObjectLiteral)
+	}
+	input.ObjectLiterals[exprRef] = lowered
+}
+
+func (l *lowerer) objectLiteral(fact semantics.ObjectLiteralFact) transfer.ObjectLiteral {
+	entries := make([]transfer.ObjectEntry, 0, len(fact.Entries))
+	for _, entry := range fact.Entries {
+		entries = append(entries, transfer.NewObjectEntry(entry.Suffix, l.valueSource(entry.Source)))
+	}
+	return transfer.NewObjectLiteral(entries)
 }
 
 func (l *lowerer) valueSources(sources []semantics.ValueSource) []transfer.ValueSource {

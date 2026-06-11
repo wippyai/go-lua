@@ -131,6 +131,49 @@ func (a PathAssignment) copy() PathAssignment {
 	return a
 }
 
+// ObjectEntry describes one static value written under an object constructor.
+type ObjectEntry struct {
+	suffix path.Path
+	source ValueSource
+}
+
+// NewObjectEntry creates a static object-entry descriptor.
+func NewObjectEntry(suffix path.Path, source ValueSource) ObjectEntry {
+	return ObjectEntry{
+		suffix: copyPath(suffix),
+		source: source,
+	}
+}
+
+// Suffix returns the relative static suffix under the constructed object.
+func (e ObjectEntry) Suffix() path.Path { return copyPath(e.suffix) }
+
+// Source returns the value assigned to the entry.
+func (e ObjectEntry) Source() ValueSource { return e.source }
+
+func (e ObjectEntry) copy() ObjectEntry {
+	e.suffix = copyPath(e.suffix)
+	return e
+}
+
+// ObjectLiteral describes static entries associated with an expression.
+type ObjectLiteral struct {
+	entries []ObjectEntry
+}
+
+// NewObjectLiteral creates an object literal sidecar from static entries.
+func NewObjectLiteral(entries []ObjectEntry) ObjectLiteral {
+	return ObjectLiteral{entries: copyObjectEntries(entries)}
+}
+
+// Entries returns the static entries for this object literal.
+func (l ObjectLiteral) Entries() []ObjectEntry { return copyObjectEntries(l.entries) }
+
+func (l ObjectLiteral) copy() ObjectLiteral {
+	l.entries = copyObjectEntries(l.entries)
+	return l
+}
+
 // Return describes the ordered value sources returned at a CFG point.
 type Return struct {
 	sources []ValueSource
@@ -305,6 +348,7 @@ type FactsInput struct {
 	PathAssignments     map[cfg.Point]PathAssignment
 	Returns             map[cfg.Point]Return
 	Calls               map[cfg.Point]CallProducer
+	ObjectLiterals      map[ExprRef]ObjectLiteral
 }
 
 // Facts is an immutable point-keyed transfer facts snapshot.
@@ -314,6 +358,7 @@ type Facts struct {
 	pathAssignments     map[cfg.Point]PathAssignment
 	returns             map[cfg.Point]Return
 	calls               map[cfg.Point]CallProducer
+	objectLiterals      map[ExprRef]ObjectLiteral
 }
 
 // NewFacts copies the supplied point-keyed facts into an immutable snapshot.
@@ -324,6 +369,7 @@ func NewFacts(input FactsInput) Facts {
 		pathAssignments:     copyPathAssignmentMap(input.PathAssignments),
 		returns:             copyReturnMap(input.Returns),
 		calls:               copyCallProducerMap(input.Calls),
+		objectLiterals:      copyObjectLiteralMap(input.ObjectLiterals),
 	}
 }
 
@@ -372,6 +418,15 @@ func (f Facts) Call(point cfg.Point) (CallProducer, bool) {
 	return fact.copy(), true
 }
 
+// ObjectLiteral returns the static-entry sidecar for expr, if present.
+func (f Facts) ObjectLiteral(expr ExprRef) (ObjectLiteral, bool) {
+	fact, ok := f.objectLiterals[expr]
+	if !ok {
+		return ObjectLiteral{}, false
+	}
+	return fact.copy(), true
+}
+
 // SourceValues resolves ValueSource descriptors into product values.
 type SourceValues interface {
 	ValueOfSource(point cfg.Point, source ValueSource, in state.State, read func(cfg.Point) state.State) (product.Value, bool)
@@ -403,6 +458,17 @@ func copyValueSources(in []ValueSource) []ValueSource {
 	}
 	out := make([]ValueSource, len(in))
 	copy(out, in)
+	return out
+}
+
+func copyObjectEntries(in []ObjectEntry) []ObjectEntry {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]ObjectEntry, len(in))
+	for i := range in {
+		out[i] = in[i].copy()
+	}
 	return out
 }
 
@@ -468,6 +534,17 @@ func copyCallProducerMap(in map[cfg.Point]CallProducer) map[cfg.Point]CallProduc
 	out := make(map[cfg.Point]CallProducer, len(in))
 	for point, fact := range in {
 		out[point] = fact.copy()
+	}
+	return out
+}
+
+func copyObjectLiteralMap(in map[ExprRef]ObjectLiteral) map[ExprRef]ObjectLiteral {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[ExprRef]ObjectLiteral, len(in))
+	for expr, fact := range in {
+		out[expr] = fact.copy()
 	}
 	return out
 }

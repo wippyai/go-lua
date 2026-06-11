@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
@@ -65,6 +66,33 @@ func TestDTOConstructorsAndAccessorsCopySlices(t *testing.T) {
 	gotPathTarget := pathAssignment.TargetPath()
 	gotPathTarget.Segments[0].Name = "changed-again"
 	assertDirectField(t, pathAssignment.TargetPath(), "field")
+
+	entrySuffix := path.Path{Segments: []segment.Segment{{Kind: segment.SegmentField, Name: "field"}}}
+	entry := NewObjectEntry(entrySuffix, source)
+	entrySuffix.Segments[0].Name = "changed"
+	if got := entry.Suffix(); len(got.Segments) != 1 || got.Segments[0].Name != "field" {
+		t.Fatalf("object entry suffix = %#v, want copied field suffix", got)
+	}
+	gotEntrySuffix := entry.Suffix()
+	gotEntrySuffix.Segments[0].Name = "changed-again"
+	if got := entry.Suffix(); got.Segments[0].Name != "field" {
+		t.Fatalf("object entry exposed mutable suffix: %#v", got)
+	}
+	if got := entry.Source(); got != source {
+		t.Fatalf("object entry source = %#v, want %#v", got, source)
+	}
+
+	entries := []ObjectEntry{entry}
+	literal := NewObjectLiteral(entries)
+	entries[0] = NewObjectEntry(path.Path{Segments: []segment.Segment{{Kind: segment.SegmentField, Name: "other"}}}, callSource)
+	if got := literal.Entries(); len(got) != 1 || got[0].Source() != source {
+		t.Fatalf("object literal entries = %#v, want copied entry", got)
+	}
+	gotEntries := literal.Entries()
+	gotEntries[0] = NewObjectEntry(path.Path{Segments: []segment.Segment{{Kind: segment.SegmentField, Name: "mutated"}}}, callSource)
+	if got := literal.Entries(); got[0].Source() != source {
+		t.Fatalf("object literal exposed mutable entries: %#v", got)
+	}
 
 	returnSources := []ValueSource{source, callSource}
 	ret := NewReturn(returnSources)
@@ -190,6 +218,11 @@ func TestFactsCarrierCopiesAndReturnsFalseForMissingFacts(t *testing.T) {
 				},
 			}),
 		},
+		ObjectLiterals: map[ExprRef]ObjectLiteral{
+			ExprRef(1): NewObjectLiteral([]ObjectEntry{
+				NewObjectEntry(path.Path{Segments: []segment.Segment{{Kind: segment.SegmentField, Name: "field"}}}, source),
+			}),
+		},
 	}
 
 	facts := NewFacts(input)
@@ -198,6 +231,9 @@ func TestFactsCarrierCopiesAndReturnsFalseForMissingFacts(t *testing.T) {
 	input.PathAssignments[point] = NewPathAssignment(path.NewPath(symbol.ID(42), "changed").Field("field"), callSource)
 	input.Returns[point] = NewReturn([]ValueSource{{Kind: ValueSourceNil}})
 	input.Calls[point] = NewCallProducer(CallProducerConfig{Context: CallProducerContextAssignment})
+	input.ObjectLiterals[ExprRef(1)] = NewObjectLiteral([]ObjectEntry{
+		NewObjectEntry(path.Path{Segments: []segment.Segment{{Kind: segment.SegmentField, Name: "changed"}}}, callSource),
+	})
 
 	if _, ok := facts.LocalAssignment(missing); ok {
 		t.Fatal("missing local assignment returned ok")
@@ -213,6 +249,9 @@ func TestFactsCarrierCopiesAndReturnsFalseForMissingFacts(t *testing.T) {
 	}
 	if _, ok := facts.Call(missing); ok {
 		t.Fatal("missing call returned ok")
+	}
+	if _, ok := facts.ObjectLiteral(ExprRef(99)); ok {
+		t.Fatal("missing object literal returned ok")
 	}
 
 	local, ok := facts.LocalAssignment(point)
@@ -277,6 +316,21 @@ func TestFactsCarrierCopiesAndReturnsFalseForMissingFacts(t *testing.T) {
 	callTargets[0] = NewCallResultTarget(CallResultTargetLocalAssignment, 0, symbol.ID(33), path.NewPath(symbol.ID(33), "changed"))
 	if got := callAgain.ResultTargets(); got[0].Kind() != CallResultTargetReturn {
 		t.Fatalf("facts call exposed mutable targets, got %v", got[0].Kind())
+	}
+
+	literal, ok := facts.ObjectLiteral(ExprRef(1))
+	if !ok {
+		t.Fatal("object literal missing")
+	}
+	entries := literal.Entries()
+	if len(entries) != 1 || entries[0].Source() != source {
+		t.Fatalf("object literal entries = %#v", entries)
+	}
+	entrySuffix := entries[0].Suffix()
+	entrySuffix.Segments[0].Name = "mutated"
+	literalAgain, _ := facts.ObjectLiteral(ExprRef(1))
+	if got := literalAgain.Entries()[0].Suffix(); got.Segments[0].Name != "field" {
+		t.Fatalf("facts object literal exposed mutable suffix: %#v", got)
 	}
 }
 

@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
@@ -74,6 +75,252 @@ func TestFactsNodeTransferAppliesOrdinaryAssignmentThroughResolver(t *testing.T)
 
 	assertValue(t, reg, got[graph.Exit()], key.SymbolValue(target), assigned)
 	assertResolverCall(t, resolver, assign, source)
+}
+
+func TestFactsNodeTransferObjectLiteralRootAssignmentsWriteStaticEntries(t *testing.T) {
+	tests := []struct {
+		name string
+		fact func(cfg.Point, symbol.ID, ValueSource) FactsInput
+	}{
+		{
+			name: "local",
+			fact: func(point cfg.Point, target symbol.ID, source ValueSource) FactsInput {
+				return FactsInput{
+					LocalAssignments: map[cfg.Point]LocalAssignment{
+						point: NewLocalAssignment(target, path.NewPath(target, "obj"), source),
+					},
+				}
+			},
+		},
+		{
+			name: "ordinary",
+			fact: func(point cfg.Point, target symbol.ID, source ValueSource) FactsInput {
+				return FactsInput{
+					OrdinaryAssignments: map[cfg.Point]OrdinaryAssignment{
+						point: NewOrdinaryAssignment(target, path.NewPath(target, "obj"), source),
+					},
+				}
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			reg := product.DefaultRegistry()
+			point := cfg.Point(61)
+			target := symbol.ID(121)
+			objectSource := ValueSource{Kind: ValueSourceExpression, ExprRef: ExprRef(61), HasExpr: true}
+			entrySource := ValueSource{Kind: ValueSourceExpression, ExprRef: ExprRef(62), HasExpr: true}
+			rootValue := presentValue(reg)
+			entryValue := absentValue(reg)
+			sources := &recordingSourceValues{
+				values: map[ValueSource]product.Value{
+					objectSource: rootValue,
+					entrySource:  entryValue,
+				},
+			}
+			input := tc.fact(point, target, objectSource)
+			input.ObjectLiterals = map[ExprRef]ObjectLiteral{
+				objectSource.ExprRef: NewObjectLiteral([]ObjectEntry{
+					NewObjectEntry(fieldSuffix("leaf"), entrySource),
+				}),
+			}
+			visibilityBuilder := visibility.NewBuilder()
+			visibilityBuilder.Define(point, target, "obj")
+
+			got := NewFactsNodeTransfer(FactsNodeTransferConfig{
+				Facts:      NewFacts(input),
+				Sources:    sources,
+				Visibility: visibility.NewResolver(visibilityBuilder.Build()),
+			})(NodeContext{
+				Registry: reg,
+				Point:    point,
+			}, state.State{})
+
+			assertValue(t, reg, got, key.SymbolValue(target), rootValue)
+			assertPathValue(t, reg, got, path.PathKey("sym121@1.leaf"), entryValue)
+			if len(sources.calls) != 2 {
+				t.Fatalf("resolver calls = %d, want root and entry", len(sources.calls))
+			}
+			if sources.calls[0].source != objectSource || sources.calls[1].source != entrySource {
+				t.Fatalf("resolver calls = %#v, want root then entry", sources.calls)
+			}
+		})
+	}
+}
+
+func TestFactsNodeTransferObjectLiteralEntriesUsePreWriteInputState(t *testing.T) {
+	reg := product.DefaultRegistry()
+	point := cfg.Point(62)
+	target := symbol.ID(122)
+	objectSource := ValueSource{Kind: ValueSourceExpression, ExprRef: ExprRef(63), HasExpr: true}
+	entrySource := ValueSource{Kind: ValueSourceExpression, ExprRef: ExprRef(64), HasExpr: true}
+	oldRootValue := presentValue(reg)
+	newRootValue := absentValue(reg)
+	sources := NewSourceValues(SourceValuesConfig{
+		Registry: reg,
+		ExpressionValue: func(point cfg.Point, expr ExprRef, source ValueSource, in state.State) (product.Value, bool) {
+			switch expr {
+			case objectSource.ExprRef:
+				return newRootValue, true
+			case entrySource.ExprRef:
+				return in.ReadValue(reg, key.SymbolValue(target)), true
+			default:
+				return product.Value{}, false
+			}
+		},
+	})
+	visibilityBuilder := visibility.NewBuilder()
+	visibilityBuilder.Define(point, target, "obj")
+
+	got := NewFactsNodeTransfer(FactsNodeTransferConfig{
+		Facts: NewFacts(FactsInput{
+			LocalAssignments: map[cfg.Point]LocalAssignment{
+				point: NewLocalAssignment(target, path.NewPath(target, "obj"), objectSource),
+			},
+			ObjectLiterals: map[ExprRef]ObjectLiteral{
+				objectSource.ExprRef: NewObjectLiteral([]ObjectEntry{
+					NewObjectEntry(fieldSuffix("old"), entrySource),
+				}),
+			},
+		}),
+		Sources:    sources,
+		Visibility: visibility.NewResolver(visibilityBuilder.Build()),
+	})(NodeContext{
+		Registry: reg,
+		Point:    point,
+	}, state.State{}.WriteValue(reg, key.SymbolValue(target), oldRootValue))
+
+	assertValue(t, reg, got, key.SymbolValue(target), newRootValue)
+	assertPathValue(t, reg, got, path.PathKey("sym122@1.old"), oldRootValue)
+}
+
+func TestFactsNodeTransferObjectLiteralMissingVisibilitySkipsEntriesKeepsRoot(t *testing.T) {
+	reg := product.DefaultRegistry()
+	point := cfg.Point(63)
+	target := symbol.ID(123)
+	objectSource := ValueSource{Kind: ValueSourceExpression, ExprRef: ExprRef(65), HasExpr: true}
+	entrySource := ValueSource{Kind: ValueSourceExpression, ExprRef: ExprRef(66), HasExpr: true}
+	rootValue := presentValue(reg)
+	entryValue := absentValue(reg)
+	sources := &recordingSourceValues{
+		values: map[ValueSource]product.Value{
+			objectSource: rootValue,
+			entrySource:  entryValue,
+		},
+	}
+
+	got := NewFactsNodeTransfer(FactsNodeTransferConfig{
+		Facts: NewFacts(FactsInput{
+			LocalAssignments: map[cfg.Point]LocalAssignment{
+				point: NewLocalAssignment(target, path.NewPath(target, "obj"), objectSource),
+			},
+			ObjectLiterals: map[ExprRef]ObjectLiteral{
+				objectSource.ExprRef: NewObjectLiteral([]ObjectEntry{
+					NewObjectEntry(fieldSuffix("leaf"), entrySource),
+				}),
+			},
+		}),
+		Sources:    sources,
+		Visibility: visibility.NewResolver(visibility.NewTable(nil)),
+	})(NodeContext{
+		Registry: reg,
+		Point:    point,
+	}, state.State{})
+
+	assertValue(t, reg, got, key.SymbolValue(target), rootValue)
+	assertPathValue(t, reg, got, path.PathKey("sym123@1.leaf"), product.Bottom(reg))
+	assertResolverCall(t, sources, point, objectSource)
+}
+
+func TestFactsNodeTransferObjectLiteralPathAssignmentWritesStaticEntries(t *testing.T) {
+	reg := product.DefaultRegistry()
+	point := cfg.Point(64)
+	target := symbol.ID(124)
+	targetPath := path.NewPath(target, "t").Field("child")
+	objectSource := ValueSource{Kind: ValueSourceExpression, ExprRef: ExprRef(67), HasExpr: true}
+	entrySource := ValueSource{Kind: ValueSourceExpression, ExprRef: ExprRef(68), HasExpr: true}
+	rootValue := presentValue(reg)
+	entryValue := absentValue(reg)
+	sources := &recordingSourceValues{
+		values: map[ValueSource]product.Value{
+			objectSource: rootValue,
+			entrySource:  entryValue,
+		},
+	}
+	visibilityBuilder := visibility.NewBuilder()
+	visibilityBuilder.Define(point, target, "t")
+
+	got := NewFactsNodeTransfer(FactsNodeTransferConfig{
+		Facts: NewFacts(FactsInput{
+			PathAssignments: map[cfg.Point]PathAssignment{
+				point: NewPathAssignment(targetPath, objectSource),
+			},
+			ObjectLiterals: map[ExprRef]ObjectLiteral{
+				objectSource.ExprRef: NewObjectLiteral([]ObjectEntry{
+					NewObjectEntry(fieldSuffix("leaf"), entrySource),
+				}),
+			},
+		}),
+		Sources:    sources,
+		Visibility: visibility.NewResolver(visibilityBuilder.Build()),
+	})(NodeContext{
+		Registry: reg,
+		Point:    point,
+	}, state.State{})
+
+	assertPathValue(t, reg, got, path.PathKey("sym124@1.child"), rootValue)
+	assertPathValue(t, reg, got, path.PathKey("sym124@1.child.leaf"), entryValue)
+	if len(sources.calls) != 2 {
+		t.Fatalf("resolver calls = %d, want root and entry", len(sources.calls))
+	}
+}
+
+func TestFactsNodeTransferObjectLiteralEntriesInvalidateSubtreeBeforeWrite(t *testing.T) {
+	reg := product.DefaultRegistry()
+	point := cfg.Point(65)
+	target := symbol.ID(125)
+	objectSource := ValueSource{Kind: ValueSourceExpression, ExprRef: ExprRef(69), HasExpr: true}
+	entrySource := ValueSource{Kind: ValueSourceExpression, ExprRef: ExprRef(70), HasExpr: true}
+	rootValue := presentValue(reg)
+	entryValue := absentValue(reg)
+	staleValue := presentValue(reg)
+	siblingValue := presentValue(reg)
+	staleChildKey := path.PathKey("sym125@1.a.old")
+	siblingKey := path.PathKey("sym125@1.b.old")
+	sources := &recordingSourceValues{
+		values: map[ValueSource]product.Value{
+			objectSource: rootValue,
+			entrySource:  entryValue,
+		},
+	}
+	visibilityBuilder := visibility.NewBuilder()
+	visibilityBuilder.Define(point, target, "t")
+
+	got := NewFactsNodeTransfer(FactsNodeTransferConfig{
+		Facts: NewFacts(FactsInput{
+			LocalAssignments: map[cfg.Point]LocalAssignment{
+				point: NewLocalAssignment(target, path.NewPath(target, "t"), objectSource),
+			},
+			ObjectLiterals: map[ExprRef]ObjectLiteral{
+				objectSource.ExprRef: NewObjectLiteral([]ObjectEntry{
+					NewObjectEntry(fieldSuffix("a"), entrySource),
+				}),
+			},
+		}),
+		Sources:    sources,
+		Visibility: visibility.NewResolver(visibilityBuilder.Build()),
+	})(NodeContext{
+		Registry: reg,
+		Point:    point,
+	}, state.State{}.
+		WritePathKey(reg, staleChildKey, staleValue).
+		WritePathKey(reg, siblingKey, siblingValue))
+
+	assertValue(t, reg, got, key.SymbolValue(target), rootValue)
+	assertPathValue(t, reg, got, path.PathKey("sym125@1.a"), entryValue)
+	assertPathValue(t, reg, got, staleChildKey, product.Bottom(reg))
+	assertPathValue(t, reg, got, siblingKey, siblingValue)
 }
 
 func TestFactsNodeTransferAppliesPathAssignmentThroughVisibility(t *testing.T) {
@@ -651,4 +898,8 @@ func assertPathValue(t *testing.T, reg *axis.Registry, gotState state.State, pat
 	if got := gotState.ReadPathKey(reg, pathKey); !product.Equal(reg, got, want) {
 		t.Fatalf("path %s = %s, want %s", pathKey, formatValue(reg, got), formatValue(reg, want))
 	}
+}
+
+func fieldSuffix(name string) path.Path {
+	return path.Path{Segments: []segment.Segment{{Kind: segment.SegmentField, Name: name}}}
 }

@@ -34,13 +34,27 @@ func NewFactsNodeTransfer(config FactsNodeTransferConfig) NodeTransfer {
 			return out
 		}
 		if fact, ok := facts.LocalAssignment(ctx.Point); ok {
-			out = applyRootAssignment(ctx, sources, read, in, out, fact.TargetSymbol(), fact.TargetPath(), fact.Source())
+			var targetPath pathdom.Path
+			var applied bool
+			out, targetPath, applied = applyRootAssignment(ctx, sources, read, in, out, fact.TargetSymbol(), fact.TargetPath(), fact.Source())
+			if applied {
+				out = applyObjectLiteralEntries(ctx, config.Visibility, facts, sources, read, in, out, targetPath, fact.Source())
+			}
 		}
 		if fact, ok := facts.OrdinaryAssignment(ctx.Point); ok {
-			out = applyRootAssignment(ctx, sources, read, in, out, fact.TargetSymbol(), fact.TargetPath(), fact.Source())
+			var targetPath pathdom.Path
+			var applied bool
+			out, targetPath, applied = applyRootAssignment(ctx, sources, read, in, out, fact.TargetSymbol(), fact.TargetPath(), fact.Source())
+			if applied {
+				out = applyObjectLiteralEntries(ctx, config.Visibility, facts, sources, read, in, out, targetPath, fact.Source())
+			}
 		}
 		if fact, ok := facts.PathAssignment(ctx.Point); ok {
-			out = applyPathAssignment(ctx, config.Visibility, sources, read, in, out, fact)
+			var applied bool
+			out, applied = applyPathAssignment(ctx, config.Visibility, sources, read, in, out, fact)
+			if applied {
+				out = applyObjectLiteralEntries(ctx, config.Visibility, facts, sources, read, in, out, fact.TargetPath(), fact.Source())
+			}
 		}
 		if fact, ok := facts.Return(ctx.Point); ok {
 			out = applyReturn(ctx, sources, read, in, out, fact)
@@ -133,16 +147,17 @@ func applyRootAssignment(
 	target symbol.ID,
 	targetPath pathdom.Path,
 	source ValueSource,
-) state.State {
-	target, ok := rootAssignmentTarget(target, targetPath)
+) (state.State, pathdom.Path, bool) {
+	root, ok := rootAssignmentTarget(target, targetPath)
 	if !ok {
-		return out
+		return out, pathdom.Path{}, false
 	}
 	value, ok := sources.ValueOfSource(ctx.Point, source, in, read)
 	if !ok {
-		return out
+		return out, pathdom.Path{}, false
 	}
-	return writeRootSymbol(ctx, out, target, value)
+	targetPath = rootAssignmentPath(root, targetPath)
+	return writeRootSymbol(ctx, out, root, value), targetPath, true
 }
 
 func rootAssignmentTarget(target symbol.ID, targetPath pathdom.Path) (symbol.ID, bool) {
@@ -156,6 +171,14 @@ func rootAssignmentTarget(target symbol.ID, targetPath pathdom.Path) (symbol.ID,
 		return targetPath.Symbol, true
 	}
 	return 0, false
+}
+
+func rootAssignmentPath(target symbol.ID, targetPath pathdom.Path) pathdom.Path {
+	out := copyPath(targetPath)
+	if out.Symbol == 0 {
+		out.Symbol = target
+	}
+	return out
 }
 
 func writeRootSymbol(ctx NodeContext, out state.State, target symbol.ID, value product.Value) state.State {
@@ -173,27 +196,79 @@ func applyPathAssignment(
 	in state.State,
 	out state.State,
 	fact PathAssignment,
-) state.State {
+) (state.State, bool) {
 	if resolver == nil {
-		return out
+		return out, false
 	}
 	targetPath := fact.TargetPath()
 	if len(targetPath.Segments) == 0 {
-		return out
+		return out, false
 	}
 	value, ok := sources.ValueOfSource(ctx.Point, fact.Source(), in, read)
 	if !ok {
-		return out
+		return out, false
 	}
 	invalidated, ok := out.InvalidatePathSubtreeAt(resolver, ctx.Point, targetPath)
 	if !ok {
-		return out
+		return out, false
 	}
 	written, ok := invalidated.WritePathAt(ctx.Registry, resolver, ctx.Point, targetPath, value)
 	if !ok {
+		return out, false
+	}
+	return written, true
+}
+
+func applyObjectLiteralEntries(
+	ctx NodeContext,
+	resolver *visibility.Resolver,
+	facts Facts,
+	sources SourceValues,
+	read func(cfg.Point) state.State,
+	in state.State,
+	out state.State,
+	targetPath pathdom.Path,
+	source ValueSource,
+) state.State {
+	if resolver == nil || !source.HasExpr {
 		return out
 	}
-	return written
+	literal, ok := facts.ObjectLiteral(source.ExprRef)
+	if !ok {
+		return out
+	}
+	for _, entry := range literal.Entries() {
+		entryPath, ok := objectEntryTargetPath(targetPath, entry.Suffix())
+		if !ok {
+			continue
+		}
+		if resolver.KeyAt(ctx.Point, entryPath) == "" {
+			continue
+		}
+		value, ok := sources.ValueOfSource(ctx.Point, entry.Source(), in, read)
+		if !ok {
+			continue
+		}
+		invalidated, ok := out.InvalidatePathSubtreeAt(resolver, ctx.Point, entryPath)
+		if !ok {
+			continue
+		}
+		written, ok := invalidated.WritePathAt(ctx.Registry, resolver, ctx.Point, entryPath, value)
+		if !ok {
+			continue
+		}
+		out = written
+	}
+	return out
+}
+
+func objectEntryTargetPath(root pathdom.Path, suffix pathdom.Path) (pathdom.Path, bool) {
+	if root.IsEmpty() || len(suffix.Segments) == 0 {
+		return pathdom.Path{}, false
+	}
+	out := copyPath(root)
+	out.Segments = append(out.Segments, suffix.Segments...)
+	return out, true
 }
 
 func applyReturn(
