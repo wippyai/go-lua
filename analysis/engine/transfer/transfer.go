@@ -26,6 +26,7 @@ type NodeContext struct {
 	Registry *axis.Registry
 	Point    cfg.Point
 	Node     *cfg.Node
+	Read     func(cfg.Point) state.State
 }
 
 // EdgeContext is the generic context passed to edge transfer hooks.
@@ -128,6 +129,7 @@ func (r Runner) Run() Result {
 				Registry: registry,
 				Point:    point,
 				Node:     graph.Node(point),
+				Read:     read,
 			}, in)
 
 			for _, succ := range graph.Successors(point) {
