@@ -138,6 +138,9 @@ func validateValue(reg *axis.Registry, v Value) {
 	if v.n == nil {
 		return
 	}
+	if v.n.reg != reg {
+		panic("product: value belongs to a different registry")
+	}
 	for _, slot := range v.n.slots {
 		if _, ok := reg.LookupErased(slot.key); !ok {
 			panic("product: value contains slot outside registry: " + slot.key)

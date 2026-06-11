@@ -94,6 +94,56 @@ func TestDefaultRegistryWithAxesRejectsDuplicateIDs(t *testing.T) {
 	}
 }
 
+func TestProductValuesAreScopedToRegistryIdentity(t *testing.T) {
+	regA := axis.NewRegistry()
+	axis.Register(regA, syntheticSpec())
+	regA.Freeze()
+
+	regB := axis.NewRegistry()
+	axis.Register(regB, syntheticHighMeetSpec())
+	regB.Freeze()
+
+	aLow := Set(regA, Top(), syntheticKey, syntheticLow)
+	aHigh := Set(regA, Top(), syntheticKey, syntheticHigh)
+	bLow := Set(regB, Top(), syntheticKey, syntheticLow)
+	bHigh := Set(regB, Top(), syntheticKey, syntheticHigh)
+
+	if aLow.n == nil || bLow.n == nil {
+		t.Fatalf("non-top custom-axis values must be interned nodes")
+	}
+	if aLow.n == bLow.n {
+		t.Fatalf("values from independent registries with the same axis ID must not alias")
+	}
+	if got := Get(regA, aLow, syntheticKey); got != syntheticLow {
+		t.Fatalf("regA value = %v, want %v", got, syntheticLow)
+	}
+	if got := Get(regB, bLow, syntheticKey); got != syntheticLow {
+		t.Fatalf("regB value = %v, want %v", got, syntheticLow)
+	}
+	if got := Get(regA, Meet(regA, aLow, aHigh), syntheticKey); got != syntheticLow {
+		t.Fatalf("regA meet(low, high) = %v, want %v", got, syntheticLow)
+	}
+	if got := Get(regB, Meet(regB, bLow, bHigh), syntheticKey); got != syntheticHigh {
+		t.Fatalf("regB meet(low, high) = %v, want %v", got, syntheticHigh)
+	}
+
+	mustPanic(t, func() {
+		_ = Get(regB, aLow, syntheticKey)
+	})
+	mustPanic(t, func() {
+		_ = Equal(regB, aLow, bLow)
+	})
+	mustPanic(t, func() {
+		_ = LessOrEq(regB, aLow, bLow)
+	})
+	mustPanic(t, func() {
+		_ = Meet(regB, aLow, bLow)
+	})
+	mustPanic(t, func() {
+		_ = Set(regB, aLow, syntheticKey, syntheticHigh)
+	})
+}
+
 func TestProductRegistryRejectsSparseAxisWithoutMeet(t *testing.T) {
 	spec := noMeetSpec().Erase()
 	if _, err := DefaultRegistryWithAxes(spec); err == nil || !strings.Contains(err.Error(), `product: sparse axis "test.synthetic.no_meet" must define Meet`) {
@@ -416,6 +466,21 @@ func TestSyntheticAxisParticipatesThroughRegistry(t *testing.T) {
 	}
 }
 
+func TestSparseAxisReducerStillRunsWithRegistryScopedValues(t *testing.T) {
+	reg := axis.NewRegistry()
+	axis.Register(reg, syntheticMirrorReducerSpec())
+	axis.Register(reg, secondSyntheticSpec())
+	reg.Freeze()
+
+	v := Set(reg, Top(), syntheticKey, syntheticLow)
+	if got := Get(reg, v, syntheticKey); got != syntheticLow {
+		t.Fatalf("source axis = %v, want %v", got, syntheticLow)
+	}
+	if got := Get(reg, v, secondSyntheticKey); got != syntheticHigh {
+		t.Fatalf("reducer mirror axis = %v, want %v", got, syntheticHigh)
+	}
+}
+
 func defaultRegistrySpecIDs() []string {
 	return specIDs(defaults.SparseSpecs())
 }
@@ -530,10 +595,43 @@ func noMeetSpec() axis.Spec[synthetic] {
 	return spec
 }
 
+func syntheticHighMeetSpec() axis.Spec[synthetic] {
+	spec := syntheticSpec()
+	spec.Meet = func(a, b synthetic) synthetic {
+		if a == b {
+			return a
+		}
+		if a == syntheticBottom || b == syntheticBottom {
+			return syntheticBottom
+		}
+		if a == syntheticTop {
+			return b
+		}
+		if b == syntheticTop {
+			return a
+		}
+		return syntheticHigh
+	}
+	return spec
+}
+
 func syntheticTopReducerSpec() axis.Spec[synthetic] {
 	spec := syntheticSpec()
 	spec.Reducer = func(w axis.Writer) bool {
 		axis.Set(w, syntheticKey, syntheticTop)
+		return false
+	}
+	return spec
+}
+
+func syntheticMirrorReducerSpec() axis.Spec[synthetic] {
+	spec := syntheticSpec()
+	spec.Reducer = func(w axis.Writer) bool {
+		source, ok := axis.Get(w, syntheticKey)
+		if !ok || source != syntheticLow {
+			return false
+		}
+		axis.Set(w, secondSyntheticKey, syntheticHigh)
 		return false
 	}
 	return spec

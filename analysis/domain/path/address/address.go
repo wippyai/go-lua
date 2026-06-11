@@ -30,11 +30,16 @@ func SameStablePath(a, b pathdom.Path) bool {
 
 // StablePathKey returns the deterministic stable key for a path.
 func StablePathKey(path pathdom.Path) pathdom.PathKey {
+	return StableKeyOfPath(path).PathKey()
+}
+
+// StableKeyOfPath returns the typed deterministic stable key for a path.
+func StableKeyOfPath(path pathdom.Path) StableKey {
 	addr, ok := StableOfPath(path)
 	if !ok {
 		return ""
 	}
-	return addr.Key()
+	return addr.StableKey()
 }
 
 // PathIdentityKey returns the stable key when path is addressable, otherwise its
@@ -125,14 +130,19 @@ func StableKeyHasPrefix(key pathdom.PathKey, prefix Stable) bool {
 
 // Key returns the deterministic key for map/set carriers.
 func (a Stable) Key() pathdom.PathKey {
+	return a.StableKey().PathKey()
+}
+
+// StableKey returns the deterministic stable-address key.
+func (a Stable) StableKey() StableKey {
 	if !a.root.isValid() {
 		return ""
 	}
 	if sym, ok := a.root.Symbol(); ok {
-		return SymbolPathKey(sym, a.suffix.segments)
+		return SymbolStableKey(sym, a.suffix.segments)
 	}
 	root, _ := a.root.Name()
-	return namedRootKey(root, a.suffix.segments)
+	return StableKey(namedRootKey(root, a.suffix.segments))
 }
 
 // Path returns a path view of the address.

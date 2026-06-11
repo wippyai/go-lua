@@ -9,11 +9,11 @@ import (
 	internal "github.com/wippyai/go-lua/analysis/internal/hash"
 )
 
-var globalInterner = &interner{nodes: make(map[uint64][]*node)}
+var globalInterner = &interner{nodes: make(map[*axis.Registry]map[uint64][]*node)}
 
 type interner struct {
 	mu    sync.Mutex
-	nodes map[uint64][]*node
+	nodes map[*axis.Registry]map[uint64][]*node
 }
 
 func intern(reg *axis.Registry, shape Shape, p presence.Value, slots []slot) Value {
@@ -31,7 +31,13 @@ func intern(reg *axis.Registry, shape Shape, p presence.Value, slots []slot) Val
 	globalInterner.mu.Lock()
 	defer globalInterner.mu.Unlock()
 
-	for _, existing := range globalInterner.nodes[h] {
+	bucket := globalInterner.nodes[reg]
+	if bucket == nil {
+		bucket = make(map[uint64][]*node)
+		globalInterner.nodes[reg] = bucket
+	}
+
+	for _, existing := range bucket[h] {
 		if sameNode(reg, existing, shape, p, slots) {
 			return Value{n: existing}
 		}
@@ -39,8 +45,8 @@ func intern(reg *axis.Registry, shape Shape, p presence.Value, slots []slot) Val
 
 	stored := make([]slot, len(slots))
 	copy(stored, slots)
-	n := &node{shape: shape, presence: p, slots: stored, hash: h}
-	globalInterner.nodes[h] = append(globalInterner.nodes[h], n)
+	n := &node{reg: reg, shape: shape, presence: p, slots: stored, hash: h}
+	bucket[h] = append(bucket[h], n)
 	return Value{n: n}
 }
 
@@ -103,7 +109,7 @@ func canonicalSlots(reg *axis.Registry, slots []slot) []slot {
 }
 
 func sameNode(reg *axis.Registry, n *node, shape Shape, p presence.Value, slots []slot) bool {
-	if n.shape != shape || !presence.Equal(n.presence, p) || len(n.slots) != len(slots) {
+	if n.reg != reg || n.shape != shape || !presence.Equal(n.presence, p) || len(n.slots) != len(slots) {
 		return false
 	}
 	for i, left := range n.slots {

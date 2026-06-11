@@ -60,6 +60,35 @@ func TestLocalPreservesVersionWhileStableIgnoresIt(t *testing.T) {
 	}
 }
 
+func TestTypedLocalAndStableKeysAreNotInterchangeable(t *testing.T) {
+	path := pathdom.NewPath(23, "item").Field("name")
+	path.Version = 4
+
+	local, ok := LocalOfPath(path)
+	if !ok {
+		t.Fatal("LocalOfPath failed")
+	}
+	stable, ok := StableOfPath(path)
+	if !ok {
+		t.Fatal("StableOfPath failed")
+	}
+
+	localKey := local.LocalKey()
+	stableKey := stable.StableKey()
+	if localKey == "" || stableKey == "" {
+		t.Fatalf("keys should be populated: local=%q stable=%q", localKey, stableKey)
+	}
+	if localKey.PathKey() == stableKey.PathKey() {
+		t.Fatalf("local and stable keys collided: %q", localKey.PathKey())
+	}
+	if _, ok := StableFromKey(localKey.PathKey()); ok {
+		t.Fatalf("StableFromKey accepted local versioned key %q", localKey.PathKey())
+	}
+	if got, ok := StableFromKey(stableKey.PathKey()); !ok || !got.Equal(stable) {
+		t.Fatalf("StableFromKey(stable) = %s/%v, want typed stable round-trip", got.Key(), ok)
+	}
+}
+
 func TestStableSeparatesSymbolAndRootIdentity(t *testing.T) {
 	symbolAddr, ok := StableOfPath(pathdom.NewPath(7, "x"))
 	if !ok {

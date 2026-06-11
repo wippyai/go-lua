@@ -5,16 +5,32 @@ import (
 	"strings"
 
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/path/keycodec"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/symbol"
 )
+
+// StableKey is the compact, version-insensitive key spelling for stable
+// addresses. It is intentionally distinct from point-local path keys.
+type StableKey pathdom.PathKey
+
+// PathKey returns the PathKey carrier for existing map APIs.
+func (k StableKey) PathKey() pathdom.PathKey { return pathdom.PathKey(k) }
 
 // SymbolPathKey returns the stable, version-insensitive key for a symbol-rooted path.
 func SymbolPathKey(sym symbol.ID, segments []segment.Segment) pathdom.PathKey {
 	if sym == 0 {
 		return ""
 	}
-	return pathdom.PathKey(prefixedDecimalKey('s', uint64(sym), segment.FormatSegments(segments)))
+	return pathdom.PathKey(SymbolStableKey(sym, segments))
+}
+
+// SymbolStableKey returns the typed stable key for a symbol-rooted address.
+func SymbolStableKey(sym symbol.ID, segments []segment.Segment) StableKey {
+	if sym == 0 {
+		return ""
+	}
+	return StableKey(keycodec.PrefixedDecimalKey('s', uint64(sym), segment.FormatSegments(segments)))
 }
 
 // SymbolPathKeyOf lowers a resolved path to its stable symbol-path key.
@@ -48,7 +64,7 @@ func parseInternedSymbolPathKey(key pathdom.PathKey) (symbol.ID, []segment.Segme
 		}
 		i++
 	}
-	n, parsed := parseUnsignedDecimal(s[1:i])
+	n, parsed := keycodec.ParseUnsignedDecimal(s[1:i])
 	if !parsed || n == 0 {
 		return 0, nil, false
 	}
@@ -129,12 +145,12 @@ func isCurrentSymbolPathKey(key pathdom.PathKey) bool {
 		}
 		i++
 	}
-	n, parsed := parseUnsignedDecimal(s[3:i])
+	n, parsed := keycodec.ParseUnsignedDecimal(s[3:i])
 	if !parsed || n == 0 {
 		return false
 	}
 	if i < len(s) && s[i] == '@' {
-		_, next, ok := parseVersionAfterAt(s, i+1)
+		_, next, ok := keycodec.ParsePositiveIntAfterAt(s, i+1)
 		if !ok {
 			return false
 		}
@@ -177,64 +193,4 @@ func parseRootAndSuffix(key pathdom.PathKey) (root string, suffix string, ok boo
 		return "", "", false
 	}
 	return s[:end], s[end:], segment.ValidFormattedSegments(s[end:])
-}
-
-func parseVersionAfterAt(s string, i int) (int, int, bool) {
-	if i >= len(s) {
-		return 0, 0, false
-	}
-	start := i
-	for i < len(s) {
-		ch := s[i]
-		if ch < '0' || ch > '9' {
-			break
-		}
-		i++
-	}
-	n, parsed := parseUnsignedDecimal(s[start:i])
-	if i == start || !parsed || n == 0 || n > uint64(int(^uint(0)>>1)) {
-		return 0, 0, false
-	}
-	return int(n), i, true
-}
-
-func parseUnsignedDecimal(s string) (uint64, bool) {
-	if s == "" {
-		return 0, false
-	}
-	var n uint64
-	for i := 0; i < len(s); i++ {
-		ch := s[i]
-		if ch < '0' || ch > '9' {
-			return 0, false
-		}
-		digit := uint64(ch - '0')
-		if n > (^uint64(0)-digit)/10 {
-			return 0, false
-		}
-		n = n*10 + digit
-	}
-	return n, true
-}
-
-func prefixedDecimalKey(prefix byte, value uint64, suffix string) string {
-	var buf [21]byte
-	i := len(buf)
-	for {
-		i--
-		buf[i] = byte('0' + value%10)
-		value /= 10
-		if value == 0 {
-			break
-		}
-	}
-	i--
-	buf[i] = prefix
-	if suffix == "" {
-		return string(buf[i:])
-	}
-	out := make([]byte, len(buf)-i+len(suffix))
-	copy(out, buf[i:])
-	copy(out[len(buf)-i:], suffix)
-	return string(out)
 }

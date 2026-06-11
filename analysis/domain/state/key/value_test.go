@@ -129,6 +129,25 @@ func TestSymbolVersionPathUsesPureKeySpelling(t *testing.T) {
 	}
 }
 
+func TestResolverPathKeyIsVersionedAndDistinctFromStableAddressKey(t *testing.T) {
+	segments := []segment.Segment{{Kind: segment.SegmentField, Name: "field"}}
+	resolverKey := SymbolVersionResolverPath(12, 3, segments)
+	if got := resolverKey.PathKey(); got != "sym12@3.field" {
+		t.Fatalf("resolver key = %q, want versioned verbose path", got)
+	}
+
+	sym, version, suffix, ok := ParseResolverPath(resolverKey.PathKey())
+	if !ok || sym != 12 || version != 3 || suffix != ".field" {
+		t.Fatalf("ParseResolverPath = %d/%d/%q/%v, want 12/3/.field/true", sym, version, suffix, ok)
+	}
+	if _, _, _, ok := ParseResolverPath("s12.field"); ok {
+		t.Fatal("ParseResolverPath accepted compact stable address key")
+	}
+	if _, _, _, ok := ParseResolverPath("$0.field"); ok {
+		t.Fatal("ParseResolverPath accepted placeholder local path key")
+	}
+}
+
 func TestPackageDoesNotImportIRorEngine(t *testing.T) {
 	cmd := exec.Command("go", "list", "-deps", ".")
 	out, err := cmd.Output()

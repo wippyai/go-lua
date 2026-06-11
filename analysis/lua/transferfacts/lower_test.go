@@ -5,10 +5,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/assertion"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/evidence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
@@ -20,6 +20,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/lua/cfgbuild"
+	"github.com/wippyai/go-lua/analysis/lua/cfgfacts"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
 	"github.com/wippyai/go-lua/analysis/lua/valuesource"
 	"github.com/wippyai/go-lua/analysis/symbol"
@@ -58,6 +59,80 @@ func TestLowerPanicsWithoutRegistryOnEmptyInputs(t *testing.T) {
 	}()
 
 	_ = Lower(nil, nil, Config{})
+}
+
+func TestLowerDoesNotLowerDeclarationOrControlSidecars(t *testing.T) {
+	typeDef := &ast.TypeDefStmt{Name: "User", Type: primitiveType("number")}
+	interfaceDef := &ast.InterfaceDefStmt{Name: "Serializable"}
+	funcDef := &ast.FuncDefStmt{
+		Name: &ast.FuncName{Func: ident("build")},
+		Func: &ast.FunctionExpr{ParList: &ast.ParList{}},
+	}
+	numericFor := &ast.NumberForStmt{
+		Name:  "i",
+		Init:  number("1"),
+		Limit: number("3"),
+		Step:  number("1"),
+	}
+	genericFor := &ast.GenericForStmt{
+		Names: []string{"item"},
+		Exprs: []ast.Expr{ident("items")},
+	}
+	label := &ast.LabelStmt{Name: "done"}
+	gotoStmt := &ast.GotoStmt{Label: "done"}
+	stmts := []ast.Stmt{typeDef, interfaceDef, funcDef, numericFor, genericFor, label, gotoStmt}
+	bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"build", "items"}})
+	built := cfgbuild.BuildChunk(stmts, bindings)
+	result, err := semantics.ExtractChunk(stmts, bindings, built)
+	if err != nil {
+		t.Fatalf("ExtractChunk: %v", err)
+	}
+
+	facts := lowerFacts(t, result, built.Graph, product.DefaultRegistry())
+	assertNoCompilerASTTypes(t, reflect.TypeOf(facts))
+
+	for _, point := range requireStmtPoints(t, built, typeDef, 1) {
+		if fact, ok := result.TypeDefinition(point); !ok || fact.Kind != cfgfacts.TypeDefinitionAlias {
+			t.Fatalf("missing type definition sidecar at point %d: %#v/%v", point, fact, ok)
+		}
+		assertNoPointFact(t, facts, point)
+	}
+	for _, point := range requireStmtPoints(t, built, interfaceDef, 1) {
+		if fact, ok := result.TypeDefinition(point); !ok || fact.Kind != cfgfacts.TypeDefinitionInterface {
+			t.Fatalf("missing interface definition sidecar at point %d: %#v/%v", point, fact, ok)
+		}
+		assertNoPointFact(t, facts, point)
+	}
+	for _, point := range requireStmtPoints(t, built, funcDef, 1) {
+		if _, ok := result.FunctionDefinition(point); !ok {
+			t.Fatalf("missing function definition sidecar at point %d", point)
+		}
+		assertNoPointFact(t, facts, point)
+	}
+	for _, point := range requireStmtPoints(t, built, numericFor, 2) {
+		if _, ok := result.NumericFor(point); !ok {
+			t.Fatalf("missing numeric-for sidecar at point %d", point)
+		}
+		assertNoPointFact(t, facts, point)
+	}
+	for _, point := range requireStmtPoints(t, built, genericFor, 2) {
+		if _, ok := result.GenericFor(point); !ok {
+			t.Fatalf("missing generic-for sidecar at point %d", point)
+		}
+		assertNoPointFact(t, facts, point)
+	}
+	for _, point := range requireStmtPoints(t, built, label, 1) {
+		if _, ok := result.Label(point); !ok {
+			t.Fatalf("missing label sidecar at point %d", point)
+		}
+		assertNoPointFact(t, facts, point)
+	}
+	for _, point := range requireStmtPoints(t, built, gotoStmt, 1) {
+		if _, ok := result.Goto(point); !ok {
+			t.Fatalf("missing goto sidecar at point %d", point)
+		}
+		assertNoPointFact(t, facts, point)
+	}
 }
 
 func TestLowerAssignmentsReturnsAndCallsPreserveValueListMetadata(t *testing.T) {
@@ -1745,6 +1820,31 @@ func requireStmtPoints(t *testing.T, built *cfgbuild.Result, stmt ast.Stmt, want
 		t.Fatalf("points for %T = %v, want %d", stmt, points, want)
 	}
 	return points
+}
+
+func assertNoPointFact(t *testing.T, facts factflow.Facts, point cfg.Point) {
+	t.Helper()
+	if _, ok := facts.LocalAssignment(point); ok {
+		t.Fatalf("point %d lowered as local assignment", point)
+	}
+	if _, ok := facts.OrdinaryAssignment(point); ok {
+		t.Fatalf("point %d lowered as ordinary assignment", point)
+	}
+	if _, ok := facts.PathAssignment(point); ok {
+		t.Fatalf("point %d lowered as path assignment", point)
+	}
+	if _, ok := facts.BranchRefinement(point); ok {
+		t.Fatalf("point %d lowered as branch refinement", point)
+	}
+	if _, ok := facts.Return(point); ok {
+		t.Fatalf("point %d lowered as return", point)
+	}
+	if _, ok := facts.Call(point); ok {
+		t.Fatalf("point %d lowered as call producer", point)
+	}
+	if _, ok := facts.CallSite(point); ok {
+		t.Fatalf("point %d lowered as call site", point)
+	}
 }
 
 func assertNoCompilerASTTypes(t *testing.T, typ reflect.Type) {

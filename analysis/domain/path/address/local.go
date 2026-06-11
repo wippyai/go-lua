@@ -2,6 +2,12 @@ package address
 
 import pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 
+// LocalKey is the point-local path key spelling that preserves SSA versions.
+type LocalKey pathdom.PathKey
+
+// PathKey returns the PathKey carrier for existing map APIs.
+func (k LocalKey) PathKey() pathdom.PathKey { return pathdom.PathKey(k) }
+
 // Local is a point-local path identity that preserves path versions.
 type Local struct {
 	path pathdom.Path
@@ -22,10 +28,15 @@ func (a Local) Path() pathdom.Path {
 
 // Key returns the version-sensitive point-local map key.
 func (a Local) Key() pathdom.PathKey {
+	return a.LocalKey().PathKey()
+}
+
+// LocalKey returns the version-sensitive point-local key.
+func (a Local) LocalKey() LocalKey {
 	if a.path.IsEmpty() {
 		return ""
 	}
-	return a.path.Key()
+	return LocalKey(a.path.Key())
 }
 
 // Stable returns the version-insensitive address for the local address.

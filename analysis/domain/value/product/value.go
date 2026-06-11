@@ -47,6 +47,7 @@ type Value struct {
 }
 
 type node struct {
+	reg      *axis.Registry
 	shape    Shape
 	presence presence.Value
 	slots    []slot
@@ -95,7 +96,9 @@ func ShapeOf(v Value) Shape {
 }
 
 func WithShape(reg *axis.Registry, v Value, shape Shape) Value {
-	return intern(registryOrDefault(reg), shape, PresenceOf(v), copySlots(v))
+	reg = registryOrDefault(reg)
+	validateValue(reg, v)
+	return intern(reg, shape, PresenceOf(v), copySlots(v))
 }
 
 func PresenceOf(v Value) presence.Value {
@@ -106,13 +109,16 @@ func PresenceOf(v Value) presence.Value {
 }
 
 func WithPresence(reg *axis.Registry, v Value, p presence.Value) Value {
-	return intern(registryOrDefault(reg), ShapeOf(v), p, copySlots(v))
+	reg = registryOrDefault(reg)
+	validateValue(reg, v)
+	return intern(reg, ShapeOf(v), p, copySlots(v))
 }
 
 // Get reads a typed axis value. If the axis is omitted, Get returns the axis
 // Top value.
 func Get[T any](reg *axis.Registry, v Value, key axis.Key[T]) T {
 	reg = registryOrDefault(reg)
+	validateValue(reg, v)
 	if key.ID() == presence.Key.ID() {
 		panic("product: presence is a core lane; use PresenceOf")
 	}
@@ -134,6 +140,7 @@ func Get[T any](reg *axis.Registry, v Value, key axis.Key[T]) T {
 // slot back to omission.
 func Set[T any](reg *axis.Registry, v Value, key axis.Key[T], value T) Value {
 	reg = registryOrDefault(reg)
+	validateValue(reg, v)
 	if key.ID() == presence.Key.ID() {
 		panic("product: presence is a core lane; use WithPresence")
 	}
