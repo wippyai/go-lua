@@ -182,20 +182,67 @@ func TestLowerSkipsUnsupportedCallProducerContexts(t *testing.T) {
 	}
 }
 
-func TestLowerSkipsMemberOrdinaryAssignmentShapes(t *testing.T) {
-	l := lowerer{exprs: make(map[any]transfer.ExprRef)}
-	memberFact := semantics.OrdinaryAssignmentFact{
-		Target: dot(ident("t"), "field"),
-		Source: semantics.ValueSource{
-			Kind:      semantics.ValueSourceExpression,
-			Expr:      number("1"),
-			ExprIndex: 0,
-		},
-	}
-	if _, ok := l.ordinaryAssignment(memberFact); ok {
-		t.Fatalf("member ordinary assignment lowered as root assignment")
+func TestLowerOrdinaryAssignmentsSplitsRootAndStaticPathWrites(t *testing.T) {
+	local := localAssign([]string{"t", "k", "x"}, number("0"), stringLit("key"), number("0"))
+	dotWrite := assign([]ast.Expr{dot(ident("t"), "x")}, number("1"))
+	indexWrite := assign([]ast.Expr{stringIndex(ident("t"), "x")}, number("2"))
+	dynamicWrite := assign([]ast.Expr{dynamicIndex(ident("t"), ident("k"))}, number("3"))
+	rootWrite := assign([]ast.Expr{ident("x")}, number("4"))
+	stmts := []ast.Stmt{local, dotWrite, indexWrite, dynamicWrite, rootWrite}
+	bindings := bind.BindChunk(stmts, bind.Options{})
+	built := cfgbuild.BuildChunk(stmts, bindings)
+	result, err := semantics.ExtractChunk(stmts, bindings, built)
+	if err != nil {
+		t.Fatalf("ExtractChunk: %v", err)
 	}
 
+	facts := Lower(result, built.Graph)
+	tSym := mustLocalAt(t, bindings, local, 0)
+
+	dotPoint := requireStmtPoints(t, built, dotWrite, 1)[0]
+	dotFact, ok := facts.PathAssignment(dotPoint)
+	if !ok {
+		t.Fatalf("missing dot path assignment")
+	}
+	if !dotFact.TargetPath().Equal(path.NewPath(tSym, "t").Field("x")) {
+		t.Fatalf("dot path assignment target = %v", dotFact.TargetPath())
+	}
+	if _, ok := facts.OrdinaryAssignment(dotPoint); ok {
+		t.Fatalf("dot path assignment also lowered as root assignment")
+	}
+
+	indexPoint := requireStmtPoints(t, built, indexWrite, 1)[0]
+	indexFact, ok := facts.PathAssignment(indexPoint)
+	if !ok {
+		t.Fatalf("missing static index path assignment")
+	}
+	if !indexFact.TargetPath().Equal(path.NewPath(tSym, "t").IndexStr("x")) {
+		t.Fatalf("static index path assignment target = %v", indexFact.TargetPath())
+	}
+
+	dynamicPoint := requireStmtPoints(t, built, dynamicWrite, 1)[0]
+	if _, ok := facts.PathAssignment(dynamicPoint); ok {
+		t.Fatalf("dynamic index lowered as path assignment")
+	}
+	if _, ok := facts.OrdinaryAssignment(dynamicPoint); ok {
+		t.Fatalf("dynamic index lowered as ordinary root assignment")
+	}
+
+	rootPoint := requireStmtPoints(t, built, rootWrite, 1)[0]
+	rootFact, ok := facts.OrdinaryAssignment(rootPoint)
+	if !ok {
+		t.Fatalf("missing root ordinary assignment")
+	}
+	if rootFact.TargetSymbol() != mustLocalAt(t, bindings, local, 2) {
+		t.Fatalf("root target = %d, want x symbol", rootFact.TargetSymbol())
+	}
+	if _, ok := facts.PathAssignment(rootPoint); ok {
+		t.Fatalf("root ordinary assignment also lowered as path assignment")
+	}
+}
+
+func TestLowerSkipsMemberOrdinaryCallTargets(t *testing.T) {
+	l := lowerer{exprs: make(map[any]transfer.ExprRef)}
 	targetSym := symbol.ID(99)
 	memberTarget := semantics.CallResultTarget{
 		Kind:      semantics.CallResultTargetOrdinaryAssignment,
@@ -227,6 +274,22 @@ func dot(obj ast.Expr, name string) *ast.AttrGetExpr {
 		Object:    obj,
 		Key:       stringLit(name),
 		KeySyntax: ast.AttrKeyDot,
+	}
+}
+
+func stringIndex(obj ast.Expr, key string) *ast.AttrGetExpr {
+	return &ast.AttrGetExpr{
+		Object:    obj,
+		Key:       stringLit(key),
+		KeySyntax: ast.AttrKeyIndex,
+	}
+}
+
+func dynamicIndex(obj ast.Expr, key ast.Expr) *ast.AttrGetExpr {
+	return &ast.AttrGetExpr{
+		Object:    obj,
+		Key:       key,
+		KeySyntax: ast.AttrKeyIndex,
 	}
 }
 

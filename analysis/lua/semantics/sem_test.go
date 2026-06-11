@@ -158,9 +158,59 @@ func TestExtractChunkAssignmentsUseStmtPointsAndPreserveIdentity(t *testing.T) {
 	if firstWrite.Symbol != mustIdentSymbol(t, bindings, aWrite) || !firstWrite.HasSymbol {
 		t.Fatalf("first ordinary symbol = %d/%v", firstWrite.Symbol, firstWrite.HasSymbol)
 	}
+	if !firstWrite.HasPath || !firstWrite.Path.Equal(path.NewPath(firstWrite.Symbol, "a")) {
+		t.Fatalf("first ordinary path = %v/%v, want root a", firstWrite.Path, firstWrite.HasPath)
+	}
 	secondWrite, ok := result.OrdinaryAssignment(writePoints[1])
 	if !ok || secondWrite.Target != bWrite {
 		t.Fatalf("second ordinary assignment = %#v, ok=%v", secondWrite, ok)
+	}
+}
+
+func TestExtractChunkOrdinaryAssignmentsResolveStaticMemberPaths(t *testing.T) {
+	local := localAssign([]string{"t", "k"}, number("0"), stringLit("key"))
+	dotWrite := assign([]ast.Expr{dot(ident("t"), "x")}, number("1"))
+	indexWrite := assign([]ast.Expr{stringIndex(ident("t"), "x")}, number("2"))
+	dynamicWrite := assign([]ast.Expr{&ast.AttrGetExpr{
+		Object:    ident("t"),
+		Key:       ident("k"),
+		KeySyntax: ast.AttrKeyIndex,
+	}}, number("3"))
+	stmts := []ast.Stmt{local, dotWrite, indexWrite, dynamicWrite}
+	bindings := bind.BindChunk(stmts, bind.Options{})
+	built := cfgbuild.BuildChunk(stmts, bindings)
+
+	result, err := ExtractChunk(stmts, bindings, built)
+	if err != nil {
+		t.Fatalf("ExtractChunk: %v", err)
+	}
+
+	tSym := mustLocalAt(t, bindings, local, 0)
+	dotFact, ok := result.OrdinaryAssignment(requireStmtPoints(t, built, dotWrite, 1)[0])
+	if !ok {
+		t.Fatalf("missing dot assignment")
+	}
+	if !dotFact.HasPath || !dotFact.Path.Equal(path.NewPath(tSym, "t").Field("x")) {
+		t.Fatalf("dot path = %v/%v, want t.x", dotFact.Path, dotFact.HasPath)
+	}
+	indexFact, ok := result.OrdinaryAssignment(requireStmtPoints(t, built, indexWrite, 1)[0])
+	if !ok {
+		t.Fatalf("missing static index assignment")
+	}
+	if !indexFact.HasPath || !indexFact.Path.Equal(path.NewPath(tSym, "t").IndexStr("x")) {
+		t.Fatalf("static index path = %v/%v, want t[\"x\"]", indexFact.Path, indexFact.HasPath)
+	}
+	indexFact.Path.Segments[0].Name = "mutated"
+	again, _ := result.OrdinaryAssignment(requireStmtPoints(t, built, indexWrite, 1)[0])
+	if !again.Path.Equal(path.NewPath(tSym, "t").IndexStr("x")) {
+		t.Fatalf("ordinary assignment exposed mutable path: %v", again.Path)
+	}
+	dynamicFact, ok := result.OrdinaryAssignment(requireStmtPoints(t, built, dynamicWrite, 1)[0])
+	if !ok {
+		t.Fatalf("missing dynamic index assignment")
+	}
+	if dynamicFact.HasPath {
+		t.Fatalf("dynamic index path resolved unexpectedly: %v", dynamicFact.Path)
 	}
 }
 

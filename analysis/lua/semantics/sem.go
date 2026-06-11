@@ -8,6 +8,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/lua/cfgbuild"
+	"github.com/wippyai/go-lua/analysis/lua/pathexpr"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
@@ -76,6 +77,8 @@ type OrdinaryAssignmentFact struct {
 
 	Symbol    symbol.ID
 	HasSymbol bool
+	Path      path.Path
+	HasPath   bool
 
 	Lhs []ast.Expr
 	Rhs []ast.Expr
@@ -478,6 +481,7 @@ func (r *Result) extractAssign(stmt *ast.AssignStmt, bindings *bind.Result, poin
 		if ident, ok := target.(*ast.IdentExpr); ok && bindings != nil {
 			id, hasSymbol = bindings.SymbolOf(ident)
 		}
+		targetPath, hasPath := pathexpr.Resolve(target, bindings)
 		r.ordinaryAssignments[assignPoints[i]] = OrdinaryAssignmentFact{
 			Stmt:      stmt,
 			Index:     i,
@@ -486,6 +490,8 @@ func (r *Result) extractAssign(stmt *ast.AssignStmt, bindings *bind.Result, poin
 			Source:    sources[i],
 			Symbol:    id,
 			HasSymbol: hasSymbol && id != 0,
+			Path:      targetPath,
+			HasPath:   hasPath,
 			Lhs:       lhs,
 			Rhs:       rhs,
 		}
@@ -772,6 +778,7 @@ func copyLocalAssignmentFact(fact LocalAssignmentFact) LocalAssignmentFact {
 }
 
 func copyOrdinaryAssignmentFact(fact OrdinaryAssignmentFact) OrdinaryAssignmentFact {
+	fact.Path = copyPath(fact.Path)
 	fact.Lhs = copyExprs(fact.Lhs)
 	fact.Rhs = copyExprs(fact.Rhs)
 	return fact

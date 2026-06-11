@@ -175,7 +175,7 @@ func (b *builder) buildAssign(state flowState, stmt *ast.AssignStmt) flowState {
 	}
 	state = b.appendValueListCalls(state, stmt, stmt.Rhs)
 	for _, lhs := range stmt.Lhs {
-		id, ok := b.simpleIdentSymbol(lhs)
+		id, ok := b.assignmentRootSymbol(lhs)
 		if !ok {
 			b.unsupported = true
 			return flowState{current: state.current}
@@ -521,6 +521,17 @@ func (b *builder) simpleIdentSymbol(expr ast.Expr) (symbol.ID, bool) {
 		return 0, false
 	}
 	return b.identSymbol(ident)
+}
+
+func (b *builder) assignmentRootSymbol(expr ast.Expr) (symbol.ID, bool) {
+	if id, ok := b.simpleIdentSymbol(expr); ok {
+		return id, true
+	}
+	attr, ok := expr.(*ast.AttrGetExpr)
+	if !ok {
+		return 0, false
+	}
+	return b.assignmentRootSymbol(attr.Object)
 }
 
 func (b *builder) identSymbol(ident *ast.IdentExpr) (symbol.ID, bool) {

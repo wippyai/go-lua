@@ -299,6 +299,42 @@ func TestBuildChunkLinearAssignmentSequencing(t *testing.T) {
 	requireEdge(t, graph, assigns[len(assigns)-1], graph.Exit(), false)
 }
 
+func TestBuildChunkMemberAssignmentsUseRootSymbolPoints(t *testing.T) {
+	decl := localAssign([]string{"t", "k"}, number("0"), stringLit("key"))
+	dotWrite := assign([]ast.Expr{&ast.AttrGetExpr{
+		Object:    ident("t"),
+		Key:       stringLit("x"),
+		KeySyntax: ast.AttrKeyDot,
+	}}, number("1"))
+	staticIndexWrite := assign([]ast.Expr{&ast.AttrGetExpr{
+		Object:    ident("t"),
+		Key:       stringLit("x"),
+		KeySyntax: ast.AttrKeyIndex,
+	}}, number("2"))
+	dynamicIndexWrite := assign([]ast.Expr{&ast.AttrGetExpr{
+		Object:    ident("t"),
+		Key:       ident("k"),
+		KeySyntax: ast.AttrKeyIndex,
+	}}, number("3"))
+	stmts := []ast.Stmt{decl, dotWrite, staticIndexWrite, dynamicIndexWrite}
+	bindings := bind.BindChunk(stmts, bind.Options{})
+
+	result := BuildChunk(stmts, bindings)
+	if result == nil || result.Graph == nil {
+		t.Fatalf("BuildChunk returned nil")
+	}
+
+	tSym := mustLocalAt(t, bindings, decl, 0)
+	for _, stmt := range []*ast.AssignStmt{dotWrite, staticIndexWrite, dynamicIndexWrite} {
+		points := requireStmtPoints(t, result, stmt, 1)
+		requirePointKind(t, result.Graph, points[0], cfg.NodeAssign)
+		fact, ok := result.Meta.Assignment(points[0])
+		if !ok || fact.Target != tSym {
+			t.Fatalf("member assignment fact = %#v/%v, want root symbol %d", fact, ok, tSym)
+		}
+	}
+}
+
 func TestBuildChunkStatementPointMappingForLinearStatements(t *testing.T) {
 	local := localAssign([]string{"a", "b"}, number("1"), number("2"))
 	aWrite := ident("a")
@@ -1790,9 +1826,9 @@ func TestBuildChunkUnsupportedExpressionCoverageReturnsNil(t *testing.T) {
 		stmt ast.Stmt
 	}{
 		{
-			name: "member assignment",
+			name: "computed object member assignment",
 			stmt: assign([]ast.Expr{&ast.AttrGetExpr{
-				Object:    ident("t"),
+				Object:    &ast.FuncCallExpr{Func: ident("make")},
 				Key:       &ast.StringExpr{Value: "field"},
 				KeySyntax: ast.AttrKeyDot,
 			}}, number("1")),

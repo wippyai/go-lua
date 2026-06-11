@@ -23,6 +23,7 @@ func Lower(result *semantics.Result, graph cfg.Graph) transfer.Facts {
 	input := transfer.FactsInput{
 		LocalAssignments:    make(map[cfg.Point]transfer.LocalAssignment),
 		OrdinaryAssignments: make(map[cfg.Point]transfer.OrdinaryAssignment),
+		PathAssignments:     make(map[cfg.Point]transfer.PathAssignment),
 		Returns:             make(map[cfg.Point]transfer.Return),
 		Calls:               make(map[cfg.Point]transfer.CallProducer),
 	}
@@ -33,7 +34,9 @@ func Lower(result *semantics.Result, graph cfg.Graph) transfer.Facts {
 			}
 		}
 		if fact, ok := result.OrdinaryAssignment(point); ok {
-			if lowered, ok := l.ordinaryAssignment(fact); ok {
+			if lowered, ok := l.pathAssignment(fact); ok {
+				input.PathAssignments[point] = lowered
+			} else if lowered, ok := l.ordinaryAssignment(fact); ok {
 				input.OrdinaryAssignments[point] = lowered
 			}
 		}
@@ -62,13 +65,24 @@ func (l *lowerer) localAssignment(fact semantics.LocalAssignmentFact) (transfer.
 }
 
 func (l *lowerer) ordinaryAssignment(fact semantics.OrdinaryAssignmentFact) (transfer.OrdinaryAssignment, bool) {
-	// Ordinary assignment facts expose a symbol only for root identifier writes.
-	// Member and subtree writes stay out of the first transfer DTO slice.
 	if !fact.HasSymbol || fact.Symbol == 0 {
 		return transfer.OrdinaryAssignment{}, false
 	}
-	target := path.NewPath(fact.Symbol, "")
+	target := fact.Path
+	if !fact.HasPath {
+		target = path.NewPath(fact.Symbol, "")
+	}
+	if len(target.Segments) != 0 {
+		return transfer.OrdinaryAssignment{}, false
+	}
 	return transfer.NewOrdinaryAssignment(fact.Symbol, target, l.valueSource(fact.Source)), true
+}
+
+func (l *lowerer) pathAssignment(fact semantics.OrdinaryAssignmentFact) (transfer.PathAssignment, bool) {
+	if !fact.HasPath || fact.Path.Symbol == 0 || len(fact.Path.Segments) == 0 {
+		return transfer.PathAssignment{}, false
+	}
+	return transfer.NewPathAssignment(fact.Path, l.valueSource(fact.Source)), true
 }
 
 func (l *lowerer) callProducer(fact semantics.CallFact) (transfer.CallProducer, bool) {
