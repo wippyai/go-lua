@@ -5,8 +5,9 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
-// RecordTailFieldType returns the tail type for a missing dot field on a Lua
-// table record.
+// RecordTailFieldType returns the tail type for a missing exact dot field on a
+// Lua table record. Tail checks use overlap policy for the exact missing key;
+// static read admission for arbitrary key types belongs in typeaccess.
 func RecordTailFieldType(r *typ.Record, name string) (typ.Type, bool) {
 	if r == nil {
 		return nil, false
@@ -21,7 +22,8 @@ func RecordTailFieldType(r *typ.Record, name string) (typ.Type, bool) {
 }
 
 // RecordTailStaticMemberType returns the tail type for a missing exact bracket
-// member on a Lua table record.
+// member on a Lua table record. Tail checks use overlap policy for this exact
+// member; static read admission for arbitrary key types belongs in typeaccess.
 func RecordTailStaticMemberType(r *typ.Record, member typ.StaticMember) (typ.Type, bool) {
 	if r == nil {
 		return nil, false
@@ -36,13 +38,13 @@ func RecordTailStaticMemberType(r *typ.Record, member typ.StaticMember) (typ.Typ
 }
 
 // RecordMapTailMayContainFieldName reports whether a record map component may
-// contain the dot-field key.
+// contain the exact dot-field key under record-tail overlap policy.
 func RecordMapTailMayContainFieldName(r *typ.Record, name string) bool {
 	return r != nil && r.HasMapComponent() && MapComponentKeyMayContainString(r.MapKey, name)
 }
 
 // RecordMapTailMayContainStaticMember reports whether a record map component
-// may contain the exact bracket member key.
+// may contain the exact bracket member key under record-tail overlap policy.
 func RecordMapTailMayContainStaticMember(r *typ.Record, member typ.StaticMember) bool {
 	return r != nil && r.HasMapComponent() && MapComponentKeyMayContainStaticMember(r.MapKey, member)
 }

@@ -92,7 +92,7 @@ func indexInRecord(r *typ.Record, key typ.Type, depth int, mode indexMode) field
 		if index, ok := literalIntKey(key); ok {
 			return indexIntInRecord(r, index)
 		}
-		if r.HasMapComponent() && keyCompatibleWithMap(key, r.MapKey) {
+		if r.HasMapComponent() && mapKeyStaticallyAdmitsIndexKey(key, r.MapKey) {
 			return fieldResult{t: r.MapValue, ok: true, nilable: true}
 		}
 		if r.Open {
@@ -109,7 +109,7 @@ func indexStringInRecord(r *typ.Record, name string) fieldResult {
 	if member := r.GetStaticStringIndex(name); member != nil {
 		return fieldResult{t: member.Type, ok: true, nilable: member.Optional}
 	}
-	if r.HasMapComponent() && subtype.IsSubtype(typ.LiteralString(name), r.MapKey) {
+	if r.HasMapComponent() && mapKeyStaticallyAdmitsIndexKey(typ.LiteralString(name), r.MapKey) {
 		return fieldResult{t: r.MapValue, ok: true, nilable: true}
 	}
 	if r.Open {
@@ -122,7 +122,7 @@ func indexIntInRecord(r *typ.Record, index int64) fieldResult {
 	if member := r.GetStaticIntIndex(index); member != nil {
 		return fieldResult{t: member.Type, ok: true, nilable: member.Optional}
 	}
-	if r.HasMapComponent() && subtype.IsSubtype(typ.LiteralInt(index), r.MapKey) {
+	if r.HasMapComponent() && mapKeyStaticallyAdmitsIndexKey(typ.LiteralInt(index), r.MapKey) {
 		return fieldResult{t: r.MapValue, ok: true, nilable: true}
 	}
 	if r.Open {
@@ -133,7 +133,7 @@ func indexIntInRecord(r *typ.Record, index int64) fieldResult {
 
 func indexInMap(keyDomain typ.Type, value typ.Type, key typ.Type, depth int, mode indexMode) fieldResult {
 	return indexByKeyVariants(key, depth, mode, true, func(key typ.Type) fieldResult {
-		if !keyCompatibleWithMap(key, keyDomain) {
+		if !mapKeyStaticallyAdmitsIndexKey(key, keyDomain) {
 			return fieldResult{}
 		}
 		if value == nil {
@@ -206,7 +206,7 @@ func indexInUnion(u *typ.Union, key typ.Type, depth int, mode indexMode) fieldRe
 		}
 		return fieldResult{}
 	}
-	return fieldResult{t: normalize.UnionForProjection(out...), ok: true, nilable: nilable}
+	return fieldResult{t: normalize.UnionForEvidence(out...), ok: true, nilable: nilable}
 }
 
 func indexInIntersection(in *typ.Intersection, key typ.Type, depth int, mode indexMode) fieldResult {
@@ -290,10 +290,12 @@ func indexKeyUnion(u *typ.Union, depth int, mode indexMode, missingNil bool, pro
 		}
 		return fieldResult{}
 	}
-	return fieldResult{t: normalize.UnionForProjection(out...), ok: true, nilable: nilable}
+	return fieldResult{t: normalize.UnionForEvidence(out...), ok: true, nilable: nilable}
 }
 
-func keyCompatibleWithMap(key typ.Type, keyDomain typ.Type) bool {
+// mapKeyStaticallyAdmitsIndexKey is the bracket-read admission check: every
+// possible index key must be a subtype of the map key domain.
+func mapKeyStaticallyAdmitsIndexKey(key typ.Type, keyDomain typ.Type) bool {
 	return key != nil && keyDomain != nil && subtype.IsSubtype(key, keyDomain)
 }
 

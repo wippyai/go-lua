@@ -80,7 +80,7 @@ func metamethodInUnion(u *typ.Union, name string, depth int) (typ.Type, bool) {
 	if len(out) == 0 {
 		return nil, false
 	}
-	return normalize.UnionForProjection(out...), true
+	return normalize.UnionForEvidence(out...), true
 }
 
 func metamethodInIntersection(in *typ.Intersection, name string, depth int) (typ.Type, bool) {

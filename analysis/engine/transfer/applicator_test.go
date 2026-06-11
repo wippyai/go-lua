@@ -35,8 +35,8 @@ func TestFactsNodeTransferAppliesLocalAssignmentThroughResolver(t *testing.T) {
 		Registry: reg,
 		NodeTransfer: NewFactsNodeTransfer(FactsNodeTransferConfig{
 			Facts: NewFacts(FactsInput{
-				LocalAssignments: map[cfg.Point]LocalAssignment{
-					assign: NewLocalAssignment(target, path.NewPath(target, "local"), source),
+				LocalAssignments: map[cfg.Point]RootAssignment{
+					assign: NewRootAssignment(target, path.NewPath(target, "local"), source),
 				},
 			}),
 			Sources: resolver,
@@ -93,8 +93,8 @@ func TestFactsNodeTransferAppliesValueOverlaysToAssignments(t *testing.T) {
 
 			got := NewFactsNodeTransfer(FactsNodeTransferConfig{
 				Facts: NewFacts(FactsInput{
-					LocalAssignments: map[cfg.Point]LocalAssignment{
-						point: NewLocalAssignment(target, path.NewPath(target, "value"), outerSource),
+					LocalAssignments: map[cfg.Point]RootAssignment{
+						point: NewRootAssignment(target, path.NewPath(target, "value"), outerSource),
 					},
 					ValueOverlays: map[ExprRef]ValueOverlay{
 						outer: NewValueOverlay(innerSource, tc.overlay),
@@ -136,8 +136,8 @@ func TestFactsNodeTransferAppliesOrdinaryAssignmentThroughResolver(t *testing.T)
 		Registry: reg,
 		NodeTransfer: NewFactsNodeTransfer(FactsNodeTransferConfig{
 			Facts: NewFacts(FactsInput{
-				OrdinaryAssignments: map[cfg.Point]OrdinaryAssignment{
-					assign: NewOrdinaryAssignment(target, path.NewPath(target, "ordinary"), source),
+				OrdinaryAssignments: map[cfg.Point]RootAssignment{
+					assign: NewRootAssignment(target, path.NewPath(target, "ordinary"), source),
 				},
 			}),
 			Sources: resolver,
@@ -157,8 +157,8 @@ func TestFactsNodeTransferRootAssignmentInvalidatesVisiblePathSubtree(t *testing
 			name: "local",
 			fact: func(point cfg.Point, target symbol.ID, source ValueSource) FactsInput {
 				return FactsInput{
-					LocalAssignments: map[cfg.Point]LocalAssignment{
-						point: NewLocalAssignment(target, path.NewPath(target, "obj"), source),
+					LocalAssignments: map[cfg.Point]RootAssignment{
+						point: NewRootAssignment(target, path.NewPath(target, "obj"), source),
 					},
 				}
 			},
@@ -167,8 +167,8 @@ func TestFactsNodeTransferRootAssignmentInvalidatesVisiblePathSubtree(t *testing
 			name: "ordinary",
 			fact: func(point cfg.Point, target symbol.ID, source ValueSource) FactsInput {
 				return FactsInput{
-					OrdinaryAssignments: map[cfg.Point]OrdinaryAssignment{
-						point: NewOrdinaryAssignment(target, path.NewPath(target, "obj"), source),
+					OrdinaryAssignments: map[cfg.Point]RootAssignment{
+						point: NewRootAssignment(target, path.NewPath(target, "obj"), source),
 					},
 				}
 			},
@@ -228,8 +228,8 @@ func TestFactsNodeTransferObjectLiteralRootAssignmentsWriteStaticEntries(t *test
 			name: "local",
 			fact: func(point cfg.Point, target symbol.ID, source ValueSource) FactsInput {
 				return FactsInput{
-					LocalAssignments: map[cfg.Point]LocalAssignment{
-						point: NewLocalAssignment(target, path.NewPath(target, "obj"), source),
+					LocalAssignments: map[cfg.Point]RootAssignment{
+						point: NewRootAssignment(target, path.NewPath(target, "obj"), source),
 					},
 				}
 			},
@@ -238,8 +238,8 @@ func TestFactsNodeTransferObjectLiteralRootAssignmentsWriteStaticEntries(t *test
 			name: "ordinary",
 			fact: func(point cfg.Point, target symbol.ID, source ValueSource) FactsInput {
 				return FactsInput{
-					OrdinaryAssignments: map[cfg.Point]OrdinaryAssignment{
-						point: NewOrdinaryAssignment(target, path.NewPath(target, "obj"), source),
+					OrdinaryAssignments: map[cfg.Point]RootAssignment{
+						point: NewRootAssignment(target, path.NewPath(target, "obj"), source),
 					},
 				}
 			},
@@ -317,8 +317,8 @@ func TestFactsNodeTransferObjectLiteralEntriesUsePreWriteInputState(t *testing.T
 
 	got := NewFactsNodeTransfer(FactsNodeTransferConfig{
 		Facts: NewFacts(FactsInput{
-			LocalAssignments: map[cfg.Point]LocalAssignment{
-				point: NewLocalAssignment(target, path.NewPath(target, "obj"), objectSource),
+			LocalAssignments: map[cfg.Point]RootAssignment{
+				point: NewRootAssignment(target, path.NewPath(target, "obj"), objectSource),
 			},
 			ObjectLiterals: map[ExprRef]ObjectLiteral{
 				objectSource.ExprRef: NewObjectLiteral([]ObjectEntry{
@@ -354,8 +354,8 @@ func TestFactsNodeTransferObjectLiteralMissingVisibilitySkipsEntriesKeepsRoot(t 
 
 	got := NewFactsNodeTransfer(FactsNodeTransferConfig{
 		Facts: NewFacts(FactsInput{
-			LocalAssignments: map[cfg.Point]LocalAssignment{
-				point: NewLocalAssignment(target, path.NewPath(target, "obj"), objectSource),
+			LocalAssignments: map[cfg.Point]RootAssignment{
+				point: NewRootAssignment(target, path.NewPath(target, "obj"), objectSource),
 			},
 			ObjectLiterals: map[ExprRef]ObjectLiteral{
 				objectSource.ExprRef: NewObjectLiteral([]ObjectEntry{
@@ -441,8 +441,8 @@ func TestFactsNodeTransferObjectLiteralEntriesInvalidateSubtreeBeforeWrite(t *te
 
 	got := NewFactsNodeTransfer(FactsNodeTransferConfig{
 		Facts: NewFacts(FactsInput{
-			LocalAssignments: map[cfg.Point]LocalAssignment{
-				point: NewLocalAssignment(target, path.NewPath(target, "t"), objectSource),
+			LocalAssignments: map[cfg.Point]RootAssignment{
+				point: NewRootAssignment(target, path.NewPath(target, "t"), objectSource),
 			},
 			ObjectLiterals: map[ExprRef]ObjectLiteral{
 				objectSource.ExprRef: NewObjectLiteral([]ObjectEntry{
@@ -714,8 +714,8 @@ func TestFactsNodeTransferAssignmentCallSourceConsumesProviderReturnSlotThroughR
 						Context: CallProducerContextAssignment,
 					}),
 				},
-				LocalAssignments: map[cfg.Point]LocalAssignment{
-					assign: NewLocalAssignment(target, path.NewPath(target, "local"), ValueSource{
+				LocalAssignments: map[cfg.Point]RootAssignment{
+					assign: NewRootAssignment(target, path.NewPath(target, "local"), ValueSource{
 						Kind:         ValueSourceCall,
 						CallPoint:    call,
 						HasCallPoint: true,
@@ -835,8 +835,8 @@ func TestFactsNodeTransferMissingResolverValueLeavesStateUnchanged(t *testing.T)
 
 	got := NewFactsNodeTransfer(FactsNodeTransferConfig{
 		Facts: NewFacts(FactsInput{
-			LocalAssignments: map[cfg.Point]LocalAssignment{
-				point: NewLocalAssignment(target, path.NewPath(target, "local"), source),
+			LocalAssignments: map[cfg.Point]RootAssignment{
+				point: NewRootAssignment(target, path.NewPath(target, "local"), source),
 			},
 		}),
 		Sources: &recordingSourceValues{},
@@ -879,8 +879,8 @@ func TestFactsNodeTransferIgnoresNonRootAssignmentFacts(t *testing.T) {
 
 	got := NewFactsNodeTransfer(FactsNodeTransferConfig{
 		Facts: NewFacts(FactsInput{
-			OrdinaryAssignments: map[cfg.Point]OrdinaryAssignment{
-				point: NewOrdinaryAssignment(target, path.NewPath(target, "ordinary").Field("member"), source),
+			OrdinaryAssignments: map[cfg.Point]RootAssignment{
+				point: NewRootAssignment(target, path.NewPath(target, "ordinary").Field("member"), source),
 			},
 		}),
 		Sources: resolver,

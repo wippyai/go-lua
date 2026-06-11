@@ -9,19 +9,13 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/unwrap"
 )
 
-// UnionForJoin applies the union normalization policy used by join-like
-// evidence merging.
-func UnionForJoin(members ...typ.Type) typ.Type {
-	return unionForRelationEvidence(members)
+// UnionForEvidence applies the shared union normalization policy used when
+// aggregating evidence or projecting values.
+func UnionForEvidence(members ...typ.Type) typ.Type {
+	return unionForEvidence(members)
 }
 
-// UnionForProjection applies the union normalization policy used by value
-// projections such as Lua field and callable-return access.
-func UnionForProjection(members ...typ.Type) typ.Type {
-	return unionForRelationEvidence(members)
-}
-
-func unionForRelationEvidence(members []typ.Type) typ.Type {
+func unionForEvidence(members []typ.Type) typ.Type {
 	flat, hasNil, hasUnknown, hasAny := flattenUnionForRelationEvidence(members)
 	if hasAny {
 		return typ.Any

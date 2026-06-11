@@ -321,7 +321,7 @@ func normalizeOperatorResults(results ...typ.Type) typ.Type {
 	if hasUnknown {
 		return typ.Unknown
 	}
-	return normalize.UnionForProjection(results...)
+	return normalize.UnionForEvidence(results...)
 }
 
 func dynamicBinaryResult(left, right typ.Type) (typ.Type, bool) {

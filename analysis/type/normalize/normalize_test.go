@@ -7,7 +7,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
-func TestUnionForJoin(t *testing.T) {
+func TestUnionForEvidence(t *testing.T) {
 	tests := []struct {
 		name    string
 		members []typ.Type
@@ -53,24 +53,6 @@ func TestUnionForJoin(t *testing.T) {
 			members: []typ.Type{typ.Integer, typ.Number},
 			want:    typ.Number,
 		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := UnionForJoin(tt.members...)
-			if !identity.TypeEquals(got, tt.want) {
-				t.Fatalf("UnionForJoin(%v) = %v, want %v", tt.members, got, tt.want)
-			}
-		})
-	}
-}
-
-func TestUnionForProjection(t *testing.T) {
-	tests := []struct {
-		name    string
-		members []typ.Type
-		want    typ.Type
-	}{
 		{
 			name:    "same scalar remains scalar",
 			members: []typ.Type{typ.String, typ.String},
@@ -110,9 +92,9 @@ func TestUnionForProjection(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := UnionForProjection(tt.members...)
+			got := UnionForEvidence(tt.members...)
 			if !identity.TypeEquals(got, tt.want) {
-				t.Fatalf("UnionForProjection(%v) = %v, want %v", tt.members, got, tt.want)
+				t.Fatalf("UnionForEvidence(%v) = %v, want %v", tt.members, got, tt.want)
 			}
 		})
 	}

@@ -44,14 +44,14 @@ func TestDTOConstructorsAndAccessorsCopySlices(t *testing.T) {
 	}
 
 	localPath := path.NewPath(symbol.ID(10), "local")
-	local := NewLocalAssignment(symbol.ID(10), localPath, source)
+	local := NewRootAssignment(symbol.ID(10), localPath, source)
 	assertPathEqual(t, local.TargetPath(), localPath)
 	if got := local.Source(); got != source {
 		t.Fatalf("local source = %#v, want %#v", got, source)
 	}
 
 	ordinaryPath := path.NewPath(symbol.ID(11), "ordinary")
-	ordinary := NewOrdinaryAssignment(symbol.ID(11), ordinaryPath, source)
+	ordinary := NewRootAssignment(symbol.ID(11), ordinaryPath, source)
 	assertPathEqual(t, ordinary.TargetPath(), ordinaryPath)
 	if got := ordinary.Source(); got != source {
 		t.Fatalf("ordinary source = %#v, want %#v", got, source)
@@ -228,11 +228,11 @@ func TestFactsCarrierCopiesAndReturnsFalseForMissingFacts(t *testing.T) {
 	callSource := ValueSource{Kind: ValueSourceCall, ExprRef: ExprRef(2), HasExpr: true}
 
 	input := FactsInput{
-		LocalAssignments: map[cfg.Point]LocalAssignment{
-			point: NewLocalAssignment(symbol.ID(30), path.NewPath(symbol.ID(30), "local"), source),
+		LocalAssignments: map[cfg.Point]RootAssignment{
+			point: NewRootAssignment(symbol.ID(30), path.NewPath(symbol.ID(30), "local"), source),
 		},
-		OrdinaryAssignments: map[cfg.Point]OrdinaryAssignment{
-			point: NewOrdinaryAssignment(symbol.ID(31), path.NewPath(symbol.ID(31), "ordinary"), source),
+		OrdinaryAssignments: map[cfg.Point]RootAssignment{
+			point: NewRootAssignment(symbol.ID(31), path.NewPath(symbol.ID(31), "ordinary"), source),
 		},
 		PathAssignments: map[cfg.Point]PathAssignment{
 			point: NewPathAssignment(path.NewPath(symbol.ID(33), "table").Field("field"), source),
@@ -271,8 +271,8 @@ func TestFactsCarrierCopiesAndReturnsFalseForMissingFacts(t *testing.T) {
 	}
 
 	facts := NewFacts(input)
-	input.LocalAssignments[point] = NewLocalAssignment(symbol.ID(40), path.NewPath(symbol.ID(40), "changed"), callSource)
-	input.OrdinaryAssignments[point] = NewOrdinaryAssignment(symbol.ID(41), path.NewPath(symbol.ID(41), "changed"), callSource)
+	input.LocalAssignments[point] = NewRootAssignment(symbol.ID(40), path.NewPath(symbol.ID(40), "changed"), callSource)
+	input.OrdinaryAssignments[point] = NewRootAssignment(symbol.ID(41), path.NewPath(symbol.ID(41), "changed"), callSource)
 	input.PathAssignments[point] = NewPathAssignment(path.NewPath(symbol.ID(42), "changed").Field("field"), callSource)
 	input.BranchRefinements[point] = NewBranchRefinement(
 		path.NewPath(symbol.ID(43), "changed").Field("field"),

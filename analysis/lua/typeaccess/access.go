@@ -94,7 +94,7 @@ func fieldInRecord(r *typ.Record, name string) fieldResult {
 		return fieldResult{t: member.Type, ok: true, nilable: member.Optional}
 	}
 	if r.HasMapComponent() {
-		if mapKeyAcceptsStringField(r.MapKey, name) {
+		if mapKeyStaticallyAdmitsFieldName(r.MapKey, name) {
 			return fieldResult{t: r.MapValue, ok: true, nilable: true}
 		}
 	}
@@ -105,7 +105,7 @@ func fieldInRecord(r *typ.Record, name string) fieldResult {
 }
 
 func fieldInMap(key typ.Type, value typ.Type, name string) fieldResult {
-	if !mapKeyAcceptsStringField(key, name) {
+	if !mapKeyStaticallyAdmitsFieldName(key, name) {
 		return fieldResult{}
 	}
 	if value == nil {
@@ -114,7 +114,9 @@ func fieldInMap(key typ.Type, value typ.Type, name string) fieldResult {
 	return fieldResult{t: value, ok: true, nilable: true}
 }
 
-func mapKeyAcceptsStringField(key typ.Type, name string) bool {
+// mapKeyStaticallyAdmitsFieldName is the dot-read admission check: the exact
+// field literal must be a subtype of the map key domain.
+func mapKeyStaticallyAdmitsFieldName(key typ.Type, name string) bool {
 	return key != nil && subtype.IsSubtype(typ.LiteralString(name), key)
 }
 
@@ -148,7 +150,7 @@ func fieldInUnion(u *typ.Union, name string, depth int) fieldResult {
 		}
 		return fieldResult{}
 	}
-	return fieldResult{t: normalize.UnionForProjection(out...), ok: true, nilable: nilable}
+	return fieldResult{t: normalize.UnionForEvidence(out...), ok: true, nilable: nilable}
 }
 
 func fieldInIntersection(in *typ.Intersection, name string, depth int) fieldResult {
@@ -228,7 +230,7 @@ func callableReturnDepth(t typ.Type, depth int) (typ.Type, bool) {
 		if len(out) == 0 {
 			return nil, false
 		}
-		return normalize.UnionForProjection(out...), true
+		return normalize.UnionForEvidence(out...), true
 	case *typ.Intersection:
 		for _, member := range v.Members {
 			if rt, ok := callableReturnDepth(member, depth+1); ok {

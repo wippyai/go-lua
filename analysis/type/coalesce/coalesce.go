@@ -75,7 +75,7 @@ func joinTypeSet(joinTypes TypeSetJoinFunc, types []typ.Type) typ.Type {
 	if joinTypes != nil {
 		return joinTypes(types...)
 	}
-	return normalize.UnionForJoin(types...)
+	return normalize.UnionForEvidence(types...)
 }
 
 // CoalesceRecordOpenness converts closed records to open when joining with open

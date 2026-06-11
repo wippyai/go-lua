@@ -47,16 +47,16 @@ type ValueSource struct {
 	OpenTail bool
 }
 
-// LocalAssignment describes a local-root write at a CFG point.
-type LocalAssignment struct {
+// RootAssignment describes a root-symbol write at a CFG point.
+type RootAssignment struct {
 	targetSymbol symbol.ID
 	targetPath   path.Path
 	source       ValueSource
 }
 
-// NewLocalAssignment creates a local-root assignment fact.
-func NewLocalAssignment(targetSymbol symbol.ID, targetPath path.Path, source ValueSource) LocalAssignment {
-	return LocalAssignment{
+// NewRootAssignment creates a root-symbol assignment fact.
+func NewRootAssignment(targetSymbol symbol.ID, targetPath path.Path, source ValueSource) RootAssignment {
+	return RootAssignment{
 		targetSymbol: targetSymbol,
 		targetPath:   copyPath(targetPath),
 		source:       source,
@@ -64,45 +64,15 @@ func NewLocalAssignment(targetSymbol symbol.ID, targetPath path.Path, source Val
 }
 
 // TargetSymbol returns the assignment target's symbol identity.
-func (a LocalAssignment) TargetSymbol() symbol.ID { return a.targetSymbol }
+func (a RootAssignment) TargetSymbol() symbol.ID { return a.targetSymbol }
 
 // TargetPath returns the assignment target's path identity.
-func (a LocalAssignment) TargetPath() path.Path { return copyPath(a.targetPath) }
+func (a RootAssignment) TargetPath() path.Path { return copyPath(a.targetPath) }
 
 // Source returns the value assigned to the target.
-func (a LocalAssignment) Source() ValueSource { return a.source }
+func (a RootAssignment) Source() ValueSource { return a.source }
 
-func (a LocalAssignment) copy() LocalAssignment {
-	a.targetPath = copyPath(a.targetPath)
-	return a
-}
-
-// OrdinaryAssignment describes a non-declaration root write at a CFG point.
-type OrdinaryAssignment struct {
-	targetSymbol symbol.ID
-	targetPath   path.Path
-	source       ValueSource
-}
-
-// NewOrdinaryAssignment creates a non-declaration root assignment fact.
-func NewOrdinaryAssignment(targetSymbol symbol.ID, targetPath path.Path, source ValueSource) OrdinaryAssignment {
-	return OrdinaryAssignment{
-		targetSymbol: targetSymbol,
-		targetPath:   copyPath(targetPath),
-		source:       source,
-	}
-}
-
-// TargetSymbol returns the assignment target's symbol identity.
-func (a OrdinaryAssignment) TargetSymbol() symbol.ID { return a.targetSymbol }
-
-// TargetPath returns the assignment target's path identity.
-func (a OrdinaryAssignment) TargetPath() path.Path { return copyPath(a.targetPath) }
-
-// Source returns the value assigned to the target.
-func (a OrdinaryAssignment) Source() ValueSource { return a.source }
-
-func (a OrdinaryAssignment) copy() OrdinaryAssignment {
+func (a RootAssignment) copy() RootAssignment {
 	a.targetPath = copyPath(a.targetPath)
 	return a
 }
@@ -463,8 +433,8 @@ func (c CallProducer) copy() CallProducer {
 
 // FactsInput carries point-keyed facts used to construct an immutable Facts snapshot.
 type FactsInput struct {
-	LocalAssignments    map[cfg.Point]LocalAssignment
-	OrdinaryAssignments map[cfg.Point]OrdinaryAssignment
+	LocalAssignments    map[cfg.Point]RootAssignment
+	OrdinaryAssignments map[cfg.Point]RootAssignment
 	PathAssignments     map[cfg.Point]PathAssignment
 	BranchRefinements   map[cfg.Point]BranchRefinement
 	Returns             map[cfg.Point]Return
@@ -475,8 +445,8 @@ type FactsInput struct {
 
 // Facts is an immutable point-keyed transfer facts snapshot.
 type Facts struct {
-	localAssignments    map[cfg.Point]LocalAssignment
-	ordinaryAssignments map[cfg.Point]OrdinaryAssignment
+	localAssignments    map[cfg.Point]RootAssignment
+	ordinaryAssignments map[cfg.Point]RootAssignment
 	pathAssignments     map[cfg.Point]PathAssignment
 	branchRefinements   map[cfg.Point]BranchRefinement
 	returns             map[cfg.Point]Return
@@ -488,8 +458,8 @@ type Facts struct {
 // NewFacts copies the supplied point-keyed facts into an immutable snapshot.
 func NewFacts(input FactsInput) Facts {
 	return Facts{
-		localAssignments:    copyLocalAssignmentMap(input.LocalAssignments),
-		ordinaryAssignments: copyOrdinaryAssignmentMap(input.OrdinaryAssignments),
+		localAssignments:    copyRootAssignmentMap(input.LocalAssignments),
+		ordinaryAssignments: copyRootAssignmentMap(input.OrdinaryAssignments),
 		pathAssignments:     copyPathAssignmentMap(input.PathAssignments),
 		branchRefinements:   copyBranchRefinementMap(input.BranchRefinements),
 		returns:             copyReturnMap(input.Returns),
@@ -500,19 +470,19 @@ func NewFacts(input FactsInput) Facts {
 }
 
 // LocalAssignment returns the local assignment fact at point.
-func (f Facts) LocalAssignment(point cfg.Point) (LocalAssignment, bool) {
+func (f Facts) LocalAssignment(point cfg.Point) (RootAssignment, bool) {
 	fact, ok := f.localAssignments[point]
 	if !ok {
-		return LocalAssignment{}, false
+		return RootAssignment{}, false
 	}
 	return fact.copy(), true
 }
 
 // OrdinaryAssignment returns the ordinary assignment fact at point.
-func (f Facts) OrdinaryAssignment(point cfg.Point) (OrdinaryAssignment, bool) {
+func (f Facts) OrdinaryAssignment(point cfg.Point) (RootAssignment, bool) {
 	fact, ok := f.ordinaryAssignments[point]
 	if !ok {
-		return OrdinaryAssignment{}, false
+		return RootAssignment{}, false
 	}
 	return fact.copy(), true
 }
@@ -627,22 +597,11 @@ func copyCallResultTargets(in []CallResultTarget) []CallResultTarget {
 	return out
 }
 
-func copyLocalAssignmentMap(in map[cfg.Point]LocalAssignment) map[cfg.Point]LocalAssignment {
+func copyRootAssignmentMap(in map[cfg.Point]RootAssignment) map[cfg.Point]RootAssignment {
 	if len(in) == 0 {
 		return nil
 	}
-	out := make(map[cfg.Point]LocalAssignment, len(in))
-	for point, fact := range in {
-		out[point] = fact.copy()
-	}
-	return out
-}
-
-func copyOrdinaryAssignmentMap(in map[cfg.Point]OrdinaryAssignment) map[cfg.Point]OrdinaryAssignment {
-	if len(in) == 0 {
-		return nil
-	}
-	out := make(map[cfg.Point]OrdinaryAssignment, len(in))
+	out := make(map[cfg.Point]RootAssignment, len(in))
 	for point, fact := range in {
 		out[point] = fact.copy()
 	}

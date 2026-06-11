@@ -27,8 +27,8 @@ func Lower(result *semantics.Result, graph cfg.Graph) transfer.Facts {
 		exprs: make(map[any]transfer.ExprRef),
 	}
 	input := transfer.FactsInput{
-		LocalAssignments:    make(map[cfg.Point]transfer.LocalAssignment),
-		OrdinaryAssignments: make(map[cfg.Point]transfer.OrdinaryAssignment),
+		LocalAssignments:    make(map[cfg.Point]transfer.RootAssignment),
+		OrdinaryAssignments: make(map[cfg.Point]transfer.RootAssignment),
 		PathAssignments:     make(map[cfg.Point]transfer.PathAssignment),
 		BranchRefinements:   make(map[cfg.Point]transfer.BranchRefinement),
 		Returns:             make(map[cfg.Point]transfer.Return),
@@ -80,26 +80,26 @@ type lowerer struct {
 	exprs map[any]transfer.ExprRef
 }
 
-func (l *lowerer) localAssignment(fact semantics.LocalAssignmentFact) (transfer.LocalAssignment, bool) {
+func (l *lowerer) localAssignment(fact semantics.LocalAssignmentFact) (transfer.RootAssignment, bool) {
 	if !fact.HasSymbol || fact.Symbol == 0 {
-		return transfer.LocalAssignment{}, false
+		return transfer.RootAssignment{}, false
 	}
 	target := path.NewPath(fact.Symbol, fact.Name)
-	return transfer.NewLocalAssignment(fact.Symbol, target, l.valueSource(fact.Source)), true
+	return transfer.NewRootAssignment(fact.Symbol, target, l.valueSource(fact.Source)), true
 }
 
-func (l *lowerer) ordinaryAssignment(fact semantics.OrdinaryAssignmentFact) (transfer.OrdinaryAssignment, bool) {
+func (l *lowerer) ordinaryAssignment(fact semantics.OrdinaryAssignmentFact) (transfer.RootAssignment, bool) {
 	if !fact.HasSymbol || fact.Symbol == 0 {
-		return transfer.OrdinaryAssignment{}, false
+		return transfer.RootAssignment{}, false
 	}
 	target := fact.Path
 	if !fact.HasPath {
 		target = path.NewPath(fact.Symbol, "")
 	}
 	if len(target.Segments) != 0 {
-		return transfer.OrdinaryAssignment{}, false
+		return transfer.RootAssignment{}, false
 	}
-	return transfer.NewOrdinaryAssignment(fact.Symbol, target, l.valueSource(fact.Source)), true
+	return transfer.NewRootAssignment(fact.Symbol, target, l.valueSource(fact.Source)), true
 }
 
 func (l *lowerer) pathAssignment(fact semantics.OrdinaryAssignmentFact) (transfer.PathAssignment, bool) {

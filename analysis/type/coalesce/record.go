@@ -27,7 +27,7 @@ func (p RecordPolicy) slotJoin() SlotJoinFunc {
 		return p.SlotJoin
 	}
 	return func(a, b typ.Type) typ.Type {
-		return normalize.UnionForJoin(a, b)
+		return normalize.UnionForEvidence(a, b)
 	}
 }
 

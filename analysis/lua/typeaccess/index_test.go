@@ -57,6 +57,37 @@ func TestIndexRecordMapComponentAndOpenRecord(t *testing.T) {
 	assertType(t, got, typ.Unknown)
 }
 
+func TestIndexRecordMapComponentRequiresStrictKeyAdmission(t *testing.T) {
+	m := typetable.NewMap(typ.LiteralString("raw"), typ.Number)
+
+	got, ok := Index(m, typ.LiteralString("raw"))
+	if !ok {
+		t.Fatal("Index(literal-key map, exact key) failed")
+	}
+	assertType(t, got, typ.NewOptional(typ.Number))
+
+	if _, ok := Index(m, typ.String); ok {
+		t.Fatal("Index(literal-key map, broad string key) succeeded")
+	}
+
+	rec := typetable.NewRecord().
+		MapComponent(typ.LiteralString("raw"), typ.Number).
+		Build()
+
+	got, ok = Index(rec, typ.LiteralString("raw"))
+	if !ok {
+		t.Fatal("Index(record literal map component, exact key) failed")
+	}
+	assertType(t, got, typ.NewOptional(typ.Number))
+
+	if _, ok := Index(rec, typ.String); ok {
+		t.Fatal("Index(record literal map component, broad string key) succeeded")
+	}
+	if _, ok := Index(rec, typ.NewUnion(typ.LiteralString("raw"), typ.LiteralString("other"))); ok {
+		t.Fatal("Index(record literal map component, partially admitted union key) succeeded")
+	}
+}
+
 func TestIndexMapReadonlyMapCompatibleKeys(t *testing.T) {
 	m := typetable.NewMap(typ.String, typ.Number)
 

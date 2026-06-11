@@ -25,6 +25,36 @@ func TestRecordTailFieldTypeUsesStringMapComponent(t *testing.T) {
 	}
 }
 
+func TestRecordTailMayContainUsesExactMemberOverlapPolicy(t *testing.T) {
+	rec := NewRecord().
+		MapComponent(typ.LiteralString("raw"), typ.Number).
+		Build()
+	rawMember := typ.StaticMember{Kind: typ.StaticMemberStringIndex, Name: "raw"}
+	otherMember := typ.StaticMember{Kind: typ.StaticMemberStringIndex, Name: "other"}
+
+	if !RecordMapTailMayContainFieldName(rec, "raw") {
+		t.Fatal("expected map tail to contain exact raw field")
+	}
+	if RecordMapTailMayContainFieldName(rec, "other") {
+		t.Fatal("did not expect map tail to contain unrelated field")
+	}
+	if !RecordMapTailMayContainStaticMember(rec, rawMember) {
+		t.Fatal("expected map tail to contain exact raw static member")
+	}
+	if RecordMapTailMayContainStaticMember(rec, otherMember) {
+		t.Fatal("did not expect map tail to contain unrelated static member")
+	}
+
+	tail, ok := RecordTailStaticMemberType(rec, rawMember)
+	if !ok {
+		t.Fatal("RecordTailStaticMemberType returned ok=false")
+	}
+	want := typ.NewOptional(typ.Number)
+	if !identity.TypeEquals(tail, want) {
+		t.Fatalf("static member tail = %v, want %v", tail, want)
+	}
+}
+
 func TestRecordMapTailStaticMemberContainment(t *testing.T) {
 	rec := NewRecord().
 		MapComponent(typ.NewUnion(typ.LiteralString("raw"), typ.Integer), typ.Boolean).

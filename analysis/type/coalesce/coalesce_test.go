@@ -65,7 +65,7 @@ func TestCoalesceMapsDefaultJoinNormalizesMergedMapKeys(t *testing.T) {
 	}
 }
 
-func TestCoalesceMapsDefaultJoinUsesJoinUnionPolicy(t *testing.T) {
+func TestCoalesceMapsDefaultJoinUsesEvidenceUnionPolicy(t *testing.T) {
 	m1 := typ.NewMap(typ.Unknown, typ.LiteralInt(1))
 	m2 := typ.NewMap(typ.String, typ.Number)
 

@@ -83,6 +83,34 @@ func TestFieldMapStringFieldOptionalityAndMissingPolicy(t *testing.T) {
 	assertType(t, got, typ.NewOptional(typ.Boolean))
 }
 
+func TestFieldRecordMapComponentUsesStrictFieldAdmission(t *testing.T) {
+	m := typetable.NewMap(typ.LiteralString("status"), typ.Boolean)
+
+	got, ok := Field(m, "status")
+	if !ok {
+		t.Fatal("Field(literal-key map, status) failed")
+	}
+	assertType(t, got, typ.NewOptional(typ.Boolean))
+
+	if _, ok := Field(m, "other"); ok {
+		t.Fatal("Field(literal-key map, other) succeeded")
+	}
+
+	rec := typetable.NewRecord().
+		MapComponent(typ.LiteralString("status"), typ.Boolean).
+		Build()
+
+	got, ok = Field(rec, "status")
+	if !ok {
+		t.Fatal("Field(record literal map component, status) failed")
+	}
+	assertType(t, got, typ.NewOptional(typ.Boolean))
+
+	if _, ok := Field(rec, "other"); ok {
+		t.Fatal("Field(record literal map component, other) succeeded")
+	}
+}
+
 func TestFieldCommonUnionField(t *testing.T) {
 	left := typetable.NewRecord().
 		Field("id", typ.String).
@@ -214,7 +242,7 @@ func TestCallableReturnUnionProjectionUsesNormalizePackage(t *testing.T) {
 	if !ok {
 		t.Fatal("CallableReturn(union) failed")
 	}
-	assertType(t, got, normalize.UnionForProjection(returns...))
+	assertType(t, got, normalize.UnionForEvidence(returns...))
 }
 
 func TestCallableReturnUnionProjectionPolicy(t *testing.T) {

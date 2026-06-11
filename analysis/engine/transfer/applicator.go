@@ -42,20 +42,10 @@ func NewFactsNodeTransfer(config FactsNodeTransferConfig) NodeTransfer {
 		}
 		sources = withValueOverlaySourceValues(ctx.Registry, sources, facts.valueOverlays)
 		if fact, ok := facts.LocalAssignment(ctx.Point); ok {
-			var targetPath pathdom.Path
-			var applied bool
-			out, targetPath, applied = applyRootAssignment(ctx, config.Visibility, sources, read, in, out, fact.TargetSymbol(), fact.TargetPath(), fact.Source())
-			if applied {
-				out = applyObjectLiteralEntries(ctx, config.Visibility, facts, sources, read, in, out, targetPath, fact.Source())
-			}
+			out = applyRootAssignmentFact(ctx, config.Visibility, facts, sources, read, in, out, fact)
 		}
 		if fact, ok := facts.OrdinaryAssignment(ctx.Point); ok {
-			var targetPath pathdom.Path
-			var applied bool
-			out, targetPath, applied = applyRootAssignment(ctx, config.Visibility, sources, read, in, out, fact.TargetSymbol(), fact.TargetPath(), fact.Source())
-			if applied {
-				out = applyObjectLiteralEntries(ctx, config.Visibility, facts, sources, read, in, out, targetPath, fact.Source())
-			}
+			out = applyRootAssignmentFact(ctx, config.Visibility, facts, sources, read, in, out, fact)
 		}
 		if fact, ok := facts.PathAssignment(ctx.Point); ok {
 			var applied bool
@@ -88,6 +78,23 @@ func NewFactsEdgeTransfer(config FactsEdgeTransferConfig) EdgeTransfer {
 		}
 		return applyBranchRefinement(ctx, config.Visibility, out, fact.TargetPath(), refinement)
 	}
+}
+
+func applyRootAssignmentFact(
+	ctx NodeContext,
+	resolver *visibility.Resolver,
+	facts Facts,
+	sources SourceValues,
+	read func(cfg.Point) state.State,
+	in state.State,
+	out state.State,
+	fact RootAssignment,
+) state.State {
+	out, targetPath, applied := applyRootAssignment(ctx, resolver, sources, read, in, out, fact.TargetSymbol(), fact.TargetPath(), fact.Source())
+	if applied {
+		out = applyObjectLiteralEntries(ctx, resolver, facts, sources, read, in, out, targetPath, fact.Source())
+	}
+	return out
 }
 
 func callResultReader(
