@@ -10,9 +10,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
-	"github.com/wippyai/go-lua/analysis/engine/visibility"
-	"github.com/wippyai/go-lua/analysis/ir/cfg"
-	"github.com/wippyai/go-lua/analysis/ir/ssa"
 	"github.com/wippyai/go-lua/analysis/symbol"
 )
 
@@ -226,98 +223,6 @@ func TestExplicitBottomEntriesCanonicalizeToAbsence(t *testing.T) {
 	}
 }
 
-func TestResolverBackedPathHelpersUseVersionedKeys(t *testing.T) {
-	reg := product.DefaultRegistry()
-	valueDomain := product.Domain(reg)
-	point := cfg.Point(7)
-	sym := symbol.ID(30)
-	resolver := visibility.NewResolver(fakeVersionedGraph{
-		versions: map[cfg.Point]map[symbol.ID]ssa.Version{
-			point: {
-				sym: {Root: "x", Symbol: sym, ID: 4},
-			},
-		},
-	})
-	path := pathdom.NewPath(sym, "x").Field("field")
-	value := presentValue(reg)
-
-	s, ok := State{}.WritePathAt(reg, resolver, point, path, value)
-	if !ok {
-		t.Fatal("WritePathAt rejected visible version")
-	}
-	if got := s.ReadPathKey(reg, pathdom.PathKey("sym30@4.field")); !valueDomain.Equal(got, value) {
-		t.Fatalf("versioned path key = %s, want %s", formatValue(reg, got), formatValue(reg, value))
-	}
-	if got := s.ReadPathKey(reg, path.Key()); !valueDomain.Equal(got, valueDomain.Bottom()) {
-		t.Fatalf("unversioned path key unexpectedly populated: %s", formatValue(reg, got))
-	}
-	if got, ok := s.ReadPathAt(reg, resolver, point, path); !ok || !valueDomain.Equal(got, value) {
-		t.Fatalf("ReadPathAt = %s/%v, want value/true", formatValue(reg, got), ok)
-	}
-
-	missingResolver := visibility.NewResolver(fakeVersionedGraph{})
-	unchanged, ok := s.WritePathAt(reg, missingResolver, point, path, absentValue(reg))
-	if ok {
-		t.Fatal("WritePathAt accepted missing visible version")
-	}
-	if !Domain(reg).Equal(unchanged, s) {
-		t.Fatalf("rejected WritePathAt changed state")
-	}
-	if got, ok := s.ReadPathAt(reg, missingResolver, point, path); ok || !valueDomain.Equal(got, valueDomain.Bottom()) {
-		t.Fatalf("ReadPathAt without visible version = %s/%v, want bottom/false", formatValue(reg, got), ok)
-	}
-}
-
-func TestUpdatePathAtUsesResolvedKeyAndSkipsUnresolvedPath(t *testing.T) {
-	reg := product.DefaultRegistry()
-	valueDomain := product.Domain(reg)
-	point := cfg.Point(8)
-	sym := symbol.ID(31)
-	resolver := visibility.NewResolver(fakeVersionedGraph{
-		versions: map[cfg.Point]map[symbol.ID]ssa.Version{
-			point: {
-				sym: {Root: "x", Symbol: sym, ID: 5},
-			},
-		},
-	})
-	path := pathdom.NewPath(sym, "x").Field("field")
-	pathKey := pathdom.PathKey("sym31@5.field")
-	present := presentValue(reg)
-	bottom := valueDomain.Bottom()
-
-	s := State{}.WritePathKey(reg, pathKey, present)
-	updated, ok := s.UpdatePathAt(reg, resolver, point, path, func(got product.Value) product.Value {
-		if !valueDomain.Equal(got, present) {
-			t.Fatalf("UpdatePathAt read %s, want present", formatValue(reg, got))
-		}
-		return bottom
-	})
-	if !ok {
-		t.Fatal("UpdatePathAt rejected visible version")
-	}
-	if got := updated.ReadPathKey(reg, pathKey); !valueDomain.Equal(got, bottom) {
-		t.Fatalf("updated resolved path = %s, want bottom", formatValue(reg, got))
-	}
-	if got := s.ReadPathKey(reg, pathKey); !valueDomain.Equal(got, present) {
-		t.Fatalf("original path changed to %s", formatValue(reg, got))
-	}
-
-	called := false
-	unchanged, ok := s.UpdatePathAt(reg, visibility.NewResolver(fakeVersionedGraph{}), point, path, func(product.Value) product.Value {
-		called = true
-		return absentValue(reg)
-	})
-	if ok {
-		t.Fatal("UpdatePathAt accepted missing visible version")
-	}
-	if called {
-		t.Fatal("UpdatePathAt called transform for unresolved path")
-	}
-	if !Domain(reg).Equal(unchanged, s) {
-		t.Fatalf("unresolved UpdatePathAt changed state")
-	}
-}
-
 func TestInvalidatePathKeySubtreeRemovesStructuredDescendants(t *testing.T) {
 	reg := product.DefaultRegistry()
 	valueDomain := product.Domain(reg)
@@ -386,47 +291,6 @@ func TestInvalidatePathKeySubtreeRemovesStructuredDescendants(t *testing.T) {
 	}
 }
 
-func TestInvalidatePathSubtreeAtUsesResolvedKeyAndRejectsUnresolvedPath(t *testing.T) {
-	reg := product.DefaultRegistry()
-	valueDomain := product.Domain(reg)
-	point := cfg.Point(9)
-	sym := symbol.ID(42)
-	resolver := visibility.NewResolver(fakeVersionedGraph{
-		versions: map[cfg.Point]map[symbol.ID]ssa.Version{
-			point: {
-				sym: {Root: "obj", Symbol: sym, ID: 6},
-			},
-		},
-	})
-	path := pathdom.NewPath(sym, "obj").Field("field")
-	childKey := pathdom.PathKey("sym42@6.field.deep")
-	otherKey := pathdom.PathKey("sym42@7.field.deep")
-	present := presentValue(reg)
-	bottom := valueDomain.Bottom()
-	s := State{}.
-		WritePathKey(reg, childKey, present).
-		WritePathKey(reg, otherKey, present)
-
-	out, ok := s.InvalidatePathSubtreeAt(resolver, point, path)
-	if !ok {
-		t.Fatal("InvalidatePathSubtreeAt rejected visible version")
-	}
-	if got := out.ReadPathKey(reg, childKey); !valueDomain.Equal(got, bottom) {
-		t.Fatalf("resolved child = %s, want bottom", formatValue(reg, got))
-	}
-	if got := out.ReadPathKey(reg, otherKey); !valueDomain.Equal(got, present) {
-		t.Fatalf("other version = %s, want present", formatValue(reg, got))
-	}
-
-	unchanged, ok := s.InvalidatePathSubtreeAt(visibility.NewResolver(fakeVersionedGraph{}), point, path)
-	if ok {
-		t.Fatal("InvalidatePathSubtreeAt accepted missing visible version")
-	}
-	if !Domain(reg).Equal(unchanged, s) {
-		t.Fatal("unresolved InvalidatePathSubtreeAt changed state")
-	}
-}
-
 func TestTopLanesReadTopAndRejectFiniteUpdates(t *testing.T) {
 	reg := product.DefaultRegistry()
 	valueDomain := product.Domain(reg)
@@ -491,6 +355,8 @@ func TestStatePackageDoesNotImportLuaPackages(t *testing.T) {
 	}
 	banned := []string{
 		"github.com/wippyai/go-lua/__old",
+		"github.com/wippyai/go-lua/analysis/engine/visibility",
+		"github.com/wippyai/go-lua/analysis/ir/cfg",
 		"github.com/wippyai/go-lua/analysis/lua",
 		"github.com/wippyai/go-lua/compiler",
 		"github.com/wippyai/go-lua/compiler/ast",
@@ -513,17 +379,6 @@ func requirePanic(t *testing.T, fn func()) {
 		}
 	}()
 	fn()
-}
-
-type fakeVersionedGraph struct {
-	versions map[cfg.Point]map[symbol.ID]ssa.Version
-}
-
-func (f fakeVersionedGraph) VisibleVersion(point cfg.Point, sym symbol.ID) ssa.Version {
-	if byPoint, ok := f.versions[point]; ok {
-		return byPoint[sym]
-	}
-	return ssa.Version{}
 }
 
 func presentValue(reg *axis.Registry) product.Value {

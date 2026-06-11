@@ -9,8 +9,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
-	"github.com/wippyai/go-lua/analysis/engine/visibility"
-	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/symbol"
 )
 
@@ -155,55 +153,6 @@ func (s State) UpdatePathKey(reg *axis.Registry, pathKey pathdom.PathKey, fn fun
 	return s.WritePathKey(reg, pathKey, fn(s.ReadPathKey(reg, pathKey)))
 }
 
-// ReadPathAt resolves path at point and reads the matching point-local key.
-// It returns false when the resolver cannot produce a key, such as a
-// symbol-rooted path with no visible SSA version.
-func (s State) ReadPathAt(
-	reg *axis.Registry,
-	resolver *visibility.Resolver,
-	point cfg.Point,
-	path pathdom.Path,
-) (product.Value, bool) {
-	pathKey := resolver.KeyAt(point, path)
-	if pathKey == "" {
-		return product.Bottom(reg), false
-	}
-	return s.ReadPathKey(reg, pathKey), true
-}
-
-// WritePathAt resolves path at point and writes the matching point-local key.
-// It returns false and leaves s unchanged when no key can be resolved.
-func (s State) WritePathAt(
-	reg *axis.Registry,
-	resolver *visibility.Resolver,
-	point cfg.Point,
-	path pathdom.Path,
-	value product.Value,
-) (State, bool) {
-	pathKey := resolver.KeyAt(point, path)
-	if pathKey == "" {
-		return s, false
-	}
-	return s.WritePathKey(reg, pathKey, value), true
-}
-
-// UpdatePathAt resolves path at point, reads the matching point-local key,
-// applies fn, and writes the transformed value. It returns false and leaves s
-// unchanged when no key can be resolved.
-func (s State) UpdatePathAt(
-	reg *axis.Registry,
-	resolver *visibility.Resolver,
-	point cfg.Point,
-	path pathdom.Path,
-	fn func(product.Value) product.Value,
-) (State, bool) {
-	pathKey := resolver.KeyAt(point, path)
-	if pathKey == "" {
-		return s, false
-	}
-	return s.UpdatePathKey(reg, pathKey, fn), true
-}
-
 // InvalidatePathKeySubtree removes finite path refinements at pathKey and any
 // descendant key. It returns false when pathKey is not a recognized structural
 // path-key spelling.
@@ -222,21 +171,6 @@ func (s State) InvalidatePathKeySubtree(pathKey pathdom.PathKey) (State, bool) {
 	out := s
 	out.paths = paths
 	return out, true
-}
-
-// InvalidatePathSubtreeAt resolves path at point and removes finite path
-// refinements at the resolved key and any descendant key. It returns false and
-// leaves s unchanged when no key can be resolved.
-func (s State) InvalidatePathSubtreeAt(
-	resolver *visibility.Resolver,
-	point cfg.Point,
-	path pathdom.Path,
-) (State, bool) {
-	pathKey := resolver.KeyAt(point, path)
-	if pathKey == "" {
-		return s, false
-	}
-	return s.InvalidatePathKeySubtree(pathKey)
 }
 
 // Domain builds the State lattice as the product of two pointwise map lattices

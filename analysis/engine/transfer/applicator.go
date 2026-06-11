@@ -221,7 +221,7 @@ func writeRootSymbol(ctx NodeContext, resolver *visibility.Resolver, out state.S
 		return out
 	}
 	if resolver != nil {
-		if invalidated, ok := out.InvalidatePathSubtreeAt(resolver, ctx.Point, targetPath); ok {
+		if invalidated, ok := invalidatePathSubtreeAt(out, resolver, ctx.Point, targetPath); ok {
 			out = invalidated
 		}
 	}
@@ -246,7 +246,7 @@ func applyBranchRefinement(
 	if resolver == nil {
 		return out
 	}
-	updated, ok := out.UpdatePathAt(ctx.Registry, resolver, ctx.Edge.From, targetPath, func(value product.Value) product.Value {
+	updated, ok := updatePathAt(ctx.Registry, out, resolver, ctx.Edge.From, targetPath, func(value product.Value) product.Value {
 		return refineProductValue(ctx.Registry, value, refinement)
 	})
 	if !ok {
@@ -283,11 +283,11 @@ func applyPathAssignment(
 	if !ok {
 		return out, false
 	}
-	invalidated, ok := out.InvalidatePathSubtreeAt(resolver, ctx.Point, targetPath)
+	invalidated, ok := invalidatePathSubtreeAt(out, resolver, ctx.Point, targetPath)
 	if !ok {
 		return out, false
 	}
-	written, ok := invalidated.WritePathAt(ctx.Registry, resolver, ctx.Point, targetPath, value)
+	written, ok := writePathAt(ctx.Registry, invalidated, resolver, ctx.Point, targetPath, value)
 	if !ok {
 		return out, false
 	}
@@ -324,11 +324,11 @@ func applyObjectLiteralEntries(
 		if !ok {
 			continue
 		}
-		invalidated, ok := out.InvalidatePathSubtreeAt(resolver, ctx.Point, entryPath)
+		invalidated, ok := invalidatePathSubtreeAt(out, resolver, ctx.Point, entryPath)
 		if !ok {
 			continue
 		}
-		written, ok := invalidated.WritePathAt(ctx.Registry, resolver, ctx.Point, entryPath, value)
+		written, ok := writePathAt(ctx.Registry, invalidated, resolver, ctx.Point, entryPath, value)
 		if !ok {
 			continue
 		}
