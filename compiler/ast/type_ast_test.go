@@ -350,6 +350,17 @@ func TestCastExpr(t *testing.T) {
 	if cast.Type != typ {
 		t.Error("Type should match")
 	}
+	if cast.Syntax != CastSyntaxUnknown {
+		t.Fatalf("Syntax = %v, want unknown for legacy construction", cast.Syntax)
+	}
+	asCast := &CastExpr{Syntax: CastSyntaxAs}
+	if asCast.Syntax != CastSyntaxAs {
+		t.Fatalf("asCast.Syntax = %v, want CastSyntaxAs", asCast.Syntax)
+	}
+	colonCast := &CastExpr{Syntax: CastSyntaxColonColon}
+	if colonCast.Syntax != CastSyntaxColonColon {
+		t.Fatalf("colonCast.Syntax = %v, want CastSyntaxColonColon", colonCast.Syntax)
+	}
 }
 
 func TestNonNilAssertExpr(t *testing.T) {

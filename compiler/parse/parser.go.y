@@ -609,12 +609,12 @@ expr:
             $$.CopyLastPos($2)
         } |
         expr TAs typeexpr {
-            $$ = &ast.CastExpr{Expr: $1, Type: $3}
+            $$ = &ast.CastExpr{Expr: $1, Type: $3, Syntax: ast.CastSyntaxAs}
             $$.CopyPos($1)
             $$.CopyLastPos($3)
         } |
         expr T2Colon typeexpr {
-            $$ = &ast.CastExpr{Expr: $1, Type: $3}
+            $$ = &ast.CastExpr{Expr: $1, Type: $3, Syntax: ast.CastSyntaxColonColon}
             $$.CopyPos($1)
             $$.CopyLastPos($3)
         } |

@@ -1785,7 +1785,7 @@ yydefault:
 		yyDollar = yyS[yypt-3 : yypt+1]
 //line parser.go.y:627
 		{
-			yyVAL.expr = &ast.CastExpr{Expr: yyDollar[1].expr, Type: yyDollar[3].typeexpr}
+			yyVAL.expr = &ast.CastExpr{Expr: yyDollar[1].expr, Type: yyDollar[3].typeexpr, Syntax: ast.CastSyntaxAs}
 			yyVAL.expr.CopyPos(yyDollar[1].expr)
 			yyVAL.expr.CopyLastPos(yyDollar[3].typeexpr)
 		}
@@ -1793,7 +1793,7 @@ yydefault:
 		yyDollar = yyS[yypt-3 : yypt+1]
 //line parser.go.y:632
 		{
-			yyVAL.expr = &ast.CastExpr{Expr: yyDollar[1].expr, Type: yyDollar[3].typeexpr}
+			yyVAL.expr = &ast.CastExpr{Expr: yyDollar[1].expr, Type: yyDollar[3].typeexpr, Syntax: ast.CastSyntaxColonColon}
 			yyVAL.expr.CopyPos(yyDollar[1].expr)
 			yyVAL.expr.CopyLastPos(yyDollar[3].typeexpr)
 		}

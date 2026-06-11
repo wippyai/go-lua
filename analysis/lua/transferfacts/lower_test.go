@@ -546,8 +546,8 @@ func TestLowerAssertionsToSidecarsWithoutProofRefinements(t *testing.T) {
 	typeRead := ident("x")
 	anyRead := ident("x")
 	nonNilRead := ident("x")
-	typeCast := &ast.CastExpr{Expr: typeRead, Type: primitiveType("number")}
-	anyCast := &ast.CastExpr{Expr: anyRead, Type: primitiveType("any")}
+	typeCast := &ast.CastExpr{Expr: typeRead, Type: primitiveType("number"), Syntax: ast.CastSyntaxAs}
+	anyCast := &ast.CastExpr{Expr: anyRead, Type: primitiveType("any"), Syntax: ast.CastSyntaxColonColon}
 	nonNil := &ast.NonNilAssertExpr{Expr: nonNilRead}
 	local := localAssign([]string{"a", "b", "c"}, typeCast, anyCast, nonNil)
 	stmts := []ast.Stmt{decl, local}
@@ -569,6 +569,46 @@ func TestLowerAssertionsToSidecarsWithoutProofRefinements(t *testing.T) {
 	assertLoweredAssertion(t, facts, nonNilSource, assertion.NonNil(), transfer.ValueSourceExpression)
 	if _, ok := facts.BranchRefinement(points[2]); ok {
 		t.Fatalf("x! assignment produced branch/presence refinement")
+	}
+}
+
+func TestLowerAssertionsPreserveCastSyntaxVariantsWithoutProofRefinements(t *testing.T) {
+	decl := localAssign([]string{"x"}, number("0"))
+	asTypeRead := ident("x")
+	colonTypeRead := ident("x")
+	asAnyRead := ident("x")
+	colonAnyRead := ident("x")
+	asTypeCast := &ast.CastExpr{Expr: asTypeRead, Type: primitiveType("number"), Syntax: ast.CastSyntaxAs}
+	colonTypeCast := &ast.CastExpr{Expr: colonTypeRead, Type: primitiveType("number"), Syntax: ast.CastSyntaxColonColon}
+	asAnyCast := &ast.CastExpr{Expr: asAnyRead, Type: primitiveType("any"), Syntax: ast.CastSyntaxAs}
+	colonAnyCast := &ast.CastExpr{Expr: colonAnyRead, Type: primitiveType("any"), Syntax: ast.CastSyntaxColonColon}
+	local := localAssign([]string{"a", "b", "c", "d"}, asTypeCast, colonTypeCast, asAnyCast, colonAnyCast)
+	stmts := []ast.Stmt{decl, local}
+	bindings := bind.BindChunk(stmts, bind.Options{})
+	built := cfgbuild.BuildChunk(stmts, bindings)
+	result, err := semantics.ExtractChunk(stmts, bindings, built)
+	if err != nil {
+		t.Fatalf("ExtractChunk: %v", err)
+	}
+
+	facts := Lower(result, built.Graph)
+	points := requireStmtPoints(t, built, local, 4)
+	cases := []struct {
+		name  string
+		point cfg.Point
+		want  assertion.Value
+	}{
+		{name: "as type", point: points[0], want: assertion.Type()},
+		{name: "colon type", point: points[1], want: assertion.Type()},
+		{name: "as any", point: points[2], want: assertion.Any()},
+		{name: "colon any", point: points[3], want: assertion.Any()},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			source := mustLocalSource(t, facts, tc.point)
+			assertLoweredAssertion(t, facts, source, tc.want, transfer.ValueSourceExpression)
+		})
 	}
 }
 

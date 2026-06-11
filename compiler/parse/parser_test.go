@@ -554,12 +554,31 @@ func TestParseCastExpr(t *testing.T) {
 	if cast.Type == nil {
 		t.Error("cast.Type is nil")
 	}
+	if cast.Syntax != ast.CastSyntaxAs {
+		t.Fatalf("cast.Syntax = %v, want CastSyntaxAs", cast.Syntax)
+	}
 	prim, ok := cast.Type.(*ast.PrimitiveTypeExpr)
 	if !ok {
 		t.Fatalf("cast.Type = %T, want *ast.PrimitiveTypeExpr", cast.Type)
 	}
 	if prim.Name != "User" {
 		t.Errorf("cast type = %q, want 'User'", prim.Name)
+	}
+}
+
+func TestParseCastExprColonColonSyntax(t *testing.T) {
+	input := "local x = data :: User"
+	stmts, err := Parse(strings.NewReader(input), "test")
+	if err != nil {
+		t.Fatalf("Parse error: %v", err)
+	}
+	local := stmts[0].(*ast.LocalAssignStmt)
+	cast, ok := local.Exprs[0].(*ast.CastExpr)
+	if !ok {
+		t.Fatalf("expr = %T, want *ast.CastExpr", local.Exprs[0])
+	}
+	if cast.Syntax != ast.CastSyntaxColonColon {
+		t.Fatalf("cast.Syntax = %v, want CastSyntaxColonColon", cast.Syntax)
 	}
 }
 
@@ -1570,11 +1589,18 @@ func TestParse_ColonColonCast(t *testing.T) {
 			}
 			local1 := stmts1[0].(*ast.LocalAssignStmt)
 			local2 := stmts2[0].(*ast.LocalAssignStmt)
-			_, ok1 := local1.Exprs[0].(*ast.CastExpr)
-			_, ok2 := local2.Exprs[0].(*ast.CastExpr)
+			cast1, ok1 := local1.Exprs[0].(*ast.CastExpr)
+			cast2, ok2 := local2.Exprs[0].(*ast.CastExpr)
 			if !ok1 || !ok2 {
 				t.Errorf("Both should produce CastExpr: :: = %T, as = %T",
 					local1.Exprs[0], local2.Exprs[0])
+				continue
+			}
+			if cast1.Syntax != ast.CastSyntaxColonColon {
+				t.Errorf(":: cast syntax = %v, want CastSyntaxColonColon", cast1.Syntax)
+			}
+			if cast2.Syntax != ast.CastSyntaxAs {
+				t.Errorf("as cast syntax = %v, want CastSyntaxAs", cast2.Syntax)
 			}
 		}
 	})
