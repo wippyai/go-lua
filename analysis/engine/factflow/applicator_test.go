@@ -741,6 +741,78 @@ func TestFactsNodeTransferAssignmentCallSourceConsumesProviderReturnSlotThroughR
 	assertValue(t, reg, got[graph.Exit()], key.SymbolValue(target), callValue)
 }
 
+func TestFactsNodeTransferPreservesCustomSparseAxisThroughAssignment(t *testing.T) {
+	reg, err := product.DefaultRegistryWithAxes(testSparseAxisSpec().Erase())
+	if err != nil {
+		t.Fatalf("DefaultRegistryWithAxes error = %v", err)
+	}
+	if _, ok := product.DefaultRegistry().LookupErased(testSparseAxisKey.ID()); ok {
+		t.Fatalf("custom axis leaked into the default registry")
+	}
+
+	graph := cfg.New()
+	assign := graph.AddNode(cfg.NodeAssign)
+	graph.AddEdge(graph.Entry(), assign, false)
+	graph.AddEdge(assign, graph.Exit(), false)
+
+	target := symbol.ID(130)
+	source := ValueSource{Kind: ValueSourceExpression, ExprRef: ExprRef(130), HasExpr: true}
+	assigned := product.Set(reg, product.NewWithPresence(reg, product.ShapeTop, presence.Present()), testSparseAxisKey, testSparseAxisLow)
+	sources := NewSourceValues(SourceValuesConfig{
+		Registry: reg,
+		ExpressionValues: map[ExprRef]product.Value{
+			source.ExprRef: assigned,
+		},
+	})
+
+	got := transfer.Run(transfer.Config{
+		Graph:    graph,
+		Registry: reg,
+		NodeTransfer: NewFactsNodeTransfer(FactsNodeTransferConfig{
+			Facts: NewFacts(FactsInput{
+				LocalAssignments: map[cfg.Point]RootAssignment{
+					assign: NewRootAssignment(target, path.NewPath(target, "sparse"), source),
+				},
+			}),
+			Sources: sources,
+		}),
+	})
+
+	assertSparseAxisValue(t, reg, got[graph.Exit()].ReadValue(reg, key.SymbolValue(target)), testSparseAxisKey, testSparseAxisLow)
+}
+
+func TestFactsNodeTransferAppliesSparseAxisReducerDuringStateWrite(t *testing.T) {
+	reg, err := product.DefaultRegistryWithAxes(
+		testReducerAxisSpec().Erase(),
+		testReducerMirrorAxisSpec().Erase(),
+	)
+	if err != nil {
+		t.Fatalf("DefaultRegistryWithAxes error = %v", err)
+	}
+
+	graph := cfg.New()
+	write := graph.AddNode(cfg.NodeNoop)
+	graph.AddEdge(graph.Entry(), write, false)
+	graph.AddEdge(write, graph.Exit(), false)
+
+	target := key.ReturnSlot(9)
+	reduced := product.Set(reg, product.Top(), testReducerAxisKey, testReducerAxisRaw)
+
+	got := transfer.Run(transfer.Config{
+		Graph:    graph,
+		Registry: reg,
+		NodeTransfer: func(ctx transfer.NodeContext, in state.State) state.State {
+			if ctx.Point != write {
+				return in
+			}
+			return in.WriteValue(reg, target, reduced)
+		},
+	})
+
+	assertSparseAxisValue(t, reg, got[graph.Exit()].ReadValue(reg, target), testReducerAxisKey, testReducerAxisRaw)
+	assertSparseAxisValue(t, reg, got[graph.Exit()].ReadValue(reg, target), testReducerMirrorAxisKey, testReducerAxisNormalized)
+}
+
 func TestFactsNodeTransferCallResultTargetsDoNotDirectlyWriteTargets(t *testing.T) {
 	reg := product.DefaultRegistry()
 	point := cfg.Point(23)
@@ -1523,6 +1595,124 @@ func wideningRegistry() *axis.Registry {
 
 func wideningValue(reg *axis.Registry, value widening) product.Value {
 	return product.Set(reg, product.Top(), wideningKey, value)
+}
+
+type testSparseAxis uint8
+
+const (
+	testSparseAxisBottom testSparseAxis = iota
+	testSparseAxisLow
+	testSparseAxisHigh
+	testSparseAxisTop
+)
+
+var testSparseAxisKey = axis.NewKey[testSparseAxis]("factflow.test.sparse")
+
+func testSparseAxisSpec() axis.Spec[testSparseAxis] {
+	return axis.Spec[testSparseAxis]{
+		Key:    testSparseAxisKey,
+		Bottom: func() testSparseAxis { return testSparseAxisBottom },
+		Top:    func() testSparseAxis { return testSparseAxisTop },
+		Equal:  func(a, b testSparseAxis) bool { return a == b },
+		LessOrEq: func(a, b testSparseAxis) bool {
+			return a <= b
+		},
+		Join: func(a, b testSparseAxis) testSparseAxis {
+			if a > b {
+				return a
+			}
+			return b
+		},
+		Meet: func(a, b testSparseAxis) testSparseAxis {
+			if a < b {
+				return a
+			}
+			return b
+		},
+		Widen: func(prev, next testSparseAxis) testSparseAxis {
+			if prev > next {
+				return prev
+			}
+			return next
+		},
+		Hash: func(v testSparseAxis) uint64 {
+			return uint64(v) + 1
+		},
+	}
+}
+
+type testReducerAxis uint8
+
+const (
+	testReducerAxisBottom testReducerAxis = iota
+	testReducerAxisRaw
+	testReducerAxisNormalized
+	testReducerAxisTop
+)
+
+var testReducerAxisKey = axis.NewKey[testReducerAxis]("factflow.test.reducer.source")
+var testReducerMirrorAxisKey = axis.NewKey[testReducerAxis]("factflow.test.reducer.mirror")
+
+func testReducerAxisSpec() axis.Spec[testReducerAxis] {
+	spec := axis.Spec[testReducerAxis]{
+		Key:    testReducerAxisKey,
+		Bottom: func() testReducerAxis { return testReducerAxisBottom },
+		Top:    func() testReducerAxis { return testReducerAxisTop },
+		Equal:  func(a, b testReducerAxis) bool { return a == b },
+		LessOrEq: func(a, b testReducerAxis) bool {
+			return a <= b
+		},
+		Join: func(a, b testReducerAxis) testReducerAxis {
+			if a > b {
+				return a
+			}
+			return b
+		},
+		Meet: func(a, b testReducerAxis) testReducerAxis {
+			if a < b {
+				return a
+			}
+			return b
+		},
+		Widen: func(prev, next testReducerAxis) testReducerAxis {
+			if prev > next {
+				return prev
+			}
+			return next
+		},
+		Hash: func(v testReducerAxis) uint64 {
+			return uint64(v) + 1
+		},
+	}
+	spec.Reducer = func(w axis.Writer) bool {
+		source, ok := axis.Get(w, testReducerAxisKey)
+		if !ok || source != testReducerAxisRaw {
+			return false
+		}
+		if mirror, ok := axis.Get(w, testReducerMirrorAxisKey); ok && mirror == testReducerAxisNormalized {
+			return false
+		}
+		axis.Set(w, testReducerMirrorAxisKey, testReducerAxisNormalized)
+		return true
+	}
+	return spec
+}
+
+func testReducerMirrorAxisSpec() axis.Spec[testReducerAxis] {
+	spec := testReducerAxisSpec()
+	spec.Key = testReducerMirrorAxisKey
+	spec.Reducer = nil
+	return spec
+}
+
+func assertSparseAxisValue[T comparable](t *testing.T, reg *axis.Registry, got product.Value, axisKey axis.Key[T], want T) {
+	t.Helper()
+	if product.Equal(reg, got, product.Bottom(reg)) {
+		t.Fatalf("value is bottom, want axis %s = %v", axisKey.ID(), want)
+	}
+	if gotAxis := product.Get(reg, got, axisKey); gotAxis != want {
+		t.Fatalf("axis %s = %v, want %v", axisKey.ID(), gotAxis, want)
+	}
 }
 
 func branchWithPresence(
