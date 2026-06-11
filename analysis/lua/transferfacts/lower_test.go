@@ -9,6 +9,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/assertion"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/evidence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
@@ -629,11 +630,15 @@ func TestLowerAssertionOverlaysApplyIndicatorsWithoutMutatingBaseValues(t *testi
 	points := requireStmtPoints(t, built, local, 3)
 	inputValues := make(map[transfer.ExprRef]product.Value)
 	type sourceCase struct {
-		name         string
-		point        cfg.Point
-		base         product.Value
-		wantClaim    assertion.Value
-		wantPresence presence.Value
+		name              string
+		point             cfg.Point
+		base              product.Value
+		wantClaim         assertion.Value
+		wantPresence      presence.Value
+		wantRuntimeKind   runtimekind.Value
+		checkRuntimeKind  bool
+		checkNoRefinement bool
+		checkNoProof      bool
 	}
 	cases := []sourceCase{
 		{
@@ -644,11 +649,15 @@ func TestLowerAssertionOverlaysApplyIndicatorsWithoutMutatingBaseValues(t *testi
 			wantPresence: presence.Present(),
 		},
 		{
-			name:         "any",
-			point:        points[1],
-			base:         product.NewWithPresence(reg, product.ShapeTop, presence.Present()),
-			wantClaim:    assertion.Any(),
-			wantPresence: presence.Present(),
+			name:              "any",
+			point:             points[1],
+			base:              product.Set(reg, product.NewWithPresence(reg, product.ShapeTop, presence.Present()), runtimekind.Key, runtimekind.Singleton(runtimekind.Table)),
+			wantClaim:         assertion.Any(),
+			wantPresence:      presence.Present(),
+			wantRuntimeKind:   runtimekind.Singleton(runtimekind.Table),
+			checkRuntimeKind:  true,
+			checkNoRefinement: true,
+			checkNoProof:      true,
 		},
 		{
 			name:         "non-nil",
@@ -676,6 +685,14 @@ func TestLowerAssertionOverlaysApplyIndicatorsWithoutMutatingBaseValues(t *testi
 	})
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			if tc.checkRuntimeKind {
+				if got := product.PresenceOf(tc.base); !presence.Equal(got, tc.wantPresence) {
+					t.Fatalf("base input presence = %s, want %s", got, tc.wantPresence)
+				}
+				if got := product.Get(reg, tc.base, runtimekind.Key); !runtimekind.Equal(got, tc.wantRuntimeKind) {
+					t.Fatalf("base input runtime kind = %s, want %s", got, tc.wantRuntimeKind)
+				}
+			}
 			out := apply(transfer.NodeContext{Registry: reg, Point: tc.point}, state.State{})
 			fact, ok := facts.LocalAssignment(tc.point)
 			if !ok {
@@ -688,8 +705,28 @@ func TestLowerAssertionOverlaysApplyIndicatorsWithoutMutatingBaseValues(t *testi
 			if got := product.PresenceOf(assigned); !presence.Equal(got, tc.wantPresence) {
 				t.Fatalf("assigned presence = %s, want %s", got, tc.wantPresence)
 			}
+			if tc.checkRuntimeKind {
+				if got := product.Get(reg, assigned, runtimekind.Key); !runtimekind.Equal(got, tc.wantRuntimeKind) {
+					t.Fatalf("assigned runtime kind = %s, want %s", got, tc.wantRuntimeKind)
+				}
+			}
+			if tc.checkNoProof {
+				if got := product.Get(reg, assigned, evidence.Key); !evidence.Equal(got, evidence.Top()) {
+					t.Fatalf("assigned evidence = %s, want top", got)
+				}
+			}
+			if tc.checkNoRefinement {
+				if _, ok := facts.BranchRefinement(tc.point); ok {
+					t.Fatalf("%s assignment produced branch refinement", tc.name)
+				}
+			}
 			if got := product.Get(reg, tc.base, assertion.Key); !assertion.Equal(got, assertion.Top()) {
 				t.Fatalf("base value mutated with assertion = %s", got)
+			}
+			if tc.checkRuntimeKind {
+				if got := product.Get(reg, tc.base, runtimekind.Key); !runtimekind.Equal(got, tc.wantRuntimeKind) {
+					t.Fatalf("base runtime kind = %s, want %s", got, tc.wantRuntimeKind)
+				}
 			}
 		})
 	}
