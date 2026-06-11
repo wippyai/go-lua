@@ -4,11 +4,12 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/type/projection"
+	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
 func TestApplyField(t *testing.T) {
-	source := typ.NewRecord().
+	source := typetable.NewRecord().
 		Field("name", typ.String).
 		Field("age", typ.Integer).
 		Build()
@@ -86,7 +87,7 @@ func TestApplyInstantiateGenericRejectsConstraintMismatch(t *testing.T) {
 }
 
 func TestApplyChainFieldCallableReturn(t *testing.T) {
-	source := typ.NewRecord().
+	source := typetable.NewRecord().
 		Field("make", typ.Func().Returns(typ.Boolean).Build()).
 		Build()
 

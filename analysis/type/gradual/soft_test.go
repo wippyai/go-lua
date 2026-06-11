@@ -3,6 +3,7 @@ package gradual
 import (
 	"testing"
 
+	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
@@ -21,9 +22,9 @@ func TestIsSoftAnnotationPolicy(t *testing.T) {
 		{"map string any", typ.NewMap(typ.String, typ.Any), false},
 		{"union all soft", typ.NewUnion(typ.Any, typ.Unknown), true},
 		{"union mixed", typ.NewUnion(typ.String, typ.Number), false},
-		{"record map any any", typ.NewRecord().MapComponent(typ.Any, typ.Any).Build(), true},
-		{"record map integer any", typ.NewRecord().MapComponent(typ.Integer, typ.Any).Build(), false},
-		{"record", typ.NewRecord().Field("id", typ.String).Build(), false},
+		{"record map any any", typetable.NewRecord().MapComponent(typ.Any, typ.Any).Build(), true},
+		{"record map integer any", typetable.NewRecord().MapComponent(typ.Integer, typ.Any).Build(), false},
+		{"record", typetable.NewRecord().Field("id", typ.String).Build(), false},
 	}
 
 	for _, tt := range tests {
@@ -34,10 +35,10 @@ func TestIsSoftAnnotationPolicy(t *testing.T) {
 }
 
 func TestIsSoftPlaceholderPolicy(t *testing.T) {
-	emptyRecord := typ.NewRecord().Build()
-	emptyMapRecord := typ.NewRecord().MapComponent(typ.String, typ.Any).Build()
-	topMapRecord := typ.NewRecord().MapComponent(typ.Any, typ.Any).Build()
-	entryRecord := typ.NewRecord().Field("id", typ.String).Build()
+	emptyRecord := typetable.NewRecord().Build()
+	emptyMapRecord := typetable.NewRecord().MapComponent(typ.String, typ.Any).Build()
+	topMapRecord := typetable.NewRecord().MapComponent(typ.Any, typ.Any).Build()
+	entryRecord := typetable.NewRecord().Field("id", typ.String).Build()
 
 	tests := []struct {
 		name string
@@ -61,10 +62,10 @@ func TestIsSoftPlaceholderPolicy(t *testing.T) {
 }
 
 func TestPruneSoftUnionMembers(t *testing.T) {
-	entryRecord := typ.NewRecord().Field("id", typ.String).Build()
+	entryRecord := typetable.NewRecord().Field("id", typ.String).Build()
 	entryArray := typ.NewArray(entryRecord)
 	softArray := typ.NewArray(typ.Any)
-	emptyRecord := typ.NewRecord().Build()
+	emptyRecord := typetable.NewRecord().Build()
 
 	tests := []struct {
 		name string
@@ -74,7 +75,7 @@ func TestPruneSoftUnionMembers(t *testing.T) {
 		{"drop soft array", typ.NewUnion(softArray, entryArray), entryArray},
 		{"drop empty record", typ.NewUnion(emptyRecord, entryArray), entryArray},
 		{"all soft stays", typ.NewUnion(typ.Any, softArray), typ.NewUnion(typ.Any, softArray)},
-		{"nil does not erase optional soft table shape", typ.NewUnion(typ.Nil, softArray, typ.NewRecord().SetOpen(true).Build()), typ.NewUnion(typ.Nil, softArray, typ.NewRecord().SetOpen(true).Build())},
+		{"nil does not erase optional soft table shape", typ.NewUnion(typ.Nil, softArray, typetable.NewRecord().SetOpen(true).Build()), typ.NewUnion(typ.Nil, softArray, typetable.NewRecord().SetOpen(true).Build())},
 	}
 
 	for _, tt := range tests {
@@ -86,9 +87,9 @@ func TestPruneSoftUnionMembers(t *testing.T) {
 }
 
 func TestPruneSoftUnionMembers_ReusesRewrittenSharedSubtrees(t *testing.T) {
-	leaf := typ.NewRecord().Field("id", typ.String).Build()
-	shared := typ.NewRecord().Field("payload", typ.NewUnion(typ.NewRecord().Build(), leaf)).Build()
-	root := typ.NewRecord().Field("a", shared).Field("b", shared).Build()
+	leaf := typetable.NewRecord().Field("id", typ.String).Build()
+	shared := typetable.NewRecord().Field("payload", typ.NewUnion(typetable.NewRecord().Build(), leaf)).Build()
+	root := typetable.NewRecord().Field("a", shared).Field("b", shared).Build()
 
 	got := PruneSoftUnionMembers(root)
 	rec, ok := got.(*typ.Record)
@@ -123,8 +124,8 @@ func TestPruneSoftUnionMembers_PrimitiveFastPath(t *testing.T) {
 }
 
 func TestPruneSoftUnionMembers_AliasStillDescends(t *testing.T) {
-	leaf := typ.NewRecord().Field("id", typ.String).Build()
-	alias := typ.NewAlias("T", typ.NewUnion(typ.NewRecord().Build(), leaf))
+	leaf := typetable.NewRecord().Field("id", typ.String).Build()
+	alias := typ.NewAlias("T", typ.NewUnion(typetable.NewRecord().Build(), leaf))
 	got := PruneSoftUnionMembers(alias)
 	gotAlias, ok := got.(*typ.Alias)
 	if !ok {
@@ -137,7 +138,7 @@ func TestPruneSoftUnionMembers_AliasStillDescends(t *testing.T) {
 
 func TestPruneSoftUnionMembers_NormalizesNilableTableKeys(t *testing.T) {
 	key := typ.LiteralString("name")
-	softKey := typ.NewRecord().Build()
+	softKey := typetable.NewRecord().Build()
 	nilableKey := typ.NewUnion(typ.Nil, softKey, key)
 
 	assertKey := func(name string, got typ.Type) {
@@ -161,7 +162,7 @@ func TestPruneSoftUnionMembers_NormalizesNilableTableKeys(t *testing.T) {
 	}
 	assertKey("readonly map", readonlyResult.Key)
 
-	recordPruned := PruneSoftUnionMembers(typ.NewRecord().
+	recordPruned := PruneSoftUnionMembers(typetable.NewRecord().
 		MapComponent(nilableKey, typ.String).
 		Build())
 	recordResult, ok := recordPruned.(*typ.Record)

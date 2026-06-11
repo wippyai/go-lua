@@ -6,6 +6,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/type/annotation"
 	"github.com/wippyai/go-lua/analysis/type/kind"
+	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
@@ -498,7 +499,7 @@ func encodeRecord(r *typ.Record) (*typeWire, error) {
 }
 
 func decodeRecord(w *typeWire) (typ.Type, error) {
-	b := typ.NewRecord().SetOpen(w.Open)
+	b := typetable.NewRecord().SetOpen(w.Open)
 	for _, field := range w.Fields {
 		t, err := decodeType(field.Type)
 		if err != nil {

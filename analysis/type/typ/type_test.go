@@ -7,8 +7,8 @@ import (
 )
 
 func TestSameNodeUsesIdentityNotStructuralEquality(t *testing.T) {
-	left := NewRecord().Field("name", String).Build()
-	right := NewRecord().Field("name", String).Build()
+	left := newRecord().Field("name", String).Build()
+	right := newRecord().Field("name", String).Build()
 	if !SameNode(left, left) {
 		t.Fatal("SameNode should accept the same type node")
 	}

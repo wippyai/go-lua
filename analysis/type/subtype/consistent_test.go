@@ -3,6 +3,7 @@ package subtype
 import (
 	"testing"
 
+	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
@@ -15,10 +16,10 @@ func TestFreshEmptyTableConsistency(t *testing.T) {
 		{"array", typ.NewArray(typ.Number), true},
 		{"map", typ.NewMap(typ.String, typ.Number), true},
 		{"readonly map", typ.NewReadonlyMap(typ.String, typ.Number), true},
-		{"optional-only record", typ.NewRecord().OptField("x", typ.Number).Build(), true},
-		{"required-field record", typ.NewRecord().Field("x", typ.Number).Build(), false},
-		{"optional static member record", typ.NewRecord().AddStaticMember(typ.StaticMember{Kind: typ.StaticMemberStringIndex, Name: "x", Type: typ.Number, Optional: true}).Build(), true},
-		{"required static member record", typ.NewRecord().StaticStringIndex("x", typ.Number).Build(), false},
+		{"optional-only record", typetable.NewRecord().OptField("x", typ.Number).Build(), true},
+		{"required-field record", typetable.NewRecord().Field("x", typ.Number).Build(), false},
+		{"optional static member record", typetable.NewRecord().AddStaticMember(typ.StaticMember{Kind: typ.StaticMemberStringIndex, Name: "x", Type: typ.Number, Optional: true}).Build(), true},
+		{"required static member record", typetable.NewRecord().StaticStringIndex("x", typ.Number).Build(), false},
 		{"empty tuple", typ.NewTuple(), true},
 		{"non-empty tuple", typ.NewTuple(typ.Number), false},
 		{"optional table target", typ.NewOptional(typ.NewMap(typ.String, typ.Number)), true},
@@ -36,17 +37,17 @@ func TestFreshEmptyTableConsistency(t *testing.T) {
 	if !ConsistentFreshEmptyTable(typ.NewArray(typ.Number)) {
 		t.Fatal("fresh empty table should satisfy array target")
 	}
-	if Consistent(typ.NewArray(typ.Number), typ.NewRecord().Build()) {
+	if Consistent(typ.NewArray(typ.Number), typetable.NewRecord().Build()) {
 		t.Fatal("empty table literal direction should not be admitted through ordinary Consistent")
 	}
-	if Consistent(typ.NewRecord().Build(), typ.NewTuple()) {
+	if Consistent(typetable.NewRecord().Build(), typ.NewTuple()) {
 		t.Fatal("ordinary empty record source should not gain empty-literal consistency")
 	}
 }
 
 func TestConsistentSubtypeAnyBridge(t *testing.T) {
-	lower := typ.NewRecord().Field("id", typ.Any).Field("n", typ.Number).Build()
-	upper := typ.NewRecord().Field("id", typ.String).Field("n", typ.Number).Build()
+	lower := typetable.NewRecord().Field("id", typ.Any).Field("n", typ.Number).Build()
+	upper := typetable.NewRecord().Field("id", typ.String).Field("n", typ.Number).Build()
 	if IsSubtype(lower, upper) {
 		t.Fatal("strict order should reject any source field to concrete field")
 	}

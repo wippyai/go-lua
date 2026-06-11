@@ -4,7 +4,7 @@ import "testing"
 
 func TestContainsAny_RecursiveTypeTerminates(t *testing.T) {
 	node := NewRecursive("Node", func(self Type) Type {
-		return NewRecord().
+		return newRecord().
 			Field("next", NewOptional(self)).
 			Field("value", String).
 			Build()
@@ -17,19 +17,19 @@ func TestContainsAny_RecursiveTypeTerminates(t *testing.T) {
 
 func TestContainsRecursive_UsesProductFlags(t *testing.T) {
 	node := NewRecursive("Node", func(self Type) Type {
-		return NewRecord().Field("next", NewOptional(self)).Build()
+		return newRecord().Field("next", NewOptional(self)).Build()
 	})
 	if !ContainsRecursive(NewUnion(String, node)) {
 		t.Fatal("ContainsRecursive() missed recursive union member")
 	}
-	if ContainsRecursive(NewRecord().Field("name", String).Build()) {
+	if ContainsRecursive(newRecord().Field("name", String).Build()) {
 		t.Fatal("ContainsRecursive() reported recursion in concrete record")
 	}
 }
 
 func TestContainsAny_RecursiveTypeFindsNestedAny(t *testing.T) {
 	node := NewRecursive("Node", func(self Type) Type {
-		return NewRecord().
+		return newRecord().
 			Field("next", NewOptional(self)).
 			Field("value", Any).
 			Build()
@@ -55,9 +55,9 @@ func TestContainsAny_NestedFunctionType(t *testing.T) {
 
 func TestContains_PrunesEquivalentRebuiltStructuralNodes(t *testing.T) {
 	leaf := func() Type {
-		return NewRecord().Field("payload", String).Build()
+		return newRecord().Field("payload", String).Build()
 	}
-	root := NewRecord().
+	root := newRecord().
 		Field("left", NewArray(leaf())).
 		Field("right", NewArray(leaf())).
 		Build()
@@ -83,8 +83,8 @@ func TestContains_PrunesEquivalentRebuiltStructuralNodes(t *testing.T) {
 func TestContains_PrunesEquivalentFunctionReturnShapes(t *testing.T) {
 	resultShape := func() Type {
 		return Func().
-			Param("ctx", NewRecord().Field("id", String).Build()).
-			Returns(NewRecord().
+			Param("ctx", newRecord().Field("id", String).Build()).
+			Returns(newRecord().
 				Field("ok", Boolean).
 				Field("value", Number).
 				Build()).
@@ -110,7 +110,7 @@ func TestContains_FindsTypeParamInsideRepeatedShape(t *testing.T) {
 	repeated := func() Type {
 		return Func().
 			Param("input", String).
-			Returns(NewRecord().Field("value", tp).Build()).
+			Returns(newRecord().Field("value", tp).Build()).
 			Build()
 	}
 	root := NewTuple(repeated(), repeated())
@@ -129,7 +129,7 @@ func TestContains_FindsTypeParamInsideRepeatedShape(t *testing.T) {
 func TestContains_NoDepthCapFindsDeepNestedPredicate(t *testing.T) {
 	tpe := Never
 	for i := 0; i < DefaultRecursionDepth+8; i++ {
-		tpe = NewRecord().Field("next", tpe).Build()
+		tpe = newRecord().Field("next", tpe).Build()
 	}
 
 	if !Contains(tpe, IsNever) {
@@ -140,7 +140,7 @@ func TestContains_NoDepthCapFindsDeepNestedPredicate(t *testing.T) {
 func TestContains_PrunesEquivalentRecursiveBranches(t *testing.T) {
 	nodeShape := func() Type {
 		return NewRecursive("Node", func(self Type) Type {
-			return NewRecord().
+			return newRecord().
 				Field("next", NewOptional(self)).
 				Field("value", String).
 				Build()
@@ -165,10 +165,10 @@ func TestContainsAny_SeesAnyThroughLaterAssignedRecursiveBody(t *testing.T) {
 	a := NewRecursivePlaceholder("A")
 	b := NewRecursivePlaceholder("B")
 
-	a.SetBody(NewRecord().
+	a.SetBody(newRecord().
 		Field("b", b).
 		Build())
-	b.SetBody(NewRecord().
+	b.SetBody(newRecord().
 		Field("value", Any).
 		Build())
 
@@ -178,7 +178,7 @@ func TestContainsAny_SeesAnyThroughLaterAssignedRecursiveBody(t *testing.T) {
 }
 
 func TestContainsAny_TypeParamConstraint(t *testing.T) {
-	tp := NewTypeParam("T", NewRecord().Field("value", Any).Build())
+	tp := NewTypeParam("T", newRecord().Field("value", Any).Build())
 	fn := Func().TypeParam("T", tp.Constraint).Returns(tp).Build()
 
 	if !ContainsAny(fn) {
@@ -189,7 +189,7 @@ func TestContainsAny_TypeParamConstraint(t *testing.T) {
 func TestContainsTypeParam_RecursiveConstraintTerminates(t *testing.T) {
 	rec := NewRecursive("Box", func(self Type) Type {
 		tp := NewTypeParam("T", self)
-		return NewRecord().
+		return newRecord().
 			Field("value", tp).
 			Field("next", NewOptional(self)).
 			Build()
@@ -202,15 +202,15 @@ func TestContainsTypeParam_RecursiveConstraintTerminates(t *testing.T) {
 
 func TestContainsAny_NonRecursiveStructuralFlag(t *testing.T) {
 	withoutAny := Func().
-		Param("input", NewRecord().
+		Param("input", newRecord().
 			Field("meta", NewMap(String, Number)).
-			Field("items", NewArray(NewRecord().Field("id", String).Build())).
+			Field("items", NewArray(newRecord().Field("id", String).Build())).
 			Build()).
 		Returns(NewTuple(String, Number)).
 		Build()
 	withAny := Func().
 		Param("input", withoutAny).
-		Returns(NewRecord().Field("value", Any).Build()).
+		Returns(newRecord().Field("value", Any).Build()).
 		Build()
 
 	if ContainsAny(withoutAny) {
@@ -223,12 +223,12 @@ func TestContainsAny_NonRecursiveStructuralFlag(t *testing.T) {
 
 func TestContainsInstantiated_NonRecursiveStructuralFlag(t *testing.T) {
 	tp := NewTypeParam("T", nil)
-	box := NewGeneric("Box", []*TypeParam{tp}, NewRecord().Field("value", tp).Build())
-	withoutInst := NewRecord().
+	box := NewGeneric("Box", []*TypeParam{tp}, newRecord().Field("value", tp).Build())
+	withoutInst := newRecord().
 		Field("id", String).
-		Field("items", NewArray(NewRecord().Field("name", String).Build())).
+		Field("items", NewArray(newRecord().Field("name", String).Build())).
 		Build()
-	withInst := NewRecord().
+	withInst := newRecord().
 		Field("box", Instantiate(box, Number)).
 		Build()
 
@@ -242,15 +242,15 @@ func TestContainsInstantiated_NonRecursiveStructuralFlag(t *testing.T) {
 
 func TestContainsNever_NonRecursiveStructuralFlag(t *testing.T) {
 	withoutNever := Func().
-		Param("input", NewRecord().
+		Param("input", newRecord().
 			Field("meta", NewMap(String, Number)).
-			Field("items", NewArray(NewRecord().Field("id", String).Build())).
+			Field("items", NewArray(newRecord().Field("id", String).Build())).
 			Build()).
 		Returns(NewTuple(String, Number)).
 		Build()
 	withNever := Func().
 		Param("input", withoutNever).
-		Returns(NewRecord().Field("value", Never).Build()).
+		Returns(newRecord().Field("value", Never).Build()).
 		Build()
 
 	if ContainsNever(withoutNever) {
@@ -263,12 +263,12 @@ func TestContainsNever_NonRecursiveStructuralFlag(t *testing.T) {
 
 func TestContainsInstantiated_SeesLaterAssignedRecursiveBody(t *testing.T) {
 	tp := NewTypeParam("T", nil)
-	box := NewGeneric("Box", []*TypeParam{tp}, NewRecord().Field("value", tp).Build())
+	box := NewGeneric("Box", []*TypeParam{tp}, newRecord().Field("value", tp).Build())
 	a := NewRecursivePlaceholder("A")
 	b := NewRecursivePlaceholder("B")
 
-	a.SetBody(NewRecord().Field("b", b).Build())
-	b.SetBody(NewRecord().Field("box", Instantiate(box, String)).Build())
+	a.SetBody(newRecord().Field("b", b).Build())
+	b.SetBody(newRecord().Field("box", Instantiate(box, String)).Build())
 
 	if !ContainsInstantiated(a) {
 		t.Fatal("ContainsInstantiated() missed instantiation through later assigned recursive body")
@@ -277,14 +277,14 @@ func TestContainsInstantiated_SeesLaterAssignedRecursiveBody(t *testing.T) {
 
 func TestContainsPredicates_ClosedRecursiveProductUsesStableFlags(t *testing.T) {
 	node := NewRecursive("Node", func(self Type) Type {
-		return NewRecord().
+		return newRecord().
 			Field("next", NewOptional(self)).
 			Field("value", String).
 			Build()
 	})
 	fn := Func().
 		Param("node", node).
-		Returns(NewRecord().
+		Returns(newRecord().
 			Field("root", node).
 			Field("children", NewArray(node)).
 			Build()).
@@ -309,7 +309,7 @@ func TestContainsPredicates_ClosedRecursiveProductUsesStableFlags(t *testing.T) 
 
 func TestContainsAny_OpenRecursiveProductSeesLaterBodyMutation(t *testing.T) {
 	node := NewRecursivePlaceholder("Node")
-	wrapper := NewRecord().
+	wrapper := newRecord().
 		Field("root", node).
 		Field("label", String).
 		Build()
@@ -321,7 +321,7 @@ func TestContainsAny_OpenRecursiveProductSeesLaterBodyMutation(t *testing.T) {
 		t.Fatal("ContainsAny() reported any before recursive placeholder body existed")
 	}
 
-	node.SetBody(NewRecord().Field("value", Any).Build())
+	node.SetBody(newRecord().Field("value", Any).Build())
 
 	if !ContainsAny(wrapper) {
 		t.Fatal("ContainsAny() missed any introduced by later recursive placeholder body")
@@ -339,7 +339,7 @@ func TestContainsTypeParam_OpenRecursiveProductSeesLaterBodyMutation(t *testing.
 		t.Fatal("ContainsTypeParam() reported type parameter before recursive placeholder body existed")
 	}
 
-	node.SetBody(NewRecord().Field("value", NewTypeParam("T", nil)).Build())
+	node.SetBody(newRecord().Field("value", NewTypeParam("T", nil)).Build())
 
 	if !ContainsTypeParam(wrapper) {
 		t.Fatal("ContainsTypeParam() missed type parameter introduced by later recursive placeholder body")
@@ -348,7 +348,7 @@ func TestContainsTypeParam_OpenRecursiveProductSeesLaterBodyMutation(t *testing.
 
 func TestContainsInstantiated_OpenRecursiveProductSeesLaterBodyMutation(t *testing.T) {
 	tp := NewTypeParam("T", nil)
-	box := NewGeneric("Box", []*TypeParam{tp}, NewRecord().Field("value", tp).Build())
+	box := NewGeneric("Box", []*TypeParam{tp}, newRecord().Field("value", tp).Build())
 	node := NewRecursivePlaceholder("Node")
 	wrapper := NewMap(String, node)
 
@@ -359,7 +359,7 @@ func TestContainsInstantiated_OpenRecursiveProductSeesLaterBodyMutation(t *testi
 		t.Fatal("ContainsInstantiated() reported instantiation before recursive placeholder body existed")
 	}
 
-	node.SetBody(NewRecord().Field("box", Instantiate(box, Number)).Build())
+	node.SetBody(newRecord().Field("box", Instantiate(box, Number)).Build())
 
 	if !ContainsInstantiated(wrapper) {
 		t.Fatal("ContainsInstantiated() missed instantiation introduced by later recursive placeholder body")
@@ -377,7 +377,7 @@ func TestContainsNever_OpenRecursiveProductSeesLaterBodyMutation(t *testing.T) {
 		t.Fatal("ContainsNever() reported never before recursive placeholder body existed")
 	}
 
-	node.SetBody(NewRecord().Field("value", Never).Build())
+	node.SetBody(newRecord().Field("value", Never).Build())
 
 	if !ContainsNever(wrapper) {
 		t.Fatal("ContainsNever() missed never introduced by later recursive placeholder body")
@@ -431,7 +431,7 @@ func TestContainsReadonlyMapDynamicPredicatesTraverseKeyAndValue(t *testing.T) {
 					t.Fatal("predicate reported marker before recursive placeholder body existed")
 				}
 
-				node.SetBody(NewRecord().Field("value", tc.marker()).Build())
+				node.SetBody(newRecord().Field("value", tc.marker()).Build())
 
 				if !tc.contains(wrapper) {
 					t.Fatal("predicate missed marker introduced through ReadonlyMap")
@@ -444,7 +444,7 @@ func TestContainsReadonlyMapDynamicPredicatesTraverseKeyAndValue(t *testing.T) {
 func TestContainsStaticMemberTraversesTypes(t *testing.T) {
 	stringMember := NewTypeParam("S", nil)
 	intMember := NewTypeParam("I", nil)
-	wrapper := NewRecord().
+	wrapper := newRecord().
 		StaticStringIndex("name", stringMember).
 		StaticIntIndex(1, intMember).
 		Build()
@@ -474,7 +474,7 @@ func TestContainsStaticMemberDynamicPredicatesTraverseTypes(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			node := NewRecursivePlaceholder("Node")
-			wrapper := NewRecord().
+			wrapper := newRecord().
 				StaticStringIndex("node", node).
 				Build()
 
@@ -485,7 +485,7 @@ func TestContainsStaticMemberDynamicPredicatesTraverseTypes(t *testing.T) {
 				t.Fatal("predicate reported marker before recursive placeholder body existed")
 			}
 
-			node.SetBody(NewRecord().Field("value", tc.marker()).Build())
+			node.SetBody(newRecord().Field("value", tc.marker()).Build())
 
 			if !tc.contains(wrapper) {
 				t.Fatal("predicate missed marker introduced through static member")
@@ -496,6 +496,6 @@ func TestContainsStaticMemberDynamicPredicatesTraverseTypes(t *testing.T) {
 
 func traversalInstantiatedMarker() Type {
 	tp := NewTypeParam("T", nil)
-	box := NewGeneric("Box", []*TypeParam{tp}, NewRecord().Field("value", tp).Build())
+	box := NewGeneric("Box", []*TypeParam{tp}, newRecord().Field("value", tp).Build())
 	return Instantiate(box, Number)
 }

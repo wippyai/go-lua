@@ -78,7 +78,7 @@ func TestRewrite_Union(t *testing.T) {
 }
 
 func TestRewrite_Intersection(t *testing.T) {
-	rec := NewRecord().Field("x", Boolean).Build()
+	rec := newRecord().Field("x", Boolean).Build()
 	inter := NewIntersection(Number, rec)
 	result := Rewrite(inter, replaceNumber(String))
 	intersection, ok := result.(*Intersection)
@@ -178,7 +178,7 @@ func TestRewrite_FunctionPreservesOptionalParam(t *testing.T) {
 }
 
 func TestRewrite_Record(t *testing.T) {
-	rec := NewRecord().Field("x", Number).OptField("y", Number).Build()
+	rec := newRecord().Field("x", Number).OptField("y", Number).Build()
 	result := Rewrite(rec, replaceNumber(String))
 	r, ok := result.(*Record)
 	if !ok {
@@ -195,7 +195,7 @@ func TestRewrite_Record(t *testing.T) {
 }
 
 func TestRewrite_RecordReadonly(t *testing.T) {
-	rec := NewRecord().ReadonlyField("id", Number).Build()
+	rec := newRecord().ReadonlyField("id", Number).Build()
 	result := Rewrite(rec, replaceNumber(String))
 	r, ok := result.(*Record)
 	if !ok {
@@ -208,8 +208,8 @@ func TestRewrite_RecordReadonly(t *testing.T) {
 }
 
 func TestRewrite_RecordMetatable(t *testing.T) {
-	mt := NewRecord().Field("__index", Number).Build()
-	rec := NewRecord().Field("x", Boolean).Metatable(mt).Build()
+	mt := newRecord().Field("__index", Number).Build()
+	rec := newRecord().Field("x", Boolean).Metatable(mt).Build()
 	result := Rewrite(rec, replaceNumber(String))
 	r, ok := result.(*Record)
 	if !ok {
@@ -277,7 +277,7 @@ func TestRewrite_TypeParamConstraint(t *testing.T) {
 
 func TestRewrite_GenericBodyAndTypeParamConstraint(t *testing.T) {
 	tp := NewTypeParam("T", Number)
-	g := NewGeneric("Box", []*TypeParam{tp}, NewRecord().Field("value", tp).Build())
+	g := NewGeneric("Box", []*TypeParam{tp}, newRecord().Field("value", tp).Build())
 
 	result := Rewrite(g, replaceNumber(String))
 	got, ok := result.(*Generic)
@@ -330,7 +330,7 @@ func TestRewrite_Interface(t *testing.T) {
 
 func TestRewrite_RecursiveBody(t *testing.T) {
 	node := NewRecursive("Node", func(self Type) Type {
-		return NewRecord().
+		return newRecord().
 			Field("value", Number).
 			Field("next", NewOptional(self)).
 			Build()
@@ -360,7 +360,7 @@ func TestRewrite_RecursiveBody(t *testing.T) {
 }
 
 func TestRewrite_SelfSubstitution(t *testing.T) {
-	rec := NewRecord().Field("x", Number).Build()
+	rec := newRecord().Field("x", Number).Build()
 	fn := Func().Param("self", Self).Returns(Self).Build()
 	result := Rewrite(fn, replaceSelf(rec))
 	f, ok := result.(*Function)

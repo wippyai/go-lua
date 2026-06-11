@@ -3,6 +3,7 @@ package subst
 import (
 	"testing"
 
+	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
@@ -110,7 +111,7 @@ func TestParams(t *testing.T) {
 			Param("x", inner).
 			Returns(inner).
 			Build()
-		rec := typ.NewRecord().
+		rec := typetable.NewRecord().
 			Field("value", outer).
 			Field("callback", nested).
 			Build()
@@ -163,7 +164,7 @@ func TestSelf(t *testing.T) {
 
 	t.Run("replace self unioned with recursive payload", func(t *testing.T) {
 		rec := typ.NewRecursive("Node", func(self typ.Type) typ.Type {
-			return typ.NewRecord().Field("next", self).Build()
+			return typetable.NewRecord().Field("next", self).Build()
 		})
 		arg := typ.NewUnion(typ.Self, rec)
 		result := Self(arg, typ.String)
@@ -174,12 +175,12 @@ func TestSelf(t *testing.T) {
 
 	t.Run("skip concrete recursive payload without self", func(t *testing.T) {
 		rec := typ.NewRecursive("Node", func(self typ.Type) typ.Type {
-			return typ.NewRecord().
+			return typetable.NewRecord().
 				Field("next", self).
 				Field("handler", typ.Func().Param("node", self).Returns(self).Build()).
 				Build()
 		})
-		wrapper := typ.NewRecord().
+		wrapper := typetable.NewRecord().
 			Field("payload", rec).
 			Field("fn", typ.Func().Param("node", rec).Returns(rec).Build()).
 			Build()
@@ -190,9 +191,9 @@ func TestSelf(t *testing.T) {
 }
 
 func TestSelfValueStopsAtNestedCallableBinders(t *testing.T) {
-	selfType := typ.NewRecord().Field("id", typ.String).Build()
+	selfType := typetable.NewRecord().Field("id", typ.String).Build()
 	nestedMethod := typ.Func().Param("self", typ.Self).Returns(typ.Self).Build()
-	value := typ.NewRecord().
+	value := typetable.NewRecord().
 		Field("owner", typ.Self).
 		Field("method", nestedMethod).
 		Build()
@@ -227,11 +228,11 @@ func TestExpandInstantiated(t *testing.T) {
 
 	t.Run("non-instantiated structural product", func(t *testing.T) {
 		concrete := typ.Func().
-			Param("ctx", typ.NewRecord().
+			Param("ctx", typetable.NewRecord().
 				Field("id", typ.String).
-				Field("items", typ.NewArray(typ.NewRecord().Field("name", typ.String).Build())).
+				Field("items", typ.NewArray(typetable.NewRecord().Field("name", typ.String).Build())).
 				Build()).
-			Returns(typ.NewRecord().Field("ok", typ.Boolean).Build()).
+			Returns(typetable.NewRecord().Field("ok", typ.Boolean).Build()).
 			Build()
 		if ExpandInstantiated(concrete) != concrete {
 			t.Error("concrete structural product should return original")
@@ -278,7 +279,7 @@ func TestExpandInstantiated(t *testing.T) {
 			t.Fatalf("instantiated readonly map key = %v, want string", readonlyResult.Key)
 		}
 
-		recordGeneric := typ.NewGeneric("RecordMap", []*typ.TypeParam{tp}, typ.NewRecord().
+		recordGeneric := typ.NewGeneric("RecordMap", []*typ.TypeParam{tp}, typetable.NewRecord().
 			MapComponent(nilableKey, typ.Number).
 			Build())
 		recordExpanded := ExpandInstantiated(typ.Instantiate(recordGeneric, typ.String))
@@ -331,7 +332,7 @@ func TestExpandInstantiated(t *testing.T) {
 	t.Run("keeps recursive instantiated function parameter lazy", func(t *testing.T) {
 		tp := typ.NewTypeParam("T", nil)
 		node := typ.NewGeneric("Node", []*typ.TypeParam{tp}, nil)
-		node.SetBody(typ.NewRecord().
+		node.SetBody(typetable.NewRecord().
 			Field("value", tp).
 			Field("next", typ.NewOptional(typ.Instantiate(node, tp))).
 			Build())

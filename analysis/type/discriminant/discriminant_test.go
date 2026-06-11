@@ -3,15 +3,16 @@ package discriminant
 import (
 	"testing"
 
+	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	. "github.com/wippyai/go-lua/analysis/type/typ"
 )
 
 func TestRecordsConflictOnRequiredLiteral(t *testing.T) {
-	a := NewRecord().
+	a := typetable.NewRecord().
 		Field("kind", LiteralString("a")).
 		Field("x", Number).
 		Build()
-	b := NewRecord().
+	b := typetable.NewRecord().
 		Field("kind", LiteralString("b")).
 		Field("y", String).
 		Build()
@@ -27,12 +28,12 @@ func TestRecordsConflictOnRequiredLiteral(t *testing.T) {
 }
 
 func TestRecordsDoNotConflictOnMultipleDifferingLiteralsWithCleanResidual(t *testing.T) {
-	a := NewRecord().
+	a := typetable.NewRecord().
 		Field("status_code", LiteralInt(401)).
 		Field("message", LiteralString("invalid key")).
 		Field("ok", Boolean).
 		Build()
-	b := NewRecord().
+	b := typetable.NewRecord().
 		Field("status_code", LiteralInt(400)).
 		Field("message", LiteralString("invalid model")).
 		Field("ok", Boolean).
@@ -52,20 +53,20 @@ func TestRecordsDoNotConflictOnMultipleDifferingLiteralsWithCleanResidual(t *tes
 }
 
 func TestRecordsConflictOnNestedRequiredLiteral(t *testing.T) {
-	leftPayload := NewRecord().
+	leftPayload := typetable.NewRecord().
 		Field("__tag", LiteralString("left")).
 		Field("value", Number).
 		Build()
-	rightPayload := NewRecord().
+	rightPayload := typetable.NewRecord().
 		Field("__tag", LiteralString("right")).
 		Field("value", Number).
 		Build()
-	a := NewRecord().
+	a := typetable.NewRecord().
 		Field("kind", LiteralString("event")).
 		Field("payload_kind", LiteralString("left")).
 		Field("payload", leftPayload).
 		Build()
-	b := NewRecord().
+	b := typetable.NewRecord().
 		Field("kind", LiteralString("event")).
 		Field("payload_kind", LiteralString("right")).
 		Field("payload", rightPayload).
@@ -81,12 +82,12 @@ func TestRecordsConflictOnNestedRequiredLiteral(t *testing.T) {
 }
 
 func TestRequiredTagsPreservesNestedNonRecursiveTag(t *testing.T) {
-	chanInt := NewAlias("__test_ChanInt", NewRecord().
+	chanInt := NewAlias("__test_ChanInt", typetable.NewRecord().
 		Field("__tag", LiteralString("int")).
 		Build())
-	errCase := NewRecord().
+	errCase := typetable.NewRecord().
 		Field("channel", chanInt).
-		Field("value", NewRecord().Field("error", String).Build()).
+		Field("value", typetable.NewRecord().Field("error", String).Build()).
 		Build()
 
 	tags := RequiredTags(errCase)
@@ -97,7 +98,7 @@ func TestRequiredTagsPreservesNestedNonRecursiveTag(t *testing.T) {
 
 func TestRequiredTagsRecursiveCycleSummarizesFiniteTags(t *testing.T) {
 	node := NewRecursive("Node", func(self Type) Type {
-		return NewRecord().
+		return typetable.NewRecord().
 			Field("kind", LiteralString("node")).
 			Field("next", self).
 			Build()
@@ -114,11 +115,11 @@ func TestRequiredTagsRecursiveCycleSummarizesFiniteTags(t *testing.T) {
 
 func TestClosedRecordSetConflict(t *testing.T) {
 	conflicting := []*Record{
-		NewRecord().
+		typetable.NewRecord().
 			Field("kind", LiteralString("a")).
 			Field("x", Number).
 			Build(),
-		NewRecord().
+		typetable.NewRecord().
 			Field("kind", LiteralString("b")).
 			Field("y", String).
 			Build(),
@@ -128,11 +129,11 @@ func TestClosedRecordSetConflict(t *testing.T) {
 	}
 
 	clean := []*Record{
-		NewRecord().
+		typetable.NewRecord().
 			Field("from", Func().Param("self", Self).Returns(Self).Build()).
 			Field("where", Func().Param("self", Self).Param("clause", String).Returns(Self).Build()).
 			Build(),
-		NewRecord().
+		typetable.NewRecord().
 			Field("from", Func().Param("self", Self).Returns(Self).Build()).
 			Field("where", Func().Param("self", Self).Param("clause", String).Returns(Self).Build()).
 			Field("limit", Number).

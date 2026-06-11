@@ -11,7 +11,7 @@ func TestRecursiveBasic(t *testing.T) {
 	// type Node = { next: Node? }
 	// This is a self-referential type
 	rec := NewRecursive("Node", func(self Type) Type {
-		return NewRecord().OptField("next", self).Build()
+		return newRecord().OptField("next", self).Build()
 	})
 
 	if rec.Kind() != kind.Recursive {
@@ -37,7 +37,7 @@ func TestRecursiveBasic(t *testing.T) {
 func TestRecursiveEqualsSelf(t *testing.T) {
 	// type Node = { next: Node? }
 	rec := NewRecursive("Node", func(self Type) Type {
-		return NewRecord().OptField("next", self).Build()
+		return newRecord().OptField("next", self).Build()
 	})
 
 	// Should equal itself without stack overflow
@@ -54,11 +54,11 @@ func TestRecursiveEqualsSelf(t *testing.T) {
 func TestRecursiveEqualsEquivalent(t *testing.T) {
 	// Create two structurally identical recursive types
 	rec1 := NewRecursive("Node", func(self Type) Type {
-		return NewRecord().OptField("next", self).Build()
+		return newRecord().OptField("next", self).Build()
 	})
 
 	rec2 := NewRecursive("Node", func(self Type) Type {
-		return NewRecord().OptField("next", self).Build()
+		return newRecord().OptField("next", self).Build()
 	})
 
 	// They should be structurally equal
@@ -70,11 +70,11 @@ func TestRecursiveEqualsEquivalent(t *testing.T) {
 // TestRecursiveNotEqualsNonRecursive tests that recursive types don't equal non-recursive.
 func TestRecursiveNotEqualsNonRecursive(t *testing.T) {
 	rec := NewRecursive("Node", func(self Type) Type {
-		return NewRecord().OptField("next", self).Build()
+		return newRecord().OptField("next", self).Build()
 	})
 
 	// A non-recursive record
-	plain := NewRecord().OptField("next", Number).Build()
+	plain := newRecord().OptField("next", Number).Build()
 
 	if TypeEquals(rec, plain) {
 		t.Error("recursive type should not equal non-recursive type")
@@ -84,11 +84,11 @@ func TestRecursiveNotEqualsNonRecursive(t *testing.T) {
 // TestRecursiveHashConsistency tests that same recursive structure produces same hash.
 func TestRecursiveHashConsistency(t *testing.T) {
 	rec1 := NewRecursive("Node", func(self Type) Type {
-		return NewRecord().OptField("next", self).Build()
+		return newRecord().OptField("next", self).Build()
 	})
 
 	rec2 := NewRecursive("Node", func(self Type) Type {
-		return NewRecord().OptField("next", self).Build()
+		return newRecord().OptField("next", self).Build()
 	})
 
 	if rec1.Hash() != rec2.Hash() {
@@ -99,7 +99,7 @@ func TestRecursiveHashConsistency(t *testing.T) {
 // TestRecursiveHashNoPanic tests that hashing a recursive type doesn't cause infinite recursion.
 func TestRecursiveHashNoPanic(t *testing.T) {
 	rec := NewRecursive("Node", func(self Type) Type {
-		return NewRecord().OptField("next", self).Build()
+		return newRecord().OptField("next", self).Build()
 	})
 
 	// Should not panic
@@ -108,10 +108,10 @@ func TestRecursiveHashNoPanic(t *testing.T) {
 
 func TestRecursiveSetBodyInvalidatesCachedHash(t *testing.T) {
 	rec := NewRecursivePlaceholder("Node")
-	rec.SetBody(NewRecord().Field("value", String).Build())
+	rec.SetBody(newRecord().Field("value", String).Build())
 	first := rec.Hash()
 
-	rec.SetBody(NewRecord().Field("value", Number).Build())
+	rec.SetBody(newRecord().Field("value", Number).Build())
 	second := rec.Hash()
 	if first == second {
 		t.Fatalf("SetBody should invalidate cached recursive hash")
@@ -121,7 +121,7 @@ func TestRecursiveSetBodyInvalidatesCachedHash(t *testing.T) {
 // TestRecursiveString tests string representation of recursive types.
 func TestRecursiveString(t *testing.T) {
 	rec := NewRecursive("Node", func(self Type) Type {
-		return NewRecord().OptField("next", self).Build()
+		return newRecord().OptField("next", self).Build()
 	})
 
 	s := rec.String()
@@ -138,7 +138,7 @@ func TestRecursiveString(t *testing.T) {
 // TestRecursiveStringNoPanic tests that String() on recursive type doesn't infinite loop.
 func TestRecursiveStringNoPanic(t *testing.T) {
 	rec := NewRecursive("Node", func(self Type) Type {
-		return NewRecord().OptField("next", self).Build()
+		return newRecord().OptField("next", self).Build()
 	})
 
 	// Should not panic or hang
@@ -154,8 +154,8 @@ func TestRecursiveMutualRecursion(t *testing.T) {
 	recB := NewRecursivePlaceholder("B")
 
 	// Now set the bodies
-	recA.SetBody(NewRecord().OptField("b", recB).Build())
-	recB.SetBody(NewRecord().OptField("a", recA).Build())
+	recA.SetBody(newRecord().OptField("b", recB).Build())
+	recB.SetBody(newRecord().OptField("a", recA).Build())
 
 	// Neither should cause infinite loops
 	if !TypeEquals(recA, recA) {
@@ -178,14 +178,14 @@ func TestRecursiveMutualHashOrderIndependence(t *testing.T) {
 	// Setup 1: A first, then B
 	recA1 := NewRecursivePlaceholder("X")
 	recB1 := NewRecursivePlaceholder("Y")
-	recA1.SetBody(NewRecord().OptField("ref", recB1).Build())
-	recB1.SetBody(NewRecord().OptField("ref", recA1).Build())
+	recA1.SetBody(newRecord().OptField("ref", recB1).Build())
+	recB1.SetBody(newRecord().OptField("ref", recA1).Build())
 
 	// Setup 2: B first, then A (reversed order)
 	recA2 := NewRecursivePlaceholder("X")
 	recB2 := NewRecursivePlaceholder("Y")
-	recB2.SetBody(NewRecord().OptField("ref", recA2).Build())
-	recA2.SetBody(NewRecord().OptField("ref", recB2).Build())
+	recB2.SetBody(newRecord().OptField("ref", recA2).Build())
+	recA2.SetBody(newRecord().OptField("ref", recB2).Build())
 
 	// Hashes should match regardless of setup order
 	if recA1.Hash() != recA2.Hash() {
@@ -207,7 +207,7 @@ func TestRecursiveMutualHashOrderIndependence(t *testing.T) {
 // TestRecursiveInUnion tests recursive type as union member.
 func TestRecursiveInUnion(t *testing.T) {
 	rec := NewRecursive("Node", func(self Type) Type {
-		return NewRecord().OptField("next", self).Build()
+		return newRecord().OptField("next", self).Build()
 	})
 
 	union := NewUnion(rec, Nil)
@@ -224,7 +224,7 @@ func TestRecursiveInUnion(t *testing.T) {
 // TestRecursiveAsAliasTarget tests recursive type wrapped in alias.
 func TestRecursiveAsAliasTarget(t *testing.T) {
 	rec := NewRecursive("Node", func(self Type) Type {
-		return NewRecord().OptField("next", self).Build()
+		return newRecord().OptField("next", self).Build()
 	})
 
 	alias := NewAlias("MyNode", rec)
@@ -243,7 +243,7 @@ func TestRecursiveListType(t *testing.T) {
 	// type List<T> = nil | { head: T, tail: List<T> }
 	// Simplified: type List = { head: number, tail: List? }
 	rec := NewRecursive("List", func(self Type) Type {
-		return NewRecord().
+		return newRecord().
 			Field("head", Number).
 			OptField("tail", self).
 			Build()
@@ -266,7 +266,7 @@ func TestRecursiveListType(t *testing.T) {
 func TestRecursiveTreeType(t *testing.T) {
 	// type Tree = { value: number, left: Tree?, right: Tree? }
 	rec := NewRecursive("Tree", func(self Type) Type {
-		return NewRecord().
+		return newRecord().
 			Field("value", Number).
 			OptField("left", self).
 			OptField("right", self).
@@ -282,12 +282,12 @@ func TestRecursiveTreeType(t *testing.T) {
 func TestRecursiveDifferentStructuresNotEqual(t *testing.T) {
 	// type A = { next: A? }
 	recA := NewRecursive("A", func(self Type) Type {
-		return NewRecord().OptField("next", self).Build()
+		return newRecord().OptField("next", self).Build()
 	})
 
 	// type B = { child: B?, value: number }
 	recB := NewRecursive("B", func(self Type) Type {
-		return NewRecord().
+		return newRecord().
 			OptField("child", self).
 			Field("value", Number).
 			Build()
@@ -301,7 +301,7 @@ func TestRecursiveDifferentStructuresNotEqual(t *testing.T) {
 // TestIsRecursiveRef tests the IsRecursiveRef utility function.
 func TestIsRecursiveRef(t *testing.T) {
 	rec := NewRecursive("Node", func(self Type) Type {
-		return NewRecord().OptField("next", self).Build()
+		return newRecord().OptField("next", self).Build()
 	})
 
 	// Same pointer should match
@@ -317,7 +317,7 @@ func TestIsRecursiveRef(t *testing.T) {
 
 	// Different ID should not match
 	rec3 := NewRecursive("Other", func(self Type) Type {
-		return NewRecord().OptField("next", self).Build()
+		return newRecord().OptField("next", self).Build()
 	})
 	if IsRecursiveRef(rec3, rec) {
 		t.Error("IsRecursiveRef should return false for different IDs")
@@ -338,7 +338,7 @@ func TestIsRecursiveRef(t *testing.T) {
 func TestRecursiveInArray(t *testing.T) {
 	// type Node = { children: Node[] }
 	rec := NewRecursive("Node", func(self Type) Type {
-		return NewRecord().Field("children", NewArray(self)).Build()
+		return newRecord().Field("children", NewArray(self)).Build()
 	})
 
 	// Hash should be stable
@@ -355,7 +355,7 @@ func TestRecursiveInArray(t *testing.T) {
 
 	// Equivalent structure should be equal
 	rec2 := NewRecursive("Node", func(self Type) Type {
-		return NewRecord().Field("children", NewArray(self)).Build()
+		return newRecord().Field("children", NewArray(self)).Build()
 	})
 	if !TypeEquals(rec, rec2) {
 		t.Error("equivalent recursive types in arrays should be equal")
@@ -366,7 +366,7 @@ func TestRecursiveInArray(t *testing.T) {
 func TestRecursiveInMap(t *testing.T) {
 	// type Node = { lookup: Map<string, Node> }
 	rec := NewRecursive("Node", func(self Type) Type {
-		return NewRecord().Field("lookup", NewMap(String, self)).Build()
+		return newRecord().Field("lookup", NewMap(String, self)).Build()
 	})
 
 	h1 := rec.Hash()
@@ -384,7 +384,7 @@ func TestRecursiveInMap(t *testing.T) {
 func TestRecursiveInTuple(t *testing.T) {
 	// type Node = { pair: (Node, number) }
 	rec := NewRecursive("Node", func(self Type) Type {
-		return NewRecord().Field("pair", NewTuple(self, Number)).Build()
+		return newRecord().Field("pair", NewTuple(self, Number)).Build()
 	})
 
 	h1 := rec.Hash()
@@ -420,9 +420,9 @@ func TestRecursiveInFunction(t *testing.T) {
 func TestRecursiveNestedRecords(t *testing.T) {
 	// type Node = { a: { b: { c: Node? } } }
 	rec := NewRecursive("Node", func(self Type) Type {
-		inner := NewRecord().OptField("c", self).Build()
-		middle := NewRecord().Field("b", inner).Build()
-		return NewRecord().Field("a", middle).Build()
+		inner := newRecord().OptField("c", self).Build()
+		middle := newRecord().Field("b", inner).Build()
+		return newRecord().Field("a", middle).Build()
 	})
 
 	h1 := rec.Hash()
@@ -437,9 +437,9 @@ func TestRecursiveNestedRecords(t *testing.T) {
 
 	// Equivalent structure
 	rec2 := NewRecursive("Node", func(self Type) Type {
-		inner := NewRecord().OptField("c", self).Build()
-		middle := NewRecord().Field("b", inner).Build()
-		return NewRecord().Field("a", middle).Build()
+		inner := newRecord().OptField("c", self).Build()
+		middle := newRecord().Field("b", inner).Build()
+		return newRecord().Field("a", middle).Build()
 	})
 	if !TypeEquals(rec, rec2) {
 		t.Error("equivalent deeply nested recursive types should be equal")
@@ -455,9 +455,9 @@ func TestRecursiveTripleMutual(t *testing.T) {
 	recB := NewRecursivePlaceholder("B")
 	recC := NewRecursivePlaceholder("C")
 
-	recA.SetBody(NewRecord().OptField("b", recB).Build())
-	recB.SetBody(NewRecord().OptField("c", recC).Build())
-	recC.SetBody(NewRecord().OptField("a", recA).Build())
+	recA.SetBody(newRecord().OptField("b", recB).Build())
+	recB.SetBody(newRecord().OptField("c", recC).Build())
+	recC.SetBody(newRecord().OptField("a", recA).Build())
 
 	// All should equal themselves
 	if !TypeEquals(recA, recA) {
@@ -502,7 +502,7 @@ func TestRecursivePlaceholderNilBody(t *testing.T) {
 func TestRecursiveHashDeterminism(t *testing.T) {
 	for i := 0; i < 100; i++ {
 		rec := NewRecursive("Node", func(self Type) Type {
-			return NewRecord().OptField("next", self).Build()
+			return newRecord().OptField("next", self).Build()
 		})
 		h1 := rec.Hash()
 		h2 := rec.Hash()
@@ -516,7 +516,7 @@ func TestRecursiveHashDeterminism(t *testing.T) {
 // TestRecursiveInOptional tests recursive type wrapped in optional.
 func TestRecursiveInOptional(t *testing.T) {
 	rec := NewRecursive("Node", func(self Type) Type {
-		return NewRecord().Field("next", NewOptional(self)).Build()
+		return newRecord().Field("next", NewOptional(self)).Build()
 	})
 
 	h1 := rec.Hash()
@@ -533,7 +533,7 @@ func TestRecursiveInOptional(t *testing.T) {
 // TestRecursiveInUnionMultiple tests recursive type in union with multiple members.
 func TestRecursiveInUnionMultiple(t *testing.T) {
 	rec := NewRecursive("Node", func(self Type) Type {
-		return NewRecord().Field("value", NewUnion(self, Number, String)).Build()
+		return newRecord().Field("value", NewUnion(self, Number, String)).Build()
 	})
 
 	h1 := rec.Hash()
@@ -550,11 +550,11 @@ func TestRecursiveInUnionMultiple(t *testing.T) {
 // TestRecursiveEqualsDifferentNames tests that name affects equality.
 func TestRecursiveEqualsDifferentNames(t *testing.T) {
 	rec1 := NewRecursive("Node", func(self Type) Type {
-		return NewRecord().OptField("next", self).Build()
+		return newRecord().OptField("next", self).Build()
 	})
 
 	rec2 := NewRecursive("Item", func(self Type) Type {
-		return NewRecord().OptField("next", self).Build()
+		return newRecord().OptField("next", self).Build()
 	})
 
 	// Different names means different types
@@ -575,14 +575,14 @@ func TestUnionKeepsMutualRecursiveFamiliesByIdentity(t *testing.T) {
 	// Build mutual recursion: A <-> B, first order
 	recA1 := NewRecursivePlaceholder("A")
 	recB1 := NewRecursivePlaceholder("B")
-	recA1.SetBody(NewRecord().OptField("b", recB1).Build())
-	recB1.SetBody(NewRecord().OptField("a", recA1).Build())
+	recA1.SetBody(newRecord().OptField("b", recB1).Build())
+	recB1.SetBody(newRecord().OptField("a", recA1).Build())
 
 	// Build equivalent mutual recursion, second order
 	recA2 := NewRecursivePlaceholder("A")
 	recB2 := NewRecursivePlaceholder("B")
-	recB2.SetBody(NewRecord().OptField("a", recA2).Build())
-	recA2.SetBody(NewRecord().OptField("b", recB2).Build())
+	recB2.SetBody(newRecord().OptField("a", recA2).Build())
+	recA2.SetBody(newRecord().OptField("b", recB2).Build())
 
 	union := NewUnion(recA1, recA2, Number)
 	u, ok := union.(*Union)
@@ -597,7 +597,7 @@ func TestUnionKeepsMutualRecursiveFamiliesByIdentity(t *testing.T) {
 
 func TestRecursiveContentFlagsDoNotForceGraphClosure(t *testing.T) {
 	rec := NewRecursivePlaceholder("Node")
-	rec.SetBody(NewRecord().Field("value", String).Build())
+	rec.SetBody(newRecord().Field("value", String).Build())
 
 	if !rec.containsFlagsDirty || !rec.containsClosedDirty {
 		t.Fatal("fresh recursive body should mark both content and graph-closure flags dirty")
@@ -619,7 +619,7 @@ func TestRecursiveContentFlagsDoNotForceGraphClosure(t *testing.T) {
 	}
 
 	direct := NewRecursivePlaceholder("Direct")
-	direct.SetBody(NewRecord().Field("value", String).Build())
+	direct.SetBody(newRecord().Field("value", String).Build())
 	if ContainsAny(direct) {
 		t.Fatal("direct recursive record without any should not contain any")
 	}
@@ -630,10 +630,10 @@ func TestRecursiveContentFlagsDoNotForceGraphClosure(t *testing.T) {
 
 func TestOpenRecursiveWrapperHashRefreshesForEquality(t *testing.T) {
 	rec := NewRecursivePlaceholder("Node")
-	staleWrapper := NewRecord().OptField("next", rec).Build()
+	staleWrapper := newRecord().OptField("next", rec).Build()
 
-	rec.SetBody(NewRecord().Field("value", Number).OptField("next", rec).Build())
-	freshWrapper := NewRecord().OptField("next", rec).Build()
+	rec.SetBody(newRecord().Field("value", Number).OptField("next", rec).Build())
+	freshWrapper := newRecord().OptField("next", rec).Build()
 
 	if !TypeEquals(staleWrapper, freshWrapper) {
 		t.Fatal("wrapper built before recursive SetBody should remain structurally equal to a fresh wrapper")
@@ -648,8 +648,8 @@ func TestOpenRecursiveWrapperHashRefreshesForEquality(t *testing.T) {
 func TestRecursiveMutualHashConsistency(t *testing.T) {
 	recA := NewRecursivePlaceholder("A")
 	recB := NewRecursivePlaceholder("B")
-	recA.SetBody(NewRecord().OptField("b", recB).Build())
-	recB.SetBody(NewRecord().OptField("a", recA).Build())
+	recA.SetBody(newRecord().OptField("b", recB).Build())
+	recB.SetBody(newRecord().OptField("a", recA).Build())
 
 	// Access hashes multiple times
 	hashes := make([]uint64, 10)
@@ -679,15 +679,15 @@ func TestRecursiveMutualHashConsistency(t *testing.T) {
 func TestRecursiveHashDependencyInvalidatesOnMutualBodyChange(t *testing.T) {
 	recA := NewRecursivePlaceholder("A")
 	recB := NewRecursivePlaceholder("B")
-	recB.SetBody(NewRecord().Field("a", recA).Build())
-	recA.SetBody(NewRecord().Field("b", recB).Build())
+	recB.SetBody(newRecord().Field("a", recA).Build())
+	recA.SetBody(newRecord().Field("b", recB).Build())
 
 	initial := recA.Hash()
 	if got := recA.Hash(); got != initial {
 		t.Fatalf("cached mutual hash changed without mutation: %d vs %d", got, initial)
 	}
 
-	recB.SetBody(NewRecord().
+	recB.SetBody(newRecord().
 		Field("a", recA).
 		Field("tag", String).
 		Build())
@@ -704,17 +704,17 @@ func TestRecursiveHashDependencyInvalidatesOnMutualBodyChange(t *testing.T) {
 func TestRecursiveHashOptionalReadonlyFlags(t *testing.T) {
 	// Required field
 	rec1 := NewRecursive("Node", func(self Type) Type {
-		return NewRecord().Field("next", self).Build()
+		return newRecord().Field("next", self).Build()
 	})
 
 	// Optional field (different)
 	rec2 := NewRecursive("Node", func(self Type) Type {
-		return NewRecord().OptField("next", self).Build()
+		return newRecord().OptField("next", self).Build()
 	})
 
 	// Readonly field (different)
 	rec3 := NewRecursive("Node", func(self Type) Type {
-		return NewRecord().ReadonlyField("next", self).Build()
+		return newRecord().ReadonlyField("next", self).Build()
 	})
 
 	// All should have different hashes
@@ -737,14 +737,14 @@ func TestRecursiveHashOptionalReadonlyFlags(t *testing.T) {
 func TestRecursiveHashFunctionVariadic(t *testing.T) {
 	// Function with param only
 	rec1 := NewRecursive("Handler", func(self Type) Type {
-		return NewRecord().
+		return newRecord().
 			Field("process", Func().Param("x", Number).Returns(self).Build()).
 			Build()
 	})
 
 	// Function with param AND variadic (different - more args)
 	rec2 := NewRecursive("Handler", func(self Type) Type {
-		return NewRecord().
+		return newRecord().
 			Field("process", Func().Param("x", Number).Variadic(String).Returns(self).Build()).
 			Build()
 	})
@@ -759,18 +759,18 @@ func TestRecursiveHashFunctionVariadic(t *testing.T) {
 
 // TestRecursiveHashMetatable tests that metatable changes recursive hash.
 func TestRecursiveHashMetatable(t *testing.T) {
-	metaType := NewRecord().
+	metaType := newRecord().
 		Field("__index", Func().Param("key", String).Returns(Any).Build()).
 		Build()
 
 	// Without metatable
 	rec1 := NewRecursive("Node", func(self Type) Type {
-		return NewRecord().Field("value", Number).OptField("next", self).Build()
+		return newRecord().Field("value", Number).OptField("next", self).Build()
 	})
 
 	// With metatable (different)
 	rec2 := NewRecursive("Node", func(self Type) Type {
-		return NewRecord().Field("value", Number).OptField("next", self).Metatable(metaType).Build()
+		return newRecord().Field("value", Number).OptField("next", self).Metatable(metaType).Build()
 	})
 
 	h1 := rec1.Hash()
@@ -785,8 +785,8 @@ func TestRecursiveHashMetatable(t *testing.T) {
 func TestRecursiveHashIntersection(t *testing.T) {
 	// Recursive type using intersection
 	rec := NewRecursive("Combined", func(self Type) Type {
-		part1 := NewRecord().Field("a", Number).Build()
-		part2 := NewRecord().Field("b", String).OptField("next", self).Build()
+		part1 := newRecord().Field("a", Number).Build()
+		part2 := newRecord().Field("b", String).OptField("next", self).Build()
 		return NewIntersection(part1, part2)
 	})
 
@@ -850,7 +850,7 @@ func TestEqualityHashReadonlyMapRefreshesOpenRecursiveKeyAndValue(t *testing.T) 
 			node := NewRecursivePlaceholder("Node")
 			staleWrapper := tc.wrap(node)
 
-			node.SetBody(NewRecord().Field("value", Number).Build())
+			node.SetBody(newRecord().Field("value", Number).Build())
 			freshWrapper := tc.wrap(node)
 
 			if !TypeEquals(staleWrapper, freshWrapper) {
@@ -865,10 +865,10 @@ func TestEqualityHashReadonlyMapRefreshesOpenRecursiveKeyAndValue(t *testing.T) 
 
 func TestEqualityHashStaticMemberIncludesTypeInOpenRecursiveWrapper(t *testing.T) {
 	node := NewRecursivePlaceholder("Node")
-	direct := NewRecord().
+	direct := newRecord().
 		StaticStringIndex("node", node).
 		Build()
-	nested := NewRecord().
+	nested := newRecord().
 		StaticStringIndex("node", NewArray(node)).
 		Build()
 
@@ -908,7 +908,7 @@ func TestRecursiveHashReadonlyMapTraversesKeyAndValue(t *testing.T) {
 func TestRecursiveGraphClosureStaticMemberSeesUnsealedPlaceholder(t *testing.T) {
 	root := NewRecursivePlaceholder("Root")
 	dangling := NewRecursivePlaceholder("Dangling")
-	root.SetBody(NewRecord().
+	root.SetBody(newRecord().
 		StaticStringIndex("dangling", dangling).
 		Build())
 
@@ -919,12 +919,12 @@ func TestRecursiveGraphClosureStaticMemberSeesUnsealedPlaceholder(t *testing.T) 
 
 func TestRecursiveHashStaticMemberTraversesType(t *testing.T) {
 	direct := NewRecursive("Box", func(self Type) Type {
-		return NewRecord().
+		return newRecord().
 			StaticStringIndex("node", self).
 			Build()
 	})
 	nested := NewRecursive("Box", func(self Type) Type {
-		return NewRecord().
+		return newRecord().
 			StaticStringIndex("node", NewArray(self)).
 			Build()
 	})
@@ -940,13 +940,13 @@ func TestRecursiveHashStaticMemberTraversesType(t *testing.T) {
 func TestRecursiveHashDependencyInvalidatesThroughStaticMember(t *testing.T) {
 	root := NewRecursivePlaceholder("Root")
 	child := NewRecursivePlaceholder("Child")
-	child.SetBody(NewRecord().Field("value", String).Build())
-	root.SetBody(NewRecord().
+	child.SetBody(newRecord().Field("value", String).Build())
+	root.SetBody(newRecord().
 		StaticStringIndex("child", child).
 		Build())
 
 	initial := root.Hash()
-	child.SetBody(NewRecord().Field("value", Number).Build())
+	child.SetBody(newRecord().Field("value", Number).Build())
 	updated := root.Hash()
 
 	if updated == initial {

@@ -3,11 +3,12 @@ package nodeid
 import (
 	"testing"
 
+	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
 func TestPointer(t *testing.T) {
-	rec := typ.NewRecord().Field("name", typ.String).Build()
+	rec := typetable.NewRecord().Field("name", typ.String).Build()
 	opt := typ.NewOptional(typ.String)
 	if got := Pointer(nil); got != 0 {
 		t.Fatalf("Pointer(nil) = %d, want 0", got)
@@ -31,7 +32,7 @@ func TestPointerTypedNil(t *testing.T) {
 }
 
 func TestStructuralPointer(t *testing.T) {
-	rec := typ.NewRecord().Field("name", typ.String).Build()
+	rec := typetable.NewRecord().Field("name", typ.String).Build()
 	if got := StructuralPointer(nil); got != 0 {
 		t.Fatalf("StructuralPointer(nil) = %d, want 0", got)
 	}

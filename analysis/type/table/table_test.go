@@ -259,10 +259,10 @@ func TestPresentReadonlyEntryValue(t *testing.T) {
 
 func TestSplitNilableFieldPreservesRecursiveUnionMemberHashes(t *testing.T) {
 	recA := typ.NewRecursive("Node", func(self typ.Type) typ.Type {
-		return typ.NewRecord().Field("next", typ.NewOptional(self)).Build()
+		return NewRecord().Field("next", typ.NewOptional(self)).Build()
 	})
 	recB := typ.NewRecursive("Node", func(self typ.Type) typ.Type {
-		return typ.NewRecord().Field("next", typ.NewOptional(self)).Field("name", typ.String).Build()
+		return NewRecord().Field("next", typ.NewOptional(self)).Field("name", typ.String).Build()
 	})
 	u, ok := typ.NewUnion(typ.Nil, recA, recB).(*typ.Union)
 	if !ok {

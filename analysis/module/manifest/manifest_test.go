@@ -14,12 +14,13 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/effect/returns"
 	"github.com/wippyai/go-lua/analysis/domain/effect/signature"
 	"github.com/wippyai/go-lua/analysis/type/annotation"
+	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
 func TestManifestDefineTypeAndSetExport(t *testing.T) {
 	m := New("example/module")
-	user := typ.NewRecord().
+	user := typetable.NewRecord().
 		Field("id", typ.Integer).
 		OptField("name", typ.String).
 		StaticStringIndex("role", typ.LiteralString("admin")).
@@ -52,7 +53,7 @@ func TestManifestRoundTrip(t *testing.T) {
 		typ.LiteralString("pending"),
 	))
 	m.DefineType("User", typ.NewAnnotated(
-		typ.NewRecord().
+		typetable.NewRecord().
 			ReadonlyField("id", typ.Integer).
 			OptField("name", typ.String).
 			Build(),

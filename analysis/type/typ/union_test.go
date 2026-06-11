@@ -281,7 +281,7 @@ func TestUnionTripleFlatten(t *testing.T) {
 	// Deeply nested unions should flatten completely
 	inner := NewUnion(Number, String)
 	mid := NewUnion(inner, Boolean)
-	record := NewRecord().Field("id", String).Build()
+	record := newRecord().Field("id", String).Build()
 	outer := NewUnion(mid, record)
 
 	u, ok := outer.(*Union)
@@ -494,13 +494,13 @@ func TestRewriteMembersScalarRewriteDoesNotCompareCompoundMembers(t *testing.T) 
 
 func TestRewriteMembersPreservesDistinctRecursiveFamilyNodes(t *testing.T) {
 	base := NewRecursive("SuiteA", func(self Type) Type {
-		return NewRecord().
+		return newRecord().
 			Field("name", String).
 			Field("children", NewArray(self)).
 			Build()
 	})
 	withPath := NewRecursive("SuiteB", func(self Type) Type {
-		return NewRecord().
+		return newRecord().
 			Field("name", String).
 			Field("children", NewArray(self)).
 			Field("full_path", String).
@@ -534,10 +534,10 @@ func TestRewriteMembersPreservesDistinctRecursiveFamilyNodes(t *testing.T) {
 
 func TestNewOptionalUnionPreservesRecursiveMemberHashes(t *testing.T) {
 	recA := NewRecursive("Node", func(self Type) Type {
-		return NewRecord().Field("next", NewOptional(self)).Build()
+		return newRecord().Field("next", NewOptional(self)).Build()
 	})
 	recB := NewRecursive("Node", func(self Type) Type {
-		return NewRecord().Field("next", NewOptional(self)).Field("name", String).Build()
+		return newRecord().Field("next", NewOptional(self)).Field("name", String).Build()
 	})
 	u := NewUnion(recA, recB)
 
@@ -570,12 +570,12 @@ func TestIntersectionConstructionHashesEachMemberOnce(t *testing.T) {
 
 func TestNewUnionRecursiveMembersUseNodeIdentityDedup(t *testing.T) {
 	left := NewRecursive("Suite", func(self Type) Type {
-		return NewRecord().
+		return newRecord().
 			Field("children", NewArray(self)).
 			Build()
 	})
 	right := NewRecursive("Suite", func(self Type) Type {
-		return NewRecord().
+		return newRecord().
 			Field("children", NewArray(self)).
 			Field("full_path", String).
 			Build()
@@ -598,12 +598,12 @@ func TestNewUnionRecursiveMembersUseNodeIdentityDedup(t *testing.T) {
 
 func TestNewUnionRecursiveMembersDoNotStructuralDedupeEquivalentFamilies(t *testing.T) {
 	left := NewRecursive("Suite", func(self Type) Type {
-		return NewRecord().
+		return newRecord().
 			Field("children", NewArray(self)).
 			Build()
 	})
 	right := NewRecursive("Suite", func(self Type) Type {
-		return NewRecord().
+		return newRecord().
 			Field("children", NewArray(self)).
 			Build()
 	})

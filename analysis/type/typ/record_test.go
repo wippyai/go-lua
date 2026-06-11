@@ -6,8 +6,58 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/kind"
 )
 
+type testRecordBuilder struct {
+	parts RecordParts
+}
+
+func newRecord() *testRecordBuilder {
+	return &testRecordBuilder{}
+}
+
+func (b *testRecordBuilder) Build() *Record {
+	return RebuildRecord(b.parts)
+}
+
+func (b *testRecordBuilder) Field(name string, t Type) *testRecordBuilder {
+	b.parts.Fields = append(b.parts.Fields, Field{Name: name, Type: t})
+	return b
+}
+
+func (b *testRecordBuilder) OptField(name string, t Type) *testRecordBuilder {
+	b.parts.Fields = append(b.parts.Fields, Field{Name: name, Type: t, Optional: true})
+	return b
+}
+
+func (b *testRecordBuilder) ReadonlyField(name string, t Type) *testRecordBuilder {
+	b.parts.Fields = append(b.parts.Fields, Field{Name: name, Type: t, Readonly: true})
+	return b
+}
+
+func (b *testRecordBuilder) AddStaticMember(member StaticMember) *testRecordBuilder {
+	b.parts.StaticMembers = append(b.parts.StaticMembers, member)
+	return b
+}
+
+func (b *testRecordBuilder) StaticStringIndex(name string, t Type) *testRecordBuilder {
+	return b.AddStaticMember(StaticMember{Kind: StaticMemberStringIndex, Name: name, Type: t})
+}
+
+func (b *testRecordBuilder) StaticIntIndex(index int64, t Type) *testRecordBuilder {
+	return b.AddStaticMember(StaticMember{Kind: StaticMemberIntIndex, Index: index, Type: t})
+}
+
+func (b *testRecordBuilder) Metatable(t Type) *testRecordBuilder {
+	b.parts.Metatable = t
+	return b
+}
+
+func (b *testRecordBuilder) SetOpen(open bool) *testRecordBuilder {
+	b.parts.Open = open
+	return b
+}
+
 func TestRecordEmpty(t *testing.T) {
-	r := NewRecord().Build()
+	r := newRecord().Build()
 
 	if r.Kind() != kind.Record {
 		t.Errorf("Kind: got %v, want Record", r.Kind())
@@ -23,7 +73,7 @@ func TestRecordEmpty(t *testing.T) {
 }
 
 func TestRecordWithFields(t *testing.T) {
-	r := NewRecord().
+	r := newRecord().
 		Field("x", Number).
 		Field("y", String).
 		Build()
@@ -34,7 +84,7 @@ func TestRecordWithFields(t *testing.T) {
 }
 
 func TestRecordNilFieldDefaultsToUnknown(t *testing.T) {
-	r := NewRecord().
+	r := newRecord().
 		Field("x", nil).
 		Build()
 
@@ -48,7 +98,7 @@ func TestRecordNilFieldDefaultsToUnknown(t *testing.T) {
 }
 
 func TestRecordFieldsSorted(t *testing.T) {
-	r := NewRecord().
+	r := newRecord().
 		Field("z", Number).
 		Field("a", String).
 		Field("m", Boolean).
@@ -80,7 +130,7 @@ func TestRecordOptionalMembersPreserveNilablePayloads(t *testing.T) {
 		}
 	}
 
-	r := NewRecord().
+	r := newRecord().
 		OptField("error", optionalString).
 		OptField("nil_only", Nil).
 		AddStaticMember(StaticMember{
@@ -137,7 +187,7 @@ func TestRecordOptionalMembersPreserveNilablePayloads(t *testing.T) {
 }
 
 func TestRecordOptionalField(t *testing.T) {
-	r := NewRecord().
+	r := newRecord().
 		Field("x", Number).
 		OptField("y", String).
 		Build()
@@ -153,7 +203,7 @@ func TestRecordOptionalField(t *testing.T) {
 }
 
 func TestRecordReadonlyField(t *testing.T) {
-	r := NewRecord().
+	r := newRecord().
 		ReadonlyField("id", Number).
 		Field("name", String).
 		Build()
@@ -170,7 +220,7 @@ func TestRecordReadonlyField(t *testing.T) {
 }
 
 func TestRecordString(t *testing.T) {
-	r := NewRecord().
+	r := newRecord().
 		Field("x", Number).
 		OptField("y", String).
 		ReadonlyField("z", Boolean).
@@ -185,10 +235,10 @@ func TestRecordString(t *testing.T) {
 }
 
 func TestRecordEquality(t *testing.T) {
-	r1 := NewRecord().Field("x", Number).Field("y", String).Build()
-	r2 := NewRecord().Field("y", String).Field("x", Number).Build()
-	r3 := NewRecord().Field("x", Number).Build()
-	r4 := NewRecord().Field("x", String).Field("y", String).Build()
+	r1 := newRecord().Field("x", Number).Field("y", String).Build()
+	r2 := newRecord().Field("y", String).Field("x", Number).Build()
+	r3 := newRecord().Field("x", Number).Build()
+	r4 := newRecord().Field("x", String).Field("y", String).Build()
 
 	if !r1.Equals(r2) {
 		t.Error("records with same fields should be equal regardless of order")
@@ -204,8 +254,8 @@ func TestRecordEquality(t *testing.T) {
 }
 
 func TestRecordEqualityOptional(t *testing.T) {
-	r1 := NewRecord().Field("x", Number).Build()
-	r2 := NewRecord().OptField("x", Number).Build()
+	r1 := newRecord().Field("x", Number).Build()
+	r2 := newRecord().OptField("x", Number).Build()
 
 	if r1.Equals(r2) {
 		t.Error("required vs optional field should differ")
@@ -213,8 +263,8 @@ func TestRecordEqualityOptional(t *testing.T) {
 }
 
 func TestRecordEqualityReadonly(t *testing.T) {
-	r1 := NewRecord().Field("x", Number).Build()
-	r2 := NewRecord().ReadonlyField("x", Number).Build()
+	r1 := newRecord().Field("x", Number).Build()
+	r2 := newRecord().ReadonlyField("x", Number).Build()
 
 	if r1.Equals(r2) {
 		t.Error("mutable vs readonly field should differ")
@@ -222,7 +272,7 @@ func TestRecordEqualityReadonly(t *testing.T) {
 }
 
 func TestRecordGetField(t *testing.T) {
-	r := NewRecord().
+	r := newRecord().
 		Field("x", Number).
 		Field("y", String).
 		Build()
@@ -244,12 +294,12 @@ func TestRecordGetField(t *testing.T) {
 
 func TestRecordHashUniqueness(t *testing.T) {
 	records := []Type{
-		NewRecord().Build(),
-		NewRecord().Field("x", Number).Build(),
-		NewRecord().Field("x", String).Build(),
-		NewRecord().Field("y", Number).Build(),
-		NewRecord().OptField("x", Number).Build(),
-		NewRecord().ReadonlyField("x", Number).Build(),
+		newRecord().Build(),
+		newRecord().Field("x", Number).Build(),
+		newRecord().Field("x", String).Build(),
+		newRecord().Field("y", Number).Build(),
+		newRecord().OptField("x", Number).Build(),
+		newRecord().ReadonlyField("x", Number).Build(),
 	}
 
 	hashes := make(map[uint64]Type)
@@ -265,15 +315,15 @@ func TestRecordHashUniqueness(t *testing.T) {
 }
 
 func TestRecordNotEqualToPrimitive(t *testing.T) {
-	r := NewRecord().Field("x", Number).Build()
+	r := newRecord().Field("x", Number).Build()
 	if r.Equals(Number) {
 		t.Error("record should not equal primitive")
 	}
 }
 
 func TestRecordWithMetatable(t *testing.T) {
-	meta := NewRecord().Field("__index", Any).Build()
-	r := NewRecord().
+	meta := newRecord().Field("__index", Any).Build()
+	r := newRecord().
 		Field("value", Number).
 		Metatable(meta).
 		Build()
@@ -288,8 +338,8 @@ func TestRecordWithMetatable(t *testing.T) {
 }
 
 func TestRecordOpenFlag(t *testing.T) {
-	closed := NewRecord().Field("x", Number).Build()
-	open := NewRecord().SetOpen(true).Field("x", Number).Build()
+	closed := newRecord().Field("x", Number).Build()
+	open := newRecord().SetOpen(true).Field("x", Number).Build()
 
 	if closed.Open {
 		t.Error("default record should not be open")
@@ -301,34 +351,34 @@ func TestRecordOpenFlag(t *testing.T) {
 }
 
 func TestRecordOpenString(t *testing.T) {
-	empty := NewRecord().SetOpen(true).Build()
+	empty := newRecord().SetOpen(true).Build()
 	if empty.String() != "{...}" {
 		t.Errorf("open empty record string: got %q, want %q", empty.String(), "{...}")
 	}
 
-	withField := NewRecord().SetOpen(true).Field("x", Number).Build()
+	withField := newRecord().SetOpen(true).Field("x", Number).Build()
 	if withField.String() != "{x: number, ...}" {
 		t.Errorf("open record string: got %q, want %q", withField.String(), "{x: number, ...}")
 	}
 }
 
 func TestRecordOpenEquality(t *testing.T) {
-	closed := NewRecord().Field("x", Number).Build()
-	open := NewRecord().SetOpen(true).Field("x", Number).Build()
+	closed := newRecord().Field("x", Number).Build()
+	open := newRecord().SetOpen(true).Field("x", Number).Build()
 
 	if closed.Equals(open) {
 		t.Error("closed and open records with same fields should not be equal")
 	}
 
-	open2 := NewRecord().SetOpen(true).Field("x", Number).Build()
+	open2 := newRecord().SetOpen(true).Field("x", Number).Build()
 	if !open.Equals(open2) {
 		t.Error("two open records with same fields should be equal")
 	}
 }
 
 func TestRecordOpenHash(t *testing.T) {
-	closed := NewRecord().Field("x", Number).Build()
-	open := NewRecord().SetOpen(true).Field("x", Number).Build()
+	closed := newRecord().Field("x", Number).Build()
+	open := newRecord().SetOpen(true).Field("x", Number).Build()
 
 	if closed.Hash() == open.Hash() {
 		t.Error("closed and open records should have different hashes")
@@ -336,14 +386,14 @@ func TestRecordOpenHash(t *testing.T) {
 }
 
 func TestRecordOpenTypeEquals(t *testing.T) {
-	closed := NewRecord().Field("x", Number).Build()
-	open := NewRecord().SetOpen(true).Field("x", Number).Build()
+	closed := newRecord().Field("x", Number).Build()
+	open := newRecord().SetOpen(true).Field("x", Number).Build()
 
 	if TypeEquals(closed, open) {
 		t.Error("TypeEquals should distinguish open from closed")
 	}
 
-	open2 := NewRecord().SetOpen(true).Field("x", Number).Build()
+	open2 := newRecord().SetOpen(true).Field("x", Number).Build()
 	if !TypeEquals(open, open2) {
 		t.Error("TypeEquals should match two identical open records")
 	}

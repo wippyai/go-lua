@@ -3,6 +3,7 @@ package recursivefamily
 import (
 	"testing"
 
+	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
@@ -68,7 +69,7 @@ func TestRecursiveFamilyInternerOwnershipIsolation(t *testing.T) {
 		t.Fatal("separate interners should not share family handles")
 	}
 
-	body := typ.NewRecord().Field("value", typ.String).Build()
+	body := typetable.NewRecord().Field("value", typ.String).Build()
 	left.Widen(rightFamily, body, nil)
 	if rightFamily.Body != nil {
 		t.Fatal("foreign family body should not be mutated")
@@ -88,7 +89,7 @@ func TestRecursiveFamilyInternerWidenRequiresOwnedHandle(t *testing.T) {
 	key := FamilyKey{Namespace: "fold", Owner: "site:3"}
 	foreign := NewRecursiveFamilyInterner().Intern(key)
 	plain := typ.NewRecursivePlaceholder("Plain")
-	body := typ.NewRecord().Field("value", typ.Number).Build()
+	body := typetable.NewRecord().Field("value", typ.Number).Build()
 
 	interner.Widen(foreign, body, nil)
 	if foreign.Body != nil {
@@ -128,7 +129,7 @@ func TestRecursiveFamilyDifferentKeysDoNotAliasEquivalentBodies(t *testing.T) {
 	interner := NewRecursiveFamilyInterner()
 	left := interner.Intern(FamilyKey{Namespace: "store", Owner: "left"})
 	right := interner.Intern(FamilyKey{Namespace: "store", Owner: "right"})
-	body := typ.NewRecord().Field("value", typ.String).Build()
+	body := typetable.NewRecord().Field("value", typ.String).Build()
 	interner.Widen(left, body, nil)
 	interner.Widen(right, body, nil)
 
@@ -154,7 +155,7 @@ func TestRecursiveFamilyIdentityStableAcrossWiden(t *testing.T) {
 		t.Fatalf("initial identity values should be non-zero: fp=%x id=%x/%v hash=%x", initialFingerprint, initialIdentityHash, ok, initialStructuralHash)
 	}
 
-	firstBody := typ.NewRecord().Field("value", typ.String).Build()
+	firstBody := typetable.NewRecord().Field("value", typ.String).Build()
 	interner.Widen(family, firstBody, nil)
 	if got := interner.RecursiveFamilyFingerprint(family); got != initialFingerprint {
 		t.Fatalf("fingerprint after first widen = %x, want %x", got, initialFingerprint)
@@ -166,7 +167,7 @@ func TestRecursiveFamilyIdentityStableAcrossWiden(t *testing.T) {
 		t.Fatalf("structural hash after first widen = %x, should no longer be family identity hash", got)
 	}
 
-	secondBody := typ.NewRecord().
+	secondBody := typetable.NewRecord().
 		Field("value", typ.String).
 		Field("extra", typ.Number).
 		Build()
@@ -183,12 +184,12 @@ func TestRecursiveFamilyIdentityStableAcrossWiden(t *testing.T) {
 
 func TestRecursiveFamilyFingerprintScansSurfaceWithoutUnfoldingBodies(t *testing.T) {
 	hidden := typ.NewRecursive("Hidden", func(self typ.Type) typ.Type {
-		return typ.NewRecord().Field("next", self).Build()
+		return typetable.NewRecord().Field("next", self).Build()
 	})
 	outer := typ.NewRecursivePlaceholder("Outer")
-	outer.SetBody(typ.NewRecord().Field("hidden", hidden).Build())
+	outer.SetBody(typetable.NewRecord().Field("hidden", hidden).Build())
 	visible := typ.NewRecursive("Visible", func(self typ.Type) typ.Type {
-		return typ.NewRecord().Field("next", self).Build()
+		return typetable.NewRecord().Field("next", self).Build()
 	})
 
 	outerOnly := RecursiveFamilyFingerprint(outer)
@@ -196,7 +197,7 @@ func TestRecursiveFamilyFingerprintScansSurfaceWithoutUnfoldingBodies(t *testing
 		t.Fatal("outer recursive family fingerprint should be non-zero")
 	}
 
-	duplicateOuter := typ.NewRecord().
+	duplicateOuter := typetable.NewRecord().
 		Field("first", outer).
 		Field("second", outer).
 		Build()
@@ -204,11 +205,11 @@ func TestRecursiveFamilyFingerprintScansSurfaceWithoutUnfoldingBodies(t *testing
 		t.Fatalf("duplicate outer fingerprint = %x, want %x", got, outerOnly)
 	}
 
-	if got := RecursiveFamilyFingerprint(typ.NewRecord().Field("outer", outer).Build()); got != outerOnly {
+	if got := RecursiveFamilyFingerprint(typetable.NewRecord().Field("outer", outer).Build()); got != outerOnly {
 		t.Fatalf("record containing outer fingerprint = %x, want %x", got, outerOnly)
 	}
 
-	explicitHidden := RecursiveFamilyFingerprint(typ.NewRecord().
+	explicitHidden := RecursiveFamilyFingerprint(typetable.NewRecord().
 		Field("outer", outer).
 		Field("hidden", hidden).
 		Build())
@@ -216,7 +217,7 @@ func TestRecursiveFamilyFingerprintScansSurfaceWithoutUnfoldingBodies(t *testing
 		t.Fatal("explicit hidden family should affect fingerprint")
 	}
 
-	surface := typ.NewRecord().
+	surface := typetable.NewRecord().
 		Field("handler", typ.Func().Param("self", outer).Returns(typ.NewArray(visible)).Build()).
 		Field("duplicate", outer).
 		MapComponent(typ.String, visible).
@@ -226,7 +227,7 @@ func TestRecursiveFamilyFingerprintScansSurfaceWithoutUnfoldingBodies(t *testing
 		t.Fatalf("surface fingerprint = %x, want visible family included with outer", surfaceFP)
 	}
 
-	repeatedSurface := typ.NewRecord().
+	repeatedSurface := typetable.NewRecord().
 		Field("a", surface).
 		Field("b", surface).
 		Build()
@@ -237,11 +238,11 @@ func TestRecursiveFamilyFingerprintScansSurfaceWithoutUnfoldingBodies(t *testing
 
 func TestRecursiveFamilyFingerprintWithinReportsBudgetExhaustion(t *testing.T) {
 	node := typ.NewRecursive("Node", func(self typ.Type) typ.Type {
-		return typ.NewRecord().Field("next", self).Build()
+		return typetable.NewRecord().Field("next", self).Build()
 	})
 	surface := typ.Type(node)
 	for i := 0; i < 8; i++ {
-		surface = typ.NewRecord().
+		surface = typetable.NewRecord().
 			Field("left", surface).
 			Field("right", typ.NewArray(surface)).
 			Build()

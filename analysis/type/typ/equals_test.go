@@ -141,9 +141,9 @@ func TestTypeEqualsTuple(t *testing.T) {
 }
 
 func TestTypeEqualsRecord(t *testing.T) {
-	r1 := NewRecord().Field("x", Number).Build()
-	r2 := NewRecord().Field("x", Number).Build()
-	r3 := NewRecord().Field("x", String).Build()
+	r1 := newRecord().Field("x", Number).Build()
+	r2 := newRecord().Field("x", Number).Build()
+	r3 := newRecord().Field("x", String).Build()
 
 	if !TypeEquals(r1, r2) {
 		t.Error("records should be equal")
@@ -155,10 +155,10 @@ func TestTypeEqualsRecord(t *testing.T) {
 }
 
 func TestTypeEqualsRecordMetatableParticipatesInIdentity(t *testing.T) {
-	metaA := NewRecord().Field("a", Func().Param("self", Self).Returns(String).Build()).Build()
-	metaB := NewRecord().Field("b", Func().Param("self", Self).Returns(Number).Build()).Build()
-	a := NewRecord().Metatable(metaA).SetOpen(true).Build()
-	b := NewRecord().Metatable(metaB).SetOpen(true).Build()
+	metaA := newRecord().Field("a", Func().Param("self", Self).Returns(String).Build()).Build()
+	metaB := newRecord().Field("b", Func().Param("self", Self).Returns(Number).Build()).Build()
+	a := newRecord().Metatable(metaA).SetOpen(true).Build()
+	b := newRecord().Metatable(metaB).SetOpen(true).Build()
 
 	if TypeEquals(a, b) {
 		t.Fatal("records with different metatables must not be structurally equal")
@@ -317,8 +317,8 @@ func TestTypeEqualsUnionOrder(t *testing.T) {
 }
 
 func TestTypeEqualsEmptyRecord(t *testing.T) {
-	r1 := NewRecord().Build()
-	r2 := NewRecord().Build()
+	r1 := newRecord().Build()
+	r2 := newRecord().Build()
 
 	if !TypeEquals(r1, r2) {
 		t.Error("empty records should be equal")
@@ -327,8 +327,8 @@ func TestTypeEqualsEmptyRecord(t *testing.T) {
 
 func TestTypeEqualsRecordFieldOrder(t *testing.T) {
 	// Records with same fields in different order
-	r1 := NewRecord().Field("a", Number).Field("b", String).Build()
-	r2 := NewRecord().Field("b", String).Field("a", Number).Build()
+	r1 := newRecord().Field("a", Number).Field("b", String).Build()
+	r2 := newRecord().Field("b", String).Field("a", Number).Build()
 
 	if !TypeEquals(r1, r2) {
 		t.Error("records with same fields should be equal regardless of definition order")
@@ -336,9 +336,9 @@ func TestTypeEqualsRecordFieldOrder(t *testing.T) {
 }
 
 func TestTypeEqualsOptionalField(t *testing.T) {
-	r1 := NewRecord().OptField("x", Number).Build()
-	r2 := NewRecord().OptField("x", Number).Build()
-	r3 := NewRecord().Field("x", Number).Build()
+	r1 := newRecord().OptField("x", Number).Build()
+	r2 := newRecord().OptField("x", Number).Build()
+	r3 := newRecord().Field("x", Number).Build()
 
 	if !TypeEquals(r1, r2) {
 		t.Error("records with same optional fields should be equal")
@@ -349,14 +349,14 @@ func TestTypeEqualsOptionalField(t *testing.T) {
 }
 
 func TestTypeEqualsSharedDAGNodes(t *testing.T) {
-	shared := NewRecord().Field("value", String).Build()
-	left := NewRecord().
+	shared := newRecord().Field("value", String).Build()
+	left := newRecord().
 		Field("a", shared).
 		Field("b", shared).
 		Build()
-	right := NewRecord().
-		Field("a", NewRecord().Field("value", String).Build()).
-		Field("b", NewRecord().Field("value", String).Build()).
+	right := newRecord().
+		Field("a", newRecord().Field("value", String).Build()).
+		Field("b", newRecord().Field("value", String).Build()).
 		Build()
 
 	if !TypeEquals(left, right) {
@@ -448,7 +448,7 @@ func TestTypeEqualsInterfaceMethodOrder(t *testing.T) {
 func TestTypeEqualsCycleDetection(t *testing.T) {
 	// Create recursive type that could cause infinite loop
 	rec := NewRecursive("Node", func(self Type) Type {
-		return NewRecord().OptField("next", self).Build()
+		return newRecord().OptField("next", self).Build()
 	})
 
 	// Should not hang
@@ -462,8 +462,8 @@ func TestTypeEqualsOpenRecursiveWrapperUsesCoinductiveWalk(t *testing.T) {
 	right := NewRecursivePlaceholder("Node")
 	leftWrapper := Func().Returns(left).Build()
 	rightWrapper := Func().Returns(right).Build()
-	left.SetBody(NewRecord().OptField("next", left).Build())
-	right.SetBody(NewRecord().OptField("next", right).Build())
+	left.SetBody(newRecord().OptField("next", left).Build())
+	right.SetBody(newRecord().OptField("next", right).Build())
 
 	if !knownContainsOpenRecursive(leftWrapper) || !knownContainsOpenRecursive(rightWrapper) {
 		t.Fatal("test requires wrappers constructed before recursive bodies close")
@@ -476,8 +476,8 @@ func TestTypeEqualsOpenRecursiveWrapperUsesCoinductiveWalk(t *testing.T) {
 func TestTypeEqualsMutualRecursion(t *testing.T) {
 	recA := NewRecursivePlaceholder("A")
 	recB := NewRecursivePlaceholder("B")
-	recA.SetBody(NewRecord().OptField("b", recB).Build())
-	recB.SetBody(NewRecord().OptField("a", recA).Build())
+	recA.SetBody(newRecord().OptField("b", recB).Build())
+	recB.SetBody(newRecord().OptField("a", recA).Build())
 
 	// Should not hang
 	if !TypeEquals(recA, recA) {

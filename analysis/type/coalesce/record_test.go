@@ -3,15 +3,16 @@ package coalesce
 import (
 	"testing"
 
+	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
 func TestJoinClosedCompatibleRecordSetMergesMissingFieldsAndStaticMembers(t *testing.T) {
-	left := typ.NewRecord().
+	left := typetable.NewRecord().
 		Field("name", typ.String).
 		StaticStringIndex("raw-key", typ.Number).
 		Build()
-	right := typ.NewRecord().
+	right := typetable.NewRecord().
 		Field("name", typ.String).
 		Field("count", typ.Integer).
 		Build()
@@ -39,8 +40,8 @@ func TestJoinClosedCompatibleRecordSetMergesMissingFieldsAndStaticMembers(t *tes
 }
 
 func TestJoinClosedCompatibleRecordSetUsesInjectedSlotJoinForSharedField(t *testing.T) {
-	left := typ.NewRecord().Field("value", typ.Number).Build()
-	right := typ.NewRecord().Field("value", typ.String).Build()
+	left := typetable.NewRecord().Field("value", typ.Number).Build()
+	right := typetable.NewRecord().Field("value", typ.String).Build()
 	sentinel := typ.NewArray(typ.Boolean)
 	called := false
 
@@ -70,11 +71,11 @@ func TestJoinClosedCompatibleRecordSetUsesInjectedSlotJoinForSharedField(t *test
 }
 
 func TestCoalesceClosedCompatibleRecordsPreservesDiscriminatedUnion(t *testing.T) {
-	a := typ.NewRecord().
+	a := typetable.NewRecord().
 		Field("kind", typ.LiteralString("a")).
 		Field("x", typ.Number).
 		Build()
-	b := typ.NewRecord().
+	b := typetable.NewRecord().
 		Field("kind", typ.LiteralString("b")).
 		Field("y", typ.String).
 		Build()
@@ -126,11 +127,11 @@ func TestJoinFieldContainerSlotUsesInjectedSlotAndKeyJoins(t *testing.T) {
 }
 
 func TestJoinFieldContainerSlotJoinsArrayElementsPointwise(t *testing.T) {
-	left := typ.NewArray(typ.NewRecord().
+	left := typ.NewArray(typetable.NewRecord().
 		Field("name", typ.LiteralString("a")).
 		Field("line", typ.LiteralInt(1)).
 		Build())
-	right := typ.NewArray(typ.NewRecord().
+	right := typ.NewArray(typetable.NewRecord().
 		Field("name", typ.LiteralString("b")).
 		Field("line", typ.LiteralInt(2)).
 		Build())
@@ -168,16 +169,16 @@ func TestJoinFieldContainerSlotJoinsArrayElementsPointwise(t *testing.T) {
 }
 
 func TestCompatibleRecordMetatablesRequireMatchingPresenceAndShape(t *testing.T) {
-	meta := typ.NewRecord().
-		Field("__index", typ.NewRecord().Field("run", typ.Func().Build()).Build()).
+	meta := typetable.NewRecord().
+		Field("__index", typetable.NewRecord().Field("run", typ.Func().Build()).Build()).
 		Build()
-	withMeta := typ.NewRecord().Field("id", typ.String).Metatable(meta).Build()
-	withSameMeta := typ.NewRecord().Field("name", typ.String).Metatable(meta).Build()
-	withoutMeta := typ.NewRecord().Field("id", typ.String).Build()
-	otherMeta := typ.NewRecord().
-		Field("__index", typ.NewRecord().Field("stop", typ.Func().Build()).Build()).
+	withMeta := typetable.NewRecord().Field("id", typ.String).Metatable(meta).Build()
+	withSameMeta := typetable.NewRecord().Field("name", typ.String).Metatable(meta).Build()
+	withoutMeta := typetable.NewRecord().Field("id", typ.String).Build()
+	otherMeta := typetable.NewRecord().
+		Field("__index", typetable.NewRecord().Field("stop", typ.Func().Build()).Build()).
 		Build()
-	withOtherMeta := typ.NewRecord().Field("id", typ.String).Metatable(otherMeta).Build()
+	withOtherMeta := typetable.NewRecord().Field("id", typ.String).Metatable(otherMeta).Build()
 
 	if !CompatibleRecordMetatables(withMeta, withSameMeta) {
 		t.Fatal("records sharing the same metatable should be compatible")

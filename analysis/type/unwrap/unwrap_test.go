@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/type/annotation"
+	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
@@ -30,7 +31,7 @@ func TestOptional(t *testing.T) {
 }
 
 func TestRecordAliasOnly(t *testing.T) {
-	rec := typ.NewRecord().Field("id", typ.String).Build()
+	rec := typetable.NewRecord().Field("id", typ.String).Build()
 	nested := typ.NewAlias("Outer", typ.NewAlias("Inner", rec))
 	annotated := typ.NewAnnotated(rec, []annotation.Annotation{{Name: "brand"}})
 
@@ -58,7 +59,7 @@ func TestRecordAliasOnly(t *testing.T) {
 }
 
 func TestRecordUnaliased(t *testing.T) {
-	rec := typ.NewRecord().Field("id", typ.String).Build()
+	rec := typetable.NewRecord().Field("id", typ.String).Build()
 	nested := typ.NewAlias("Outer", typ.NewAlias("Inner", rec))
 	annotated := typ.NewAnnotated(rec, []annotation.Annotation{{Name: "brand"}})
 
@@ -86,8 +87,8 @@ func TestRecordUnaliased(t *testing.T) {
 }
 
 func TestRecordAliasPoliciesDifferAfterTargetMutation(t *testing.T) {
-	original := typ.NewRecord().Field("original", typ.String).Build()
-	updated := typ.NewRecord().Field("updated", typ.String).Build()
+	original := typetable.NewRecord().Field("original", typ.String).Build()
+	updated := typetable.NewRecord().Field("updated", typ.String).Build()
 	alias := typ.NewAlias("Alias", typ.NewAlias("Inner", original))
 	alias.Target = updated
 

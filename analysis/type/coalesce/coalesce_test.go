@@ -3,6 +3,7 @@ package coalesce
 import (
 	"testing"
 
+	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
@@ -161,7 +162,7 @@ func TestCoalesceMapsRecursesThroughProvidedJoin(t *testing.T) {
 }
 
 func TestCoalesceEmptyRecordWithMapHandlesAliasAndReadonlyMap(t *testing.T) {
-	empty := typ.NewAlias("Empty", typ.NewRecord().Build())
+	empty := typ.NewAlias("Empty", typetable.NewRecord().Build())
 	readonly := typ.NewReadonlyMap(typ.String, typ.Number)
 
 	got := CoalesceEmptyRecordWithMap([]typ.Type{empty, readonly, typ.Boolean})
@@ -174,7 +175,7 @@ func TestCoalesceEmptyRecordWithMapHandlesAliasAndReadonlyMap(t *testing.T) {
 }
 
 func TestCoalesceEmptyRecordWithArrayAndPreferArrayHandleAliases(t *testing.T) {
-	empty := typ.NewAlias("Empty", typ.NewRecord().Build())
+	empty := typ.NewAlias("Empty", typetable.NewRecord().Build())
 	arr := typ.NewAlias("Numbers", typ.NewArray(typ.Number))
 
 	got := CoalesceEmptyRecordWithArray([]typ.Type{typ.String, empty, arr})
@@ -192,8 +193,8 @@ func TestCoalesceEmptyRecordWithArrayAndPreferArrayHandleAliases(t *testing.T) {
 }
 
 func TestCoalesceRecordOpennessNormalizesCopiedMapComponentKeys(t *testing.T) {
-	open := typ.NewRecord().SetOpen(true).Field("x", typ.Number).Build()
-	closed := typ.NewRecord().
+	open := typetable.NewRecord().SetOpen(true).Field("x", typ.Number).Build()
+	closed := typetable.NewRecord().
 		MapComponent(typ.NewOptional(typ.String), typ.Number).
 		Build()
 

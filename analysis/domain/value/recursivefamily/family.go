@@ -281,7 +281,7 @@ func collapseChildren(slot typ.Type, family *typ.Recursive) typ.Type {
 	}
 	switch v := slot.(type) {
 	case *typ.Record:
-		builder := typ.NewRecord().SetOpen(v.Open)
+		builder := typetable.NewRecord().SetOpen(v.Open)
 		for _, f := range v.Fields {
 			ft := child(f.Type)
 			switch {

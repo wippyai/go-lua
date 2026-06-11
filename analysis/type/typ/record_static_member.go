@@ -65,24 +65,6 @@ func staticMembersSorted(members []StaticMember) bool {
 	return true
 }
 
-// StaticStringIndex adds a required bracket-string member.
-func (b *RecordBuilder) StaticStringIndex(name string, t Type) *RecordBuilder {
-	b.staticMembers = append(b.staticMembers, StaticMember{Kind: StaticMemberStringIndex, Name: name, Type: t})
-	return b
-}
-
-// StaticIntIndex adds a required bracket-integer member.
-func (b *RecordBuilder) StaticIntIndex(index int64, t Type) *RecordBuilder {
-	b.staticMembers = append(b.staticMembers, StaticMember{Kind: StaticMemberIntIndex, Index: index, Type: t})
-	return b
-}
-
-// AddStaticMember adds a pre-built exact bracket member.
-func (b *RecordBuilder) AddStaticMember(member StaticMember) *RecordBuilder {
-	b.staticMembers = append(b.staticMembers, member)
-	return b
-}
-
 func writeStaticMemberKey(sb *strings.Builder, member StaticMember) {
 	switch member.Kind {
 	case StaticMemberStringIndex:

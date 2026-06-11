@@ -7,7 +7,7 @@ import (
 
 func TestFormatShortBoundsRecursiveProduct(t *testing.T) {
 	node := NewRecursive("Node", func(self Type) Type {
-		return NewRecord().
+		return newRecord().
 			Field("next", NewOptional(self)).
 			Field("payload", NewMap(String, self)).
 			Build()
@@ -16,7 +16,7 @@ func TestFormatShortBoundsRecursiveProduct(t *testing.T) {
 	members := []Type{node}
 	for i := 0; i < DefaultFormatOptions.MaxUnionMembers+6; i++ {
 		field := "case" + string(rune('a'+i))
-		members = append(members, NewRecord().
+		members = append(members, newRecord().
 			Field(field, node).
 			Field("meta", NewMap(String, node)).
 			Build())
@@ -35,7 +35,7 @@ func TestFormatShortBoundsRecursiveProduct(t *testing.T) {
 func TestFormatHonorsDepthBudget(t *testing.T) {
 	tp := Type(String)
 	for i := 0; i < DefaultFormatOptions.MaxDepth+4; i++ {
-		tp = NewRecord().Field("next", tp).Build()
+		tp = newRecord().Field("next", tp).Build()
 	}
 
 	got := Format(tp, FormatOptions{

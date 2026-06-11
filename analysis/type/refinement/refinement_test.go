@@ -3,12 +3,13 @@ package refinement
 import (
 	"testing"
 
+	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
 func TestContainsFreeTypeParamTreatsClosedInstantiationAsClosed(t *testing.T) {
 	tp := typ.NewTypeParam("T", nil)
-	box := typ.NewGeneric("Box", []*typ.TypeParam{tp}, typ.NewRecord().Field("value", tp).Build())
+	box := typ.NewGeneric("Box", []*typ.TypeParam{tp}, typetable.NewRecord().Field("value", tp).Build())
 
 	if ContainsFreeTypeParam(typ.Instantiate(box, typ.String)) {
 		t.Fatal("closed Box<string> should not report a free type parameter")
@@ -21,7 +22,7 @@ func TestContainsFreeTypeParamTreatsClosedInstantiationAsClosed(t *testing.T) {
 func TestContainsFreeTypeParamKeepsFunctionOwnedParamsScoped(t *testing.T) {
 	tp := typ.NewTypeParam("T", nil)
 	fn := typ.Func().TypeParamRef(tp).Returns(tp).Build()
-	closedFunctionWithFreeSibling := typ.NewRecord().
+	closedFunctionWithFreeSibling := typetable.NewRecord().
 		Field("call", fn).
 		Field("value", tp).
 		Build()
@@ -35,7 +36,7 @@ func TestContainsFreeTypeParamKeepsFunctionOwnedParamsScoped(t *testing.T) {
 }
 
 func TestNeedsSameExpressionFallbackFindsNestedRepairableLeaves(t *testing.T) {
-	clean := typ.NewRecord().
+	clean := typetable.NewRecord().
 		Field("value", typ.LiteralString("hello")).
 		Field("get", typ.Func().OptParam("self", typ.Any).Returns(typ.String).Build()).
 		Build()
@@ -43,7 +44,7 @@ func TestNeedsSameExpressionFallbackFindsNestedRepairableLeaves(t *testing.T) {
 		t.Fatalf("clean record reported fallback need: %v", clean)
 	}
 
-	open := typ.NewRecord().
+	open := typetable.NewRecord().
 		Field("value", typ.LiteralString("hello")).
 		Field("get", typ.Func().OptParam("self", typ.Any).Returns(typ.NewRef("", "T")).Build()).
 		Build()
@@ -54,12 +55,12 @@ func TestNeedsSameExpressionFallbackFindsNestedRepairableLeaves(t *testing.T) {
 
 func TestNeedsSameExpressionFallbackUsesRecursiveFamilySeen(t *testing.T) {
 	node := typ.NewRecursive("Node", func(self typ.Type) typ.Type {
-		return typ.NewRecord().
+		return typetable.NewRecord().
 			Field("next", typ.NewOptional(self)).
 			Field("get", typ.Func().OptParam("self", typ.Any).Returns(self).Build()).
 			Build()
 	})
-	surface := typ.NewRecord().
+	surface := typetable.NewRecord().
 		Field("left", node).
 		Field("right", node).
 		Build()
@@ -69,7 +70,7 @@ func TestNeedsSameExpressionFallbackUsesRecursiveFamilySeen(t *testing.T) {
 	}
 
 	open := typ.NewRecursive("OpenNode", func(self typ.Type) typ.Type {
-		return typ.NewRecord().
+		return typetable.NewRecord().
 			Field("next", typ.NewOptional(self)).
 			Field("get", typ.Func().OptParam("self", typ.Any).Returns(typ.NewRef("", "T")).Build()).
 			Build()
@@ -81,13 +82,13 @@ func TestNeedsSameExpressionFallbackUsesRecursiveFamilySeen(t *testing.T) {
 
 func TestNeedsSameExpressionFallbackUsesRecursiveAliasFamilySeen(t *testing.T) {
 	node := typ.NewRecursivePlaceholder("Node")
-	var tower typ.Type = typ.NewAlias("NodeAlias", typ.NewRecord().
+	var tower typ.Type = typ.NewAlias("NodeAlias", typetable.NewRecord().
 		Field("next", node).
 		Build())
 	for i := 0; i < 512; i++ {
 		tower = typ.NewAlias("TowerAlias", typ.NewMap(typ.String, typ.NewOptional(typ.NewUnion(tower, typ.Nil))))
 	}
-	node.SetBody(typ.NewRecord().
+	node.SetBody(typetable.NewRecord().
 		Field("next", tower).
 		Field("hole", typ.Unknown).
 		Build())
@@ -111,11 +112,11 @@ func TestNeedsSameExpressionFallbackWithinReportsIncomplete(t *testing.T) {
 
 func TestRefineWithFallbackRepairsTypeParamLeafAndKeepsLiteral(t *testing.T) {
 	tp := typ.NewTypeParam("T", nil)
-	summary := typ.NewRecord().
+	summary := typetable.NewRecord().
 		Field("value", typ.LiteralString("hello")).
 		Field("get", typ.Func().OptParam("self", typ.Any).Returns(tp).Build()).
 		Build()
-	fallback := typ.NewRecord().
+	fallback := typetable.NewRecord().
 		Field("value", typ.String).
 		Field("get", typ.Func().OptParam("self", typ.Self).Returns(typ.String).Build()).
 		Build()
@@ -153,10 +154,10 @@ func TestRefineWithFallbackDoesNotReplaceWholeConcreteLeaf(t *testing.T) {
 }
 
 func TestRefineWithFallbackKeepsConcreteArrayElementOverEmptyFallback(t *testing.T) {
-	summaryRecord := typ.NewRecord().
+	summaryRecord := typetable.NewRecord().
 		Field("node_order", typ.NewArray(typ.String)).
 		Build()
-	fallbackRecord := typ.NewRecord().
+	fallbackRecord := typetable.NewRecord().
 		Field("node_order", typ.NewArray(typ.Never)).
 		Build()
 	summary := typ.NewUnion(typ.Nil, summaryRecord)
@@ -178,7 +179,7 @@ func TestRefineWithFallbackRepairsFunctionReturnDespiteParamShapeMismatch(t *tes
 		Returns(tp).
 		Build()
 	fallback := typ.Func().
-		Param("self", typ.NewRecord().Field("value", typ.String).Build()).
+		Param("self", typetable.NewRecord().Field("value", typ.String).Build()).
 		Returns(typ.String).
 		Build()
 
@@ -201,16 +202,16 @@ func TestRefineWithFallbackRepairsFunctionReturnDespiteParamShapeMismatch(t *tes
 func TestRefineWithFallbackRepairsFunctionReturnWithInstantiatedSelfParam(t *testing.T) {
 	tp := typ.NewTypeParam("T", nil)
 	container := typ.NewGeneric("Container", []*typ.TypeParam{tp},
-		typ.NewRecord().
+		typetable.NewRecord().
 			Field("value", tp).
-			Field("get", typ.Func().Param("self", typ.Instantiate(typ.NewGeneric("Container", []*typ.TypeParam{tp}, typ.NewRecord().Build()), tp)).Returns(tp).Build()).
+			Field("get", typ.Func().Param("self", typ.Instantiate(typ.NewGeneric("Container", []*typ.TypeParam{tp}, typetable.NewRecord().Build()), tp)).Returns(tp).Build()).
 			Build(),
 	)
-	summary := typ.NewRecord().
+	summary := typetable.NewRecord().
 		Field("value", typ.LiteralString("hello")).
 		Field("get", typ.Func().OptParam("self", typ.Any).Returns(tp).Build()).
 		Build()
-	fallback := typ.NewRecord().
+	fallback := typetable.NewRecord().
 		Field("value", typ.String).
 		Field("get", typ.Func().Param("self", typ.Instantiate(container, typ.String)).Returns(typ.String).Build()).
 		Build()
@@ -236,7 +237,7 @@ func TestRefineWithFallbackRepairsDeferredRefLeaf(t *testing.T) {
 		Returns(typ.NewRef("", "T")).
 		Build()
 	fallback := typ.Func().
-		Param("self", typ.NewRecord().Field("value", typ.String).Build()).
+		Param("self", typetable.NewRecord().Field("value", typ.String).Build()).
 		Returns(typ.String).
 		Build()
 

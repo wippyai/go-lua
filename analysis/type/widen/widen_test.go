@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/type/kind"
+	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
@@ -155,7 +156,7 @@ func TestWidenForInferenceNormalizesNilableTableKeys(t *testing.T) {
 		t.Fatalf("readonly map key should widen and drop nil, got %v", resultReadonly.Key)
 	}
 
-	widenedRecord := WidenForInference(typ.NewRecord().
+	widenedRecord := WidenForInference(typetable.NewRecord().
 		MapComponent(nilableLiteralKey, typ.LiteralInt(42)).
 		Build())
 	resultRecord, ok := widenedRecord.(*typ.Record)
@@ -174,7 +175,7 @@ func TestWidenForInferenceNil(t *testing.T) {
 }
 
 func TestWidenForInferenceRecord(t *testing.T) {
-	rec := typ.NewRecord().
+	rec := typetable.NewRecord().
 		Field("x", typ.LiteralInt(42)).
 		OptField("y", typ.LiteralString("hello")).
 		ReadonlyField("z", typ.LiteralBool(true)).
@@ -203,7 +204,7 @@ func TestWidenForInferenceRecord(t *testing.T) {
 }
 
 func TestWidenForInferenceRecordStaticMembers(t *testing.T) {
-	rec := typ.NewRecord().
+	rec := typetable.NewRecord().
 		StaticStringIndex("name", typ.LiteralString("lua")).
 		AddStaticMember(typ.StaticMember{
 			Kind:     typ.StaticMemberIntIndex,
@@ -230,8 +231,8 @@ func TestWidenForInferenceRecordStaticMembers(t *testing.T) {
 }
 
 func TestWidenForInferenceRecordWithMetatableAndMapComponent(t *testing.T) {
-	meta := typ.NewRecord().Field("__index", typ.LiteralString("meta")).Build()
-	rec := typ.NewRecord().
+	meta := typetable.NewRecord().Field("__index", typ.LiteralString("meta")).Build()
+	rec := typetable.NewRecord().
 		SetOpen(true).
 		Field("name", typ.LiteralString("test")).
 		Metatable(meta).
@@ -265,7 +266,7 @@ func TestWidenForInferenceRecordWithMetatableAndMapComponent(t *testing.T) {
 }
 
 func TestWidenForInferenceLargeRecordCollapses(t *testing.T) {
-	builder := typ.NewRecord()
+	builder := typetable.NewRecord()
 	for i := 0; i < typ.DefaultRecursionDepth+1; i++ {
 		builder.Field(fmt.Sprintf("f%d", i), typ.LiteralInt(int64(i)))
 	}
@@ -295,7 +296,7 @@ func TestWidenForInferenceUnchangedContainers(t *testing.T) {
 		t.Fatal("map without literals should be unchanged")
 	}
 
-	rec := typ.NewRecord().Field("x", typ.Number).Build()
+	rec := typetable.NewRecord().Field("x", typ.Number).Build()
 	if got := WidenForInference(rec); got != rec {
 		t.Fatal("record without literals should be unchanged")
 	}
@@ -307,7 +308,7 @@ func TestWidenForInferenceFunctionNestedLiterals(t *testing.T) {
 		OptParam("flag", typ.LiteralBool(true)).
 		Variadic(typ.LiteralString("extra")).
 		Returns(
-			typ.NewRecord().
+			typetable.NewRecord().
 				Field("label", typ.LiteralString("ok")).
 				Build(),
 		).

@@ -4,11 +4,12 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/type/normalize"
+	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
 func TestFieldDirectRecordField(t *testing.T) {
-	rec := typ.NewRecord().
+	rec := typetable.NewRecord().
 		Field("name", typ.String).
 		Field("age", typ.Integer).
 		Build()
@@ -26,7 +27,7 @@ func TestFieldDirectRecordField(t *testing.T) {
 
 func TestFieldOptionalAliasInstantiatedRecord(t *testing.T) {
 	t.Run("optional", func(t *testing.T) {
-		rec := typ.NewRecord().Field("value", typ.String).Build()
+		rec := typetable.NewRecord().Field("value", typ.String).Build()
 
 		got, ok := Field(typ.NewOptional(rec), "value")
 		if !ok {
@@ -36,7 +37,7 @@ func TestFieldOptionalAliasInstantiatedRecord(t *testing.T) {
 	})
 
 	t.Run("alias", func(t *testing.T) {
-		rec := typ.NewRecord().Field("value", typ.Boolean).Build()
+		rec := typetable.NewRecord().Field("value", typ.Boolean).Build()
 
 		got, ok := Field(typ.NewAlias("Row", rec), "value")
 		if !ok {
@@ -48,7 +49,7 @@ func TestFieldOptionalAliasInstantiatedRecord(t *testing.T) {
 	t.Run("instantiated", func(t *testing.T) {
 		param := typ.NewTypeParam("T", nil)
 		box := typ.NewGeneric("Box", []*typ.TypeParam{param},
-			typ.NewRecord().Field("value", param).Build())
+			typetable.NewRecord().Field("value", param).Build())
 
 		got, ok := Field(typ.Instantiate(box, typ.Number), "value")
 		if !ok {
@@ -71,7 +72,7 @@ func TestFieldMapStringFieldOptionalityAndMissingPolicy(t *testing.T) {
 		t.Fatal("MissingFieldReadsNil(map) = false, want true")
 	}
 
-	rec := typ.NewRecord().
+	rec := typetable.NewRecord().
 		MapComponent(typ.String, typ.Boolean).
 		Build()
 	got, ok = Field(rec, "dynamic")
@@ -82,11 +83,11 @@ func TestFieldMapStringFieldOptionalityAndMissingPolicy(t *testing.T) {
 }
 
 func TestFieldCommonUnionField(t *testing.T) {
-	left := typ.NewRecord().
+	left := typetable.NewRecord().
 		Field("id", typ.String).
 		Field("left", typ.Number).
 		Build()
-	right := typ.NewRecord().
+	right := typetable.NewRecord().
 		Field("id", typ.String).
 		Field("right", typ.Boolean).
 		Build()
@@ -100,10 +101,10 @@ func TestFieldCommonUnionField(t *testing.T) {
 
 func TestFieldUnionProjectionPolicy(t *testing.T) {
 	fieldRec := func(t typ.Type) typ.Type {
-		return typ.NewRecord().Field("value", t).Build()
+		return typetable.NewRecord().Field("value", t).Build()
 	}
 	optFieldRec := func(t typ.Type) typ.Type {
-		return typ.NewRecord().OptField("value", t).Build()
+		return typetable.NewRecord().OptField("value", t).Build()
 	}
 
 	tests := []struct {
@@ -173,8 +174,8 @@ func TestFieldIntersectionFieldMeetPolicy(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			left := typ.NewRecord().Field("value", tt.left).Build()
-			right := typ.NewRecord().Field("value", tt.right).Build()
+			left := typetable.NewRecord().Field("value", tt.left).Build()
+			right := typetable.NewRecord().Field("value", tt.right).Build()
 
 			got, ok := Field(typ.NewIntersection(left, right), "value")
 			if !ok {
