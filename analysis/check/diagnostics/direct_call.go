@@ -12,6 +12,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/typeannotation"
 	"github.com/wippyai/go-lua/analysis/lua/valueexpr"
 	"github.com/wippyai/go-lua/analysis/symbol"
+	"github.com/wippyai/go-lua/analysis/type/refinement"
 	"github.com/wippyai/go-lua/analysis/type/subtype"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/unwrap"
@@ -147,6 +148,9 @@ func (p DirectCallContract) directFunctionCall(
 		}
 		got, ok := valueexpr.LiteralType(arg)
 		if !ok {
+			continue
+		}
+		if refinement.ContainsFreeTypeParam(want) {
 			continue
 		}
 		if subtype.IsSubtype(got, want) {

@@ -189,6 +189,19 @@ func TestDirectCallReportsWrongArgumentType(t *testing.T) {
 	}
 }
 
+func TestDirectCallSkipsGenericIdentityArgumentClaims(t *testing.T) {
+	diags := runDiagnostics(t, `
+		local function identity<T>(x: T): T
+			return x
+		end
+		local n: number = identity(42)
+		local s: string = identity("hello")
+	`)
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v, want none for generic identity call", diags)
+	}
+}
+
 func TestDirectCallAcceptsTypedOptionalParam(t *testing.T) {
 	diags := runDiagnostics(t, `
 		local function log(msg: string, level: string?)
