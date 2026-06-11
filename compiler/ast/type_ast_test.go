@@ -351,7 +351,7 @@ func TestCastExpr(t *testing.T) {
 		t.Error("Type should match")
 	}
 	if cast.Syntax != CastSyntaxUnknown {
-		t.Fatalf("Syntax = %v, want unknown for legacy construction", cast.Syntax)
+		t.Fatalf("Syntax = %v, want unspecified syntax for hand-built AST nodes", cast.Syntax)
 	}
 	asCast := &CastExpr{Syntax: CastSyntaxAs}
 	if asCast.Syntax != CastSyntaxAs {

@@ -69,7 +69,7 @@ type IdentExpr struct {
 type AttrKeySyntax uint8
 
 const (
-	// AttrKeyUnknown preserves legacy behavior for hand-built AST nodes.
+	// AttrKeyUnknown records unspecified syntax for hand-built or manual AST nodes.
 	AttrKeyUnknown AttrKeySyntax = iota
 	// AttrKeyDot is source dot syntax: obj.key.
 	AttrKeyDot
@@ -82,7 +82,7 @@ type AttrGetExpr struct {
 	ExprBase
 	Object    Expr          // Table expression
 	Key       Expr          // Key expression
-	KeySyntax AttrKeySyntax // Dot, bracket, or unknown for legacy/manual ASTs
+	KeySyntax AttrKeySyntax // Dot, bracket, or unspecified syntax for hand-built/manual ASTs
 }
 
 // TableExpr represents a table constructor ({...}).

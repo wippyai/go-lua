@@ -140,7 +140,7 @@ func (n *Node) CopyLastPos(src PositionHolder) {
 // Field represents a key-value pair in a table constructor.
 type Field struct {
 	Key       Expr
-	KeySyntax AttrKeySyntax // Dot/name, bracket, or unknown for legacy/manual ASTs
+	KeySyntax AttrKeySyntax // Dot/name, bracket, or unspecified syntax for hand-built/manual ASTs
 	Value     Expr
 }
 

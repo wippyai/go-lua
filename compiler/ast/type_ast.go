@@ -219,7 +219,7 @@ type InterfaceDefStmt struct {
 type CastSyntax uint8
 
 const (
-	// CastSyntaxUnknown preserves legacy behavior for hand-built AST nodes.
+	// CastSyntaxUnknown records unspecified syntax for hand-built or manual AST nodes.
 	CastSyntaxUnknown CastSyntax = iota
 	// CastSyntaxAs records source `as` syntax.
 	CastSyntaxAs
