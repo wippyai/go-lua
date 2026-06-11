@@ -253,6 +253,189 @@ func TestFactsNodeTransferReturnCallSourceReadsReturnSlotThroughRead(t *testing.
 	assertValue(t, reg, got[graph.Exit()], key.ReturnSlot(0), callValue)
 }
 
+func TestFactsNodeTransferCallProducerProviderWritesReturnSlots(t *testing.T) {
+	reg := product.DefaultRegistry()
+	point := cfg.Point(22)
+	target := symbol.ID(111)
+	in := state.State{}.WriteValue(reg, key.SymbolValue(target), presentValue(reg))
+	first := presentValue(reg)
+	third := absentValue(reg)
+
+	var providerCalled bool
+	got := NewFactsNodeTransfer(FactsNodeTransferConfig{
+		Facts: NewFacts(FactsInput{
+			Calls: map[cfg.Point]CallProducer{
+				point: NewCallProducer(CallProducerConfig{
+					Context:      CallProducerContextAssignment,
+					CalleeSymbol: symbol.ID(201),
+					ExprIndex:    4,
+				}),
+			},
+		}),
+		CallResults: func(ctx NodeContext, call CallProducer, gotIn state.State, read func(cfg.Point) state.State) []CallResult {
+			providerCalled = true
+			if ctx.Point != point {
+				t.Fatalf("provider point = %d, want %d", ctx.Point, point)
+			}
+			if call.Context() != CallProducerContextAssignment || call.CalleeSymbol() != symbol.ID(201) || call.ExprIndex() != 4 {
+				t.Fatalf("provider call = %#v", call)
+			}
+			assertStateEqual(t, reg, gotIn, in)
+			assertValue(t, reg, read(point), key.SymbolValue(target), presentValue(reg))
+			return []CallResult{
+				{Index: 0, Value: first},
+				{Index: 2, Value: third},
+				{Index: -1, Value: product.Top()},
+			}
+		},
+	})(NodeContext{
+		Registry: reg,
+		Point:    point,
+	}, in)
+
+	if !providerCalled {
+		t.Fatal("call result provider was not called")
+	}
+	assertValue(t, reg, got, key.ReturnSlot(0), first)
+	assertValue(t, reg, got, key.ReturnSlot(1), product.Bottom(reg))
+	assertValue(t, reg, got, key.ReturnSlot(2), third)
+	assertValue(t, reg, got, key.SymbolValue(target), presentValue(reg))
+}
+
+func TestFactsNodeTransferAssignmentCallSourceConsumesProviderReturnSlotThroughRead(t *testing.T) {
+	reg := product.DefaultRegistry()
+	graph := cfg.New()
+	call := graph.AddNode(cfg.NodeCall)
+	assign := graph.AddNode(cfg.NodeAssign)
+	graph.AddEdge(graph.Entry(), call, false)
+	graph.AddEdge(call, assign, false)
+	graph.AddEdge(assign, graph.Exit(), false)
+
+	target := symbol.ID(112)
+	callValue := presentValue(reg)
+	sources := NewSourceValues(SourceValuesConfig{Registry: reg})
+
+	got := Run(Config{
+		Graph:    graph,
+		Registry: reg,
+		NodeTransfer: NewFactsNodeTransfer(FactsNodeTransferConfig{
+			Facts: NewFacts(FactsInput{
+				Calls: map[cfg.Point]CallProducer{
+					call: NewCallProducer(CallProducerConfig{
+						Context: CallProducerContextAssignment,
+					}),
+				},
+				LocalAssignments: map[cfg.Point]LocalAssignment{
+					assign: NewLocalAssignment(target, path.NewPath(target, "local"), ValueSource{
+						Kind:         ValueSourceCall,
+						CallPoint:    call,
+						HasCallPoint: true,
+						ResultIndex:  0,
+					}),
+				},
+			}),
+			Sources: sources,
+			CallResults: func(ctx NodeContext, call CallProducer, in state.State, read func(cfg.Point) state.State) []CallResult {
+				return []CallResult{{Index: 0, Value: callValue}}
+			},
+		}),
+		EdgeTransfer: func(ctx EdgeContext, out state.State) state.State {
+			if ctx.Edge.From == call && ctx.Edge.To == assign {
+				return out.WriteReturnSlot(reg, 0, product.Bottom(reg))
+			}
+			return out
+		},
+	})
+
+	assertValue(t, reg, got[assign], key.ReturnSlot(0), product.Bottom(reg))
+	assertValue(t, reg, got[graph.Exit()], key.SymbolValue(target), callValue)
+}
+
+func TestFactsNodeTransferCallResultTargetsDoNotDirectlyWriteTargets(t *testing.T) {
+	reg := product.DefaultRegistry()
+	point := cfg.Point(23)
+	target := symbol.ID(113)
+	targetPath := path.NewPath(target, "table").Field("field")
+	pathKey := path.PathKey("sym113@1.field")
+	symbolValue := presentValue(reg)
+	pathValue := presentValue(reg)
+	resultValue := absentValue(reg)
+	in := state.State{}.
+		WriteValue(reg, key.SymbolValue(target), symbolValue).
+		WritePathKey(reg, pathKey, pathValue)
+
+	got := NewFactsNodeTransfer(FactsNodeTransferConfig{
+		Facts: NewFacts(FactsInput{
+			Calls: map[cfg.Point]CallProducer{
+				point: NewCallProducer(CallProducerConfig{
+					Context: CallProducerContextAssignment,
+					ResultTargets: []CallResultTarget{
+						NewCallResultTarget(CallResultTargetLocalAssignment, 0, target, path.NewPath(target, "local")),
+						NewCallResultTarget(CallResultTargetOrdinaryAssignment, 0, target, targetPath),
+					},
+				}),
+			},
+		}),
+		CallResults: func(ctx NodeContext, call CallProducer, in state.State, read func(cfg.Point) state.State) []CallResult {
+			return []CallResult{{Index: 0, Value: resultValue}}
+		},
+	})(NodeContext{
+		Registry: reg,
+		Point:    point,
+	}, in)
+
+	assertValue(t, reg, got, key.ReturnSlot(0), resultValue)
+	assertValue(t, reg, got, key.SymbolValue(target), symbolValue)
+	assertPathValue(t, reg, got, pathKey, pathValue)
+}
+
+func TestFactsNodeTransferMissingCallResultProviderOrNoResultsLeavesStateUnchanged(t *testing.T) {
+	reg := product.DefaultRegistry()
+	point := cfg.Point(24)
+	target := symbol.ID(114)
+	in := state.State{}.
+		WriteReturnSlot(reg, 0, presentValue(reg)).
+		WriteValue(reg, key.SymbolValue(target), absentValue(reg))
+
+	facts := NewFacts(FactsInput{
+		Calls: map[cfg.Point]CallProducer{
+			point: NewCallProducer(CallProducerConfig{Context: CallProducerContextAssignment}),
+		},
+	})
+	tests := []struct {
+		name     string
+		provider CallResultProvider
+	}{
+		{name: "nil provider"},
+		{
+			name: "nil results",
+			provider: func(ctx NodeContext, call CallProducer, in state.State, read func(cfg.Point) state.State) []CallResult {
+				return nil
+			},
+		},
+		{
+			name: "empty results",
+			provider: func(ctx NodeContext, call CallProducer, in state.State, read func(cfg.Point) state.State) []CallResult {
+				return []CallResult{}
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := NewFactsNodeTransfer(FactsNodeTransferConfig{
+				Facts:       facts,
+				CallResults: tc.provider,
+			})(NodeContext{
+				Registry: reg,
+				Point:    point,
+			}, in)
+
+			assertStateEqual(t, reg, got, in)
+		})
+	}
+}
+
 func TestFactsNodeTransferMissingResolverValueLeavesStateUnchanged(t *testing.T) {
 	reg := product.DefaultRegistry()
 	point := cfg.Point(12)

@@ -12,28 +12,27 @@ import (
 
 // FactsNodeTransferConfig configures the generic fact applicator.
 type FactsNodeTransferConfig struct {
-	Facts      Facts
-	Sources    SourceValues
-	Visibility *visibility.Resolver
+	Facts       Facts
+	Sources     SourceValues
+	CallResults CallResultProvider
+	Visibility  *visibility.Resolver
 }
 
 // NewFactsNodeTransfer returns a generic node transfer that applies point-local
 // transfer facts. It intentionally handles only root assignment, member/path
-// assignment, and return-slot facts; richer Lua lowering, calls, branches, and
-// diagnostics stay outside this package.
+// assignment, call return-slot production, and return-slot facts; richer Lua
+// lowering, branches, and diagnostics stay outside this package.
 func NewFactsNodeTransfer(config FactsNodeTransferConfig) NodeTransfer {
 	return func(ctx NodeContext, in state.State) state.State {
 		facts := config.Facts
 		sources := config.Sources
-		if sources == nil {
-			return in
-		}
-		read := ctx.Read
-		if read == nil {
-			read = emptyStateRead
-		}
+		callResults := config.CallResults
+		read, materialize := callResultReader(ctx, facts, callResults)
 
-		out := in
+		out := materialize(ctx.Point, in)
+		if sources == nil {
+			return out
+		}
 		if fact, ok := facts.LocalAssignment(ctx.Point); ok {
 			out = applyRootAssignment(ctx, sources, read, in, out, fact.TargetSymbol(), fact.TargetPath(), fact.Source())
 		}
@@ -48,6 +47,81 @@ func NewFactsNodeTransfer(config FactsNodeTransferConfig) NodeTransfer {
 		}
 		return out
 	}
+}
+
+func callResultReader(
+	ctx NodeContext,
+	facts Facts,
+	provider CallResultProvider,
+) (func(cfg.Point) state.State, func(cfg.Point, state.State) state.State) {
+	rawRead := ctx.Read
+	if rawRead == nil {
+		rawRead = emptyStateRead
+	}
+	if provider == nil {
+		return rawRead, func(_ cfg.Point, base state.State) state.State {
+			return base
+		}
+	}
+
+	cache := make(map[cfg.Point]state.State)
+	active := make(map[cfg.Point]bool)
+	activeBase := make(map[cfg.Point]state.State)
+	var read func(cfg.Point) state.State
+	materialize := func(point cfg.Point, base state.State) state.State {
+		if out, ok := cache[point]; ok {
+			return out
+		}
+		if active[point] {
+			return activeBase[point]
+		}
+		active[point] = true
+		activeBase[point] = base
+		out := materializeCallResults(callContextAt(ctx, point, read), facts, provider, read, base, base)
+		delete(active, point)
+		delete(activeBase, point)
+		cache[point] = out
+		return out
+	}
+	read = func(point cfg.Point) state.State {
+		return materialize(point, rawRead(point))
+	}
+	return read, materialize
+}
+
+func callContextAt(ctx NodeContext, point cfg.Point, read func(cfg.Point) state.State) NodeContext {
+	ctx.Point = point
+	ctx.Read = read
+	if ctx.Graph != nil {
+		ctx.Node = ctx.Graph.Node(point)
+	} else {
+		ctx.Node = nil
+	}
+	return ctx
+}
+
+func materializeCallResults(
+	ctx NodeContext,
+	facts Facts,
+	provider CallResultProvider,
+	read func(cfg.Point) state.State,
+	in state.State,
+	out state.State,
+) state.State {
+	if provider == nil {
+		return out
+	}
+	call, ok := facts.Call(ctx.Point)
+	if !ok {
+		return out
+	}
+	for _, result := range provider(ctx, call, in, read) {
+		if result.Index < 0 {
+			continue
+		}
+		out = out.WriteReturnSlot(ctx.Registry, result.Index, result.Value)
+	}
+	return out
 }
 
 func applyRootAssignment(

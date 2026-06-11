@@ -377,6 +377,17 @@ type SourceValues interface {
 	ValueOfSource(point cfg.Point, source ValueSource, in state.State, read func(cfg.Point) state.State) (product.Value, bool)
 }
 
+// CallResult is one indexed abstract result produced by a call.
+type CallResult struct {
+	Index int
+	Value product.Value
+}
+
+// CallResultProvider resolves generic call-producer facts into indexed return
+// slots. Call result targets remain metadata for downstream facts; providers
+// produce only ReturnSlot(index) values.
+type CallResultProvider func(ctx NodeContext, call CallProducer, in state.State, read func(cfg.Point) state.State) []CallResult
+
 func copyPath(p path.Path) path.Path {
 	if len(p.Segments) == 0 {
 		return p
