@@ -16,6 +16,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/effect/iteration"
 	"github.com/wippyai/go-lua/analysis/domain/effect/mutation"
 	"github.com/wippyai/go-lua/analysis/domain/effect/ownership"
+	"github.com/wippyai/go-lua/analysis/domain/effect/postcondition"
 	"github.com/wippyai/go-lua/analysis/domain/effect/returns"
 	"github.com/wippyai/go-lua/analysis/module/manifest"
 	"github.com/wippyai/go-lua/analysis/type/typ"
@@ -26,6 +27,14 @@ func TestLookupSeededFunctionTypes(t *testing.T) {
 		name string
 		want *typ.Function
 	}{
+		{
+			name: Assert,
+			want: typ.Func().
+				Param("v", typ.Any).
+				OptParam("message", typ.Any).
+				Returns(typ.Any).
+				Build(),
+		},
 		{
 			name: Require,
 			want: typ.Func().
@@ -99,6 +108,16 @@ func TestLookupSeededEffects(t *testing.T) {
 		name   string
 		labels []effect.Label
 	}{
+		{
+			name: Assert,
+			labels: []effect.Label{
+				control.Throw{},
+				postcondition.NormalReturnRefinement{
+					Target:     effect.ParamRef{Index: 0},
+					Refinement: postcondition.Present{},
+				},
+			},
+		},
 		{
 			name: Require,
 			labels: []effect.Label{
@@ -208,9 +227,24 @@ func TestSignaturesSeededNames(t *testing.T) {
 	sort.Strings(got)
 
 	want := []string{IPairs, PCall, Pairs, Require, TableInsert, Type, XPCall}
+	want = append(want, Assert)
 	sort.Strings(want)
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("names = %v, want %v", got, want)
+	}
+}
+
+func TestAssertSignatureDeclaresNormalReturnPresentPostcondition(t *testing.T) {
+	got, ok := Lookup(Assert)
+	if !ok {
+		t.Fatalf("Lookup(%q) missing", Assert)
+	}
+	want := postcondition.NormalReturnRefinement{
+		Target:     effect.ParamRef{Index: 0},
+		Refinement: postcondition.Present{},
+	}
+	if !hasLabel(got.Effect, want) {
+		t.Fatalf("assert effect %v missing %v", got.Effect, want)
 	}
 }
 

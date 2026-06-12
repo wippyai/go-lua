@@ -12,6 +12,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/effect/iteration"
 	"github.com/wippyai/go-lua/analysis/domain/effect/mutation"
 	"github.com/wippyai/go-lua/analysis/domain/effect/ownership"
+	"github.com/wippyai/go-lua/analysis/domain/effect/postcondition"
 	"github.com/wippyai/go-lua/analysis/domain/effect/returns"
 	"github.com/wippyai/go-lua/analysis/type/projection"
 )
@@ -37,10 +38,11 @@ type effectLabelWire struct {
 	Into   *paramRefWire `json:"into,omitempty"`
 	Value  *paramRefWire `json:"value,omitempty"`
 
-	IteratorKind string               `json:"iteratorKind,omitempty"`
-	Transform    *effectTransformWire `json:"transform,omitempty"`
-	ReturnType   *effectReturnWire    `json:"returnType,omitempty"`
-	Length       *exprWire            `json:"length,omitempty"`
+	IteratorKind string                `json:"iteratorKind,omitempty"`
+	Transform    *effectTransformWire  `json:"transform,omitempty"`
+	ReturnType   *effectReturnWire     `json:"returnType,omitempty"`
+	Length       *exprWire             `json:"length,omitempty"`
+	Refinement   *effectRefinementWire `json:"refinement,omitempty"`
 }
 
 type effectTransformWire struct {
@@ -49,6 +51,10 @@ type effectTransformWire struct {
 	Container *paramRefWire `json:"container,omitempty"`
 	Value     *paramRefWire `json:"value,omitempty"`
 	Element   *paramRefWire `json:"element,omitempty"`
+}
+
+type effectRefinementWire struct {
+	Kind string `json:"kind"`
 }
 
 type effectReturnWire struct {
@@ -191,6 +197,16 @@ func encodeEffectLabel(label effect.Label) (effectLabelWire, error) {
 		return effectLabelWire{Kind: "ownership.send", FromParam: l.FromParam}, nil
 	case ownership.Freeze:
 		return effectLabelWire{Kind: "ownership.freeze", Param: encodeParamRef(l.Param)}, nil
+	case postcondition.NormalReturnRefinement:
+		refinement, err := encodeEffectRefinement(l.Refinement)
+		if err != nil {
+			return effectLabelWire{}, err
+		}
+		return effectLabelWire{
+			Kind:       postcondition.NormalReturnRefinementKind,
+			Target:     encodeParamRef(l.Target),
+			Refinement: refinement,
+		}, nil
 	case returns.Return:
 		transform, err := encodeEffectReturn(l.Transform)
 		if err != nil {
@@ -261,6 +277,12 @@ func decodeEffectLabel(w effectLabelWire) (effect.Label, error) {
 		return ownership.Send{FromParam: w.FromParam}, nil
 	case "ownership.freeze":
 		return ownership.Freeze{Param: decodeParamRef(w.Param)}, nil
+	case postcondition.NormalReturnRefinementKind:
+		refinement, err := decodeEffectRefinement(w.Refinement)
+		if err != nil {
+			return nil, err
+		}
+		return postcondition.NormalReturnRefinement{Target: decodeParamRef(w.Target), Refinement: refinement}, nil
 	case "returns.return":
 		transform, err := decodeEffectReturn(w.ReturnType)
 		if err != nil {
@@ -280,6 +302,35 @@ func decodeEffectLabel(w effectLabelWire) (effect.Label, error) {
 		return returns.CorrelatedReturn{Indices: indices}, nil
 	default:
 		return nil, fmt.Errorf("manifest: unknown effect label kind %q", w.Kind)
+	}
+}
+
+func encodeEffectRefinement(refinement postcondition.Refinement) (*effectRefinementWire, error) {
+	if refinement == nil {
+		return nil, fmt.Errorf("manifest: missing effect refinement")
+	}
+	switch r := refinement.(type) {
+	case postcondition.Present:
+		return &effectRefinementWire{Kind: r.Kind()}, nil
+	case *postcondition.Present:
+		if r == nil {
+			return nil, fmt.Errorf("manifest: missing effect refinement")
+		}
+		return encodeEffectRefinement(*r)
+	default:
+		return nil, fmt.Errorf("manifest: unsupported effect refinement %T", refinement)
+	}
+}
+
+func decodeEffectRefinement(w *effectRefinementWire) (postcondition.Refinement, error) {
+	if w == nil {
+		return nil, fmt.Errorf("manifest: missing effect refinement")
+	}
+	switch w.Kind {
+	case postcondition.PresentKind:
+		return postcondition.Present{}, nil
+	default:
+		return nil, fmt.Errorf("manifest: unknown effect refinement kind %q", w.Kind)
 	}
 }
 

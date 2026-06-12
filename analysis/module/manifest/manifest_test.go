@@ -12,6 +12,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/effect/iteration"
 	"github.com/wippyai/go-lua/analysis/domain/effect/mutation"
 	"github.com/wippyai/go-lua/analysis/domain/effect/ownership"
+	"github.com/wippyai/go-lua/analysis/domain/effect/postcondition"
 	"github.com/wippyai/go-lua/analysis/domain/effect/returns"
 	"github.com/wippyai/go-lua/analysis/domain/effect/signature"
 	"github.com/wippyai/go-lua/analysis/type/annotation"
@@ -97,6 +98,7 @@ func TestManifestRoundTripNamedFunctionSignatureEffects(t *testing.T) {
 		control.IO{},
 		ownership.Store{Param: effect.ParamRef{Index: 0}, Into: effect.ParamRef{Index: 1}},
 		mutation.LengthChange{Target: effect.ParamRef{Index: 1}, Delta: -1},
+		postcondition.NormalReturnRefinement{Target: effect.ParamRef{Index: 0}, Refinement: postcondition.Present{}},
 		returns.Return{ReturnIndex: 0, Transform: returns.ElementOf{Source: effect.ParamRef{Index: 1}}},
 		returns.ReturnLength{ReturnIndex: 0, Length: expr.Add(expr.PL(1), expr.C(1))},
 	)
@@ -168,6 +170,12 @@ func TestManifestEffectLabelRoundTripPreservesRowsAndSelectors(t *testing.T) {
 		{"ownership borrow all", ownership.BorrowAll{}, ownership.BorrowsAllParams},
 		{"ownership send", ownership.Send{FromParam: 1}, ownership.HasSend},
 		{"ownership freeze", ownership.Freeze{Param: p2}, ownership.HasFreeze},
+		{"postcondition normal return present", postcondition.NormalReturnRefinement{Target: p0, Refinement: postcondition.Present{}}, func(r effect.Row) bool {
+			return r.Has(func(label effect.Label) bool {
+				got, ok := effect.NormalizeLabel(label).(postcondition.NormalReturnRefinement)
+				return ok && got.Target.Index == 0
+			})
+		}},
 		{"returns return", returns.Return{ReturnIndex: 0, Transform: returns.ElementOf{Source: p0}}, func(r effect.Row) bool {
 			return returns.GetReturn(r, 0) != nil
 		}},
@@ -297,6 +305,44 @@ func TestManifestDecodeIteratorRequiresExplicitKind(t *testing.T) {
 	_, err := decodeEffectLabel(effectLabelWire{Kind: "iteration.iterator"})
 	if err == nil || !strings.Contains(err.Error(), `unknown iterator kind ""`) {
 		t.Fatalf("decodeEffectLabel error = %v, want unknown iterator kind", err)
+	}
+}
+
+func TestManifestDecodePostconditionRefinementRequiresKnownKind(t *testing.T) {
+	_, err := decodeEffectLabel(effectLabelWire{
+		Kind:       postcondition.NormalReturnRefinementKind,
+		Target:     &paramRefWire{Index: 0},
+		Refinement: &effectRefinementWire{Kind: "future"},
+	})
+	if err == nil || !strings.Contains(err.Error(), `unknown effect refinement kind "future"`) {
+		t.Fatalf("decodeEffectLabel error = %v, want unknown effect refinement kind", err)
+	}
+}
+
+func TestManifestDecodePostconditionRefinementRequiresRefinement(t *testing.T) {
+	_, err := decodeEffectLabel(effectLabelWire{
+		Kind:   postcondition.NormalReturnRefinementKind,
+		Target: &paramRefWire{Index: 0},
+	})
+	if err == nil || !strings.Contains(err.Error(), "missing effect refinement") {
+		t.Fatalf("decodeEffectLabel error = %v, want missing effect refinement", err)
+	}
+}
+
+func TestManifestEncodePostconditionRefinementRequiresRefinement(t *testing.T) {
+	m := New("example/bad-postcondition")
+	m.DefineFunctionSignature("assertLike", signature.Function{
+		Type: typ.Func().
+			Param("input", typ.Any).
+			Build(),
+		Effect: effect.Empty.With(postcondition.NormalReturnRefinement{
+			Target: effect.ParamRef{Index: 0},
+		}),
+	})
+
+	_, err := Encode(m)
+	if err == nil || !strings.Contains(err.Error(), "missing effect refinement") {
+		t.Fatalf("Encode error = %v, want missing effect refinement", err)
 	}
 }
 

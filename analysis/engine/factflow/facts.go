@@ -72,6 +72,16 @@ func (f Facts) WithBranchPresenceRelations(relations map[cfg.Point]BranchPresenc
 	return f
 }
 
+// WithPostconditionRefinements returns f plus the supplied node-local normal
+// return refinements.
+func (f Facts) WithPostconditionRefinements(refinements map[cfg.Point]PostconditionRefinementSet) Facts {
+	if len(refinements) == 0 {
+		return f
+	}
+	f.postconditionRefinements = mergePostconditionRefinementMap(f.postconditionRefinements, refinements)
+	return f
+}
+
 // LocalAssignment returns the local assignment fact at point.
 func (f Facts) LocalAssignment(point cfg.Point) (RootAssignment, bool) {
 	fact, ok := f.localAssignments[point]

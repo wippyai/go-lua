@@ -62,6 +62,25 @@ func copyPostconditionRefinementMap(in map[cfg.Point]PostconditionRefinementSet)
 	return out
 }
 
+func mergePostconditionRefinementMap(
+	base map[cfg.Point]PostconditionRefinementSet,
+	add map[cfg.Point]PostconditionRefinementSet,
+) map[cfg.Point]PostconditionRefinementSet {
+	out := copyPostconditionRefinementMap(base)
+	if len(add) == 0 {
+		return out
+	}
+	if out == nil {
+		out = make(map[cfg.Point]PostconditionRefinementSet, len(add))
+	}
+	for point, set := range add {
+		refinements := out[point].Refinements()
+		refinements = append(refinements, set.Refinements()...)
+		out[point] = NewPostconditionRefinementSet(refinements...)
+	}
+	return out
+}
+
 func copyPostconditionRefinementSlice(in []PostconditionRefinement) []PostconditionRefinement {
 	if len(in) == 0 {
 		return nil

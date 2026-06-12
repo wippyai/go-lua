@@ -8,6 +8,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/ref"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/summary"
 	"github.com/wippyai/go-lua/analysis/domain/effect"
+	"github.com/wippyai/go-lua/analysis/domain/effect/postcondition"
 	"github.com/wippyai/go-lua/analysis/domain/effect/returns"
 	"github.com/wippyai/go-lua/analysis/domain/effect/signature"
 	"github.com/wippyai/go-lua/analysis/domain/path"
@@ -246,6 +247,137 @@ func TestWithSignatureRelationsStopsAtErrorReturnTargetReassignment(t *testing.T
 	if relations := got.BranchPresenceRelations(branch); len(relations) != 0 {
 		t.Fatalf("branch relations after reassignment = %#v, want none", relations)
 	}
+}
+
+func TestWithSignaturePostconditionsLowersCallSiteArgumentPathAndApplies(t *testing.T) {
+	reg := standard.Registry()
+	graph := cfg.New()
+	call := graph.AddNode(cfg.NodeCall)
+	graph.AddEdge(graph.Entry(), call, false)
+	graph.AddEdge(call, graph.Exit(), false)
+
+	callee := symbol.ID(801)
+	argExpr := factflow.ExprRef(802)
+	argSymbol := symbol.ID(803)
+	argPath := path.NewPath(argSymbol, "x")
+	facts := factflow.NewFacts(factflow.FactsInput{
+		CallSites: map[cfg.Point]factflow.CallSite{
+			call: factflow.NewCallSite(factflow.CallSiteConfig{
+				Context:      factflow.CallSiteContextStatement,
+				CalleeSymbol: callee,
+				ArgumentSources: []factflow.ValueSource{
+					{Kind: factflow.ValueSourceExpression, ExprRef: argExpr, HasExpr: true},
+				},
+			}),
+		},
+		ExpressionPaths: map[factflow.ExprRef]path.Path{
+			argExpr: argPath,
+		},
+	})
+
+	got := WithSignaturePostconditions(SignaturePostconditionConfig{
+		Graph:    graph,
+		Registry: reg,
+		Signatures: signatureMap{
+			"assertLike": {
+				Type: typ.Func().Param("v", typ.Any).Build(),
+				Effect: effect.Empty.With(postcondition.NormalReturnRefinement{
+					Target:     effect.ParamRef{Index: 0},
+					Refinement: postcondition.Present{},
+				}),
+			},
+		},
+		NameFor: func(_ transfer.NodeContext, call factflow.CallProducer) (string, bool) {
+			if call.CalleeSymbol() != callee {
+				return "", false
+			}
+			return "assertLike", true
+		},
+		Facts: facts,
+	})
+
+	refinements := got.PostconditionRefinements(call)
+	if len(refinements) != 1 {
+		t.Fatalf("postcondition refinements = %d, want 1: %#v", len(refinements), refinements)
+	}
+	if !refinements[0].TargetPath().Equal(argPath) {
+		t.Fatalf("target path = %s, want %s", refinements[0].TargetPath(), argPath)
+	}
+	value, ok := refinements[0].Value().Constraint()
+	if !ok {
+		t.Fatalf("missing value constraint")
+	}
+	assertPresence(t, reg, value, presence.Present())
+
+	flow := transfer.Run(transfer.Config{
+		Graph:      graph,
+		Registry:   reg,
+		EntryState: state.State{}.WriteValue(reg, key.SymbolValue(argSymbol), product.Top()),
+		NodeTransfer: factapply.NewFactsNodeTransfer(factapply.FactsNodeTransferConfig{
+			Facts:   got,
+			Sources: sourcevalue.NewSourceValues(sourcevalue.SourceValuesConfig{Registry: reg}),
+		}),
+	})
+	assertStatePresence(t, reg, flow[graph.Exit()], key.SymbolValue(argSymbol), presence.Present())
+}
+
+func TestWithSignaturePostconditionsSkipsArgumentsWithoutExpressionPath(t *testing.T) {
+	reg := standard.Registry()
+	graph := cfg.New()
+	call := graph.AddNode(cfg.NodeCall)
+	graph.AddEdge(graph.Entry(), call, false)
+	graph.AddEdge(call, graph.Exit(), false)
+
+	callee := symbol.ID(811)
+	argSymbol := symbol.ID(812)
+	existing := product.NewWithPresence(reg, product.ShapeTop, presence.Maybe())
+	facts := factflow.NewFacts(factflow.FactsInput{
+		CallSites: map[cfg.Point]factflow.CallSite{
+			call: factflow.NewCallSite(factflow.CallSiteConfig{
+				Context:      factflow.CallSiteContextStatement,
+				CalleeSymbol: callee,
+				ArgumentSources: []factflow.ValueSource{
+					{Kind: factflow.ValueSourceExpression, ExprRef: factflow.ExprRef(813), HasExpr: true},
+					{Kind: factflow.ValueSourceNil},
+				},
+			}),
+		},
+	})
+
+	got := WithSignaturePostconditions(SignaturePostconditionConfig{
+		Graph:    graph,
+		Registry: reg,
+		Signatures: signatureMap{
+			"assertLike": {
+				Type: typ.Func().Param("v", typ.Any).Build(),
+				Effect: effect.Empty.With(
+					postcondition.NormalReturnRefinement{Target: effect.ParamRef{Index: 0}, Refinement: postcondition.Present{}},
+					postcondition.NormalReturnRefinement{Target: effect.ParamRef{Index: 1}, Refinement: postcondition.Present{}},
+				),
+			},
+		},
+		NameFor: func(_ transfer.NodeContext, call factflow.CallProducer) (string, bool) {
+			if call.CalleeSymbol() != callee {
+				return "", false
+			}
+			return "assertLike", true
+		},
+		Facts: facts,
+	})
+
+	if refinements := got.PostconditionRefinements(call); len(refinements) != 0 {
+		t.Fatalf("postcondition refinements = %#v, want none", refinements)
+	}
+	flow := transfer.Run(transfer.Config{
+		Graph:      graph,
+		Registry:   reg,
+		EntryState: state.State{}.WriteValue(reg, key.SymbolValue(argSymbol), existing),
+		NodeTransfer: factapply.NewFactsNodeTransfer(factapply.FactsNodeTransferConfig{
+			Facts:   got,
+			Sources: sourcevalue.NewSourceValues(sourcevalue.SourceValuesConfig{Registry: reg}),
+		}),
+	})
+	assertStatePresence(t, reg, flow[graph.Exit()], key.SymbolValue(argSymbol), presence.Maybe())
 }
 
 func TestCallTargetForResultUsesExplicitTargetResultIndex(t *testing.T) {
@@ -914,6 +1046,7 @@ func TestProductionImportsAreBounded(t *testing.T) {
 	allowed := map[string]bool{
 		"github.com/wippyai/go-lua/analysis/check/fixpoint/summary":        true,
 		"github.com/wippyai/go-lua/analysis/domain/effect":                 true,
+		"github.com/wippyai/go-lua/analysis/domain/effect/postcondition":   true,
 		"github.com/wippyai/go-lua/analysis/domain/effect/returns":         true,
 		"github.com/wippyai/go-lua/analysis/domain/effect/signature":       true,
 		"github.com/wippyai/go-lua/analysis/domain/path":                   true,
@@ -984,6 +1117,13 @@ func assertValue(t *testing.T, reg *axis.Registry, st state.State, slot key.Valu
 	t.Helper()
 	if got := st.ReadValue(reg, slot); !product.Equal(reg, got, want) {
 		t.Fatalf("state[%s] = %v, want %v", slot, got, want)
+	}
+}
+
+func assertStatePresence(t *testing.T, reg *axis.Registry, st state.State, slot key.Value, want presence.Value) {
+	t.Helper()
+	if got := product.PresenceOf(st.ReadValue(reg, slot)); !presence.Equal(got, want) {
+		t.Fatalf("state[%s] presence = %s, want %s", slot, got, want)
 	}
 }
 

@@ -9,12 +9,14 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/effect/iteration"
 	"github.com/wippyai/go-lua/analysis/domain/effect/mutation"
 	"github.com/wippyai/go-lua/analysis/domain/effect/ownership"
+	"github.com/wippyai/go-lua/analysis/domain/effect/postcondition"
 	"github.com/wippyai/go-lua/analysis/domain/effect/returns"
 	"github.com/wippyai/go-lua/analysis/domain/effect/signature"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
 const (
+	Assert      = "assert"
 	Require     = "require"
 	Type        = "type"
 	Pairs       = "pairs"
@@ -25,6 +27,18 @@ const (
 )
 
 var registry = map[string]signature.Function{
+	Assert: sig(
+		typ.Func().
+			Param("v", typ.Any).
+			OptParam("message", typ.Any).
+			Returns(typ.Any).
+			Build(),
+		control.Throw{},
+		postcondition.NormalReturnRefinement{
+			Target:     effect.ParamRef{Index: 0},
+			Refinement: postcondition.Present{},
+		},
+	),
 	Require: sig(
 		typ.Func().
 			Param("modname", typ.String).

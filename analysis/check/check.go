@@ -416,6 +416,13 @@ func (c *Checker) run(bindings *bind.Result, built *cfgbuild.Result, sem *semant
 			NameFor:    c.signatureNameForCall(bindings),
 			Facts:      facts,
 		})
+		facts = callresult.WithSignaturePostconditions(callresult.SignaturePostconditionConfig{
+			Graph:      built.Graph,
+			Registry:   config.Registry,
+			Signatures: config.Signatures,
+			NameFor:    c.signatureNameForCall(bindings),
+			Facts:      facts,
+		})
 	}
 	expressionValue := config.ExpressionValue
 	if expressionValue == nil {
