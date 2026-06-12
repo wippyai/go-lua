@@ -20,11 +20,14 @@ const (
 	CheckTypeNot
 	CheckLiteralEqual
 	CheckLiteralNot
+	CheckPathEqual
+	CheckPathNot
 )
 
 type Check struct {
 	Kind          CheckKind
 	Path          path.Path
+	OtherPath     path.Path
 	TypeName      string
 	LiteralString string
 }
@@ -56,9 +59,31 @@ func Normalize(expr ast.Expr, bindings *bind.Result) Check {
 			}
 			return Check{Kind: kind, Path: p}
 		}
+		if check, ok := normalizePathComparison(expr, bindings); ok {
+			return check
+		}
 	}
 
 	return Check{}
+}
+
+func normalizePathComparison(expr *ast.RelationalOpExpr, bindings *bind.Result) (Check, bool) {
+	lhs, ok := pathexpr.Resolve(expr.Lhs, bindings)
+	if !ok || lhs.IsEmpty() {
+		return Check{}, false
+	}
+	rhs, ok := pathexpr.Resolve(expr.Rhs, bindings)
+	if !ok || rhs.IsEmpty() {
+		return Check{}, false
+	}
+	if rhs.Less(lhs) {
+		lhs, rhs = rhs, lhs
+	}
+	kind := CheckPathEqual
+	if expr.Operator == "~=" {
+		kind = CheckPathNot
+	}
+	return Check{Kind: kind, Path: lhs, OtherPath: rhs}, true
 }
 
 func normalizeStringLiteralComparison(expr *ast.RelationalOpExpr, bindings *bind.Result) (Check, bool) {

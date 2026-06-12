@@ -14,6 +14,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/cfgfacts"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/compiler/ast"
+	"github.com/wippyai/go-lua/compiler/parse"
 )
 
 func ident(name string) *ast.IdentExpr {
@@ -1071,6 +1072,80 @@ func TestExtractChunkCallFactResolvesMethodPaths(t *testing.T) {
 	}
 }
 
+func TestExtractChunkChannelSelectFacts(t *testing.T) {
+	stmts, err := parse.ParseString(`local result = channel.select { events_ch:case_receive(), stop_ch:case_receive() }`, "test")
+	if err != nil {
+		t.Fatalf("ParseString: %v", err)
+	}
+	if len(stmts) != 1 {
+		t.Fatalf("parsed stmts = %d, want 1", len(stmts))
+	}
+	local, ok := stmts[0].(*ast.LocalAssignStmt)
+	if !ok {
+		t.Fatalf("stmt = %T, want *ast.LocalAssignStmt", stmts[0])
+	}
+	bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"channel", "events_ch", "stop_ch"}})
+	selectCall, ok := local.Exprs[0].(*ast.FuncCallExpr)
+	if !ok {
+		t.Fatalf("local expr = %T, want *ast.FuncCallExpr", local.Exprs[0])
+	}
+
+	result := newResult(nil)
+	targets := localResultTargets(local, bindings)
+	callFact := buildCallFact(local, nil, CallContextAssignmentSource, local.Exprs, 0, selectCall, bindings, targets)
+	secondFact := callFact
+	secondFact.ChannelSelect.ResultTarget.Path = path.NewPath(symbol.ID(9999), "second")
+	result.calls[2] = secondFact
+	result.calls[1] = callFact
+	if !callFact.HasChannelSelect {
+		t.Fatalf("call fact missing channel select annotation: %#v", callFact)
+	}
+	pointFact, ok := result.ChannelSelect(1)
+	if !ok {
+		t.Fatalf("missing point-keyed channel select")
+	}
+	if pointFact.Call != callFact.Call {
+		t.Fatalf("point select call = %p, want %p", pointFact.Call, callFact.Call)
+	}
+	selects := result.ChannelSelects()
+	if len(selects) != 2 {
+		t.Fatalf("channel selects = %#v, want two", selects)
+	}
+	selectFact := selects[0]
+	if selectFact.Call != callFact.Call {
+		t.Fatalf("select call = %p, want %p", selectFact.Call, callFact.Call)
+	}
+	wantResultPath := path.NewPath(mustLocalAt(t, bindings, local, 0), "result")
+	if selectFact.ResultTarget.Kind != CallResultTargetLocalAssignment || !selectFact.ResultTarget.HasPath || !selectFact.ResultTarget.Path.Equal(wantResultPath) {
+		t.Fatalf("result target = %#v, want path %#v", selectFact.ResultTarget, wantResultPath)
+	}
+	wantSecondPath := path.NewPath(symbol.ID(9999), "second")
+	if !selects[1].ResultTarget.HasPath || !selects[1].ResultTarget.Path.Equal(wantSecondPath) {
+		t.Fatalf("second result target = %#v, want path %#v", selects[1].ResultTarget, wantSecondPath)
+	}
+	if len(selectFact.Cases) != 2 {
+		t.Fatalf("cases = %#v, want two", selectFact.Cases)
+	}
+	wantNames := []string{"events_ch", "stop_ch"}
+	for i, wantName := range wantNames {
+		receiver, ok := selectFact.Cases[i].CaseCall.Receiver.(*ast.IdentExpr)
+		if !ok {
+			t.Fatalf("case %d receiver = %T, want *ast.IdentExpr", i, selectFact.Cases[i].CaseCall.Receiver)
+		}
+		wantPath := path.NewPath(mustIdentSymbol(t, bindings, receiver), wantName)
+		if !selectFact.Cases[i].HasChannelPath || !selectFact.Cases[i].ChannelPath.Equal(wantPath) {
+			t.Fatalf("case %d path = %#v, want %#v", i, selectFact.Cases[i].ChannelPath, wantPath)
+		}
+	}
+
+	originalCasePath := copyPath(selectFact.Cases[0].ChannelPath)
+	selects[0].Cases[0].ChannelPath.Segments = append(selects[0].Cases[0].ChannelPath.Segments, segment.Segment{Kind: segment.SegmentField, Name: "mutated"})
+	again := result.ChannelSelects()
+	if !again[0].Cases[0].ChannelPath.Equal(originalCasePath) {
+		t.Fatalf("ChannelSelects exposed mutable channel path")
+	}
+}
+
 func TestExtractChunkBranchConditionChecksResolvePaths(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -1214,6 +1289,40 @@ func TestBranchConditionCheckPathIsCopied(t *testing.T) {
 	wantPath := path.NewPath(mustIdentSymbol(t, bindings, root), "obj").Field("ready")
 	if !again.Check.Path.Equal(wantPath) {
 		t.Fatalf("BranchCondition exposed mutable path segments: %#v", again.Check.Path)
+	}
+}
+
+func TestBranchConditionCheckOtherPathIsCopied(t *testing.T) {
+	decl := localAssign([]string{"obj", "other"}, &ast.TableExpr{}, &ast.TableExpr{})
+	root := ident("obj")
+	other := ident("other")
+	cond := &ast.RelationalOpExpr{Operator: "==", Lhs: dot(root, "ready"), Rhs: dot(other, "ready")}
+	stmt := &ast.IfStmt{Condition: cond}
+	stmts := []ast.Stmt{decl, stmt}
+	bindings := bind.BindChunk(stmts, bind.Options{})
+	built := cfgbuild.BuildChunk(stmts, bindings)
+	if built == nil {
+		t.Fatalf("BuildChunk returned nil")
+	}
+	result, err := ExtractChunk(stmts, bindings, built)
+	if err != nil {
+		t.Fatalf("ExtractChunk: %v", err)
+	}
+
+	point := requireStmtPoints(t, built, stmt, 1)[0]
+	fact, ok := result.BranchCondition(point)
+	if !ok {
+		t.Fatalf("missing branch condition fact")
+	}
+	if len(fact.Check.OtherPath.Segments) != 1 {
+		t.Fatalf("other path segments = %#v, want one segment", fact.Check.OtherPath.Segments)
+	}
+	original := copyPath(fact.Check.OtherPath)
+	fact.Check.OtherPath.Segments[0].Name = "mutated"
+
+	again, _ := result.BranchCondition(point)
+	if !again.Check.OtherPath.Equal(original) {
+		t.Fatalf("BranchCondition exposed mutable other path segments: %#v", again.Check.OtherPath)
 	}
 }
 

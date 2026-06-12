@@ -14,6 +14,7 @@ func copyBranchConditionFact(fact BranchConditionFact) BranchConditionFact {
 
 func copyBranchConditionCheck(check branchcond.Check) branchcond.Check {
 	check.Path = copyPath(check.Path)
+	check.OtherPath = copyPath(check.OtherPath)
 	return check
 }
 

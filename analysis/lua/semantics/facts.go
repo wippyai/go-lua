@@ -99,6 +99,9 @@ type CallFact struct {
 
 	CalleeSymbol    symbol.ID
 	HasCalleeSymbol bool
+
+	ChannelSelect    ChannelSelectFact
+	HasChannelSelect bool
 }
 
 type ReturnFact struct {
@@ -120,6 +123,18 @@ type ObjectEntryFact struct {
 	Value  ast.Expr
 	Suffix path.Path
 	Source sourceprovenance.ASTSource
+}
+
+type ChannelSelectFact struct {
+	Call         *ast.FuncCallExpr
+	ResultTarget CallResultTarget
+	Cases        []ChannelSelectCaseFact
+}
+
+type ChannelSelectCaseFact struct {
+	CaseCall       *ast.FuncCallExpr
+	ChannelPath    path.Path
+	HasChannelPath bool
 }
 
 type BranchConditionFact struct {

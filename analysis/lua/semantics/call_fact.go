@@ -76,7 +76,7 @@ func buildCallFact(sourceStmt ast.Stmt, callStmt *ast.FuncCallStmt, context Call
 		calleeSymbol = calleePath.Symbol
 		hasCalleeSymbol = true
 	}
-	return CallFact{
+	fact := CallFact{
 		Stmt:            callStmt,
 		SourceStmt:      sourceStmt,
 		Context:         context,
@@ -101,6 +101,11 @@ func buildCallFact(sourceStmt ast.Stmt, callStmt *ast.FuncCallStmt, context Call
 		CalleeSymbol:    calleeSymbol,
 		HasCalleeSymbol: hasCalleeSymbol,
 	}
+	if selectFact, ok := channelSelectFact(fact, bindings); ok {
+		fact.ChannelSelect = selectFact
+		fact.HasChannelSelect = true
+	}
+	return fact
 }
 
 func callListFlags(context CallContextKind, exprs []ast.Expr, exprIndex int) (final, allowExpansion, openTail bool) {

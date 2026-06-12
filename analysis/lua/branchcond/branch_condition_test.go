@@ -83,9 +83,17 @@ func assertLiteralCheck(t *testing.T, got Check, wantKind CheckKind, wantPath pa
 	}
 }
 
+func assertPathCheck(t *testing.T, got Check, wantKind CheckKind, wantPath, wantOtherPath path.Path) {
+	t.Helper()
+	assertCheck(t, got, wantKind, wantPath, "")
+	if !got.OtherPath.Equal(wantOtherPath) {
+		t.Fatalf("other path = %#v, want %#v", got.OtherPath, wantOtherPath)
+	}
+}
+
 func assertCheckNone(t *testing.T, got Check) {
 	t.Helper()
-	if got.Kind != CheckNone || !got.Path.IsEmpty() || got.TypeName != "" {
+	if got.Kind != CheckNone || !got.Path.IsEmpty() || !got.OtherPath.IsEmpty() || got.TypeName != "" {
 		t.Fatalf("check = %#v, want empty CheckNone", got)
 	}
 }
@@ -145,6 +153,37 @@ func TestNormalizePathChecks(t *testing.T) {
 			expr := tt.expr(root)
 			bindings := bindReturn(expr)
 			assertCheck(t, Normalize(expr, bindings), tt.wantKind, tt.wantPath(mustIdentSymbol(t, bindings, root)), "")
+		})
+	}
+}
+
+func TestNormalizePathComparisons(t *testing.T) {
+	tests := []struct {
+		name     string
+		operator string
+		wantKind CheckKind
+	}{
+		{
+			name:     "result channel equals channel",
+			operator: "==",
+			wantKind: CheckPathEqual,
+		},
+		{
+			name:     "result channel not equals channel",
+			operator: "~=",
+			wantKind: CheckPathNot,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := ident("result")
+			ch := ident("ch")
+			expr := &ast.RelationalOpExpr{Operator: tt.operator, Lhs: dot(result, "channel"), Rhs: ch}
+			bindings := bindReturn(expr)
+			resultPath := path.NewPath(mustIdentSymbol(t, bindings, result), "result").Field("channel")
+			chPath := path.NewPath(mustIdentSymbol(t, bindings, ch), "ch")
+			assertPathCheck(t, Normalize(expr, bindings), tt.wantKind, resultPath, chPath)
 		})
 	}
 }

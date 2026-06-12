@@ -1,6 +1,8 @@
 package semantics
 
 import (
+	"sort"
+
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/cfgfacts"
 	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
@@ -92,6 +94,37 @@ func (r *Result) ObjectLiteral(expr ast.Expr) (ObjectLiteralFact, bool) {
 		return ObjectLiteralFact{}, false
 	}
 	return copyObjectLiteralFact(fact), true
+}
+
+func (r *Result) ChannelSelect(point cfg.Point) (ChannelSelectFact, bool) {
+	if r == nil {
+		return ChannelSelectFact{}, false
+	}
+	fact, ok := r.calls[point]
+	if !ok || !fact.HasChannelSelect {
+		return ChannelSelectFact{}, false
+	}
+	return copyChannelSelectFact(fact.ChannelSelect), true
+}
+
+func (r *Result) ChannelSelects() []ChannelSelectFact {
+	if r == nil {
+		return nil
+	}
+	var points []cfg.Point
+	for point, fact := range r.calls {
+		if fact.HasChannelSelect {
+			points = append(points, point)
+		}
+	}
+	sort.Slice(points, func(i, j int) bool {
+		return points[i] < points[j]
+	})
+	out := make([]ChannelSelectFact, 0, len(points))
+	for _, point := range points {
+		out = append(out, copyChannelSelectFact(r.calls[point].ChannelSelect))
+	}
+	return out
 }
 
 func (r *Result) BranchCondition(point cfg.Point) (BranchConditionFact, bool) {
@@ -229,6 +262,7 @@ func copyCallFact(fact CallFact) CallFact {
 	fact.ReceiverPath = copyPath(fact.ReceiverPath)
 	fact.MethodPath = copyPath(fact.MethodPath)
 	fact.ResultTargets = copyResultTargets(fact.ResultTargets)
+	fact.ChannelSelect = copyChannelSelectFact(fact.ChannelSelect)
 	return fact
 }
 
@@ -251,6 +285,24 @@ func copyObjectEntries(in []ObjectEntryFact) []ObjectEntryFact {
 	for i := range in {
 		out[i] = in[i]
 		out[i].Suffix = copyPath(in[i].Suffix)
+	}
+	return out
+}
+
+func copyChannelSelectFact(fact ChannelSelectFact) ChannelSelectFact {
+	fact.ResultTarget = copyResultTarget(fact.ResultTarget)
+	fact.Cases = copyChannelSelectCases(fact.Cases)
+	return fact
+}
+
+func copyChannelSelectCases(in []ChannelSelectCaseFact) []ChannelSelectCaseFact {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]ChannelSelectCaseFact, len(in))
+	for i := range in {
+		out[i] = in[i]
+		out[i].ChannelPath = copyPath(in[i].ChannelPath)
 	}
 	return out
 }
