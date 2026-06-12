@@ -5,12 +5,14 @@ package checktest
 
 import (
 	"errors"
+	"sort"
 
 	"github.com/wippyai/go-lua/analysis/check"
 	"github.com/wippyai/go-lua/analysis/check/diagnostics"
 	"github.com/wippyai/go-lua/analysis/diagnostic"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/module/manifest"
+	"github.com/wippyai/go-lua/analysis/module/signaturelookup"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/compiler/parse"
 )
@@ -86,7 +88,7 @@ func FuncsManifest() *manifest.Manifest {
 }
 
 func checkSource(src, filename string, opts ...Option) Result {
-	_ = applyOptions(opts)
+	cfg := applyOptions(opts)
 	stmts, err := parse.ParseString(src, filename)
 	if err != nil {
 		return Result{Diagnostics: []diagnostic.Diagnostic{{
@@ -97,8 +99,9 @@ func checkSource(src, filename string, opts ...Option) Result {
 		}}}
 	}
 	reg := product.DefaultRegistry()
+	signatures := cfg.signatureSource()
 	precheck := diagnostics.Precheck(stmts, diagnostics.Config{Registry: reg})
-	checked, err := check.CheckChunk(stmts, check.Config{Registry: reg})
+	checked, err := check.CheckChunk(stmts, check.Config{Registry: reg, Signatures: signatures})
 	if err != nil {
 		if errors.Is(err, check.ErrUnsupportedCFG) {
 			setDefaultFile(precheck, filename)
@@ -126,6 +129,32 @@ func applyOptions(opts []Option) config {
 		}
 	}
 	return cfg
+}
+
+func (c config) signatureSource() signaturelookup.Source {
+	manifests := make([]*manifest.Manifest, 0, len(c.manifests)+len(c.modules))
+	names := make([]string, 0, len(c.manifests))
+	for name := range c.manifests {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		manifests = append(manifests, c.manifests[name])
+	}
+	names = names[:0]
+	for name := range c.modules {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		if mod := c.modules[name]; mod != nil {
+			manifests = append(manifests, mod.Manifest)
+		}
+	}
+	return signaturelookup.Source{
+		Manifests:     manifests,
+		IncludeStdlib: c.stdlib,
+	}
 }
 
 func setDefaultFile(diags []diagnostic.Diagnostic, filename string) {

@@ -1,10 +1,11 @@
-package summary
+package summary_test
 
 import (
 	"strings"
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/check"
+	"github.com/wippyai/go-lua/analysis/check/fixpoint/summary"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
@@ -33,7 +34,7 @@ func TestFromResultProjectsReturnSlotsFromExitState(t *testing.T) {
 			}
 		},
 	})
-	got := FromResult(result)
+	got := summary.FromResult(result)
 
 	if len(got.Returns) != 2 {
 		t.Fatalf("FromResult returned %d slots, want 2", len(got.Returns))
@@ -46,7 +47,7 @@ func TestFromResultNoExplicitReturnProjectsEmptySummary(t *testing.T) {
 	reg, _ := projectTestRegistry(t)
 	result := projectCheckChunk(t, projectParseChunk(t, "local x = 1"), check.Config{Registry: reg})
 
-	if got := FromResult(result); len(got.Returns) != 0 {
+	if got := summary.FromResult(result); len(got.Returns) != 0 {
 		t.Fatalf("FromResult returned %#v, want empty summary", got)
 	}
 }
@@ -55,7 +56,7 @@ func TestFromResultUnresolvedReturnExpressionNormalizesBottomSlot(t *testing.T) 
 	reg, _ := projectTestRegistry(t)
 	result := projectCheckChunk(t, projectParseChunk(t, "return unknown"), check.Config{Registry: reg})
 
-	if got := FromResult(result); len(got.Returns) != 0 {
+	if got := summary.FromResult(result); len(got.Returns) != 0 {
 		t.Fatalf("FromResult returned %#v, want empty summary", got)
 	}
 }
@@ -87,7 +88,7 @@ func TestFromResultReadsJoinedExitReturnSlot(t *testing.T) {
 			return value, true
 		},
 	})
-	got := FromResult(result)
+	got := summary.FromResult(result)
 
 	if len(got.Returns) != 1 {
 		t.Fatalf("FromResult returned %d slots, want 1", len(got.Returns))
@@ -120,7 +121,7 @@ func TestFromResultIgnoresDeadReturnFacts(t *testing.T) {
 	if got := result.ReturnPoints(); len(got) != 1 {
 		t.Fatalf("ReturnPoints returned %d points, want only the reachable return", len(got))
 	}
-	got := FromResult(result)
+	got := summary.FromResult(result)
 
 	if len(got.Returns) != 1 {
 		t.Fatalf("FromResult returned %d slots, want 1", len(got.Returns))
@@ -132,7 +133,7 @@ func TestFromResultIgnoresDeadReturnFacts(t *testing.T) {
 }
 
 func TestFromResultMissingReadModelReturnsEmptySummary(t *testing.T) {
-	if got := FromResult(nil); len(got.Returns) != 0 {
+	if got := summary.FromResult(nil); len(got.Returns) != 0 {
 		t.Fatalf("FromResult(nil) returned %#v, want empty summary", got)
 	}
 }

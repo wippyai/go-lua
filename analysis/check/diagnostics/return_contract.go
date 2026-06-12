@@ -151,12 +151,14 @@ func produceDirectCallResultAssignment(result *check.Result, config Config, inhe
 		if !ok || fact.Call == nil {
 			continue
 		}
-		if _, _, _, ok := callMemberAccess(fact); ok {
-			continue
-		}
 		site, ok := result.CallSite(point)
 		if !ok || site.CalleeSymbol() == 0 {
 			continue
+		}
+		if _, _, _, ok := callMemberAccess(fact); ok {
+			if _, hasSignature := result.CallSignature(site); !hasSignature {
+				continue
+			}
 		}
 		contract, name, ok := directCallResultContract(result, fact, site, defs[site.CalleeSymbol()], producer.Resolver)
 		if !ok {
@@ -199,6 +201,15 @@ func directCallResultContract(result *check.Result, fact semantics.CallFact, sit
 		}
 		contract.name = name
 		contract.declSpan = ast.SpanOf(def)
+		if !directCallArgsCompatible(fact, contract) {
+			return directFunctionContract{}, "", false
+		}
+		return contract, name, true
+	}
+	if sig, ok := result.CallSignature(site); ok && sig.Type != nil {
+		contract := lowerDirectFunctionType(sig.Type)
+		contract.name = name
+		contract.declSpan = ast.SpanOf(fact.Call)
 		if !directCallArgsCompatible(fact, contract) {
 			return directFunctionContract{}, "", false
 		}

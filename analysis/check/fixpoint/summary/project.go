@@ -1,13 +1,23 @@
 package summary
 
 import (
-	"github.com/wippyai/go-lua/analysis/check"
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/engine/state"
+	"github.com/wippyai/go-lua/analysis/ir/cfg"
 )
 
+type ResultReader interface {
+	Registry() *axis.Registry
+	Graph() cfg.Graph
+	ExitState() (state.State, bool)
+	ReturnPoints() []cfg.Point
+	ReturnArity(cfg.Point) (int, bool)
+}
+
 // FromResult projects one completed check result into a fixed-point summary.
-func FromResult(result *check.Result) Summary {
+func FromResult(result ResultReader) Summary {
 	if result == nil {
 		return Summary{}
 	}

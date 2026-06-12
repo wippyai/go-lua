@@ -3,7 +3,12 @@ package check
 import (
 	"errors"
 	"fmt"
+	"strings"
 
+	"github.com/wippyai/go-lua/analysis/check/fixpoint/callresult"
+	"github.com/wippyai/go-lua/analysis/domain/effect/signature"
+	"github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
@@ -18,6 +23,8 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/cfgfacts"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
 	"github.com/wippyai/go-lua/analysis/lua/transferfacts"
+	"github.com/wippyai/go-lua/analysis/module/manifest"
+	"github.com/wippyai/go-lua/analysis/module/signaturelookup"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
@@ -35,6 +42,7 @@ type Config struct {
 	ExpressionValue  source.ExpressionValueProvider
 	VarargValue      source.VarargValueProvider
 	CallResults      apply.CallResultProvider
+	Signatures       signaturelookup.Source
 
 	Visibility *visibility.Resolver
 
@@ -50,13 +58,14 @@ type Checker struct {
 }
 
 type Result struct {
-	registry  *axis.Registry
-	bindings  *bind.Result
-	cfg       *cfgbuild.Result
-	semantics *semantics.Result
-	facts     factflow.Facts
-	flow      transfer.Result
-	functions []*Result
+	registry   *axis.Registry
+	bindings   *bind.Result
+	cfg        *cfgbuild.Result
+	semantics  *semantics.Result
+	signatures signaturelookup.Source
+	facts      factflow.Facts
+	flow       transfer.Result
+	functions  []*Result
 }
 
 func (r *Result) Registry() *axis.Registry {
@@ -215,6 +224,17 @@ func (r *Result) SymbolTypeAnnotation(id symbol.ID) (ast.TypeExpr, bool) {
 	return nil, false
 }
 
+func (r *Result) CallSignature(site factflow.CallSite) (signature.Function, bool) {
+	if r == nil {
+		return signature.Function{}, false
+	}
+	name, ok := r.stableCalleeName(site.CalleeSymbol(), site.CalleePath())
+	if !ok {
+		return signature.Function{}, false
+	}
+	return r.signatures.Lookup(name)
+}
+
 func (r *Result) ReturnArity(point cfg.Point) (int, bool) {
 	if r == nil {
 		return 0, false
@@ -275,7 +295,7 @@ func CheckBoundFunction(fn *ast.FunctionExpr, bindings *bind.Result, config Conf
 }
 
 func (c *Checker) CheckChunk(stmts []ast.Stmt) (*Result, error) {
-	bindings := bind.BindChunk(stmts, bind.Options{Globals: c.config.Globals})
+	bindings := bind.BindChunk(stmts, bind.Options{Globals: configGlobals(c.config)})
 	return c.CheckBoundChunk(stmts, bindings)
 }
 
@@ -294,7 +314,7 @@ func (c *Checker) CheckBoundChunk(stmts []ast.Stmt, bindings *bind.Result) (*Res
 }
 
 func (c *Checker) CheckFunction(fn *ast.FunctionExpr) (*Result, error) {
-	bindings := bind.BindFunction(fn, bind.Options{Globals: c.config.Globals})
+	bindings := bind.BindFunction(fn, bind.Options{Globals: configGlobals(c.config)})
 	return c.CheckBoundFunction(fn, bindings)
 }
 
@@ -321,6 +341,10 @@ func (c *Checker) run(bindings *bind.Result, built *cfgbuild.Result, sem *semant
 		ExpressionValue:  config.ExpressionValue,
 		VarargValue:      config.VarargValue,
 	})
+	callResults := config.CallResults
+	if hasSignatures(config.Signatures) {
+		callResults = callresult.Fallback(callResults, callresult.SignatureProvider(config.Signatures, c.signatureNameForCall(bindings)))
+	}
 	flow := transfer.Run(transfer.Config{
 		Graph:      built.Graph,
 		Registry:   config.Registry,
@@ -329,7 +353,7 @@ func (c *Checker) run(bindings *bind.Result, built *cfgbuild.Result, sem *semant
 		NodeTransfer: apply.NewFactsNodeTransfer(apply.FactsNodeTransferConfig{
 			Facts:       facts,
 			Sources:     sources,
-			CallResults: config.CallResults,
+			CallResults: callResults,
 			Visibility:  config.Visibility,
 		}),
 		EdgeTransfer: apply.NewFactsEdgeTransfer(apply.FactsEdgeTransferConfig{
@@ -340,12 +364,13 @@ func (c *Checker) run(bindings *bind.Result, built *cfgbuild.Result, sem *semant
 		WidenDelay: config.WidenDelay,
 	})
 	return &Result{
-		registry:  config.Registry,
-		bindings:  bindings,
-		cfg:       built,
-		semantics: sem,
-		facts:     facts,
-		flow:      flow,
+		registry:   config.Registry,
+		bindings:   bindings,
+		cfg:        built,
+		semantics:  sem,
+		signatures: config.Signatures,
+		facts:      facts,
+		flow:       flow,
 	}
 }
 
@@ -377,6 +402,7 @@ func (c *Checker) checkNestedFunction(fn *ast.FunctionExpr, bindings *bind.Resul
 
 func copyConfig(config Config) Config {
 	config.Globals = append([]string(nil), config.Globals...)
+	config.Signatures.Manifests = append([]*manifest.Manifest(nil), config.Signatures.Manifests...)
 	if len(config.ExpressionValues) != 0 {
 		values := make(map[factflow.ExprRef]product.Value, len(config.ExpressionValues))
 		for ref, value := range config.ExpressionValues {
@@ -385,4 +411,70 @@ func copyConfig(config Config) Config {
 		config.ExpressionValues = values
 	}
 	return config
+}
+
+func (c *Checker) signatureNameForCall(bindings *bind.Result) callresult.NameFunc {
+	return func(_ transfer.NodeContext, call factflow.CallProducer) (string, bool) {
+		result := Result{bindings: bindings}
+		return result.stableCalleeName(call.CalleeSymbol(), call.CalleePath())
+	}
+}
+
+func (r *Result) stableCalleeName(callee symbol.ID, calleePath path.Path) (string, bool) {
+	if r == nil || r.bindings == nil {
+		return "", false
+	}
+	root := callee
+	if calleePath.Symbol != 0 {
+		root = calleePath.Symbol
+	}
+	if root == 0 {
+		return "", false
+	}
+	kind, ok := r.bindings.Kind(root)
+	if !ok || kind != symbol.Global {
+		return "", false
+	}
+	name := r.bindings.Name(root)
+	if name == "" {
+		return "", false
+	}
+	if len(calleePath.Segments) == 0 {
+		return name, true
+	}
+	var b strings.Builder
+	b.WriteString(name)
+	for _, seg := range calleePath.Segments {
+		switch seg.Kind {
+		case segment.SegmentField, segment.SegmentIndexString:
+			if seg.Name == "" {
+				return "", false
+			}
+			b.WriteByte('.')
+			b.WriteString(seg.Name)
+		default:
+			return "", false
+		}
+	}
+	return b.String(), true
+}
+
+func configGlobals(config Config) []string {
+	globals := append([]string(nil), config.Globals...)
+	if hasSignatures(config.Signatures) {
+		for name := range config.Signatures.Signatures() {
+			root := name
+			if dot := strings.IndexByte(root, '.'); dot >= 0 {
+				root = root[:dot]
+			}
+			if root != "" {
+				globals = append(globals, root)
+			}
+		}
+	}
+	return globals
+}
+
+func hasSignatures(source signaturelookup.Source) bool {
+	return source.IncludeStdlib || len(source.Manifests) != 0
 }
