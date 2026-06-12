@@ -3,6 +3,7 @@ package check
 import (
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/evidence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine/state"
@@ -56,15 +57,22 @@ func functionParamEntrySeeds(reg *axis.Registry, bindings *bind.Result, fn *ast.
 	slots := bindings.ParamSlots(fn)
 	seeds := make([]paramEntrySeed, 0, len(slots))
 	for _, slot := range slots {
-		if slot.Symbol == 0 || slot.Type == nil {
-			continue
-		}
-		t, ok := resolver.Type(slot.Type)
-		if !ok {
+		if slot.Symbol == 0 {
 			continue
 		}
 		valueSlot := key.SymbolValue(slot.Symbol)
 		if valueSlot == "" {
+			continue
+		}
+		if slot.Type == nil {
+			seeds = append(seeds, paramEntrySeed{
+				slot:  valueSlot,
+				value: product.Set(reg, product.Top(), evidence.Key, evidence.GradualTop()),
+			})
+			continue
+		}
+		t, ok := resolver.Type(slot.Type)
+		if !ok {
 			continue
 		}
 		seeds = append(seeds, paramEntrySeed{
