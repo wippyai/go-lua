@@ -5,15 +5,22 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/domain/effect"
+	"github.com/wippyai/go-lua/analysis/domain/effect/returns"
+	"github.com/wippyai/go-lua/analysis/domain/effect/signature"
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
+	"github.com/wippyai/go-lua/analysis/module/manifest"
+	"github.com/wippyai/go-lua/analysis/module/signaturelookup"
 	"github.com/wippyai/go-lua/analysis/symbol"
+	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/parse"
 )
@@ -108,6 +115,38 @@ func TestCheckFunctionReturnArityUsesLoweredFacts(t *testing.T) {
 	if arity != 2 {
 		t.Fatalf("return arity = %d, want 2", arity)
 	}
+}
+
+func TestCheckChunkManifestSameAsSignatureUsesArgumentSourceValue(t *testing.T) {
+	reg := product.DefaultRegistry()
+	argValue := product.Set(reg, product.Top(), runtimekind.Key, runtimekind.Singleton(runtimekind.String))
+	m := manifest.New("test")
+	m.DefineFunctionSignature("id", signature.Function{
+		Type:   typ.Func().Param("value", typ.Any).Returns(typ.Number).Build(),
+		Effect: effect.Empty.With(returns.Return{ReturnIndex: 0, Transform: returns.SameAs{Source: effect.ParamRef{Index: 0}}}),
+	})
+	stmts := parseChunk(t, `local x: string = id("s")`)
+
+	result, err := CheckChunk(stmts, Config{
+		Registry: reg,
+		Signatures: signaturelookup.Source{
+			Manifests: []*manifest.Manifest{m},
+		},
+		ExpressionValue: func(_ cfg.Point, _ factflow.ExprRef, _ factflow.ValueSource, _ state.State) (product.Value, bool) {
+			return argValue, true
+		},
+	})
+	if err != nil {
+		t.Fatalf("CheckChunk: %v", err)
+	}
+
+	x := mustLocalAt(t, result, stmts[0].(*ast.LocalAssignStmt), 0)
+	exit, ok := result.ExitState()
+	if !ok {
+		t.Fatalf("missing exit state")
+	}
+	got := exit.ReadValue(reg, key.SymbolValue(x))
+	assertRuntimeKind(t, reg, got, runtimekind.Singleton(runtimekind.String))
 }
 
 func TestCheckBoundFunctionUsesSuppliedBindingIdentity(t *testing.T) {
@@ -253,6 +292,13 @@ func assertProductEqual(t *testing.T, reg *axis.Registry, got, want product.Valu
 	t.Helper()
 	if !product.Equal(reg, got, want) {
 		t.Fatalf("value = %v, want %v", got, want)
+	}
+}
+
+func assertRuntimeKind(t *testing.T, reg *axis.Registry, got product.Value, want runtimekind.Value) {
+	t.Helper()
+	if kind := product.Get(reg, got, runtimekind.Key); !runtimekind.Equal(kind, want) {
+		t.Fatalf("runtimekind = %s, want %s", kind, want)
 	}
 }
 

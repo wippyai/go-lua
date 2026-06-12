@@ -5,9 +5,13 @@ import (
 	"strings"
 
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/summary"
+	"github.com/wippyai/go-lua/analysis/domain/effect"
+	"github.com/wippyai/go-lua/analysis/domain/effect/returns"
 	"github.com/wippyai/go-lua/analysis/domain/effect/signature"
+	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/factflow/apply"
+	"github.com/wippyai/go-lua/analysis/engine/factflow/source"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
@@ -24,6 +28,15 @@ type NameFunc func(ctx transfer.NodeContext, call factflow.CallProducer) (string
 // results.
 type SignatureLookup interface {
 	Lookup(name string) (signature.Function, bool)
+}
+
+// SignatureProviderConfig carries the signature/effect lookup plus the generic
+// fact/source read models needed to resolve call argument values.
+type SignatureProviderConfig struct {
+	Signatures SignatureLookup
+	NameFor    NameFunc
+	Facts      factflow.Facts
+	Sources    source.SourceValues
 }
 
 // Provider returns a factflow call-result provider backed by exact summary reads.
@@ -50,8 +63,12 @@ func Provider(summaries summary.Reader, keyFor KeyFunc) apply.CallResultProvider
 
 // SignatureProvider materializes declared signature return types into call
 // return slots.
-func SignatureProvider(signatures SignatureLookup, nameFor NameFunc) apply.CallResultProvider {
-	return func(ctx transfer.NodeContext, call factflow.CallProducer, _ state.State, _ func(cfg.Point) state.State) []apply.CallResult {
+func SignatureProvider(config SignatureProviderConfig) apply.CallResultProvider {
+	signatures := config.Signatures
+	nameFor := config.NameFor
+	facts := config.Facts
+	sources := config.Sources
+	return func(ctx transfer.NodeContext, call factflow.CallProducer, in state.State, read func(cfg.Point) state.State) []apply.CallResult {
 		if signatures == nil || nameFor == nil {
 			return nil
 		}
@@ -65,16 +82,66 @@ func SignatureProvider(signatures SignatureLookup, nameFor NameFunc) apply.CallR
 		}
 		results := make([]apply.CallResult, 0, len(sig.Type.Returns))
 		for i, ret := range sig.Type.Returns {
-			if ret == nil {
+			value, ok := signatureReturnValue(ctx, facts, sources, sig, i, in, read)
+			if !ok && ret != nil {
+				value, ok = valueFromType(ctx.Registry, ret), true
+			}
+			if !ok {
 				continue
 			}
 			results = append(results, apply.CallResult{
 				Index: i,
-				Value: valueFromType(ctx.Registry, ret),
+				Value: value,
 			})
 		}
 		return results
 	}
+}
+
+func signatureReturnValue(
+	ctx transfer.NodeContext,
+	facts factflow.Facts,
+	sources source.SourceValues,
+	sig signature.Function,
+	index int,
+	in state.State,
+	read func(cfg.Point) state.State,
+) (product.Value, bool) {
+	if sources == nil {
+		return product.Value{}, false
+	}
+	ref, ok := sameAsReturnSource(sig, index)
+	if !ok {
+		return product.Value{}, false
+	}
+	site, ok := facts.CallSite(ctx.Point)
+	if !ok {
+		return product.Value{}, false
+	}
+	args := site.ArgumentSources()
+	argIndex, ok := effect.ResolveParamIndex(ref, len(args))
+	if !ok {
+		return product.Value{}, false
+	}
+	return source.WithValueOverlays(ctx.Registry, sources, facts.ValueOverlays()).ValueOfSource(ctx.Point, args[argIndex], in, read)
+}
+
+func sameAsReturnSource(sig signature.Function, index int) (effect.ParamRef, bool) {
+	for _, label := range sig.Effect.Labels {
+		ret, ok := effect.NormalizeLabel(label).(returns.Return)
+		if !ok || ret.ReturnIndex != index {
+			continue
+		}
+		switch transform := ret.Transform.(type) {
+		case returns.SameAs:
+			return transform.Source, true
+		case *returns.SameAs:
+			if transform != nil {
+				return transform.Source, true
+			}
+		}
+	}
+	return effect.ParamRef{}, false
 }
 
 // Fallback composes two call result providers. Primary results win by index;

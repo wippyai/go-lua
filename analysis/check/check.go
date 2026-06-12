@@ -343,7 +343,12 @@ func (c *Checker) run(bindings *bind.Result, built *cfgbuild.Result, sem *semant
 	})
 	callResults := config.CallResults
 	if hasSignatures(config.Signatures) {
-		callResults = callresult.Fallback(callResults, callresult.SignatureProvider(config.Signatures, c.signatureNameForCall(bindings)))
+		callResults = callresult.Fallback(callResults, callresult.SignatureProvider(callresult.SignatureProviderConfig{
+			Signatures: config.Signatures,
+			NameFor:    c.signatureNameForCall(bindings),
+			Facts:      facts,
+			Sources:    sources,
+		}))
 	}
 	flow := transfer.Run(transfer.Config{
 		Graph:      built.Graph,

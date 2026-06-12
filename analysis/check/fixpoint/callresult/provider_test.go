@@ -7,6 +7,8 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/ref"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/summary"
+	"github.com/wippyai/go-lua/analysis/domain/effect"
+	"github.com/wippyai/go-lua/analysis/domain/effect/returns"
 	"github.com/wippyai/go-lua/analysis/domain/effect/signature"
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
@@ -50,9 +52,12 @@ func TestByCalleeSymbolProviderReadsSummaryReturns(t *testing.T) {
 
 func TestSignatureProviderMaterializesDeclaredReturns(t *testing.T) {
 	reg := product.DefaultRegistry()
-	provider := SignatureProvider(signatureMap{
-		"f": {Type: typ.Func().Returns(typ.Number, typ.String).Build()},
-	}, StaticName("f"))
+	provider := SignatureProvider(SignatureProviderConfig{
+		Signatures: signatureMap{
+			"f": {Type: typ.Func().Returns(typ.Number, typ.String).Build()},
+		},
+		NameFor: StaticName("f"),
+	})
 
 	got := provider(transfer.NodeContext{Registry: reg}, factflow.NewCallProducer(factflow.CallProducerConfig{
 		CalleeSymbol: symbol.ID(17),
@@ -65,15 +70,107 @@ func TestSignatureProviderMaterializesDeclaredReturns(t *testing.T) {
 	assertRuntimeKind(t, reg, got[1].Value, runtimekind.Singleton(runtimekind.String))
 }
 
+func TestSignatureProviderSameAsReturnsArgumentValue(t *testing.T) {
+	reg := product.DefaultRegistry()
+	point := cfg.Point(4)
+	argRef := factflow.ExprRef(7)
+	argValue := product.Set(reg, product.Top(), runtimekind.Key, runtimekind.Singleton(runtimekind.String))
+	provider := SignatureProvider(SignatureProviderConfig{
+		Signatures: signatureMap{
+			"f": {
+				Type:   typ.Func().Param("value", typ.Any).Returns(typ.Number).Build(),
+				Effect: effect.Empty.With(returns.Return{ReturnIndex: 0, Transform: returns.SameAs{Source: effect.ParamRef{Index: 0}}}),
+			},
+		},
+		NameFor: StaticName("f"),
+		Facts: signatureProviderFacts(point, []factflow.ValueSource{{
+			Kind:    factflow.ValueSourceExpression,
+			ExprRef: argRef,
+			HasExpr: true,
+		}}),
+		Sources: source.NewSourceValues(source.SourceValuesConfig{
+			Registry: reg,
+			ExpressionValues: map[factflow.ExprRef]product.Value{
+				argRef: argValue,
+			},
+		}),
+	})
+
+	got := provider(transfer.NodeContext{Registry: reg, Point: point}, factflow.NewCallProducer(factflow.CallProducerConfig{}), state.State{}, nil)
+
+	assertCallResults(t, reg, got, []product.Value{argValue})
+}
+
+func TestSignatureProviderSameAsResolvesNegativeParamRef(t *testing.T) {
+	reg := product.DefaultRegistry()
+	point := cfg.Point(5)
+	firstRef := factflow.ExprRef(8)
+	lastRef := factflow.ExprRef(9)
+	firstValue := product.Set(reg, product.Top(), runtimekind.Key, runtimekind.Singleton(runtimekind.Number))
+	lastValue := product.Set(reg, product.Top(), runtimekind.Key, runtimekind.Singleton(runtimekind.Boolean))
+	provider := SignatureProvider(SignatureProviderConfig{
+		Signatures: signatureMap{
+			"f": {
+				Type:   typ.Func().Param("first", typ.Any).Param("last", typ.Any).Returns(typ.String).Build(),
+				Effect: effect.Empty.With(returns.Return{ReturnIndex: 0, Transform: returns.SameAs{Source: effect.ParamRef{Index: -1}}}),
+			},
+		},
+		NameFor: StaticName("f"),
+		Facts: signatureProviderFacts(point, []factflow.ValueSource{
+			{Kind: factflow.ValueSourceExpression, ExprRef: firstRef, HasExpr: true},
+			{Kind: factflow.ValueSourceExpression, ExprRef: lastRef, HasExpr: true},
+		}),
+		Sources: source.NewSourceValues(source.SourceValuesConfig{
+			Registry: reg,
+			ExpressionValues: map[factflow.ExprRef]product.Value{
+				firstRef: firstValue,
+				lastRef:  lastValue,
+			},
+		}),
+	})
+
+	got := provider(transfer.NodeContext{Registry: reg, Point: point}, factflow.NewCallProducer(factflow.CallProducerConfig{}), state.State{}, nil)
+
+	assertCallResults(t, reg, got, []product.Value{lastValue})
+}
+
+func TestSignatureProviderSameAsFallsBackToDeclaredReturnTypeWhenArgumentUnresolved(t *testing.T) {
+	reg := product.DefaultRegistry()
+	point := cfg.Point(6)
+	provider := SignatureProvider(SignatureProviderConfig{
+		Signatures: signatureMap{
+			"f": {
+				Type:   typ.Func().Returns(typ.Number).Build(),
+				Effect: effect.Empty.With(returns.Return{ReturnIndex: 0, Transform: returns.SameAs{Source: effect.ParamRef{Index: 1}}}),
+			},
+		},
+		NameFor: StaticName("f"),
+		Facts: signatureProviderFacts(point, []factflow.ValueSource{
+			{Kind: factflow.ValueSourceExpression, ExprRef: factflow.ExprRef(10), HasExpr: true},
+		}),
+		Sources: source.NewSourceValues(source.SourceValuesConfig{Registry: reg}),
+	})
+
+	got := provider(transfer.NodeContext{Registry: reg, Point: point}, factflow.NewCallProducer(factflow.CallProducerConfig{}), state.State{}, nil)
+
+	if len(got) != 1 {
+		t.Fatalf("got %d results, want 1: %#v", len(got), got)
+	}
+	assertRuntimeKind(t, reg, got[0].Value, runtimekind.Singleton(runtimekind.Number))
+}
+
 func TestFallbackKeepsPrimarySlotsAndFillsMissingSignatureSlots(t *testing.T) {
 	reg := product.DefaultRegistry()
 	primaryValue := product.Set(reg, product.Top(), runtimekind.Key, runtimekind.Singleton(runtimekind.Boolean))
 	primary := func(transfer.NodeContext, factflow.CallProducer, state.State, func(cfg.Point) state.State) []apply.CallResult {
 		return []apply.CallResult{{Index: 0, Value: primaryValue}}
 	}
-	signatures := SignatureProvider(signatureMap{
-		"f": {Type: typ.Func().Returns(typ.Number, typ.String).Build()},
-	}, StaticName("f"))
+	signatures := SignatureProvider(SignatureProviderConfig{
+		Signatures: signatureMap{
+			"f": {Type: typ.Func().Returns(typ.Number, typ.String).Build()},
+		},
+		NameFor: StaticName("f"),
+	})
 
 	got := Fallback(primary, signatures)(transfer.NodeContext{Registry: reg}, factflow.NewCallProducer(factflow.CallProducerConfig{}), state.State{}, nil)
 
@@ -87,6 +184,41 @@ func TestFallbackKeepsPrimarySlotsAndFillsMissingSignatureSlots(t *testing.T) {
 		t.Fatalf("fallback slot index = %d, want 1", got[1].Index)
 	}
 	assertRuntimeKind(t, reg, got[1].Value, runtimekind.Singleton(runtimekind.String))
+}
+
+func TestFallbackKeepsPrimarySlotOverSignatureSameAs(t *testing.T) {
+	reg := product.DefaultRegistry()
+	point := cfg.Point(7)
+	argRef := factflow.ExprRef(11)
+	primaryValue := product.Set(reg, product.Top(), runtimekind.Key, runtimekind.Singleton(runtimekind.Boolean))
+	argValue := product.Set(reg, product.Top(), runtimekind.Key, runtimekind.Singleton(runtimekind.String))
+	primary := func(transfer.NodeContext, factflow.CallProducer, state.State, func(cfg.Point) state.State) []apply.CallResult {
+		return []apply.CallResult{{Index: 0, Value: primaryValue}}
+	}
+	signatures := SignatureProvider(SignatureProviderConfig{
+		Signatures: signatureMap{
+			"f": {
+				Type:   typ.Func().Returns(typ.Number).Build(),
+				Effect: effect.Empty.With(returns.Return{ReturnIndex: 0, Transform: returns.SameAs{Source: effect.ParamRef{Index: 0}}}),
+			},
+		},
+		NameFor: StaticName("f"),
+		Facts: signatureProviderFacts(point, []factflow.ValueSource{{
+			Kind:    factflow.ValueSourceExpression,
+			ExprRef: argRef,
+			HasExpr: true,
+		}}),
+		Sources: source.NewSourceValues(source.SourceValuesConfig{
+			Registry: reg,
+			ExpressionValues: map[factflow.ExprRef]product.Value{
+				argRef: argValue,
+			},
+		}),
+	})
+
+	got := Fallback(primary, signatures)(transfer.NodeContext{Registry: reg, Point: point}, factflow.NewCallProducer(factflow.CallProducerConfig{}), state.State{}, nil)
+
+	assertCallResults(t, reg, got, []product.Value{primaryValue})
 }
 
 func TestProviderMissingAndEmptyReturnsYieldNoResults(t *testing.T) {
@@ -209,6 +341,8 @@ func TestProductionImportsAreBounded(t *testing.T) {
 	}
 	allowed := map[string]bool{
 		"github.com/wippyai/go-lua/analysis/check/fixpoint/summary":        true,
+		"github.com/wippyai/go-lua/analysis/domain/effect":                 true,
+		"github.com/wippyai/go-lua/analysis/domain/effect/returns":         true,
 		"github.com/wippyai/go-lua/analysis/domain/effect/signature":       true,
 		"github.com/wippyai/go-lua/analysis/domain/value/axis":             true,
 		"github.com/wippyai/go-lua/analysis/domain/value/axis/presence":    true,
@@ -216,6 +350,7 @@ func TestProductionImportsAreBounded(t *testing.T) {
 		"github.com/wippyai/go-lua/analysis/domain/value/product":          true,
 		"github.com/wippyai/go-lua/analysis/engine/factflow":               true,
 		"github.com/wippyai/go-lua/analysis/engine/factflow/apply":         true,
+		"github.com/wippyai/go-lua/analysis/engine/factflow/source":        true,
 		"github.com/wippyai/go-lua/analysis/engine/state":                  true,
 		"github.com/wippyai/go-lua/analysis/engine/transfer":               true,
 		"github.com/wippyai/go-lua/analysis/ir/cfg":                        true,
@@ -253,6 +388,14 @@ func assertCallResults(t *testing.T, reg *axis.Registry, got []apply.CallResult,
 			t.Fatalf("got result[%d].Value = %v, want %v", i, got[i].Value, value)
 		}
 	}
+}
+
+func signatureProviderFacts(point cfg.Point, args []factflow.ValueSource) factflow.Facts {
+	return factflow.NewFacts(factflow.FactsInput{
+		CallSites: map[cfg.Point]factflow.CallSite{
+			point: factflow.NewCallSite(factflow.CallSiteConfig{ArgumentSources: args}),
+		},
+	})
 }
 
 func assertValue(t *testing.T, reg *axis.Registry, st state.State, slot key.Value, want product.Value) {
