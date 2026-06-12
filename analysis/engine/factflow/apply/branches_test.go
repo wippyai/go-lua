@@ -88,6 +88,92 @@ func TestFactsEdgeTransferAppliesMultipleRefinementsOnSameBranchEdge(t *testing.
 	assertValue(t, reg, got[elsePoint], key.SymbolValue(secondTarget), absentValue(reg))
 }
 
+func TestFactsEdgeTransferAppliesBranchPresenceRelationFromErrorPath(t *testing.T) {
+	reg := product.DefaultRegistry()
+	graph := cfg.New()
+	branch := graph.AddNode(cfg.NodeBranch)
+	thenPoint := graph.AddNode(cfg.NodeNoop)
+	elsePoint := graph.AddNode(cfg.NodeNoop)
+	graph.AddEdge(graph.Entry(), branch, false)
+	graph.AddEdge(branch, thenPoint, true)
+	graph.AddEdge(branch, elsePoint, false)
+	graph.AddEdge(thenPoint, graph.Exit(), false)
+	graph.AddEdge(elsePoint, graph.Exit(), false)
+
+	value := symbol.ID(315)
+	err := symbol.ID(316)
+	valuePath := pathdom.NewPath(value, "value")
+	errPath := pathdom.NewPath(err, "err")
+	initial := state.State{}.
+		WriteValue(reg, key.SymbolValue(value), product.Top()).
+		WriteValue(reg, key.SymbolValue(err), product.Top())
+
+	got := transfer.Run(transfer.Config{
+		Graph:      graph,
+		Registry:   reg,
+		EntryState: initial,
+		EdgeTransfer: NewFactsEdgeTransfer(FactsEdgeTransferConfig{
+			Facts: factflow.NewFacts(factflow.FactsInput{
+				BranchRefinements: map[cfg.Point]factflow.BranchRefinement{
+					branch: branchWithPresence(errPath, presence.Absent(), true, presence.Present(), true),
+				},
+				BranchPresenceRelations: map[cfg.Point]factflow.BranchPresenceRelationSet{
+					branch: factflow.NewBranchPresenceRelationSet(
+						factflow.NewBranchPresenceRelation(errPath, presence.Present(), valuePath, presence.Absent()),
+						factflow.NewBranchPresenceRelation(errPath, presence.Absent(), valuePath, presence.Present()),
+					),
+				},
+			}),
+		}),
+	})
+
+	assertValue(t, reg, got[thenPoint], key.SymbolValue(value), presentValue(reg))
+	assertValue(t, reg, got[elsePoint], key.SymbolValue(value), absentValue(reg))
+}
+
+func TestFactsEdgeTransferErrorReturnRelationDoesNotInventFalsyNilBranch(t *testing.T) {
+	reg := product.DefaultRegistry()
+	graph := cfg.New()
+	branch := graph.AddNode(cfg.NodeBranch)
+	thenPoint := graph.AddNode(cfg.NodeNoop)
+	elsePoint := graph.AddNode(cfg.NodeNoop)
+	graph.AddEdge(graph.Entry(), branch, false)
+	graph.AddEdge(branch, thenPoint, true)
+	graph.AddEdge(branch, elsePoint, false)
+	graph.AddEdge(thenPoint, graph.Exit(), false)
+	graph.AddEdge(elsePoint, graph.Exit(), false)
+
+	value := symbol.ID(317)
+	err := symbol.ID(318)
+	valuePath := pathdom.NewPath(value, "value")
+	errPath := pathdom.NewPath(err, "err")
+	initial := state.State{}.
+		WriteValue(reg, key.SymbolValue(value), product.Top()).
+		WriteValue(reg, key.SymbolValue(err), product.Top())
+
+	got := transfer.Run(transfer.Config{
+		Graph:      graph,
+		Registry:   reg,
+		EntryState: initial,
+		EdgeTransfer: NewFactsEdgeTransfer(FactsEdgeTransferConfig{
+			Facts: factflow.NewFacts(factflow.FactsInput{
+				BranchRefinements: map[cfg.Point]factflow.BranchRefinement{
+					branch: branchWithPresence(errPath, presence.Present(), true, presence.Bottom(), false),
+				},
+				BranchPresenceRelations: map[cfg.Point]factflow.BranchPresenceRelationSet{
+					branch: factflow.NewBranchPresenceRelationSet(
+						factflow.NewBranchPresenceRelation(errPath, presence.Present(), valuePath, presence.Absent()),
+						factflow.NewBranchPresenceRelation(errPath, presence.Absent(), valuePath, presence.Present()),
+					),
+				},
+			}),
+		}),
+	})
+
+	assertValue(t, reg, got[thenPoint], key.SymbolValue(value), absentValue(reg))
+	assertValue(t, reg, got[elsePoint], key.SymbolValue(value), product.Top())
+}
+
 func TestFactsEdgeTransferOneSidedTruthyFalsyRefinements(t *testing.T) {
 	tests := []struct {
 		name      string

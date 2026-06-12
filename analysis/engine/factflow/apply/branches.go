@@ -4,6 +4,7 @@ import (
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/state"
@@ -44,4 +45,35 @@ func refineProductValue(reg *axis.Registry, value product.Value, refinement fact
 		return value
 	}
 	return product.Meet(reg, value, constraint)
+}
+
+func branchPresenceRelationRefinement(
+	ctx transfer.EdgeContext,
+	branchRefinements []factflow.BranchRefinement,
+	relation factflow.BranchPresenceRelation,
+) (factflow.ValueRefinement, bool) {
+	triggerPath := relation.TriggerPath()
+	for _, branchRefinement := range branchRefinements {
+		if !branchRefinement.TargetPath().Equal(triggerPath) {
+			continue
+		}
+		refinement, ok := branchRefinement.ValueForEdge(ctx.Edge.Cond)
+		if !ok || !refinementHasPresence(refinement, relation.TriggerPresence()) {
+			continue
+		}
+		return presenceRefinement(ctx.Registry, relation.TargetPresence()), true
+	}
+	return factflow.ValueRefinement{}, false
+}
+
+func refinementHasPresence(refinement factflow.ValueRefinement, want presence.Value) bool {
+	constraint, ok := refinement.Constraint()
+	if !ok {
+		return false
+	}
+	return presence.Equal(product.PresenceOf(constraint), want)
+}
+
+func presenceRefinement(reg *axis.Registry, value presence.Value) factflow.ValueRefinement {
+	return factflow.NewValueConstraint(product.NewWithPresence(reg, product.ShapeTop, value))
 }

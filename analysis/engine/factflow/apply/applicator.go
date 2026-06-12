@@ -65,12 +65,20 @@ func NewFactsEdgeTransfer(config FactsEdgeTransferConfig) transfer.EdgeTransfer 
 		if !ctx.HasCond {
 			return out
 		}
-		for _, fact := range config.Facts.BranchRefinements(ctx.Edge.From) {
+		branchRefinements := config.Facts.BranchRefinements(ctx.Edge.From)
+		for _, fact := range branchRefinements {
 			refinement, ok := fact.ValueForEdge(ctx.Edge.Cond)
 			if !ok {
 				continue
 			}
 			out = applyBranchRefinement(ctx, config.Visibility, out, fact.TargetPath(), refinement)
+		}
+		for _, relation := range config.Facts.BranchPresenceRelations(ctx.Edge.From) {
+			refinement, ok := branchPresenceRelationRefinement(ctx, branchRefinements, relation)
+			if !ok {
+				continue
+			}
+			out = applyBranchRefinement(ctx, config.Visibility, out, relation.TargetPath(), refinement)
 		}
 		return out
 	}

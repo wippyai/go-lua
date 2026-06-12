@@ -4,46 +4,59 @@ import "github.com/wippyai/go-lua/analysis/ir/cfg"
 
 // FactsInput carries point-keyed facts used to construct an immutable Facts snapshot.
 type FactsInput struct {
-	LocalAssignments     map[cfg.Point]RootAssignment
-	OrdinaryAssignments  map[cfg.Point]RootAssignment
-	PathAssignments      map[cfg.Point]PathAssignment
-	BranchRefinements    map[cfg.Point]BranchRefinement
-	BranchRefinementSets map[cfg.Point]BranchRefinementSet
-	Returns              map[cfg.Point]Return
-	Calls                map[cfg.Point]CallProducer
-	CallSites            map[cfg.Point]CallSite
-	ObjectLiterals       map[ExprRef]ObjectLiteral
-	ValueOverlays        map[ExprRef]ValueOverlay
+	LocalAssignments        map[cfg.Point]RootAssignment
+	OrdinaryAssignments     map[cfg.Point]RootAssignment
+	PathAssignments         map[cfg.Point]PathAssignment
+	BranchRefinements       map[cfg.Point]BranchRefinement
+	BranchRefinementSets    map[cfg.Point]BranchRefinementSet
+	BranchPresenceRelations map[cfg.Point]BranchPresenceRelationSet
+	Returns                 map[cfg.Point]Return
+	Calls                   map[cfg.Point]CallProducer
+	CallSites               map[cfg.Point]CallSite
+	ObjectLiterals          map[ExprRef]ObjectLiteral
+	ValueOverlays           map[ExprRef]ValueOverlay
 }
 
 // Facts is an immutable point-keyed transfer facts snapshot.
 type Facts struct {
-	localAssignments     map[cfg.Point]RootAssignment
-	ordinaryAssignments  map[cfg.Point]RootAssignment
-	pathAssignments      map[cfg.Point]PathAssignment
-	branchRefinements    map[cfg.Point]BranchRefinement
-	branchRefinementSets map[cfg.Point]BranchRefinementSet
-	returns              map[cfg.Point]Return
-	calls                map[cfg.Point]CallProducer
-	callSites            map[cfg.Point]CallSite
-	objectLiterals       map[ExprRef]ObjectLiteral
-	valueOverlays        map[ExprRef]ValueOverlay
+	localAssignments        map[cfg.Point]RootAssignment
+	ordinaryAssignments     map[cfg.Point]RootAssignment
+	pathAssignments         map[cfg.Point]PathAssignment
+	branchRefinements       map[cfg.Point]BranchRefinement
+	branchRefinementSets    map[cfg.Point]BranchRefinementSet
+	branchPresenceRelations map[cfg.Point]BranchPresenceRelationSet
+	returns                 map[cfg.Point]Return
+	calls                   map[cfg.Point]CallProducer
+	callSites               map[cfg.Point]CallSite
+	objectLiterals          map[ExprRef]ObjectLiteral
+	valueOverlays           map[ExprRef]ValueOverlay
 }
 
 // NewFacts copies the supplied point-keyed facts into an immutable snapshot.
 func NewFacts(input FactsInput) Facts {
 	return Facts{
-		localAssignments:     copyRootAssignmentMap(input.LocalAssignments),
-		ordinaryAssignments:  copyRootAssignmentMap(input.OrdinaryAssignments),
-		pathAssignments:      copyPathAssignmentMap(input.PathAssignments),
-		branchRefinements:    copyBranchRefinementMap(input.BranchRefinements),
-		branchRefinementSets: copyBranchRefinementSetMap(input.BranchRefinementSets),
-		returns:              copyReturnMap(input.Returns),
-		calls:                copyCallProducerMap(input.Calls),
-		callSites:            copyCallSiteMap(input.CallSites),
-		objectLiterals:       copyObjectLiteralMap(input.ObjectLiterals),
-		valueOverlays:        copyValueOverlayMap(input.ValueOverlays),
+		localAssignments:        copyRootAssignmentMap(input.LocalAssignments),
+		ordinaryAssignments:     copyRootAssignmentMap(input.OrdinaryAssignments),
+		pathAssignments:         copyPathAssignmentMap(input.PathAssignments),
+		branchRefinements:       copyBranchRefinementMap(input.BranchRefinements),
+		branchRefinementSets:    copyBranchRefinementSetMap(input.BranchRefinementSets),
+		branchPresenceRelations: copyBranchPresenceRelationMap(input.BranchPresenceRelations),
+		returns:                 copyReturnMap(input.Returns),
+		calls:                   copyCallProducerMap(input.Calls),
+		callSites:               copyCallSiteMap(input.CallSites),
+		objectLiterals:          copyObjectLiteralMap(input.ObjectLiterals),
+		valueOverlays:           copyValueOverlayMap(input.ValueOverlays),
 	}
+}
+
+// WithBranchPresenceRelations returns f plus the supplied branch-triggered
+// presence relations.
+func (f Facts) WithBranchPresenceRelations(relations map[cfg.Point]BranchPresenceRelationSet) Facts {
+	if len(relations) == 0 {
+		return f
+	}
+	f.branchPresenceRelations = mergeBranchPresenceRelationMap(f.branchPresenceRelations, relations)
+	return f
 }
 
 // LocalAssignment returns the local assignment fact at point.
@@ -92,6 +105,14 @@ func (f Facts) BranchRefinements(point cfg.Point) []BranchRefinement {
 		out = append(out, set.Refinements()...)
 	}
 	return out
+}
+
+// BranchPresenceRelations returns branch-triggered presence relations at point.
+func (f Facts) BranchPresenceRelations(point cfg.Point) []BranchPresenceRelation {
+	if set, ok := f.branchPresenceRelations[point]; ok {
+		return set.Relations()
+	}
+	return nil
 }
 
 // Return returns the return fact at point.

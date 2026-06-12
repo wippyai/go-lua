@@ -92,6 +92,26 @@ func TestDTOConstructorsAndAccessorsCopySlices(t *testing.T) {
 	branchSetRefinements[0] = NewBranchRefinement(path.NewPath(symbol.ID(18), "mutated"), trueRefinement, true, falseRefinement, true)
 	assertPathEqual(t, branchSet.Refinements()[0].TargetPath(), path.NewPath(symbol.ID(15), "value").Field("ready"))
 
+	relationTrigger := path.NewPath(symbol.ID(19), "err")
+	relationTarget := path.NewPath(symbol.ID(20), "value")
+	relation := NewBranchPresenceRelation(relationTrigger, presence.Present(), relationTarget, presence.Absent())
+	assertPathEqual(t, relation.TriggerPath(), relationTrigger)
+	assertPathEqual(t, relation.TargetPath(), relationTarget)
+	if !presence.Equal(relation.TriggerPresence(), presence.Present()) || !presence.Equal(relation.TargetPresence(), presence.Absent()) {
+		t.Fatalf("relation presence = %s/%s, want present/absent", relation.TriggerPresence(), relation.TargetPresence())
+	}
+	relationTrigger.Root = "changed"
+	relationTarget.Root = "changed"
+	assertPathEqual(t, relation.TriggerPath(), path.NewPath(symbol.ID(19), "err"))
+	assertPathEqual(t, relation.TargetPath(), path.NewPath(symbol.ID(20), "value"))
+	relationSet := NewBranchPresenceRelationSet(relation)
+	relationSetRelations := relationSet.Relations()
+	if len(relationSetRelations) != 1 {
+		t.Fatalf("relation set len = %d, want 1", len(relationSetRelations))
+	}
+	relationSetRelations[0] = NewBranchPresenceRelation(path.NewPath(symbol.ID(21), "other"), presence.Absent(), path.NewPath(symbol.ID(22), "changed"), presence.Present())
+	assertPathEqual(t, relationSet.Relations()[0].TriggerPath(), path.NewPath(symbol.ID(19), "err"))
+
 	entrySuffix := path.Path{Segments: []segment.Segment{{Kind: segment.SegmentField, Name: "field"}}}
 	entry := NewObjectEntry(entrySuffix, source)
 	entrySuffix.Segments[0].Name = "changed"
@@ -354,6 +374,16 @@ func TestFactsCarrierCopiesAndReturnsFalseForMissingFacts(t *testing.T) {
 				),
 			),
 		},
+		BranchPresenceRelations: map[cfg.Point]BranchPresenceRelationSet{
+			point: NewBranchPresenceRelationSet(
+				NewBranchPresenceRelation(
+					path.NewPath(symbol.ID(47), "err"),
+					presence.Present(),
+					path.NewPath(symbol.ID(48), "value"),
+					presence.Absent(),
+				),
+			),
+		},
 		Returns: map[cfg.Point]Return{
 			point: NewReturn([]ValueSource{source, callSource}),
 		},
@@ -418,6 +448,14 @@ func TestFactsCarrierCopiesAndReturnsFalseForMissingFacts(t *testing.T) {
 			valueRefinementWithPresence(presence.Present()), true,
 		),
 	)
+	input.BranchPresenceRelations[point] = NewBranchPresenceRelationSet(
+		NewBranchPresenceRelation(
+			path.NewPath(symbol.ID(49), "changed"),
+			presence.Absent(),
+			path.NewPath(symbol.ID(50), "changed"),
+			presence.Present(),
+		),
+	)
 	input.Returns[point] = NewReturn([]ValueSource{{Kind: ValueSourceNil}})
 	input.Calls[point] = NewCallProducer(CallProducerConfig{Context: CallProducerContextAssignment})
 	input.CallSites[point] = NewCallSite(CallSiteConfig{Context: CallSiteContextStatement})
@@ -440,6 +478,9 @@ func TestFactsCarrierCopiesAndReturnsFalseForMissingFacts(t *testing.T) {
 	}
 	if got := facts.BranchRefinements(missing); len(got) != 0 {
 		t.Fatalf("missing branch refinements = %#v, want empty", got)
+	}
+	if got := facts.BranchPresenceRelations(missing); len(got) != 0 {
+		t.Fatalf("missing branch presence relations = %#v, want empty", got)
 	}
 	if _, ok := facts.Return(missing); ok {
 		t.Fatal("missing return returned ok")
@@ -519,6 +560,19 @@ func TestFactsCarrierCopiesAndReturnsFalseForMissingFacts(t *testing.T) {
 	)
 	branchRefinementsAgain := facts.BranchRefinements(point)
 	assertPathEqual(t, branchRefinementsAgain[1].TargetPath(), path.NewPath(symbol.ID(44), "other").Field("ready"))
+
+	relations := facts.BranchPresenceRelations(point)
+	if len(relations) != 1 {
+		t.Fatalf("branch presence relations len = %d, want 1", len(relations))
+	}
+	assertPathEqual(t, relations[0].TriggerPath(), path.NewPath(symbol.ID(47), "err"))
+	assertPathEqual(t, relations[0].TargetPath(), path.NewPath(symbol.ID(48), "value"))
+	if !presence.Equal(relations[0].TriggerPresence(), presence.Present()) || !presence.Equal(relations[0].TargetPresence(), presence.Absent()) {
+		t.Fatalf("branch presence relation presence = %s/%s, want present/absent", relations[0].TriggerPresence(), relations[0].TargetPresence())
+	}
+	relations[0] = NewBranchPresenceRelation(path.NewPath(symbol.ID(51), "mutated"), presence.Absent(), path.NewPath(symbol.ID(52), "mutated"), presence.Present())
+	relationsAgain := facts.BranchPresenceRelations(point)
+	assertPathEqual(t, relationsAgain[0].TriggerPath(), path.NewPath(symbol.ID(47), "err"))
 
 	ret, ok := facts.Return(point)
 	if !ok {

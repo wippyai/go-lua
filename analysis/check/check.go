@@ -335,6 +335,14 @@ func (c *Checker) CheckBoundFunction(fn *ast.FunctionExpr, bindings *bind.Result
 func (c *Checker) run(bindings *bind.Result, built *cfgbuild.Result, sem *semantics.Result) *Result {
 	config := c.config
 	facts := transferfacts.Lower(sem, built.Graph, transferfacts.Config{Registry: config.Registry})
+	if hasSignatures(config.Signatures) {
+		facts = callresult.WithSignatureRelations(callresult.SignatureRelationConfig{
+			Graph:      built.Graph,
+			Signatures: config.Signatures,
+			NameFor:    c.signatureNameForCall(bindings),
+			Facts:      facts,
+		})
+	}
 	sources := source.NewSourceValues(source.SourceValuesConfig{
 		Registry:         config.Registry,
 		ExpressionValues: config.ExpressionValues,
