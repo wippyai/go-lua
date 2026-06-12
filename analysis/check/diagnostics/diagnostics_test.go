@@ -35,6 +35,27 @@ func TestAnnotationAssignabilityAcceptsSubtypeLiteral(t *testing.T) {
 	}
 }
 
+func TestAnnotationAssignabilityReportsArrayLiteralElementMismatch(t *testing.T) {
+	diags := runDiagnostics(t, `local arr: {number} = {1, "two", 3}`)
+	if len(diags) != 1 {
+		t.Fatalf("diagnostics = %d, want 1: %#v", len(diags), diags)
+	}
+	d := diags[0]
+	if d.Code != CodeAssignmentType || d.Severity != diagnostic.SeverityError {
+		t.Fatalf("diagnostic code/severity = %s/%s", d.Code, d.Severity)
+	}
+	if !strings.Contains(d.Message, `"two"`) || !strings.Contains(d.Message, "number") {
+		t.Fatalf("message = %q", d.Message)
+	}
+}
+
+func TestAnnotationAssignabilityAcceptsHomogeneousArrayLiteral(t *testing.T) {
+	diags := runDiagnostics(t, `local arr: {number} = {1, 2, 3}`)
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v, want none", diags)
+	}
+}
+
 func TestAnnotationAssignabilityDoesNotTrustCastEscape(t *testing.T) {
 	diags := runDiagnostics(t, `local x: number = "no" as any`)
 	if len(diags) != 1 {
@@ -94,6 +115,41 @@ func TestMemberCallAcceptsMatchingDiscriminantMethod(t *testing.T) {
 			else
 				a.meow()
 			end
+		end
+	`)
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v, want none", diags)
+	}
+}
+
+func TestMemberCallReportsUnionReceiverMissingMethod(t *testing.T) {
+	diags := runDiagnostics(t, `
+		function f(x: string | number)
+			x:upper()
+		end
+	`)
+	if len(diags) != 1 {
+		t.Fatalf("diagnostics = %d, want 1: %#v", len(diags), diags)
+	}
+	d := diags[0]
+	if d.Code != CodeMissingMember || d.Severity != diagnostic.SeverityError {
+		t.Fatalf("diagnostic code/severity = %s/%s", d.Code, d.Severity)
+	}
+	if !strings.Contains(d.Message, "upper") || !strings.Contains(d.Message, "number") {
+		t.Fatalf("message = %q, want missing upper on string|number receiver", d.Message)
+	}
+	if len(d.Explanation.Evidence()) == 0 {
+		t.Fatalf("explanation evidence = %#v, want non-empty", d.Explanation.Evidence())
+	}
+}
+
+func TestMemberCallAcceptsUnionReceiverWhenAllAlternativesCallable(t *testing.T) {
+	diags := runDiagnostics(t, `
+		type Left = {run: () -> string}
+		type Right = {run: () -> number}
+
+		function f(x: Left | Right)
+			x:run()
 		end
 	`)
 	if len(diags) != 0 {

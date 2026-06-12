@@ -11,8 +11,9 @@ import (
 )
 
 type literalConstraint struct {
-	target path.Path
-	value  string
+	target  path.Path
+	value   string
+	negated bool
 }
 
 type literalEnv struct {
@@ -85,6 +86,12 @@ func applyBranchLiteral(env literalEnv, check branchcond.Check, cond bool) liter
 	if check.Kind == branchcond.CheckLiteralEqual && cond {
 		return env.with(literalConstraint{target: check.Path, value: check.LiteralString})
 	}
+	if check.Kind == branchcond.CheckLiteralEqual && !cond {
+		return env.with(literalConstraint{target: check.Path, value: check.LiteralString, negated: true})
+	}
+	if check.Kind == branchcond.CheckLiteralNot && cond {
+		return env.with(literalConstraint{target: check.Path, value: check.LiteralString, negated: true})
+	}
 	if check.Kind == branchcond.CheckLiteralNot && !cond {
 		return env.with(literalConstraint{target: check.Path, value: check.LiteralString})
 	}
@@ -115,7 +122,7 @@ func joinEnvs(a, b literalEnv) literalEnv {
 	var out literalEnv
 	for _, left := range a.constraints {
 		for _, right := range b.constraints {
-			if left.value == right.value && left.target.Equal(right.target) {
+			if left.value == right.value && left.negated == right.negated && left.target.Equal(right.target) {
 				out.constraints = append(out.constraints, left)
 				break
 			}
@@ -132,7 +139,7 @@ func envEqual(a, b literalEnv) bool {
 	sortEnv(a)
 	sortEnv(b)
 	for i := range a.constraints {
-		if a.constraints[i].value != b.constraints[i].value || !a.constraints[i].target.Equal(b.constraints[i].target) {
+		if a.constraints[i].value != b.constraints[i].value || a.constraints[i].negated != b.constraints[i].negated || !a.constraints[i].target.Equal(b.constraints[i].target) {
 			return false
 		}
 	}
@@ -154,6 +161,9 @@ func sortEnv(e literalEnv) {
 		if leftSuffix != rightSuffix {
 			return leftSuffix < rightSuffix
 		}
-		return left.value < right.value
+		if left.value != right.value {
+			return left.value < right.value
+		}
+		return !left.negated && right.negated
 	})
 }

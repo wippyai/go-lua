@@ -189,6 +189,51 @@ func TestFieldUnionProjectionPolicy(t *testing.T) {
 	}
 }
 
+func TestMemberCallUnionRequiresCallableMemberOnEveryAlternative(t *testing.T) {
+	stringMethod, status := MemberCall(typ.String, "upper")
+	if status != MemberCallOK {
+		t.Fatalf("MemberCall(string, upper) status = %v, want ok", status)
+	}
+	if !callableValue(stringMethod, 0) {
+		t.Fatalf("MemberCall(string, upper) type = %v, want callable", stringMethod)
+	}
+
+	if _, status := MemberCall(typ.NewUnion(typ.String, typ.Number), "upper"); status != MemberCallMissing {
+		t.Fatalf("MemberCall(string|number, upper) status = %v, want missing", status)
+	}
+
+	left := typetable.NewRecord().
+		Field("run", typ.Func().Returns(typ.String).Build()).
+		Build()
+	right := typetable.NewRecord().
+		Field("run", typ.Func().Returns(typ.Number).Build()).
+		Build()
+	member, status := MemberCall(typ.NewUnion(left, right), "run")
+	if status != MemberCallOK {
+		t.Fatalf("MemberCall(callable record union, run) status = %v, want ok", status)
+	}
+	assertType(t, member, typ.NewUnion(
+		typ.Func().Returns(typ.String).Build(),
+		typ.Func().Returns(typ.Number).Build(),
+	))
+}
+
+func TestMemberCallRejectsOptionalUnionMember(t *testing.T) {
+	callable := typ.Func().Build()
+	left := typetable.NewRecord().
+		Field("run", callable).
+		Build()
+	right := typetable.NewRecord().
+		OptField("run", callable).
+		Build()
+
+	member, status := MemberCall(typ.NewUnion(left, right), "run")
+	if status != MemberCallNotCallable {
+		t.Fatalf("MemberCall(optional member union, run) status = %v, want not-callable", status)
+	}
+	assertType(t, member, typ.NewOptional(callable))
+}
+
 func TestFieldIntersectionFieldMeetPolicy(t *testing.T) {
 	tests := []struct {
 		name  string

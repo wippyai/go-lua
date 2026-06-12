@@ -121,6 +121,13 @@ func (r *Result) LocalAssignment(point cfg.Point) (semantics.LocalAssignmentFact
 	return r.semantics.LocalAssignment(point)
 }
 
+func (r *Result) ObjectLiteral(expr ast.Expr) (semantics.ObjectLiteralFact, bool) {
+	if r == nil || r.semantics == nil {
+		return semantics.ObjectLiteralFact{}, false
+	}
+	return r.semantics.ObjectLiteral(expr)
+}
+
 func (r *Result) OrdinaryAssignment(point cfg.Point) (semantics.OrdinaryAssignmentFact, bool) {
 	if r == nil || r.semantics == nil {
 		return semantics.OrdinaryAssignmentFact{}, false

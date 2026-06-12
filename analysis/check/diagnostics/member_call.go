@@ -13,7 +13,10 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/typeannotation"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/type/discriminant"
+	"github.com/wippyai/go-lua/analysis/type/normalize"
+	"github.com/wippyai/go-lua/analysis/type/subtype"
 	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/analysis/type/unwrap"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
 
@@ -57,23 +60,28 @@ func (p MemberCall) call(result *check.Result, point cfg.Point, fact semantics.C
 		return diagnostic.Diagnostic{}, false
 	}
 	narrowed, narrowedByDiscriminant := applyLiteralNarrowing(baseType, receiver, env)
+	receiverType := narrowed
 	if !narrowedByDiscriminant {
+		if !unionReceiver(baseType) {
+			return diagnostic.Diagnostic{}, false
+		}
+		receiverType = baseType
+	}
+	if typ.IsNever(receiverType) || typ.IsAny(receiverType) || typ.IsUnknown(receiverType) {
 		return diagnostic.Diagnostic{}, false
 	}
-	if typ.IsNever(narrowed) || typ.IsAny(narrowed) || typ.IsUnknown(narrowed) {
+
+	memberType, status := typeaccess.MemberCall(receiverType, member)
+	switch status {
+	case typeaccess.MemberCallOK:
+		return diagnostic.Diagnostic{}, false
+	case typeaccess.MemberCallMissing:
+		return memberDiagnostic(result, fact, callExpr, receiverType, member, point), true
+	case typeaccess.MemberCallNotCallable:
+		return notCallableDiagnostic(result, fact, callExpr, receiverType, memberType, member, point), true
+	default:
 		return diagnostic.Diagnostic{}, false
 	}
-	memberType, ok := typeaccess.Field(narrowed, member)
-	if !ok {
-		return memberDiagnostic(result, fact, callExpr, narrowed, member, point), true
-	}
-	if typ.IsAny(memberType) || typ.IsUnknown(memberType) {
-		return diagnostic.Diagnostic{}, false
-	}
-	if _, ok := typeaccess.Callable(memberType); !ok {
-		return notCallableDiagnostic(result, fact, callExpr, narrowed, memberType, member, point), true
-	}
-	return diagnostic.Diagnostic{}, false
 }
 
 func callMemberAccess(fact semantics.CallFact) (path.Path, string, *ast.FuncCallExpr, bool) {
@@ -110,12 +118,102 @@ func applyLiteralNarrowing(base typ.Type, receiver path.Path, env literalEnv) (t
 		if !ok {
 			continue
 		}
-		if narrowed, ok := discriminant.NarrowByPathLiteral(out, suffix, typ.LiteralString(c.value)); ok {
-			out = narrowed
-			changed = true
+		lit := typ.LiteralString(c.value)
+		if c.negated {
+			if narrowed, ok := narrowByPathLiteralNot(out, suffix, lit); ok {
+				out = narrowed
+				changed = true
+			}
+		} else {
+			if narrowed, ok := discriminant.NarrowByPathLiteral(out, suffix, lit); ok {
+				out = narrowed
+				changed = true
+			}
 		}
 	}
 	return out, changed
+}
+
+func narrowByPathLiteralNot(t typ.Type, suffix []segment.Segment, lit typ.Type) (typ.Type, bool) {
+	if t == nil || len(suffix) == 0 || lit == nil {
+		return nil, false
+	}
+	narrowed, ok := narrowByPathLiteralNotDepth(t, suffix, lit, 0)
+	if !ok || narrowed == nil || typ.SameNodeOrAcyclicEqual(narrowed, t) {
+		return narrowed, false
+	}
+	return narrowed, true
+}
+
+func narrowByPathLiteralNotDepth(t typ.Type, suffix []segment.Segment, lit typ.Type, depth int) (typ.Type, bool) {
+	if t == nil || depth > typ.DefaultRecursionDepth {
+		return nil, false
+	}
+	switch v := unwrap.Annotated(t).(type) {
+	case *typ.Alias:
+		return narrowByPathLiteralNotDepth(v.UnaliasedTarget(), suffix, lit, depth+1)
+	case *typ.Optional:
+		return narrowByPathLiteralNotDepth(v.Inner, suffix, lit, depth+1)
+	case *typ.Union:
+		out := make([]typ.Type, 0, len(v.Members))
+		for _, member := range v.Members {
+			if !pathAdmitsLiteral(member, suffix, lit, depth+1) {
+				out = append(out, member)
+			}
+		}
+		if len(out) == len(v.Members) {
+			return t, false
+		}
+		if len(out) == 0 {
+			return typ.Never, true
+		}
+		return normalize.UnionForEvidence(out...), true
+	default:
+		if pathAdmitsLiteral(t, suffix, lit, depth+1) {
+			return typ.Never, true
+		}
+		return t, false
+	}
+}
+
+func pathAdmitsLiteral(t typ.Type, suffix []segment.Segment, lit typ.Type, depth int) bool {
+	field, ok := typeAtPath(t, suffix, depth+1)
+	return ok && subtype.IsSubtype(lit, field)
+}
+
+func typeAtPath(t typ.Type, suffix []segment.Segment, depth int) (typ.Type, bool) {
+	if t == nil || len(suffix) == 0 || depth > typ.DefaultRecursionDepth {
+		return nil, false
+	}
+	seg := suffix[0]
+	var current typ.Type
+	var ok bool
+	switch seg.Kind {
+	case segment.SegmentField, segment.SegmentIndexString:
+		current, ok = typeaccess.Field(t, seg.Name)
+	case segment.SegmentIndexInt:
+		current, ok = typeaccess.Index(t, typ.LiteralInt(int64(seg.Index)))
+	default:
+		ok = false
+	}
+	if !ok {
+		return nil, false
+	}
+	if len(suffix) == 1 {
+		return current, true
+	}
+	return typeAtPath(current, suffix[1:], depth+1)
+}
+
+func unionReceiver(t typ.Type) bool {
+	switch v := unwrap.Annotated(t).(type) {
+	case *typ.Union:
+		return true
+	case *typ.Alias:
+		return unionReceiver(v.UnaliasedTarget())
+	default:
+		return false
+	}
 }
 
 func suffixFromReceiver(receiver, target path.Path) ([]segment.Segment, bool) {
@@ -158,7 +256,7 @@ func memberDiagnostic(result *check.Result, fact semantics.CallFact, call *ast.F
 				Kind:    diagnostic.EvidenceAbstractFact,
 				Trust:   diagnostic.TrustProven,
 				Span:    span,
-				Message: fmt.Sprintf("active discriminant narrowing gives receiver type %s", formatType(receiver)),
+				Message: fmt.Sprintf("receiver type at call is %s", formatType(receiver)),
 			},
 		),
 		Labels: []diagnostic.Label{{Span: span, Message: "missing member call"}},
@@ -193,7 +291,7 @@ func notCallableDiagnostic(result *check.Result, fact semantics.CallFact, call *
 				Kind:    diagnostic.EvidenceAbstractFact,
 				Trust:   diagnostic.TrustProven,
 				Span:    span,
-				Message: fmt.Sprintf("member type after narrowing is %s", formatType(memberType)),
+				Message: fmt.Sprintf("member type at call is %s", formatType(memberType)),
 			},
 		),
 		Labels: []diagnostic.Label{{Span: span, Message: "non-callable member"}},
