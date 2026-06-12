@@ -6,8 +6,10 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/variantorigin"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/standard"
+	"github.com/wippyai/go-lua/analysis/type/discriminant"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
@@ -80,6 +82,35 @@ func TestFromTypeLeavesUnknownAndAnyAsTop(t *testing.T) {
 	}
 }
 
+func TestFromTypeMaterializesVariantOrigin(t *testing.T) {
+	reg := standard.Registry()
+	left := typetable.NewRecord().
+		Field("kind", typ.LiteralString("left")).
+		Field("value", typ.Number).
+		Build()
+	right := typetable.NewRecord().
+		Field("kind", typ.LiteralString("right")).
+		Field("value", typ.String).
+		Build()
+	union := typ.NewUnion(left, right)
+
+	family, cases, ok := discriminant.OriginOfType(union)
+	if !ok {
+		t.Fatal("origin helper did not recognize record union")
+	}
+	got := FromType(reg, union)
+	origin := product.Get(reg, got, variantorigin.Key)
+	if origin.IsBottom() || origin.IsTop() {
+		t.Fatalf("variant origin = %v, want concrete", origin)
+	}
+	if origin.Family() != family {
+		t.Fatalf("variant origin family = %d, want %d", origin.Family(), family)
+	}
+	if !sameCases(origin.Cases(), cases) {
+		t.Fatalf("variant origin cases = %v, want %v", origin.Cases(), cases)
+	}
+}
+
 func TestRuntimeKindFromType(t *testing.T) {
 	tests := []struct {
 		name string
@@ -135,4 +166,16 @@ func assertRuntimeKind(t *testing.T, reg *axis.Registry, got product.Value, want
 	if gotKind := product.Get(reg, got, runtimekind.Key); !runtimekind.Equal(gotKind, want) {
 		t.Fatalf("runtimekind = %s, want %s", gotKind, want)
 	}
+}
+
+func sameCases(a, b []int) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }

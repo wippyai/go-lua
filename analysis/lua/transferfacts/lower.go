@@ -92,8 +92,8 @@ func Lower(result *semantics.Result, graph cfg.Graph, config Config) factflow.Fa
 			if lowered, ok := l.branchRefinement(fact); ok {
 				input.BranchRefinements[point] = lowered
 			}
-			if lowered, ok := l.branchPathRelation(fact); ok {
-				input.BranchPathRelations[point] = factflow.NewBranchPathRelationSet(lowered)
+			if lowered, ok := l.branchPathRelations(fact); ok {
+				input.BranchPathRelations[point] = lowered
 			}
 			l.addAssertionOverlaysForSource(&input, fact.Source)
 		}

@@ -217,3 +217,89 @@ func TestNarrowByPathLiteralNotReturnsNeverForMatchingSingleVariant(t *testing.T
 		t.Fatalf("narrowed type = %s/%v, want never/true", got, ok)
 	}
 }
+
+func TestOriginProjectsAndNarrowsClosedRecordUnion(t *testing.T) {
+	chanInt := NewAlias("__test_ChanInt", typetable.NewRecord().
+		Field("__tag", LiteralString("int")).
+		Build())
+	chanStr := NewAlias("__test_ChanStr", typetable.NewRecord().
+		Field("__tag", LiteralString("str")).
+		Build())
+	intCase := typetable.NewRecord().
+		Field("channel", chanInt).
+		Field("value", Number).
+		Build()
+	strCase := typetable.NewRecord().
+		Field("channel", chanStr).
+		Field("value", String).
+		Build()
+	union := NewUnion(intCase, strCase)
+
+	rootFamily, rootCases, ok := OriginOfType(union)
+	if !ok {
+		t.Fatal("closed record union origin missing")
+	}
+	channelFamily, channelCases, ok := ProjectOrigin(rootFamily, rootCases, []segment.Segment{
+		{Kind: segment.SegmentField, Name: "channel"},
+	})
+	if !ok {
+		t.Fatal("channel origin projection missing")
+	}
+	intFamily, intCases, ok := OriginOfType(chanInt)
+	if !ok {
+		t.Fatal("chanInt origin missing")
+	}
+	if channelFamily != intFamily || len(channelCases) != 2 {
+		t.Fatalf("projected channel origin = family %d cases %v, want family %d with two cases", channelFamily, channelCases, intFamily)
+	}
+
+	narrowCases, ok := NarrowOriginByPath(rootFamily, rootCases, []segment.Segment{
+		{Kind: segment.SegmentField, Name: "channel"},
+	}, intFamily, intCases, true)
+	if !ok {
+		t.Fatal("positive origin narrowing did not change root cases")
+	}
+	got, ok := NarrowByOrigin(union, rootFamily, narrowCases)
+	if !ok || !TypeEquals(got, intCase) {
+		t.Fatalf("positive narrowed type = %s/%v, want int case", got, ok)
+	}
+
+	remainingCases, ok := NarrowOriginByPath(rootFamily, rootCases, []segment.Segment{
+		{Kind: segment.SegmentField, Name: "channel"},
+	}, intFamily, intCases, false)
+	if !ok {
+		t.Fatal("negative origin narrowing did not change root cases")
+	}
+	got, ok = NarrowByOrigin(union, rootFamily, remainingCases)
+	if !ok || !TypeEquals(got, strCase) {
+		t.Fatalf("negative narrowed type = %s/%v, want str case", got, ok)
+	}
+}
+
+func TestOriginNarrowByPathIncompatibleConstraintIsNoop(t *testing.T) {
+	dog := typetable.NewRecord().
+		Field("kind", LiteralString("dog")).
+		Field("value", Number).
+		Build()
+	cat := typetable.NewRecord().
+		Field("kind", LiteralString("cat")).
+		Field("value", String).
+		Build()
+	union := NewUnion(dog, cat)
+
+	rootFamily, rootCases, ok := OriginOfType(union)
+	if !ok {
+		t.Fatal("closed record union origin missing")
+	}
+	otherFamily, otherCases, ok := OriginOfType(typetable.NewRecord().
+		Field("__tag", LiteralString("other")).
+		Build())
+	if !ok {
+		t.Fatal("other origin missing")
+	}
+	if _, ok := NarrowOriginByPath(rootFamily, rootCases, []segment.Segment{
+		{Kind: segment.SegmentField, Name: "kind"},
+	}, otherFamily, otherCases, false); ok {
+		t.Fatal("incompatible constraint narrowed root cases")
+	}
+}

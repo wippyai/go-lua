@@ -175,21 +175,39 @@ func assertLoweredBranchPathEquality(
 		wantLeft, wantRight = wantRight, wantLeft
 	}
 	relations := facts.BranchPathRelations(point)
-	if len(relations) != 1 {
-		t.Fatalf("branch path relations at point %d = %d, want 1", point, len(relations))
+	if len(relations) != 2 {
+		t.Fatalf("branch path relations at point %d = %d, want 2", point, len(relations))
 	}
-	relation := relations[0]
-	if relation.Kind() != factflow.BranchPathRelationEqual {
-		t.Fatalf("branch path relation kind = %v, want equality", relation.Kind())
+	var equality, inequality factflow.BranchPathRelation
+	for _, relation := range relations {
+		switch relation.Kind() {
+		case factflow.BranchPathRelationEqual:
+			equality = relation
+		case factflow.BranchPathRelationNotEqual:
+			inequality = relation
+		default:
+			t.Fatalf("branch path relation kind = %v, want equality or inequality", relation.Kind())
+		}
 	}
-	if !relation.LeftPath().Equal(wantLeft) {
-		t.Fatalf("branch path relation left = %#v, want %#v", relation.LeftPath(), wantLeft)
+	if equality.Kind() != factflow.BranchPathRelationEqual {
+		t.Fatal("missing equality branch path relation")
 	}
-	if !relation.RightPath().Equal(wantRight) {
-		t.Fatalf("branch path relation right = %#v, want %#v", relation.RightPath(), wantRight)
+	if inequality.Kind() != factflow.BranchPathRelationNotEqual {
+		t.Fatal("missing inequality branch path relation")
 	}
-	if relation.ActiveOnEdge(true) != wantTrue || relation.ActiveOnEdge(false) != wantFalse {
-		t.Fatalf("branch path relation active true/false = %v/%v, want %v/%v", relation.ActiveOnEdge(true), relation.ActiveOnEdge(false), wantTrue, wantFalse)
+	for _, relation := range []factflow.BranchPathRelation{equality, inequality} {
+		if !relation.LeftPath().Equal(wantLeft) {
+			t.Fatalf("branch path relation left = %#v, want %#v", relation.LeftPath(), wantLeft)
+		}
+		if !relation.RightPath().Equal(wantRight) {
+			t.Fatalf("branch path relation right = %#v, want %#v", relation.RightPath(), wantRight)
+		}
+	}
+	if equality.ActiveOnEdge(true) != wantTrue || equality.ActiveOnEdge(false) != wantFalse {
+		t.Fatalf("equality relation active true/false = %v/%v, want %v/%v", equality.ActiveOnEdge(true), equality.ActiveOnEdge(false), wantTrue, wantFalse)
+	}
+	if inequality.ActiveOnEdge(true) != !wantTrue || inequality.ActiveOnEdge(false) != !wantFalse {
+		t.Fatalf("inequality relation active true/false = %v/%v, want %v/%v", inequality.ActiveOnEdge(true), inequality.ActiveOnEdge(false), !wantTrue, !wantFalse)
 	}
 	if _, ok := facts.BranchRefinement(point); ok {
 		t.Fatalf("path equality relation at point %d also lowered as branch refinement", point)

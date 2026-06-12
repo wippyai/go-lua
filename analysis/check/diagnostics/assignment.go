@@ -9,11 +9,13 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/variantorigin"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
 	"github.com/wippyai/go-lua/analysis/lua/typeannotation"
 	"github.com/wippyai/go-lua/analysis/lua/valueexpr"
+	"github.com/wippyai/go-lua/analysis/type/discriminant"
 	"github.com/wippyai/go-lua/analysis/type/kind"
 	"github.com/wippyai/go-lua/analysis/type/subst"
 	"github.com/wippyai/go-lua/analysis/type/subtype"
@@ -241,6 +243,12 @@ func refineDeclaredTypeWithValue(result *check.Result, declared typ.Type, value 
 		out = typ.Nil
 	}
 	if result != nil && result.Registry() != nil {
+		origin := product.Get(result.Registry(), value, variantorigin.Key)
+		if !origin.IsBottom() && !origin.IsTop() {
+			if refined, ok := discriminant.NarrowByOrigin(out, origin.Family(), origin.Cases()); ok {
+				out = refined
+			}
+		}
 		kinds := product.Get(result.Registry(), value, runtimekind.Key)
 		if refined, ok := refineTypeByRuntimeKindSet(out, kinds, p); ok {
 			out = refined

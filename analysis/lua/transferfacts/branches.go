@@ -47,19 +47,25 @@ func (l *lowerer) branchRefinement(fact semantics.BranchConditionFact) (factflow
 	}
 }
 
-func (l *lowerer) branchPathRelation(fact semantics.BranchConditionFact) (factflow.BranchPathRelation, bool) {
+func (l *lowerer) branchPathRelations(fact semantics.BranchConditionFact) (factflow.BranchPathRelationSet, bool) {
 	left := fact.Check.Path
 	right := fact.Check.OtherPath
 	if left.IsEmpty() || right.IsEmpty() {
-		return factflow.BranchPathRelation{}, false
+		return factflow.BranchPathRelationSet{}, false
 	}
 	switch fact.Check.Kind {
 	case branchcond.CheckPathEqual:
-		return factflow.NewBranchPathEquality(left, right, true, false), true
+		return factflow.NewBranchPathRelationSet(
+			factflow.NewBranchPathEquality(left, right, true, false),
+			factflow.NewBranchPathInequality(left, right, false, true),
+		), true
 	case branchcond.CheckPathNot:
-		return factflow.NewBranchPathEquality(left, right, false, true), true
+		return factflow.NewBranchPathRelationSet(
+			factflow.NewBranchPathInequality(left, right, true, false),
+			factflow.NewBranchPathEquality(left, right, false, true),
+		), true
 	default:
-		return factflow.BranchPathRelation{}, false
+		return factflow.BranchPathRelationSet{}, false
 	}
 }
 

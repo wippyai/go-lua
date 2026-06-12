@@ -132,13 +132,18 @@ func (l *lowerer) addExpressionCondition(ref factflow.ExprRef, expr ast.Expr) {
 	}
 	var trueRelations []factflow.PostconditionPathRelation
 	var falseRelations []factflow.PostconditionPathRelation
-	if relation, ok := l.branchPathRelation(semantics.BranchConditionFact{Check: check}); ok {
-		equality := factflow.NewPostconditionPathEquality(relation.LeftPath(), relation.RightPath())
-		if relation.ActiveOnEdge(true) {
-			trueRelations = append(trueRelations, equality)
-		}
-		if relation.ActiveOnEdge(false) {
-			falseRelations = append(falseRelations, equality)
+	if relations, ok := l.branchPathRelations(semantics.BranchConditionFact{Check: check}); ok {
+		for _, relation := range relations.Relations() {
+			if relation.Kind() != factflow.BranchPathRelationEqual {
+				continue
+			}
+			equality := factflow.NewPostconditionPathEquality(relation.LeftPath(), relation.RightPath())
+			if relation.ActiveOnEdge(true) {
+				trueRelations = append(trueRelations, equality)
+			}
+			if relation.ActiveOnEdge(false) {
+				falseRelations = append(falseRelations, equality)
+			}
 		}
 	}
 	condition := factflow.NewExpressionCondition(trueRefinements, falseRefinements, trueRelations, falseRelations)

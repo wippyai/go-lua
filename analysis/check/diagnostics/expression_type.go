@@ -6,6 +6,8 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/variantorigin"
+	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/typeaccess"
@@ -77,11 +79,20 @@ func (p expressionTyper) annotatedPathType(expr ast.Expr) (typ.Type, bool) {
 		return nil, false
 	}
 	annotation, ok := p.result.SymbolTypeAnnotation(accessPath.Symbol)
-	if !ok {
-		return nil, false
-	}
-	t, ok := lowerType(annotation, p.resolver)
-	if !ok {
+	var t typ.Type
+	if ok {
+		lowered, loweredOK := lowerType(annotation, p.resolver)
+		if !loweredOK {
+			return nil, false
+		}
+		t = lowered
+	} else if p.flow {
+		lowered, loweredOK := p.flowOriginType(accessPath)
+		if !loweredOK {
+			return nil, false
+		}
+		t = lowered
+	} else {
 		return nil, false
 	}
 	if p.flow {
@@ -95,6 +106,21 @@ func (p expressionTyper) annotatedPathType(expr ast.Expr) (typ.Type, bool) {
 		t = next
 	}
 	return t, true
+}
+
+func (p expressionTyper) flowOriginType(accessPath pathdom.Path) (typ.Type, bool) {
+	if p.result == nil || p.result.Registry() == nil || accessPath.Symbol == 0 {
+		return nil, false
+	}
+	value, ok := p.result.SymbolValueAt(p.point, accessPath.Symbol)
+	if !ok || product.Equal(p.result.Registry(), value, product.Bottom(p.result.Registry())) {
+		return nil, false
+	}
+	origin := product.Get(p.result.Registry(), value, variantorigin.Key)
+	if origin.IsBottom() || origin.IsTop() {
+		return nil, false
+	}
+	return discriminant.TypeFromOrigin(origin.Family(), origin.Cases())
 }
 
 func (p expressionTyper) flowRootType(t typ.Type, accessPath pathdom.Path) typ.Type {

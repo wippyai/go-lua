@@ -9,11 +9,15 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/variantorigin"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/standard"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
+	"github.com/wippyai/go-lua/analysis/symbol"
+	"github.com/wippyai/go-lua/analysis/type/discriminant"
+	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
 type sourceValueCall struct {
@@ -87,6 +91,22 @@ func assertRuntimeKind(t *testing.T, reg *axis.Registry, got product.Value, want
 	t.Helper()
 	if kind := product.Get(reg, got, runtimekind.Key); !runtimekind.Equal(kind, want) {
 		t.Fatalf("runtime kind = %s in %s, want %s", kind, formatValue(reg, got), want)
+	}
+}
+
+func assertVariantOriginType(t *testing.T, reg *axis.Registry, gotState state.State, slot symbol.ID, base typ.Type, want typ.Type) {
+	t.Helper()
+	value := gotState.ReadValue(reg, key.SymbolValue(slot))
+	origin := product.Get(reg, value, variantorigin.Key)
+	if origin.IsBottom() || origin.IsTop() {
+		t.Fatalf("variant origin = %v, want concrete in %s", origin, formatValue(reg, value))
+	}
+	got, ok := discriminant.NarrowByOrigin(base, origin.Family(), origin.Cases())
+	if !ok {
+		t.Fatalf("origin family %d cases %v did not narrow %s", origin.Family(), origin.Cases(), base)
+	}
+	if !typ.TypeEquals(got, want) {
+		t.Fatalf("origin narrowed type = %s, want %s", got, want)
 	}
 }
 

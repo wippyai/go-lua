@@ -43,6 +43,10 @@ type noNormalReturnReader interface {
 	NoNormalReturn(cfg.Point) bool
 }
 
+type returnTypeValueReader interface {
+	ReturnTypeValues() []product.Value
+}
+
 // FromResult projects one completed check result into a fixed-point summary.
 func FromResult(result ResultReader) Summary {
 	if result == nil {
@@ -69,9 +73,17 @@ func FromResult(result ResultReader) Summary {
 		}
 	}
 	if arity > 0 {
+		var declared []product.Value
+		if reader, ok := result.(returnTypeValueReader); ok {
+			declared = reader.ReturnTypeValues()
+		}
 		summary.Returns = make([]product.Value, arity)
 		for i := range summary.Returns {
-			summary.Returns[i] = exit.ReadValue(reg, key.ReturnSlot(i))
+			value := exit.ReadValue(reg, key.ReturnSlot(i))
+			if i < len(declared) {
+				value = product.Join(reg, value, declared[i])
+			}
+			summary.Returns[i] = value
 		}
 	}
 	return Normalize(reg, summary)

@@ -102,6 +102,34 @@ func TestFromResultReadsJoinedExitReturnSlot(t *testing.T) {
 	}
 }
 
+func TestFromResultJoinsDeclaredReturnTypeEvidence(t *testing.T) {
+	reg := standard.Registry()
+	numberValue := product.Set(reg, product.Top(), runtimekind.Key, runtimekind.Singleton(runtimekind.Number))
+	fn := projectParseFunction(t, `
+function f(): number | string
+	return 1
+end`)
+
+	result := projectCheckFunction(t, fn, check.Config{
+		Registry: reg,
+		ExpressionValue: func(_ cfg.Point, _ factflow.ExprRef, source factflow.ValueSource, _ state.State) (product.Value, bool) {
+			if source.TargetIndex != 0 {
+				return product.Value{}, false
+			}
+			return numberValue, true
+		},
+	})
+	got := summary.FromResult(result)
+
+	if len(got.Returns) != 1 {
+		t.Fatalf("FromResult returned %d slots, want 1", len(got.Returns))
+	}
+	want := runtimekind.Join(runtimekind.Singleton(runtimekind.Number), runtimekind.Singleton(runtimekind.String))
+	if kind := product.Get(reg, got.Returns[0], runtimekind.Key); !runtimekind.Equal(kind, want) {
+		t.Fatalf("return runtime kind = %s, want %s", kind, want)
+	}
+}
+
 func TestFromResultIgnoresDeadReturnFacts(t *testing.T) {
 	reg, axisKey := projectTestRegistry(t)
 	live := projectValue(reg, axisKey, projectMarkA)

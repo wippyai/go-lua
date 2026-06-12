@@ -12,6 +12,7 @@ type BranchPathRelationKind uint8
 const (
 	BranchPathRelationUnknown BranchPathRelationKind = iota
 	BranchPathRelationEqual
+	BranchPathRelationNotEqual
 )
 
 // BranchPathRelation describes a path-to-path relation that is active only on
@@ -40,6 +41,22 @@ func NewBranchPathEquality(
 ) BranchPathRelation {
 	return BranchPathRelation{
 		kind:          BranchPathRelationEqual,
+		leftPath:      copyPath(leftPath),
+		rightPath:     copyPath(rightPath),
+		activeOnTrue:  activeOnTrue,
+		activeOnFalse: activeOnFalse,
+	}
+}
+
+// NewBranchPathInequality creates a branch path inequality relation.
+func NewBranchPathInequality(
+	leftPath path.Path,
+	rightPath path.Path,
+	activeOnTrue bool,
+	activeOnFalse bool,
+) BranchPathRelation {
+	return BranchPathRelation{
+		kind:          BranchPathRelationNotEqual,
 		leftPath:      copyPath(leftPath),
 		rightPath:     copyPath(rightPath),
 		activeOnTrue:  activeOnTrue,

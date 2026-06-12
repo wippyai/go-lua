@@ -9,12 +9,15 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/standard"
+	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/engine/visibility"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/symbol"
+	typetable "github.com/wippyai/go-lua/analysis/type/table"
+	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
 func TestFactsEdgeTransferAppliesNilRefinementsOnRootValue(t *testing.T) {
@@ -210,6 +213,65 @@ func TestFactsEdgeTransferAppliesPathInequalityEqualityOnFalseEdge(t *testing.T)
 	assertRuntimeKind(t, reg, got[thenPoint].ReadValue(reg, key.SymbolValue(right)), runtimekind.Top())
 	assertRuntimeKind(t, reg, got[elsePoint].ReadValue(reg, key.SymbolValue(left)), runtimekind.Singleton(runtimekind.Function))
 	assertRuntimeKind(t, reg, got[elsePoint].ReadValue(reg, key.SymbolValue(right)), runtimekind.Singleton(runtimekind.Function))
+}
+
+func TestFactsEdgeTransferPathComparisonNarrowsParentVariantOrigin(t *testing.T) {
+	reg := standard.Registry()
+	graph := cfg.New()
+	branch := graph.AddNode(cfg.NodeBranch)
+	thenPoint := graph.AddNode(cfg.NodeNoop)
+	elsePoint := graph.AddNode(cfg.NodeNoop)
+	graph.AddEdge(graph.Entry(), branch, false)
+	graph.AddEdge(branch, thenPoint, true)
+	graph.AddEdge(branch, elsePoint, false)
+	graph.AddEdge(thenPoint, graph.Exit(), false)
+	graph.AddEdge(elsePoint, graph.Exit(), false)
+
+	chanInt := typ.NewAlias("__test_ChanInt", typetable.NewRecord().
+		Field("__tag", typ.LiteralString("int")).
+		Build())
+	chanStr := typ.NewAlias("__test_ChanStr", typetable.NewRecord().
+		Field("__tag", typ.LiteralString("str")).
+		Build())
+	intCase := typetable.NewRecord().
+		Field("channel", chanInt).
+		Field("value", typ.Number).
+		Build()
+	strCase := typetable.NewRecord().
+		Field("channel", chanStr).
+		Field("value", typ.String).
+		Build()
+	union := typ.NewUnion(intCase, strCase)
+
+	result := symbol.ID(325)
+	ch1 := symbol.ID(326)
+	resultPath := pathdom.NewPath(result, "result")
+	ch1Path := pathdom.NewPath(ch1, "ch1")
+	initial := state.State{}.
+		WriteValue(reg, key.SymbolValue(result), typevalue.FromType(reg, union)).
+		WriteValue(reg, key.SymbolValue(ch1), typevalue.FromType(reg, chanInt))
+	visibilityBuilder := visibility.NewBuilder()
+	visibilityBuilder.Define(branch, result, "result")
+
+	got := transfer.Run(transfer.Config{
+		Graph:      graph,
+		Registry:   reg,
+		EntryState: initial,
+		EdgeTransfer: NewFactsEdgeTransfer(FactsEdgeTransferConfig{
+			Facts: factflow.NewFacts(factflow.FactsInput{
+				BranchPathRelations: map[cfg.Point]factflow.BranchPathRelationSet{
+					branch: factflow.NewBranchPathRelationSet(
+						factflow.NewBranchPathEquality(resultPath.Field("channel"), ch1Path, true, false),
+						factflow.NewBranchPathInequality(resultPath.Field("channel"), ch1Path, false, true),
+					),
+				},
+			}),
+			Visibility: visibility.NewResolver(visibilityBuilder.Build()),
+		}),
+	})
+
+	assertVariantOriginType(t, reg, got[thenPoint], result, union, intCase)
+	assertVariantOriginType(t, reg, got[elsePoint], result, union, strCase)
 }
 
 func TestFactsEdgeTransferAppliesPathEqualityRelationRootMember(t *testing.T) {

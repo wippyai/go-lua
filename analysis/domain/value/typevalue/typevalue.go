@@ -4,7 +4,9 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/variantorigin"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/type/discriminant"
 	"github.com/wippyai/go-lua/analysis/type/kind"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/unwrap"
@@ -18,6 +20,9 @@ func FromType(reg *axis.Registry, t typ.Type) product.Value {
 	}
 	if kindValue, ok := RuntimeKindFromType(t); ok {
 		value = product.Set(reg, value, runtimekind.Key, kindValue)
+	}
+	if family, cases, ok := discriminant.OriginOfType(t); ok {
+		value = product.Set(reg, value, variantorigin.Key, variantorigin.Of(family, cases))
 	}
 	return value
 }
