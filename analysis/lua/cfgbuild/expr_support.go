@@ -3,6 +3,7 @@ package cfgbuild
 import (
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/branchcond"
+	"github.com/wippyai/go-lua/analysis/lua/pathexpr"
 	"github.com/wippyai/go-lua/analysis/lua/valueexpr"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
@@ -56,7 +57,7 @@ func (b *builder) hasUnsupportedConditionExpr(expr ast.Expr) bool {
 	if call, ok := valueexpr.Call(expr); ok {
 		return b.hasUnsupportedExprInCall(call)
 	}
-	if b.exprCovered(expr) {
+	if b.conditionExprCovered(expr) {
 		return false
 	}
 	return !branchcond.SupportsTypeComparison(expr, b.bindings)
@@ -71,6 +72,14 @@ func (b *builder) appendConditionCall(state flowState, stmt ast.Stmt, expr ast.E
 }
 
 func (b *builder) exprCovered(expr ast.Expr) bool {
+	return b.exprCoveredMode(expr, true)
+}
+
+func (b *builder) conditionExprCovered(expr ast.Expr) bool {
+	return b.exprCoveredMode(expr, false)
+}
+
+func (b *builder) exprCoveredMode(expr ast.Expr, allowProjectedCalls bool) bool {
 	switch expr := expr.(type) {
 	case nil:
 		return true
@@ -79,42 +88,64 @@ func (b *builder) exprCovered(expr ast.Expr) bool {
 	case *ast.IdentExpr:
 		return true
 	case *ast.AttrGetExpr:
-		return b.exprCovered(expr.Object) && b.exprCovered(expr.Key)
+		if allowProjectedCalls {
+			return b.attrObjectCovered(expr.Object) && b.exprCoveredMode(expr.Key, allowProjectedCalls)
+		}
+		return b.exprCoveredMode(expr.Object, allowProjectedCalls) && b.exprCoveredMode(expr.Key, allowProjectedCalls)
 	case *ast.TableExpr:
 		for _, field := range expr.Fields {
 			if field == nil {
 				continue
 			}
-			if !b.exprCovered(field.Key) || !b.exprCovered(field.Value) {
+			if !b.exprCoveredMode(field.Key, allowProjectedCalls) || !b.exprCoveredMode(field.Value, allowProjectedCalls) {
 				return false
 			}
 		}
 		return true
 	case *ast.FuncCallExpr:
-		return false
+		return allowProjectedCalls && b.pureTypeCallCovered(expr)
 	case *ast.FunctionExpr:
 		return true
 	case *ast.LogicalOpExpr:
-		return b.exprCovered(expr.Lhs) && b.exprCovered(expr.Rhs)
+		return b.exprCoveredMode(expr.Lhs, allowProjectedCalls) && b.exprCoveredMode(expr.Rhs, allowProjectedCalls)
 	case *ast.RelationalOpExpr:
-		return b.exprCovered(expr.Lhs) && b.exprCovered(expr.Rhs)
+		return b.exprCoveredMode(expr.Lhs, allowProjectedCalls) && b.exprCoveredMode(expr.Rhs, allowProjectedCalls)
 	case *ast.StringConcatOpExpr:
-		return b.exprCovered(expr.Lhs) && b.exprCovered(expr.Rhs)
+		return b.exprCoveredMode(expr.Lhs, allowProjectedCalls) && b.exprCoveredMode(expr.Rhs, allowProjectedCalls)
 	case *ast.ArithmeticOpExpr:
-		return b.exprCovered(expr.Lhs) && b.exprCovered(expr.Rhs)
+		return b.exprCoveredMode(expr.Lhs, allowProjectedCalls) && b.exprCoveredMode(expr.Rhs, allowProjectedCalls)
 	case *ast.UnaryMinusOpExpr:
-		return b.exprCovered(expr.Expr)
+		return b.exprCoveredMode(expr.Expr, allowProjectedCalls)
 	case *ast.UnaryNotOpExpr:
-		return b.exprCovered(expr.Expr)
+		return b.exprCoveredMode(expr.Expr, allowProjectedCalls)
 	case *ast.UnaryLenOpExpr:
-		return b.exprCovered(expr.Expr)
+		return b.exprCoveredMode(expr.Expr, allowProjectedCalls)
 	case *ast.UnaryBNotOpExpr:
-		return b.exprCovered(expr.Expr)
+		return b.exprCoveredMode(expr.Expr, allowProjectedCalls)
 	case *ast.CastExpr:
-		return b.exprCovered(expr.Expr)
+		return b.exprCoveredMode(expr.Expr, allowProjectedCalls)
 	case *ast.NonNilAssertExpr:
-		return b.exprCovered(expr.Expr)
+		return b.exprCoveredMode(expr.Expr, allowProjectedCalls)
 	default:
 		return false
 	}
+}
+
+func (b *builder) attrObjectCovered(expr ast.Expr) bool {
+	if call, ok := valueexpr.Call(expr); ok {
+		return !b.hasUnsupportedExprInCall(call)
+	}
+	return b.exprCovered(expr)
+}
+
+func (b *builder) pureTypeCallCovered(call *ast.FuncCallExpr) bool {
+	if call == nil || call.Receiver != nil || call.Method != "" || len(call.Args) != 1 || len(call.TypeArgs) != 0 {
+		return false
+	}
+	fn, ok := call.Func.(*ast.IdentExpr)
+	if !ok || !b.bindings.ResolvesToGlobal(fn, "type") {
+		return false
+	}
+	_, ok = pathexpr.Resolve(call.Args[0], b.bindings)
+	return ok
 }

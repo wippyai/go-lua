@@ -43,13 +43,16 @@ func (p ReturnContract) Produce(result *check.Result) []diagnostic.Diagnostic {
 		for i, expr := range fact.Exprs {
 			got, ok := valueexpr.LiteralType(expr)
 			if !ok {
+				got, ok = projectedOptionalIndexType(result, p.Resolver, expr)
+			}
+			if !ok {
 				continue
 			}
 			want, ok := returnTypeAt(returns, i)
 			if !ok || refinement.ContainsFreeTypeParam(want) {
 				continue
 			}
-			if subtype.IsSubtype(got, want) {
+			if !clearMismatch(got, want) {
 				continue
 			}
 			annotation := typeExprAt(fn.ReturnTypes, i)

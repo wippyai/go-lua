@@ -7,6 +7,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/diagnostic"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
+	"github.com/wippyai/go-lua/analysis/lua/typeannotation"
 	"github.com/wippyai/go-lua/analysis/lua/valueexpr"
 	"github.com/wippyai/go-lua/analysis/type/subst"
 	"github.com/wippyai/go-lua/analysis/type/subtype"
@@ -49,6 +50,9 @@ func (p AnnotationAssignability) localAssignment(result *check.Result, fact sema
 		return diagnostic.Diagnostic{}, false
 	}
 	got, ok := literalType(fact.Expr)
+	if !ok {
+		got, ok = projectedOptionalIndexType(result, p.Resolver, fact.Expr)
+	}
 	if !ok || !clearMismatch(got, want) {
 		return p.objectLiteralAssignment(result, fact.Name, want, fact.Expr, fact.Type)
 	}
@@ -70,6 +74,9 @@ func (p AnnotationAssignability) objectLiteralAssignment(result *check.Result, n
 			continue
 		}
 		return assignmentDiagnostic(name, expected, got, entry.Value, annotation), true
+	}
+	if field, ok := missingRequiredRecordField(want, fact); ok {
+		return missingFieldAssignmentDiagnostic(name, want, field, expr, annotation), true
 	}
 	return diagnostic.Diagnostic{}, false
 }
@@ -110,11 +117,46 @@ func assignmentDiagnostic(name string, want, got typ.Type, expr ast.Expr, annota
 }
 
 func clearMismatch(got, want typ.Type) bool {
-	return got != nil && want != nil && !subtype.IsSubtype(got, want)
+	if got == nil || want == nil || typ.IsAny(got) || typ.IsUnknown(got) || typ.IsAny(want) || typ.IsUnknown(want) {
+		return false
+	}
+	if subtype.IsSubtype(got, want) {
+		return false
+	}
+	if projectionHasNil(want) {
+		nonNilWant := projectionWithoutNil(want)
+		if nonNilWant != nil && !typ.IsNever(nonNilWant) && subtype.IsSubtype(got, nonNilWant) {
+			return false
+		}
+	}
+	return true
 }
 
 func literalType(expr ast.Expr) (typ.Type, bool) {
 	return valueexpr.LiteralType(expr)
+}
+
+func projectedOptionalIndexType(result *check.Result, resolver typeannotation.Resolver, expr ast.Expr) (typ.Type, bool) {
+	if !shouldProjectOptionalIndex(result, expr) {
+		return nil, false
+	}
+	got, ok := newExpressionTyper(result, resolver).typeOf(expr)
+	if !ok || !projectionHasNil(got) {
+		return nil, false
+	}
+	return got, true
+}
+
+func shouldProjectOptionalIndex(result *check.Result, expr ast.Expr) bool {
+	attr, ok := expr.(*ast.AttrGetExpr)
+	if !ok || attr.KeySyntax != ast.AttrKeyIndex {
+		return false
+	}
+	if _, literal := attr.Key.(*ast.NumberExpr); !literal {
+		return true
+	}
+	container, ok := result.ExpressionPath(attr.Object)
+	return ok && len(container.Segments) > 0
 }
 
 func expectedTypeAtSegments(root typ.Type, segments []segment.Segment) (typ.Type, bool) {
@@ -207,6 +249,79 @@ func expectedRecordSegmentType(record *typ.Record, seg segment.Segment) (typ.Typ
 		return nil, false
 	}
 	return record.MapValue, record.MapValue != nil
+}
+
+func missingRequiredRecordField(want typ.Type, fact semantics.ObjectLiteralFact) (typ.Field, bool) {
+	record, ok := closedRecord(want)
+	if !ok {
+		return typ.Field{}, false
+	}
+	present := make(map[string]struct{}, len(fact.Entries))
+	for _, entry := range fact.Entries {
+		if len(entry.Suffix.Segments) != 1 {
+			continue
+		}
+		seg := entry.Suffix.Segments[0]
+		switch seg.Kind {
+		case segment.SegmentField, segment.SegmentIndexString:
+			if seg.Name != "" {
+				present[seg.Name] = struct{}{}
+			}
+		}
+	}
+	for _, field := range record.Fields {
+		if field.Optional {
+			continue
+		}
+		if _, ok := present[field.Name]; ok {
+			continue
+		}
+		return field, true
+	}
+	return typ.Field{}, false
+}
+
+func closedRecord(t typ.Type) (*typ.Record, bool) {
+	record, ok := transparentExpectedType(t).(*typ.Record)
+	if !ok || record == nil || record.Open {
+		return nil, false
+	}
+	return record, true
+}
+
+func missingFieldAssignmentDiagnostic(name string, want typ.Type, field typ.Field, expr ast.Expr, annotation ast.TypeExpr) diagnostic.Diagnostic {
+	exprSpan := ast.SpanOf(expr)
+	typeSpan := ast.SpanOf(annotation)
+	return diagnostic.Diagnostic{
+		Position: diagnostic.Position{
+			Line:      exprSpan.StartLine,
+			Column:    exprSpan.StartCol,
+			EndLine:   exprSpan.EndLine,
+			EndColumn: exprSpan.EndCol,
+		},
+		Span:     exprSpan,
+		Code:     CodeAssignmentType,
+		Severity: diagnostic.SeverityError,
+		Message:  fmt.Sprintf("missing required field %q for %s", field.Name, formatType(want)),
+		Explanation: diagnostic.NewExplanation(
+			diagnostic.Evidence{
+				Kind:    diagnostic.EvidenceAbstractFact,
+				Trust:   diagnostic.TrustProven,
+				Span:    exprSpan,
+				Message: fmt.Sprintf("source object literal does not provide %q", field.Name),
+			},
+			diagnostic.Evidence{
+				Kind:    diagnostic.EvidenceUserAssertion,
+				Trust:   diagnostic.TrustClaimed,
+				Span:    typeSpan,
+				Message: fmt.Sprintf("%s is annotated %s", name, formatType(want)),
+			},
+		),
+		Labels: []diagnostic.Label{
+			{Span: exprSpan, Message: "object literal"},
+			{Span: typeSpan, Message: "declared type"},
+		},
+	}
 }
 
 func segmentKeyType(seg segment.Segment) (typ.Type, bool) {

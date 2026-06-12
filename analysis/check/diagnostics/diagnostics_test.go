@@ -76,6 +76,84 @@ func TestAnnotationAssignabilitySkipsNonLiteralSources(t *testing.T) {
 	}
 }
 
+func TestAnnotationAssignabilitySkipsRootLiteralIndexProjection(t *testing.T) {
+	diags := runDiagnostics(t, `
+		local xs: {number} = {1, 2}
+		local x: number = xs[1]
+	`)
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v, want none", diags)
+	}
+}
+
+func TestAnnotationAssignabilityReportsNestedOptionalIndexProjection(t *testing.T) {
+	diags := runDiagnostics(t, `
+		type Response = {
+			result: {
+				data: {
+					departments: {string}?,
+				},
+			},
+		}
+		local response: Response = {
+			result = {
+				data = {
+					departments = {"engineering"},
+				},
+			},
+		}
+		local first: string = response.result.data.departments[1]
+	`)
+	if len(diags) != 1 {
+		t.Fatalf("diagnostics = %d, want 1: %#v", len(diags), diags)
+	}
+	if d := diags[0]; d.Code != CodeAssignmentType || !strings.Contains(d.Message, "string?") {
+		t.Fatalf("diagnostic = %#v, want optional nested index assignment error", d)
+	}
+}
+
+func TestAnnotationAssignabilityReportsNestedOptionalIndexAfterGuardCalls(t *testing.T) {
+	diags := runDiagnostics(t, `
+		type Response = {
+			result: {
+				data: {
+					departments: {string}?,
+				},
+			},
+		}
+		local response: Response = {
+			result = {
+				data = {
+					departments = {"engineering"},
+				},
+			},
+		}
+		test.not_nil(response.result.data.departments, "departments required")
+		test.eq(type(response.result.data.departments), "table", "departments should be a table")
+		local count: number = #response.result.data.departments
+		local first: string = response.result.data.departments[1]
+	`)
+	if len(diags) != 1 {
+		t.Fatalf("diagnostics = %d, want 1: %#v", len(diags), diags)
+	}
+	if d := diags[0]; d.Code != CodeAssignmentType || !strings.Contains(d.Message, "string?") {
+		t.Fatalf("diagnostic = %#v, want optional nested index assignment error", d)
+	}
+}
+
+func TestAnnotationAssignabilityReportsMissingRequiredField(t *testing.T) {
+	diags := runDiagnostics(t, `
+		type Point = {x: number, y: number}
+		local p: Point = {x = 10}
+	`)
+	if len(diags) != 1 {
+		t.Fatalf("diagnostics = %d, want 1: %#v", len(diags), diags)
+	}
+	if d := diags[0]; d.Code != CodeAssignmentType || !strings.Contains(d.Message, "y") {
+		t.Fatalf("diagnostic = %#v, want missing required field y", d)
+	}
+}
+
 func TestLexicalTypeShadowingResolvesNearestVisibleAlias(t *testing.T) {
 	diags := runDiagnostics(t, `
 		type Value = number
@@ -422,6 +500,20 @@ func TestReturnContractReportsLiteralMismatch(t *testing.T) {
 		if got[1].Span != ast.SpanOf(fn.ReturnTypes[0]) {
 			t.Fatalf("declared return evidence span = %#v, want %#v", got[1].Span, ast.SpanOf(fn.ReturnTypes[0]))
 		}
+	}
+}
+
+func TestReturnContractReportsProjectedIndexOptional(t *testing.T) {
+	diags := runDiagnostics(t, `
+		local function pick(xs: {number}, i: integer): number
+			return xs[i]
+		end
+	`)
+	if len(diags) != 1 {
+		t.Fatalf("diagnostics = %d, want 1: %#v", len(diags), diags)
+	}
+	if d := diags[0]; d.Code != CodeReturnContractType || !strings.Contains(d.Message, "number?") {
+		t.Fatalf("diagnostic = %#v, want return contract optional index error", d)
 	}
 }
 

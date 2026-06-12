@@ -1795,6 +1795,47 @@ func TestBuildChunkUnsupportedExpressionCoverageReturnsNil(t *testing.T) {
 	}
 }
 
+func TestBuildChunkAllowsNestedGlobalTypePathCallArgument(t *testing.T) {
+	x := ident("x")
+	stmts := []ast.Stmt{
+		localAssign([]string{"x"}, stringLit("value")),
+		&ast.FuncCallStmt{Expr: &ast.FuncCallExpr{
+			Func: ident("print"),
+			Args: []ast.Expr{typeCall(x)},
+		}},
+	}
+	bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"print", "type"}})
+	result := BuildChunk(stmts, bindings)
+	if result == nil || result.Graph == nil {
+		t.Fatalf("BuildChunk returned nil for nested global type(path) call argument")
+	}
+	if points := result.StmtPoints.PointsFor(stmts[1]); len(points) != 1 {
+		t.Fatalf("call statement points = %v, want one outer call point", points)
+	}
+}
+
+func TestBuildChunkAllowsMethodCallOnIndexedCallReceiver(t *testing.T) {
+	receiver := &ast.AttrGetExpr{
+		Object:    &ast.FuncCallExpr{Func: ident("make")},
+		Key:       number("1"),
+		KeySyntax: ast.AttrKeyIndex,
+	}
+	stmts := []ast.Stmt{
+		&ast.FuncCallStmt{Expr: &ast.FuncCallExpr{
+			Receiver: receiver,
+			Method:   "run",
+		}},
+	}
+	bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"make"}})
+	result := BuildChunk(stmts, bindings)
+	if result == nil || result.Graph == nil {
+		t.Fatalf("BuildChunk returned nil for method call on indexed call receiver")
+	}
+	if points := result.StmtPoints.PointsFor(stmts[0]); len(points) != 1 {
+		t.Fatalf("call statement points = %v, want one outer call point", points)
+	}
+}
+
 func TestBuildChunkBreakOutsideLoopReturnsNil(t *testing.T) {
 	stmts := []ast.Stmt{&ast.BreakStmt{}}
 	bindings := bind.BindChunk(stmts, bind.Options{})

@@ -21,6 +21,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/lua/cfgbuild"
 	"github.com/wippyai/go-lua/analysis/lua/cfgfacts"
+	"github.com/wippyai/go-lua/analysis/lua/pathexpr"
 	"github.com/wippyai/go-lua/analysis/lua/readexpr"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
 	"github.com/wippyai/go-lua/analysis/lua/transferfacts"
@@ -223,6 +224,13 @@ func (r *Result) SymbolTypeAnnotation(id symbol.ID) (ast.TypeExpr, bool) {
 		}
 	}
 	return nil, false
+}
+
+func (r *Result) ExpressionPath(expr ast.Expr) (path.Path, bool) {
+	if r == nil || r.bindings == nil {
+		return path.Path{}, false
+	}
+	return pathexpr.Resolve(expr, r.bindings)
 }
 
 func (r *Result) CallSignature(site factflow.CallSite) (signature.Function, bool) {
