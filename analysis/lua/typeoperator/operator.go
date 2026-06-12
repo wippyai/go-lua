@@ -5,7 +5,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/wippyai/go-lua/analysis/lua/typeaccess"
+	"github.com/wippyai/go-lua/analysis/lua/typecall"
 	"github.com/wippyai/go-lua/analysis/type/kind"
 	"github.com/wippyai/go-lua/analysis/type/normalize"
 	"github.com/wippyai/go-lua/analysis/type/subst"
@@ -451,11 +451,11 @@ func unaryMetamethodReturn(operand typ.Type, name string) (typ.Type, bool, bool)
 }
 
 func metamethodReturn(t typ.Type, name string) (typ.Type, bool, bool) {
-	mt, found := typeaccess.GetMetamethod(t, name)
+	mt, found := typecall.GetMetamethod(t, name)
 	if !found {
 		return nil, false, false
 	}
-	result, ok := typeaccess.CallableReturn(mt)
+	result, ok := typecall.CallableReturn(mt)
 	if !ok {
 		return nil, true, false
 	}

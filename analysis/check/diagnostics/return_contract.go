@@ -8,8 +8,8 @@ import (
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
-	"github.com/wippyai/go-lua/analysis/lua/typeaccess"
 	"github.com/wippyai/go-lua/analysis/lua/typeannotation"
+	"github.com/wippyai/go-lua/analysis/lua/typecall"
 	"github.com/wippyai/go-lua/analysis/lua/valueexpr"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/type/refinement"
@@ -223,7 +223,7 @@ func directCallResultContract(result *check.Result, fact semantics.CallFact, sit
 	if !ok || typ.IsAny(baseType) || typ.IsUnknown(baseType) {
 		return directFunctionContract{}, "", false
 	}
-	callable, ok := typeaccess.Callable(baseType)
+	callable, ok := typecall.Callable(baseType)
 	if !ok {
 		return directFunctionContract{}, "", false
 	}

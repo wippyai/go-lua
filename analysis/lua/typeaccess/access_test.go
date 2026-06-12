@@ -3,7 +3,6 @@ package typeaccess
 import (
 	"testing"
 
-	"github.com/wippyai/go-lua/analysis/type/normalize"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
@@ -189,51 +188,6 @@ func TestFieldUnionProjectionPolicy(t *testing.T) {
 	}
 }
 
-func TestMemberCallUnionRequiresCallableMemberOnEveryAlternative(t *testing.T) {
-	stringMethod, status := MemberCall(typ.String, "upper")
-	if status != MemberCallOK {
-		t.Fatalf("MemberCall(string, upper) status = %v, want ok", status)
-	}
-	if !callableValue(stringMethod, 0) {
-		t.Fatalf("MemberCall(string, upper) type = %v, want callable", stringMethod)
-	}
-
-	if _, status := MemberCall(typ.NewUnion(typ.String, typ.Number), "upper"); status != MemberCallMissing {
-		t.Fatalf("MemberCall(string|number, upper) status = %v, want missing", status)
-	}
-
-	left := typetable.NewRecord().
-		Field("run", typ.Func().Returns(typ.String).Build()).
-		Build()
-	right := typetable.NewRecord().
-		Field("run", typ.Func().Returns(typ.Number).Build()).
-		Build()
-	member, status := MemberCall(typ.NewUnion(left, right), "run")
-	if status != MemberCallOK {
-		t.Fatalf("MemberCall(callable record union, run) status = %v, want ok", status)
-	}
-	assertType(t, member, typ.NewUnion(
-		typ.Func().Returns(typ.String).Build(),
-		typ.Func().Returns(typ.Number).Build(),
-	))
-}
-
-func TestMemberCallRejectsOptionalUnionMember(t *testing.T) {
-	callable := typ.Func().Build()
-	left := typetable.NewRecord().
-		Field("run", callable).
-		Build()
-	right := typetable.NewRecord().
-		OptField("run", callable).
-		Build()
-
-	member, status := MemberCall(typ.NewUnion(left, right), "run")
-	if status != MemberCallNotCallable {
-		t.Fatalf("MemberCall(optional member union, run) status = %v, want not-callable", status)
-	}
-	assertType(t, member, typ.NewOptional(callable))
-}
-
 func TestFieldIntersectionFieldMeetPolicy(t *testing.T) {
 	tests := []struct {
 		name  string
@@ -269,75 +223,6 @@ func TestFieldIntersectionFieldMeetPolicy(t *testing.T) {
 			got, ok := Field(typ.NewIntersection(left, right), "value")
 			if !ok {
 				t.Fatal("Field(intersection, value) failed")
-			}
-			assertType(t, got, tt.want)
-		})
-	}
-}
-
-func TestCallableReturnFirstReturn(t *testing.T) {
-	fn := typ.Func().
-		Param("input", typ.String).
-		Returns(typ.Number, typ.Boolean).
-		Build()
-
-	got, ok := CallableReturn(fn)
-	if !ok {
-		t.Fatal("CallableReturn(function) failed")
-	}
-	assertType(t, got, typ.Number)
-}
-
-func TestCallableReturnUnionProjectionUsesNormalizePackage(t *testing.T) {
-	callableReturning := func(t typ.Type) typ.Type {
-		return typ.Func().Returns(t).Build()
-	}
-
-	returns := []typ.Type{typ.Unknown, typ.String, typ.Never}
-	got, ok := CallableReturn(typ.NewUnion(
-		callableReturning(returns[0]),
-		callableReturning(returns[1]),
-		callableReturning(returns[2]),
-	))
-	if !ok {
-		t.Fatal("CallableReturn(union) failed")
-	}
-	assertType(t, got, normalize.UnionForEvidence(returns...))
-}
-
-func TestCallableReturnUnionProjectionPolicy(t *testing.T) {
-	callableReturning := func(t typ.Type) typ.Type {
-		return typ.Func().Returns(t).Build()
-	}
-
-	tests := []struct {
-		name     string
-		receiver typ.Type
-		want     typ.Type
-	}{
-		{
-			name: "any absorbs concrete projection",
-			receiver: typ.NewUnion(
-				callableReturning(typ.Any),
-				callableReturning(typ.String),
-			),
-			want: typ.Any,
-		},
-		{
-			name: "optional return preserves nilability",
-			receiver: typ.NewUnion(
-				callableReturning(typ.NewOptional(typ.Number)),
-				callableReturning(typ.String),
-			),
-			want: typ.NewUnion(typ.Nil, typ.String, typ.Number),
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got, ok := CallableReturn(tt.receiver)
-			if !ok {
-				t.Fatal("CallableReturn(union) failed")
 			}
 			assertType(t, got, tt.want)
 		})

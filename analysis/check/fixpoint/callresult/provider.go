@@ -9,13 +9,13 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/effect/returns"
 	"github.com/wippyai/go-lua/analysis/domain/effect/signature"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
-	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	factapply "github.com/wippyai/go-lua/analysis/engine/factapply"
+	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	sourcevalue "github.com/wippyai/go-lua/analysis/engine/sourcevalue"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
-	"github.com/wippyai/go-lua/analysis/lua/typeaccess"
+	"github.com/wippyai/go-lua/analysis/lua/typecall"
 	"github.com/wippyai/go-lua/analysis/lua/typeprojection"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/type/kind"
@@ -224,7 +224,7 @@ func callbackReturnValue(
 	if !ok || sig.Type == nil || argIndex < 0 || argIndex >= len(sig.Type.Params) {
 		return product.Value{}, false
 	}
-	ret, ok := typeaccess.CallableReturn(sig.Type.Params[argIndex].Type)
+	ret, ok := typecall.CallableReturn(sig.Type.Params[argIndex].Type)
 	if !ok {
 		return product.Value{}, false
 	}

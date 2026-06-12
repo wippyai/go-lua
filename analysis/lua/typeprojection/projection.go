@@ -2,6 +2,7 @@ package typeprojection
 
 import (
 	"github.com/wippyai/go-lua/analysis/lua/typeaccess"
+	"github.com/wippyai/go-lua/analysis/lua/typecall"
 	"github.com/wippyai/go-lua/analysis/type/projection"
 	"github.com/wippyai/go-lua/analysis/type/subtype"
 	"github.com/wippyai/go-lua/analysis/type/typ"
@@ -20,7 +21,7 @@ func Apply(source typ.Type, p projection.Projection) (typ.Type, bool) {
 			}
 			current = next
 		case projection.StepCallableReturn:
-			next, ok := typeaccess.CallableReturn(current)
+			next, ok := typecall.CallableReturn(current)
 			if !ok {
 				return nil, false
 			}

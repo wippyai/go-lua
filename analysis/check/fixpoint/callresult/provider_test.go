@@ -886,6 +886,7 @@ func TestProductionImportsAreBounded(t *testing.T) {
 		"github.com/wippyai/go-lua/analysis/engine/transfer":               true,
 		"github.com/wippyai/go-lua/analysis/ir/cfg":                        true,
 		"github.com/wippyai/go-lua/analysis/lua/typeaccess":                true,
+		"github.com/wippyai/go-lua/analysis/lua/typecall":                  true,
 		"github.com/wippyai/go-lua/analysis/lua/typeprojection":            true,
 		"github.com/wippyai/go-lua/analysis/symbol":                        true,
 		"github.com/wippyai/go-lua/analysis/type/kind":                     true,
@@ -901,6 +902,7 @@ func TestProductionImportsAreBounded(t *testing.T) {
 	forbidden := []string{"/__old", "/adapter", "/query", "/compiler", "/analysis/lua", "/cfgbuild", "/semantics", "/diagnostic", "/diagnostics", "/store", "/session"}
 	for _, dep := range strings.Fields(string(out)) {
 		if dep == "github.com/wippyai/go-lua/analysis/lua/typeaccess" ||
+			dep == "github.com/wippyai/go-lua/analysis/lua/typecall" ||
 			dep == "github.com/wippyai/go-lua/analysis/lua/typeprojection" {
 			continue
 		}

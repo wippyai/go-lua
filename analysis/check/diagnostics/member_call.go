@@ -11,6 +11,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
 	"github.com/wippyai/go-lua/analysis/lua/typeaccess"
 	"github.com/wippyai/go-lua/analysis/lua/typeannotation"
+	"github.com/wippyai/go-lua/analysis/lua/typecall"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/type/discriminant"
 	"github.com/wippyai/go-lua/analysis/type/normalize"
@@ -71,13 +72,13 @@ func (p MemberCall) call(result *check.Result, point cfg.Point, fact semantics.C
 		return diagnostic.Diagnostic{}, false
 	}
 
-	memberType, status := typeaccess.MemberCall(receiverType, member)
+	memberType, status := typecall.MemberCall(receiverType, member)
 	switch status {
-	case typeaccess.MemberCallOK:
+	case typecall.MemberCallOK:
 		return diagnostic.Diagnostic{}, false
-	case typeaccess.MemberCallMissing:
+	case typecall.MemberCallMissing:
 		return memberDiagnostic(result, fact, callExpr, receiverType, member, point), true
-	case typeaccess.MemberCallNotCallable:
+	case typecall.MemberCallNotCallable:
 		return notCallableDiagnostic(result, fact, callExpr, receiverType, memberType, member, point), true
 	default:
 		return diagnostic.Diagnostic{}, false
