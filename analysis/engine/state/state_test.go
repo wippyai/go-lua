@@ -8,6 +8,7 @@ import (
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/standard"
@@ -224,6 +225,414 @@ func TestExplicitBottomEntriesCanonicalizeToAbsence(t *testing.T) {
 	}
 }
 
+func TestWritesFromStateBottomProduceReachableState(t *testing.T) {
+	reg := standard.Registry()
+	stateDomain := Domain(reg)
+	bottom := stateDomain.Bottom()
+	empty := State{}
+	if stateDomain.Equal(bottom, empty) {
+		t.Fatalf("lattice bottom must stay distinct from reachable empty for must-fact lanes")
+	}
+
+	slot := key.SymbolValue(symbol.ID(65))
+	pathKey := pathdom.PathKey("sym65@1.member")
+	dynamicKey := DynamicIndexKey{Table: pathdom.PathKey("sym65@1.table"), Site: "dyn"}
+	heapID := identity.ID{Kind: "table", Site: "bottom-write", Index: 1}
+	proof := BranchProof{Kind: BranchProofPathPresence, Path: pathKey, Presence: presence.Present()}
+	effectKey := EffectDeltaKey{Target: pathdom.PathKey("sym65@1.table"), Site: "effect", Kind: EffectDeltaMutation}
+	channel := ChannelSelectFact{Select: "select-bottom", Kind: ChannelSelectFactSelect, Result: pathKey}
+	escapeID := identity.ID{Kind: "table", Site: "escape-bottom", Index: 1}
+	present := presentValue(reg)
+
+	dynamicFact := DynamicIndexFact{
+		KeyPresence: presence.Present(),
+		KeyValue:    present,
+		Value:       present,
+		Admission:   DynamicIndexAdmissionAdmitted,
+	}
+	effectDelta := EffectDelta{Before: present, After: present, Change: EffectDeltaChangeChanged}
+
+	cases := []struct {
+		name  string
+		state State
+	}{
+		{"value", bottom.WriteValue(reg, slot, present)},
+		{"path", bottom.WritePathKey(reg, pathKey, present)},
+		{"static-member", bottom.WritePathStaticMember(pathKey, present)},
+		{"dynamic-index", bottom.WriteDynamicIndexFact(reg, dynamicKey, dynamicFact)},
+		{"heap-table", bottom.WriteHeapTableObject(reg, heapID, HeapTableObject{Root: present})},
+		{"branch-proof", bottom.AddBranchProof(proof)},
+		{"effect-delta", bottom.WriteEffectDelta(reg, effectKey, effectDelta)},
+		{"channel-select", bottom.AddChannelSelectFact(channel)},
+		{"escape-placement", bottom.WriteEscapePlacement(escapeID, EscapePlacementStack)},
+	}
+	for _, tc := range cases {
+		if tc.state.pathStaticMembersBottom || tc.state.branchProofsBottom || tc.state.channelSelectBottom {
+			t.Fatalf("%s write left partial must-lane bottom: %#v", tc.name, tc.state)
+		}
+		if !stateDomain.LessOrEq(bottom, tc.state) {
+			t.Fatalf("%s write did not move upward from lattice bottom", tc.name)
+		}
+	}
+}
+
+func TestPathStaticMembersUseMustJoinSeparateFromPathRefinements(t *testing.T) {
+	reg := standard.Registry()
+	valueDomain := product.Domain(reg)
+	stateDomain := Domain(reg)
+	common := pathdom.PathKey("sym70@1.shared")
+	leftOnly := pathdom.PathKey("sym70@1.left")
+	rightOnly := pathdom.PathKey("sym70@1.right")
+	present := presentValue(reg)
+	absent := absentValue(reg)
+
+	left := State{}.
+		WritePathKey(reg, leftOnly, present).
+		WritePathStaticMember(common, present).
+		WritePathStaticMember(leftOnly, present)
+	right := State{}.
+		WritePathKey(reg, rightOnly, present).
+		WritePathStaticMember(common, absent).
+		WritePathStaticMember(rightOnly, present)
+
+	joined := stateDomain.Join(left, right)
+	if got := joined.ReadPathKey(reg, leftOnly); !valueDomain.Equal(got, present) {
+		t.Fatalf("disjoint refinement path was dropped: %s", formatValue(reg, got))
+	}
+	if got := joined.ReadPathKey(reg, rightOnly); !valueDomain.Equal(got, present) {
+		t.Fatalf("disjoint refinement path was dropped: %s", formatValue(reg, got))
+	}
+	if got, ok := joined.ReadPathStaticMember(common); !ok || !valueDomain.Equal(got, product.Top()) {
+		t.Fatalf("joined static member = %s ok=%v, want top common fact", formatValue(reg, got), ok)
+	}
+	if _, ok := joined.ReadPathStaticMember(leftOnly); ok {
+		t.Fatalf("left-only static member survived must join")
+	}
+	if _, ok := joined.ReadPathStaticMember(rightOnly); ok {
+		t.Fatalf("right-only static member survived must join")
+	}
+	if widened := stateDomain.Widen(left, right); !stateDomain.Equal(widened, joined) {
+		t.Fatalf("static member widen differs from join")
+	}
+	if !stateDomain.LessOrEq(left, joined) || stateDomain.LessOrEq(joined, left) {
+		t.Fatalf("static member order should move toward fewer/weaker must facts")
+	}
+	if !stateDomain.Equal(stateDomain.Join(stateDomain.Bottom(), left), left) {
+		t.Fatalf("state bottom should be join identity for static members")
+	}
+
+	clone := left.Clone().WritePathStaticMember(common, absent)
+	if got, _ := left.ReadPathStaticMember(common); !valueDomain.Equal(got, present) {
+		t.Fatalf("static member clone write mutated original: %s", formatValue(reg, got))
+	}
+	if got, _ := clone.ReadPathStaticMember(common); !valueDomain.Equal(got, absent) {
+		t.Fatalf("static member clone write = %s, want absent", formatValue(reg, got))
+	}
+}
+
+func TestDynamicIndexKeysPointwiseFacts(t *testing.T) {
+	reg := standard.Registry()
+	valueDomain := product.Domain(reg)
+	stateDomain := Domain(reg)
+	common := DynamicIndexKey{Table: pathdom.PathKey("sym80@1.table"), Site: "common"}
+	leftOnly := DynamicIndexKey{Table: pathdom.PathKey("sym80@1.table"), Site: "left"}
+	presentFact := DynamicIndexFact{
+		KeyPresence: presence.Present(),
+		KeyValue:    presentValue(reg),
+		Value:       presentValue(reg),
+		Admission:   DynamicIndexAdmissionAdmitted,
+	}
+	absentFact := DynamicIndexFact{
+		KeyPresence: presence.Absent(),
+		KeyValue:    absentValue(reg),
+		Value:       absentValue(reg),
+		Admission:   DynamicIndexAdmissionRejected,
+	}
+
+	if got := (State{}).ReadDynamicIndexFact(reg, common); !dynamicIndexFactDomain(reg).Equal(got, dynamicIndexFactBottom(reg)) {
+		t.Fatalf("empty dynamic index fact = %#v, want bottom", got)
+	}
+
+	left := State{}.
+		WriteDynamicIndexFact(reg, common, presentFact).
+		WriteDynamicIndexFact(reg, leftOnly, presentFact)
+	right := State{}.WriteDynamicIndexFact(reg, common, absentFact)
+	same := State{}.WriteDynamicIndexFact(reg, common, presentFact)
+	if !stateDomain.Equal(State{}.WriteDynamicIndexFact(reg, common, presentFact), same) {
+		t.Fatalf("equal dynamic index facts compare different")
+	}
+	if !stateDomain.Equal(stateDomain.Join(stateDomain.Bottom(), left), left) {
+		t.Fatalf("state bottom should be join identity for dynamic index facts")
+	}
+
+	joined := stateDomain.Join(left, right)
+	got := joined.ReadDynamicIndexFact(reg, common)
+	if !presence.Equal(got.KeyPresence, presence.Maybe()) ||
+		!valueDomain.Equal(got.KeyValue, product.Top()) ||
+		!valueDomain.Equal(got.Value, product.Top()) ||
+		got.Admission != DynamicIndexAdmissionUnknown {
+		t.Fatalf("joined dynamic fact = %#v, want joined key/value/admission atoms", got)
+	}
+	if got := joined.ReadDynamicIndexFact(reg, leftOnly); !dynamicIndexFactDomain(reg).Equal(got, presentFact) {
+		t.Fatalf("disjoint dynamic index fact did not survive pointwise join: %#v", got)
+	}
+	if widened := stateDomain.Widen(left, right); !stateDomain.Equal(widened, joined) {
+		t.Fatalf("dynamic index widen differs from join")
+	}
+	if !stateDomain.LessOrEq(left, joined) || stateDomain.LessOrEq(joined, left) {
+		t.Fatalf("dynamic index order should be pointwise")
+	}
+
+	clone := left.Clone().WriteDynamicIndexFact(reg, common, absentFact)
+	if got := left.ReadDynamicIndexFact(reg, common); !dynamicIndexFactDomain(reg).Equal(got, presentFact) {
+		t.Fatalf("dynamic index clone write mutated original: %#v", got)
+	}
+	if got := clone.ReadDynamicIndexFact(reg, common); !dynamicIndexFactDomain(reg).Equal(got, absentFact) {
+		t.Fatalf("dynamic index clone write = %#v, want absent fact", got)
+	}
+}
+
+func TestHeapTableIdentityObjectsJoinAndCopy(t *testing.T) {
+	reg := standard.Registry()
+	valueDomain := product.Domain(reg)
+	stateDomain := Domain(reg)
+	id := identity.ID{Kind: "table", Site: "alloc", Index: 1}
+	otherID := identity.ID{Kind: "table", Site: "alloc", Index: 2}
+	staticCommon := pathdom.PathKey("sym90@1.table.name")
+	staticLeft := pathdom.PathKey("sym90@1.table.left")
+	dynCommon := DynamicIndexKey{Table: pathdom.PathKey("sym90@1.table"), Site: "dyn"}
+	present := presentValue(reg)
+	absent := absentValue(reg)
+
+	leftObject := HeapTableObject{
+		Root: present,
+		StaticMembers: map[pathdom.PathKey]product.Value{
+			staticCommon: present,
+			staticLeft:   present,
+		},
+		DynamicIndexFacts: map[DynamicIndexKey]DynamicIndexFact{
+			dynCommon: {
+				KeyPresence: presence.Present(),
+				KeyValue:    present,
+				Value:       present,
+				Admission:   DynamicIndexAdmissionAdmitted,
+			},
+		},
+	}
+	rightObject := HeapTableObject{
+		Root: absent,
+		StaticMembers: map[pathdom.PathKey]product.Value{
+			staticCommon: absent,
+		},
+		DynamicIndexFacts: map[DynamicIndexKey]DynamicIndexFact{
+			dynCommon: {
+				KeyPresence: presence.Absent(),
+				KeyValue:    absent,
+				Value:       absent,
+				Admission:   DynamicIndexAdmissionRejected,
+			},
+		},
+	}
+
+	if got := (State{}).ReadHeapTableObject(reg, id); !heapTableObjectDomain(reg).Equal(got, heapTableObjectBottom(reg)) {
+		t.Fatalf("empty heap object = %#v, want bottom", got)
+	}
+
+	left := State{}.
+		WriteHeapTableObject(reg, id, leftObject).
+		WriteHeapTableObject(reg, otherID, HeapTableObject{Root: present})
+	right := State{}.WriteHeapTableObject(reg, id, rightObject)
+	if !stateDomain.Equal(stateDomain.Join(stateDomain.Bottom(), left), left) {
+		t.Fatalf("state bottom should be join identity for heap table identity")
+	}
+
+	joined := stateDomain.Join(left, right)
+	got := joined.ReadHeapTableObject(reg, id)
+	if !valueDomain.Equal(got.Root, product.Top()) {
+		t.Fatalf("joined heap root = %s, want top", formatValue(reg, got.Root))
+	}
+	if gotStatic, ok := got.StaticMembers[staticCommon]; !ok || !valueDomain.Equal(gotStatic, product.Top()) {
+		t.Fatalf("joined heap static member = %s ok=%v, want top common fact", formatValue(reg, gotStatic), ok)
+	}
+	if _, ok := got.StaticMembers[staticLeft]; ok {
+		t.Fatalf("left-only heap static member survived must join")
+	}
+	if gotDynamic := got.DynamicIndexFacts[dynCommon]; !presence.Equal(gotDynamic.KeyPresence, presence.Maybe()) || gotDynamic.Admission != DynamicIndexAdmissionUnknown {
+		t.Fatalf("joined heap dynamic fact = %#v, want joined fact", gotDynamic)
+	}
+	if other := joined.ReadHeapTableObject(reg, otherID); !valueDomain.Equal(other.Root, present) {
+		t.Fatalf("disjoint heap identity did not survive pointwise join")
+	}
+	if widened := stateDomain.Widen(left, right); !stateDomain.Equal(widened, joined) {
+		t.Fatalf("heap identity widen differs from join")
+	}
+	if !stateDomain.LessOrEq(left, joined) || stateDomain.LessOrEq(joined, left) {
+		t.Fatalf("heap identity order should combine pointwise root/dynamic with must static children")
+	}
+
+	read := left.ReadHeapTableObject(reg, id)
+	read.StaticMembers[staticCommon] = absent
+	read.DynamicIndexFacts[dynCommon] = DynamicIndexFact{Admission: DynamicIndexAdmissionRejected}
+	again := left.ReadHeapTableObject(reg, id)
+	if !valueDomain.Equal(again.StaticMembers[staticCommon], present) {
+		t.Fatalf("heap object read exposed mutable static members")
+	}
+	if again.DynamicIndexFacts[dynCommon].Admission != DynamicIndexAdmissionAdmitted {
+		t.Fatalf("heap object read exposed mutable dynamic facts")
+	}
+}
+
+func TestBranchProofsUseMustJoin(t *testing.T) {
+	stateDomain := Domain(standard.Registry())
+	common := BranchProof{Kind: BranchProofPathPresence, Path: pathdom.PathKey("sym100@1.err"), Presence: presence.Present()}
+	leftOnly := BranchProof{Kind: BranchProofPathEqual, Path: pathdom.PathKey("sym100@1.a"), Other: pathdom.PathKey("sym100@1.b")}
+	rightOnly := BranchProof{Kind: BranchProofPathNotEqual, Path: pathdom.PathKey("sym100@1.a"), Other: pathdom.PathKey("sym100@1.c")}
+	left := State{}.AddBranchProof(common).AddBranchProof(leftOnly)
+	right := State{}.AddBranchProof(common).AddBranchProof(rightOnly)
+
+	if !left.HasBranchProof(common) || !stateDomain.Equal(State{}.AddBranchProof(common), State{}.AddBranchProof(common)) {
+		t.Fatalf("branch proof empty/equality behavior failed")
+	}
+	if !stateDomain.Equal(stateDomain.Join(stateDomain.Bottom(), left), left) {
+		t.Fatalf("state bottom should be join identity for branch proofs")
+	}
+	joined := stateDomain.Join(left, right)
+	if !joined.HasBranchProof(common) {
+		t.Fatalf("common branch proof was dropped")
+	}
+	if joined.HasBranchProof(leftOnly) || joined.HasBranchProof(rightOnly) {
+		t.Fatalf("disjoint branch proof survived must join")
+	}
+	if widened := stateDomain.Widen(left, right); !stateDomain.Equal(widened, joined) {
+		t.Fatalf("branch proof widen differs from join")
+	}
+	if !stateDomain.LessOrEq(left, joined) || stateDomain.LessOrEq(joined, left) {
+		t.Fatalf("branch proof order should move toward fewer must proofs")
+	}
+	clone := left.Clone().AddBranchProof(rightOnly)
+	if left.HasBranchProof(rightOnly) || !clone.HasBranchProof(rightOnly) {
+		t.Fatalf("branch proof clone write mutated original or missed clone")
+	}
+}
+
+func TestEffectDeltasPointwiseJoin(t *testing.T) {
+	reg := standard.Registry()
+	valueDomain := product.Domain(reg)
+	stateDomain := Domain(reg)
+	common := EffectDeltaKey{Target: pathdom.PathKey("sym110@1.table"), Site: "call", Kind: EffectDeltaMutation}
+	leftOnly := EffectDeltaKey{Target: pathdom.PathKey("sym110@1.left"), Site: "call", Kind: EffectDeltaMutation}
+	presentDelta := EffectDelta{Before: presentValue(reg), After: presentValue(reg), Change: EffectDeltaChangeChanged}
+	absentDelta := EffectDelta{Before: absentValue(reg), After: absentValue(reg), Change: EffectDeltaChangeNone}
+
+	if got := (State{}).ReadEffectDelta(reg, common); !effectDeltaDomain(reg).Equal(got, effectDeltaBottom(reg)) {
+		t.Fatalf("empty effect delta = %#v, want bottom", got)
+	}
+	if !stateDomain.Equal(State{}.WriteEffectDelta(reg, common, presentDelta), State{}.WriteEffectDelta(reg, common, presentDelta)) {
+		t.Fatalf("equal effect deltas compare different")
+	}
+
+	left := State{}.WriteEffectDelta(reg, common, presentDelta).WriteEffectDelta(reg, leftOnly, presentDelta)
+	right := State{}.WriteEffectDelta(reg, common, absentDelta)
+	if !stateDomain.Equal(stateDomain.Join(stateDomain.Bottom(), left), left) {
+		t.Fatalf("state bottom should be join identity for effect deltas")
+	}
+	joined := stateDomain.Join(left, right)
+	got := joined.ReadEffectDelta(reg, common)
+	if !valueDomain.Equal(got.Before, product.Top()) || !valueDomain.Equal(got.After, product.Top()) || got.Change != EffectDeltaChangeUnknown {
+		t.Fatalf("joined effect delta = %#v, want joined values and unknown change", got)
+	}
+	if got := joined.ReadEffectDelta(reg, leftOnly); !effectDeltaDomain(reg).Equal(got, presentDelta) {
+		t.Fatalf("disjoint effect delta did not survive pointwise join: %#v", got)
+	}
+	if widened := stateDomain.Widen(left, right); !stateDomain.Equal(widened, joined) {
+		t.Fatalf("effect delta widen differs from join")
+	}
+	if !stateDomain.LessOrEq(left, joined) || stateDomain.LessOrEq(joined, left) {
+		t.Fatalf("effect delta order should be pointwise")
+	}
+	clone := left.Clone().WriteEffectDelta(reg, common, absentDelta)
+	if got := left.ReadEffectDelta(reg, common); !effectDeltaDomain(reg).Equal(got, presentDelta) {
+		t.Fatalf("effect delta clone write mutated original: %#v", got)
+	}
+	if got := clone.ReadEffectDelta(reg, common); !effectDeltaDomain(reg).Equal(got, absentDelta) {
+		t.Fatalf("effect delta clone write = %#v, want absent delta", got)
+	}
+}
+
+func TestChannelSelectFactsUseMustJoin(t *testing.T) {
+	stateDomain := Domain(standard.Registry())
+	common := ChannelSelectFact{Select: "select-1", Kind: ChannelSelectFactSelect, Result: pathdom.PathKey("sym120@1.result")}
+	leftOnly := ChannelSelectFact{Select: "select-1", Kind: ChannelSelectFactReceive, Case: pathdom.PathKey("sym120@1.left"), Index: 0}
+	rightOnly := ChannelSelectFact{Select: "select-1", Kind: ChannelSelectFactCase, Case: pathdom.PathKey("sym120@1.right"), Index: 1}
+	left := State{}.AddChannelSelectFact(common).AddChannelSelectFact(leftOnly)
+	right := State{}.AddChannelSelectFact(common).AddChannelSelectFact(rightOnly)
+
+	if !left.HasChannelSelectFact(common) || !stateDomain.Equal(State{}.AddChannelSelectFact(common), State{}.AddChannelSelectFact(common)) {
+		t.Fatalf("channel select empty/equality behavior failed")
+	}
+	if !stateDomain.Equal(stateDomain.Join(stateDomain.Bottom(), left), left) {
+		t.Fatalf("state bottom should be join identity for channel select facts")
+	}
+	joined := stateDomain.Join(left, right)
+	if !joined.HasChannelSelectFact(common) {
+		t.Fatalf("common channel select fact was dropped")
+	}
+	if joined.HasChannelSelectFact(leftOnly) || joined.HasChannelSelectFact(rightOnly) {
+		t.Fatalf("disjoint channel select fact survived must join")
+	}
+	if widened := stateDomain.Widen(left, right); !stateDomain.Equal(widened, joined) {
+		t.Fatalf("channel select widen differs from join")
+	}
+	if !stateDomain.LessOrEq(left, joined) || stateDomain.LessOrEq(joined, left) {
+		t.Fatalf("channel select order should move toward fewer must facts")
+	}
+	clone := left.Clone().AddChannelSelectFact(rightOnly)
+	if left.HasChannelSelectFact(rightOnly) || !clone.HasChannelSelectFact(rightOnly) {
+		t.Fatalf("channel select clone write mutated original or missed clone")
+	}
+}
+
+func TestEscapePlacementOrderAndCopy(t *testing.T) {
+	stateDomain := Domain(standard.Registry())
+	id := identity.ID{Kind: "table", Site: "escape", Index: 1}
+	otherID := identity.ID{Kind: "table", Site: "escape", Index: 2}
+
+	if got := (State{}).ReadEscapePlacement(id); got != EscapePlacementBottom {
+		t.Fatalf("empty escape placement = %v, want bottom", got)
+	}
+	if !stateDomain.Equal(State{}.WriteEscapePlacement(id, EscapePlacementStack), State{}.WriteEscapePlacement(id, EscapePlacementStack)) {
+		t.Fatalf("equal escape placements compare different")
+	}
+
+	left := State{}.
+		WriteEscapePlacement(id, EscapePlacementStack).
+		WriteEscapePlacement(otherID, EscapePlacementOwnedHeap)
+	right := State{}.WriteEscapePlacement(id, EscapePlacementEscaped)
+	if !stateDomain.Equal(stateDomain.Join(stateDomain.Bottom(), left), left) {
+		t.Fatalf("state bottom should be join identity for escape placement")
+	}
+	joined := stateDomain.Join(left, right)
+	if got := joined.ReadEscapePlacement(id); got != EscapePlacementEscaped {
+		t.Fatalf("joined escape placement = %v, want escaped", got)
+	}
+	if got := joined.ReadEscapePlacement(otherID); got != EscapePlacementOwnedHeap {
+		t.Fatalf("disjoint escape placement did not survive pointwise join: %v", got)
+	}
+	if widened := stateDomain.Widen(left, right); !stateDomain.Equal(widened, joined) {
+		t.Fatalf("escape placement widen differs from join")
+	}
+	if !stateDomain.LessOrEq(left, joined) || stateDomain.LessOrEq(joined, left) {
+		t.Fatalf("escape placement order should move toward escaped/unknown")
+	}
+	clone := left.Clone().WriteEscapePlacement(id, EscapePlacementUnknown)
+	if got := left.ReadEscapePlacement(id); got != EscapePlacementStack {
+		t.Fatalf("escape placement clone write mutated original: %v", got)
+	}
+	if got := clone.ReadEscapePlacement(id); got != EscapePlacementUnknown {
+		t.Fatalf("escape placement clone write = %v, want unknown", got)
+	}
+}
+
 func TestInvalidatePathKeySubtreeRemovesStructuredDescendants(t *testing.T) {
 	reg := standard.Registry()
 	valueDomain := product.Domain(reg)
@@ -362,7 +771,18 @@ func TestTopLanesReadTopAndRejectFiniteUpdates(t *testing.T) {
 	top := Domain(reg).Top()
 	slot := key.SymbolValue(symbol.ID(50))
 	pathKey := pathdom.PathKey("sym50@1.field")
+	dynamicKey := DynamicIndexKey{Table: pathdom.PathKey("sym50@1.table"), Site: "dyn"}
+	heapID := identity.ID{Kind: "table", Site: "top", Index: 1}
+	effectKey := EffectDeltaKey{Target: pathdom.PathKey("sym50@1.table"), Site: "effect", Kind: EffectDeltaMutation}
+	escapeID := identity.ID{Kind: "table", Site: "escape-top", Index: 1}
 	present := presentValue(reg)
+	dynamicFact := DynamicIndexFact{
+		KeyPresence: presence.Present(),
+		KeyValue:    present,
+		Value:       present,
+		Admission:   DynamicIndexAdmissionAdmitted,
+	}
+	effectDelta := EffectDelta{Before: present, After: present, Change: EffectDeltaChangeChanged}
 
 	if got := top.ReadValue(reg, slot); !valueDomain.Equal(got, product.Top()) {
 		t.Fatalf("top value read = %s, want top", formatValue(reg, got))
@@ -372,6 +792,21 @@ func TestTopLanesReadTopAndRejectFiniteUpdates(t *testing.T) {
 	}
 	if got := top.ReadPathKey(reg, pathKey); !valueDomain.Equal(got, product.Top()) {
 		t.Fatalf("top path read = %s, want top", formatValue(reg, got))
+	}
+	if got := top.ReadDynamicIndexFact(reg, dynamicKey); !dynamicIndexFactDomain(reg).Equal(got, dynamicIndexFactTop()) {
+		t.Fatalf("top dynamic-index read = %#v, want top", got)
+	}
+	if got := top.ReadHeapTableObject(reg, heapID); !heapTableObjectDomain(reg).Equal(got, heapTableObjectTop()) {
+		t.Fatalf("top heap-object read = %#v, want top", got)
+	}
+	if got := top.ReadEffectDelta(reg, effectKey); !effectDeltaDomain(reg).Equal(got, effectDeltaTop()) {
+		t.Fatalf("top effect-delta read = %#v, want top", got)
+	}
+	if got := top.ReadEscapePlacement(escapeID); got != EscapePlacementUnknown {
+		t.Fatalf("top escape-placement read = %v, want unknown", got)
+	}
+	if _, ok := top.ReadPathStaticMember(pathKey); ok {
+		t.Fatalf("top static-member lane should read as unknown absence")
 	}
 
 	requirePanic(t, func() {
@@ -412,6 +847,18 @@ func TestTopLanesReadTopAndRejectFiniteUpdates(t *testing.T) {
 	})
 	requirePanic(t, func() {
 		top.InvalidatePathKeyDescendants(pathKey)
+	})
+	requirePanic(t, func() {
+		top.WriteDynamicIndexFact(reg, dynamicKey, dynamicFact)
+	})
+	requirePanic(t, func() {
+		top.WriteHeapTableObject(reg, heapID, HeapTableObject{Root: present})
+	})
+	requirePanic(t, func() {
+		top.WriteEffectDelta(reg, effectKey, effectDelta)
+	})
+	requirePanic(t, func() {
+		top.WriteEscapePlacement(escapeID, EscapePlacementStack)
 	})
 }
 

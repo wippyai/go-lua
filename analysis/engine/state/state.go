@@ -6,6 +6,7 @@ import (
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 )
 
@@ -15,17 +16,47 @@ type State struct {
 	values map[key.Value]product.Value
 	paths  map[pathdom.PathKey]product.Value
 
+	pathStaticMembers       map[pathdom.PathKey]product.Value
+	dynamicIndex            map[DynamicIndexKey]DynamicIndexFact
+	heapTableIdentity       map[identity.ID]HeapTableObject
+	branchProofs            map[BranchProof]struct{}
+	effectDeltas            map[EffectDeltaKey]EffectDelta
+	channelSelect           map[ChannelSelectFact]struct{}
+	escapePlacement         map[identity.ID]EscapePlacement
+	pathStaticMembersBottom bool
+	branchProofsBottom      bool
+	channelSelectBottom     bool
+
 	valuesTop bool
 	pathsTop  bool
+
+	dynamicIndexTop      bool
+	heapTableIdentityTop bool
+	effectDeltasTop      bool
+	escapePlacementTop   bool
 }
 
 // Clone returns an independent copy of the finite lanes in s.
 func (s State) Clone() State {
 	return State{
-		values:    cloneValueMap(s.values),
-		paths:     clonePathMap(s.paths),
-		valuesTop: s.valuesTop,
-		pathsTop:  s.pathsTop,
+		values:                  cloneValueMap(s.values),
+		paths:                   clonePathMap(s.paths),
+		pathStaticMembers:       clonePathMap(s.pathStaticMembers),
+		dynamicIndex:            cloneDynamicIndexMap(s.dynamicIndex),
+		heapTableIdentity:       cloneHeapTableObjectMap(s.heapTableIdentity),
+		branchProofs:            cloneBranchProofSet(s.branchProofs),
+		effectDeltas:            cloneEffectDeltaMap(s.effectDeltas),
+		channelSelect:           cloneChannelSelectSet(s.channelSelect),
+		escapePlacement:         cloneEscapePlacementMap(s.escapePlacement),
+		pathStaticMembersBottom: s.pathStaticMembersBottom,
+		branchProofsBottom:      s.branchProofsBottom,
+		channelSelectBottom:     s.channelSelectBottom,
+		valuesTop:               s.valuesTop,
+		pathsTop:                s.pathsTop,
+		dynamicIndexTop:         s.dynamicIndexTop,
+		heapTableIdentityTop:    s.heapTableIdentityTop,
+		effectDeltasTop:         s.effectDeltasTop,
+		escapePlacementTop:      s.escapePlacementTop,
 	}
 }
 
@@ -58,7 +89,7 @@ func (s State) WriteValue(reg *axis.Registry, slot key.Value, value product.Valu
 		if !changed {
 			return s
 		}
-		out := s
+		out := s.reachable()
 		out.values = values
 		return out
 	}
@@ -67,7 +98,7 @@ func (s State) WriteValue(reg *axis.Registry, slot key.Value, value product.Valu
 		values = make(map[key.Value]product.Value, 1)
 	}
 	values[slot] = value
-	out := s
+	out := s.reachable()
 	out.values = values
 	return out
 }
@@ -102,42 +133,95 @@ func (s State) UpdateReturnSlot(reg *axis.Registry, index int, fn func(product.V
 func Domain(reg *axis.Registry) lattice.Lattice[State] {
 	valueDomain := product.Domain(reg)
 	ops := domainOps{
-		values: lift.Map[key.Value, product.Value](valueDomain),
-		paths:  lift.Map[pathdom.PathKey, product.Value](valueDomain),
+		values:            lift.Map[key.Value, product.Value](valueDomain),
+		paths:             lift.Map[pathdom.PathKey, product.Value](valueDomain),
+		pathStaticMembers: mustMapDomain[pathdom.PathKey, product.Value](valueDomain),
+		dynamicIndex:      dynamicIndexMapDomain(reg),
+		heapTableIdentity: heapTableIdentityMapDomain(reg),
+		branchProofs:      mustSetDomain[BranchProof](),
+		effectDeltas:      effectDeltaMapDomain(reg),
+		channelSelect:     mustSetDomain[ChannelSelectFact](),
+		escapePlacement:   escapePlacementMapDomain(),
 	}
 	return lattice.Lattice[State]{
 		Bottom: func() State {
-			return State{}
+			return State{
+				pathStaticMembersBottom: true,
+				branchProofsBottom:      true,
+				channelSelectBottom:     true,
+			}
 		},
 		Top: func() State {
-			return State{valuesTop: true, pathsTop: true}
+			return State{
+				valuesTop:            true,
+				pathsTop:             true,
+				dynamicIndexTop:      true,
+				heapTableIdentityTop: true,
+				effectDeltasTop:      true,
+				escapePlacementTop:   true,
+			}
 		},
 		Equal: func(a, b State) bool {
 			return ops.values.Equal(ops.valueLane(a), ops.valueLane(b)) &&
-				ops.paths.Equal(ops.pathLane(a), ops.pathLane(b))
+				ops.paths.Equal(ops.pathLane(a), ops.pathLane(b)) &&
+				ops.pathStaticMembers.Equal(ops.pathStaticMemberLane(a), ops.pathStaticMemberLane(b)) &&
+				ops.dynamicIndex.Equal(ops.dynamicIndexLane(a), ops.dynamicIndexLane(b)) &&
+				ops.heapTableIdentity.Equal(ops.heapTableIdentityLane(a), ops.heapTableIdentityLane(b)) &&
+				ops.branchProofs.Equal(ops.branchProofLane(a), ops.branchProofLane(b)) &&
+				ops.effectDeltas.Equal(ops.effectDeltaLane(a), ops.effectDeltaLane(b)) &&
+				ops.channelSelect.Equal(ops.channelSelectLane(a), ops.channelSelectLane(b)) &&
+				ops.escapePlacement.Equal(ops.escapePlacementLane(a), ops.escapePlacementLane(b))
 		},
 		LessOrEq: func(a, b State) bool {
 			return ops.values.LessOrEq(ops.valueLane(a), ops.valueLane(b)) &&
-				ops.paths.LessOrEq(ops.pathLane(a), ops.pathLane(b))
+				ops.paths.LessOrEq(ops.pathLane(a), ops.pathLane(b)) &&
+				ops.pathStaticMembers.LessOrEq(ops.pathStaticMemberLane(a), ops.pathStaticMemberLane(b)) &&
+				ops.dynamicIndex.LessOrEq(ops.dynamicIndexLane(a), ops.dynamicIndexLane(b)) &&
+				ops.heapTableIdentity.LessOrEq(ops.heapTableIdentityLane(a), ops.heapTableIdentityLane(b)) &&
+				ops.branchProofs.LessOrEq(ops.branchProofLane(a), ops.branchProofLane(b)) &&
+				ops.effectDeltas.LessOrEq(ops.effectDeltaLane(a), ops.effectDeltaLane(b)) &&
+				ops.channelSelect.LessOrEq(ops.channelSelectLane(a), ops.channelSelectLane(b)) &&
+				ops.escapePlacement.LessOrEq(ops.escapePlacementLane(a), ops.escapePlacementLane(b))
 		},
 		Join: func(a, b State) State {
 			return ops.fromLanes(
 				ops.values.Join(ops.valueLane(a), ops.valueLane(b)),
 				ops.paths.Join(ops.pathLane(a), ops.pathLane(b)),
+				ops.pathStaticMembers.Join(ops.pathStaticMemberLane(a), ops.pathStaticMemberLane(b)),
+				ops.dynamicIndex.Join(ops.dynamicIndexLane(a), ops.dynamicIndexLane(b)),
+				ops.heapTableIdentity.Join(ops.heapTableIdentityLane(a), ops.heapTableIdentityLane(b)),
+				ops.branchProofs.Join(ops.branchProofLane(a), ops.branchProofLane(b)),
+				ops.effectDeltas.Join(ops.effectDeltaLane(a), ops.effectDeltaLane(b)),
+				ops.channelSelect.Join(ops.channelSelectLane(a), ops.channelSelectLane(b)),
+				ops.escapePlacement.Join(ops.escapePlacementLane(a), ops.escapePlacementLane(b)),
 			)
 		},
 		Widen: func(prev, next State) State {
 			return ops.fromLanes(
 				ops.values.Widen(ops.valueLane(prev), ops.valueLane(next)),
 				ops.paths.Widen(ops.pathLane(prev), ops.pathLane(next)),
+				ops.pathStaticMembers.Widen(ops.pathStaticMemberLane(prev), ops.pathStaticMemberLane(next)),
+				ops.dynamicIndex.Widen(ops.dynamicIndexLane(prev), ops.dynamicIndexLane(next)),
+				ops.heapTableIdentity.Widen(ops.heapTableIdentityLane(prev), ops.heapTableIdentityLane(next)),
+				ops.branchProofs.Widen(ops.branchProofLane(prev), ops.branchProofLane(next)),
+				ops.effectDeltas.Widen(ops.effectDeltaLane(prev), ops.effectDeltaLane(next)),
+				ops.channelSelect.Widen(ops.channelSelectLane(prev), ops.channelSelectLane(next)),
+				ops.escapePlacement.Widen(ops.escapePlacementLane(prev), ops.escapePlacementLane(next)),
 			)
 		},
 	}
 }
 
 type domainOps struct {
-	values lattice.Lattice[map[key.Value]product.Value]
-	paths  lattice.Lattice[map[pathdom.PathKey]product.Value]
+	values            lattice.Lattice[map[key.Value]product.Value]
+	paths             lattice.Lattice[map[pathdom.PathKey]product.Value]
+	pathStaticMembers lattice.Lattice[mustMapLane[pathdom.PathKey, product.Value]]
+	dynamicIndex      lattice.Lattice[map[DynamicIndexKey]DynamicIndexFact]
+	heapTableIdentity lattice.Lattice[map[identity.ID]HeapTableObject]
+	branchProofs      lattice.Lattice[mustSetLane[BranchProof]]
+	effectDeltas      lattice.Lattice[map[EffectDeltaKey]EffectDelta]
+	channelSelect     lattice.Lattice[mustSetLane[ChannelSelectFact]]
+	escapePlacement   lattice.Lattice[map[identity.ID]EscapePlacement]
 }
 
 func (o domainOps) valueLane(s State) map[key.Value]product.Value {
@@ -154,9 +238,65 @@ func (o domainOps) pathLane(s State) map[pathdom.PathKey]product.Value {
 	return s.paths
 }
 
+func (o domainOps) pathStaticMemberLane(s State) mustMapLane[pathdom.PathKey, product.Value] {
+	return mustMapLane[pathdom.PathKey, product.Value]{
+		bottom: s.pathStaticMembersBottom,
+		values: s.pathStaticMembers,
+	}
+}
+
+func (o domainOps) dynamicIndexLane(s State) map[DynamicIndexKey]DynamicIndexFact {
+	if s.dynamicIndexTop {
+		return o.dynamicIndex.Top()
+	}
+	return s.dynamicIndex
+}
+
+func (o domainOps) heapTableIdentityLane(s State) map[identity.ID]HeapTableObject {
+	if s.heapTableIdentityTop {
+		return o.heapTableIdentity.Top()
+	}
+	return s.heapTableIdentity
+}
+
+func (o domainOps) branchProofLane(s State) mustSetLane[BranchProof] {
+	return mustSetLane[BranchProof]{
+		bottom: s.branchProofsBottom,
+		values: s.branchProofs,
+	}
+}
+
+func (o domainOps) effectDeltaLane(s State) map[EffectDeltaKey]EffectDelta {
+	if s.effectDeltasTop {
+		return o.effectDeltas.Top()
+	}
+	return s.effectDeltas
+}
+
+func (o domainOps) channelSelectLane(s State) mustSetLane[ChannelSelectFact] {
+	return mustSetLane[ChannelSelectFact]{
+		bottom: s.channelSelectBottom,
+		values: s.channelSelect,
+	}
+}
+
+func (o domainOps) escapePlacementLane(s State) map[identity.ID]EscapePlacement {
+	if s.escapePlacementTop {
+		return o.escapePlacement.Top()
+	}
+	return s.escapePlacement
+}
+
 func (o domainOps) fromLanes(
 	values map[key.Value]product.Value,
 	paths map[pathdom.PathKey]product.Value,
+	pathStaticMembers mustMapLane[pathdom.PathKey, product.Value],
+	dynamicIndex map[DynamicIndexKey]DynamicIndexFact,
+	heapTableIdentity map[identity.ID]HeapTableObject,
+	branchProofs mustSetLane[BranchProof],
+	effectDeltas map[EffectDeltaKey]EffectDelta,
+	channelSelect mustSetLane[ChannelSelectFact],
+	escapePlacement map[identity.ID]EscapePlacement,
 ) State {
 	out := State{}
 	if o.values.Equal(values, o.values.Top()) {
@@ -169,7 +309,40 @@ func (o domainOps) fromLanes(
 	} else {
 		out.paths = paths
 	}
+	out.pathStaticMembers = pathStaticMembers.values
+	out.pathStaticMembersBottom = pathStaticMembers.bottom
+	if o.dynamicIndex.Equal(dynamicIndex, o.dynamicIndex.Top()) {
+		out.dynamicIndexTop = true
+	} else {
+		out.dynamicIndex = dynamicIndex
+	}
+	if o.heapTableIdentity.Equal(heapTableIdentity, o.heapTableIdentity.Top()) {
+		out.heapTableIdentityTop = true
+	} else {
+		out.heapTableIdentity = heapTableIdentity
+	}
+	out.branchProofs = branchProofs.values
+	out.branchProofsBottom = branchProofs.bottom
+	if o.effectDeltas.Equal(effectDeltas, o.effectDeltas.Top()) {
+		out.effectDeltasTop = true
+	} else {
+		out.effectDeltas = effectDeltas
+	}
+	out.channelSelect = channelSelect.values
+	out.channelSelectBottom = channelSelect.bottom
+	if o.escapePlacement.Equal(escapePlacement, o.escapePlacement.Top()) {
+		out.escapePlacementTop = true
+	} else {
+		out.escapePlacement = escapePlacement
+	}
 	return out
+}
+
+func (s State) reachable() State {
+	s.pathStaticMembersBottom = false
+	s.branchProofsBottom = false
+	s.channelSelectBottom = false
+	return s
 }
 
 func cloneValueMap(in map[key.Value]product.Value) map[key.Value]product.Value {

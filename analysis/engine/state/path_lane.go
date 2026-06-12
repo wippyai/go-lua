@@ -37,7 +37,7 @@ func (s State) WritePathKey(reg *axis.Registry, pathKey pathdom.PathKey, value p
 		if !changed {
 			return s
 		}
-		out := s
+		out := s.reachable()
 		out.paths = paths
 		return out
 	}
@@ -46,7 +46,7 @@ func (s State) WritePathKey(reg *axis.Registry, pathKey pathdom.PathKey, value p
 		paths = make(map[pathdom.PathKey]product.Value, 1)
 	}
 	paths[pathKey] = value
-	out := s
+	out := s.reachable()
 	out.paths = paths
 	return out
 }
