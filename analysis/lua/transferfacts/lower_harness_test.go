@@ -11,10 +11,12 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/standard"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
+	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/lua/cfgbuild"
 	"github.com/wippyai/go-lua/analysis/lua/cfgfacts"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
+	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
 
@@ -346,6 +348,16 @@ func TestLowerOrdinaryAssignmentsSplitsRootAndStaticPathWrites(t *testing.T) {
 	if !dotFact.TargetPath().Equal(path.NewPath(tSym, "t").Field("x")) {
 		t.Fatalf("dot path assignment target = %v", dotFact.TargetPath())
 	}
+	dotStatic, ok := facts.PathStaticMemberWrite(dotPoint)
+	if !ok {
+		t.Fatalf("missing dot static member write")
+	}
+	if !dotStatic.TargetPath().Equal(path.NewPath(tSym, "t").Field("x")) {
+		t.Fatalf("dot static member write target = %v", dotStatic.TargetPath())
+	}
+	if dotStatic.Source() != dotFact.Source() {
+		t.Fatalf("dot static member write source = %#v, want path assignment source %#v", dotStatic.Source(), dotFact.Source())
+	}
 	if _, ok := facts.OrdinaryAssignment(dotPoint); ok {
 		t.Fatalf("dot path assignment also lowered as root assignment")
 	}
@@ -360,6 +372,16 @@ func TestLowerOrdinaryAssignmentsSplitsRootAndStaticPathWrites(t *testing.T) {
 	}
 	if !indexFact.TargetPath().Equal(path.NewPath(tSym, "t").IndexStr("x")) {
 		t.Fatalf("static index path assignment target = %v", indexFact.TargetPath())
+	}
+	indexStatic, ok := facts.PathStaticMemberWrite(indexPoint)
+	if !ok {
+		t.Fatalf("missing static index member write")
+	}
+	if !indexStatic.TargetPath().Equal(path.NewPath(tSym, "t").IndexStr("x")) {
+		t.Fatalf("static index member write target = %v", indexStatic.TargetPath())
+	}
+	if indexStatic.Source() != indexFact.Source() {
+		t.Fatalf("static index member write source = %#v, want path assignment source %#v", indexStatic.Source(), indexFact.Source())
 	}
 	if _, ok := facts.PathDescendantInvalidation(indexPoint); ok {
 		t.Fatalf("static index path assignment also lowered as descendant invalidation")
@@ -379,6 +401,28 @@ func TestLowerOrdinaryAssignmentsSplitsRootAndStaticPathWrites(t *testing.T) {
 	if !invalidation.ContainerPath().Equal(path.NewPath(tSym, "t")) {
 		t.Fatalf("dynamic index invalidation container = %v", invalidation.ContainerPath())
 	}
+	dynamicFact, ok := facts.DynamicIndexWrite(dynamicPoint)
+	if !ok {
+		t.Fatalf("missing dynamic index write")
+	}
+	if !dynamicFact.TablePath().Equal(path.NewPath(tSym, "t")) {
+		t.Fatalf("dynamic index table path = %v", dynamicFact.TablePath())
+	}
+	if dynamicFact.Admission() != factflow.DynamicIndexAdmissionUnknown {
+		t.Fatalf("dynamic index admission = %v, want unknown", dynamicFact.Admission())
+	}
+	if dynamicFact.ReadbackIntent() != factflow.DynamicIndexReadbackKeyAndValue {
+		t.Fatalf("dynamic index readback = %v, want key and value", dynamicFact.ReadbackIntent())
+	}
+	if dynamicFact.KeySource().Kind != factflow.ValueSourceExpression || !dynamicFact.KeySource().HasExpr {
+		t.Fatalf("dynamic index key source = %#v, want expression source", dynamicFact.KeySource())
+	}
+	if dynamicFact.Source().Kind != factflow.ValueSourceExpression || !dynamicFact.Source().HasExpr {
+		t.Fatalf("dynamic index value source = %#v, want expression source", dynamicFact.Source())
+	}
+	if _, ok := facts.PathStaticMemberWrite(dynamicPoint); ok {
+		t.Fatalf("dynamic index lowered as static member write")
+	}
 
 	rootPoint := requireStmtPoints(t, built, rootWrite, 1)[0]
 	rootFact, ok := facts.OrdinaryAssignment(rootPoint)
@@ -393,5 +437,57 @@ func TestLowerOrdinaryAssignmentsSplitsRootAndStaticPathWrites(t *testing.T) {
 	}
 	if _, ok := facts.PathDescendantInvalidation(rootPoint); ok {
 		t.Fatalf("root ordinary assignment also lowered as descendant invalidation")
+	}
+}
+
+func TestLowerChannelSelectFacts(t *testing.T) {
+	point := cfg.Point(700)
+	resultPath := path.NewPath(symbol.ID(701), "result")
+	wantCases := []path.Path{
+		path.NewPath(symbol.ID(702), "events_ch"),
+		path.NewPath(symbol.ID(703), "stop_ch"),
+	}
+	events := (&lowerer{}).channelSelectEvents(point, semantics.ChannelSelectFact{
+		ResultTarget: semantics.CallResultTarget{
+			Kind:        semantics.CallResultTargetLocalAssignment,
+			Path:        resultPath,
+			HasPath:     true,
+			ResultIndex: 0,
+		},
+		Cases: []semantics.ChannelSelectCaseFact{
+			{ChannelPath: wantCases[0], HasChannelPath: true},
+			{ChannelPath: wantCases[1], HasChannelPath: true},
+		},
+	})
+	if len(events) != 5 {
+		t.Fatalf("channel select events = %#v, want select plus two case/receive pairs", events)
+	}
+	if events[0].Kind() != factflow.ChannelSelectSelect || events[0].SelectID() == "" || events[0].Index() != 0 {
+		t.Fatalf("select event = %#v", events[0])
+	}
+	if got, ok := events[0].ResultPath(); !ok || !got.Equal(resultPath) {
+		t.Fatalf("select result path = %v/%v, want %v", got, ok, resultPath)
+	}
+	for i, wantCase := range wantCases {
+		caseEvent := events[1+i*2]
+		receiveEvent := events[2+i*2]
+		if caseEvent.SelectID() != events[0].SelectID() || receiveEvent.SelectID() != events[0].SelectID() {
+			t.Fatalf("case %d select IDs = %q/%q, want %q", i, caseEvent.SelectID(), receiveEvent.SelectID(), events[0].SelectID())
+		}
+		if caseEvent.Kind() != factflow.ChannelSelectCase || caseEvent.Index() != i {
+			t.Fatalf("case event %d = %#v", i, caseEvent)
+		}
+		if got, ok := caseEvent.CasePath(); !ok || !got.Equal(wantCase) {
+			t.Fatalf("case path %d = %v/%v, want %v", i, got, ok, wantCase)
+		}
+		if receiveEvent.Kind() != factflow.ChannelSelectReceive || receiveEvent.Index() != i {
+			t.Fatalf("receive event %d = %#v", i, receiveEvent)
+		}
+		if got, ok := receiveEvent.ResultPath(); !ok || !got.Equal(resultPath) {
+			t.Fatalf("receive result path %d = %v/%v, want %v", i, got, ok, resultPath)
+		}
+		if got, ok := receiveEvent.CasePath(); !ok || !got.Equal(wantCase) {
+			t.Fatalf("receive case path %d = %v/%v, want %v", i, got, ok, wantCase)
+		}
 	}
 }

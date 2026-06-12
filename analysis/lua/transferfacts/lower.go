@@ -37,10 +37,13 @@ func Lower(result *semantics.Result, graph cfg.Graph, config Config) factflow.Fa
 	input := factflow.FactsInput{
 		RootAssignments:             make(map[cfg.Point]factflow.RootAssignment),
 		PathAssignments:             make(map[cfg.Point]factflow.PathAssignment),
+		PathStaticMemberWrites:      make(map[cfg.Point]factflow.PathStaticMemberWrite),
+		DynamicIndexWrites:          make(map[cfg.Point]factflow.DynamicIndexWrite),
 		PathDescendantInvalidations: make(map[cfg.Point]factflow.PathDescendantInvalidation),
 		BranchRefinements:           make(map[cfg.Point]factflow.BranchRefinementSet),
 		BranchPresenceRelations:     make(map[cfg.Point]factflow.BranchPresenceRelationSet),
 		BranchPathRelations:         make(map[cfg.Point]factflow.BranchPathRelationSet),
+		ChannelSelects:              make(map[cfg.Point]factflow.ChannelSelectSet),
 		PostconditionRefinements:    make(map[cfg.Point]factflow.PostconditionRefinementSet),
 		CallResultValues:            make(map[cfg.Point]factflow.CallResultValueSet),
 		ReturnPresenceRelations:     make(map[cfg.Point]factflow.ReturnPresenceRelationSet),
@@ -60,14 +63,21 @@ func Lower(result *semantics.Result, graph cfg.Graph, config Config) factflow.Fa
 		if fact, ok := result.OrdinaryAssignment(point); ok {
 			if lowered, ok := l.pathAssignment(fact); ok {
 				input.PathAssignments[point] = lowered
+				if lowered, ok := l.pathStaticMemberWrite(fact); ok {
+					input.PathStaticMemberWrites[point] = lowered
+				}
 				l.addAssertionRefinementsForSource(&input, fact.Source)
 				l.addObjectLiteral(&input, result, fact.Source)
-			} else if lowered, ok := l.pathDescendantInvalidation(fact); ok {
-				input.PathDescendantInvalidations[point] = lowered
 			} else if lowered, ok := l.ordinaryAssignment(fact); ok {
 				input.RootAssignments[point] = lowered
 				l.addAssertionRefinementsForSource(&input, fact.Source)
 				l.addObjectLiteral(&input, result, fact.Source)
+			}
+			if lowered, ok := l.dynamicIndexWrite(fact); ok {
+				input.DynamicIndexWrites[point] = lowered
+			}
+			if lowered, ok := l.pathDescendantInvalidation(fact); ok {
+				input.PathDescendantInvalidations[point] = lowered
 			}
 		}
 		if fact, ok := result.Return(point); ok {
@@ -81,6 +91,9 @@ func Lower(result *semantics.Result, graph cfg.Graph, config Config) factflow.Fa
 		}
 		if fact, ok := result.Call(point); ok {
 			input.CallSites[point] = l.callSite(fact)
+			if lowered := l.channelSelects(point, result); len(lowered) != 0 {
+				input.ChannelSelects[point] = factflow.NewChannelSelectSet(lowered...)
+			}
 			for _, source := range fact.ArgumentSources {
 				l.addAssertionRefinementsForSource(&input, source)
 				l.addObjectLiteral(&input, result, source)
