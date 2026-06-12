@@ -76,6 +76,67 @@ func TestAnnotationAssignabilitySkipsNonLiteralSources(t *testing.T) {
 	}
 }
 
+func TestLexicalTypeShadowingResolvesNearestVisibleAlias(t *testing.T) {
+	diags := runDiagnostics(t, `
+		type Value = number
+		local a: Value = 10
+		if true then
+			type Value = string
+			local b: Value = "hello"
+		end
+		local c: Value = 20
+	`)
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v, want none", diags)
+	}
+}
+
+func TestUnresolvedLexicalTypeReferences(t *testing.T) {
+	cases := []struct {
+		name string
+		src  string
+		line int
+	}{
+		{
+			name: "used before definition",
+			src: `
+local p: Point = {x = 10, y = 20}
+type Point = {x: number, y: number}
+`,
+			line: 2,
+		},
+		{
+			name: "not visible outside block",
+			src: `
+if true then
+	type LocalPoint = {x: number, y: number}
+end
+local p: LocalPoint = {x = 1, y = 2}
+`,
+			line: 5,
+		},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			diags := runDiagnostics(t, tc.src)
+			if len(diags) != 1 {
+				t.Fatalf("diagnostics = %d, want 1: %#v", len(diags), diags)
+			}
+			d := diags[0]
+			if d.Code != CodeUnresolvedTypeReference || d.Severity != diagnostic.SeverityError {
+				t.Fatalf("diagnostic code/severity = %s/%s", d.Code, d.Severity)
+			}
+			if d.Position.Line != tc.line {
+				t.Fatalf("diagnostic line = %d, want %d", d.Position.Line, tc.line)
+			}
+			if !strings.Contains(d.Message, "unknown type") {
+				t.Fatalf("message = %q", d.Message)
+			}
+		})
+	}
+}
+
 func TestMemberCallReportsMissingMethodAfterDiscriminantNarrowing(t *testing.T) {
 	diags := runDiagnostics(t, `
 		type Dog = {kind: "dog", bark: () -> ()}

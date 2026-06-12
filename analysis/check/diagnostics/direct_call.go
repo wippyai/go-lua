@@ -79,7 +79,7 @@ func (p DirectCallContract) call(
 	if !ok {
 		return diagnostic.Diagnostic{}, false
 	}
-	baseType, ok := typeannotation.Type(baseExpr, p.Resolver)
+	baseType, ok := lowerType(baseExpr, p.Resolver)
 	if !ok {
 		return diagnostic.Diagnostic{}, false
 	}
@@ -247,7 +247,7 @@ func lowerDirectCallResult(expr ast.TypeExpr, resolver typeannotation.Resolver) 
 	if expr == nil {
 		return directCallResult{}, true
 	}
-	t, ok := typeannotation.Type(expr, resolver)
+	t, ok := lowerType(expr, resolver)
 	if !ok {
 		return directCallResult{}, false
 	}
@@ -261,7 +261,7 @@ func lowerDirectCallParam(expr ast.TypeExpr, resolver typeannotation.Resolver) (
 	if expr == nil {
 		return directCallParam{optional: true}, true
 	}
-	t, ok := typeannotation.Type(expr, resolver)
+	t, ok := lowerType(expr, resolver)
 	if !ok {
 		return directCallParam{}, false
 	}

@@ -7,7 +7,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/diagnostic"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
-	"github.com/wippyai/go-lua/analysis/lua/typeannotation"
 	"github.com/wippyai/go-lua/analysis/lua/valueexpr"
 	"github.com/wippyai/go-lua/analysis/type/subst"
 	"github.com/wippyai/go-lua/analysis/type/subtype"
@@ -45,7 +44,7 @@ func (p AnnotationAssignability) localAssignment(result *check.Result, fact sema
 	if fact.Type == nil || fact.Expr == nil {
 		return diagnostic.Diagnostic{}, false
 	}
-	want, ok := typeannotation.Type(fact.Type, p.Resolver)
+	want, ok := lowerType(fact.Type, p.Resolver)
 	if !ok {
 		return diagnostic.Diagnostic{}, false
 	}

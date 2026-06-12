@@ -10,7 +10,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
 	"github.com/wippyai/go-lua/analysis/lua/typeaccess"
-	"github.com/wippyai/go-lua/analysis/lua/typeannotation"
 	"github.com/wippyai/go-lua/analysis/lua/typecall"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/type/discriminant"
@@ -56,7 +55,7 @@ func (p MemberCall) call(result *check.Result, point cfg.Point, fact semantics.C
 	if !ok {
 		return diagnostic.Diagnostic{}, false
 	}
-	baseType, ok := typeannotation.Type(baseExpr, p.Resolver)
+	baseType, ok := lowerType(baseExpr, p.Resolver)
 	if !ok {
 		return diagnostic.Diagnostic{}, false
 	}

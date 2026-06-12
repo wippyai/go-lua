@@ -11,8 +11,8 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
-	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	factapply "github.com/wippyai/go-lua/analysis/engine/factapply"
+	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	sourcevalue "github.com/wippyai/go-lua/analysis/engine/sourcevalue"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
@@ -252,6 +252,41 @@ func (r *Result) LocalSymbols(stmt *ast.LocalAssignStmt) []symbol.ID {
 		return nil
 	}
 	return r.bindings.LocalSymbols(stmt)
+}
+
+func (r *Result) TypeRef(ref *ast.TypeRefExpr) (bind.TypeDecl, bool) {
+	if r == nil || r.bindings == nil {
+		return bind.TypeDecl{}, false
+	}
+	return r.bindings.TypeRef(ref)
+}
+
+func (r *Result) PrimitiveTypeRef(expr *ast.PrimitiveTypeExpr) (bind.TypeDecl, bool) {
+	if r == nil || r.bindings == nil {
+		return bind.TypeDecl{}, false
+	}
+	return r.bindings.PrimitiveTypeRef(expr)
+}
+
+func (r *Result) TypeDef(stmt *ast.TypeDefStmt) (bind.TypeDecl, bool) {
+	if r == nil || r.bindings == nil {
+		return bind.TypeDecl{}, false
+	}
+	return r.bindings.TypeDef(stmt)
+}
+
+func (r *Result) InterfaceDef(stmt *ast.InterfaceDefStmt) (bind.TypeDecl, bool) {
+	if r == nil || r.bindings == nil {
+		return bind.TypeDecl{}, false
+	}
+	return r.bindings.InterfaceDef(stmt)
+}
+
+func (r *Result) TypeDefParams(stmt *ast.TypeDefStmt) []bind.TypeDecl {
+	if r == nil || r.bindings == nil {
+		return nil
+	}
+	return r.bindings.TypeDefParams(stmt)
 }
 
 func New(config Config) (*Checker, error) {

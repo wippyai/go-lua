@@ -172,7 +172,7 @@ func produceDirectCallResultAssignment(result *check.Result, config Config, inhe
 			if !ok {
 				continue
 			}
-			want, ok := typeannotation.Type(wantExpr, producer.Resolver)
+			want, ok := lowerType(wantExpr, producer.Resolver)
 			if !ok || typ.IsAny(want) || typ.IsUnknown(want) || refinement.ContainsFreeTypeParam(want) {
 				continue
 			}
@@ -219,7 +219,7 @@ func directCallResultContract(result *check.Result, fact semantics.CallFact, sit
 	if !ok {
 		return directFunctionContract{}, "", false
 	}
-	baseType, ok := typeannotation.Type(baseExpr, resolver)
+	baseType, ok := lowerType(baseExpr, resolver)
 	if !ok || typ.IsAny(baseType) || typ.IsUnknown(baseType) {
 		return directFunctionContract{}, "", false
 	}

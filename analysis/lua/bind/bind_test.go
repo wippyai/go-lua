@@ -60,6 +60,24 @@ func mustLocalAt(t *testing.T, r *Result, stmt *ast.LocalAssignStmt, index int) 
 	return id
 }
 
+func mustTypeRef(t *testing.T, r *Result, ref *ast.TypeRefExpr) TypeDecl {
+	t.Helper()
+	decl, ok := r.TypeRef(ref)
+	if !ok {
+		t.Fatalf("TypeRef(%v) missing", ref.Path)
+	}
+	return decl
+}
+
+func mustPrimitiveTypeRef(t *testing.T, r *Result, expr *ast.PrimitiveTypeExpr) TypeDecl {
+	t.Helper()
+	decl, ok := r.PrimitiveTypeRef(expr)
+	if !ok {
+		t.Fatalf("PrimitiveTypeRef(%q) missing", expr.Name)
+	}
+	return decl
+}
+
 func assertKind(t *testing.T, r *Result, id symbol.ID, want symbol.Kind) {
 	t.Helper()
 	got, ok := r.Kind(id)
@@ -978,6 +996,101 @@ func TestTypedNamesDoNotAffectValueSymbols(t *testing.T) {
 	}
 	if r.Name(ids[0]) != "a" || r.Name(ids[1]) != "b" {
 		t.Fatalf("local symbol names = %q, %q; want a, b", r.Name(ids[0]), r.Name(ids[1]))
+	}
+}
+
+func TestLexicalTypeNames(t *testing.T) {
+	outerDef := &ast.TypeDefStmt{Name: "Value", Type: &ast.PrimitiveTypeExpr{Name: "number"}}
+	outerUse := typeRef("Value")
+	outerPrimitiveUse := &ast.PrimitiveTypeExpr{Name: "Value"}
+	innerDef := &ast.TypeDefStmt{Name: "Value", Type: &ast.PrimitiveTypeExpr{Name: "string"}}
+	innerUse := typeRef("Value")
+	afterUse := typeRef("Value")
+	blockDef := &ast.TypeDefStmt{Name: "LocalPoint", Type: &ast.PrimitiveTypeExpr{Name: "number"}}
+	outsideBlockUse := typeRef("LocalPoint")
+	beforeDefUse := typeRef("Point")
+	laterDef := &ast.TypeDefStmt{Name: "Point", Type: &ast.PrimitiveTypeExpr{Name: "number"}}
+	selfUse := typeRef("Node")
+	selfDef := &ast.TypeDefStmt{Name: "Node", Type: &ast.RecordTypeExpr{Fields: []ast.RecordFieldExpr{{
+		Name: "next",
+		Type: selfUse,
+	}}}}
+
+	r := BindChunk([]ast.Stmt{
+		outerDef,
+		&ast.LocalAssignStmt{Names: []string{"a"}, Types: []ast.TypeExpr{outerUse}},
+		&ast.LocalAssignStmt{Names: []string{"aa"}, Types: []ast.TypeExpr{outerPrimitiveUse}},
+		&ast.IfStmt{Condition: &ast.TrueExpr{}, Then: []ast.Stmt{
+			innerDef,
+			&ast.LocalAssignStmt{Names: []string{"b"}, Types: []ast.TypeExpr{innerUse}},
+		}},
+		&ast.LocalAssignStmt{Names: []string{"c"}, Types: []ast.TypeExpr{afterUse}},
+		&ast.DoBlockStmt{Stmts: []ast.Stmt{blockDef}},
+		&ast.LocalAssignStmt{Names: []string{"outside"}, Types: []ast.TypeExpr{outsideBlockUse}},
+		&ast.LocalAssignStmt{Names: []string{"before"}, Types: []ast.TypeExpr{beforeDefUse}},
+		laterDef,
+		selfDef,
+	}, Options{})
+
+	outerDecl, ok := r.TypeDef(outerDef)
+	if !ok {
+		t.Fatalf("outer type declaration missing")
+	}
+	innerDecl, ok := r.TypeDef(innerDef)
+	if !ok {
+		t.Fatalf("inner type declaration missing")
+	}
+	if got := mustTypeRef(t, r, outerUse); got.ID != outerDecl.ID {
+		t.Fatalf("outer use resolved to %#v, want outer %#v", got, outerDecl)
+	}
+	if got := mustPrimitiveTypeRef(t, r, outerPrimitiveUse); got.ID != outerDecl.ID {
+		t.Fatalf("outer primitive use resolved to %#v, want outer %#v", got, outerDecl)
+	}
+	if got := mustTypeRef(t, r, innerUse); got.ID != innerDecl.ID {
+		t.Fatalf("inner use resolved to %#v, want inner %#v", got, innerDecl)
+	}
+	if got := mustTypeRef(t, r, afterUse); got.ID != outerDecl.ID {
+		t.Fatalf("post-block use resolved to %#v, want outer %#v", got, outerDecl)
+	}
+	if _, ok := r.TypeRef(outsideBlockUse); ok {
+		t.Fatalf("block-local type resolved outside its block")
+	}
+	if _, ok := r.TypeRef(beforeDefUse); ok {
+		t.Fatalf("later type declaration resolved before its declaration")
+	}
+	selfDecl, ok := r.TypeDef(selfDef)
+	if !ok {
+		t.Fatalf("self type declaration missing")
+	}
+	if got := mustTypeRef(t, r, selfUse); got.ID != selfDecl.ID {
+		t.Fatalf("self use resolved to %#v, want self declaration %#v", got, selfDecl)
+	}
+}
+
+func TestFunctionTypeParamsBindTypeRefs(t *testing.T) {
+	paramRef := typeRef("T")
+	returnRef := typeRef("T")
+	fn := &ast.FunctionExpr{
+		TypeParams: []ast.TypeParamExpr{{Name: "T"}},
+		ParList: &ast.ParList{
+			Names: []string{"value"},
+			Types: []ast.TypeExpr{paramRef},
+		},
+		ReturnTypes: []ast.TypeExpr{returnRef},
+	}
+
+	r := BindFunction(fn, Options{})
+	paramDecl := mustTypeRef(t, r, paramRef)
+	returnDecl := mustTypeRef(t, r, returnRef)
+	if paramDecl.Kind != TypeDeclParam {
+		t.Fatalf("param ref kind = %v, want TypeDeclParam", paramDecl.Kind)
+	}
+	if returnDecl.ID != paramDecl.ID {
+		t.Fatalf("return ref type param = %#v, want same declaration %#v", returnDecl, paramDecl)
+	}
+	params := r.FunctionTypeParams(fn)
+	if len(params) != 1 || params[0].ID != paramDecl.ID {
+		t.Fatalf("FunctionTypeParams = %#v, want %#v", params, paramDecl)
 	}
 }
 
