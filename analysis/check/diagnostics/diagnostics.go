@@ -8,6 +8,8 @@ import (
 	"github.com/wippyai/go-lua/analysis/diagnostic"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/lua/typeannotation"
+	"github.com/wippyai/go-lua/analysis/symbol"
+	"github.com/wippyai/go-lua/compiler/ast"
 )
 
 const (
@@ -34,20 +36,21 @@ type Producer interface {
 }
 
 func Produce(result *check.Result, config Config) []diagnostic.Diagnostic {
-	return produceWithResolver(result, config, nil)
+	return produceWithResolver(result, config, nil, nil)
 }
 
-func produceWithResolver(result *check.Result, config Config, parent typeannotation.Resolver) []diagnostic.Diagnostic {
+func produceWithResolver(result *check.Result, config Config, parent typeannotation.Resolver, inheritedDefs map[symbol.ID]*ast.FunctionExpr) []diagnostic.Diagnostic {
 	resolver := newResultResolver(result, config.Resolver, parent)
 	config.Resolver = resolver
+	defs := directCallDefinitions(result, inheritedDefs)
 	var out []diagnostic.Diagnostic
 	out = append(out, AnnotationAssignability(config).Produce(result)...)
 	out = append(out, ReturnContract(config).Produce(result)...)
-	out = append(out, DirectCallContract(config).Produce(result)...)
-	out = append(out, DirectCallResultAssignment(config).Produce(result)...)
+	out = append(out, produceDirectCallContract(result, config, defs)...)
+	out = append(out, produceDirectCallResultAssignment(result, config, defs)...)
 	out = append(out, MemberCall(config).Produce(result)...)
 	for _, fn := range result.FunctionResults() {
-		out = append(out, produceWithResolver(fn, config, resolver)...)
+		out = append(out, produceWithResolver(fn, config, resolver, defs)...)
 	}
 	return out
 }

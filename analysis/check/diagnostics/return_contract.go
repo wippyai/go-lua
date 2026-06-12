@@ -11,6 +11,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/typeaccess"
 	"github.com/wippyai/go-lua/analysis/lua/typeannotation"
 	"github.com/wippyai/go-lua/analysis/lua/valueexpr"
+	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/type/refinement"
 	"github.com/wippyai/go-lua/analysis/type/subtype"
 	"github.com/wippyai/go-lua/analysis/type/typ"
@@ -131,6 +132,10 @@ func returnContractDiagnostic(expr ast.Expr, annotation ast.TypeExpr, got, want 
 type DirectCallResultAssignment Config
 
 func (p DirectCallResultAssignment) Produce(result *check.Result) []diagnostic.Diagnostic {
+	return produceDirectCallResultAssignment(result, Config(p), nil)
+}
+
+func produceDirectCallResultAssignment(result *check.Result, config Config, inherited map[symbol.ID]*ast.FunctionExpr) []diagnostic.Diagnostic {
 	if result == nil {
 		return nil
 	}
@@ -138,7 +143,8 @@ func (p DirectCallResultAssignment) Produce(result *check.Result) []diagnostic.D
 	if graph == nil {
 		return nil
 	}
-	defs := directCallDefinitions(result)
+	defs := directCallDefinitions(result, inherited)
+	producer := DirectCallResultAssignment(config)
 	var out []diagnostic.Diagnostic
 	for _, point := range graph.RPO() {
 		fact, ok := result.Call(point)
@@ -152,7 +158,7 @@ func (p DirectCallResultAssignment) Produce(result *check.Result) []diagnostic.D
 		if !ok || site.CalleeSymbol() == 0 {
 			continue
 		}
-		contract, name, ok := directCallResultContract(result, fact, site, defs[site.CalleeSymbol()], p.Resolver)
+		contract, name, ok := directCallResultContract(result, fact, site, defs[site.CalleeSymbol()], producer.Resolver)
 		if !ok {
 			continue
 		}
@@ -164,7 +170,7 @@ func (p DirectCallResultAssignment) Produce(result *check.Result) []diagnostic.D
 			if !ok {
 				continue
 			}
-			want, ok := typeannotation.Type(wantExpr, p.Resolver)
+			want, ok := typeannotation.Type(wantExpr, producer.Resolver)
 			if !ok || typ.IsAny(want) || typ.IsUnknown(want) || refinement.ContainsFreeTypeParam(want) {
 				continue
 			}

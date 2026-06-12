@@ -24,6 +24,10 @@ import (
 type DirectCallContract Config
 
 func (p DirectCallContract) Produce(result *check.Result) []diagnostic.Diagnostic {
+	return produceDirectCallContract(result, Config(p), nil)
+}
+
+func produceDirectCallContract(result *check.Result, config Config, inherited map[symbol.ID]*ast.FunctionExpr) []diagnostic.Diagnostic {
 	if result == nil {
 		return nil
 	}
@@ -31,7 +35,8 @@ func (p DirectCallContract) Produce(result *check.Result) []diagnostic.Diagnosti
 	if graph == nil {
 		return nil
 	}
-	defs := directCallDefinitions(result)
+	defs := directCallDefinitions(result, inherited)
+	producer := DirectCallContract(config)
 	var out []diagnostic.Diagnostic
 	for _, point := range graph.RPO() {
 		fact, ok := result.Call(point)
@@ -45,7 +50,7 @@ func (p DirectCallContract) Produce(result *check.Result) []diagnostic.Diagnosti
 		if !ok || site.CalleeSymbol() == 0 {
 			continue
 		}
-		d, ok := p.call(result, point, fact, site, defs[site.CalleeSymbol()])
+		d, ok := producer.call(result, point, fact, site, defs[site.CalleeSymbol()])
 		if !ok {
 			continue
 		}
@@ -399,20 +404,32 @@ func argTypeDiagnostic(point cfg.Point, call *ast.FuncCallExpr, name string, ind
 	}
 }
 
-func directCallDefinitions(result *check.Result) map[symbol.ID]*ast.FunctionExpr {
+func directCallDefinitions(result *check.Result, parent map[symbol.ID]*ast.FunctionExpr) map[symbol.ID]*ast.FunctionExpr {
 	graph := result.Graph()
 	if graph == nil {
-		return nil
+		return parent
 	}
-	out := make(map[symbol.ID]*ast.FunctionExpr)
+	var out map[symbol.ID]*ast.FunctionExpr
+	if len(parent) != 0 {
+		out = make(map[symbol.ID]*ast.FunctionExpr, len(parent))
+		for id, fn := range parent {
+			out[id] = fn
+		}
+	}
 	for _, point := range graph.RPO() {
 		if fact, ok := result.LocalAssignment(point); ok && fact.HasSymbol && fact.Symbol != 0 {
 			if fn, ok := fact.Expr.(*ast.FunctionExpr); ok {
+				if out == nil {
+					out = make(map[symbol.ID]*ast.FunctionExpr)
+				}
 				out[fact.Symbol] = fn
 			}
 		}
 		if fact, ok := result.OrdinaryAssignment(point); ok && fact.HasSymbol && fact.Symbol != 0 {
 			if fn, ok := fact.Value.(*ast.FunctionExpr); ok {
+				if out == nil {
+					out = make(map[symbol.ID]*ast.FunctionExpr)
+				}
 				out[fact.Symbol] = fn
 			}
 		}
@@ -420,10 +437,13 @@ func directCallDefinitions(result *check.Result) map[symbol.ID]*ast.FunctionExpr
 		if !ok || !fact.HasTargetSymbol || fact.TargetSymbol == 0 || fact.Func == nil {
 			continue
 		}
+		if out == nil {
+			out = make(map[symbol.ID]*ast.FunctionExpr)
+		}
 		out[fact.TargetSymbol] = fact.Func
 	}
 	if len(out) == 0 {
-		return nil
+		return parent
 	}
 	return out
 }

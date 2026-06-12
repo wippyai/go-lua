@@ -190,6 +190,28 @@ func TestDirectCallReportsWrongArgumentType(t *testing.T) {
 	}
 }
 
+func TestDirectCallReportsWrongArgumentTypeInNestedReturn(t *testing.T) {
+	diags := runDiagnostics(t, `
+		local function add(a: number, b: number): number
+			return a + b
+		end
+		local function f(): number
+			return add("bad", 2)
+		end
+		local x = f()
+	`)
+	if len(diags) != 1 {
+		t.Fatalf("diagnostics = %d, want 1: %#v", len(diags), diags)
+	}
+	d := diags[0]
+	if d.Code != CodeDirectCallArgType || d.Severity != diagnostic.SeverityError {
+		t.Fatalf("diagnostic code/severity = %s/%s", d.Code, d.Severity)
+	}
+	if !strings.Contains(d.Message, "argument 1") || !strings.Contains(d.Message, `"bad"`) || !strings.Contains(d.Message, "number") {
+		t.Fatalf("message = %q", d.Message)
+	}
+}
+
 func TestDirectCallSkipsGenericIdentityArgumentClaims(t *testing.T) {
 	diags := runDiagnostics(t, `
 		local function identity<T>(x: T): T
