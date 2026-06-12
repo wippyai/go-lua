@@ -20,103 +20,35 @@ import (
 	"github.com/wippyai/go-lua/analysis/symbol"
 )
 
-func TestByPointProviderReadsSummaryReturns(t *testing.T) {
+func TestByCalleeSymbolProviderReadsSummaryReturns(t *testing.T) {
 	reg := product.DefaultRegistry()
-	point := cfg.Point(7)
-	key := summary.DefaultSummaryKey(ref.FuncRef{Kind: ref.KindCFG, ID: 11})
+	callee := symbol.ID(17)
+	key := summary.DefaultSummaryKey(ref.FuncRef{Kind: ref.KindSymbol, ID: 18})
 	first := product.Top()
 	second := product.Absent(reg)
 	provider := Provider(summary.NewSnapshot(reg, summary.EntrySummary{
 		Key:     key,
 		Summary: summary.Summary{Returns: []product.Value{first, second}},
-	}), ByPoint(map[cfg.Point]summary.SummaryKey{point: key}))
-
-	got := provider(transfer.NodeContext{Registry: reg, Point: point}, factflow.NewCallProducer(factflow.CallProducerConfig{}), state.State{}, nil)
-
-	assertCallResults(t, reg, got, []product.Value{first, second})
-}
-
-func TestByCalleeSymbolProviderReadsSummaryReturns(t *testing.T) {
-	reg := product.DefaultRegistry()
-	callee := symbol.ID(17)
-	key := summary.DefaultSummaryKey(ref.FuncRef{Kind: ref.KindSymbol, ID: 18})
-	want := product.Top()
-	provider := Provider(summary.NewSnapshot(reg, summary.EntrySummary{
-		Key:     key,
-		Summary: summary.Summary{Returns: []product.Value{want}},
 	}), ByCalleeSymbol(map[symbol.ID]summary.SummaryKey{callee: key}))
 
 	got := provider(transfer.NodeContext{Registry: reg}, factflow.NewCallProducer(factflow.CallProducerConfig{
 		CalleeSymbol: callee,
 	}), state.State{}, nil)
 
-	assertCallResults(t, reg, got, []product.Value{want})
+	assertCallResults(t, reg, got, []product.Value{first, second})
 }
 
-func TestByCalleePathProviderReadsPathSpecificSummaryReturns(t *testing.T) {
+func TestProviderMissingAndEmptyReturnsYieldNoResults(t *testing.T) {
 	reg := product.DefaultRegistry()
-	root := symbol.ID(29)
-	fPath := path.NewPath(root, "M").Field("f")
-	gPath := path.NewPath(root, "M").Field("g")
-	rootPath := path.NewPath(root, "M")
-	fCallPath := fPath
-	fCallPath.Version = 7
-	gCallPath := gPath
-	gCallPath.Version = 8
-
-	fPathKey := mustCalleePathKey(t, fPath)
-	gPathKey := mustCalleePathKey(t, gPath)
-	rootPathKey := mustCalleePathKey(t, rootPath)
-	if fPathKey == gPathKey {
-		t.Fatalf("callee path keys collided: %#v", fPathKey)
-	}
-
-	fKey := summary.DefaultSummaryKey(ref.FuncRef{Kind: ref.KindSymbol, ID: 30})
-	gKey := summary.DefaultSummaryKey(ref.FuncRef{Kind: ref.KindSymbol, ID: 31})
-	rootKey := summary.DefaultSummaryKey(ref.FuncRef{Kind: ref.KindSymbol, ID: 32})
-	fValue := product.Top()
-	gValue := product.Absent(reg)
-	rootValue := product.Bottom(reg)
-	provider := Provider(summary.NewSnapshot(reg,
-		summary.EntrySummary{Key: fKey, Summary: summary.Summary{Returns: []product.Value{fValue}}},
-		summary.EntrySummary{Key: gKey, Summary: summary.Summary{Returns: []product.Value{gValue}}},
-		summary.EntrySummary{Key: rootKey, Summary: summary.Summary{Returns: []product.Value{rootValue}}},
-	), ByCalleePath(map[CalleePathKey]summary.SummaryKey{
-		fPathKey:    fKey,
-		gPathKey:    gKey,
-		rootPathKey: rootKey,
-	}))
-
-	gotF := provider(transfer.NodeContext{Registry: reg}, factflow.NewCallProducer(factflow.CallProducerConfig{
-		CalleeSymbol: root,
-		CalleePath:   fCallPath,
-	}), state.State{}, nil)
-	assertCallResults(t, reg, gotF, []product.Value{fValue})
-
-	gotG := provider(transfer.NodeContext{Registry: reg}, factflow.NewCallProducer(factflow.CallProducerConfig{
-		CalleeSymbol: root,
-		CalleePath:   gCallPath,
-	}), state.State{}, nil)
-	assertCallResults(t, reg, gotG, []product.Value{gValue})
-
-	gotMissingPath := provider(transfer.NodeContext{Registry: reg}, factflow.NewCallProducer(factflow.CallProducerConfig{
-		CalleeSymbol: root,
-	}), state.State{}, nil)
-	if len(gotMissingPath) != 0 {
-		t.Fatalf("provider returned %d results for missing callee path, want none", len(gotMissingPath))
-	}
-}
-
-func TestProviderMissingInputsReturnNoResults(t *testing.T) {
-	reg := product.DefaultRegistry()
-	point := cfg.Point(3)
-	key := summary.DefaultSummaryKey(ref.FuncRef{Kind: ref.KindCFG, ID: 19})
+	callee := symbol.ID(17)
+	key := summary.DefaultSummaryKey(ref.FuncRef{Kind: ref.KindSymbol, ID: 18})
+	missingKey := summary.DefaultSummaryKey(ref.FuncRef{Kind: ref.KindSymbol, ID: 19})
 	snap := summary.NewSnapshot(reg, summary.EntrySummary{
 		Key:     key,
 		Summary: summary.Summary{Returns: []product.Value{product.Top()}},
 	})
-	call := factflow.NewCallProducer(factflow.CallProducerConfig{})
-	ctx := transfer.NodeContext{Registry: reg, Point: point}
+	call := factflow.NewCallProducer(factflow.CallProducerConfig{CalleeSymbol: callee})
+	ctx := transfer.NodeContext{Registry: reg}
 
 	tests := []struct {
 		name     string
@@ -124,7 +56,7 @@ func TestProviderMissingInputsReturnNoResults(t *testing.T) {
 	}{
 		{
 			name:     "nil reader",
-			provider: Provider(nil, ByPoint(map[cfg.Point]summary.SummaryKey{point: key})),
+			provider: Provider(nil, ByCalleeSymbol(map[symbol.ID]summary.SummaryKey{callee: key})),
 		},
 		{
 			name:     "nil key func",
@@ -132,11 +64,15 @@ func TestProviderMissingInputsReturnNoResults(t *testing.T) {
 		},
 		{
 			name:     "missing key",
-			provider: Provider(snap, ByPoint(map[cfg.Point]summary.SummaryKey{})),
+			provider: Provider(snap, ByCalleeSymbol(map[symbol.ID]summary.SummaryKey{})),
 		},
 		{
 			name:     "missing summary",
-			provider: Provider(snap, ByPoint(map[cfg.Point]summary.SummaryKey{point: summary.DefaultSummaryKey(ref.FuncRef{Kind: ref.KindCFG, ID: 20})})),
+			provider: Provider(snap, ByCalleeSymbol(map[symbol.ID]summary.SummaryKey{callee: missingKey})),
+		},
+		{
+			name:     "empty returns",
+			provider: Provider(summary.NewSnapshot(reg, summary.EntrySummary{Key: key, Summary: summary.Summary{Returns: nil}}), ByCalleeSymbol(map[symbol.ID]summary.SummaryKey{callee: key})),
 		},
 	}
 
@@ -149,28 +85,19 @@ func TestProviderMissingInputsReturnNoResults(t *testing.T) {
 	}
 }
 
-func TestKeyMapsAreCloned(t *testing.T) {
+func TestByCalleeSymbolKeyMapsAreCloned(t *testing.T) {
 	reg := product.DefaultRegistry()
-	point := cfg.Point(5)
 	callee := symbol.ID(21)
-	pointKey := summary.DefaultSummaryKey(ref.FuncRef{Kind: ref.KindCFG, ID: 22})
 	symbolKey := summary.DefaultSummaryKey(ref.FuncRef{Kind: ref.KindSymbol, ID: 23})
-	pointValue := product.Top()
 	symbolValue := product.Absent(reg)
 	snap := summary.NewSnapshot(reg,
-		summary.EntrySummary{Key: pointKey, Summary: summary.Summary{Returns: []product.Value{pointValue}}},
 		summary.EntrySummary{Key: symbolKey, Summary: summary.Summary{Returns: []product.Value{symbolValue}}},
 	)
-
-	pointMap := map[cfg.Point]summary.SummaryKey{point: pointKey}
-	pointProvider := Provider(snap, ByPoint(pointMap))
-	pointMap[point] = summary.DefaultSummaryKey(ref.FuncRef{Kind: ref.KindCFG, ID: 24})
 
 	symbolMap := map[symbol.ID]summary.SummaryKey{callee: symbolKey}
 	symbolProvider := Provider(snap, ByCalleeSymbol(symbolMap))
 	symbolMap[callee] = summary.DefaultSummaryKey(ref.FuncRef{Kind: ref.KindSymbol, ID: 25})
 
-	assertCallResults(t, reg, pointProvider(transfer.NodeContext{Registry: reg, Point: point}, factflow.NewCallProducer(factflow.CallProducerConfig{}), state.State{}, nil), []product.Value{pointValue})
 	assertCallResults(t, reg, symbolProvider(transfer.NodeContext{Registry: reg}, factflow.NewCallProducer(factflow.CallProducerConfig{CalleeSymbol: callee}), state.State{}, nil), []product.Value{symbolValue})
 }
 
@@ -216,7 +143,7 @@ func TestProviderIntegratesWithFactflowCallRead(t *testing.T) {
 			CallResults: Provider(summary.NewSnapshot(reg, summary.EntrySummary{
 				Key:     calleeKey,
 				Summary: summary.Summary{Returns: []product.Value{callValue}},
-			}), ByPoint(map[cfg.Point]summary.SummaryKey{call: calleeKey})),
+			}), ByCalleeSymbol(map[symbol.ID]summary.SummaryKey{symbol.ID(28): calleeKey})),
 		}),
 	})
 
@@ -231,8 +158,6 @@ func TestProductionImportsAreBounded(t *testing.T) {
 	}
 	allowed := map[string]bool{
 		"github.com/wippyai/go-lua/analysis/check/fixpoint/summary": true,
-		"github.com/wippyai/go-lua/analysis/domain/path":            true,
-		"github.com/wippyai/go-lua/analysis/domain/path/segment":    true,
 		"github.com/wippyai/go-lua/analysis/engine/factflow":        true,
 		"github.com/wippyai/go-lua/analysis/engine/factflow/apply":  true,
 		"github.com/wippyai/go-lua/analysis/engine/state":           true,
@@ -246,19 +171,7 @@ func TestProductionImportsAreBounded(t *testing.T) {
 		}
 	}
 
-	forbidden := []string{
-		"/__old",
-		"/adapter",
-		"/query",
-		"/compiler",
-		"/analysis/lua",
-		"/cfgbuild",
-		"/semantics",
-		"/diagnostic",
-		"/diagnostics",
-		"/store",
-		"/session",
-	}
+	forbidden := []string{"/__old", "/adapter", "/query", "/compiler", "/analysis/lua", "/cfgbuild", "/semantics", "/diagnostic", "/diagnostics", "/store", "/session"}
 	for _, dep := range strings.Fields(string(out)) {
 		for _, forbiddenPart := range forbidden {
 			if strings.Contains(dep, forbiddenPart) {
@@ -266,15 +179,6 @@ func TestProductionImportsAreBounded(t *testing.T) {
 			}
 		}
 	}
-}
-
-func mustCalleePathKey(t *testing.T, p path.Path) CalleePathKey {
-	t.Helper()
-	key, ok := CalleePathKeyOf(p)
-	if !ok {
-		t.Fatalf("CalleePathKeyOf(%#v) returned no key", p)
-	}
-	return key
 }
 
 func assertCallResults(t *testing.T, reg *axis.Registry, got []apply.CallResult, want []product.Value) {
