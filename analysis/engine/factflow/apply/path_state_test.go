@@ -17,7 +17,10 @@ func TestPathStateAdaptersUseResolvedKeysAndRejectMissingVersion(t *testing.T) {
 	sym := symbol.ID(30)
 	resolver := resolverWithVisibleVersion(point, sym, "x")
 	targetPath := path.NewPath(sym, "x").Field("field")
+	targetPath.Version = 99
 	pathKey := path.PathKey("sym30@1.field")
+	unversionedPathKey := path.PathKey("sym30.field")
+	syntaxVersionPathKey := path.PathKey("sym30@99.field")
 	value := presentValue(reg)
 
 	s, ok := writePathAt(reg, state.State{}, resolver, point, targetPath, value)
@@ -25,7 +28,8 @@ func TestPathStateAdaptersUseResolvedKeysAndRejectMissingVersion(t *testing.T) {
 		t.Fatal("writePathAt rejected visible version")
 	}
 	assertPathValue(t, reg, s, pathKey, value)
-	assertPathValue(t, reg, s, targetPath.Key(), product.Bottom(reg))
+	assertPathValue(t, reg, s, unversionedPathKey, product.Bottom(reg))
+	assertPathValue(t, reg, s, syntaxVersionPathKey, product.Bottom(reg))
 
 	missingResolver := visibility.NewResolver(visibility.NewTable(nil))
 	unchanged, ok := writePathAt(reg, s, missingResolver, point, targetPath, absentValue(reg))

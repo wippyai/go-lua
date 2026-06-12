@@ -2,6 +2,7 @@ package visibility
 
 import (
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
@@ -41,15 +42,19 @@ func NewResolver(source VersionSource) *Resolver {
 	}
 }
 
-// KeyAt returns the versioned state key for path at point. Placeholder paths use
-// their current canonical path key because they are not point-local symbol
-// values. Symbol-rooted paths must resolve to a nonzero visible SSA version.
+// KeyAt returns the point-visible state key for path at point. Symbol-rooted
+// paths must resolve to a nonzero visible SSA version. Placeholder paths keep
+// structural local identity because they are not point-local symbol values.
 func (r *Resolver) KeyAt(point cfg.Point, path pathdom.Path) pathdom.PathKey {
 	if path.IsEmpty() {
 		return ""
 	}
 	if path.IsPlaceholder() {
-		return path.Key()
+		key, ok := pathaddr.LocalKeyOfPath(path)
+		if !ok {
+			return ""
+		}
+		return key.PathKey()
 	}
 	if path.Symbol == 0 || r == nil || r.source == nil {
 		return ""

@@ -135,8 +135,24 @@ func TestResolverPlaceholderUsesCurrentPathKey(t *testing.T) {
 	resolver := NewResolver(nil)
 	path := pathdom.NewPlaceholder(0).IndexStr("item")
 
-	if got, want := resolver.KeyAt(1, path), path.Key(); got != want {
+	if got, want := resolver.KeyAt(1, path), pathdom.PathKey("$0[\"item\"]"); got != want {
 		t.Fatalf("KeyAt(placeholder) = %q, want %q", got, want)
+	}
+}
+
+func TestResolverKeyAtUsesVisibleVersionNotPathSyntaxVersion(t *testing.T) {
+	point := cfg.Point(6)
+	sym := symbol.ID(101)
+	resolver := NewResolver(NewTable(map[cfg.Point]map[symbol.ID]ssa.Version{
+		point: {
+			sym: {Root: "x", Symbol: sym, ID: 3},
+		},
+	}))
+	path := pathdom.NewPath(sym, "x").Field("field")
+	path.Version = 99
+
+	if got, want := resolver.KeyAt(point, path), pathdom.PathKey("sym101@3.field"); got != want {
+		t.Fatalf("KeyAt(versioned path) = %q, want visible version key %q", got, want)
 	}
 }
 

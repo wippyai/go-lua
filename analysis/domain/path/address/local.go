@@ -21,6 +21,18 @@ func LocalOfPath(path pathdom.Path) (Local, bool) {
 	return Local{path: clonePath(path)}, true
 }
 
+// LocalKeyOfPath returns the version-sensitive point-local key for path.
+// It preserves path.Version and non-symbol root spelling. Symbol-rooted state
+// application usually needs visibility.Resolver so the visible SSA version at
+// a CFG point, rather than incidental path syntax, owns the key.
+func LocalKeyOfPath(path pathdom.Path) (LocalKey, bool) {
+	local, ok := LocalOfPath(path)
+	if !ok {
+		return "", false
+	}
+	return local.LocalKey(), true
+}
+
 // Path returns a defensive copy of the underlying path.
 func (a Local) Path() pathdom.Path {
 	return clonePath(a.path)

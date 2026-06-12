@@ -257,7 +257,10 @@ func (p Path) String() string {
 	return b.String()
 }
 
-// Key returns a stable key representation of the path.
+// Key returns the structural, version-sensitive representation of the path.
+// This is path syntax identity, not stable address identity. Callers that need
+// version-insensitive finite-address identity should use domain/path/address;
+// callers that need point-visible state keys should use engine/visibility.
 // Format: sym<symbol>@<version><segments> for versioned symbol paths,
 // sym<symbol><segments> for unversioned symbol paths, <Root><segments> for placeholders.
 func (p Path) Key() PathKey {

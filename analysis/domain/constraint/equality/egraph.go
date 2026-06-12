@@ -111,7 +111,9 @@ func (e *EGraph) Clone() *EGraph {
 	return c
 }
 
-// Register adds a path to the E-graph if not already present.
+// Register adds a path to the E-graph if not already present. Equality uses
+// Path.Key structural identity intentionally; stable address identity and
+// point-visible state identity are owned outside this graph.
 // Also registers the parent-child relationship for congruence.
 func (e *EGraph) Register(path pathdom.Path) {
 	key := path.Key()
@@ -254,7 +256,9 @@ func (e *EGraph) propagateCongruence(rootX, rootY pathdom.PathKey) {
 	}
 }
 
-// AddEquality adds x == y to the E-graph with congruence propagation.
+// AddEquality adds x == y to the E-graph with congruence propagation. Path
+// structural keys are intentional here: this graph reasons about path terms,
+// not stable finite addresses or point-visible state slots.
 func (e *EGraph) AddEquality(x, y pathdom.Path) bool {
 	return e.Union(x.Key(), y.Key())
 }

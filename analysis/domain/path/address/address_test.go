@@ -60,6 +60,37 @@ func TestLocalPreservesVersionWhileStableIgnoresIt(t *testing.T) {
 	}
 }
 
+func TestLocalKeyOfPathPreservesPlaceholderAndReturnSlotStructure(t *testing.T) {
+	tests := []struct {
+		name string
+		path pathdom.Path
+		want pathdom.PathKey
+	}{
+		{
+			name: "placeholder",
+			path: pathdom.NewPlaceholder(0).IndexStr("item"),
+			want: pathdom.PathKey("$0[\"item\"]"),
+		},
+		{
+			name: "return slot",
+			path: pathdom.NewReturnSlot(1).Field("ok"),
+			want: pathdom.PathKey("ret[1].ok"),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, ok := LocalKeyOfPath(tt.path)
+			if !ok {
+				t.Fatal("LocalKeyOfPath rejected structural path")
+			}
+			if got.PathKey() != tt.want {
+				t.Fatalf("LocalKeyOfPath = %q, want %q", got.PathKey(), tt.want)
+			}
+		})
+	}
+}
+
 func TestTypedLocalAndStableKeysAreNotInterchangeable(t *testing.T) {
 	path := pathdom.NewPath(23, "item").Field("name")
 	path.Version = 4
