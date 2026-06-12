@@ -16,6 +16,7 @@ type FactsInput struct {
 	BranchPathRelations         map[cfg.Point]BranchPathRelationSet
 	PostconditionRefinements    map[cfg.Point]PostconditionRefinementSet
 	PostconditionPathRelations  map[cfg.Point]PostconditionPathRelationSet
+	CallResultValues            map[cfg.Point]CallResultValueSet
 	Returns                     map[cfg.Point]Return
 	Calls                       map[cfg.Point]CallProducer
 	CallSites                   map[cfg.Point]CallSite
@@ -38,6 +39,7 @@ type Facts struct {
 	branchPathRelations         map[cfg.Point]BranchPathRelationSet
 	postconditionRefinements    map[cfg.Point]PostconditionRefinementSet
 	postconditionPathRelations  map[cfg.Point]PostconditionPathRelationSet
+	callResultValues            map[cfg.Point]CallResultValueSet
 	returns                     map[cfg.Point]Return
 	calls                       map[cfg.Point]CallProducer
 	callSites                   map[cfg.Point]CallSite
@@ -61,6 +63,7 @@ func NewFacts(input FactsInput) Facts {
 		branchPathRelations:         copyBranchPathRelationMap(input.BranchPathRelations),
 		postconditionRefinements:    copyPostconditionRefinementMap(input.PostconditionRefinements),
 		postconditionPathRelations:  copyPostconditionPathRelationMap(input.PostconditionPathRelations),
+		callResultValues:            copyCallResultValueMap(input.CallResultValues),
 		returns:                     copyReturnMap(input.Returns),
 		calls:                       copyCallProducerMap(input.Calls),
 		callSites:                   copyCallSiteMap(input.CallSites),
@@ -205,6 +208,14 @@ func (f Facts) PostconditionRefinements(point cfg.Point) []PostconditionRefineme
 func (f Facts) PostconditionPathRelations(point cfg.Point) []PostconditionPathRelation {
 	if set, ok := f.postconditionPathRelations[point]; ok {
 		return set.Relations()
+	}
+	return nil
+}
+
+// CallResultValues returns fixed product values for call return slots at point.
+func (f Facts) CallResultValues(point cfg.Point) []CallResultValue {
+	if set, ok := f.callResultValues[point]; ok {
+		return set.Values()
 	}
 	return nil
 }

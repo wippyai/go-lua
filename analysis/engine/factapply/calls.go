@@ -29,11 +29,6 @@ func callResultReader(
 	if rawRead == nil {
 		rawRead = emptyStateRead
 	}
-	if provider == nil {
-		return rawRead, func(_ cfg.Point, base state.State) state.State {
-			return base
-		}
-	}
 
 	cache := make(map[cfg.Point]state.State)
 	active := make(map[cfg.Point]bool)
@@ -79,20 +74,34 @@ func materializeCallResults(
 	in state.State,
 	out state.State,
 ) state.State {
-	if provider == nil {
-		return out
-	}
 	call, ok := facts.Call(ctx.Point)
 	if !ok {
 		return out
 	}
-	for _, result := range provider(ctx, call, in, read) {
-		if result.Index < 0 {
-			continue
+	if provider != nil {
+		for _, result := range provider(ctx, call, in, read) {
+			if result.Index < 0 {
+				continue
+			}
+			out = out.WriteReturnSlot(ctx.Registry, result.Index, result.Value)
 		}
-		out = out.WriteReturnSlot(ctx.Registry, result.Index, result.Value)
+	}
+	for _, result := range facts.CallResultValues(ctx.Point) {
+		out = constrainReturnSlot(ctx, out, result)
 	}
 	return out
+}
+
+func constrainReturnSlot(ctx transfer.NodeContext, out state.State, fact factflow.CallResultValue) state.State {
+	if fact.Index() < 0 {
+		return out
+	}
+	value := fact.Value()
+	current := out.ReadReturnSlot(ctx.Registry, fact.Index())
+	if product.Equal(ctx.Registry, current, product.Bottom(ctx.Registry)) {
+		return out.WriteReturnSlot(ctx.Registry, fact.Index(), value)
+	}
+	return out.WriteReturnSlot(ctx.Registry, fact.Index(), product.Meet(ctx.Registry, current, value))
 }
 
 func applyReturn(

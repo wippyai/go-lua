@@ -16,6 +16,7 @@ type Options struct {
 type Result struct {
 	identSymbols       map[*ast.IdentExpr]symbol.ID
 	implicitGlobalUses map[*ast.IdentExpr]struct{}
+	typeValueRefs      map[*ast.IdentExpr]TypeDecl
 
 	names map[symbol.ID]string
 	kinds map[symbol.ID]symbol.Kind
@@ -171,6 +172,17 @@ func (r *Result) SymbolOf(ident *ast.IdentExpr) (symbol.ID, bool) {
 	}
 	id, ok := r.identSymbols[ident]
 	return id, ok
+}
+
+// TypeValueRef returns the lexical type declaration named by an identifier
+// used in value position, such as the receiver in Point:is(v) or callee in
+// Point(v).
+func (r *Result) TypeValueRef(ident *ast.IdentExpr) (TypeDecl, bool) {
+	if r == nil || ident == nil {
+		return TypeDecl{}, false
+	}
+	decl, ok := r.typeValueRefs[ident]
+	return decl, ok && decl.ID != 0
 }
 
 // FuncDefTargetSymbol returns the simple assignment target for a function
@@ -437,6 +449,7 @@ func newResult(opts Options) *Result {
 	r := &Result{
 		identSymbols:       make(map[*ast.IdentExpr]symbol.ID),
 		implicitGlobalUses: make(map[*ast.IdentExpr]struct{}),
+		typeValueRefs:      make(map[*ast.IdentExpr]TypeDecl),
 		names:              make(map[symbol.ID]string),
 		kinds:              make(map[symbol.ID]symbol.Kind),
 		globals:            make(map[string]globalSymbol),
@@ -1084,6 +1097,9 @@ func (b *binder) bindReadIdent(ident *ast.IdentExpr) {
 	}
 	id, _, ok := b.lookup(ident.Value)
 	if !ok {
+		if decl, hasType := b.lookupType(ident.Value); hasType {
+			b.result.typeValueRefs[ident] = decl
+		}
 		id = b.result.global(ident.Value, false)
 		b.result.implicitGlobalUses[ident] = struct{}{}
 	}

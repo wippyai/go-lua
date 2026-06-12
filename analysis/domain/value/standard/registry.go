@@ -8,6 +8,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/ownership"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/typewitness"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/variantorigin"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 )
@@ -40,6 +41,7 @@ func defaultSpecs() []axis.ErasedSpec {
 		variantorigin.Spec().Erase(),
 		identity.Spec().Erase(),
 		runtimekind.Spec().Erase(),
+		typewitness.Spec().Erase(),
 		escape.Spec().Erase(),
 		ownership.Spec().Erase(),
 		evidence.Spec().Erase(),

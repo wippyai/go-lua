@@ -40,8 +40,10 @@ func Lower(result *semantics.Result, graph cfg.Graph, config Config) factflow.Fa
 		PathAssignments:             make(map[cfg.Point]factflow.PathAssignment),
 		PathDescendantInvalidations: make(map[cfg.Point]factflow.PathDescendantInvalidation),
 		BranchRefinements:           make(map[cfg.Point]factflow.BranchRefinement),
+		BranchRefinementSets:        make(map[cfg.Point]factflow.BranchRefinementSet),
 		BranchPathRelations:         make(map[cfg.Point]factflow.BranchPathRelationSet),
 		PostconditionRefinements:    make(map[cfg.Point]factflow.PostconditionRefinementSet),
+		CallResultValues:            make(map[cfg.Point]factflow.CallResultValueSet),
 		Returns:                     make(map[cfg.Point]factflow.Return),
 		Calls:                       make(map[cfg.Point]factflow.CallProducer),
 		CallSites:                   make(map[cfg.Point]factflow.CallSite),
@@ -84,6 +86,12 @@ func Lower(result *semantics.Result, graph cfg.Graph, config Config) factflow.Fa
 			if lowered, ok := l.assertPostconditionRefinement(fact); ok {
 				input.PostconditionRefinements[point] = factflow.NewPostconditionRefinementSet(lowered)
 			}
+			if lowered, ok := l.typeCastPostconditionRefinement(fact); ok {
+				appendPostconditionRefinements(input.PostconditionRefinements, point, lowered)
+			}
+			if lowered, ok := l.typeCastCallResultValue(fact); ok {
+				input.CallResultValues[point] = factflow.NewCallResultValueSet(lowered)
+			}
 			if lowered, ok := l.callProducer(fact); ok {
 				input.Calls[point] = lowered
 			}
@@ -98,6 +106,7 @@ func Lower(result *semantics.Result, graph cfg.Graph, config Config) factflow.Fa
 			l.addAssertionOverlaysForSource(&input, fact.Source)
 		}
 	}
+	l.addTypeIsBranchRefinements(&input, graph, result)
 	input.ExpressionPaths = l.expressionPaths
 	input.ExpressionConditions = l.expressionConditions
 	return factflow.NewFacts(input)

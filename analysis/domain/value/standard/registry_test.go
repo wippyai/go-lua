@@ -24,6 +24,7 @@ func TestRegistryBundleFrozenAndStable(t *testing.T) {
 		"variantorigin",
 		"identity",
 		"runtimekind",
+		"typewitness",
 		"escape",
 		"ownership",
 		"evidence",

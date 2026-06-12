@@ -9,6 +9,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/typewitness"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/variantorigin"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
@@ -248,6 +249,10 @@ func refineDeclaredTypeWithValue(result *check.Result, declared typ.Type, value 
 			if refined, ok := discriminant.NarrowByOrigin(out, origin.Family(), origin.Cases()); ok {
 				out = refined
 			}
+		}
+		witness := product.Get(result.Registry(), value, typewitness.Key)
+		if t, ok := witness.Type(); ok {
+			out = t
 		}
 		kinds := product.Get(result.Registry(), value, runtimekind.Key)
 		if refined, ok := refineTypeByRuntimeKindSet(out, kinds, p); ok {

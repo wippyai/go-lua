@@ -34,6 +34,13 @@ func (r *typeResolver) Type(expr ast.TypeExpr) (typ.Type, bool) {
 	return t, ok
 }
 
+func (r *typeResolver) Decl(decl bind.TypeDecl) (typ.Type, bool) {
+	if r == nil {
+		return nil, false
+	}
+	return r.resolveDecl(decl)
+}
+
 func (r *typeResolver) ResolveTypeRef(path []string) (typ.Type, bool) {
 	if len(path) != 1 {
 		return nil, false

@@ -12,8 +12,10 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/ownership"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/typewitness"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/variantorigin"
 	latticelaws "github.com/wippyai/go-lua/analysis/test/laws/lattice"
+	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
 func TestFiniteAxisSpecsLaws(t *testing.T) {
@@ -50,6 +52,15 @@ func TestFiniteAxisSpecsLaws(t *testing.T) {
 			numberOrString,
 			runtimekind.Top().Without(runtimekind.Table),
 			runtimekind.Top(),
+		})
+	})
+
+	t.Run("typewitness", func(t *testing.T) {
+		runAxisLaws(t, "typewitness", typewitness.Spec(), []typewitness.Value{
+			typewitness.Bottom(),
+			typewitness.Of(typ.Number),
+			typewitness.Of(typ.String),
+			typewitness.Top(),
 		})
 	})
 
