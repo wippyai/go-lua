@@ -22,22 +22,22 @@ import (
 	"github.com/wippyai/go-lua/analysis/symbol"
 )
 
-func TestByCalleeSymbolProviderReadsSummaryReturns(t *testing.T) {
+func TestOutcomeProviderReadsSummaryReturnsByCalleeSymbol(t *testing.T) {
 	reg := standard.Registry()
 	callee := symbol.ID(17)
 	key := summary.DefaultSummaryKey(ref.FuncRef{Kind: ref.KindSymbol, ID: 18})
 	first := product.Top()
 	second := product.Absent(reg)
-	provider := Provider(summary.NewSnapshot(reg, summary.EntrySummary{
+	provider := OutcomeProvider(summary.NewSnapshot(reg, summary.EntrySummary{
 		Key:     key,
 		Summary: summary.Summary{Returns: []product.Value{first, second}},
 	}), ByCalleeSymbol(map[symbol.ID]summary.SummaryKey{callee: key}))
 
-	got := provider(transfer.NodeContext{Registry: reg}, factflow.NewCallProducer(factflow.CallProducerConfig{
+	got := provider(transfer.NodeContext{Registry: reg}, factflow.NewCallSite(factflow.CallSiteConfig{
 		CalleeSymbol: callee,
 	}), state.State{}, nil)
 
-	assertCallResults(t, reg, got, []product.Value{first, second})
+	assertCallResults(t, reg, got.Results, []product.Value{first, second})
 }
 
 func TestOutcomeProviderMapsSummaryReturnsAndNormalReturnFacts(t *testing.T) {
@@ -147,7 +147,7 @@ func TestOutcomeProviderMapsSummaryReturnsAndNormalReturnFacts(t *testing.T) {
 	}
 }
 
-func TestProviderMissingAndEmptyReturnsYieldNoResults(t *testing.T) {
+func TestOutcomeProviderMissingAndEmptySummaryYieldsZeroOutcome(t *testing.T) {
 	reg := standard.Registry()
 	callee := symbol.ID(17)
 	key := summary.DefaultSummaryKey(ref.FuncRef{Kind: ref.KindSymbol, ID: 18})
@@ -156,40 +156,38 @@ func TestProviderMissingAndEmptyReturnsYieldNoResults(t *testing.T) {
 		Key:     key,
 		Summary: summary.Summary{Returns: []product.Value{product.Top()}},
 	})
-	call := factflow.NewCallProducer(factflow.CallProducerConfig{CalleeSymbol: callee})
+	site := factflow.NewCallSite(factflow.CallSiteConfig{CalleeSymbol: callee})
 	ctx := transfer.NodeContext{Registry: reg}
 
 	tests := []struct {
 		name     string
-		provider factapply.CallResultProvider
+		provider factapply.CallOutcomeProvider
 	}{
 		{
 			name:     "nil reader",
-			provider: Provider(nil, ByCalleeSymbol(map[symbol.ID]summary.SummaryKey{callee: key})),
+			provider: OutcomeProvider(nil, ByCalleeSymbol(map[symbol.ID]summary.SummaryKey{callee: key})),
 		},
 		{
 			name:     "nil key func",
-			provider: Provider(snap, nil),
+			provider: OutcomeProvider(snap, nil),
 		},
 		{
 			name:     "missing key",
-			provider: Provider(snap, ByCalleeSymbol(map[symbol.ID]summary.SummaryKey{})),
+			provider: OutcomeProvider(snap, ByCalleeSymbol(map[symbol.ID]summary.SummaryKey{})),
 		},
 		{
 			name:     "missing summary",
-			provider: Provider(snap, ByCalleeSymbol(map[symbol.ID]summary.SummaryKey{callee: missingKey})),
+			provider: OutcomeProvider(snap, ByCalleeSymbol(map[symbol.ID]summary.SummaryKey{callee: missingKey})),
 		},
 		{
 			name:     "empty returns",
-			provider: Provider(summary.NewSnapshot(reg, summary.EntrySummary{Key: key, Summary: summary.Summary{Returns: nil}}), ByCalleeSymbol(map[symbol.ID]summary.SummaryKey{callee: key})),
+			provider: OutcomeProvider(summary.NewSnapshot(reg, summary.EntrySummary{Key: key, Summary: summary.Summary{Returns: nil}}), ByCalleeSymbol(map[symbol.ID]summary.SummaryKey{callee: key})),
 		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := tc.provider(ctx, call, state.State{}, nil); len(got) != 0 {
-				t.Fatalf("provider returned %d results, want none", len(got))
-			}
+			assertEmptyOutcome(t, tc.provider(ctx, site, state.State{}, nil))
 		})
 	}
 }
@@ -219,19 +217,17 @@ func TestFallbackKeepsPrimarySlotsAndFillsMissingSlots(t *testing.T) {
 }
 
 func TestByCalleeSymbolKeyMapsAreCloned(t *testing.T) {
-	reg := standard.Registry()
 	callee := symbol.ID(21)
 	symbolKey := summary.DefaultSummaryKey(ref.FuncRef{Kind: ref.KindSymbol, ID: 23})
-	symbolValue := product.Absent(reg)
-	snap := summary.NewSnapshot(reg,
-		summary.EntrySummary{Key: symbolKey, Summary: summary.Summary{Returns: []product.Value{symbolValue}}},
-	)
 
 	symbolMap := map[symbol.ID]summary.SummaryKey{callee: symbolKey}
-	symbolProvider := Provider(snap, ByCalleeSymbol(symbolMap))
+	keyFor := ByCalleeSymbol(symbolMap)
 	symbolMap[callee] = summary.DefaultSummaryKey(ref.FuncRef{Kind: ref.KindSymbol, ID: 25})
 
-	assertCallResults(t, reg, symbolProvider(transfer.NodeContext{Registry: reg}, factflow.NewCallProducer(factflow.CallProducerConfig{CalleeSymbol: callee}), state.State{}, nil), []product.Value{symbolValue})
+	got, ok := keyFor(transfer.NodeContext{}, factflow.NewCallProducer(factflow.CallProducerConfig{CalleeSymbol: callee}))
+	if !ok || got != symbolKey {
+		t.Fatalf("symbol key = %v, %v; want %v, true", got, ok, symbolKey)
+	}
 }
 
 func TestByCalleeIdentityPrefersSymbolAndFallsBackToPath(t *testing.T) {
@@ -260,7 +256,7 @@ func TestByCalleeIdentityPrefersSymbolAndFallsBackToPath(t *testing.T) {
 	}
 }
 
-func TestProviderIntegratesWithFactflowCallRead(t *testing.T) {
+func TestOutcomeProviderIntegratesWithFactflowCallRead(t *testing.T) {
 	reg := standard.Registry()
 	graph := cfg.New()
 	call := graph.AddNode(cfg.NodeCall)
@@ -299,7 +295,7 @@ func TestProviderIntegratesWithFactflowCallRead(t *testing.T) {
 				},
 			}),
 			Sources: sourcevalue.NewSourceValues(sourcevalue.SourceValuesConfig{Registry: reg}),
-			CallResults: Provider(summary.NewSnapshot(reg, summary.EntrySummary{
+			CallOutcome: OutcomeProvider(summary.NewSnapshot(reg, summary.EntrySummary{
 				Key:     calleeKey,
 				Summary: summary.Summary{Returns: []product.Value{callValue}},
 			}), ByCalleeSymbol(map[symbol.ID]summary.SummaryKey{symbol.ID(28): calleeKey})),
@@ -356,6 +352,19 @@ func assertCallResults(t *testing.T, reg *axis.Registry, got []factapply.CallRes
 		if !product.Equal(reg, got[i].Value, value) {
 			t.Fatalf("result %d value = %#v, want %#v", i, got[i].Value, value)
 		}
+	}
+}
+
+func assertEmptyOutcome(t *testing.T, got factapply.CallOutcome) {
+	t.Helper()
+	if len(got.Results) != 0 ||
+		len(got.PathRefinements) != 0 ||
+		len(got.PathStaticMembers) != 0 ||
+		len(got.DynamicIndexFacts) != 0 ||
+		len(got.BranchProofs) != 0 ||
+		len(got.ChannelSelects) != 0 ||
+		len(got.EffectDeltas) != 0 {
+		t.Fatalf("provider returned non-empty outcome: %#v", got)
 	}
 }
 

@@ -1,4 +1,4 @@
-// Package callresult bridges summary values into factflow call results.
+// Package callresult adapts fixpoint summaries into factflow call outcomes.
 package callresult
 
 import (
@@ -14,28 +14,6 @@ import (
 
 // KeyFunc maps one call producer in context to an exact summary key.
 type KeyFunc func(ctx transfer.NodeContext, call factflow.CallProducer) (summary.SummaryKey, bool)
-
-// Provider returns a factflow call-result provider backed by exact summary reads.
-func Provider(summaries summary.Reader, keyFor KeyFunc) factapply.CallResultProvider {
-	return func(ctx transfer.NodeContext, call factflow.CallProducer, _ state.State, _ func(cfg.Point) state.State) []factapply.CallResult {
-		if summaries == nil || keyFor == nil {
-			return nil
-		}
-		key, ok := keyFor(ctx, call)
-		if !ok {
-			return nil
-		}
-		got, ok := summaries.Read(key)
-		if !ok || len(got.Returns) == 0 {
-			return nil
-		}
-		results := make([]factapply.CallResult, len(got.Returns))
-		for i, value := range got.Returns {
-			results[i] = factapply.CallResult{Index: i, Value: value}
-		}
-		return results
-	}
-}
 
 // OutcomeProvider returns a generic call-boundary outcome provider backed by
 // exact summary reads.
