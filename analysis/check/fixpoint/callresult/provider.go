@@ -186,7 +186,7 @@ func sameAsReturnValue(
 	if !ok {
 		return product.Value{}, false
 	}
-	return sourcevalue.WithValueOverlays(ctx.Registry, sources, facts.ValueOverlays()).ValueOfSource(ctx.Point, args[argIndex], in, read)
+	return sourcevalue.WithExpressionRefinements(ctx.Registry, sources, facts.ExpressionRefinements()).ValueOfSource(ctx.Point, args[argIndex], in, read)
 }
 
 func elementOfReturnValue(

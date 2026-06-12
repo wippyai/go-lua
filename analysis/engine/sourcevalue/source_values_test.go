@@ -178,16 +178,16 @@ func TestSourceValuesExpressionAndVarargProvidersAreGenericHooks(t *testing.T) {
 	}
 }
 
-func TestValueOverlaySourceValuesMeetsOverlayAndDoesNotMutateBase(t *testing.T) {
+func TestExpressionRefinementSourceValuesMeetsRefinementAndDoesNotMutateBase(t *testing.T) {
 	reg := standard.Registry()
 	inner := ExprRef(10)
 	outer := ExprRef(11)
 	innerSource := ValueSource{Kind: ValueSourceExpression, ExprRef: inner, HasExpr: true}
 	outerSource := ValueSource{Kind: ValueSourceExpression, ExprRef: outer, HasExpr: true}
 	base := product.NewWithPresence(reg, product.ShapeTop, presence.Present())
-	overlay := runtimeKindOverlay(reg, runtimekind.Singleton(runtimekind.Table))
-	overlays := map[ExprRef]ValueOverlay{
-		outer: NewValueOverlay(innerSource, overlay),
+	refinement := runtimeKindRefinement(reg, runtimekind.Singleton(runtimekind.Table))
+	refinements := map[ExprRef]ExpressionRefinement{
+		outer: NewExpressionRefinement(innerSource, refinement),
 	}
 	baseResolver := NewSourceValues(SourceValuesConfig{
 		Registry: reg,
@@ -195,11 +195,11 @@ func TestValueOverlaySourceValuesMeetsOverlayAndDoesNotMutateBase(t *testing.T) 
 			inner: base,
 		},
 	})
-	resolver := WithValueOverlays(reg, baseResolver, overlays)
+	resolver := WithExpressionRefinements(reg, baseResolver, refinements)
 
 	got, ok := resolver.ValueOfSource(cfg.Point(1), outerSource, state.State{}, nil)
 	if !ok {
-		t.Fatal("value overlay source did not resolve through inner expression")
+		t.Fatal("expression refinement source did not resolve through inner expression")
 	}
 	if gotPresence := product.PresenceOf(got); !presence.Equal(gotPresence, presence.Present()) {
 		t.Fatalf("presence = %s, want original present", gotPresence)
@@ -212,7 +212,7 @@ func TestValueOverlaySourceValuesMeetsOverlayAndDoesNotMutateBase(t *testing.T) 
 	}
 }
 
-func TestValueOverlaySourceValuesAppliesOverlayToCallSource(t *testing.T) {
+func TestExpressionRefinementSourceValuesAppliesRefinementToCallSource(t *testing.T) {
 	reg := standard.Registry()
 	inner := ExprRef(12)
 	outer := ExprRef(13)
@@ -229,8 +229,8 @@ func TestValueOverlaySourceValuesAppliesOverlayToCallSource(t *testing.T) {
 	innerSource := outerSource
 	innerSource.ExprRef = inner
 	baseResolver := NewSourceValues(SourceValuesConfig{Registry: reg})
-	resolver := WithValueOverlays(reg, baseResolver, map[ExprRef]ValueOverlay{
-		outer: NewValueOverlay(innerSource, runtimeKindOverlay(reg, runtimekind.Singleton(runtimekind.Function))),
+	resolver := WithExpressionRefinements(reg, baseResolver, map[ExprRef]ExpressionRefinement{
+		outer: NewExpressionRefinement(innerSource, runtimeKindRefinement(reg, runtimekind.Singleton(runtimekind.Function))),
 	})
 
 	var readPoint cfg.Point
@@ -255,25 +255,25 @@ func TestValueOverlaySourceValuesAppliesOverlayToCallSource(t *testing.T) {
 	}
 }
 
-func TestValueOverlaySourceValuesPanicsWithoutRegistry(t *testing.T) {
+func TestExpressionRefinementSourceValuesPanicsWithoutRegistry(t *testing.T) {
 	reg := standard.Registry()
 	base := NewSourceValues(SourceValuesConfig{Registry: reg})
 
 	defer func() {
-		if r := recover(); r == nil || !strings.Contains(r.(string), "value overlay source values require a registry") {
-			t.Fatal("WithValueOverlays did not panic")
+		if r := recover(); r == nil || !strings.Contains(r.(string), "expression refinement source values require a registry") {
+			t.Fatal("WithExpressionRefinements did not panic")
 		}
 	}()
 
-	_ = WithValueOverlays(nil, base, map[ExprRef]ValueOverlay{
-		ExprRef(1): NewValueOverlay(
+	_ = WithExpressionRefinements(nil, base, map[ExprRef]ExpressionRefinement{
+		ExprRef(1): NewExpressionRefinement(
 			ValueSource{Kind: ValueSourceExpression, ExprRef: ExprRef(2), HasExpr: true},
-			runtimeKindOverlay(reg, runtimekind.Singleton(runtimekind.Table)),
+			runtimeKindRefinement(reg, runtimekind.Singleton(runtimekind.Table)),
 		),
 	})
 }
 
-func TestValueOverlaySourceValuesCanMeetCorePresenceOverlay(t *testing.T) {
+func TestExpressionRefinementSourceValuesCanMeetCorePresenceRefinement(t *testing.T) {
 	reg := standard.Registry()
 	inner := ExprRef(14)
 	outer := ExprRef(15)
@@ -283,8 +283,8 @@ func TestValueOverlaySourceValuesCanMeetCorePresenceOverlay(t *testing.T) {
 			inner: absentValue(reg),
 		},
 	})
-	resolver := WithValueOverlays(reg, baseResolver, map[ExprRef]ValueOverlay{
-		outer: NewValueOverlay(
+	resolver := WithExpressionRefinements(reg, baseResolver, map[ExprRef]ExpressionRefinement{
+		outer: NewExpressionRefinement(
 			ValueSource{Kind: ValueSourceExpression, ExprRef: inner, HasExpr: true},
 			product.NewWithPresence(reg, product.ShapeTop, presence.Absent()),
 		),
@@ -292,14 +292,14 @@ func TestValueOverlaySourceValuesCanMeetCorePresenceOverlay(t *testing.T) {
 
 	got, ok := resolver.ValueOfSource(cfg.Point(1), ValueSource{Kind: ValueSourceExpression, ExprRef: outer, HasExpr: true}, state.State{}, nil)
 	if !ok {
-		t.Fatal("presence overlay source did not resolve")
+		t.Fatal("presence refinement source did not resolve")
 	}
 	if gotPresence := product.PresenceOf(got); !presence.Equal(gotPresence, presence.Absent()) {
-		t.Fatalf("presence overlay = %s, want absent", gotPresence)
+		t.Fatalf("presence refinement = %s, want absent", gotPresence)
 	}
 }
 
-func TestValueOverlaySourceValuesNestedOverlaysMeet(t *testing.T) {
+func TestExpressionRefinementSourceValuesNestedRefinementsMeet(t *testing.T) {
 	reg := standard.Registry()
 	inner := ExprRef(20)
 	middle := ExprRef(21)
@@ -310,44 +310,44 @@ func TestValueOverlaySourceValuesNestedOverlaysMeet(t *testing.T) {
 			inner: presentValue(reg),
 		},
 	})
-	resolver := WithValueOverlays(reg, baseResolver, map[ExprRef]ValueOverlay{
-		middle: NewValueOverlay(
+	resolver := WithExpressionRefinements(reg, baseResolver, map[ExprRef]ExpressionRefinement{
+		middle: NewExpressionRefinement(
 			ValueSource{Kind: ValueSourceExpression, ExprRef: inner, HasExpr: true},
-			runtimeKindOverlay(reg, runtimekind.Top().Without(runtimekind.Nil)),
+			runtimeKindRefinement(reg, runtimekind.Top().Without(runtimekind.Nil)),
 		),
-		outer: NewValueOverlay(
+		outer: NewExpressionRefinement(
 			ValueSource{Kind: ValueSourceExpression, ExprRef: middle, HasExpr: true},
-			runtimeKindOverlay(reg, runtimekind.Singleton(runtimekind.Table)),
+			runtimeKindRefinement(reg, runtimekind.Singleton(runtimekind.Table)),
 		),
 	})
 
 	got, ok := resolver.ValueOfSource(cfg.Point(2), ValueSource{Kind: ValueSourceExpression, ExprRef: outer, HasExpr: true}, state.State{}, nil)
 	if !ok {
-		t.Fatal("nested overlay source did not resolve")
+		t.Fatal("nested refinement source did not resolve")
 	}
 	if gotKind := product.Get(reg, got, runtimekind.Key); !runtimekind.Equal(gotKind, runtimekind.Singleton(runtimekind.Table)) {
 		t.Fatalf("nested runtime kind = %s, want table", gotKind)
 	}
 }
 
-func TestValueOverlaySourceValuesMissingInnerSourceReturnsFalse(t *testing.T) {
+func TestExpressionRefinementSourceValuesMissingInnerSourceReturnsFalse(t *testing.T) {
 	reg := standard.Registry()
 	baseResolver := NewSourceValues(SourceValuesConfig{
 		Registry: reg,
 	})
-	resolver := WithValueOverlays(reg, baseResolver, map[ExprRef]ValueOverlay{
-		ExprRef(30): NewValueOverlay(
+	resolver := WithExpressionRefinements(reg, baseResolver, map[ExprRef]ExpressionRefinement{
+		ExprRef(30): NewExpressionRefinement(
 			ValueSource{Kind: ValueSourceExpression, ExprRef: ExprRef(31), HasExpr: true},
-			runtimeKindOverlay(reg, runtimekind.Singleton(runtimekind.Table)),
+			runtimeKindRefinement(reg, runtimekind.Singleton(runtimekind.Table)),
 		),
 	})
 
 	if got, ok := resolver.ValueOfSource(cfg.Point(3), ValueSource{Kind: ValueSourceExpression, ExprRef: ExprRef(30), HasExpr: true}, state.State{}, nil); ok {
-		t.Fatalf("missing overlay inner source resolved to %s, want false", formatValue(reg, got))
+		t.Fatalf("missing refinement inner source resolved to %s, want false", formatValue(reg, got))
 	}
 }
 
-func runtimeKindOverlay(reg *axis.Registry, value runtimekind.Value) product.Value {
+func runtimeKindRefinement(reg *axis.Registry, value runtimekind.Value) product.Value {
 	return product.Set(reg, product.Top(), runtimekind.Key, value)
 }
 

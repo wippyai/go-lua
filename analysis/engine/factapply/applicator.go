@@ -49,7 +49,7 @@ func NewFactsNodeTransfer(config FactsNodeTransferConfig) transfer.NodeTransfer 
 		if sources == nil {
 			return out
 		}
-		sources = sourcevalue.WithValueOverlays(ctx.Registry, sources, facts.ValueOverlays())
+		sources = sourcevalue.WithExpressionRefinements(ctx.Registry, sources, facts.ExpressionRefinements())
 		if fact, ok := facts.LocalAssignment(ctx.Point); ok {
 			out = applyRootAssignmentFact(ctx, config.Visibility, facts, sources, read, in, out, fact)
 		}

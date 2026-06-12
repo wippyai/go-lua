@@ -22,7 +22,7 @@ type FactsInput struct {
 	Calls                       map[cfg.Point]CallProducer
 	CallSites                   map[cfg.Point]CallSite
 	ObjectLiterals              map[ExprRef]ObjectLiteral
-	ValueOverlays               map[ExprRef]ValueOverlay
+	ExpressionRefinements       map[ExprRef]ExpressionRefinement
 	ExpressionPaths             map[ExprRef]pathdom.Path
 	ExpressionConditions        map[ExprRef]ExpressionCondition
 }
@@ -46,7 +46,7 @@ type Facts struct {
 	calls                       map[cfg.Point]CallProducer
 	callSites                   map[cfg.Point]CallSite
 	objectLiterals              map[ExprRef]ObjectLiteral
-	valueOverlays               map[ExprRef]ValueOverlay
+	expressionRefinements       map[ExprRef]ExpressionRefinement
 	expressionPaths             map[ExprRef]pathdom.Path
 	expressionConditions        map[ExprRef]ExpressionCondition
 }
@@ -71,7 +71,7 @@ func NewFacts(input FactsInput) Facts {
 		calls:                       copyCallProducerMap(input.Calls),
 		callSites:                   copyCallSiteMap(input.CallSites),
 		objectLiterals:              copyObjectLiteralMap(input.ObjectLiterals),
-		valueOverlays:               copyValueOverlayMap(input.ValueOverlays),
+		expressionRefinements:       copyExpressionRefinementMap(input.ExpressionRefinements),
 		expressionPaths:             copyExpressionPathMap(input.ExpressionPaths),
 		expressionConditions:        copyExpressionConditionMap(input.ExpressionConditions),
 	}
@@ -277,18 +277,18 @@ func (f Facts) ObjectLiteral(expr ExprRef) (ObjectLiteral, bool) {
 	return fact.copy(), true
 }
 
-// ValueOverlay returns the source-value overlay sidecar for expr, if present.
-func (f Facts) ValueOverlay(expr ExprRef) (ValueOverlay, bool) {
-	fact, ok := f.valueOverlays[expr]
+// ExpressionRefinement returns the source-value refinement fact for expr, if present.
+func (f Facts) ExpressionRefinement(expr ExprRef) (ExpressionRefinement, bool) {
+	fact, ok := f.expressionRefinements[expr]
 	if !ok {
-		return ValueOverlay{}, false
+		return ExpressionRefinement{}, false
 	}
 	return fact.copy(), true
 }
 
-// ValueOverlays returns the source-value overlay sidecars keyed by expression.
-func (f Facts) ValueOverlays() map[ExprRef]ValueOverlay {
-	return copyValueOverlayMap(f.valueOverlays)
+// ExpressionRefinements returns source-value refinement facts keyed by expression.
+func (f Facts) ExpressionRefinements() map[ExprRef]ExpressionRefinement {
+	return copyExpressionRefinementMap(f.expressionRefinements)
 }
 
 // ExpressionPath returns the static expression access path for expr, if present.

@@ -94,7 +94,7 @@ func TestLowerClaimsPreserveCastSyntaxVariantsWithoutProofRefinements(t *testing
 	}
 }
 
-func TestLowerParsedCastClaimsOnlyProduceClaimOverlays(t *testing.T) {
+func TestLowerParsedCastClaimsOnlyProduceClaimRefinements(t *testing.T) {
 	stmts, _, built, result := parseSemanticChunk(t, `
 local x = 0
 local a, b, c, d = x as number, x :: number, x as any, x :: any
@@ -167,8 +167,8 @@ if x :: number then end
 			}
 
 			branchLowerer := lowerer{registry: standard.Registry(), exprs: make(map[any]factflow.ExprRef)}
-			branchInput := factflow.FactsInput{ValueOverlays: make(map[factflow.ExprRef]factflow.ValueOverlay)}
-			branchLowerer.addAssertionOverlaysForSource(&branchInput, branch.Source)
+			branchInput := factflow.FactsInput{ExpressionRefinements: make(map[factflow.ExprRef]factflow.ExpressionRefinement)}
+			branchLowerer.addAssertionRefinementsForSource(&branchInput, branch.Source)
 			branchFacts := factflow.NewFacts(branchInput)
 			branchSource := branchLowerer.valueSource(branch.Source)
 			assertLoweredAssertion(t, branchFacts, branchSource, assertion.Type(), factflow.ValueSourceExpression)
@@ -190,12 +190,12 @@ local a, b = x as any, x :: any
 	inputValues := make(map[factflow.ExprRef]product.Value)
 	for _, point := range points {
 		source := mustLocalSource(t, facts, point)
-		overlay, ok := facts.ValueOverlay(source.ExprRef)
+		refinement, ok := facts.ExpressionRefinement(source.ExprRef)
 		if !ok {
-			t.Fatalf("missing any claim overlay for source ref %d", source.ExprRef)
+			t.Fatalf("missing any claim refinement for source ref %d", source.ExprRef)
 		}
-		assertAssertionOnlyProduct(t, overlay.Overlay(), assertion.Any())
-		inputValues[overlay.Source().ExprRef] = base
+		assertAssertionOnlyProduct(t, refinement.Refinement(), assertion.Any())
+		inputValues[refinement.Source().ExprRef] = base
 	}
 
 	factApply := factapply.NewFactsNodeTransfer(factapply.FactsNodeTransferConfig{
@@ -280,27 +280,27 @@ func TestLowerNestedClaimsPreserveOuterIdentityAndInnerFlow(t *testing.T) {
 
 	facts := lowerFacts(t, result, built.Graph, standard.Registry())
 	source := mustLocalSource(t, facts, requireStmtPoints(t, built, local, 1)[0])
-	outer, ok := facts.ValueOverlay(source.ExprRef)
+	outer, ok := facts.ExpressionRefinement(source.ExprRef)
 	if !ok {
 		t.Fatalf("missing outer assertion for source %#v", source)
 	}
-	if got := overlayAssertion(t, outer); !assertion.Equal(got, assertion.Type()) {
+	if got := refinementAssertion(t, outer); !assertion.Equal(got, assertion.Type()) {
 		t.Fatalf("outer assertion = %s, want type", got)
 	}
 	innerSource := outer.Source()
 	if innerSource.ExprRef == source.ExprRef || innerSource.ExprRef == 0 {
 		t.Fatalf("outer assertion did not point at distinct inner expr ref: outer=%#v inner=%#v", source, innerSource)
 	}
-	inner, ok := facts.ValueOverlay(innerSource.ExprRef)
+	inner, ok := facts.ExpressionRefinement(innerSource.ExprRef)
 	if !ok {
 		t.Fatalf("missing inner non-nil claim for source %#v", innerSource)
 	}
-	if got := overlayAssertion(t, inner); !assertion.Equal(got, assertion.NonNil()) {
+	if got := refinementAssertion(t, inner); !assertion.Equal(got, assertion.NonNil()) {
 		t.Fatalf("inner assertion = %s, want non-nil", got)
 	}
 }
 
-func TestLowerClaimOverlaysApplyIndicatorsWithoutMutatingBaseValues(t *testing.T) {
+func TestLowerClaimRefinementsApplyIndicatorsWithoutMutatingBaseValues(t *testing.T) {
 	decl := localAssign([]string{"x"}, number("0"))
 	typeRead := ident("x")
 	anyRead := ident("x")
@@ -364,11 +364,11 @@ func TestLowerClaimOverlaysApplyIndicatorsWithoutMutatingBaseValues(t *testing.T
 	}
 	for i := range cases {
 		source := mustLocalSource(t, facts, cases[i].point)
-		overlay, ok := facts.ValueOverlay(source.ExprRef)
+		refinement, ok := facts.ExpressionRefinement(source.ExprRef)
 		if !ok {
-			t.Fatalf("%s overlay missing", cases[i].name)
+			t.Fatalf("%s refinement missing", cases[i].name)
 		}
-		inputValues[overlay.Source().ExprRef] = cases[i].base
+		inputValues[refinement.Source().ExprRef] = cases[i].base
 	}
 
 	factApply := factapply.NewFactsNodeTransfer(factapply.FactsNodeTransferConfig{
@@ -433,7 +433,7 @@ func TestLowerClaimOverlaysApplyIndicatorsWithoutMutatingBaseValues(t *testing.T
 	}
 }
 
-func TestLowerNestedClaimOverlaysApplyCombinedIndicators(t *testing.T) {
+func TestLowerNestedClaimRefinementsApplyCombinedIndicators(t *testing.T) {
 	decl := localAssign([]string{"x"}, number("0"))
 	read := ident("x")
 	nonNil := &ast.NonNilAssertExpr{Expr: read}
@@ -451,13 +451,13 @@ func TestLowerNestedClaimOverlaysApplyCombinedIndicators(t *testing.T) {
 	facts := lowerFacts(t, result, built.Graph, standard.Registry())
 	point := requireStmtPoints(t, built, local, 1)[0]
 	source := mustLocalSource(t, facts, point)
-	outer, ok := facts.ValueOverlay(source.ExprRef)
+	outer, ok := facts.ExpressionRefinement(source.ExprRef)
 	if !ok {
-		t.Fatalf("missing outer assertion overlay")
+		t.Fatalf("missing outer assertion refinement")
 	}
-	inner, ok := facts.ValueOverlay(outer.Source().ExprRef)
+	inner, ok := facts.ExpressionRefinement(outer.Source().ExprRef)
 	if !ok {
-		t.Fatalf("missing inner assertion overlay")
+		t.Fatalf("missing inner assertion refinement")
 	}
 	base := product.NewWithPresence(reg, product.ShapeTop, presence.Present())
 	factApply := factapply.NewFactsNodeTransfer(factapply.FactsNodeTransferConfig{
@@ -485,7 +485,7 @@ func TestLowerNestedClaimOverlaysApplyCombinedIndicators(t *testing.T) {
 	}
 }
 
-func TestLowerNestedAnyClaimOverlaysStayAssertionOnly(t *testing.T) {
+func TestLowerNestedAnyClaimRefinementsStayAssertionOnly(t *testing.T) {
 	stmts, _, built, result := parseSemanticChunk(t, `
 local x = 0
 local a, b = (x as any) as number, (x :: any) :: number
@@ -498,18 +498,18 @@ local a, b = (x as any) as number, (x :: any) :: number
 	inputValues := make(map[factflow.ExprRef]product.Value)
 	for _, point := range points {
 		source := mustLocalSource(t, facts, point)
-		outer, ok := facts.ValueOverlay(source.ExprRef)
+		outer, ok := facts.ExpressionRefinement(source.ExprRef)
 		if !ok {
-			t.Fatalf("missing outer assertion overlay for source ref %d", source.ExprRef)
+			t.Fatalf("missing outer assertion refinement for source ref %d", source.ExprRef)
 		}
-		assertAssertionOnlyProduct(t, outer.Overlay(), assertion.Type())
+		assertAssertionOnlyProduct(t, outer.Refinement(), assertion.Type())
 		inner := outer.Source()
-		innerOverlay, ok := facts.ValueOverlay(inner.ExprRef)
+		innerRefinement, ok := facts.ExpressionRefinement(inner.ExprRef)
 		if !ok {
-			t.Fatalf("missing inner any assertion overlay for source ref %d", inner.ExprRef)
+			t.Fatalf("missing inner any assertion refinement for source ref %d", inner.ExprRef)
 		}
-		assertAssertionOnlyProduct(t, innerOverlay.Overlay(), assertion.Any())
-		inputValues[innerOverlay.Source().ExprRef] = product.NewWithPresence(reg, product.ShapeTop, presence.Present())
+		assertAssertionOnlyProduct(t, innerRefinement.Refinement(), assertion.Any())
+		inputValues[innerRefinement.Source().ExprRef] = product.NewWithPresence(reg, product.ShapeTop, presence.Present())
 	}
 
 	factApply := factapply.NewFactsNodeTransfer(factapply.FactsNodeTransferConfig{
@@ -572,11 +572,11 @@ func TestLowerClaimWrappedCallPreservesProducerAndClaim(t *testing.T) {
 	if localSource.Kind != factflow.ValueSourceCall || localSource.ExprRef == innerRef || localSource.CallPoint != localPoints[0] || !localSource.HasCallPoint {
 		t.Fatalf("local wrapped call source = %#v, inner ref %d", localSource, innerRef)
 	}
-	claim, ok := facts.ValueOverlay(localSource.ExprRef)
+	claim, ok := facts.ExpressionRefinement(localSource.ExprRef)
 	if !ok {
 		t.Fatalf("missing assertion sidecar for outer ref %d", localSource.ExprRef)
 	}
-	if got := overlayAssertion(t, claim); !assertion.Equal(got, assertion.Type()) {
+	if got := refinementAssertion(t, claim); !assertion.Equal(got, assertion.Type()) {
 		t.Fatalf("outer assertion = %s, want type", got)
 	}
 	innerSource := claim.Source()
@@ -601,8 +601,8 @@ func TestLowerClaimWrappedCallPreservesProducerAndClaim(t *testing.T) {
 		t.Fatal("missing wrapped condition branch fact")
 	}
 	branchLowerer := lowerer{registry: standard.Registry(), exprs: make(map[any]factflow.ExprRef)}
-	branchInput := factflow.FactsInput{ValueOverlays: make(map[factflow.ExprRef]factflow.ValueOverlay)}
-	branchLowerer.addAssertionOverlaysForSource(&branchInput, branch.Source)
+	branchInput := factflow.FactsInput{ExpressionRefinements: make(map[factflow.ExprRef]factflow.ExpressionRefinement)}
+	branchLowerer.addAssertionRefinementsForSource(&branchInput, branch.Source)
 	branchFacts := factflow.NewFacts(branchInput)
 	branchSource := branchLowerer.valueSource(branch.Source)
 	if branchSource.Kind != factflow.ValueSourceCall || branchSource.CallPoint != ifPoints[0] || !branchSource.HasCallPoint {
@@ -611,7 +611,7 @@ func TestLowerClaimWrappedCallPreservesProducerAndClaim(t *testing.T) {
 	assertLoweredAssertion(t, branchFacts, branchSource, assertion.Type(), factflow.ValueSourceCall)
 }
 
-func TestLowerExpandedClaimWrappedCallKeepsPerResultSlotOverlays(t *testing.T) {
+func TestLowerExpandedClaimWrappedCallKeepsPerResultSlotRefinements(t *testing.T) {
 	cases := []struct {
 		name string
 		wrap func(*ast.FuncCallExpr) ast.Expr
@@ -663,20 +663,20 @@ func TestLowerExpandedClaimWrappedCallKeepsPerResultSlotOverlays(t *testing.T) {
 				t.Fatalf("expanded wrapped call reused one outer source ref for both result slots: %#v %#v", firstSource, secondSource)
 			}
 
-			assertSlotOverlay := func(source factflow.ValueSource, resultIndex int) {
+			assertSlotRefinement := func(source factflow.ValueSource, resultIndex int) {
 				t.Helper()
-				overlay, ok := facts.ValueOverlay(source.ExprRef)
+				refinement, ok := facts.ExpressionRefinement(source.ExprRef)
 				if !ok {
-					t.Fatalf("missing overlay for source ref %d", source.ExprRef)
+					t.Fatalf("missing refinement for source ref %d", source.ExprRef)
 				}
-				assertAssertionOnlyProduct(t, overlay.Overlay(), tc.want)
-				inner := overlay.Source()
+				assertAssertionOnlyProduct(t, refinement.Refinement(), tc.want)
+				inner := refinement.Source()
 				if inner.Kind != factflow.ValueSourceCall || inner.ExprRef != innerRef || inner.ResultIndex != resultIndex || inner.CallPoint != points[0] || !inner.HasCallPoint {
-					t.Fatalf("overlay source = %#v, want call ref %d result %d at point %d", inner, innerRef, resultIndex, points[0])
+					t.Fatalf("refinement source = %#v, want call ref %d result %d at point %d", inner, innerRef, resultIndex, points[0])
 				}
 			}
-			assertSlotOverlay(firstSource, 0)
-			assertSlotOverlay(secondSource, 1)
+			assertSlotRefinement(firstSource, 0)
+			assertSlotRefinement(secondSource, 1)
 
 			firstValue := product.Set(reg, product.NewWithPresence(reg, product.ShapeTop, presence.Present()), runtimekind.Key, runtimekind.Singleton(runtimekind.Number))
 			secondValue := product.Set(reg, product.NewWithPresence(reg, product.ShapeTop, presence.Present()), runtimekind.Key, runtimekind.Singleton(runtimekind.String))

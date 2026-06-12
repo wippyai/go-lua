@@ -17,24 +17,24 @@ import (
 	"github.com/wippyai/go-lua/analysis/symbol"
 )
 
-func TestFactsNodeTransferAppliesValueOverlaysToAssignments(t *testing.T) {
+func TestFactsNodeTransferAppliesExpressionRefinementsToAssignments(t *testing.T) {
 	tests := []struct {
 		name         string
 		innerAbsent  bool
-		overlay      product.Value
+		refinement   product.Value
 		wantKind     runtimekind.Value
 		wantPresence presence.Value
 	}{
 		{
-			name:         "runtime kind overlay attaches",
-			overlay:      runtimeKindConstraint(runtimekind.Singleton(runtimekind.Table)),
+			name:         "runtime kind refinement attaches",
+			refinement:   runtimeKindConstraint(runtimekind.Singleton(runtimekind.Table)),
 			wantKind:     runtimekind.Singleton(runtimekind.Table),
 			wantPresence: presence.Present(),
 		},
 		{
-			name:         "runtime kind overlay keeps absent presence",
+			name:         "runtime kind refinement keeps absent presence",
 			innerAbsent:  true,
-			overlay:      runtimeKindConstraint(runtimekind.Singleton(runtimekind.Function)),
+			refinement:   runtimeKindConstraint(runtimekind.Singleton(runtimekind.Function)),
 			wantKind:     runtimekind.Singleton(runtimekind.Function),
 			wantPresence: presence.Absent(),
 		},
@@ -65,8 +65,8 @@ func TestFactsNodeTransferAppliesValueOverlaysToAssignments(t *testing.T) {
 					LocalAssignments: map[cfg.Point]factflow.RootAssignment{
 						point: factflow.NewRootAssignment(target, path.NewPath(target, "value"), outerSource),
 					},
-					ValueOverlays: map[factflow.ExprRef]factflow.ValueOverlay{
-						outer: factflow.NewValueOverlay(innerSource, tc.overlay),
+					ExpressionRefinements: map[factflow.ExprRef]factflow.ExpressionRefinement{
+						outer: factflow.NewExpressionRefinement(innerSource, tc.refinement),
 					},
 				}),
 				Sources: sources,

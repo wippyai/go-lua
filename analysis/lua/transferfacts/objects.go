@@ -24,7 +24,7 @@ func (l *lowerer) addObjectLiteral(input *factflow.FactsInput, result *semantics
 	}
 	input.ObjectLiterals[exprRef] = lowered
 	for _, entry := range fact.Entries {
-		l.addAssertionOverlaysForSource(input, entry.Source)
+		l.addAssertionRefinementsForSource(input, entry.Source)
 	}
 }
 

@@ -47,20 +47,20 @@ func mustLocalSource(t *testing.T, facts factflow.Facts, point cfg.Point) factfl
 
 func assertLoweredAssertion(t *testing.T, facts factflow.Facts, source factflow.ValueSource, want assertion.Value, wantInnerKind factflow.ValueSourceKind) {
 	t.Helper()
-	claim, ok := facts.ValueOverlay(source.ExprRef)
+	claim, ok := facts.ExpressionRefinement(source.ExprRef)
 	if !ok {
 		t.Fatalf("missing assertion for source ref %d", source.ExprRef)
 	}
-	assertAssertionOnlyProduct(t, claim.Overlay(), want)
+	assertAssertionOnlyProduct(t, claim.Refinement(), want)
 	inner := claim.Source()
 	if inner.ExprRef == 0 || inner.ExprRef == source.ExprRef || inner.Kind != wantInnerKind {
 		t.Fatalf("assertion inner source = %#v, outer %#v", inner, source)
 	}
 }
 
-func overlayAssertion(t *testing.T, overlay factflow.ValueOverlay) assertion.Value {
+func refinementAssertion(t *testing.T, refinement factflow.ExpressionRefinement) assertion.Value {
 	t.Helper()
-	return product.Get(standard.Registry(), overlay.Overlay(), assertion.Key)
+	return product.Get(standard.Registry(), refinement.Refinement(), assertion.Key)
 }
 
 func assertAssertionOnlyProduct(t *testing.T, value product.Value, want assertion.Value) {
@@ -70,19 +70,19 @@ func assertAssertionOnlyProduct(t *testing.T, value product.Value, want assertio
 		t.Fatalf("assertion value = %s, want %s", got, want)
 	}
 	if got := product.ShapeOf(value); got != product.ShapeTop {
-		t.Fatalf("assertion overlay shape = %s, want top", got)
+		t.Fatalf("assertion refinement shape = %s, want top", got)
 	}
 	if got := product.PresenceOf(value); !presence.Equal(got, presence.Top()) {
-		t.Fatalf("assertion overlay presence = %s, want top", got)
+		t.Fatalf("assertion refinement presence = %s, want top", got)
 	}
 	if got := product.Get(reg, value, runtimekind.Key); !runtimekind.Equal(got, runtimekind.Top()) {
-		t.Fatalf("assertion overlay runtime kind = %s, want top", got)
+		t.Fatalf("assertion refinement runtime kind = %s, want top", got)
 	}
 	if got := product.Get(reg, value, evidence.Key); !evidence.Equal(got, evidence.Top()) {
-		t.Fatalf("assertion overlay evidence = %s, want top", got)
+		t.Fatalf("assertion refinement evidence = %s, want top", got)
 	}
 	if !product.Equal(reg, value, product.Set(reg, product.Top(), assertion.Key, want)) {
-		t.Fatalf("assertion overlay carried non-assertion axes")
+		t.Fatalf("assertion refinement carried non-assertion axes")
 	}
 }
 

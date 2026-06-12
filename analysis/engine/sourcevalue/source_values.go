@@ -110,27 +110,27 @@ func copyExpressionValues(in map[factflow.ExprRef]product.Value) map[factflow.Ex
 	return out
 }
 
-type valueOverlaySourceValues struct {
-	registry *axis.Registry
-	base     SourceValues
-	overlays map[factflow.ExprRef]factflow.ValueOverlay
+type expressionRefinementSourceValues struct {
+	registry    *axis.Registry
+	base        SourceValues
+	refinements map[factflow.ExprRef]factflow.ExpressionRefinement
 }
 
-func WithValueOverlays(reg *axis.Registry, base SourceValues, overlays map[factflow.ExprRef]factflow.ValueOverlay) SourceValues {
-	if base == nil || len(overlays) == 0 {
+func WithExpressionRefinements(reg *axis.Registry, base SourceValues, refinements map[factflow.ExprRef]factflow.ExpressionRefinement) SourceValues {
+	if base == nil || len(refinements) == 0 {
 		return base
 	}
 	if reg == nil {
-		panic("factflow: value overlay source values require a registry")
+		panic("factflow: expression refinement source values require a registry")
 	}
-	return valueOverlaySourceValues{
-		registry: reg,
-		base:     base,
-		overlays: overlays,
+	return expressionRefinementSourceValues{
+		registry:    reg,
+		base:        base,
+		refinements: refinements,
 	}
 }
 
-func (r valueOverlaySourceValues) ValueOfSource(
+func (r expressionRefinementSourceValues) ValueOfSource(
 	point cfg.Point,
 	source factflow.ValueSource,
 	in state.State,
@@ -139,7 +139,7 @@ func (r valueOverlaySourceValues) ValueOfSource(
 	return r.valueOfSource(point, source, in, read, nil)
 }
 
-func (r valueOverlaySourceValues) valueOfSource(
+func (r expressionRefinementSourceValues) valueOfSource(
 	point cfg.Point,
 	source factflow.ValueSource,
 	in state.State,
@@ -149,7 +149,7 @@ func (r valueOverlaySourceValues) valueOfSource(
 	if !source.HasExpr {
 		return r.base.ValueOfSource(point, source, in, read)
 	}
-	if overlay, ok := r.overlays[source.ExprRef]; ok {
+	if refinement, ok := r.refinements[source.ExprRef]; ok {
 		if active[source.ExprRef] {
 			return product.Value{}, false
 		}
@@ -157,12 +157,12 @@ func (r valueOverlaySourceValues) valueOfSource(
 			active = make(map[factflow.ExprRef]bool, 1)
 		}
 		active[source.ExprRef] = true
-		value, ok := r.valueOfSource(point, overlay.Source(), in, read, active)
+		value, ok := r.valueOfSource(point, refinement.Source(), in, read, active)
 		delete(active, source.ExprRef)
 		if !ok {
 			return product.Value{}, false
 		}
-		return product.Meet(r.registry, value, overlay.Overlay()), true
+		return product.Meet(r.registry, value, refinement.Refinement()), true
 	}
 	return r.base.ValueOfSource(point, source, in, read)
 }

@@ -180,5 +180,5 @@ func (r *Result) boundarySources() sourcevalue.SourceValues {
 	if r == nil || r.sources == nil {
 		return nil
 	}
-	return sourcevalue.WithValueOverlays(r.registry, r.sources, r.facts.ValueOverlays())
+	return sourcevalue.WithExpressionRefinements(r.registry, r.sources, r.facts.ExpressionRefinements())
 }

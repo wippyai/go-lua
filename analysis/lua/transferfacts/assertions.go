@@ -8,7 +8,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 )
 
-func (l *lowerer) addAssertionOverlaysForSource(input *factflow.FactsInput, source sourceprovenance.ASTSource) {
+func (l *lowerer) addAssertionRefinementsForSource(input *factflow.FactsInput, source sourceprovenance.ASTSource) {
 	if input == nil || source.Expr == nil {
 		return
 	}
@@ -27,14 +27,14 @@ func (l *lowerer) addAssertion(input *factflow.FactsInput, outer sourceprovenanc
 	}
 	inner := outer
 	inner.Expr = innerExpr
-	if input.ValueOverlays == nil {
-		input.ValueOverlays = make(map[factflow.ExprRef]factflow.ValueOverlay)
+	if input.ExpressionRefinements == nil {
+		input.ExpressionRefinements = make(map[factflow.ExprRef]factflow.ExpressionRefinement)
 	}
-	input.ValueOverlays[outerSource.ExprRef] = factflow.NewValueOverlay(l.valueSource(inner), l.assertionOverlay(value))
-	l.addAssertionOverlaysForSource(input, inner)
+	input.ExpressionRefinements[outerSource.ExprRef] = factflow.NewExpressionRefinement(l.valueSource(inner), l.assertionRefinement(value))
+	l.addAssertionRefinementsForSource(input, inner)
 }
 
-func (l *lowerer) assertionOverlay(value assertion.Value) product.Value {
+func (l *lowerer) assertionRefinement(value assertion.Value) product.Value {
 	return product.Set(l.registry, product.Top(), assertion.Key, value)
 }
 

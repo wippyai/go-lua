@@ -50,26 +50,26 @@ func Lower(result *semantics.Result, graph cfg.Graph, config Config) factflow.Fa
 		Calls:                       make(map[cfg.Point]factflow.CallProducer),
 		CallSites:                   make(map[cfg.Point]factflow.CallSite),
 		ObjectLiterals:              make(map[factflow.ExprRef]factflow.ObjectLiteral),
-		ValueOverlays:               make(map[factflow.ExprRef]factflow.ValueOverlay),
+		ExpressionRefinements:       make(map[factflow.ExprRef]factflow.ExpressionRefinement),
 	}
 	for _, point := range graph.RPO() {
 		if fact, ok := result.LocalAssignment(point); ok {
 			if lowered, ok := l.localAssignment(fact); ok {
 				input.LocalAssignments[point] = lowered
-				l.addAssertionOverlaysForSource(&input, fact.Source)
+				l.addAssertionRefinementsForSource(&input, fact.Source)
 				l.addObjectLiteral(&input, result, fact.Source)
 			}
 		}
 		if fact, ok := result.OrdinaryAssignment(point); ok {
 			if lowered, ok := l.pathAssignment(fact); ok {
 				input.PathAssignments[point] = lowered
-				l.addAssertionOverlaysForSource(&input, fact.Source)
+				l.addAssertionRefinementsForSource(&input, fact.Source)
 				l.addObjectLiteral(&input, result, fact.Source)
 			} else if lowered, ok := l.pathDescendantInvalidation(fact); ok {
 				input.PathDescendantInvalidations[point] = lowered
 			} else if lowered, ok := l.ordinaryAssignment(fact); ok {
 				input.OrdinaryAssignments[point] = lowered
-				l.addAssertionOverlaysForSource(&input, fact.Source)
+				l.addAssertionRefinementsForSource(&input, fact.Source)
 				l.addObjectLiteral(&input, result, fact.Source)
 			}
 		}
@@ -79,13 +79,13 @@ func Lower(result *semantics.Result, graph cfg.Graph, config Config) factflow.Fa
 				input.ReturnPresenceRelations[point] = factflow.NewReturnPresenceRelationSet(relations...)
 			}
 			for _, source := range fact.Sources {
-				l.addAssertionOverlaysForSource(&input, source)
+				l.addAssertionRefinementsForSource(&input, source)
 			}
 		}
 		if fact, ok := result.Call(point); ok {
 			input.CallSites[point] = l.callSite(fact)
 			for _, source := range fact.ArgumentSources {
-				l.addAssertionOverlaysForSource(&input, source)
+				l.addAssertionRefinementsForSource(&input, source)
 				l.addObjectLiteral(&input, result, source)
 			}
 			if lowered, ok := l.assertPostconditionRefinement(fact); ok {
@@ -111,7 +111,7 @@ func Lower(result *semantics.Result, graph cfg.Graph, config Config) factflow.Fa
 			if lowered, ok := l.branchPathRelations(fact); ok {
 				input.BranchPathRelations[point] = lowered
 			}
-			l.addAssertionOverlaysForSource(&input, fact.Source)
+			l.addAssertionRefinementsForSource(&input, fact.Source)
 		}
 	}
 	l.addTypeIsBranchRefinements(&input, graph, result)

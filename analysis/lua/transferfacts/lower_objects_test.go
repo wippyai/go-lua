@@ -58,7 +58,7 @@ func TestLowerObjectLiteralSidecarUsesAssignmentExprRef(t *testing.T) {
 	}
 }
 
-func TestLowerWrappedObjectLiteralKeepsAssertionOverlayAndEntries(t *testing.T) {
+func TestLowerWrappedObjectLiteralKeepsAssertionRefinementAndEntries(t *testing.T) {
 	leafValue := number("1")
 	table := &ast.TableExpr{Fields: []*ast.Field{
 		{Key: stringLit("leaf"), KeySyntax: ast.AttrKeyDot, Value: leafValue},

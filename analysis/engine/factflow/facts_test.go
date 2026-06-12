@@ -191,13 +191,13 @@ func TestDTOConstructorsAndAccessorsCopySlices(t *testing.T) {
 		t.Fatalf("object literal exposed mutable entries: %#v", got)
 	}
 
-	overlayValue := runtimeKindConstraint(runtimekind.Singleton(runtimekind.Table))
-	overlay := NewValueOverlay(source, overlayValue)
-	if got := overlay.Source(); got != source {
-		t.Fatalf("value overlay source = %#v, want %#v", got, source)
+	refinementValue := runtimeKindConstraint(runtimekind.Singleton(runtimekind.Table))
+	refinement := NewExpressionRefinement(source, refinementValue)
+	if got := refinement.Source(); got != source {
+		t.Fatalf("expression refinement source = %#v, want %#v", got, source)
 	}
-	if got := overlay.Overlay(); !product.Equal(standard.Registry(), got, overlayValue) {
-		t.Fatalf("value overlay = %s, want %s", formatValue(standard.Registry(), got), formatValue(standard.Registry(), overlayValue))
+	if got := refinement.Refinement(); !product.Equal(standard.Registry(), got, refinementValue) {
+		t.Fatalf("expression refinement = %s, want %s", formatValue(standard.Registry(), got), formatValue(standard.Registry(), refinementValue))
 	}
 
 	returnSources := []ValueSource{source, callSource}
@@ -476,8 +476,8 @@ func TestFactsCarrierCopiesAndReturnsFalseForMissingFacts(t *testing.T) {
 				NewObjectEntry(path.Path{Segments: []segment.Segment{{Kind: segment.SegmentField, Name: "field"}}}, source),
 			}),
 		},
-		ValueOverlays: map[ExprRef]ValueOverlay{
-			ExprRef(4): NewValueOverlay(source, runtimeKindConstraint(runtimekind.Singleton(runtimekind.Table))),
+		ExpressionRefinements: map[ExprRef]ExpressionRefinement{
+			ExprRef(4): NewExpressionRefinement(source, runtimeKindConstraint(runtimekind.Singleton(runtimekind.Table))),
 		},
 		ExpressionPaths: map[ExprRef]path.Path{
 			ExprRef(6): path.NewPath(symbol.ID(54), "read").Field("leaf"),
@@ -529,7 +529,7 @@ func TestFactsCarrierCopiesAndReturnsFalseForMissingFacts(t *testing.T) {
 	input.ObjectLiterals[ExprRef(1)] = NewObjectLiteral([]ObjectEntry{
 		NewObjectEntry(path.Path{Segments: []segment.Segment{{Kind: segment.SegmentField, Name: "changed"}}}, callSource),
 	})
-	input.ValueOverlays[ExprRef(4)] = NewValueOverlay(callSource, runtimeKindConstraint(runtimekind.Singleton(runtimekind.Function)))
+	input.ExpressionRefinements[ExprRef(4)] = NewExpressionRefinement(callSource, runtimeKindConstraint(runtimekind.Singleton(runtimekind.Function)))
 	input.ExpressionPaths[ExprRef(6)] = path.NewPath(symbol.ID(55), "changed").Field("leaf")
 
 	if _, ok := facts.LocalAssignment(missing); ok {
@@ -571,8 +571,8 @@ func TestFactsCarrierCopiesAndReturnsFalseForMissingFacts(t *testing.T) {
 	if _, ok := facts.ObjectLiteral(ExprRef(99)); ok {
 		t.Fatal("missing object literal returned ok")
 	}
-	if _, ok := facts.ValueOverlay(ExprRef(99)); ok {
-		t.Fatal("missing value overlay returned ok")
+	if _, ok := facts.ExpressionRefinement(ExprRef(99)); ok {
+		t.Fatal("missing expression refinement returned ok")
 	}
 	if _, ok := facts.ExpressionPath(ExprRef(99)); ok {
 		t.Fatal("missing expression path returned ok")
@@ -798,13 +798,13 @@ func TestFactsCarrierCopiesAndReturnsFalseForMissingFacts(t *testing.T) {
 		t.Fatalf("facts object literal exposed mutable suffix: %#v", got)
 	}
 
-	overlayFact, ok := facts.ValueOverlay(ExprRef(4))
+	refinementFact, ok := facts.ExpressionRefinement(ExprRef(4))
 	if !ok {
-		t.Fatal("value overlay missing")
+		t.Fatal("expression refinement missing")
 	}
-	wantOverlay := runtimeKindConstraint(runtimekind.Singleton(runtimekind.Table))
-	if overlayFact.Source() != source || !product.Equal(standard.Registry(), overlayFact.Overlay(), wantOverlay) {
-		t.Fatalf("value overlay fact = %#v, want original overlay", overlayFact)
+	wantRefinement := runtimeKindConstraint(runtimekind.Singleton(runtimekind.Table))
+	if refinementFact.Source() != source || !product.Equal(standard.Registry(), refinementFact.Refinement(), wantRefinement) {
+		t.Fatalf("expression refinement fact = %#v, want original refinement", refinementFact)
 	}
 
 	exprPath, ok := facts.ExpressionPath(ExprRef(6))
