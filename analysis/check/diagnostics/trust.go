@@ -154,16 +154,15 @@ func boundaryValueFromSource(result *check.Result, point cfg.Point, source sourc
 		return product.Value{}, false
 	}
 	if source.Kind == factflow.ValueSourceCall {
-		return result.SourceValueAtBoundary(point, factflow.ValueSource{
-			Kind:         source.Kind,
-			ResultIndex:  source.ResultIndex,
-			CallPoint:    source.CallPoint,
-			HasCallPoint: source.HasCallPoint,
-			Final:        source.Final,
-			Expanded:     source.Expanded,
-			Adjusted:     source.Adjusted,
-			OpenTail:     source.OpenTail,
-		})
+		shape, ok := factflow.NewValueSourceShape(source.Final, source.Expanded, source.Adjusted, source.OpenTail)
+		if !ok {
+			return product.Value{}, false
+		}
+		valueSource, ok := factflow.NewCallValueSource(0, source.ExprIndex, source.TargetIndex, source.ResultIndex, source.CallPoint, shape)
+		if !ok {
+			return product.Value{}, false
+		}
+		return result.SourceValueAtBoundary(point, valueSource)
 	}
 	if source.Expr != nil {
 		return result.ExpressionValueAtBoundary(point, source.Expr)

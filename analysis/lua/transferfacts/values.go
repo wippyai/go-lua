@@ -62,20 +62,34 @@ func (l *lowerer) valueSource(source sourceprovenance.ASTSource) factflow.ValueS
 		l.addExpressionPath(exprRef, source.Expr)
 		l.addExpressionCondition(exprRef, source.Expr)
 	}
-	return factflow.ValueSource{
-		Kind:         source.Kind,
-		ExprRef:      exprRef,
-		HasExpr:      hasExpr,
-		ExprIndex:    source.ExprIndex,
-		TargetIndex:  source.TargetIndex,
-		ResultIndex:  source.ResultIndex,
-		CallPoint:    source.CallPoint,
-		HasCallPoint: source.HasCallPoint,
-		Final:        source.Final,
-		Expanded:     source.Expanded,
-		Adjusted:     source.Adjusted,
-		OpenTail:     source.OpenTail,
+	shape, ok := factflow.NewValueSourceShape(source.Final, source.Expanded, source.Adjusted, source.OpenTail)
+	if !ok {
+		panic("transferfacts: invalid value source shape")
 	}
+	switch source.Kind {
+	case factflow.ValueSourceExpression:
+		return mustValueSource(factflow.NewExpressionValueSource(exprRef, source.ExprIndex, source.TargetIndex, source.ResultIndex, shape))
+	case factflow.ValueSourceCall:
+		if !source.HasCallPoint {
+			return factflow.NewUnknownValueSource(source.TargetIndex)
+		}
+		return mustValueSource(factflow.NewCallValueSource(exprRef, source.ExprIndex, source.TargetIndex, source.ResultIndex, source.CallPoint, shape))
+	case factflow.ValueSourceVararg:
+		return mustValueSource(factflow.NewVarargValueSource(exprRef, source.ExprIndex, source.TargetIndex, source.ResultIndex, shape))
+	case factflow.ValueSourceNil:
+		return factflow.NewNilValueSource(source.TargetIndex)
+	case factflow.ValueSourceUnknown:
+		return factflow.NewUnknownValueSource(source.TargetIndex)
+	default:
+		panic("transferfacts: unknown value source kind")
+	}
+}
+
+func mustValueSource(source factflow.ValueSource, ok bool) factflow.ValueSource {
+	if !ok {
+		panic("transferfacts: invalid value source")
+	}
+	return source
 }
 
 type sourceExprRefKey struct {

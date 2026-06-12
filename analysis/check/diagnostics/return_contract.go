@@ -223,12 +223,11 @@ func boundaryCallResultReader(callPoint cfg.Point, resultIndex int) boundaryValu
 		if resultIndex < 0 {
 			return product.Value{}, false
 		}
-		return result.SourceValueAtBoundary(point, factflow.ValueSource{
-			Kind:         factflow.ValueSourceCall,
-			ResultIndex:  resultIndex,
-			CallPoint:    callPoint,
-			HasCallPoint: callPoint != 0,
-		})
+		source, ok := factflow.NewCallValueSource(0, factflow.NoValueSourceIndex, factflow.NoValueSourceIndex, resultIndex, callPoint, factflow.ValueSourceShape{})
+		if !ok {
+			return product.Value{}, false
+		}
+		return result.SourceValueAtBoundary(point, source)
 	}
 }
 
