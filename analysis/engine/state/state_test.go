@@ -10,11 +10,12 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/domain/value/standard"
 	"github.com/wippyai/go-lua/analysis/symbol"
 )
 
 func TestBottomReadsProductBottom(t *testing.T) {
-	reg := product.DefaultRegistry()
+	reg := standard.Registry()
 	valueDomain := product.Domain(reg)
 	var s State
 
@@ -27,7 +28,7 @@ func TestBottomReadsProductBottom(t *testing.T) {
 }
 
 func TestWriteReadValueSlots(t *testing.T) {
-	reg := product.DefaultRegistry()
+	reg := standard.Registry()
 	valueDomain := product.Domain(reg)
 	symSlot := key.SymbolValue(symbol.ID(10))
 	retSlot := key.ReturnSlot(1)
@@ -47,7 +48,7 @@ func TestWriteReadValueSlots(t *testing.T) {
 }
 
 func TestWritesAreImmutable(t *testing.T) {
-	reg := product.DefaultRegistry()
+	reg := standard.Registry()
 	valueDomain := product.Domain(reg)
 	slot := key.SymbolValue(symbol.ID(11))
 	pathKey := pathdom.PathKey("sym11@1.field")
@@ -76,7 +77,7 @@ func TestWritesAreImmutable(t *testing.T) {
 }
 
 func TestUpdateHelpersReadCurrentAndCanonicalizeBottom(t *testing.T) {
-	reg := product.DefaultRegistry()
+	reg := standard.Registry()
 	valueDomain := product.Domain(reg)
 	stateDomain := Domain(reg)
 	slot := key.SymbolValue(symbol.ID(12))
@@ -140,7 +141,7 @@ func TestUpdateHelpersReadCurrentAndCanonicalizeBottom(t *testing.T) {
 }
 
 func TestDomainPointwiseOperations(t *testing.T) {
-	reg := product.DefaultRegistry()
+	reg := standard.Registry()
 	valueDomain := product.Domain(reg)
 	stateDomain := Domain(reg)
 	present := presentValue(reg)
@@ -192,7 +193,7 @@ func TestDomainPointwiseOperations(t *testing.T) {
 }
 
 func TestExplicitBottomEntriesCanonicalizeToAbsence(t *testing.T) {
-	reg := product.DefaultRegistry()
+	reg := standard.Registry()
 	valueDomain := product.Domain(reg)
 	stateDomain := Domain(reg)
 	bottom := valueDomain.Bottom()
@@ -224,7 +225,7 @@ func TestExplicitBottomEntriesCanonicalizeToAbsence(t *testing.T) {
 }
 
 func TestInvalidatePathKeySubtreeRemovesStructuredDescendants(t *testing.T) {
-	reg := product.DefaultRegistry()
+	reg := standard.Registry()
 	valueDomain := product.Domain(reg)
 	present := presentValue(reg)
 	bottom := valueDomain.Bottom()
@@ -292,7 +293,7 @@ func TestInvalidatePathKeySubtreeRemovesStructuredDescendants(t *testing.T) {
 }
 
 func TestInvalidatePathKeyDescendantsKeepsContainerAndUnrelatedPaths(t *testing.T) {
-	reg := product.DefaultRegistry()
+	reg := standard.Registry()
 	valueDomain := product.Domain(reg)
 	present := presentValue(reg)
 	bottom := valueDomain.Bottom()
@@ -356,7 +357,7 @@ func TestInvalidatePathKeyDescendantsKeepsContainerAndUnrelatedPaths(t *testing.
 }
 
 func TestTopLanesReadTopAndRejectFiniteUpdates(t *testing.T) {
-	reg := product.DefaultRegistry()
+	reg := standard.Registry()
 	valueDomain := product.Domain(reg)
 	top := Domain(reg).Top()
 	slot := key.SymbolValue(symbol.ID(50))

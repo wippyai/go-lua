@@ -9,6 +9,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/domain/value/standard"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/visibility"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
@@ -16,7 +17,7 @@ import (
 )
 
 func TestProjectExactPresentDropsNil(t *testing.T) {
-	reg := product.DefaultRegistry()
+	reg := standard.Registry()
 	point := cfg.Point(1)
 	resolver := testResolver(point, symbol.ID(10), "t")
 	readPath := path.NewPath(symbol.ID(10), "t").Field("name")
@@ -38,7 +39,7 @@ func TestProjectExactPresentDropsNil(t *testing.T) {
 }
 
 func TestProjectExactAbsentReturnsNil(t *testing.T) {
-	reg := product.DefaultRegistry()
+	reg := standard.Registry()
 	point := cfg.Point(2)
 	resolver := testResolver(point, symbol.ID(11), "t")
 	readPath := path.NewPath(symbol.ID(11), "t").IndexStr("missing")
@@ -53,7 +54,7 @@ func TestProjectExactAbsentReturnsNil(t *testing.T) {
 }
 
 func TestProjectNoExactProofKeepsRuntimeIndexOptionality(t *testing.T) {
-	reg := product.DefaultRegistry()
+	reg := standard.Registry()
 	point := cfg.Point(3)
 	resolver := testResolver(point, symbol.ID(12), "t")
 	readPath := path.NewPath(symbol.ID(12), "t").IndexInt(1)
@@ -68,7 +69,7 @@ func TestProjectNoExactProofKeepsRuntimeIndexOptionality(t *testing.T) {
 }
 
 func TestProjectRejectsKnownNonTableParent(t *testing.T) {
-	reg := product.DefaultRegistry()
+	reg := standard.Registry()
 	point := cfg.Point(4)
 	resolver := testResolver(point, symbol.ID(13), "t")
 	readPath := path.NewPath(symbol.ID(13), "t").Field("name")
@@ -81,7 +82,7 @@ func TestProjectRejectsKnownNonTableParent(t *testing.T) {
 }
 
 func TestProjectChildProofDoesNotProveParentAggregate(t *testing.T) {
-	reg := product.DefaultRegistry()
+	reg := standard.Registry()
 	point := cfg.Point(5)
 	resolver := testResolver(point, symbol.ID(14), "t")
 	parentPath := path.NewPath(symbol.ID(14), "t")

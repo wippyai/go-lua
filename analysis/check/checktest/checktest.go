@@ -10,7 +10,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/check"
 	"github.com/wippyai/go-lua/analysis/check/diagnostics"
 	"github.com/wippyai/go-lua/analysis/diagnostic"
-	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/domain/value/standard"
 	"github.com/wippyai/go-lua/analysis/module/manifest"
 	"github.com/wippyai/go-lua/analysis/module/signaturelookup"
 	"github.com/wippyai/go-lua/analysis/type/typ"
@@ -98,7 +98,7 @@ func checkSource(src, filename string, opts ...Option) Result {
 			Severity: diagnostic.SeverityError,
 		}}}
 	}
-	reg := product.DefaultRegistry()
+	reg := standard.Registry()
 	signatures := cfg.signatureSource()
 	precheck := diagnostics.Precheck(stmts, diagnostics.Config{Registry: reg})
 	checked, err := check.CheckChunk(stmts, check.Config{Registry: reg, Signatures: signatures})

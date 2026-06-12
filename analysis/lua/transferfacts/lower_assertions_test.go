@@ -10,8 +10,9 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
-	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
+	"github.com/wippyai/go-lua/analysis/domain/value/standard"
 	factapply "github.com/wippyai/go-lua/analysis/engine/factapply"
+	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/sourcevalue"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
@@ -39,7 +40,7 @@ func TestLowerClaimsToSidecarsWithoutProofRefinements(t *testing.T) {
 		t.Fatalf("ExtractChunk: %v", err)
 	}
 
-	facts := lowerFacts(t, result, built.Graph, product.DefaultRegistry())
+	facts := lowerFacts(t, result, built.Graph, standard.Registry())
 	points := requireStmtPoints(t, built, local, 3)
 	typeSource := mustLocalSource(t, facts, points[0])
 	anySource := mustLocalSource(t, facts, points[1])
@@ -72,7 +73,7 @@ func TestLowerClaimsPreserveCastSyntaxVariantsWithoutProofRefinements(t *testing
 		t.Fatalf("ExtractChunk: %v", err)
 	}
 
-	facts := lowerFacts(t, result, built.Graph, product.DefaultRegistry())
+	facts := lowerFacts(t, result, built.Graph, standard.Registry())
 	points := requireStmtPoints(t, built, local, 4)
 	cases := []struct {
 		name  string
@@ -99,7 +100,7 @@ local x = 0
 local a, b, c, d = x as number, x :: number, x as any, x :: any
 `)
 
-	facts := lowerFacts(t, result, built.Graph, product.DefaultRegistry())
+	facts := lowerFacts(t, result, built.Graph, standard.Registry())
 	assertNoCompilerASTTypes(t, reflect.TypeOf(facts))
 
 	local := mustLocalStmt(t, stmts, 1)
@@ -135,7 +136,7 @@ if x as number then end
 if x :: number then end
 `)
 
-	facts := lowerFacts(t, result, built.Graph, product.DefaultRegistry())
+	facts := lowerFacts(t, result, built.Graph, standard.Registry())
 	cases := []struct {
 		name   string
 		index  int
@@ -165,7 +166,7 @@ if x :: number then end
 				t.Fatalf("cast syntax = %v, want %v", cast.Syntax, tc.syntax)
 			}
 
-			branchLowerer := lowerer{exprs: make(map[any]factflow.ExprRef)}
+			branchLowerer := lowerer{registry: standard.Registry(), exprs: make(map[any]factflow.ExprRef)}
 			branchInput := factflow.FactsInput{ValueOverlays: make(map[factflow.ExprRef]factflow.ValueOverlay)}
 			branchLowerer.addAssertionOverlaysForSource(&branchInput, branch.Source)
 			branchFacts := factflow.NewFacts(branchInput)
@@ -181,8 +182,8 @@ local x = 0
 local a, b = x as any, x :: any
 `)
 
-	reg := product.DefaultRegistry()
-	facts := lowerFacts(t, result, built.Graph, product.DefaultRegistry())
+	reg := standard.Registry()
+	facts := lowerFacts(t, result, built.Graph, standard.Registry())
 	local := mustLocalStmt(t, stmts, 1)
 	points := requireStmtPoints(t, built, local, 2)
 	base := product.Set(reg, product.NewWithPresence(reg, product.ShapeTop, presence.Present()), runtimekind.Key, runtimekind.Singleton(runtimekind.Table))
@@ -277,7 +278,7 @@ func TestLowerNestedClaimsPreserveOuterIdentityAndInnerFlow(t *testing.T) {
 		t.Fatalf("ExtractChunk: %v", err)
 	}
 
-	facts := lowerFacts(t, result, built.Graph, product.DefaultRegistry())
+	facts := lowerFacts(t, result, built.Graph, standard.Registry())
 	source := mustLocalSource(t, facts, requireStmtPoints(t, built, local, 1)[0])
 	outer, ok := facts.ValueOverlay(source.ExprRef)
 	if !ok {
@@ -316,9 +317,9 @@ func TestLowerClaimOverlaysApplyIndicatorsWithoutMutatingBaseValues(t *testing.T
 		t.Fatalf("ExtractChunk: %v", err)
 	}
 
-	reg, err := product.DefaultRegistryWithAxes(testLowerSparseAxisSpec().Erase())
+	reg, err := standard.RegistryWithAxes(testLowerSparseAxisSpec().Erase())
 	if err != nil {
-		t.Fatalf("DefaultRegistryWithAxes error = %v", err)
+		t.Fatalf("RegistryWithAxes error = %v", err)
 	}
 	facts := lowerFacts(t, result, built.Graph, reg)
 	points := requireStmtPoints(t, built, local, 3)
@@ -446,8 +447,8 @@ func TestLowerNestedClaimOverlaysApplyCombinedIndicators(t *testing.T) {
 		t.Fatalf("ExtractChunk: %v", err)
 	}
 
-	reg := product.DefaultRegistry()
-	facts := lowerFacts(t, result, built.Graph, product.DefaultRegistry())
+	reg := standard.Registry()
+	facts := lowerFacts(t, result, built.Graph, standard.Registry())
 	point := requireStmtPoints(t, built, local, 1)[0]
 	source := mustLocalSource(t, facts, point)
 	outer, ok := facts.ValueOverlay(source.ExprRef)
@@ -490,7 +491,7 @@ local x = 0
 local a, b = (x as any) as number, (x :: any) :: number
 `)
 
-	reg := product.DefaultRegistry()
+	reg := standard.Registry()
 	facts := lowerFacts(t, result, built.Graph, reg)
 	local := mustLocalStmt(t, stmts, 1)
 	points := requireStmtPoints(t, built, local, 2)
@@ -557,7 +558,7 @@ func TestLowerClaimWrappedCallPreservesProducerAndClaim(t *testing.T) {
 		t.Fatalf("ExtractChunk: %v", err)
 	}
 
-	facts := lowerFacts(t, result, built.Graph, product.DefaultRegistry())
+	facts := lowerFacts(t, result, built.Graph, standard.Registry())
 	localPoints := requireStmtPoints(t, built, local, 2)
 	producer, ok := facts.Call(localPoints[0])
 	if !ok {
@@ -599,7 +600,7 @@ func TestLowerClaimWrappedCallPreservesProducerAndClaim(t *testing.T) {
 	if !ok {
 		t.Fatal("missing wrapped condition branch fact")
 	}
-	branchLowerer := lowerer{exprs: make(map[any]factflow.ExprRef)}
+	branchLowerer := lowerer{registry: standard.Registry(), exprs: make(map[any]factflow.ExprRef)}
 	branchInput := factflow.FactsInput{ValueOverlays: make(map[factflow.ExprRef]factflow.ValueOverlay)}
 	branchLowerer.addAssertionOverlaysForSource(&branchInput, branch.Source)
 	branchFacts := factflow.NewFacts(branchInput)

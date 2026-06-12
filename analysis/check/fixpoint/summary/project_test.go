@@ -9,6 +9,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/domain/value/standard"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
@@ -150,7 +151,7 @@ const (
 func projectTestRegistry(t *testing.T) (*axis.Registry, axis.Key[projectMark]) {
 	t.Helper()
 	axisKey := axis.NewKey[projectMark]("summary.project.test." + strings.ReplaceAll(t.Name(), "/", "."))
-	reg, err := product.DefaultRegistryWithAxes(axis.Spec[projectMark]{
+	reg, err := standard.RegistryWithAxes(axis.Spec[projectMark]{
 		Key:    axisKey,
 		Bottom: func() projectMark { return projectMarkBottom },
 		Top:    func() projectMark { return projectMarkTop },
@@ -194,7 +195,7 @@ func projectTestRegistry(t *testing.T) (*axis.Registry, axis.Key[projectMark]) {
 		Hash: func(v projectMark) uint64 { return uint64(v) },
 	}.Erase())
 	if err != nil {
-		t.Fatalf("DefaultRegistryWithAxes: %v", err)
+		t.Fatalf("RegistryWithAxes: %v", err)
 	}
 	return reg, axisKey
 }

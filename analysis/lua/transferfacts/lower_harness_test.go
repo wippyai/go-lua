@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/domain/path"
-	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/domain/value/standard"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/lua/cfgbuild"
@@ -67,7 +67,7 @@ func TestLowerDoesNotLowerDeclarationOrControlSidecars(t *testing.T) {
 		t.Fatalf("ExtractChunk: %v", err)
 	}
 
-	facts := lowerFacts(t, result, built.Graph, product.DefaultRegistry())
+	facts := lowerFacts(t, result, built.Graph, standard.Registry())
 	assertNoCompilerASTTypes(t, reflect.TypeOf(facts))
 
 	for _, point := range requireStmtPoints(t, built, typeDef, 1) {
@@ -139,7 +139,7 @@ func TestLowerAssignmentsReturnsAndCallsPreserveValueListMetadata(t *testing.T) 
 		t.Fatalf("ExtractChunk: %v", err)
 	}
 
-	facts := lowerFacts(t, result, built.Graph, product.DefaultRegistry())
+	facts := lowerFacts(t, result, built.Graph, standard.Registry())
 	assertNoCompilerASTTypes(t, reflect.TypeOf(facts))
 
 	localPoints := requireStmtPoints(t, built, local, 5)
@@ -261,7 +261,7 @@ local d = t[k]
 `)
 	_ = stmts
 
-	facts := Lower(result, built.Graph, Config{Registry: product.DefaultRegistry(), Bindings: bindings})
+	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings})
 
 	assertExprPath := func(source factflow.ValueSource, want path.Path) {
 		t.Helper()
@@ -301,7 +301,7 @@ func TestLowerOrdinaryAssignmentsSplitsRootAndStaticPathWrites(t *testing.T) {
 		t.Fatalf("ExtractChunk: %v", err)
 	}
 
-	facts := lowerFacts(t, result, built.Graph, product.DefaultRegistry())
+	facts := lowerFacts(t, result, built.Graph, standard.Registry())
 	tSym := mustLocalAt(t, bindings, local, 0)
 
 	dotPoint := requireStmtPoints(t, built, dotWrite, 1)[0]

@@ -16,8 +16,9 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
-	"github.com/wippyai/go-lua/analysis/engine/factflow"
+	"github.com/wippyai/go-lua/analysis/domain/value/standard"
 	factapply "github.com/wippyai/go-lua/analysis/engine/factapply"
+	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	sourcevalue "github.com/wippyai/go-lua/analysis/engine/sourcevalue"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
@@ -36,7 +37,7 @@ func (m signatureMap) Lookup(name string) (signature.Function, bool) {
 }
 
 func TestByCalleeSymbolProviderReadsSummaryReturns(t *testing.T) {
-	reg := product.DefaultRegistry()
+	reg := standard.Registry()
 	callee := symbol.ID(17)
 	key := summary.DefaultSummaryKey(ref.FuncRef{Kind: ref.KindSymbol, ID: 18})
 	first := product.Top()
@@ -54,7 +55,7 @@ func TestByCalleeSymbolProviderReadsSummaryReturns(t *testing.T) {
 }
 
 func TestSignatureProviderMaterializesDeclaredReturns(t *testing.T) {
-	reg := product.DefaultRegistry()
+	reg := standard.Registry()
 	provider := SignatureProvider(SignatureProviderConfig{
 		Signatures: signatureMap{
 			"f": {Type: typ.Func().Returns(typ.Number, typ.String).Build()},
@@ -126,8 +127,8 @@ func TestWithSignatureRelationsLowersErrorReturnToBranchPresenceRelations(t *tes
 		BranchRefinements: map[cfg.Point]factflow.BranchRefinement{
 			branch: factflow.NewBranchRefinement(
 				errPath,
-				factflow.NewValueConstraint(product.NewWithPresence(product.DefaultRegistry(), product.ShapeTop, presence.Absent())), true,
-				factflow.NewValueConstraint(product.NewWithPresence(product.DefaultRegistry(), product.ShapeTop, presence.Present())), true,
+				factflow.NewValueConstraint(product.NewWithPresence(standard.Registry(), product.ShapeTop, presence.Absent())), true,
+				factflow.NewValueConstraint(product.NewWithPresence(standard.Registry(), product.ShapeTop, presence.Present())), true,
 			),
 		},
 	})
@@ -207,8 +208,8 @@ func TestWithSignatureRelationsStopsAtErrorReturnTargetReassignment(t *testing.T
 		BranchRefinements: map[cfg.Point]factflow.BranchRefinement{
 			branch: factflow.NewBranchRefinement(
 				errPath,
-				factflow.NewValueConstraint(product.NewWithPresence(product.DefaultRegistry(), product.ShapeTop, presence.Absent())), true,
-				factflow.NewValueConstraint(product.NewWithPresence(product.DefaultRegistry(), product.ShapeTop, presence.Present())), true,
+				factflow.NewValueConstraint(product.NewWithPresence(standard.Registry(), product.ShapeTop, presence.Absent())), true,
+				factflow.NewValueConstraint(product.NewWithPresence(standard.Registry(), product.ShapeTop, presence.Present())), true,
 			),
 		},
 	})
@@ -228,7 +229,7 @@ func TestWithSignatureRelationsStopsAtErrorReturnTargetReassignment(t *testing.T
 }
 
 func TestSignatureProviderSameAsReturnsArgumentValue(t *testing.T) {
-	reg := product.DefaultRegistry()
+	reg := standard.Registry()
 	point := cfg.Point(4)
 	argRef := factflow.ExprRef(7)
 	argValue := product.Set(reg, product.Top(), runtimekind.Key, runtimekind.Singleton(runtimekind.String))
@@ -259,7 +260,7 @@ func TestSignatureProviderSameAsReturnsArgumentValue(t *testing.T) {
 }
 
 func TestSignatureProviderSameAsResolvesNegativeParamRef(t *testing.T) {
-	reg := product.DefaultRegistry()
+	reg := standard.Registry()
 	point := cfg.Point(5)
 	firstRef := factflow.ExprRef(8)
 	lastRef := factflow.ExprRef(9)
@@ -292,7 +293,7 @@ func TestSignatureProviderSameAsResolvesNegativeParamRef(t *testing.T) {
 }
 
 func TestSignatureProviderSameAsFallsBackToDeclaredReturnTypeWhenArgumentUnresolved(t *testing.T) {
-	reg := product.DefaultRegistry()
+	reg := standard.Registry()
 	point := cfg.Point(6)
 	provider := SignatureProvider(SignatureProviderConfig{
 		Signatures: signatureMap{
@@ -317,7 +318,7 @@ func TestSignatureProviderSameAsFallsBackToDeclaredReturnTypeWhenArgumentUnresol
 }
 
 func TestSignatureProviderElementOfArrayReturnsElementRuntimeKind(t *testing.T) {
-	reg := product.DefaultRegistry()
+	reg := standard.Registry()
 	point := cfg.Point(8)
 	provider := SignatureProvider(SignatureProviderConfig{
 		Signatures: signatureMap{
@@ -339,7 +340,7 @@ func TestSignatureProviderElementOfArrayReturnsElementRuntimeKind(t *testing.T) 
 }
 
 func TestSignatureProviderElementOfMapReturnsValueRuntimeKind(t *testing.T) {
-	reg := product.DefaultRegistry()
+	reg := standard.Registry()
 	point := cfg.Point(9)
 	provider := SignatureProvider(SignatureProviderConfig{
 		Signatures: signatureMap{
@@ -361,7 +362,7 @@ func TestSignatureProviderElementOfMapReturnsValueRuntimeKind(t *testing.T) {
 }
 
 func TestSignatureProviderElementOfTupleReturnsElementUnionRuntimeKind(t *testing.T) {
-	reg := product.DefaultRegistry()
+	reg := standard.Registry()
 	point := cfg.Point(10)
 	provider := SignatureProvider(SignatureProviderConfig{
 		Signatures: signatureMap{
@@ -386,7 +387,7 @@ func TestSignatureProviderElementOfTupleReturnsElementUnionRuntimeKind(t *testin
 }
 
 func TestSignatureProviderOptionalElementOfArrayKeepsMaybePresence(t *testing.T) {
-	reg := product.DefaultRegistry()
+	reg := standard.Registry()
 	point := cfg.Point(11)
 	provider := SignatureProvider(SignatureProviderConfig{
 		Signatures: signatureMap{
@@ -411,7 +412,7 @@ func TestSignatureProviderOptionalElementOfArrayKeepsMaybePresence(t *testing.T)
 }
 
 func TestSignatureProviderElementOfFallsBackToDeclaredReturnTypeWhenParamRefUnresolved(t *testing.T) {
-	reg := product.DefaultRegistry()
+	reg := standard.Registry()
 	point := cfg.Point(12)
 	provider := SignatureProvider(SignatureProviderConfig{
 		Signatures: signatureMap{
@@ -433,7 +434,7 @@ func TestSignatureProviderElementOfFallsBackToDeclaredReturnTypeWhenParamRefUnre
 }
 
 func TestSignatureProviderCallbackReturnProjectsFirstReturnRuntimeKind(t *testing.T) {
-	reg := product.DefaultRegistry()
+	reg := standard.Registry()
 	point := cfg.Point(13)
 	provider := SignatureProvider(SignatureProviderConfig{
 		Signatures: signatureMap{
@@ -458,7 +459,7 @@ func TestSignatureProviderCallbackReturnProjectsFirstReturnRuntimeKind(t *testin
 }
 
 func TestSignatureProviderCallbackReturnResolvesNegativeParamRef(t *testing.T) {
-	reg := product.DefaultRegistry()
+	reg := standard.Registry()
 	point := cfg.Point(14)
 	provider := SignatureProvider(SignatureProviderConfig{
 		Signatures: signatureMap{
@@ -487,7 +488,7 @@ func TestSignatureProviderCallbackReturnResolvesNegativeParamRef(t *testing.T) {
 }
 
 func TestSignatureProviderArrayOfCallbackReturnProjectsTableRuntimeKind(t *testing.T) {
-	reg := product.DefaultRegistry()
+	reg := standard.Registry()
 	point := cfg.Point(15)
 	provider := SignatureProvider(SignatureProviderConfig{
 		Signatures: signatureMap{
@@ -512,7 +513,7 @@ func TestSignatureProviderArrayOfCallbackReturnProjectsTableRuntimeKind(t *testi
 }
 
 func TestSignatureProviderCallbackReturnFallsBackToDeclaredReturnType(t *testing.T) {
-	reg := product.DefaultRegistry()
+	reg := standard.Registry()
 
 	tests := []struct {
 		name      string
@@ -567,7 +568,7 @@ func TestSignatureProviderCallbackReturnFallsBackToDeclaredReturnType(t *testing
 }
 
 func TestSignatureProviderTypeProjectionFieldReturnsFieldRuntimeKind(t *testing.T) {
-	reg := product.DefaultRegistry()
+	reg := standard.Registry()
 	point := cfg.Point(18)
 	record := typetable.NewRecord().
 		Field("name", typ.String).
@@ -599,7 +600,7 @@ func TestSignatureProviderTypeProjectionFieldReturnsFieldRuntimeKind(t *testing.
 }
 
 func TestSignatureProviderTypeProjectionCallableReturnReturnsFirstReturnRuntimeKind(t *testing.T) {
-	reg := product.DefaultRegistry()
+	reg := standard.Registry()
 	point := cfg.Point(19)
 	provider := SignatureProvider(SignatureProviderConfig{
 		Signatures: signatureMap{
@@ -627,7 +628,7 @@ func TestSignatureProviderTypeProjectionCallableReturnReturnsFirstReturnRuntimeK
 }
 
 func TestSignatureProviderTypeProjectionGenericArgReturnsArgRuntimeKind(t *testing.T) {
-	reg := product.DefaultRegistry()
+	reg := standard.Registry()
 	point := cfg.Point(20)
 	param := typ.NewTypeParam("T", nil)
 	box := typ.NewGeneric("Box", []*typ.TypeParam{param}, param)
@@ -658,7 +659,7 @@ func TestSignatureProviderTypeProjectionGenericArgReturnsArgRuntimeKind(t *testi
 }
 
 func TestSignatureProviderTypeProjectionFallsBackToDeclaredReturnType(t *testing.T) {
-	reg := product.DefaultRegistry()
+	reg := standard.Registry()
 	point := cfg.Point(21)
 	record := typetable.NewRecord().
 		Field("name", typ.String).
@@ -689,7 +690,7 @@ func TestSignatureProviderTypeProjectionFallsBackToDeclaredReturnType(t *testing
 }
 
 func TestFallbackKeepsPrimarySlotsAndFillsMissingSignatureSlots(t *testing.T) {
-	reg := product.DefaultRegistry()
+	reg := standard.Registry()
 	primaryValue := product.Set(reg, product.Top(), runtimekind.Key, runtimekind.Singleton(runtimekind.Boolean))
 	primary := func(transfer.NodeContext, factflow.CallProducer, state.State, func(cfg.Point) state.State) []factapply.CallResult {
 		return []factapply.CallResult{{Index: 0, Value: primaryValue}}
@@ -716,7 +717,7 @@ func TestFallbackKeepsPrimarySlotsAndFillsMissingSignatureSlots(t *testing.T) {
 }
 
 func TestFallbackKeepsPrimarySlotOverSignatureSameAs(t *testing.T) {
-	reg := product.DefaultRegistry()
+	reg := standard.Registry()
 	point := cfg.Point(7)
 	argRef := factflow.ExprRef(11)
 	primaryValue := product.Set(reg, product.Top(), runtimekind.Key, runtimekind.Singleton(runtimekind.Boolean))
@@ -751,7 +752,7 @@ func TestFallbackKeepsPrimarySlotOverSignatureSameAs(t *testing.T) {
 }
 
 func TestProviderMissingAndEmptyReturnsYieldNoResults(t *testing.T) {
-	reg := product.DefaultRegistry()
+	reg := standard.Registry()
 	callee := symbol.ID(17)
 	key := summary.DefaultSummaryKey(ref.FuncRef{Kind: ref.KindSymbol, ID: 18})
 	missingKey := summary.DefaultSummaryKey(ref.FuncRef{Kind: ref.KindSymbol, ID: 19})
@@ -798,7 +799,7 @@ func TestProviderMissingAndEmptyReturnsYieldNoResults(t *testing.T) {
 }
 
 func TestByCalleeSymbolKeyMapsAreCloned(t *testing.T) {
-	reg := product.DefaultRegistry()
+	reg := standard.Registry()
 	callee := symbol.ID(21)
 	symbolKey := summary.DefaultSummaryKey(ref.FuncRef{Kind: ref.KindSymbol, ID: 23})
 	symbolValue := product.Absent(reg)
@@ -814,7 +815,7 @@ func TestByCalleeSymbolKeyMapsAreCloned(t *testing.T) {
 }
 
 func TestProviderIntegratesWithFactflowCallRead(t *testing.T) {
-	reg := product.DefaultRegistry()
+	reg := standard.Registry()
 	graph := cfg.New()
 	call := graph.AddNode(cfg.NodeCall)
 	assign := graph.AddNode(cfg.NodeAssign)
@@ -879,7 +880,7 @@ func TestProductionImportsAreBounded(t *testing.T) {
 		"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind": true,
 		"github.com/wippyai/go-lua/analysis/domain/value/product":          true,
 		"github.com/wippyai/go-lua/analysis/engine/factflow":               true,
-		"github.com/wippyai/go-lua/analysis/engine/factapply":             true,
+		"github.com/wippyai/go-lua/analysis/engine/factapply":              true,
 		"github.com/wippyai/go-lua/analysis/engine/sourcevalue":            true,
 		"github.com/wippyai/go-lua/analysis/engine/state":                  true,
 		"github.com/wippyai/go-lua/analysis/engine/transfer":               true,

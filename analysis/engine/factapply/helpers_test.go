@@ -10,6 +10,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/domain/value/standard"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
@@ -98,7 +99,7 @@ func absentValue(reg *axis.Registry) product.Value {
 }
 
 func runtimeKindConstraint(value runtimekind.Value) product.Value {
-	return product.Set(product.DefaultRegistry(), product.Top(), runtimekind.Key, value)
+	return product.Set(standard.Registry(), product.Top(), runtimekind.Key, value)
 }
 
 func formatValue(reg *axis.Registry, v product.Value) string {
@@ -292,11 +293,11 @@ func branchWithPresence(
 ) factflow.BranchRefinement {
 	var trueValue factflow.ValueRefinement
 	if hasTrue {
-		trueValue = factflow.NewValueConstraint(product.NewWithPresence(product.DefaultRegistry(), product.ShapeTop, truePresence))
+		trueValue = factflow.NewValueConstraint(product.NewWithPresence(standard.Registry(), product.ShapeTop, truePresence))
 	}
 	var falseValue factflow.ValueRefinement
 	if hasFalse {
-		falseValue = factflow.NewValueConstraint(product.NewWithPresence(product.DefaultRegistry(), product.ShapeTop, falsePresence))
+		falseValue = factflow.NewValueConstraint(product.NewWithPresence(standard.Registry(), product.ShapeTop, falsePresence))
 	}
 	return factflow.NewBranchRefinement(targetPath, trueValue, hasTrue, falseValue, hasFalse)
 }
@@ -310,11 +311,11 @@ func branchWithRuntimeKind(
 ) factflow.BranchRefinement {
 	var trueValue factflow.ValueRefinement
 	if hasTrue {
-		trueValue = factflow.NewValueConstraint(product.Set(product.DefaultRegistry(), product.Top(), runtimekind.Key, trueRuntimeKind))
+		trueValue = factflow.NewValueConstraint(product.Set(standard.Registry(), product.Top(), runtimekind.Key, trueRuntimeKind))
 	}
 	var falseValue factflow.ValueRefinement
 	if hasFalse {
-		falseValue = factflow.NewValueConstraint(product.Set(product.DefaultRegistry(), product.Top(), runtimekind.Key, falseRuntimeKind))
+		falseValue = factflow.NewValueConstraint(product.Set(standard.Registry(), product.Top(), runtimekind.Key, falseRuntimeKind))
 	}
 	return factflow.NewBranchRefinement(targetPath, trueValue, hasTrue, falseValue, hasFalse)
 }

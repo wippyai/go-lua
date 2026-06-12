@@ -6,7 +6,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/check"
 	"github.com/wippyai/go-lua/analysis/diagnostic"
-	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/domain/value/standard"
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/parse"
 )
@@ -336,11 +336,11 @@ func TestDirectCallAcceptsExplicitNilCheckOptional(t *testing.T) {
 
 func TestReturnContractReportsLiteralMismatch(t *testing.T) {
 	fn := mustFunctionExpr(t, `function f(): number return "hello" end`)
-	result, err := check.CheckFunction(fn, check.Config{Registry: product.DefaultRegistry()})
+	result, err := check.CheckFunction(fn, check.Config{Registry: standard.Registry()})
 	if err != nil {
 		t.Fatalf("check: %v", err)
 	}
-	diags := Produce(result, Config{Registry: product.DefaultRegistry()})
+	diags := Produce(result, Config{Registry: standard.Registry()})
 	if len(diags) != 1 {
 		t.Fatalf("diagnostics = %d, want 1: %#v", len(diags), diags)
 	}
@@ -449,7 +449,7 @@ func TestPrecheckReportsStructuralBreakAndGoto(t *testing.T) {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			stmts := mustStmts(t, tc.src)
-			diags := Precheck(stmts, Config{Registry: product.DefaultRegistry()})
+			diags := Precheck(stmts, Config{Registry: standard.Registry()})
 			if len(diags) != 1 {
 				t.Fatalf("diagnostics = %d, want 1: %#v", len(diags), diags)
 			}
@@ -467,7 +467,7 @@ func TestPrecheckAllowsForwardGotoAcrossNestedBlocks(t *testing.T) {
 	}
 	for _, src := range cases {
 		stmts := mustStmts(t, src)
-		diags := Precheck(stmts, Config{Registry: product.DefaultRegistry()})
+		diags := Precheck(stmts, Config{Registry: standard.Registry()})
 		if len(diags) != 0 {
 			t.Fatalf("diagnostics = %#v, want none", diags)
 		}
@@ -480,11 +480,11 @@ func runDiagnostics(t *testing.T, src string) []diagnostic.Diagnostic {
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
-	result, err := check.CheckChunk(stmts, check.Config{Registry: product.DefaultRegistry()})
+	result, err := check.CheckChunk(stmts, check.Config{Registry: standard.Registry()})
 	if err != nil {
 		t.Fatalf("check: %v", err)
 	}
-	return Produce(result, Config{Registry: product.DefaultRegistry()})
+	return Produce(result, Config{Registry: standard.Registry()})
 }
 
 func mustStmts(t *testing.T, src string) []ast.Stmt {

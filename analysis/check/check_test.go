@@ -14,6 +14,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/domain/value/standard"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/visibility"
@@ -63,7 +64,7 @@ func TestCheckChunkAssignsLocalFromExpressionValue(t *testing.T) {
 }
 
 func TestCheckFunctionRunsIntraprocedurally(t *testing.T) {
-	reg := product.DefaultRegistry()
+	reg := standard.Registry()
 	fn := parseFunction(t, "function f(a) local b = a return b end")
 
 	result, err := CheckFunction(fn, Config{Registry: reg})
@@ -100,7 +101,7 @@ func TestCheckFunctionRunsIntraprocedurally(t *testing.T) {
 }
 
 func TestCheckFunctionReturnArityUsesLoweredFacts(t *testing.T) {
-	reg := product.DefaultRegistry()
+	reg := standard.Registry()
 	fn := parseFunction(t, "function f(a) return a, nil end")
 
 	result, err := CheckFunction(fn, Config{Registry: reg})
@@ -121,7 +122,7 @@ func TestCheckFunctionReturnArityUsesLoweredFacts(t *testing.T) {
 }
 
 func TestCheckChunkManifestSameAsSignatureUsesArgumentSourceValue(t *testing.T) {
-	reg := product.DefaultRegistry()
+	reg := standard.Registry()
 	argValue := product.Set(reg, product.Top(), runtimekind.Key, runtimekind.Singleton(runtimekind.String))
 	m := manifest.New("test")
 	m.DefineFunctionSignature("id", signature.Function{
@@ -153,7 +154,7 @@ func TestCheckChunkManifestSameAsSignatureUsesArgumentSourceValue(t *testing.T) 
 }
 
 func TestCheckChunkDefaultExpressionValueProjectsStaticReadOptionality(t *testing.T) {
-	reg := product.DefaultRegistry()
+	reg := standard.Registry()
 	stmts := parseChunk(t, `local out = t["name"]`)
 	bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"t"}})
 	built := cfgbuild.BuildChunk(stmts, bindings)
@@ -189,7 +190,7 @@ func TestCheckChunkDefaultExpressionValueProjectsStaticReadOptionality(t *testin
 }
 
 func TestCheckChunkDefaultExpressionValueUsesExactPathPresenceProof(t *testing.T) {
-	reg := product.DefaultRegistry()
+	reg := standard.Registry()
 	stmts := parseChunk(t, `local out = t.name`)
 	bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"t"}})
 	built := cfgbuild.BuildChunk(stmts, bindings)
@@ -230,7 +231,7 @@ func TestCheckChunkDefaultExpressionValueUsesExactPathPresenceProof(t *testing.T
 }
 
 func TestCheckChunkUserExpressionValueOverridesDefaultStaticReadProjector(t *testing.T) {
-	reg := product.DefaultRegistry()
+	reg := standard.Registry()
 	stmts := parseChunk(t, `local out = t.name`)
 	bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"t"}})
 	built := cfgbuild.BuildChunk(stmts, bindings)
@@ -328,7 +329,7 @@ end`)
 }
 
 func TestCopyConfigCopiesMutableFields(t *testing.T) {
-	reg := product.DefaultRegistry()
+	reg := standard.Registry()
 	expr := factflow.ExprRef(42)
 	initial := map[factflow.ExprRef]product.Value{
 		expr: product.NewWithPresence(reg, product.ShapeTop, presence.Present()),
@@ -353,7 +354,7 @@ func TestCopyConfigCopiesMutableFields(t *testing.T) {
 }
 
 func TestCheckChunkReturnsUnsupportedCFG(t *testing.T) {
-	reg := product.DefaultRegistry()
+	reg := standard.Registry()
 	stmts := parseChunk(t, "print(value())")
 
 	_, err := CheckChunk(stmts, Config{Registry: reg})
@@ -461,7 +462,7 @@ const (
 func testRegistry(t *testing.T) (*axis.Registry, axis.Key[markValue]) {
 	t.Helper()
 	markKey := axis.NewKey[markValue]("check.test.mark." + strings.ReplaceAll(t.Name(), "/", "."))
-	reg, err := product.DefaultRegistryWithAxes(axis.Spec[markValue]{
+	reg, err := standard.RegistryWithAxes(axis.Spec[markValue]{
 		Key:    markKey,
 		Bottom: func() markValue { return markBottom },
 		Top:    func() markValue { return markHigh },
@@ -485,7 +486,7 @@ func testRegistry(t *testing.T) (*axis.Registry, axis.Key[markValue]) {
 		Hash:  func(v markValue) uint64 { return uint64(v) },
 	}.Erase())
 	if err != nil {
-		t.Fatalf("DefaultRegistryWithAxes: %v", err)
+		t.Fatalf("RegistryWithAxes: %v", err)
 	}
 	return reg, markKey
 }

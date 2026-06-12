@@ -8,6 +8,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/summary"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/domain/value/standard"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
@@ -18,7 +19,7 @@ import (
 )
 
 func TestRunBoundChunkUsesSuppliedBindIdentityForLocalCallee(t *testing.T) {
-	reg := product.DefaultRegistry()
+	reg := standard.Registry()
 	want := product.Top()
 	stmts := parseChunk(t, `
 local f = function()
@@ -56,7 +57,7 @@ return f()
 }
 
 func TestRunChunkUsesExactConfiguredRootKey(t *testing.T) {
-	reg := product.DefaultRegistry()
+	reg := standard.Registry()
 	want := product.Top()
 	stmts := parseChunk(t, "return 1")
 	rootKey := summary.SummaryKey{

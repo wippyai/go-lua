@@ -17,7 +17,7 @@ type interner struct {
 }
 
 func intern(reg *axis.Registry, shape Shape, p presence.Value, slots []slot) Value {
-	reg = registryOrDefault(reg)
+	requireRegistry(reg)
 	shape = normalizeShape(shape)
 	p = normalizePresence(p)
 	slots = canonicalSlots(reg, slots)
@@ -126,7 +126,7 @@ func sameNode(reg *axis.Registry, n *node, shape Shape, p presence.Value, slots 
 }
 
 func Hash(reg *axis.Registry, v Value) uint64 {
-	reg = registryOrDefault(reg)
+	requireRegistry(reg)
 	if v.n == nil {
 		return stableHash(reg, ShapeTop, presence.Top(), nil)
 	}

@@ -5,6 +5,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/domain/value/standard"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
@@ -14,7 +15,7 @@ import (
 )
 
 func TestFactsNodeTransferAppliesPathAssignmentThroughVisibility(t *testing.T) {
-	reg := product.DefaultRegistry()
+	reg := standard.Registry()
 	graph := cfg.New()
 	assign := graph.AddNode(cfg.NodeAssign)
 	graph.AddEdge(graph.Entry(), assign, false)
@@ -51,7 +52,7 @@ func TestFactsNodeTransferAppliesPathAssignmentThroughVisibility(t *testing.T) {
 }
 
 func TestFactsNodeTransferPathAssignmentInvalidatesSubtreeBeforeWriting(t *testing.T) {
-	reg := product.DefaultRegistry()
+	reg := standard.Registry()
 	point := cfg.Point(16)
 	source := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: factflow.ExprRef(16), HasExpr: true}
 	target := symbol.ID(107)
@@ -89,7 +90,7 @@ func TestFactsNodeTransferPathAssignmentInvalidatesSubtreeBeforeWriting(t *testi
 }
 
 func TestFactsNodeTransferPathDescendantInvalidationKeepsContainer(t *testing.T) {
-	reg := product.DefaultRegistry()
+	reg := standard.Registry()
 	point := cfg.Point(20)
 	target := symbol.ID(111)
 	containerPath := path.NewPath(target, "item")
@@ -125,7 +126,7 @@ func TestFactsNodeTransferPathDescendantInvalidationKeepsContainer(t *testing.T)
 }
 
 func TestFactsNodeTransferPathAssignmentRequiresVisibility(t *testing.T) {
-	reg := product.DefaultRegistry()
+	reg := standard.Registry()
 	point := cfg.Point(17)
 	source := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: factflow.ExprRef(17), HasExpr: true}
 	target := symbol.ID(108)
@@ -155,7 +156,7 @@ func TestFactsNodeTransferPathAssignmentRequiresVisibility(t *testing.T) {
 }
 
 func TestFactsNodeTransferPathAssignmentWithUnresolvedVersionIsNoop(t *testing.T) {
-	reg := product.DefaultRegistry()
+	reg := standard.Registry()
 	point := cfg.Point(18)
 	source := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: factflow.ExprRef(18), HasExpr: true}
 	target := symbol.ID(109)
@@ -182,7 +183,7 @@ func TestFactsNodeTransferPathAssignmentWithUnresolvedVersionIsNoop(t *testing.T
 }
 
 func TestFactsNodeTransferIgnoresRootPathAssignment(t *testing.T) {
-	reg := product.DefaultRegistry()
+	reg := standard.Registry()
 	point := cfg.Point(19)
 	source := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: factflow.ExprRef(19), HasExpr: true}
 	target := symbol.ID(110)

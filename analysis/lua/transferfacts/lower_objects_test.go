@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/assertion"
-	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/domain/value/standard"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/lua/cfgbuild"
@@ -31,7 +31,7 @@ func TestLowerObjectLiteralSidecarUsesAssignmentExprRef(t *testing.T) {
 		t.Fatalf("ExtractChunk: %v", err)
 	}
 
-	facts := lowerFacts(t, result, built.Graph, product.DefaultRegistry())
+	facts := lowerFacts(t, result, built.Graph, standard.Registry())
 	assertNoCompilerASTTypes(t, reflect.TypeOf(facts))
 
 	point := requireStmtPoints(t, built, local, 1)[0]
@@ -77,7 +77,7 @@ func TestLowerWrappedObjectLiteralKeepsAssertionOverlayAndEntries(t *testing.T) 
 		t.Fatalf("ExtractChunk: %v", err)
 	}
 
-	facts := lowerFacts(t, result, built.Graph, product.DefaultRegistry())
+	facts := lowerFacts(t, result, built.Graph, standard.Registry())
 	assertNoCompilerASTTypes(t, reflect.TypeOf(facts))
 
 	point := requireStmtPoints(t, built, local, 1)[0]
@@ -119,7 +119,7 @@ func TestLowerNestedObjectLiteralEntriesUnderAssignmentExprRef(t *testing.T) {
 		t.Fatalf("ExtractChunk: %v", err)
 	}
 
-	facts := lowerFacts(t, result, built.Graph, product.DefaultRegistry())
+	facts := lowerFacts(t, result, built.Graph, standard.Registry())
 	assertNoCompilerASTTypes(t, reflect.TypeOf(facts))
 
 	point := requireStmtPoints(t, built, local, 1)[0]

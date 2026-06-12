@@ -6,7 +6,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
-	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/domain/value/standard"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/lua/branchcond"
 	"github.com/wippyai/go-lua/analysis/lua/cfgbuild"
@@ -33,7 +33,7 @@ func TestLowerIdentifierNilTruthyFalsyBranches(t *testing.T) {
 		t.Fatalf("ExtractChunk: %v", err)
 	}
 
-	facts := lowerFacts(t, result, built.Graph, product.DefaultRegistry())
+	facts := lowerFacts(t, result, built.Graph, standard.Registry())
 	xPath := path.NewPath(mustIdentSymbol(t, bindings, nilRead), "x")
 	assertLoweredBranchValuePresence(t, facts, requireStmtPoints(t, built, nilStmt, 1)[0], xPath, presence.Absent(), true, presence.Present(), true)
 	assertLoweredBranchValuePresence(t, facts, requireStmtPoints(t, built, notNilStmt, 1)[0], xPath, presence.Present(), true, presence.Absent(), true)
@@ -53,7 +53,7 @@ func TestLowerMemberPathBranchRefinement(t *testing.T) {
 		t.Fatalf("ExtractChunk: %v", err)
 	}
 
-	facts := lowerFacts(t, result, built.Graph, product.DefaultRegistry())
+	facts := lowerFacts(t, result, built.Graph, standard.Registry())
 	wantPath := path.NewPath(mustIdentSymbol(t, bindings, rootRead), "t").Field("child")
 	assertLoweredBranchValuePresence(t, facts, requireStmtPoints(t, built, memberStmt, 1)[0], wantPath, presence.Present(), true, presence.Absent(), true)
 }
@@ -74,7 +74,7 @@ func TestLowerTypeGuardTableEqualityBranchRefinement(t *testing.T) {
 		t.Fatalf("ExtractChunk: %v", err)
 	}
 
-	facts := lowerFacts(t, result, built.Graph, product.DefaultRegistry())
+	facts := lowerFacts(t, result, built.Graph, standard.Registry())
 	point := requireStmtPoints(t, built, typeStmt, 1)[0]
 	xPath := path.NewPath(mustIdentSymbol(t, bindings, xRead), "x")
 	assertLoweredBranchValueRefinement(t, facts, point, xPath,
@@ -107,7 +107,7 @@ func TestLowerTypeGuardFunctionInequalityBranchRefinement(t *testing.T) {
 		t.Fatalf("ExtractChunk: %v", err)
 	}
 
-	facts := lowerFacts(t, result, built.Graph, product.DefaultRegistry())
+	facts := lowerFacts(t, result, built.Graph, standard.Registry())
 	point := requireStmtPoints(t, built, typeStmt, 1)[0]
 	xPath := path.NewPath(mustIdentSymbol(t, bindings, xRead), "x")
 	assertLoweredBranchValueRefinement(t, facts, point, xPath,
@@ -146,7 +146,7 @@ func TestLowerTypeGuardNilBranchRefinements(t *testing.T) {
 		t.Fatalf("ExtractChunk: %v", err)
 	}
 
-	facts := lowerFacts(t, result, built.Graph, product.DefaultRegistry())
+	facts := lowerFacts(t, result, built.Graph, standard.Registry())
 	xPath := path.NewPath(mustIdentSymbol(t, bindings, eqRead), "x")
 	nilValue := valueRefinementExpectation{
 		presence:       presence.Absent(),
@@ -165,7 +165,7 @@ func TestLowerTypeGuardNilBranchRefinements(t *testing.T) {
 }
 
 func TestLowerTypeGuardRuntimeTypeNames(t *testing.T) {
-	l := lowerer{registry: product.DefaultRegistry()}
+	l := lowerer{registry: standard.Registry()}
 	target := path.NewPath(symbol.ID(1), "x")
 	tests := []struct {
 		typeName string
@@ -234,7 +234,7 @@ func TestLowerTypeGuardReversedOperandsBranchRefinement(t *testing.T) {
 		t.Fatalf("ExtractChunk: %v", err)
 	}
 
-	facts := lowerFacts(t, result, built.Graph, product.DefaultRegistry())
+	facts := lowerFacts(t, result, built.Graph, standard.Registry())
 	point := requireStmtPoints(t, built, typeStmt, 1)[0]
 	xPath := path.NewPath(mustIdentSymbol(t, bindings, xRead), "x")
 	assertLoweredBranchValueRefinement(t, facts, point, xPath,
@@ -266,7 +266,7 @@ func TestLowerSkipsUnknownTypeGuardBranchRefinements(t *testing.T) {
 		t.Fatalf("ExtractChunk: %v", err)
 	}
 
-	facts := lowerFacts(t, result, built.Graph, product.DefaultRegistry())
+	facts := lowerFacts(t, result, built.Graph, standard.Registry())
 	point := requireStmtPoints(t, built, typeStmt, 1)[0]
 	if _, ok := facts.BranchRefinement(point); ok {
 		t.Fatalf("unknown type guard branch point %d lowered as branch refinement", point)

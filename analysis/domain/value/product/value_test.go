@@ -7,119 +7,51 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
-	"github.com/wippyai/go-lua/analysis/domain/value/axis/assertion"
-	"github.com/wippyai/go-lua/analysis/domain/value/axis/escape"
-	"github.com/wippyai/go-lua/analysis/domain/value/axis/evidence"
-	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
-	"github.com/wippyai/go-lua/analysis/domain/value/axis/ownership"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
-	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
-	"github.com/wippyai/go-lua/analysis/domain/value/axis/variantorigin"
 	latticelaws "github.com/wippyai/go-lua/analysis/test/laws/lattice"
 )
 
-func TestDefaultProductLaws(t *testing.T) {
-	reg := DefaultRegistry()
-	if !reg.Frozen() {
-		t.Fatalf("DefaultRegistry must be frozen")
-	}
-	if _, ok := reg.LookupErased(presence.Key.ID()); ok {
-		t.Fatalf("presence must be core, not registered as a sparse default axis")
-	}
+func TestProductLaws(t *testing.T) {
+	reg := mustRegistry(t, syntheticSpec().Erase(), secondSyntheticSpec().Erase())
 	d := Domain(reg)
 	suite := latticelaws.LawSuite[Value]{
-		Name:   "value.product(default)",
+		Name:   "value.product(generic)",
 		Domain: d,
-		Sample: defaultProductSample(reg, d.Bottom(), d.Top()),
+		Sample: productSample(reg, d.Bottom(), d.Top()),
 		Format: formatValue,
 	}
 	suite.Run(t)
 }
 
-func TestDefaultRegistryBundleFrozenAndStable(t *testing.T) {
-	reg := DefaultRegistry()
-	want := defaultRegistrySpecIDs()
+func TestRegistryWithAxesFrozenAndStable(t *testing.T) {
+	reg := mustRegistry(t, syntheticSpec().Erase(), secondSyntheticSpec().Erase())
+	want := []string{syntheticKey.ID(), secondSyntheticKey.ID()}
 	if got := registrySpecIDs(reg); !slices.Equal(got, want) {
-		t.Fatalf("DefaultRegistry axes = %v, want %v", got, want)
+		t.Fatalf("RegistryWithAxes axes = %v, want %v", got, want)
 	}
 	if !reg.Frozen() {
-		t.Fatalf("DefaultRegistry must be frozen")
+		t.Fatalf("RegistryWithAxes must return a frozen registry")
 	}
 	if _, ok := reg.LookupErased(presence.Key.ID()); ok {
-		t.Fatalf("presence must be core, not registered as a sparse default axis")
-	}
-
-	fresh, err := DefaultRegistryWithAxes()
-	if err != nil {
-		t.Fatalf("DefaultRegistryWithAxes() error = %v", err)
-	}
-	if fresh == reg {
-		t.Fatalf("DefaultRegistryWithAxes must not expose the default singleton")
-	}
-	if !fresh.Frozen() {
-		t.Fatalf("DefaultRegistryWithAxes must return a frozen registry")
-	}
-	if got := registrySpecIDs(fresh); !slices.Equal(got, want) {
-		t.Fatalf("DefaultRegistryWithAxes axes = %v, want %v", got, want)
+		t.Fatalf("presence must be core, not registered as a sparse axis")
 	}
 }
 
-func TestDefaultSparseSpecsStableAndExcludePresence(t *testing.T) {
-	got := defaultRegistrySpecIDs()
-	want := []string{
-		"variantorigin",
-		"identity",
-		"runtimekind",
-		"escape",
-		"ownership",
-		"evidence",
-		"assertion",
-	}
-	if !slices.Equal(got, want) {
-		t.Fatalf("default sparse axis IDs = %v, want %v", got, want)
-	}
-	if slices.Contains(got, presence.Key.ID()) {
-		t.Fatalf("default sparse axes must not include presence core lane")
-	}
-}
-
-func TestDefaultRegistryWithAxesAddsCustomSparseAxis(t *testing.T) {
-	reg, err := DefaultRegistryWithAxes(syntheticSpec().Erase())
-	if err != nil {
-		t.Fatalf("DefaultRegistryWithAxes error = %v", err)
-	}
-	want := append(defaultRegistrySpecIDs(), syntheticKey.ID())
-	if got := registrySpecIDs(reg); !slices.Equal(got, want) {
-		t.Fatalf("custom registry axes = %v, want %v", got, want)
-	}
-	if _, ok := DefaultRegistry().LookupErased(syntheticKey.ID()); ok {
-		t.Fatalf("custom axis mutated DefaultRegistry")
-	}
-
-	d := Domain(reg)
-	v := Set(reg, d.Top(), syntheticKey, syntheticLow)
-	if got := Get(reg, v, syntheticKey); got != syntheticLow {
-		t.Fatalf("custom sparse axis value = %v, want %v", got, syntheticLow)
-	}
-}
-
-func TestDefaultRegistryWithAxesRejectsDuplicateIDs(t *testing.T) {
-	if _, err := DefaultRegistryWithAxes(escape.Spec().Erase()); err == nil {
-		t.Fatalf("duplicate default axis ID should fail")
-	}
-	if _, err := DefaultRegistryWithAxes(syntheticSpec().Erase(), syntheticSpec().Erase()); err == nil {
+func TestRegistryWithAxesRejectsDuplicateIDs(t *testing.T) {
+	if _, err := RegistryWithAxes(syntheticSpec().Erase(), syntheticSpec().Erase()); err == nil {
 		t.Fatalf("duplicate caller axis ID should fail")
 	}
 }
 
-func TestProductValuesAreScopedToRegistryIdentity(t *testing.T) {
-	regA := axis.NewRegistry()
-	axis.Register(regA, syntheticSpec())
-	regA.Freeze()
+func TestValidateRegistryRejectsNil(t *testing.T) {
+	if err := ValidateRegistry(nil); err == nil || !strings.Contains(err.Error(), "registry is required") {
+		t.Fatalf("ValidateRegistry(nil) error = %v, want registry-required error", err)
+	}
+}
 
-	regB := axis.NewRegistry()
-	axis.Register(regB, syntheticHighMeetSpec())
-	regB.Freeze()
+func TestProductValuesAreScopedToRegistryIdentity(t *testing.T) {
+	regA := mustRegistry(t, syntheticSpec().Erase())
+	regB := mustRegistry(t, syntheticHighMeetSpec().Erase())
 
 	aLow := Set(regA, Top(), syntheticKey, syntheticLow)
 	aHigh := Set(regA, Top(), syntheticKey, syntheticHigh)
@@ -164,8 +96,8 @@ func TestProductValuesAreScopedToRegistryIdentity(t *testing.T) {
 
 func TestProductRegistryRejectsSparseAxisWithoutMeet(t *testing.T) {
 	spec := noMeetSpec().Erase()
-	if _, err := DefaultRegistryWithAxes(spec); err == nil || !strings.Contains(err.Error(), `product: sparse axis "test.synthetic.no_meet" must define Meet`) {
-		t.Fatalf("DefaultRegistryWithAxes(no-meet) error = %v, want product no-meet error", err)
+	if _, err := RegistryWithAxes(spec); err == nil || !strings.Contains(err.Error(), `product: sparse axis "test.synthetic.no_meet" must define Meet`) {
+		t.Fatalf("RegistryWithAxes(no-meet) error = %v, want product no-meet error", err)
 	}
 
 	reg := axis.NewRegistry()
@@ -179,9 +111,9 @@ func TestProductRegistryRejectsSparseAxisWithoutMeet(t *testing.T) {
 }
 
 func TestExplicitTopSparseSlotNormalizesToOmission(t *testing.T) {
-	reg := DefaultRegistry()
+	reg := mustRegistry(t, syntheticSpec().Erase())
 	top := Top()
-	explicit := intern(reg, ShapeTop, presence.Top(), []slot{{key: escape.Key.ID(), value: escape.Top()}})
+	explicit := intern(reg, ShapeTop, presence.Top(), []slot{{key: syntheticKey.ID(), value: syntheticTop}})
 
 	if explicit.n != nil {
 		t.Fatalf("explicit top slot should canonicalize to the nil top node, got %s", formatValue(explicit))
@@ -193,69 +125,14 @@ func TestExplicitTopSparseSlotNormalizesToOmission(t *testing.T) {
 		t.Fatalf("explicit top slot hash differs from omitted slot")
 	}
 
-	setTop := Set(reg, top, escape.Key, escape.Top())
+	setTop := Set(reg, top, syntheticKey, syntheticTop)
 	if !Equal(reg, setTop, top) || Hash(reg, setTop) != Hash(reg, top) {
 		t.Fatalf("Set(top axis) did not preserve omitted-slot canonical form")
 	}
 }
 
-func TestDefaultRegistryRuntimeKindStoresAndSparsifiesTop(t *testing.T) {
-	reg := DefaultRegistry()
-	tableKind := runtimekind.Singleton(runtimekind.Table)
-
-	v := Set(reg, Top(), runtimekind.Key, tableKind)
-	if got := Get(reg, v, runtimekind.Key); !runtimekind.Equal(got, tableKind) {
-		t.Fatalf("runtimekind value = %s, want %s", got, tableKind)
-	}
-	if _, ok := lookupSlot(v, runtimekind.Key.ID()); !ok {
-		t.Fatalf("runtimekind singleton should be stored as a sparse slot")
-	}
-
-	setTop := Set(reg, v, runtimekind.Key, runtimekind.Top())
-	if !Equal(reg, setTop, Top()) {
-		t.Fatalf("setting runtimekind top should sparsify to product top, got %s", formatValue(setTop))
-	}
-
-	explicitTop := intern(reg, ShapeTop, presence.Top(), []slot{{key: runtimekind.Key.ID(), value: runtimekind.Top()}})
-	if !Equal(reg, explicitTop, Top()) || Hash(reg, explicitTop) != Hash(reg, Top()) {
-		t.Fatalf("explicit runtimekind top slot should canonicalize to omission")
-	}
-}
-
-func TestDefaultRegistryClaimAxisStoresSparsifiesAndAffectsIdentity(t *testing.T) {
-	reg := DefaultRegistry()
-	typeClaim := assertion.Type()
-	anyClaim := assertion.Any()
-
-	v := Set(reg, Top(), assertion.Key, typeClaim)
-	if got := Get(reg, v, assertion.Key); !assertion.Equal(got, typeClaim) {
-		t.Fatalf("assertion value = %s, want %s", got, typeClaim)
-	}
-	if _, ok := lookupSlot(v, assertion.Key.ID()); !ok {
-		t.Fatalf("non-top assertion should be stored as a sparse slot")
-	}
-
-	other := Set(reg, Top(), assertion.Key, anyClaim)
-	if Equal(reg, v, other) {
-		t.Fatalf("different claim indicators should affect product equality")
-	}
-	if Hash(reg, v) == Hash(reg, other) {
-		t.Fatalf("different claim indicators should affect product hash")
-	}
-
-	setTop := Set(reg, v, assertion.Key, assertion.Top())
-	if !Equal(reg, setTop, Top()) {
-		t.Fatalf("setting assertion top should sparsify to product top, got %s", formatValue(setTop))
-	}
-
-	explicitTop := intern(reg, ShapeTop, presence.Top(), []slot{{key: assertion.Key.ID(), value: assertion.Top()}})
-	if !Equal(reg, explicitTop, Top()) || Hash(reg, explicitTop) != Hash(reg, Top()) {
-		t.Fatalf("explicit assertion top slot should canonicalize to omission")
-	}
-}
-
 func TestReducePresenceShapeNormalizesCoreLanes(t *testing.T) {
-	reg := DefaultRegistry()
+	reg := mustRegistry(t)
 	tests := []struct {
 		name         string
 		shape        Shape
@@ -315,9 +192,7 @@ func TestReducePresenceShapeNormalizesCoreLanes(t *testing.T) {
 
 func TestReducePresenceShapeSparseSlots(t *testing.T) {
 	t.Run("preserves sparse slots", func(t *testing.T) {
-		reg := axis.NewRegistry()
-		axis.Register(reg, syntheticSpec())
-		reg.Freeze()
+		reg := mustRegistry(t, syntheticSpec().Erase())
 
 		v := Set(reg, Top(), syntheticKey, syntheticLow)
 		v = WithPresence(reg, v, presence.Absent())
@@ -334,9 +209,7 @@ func TestReducePresenceShapeSparseSlots(t *testing.T) {
 	})
 
 	t.Run("explicit top removes sparse slot", func(t *testing.T) {
-		reg := axis.NewRegistry()
-		axis.Register(reg, syntheticTopReducerSpec())
-		reg.Freeze()
+		reg := mustRegistry(t, syntheticTopReducerSpec().Erase())
 
 		v := intern(reg, ShapeTop, presence.Absent(), []slot{{key: syntheticKey.ID(), value: syntheticLow}})
 
@@ -356,7 +229,7 @@ func TestReducePresenceShapeSparseSlots(t *testing.T) {
 }
 
 func TestPresenceIsCoreLane(t *testing.T) {
-	reg := DefaultRegistry()
+	reg := mustRegistry(t)
 	top := Top()
 	present := WithPresence(reg, top, presence.Present())
 	absent := WithPresence(reg, top, presence.Absent())
@@ -386,24 +259,14 @@ func TestPresenceIsCoreLane(t *testing.T) {
 	}
 }
 
-func TestProductMeetCoreAndRuntimeKindRefinements(t *testing.T) {
-	reg := DefaultRegistry()
+func TestProductMeetCorePresenceRefinement(t *testing.T) {
+	reg := mustRegistry(t)
 	top := Top()
 
 	present := WithPresence(reg, top, presence.Present())
 	absent := WithPresence(reg, top, presence.Absent())
 	if got := Meet(reg, present, absent); !Equal(reg, got, Bottom(reg)) {
 		t.Fatalf("present meet absent = %s, want product bottom", formatValue(got))
-	}
-
-	tableKind := Set(reg, top, runtimekind.Key, runtimekind.Singleton(runtimekind.Table))
-	functionKind := Set(reg, top, runtimekind.Key, runtimekind.Singleton(runtimekind.Function))
-	if got := Meet(reg, tableKind, functionKind); !Equal(reg, got, Bottom(reg)) {
-		t.Fatalf("table meet function = %s, want product bottom", formatValue(got))
-	}
-
-	if got := Meet(reg, top, tableKind); !Equal(reg, got, tableKind) {
-		t.Fatalf("top meet table = %s, want table", formatValue(got))
 	}
 }
 
@@ -412,14 +275,15 @@ func TestPresenceCannotBeSparseProductAxis(t *testing.T) {
 	axis.Register(reg, presence.Spec())
 	reg.Freeze()
 
-	if _, err := DefaultRegistryWithAxes(presence.Spec().Erase()); err == nil {
-		t.Fatalf("DefaultRegistryWithAxes should reject presence as a sparse axis")
+	if _, err := RegistryWithAxes(presence.Spec().Erase()); err == nil {
+		t.Fatalf("RegistryWithAxes should reject presence as a sparse axis")
 	}
 	mustPanic(t, func() {
 		_ = Domain(reg)
 	})
 	mustPanic(t, func() {
-		_ = intern(DefaultRegistry(), ShapeTop, presence.Top(), []slot{{key: presence.Key.ID(), value: presence.Present()}})
+		valid := mustRegistry(t)
+		_ = intern(valid, ShapeTop, presence.Top(), []slot{{key: presence.Key.ID(), value: presence.Present()}})
 	})
 }
 
@@ -441,10 +305,20 @@ func TestProductRequiresFrozenRegistry(t *testing.T) {
 	}
 }
 
+func TestProductOperationsRequireRegistry(t *testing.T) {
+	mustPanicContaining(t, "registry is required", func() {
+		_ = Bottom(nil)
+	})
+	mustPanicContaining(t, "registry is required", func() {
+		_ = Domain(nil)
+	})
+	mustPanicContaining(t, "registry is required", func() {
+		_ = Equal(nil, Top(), Top())
+	})
+}
+
 func TestProductMeetUsesCustomSparseAxis(t *testing.T) {
-	reg := axis.NewRegistry()
-	axis.Register(reg, syntheticSpec())
-	reg.Freeze()
+	reg := mustRegistry(t, syntheticSpec().Erase())
 	d := Domain(reg)
 
 	low := Set(reg, d.Top(), syntheticKey, syntheticLow)
@@ -456,9 +330,7 @@ func TestProductMeetUsesCustomSparseAxis(t *testing.T) {
 }
 
 func TestSyntheticAxisParticipatesThroughRegistry(t *testing.T) {
-	reg := axis.NewRegistry()
-	axis.Register(reg, syntheticSpec())
-	reg.Freeze()
+	reg := mustRegistry(t, syntheticSpec().Erase())
 	d := Domain(reg)
 
 	a := Set(reg, d.Top(), syntheticKey, syntheticLow)
@@ -485,10 +357,7 @@ func TestSyntheticAxisParticipatesThroughRegistry(t *testing.T) {
 }
 
 func TestSparseAxisReducerStillRunsWithRegistryScopedValues(t *testing.T) {
-	reg := axis.NewRegistry()
-	axis.Register(reg, syntheticMirrorReducerSpec())
-	axis.Register(reg, secondSyntheticSpec())
-	reg.Freeze()
+	reg := mustRegistry(t, syntheticMirrorReducerSpec().Erase(), secondSyntheticSpec().Erase())
 
 	v := Set(reg, Top(), syntheticKey, syntheticLow)
 	if got := Get(reg, v, syntheticKey); got != syntheticLow {
@@ -499,8 +368,13 @@ func TestSparseAxisReducerStillRunsWithRegistryScopedValues(t *testing.T) {
 	}
 }
 
-func defaultRegistrySpecIDs() []string {
-	return specIDs(defaultSparseSpecs())
+func mustRegistry(t *testing.T, specs ...axis.ErasedSpec) *axis.Registry {
+	t.Helper()
+	reg, err := RegistryWithAxes(specs...)
+	if err != nil {
+		t.Fatalf("RegistryWithAxes() error = %v", err)
+	}
+	return reg
 }
 
 func registrySpecIDs(reg *axis.Registry) []string {
@@ -515,19 +389,13 @@ func specIDs(specs []axis.ErasedSpec) []string {
 	return ids
 }
 
-func defaultProductSample(reg *axis.Registry, bottom, top Value) []Value {
+func productSample(reg *axis.Registry, bottom, top Value) []Value {
 	present := WithPresence(reg, top, presence.Present())
 	absent := WithPresence(reg, top, presence.Absent())
-	fresh := Set(reg, top, escape.Key, escape.Fresh())
-	unique := Set(reg, top, ownership.Key, ownership.Unique())
-	gradual := Set(reg, top, evidence.Key, evidence.GradualTop())
-	claimed := Set(reg, top, assertion.Key, assertion.Type())
-	variant := Set(reg, top, variantorigin.Key, variantorigin.Singleton(7, 1))
-	ident := Set(reg, top, identity.Key, identity.Singleton(identity.ID{Kind: "alloc", Site: "sample", Index: 1}))
-	tableKind := Set(reg, top, runtimekind.Key, runtimekind.Singleton(runtimekind.Table))
-	combo := Set(reg, present, escape.Key, escape.Fresh())
-	combo = Set(reg, combo, evidence.Key, evidence.GradualTop())
-	combo = Set(reg, combo, runtimekind.Key, runtimekind.Singleton(runtimekind.Function))
+	low := Set(reg, top, syntheticKey, syntheticLow)
+	high := Set(reg, top, syntheticKey, syntheticHigh)
+	mirror := Set(reg, low, secondSyntheticKey, syntheticHigh)
+	combo := WithPresence(reg, high, presence.Present())
 	presenceBottom := WithPresence(reg, top, presence.Bottom())
 
 	return []Value{
@@ -535,13 +403,9 @@ func defaultProductSample(reg *axis.Registry, bottom, top Value) []Value {
 		top,
 		present,
 		absent,
-		fresh,
-		unique,
-		gradual,
-		claimed,
-		variant,
-		ident,
-		tableKind,
+		low,
+		high,
+		mirror,
 		combo,
 		presenceBottom,
 	}
@@ -660,6 +524,20 @@ func mustPanic(t *testing.T, f func()) {
 	defer func() {
 		if recover() == nil {
 			t.Fatalf("expected panic")
+		}
+	}()
+	f()
+}
+
+func mustPanicContaining(t *testing.T, want string, f func()) {
+	t.Helper()
+	defer func() {
+		got := recover()
+		if got == nil {
+			t.Fatalf("expected panic containing %q", want)
+		}
+		if !strings.Contains(fmt.Sprint(got), want) {
+			t.Fatalf("panic = %v, want substring %q", got, want)
 		}
 	}()
 	f()

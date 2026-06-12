@@ -7,7 +7,7 @@ import (
 )
 
 func Domain(reg *axis.Registry) lattice.Lattice[Value] {
-	reg = registryOrDefault(reg)
+	requireRegistry(reg)
 	return lattice.Lattice[Value]{
 		Bottom: func() Value { return Bottom(reg) },
 		Top:    Top,
@@ -30,7 +30,7 @@ func Domain(reg *axis.Registry) lattice.Lattice[Value] {
 }
 
 func Equal(reg *axis.Registry, a, b Value) bool {
-	reg = registryOrDefault(reg)
+	requireRegistry(reg)
 	validateValue(reg, a)
 	validateValue(reg, b)
 	if a.n == b.n {
@@ -51,7 +51,7 @@ func Equal(reg *axis.Registry, a, b Value) bool {
 }
 
 func LessOrEq(reg *axis.Registry, a, b Value) bool {
-	reg = registryOrDefault(reg)
+	requireRegistry(reg)
 	validateValue(reg, a)
 	validateValue(reg, b)
 	if !shapeLessOrEq(ShapeOf(a), ShapeOf(b)) {
@@ -70,7 +70,7 @@ func LessOrEq(reg *axis.Registry, a, b Value) bool {
 }
 
 func Join(reg *axis.Registry, a, b Value) Value {
-	reg = registryOrDefault(reg)
+	requireRegistry(reg)
 	validateValue(reg, a)
 	validateValue(reg, b)
 	slots := make([]slot, 0, len(reg.Specs()))
@@ -88,7 +88,7 @@ func Join(reg *axis.Registry, a, b Value) Value {
 }
 
 func Meet(reg *axis.Registry, a, b Value) Value {
-	reg = registryOrDefault(reg)
+	requireRegistry(reg)
 	validateValue(reg, a)
 	validateValue(reg, b)
 	slots := make([]slot, 0, len(reg.Specs()))
@@ -106,7 +106,7 @@ func Meet(reg *axis.Registry, a, b Value) Value {
 }
 
 func Widen(reg *axis.Registry, prev, next Value) Value {
-	reg = registryOrDefault(reg)
+	requireRegistry(reg)
 	validateValue(reg, prev)
 	validateValue(reg, next)
 	slots := make([]slot, 0, len(reg.Specs()))

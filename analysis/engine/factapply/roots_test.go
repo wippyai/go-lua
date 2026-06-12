@@ -6,6 +6,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/domain/value/standard"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
@@ -15,7 +16,7 @@ import (
 )
 
 func TestFactsNodeTransferAppliesLocalAssignmentThroughResolver(t *testing.T) {
-	reg := product.DefaultRegistry()
+	reg := standard.Registry()
 	graph := cfg.New()
 	assign := graph.AddNode(cfg.NodeAssign)
 	graph.AddEdge(graph.Entry(), assign, false)
@@ -47,7 +48,7 @@ func TestFactsNodeTransferAppliesLocalAssignmentThroughResolver(t *testing.T) {
 }
 
 func TestFactsNodeTransferAppliesOrdinaryAssignmentThroughResolver(t *testing.T) {
-	reg := product.DefaultRegistry()
+	reg := standard.Registry()
 	graph := cfg.New()
 	assign := graph.AddNode(cfg.NodeAssign)
 	graph.AddEdge(graph.Entry(), assign, false)
@@ -106,7 +107,7 @@ func TestFactsNodeTransferRootAssignmentInvalidatesVisiblePathSubtree(t *testing
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			reg := product.DefaultRegistry()
+			reg := standard.Registry()
 			point := cfg.Point(60)
 			target := symbol.ID(120)
 			source := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: factflow.ExprRef(60), HasExpr: true}

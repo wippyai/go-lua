@@ -9,12 +9,13 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/domain/value/standard"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 )
 
 func TestRun_LinearGraphPropagatesEntryStateThroughIdentityTransfers(t *testing.T) {
-	reg := product.DefaultRegistry()
+	reg := standard.Registry()
 	graph := cfg.New()
 	mid := graph.AddNode(cfg.NodeNoop)
 	graph.AddEdge(graph.Entry(), mid, false)
@@ -35,7 +36,7 @@ func TestRun_LinearGraphPropagatesEntryStateThroughIdentityTransfers(t *testing.
 }
 
 func TestRun_NodeTransferWritesAssignmentOutputForSuccessor(t *testing.T) {
-	reg := product.DefaultRegistry()
+	reg := standard.Registry()
 	graph := cfg.New()
 	assign := graph.AddNode(cfg.NodeAssign)
 	graph.AddEdge(graph.Entry(), assign, false)
@@ -62,7 +63,7 @@ func TestRun_NodeTransferWritesAssignmentOutputForSuccessor(t *testing.T) {
 }
 
 func TestRun_EdgeTransferDistinguishesBranchEdges(t *testing.T) {
-	reg := product.DefaultRegistry()
+	reg := standard.Registry()
 	graph := cfg.New()
 	branch := graph.AddNode(cfg.NodeBranch)
 	thenPoint := graph.AddNode(cfg.NodeNoop)
@@ -99,7 +100,7 @@ func TestRun_EdgeTransferDistinguishesBranchEdges(t *testing.T) {
 }
 
 func TestRun_EdgeTransferDoesNotExposeConditionForOrdinaryEdges(t *testing.T) {
-	reg := product.DefaultRegistry()
+	reg := standard.Registry()
 	graph := cfg.New()
 	mid := graph.AddNode(cfg.NodeNoop)
 	graph.AddEdge(graph.Entry(), mid, false)
@@ -126,7 +127,7 @@ func TestRun_EdgeTransferDoesNotExposeConditionForOrdinaryEdges(t *testing.T) {
 }
 
 func TestRun_JoinPointJoinsPredecessorStatesViaStateDomain(t *testing.T) {
-	reg := product.DefaultRegistry()
+	reg := standard.Registry()
 	graph := cfg.New()
 	branch := graph.AddNode(cfg.NodeBranch)
 	left := graph.AddNode(cfg.NodeNoop)

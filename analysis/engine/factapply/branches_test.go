@@ -8,6 +8,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/domain/value/standard"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
@@ -17,7 +18,7 @@ import (
 )
 
 func TestFactsEdgeTransferAppliesNilRefinementsOnRootValue(t *testing.T) {
-	reg := product.DefaultRegistry()
+	reg := standard.Registry()
 	graph := cfg.New()
 	branch := graph.AddNode(cfg.NodeBranch)
 	thenPoint := graph.AddNode(cfg.NodeNoop)
@@ -48,7 +49,7 @@ func TestFactsEdgeTransferAppliesNilRefinementsOnRootValue(t *testing.T) {
 }
 
 func TestFactsEdgeTransferAppliesMultipleRefinementsOnSameBranchEdge(t *testing.T) {
-	reg := product.DefaultRegistry()
+	reg := standard.Registry()
 	graph := cfg.New()
 	branch := graph.AddNode(cfg.NodeBranch)
 	thenPoint := graph.AddNode(cfg.NodeNoop)
@@ -89,7 +90,7 @@ func TestFactsEdgeTransferAppliesMultipleRefinementsOnSameBranchEdge(t *testing.
 }
 
 func TestFactsEdgeTransferAppliesBranchPresenceRelationFromErrorPath(t *testing.T) {
-	reg := product.DefaultRegistry()
+	reg := standard.Registry()
 	graph := cfg.New()
 	branch := graph.AddNode(cfg.NodeBranch)
 	thenPoint := graph.AddNode(cfg.NodeNoop)
@@ -132,7 +133,7 @@ func TestFactsEdgeTransferAppliesBranchPresenceRelationFromErrorPath(t *testing.
 }
 
 func TestFactsEdgeTransferErrorReturnRelationDoesNotInventFalsyNilBranch(t *testing.T) {
-	reg := product.DefaultRegistry()
+	reg := standard.Registry()
 	graph := cfg.New()
 	branch := graph.AddNode(cfg.NodeBranch)
 	thenPoint := graph.AddNode(cfg.NodeNoop)
@@ -184,20 +185,20 @@ func TestFactsEdgeTransferOneSidedTruthyFalsyRefinements(t *testing.T) {
 		{
 			name:      "truthy refines true edge only",
 			fact:      branchWithPresence(pathdom.NewPath(symbol.ID(302), "x"), presence.Present(), true, presence.Bottom(), false),
-			wantTrue:  presentValue(product.DefaultRegistry()),
+			wantTrue:  presentValue(standard.Registry()),
 			wantFalse: product.Top(),
 		},
 		{
 			name:      "falsy refines false edge only",
 			fact:      branchWithPresence(pathdom.NewPath(symbol.ID(303), "x"), presence.Bottom(), false, presence.Present(), true),
 			wantTrue:  product.Top(),
-			wantFalse: presentValue(product.DefaultRegistry()),
+			wantFalse: presentValue(standard.Registry()),
 		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			reg := product.DefaultRegistry()
+			reg := standard.Registry()
 			graph := cfg.New()
 			branch := graph.AddNode(cfg.NodeBranch)
 			thenPoint := graph.AddNode(cfg.NodeNoop)
@@ -230,7 +231,7 @@ func TestFactsEdgeTransferOneSidedTruthyFalsyRefinements(t *testing.T) {
 }
 
 func TestFactsEdgeTransferRefinesStaticMemberPathThroughVisibility(t *testing.T) {
-	reg := product.DefaultRegistry()
+	reg := standard.Registry()
 	graph := cfg.New()
 	branch := graph.AddNode(cfg.NodeBranch)
 	thenPoint := graph.AddNode(cfg.NodeNoop)
@@ -268,7 +269,7 @@ func TestFactsEdgeTransferRefinesStaticMemberPathThroughVisibility(t *testing.T)
 }
 
 func TestFactsEdgeTransferRefinesRuntimeKindOnRootValue(t *testing.T) {
-	reg := product.DefaultRegistry()
+	reg := standard.Registry()
 	graph := cfg.New()
 	branch := graph.AddNode(cfg.NodeBranch)
 	thenPoint := graph.AddNode(cfg.NodeNoop)
@@ -299,7 +300,7 @@ func TestFactsEdgeTransferRefinesRuntimeKindOnRootValue(t *testing.T) {
 }
 
 func TestFactsEdgeTransferRefinesRuntimeKindOnStaticMemberPath(t *testing.T) {
-	reg := product.DefaultRegistry()
+	reg := standard.Registry()
 	graph := cfg.New()
 	branch := graph.AddNode(cfg.NodeBranch)
 	thenPoint := graph.AddNode(cfg.NodeNoop)
@@ -336,7 +337,7 @@ func TestFactsEdgeTransferRefinesRuntimeKindOnStaticMemberPath(t *testing.T) {
 }
 
 func TestFactsEdgeTransferRuntimeKindContradictionGoesBottom(t *testing.T) {
-	reg := product.DefaultRegistry()
+	reg := standard.Registry()
 	graph := cfg.New()
 	branch := graph.AddNode(cfg.NodeBranch)
 	thenPoint := graph.AddNode(cfg.NodeNoop)
@@ -407,7 +408,7 @@ func TestFactsEdgeTransferAppliesGenericProductConstraintAxis(t *testing.T) {
 
 func TestFactsEdgeTransferNoopsWithoutBranchConditionOrVisibility(t *testing.T) {
 	t.Run("non-branch edge", func(t *testing.T) {
-		reg := product.DefaultRegistry()
+		reg := standard.Registry()
 		graph := cfg.New()
 		mid := graph.AddNode(cfg.NodeNoop)
 		graph.AddEdge(graph.Entry(), mid, false)
@@ -432,7 +433,7 @@ func TestFactsEdgeTransferNoopsWithoutBranchConditionOrVisibility(t *testing.T) 
 	})
 
 	t.Run("missing visibility for static path", func(t *testing.T) {
-		reg := product.DefaultRegistry()
+		reg := standard.Registry()
 		graph := cfg.New()
 		branch := graph.AddNode(cfg.NodeBranch)
 		thenPoint := graph.AddNode(cfg.NodeNoop)
@@ -466,7 +467,7 @@ func TestFactsEdgeTransferNoopsWithoutBranchConditionOrVisibility(t *testing.T) 
 }
 
 func TestFactsEdgeTransferJoinRestoresMaybePresence(t *testing.T) {
-	reg := product.DefaultRegistry()
+	reg := standard.Registry()
 	graph := cfg.New()
 	branch := graph.AddNode(cfg.NodeBranch)
 	thenPoint := graph.AddNode(cfg.NodeNoop)
@@ -500,7 +501,7 @@ func TestFactsEdgeTransferJoinRestoresMaybePresence(t *testing.T) {
 }
 
 func TestFactsEdgeTransferJoinRestoresRuntimeKindUnion(t *testing.T) {
-	reg := product.DefaultRegistry()
+	reg := standard.Registry()
 	graph := cfg.New()
 	branch := graph.AddNode(cfg.NodeBranch)
 	thenPoint := graph.AddNode(cfg.NodeNoop)

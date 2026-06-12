@@ -5,6 +5,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/domain/value/standard"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/visibility"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
@@ -12,7 +13,7 @@ import (
 )
 
 func TestPathStateAdaptersUseResolvedKeysAndRejectMissingVersion(t *testing.T) {
-	reg := product.DefaultRegistry()
+	reg := standard.Registry()
 	point := cfg.Point(7)
 	sym := symbol.ID(30)
 	resolver := resolverWithVisibleVersion(point, sym, "x")
@@ -40,7 +41,7 @@ func TestPathStateAdaptersUseResolvedKeysAndRejectMissingVersion(t *testing.T) {
 }
 
 func TestPathStateAdapterUpdateUsesResolvedKeyAndSkipsUnresolvedPath(t *testing.T) {
-	reg := product.DefaultRegistry()
+	reg := standard.Registry()
 	point := cfg.Point(8)
 	sym := symbol.ID(31)
 	resolver := resolverWithVisibleVersion(point, sym, "x")
@@ -77,7 +78,7 @@ func TestPathStateAdapterUpdateUsesResolvedKeyAndSkipsUnresolvedPath(t *testing.
 }
 
 func TestPathStateAdapterInvalidateSubtreeUsesResolvedKeyAndRejectsUnresolvedPath(t *testing.T) {
-	reg := product.DefaultRegistry()
+	reg := standard.Registry()
 	point := cfg.Point(9)
 	sym := symbol.ID(42)
 	resolver := resolverWithVisibleVersion(point, sym, "obj")

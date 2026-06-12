@@ -64,7 +64,7 @@ func Top() Value {
 }
 
 func Bottom(reg *axis.Registry) Value {
-	reg = registryOrDefault(reg)
+	requireRegistry(reg)
 	return intern(reg, ShapeBottom, presence.Bottom(), bottomSlots(reg))
 }
 
@@ -77,11 +77,11 @@ func bottomSlots(reg *axis.Registry) []slot {
 }
 
 func New(reg *axis.Registry, shape Shape) Value {
-	return intern(registryOrDefault(reg), shape, presence.Top(), nil)
+	return intern(reg, shape, presence.Top(), nil)
 }
 
 func NewWithPresence(reg *axis.Registry, shape Shape, p presence.Value) Value {
-	return intern(registryOrDefault(reg), shape, p, nil)
+	return intern(reg, shape, p, nil)
 }
 
 func Absent(reg *axis.Registry) Value {
@@ -96,7 +96,7 @@ func ShapeOf(v Value) Shape {
 }
 
 func WithShape(reg *axis.Registry, v Value, shape Shape) Value {
-	reg = registryOrDefault(reg)
+	requireRegistry(reg)
 	validateValue(reg, v)
 	return intern(reg, shape, PresenceOf(v), copySlots(v))
 }
@@ -109,7 +109,7 @@ func PresenceOf(v Value) presence.Value {
 }
 
 func WithPresence(reg *axis.Registry, v Value, p presence.Value) Value {
-	reg = registryOrDefault(reg)
+	requireRegistry(reg)
 	validateValue(reg, v)
 	return intern(reg, ShapeOf(v), p, copySlots(v))
 }
@@ -117,7 +117,7 @@ func WithPresence(reg *axis.Registry, v Value, p presence.Value) Value {
 // Get reads a typed axis value. If the axis is omitted, Get returns the axis
 // Top value.
 func Get[T any](reg *axis.Registry, v Value, key axis.Key[T]) T {
-	reg = registryOrDefault(reg)
+	requireRegistry(reg)
 	validateValue(reg, v)
 	if key.ID() == presence.Key.ID() {
 		panic("product: presence is a core lane; use PresenceOf")
@@ -139,7 +139,7 @@ func Get[T any](reg *axis.Registry, v Value, key axis.Key[T]) T {
 // Set returns v with key set to value. Setting an axis to Top canonicalizes the
 // slot back to omission.
 func Set[T any](reg *axis.Registry, v Value, key axis.Key[T], value T) Value {
-	reg = registryOrDefault(reg)
+	requireRegistry(reg)
 	validateValue(reg, v)
 	if key.ID() == presence.Key.ID() {
 		panic("product: presence is a core lane; use WithPresence")

@@ -8,6 +8,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/domain/value/standard"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/sourcevalue"
 	"github.com/wippyai/go-lua/analysis/engine/state"
@@ -41,7 +42,7 @@ func TestFactsNodeTransferAppliesValueOverlaysToAssignments(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			reg := product.DefaultRegistry()
+			reg := standard.Registry()
 			point := cfg.Point(51)
 			target := symbol.ID(151)
 			inner := factflow.ExprRef(1510)
@@ -86,7 +87,7 @@ func TestFactsNodeTransferAppliesValueOverlaysToAssignments(t *testing.T) {
 }
 
 func TestFactsNodeTransferMissingResolverValueLeavesStateUnchanged(t *testing.T) {
-	reg := product.DefaultRegistry()
+	reg := standard.Registry()
 	point := cfg.Point(12)
 	source := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: factflow.ExprRef(12), HasExpr: true}
 	target := symbol.ID(103)
@@ -109,7 +110,7 @@ func TestFactsNodeTransferMissingResolverValueLeavesStateUnchanged(t *testing.T)
 }
 
 func TestFactsNodeTransferAbsentFactsAndNilResolverLeaveStateUnchanged(t *testing.T) {
-	reg := product.DefaultRegistry()
+	reg := standard.Registry()
 	point := cfg.Point(13)
 	target := symbol.ID(104)
 	in := state.State{}.WriteValue(reg, key.SymbolValue(target), presentValue(reg))
@@ -128,7 +129,7 @@ func TestFactsNodeTransferAbsentFactsAndNilResolverLeaveStateUnchanged(t *testin
 }
 
 func TestFactsNodeTransferIgnoresNonRootAssignmentFacts(t *testing.T) {
-	reg := product.DefaultRegistry()
+	reg := standard.Registry()
 	point := cfg.Point(14)
 	source := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: factflow.ExprRef(14), HasExpr: true}
 	target := symbol.ID(105)

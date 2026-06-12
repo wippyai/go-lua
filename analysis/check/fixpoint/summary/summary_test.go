@@ -59,23 +59,25 @@ func TestSummaryKeyAxesAreDistinct(t *testing.T) {
 }
 
 func TestSnapshotExactReads(t *testing.T) {
+	reg := mustRegistry(t)
 	fn := ref.FuncRef{Kind: ref.KindCFG, ID: 7}
 	exact := SummaryKey{Ref: fn, Entry: EntryKey{Values: 1, Facts: 2}}
 	want := Summary{Returns: []product.Value{product.Top()}}
-	snap := NewSnapshot(nil, EntrySummary{Key: exact, Summary: want})
+	snap := NewSnapshot(reg, EntrySummary{Key: exact, Summary: want})
 
 	got, ok := snap.Read(exact)
 	if !ok {
 		t.Fatalf("Read(exact) missing")
 	}
-	if len(got.Returns) != 1 || !product.Equal(nil, got.Returns[0], product.Top()) {
+	if len(got.Returns) != 1 || !product.Equal(reg, got.Returns[0], product.Top()) {
 		t.Fatalf("Read(exact) = %#v, want one top return", got)
 	}
 }
 
 func TestSnapshotExactReadsDoNotFallbackByRef(t *testing.T) {
+	reg := mustRegistry(t)
 	fn := ref.FuncRef{Kind: ref.KindCFG, ID: 7}
-	snap := NewSnapshot(nil, EntrySummary{
+	snap := NewSnapshot(reg, EntrySummary{
 		Key:     SummaryKey{Ref: fn, Entry: EntryKey{Values: 1}},
 		Summary: Summary{Returns: []product.Value{product.Top()}},
 	})
@@ -86,13 +88,14 @@ func TestSnapshotExactReadsDoNotFallbackByRef(t *testing.T) {
 }
 
 func TestSnapshotReadsNormalizedSummaries(t *testing.T) {
+	reg := mustRegistry(t)
 	key := DefaultSummaryKey(ref.FuncRef{Kind: ref.KindSymbol, ID: 11})
-	snap := NewSnapshot(nil, EntrySummary{
+	snap := NewSnapshot(reg, EntrySummary{
 		Key: key,
 		Summary: Summary{Returns: []product.Value{
 			product.Top(),
-			product.Bottom(nil),
-			product.Bottom(nil),
+			product.Bottom(reg),
+			product.Bottom(reg),
 		}},
 	})
 
@@ -103,15 +106,15 @@ func TestSnapshotReadsNormalizedSummaries(t *testing.T) {
 	if len(got.Returns) != 1 {
 		t.Fatalf("Read(key) returned %d returns, want normalized 1", len(got.Returns))
 	}
-	if !product.Equal(nil, got.Returns[0], product.Top()) {
+	if !product.Equal(reg, got.Returns[0], product.Top()) {
 		t.Fatalf("Read(key) first return = %#v, want top", got.Returns[0])
 	}
 }
 
 func TestSnapshotNormalizesWithCustomRegistry(t *testing.T) {
-	reg, err := product.DefaultRegistryWithAxes(summaryTestSpec().Erase())
+	reg, err := product.RegistryWithAxes(summaryTestSpec().Erase())
 	if err != nil {
-		t.Fatalf("DefaultRegistryWithAxes() error = %v", err)
+		t.Fatalf("RegistryWithAxes() error = %v", err)
 	}
 	key := DefaultSummaryKey(ref.FuncRef{Kind: ref.KindSymbol, ID: 12})
 	value := product.Set(reg, product.Top(), summaryTestKey, summaryTestLow)
@@ -136,38 +139,40 @@ func TestSnapshotNormalizesWithCustomRegistry(t *testing.T) {
 }
 
 func TestSummaryCloneIsolatesReturns(t *testing.T) {
-	original := Summary{Returns: []product.Value{product.Top(), product.Absent(nil)}}
+	reg := mustRegistry(t)
+	original := Summary{Returns: []product.Value{product.Top(), product.Absent(reg)}}
 	cloned := original.Clone()
-	cloned.Returns[0] = product.Bottom(nil)
+	cloned.Returns[0] = product.Bottom(reg)
 
-	if product.Equal(nil, original.Returns[0], product.Bottom(nil)) {
+	if product.Equal(reg, original.Returns[0], product.Bottom(reg)) {
 		t.Fatalf("mutating cloned returns changed original")
 	}
-	if !product.Equal(nil, original.Returns[0], product.Top()) {
+	if !product.Equal(reg, original.Returns[0], product.Top()) {
 		t.Fatalf("original first return changed unexpectedly")
 	}
 }
 
 func TestSnapshotClonesOnWriteAndRead(t *testing.T) {
+	reg := mustRegistry(t)
 	key := DefaultSummaryKey(ref.FuncRef{Kind: ref.KindSymbol, ID: 9})
 	input := Summary{Returns: []product.Value{product.Top()}}
-	snap := NewSnapshot(nil, EntrySummary{Key: key, Summary: input})
-	input.Returns[0] = product.Bottom(nil)
+	snap := NewSnapshot(reg, EntrySummary{Key: key, Summary: input})
+	input.Returns[0] = product.Bottom(reg)
 
 	first, ok := snap.Read(key)
 	if !ok {
 		t.Fatalf("Read(key) missing")
 	}
-	if !product.Equal(nil, first.Returns[0], product.Top()) {
+	if !product.Equal(reg, first.Returns[0], product.Top()) {
 		t.Fatalf("snapshot changed after input mutation")
 	}
 
-	first.Returns[0] = product.Bottom(nil)
+	first.Returns[0] = product.Bottom(reg)
 	second, ok := snap.Read(key)
 	if !ok {
 		t.Fatalf("second Read(key) missing")
 	}
-	if !product.Equal(nil, second.Returns[0], product.Top()) {
+	if !product.Equal(reg, second.Returns[0], product.Top()) {
 		t.Fatalf("snapshot changed after read result mutation")
 	}
 }
@@ -215,74 +220,88 @@ func summaryTestSpec() axis.Spec[summaryTestAxis] {
 }
 
 func TestEqualTreatsAbsentReturnSlotAsBottom(t *testing.T) {
+	reg := mustRegistry(t)
 	empty := Summary{}
-	explicitBottom := Summary{Returns: []product.Value{product.Bottom(nil)}}
+	explicitBottom := Summary{Returns: []product.Value{product.Bottom(reg)}}
 
-	if !Equal(nil, empty, explicitBottom) {
+	if !Equal(reg, empty, explicitBottom) {
 		t.Fatalf("missing return slot should equal explicit bottom")
 	}
-	if !Equal(nil, explicitBottom, empty) {
+	if !Equal(reg, explicitBottom, empty) {
 		t.Fatalf("explicit bottom should equal missing return slot")
 	}
 }
 
 func TestJoinWithMissingReturnSlot(t *testing.T) {
-	got := Join(nil, Summary{}, Summary{Returns: []product.Value{product.Top()}})
+	reg := mustRegistry(t)
+	got := Join(reg, Summary{}, Summary{Returns: []product.Value{product.Top()}})
 	if len(got.Returns) != 1 {
 		t.Fatalf("Join returned %d slots, want 1", len(got.Returns))
 	}
-	if !product.Equal(nil, got.Returns[0], product.Top()) {
+	if !product.Equal(reg, got.Returns[0], product.Top()) {
 		t.Fatalf("Join missing slot with top = %#v, want top", got.Returns[0])
 	}
 }
 
 func TestNormalizeTrimsTrailingBottomReturnSlots(t *testing.T) {
+	reg := mustRegistry(t)
 	s := Summary{
 		Returns: []product.Value{
 			product.Top(),
-			product.Bottom(nil),
-			product.Bottom(nil),
+			product.Bottom(reg),
+			product.Bottom(reg),
 		},
 	}
-	got := Normalize(nil, s)
+	got := Normalize(reg, s)
 	if len(got.Returns) != 1 {
 		t.Fatalf("Normalize kept %d returns, want 1", len(got.Returns))
 	}
-	if !product.Equal(nil, got.Returns[0], product.Top()) {
+	if !product.Equal(reg, got.Returns[0], product.Top()) {
 		t.Fatalf("Normalize first return = %#v, want top", got.Returns[0])
 	}
 
-	allBottom := Normalize(nil, Summary{Returns: []product.Value{product.Bottom(nil)}})
+	allBottom := Normalize(reg, Summary{Returns: []product.Value{product.Bottom(reg)}})
 	if len(allBottom.Returns) != 0 {
 		t.Fatalf("Normalize(all bottom) kept %d returns, want 0", len(allBottom.Returns))
 	}
 }
 
 func TestLessOrEqAndEqualForReturnTuples(t *testing.T) {
+	reg := mustRegistry(t)
 	bottom := Summary{}
 	top := Summary{Returns: []product.Value{product.Top()}}
-	topWithTrailingBottom := Summary{Returns: []product.Value{product.Top(), product.Bottom(nil)}}
+	topWithTrailingBottom := Summary{Returns: []product.Value{product.Top(), product.Bottom(reg)}}
 
-	if !LessOrEq(nil, bottom, top) {
+	if !LessOrEq(reg, bottom, top) {
 		t.Fatalf("bottom summary should be <= top-return summary")
 	}
-	if LessOrEq(nil, top, bottom) {
+	if LessOrEq(reg, top, bottom) {
 		t.Fatalf("top-return summary should not be <= bottom summary")
 	}
-	if !Equal(nil, top, topWithTrailingBottom) {
+	if !Equal(reg, top, topWithTrailingBottom) {
 		t.Fatalf("trailing bottom slot should not affect equality")
 	}
-	if Equal(nil, bottom, top) {
+	if Equal(reg, bottom, top) {
 		t.Fatalf("bottom summary should not equal top-return summary")
 	}
 }
 
 func TestWidenWithMissingReturnSlot(t *testing.T) {
-	got := Widen(nil, Summary{}, Summary{Returns: []product.Value{product.Top()}})
+	reg := mustRegistry(t)
+	got := Widen(reg, Summary{}, Summary{Returns: []product.Value{product.Top()}})
 	if len(got.Returns) != 1 {
 		t.Fatalf("Widen returned %d slots, want 1", len(got.Returns))
 	}
-	if !product.Equal(nil, got.Returns[0], product.Top()) {
+	if !product.Equal(reg, got.Returns[0], product.Top()) {
 		t.Fatalf("Widen missing slot with top = %#v, want top", got.Returns[0])
 	}
+}
+
+func mustRegistry(t *testing.T) *axis.Registry {
+	t.Helper()
+	reg, err := product.RegistryWithAxes()
+	if err != nil {
+		t.Fatalf("RegistryWithAxes() error = %v", err)
+	}
+	return reg
 }

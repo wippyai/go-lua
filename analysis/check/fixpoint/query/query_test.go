@@ -10,10 +10,11 @@ import (
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/summary"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/domain/value/standard"
 )
 
 func TestRunSingleBodyReturnsExactKeySnapshot(t *testing.T) {
-	reg := product.DefaultRegistry()
+	reg := standard.Registry()
 	key := summary.DefaultSummaryKey(ref.FuncRef{Kind: ref.KindSymbol, ID: 1})
 
 	snap, err := Run(Config{
@@ -39,7 +40,7 @@ func TestRunSingleBodyReturnsExactKeySnapshot(t *testing.T) {
 }
 
 func TestSnapshotExactReadsDoNotFallbackByFuncRef(t *testing.T) {
-	reg := product.DefaultRegistry()
+	reg := standard.Registry()
 	fn := ref.FuncRef{Kind: ref.KindSymbol, ID: 2}
 	exact := summary.SummaryKey{Ref: fn, Entry: summary.EntryKey{Values: 1}}
 
@@ -62,9 +63,9 @@ func TestSnapshotExactReadsDoNotFallbackByFuncRef(t *testing.T) {
 }
 
 func TestBodyReadCreatesDependencyAndObservesUpdatedValue(t *testing.T) {
-	reg, err := product.DefaultRegistryWithAxes(queryTestSpec().Erase())
+	reg, err := standard.RegistryWithAxes(queryTestSpec().Erase())
 	if err != nil {
-		t.Fatalf("DefaultRegistryWithAxes() error = %v", err)
+		t.Fatalf("RegistryWithAxes() error = %v", err)
 	}
 	source := summary.DefaultSummaryKey(ref.FuncRef{Kind: ref.KindSymbol, ID: 3})
 	dependent := summary.DefaultSummaryKey(ref.FuncRef{Kind: ref.KindSymbol, ID: 4})
@@ -112,7 +113,7 @@ func TestBodyReadCreatesDependencyAndObservesUpdatedValue(t *testing.T) {
 }
 
 func TestMissingReturnSlotsAreBottomInJoinAndWiden(t *testing.T) {
-	reg := product.DefaultRegistry()
+	reg := standard.Registry()
 	joinKey := summary.DefaultSummaryKey(ref.FuncRef{Kind: ref.KindSymbol, ID: 5})
 	widenKey := summary.DefaultSummaryKey(ref.FuncRef{Kind: ref.KindSymbol, ID: 6})
 	joinVisits := 0
@@ -162,7 +163,7 @@ func TestMissingReturnSlotsAreBottomInJoinAndWiden(t *testing.T) {
 }
 
 func TestSeedInitializesExactKeyAndDoesNotFallbackByFuncRef(t *testing.T) {
-	reg := product.DefaultRegistry()
+	reg := standard.Registry()
 	fn := ref.FuncRef{Kind: ref.KindSymbol, ID: 7}
 	seededKey := summary.SummaryKey{Ref: fn, Entry: summary.EntryKey{Values: 1}}
 	configuredKey := summary.DefaultSummaryKey(fn)
@@ -207,7 +208,7 @@ func TestSeedInitializesExactKeyAndDoesNotFallbackByFuncRef(t *testing.T) {
 }
 
 func TestSeedInitializesConfiguredExactKey(t *testing.T) {
-	reg := product.DefaultRegistry()
+	reg := standard.Registry()
 	key := summary.DefaultSummaryKey(ref.FuncRef{Kind: ref.KindSymbol, ID: 8})
 	seed := summary.NewSnapshot(reg, summary.EntrySummary{
 		Key:     key,
@@ -239,7 +240,7 @@ func TestSeedInitializesConfiguredExactKey(t *testing.T) {
 }
 
 func TestWidenHooksAreForwardedForSummaryKeys(t *testing.T) {
-	reg := product.DefaultRegistry()
+	reg := standard.Registry()
 	key := summary.DefaultSummaryKey(ref.FuncRef{Kind: ref.KindSymbol, ID: 9})
 	var widenAtKeys []summary.SummaryKey
 	var widenDelayKeys []summary.SummaryKey
@@ -278,7 +279,7 @@ func TestWidenHooksAreForwardedForSummaryKeys(t *testing.T) {
 }
 
 func TestNewValidationErrors(t *testing.T) {
-	reg := product.DefaultRegistry()
+	reg := standard.Registry()
 	key := summary.DefaultSummaryKey(ref.FuncRef{Kind: ref.KindSymbol, ID: 10})
 
 	if _, err := New(Config{}); !errors.Is(err, ErrRegistryRequired) {

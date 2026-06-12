@@ -9,6 +9,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/domain/value/standard"
 	. "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
@@ -26,7 +27,7 @@ func TestSourceValuesPanicsWithoutRegistry(t *testing.T) {
 }
 
 func TestSourceValuesExpressionMapResolvesAndDoesNotMutateState(t *testing.T) {
-	reg := product.DefaultRegistry()
+	reg := standard.Registry()
 	expr := ExprRef(10)
 	source := ValueSource{Kind: ValueSourceExpression, ExprRef: expr, HasExpr: true}
 	value := presentValue(reg)
@@ -51,7 +52,7 @@ func TestSourceValuesExpressionMapResolvesAndDoesNotMutateState(t *testing.T) {
 }
 
 func TestSourceValuesNilReturnsAbsentPresence(t *testing.T) {
-	reg := product.DefaultRegistry()
+	reg := standard.Registry()
 	resolver := NewSourceValues(SourceValuesConfig{Registry: reg})
 
 	got, ok := resolver.ValueOfSource(cfg.Point(2), ValueSource{Kind: ValueSourceNil}, state.State{}, nil)
@@ -64,7 +65,7 @@ func TestSourceValuesNilReturnsAbsentPresence(t *testing.T) {
 }
 
 func TestSourceValuesCallReadsReturnSlot(t *testing.T) {
-	reg := product.DefaultRegistry()
+	reg := standard.Registry()
 	callPoint := cfg.Point(33)
 	source := ValueSource{
 		Kind:         ValueSourceCall,
@@ -92,7 +93,7 @@ func TestSourceValuesCallReadsReturnSlot(t *testing.T) {
 }
 
 func TestSourceValuesMissingMetadataAndUnknownSourcesReturnFalse(t *testing.T) {
-	reg := product.DefaultRegistry()
+	reg := standard.Registry()
 	resolver := NewSourceValues(SourceValuesConfig{Registry: reg})
 	read := func(cfg.Point) state.State { return state.State{}.WriteReturnSlot(reg, 0, presentValue(reg)) }
 
@@ -143,7 +144,7 @@ func TestSourceValuesMissingMetadataAndUnknownSourcesReturnFalse(t *testing.T) {
 }
 
 func TestSourceValuesExpressionAndVarargProvidersAreGenericHooks(t *testing.T) {
-	reg := product.DefaultRegistry()
+	reg := standard.Registry()
 	exprValue := presentValue(reg)
 	varargValue := absentValue(reg)
 	resolver := NewSourceValues(SourceValuesConfig{
@@ -178,7 +179,7 @@ func TestSourceValuesExpressionAndVarargProvidersAreGenericHooks(t *testing.T) {
 }
 
 func TestValueOverlaySourceValuesMeetsOverlayAndDoesNotMutateBase(t *testing.T) {
-	reg := product.DefaultRegistry()
+	reg := standard.Registry()
 	inner := ExprRef(10)
 	outer := ExprRef(11)
 	innerSource := ValueSource{Kind: ValueSourceExpression, ExprRef: inner, HasExpr: true}
@@ -212,7 +213,7 @@ func TestValueOverlaySourceValuesMeetsOverlayAndDoesNotMutateBase(t *testing.T) 
 }
 
 func TestValueOverlaySourceValuesAppliesOverlayToCallSource(t *testing.T) {
-	reg := product.DefaultRegistry()
+	reg := standard.Registry()
 	inner := ExprRef(12)
 	outer := ExprRef(13)
 	callPoint := cfg.Point(44)
@@ -255,7 +256,7 @@ func TestValueOverlaySourceValuesAppliesOverlayToCallSource(t *testing.T) {
 }
 
 func TestValueOverlaySourceValuesPanicsWithoutRegistry(t *testing.T) {
-	reg := product.DefaultRegistry()
+	reg := standard.Registry()
 	base := NewSourceValues(SourceValuesConfig{Registry: reg})
 
 	defer func() {
@@ -273,7 +274,7 @@ func TestValueOverlaySourceValuesPanicsWithoutRegistry(t *testing.T) {
 }
 
 func TestValueOverlaySourceValuesCanMeetCorePresenceOverlay(t *testing.T) {
-	reg := product.DefaultRegistry()
+	reg := standard.Registry()
 	inner := ExprRef(14)
 	outer := ExprRef(15)
 	baseResolver := NewSourceValues(SourceValuesConfig{
@@ -299,7 +300,7 @@ func TestValueOverlaySourceValuesCanMeetCorePresenceOverlay(t *testing.T) {
 }
 
 func TestValueOverlaySourceValuesNestedOverlaysMeet(t *testing.T) {
-	reg := product.DefaultRegistry()
+	reg := standard.Registry()
 	inner := ExprRef(20)
 	middle := ExprRef(21)
 	outer := ExprRef(22)
@@ -330,7 +331,7 @@ func TestValueOverlaySourceValuesNestedOverlaysMeet(t *testing.T) {
 }
 
 func TestValueOverlaySourceValuesMissingInnerSourceReturnsFalse(t *testing.T) {
-	reg := product.DefaultRegistry()
+	reg := standard.Registry()
 	baseResolver := NewSourceValues(SourceValuesConfig{
 		Registry: reg,
 	})

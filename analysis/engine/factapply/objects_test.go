@@ -6,6 +6,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/domain/value/standard"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/sourcevalue"
 	"github.com/wippyai/go-lua/analysis/engine/state"
@@ -44,7 +45,7 @@ func TestFactsNodeTransferObjectLiteralRootAssignmentsWriteStaticEntries(t *test
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			reg := product.DefaultRegistry()
+			reg := standard.Registry()
 			point := cfg.Point(61)
 			target := symbol.ID(121)
 			objectSource := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: factflow.ExprRef(61), HasExpr: true}
@@ -88,7 +89,7 @@ func TestFactsNodeTransferObjectLiteralRootAssignmentsWriteStaticEntries(t *test
 }
 
 func TestFactsNodeTransferObjectLiteralEntriesUsePreWriteInputState(t *testing.T) {
-	reg := product.DefaultRegistry()
+	reg := standard.Registry()
 	point := cfg.Point(62)
 	target := symbol.ID(122)
 	objectSource := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: factflow.ExprRef(63), HasExpr: true}
@@ -134,7 +135,7 @@ func TestFactsNodeTransferObjectLiteralEntriesUsePreWriteInputState(t *testing.T
 }
 
 func TestFactsNodeTransferObjectLiteralMissingVisibilitySkipsEntriesKeepsRoot(t *testing.T) {
-	reg := product.DefaultRegistry()
+	reg := standard.Registry()
 	point := cfg.Point(63)
 	target := symbol.ID(123)
 	objectSource := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: factflow.ExprRef(65), HasExpr: true}
@@ -172,7 +173,7 @@ func TestFactsNodeTransferObjectLiteralMissingVisibilitySkipsEntriesKeepsRoot(t 
 }
 
 func TestFactsNodeTransferObjectLiteralPathAssignmentWritesStaticEntries(t *testing.T) {
-	reg := product.DefaultRegistry()
+	reg := standard.Registry()
 	point := cfg.Point(64)
 	target := symbol.ID(124)
 	targetPath := path.NewPath(target, "t").Field("child")
@@ -215,7 +216,7 @@ func TestFactsNodeTransferObjectLiteralPathAssignmentWritesStaticEntries(t *test
 }
 
 func TestFactsNodeTransferObjectLiteralEntriesInvalidateSubtreeBeforeWrite(t *testing.T) {
-	reg := product.DefaultRegistry()
+	reg := standard.Registry()
 	point := cfg.Point(65)
 	target := symbol.ID(125)
 	objectSource := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: factflow.ExprRef(69), HasExpr: true}

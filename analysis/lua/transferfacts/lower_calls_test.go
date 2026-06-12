@@ -6,7 +6,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/assertion"
-	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/domain/value/standard"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
@@ -35,7 +35,7 @@ func TestLowerCallSitesPreserveAllSemanticContextsAndProducerStaysNarrow(t *test
 		t.Fatalf("ExtractChunk: %v", err)
 	}
 
-	facts := lowerFacts(t, result, built.Graph, product.DefaultRegistry())
+	facts := lowerFacts(t, result, built.Graph, standard.Registry())
 
 	localPoints := requireStmtPoints(t, built, local, 2)
 	localSite, ok := facts.CallSite(localPoints[0])
@@ -136,7 +136,7 @@ func TestLowerCallSitePreservesPortableCallShapeAndArgumentOverlays(t *testing.T
 		t.Fatalf("ExtractChunk: %v", err)
 	}
 
-	facts := lowerFacts(t, result, built.Graph, product.DefaultRegistry())
+	facts := lowerFacts(t, result, built.Graph, standard.Registry())
 	assertNoCompilerASTTypes(t, reflect.TypeOf(facts))
 
 	point := requireStmtPoints(t, built, stmt, 1)[0]
@@ -257,7 +257,7 @@ func TestLowerMemberOrdinaryCallTargetStaysCallSiteOnly(t *testing.T) {
 		t.Fatalf("ExtractChunk: %v", err)
 	}
 
-	facts := lowerFacts(t, result, built.Graph, product.DefaultRegistry())
+	facts := lowerFacts(t, result, built.Graph, standard.Registry())
 	points := requireStmtPoints(t, built, write, 2)
 	producer, ok := facts.Call(points[0])
 	if !ok {

@@ -13,6 +13,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/domain/value/standard"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
@@ -59,12 +60,12 @@ func assertLoweredAssertion(t *testing.T, facts factflow.Facts, source factflow.
 
 func overlayAssertion(t *testing.T, overlay factflow.ValueOverlay) assertion.Value {
 	t.Helper()
-	return product.Get(product.DefaultRegistry(), overlay.Overlay(), assertion.Key)
+	return product.Get(standard.Registry(), overlay.Overlay(), assertion.Key)
 }
 
 func assertAssertionOnlyProduct(t *testing.T, value product.Value, want assertion.Value) {
 	t.Helper()
-	reg := product.DefaultRegistry()
+	reg := standard.Registry()
 	if got := product.Get(reg, value, assertion.Key); !assertion.Equal(got, want) {
 		t.Fatalf("assertion value = %s, want %s", got, want)
 	}
@@ -174,7 +175,7 @@ func assertValueRefinement(t *testing.T, label string, got factflow.ValueRefinem
 	if want.hasPresence && !presence.Equal(gotPresence, want.presence) {
 		t.Fatalf("%s presence = %s, want %s", label, gotPresence, want.presence)
 	}
-	gotRuntimeKind := product.Get(product.DefaultRegistry(), constraint, runtimekind.Key)
+	gotRuntimeKind := product.Get(standard.Registry(), constraint, runtimekind.Key)
 	hasRuntimeKind := !runtimekind.Equal(gotRuntimeKind, runtimekind.Top())
 	if hasRuntimeKind != want.hasRuntimeKind {
 		t.Fatalf("%s runtime kind ok = %v, want %v", label, hasRuntimeKind, want.hasRuntimeKind)

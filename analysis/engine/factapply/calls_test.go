@@ -6,6 +6,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/domain/value/standard"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/sourcevalue"
 	"github.com/wippyai/go-lua/analysis/engine/state"
@@ -15,7 +16,7 @@ import (
 )
 
 func TestFactsNodeTransferAppliesReturnSlotsThroughSourceValues(t *testing.T) {
-	reg := product.DefaultRegistry()
+	reg := standard.Registry()
 	graph := cfg.New()
 	ret := graph.AddNode(cfg.NodeReturn)
 	graph.AddEdge(graph.Entry(), ret, false)
@@ -52,7 +53,7 @@ func TestFactsNodeTransferAppliesReturnSlotsThroughSourceValues(t *testing.T) {
 }
 
 func TestFactsNodeTransferUnresolvedReturnSourceLeavesSlotUnchanged(t *testing.T) {
-	reg := product.DefaultRegistry()
+	reg := standard.Registry()
 	point := cfg.Point(21)
 	slotValue := presentValue(reg)
 	in := state.State{}.WriteReturnSlot(reg, 0, slotValue)
@@ -76,7 +77,7 @@ func TestFactsNodeTransferUnresolvedReturnSourceLeavesSlotUnchanged(t *testing.T
 }
 
 func TestFactsNodeTransferReturnCallSourceReadsReturnSlotThroughRead(t *testing.T) {
-	reg := product.DefaultRegistry()
+	reg := standard.Registry()
 	graph := cfg.New()
 	call := graph.AddNode(cfg.NodeCall)
 	ret := graph.AddNode(cfg.NodeReturn)
@@ -117,7 +118,7 @@ func TestFactsNodeTransferReturnCallSourceReadsReturnSlotThroughRead(t *testing.
 }
 
 func TestFactsNodeTransferCallProducerProviderWritesReturnSlots(t *testing.T) {
-	reg := product.DefaultRegistry()
+	reg := standard.Registry()
 	point := cfg.Point(22)
 	target := symbol.ID(111)
 	in := state.State{}.WriteValue(reg, key.SymbolValue(target), presentValue(reg))
@@ -166,7 +167,7 @@ func TestFactsNodeTransferCallProducerProviderWritesReturnSlots(t *testing.T) {
 }
 
 func TestFactsNodeTransferAssignmentCallSourceConsumesProviderReturnSlotThroughRead(t *testing.T) {
-	reg := product.DefaultRegistry()
+	reg := standard.Registry()
 	graph := cfg.New()
 	call := graph.AddNode(cfg.NodeCall)
 	assign := graph.AddNode(cfg.NodeAssign)
@@ -215,7 +216,7 @@ func TestFactsNodeTransferAssignmentCallSourceConsumesProviderReturnSlotThroughR
 }
 
 func TestFactsNodeTransferCallResultTargetsDoNotDirectlyWriteTargets(t *testing.T) {
-	reg := product.DefaultRegistry()
+	reg := standard.Registry()
 	point := cfg.Point(23)
 	target := symbol.ID(113)
 	targetPath := path.NewPath(target, "table").Field("field")
@@ -253,7 +254,7 @@ func TestFactsNodeTransferCallResultTargetsDoNotDirectlyWriteTargets(t *testing.
 }
 
 func TestFactsNodeTransferMissingCallResultProviderOrNoResultsLeavesStateUnchanged(t *testing.T) {
-	reg := product.DefaultRegistry()
+	reg := standard.Registry()
 	point := cfg.Point(24)
 	target := symbol.ID(114)
 	in := state.State{}.

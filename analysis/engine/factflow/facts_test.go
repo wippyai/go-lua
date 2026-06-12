@@ -9,6 +9,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/domain/value/standard"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/symbol"
 )
@@ -153,8 +154,8 @@ func TestDTOConstructorsAndAccessorsCopySlices(t *testing.T) {
 	if got := overlay.Source(); got != source {
 		t.Fatalf("value overlay source = %#v, want %#v", got, source)
 	}
-	if got := overlay.Overlay(); !product.Equal(product.DefaultRegistry(), got, overlayValue) {
-		t.Fatalf("value overlay = %s, want %s", formatValue(product.DefaultRegistry(), got), formatValue(product.DefaultRegistry(), overlayValue))
+	if got := overlay.Overlay(); !product.Equal(standard.Registry(), got, overlayValue) {
+		t.Fatalf("value overlay = %s, want %s", formatValue(standard.Registry(), got), formatValue(standard.Registry(), overlayValue))
 	}
 
 	returnSources := []ValueSource{source, callSource}
@@ -723,7 +724,7 @@ func TestFactsCarrierCopiesAndReturnsFalseForMissingFacts(t *testing.T) {
 		t.Fatal("value overlay missing")
 	}
 	wantOverlay := runtimeKindConstraint(runtimekind.Singleton(runtimekind.Table))
-	if overlayFact.Source() != source || !product.Equal(product.DefaultRegistry(), overlayFact.Overlay(), wantOverlay) {
+	if overlayFact.Source() != source || !product.Equal(standard.Registry(), overlayFact.Overlay(), wantOverlay) {
 		t.Fatalf("value overlay fact = %#v, want original overlay", overlayFact)
 	}
 
@@ -761,18 +762,18 @@ func valueRefinementWithPresence(value presence.Value) ValueRefinement {
 }
 
 func valueRefinementWithPresenceRuntime(p presence.Value, kind runtimekind.Value) ValueRefinement {
-	reg := product.DefaultRegistry()
+	reg := standard.Registry()
 	return NewValueRefinement().
 		WithConstraint(reg, presenceConstraint(p)).
 		WithConstraint(reg, runtimeKindConstraint(kind))
 }
 
 func presenceConstraint(value presence.Value) product.Value {
-	return product.NewWithPresence(product.DefaultRegistry(), product.ShapeTop, value)
+	return product.NewWithPresence(standard.Registry(), product.ShapeTop, value)
 }
 
 func runtimeKindConstraint(value runtimekind.Value) product.Value {
-	return product.Set(product.DefaultRegistry(), product.Top(), runtimekind.Key, value)
+	return product.Set(standard.Registry(), product.Top(), runtimekind.Key, value)
 }
 
 func formatValue(reg *axis.Registry, v product.Value) string {
@@ -801,7 +802,7 @@ func assertValueRefinementConstraint(
 	if gotPresence := product.PresenceOf(constraint); !presence.Equal(gotPresence, wantPresence) {
 		t.Fatalf("%s presence = %s, want %s", label, gotPresence, wantPresence)
 	}
-	if gotRuntimeKind := product.Get(product.DefaultRegistry(), constraint, runtimekind.Key); !runtimekind.Equal(gotRuntimeKind, wantRuntimeKind) {
+	if gotRuntimeKind := product.Get(standard.Registry(), constraint, runtimekind.Key); !runtimekind.Equal(gotRuntimeKind, wantRuntimeKind) {
 		t.Fatalf("%s runtime kind = %s, want %s", label, gotRuntimeKind, wantRuntimeKind)
 	}
 }

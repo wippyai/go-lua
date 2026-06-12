@@ -12,6 +12,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/domain/value/standard"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/module/manifest"
@@ -23,7 +24,7 @@ import (
 )
 
 func TestErrorReturnSignatureRefinesValuePresenceAcrossErrorBranch(t *testing.T) {
-	reg := product.DefaultRegistry()
+	reg := standard.Registry()
 	m := manifest.New("test")
 	m.DefineFunctionSignature("f", signature.Function{
 		Type: typ.Func().
