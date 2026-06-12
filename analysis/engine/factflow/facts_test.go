@@ -84,6 +84,13 @@ func TestDTOConstructorsAndAccessorsCopySlices(t *testing.T) {
 	gotBranchTarget := branchRefinement.TargetPath()
 	gotBranchTarget.Segments[0].Name = "changed-again"
 	assertDirectField(t, branchRefinement.TargetPath(), "ready")
+	branchSet := NewBranchRefinementSet(branchRefinement)
+	branchSetRefinements := branchSet.Refinements()
+	if len(branchSetRefinements) != 1 {
+		t.Fatalf("branch set refinements len = %d, want 1", len(branchSetRefinements))
+	}
+	branchSetRefinements[0] = NewBranchRefinement(path.NewPath(symbol.ID(18), "mutated"), trueRefinement, true, falseRefinement, true)
+	assertPathEqual(t, branchSet.Refinements()[0].TargetPath(), path.NewPath(symbol.ID(15), "value").Field("ready"))
 
 	entrySuffix := path.Path{Segments: []segment.Segment{{Kind: segment.SegmentField, Name: "field"}}}
 	entry := NewObjectEntry(entrySuffix, source)
@@ -338,6 +345,15 @@ func TestFactsCarrierCopiesAndReturnsFalseForMissingFacts(t *testing.T) {
 				valueRefinementWithPresenceRuntime(presence.Absent(), runtimekind.Singleton(runtimekind.Nil)), true,
 			),
 		},
+		BranchRefinementSets: map[cfg.Point]BranchRefinementSet{
+			point: NewBranchRefinementSet(
+				NewBranchRefinement(
+					path.NewPath(symbol.ID(44), "other").Field("ready"),
+					valueRefinementWithPresence(presence.Present()), true,
+					valueRefinementWithPresence(presence.Absent()), true,
+				),
+			),
+		},
 		Returns: map[cfg.Point]Return{
 			point: NewReturn([]ValueSource{source, callSource}),
 		},
@@ -395,6 +411,13 @@ func TestFactsCarrierCopiesAndReturnsFalseForMissingFacts(t *testing.T) {
 		valueRefinementWithPresence(presence.Absent()), true,
 		valueRefinementWithPresence(presence.Present()), true,
 	)
+	input.BranchRefinementSets[point] = NewBranchRefinementSet(
+		NewBranchRefinement(
+			path.NewPath(symbol.ID(45), "changed").Field("field"),
+			valueRefinementWithPresence(presence.Absent()), true,
+			valueRefinementWithPresence(presence.Present()), true,
+		),
+	)
 	input.Returns[point] = NewReturn([]ValueSource{{Kind: ValueSourceNil}})
 	input.Calls[point] = NewCallProducer(CallProducerConfig{Context: CallProducerContextAssignment})
 	input.CallSites[point] = NewCallSite(CallSiteConfig{Context: CallSiteContextStatement})
@@ -414,6 +437,9 @@ func TestFactsCarrierCopiesAndReturnsFalseForMissingFacts(t *testing.T) {
 	}
 	if _, ok := facts.BranchRefinement(missing); ok {
 		t.Fatal("missing branch refinement returned ok")
+	}
+	if got := facts.BranchRefinements(missing); len(got) != 0 {
+		t.Fatalf("missing branch refinements = %#v, want empty", got)
 	}
 	if _, ok := facts.Return(missing); ok {
 		t.Fatal("missing return returned ok")
@@ -480,6 +506,19 @@ func TestFactsCarrierCopiesAndReturnsFalseForMissingFacts(t *testing.T) {
 		t.Fatalf("branch false value missing")
 	}
 	assertValueRefinementConstraint(t, "branch false", falseValue, presence.Absent(), runtimekind.Singleton(runtimekind.Nil))
+	branchRefinements := facts.BranchRefinements(point)
+	if len(branchRefinements) != 2 {
+		t.Fatalf("branch refinements len = %d, want 2", len(branchRefinements))
+	}
+	assertPathEqual(t, branchRefinements[0].TargetPath(), path.NewPath(symbol.ID(34), "value").Field("ready"))
+	assertPathEqual(t, branchRefinements[1].TargetPath(), path.NewPath(symbol.ID(44), "other").Field("ready"))
+	branchRefinements[1] = NewBranchRefinement(
+		path.NewPath(symbol.ID(46), "mutated"),
+		valueRefinementWithPresence(presence.Absent()), true,
+		ValueRefinement{}, false,
+	)
+	branchRefinementsAgain := facts.BranchRefinements(point)
+	assertPathEqual(t, branchRefinementsAgain[1].TargetPath(), path.NewPath(symbol.ID(44), "other").Field("ready"))
 
 	ret, ok := facts.Return(point)
 	if !ok {

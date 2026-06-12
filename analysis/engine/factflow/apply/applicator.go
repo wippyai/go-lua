@@ -65,14 +65,13 @@ func NewFactsEdgeTransfer(config FactsEdgeTransferConfig) transfer.EdgeTransfer 
 		if !ctx.HasCond {
 			return out
 		}
-		fact, ok := config.Facts.BranchRefinement(ctx.Edge.From)
-		if !ok {
-			return out
+		for _, fact := range config.Facts.BranchRefinements(ctx.Edge.From) {
+			refinement, ok := fact.ValueForEdge(ctx.Edge.Cond)
+			if !ok {
+				continue
+			}
+			out = applyBranchRefinement(ctx, config.Visibility, out, fact.TargetPath(), refinement)
 		}
-		refinement, ok := fact.ValueForEdge(ctx.Edge.Cond)
-		if !ok {
-			return out
-		}
-		return applyBranchRefinement(ctx, config.Visibility, out, fact.TargetPath(), refinement)
+		return out
 	}
 }

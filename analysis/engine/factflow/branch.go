@@ -60,6 +60,12 @@ type BranchRefinement struct {
 	hasFalseValue bool
 }
 
+// BranchRefinementSet groups branch-edge refinements emitted at the same CFG
+// branch point.
+type BranchRefinementSet struct {
+	refinements []BranchRefinement
+}
+
 // NewBranchRefinement creates a branch refinement fact.
 func NewBranchRefinement(
 	targetPath path.Path,
@@ -75,6 +81,11 @@ func NewBranchRefinement(
 		falseValue:    falseValue,
 		hasFalseValue: hasFalseValue,
 	}
+}
+
+// NewBranchRefinementSet creates a branch refinement set.
+func NewBranchRefinementSet(refinements ...BranchRefinement) BranchRefinementSet {
+	return BranchRefinementSet{refinements: copyBranchRefinementSlice(refinements)}
 }
 
 // TargetPath returns the refined path.
@@ -103,6 +114,15 @@ func (r BranchRefinement) copy() BranchRefinement {
 	return r
 }
 
+// Refinements returns the branch refinements in deterministic order.
+func (s BranchRefinementSet) Refinements() []BranchRefinement {
+	return copyBranchRefinementSlice(s.refinements)
+}
+
+func (s BranchRefinementSet) copy() BranchRefinementSet {
+	return BranchRefinementSet{refinements: copyBranchRefinementSlice(s.refinements)}
+}
+
 func copyBranchRefinementMap(in map[cfg.Point]BranchRefinement) map[cfg.Point]BranchRefinement {
 	if len(in) == 0 {
 		return nil
@@ -110,6 +130,28 @@ func copyBranchRefinementMap(in map[cfg.Point]BranchRefinement) map[cfg.Point]Br
 	out := make(map[cfg.Point]BranchRefinement, len(in))
 	for point, fact := range in {
 		out[point] = fact.copy()
+	}
+	return out
+}
+
+func copyBranchRefinementSetMap(in map[cfg.Point]BranchRefinementSet) map[cfg.Point]BranchRefinementSet {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[cfg.Point]BranchRefinementSet, len(in))
+	for point, set := range in {
+		out[point] = set.copy()
+	}
+	return out
+}
+
+func copyBranchRefinementSlice(in []BranchRefinement) []BranchRefinement {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]BranchRefinement, len(in))
+	for i, fact := range in {
+		out[i] = fact.copy()
 	}
 	return out
 }

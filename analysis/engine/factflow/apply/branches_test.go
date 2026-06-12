@@ -47,6 +47,47 @@ func TestFactsEdgeTransferAppliesNilRefinementsOnRootValue(t *testing.T) {
 	assertValue(t, reg, got[elsePoint], key.SymbolValue(target), presentValue(reg))
 }
 
+func TestFactsEdgeTransferAppliesMultipleRefinementsOnSameBranchEdge(t *testing.T) {
+	reg := product.DefaultRegistry()
+	graph := cfg.New()
+	branch := graph.AddNode(cfg.NodeBranch)
+	thenPoint := graph.AddNode(cfg.NodeNoop)
+	elsePoint := graph.AddNode(cfg.NodeNoop)
+	graph.AddEdge(graph.Entry(), branch, false)
+	graph.AddEdge(branch, thenPoint, true)
+	graph.AddEdge(branch, elsePoint, false)
+	graph.AddEdge(thenPoint, graph.Exit(), false)
+	graph.AddEdge(elsePoint, graph.Exit(), false)
+
+	firstTarget := symbol.ID(313)
+	secondTarget := symbol.ID(314)
+	initial := state.State{}.
+		WriteValue(reg, key.SymbolValue(firstTarget), product.Top()).
+		WriteValue(reg, key.SymbolValue(secondTarget), product.Top())
+	got := transfer.Run(transfer.Config{
+		Graph:      graph,
+		Registry:   reg,
+		EntryState: initial,
+		EdgeTransfer: NewFactsEdgeTransfer(FactsEdgeTransferConfig{
+			Facts: factflow.NewFacts(factflow.FactsInput{
+				BranchRefinements: map[cfg.Point]factflow.BranchRefinement{
+					branch: branchWithPresence(pathdom.NewPath(firstTarget, "first"), presence.Present(), true, presence.Absent(), true),
+				},
+				BranchRefinementSets: map[cfg.Point]factflow.BranchRefinementSet{
+					branch: factflow.NewBranchRefinementSet(
+						branchWithPresence(pathdom.NewPath(secondTarget, "second"), presence.Present(), true, presence.Absent(), true),
+					),
+				},
+			}),
+		}),
+	})
+
+	assertValue(t, reg, got[thenPoint], key.SymbolValue(firstTarget), presentValue(reg))
+	assertValue(t, reg, got[thenPoint], key.SymbolValue(secondTarget), presentValue(reg))
+	assertValue(t, reg, got[elsePoint], key.SymbolValue(firstTarget), absentValue(reg))
+	assertValue(t, reg, got[elsePoint], key.SymbolValue(secondTarget), absentValue(reg))
+}
+
 func TestFactsEdgeTransferOneSidedTruthyFalsyRefinements(t *testing.T) {
 	tests := []struct {
 		name      string
