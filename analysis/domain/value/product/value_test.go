@@ -8,7 +8,6 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/assertion"
-	"github.com/wippyai/go-lua/analysis/domain/value/axis/defaults"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/escape"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/evidence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
@@ -62,6 +61,25 @@ func TestDefaultRegistryBundleFrozenAndStable(t *testing.T) {
 	}
 	if got := registrySpecIDs(fresh); !slices.Equal(got, want) {
 		t.Fatalf("DefaultRegistryWithAxes axes = %v, want %v", got, want)
+	}
+}
+
+func TestDefaultSparseSpecsStableAndExcludePresence(t *testing.T) {
+	got := defaultRegistrySpecIDs()
+	want := []string{
+		"variantorigin",
+		"identity",
+		"runtimekind",
+		"escape",
+		"ownership",
+		"evidence",
+		"assertion",
+	}
+	if !slices.Equal(got, want) {
+		t.Fatalf("default sparse axis IDs = %v, want %v", got, want)
+	}
+	if slices.Contains(got, presence.Key.ID()) {
+		t.Fatalf("default sparse axes must not include presence core lane")
 	}
 }
 
@@ -482,7 +500,7 @@ func TestSparseAxisReducerStillRunsWithRegistryScopedValues(t *testing.T) {
 }
 
 func defaultRegistrySpecIDs() []string {
-	return specIDs(defaults.SparseSpecs())
+	return specIDs(defaultSparseSpecs())
 }
 
 func registrySpecIDs(reg *axis.Registry) []string {
