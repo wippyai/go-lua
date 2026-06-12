@@ -46,10 +46,19 @@ func NewFactsNodeTransfer(config FactsNodeTransferConfig) transfer.NodeTransfer 
 		for _, fact := range facts.PostconditionPathRelations(ctx.Point) {
 			out = applyPostconditionPathRelation(ctx, config.Visibility, out, fact)
 		}
+		for _, fact := range facts.ChannelSelects(ctx.Point) {
+			out = applyChannelSelect(ctx, config.Visibility, out, fact)
+		}
 		if sources == nil {
 			return out
 		}
 		sources = sourcevalue.WithExpressionRefinements(ctx.Registry, sources, facts.ExpressionRefinements())
+		if fact, ok := facts.PathStaticMemberWrite(ctx.Point); ok {
+			out = applyPathStaticMemberWrite(ctx, config.Visibility, sources, read, in, out, fact)
+		}
+		if fact, ok := facts.DynamicIndexWrite(ctx.Point); ok {
+			out = applyDynamicIndexWrite(ctx, config.Visibility, sources, read, in, out, fact)
+		}
 		if fact, ok := facts.RootAssignment(ctx.Point); ok {
 			out = applyRootAssignmentFact(ctx, config.Visibility, facts, sources, read, in, out, fact)
 		}
@@ -94,6 +103,9 @@ func NewFactsEdgeTransfer(config FactsEdgeTransferConfig) transfer.EdgeTransfer 
 				continue
 			}
 			out = applyBranchPathRelation(ctx, config.Visibility, out, relation)
+		}
+		for _, proof := range config.Facts.BranchProofs(ctx.Edge.From) {
+			out = applyBranchProof(ctx, config.Visibility, out, proof)
 		}
 		return out
 	}
