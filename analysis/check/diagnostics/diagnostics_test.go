@@ -7,6 +7,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/check"
 	"github.com/wippyai/go-lua/analysis/diagnostic"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/parse"
 )
 
@@ -255,6 +256,102 @@ func TestDirectCallAcceptsExplicitNilCheckOptional(t *testing.T) {
 	}
 }
 
+func TestReturnContractReportsLiteralMismatch(t *testing.T) {
+	fn := mustFunctionExpr(t, `function f(): number return "hello" end`)
+	result, err := check.CheckFunction(fn, check.Config{Registry: product.DefaultRegistry()})
+	if err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	diags := Produce(result, Config{Registry: product.DefaultRegistry()})
+	if len(diags) != 1 {
+		t.Fatalf("diagnostics = %d, want 1: %#v", len(diags), diags)
+	}
+	d := diags[0]
+	if d.Code != CodeReturnContractType || d.Severity != diagnostic.SeverityError {
+		t.Fatalf("diagnostic code/severity = %s/%s", d.Code, d.Severity)
+	}
+	if !strings.Contains(d.Message, "returned value") || !strings.Contains(d.Message, "hello") || !strings.Contains(d.Message, "number") {
+		t.Fatalf("message = %q", d.Message)
+	}
+	wantReturn := fn.Stmts[0].(*ast.ReturnStmt)
+	if got := d.Explanation.Evidence(); len(got) != 2 {
+		t.Fatalf("explanation evidence = %#v, want 2 items", got)
+	} else {
+		if got[0].Span != ast.SpanOf(wantReturn.Exprs[0]) {
+			t.Fatalf("returned value evidence span = %#v, want %#v", got[0].Span, ast.SpanOf(wantReturn.Exprs[0]))
+		}
+		if got[1].Span != ast.SpanOf(fn.ReturnTypes[0]) {
+			t.Fatalf("declared return evidence span = %#v, want %#v", got[1].Span, ast.SpanOf(fn.ReturnTypes[0]))
+		}
+	}
+}
+
+func TestReturnContractSkipsOptionalUnknownAndGenericReturns(t *testing.T) {
+	cases := []struct {
+		name string
+		src  string
+	}{
+		{name: "optional nil", src: `local function f(): number? return nil end`},
+		{name: "unknown", src: `local function f(): unknown return "hello" end`},
+		{name: "any", src: `local function f(): any return "hello" end`},
+		{name: "generic", src: `local function id<T>(x: T): T return "hello" end`},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			diags := runDiagnostics(t, tc.src)
+			if len(diags) != 0 {
+				t.Fatalf("diagnostics = %#v, want none", diags)
+			}
+		})
+	}
+}
+
+func TestDirectCallResultAssignmentReportsAnnotatedLocalMismatch(t *testing.T) {
+	src := `
+local function add(a: number, b: number): number
+	return a + b
+end
+local x: string = add(1, 2)
+`
+	diags := runDiagnostics(t, src)
+	if len(diags) != 1 {
+		t.Fatalf("diagnostics = %d, want 1: %#v", len(diags), diags)
+	}
+	d := diags[0]
+	if d.Code != CodeDirectCallResultAssignment || d.Severity != diagnostic.SeverityError {
+		t.Fatalf("diagnostic code/severity = %s/%s", d.Code, d.Severity)
+	}
+	if !strings.Contains(d.Message, "call result") || !strings.Contains(d.Message, "string") || !strings.Contains(d.Message, "number") {
+		t.Fatalf("message = %q", d.Message)
+	}
+	stmts := mustStmts(t, src)
+	assign := stmts[1].(*ast.LocalAssignStmt)
+	call := assign.Exprs[0].(*ast.FuncCallExpr)
+	if got := d.Explanation.Evidence(); len(got) != 2 {
+		t.Fatalf("explanation evidence = %#v, want 2 items", got)
+	} else {
+		if got[0].Span != ast.SpanOf(call) {
+			t.Fatalf("call evidence span = %#v, want %#v", got[0].Span, ast.SpanOf(call))
+		}
+		if got[1].Span != ast.SpanOf(assign.Types[0]) {
+			t.Fatalf("declared type evidence span = %#v, want %#v", got[1].Span, ast.SpanOf(assign.Types[0]))
+		}
+	}
+}
+
+func TestDirectCallResultAssignmentSkipsGenericReturnContracts(t *testing.T) {
+	diags := runDiagnostics(t, `
+		local function id<T>(x: T): T
+			return x
+		end
+		local s: string = id("hello")
+	`)
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v, want none for generic return contract", diags)
+	}
+}
+
 func runDiagnostics(t *testing.T, src string) []diagnostic.Diagnostic {
 	t.Helper()
 	stmts, err := parse.ParseString(src, "diagnostics_test.lua")
@@ -266,4 +363,26 @@ func runDiagnostics(t *testing.T, src string) []diagnostic.Diagnostic {
 		t.Fatalf("check: %v", err)
 	}
 	return Produce(result, Config{Registry: product.DefaultRegistry()})
+}
+
+func mustStmts(t *testing.T, src string) []ast.Stmt {
+	t.Helper()
+	stmts, err := parse.ParseString(src, "diagnostics_test.lua")
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	return stmts
+}
+
+func mustFunctionExpr(t *testing.T, src string) *ast.FunctionExpr {
+	t.Helper()
+	stmts := mustStmts(t, src)
+	if len(stmts) != 1 {
+		t.Fatalf("stmts = %d, want 1", len(stmts))
+	}
+	def, ok := stmts[0].(*ast.FuncDefStmt)
+	if !ok || def.Func == nil {
+		t.Fatalf("stmt = %T, want *ast.FuncDefStmt with function", stmts[0])
+	}
+	return def.Func
 }

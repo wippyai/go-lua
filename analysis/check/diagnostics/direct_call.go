@@ -95,6 +95,7 @@ type directFunctionContract struct {
 	name      string
 	declSpan  ast.Span
 	params    []directCallParam
+	returns   []directCallResult
 	variadic  directCallParam
 	hasVararg bool
 }
@@ -103,6 +104,11 @@ type directCallParam struct {
 	typ      typ.Type
 	explicit bool
 	optional bool
+}
+
+type directCallResult struct {
+	typ      typ.Type
+	explicit bool
 }
 
 func (p DirectCallContract) callFunction(
@@ -166,7 +172,8 @@ func lowerDirectFunctionContract(fn *ast.FunctionExpr, resolver typeannotation.R
 		return directFunctionContract{}, false
 	}
 	contract := directFunctionContract{
-		params: make([]directCallParam, 0),
+		params:  make([]directCallParam, 0),
+		returns: make([]directCallResult, 0),
 	}
 	if fn.ParList != nil {
 		contract.params = make([]directCallParam, 0, len(fn.ParList.Names))
@@ -186,12 +193,21 @@ func lowerDirectFunctionContract(fn *ast.FunctionExpr, resolver typeannotation.R
 			contract.variadic = variadic
 		}
 	}
+	contract.returns = make([]directCallResult, 0, len(fn.ReturnTypes))
+	for _, retExpr := range fn.ReturnTypes {
+		ret, ok := lowerDirectCallResult(retExpr, resolver)
+		if !ok {
+			return directFunctionContract{}, false
+		}
+		contract.returns = append(contract.returns, ret)
+	}
 	return contract, true
 }
 
 func lowerDirectFunctionType(fn *typ.Function) directFunctionContract {
 	contract := directFunctionContract{
-		params: make([]directCallParam, 0, len(fn.Params)),
+		params:  make([]directCallParam, 0, len(fn.Params)),
+		returns: make([]directCallResult, 0, len(fn.Returns)),
 	}
 	for _, param := range fn.Params {
 		optional := param.Optional || isOptionalType(param.Type)
@@ -205,6 +221,12 @@ func lowerDirectFunctionType(fn *typ.Function) directFunctionContract {
 			optional: optional,
 		})
 	}
+	for _, ret := range fn.Returns {
+		contract.returns = append(contract.returns, directCallResult{
+			typ:      ret,
+			explicit: ret != nil && !typ.IsAny(ret) && !typ.IsUnknown(ret),
+		})
+	}
 	if fn.Variadic != nil {
 		contract.hasVararg = true
 		contract.variadic = directCallParam{
@@ -214,6 +236,20 @@ func lowerDirectFunctionType(fn *typ.Function) directFunctionContract {
 		}
 	}
 	return contract
+}
+
+func lowerDirectCallResult(expr ast.TypeExpr, resolver typeannotation.Resolver) (directCallResult, bool) {
+	if expr == nil {
+		return directCallResult{}, true
+	}
+	t, ok := typeannotation.Type(expr, resolver)
+	if !ok {
+		return directCallResult{}, false
+	}
+	return directCallResult{
+		typ:      t,
+		explicit: !typ.IsAny(t) && !typ.IsUnknown(t),
+	}, true
 }
 
 func lowerDirectCallParam(expr ast.TypeExpr, resolver typeannotation.Resolver) (directCallParam, bool) {
@@ -241,6 +277,17 @@ func (c directFunctionContract) requiredArity() int {
 		}
 	}
 	return required
+}
+
+func (c directFunctionContract) returnType(index int) (typ.Type, bool) {
+	if index < 0 || index >= len(c.returns) {
+		return nil, false
+	}
+	ret := c.returns[index]
+	if !ret.explicit || ret.typ == nil || typ.IsAny(ret.typ) || typ.IsUnknown(ret.typ) {
+		return nil, false
+	}
+	return ret.typ, true
 }
 
 func typeExprAt(exprs []ast.TypeExpr, index int) ast.TypeExpr {

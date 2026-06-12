@@ -163,6 +163,13 @@ func (r *Result) FunctionDefinition(point cfg.Point) (cfgfacts.FunctionDefinitio
 	return r.semantics.FunctionDefinition(point)
 }
 
+func (r *Result) Function() *ast.FunctionExpr {
+	if r == nil || r.semantics == nil {
+		return nil
+	}
+	return r.semantics.Function()
+}
+
 func (r *Result) FunctionResults() []*Result {
 	if r == nil || len(r.functions) == 0 {
 		return nil
