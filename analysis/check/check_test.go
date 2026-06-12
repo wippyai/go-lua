@@ -167,7 +167,7 @@ func TestCheckFunctionSeedsDeclaredParameterEntryState(t *testing.T) {
 	got := entry.ReadValue(reg, key.SymbolValue(slot.Symbol))
 	assertPresence(t, reg, got, presence.Maybe())
 	assertRuntimeKind(t, reg, got, runtimekind.Singleton(runtimekind.String))
-	if pathValue := entry.ReadPathKey(reg, key.SymbolVersionPath(slot.Symbol, 1, nil)); !product.Equal(reg, pathValue, product.Bottom(reg)) {
+	if pathValue := entry.ReadPathKey(reg, key.ResolverPath(key.SymbolVersionRoot(slot.Symbol, 1)).PathKey()); !product.Equal(reg, pathValue, product.Bottom(reg)) {
 		t.Fatalf("entry path lane for parameter root = %v, want bottom", pathValue)
 	}
 }
@@ -178,7 +178,7 @@ func TestCheckFunctionParameterEntryStateKeepsExplicitEntryValueAndPath(t *testi
 	bindings := bind.BindFunction(fn, bind.Options{})
 	slot := mustParamSlot(t, bindings, fn, 0)
 	explicitValue := product.NewWithPresence(reg, product.ShapeTop, presence.Present())
-	pathKey := key.SymbolVersionPath(slot.Symbol, 1, nil)
+	pathKey := key.ResolverPath(key.SymbolVersionRoot(slot.Symbol, 1)).PathKey()
 	explicitPath := product.NewWithPresence(reg, product.ShapeTop, presence.Absent())
 	entryState := state.State{}.
 		WriteValue(reg, key.SymbolValue(slot.Symbol), explicitValue).

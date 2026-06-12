@@ -257,8 +257,8 @@ func TestLowerMemberOrdinaryCallTargetStaysCallSiteOnly(t *testing.T) {
 	if !ok {
 		t.Fatalf("missing assignment call producer at point %d", points[0])
 	}
-	if producer.Context() != factflow.CallProducerContextAssignment {
-		t.Fatalf("producer context = %v, want assignment", producer.Context())
+	if producer.CalleeSymbol() == 0 {
+		t.Fatalf("producer callee symbol missing")
 	}
 	if got := producer.ResultTargets(); len(got) != 0 {
 		t.Fatalf("member ordinary target leaked into producer targets: %#v", got)

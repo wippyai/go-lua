@@ -28,8 +28,8 @@ func TestStableIgnoresVersionAndExportsCanonicalKey(t *testing.T) {
 	if got, want := addrA.Key(), SymbolPathKey(42, a.Segments); got != want {
 		t.Fatalf("stable key = %s, want %s", got, want)
 	}
-	if !SameStablePath(a, b) {
-		t.Fatalf("SameStablePath(%s, %s) = false, want true", a.Key(), b.Key())
+	if !addrA.Equal(addrB) {
+		t.Fatalf("stable addresses differ across versions: %s vs %s", addrA.Key(), addrB.Key())
 	}
 }
 
@@ -73,7 +73,7 @@ func TestLocalKeyOfPathPreservesPlaceholderAndReturnSlotStructure(t *testing.T) 
 		},
 		{
 			name: "return slot",
-			path: pathdom.NewReturnSlot(1).Field("ok"),
+			path: pathdom.Path{Root: "ret[1]"}.Field("ok"),
 			want: pathdom.PathKey("ret[1].ok"),
 		},
 	}
@@ -180,7 +180,7 @@ func TestStablePrefixParentAndRemainderAreStructured(t *testing.T) {
 	}
 }
 
-func TestStableKeyHasPrefixUsesSegmentBoundaries(t *testing.T) {
+func TestStableFromKeyUsesSegmentBoundaries(t *testing.T) {
 	root, _ := StableOfPath(pathdom.NewPath(7, "root"))
 	field, _ := StableOfPath(pathdom.NewPath(7, "root").Field("foo"))
 	child := SymbolPathKey(7, []segment.Segment{
@@ -191,46 +191,74 @@ func TestStableKeyHasPrefixUsesSegmentBoundaries(t *testing.T) {
 		{Kind: segment.SegmentField, Name: "foobar"},
 	})
 
-	if !StableKeyHasPrefix(child, root) {
+	if parsed, ok := StableFromKey(child); !ok || !parsed.HasPrefix(root) {
 		t.Fatalf("%s should be under root %s", child, root.Key())
 	}
-	if !StableKeyHasPrefix(child, field) {
+	if parsed, ok := StableFromKey(child); !ok || !parsed.HasPrefix(field) {
 		t.Fatalf("%s should be under field %s", child, field.Key())
 	}
-	if StableKeyHasPrefix(siblingPrefixCollision, field) {
+	if parsed, ok := StableFromKey(siblingPrefixCollision); !ok || parsed.HasPrefix(field) {
 		t.Fatalf("%s should not be under field %s", siblingPrefixCollision, field.Key())
 	}
 
 	stale := pathdom.NewPath(7, "root").Field("foo")
 	stale.Version = 1
-	if StableKeyHasPrefix(stale.Key(), root) {
-		t.Fatalf("stale path key accepted as stable key: %s", stale.Key())
+	if _, ok := StableFromKey(stale.Key()); ok {
+		t.Fatalf("StableFromKey accepted stale path key: %s", stale.Key())
 	}
 }
 
 func TestStableFromKeyRoundTripsSymbolAndNamedRoots(t *testing.T) {
-	symbolAddr, _ := StableOfSymbol(11, []segment.Segment{
+	symRoot, ok := SymbolRoot(11)
+	if !ok {
+		t.Fatal("SymbolRoot failed")
+	}
+	symbolAddr, ok := stableOfRootAndSuffix(symRoot, SuffixOfSegments([]segment.Segment{
 		{Kind: segment.SegmentIndexString, Name: "node-id"},
 		{Kind: segment.SegmentField, Name: "label"},
-	})
+	}))
+	if !ok {
+		t.Fatal("symbol address construction failed")
+	}
 	parsedSymbol, ok := StableFromKey(symbolAddr.Key())
 	if !ok || !parsedSymbol.Equal(symbolAddr) {
 		t.Fatalf("StableFromKey(symbol) = %s/%v, want %s/true", parsedSymbol.Key(), ok, symbolAddr.Key())
 	}
 
-	rootAddr, _ := StableOfRoot("$0", []segment.Segment{{Kind: segment.SegmentIndexString, Name: "node-id"}})
+	root, ok := NamedRoot("$0")
+	if !ok {
+		t.Fatal("NamedRoot failed")
+	}
+	rootAddr, ok := stableOfRootAndSuffix(root, SuffixOfSegments([]segment.Segment{{Kind: segment.SegmentIndexString, Name: "node-id"}}))
+	if !ok {
+		t.Fatal("named root construction failed")
+	}
 	parsedRoot, ok := StableFromKey(rootAddr.Key())
 	if !ok || !parsedRoot.Equal(rootAddr) {
 		t.Fatalf("StableFromKey(root) = %s/%v, want %s/true", parsedRoot.Key(), ok, rootAddr.Key())
 	}
 
-	ambiguousRoot, _ := StableOfRoot("s7", []segment.Segment{{Kind: segment.SegmentField, Name: "value"}})
-	parsedAmbiguous, ok := StableFromKey(ambiguousRoot.Key())
-	if !ok || !parsedAmbiguous.Equal(ambiguousRoot) {
-		t.Fatalf("StableFromKey(ambiguous root) = %s/%v, want %s/true", parsedAmbiguous.Key(), ok, ambiguousRoot.Key())
+	ambiguousRoot, ok := NamedRoot("s7")
+	if !ok {
+		t.Fatal("NamedRoot(ambiguous) failed")
+	}
+	ambiguousAddr, ok := stableOfRootAndSuffix(ambiguousRoot, SuffixOfSegments([]segment.Segment{{Kind: segment.SegmentField, Name: "value"}}))
+	if !ok {
+		t.Fatal("ambiguous root construction failed")
+	}
+	parsedAmbiguous, ok := StableFromKey(ambiguousAddr.Key())
+	if !ok || !parsedAmbiguous.Equal(ambiguousAddr) {
+		t.Fatalf("StableFromKey(ambiguous root) = %s/%v, want %s/true", parsedAmbiguous.Key(), ok, ambiguousAddr.Key())
 	}
 
-	retAddr, _ := StableOfRoot("ret[1]", []segment.Segment{{Kind: segment.SegmentField, Name: "ok"}})
+	retRoot, ok := NamedRoot("ret[1]")
+	if !ok {
+		t.Fatal("NamedRoot(ret) failed")
+	}
+	retAddr, ok := stableOfRootAndSuffix(retRoot, SuffixOfSegments([]segment.Segment{{Kind: segment.SegmentField, Name: "ok"}}))
+	if !ok {
+		t.Fatal("ret root construction failed")
+	}
 	parsedRet, ok := StableFromKey(retAddr.Key())
 	if !ok || !parsedRet.Equal(retAddr) {
 		t.Fatalf("StableFromKey(ret) = %s/%v, want %s/true", parsedRet.Key(), ok, retAddr.Key())
@@ -244,16 +272,17 @@ func TestStableFromKeyRejectsVersionedPathKeys(t *testing.T) {
 	if _, ok := StableFromKey(staleKey); ok {
 		t.Fatalf("StableFromKey accepted versioned path key %s", staleKey)
 	}
-	if got, ok := StableFromKey(StablePathKey(path)); !ok || got.Key() != StablePathKey(path) {
-		t.Fatalf("StableFromKey(stable key) = %s/%v, want %s/true", got.Key(), ok, StablePathKey(path))
+	stableKey := stableOfPathKey(t, path)
+	if got, ok := StableFromKey(stableKey); !ok || got.Key() != stableKey {
+		t.Fatalf("StableFromKey(stable key) = %s/%v, want %s/true", got.Key(), ok, stableKey)
 	}
 }
 
-func TestStablePathKeySeparatesAmbiguousRootsAndVersionedLocalKeys(t *testing.T) {
+func TestStableKeySeparatesAmbiguousRootsAndVersionedLocalKeys(t *testing.T) {
 	ambiguousRoot := pathdom.Path{Root: "sym12", Segments: []segment.Segment{{Kind: segment.SegmentField, Name: "field"}}}
-	ambiguousStable := StablePathKey(ambiguousRoot)
+	ambiguousStable := stableOfPathKey(t, ambiguousRoot)
 	if ambiguousStable == ambiguousRoot.Key() {
-		t.Fatalf("StablePathKey(%q) collided with path key %q", ambiguousRoot.String(), ambiguousRoot.Key())
+		t.Fatalf("stable key collided with path key %q", ambiguousRoot.Key())
 	}
 	if parsed, ok := StableFromKey(ambiguousStable); !ok || parsed.Key() != ambiguousStable {
 		t.Fatalf("StableFromKey(%q) = %s/%v, want round-trip", ambiguousStable, parsed.Key(), ok)
@@ -264,27 +293,27 @@ func TestStablePathKeySeparatesAmbiguousRootsAndVersionedLocalKeys(t *testing.T)
 
 	versionedLocal := pathdom.NewPath(12, "sym12").Field("field")
 	versionedLocal.Version = 3
-	if StablePathKey(versionedLocal) == versionedLocal.Key() {
-		t.Fatalf("StablePathKey(%q) collided with versioned local key %q", versionedLocal.String(), versionedLocal.Key())
+	if stableOfPathKey(t, versionedLocal) == versionedLocal.Key() {
+		t.Fatalf("stable key collided with versioned local key %q", versionedLocal.String())
 	}
 	if _, ok := StableFromKey(versionedLocal.Key()); ok {
 		t.Fatalf("StableFromKey accepted versioned local key %q", versionedLocal.Key())
 	}
-	if parsed, ok := StableFromKey(StablePathKey(versionedLocal)); !ok || !parsed.Equal(mustStableOfPath(t, versionedLocal)) {
+	if parsed, ok := StableFromKey(stableOfPathKey(t, versionedLocal)); !ok || !parsed.Equal(mustStableOfPath(t, versionedLocal)) {
 		t.Fatalf("StableFromKey(stable versioned key) = %s/%v, want round-trip", parsed.Key(), ok)
 	}
 
 	placeholder := pathdom.Path{Root: "$0", Segments: []segment.Segment{{Kind: segment.SegmentField, Name: "field"}}}
 	ret := pathdom.Path{Root: "ret[0]", Segments: []segment.Segment{{Kind: segment.SegmentField, Name: "field"}}}
 	for _, path := range []pathdom.Path{placeholder, ret} {
-		stable := StablePathKey(path)
+		stable := stableOfPathKey(t, path)
 		parsed, ok := StableFromKey(stable)
 		if !ok || !parsed.Equal(mustStableOfPath(t, path)) {
 			t.Fatalf("StableFromKey(%q) = %s/%v, want round-trip", stable, parsed.Key(), ok)
 		}
 	}
-	if StablePathKey(placeholder) == StablePathKey(ret) {
-		t.Fatalf("placeholder and return-root stable keys collided: %q", StablePathKey(placeholder))
+	if stableOfPathKey(t, placeholder) == stableOfPathKey(t, ret) {
+		t.Fatalf("placeholder and return-root stable keys collided: %q", stableOfPathKey(t, placeholder))
 	}
 }
 
@@ -297,11 +326,21 @@ func mustStableOfPath(t *testing.T, path pathdom.Path) Stable {
 	return got
 }
 
+func stableOfPathKey(t *testing.T, path pathdom.Path) pathdom.PathKey {
+	t.Helper()
+	stable := mustStableOfPath(t, path)
+	return stable.Key()
+}
+
 func TestStableConstructorsAreDefensive(t *testing.T) {
 	segments := []segment.Segment{{Kind: segment.SegmentField, Name: "payload"}}
-	addr, ok := StableOfSymbol(13, segments)
+	root, ok := SymbolRoot(13)
 	if !ok {
-		t.Fatal("StableOfSymbol failed")
+		t.Fatal("SymbolRoot failed")
+	}
+	addr, ok := stableOfRootAndSuffix(root, SuffixOfSegments(segments))
+	if !ok {
+		t.Fatal("stable constructor failed")
 	}
 	segments[0].Name = "mutated"
 	if got, want := addr.Key(), SymbolPathKey(13, []segment.Segment{{Kind: segment.SegmentField, Name: "payload"}}); got != want {
@@ -353,18 +392,21 @@ func TestRootAndSuffixVocabulary(t *testing.T) {
 
 func TestContainerRefOwnsSymbolContainerIdentity(t *testing.T) {
 	path := pathdom.NewPath(31, "rows").Field("items")
-
-	ref, ok := ContainerOfPath(path)
-	if !ok || !ref.IsValid() {
-		t.Fatalf("ContainerOfPath = %#v/%v, want valid ref", ref, ok)
+	key, ok := SymbolPathKeyOf(path)
+	if !ok {
+		t.Fatal("SymbolPathKeyOf failed")
+	}
+	ref := ContainerRef{root: path.Symbol, key: key}
+	if !ref.IsValid() {
+		t.Fatalf("ContainerRef = %#v, want valid ref", ref)
 	}
 	if got := ref.Root(); got != path.Symbol {
 		t.Fatalf("ContainerRef root = %d, want %d", got, path.Symbol)
 	}
 
-	again, ok := ContainerOfPath(pathdom.Path{Symbol: path.Symbol, Segments: path.Segments})
-	if !ok || !ref.Equal(again) {
-		t.Fatalf("ContainerRef equality = %#v/%#v/%v, want equal", ref, again, ok)
+	again := ContainerRef{root: path.Symbol, key: key}
+	if !ref.Equal(again) {
+		t.Fatalf("ContainerRef equality = %#v/%#v, want equal", ref, again)
 	}
 	gotStable, ok := ref.Stable()
 	if !ok {
@@ -377,10 +419,14 @@ func TestContainerRefOwnsSymbolContainerIdentity(t *testing.T) {
 }
 
 func TestContainerRefRejectsUnresolvedPaths(t *testing.T) {
-	if ref, ok := ContainerOfPath(pathdom.Path{Root: "rows"}); ok || ref.IsValid() {
-		t.Fatalf("ContainerOfPath(unresolved) = %#v/%v, want rejected", ref, ok)
+	if key, ok := SymbolPathKeyOf(pathdom.Path{Root: "rows"}); ok || key != "" {
+		t.Fatalf("SymbolPathKeyOf(unresolved) = %q/%v, want rejected", key, ok)
 	}
-	if ref, ok := ContainerOfSymbol(0); ok || ref.IsValid() {
-		t.Fatalf("ContainerOfSymbol(0) = %#v/%v, want rejected", ref, ok)
+	ref := ContainerRef{}
+	if ref.IsValid() {
+		t.Fatalf("zero ContainerRef should be invalid: %#v", ref)
+	}
+	if stable, ok := (ContainerRef{key: ""}).Stable(); ok || stable.Key() != "" {
+		t.Fatalf("ContainerRef.Stable(empty) = %#v/%v, want rejected", stable, ok)
 	}
 }

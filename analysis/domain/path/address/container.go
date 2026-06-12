@@ -11,32 +11,6 @@ type ContainerRef struct {
 	key  pathdom.PathKey
 }
 
-// ContainerOfPath lowers a resolved static path to a shared container identity.
-func ContainerOfPath(path pathdom.Path) (ContainerRef, bool) {
-	key, ok := SymbolPathKeyOf(path)
-	if !ok {
-		return ContainerRef{}, false
-	}
-	return ContainerRef{root: path.Symbol, key: key}, true
-}
-
-// ContainerOfSymbol builds a container identity for a bare symbol slot.
-func ContainerOfSymbol(sym symbol.ID) (ContainerRef, bool) {
-	if sym == 0 {
-		return ContainerRef{}, false
-	}
-	return ContainerRef{root: sym, key: SymbolPathKey(sym, nil)}, true
-}
-
-// ContainerFromKey parses a compact symbol-path key into a container identity.
-func ContainerFromKey(key pathdom.PathKey) (ContainerRef, bool) {
-	sym, _, ok := ParseSymbolPathKey(key)
-	if !ok {
-		return ContainerRef{}, false
-	}
-	return ContainerRef{root: sym, key: key}, true
-}
-
 // IsValid reports whether ref names a real symbol-rooted container.
 func (r ContainerRef) IsValid() bool {
 	return r.root != 0 && r.key != ""

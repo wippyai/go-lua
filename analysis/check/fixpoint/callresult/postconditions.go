@@ -227,18 +227,10 @@ func signatureForSite(config SignaturePostconditionConfig, point cfg.Point, site
 }
 
 func callProducerForSite(site factflow.CallSite) factflow.CallProducer {
-	expr, hasExpr := site.Expr()
 	return factflow.NewCallProducer(factflow.CallProducerConfig{
 		CalleeSymbol:  site.CalleeSymbol(),
 		CalleePath:    site.CalleePath(),
-		ExprRef:       expr,
-		HasExpr:       hasExpr,
-		ExprIndex:     site.ExprIndex(),
 		ResultTargets: site.ResultTargets(),
-		Final:         site.Final(),
-		Expanded:      site.Expanded(),
-		Adjusted:      site.Adjusted(),
-		OpenTail:      site.OpenTail(),
 	})
 }
 

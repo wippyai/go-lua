@@ -119,10 +119,6 @@ func TestWithSignatureRelationsLowersErrorReturnToBranchPresenceRelations(t *tes
 	facts := factflow.NewFacts(factflow.FactsInput{
 		Calls: map[cfg.Point]factflow.CallProducer{
 			call: factflow.NewCallProducer(factflow.CallProducerConfig{
-				Context:   factflow.CallProducerContextAssignment,
-				ExprIndex: 0,
-				Final:     true,
-				Expanded:  true,
 				ResultTargets: []factflow.CallResultTarget{
 					factflow.NewCallResultTarget(factflow.CallResultTargetLocalAssignment, 0, 0, value, valuePath),
 					factflow.NewCallResultTarget(factflow.CallResultTargetLocalAssignment, 1, 1, err, errPath),
@@ -197,10 +193,6 @@ func TestWithSignatureRelationsStopsAtErrorReturnTargetReassignment(t *testing.T
 	facts := factflow.NewFacts(factflow.FactsInput{
 		Calls: map[cfg.Point]factflow.CallProducer{
 			call: factflow.NewCallProducer(factflow.CallProducerConfig{
-				Context:   factflow.CallProducerContextAssignment,
-				ExprIndex: 0,
-				Final:     true,
-				Expanded:  true,
 				ResultTargets: []factflow.CallResultTarget{
 					factflow.NewCallResultTarget(factflow.CallResultTargetLocalAssignment, 0, 0, value, valuePath),
 					factflow.NewCallResultTarget(factflow.CallResultTargetLocalAssignment, 1, 1, err, errPath),
@@ -703,10 +695,6 @@ func TestCallTargetForResultUsesExplicitTargetResultIndex(t *testing.T) {
 	target := symbol.ID(705)
 	targetPath := path.NewPath(target, "value")
 	call := factflow.NewCallProducer(factflow.CallProducerConfig{
-		Context:   factflow.CallProducerContextAssignment,
-		ExprIndex: 9,
-		Final:     false,
-		Expanded:  false,
 		ResultTargets: []factflow.CallResultTarget{
 			factflow.NewCallResultTarget(factflow.CallResultTargetLocalAssignment, 9, 1, target, targetPath),
 		},
@@ -1329,7 +1317,6 @@ func TestProviderIntegratesWithFactflowCallRead(t *testing.T) {
 			Facts: factflow.NewFacts(factflow.FactsInput{
 				Calls: map[cfg.Point]factflow.CallProducer{
 					call: factflow.NewCallProducer(factflow.CallProducerConfig{
-						Context:      factflow.CallProducerContextAssignment,
 						CalleeSymbol: symbol.ID(28),
 						ResultTargets: []factflow.CallResultTarget{
 							factflow.NewCallResultTarget(factflow.CallResultTargetLocalAssignment, 0, 0, target, path.NewPath(target, "x")),

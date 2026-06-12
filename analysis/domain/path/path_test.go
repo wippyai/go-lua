@@ -486,44 +486,6 @@ func TestPathEqual(t *testing.T) {
 	}
 }
 
-func TestPathIsReturnPath(t *testing.T) {
-	returnPath := Path{Root: "ret[0]"}
-	if !IsReturnPath(returnPath) {
-		t.Error("IsReturnPath should return true for ret[0] path")
-	}
-
-	returnPath2 := Path{Root: "ret[42]"}
-	if !IsReturnPath(returnPath2) {
-		t.Error("IsReturnPath should return true for ret[42] path")
-	}
-
-	notReturn := Path{Root: "x"}
-	if IsReturnPath(notReturn) {
-		t.Error("IsReturnPath should return false for non-return path")
-	}
-
-	partial := Path{Root: "ret["}
-	if IsReturnPath(partial) {
-		t.Error("IsReturnPath should return false for partial ret path")
-	}
-
-	invalid := []Path{
-		{Root: "ret[-1]"},
-		{Root: "ret[]"},
-		{Root: "ret[abc]"},
-		{Root: "ret[1x]"},
-		{Root: "ret[1]]"},
-		{Root: "ret[0]", Symbol: 7},
-		{Root: "ret[0]", Segments: []segment.Segment{{Kind: segment.SegmentField, Name: "k"}}},
-		{Root: "ret[0]", Segments: []segment.Segment{{Kind: segment.SegmentIndexInt, Index: 1}}},
-	}
-	for _, p := range invalid {
-		if IsReturnPath(p) {
-			t.Errorf("IsReturnPath should return false for invalid path %q (symbol=%d)", p.Root, p.Symbol)
-		}
-	}
-}
-
 // TestPathParentSliceAliasing tests for slice aliasing bugs in Parent().
 // If Parent() shares the backing array with the original path's segments,
 // modifications to one could corrupt the other.

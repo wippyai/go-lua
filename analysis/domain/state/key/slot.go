@@ -8,26 +8,6 @@ type Slot struct {
 	key    Value
 }
 
-// SymbolSlot identifies the logical slot for a symbol.
-func SymbolSlot(sym symbol.ID) (Slot, bool) {
-	if sym == 0 {
-		return Slot{}, false
-	}
-	return Slot{symbol: sym}, true
-}
-
-// ValueSlot identifies the logical slot named by key. Symbol-shaped keys are
-// normalized to symbol slots so storage policy can stay symbol-aware.
-func ValueSlot(key Value) (Slot, bool) {
-	if key == "" {
-		return Slot{}, false
-	}
-	if sym, ok := ParseSymbolValue(key); ok {
-		return SymbolSlot(sym)
-	}
-	return Slot{key: key}, true
-}
-
 // Symbol returns the symbol for a symbol slot.
 func (s Slot) Symbol() (symbol.ID, bool) {
 	return s.symbol, s.symbol != 0

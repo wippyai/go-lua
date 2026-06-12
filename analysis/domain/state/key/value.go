@@ -78,26 +78,6 @@ func SymbolVersionRoot(sym symbol.ID, version int) string {
 	return SymbolRoot(sym) + "@" + strconv.Itoa(version)
 }
 
-// SymbolVersionPath returns the verbose resolver key for a symbol/version path.
-func SymbolVersionPath(sym symbol.ID, version int, segments []segment.Segment) pathdom.PathKey {
-	return SymbolVersionResolverPath(sym, version, segments).PathKey()
-}
-
-// SymbolVersionResolverPath returns the typed verbose resolver key for a
-// symbol/version path.
-func SymbolVersionResolverPath(sym symbol.ID, version int, segments []segment.Segment) ResolverPath {
-	root := SymbolVersionRoot(sym, version)
-	if root == "" {
-		return ""
-	}
-	return ResolverPath(root + segment.FormatSegments(segments))
-}
-
-// ParsePathKey extracts a verbose symbol key. Version is zero when absent.
-func ParsePathKey(key pathdom.PathKey) (sym symbol.ID, version int, suffix string, ok bool) {
-	return ParseResolverPath(key)
-}
-
 // ParseResolverPath extracts a verbose state resolver path key. Version is zero
 // only for accepted plain/current symbol paths; point-local state keys require
 // callers to reject zero-version symbol paths when appropriate.

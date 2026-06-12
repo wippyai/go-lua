@@ -222,17 +222,9 @@ func TestDTOConstructorsAndAccessorsCopySlices(t *testing.T) {
 
 	targets := []CallResultTarget{target}
 	call := NewCallProducer(CallProducerConfig{
-		Context:       CallProducerContextAssignment,
 		CalleeSymbol:  symbol.ID(12),
 		CalleePath:    calleePath,
-		ExprRef:       ExprRef(3),
-		HasExpr:       true,
-		ExprIndex:     2,
 		ResultTargets: targets,
-		Final:         true,
-		Expanded:      true,
-		Adjusted:      true,
-		OpenTail:      true,
 	})
 	calleePath.Segments[0].Name = "changed"
 	targets[0] = NewCallResultTarget(CallResultTargetReturn, 0, 0, 0, path.Path{})
@@ -241,14 +233,8 @@ func TestDTOConstructorsAndAccessorsCopySlices(t *testing.T) {
 	gotCalleePath := call.CalleePath()
 	gotCalleePath.Segments[0].Name = "changed-again"
 	assertDirectField(t, call.CalleePath(), "method")
-	if call.Context() != CallProducerContextAssignment || call.CalleeSymbol() != symbol.ID(12) {
-		t.Fatalf("call context/symbol = %v/%v", call.Context(), call.CalleeSymbol())
-	}
-	if expr, ok := call.Expr(); !ok || expr != ExprRef(3) {
-		t.Fatalf("call expr = %v/%v, want %v/true", expr, ok, ExprRef(3))
-	}
-	if !call.Final() || !call.Expanded() || !call.Adjusted() || !call.OpenTail() {
-		t.Fatalf("call value-list flags were not preserved")
+	if call.CalleeSymbol() != symbol.ID(12) {
+		t.Fatalf("call symbol = %v", call.CalleeSymbol())
 	}
 	gotTargets := call.ResultTargets()
 	if len(gotTargets) != 1 || gotTargets[0].Kind() != CallResultTargetLocalAssignment {
@@ -365,15 +351,6 @@ func TestTransferOwnedEnumsAreIndependentContracts(t *testing.T) {
 		t.Fatalf("unexpected value source kinds: %#v", kinds)
 	}
 
-	contexts := []CallProducerContext{
-		CallProducerContextUnknown,
-		CallProducerContextAssignment,
-		CallProducerContextReturn,
-	}
-	if len(contexts) != 3 || contexts[1] != CallProducerContextAssignment {
-		t.Fatalf("unexpected call producer contexts: %#v", contexts)
-	}
-
 	siteContexts := []CallSiteContext{
 		CallSiteContextUnknown,
 		CallSiteContextStatement,
@@ -465,12 +442,8 @@ func TestFactsCarrierCopiesAndReturnsFalseForMissingFacts(t *testing.T) {
 		},
 		Calls: map[cfg.Point]CallProducer{
 			point: NewCallProducer(CallProducerConfig{
-				Context:      CallProducerContextReturn,
 				CalleeSymbol: symbol.ID(32),
 				CalleePath:   path.NewPath(symbol.ID(32), "callee").Field("method"),
-				ExprRef:      ExprRef(3),
-				HasExpr:      true,
-				ExprIndex:    0,
 				ResultTargets: []CallResultTarget{
 					NewCallResultTarget(CallResultTargetReturn, 0, 0, 0, path.Path{}),
 				},
@@ -551,7 +524,7 @@ func TestFactsCarrierCopiesAndReturnsFalseForMissingFacts(t *testing.T) {
 		),
 	)
 	input.Returns[point] = NewReturn([]ValueSource{{Kind: ValueSourceNil}})
-	input.Calls[point] = NewCallProducer(CallProducerConfig{Context: CallProducerContextAssignment})
+	input.Calls[point] = NewCallProducer(CallProducerConfig{})
 	input.CallSites[point] = NewCallSite(CallSiteConfig{Context: CallSiteContextStatement})
 	input.ObjectLiterals[ExprRef(1)] = NewObjectLiteral([]ObjectEntry{
 		NewObjectEntry(path.Path{Segments: []segment.Segment{{Kind: segment.SegmentField, Name: "changed"}}}, callSource),
@@ -734,9 +707,6 @@ func TestFactsCarrierCopiesAndReturnsFalseForMissingFacts(t *testing.T) {
 	call, ok := facts.Call(point)
 	if !ok {
 		t.Fatal("call missing")
-	}
-	if call.Context() != CallProducerContextReturn {
-		t.Fatalf("call context = %v, want %v", call.Context(), CallProducerContextReturn)
 	}
 	callCalleePath := call.CalleePath()
 	callCalleePath.Segments[0].Name = "mutated"

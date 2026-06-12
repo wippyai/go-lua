@@ -560,13 +560,13 @@ func TestLowerClaimWrappedCallPreservesProducerAndClaim(t *testing.T) {
 
 	facts := lowerFacts(t, result, built.Graph, standard.Registry())
 	localPoints := requireStmtPoints(t, built, local, 2)
-	producer, ok := facts.Call(localPoints[0])
+	site, ok := facts.CallSite(localPoints[0])
 	if !ok {
-		t.Fatal("missing assertion-wrapped assignment call producer")
+		t.Fatal("missing assertion-wrapped assignment call site")
 	}
-	innerRef, ok := producer.Expr()
+	innerRef, ok := site.Expr()
 	if !ok || innerRef == 0 {
-		t.Fatalf("inner producer expr ref = %d/%v", innerRef, ok)
+		t.Fatalf("inner call-site expr ref = %d/%v", innerRef, ok)
 	}
 	localSource := mustLocalSource(t, facts, localPoints[1])
 	if localSource.Kind != factflow.ValueSourceCall || localSource.ExprRef == innerRef || localSource.CallPoint != localPoints[0] || !localSource.HasCallPoint {
@@ -648,13 +648,13 @@ func TestLowerExpandedClaimWrappedCallKeepsPerResultSlotOverlays(t *testing.T) {
 			reg := standard.Registry()
 			facts := lowerFacts(t, result, built.Graph, reg)
 			points := requireStmtPoints(t, built, local, 3)
-			producer, ok := facts.Call(points[0])
+			site, ok := facts.CallSite(points[0])
 			if !ok {
-				t.Fatal("missing wrapped call producer")
+				t.Fatal("missing wrapped call site")
 			}
-			innerRef, ok := producer.Expr()
+			innerRef, ok := site.Expr()
 			if !ok || innerRef == 0 {
-				t.Fatalf("producer expr ref = %d/%v", innerRef, ok)
+				t.Fatalf("call-site expr ref = %d/%v", innerRef, ok)
 			}
 
 			firstSource := mustLocalSource(t, facts, points[1])

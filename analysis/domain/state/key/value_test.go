@@ -21,27 +21,24 @@ func TestValueConstructorsAreStableAndTyped(t *testing.T) {
 	}
 }
 
-func TestValueSlotNormalizesSymbolKeys(t *testing.T) {
-	symbolSlot, ok := ValueSlot(SymbolValue(42))
-	if !ok {
-		t.Fatal("ValueSlot(symbol) reported absent")
-	}
+func TestSlotMethods(t *testing.T) {
+	symbolSlot := Slot{symbol: 42}
 	if got, ok := symbolSlot.Symbol(); !ok || got != 42 {
-		t.Fatalf("ValueSlot(symbol).Symbol = %d/%v, want 42/true", got, ok)
+		t.Fatalf("Slot{symbol:42}.Symbol = %d/%v, want 42/true", got, ok)
 	}
 	if _, ok := symbolSlot.Key(); ok {
-		t.Fatal("ValueSlot(symbol).Key reported present")
+		t.Fatal("Slot{symbol:42}.Key reported present")
 	}
 	if got, ok := symbolSlot.Value(); !ok || got != SymbolValue(42) {
-		t.Fatalf("ValueSlot(symbol).Value = %q/%v, want s42/true", got, ok)
+		t.Fatalf("Slot{symbol:42}.Value = %q/%v, want s42/true", got, ok)
 	}
 
-	keySlot, ok := ValueSlot(ReturnSlot(1))
-	if !ok {
-		t.Fatal("ValueSlot(return) reported absent")
-	}
+	keySlot := Slot{key: ReturnSlot(1)}
 	if got, ok := keySlot.Key(); !ok || got != ReturnSlot(1) {
-		t.Fatalf("ValueSlot(return).Key = %q/%v, want r1/true", got, ok)
+		t.Fatalf("Slot{key:r1}.Key = %q/%v, want r1/true", got, ok)
+	}
+	if got, ok := keySlot.Value(); !ok || got != ReturnSlot(1) {
+		t.Fatalf("Slot{key:r1}.Value = %q/%v, want r1/true", got, ok)
 	}
 }
 
@@ -68,16 +65,16 @@ func TestParseReturnSlotRejectsOverflow(t *testing.T) {
 	}
 }
 
-func TestParsePathKeyAndRootSuffix(t *testing.T) {
-	sym, version, suffix, ok := ParsePathKey(`sym42@3.field["k"]`)
+func TestParseResolverPathAndRootSuffix(t *testing.T) {
+	sym, version, suffix, ok := ParseResolverPath(`sym42@3.field["k"]`)
 	if !ok || sym != 42 || version != 3 || suffix != `.field["k"]` {
-		t.Fatalf("ParsePathKey = %d/%d/%q/%v, want 42/3/suffix/true", sym, version, suffix, ok)
+		t.Fatalf("ParseResolverPath = %d/%d/%q/%v, want 42/3/suffix/true", sym, version, suffix, ok)
 	}
-	if _, _, _, ok := ParsePathKey("sym1@.field"); ok {
-		t.Fatal("ParsePathKey accepted invalid version")
+	if _, _, _, ok := ParseResolverPath("sym1@.field"); ok {
+		t.Fatal("ParseResolverPath accepted invalid version")
 	}
-	if _, _, _, ok := ParsePathKey("sym1@1[bad]"); ok {
-		t.Fatal("ParsePathKey accepted invalid suffix")
+	if _, _, _, ok := ParseResolverPath("sym1@1[bad]"); ok {
+		t.Fatal("ParseResolverPath accepted invalid suffix")
 	}
 }
 
@@ -101,37 +98,18 @@ func TestStateKeyAndPathKeySpellingsStayDisjoint(t *testing.T) {
 		t.Fatal("ParseReturnSlot accepted placeholder spelling $0")
 	}
 
-	sym, version, suffix, ok := ParsePathKey("sym12@3.field")
+	sym, version, suffix, ok := ParseResolverPath("sym12@3.field")
 	if !ok || sym != 12 || version != 3 || suffix != ".field" {
-		t.Fatalf("ParsePathKey(versioned) = %d/%d/%q/%v, want 12/3/.field/true", sym, version, suffix, ok)
+		t.Fatalf("ParseResolverPath(versioned) = %d/%d/%q/%v, want 12/3/.field/true", sym, version, suffix, ok)
 	}
 	if got := SymbolVersionRoot(sym, version); got != "sym12@3" {
 		t.Fatalf("SymbolVersionRoot = %q, want sym12@3", got)
-	}
-	if got := SymbolVersionPath(sym, version, []segment.Segment{{Kind: segment.SegmentField, Name: "field"}}); got != "sym12@3.field" {
-		t.Fatalf("SymbolVersionPath = %q, want sym12@3.field", got)
-	}
-}
-
-func TestSymbolVersionPathUsesPureKeySpelling(t *testing.T) {
-	segments := []segment.Segment{
-		{Kind: segment.SegmentField, Name: "field"},
-		{Kind: segment.SegmentIndexString, Name: "k"},
-	}
-	if got := SymbolVersionPath(42, 3, segments); got != `sym42@3.field["k"]` {
-		t.Fatalf("SymbolVersionPath = %q, want verbose versioned path", got)
-	}
-	if got := SymbolVersionPath(0, 3, segments); got != "" {
-		t.Fatalf("SymbolVersionPath with zero symbol = %q, want empty", got)
-	}
-	if got := SymbolVersionPath(42, 0, segments); got != "" {
-		t.Fatalf("SymbolVersionPath with zero version = %q, want empty", got)
 	}
 }
 
 func TestResolverPathKeyIsVersionedAndDistinctFromStableAddressKey(t *testing.T) {
 	segments := []segment.Segment{{Kind: segment.SegmentField, Name: "field"}}
-	resolverKey := SymbolVersionResolverPath(12, 3, segments)
+	resolverKey := ResolverPath(SymbolVersionRoot(12, 3) + segment.FormatSegments(segments))
 	if got := resolverKey.PathKey(); got != "sym12@3.field" {
 		t.Fatalf("resolver key = %q, want versioned verbose path", got)
 	}
@@ -145,6 +123,22 @@ func TestResolverPathKeyIsVersionedAndDistinctFromStableAddressKey(t *testing.T)
 	}
 	if _, _, _, ok := ParseResolverPath("$0.field"); ok {
 		t.Fatal("ParseResolverPath accepted placeholder local path key")
+	}
+}
+
+func TestResolverPathUsesPureKeySpelling(t *testing.T) {
+	segments := []segment.Segment{
+		{Kind: segment.SegmentField, Name: "field"},
+		{Kind: segment.SegmentIndexString, Name: "k"},
+	}
+	if got := ResolverPath(SymbolVersionRoot(42, 3) + segment.FormatSegments(segments)).PathKey(); got != `sym42@3.field["k"]` {
+		t.Fatalf("ResolverPath = %q, want verbose versioned path", got)
+	}
+	if got := SymbolVersionRoot(0, 3); got != "" {
+		t.Fatalf("SymbolVersionRoot with zero symbol = %q, want empty", got)
+	}
+	if got := SymbolVersionRoot(42, 0); got != "" {
+		t.Fatalf("SymbolVersionRoot with zero version = %q, want empty", got)
 	}
 }
 

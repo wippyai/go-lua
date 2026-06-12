@@ -51,7 +51,7 @@ type parsedKey struct {
 }
 
 func parse(pathKey pathdom.PathKey) (parsedKey, bool) {
-	sym, version, suffix, ok := key.ParsePathKey(pathKey)
+	sym, version, suffix, ok := key.ParseResolverPath(pathKey)
 	if ok && version > 0 {
 		segments, ok := segment.InternFormattedSegments(suffix)
 		if !ok {

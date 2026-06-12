@@ -207,8 +207,8 @@ func TestResolverKeepsSameSymbolDifferentVersionsDistinctWhileStableIdentityIgno
 	if !stableV1.Equal(stableV2) {
 		t.Fatalf("stable identity changed across versions: %s vs %s", stableV1.Key(), stableV2.Key())
 	}
-	if got := pathaddr.StablePathKey(pathV1); got != pathaddr.StablePathKey(pathV2) {
-		t.Fatalf("StablePathKey changed across versions: %q vs %q", pathaddr.StablePathKey(pathV1), pathaddr.StablePathKey(pathV2))
+	if got := stableV1.Key(); got != stableV2.Key() {
+		t.Fatalf("stable key changed across versions: %q vs %q", stableV1.Key(), stableV2.Key())
 	}
 }
 

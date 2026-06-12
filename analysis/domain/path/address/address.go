@@ -21,45 +21,6 @@ func StableOfPath(path pathdom.Path) (Stable, bool) {
 	return stableOfRootAndSuffix(root, suffixOfOwnedSegments(cloneSegments(path.Segments)))
 }
 
-// SameStablePath reports whether two paths share stable identity.
-func SameStablePath(a, b pathdom.Path) bool {
-	left, leftOK := StableOfPath(a)
-	right, rightOK := StableOfPath(b)
-	return leftOK && rightOK && left.Equal(right)
-}
-
-// StablePathKey returns the deterministic stable key for a path.
-func StablePathKey(path pathdom.Path) pathdom.PathKey {
-	return StableKeyOfPath(path).PathKey()
-}
-
-// StableKeyOfPath returns the typed deterministic stable key for a path.
-func StableKeyOfPath(path pathdom.Path) StableKey {
-	addr, ok := StableOfPath(path)
-	if !ok {
-		return ""
-	}
-	return addr.StableKey()
-}
-
-// PathIdentityKey returns the stable key when path is addressable, otherwise its
-// structural path key.
-func PathIdentityKey(path pathdom.Path) pathdom.PathKey {
-	if key := StablePathKey(path); key != "" {
-		return key
-	}
-	return path.Key()
-}
-
-// StableOfSymbol builds a stable symbol-rooted address.
-func StableOfSymbol(sym symbol.ID, segments []segment.Segment) (Stable, bool) {
-	root, ok := SymbolRoot(sym)
-	if !ok {
-		return Stable{}, false
-	}
-	return stableOfRootAndSuffix(root, SuffixOfSegments(segments))
-}
-
 func stableOfSymbolOwnedSegments(sym symbol.ID, segments []segment.Segment) (Stable, bool) {
 	root, ok := SymbolRoot(sym)
 	if !ok {
@@ -68,26 +29,12 @@ func stableOfSymbolOwnedSegments(sym symbol.ID, segments []segment.Segment) (Sta
 	return stableOfRootAndSuffix(root, suffixOfOwnedSegments(segments))
 }
 
-// StableOfRoot builds a stable named-root address.
-func StableOfRoot(root string, segments []segment.Segment) (Stable, bool) {
-	pathRoot, ok := NamedRoot(root)
-	if !ok {
-		return Stable{}, false
-	}
-	return stableOfRootAndSuffix(pathRoot, SuffixOfSegments(segments))
-}
-
 func stableOfRootOwnedSegments(root string, segments []segment.Segment) (Stable, bool) {
 	pathRoot, ok := NamedRoot(root)
 	if !ok {
 		return Stable{}, false
 	}
 	return stableOfRootAndSuffix(pathRoot, suffixOfOwnedSegments(segments))
-}
-
-// StableOfRootAndSuffix builds a stable address from normalized vocabulary.
-func StableOfRootAndSuffix(root Root, suffix Suffix) (Stable, bool) {
-	return stableOfRootAndSuffix(root, suffix)
 }
 
 func stableOfRootAndSuffix(root Root, suffix Suffix) (Stable, bool) {
@@ -120,12 +67,6 @@ func StableFromKey(key pathdom.PathKey) (Stable, bool) {
 		return Stable{}, false
 	}
 	return stableOfRootOwnedSegments(root, segments)
-}
-
-// StableKeyHasPrefix reports whether key denotes prefix or a descendant of prefix.
-func StableKeyHasPrefix(key pathdom.PathKey, prefix Stable) bool {
-	addr, ok := StableFromKey(key)
-	return ok && addr.HasPrefix(prefix)
 }
 
 // Key returns the deterministic key for map/set carriers.

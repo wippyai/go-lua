@@ -8,11 +8,11 @@ import (
 )
 
 func (l *lowerer) callProducer(fact semantics.CallFact) (factflow.CallProducer, bool) {
-	context, ok := callProducerContext(fact.Context)
-	if !ok {
+	switch fact.Context {
+	case semantics.CallContextAssignmentSource, semantics.CallContextReturnSource:
+	default:
 		return factflow.CallProducer{}, false
 	}
-	exprRef, hasExpr := l.exprRef(fact.Call)
 	calleeSymbol := symbol.ID(0)
 	if fact.HasCalleeSymbol {
 		calleeSymbol = fact.CalleeSymbol
@@ -22,17 +22,9 @@ func (l *lowerer) callProducer(fact semantics.CallFact) (factflow.CallProducer, 
 		calleePath = fact.CalleePath
 	}
 	return factflow.NewCallProducer(factflow.CallProducerConfig{
-		Context:       context,
 		CalleeSymbol:  calleeSymbol,
 		CalleePath:    calleePath,
-		ExprRef:       exprRef,
-		HasExpr:       hasExpr,
-		ExprIndex:     fact.ExprIndex,
 		ResultTargets: l.callProducerResultTargets(fact.ResultTargets),
-		Final:         fact.Final,
-		Expanded:      fact.Expanded,
-		Adjusted:      fact.Adjusted,
-		OpenTail:      fact.OpenTail,
 	}), true
 }
 
@@ -74,17 +66,6 @@ func (l *lowerer) callSite(fact semantics.CallFact) factflow.CallSite {
 		Adjusted:        fact.Adjusted,
 		OpenTail:        fact.OpenTail,
 	})
-}
-
-func callProducerContext(kind semantics.CallContextKind) (factflow.CallProducerContext, bool) {
-	switch kind {
-	case semantics.CallContextAssignmentSource:
-		return factflow.CallProducerContextAssignment, true
-	case semantics.CallContextReturnSource:
-		return factflow.CallProducerContextReturn, true
-	default:
-		return factflow.CallProducerContextUnknown, false
-	}
 }
 
 func callSiteContext(kind semantics.CallContextKind) factflow.CallSiteContext {

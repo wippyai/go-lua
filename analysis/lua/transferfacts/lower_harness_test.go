@@ -188,12 +188,8 @@ func TestLowerAssignmentsReturnsAndCallsPreserveValueListMetadata(t *testing.T) 
 	if !ok {
 		t.Fatalf("missing make call producer")
 	}
-	if makeProducer.Context() != factflow.CallProducerContextAssignment || makeProducer.ExprIndex() != 0 || makeProducer.Final() || makeProducer.Expanded() || !makeProducer.Adjusted() || makeProducer.OpenTail() {
-		t.Fatalf("make producer flags/context are wrong")
-	}
-	makeRef, ok := makeProducer.Expr()
-	if !ok || makeRef == 0 {
-		t.Fatalf("make producer expr ref = %d/%v", makeRef, ok)
+	if makeProducer.CalleeSymbol() == 0 {
+		t.Fatalf("make producer callee symbol missing")
 	}
 	makeTargets := makeProducer.ResultTargets()
 	if len(makeTargets) != 1 || makeTargets[0].Kind() != factflow.CallResultTargetLocalAssignment || makeTargets[0].Index() != 0 || makeTargets[0].ResultIndex() != 0 {
@@ -208,20 +204,16 @@ func TestLowerAssignmentsReturnsAndCallsPreserveValueListMetadata(t *testing.T) 
 	if aFact.TargetSymbol() != mustLocalAt(t, bindings, local, 0) || !aFact.TargetPath().Equal(path.NewPath(aFact.TargetSymbol(), "a")) {
 		t.Fatalf("local a target = %d %v", aFact.TargetSymbol(), aFact.TargetPath())
 	}
-	if aSource.Kind != factflow.ValueSourceCall || aSource.ExprRef != makeRef || !aSource.HasExpr || aSource.ExprIndex != 0 || aSource.TargetIndex != 0 || aSource.ResultIndex != 0 || aSource.CallPoint != localPoints[0] || !aSource.HasCallPoint || !aSource.Adjusted {
-		t.Fatalf("local a source = %#v, make ref %d", aSource, makeRef)
+	if aSource.Kind != factflow.ValueSourceCall || aSource.ExprRef == 0 || !aSource.HasExpr || aSource.ExprIndex != 0 || aSource.TargetIndex != 0 || aSource.ResultIndex != 0 || aSource.CallPoint != localPoints[0] || !aSource.HasCallPoint || !aSource.Adjusted {
+		t.Fatalf("local a source = %#v", aSource)
 	}
 
 	packProducer, ok := facts.Call(localPoints[1])
 	if !ok {
 		t.Fatalf("missing pack call producer")
 	}
-	packRef, ok := packProducer.Expr()
-	if !ok || packRef == 0 || packRef == makeRef {
-		t.Fatalf("pack producer expr ref = %d/%v, make ref %d", packRef, ok, makeRef)
-	}
-	if !packProducer.Final() || !packProducer.Expanded() || packProducer.Adjusted() || packProducer.OpenTail() {
-		t.Fatalf("pack producer flags are wrong")
+	if packProducer.CalleeSymbol() == 0 {
+		t.Fatalf("pack producer callee symbol missing")
 	}
 	packTargets := packProducer.ResultTargets()
 	if len(packTargets) != 2 || packTargets[0].Index() != 1 || packTargets[0].ResultIndex() != 0 || packTargets[1].Index() != 2 || packTargets[1].ResultIndex() != 1 {
@@ -235,11 +227,11 @@ func TestLowerAssignmentsReturnsAndCallsPreserveValueListMetadata(t *testing.T) 
 	if !ok {
 		t.Fatalf("missing local c fact")
 	}
-	if got := bFact.Source(); got.ExprRef != packRef || got.ResultIndex != 0 || !got.Expanded || got.OpenTail {
-		t.Fatalf("local b source = %#v, pack ref %d", got, packRef)
+	if got := bFact.Source(); got.ExprRef == 0 || got.ResultIndex != 0 || !got.Expanded || got.OpenTail {
+		t.Fatalf("local b source = %#v", got)
 	}
-	if got := cFact.Source(); got.ExprRef != packRef || got.ResultIndex != 1 || !got.Expanded || got.OpenTail {
-		t.Fatalf("local c source = %#v, pack ref %d", got, packRef)
+	if got := cFact.Source(); got.ExprRef == 0 || got.ResultIndex != 1 || !got.Expanded || got.OpenTail {
+		t.Fatalf("local c source = %#v", got)
 	}
 
 	writePoints := requireStmtPoints(t, built, write, 2)
@@ -247,9 +239,8 @@ func TestLowerAssignmentsReturnsAndCallsPreserveValueListMetadata(t *testing.T) 
 	if !ok {
 		t.Fatalf("missing put call producer")
 	}
-	putRef, ok := putProducer.Expr()
-	if !ok || putRef == 0 {
-		t.Fatalf("put producer expr ref = %d/%v", putRef, ok)
+	if putProducer.CalleeSymbol() == 0 {
+		t.Fatalf("put producer callee symbol missing")
 	}
 	ordinary, ok := facts.OrdinaryAssignment(writePoints[1])
 	if !ok {
@@ -258,8 +249,8 @@ func TestLowerAssignmentsReturnsAndCallsPreserveValueListMetadata(t *testing.T) 
 	if ordinary.TargetSymbol() != mustIdentSymbol(t, bindings, aWrite) {
 		t.Fatalf("ordinary target = %d, want %d", ordinary.TargetSymbol(), mustIdentSymbol(t, bindings, aWrite))
 	}
-	if got := ordinary.Source(); got.Kind != factflow.ValueSourceCall || got.ExprRef != putRef || !got.HasExpr || got.CallPoint != writePoints[0] || !got.HasCallPoint {
-		t.Fatalf("ordinary source = %#v, put ref %d", got, putRef)
+	if got := ordinary.Source(); got.Kind != factflow.ValueSourceCall || got.ExprRef == 0 || !got.HasExpr || got.CallPoint != writePoints[0] || !got.HasCallPoint {
+		t.Fatalf("ordinary source = %#v", got)
 	}
 
 	returnPoints := requireStmtPoints(t, built, ret, 2)
@@ -267,12 +258,8 @@ func TestLowerAssignmentsReturnsAndCallsPreserveValueListMetadata(t *testing.T) 
 	if !ok {
 		t.Fatalf("missing tail call producer")
 	}
-	if tailProducer.Context() != factflow.CallProducerContextReturn || !tailProducer.Final() || !tailProducer.Expanded() || !tailProducer.OpenTail() {
-		t.Fatalf("tail producer flags/context are wrong")
-	}
-	tailRef, ok := tailProducer.Expr()
-	if !ok || tailRef == 0 {
-		t.Fatalf("tail producer expr ref = %d/%v", tailRef, ok)
+	if tailProducer.CalleeSymbol() == 0 {
+		t.Fatalf("tail producer callee symbol missing")
 	}
 	tailTargets := tailProducer.ResultTargets()
 	if len(tailTargets) != 1 || tailTargets[0].Kind() != factflow.CallResultTargetReturn || tailTargets[0].Index() != 1 || tailTargets[0].ResultIndex() != 0 {
@@ -286,8 +273,8 @@ func TestLowerAssignmentsReturnsAndCallsPreserveValueListMetadata(t *testing.T) 
 	if len(sources) != 2 || sources[0].Kind != factflow.ValueSourceExpression || !sources[0].HasExpr || sources[1].Kind != factflow.ValueSourceCall {
 		t.Fatalf("return sources = %#v", sources)
 	}
-	if sources[1].ExprRef != tailRef || !sources[1].Expanded || !sources[1].OpenTail || sources[1].CallPoint != returnPoints[0] || !sources[1].HasCallPoint {
-		t.Fatalf("return tail source = %#v, tail ref %d", sources[1], tailRef)
+	if sources[1].ExprRef == 0 || !sources[1].Expanded || !sources[1].OpenTail || sources[1].CallPoint != returnPoints[0] || !sources[1].HasCallPoint {
+		t.Fatalf("return tail source = %#v", sources[1])
 	}
 }
 
