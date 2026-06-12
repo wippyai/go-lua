@@ -1,4 +1,4 @@
-package typeaccess
+package typeoperator
 
 import (
 	"testing"
@@ -285,4 +285,17 @@ func TestOperatorSwappedComparisonMetamethod(t *testing.T) {
 		t.Fatal("BinaryOp(left, >, right __lt) failed")
 	}
 	assertType(t, got, typ.Boolean)
+}
+
+func assertType(t *testing.T, got typ.Type, want typ.Type) {
+	t.Helper()
+	if !typ.TypeEquals(got, want) {
+		t.Fatalf("type = %v, want %v", got, want)
+	}
+}
+
+func recordWithMetamethod(name string, mt typ.Type) *typ.Record {
+	return typetable.NewRecord().
+		Metatable(typetable.NewRecord().Field(name, mt).Build()).
+		Build()
 }

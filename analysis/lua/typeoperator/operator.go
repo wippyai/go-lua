@@ -1,10 +1,11 @@
-package typeaccess
+package typeoperator
 
 import (
 	"math"
 	"strconv"
 	"strings"
 
+	"github.com/wippyai/go-lua/analysis/lua/typeaccess"
 	"github.com/wippyai/go-lua/analysis/type/kind"
 	"github.com/wippyai/go-lua/analysis/type/normalize"
 	"github.com/wippyai/go-lua/analysis/type/subst"
@@ -450,11 +451,11 @@ func unaryMetamethodReturn(operand typ.Type, name string) (typ.Type, bool, bool)
 }
 
 func metamethodReturn(t typ.Type, name string) (typ.Type, bool, bool) {
-	mt, found := GetMetamethod(t, name)
+	mt, found := typeaccess.GetMetamethod(t, name)
 	if !found {
 		return nil, false, false
 	}
-	result, ok := CallableReturn(mt)
+	result, ok := typeaccess.CallableReturn(mt)
 	if !ok {
 		return nil, true, false
 	}
@@ -556,4 +557,8 @@ func numericStringLiteral(lit *typ.Literal) (float64, bool) {
 
 func isIntegralFloat(v float64) bool {
 	return !math.IsNaN(v) && !math.IsInf(v, 0) && v == math.Trunc(v)
+}
+
+func stopDepth(t typ.Type, depth int) bool {
+	return t == nil || depth > typ.DefaultRecursionDepth
 }
