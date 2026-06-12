@@ -54,6 +54,10 @@ func iteratorValueSources(exprs []ast.Expr, callPoints map[int]cfg.Point) []sour
 	return sourceprovenance.ValueListSources(exprs, false, callPointResolverByExprIndex(callPoints))
 }
 
+func argumentValueSources(exprs []ast.Expr) []sourceprovenance.ASTSource {
+	return sourceprovenance.ValueListSources(exprs, false, nil)
+}
+
 func conditionValueSource(expr ast.Expr, callPoints map[int]cfg.Point) sourceprovenance.ASTSource {
 	return sourceprovenance.ConditionSource(expr, callPointResolverByExprIndex(callPoints))
 }

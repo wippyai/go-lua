@@ -49,7 +49,7 @@ func TestLowerCallSitesPreserveAllSemanticContextsAndProducerStaysNarrow(t *test
 		t.Fatalf("assignment-source call-site expr = %d/%v", expr, ok)
 	}
 	localTargets := localSite.ResultTargets()
-	if len(localTargets) != 1 || localTargets[0].Kind() != factflow.CallResultTargetLocalAssignment || localTargets[0].Index() != 0 {
+	if len(localTargets) != 1 || localTargets[0].Kind() != factflow.CallResultTargetLocalAssignment || localTargets[0].Index() != 0 || localTargets[0].ResultIndex() != 0 {
 		t.Fatalf("assignment-source call-site targets = %#v", localTargets)
 	}
 	if _, ok := facts.Call(localPoints[0]); !ok {
@@ -104,7 +104,7 @@ func TestLowerCallSitesPreserveAllSemanticContextsAndProducerStaysNarrow(t *test
 		t.Fatalf("return-source call site = context %v expr index %d open tail=%v", returnSite.Context(), returnSite.ExprIndex(), returnSite.OpenTail())
 	}
 	returnTargets := returnSite.ResultTargets()
-	if len(returnTargets) != 1 || returnTargets[0].Kind() != factflow.CallResultTargetReturn || returnTargets[0].Index() != 0 {
+	if len(returnTargets) != 1 || returnTargets[0].Kind() != factflow.CallResultTargetReturn || returnTargets[0].Index() != 0 || returnTargets[0].ResultIndex() != 0 {
 		t.Fatalf("return-source call-site targets = %#v", returnTargets)
 	}
 	if _, ok := facts.Call(returnPoints[0]); !ok {
@@ -190,7 +190,7 @@ func TestLowerCallSitePreservesPortableCallShapeAndArgumentOverlays(t *testing.T
 	}
 }
 
-func TestLowerCallSiteArgumentNestedCallSourceHasCallPoint(t *testing.T) {
+func TestLowerCallSiteUsesSemanticArgumentSources(t *testing.T) {
 	inner := &ast.FuncCallExpr{Func: ident("g")}
 	wrapped := &ast.CastExpr{
 		Expr:   inner,
@@ -203,13 +203,16 @@ func TestLowerCallSiteArgumentNestedCallSourceHasCallPoint(t *testing.T) {
 	}
 	innerPoint := cfg.Point(42)
 	l := lowerer{
-		exprs:      make(map[any]factflow.ExprRef),
-		callPoints: map[*ast.FuncCallExpr]cfg.Point{inner: innerPoint},
+		exprs: make(map[any]factflow.ExprRef),
 	}
+	semanticSource := sourceprovenance.SourceForExpr(wrapped, 0, 0, 0, true, false, func(exprIndex int, call *ast.FuncCallExpr) (cfg.Point, bool) {
+		return innerPoint, exprIndex == 0 && call == inner
+	})
 	site := l.callSite(semantics.CallFact{
-		Context: semantics.CallContextStatement,
-		Call:    outer,
-		Args:    []ast.Expr{wrapped},
+		Context:         semantics.CallContextStatement,
+		Call:            outer,
+		Args:            []ast.Expr{ident("not_semantic_source")},
+		ArgumentSources: []sourceprovenance.ASTSource{semanticSource},
 	})
 	args := site.ArgumentSources()
 	if len(args) != 1 {
@@ -218,15 +221,6 @@ func TestLowerCallSiteArgumentNestedCallSourceHasCallPoint(t *testing.T) {
 	arg := args[0]
 	if arg.Kind != factflow.ValueSourceCall || !arg.HasCallPoint || arg.CallPoint != innerPoint {
 		t.Fatalf("nested call arg source = %#v, want call point %d", arg, innerPoint)
-	}
-
-	wrappedSource := l.argumentValueSources([]ast.Expr{wrapped})[0]
-	if wrappedSource.Kind != factflow.ValueSourceCall || !wrappedSource.HasCallPoint || wrappedSource.CallPoint != innerPoint {
-		t.Fatalf("wrapped nested call arg source = %#v, want call point %d", wrappedSource, innerPoint)
-	}
-	wrappedSemanticSource := sourceprovenance.SourceForExpr(wrapped, 0, 0, 0, true, false, l.callPointResolver())
-	if wrappedSemanticSource.Kind != factflow.ValueSourceCall || !wrappedSemanticSource.HasCallPoint || wrappedSemanticSource.CallPoint != innerPoint {
-		t.Fatalf("wrapped nested call semantic source = %#v, want call point %d", wrappedSemanticSource, innerPoint)
 	}
 }
 
@@ -278,7 +272,7 @@ func TestLowerMemberOrdinaryCallTargetStaysCallSiteOnly(t *testing.T) {
 		t.Fatalf("call-site context = %v, want assignment source", site.Context())
 	}
 	targets := site.ResultTargets()
-	if len(targets) != 1 || targets[0].Kind() != factflow.CallResultTargetOrdinaryAssignment || targets[0].Index() != 0 {
+	if len(targets) != 1 || targets[0].Kind() != factflow.CallResultTargetOrdinaryAssignment || targets[0].Index() != 0 || targets[0].ResultIndex() != 0 {
 		t.Fatalf("call-site targets = %#v", targets)
 	}
 	wantPath := path.NewPath(mustIdentSymbol(t, bindings, targetRoot), "t").Field("x")

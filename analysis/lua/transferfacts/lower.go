@@ -8,7 +8,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
-	"github.com/wippyai/go-lua/compiler/ast"
 )
 
 // Lower converts Lua semantic facts into the generic transfer fact DTOs consumed
@@ -33,7 +32,6 @@ func Lower(result *semantics.Result, graph cfg.Graph, config Config) factflow.Fa
 		exprs:           make(map[any]factflow.ExprRef),
 		types:           make(map[any]factflow.TypeRef),
 		expressionPaths: make(map[factflow.ExprRef]pathdom.Path),
-		callPoints:      callPointsByExpr(result, graph),
 	}
 	input := factflow.FactsInput{
 		LocalAssignments:            make(map[cfg.Point]factflow.RootAssignment),
@@ -76,7 +74,7 @@ func Lower(result *semantics.Result, graph cfg.Graph, config Config) factflow.Fa
 		}
 		if fact, ok := result.Call(point); ok {
 			input.CallSites[point] = l.callSite(fact)
-			for _, source := range l.argumentSemanticValueSources(fact.Args) {
+			for _, source := range fact.ArgumentSources {
 				l.addAssertionOverlaysForSource(&input, source)
 				l.addObjectLiteral(&input, result, source)
 			}
@@ -101,17 +99,4 @@ type lowerer struct {
 	exprs           map[any]factflow.ExprRef
 	types           map[any]factflow.TypeRef
 	expressionPaths map[factflow.ExprRef]pathdom.Path
-	callPoints      map[*ast.FuncCallExpr]cfg.Point
-}
-
-func callPointsByExpr(result *semantics.Result, graph cfg.Graph) map[*ast.FuncCallExpr]cfg.Point {
-	out := make(map[*ast.FuncCallExpr]cfg.Point)
-	for _, point := range graph.RPO() {
-		fact, ok := result.Call(point)
-		if !ok || fact.Call == nil {
-			continue
-		}
-		out[fact.Call] = point
-	}
-	return out
 }

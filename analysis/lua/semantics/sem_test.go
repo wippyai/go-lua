@@ -736,7 +736,7 @@ func TestExtractChunkAssignmentAndReturnCallFactsUseLuaListRules(t *testing.T) {
 	if makeFact.CalleeSymbol != mustIdentSymbol(t, bindings, makeIdent) || !makeFact.HasCalleeSymbol {
 		t.Fatalf("make callee symbol = %d/%v", makeFact.CalleeSymbol, makeFact.HasCalleeSymbol)
 	}
-	if len(makeFact.ResultTargets) != 1 || makeFact.ResultTargets[0].Kind != CallResultTargetLocalAssignment || makeFact.ResultTargets[0].Index != 0 || makeFact.ResultTargets[0].Name != "a" {
+	if len(makeFact.ResultTargets) != 1 || makeFact.ResultTargets[0].Kind != CallResultTargetLocalAssignment || makeFact.ResultTargets[0].Index != 0 || makeFact.ResultTargets[0].ResultIndex != 0 || makeFact.ResultTargets[0].Name != "a" {
 		t.Fatalf("make result targets = %#v", makeFact.ResultTargets)
 	}
 
@@ -747,7 +747,7 @@ func TestExtractChunkAssignmentAndReturnCallFactsUseLuaListRules(t *testing.T) {
 	if packFact.Context != CallContextAssignmentSource || packFact.ExprIndex != 1 || !packFact.Final || !packFact.Expanded || packFact.Adjusted {
 		t.Fatalf("pack fact = %#v", packFact)
 	}
-	if len(packFact.ResultTargets) != 2 || packFact.ResultTargets[0].Index != 1 || packFact.ResultTargets[1].Index != 2 {
+	if len(packFact.ResultTargets) != 2 || packFact.ResultTargets[0].Index != 1 || packFact.ResultTargets[0].ResultIndex != 0 || packFact.ResultTargets[1].Index != 2 || packFact.ResultTargets[1].ResultIndex != 1 {
 		t.Fatalf("pack result targets = %#v", packFact.ResultTargets)
 	}
 
@@ -781,7 +781,7 @@ func TestExtractChunkAssignmentAndReturnCallFactsUseLuaListRules(t *testing.T) {
 	if tailFact.Context != CallContextReturnSource || tailFact.SourceStmt != ret || tailFact.ExprIndex != 1 || !tailFact.Final || !tailFact.Expanded || !tailFact.OpenTail {
 		t.Fatalf("tail fact = %#v", tailFact)
 	}
-	if len(tailFact.ResultTargets) != 1 || tailFact.ResultTargets[0].Kind != CallResultTargetReturn || tailFact.ResultTargets[0].Index != 1 || !tailFact.ResultTargets[0].OpenTail {
+	if len(tailFact.ResultTargets) != 1 || tailFact.ResultTargets[0].Kind != CallResultTargetReturn || tailFact.ResultTargets[0].Index != 1 || tailFact.ResultTargets[0].ResultIndex != 0 || !tailFact.ResultTargets[0].OpenTail {
 		t.Fatalf("tail result targets = %#v", tailFact.ResultTargets)
 	}
 	returnFact, ok := result.Return(returnPoints[1])
@@ -996,7 +996,7 @@ func TestExtractChunkAssignmentValueSourcesHandleAdjustRetNilFillAndVararg(t *te
 	if !callFact.Final || callFact.Expanded || !callFact.Adjusted {
 		t.Fatalf("adjusted call flags = %#v", callFact)
 	}
-	if len(callFact.ResultTargets) != 1 || callFact.ResultTargets[0].Kind != CallResultTargetOrdinaryAssignment || callFact.ResultTargets[0].Index != 0 {
+	if len(callFact.ResultTargets) != 1 || callFact.ResultTargets[0].Kind != CallResultTargetOrdinaryAssignment || callFact.ResultTargets[0].Index != 0 || callFact.ResultTargets[0].ResultIndex != 0 {
 		t.Fatalf("adjusted call targets = %#v", callFact.ResultTargets)
 	}
 	first, ok := result.OrdinaryAssignment(adjustedPoints[1])
@@ -1073,10 +1073,17 @@ func TestExtractChunkCallFactResolvesMethodPaths(t *testing.T) {
 	if !fact.HasCalleePath || !fact.CalleePath.Equal(methodPath) {
 		t.Fatalf("callee path = %#v, want %#v", fact.CalleePath, methodPath)
 	}
+	if len(fact.ArgumentSources) != 1 || fact.ArgumentSources[0].Kind != factflow.ValueSourceExpression || fact.ArgumentSources[0].Expr != arg || fact.ArgumentSources[0].ExprIndex != 0 || fact.ArgumentSources[0].TargetIndex != 0 || fact.ArgumentSources[0].ResultIndex != 0 || !fact.ArgumentSources[0].Final {
+		t.Fatalf("method argument sources = %#v", fact.ArgumentSources)
+	}
+	fact.ArgumentSources[0].Kind = factflow.ValueSourceNil
 	fact.MethodPath.Segments[0].Name = "mutated"
 	again, _ := result.Call(point)
 	if !again.MethodPath.Equal(methodPath) {
 		t.Fatalf("Call exposed mutable method path: %#v", again.MethodPath)
+	}
+	if again.ArgumentSources[0].Kind != factflow.ValueSourceExpression {
+		t.Fatalf("Call exposed mutable argument sources: %#v", again.ArgumentSources)
 	}
 }
 

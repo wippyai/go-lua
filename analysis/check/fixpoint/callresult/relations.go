@@ -129,26 +129,11 @@ func callTargetForResult(call factflow.CallProducer, resultIndex int) (factflow.
 		return factflow.CallResultTarget{}, false
 	}
 	for _, target := range call.ResultTargets() {
-		slot, ok := resultSlotForTarget(call, target)
-		if ok && slot == resultIndex {
+		if target.ResultIndex() == resultIndex {
 			return target, true
 		}
 	}
 	return factflow.CallResultTarget{}, false
-}
-
-func resultSlotForTarget(call factflow.CallProducer, target factflow.CallResultTarget) (int, bool) {
-	if target.Index() < 0 {
-		return 0, false
-	}
-	if call.Expanded() && call.Final() {
-		slot := target.Index() - call.ExprIndex()
-		return slot, slot >= 0
-	}
-	if target.Index() == call.ExprIndex() {
-		return 0, true
-	}
-	return 0, false
 }
 
 func relatableCallTarget(target factflow.CallResultTarget) bool {

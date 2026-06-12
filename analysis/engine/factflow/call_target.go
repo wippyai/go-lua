@@ -19,15 +19,17 @@ const (
 type CallResultTarget struct {
 	kind         CallResultTargetKind
 	index        int
+	resultIndex  int
 	targetSymbol symbol.ID
 	targetPath   path.Path
 }
 
 // NewCallResultTarget creates a call result target descriptor.
-func NewCallResultTarget(kind CallResultTargetKind, index int, targetSymbol symbol.ID, targetPath path.Path) CallResultTarget {
+func NewCallResultTarget(kind CallResultTargetKind, index, resultIndex int, targetSymbol symbol.ID, targetPath path.Path) CallResultTarget {
 	return CallResultTarget{
 		kind:         kind,
 		index:        index,
+		resultIndex:  resultIndex,
 		targetSymbol: targetSymbol,
 		targetPath:   copyPath(targetPath),
 	}
@@ -38,6 +40,9 @@ func (t CallResultTarget) Kind() CallResultTargetKind { return t.kind }
 
 // Index returns the target's value-list index.
 func (t CallResultTarget) Index() int { return t.index }
+
+// ResultIndex returns the consumed result slot from the producing call.
+func (t CallResultTarget) ResultIndex() int { return t.resultIndex }
 
 // TargetSymbol returns the target's symbol identity.
 func (t CallResultTarget) TargetSymbol() symbol.ID { return t.targetSymbol }

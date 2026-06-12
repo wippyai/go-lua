@@ -109,32 +109,6 @@ func (l *lowerer) addExpressionPath(ref factflow.ExprRef, expr ast.Expr) {
 	l.expressionPaths[ref] = p
 }
 
-func (l *lowerer) argumentValueSources(args []ast.Expr) []factflow.ValueSource {
-	if len(args) == 0 {
-		return nil
-	}
-	out := make([]factflow.ValueSource, len(args))
-	for i, arg := range args {
-		source := sourceprovenance.SourceForExpr(arg, i, i, 0, i == len(args)-1, false, l.callPointResolver())
-		out[i] = l.valueSource(source)
-	}
-	return out
-}
-
-func (l *lowerer) argumentSemanticValueSources(args []ast.Expr) []sourceprovenance.ASTSource {
-	return sourceprovenance.ValueListSources(args, false, l.callPointResolver())
-}
-
-func (l *lowerer) callPointResolver() sourceprovenance.CallPointResolver {
-	if len(l.callPoints) == 0 {
-		return nil
-	}
-	return func(exprIndex int, call *ast.FuncCallExpr) (cfg.Point, bool) {
-		point, ok := l.callPoints[call]
-		return point, ok
-	}
-}
-
 func (l *lowerer) exprRef(expr any) (factflow.ExprRef, bool) {
 	if expr == nil {
 		return 0, false

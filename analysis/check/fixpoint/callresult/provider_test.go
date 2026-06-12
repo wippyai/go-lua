@@ -103,8 +103,8 @@ func TestWithSignatureRelationsLowersErrorReturnToBranchPresenceRelations(t *tes
 				Final:     true,
 				Expanded:  true,
 				ResultTargets: []factflow.CallResultTarget{
-					factflow.NewCallResultTarget(factflow.CallResultTargetLocalAssignment, 0, value, valuePath),
-					factflow.NewCallResultTarget(factflow.CallResultTargetLocalAssignment, 1, err, errPath),
+					factflow.NewCallResultTarget(factflow.CallResultTargetLocalAssignment, 0, 0, value, valuePath),
+					factflow.NewCallResultTarget(factflow.CallResultTargetLocalAssignment, 1, 1, err, errPath),
 				},
 			}),
 		},
@@ -181,8 +181,8 @@ func TestWithSignatureRelationsStopsAtErrorReturnTargetReassignment(t *testing.T
 				Final:     true,
 				Expanded:  true,
 				ResultTargets: []factflow.CallResultTarget{
-					factflow.NewCallResultTarget(factflow.CallResultTargetLocalAssignment, 0, value, valuePath),
-					factflow.NewCallResultTarget(factflow.CallResultTargetLocalAssignment, 1, err, errPath),
+					factflow.NewCallResultTarget(factflow.CallResultTargetLocalAssignment, 0, 0, value, valuePath),
+					factflow.NewCallResultTarget(factflow.CallResultTargetLocalAssignment, 1, 1, err, errPath),
 				},
 			}),
 		},
@@ -225,6 +225,28 @@ func TestWithSignatureRelationsStopsAtErrorReturnTargetReassignment(t *testing.T
 
 	if relations := got.BranchPresenceRelations(branch); len(relations) != 0 {
 		t.Fatalf("branch relations after reassignment = %#v, want none", relations)
+	}
+}
+
+func TestCallTargetForResultUsesExplicitTargetResultIndex(t *testing.T) {
+	target := symbol.ID(705)
+	targetPath := path.NewPath(target, "value")
+	call := factflow.NewCallProducer(factflow.CallProducerConfig{
+		Context:   factflow.CallProducerContextAssignment,
+		ExprIndex: 9,
+		Final:     false,
+		Expanded:  false,
+		ResultTargets: []factflow.CallResultTarget{
+			factflow.NewCallResultTarget(factflow.CallResultTargetLocalAssignment, 9, 1, target, targetPath),
+		},
+	})
+
+	got, ok := callTargetForResult(call, 1)
+	if !ok || got.TargetSymbol() != target || got.ResultIndex() != 1 {
+		t.Fatalf("target for result 1 = %#v/%v, want explicit slot target", got, ok)
+	}
+	if got, ok := callTargetForResult(call, 0); ok {
+		t.Fatalf("target for recomputed result 0 = %#v, want none", got)
 	}
 }
 
@@ -839,7 +861,7 @@ func TestProviderIntegratesWithFactflowCallRead(t *testing.T) {
 						Context:      factflow.CallProducerContextAssignment,
 						CalleeSymbol: symbol.ID(28),
 						ResultTargets: []factflow.CallResultTarget{
-							factflow.NewCallResultTarget(factflow.CallResultTargetLocalAssignment, 0, target, path.NewPath(target, "x")),
+							factflow.NewCallResultTarget(factflow.CallResultTargetLocalAssignment, 0, 0, target, path.NewPath(target, "x")),
 						},
 					}),
 				},

@@ -172,8 +172,11 @@ func TestDTOConstructorsAndAccessorsCopySlices(t *testing.T) {
 
 	calleePath := path.NewPath(symbol.ID(12), "callee").Field("method")
 	targetPath := path.NewPath(symbol.ID(13), "target")
-	target := NewCallResultTarget(CallResultTargetLocalAssignment, 0, symbol.ID(13), targetPath)
+	target := NewCallResultTarget(CallResultTargetLocalAssignment, 0, 0, symbol.ID(13), targetPath)
 	assertPathEqual(t, target.TargetPath(), targetPath)
+	if target.ResultIndex() != 0 {
+		t.Fatalf("call result target slot = %d, want 0", target.ResultIndex())
+	}
 
 	targets := []CallResultTarget{target}
 	call := NewCallProducer(CallProducerConfig{
@@ -190,7 +193,7 @@ func TestDTOConstructorsAndAccessorsCopySlices(t *testing.T) {
 		OpenTail:      true,
 	})
 	calleePath.Segments[0].Name = "changed"
-	targets[0] = NewCallResultTarget(CallResultTargetReturn, 0, 0, path.Path{})
+	targets[0] = NewCallResultTarget(CallResultTargetReturn, 0, 0, 0, path.Path{})
 
 	assertDirectField(t, call.CalleePath(), "method")
 	gotCalleePath := call.CalleePath()
@@ -209,7 +212,7 @@ func TestDTOConstructorsAndAccessorsCopySlices(t *testing.T) {
 	if len(gotTargets) != 1 || gotTargets[0].Kind() != CallResultTargetLocalAssignment {
 		t.Fatalf("call targets = %#v, want one local-assignment target", gotTargets)
 	}
-	gotTargets[0] = NewCallResultTarget(CallResultTargetReturn, 0, 0, path.Path{})
+	gotTargets[0] = NewCallResultTarget(CallResultTargetReturn, 0, 0, 0, path.Path{})
 	if got := call.ResultTargets(); got[0].Kind() != CallResultTargetLocalAssignment {
 		t.Fatalf("call result targets exposed mutable slice, got %v", got[0].Kind())
 	}
@@ -224,7 +227,7 @@ func TestDTOConstructorsAndAccessorsCopySlices(t *testing.T) {
 	siteArgs := []ValueSource{source, callSource}
 	siteTypeArgs := []TypeRef{TypeRef(1), TypeRef(2)}
 	siteTargets := []CallResultTarget{
-		NewCallResultTarget(CallResultTargetOrdinaryAssignment, 0, symbol.ID(17), siteTargetPath),
+		NewCallResultTarget(CallResultTargetOrdinaryAssignment, 0, 0, symbol.ID(17), siteTargetPath),
 	}
 	site := NewCallSite(CallSiteConfig{
 		Context:         CallSiteContextCondition,
@@ -249,7 +252,7 @@ func TestDTOConstructorsAndAccessorsCopySlices(t *testing.T) {
 	siteMethodPath.Segments[0].Name = "changed"
 	siteArgs[0].Kind = ValueSourceNil
 	siteTypeArgs[0] = TypeRef(99)
-	siteTargets[0] = NewCallResultTarget(CallResultTargetReturn, 0, 0, path.Path{})
+	siteTargets[0] = NewCallResultTarget(CallResultTargetReturn, 0, 0, 0, path.Path{})
 	assertDirectField(t, site.CalleePath(), "run")
 	gotSiteCalleePath := site.CalleePath()
 	gotSiteCalleePath.Segments[0].Name = "changed-again"
@@ -302,7 +305,7 @@ func TestDTOConstructorsAndAccessorsCopySlices(t *testing.T) {
 		t.Fatalf("call site targets = %#v, want one ordinary-assignment target", gotSiteTargets)
 	}
 	assertDirectField(t, gotSiteTargets[0].TargetPath(), "x")
-	gotSiteTargets[0] = NewCallResultTarget(CallResultTargetReturn, 0, 0, path.Path{})
+	gotSiteTargets[0] = NewCallResultTarget(CallResultTargetReturn, 0, 0, 0, path.Path{})
 	if got := site.ResultTargets(); got[0].Kind() != CallResultTargetOrdinaryAssignment {
 		t.Fatalf("call site result targets exposed mutable slice, got %v", got[0].Kind())
 	}
@@ -409,7 +412,7 @@ func TestFactsCarrierCopiesAndReturnsFalseForMissingFacts(t *testing.T) {
 				HasExpr:      true,
 				ExprIndex:    0,
 				ResultTargets: []CallResultTarget{
-					NewCallResultTarget(CallResultTargetReturn, 0, 0, path.Path{}),
+					NewCallResultTarget(CallResultTargetReturn, 0, 0, 0, path.Path{}),
 				},
 			}),
 		},
@@ -429,7 +432,7 @@ func TestFactsCarrierCopiesAndReturnsFalseForMissingFacts(t *testing.T) {
 				ArgumentSources: []ValueSource{source, callSource},
 				TypeArgs:        []TypeRef{TypeRef(7), TypeRef(8)},
 				ResultTargets: []CallResultTarget{
-					NewCallResultTarget(CallResultTargetOrdinaryAssignment, 0, symbol.ID(33), path.NewPath(symbol.ID(33), "table").Field("field")),
+					NewCallResultTarget(CallResultTargetOrdinaryAssignment, 0, 0, symbol.ID(33), path.NewPath(symbol.ID(33), "table").Field("field")),
 				},
 				Final:    true,
 				Expanded: true,
@@ -637,7 +640,7 @@ func TestFactsCarrierCopiesAndReturnsFalseForMissingFacts(t *testing.T) {
 	if len(callTargets) != 1 || callTargets[0].Kind() != CallResultTargetReturn {
 		t.Fatalf("call targets = %#v", callTargets)
 	}
-	callTargets[0] = NewCallResultTarget(CallResultTargetLocalAssignment, 0, symbol.ID(33), path.NewPath(symbol.ID(33), "changed"))
+	callTargets[0] = NewCallResultTarget(CallResultTargetLocalAssignment, 0, 0, symbol.ID(33), path.NewPath(symbol.ID(33), "changed"))
 	if got := callAgain.ResultTargets(); got[0].Kind() != CallResultTargetReturn {
 		t.Fatalf("facts call exposed mutable targets, got %v", got[0].Kind())
 	}
@@ -699,7 +702,7 @@ func TestFactsCarrierCopiesAndReturnsFalseForMissingFacts(t *testing.T) {
 	callSiteTargetPath := callSiteTargets[0].TargetPath()
 	callSiteTargetPath.Segments[0].Name = "mutated"
 	assertDirectField(t, callSiteAgain.ResultTargets()[0].TargetPath(), "field")
-	callSiteTargets[0] = NewCallResultTarget(CallResultTargetReturn, 0, 0, path.Path{})
+	callSiteTargets[0] = NewCallResultTarget(CallResultTargetReturn, 0, 0, 0, path.Path{})
 	if got := callSiteAgain.ResultTargets(); got[0].Kind() != CallResultTargetOrdinaryAssignment {
 		t.Fatalf("facts call site exposed mutable targets, got %v", got[0].Kind())
 	}

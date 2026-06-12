@@ -16,10 +16,11 @@ func localResultTargets(stmt *ast.LocalAssignStmt, bindings *bind.Result) []Call
 	targets := make([]CallResultTarget, len(stmt.Names))
 	for i, name := range stmt.Names {
 		target := CallResultTarget{
-			Kind:  CallResultTargetLocalAssignment,
-			Index: i,
-			Local: stmt,
-			Name:  name,
+			Kind:        CallResultTargetLocalAssignment,
+			Index:       i,
+			ResultIndex: NoCallResultIndex,
+			Local:       stmt,
+			Name:        name,
 		}
 		if bindings != nil {
 			id, ok := bindings.LocalSymbolAt(stmt, i)
@@ -42,10 +43,11 @@ func ordinaryResultTargets(stmt *ast.AssignStmt, bindings *bind.Result) []CallRe
 	targets := make([]CallResultTarget, len(stmt.Lhs))
 	for i, expr := range stmt.Lhs {
 		target := CallResultTarget{
-			Kind:   CallResultTargetOrdinaryAssignment,
-			Index:  i,
-			Assign: stmt,
-			Target: expr,
+			Kind:        CallResultTargetOrdinaryAssignment,
+			Index:       i,
+			ResultIndex: NoCallResultIndex,
+			Assign:      stmt,
+			Target:      expr,
 		}
 		if p, ok := pathexpr.Resolve(expr, bindings); ok {
 			target.Path = p
@@ -58,12 +60,13 @@ func ordinaryResultTargets(stmt *ast.AssignStmt, bindings *bind.Result) []CallRe
 	return targets
 }
 
-func returnResultTarget(stmt *ast.ReturnStmt, index int, openTail bool) CallResultTarget {
+func returnResultTarget(stmt *ast.ReturnStmt, index, resultIndex int, openTail bool) CallResultTarget {
 	return CallResultTarget{
-		Kind:     CallResultTargetReturn,
-		Index:    index,
-		Return:   stmt,
-		OpenTail: openTail,
+		Kind:        CallResultTargetReturn,
+		Index:       index,
+		ResultIndex: resultIndex,
+		Return:      stmt,
+		OpenTail:    openTail,
 	}
 }
 
@@ -91,6 +94,7 @@ func buildCallFact(sourceStmt ast.Stmt, callStmt *ast.FuncCallStmt, context Call
 		Method:          call.Method,
 		Args:            copyExprs(call.Args),
 		TypeArgs:        copyTypeExprs(call.TypeArgs),
+		ArgumentSources: argumentValueSources(call.Args),
 		CalleePath:      calleePath,
 		HasCalleePath:   hasCalleePath,
 		ReceiverPath:    receiverPath,
@@ -143,17 +147,27 @@ func resolveCallPaths(call *ast.FuncCallExpr, bindings *bind.Result) (path.Path,
 func callResultTargets(context CallContextKind, sourceStmt ast.Stmt, exprIndex int, adjusted, expanded, openTail bool, assignmentTargets []CallResultTarget) []CallResultTarget {
 	switch context {
 	case CallContextAssignmentSource:
-		if len(assignmentTargets) == 0 || exprIndex >= len(assignmentTargets) {
+		if len(assignmentTargets) == 0 || exprIndex < 0 || exprIndex >= len(assignmentTargets) {
 			return nil
 		}
 		if adjusted || !expanded {
-			return []CallResultTarget{copyResultTarget(assignmentTargets[exprIndex])}
+			return []CallResultTarget{callResultTarget(assignmentTargets[exprIndex], 0)}
 		}
-		return copyResultTargets(assignmentTargets[exprIndex:])
+		targets := make([]CallResultTarget, 0, len(assignmentTargets)-exprIndex)
+		for i, target := range assignmentTargets[exprIndex:] {
+			targets = append(targets, callResultTarget(target, i))
+		}
+		return targets
 	case CallContextReturnSource:
 		stmt, _ := sourceStmt.(*ast.ReturnStmt)
-		return []CallResultTarget{returnResultTarget(stmt, exprIndex, openTail)}
+		return []CallResultTarget{returnResultTarget(stmt, exprIndex, 0, openTail)}
 	default:
 		return nil
 	}
+}
+
+func callResultTarget(target CallResultTarget, resultIndex int) CallResultTarget {
+	target = copyResultTarget(target)
+	target.ResultIndex = resultIndex
+	return target
 }

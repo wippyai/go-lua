@@ -30,7 +30,7 @@ func (l *lowerer) callProducerResultTarget(target semantics.CallResultTarget) (f
 		if !target.HasPath {
 			targetPath = path.NewPath(target.Symbol, target.Name)
 		}
-		return factflow.NewCallResultTarget(factflow.CallResultTargetLocalAssignment, target.Index, target.Symbol, targetPath), true
+		return factflow.NewCallResultTarget(factflow.CallResultTargetLocalAssignment, target.Index, target.ResultIndex, target.Symbol, targetPath), true
 	case semantics.CallResultTargetOrdinaryAssignment:
 		if !target.HasSymbol || target.Symbol == 0 {
 			return factflow.CallResultTarget{}, false
@@ -42,9 +42,9 @@ func (l *lowerer) callProducerResultTarget(target semantics.CallResultTarget) (f
 		if !target.HasPath {
 			targetPath = path.NewPath(target.Symbol, "")
 		}
-		return factflow.NewCallResultTarget(factflow.CallResultTargetOrdinaryAssignment, target.Index, target.Symbol, targetPath), true
+		return factflow.NewCallResultTarget(factflow.CallResultTargetOrdinaryAssignment, target.Index, target.ResultIndex, target.Symbol, targetPath), true
 	case semantics.CallResultTargetReturn:
-		return factflow.NewCallResultTarget(factflow.CallResultTargetReturn, target.Index, 0, path.Path{}), true
+		return factflow.NewCallResultTarget(factflow.CallResultTargetReturn, target.Index, target.ResultIndex, 0, path.Path{}), true
 	default:
 		return factflow.CallResultTarget{}, false
 	}
@@ -83,5 +83,5 @@ func callSiteResultTarget(target semantics.CallResultTarget) factflow.CallResult
 	} else if target.Kind == semantics.CallResultTargetOrdinaryAssignment && target.HasSymbol {
 		targetPath = path.NewPath(target.Symbol, "")
 	}
-	return factflow.NewCallResultTarget(targetKind, target.Index, targetSymbol, targetPath)
+	return factflow.NewCallResultTarget(targetKind, target.Index, target.ResultIndex, targetSymbol, targetPath)
 }

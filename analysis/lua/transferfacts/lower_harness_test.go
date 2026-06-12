@@ -155,7 +155,7 @@ func TestLowerAssignmentsReturnsAndCallsPreserveValueListMetadata(t *testing.T) 
 		t.Fatalf("make producer expr ref = %d/%v", makeRef, ok)
 	}
 	makeTargets := makeProducer.ResultTargets()
-	if len(makeTargets) != 1 || makeTargets[0].Kind() != factflow.CallResultTargetLocalAssignment || makeTargets[0].Index() != 0 {
+	if len(makeTargets) != 1 || makeTargets[0].Kind() != factflow.CallResultTargetLocalAssignment || makeTargets[0].Index() != 0 || makeTargets[0].ResultIndex() != 0 {
 		t.Fatalf("make targets = %#v", makeTargets)
 	}
 
@@ -183,7 +183,7 @@ func TestLowerAssignmentsReturnsAndCallsPreserveValueListMetadata(t *testing.T) 
 		t.Fatalf("pack producer flags are wrong")
 	}
 	packTargets := packProducer.ResultTargets()
-	if len(packTargets) != 2 || packTargets[0].Index() != 1 || packTargets[1].Index() != 2 {
+	if len(packTargets) != 2 || packTargets[0].Index() != 1 || packTargets[0].ResultIndex() != 0 || packTargets[1].Index() != 2 || packTargets[1].ResultIndex() != 1 {
 		t.Fatalf("pack targets = %#v", packTargets)
 	}
 	bFact, ok := facts.LocalAssignment(localPoints[3])
@@ -234,7 +234,7 @@ func TestLowerAssignmentsReturnsAndCallsPreserveValueListMetadata(t *testing.T) 
 		t.Fatalf("tail producer expr ref = %d/%v", tailRef, ok)
 	}
 	tailTargets := tailProducer.ResultTargets()
-	if len(tailTargets) != 1 || tailTargets[0].Kind() != factflow.CallResultTargetReturn || tailTargets[0].Index() != 1 {
+	if len(tailTargets) != 1 || tailTargets[0].Kind() != factflow.CallResultTargetReturn || tailTargets[0].Index() != 1 || tailTargets[0].ResultIndex() != 0 {
 		t.Fatalf("tail targets = %#v", tailTargets)
 	}
 	returnFact, ok := facts.Return(returnPoints[1])

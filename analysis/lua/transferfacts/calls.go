@@ -66,7 +66,7 @@ func (l *lowerer) callSite(fact semantics.CallFact) factflow.CallSite {
 		ExprRef:         exprRef,
 		HasExpr:         hasExpr,
 		ExprIndex:       fact.ExprIndex,
-		ArgumentSources: l.argumentValueSources(fact.Args),
+		ArgumentSources: l.valueSources(fact.ArgumentSources),
 		TypeArgs:        l.typeRefs(fact.TypeArgs),
 		ResultTargets:   l.callSiteResultTargets(fact.ResultTargets),
 		Final:           fact.Final,

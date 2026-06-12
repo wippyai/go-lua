@@ -259,6 +259,7 @@ func copyOrdinaryAssignmentFact(fact OrdinaryAssignmentFact) OrdinaryAssignmentF
 func copyCallFact(fact CallFact) CallFact {
 	fact.Args = copyExprs(fact.Args)
 	fact.TypeArgs = copyTypeExprs(fact.TypeArgs)
+	fact.ArgumentSources = copyValueSources(fact.ArgumentSources)
 	fact.CalleePath = copyPath(fact.CalleePath)
 	fact.ReceiverPath = copyPath(fact.ReceiverPath)
 	fact.MethodPath = copyPath(fact.MethodPath)

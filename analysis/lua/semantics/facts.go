@@ -37,6 +37,8 @@ const (
 	CallResultTargetReturn
 )
 
+const NoCallResultIndex = -1
+
 type LocalAssignmentFact struct {
 	Stmt  *ast.LocalAssignStmt
 	Index int
@@ -90,6 +92,8 @@ type CallFact struct {
 	Method   string
 	Args     []ast.Expr
 	TypeArgs []ast.TypeExpr
+
+	ArgumentSources []sourceprovenance.ASTSource
 
 	CalleePath      path.Path
 	HasCalleePath   bool
@@ -153,8 +157,9 @@ type BranchConditionFact struct {
 }
 
 type CallResultTarget struct {
-	Kind  CallResultTargetKind
-	Index int
+	Kind        CallResultTargetKind
+	Index       int
+	ResultIndex int
 
 	Local  *ast.LocalAssignStmt
 	Assign *ast.AssignStmt

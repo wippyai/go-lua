@@ -234,8 +234,8 @@ func TestFactsNodeTransferCallResultTargetsDoNotDirectlyWriteTargets(t *testing.
 				point: factflow.NewCallProducer(factflow.CallProducerConfig{
 					Context: factflow.CallProducerContextAssignment,
 					ResultTargets: []factflow.CallResultTarget{
-						factflow.NewCallResultTarget(factflow.CallResultTargetLocalAssignment, 0, target, path.NewPath(target, "local")),
-						factflow.NewCallResultTarget(factflow.CallResultTargetOrdinaryAssignment, 0, target, targetPath),
+						factflow.NewCallResultTarget(factflow.CallResultTargetLocalAssignment, 0, 0, target, path.NewPath(target, "local")),
+						factflow.NewCallResultTarget(factflow.CallResultTargetOrdinaryAssignment, 0, 0, target, targetPath),
 					},
 				}),
 			},
