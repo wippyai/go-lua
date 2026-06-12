@@ -153,14 +153,9 @@ func callResultAssignmentPoint(
 	resultIndex int,
 ) (cfg.Point, bool) {
 	for _, point := range graph.RPO() {
-		if local, ok := facts.LocalAssignment(point); ok &&
-			local.TargetPath().Equal(target.TargetPath()) &&
-			valueSourceConsumesCallResult(local.Source(), callPoint, target, resultIndex) {
-			return point, true
-		}
-		if ordinary, ok := facts.OrdinaryAssignment(point); ok &&
-			ordinary.TargetPath().Equal(target.TargetPath()) &&
-			valueSourceConsumesCallResult(ordinary.Source(), callPoint, target, resultIndex) {
+		if assignment, ok := facts.RootAssignment(point); ok &&
+			assignment.TargetPath().Equal(target.TargetPath()) &&
+			valueSourceConsumesCallResult(assignment.Source(), callPoint, target, resultIndex) {
 			return point, true
 		}
 	}
@@ -262,10 +257,7 @@ func relationKilledAt(facts factflow.Facts, point cfg.Point, targets errorReturn
 	if point == targets.valueAssign || point == targets.errorAssign {
 		return false
 	}
-	if local, ok := facts.LocalAssignment(point); ok && relationTargetPath(local.TargetPath(), targets) {
-		return true
-	}
-	if ordinary, ok := facts.OrdinaryAssignment(point); ok && relationTargetPath(ordinary.TargetPath(), targets) {
+	if assignment, ok := facts.RootAssignment(point); ok && relationTargetPath(assignment.TargetPath(), targets) {
 		return true
 	}
 	if pathAssignment, ok := facts.PathAssignment(point); ok && relationTargetPath(pathAssignment.TargetPath(), targets) {

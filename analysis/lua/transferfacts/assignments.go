@@ -18,10 +18,10 @@ func (l *lowerer) localAssignment(fact semantics.LocalAssignmentFact) (factflow.
 	source := l.valueSource(fact.Source)
 	if declaredValueApplies(fact) {
 		if declared, ok := l.declaredValue(fact.Type); ok {
-			return factflow.NewRootAssignmentWithDeclaredValue(fact.Symbol, target, source, declared), true
+			return factflow.NewRootAssignmentWithDeclaredValue(factflow.RootAssignmentLocalDeclaration, fact.Symbol, target, source, declared), true
 		}
 	}
-	return factflow.NewRootAssignment(fact.Symbol, target, source), true
+	return factflow.NewRootAssignment(factflow.RootAssignmentLocalDeclaration, fact.Symbol, target, source), true
 }
 
 func declaredValueApplies(fact semantics.LocalAssignmentFact) bool {
@@ -45,7 +45,7 @@ func (l *lowerer) ordinaryAssignment(fact semantics.OrdinaryAssignmentFact) (fac
 	if len(target.Segments) != 0 {
 		return factflow.RootAssignment{}, false
 	}
-	return factflow.NewRootAssignment(fact.Symbol, target, l.valueSource(fact.Source)), true
+	return factflow.NewRootAssignment(factflow.RootAssignmentOrdinaryRootWrite, fact.Symbol, target, l.valueSource(fact.Source)), true
 }
 
 func (l *lowerer) pathAssignment(fact semantics.OrdinaryAssignmentFact) (factflow.PathAssignment, bool) {

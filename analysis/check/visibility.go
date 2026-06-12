@@ -45,12 +45,7 @@ func visibilityDefinitions(bindings *bind.Result, built *cfgbuild.Result, facts 
 	}
 
 	for _, point := range graph.RPO() {
-		if fact, ok := facts.LocalAssignment(point); ok {
-			sym := fact.TargetSymbol()
-			assigned[sym] = struct{}{}
-			add(point, sym)
-		}
-		if fact, ok := facts.OrdinaryAssignment(point); ok {
+		if fact, ok := facts.RootAssignment(point); ok {
 			sym := fact.TargetSymbol()
 			assigned[sym] = struct{}{}
 			add(point, sym)

@@ -30,7 +30,7 @@ func (r *Result) extractLocalAssign(stmt *ast.LocalAssignStmt, bindings *bind.Re
 		if bindings != nil {
 			id, hasSymbol = bindings.LocalSymbolAt(stmt, i)
 		}
-		r.localAssignments[assignPoints[i]] = LocalAssignmentFact{
+		r.localDeclarationFacts[assignPoints[i]] = LocalAssignmentFact{
 			Stmt:      stmt,
 			Index:     i,
 			Name:      name,
@@ -70,7 +70,7 @@ func (r *Result) extractAssign(stmt *ast.AssignStmt, bindings *bind.Result, poin
 		}
 		targetPath, hasPath := pathexpr.Resolve(target, bindings)
 		containerPath, hasContainerPath := pathexpr.ResolveContainer(target, bindings)
-		r.ordinaryAssignments[assignPoints[i]] = OrdinaryAssignmentFact{
+		r.assignmentFacts[assignPoints[i]] = OrdinaryAssignmentFact{
 			Stmt:             stmt,
 			Index:            i,
 			Target:           target,

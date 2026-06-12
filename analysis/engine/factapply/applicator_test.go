@@ -62,8 +62,8 @@ func TestFactsNodeTransferAppliesExpressionRefinementsToAssignments(t *testing.T
 
 			got := NewFactsNodeTransfer(FactsNodeTransferConfig{
 				Facts: factflow.NewFacts(factflow.FactsInput{
-					LocalAssignments: map[cfg.Point]factflow.RootAssignment{
-						point: factflow.NewRootAssignment(target, path.NewPath(target, "value"), outerSource),
+					RootAssignments: map[cfg.Point]factflow.RootAssignment{
+						point: factflow.NewRootAssignment(factflow.RootAssignmentLocalDeclaration, target, path.NewPath(target, "value"), outerSource),
 					},
 					ExpressionRefinements: map[factflow.ExprRef]factflow.ExpressionRefinement{
 						outer: factflow.NewExpressionRefinement(innerSource, tc.refinement),
@@ -96,8 +96,8 @@ func TestFactsNodeTransferMissingResolverValueLeavesStateUnchanged(t *testing.T)
 
 	got := NewFactsNodeTransfer(FactsNodeTransferConfig{
 		Facts: factflow.NewFacts(factflow.FactsInput{
-			LocalAssignments: map[cfg.Point]factflow.RootAssignment{
-				point: factflow.NewRootAssignment(target, path.NewPath(target, "local"), source),
+			RootAssignments: map[cfg.Point]factflow.RootAssignment{
+				point: factflow.NewRootAssignment(factflow.RootAssignmentLocalDeclaration, target, path.NewPath(target, "local"), source),
 			},
 		}),
 		Sources: &recordingSourceValues{},
@@ -140,8 +140,8 @@ func TestFactsNodeTransferIgnoresNonRootAssignmentFacts(t *testing.T) {
 
 	got := NewFactsNodeTransfer(FactsNodeTransferConfig{
 		Facts: factflow.NewFacts(factflow.FactsInput{
-			OrdinaryAssignments: map[cfg.Point]factflow.RootAssignment{
-				point: factflow.NewRootAssignment(target, path.NewPath(target, "ordinary").Field("member"), source),
+			RootAssignments: map[cfg.Point]factflow.RootAssignment{
+				point: factflow.NewRootAssignment(factflow.RootAssignmentOrdinaryRootWrite, target, path.NewPath(target, "ordinary").Field("member"), source),
 			},
 		}),
 		Sources: resolver,

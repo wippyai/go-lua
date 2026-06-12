@@ -7,8 +7,18 @@ import (
 	"github.com/wippyai/go-lua/analysis/symbol"
 )
 
+// RootAssignmentKind preserves the source origin of a root-symbol write.
+type RootAssignmentKind int
+
+const (
+	RootAssignmentUnknown RootAssignmentKind = iota
+	RootAssignmentLocalDeclaration
+	RootAssignmentOrdinaryRootWrite
+)
+
 // RootAssignment describes a root-symbol write at a CFG point.
 type RootAssignment struct {
+	kind         RootAssignmentKind
 	targetSymbol symbol.ID
 	targetPath   path.Path
 	source       ValueSource
@@ -18,8 +28,9 @@ type RootAssignment struct {
 }
 
 // NewRootAssignment creates a root-symbol assignment fact.
-func NewRootAssignment(targetSymbol symbol.ID, targetPath path.Path, source ValueSource) RootAssignment {
+func NewRootAssignment(kind RootAssignmentKind, targetSymbol symbol.ID, targetPath path.Path, source ValueSource) RootAssignment {
 	return RootAssignment{
+		kind:         kind,
 		targetSymbol: targetSymbol,
 		targetPath:   copyPath(targetPath),
 		source:       source,
@@ -28,12 +39,15 @@ func NewRootAssignment(targetSymbol symbol.ID, targetPath path.Path, source Valu
 
 // NewRootAssignmentWithDeclaredValue creates a root assignment fact that can
 // write declared type evidence when its source has no value evidence.
-func NewRootAssignmentWithDeclaredValue(targetSymbol symbol.ID, targetPath path.Path, source ValueSource, declaredValue product.Value) RootAssignment {
-	fact := NewRootAssignment(targetSymbol, targetPath, source)
+func NewRootAssignmentWithDeclaredValue(kind RootAssignmentKind, targetSymbol symbol.ID, targetPath path.Path, source ValueSource, declaredValue product.Value) RootAssignment {
+	fact := NewRootAssignment(kind, targetSymbol, targetPath, source)
 	fact.declaredValue = declaredValue
 	fact.hasDeclaredValue = true
 	return fact
 }
+
+// Kind returns the source origin for this root assignment.
+func (a RootAssignment) Kind() RootAssignmentKind { return a.kind }
 
 // TargetSymbol returns the assignment target's symbol identity.
 func (a RootAssignment) TargetSymbol() symbol.ID { return a.targetSymbol }

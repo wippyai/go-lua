@@ -343,8 +343,8 @@ func (r *Result) ReassignedParameterValueSlots() map[statekey.Value]struct{} {
 		return nil
 	}
 	for _, point := range graph.RPO() {
-		assignment, ok := r.facts.OrdinaryAssignment(point)
-		if !ok {
+		assignment, ok := r.facts.RootAssignment(point)
+		if !ok || assignment.Kind() != factflow.RootAssignmentOrdinaryRootWrite {
 			continue
 		}
 		slot := statekey.SymbolValue(assignment.TargetSymbol())

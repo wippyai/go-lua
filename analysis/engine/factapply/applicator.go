@@ -50,10 +50,7 @@ func NewFactsNodeTransfer(config FactsNodeTransferConfig) transfer.NodeTransfer 
 			return out
 		}
 		sources = sourcevalue.WithExpressionRefinements(ctx.Registry, sources, facts.ExpressionRefinements())
-		if fact, ok := facts.LocalAssignment(ctx.Point); ok {
-			out = applyRootAssignmentFact(ctx, config.Visibility, facts, sources, read, in, out, fact)
-		}
-		if fact, ok := facts.OrdinaryAssignment(ctx.Point); ok {
+		if fact, ok := facts.RootAssignment(ctx.Point); ok {
 			out = applyRootAssignmentFact(ctx, config.Visibility, facts, sources, read, in, out, fact)
 		}
 		if fact, ok := facts.PathAssignment(ctx.Point); ok {

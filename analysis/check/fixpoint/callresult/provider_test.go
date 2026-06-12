@@ -181,8 +181,8 @@ func TestProviderIntegratesWithFactflowCallRead(t *testing.T) {
 						},
 					}),
 				},
-				LocalAssignments: map[cfg.Point]factflow.RootAssignment{
-					assign: factflow.NewRootAssignment(target, path.NewPath(target, "x"), factflow.ValueSource{
+				RootAssignments: map[cfg.Point]factflow.RootAssignment{
+					assign: factflow.NewRootAssignment(factflow.RootAssignmentLocalDeclaration, target, path.NewPath(target, "x"), factflow.ValueSource{
 						Kind:         factflow.ValueSourceCall,
 						CallPoint:    call,
 						HasCallPoint: true,

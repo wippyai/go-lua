@@ -35,8 +35,7 @@ func Lower(result *semantics.Result, graph cfg.Graph, config Config) factflow.Fa
 		expressionConditions: make(map[factflow.ExprRef]factflow.ExpressionCondition),
 	}
 	input := factflow.FactsInput{
-		LocalAssignments:            make(map[cfg.Point]factflow.RootAssignment),
-		OrdinaryAssignments:         make(map[cfg.Point]factflow.RootAssignment),
+		RootAssignments:             make(map[cfg.Point]factflow.RootAssignment),
 		PathAssignments:             make(map[cfg.Point]factflow.PathAssignment),
 		PathDescendantInvalidations: make(map[cfg.Point]factflow.PathDescendantInvalidation),
 		BranchRefinements:           make(map[cfg.Point]factflow.BranchRefinementSet),
@@ -53,7 +52,7 @@ func Lower(result *semantics.Result, graph cfg.Graph, config Config) factflow.Fa
 	for _, point := range graph.RPO() {
 		if fact, ok := result.LocalAssignment(point); ok {
 			if lowered, ok := l.localAssignment(fact); ok {
-				input.LocalAssignments[point] = lowered
+				input.RootAssignments[point] = lowered
 				l.addAssertionRefinementsForSource(&input, fact.Source)
 				l.addObjectLiteral(&input, result, fact.Source)
 			}
@@ -66,7 +65,7 @@ func Lower(result *semantics.Result, graph cfg.Graph, config Config) factflow.Fa
 			} else if lowered, ok := l.pathDescendantInvalidation(fact); ok {
 				input.PathDescendantInvalidations[point] = lowered
 			} else if lowered, ok := l.ordinaryAssignment(fact); ok {
-				input.OrdinaryAssignments[point] = lowered
+				input.RootAssignments[point] = lowered
 				l.addAssertionRefinementsForSource(&input, fact.Source)
 				l.addObjectLiteral(&input, result, fact.Source)
 			}

@@ -37,14 +37,20 @@ func TestDTOConstructorsAndAccessorsCopySlices(t *testing.T) {
 	}
 
 	localPath := path.NewPath(symbol.ID(10), "local")
-	local := NewRootAssignment(symbol.ID(10), localPath, source)
+	local := NewRootAssignment(RootAssignmentLocalDeclaration, symbol.ID(10), localPath, source)
+	if got := local.Kind(); got != RootAssignmentLocalDeclaration {
+		t.Fatalf("local kind = %v, want local declaration", got)
+	}
 	assertPathEqual(t, local.TargetPath(), localPath)
 	if got := local.Source(); got != source {
 		t.Fatalf("local source = %#v, want %#v", got, source)
 	}
 
 	ordinaryPath := path.NewPath(symbol.ID(11), "ordinary")
-	ordinary := NewRootAssignment(symbol.ID(11), ordinaryPath, source)
+	ordinary := NewRootAssignment(RootAssignmentOrdinaryRootWrite, symbol.ID(11), ordinaryPath, source)
+	if got := ordinary.Kind(); got != RootAssignmentOrdinaryRootWrite {
+		t.Fatalf("ordinary kind = %v, want ordinary root write", got)
+	}
 	assertPathEqual(t, ordinary.TargetPath(), ordinaryPath)
 	if got := ordinary.Source(); got != source {
 		t.Fatalf("ordinary source = %#v, want %#v", got, source)
@@ -508,17 +514,17 @@ func TestTransferOwnedEnumsAreIndependentContracts(t *testing.T) {
 }
 
 func TestFactsCarrierCopiesAndReturnsFalseForMissingFacts(t *testing.T) {
-	point := cfg.Point(20)
-	missing := cfg.Point(21)
+	localPoint := cfg.Point(20)
+	ordinaryPoint := cfg.Point(21)
+	point := localPoint
+	missing := cfg.Point(22)
 	source := ValueSource{Kind: ValueSourceExpression, ExprRef: ExprRef(1), HasExpr: true}
 	callSource := ValueSource{Kind: ValueSourceCall, ExprRef: ExprRef(2), HasExpr: true}
 
 	input := FactsInput{
-		LocalAssignments: map[cfg.Point]RootAssignment{
-			point: NewRootAssignment(symbol.ID(30), path.NewPath(symbol.ID(30), "local"), source),
-		},
-		OrdinaryAssignments: map[cfg.Point]RootAssignment{
-			point: NewRootAssignment(symbol.ID(31), path.NewPath(symbol.ID(31), "ordinary"), source),
+		RootAssignments: map[cfg.Point]RootAssignment{
+			localPoint:    NewRootAssignment(RootAssignmentLocalDeclaration, symbol.ID(30), path.NewPath(symbol.ID(30), "local"), source),
+			ordinaryPoint: NewRootAssignment(RootAssignmentOrdinaryRootWrite, symbol.ID(31), path.NewPath(symbol.ID(31), "ordinary"), source),
 		},
 		PathAssignments: map[cfg.Point]PathAssignment{
 			point: NewPathAssignment(path.NewPath(symbol.ID(33), "table").Field("field"), source),
@@ -607,8 +613,8 @@ func TestFactsCarrierCopiesAndReturnsFalseForMissingFacts(t *testing.T) {
 	}
 
 	facts := NewFacts(input)
-	input.LocalAssignments[point] = NewRootAssignment(symbol.ID(40), path.NewPath(symbol.ID(40), "changed"), callSource)
-	input.OrdinaryAssignments[point] = NewRootAssignment(symbol.ID(41), path.NewPath(symbol.ID(41), "changed"), callSource)
+	input.RootAssignments[localPoint] = NewRootAssignment(RootAssignmentLocalDeclaration, symbol.ID(40), path.NewPath(symbol.ID(40), "changed"), callSource)
+	input.RootAssignments[ordinaryPoint] = NewRootAssignment(RootAssignmentOrdinaryRootWrite, symbol.ID(41), path.NewPath(symbol.ID(41), "changed"), callSource)
 	input.PathAssignments[point] = NewPathAssignment(path.NewPath(symbol.ID(42), "changed").Field("field"), callSource)
 	input.PathDescendantInvalidations[point] = NewPathDescendantInvalidation(path.NewPath(symbol.ID(53), "changed"))
 	input.BranchRefinements[point] = NewBranchRefinementSet(
@@ -696,24 +702,32 @@ func TestFactsCarrierCopiesAndReturnsFalseForMissingFacts(t *testing.T) {
 		t.Fatal("missing expression path returned ok")
 	}
 
-	local, ok := facts.LocalAssignment(point)
+	local, ok := facts.LocalAssignment(localPoint)
 	if !ok {
 		t.Fatal("local assignment missing")
 	}
 	if local.TargetSymbol() != symbol.ID(30) {
 		t.Fatalf("local target symbol = %v, want 30", local.TargetSymbol())
 	}
-	localAgain, _ := facts.LocalAssignment(point)
+	localAgain, _ := facts.LocalAssignment(localPoint)
 	assertPathEqual(t, localAgain.TargetPath(), path.NewPath(symbol.ID(30), "local"))
 
-	ordinary, ok := facts.OrdinaryAssignment(point)
+	root, ok := facts.RootAssignment(ordinaryPoint)
+	if !ok {
+		t.Fatal("root assignment missing")
+	}
+	if root.Kind() != RootAssignmentOrdinaryRootWrite {
+		t.Fatalf("root assignment kind = %v, want ordinary root write", root.Kind())
+	}
+
+	ordinary, ok := facts.OrdinaryAssignment(ordinaryPoint)
 	if !ok {
 		t.Fatal("ordinary assignment missing")
 	}
 	if ordinary.TargetSymbol() != symbol.ID(31) {
 		t.Fatalf("ordinary target symbol = %v, want 31", ordinary.TargetSymbol())
 	}
-	ordinaryAgain, _ := facts.OrdinaryAssignment(point)
+	ordinaryAgain, _ := facts.OrdinaryAssignment(ordinaryPoint)
 	assertPathEqual(t, ordinaryAgain.TargetPath(), path.NewPath(symbol.ID(31), "ordinary"))
 
 	pathAssignment, ok := facts.PathAssignment(point)

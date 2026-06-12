@@ -13,24 +13,24 @@ import (
 type Result struct {
 	function *ast.FunctionExpr
 
-	localAssignments    map[cfg.Point]LocalAssignmentFact
-	ordinaryAssignments map[cfg.Point]OrdinaryAssignmentFact
-	calls               map[cfg.Point]CallFact
-	returns             map[cfg.Point]ReturnFact
-	objectLiterals      map[ast.Expr]ObjectLiteralFact
-	branches            map[cfg.Point]BranchConditionFact
-	meta                cfgfacts.Metadata
+	localDeclarationFacts map[cfg.Point]LocalAssignmentFact
+	assignmentFacts       map[cfg.Point]OrdinaryAssignmentFact
+	calls                 map[cfg.Point]CallFact
+	returns               map[cfg.Point]ReturnFact
+	objectLiterals        map[ast.Expr]ObjectLiteralFact
+	branches              map[cfg.Point]BranchConditionFact
+	meta                  cfgfacts.Metadata
 }
 
 func newResult(fn *ast.FunctionExpr) *Result {
 	return &Result{
-		function:            fn,
-		localAssignments:    make(map[cfg.Point]LocalAssignmentFact),
-		ordinaryAssignments: make(map[cfg.Point]OrdinaryAssignmentFact),
-		calls:               make(map[cfg.Point]CallFact),
-		returns:             make(map[cfg.Point]ReturnFact),
-		objectLiterals:      make(map[ast.Expr]ObjectLiteralFact),
-		branches:            make(map[cfg.Point]BranchConditionFact),
+		function:              fn,
+		localDeclarationFacts: make(map[cfg.Point]LocalAssignmentFact),
+		assignmentFacts:       make(map[cfg.Point]OrdinaryAssignmentFact),
+		calls:                 make(map[cfg.Point]CallFact),
+		returns:               make(map[cfg.Point]ReturnFact),
+		objectLiterals:        make(map[ast.Expr]ObjectLiteralFact),
+		branches:              make(map[cfg.Point]BranchConditionFact),
 	}
 }
 
@@ -45,7 +45,7 @@ func (r *Result) LocalAssignment(point cfg.Point) (LocalAssignmentFact, bool) {
 	if r == nil {
 		return LocalAssignmentFact{}, false
 	}
-	fact, ok := r.localAssignments[point]
+	fact, ok := r.localDeclarationFacts[point]
 	if !ok {
 		return LocalAssignmentFact{}, false
 	}
@@ -56,7 +56,7 @@ func (r *Result) OrdinaryAssignment(point cfg.Point) (OrdinaryAssignmentFact, bo
 	if r == nil {
 		return OrdinaryAssignmentFact{}, false
 	}
-	fact, ok := r.ordinaryAssignments[point]
+	fact, ok := r.assignmentFacts[point]
 	if !ok {
 		return OrdinaryAssignmentFact{}, false
 	}

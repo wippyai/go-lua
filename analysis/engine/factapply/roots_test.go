@@ -35,8 +35,8 @@ func TestFactsNodeTransferAppliesLocalAssignmentThroughResolver(t *testing.T) {
 		Registry: reg,
 		NodeTransfer: NewFactsNodeTransfer(FactsNodeTransferConfig{
 			Facts: factflow.NewFacts(factflow.FactsInput{
-				LocalAssignments: map[cfg.Point]factflow.RootAssignment{
-					assign: factflow.NewRootAssignment(target, path.NewPath(target, "local"), source),
+				RootAssignments: map[cfg.Point]factflow.RootAssignment{
+					assign: factflow.NewRootAssignment(factflow.RootAssignmentLocalDeclaration, target, path.NewPath(target, "local"), source),
 				},
 			}),
 			Sources: resolver,
@@ -67,8 +67,8 @@ func TestFactsNodeTransferAppliesOrdinaryAssignmentThroughResolver(t *testing.T)
 		Registry: reg,
 		NodeTransfer: NewFactsNodeTransfer(FactsNodeTransferConfig{
 			Facts: factflow.NewFacts(factflow.FactsInput{
-				OrdinaryAssignments: map[cfg.Point]factflow.RootAssignment{
-					assign: factflow.NewRootAssignment(target, path.NewPath(target, "ordinary"), source),
+				RootAssignments: map[cfg.Point]factflow.RootAssignment{
+					assign: factflow.NewRootAssignment(factflow.RootAssignmentOrdinaryRootWrite, target, path.NewPath(target, "ordinary"), source),
 				},
 			}),
 			Sources: resolver,
@@ -96,8 +96,8 @@ func TestFactsNodeTransferRootAssignmentUsesDeclaredValueWhenSourceMissing(t *te
 		Registry: reg,
 		NodeTransfer: NewFactsNodeTransfer(FactsNodeTransferConfig{
 			Facts: factflow.NewFacts(factflow.FactsInput{
-				LocalAssignments: map[cfg.Point]factflow.RootAssignment{
-					assign: factflow.NewRootAssignmentWithDeclaredValue(target, path.NewPath(target, "local"), source, declared),
+				RootAssignments: map[cfg.Point]factflow.RootAssignment{
+					assign: factflow.NewRootAssignmentWithDeclaredValue(factflow.RootAssignmentLocalDeclaration, target, path.NewPath(target, "local"), source, declared),
 				},
 			}),
 			Sources: resolver,
@@ -118,8 +118,8 @@ func TestFactsNodeTransferRootAssignmentInvalidatesVisiblePathSubtree(t *testing
 			name: "local",
 			fact: func(point cfg.Point, target symbol.ID, source factflow.ValueSource) factflow.FactsInput {
 				return factflow.FactsInput{
-					LocalAssignments: map[cfg.Point]factflow.RootAssignment{
-						point: factflow.NewRootAssignment(target, path.NewPath(target, "obj"), source),
+					RootAssignments: map[cfg.Point]factflow.RootAssignment{
+						point: factflow.NewRootAssignment(factflow.RootAssignmentLocalDeclaration, target, path.NewPath(target, "obj"), source),
 					},
 				}
 			},
@@ -128,8 +128,8 @@ func TestFactsNodeTransferRootAssignmentInvalidatesVisiblePathSubtree(t *testing
 			name: "ordinary",
 			fact: func(point cfg.Point, target symbol.ID, source factflow.ValueSource) factflow.FactsInput {
 				return factflow.FactsInput{
-					OrdinaryAssignments: map[cfg.Point]factflow.RootAssignment{
-						point: factflow.NewRootAssignment(target, path.NewPath(target, "obj"), source),
+					RootAssignments: map[cfg.Point]factflow.RootAssignment{
+						point: factflow.NewRootAssignment(factflow.RootAssignmentOrdinaryRootWrite, target, path.NewPath(target, "obj"), source),
 					},
 				}
 			},

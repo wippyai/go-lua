@@ -49,9 +49,12 @@ func TestLowerAnnotatedLiteralLocalCarriesDeclaredValue(t *testing.T) {
 
 	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings})
 	points := requireStmtPoints(t, built, mustLocalStmt(t, stmts, 0), 1)
-	fact, ok := facts.LocalAssignment(points[0])
+	fact, ok := facts.RootAssignment(points[0])
 	if !ok {
-		t.Fatalf("missing local assignment at point %d", points[0])
+		t.Fatalf("missing root assignment at point %d", points[0])
+	}
+	if got := fact.Kind(); got != factflow.RootAssignmentLocalDeclaration {
+		t.Fatalf("root assignment kind = %v, want local declaration", got)
 	}
 	declared, ok := fact.DeclaredValue()
 	if !ok {
@@ -242,9 +245,12 @@ func TestLowerAssignmentsReturnsAndCallsPreserveValueListMetadata(t *testing.T) 
 	if putProducer.CalleeSymbol() == 0 {
 		t.Fatalf("put producer callee symbol missing")
 	}
-	ordinary, ok := facts.OrdinaryAssignment(writePoints[1])
+	ordinary, ok := facts.RootAssignment(writePoints[1])
 	if !ok {
-		t.Fatalf("missing ordinary root assignment")
+		t.Fatalf("missing root assignment")
+	}
+	if got := ordinary.Kind(); got != factflow.RootAssignmentOrdinaryRootWrite {
+		t.Fatalf("root assignment kind = %v, want ordinary root write", got)
 	}
 	if ordinary.TargetSymbol() != mustIdentSymbol(t, bindings, aWrite) {
 		t.Fatalf("ordinary target = %d, want %d", ordinary.TargetSymbol(), mustIdentSymbol(t, bindings, aWrite))

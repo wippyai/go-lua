@@ -25,8 +25,8 @@ func TestFactsNodeTransferObjectLiteralRootAssignmentsWriteStaticEntries(t *test
 			name: "local",
 			fact: func(point cfg.Point, target symbol.ID, source factflow.ValueSource) factflow.FactsInput {
 				return factflow.FactsInput{
-					LocalAssignments: map[cfg.Point]factflow.RootAssignment{
-						point: factflow.NewRootAssignment(target, path.NewPath(target, "obj"), source),
+					RootAssignments: map[cfg.Point]factflow.RootAssignment{
+						point: factflow.NewRootAssignment(factflow.RootAssignmentLocalDeclaration, target, path.NewPath(target, "obj"), source),
 					},
 				}
 			},
@@ -35,8 +35,8 @@ func TestFactsNodeTransferObjectLiteralRootAssignmentsWriteStaticEntries(t *test
 			name: "ordinary",
 			fact: func(point cfg.Point, target symbol.ID, source factflow.ValueSource) factflow.FactsInput {
 				return factflow.FactsInput{
-					OrdinaryAssignments: map[cfg.Point]factflow.RootAssignment{
-						point: factflow.NewRootAssignment(target, path.NewPath(target, "obj"), source),
+					RootAssignments: map[cfg.Point]factflow.RootAssignment{
+						point: factflow.NewRootAssignment(factflow.RootAssignmentOrdinaryRootWrite, target, path.NewPath(target, "obj"), source),
 					},
 				}
 			},
@@ -114,8 +114,8 @@ func TestFactsNodeTransferObjectLiteralEntriesUsePreWriteInputState(t *testing.T
 
 	got := NewFactsNodeTransfer(FactsNodeTransferConfig{
 		Facts: factflow.NewFacts(factflow.FactsInput{
-			LocalAssignments: map[cfg.Point]factflow.RootAssignment{
-				point: factflow.NewRootAssignment(target, path.NewPath(target, "obj"), objectSource),
+			RootAssignments: map[cfg.Point]factflow.RootAssignment{
+				point: factflow.NewRootAssignment(factflow.RootAssignmentLocalDeclaration, target, path.NewPath(target, "obj"), objectSource),
 			},
 			ObjectLiterals: map[factflow.ExprRef]factflow.ObjectLiteral{
 				objectSource.ExprRef: factflow.NewObjectLiteral([]factflow.ObjectEntry{
@@ -151,8 +151,8 @@ func TestFactsNodeTransferObjectLiteralMissingVisibilitySkipsEntriesKeepsRoot(t 
 
 	got := NewFactsNodeTransfer(FactsNodeTransferConfig{
 		Facts: factflow.NewFacts(factflow.FactsInput{
-			LocalAssignments: map[cfg.Point]factflow.RootAssignment{
-				point: factflow.NewRootAssignment(target, path.NewPath(target, "obj"), objectSource),
+			RootAssignments: map[cfg.Point]factflow.RootAssignment{
+				point: factflow.NewRootAssignment(factflow.RootAssignmentLocalDeclaration, target, path.NewPath(target, "obj"), objectSource),
 			},
 			ObjectLiterals: map[factflow.ExprRef]factflow.ObjectLiteral{
 				objectSource.ExprRef: factflow.NewObjectLiteral([]factflow.ObjectEntry{
@@ -238,8 +238,8 @@ func TestFactsNodeTransferObjectLiteralEntriesInvalidateSubtreeBeforeWrite(t *te
 
 	got := NewFactsNodeTransfer(FactsNodeTransferConfig{
 		Facts: factflow.NewFacts(factflow.FactsInput{
-			LocalAssignments: map[cfg.Point]factflow.RootAssignment{
-				point: factflow.NewRootAssignment(target, path.NewPath(target, "t"), objectSource),
+			RootAssignments: map[cfg.Point]factflow.RootAssignment{
+				point: factflow.NewRootAssignment(factflow.RootAssignmentLocalDeclaration, target, path.NewPath(target, "t"), objectSource),
 			},
 			ObjectLiterals: map[factflow.ExprRef]factflow.ObjectLiteral{
 				objectSource.ExprRef: factflow.NewObjectLiteral([]factflow.ObjectEntry{

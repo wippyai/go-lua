@@ -112,15 +112,15 @@ func TestWithSignatureRelationsLowersErrorReturnToBranchPresenceRelations(t *tes
 				},
 			}),
 		},
-		LocalAssignments: map[cfg.Point]factflow.RootAssignment{
-			assignValue: factflow.NewRootAssignment(value, valuePath, factflow.ValueSource{
+		RootAssignments: map[cfg.Point]factflow.RootAssignment{
+			assignValue: factflow.NewRootAssignment(factflow.RootAssignmentLocalDeclaration, value, valuePath, factflow.ValueSource{
 				Kind:         factflow.ValueSourceCall,
 				TargetIndex:  0,
 				ResultIndex:  0,
 				CallPoint:    call,
 				HasCallPoint: true,
 			}),
-			assignErr: factflow.NewRootAssignment(err, errPath, factflow.ValueSource{
+			assignErr: factflow.NewRootAssignment(factflow.RootAssignmentLocalDeclaration, err, errPath, factflow.ValueSource{
 				Kind:         factflow.ValueSourceCall,
 				TargetIndex:  1,
 				ResultIndex:  1,
@@ -189,24 +189,22 @@ func TestWithSignatureRelationsStopsAtErrorReturnTargetReassignment(t *testing.T
 				},
 			}),
 		},
-		LocalAssignments: map[cfg.Point]factflow.RootAssignment{
-			assignValue: factflow.NewRootAssignment(value, valuePath, factflow.ValueSource{
+		RootAssignments: map[cfg.Point]factflow.RootAssignment{
+			assignValue: factflow.NewRootAssignment(factflow.RootAssignmentLocalDeclaration, value, valuePath, factflow.ValueSource{
 				Kind:         factflow.ValueSourceCall,
 				TargetIndex:  0,
 				ResultIndex:  0,
 				CallPoint:    call,
 				HasCallPoint: true,
 			}),
-			assignErr: factflow.NewRootAssignment(err, errPath, factflow.ValueSource{
+			assignErr: factflow.NewRootAssignment(factflow.RootAssignmentLocalDeclaration, err, errPath, factflow.ValueSource{
 				Kind:         factflow.ValueSourceCall,
 				TargetIndex:  1,
 				ResultIndex:  1,
 				CallPoint:    call,
 				HasCallPoint: true,
 			}),
-		},
-		OrdinaryAssignments: map[cfg.Point]factflow.RootAssignment{
-			reassignErr: factflow.NewRootAssignment(err, errPath, factflow.ValueSource{Kind: factflow.ValueSourceNil}),
+			reassignErr: factflow.NewRootAssignment(factflow.RootAssignmentOrdinaryRootWrite, err, errPath, factflow.ValueSource{Kind: factflow.ValueSourceNil}),
 		},
 		BranchRefinements: map[cfg.Point]factflow.BranchRefinementSet{
 			branch: factflow.NewBranchRefinementSet(
@@ -805,15 +803,15 @@ func TestWithSummaryPostconditionsLowersReturnPresenceRelations(t *testing.T) {
 				},
 			}),
 		},
-		LocalAssignments: map[cfg.Point]factflow.RootAssignment{
-			assignValue: factflow.NewRootAssignment(value, valuePath, factflow.ValueSource{
+		RootAssignments: map[cfg.Point]factflow.RootAssignment{
+			assignValue: factflow.NewRootAssignment(factflow.RootAssignmentLocalDeclaration, value, valuePath, factflow.ValueSource{
 				Kind:         factflow.ValueSourceCall,
 				TargetIndex:  0,
 				ResultIndex:  0,
 				CallPoint:    call,
 				HasCallPoint: true,
 			}),
-			assignErr: factflow.NewRootAssignment(err, errPath, factflow.ValueSource{
+			assignErr: factflow.NewRootAssignment(factflow.RootAssignmentLocalDeclaration, err, errPath, factflow.ValueSource{
 				Kind:         factflow.ValueSourceCall,
 				TargetIndex:  1,
 				ResultIndex:  1,

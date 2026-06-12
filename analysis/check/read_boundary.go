@@ -154,10 +154,7 @@ func (r *Result) stateRead(point cfg.Point) state.State {
 }
 
 func (r *Result) hasNodeLocalBoundaryEffects(point cfg.Point) bool {
-	if _, ok := r.facts.LocalAssignment(point); ok {
-		return true
-	}
-	if _, ok := r.facts.OrdinaryAssignment(point); ok {
+	if _, ok := r.facts.RootAssignment(point); ok {
 		return true
 	}
 	if _, ok := r.facts.PathAssignment(point); ok {

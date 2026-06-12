@@ -259,14 +259,9 @@ func typeIsEstablishPoint(input *factflow.FactsInput, graph cfg.Graph, callPoint
 
 func callResultAssignmentPoint(input *factflow.FactsInput, graph cfg.Graph, callPoint cfg.Point, target path.Path, resultIndex int) (cfg.Point, bool) {
 	for _, point := range graph.RPO() {
-		if local, ok := input.LocalAssignments[point]; ok &&
-			local.TargetPath().Equal(target) &&
-			valueSourceConsumesCallResult(local.Source(), callPoint, resultIndex) {
-			return point, true
-		}
-		if ordinary, ok := input.OrdinaryAssignments[point]; ok &&
-			ordinary.TargetPath().Equal(target) &&
-			valueSourceConsumesCallResult(ordinary.Source(), callPoint, resultIndex) {
+		if assignment, ok := input.RootAssignments[point]; ok &&
+			assignment.TargetPath().Equal(target) &&
+			valueSourceConsumesCallResult(assignment.Source(), callPoint, resultIndex) {
 			return point, true
 		}
 	}
@@ -309,10 +304,7 @@ func typeIsActiveIn(input *factflow.FactsInput, graph cfg.Graph, establish cfg.P
 }
 
 func typeIsRelationKilledAt(input *factflow.FactsInput, point cfg.Point, targets typeIsTargets) bool {
-	if local, ok := input.LocalAssignments[point]; ok && typeIsKillsPath(local.TargetPath(), targets) {
-		return true
-	}
-	if ordinary, ok := input.OrdinaryAssignments[point]; ok && typeIsKillsPath(ordinary.TargetPath(), targets) {
+	if assignment, ok := input.RootAssignments[point]; ok && typeIsKillsPath(assignment.TargetPath(), targets) {
 		return true
 	}
 	if pathAssign, ok := input.PathAssignments[point]; ok && typeIsKillsPath(pathAssign.TargetPath(), targets) {

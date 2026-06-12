@@ -5,8 +5,7 @@ import pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 
 // FactsInput carries point-keyed facts used to construct an immutable Facts snapshot.
 type FactsInput struct {
-	LocalAssignments            map[cfg.Point]RootAssignment
-	OrdinaryAssignments         map[cfg.Point]RootAssignment
+	RootAssignments             map[cfg.Point]RootAssignment
 	PathAssignments             map[cfg.Point]PathAssignment
 	PathDescendantInvalidations map[cfg.Point]PathDescendantInvalidation
 	NoNormalReturns             map[cfg.Point]struct{}
@@ -27,8 +26,7 @@ type FactsInput struct {
 
 // Facts is an immutable point-keyed transfer facts snapshot.
 type Facts struct {
-	localAssignments            map[cfg.Point]RootAssignment
-	ordinaryAssignments         map[cfg.Point]RootAssignment
+	rootAssignments             map[cfg.Point]RootAssignment
 	pathAssignments             map[cfg.Point]PathAssignment
 	pathDescendantInvalidations map[cfg.Point]PathDescendantInvalidation
 	noNormalReturns             map[cfg.Point]struct{}
@@ -50,8 +48,7 @@ type Facts struct {
 // NewFacts copies the supplied point-keyed facts into an immutable snapshot.
 func NewFacts(input FactsInput) Facts {
 	return Facts{
-		localAssignments:            copyRootAssignmentMap(input.LocalAssignments),
-		ordinaryAssignments:         copyRootAssignmentMap(input.OrdinaryAssignments),
+		rootAssignments:             copyRootAssignmentMap(input.RootAssignments),
 		pathAssignments:             copyPathAssignmentMap(input.PathAssignments),
 		pathDescendantInvalidations: copyPathDescendantInvalidationMap(input.PathDescendantInvalidations),
 		noNormalReturns:             copyNoNormalReturnMap(input.NoNormalReturns),
@@ -133,22 +130,31 @@ func (f Facts) WithPathDescendantInvalidations(invalidations map[cfg.Point]PathD
 	return f
 }
 
-// LocalAssignment returns the local assignment fact at point.
-func (f Facts) LocalAssignment(point cfg.Point) (RootAssignment, bool) {
-	fact, ok := f.localAssignments[point]
+// RootAssignment returns the root assignment fact at point.
+func (f Facts) RootAssignment(point cfg.Point) (RootAssignment, bool) {
+	fact, ok := f.rootAssignments[point]
 	if !ok {
 		return RootAssignment{}, false
 	}
 	return fact.copy(), true
 }
 
-// OrdinaryAssignment returns the ordinary assignment fact at point.
-func (f Facts) OrdinaryAssignment(point cfg.Point) (RootAssignment, bool) {
-	fact, ok := f.ordinaryAssignments[point]
-	if !ok {
+// LocalAssignment returns the local assignment fact at point.
+func (f Facts) LocalAssignment(point cfg.Point) (RootAssignment, bool) {
+	fact, ok := f.RootAssignment(point)
+	if !ok || fact.Kind() != RootAssignmentLocalDeclaration {
 		return RootAssignment{}, false
 	}
-	return fact.copy(), true
+	return fact, true
+}
+
+// OrdinaryAssignment returns the ordinary assignment fact at point.
+func (f Facts) OrdinaryAssignment(point cfg.Point) (RootAssignment, bool) {
+	fact, ok := f.RootAssignment(point)
+	if !ok || fact.Kind() != RootAssignmentOrdinaryRootWrite {
+		return RootAssignment{}, false
+	}
+	return fact, true
 }
 
 // PathAssignment returns the member/path assignment fact at point.
