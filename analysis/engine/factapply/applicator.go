@@ -1,4 +1,4 @@
-package apply
+package factapply
 
 import (
 	"github.com/wippyai/go-lua/analysis/engine/factflow"

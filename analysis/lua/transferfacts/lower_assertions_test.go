@@ -11,7 +11,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
-	factapply "github.com/wippyai/go-lua/analysis/engine/factflow/apply"
+	factapply "github.com/wippyai/go-lua/analysis/engine/factapply"
 	"github.com/wippyai/go-lua/analysis/engine/sourcevalue"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
@@ -197,7 +197,7 @@ local a, b = x as any, x :: any
 		inputValues[overlay.Source().ExprRef] = base
 	}
 
-	apply := factapply.NewFactsNodeTransfer(factapply.FactsNodeTransferConfig{
+	factApply := factapply.NewFactsNodeTransfer(factapply.FactsNodeTransferConfig{
 		Facts: facts,
 		Sources: sourcevalue.NewSourceValues(sourcevalue.SourceValuesConfig{
 			Registry:         reg,
@@ -205,7 +205,7 @@ local a, b = x as any, x :: any
 		}),
 	})
 	for _, point := range points {
-		out := apply(transfer.NodeContext{Registry: reg, Point: point}, state.State{})
+		out := factApply(transfer.NodeContext{Registry: reg, Point: point}, state.State{})
 		fact, ok := facts.LocalAssignment(point)
 		if !ok {
 			t.Fatalf("missing local assignment at point %d", point)
@@ -370,7 +370,7 @@ func TestLowerClaimOverlaysApplyIndicatorsWithoutMutatingBaseValues(t *testing.T
 		inputValues[overlay.Source().ExprRef] = cases[i].base
 	}
 
-	apply := factapply.NewFactsNodeTransfer(factapply.FactsNodeTransferConfig{
+	factApply := factapply.NewFactsNodeTransfer(factapply.FactsNodeTransferConfig{
 		Facts: facts,
 		Sources: sourcevalue.NewSourceValues(sourcevalue.SourceValuesConfig{
 			Registry:         reg,
@@ -387,7 +387,7 @@ func TestLowerClaimOverlaysApplyIndicatorsWithoutMutatingBaseValues(t *testing.T
 					t.Fatalf("base input runtime kind = %s, want %s", got, tc.wantRuntimeKind)
 				}
 			}
-			out := apply(transfer.NodeContext{Registry: reg, Point: tc.point}, state.State{})
+			out := factApply(transfer.NodeContext{Registry: reg, Point: tc.point}, state.State{})
 			fact, ok := facts.LocalAssignment(tc.point)
 			if !ok {
 				t.Fatalf("missing local assignment at point %d", tc.point)
@@ -459,7 +459,7 @@ func TestLowerNestedClaimOverlaysApplyCombinedIndicators(t *testing.T) {
 		t.Fatalf("missing inner assertion overlay")
 	}
 	base := product.NewWithPresence(reg, product.ShapeTop, presence.Present())
-	apply := factapply.NewFactsNodeTransfer(factapply.FactsNodeTransferConfig{
+	factApply := factapply.NewFactsNodeTransfer(factapply.FactsNodeTransferConfig{
 		Facts: facts,
 		Sources: sourcevalue.NewSourceValues(sourcevalue.SourceValuesConfig{
 			Registry: reg,
@@ -469,7 +469,7 @@ func TestLowerNestedClaimOverlaysApplyCombinedIndicators(t *testing.T) {
 		}),
 	})
 
-	out := apply(transfer.NodeContext{Registry: reg, Point: point}, state.State{})
+	out := factApply(transfer.NodeContext{Registry: reg, Point: point}, state.State{})
 	fact, ok := facts.LocalAssignment(point)
 	if !ok {
 		t.Fatalf("missing local assignment at point %d", point)
@@ -511,7 +511,7 @@ local a, b = (x as any) as number, (x :: any) :: number
 		inputValues[innerOverlay.Source().ExprRef] = product.NewWithPresence(reg, product.ShapeTop, presence.Present())
 	}
 
-	apply := factapply.NewFactsNodeTransfer(factapply.FactsNodeTransferConfig{
+	factApply := factapply.NewFactsNodeTransfer(factapply.FactsNodeTransferConfig{
 		Facts: facts,
 		Sources: sourcevalue.NewSourceValues(sourcevalue.SourceValuesConfig{
 			Registry:         reg,
@@ -519,7 +519,7 @@ local a, b = (x as any) as number, (x :: any) :: number
 		}),
 	})
 	for _, point := range points {
-		out := apply(transfer.NodeContext{Registry: reg, Point: point}, state.State{})
+		out := factApply(transfer.NodeContext{Registry: reg, Point: point}, state.State{})
 		fact, ok := facts.LocalAssignment(point)
 		if !ok {
 			t.Fatalf("missing local assignment at point %d", point)

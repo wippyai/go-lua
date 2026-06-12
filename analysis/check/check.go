@@ -12,7 +12,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
-	"github.com/wippyai/go-lua/analysis/engine/factflow/apply"
+	factapply "github.com/wippyai/go-lua/analysis/engine/factapply"
 	sourcevalue "github.com/wippyai/go-lua/analysis/engine/sourcevalue"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
@@ -42,7 +42,7 @@ type Config struct {
 	ExpressionValues map[factflow.ExprRef]product.Value
 	ExpressionValue  sourcevalue.ExpressionValueProvider
 	VarargValue      sourcevalue.VarargValueProvider
-	CallResults      apply.CallResultProvider
+	CallResults      factapply.CallResultProvider
 	Signatures       signaturelookup.Source
 
 	Visibility *visibility.Resolver
@@ -372,13 +372,13 @@ func (c *Checker) run(bindings *bind.Result, built *cfgbuild.Result, sem *semant
 		Registry:   config.Registry,
 		EntryState: config.EntryState,
 		Initial:    config.Initial,
-		NodeTransfer: apply.NewFactsNodeTransfer(apply.FactsNodeTransferConfig{
+		NodeTransfer: factapply.NewFactsNodeTransfer(factapply.FactsNodeTransferConfig{
 			Facts:       facts,
 			Sources:     sources,
 			CallResults: callResults,
 			Visibility:  config.Visibility,
 		}),
-		EdgeTransfer: apply.NewFactsEdgeTransfer(apply.FactsEdgeTransferConfig{
+		EdgeTransfer: factapply.NewFactsEdgeTransfer(factapply.FactsEdgeTransferConfig{
 			Facts:      facts,
 			Visibility: config.Visibility,
 		}),

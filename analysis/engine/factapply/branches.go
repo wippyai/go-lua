@@ -1,4 +1,4 @@
-package apply
+package factapply
 
 import (
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"

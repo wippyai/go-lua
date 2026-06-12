@@ -17,7 +17,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
-	"github.com/wippyai/go-lua/analysis/engine/factflow/apply"
+	factapply "github.com/wippyai/go-lua/analysis/engine/factapply"
 	sourcevalue "github.com/wippyai/go-lua/analysis/engine/sourcevalue"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
@@ -691,8 +691,8 @@ func TestSignatureProviderTypeProjectionFallsBackToDeclaredReturnType(t *testing
 func TestFallbackKeepsPrimarySlotsAndFillsMissingSignatureSlots(t *testing.T) {
 	reg := product.DefaultRegistry()
 	primaryValue := product.Set(reg, product.Top(), runtimekind.Key, runtimekind.Singleton(runtimekind.Boolean))
-	primary := func(transfer.NodeContext, factflow.CallProducer, state.State, func(cfg.Point) state.State) []apply.CallResult {
-		return []apply.CallResult{{Index: 0, Value: primaryValue}}
+	primary := func(transfer.NodeContext, factflow.CallProducer, state.State, func(cfg.Point) state.State) []factapply.CallResult {
+		return []factapply.CallResult{{Index: 0, Value: primaryValue}}
 	}
 	signatures := SignatureProvider(SignatureProviderConfig{
 		Signatures: signatureMap{
@@ -721,8 +721,8 @@ func TestFallbackKeepsPrimarySlotOverSignatureSameAs(t *testing.T) {
 	argRef := factflow.ExprRef(11)
 	primaryValue := product.Set(reg, product.Top(), runtimekind.Key, runtimekind.Singleton(runtimekind.Boolean))
 	argValue := product.Set(reg, product.Top(), runtimekind.Key, runtimekind.Singleton(runtimekind.String))
-	primary := func(transfer.NodeContext, factflow.CallProducer, state.State, func(cfg.Point) state.State) []apply.CallResult {
-		return []apply.CallResult{{Index: 0, Value: primaryValue}}
+	primary := func(transfer.NodeContext, factflow.CallProducer, state.State, func(cfg.Point) state.State) []factapply.CallResult {
+		return []factapply.CallResult{{Index: 0, Value: primaryValue}}
 	}
 	signatures := SignatureProvider(SignatureProviderConfig{
 		Signatures: signatureMap{
@@ -764,7 +764,7 @@ func TestProviderMissingAndEmptyReturnsYieldNoResults(t *testing.T) {
 
 	tests := []struct {
 		name     string
-		provider apply.CallResultProvider
+		provider factapply.CallResultProvider
 	}{
 		{
 			name:     "nil reader",
@@ -831,7 +831,7 @@ func TestProviderIntegratesWithFactflowCallRead(t *testing.T) {
 		Graph:      graph,
 		Registry:   reg,
 		EntryState: state.State{}.WriteValue(reg, key.SymbolValue(target), existingTargetValue),
-		NodeTransfer: apply.NewFactsNodeTransfer(apply.FactsNodeTransferConfig{
+		NodeTransfer: factapply.NewFactsNodeTransfer(factapply.FactsNodeTransferConfig{
 			Facts: factflow.NewFacts(factflow.FactsInput{
 				Calls: map[cfg.Point]factflow.CallProducer{
 					call: factflow.NewCallProducer(factflow.CallProducerConfig{
@@ -879,7 +879,7 @@ func TestProductionImportsAreBounded(t *testing.T) {
 		"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind": true,
 		"github.com/wippyai/go-lua/analysis/domain/value/product":          true,
 		"github.com/wippyai/go-lua/analysis/engine/factflow":               true,
-		"github.com/wippyai/go-lua/analysis/engine/factflow/apply":         true,
+		"github.com/wippyai/go-lua/analysis/engine/factapply":             true,
 		"github.com/wippyai/go-lua/analysis/engine/sourcevalue":            true,
 		"github.com/wippyai/go-lua/analysis/engine/state":                  true,
 		"github.com/wippyai/go-lua/analysis/engine/transfer":               true,
@@ -911,7 +911,7 @@ func TestProductionImportsAreBounded(t *testing.T) {
 	}
 }
 
-func assertCallResults(t *testing.T, reg *axis.Registry, got []apply.CallResult, want []product.Value) {
+func assertCallResults(t *testing.T, reg *axis.Registry, got []factapply.CallResult, want []product.Value) {
 	t.Helper()
 	if len(got) != len(want) {
 		t.Fatalf("got %d results, want %d", len(got), len(want))

@@ -42,7 +42,7 @@ func TestFactflowPackageDoesNotImportApplicationStatePackages(t *testing.T) {
 		"github.com/wippyai/go-lua/analysis/engine/state":          true,
 		"github.com/wippyai/go-lua/analysis/engine/transfer":       true,
 		"github.com/wippyai/go-lua/analysis/engine/visibility":     true,
-		"github.com/wippyai/go-lua/analysis/engine/factflow/apply": true,
+		"github.com/wippyai/go-lua/analysis/engine/factapply":      true,
 	}
 	for _, dep := range strings.Fields(string(out)) {
 		if banned[dep] {

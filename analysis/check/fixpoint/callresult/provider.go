@@ -10,7 +10,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/effect/signature"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
-	"github.com/wippyai/go-lua/analysis/engine/factflow/apply"
+	factapply "github.com/wippyai/go-lua/analysis/engine/factapply"
 	sourcevalue "github.com/wippyai/go-lua/analysis/engine/sourcevalue"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
@@ -44,8 +44,8 @@ type SignatureProviderConfig struct {
 }
 
 // Provider returns a factflow call-result provider backed by exact summary reads.
-func Provider(summaries summary.Reader, keyFor KeyFunc) apply.CallResultProvider {
-	return func(ctx transfer.NodeContext, call factflow.CallProducer, _ state.State, _ func(cfg.Point) state.State) []apply.CallResult {
+func Provider(summaries summary.Reader, keyFor KeyFunc) factapply.CallResultProvider {
+	return func(ctx transfer.NodeContext, call factflow.CallProducer, _ state.State, _ func(cfg.Point) state.State) []factapply.CallResult {
 		if summaries == nil || keyFor == nil {
 			return nil
 		}
@@ -57,9 +57,9 @@ func Provider(summaries summary.Reader, keyFor KeyFunc) apply.CallResultProvider
 		if !ok || len(got.Returns) == 0 {
 			return nil
 		}
-		results := make([]apply.CallResult, len(got.Returns))
+		results := make([]factapply.CallResult, len(got.Returns))
 		for i, value := range got.Returns {
-			results[i] = apply.CallResult{Index: i, Value: value}
+			results[i] = factapply.CallResult{Index: i, Value: value}
 		}
 		return results
 	}
@@ -67,12 +67,12 @@ func Provider(summaries summary.Reader, keyFor KeyFunc) apply.CallResultProvider
 
 // SignatureProvider materializes declared signature return types into call
 // return slots.
-func SignatureProvider(config SignatureProviderConfig) apply.CallResultProvider {
+func SignatureProvider(config SignatureProviderConfig) factapply.CallResultProvider {
 	signatures := config.Signatures
 	nameFor := config.NameFor
 	facts := config.Facts
 	sources := config.Sources
-	return func(ctx transfer.NodeContext, call factflow.CallProducer, in state.State, read func(cfg.Point) state.State) []apply.CallResult {
+	return func(ctx transfer.NodeContext, call factflow.CallProducer, in state.State, read func(cfg.Point) state.State) []factapply.CallResult {
 		if signatures == nil || nameFor == nil {
 			return nil
 		}
@@ -84,7 +84,7 @@ func SignatureProvider(config SignatureProviderConfig) apply.CallResultProvider 
 		if !ok || sig.Type == nil || len(sig.Type.Returns) == 0 {
 			return nil
 		}
-		results := make([]apply.CallResult, 0, len(sig.Type.Returns))
+		results := make([]factapply.CallResult, 0, len(sig.Type.Returns))
 		for i, ret := range sig.Type.Returns {
 			value, ok := signatureReturnValue(ctx, facts, sources, sig, i, in, read)
 			if !ok && ret != nil {
@@ -93,7 +93,7 @@ func SignatureProvider(config SignatureProviderConfig) apply.CallResultProvider 
 			if !ok {
 				continue
 			}
-			results = append(results, apply.CallResult{
+			results = append(results, factapply.CallResult{
 				Index: i,
 				Value: value,
 			})
@@ -366,14 +366,14 @@ func elementTypeOfDepth(t typ.Type, depth int) (typ.Type, bool) {
 
 // Fallback composes two call result providers. Primary results win by index;
 // fallback results fill only missing result slots.
-func Fallback(primary, fallback apply.CallResultProvider) apply.CallResultProvider {
+func Fallback(primary, fallback factapply.CallResultProvider) factapply.CallResultProvider {
 	if primary == nil {
 		return fallback
 	}
 	if fallback == nil {
 		return primary
 	}
-	return func(ctx transfer.NodeContext, call factflow.CallProducer, in state.State, read func(cfg.Point) state.State) []apply.CallResult {
+	return func(ctx transfer.NodeContext, call factflow.CallProducer, in state.State, read func(cfg.Point) state.State) []factapply.CallResult {
 		first := primary(ctx, call, in, read)
 		second := fallback(ctx, call, in, read)
 		if len(first) == 0 {
@@ -383,7 +383,7 @@ func Fallback(primary, fallback apply.CallResultProvider) apply.CallResultProvid
 			return first
 		}
 		seen := make(map[int]struct{}, len(first))
-		out := append([]apply.CallResult(nil), first...)
+		out := append([]factapply.CallResult(nil), first...)
 		for _, result := range first {
 			seen[result.Index] = struct{}{}
 		}
