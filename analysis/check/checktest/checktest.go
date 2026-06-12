@@ -86,8 +86,7 @@ func FuncsManifest() *manifest.Manifest {
 }
 
 func checkSource(src, filename string, opts ...Option) Result {
-	cfg := applyOptions(opts)
-	_ = cfg
+	_ = applyOptions(opts)
 	stmts, err := parse.ParseString(src, filename)
 	if err != nil {
 		return Result{Diagnostics: []diagnostic.Diagnostic{{
@@ -98,19 +97,23 @@ func checkSource(src, filename string, opts ...Option) Result {
 		}}}
 	}
 	reg := product.DefaultRegistry()
+	precheck := diagnostics.Precheck(stmts, diagnostics.Config{Registry: reg})
 	checked, err := check.CheckChunk(stmts, check.Config{Registry: reg})
 	if err != nil {
 		if errors.Is(err, check.ErrUnsupportedCFG) {
-			return Result{}
+			setDefaultFile(precheck, filename)
+			return Result{Diagnostics: precheck}
 		}
-		return Result{Diagnostics: []diagnostic.Diagnostic{{
+		diags := append([]diagnostic.Diagnostic{{
 			Position: diagnostic.Position{File: filename},
 			Code:     diagnostic.Code("check"),
 			Message:  err.Error(),
 			Severity: diagnostic.SeverityError,
-		}}}
+		}}, precheck...)
+		setDefaultFile(diags, filename)
+		return Result{Diagnostics: diags}
 	}
-	diags := diagnostics.Produce(checked, diagnostics.Config{Registry: reg})
+	diags := append(precheck, diagnostics.Produce(checked, diagnostics.Config{Registry: reg})...)
 	setDefaultFile(diags, filename)
 	return Result{Diagnostics: diags}
 }

@@ -19,6 +19,9 @@ const (
 	CodeDirectCallArgType          diagnostic.Code = "type.call.direct.argument_type"
 	CodeReturnContractType         diagnostic.Code = "type.return.contract"
 	CodeDirectCallResultAssignment diagnostic.Code = "type.call.direct.result_assignment"
+	CodeBreakOutsideLoop           diagnostic.Code = "syntax.break.outside_loop"
+	CodeDuplicateLabel             diagnostic.Code = "syntax.label.duplicate"
+	CodeGotoUndefinedLabel         diagnostic.Code = "syntax.goto.undefined"
 )
 
 type Config struct {
