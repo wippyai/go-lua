@@ -19,8 +19,9 @@ type FactsNodeTransferConfig struct {
 
 // FactsEdgeTransferConfig configures the generic edge fact applicator.
 type FactsEdgeTransferConfig struct {
-	Facts      factflow.Facts
-	Visibility *visibility.Resolver
+	Facts       factflow.Facts
+	CallOutcome CallOutcomeProvider
+	Visibility  *visibility.Resolver
 }
 
 // NewFactsNodeTransfer returns a generic node transfer that applies point-local
@@ -109,6 +110,7 @@ func NewFactsEdgeTransfer(config FactsEdgeTransferConfig) transfer.EdgeTransfer 
 		for _, proof := range config.Facts.BranchProofs(ctx.Edge.From) {
 			out = applyBranchProof(ctx, config.Visibility, out, proof)
 		}
+		out = applyCallOutcomeEdgeFacts(ctx, config.Facts, config.CallOutcome, config.Visibility, branchRefinements, out)
 		return out
 	}
 }

@@ -332,6 +332,15 @@ func normalReturnParamAt(reg *axis.Registry, s Summary, i int) product.Value {
 	return product.Bottom(reg)
 }
 
+// UsefulNormalReturnParam reports whether a normal-return parameter lane carries
+// caller-applicable information.
+func UsefulNormalReturnParam(reg *axis.Registry, value product.Value) bool {
+	if reg == nil {
+		return false
+	}
+	return !product.Equal(reg, value, product.Bottom(reg)) && !product.Equal(reg, value, product.Top())
+}
+
 func normalReturnParamConditionAt(reg *axis.Registry, s Summary, i int) ParamCondition {
 	if i < len(s.NormalReturnParamConditions) {
 		return s.NormalReturnParamConditions[i]

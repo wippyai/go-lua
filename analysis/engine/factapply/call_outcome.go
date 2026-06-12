@@ -12,12 +12,17 @@ import (
 type CallOutcome struct {
 	Results []CallResult
 
-	PathRefinements   []CallPathRefinement
-	PathStaticMembers []CallPathStaticMember
-	DynamicIndexFacts []CallDynamicIndexFact
-	BranchProofs      []CallBranchProof
-	ChannelSelects    []CallChannelSelectFact
-	EffectDeltas      []CallEffectDelta
+	PathRefinements            []CallPathRefinement
+	ParamPathRefinements       []CallParamPathRefinement
+	ParamConditions            []CallParamCondition
+	ParamPathRelations         []CallParamPathRelation
+	PathStaticMembers          []CallPathStaticMember
+	DynamicIndexFacts          []CallDynamicIndexFact
+	BranchProofs               []CallBranchProof
+	ChannelSelects             []CallChannelSelectFact
+	EffectDeltas               []CallEffectDelta
+	ReturnConditionRefinements []CallReturnConditionRefinement
+	ReturnPresenceRelations    []CallReturnPresenceRelation
 }
 
 // CallPathRefinement records a normal-return value constraint for a
@@ -25,6 +30,38 @@ type CallOutcome struct {
 type CallPathRefinement struct {
 	Path  pathdom.Path
 	Value product.Value
+}
+
+// CallParamPathRefinement records a normal-return value constraint for a
+// parameter placeholder path. Parameter placeholders are indexed by explicit
+// argument position and do not include the receiver slot.
+type CallParamPathRefinement struct {
+	Path  pathdom.Path
+	Value product.Value
+}
+
+// CallParamCondition records that a normal return selects the truthiness facts
+// for one call argument expression.
+type CallParamCondition struct {
+	ParamIndex int
+	Value      bool
+}
+
+// CallPathRelationKind classifies a normal-return relation over placeholder
+// paths.
+type CallPathRelationKind uint8
+
+const (
+	CallPathRelationEqual CallPathRelationKind = iota + 1
+)
+
+// CallParamPathRelation records a normal-return relation over parameter
+// placeholder paths. Parameter placeholders are indexed by explicit argument
+// position and do not include the receiver slot.
+type CallParamPathRelation struct {
+	Kind  CallPathRelationKind
+	Left  pathdom.Path
+	Right pathdom.Path
 }
 
 // CallPathStaticMember records a normal-return static-member fact for a
@@ -119,4 +156,22 @@ type CallEffectDelta struct {
 	Before product.Value
 	After  product.Value
 	Change CallEffectDeltaChange
+}
+
+// CallReturnConditionRefinement records a parameter-relative value refinement
+// selected by the boolean value of one call return slot.
+type CallReturnConditionRefinement struct {
+	ReturnIndex int
+	ReturnValue bool
+	Target      pathdom.Path
+	Value       product.Value
+}
+
+// CallReturnPresenceRelation records a must implication between two call
+// return slots.
+type CallReturnPresenceRelation struct {
+	TriggerIndex    int
+	TriggerPresence presence.Value
+	TargetIndex     int
+	TargetPresence  presence.Value
 }

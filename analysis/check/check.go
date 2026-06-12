@@ -559,15 +559,6 @@ func (c *Checker) run(bindings *bind.Result, built *cfgbuild.Result, sem *semant
 			Facts:      facts,
 		})
 	}
-	if config.SummaryResults != nil && config.SummaryKeyFor != nil {
-		facts = effectlowering.WithSummaryPostconditions(effectlowering.SummaryPostconditionConfig{
-			Graph:     built.Graph,
-			Registry:  config.Registry,
-			Summaries: config.SummaryResults,
-			KeyFor:    config.SummaryKeyFor,
-			Facts:     facts,
-		})
-	}
 	resolver := config.Visibility
 	if resolver == nil {
 		resolver = defaultVisibilityResolver(bindings, built, facts)
@@ -620,8 +611,9 @@ func (c *Checker) run(bindings *bind.Result, built *cfgbuild.Result, sem *semant
 			Visibility:  resolver,
 		}),
 		EdgeTransfer: factapply.NewFactsEdgeTransfer(factapply.FactsEdgeTransferConfig{
-			Facts:      facts,
-			Visibility: resolver,
+			Facts:       facts,
+			CallOutcome: callOutcome,
+			Visibility:  resolver,
 		}),
 		WidenAt:    config.WidenAt,
 		WidenDelay: config.WidenDelay,

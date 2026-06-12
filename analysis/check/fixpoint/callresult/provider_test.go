@@ -147,6 +147,82 @@ func TestOutcomeProviderMapsSummaryReturnsAndNormalReturnFacts(t *testing.T) {
 	}
 }
 
+func TestOutcomeProviderMapsSummaryPostconditionFields(t *testing.T) {
+	reg := standard.Registry()
+	callee := symbol.ID(137)
+	key := summary.DefaultSummaryKey(ref.FuncRef{Kind: ref.KindSymbol, ID: 138})
+	present := product.NewWithPresence(reg, product.ShapeTop, presence.Present())
+	provider := OutcomeProvider(summary.NewSnapshot(reg, summary.EntrySummary{
+		Key: key,
+		Summary: summary.Summary{
+			NormalReturnParams: []product.Value{
+				present,
+				product.Top(),
+				product.Bottom(reg),
+			},
+			NormalReturnParamConditions: []summary.ParamCondition{
+				summary.ParamConditionTruthy,
+				summary.ParamConditionFalsy,
+				summary.ParamConditionTop,
+			},
+			NormalReturnParamEqualities: []summary.ParamEquality{
+				{Left: 0, Right: 1},
+			},
+			ReturnConditionParamRefinements: []summary.ReturnConditionParamRefinement{
+				{
+					ReturnIndex: 0,
+					ReturnValue: true,
+					Target:      path.NewPlaceholder(0).Field("value"),
+					Value:       present,
+				},
+			},
+			ReturnPresenceRelations: []summary.ReturnPresenceRelation{
+				{
+					TriggerIndex:    1,
+					TriggerPresence: presence.Present(),
+					TargetIndex:     0,
+					TargetPresence:  presence.Absent(),
+				},
+			},
+		},
+	}), ByCalleeSymbol(map[symbol.ID]summary.SummaryKey{callee: key}))
+
+	got := provider(transfer.NodeContext{Registry: reg}, factflow.NewCallSite(factflow.CallSiteConfig{
+		CalleeSymbol: callee,
+	}), state.State{}, nil)
+
+	if len(got.ParamPathRefinements) != 1 ||
+		!got.ParamPathRefinements[0].Path.Equal(path.NewPlaceholder(0)) ||
+		!product.Equal(reg, got.ParamPathRefinements[0].Value, present) {
+		t.Fatalf("param path refinements = %#v, want only useful normal-return param", got.ParamPathRefinements)
+	}
+	if len(got.ParamConditions) != 2 ||
+		got.ParamConditions[0] != (factapply.CallParamCondition{ParamIndex: 0, Value: true}) ||
+		got.ParamConditions[1] != (factapply.CallParamCondition{ParamIndex: 1, Value: false}) {
+		t.Fatalf("param conditions = %#v, want truthy/falsy conditions only", got.ParamConditions)
+	}
+	if len(got.ParamPathRelations) != 1 ||
+		got.ParamPathRelations[0].Kind != factapply.CallPathRelationEqual ||
+		!got.ParamPathRelations[0].Left.Equal(path.NewPlaceholder(0)) ||
+		!got.ParamPathRelations[0].Right.Equal(path.NewPlaceholder(1)) {
+		t.Fatalf("param path relations = %#v, want mapped equality", got.ParamPathRelations)
+	}
+	if len(got.ReturnConditionRefinements) != 1 ||
+		got.ReturnConditionRefinements[0].ReturnIndex != 0 ||
+		!got.ReturnConditionRefinements[0].ReturnValue ||
+		!got.ReturnConditionRefinements[0].Target.Equal(path.NewPlaceholder(0).Field("value")) ||
+		!product.Equal(reg, got.ReturnConditionRefinements[0].Value, present) {
+		t.Fatalf("return condition refinements = %#v, want mapped refinement", got.ReturnConditionRefinements)
+	}
+	if len(got.ReturnPresenceRelations) != 1 ||
+		got.ReturnPresenceRelations[0].TriggerIndex != 1 ||
+		!presence.Equal(got.ReturnPresenceRelations[0].TriggerPresence, presence.Present()) ||
+		got.ReturnPresenceRelations[0].TargetIndex != 0 ||
+		!presence.Equal(got.ReturnPresenceRelations[0].TargetPresence, presence.Absent()) {
+		t.Fatalf("return presence relations = %#v, want mapped relation", got.ReturnPresenceRelations)
+	}
+}
+
 func TestOutcomeProviderMissingAndEmptySummaryYieldsZeroOutcome(t *testing.T) {
 	reg := standard.Registry()
 	callee := symbol.ID(17)
@@ -359,11 +435,16 @@ func assertEmptyOutcome(t *testing.T, got factapply.CallOutcome) {
 	t.Helper()
 	if len(got.Results) != 0 ||
 		len(got.PathRefinements) != 0 ||
+		len(got.ParamPathRefinements) != 0 ||
+		len(got.ParamConditions) != 0 ||
+		len(got.ParamPathRelations) != 0 ||
 		len(got.PathStaticMembers) != 0 ||
 		len(got.DynamicIndexFacts) != 0 ||
 		len(got.BranchProofs) != 0 ||
 		len(got.ChannelSelects) != 0 ||
-		len(got.EffectDeltas) != 0 {
+		len(got.EffectDeltas) != 0 ||
+		len(got.ReturnConditionRefinements) != 0 ||
+		len(got.ReturnPresenceRelations) != 0 {
 		t.Fatalf("provider returned non-empty outcome: %#v", got)
 	}
 }

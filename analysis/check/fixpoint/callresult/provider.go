@@ -30,11 +30,16 @@ func OutcomeProvider(summaries summary.Reader, keyFor KeyFunc) factapply.CallOut
 		if !ok {
 			return factapply.CallOutcome{}
 		}
-		return outcomeFromSummary(got)
+		return outcomeFromSummary(got, func(index int) bool {
+			if index < 0 || index >= len(got.NormalReturnParams) {
+				return false
+			}
+			return summary.UsefulNormalReturnParam(ctx.Registry, got.NormalReturnParams[index])
+		})
 	}
 }
 
-func outcomeFromSummary(got summary.Summary) factapply.CallOutcome {
+func outcomeFromSummary(got summary.Summary, usefulNormalReturnParam func(int) bool) factapply.CallOutcome {
 	out := factapply.CallOutcome{}
 	if len(got.Returns) != 0 {
 		out.Results = make([]factapply.CallResult, len(got.Returns))
@@ -42,14 +47,42 @@ func outcomeFromSummary(got summary.Summary) factapply.CallOutcome {
 			out.Results[i] = factapply.CallResult{Index: i, Value: value}
 		}
 	}
+	for i, value := range got.NormalReturnParams {
+		if usefulNormalReturnParam == nil || !usefulNormalReturnParam(i) {
+			continue
+		}
+		out.ParamPathRefinements = append(out.ParamPathRefinements, factapply.CallParamPathRefinement{
+			Path:  pathdom.NewPlaceholder(i),
+			Value: value,
+		})
+	}
+	for i, condition := range got.NormalReturnParamConditions {
+		value, ok := paramConditionValue(condition)
+		if !ok {
+			continue
+		}
+		out.ParamConditions = append(out.ParamConditions, factapply.CallParamCondition{
+			ParamIndex: i,
+			Value:      value,
+		})
+	}
+	for _, equality := range got.NormalReturnParamEqualities {
+		if equality.Left < 0 || equality.Right < 0 || equality.Left == equality.Right {
+			continue
+		}
+		out.ParamPathRelations = append(out.ParamPathRelations, factapply.CallParamPathRelation{
+			Kind:  factapply.CallPathRelationEqual,
+			Left:  pathdom.NewPlaceholder(equality.Left),
+			Right: pathdom.NewPlaceholder(equality.Right),
+		})
+	}
 	facts := got.NormalReturnFacts
 	if len(facts.PathRefinements) != 0 {
-		out.PathRefinements = make([]factapply.CallPathRefinement, len(facts.PathRefinements))
-		for i, fact := range facts.PathRefinements {
-			out.PathRefinements[i] = factapply.CallPathRefinement{
+		for _, fact := range facts.PathRefinements {
+			out.PathRefinements = append(out.PathRefinements, factapply.CallPathRefinement{
 				Path:  copyPath(fact.Path),
 				Value: fact.Value,
-			}
+			})
 		}
 	}
 	if len(facts.PathStaticMembers) != 0 {
@@ -110,7 +143,40 @@ func outcomeFromSummary(got summary.Summary) factapply.CallOutcome {
 			}
 		}
 	}
+	if len(got.ReturnConditionParamRefinements) != 0 {
+		out.ReturnConditionRefinements = make([]factapply.CallReturnConditionRefinement, len(got.ReturnConditionParamRefinements))
+		for i, refinement := range got.ReturnConditionParamRefinements {
+			out.ReturnConditionRefinements[i] = factapply.CallReturnConditionRefinement{
+				ReturnIndex: refinement.ReturnIndex,
+				ReturnValue: refinement.ReturnValue,
+				Target:      copyPath(refinement.Target),
+				Value:       refinement.Value,
+			}
+		}
+	}
+	if len(got.ReturnPresenceRelations) != 0 {
+		out.ReturnPresenceRelations = make([]factapply.CallReturnPresenceRelation, len(got.ReturnPresenceRelations))
+		for i, relation := range got.ReturnPresenceRelations {
+			out.ReturnPresenceRelations[i] = factapply.CallReturnPresenceRelation{
+				TriggerIndex:    relation.TriggerIndex,
+				TriggerPresence: relation.TriggerPresence,
+				TargetIndex:     relation.TargetIndex,
+				TargetPresence:  relation.TargetPresence,
+			}
+		}
+	}
 	return out
+}
+
+func paramConditionValue(condition summary.ParamCondition) (bool, bool) {
+	switch condition {
+	case summary.ParamConditionTruthy:
+		return true, true
+	case summary.ParamConditionFalsy:
+		return false, true
+	default:
+		return false, false
+	}
 }
 
 // Fallback composes two call result providers. Primary results win by index;

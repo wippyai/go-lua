@@ -131,12 +131,26 @@ func applyCallOutcomeFacts(
 	outcome CallOutcome,
 ) state.State {
 	bindings := callPlaceholderBindings(facts, site)
+	paramBindings := callArgumentPlaceholderBindings(facts, site)
 	for _, fact := range outcome.PathRefinements {
 		targetPath, ok := fact.Path.Substitute(bindings)
 		if !ok {
 			continue
 		}
 		out = applyValueRefinementAt(ctx.Registry, resolver, ctx.Point, out, targetPath, factflow.NewValueConstraint(fact.Value))
+	}
+	for _, fact := range outcome.ParamPathRefinements {
+		targetPath, ok := fact.Path.Substitute(paramBindings)
+		if !ok {
+			continue
+		}
+		out = applyValueRefinementAt(ctx.Registry, resolver, ctx.Point, out, targetPath, factflow.NewValueConstraint(fact.Value))
+	}
+	for _, condition := range outcome.ParamConditions {
+		out = applyCallParamCondition(ctx, facts, resolver, out, site, condition)
+	}
+	for _, relation := range outcome.ParamPathRelations {
+		out = applyCallParamPathRelation(ctx, resolver, out, paramBindings, relation)
 	}
 	for _, fact := range outcome.PathStaticMembers {
 		targetPath, ok := fact.Path.Substitute(bindings)
@@ -208,6 +222,58 @@ func applyCallOutcomeFacts(
 	return out
 }
 
+func applyCallParamCondition(
+	ctx transfer.NodeContext,
+	facts factflow.Facts,
+	resolver *visibility.Resolver,
+	out state.State,
+	site factflow.CallSite,
+	condition CallParamCondition,
+) state.State {
+	args := site.ArgumentSources()
+	if condition.ParamIndex < 0 || condition.ParamIndex >= len(args) {
+		return out
+	}
+	arg := args[condition.ParamIndex]
+	if arg.Kind != factflow.ValueSourceExpression || !arg.HasExpr {
+		return out
+	}
+	expressionCondition, ok := facts.ExpressionCondition(arg.ExprRef)
+	if !ok {
+		return out
+	}
+	for _, refinement := range expressionCondition.RefinementsForValue(condition.Value) {
+		out = applyPostconditionRefinement(ctx, resolver, out, refinement)
+	}
+	for _, relation := range expressionCondition.PathRelationsForValue(condition.Value) {
+		out = applyPostconditionPathRelation(ctx, resolver, out, relation)
+	}
+	return out
+}
+
+func applyCallParamPathRelation(
+	ctx transfer.NodeContext,
+	resolver *visibility.Resolver,
+	out state.State,
+	bindings []pathdom.Path,
+	relation CallParamPathRelation,
+) state.State {
+	switch relation.Kind {
+	case CallPathRelationEqual:
+		left, ok := relation.Left.Substitute(bindings)
+		if !ok {
+			return out
+		}
+		right, ok := relation.Right.Substitute(bindings)
+		if !ok || left.Equal(right) {
+			return out
+		}
+		return applyPathEqualityAt(ctx.Registry, resolver, ctx.Point, out, left, right)
+	default:
+		return out
+	}
+}
+
 func callPlaceholderBindings(facts factflow.Facts, site factflow.CallSite) []pathdom.Path {
 	var bindings []pathdom.Path
 	offset := 0
@@ -224,6 +290,21 @@ func callPlaceholderBindings(facts factflow.Facts, site factflow.CallSite) []pat
 			continue
 		}
 		bindings = bindPlaceholderPath(bindings, i+offset, sourcePath)
+	}
+	return bindings
+}
+
+func callArgumentPlaceholderBindings(facts factflow.Facts, site factflow.CallSite) []pathdom.Path {
+	var bindings []pathdom.Path
+	for i, source := range site.ArgumentSources() {
+		if source.Kind != factflow.ValueSourceExpression || !source.HasExpr {
+			continue
+		}
+		sourcePath, ok := facts.ExpressionPath(source.ExprRef)
+		if !ok || sourcePath.IsEmpty() {
+			continue
+		}
+		bindings = bindPlaceholderPath(bindings, i, sourcePath)
 	}
 	return bindings
 }
