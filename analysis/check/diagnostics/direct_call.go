@@ -5,6 +5,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/check"
 	"github.com/wippyai/go-lua/analysis/diagnostic"
+	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
@@ -210,10 +211,14 @@ func boundaryCallArgumentSourceType(result *check.Result, point cfg.Point, fact 
 }
 
 func boundaryCallArgumentReader(fact semantics.CallFact, index int, fallback ast.Expr) boundaryValueReader {
-	if index >= 0 && index < len(fact.ArgumentSources) {
-		return boundaryValueFromASTSource(fact.ArgumentSources[index])
+	return func(result *check.Result, point cfg.Point) (product.Value, bool) {
+		if index >= 0 && index < len(fact.ArgumentSources) {
+			if value, ok := boundaryValueFromASTSource(fact.ArgumentSources[index])(result, point); ok {
+				return value, true
+			}
+		}
+		return boundaryValueFromExpr(fallback)(result, point)
 	}
-	return boundaryValueFromExpr(fallback)
 }
 
 func lowerDirectFunctionContract(fn *ast.FunctionExpr, resolver typeannotation.Resolver) (directFunctionContract, bool) {
