@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/callresult"
+	"github.com/wippyai/go-lua/analysis/check/fixpoint/effectlowering"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/summary"
 	"github.com/wippyai/go-lua/analysis/domain/effect/signature"
 	"github.com/wippyai/go-lua/analysis/domain/path"
@@ -529,27 +530,27 @@ func (c *Checker) run(bindings *bind.Result, built *cfgbuild.Result, sem *semant
 	config := c.config
 	facts := transferfacts.Lower(sem, built.Graph, transferfacts.Config{Registry: config.Registry, Bindings: bindings})
 	if hasSignatures(config.Signatures) {
-		facts = callresult.WithSignatureRelations(callresult.SignatureRelationConfig{
+		facts = effectlowering.WithSignatureRelations(effectlowering.SignatureRelationConfig{
 			Graph:      built.Graph,
 			Signatures: config.Signatures,
 			NameFor:    c.signatureNameForCall(bindings),
 			Facts:      facts,
 		})
-		facts = callresult.WithSignatureNoNormalReturns(callresult.SignatureNoNormalReturnConfig{
-			Graph:      built.Graph,
-			Registry:   config.Registry,
-			Signatures: config.Signatures,
-			NameFor:    c.signatureNameForCall(bindings),
-			Facts:      facts,
-		})
-		facts = callresult.WithSignaturePostconditions(callresult.SignaturePostconditionConfig{
+		facts = effectlowering.WithSignatureNoNormalReturns(effectlowering.SignatureNoNormalReturnConfig{
 			Graph:      built.Graph,
 			Registry:   config.Registry,
 			Signatures: config.Signatures,
 			NameFor:    c.signatureNameForCall(bindings),
 			Facts:      facts,
 		})
-		facts = callresult.WithSignatureMutations(callresult.SignatureMutationConfig{
+		facts = effectlowering.WithSignaturePostconditions(effectlowering.SignaturePostconditionConfig{
+			Graph:      built.Graph,
+			Registry:   config.Registry,
+			Signatures: config.Signatures,
+			NameFor:    c.signatureNameForCall(bindings),
+			Facts:      facts,
+		})
+		facts = effectlowering.WithSignatureMutations(effectlowering.SignatureMutationConfig{
 			Graph:      built.Graph,
 			Signatures: config.Signatures,
 			NameFor:    c.signatureNameForCall(bindings),
@@ -557,7 +558,7 @@ func (c *Checker) run(bindings *bind.Result, built *cfgbuild.Result, sem *semant
 		})
 	}
 	if config.SummaryResults != nil && config.SummaryKeyFor != nil {
-		facts = callresult.WithSummaryPostconditions(callresult.SummaryPostconditionConfig{
+		facts = effectlowering.WithSummaryPostconditions(effectlowering.SummaryPostconditionConfig{
 			Graph:     built.Graph,
 			Registry:  config.Registry,
 			Summaries: config.SummaryResults,
@@ -585,7 +586,7 @@ func (c *Checker) run(bindings *bind.Result, built *cfgbuild.Result, sem *semant
 	})
 	callResults := config.CallResults
 	if hasSignatures(config.Signatures) {
-		callResults = callresult.Fallback(callResults, callresult.SignatureProvider(callresult.SignatureProviderConfig{
+		callResults = callresult.Fallback(callResults, effectlowering.SignatureProvider(effectlowering.SignatureProviderConfig{
 			Signatures: config.Signatures,
 			NameFor:    c.signatureNameForCall(bindings),
 			Facts:      facts,
@@ -668,7 +669,7 @@ func copyConfig(config Config) Config {
 	return config
 }
 
-func (c *Checker) signatureNameForCall(bindings *bind.Result) callresult.NameFunc {
+func (c *Checker) signatureNameForCall(bindings *bind.Result) effectlowering.SignatureNameFunc {
 	return func(_ transfer.NodeContext, call factflow.CallProducer) (string, bool) {
 		result := Result{bindings: bindings}
 		return result.stableCalleeName(call.CalleeSymbol(), call.CalleePath())

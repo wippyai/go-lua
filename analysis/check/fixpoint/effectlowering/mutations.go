@@ -1,4 +1,4 @@
-package callresult
+package effectlowering
 
 import (
 	"github.com/wippyai/go-lua/analysis/domain/effect"
@@ -16,7 +16,7 @@ import (
 type SignatureMutationConfig struct {
 	Graph      cfg.Graph
 	Signatures SignatureLookup
-	NameFor    NameFunc
+	NameFor    SignatureNameFunc
 	Facts      factflow.Facts
 }
 

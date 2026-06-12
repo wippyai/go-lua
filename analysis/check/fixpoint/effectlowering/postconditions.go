@@ -1,6 +1,7 @@
-package callresult
+package effectlowering
 
 import (
+	"github.com/wippyai/go-lua/analysis/check/fixpoint/callresult"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/summary"
 	"github.com/wippyai/go-lua/analysis/domain/effect"
 	"github.com/wippyai/go-lua/analysis/domain/effect/postcondition"
@@ -21,7 +22,7 @@ type SignaturePostconditionConfig struct {
 	Graph      cfg.Graph
 	Registry   *axis.Registry
 	Signatures SignatureLookup
-	NameFor    NameFunc
+	NameFor    SignatureNameFunc
 	Facts      factflow.Facts
 }
 
@@ -31,7 +32,7 @@ type SignatureNoNormalReturnConfig struct {
 	Graph      cfg.Graph
 	Registry   *axis.Registry
 	Signatures SignatureLookup
-	NameFor    NameFunc
+	NameFor    SignatureNameFunc
 	Facts      factflow.Facts
 }
 
@@ -41,7 +42,7 @@ type SummaryPostconditionConfig struct {
 	Graph     cfg.Graph
 	Registry  *axis.Registry
 	Summaries summary.Reader
-	KeyFor    KeyFunc
+	KeyFor    callresult.KeyFunc
 	Facts     factflow.Facts
 }
 
