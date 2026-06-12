@@ -10,7 +10,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
-	"github.com/wippyai/go-lua/analysis/engine/factflow/source"
+	sourcevalue "github.com/wippyai/go-lua/analysis/engine/sourcevalue"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/visibility"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
@@ -25,7 +25,7 @@ type Config struct {
 	Visibility *visibility.Resolver
 }
 
-func Provider(config Config) source.ExpressionValueProvider {
+func Provider(config Config) sourcevalue.ExpressionValueProvider {
 	reg := config.Registry
 	if reg == nil {
 		panic("readexpr: Config.Registry is required")

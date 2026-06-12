@@ -18,7 +18,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/factflow/apply"
-	"github.com/wippyai/go-lua/analysis/engine/factflow/source"
+	sourcevalue "github.com/wippyai/go-lua/analysis/engine/sourcevalue"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
@@ -245,7 +245,7 @@ func TestSignatureProviderSameAsReturnsArgumentValue(t *testing.T) {
 			ExprRef: argRef,
 			HasExpr: true,
 		}}),
-		Sources: source.NewSourceValues(source.SourceValuesConfig{
+		Sources: sourcevalue.NewSourceValues(sourcevalue.SourceValuesConfig{
 			Registry: reg,
 			ExpressionValues: map[factflow.ExprRef]product.Value{
 				argRef: argValue,
@@ -277,7 +277,7 @@ func TestSignatureProviderSameAsResolvesNegativeParamRef(t *testing.T) {
 			{Kind: factflow.ValueSourceExpression, ExprRef: firstRef, HasExpr: true},
 			{Kind: factflow.ValueSourceExpression, ExprRef: lastRef, HasExpr: true},
 		}),
-		Sources: source.NewSourceValues(source.SourceValuesConfig{
+		Sources: sourcevalue.NewSourceValues(sourcevalue.SourceValuesConfig{
 			Registry: reg,
 			ExpressionValues: map[factflow.ExprRef]product.Value{
 				firstRef: firstValue,
@@ -305,7 +305,7 @@ func TestSignatureProviderSameAsFallsBackToDeclaredReturnTypeWhenArgumentUnresol
 		Facts: signatureProviderFacts(point, []factflow.ValueSource{
 			{Kind: factflow.ValueSourceExpression, ExprRef: factflow.ExprRef(10), HasExpr: true},
 		}),
-		Sources: source.NewSourceValues(source.SourceValuesConfig{Registry: reg}),
+		Sources: sourcevalue.NewSourceValues(sourcevalue.SourceValuesConfig{Registry: reg}),
 	})
 
 	got := provider(transfer.NodeContext{Registry: reg, Point: point}, factflow.NewCallProducer(factflow.CallProducerConfig{}), state.State{}, nil)
@@ -737,7 +737,7 @@ func TestFallbackKeepsPrimarySlotOverSignatureSameAs(t *testing.T) {
 			ExprRef: argRef,
 			HasExpr: true,
 		}}),
-		Sources: source.NewSourceValues(source.SourceValuesConfig{
+		Sources: sourcevalue.NewSourceValues(sourcevalue.SourceValuesConfig{
 			Registry: reg,
 			ExpressionValues: map[factflow.ExprRef]product.Value{
 				argRef: argValue,
@@ -851,7 +851,7 @@ func TestProviderIntegratesWithFactflowCallRead(t *testing.T) {
 					}),
 				},
 			}),
-			Sources: source.NewSourceValues(source.SourceValuesConfig{Registry: reg}),
+			Sources: sourcevalue.NewSourceValues(sourcevalue.SourceValuesConfig{Registry: reg}),
 			CallResults: Provider(summary.NewSnapshot(reg, summary.EntrySummary{
 				Key:     calleeKey,
 				Summary: summary.Summary{Returns: []product.Value{callValue}},
@@ -880,7 +880,7 @@ func TestProductionImportsAreBounded(t *testing.T) {
 		"github.com/wippyai/go-lua/analysis/domain/value/product":          true,
 		"github.com/wippyai/go-lua/analysis/engine/factflow":               true,
 		"github.com/wippyai/go-lua/analysis/engine/factflow/apply":         true,
-		"github.com/wippyai/go-lua/analysis/engine/factflow/source":        true,
+		"github.com/wippyai/go-lua/analysis/engine/sourcevalue":            true,
 		"github.com/wippyai/go-lua/analysis/engine/state":                  true,
 		"github.com/wippyai/go-lua/analysis/engine/transfer":               true,
 		"github.com/wippyai/go-lua/analysis/ir/cfg":                        true,

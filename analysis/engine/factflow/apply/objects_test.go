@@ -7,7 +7,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
-	factsource "github.com/wippyai/go-lua/analysis/engine/factflow/source"
+	"github.com/wippyai/go-lua/analysis/engine/sourcevalue"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/engine/visibility"
@@ -95,7 +95,7 @@ func TestFactsNodeTransferObjectLiteralEntriesUsePreWriteInputState(t *testing.T
 	entrySource := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: factflow.ExprRef(64), HasExpr: true}
 	oldRootValue := presentValue(reg)
 	newRootValue := absentValue(reg)
-	sources := factsource.NewSourceValues(factsource.SourceValuesConfig{
+	sources := sourcevalue.NewSourceValues(sourcevalue.SourceValuesConfig{
 		Registry: reg,
 		ExpressionValue: func(point cfg.Point, expr factflow.ExprRef, source factflow.ValueSource, in state.State) (product.Value, bool) {
 			switch expr {

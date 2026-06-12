@@ -3,7 +3,7 @@ package apply
 import (
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
-	"github.com/wippyai/go-lua/analysis/engine/factflow/source"
+	sourcevalue "github.com/wippyai/go-lua/analysis/engine/sourcevalue"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/engine/visibility"
@@ -13,7 +13,7 @@ import (
 func applyPathAssignment(
 	ctx transfer.NodeContext,
 	resolver *visibility.Resolver,
-	sources source.SourceValues,
+	sources sourcevalue.SourceValues,
 	read func(cfg.Point) state.State,
 	in state.State,
 	out state.State,

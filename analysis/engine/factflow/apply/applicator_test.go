@@ -9,7 +9,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
-	factsource "github.com/wippyai/go-lua/analysis/engine/factflow/source"
+	"github.com/wippyai/go-lua/analysis/engine/sourcevalue"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
@@ -52,7 +52,7 @@ func TestFactsNodeTransferAppliesValueOverlaysToAssignments(t *testing.T) {
 			if tc.innerAbsent {
 				innerValue = absentValue(reg)
 			}
-			sources := factsource.NewSourceValues(factsource.SourceValuesConfig{
+			sources := sourcevalue.NewSourceValues(sourcevalue.SourceValuesConfig{
 				Registry: reg,
 				ExpressionValues: map[factflow.ExprRef]product.Value{
 					inner: innerValue,

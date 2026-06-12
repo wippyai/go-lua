@@ -12,7 +12,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	factapply "github.com/wippyai/go-lua/analysis/engine/factflow/apply"
-	factsource "github.com/wippyai/go-lua/analysis/engine/factflow/source"
+	"github.com/wippyai/go-lua/analysis/engine/sourcevalue"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
@@ -199,7 +199,7 @@ local a, b = x as any, x :: any
 
 	apply := factapply.NewFactsNodeTransfer(factapply.FactsNodeTransferConfig{
 		Facts: facts,
-		Sources: factsource.NewSourceValues(factsource.SourceValuesConfig{
+		Sources: sourcevalue.NewSourceValues(sourcevalue.SourceValuesConfig{
 			Registry:         reg,
 			ExpressionValues: inputValues,
 		}),
@@ -372,7 +372,7 @@ func TestLowerClaimOverlaysApplyIndicatorsWithoutMutatingBaseValues(t *testing.T
 
 	apply := factapply.NewFactsNodeTransfer(factapply.FactsNodeTransferConfig{
 		Facts: facts,
-		Sources: factsource.NewSourceValues(factsource.SourceValuesConfig{
+		Sources: sourcevalue.NewSourceValues(sourcevalue.SourceValuesConfig{
 			Registry:         reg,
 			ExpressionValues: inputValues,
 		}),
@@ -461,7 +461,7 @@ func TestLowerNestedClaimOverlaysApplyCombinedIndicators(t *testing.T) {
 	base := product.NewWithPresence(reg, product.ShapeTop, presence.Present())
 	apply := factapply.NewFactsNodeTransfer(factapply.FactsNodeTransferConfig{
 		Facts: facts,
-		Sources: factsource.NewSourceValues(factsource.SourceValuesConfig{
+		Sources: sourcevalue.NewSourceValues(sourcevalue.SourceValuesConfig{
 			Registry: reg,
 			ExpressionValues: map[factflow.ExprRef]product.Value{
 				inner.Source().ExprRef: base,
@@ -513,7 +513,7 @@ local a, b = (x as any) as number, (x :: any) :: number
 
 	apply := factapply.NewFactsNodeTransfer(factapply.FactsNodeTransferConfig{
 		Facts: facts,
-		Sources: factsource.NewSourceValues(factsource.SourceValuesConfig{
+		Sources: sourcevalue.NewSourceValues(sourcevalue.SourceValuesConfig{
 			Registry:         reg,
 			ExpressionValues: inputValues,
 		}),

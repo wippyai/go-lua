@@ -13,7 +13,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/factflow/apply"
-	"github.com/wippyai/go-lua/analysis/engine/factflow/source"
+	sourcevalue "github.com/wippyai/go-lua/analysis/engine/sourcevalue"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/engine/visibility"
@@ -40,8 +40,8 @@ type Config struct {
 	Globals  []string
 
 	ExpressionValues map[factflow.ExprRef]product.Value
-	ExpressionValue  source.ExpressionValueProvider
-	VarargValue      source.VarargValueProvider
+	ExpressionValue  sourcevalue.ExpressionValueProvider
+	VarargValue      sourcevalue.VarargValueProvider
 	CallResults      apply.CallResultProvider
 	Signatures       signaturelookup.Source
 
@@ -352,7 +352,7 @@ func (c *Checker) run(bindings *bind.Result, built *cfgbuild.Result, sem *semant
 			Visibility: config.Visibility,
 		})
 	}
-	sources := source.NewSourceValues(source.SourceValuesConfig{
+	sources := sourcevalue.NewSourceValues(sourcevalue.SourceValuesConfig{
 		Registry:         config.Registry,
 		ExpressionValues: config.ExpressionValues,
 		ExpressionValue:  expressionValue,

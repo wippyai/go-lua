@@ -7,7 +7,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
-	factsource "github.com/wippyai/go-lua/analysis/engine/factflow/source"
+	"github.com/wippyai/go-lua/analysis/engine/sourcevalue"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
@@ -23,7 +23,7 @@ func TestFactsNodeTransferAppliesReturnSlotsThroughSourceValues(t *testing.T) {
 
 	expr := factflow.ExprRef(20)
 	exprValue := presentValue(reg)
-	sources := factsource.NewSourceValues(factsource.SourceValuesConfig{
+	sources := sourcevalue.NewSourceValues(sourcevalue.SourceValuesConfig{
 		Registry: reg,
 		ExpressionValues: map[factflow.ExprRef]product.Value{
 			expr: exprValue,
@@ -56,7 +56,7 @@ func TestFactsNodeTransferUnresolvedReturnSourceLeavesSlotUnchanged(t *testing.T
 	point := cfg.Point(21)
 	slotValue := presentValue(reg)
 	in := state.State{}.WriteReturnSlot(reg, 0, slotValue)
-	sources := factsource.NewSourceValues(factsource.SourceValuesConfig{Registry: reg})
+	sources := sourcevalue.NewSourceValues(sourcevalue.SourceValuesConfig{Registry: reg})
 
 	got := NewFactsNodeTransfer(FactsNodeTransferConfig{
 		Facts: factflow.NewFacts(factflow.FactsInput{
@@ -85,7 +85,7 @@ func TestFactsNodeTransferReturnCallSourceReadsReturnSlotThroughRead(t *testing.
 	graph.AddEdge(ret, graph.Exit(), false)
 
 	callValue := presentValue(reg)
-	sources := factsource.NewSourceValues(factsource.SourceValuesConfig{Registry: reg})
+	sources := sourcevalue.NewSourceValues(sourcevalue.SourceValuesConfig{Registry: reg})
 
 	got := transfer.Run(transfer.Config{
 		Graph:    graph,
@@ -176,7 +176,7 @@ func TestFactsNodeTransferAssignmentCallSourceConsumesProviderReturnSlotThroughR
 
 	target := symbol.ID(112)
 	callValue := presentValue(reg)
-	sources := factsource.NewSourceValues(factsource.SourceValuesConfig{Registry: reg})
+	sources := sourcevalue.NewSourceValues(sourcevalue.SourceValuesConfig{Registry: reg})
 
 	got := transfer.Run(transfer.Config{
 		Graph:    graph,

@@ -11,7 +11,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/factflow/apply"
-	"github.com/wippyai/go-lua/analysis/engine/factflow/source"
+	sourcevalue "github.com/wippyai/go-lua/analysis/engine/sourcevalue"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
@@ -40,7 +40,7 @@ type SignatureProviderConfig struct {
 	Signatures SignatureLookup
 	NameFor    NameFunc
 	Facts      factflow.Facts
-	Sources    source.SourceValues
+	Sources    sourcevalue.SourceValues
 }
 
 // Provider returns a factflow call-result provider backed by exact summary reads.
@@ -105,7 +105,7 @@ func SignatureProvider(config SignatureProviderConfig) apply.CallResultProvider 
 func signatureReturnValue(
 	ctx transfer.NodeContext,
 	facts factflow.Facts,
-	sources source.SourceValues,
+	sources sourcevalue.SourceValues,
 	sig signature.Function,
 	index int,
 	in state.State,
@@ -166,7 +166,7 @@ func signatureReturnValue(
 func sameAsReturnValue(
 	ctx transfer.NodeContext,
 	facts factflow.Facts,
-	sources source.SourceValues,
+	sources sourcevalue.SourceValues,
 	ref effect.ParamRef,
 	in state.State,
 	read func(cfg.Point) state.State,
@@ -183,7 +183,7 @@ func sameAsReturnValue(
 	if !ok {
 		return product.Value{}, false
 	}
-	return source.WithValueOverlays(ctx.Registry, sources, facts.ValueOverlays()).ValueOfSource(ctx.Point, args[argIndex], in, read)
+	return sourcevalue.WithValueOverlays(ctx.Registry, sources, facts.ValueOverlays()).ValueOfSource(ctx.Point, args[argIndex], in, read)
 }
 
 func elementOfReturnValue(

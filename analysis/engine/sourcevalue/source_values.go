@@ -1,4 +1,4 @@
-package source
+package sourcevalue
 
 import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"

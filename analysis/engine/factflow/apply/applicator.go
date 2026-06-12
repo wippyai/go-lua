@@ -2,7 +2,7 @@ package apply
 
 import (
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
-	"github.com/wippyai/go-lua/analysis/engine/factflow/source"
+	sourcevalue "github.com/wippyai/go-lua/analysis/engine/sourcevalue"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/engine/visibility"
@@ -11,7 +11,7 @@ import (
 // FactsNodeTransferConfig configures the generic fact applicator.
 type FactsNodeTransferConfig struct {
 	Facts       factflow.Facts
-	Sources     source.SourceValues
+	Sources     sourcevalue.SourceValues
 	CallResults CallResultProvider
 	Visibility  *visibility.Resolver
 }
@@ -40,7 +40,7 @@ func NewFactsNodeTransfer(config FactsNodeTransferConfig) transfer.NodeTransfer 
 		if sources == nil {
 			return out
 		}
-		sources = source.WithValueOverlays(ctx.Registry, sources, facts.ValueOverlays())
+		sources = sourcevalue.WithValueOverlays(ctx.Registry, sources, facts.ValueOverlays())
 		if fact, ok := facts.LocalAssignment(ctx.Point); ok {
 			out = applyRootAssignmentFact(ctx, config.Visibility, facts, sources, read, in, out, fact)
 		}

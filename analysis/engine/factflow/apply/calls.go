@@ -3,7 +3,7 @@ package apply
 import (
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
-	"github.com/wippyai/go-lua/analysis/engine/factflow/source"
+	sourcevalue "github.com/wippyai/go-lua/analysis/engine/sourcevalue"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
@@ -97,7 +97,7 @@ func materializeCallResults(
 
 func applyReturn(
 	ctx transfer.NodeContext,
-	sources source.SourceValues,
+	sources sourcevalue.SourceValues,
 	read func(cfg.Point) state.State,
 	in state.State,
 	out state.State,
