@@ -16,6 +16,8 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/symbol"
+	"github.com/wippyai/go-lua/analysis/type/kind"
+	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
 // KeyFunc maps one call producer in context to an exact summary key.
@@ -107,11 +109,46 @@ func signatureReturnValue(
 	in state.State,
 	read func(cfg.Point) state.State,
 ) (product.Value, bool) {
-	if sources == nil {
+	transform, ok := returnTransform(sig, index)
+	if !ok {
 		return product.Value{}, false
 	}
-	ref, ok := sameAsReturnSource(sig, index)
-	if !ok {
+	switch transform := transform.(type) {
+	case returns.SameAs:
+		return sameAsReturnValue(ctx, facts, sources, transform.Source, in, read)
+	case *returns.SameAs:
+		if transform == nil {
+			return product.Value{}, false
+		}
+		return sameAsReturnValue(ctx, facts, sources, transform.Source, in, read)
+	case returns.ElementOf:
+		return elementOfReturnValue(ctx, facts, sig, transform.Source)
+	case *returns.ElementOf:
+		if transform == nil {
+			return product.Value{}, false
+		}
+		return elementOfReturnValue(ctx, facts, sig, transform.Source)
+	case returns.OptionalElementOf:
+		return elementOfReturnValue(ctx, facts, sig, transform.Source)
+	case *returns.OptionalElementOf:
+		if transform == nil {
+			return product.Value{}, false
+		}
+		return elementOfReturnValue(ctx, facts, sig, transform.Source)
+	default:
+		return product.Value{}, false
+	}
+}
+
+func sameAsReturnValue(
+	ctx transfer.NodeContext,
+	facts factflow.Facts,
+	sources source.SourceValues,
+	ref effect.ParamRef,
+	in state.State,
+	read func(cfg.Point) state.State,
+) (product.Value, bool) {
+	if sources == nil {
 		return product.Value{}, false
 	}
 	site, ok := facts.CallSite(ctx.Point)
@@ -126,22 +163,122 @@ func signatureReturnValue(
 	return source.WithValueOverlays(ctx.Registry, sources, facts.ValueOverlays()).ValueOfSource(ctx.Point, args[argIndex], in, read)
 }
 
-func sameAsReturnSource(sig signature.Function, index int) (effect.ParamRef, bool) {
+func elementOfReturnValue(
+	ctx transfer.NodeContext,
+	facts factflow.Facts,
+	sig signature.Function,
+	ref effect.ParamRef,
+) (product.Value, bool) {
+	site, ok := facts.CallSite(ctx.Point)
+	if !ok {
+		return product.Value{}, false
+	}
+	args := site.ArgumentSources()
+	argIndex, ok := effect.ResolveParamIndex(ref, len(args))
+	if !ok || sig.Type == nil || argIndex < 0 || argIndex >= len(sig.Type.Params) {
+		return product.Value{}, false
+	}
+	elem, ok := elementTypeOf(sig.Type.Params[argIndex].Type)
+	if !ok {
+		return product.Value{}, false
+	}
+	return valueFromType(ctx.Registry, elem), true
+}
+
+func returnTransform(sig signature.Function, index int) (returns.ReturnType, bool) {
 	for _, label := range sig.Effect.Labels {
 		ret, ok := effect.NormalizeLabel(label).(returns.Return)
 		if !ok || ret.ReturnIndex != index {
 			continue
 		}
 		switch transform := ret.Transform.(type) {
-		case returns.SameAs:
-			return transform.Source, true
+		case returns.SameAs, returns.ElementOf, returns.OptionalElementOf:
+			return ret.Transform, true
 		case *returns.SameAs:
 			if transform != nil {
-				return transform.Source, true
+				return transform, true
+			}
+		case *returns.ElementOf:
+			if transform != nil {
+				return transform, true
+			}
+		case *returns.OptionalElementOf:
+			if transform != nil {
+				return transform, true
 			}
 		}
 	}
-	return effect.ParamRef{}, false
+	return nil, false
+}
+
+func elementTypeOf(t typ.Type) (typ.Type, bool) {
+	return elementTypeOfDepth(t, 0)
+}
+
+func elementTypeOfDepth(t typ.Type, depth int) (typ.Type, bool) {
+	if depth > typ.DefaultRecursionDepth {
+		return nil, false
+	}
+	t = typ.NormalizeNilType(t)
+	if t == nil {
+		return nil, false
+	}
+	switch tt := t.(type) {
+	case *typ.Annotated:
+		return elementTypeOfDepth(tt.Inner, depth+1)
+	case *typ.Alias:
+		return elementTypeOfDepth(tt.UnaliasedTarget(), depth+1)
+	case *typ.Optional:
+		return elementTypeOfDepth(tt.Inner, depth+1)
+	case *typ.Array:
+		if typ.NormalizeNilType(tt.Element) == nil {
+			return nil, false
+		}
+		return tt.Element, true
+	case *typ.Map:
+		if typ.NormalizeNilType(tt.Value) == nil {
+			return nil, false
+		}
+		return tt.Value, true
+	case *typ.ReadonlyMap:
+		if typ.NormalizeNilType(tt.Value) == nil {
+			return nil, false
+		}
+		return tt.Value, true
+	case *typ.Tuple:
+		if len(tt.Elements) == 0 {
+			return nil, false
+		}
+		if len(tt.Elements) == 1 {
+			if typ.NormalizeNilType(tt.Elements[0]) == nil {
+				return nil, false
+			}
+			return tt.Elements[0], true
+		}
+		return typ.NewUnion(tt.Elements...), true
+	case *typ.Union:
+		members := make([]typ.Type, 0, len(tt.Members))
+		for _, member := range tt.Members {
+			member = typ.NormalizeNilType(member)
+			if member == nil {
+				continue
+			}
+			if member.Kind() == kind.Nil {
+				continue
+			}
+			elem, ok := elementTypeOfDepth(member, depth+1)
+			if !ok {
+				return nil, false
+			}
+			members = append(members, elem)
+		}
+		if len(members) == 0 {
+			return nil, false
+		}
+		return typ.NewUnion(members...), true
+	default:
+		return nil, false
+	}
 }
 
 // Fallback composes two call result providers. Primary results win by index;

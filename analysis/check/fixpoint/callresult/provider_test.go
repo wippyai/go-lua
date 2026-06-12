@@ -13,6 +13,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
@@ -149,6 +150,122 @@ func TestSignatureProviderSameAsFallsBackToDeclaredReturnTypeWhenArgumentUnresol
 			{Kind: factflow.ValueSourceExpression, ExprRef: factflow.ExprRef(10), HasExpr: true},
 		}),
 		Sources: source.NewSourceValues(source.SourceValuesConfig{Registry: reg}),
+	})
+
+	got := provider(transfer.NodeContext{Registry: reg, Point: point}, factflow.NewCallProducer(factflow.CallProducerConfig{}), state.State{}, nil)
+
+	if len(got) != 1 {
+		t.Fatalf("got %d results, want 1: %#v", len(got), got)
+	}
+	assertRuntimeKind(t, reg, got[0].Value, runtimekind.Singleton(runtimekind.Number))
+}
+
+func TestSignatureProviderElementOfArrayReturnsElementRuntimeKind(t *testing.T) {
+	reg := product.DefaultRegistry()
+	point := cfg.Point(8)
+	provider := SignatureProvider(SignatureProviderConfig{
+		Signatures: signatureMap{
+			"f": {
+				Type:   typ.Func().Param("items", typ.NewArray(typ.String)).Returns(typ.Any).Build(),
+				Effect: effect.Empty.With(returns.Return{ReturnIndex: 0, Transform: returns.ElementOf{Source: effect.ParamRef{Index: 0}}}),
+			},
+		},
+		NameFor: StaticName("f"),
+		Facts:   signatureProviderFacts(point, []factflow.ValueSource{{Kind: factflow.ValueSourceExpression}}),
+	})
+
+	got := provider(transfer.NodeContext{Registry: reg, Point: point}, factflow.NewCallProducer(factflow.CallProducerConfig{}), state.State{}, nil)
+
+	if len(got) != 1 {
+		t.Fatalf("got %d results, want 1: %#v", len(got), got)
+	}
+	assertRuntimeKind(t, reg, got[0].Value, runtimekind.Singleton(runtimekind.String))
+}
+
+func TestSignatureProviderElementOfMapReturnsValueRuntimeKind(t *testing.T) {
+	reg := product.DefaultRegistry()
+	point := cfg.Point(9)
+	provider := SignatureProvider(SignatureProviderConfig{
+		Signatures: signatureMap{
+			"f": {
+				Type:   typ.Func().Param("items", typ.NewMap(typ.String, typ.Number)).Returns(typ.Any).Build(),
+				Effect: effect.Empty.With(returns.Return{ReturnIndex: 0, Transform: returns.ElementOf{Source: effect.ParamRef{Index: 0}}}),
+			},
+		},
+		NameFor: StaticName("f"),
+		Facts:   signatureProviderFacts(point, []factflow.ValueSource{{Kind: factflow.ValueSourceExpression}}),
+	})
+
+	got := provider(transfer.NodeContext{Registry: reg, Point: point}, factflow.NewCallProducer(factflow.CallProducerConfig{}), state.State{}, nil)
+
+	if len(got) != 1 {
+		t.Fatalf("got %d results, want 1: %#v", len(got), got)
+	}
+	assertRuntimeKind(t, reg, got[0].Value, runtimekind.Singleton(runtimekind.Number))
+}
+
+func TestSignatureProviderElementOfTupleReturnsElementUnionRuntimeKind(t *testing.T) {
+	reg := product.DefaultRegistry()
+	point := cfg.Point(10)
+	provider := SignatureProvider(SignatureProviderConfig{
+		Signatures: signatureMap{
+			"f": {
+				Type:   typ.Func().Param("items", typ.NewTuple(typ.String, typ.Number)).Returns(typ.Any).Build(),
+				Effect: effect.Empty.With(returns.Return{ReturnIndex: 0, Transform: returns.ElementOf{Source: effect.ParamRef{Index: 0}}}),
+			},
+		},
+		NameFor: StaticName("f"),
+		Facts:   signatureProviderFacts(point, []factflow.ValueSource{{Kind: factflow.ValueSourceExpression}}),
+	})
+
+	got := provider(transfer.NodeContext{Registry: reg, Point: point}, factflow.NewCallProducer(factflow.CallProducerConfig{}), state.State{}, nil)
+
+	if len(got) != 1 {
+		t.Fatalf("got %d results, want 1: %#v", len(got), got)
+	}
+	assertRuntimeKind(t, reg, got[0].Value, runtimekind.Join(
+		runtimekind.Singleton(runtimekind.String),
+		runtimekind.Singleton(runtimekind.Number),
+	))
+}
+
+func TestSignatureProviderOptionalElementOfArrayKeepsMaybePresence(t *testing.T) {
+	reg := product.DefaultRegistry()
+	point := cfg.Point(11)
+	provider := SignatureProvider(SignatureProviderConfig{
+		Signatures: signatureMap{
+			"f": {
+				Type:   typ.Func().Param("items", typ.NewArray(typ.String)).Returns(typ.Any).Build(),
+				Effect: effect.Empty.With(returns.Return{ReturnIndex: 0, Transform: returns.OptionalElementOf{Source: effect.ParamRef{Index: 0}}}),
+			},
+		},
+		NameFor: StaticName("f"),
+		Facts:   signatureProviderFacts(point, []factflow.ValueSource{{Kind: factflow.ValueSourceExpression}}),
+	})
+
+	got := provider(transfer.NodeContext{Registry: reg, Point: point}, factflow.NewCallProducer(factflow.CallProducerConfig{}), state.State{}, nil)
+
+	if len(got) != 1 {
+		t.Fatalf("got %d results, want 1: %#v", len(got), got)
+	}
+	assertRuntimeKind(t, reg, got[0].Value, runtimekind.Singleton(runtimekind.String))
+	if gotPresence := product.PresenceOf(got[0].Value); !presence.Equal(gotPresence, presence.Top()) {
+		t.Fatalf("presence = %s, want maybe/top", gotPresence)
+	}
+}
+
+func TestSignatureProviderElementOfFallsBackToDeclaredReturnTypeWhenParamRefUnresolved(t *testing.T) {
+	reg := product.DefaultRegistry()
+	point := cfg.Point(12)
+	provider := SignatureProvider(SignatureProviderConfig{
+		Signatures: signatureMap{
+			"f": {
+				Type:   typ.Func().Param("items", typ.NewArray(typ.String)).Returns(typ.Number).Build(),
+				Effect: effect.Empty.With(returns.Return{ReturnIndex: 0, Transform: returns.ElementOf{Source: effect.ParamRef{Index: 1}}}),
+			},
+		},
+		NameFor: StaticName("f"),
+		Facts:   signatureProviderFacts(point, []factflow.ValueSource{{Kind: factflow.ValueSourceExpression}}),
 	})
 
 	got := provider(transfer.NodeContext{Registry: reg, Point: point}, factflow.NewCallProducer(factflow.CallProducerConfig{}), state.State{}, nil)
