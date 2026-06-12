@@ -121,6 +121,27 @@ func TestAnnotationAssignabilityUsesSolvedTypeTestState(t *testing.T) {
 	}
 }
 
+func TestAnnotationAssignabilityUsesTypeIsWrapperErrorBranchState(t *testing.T) {
+	diags := runDiagnostics(t, `
+		type Point = {x: number, y: number}
+		local function isPoint(x)
+			return Point:is(x)
+		end
+		function validate(data: any)
+			local val, err = isPoint(data)
+			if err ~= nil then
+				local p: Point = val
+			end
+		end
+	`)
+	if len(diags) != 1 {
+		t.Fatalf("diagnostics = %d, want 1: %#v", len(diags), diags)
+	}
+	if d := diags[0]; d.Code != CodeAssignmentType || !strings.Contains(d.Message, "nil") {
+		t.Fatalf("diagnostic = %#v, want nil-to-Point assignment error", d)
+	}
+}
+
 func TestAnnotationAssignabilityUsesDeclaredLocalValueForTypeTestState(t *testing.T) {
 	diags := runDiagnostics(t, `
 		local y: string | number = 42

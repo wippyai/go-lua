@@ -64,7 +64,8 @@ end
 	branchPoint := requireStmtPoints(t, built, ifStmt, 1)[0]
 
 	var found bool
-	for _, refinement := range facts.BranchRefinements(branchPoint) {
+	refinements := facts.BranchRefinements(branchPoint)
+	for _, refinement := range refinements {
 		if !refinement.TargetPath().Equal(dataPath) {
 			continue
 		}
@@ -78,6 +79,103 @@ end
 	if !found {
 		t.Fatalf("missing true-edge Point refinement for %s at branch %d", dataPath, branchPoint)
 	}
+}
+
+func TestLowerTypeIsDirectConditionPublishesArgumentEvidence(t *testing.T) {
+	reg := standard.Registry()
+	stmts, bindings, built, result := parseSemanticChunk(t, `
+type Point = {x: number, y: number}
+local data: any = {}
+if Point:is(data) then
+end
+`)
+	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings})
+	dataStmt := mustLocalStmt(t, stmts, 1)
+	ifStmt := mustIfStmt(t, stmts, 2)
+	dataPath := path.NewPath(mustLocalAt(t, bindings, dataStmt, 0), "data")
+	branchPoint := requireStmtPoints(t, built, ifStmt, 2)[1]
+
+	refinements := facts.BranchRefinements(branchPoint)
+	var found bool
+	for _, refinement := range refinements {
+		if !refinement.TargetPath().Equal(dataPath) {
+			continue
+		}
+		value, ok := refinement.TrueValue()
+		if !ok {
+			continue
+		}
+		assertProductPointLike(t, reg, refinementConstraint(t, value))
+		found = true
+	}
+	if !found {
+		t.Fatalf("missing true-edge Point refinement for %s at branch %d", dataPath, branchPoint)
+	}
+}
+
+func TestLowerTypeIsNegatedConditionPublishesInvertedArgumentEvidence(t *testing.T) {
+	reg := standard.Registry()
+	stmts, bindings, built, result := parseSemanticChunk(t, `
+type Point = {x: number, y: number}
+local data: any = {}
+if not Point:is(data) then
+end
+`)
+	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings})
+	dataStmt := mustLocalStmt(t, stmts, 1)
+	ifStmt := mustIfStmt(t, stmts, 2)
+	dataPath := path.NewPath(mustLocalAt(t, bindings, dataStmt, 0), "data")
+	branchPoint := requireStmtPoints(t, built, ifStmt, 2)[1]
+
+	refinements := facts.BranchRefinements(branchPoint)
+	var found bool
+	for _, refinement := range refinements {
+		if !refinement.TargetPath().Equal(dataPath) {
+			continue
+		}
+		if _, ok := refinement.TrueValue(); ok {
+			t.Fatalf("unexpected true-edge Point refinement for negated Type:is")
+		}
+		value, ok := refinement.FalseValue()
+		if !ok {
+			continue
+		}
+		assertProductPointLike(t, reg, refinementConstraint(t, value))
+		found = true
+	}
+	if !found {
+		t.Fatalf("missing false-edge Point refinement for %s at branch %d: %#v", dataPath, branchPoint, refinements)
+	}
+}
+
+func TestLowerTypeIsOpenTailReturnPublishesSlotsAndPresenceRelation(t *testing.T) {
+	reg := standard.Registry()
+	stmts, bindings, built, result := parseSemanticChunk(t, `
+type Point = {x: number, y: number}
+local data: any = {}
+return Point:is(data)
+`)
+	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings})
+	ret := stmts[2].(*ast.ReturnStmt)
+	points := requireStmtPoints(t, built, ret, 2)
+	callPoint := points[0]
+	returnPoint := points[1]
+
+	values := facts.CallResultValues(callPoint)
+	if len(values) != 2 {
+		t.Fatalf("Type:is call result values = %d, want 2: %#v", len(values), values)
+	}
+	returnFact, ok := facts.Return(returnPoint)
+	if !ok {
+		t.Fatalf("missing lowered return fact")
+	}
+	sources := returnFact.Sources()
+	if len(sources) != 2 || sources[0].ResultIndex != 0 || sources[1].ResultIndex != 1 {
+		t.Fatalf("return sources = %#v, want expanded Type:is result slots", sources)
+	}
+	relations := facts.ReturnPresenceRelations(returnPoint)
+	assertReturnPresenceRelation(t, relations, 1, presence.Present(), 0, presence.Absent())
+	assertReturnPresenceRelation(t, relations, 1, presence.Absent(), 0, presence.Present())
 }
 
 func TestLowerTypeCastCallIgnoresValueShadow(t *testing.T) {
@@ -130,4 +228,25 @@ func assertProductPointLike(t *testing.T, reg *axis.Registry, value product.Valu
 	if got := product.Get(reg, value, runtimekind.Key); !runtimekind.Equal(got, runtimekind.Singleton(runtimekind.Table)) {
 		t.Fatalf("runtime kind = %s, want table", got)
 	}
+}
+
+func assertReturnPresenceRelation(
+	t *testing.T,
+	relations []factflow.ReturnPresenceRelation,
+	triggerIndex int,
+	triggerPresence presence.Value,
+	targetIndex int,
+	targetPresence presence.Value,
+) {
+	t.Helper()
+	for _, relation := range relations {
+		if relation.TriggerIndex() == triggerIndex &&
+			presence.Equal(relation.TriggerPresence(), triggerPresence) &&
+			relation.TargetIndex() == targetIndex &&
+			presence.Equal(relation.TargetPresence(), targetPresence) {
+			return
+		}
+	}
+	t.Fatalf("missing return presence relation %d/%s -> %d/%s in %#v",
+		triggerIndex, triggerPresence, targetIndex, targetPresence, relations)
 }

@@ -52,6 +52,10 @@ type returnValueSourceReader interface {
 	ReturnValueSources(cfg.Point) ([]factflow.ValueSource, bool)
 }
 
+type returnPresenceRelationReader interface {
+	ReturnPresenceRelations(cfg.Point) []factflow.ReturnPresenceRelation
+}
+
 type expressionConditionReader interface {
 	ExpressionCondition(factflow.ExprRef) (factflow.ExpressionCondition, bool)
 }
@@ -73,6 +77,7 @@ func FromResult(result ResultReader) Summary {
 		NormalReturnParamConditions:     projectNormalReturnParamConditions(reg, result),
 		NormalReturnParamEqualities:     projectNormalReturnParamEqualities(reg, result),
 		ReturnConditionParamRefinements: projectReturnConditionParamRefinements(reg, result),
+		ReturnPresenceRelations:         projectReturnPresenceRelations(result),
 	}
 
 	arity := 0
@@ -246,7 +251,7 @@ func projectReturnConditionParamRefinements(
 			continue
 		}
 		for returnIndex, source := range sources {
-			if source.Kind != factflow.ValueSourceExpression || !source.HasExpr {
+			if !returnConditionSource(source) || !source.HasExpr {
 				continue
 			}
 			condition, ok := conditionReader.ExpressionCondition(source.ExprRef)
@@ -258,6 +263,32 @@ func projectReturnConditionParamRefinements(
 		}
 	}
 	return normalizeReturnConditionParamRefinements(reg, out)
+}
+
+func returnConditionSource(source factflow.ValueSource) bool {
+	if source.Kind == factflow.ValueSourceExpression {
+		return true
+	}
+	return source.Kind == factflow.ValueSourceCall && source.ResultIndex == 0
+}
+
+func projectReturnPresenceRelations(result ResultReader) []ReturnPresenceRelation {
+	reader, ok := result.(returnPresenceRelationReader)
+	if !ok {
+		return nil
+	}
+	var out []ReturnPresenceRelation
+	for _, point := range result.ReturnPoints() {
+		for _, relation := range reader.ReturnPresenceRelations(point) {
+			out = append(out, ReturnPresenceRelation{
+				TriggerIndex:    relation.TriggerIndex(),
+				TriggerPresence: relation.TriggerPresence(),
+				TargetIndex:     relation.TargetIndex(),
+				TargetPresence:  relation.TargetPresence(),
+			})
+		}
+	}
+	return normalizeReturnPresenceRelations(out)
 }
 
 func appendReturnConditionParamRefinements(

@@ -605,6 +605,100 @@ func TestWithSummaryPostconditionsLowersReturnConditionToBranchRefinement(t *tes
 	}
 }
 
+func TestWithSummaryPostconditionsLowersReturnPresenceRelations(t *testing.T) {
+	reg := standard.Registry()
+	graph := cfg.New()
+	call := graph.AddNode(cfg.NodeCall)
+	assignValue := graph.AddNode(cfg.NodeAssign)
+	assignErr := graph.AddNode(cfg.NodeAssign)
+	branch := graph.AddNode(cfg.NodeBranch)
+	thenPoint := graph.AddNode(cfg.NodeNoop)
+	elsePoint := graph.AddNode(cfg.NodeNoop)
+	graph.AddEdge(graph.Entry(), call, false)
+	graph.AddEdge(call, assignValue, false)
+	graph.AddEdge(assignValue, assignErr, false)
+	graph.AddEdge(assignErr, branch, false)
+	graph.AddEdge(branch, thenPoint, true)
+	graph.AddEdge(branch, elsePoint, false)
+	graph.AddEdge(thenPoint, graph.Exit(), false)
+	graph.AddEdge(elsePoint, graph.Exit(), false)
+
+	callee := symbol.ID(851)
+	value := symbol.ID(852)
+	err := symbol.ID(853)
+	valuePath := path.NewPath(value, "value")
+	errPath := path.NewPath(err, "err")
+	summaryKey := summary.DefaultSummaryKey(ref.FuncRef{Kind: ref.KindSymbol, ID: 854})
+	facts := factflow.NewFacts(factflow.FactsInput{
+		CallSites: map[cfg.Point]factflow.CallSite{
+			call: factflow.NewCallSite(factflow.CallSiteConfig{
+				Context:      factflow.CallSiteContextAssignmentSource,
+				CalleeSymbol: callee,
+				ResultTargets: []factflow.CallResultTarget{
+					factflow.NewCallResultTarget(factflow.CallResultTargetLocalAssignment, 0, 0, value, valuePath),
+					factflow.NewCallResultTarget(factflow.CallResultTargetLocalAssignment, 1, 1, err, errPath),
+				},
+			}),
+		},
+		LocalAssignments: map[cfg.Point]factflow.RootAssignment{
+			assignValue: factflow.NewRootAssignment(value, valuePath, factflow.ValueSource{
+				Kind:         factflow.ValueSourceCall,
+				TargetIndex:  0,
+				ResultIndex:  0,
+				CallPoint:    call,
+				HasCallPoint: true,
+			}),
+			assignErr: factflow.NewRootAssignment(err, errPath, factflow.ValueSource{
+				Kind:         factflow.ValueSourceCall,
+				TargetIndex:  1,
+				ResultIndex:  1,
+				CallPoint:    call,
+				HasCallPoint: true,
+			}),
+		},
+		BranchRefinements: map[cfg.Point]factflow.BranchRefinement{
+			branch: factflow.NewBranchRefinement(
+				errPath,
+				factflow.NewValueConstraint(product.NewWithPresence(reg, product.ShapeTop, presence.Present())), true,
+				factflow.NewValueConstraint(product.NewWithPresence(reg, product.ShapeTop, presence.Absent())), true,
+			),
+		},
+	})
+
+	got := WithSummaryPostconditions(SummaryPostconditionConfig{
+		Graph:    graph,
+		Registry: reg,
+		Summaries: summary.NewSnapshot(reg, summary.EntrySummary{
+			Key: summaryKey,
+			Summary: summary.Summary{
+				ReturnPresenceRelations: []summary.ReturnPresenceRelation{
+					{
+						TriggerIndex:    1,
+						TriggerPresence: presence.Present(),
+						TargetIndex:     0,
+						TargetPresence:  presence.Absent(),
+					},
+					{
+						TriggerIndex:    1,
+						TriggerPresence: presence.Absent(),
+						TargetIndex:     0,
+						TargetPresence:  presence.Present(),
+					},
+				},
+			},
+		}),
+		KeyFor: ByCalleeSymbol(map[symbol.ID]summary.SummaryKey{callee: summaryKey}),
+		Facts:  facts,
+	})
+
+	relations := got.BranchPresenceRelations(branch)
+	if len(relations) != 2 {
+		t.Fatalf("branch relations = %d, want 2: %#v", len(relations), relations)
+	}
+	assertBranchPresenceRelation(t, relations, errPath, presence.Present(), valuePath, presence.Absent())
+	assertBranchPresenceRelation(t, relations, errPath, presence.Absent(), valuePath, presence.Present())
+}
+
 func TestCallTargetForResultUsesExplicitTargetResultIndex(t *testing.T) {
 	target := symbol.ID(705)
 	targetPath := path.NewPath(target, "value")

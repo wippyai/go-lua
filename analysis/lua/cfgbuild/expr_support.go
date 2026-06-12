@@ -54,7 +54,7 @@ func (b *builder) appendValueListCalls(state flowState, stmt ast.Stmt, exprs []a
 }
 
 func (b *builder) hasUnsupportedConditionExpr(expr ast.Expr) bool {
-	if call, ok := valueexpr.Call(expr); ok {
+	if call, _, ok := branchcond.PredicateCall(expr); ok {
 		return b.hasUnsupportedExprInCall(call)
 	}
 	if b.conditionExprCovered(expr) {
@@ -64,7 +64,7 @@ func (b *builder) hasUnsupportedConditionExpr(expr ast.Expr) bool {
 }
 
 func (b *builder) appendConditionCall(state flowState, stmt ast.Stmt, expr ast.Expr) (flowState, cfg.Point, bool) {
-	if _, ok := valueexpr.Call(expr); !ok {
+	if _, _, ok := branchcond.PredicateCall(expr); !ok {
 		return state, 0, false
 	}
 	next := b.appendCall(state, stmt)

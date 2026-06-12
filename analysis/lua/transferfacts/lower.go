@@ -41,9 +41,11 @@ func Lower(result *semantics.Result, graph cfg.Graph, config Config) factflow.Fa
 		PathDescendantInvalidations: make(map[cfg.Point]factflow.PathDescendantInvalidation),
 		BranchRefinements:           make(map[cfg.Point]factflow.BranchRefinement),
 		BranchRefinementSets:        make(map[cfg.Point]factflow.BranchRefinementSet),
+		BranchPresenceRelations:     make(map[cfg.Point]factflow.BranchPresenceRelationSet),
 		BranchPathRelations:         make(map[cfg.Point]factflow.BranchPathRelationSet),
 		PostconditionRefinements:    make(map[cfg.Point]factflow.PostconditionRefinementSet),
 		CallResultValues:            make(map[cfg.Point]factflow.CallResultValueSet),
+		ReturnPresenceRelations:     make(map[cfg.Point]factflow.ReturnPresenceRelationSet),
 		Returns:                     make(map[cfg.Point]factflow.Return),
 		Calls:                       make(map[cfg.Point]factflow.CallProducer),
 		CallSites:                   make(map[cfg.Point]factflow.CallSite),
@@ -72,7 +74,10 @@ func Lower(result *semantics.Result, graph cfg.Graph, config Config) factflow.Fa
 			}
 		}
 		if fact, ok := result.Return(point); ok {
-			input.Returns[point] = factflow.NewReturn(l.valueSources(fact.Sources))
+			input.Returns[point] = factflow.NewReturn(l.returnValueSources(fact.Sources, result))
+			if relations := l.typeIsReturnPresenceRelations(fact.Sources, result); len(relations) != 0 {
+				input.ReturnPresenceRelations[point] = factflow.NewReturnPresenceRelationSet(relations...)
+			}
 			for _, source := range fact.Sources {
 				l.addAssertionOverlaysForSource(&input, source)
 			}
@@ -90,7 +95,10 @@ func Lower(result *semantics.Result, graph cfg.Graph, config Config) factflow.Fa
 				appendPostconditionRefinements(input.PostconditionRefinements, point, lowered)
 			}
 			if lowered, ok := l.typeCastCallResultValue(fact); ok {
-				input.CallResultValues[point] = factflow.NewCallResultValueSet(lowered)
+				appendCallResultValues(input.CallResultValues, point, lowered)
+			}
+			if lowered := l.typeIsCallResultValues(fact); len(lowered) != 0 {
+				appendCallResultValues(input.CallResultValues, point, lowered...)
 			}
 			if lowered, ok := l.callProducer(fact); ok {
 				input.Calls[point] = lowered

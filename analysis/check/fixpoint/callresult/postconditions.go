@@ -74,7 +74,8 @@ func WithSummaryPostconditions(config SummaryPostconditionConfig) factflow.Facts
 	facts := summaryPostconditionFacts(config)
 	out := config.Facts.WithPostconditionRefinements(facts.refinements)
 	out = out.WithPostconditionPathRelations(facts.pathRelations)
-	return out.WithBranchRefinementSets(facts.branchRefinements)
+	out = out.WithBranchRefinementSets(facts.branchRefinements)
+	return out.WithBranchPresenceRelations(facts.branchPresenceRelations)
 }
 
 func signaturePostconditionFacts(config SignaturePostconditionConfig) map[cfg.Point]factflow.PostconditionRefinementSet {
@@ -130,16 +131,18 @@ func signatureNoNormalReturnFacts(config SignatureNoNormalReturnConfig) map[cfg.
 }
 
 type summaryPostconditionFactsResult struct {
-	refinements       map[cfg.Point]factflow.PostconditionRefinementSet
-	pathRelations     map[cfg.Point]factflow.PostconditionPathRelationSet
-	branchRefinements map[cfg.Point]factflow.BranchRefinementSet
+	refinements             map[cfg.Point]factflow.PostconditionRefinementSet
+	pathRelations           map[cfg.Point]factflow.PostconditionPathRelationSet
+	branchRefinements       map[cfg.Point]factflow.BranchRefinementSet
+	branchPresenceRelations map[cfg.Point]factflow.BranchPresenceRelationSet
 }
 
 func summaryPostconditionFacts(config SummaryPostconditionConfig) summaryPostconditionFactsResult {
 	out := summaryPostconditionFactsResult{
-		refinements:       make(map[cfg.Point]factflow.PostconditionRefinementSet),
-		pathRelations:     make(map[cfg.Point]factflow.PostconditionPathRelationSet),
-		branchRefinements: make(map[cfg.Point]factflow.BranchRefinementSet),
+		refinements:             make(map[cfg.Point]factflow.PostconditionRefinementSet),
+		pathRelations:           make(map[cfg.Point]factflow.PostconditionPathRelationSet),
+		branchRefinements:       make(map[cfg.Point]factflow.BranchRefinementSet),
+		branchPresenceRelations: make(map[cfg.Point]factflow.BranchPresenceRelationSet),
 	}
 	for _, point := range config.Graph.RPO() {
 		site, ok := config.Facts.CallSite(point)
@@ -188,6 +191,9 @@ func summaryPostconditionFacts(config SummaryPostconditionConfig) summaryPostcon
 				appendBranchRefinements(out.branchRefinements, branch, lowered)
 			}
 		}
+		for _, relation := range got.ReturnPresenceRelations {
+			addSummaryReturnPresenceRelation(config, out.branchPresenceRelations, point, site, relation)
+		}
 	}
 	if len(out.refinements) == 0 {
 		out.refinements = nil
@@ -197,6 +203,9 @@ func summaryPostconditionFacts(config SummaryPostconditionConfig) summaryPostcon
 	}
 	if len(out.branchRefinements) == 0 {
 		out.branchRefinements = nil
+	}
+	if len(out.branchPresenceRelations) == 0 {
+		out.branchPresenceRelations = nil
 	}
 	return out
 }
@@ -388,6 +397,61 @@ func returnConditionSummaryBranchRefinement(
 		return branch, factflow.NewBranchRefinement(targetPath, value, true, factflow.ValueRefinement{}, false), true
 	}
 	return branch, factflow.NewBranchRefinement(targetPath, factflow.ValueRefinement{}, false, value, true), true
+}
+
+func addSummaryReturnPresenceRelation(
+	config SummaryPostconditionConfig,
+	out map[cfg.Point]factflow.BranchPresenceRelationSet,
+	callPoint cfg.Point,
+	site factflow.CallSite,
+	relation summary.ReturnPresenceRelation,
+) {
+	triggerTarget, ok := callSiteTargetForResult(site, relation.TriggerIndex)
+	if !ok || !relatableCallTarget(triggerTarget) {
+		return
+	}
+	target, ok := callSiteTargetForResult(site, relation.TargetIndex)
+	if !ok || !relatableCallTarget(target) {
+		return
+	}
+	triggerAssign, ok := callResultAssignmentPoint(config.Graph, config.Facts, callPoint, triggerTarget, relation.TriggerIndex)
+	if !ok {
+		return
+	}
+	targetAssign, ok := callResultAssignmentPoint(config.Graph, config.Facts, callPoint, target, relation.TargetIndex)
+	if !ok {
+		return
+	}
+	targets := errorReturnTargets{
+		valueTarget: target,
+		errorTarget: triggerTarget,
+		valueAssign: targetAssign,
+		errorAssign: triggerAssign,
+		establish:   laterPoint(config.Graph, targetAssign, triggerAssign),
+	}
+	activeIn := relationActiveIn(config.Graph, config.Facts, targets)
+	for _, branch := range config.Graph.RPO() {
+		if !activeIn[branch] || !config.Graph.IsBranch(branch) || !branchRefinesPath(config.Facts, branch, triggerTarget) {
+			continue
+		}
+		appendBranchPresenceRelations(out, branch,
+			factflow.NewBranchPresenceRelation(
+				triggerTarget.TargetPath(),
+				relation.TriggerPresence,
+				target.TargetPath(),
+				relation.TargetPresence,
+			),
+		)
+	}
+}
+
+func callSiteTargetForResult(site factflow.CallSite, resultIndex int) (factflow.CallResultTarget, bool) {
+	for _, target := range site.ResultTargets() {
+		if target.ResultIndex() == resultIndex {
+			return target, true
+		}
+	}
+	return factflow.CallResultTarget{}, false
 }
 
 func substituteSummaryParamPath(

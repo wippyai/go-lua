@@ -610,6 +610,46 @@ end
 	assertConcreteTypeWitness(t, reg, got)
 }
 
+func TestTypeIsWrapperErrorBranchMakesReturnedValueAbsent(t *testing.T) {
+	reg := standard.Registry()
+	stmts := parseChunk(t, `
+type Point = {x: number, y: number}
+local function isPoint(x)
+	return Point:is(x)
+end
+function validate(data: any)
+	local val, err = isPoint(data)
+	if err ~= nil then
+		local failed = val
+	end
+end
+`)
+
+	parent, err := CheckChunk(stmts, Config{Registry: reg})
+	if err != nil {
+		t.Fatalf("CheckChunk: %v", err)
+	}
+	functions := parent.FunctionResults()
+	if len(functions) != 2 {
+		t.Fatalf("function results = %d, want 2", len(functions))
+	}
+	result := functions[1]
+	fn := result.Function()
+	typeIsStmt := fn.Stmts[0].(*ast.LocalAssignStmt)
+	val := mustLocalAt(t, result, typeIsStmt, 0)
+	ifStmt := fn.Stmts[1].(*ast.IfStmt)
+	thenLocal := ifStmt.Then[0].(*ast.LocalAssignStmt)
+	thenPoint := requireLocalAssignmentPoint(t, result, thenLocal, 0)
+
+	got, ok := result.SymbolValueAtBoundary(thenPoint, val)
+	if !ok {
+		t.Fatalf("missing val at error branch boundary")
+	}
+	if gotPresence := product.PresenceOf(got); !presence.Equal(gotPresence, presence.Absent()) {
+		t.Fatalf("val presence on error branch = %s, want absent; value=%v", gotPresence, got)
+	}
+}
+
 func TestCheckChunkUserExpressionValueOverridesDefaultStaticReadProjector(t *testing.T) {
 	reg := standard.Registry()
 	stmts := parseChunk(t, `local out = t.name`)

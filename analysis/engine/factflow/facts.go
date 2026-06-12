@@ -17,6 +17,7 @@ type FactsInput struct {
 	PostconditionRefinements    map[cfg.Point]PostconditionRefinementSet
 	PostconditionPathRelations  map[cfg.Point]PostconditionPathRelationSet
 	CallResultValues            map[cfg.Point]CallResultValueSet
+	ReturnPresenceRelations     map[cfg.Point]ReturnPresenceRelationSet
 	Returns                     map[cfg.Point]Return
 	Calls                       map[cfg.Point]CallProducer
 	CallSites                   map[cfg.Point]CallSite
@@ -40,6 +41,7 @@ type Facts struct {
 	postconditionRefinements    map[cfg.Point]PostconditionRefinementSet
 	postconditionPathRelations  map[cfg.Point]PostconditionPathRelationSet
 	callResultValues            map[cfg.Point]CallResultValueSet
+	returnPresenceRelations     map[cfg.Point]ReturnPresenceRelationSet
 	returns                     map[cfg.Point]Return
 	calls                       map[cfg.Point]CallProducer
 	callSites                   map[cfg.Point]CallSite
@@ -64,6 +66,7 @@ func NewFacts(input FactsInput) Facts {
 		postconditionRefinements:    copyPostconditionRefinementMap(input.PostconditionRefinements),
 		postconditionPathRelations:  copyPostconditionPathRelationMap(input.PostconditionPathRelations),
 		callResultValues:            copyCallResultValueMap(input.CallResultValues),
+		returnPresenceRelations:     copyReturnPresenceRelationMap(input.ReturnPresenceRelations),
 		returns:                     copyReturnMap(input.Returns),
 		calls:                       copyCallProducerMap(input.Calls),
 		callSites:                   copyCallSiteMap(input.CallSites),
@@ -226,6 +229,14 @@ func (f Facts) PostconditionPathRelations(point cfg.Point) []PostconditionPathRe
 func (f Facts) CallResultValues(point cfg.Point) []CallResultValue {
 	if set, ok := f.callResultValues[point]; ok {
 		return set.Values()
+	}
+	return nil
+}
+
+// ReturnPresenceRelations returns return-slot presence relations at point.
+func (f Facts) ReturnPresenceRelations(point cfg.Point) []ReturnPresenceRelation {
+	if set, ok := f.returnPresenceRelations[point]; ok {
+		return set.Relations()
 	}
 	return nil
 }

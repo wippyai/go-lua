@@ -5,6 +5,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/lua/pathexpr"
+	"github.com/wippyai/go-lua/analysis/lua/valueexpr"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
 
@@ -30,6 +31,20 @@ type Check struct {
 	OtherPath     path.Path
 	TypeName      string
 	LiteralString string
+}
+
+// PredicateCall returns the direct call whose boolean result selects a branch.
+// The negated flag is true when the branch condition is `not call(...)`.
+func PredicateCall(expr ast.Expr) (*ast.FuncCallExpr, bool, bool) {
+	switch expr := valueexpr.AssertionInner(expr).(type) {
+	case *ast.FuncCallExpr:
+		return expr, false, true
+	case *ast.UnaryNotOpExpr:
+		call, ok := valueexpr.Call(expr.Expr)
+		return call, true, ok
+	default:
+		return nil, false, false
+	}
 }
 
 func Normalize(expr ast.Expr, bindings *bind.Result) Check {

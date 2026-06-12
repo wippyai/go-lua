@@ -176,6 +176,9 @@ func boundaryValueAdmissible(result *check.Result, value product.Value, want typ
 		return false
 	}
 	reg := result.Registry()
+	if presence.Equal(product.PresenceOf(value), presence.Absent()) {
+		return subtype.IsSubtype(typ.Nil, want)
+	}
 	if gotEvidence := product.Get(reg, value, evidence.Key); evidence.Equal(gotEvidence, evidence.GradualTop()) {
 		return true
 	}
@@ -195,6 +198,9 @@ func concreteBoundaryType(result *check.Result, value product.Value) (typ.Type, 
 		return nil, false
 	}
 	reg := result.Registry()
+	if presence.Equal(product.PresenceOf(value), presence.Absent()) {
+		return typ.Nil, true
+	}
 	if witness := product.Get(reg, value, typewitness.Key); !witness.IsTop() {
 		return witness.Type()
 	}

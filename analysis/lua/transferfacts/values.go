@@ -22,6 +22,40 @@ func (l *lowerer) valueSources(sources []sourceprovenance.ASTSource) []factflow.
 	return out
 }
 
+func (l *lowerer) returnValueSources(sources []sourceprovenance.ASTSource, result *semantics.Result) []factflow.ValueSource {
+	if len(sources) == 0 {
+		return nil
+	}
+	out := make([]factflow.ValueSource, 0, len(sources))
+	for _, source := range sources {
+		for _, expanded := range l.expandTypeIsOpenTailReturnSource(source, result) {
+			out = append(out, l.valueSource(expanded))
+		}
+	}
+	return out
+}
+
+func (l *lowerer) expandTypeIsOpenTailReturnSource(source sourceprovenance.ASTSource, result *semantics.Result) []sourceprovenance.ASTSource {
+	if source.Kind != factflow.ValueSourceCall || !source.OpenTail || !source.Expanded ||
+		!source.HasCallPoint || result == nil {
+		return []sourceprovenance.ASTSource{source}
+	}
+	fact, ok := result.Call(source.CallPoint)
+	if !ok {
+		return []sourceprovenance.ASTSource{source}
+	}
+	if _, _, ok := l.typeIsCall(fact); !ok {
+		return []sourceprovenance.ASTSource{source}
+	}
+	value := source
+	value.OpenTail = false
+	errorSource := source
+	errorSource.TargetIndex = source.TargetIndex + 1
+	errorSource.ResultIndex = source.ResultIndex + 1
+	errorSource.OpenTail = false
+	return []sourceprovenance.ASTSource{value, errorSource}
+}
+
 func (l *lowerer) valueSource(source sourceprovenance.ASTSource) factflow.ValueSource {
 	exprRef, hasExpr := l.valueSourceExprRef(source)
 	if hasExpr {
@@ -125,6 +159,13 @@ func (l *lowerer) addExpressionCondition(ref factflow.ExprRef, expr ast.Expr) {
 		}
 		if value, ok := refinement.TrueValue(); ok {
 			trueRefinements = append(trueRefinements, factflow.NewPostconditionRefinement(refinement.TargetPath(), value))
+		}
+	}
+	if refinement, returnValue, ok := l.typeIsExpressionConditionRefinement(expr); ok {
+		if returnValue {
+			trueRefinements = append(trueRefinements, refinement)
+		} else {
+			falseRefinements = append(falseRefinements, refinement)
 		}
 	}
 	check := branchcond.Normalize(expr, l.bindings)

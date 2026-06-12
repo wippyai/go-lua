@@ -382,7 +382,7 @@ func refineDeclaredTypeWithValue(result *check.Result, declared typ.Type, value 
 			out = withoutNil
 		}
 	case presence.Equal(p, presence.Absent()):
-		out = typ.Nil
+		return typ.Nil, true
 	}
 	if result != nil && result.Registry() != nil {
 		origin := product.Get(result.Registry(), value, variantorigin.Key)

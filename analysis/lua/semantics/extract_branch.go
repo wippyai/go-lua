@@ -11,7 +11,7 @@ func (r *Result) extractBranch(stmt ast.Stmt, kind BranchKind, condition ast.Exp
 	if len(points) == 0 {
 		return nil
 	}
-	calls := topLevelValueListCalls([]ast.Expr{condition})
+	calls := branchConditionCalls(condition)
 	if len(points) != len(calls)+1 {
 		return ErrPointMismatch
 	}
@@ -36,4 +36,12 @@ func (r *Result) extractBranch(stmt ast.Stmt, kind BranchKind, condition ast.Exp
 	}
 	r.branches[branchPoint] = fact
 	return nil
+}
+
+func branchConditionCalls(condition ast.Expr) []indexedCall {
+	call, _, ok := branchcond.PredicateCall(condition)
+	if !ok {
+		return nil
+	}
+	return []indexedCall{{index: 0, call: call}}
 }

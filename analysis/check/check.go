@@ -295,6 +295,13 @@ func (r *Result) ReturnValueSources(point cfg.Point) ([]factflow.ValueSource, bo
 	return fact.Sources(), true
 }
 
+func (r *Result) ReturnPresenceRelations(point cfg.Point) []factflow.ReturnPresenceRelation {
+	if r == nil {
+		return nil
+	}
+	return r.facts.ReturnPresenceRelations(point)
+}
+
 func (r *Result) ExpressionCondition(ref factflow.ExprRef) (factflow.ExpressionCondition, bool) {
 	if r == nil {
 		return factflow.ExpressionCondition{}, false

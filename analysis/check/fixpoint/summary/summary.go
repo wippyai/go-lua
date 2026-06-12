@@ -51,6 +51,7 @@ type Summary struct {
 	NormalReturnParamConditions     []ParamCondition
 	NormalReturnParamEqualities     []ParamEquality
 	ReturnConditionParamRefinements []ReturnConditionParamRefinement
+	ReturnPresenceRelations         []ReturnPresenceRelation
 }
 
 // ParamCondition is a summary-local truthiness condition for one parameter on
@@ -96,11 +97,13 @@ func Normalize(reg *axis.Registry, s Summary) Summary {
 		reg,
 		out.ReturnConditionParamRefinements,
 	)
+	out.ReturnPresenceRelations = normalizeReturnPresenceRelations(out.ReturnPresenceRelations)
 	if len(out.Returns) == 0 &&
 		len(out.NormalReturnParams) == 0 &&
 		len(out.NormalReturnParamConditions) == 0 &&
 		len(out.NormalReturnParamEqualities) == 0 &&
-		len(out.ReturnConditionParamRefinements) == 0 {
+		len(out.ReturnConditionParamRefinements) == 0 &&
+		len(out.ReturnPresenceRelations) == 0 {
 		return Summary{}
 	}
 	return out
@@ -129,7 +132,8 @@ func Equal(reg *axis.Registry, a, b Summary) bool {
 		}
 	}
 	return paramEqualitiesSummaryEqual(reg, a, b) &&
-		returnConditionParamRefinementsEqual(reg, a.ReturnConditionParamRefinements, b.ReturnConditionParamRefinements)
+		returnConditionParamRefinementsEqual(reg, a.ReturnConditionParamRefinements, b.ReturnConditionParamRefinements) &&
+		returnPresenceRelationsEqual(a.ReturnPresenceRelations, b.ReturnPresenceRelations)
 }
 
 // LessOrEq reports whether a is less than or equal to b componentwise. Missing
@@ -161,7 +165,8 @@ func LessOrEq(reg *axis.Registry, a, b Summary) bool {
 		}
 	}
 	return paramEqualitiesSummaryLessOrEq(reg, a, b) &&
-		returnConditionParamRefinementsLessOrEq(reg, a.ReturnConditionParamRefinements, b.ReturnConditionParamRefinements)
+		returnConditionParamRefinementsLessOrEq(reg, a.ReturnConditionParamRefinements, b.ReturnConditionParamRefinements) &&
+		returnPresenceRelationsLessOrEq(a.ReturnPresenceRelations, b.ReturnPresenceRelations)
 }
 
 // Join returns the componentwise join of a and b. Missing return and
@@ -179,7 +184,8 @@ func Join(reg *axis.Registry, a, b Summary) Summary {
 	}
 	if returns == 0 && params == 0 && conditions == 0 &&
 		len(a.NormalReturnParamEqualities) == 0 && len(b.NormalReturnParamEqualities) == 0 &&
-		len(a.ReturnConditionParamRefinements) == 0 && len(b.ReturnConditionParamRefinements) == 0 {
+		len(a.ReturnConditionParamRefinements) == 0 && len(b.ReturnConditionParamRefinements) == 0 &&
+		len(a.ReturnPresenceRelations) == 0 && len(b.ReturnPresenceRelations) == 0 {
 		return Summary{}
 	}
 	out := Summary{}
@@ -210,6 +216,7 @@ func Join(reg *axis.Registry, a, b Summary) Summary {
 		a.ReturnConditionParamRefinements,
 		b.ReturnConditionParamRefinements,
 	)
+	out.ReturnPresenceRelations = joinReturnPresenceRelations(a.ReturnPresenceRelations, b.ReturnPresenceRelations)
 	return Normalize(reg, out)
 }
 
@@ -228,7 +235,8 @@ func Widen(reg *axis.Registry, prev, next Summary) Summary {
 	}
 	if returns == 0 && params == 0 && conditions == 0 &&
 		len(prev.NormalReturnParamEqualities) == 0 && len(next.NormalReturnParamEqualities) == 0 &&
-		len(prev.ReturnConditionParamRefinements) == 0 && len(next.ReturnConditionParamRefinements) == 0 {
+		len(prev.ReturnConditionParamRefinements) == 0 && len(next.ReturnConditionParamRefinements) == 0 &&
+		len(prev.ReturnPresenceRelations) == 0 && len(next.ReturnPresenceRelations) == 0 {
 		return Summary{}
 	}
 	out := Summary{}
@@ -263,6 +271,7 @@ func Widen(reg *axis.Registry, prev, next Summary) Summary {
 		prev.ReturnConditionParamRefinements,
 		next.ReturnConditionParamRefinements,
 	)
+	out.ReturnPresenceRelations = joinReturnPresenceRelations(prev.ReturnPresenceRelations, next.ReturnPresenceRelations)
 	return Normalize(reg, out)
 }
 
@@ -272,7 +281,8 @@ func (s Summary) Clone() Summary {
 		len(s.NormalReturnParams) == 0 &&
 		len(s.NormalReturnParamConditions) == 0 &&
 		len(s.NormalReturnParamEqualities) == 0 &&
-		len(s.ReturnConditionParamRefinements) == 0 {
+		len(s.ReturnConditionParamRefinements) == 0 &&
+		len(s.ReturnPresenceRelations) == 0 {
 		return Summary{}
 	}
 	out := Summary{}
@@ -293,6 +303,7 @@ func (s Summary) Clone() Summary {
 		copy(out.NormalReturnParamEqualities, s.NormalReturnParamEqualities)
 	}
 	out.ReturnConditionParamRefinements = cloneReturnConditionParamRefinements(s.ReturnConditionParamRefinements)
+	out.ReturnPresenceRelations = cloneReturnPresenceRelations(s.ReturnPresenceRelations)
 	return out
 }
 
@@ -471,7 +482,8 @@ func summaryBottom(s Summary) bool {
 		len(s.NormalReturnParams) == 0 &&
 		len(s.NormalReturnParamConditions) == 0 &&
 		len(s.NormalReturnParamEqualities) == 0 &&
-		len(s.ReturnConditionParamRefinements) == 0
+		len(s.ReturnConditionParamRefinements) == 0 &&
+		len(s.ReturnPresenceRelations) == 0
 }
 
 // Reader reads exact summary keys.
