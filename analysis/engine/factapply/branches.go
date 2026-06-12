@@ -77,3 +77,76 @@ func refinementHasPresence(refinement factflow.ValueRefinement, want presence.Va
 func presenceRefinement(reg *axis.Registry, value presence.Value) factflow.ValueRefinement {
 	return factflow.NewValueConstraint(product.NewWithPresence(reg, product.ShapeTop, value))
 }
+
+type branchPathValue struct {
+	value product.Value
+	write func(state.State, product.Value) state.State
+}
+
+func applyBranchPathRelation(
+	ctx transfer.EdgeContext,
+	resolver *visibility.Resolver,
+	out state.State,
+	relation factflow.BranchPathRelation,
+) state.State {
+	switch relation.Kind() {
+	case factflow.BranchPathRelationEqual:
+		return applyBranchPathEquality(ctx, resolver, out, relation.LeftPath(), relation.RightPath())
+	default:
+		return out
+	}
+}
+
+func applyBranchPathEquality(
+	ctx transfer.EdgeContext,
+	resolver *visibility.Resolver,
+	out state.State,
+	leftPath pathdom.Path,
+	rightPath pathdom.Path,
+) state.State {
+	left, ok := resolveBranchPathValue(ctx, resolver, out, leftPath)
+	if !ok {
+		return out
+	}
+	right, ok := resolveBranchPathValue(ctx, resolver, out, rightPath)
+	if !ok {
+		return out
+	}
+	meet := product.Meet(ctx.Registry, left.value, right.value)
+	out = left.write(out, meet)
+	out = right.write(out, meet)
+	return out
+}
+
+func resolveBranchPathValue(
+	ctx transfer.EdgeContext,
+	resolver *visibility.Resolver,
+	out state.State,
+	targetPath pathdom.Path,
+) (branchPathValue, bool) {
+	if targetPath.Symbol == 0 {
+		return branchPathValue{}, false
+	}
+	if len(targetPath.Segments) == 0 {
+		slot := key.SymbolValue(targetPath.Symbol)
+		return branchPathValue{
+			value: out.ReadValue(ctx.Registry, slot),
+			write: func(s state.State, value product.Value) state.State {
+				return s.WriteValue(ctx.Registry, slot, value)
+			},
+		}, true
+	}
+	if resolver == nil {
+		return branchPathValue{}, false
+	}
+	pathKey := resolver.KeyAt(ctx.Edge.From, targetPath)
+	if pathKey == "" {
+		return branchPathValue{}, false
+	}
+	return branchPathValue{
+		value: out.ReadPathKey(ctx.Registry, pathKey),
+		write: func(s state.State, value product.Value) state.State {
+			return s.WritePathKey(ctx.Registry, pathKey, value)
+		},
+	}, true
+}

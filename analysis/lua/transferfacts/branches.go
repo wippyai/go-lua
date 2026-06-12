@@ -47,6 +47,22 @@ func (l *lowerer) branchRefinement(fact semantics.BranchConditionFact) (factflow
 	}
 }
 
+func (l *lowerer) branchPathRelation(fact semantics.BranchConditionFact) (factflow.BranchPathRelation, bool) {
+	left := fact.Check.Path
+	right := fact.Check.OtherPath
+	if left.IsEmpty() || right.IsEmpty() {
+		return factflow.BranchPathRelation{}, false
+	}
+	switch fact.Check.Kind {
+	case branchcond.CheckPathEqual:
+		return factflow.NewBranchPathEquality(left, right, true, false), true
+	case branchcond.CheckPathNot:
+		return factflow.NewBranchPathEquality(left, right, false, true), true
+	default:
+		return factflow.BranchPathRelation{}, false
+	}
+}
+
 func (l *lowerer) typeBranchRefinement(target path.Path, kind branchcond.CheckKind, typeName string) (factflow.BranchRefinement, bool) {
 	tag, ok := runtimekind.ParseTag(typeName)
 	if !ok {

@@ -12,6 +12,7 @@ type FactsInput struct {
 	BranchRefinements           map[cfg.Point]BranchRefinement
 	BranchRefinementSets        map[cfg.Point]BranchRefinementSet
 	BranchPresenceRelations     map[cfg.Point]BranchPresenceRelationSet
+	BranchPathRelations         map[cfg.Point]BranchPathRelationSet
 	Returns                     map[cfg.Point]Return
 	Calls                       map[cfg.Point]CallProducer
 	CallSites                   map[cfg.Point]CallSite
@@ -29,6 +30,7 @@ type Facts struct {
 	branchRefinements           map[cfg.Point]BranchRefinement
 	branchRefinementSets        map[cfg.Point]BranchRefinementSet
 	branchPresenceRelations     map[cfg.Point]BranchPresenceRelationSet
+	branchPathRelations         map[cfg.Point]BranchPathRelationSet
 	returns                     map[cfg.Point]Return
 	calls                       map[cfg.Point]CallProducer
 	callSites                   map[cfg.Point]CallSite
@@ -47,6 +49,7 @@ func NewFacts(input FactsInput) Facts {
 		branchRefinements:           copyBranchRefinementMap(input.BranchRefinements),
 		branchRefinementSets:        copyBranchRefinementSetMap(input.BranchRefinementSets),
 		branchPresenceRelations:     copyBranchPresenceRelationMap(input.BranchPresenceRelations),
+		branchPathRelations:         copyBranchPathRelationMap(input.BranchPathRelations),
 		returns:                     copyReturnMap(input.Returns),
 		calls:                       copyCallProducerMap(input.Calls),
 		callSites:                   copyCallSiteMap(input.CallSites),
@@ -127,6 +130,14 @@ func (f Facts) BranchRefinements(point cfg.Point) []BranchRefinement {
 // BranchPresenceRelations returns branch-triggered presence relations at point.
 func (f Facts) BranchPresenceRelations(point cfg.Point) []BranchPresenceRelation {
 	if set, ok := f.branchPresenceRelations[point]; ok {
+		return set.Relations()
+	}
+	return nil
+}
+
+// BranchPathRelations returns branch-triggered path relations at point.
+func (f Facts) BranchPathRelations(point cfg.Point) []BranchPathRelation {
+	if set, ok := f.branchPathRelations[point]; ok {
 		return set.Relations()
 	}
 	return nil

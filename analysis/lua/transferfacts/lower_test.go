@@ -161,6 +161,41 @@ func assertLoweredBranchValueRefinement(
 	assertValueRefinement(t, "false edge", falseValue, wantFalse)
 }
 
+func assertLoweredBranchPathEquality(
+	t *testing.T,
+	facts factflow.Facts,
+	point cfg.Point,
+	wantLeft path.Path,
+	wantRight path.Path,
+	wantTrue bool,
+	wantFalse bool,
+) {
+	t.Helper()
+	if wantRight.Less(wantLeft) {
+		wantLeft, wantRight = wantRight, wantLeft
+	}
+	relations := facts.BranchPathRelations(point)
+	if len(relations) != 1 {
+		t.Fatalf("branch path relations at point %d = %d, want 1", point, len(relations))
+	}
+	relation := relations[0]
+	if relation.Kind() != factflow.BranchPathRelationEqual {
+		t.Fatalf("branch path relation kind = %v, want equality", relation.Kind())
+	}
+	if !relation.LeftPath().Equal(wantLeft) {
+		t.Fatalf("branch path relation left = %#v, want %#v", relation.LeftPath(), wantLeft)
+	}
+	if !relation.RightPath().Equal(wantRight) {
+		t.Fatalf("branch path relation right = %#v, want %#v", relation.RightPath(), wantRight)
+	}
+	if relation.ActiveOnEdge(true) != wantTrue || relation.ActiveOnEdge(false) != wantFalse {
+		t.Fatalf("branch path relation active true/false = %v/%v, want %v/%v", relation.ActiveOnEdge(true), relation.ActiveOnEdge(false), wantTrue, wantFalse)
+	}
+	if _, ok := facts.BranchRefinement(point); ok {
+		t.Fatalf("path equality relation at point %d also lowered as branch refinement", point)
+	}
+}
+
 func assertValueRefinement(t *testing.T, label string, got factflow.ValueRefinement, want valueRefinementExpectation) {
 	t.Helper()
 	constraint, hasConstraint := got.Constraint()
@@ -400,6 +435,9 @@ func assertNoPointFact(t *testing.T, facts factflow.Facts, point cfg.Point) {
 	}
 	if _, ok := facts.BranchRefinement(point); ok {
 		t.Fatalf("point %d lowered as branch refinement", point)
+	}
+	if relations := facts.BranchPathRelations(point); len(relations) != 0 {
+		t.Fatalf("point %d lowered as branch path relation", point)
 	}
 	if _, ok := facts.Return(point); ok {
 		t.Fatalf("point %d lowered as return", point)

@@ -122,6 +122,29 @@ func TestDTOConstructorsAndAccessorsCopySlices(t *testing.T) {
 	relationSetRelations[0] = NewBranchPresenceRelation(path.NewPath(symbol.ID(21), "other"), presence.Absent(), path.NewPath(symbol.ID(22), "changed"), presence.Present())
 	assertPathEqual(t, relationSet.Relations()[0].TriggerPath(), path.NewPath(symbol.ID(19), "err"))
 
+	pathRelationLeft := path.NewPath(symbol.ID(24), "left").Field("value")
+	pathRelationRight := path.NewPath(symbol.ID(25), "right").Field("value")
+	pathRelation := NewBranchPathEquality(pathRelationLeft, pathRelationRight, true, false)
+	if pathRelation.Kind() != BranchPathRelationEqual {
+		t.Fatalf("path relation kind = %v, want equality", pathRelation.Kind())
+	}
+	assertPathEqual(t, pathRelation.LeftPath(), pathRelationLeft)
+	assertPathEqual(t, pathRelation.RightPath(), pathRelationRight)
+	if !pathRelation.ActiveOnEdge(true) || pathRelation.ActiveOnEdge(false) {
+		t.Fatalf("path relation active true/false = %v/%v, want true/false", pathRelation.ActiveOnEdge(true), pathRelation.ActiveOnEdge(false))
+	}
+	pathRelationLeft.Segments[0].Name = "changed"
+	pathRelationRight.Segments[0].Name = "changed"
+	assertPathEqual(t, pathRelation.LeftPath(), path.NewPath(symbol.ID(24), "left").Field("value"))
+	assertPathEqual(t, pathRelation.RightPath(), path.NewPath(symbol.ID(25), "right").Field("value"))
+	pathRelationSet := NewBranchPathRelationSet(pathRelation)
+	pathRelationSetRelations := pathRelationSet.Relations()
+	if len(pathRelationSetRelations) != 1 {
+		t.Fatalf("path relation set len = %d, want 1", len(pathRelationSetRelations))
+	}
+	pathRelationSetRelations[0] = NewBranchPathEquality(path.NewPath(symbol.ID(26), "mutated"), path.NewPath(symbol.ID(27), "mutated"), false, true)
+	assertPathEqual(t, pathRelationSet.Relations()[0].LeftPath(), path.NewPath(symbol.ID(24), "left").Field("value"))
+
 	entrySuffix := path.Path{Segments: []segment.Segment{{Kind: segment.SegmentField, Name: "field"}}}
 	entry := NewObjectEntry(entrySuffix, source)
 	entrySuffix.Segments[0].Name = "changed"
@@ -400,6 +423,16 @@ func TestFactsCarrierCopiesAndReturnsFalseForMissingFacts(t *testing.T) {
 				),
 			),
 		},
+		BranchPathRelations: map[cfg.Point]BranchPathRelationSet{
+			point: NewBranchPathRelationSet(
+				NewBranchPathEquality(
+					path.NewPath(symbol.ID(57), "left").Field("value"),
+					path.NewPath(symbol.ID(58), "right").Field("value"),
+					true,
+					false,
+				),
+			),
+		},
 		Returns: map[cfg.Point]Return{
 			point: NewReturn([]ValueSource{source, callSource}),
 		},
@@ -476,6 +509,14 @@ func TestFactsCarrierCopiesAndReturnsFalseForMissingFacts(t *testing.T) {
 			presence.Present(),
 		),
 	)
+	input.BranchPathRelations[point] = NewBranchPathRelationSet(
+		NewBranchPathEquality(
+			path.NewPath(symbol.ID(59), "changed"),
+			path.NewPath(symbol.ID(60), "changed"),
+			false,
+			true,
+		),
+	)
 	input.Returns[point] = NewReturn([]ValueSource{{Kind: ValueSourceNil}})
 	input.Calls[point] = NewCallProducer(CallProducerConfig{Context: CallProducerContextAssignment})
 	input.CallSites[point] = NewCallSite(CallSiteConfig{Context: CallSiteContextStatement})
@@ -505,6 +546,9 @@ func TestFactsCarrierCopiesAndReturnsFalseForMissingFacts(t *testing.T) {
 	}
 	if got := facts.BranchPresenceRelations(missing); len(got) != 0 {
 		t.Fatalf("missing branch presence relations = %#v, want empty", got)
+	}
+	if got := facts.BranchPathRelations(missing); len(got) != 0 {
+		t.Fatalf("missing branch path relations = %#v, want empty", got)
 	}
 	if _, ok := facts.Return(missing); ok {
 		t.Fatal("missing return returned ok")
@@ -610,6 +654,22 @@ func TestFactsCarrierCopiesAndReturnsFalseForMissingFacts(t *testing.T) {
 	relations[0] = NewBranchPresenceRelation(path.NewPath(symbol.ID(51), "mutated"), presence.Absent(), path.NewPath(symbol.ID(52), "mutated"), presence.Present())
 	relationsAgain := facts.BranchPresenceRelations(point)
 	assertPathEqual(t, relationsAgain[0].TriggerPath(), path.NewPath(symbol.ID(47), "err"))
+
+	pathRelations := facts.BranchPathRelations(point)
+	if len(pathRelations) != 1 {
+		t.Fatalf("branch path relations len = %d, want 1", len(pathRelations))
+	}
+	if pathRelations[0].Kind() != BranchPathRelationEqual {
+		t.Fatalf("branch path relation kind = %v, want equality", pathRelations[0].Kind())
+	}
+	assertPathEqual(t, pathRelations[0].LeftPath(), path.NewPath(symbol.ID(57), "left").Field("value"))
+	assertPathEqual(t, pathRelations[0].RightPath(), path.NewPath(symbol.ID(58), "right").Field("value"))
+	if !pathRelations[0].ActiveOnEdge(true) || pathRelations[0].ActiveOnEdge(false) {
+		t.Fatalf("branch path relation active true/false = %v/%v, want true/false", pathRelations[0].ActiveOnEdge(true), pathRelations[0].ActiveOnEdge(false))
+	}
+	pathRelations[0] = NewBranchPathEquality(path.NewPath(symbol.ID(61), "mutated"), path.NewPath(symbol.ID(62), "mutated"), false, true)
+	pathRelationsAgain := facts.BranchPathRelations(point)
+	assertPathEqual(t, pathRelationsAgain[0].LeftPath(), path.NewPath(symbol.ID(57), "left").Field("value"))
 
 	ret, ok := facts.Return(point)
 	if !ok {

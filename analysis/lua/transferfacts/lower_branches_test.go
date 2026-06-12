@@ -58,6 +58,62 @@ func TestLowerMemberPathBranchRefinement(t *testing.T) {
 	assertLoweredBranchValuePresence(t, facts, requireStmtPoints(t, built, memberStmt, 1)[0], wantPath, presence.Present(), true, presence.Absent(), true)
 }
 
+func TestLowerPathEqualityBranchRelation(t *testing.T) {
+	decl := localAssign([]string{"a", "b"}, number("1"), number("2"))
+	aRead := ident("a")
+	bRead := ident("b")
+	eqStmt := &ast.IfStmt{Condition: &ast.RelationalOpExpr{Operator: "==", Lhs: aRead, Rhs: bRead}}
+	stmts := []ast.Stmt{decl, eqStmt}
+	bindings := bind.BindChunk(stmts, bind.Options{})
+	built := cfgbuild.BuildChunk(stmts, bindings)
+	result, err := semantics.ExtractChunk(stmts, bindings, built)
+	if err != nil {
+		t.Fatalf("ExtractChunk: %v", err)
+	}
+
+	facts := lowerFacts(t, result, built.Graph, standard.Registry())
+	point := requireStmtPoints(t, built, eqStmt, 1)[0]
+	assertLoweredBranchPathEquality(
+		t,
+		facts,
+		point,
+		path.NewPath(mustIdentSymbol(t, bindings, aRead), "a"),
+		path.NewPath(mustIdentSymbol(t, bindings, bRead), "b"),
+		true,
+		false,
+	)
+}
+
+func TestLowerPathInequalityBranchRelation(t *testing.T) {
+	decl := localAssign([]string{"t", "u"}, &ast.TableExpr{}, &ast.TableExpr{})
+	tRead := ident("t")
+	uRead := ident("u")
+	neqStmt := &ast.IfStmt{Condition: &ast.RelationalOpExpr{
+		Operator: "~=",
+		Lhs:      dot(tRead, "left"),
+		Rhs:      dot(uRead, "right"),
+	}}
+	stmts := []ast.Stmt{decl, neqStmt}
+	bindings := bind.BindChunk(stmts, bind.Options{})
+	built := cfgbuild.BuildChunk(stmts, bindings)
+	result, err := semantics.ExtractChunk(stmts, bindings, built)
+	if err != nil {
+		t.Fatalf("ExtractChunk: %v", err)
+	}
+
+	facts := lowerFacts(t, result, built.Graph, standard.Registry())
+	point := requireStmtPoints(t, built, neqStmt, 1)[0]
+	assertLoweredBranchPathEquality(
+		t,
+		facts,
+		point,
+		path.NewPath(mustIdentSymbol(t, bindings, tRead), "t").Field("left"),
+		path.NewPath(mustIdentSymbol(t, bindings, uRead), "u").Field("right"),
+		false,
+		true,
+	)
+}
+
 func TestLowerTypeGuardTableEqualityBranchRefinement(t *testing.T) {
 	decl := localAssign([]string{"x"}, number("0"))
 	xRead := ident("x")

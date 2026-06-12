@@ -83,6 +83,12 @@ func NewFactsEdgeTransfer(config FactsEdgeTransferConfig) transfer.EdgeTransfer 
 			}
 			out = applyBranchRefinement(ctx, config.Visibility, out, relation.TargetPath(), refinement)
 		}
+		for _, relation := range config.Facts.BranchPathRelations(ctx.Edge.From) {
+			if !relation.ActiveOnEdge(ctx.Edge.Cond) {
+				continue
+			}
+			out = applyBranchPathRelation(ctx, config.Visibility, out, relation)
+		}
 		return out
 	}
 }
