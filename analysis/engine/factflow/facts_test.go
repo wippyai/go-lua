@@ -847,6 +847,38 @@ func TestFactsCarrierCopiesAndReturnsFalseForMissingFacts(t *testing.T) {
 	assertDirectField(t, allExpressionPathsAgain[ExprRef(6)], "leaf")
 }
 
+func TestWithPathDescendantInvalidationsKeepsExistingPathOnCollision(t *testing.T) {
+	point := cfg.Point(30)
+	other := cfg.Point(31)
+	firstPath := path.NewPath(symbol.ID(70), "first")
+	secondPath := path.NewPath(symbol.ID(71), "second")
+	otherPath := path.NewPath(symbol.ID(72), "other")
+
+	facts := NewFacts(FactsInput{
+		PathDescendantInvalidations: map[cfg.Point]PathDescendantInvalidation{
+			point: NewPathDescendantInvalidation(firstPath),
+		},
+	})
+	got := facts.WithPathDescendantInvalidations(map[cfg.Point]PathDescendantInvalidation{
+		point: NewPathDescendantInvalidation(secondPath),
+		other: NewPathDescendantInvalidation(otherPath),
+	})
+
+	invalidation, ok := got.PathDescendantInvalidation(point)
+	if !ok {
+		t.Fatalf("missing original invalidation")
+	}
+	assertPathEqual(t, invalidation.ContainerPath(), firstPath)
+	otherInvalidation, ok := got.PathDescendantInvalidation(other)
+	if !ok {
+		t.Fatalf("missing merged invalidation")
+	}
+	assertPathEqual(t, otherInvalidation.ContainerPath(), otherPath)
+	if _, ok := facts.PathDescendantInvalidation(other); ok {
+		t.Fatalf("source facts were mutated")
+	}
+}
+
 func assertDirectField(t *testing.T, p path.Path, want string) {
 	t.Helper()
 	got, ok := p.DirectFieldName()

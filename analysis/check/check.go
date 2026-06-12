@@ -549,6 +549,12 @@ func (c *Checker) run(bindings *bind.Result, built *cfgbuild.Result, sem *semant
 			NameFor:    c.signatureNameForCall(bindings),
 			Facts:      facts,
 		})
+		facts = callresult.WithSignatureMutations(callresult.SignatureMutationConfig{
+			Graph:      built.Graph,
+			Signatures: config.Signatures,
+			NameFor:    c.signatureNameForCall(bindings),
+			Facts:      facts,
+		})
 	}
 	if config.SummaryResults != nil && config.SummaryKeyFor != nil {
 		facts = callresult.WithSummaryPostconditions(callresult.SummaryPostconditionConfig{

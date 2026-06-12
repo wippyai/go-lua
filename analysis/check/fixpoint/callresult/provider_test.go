@@ -9,6 +9,8 @@ import (
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/summary"
 	"github.com/wippyai/go-lua/analysis/domain/constraint/expr"
 	"github.com/wippyai/go-lua/analysis/domain/effect"
+	"github.com/wippyai/go-lua/analysis/domain/effect/mutation"
+	"github.com/wippyai/go-lua/analysis/domain/effect/ownership"
 	"github.com/wippyai/go-lua/analysis/domain/effect/postcondition"
 	"github.com/wippyai/go-lua/analysis/domain/effect/returns"
 	"github.com/wippyai/go-lua/analysis/domain/effect/signature"
@@ -375,6 +377,187 @@ func TestWithSignaturePostconditionsSkipsArgumentsWithoutExpressionPath(t *testi
 		}),
 	})
 	assertStatePresence(t, reg, flow[graph.Exit()], key.SymbolValue(argSymbol), presence.Maybe())
+}
+
+func TestWithSignatureMutationsLowersTableMutatorToDescendantInvalidation(t *testing.T) {
+	graph := cfg.New()
+	call := graph.AddNode(cfg.NodeCall)
+	graph.AddEdge(graph.Entry(), call, false)
+	graph.AddEdge(call, graph.Exit(), false)
+
+	argExpr := factflow.ExprRef(901)
+	argPath := path.NewPath(symbol.ID(902), "items")
+	facts := factflow.NewFacts(factflow.FactsInput{
+		CallSites: map[cfg.Point]factflow.CallSite{
+			call: factflow.NewCallSite(factflow.CallSiteConfig{
+				Context: factflow.CallSiteContextStatement,
+				ArgumentSources: []factflow.ValueSource{
+					{Kind: factflow.ValueSourceExpression, ExprRef: argExpr, HasExpr: true},
+					{Kind: factflow.ValueSourceNil},
+				},
+			}),
+		},
+		ExpressionPaths: map[factflow.ExprRef]path.Path{
+			argExpr: argPath,
+		},
+	})
+
+	got := WithSignatureMutations(SignatureMutationConfig{
+		Graph: graph,
+		Signatures: signatureMap{
+			"table.insert": {
+				Effect: effect.Empty.With(
+					mutation.TableMutator{Target: effect.ParamRef{Index: 0}, Value: effect.ParamRef{Index: -1}},
+					mutation.LengthChange{Target: effect.ParamRef{Index: 0}, Delta: 1},
+				),
+			},
+		},
+		NameFor: StaticName("table.insert"),
+		Facts:   facts,
+	})
+
+	invalidation, ok := got.PathDescendantInvalidation(call)
+	if !ok {
+		t.Fatalf("missing path descendant invalidation")
+	}
+	if !invalidation.ContainerPath().Equal(argPath) {
+		t.Fatalf("invalidation path = %s, want %s", invalidation.ContainerPath(), argPath)
+	}
+	if assignment, ok := got.PathAssignment(call); ok {
+		t.Fatalf("unexpected path assignment: %#v", assignment)
+	}
+}
+
+func TestWithSignatureMutationsLowersStoreIntoContainerArgument(t *testing.T) {
+	graph := cfg.New()
+	call := graph.AddNode(cfg.NodeCall)
+	graph.AddEdge(graph.Entry(), call, false)
+	graph.AddEdge(call, graph.Exit(), false)
+
+	containerExpr := factflow.ExprRef(911)
+	insertedExpr := factflow.ExprRef(912)
+	containerPath := path.NewPath(symbol.ID(913), "container")
+	insertedPath := path.NewPath(symbol.ID(914), "inserted")
+	facts := factflow.NewFacts(factflow.FactsInput{
+		CallSites: map[cfg.Point]factflow.CallSite{
+			call: factflow.NewCallSite(factflow.CallSiteConfig{
+				Context: factflow.CallSiteContextStatement,
+				ArgumentSources: []factflow.ValueSource{
+					{Kind: factflow.ValueSourceExpression, ExprRef: containerExpr, HasExpr: true},
+					{Kind: factflow.ValueSourceExpression, ExprRef: insertedExpr, HasExpr: true},
+				},
+			}),
+		},
+		ExpressionPaths: map[factflow.ExprRef]path.Path{
+			containerExpr: containerPath,
+			insertedExpr:  insertedPath,
+		},
+	})
+
+	got := WithSignatureMutations(SignatureMutationConfig{
+		Graph: graph,
+		Signatures: signatureMap{
+			"store": {
+				Effect: effect.Empty.With(ownership.Store{
+					Param: effect.ParamRef{Index: -1},
+					Into:  effect.ParamRef{Index: 0},
+				}),
+			},
+		},
+		NameFor: StaticName("store"),
+		Facts:   facts,
+	})
+
+	invalidation, ok := got.PathDescendantInvalidation(call)
+	if !ok {
+		t.Fatalf("missing path descendant invalidation")
+	}
+	if !invalidation.ContainerPath().Equal(containerPath) {
+		t.Fatalf("invalidation path = %s, want container path %s", invalidation.ContainerPath(), containerPath)
+	}
+	if invalidation.ContainerPath().Equal(insertedPath) {
+		t.Fatalf("invalidation used inserted value path %s", insertedPath)
+	}
+}
+
+func TestWithSignatureMutationsSkipsStoreWithoutKnownDestination(t *testing.T) {
+	graph := cfg.New()
+	call := graph.AddNode(cfg.NodeCall)
+	graph.AddEdge(graph.Entry(), call, false)
+	graph.AddEdge(call, graph.Exit(), false)
+
+	firstExpr := factflow.ExprRef(916)
+	lastExpr := factflow.ExprRef(917)
+	facts := factflow.NewFacts(factflow.FactsInput{
+		CallSites: map[cfg.Point]factflow.CallSite{
+			call: factflow.NewCallSite(factflow.CallSiteConfig{
+				Context: factflow.CallSiteContextStatement,
+				ArgumentSources: []factflow.ValueSource{
+					{Kind: factflow.ValueSourceExpression, ExprRef: firstExpr, HasExpr: true},
+					{Kind: factflow.ValueSourceExpression, ExprRef: lastExpr, HasExpr: true},
+				},
+			}),
+		},
+		ExpressionPaths: map[factflow.ExprRef]path.Path{
+			firstExpr: path.NewPath(symbol.ID(918), "first"),
+			lastExpr:  path.NewPath(symbol.ID(919), "last"),
+		},
+	})
+
+	got := WithSignatureMutations(SignatureMutationConfig{
+		Graph: graph,
+		Signatures: signatureMap{
+			"store": {
+				Effect: effect.Empty.With(ownership.Store{
+					Param: effect.ParamRef{Index: 0},
+					Into:  effect.ParamRef{Index: -1},
+				}),
+			},
+		},
+		NameFor: StaticName("store"),
+		Facts:   facts,
+	})
+
+	if invalidation, ok := got.PathDescendantInvalidation(call); ok {
+		t.Fatalf("unexpected path descendant invalidation for store without destination: %#v", invalidation)
+	}
+}
+
+func TestWithSignatureMutationsSkipsTargetWithoutExpressionPath(t *testing.T) {
+	graph := cfg.New()
+	call := graph.AddNode(cfg.NodeCall)
+	graph.AddEdge(graph.Entry(), call, false)
+	graph.AddEdge(call, graph.Exit(), false)
+
+	facts := factflow.NewFacts(factflow.FactsInput{
+		CallSites: map[cfg.Point]factflow.CallSite{
+			call: factflow.NewCallSite(factflow.CallSiteConfig{
+				Context: factflow.CallSiteContextStatement,
+				ArgumentSources: []factflow.ValueSource{
+					{Kind: factflow.ValueSourceExpression, ExprRef: factflow.ExprRef(921), HasExpr: true},
+					{Kind: factflow.ValueSourceNil},
+				},
+			}),
+		},
+	})
+
+	got := WithSignatureMutations(SignatureMutationConfig{
+		Graph: graph,
+		Signatures: signatureMap{
+			"table.insert": {
+				Effect: effect.Empty.With(mutation.TableMutator{
+					Target: effect.ParamRef{Index: 0},
+					Value:  effect.ParamRef{Index: -1},
+				}),
+			},
+		},
+		NameFor: StaticName("table.insert"),
+		Facts:   facts,
+	})
+
+	if invalidation, ok := got.PathDescendantInvalidation(call); ok {
+		t.Fatalf("unexpected path descendant invalidation: %#v", invalidation)
+	}
 }
 
 func TestWithSignatureNoNormalReturnsMarksNeverReturnCallAndApplies(t *testing.T) {
@@ -1484,6 +1667,8 @@ func TestProductionImportsAreBounded(t *testing.T) {
 	allowed := map[string]bool{
 		"github.com/wippyai/go-lua/analysis/check/fixpoint/summary":        true,
 		"github.com/wippyai/go-lua/analysis/domain/effect":                 true,
+		"github.com/wippyai/go-lua/analysis/domain/effect/mutation":        true,
+		"github.com/wippyai/go-lua/analysis/domain/effect/ownership":       true,
 		"github.com/wippyai/go-lua/analysis/domain/effect/postcondition":   true,
 		"github.com/wippyai/go-lua/analysis/domain/effect/returns":         true,
 		"github.com/wippyai/go-lua/analysis/domain/effect/signature":       true,

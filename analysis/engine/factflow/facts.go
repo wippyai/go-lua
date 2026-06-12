@@ -124,6 +124,18 @@ func (f Facts) WithNoNormalReturns(points map[cfg.Point]struct{}) Facts {
 	return f
 }
 
+// WithPathDescendantInvalidations returns f plus descendant invalidations for
+// statically known container paths. Factflow currently stores at most one such
+// invalidation per point; when two different paths collide, the existing path is
+// retained instead of inventing unsafe precision.
+func (f Facts) WithPathDescendantInvalidations(invalidations map[cfg.Point]PathDescendantInvalidation) Facts {
+	if len(invalidations) == 0 {
+		return f
+	}
+	f.pathDescendantInvalidations = mergePathDescendantInvalidationMap(f.pathDescendantInvalidations, invalidations)
+	return f
+}
+
 // LocalAssignment returns the local assignment fact at point.
 func (f Facts) LocalAssignment(point cfg.Point) (RootAssignment, bool) {
 	fact, ok := f.localAssignments[point]
