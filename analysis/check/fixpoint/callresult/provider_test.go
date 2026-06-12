@@ -10,6 +10,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/standard"
 	factapply "github.com/wippyai/go-lua/analysis/engine/factapply"
@@ -37,6 +38,113 @@ func TestByCalleeSymbolProviderReadsSummaryReturns(t *testing.T) {
 	}), state.State{}, nil)
 
 	assertCallResults(t, reg, got, []product.Value{first, second})
+}
+
+func TestOutcomeProviderMapsSummaryReturnsAndNormalReturnFacts(t *testing.T) {
+	reg := standard.Registry()
+	callee := symbol.ID(37)
+	key := summary.DefaultSummaryKey(ref.FuncRef{Kind: ref.KindSymbol, ID: 38})
+	ret := product.Absent(reg)
+	present := product.NewWithPresence(reg, product.ShapeTop, presence.Present())
+	absent := product.Absent(reg)
+	provider := OutcomeProvider(summary.NewSnapshot(reg, summary.EntrySummary{
+		Key: key,
+		Summary: summary.Summary{
+			Returns: []product.Value{ret},
+			NormalReturnFacts: summary.NormalReturnFacts{
+				PathRefinements: []summary.PathValueFact{
+					{Path: path.NewPlaceholder(0).Field("field"), Value: absent},
+				},
+				PathStaticMembers: []summary.PathStaticMemberFact{
+					{Path: path.NewPlaceholder(0).Field("static"), Value: present},
+				},
+				DynamicIndexFacts: []summary.DynamicIndexFact{
+					{
+						Table:       path.NewPlaceholder(0).Field("items"),
+						Site:        "summary.dynamic",
+						KeyPresence: presence.Present(),
+						KeyValue:    present,
+						Value:       absent,
+						Admission:   summary.DynamicIndexAdmissionAdmitted,
+					},
+				},
+				BranchProofs: []summary.BranchProof{
+					{
+						Kind:  summary.BranchProofPathEqual,
+						Path:  path.NewPlaceholder(0).Field("left"),
+						Other: path.NewPlaceholder(1).Field("right"),
+					},
+				},
+				ChannelSelects: []summary.ChannelSelectFact{
+					{
+						Select: "summary.select",
+						Kind:   summary.ChannelSelectFactReceive,
+						Result: path.NewPlaceholder(0).Field("result"),
+						Case:   path.NewPlaceholder(1).Field("case"),
+						Index:  2,
+					},
+				},
+				EffectDeltas: []summary.EffectDelta{
+					{
+						Target: path.NewPlaceholder(0).Field("items"),
+						Site:   "summary.effect",
+						Kind:   summary.EffectDeltaMutation,
+						Before: present,
+						After:  absent,
+						Change: summary.EffectDeltaChangeChanged,
+					},
+				},
+			},
+		},
+	}), ByCalleeSymbol(map[symbol.ID]summary.SummaryKey{callee: key}))
+
+	got := provider(transfer.NodeContext{Registry: reg}, factflow.NewCallSite(factflow.CallSiteConfig{
+		CalleeSymbol: callee,
+	}), state.State{}, nil)
+
+	assertCallResults(t, reg, got.Results, []product.Value{ret})
+	if len(got.PathRefinements) != 1 ||
+		!got.PathRefinements[0].Path.Equal(path.NewPlaceholder(0).Field("field")) ||
+		!product.Equal(reg, got.PathRefinements[0].Value, absent) {
+		t.Fatalf("path refinements = %#v, want mapped summary path refinement", got.PathRefinements)
+	}
+	if len(got.PathStaticMembers) != 1 ||
+		!got.PathStaticMembers[0].Path.Equal(path.NewPlaceholder(0).Field("static")) ||
+		!product.Equal(reg, got.PathStaticMembers[0].Value, present) {
+		t.Fatalf("path static members = %#v, want mapped summary static member", got.PathStaticMembers)
+	}
+	if len(got.DynamicIndexFacts) != 1 ||
+		!got.DynamicIndexFacts[0].Table.Equal(path.NewPlaceholder(0).Field("items")) ||
+		got.DynamicIndexFacts[0].Site != "summary.dynamic" ||
+		!presence.Equal(got.DynamicIndexFacts[0].KeyPresence, presence.Present()) ||
+		!product.Equal(reg, got.DynamicIndexFacts[0].KeyValue, present) ||
+		!product.Equal(reg, got.DynamicIndexFacts[0].Value, absent) ||
+		got.DynamicIndexFacts[0].Admission != factapply.CallDynamicIndexAdmissionAdmitted {
+		t.Fatalf("dynamic-index facts = %#v, want mapped summary dynamic fact", got.DynamicIndexFacts)
+	}
+	if len(got.BranchProofs) != 1 ||
+		got.BranchProofs[0].Kind != factapply.CallBranchProofPathEqual ||
+		!got.BranchProofs[0].Path.Equal(path.NewPlaceholder(0).Field("left")) ||
+		!got.BranchProofs[0].Other.Equal(path.NewPlaceholder(1).Field("right")) {
+		t.Fatalf("branch proofs = %#v, want mapped summary branch proof", got.BranchProofs)
+	}
+	if len(got.ChannelSelects) != 1 ||
+		got.ChannelSelects[0].Kind != factapply.CallChannelSelectFactReceive ||
+		got.ChannelSelects[0].Select != "summary.select" ||
+		!got.ChannelSelects[0].Result.Equal(path.NewPlaceholder(0).Field("result")) ||
+		!got.ChannelSelects[0].Case.Equal(path.NewPlaceholder(1).Field("case")) ||
+		got.ChannelSelects[0].Index != 2 {
+		t.Fatalf("channel selects = %#v, want mapped summary channel select", got.ChannelSelects)
+	}
+	if len(got.EffectDeltas) != 1 ||
+		got.EffectDeltas[0].Kind != factapply.CallEffectDeltaMutation ||
+		got.EffectDeltas[0].Site != "summary.effect" ||
+		!got.EffectDeltas[0].Target.Equal(path.NewPlaceholder(0).Field("items")) ||
+		!product.Equal(reg, got.EffectDeltas[0].Before, present) ||
+		!product.Equal(reg, got.EffectDeltas[0].After, absent) ||
+		got.EffectDeltas[0].Change != factapply.CallEffectDeltaChangeChanged {
+		t.Fatalf("effect deltas = %#v, want mapped summary effect delta", got.EffectDeltas)
+	}
 }
 
 func TestProviderMissingAndEmptyReturnsYieldNoResults(t *testing.T) {
@@ -220,6 +328,18 @@ func TestProductionImportsAreBounded(t *testing.T) {
 	for _, imp := range strings.Fields(string(out)) {
 		if !allowed[imp] {
 			t.Fatalf("unexpected production import %q", imp)
+		}
+	}
+}
+
+func TestFactapplyDoesNotImportSummary(t *testing.T) {
+	out, err := exec.Command("go", "list", "-f", "{{range .Imports}}{{.}}\n{{end}}", "../../../engine/factapply").Output()
+	if err != nil {
+		t.Fatalf("go list imports factapply error = %v", err)
+	}
+	for _, imp := range strings.Fields(string(out)) {
+		if imp == "github.com/wippyai/go-lua/analysis/check/fixpoint/summary" {
+			t.Fatalf("factapply imports summary")
 		}
 	}
 }

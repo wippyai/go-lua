@@ -37,6 +37,104 @@ func Provider(summaries summary.Reader, keyFor KeyFunc) factapply.CallResultProv
 	}
 }
 
+// OutcomeProvider returns a generic call-boundary outcome provider backed by
+// exact summary reads.
+func OutcomeProvider(summaries summary.Reader, keyFor KeyFunc) factapply.CallOutcomeProvider {
+	return func(ctx transfer.NodeContext, site factflow.CallSite, _ state.State, _ func(cfg.Point) state.State) factapply.CallOutcome {
+		if summaries == nil || keyFor == nil {
+			return factapply.CallOutcome{}
+		}
+		key, ok := keyFor(ctx, factflow.CallProducerFromSite(site))
+		if !ok {
+			return factapply.CallOutcome{}
+		}
+		got, ok := summaries.Read(key)
+		if !ok {
+			return factapply.CallOutcome{}
+		}
+		return outcomeFromSummary(got)
+	}
+}
+
+func outcomeFromSummary(got summary.Summary) factapply.CallOutcome {
+	out := factapply.CallOutcome{}
+	if len(got.Returns) != 0 {
+		out.Results = make([]factapply.CallResult, len(got.Returns))
+		for i, value := range got.Returns {
+			out.Results[i] = factapply.CallResult{Index: i, Value: value}
+		}
+	}
+	facts := got.NormalReturnFacts
+	if len(facts.PathRefinements) != 0 {
+		out.PathRefinements = make([]factapply.CallPathRefinement, len(facts.PathRefinements))
+		for i, fact := range facts.PathRefinements {
+			out.PathRefinements[i] = factapply.CallPathRefinement{
+				Path:  copyPath(fact.Path),
+				Value: fact.Value,
+			}
+		}
+	}
+	if len(facts.PathStaticMembers) != 0 {
+		out.PathStaticMembers = make([]factapply.CallPathStaticMember, len(facts.PathStaticMembers))
+		for i, fact := range facts.PathStaticMembers {
+			out.PathStaticMembers[i] = factapply.CallPathStaticMember{
+				Path:  copyPath(fact.Path),
+				Value: fact.Value,
+			}
+		}
+	}
+	if len(facts.DynamicIndexFacts) != 0 {
+		out.DynamicIndexFacts = make([]factapply.CallDynamicIndexFact, len(facts.DynamicIndexFacts))
+		for i, fact := range facts.DynamicIndexFacts {
+			out.DynamicIndexFacts[i] = factapply.CallDynamicIndexFact{
+				Table:       copyPath(fact.Table),
+				Site:        fact.Site,
+				KeyPresence: fact.KeyPresence,
+				KeyValue:    fact.KeyValue,
+				Value:       fact.Value,
+				Admission:   dynamicIndexAdmission(fact.Admission),
+			}
+		}
+	}
+	if len(facts.BranchProofs) != 0 {
+		out.BranchProofs = make([]factapply.CallBranchProof, len(facts.BranchProofs))
+		for i, proof := range facts.BranchProofs {
+			out.BranchProofs[i] = factapply.CallBranchProof{
+				Kind:     branchProofKind(proof.Kind),
+				Path:     copyPath(proof.Path),
+				Presence: proof.Presence,
+				Other:    copyPath(proof.Other),
+			}
+		}
+	}
+	if len(facts.ChannelSelects) != 0 {
+		out.ChannelSelects = make([]factapply.CallChannelSelectFact, len(facts.ChannelSelects))
+		for i, fact := range facts.ChannelSelects {
+			out.ChannelSelects[i] = factapply.CallChannelSelectFact{
+				Select: fact.Select,
+				Kind:   channelSelectKind(fact.Kind),
+				Result: copyPath(fact.Result),
+				Case:   copyPath(fact.Case),
+				Index:  fact.Index,
+			}
+		}
+	}
+	if len(facts.EffectDeltas) != 0 {
+		out.EffectDeltas = make([]factapply.CallEffectDelta, len(facts.EffectDeltas))
+		for i, delta := range facts.EffectDeltas {
+			out.EffectDeltas[i] = factapply.CallEffectDelta{
+				Target: copyPath(delta.Target),
+				Site:   delta.Site,
+				Kind:   effectDeltaKind(delta.Kind),
+				Before: delta.Before,
+				After:  delta.After,
+				Change: effectDeltaChange(delta.Change),
+			}
+		}
+	}
+	return out
+}
+
 // Fallback composes two call result providers. Primary results win by index;
 // fallback results fill only missing result slots.
 func Fallback(primary, fallback factapply.CallResultProvider) factapply.CallResultProvider {
@@ -68,6 +166,80 @@ func Fallback(primary, fallback factapply.CallResultProvider) factapply.CallResu
 		}
 		return out
 	}
+}
+
+func dynamicIndexAdmission(admission summary.DynamicIndexAdmission) factapply.CallDynamicIndexAdmission {
+	switch admission {
+	case summary.DynamicIndexAdmissionAdmitted:
+		return factapply.CallDynamicIndexAdmissionAdmitted
+	case summary.DynamicIndexAdmissionRejected:
+		return factapply.CallDynamicIndexAdmissionRejected
+	case summary.DynamicIndexAdmissionUnknown:
+		return factapply.CallDynamicIndexAdmissionUnknown
+	default:
+		return factapply.CallDynamicIndexAdmissionBottom
+	}
+}
+
+func branchProofKind(kind summary.BranchProofKind) factapply.CallBranchProofKind {
+	switch kind {
+	case summary.BranchProofPathPresence:
+		return factapply.CallBranchProofPathPresence
+	case summary.BranchProofPathEqual:
+		return factapply.CallBranchProofPathEqual
+	case summary.BranchProofPathNotEqual:
+		return factapply.CallBranchProofPathNotEqual
+	default:
+		return 0
+	}
+}
+
+func channelSelectKind(kind summary.ChannelSelectFactKind) factapply.CallChannelSelectFactKind {
+	switch kind {
+	case summary.ChannelSelectFactSelect:
+		return factapply.CallChannelSelectFactSelect
+	case summary.ChannelSelectFactReceive:
+		return factapply.CallChannelSelectFactReceive
+	case summary.ChannelSelectFactCase:
+		return factapply.CallChannelSelectFactCase
+	default:
+		return 0
+	}
+}
+
+func effectDeltaKind(kind summary.EffectDeltaKind) factapply.CallEffectDeltaKind {
+	switch kind {
+	case summary.EffectDeltaMutation:
+		return factapply.CallEffectDeltaMutation
+	case summary.EffectDeltaEscape:
+		return factapply.CallEffectDeltaEscape
+	case summary.EffectDeltaCall:
+		return factapply.CallEffectDeltaCall
+	default:
+		return 0
+	}
+}
+
+func effectDeltaChange(change summary.EffectDeltaChange) factapply.CallEffectDeltaChange {
+	switch change {
+	case summary.EffectDeltaChangeNone:
+		return factapply.CallEffectDeltaChangeNone
+	case summary.EffectDeltaChangeChanged:
+		return factapply.CallEffectDeltaChangeChanged
+	case summary.EffectDeltaChangeUnknown:
+		return factapply.CallEffectDeltaChangeUnknown
+	default:
+		return factapply.CallEffectDeltaChangeBottom
+	}
+}
+
+func copyPath(p pathdom.Path) pathdom.Path {
+	if len(p.Segments) == 0 {
+		return p
+	}
+	out := p
+	out.Segments = append(p.Segments[:0:0], p.Segments...)
+	return out
 }
 
 // ByCalleeSymbol maps callee symbol IDs to exact summary keys.

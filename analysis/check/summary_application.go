@@ -270,9 +270,6 @@ func (c *Checker) withSummaryApplication(summaries summaryApplication) *Checker 
 	config := c.config
 	config.SummaryResults = summaries.summaries
 	config.SummaryKeyFor = summaries.keyFor
-	config.CallResults = callresult.Fallback(
-		callresult.Provider(summaries.summaries, summaries.keyFor),
-		config.CallResults,
-	)
+	config.CallOutcome = callresult.OutcomeProvider(summaries.summaries, summaries.keyFor)
 	return &Checker{config: config}
 }

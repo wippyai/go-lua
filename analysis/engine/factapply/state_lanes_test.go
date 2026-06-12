@@ -222,3 +222,271 @@ func TestFactsNodeTransferAppliesChannelSelectFactsWithPathKeys(t *testing.T) {
 		t.Fatalf("channel-select fact missing: %#v", want)
 	}
 }
+
+func TestFactsNodeTransferCallOutcomeRebasesPathRefinement(t *testing.T) {
+	reg := standard.Registry()
+	point := cfg.Point(501)
+	arg := symbol.ID(501)
+	argPath := pathdom.NewPath(arg, "arg")
+	argFieldKey := pathdom.PathKey("sym501@1.field")
+	placeholderKey := pathdom.NewPlaceholder(0).Field("field").Key()
+	argExpr := factflow.ExprRef(501)
+	refinement := presentValue(reg)
+	visibilityBuilder := visibility.NewBuilder()
+	visibilityBuilder.Define(point, arg, "arg")
+
+	got := NewFactsNodeTransfer(FactsNodeTransferConfig{
+		Facts: factflow.NewFacts(factflow.FactsInput{
+			CallSites: map[cfg.Point]factflow.CallSite{
+				point: factflow.NewCallSite(factflow.CallSiteConfig{
+					Context: factflow.CallSiteContextStatement,
+					ArgumentSources: []factflow.ValueSource{
+						{Kind: factflow.ValueSourceExpression, ExprRef: argExpr, HasExpr: true},
+					},
+				}),
+			},
+			ExpressionPaths: map[factflow.ExprRef]pathdom.Path{
+				argExpr: argPath,
+			},
+		}),
+		CallOutcome: func(transfer.NodeContext, factflow.CallSite, state.State, func(cfg.Point) state.State) CallOutcome {
+			return CallOutcome{
+				PathRefinements: []CallPathRefinement{
+					{Path: pathdom.NewPlaceholder(0).Field("field"), Value: refinement},
+				},
+			}
+		},
+		Visibility: visibility.NewResolver(visibilityBuilder.Build()),
+	})(transfer.NodeContext{
+		Registry: reg,
+		Point:    point,
+	}, state.State{}.WritePathKey(reg, argFieldKey, product.Top()))
+
+	assertPathValue(t, reg, got, argFieldKey, refinement)
+	assertPathValue(t, reg, got, placeholderKey, product.Bottom(reg))
+}
+
+func TestFactsNodeTransferStatementCallOutcomeDoesNotWriteReturnSlots(t *testing.T) {
+	reg := standard.Registry()
+	point := cfg.Point(502)
+	arg := symbol.ID(502)
+	argPath := pathdom.NewPath(arg, "arg")
+	argKey := pathdom.PathKey("sym502@1.side")
+	argExpr := factflow.ExprRef(502)
+	returnValue := absentValue(reg)
+	sideValue := presentValue(reg)
+	visibilityBuilder := visibility.NewBuilder()
+	visibilityBuilder.Define(point, arg, "arg")
+
+	got := NewFactsNodeTransfer(FactsNodeTransferConfig{
+		Facts: factflow.NewFacts(factflow.FactsInput{
+			CallSites: map[cfg.Point]factflow.CallSite{
+				point: factflow.NewCallSite(factflow.CallSiteConfig{
+					Context: factflow.CallSiteContextStatement,
+					ArgumentSources: []factflow.ValueSource{
+						{Kind: factflow.ValueSourceExpression, ExprRef: argExpr, HasExpr: true},
+					},
+				}),
+			},
+			ExpressionPaths: map[factflow.ExprRef]pathdom.Path{
+				argExpr: argPath,
+			},
+		}),
+		CallOutcome: func(transfer.NodeContext, factflow.CallSite, state.State, func(cfg.Point) state.State) CallOutcome {
+			return CallOutcome{
+				Results: []CallResult{{Index: 0, Value: returnValue}},
+				PathStaticMembers: []CallPathStaticMember{
+					{Path: pathdom.NewPlaceholder(0).Field("side"), Value: sideValue},
+				},
+			}
+		},
+		CallResults: func(transfer.NodeContext, factflow.CallProducer, state.State, func(cfg.Point) state.State) []CallResult {
+			t.Fatal("value-only call result provider should not run for statement calls")
+			return nil
+		},
+		Visibility: visibility.NewResolver(visibilityBuilder.Build()),
+	})(transfer.NodeContext{
+		Registry: reg,
+		Point:    point,
+	}, state.State{})
+
+	if gotValue := got.ReadReturnSlot(reg, 0); !product.Equal(reg, gotValue, product.Bottom(reg)) {
+		t.Fatalf("return slot 0 = %s, want bottom for statement call", formatValue(reg, gotValue))
+	}
+	if gotValue, ok := got.ReadPathStaticMember(argKey); !ok || !product.Equal(reg, gotValue, sideValue) {
+		t.Fatalf("statement side fact = %s/%v, want %s/true", formatValue(reg, gotValue), ok, formatValue(reg, sideValue))
+	}
+}
+
+func TestFactsNodeTransferCallOutcomeBindsReceiverBeforeExplicitArgs(t *testing.T) {
+	reg := standard.Registry()
+	point := cfg.Point(503)
+	receiver := symbol.ID(503)
+	arg := symbol.ID(504)
+	receiverPath := pathdom.NewPath(receiver, "receiver")
+	argPath := pathdom.NewPath(arg, "arg")
+	receiverKey := pathdom.PathKey("sym503@1.self")
+	argKey := pathdom.PathKey("sym504@1.value")
+	argExpr := factflow.ExprRef(503)
+	receiverValue := presentValue(reg)
+	argValue := absentValue(reg)
+	visibilityBuilder := visibility.NewBuilder()
+	visibilityBuilder.Define(point, receiver, "receiver")
+	visibilityBuilder.Define(point, arg, "arg")
+
+	got := NewFactsNodeTransfer(FactsNodeTransferConfig{
+		Facts: factflow.NewFacts(factflow.FactsInput{
+			CallSites: map[cfg.Point]factflow.CallSite{
+				point: factflow.NewCallSite(factflow.CallSiteConfig{
+					Context:         factflow.CallSiteContextStatement,
+					ReceiverPath:    receiverPath,
+					HasReceiverPath: true,
+					ArgumentSources: []factflow.ValueSource{
+						{Kind: factflow.ValueSourceExpression, ExprRef: argExpr, HasExpr: true},
+					},
+				}),
+			},
+			ExpressionPaths: map[factflow.ExprRef]pathdom.Path{
+				argExpr: argPath,
+			},
+		}),
+		CallOutcome: func(transfer.NodeContext, factflow.CallSite, state.State, func(cfg.Point) state.State) CallOutcome {
+			return CallOutcome{
+				PathStaticMembers: []CallPathStaticMember{
+					{Path: pathdom.NewPlaceholder(0).Field("self"), Value: receiverValue},
+					{Path: pathdom.NewPlaceholder(1).Field("value"), Value: argValue},
+				},
+			}
+		},
+		Visibility: visibility.NewResolver(visibilityBuilder.Build()),
+	})(transfer.NodeContext{
+		Registry: reg,
+		Point:    point,
+	}, state.State{})
+
+	if gotValue, ok := got.ReadPathStaticMember(receiverKey); !ok || !product.Equal(reg, gotValue, receiverValue) {
+		t.Fatalf("receiver static member = %s/%v, want %s/true", formatValue(reg, gotValue), ok, formatValue(reg, receiverValue))
+	}
+	if gotValue, ok := got.ReadPathStaticMember(argKey); !ok || !product.Equal(reg, gotValue, argValue) {
+		t.Fatalf("arg static member = %s/%v, want %s/true", formatValue(reg, gotValue), ok, formatValue(reg, argValue))
+	}
+}
+
+func TestFactsNodeTransferCallOutcomeRebasesStateLaneFacts(t *testing.T) {
+	reg := standard.Registry()
+	point := cfg.Point(504)
+	first := symbol.ID(505)
+	second := symbol.ID(506)
+	firstPath := pathdom.NewPath(first, "first")
+	secondPath := pathdom.NewPath(second, "second")
+	firstExpr := factflow.ExprRef(504)
+	secondExpr := factflow.ExprRef(505)
+	present := presentValue(reg)
+	absent := absentValue(reg)
+	visibilityBuilder := visibility.NewBuilder()
+	visibilityBuilder.Define(point, first, "first")
+	visibilityBuilder.Define(point, second, "second")
+
+	got := NewFactsNodeTransfer(FactsNodeTransferConfig{
+		Facts: factflow.NewFacts(factflow.FactsInput{
+			CallSites: map[cfg.Point]factflow.CallSite{
+				point: factflow.NewCallSite(factflow.CallSiteConfig{
+					Context: factflow.CallSiteContextStatement,
+					ArgumentSources: []factflow.ValueSource{
+						{Kind: factflow.ValueSourceExpression, ExprRef: firstExpr, HasExpr: true},
+						{Kind: factflow.ValueSourceExpression, ExprRef: secondExpr, HasExpr: true},
+					},
+				}),
+			},
+			ExpressionPaths: map[factflow.ExprRef]pathdom.Path{
+				firstExpr:  firstPath,
+				secondExpr: secondPath,
+			},
+		}),
+		CallOutcome: func(transfer.NodeContext, factflow.CallSite, state.State, func(cfg.Point) state.State) CallOutcome {
+			return CallOutcome{
+				DynamicIndexFacts: []CallDynamicIndexFact{
+					{
+						Table:       pathdom.NewPlaceholder(0).Field("items"),
+						Site:        "callee.dynamic",
+						KeyPresence: presence.Present(),
+						KeyValue:    present,
+						Value:       absent,
+						Admission:   CallDynamicIndexAdmissionAdmitted,
+					},
+				},
+				BranchProofs: []CallBranchProof{
+					{
+						Kind:  CallBranchProofPathEqual,
+						Path:  pathdom.NewPlaceholder(0).Field("left"),
+						Other: pathdom.NewPlaceholder(1).Field("right"),
+					},
+				},
+				ChannelSelects: []CallChannelSelectFact{
+					{
+						Select: "callee.select",
+						Kind:   CallChannelSelectFactReceive,
+						Result: pathdom.NewPlaceholder(0).Field("result"),
+						Case:   pathdom.NewPlaceholder(1).Field("case"),
+						Index:  3,
+					},
+				},
+				EffectDeltas: []CallEffectDelta{
+					{
+						Target: pathdom.NewPlaceholder(0).Field("items"),
+						Site:   "callee.effect",
+						Kind:   CallEffectDeltaMutation,
+						Before: present,
+						After:  absent,
+						Change: CallEffectDeltaChangeChanged,
+					},
+				},
+			}
+		},
+		Visibility: visibility.NewResolver(visibilityBuilder.Build()),
+	})(transfer.NodeContext{
+		Registry: reg,
+		Point:    point,
+	}, state.State{})
+
+	dynamicKey := state.DynamicIndexKey{Table: pathdom.PathKey("sym505@1.items"), Site: state.DynamicIndexSite("callee.dynamic")}
+	gotDynamic := got.ReadDynamicIndexFact(reg, dynamicKey)
+	if !presence.Equal(gotDynamic.KeyPresence, presence.Present()) ||
+		!product.Equal(reg, gotDynamic.KeyValue, present) ||
+		!product.Equal(reg, gotDynamic.Value, absent) ||
+		gotDynamic.Admission != state.DynamicIndexAdmissionAdmitted {
+		t.Fatalf("dynamic-index fact = %#v, want rebased fact", gotDynamic)
+	}
+
+	proof := state.BranchProof{
+		Kind:  state.BranchProofPathEqual,
+		Path:  pathdom.PathKey("sym505@1.left"),
+		Other: pathdom.PathKey("sym506@1.right"),
+	}
+	if !got.HasBranchProof(proof) {
+		t.Fatalf("branch proof missing: %#v", proof)
+	}
+
+	selectFact := state.ChannelSelectFact{
+		Select: state.ChannelSelectID("callee.select"),
+		Kind:   state.ChannelSelectFactReceive,
+		Result: pathdom.PathKey("sym505@1.result"),
+		Case:   pathdom.PathKey("sym506@1.case"),
+		Index:  3,
+	}
+	if !got.HasChannelSelectFact(selectFact) {
+		t.Fatalf("channel-select fact missing: %#v", selectFact)
+	}
+
+	effectKey := state.EffectDeltaKey{
+		Target: pathdom.PathKey("sym505@1.items"),
+		Site:   state.EffectSite("callee.effect"),
+		Kind:   state.EffectDeltaMutation,
+	}
+	gotEffect := got.ReadEffectDelta(reg, effectKey)
+	if !product.Equal(reg, gotEffect.Before, present) ||
+		!product.Equal(reg, gotEffect.After, absent) ||
+		gotEffect.Change != state.EffectDeltaChangeChanged {
+		t.Fatalf("effect delta = %#v, want rebased delta", gotEffect)
+	}
+}

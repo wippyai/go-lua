@@ -47,6 +47,7 @@ type Config struct {
 	ExpressionValue  sourcevalue.ExpressionValueProvider
 	VarargValue      sourcevalue.VarargValueProvider
 	CallResults      factapply.CallResultProvider
+	CallOutcome      factapply.CallOutcomeProvider
 	SummaryResults   summary.Reader
 	SummaryKeyFor    callresult.KeyFunc
 	Signatures       signaturelookup.Source
@@ -75,6 +76,7 @@ type Result struct {
 	visibility  *visibility.Resolver
 	sources     sourcevalue.SourceValues
 	callResults factapply.CallResultProvider
+	callOutcome factapply.CallOutcomeProvider
 	functions   []*Result
 }
 
@@ -593,6 +595,10 @@ func (c *Checker) run(bindings *bind.Result, built *cfgbuild.Result, sem *semant
 			Sources:    sources,
 		}))
 	}
+	callOutcome := config.CallOutcome
+	if callOutcome == nil && config.SummaryResults != nil && config.SummaryKeyFor != nil {
+		callOutcome = callresult.OutcomeProvider(config.SummaryResults, config.SummaryKeyFor)
+	}
 	entryState, initial := parameterEntryState(
 		config.Registry,
 		built.Graph,
@@ -610,6 +616,7 @@ func (c *Checker) run(bindings *bind.Result, built *cfgbuild.Result, sem *semant
 			Facts:       facts,
 			Sources:     sources,
 			CallResults: callResults,
+			CallOutcome: callOutcome,
 			Visibility:  resolver,
 		}),
 		EdgeTransfer: factapply.NewFactsEdgeTransfer(factapply.FactsEdgeTransferConfig{
@@ -630,6 +637,7 @@ func (c *Checker) run(bindings *bind.Result, built *cfgbuild.Result, sem *semant
 		visibility:  resolver,
 		sources:     sources,
 		callResults: callResults,
+		callOutcome: callOutcome,
 	}
 }
 

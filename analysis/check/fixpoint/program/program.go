@@ -317,7 +317,7 @@ func chunkFunction(key summary.SummaryKey, stmts []ast.Stmt, bindings *bind.Resu
 	return query.Function{
 		Key: key,
 		Body: func(ctx query.Context) (summary.Summary, error) {
-			config := checkConfigWithCallResults(captured, ctx.Summaries, keyFor)
+			config := checkConfigWithSummaries(captured, ctx.Summaries, keyFor)
 			result, err := check.CheckBoundChunk(stmts, bindings, config)
 			if err != nil {
 				return summary.Summary{}, err
@@ -332,7 +332,7 @@ func boundFunction(key summary.SummaryKey, fn *ast.FunctionExpr, bindings *bind.
 	return query.Function{
 		Key: key,
 		Body: func(ctx query.Context) (summary.Summary, error) {
-			config := checkConfigWithCallResults(captured, ctx.Summaries, keyFor)
+			config := checkConfigWithSummaries(captured, ctx.Summaries, keyFor)
 			result, err := check.CheckBoundFunction(fn, bindings, config)
 			if err != nil {
 				return summary.Summary{}, err
@@ -346,9 +346,9 @@ func keyFunc(keys programKeys) callresult.KeyFunc {
 	return callresult.ByCalleeIdentity(keys.targetKeys, keys.pathKeys)
 }
 
-func checkConfigWithCallResults(config check.Config, summaries summary.Reader, keyFor callresult.KeyFunc) check.Config {
+func checkConfigWithSummaries(config check.Config, summaries summary.Reader, keyFor callresult.KeyFunc) check.Config {
 	out := cloneCheckConfig(config)
-	out.CallResults = callresult.Provider(summaries, keyFor)
+	out.CallOutcome = callresult.OutcomeProvider(summaries, keyFor)
 	out.SummaryResults = summaries
 	out.SummaryKeyFor = keyFor
 	return out

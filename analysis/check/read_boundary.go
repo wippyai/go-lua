@@ -135,6 +135,7 @@ func (r *Result) nodeOutputAt(point cfg.Point) (state.State, bool) {
 		Facts:       r.facts,
 		Sources:     r.sources,
 		CallResults: r.callResults,
+		CallOutcome: r.callOutcome,
 		Visibility:  r.visibility,
 	})
 	return transferFn(transfer.NodeContext{
@@ -165,6 +166,11 @@ func (r *Result) hasNodeLocalBoundaryEffects(point cfg.Point) bool {
 	}
 	if _, ok := r.facts.Call(point); ok {
 		return true
+	}
+	if r.callOutcome != nil {
+		if _, ok := r.facts.CallSite(point); ok {
+			return true
+		}
 	}
 	if r.facts.NoNormalReturn(point) {
 		return true
