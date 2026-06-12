@@ -84,7 +84,7 @@ func returnSourceAt(fact semantics.ReturnFact, index int) sourceprovenance.ASTSo
 	if index >= 0 && index < len(fact.Sources) {
 		return fact.Sources[index]
 	}
-	return sourceprovenance.ASTSource{Kind: factflow.ValueSourceExpression}
+	return sourceprovenance.NewUnknownSource(factflow.NoValueSourceIndex)
 }
 
 func lowerReturnTypes(fn *ast.FunctionExpr, resolver typeannotation.Resolver) ([]directCallResult, bool) {

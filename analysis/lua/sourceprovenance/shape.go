@@ -42,44 +42,14 @@ func ValueShape(expr ast.Expr, final, allowExpansion, openTail bool) (expanded, 
 }
 
 func ConditionSource(expr ast.Expr, resolver CallPointResolver) ASTSource {
-	source := ASTSource{
-		Kind:        valueSourceKind(expr),
-		Expr:        expr,
-		ExprIndex:   0,
-		TargetIndex: factflow.NoValueSourceIndex,
-		ResultIndex: 0,
-		Final:       true,
-		Adjusted:    valueexpr.CanProduceMultipleValues(expr),
-	}
-	if source.Kind == factflow.ValueSourceCall {
-		if point, ok := resolveCallPoint(resolver, 0, expr); ok {
-			source.CallPoint = point
-			source.HasCallPoint = point != 0
-		}
-	}
-	return source
+	shape := mustValueSourceShape(factflow.NewValueSourceShape(true, false, valueexpr.CanProduceMultipleValues(expr), false))
+	return sourceForExprShape(expr, 0, factflow.NoValueSourceIndex, 0, shape, resolver)
 }
 
 func SourceForExpr(expr ast.Expr, exprIndex, targetIndex, resultIndex int, final, openTail bool, resolver CallPointResolver) ASTSource {
 	expanded, adjusted, shapedOpenTail := ValueShape(expr, final, true, openTail)
-	source := ASTSource{
-		Kind:        valueSourceKind(expr),
-		Expr:        expr,
-		ExprIndex:   exprIndex,
-		TargetIndex: targetIndex,
-		ResultIndex: resultIndex,
-		Final:       final,
-		Expanded:    expanded,
-		Adjusted:    adjusted,
-		OpenTail:    shapedOpenTail,
-	}
-	if source.Kind == factflow.ValueSourceCall {
-		if point, ok := resolveCallPoint(resolver, exprIndex, expr); ok {
-			source.CallPoint = point
-			source.HasCallPoint = point != 0
-		}
-	}
-	return source
+	shape := mustValueSourceShape(factflow.NewValueSourceShape(final, expanded, adjusted, shapedOpenTail))
+	return sourceForExprShape(expr, exprIndex, targetIndex, resultIndex, shape, resolver)
 }
 
 func assignmentSource(exprs []ast.Expr, targetIndex int, resolver CallPointResolver) ASTSource {
@@ -104,12 +74,36 @@ func assignmentSource(exprs []ast.Expr, targetIndex int, resolver CallPointResol
 }
 
 func nilFillSource(targetIndex int) ASTSource {
-	return ASTSource{
-		Kind:        factflow.ValueSourceNil,
-		ExprIndex:   factflow.NoValueSourceIndex,
-		TargetIndex: targetIndex,
-		ResultIndex: factflow.NoValueSourceIndex,
+	return NewNilSource(targetIndex)
+}
+
+func sourceForExprShape(expr ast.Expr, exprIndex, targetIndex, resultIndex int, shape factflow.ValueSourceShape, resolver CallPointResolver) ASTSource {
+	switch valueSourceKind(expr) {
+	case factflow.ValueSourceCall:
+		point, ok := resolveCallPoint(resolver, exprIndex, expr)
+		if !ok || point == 0 {
+			return NewUnknownSource(targetIndex)
+		}
+		return mustASTSource(NewCallSource(expr, exprIndex, targetIndex, resultIndex, point, shape))
+	case factflow.ValueSourceVararg:
+		return mustASTSource(NewVarargSource(expr, exprIndex, targetIndex, resultIndex, shape))
+	default:
+		return mustASTSource(NewExpressionSource(expr, exprIndex, targetIndex, resultIndex, shape))
 	}
+}
+
+func mustValueSourceShape(shape factflow.ValueSourceShape, ok bool) factflow.ValueSourceShape {
+	if !ok {
+		panic("sourceprovenance: invalid value source shape")
+	}
+	return shape
+}
+
+func mustASTSource(source ASTSource, ok bool) ASTSource {
+	if !ok {
+		panic("sourceprovenance: invalid AST source")
+	}
+	return source
 }
 
 func resolveCallPoint(resolver CallPointResolver, exprIndex int, expr ast.Expr) (cfg.Point, bool) {

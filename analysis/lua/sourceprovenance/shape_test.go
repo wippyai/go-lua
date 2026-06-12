@@ -24,10 +24,17 @@ func wrappedCall(name string) ast.Expr {
 	}
 }
 
+func pointResolver(points map[int]cfg.Point) CallPointResolver {
+	return func(exprIndex int, call *ast.FuncCallExpr) (cfg.Point, bool) {
+		point, ok := points[exprIndex]
+		return point, ok
+	}
+}
+
 func TestAssignmentSourcesShape(t *testing.T) {
 	t.Run("fixed targets and expanding final call", func(t *testing.T) {
 		exprs := []ast.Expr{ident("x"), call("pack")}
-		sources := AssignmentSources(exprs, 4, nil)
+		sources := AssignmentSources(exprs, 4, pointResolver(map[int]cfg.Point{1: cfg.Point(10)}))
 		if len(sources) != 4 {
 			t.Fatalf("len(sources) = %d, want 4", len(sources))
 		}
@@ -60,9 +67,13 @@ func TestAssignmentSourcesShape(t *testing.T) {
 
 func TestValueListSourcesShape(t *testing.T) {
 	exprs := []ast.Expr{call("left"), call("tail")}
+	resolver := pointResolver(map[int]cfg.Point{
+		0: cfg.Point(10),
+		1: cfg.Point(11),
+	})
 
 	t.Run("return open tail final call expands and keeps open tail", func(t *testing.T) {
-		sources := ValueListSources(exprs, true, nil)
+		sources := ValueListSources(exprs, true, resolver)
 		if len(sources) != 2 {
 			t.Fatalf("len(sources) = %d, want 2", len(sources))
 		}
@@ -73,7 +84,7 @@ func TestValueListSourcesShape(t *testing.T) {
 	})
 
 	t.Run("closed tail final call expands without open tail", func(t *testing.T) {
-		sources := ValueListSources(exprs, false, nil)
+		sources := ValueListSources(exprs, false, resolver)
 		if len(sources) != 2 {
 			t.Fatalf("len(sources) = %d, want 2", len(sources))
 		}
@@ -85,7 +96,7 @@ func TestValueListSourcesShape(t *testing.T) {
 }
 
 func TestConditionSourceShape(t *testing.T) {
-	source := ConditionSource(wrappedCall("pred"), nil)
+	source := ConditionSource(wrappedCall("pred"), pointResolver(map[int]cfg.Point{0: cfg.Point(12)}))
 	if source.Kind != factflow.ValueSourceCall {
 		t.Fatalf("kind = %v, want call", source.Kind)
 	}
@@ -94,6 +105,57 @@ func TestConditionSourceShape(t *testing.T) {
 	}
 	if !source.Final || !source.Adjusted || source.Expanded || source.OpenTail {
 		t.Fatalf("condition flags = %#v, want adjusted multi-value without expansion", source)
+	}
+}
+
+func TestUnresolvedCallPointSourcesAreExplicitUnknown(t *testing.T) {
+	source := SourceForExpr(call("missing"), 0, 0, 0, true, false, nil)
+	if source.Kind != factflow.ValueSourceUnknown {
+		t.Fatalf("kind = %v, want unknown", source.Kind)
+	}
+	if source.HasCallPoint || source.CallPoint != 0 {
+		t.Fatalf("call point = %#v, want none", source)
+	}
+	if source.Expr != nil || source.ExprIndex != factflow.NoValueSourceIndex || source.ResultIndex != factflow.NoValueSourceIndex {
+		t.Fatalf("unknown source fields = %#v", source)
+	}
+	if !source.Valid() {
+		t.Fatalf("unknown source is invalid: %#v", source)
+	}
+
+	condition := ConditionSource(wrappedCall("pred"), nil)
+	if condition.Kind != factflow.ValueSourceUnknown || !condition.Valid() {
+		t.Fatalf("unresolved condition source = %#v, want valid unknown", condition)
+	}
+}
+
+func TestASTSourceConstructorsRejectInvalidCombinations(t *testing.T) {
+	invalidShape := factflow.ValueSourceShape{Final: true, Expanded: true, Adjusted: true}
+	if _, ok := NewExpressionSource(ident("x"), 0, 0, 0, invalidShape); ok {
+		t.Fatalf("expression source accepted invalid shape")
+	}
+	if _, ok := NewCallSource(call("f"), 0, 0, 0, cfg.Point(1), invalidShape); ok {
+		t.Fatalf("call source accepted invalid shape")
+	}
+	if _, ok := NewVarargSource(&ast.Comma3Expr{}, 0, 0, 0, invalidShape); ok {
+		t.Fatalf("vararg source accepted invalid shape")
+	}
+
+	plainShape, ok := factflow.NewValueSourceShape(false, false, false, false)
+	if !ok {
+		t.Fatalf("plain shape rejected")
+	}
+	if _, ok := NewExpressionSource(nil, 0, 0, 0, plainShape); ok {
+		t.Fatalf("expression source accepted nil expr")
+	}
+	if _, ok := NewVarargSource(nil, 0, 0, 0, plainShape); ok {
+		t.Fatalf("vararg source accepted nil expr")
+	}
+	if _, ok := NewCallSource(call("missing"), 0, 0, 0, 0, plainShape); ok {
+		t.Fatalf("call source accepted missing call point")
+	}
+	if _, ok := NewCallSource(call("missing"), 0, 0, factflow.NoValueSourceIndex, cfg.Point(1), plainShape); ok {
+		t.Fatalf("call source accepted missing result index")
 	}
 }
 
