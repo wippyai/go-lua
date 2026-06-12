@@ -14,9 +14,10 @@ type Options struct {
 
 // Result records lexical declaration identities for identifier occurrences.
 type Result struct {
-	identSymbols       map[*ast.IdentExpr]symbol.ID
-	implicitGlobalUses map[*ast.IdentExpr]struct{}
-	typeValueRefs      map[*ast.IdentExpr]TypeDecl
+	identSymbols          map[*ast.IdentExpr]symbol.ID
+	implicitGlobalUses    map[*ast.IdentExpr]struct{}
+	implicitGlobalSymbols map[symbol.ID]struct{}
+	typeValueRefs         map[*ast.IdentExpr]TypeDecl
 
 	names map[symbol.ID]string
 	kinds map[symbol.ID]symbol.Kind
@@ -447,31 +448,32 @@ func (r *Result) FunctionTypeParams(fn *ast.FunctionExpr) []TypeDecl {
 
 func newResult(opts Options) *Result {
 	r := &Result{
-		identSymbols:       make(map[*ast.IdentExpr]symbol.ID),
-		implicitGlobalUses: make(map[*ast.IdentExpr]struct{}),
-		typeValueRefs:      make(map[*ast.IdentExpr]TypeDecl),
-		names:              make(map[symbol.ID]string),
-		kinds:              make(map[symbol.ID]symbol.Kind),
-		globals:            make(map[string]globalSymbol),
-		functionSymbols:    make(map[*ast.FunctionExpr]symbol.ID),
-		functionsBySymbol:  make(map[symbol.ID]*ast.FunctionExpr),
-		nestedFunctions:    make(map[*ast.FunctionExpr][]*ast.FunctionExpr),
-		functionOrigins:    make(map[*ast.FunctionExpr]FunctionOrigin),
-		declaringFunctions: make(map[symbol.ID]*ast.FunctionExpr),
-		directCaptures:     make(map[*ast.FunctionExpr][]Capture),
-		directCaptureSeen:  make(map[*ast.FunctionExpr]map[symbol.ID]struct{}),
-		paramSymbols:       make(map[*ast.FunctionExpr][]symbol.ID),
-		varargSymbols:      make(map[*ast.FunctionExpr]symbol.ID),
-		paramSlots:         make(map[*ast.FunctionExpr][]ParamSlot),
-		localSymbols:       make(map[*ast.LocalAssignStmt][]symbol.ID),
-		numForSymbols:      make(map[*ast.NumberForStmt]symbol.ID),
-		genericForSymbols:  make(map[*ast.GenericForStmt][]symbol.ID),
-		typeRefs:           make(map[*ast.TypeRefExpr]TypeDecl),
-		primitiveTypeRefs:  make(map[*ast.PrimitiveTypeExpr]TypeDecl),
-		typeDefDecls:       make(map[*ast.TypeDefStmt]TypeDecl),
-		interfaceDecls:     make(map[*ast.InterfaceDefStmt]TypeDecl),
-		typeDefParams:      make(map[*ast.TypeDefStmt][]TypeDecl),
-		functionTypeParams: make(map[*ast.FunctionExpr][]TypeDecl),
+		identSymbols:          make(map[*ast.IdentExpr]symbol.ID),
+		implicitGlobalUses:    make(map[*ast.IdentExpr]struct{}),
+		implicitGlobalSymbols: make(map[symbol.ID]struct{}),
+		typeValueRefs:         make(map[*ast.IdentExpr]TypeDecl),
+		names:                 make(map[symbol.ID]string),
+		kinds:                 make(map[symbol.ID]symbol.Kind),
+		globals:               make(map[string]globalSymbol),
+		functionSymbols:       make(map[*ast.FunctionExpr]symbol.ID),
+		functionsBySymbol:     make(map[symbol.ID]*ast.FunctionExpr),
+		nestedFunctions:       make(map[*ast.FunctionExpr][]*ast.FunctionExpr),
+		functionOrigins:       make(map[*ast.FunctionExpr]FunctionOrigin),
+		declaringFunctions:    make(map[symbol.ID]*ast.FunctionExpr),
+		directCaptures:        make(map[*ast.FunctionExpr][]Capture),
+		directCaptureSeen:     make(map[*ast.FunctionExpr]map[symbol.ID]struct{}),
+		paramSymbols:          make(map[*ast.FunctionExpr][]symbol.ID),
+		varargSymbols:         make(map[*ast.FunctionExpr]symbol.ID),
+		paramSlots:            make(map[*ast.FunctionExpr][]ParamSlot),
+		localSymbols:          make(map[*ast.LocalAssignStmt][]symbol.ID),
+		numForSymbols:         make(map[*ast.NumberForStmt]symbol.ID),
+		genericForSymbols:     make(map[*ast.GenericForStmt][]symbol.ID),
+		typeRefs:              make(map[*ast.TypeRefExpr]TypeDecl),
+		primitiveTypeRefs:     make(map[*ast.PrimitiveTypeExpr]TypeDecl),
+		typeDefDecls:          make(map[*ast.TypeDefStmt]TypeDecl),
+		interfaceDecls:        make(map[*ast.InterfaceDefStmt]TypeDecl),
+		typeDefParams:         make(map[*ast.TypeDefStmt][]TypeDecl),
+		functionTypeParams:    make(map[*ast.FunctionExpr][]TypeDecl),
 	}
 	for _, name := range normalizeNames(opts.Globals) {
 		r.global(name, true)
@@ -1102,6 +1104,11 @@ func (b *binder) bindReadIdent(ident *ast.IdentExpr) {
 		}
 		id = b.result.global(ident.Value, false)
 		b.result.implicitGlobalUses[ident] = struct{}{}
+		b.result.implicitGlobalSymbols[id] = struct{}{}
+	} else if _, isImplicitGlobal := b.result.implicitGlobalSymbols[id]; isImplicitGlobal {
+		if decl, hasType := b.lookupType(ident.Value); hasType {
+			b.result.typeValueRefs[ident] = decl
+		}
 	}
 	b.result.identSymbols[ident] = id
 	b.recordDirectCapture(id)

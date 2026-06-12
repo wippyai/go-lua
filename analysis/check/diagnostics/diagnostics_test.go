@@ -599,6 +599,34 @@ func TestDirectCallSkipsGenericIdentityArgumentClaims(t *testing.T) {
 	}
 }
 
+func TestAnnotationAssignabilityUsesBoundaryProofAfterAssignedTypeCast(t *testing.T) {
+	diags := runDiagnosticsWithGlobals(t, `
+		type Point = {x: number, y: number}
+		local function validate(data: any)
+			Point(data)
+			local p: {x: number, y: number} = data
+			return p
+		end
+		local function validate_assign(data: any)
+			local v = Point(data)
+			local p: {x: number, y: number} = data
+			return p
+		end
+		local function expect_point(x)
+			return Point(x)
+		end
+		local function validate_wrapped(data: any)
+			expect_point(data)
+			local p: {x: number, y: number} = data
+			return p
+		end
+		return validate, validate_assign, validate_wrapped
+	`, nil)
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v, want none after type-cast postcondition", diags)
+	}
+}
+
 func TestDirectCallAcceptsTypedOptionalParam(t *testing.T) {
 	diags := runDiagnostics(t, `
 		local function log(msg: string, level: string?)

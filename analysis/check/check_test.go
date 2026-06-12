@@ -491,6 +491,83 @@ local v = Point(data)
 	assertConcreteTypeWitness(t, reg, target)
 }
 
+func TestReadBoundaryLaterAssignmentSeesNormalPostconditionTypeWitness(t *testing.T) {
+	reg := standard.Registry()
+	stmts := parseChunk(t, `
+type Point = {x: number, y: number}
+local function validate(data: any)
+	local v = Point(data)
+	local p: {x: number, y: number} = data
+end
+`)
+
+	parent, err := CheckChunk(stmts, Config{Registry: reg})
+	if err != nil {
+		t.Fatalf("CheckChunk: %v", err)
+	}
+	functions := parent.FunctionResults()
+	if len(functions) != 1 {
+		t.Fatalf("function results = %d, want 1", len(functions))
+	}
+	result := functions[0]
+	fn := result.Function()
+	assign := fn.Stmts[1].(*ast.LocalAssignStmt)
+	point := requireLocalAssignmentPoint(t, result, assign, 0)
+	got, ok := result.ExpressionValueAtBoundary(point, assign.Exprs[0])
+	if !ok {
+		t.Fatalf("ExpressionValueAtBoundary returned false")
+	}
+	assertConcreteTypeWitness(t, reg, got)
+}
+
+func TestReadBoundaryNestedFunctionsSeeCastAndSummaryPostconditions(t *testing.T) {
+	reg := standard.Registry()
+	stmts := parseChunk(t, `
+type Point = {x: number, y: number}
+local function validate(data: any)
+	Point(data)
+	local p: {x: number, y: number} = data
+	return p
+end
+local function validate_assign(data: any)
+	local v = Point(data)
+	local p: {x: number, y: number} = data
+	return p
+end
+local function expect_point(x)
+	return Point(x)
+end
+local function validate_wrapped(data: any)
+	expect_point(data)
+	local p: {x: number, y: number} = data
+	return p
+end
+return validate, validate_assign, validate_wrapped
+`)
+
+	parent, err := CheckChunk(stmts, Config{Registry: reg})
+	if err != nil {
+		t.Fatalf("CheckChunk: %v", err)
+	}
+	functions := parent.FunctionResults()
+	if len(functions) != 4 {
+		t.Fatalf("function results = %d, want 4", len(functions))
+	}
+	assertLocalAssignmentExprWitness := func(result *Result, stmtIndex int, exprIndex int) {
+		t.Helper()
+		fn := result.Function()
+		assign := fn.Stmts[stmtIndex].(*ast.LocalAssignStmt)
+		point := requireLocalAssignmentPoint(t, result, assign, 0)
+		got, ok := result.ExpressionValueAtBoundary(point, assign.Exprs[exprIndex])
+		if !ok {
+			t.Fatalf("ExpressionValueAtBoundary for stmt %d returned false", stmtIndex)
+		}
+		assertConcreteTypeWitness(t, reg, got)
+	}
+	assertLocalAssignmentExprWitness(functions[1], 1, 0)
+	assertLocalAssignmentExprWitness(functions[3], 1, 0)
+}
+
 func TestReadBoundaryBranchSuccessorExpressionSeesEdgeRefinement(t *testing.T) {
 	reg := standard.Registry()
 	stmts := parseChunk(t, `

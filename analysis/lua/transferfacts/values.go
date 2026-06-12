@@ -116,33 +116,46 @@ func (l *lowerer) addExpressionCondition(ref factflow.ExprRef, expr ast.Expr) {
 	if ref == 0 || expr == nil || l.bindings == nil {
 		return
 	}
-	check := branchcond.Normalize(expr, l.bindings)
-	if check.Kind == branchcond.CheckNone {
-		return
-	}
 	var trueRefinements []factflow.PostconditionRefinement
 	var falseRefinements []factflow.PostconditionRefinement
-	if refinement, ok := l.branchRefinement(semantics.BranchConditionFact{Check: check}); ok {
+	for _, check := range branchcond.TruthyChecks(expr, l.bindings) {
+		refinement, ok := l.branchRefinement(semantics.BranchConditionFact{Check: check})
+		if !ok {
+			continue
+		}
 		if value, ok := refinement.TrueValue(); ok {
 			trueRefinements = append(trueRefinements, factflow.NewPostconditionRefinement(refinement.TargetPath(), value))
 		}
-		if value, ok := refinement.FalseValue(); ok {
-			falseRefinements = append(falseRefinements, factflow.NewPostconditionRefinement(refinement.TargetPath(), value))
+	}
+	check := branchcond.Normalize(expr, l.bindings)
+	if check.Kind != branchcond.CheckNone {
+		if refinement, ok := l.branchRefinement(semantics.BranchConditionFact{Check: check}); ok {
+			if value, ok := refinement.FalseValue(); ok {
+				falseRefinements = append(falseRefinements, factflow.NewPostconditionRefinement(refinement.TargetPath(), value))
+			}
 		}
 	}
 	var trueRelations []factflow.PostconditionPathRelation
 	var falseRelations []factflow.PostconditionPathRelation
-	if relations, ok := l.branchPathRelations(semantics.BranchConditionFact{Check: check}); ok {
+	for _, check := range branchcond.TruthyChecks(expr, l.bindings) {
+		relations, ok := l.branchPathRelations(semantics.BranchConditionFact{Check: check})
+		if !ok {
+			continue
+		}
 		for _, relation := range relations.Relations() {
-			if relation.Kind() != factflow.BranchPathRelationEqual {
+			if relation.Kind() != factflow.BranchPathRelationEqual || !relation.ActiveOnEdge(true) {
 				continue
 			}
-			equality := factflow.NewPostconditionPathEquality(relation.LeftPath(), relation.RightPath())
-			if relation.ActiveOnEdge(true) {
-				trueRelations = append(trueRelations, equality)
-			}
-			if relation.ActiveOnEdge(false) {
-				falseRelations = append(falseRelations, equality)
+			trueRelations = append(trueRelations, factflow.NewPostconditionPathEquality(relation.LeftPath(), relation.RightPath()))
+		}
+	}
+	if check.Kind != branchcond.CheckNone {
+		if relations, ok := l.branchPathRelations(semantics.BranchConditionFact{Check: check}); ok {
+			for _, relation := range relations.Relations() {
+				if relation.Kind() != factflow.BranchPathRelationEqual || !relation.ActiveOnEdge(false) {
+					continue
+				}
+				falseRelations = append(falseRelations, factflow.NewPostconditionPathEquality(relation.LeftPath(), relation.RightPath()))
 			}
 		}
 	}

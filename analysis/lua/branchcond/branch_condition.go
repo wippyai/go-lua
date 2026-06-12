@@ -67,6 +67,32 @@ func Normalize(expr ast.Expr, bindings *bind.Result) Check {
 	return Check{}
 }
 
+// TruthyChecks returns checks that must all hold when expr is truthy. For
+// conjunctions, Lua's true result proves both sides; for disjunctions it does
+// not prove either side individually.
+func TruthyChecks(expr ast.Expr, bindings *bind.Result) []Check {
+	check := Normalize(expr, bindings)
+	if check.Kind != CheckNone {
+		return []Check{check}
+	}
+	logical, ok := expr.(*ast.LogicalOpExpr)
+	if !ok || logical.Operator != "and" {
+		return nil
+	}
+	left := TruthyChecks(logical.Lhs, bindings)
+	right := TruthyChecks(logical.Rhs, bindings)
+	if len(left) == 0 {
+		return right
+	}
+	if len(right) == 0 {
+		return left
+	}
+	out := make([]Check, 0, len(left)+len(right))
+	out = append(out, left...)
+	out = append(out, right...)
+	return out
+}
+
 func normalizePathComparison(expr *ast.RelationalOpExpr, bindings *bind.Result) (Check, bool) {
 	lhs, ok := pathexpr.Resolve(expr.Lhs, bindings)
 	if !ok || lhs.IsEmpty() {

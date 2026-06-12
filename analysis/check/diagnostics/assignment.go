@@ -12,12 +12,15 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/typewitness"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/variantorigin"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
+	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
 	"github.com/wippyai/go-lua/analysis/lua/typeannotation"
 	"github.com/wippyai/go-lua/analysis/lua/valueexpr"
 	"github.com/wippyai/go-lua/analysis/type/discriminant"
 	"github.com/wippyai/go-lua/analysis/type/kind"
+	"github.com/wippyai/go-lua/analysis/type/refinement"
 	"github.com/wippyai/go-lua/analysis/type/subst"
 	"github.com/wippyai/go-lua/analysis/type/subtype"
 	"github.com/wippyai/go-lua/analysis/type/typ"
@@ -47,6 +50,11 @@ func (p AnnotationAssignability) Produce(result *check.Result) []diagnostic.Diag
 		if d, ok := p.localAssignment(result, point, fact, envs[point]); ok {
 			out = append(out, d)
 		}
+		if fact, ok := result.OrdinaryAssignment(point); ok {
+			if d, ok := p.pathAssignment(result, point, fact); ok {
+				out = append(out, d)
+			}
+		}
 	}
 	return out
 }
@@ -59,6 +67,9 @@ func (p AnnotationAssignability) localAssignment(result *check.Result, point cfg
 	if !ok {
 		return diagnostic.Diagnostic{}, false
 	}
+	if directCallResultOwner(result, fact.Source) || directCallExpressionOwner(result, fact.Expr) {
+		return p.objectLiteralAssignment(result, fact.Name, want, fact.Expr, fact.Type)
+	}
 	got, ok := literalType(fact.Expr)
 	if !ok {
 		got, ok = projectedOptionalIndexType(result, p.Resolver, fact.Expr)
@@ -69,10 +80,105 @@ func (p AnnotationAssignability) localAssignment(result *check.Result, point cfg
 	if !ok {
 		got, ok = annotatedIdentifierType(result, p.Resolver, point, fact.Expr)
 	}
-	if !ok || !clearMismatch(got, want) {
+	if !ok || topLikeType(got) {
+		if boundaryGot, boundaryOK := boundarySourceType(result, point, fact.Source); boundaryOK {
+			got = boundaryGot
+			ok = true
+		}
+	}
+	if !ok {
+		got, ok = explicitTopLikeExpressionType(result, p.Resolver, fact.Expr)
+	}
+	if !ok {
+		got, ok = explicitTopLikeCallFactSourceType(result, p.Resolver, fact.Source)
+	}
+	if !ok {
 		return p.objectLiteralAssignment(result, fact.Name, want, fact.Expr, fact.Type)
 	}
-	return assignmentDiagnostic(fact.Name, want, got, fact.Expr, fact.Type), true
+	if boundaryTypeMismatch(result, point, got, want, boundaryValueFromASTSource(fact.Source)) {
+		return assignmentDiagnostic(fact.Name, want, got, fact.Expr, fact.Type), true
+	}
+	return p.objectLiteralAssignment(result, fact.Name, want, fact.Expr, fact.Type)
+}
+
+func (p AnnotationAssignability) pathAssignment(result *check.Result, point cfg.Point, fact semantics.OrdinaryAssignmentFact) (diagnostic.Diagnostic, bool) {
+	if fact.Target == nil || fact.Value == nil || !fact.HasPath || fact.Path.Symbol == 0 || len(fact.Path.Segments) == 0 {
+		return diagnostic.Diagnostic{}, false
+	}
+	want, ok := newExpressionTyper(result, p.Resolver).typeOf(fact.Target)
+	if !ok || topLikeType(want) || refinement.ContainsFreeTypeParam(want) {
+		return diagnostic.Diagnostic{}, false
+	}
+	got, ok := assignmentValueType(result, p.Resolver, point, fact.Value, fact.Source)
+	if !ok {
+		return diagnostic.Diagnostic{}, false
+	}
+	if !boundaryTypeMismatch(result, point, got, want, boundaryValueFromASTSource(fact.Source)) {
+		return diagnostic.Diagnostic{}, false
+	}
+	return pathAssignmentDiagnostic(fact.Target, fact.Value, got, want), true
+}
+
+func assignmentValueType(result *check.Result, resolver typeannotation.Resolver, point cfg.Point, expr ast.Expr, source sourceprovenance.ASTSource) (typ.Type, bool) {
+	if got, ok := valueexpr.LiteralType(expr); ok {
+		return got, true
+	}
+	if got, ok := projectedOptionalIndexType(result, resolver, expr); ok {
+		return got, true
+	}
+	if got, ok := boundarySourceType(result, point, source); ok {
+		return got, true
+	}
+	if got, ok := explicitTopLikeCallSourceType(result, resolver, expr); ok {
+		return got, true
+	}
+	if got, ok := explicitTopLikeCallFactSourceType(result, resolver, source); ok {
+		return got, true
+	}
+	return boundaryExprType(result, resolver, expr)
+}
+
+func directCallResultOwner(result *check.Result, source sourceprovenance.ASTSource) bool {
+	if result == nil || source.Kind != factflow.ValueSourceCall || !source.HasCallPoint {
+		return false
+	}
+	fact, ok := result.Call(source.CallPoint)
+	if !ok || fact.Call == nil {
+		return false
+	}
+	return directCallPointResultOwner(result, source.CallPoint, fact)
+}
+
+func directCallExpressionOwner(result *check.Result, expr ast.Expr) bool {
+	call, ok := expr.(*ast.FuncCallExpr)
+	if !ok || result == nil {
+		return false
+	}
+	graph := result.Graph()
+	if graph == nil {
+		return false
+	}
+	for _, point := range graph.RPO() {
+		fact, ok := result.Call(point)
+		if !ok || fact.Call != call {
+			continue
+		}
+		return directCallPointResultOwner(result, point, fact)
+	}
+	return false
+}
+
+func directCallPointResultOwner(result *check.Result, point cfg.Point, fact semantics.CallFact) bool {
+	site, ok := result.CallSite(point)
+	if !ok || site.CalleeSymbol() == 0 {
+		return false
+	}
+	if _, _, _, member := callMemberAccess(fact); member {
+		if _, hasSignature := result.CallSignature(site); !hasSignature {
+			return false
+		}
+	}
+	return true
 }
 
 func (p AnnotationAssignability) objectLiteralAssignment(result *check.Result, name string, want typ.Type, expr ast.Expr, annotation ast.TypeExpr) (diagnostic.Diagnostic, bool) {
@@ -128,6 +234,41 @@ func assignmentDiagnostic(name string, want, got typ.Type, expr ast.Expr, annota
 		Labels: []diagnostic.Label{
 			{Span: exprSpan, Message: "assigned value"},
 			{Span: typeSpan, Message: "declared type"},
+		},
+	}
+}
+
+func pathAssignmentDiagnostic(target ast.Expr, value ast.Expr, got, want typ.Type) diagnostic.Diagnostic {
+	valueSpan := ast.SpanOf(value)
+	targetSpan := ast.SpanOf(target)
+	return diagnostic.Diagnostic{
+		Position: diagnostic.Position{
+			Line:      valueSpan.StartLine,
+			Column:    valueSpan.StartCol,
+			EndLine:   valueSpan.EndLine,
+			EndColumn: valueSpan.EndCol,
+		},
+		Span:     valueSpan,
+		Code:     CodeAssignmentType,
+		Severity: diagnostic.SeverityError,
+		Message:  fmt.Sprintf("cannot assign %s to %s", formatType(got), formatType(want)),
+		Explanation: diagnostic.NewExplanation(
+			diagnostic.Evidence{
+				Kind:    diagnostic.EvidenceAbstractFact,
+				Trust:   diagnostic.TrustProven,
+				Span:    valueSpan,
+				Message: fmt.Sprintf("source expression is %s", formatType(got)),
+			},
+			diagnostic.Evidence{
+				Kind:    diagnostic.EvidenceAbstractFact,
+				Trust:   diagnostic.TrustProven,
+				Span:    targetSpan,
+				Message: fmt.Sprintf("assignment target expects %s", formatType(want)),
+			},
+		),
+		Labels: []diagnostic.Label{
+			{Span: valueSpan, Message: "assigned value"},
+			{Span: targetSpan, Message: "typed target"},
 		},
 	}
 }

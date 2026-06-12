@@ -5,15 +5,16 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/check"
 	"github.com/wippyai/go-lua/analysis/diagnostic"
+	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
+	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
 	"github.com/wippyai/go-lua/analysis/lua/typeannotation"
 	"github.com/wippyai/go-lua/analysis/lua/typecall"
 	"github.com/wippyai/go-lua/analysis/lua/valueexpr"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/type/refinement"
-	"github.com/wippyai/go-lua/analysis/type/subtype"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
@@ -41,10 +42,8 @@ func (p ReturnContract) Produce(result *check.Result) []diagnostic.Diagnostic {
 			continue
 		}
 		for i, expr := range fact.Exprs {
-			got, ok := valueexpr.LiteralType(expr)
-			if !ok {
-				got, ok = projectedOptionalIndexType(result, p.Resolver, expr)
-			}
+			source := returnSourceAt(fact, i)
+			got, ok := returnValueType(result, p.Resolver, expr, source)
 			if !ok {
 				continue
 			}
@@ -52,7 +51,7 @@ func (p ReturnContract) Produce(result *check.Result) []diagnostic.Diagnostic {
 			if !ok || refinement.ContainsFreeTypeParam(want) {
 				continue
 			}
-			if !clearMismatch(got, want) {
+			if !boundaryTypeMismatch(result, point, got, want, boundaryValueFromASTSource(source)) {
 				continue
 			}
 			annotation := typeExprAt(fn.ReturnTypes, i)
@@ -63,6 +62,29 @@ func (p ReturnContract) Produce(result *check.Result) []diagnostic.Diagnostic {
 		}
 	}
 	return out
+}
+
+func returnValueType(result *check.Result, resolver typeannotation.Resolver, expr ast.Expr, source sourceprovenance.ASTSource) (typ.Type, bool) {
+	if got, ok := valueexpr.LiteralType(expr); ok {
+		return got, true
+	}
+	if got, ok := projectedOptionalIndexType(result, resolver, expr); ok {
+		return got, true
+	}
+	if got, ok := explicitTopLikeExpressionType(result, resolver, expr); ok {
+		return got, true
+	}
+	if got, ok := explicitTopLikeCallFactSourceType(result, resolver, source); ok {
+		return got, true
+	}
+	return nil, false
+}
+
+func returnSourceAt(fact semantics.ReturnFact, index int) sourceprovenance.ASTSource {
+	if index >= 0 && index < len(fact.Sources) {
+		return fact.Sources[index]
+	}
+	return sourceprovenance.ASTSource{Kind: factflow.ValueSourceExpression}
 }
 
 func lowerReturnTypes(fn *ast.FunctionExpr, resolver typeannotation.Resolver) ([]directCallResult, bool) {
@@ -163,7 +185,7 @@ func produceDirectCallResultAssignment(result *check.Result, config Config, inhe
 				continue
 			}
 		}
-		contract, name, ok := directCallResultContract(result, fact, site, defs[site.CalleeSymbol()], producer.Resolver)
+		contract, name, ok := directCallResultContract(result, point, fact, site, defs[site.CalleeSymbol()], producer.Resolver)
 		if !ok {
 			continue
 		}
@@ -179,20 +201,38 @@ func produceDirectCallResultAssignment(result *check.Result, config Config, inhe
 			if !ok || typ.IsAny(want) || typ.IsUnknown(want) || refinement.ContainsFreeTypeParam(want) {
 				continue
 			}
-			got, ok := contract.returnType(target.Index)
+			resultIndex := target.ResultIndex
+			got, ok := contract.returnType(resultIndex)
+			if !ok {
+				got, ok = contract.declaredReturnType(resultIndex)
+			}
 			if !ok || refinement.ContainsFreeTypeParam(got) {
 				continue
 			}
-			if subtype.IsSubtype(got, want) {
+			if !boundaryTypeMismatch(result, point, got, want, boundaryCallResultReader(point, resultIndex)) {
 				continue
 			}
-			out = append(out, directCallResultAssignmentDiagnostic(point, fact.Call, name, target.Index, got, want, wantExpr))
+			out = append(out, directCallResultAssignmentDiagnostic(point, fact.Call, name, resultIndex, got, want, wantExpr))
 		}
 	}
 	return out
 }
 
-func directCallResultContract(result *check.Result, fact semantics.CallFact, site factflow.CallSite, def *ast.FunctionExpr, resolver typeannotation.Resolver) (directFunctionContract, string, bool) {
+func boundaryCallResultReader(callPoint cfg.Point, resultIndex int) boundaryValueReader {
+	return func(result *check.Result, point cfg.Point) (product.Value, bool) {
+		if resultIndex < 0 {
+			return product.Value{}, false
+		}
+		return result.SourceValueAtBoundary(point, factflow.ValueSource{
+			Kind:         factflow.ValueSourceCall,
+			ResultIndex:  resultIndex,
+			CallPoint:    callPoint,
+			HasCallPoint: callPoint != 0,
+		})
+	}
+}
+
+func directCallResultContract(result *check.Result, point cfg.Point, fact semantics.CallFact, site factflow.CallSite, def *ast.FunctionExpr, resolver typeannotation.Resolver) (directFunctionContract, string, bool) {
 	name := result.SymbolName(site.CalleeSymbol())
 	if name == "" {
 		name = "call target"
@@ -204,7 +244,7 @@ func directCallResultContract(result *check.Result, fact semantics.CallFact, sit
 		}
 		contract.name = name
 		contract.declSpan = ast.SpanOf(def)
-		if !directCallArgsCompatible(fact, contract) {
+		if !directCallArgsCompatible(result, point, fact, contract, resolver) {
 			return directFunctionContract{}, "", false
 		}
 		return contract, name, true
@@ -213,7 +253,7 @@ func directCallResultContract(result *check.Result, fact semantics.CallFact, sit
 		contract := lowerDirectFunctionType(sig.Type)
 		contract.name = name
 		contract.declSpan = ast.SpanOf(fact.Call)
-		if !directCallArgsCompatible(fact, contract) {
+		if !directCallArgsCompatible(result, point, fact, contract, resolver) {
 			return directFunctionContract{}, "", false
 		}
 		return contract, name, true
@@ -233,13 +273,16 @@ func directCallResultContract(result *check.Result, fact semantics.CallFact, sit
 	contract := lowerDirectFunctionType(callable)
 	contract.name = name
 	contract.declSpan = ast.SpanOf(fact.Call)
-	if !directCallArgsCompatible(fact, contract) {
+	if !directCallArgsCompatible(result, point, fact, contract, resolver) {
 		return directFunctionContract{}, "", false
 	}
 	return contract, name, true
 }
 
-func directCallArgsCompatible(fact semantics.CallFact, contract directFunctionContract) bool {
+func directCallArgsCompatible(result *check.Result, point cfg.Point, fact semantics.CallFact, contract directFunctionContract, resolver typeannotation.Resolver) bool {
+	if fact.Call == nil {
+		return false
+	}
 	args := fact.Call.Args
 	required := contract.requiredArity()
 	if len(args) < required {
@@ -261,11 +304,14 @@ func directCallArgsCompatible(fact semantics.CallFact, contract directFunctionCo
 		} else {
 			break
 		}
-		got, ok := valueexpr.LiteralType(arg)
+		got, ok := boundaryExprType(result, resolver, arg)
+		if !ok {
+			got, ok = boundaryCallArgumentSourceType(result, point, fact, i)
+		}
 		if !ok || refinement.ContainsFreeTypeParam(want) {
 			continue
 		}
-		if subtype.IsSubtype(got, want) {
+		if !boundaryTypeMismatch(result, point, got, want, boundaryCallArgumentReader(fact, i, arg)) {
 			continue
 		}
 		return false

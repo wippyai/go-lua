@@ -10,10 +10,8 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
 	"github.com/wippyai/go-lua/analysis/lua/typeannotation"
 	"github.com/wippyai/go-lua/analysis/lua/typecall"
-	"github.com/wippyai/go-lua/analysis/lua/valueexpr"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/type/refinement"
-	"github.com/wippyai/go-lua/analysis/type/subtype"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/unwrap"
 	"github.com/wippyai/go-lua/compiler/ast"
@@ -72,7 +70,7 @@ func (p DirectCallContract) call(
 	}
 
 	if def != nil {
-		return p.callFunction(point, fact, name, def)
+		return p.callFunction(result, point, fact, name, def)
 	}
 
 	baseExpr, ok := result.SymbolTypeAnnotation(site.CalleeSymbol())
@@ -93,7 +91,7 @@ func (p DirectCallContract) call(
 	contract := lowerDirectFunctionType(callable)
 	contract.name = name
 	contract.declSpan = ast.SpanOf(fact.Call)
-	return p.directFunctionCall(point, fact.Call, contract)
+	return p.directFunctionCall(result, point, fact, contract)
 }
 
 type directFunctionContract struct {
@@ -117,6 +115,7 @@ type directCallResult struct {
 }
 
 func (p DirectCallContract) callFunction(
+	result *check.Result,
 	point cfg.Point,
 	fact semantics.CallFact,
 	name string,
@@ -128,14 +127,19 @@ func (p DirectCallContract) callFunction(
 	}
 	contract.name = name
 	contract.declSpan = ast.SpanOf(fn)
-	return p.directFunctionCall(point, fact.Call, contract)
+	return p.directFunctionCall(result, point, fact, contract)
 }
 
 func (p DirectCallContract) directFunctionCall(
+	result *check.Result,
 	point cfg.Point,
-	call *ast.FuncCallExpr,
+	fact semantics.CallFact,
 	contract directFunctionContract,
 ) (diagnostic.Diagnostic, bool) {
+	call := fact.Call
+	if call == nil {
+		return diagnostic.Diagnostic{}, false
+	}
 	args := call.Args
 	required := contract.requiredArity()
 	if len(args) < required {
@@ -157,19 +161,36 @@ func (p DirectCallContract) directFunctionCall(
 		} else {
 			break
 		}
-		got, ok := valueexpr.LiteralType(arg)
+		got, ok := boundaryExprType(result, p.Resolver, arg)
+		if !ok {
+			got, ok = boundaryCallArgumentSourceType(result, point, fact, i)
+		}
 		if !ok {
 			continue
 		}
 		if refinement.ContainsFreeTypeParam(want) {
 			continue
 		}
-		if subtype.IsSubtype(got, want) {
+		if !boundaryTypeMismatch(result, point, got, want, boundaryCallArgumentReader(fact, i, arg)) {
 			continue
 		}
 		return argTypeDiagnostic(point, call, contract.name, i, got, want, arg, contract.declSpan), true
 	}
 	return diagnostic.Diagnostic{}, false
+}
+
+func boundaryCallArgumentSourceType(result *check.Result, point cfg.Point, fact semantics.CallFact, index int) (typ.Type, bool) {
+	if index < 0 || index >= len(fact.ArgumentSources) {
+		return nil, false
+	}
+	return boundarySourceType(result, point, fact.ArgumentSources[index])
+}
+
+func boundaryCallArgumentReader(fact semantics.CallFact, index int, fallback ast.Expr) boundaryValueReader {
+	if index >= 0 && index < len(fact.ArgumentSources) {
+		return boundaryValueFromASTSource(fact.ArgumentSources[index])
+	}
+	return boundaryValueFromExpr(fallback)
 }
 
 func lowerDirectFunctionContract(fn *ast.FunctionExpr, resolver typeannotation.Resolver) (directFunctionContract, bool) {
@@ -293,6 +314,14 @@ func (c directFunctionContract) returnType(index int) (typ.Type, bool) {
 		return nil, false
 	}
 	return ret.typ, true
+}
+
+func (c directFunctionContract) declaredReturnType(index int) (typ.Type, bool) {
+	if index < 0 || index >= len(c.returns) {
+		return nil, false
+	}
+	ret := c.returns[index]
+	return ret.typ, ret.typ != nil
 }
 
 func typeExprAt(exprs []ast.TypeExpr, index int) ast.TypeExpr {

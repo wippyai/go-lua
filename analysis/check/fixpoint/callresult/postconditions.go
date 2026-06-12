@@ -73,7 +73,8 @@ func WithSummaryPostconditions(config SummaryPostconditionConfig) factflow.Facts
 	}
 	facts := summaryPostconditionFacts(config)
 	out := config.Facts.WithPostconditionRefinements(facts.refinements)
-	return out.WithPostconditionPathRelations(facts.pathRelations)
+	out = out.WithPostconditionPathRelations(facts.pathRelations)
+	return out.WithBranchRefinementSets(facts.branchRefinements)
 }
 
 func signaturePostconditionFacts(config SignaturePostconditionConfig) map[cfg.Point]factflow.PostconditionRefinementSet {
@@ -129,14 +130,16 @@ func signatureNoNormalReturnFacts(config SignatureNoNormalReturnConfig) map[cfg.
 }
 
 type summaryPostconditionFactsResult struct {
-	refinements   map[cfg.Point]factflow.PostconditionRefinementSet
-	pathRelations map[cfg.Point]factflow.PostconditionPathRelationSet
+	refinements       map[cfg.Point]factflow.PostconditionRefinementSet
+	pathRelations     map[cfg.Point]factflow.PostconditionPathRelationSet
+	branchRefinements map[cfg.Point]factflow.BranchRefinementSet
 }
 
 func summaryPostconditionFacts(config SummaryPostconditionConfig) summaryPostconditionFactsResult {
 	out := summaryPostconditionFactsResult{
-		refinements:   make(map[cfg.Point]factflow.PostconditionRefinementSet),
-		pathRelations: make(map[cfg.Point]factflow.PostconditionPathRelationSet),
+		refinements:       make(map[cfg.Point]factflow.PostconditionRefinementSet),
+		pathRelations:     make(map[cfg.Point]factflow.PostconditionPathRelationSet),
+		branchRefinements: make(map[cfg.Point]factflow.BranchRefinementSet),
 	}
 	for _, point := range config.Graph.RPO() {
 		site, ok := config.Facts.CallSite(point)
@@ -179,12 +182,21 @@ func summaryPostconditionFacts(config SummaryPostconditionConfig) summaryPostcon
 				appendPostconditionPathRelations(out.pathRelations, point, relation)
 			}
 		}
+		for _, refinement := range got.ReturnConditionParamRefinements {
+			branch, lowered, ok := returnConditionSummaryBranchRefinement(config, point, site, refinement)
+			if ok {
+				appendBranchRefinements(out.branchRefinements, branch, lowered)
+			}
+		}
 	}
 	if len(out.refinements) == 0 {
 		out.refinements = nil
 	}
 	if len(out.pathRelations) == 0 {
 		out.pathRelations = nil
+	}
+	if len(out.branchRefinements) == 0 {
+		out.branchRefinements = nil
 	}
 	return out
 }
@@ -354,6 +366,68 @@ func normalReturnSummaryParamPath(
 	return targetPath, true
 }
 
+func returnConditionSummaryBranchRefinement(
+	config SummaryPostconditionConfig,
+	point cfg.Point,
+	site factflow.CallSite,
+	refinement summary.ReturnConditionParamRefinement,
+) (cfg.Point, factflow.BranchRefinement, bool) {
+	if site.Context() != factflow.CallSiteContextCondition || refinement.ReturnIndex != 0 {
+		return 0, factflow.BranchRefinement{}, false
+	}
+	branch, ok := conditionCallBranchPoint(config.Graph, point)
+	if !ok {
+		return 0, factflow.BranchRefinement{}, false
+	}
+	targetPath, ok := substituteSummaryParamPath(config, site, refinement.Target)
+	if !ok {
+		return 0, factflow.BranchRefinement{}, false
+	}
+	value := factflow.NewValueConstraint(refinement.Value)
+	if refinement.ReturnValue {
+		return branch, factflow.NewBranchRefinement(targetPath, value, true, factflow.ValueRefinement{}, false), true
+	}
+	return branch, factflow.NewBranchRefinement(targetPath, factflow.ValueRefinement{}, false, value, true), true
+}
+
+func substituteSummaryParamPath(
+	config SummaryPostconditionConfig,
+	site factflow.CallSite,
+	target pathdom.Path,
+) (pathdom.Path, bool) {
+	args := site.ArgumentSources()
+	paths := make([]pathdom.Path, len(args))
+	for i, arg := range args {
+		if arg.Kind != factflow.ValueSourceExpression || !arg.HasExpr {
+			continue
+		}
+		p, ok := config.Facts.ExpressionPath(arg.ExprRef)
+		if !ok || p.IsEmpty() {
+			continue
+		}
+		paths[i] = p
+	}
+	return target.Substitute(paths)
+}
+
+func conditionCallBranchPoint(graph cfg.Graph, point cfg.Point) (cfg.Point, bool) {
+	if graph == nil {
+		return 0, false
+	}
+	if graph.IsBranch(point) {
+		return point, true
+	}
+	successors := graph.Successors(point)
+	if len(successors) != 1 {
+		return 0, false
+	}
+	branch := successors[0]
+	if !graph.IsBranch(branch) {
+		return 0, false
+	}
+	return branch, true
+}
+
 func postconditionRefinementValue(reg *axis.Registry, refinement postcondition.Refinement) (factflow.ValueRefinement, bool) {
 	switch r := refinement.(type) {
 	case postcondition.Present:
@@ -398,4 +472,17 @@ func appendPostconditionPathRelations(
 	existing := out[point].Relations()
 	existing = append(existing, relations...)
 	out[point] = factflow.NewPostconditionPathRelationSet(existing...)
+}
+
+func appendBranchRefinements(
+	out map[cfg.Point]factflow.BranchRefinementSet,
+	point cfg.Point,
+	refinements ...factflow.BranchRefinement,
+) {
+	if len(refinements) == 0 {
+		return
+	}
+	existing := out[point].Refinements()
+	existing = append(existing, refinements...)
+	out[point] = factflow.NewBranchRefinementSet(existing...)
 }

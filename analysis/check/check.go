@@ -284,6 +284,24 @@ func (r *Result) ReturnArity(point cfg.Point) (int, bool) {
 	return len(fact.Sources()), true
 }
 
+func (r *Result) ReturnValueSources(point cfg.Point) ([]factflow.ValueSource, bool) {
+	if r == nil {
+		return nil, false
+	}
+	fact, ok := r.facts.Return(point)
+	if !ok {
+		return nil, false
+	}
+	return fact.Sources(), true
+}
+
+func (r *Result) ExpressionCondition(ref factflow.ExprRef) (factflow.ExpressionCondition, bool) {
+	if r == nil {
+		return factflow.ExpressionCondition{}, false
+	}
+	return r.facts.ExpressionCondition(ref)
+}
+
 func (r *Result) ParameterValueSlots() []statekey.Value {
 	if r == nil || r.bindings == nil {
 		return nil

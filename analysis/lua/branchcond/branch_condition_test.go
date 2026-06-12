@@ -232,6 +232,23 @@ func TestNormalizeTypeComparisons(t *testing.T) {
 	}
 }
 
+func TestTruthyChecksExtractSupportedConjuncts(t *testing.T) {
+	value := ident("value")
+	expr := &ast.LogicalOpExpr{
+		Operator: "and",
+		Lhs:      &ast.RelationalOpExpr{Operator: "==", Lhs: typeCall(value), Rhs: stringLit("number")},
+		Rhs:      &ast.RelationalOpExpr{Operator: ">", Lhs: value, Rhs: number("0")},
+	}
+	bindings := bindReturn(expr, "type")
+
+	got := TruthyChecks(expr, bindings)
+
+	if len(got) != 1 {
+		t.Fatalf("TruthyChecks returned %d checks, want 1: %#v", len(got), got)
+	}
+	assertCheck(t, got[0], CheckTypeEqual, path.NewPath(mustIdentSymbol(t, bindings, value), "value"), "number")
+}
+
 func TestNormalizeStringLiteralComparisons(t *testing.T) {
 	tests := []struct {
 		name     string

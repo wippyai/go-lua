@@ -531,6 +531,80 @@ func TestWithSummaryPostconditionsSkipsTopAndBottomConstraints(t *testing.T) {
 	}
 }
 
+func TestWithSummaryPostconditionsLowersReturnConditionToBranchRefinement(t *testing.T) {
+	reg := standard.Registry()
+	graph := cfg.New()
+	call := graph.AddNode(cfg.NodeCall)
+	branch := graph.AddNode(cfg.NodeBranch)
+	thenPoint := graph.AddNode(cfg.NodeNoop)
+	elsePoint := graph.AddNode(cfg.NodeNoop)
+	graph.AddEdge(graph.Entry(), call, false)
+	graph.AddEdge(call, branch, false)
+	graph.AddEdge(branch, thenPoint, true)
+	graph.AddEdge(branch, elsePoint, false)
+	graph.AddEdge(thenPoint, graph.Exit(), false)
+	graph.AddEdge(elsePoint, graph.Exit(), false)
+
+	callee := symbol.ID(841)
+	argExpr := factflow.ExprRef(842)
+	argSymbol := symbol.ID(843)
+	argPath := path.NewPath(argSymbol, "value")
+	summaryKey := summary.DefaultSummaryKey(ref.FuncRef{Kind: ref.KindSymbol, ID: 844})
+	numberValue := product.Set(reg, product.Top(), runtimekind.Key, runtimekind.Singleton(runtimekind.Number))
+	facts := factflow.NewFacts(factflow.FactsInput{
+		CallSites: map[cfg.Point]factflow.CallSite{
+			call: factflow.NewCallSite(factflow.CallSiteConfig{
+				Context:      factflow.CallSiteContextCondition,
+				CalleeSymbol: callee,
+				ArgumentSources: []factflow.ValueSource{
+					{Kind: factflow.ValueSourceExpression, ExprRef: argExpr, HasExpr: true},
+				},
+			}),
+		},
+		ExpressionPaths: map[factflow.ExprRef]path.Path{
+			argExpr: argPath,
+		},
+	})
+
+	got := WithSummaryPostconditions(SummaryPostconditionConfig{
+		Graph:    graph,
+		Registry: reg,
+		Summaries: summary.NewSnapshot(reg, summary.EntrySummary{
+			Key: summaryKey,
+			Summary: summary.Summary{
+				ReturnConditionParamRefinements: []summary.ReturnConditionParamRefinement{{
+					ReturnIndex: 0,
+					ReturnValue: true,
+					Target:      path.NewPlaceholder(0),
+					Value:       numberValue,
+				}},
+			},
+		}),
+		KeyFor: ByCalleeSymbol(map[symbol.ID]summary.SummaryKey{callee: summaryKey}),
+		Facts:  facts,
+	})
+
+	refinements := got.BranchRefinements(branch)
+	if len(refinements) != 1 {
+		t.Fatalf("branch refinements = %d, want 1: %#v", len(refinements), refinements)
+	}
+	if !refinements[0].TargetPath().Equal(argPath) {
+		t.Fatalf("target path = %s, want %s", refinements[0].TargetPath(), argPath)
+	}
+	value, ok := refinements[0].TrueValue()
+	if !ok {
+		t.Fatalf("missing true-edge refinement")
+	}
+	constraint, ok := value.Constraint()
+	if !ok {
+		t.Fatalf("missing value constraint")
+	}
+	assertRuntimeKind(t, reg, constraint, runtimekind.Singleton(runtimekind.Number))
+	if _, ok := refinements[0].FalseValue(); ok {
+		t.Fatalf("unexpected false-edge refinement")
+	}
+}
+
 func TestCallTargetForResultUsesExplicitTargetResultIndex(t *testing.T) {
 	target := symbol.ID(705)
 	targetPath := path.NewPath(target, "value")

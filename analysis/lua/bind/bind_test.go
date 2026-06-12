@@ -1067,6 +1067,91 @@ func TestLexicalTypeNames(t *testing.T) {
 	}
 }
 
+func TestTypeValueRefsSurviveNestedLocalFunctions(t *testing.T) {
+	pointDef := &ast.TypeDefStmt{
+		Name: "Point",
+		Type: &ast.RecordTypeExpr{Fields: []ast.RecordFieldExpr{
+			{Name: "x", Type: &ast.PrimitiveTypeExpr{Name: "number"}},
+			{Name: "y", Type: &ast.PrimitiveTypeExpr{Name: "number"}},
+		}},
+	}
+	dataDecl := localAssign([]string{"data"}, &ast.TableExpr{})
+
+	firstPointCall := &ast.FuncCallExpr{
+		Func: ident("Point"),
+		Args: []ast.Expr{ident("data")},
+	}
+	firstFn := function(nil, ret(firstPointCall))
+	firstDecl := localAssign([]string{"first"}, firstFn)
+
+	nestedPointCall := &ast.FuncCallExpr{
+		Func: ident("Point"),
+		Args: []ast.Expr{ident("data")},
+	}
+	nestedFn := function(nil, ret(nestedPointCall))
+	secondFn := function(nil,
+		localAssign([]string{"helper"}, nestedFn),
+		ret(&ast.FuncCallExpr{Func: ident("helper")}),
+	)
+	secondDecl := localAssign([]string{"second"}, secondFn)
+
+	r := BindChunk([]ast.Stmt{
+		pointDef,
+		dataDecl,
+		firstDecl,
+		secondDecl,
+	}, Options{})
+
+	firstPointIdent := firstPointCall.Func.(*ast.IdentExpr)
+	nestedPointIdent := nestedPointCall.Func.(*ast.IdentExpr)
+	if _, ok := r.TypeValueRef(firstPointIdent); !ok {
+		t.Fatalf("first Point call did not resolve as a type value")
+	}
+	if _, ok := r.TypeValueRef(nestedPointIdent); !ok {
+		t.Fatalf("nested Point call did not resolve as a type value")
+	}
+	if got := mustSymbol(t, r, firstPointCall.Args[0].(*ast.IdentExpr)); got != mustLocalAt(t, r, dataDecl, 0) {
+		t.Fatalf("first Point argument resolved to %d, want data local", got)
+	}
+	if got := mustSymbol(t, r, nestedPointCall.Args[0].(*ast.IdentExpr)); got != mustLocalAt(t, r, dataDecl, 0) {
+		t.Fatalf("nested Point argument resolved to %d, want data local", got)
+	}
+}
+
+func TestLocalValueShadowDoesNotBecomeTypeValue(t *testing.T) {
+	pointDef := &ast.TypeDefStmt{
+		Name: "Point",
+		Type: &ast.RecordTypeExpr{Fields: []ast.RecordFieldExpr{
+			{Name: "x", Type: &ast.PrimitiveTypeExpr{Name: "number"}},
+			{Name: "y", Type: &ast.PrimitiveTypeExpr{Name: "number"}},
+		}},
+	}
+	dataDecl := localAssign([]string{"data"}, &ast.TableExpr{})
+	localPointDecl := localAssign([]string{"Point"}, function([]string{"value"}, ret(ident("value"))))
+	localPointCall := &ast.FuncCallExpr{
+		Func: ident("Point"),
+		Args: []ast.Expr{ident("data")},
+	}
+	shadowFn := function(nil,
+		localPointDecl,
+		ret(localPointCall),
+	)
+
+	r := BindChunk([]ast.Stmt{
+		pointDef,
+		dataDecl,
+		localAssign([]string{"shadow"}, shadowFn),
+	}, Options{})
+
+	localPointID := mustLocalAt(t, r, localPointDecl, 0)
+	if got := mustSymbol(t, r, localPointCall.Func.(*ast.IdentExpr)); got != localPointID {
+		t.Fatalf("shadowed Point call resolved to %d, want local %d", got, localPointID)
+	}
+	if _, ok := r.TypeValueRef(localPointCall.Func.(*ast.IdentExpr)); ok {
+		t.Fatalf("shadowed Point call was marked as a type value")
+	}
+}
+
 func TestFunctionTypeParamsBindTypeRefs(t *testing.T) {
 	paramRef := typeRef("T")
 	returnRef := typeRef("T")

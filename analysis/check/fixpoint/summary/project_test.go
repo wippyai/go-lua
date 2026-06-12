@@ -263,6 +263,30 @@ end`), check.Config{Registry: reg})
 	}
 }
 
+func TestFromResultProjectsReturnTruthyParamRefinement(t *testing.T) {
+	reg := standard.Registry()
+	result := projectCheckFunction(t, projectParseFunction(t, `
+function f(value: any)
+	return type(value) == "number" and value > 0
+end`), check.Config{
+		Registry: reg,
+		Globals:  []string{"type"},
+	})
+
+	got := summary.FromResult(result)
+
+	if len(got.ReturnConditionParamRefinements) == 0 {
+		t.Fatalf("return condition param refinements missing: %#v", got)
+	}
+	refinement := got.ReturnConditionParamRefinements[0]
+	if refinement.ReturnIndex != 0 || !refinement.ReturnValue || refinement.Target.PlaceholderIndex() != 0 {
+		t.Fatalf("return condition refinement = %#v, want truthy ret[0] -> $0", refinement)
+	}
+	if kind := product.Get(reg, refinement.Value, runtimekind.Key); !runtimekind.Equal(kind, runtimekind.Singleton(runtimekind.Number)) {
+		t.Fatalf("return condition runtime kind = %s, want number", kind)
+	}
+}
+
 func TestFromResultMissingReadModelReturnsEmptySummary(t *testing.T) {
 	if got := summary.FromResult(nil); len(got.Returns) != 0 {
 		t.Fatalf("FromResult(nil) returned %#v, want empty summary", got)

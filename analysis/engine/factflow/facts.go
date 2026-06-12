@@ -84,6 +84,16 @@ func (f Facts) WithBranchPresenceRelations(relations map[cfg.Point]BranchPresenc
 	return f
 }
 
+// WithBranchRefinementSets returns f plus the supplied branch-edge value
+// refinements.
+func (f Facts) WithBranchRefinementSets(refinements map[cfg.Point]BranchRefinementSet) Facts {
+	if len(refinements) == 0 {
+		return f
+	}
+	f.branchRefinementSets = mergeBranchRefinementSetMap(f.branchRefinementSets, refinements)
+	return f
+}
+
 // WithPostconditionRefinements returns f plus the supplied node-local normal
 // return refinements.
 func (f Facts) WithPostconditionRefinements(refinements map[cfg.Point]PostconditionRefinementSet) Facts {
