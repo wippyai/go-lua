@@ -16,6 +16,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/typeaccess"
+	"github.com/wippyai/go-lua/analysis/lua/typeprojection"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/type/kind"
 	"github.com/wippyai/go-lua/analysis/type/typ"
@@ -150,6 +151,13 @@ func signatureReturnValue(
 			return product.Value{}, false
 		}
 		return callbackReturnValue(ctx, facts, sig, transform.CallbackParam, true)
+	case returns.TypeProjection:
+		return typeProjectionReturnValue(ctx, facts, sig, transform)
+	case *returns.TypeProjection:
+		if transform == nil {
+			return product.Value{}, false
+		}
+		return typeProjectionReturnValue(ctx, facts, sig, *transform)
 	default:
 		return product.Value{}, false
 	}
@@ -226,6 +234,28 @@ func callbackReturnValue(
 	return valueFromType(ctx.Registry, ret), true
 }
 
+func typeProjectionReturnValue(
+	ctx transfer.NodeContext,
+	facts factflow.Facts,
+	sig signature.Function,
+	transform returns.TypeProjection,
+) (product.Value, bool) {
+	site, ok := facts.CallSite(ctx.Point)
+	if !ok {
+		return product.Value{}, false
+	}
+	args := site.ArgumentSources()
+	argIndex, ok := effect.ResolveParamIndex(transform.Source, len(args))
+	if !ok || sig.Type == nil || argIndex < 0 || argIndex >= len(sig.Type.Params) {
+		return product.Value{}, false
+	}
+	projected, ok := typeprojection.Apply(sig.Type.Params[argIndex].Type, transform.Projection)
+	if !ok {
+		return product.Value{}, false
+	}
+	return valueFromType(ctx.Registry, projected), true
+}
+
 func returnTransform(sig signature.Function, index int) (returns.ReturnType, bool) {
 	for _, label := range sig.Effect.Labels {
 		ret, ok := effect.NormalizeLabel(label).(returns.Return)
@@ -233,7 +263,7 @@ func returnTransform(sig signature.Function, index int) (returns.ReturnType, boo
 			continue
 		}
 		switch transform := ret.Transform.(type) {
-		case returns.SameAs, returns.ElementOf, returns.OptionalElementOf, returns.CallbackReturn, returns.ArrayOfCallbackReturn:
+		case returns.SameAs, returns.ElementOf, returns.OptionalElementOf, returns.CallbackReturn, returns.ArrayOfCallbackReturn, returns.TypeProjection:
 			return ret.Transform, true
 		case *returns.SameAs:
 			if transform != nil {
@@ -252,6 +282,10 @@ func returnTransform(sig signature.Function, index int) (returns.ReturnType, boo
 				return transform, true
 			}
 		case *returns.ArrayOfCallbackReturn:
+			if transform != nil {
+				return transform, true
+			}
+		case *returns.TypeProjection:
 			if transform != nil {
 				return transform, true
 			}

@@ -23,6 +23,8 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/symbol"
+	"github.com/wippyai/go-lua/analysis/type/projection"
+	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
@@ -410,6 +412,128 @@ func TestSignatureProviderCallbackReturnFallsBackToDeclaredReturnType(t *testing
 	}
 }
 
+func TestSignatureProviderTypeProjectionFieldReturnsFieldRuntimeKind(t *testing.T) {
+	reg := product.DefaultRegistry()
+	point := cfg.Point(18)
+	record := typetable.NewRecord().
+		Field("name", typ.String).
+		Field("age", typ.Integer).
+		Build()
+	provider := SignatureProvider(SignatureProviderConfig{
+		Signatures: signatureMap{
+			"f": {
+				Type: typ.Func().
+					Param("value", record).
+					Returns(typ.Any).
+					Build(),
+				Effect: effect.Empty.With(returns.Return{ReturnIndex: 0, Transform: returns.TypeProjection{
+					Source:     effect.ParamRef{Index: 0},
+					Projection: projection.Projection{Steps: []projection.Step{projection.Field("name")}},
+				}}),
+			},
+		},
+		NameFor: StaticName("f"),
+		Facts:   signatureProviderFacts(point, []factflow.ValueSource{{Kind: factflow.ValueSourceExpression}}),
+	})
+
+	got := provider(transfer.NodeContext{Registry: reg, Point: point}, factflow.NewCallProducer(factflow.CallProducerConfig{}), state.State{}, nil)
+
+	if len(got) != 1 {
+		t.Fatalf("got %d results, want 1: %#v", len(got), got)
+	}
+	assertRuntimeKind(t, reg, got[0].Value, runtimekind.Singleton(runtimekind.String))
+}
+
+func TestSignatureProviderTypeProjectionCallableReturnReturnsFirstReturnRuntimeKind(t *testing.T) {
+	reg := product.DefaultRegistry()
+	point := cfg.Point(19)
+	provider := SignatureProvider(SignatureProviderConfig{
+		Signatures: signatureMap{
+			"f": {
+				Type: typ.Func().
+					Param("callback", typ.Func().Returns(typ.Boolean, typ.String).Build()).
+					Returns(typ.Any).
+					Build(),
+				Effect: effect.Empty.With(returns.Return{ReturnIndex: 0, Transform: returns.TypeProjection{
+					Source:     effect.ParamRef{Index: 0},
+					Projection: projection.Projection{Steps: []projection.Step{projection.CallableReturn()}},
+				}}),
+			},
+		},
+		NameFor: StaticName("f"),
+		Facts:   signatureProviderFacts(point, []factflow.ValueSource{{Kind: factflow.ValueSourceExpression}}),
+	})
+
+	got := provider(transfer.NodeContext{Registry: reg, Point: point}, factflow.NewCallProducer(factflow.CallProducerConfig{}), state.State{}, nil)
+
+	if len(got) != 1 {
+		t.Fatalf("got %d results, want 1: %#v", len(got), got)
+	}
+	assertRuntimeKind(t, reg, got[0].Value, runtimekind.Singleton(runtimekind.Boolean))
+}
+
+func TestSignatureProviderTypeProjectionGenericArgReturnsArgRuntimeKind(t *testing.T) {
+	reg := product.DefaultRegistry()
+	point := cfg.Point(20)
+	param := typ.NewTypeParam("T", nil)
+	box := typ.NewGeneric("Box", []*typ.TypeParam{param}, param)
+	stringBox := typ.NewAlias("StringBox", typ.Instantiate(box, typ.String))
+	provider := SignatureProvider(SignatureProviderConfig{
+		Signatures: signatureMap{
+			"f": {
+				Type: typ.Func().
+					Param("value", stringBox).
+					Returns(typ.Any).
+					Build(),
+				Effect: effect.Empty.With(returns.Return{ReturnIndex: 0, Transform: returns.TypeProjection{
+					Source:     effect.ParamRef{Index: 0},
+					Projection: projection.Projection{Steps: []projection.Step{projection.GenericArg(0)}},
+				}}),
+			},
+		},
+		NameFor: StaticName("f"),
+		Facts:   signatureProviderFacts(point, []factflow.ValueSource{{Kind: factflow.ValueSourceExpression}}),
+	})
+
+	got := provider(transfer.NodeContext{Registry: reg, Point: point}, factflow.NewCallProducer(factflow.CallProducerConfig{}), state.State{}, nil)
+
+	if len(got) != 1 {
+		t.Fatalf("got %d results, want 1: %#v", len(got), got)
+	}
+	assertRuntimeKind(t, reg, got[0].Value, runtimekind.Singleton(runtimekind.String))
+}
+
+func TestSignatureProviderTypeProjectionFallsBackToDeclaredReturnType(t *testing.T) {
+	reg := product.DefaultRegistry()
+	point := cfg.Point(21)
+	record := typetable.NewRecord().
+		Field("name", typ.String).
+		Build()
+	provider := SignatureProvider(SignatureProviderConfig{
+		Signatures: signatureMap{
+			"f": {
+				Type: typ.Func().
+					Param("value", record).
+					Returns(typ.Number).
+					Build(),
+				Effect: effect.Empty.With(returns.Return{ReturnIndex: 0, Transform: returns.TypeProjection{
+					Source:     effect.ParamRef{Index: 0},
+					Projection: projection.Projection{Steps: []projection.Step{projection.Field("missing")}},
+				}}),
+			},
+		},
+		NameFor: StaticName("f"),
+		Facts:   signatureProviderFacts(point, []factflow.ValueSource{{Kind: factflow.ValueSourceExpression}}),
+	})
+
+	got := provider(transfer.NodeContext{Registry: reg, Point: point}, factflow.NewCallProducer(factflow.CallProducerConfig{}), state.State{}, nil)
+
+	if len(got) != 1 {
+		t.Fatalf("got %d results, want 1: %#v", len(got), got)
+	}
+	assertRuntimeKind(t, reg, got[0].Value, runtimekind.Singleton(runtimekind.Number))
+}
+
 func TestFallbackKeepsPrimarySlotsAndFillsMissingSignatureSlots(t *testing.T) {
 	reg := product.DefaultRegistry()
 	primaryValue := product.Set(reg, product.Top(), runtimekind.Key, runtimekind.Singleton(runtimekind.Boolean))
@@ -606,6 +730,7 @@ func TestProductionImportsAreBounded(t *testing.T) {
 		"github.com/wippyai/go-lua/analysis/engine/transfer":               true,
 		"github.com/wippyai/go-lua/analysis/ir/cfg":                        true,
 		"github.com/wippyai/go-lua/analysis/lua/typeaccess":                true,
+		"github.com/wippyai/go-lua/analysis/lua/typeprojection":            true,
 		"github.com/wippyai/go-lua/analysis/symbol":                        true,
 		"github.com/wippyai/go-lua/analysis/type/kind":                     true,
 		"github.com/wippyai/go-lua/analysis/type/typ":                      true,
@@ -619,7 +744,8 @@ func TestProductionImportsAreBounded(t *testing.T) {
 
 	forbidden := []string{"/__old", "/adapter", "/query", "/compiler", "/analysis/lua", "/cfgbuild", "/semantics", "/diagnostic", "/diagnostics", "/store", "/session"}
 	for _, dep := range strings.Fields(string(out)) {
-		if dep == "github.com/wippyai/go-lua/analysis/lua/typeaccess" {
+		if dep == "github.com/wippyai/go-lua/analysis/lua/typeaccess" ||
+			dep == "github.com/wippyai/go-lua/analysis/lua/typeprojection" {
 			continue
 		}
 		for _, forbiddenPart := range forbidden {
