@@ -604,6 +604,9 @@ func TestFactsCarrierCopiesAndReturnsFalseForMissingFacts(t *testing.T) {
 				NewObjectEntry(path.Path{Segments: []segment.Segment{{Kind: segment.SegmentField, Name: "field"}}}, source),
 			}),
 		},
+		ExpressionValues: map[ExprRef]product.Value{
+			ExprRef(3): product.Set(standard.Registry(), product.Top(), runtimekind.Key, runtimekind.Singleton(runtimekind.String)),
+		},
 		ExpressionRefinements: map[ExprRef]ExpressionRefinement{
 			ExprRef(4): NewExpressionRefinement(source, runtimeKindConstraint(runtimekind.Singleton(runtimekind.Table))),
 		},
@@ -656,6 +659,7 @@ func TestFactsCarrierCopiesAndReturnsFalseForMissingFacts(t *testing.T) {
 	input.ObjectLiterals[ExprRef(1)] = NewObjectLiteral([]ObjectEntry{
 		NewObjectEntry(path.Path{Segments: []segment.Segment{{Kind: segment.SegmentField, Name: "changed"}}}, callSource),
 	})
+	input.ExpressionValues[ExprRef(3)] = product.Set(standard.Registry(), product.Top(), runtimekind.Key, runtimekind.Singleton(runtimekind.Number))
 	input.ExpressionRefinements[ExprRef(4)] = NewExpressionRefinement(callSource, runtimeKindConstraint(runtimekind.Singleton(runtimekind.Function)))
 	input.ExpressionPaths[ExprRef(6)] = path.NewPath(symbol.ID(55), "changed").Field("leaf")
 
@@ -694,6 +698,9 @@ func TestFactsCarrierCopiesAndReturnsFalseForMissingFacts(t *testing.T) {
 	}
 	if _, ok := facts.ObjectLiteral(ExprRef(99)); ok {
 		t.Fatal("missing object literal returned ok")
+	}
+	if _, ok := facts.ExpressionValue(ExprRef(99)); ok {
+		t.Fatal("missing expression value returned ok")
 	}
 	if _, ok := facts.ExpressionRefinement(ExprRef(99)); ok {
 		t.Fatal("missing expression refinement returned ok")
@@ -924,6 +931,20 @@ func TestFactsCarrierCopiesAndReturnsFalseForMissingFacts(t *testing.T) {
 	literalAgain, _ := facts.ObjectLiteral(ExprRef(1))
 	if got := literalAgain.Entries()[0].Suffix(); got.Segments[0].Name != "field" {
 		t.Fatalf("facts object literal exposed mutable suffix: %#v", got)
+	}
+
+	exprValue, ok := facts.ExpressionValue(ExprRef(3))
+	if !ok {
+		t.Fatal("expression value missing")
+	}
+	if got := product.Get(standard.Registry(), exprValue, runtimekind.Key); !runtimekind.Equal(got, runtimekind.Singleton(runtimekind.String)) {
+		t.Fatalf("expression value runtime kind = %s, want string", got)
+	}
+	allExpressionValues := facts.ExpressionValues()
+	allExpressionValues[ExprRef(3)] = product.Set(standard.Registry(), product.Top(), runtimekind.Key, runtimekind.Singleton(runtimekind.Boolean))
+	allExpressionValuesAgain := facts.ExpressionValues()
+	if got := product.Get(standard.Registry(), allExpressionValuesAgain[ExprRef(3)], runtimekind.Key); !runtimekind.Equal(got, runtimekind.Singleton(runtimekind.String)) {
+		t.Fatalf("facts expression values exposed mutable map, got runtime kind %s", got)
 	}
 
 	refinementFact, ok := facts.ExpressionRefinement(ExprRef(4))

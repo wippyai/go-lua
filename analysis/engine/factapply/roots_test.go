@@ -79,7 +79,47 @@ func TestFactsNodeTransferAppliesOrdinaryAssignmentThroughResolver(t *testing.T)
 	assertResolverCall(t, resolver, assign, source)
 }
 
-func TestFactsNodeTransferRootAssignmentUsesDeclaredValueWhenSourceMissing(t *testing.T) {
+func TestFactsNodeTransferRootAssignmentAddsPathEqualityProofForPathSource(t *testing.T) {
+	reg := standard.Registry()
+	point := cfg.Point(12)
+	source := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: factflow.ExprRef(12), HasExpr: true}
+	target := symbol.ID(112)
+	sourceSymbol := symbol.ID(113)
+	assigned := presentValue(reg)
+	sources := &recordingSourceValues{
+		values: map[factflow.ValueSource]product.Value{source: assigned},
+	}
+	visibilityBuilder := visibility.NewBuilder()
+	visibilityBuilder.Define(point, target, "alias")
+	visibilityBuilder.Define(point, sourceSymbol, "box")
+
+	got := NewFactsNodeTransfer(FactsNodeTransferConfig{
+		Facts: factflow.NewFacts(factflow.FactsInput{
+			RootAssignments: map[cfg.Point]factflow.RootAssignment{
+				point: factflow.NewRootAssignment(factflow.RootAssignmentLocalDeclaration, target, path.NewPath(target, "alias"), source),
+			},
+			ExpressionPaths: map[factflow.ExprRef]path.Path{
+				source.ExprRef: path.NewPath(sourceSymbol, "box"),
+			},
+		}),
+		Sources:    sources,
+		Visibility: visibility.NewResolver(visibilityBuilder.Build()),
+	})(transfer.NodeContext{
+		Registry: reg,
+		Point:    point,
+	}, state.State{})
+
+	proof := state.BranchProof{
+		Kind:  state.BranchProofPathEqual,
+		Path:  path.PathKey("sym112@1"),
+		Other: path.PathKey("sym113@1"),
+	}
+	if !got.HasBranchProof(proof) {
+		t.Fatalf("missing path equality proof %#v", proof)
+	}
+}
+
+func TestFactsNodeTransferRootAssignmentUsesDeclaredContractBeforeSource(t *testing.T) {
 	reg := standard.Registry()
 	graph := cfg.New()
 	assign := graph.AddNode(cfg.NodeAssign)
@@ -89,7 +129,38 @@ func TestFactsNodeTransferRootAssignmentUsesDeclaredValueWhenSourceMissing(t *te
 	source := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: factflow.ExprRef(12), HasExpr: true}
 	target := symbol.ID(103)
 	declared := product.Set(reg, presentValue(reg), runtimekind.Key, runtimekind.Singleton(runtimekind.String))
-	resolver := &recordingSourceValues{}
+
+	got := transfer.Run(transfer.Config{
+		Graph:    graph,
+		Registry: reg,
+		NodeTransfer: NewFactsNodeTransfer(FactsNodeTransferConfig{
+			Facts: factflow.NewFacts(factflow.FactsInput{
+				RootAssignments: map[cfg.Point]factflow.RootAssignment{
+					assign: factflow.NewRootAssignmentWithDeclaredContractValue(factflow.RootAssignmentLocalDeclaration, target, path.NewPath(target, "local"), source, declared),
+				},
+			}),
+			Sources: panicSourceValues{},
+		}),
+	})
+
+	assertValue(t, reg, got[graph.Exit()], key.SymbolValue(target), declared)
+	assertRuntimeKind(t, reg, got[graph.Exit()].ReadValue(reg, key.SymbolValue(target)), runtimekind.Singleton(runtimekind.String))
+}
+
+func TestFactsNodeTransferRootAssignmentUsesSourceBeforeFallbackDeclaredValue(t *testing.T) {
+	reg := standard.Registry()
+	graph := cfg.New()
+	assign := graph.AddNode(cfg.NodeAssign)
+	graph.AddEdge(graph.Entry(), assign, false)
+	graph.AddEdge(assign, graph.Exit(), false)
+
+	source := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: factflow.ExprRef(13), HasExpr: true}
+	target := symbol.ID(104)
+	declared := product.Set(reg, presentValue(reg), runtimekind.Key, runtimekind.Singleton(runtimekind.String))
+	assigned := product.Set(reg, presentValue(reg), runtimekind.Key, runtimekind.Singleton(runtimekind.Number))
+	resolver := &recordingSourceValues{
+		values: map[factflow.ValueSource]product.Value{source: assigned},
+	}
 
 	got := transfer.Run(transfer.Config{
 		Graph:    graph,
@@ -104,8 +175,8 @@ func TestFactsNodeTransferRootAssignmentUsesDeclaredValueWhenSourceMissing(t *te
 		}),
 	})
 
-	assertValue(t, reg, got[graph.Exit()], key.SymbolValue(target), declared)
-	assertRuntimeKind(t, reg, got[graph.Exit()].ReadValue(reg, key.SymbolValue(target)), runtimekind.Singleton(runtimekind.String))
+	assertValue(t, reg, got[graph.Exit()], key.SymbolValue(target), assigned)
+	assertRuntimeKind(t, reg, got[graph.Exit()].ReadValue(reg, key.SymbolValue(target)), runtimekind.Singleton(runtimekind.Number))
 	assertResolverCall(t, resolver, assign, source)
 }
 

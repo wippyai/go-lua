@@ -9,6 +9,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/variantorigin"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/standard"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
@@ -127,6 +128,34 @@ end`)
 	want := runtimekind.Join(runtimekind.Singleton(runtimekind.Number), runtimekind.Singleton(runtimekind.String))
 	if kind := product.Get(reg, got.Returns[0], runtimekind.Key); !runtimekind.Equal(kind, want) {
 		t.Fatalf("return runtime kind = %s, want %s", kind, want)
+	}
+}
+
+func TestFromResultPreservesDeclaredReturnVariantOrigin(t *testing.T) {
+	reg := standard.Registry()
+	tableValue := product.Set(reg, product.Top(), runtimekind.Key, runtimekind.Singleton(runtimekind.Table))
+	fn := projectParseFunction(t, `
+function f(): {kind: "a", value: number} | {kind: "b", value: string}
+	return {kind = "a", value = 1}
+end`)
+
+	result := projectCheckFunction(t, fn, check.Config{
+		Registry: reg,
+		ExpressionValue: func(_ cfg.Point, _ factflow.ExprRef, source factflow.ValueSource, _ state.State) (product.Value, bool) {
+			if source.TargetIndex != 0 {
+				return product.Value{}, false
+			}
+			return tableValue, true
+		},
+	})
+	got := summary.FromResult(result)
+
+	if len(got.Returns) != 1 {
+		t.Fatalf("FromResult returned %d slots, want 1", len(got.Returns))
+	}
+	origin := product.Get(reg, got.Returns[0], variantorigin.Key)
+	if origin.IsBottom() || origin.IsTop() {
+		t.Fatalf("return variant origin = %v, want declared record-union origin", origin)
 	}
 }
 

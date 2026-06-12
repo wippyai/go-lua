@@ -249,9 +249,12 @@ func TestFactsEdgeTransferPathComparisonNarrowsParentVariantOrigin(t *testing.T)
 	ch1 := symbol.ID(326)
 	resultPath := pathdom.NewPath(result, "result")
 	ch1Path := pathdom.NewPath(ch1, "ch1")
+	staleValueKey := pathdom.PathKey("sym325@1.value")
+	staleValue := product.Set(reg, product.Top(), runtimekind.Key, runtimekind.Singleton(runtimekind.Number))
 	initial := state.State{}.
 		WriteValue(reg, key.SymbolValue(result), typevalue.FromType(reg, union)).
-		WriteValue(reg, key.SymbolValue(ch1), typevalue.FromType(reg, chanInt))
+		WriteValue(reg, key.SymbolValue(ch1), typevalue.FromType(reg, chanInt)).
+		WritePathKey(reg, staleValueKey, staleValue)
 	visibilityBuilder := visibility.NewBuilder()
 	visibilityBuilder.Define(branch, result, "result")
 
@@ -274,6 +277,8 @@ func TestFactsEdgeTransferPathComparisonNarrowsParentVariantOrigin(t *testing.T)
 
 	assertVariantOriginType(t, reg, got[thenPoint], result, union, intCase)
 	assertVariantOriginType(t, reg, got[elsePoint], result, union, strCase)
+	assertPathValue(t, reg, got[thenPoint], staleValueKey, product.Bottom(reg))
+	assertPathValue(t, reg, got[elsePoint], staleValueKey, product.Bottom(reg))
 }
 
 func TestFactsEdgeTransferAppliesPathEqualityRelationRootMember(t *testing.T) {
@@ -549,6 +554,131 @@ func TestFactsEdgeTransferRefinesStaticMemberPathThroughVisibility(t *testing.T)
 	assertPathValue(t, reg, got[thenPoint], pathKey, presentValue(reg))
 	assertPathValue(t, reg, got[elsePoint], pathKey, absentValue(reg))
 	assertValue(t, reg, got[thenPoint], key.SymbolValue(target), product.Bottom(reg))
+}
+
+func TestFactsEdgeTransferRootRefinementInvalidatesDescendantPathFacts(t *testing.T) {
+	reg := standard.Registry()
+	graph := cfg.New()
+	branch := graph.AddNode(cfg.NodeBranch)
+	thenPoint := graph.AddNode(cfg.NodeNoop)
+	elsePoint := graph.AddNode(cfg.NodeNoop)
+	graph.AddEdge(graph.Entry(), branch, false)
+	graph.AddEdge(branch, thenPoint, true)
+	graph.AddEdge(branch, elsePoint, false)
+	graph.AddEdge(thenPoint, graph.Exit(), false)
+	graph.AddEdge(elsePoint, graph.Exit(), false)
+
+	target := symbol.ID(329)
+	rootPath := pathdom.NewPath(target, "r")
+	childKey := pathdom.PathKey("sym329@1.value")
+	staleChild := product.Set(reg, product.Top(), runtimekind.Key, runtimekind.Singleton(runtimekind.String))
+	initial := state.State{}.
+		WriteValue(reg, key.SymbolValue(target), product.Top()).
+		WritePathKey(reg, childKey, staleChild)
+	visibilityBuilder := visibility.NewBuilder()
+	visibilityBuilder.Define(branch, target, "r")
+
+	got := transfer.Run(transfer.Config{
+		Graph:      graph,
+		Registry:   reg,
+		EntryState: initial,
+		EdgeTransfer: NewFactsEdgeTransfer(FactsEdgeTransferConfig{
+			Facts: factflow.NewFacts(factflow.FactsInput{
+				BranchRefinements: map[cfg.Point]factflow.BranchRefinementSet{
+					branch: factflow.NewBranchRefinementSet(
+						branchWithRuntimeKind(rootPath, runtimekind.Singleton(runtimekind.Table), true, runtimekind.Value{}, false),
+					),
+				},
+			}),
+			Visibility: visibility.NewResolver(visibilityBuilder.Build()),
+		}),
+	})
+
+	assertRuntimeKind(t, reg, got[thenPoint].ReadValue(reg, key.SymbolValue(target)), runtimekind.Singleton(runtimekind.Table))
+	assertPathValue(t, reg, got[thenPoint], childKey, product.Bottom(reg))
+	assertPathValue(t, reg, got[elsePoint], childKey, staleChild)
+}
+
+func TestFactsEdgeTransferRootRefinementAllowsLaterChildRepublish(t *testing.T) {
+	reg := standard.Registry()
+	graph := cfg.New()
+	branch := graph.AddNode(cfg.NodeBranch)
+	thenPoint := graph.AddNode(cfg.NodeNoop)
+	elsePoint := graph.AddNode(cfg.NodeNoop)
+	graph.AddEdge(graph.Entry(), branch, false)
+	graph.AddEdge(branch, thenPoint, true)
+	graph.AddEdge(branch, elsePoint, false)
+	graph.AddEdge(thenPoint, graph.Exit(), false)
+	graph.AddEdge(elsePoint, graph.Exit(), false)
+
+	target := symbol.ID(330)
+	rootPath := pathdom.NewPath(target, "r")
+	childPath := rootPath.Field("value")
+	childKey := pathdom.PathKey("sym330@1.value")
+	staleChild := product.Set(reg, product.Top(), runtimekind.Key, runtimekind.Singleton(runtimekind.String))
+	initial := state.State{}.
+		WriteValue(reg, key.SymbolValue(target), product.Top()).
+		WritePathKey(reg, childKey, staleChild)
+	visibilityBuilder := visibility.NewBuilder()
+	visibilityBuilder.Define(branch, target, "r")
+
+	got := transfer.Run(transfer.Config{
+		Graph:      graph,
+		Registry:   reg,
+		EntryState: initial,
+		EdgeTransfer: NewFactsEdgeTransfer(FactsEdgeTransferConfig{
+			Facts: factflow.NewFacts(factflow.FactsInput{
+				BranchRefinements: map[cfg.Point]factflow.BranchRefinementSet{
+					branch: factflow.NewBranchRefinementSet(
+						branchWithRuntimeKind(rootPath, runtimekind.Singleton(runtimekind.Table), true, runtimekind.Value{}, false),
+						branchWithRuntimeKind(childPath, runtimekind.Singleton(runtimekind.Number), true, runtimekind.Value{}, false),
+					),
+				},
+			}),
+			Visibility: visibility.NewResolver(visibilityBuilder.Build()),
+		}),
+	})
+
+	assertRuntimeKind(t, reg, got[thenPoint].ReadValue(reg, key.SymbolValue(target)), runtimekind.Singleton(runtimekind.Table))
+	assertRuntimeKind(t, reg, got[thenPoint].ReadPathKey(reg, childKey), runtimekind.Singleton(runtimekind.Number))
+	assertPathValue(t, reg, got[elsePoint], childKey, staleChild)
+}
+
+func TestFactsEdgeTransferMaterializesStaticMemberPathRefinement(t *testing.T) {
+	reg := standard.Registry()
+	graph := cfg.New()
+	branch := graph.AddNode(cfg.NodeBranch)
+	thenPoint := graph.AddNode(cfg.NodeNoop)
+	elsePoint := graph.AddNode(cfg.NodeNoop)
+	graph.AddEdge(graph.Entry(), branch, false)
+	graph.AddEdge(branch, thenPoint, true)
+	graph.AddEdge(branch, elsePoint, false)
+	graph.AddEdge(thenPoint, graph.Exit(), false)
+	graph.AddEdge(elsePoint, graph.Exit(), false)
+
+	target := symbol.ID(305)
+	targetPath := pathdom.NewPath(target, "t").Field("field")
+	pathKey := pathdom.PathKey("sym305@1.field")
+	visibilityBuilder := visibility.NewBuilder()
+	visibilityBuilder.Define(branch, target, "t")
+
+	got := transfer.Run(transfer.Config{
+		Graph:    graph,
+		Registry: reg,
+		EdgeTransfer: NewFactsEdgeTransfer(FactsEdgeTransferConfig{
+			Facts: factflow.NewFacts(factflow.FactsInput{
+				BranchRefinements: map[cfg.Point]factflow.BranchRefinementSet{
+					branch: factflow.NewBranchRefinementSet(
+						branchWithPresence(targetPath, presence.Present(), true, presence.Absent(), true),
+					),
+				},
+			}),
+			Visibility: visibility.NewResolver(visibilityBuilder.Build()),
+		}),
+	})
+
+	assertPathValue(t, reg, got[thenPoint], pathKey, presentValue(reg))
+	assertPathValue(t, reg, got[elsePoint], pathKey, absentValue(reg))
 }
 
 func TestFactsEdgeTransferRefinesRuntimeKindOnRootValue(t *testing.T) {

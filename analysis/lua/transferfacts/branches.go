@@ -8,6 +8,7 @@ import (
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/lua/branchcond"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
+	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
 func (l *lowerer) branchRefinement(fact semantics.BranchConditionFact) (factflow.BranchRefinement, bool) {
@@ -20,31 +21,156 @@ func (l *lowerer) branchRefinement(fact semantics.BranchConditionFact) (factflow
 		return factflow.NewBranchRefinement(
 			target,
 			l.presenceRefinement(presence.Absent()), true,
-			l.presenceRefinement(presence.Present()), true,
+			l.typedPresenceRefinement(target, presence.Present()), true,
 		), true
 	case branchcond.CheckNotNil:
 		return factflow.NewBranchRefinement(
 			target,
-			l.presenceRefinement(presence.Present()), true,
+			l.typedPresenceRefinement(target, presence.Present()), true,
 			l.presenceRefinement(presence.Absent()), true,
 		), true
 	case branchcond.CheckTruthy:
 		return factflow.NewBranchRefinement(
 			target,
-			l.presenceRefinement(presence.Present()), true,
+			l.typedPresenceRefinement(target, presence.Present()), true,
 			factflow.ValueRefinement{}, false,
 		), true
 	case branchcond.CheckFalsy:
 		return factflow.NewBranchRefinement(
 			target,
 			factflow.ValueRefinement{}, false,
-			l.presenceRefinement(presence.Present()), true,
+			l.typedPresenceRefinement(target, presence.Present()), true,
 		), true
+	case branchcond.CheckLiteralEqual, branchcond.CheckLiteralNot:
+		return l.literalBranchRefinement(target, fact.Check.Kind, fact.Check.LiteralString)
 	case branchcond.CheckTypeEqual, branchcond.CheckTypeNot:
 		return l.typeBranchRefinement(target, fact.Check.Kind, fact.Check.TypeName)
 	default:
 		return factflow.BranchRefinement{}, false
 	}
+}
+
+func (l *lowerer) branchRefinements(fact semantics.BranchConditionFact) []factflow.BranchRefinement {
+	if fact.Check.Kind != branchcond.CheckNone {
+		if lowered := l.branchRefinementsForCheck(fact.Check); len(lowered) != 0 {
+			return lowered
+		}
+		return nil
+	}
+	var out []factflow.BranchRefinement
+	for _, check := range branchcond.TruthyChecks(fact.Condition, l.bindings) {
+		out = append(out, l.branchEdgeRefinements(check, true)...)
+	}
+	for _, check := range branchcond.FalsyChecks(fact.Condition, l.bindings) {
+		out = append(out, l.branchEdgeRefinements(check, false)...)
+	}
+	return out
+}
+
+func (l *lowerer) branchRefinementsForCheck(check branchcond.Check) []factflow.BranchRefinement {
+	refinement, ok := l.branchRefinement(semantics.BranchConditionFact{Check: check})
+	if !ok {
+		return nil
+	}
+	out := l.rootRefinementsForBranchRefinement(refinement)
+	out = append(out, l.truthyBooleanRootRefinements(check)...)
+	out = append(out, refinement)
+	return out
+}
+
+func (l *lowerer) branchEdgeRefinements(check branchcond.Check, cond bool) []factflow.BranchRefinement {
+	refinement, ok := l.branchEdgeRefinement(check, cond)
+	if !ok {
+		return nil
+	}
+	out := l.rootRefinementsForBranchRefinement(refinement)
+	if check.Kind == branchcond.CheckTruthy || check.Kind == branchcond.CheckFalsy {
+		out = append(out, l.truthyBooleanRootRefinementOnEdge(check, cond)...)
+	}
+	out = append(out, refinement)
+	return out
+}
+
+func (l *lowerer) branchEdgeRefinement(check branchcond.Check, cond bool) (factflow.BranchRefinement, bool) {
+	refinement, ok := l.branchRefinement(semantics.BranchConditionFact{Check: check})
+	if !ok {
+		return factflow.BranchRefinement{}, false
+	}
+	value, ok := refinement.ValueForEdge(cond)
+	if !ok {
+		return factflow.BranchRefinement{}, false
+	}
+	if cond {
+		return factflow.NewBranchRefinement(refinement.TargetPath(), value, true, factflow.ValueRefinement{}, false), true
+	}
+	return factflow.NewBranchRefinement(refinement.TargetPath(), factflow.ValueRefinement{}, false, value, true), true
+}
+
+func (l *lowerer) rootRefinementsForBranchRefinement(refinement factflow.BranchRefinement) []factflow.BranchRefinement {
+	target := refinement.TargetPath()
+	var out []factflow.BranchRefinement
+	if value, ok := refinement.TrueValue(); ok && refinementHasPresence(value, presence.Present()) {
+		if root, ok := l.rootPresenceRefinement(target, true); ok {
+			out = append(out, root)
+		}
+	}
+	if value, ok := refinement.FalseValue(); ok && refinementHasPresence(value, presence.Present()) {
+		if root, ok := l.rootPresenceRefinement(target, false); ok {
+			out = append(out, root)
+		}
+	}
+	return out
+}
+
+func (l *lowerer) truthyBooleanRootRefinements(check branchcond.Check) []factflow.BranchRefinement {
+	switch check.Kind {
+	case branchcond.CheckTruthy:
+		var out []factflow.BranchRefinement
+		if root, ok := l.rootLiteralRefinement(check.Path, typ.LiteralBool(true), true); ok {
+			out = append(out, root)
+		}
+		if root, ok := l.rootLiteralRefinement(check.Path, typ.LiteralBool(false), false); ok {
+			out = append(out, root)
+		}
+		return out
+	case branchcond.CheckFalsy:
+		var out []factflow.BranchRefinement
+		if root, ok := l.rootLiteralRefinement(check.Path, typ.LiteralBool(false), true); ok {
+			out = append(out, root)
+		}
+		if root, ok := l.rootLiteralRefinement(check.Path, typ.LiteralBool(true), false); ok {
+			out = append(out, root)
+		}
+		return out
+	default:
+		return nil
+	}
+}
+
+func (l *lowerer) truthyBooleanRootRefinementOnEdge(check branchcond.Check, cond bool) []factflow.BranchRefinement {
+	switch check.Kind {
+	case branchcond.CheckTruthy:
+		if cond {
+			if root, ok := l.rootLiteralRefinement(check.Path, typ.LiteralBool(true), true); ok {
+				return []factflow.BranchRefinement{root}
+			}
+		} else {
+			if root, ok := l.rootLiteralRefinement(check.Path, typ.LiteralBool(false), false); ok {
+				return []factflow.BranchRefinement{root}
+			}
+		}
+	case branchcond.CheckFalsy:
+		if cond {
+			if root, ok := l.rootLiteralRefinement(check.Path, typ.LiteralBool(false), true); ok {
+				return []factflow.BranchRefinement{root}
+			}
+		} else {
+			if root, ok := l.rootLiteralRefinement(check.Path, typ.LiteralBool(true), false); ok {
+				return []factflow.BranchRefinement{root}
+			}
+		}
+	}
+	return nil
 }
 
 func (l *lowerer) branchPathRelations(fact semantics.BranchConditionFact) (factflow.BranchPathRelationSet, bool) {
@@ -67,6 +193,14 @@ func (l *lowerer) branchPathRelations(fact semantics.BranchConditionFact) (factf
 	default:
 		return factflow.BranchPathRelationSet{}, false
 	}
+}
+
+func refinementHasPresence(refinement factflow.ValueRefinement, want presence.Value) bool {
+	constraint, ok := refinement.Constraint()
+	if !ok {
+		return false
+	}
+	return presence.Equal(product.PresenceOf(constraint), want)
 }
 
 func (l *lowerer) typeBranchRefinement(target path.Path, kind branchcond.CheckKind, typeName string) (factflow.BranchRefinement, bool) {

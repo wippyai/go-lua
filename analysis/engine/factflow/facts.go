@@ -1,7 +1,10 @@
 package factflow
 
-import "github.com/wippyai/go-lua/analysis/ir/cfg"
-import pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+import (
+	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/ir/cfg"
+)
 
 // FactsInput carries point-keyed facts used to construct an immutable Facts snapshot.
 type FactsInput struct {
@@ -23,6 +26,7 @@ type FactsInput struct {
 	Returns                     map[cfg.Point]Return
 	CallSites                   map[cfg.Point]CallSite
 	ObjectLiterals              map[ExprRef]ObjectLiteral
+	ExpressionValues            map[ExprRef]product.Value
 	ExpressionRefinements       map[ExprRef]ExpressionRefinement
 	ExpressionPaths             map[ExprRef]pathdom.Path
 	ExpressionConditions        map[ExprRef]ExpressionCondition
@@ -48,6 +52,7 @@ type Facts struct {
 	returns                     map[cfg.Point]Return
 	callSites                   map[cfg.Point]CallSite
 	objectLiterals              map[ExprRef]ObjectLiteral
+	expressionValues            map[ExprRef]product.Value
 	expressionRefinements       map[ExprRef]ExpressionRefinement
 	expressionPaths             map[ExprRef]pathdom.Path
 	expressionConditions        map[ExprRef]ExpressionCondition
@@ -74,6 +79,7 @@ func NewFacts(input FactsInput) Facts {
 		returns:                     copyReturnMap(input.Returns),
 		callSites:                   copyCallSiteMap(input.CallSites),
 		objectLiterals:              copyObjectLiteralMap(input.ObjectLiterals),
+		expressionValues:            copyExpressionValueMap(input.ExpressionValues),
 		expressionRefinements:       copyExpressionRefinementMap(input.ExpressionRefinements),
 		expressionPaths:             copyExpressionPathMap(input.ExpressionPaths),
 		expressionConditions:        copyExpressionConditionMap(input.ExpressionConditions),
@@ -324,6 +330,17 @@ func (f Facts) ObjectLiteral(expr ExprRef) (ObjectLiteral, bool) {
 	return fact.copy(), true
 }
 
+// ExpressionValue returns the syntactically known value fact for expr, if present.
+func (f Facts) ExpressionValue(expr ExprRef) (product.Value, bool) {
+	value, ok := f.expressionValues[expr]
+	return value, ok
+}
+
+// ExpressionValues returns syntactically known expression values keyed by expression.
+func (f Facts) ExpressionValues() map[ExprRef]product.Value {
+	return copyExpressionValueMap(f.expressionValues)
+}
+
 // ExpressionRefinement returns the source-value refinement fact for expr, if present.
 func (f Facts) ExpressionRefinement(expr ExprRef) (ExpressionRefinement, bool) {
 	fact, ok := f.expressionRefinements[expr]
@@ -369,6 +386,17 @@ func copyNoNormalReturnMap(in map[cfg.Point]struct{}) map[cfg.Point]struct{} {
 	out := make(map[cfg.Point]struct{}, len(in))
 	for point := range in {
 		out[point] = struct{}{}
+	}
+	return out
+}
+
+func copyExpressionValueMap(in map[ExprRef]product.Value) map[ExprRef]product.Value {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[ExprRef]product.Value, len(in))
+	for ref, value := range in {
+		out[ref] = value
 	}
 	return out
 }

@@ -37,6 +37,9 @@ func applyValueRefinementAt(
 		return out
 	}
 	if len(targetPath.Segments) == 0 {
+		if _, ok := refinement.Constraint(); ok {
+			out = invalidateRootDescendantsAt(resolver, point, out, targetPath)
+		}
 		return out.UpdateValue(reg, key.SymbolValue(targetPath.Symbol), func(value product.Value) product.Value {
 			return refineProductValue(reg, value, refinement)
 		})
@@ -44,13 +47,19 @@ func applyValueRefinementAt(
 	if resolver == nil {
 		return out
 	}
-	updated, ok := updatePathAt(reg, out, resolver, point, targetPath, func(value product.Value) product.Value {
-		return refineProductValue(reg, value, refinement)
-	})
+	current, ok := resolvePathValueAt(reg, resolver, point, out, targetPath)
 	if !ok {
-		return out
+		constraint, hasConstraint := refinement.Constraint()
+		if !hasConstraint {
+			return out
+		}
+		written, wrote := writePathAt(reg, out, resolver, point, targetPath, constraint)
+		if !wrote {
+			return out
+		}
+		return written
 	}
-	return updated
+	return current.write(out, refineProductValue(reg, current.value, refinement))
 }
 
 func refineProductValue(reg *axis.Registry, value product.Value, refinement factflow.ValueRefinement) product.Value {
@@ -266,5 +275,24 @@ func applyPathOriginRelation(
 	} else {
 		narrowed = variantorigin.Of(rootOrigin.Family(), cases)
 	}
+	rootPath := parentPath
+	rootPath.Segments = nil
+	out = invalidateRootDescendantsAt(resolver, point, out, rootPath)
 	return out.WriteValue(reg, slot, product.Set(reg, root, variantorigin.Key, narrowed))
+}
+
+func invalidateRootDescendantsAt(
+	resolver *visibility.Resolver,
+	point cfg.Point,
+	out state.State,
+	rootPath pathdom.Path,
+) state.State {
+	if resolver == nil || rootPath.Symbol == 0 || len(rootPath.Segments) != 0 {
+		return out
+	}
+	invalidated, ok := invalidatePathDescendantsAt(out, resolver, point, rootPath)
+	if !ok {
+		return out
+	}
+	return invalidated
 }

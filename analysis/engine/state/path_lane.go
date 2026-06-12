@@ -71,11 +71,17 @@ func (s State) InvalidatePathKeySubtree(pathKey pathdom.PathKey) (State, bool) {
 	if !ok {
 		return s, false
 	}
-	if !changed {
+	staticMembers, staticChanged, _ := statepathkey.DeleteSubtree(s.pathStaticMembers, pathKey)
+	branchProofs, branchProofChanged := deleteBranchProofsMatching(s.branchProofs, func(candidate pathdom.PathKey) bool {
+		return pathKeyInSubtree(candidate, pathKey)
+	})
+	if !changed && !staticChanged && !branchProofChanged {
 		return s, true
 	}
 	out := s
 	out.paths = paths
+	out.pathStaticMembers = staticMembers
+	out.branchProofs = branchProofs
 	return out, true
 }
 
@@ -90,11 +96,17 @@ func (s State) InvalidatePathKeyDescendants(pathKey pathdom.PathKey) (State, boo
 	if !ok {
 		return s, false
 	}
-	if !changed {
+	staticMembers, staticChanged, _ := statepathkey.DeleteDescendants(s.pathStaticMembers, pathKey)
+	branchProofs, branchProofChanged := deleteBranchProofsMatching(s.branchProofs, func(candidate pathdom.PathKey) bool {
+		return pathKeyInDescendants(candidate, pathKey)
+	})
+	if !changed && !staticChanged && !branchProofChanged {
 		return s, true
 	}
 	out := s
 	out.paths = paths
+	out.pathStaticMembers = staticMembers
+	out.branchProofs = branchProofs
 	return out, true
 }
 
@@ -115,4 +127,20 @@ func deletePathEntry(
 		return nil, true
 	}
 	return out, true
+}
+
+func pathKeyInSubtree(candidate pathdom.PathKey, prefix pathdom.PathKey) bool {
+	if candidate == "" {
+		return false
+	}
+	_, changed, ok := statepathkey.DeleteSubtree(map[pathdom.PathKey]product.Value{candidate: {}}, prefix)
+	return ok && changed
+}
+
+func pathKeyInDescendants(candidate pathdom.PathKey, prefix pathdom.PathKey) bool {
+	if candidate == "" {
+		return false
+	}
+	_, changed, ok := statepathkey.DeleteDescendants(map[pathdom.PathKey]product.Value{candidate: {}}, prefix)
+	return ok && changed
 }

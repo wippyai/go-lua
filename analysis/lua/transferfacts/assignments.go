@@ -19,7 +19,7 @@ func (l *lowerer) localAssignment(fact semantics.LocalAssignmentFact) (factflow.
 	source := l.valueSource(fact.Source)
 	if declaredValueApplies(fact) {
 		if declared, ok := l.declaredValue(fact.Type); ok {
-			return factflow.NewRootAssignmentWithDeclaredValue(factflow.RootAssignmentLocalDeclaration, fact.Symbol, target, source, declared), true
+			return factflow.NewRootAssignmentWithDeclaredContractValue(factflow.RootAssignmentLocalDeclaration, fact.Symbol, target, source, declared), true
 		}
 	}
 	return factflow.NewRootAssignment(factflow.RootAssignmentLocalDeclaration, fact.Symbol, target, source), true

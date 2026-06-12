@@ -4,6 +4,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/variantorigin"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/state"
@@ -97,12 +98,25 @@ func FromResult(result ResultReader) Summary {
 		for i := range summary.Returns {
 			value := exit.ReadValue(reg, key.ReturnSlot(i))
 			if i < len(declared) {
-				value = product.Join(reg, value, declared[i])
+				value = joinDeclaredReturnValue(reg, value, declared[i])
 			}
 			summary.Returns[i] = value
 		}
 	}
 	return Normalize(reg, summary)
+}
+
+func joinDeclaredReturnValue(reg *axis.Registry, value product.Value, declared product.Value) product.Value {
+	joined := product.Join(reg, value, declared)
+	declaredOrigin := product.Get(reg, declared, variantorigin.Key)
+	if declaredOrigin.IsBottom() || declaredOrigin.IsTop() {
+		return joined
+	}
+	joinedOrigin := product.Get(reg, joined, variantorigin.Key)
+	if !joinedOrigin.IsTop() {
+		return joined
+	}
+	return product.Set(reg, joined, variantorigin.Key, declaredOrigin)
 }
 
 func projectNormalReturnParams(reg *axis.Registry, result ResultReader, exit state.State) []product.Value {

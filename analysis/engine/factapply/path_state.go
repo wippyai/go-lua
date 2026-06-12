@@ -21,7 +21,12 @@ func writePathAt(
 	if pathKey == "" {
 		return s, false
 	}
-	return s.WritePathKey(reg, pathKey, value), true
+	equivalent := s.EquivalentPathKeys(pathKey)
+	out := s.WritePathKey(reg, pathKey, value)
+	for _, alias := range equivalent {
+		out = out.WritePathKey(reg, alias, value)
+	}
+	return out, true
 }
 
 func updatePathAt(
@@ -49,7 +54,19 @@ func invalidatePathSubtreeAt(
 	if pathKey == "" {
 		return s, false
 	}
-	return s.InvalidatePathKeySubtree(pathKey)
+	equivalent := s.EquivalentPathKeys(pathKey)
+	out, ok := s.InvalidatePathKeySubtree(pathKey)
+	if !ok {
+		return s, false
+	}
+	for _, alias := range equivalent {
+		var aliasOK bool
+		out, aliasOK = out.InvalidatePathKeySubtree(alias)
+		if !aliasOK {
+			return s, false
+		}
+	}
+	return out, true
 }
 
 func invalidatePathDescendantsAt(
@@ -62,5 +79,17 @@ func invalidatePathDescendantsAt(
 	if pathKey == "" {
 		return s, false
 	}
-	return s.InvalidatePathKeyDescendants(pathKey)
+	equivalent := s.EquivalentPathKeys(pathKey)
+	out, ok := s.InvalidatePathKeyDescendants(pathKey)
+	if !ok {
+		return s, false
+	}
+	for _, alias := range equivalent {
+		var aliasOK bool
+		out, aliasOK = out.InvalidatePathKeyDescendants(alias)
+		if !aliasOK {
+			return s, false
+		}
+	}
+	return out, true
 }

@@ -82,6 +82,9 @@ func materializeCallOutcome(
 		return out
 	}
 	_, hasProducer := facts.Call(ctx.Point)
+	if hasProducer {
+		out = clearCallProducerReturnSlots(ctx, site, out)
+	}
 	if outcomeProvider != nil {
 		outcome := outcomeProvider(ctx, site, in, read)
 		if hasProducer {
@@ -98,6 +101,16 @@ func materializeCallOutcome(
 		for _, result := range facts.CallResultValues(ctx.Point) {
 			out = constrainReturnSlot(ctx, out, result)
 		}
+	}
+	return out
+}
+
+func clearCallProducerReturnSlots(ctx transfer.NodeContext, site factflow.CallSite, out state.State) state.State {
+	for _, target := range site.ResultTargets() {
+		if target.ResultIndex() < 0 {
+			continue
+		}
+		out = out.WriteReturnSlot(ctx.Registry, target.ResultIndex(), product.Bottom(ctx.Registry))
 	}
 	return out
 }

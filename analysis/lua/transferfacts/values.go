@@ -2,12 +2,17 @@ package transferfacts
 
 import (
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
+	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/branchcond"
 	"github.com/wippyai/go-lua/analysis/lua/pathexpr"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
 	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
+	"github.com/wippyai/go-lua/analysis/lua/valueexpr"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
 
@@ -61,6 +66,9 @@ func (l *lowerer) valueSource(source sourceprovenance.ASTSource) factflow.ValueS
 	if hasExpr {
 		l.addExpressionPath(exprRef, source.Expr)
 		l.addExpressionCondition(exprRef, source.Expr)
+		if source.Kind == factflow.ValueSourceExpression {
+			l.addExpressionValue(exprRef, source.Expr)
+		}
 	}
 	shape, ok := factflow.NewValueSourceShape(source.Final, source.Expanded, source.Adjusted, source.OpenTail)
 	if !ok {
@@ -219,6 +227,30 @@ func (l *lowerer) addExpressionCondition(ref factflow.ExprRef, expr ast.Expr) {
 		return
 	}
 	l.expressionConditions[ref] = condition
+}
+
+func (l *lowerer) addExpressionValue(ref factflow.ExprRef, expr ast.Expr) {
+	if ref == 0 || expr == nil {
+		return
+	}
+	value, ok := l.expressionValue(expr)
+	if !ok {
+		return
+	}
+	l.expressionValues[ref] = value
+}
+
+func (l *lowerer) expressionValue(expr ast.Expr) (product.Value, bool) {
+	if t, ok := valueexpr.LiteralType(expr); ok {
+		value := typevalue.FromType(l.registry, t)
+		return typevalue.WithWitness(l.registry, value, t), true
+	}
+	kind, ok := valueexpr.RuntimeKind(expr)
+	if !ok {
+		return product.Value{}, false
+	}
+	value := product.NewWithPresence(l.registry, product.ShapeTop, presence.Present())
+	return product.Set(l.registry, value, runtimekind.Key, kind), true
 }
 
 func (l *lowerer) exprRef(expr any) (factflow.ExprRef, bool) {

@@ -32,6 +32,28 @@ func lowerFacts(t *testing.T, result *semantics.Result, graph cfg.Graph, reg *ax
 	return Lower(result, graph, Config{Registry: reg})
 }
 
+func TestLowerLiteralExpressionValues(t *testing.T) {
+	nilLocal := localAssign([]string{"missing"}, &ast.NilExpr{})
+	numberLocal := localAssign([]string{"count"}, number("7"))
+	tableLocal := localAssign([]string{"box"}, &ast.TableExpr{})
+	stmts := []ast.Stmt{nilLocal, numberLocal, tableLocal}
+	bindings := bind.BindChunk(stmts, bind.Options{})
+	built := cfgbuild.BuildChunk(stmts, bindings)
+	result, err := semantics.ExtractChunk(stmts, bindings, built)
+	if err != nil {
+		t.Fatalf("ExtractChunk: %v", err)
+	}
+
+	facts := lowerFacts(t, result, built.Graph, standard.Registry())
+	nilSource := mustLocalSource(t, facts, requireStmtPoints(t, built, nilLocal, 1)[0])
+	numberSource := mustLocalSource(t, facts, requireStmtPoints(t, built, numberLocal, 1)[0])
+	tableSource := mustLocalSource(t, facts, requireStmtPoints(t, built, tableLocal, 1)[0])
+
+	assertExpressionValue(t, facts, nilSource.ExprRef, presence.Absent(), runtimekind.Singleton(runtimekind.Nil))
+	assertExpressionValue(t, facts, numberSource.ExprRef, presence.Present(), runtimekind.Singleton(runtimekind.Number))
+	assertExpressionValue(t, facts, tableSource.ExprRef, presence.Present(), runtimekind.Singleton(runtimekind.Table))
+}
+
 func mustLocalSource(t *testing.T, facts factflow.Facts, point cfg.Point) factflow.ValueSource {
 	t.Helper()
 	fact, ok := facts.LocalAssignment(point)
@@ -43,6 +65,20 @@ func mustLocalSource(t *testing.T, facts factflow.Facts, point cfg.Point) factfl
 		t.Fatalf("local source = %#v, want expr ref", source)
 	}
 	return source
+}
+
+func assertExpressionValue(t *testing.T, facts factflow.Facts, ref factflow.ExprRef, wantPresence presence.Value, wantRuntimeKind runtimekind.Value) {
+	t.Helper()
+	value, ok := facts.ExpressionValue(ref)
+	if !ok {
+		t.Fatalf("missing expression value for ref %d", ref)
+	}
+	if got := product.PresenceOf(value); !presence.Equal(got, wantPresence) {
+		t.Fatalf("expression value presence = %s, want %s", got, wantPresence)
+	}
+	if got := product.Get(standard.Registry(), value, runtimekind.Key); !runtimekind.Equal(got, wantRuntimeKind) {
+		t.Fatalf("expression value runtime kind = %s, want %s", got, wantRuntimeKind)
+	}
 }
 
 func assertLoweredAssertion(t *testing.T, facts factflow.Facts, source factflow.ValueSource, want assertion.Value, wantInnerKind factflow.ValueSourceKind) {
@@ -378,6 +414,31 @@ func parseSemanticChunk(t *testing.T, source string, globals ...string) ([]ast.S
 		t.Fatalf("ExtractChunk: %v", err)
 	}
 	return stmts, bindings, built, result
+}
+
+func parseSemanticFunction(t *testing.T, source string, globals ...string) (*ast.FunctionExpr, *bind.Result, *cfgbuild.Result, *semantics.Result) {
+	t.Helper()
+	stmts, err := parse.ParseString(source, "transferfacts_test.lua")
+	if err != nil {
+		t.Fatalf("ParseString: %v", err)
+	}
+	if len(stmts) != 1 {
+		t.Fatalf("ParseString returned %d statements, want 1", len(stmts))
+	}
+	def, ok := stmts[0].(*ast.FuncDefStmt)
+	if !ok || def.Func == nil {
+		t.Fatalf("statement = %T, want function definition", stmts[0])
+	}
+	bindings := bind.BindFunction(def.Func, bind.Options{Globals: globals})
+	built := cfgbuild.BuildFunction(def.Func, bindings)
+	if built == nil {
+		t.Fatalf("BuildFunction returned nil")
+	}
+	result, err := semantics.ExtractFunction(def.Func, bindings, built)
+	if err != nil {
+		t.Fatalf("ExtractFunction: %v", err)
+	}
+	return def.Func, bindings, built, result
 }
 
 func mustLocalStmt(t *testing.T, stmts []ast.Stmt, index int) *ast.LocalAssignStmt {

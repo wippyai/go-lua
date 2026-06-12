@@ -254,6 +254,41 @@ func TestFactsNodeTransferCallResultTargetsDoNotDirectlyWriteTargets(t *testing.
 	assertPathValue(t, reg, got, pathKey, pathValue)
 }
 
+func TestFactsNodeTransferCallProducerClearsStaleReturnSlotsWithoutOutcome(t *testing.T) {
+	reg := standard.Registry()
+	point := cfg.Point(25)
+	target := symbol.ID(115)
+	stale := presentValue(reg)
+	in := state.State{}.
+		WriteReturnSlot(reg, 0, stale).
+		WriteValue(reg, key.SymbolValue(target), absentValue(reg))
+
+	got := NewFactsNodeTransfer(FactsNodeTransferConfig{
+		Facts: factflow.NewFacts(factflow.FactsInput{
+			CallSites: map[cfg.Point]factflow.CallSite{
+				point: factflow.NewCallSite(factflow.CallSiteConfig{
+					Context: factflow.CallSiteContextAssignmentSource,
+					ResultTargets: []factflow.CallResultTarget{
+						factflow.NewCallResultTarget(
+							factflow.CallResultTargetLocalAssignment,
+							0,
+							0,
+							target,
+							path.NewPath(target, "out"),
+						),
+					},
+				}),
+			},
+		}),
+	})(transfer.NodeContext{
+		Registry: reg,
+		Point:    point,
+	}, in)
+
+	assertValue(t, reg, got, key.ReturnSlot(0), product.Bottom(reg))
+	assertValue(t, reg, got, key.SymbolValue(target), absentValue(reg))
+}
+
 func TestFactsNodeTransferMissingCallOutcomeProviderOrNoResultsLeavesStateUnchanged(t *testing.T) {
 	reg := standard.Registry()
 	point := cfg.Point(24)

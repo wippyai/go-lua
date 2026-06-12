@@ -4,10 +4,13 @@ package transferfacts
 import (
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
+	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
+	"github.com/wippyai/go-lua/analysis/symbol"
+	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
 // Lower converts Lua semantic facts into the generic transfer fact DTOs consumed
@@ -26,11 +29,14 @@ func Lower(result *semantics.Result, graph cfg.Graph, config Config) factflow.Fa
 	if result == nil || graph == nil {
 		return factflow.NewFacts(factflow.FactsInput{})
 	}
+	typeResolver := newTypeResolver(config.Bindings)
 	l := lowerer{
 		registry:             config.Registry,
 		bindings:             config.Bindings,
+		symbolTypes:          lowerSymbolTypes(config.Bindings, graph, result, typeResolver),
 		exprs:                make(map[any]factflow.ExprRef),
 		types:                make(map[any]factflow.TypeRef),
+		expressionValues:     make(map[factflow.ExprRef]product.Value),
 		expressionPaths:      make(map[factflow.ExprRef]pathdom.Path),
 		expressionConditions: make(map[factflow.ExprRef]factflow.ExpressionCondition),
 	}
@@ -50,6 +56,7 @@ func Lower(result *semantics.Result, graph cfg.Graph, config Config) factflow.Fa
 		Returns:                     make(map[cfg.Point]factflow.Return),
 		CallSites:                   make(map[cfg.Point]factflow.CallSite),
 		ObjectLiterals:              make(map[factflow.ExprRef]factflow.ObjectLiteral),
+		ExpressionValues:            make(map[factflow.ExprRef]product.Value),
 		ExpressionRefinements:       make(map[factflow.ExprRef]factflow.ExpressionRefinement),
 	}
 	for _, point := range graph.RPO() {
@@ -112,8 +119,8 @@ func Lower(result *semantics.Result, graph cfg.Graph, config Config) factflow.Fa
 			}
 		}
 		if fact, ok := result.BranchCondition(point); ok {
-			if lowered, ok := l.branchRefinement(fact); ok {
-				appendBranchRefinement(input.BranchRefinements, point, lowered)
+			if lowered := l.branchRefinements(fact); len(lowered) != 0 {
+				appendBranchRefinement(input.BranchRefinements, point, lowered...)
 			}
 			if lowered, ok := l.branchPathRelations(fact); ok {
 				input.BranchPathRelations[point] = lowered
@@ -122,6 +129,7 @@ func Lower(result *semantics.Result, graph cfg.Graph, config Config) factflow.Fa
 		}
 	}
 	l.addTypeIsBranchRefinements(&input, graph, result)
+	input.ExpressionValues = l.expressionValues
 	input.ExpressionPaths = l.expressionPaths
 	input.ExpressionConditions = l.expressionConditions
 	return factflow.NewFacts(input)
@@ -130,8 +138,10 @@ func Lower(result *semantics.Result, graph cfg.Graph, config Config) factflow.Fa
 type lowerer struct {
 	registry             *axis.Registry
 	bindings             *bind.Result
+	symbolTypes          map[symbol.ID]typ.Type
 	exprs                map[any]factflow.ExprRef
 	types                map[any]factflow.TypeRef
+	expressionValues     map[factflow.ExprRef]product.Value
 	expressionPaths      map[factflow.ExprRef]pathdom.Path
 	expressionConditions map[factflow.ExprRef]factflow.ExpressionCondition
 }

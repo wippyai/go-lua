@@ -811,6 +811,42 @@ func TestDirectCallResultAssignmentSkipsGenericReturnContracts(t *testing.T) {
 	}
 }
 
+func TestReturnContractReportsGenericDirectCallConcreteMismatch(t *testing.T) {
+	src := `
+		type Box<T> = {value: T}
+		type StringBox = {value: string}
+		local function make<T>(value: T): Box<T>
+			return {value = value}
+		end
+		local function build(): StringBox
+			return make(true)
+		end
+	`
+	diags := runDiagnostics(t, src)
+	if len(diags) != 1 {
+		t.Fatalf("diagnostics = %d, want 1: %#v", len(diags), diags)
+	}
+	if d := diags[0]; d.Code != CodeReturnContractType || d.Severity != diagnostic.SeverityError {
+		t.Fatalf("diagnostic = %#v, want return contract error", d)
+	}
+}
+
+func TestReturnContractSkipsUninferredGenericDirectCallReturn(t *testing.T) {
+	diags := runDiagnostics(t, `
+		type User = {id: string}
+		type Result<T> = {ok: true, value: T} | {ok: false, error: string}
+		local function invalid<T>(message: string): Result<T>
+			return {ok = false, error = message}
+		end
+		local function decode(): Result<User>
+			return invalid("id")
+		end
+	`)
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v, want none for uninferred generic return", diags)
+	}
+}
+
 func TestPrecheckReportsStructuralBreakAndGoto(t *testing.T) {
 	cases := []struct {
 		name string

@@ -90,12 +90,44 @@ func TruthyChecks(expr ast.Expr, bindings *bind.Result) []Check {
 	if check.Kind != CheckNone {
 		return []Check{check}
 	}
+	if unary, ok := expr.(*ast.UnaryNotOpExpr); ok {
+		return FalsyChecks(unary.Expr, bindings)
+	}
 	logical, ok := expr.(*ast.LogicalOpExpr)
 	if !ok || logical.Operator != "and" {
 		return nil
 	}
 	left := TruthyChecks(logical.Lhs, bindings)
 	right := TruthyChecks(logical.Rhs, bindings)
+	if len(left) == 0 {
+		return right
+	}
+	if len(right) == 0 {
+		return left
+	}
+	out := make([]Check, 0, len(left)+len(right))
+	out = append(out, left...)
+	out = append(out, right...)
+	return out
+}
+
+// FalsyChecks returns checks that must all hold when expr is falsy. For
+// disjunctions, Lua's false result proves both sides false; for conjunctions it
+// does not prove either side individually.
+func FalsyChecks(expr ast.Expr, bindings *bind.Result) []Check {
+	check := Normalize(expr, bindings)
+	if check.Kind != CheckNone {
+		return []Check{check}
+	}
+	if unary, ok := expr.(*ast.UnaryNotOpExpr); ok {
+		return TruthyChecks(unary.Expr, bindings)
+	}
+	logical, ok := expr.(*ast.LogicalOpExpr)
+	if !ok || logical.Operator != "or" {
+		return nil
+	}
+	left := FalsyChecks(logical.Lhs, bindings)
+	right := FalsyChecks(logical.Rhs, bindings)
 	if len(left) == 0 {
 		return right
 	}

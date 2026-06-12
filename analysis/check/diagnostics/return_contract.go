@@ -24,6 +24,10 @@ import (
 type ReturnContract Config
 
 func (p ReturnContract) Produce(result *check.Result) []diagnostic.Diagnostic {
+	return produceReturnContract(result, Config(p), nil)
+}
+
+func produceReturnContract(result *check.Result, config Config, inherited map[symbol.ID]*ast.FunctionExpr) []diagnostic.Diagnostic {
 	if result == nil {
 		return nil
 	}
@@ -31,7 +35,8 @@ func (p ReturnContract) Produce(result *check.Result) []diagnostic.Diagnostic {
 	if fn == nil {
 		return nil
 	}
-	returns, ok := lowerReturnTypes(fn, p.Resolver)
+	producer := ReturnContract(config)
+	returns, ok := lowerReturnTypes(fn, producer.Resolver)
 	if !ok || len(returns) == 0 {
 		return nil
 	}
@@ -43,7 +48,7 @@ func (p ReturnContract) Produce(result *check.Result) []diagnostic.Diagnostic {
 		}
 		for i, expr := range fact.Exprs {
 			source := returnSourceAt(fact, i)
-			got, ok := returnValueType(result, p.Resolver, expr, source)
+			got, ok := returnValueType(result, producer.Resolver, point, expr, source, inherited)
 			if !ok {
 				continue
 			}
@@ -64,8 +69,11 @@ func (p ReturnContract) Produce(result *check.Result) []diagnostic.Diagnostic {
 	return out
 }
 
-func returnValueType(result *check.Result, resolver typeannotation.Resolver, expr ast.Expr, source sourceprovenance.ASTSource) (typ.Type, bool) {
+func returnValueType(result *check.Result, resolver typeannotation.Resolver, point cfg.Point, expr ast.Expr, source sourceprovenance.ASTSource, inherited map[symbol.ID]*ast.FunctionExpr) (typ.Type, bool) {
 	if got, ok := valueexpr.LiteralType(expr); ok {
+		return got, true
+	}
+	if got, ok := directCallReturnSourceType(result, resolver, source, inherited); ok {
 		return got, true
 	}
 	if got, ok := projectedOptionalIndexType(result, resolver, expr); ok {
@@ -78,6 +86,35 @@ func returnValueType(result *check.Result, resolver typeannotation.Resolver, exp
 		return got, true
 	}
 	return nil, false
+}
+
+func directCallReturnSourceType(result *check.Result, resolver typeannotation.Resolver, source sourceprovenance.ASTSource, inherited map[symbol.ID]*ast.FunctionExpr) (typ.Type, bool) {
+	if result == nil || source.Kind != factflow.ValueSourceCall || !source.HasCallPoint {
+		return nil, false
+	}
+	fact, ok := result.Call(source.CallPoint)
+	if !ok || fact.Call == nil {
+		return nil, false
+	}
+	site, ok := result.CallSite(source.CallPoint)
+	if !ok || site.CalleeSymbol() == 0 {
+		return nil, false
+	}
+	contract, _, ok := directCallResultContract(result, source.CallPoint, fact, site, inherited[site.CalleeSymbol()], resolver)
+	if !ok {
+		return nil, false
+	}
+	if got, ok := contract.returnType(source.ResultIndex); ok {
+		if refinement.ContainsFreeTypeParam(got) {
+			return nil, false
+		}
+		return got, true
+	}
+	got, ok := contract.declaredReturnType(source.ResultIndex)
+	if !ok || refinement.ContainsFreeTypeParam(got) {
+		return nil, false
+	}
+	return got, true
 }
 
 func returnSourceAt(fact semantics.ReturnFact, index int) sourceprovenance.ASTSource {
@@ -237,12 +274,17 @@ func directCallResultContract(result *check.Result, point cfg.Point, fact semant
 		name = "call target"
 	}
 	if def != nil {
-		contract, ok := lowerDirectFunctionContract(def, resolver)
+		contract, ok := lowerDirectFunctionContractInScope(def, resolver)
 		if !ok {
 			return directFunctionContract{}, "", false
 		}
 		contract.name = name
 		contract.declSpan = ast.SpanOf(def)
+		var violations []typecall.ArgumentConstraintViolation
+		contract, violations = instantiateDirectFunctionContract(result, point, fact, contract, resolver)
+		if len(violations) > 0 {
+			return directFunctionContract{}, "", false
+		}
 		if !directCallArgsCompatible(result, point, fact, contract, resolver) {
 			return directFunctionContract{}, "", false
 		}
@@ -252,6 +294,11 @@ func directCallResultContract(result *check.Result, point cfg.Point, fact semant
 		contract := lowerDirectFunctionType(sig.Type)
 		contract.name = name
 		contract.declSpan = ast.SpanOf(fact.Call)
+		var violations []typecall.ArgumentConstraintViolation
+		contract, violations = instantiateDirectFunctionContract(result, point, fact, contract, resolver)
+		if len(violations) > 0 {
+			return directFunctionContract{}, "", false
+		}
 		if !directCallArgsCompatible(result, point, fact, contract, resolver) {
 			return directFunctionContract{}, "", false
 		}
@@ -272,6 +319,11 @@ func directCallResultContract(result *check.Result, point cfg.Point, fact semant
 	contract := lowerDirectFunctionType(callable)
 	contract.name = name
 	contract.declSpan = ast.SpanOf(fact.Call)
+	var violations []typecall.ArgumentConstraintViolation
+	contract, violations = instantiateDirectFunctionContract(result, point, fact, contract, resolver)
+	if len(violations) > 0 {
+		return directFunctionContract{}, "", false
+	}
 	if !directCallArgsCompatible(result, point, fact, contract, resolver) {
 		return directFunctionContract{}, "", false
 	}
@@ -285,6 +337,10 @@ func directCallArgsCompatible(result *check.Result, point cfg.Point, fact semant
 	args := fact.Call.Args
 	required := contract.requiredArity()
 	if len(args) < required {
+		return false
+	}
+	contract, violations := instantiateDirectFunctionContract(result, point, fact, contract, resolver)
+	if len(violations) > 0 {
 		return false
 	}
 	for i, arg := range args {
@@ -316,6 +372,44 @@ func directCallArgsCompatible(result *check.Result, point cfg.Point, fact semant
 		return false
 	}
 	return true
+}
+
+func instantiateDirectFunctionContract(
+	result *check.Result,
+	point cfg.Point,
+	fact semantics.CallFact,
+	contract directFunctionContract,
+	resolver typeannotation.Resolver,
+) (directFunctionContract, []typecall.ArgumentConstraintViolation) {
+	if contract.source == nil || len(contract.source.TypeParams) == 0 || fact.Call == nil {
+		return contract, nil
+	}
+	args := directCallArgumentTypes(result, resolver, point, fact)
+	fn, violations := typecall.InstantiateGenericCall(contract.source, args)
+	if fn == nil || fn == contract.source {
+		return contract, violations
+	}
+	instantiated := lowerDirectFunctionType(fn)
+	instantiated.name = contract.name
+	instantiated.declSpan = contract.declSpan
+	return instantiated, violations
+}
+
+func directCallArgumentTypes(result *check.Result, resolver typeannotation.Resolver, point cfg.Point, fact semantics.CallFact) []typ.Type {
+	if fact.Call == nil {
+		return nil
+	}
+	args := make([]typ.Type, len(fact.Call.Args))
+	for i, arg := range fact.Call.Args {
+		got, ok := boundaryExprType(result, resolver, arg)
+		if !ok {
+			got, ok = boundaryCallArgumentSourceType(result, point, fact, i)
+		}
+		if ok {
+			args[i] = got
+		}
+	}
+	return args
 }
 
 func directCallResultAssignmentDiagnostic(point cfg.Point, call *ast.FuncCallExpr, name string, index int, got, want typ.Type, annotation ast.TypeExpr) diagnostic.Diagnostic {

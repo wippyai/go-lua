@@ -58,6 +58,9 @@ func TestLowerAnnotatedLiteralLocalCarriesDeclaredValue(t *testing.T) {
 	if got := fact.Kind(); got != factflow.RootAssignmentLocalDeclaration {
 		t.Fatalf("root assignment kind = %v, want local declaration", got)
 	}
+	if !fact.DeclaredValueContracts() {
+		t.Fatalf("declared value should be an explicit contract")
+	}
 	declared, ok := fact.DeclaredValue()
 	if !ok {
 		t.Fatalf("missing declared value")

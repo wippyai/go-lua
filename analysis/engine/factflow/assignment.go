@@ -23,8 +23,9 @@ type RootAssignment struct {
 	targetPath   path.Path
 	source       ValueSource
 
-	declaredValue    product.Value
-	hasDeclaredValue bool
+	declaredValue          product.Value
+	hasDeclaredValue       bool
+	declaredValueContracts bool
 }
 
 // NewRootAssignment creates a root-symbol assignment fact.
@@ -46,6 +47,14 @@ func NewRootAssignmentWithDeclaredValue(kind RootAssignmentKind, targetSymbol sy
 	return fact
 }
 
+// NewRootAssignmentWithDeclaredContractValue creates a root assignment fact
+// whose declared type is the assignment's authoritative contract.
+func NewRootAssignmentWithDeclaredContractValue(kind RootAssignmentKind, targetSymbol symbol.ID, targetPath path.Path, source ValueSource, declaredValue product.Value) RootAssignment {
+	fact := NewRootAssignmentWithDeclaredValue(kind, targetSymbol, targetPath, source, declaredValue)
+	fact.declaredValueContracts = true
+	return fact
+}
+
 // Kind returns the source origin for this root assignment.
 func (a RootAssignment) Kind() RootAssignmentKind { return a.kind }
 
@@ -62,6 +71,12 @@ func (a RootAssignment) Source() ValueSource { return a.source }
 // Source has no value evidence.
 func (a RootAssignment) DeclaredValue() (product.Value, bool) {
 	return a.declaredValue, a.hasDeclaredValue
+}
+
+// DeclaredValueContracts reports whether declared value evidence is an
+// explicit contract that should take precedence over source precision.
+func (a RootAssignment) DeclaredValueContracts() bool {
+	return a.hasDeclaredValue && a.declaredValueContracts
 }
 
 func (a RootAssignment) copy() RootAssignment {

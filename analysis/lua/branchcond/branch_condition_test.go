@@ -249,6 +249,40 @@ func TestTruthyChecksExtractSupportedConjuncts(t *testing.T) {
 	assertCheck(t, got[0], CheckTypeEqual, path.NewPath(mustIdentSymbol(t, bindings, value), "value"), "number")
 }
 
+func TestFalsyChecksExtractSupportedDisjuncts(t *testing.T) {
+	pageRoot := ident("page")
+	fieldRoot := ident("page")
+	literalRoot := ident("page")
+	fieldPathExpr := dot(fieldRoot, "data_func")
+	literalPathExpr := dot(literalRoot, "data_func")
+	expr := &ast.LogicalOpExpr{
+		Operator: "or",
+		Lhs:      &ast.UnaryNotOpExpr{Expr: pageRoot},
+		Rhs: &ast.LogicalOpExpr{
+			Operator: "or",
+			Lhs:      &ast.UnaryNotOpExpr{Expr: fieldPathExpr},
+			Rhs: &ast.RelationalOpExpr{
+				Operator: "==",
+				Lhs:      literalPathExpr,
+				Rhs:      stringLit(""),
+			},
+		},
+	}
+	bindings := bindReturn(expr)
+	pageSym := mustIdentSymbol(t, bindings, pageRoot)
+	pagePath := path.NewPath(pageSym, "page")
+	fieldPath := pagePath.Field("data_func")
+
+	got := FalsyChecks(expr, bindings)
+
+	if len(got) != 3 {
+		t.Fatalf("FalsyChecks returned %d checks, want 3: %#v", len(got), got)
+	}
+	assertCheck(t, got[0], CheckFalsy, pagePath, "")
+	assertCheck(t, got[1], CheckFalsy, fieldPath, "")
+	assertLiteralCheck(t, got[2], CheckLiteralEqual, fieldPath, "")
+}
+
 func TestNormalizeStringLiteralComparisons(t *testing.T) {
 	tests := []struct {
 		name     string

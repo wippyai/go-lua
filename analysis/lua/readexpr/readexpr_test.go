@@ -4,16 +4,22 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/variantorigin"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/standard"
+	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/visibility"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/symbol"
+	"github.com/wippyai/go-lua/analysis/type/discriminant"
+	typetable "github.com/wippyai/go-lua/analysis/type/table"
+	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
 func TestProjectExactPresentDropsNil(t *testing.T) {
@@ -66,6 +72,44 @@ func TestProjectNoExactProofKeepsRuntimeIndexOptionality(t *testing.T) {
 		t.Fatalf("Project returned false")
 	}
 	assertPresence(t, reg, got, presence.Top())
+}
+
+func TestProjectNoExactProofUsesNarrowedParentOrigin(t *testing.T) {
+	reg := standard.Registry()
+	point := cfg.Point(7)
+	result := symbol.ID(17)
+	resolver := testResolver(point, result, "result")
+	readPath := path.NewPath(result, "result").Field("value")
+	intCase := typetable.NewRecord().
+		Field("channel", typ.NewAlias("__test_ChanInt", typetable.NewRecord().Field("__tag", typ.LiteralString("int")).Build())).
+		Field("value", typ.Number).
+		Build()
+	chanStr := typ.NewAlias("__test_ChanStr", typetable.NewRecord().Field("__tag", typ.LiteralString("str")).Build())
+	strCase := typetable.NewRecord().
+		Field("channel", chanStr).
+		Field("value", typ.String).
+		Build()
+	union := typ.NewUnion(intCase, strCase)
+	rootFamily, rootCases, ok := discriminant.OriginOfType(union)
+	if !ok {
+		t.Fatal("missing root origin")
+	}
+	constraintFamily, constraintCases, ok := discriminant.OriginOfType(chanStr)
+	if !ok {
+		t.Fatal("missing channel origin")
+	}
+	strCases, ok := discriminant.NarrowOriginByPath(rootFamily, rootCases, []segment.Segment{{Kind: segment.SegmentField, Name: "channel"}}, constraintFamily, constraintCases, true)
+	if !ok {
+		t.Fatal("failed to narrow root origin")
+	}
+	rootValue := product.Set(reg, typevalue.FromType(reg, union), variantorigin.Key, variantorigin.Of(rootFamily, strCases))
+	in := state.State{}.WriteValue(reg, key.SymbolValue(result), rootValue)
+
+	got, ok := Project(Config{Registry: reg, Visibility: resolver}, point, readPath, in)
+	if !ok {
+		t.Fatalf("Project returned false")
+	}
+	assertRuntimeKind(t, reg, got, runtimekind.Singleton(runtimekind.String))
 }
 
 func TestProjectRootIdentifierReadsSymbolState(t *testing.T) {

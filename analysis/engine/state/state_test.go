@@ -515,6 +515,43 @@ func TestBranchProofsUseMustJoin(t *testing.T) {
 	}
 }
 
+func TestEquivalentPathKeysFollowEqualityProofs(t *testing.T) {
+	s := State{}.
+		AddBranchProof(BranchProof{
+			Kind:  BranchProofPathEqual,
+			Path:  pathdom.PathKey("sym10@1"),
+			Other: pathdom.PathKey("sym20@1"),
+		}).
+		AddBranchProof(BranchProof{
+			Kind:  BranchProofPathEqual,
+			Path:  pathdom.PathKey("sym20@1.child"),
+			Other: pathdom.PathKey("sym30@1.leaf"),
+		}).
+		AddBranchProof(BranchProof{
+			Kind:  BranchProofPathNotEqual,
+			Path:  pathdom.PathKey("sym10@1"),
+			Other: pathdom.PathKey("sym40@1"),
+		})
+
+	got := s.EquivalentPathKeys(pathdom.PathKey("sym10@1.child.name"))
+	want := []pathdom.PathKey{
+		pathdom.PathKey("sym20@1.child.name"),
+		pathdom.PathKey("sym30@1.leaf.name"),
+	}
+	if len(got) != len(want) {
+		t.Fatalf("EquivalentPathKeys len = %d (%#v), want %d (%#v)", len(got), got, len(want), want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("EquivalentPathKeys[%d] = %s, want %s (all %#v)", i, got[i], want[i], got)
+		}
+	}
+
+	if got := s.EquivalentPathKeys(pathdom.PathKey("sym99@1.child")); len(got) != 0 {
+		t.Fatalf("unrelated EquivalentPathKeys = %#v, want empty", got)
+	}
+}
+
 func TestEffectDeltasPointwiseJoin(t *testing.T) {
 	reg := standard.Registry()
 	valueDomain := product.Domain(reg)
@@ -648,6 +685,9 @@ func TestInvalidatePathKeySubtreeRemovesStructuredDescendants(t *testing.T) {
 	placeholderPrefix := pathdom.PathKey("$0.field")
 	placeholderChild := pathdom.PathKey("$0.field.deep")
 	placeholderSibling := pathdom.PathKey("$0.fieldish")
+	prefixProof := BranchProof{Kind: BranchProofPathPresence, Path: prefix, Presence: presence.Present()}
+	childProof := BranchProof{Kind: BranchProofPathEqual, Path: child, Other: otherSymbol}
+	otherProof := BranchProof{Kind: BranchProofPathNotEqual, Path: otherSymbol, Other: otherVersion}
 
 	s := State{}.
 		WritePathKey(reg, root, present).
@@ -659,7 +699,14 @@ func TestInvalidatePathKeySubtreeRemovesStructuredDescendants(t *testing.T) {
 		WritePathKey(reg, otherSymbol, present).
 		WritePathKey(reg, placeholderPrefix, present).
 		WritePathKey(reg, placeholderChild, present).
-		WritePathKey(reg, placeholderSibling, present)
+		WritePathKey(reg, placeholderSibling, present).
+		WritePathStaticMember(prefix, present).
+		WritePathStaticMember(child, present).
+		WritePathStaticMember(siblingPrefixCollision, present).
+		WritePathStaticMember(otherVersion, present).
+		AddBranchProof(prefixProof).
+		AddBranchProof(childProof).
+		AddBranchProof(otherProof)
 
 	invalidPrefix, ok := s.InvalidatePathKeySubtree(pathdom.PathKey(".field"))
 	if ok {
@@ -683,8 +730,30 @@ func TestInvalidatePathKeySubtreeRemovesStructuredDescendants(t *testing.T) {
 			t.Fatalf("%s = %s, want present", kept, formatValue(reg, got))
 		}
 	}
+	for _, removed := range []pathdom.PathKey{prefix, child} {
+		if got, ok := out.ReadPathStaticMember(removed); ok {
+			t.Fatalf("static member %s = %s, want removed", removed, formatValue(reg, got))
+		}
+	}
+	for _, kept := range []pathdom.PathKey{siblingPrefixCollision, otherVersion} {
+		if got, ok := out.ReadPathStaticMember(kept); !ok || !valueDomain.Equal(got, present) {
+			t.Fatalf("static member %s = %s ok=%v, want present", kept, formatValue(reg, got), ok)
+		}
+	}
+	if out.HasBranchProof(prefixProof) || out.HasBranchProof(childProof) {
+		t.Fatalf("subtree branch proof survived path invalidation")
+	}
+	if !out.HasBranchProof(otherProof) {
+		t.Fatalf("unrelated branch proof was removed")
+	}
 	if got := s.ReadPathKey(reg, child); !valueDomain.Equal(got, present) {
 		t.Fatalf("original child changed to %s", formatValue(reg, got))
+	}
+	if got, ok := s.ReadPathStaticMember(child); !ok || !valueDomain.Equal(got, present) {
+		t.Fatalf("original static member changed to %s ok=%v", formatValue(reg, got), ok)
+	}
+	if !s.HasBranchProof(childProof) {
+		t.Fatalf("original branch proof changed")
 	}
 
 	out, ok = out.InvalidatePathKeySubtree(placeholderPrefix)
@@ -715,6 +784,8 @@ func TestInvalidatePathKeyDescendantsKeepsContainerAndUnrelatedPaths(t *testing.
 	otherSymbol := pathdom.PathKey("sym61@2.item.count")
 	placeholderContainer := pathdom.PathKey("$0.item")
 	placeholderChild := pathdom.PathKey("$0.item.count")
+	containerProof := BranchProof{Kind: BranchProofPathPresence, Path: container, Presence: presence.Present()}
+	childProof := BranchProof{Kind: BranchProofPathEqual, Path: child, Other: otherSymbol}
 
 	s := State{}.
 		WritePathKey(reg, container, present).
@@ -725,7 +796,13 @@ func TestInvalidatePathKeyDescendantsKeepsContainerAndUnrelatedPaths(t *testing.
 		WritePathKey(reg, otherVersion, present).
 		WritePathKey(reg, otherSymbol, present).
 		WritePathKey(reg, placeholderContainer, present).
-		WritePathKey(reg, placeholderChild, present)
+		WritePathKey(reg, placeholderChild, present).
+		WritePathStaticMember(container, present).
+		WritePathStaticMember(child, present).
+		WritePathStaticMember(deepChild, present).
+		WritePathStaticMember(otherVersion, present).
+		AddBranchProof(containerProof).
+		AddBranchProof(childProof)
 
 	invalidPrefix, ok := s.InvalidatePathKeyDescendants(pathdom.PathKey(".item"))
 	if ok {
@@ -748,6 +825,22 @@ func TestInvalidatePathKeyDescendantsKeepsContainerAndUnrelatedPaths(t *testing.
 		if got := out.ReadPathKey(reg, kept); !valueDomain.Equal(got, present) {
 			t.Fatalf("%s = %s, want present", kept, formatValue(reg, got))
 		}
+	}
+	for _, removed := range []pathdom.PathKey{child, deepChild} {
+		if got, ok := out.ReadPathStaticMember(removed); ok {
+			t.Fatalf("static member %s = %s, want removed", removed, formatValue(reg, got))
+		}
+	}
+	for _, kept := range []pathdom.PathKey{container, otherVersion} {
+		if got, ok := out.ReadPathStaticMember(kept); !ok || !valueDomain.Equal(got, present) {
+			t.Fatalf("static member %s = %s ok=%v, want present", kept, formatValue(reg, got), ok)
+		}
+	}
+	if !out.HasBranchProof(containerProof) {
+		t.Fatalf("container branch proof was removed by descendant invalidation")
+	}
+	if out.HasBranchProof(childProof) {
+		t.Fatalf("descendant branch proof survived descendant invalidation")
 	}
 	if got := s.ReadPathKey(reg, child); !valueDomain.Equal(got, present) {
 		t.Fatalf("original child changed to %s", formatValue(reg, got))

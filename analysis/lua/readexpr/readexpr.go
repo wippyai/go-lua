@@ -8,6 +8,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/variantorigin"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
@@ -16,6 +17,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/visibility"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/typeaccess"
+	"github.com/wippyai/go-lua/analysis/type/discriminant"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
@@ -64,6 +66,9 @@ func Project(config Config, point cfg.Point, p pathdom.Path, in state.State) (pr
 	parentValue, hasParent := readPathValue(reg, config.Visibility, point, parent, in)
 	if !runtimeMayBeTable(reg, parentValue, hasParent) {
 		return product.Value{}, false
+	}
+	if projected, ok := projectFromParentOrigin(reg, parentValue, p.Segments[len(p.Segments)-1]); ok {
+		return projected, true
 	}
 
 	keyType, ok := segmentKeyType(p.Segments[len(p.Segments)-1])
@@ -130,6 +135,35 @@ func readPathValue(
 		return product.Value{}, false
 	}
 	return value, true
+}
+
+func projectFromParentOrigin(reg *axis.Registry, parentValue product.Value, seg segment.Segment) (product.Value, bool) {
+	origin := product.Get(reg, parentValue, variantorigin.Key)
+	if origin.IsBottom() || origin.IsTop() {
+		return product.Value{}, false
+	}
+	parentType, ok := discriminant.TypeFromOrigin(origin.Family(), origin.Cases())
+	if !ok {
+		return product.Value{}, false
+	}
+	projected, ok := projectSegmentType(parentType, seg)
+	if !ok {
+		return product.Value{}, false
+	}
+	return typevalue.FromType(reg, projected), true
+}
+
+func projectSegmentType(t typ.Type, seg segment.Segment) (typ.Type, bool) {
+	switch seg.Kind {
+	case segment.SegmentField:
+		return typeaccess.Field(t, seg.Name)
+	case segment.SegmentIndexString:
+		return typeaccess.RuntimeIndex(t, typ.LiteralString(seg.Name))
+	case segment.SegmentIndexInt:
+		return typeaccess.RuntimeIndex(t, typ.LiteralInt(int64(seg.Index)))
+	default:
+		return nil, false
+	}
 }
 
 func runtimeMayBeTable(reg *axis.Registry, value product.Value, hasValue bool) bool {

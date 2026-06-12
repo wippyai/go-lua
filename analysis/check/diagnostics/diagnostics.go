@@ -50,7 +50,7 @@ func produceWithResolver(result *check.Result, config Config, parent typeannotat
 	out = append(out, UnresolvedTypeReferences(config).Produce(result)...)
 	out = append(out, UnresolvedValueReferences(config).Produce(result)...)
 	out = append(out, AnnotationAssignability(config).Produce(result)...)
-	out = append(out, ReturnContract(config).Produce(result)...)
+	out = append(out, produceReturnContract(result, config, defs)...)
 	out = append(out, produceDirectCallContract(result, config, defs)...)
 	out = append(out, produceDirectCallResultAssignment(result, config, defs)...)
 	out = append(out, NumericForOperands(config).Produce(result)...)

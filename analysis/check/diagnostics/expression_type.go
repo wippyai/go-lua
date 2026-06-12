@@ -105,7 +105,7 @@ func (p expressionTyper) annotatedPathType(expr ast.Expr) (typ.Type, bool) {
 		}
 		t = next
 	}
-	return t, true
+	return p.refineFlowExpressionType(expr, t), true
 }
 
 func (p expressionTyper) flowOriginType(accessPath pathdom.Path) (typ.Type, bool) {
@@ -290,13 +290,36 @@ func (p expressionTyper) attrType(expr *ast.AttrGetExpr, depth int) (typ.Type, b
 		if name == "" {
 			return nil, false
 		}
-		return expressionSegmentType(container, segment.Segment{Kind: segment.SegmentField, Name: name})
+		t, ok := expressionSegmentType(container, segment.Segment{Kind: segment.SegmentField, Name: name})
+		if !ok {
+			return nil, false
+		}
+		return p.refineFlowExpressionType(expr, t), true
 	}
 	key, ok := p.typeOfDepth(expr.Key, depth+1)
 	if !ok {
 		return nil, false
 	}
-	return typeaccess.RuntimeIndex(container, key)
+	t, ok := typeaccess.RuntimeIndex(container, key)
+	if !ok {
+		return nil, false
+	}
+	return p.refineFlowExpressionType(expr, t), true
+}
+
+func (p expressionTyper) refineFlowExpressionType(expr ast.Expr, t typ.Type) typ.Type {
+	if !p.flow || p.result == nil || expr == nil || t == nil {
+		return t
+	}
+	value, ok := p.result.ExpressionValueAtBoundary(p.point, expr)
+	if !ok {
+		return t
+	}
+	refined, ok := refineDeclaredTypeWithValue(p.result, t, value)
+	if !ok {
+		return t
+	}
+	return refined
 }
 
 func (p expressionTyper) unaryType(op string, expr ast.Expr, depth int) (typ.Type, bool) {

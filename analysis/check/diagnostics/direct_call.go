@@ -97,6 +97,7 @@ func (p DirectCallContract) call(
 type directFunctionContract struct {
 	name      string
 	declSpan  ast.Span
+	source    *typ.Function
 	params    []directCallParam
 	returns   []directCallResult
 	variadic  directCallParam
@@ -121,7 +122,7 @@ func (p DirectCallContract) callFunction(
 	name string,
 	fn *ast.FunctionExpr,
 ) (diagnostic.Diagnostic, bool) {
-	contract, ok := lowerDirectFunctionContract(fn, p.Resolver)
+	contract, ok := lowerDirectFunctionContractInScope(fn, p.Resolver)
 	if !ok {
 		return diagnostic.Diagnostic{}, false
 	}
@@ -145,6 +146,13 @@ func (p DirectCallContract) directFunctionCall(
 	if len(args) < required {
 		return tooFewArgsDiagnostic(point, call, contract.name, required, len(args), contract.declSpan), true
 	}
+	contract, violations := instantiateDirectFunctionContract(result, point, fact, contract, p.Resolver)
+	if len(violations) > 0 {
+		violation := violations[0]
+		if violation.Index >= 0 && violation.Index < len(args) {
+			return argTypeDiagnostic(point, call, contract.name, violation.Index, violation.Got, violation.Constraint, args[violation.Index], contract.declSpan), true
+		}
+	}
 	for i, arg := range args {
 		var want typ.Type
 		if i < len(contract.params) {
@@ -161,9 +169,12 @@ func (p DirectCallContract) directFunctionCall(
 		} else {
 			break
 		}
-		got, ok := boundaryExprType(result, p.Resolver, arg)
+		got, ok := projectedFlowSourceType(result, p.Resolver, point, literalEnv{}, arg)
 		if !ok {
 			got, ok = boundaryCallArgumentSourceType(result, point, fact, i)
+		}
+		if !ok {
+			got, ok = boundaryExprType(result, p.Resolver, arg)
 		}
 		if !ok {
 			continue
@@ -171,12 +182,24 @@ func (p DirectCallContract) directFunctionCall(
 		if refinement.ContainsFreeTypeParam(want) {
 			continue
 		}
-		if !boundaryTypeMismatch(result, point, got, want, boundaryCallArgumentReader(fact, i, arg)) {
+		if !directCallArgumentTypeMismatch(result, point, got, want, boundaryCallArgumentReader(fact, i, arg)) {
 			continue
 		}
 		return argTypeDiagnostic(point, call, contract.name, i, got, want, arg, contract.declSpan), true
 	}
 	return diagnostic.Diagnostic{}, false
+}
+
+func directCallArgumentTypeMismatch(result *check.Result, point cfg.Point, got, want typ.Type, read boundaryValueReader) bool {
+	if !boundaryTypeMismatch(result, point, got, want, nil) {
+		return false
+	}
+	if read != nil {
+		if value, ok := read(result, point); ok && boundaryValueAdmissible(result, value, want) {
+			return false
+		}
+	}
+	return true
 }
 
 func boundaryCallArgumentSourceType(result *check.Result, point cfg.Point, fact semantics.CallFact, index int) (typ.Type, bool) {
@@ -196,6 +219,9 @@ func boundaryCallArgumentReader(fact semantics.CallFact, index int, fallback ast
 func lowerDirectFunctionContract(fn *ast.FunctionExpr, resolver typeannotation.Resolver) (directFunctionContract, bool) {
 	if fn == nil {
 		return directFunctionContract{}, false
+	}
+	if fnType, ok := lowerFunctionExprType(fn, resolver); ok {
+		return lowerDirectFunctionType(fnType), true
 	}
 	contract := directFunctionContract{
 		params:  make([]directCallParam, 0),
@@ -230,8 +256,25 @@ func lowerDirectFunctionContract(fn *ast.FunctionExpr, resolver typeannotation.R
 	return contract, true
 }
 
+func lowerDirectFunctionContractInScope(fn *ast.FunctionExpr, resolver typeannotation.Resolver) (directFunctionContract, bool) {
+	for current := resolver; current != nil; current = parentTypeResolver(current) {
+		if contract, ok := lowerDirectFunctionContract(fn, current); ok {
+			return contract, true
+		}
+	}
+	return lowerDirectFunctionContract(fn, nil)
+}
+
+func parentTypeResolver(resolver typeannotation.Resolver) typeannotation.Resolver {
+	if r, ok := resolver.(*resultResolver); ok {
+		return r.parent
+	}
+	return nil
+}
+
 func lowerDirectFunctionType(fn *typ.Function) directFunctionContract {
 	contract := directFunctionContract{
+		source:  fn,
 		params:  make([]directCallParam, 0, len(fn.Params)),
 		returns: make([]directCallResult, 0, len(fn.Returns)),
 	}
@@ -262,6 +305,38 @@ func lowerDirectFunctionType(fn *typ.Function) directFunctionContract {
 		}
 	}
 	return contract
+}
+
+func lowerFunctionExprType(fn *ast.FunctionExpr, resolver typeannotation.Resolver) (*typ.Function, bool) {
+	if fn == nil {
+		return nil, false
+	}
+	expr := &ast.FunctionTypeExpr{
+		TypeParams: fn.TypeParams,
+		Returns:    fn.ReturnTypes,
+	}
+	if fn.ParList != nil {
+		expr.Params = make([]ast.FunctionParamExpr, 0, len(fn.ParList.Names))
+		for i, name := range fn.ParList.Names {
+			t := typeExprAt(fn.ParList.Types, i)
+			if t == nil {
+				return nil, false
+			}
+			expr.Params = append(expr.Params, ast.FunctionParamExpr{Name: name, Type: t})
+		}
+		if fn.ParList.HasVargs {
+			if fn.ParList.VarargType == nil {
+				return nil, false
+			}
+			expr.Variadic = fn.ParList.VarargType
+		}
+	}
+	lowered, ok := lowerType(expr, resolver)
+	if !ok {
+		return nil, false
+	}
+	fnType, ok := lowered.(*typ.Function)
+	return fnType, ok
 }
 
 func lowerDirectCallResult(expr ast.TypeExpr, resolver typeannotation.Resolver) (directCallResult, bool) {

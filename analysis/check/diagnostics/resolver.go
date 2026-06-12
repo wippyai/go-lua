@@ -14,10 +14,12 @@ type resultResolver struct {
 
 	aliases    map[bind.TypeDeclID]*ast.TypeDefStmt
 	interfaces map[bind.TypeDeclID]*ast.InterfaceDefStmt
+	aliasNames map[string]bind.TypeDecl
+	ifaceNames map[string]bind.TypeDecl
 	knownNames map[string]struct{}
 	cache      map[bind.TypeDeclID]typ.Type
 	params     map[bind.TypeDeclID]*typ.TypeParam
-	active     map[bind.TypeDeclID]bool
+	active     map[typeDeclKey]bool
 
 	current []ast.TypeExpr
 
@@ -25,15 +27,22 @@ type resultResolver struct {
 	parent   typeannotation.Resolver
 }
 
+type typeDeclKey struct {
+	kind bind.TypeDeclKind
+	id   bind.TypeDeclID
+}
+
 func newResultResolver(result *check.Result, explicit, parent typeannotation.Resolver) *resultResolver {
 	r := &resultResolver{
 		result:     result,
 		aliases:    make(map[bind.TypeDeclID]*ast.TypeDefStmt),
 		interfaces: make(map[bind.TypeDeclID]*ast.InterfaceDefStmt),
+		aliasNames: make(map[string]bind.TypeDecl),
+		ifaceNames: make(map[string]bind.TypeDecl),
 		knownNames: make(map[string]struct{}),
 		cache:      make(map[bind.TypeDeclID]typ.Type),
 		params:     make(map[bind.TypeDeclID]*typ.TypeParam),
-		active:     make(map[bind.TypeDeclID]bool),
+		active:     make(map[typeDeclKey]bool),
 		explicit:   explicit,
 		parent:     parent,
 	}
@@ -53,6 +62,7 @@ func newResultResolver(result *check.Result, explicit, parent typeannotation.Res
 			decl, ok := result.TypeDef(fact.Type)
 			if ok {
 				r.aliases[decl.ID] = fact.Type
+				r.aliasNames[decl.Name] = decl
 				r.knownNames[decl.Name] = struct{}{}
 			}
 		case cfgfacts.TypeDefinitionInterface:
@@ -62,6 +72,7 @@ func newResultResolver(result *check.Result, explicit, parent typeannotation.Res
 			decl, ok := result.InterfaceDef(fact.Interface)
 			if ok {
 				r.interfaces[decl.ID] = fact.Interface
+				r.ifaceNames[decl.Name] = decl
 				r.knownNames[decl.Name] = struct{}{}
 			}
 		}
@@ -74,6 +85,11 @@ func (r *resultResolver) ResolveTypeRef(path []string) (typ.Type, bool) {
 		return resolveFallback(path, r.explicit, r.parent)
 	}
 	if decl, ok := r.currentBinding(path[0]); ok {
+		if t, ok := r.resolveDecl(decl); ok {
+			return t, true
+		}
+	}
+	if decl, ok := r.namedBinding(path[0]); ok {
 		if t, ok := r.resolveDecl(decl); ok {
 			return t, true
 		}
@@ -165,6 +181,19 @@ func (r *resultResolver) currentBinding(name string) (bind.TypeDecl, bool) {
 	return typeBindingInExpr(r.result, r.current[len(r.current)-1], name)
 }
 
+func (r *resultResolver) namedBinding(name string) (bind.TypeDecl, bool) {
+	if r == nil || name == "" {
+		return bind.TypeDecl{}, false
+	}
+	if decl, ok := r.aliasNames[name]; ok {
+		return decl, true
+	}
+	if decl, ok := r.ifaceNames[name]; ok {
+		return decl, true
+	}
+	return bind.TypeDecl{}, false
+}
+
 func (r *resultResolver) resolveDecl(decl bind.TypeDecl) (typ.Type, bool) {
 	if decl.ID == 0 {
 		return nil, false
@@ -194,35 +223,59 @@ func (r *resultResolver) resolveAlias(decl bind.TypeDecl, stmt *ast.TypeDefStmt)
 	if t, ok := r.cache[decl.ID]; ok {
 		return t, true
 	}
-	if r.active[decl.ID] {
+	key := typeDeclKey{kind: decl.Kind, id: decl.ID}
+	if r.active[key] {
 		return typ.NewRef("", decl.Name), true
 	}
-	r.active[decl.ID] = true
+	r.active[key] = true
 	var t typ.Type
 	var ok bool
 	if params := r.result.TypeDefParams(stmt); len(params) > 0 {
 		typeParams := make([]*typ.TypeParam, 0, len(params))
+		typeParamScope := make(map[string]*typ.TypeParam, len(params))
 		for _, param := range params {
 			tp, ok := r.resolveTypeParam(param)
 			if !ok {
-				delete(r.active, decl.ID)
+				delete(r.active, key)
 				return nil, false
 			}
 			typeParams = append(typeParams, tp)
+			typeParamScope[tp.Name] = tp
 		}
-		body, ok := r.Type(stmt.Type)
+		var body typ.Type
+		body, ok = typeannotation.Type(stmt.Type, diagnosticTypeParamResolver{
+			typeParams: typeParamScope,
+			parent:     r,
+		})
 		if ok {
 			t = typ.NewGeneric(decl.Name, typeParams, body)
 		}
 	} else {
 		t, ok = r.Type(stmt.Type)
 	}
-	delete(r.active, decl.ID)
+	delete(r.active, key)
 	if !ok {
 		return resolveFallback([]string{decl.Name}, r.explicit, r.parent)
 	}
 	r.cache[decl.ID] = t
 	return t, true
+}
+
+type diagnosticTypeParamResolver struct {
+	typeParams map[string]*typ.TypeParam
+	parent     typeannotation.Resolver
+}
+
+func (r diagnosticTypeParamResolver) ResolveTypeRef(path []string) (typ.Type, bool) {
+	if len(path) == 1 {
+		if t, ok := r.typeParams[path[0]]; ok {
+			return t, true
+		}
+	}
+	if r.parent == nil {
+		return nil, false
+	}
+	return r.parent.ResolveTypeRef(path)
 }
 
 func (r *resultResolver) resolveTypeParam(decl bind.TypeDecl) (*typ.TypeParam, bool) {
@@ -232,20 +285,21 @@ func (r *resultResolver) resolveTypeParam(decl bind.TypeDecl) (*typ.TypeParam, b
 	if t, ok := r.params[decl.ID]; ok {
 		return t, true
 	}
-	if r.active[decl.ID] {
+	key := typeDeclKey{kind: decl.Kind, id: decl.ID}
+	if r.active[key] {
 		return typ.NewTypeParam(decl.Name, nil), true
 	}
-	r.active[decl.ID] = true
+	r.active[key] = true
 	var constraint typ.Type
 	if decl.Constraint != nil {
 		t, ok := r.Type(decl.Constraint)
 		if !ok {
-			delete(r.active, decl.ID)
+			delete(r.active, key)
 			return nil, false
 		}
 		constraint = t
 	}
-	delete(r.active, decl.ID)
+	delete(r.active, key)
 	t := typ.NewTypeParam(decl.Name, constraint)
 	r.params[decl.ID] = t
 	return t, true

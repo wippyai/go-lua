@@ -89,6 +89,55 @@ func TestFactsNodeTransferPathAssignmentInvalidatesSubtreeBeforeWriting(t *testi
 	assertPathValue(t, reg, got, siblingKey, present)
 }
 
+func TestFactsNodeTransferPathAssignmentInvalidatesEquivalentPathProofs(t *testing.T) {
+	reg := standard.Registry()
+	point := cfg.Point(18)
+	source := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: factflow.ExprRef(18), HasExpr: true}
+	alias := symbol.ID(108)
+	original := symbol.ID(109)
+	aliasPath := path.NewPath(alias, "alias").Field("value")
+	aliasKey := path.PathKey("sym108@1.value")
+	originalKey := path.PathKey("sym109@1.value")
+	originalChildKey := path.PathKey("sym109@1.value.deep")
+	siblingKey := path.PathKey("sym109@1.other")
+	assigned := absentValue(reg)
+	present := presentValue(reg)
+	in := state.State{}.
+		WritePathKey(reg, aliasKey, present).
+		WritePathKey(reg, originalKey, present).
+		WritePathKey(reg, originalChildKey, present).
+		WritePathKey(reg, siblingKey, present).
+		AddBranchProof(state.BranchProof{
+			Kind:  state.BranchProofPathEqual,
+			Path:  path.PathKey("sym108@1"),
+			Other: path.PathKey("sym109@1"),
+		})
+	sources := &recordingSourceValues{
+		values: map[factflow.ValueSource]product.Value{source: assigned},
+	}
+	visibilityBuilder := visibility.NewBuilder()
+	visibilityBuilder.Define(point, alias, "alias")
+	visibilityBuilder.Define(point, original, "original")
+
+	got := NewFactsNodeTransfer(FactsNodeTransferConfig{
+		Facts: factflow.NewFacts(factflow.FactsInput{
+			PathAssignments: map[cfg.Point]factflow.PathAssignment{
+				point: factflow.NewPathAssignment(aliasPath, source),
+			},
+		}),
+		Sources:    sources,
+		Visibility: visibility.NewResolver(visibilityBuilder.Build()),
+	})(transfer.NodeContext{
+		Registry: reg,
+		Point:    point,
+	}, in)
+
+	assertPathValue(t, reg, got, aliasKey, assigned)
+	assertPathValue(t, reg, got, originalKey, assigned)
+	assertPathValue(t, reg, got, originalChildKey, product.Bottom(reg))
+	assertPathValue(t, reg, got, siblingKey, present)
+}
+
 func TestFactsNodeTransferPathDescendantInvalidationKeepsContainer(t *testing.T) {
 	reg := standard.Registry()
 	point := cfg.Point(20)

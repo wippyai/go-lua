@@ -542,7 +542,8 @@ func (c *Checker) run(bindings *bind.Result, built *cfgbuild.Result, sem *semant
 	if resolver == nil {
 		resolver = defaultVisibilityResolver(bindings, built, facts)
 	}
-	expressionValue := config.ExpressionValue
+	userExpressionValue := config.ExpressionValue
+	expressionValue := userExpressionValue
 	if expressionValue == nil {
 		expressionValue = readexpr.Provider(readexpr.Config{
 			Registry:   config.Registry,
@@ -550,9 +551,13 @@ func (c *Checker) run(bindings *bind.Result, built *cfgbuild.Result, sem *semant
 			Visibility: resolver,
 		})
 	}
+	expressionValues := config.ExpressionValues
+	if userExpressionValue == nil {
+		expressionValues = mergeExpressionValues(facts.ExpressionValues(), config.ExpressionValues)
+	}
 	sources := sourcevalue.NewSourceValues(sourcevalue.SourceValuesConfig{
 		Registry:         config.Registry,
-		ExpressionValues: config.ExpressionValues,
+		ExpressionValues: expressionValues,
 		ExpressionValue:  expressionValue,
 		VarargValue:      config.VarargValue,
 	})
@@ -643,6 +648,20 @@ func copyConfig(config Config) Config {
 		config.ExpressionValues = values
 	}
 	return config
+}
+
+func mergeExpressionValues(base, override map[factflow.ExprRef]product.Value) map[factflow.ExprRef]product.Value {
+	if len(base) == 0 && len(override) == 0 {
+		return nil
+	}
+	out := make(map[factflow.ExprRef]product.Value, len(base)+len(override))
+	for ref, value := range base {
+		out[ref] = value
+	}
+	for ref, value := range override {
+		out[ref] = value
+	}
+	return out
 }
 
 func (c *Checker) signatureNameForCall(bindings *bind.Result) effectlowering.SignatureNameFunc {

@@ -24,8 +24,9 @@ func applyRootAssignmentFact(
 	fact factflow.RootAssignment,
 ) state.State {
 	declared, hasDeclared := fact.DeclaredValue()
-	out, targetPath, applied := applyRootAssignment(ctx, resolver, sources, read, in, out, fact.TargetSymbol(), fact.TargetPath(), fact.Source(), declared, hasDeclared)
+	out, targetPath, applied := applyRootAssignment(ctx, resolver, sources, read, in, out, fact.TargetSymbol(), fact.TargetPath(), fact.Source(), declared, hasDeclared, fact.DeclaredValueContracts())
 	if applied {
+		out = applyRootAssignmentPathProof(ctx, resolver, facts, out, targetPath, fact.Source())
 		out = applyObjectLiteralEntries(ctx, resolver, facts, sources, read, in, out, targetPath, fact.Source())
 	}
 	return out
@@ -43,13 +44,18 @@ func applyRootAssignment(
 	source factflow.ValueSource,
 	declared product.Value,
 	hasDeclared bool,
+	declaredContracts bool,
 ) (state.State, pathdom.Path, bool) {
 	root, ok := rootAssignmentTarget(target, targetPath)
 	if !ok {
 		return out, pathdom.Path{}, false
 	}
-	value, ok := sources.ValueOfSource(ctx.Point, source, in, read)
-	if !ok {
+	var value product.Value
+	if hasDeclared && declaredContracts {
+		value = declared
+	} else if sourceValue, ok := sources.ValueOfSource(ctx.Point, source, in, read); ok {
+		value = sourceValue
+	} else {
 		if !hasDeclared {
 			return out, pathdom.Path{}, false
 		}
@@ -90,4 +96,31 @@ func writeRootSymbol(ctx transfer.NodeContext, resolver *visibility.Resolver, ou
 		}
 	}
 	return out.WriteValue(ctx.Registry, key.SymbolValue(target), value)
+}
+
+func applyRootAssignmentPathProof(
+	ctx transfer.NodeContext,
+	resolver *visibility.Resolver,
+	facts factflow.Facts,
+	out state.State,
+	targetPath pathdom.Path,
+	source factflow.ValueSource,
+) state.State {
+	if resolver == nil || !source.HasExpr || targetPath.Symbol == 0 {
+		return out
+	}
+	sourcePath, ok := facts.ExpressionPath(source.ExprRef)
+	if !ok || sourcePath.IsEmpty() || sourcePath.Symbol == 0 {
+		return out
+	}
+	targetKey := resolver.KeyAt(ctx.Point, targetPath)
+	sourceKey := resolver.KeyAt(ctx.Point, sourcePath)
+	if targetKey == "" || sourceKey == "" || targetKey == sourceKey {
+		return out
+	}
+	return out.AddBranchProof(state.BranchProof{
+		Kind:  state.BranchProofPathEqual,
+		Path:  targetKey,
+		Other: sourceKey,
+	})
 }
