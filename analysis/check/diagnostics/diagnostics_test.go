@@ -7,6 +7,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/check"
 	"github.com/wippyai/go-lua/analysis/diagnostic"
 	"github.com/wippyai/go-lua/analysis/domain/value/standard"
+	"github.com/wippyai/go-lua/analysis/module/signaturelookup"
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/parse"
 )
@@ -83,6 +84,32 @@ func TestAnnotationAssignabilitySkipsAnnotatedIdentifierWithoutPointProof(t *tes
 	`)
 	if len(diags) != 0 {
 		t.Fatalf("diagnostics = %#v, want none without point-local source proof", diags)
+	}
+}
+
+func TestAnnotationAssignabilityReportsMaybeParameterWithoutNarrowing(t *testing.T) {
+	diags := runDiagnostics(t, `
+		function f(x: string?)
+			local y: string = x
+		end
+	`)
+	if len(diags) != 1 {
+		t.Fatalf("diagnostics = %d, want 1: %#v", len(diags), diags)
+	}
+	if d := diags[0]; d.Code != CodeAssignmentType || !strings.Contains(d.Message, "string?") {
+		t.Fatalf("diagnostic = %#v, want optional parameter assignment error", d)
+	}
+}
+
+func TestAnnotationAssignabilityAcceptsAssertedMaybeParameter(t *testing.T) {
+	diags := runDiagnosticsWithSignatures(t, `
+		function f(x: string?)
+			assert(x)
+			local y: string = x
+		end
+	`, signaturelookup.Source{IncludeStdlib: true})
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v, want none after assert", diags)
 	}
 }
 
@@ -731,15 +758,30 @@ func runDiagnostics(t *testing.T, src string) []diagnostic.Diagnostic {
 
 func runDiagnosticsWithGlobals(t *testing.T, src string, globals []string) []diagnostic.Diagnostic {
 	t.Helper()
+	return runDiagnosticsFull(t, src, globals, signaturelookup.Source{})
+}
+
+func runDiagnosticsWithSignatures(t *testing.T, src string, signatures signaturelookup.Source) []diagnostic.Diagnostic {
+	t.Helper()
+	return runDiagnosticsFull(t, src, []string{"test", "type", "value"}, signatures)
+}
+
+func runDiagnosticsFull(t *testing.T, src string, globals []string, signatures signaturelookup.Source) []diagnostic.Diagnostic {
+	t.Helper()
 	stmts, err := parse.ParseString(src, "diagnostics_test.lua")
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
-	result, err := check.CheckChunk(stmts, check.Config{Registry: standard.Registry(), Globals: globals})
+	reg := standard.Registry()
+	result, err := check.CheckChunk(stmts, check.Config{
+		Registry:   reg,
+		Globals:    globals,
+		Signatures: signatures,
+	})
 	if err != nil {
 		t.Fatalf("check: %v", err)
 	}
-	return Produce(result, Config{Registry: standard.Registry()})
+	return Produce(result, Config{Registry: reg})
 }
 
 func mustStmts(t *testing.T, src string) []ast.Stmt {

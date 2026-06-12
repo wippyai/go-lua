@@ -6,6 +6,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/ref"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 )
 
@@ -152,6 +153,20 @@ func TestSummaryCloneIsolatesReturns(t *testing.T) {
 	}
 }
 
+func TestSummaryCloneIsolatesNormalReturnParams(t *testing.T) {
+	reg := mustRegistry(t)
+	original := Summary{NormalReturnParams: []product.Value{product.Top(), product.Absent(reg)}}
+	cloned := original.Clone()
+	cloned.NormalReturnParams[0] = product.Bottom(reg)
+
+	if product.Equal(reg, original.NormalReturnParams[0], product.Bottom(reg)) {
+		t.Fatalf("mutating cloned normal return params changed original")
+	}
+	if !product.Equal(reg, original.NormalReturnParams[0], product.Top()) {
+		t.Fatalf("original first normal return param changed unexpectedly")
+	}
+}
+
 func TestSnapshotClonesOnWriteAndRead(t *testing.T) {
 	reg := mustRegistry(t)
 	key := DefaultSummaryKey(ref.FuncRef{Kind: ref.KindSymbol, ID: 9})
@@ -266,6 +281,29 @@ func TestNormalizeTrimsTrailingBottomReturnSlots(t *testing.T) {
 	}
 }
 
+func TestNormalizeTrimsTrailingBottomNormalReturnParams(t *testing.T) {
+	reg := mustRegistry(t)
+	s := Summary{
+		NormalReturnParams: []product.Value{
+			product.Top(),
+			product.Bottom(reg),
+			product.Bottom(reg),
+		},
+	}
+	got := Normalize(reg, s)
+	if len(got.NormalReturnParams) != 1 {
+		t.Fatalf("Normalize kept %d normal return params, want 1", len(got.NormalReturnParams))
+	}
+	if !product.Equal(reg, got.NormalReturnParams[0], product.Top()) {
+		t.Fatalf("Normalize first normal return param = %#v, want top", got.NormalReturnParams[0])
+	}
+
+	allBottom := Normalize(reg, Summary{NormalReturnParams: []product.Value{product.Bottom(reg)}})
+	if len(allBottom.NormalReturnParams) != 0 {
+		t.Fatalf("Normalize(all bottom) kept %d normal return params, want 0", len(allBottom.NormalReturnParams))
+	}
+}
+
 func TestLessOrEqAndEqualForReturnTuples(t *testing.T) {
 	reg := mustRegistry(t)
 	bottom := Summary{}
@@ -283,6 +321,43 @@ func TestLessOrEqAndEqualForReturnTuples(t *testing.T) {
 	}
 	if Equal(reg, bottom, top) {
 		t.Fatalf("bottom summary should not equal top-return summary")
+	}
+}
+
+func TestJoinWeakensNormalReturnParamConstraints(t *testing.T) {
+	reg := mustRegistry(t)
+	present := product.NewWithPresence(reg, product.ShapeTop, presence.Present())
+	got := Join(reg,
+		Summary{NormalReturnParams: []product.Value{present}},
+		Summary{NormalReturnParams: []product.Value{product.Top()}},
+	)
+
+	if len(got.NormalReturnParams) != 1 {
+		t.Fatalf("Join returned %d normal return params, want 1", len(got.NormalReturnParams))
+	}
+	if !product.Equal(reg, got.NormalReturnParams[0], product.Top()) {
+		t.Fatalf("Join did not weaken normal return param to top: %v", got.NormalReturnParams[0])
+	}
+}
+
+func TestLessOrEqAndEqualForNormalReturnParams(t *testing.T) {
+	reg := mustRegistry(t)
+	presentValue := product.NewWithPresence(reg, product.ShapeTop, presence.Present())
+	bottom := Summary{}
+	present := Summary{NormalReturnParams: []product.Value{presentValue}}
+	presentWithTrailingBottom := Summary{NormalReturnParams: []product.Value{presentValue, product.Bottom(reg)}}
+
+	if !LessOrEq(reg, bottom, present) {
+		t.Fatalf("bottom summary should be <= present normal-return summary")
+	}
+	if LessOrEq(reg, present, bottom) {
+		t.Fatalf("present normal-return summary should not be <= bottom summary")
+	}
+	if !Equal(reg, present, presentWithTrailingBottom) {
+		t.Fatalf("trailing bottom normal-return slot should not affect equality")
+	}
+	if Equal(reg, bottom, present) {
+		t.Fatalf("bottom summary should not equal present normal-return summary")
 	}
 }
 

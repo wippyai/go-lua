@@ -17,6 +17,7 @@ import (
 
 const (
 	Assert      = "assert"
+	Error       = "error"
 	Require     = "require"
 	Type        = "type"
 	Pairs       = "pairs"
@@ -38,6 +39,14 @@ var registry = map[string]signature.Function{
 			Target:     effect.ParamRef{Index: 0},
 			Refinement: postcondition.Present{},
 		},
+	),
+	Error: sig(
+		typ.Func().
+			Param("message", typ.Any).
+			OptParam("level", typ.Integer).
+			Returns(typ.Never).
+			Build(),
+		control.Throw{},
 	),
 	Require: sig(
 		typ.Func().

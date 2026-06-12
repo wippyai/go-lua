@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/callresult"
+	"github.com/wippyai/go-lua/analysis/check/fixpoint/summary"
 	"github.com/wippyai/go-lua/analysis/domain/effect/signature"
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
@@ -45,6 +46,8 @@ type Config struct {
 	ExpressionValue  sourcevalue.ExpressionValueProvider
 	VarargValue      sourcevalue.VarargValueProvider
 	CallResults      factapply.CallResultProvider
+	SummaryResults   summary.Reader
+	SummaryKeyFor    callresult.KeyFunc
 	Signatures       signaturelookup.Source
 
 	Visibility *visibility.Resolver
@@ -104,6 +107,14 @@ func (r *Result) ExitState() (state.State, bool) {
 	return r.StateAt(graph.Exit())
 }
 
+func (r *Result) EntryState() (state.State, bool) {
+	graph := r.Graph()
+	if graph == nil {
+		return state.State{}, false
+	}
+	return r.StateAt(graph.Entry())
+}
+
 func (r *Result) ReturnPoints() []cfg.Point {
 	graph := r.Graph()
 	if graph == nil {
@@ -159,6 +170,13 @@ func (r *Result) CallSite(point cfg.Point) (factflow.CallSite, bool) {
 		return factflow.CallSite{}, false
 	}
 	return r.facts.CallSite(point)
+}
+
+func (r *Result) NoNormalReturn(point cfg.Point) bool {
+	if r == nil {
+		return false
+	}
+	return r.facts.NoNormalReturn(point)
 }
 
 func (r *Result) BranchCondition(point cfg.Point) (semantics.BranchConditionFact, bool) {
@@ -261,6 +279,54 @@ func (r *Result) ReturnArity(point cfg.Point) (int, bool) {
 		return 0, false
 	}
 	return len(fact.Sources()), true
+}
+
+func (r *Result) ParameterValueSlots() []statekey.Value {
+	if r == nil || r.bindings == nil {
+		return nil
+	}
+	slots := r.bindings.ParamSlots(r.Function())
+	out := make([]statekey.Value, 0, len(slots))
+	for _, slot := range slots {
+		valueSlot := statekey.SymbolValue(slot.Symbol)
+		if valueSlot == "" {
+			continue
+		}
+		out = append(out, valueSlot)
+	}
+	return out
+}
+
+func (r *Result) ReassignedParameterValueSlots() map[statekey.Value]struct{} {
+	if r == nil || r.bindings == nil {
+		return nil
+	}
+	params := make(map[statekey.Value]struct{})
+	for _, slot := range r.ParameterValueSlots() {
+		params[slot] = struct{}{}
+	}
+	if len(params) == 0 {
+		return nil
+	}
+	out := make(map[statekey.Value]struct{})
+	graph := r.Graph()
+	if graph == nil {
+		return nil
+	}
+	for _, point := range graph.RPO() {
+		assignment, ok := r.facts.OrdinaryAssignment(point)
+		if !ok {
+			continue
+		}
+		slot := statekey.SymbolValue(assignment.TargetSymbol())
+		if _, ok := params[slot]; ok {
+			out[slot] = struct{}{}
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 func (r *Result) LocalSymbols(stmt *ast.LocalAssignStmt) []symbol.ID {
@@ -374,6 +440,15 @@ func (c *Checker) CheckChunk(stmts []ast.Stmt) (*Result, error) {
 }
 
 func (c *Checker) CheckBoundChunk(stmts []ast.Stmt, bindings *bind.Result) (*Result, error) {
+	summaries, err := c.functionSummaries(stmts, bindings)
+	if err != nil {
+		return nil, err
+	}
+	checker := c.withSummaryApplication(summaries)
+	return checker.checkBoundChunk(stmts, bindings, summaries)
+}
+
+func (c *Checker) checkBoundChunk(stmts []ast.Stmt, bindings *bind.Result, summaries summaryApplication) (*Result, error) {
 	built := cfgbuild.BuildChunk(stmts, bindings)
 	if built == nil || built.Graph == nil {
 		return nil, ErrUnsupportedCFG
@@ -383,7 +458,7 @@ func (c *Checker) CheckBoundChunk(stmts []ast.Stmt, bindings *bind.Result) (*Res
 		return nil, fmt.Errorf("check: extract chunk semantics: %w", err)
 	}
 	result := c.run(bindings, built, sem)
-	c.attachFunctionResults(result, bindings, nil)
+	c.attachFunctionResults(result, bindings, nil, summaries)
 	return result, nil
 }
 
@@ -393,6 +468,24 @@ func (c *Checker) CheckFunction(fn *ast.FunctionExpr) (*Result, error) {
 }
 
 func (c *Checker) CheckBoundFunction(fn *ast.FunctionExpr, bindings *bind.Result) (*Result, error) {
+	var stmts []ast.Stmt
+	if fn != nil {
+		stmts = fn.Stmts
+	}
+	summaries, err := c.functionSummaries(stmts, bindings)
+	if err != nil {
+		return nil, err
+	}
+	checker := c.withSummaryApplication(summaries)
+	result, err := checker.checkBoundFunctionBody(fn, bindings)
+	if err != nil {
+		return nil, err
+	}
+	checker.attachFunctionResults(result, bindings, fn, summaries)
+	return result, nil
+}
+
+func (c *Checker) checkBoundFunctionBody(fn *ast.FunctionExpr, bindings *bind.Result) (*Result, error) {
 	built := cfgbuild.BuildFunction(fn, bindings)
 	if built == nil || built.Graph == nil {
 		return nil, ErrUnsupportedCFG
@@ -401,9 +494,7 @@ func (c *Checker) CheckBoundFunction(fn *ast.FunctionExpr, bindings *bind.Result
 	if err != nil {
 		return nil, fmt.Errorf("check: extract function semantics: %w", err)
 	}
-	result := c.run(bindings, built, sem)
-	c.attachFunctionResults(result, bindings, fn)
-	return result, nil
+	return c.run(bindings, built, sem), nil
 }
 
 func (c *Checker) run(bindings *bind.Result, built *cfgbuild.Result, sem *semantics.Result) *Result {
@@ -416,12 +507,28 @@ func (c *Checker) run(bindings *bind.Result, built *cfgbuild.Result, sem *semant
 			NameFor:    c.signatureNameForCall(bindings),
 			Facts:      facts,
 		})
+		facts = callresult.WithSignatureNoNormalReturns(callresult.SignatureNoNormalReturnConfig{
+			Graph:      built.Graph,
+			Registry:   config.Registry,
+			Signatures: config.Signatures,
+			NameFor:    c.signatureNameForCall(bindings),
+			Facts:      facts,
+		})
 		facts = callresult.WithSignaturePostconditions(callresult.SignaturePostconditionConfig{
 			Graph:      built.Graph,
 			Registry:   config.Registry,
 			Signatures: config.Signatures,
 			NameFor:    c.signatureNameForCall(bindings),
 			Facts:      facts,
+		})
+	}
+	if config.SummaryResults != nil && config.SummaryKeyFor != nil {
+		facts = callresult.WithSummaryPostconditions(callresult.SummaryPostconditionConfig{
+			Graph:     built.Graph,
+			Registry:  config.Registry,
+			Summaries: config.SummaryResults,
+			KeyFor:    config.SummaryKeyFor,
+			Facts:     facts,
 		})
 	}
 	expressionValue := config.ExpressionValue
@@ -447,11 +554,19 @@ func (c *Checker) run(bindings *bind.Result, built *cfgbuild.Result, sem *semant
 			Sources:    sources,
 		}))
 	}
+	entryState, initial := parameterEntryState(
+		config.Registry,
+		built.Graph,
+		bindings,
+		sem.Function(),
+		config.EntryState,
+		config.Initial,
+	)
 	flow := transfer.Run(transfer.Config{
 		Graph:      built.Graph,
 		Registry:   config.Registry,
-		EntryState: config.EntryState,
-		Initial:    config.Initial,
+		EntryState: entryState,
+		Initial:    initial,
 		NodeTransfer: factapply.NewFactsNodeTransfer(factapply.FactsNodeTransferConfig{
 			Facts:       facts,
 			Sources:     sources,
@@ -476,30 +591,27 @@ func (c *Checker) run(bindings *bind.Result, built *cfgbuild.Result, sem *semant
 	}
 }
 
-func (c *Checker) attachFunctionResults(parent *Result, bindings *bind.Result, fn *ast.FunctionExpr) {
+func (c *Checker) attachFunctionResults(parent *Result, bindings *bind.Result, fn *ast.FunctionExpr, summaries summaryApplication) {
 	if parent == nil || bindings == nil {
 		return
 	}
 	for _, nested := range bindings.NestedFunctions(fn) {
-		child, ok := c.checkNestedFunction(nested, bindings)
+		child, ok := c.checkNestedFunction(nested, bindings, summaries)
 		if !ok {
 			continue
 		}
-		c.attachFunctionResults(child, bindings, nested)
+		c.attachFunctionResults(child, bindings, nested, summaries)
 		parent.functions = append(parent.functions, child)
 	}
 }
 
-func (c *Checker) checkNestedFunction(fn *ast.FunctionExpr, bindings *bind.Result) (*Result, bool) {
-	built := cfgbuild.BuildFunction(fn, bindings)
-	if built == nil || built.Graph == nil {
-		return nil, false
-	}
-	sem, err := semantics.ExtractFunction(fn, bindings, built)
+func (c *Checker) checkNestedFunction(fn *ast.FunctionExpr, bindings *bind.Result, summaries summaryApplication) (*Result, bool) {
+	checker := c.withSummaryApplication(summaries)
+	result, err := checker.checkBoundFunctionBody(fn, bindings)
 	if err != nil {
 		return nil, false
 	}
-	return c.run(bindings, built, sem), true
+	return result, true
 }
 
 func copyConfig(config Config) Config {

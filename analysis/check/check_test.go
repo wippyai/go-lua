@@ -121,6 +121,116 @@ func TestCheckFunctionReturnArityUsesLoweredFacts(t *testing.T) {
 	}
 }
 
+func TestCheckFunctionSeedsDeclaredParameterEntryState(t *testing.T) {
+	reg := standard.Registry()
+	fn := parseFunction(t, "function f(x: string?) local y = x end")
+
+	result, err := CheckFunction(fn, Config{Registry: reg})
+	if err != nil {
+		t.Fatalf("CheckFunction: %v", err)
+	}
+
+	slot := mustParamSlot(t, result.bindings, fn, 0)
+	entry, ok := result.StateAt(result.Graph().Entry())
+	if !ok {
+		t.Fatalf("missing entry state")
+	}
+	got := entry.ReadValue(reg, key.SymbolValue(slot.Symbol))
+	assertPresence(t, reg, got, presence.Maybe())
+	assertRuntimeKind(t, reg, got, runtimekind.Singleton(runtimekind.String))
+	if pathValue := entry.ReadPathKey(reg, key.SymbolVersionPath(slot.Symbol, 1, nil)); !product.Equal(reg, pathValue, product.Bottom(reg)) {
+		t.Fatalf("entry path lane for parameter root = %v, want bottom", pathValue)
+	}
+}
+
+func TestCheckFunctionParameterEntryStateKeepsExplicitEntryValueAndPath(t *testing.T) {
+	reg := standard.Registry()
+	fn := parseFunction(t, "function f(x: string?) return x end")
+	bindings := bind.BindFunction(fn, bind.Options{})
+	slot := mustParamSlot(t, bindings, fn, 0)
+	explicitValue := product.NewWithPresence(reg, product.ShapeTop, presence.Present())
+	pathKey := key.SymbolVersionPath(slot.Symbol, 1, nil)
+	explicitPath := product.NewWithPresence(reg, product.ShapeTop, presence.Absent())
+	entryState := state.State{}.
+		WriteValue(reg, key.SymbolValue(slot.Symbol), explicitValue).
+		WritePathKey(reg, pathKey, explicitPath)
+
+	result, err := CheckBoundFunction(fn, bindings, Config{
+		Registry:   reg,
+		EntryState: entryState,
+	})
+	if err != nil {
+		t.Fatalf("CheckBoundFunction: %v", err)
+	}
+
+	entry, ok := result.StateAt(result.Graph().Entry())
+	if !ok {
+		t.Fatalf("missing entry state")
+	}
+	assertProductEqual(t, reg, entry.ReadValue(reg, key.SymbolValue(slot.Symbol)), explicitValue)
+	assertProductEqual(t, reg, entry.ReadPathKey(reg, pathKey), explicitPath)
+}
+
+func TestCheckFunctionParameterEntryStateMergesExplicitInitial(t *testing.T) {
+	reg := standard.Registry()
+	fn := parseFunction(t, "function f(x: string?, y: number) return x end")
+	bindings := bind.BindFunction(fn, bind.Options{})
+	built := cfgbuild.BuildFunction(fn, bindings)
+	xSlot := mustParamSlot(t, bindings, fn, 0)
+	ySlot := mustParamSlot(t, bindings, fn, 1)
+	explicitX := product.NewWithPresence(reg, product.ShapeTop, presence.Present())
+	initialEntry := state.State{}.WriteValue(reg, key.SymbolValue(xSlot.Symbol), explicitX)
+
+	result, err := CheckBoundFunction(fn, bindings, Config{
+		Registry: reg,
+		Initial: func(point cfg.Point) (state.State, bool) {
+			if built != nil && built.Graph != nil && point == built.Graph.Entry() {
+				return initialEntry, true
+			}
+			return state.State{}, false
+		},
+	})
+	if err != nil {
+		t.Fatalf("CheckBoundFunction: %v", err)
+	}
+
+	entry, ok := result.StateAt(result.Graph().Entry())
+	if !ok {
+		t.Fatalf("missing entry state")
+	}
+	assertProductEqual(t, reg, entry.ReadValue(reg, key.SymbolValue(xSlot.Symbol)), explicitX)
+	yValue := entry.ReadValue(reg, key.SymbolValue(ySlot.Symbol))
+	assertPresence(t, reg, yValue, presence.Present())
+	assertRuntimeKind(t, reg, yValue, runtimekind.Singleton(runtimekind.Number))
+}
+
+func TestCheckChunkSeedsDeclaredParameterAliasEntryState(t *testing.T) {
+	reg := standard.Registry()
+	stmts := parseChunk(t, `
+type MaybeString = string?
+function f(x: MaybeString)
+	local y = x
+end`)
+
+	result, err := CheckChunk(stmts, Config{Registry: reg})
+	if err != nil {
+		t.Fatalf("CheckChunk: %v", err)
+	}
+	functions := result.FunctionResults()
+	if len(functions) != 1 {
+		t.Fatalf("function results = %d, want 1", len(functions))
+	}
+	child := functions[0]
+	slot := mustParamSlot(t, child.bindings, child.Function(), 0)
+	entry, ok := child.StateAt(child.Graph().Entry())
+	if !ok {
+		t.Fatalf("missing child entry state")
+	}
+	got := entry.ReadValue(reg, key.SymbolValue(slot.Symbol))
+	assertPresence(t, reg, got, presence.Maybe())
+	assertRuntimeKind(t, reg, got, runtimekind.Singleton(runtimekind.String))
+}
+
 func TestCheckChunkManifestSameAsSignatureUsesArgumentSourceValue(t *testing.T) {
 	reg := standard.Registry()
 	argValue := product.Set(reg, product.Top(), runtimekind.Key, runtimekind.Singleton(runtimekind.String))
@@ -416,6 +526,18 @@ func mustIdentSymbol(t *testing.T, bindings *bind.Result, ident *ast.IdentExpr) 
 		t.Fatalf("missing symbol for ident %q", ident.Value)
 	}
 	return id
+}
+
+func mustParamSlot(t *testing.T, bindings *bind.Result, fn *ast.FunctionExpr, index int) bind.ParamSlot {
+	t.Helper()
+	slots := bindings.ParamSlots(fn)
+	if index < 0 || index >= len(slots) {
+		t.Fatalf("param slot index %d out of range for %d slots", index, len(slots))
+	}
+	if slots[index].Symbol == 0 {
+		t.Fatalf("param slot %d has zero symbol", index)
+	}
+	return slots[index]
 }
 
 func requireCheckStmtPoint(t *testing.T, built *cfgbuild.Result, stmt ast.Stmt) cfg.Point {

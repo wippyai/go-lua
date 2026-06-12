@@ -27,11 +27,12 @@ func Lower(result *semantics.Result, graph cfg.Graph, config Config) factflow.Fa
 		return factflow.NewFacts(factflow.FactsInput{})
 	}
 	l := lowerer{
-		registry:        config.Registry,
-		bindings:        config.Bindings,
-		exprs:           make(map[any]factflow.ExprRef),
-		types:           make(map[any]factflow.TypeRef),
-		expressionPaths: make(map[factflow.ExprRef]pathdom.Path),
+		registry:             config.Registry,
+		bindings:             config.Bindings,
+		exprs:                make(map[any]factflow.ExprRef),
+		types:                make(map[any]factflow.TypeRef),
+		expressionPaths:      make(map[factflow.ExprRef]pathdom.Path),
+		expressionConditions: make(map[factflow.ExprRef]factflow.ExpressionCondition),
 	}
 	input := factflow.FactsInput{
 		LocalAssignments:            make(map[cfg.Point]factflow.RootAssignment),
@@ -98,13 +99,15 @@ func Lower(result *semantics.Result, graph cfg.Graph, config Config) factflow.Fa
 		}
 	}
 	input.ExpressionPaths = l.expressionPaths
+	input.ExpressionConditions = l.expressionConditions
 	return factflow.NewFacts(input)
 }
 
 type lowerer struct {
-	registry        *axis.Registry
-	bindings        *bind.Result
-	exprs           map[any]factflow.ExprRef
-	types           map[any]factflow.TypeRef
-	expressionPaths map[factflow.ExprRef]pathdom.Path
+	registry             *axis.Registry
+	bindings             *bind.Result
+	exprs                map[any]factflow.ExprRef
+	types                map[any]factflow.TypeRef
+	expressionPaths      map[factflow.ExprRef]pathdom.Path
+	expressionConditions map[factflow.ExprRef]factflow.ExpressionCondition
 }

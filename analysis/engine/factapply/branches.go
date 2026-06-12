@@ -90,7 +90,7 @@ func presenceRefinement(reg *axis.Registry, value presence.Value) factflow.Value
 	return factflow.NewValueConstraint(product.NewWithPresence(reg, product.ShapeTop, value))
 }
 
-type branchPathValue struct {
+type pathValue struct {
 	value product.Value
 	write func(state.State, product.Value) state.State
 }
@@ -116,49 +116,61 @@ func applyBranchPathEquality(
 	leftPath pathdom.Path,
 	rightPath pathdom.Path,
 ) state.State {
-	left, ok := resolveBranchPathValue(ctx, resolver, out, leftPath)
+	return applyPathEqualityAt(ctx.Registry, resolver, ctx.Edge.From, out, leftPath, rightPath)
+}
+
+func applyPathEqualityAt(
+	reg *axis.Registry,
+	resolver *visibility.Resolver,
+	point cfg.Point,
+	out state.State,
+	leftPath pathdom.Path,
+	rightPath pathdom.Path,
+) state.State {
+	left, ok := resolvePathValueAt(reg, resolver, point, out, leftPath)
 	if !ok {
 		return out
 	}
-	right, ok := resolveBranchPathValue(ctx, resolver, out, rightPath)
+	right, ok := resolvePathValueAt(reg, resolver, point, out, rightPath)
 	if !ok {
 		return out
 	}
-	meet := product.Meet(ctx.Registry, left.value, right.value)
+	meet := product.Meet(reg, left.value, right.value)
 	out = left.write(out, meet)
 	out = right.write(out, meet)
 	return out
 }
 
-func resolveBranchPathValue(
-	ctx transfer.EdgeContext,
+func resolvePathValueAt(
+	reg *axis.Registry,
 	resolver *visibility.Resolver,
+	point cfg.Point,
 	out state.State,
 	targetPath pathdom.Path,
-) (branchPathValue, bool) {
+) (pathValue, bool) {
 	if targetPath.Symbol == 0 {
-		return branchPathValue{}, false
+		return pathValue{}, false
 	}
 	if len(targetPath.Segments) == 0 {
 		slot := key.SymbolValue(targetPath.Symbol)
-		return branchPathValue{
-			value: out.ReadValue(ctx.Registry, slot),
+		return pathValue{
+			value: out.ReadValue(reg, slot),
 			write: func(s state.State, value product.Value) state.State {
-				return s.WriteValue(ctx.Registry, slot, value)
+				return s.WriteValue(reg, slot, value)
 			},
 		}, true
 	}
 	if resolver == nil {
-		return branchPathValue{}, false
+		return pathValue{}, false
 	}
-	pathKey := resolver.KeyAt(ctx.Edge.From, targetPath)
+	pathKey := resolver.KeyAt(point, targetPath)
 	if pathKey == "" {
-		return branchPathValue{}, false
+		return pathValue{}, false
 	}
-	return branchPathValue{
-		value: out.ReadPathKey(ctx.Registry, pathKey),
+	return pathValue{
+		value: out.ReadPathKey(reg, pathKey),
 		write: func(s state.State, value product.Value) state.State {
-			return s.WritePathKey(ctx.Registry, pathKey, value)
+			return s.WritePathKey(reg, pathKey, value)
 		},
 	}, true
 }

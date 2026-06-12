@@ -7,6 +7,8 @@ import (
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/ref"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/summary"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/standard"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
@@ -54,6 +56,41 @@ return f()
 	}
 	assertSummaryReturn(t, reg, result.Snapshot(), result.RootKey(), want)
 	assertSummaryReturn(t, reg, result.Snapshot(), targetKey, want)
+}
+
+func TestRunChunkReexportsChainedWrapperNormalReturnParam(t *testing.T) {
+	reg := standard.Registry()
+	stmts := parseChunk(t, `
+local requireValue = function(x: string?)
+	assert(x)
+end
+local requireAgain = function(x: string?)
+	requireValue(x)
+end
+`)
+	firstLocal := stmts[0].(*ast.LocalAssignStmt)
+	secondLocal := stmts[1].(*ast.LocalAssignStmt)
+	bindings := bind.BindChunk(stmts, bind.Options{})
+	requireValue := mustBoundLocalAt(t, bindings, firstLocal, 0)
+	requireAgain := mustBoundLocalAt(t, bindings, secondLocal, 0)
+
+	result, err := RunBoundChunk(stmts, bindings, Config{
+		Check: check.Config{Registry: reg},
+	})
+	if err != nil {
+		t.Fatalf("RunBoundChunk: %v", err)
+	}
+
+	valueKey, ok := result.TargetKey(requireValue)
+	if !ok {
+		t.Fatalf("TargetKey(requireValue) missing")
+	}
+	againKey, ok := result.TargetKey(requireAgain)
+	if !ok {
+		t.Fatalf("TargetKey(requireAgain) missing")
+	}
+	assertSummaryNormalReturnParam(t, reg, result.Snapshot(), valueKey, 0, presence.Present(), runtimekind.Singleton(runtimekind.String))
+	assertSummaryNormalReturnParam(t, reg, result.Snapshot(), againKey, 0, presence.Present(), runtimekind.Singleton(runtimekind.String))
 }
 
 func TestRunChunkUsesExactConfiguredRootKey(t *testing.T) {
@@ -129,5 +166,31 @@ func assertSummaryReturn(t *testing.T, reg *axis.Registry, snapshot summary.Snap
 	}
 	if !product.Equal(reg, got.Returns[0], want) {
 		t.Fatalf("summary %s return = %v, want %v", key.Ref, got.Returns[0], want)
+	}
+}
+
+func assertSummaryNormalReturnParam(
+	t *testing.T,
+	reg *axis.Registry,
+	snapshot summary.Snapshot,
+	key summary.SummaryKey,
+	index int,
+	wantPresence presence.Value,
+	wantKind runtimekind.Value,
+) {
+	t.Helper()
+	got, ok := snapshot.Read(key)
+	if !ok {
+		t.Fatalf("summary %s missing", key.Ref)
+	}
+	if len(got.NormalReturnParams) <= index {
+		t.Fatalf("summary %s normal return params = %d, want index %d: %#v", key.Ref, len(got.NormalReturnParams), index, got)
+	}
+	value := got.NormalReturnParams[index]
+	if gotPresence := product.PresenceOf(value); !presence.Equal(gotPresence, wantPresence) {
+		t.Fatalf("summary %s param %d presence = %s, want %s", key.Ref, index, gotPresence, wantPresence)
+	}
+	if gotKind := product.Get(reg, value, runtimekind.Key); !runtimekind.Equal(gotKind, wantKind) {
+		t.Fatalf("summary %s param %d runtime kind = %s, want %s", key.Ref, index, gotKind, wantKind)
 	}
 }

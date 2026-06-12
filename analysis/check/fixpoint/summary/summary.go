@@ -2,6 +2,8 @@
 package summary
 
 import (
+	"sort"
+
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/ref"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
@@ -44,24 +46,63 @@ func (k SummaryKey) Less(other SummaryKey) bool {
 
 // Summary is the fixed-point analysis summary payload for one function entry.
 type Summary struct {
-	Returns []product.Value
+	Returns                     []product.Value
+	NormalReturnParams          []product.Value
+	NormalReturnParamConditions []ParamCondition
+	NormalReturnParamEqualities []ParamEquality
 }
 
-// Normalize returns s with trailing bottom return slots removed.
+// ParamCondition is a summary-local truthiness condition for one parameter on
+// normal return.
+type ParamCondition uint8
+
+const (
+	ParamConditionBottom ParamCondition = iota
+	ParamConditionTruthy
+	ParamConditionFalsy
+	ParamConditionTop
+)
+
+// IsUseful reports whether c carries a caller-applicable condition.
+func (c ParamCondition) IsUseful() bool {
+	return c == ParamConditionTruthy || c == ParamConditionFalsy
+}
+
+// ParamEquality records a normal-return equality relation between two
+// parameter roots.
+type ParamEquality struct {
+	Left  int
+	Right int
+}
+
+// Normalize returns s with trailing bottom slots removed.
 func Normalize(reg *axis.Registry, s Summary) Summary {
 	out := s.Clone()
 	bottom := product.Bottom(reg)
 	for len(out.Returns) > 0 && product.Equal(reg, out.Returns[len(out.Returns)-1], bottom) {
 		out.Returns = out.Returns[:len(out.Returns)-1]
 	}
-	if len(out.Returns) == 0 {
+	for len(out.NormalReturnParams) > 0 &&
+		product.Equal(reg, out.NormalReturnParams[len(out.NormalReturnParams)-1], bottom) {
+		out.NormalReturnParams = out.NormalReturnParams[:len(out.NormalReturnParams)-1]
+	}
+	for len(out.NormalReturnParamConditions) > 0 &&
+		!out.NormalReturnParamConditions[len(out.NormalReturnParamConditions)-1].IsUseful() {
+		out.NormalReturnParamConditions = out.NormalReturnParamConditions[:len(out.NormalReturnParamConditions)-1]
+	}
+	out.NormalReturnParamEqualities = normalizeParamEqualities(out.NormalReturnParamEqualities)
+	if len(out.Returns) == 0 &&
+		len(out.NormalReturnParams) == 0 &&
+		len(out.NormalReturnParamConditions) == 0 &&
+		len(out.NormalReturnParamEqualities) == 0 {
 		return Summary{}
 	}
 	return out
 }
 
-// Equal reports whether a and b have equal return tuples. Missing slots are
-// bottom.
+// Equal reports whether a and b have equal summary lanes. Missing return and
+// value-constraint slots are bottom. Missing condition slots within the known
+// normal-return parameter arity are top/no-constraint.
 func Equal(reg *axis.Registry, a, b Summary) bool {
 	n := max(len(a.Returns), len(b.Returns))
 	for i := range n {
@@ -69,11 +110,24 @@ func Equal(reg *axis.Registry, a, b Summary) bool {
 			return false
 		}
 	}
-	return true
+	n = max(len(a.NormalReturnParams), len(b.NormalReturnParams))
+	for i := range n {
+		if !product.Equal(reg, normalReturnParamAt(reg, a, i), normalReturnParamAt(reg, b, i)) {
+			return false
+		}
+	}
+	n = max(normalReturnParamCount(reg, a), normalReturnParamCount(reg, b))
+	for i := range n {
+		if normalReturnParamConditionAt(reg, a, i) != normalReturnParamConditionAt(reg, b, i) {
+			return false
+		}
+	}
+	return paramEqualitiesSummaryEqual(reg, a, b)
 }
 
 // LessOrEq reports whether a is less than or equal to b componentwise. Missing
-// return slots are bottom.
+// return and value-constraint slots are bottom. Missing condition slots within
+// the known normal-return parameter arity are top/no-constraint.
 func LessOrEq(reg *axis.Registry, a, b Summary) bool {
 	n := max(len(a.Returns), len(b.Returns))
 	for i := range n {
@@ -81,44 +135,124 @@ func LessOrEq(reg *axis.Registry, a, b Summary) bool {
 			return false
 		}
 	}
-	return true
+	n = max(len(a.NormalReturnParams), len(b.NormalReturnParams))
+	for i := range n {
+		if !product.LessOrEq(reg, normalReturnParamAt(reg, a, i), normalReturnParamAt(reg, b, i)) {
+			return false
+		}
+	}
+	n = max(normalReturnParamCount(reg, a), normalReturnParamCount(reg, b))
+	for i := range n {
+		if !paramConditionLessOrEq(normalReturnParamConditionAt(reg, a, i), normalReturnParamConditionAt(reg, b, i)) {
+			return false
+		}
+	}
+	return paramEqualitiesSummaryLessOrEq(reg, a, b)
 }
 
-// Join returns the componentwise join of a and b. Missing return slots are
-// bottom.
+// Join returns the componentwise join of a and b. Missing return and
+// value-constraint slots are bottom. Missing condition slots within the known
+// normal-return parameter arity are top/no-constraint.
 func Join(reg *axis.Registry, a, b Summary) Summary {
-	n := max(len(a.Returns), len(b.Returns))
-	if n == 0 {
+	returns := max(len(a.Returns), len(b.Returns))
+	params := max(len(a.NormalReturnParams), len(b.NormalReturnParams))
+	conditions := max(normalReturnParamCount(reg, a), normalReturnParamCount(reg, b))
+	if returns == 0 && params == 0 && conditions == 0 &&
+		len(a.NormalReturnParamEqualities) == 0 && len(b.NormalReturnParamEqualities) == 0 {
 		return Summary{}
 	}
-	out := Summary{Returns: make([]product.Value, n)}
-	for i := range n {
+	out := Summary{}
+	if returns > 0 {
+		out.Returns = make([]product.Value, returns)
+	}
+	for i := range returns {
 		out.Returns[i] = product.Join(reg, returnAt(reg, a, i), returnAt(reg, b, i))
 	}
+	if params > 0 {
+		out.NormalReturnParams = make([]product.Value, params)
+	}
+	for i := range params {
+		out.NormalReturnParams[i] = product.Join(reg, normalReturnParamAt(reg, a, i), normalReturnParamAt(reg, b, i))
+	}
+	if conditions > 0 {
+		out.NormalReturnParamConditions = make([]ParamCondition, conditions)
+	}
+	for i := range conditions {
+		out.NormalReturnParamConditions[i] = joinParamCondition(
+			normalReturnParamConditionAt(reg, a, i),
+			normalReturnParamConditionAt(reg, b, i),
+		)
+	}
+	out.NormalReturnParamEqualities = joinParamEqualities(reg, a, b)
 	return Normalize(reg, out)
 }
 
-// Widen returns the componentwise widening from prev to next. Missing return
-// slots are bottom.
+// Widen returns the componentwise widening from prev to next. Missing return and
+// value-constraint slots are bottom. Missing condition slots within the known
+// normal-return parameter arity are top/no-constraint.
 func Widen(reg *axis.Registry, prev, next Summary) Summary {
-	n := max(len(prev.Returns), len(next.Returns))
-	if n == 0 {
+	returns := max(len(prev.Returns), len(next.Returns))
+	params := max(len(prev.NormalReturnParams), len(next.NormalReturnParams))
+	conditions := max(normalReturnParamCount(reg, prev), normalReturnParamCount(reg, next))
+	if returns == 0 && params == 0 && conditions == 0 &&
+		len(prev.NormalReturnParamEqualities) == 0 && len(next.NormalReturnParamEqualities) == 0 {
 		return Summary{}
 	}
-	out := Summary{Returns: make([]product.Value, n)}
-	for i := range n {
+	out := Summary{}
+	if returns > 0 {
+		out.Returns = make([]product.Value, returns)
+	}
+	for i := range returns {
 		out.Returns[i] = product.Widen(reg, returnAt(reg, prev, i), returnAt(reg, next, i))
 	}
+	if params > 0 {
+		out.NormalReturnParams = make([]product.Value, params)
+	}
+	for i := range params {
+		out.NormalReturnParams[i] = product.Widen(
+			reg,
+			normalReturnParamAt(reg, prev, i),
+			normalReturnParamAt(reg, next, i),
+		)
+	}
+	if conditions > 0 {
+		out.NormalReturnParamConditions = make([]ParamCondition, conditions)
+	}
+	for i := range conditions {
+		out.NormalReturnParamConditions[i] = widenParamCondition(
+			normalReturnParamConditionAt(reg, prev, i),
+			normalReturnParamConditionAt(reg, next, i),
+		)
+	}
+	out.NormalReturnParamEqualities = joinParamEqualities(reg, prev, next)
 	return Normalize(reg, out)
 }
 
 // Clone returns an independent copy of s.
 func (s Summary) Clone() Summary {
-	if len(s.Returns) == 0 {
+	if len(s.Returns) == 0 &&
+		len(s.NormalReturnParams) == 0 &&
+		len(s.NormalReturnParamConditions) == 0 &&
+		len(s.NormalReturnParamEqualities) == 0 {
 		return Summary{}
 	}
-	out := Summary{Returns: make([]product.Value, len(s.Returns))}
-	copy(out.Returns, s.Returns)
+	out := Summary{}
+	if len(s.Returns) > 0 {
+		out.Returns = make([]product.Value, len(s.Returns))
+		copy(out.Returns, s.Returns)
+	}
+	if len(s.NormalReturnParams) > 0 {
+		out.NormalReturnParams = make([]product.Value, len(s.NormalReturnParams))
+		copy(out.NormalReturnParams, s.NormalReturnParams)
+	}
+	if len(s.NormalReturnParamConditions) > 0 {
+		out.NormalReturnParamConditions = make([]ParamCondition, len(s.NormalReturnParamConditions))
+		copy(out.NormalReturnParamConditions, s.NormalReturnParamConditions)
+	}
+	if len(s.NormalReturnParamEqualities) > 0 {
+		out.NormalReturnParamEqualities = make([]ParamEquality, len(s.NormalReturnParamEqualities))
+		copy(out.NormalReturnParamEqualities, s.NormalReturnParamEqualities)
+	}
 	return out
 }
 
@@ -127,6 +261,169 @@ func returnAt(reg *axis.Registry, s Summary, i int) product.Value {
 		return s.Returns[i]
 	}
 	return product.Bottom(reg)
+}
+
+func normalReturnParamAt(reg *axis.Registry, s Summary, i int) product.Value {
+	if i < len(s.NormalReturnParams) {
+		return s.NormalReturnParams[i]
+	}
+	return product.Bottom(reg)
+}
+
+func normalReturnParamConditionAt(reg *axis.Registry, s Summary, i int) ParamCondition {
+	if i < len(s.NormalReturnParamConditions) {
+		return s.NormalReturnParamConditions[i]
+	}
+	if i < normalReturnParamCount(reg, s) {
+		return ParamConditionTop
+	}
+	return ParamConditionBottom
+}
+
+func normalReturnParamCount(reg *axis.Registry, s Summary) int {
+	paramCount := len(s.NormalReturnParams)
+	bottom := product.Bottom(reg)
+	for paramCount > 0 && product.Equal(reg, s.NormalReturnParams[paramCount-1], bottom) {
+		paramCount--
+	}
+	conditionCount := len(s.NormalReturnParamConditions)
+	for conditionCount > 0 && !s.NormalReturnParamConditions[conditionCount-1].IsUseful() {
+		conditionCount--
+	}
+	return max(paramCount, conditionCount)
+}
+
+func paramConditionLessOrEq(a, b ParamCondition) bool {
+	return a == b || a == ParamConditionBottom || b == ParamConditionTop
+}
+
+func joinParamCondition(a, b ParamCondition) ParamCondition {
+	if a == b {
+		return a
+	}
+	if a == ParamConditionBottom {
+		return b
+	}
+	if b == ParamConditionBottom {
+		return a
+	}
+	return ParamConditionTop
+}
+
+func widenParamCondition(prev, next ParamCondition) ParamCondition {
+	if prev == next {
+		return next
+	}
+	if prev == ParamConditionBottom {
+		return next
+	}
+	return ParamConditionTop
+}
+
+func normalizeParamEqualities(in []ParamEquality) []ParamEquality {
+	if len(in) == 0 {
+		return nil
+	}
+	seen := make(map[ParamEquality]struct{}, len(in))
+	out := make([]ParamEquality, 0, len(in))
+	for _, eq := range in {
+		if eq.Left == eq.Right || eq.Left < 0 || eq.Right < 0 {
+			continue
+		}
+		if eq.Right < eq.Left {
+			eq.Left, eq.Right = eq.Right, eq.Left
+		}
+		if _, ok := seen[eq]; ok {
+			continue
+		}
+		seen[eq] = struct{}{}
+		out = append(out, eq)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Left != out[j].Left {
+			return out[i].Left < out[j].Left
+		}
+		return out[i].Right < out[j].Right
+	})
+	return out
+}
+
+func paramEqualitiesEqual(a, b []ParamEquality) bool {
+	a = normalizeParamEqualities(a)
+	b = normalizeParamEqualities(b)
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func paramEqualitiesLessOrEq(a, b []ParamEquality) bool {
+	a = normalizeParamEqualities(a)
+	b = normalizeParamEqualities(b)
+	if len(b) == 0 {
+		return true
+	}
+	seen := make(map[ParamEquality]struct{}, len(a))
+	for _, eq := range a {
+		seen[eq] = struct{}{}
+	}
+	for _, eq := range b {
+		if _, ok := seen[eq]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
+func paramEqualitiesSummaryEqual(reg *axis.Registry, a, b Summary) bool {
+	if paramEqualitiesBottom(reg, a) || paramEqualitiesBottom(reg, b) {
+		return paramEqualitiesBottom(reg, a) && paramEqualitiesBottom(reg, b)
+	}
+	return paramEqualitiesEqual(a.NormalReturnParamEqualities, b.NormalReturnParamEqualities)
+}
+
+func paramEqualitiesSummaryLessOrEq(reg *axis.Registry, a, b Summary) bool {
+	if paramEqualitiesBottom(reg, a) {
+		return true
+	}
+	if paramEqualitiesBottom(reg, b) {
+		return false
+	}
+	return paramEqualitiesLessOrEq(a.NormalReturnParamEqualities, b.NormalReturnParamEqualities)
+}
+
+func joinParamEqualities(reg *axis.Registry, a, b Summary) []ParamEquality {
+	switch {
+	case paramEqualitiesBottom(reg, a):
+		return normalizeParamEqualities(b.NormalReturnParamEqualities)
+	case paramEqualitiesBottom(reg, b):
+		return normalizeParamEqualities(a.NormalReturnParamEqualities)
+	}
+	aEqualities := normalizeParamEqualities(a.NormalReturnParamEqualities)
+	bEqualities := normalizeParamEqualities(b.NormalReturnParamEqualities)
+	if len(aEqualities) == 0 || len(bEqualities) == 0 {
+		return nil
+	}
+	seen := make(map[ParamEquality]struct{}, len(bEqualities))
+	for _, eq := range bEqualities {
+		seen[eq] = struct{}{}
+	}
+	out := make([]ParamEquality, 0, min(len(aEqualities), len(bEqualities)))
+	for _, eq := range aEqualities {
+		if _, ok := seen[eq]; ok {
+			out = append(out, eq)
+		}
+	}
+	return normalizeParamEqualities(out)
+}
+
+func paramEqualitiesBottom(reg *axis.Registry, s Summary) bool {
+	return normalReturnParamCount(reg, s) == 0 && len(s.NormalReturnParamEqualities) == 0
 }
 
 // Reader reads exact summary keys.

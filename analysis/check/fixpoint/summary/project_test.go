@@ -8,11 +8,13 @@ import (
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/summary"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/standard"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
+	"github.com/wippyai/go-lua/analysis/module/signaturelookup"
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/parse"
 )
@@ -133,6 +135,106 @@ func TestFromResultIgnoresDeadReturnFacts(t *testing.T) {
 	}
 }
 
+func TestFromResultProjectsStrictNormalReturnParamConstraint(t *testing.T) {
+	reg := standard.Registry()
+	result := projectCheckFunction(t, projectParseFunction(t, `
+function f(x: string?)
+	assert(x)
+end`), check.Config{Registry: reg})
+
+	got := summary.FromResult(result)
+
+	if len(got.NormalReturnParams) != 1 {
+		t.Fatalf("normal return params = %d, want 1: %#v", len(got.NormalReturnParams), got)
+	}
+	if gotPresence := product.PresenceOf(got.NormalReturnParams[0]); !presence.Equal(gotPresence, presence.Present()) {
+		t.Fatalf("normal return param presence = %s, want present", gotPresence)
+	}
+	if gotKind := product.Get(reg, got.NormalReturnParams[0], runtimekind.Key); !runtimekind.Equal(gotKind, runtimekind.Singleton(runtimekind.String)) {
+		t.Fatalf("normal return param runtime kind = %s, want string", gotKind)
+	}
+}
+
+func TestFromResultProjectsParamConstraintAfterErrorGuard(t *testing.T) {
+	reg := standard.Registry()
+	result := projectCheckFunction(t, projectParseFunction(t, `
+function f(x: string?)
+	if x == nil then
+		error("missing")
+	end
+end`), check.Config{
+		Registry: reg,
+		Signatures: signaturelookup.Source{
+			IncludeStdlib: true,
+		},
+	})
+
+	got := summary.FromResult(result)
+
+	if len(got.NormalReturnParams) != 1 {
+		t.Fatalf("normal return params = %d, want 1: %#v", len(got.NormalReturnParams), got)
+	}
+	if gotPresence := product.PresenceOf(got.NormalReturnParams[0]); !presence.Equal(gotPresence, presence.Present()) {
+		t.Fatalf("normal return param presence = %s, want present", gotPresence)
+	}
+	if gotKind := product.Get(reg, got.NormalReturnParams[0], runtimekind.Key); !runtimekind.Equal(gotKind, runtimekind.Singleton(runtimekind.String)) {
+		t.Fatalf("normal return param runtime kind = %s, want string", gotKind)
+	}
+}
+
+func TestFromResultDoesNotProjectUnchangedParamEntryAssumption(t *testing.T) {
+	reg := standard.Registry()
+	result := projectCheckFunction(t, projectParseFunction(t, `
+function f(x: string?)
+	local y = x
+end`), check.Config{Registry: reg})
+
+	got := summary.FromResult(result)
+	if len(got.NormalReturnParams) != 1 {
+		t.Fatalf("normal return params = %#v, want one explicit top", got.NormalReturnParams)
+	}
+	if !product.Equal(reg, got.NormalReturnParams[0], product.Top()) {
+		t.Fatalf("normal return param = %#v, want top/no constraint", got.NormalReturnParams[0])
+	}
+}
+
+func TestFromResultDoesNotProjectConditionalParamAssert(t *testing.T) {
+	reg := standard.Registry()
+	result := projectCheckFunction(t, projectParseFunction(t, `
+function f(x: string?, c: boolean)
+	if c then
+		assert(x)
+	end
+end`), check.Config{Registry: reg})
+
+	got := summary.FromResult(result)
+	if len(got.NormalReturnParams) != 2 {
+		t.Fatalf("normal return params = %#v, want explicit top slots", got.NormalReturnParams)
+	}
+	for i, value := range got.NormalReturnParams {
+		if !product.Equal(reg, value, product.Top()) {
+			t.Fatalf("normal return param %d = %#v, want top/no constraint", i, value)
+		}
+	}
+}
+
+func TestFromResultDoesNotProjectReassignedParamAssert(t *testing.T) {
+	reg := standard.Registry()
+	result := projectCheckFunction(t, projectParseFunction(t, `
+function f(x: string?)
+	x = "fallback"
+	assert(x)
+end`), check.Config{Registry: reg})
+
+	got := summary.FromResult(result)
+	if len(got.NormalReturnParams) != 1 {
+		t.Fatalf("normal return params = %#v, want one explicit top", got.NormalReturnParams)
+	}
+	if !product.Equal(reg, got.NormalReturnParams[0], product.Top()) {
+		t.Fatalf("normal return param = %#v, want top/no constraint", got.NormalReturnParams[0])
+	}
+}
+
 func TestFromResultMissingReadModelReturnsEmptySummary(t *testing.T) {
 	if got := summary.FromResult(nil); len(got.Returns) != 0 {
 		t.Fatalf("FromResult(nil) returned %#v, want empty summary", got)
@@ -211,6 +313,28 @@ func projectCheckChunk(t *testing.T, stmts []ast.Stmt, config check.Config) *che
 		t.Fatalf("CheckChunk: %v", err)
 	}
 	return result
+}
+
+func projectCheckFunction(t *testing.T, fn *ast.FunctionExpr, config check.Config) *check.Result {
+	t.Helper()
+	result, err := check.CheckFunction(fn, config)
+	if err != nil {
+		t.Fatalf("CheckFunction: %v", err)
+	}
+	return result
+}
+
+func projectParseFunction(t *testing.T, src string) *ast.FunctionExpr {
+	t.Helper()
+	stmts := projectParseChunk(t, src)
+	if len(stmts) != 1 {
+		t.Fatalf("got %d stmts, want 1", len(stmts))
+	}
+	def, ok := stmts[0].(*ast.FuncDefStmt)
+	if !ok || def.Func == nil {
+		t.Fatalf("stmt = %T, want function definition", stmts[0])
+	}
+	return def.Func
 }
 
 func projectParseChunk(t *testing.T, src string) []ast.Stmt {

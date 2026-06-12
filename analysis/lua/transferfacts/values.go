@@ -4,7 +4,9 @@ import (
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
+	"github.com/wippyai/go-lua/analysis/lua/branchcond"
 	"github.com/wippyai/go-lua/analysis/lua/pathexpr"
+	"github.com/wippyai/go-lua/analysis/lua/semantics"
 	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
@@ -24,6 +26,7 @@ func (l *lowerer) valueSource(source sourceprovenance.ASTSource) factflow.ValueS
 	exprRef, hasExpr := l.valueSourceExprRef(source)
 	if hasExpr {
 		l.addExpressionPath(exprRef, source.Expr)
+		l.addExpressionCondition(exprRef, source.Expr)
 	}
 	return factflow.ValueSource{
 		Kind:         source.Kind,
@@ -107,6 +110,42 @@ func (l *lowerer) addExpressionPath(ref factflow.ExprRef, expr ast.Expr) {
 		l.expressionPaths = make(map[factflow.ExprRef]pathdom.Path)
 	}
 	l.expressionPaths[ref] = p
+}
+
+func (l *lowerer) addExpressionCondition(ref factflow.ExprRef, expr ast.Expr) {
+	if ref == 0 || expr == nil || l.bindings == nil {
+		return
+	}
+	check := branchcond.Normalize(expr, l.bindings)
+	if check.Kind == branchcond.CheckNone {
+		return
+	}
+	var trueRefinements []factflow.PostconditionRefinement
+	var falseRefinements []factflow.PostconditionRefinement
+	if refinement, ok := l.branchRefinement(semantics.BranchConditionFact{Check: check}); ok {
+		if value, ok := refinement.TrueValue(); ok {
+			trueRefinements = append(trueRefinements, factflow.NewPostconditionRefinement(refinement.TargetPath(), value))
+		}
+		if value, ok := refinement.FalseValue(); ok {
+			falseRefinements = append(falseRefinements, factflow.NewPostconditionRefinement(refinement.TargetPath(), value))
+		}
+	}
+	var trueRelations []factflow.PostconditionPathRelation
+	var falseRelations []factflow.PostconditionPathRelation
+	if relation, ok := l.branchPathRelation(semantics.BranchConditionFact{Check: check}); ok {
+		equality := factflow.NewPostconditionPathEquality(relation.LeftPath(), relation.RightPath())
+		if relation.ActiveOnEdge(true) {
+			trueRelations = append(trueRelations, equality)
+		}
+		if relation.ActiveOnEdge(false) {
+			falseRelations = append(falseRelations, equality)
+		}
+	}
+	condition := factflow.NewExpressionCondition(trueRefinements, falseRefinements, trueRelations, falseRelations)
+	if condition.IsEmpty() {
+		return
+	}
+	l.expressionConditions[ref] = condition
 }
 
 func (l *lowerer) exprRef(expr any) (factflow.ExprRef, bool) {

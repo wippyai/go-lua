@@ -15,3 +15,17 @@ func applyPostconditionRefinement(
 ) state.State {
 	return applyValueRefinementAt(ctx.Registry, resolver, ctx.Point, out, fact.TargetPath(), fact.Value())
 }
+
+func applyPostconditionPathRelation(
+	ctx transfer.NodeContext,
+	resolver *visibility.Resolver,
+	out state.State,
+	fact factflow.PostconditionPathRelation,
+) state.State {
+	switch fact.Kind() {
+	case factflow.PostconditionPathRelationEqual:
+		return applyPathEqualityAt(ctx.Registry, resolver, ctx.Point, out, fact.LeftPath(), fact.RightPath())
+	default:
+		return out
+	}
+}

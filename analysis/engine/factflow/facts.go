@@ -9,17 +9,20 @@ type FactsInput struct {
 	OrdinaryAssignments         map[cfg.Point]RootAssignment
 	PathAssignments             map[cfg.Point]PathAssignment
 	PathDescendantInvalidations map[cfg.Point]PathDescendantInvalidation
+	NoNormalReturns             map[cfg.Point]struct{}
 	BranchRefinements           map[cfg.Point]BranchRefinement
 	BranchRefinementSets        map[cfg.Point]BranchRefinementSet
 	BranchPresenceRelations     map[cfg.Point]BranchPresenceRelationSet
 	BranchPathRelations         map[cfg.Point]BranchPathRelationSet
 	PostconditionRefinements    map[cfg.Point]PostconditionRefinementSet
+	PostconditionPathRelations  map[cfg.Point]PostconditionPathRelationSet
 	Returns                     map[cfg.Point]Return
 	Calls                       map[cfg.Point]CallProducer
 	CallSites                   map[cfg.Point]CallSite
 	ObjectLiterals              map[ExprRef]ObjectLiteral
 	ValueOverlays               map[ExprRef]ValueOverlay
 	ExpressionPaths             map[ExprRef]pathdom.Path
+	ExpressionConditions        map[ExprRef]ExpressionCondition
 }
 
 // Facts is an immutable point-keyed transfer facts snapshot.
@@ -28,17 +31,20 @@ type Facts struct {
 	ordinaryAssignments         map[cfg.Point]RootAssignment
 	pathAssignments             map[cfg.Point]PathAssignment
 	pathDescendantInvalidations map[cfg.Point]PathDescendantInvalidation
+	noNormalReturns             map[cfg.Point]struct{}
 	branchRefinements           map[cfg.Point]BranchRefinement
 	branchRefinementSets        map[cfg.Point]BranchRefinementSet
 	branchPresenceRelations     map[cfg.Point]BranchPresenceRelationSet
 	branchPathRelations         map[cfg.Point]BranchPathRelationSet
 	postconditionRefinements    map[cfg.Point]PostconditionRefinementSet
+	postconditionPathRelations  map[cfg.Point]PostconditionPathRelationSet
 	returns                     map[cfg.Point]Return
 	calls                       map[cfg.Point]CallProducer
 	callSites                   map[cfg.Point]CallSite
 	objectLiterals              map[ExprRef]ObjectLiteral
 	valueOverlays               map[ExprRef]ValueOverlay
 	expressionPaths             map[ExprRef]pathdom.Path
+	expressionConditions        map[ExprRef]ExpressionCondition
 }
 
 // NewFacts copies the supplied point-keyed facts into an immutable snapshot.
@@ -48,17 +54,20 @@ func NewFacts(input FactsInput) Facts {
 		ordinaryAssignments:         copyRootAssignmentMap(input.OrdinaryAssignments),
 		pathAssignments:             copyPathAssignmentMap(input.PathAssignments),
 		pathDescendantInvalidations: copyPathDescendantInvalidationMap(input.PathDescendantInvalidations),
+		noNormalReturns:             copyNoNormalReturnMap(input.NoNormalReturns),
 		branchRefinements:           copyBranchRefinementMap(input.BranchRefinements),
 		branchRefinementSets:        copyBranchRefinementSetMap(input.BranchRefinementSets),
 		branchPresenceRelations:     copyBranchPresenceRelationMap(input.BranchPresenceRelations),
 		branchPathRelations:         copyBranchPathRelationMap(input.BranchPathRelations),
 		postconditionRefinements:    copyPostconditionRefinementMap(input.PostconditionRefinements),
+		postconditionPathRelations:  copyPostconditionPathRelationMap(input.PostconditionPathRelations),
 		returns:                     copyReturnMap(input.Returns),
 		calls:                       copyCallProducerMap(input.Calls),
 		callSites:                   copyCallSiteMap(input.CallSites),
 		objectLiterals:              copyObjectLiteralMap(input.ObjectLiterals),
 		valueOverlays:               copyValueOverlayMap(input.ValueOverlays),
 		expressionPaths:             copyExpressionPathMap(input.ExpressionPaths),
+		expressionConditions:        copyExpressionConditionMap(input.ExpressionConditions),
 	}
 }
 
@@ -79,6 +88,26 @@ func (f Facts) WithPostconditionRefinements(refinements map[cfg.Point]Postcondit
 		return f
 	}
 	f.postconditionRefinements = mergePostconditionRefinementMap(f.postconditionRefinements, refinements)
+	return f
+}
+
+// WithPostconditionPathRelations returns f plus the supplied node-local normal
+// return path relations.
+func (f Facts) WithPostconditionPathRelations(relations map[cfg.Point]PostconditionPathRelationSet) Facts {
+	if len(relations) == 0 {
+		return f
+	}
+	f.postconditionPathRelations = mergePostconditionPathRelationMap(f.postconditionPathRelations, relations)
+	return f
+}
+
+// WithNoNormalReturns returns f plus the supplied points that cannot complete
+// normally.
+func (f Facts) WithNoNormalReturns(points map[cfg.Point]struct{}) Facts {
+	if len(points) == 0 {
+		return f
+	}
+	f.noNormalReturns = mergeNoNormalReturnMap(f.noNormalReturns, points)
 	return f
 }
 
@@ -117,6 +146,12 @@ func (f Facts) PathDescendantInvalidation(point cfg.Point) (PathDescendantInvali
 		return PathDescendantInvalidation{}, false
 	}
 	return fact.copy(), true
+}
+
+// NoNormalReturn reports whether point cannot complete normally.
+func (f Facts) NoNormalReturn(point cfg.Point) bool {
+	_, ok := f.noNormalReturns[point]
+	return ok
 }
 
 // BranchRefinement returns the branch-edge value refinement at point.
@@ -161,6 +196,15 @@ func (f Facts) BranchPathRelations(point cfg.Point) []BranchPathRelation {
 func (f Facts) PostconditionRefinements(point cfg.Point) []PostconditionRefinement {
 	if set, ok := f.postconditionRefinements[point]; ok {
 		return set.Refinements()
+	}
+	return nil
+}
+
+// PostconditionPathRelations returns node-local path relations that hold after
+// point completes normally.
+func (f Facts) PostconditionPathRelations(point cfg.Point) []PostconditionPathRelation {
+	if set, ok := f.postconditionPathRelations[point]; ok {
+		return set.Relations()
 	}
 	return nil
 }
@@ -227,4 +271,36 @@ func (f Facts) ExpressionPath(expr ExprRef) (pathdom.Path, bool) {
 // ExpressionPaths returns the static expression access paths keyed by expression.
 func (f Facts) ExpressionPaths() map[ExprRef]pathdom.Path {
 	return copyExpressionPathMap(f.expressionPaths)
+}
+
+// ExpressionCondition returns the normalized path facts selected by expression
+// truth value, if present.
+func (f Facts) ExpressionCondition(expr ExprRef) (ExpressionCondition, bool) {
+	condition, ok := f.expressionConditions[expr]
+	if !ok {
+		return ExpressionCondition{}, false
+	}
+	return condition.copy(), true
+}
+
+func copyNoNormalReturnMap(in map[cfg.Point]struct{}) map[cfg.Point]struct{} {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[cfg.Point]struct{}, len(in))
+	for point := range in {
+		out[point] = struct{}{}
+	}
+	return out
+}
+
+func mergeNoNormalReturnMap(base, added map[cfg.Point]struct{}) map[cfg.Point]struct{} {
+	if len(base) == 0 {
+		return copyNoNormalReturnMap(added)
+	}
+	out := copyNoNormalReturnMap(base)
+	for point := range added {
+		out[point] = struct{}{}
+	}
+	return out
 }

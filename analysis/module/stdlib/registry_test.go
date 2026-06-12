@@ -36,6 +36,14 @@ func TestLookupSeededFunctionTypes(t *testing.T) {
 				Build(),
 		},
 		{
+			name: Error,
+			want: typ.Func().
+				Param("message", typ.Any).
+				OptParam("level", typ.Integer).
+				Returns(typ.Never).
+				Build(),
+		},
+		{
 			name: Require,
 			want: typ.Func().
 				Param("modname", typ.String).
@@ -116,6 +124,12 @@ func TestLookupSeededEffects(t *testing.T) {
 					Target:     effect.ParamRef{Index: 0},
 					Refinement: postcondition.Present{},
 				},
+			},
+		},
+		{
+			name: Error,
+			labels: []effect.Label{
+				control.Throw{},
 			},
 		},
 		{
@@ -226,7 +240,7 @@ func TestSignaturesSeededNames(t *testing.T) {
 	}
 	sort.Strings(got)
 
-	want := []string{IPairs, PCall, Pairs, Require, TableInsert, Type, XPCall}
+	want := []string{Error, IPairs, PCall, Pairs, Require, TableInsert, Type, XPCall}
 	want = append(want, Assert)
 	sort.Strings(want)
 	if !reflect.DeepEqual(got, want) {

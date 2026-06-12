@@ -1,15 +1,18 @@
 package callresult
 
 import (
+	"github.com/wippyai/go-lua/analysis/check/fixpoint/summary"
 	"github.com/wippyai/go-lua/analysis/domain/effect"
 	"github.com/wippyai/go-lua/analysis/domain/effect/postcondition"
 	"github.com/wippyai/go-lua/analysis/domain/effect/signature"
+	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
+	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
 // SignaturePostconditionConfig carries signature lookup plus the generic fact
@@ -22,6 +25,26 @@ type SignaturePostconditionConfig struct {
 	Facts      factflow.Facts
 }
 
+// SignatureNoNormalReturnConfig carries signature lookup plus the generic fact
+// model needed to mark calls that cannot complete normally.
+type SignatureNoNormalReturnConfig struct {
+	Graph      cfg.Graph
+	Registry   *axis.Registry
+	Signatures SignatureLookup
+	NameFor    NameFunc
+	Facts      factflow.Facts
+}
+
+// SummaryPostconditionConfig carries summary lookup plus the generic fact model
+// needed to lower function-body-derived normal-return postconditions.
+type SummaryPostconditionConfig struct {
+	Graph     cfg.Graph
+	Registry  *axis.Registry
+	Summaries summary.Reader
+	KeyFor    KeyFunc
+	Facts     factflow.Facts
+}
+
 // WithSignaturePostconditions returns Facts extended with generic
 // postcondition facts lowered from declared signature effects.
 func WithSignaturePostconditions(config SignaturePostconditionConfig) factflow.Facts {
@@ -30,6 +53,27 @@ func WithSignaturePostconditions(config SignaturePostconditionConfig) factflow.F
 	}
 	refinements := signaturePostconditionFacts(config)
 	return config.Facts.WithPostconditionRefinements(refinements)
+}
+
+// WithSignatureNoNormalReturns returns Facts extended with call points whose
+// declared signature has no normal return value.
+func WithSignatureNoNormalReturns(config SignatureNoNormalReturnConfig) factflow.Facts {
+	if config.Graph == nil || config.Registry == nil || config.Signatures == nil || config.NameFor == nil {
+		return config.Facts
+	}
+	points := signatureNoNormalReturnFacts(config)
+	return config.Facts.WithNoNormalReturns(points)
+}
+
+// WithSummaryPostconditions returns Facts extended with generic postcondition
+// facts lowered from solved function-body summaries.
+func WithSummaryPostconditions(config SummaryPostconditionConfig) factflow.Facts {
+	if config.Graph == nil || config.Registry == nil || config.Summaries == nil || config.KeyFor == nil {
+		return config.Facts
+	}
+	facts := summaryPostconditionFacts(config)
+	out := config.Facts.WithPostconditionRefinements(facts.refinements)
+	return out.WithPostconditionPathRelations(facts.pathRelations)
 }
 
 func signaturePostconditionFacts(config SignaturePostconditionConfig) map[cfg.Point]factflow.PostconditionRefinementSet {
@@ -54,6 +98,99 @@ func signaturePostconditionFacts(config SignaturePostconditionConfig) map[cfg.Po
 		return nil
 	}
 	return out
+}
+
+func signatureNoNormalReturnFacts(config SignatureNoNormalReturnConfig) map[cfg.Point]struct{} {
+	out := make(map[cfg.Point]struct{})
+	for _, point := range config.Graph.RPO() {
+		site, ok := config.Facts.CallSite(point)
+		if !ok {
+			continue
+		}
+		name, ok := config.NameFor(transfer.NodeContext{
+			Graph:    config.Graph,
+			Registry: config.Registry,
+			Point:    point,
+			Node:     config.Graph.Node(point),
+		}, callProducerForSite(site))
+		if !ok {
+			continue
+		}
+		sig, ok := config.Signatures.Lookup(name)
+		if !ok || !signatureHasNoNormalReturn(sig) {
+			continue
+		}
+		out[point] = struct{}{}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+type summaryPostconditionFactsResult struct {
+	refinements   map[cfg.Point]factflow.PostconditionRefinementSet
+	pathRelations map[cfg.Point]factflow.PostconditionPathRelationSet
+}
+
+func summaryPostconditionFacts(config SummaryPostconditionConfig) summaryPostconditionFactsResult {
+	out := summaryPostconditionFactsResult{
+		refinements:   make(map[cfg.Point]factflow.PostconditionRefinementSet),
+		pathRelations: make(map[cfg.Point]factflow.PostconditionPathRelationSet),
+	}
+	for _, point := range config.Graph.RPO() {
+		site, ok := config.Facts.CallSite(point)
+		if !ok {
+			continue
+		}
+		key, ok := config.KeyFor(transfer.NodeContext{
+			Graph:    config.Graph,
+			Registry: config.Registry,
+			Point:    point,
+			Node:     config.Graph.Node(point),
+		}, callProducerForSite(site))
+		if !ok {
+			continue
+		}
+		got, ok := config.Summaries.Read(key)
+		if !ok {
+			continue
+		}
+		for i, value := range got.NormalReturnParams {
+			refinement, ok := normalReturnSummaryPostcondition(config, site, i, value)
+			if ok {
+				appendPostconditionRefinements(out.refinements, point, refinement)
+			}
+		}
+		for i, condition := range got.NormalReturnParamConditions {
+			if !condition.IsUseful() {
+				continue
+			}
+			refinements, relations, ok := normalReturnSummaryConditionPostconditions(config, site, i, condition)
+			if !ok {
+				continue
+			}
+			appendPostconditionRefinements(out.refinements, point, refinements...)
+			appendPostconditionPathRelations(out.pathRelations, point, relations...)
+		}
+		for _, equality := range got.NormalReturnParamEqualities {
+			relation, ok := normalReturnSummaryParamEquality(config, site, equality)
+			if ok {
+				appendPostconditionPathRelations(out.pathRelations, point, relation)
+			}
+		}
+	}
+	if len(out.refinements) == 0 {
+		out.refinements = nil
+	}
+	if len(out.pathRelations) == 0 {
+		out.pathRelations = nil
+	}
+	return out
+}
+
+func signatureHasNoNormalReturn(sig signature.Function) bool {
+	return sig.Type != nil && len(sig.Type.Returns) == 1 && typ.IsNever(sig.Type.Returns[0])
 }
 
 func signatureForSite(config SignaturePostconditionConfig, point cfg.Point, site factflow.CallSite) (signature.Function, bool) {
@@ -127,6 +264,96 @@ func normalReturnPostcondition(
 	return factflow.NewPostconditionRefinement(targetPath, value), true
 }
 
+func normalReturnSummaryPostcondition(
+	config SummaryPostconditionConfig,
+	site factflow.CallSite,
+	paramIndex int,
+	value product.Value,
+) (factflow.PostconditionRefinement, bool) {
+	if !usefulPostconditionConstraint(config.Registry, value) {
+		return factflow.PostconditionRefinement{}, false
+	}
+	args := site.ArgumentSources()
+	if paramIndex < 0 || paramIndex >= len(args) {
+		return factflow.PostconditionRefinement{}, false
+	}
+	arg := args[paramIndex]
+	if arg.Kind != factflow.ValueSourceExpression || !arg.HasExpr {
+		return factflow.PostconditionRefinement{}, false
+	}
+	targetPath, ok := config.Facts.ExpressionPath(arg.ExprRef)
+	if !ok || targetPath.IsEmpty() {
+		return factflow.PostconditionRefinement{}, false
+	}
+	return factflow.NewPostconditionRefinement(targetPath, factflow.NewValueConstraint(value)), true
+}
+
+func normalReturnSummaryConditionPostconditions(
+	config SummaryPostconditionConfig,
+	site factflow.CallSite,
+	paramIndex int,
+	condition summary.ParamCondition,
+) ([]factflow.PostconditionRefinement, []factflow.PostconditionPathRelation, bool) {
+	args := site.ArgumentSources()
+	if paramIndex < 0 || paramIndex >= len(args) {
+		return nil, nil, false
+	}
+	arg := args[paramIndex]
+	if arg.Kind != factflow.ValueSourceExpression || !arg.HasExpr {
+		return nil, nil, false
+	}
+	expressionCondition, ok := config.Facts.ExpressionCondition(arg.ExprRef)
+	if !ok {
+		return nil, nil, false
+	}
+	value := condition == summary.ParamConditionTruthy
+	refinements := expressionCondition.RefinementsForValue(value)
+	relations := expressionCondition.PathRelationsForValue(value)
+	if len(refinements) == 0 && len(relations) == 0 {
+		return nil, nil, false
+	}
+	return refinements, relations, true
+}
+
+func normalReturnSummaryParamEquality(
+	config SummaryPostconditionConfig,
+	site factflow.CallSite,
+	equality summary.ParamEquality,
+) (factflow.PostconditionPathRelation, bool) {
+	left, ok := normalReturnSummaryParamPath(config, site, equality.Left)
+	if !ok {
+		return factflow.PostconditionPathRelation{}, false
+	}
+	right, ok := normalReturnSummaryParamPath(config, site, equality.Right)
+	if !ok {
+		return factflow.PostconditionPathRelation{}, false
+	}
+	if left.Equal(right) {
+		return factflow.PostconditionPathRelation{}, false
+	}
+	return factflow.NewPostconditionPathEquality(left, right), true
+}
+
+func normalReturnSummaryParamPath(
+	config SummaryPostconditionConfig,
+	site factflow.CallSite,
+	paramIndex int,
+) (pathdom.Path, bool) {
+	args := site.ArgumentSources()
+	if paramIndex < 0 || paramIndex >= len(args) {
+		return pathdom.Path{}, false
+	}
+	arg := args[paramIndex]
+	if arg.Kind != factflow.ValueSourceExpression || !arg.HasExpr {
+		return pathdom.Path{}, false
+	}
+	targetPath, ok := config.Facts.ExpressionPath(arg.ExprRef)
+	if !ok || targetPath.IsEmpty() {
+		return pathdom.Path{}, false
+	}
+	return targetPath, true
+}
+
 func postconditionRefinementValue(reg *axis.Registry, refinement postcondition.Refinement) (factflow.ValueRefinement, bool) {
 	switch r := refinement.(type) {
 	case postcondition.Present:
@@ -143,12 +370,32 @@ func presentPostconditionRefinement(reg *axis.Registry) factflow.ValueRefinement
 	return factflow.NewValueConstraint(product.NewWithPresence(reg, product.ShapeTop, presence.Present()))
 }
 
+func usefulPostconditionConstraint(reg *axis.Registry, value product.Value) bool {
+	return !product.Equal(reg, value, product.Bottom(reg)) && !product.Equal(reg, value, product.Top())
+}
+
 func appendPostconditionRefinements(
 	out map[cfg.Point]factflow.PostconditionRefinementSet,
 	point cfg.Point,
 	refinements ...factflow.PostconditionRefinement,
 ) {
+	if len(refinements) == 0 {
+		return
+	}
 	existing := out[point].Refinements()
 	existing = append(existing, refinements...)
 	out[point] = factflow.NewPostconditionRefinementSet(existing...)
+}
+
+func appendPostconditionPathRelations(
+	out map[cfg.Point]factflow.PostconditionPathRelationSet,
+	point cfg.Point,
+	relations ...factflow.PostconditionPathRelation,
+) {
+	if len(relations) == 0 {
+		return
+	}
+	existing := out[point].Relations()
+	existing = append(existing, relations...)
+	out[point] = factflow.NewPostconditionPathRelationSet(existing...)
 }

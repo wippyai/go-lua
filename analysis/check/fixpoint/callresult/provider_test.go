@@ -380,6 +380,157 @@ func TestWithSignaturePostconditionsSkipsArgumentsWithoutExpressionPath(t *testi
 	assertStatePresence(t, reg, flow[graph.Exit()], key.SymbolValue(argSymbol), presence.Maybe())
 }
 
+func TestWithSignatureNoNormalReturnsMarksNeverReturnCallAndApplies(t *testing.T) {
+	reg := standard.Registry()
+	graph := cfg.New()
+	call := graph.AddNode(cfg.NodeCall)
+	graph.AddEdge(graph.Entry(), call, false)
+	graph.AddEdge(call, graph.Exit(), false)
+
+	target := symbol.ID(820)
+	facts := factflow.NewFacts(factflow.FactsInput{
+		CallSites: map[cfg.Point]factflow.CallSite{
+			call: factflow.NewCallSite(factflow.CallSiteConfig{
+				Context: factflow.CallSiteContextStatement,
+			}),
+		},
+	})
+
+	got := WithSignatureNoNormalReturns(SignatureNoNormalReturnConfig{
+		Graph:    graph,
+		Registry: reg,
+		Signatures: signatureMap{
+			"error": {Type: typ.Func().Param("message", typ.Any).Returns(typ.Never).Build()},
+		},
+		NameFor: StaticName("error"),
+		Facts:   facts,
+	})
+
+	if !got.NoNormalReturn(call) {
+		t.Fatalf("NoNormalReturn(%d) = false, want true", call)
+	}
+	flow := transfer.Run(transfer.Config{
+		Graph:      graph,
+		Registry:   reg,
+		EntryState: state.State{}.WriteValue(reg, key.SymbolValue(target), product.Top()),
+		NodeTransfer: factapply.NewFactsNodeTransfer(factapply.FactsNodeTransferConfig{
+			Facts:   got,
+			Sources: sourcevalue.NewSourceValues(sourcevalue.SourceValuesConfig{Registry: reg}),
+		}),
+	})
+	assertValue(t, reg, flow[graph.Exit()], key.SymbolValue(target), product.Bottom(reg))
+}
+
+func TestWithSummaryPostconditionsLowersCallSiteArgumentPathAndApplies(t *testing.T) {
+	reg := standard.Registry()
+	graph := cfg.New()
+	call := graph.AddNode(cfg.NodeCall)
+	graph.AddEdge(graph.Entry(), call, false)
+	graph.AddEdge(call, graph.Exit(), false)
+
+	callee := symbol.ID(821)
+	argExpr := factflow.ExprRef(822)
+	argSymbol := symbol.ID(823)
+	argPath := path.NewPath(argSymbol, "x")
+	summaryKey := summary.DefaultSummaryKey(ref.FuncRef{Kind: ref.KindSymbol, ID: 824})
+	constraint := product.NewWithPresence(reg, product.ShapeTop, presence.Present())
+	facts := factflow.NewFacts(factflow.FactsInput{
+		CallSites: map[cfg.Point]factflow.CallSite{
+			call: factflow.NewCallSite(factflow.CallSiteConfig{
+				Context:      factflow.CallSiteContextStatement,
+				CalleeSymbol: callee,
+				ArgumentSources: []factflow.ValueSource{
+					{Kind: factflow.ValueSourceExpression, ExprRef: argExpr, HasExpr: true},
+				},
+			}),
+		},
+		ExpressionPaths: map[factflow.ExprRef]path.Path{
+			argExpr: argPath,
+		},
+	})
+
+	got := WithSummaryPostconditions(SummaryPostconditionConfig{
+		Graph:    graph,
+		Registry: reg,
+		Summaries: summary.NewSnapshot(reg, summary.EntrySummary{
+			Key: summaryKey,
+			Summary: summary.Summary{
+				NormalReturnParams: []product.Value{constraint},
+			},
+		}),
+		KeyFor: ByCalleeSymbol(map[symbol.ID]summary.SummaryKey{callee: summaryKey}),
+		Facts:  facts,
+	})
+
+	refinements := got.PostconditionRefinements(call)
+	if len(refinements) != 1 {
+		t.Fatalf("postcondition refinements = %d, want 1: %#v", len(refinements), refinements)
+	}
+	if !refinements[0].TargetPath().Equal(argPath) {
+		t.Fatalf("target path = %s, want %s", refinements[0].TargetPath(), argPath)
+	}
+	value, ok := refinements[0].Value().Constraint()
+	if !ok {
+		t.Fatalf("missing value constraint")
+	}
+	assertPresence(t, reg, value, presence.Present())
+
+	flow := transfer.Run(transfer.Config{
+		Graph:      graph,
+		Registry:   reg,
+		EntryState: state.State{}.WriteValue(reg, key.SymbolValue(argSymbol), product.Top()),
+		NodeTransfer: factapply.NewFactsNodeTransfer(factapply.FactsNodeTransferConfig{
+			Facts:   got,
+			Sources: sourcevalue.NewSourceValues(sourcevalue.SourceValuesConfig{Registry: reg}),
+		}),
+	})
+	assertStatePresence(t, reg, flow[graph.Exit()], key.SymbolValue(argSymbol), presence.Present())
+}
+
+func TestWithSummaryPostconditionsSkipsTopAndBottomConstraints(t *testing.T) {
+	reg := standard.Registry()
+	graph := cfg.New()
+	call := graph.AddNode(cfg.NodeCall)
+	graph.AddEdge(graph.Entry(), call, false)
+	graph.AddEdge(call, graph.Exit(), false)
+
+	callee := symbol.ID(831)
+	argExpr := factflow.ExprRef(832)
+	summaryKey := summary.DefaultSummaryKey(ref.FuncRef{Kind: ref.KindSymbol, ID: 833})
+	facts := factflow.NewFacts(factflow.FactsInput{
+		CallSites: map[cfg.Point]factflow.CallSite{
+			call: factflow.NewCallSite(factflow.CallSiteConfig{
+				Context:      factflow.CallSiteContextStatement,
+				CalleeSymbol: callee,
+				ArgumentSources: []factflow.ValueSource{
+					{Kind: factflow.ValueSourceExpression, ExprRef: argExpr, HasExpr: true},
+					{Kind: factflow.ValueSourceExpression, ExprRef: argExpr, HasExpr: true},
+				},
+			}),
+		},
+		ExpressionPaths: map[factflow.ExprRef]path.Path{
+			argExpr: path.NewPath(symbol.ID(834), "x"),
+		},
+	})
+
+	got := WithSummaryPostconditions(SummaryPostconditionConfig{
+		Graph:    graph,
+		Registry: reg,
+		Summaries: summary.NewSnapshot(reg, summary.EntrySummary{
+			Key: summaryKey,
+			Summary: summary.Summary{
+				NormalReturnParams: []product.Value{product.Top(), product.Bottom(reg)},
+			},
+		}),
+		KeyFor: ByCalleeSymbol(map[symbol.ID]summary.SummaryKey{callee: summaryKey}),
+		Facts:  facts,
+	})
+
+	if refinements := got.PostconditionRefinements(call); len(refinements) != 0 {
+		t.Fatalf("postcondition refinements = %#v, want none", refinements)
+	}
+}
+
 func TestCallTargetForResultUsesExplicitTargetResultIndex(t *testing.T) {
 	target := symbol.ID(705)
 	targetPath := path.NewPath(target, "value")

@@ -34,11 +34,17 @@ func NewFactsNodeTransfer(config FactsNodeTransferConfig) transfer.NodeTransfer 
 		read, materialize := callResultReader(ctx, facts, callResults)
 
 		out := materialize(ctx.Point, in)
+		if facts.NoNormalReturn(ctx.Point) {
+			return state.State{}
+		}
 		if fact, ok := facts.PathDescendantInvalidation(ctx.Point); ok {
 			out = applyPathDescendantInvalidation(ctx, config.Visibility, out, fact)
 		}
 		for _, fact := range facts.PostconditionRefinements(ctx.Point) {
 			out = applyPostconditionRefinement(ctx, config.Visibility, out, fact)
+		}
+		for _, fact := range facts.PostconditionPathRelations(ctx.Point) {
+			out = applyPostconditionPathRelation(ctx, config.Visibility, out, fact)
 		}
 		if sources == nil {
 			return out

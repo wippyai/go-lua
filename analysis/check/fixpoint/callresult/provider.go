@@ -8,6 +8,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/effect"
 	"github.com/wippyai/go-lua/analysis/domain/effect/returns"
 	"github.com/wippyai/go-lua/analysis/domain/effect/signature"
+	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
@@ -429,6 +430,31 @@ func ByCalleeSymbol(keys map[symbol.ID]summary.SummaryKey) KeyFunc {
 	}
 	return func(_ transfer.NodeContext, call factflow.CallProducer) (summary.SummaryKey, bool) {
 		key, ok := cloned[call.CalleeSymbol()]
+		return key, ok
+	}
+}
+
+// ByCalleeIdentity maps direct callee symbols and exact callee access paths to
+// summary keys. Symbol keys are checked first because direct locals are the
+// narrowest identity for function values.
+func ByCalleeIdentity(symbolKeys map[symbol.ID]summary.SummaryKey, pathKeys map[pathdom.PathKey]summary.SummaryKey) KeyFunc {
+	clonedSymbols := make(map[symbol.ID]summary.SummaryKey, len(symbolKeys))
+	for id, key := range symbolKeys {
+		clonedSymbols[id] = key
+	}
+	clonedPaths := make(map[pathdom.PathKey]summary.SummaryKey, len(pathKeys))
+	for pathKey, key := range pathKeys {
+		clonedPaths[pathKey] = key
+	}
+	return func(_ transfer.NodeContext, call factflow.CallProducer) (summary.SummaryKey, bool) {
+		if key, ok := clonedSymbols[call.CalleeSymbol()]; ok {
+			return key, true
+		}
+		calleePath := call.CalleePath()
+		if calleePath.IsEmpty() {
+			return summary.SummaryKey{}, false
+		}
+		key, ok := clonedPaths[calleePath.Key()]
 		return key, ok
 	}
 }
