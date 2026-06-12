@@ -250,6 +250,43 @@ func TestLowerAssignmentsReturnsAndCallsPreserveValueListMetadata(t *testing.T) 
 	}
 }
 
+func TestLowerStaticExpressionPathSidecar(t *testing.T) {
+	stmts, bindings, built, result := parseSemanticChunk(t, `
+local t = {}
+local a = t.name
+local b = t["raw"]
+local c = t[1]
+local k = "name"
+local d = t[k]
+`)
+	_ = stmts
+
+	facts := Lower(result, built.Graph, Config{Registry: product.DefaultRegistry(), Bindings: bindings})
+
+	assertExprPath := func(source factflow.ValueSource, want path.Path) {
+		t.Helper()
+		got, ok := facts.ExpressionPath(source.ExprRef)
+		if !ok {
+			t.Fatalf("missing expression path for ref %d", source.ExprRef)
+		}
+		if !got.Equal(want) {
+			t.Fatalf("expression path = %q, want %q", got.String(), want.String())
+		}
+	}
+
+	tSym := mustLocalAt(t, bindings, stmts[0].(*ast.LocalAssignStmt), 0)
+	nameSource := mustLocalSource(t, facts, requireStmtPoints(t, built, stmts[1], 1)[0])
+	rawSource := mustLocalSource(t, facts, requireStmtPoints(t, built, stmts[2], 1)[0])
+	intSource := mustLocalSource(t, facts, requireStmtPoints(t, built, stmts[3], 1)[0])
+	dynamicSource := mustLocalSource(t, facts, requireStmtPoints(t, built, stmts[5], 1)[0])
+	assertExprPath(nameSource, path.NewPath(tSym, "t").Field("name"))
+	assertExprPath(rawSource, path.NewPath(tSym, "t").IndexStr("raw"))
+	assertExprPath(intSource, path.NewPath(tSym, "t").IndexInt(1))
+	if _, ok := facts.ExpressionPath(dynamicSource.ExprRef); ok {
+		t.Fatalf("dynamic index source ref %d unexpectedly has a static expression path", dynamicSource.ExprRef)
+	}
+}
+
 func TestLowerOrdinaryAssignmentsSplitsRootAndStaticPathWrites(t *testing.T) {
 	local := localAssign([]string{"t", "k", "x"}, number("0"), stringLit("key"), number("0"))
 	dotWrite := assign([]ast.Expr{dot(ident("t"), "x")}, number("1"))

@@ -442,6 +442,9 @@ func TestFactsCarrierCopiesAndReturnsFalseForMissingFacts(t *testing.T) {
 		ValueOverlays: map[ExprRef]ValueOverlay{
 			ExprRef(4): NewValueOverlay(source, runtimeKindConstraint(runtimekind.Singleton(runtimekind.Table))),
 		},
+		ExpressionPaths: map[ExprRef]path.Path{
+			ExprRef(6): path.NewPath(symbol.ID(54), "read").Field("leaf"),
+		},
 	}
 
 	facts := NewFacts(input)
@@ -476,6 +479,7 @@ func TestFactsCarrierCopiesAndReturnsFalseForMissingFacts(t *testing.T) {
 		NewObjectEntry(path.Path{Segments: []segment.Segment{{Kind: segment.SegmentField, Name: "changed"}}}, callSource),
 	})
 	input.ValueOverlays[ExprRef(4)] = NewValueOverlay(callSource, runtimeKindConstraint(runtimekind.Singleton(runtimekind.Function)))
+	input.ExpressionPaths[ExprRef(6)] = path.NewPath(symbol.ID(55), "changed").Field("leaf")
 
 	if _, ok := facts.LocalAssignment(missing); ok {
 		t.Fatal("missing local assignment returned ok")
@@ -512,6 +516,9 @@ func TestFactsCarrierCopiesAndReturnsFalseForMissingFacts(t *testing.T) {
 	}
 	if _, ok := facts.ValueOverlay(ExprRef(99)); ok {
 		t.Fatal("missing value overlay returned ok")
+	}
+	if _, ok := facts.ExpressionPath(ExprRef(99)); ok {
+		t.Fatal("missing expression path returned ok")
 	}
 
 	local, ok := facts.LocalAssignment(point)
@@ -719,6 +726,19 @@ func TestFactsCarrierCopiesAndReturnsFalseForMissingFacts(t *testing.T) {
 	if overlayFact.Source() != source || !product.Equal(product.DefaultRegistry(), overlayFact.Overlay(), wantOverlay) {
 		t.Fatalf("value overlay fact = %#v, want original overlay", overlayFact)
 	}
+
+	exprPath, ok := facts.ExpressionPath(ExprRef(6))
+	if !ok {
+		t.Fatal("expression path missing")
+	}
+	assertPathEqual(t, exprPath, path.NewPath(symbol.ID(54), "read").Field("leaf"))
+	exprPath.Segments[0].Name = "mutated"
+	exprPathAgain, _ := facts.ExpressionPath(ExprRef(6))
+	assertDirectField(t, exprPathAgain, "leaf")
+	allExpressionPaths := facts.ExpressionPaths()
+	allExpressionPaths[ExprRef(6)] = path.NewPath(symbol.ID(56), "mutated").Field("other")
+	allExpressionPathsAgain := facts.ExpressionPaths()
+	assertDirectField(t, allExpressionPathsAgain[ExprRef(6)], "leaf")
 }
 
 func assertDirectField(t *testing.T, p path.Path, want string) {

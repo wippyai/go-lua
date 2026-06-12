@@ -21,6 +21,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/lua/cfgbuild"
 	"github.com/wippyai/go-lua/analysis/lua/cfgfacts"
+	"github.com/wippyai/go-lua/analysis/lua/readexpr"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
 	"github.com/wippyai/go-lua/analysis/lua/transferfacts"
 	"github.com/wippyai/go-lua/analysis/module/manifest"
@@ -334,7 +335,7 @@ func (c *Checker) CheckBoundFunction(fn *ast.FunctionExpr, bindings *bind.Result
 
 func (c *Checker) run(bindings *bind.Result, built *cfgbuild.Result, sem *semantics.Result) *Result {
 	config := c.config
-	facts := transferfacts.Lower(sem, built.Graph, transferfacts.Config{Registry: config.Registry})
+	facts := transferfacts.Lower(sem, built.Graph, transferfacts.Config{Registry: config.Registry, Bindings: bindings})
 	if hasSignatures(config.Signatures) {
 		facts = callresult.WithSignatureRelations(callresult.SignatureRelationConfig{
 			Graph:      built.Graph,
@@ -343,10 +344,18 @@ func (c *Checker) run(bindings *bind.Result, built *cfgbuild.Result, sem *semant
 			Facts:      facts,
 		})
 	}
+	expressionValue := config.ExpressionValue
+	if expressionValue == nil {
+		expressionValue = readexpr.Provider(readexpr.Config{
+			Registry:   config.Registry,
+			Facts:      facts,
+			Visibility: config.Visibility,
+		})
+	}
 	sources := source.NewSourceValues(source.SourceValuesConfig{
 		Registry:         config.Registry,
 		ExpressionValues: config.ExpressionValues,
-		ExpressionValue:  config.ExpressionValue,
+		ExpressionValue:  expressionValue,
 		VarargValue:      config.VarargValue,
 	})
 	callResults := config.CallResults

@@ -8,6 +8,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/effect"
 	"github.com/wippyai/go-lua/analysis/domain/effect/returns"
 	"github.com/wippyai/go-lua/analysis/domain/effect/signature"
+	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
@@ -15,8 +16,10 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/state"
+	"github.com/wippyai/go-lua/analysis/engine/visibility"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
+	"github.com/wippyai/go-lua/analysis/lua/cfgbuild"
 	"github.com/wippyai/go-lua/analysis/module/manifest"
 	"github.com/wippyai/go-lua/analysis/module/signaturelookup"
 	"github.com/wippyai/go-lua/analysis/symbol"
@@ -147,6 +150,123 @@ func TestCheckChunkManifestSameAsSignatureUsesArgumentSourceValue(t *testing.T) 
 	}
 	got := exit.ReadValue(reg, key.SymbolValue(x))
 	assertRuntimeKind(t, reg, got, runtimekind.Singleton(runtimekind.String))
+}
+
+func TestCheckChunkDefaultExpressionValueProjectsStaticReadOptionality(t *testing.T) {
+	reg := product.DefaultRegistry()
+	stmts := parseChunk(t, `local out = t["name"]`)
+	bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"t"}})
+	built := cfgbuild.BuildChunk(stmts, bindings)
+	local := stmts[0].(*ast.LocalAssignStmt)
+	assignPoint := requireCheckStmtPoint(t, built, local)
+	attr := local.Exprs[0].(*ast.AttrGetExpr)
+	tSym := mustIdentSymbol(t, bindings, attr.Object.(*ast.IdentExpr))
+	resolverBuilder := visibility.NewBuilder()
+	resolverBuilder.Define(assignPoint, tSym, "t")
+	resolver := visibility.NewResolver(resolverBuilder.Build())
+	entry := state.State{}.WriteValue(
+		reg,
+		key.SymbolValue(tSym),
+		product.Set(reg, product.Top(), runtimekind.Key, runtimekind.Singleton(runtimekind.Table)),
+	)
+
+	result, err := CheckBoundChunk(stmts, bindings, Config{
+		Registry:   reg,
+		Globals:    []string{"t"},
+		Visibility: resolver,
+		EntryState: entry,
+	})
+	if err != nil {
+		t.Fatalf("CheckBoundChunk: %v", err)
+	}
+
+	out := mustLocalAt(t, result, local, 0)
+	exit, ok := result.ExitState()
+	if !ok {
+		t.Fatalf("missing exit state")
+	}
+	assertPresence(t, reg, exit.ReadValue(reg, key.SymbolValue(out)), presence.Top())
+}
+
+func TestCheckChunkDefaultExpressionValueUsesExactPathPresenceProof(t *testing.T) {
+	reg := product.DefaultRegistry()
+	stmts := parseChunk(t, `local out = t.name`)
+	bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"t"}})
+	built := cfgbuild.BuildChunk(stmts, bindings)
+	local := stmts[0].(*ast.LocalAssignStmt)
+	assignPoint := requireCheckStmtPoint(t, built, local)
+	attr := local.Exprs[0].(*ast.AttrGetExpr)
+	tSym := mustIdentSymbol(t, bindings, attr.Object.(*ast.IdentExpr))
+	readPath := path.NewPath(tSym, "t").Field("name")
+	resolverBuilder := visibility.NewBuilder()
+	resolverBuilder.Define(assignPoint, tSym, "t")
+	resolver := visibility.NewResolver(resolverBuilder.Build())
+	childValue := product.Set(
+		reg,
+		product.NewWithPresence(reg, product.ShapeTop, presence.Present()),
+		runtimekind.Key,
+		runtimekind.Singleton(runtimekind.String),
+	)
+	entry := state.State{}.WritePathKey(reg, resolver.KeyAt(assignPoint, readPath), childValue)
+
+	result, err := CheckBoundChunk(stmts, bindings, Config{
+		Registry:   reg,
+		Globals:    []string{"t"},
+		Visibility: resolver,
+		EntryState: entry,
+	})
+	if err != nil {
+		t.Fatalf("CheckBoundChunk: %v", err)
+	}
+
+	out := mustLocalAt(t, result, local, 0)
+	exit, ok := result.ExitState()
+	if !ok {
+		t.Fatalf("missing exit state")
+	}
+	got := exit.ReadValue(reg, key.SymbolValue(out))
+	assertPresence(t, reg, got, presence.Present())
+	assertRuntimeKind(t, reg, got, runtimekind.Singleton(runtimekind.String))
+}
+
+func TestCheckChunkUserExpressionValueOverridesDefaultStaticReadProjector(t *testing.T) {
+	reg := product.DefaultRegistry()
+	stmts := parseChunk(t, `local out = t.name`)
+	bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"t"}})
+	built := cfgbuild.BuildChunk(stmts, bindings)
+	local := stmts[0].(*ast.LocalAssignStmt)
+	assignPoint := requireCheckStmtPoint(t, built, local)
+	attr := local.Exprs[0].(*ast.AttrGetExpr)
+	tSym := mustIdentSymbol(t, bindings, attr.Object.(*ast.IdentExpr))
+	resolverBuilder := visibility.NewBuilder()
+	resolverBuilder.Define(assignPoint, tSym, "t")
+	override := product.Set(
+		reg,
+		product.NewWithPresence(reg, product.ShapeTop, presence.Absent()),
+		runtimekind.Key,
+		runtimekind.Singleton(runtimekind.Nil),
+	)
+
+	result, err := CheckBoundChunk(stmts, bindings, Config{
+		Registry:   reg,
+		Globals:    []string{"t"},
+		Visibility: visibility.NewResolver(resolverBuilder.Build()),
+		ExpressionValue: func(_ cfg.Point, _ factflow.ExprRef, _ factflow.ValueSource, _ state.State) (product.Value, bool) {
+			return override, true
+		},
+	})
+	if err != nil {
+		t.Fatalf("CheckBoundChunk: %v", err)
+	}
+
+	out := mustLocalAt(t, result, local, 0)
+	exit, ok := result.ExitState()
+	if !ok {
+		t.Fatalf("missing exit state")
+	}
+	got := exit.ReadValue(reg, key.SymbolValue(out))
+	assertPresence(t, reg, got, presence.Absent())
+	assertRuntimeKind(t, reg, got, runtimekind.Singleton(runtimekind.Nil))
 }
 
 func TestCheckBoundFunctionUsesSuppliedBindingIdentity(t *testing.T) {
@@ -288,6 +408,27 @@ func mustBoundLocalAt(t *testing.T, bindings *bind.Result, stmt *ast.LocalAssign
 	return locals[index]
 }
 
+func mustIdentSymbol(t *testing.T, bindings *bind.Result, ident *ast.IdentExpr) symbol.ID {
+	t.Helper()
+	id, ok := bindings.SymbolOf(ident)
+	if !ok || id == 0 {
+		t.Fatalf("missing symbol for ident %q", ident.Value)
+	}
+	return id
+}
+
+func requireCheckStmtPoint(t *testing.T, built *cfgbuild.Result, stmt ast.Stmt) cfg.Point {
+	t.Helper()
+	if built == nil {
+		t.Fatalf("missing cfg build result")
+	}
+	points := built.StmtPoints.PointsFor(stmt)
+	if len(points) != 1 {
+		t.Fatalf("stmt points = %v, want one point", points)
+	}
+	return points[0]
+}
+
 func assertProductEqual(t *testing.T, reg *axis.Registry, got, want product.Value) {
 	t.Helper()
 	if !product.Equal(reg, got, want) {
@@ -299,6 +440,13 @@ func assertRuntimeKind(t *testing.T, reg *axis.Registry, got product.Value, want
 	t.Helper()
 	if kind := product.Get(reg, got, runtimekind.Key); !runtimekind.Equal(kind, want) {
 		t.Fatalf("runtimekind = %s, want %s", kind, want)
+	}
+}
+
+func assertPresence(t *testing.T, _ *axis.Registry, got product.Value, want presence.Value) {
+	t.Helper()
+	if gotPresence := product.PresenceOf(got); !presence.Equal(gotPresence, want) {
+		t.Fatalf("presence = %s, want %s", gotPresence, want)
 	}
 }
 

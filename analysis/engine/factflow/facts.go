@@ -1,6 +1,7 @@
 package factflow
 
 import "github.com/wippyai/go-lua/analysis/ir/cfg"
+import pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 
 // FactsInput carries point-keyed facts used to construct an immutable Facts snapshot.
 type FactsInput struct {
@@ -16,6 +17,7 @@ type FactsInput struct {
 	CallSites                   map[cfg.Point]CallSite
 	ObjectLiterals              map[ExprRef]ObjectLiteral
 	ValueOverlays               map[ExprRef]ValueOverlay
+	ExpressionPaths             map[ExprRef]pathdom.Path
 }
 
 // Facts is an immutable point-keyed transfer facts snapshot.
@@ -32,6 +34,7 @@ type Facts struct {
 	callSites                   map[cfg.Point]CallSite
 	objectLiterals              map[ExprRef]ObjectLiteral
 	valueOverlays               map[ExprRef]ValueOverlay
+	expressionPaths             map[ExprRef]pathdom.Path
 }
 
 // NewFacts copies the supplied point-keyed facts into an immutable snapshot.
@@ -49,6 +52,7 @@ func NewFacts(input FactsInput) Facts {
 		callSites:                   copyCallSiteMap(input.CallSites),
 		objectLiterals:              copyObjectLiteralMap(input.ObjectLiterals),
 		valueOverlays:               copyValueOverlayMap(input.ValueOverlays),
+		expressionPaths:             copyExpressionPathMap(input.ExpressionPaths),
 	}
 }
 
@@ -176,4 +180,18 @@ func (f Facts) ValueOverlay(expr ExprRef) (ValueOverlay, bool) {
 // ValueOverlays returns the source-value overlay sidecars keyed by expression.
 func (f Facts) ValueOverlays() map[ExprRef]ValueOverlay {
 	return copyValueOverlayMap(f.valueOverlays)
+}
+
+// ExpressionPath returns the static expression access path for expr, if present.
+func (f Facts) ExpressionPath(expr ExprRef) (pathdom.Path, bool) {
+	p, ok := f.expressionPaths[expr]
+	if !ok {
+		return pathdom.Path{}, false
+	}
+	return copyPath(p), true
+}
+
+// ExpressionPaths returns the static expression access paths keyed by expression.
+func (f Facts) ExpressionPaths() map[ExprRef]pathdom.Path {
+	return copyExpressionPathMap(f.expressionPaths)
 }

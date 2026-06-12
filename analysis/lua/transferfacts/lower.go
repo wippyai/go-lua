@@ -2,9 +2,11 @@
 package transferfacts
 
 import (
+	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
+	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
@@ -15,6 +17,7 @@ import (
 // and diagnostic facts separately.
 type Config struct {
 	Registry *axis.Registry
+	Bindings *bind.Result
 }
 
 func Lower(result *semantics.Result, graph cfg.Graph, config Config) factflow.Facts {
@@ -25,10 +28,12 @@ func Lower(result *semantics.Result, graph cfg.Graph, config Config) factflow.Fa
 		return factflow.NewFacts(factflow.FactsInput{})
 	}
 	l := lowerer{
-		registry:   config.Registry,
-		exprs:      make(map[any]factflow.ExprRef),
-		types:      make(map[any]factflow.TypeRef),
-		callPoints: callPointsByExpr(result, graph),
+		registry:        config.Registry,
+		bindings:        config.Bindings,
+		exprs:           make(map[any]factflow.ExprRef),
+		types:           make(map[any]factflow.TypeRef),
+		expressionPaths: make(map[factflow.ExprRef]pathdom.Path),
+		callPoints:      callPointsByExpr(result, graph),
 	}
 	input := factflow.FactsInput{
 		LocalAssignments:            make(map[cfg.Point]factflow.RootAssignment),
@@ -86,14 +91,17 @@ func Lower(result *semantics.Result, graph cfg.Graph, config Config) factflow.Fa
 			l.addAssertionOverlaysForSource(&input, fact.Source)
 		}
 	}
+	input.ExpressionPaths = l.expressionPaths
 	return factflow.NewFacts(input)
 }
 
 type lowerer struct {
-	registry   *axis.Registry
-	exprs      map[any]factflow.ExprRef
-	types      map[any]factflow.TypeRef
-	callPoints map[*ast.FuncCallExpr]cfg.Point
+	registry        *axis.Registry
+	bindings        *bind.Result
+	exprs           map[any]factflow.ExprRef
+	types           map[any]factflow.TypeRef
+	expressionPaths map[factflow.ExprRef]pathdom.Path
+	callPoints      map[*ast.FuncCallExpr]cfg.Point
 }
 
 func callPointsByExpr(result *semantics.Result, graph cfg.Graph) map[*ast.FuncCallExpr]cfg.Point {

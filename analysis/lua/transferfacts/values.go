@@ -1,8 +1,10 @@
 package transferfacts
 
 import (
+	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
+	"github.com/wippyai/go-lua/analysis/lua/pathexpr"
 	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
@@ -20,6 +22,9 @@ func (l *lowerer) valueSources(sources []sourceprovenance.ASTSource) []factflow.
 
 func (l *lowerer) valueSource(source sourceprovenance.ASTSource) factflow.ValueSource {
 	exprRef, hasExpr := l.exprRef(source.Expr)
+	if hasExpr {
+		l.addExpressionPath(exprRef, source.Expr)
+	}
 	return factflow.ValueSource{
 		Kind:         source.Kind,
 		ExprRef:      exprRef,
@@ -34,6 +39,20 @@ func (l *lowerer) valueSource(source sourceprovenance.ASTSource) factflow.ValueS
 		Adjusted:     source.Adjusted,
 		OpenTail:     source.OpenTail,
 	}
+}
+
+func (l *lowerer) addExpressionPath(ref factflow.ExprRef, expr ast.Expr) {
+	if ref == 0 || expr == nil || l.bindings == nil {
+		return
+	}
+	p, ok := pathexpr.Resolve(expr, l.bindings)
+	if !ok || p.IsEmpty() {
+		return
+	}
+	if l.expressionPaths == nil {
+		l.expressionPaths = make(map[factflow.ExprRef]pathdom.Path)
+	}
+	l.expressionPaths[ref] = p
 }
 
 func (l *lowerer) argumentValueSources(args []ast.Expr) []factflow.ValueSource {
