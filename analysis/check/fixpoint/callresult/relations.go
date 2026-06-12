@@ -49,7 +49,7 @@ func signatureRelationFacts(config SignatureRelationConfig) map[cfg.Point]factfl
 		if !ok {
 			continue
 		}
-		for _, label := range errorReturnLabels(sig) {
+		for _, label := range activeErrorReturnLabels(sig) {
 			targets, ok := errorReturnCallTargets(config, point, call, label)
 			if !ok {
 				continue
@@ -75,7 +75,7 @@ func signatureForCall(config SignatureRelationConfig, point cfg.Point, call fact
 	return config.Signatures.Lookup(name)
 }
 
-func errorReturnLabels(sig signature.Function) []returns.ErrorReturn {
+func activeErrorReturnLabels(sig signature.Function) []returns.ErrorReturn {
 	if len(sig.Effect.Labels) == 0 {
 		return nil
 	}

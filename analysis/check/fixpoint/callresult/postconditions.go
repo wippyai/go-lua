@@ -89,7 +89,7 @@ func signaturePostconditionFacts(config SignaturePostconditionConfig) map[cfg.Po
 		if !ok {
 			continue
 		}
-		for _, label := range normalReturnRefinementLabels(sig) {
+		for _, label := range activeNormalReturnRefinementLabels(sig) {
 			refinement, ok := normalReturnPostcondition(config, site, label)
 			if ok {
 				appendPostconditionRefinements(out, point, refinement)
@@ -226,7 +226,7 @@ func signatureForSite(config SignaturePostconditionConfig, point cfg.Point, site
 	return config.Signatures.Lookup(name)
 }
 
-func normalReturnRefinementLabels(sig signature.Function) []postcondition.NormalReturnRefinement {
+func activeNormalReturnRefinementLabels(sig signature.Function) []postcondition.NormalReturnRefinement {
 	if len(sig.Effect.Labels) == 0 {
 		return nil
 	}

@@ -7,6 +7,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/ref"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/summary"
+	"github.com/wippyai/go-lua/analysis/domain/constraint/expr"
 	"github.com/wippyai/go-lua/analysis/domain/effect"
 	"github.com/wippyai/go-lua/analysis/domain/effect/postcondition"
 	"github.com/wippyai/go-lua/analysis/domain/effect/returns"
@@ -1174,6 +1175,131 @@ func TestSignatureProviderTypeProjectionFallsBackToDeclaredReturnType(t *testing
 		t.Fatalf("got %d results, want 1: %#v", len(got), got)
 	}
 	assertRuntimeKind(t, reg, got[0].Value, runtimekind.Singleton(runtimekind.Number))
+}
+
+func TestSignatureProviderReservedReturnTransformsUseOnlyDeclaredReturnType(t *testing.T) {
+	reg := standard.Registry()
+	point := cfg.Point(22)
+	tests := []struct {
+		name  string
+		label effect.Label
+	}{
+		{
+			name: "deep element",
+			label: returns.Return{
+				ReturnIndex: 0,
+				Transform:   returns.DeepElementOf{Source: effect.ParamRef{Index: 0}},
+			},
+		},
+		{
+			name: "string unpack",
+			label: returns.Return{
+				ReturnIndex: 0,
+				Transform:   returns.StringUnpackValue{Format: effect.ParamRef{Index: 0}},
+			},
+		},
+		{
+			name: "select case",
+			label: returns.Return{
+				ReturnIndex: 0,
+				Transform:   returns.SelectCaseOfParam{Source: effect.ParamRef{Index: 0}},
+			},
+		},
+		{
+			name: "select result",
+			label: returns.Return{
+				ReturnIndex: 0,
+				Transform: returns.SelectResultOfCases{
+					Cases:   effect.ParamRef{Index: 0},
+					Default: effect.ParamRef{Index: 1},
+				},
+			},
+		},
+		{
+			name:  "return length",
+			label: returns.ReturnLength{ReturnIndex: 0, Length: expr.PL(0)},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			provider := SignatureProvider(SignatureProviderConfig{
+				Signatures: signatureMap{
+					"f": {
+						Type: typ.Func().
+							Param("items", typ.NewArray(typ.String)).
+							Param("default", typ.Number).
+							Returns(typ.Boolean).
+							Build(),
+						Effect: effect.Empty.With(tc.label),
+					},
+				},
+				NameFor: StaticName("f"),
+				Facts: signatureProviderFacts(point, []factflow.ValueSource{
+					{Kind: factflow.ValueSourceExpression},
+					{Kind: factflow.ValueSourceExpression},
+				}),
+			})
+
+			got := provider(transfer.NodeContext{Registry: reg, Point: point}, factflow.NewCallProducer(factflow.CallProducerConfig{}), state.State{}, nil)
+
+			if len(got) != 1 {
+				t.Fatalf("got %d results, want 1 declared result: %#v", len(got), got)
+			}
+			assertRuntimeKind(t, reg, got[0].Value, runtimekind.Singleton(runtimekind.Boolean))
+		})
+	}
+}
+
+func TestActiveReturnTransformIgnoresReservedReturnTransforms(t *testing.T) {
+	tests := []struct {
+		name  string
+		label effect.Label
+	}{
+		{
+			name: "deep element",
+			label: returns.Return{
+				ReturnIndex: 0,
+				Transform:   returns.DeepElementOf{Source: effect.ParamRef{Index: 0}},
+			},
+		},
+		{
+			name: "string unpack",
+			label: returns.Return{
+				ReturnIndex: 0,
+				Transform:   returns.StringUnpackValue{Format: effect.ParamRef{Index: 0}},
+			},
+		},
+		{
+			name: "select case",
+			label: returns.Return{
+				ReturnIndex: 0,
+				Transform:   returns.SelectCaseOfParam{Source: effect.ParamRef{Index: 0}},
+			},
+		},
+		{
+			name: "select result",
+			label: returns.Return{
+				ReturnIndex: 0,
+				Transform: returns.SelectResultOfCases{
+					Cases:   effect.ParamRef{Index: 0},
+					Default: effect.ParamRef{Index: 1},
+				},
+			},
+		},
+		{
+			name:  "return length",
+			label: returns.ReturnLength{ReturnIndex: 0, Length: expr.PL(0)},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if transform, ok := activeReturnTransform(signature.Function{Effect: effect.Empty.With(tc.label)}, 0); ok {
+				t.Fatalf("active transform = %#v, want none", transform)
+			}
+		})
+	}
 }
 
 func TestFallbackKeepsPrimarySlotsAndFillsMissingSignatureSlots(t *testing.T) {

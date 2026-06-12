@@ -114,7 +114,7 @@ func signatureReturnValue(
 	in state.State,
 	read func(cfg.Point) state.State,
 ) (product.Value, bool) {
-	transform, ok := returnTransform(sig, index)
+	transform, ok := activeReturnTransform(sig, index)
 	if !ok {
 		return product.Value{}, false
 	}
@@ -272,7 +272,7 @@ func typeProjectionReturnValue(
 	return typevalue.FromType(ctx.Registry, projected), true
 }
 
-func returnTransform(sig signature.Function, index int) (returns.ReturnType, bool) {
+func activeReturnTransform(sig signature.Function, index int) (returns.ReturnType, bool) {
 	for _, label := range sig.Effect.Labels {
 		ret, ok := effect.NormalizeLabel(label).(returns.Return)
 		if !ok || ret.ReturnIndex != index {
