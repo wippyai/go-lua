@@ -15,6 +15,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
+	"github.com/wippyai/go-lua/analysis/lua/typeaccess"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/type/kind"
 	"github.com/wippyai/go-lua/analysis/type/typ"
@@ -135,6 +136,20 @@ func signatureReturnValue(
 			return product.Value{}, false
 		}
 		return elementOfReturnValue(ctx, facts, sig, transform.Source)
+	case returns.CallbackReturn:
+		return callbackReturnValue(ctx, facts, sig, transform.CallbackParam, false)
+	case *returns.CallbackReturn:
+		if transform == nil {
+			return product.Value{}, false
+		}
+		return callbackReturnValue(ctx, facts, sig, transform.CallbackParam, false)
+	case returns.ArrayOfCallbackReturn:
+		return callbackReturnValue(ctx, facts, sig, transform.CallbackParam, true)
+	case *returns.ArrayOfCallbackReturn:
+		if transform == nil {
+			return product.Value{}, false
+		}
+		return callbackReturnValue(ctx, facts, sig, transform.CallbackParam, true)
 	default:
 		return product.Value{}, false
 	}
@@ -185,6 +200,32 @@ func elementOfReturnValue(
 	return valueFromType(ctx.Registry, elem), true
 }
 
+func callbackReturnValue(
+	ctx transfer.NodeContext,
+	facts factflow.Facts,
+	sig signature.Function,
+	ref effect.ParamRef,
+	array bool,
+) (product.Value, bool) {
+	site, ok := facts.CallSite(ctx.Point)
+	if !ok {
+		return product.Value{}, false
+	}
+	args := site.ArgumentSources()
+	argIndex, ok := effect.ResolveParamIndex(ref, len(args))
+	if !ok || sig.Type == nil || argIndex < 0 || argIndex >= len(sig.Type.Params) {
+		return product.Value{}, false
+	}
+	ret, ok := typeaccess.CallableReturn(sig.Type.Params[argIndex].Type)
+	if !ok {
+		return product.Value{}, false
+	}
+	if array {
+		ret = typ.NewArray(ret)
+	}
+	return valueFromType(ctx.Registry, ret), true
+}
+
 func returnTransform(sig signature.Function, index int) (returns.ReturnType, bool) {
 	for _, label := range sig.Effect.Labels {
 		ret, ok := effect.NormalizeLabel(label).(returns.Return)
@@ -192,7 +233,7 @@ func returnTransform(sig signature.Function, index int) (returns.ReturnType, boo
 			continue
 		}
 		switch transform := ret.Transform.(type) {
-		case returns.SameAs, returns.ElementOf, returns.OptionalElementOf:
+		case returns.SameAs, returns.ElementOf, returns.OptionalElementOf, returns.CallbackReturn, returns.ArrayOfCallbackReturn:
 			return ret.Transform, true
 		case *returns.SameAs:
 			if transform != nil {
@@ -203,6 +244,14 @@ func returnTransform(sig signature.Function, index int) (returns.ReturnType, boo
 				return transform, true
 			}
 		case *returns.OptionalElementOf:
+			if transform != nil {
+				return transform, true
+			}
+		case *returns.CallbackReturn:
+			if transform != nil {
+				return transform, true
+			}
+		case *returns.ArrayOfCallbackReturn:
 			if transform != nil {
 				return transform, true
 			}

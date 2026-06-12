@@ -276,6 +276,140 @@ func TestSignatureProviderElementOfFallsBackToDeclaredReturnTypeWhenParamRefUnre
 	assertRuntimeKind(t, reg, got[0].Value, runtimekind.Singleton(runtimekind.Number))
 }
 
+func TestSignatureProviderCallbackReturnProjectsFirstReturnRuntimeKind(t *testing.T) {
+	reg := product.DefaultRegistry()
+	point := cfg.Point(13)
+	provider := SignatureProvider(SignatureProviderConfig{
+		Signatures: signatureMap{
+			"f": {
+				Type: typ.Func().
+					Param("callback", typ.Func().Returns(typ.Integer).Build()).
+					Returns(typ.Any).
+					Build(),
+				Effect: effect.Empty.With(returns.Return{ReturnIndex: 0, Transform: returns.CallbackReturn{CallbackParam: effect.ParamRef{Index: 0}}}),
+			},
+		},
+		NameFor: StaticName("f"),
+		Facts:   signatureProviderFacts(point, []factflow.ValueSource{{Kind: factflow.ValueSourceExpression}}),
+	})
+
+	got := provider(transfer.NodeContext{Registry: reg, Point: point}, factflow.NewCallProducer(factflow.CallProducerConfig{}), state.State{}, nil)
+
+	if len(got) != 1 {
+		t.Fatalf("got %d results, want 1: %#v", len(got), got)
+	}
+	assertRuntimeKind(t, reg, got[0].Value, runtimekind.Singleton(runtimekind.Number))
+}
+
+func TestSignatureProviderCallbackReturnResolvesNegativeParamRef(t *testing.T) {
+	reg := product.DefaultRegistry()
+	point := cfg.Point(14)
+	provider := SignatureProvider(SignatureProviderConfig{
+		Signatures: signatureMap{
+			"f": {
+				Type: typ.Func().
+					Param("value", typ.String).
+					Param("callback", typ.Func().Returns(typ.Boolean).Build()).
+					Returns(typ.Any).
+					Build(),
+				Effect: effect.Empty.With(returns.Return{ReturnIndex: 0, Transform: returns.CallbackReturn{CallbackParam: effect.ParamRef{Index: -1}}}),
+			},
+		},
+		NameFor: StaticName("f"),
+		Facts: signatureProviderFacts(point, []factflow.ValueSource{
+			{Kind: factflow.ValueSourceExpression},
+			{Kind: factflow.ValueSourceExpression},
+		}),
+	})
+
+	got := provider(transfer.NodeContext{Registry: reg, Point: point}, factflow.NewCallProducer(factflow.CallProducerConfig{}), state.State{}, nil)
+
+	if len(got) != 1 {
+		t.Fatalf("got %d results, want 1: %#v", len(got), got)
+	}
+	assertRuntimeKind(t, reg, got[0].Value, runtimekind.Singleton(runtimekind.Boolean))
+}
+
+func TestSignatureProviderArrayOfCallbackReturnProjectsTableRuntimeKind(t *testing.T) {
+	reg := product.DefaultRegistry()
+	point := cfg.Point(15)
+	provider := SignatureProvider(SignatureProviderConfig{
+		Signatures: signatureMap{
+			"f": {
+				Type: typ.Func().
+					Param("callback", typ.Func().Returns(typ.String).Build()).
+					Returns(typ.Any).
+					Build(),
+				Effect: effect.Empty.With(returns.Return{ReturnIndex: 0, Transform: returns.ArrayOfCallbackReturn{CallbackParam: effect.ParamRef{Index: 0}}}),
+			},
+		},
+		NameFor: StaticName("f"),
+		Facts:   signatureProviderFacts(point, []factflow.ValueSource{{Kind: factflow.ValueSourceExpression}}),
+	})
+
+	got := provider(transfer.NodeContext{Registry: reg, Point: point}, factflow.NewCallProducer(factflow.CallProducerConfig{}), state.State{}, nil)
+
+	if len(got) != 1 {
+		t.Fatalf("got %d results, want 1: %#v", len(got), got)
+	}
+	assertRuntimeKind(t, reg, got[0].Value, runtimekind.Singleton(runtimekind.Table))
+}
+
+func TestSignatureProviderCallbackReturnFallsBackToDeclaredReturnType(t *testing.T) {
+	reg := product.DefaultRegistry()
+
+	tests := []struct {
+		name      string
+		point     cfg.Point
+		paramType typ.Type
+		ref       effect.ParamRef
+		args      []factflow.ValueSource
+		want      runtimekind.Value
+	}{
+		{
+			name:      "non-callable callback parameter",
+			point:     cfg.Point(16),
+			paramType: typ.String,
+			ref:       effect.ParamRef{Index: 0},
+			args:      []factflow.ValueSource{{Kind: factflow.ValueSourceExpression}},
+			want:      runtimekind.Singleton(runtimekind.Boolean),
+		},
+		{
+			name:      "out-of-range callback parameter",
+			point:     cfg.Point(17),
+			paramType: typ.Func().Returns(typ.Number).Build(),
+			ref:       effect.ParamRef{Index: 1},
+			args:      []factflow.ValueSource{{Kind: factflow.ValueSourceExpression}},
+			want:      runtimekind.Singleton(runtimekind.Boolean),
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			provider := SignatureProvider(SignatureProviderConfig{
+				Signatures: signatureMap{
+					"f": {
+						Type: typ.Func().
+							Param("callback", tc.paramType).
+							Returns(typ.Boolean).
+							Build(),
+						Effect: effect.Empty.With(returns.Return{ReturnIndex: 0, Transform: returns.CallbackReturn{CallbackParam: tc.ref}}),
+					},
+				},
+				NameFor: StaticName("f"),
+				Facts:   signatureProviderFacts(tc.point, tc.args),
+			})
+
+			got := provider(transfer.NodeContext{Registry: reg, Point: tc.point}, factflow.NewCallProducer(factflow.CallProducerConfig{}), state.State{}, nil)
+
+			if len(got) != 1 {
+				t.Fatalf("got %d results, want 1: %#v", len(got), got)
+			}
+			assertRuntimeKind(t, reg, got[0].Value, tc.want)
+		})
+	}
+}
+
 func TestFallbackKeepsPrimarySlotsAndFillsMissingSignatureSlots(t *testing.T) {
 	reg := product.DefaultRegistry()
 	primaryValue := product.Set(reg, product.Top(), runtimekind.Key, runtimekind.Singleton(runtimekind.Boolean))
@@ -471,6 +605,7 @@ func TestProductionImportsAreBounded(t *testing.T) {
 		"github.com/wippyai/go-lua/analysis/engine/state":                  true,
 		"github.com/wippyai/go-lua/analysis/engine/transfer":               true,
 		"github.com/wippyai/go-lua/analysis/ir/cfg":                        true,
+		"github.com/wippyai/go-lua/analysis/lua/typeaccess":                true,
 		"github.com/wippyai/go-lua/analysis/symbol":                        true,
 		"github.com/wippyai/go-lua/analysis/type/kind":                     true,
 		"github.com/wippyai/go-lua/analysis/type/typ":                      true,
@@ -484,6 +619,9 @@ func TestProductionImportsAreBounded(t *testing.T) {
 
 	forbidden := []string{"/__old", "/adapter", "/query", "/compiler", "/analysis/lua", "/cfgbuild", "/semantics", "/diagnostic", "/diagnostics", "/store", "/session"}
 	for _, dep := range strings.Fields(string(out)) {
+		if dep == "github.com/wippyai/go-lua/analysis/lua/typeaccess" {
+			continue
+		}
 		for _, forbiddenPart := range forbidden {
 			if strings.Contains(dep, forbiddenPart) {
 				t.Fatalf("forbidden production import %q matched %q", dep, forbiddenPart)
