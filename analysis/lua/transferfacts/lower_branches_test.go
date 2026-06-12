@@ -111,6 +111,7 @@ end
 		presence.Bottom(), false,
 		presence.Present(), true,
 	)
+	assertRootRefinementsBeforeDescendants(t, facts.BranchRefinements(point))
 }
 
 func TestLowerTypedOptionalMemberBranchPublishesStaticRuntimeKind(t *testing.T) {
@@ -177,6 +178,47 @@ func TestLowerMemberPathBranchRefinementOrdersRootBeforeChild(t *testing.T) {
 	}
 	if rootIndex >= childIndex {
 		t.Fatalf("root refinement index = %d, child index = %d; want root first", rootIndex, childIndex)
+	}
+}
+
+func TestLowerCompoundBranchOrdersAllRootsBeforeDescendants(t *testing.T) {
+	fn, bindings, built, result := parseSemanticFunction(t, `
+function f(page: { data_func: string?, url: string? } | { other: string })
+	if page.data_func and page.url then
+	end
+end
+`)
+	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings})
+	page := bindings.ParamSlots(fn)[0].Symbol
+	rootPath := path.NewPath(page, "page")
+	dataPath := rootPath.Field("data_func")
+	urlPath := rootPath.Field("url")
+	ifStmt := fn.Stmts[0].(*ast.IfStmt)
+	refinements := facts.BranchRefinements(requireStmtPoints(t, built, ifStmt, 1)[0])
+
+	firstDescendant := len(refinements)
+	for i, refinement := range refinements {
+		if len(refinement.TargetPath().Segments) != 0 {
+			firstDescendant = i
+			break
+		}
+	}
+	if firstDescendant == len(refinements) {
+		t.Fatalf("compound branch produced no descendant refinements: %#v", refinements)
+	}
+	for i := firstDescendant; i < len(refinements); i++ {
+		if len(refinements[i].TargetPath().Segments) == 0 {
+			t.Fatalf("root refinement at index %d after descendant index %d", i, firstDescendant)
+		}
+	}
+	if branchRefinementIndex(refinements, rootPath) < 0 {
+		t.Fatalf("missing root refinement for compound branch")
+	}
+	if branchRefinementIndex(refinements, dataPath) < 0 {
+		t.Fatalf("missing data_func descendant refinement")
+	}
+	if branchRefinementIndex(refinements, urlPath) < 0 {
+		t.Fatalf("missing url descendant refinement")
 	}
 }
 
@@ -270,6 +312,20 @@ func branchRefinementIndex(refinements []factflow.BranchRefinement, wantPath pat
 		}
 	}
 	return -1
+}
+
+func assertRootRefinementsBeforeDescendants(t *testing.T, refinements []factflow.BranchRefinement) {
+	t.Helper()
+	seenDescendant := false
+	for i, refinement := range refinements {
+		if len(refinement.TargetPath().Segments) == 0 {
+			if seenDescendant {
+				t.Fatalf("root refinement at index %d appears after descendant in %#v", i, refinements)
+			}
+			continue
+		}
+		seenDescendant = true
+	}
 }
 
 func TestLowerPathInequalityBranchRelation(t *testing.T) {

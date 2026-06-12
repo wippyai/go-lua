@@ -64,7 +64,7 @@ func (l *lowerer) branchRefinements(fact semantics.BranchConditionFact) []factfl
 	for _, check := range branchcond.FalsyChecks(fact.Condition, l.bindings) {
 		out = append(out, l.branchEdgeRefinements(check, false)...)
 	}
-	return out
+	return orderRootRefinementsBeforeDescendants(out)
 }
 
 func (l *lowerer) branchRefinementsForCheck(check branchcond.Check) []factflow.BranchRefinement {
@@ -88,6 +88,24 @@ func (l *lowerer) branchEdgeRefinements(check branchcond.Check, cond bool) []fac
 		out = append(out, l.truthyBooleanRootRefinementOnEdge(check, cond)...)
 	}
 	out = append(out, refinement)
+	return out
+}
+
+func orderRootRefinementsBeforeDescendants(refinements []factflow.BranchRefinement) []factflow.BranchRefinement {
+	if len(refinements) < 2 {
+		return refinements
+	}
+	out := make([]factflow.BranchRefinement, 0, len(refinements))
+	for _, refinement := range refinements {
+		if len(refinement.TargetPath().Segments) == 0 {
+			out = append(out, refinement)
+		}
+	}
+	for _, refinement := range refinements {
+		if len(refinement.TargetPath().Segments) != 0 {
+			out = append(out, refinement)
+		}
+	}
 	return out
 }
 
