@@ -79,154 +79,21 @@ func TestSignatureOutcomeProviderMaterializesOptionalDeclaredReturn(t *testing.T
 	assertRuntimeKind(t, reg, got[0].Value, runtimekind.Singleton(runtimekind.String))
 }
 
-func TestWithSignatureRelationsLowersErrorReturnToBranchPresenceRelations(t *testing.T) {
-	graph := cfg.New()
-	call := graph.AddNode(cfg.NodeCall)
-	assignValue := graph.AddNode(cfg.NodeAssign)
-	assignErr := graph.AddNode(cfg.NodeAssign)
-	branch := graph.AddNode(cfg.NodeBranch)
-	thenPoint := graph.AddNode(cfg.NodeNoop)
-	elsePoint := graph.AddNode(cfg.NodeNoop)
-	graph.AddEdge(graph.Entry(), call, false)
-	graph.AddEdge(call, assignValue, false)
-	graph.AddEdge(assignValue, assignErr, false)
-	graph.AddEdge(assignErr, branch, false)
-	graph.AddEdge(branch, thenPoint, true)
-	graph.AddEdge(branch, elsePoint, false)
-	graph.AddEdge(thenPoint, graph.Exit(), false)
-	graph.AddEdge(elsePoint, graph.Exit(), false)
-
-	value := symbol.ID(701)
-	err := symbol.ID(702)
-	valuePath := path.NewPath(value, "value")
-	errPath := path.NewPath(err, "err")
-	facts := factflow.NewFacts(factflow.FactsInput{
-		CallSites: map[cfg.Point]factflow.CallSite{
-			call: factflow.NewCallSite(factflow.CallSiteConfig{
-				Context: factflow.CallSiteContextAssignmentSource,
-				ResultTargets: []factflow.CallResultTarget{
-					factflow.NewCallResultTarget(factflow.CallResultTargetLocalAssignment, 0, 0, value, valuePath),
-					factflow.NewCallResultTarget(factflow.CallResultTargetLocalAssignment, 1, 1, err, errPath),
-				},
-			}),
-		},
-		RootAssignments: map[cfg.Point]factflow.RootAssignment{
-			assignValue: factflow.NewRootAssignment(factflow.RootAssignmentLocalDeclaration, value, valuePath, factflow.ValueSource{
-				Kind:         factflow.ValueSourceCall,
-				TargetIndex:  0,
-				ResultIndex:  0,
-				CallPoint:    call,
-				HasCallPoint: true,
-			}),
-			assignErr: factflow.NewRootAssignment(factflow.RootAssignmentLocalDeclaration, err, errPath, factflow.ValueSource{
-				Kind:         factflow.ValueSourceCall,
-				TargetIndex:  1,
-				ResultIndex:  1,
-				CallPoint:    call,
-				HasCallPoint: true,
-			}),
-		},
-		BranchRefinements: map[cfg.Point]factflow.BranchRefinementSet{
-			branch: factflow.NewBranchRefinementSet(
-				factflow.NewBranchRefinement(
-					errPath,
-					factflow.NewValueConstraint(product.NewWithPresence(standard.Registry(), product.ShapeTop, presence.Absent())), true,
-					factflow.NewValueConstraint(product.NewWithPresence(standard.Registry(), product.ShapeTop, presence.Present())), true,
-				),
-			),
-		},
-	})
-
-	got := WithSignatureRelations(SignatureRelationConfig{
-		Graph: graph,
+func TestSignatureOutcomeProviderLowersErrorReturnToReturnPresenceRelations(t *testing.T) {
+	provider := SignatureOutcomeProvider(SignatureOutcomeProviderConfig{
 		Signatures: signatureMap{
 			"f": {Effect: effect.Empty.With(returns.ErrorReturn{ValueIndex: 0, ErrorIndex: 1})},
 		},
 		NameFor: StaticName("f"),
-		Facts:   facts,
 	})
 
-	relations := got.BranchPresenceRelations(branch)
-	if len(relations) != 2 {
-		t.Fatalf("branch relations = %d, want 2: %#v", len(relations), relations)
+	got := provider(transfer.NodeContext{}, factflow.NewCallSite(factflow.CallSiteConfig{}), state.State{}, nil)
+
+	if len(got.ReturnPresenceRelations) != 2 {
+		t.Fatalf("return presence relations = %d, want 2: %#v", len(got.ReturnPresenceRelations), got.ReturnPresenceRelations)
 	}
-	assertBranchPresenceRelation(t, relations, errPath, presence.Present(), valuePath, presence.Absent())
-	assertBranchPresenceRelation(t, relations, errPath, presence.Absent(), valuePath, presence.Present())
-}
-
-func TestWithSignatureRelationsStopsAtErrorReturnTargetReassignment(t *testing.T) {
-	graph := cfg.New()
-	call := graph.AddNode(cfg.NodeCall)
-	assignValue := graph.AddNode(cfg.NodeAssign)
-	assignErr := graph.AddNode(cfg.NodeAssign)
-	reassignErr := graph.AddNode(cfg.NodeAssign)
-	branch := graph.AddNode(cfg.NodeBranch)
-	thenPoint := graph.AddNode(cfg.NodeNoop)
-	elsePoint := graph.AddNode(cfg.NodeNoop)
-	graph.AddEdge(graph.Entry(), call, false)
-	graph.AddEdge(call, assignValue, false)
-	graph.AddEdge(assignValue, assignErr, false)
-	graph.AddEdge(assignErr, reassignErr, false)
-	graph.AddEdge(reassignErr, branch, false)
-	graph.AddEdge(branch, thenPoint, true)
-	graph.AddEdge(branch, elsePoint, false)
-	graph.AddEdge(thenPoint, graph.Exit(), false)
-	graph.AddEdge(elsePoint, graph.Exit(), false)
-
-	value := symbol.ID(703)
-	err := symbol.ID(704)
-	valuePath := path.NewPath(value, "value")
-	errPath := path.NewPath(err, "err")
-	facts := factflow.NewFacts(factflow.FactsInput{
-		CallSites: map[cfg.Point]factflow.CallSite{
-			call: factflow.NewCallSite(factflow.CallSiteConfig{
-				Context: factflow.CallSiteContextAssignmentSource,
-				ResultTargets: []factflow.CallResultTarget{
-					factflow.NewCallResultTarget(factflow.CallResultTargetLocalAssignment, 0, 0, value, valuePath),
-					factflow.NewCallResultTarget(factflow.CallResultTargetLocalAssignment, 1, 1, err, errPath),
-				},
-			}),
-		},
-		RootAssignments: map[cfg.Point]factflow.RootAssignment{
-			assignValue: factflow.NewRootAssignment(factflow.RootAssignmentLocalDeclaration, value, valuePath, factflow.ValueSource{
-				Kind:         factflow.ValueSourceCall,
-				TargetIndex:  0,
-				ResultIndex:  0,
-				CallPoint:    call,
-				HasCallPoint: true,
-			}),
-			assignErr: factflow.NewRootAssignment(factflow.RootAssignmentLocalDeclaration, err, errPath, factflow.ValueSource{
-				Kind:         factflow.ValueSourceCall,
-				TargetIndex:  1,
-				ResultIndex:  1,
-				CallPoint:    call,
-				HasCallPoint: true,
-			}),
-			reassignErr: factflow.NewRootAssignment(factflow.RootAssignmentOrdinaryRootWrite, err, errPath, factflow.ValueSource{Kind: factflow.ValueSourceNil}),
-		},
-		BranchRefinements: map[cfg.Point]factflow.BranchRefinementSet{
-			branch: factflow.NewBranchRefinementSet(
-				factflow.NewBranchRefinement(
-					errPath,
-					factflow.NewValueConstraint(product.NewWithPresence(standard.Registry(), product.ShapeTop, presence.Absent())), true,
-					factflow.NewValueConstraint(product.NewWithPresence(standard.Registry(), product.ShapeTop, presence.Present())), true,
-				),
-			),
-		},
-	})
-
-	got := WithSignatureRelations(SignatureRelationConfig{
-		Graph: graph,
-		Signatures: signatureMap{
-			"f": {Effect: effect.Empty.With(returns.ErrorReturn{ValueIndex: 0, ErrorIndex: 1})},
-		},
-		NameFor: StaticName("f"),
-		Facts:   facts,
-	})
-
-	if relations := got.BranchPresenceRelations(branch); len(relations) != 0 {
-		t.Fatalf("branch relations after reassignment = %#v, want none", relations)
-	}
+	assertCallReturnPresenceRelation(t, got.ReturnPresenceRelations, 1, presence.Present(), 0, presence.Absent())
+	assertCallReturnPresenceRelation(t, got.ReturnPresenceRelations, 1, presence.Absent(), 0, presence.Present())
 }
 
 func TestWithSignaturePostconditionsLowersCallSiteArgumentPathAndApplies(t *testing.T) {
@@ -580,24 +447,6 @@ func TestWithSignatureNoNormalReturnsMarksNeverReturnCallAndApplies(t *testing.T
 		}),
 	})
 	assertValue(t, reg, flow[graph.Exit()], key.SymbolValue(target), product.Bottom(reg))
-}
-
-func TestCallTargetForResultUsesExplicitTargetResultIndex(t *testing.T) {
-	target := symbol.ID(705)
-	targetPath := path.NewPath(target, "value")
-	call := factflow.NewCallProducer(factflow.CallProducerConfig{
-		ResultTargets: []factflow.CallResultTarget{
-			factflow.NewCallResultTarget(factflow.CallResultTargetLocalAssignment, 9, 1, target, targetPath),
-		},
-	})
-
-	got, ok := callTargetForResult(call, 1)
-	if !ok || got.TargetSymbol() != target || got.ResultIndex() != 1 {
-		t.Fatalf("target for result 1 = %#v/%v, want explicit slot target", got, ok)
-	}
-	if got, ok := callTargetForResult(call, 0); ok {
-		t.Fatalf("target for recomputed result 0 = %#v, want none", got)
-	}
 }
 
 func TestSignatureOutcomeProviderSameAsReturnsArgumentValue(t *testing.T) {
@@ -1354,22 +1203,22 @@ func assertPresence(t *testing.T, _ *axis.Registry, got product.Value, want pres
 	}
 }
 
-func assertBranchPresenceRelation(
+func assertCallReturnPresenceRelation(
 	t *testing.T,
-	relations []factflow.BranchPresenceRelation,
-	triggerPath path.Path,
+	relations []factapply.CallReturnPresenceRelation,
+	triggerIndex int,
 	triggerPresence presence.Value,
-	targetPath path.Path,
+	targetIndex int,
 	targetPresence presence.Value,
 ) {
 	t.Helper()
 	for _, relation := range relations {
-		if relation.TriggerPath().Equal(triggerPath) &&
-			presence.Equal(relation.TriggerPresence(), triggerPresence) &&
-			relation.TargetPath().Equal(targetPath) &&
-			presence.Equal(relation.TargetPresence(), targetPresence) {
+		if relation.TriggerIndex == triggerIndex &&
+			presence.Equal(relation.TriggerPresence, triggerPresence) &&
+			relation.TargetIndex == targetIndex &&
+			presence.Equal(relation.TargetPresence, targetPresence) {
 			return
 		}
 	}
-	t.Fatalf("missing relation %s/%s -> %s/%s in %#v", triggerPath.String(), triggerPresence, targetPath.String(), targetPresence, relations)
+	t.Fatalf("missing relation %d/%s -> %d/%s in %#v", triggerIndex, triggerPresence, targetIndex, targetPresence, relations)
 }

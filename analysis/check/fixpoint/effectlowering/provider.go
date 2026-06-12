@@ -58,8 +58,14 @@ func SignatureOutcomeProvider(config SignatureOutcomeProviderConfig) factapply.C
 			return factapply.CallOutcome{}
 		}
 		sig, ok := signatures.Lookup(name)
-		if !ok || sig.Type == nil || len(sig.Type.Returns) == 0 {
+		if !ok {
 			return factapply.CallOutcome{}
+		}
+		out := factapply.CallOutcome{
+			ReturnPresenceRelations: signatureReturnPresenceRelations(sig),
+		}
+		if sig.Type == nil || len(sig.Type.Returns) == 0 {
+			return out
 		}
 		results := make([]factapply.CallResult, 0, len(sig.Type.Returns))
 		for i, ret := range sig.Type.Returns {
@@ -75,8 +81,55 @@ func SignatureOutcomeProvider(config SignatureOutcomeProviderConfig) factapply.C
 				Value: value,
 			})
 		}
-		return factapply.CallOutcome{Results: results}
+		out.Results = results
+		return out
 	}
+}
+
+func signatureReturnPresenceRelations(sig signature.Function) []factapply.CallReturnPresenceRelation {
+	labels := activeErrorReturnLabels(sig)
+	if len(labels) == 0 {
+		return nil
+	}
+	out := make([]factapply.CallReturnPresenceRelation, 0, len(labels)*2)
+	for _, label := range labels {
+		if label.ValueIndex < 0 || label.ErrorIndex < 0 {
+			continue
+		}
+		out = append(out,
+			factapply.CallReturnPresenceRelation{
+				TriggerIndex:    label.ErrorIndex,
+				TriggerPresence: presence.Present(),
+				TargetIndex:     label.ValueIndex,
+				TargetPresence:  presence.Absent(),
+			},
+			factapply.CallReturnPresenceRelation{
+				TriggerIndex:    label.ErrorIndex,
+				TriggerPresence: presence.Absent(),
+				TargetIndex:     label.ValueIndex,
+				TargetPresence:  presence.Present(),
+			},
+		)
+	}
+	return out
+}
+
+func activeErrorReturnLabels(sig signature.Function) []returns.ErrorReturn {
+	if len(sig.Effect.Labels) == 0 {
+		return nil
+	}
+	out := make([]returns.ErrorReturn, 0, len(sig.Effect.Labels))
+	for _, label := range sig.Effect.Labels {
+		switch normalized := effect.NormalizeLabel(label).(type) {
+		case returns.ErrorReturn:
+			out = append(out, normalized)
+		case *returns.ErrorReturn:
+			if normalized != nil {
+				out = append(out, *normalized)
+			}
+		}
+	}
+	return out
 }
 
 func signatureReturnValue(

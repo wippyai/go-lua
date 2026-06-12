@@ -530,12 +530,6 @@ func (c *Checker) run(bindings *bind.Result, built *cfgbuild.Result, sem *semant
 	config := c.config
 	facts := transferfacts.Lower(sem, built.Graph, transferfacts.Config{Registry: config.Registry, Bindings: bindings})
 	if hasSignatures(config.Signatures) {
-		facts = effectlowering.WithSignatureRelations(effectlowering.SignatureRelationConfig{
-			Graph:      built.Graph,
-			Signatures: config.Signatures,
-			NameFor:    c.signatureNameForCall(bindings),
-			Facts:      facts,
-		})
 		facts = effectlowering.WithSignatureNoNormalReturns(effectlowering.SignatureNoNormalReturnConfig{
 			Graph:      built.Graph,
 			Registry:   config.Registry,
