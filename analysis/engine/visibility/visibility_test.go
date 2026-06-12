@@ -212,6 +212,108 @@ func TestResolverKeepsSameSymbolDifferentVersionsDistinctWhileStableIdentityIgno
 	}
 }
 
+func TestBuildForwardPropagatesDefinitionToSuccessorPoints(t *testing.T) {
+	graph := cfg.New()
+	assign := graph.AddNode(cfg.NodeAssign)
+	branch := graph.AddBranch()
+	thenPoint := graph.AddNode(cfg.NodeNoop)
+	elsePoint := graph.AddNode(cfg.NodeNoop)
+	graph.AddEdge(graph.Entry(), assign, false)
+	graph.AddEdge(assign, branch, false)
+	graph.AddEdge(branch, thenPoint, true)
+	graph.AddEdge(branch, elsePoint, false)
+	graph.AddEdge(thenPoint, graph.Exit(), false)
+	graph.AddEdge(elsePoint, graph.Exit(), false)
+
+	sym := symbol.ID(200)
+	table := BuildForward(BuildConfig{
+		Graph: graph,
+		Definitions: []Definition{
+			{Point: assign, Symbol: sym, Root: "result"},
+		},
+	})
+	want := ssa.Version{Root: "result", Symbol: sym, ID: 1}
+
+	for _, point := range []cfg.Point{assign, branch, thenPoint, elsePoint, graph.Exit()} {
+		if got := table.VisibleVersion(point, sym); got != want {
+			t.Fatalf("VisibleVersion(%d) = %+v, want %+v", point, got, want)
+		}
+	}
+	if got := table.VisibleVersion(graph.Entry(), sym); got != (ssa.Version{}) {
+		t.Fatalf("entry VisibleVersion = %+v, want zero before definition", got)
+	}
+}
+
+func TestBuildForwardCreatesStableJoinVersionForDifferentIncomingDefinitions(t *testing.T) {
+	graph := cfg.New()
+	branch := graph.AddBranch()
+	thenAssign := graph.AddNode(cfg.NodeAssign)
+	elseAssign := graph.AddNode(cfg.NodeAssign)
+	join := graph.AddNode(cfg.NodeJoin)
+	after := graph.AddNode(cfg.NodeNoop)
+	graph.AddEdge(graph.Entry(), branch, false)
+	graph.AddEdge(branch, thenAssign, true)
+	graph.AddEdge(branch, elseAssign, false)
+	graph.AddEdge(thenAssign, join, false)
+	graph.AddEdge(elseAssign, join, false)
+	graph.AddEdge(join, after, false)
+	graph.AddEdge(after, graph.Exit(), false)
+
+	sym := symbol.ID(201)
+	table := BuildForward(BuildConfig{
+		Graph: graph,
+		Definitions: []Definition{
+			{Point: thenAssign, Symbol: sym, Root: "value"},
+			{Point: elseAssign, Symbol: sym, Root: "value"},
+		},
+	})
+
+	thenVersion := table.VisibleVersion(thenAssign, sym)
+	elseVersion := table.VisibleVersion(elseAssign, sym)
+	joinVersion := table.VisibleVersion(join, sym)
+	afterVersion := table.VisibleVersion(after, sym)
+
+	if thenVersion.ID == 0 || elseVersion.ID == 0 || joinVersion.ID == 0 {
+		t.Fatalf("versions = then %+v else %+v join %+v, want nonzero", thenVersion, elseVersion, joinVersion)
+	}
+	if thenVersion == elseVersion {
+		t.Fatalf("branch definitions share version %+v, want distinct", thenVersion)
+	}
+	if joinVersion == thenVersion || joinVersion == elseVersion {
+		t.Fatalf("join version %+v reused incoming versions then=%+v else=%+v", joinVersion, thenVersion, elseVersion)
+	}
+	if afterVersion != joinVersion {
+		t.Fatalf("after VisibleVersion = %+v, want propagated join version %+v", afterVersion, joinVersion)
+	}
+}
+
+func TestBuildForwardDoesNotCreateLoopPhiWithoutBackedgeRedefinition(t *testing.T) {
+	graph := cfg.New()
+	assign := graph.AddNode(cfg.NodeAssign)
+	header := graph.AddBranch()
+	body := graph.AddNode(cfg.NodeNoop)
+	graph.AddEdge(graph.Entry(), assign, false)
+	graph.AddEdge(assign, header, false)
+	graph.AddEdge(header, body, true)
+	graph.AddEdge(body, header, false)
+	graph.AddEdge(header, graph.Exit(), false)
+
+	sym := symbol.ID(202)
+	table := BuildForward(BuildConfig{
+		Graph: graph,
+		Definitions: []Definition{
+			{Point: assign, Symbol: sym, Root: "item"},
+		},
+	})
+	want := ssa.Version{Root: "item", Symbol: sym, ID: 1}
+
+	for _, point := range []cfg.Point{assign, header, body, graph.Exit()} {
+		if got := table.VisibleVersion(point, sym); got != want {
+			t.Fatalf("VisibleVersion(%d) = %+v, want %+v", point, got, want)
+		}
+	}
+}
+
 func TestPackageDoesNotImportLuaPackages(t *testing.T) {
 	pkgs, err := parser.ParseDir(token.NewFileSet(), ".", nil, parser.ImportsOnly)
 	if err != nil {

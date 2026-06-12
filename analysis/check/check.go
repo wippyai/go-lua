@@ -531,12 +531,16 @@ func (c *Checker) run(bindings *bind.Result, built *cfgbuild.Result, sem *semant
 			Facts:     facts,
 		})
 	}
+	resolver := config.Visibility
+	if resolver == nil {
+		resolver = defaultVisibilityResolver(bindings, built, facts)
+	}
 	expressionValue := config.ExpressionValue
 	if expressionValue == nil {
 		expressionValue = readexpr.Provider(readexpr.Config{
 			Registry:   config.Registry,
 			Facts:      facts,
-			Visibility: config.Visibility,
+			Visibility: resolver,
 		})
 	}
 	sources := sourcevalue.NewSourceValues(sourcevalue.SourceValuesConfig{
@@ -571,11 +575,11 @@ func (c *Checker) run(bindings *bind.Result, built *cfgbuild.Result, sem *semant
 			Facts:       facts,
 			Sources:     sources,
 			CallResults: callResults,
-			Visibility:  config.Visibility,
+			Visibility:  resolver,
 		}),
 		EdgeTransfer: factapply.NewFactsEdgeTransfer(factapply.FactsEdgeTransferConfig{
 			Facts:      facts,
-			Visibility: config.Visibility,
+			Visibility: resolver,
 		}),
 		WidenAt:    config.WidenAt,
 		WidenDelay: config.WidenDelay,

@@ -368,6 +368,84 @@ func TestCheckChunkDefaultExpressionValueUsesExactPathPresenceProof(t *testing.T
 	assertRuntimeKind(t, reg, got, runtimekind.Singleton(runtimekind.String))
 }
 
+func TestCheckChunkBuildsDefaultVisibilityForExactPathWriteThenRead(t *testing.T) {
+	reg := standard.Registry()
+	stmts := parseChunk(t, `
+local t = {}
+local a: string = "alpha"
+local b: number = 1
+t.a = a
+t.b = b
+local outA = t.a
+local outB = t.b
+`)
+
+	result, err := CheckChunk(stmts, Config{Registry: reg})
+	if err != nil {
+		t.Fatalf("CheckChunk: %v", err)
+	}
+
+	outA := mustLocalAt(t, result, stmts[5].(*ast.LocalAssignStmt), 0)
+	outB := mustLocalAt(t, result, stmts[6].(*ast.LocalAssignStmt), 0)
+	exit, ok := result.ExitState()
+	if !ok {
+		t.Fatalf("missing exit state")
+	}
+	gotA := exit.ReadValue(reg, key.SymbolValue(outA))
+	assertPresence(t, reg, gotA, presence.Present())
+	assertRuntimeKind(t, reg, gotA, runtimekind.Singleton(runtimekind.String))
+	gotB := exit.ReadValue(reg, key.SymbolValue(outB))
+	assertPresence(t, reg, gotB, presence.Present())
+	assertRuntimeKind(t, reg, gotB, runtimekind.Singleton(runtimekind.Number))
+}
+
+func TestCheckChunkBuildsDefaultVisibilityForBranchPathEquality(t *testing.T) {
+	reg := standard.Registry()
+	stmts := parseChunk(t, `
+if t.left == t.right then
+	local out = t.right
+end
+`)
+	bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"t"}})
+	ifStmt := stmts[0].(*ast.IfStmt)
+	local := ifStmt.Then[0].(*ast.LocalAssignStmt)
+	condition := ifStmt.Condition.(*ast.RelationalOpExpr)
+	left := condition.Lhs.(*ast.AttrGetExpr)
+	tSym := mustIdentSymbol(t, bindings, left.Object.(*ast.IdentExpr))
+	stringValue := product.Set(
+		reg,
+		product.NewWithPresence(reg, product.ShapeTop, presence.Present()),
+		runtimekind.Key,
+		runtimekind.Singleton(runtimekind.String),
+	)
+	entry := state.State{}.
+		WritePathKey(reg, path.PathKey(key.SymbolVersionRoot(tSym, 1)+".left"), stringValue).
+		WritePathKey(reg, path.PathKey(key.SymbolVersionRoot(tSym, 1)+".right"), product.Top())
+
+	result, err := CheckBoundChunk(stmts, bindings, Config{
+		Registry:   reg,
+		Globals:    []string{"t"},
+		EntryState: entry,
+	})
+	if err != nil {
+		t.Fatalf("CheckBoundChunk: %v", err)
+	}
+
+	out := mustLocalAt(t, result, local, 0)
+	assignPoint := requireLocalAssignmentPoint(t, result, local, 0)
+	succs := result.Graph().Successors(assignPoint)
+	if len(succs) != 1 {
+		t.Fatalf("assignment successors = %v, want one successor", succs)
+	}
+	after, ok := result.StateAt(succs[0])
+	if !ok {
+		t.Fatalf("missing state after local assignment")
+	}
+	got := after.ReadValue(reg, key.SymbolValue(out))
+	assertPresence(t, reg, got, presence.Present())
+	assertRuntimeKind(t, reg, got, runtimekind.Singleton(runtimekind.String))
+}
+
 func TestCheckChunkUserExpressionValueOverridesDefaultStaticReadProjector(t *testing.T) {
 	reg := standard.Registry()
 	stmts := parseChunk(t, `local out = t.name`)
