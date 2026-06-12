@@ -68,6 +68,28 @@ func TestProjectNoExactProofKeepsRuntimeIndexOptionality(t *testing.T) {
 	assertPresence(t, reg, got, presence.Top())
 }
 
+func TestProjectRootIdentifierReadsSymbolState(t *testing.T) {
+	reg := standard.Registry()
+	point := cfg.Point(6)
+	sym := symbol.ID(16)
+	readPath := path.NewPath(sym, "x")
+	want := product.Set(
+		reg,
+		product.NewWithPresence(reg, product.ShapeTop, presence.Present()),
+		runtimekind.Key,
+		runtimekind.Singleton(runtimekind.String),
+	)
+	in := state.State{}.WriteValue(reg, key.SymbolValue(sym), want)
+
+	got, ok := Project(Config{Registry: reg}, point, readPath, in)
+	if !ok {
+		t.Fatalf("Project returned false")
+	}
+	if !product.Equal(reg, got, want) {
+		t.Fatalf("Project root value = %v, want %v", got, want)
+	}
+}
+
 func TestProjectRejectsKnownNonTableParent(t *testing.T) {
 	reg := standard.Registry()
 	point := cfg.Point(4)
@@ -100,9 +122,11 @@ func TestProjectChildProofDoesNotProveParentAggregate(t *testing.T) {
 	}
 	assertPresence(t, reg, got, presence.Present())
 	assertRuntimeKind(t, reg, in.ReadValue(reg, parentKey), runtimekind.Singleton(runtimekind.String))
-	if _, ok := Project(Config{Registry: reg, Visibility: resolver}, point, parentPath, in); ok {
-		t.Fatalf("root aggregate read unexpectedly projected from child proof")
+	root, ok := Project(Config{Registry: reg, Visibility: resolver}, point, parentPath, in)
+	if !ok {
+		t.Fatalf("root aggregate read returned false")
 	}
+	assertRuntimeKind(t, reg, root, runtimekind.Singleton(runtimekind.String))
 }
 
 func testResolver(point cfg.Point, sym symbol.ID, root string) *visibility.Resolver {

@@ -8,7 +8,9 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/effect"
 	"github.com/wippyai/go-lua/analysis/domain/effect/returns"
 	"github.com/wippyai/go-lua/analysis/domain/effect/signature"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	factapply "github.com/wippyai/go-lua/analysis/engine/factapply"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	sourcevalue "github.com/wippyai/go-lua/analysis/engine/sourcevalue"
@@ -88,7 +90,7 @@ func SignatureProvider(config SignatureProviderConfig) factapply.CallResultProvi
 		for i, ret := range sig.Type.Returns {
 			value, ok := signatureReturnValue(ctx, facts, sources, sig, i, in, read)
 			if !ok && ret != nil {
-				value, ok = valueFromType(ctx.Registry, ret), true
+				value, ok = typevalue.FromType(ctx.Registry, ret), true
 			}
 			if !ok {
 				continue
@@ -131,12 +133,12 @@ func signatureReturnValue(
 		}
 		return elementOfReturnValue(ctx, facts, sig, transform.Source)
 	case returns.OptionalElementOf:
-		return elementOfReturnValue(ctx, facts, sig, transform.Source)
+		return optionalElementOfReturnValue(ctx, facts, sig, transform.Source)
 	case *returns.OptionalElementOf:
 		if transform == nil {
 			return product.Value{}, false
 		}
-		return elementOfReturnValue(ctx, facts, sig, transform.Source)
+		return optionalElementOfReturnValue(ctx, facts, sig, transform.Source)
 	case returns.CallbackReturn:
 		return callbackReturnValue(ctx, facts, sig, transform.CallbackParam, false)
 	case *returns.CallbackReturn:
@@ -205,7 +207,20 @@ func elementOfReturnValue(
 	if !ok {
 		return product.Value{}, false
 	}
-	return valueFromType(ctx.Registry, elem), true
+	return typevalue.FromType(ctx.Registry, elem), true
+}
+
+func optionalElementOfReturnValue(
+	ctx transfer.NodeContext,
+	facts factflow.Facts,
+	sig signature.Function,
+	ref effect.ParamRef,
+) (product.Value, bool) {
+	value, ok := elementOfReturnValue(ctx, facts, sig, ref)
+	if !ok {
+		return product.Value{}, false
+	}
+	return product.WithPresence(ctx.Registry, value, presence.Maybe()), true
 }
 
 func callbackReturnValue(
@@ -231,7 +246,7 @@ func callbackReturnValue(
 	if array {
 		ret = typ.NewArray(ret)
 	}
-	return valueFromType(ctx.Registry, ret), true
+	return typevalue.FromType(ctx.Registry, ret), true
 }
 
 func typeProjectionReturnValue(
@@ -253,7 +268,7 @@ func typeProjectionReturnValue(
 	if !ok {
 		return product.Value{}, false
 	}
-	return valueFromType(ctx.Registry, projected), true
+	return typevalue.FromType(ctx.Registry, projected), true
 }
 
 func returnTransform(sig signature.Function, index int) (returns.ReturnType, bool) {

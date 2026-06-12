@@ -9,13 +9,13 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	sourcevalue "github.com/wippyai/go-lua/analysis/engine/sourcevalue"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/visibility"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/typeaccess"
-	"github.com/wippyai/go-lua/analysis/type/kind"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
@@ -44,8 +44,11 @@ func Project(config Config, point cfg.Point, p pathdom.Path, in state.State) (pr
 	if reg == nil {
 		panic("readexpr: Config.Registry is required")
 	}
-	if p.IsEmpty() || len(p.Segments) == 0 {
+	if p.IsEmpty() {
 		return product.Value{}, false
+	}
+	if len(p.Segments) == 0 {
+		return readPathValue(reg, config.Visibility, point, p, in)
 	}
 
 	if exact, ok := exactPathValue(reg, config.Visibility, point, p, in); ok {
@@ -71,7 +74,7 @@ func Project(config Config, point cfg.Point, p pathdom.Path, in state.State) (pr
 	if !ok {
 		return product.Value{}, false
 	}
-	return valueFromType(reg, projected), true
+	return typevalue.FromType(reg, projected), true
 }
 
 func exactPathValue(
@@ -151,71 +154,6 @@ func segmentKeyType(seg segment.Segment) (typ.Type, bool) {
 		return typ.LiteralInt(int64(seg.Index)), true
 	default:
 		return nil, false
-	}
-}
-
-func valueFromType(reg *axis.Registry, t typ.Type) product.Value {
-	value := product.Top()
-	if kindValue, ok := runtimeKindFromType(t); ok {
-		value = product.Set(reg, value, runtimekind.Key, kindValue)
-	}
-	if normalized := typ.NormalizeNilType(t); normalized != nil && normalized.Kind() == kind.Nil {
-		value = product.WithPresence(reg, value, presence.Absent())
-	}
-	return value
-}
-
-func runtimeKindFromType(t typ.Type) (runtimekind.Value, bool) {
-	if t == nil {
-		return runtimekind.Value{}, false
-	}
-	switch tt := typ.NormalizeNilType(t).(type) {
-	case *typ.Literal:
-		switch tt.Base {
-		case kind.Boolean:
-			return runtimekind.Singleton(runtimekind.Boolean), true
-		case kind.Integer, kind.Number:
-			return runtimekind.Singleton(runtimekind.Number), true
-		case kind.String:
-			return runtimekind.Singleton(runtimekind.String), true
-		default:
-			return runtimekind.Value{}, false
-		}
-	case *typ.Optional:
-		return runtimeKindFromType(tt.Inner)
-	case *typ.Union:
-		var out runtimekind.Value
-		seen := false
-		for _, member := range tt.Members {
-			memberKind, ok := runtimeKindFromType(member)
-			if !ok {
-				return runtimekind.Value{}, false
-			}
-			if seen {
-				out = runtimekind.Join(out, memberKind)
-			} else {
-				out = memberKind
-				seen = true
-			}
-		}
-		return out, seen
-	default:
-		switch tt.Kind() {
-		case kind.Nil:
-			return runtimekind.Singleton(runtimekind.Nil), true
-		case kind.Boolean:
-			return runtimekind.Singleton(runtimekind.Boolean), true
-		case kind.Number, kind.Integer:
-			return runtimekind.Singleton(runtimekind.Number), true
-		case kind.String:
-			return runtimekind.Singleton(runtimekind.String), true
-		case kind.Function:
-			return runtimekind.Singleton(runtimekind.Function), true
-		case kind.Record, kind.Array, kind.Tuple, kind.Map, kind.ReadonlyMap:
-			return runtimekind.Singleton(runtimekind.Table), true
-		default:
-			return runtimekind.Value{}, false
-		}
 	}
 }
 

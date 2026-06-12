@@ -93,7 +93,7 @@ func TestRequiredTagsPreservesNestedNonRecursiveTag(t *testing.T) {
 
 	d := NewDetector()
 	tags := d.RequiredTags(errCase)
-	if tags["channel.__tag"] != LiteralString("int").Hash() {
+	if tags["channel.__tag"] != EqualityHash(LiteralString("int")) {
 		t.Fatalf("nested channel tag was not summarized: %v", tags)
 	}
 }
@@ -108,7 +108,7 @@ func TestRequiredTagsRecursiveCycleSummarizesFiniteTags(t *testing.T) {
 
 	d := NewDetector()
 	tags := d.RequiredTags(node)
-	if tags["kind"] != LiteralString("node").Hash() {
+	if tags["kind"] != EqualityHash(LiteralString("node")) {
 		t.Fatalf("recursive top-level tag was not summarized: %v", tags)
 	}
 	if _, ok := tags["next.kind"]; ok {

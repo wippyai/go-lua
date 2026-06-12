@@ -74,6 +74,26 @@ func TestSignatureProviderMaterializesDeclaredReturns(t *testing.T) {
 	assertRuntimeKind(t, reg, got[1].Value, runtimekind.Singleton(runtimekind.String))
 }
 
+func TestSignatureProviderMaterializesOptionalDeclaredReturn(t *testing.T) {
+	reg := standard.Registry()
+	provider := SignatureProvider(SignatureProviderConfig{
+		Signatures: signatureMap{
+			"f": {Type: typ.Func().Returns(typ.NewOptional(typ.String)).Build()},
+		},
+		NameFor: StaticName("f"),
+	})
+
+	got := provider(transfer.NodeContext{Registry: reg}, factflow.NewCallProducer(factflow.CallProducerConfig{
+		CalleeSymbol: symbol.ID(18),
+	}), state.State{}, nil)
+
+	if len(got) != 1 {
+		t.Fatalf("got %d results, want 1: %#v", len(got), got)
+	}
+	assertPresence(t, reg, got[0].Value, presence.Maybe())
+	assertRuntimeKind(t, reg, got[0].Value, runtimekind.Singleton(runtimekind.String))
+}
+
 func TestWithSignatureRelationsLowersErrorReturnToBranchPresenceRelations(t *testing.T) {
 	graph := cfg.New()
 	call := graph.AddNode(cfg.NodeCall)
@@ -901,6 +921,7 @@ func TestProductionImportsAreBounded(t *testing.T) {
 		"github.com/wippyai/go-lua/analysis/domain/value/axis/presence":    true,
 		"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind": true,
 		"github.com/wippyai/go-lua/analysis/domain/value/product":          true,
+		"github.com/wippyai/go-lua/analysis/domain/value/typevalue":        true,
 		"github.com/wippyai/go-lua/analysis/engine/factflow":               true,
 		"github.com/wippyai/go-lua/analysis/engine/factapply":              true,
 		"github.com/wippyai/go-lua/analysis/engine/sourcevalue":            true,
@@ -970,6 +991,13 @@ func assertRuntimeKind(t *testing.T, reg *axis.Registry, got product.Value, want
 	t.Helper()
 	if kind := product.Get(reg, got, runtimekind.Key); !runtimekind.Equal(kind, want) {
 		t.Fatalf("runtimekind = %s, want %s", kind, want)
+	}
+}
+
+func assertPresence(t *testing.T, _ *axis.Registry, got product.Value, want presence.Value) {
+	t.Helper()
+	if gotPresence := product.PresenceOf(got); !presence.Equal(gotPresence, want) {
+		t.Fatalf("presence = %s, want %s", gotPresence, want)
 	}
 }
 
