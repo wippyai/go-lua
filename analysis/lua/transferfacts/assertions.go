@@ -21,8 +21,8 @@ func (l *lowerer) addAssertionOverlaysForSource(input *factflow.FactsInput, sour
 }
 
 func (l *lowerer) addAssertion(input *factflow.FactsInput, outer sourceprovenance.ASTSource, innerExpr ast.Expr, value assertion.Value) {
-	outerRef, hasOuter := l.exprRef(outer.Expr)
-	if !hasOuter || innerExpr == nil {
+	outerSource := l.valueSource(outer)
+	if !outerSource.HasExpr || innerExpr == nil {
 		return
 	}
 	inner := outer
@@ -30,7 +30,7 @@ func (l *lowerer) addAssertion(input *factflow.FactsInput, outer sourceprovenanc
 	if input.ValueOverlays == nil {
 		input.ValueOverlays = make(map[factflow.ExprRef]factflow.ValueOverlay)
 	}
-	input.ValueOverlays[outerRef] = factflow.NewValueOverlay(l.valueSource(inner), l.assertionOverlay(value))
+	input.ValueOverlays[outerSource.ExprRef] = factflow.NewValueOverlay(l.valueSource(inner), l.assertionOverlay(value))
 	l.addAssertionOverlaysForSource(input, inner)
 }
 

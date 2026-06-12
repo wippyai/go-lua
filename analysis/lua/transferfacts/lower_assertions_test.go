@@ -610,3 +610,110 @@ func TestLowerClaimWrappedCallPreservesProducerAndClaim(t *testing.T) {
 	}
 	assertLoweredAssertion(t, branchFacts, branchSource, assertion.Type(), factflow.ValueSourceCall)
 }
+
+func TestLowerExpandedClaimWrappedCallKeepsPerResultSlotOverlays(t *testing.T) {
+	cases := []struct {
+		name string
+		wrap func(*ast.FuncCallExpr) ast.Expr
+		want assertion.Value
+	}{
+		{
+			name: "cast",
+			wrap: func(call *ast.FuncCallExpr) ast.Expr {
+				return &ast.CastExpr{Expr: call, Type: primitiveType("number"), Syntax: ast.CastSyntaxAs}
+			},
+			want: assertion.Type(),
+		},
+		{
+			name: "non-nil",
+			wrap: func(call *ast.FuncCallExpr) ast.Expr {
+				return &ast.NonNilAssertExpr{Expr: call}
+			},
+			want: assertion.NonNil(),
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			makeCall := &ast.FuncCallExpr{Func: ident("make")}
+			local := localAssign([]string{"a", "b"}, tc.wrap(makeCall))
+			stmts := []ast.Stmt{local}
+			bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"make"}})
+			built := cfgbuild.BuildChunk(stmts, bindings)
+			result, err := semantics.ExtractChunk(stmts, bindings, built)
+			if err != nil {
+				t.Fatalf("ExtractChunk: %v", err)
+			}
+
+			reg := standard.Registry()
+			facts := lowerFacts(t, result, built.Graph, reg)
+			points := requireStmtPoints(t, built, local, 3)
+			producer, ok := facts.Call(points[0])
+			if !ok {
+				t.Fatal("missing wrapped call producer")
+			}
+			innerRef, ok := producer.Expr()
+			if !ok || innerRef == 0 {
+				t.Fatalf("producer expr ref = %d/%v", innerRef, ok)
+			}
+
+			firstSource := mustLocalSource(t, facts, points[1])
+			secondSource := mustLocalSource(t, facts, points[2])
+			if firstSource.ExprRef == secondSource.ExprRef {
+				t.Fatalf("expanded wrapped call reused one outer source ref for both result slots: %#v %#v", firstSource, secondSource)
+			}
+
+			assertSlotOverlay := func(source factflow.ValueSource, resultIndex int) {
+				t.Helper()
+				overlay, ok := facts.ValueOverlay(source.ExprRef)
+				if !ok {
+					t.Fatalf("missing overlay for source ref %d", source.ExprRef)
+				}
+				assertAssertionOnlyProduct(t, overlay.Overlay(), tc.want)
+				inner := overlay.Source()
+				if inner.Kind != factflow.ValueSourceCall || inner.ExprRef != innerRef || inner.ResultIndex != resultIndex || inner.CallPoint != points[0] || !inner.HasCallPoint {
+					t.Fatalf("overlay source = %#v, want call ref %d result %d at point %d", inner, innerRef, resultIndex, points[0])
+				}
+			}
+			assertSlotOverlay(firstSource, 0)
+			assertSlotOverlay(secondSource, 1)
+
+			firstValue := product.Set(reg, product.NewWithPresence(reg, product.ShapeTop, presence.Present()), runtimekind.Key, runtimekind.Singleton(runtimekind.Number))
+			secondValue := product.Set(reg, product.NewWithPresence(reg, product.ShapeTop, presence.Present()), runtimekind.Key, runtimekind.Singleton(runtimekind.String))
+			transferFn := factapply.NewFactsNodeTransfer(factapply.FactsNodeTransferConfig{
+				Facts: facts,
+				Sources: sourcevalue.NewSourceValues(sourcevalue.SourceValuesConfig{
+					Registry: reg,
+				}),
+				CallResults: func(ctx transfer.NodeContext, call factflow.CallProducer, in state.State, read func(cfg.Point) state.State) []factapply.CallResult {
+					if ctx.Point != points[0] {
+						t.Fatalf("call result requested at point %d, want %d", ctx.Point, points[0])
+					}
+					return []factapply.CallResult{
+						{Index: 0, Value: firstValue},
+						{Index: 1, Value: secondValue},
+					}
+				},
+			})
+
+			out := transferFn(transfer.NodeContext{Registry: reg, Point: points[1]}, state.State{})
+			out = transferFn(transfer.NodeContext{Registry: reg, Point: points[2]}, out)
+			firstFact, ok := facts.LocalAssignment(points[1])
+			if !ok {
+				t.Fatalf("missing first local assignment")
+			}
+			secondFact, ok := facts.LocalAssignment(points[2])
+			if !ok {
+				t.Fatalf("missing second local assignment")
+			}
+			firstAssigned := out.ReadValue(reg, key.SymbolValue(firstFact.TargetSymbol()))
+			secondAssigned := out.ReadValue(reg, key.SymbolValue(secondFact.TargetSymbol()))
+			if want := product.Set(reg, firstValue, assertion.Key, tc.want); !product.Equal(reg, firstAssigned, want) {
+				t.Fatalf("first assigned value = %v, want first call result with claim", firstAssigned)
+			}
+			if want := product.Set(reg, secondValue, assertion.Key, tc.want); !product.Equal(reg, secondAssigned, want) {
+				t.Fatalf("second assigned value = %v, want second call result with claim", secondAssigned)
+			}
+		})
+	}
+}
