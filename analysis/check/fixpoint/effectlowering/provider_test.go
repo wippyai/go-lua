@@ -96,7 +96,7 @@ func TestSignatureOutcomeProviderLowersErrorReturnToReturnPresenceRelations(t *t
 	assertCallReturnPresenceRelation(t, got.ReturnPresenceRelations, 1, presence.Absent(), 0, presence.Present())
 }
 
-func TestWithSignaturePostconditionsLowersCallSiteArgumentPathAndApplies(t *testing.T) {
+func TestSignatureOutcomeProviderLowersNormalReturnRefinementToParamPathRefinementAndApplies(t *testing.T) {
 	reg := standard.Registry()
 	graph := cfg.New()
 	call := graph.AddNode(cfg.NodeCall)
@@ -122,9 +122,7 @@ func TestWithSignaturePostconditionsLowersCallSiteArgumentPathAndApplies(t *test
 		},
 	})
 
-	got := WithSignaturePostconditions(SignaturePostconditionConfig{
-		Graph:    graph,
-		Registry: reg,
+	provider := SignatureOutcomeProvider(SignatureOutcomeProviderConfig{
 		Signatures: signatureMap{
 			"assertLike": {
 				Type: typ.Func().Param("v", typ.Any).Build(),
@@ -142,33 +140,34 @@ func TestWithSignaturePostconditionsLowersCallSiteArgumentPathAndApplies(t *test
 		},
 		Facts: facts,
 	})
-
-	refinements := got.PostconditionRefinements(call)
-	if len(refinements) != 1 {
-		t.Fatalf("postcondition refinements = %d, want 1: %#v", len(refinements), refinements)
-	}
-	if !refinements[0].TargetPath().Equal(argPath) {
-		t.Fatalf("target path = %s, want %s", refinements[0].TargetPath(), argPath)
-	}
-	value, ok := refinements[0].Value().Constraint()
+	site, ok := facts.CallSite(call)
 	if !ok {
-		t.Fatalf("missing value constraint")
+		t.Fatalf("missing call site")
 	}
-	assertPresence(t, reg, value, presence.Present())
+	got := provider(transfer.NodeContext{Graph: graph, Registry: reg, Point: call, Node: graph.Node(call)}, site, state.State{}, nil)
+
+	if len(got.ParamPathRefinements) != 1 {
+		t.Fatalf("param path refinements = %d, want 1: %#v", len(got.ParamPathRefinements), got.ParamPathRefinements)
+	}
+	if !got.ParamPathRefinements[0].Path.Equal(path.NewPlaceholder(0)) {
+		t.Fatalf("target path = %s, want $0", got.ParamPathRefinements[0].Path.String())
+	}
+	assertPresence(t, reg, got.ParamPathRefinements[0].Value, presence.Present())
 
 	flow := transfer.Run(transfer.Config{
 		Graph:      graph,
 		Registry:   reg,
 		EntryState: state.State{}.WriteValue(reg, key.SymbolValue(argSymbol), product.Top()),
 		NodeTransfer: factapply.NewFactsNodeTransfer(factapply.FactsNodeTransferConfig{
-			Facts:   got,
-			Sources: sourcevalue.NewSourceValues(sourcevalue.SourceValuesConfig{Registry: reg}),
+			Facts:       facts,
+			Sources:     sourcevalue.NewSourceValues(sourcevalue.SourceValuesConfig{Registry: reg}),
+			CallOutcome: provider,
 		}),
 	})
 	assertStatePresence(t, reg, flow[graph.Exit()], key.SymbolValue(argSymbol), presence.Present())
 }
 
-func TestWithSignaturePostconditionsSkipsArgumentsWithoutExpressionPath(t *testing.T) {
+func TestSignatureOutcomeProviderNormalReturnRefinementDoesNotApplyWithoutExpressionPath(t *testing.T) {
 	reg := standard.Registry()
 	graph := cfg.New()
 	call := graph.AddNode(cfg.NodeCall)
@@ -191,9 +190,7 @@ func TestWithSignaturePostconditionsSkipsArgumentsWithoutExpressionPath(t *testi
 		},
 	})
 
-	got := WithSignaturePostconditions(SignaturePostconditionConfig{
-		Graph:    graph,
-		Registry: reg,
+	provider := SignatureOutcomeProvider(SignatureOutcomeProviderConfig{
 		Signatures: signatureMap{
 			"assertLike": {
 				Type: typ.Func().Param("v", typ.Any).Build(),
@@ -211,17 +208,23 @@ func TestWithSignaturePostconditionsSkipsArgumentsWithoutExpressionPath(t *testi
 		},
 		Facts: facts,
 	})
+	site, ok := facts.CallSite(call)
+	if !ok {
+		t.Fatalf("missing call site")
+	}
+	got := provider(transfer.NodeContext{Graph: graph, Registry: reg, Point: call, Node: graph.Node(call)}, site, state.State{}, nil)
 
-	if refinements := got.PostconditionRefinements(call); len(refinements) != 0 {
-		t.Fatalf("postcondition refinements = %#v, want none", refinements)
+	if len(got.ParamPathRefinements) != 1 || !got.ParamPathRefinements[0].Path.Equal(path.NewPlaceholder(0)) {
+		t.Fatalf("param path refinements = %#v, want one unresolved $0 refinement", got.ParamPathRefinements)
 	}
 	flow := transfer.Run(transfer.Config{
 		Graph:      graph,
 		Registry:   reg,
 		EntryState: state.State{}.WriteValue(reg, key.SymbolValue(argSymbol), existing),
 		NodeTransfer: factapply.NewFactsNodeTransfer(factapply.FactsNodeTransferConfig{
-			Facts:   got,
-			Sources: sourcevalue.NewSourceValues(sourcevalue.SourceValuesConfig{Registry: reg}),
+			Facts:       facts,
+			Sources:     sourcevalue.NewSourceValues(sourcevalue.SourceValuesConfig{Registry: reg}),
+			CallOutcome: provider,
 		}),
 	})
 	assertStatePresence(t, reg, flow[graph.Exit()], key.SymbolValue(argSymbol), presence.Maybe())
