@@ -2,7 +2,6 @@ package factflow
 
 import (
 	"github.com/wippyai/go-lua/analysis/domain/path"
-	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/symbol"
 )
 
@@ -41,6 +40,46 @@ func CallProducerFromSite(site CallSite) CallProducer {
 	})
 }
 
+func callProducerFromFactSite(site CallSite) (CallProducer, bool) {
+	switch site.Context() {
+	case CallSiteContextAssignmentSource, CallSiteContextReturnSource:
+	default:
+		return CallProducer{}, false
+	}
+	return NewCallProducer(CallProducerConfig{
+		CalleeSymbol:  site.CalleeSymbol(),
+		CalleePath:    site.CalleePath(),
+		ResultTargets: strictProducerResultTargets(site.ResultTargets()),
+	}), true
+}
+
+func strictProducerResultTargets(targets []CallResultTarget) []CallResultTarget {
+	if len(targets) == 0 {
+		return nil
+	}
+	out := make([]CallResultTarget, 0, len(targets))
+	for _, target := range targets {
+		if !strictProducerResultTarget(target) {
+			continue
+		}
+		out = append(out, target.copy())
+	}
+	return out
+}
+
+func strictProducerResultTarget(target CallResultTarget) bool {
+	switch target.Kind() {
+	case CallResultTargetLocalAssignment:
+		return target.TargetSymbol() != 0
+	case CallResultTargetOrdinaryAssignment:
+		return target.TargetSymbol() != 0 && len(target.TargetPath().Segments) == 0
+	case CallResultTargetReturn:
+		return true
+	default:
+		return false
+	}
+}
+
 // CalleeSymbol returns the callee's symbol identity.
 func (c CallProducer) CalleeSymbol() symbol.ID { return c.calleeSymbol }
 
@@ -56,15 +95,4 @@ func (c CallProducer) copy() CallProducer {
 	c.calleePath = copyPath(c.calleePath)
 	c.resultTargets = copyCallResultTargets(c.resultTargets)
 	return c
-}
-
-func copyCallProducerMap(in map[cfg.Point]CallProducer) map[cfg.Point]CallProducer {
-	if len(in) == 0 {
-		return nil
-	}
-	out := make(map[cfg.Point]CallProducer, len(in))
-	for point, fact := range in {
-		out[point] = fact.copy()
-	}
-	return out
 }

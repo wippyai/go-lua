@@ -374,6 +374,104 @@ func TestCallProducerFromSiteProjectsOnlyNarrowProducerEvidence(t *testing.T) {
 	}
 }
 
+func TestFactsCallDerivesProducerFromCanonicalCallSite(t *testing.T) {
+	point := cfg.Point(30)
+	site := NewCallSite(CallSiteConfig{
+		Context:      CallSiteContextAssignmentSource,
+		CalleeSymbol: symbol.ID(31),
+		CalleePath:   path.NewPath(symbol.ID(31), "make"),
+		ResultTargets: []CallResultTarget{
+			NewCallResultTarget(CallResultTargetLocalAssignment, 0, 0, symbol.ID(32), path.NewPath(symbol.ID(32), "out")),
+		},
+	})
+	input := FactsInput{
+		CallSites: map[cfg.Point]CallSite{
+			point: site,
+		},
+	}
+
+	facts := NewFacts(input)
+	input.CallSites[point] = NewCallSite(CallSiteConfig{
+		Context:      CallSiteContextAssignmentSource,
+		CalleeSymbol: symbol.ID(99),
+		CalleePath:   path.NewPath(symbol.ID(99), "changed"),
+	})
+
+	got, ok := facts.Call(point)
+	if !ok {
+		t.Fatal("call producer missing")
+	}
+	want := CallProducerFromSite(site)
+	if got.CalleeSymbol() != want.CalleeSymbol() || !got.CalleePath().Equal(want.CalleePath()) {
+		t.Fatalf("producer callee = %v/%v, want %v/%v", got.CalleeSymbol(), got.CalleePath(), want.CalleeSymbol(), want.CalleePath())
+	}
+	gotTargets := got.ResultTargets()
+	wantTargets := want.ResultTargets()
+	if len(gotTargets) != 1 || len(wantTargets) != 1 || gotTargets[0].Kind() != wantTargets[0].Kind() || !gotTargets[0].TargetPath().Equal(wantTargets[0].TargetPath()) {
+		t.Fatalf("producer targets = %#v, want %#v", gotTargets, wantTargets)
+	}
+}
+
+func TestFactsCallKeepsProducerProjectionNarrow(t *testing.T) {
+	points := map[string]cfg.Point{
+		"statement":        cfg.Point(40),
+		"condition":        cfg.Point(41),
+		"iterator":         cfg.Point(42),
+		"memberAssignment": cfg.Point(43),
+		"returnSource":     cfg.Point(44),
+	}
+	facts := NewFacts(FactsInput{
+		CallSites: map[cfg.Point]CallSite{
+			points["statement"]: NewCallSite(CallSiteConfig{
+				Context:      CallSiteContextStatement,
+				CalleeSymbol: symbol.ID(50),
+			}),
+			points["condition"]: NewCallSite(CallSiteConfig{
+				Context:      CallSiteContextCondition,
+				CalleeSymbol: symbol.ID(51),
+			}),
+			points["iterator"]: NewCallSite(CallSiteConfig{
+				Context:      CallSiteContextIteratorSource,
+				CalleeSymbol: symbol.ID(52),
+			}),
+			points["memberAssignment"]: NewCallSite(CallSiteConfig{
+				Context:      CallSiteContextAssignmentSource,
+				CalleeSymbol: symbol.ID(53),
+				ResultTargets: []CallResultTarget{
+					NewCallResultTarget(CallResultTargetOrdinaryAssignment, 0, 0, symbol.ID(54), path.NewPath(symbol.ID(54), "t").Field("x")),
+				},
+			}),
+			points["returnSource"]: NewCallSite(CallSiteConfig{
+				Context:      CallSiteContextReturnSource,
+				CalleeSymbol: symbol.ID(55),
+				ResultTargets: []CallResultTarget{
+					NewCallResultTarget(CallResultTargetReturn, 0, 0, 0, path.Path{}),
+				},
+			}),
+		},
+	})
+
+	for _, name := range []string{"statement", "condition", "iterator"} {
+		if _, ok := facts.Call(points[name]); ok {
+			t.Fatalf("%s call unexpectedly produced call-result producer evidence", name)
+		}
+	}
+	memberProducer, ok := facts.Call(points["memberAssignment"])
+	if !ok {
+		t.Fatal("member assignment call producer missing")
+	}
+	if targets := memberProducer.ResultTargets(); len(targets) != 0 {
+		t.Fatalf("member assignment targets leaked into producer: %#v", targets)
+	}
+	returnProducer, ok := facts.Call(points["returnSource"])
+	if !ok {
+		t.Fatal("return-source call producer missing")
+	}
+	if targets := returnProducer.ResultTargets(); len(targets) != 1 || targets[0].Kind() != CallResultTargetReturn {
+		t.Fatalf("return-source producer targets = %#v, want one return target", targets)
+	}
+}
+
 func TestTransferOwnedEnumsAreIndependentContracts(t *testing.T) {
 	kinds := []ValueSourceKind{
 		ValueSourceUnknown,
@@ -473,15 +571,6 @@ func TestFactsCarrierCopiesAndReturnsFalseForMissingFacts(t *testing.T) {
 		Returns: map[cfg.Point]Return{
 			point: NewReturn([]ValueSource{source, callSource}),
 		},
-		Calls: map[cfg.Point]CallProducer{
-			point: NewCallProducer(CallProducerConfig{
-				CalleeSymbol: symbol.ID(32),
-				CalleePath:   path.NewPath(symbol.ID(32), "callee").Field("method"),
-				ResultTargets: []CallResultTarget{
-					NewCallResultTarget(CallResultTargetReturn, 0, 0, 0, path.Path{}),
-				},
-			}),
-		},
 		CallSites: map[cfg.Point]CallSite{
 			point: NewCallSite(CallSiteConfig{
 				Context:         CallSiteContextAssignmentSource,
@@ -498,7 +587,7 @@ func TestFactsCarrierCopiesAndReturnsFalseForMissingFacts(t *testing.T) {
 				ArgumentSources: []ValueSource{source, callSource},
 				TypeArgs:        []TypeRef{TypeRef(7), TypeRef(8)},
 				ResultTargets: []CallResultTarget{
-					NewCallResultTarget(CallResultTargetOrdinaryAssignment, 0, 0, symbol.ID(33), path.NewPath(symbol.ID(33), "table").Field("field")),
+					NewCallResultTarget(CallResultTargetLocalAssignment, 0, 0, symbol.ID(33), path.NewPath(symbol.ID(33), "table")),
 				},
 				Final:    true,
 				Expanded: true,
@@ -557,7 +646,6 @@ func TestFactsCarrierCopiesAndReturnsFalseForMissingFacts(t *testing.T) {
 		),
 	)
 	input.Returns[point] = NewReturn([]ValueSource{{Kind: ValueSourceNil}})
-	input.Calls[point] = NewCallProducer(CallProducerConfig{})
 	input.CallSites[point] = NewCallSite(CallSiteConfig{Context: CallSiteContextStatement})
 	input.ObjectLiterals[ExprRef(1)] = NewObjectLiteral([]ObjectEntry{
 		NewObjectEntry(path.Path{Segments: []segment.Segment{{Kind: segment.SegmentField, Name: "changed"}}}, callSource),
@@ -737,13 +825,13 @@ func TestFactsCarrierCopiesAndReturnsFalseForMissingFacts(t *testing.T) {
 	callCalleePath := call.CalleePath()
 	callCalleePath.Segments[0].Name = "mutated"
 	callAgain, _ := facts.Call(point)
-	assertDirectField(t, callAgain.CalleePath(), "method")
+	assertDirectField(t, callAgain.CalleePath(), "site")
 	callTargets := call.ResultTargets()
-	if len(callTargets) != 1 || callTargets[0].Kind() != CallResultTargetReturn {
+	if len(callTargets) != 1 || callTargets[0].Kind() != CallResultTargetLocalAssignment {
 		t.Fatalf("call targets = %#v", callTargets)
 	}
 	callTargets[0] = NewCallResultTarget(CallResultTargetLocalAssignment, 0, 0, symbol.ID(33), path.NewPath(symbol.ID(33), "changed"))
-	if got := callAgain.ResultTargets(); got[0].Kind() != CallResultTargetReturn {
+	if got := callAgain.ResultTargets(); got[0].Kind() != CallResultTargetLocalAssignment {
 		t.Fatalf("facts call exposed mutable targets, got %v", got[0].Kind())
 	}
 
@@ -798,14 +886,14 @@ func TestFactsCarrierCopiesAndReturnsFalseForMissingFacts(t *testing.T) {
 		t.Fatalf("facts call site exposed mutable type args, got %#v", got)
 	}
 	callSiteTargets := callSite.ResultTargets()
-	if len(callSiteTargets) != 1 || callSiteTargets[0].Kind() != CallResultTargetOrdinaryAssignment {
+	if len(callSiteTargets) != 1 || callSiteTargets[0].Kind() != CallResultTargetLocalAssignment {
 		t.Fatalf("call site targets = %#v", callSiteTargets)
 	}
 	callSiteTargetPath := callSiteTargets[0].TargetPath()
-	callSiteTargetPath.Segments[0].Name = "mutated"
-	assertDirectField(t, callSiteAgain.ResultTargets()[0].TargetPath(), "field")
+	callSiteTargetPath.Root = "mutated"
+	assertPathEqual(t, callSiteAgain.ResultTargets()[0].TargetPath(), path.NewPath(symbol.ID(33), "table"))
 	callSiteTargets[0] = NewCallResultTarget(CallResultTargetReturn, 0, 0, 0, path.Path{})
-	if got := callSiteAgain.ResultTargets(); got[0].Kind() != CallResultTargetOrdinaryAssignment {
+	if got := callSiteAgain.ResultTargets(); got[0].Kind() != CallResultTargetLocalAssignment {
 		t.Fatalf("facts call site exposed mutable targets, got %v", got[0].Kind())
 	}
 

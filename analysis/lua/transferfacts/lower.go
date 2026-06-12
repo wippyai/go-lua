@@ -46,7 +46,6 @@ func Lower(result *semantics.Result, graph cfg.Graph, config Config) factflow.Fa
 		CallResultValues:            make(map[cfg.Point]factflow.CallResultValueSet),
 		ReturnPresenceRelations:     make(map[cfg.Point]factflow.ReturnPresenceRelationSet),
 		Returns:                     make(map[cfg.Point]factflow.Return),
-		Calls:                       make(map[cfg.Point]factflow.CallProducer),
 		CallSites:                   make(map[cfg.Point]factflow.CallSite),
 		ObjectLiterals:              make(map[factflow.ExprRef]factflow.ObjectLiteral),
 		ExpressionRefinements:       make(map[factflow.ExprRef]factflow.ExpressionRefinement),
@@ -98,9 +97,6 @@ func Lower(result *semantics.Result, graph cfg.Graph, config Config) factflow.Fa
 			}
 			if lowered := l.typeIsCallResultValues(fact); len(lowered) != 0 {
 				appendCallResultValues(input.CallResultValues, point, lowered...)
-			}
-			if lowered, ok := l.callProducer(fact); ok {
-				input.Calls[point] = lowered
 			}
 		}
 		if fact, ok := result.BranchCondition(point); ok {

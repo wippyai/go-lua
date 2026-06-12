@@ -172,8 +172,9 @@ func TestProviderIntegratesWithFactflowCallRead(t *testing.T) {
 		EntryState: state.State{}.WriteValue(reg, key.SymbolValue(target), existingTargetValue),
 		NodeTransfer: factapply.NewFactsNodeTransfer(factapply.FactsNodeTransferConfig{
 			Facts: factflow.NewFacts(factflow.FactsInput{
-				Calls: map[cfg.Point]factflow.CallProducer{
-					call: factflow.NewCallProducer(factflow.CallProducerConfig{
+				CallSites: map[cfg.Point]factflow.CallSite{
+					call: factflow.NewCallSite(factflow.CallSiteConfig{
+						Context:      factflow.CallSiteContextAssignmentSource,
 						CalleeSymbol: symbol.ID(28),
 						ResultTargets: []factflow.CallResultTarget{
 							factflow.NewCallResultTarget(factflow.CallResultTargetLocalAssignment, 0, 0, target, path.NewPath(target, "x")),

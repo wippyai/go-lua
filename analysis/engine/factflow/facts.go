@@ -18,7 +18,6 @@ type FactsInput struct {
 	CallResultValues            map[cfg.Point]CallResultValueSet
 	ReturnPresenceRelations     map[cfg.Point]ReturnPresenceRelationSet
 	Returns                     map[cfg.Point]Return
-	Calls                       map[cfg.Point]CallProducer
 	CallSites                   map[cfg.Point]CallSite
 	ObjectLiterals              map[ExprRef]ObjectLiteral
 	ExpressionRefinements       map[ExprRef]ExpressionRefinement
@@ -41,7 +40,6 @@ type Facts struct {
 	callResultValues            map[cfg.Point]CallResultValueSet
 	returnPresenceRelations     map[cfg.Point]ReturnPresenceRelationSet
 	returns                     map[cfg.Point]Return
-	calls                       map[cfg.Point]CallProducer
 	callSites                   map[cfg.Point]CallSite
 	objectLiterals              map[ExprRef]ObjectLiteral
 	expressionRefinements       map[ExprRef]ExpressionRefinement
@@ -65,7 +63,6 @@ func NewFacts(input FactsInput) Facts {
 		callResultValues:            copyCallResultValueMap(input.CallResultValues),
 		returnPresenceRelations:     copyReturnPresenceRelationMap(input.ReturnPresenceRelations),
 		returns:                     copyReturnMap(input.Returns),
-		calls:                       copyCallProducerMap(input.Calls),
 		callSites:                   copyCallSiteMap(input.CallSites),
 		objectLiterals:              copyObjectLiteralMap(input.ObjectLiterals),
 		expressionRefinements:       copyExpressionRefinementMap(input.ExpressionRefinements),
@@ -246,13 +243,15 @@ func (f Facts) Return(point cfg.Point) (Return, bool) {
 	return fact.copy(), true
 }
 
-// Call returns the call producer fact at point.
+// Call returns the narrow call producer projection for the canonical call-site
+// evidence at point. Only assignment/return-source calls are producer-eligible;
+// broad semantic call evidence remains available through CallSite.
 func (f Facts) Call(point cfg.Point) (CallProducer, bool) {
-	fact, ok := f.calls[point]
+	site, ok := f.callSites[point]
 	if !ok {
 		return CallProducer{}, false
 	}
-	return fact.copy(), true
+	return callProducerFromFactSite(site)
 }
 
 // CallSite returns the call-site evidence fact at point.

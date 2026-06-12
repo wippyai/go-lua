@@ -128,8 +128,9 @@ func TestFactsNodeTransferCallProducerProviderWritesReturnSlots(t *testing.T) {
 	var providerCalled bool
 	got := NewFactsNodeTransfer(FactsNodeTransferConfig{
 		Facts: factflow.NewFacts(factflow.FactsInput{
-			Calls: map[cfg.Point]factflow.CallProducer{
-				point: factflow.NewCallProducer(factflow.CallProducerConfig{
+			CallSites: map[cfg.Point]factflow.CallSite{
+				point: factflow.NewCallSite(factflow.CallSiteConfig{
+					Context:      factflow.CallSiteContextAssignmentSource,
 					CalleeSymbol: symbol.ID(201),
 				}),
 			},
@@ -182,8 +183,10 @@ func TestFactsNodeTransferAssignmentCallSourceConsumesProviderReturnSlotThroughR
 		Registry: reg,
 		NodeTransfer: NewFactsNodeTransfer(FactsNodeTransferConfig{
 			Facts: factflow.NewFacts(factflow.FactsInput{
-				Calls: map[cfg.Point]factflow.CallProducer{
-					call: factflow.NewCallProducer(factflow.CallProducerConfig{}),
+				CallSites: map[cfg.Point]factflow.CallSite{
+					call: factflow.NewCallSite(factflow.CallSiteConfig{
+						Context: factflow.CallSiteContextAssignmentSource,
+					}),
 				},
 				LocalAssignments: map[cfg.Point]factflow.RootAssignment{
 					assign: factflow.NewRootAssignment(target, path.NewPath(target, "local"), factflow.ValueSource{
@@ -226,8 +229,9 @@ func TestFactsNodeTransferCallResultTargetsDoNotDirectlyWriteTargets(t *testing.
 
 	got := NewFactsNodeTransfer(FactsNodeTransferConfig{
 		Facts: factflow.NewFacts(factflow.FactsInput{
-			Calls: map[cfg.Point]factflow.CallProducer{
-				point: factflow.NewCallProducer(factflow.CallProducerConfig{
+			CallSites: map[cfg.Point]factflow.CallSite{
+				point: factflow.NewCallSite(factflow.CallSiteConfig{
+					Context: factflow.CallSiteContextAssignmentSource,
 					ResultTargets: []factflow.CallResultTarget{
 						factflow.NewCallResultTarget(factflow.CallResultTargetLocalAssignment, 0, 0, target, path.NewPath(target, "local")),
 						factflow.NewCallResultTarget(factflow.CallResultTargetOrdinaryAssignment, 0, 0, target, targetPath),
@@ -257,8 +261,10 @@ func TestFactsNodeTransferMissingCallResultProviderOrNoResultsLeavesStateUnchang
 		WriteValue(reg, key.SymbolValue(target), absentValue(reg))
 
 	facts := factflow.NewFacts(factflow.FactsInput{
-		Calls: map[cfg.Point]factflow.CallProducer{
-			point: factflow.NewCallProducer(factflow.CallProducerConfig{}),
+		CallSites: map[cfg.Point]factflow.CallSite{
+			point: factflow.NewCallSite(factflow.CallSiteConfig{
+				Context: factflow.CallSiteContextAssignmentSource,
+			}),
 		},
 	})
 	tests := []struct {

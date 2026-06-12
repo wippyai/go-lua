@@ -103,8 +103,9 @@ func TestWithSignatureRelationsLowersErrorReturnToBranchPresenceRelations(t *tes
 	valuePath := path.NewPath(value, "value")
 	errPath := path.NewPath(err, "err")
 	facts := factflow.NewFacts(factflow.FactsInput{
-		Calls: map[cfg.Point]factflow.CallProducer{
-			call: factflow.NewCallProducer(factflow.CallProducerConfig{
+		CallSites: map[cfg.Point]factflow.CallSite{
+			call: factflow.NewCallSite(factflow.CallSiteConfig{
+				Context: factflow.CallSiteContextAssignmentSource,
 				ResultTargets: []factflow.CallResultTarget{
 					factflow.NewCallResultTarget(factflow.CallResultTargetLocalAssignment, 0, 0, value, valuePath),
 					factflow.NewCallResultTarget(factflow.CallResultTargetLocalAssignment, 1, 1, err, errPath),
@@ -179,8 +180,9 @@ func TestWithSignatureRelationsStopsAtErrorReturnTargetReassignment(t *testing.T
 	valuePath := path.NewPath(value, "value")
 	errPath := path.NewPath(err, "err")
 	facts := factflow.NewFacts(factflow.FactsInput{
-		Calls: map[cfg.Point]factflow.CallProducer{
-			call: factflow.NewCallProducer(factflow.CallProducerConfig{
+		CallSites: map[cfg.Point]factflow.CallSite{
+			call: factflow.NewCallSite(factflow.CallSiteConfig{
+				Context: factflow.CallSiteContextAssignmentSource,
 				ResultTargets: []factflow.CallResultTarget{
 					factflow.NewCallResultTarget(factflow.CallResultTargetLocalAssignment, 0, 0, value, valuePath),
 					factflow.NewCallResultTarget(factflow.CallResultTargetLocalAssignment, 1, 1, err, errPath),

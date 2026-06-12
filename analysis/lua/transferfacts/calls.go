@@ -7,27 +7,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/symbol"
 )
 
-func (l *lowerer) callProducer(fact semantics.CallFact) (factflow.CallProducer, bool) {
-	switch fact.Context {
-	case semantics.CallContextAssignmentSource, semantics.CallContextReturnSource:
-	default:
-		return factflow.CallProducer{}, false
-	}
-	calleeSymbol := symbol.ID(0)
-	if fact.HasCalleeSymbol {
-		calleeSymbol = fact.CalleeSymbol
-	}
-	calleePath := path.Path{}
-	if fact.HasCalleePath {
-		calleePath = fact.CalleePath
-	}
-	return factflow.NewCallProducer(factflow.CallProducerConfig{
-		CalleeSymbol:  calleeSymbol,
-		CalleePath:    calleePath,
-		ResultTargets: l.strictProducerResultTargets(fact.ResultTargets),
-	}), true
-}
-
 func (l *lowerer) callSite(fact semantics.CallFact) factflow.CallSite {
 	exprRef, hasExpr := l.exprRef(fact.Call)
 	calleeSymbol := symbol.ID(0)
