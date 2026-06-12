@@ -7,11 +7,15 @@ import pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 type FactsInput struct {
 	RootAssignments             map[cfg.Point]RootAssignment
 	PathAssignments             map[cfg.Point]PathAssignment
+	PathStaticMemberWrites      map[cfg.Point]PathStaticMemberWrite
+	DynamicIndexWrites          map[cfg.Point]DynamicIndexWrite
 	PathDescendantInvalidations map[cfg.Point]PathDescendantInvalidation
 	NoNormalReturns             map[cfg.Point]struct{}
 	BranchRefinements           map[cfg.Point]BranchRefinementSet
 	BranchPresenceRelations     map[cfg.Point]BranchPresenceRelationSet
 	BranchPathRelations         map[cfg.Point]BranchPathRelationSet
+	BranchProofs                map[cfg.Point]BranchProofSet
+	ChannelSelects              map[cfg.Point]ChannelSelectSet
 	PostconditionRefinements    map[cfg.Point]PostconditionRefinementSet
 	PostconditionPathRelations  map[cfg.Point]PostconditionPathRelationSet
 	CallResultValues            map[cfg.Point]CallResultValueSet
@@ -28,11 +32,15 @@ type FactsInput struct {
 type Facts struct {
 	rootAssignments             map[cfg.Point]RootAssignment
 	pathAssignments             map[cfg.Point]PathAssignment
+	pathStaticMemberWrites      map[cfg.Point]PathStaticMemberWrite
+	dynamicIndexWrites          map[cfg.Point]DynamicIndexWrite
 	pathDescendantInvalidations map[cfg.Point]PathDescendantInvalidation
 	noNormalReturns             map[cfg.Point]struct{}
 	branchRefinements           map[cfg.Point]BranchRefinementSet
 	branchPresenceRelations     map[cfg.Point]BranchPresenceRelationSet
 	branchPathRelations         map[cfg.Point]BranchPathRelationSet
+	branchProofs                map[cfg.Point]BranchProofSet
+	channelSelects              map[cfg.Point]ChannelSelectSet
 	postconditionRefinements    map[cfg.Point]PostconditionRefinementSet
 	postconditionPathRelations  map[cfg.Point]PostconditionPathRelationSet
 	callResultValues            map[cfg.Point]CallResultValueSet
@@ -50,11 +58,15 @@ func NewFacts(input FactsInput) Facts {
 	return Facts{
 		rootAssignments:             copyRootAssignmentMap(input.RootAssignments),
 		pathAssignments:             copyPathAssignmentMap(input.PathAssignments),
+		pathStaticMemberWrites:      copyPathStaticMemberWriteMap(input.PathStaticMemberWrites),
+		dynamicIndexWrites:          copyDynamicIndexWriteMap(input.DynamicIndexWrites),
 		pathDescendantInvalidations: copyPathDescendantInvalidationMap(input.PathDescendantInvalidations),
 		noNormalReturns:             copyNoNormalReturnMap(input.NoNormalReturns),
 		branchRefinements:           copyBranchRefinementSetMap(input.BranchRefinements),
 		branchPresenceRelations:     copyBranchPresenceRelationMap(input.BranchPresenceRelations),
 		branchPathRelations:         copyBranchPathRelationMap(input.BranchPathRelations),
+		branchProofs:                copyBranchProofMap(input.BranchProofs),
+		channelSelects:              copyChannelSelectMap(input.ChannelSelects),
 		postconditionRefinements:    copyPostconditionRefinementMap(input.PostconditionRefinements),
 		postconditionPathRelations:  copyPostconditionPathRelationMap(input.PostconditionPathRelations),
 		callResultValues:            copyCallResultValueMap(input.CallResultValues),
@@ -166,6 +178,24 @@ func (f Facts) PathAssignment(point cfg.Point) (PathAssignment, bool) {
 	return fact.copy(), true
 }
 
+// PathStaticMemberWrite returns the static-member proof write event at point.
+func (f Facts) PathStaticMemberWrite(point cfg.Point) (PathStaticMemberWrite, bool) {
+	fact, ok := f.pathStaticMemberWrites[point]
+	if !ok {
+		return PathStaticMemberWrite{}, false
+	}
+	return fact.copy(), true
+}
+
+// DynamicIndexWrite returns the dynamic-index write event at point.
+func (f Facts) DynamicIndexWrite(point cfg.Point) (DynamicIndexWrite, bool) {
+	fact, ok := f.dynamicIndexWrites[point]
+	if !ok {
+		return DynamicIndexWrite{}, false
+	}
+	return fact.copy(), true
+}
+
 // PathDescendantInvalidation returns the descendant-only path invalidation fact
 // at point.
 func (f Facts) PathDescendantInvalidation(point cfg.Point) (PathDescendantInvalidation, bool) {
@@ -202,6 +232,22 @@ func (f Facts) BranchPresenceRelations(point cfg.Point) []BranchPresenceRelation
 func (f Facts) BranchPathRelations(point cfg.Point) []BranchPathRelation {
 	if set, ok := f.branchPathRelations[point]; ok {
 		return set.Relations()
+	}
+	return nil
+}
+
+// BranchProofs returns branch/postcondition proof facts at point.
+func (f Facts) BranchProofs(point cfg.Point) []BranchProof {
+	if set, ok := f.branchProofs[point]; ok {
+		return set.Proofs()
+	}
+	return nil
+}
+
+// ChannelSelects returns channel-select evidence events at point.
+func (f Facts) ChannelSelects(point cfg.Point) []ChannelSelect {
+	if set, ok := f.channelSelects[point]; ok {
+		return set.Events()
 	}
 	return nil
 }
