@@ -520,7 +520,7 @@ end
 	assertConcreteTypeWitness(t, reg, got)
 }
 
-func TestReadBoundaryNestedFunctionsSeeCastAndSummaryPostconditions(t *testing.T) {
+func TestReadBoundaryNestedFunctionsSeeCastAndNormalReturnFacts(t *testing.T) {
 	reg := standard.Registry()
 	stmts := parseChunk(t, `
 type Point = {x: number, y: number}

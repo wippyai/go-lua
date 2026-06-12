@@ -17,11 +17,6 @@ type CallResult struct {
 	Value product.Value
 }
 
-// CallResultProvider resolves generic call-producer facts into indexed return
-// slots. Call result targets remain metadata for downstream facts; providers
-// produce only ReturnSlot(index) values.
-type CallResultProvider func(ctx transfer.NodeContext, call factflow.CallProducer, in state.State, read func(cfg.Point) state.State) []CallResult
-
 // CallOutcomeProvider resolves rich call-site evidence into one generic call
 // outcome payload.
 type CallOutcomeProvider func(ctx transfer.NodeContext, site factflow.CallSite, in state.State, read func(cfg.Point) state.State) CallOutcome
@@ -29,7 +24,6 @@ type CallOutcomeProvider func(ctx transfer.NodeContext, site factflow.CallSite, 
 func callResultReader(
 	ctx transfer.NodeContext,
 	facts factflow.Facts,
-	provider CallResultProvider,
 	outcomeProvider CallOutcomeProvider,
 	resolver *visibility.Resolver,
 ) (func(cfg.Point) state.State, func(cfg.Point, state.State) state.State) {
@@ -51,7 +45,7 @@ func callResultReader(
 		}
 		active[point] = true
 		activeBase[point] = base
-		out := materializeCallResults(callContextAt(ctx, point, read), facts, provider, outcomeProvider, resolver, read, base, base)
+		out := materializeCallOutcome(callContextAt(ctx, point, read), facts, outcomeProvider, resolver, read, base, base)
 		delete(active, point)
 		delete(activeBase, point)
 		cache[point] = out
@@ -74,10 +68,9 @@ func callContextAt(ctx transfer.NodeContext, point cfg.Point, read func(cfg.Poin
 	return ctx
 }
 
-func materializeCallResults(
+func materializeCallOutcome(
 	ctx transfer.NodeContext,
 	facts factflow.Facts,
-	provider CallResultProvider,
 	outcomeProvider CallOutcomeProvider,
 	resolver *visibility.Resolver,
 	read func(cfg.Point) state.State,
@@ -88,8 +81,7 @@ func materializeCallResults(
 	if !ok {
 		return out
 	}
-	call, hasProducer := facts.Call(ctx.Point)
-	written := make(map[int]struct{})
+	_, hasProducer := facts.Call(ctx.Point)
 	if outcomeProvider != nil {
 		outcome := outcomeProvider(ctx, site, in, read)
 		if hasProducer {
@@ -98,21 +90,9 @@ func materializeCallResults(
 					continue
 				}
 				out = out.WriteReturnSlot(ctx.Registry, result.Index, result.Value)
-				written[result.Index] = struct{}{}
 			}
 		}
 		out = applyCallOutcomeFacts(ctx, facts, resolver, out, site, outcome)
-	}
-	if provider != nil && hasProducer {
-		for _, result := range provider(ctx, call, in, read) {
-			if result.Index < 0 {
-				continue
-			}
-			if _, ok := written[result.Index]; ok {
-				continue
-			}
-			out = out.WriteReturnSlot(ctx.Registry, result.Index, result.Value)
-		}
 	}
 	if hasProducer {
 		for _, result := range facts.CallResultValues(ctx.Point) {

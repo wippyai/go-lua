@@ -46,7 +46,6 @@ type Config struct {
 	ExpressionValues map[factflow.ExprRef]product.Value
 	ExpressionValue  sourcevalue.ExpressionValueProvider
 	VarargValue      sourcevalue.VarargValueProvider
-	CallResults      factapply.CallResultProvider
 	CallOutcome      factapply.CallOutcomeProvider
 	SummaryResults   summary.Reader
 	SummaryKeyFor    callresult.KeyFunc
@@ -75,7 +74,6 @@ type Result struct {
 	flow        transfer.Result
 	visibility  *visibility.Resolver
 	sources     sourcevalue.SourceValues
-	callResults factapply.CallResultProvider
 	callOutcome factapply.CallOutcomeProvider
 	functions   []*Result
 }
@@ -577,18 +575,17 @@ func (c *Checker) run(bindings *bind.Result, built *cfgbuild.Result, sem *semant
 		ExpressionValue:  expressionValue,
 		VarargValue:      config.VarargValue,
 	})
-	callResults := config.CallResults
+	callOutcome := config.CallOutcome
+	if callOutcome == nil && config.SummaryResults != nil && config.SummaryKeyFor != nil {
+		callOutcome = callresult.OutcomeProvider(config.SummaryResults, config.SummaryKeyFor)
+	}
 	if hasSignatures(config.Signatures) {
-		callResults = callresult.Fallback(callResults, effectlowering.SignatureProvider(effectlowering.SignatureProviderConfig{
+		callOutcome = callresult.WithSupplementalResults(callOutcome, effectlowering.SignatureOutcomeProvider(effectlowering.SignatureOutcomeProviderConfig{
 			Signatures: config.Signatures,
 			NameFor:    c.signatureNameForCall(bindings),
 			Facts:      facts,
 			Sources:    sources,
 		}))
-	}
-	callOutcome := config.CallOutcome
-	if callOutcome == nil && config.SummaryResults != nil && config.SummaryKeyFor != nil {
-		callOutcome = callresult.OutcomeProvider(config.SummaryResults, config.SummaryKeyFor)
 	}
 	entryState, initial := parameterEntryState(
 		config.Registry,
@@ -606,7 +603,6 @@ func (c *Checker) run(bindings *bind.Result, built *cfgbuild.Result, sem *semant
 		NodeTransfer: factapply.NewFactsNodeTransfer(factapply.FactsNodeTransferConfig{
 			Facts:       facts,
 			Sources:     sources,
-			CallResults: callResults,
 			CallOutcome: callOutcome,
 			Visibility:  resolver,
 		}),
@@ -628,7 +624,6 @@ func (c *Checker) run(bindings *bind.Result, built *cfgbuild.Result, sem *semant
 		flow:        flow,
 		visibility:  resolver,
 		sources:     sources,
-		callResults: callResults,
 		callOutcome: callOutcome,
 	}
 }

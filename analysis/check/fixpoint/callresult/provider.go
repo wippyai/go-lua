@@ -179,34 +179,34 @@ func paramConditionValue(condition summary.ParamCondition) (bool, bool) {
 	}
 }
 
-// Fallback composes two call result providers. Primary results win by index;
-// fallback results fill only missing result slots.
-func Fallback(primary, fallback factapply.CallResultProvider) factapply.CallResultProvider {
+// WithSupplementalResults composes two call outcome providers. Primary outcome
+// fields are preserved; supplemental results fill only missing result slots.
+func WithSupplementalResults(primary, supplemental factapply.CallOutcomeProvider) factapply.CallOutcomeProvider {
 	if primary == nil {
-		return fallback
+		return supplemental
 	}
-	if fallback == nil {
+	if supplemental == nil {
 		return primary
 	}
-	return func(ctx transfer.NodeContext, call factflow.CallProducer, in state.State, read func(cfg.Point) state.State) []factapply.CallResult {
-		first := primary(ctx, call, in, read)
-		second := fallback(ctx, call, in, read)
-		if len(first) == 0 {
-			return second
+	return func(ctx transfer.NodeContext, site factflow.CallSite, in state.State, read func(cfg.Point) state.State) factapply.CallOutcome {
+		out := primary(ctx, site, in, read)
+		second := supplemental(ctx, site, in, read)
+		if len(out.Results) == 0 {
+			out.Results = second.Results
+			return out
 		}
-		if len(second) == 0 {
-			return first
+		if len(second.Results) == 0 {
+			return out
 		}
-		seen := make(map[int]struct{}, len(first))
-		out := append([]factapply.CallResult(nil), first...)
-		for _, result := range first {
+		seen := make(map[int]struct{}, len(out.Results))
+		for _, result := range out.Results {
 			seen[result.Index] = struct{}{}
 		}
-		for _, result := range second {
+		for _, result := range second.Results {
 			if _, ok := seen[result.Index]; ok {
 				continue
 			}
-			out = append(out, result)
+			out.Results = append(out.Results, result)
 		}
 		return out
 	}

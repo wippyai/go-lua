@@ -300,10 +300,6 @@ func TestFactsNodeTransferStatementCallOutcomeDoesNotWriteReturnSlots(t *testing
 				},
 			}
 		},
-		CallResults: func(transfer.NodeContext, factflow.CallProducer, state.State, func(cfg.Point) state.State) []CallResult {
-			t.Fatal("value-only call result provider should not run for statement calls")
-			return nil
-		},
 		Visibility: visibility.NewResolver(visibilityBuilder.Build()),
 	})(transfer.NodeContext{
 		Registry: reg,

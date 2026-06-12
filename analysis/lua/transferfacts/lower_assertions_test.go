@@ -685,13 +685,15 @@ func TestLowerExpandedClaimWrappedCallKeepsPerResultSlotRefinements(t *testing.T
 				Sources: sourcevalue.NewSourceValues(sourcevalue.SourceValuesConfig{
 					Registry: reg,
 				}),
-				CallResults: func(ctx transfer.NodeContext, call factflow.CallProducer, in state.State, read func(cfg.Point) state.State) []factapply.CallResult {
+				CallOutcome: func(ctx transfer.NodeContext, site factflow.CallSite, in state.State, read func(cfg.Point) state.State) factapply.CallOutcome {
 					if ctx.Point != points[0] {
 						t.Fatalf("call result requested at point %d, want %d", ctx.Point, points[0])
 					}
-					return []factapply.CallResult{
-						{Index: 0, Value: firstValue},
-						{Index: 1, Value: secondValue},
+					return factapply.CallOutcome{
+						Results: []factapply.CallResult{
+							{Index: 0, Value: firstValue},
+							{Index: 1, Value: secondValue},
+						},
 					}
 				},
 			})

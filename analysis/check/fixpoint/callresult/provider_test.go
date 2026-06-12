@@ -37,7 +37,7 @@ func TestOutcomeProviderReadsSummaryReturnsByCalleeSymbol(t *testing.T) {
 		CalleeSymbol: callee,
 	}), state.State{}, nil)
 
-	assertCallResults(t, reg, got.Results, []product.Value{first, second})
+	assertCallOutcomeResults(t, reg, got.Results, []product.Value{first, second})
 }
 
 func TestOutcomeProviderMapsSummaryReturnsAndNormalReturnFacts(t *testing.T) {
@@ -102,7 +102,7 @@ func TestOutcomeProviderMapsSummaryReturnsAndNormalReturnFacts(t *testing.T) {
 		CalleeSymbol: callee,
 	}), state.State{}, nil)
 
-	assertCallResults(t, reg, got.Results, []product.Value{ret})
+	assertCallOutcomeResults(t, reg, got.Results, []product.Value{ret})
 	if len(got.PathRefinements) != 1 ||
 		!got.PathRefinements[0].Path.Equal(path.NewPlaceholder(0).Field("field")) ||
 		!product.Equal(reg, got.PathRefinements[0].Value, absent) {
@@ -147,7 +147,7 @@ func TestOutcomeProviderMapsSummaryReturnsAndNormalReturnFacts(t *testing.T) {
 	}
 }
 
-func TestOutcomeProviderMapsSummaryPostconditionFields(t *testing.T) {
+func TestOutcomeProviderMapsNormalReturnFacts(t *testing.T) {
 	reg := standard.Registry()
 	callee := symbol.ID(137)
 	key := summary.DefaultSummaryKey(ref.FuncRef{Kind: ref.KindSymbol, ID: 138})
@@ -268,27 +268,35 @@ func TestOutcomeProviderMissingAndEmptySummaryYieldsZeroOutcome(t *testing.T) {
 	}
 }
 
-func TestFallbackKeepsPrimarySlotsAndFillsMissingSlots(t *testing.T) {
+func TestWithSupplementalResultsKeepsPrimarySlotsAndFillsMissingSlots(t *testing.T) {
 	reg := standard.Registry()
 	primaryValue := product.Absent(reg)
-	fallbackValue := product.Top()
-	primary := func(transfer.NodeContext, factflow.CallProducer, state.State, func(cfg.Point) state.State) []factapply.CallResult {
-		return []factapply.CallResult{{Index: 0, Value: primaryValue}}
+	supplementalValue := product.Top()
+	primary := func(transfer.NodeContext, factflow.CallSite, state.State, func(cfg.Point) state.State) factapply.CallOutcome {
+		return factapply.CallOutcome{
+			Results: []factapply.CallResult{{Index: 0, Value: primaryValue}},
+			ParamConditions: []factapply.CallParamCondition{
+				{ParamIndex: 0, Value: true},
+			},
+		}
 	}
-	fallback := func(transfer.NodeContext, factflow.CallProducer, state.State, func(cfg.Point) state.State) []factapply.CallResult {
-		return []factapply.CallResult{{Index: 0, Value: product.Top()}, {Index: 1, Value: fallbackValue}}
+	supplemental := func(transfer.NodeContext, factflow.CallSite, state.State, func(cfg.Point) state.State) factapply.CallOutcome {
+		return factapply.CallOutcome{Results: []factapply.CallResult{{Index: 0, Value: product.Top()}, {Index: 1, Value: supplementalValue}}}
 	}
 
-	got := Fallback(primary, fallback)(transfer.NodeContext{Registry: reg}, factflow.NewCallProducer(factflow.CallProducerConfig{}), state.State{}, nil)
+	got := WithSupplementalResults(primary, supplemental)(transfer.NodeContext{Registry: reg}, factflow.NewCallSite(factflow.CallSiteConfig{}), state.State{}, nil)
 
-	if len(got) != 2 {
-		t.Fatalf("got %d results, want 2: %#v", len(got), got)
+	if len(got.Results) != 2 {
+		t.Fatalf("got %d results, want 2: %#v", len(got.Results), got.Results)
 	}
-	if got[0].Index != 0 || !product.Equal(reg, got[0].Value, primaryValue) {
-		t.Fatalf("primary slot = %#v, want index 0 primary value", got[0])
+	if got.Results[0].Index != 0 || !product.Equal(reg, got.Results[0].Value, primaryValue) {
+		t.Fatalf("primary slot = %#v, want index 0 primary value", got.Results[0])
 	}
-	if got[1].Index != 1 || !product.Equal(reg, got[1].Value, fallbackValue) {
-		t.Fatalf("fallback slot = %#v, want index 1 fallback value", got[1])
+	if got.Results[1].Index != 1 || !product.Equal(reg, got.Results[1].Value, supplementalValue) {
+		t.Fatalf("supplemental slot = %#v, want index 1 supplemental value", got.Results[1])
+	}
+	if len(got.ParamConditions) != 1 || got.ParamConditions[0].ParamIndex != 0 || !got.ParamConditions[0].Value {
+		t.Fatalf("primary side facts = %#v, want preserved param condition", got.ParamConditions)
 	}
 }
 
@@ -306,7 +314,7 @@ func TestByCalleeSymbolKeyMapsAreCloned(t *testing.T) {
 	}
 }
 
-func TestByCalleeIdentityPrefersSymbolAndFallsBackToPath(t *testing.T) {
+func TestByCalleeIdentityPrefersSymbolAndUsesPathWhenSymbolMissing(t *testing.T) {
 	symbolKey := summary.DefaultSummaryKey(ref.FuncRef{Kind: ref.KindSymbol, ID: 31})
 	pathKey := summary.DefaultSummaryKey(ref.FuncRef{Kind: ref.KindSymbol, ID: 32})
 	calleeSymbol := symbol.ID(33)
@@ -416,7 +424,7 @@ func TestFactapplyDoesNotImportSummary(t *testing.T) {
 	}
 }
 
-func assertCallResults(t *testing.T, reg *axis.Registry, got []factapply.CallResult, want []product.Value) {
+func assertCallOutcomeResults(t *testing.T, reg *axis.Registry, got []factapply.CallResult, want []product.Value) {
 	t.Helper()
 	if len(got) != len(want) {
 		t.Fatalf("got %d results, want %d: %#v", len(got), len(want), got)

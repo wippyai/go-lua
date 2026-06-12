@@ -134,7 +134,6 @@ func (r *Result) nodeOutputAt(point cfg.Point) (state.State, bool) {
 	transferFn := factapply.NewFactsNodeTransfer(factapply.FactsNodeTransferConfig{
 		Facts:       r.facts,
 		Sources:     r.sources,
-		CallResults: r.callResults,
 		CallOutcome: r.callOutcome,
 		Visibility:  r.visibility,
 	})

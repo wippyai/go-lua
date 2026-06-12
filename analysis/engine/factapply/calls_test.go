@@ -117,7 +117,7 @@ func TestFactsNodeTransferReturnCallSourceReadsReturnSlotThroughRead(t *testing.
 	assertValue(t, reg, got[graph.Exit()], key.ReturnSlot(0), callValue)
 }
 
-func TestFactsNodeTransferCallProducerProviderWritesReturnSlots(t *testing.T) {
+func TestFactsNodeTransferCallOutcomeProviderWritesReturnSlots(t *testing.T) {
 	reg := standard.Registry()
 	point := cfg.Point(22)
 	target := symbol.ID(111)
@@ -135,20 +135,22 @@ func TestFactsNodeTransferCallProducerProviderWritesReturnSlots(t *testing.T) {
 				}),
 			},
 		}),
-		CallResults: func(ctx transfer.NodeContext, call factflow.CallProducer, gotIn state.State, read func(cfg.Point) state.State) []CallResult {
+		CallOutcome: func(ctx transfer.NodeContext, site factflow.CallSite, gotIn state.State, read func(cfg.Point) state.State) CallOutcome {
 			providerCalled = true
 			if ctx.Point != point {
 				t.Fatalf("provider point = %d, want %d", ctx.Point, point)
 			}
-			if call.CalleeSymbol() != symbol.ID(201) {
-				t.Fatalf("provider call = %#v", call)
+			if site.CalleeSymbol() != symbol.ID(201) {
+				t.Fatalf("provider site = %#v", site)
 			}
 			assertStateEqual(t, reg, gotIn, in)
 			assertValue(t, reg, read(point), key.SymbolValue(target), presentValue(reg))
-			return []CallResult{
-				{Index: 0, Value: first},
-				{Index: 2, Value: third},
-				{Index: -1, Value: product.Top()},
+			return CallOutcome{
+				Results: []CallResult{
+					{Index: 0, Value: first},
+					{Index: 2, Value: third},
+					{Index: -1, Value: product.Top()},
+				},
 			}
 		},
 	})(transfer.NodeContext{
@@ -198,8 +200,8 @@ func TestFactsNodeTransferAssignmentCallSourceConsumesProviderReturnSlotThroughR
 				},
 			}),
 			Sources: sources,
-			CallResults: func(ctx transfer.NodeContext, call factflow.CallProducer, in state.State, read func(cfg.Point) state.State) []CallResult {
-				return []CallResult{{Index: 0, Value: callValue}}
+			CallOutcome: func(ctx transfer.NodeContext, site factflow.CallSite, in state.State, read func(cfg.Point) state.State) CallOutcome {
+				return CallOutcome{Results: []CallResult{{Index: 0, Value: callValue}}}
 			},
 		}),
 		EdgeTransfer: func(ctx transfer.EdgeContext, out state.State) state.State {
@@ -239,8 +241,8 @@ func TestFactsNodeTransferCallResultTargetsDoNotDirectlyWriteTargets(t *testing.
 				}),
 			},
 		}),
-		CallResults: func(ctx transfer.NodeContext, call factflow.CallProducer, in state.State, read func(cfg.Point) state.State) []CallResult {
-			return []CallResult{{Index: 0, Value: resultValue}}
+		CallOutcome: func(ctx transfer.NodeContext, site factflow.CallSite, in state.State, read func(cfg.Point) state.State) CallOutcome {
+			return CallOutcome{Results: []CallResult{{Index: 0, Value: resultValue}}}
 		},
 	})(transfer.NodeContext{
 		Registry: reg,
@@ -252,7 +254,7 @@ func TestFactsNodeTransferCallResultTargetsDoNotDirectlyWriteTargets(t *testing.
 	assertPathValue(t, reg, got, pathKey, pathValue)
 }
 
-func TestFactsNodeTransferMissingCallResultProviderOrNoResultsLeavesStateUnchanged(t *testing.T) {
+func TestFactsNodeTransferMissingCallOutcomeProviderOrNoResultsLeavesStateUnchanged(t *testing.T) {
 	reg := standard.Registry()
 	point := cfg.Point(24)
 	target := symbol.ID(114)
@@ -269,19 +271,19 @@ func TestFactsNodeTransferMissingCallResultProviderOrNoResultsLeavesStateUnchang
 	})
 	tests := []struct {
 		name     string
-		provider CallResultProvider
+		provider CallOutcomeProvider
 	}{
 		{name: "nil provider"},
 		{
 			name: "nil results",
-			provider: func(ctx transfer.NodeContext, call factflow.CallProducer, in state.State, read func(cfg.Point) state.State) []CallResult {
-				return nil
+			provider: func(ctx transfer.NodeContext, site factflow.CallSite, in state.State, read func(cfg.Point) state.State) CallOutcome {
+				return CallOutcome{}
 			},
 		},
 		{
 			name: "empty results",
-			provider: func(ctx transfer.NodeContext, call factflow.CallProducer, in state.State, read func(cfg.Point) state.State) []CallResult {
-				return []CallResult{}
+			provider: func(ctx transfer.NodeContext, site factflow.CallSite, in state.State, read func(cfg.Point) state.State) CallOutcome {
+				return CallOutcome{Results: []CallResult{}}
 			},
 		},
 	}
@@ -290,7 +292,7 @@ func TestFactsNodeTransferMissingCallResultProviderOrNoResultsLeavesStateUnchang
 		t.Run(tc.name, func(t *testing.T) {
 			got := NewFactsNodeTransfer(FactsNodeTransferConfig{
 				Facts:       facts,
-				CallResults: tc.provider,
+				CallOutcome: tc.provider,
 			})(transfer.NodeContext{
 				Registry: reg,
 				Point:    point,

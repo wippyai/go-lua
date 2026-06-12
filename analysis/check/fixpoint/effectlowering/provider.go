@@ -1,5 +1,5 @@
 // Package effectlowering lowers declared signature effects into factflow facts
-// and factapply call results.
+// and factapply call outcomes.
 package effectlowering
 
 import (
@@ -32,33 +32,34 @@ type SignatureLookup interface {
 	Lookup(name string) (signature.Function, bool)
 }
 
-// SignatureProviderConfig carries the signature/effect lookup plus the generic
+// SignatureOutcomeProviderConfig carries the signature/effect lookup plus the generic
 // fact/source read models needed to resolve call argument values.
-type SignatureProviderConfig struct {
+type SignatureOutcomeProviderConfig struct {
 	Signatures SignatureLookup
 	NameFor    SignatureNameFunc
 	Facts      factflow.Facts
 	Sources    sourcevalue.SourceValues
 }
 
-// SignatureProvider materializes declared signature return types into call
-// return slots.
-func SignatureProvider(config SignatureProviderConfig) factapply.CallResultProvider {
+// SignatureOutcomeProvider materializes declared signature return types into
+// call outcome return slots.
+func SignatureOutcomeProvider(config SignatureOutcomeProviderConfig) factapply.CallOutcomeProvider {
 	signatures := config.Signatures
 	nameFor := config.NameFor
 	facts := config.Facts
 	sources := config.Sources
-	return func(ctx transfer.NodeContext, call factflow.CallProducer, in state.State, read func(cfg.Point) state.State) []factapply.CallResult {
+	return func(ctx transfer.NodeContext, site factflow.CallSite, in state.State, read func(cfg.Point) state.State) factapply.CallOutcome {
 		if signatures == nil || nameFor == nil {
-			return nil
+			return factapply.CallOutcome{}
 		}
+		call := factflow.CallProducerFromSite(site)
 		name, ok := nameFor(ctx, call)
 		if !ok {
-			return nil
+			return factapply.CallOutcome{}
 		}
 		sig, ok := signatures.Lookup(name)
 		if !ok || sig.Type == nil || len(sig.Type.Returns) == 0 {
-			return nil
+			return factapply.CallOutcome{}
 		}
 		results := make([]factapply.CallResult, 0, len(sig.Type.Returns))
 		for i, ret := range sig.Type.Returns {
@@ -74,7 +75,7 @@ func SignatureProvider(config SignatureProviderConfig) factapply.CallResultProvi
 				Value: value,
 			})
 		}
-		return results
+		return factapply.CallOutcome{Results: results}
 	}
 }
 

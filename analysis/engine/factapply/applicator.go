@@ -12,7 +12,6 @@ import (
 type FactsNodeTransferConfig struct {
 	Facts       factflow.Facts
 	Sources     sourcevalue.SourceValues
-	CallResults CallResultProvider
 	CallOutcome CallOutcomeProvider
 	Visibility  *visibility.Resolver
 }
@@ -32,9 +31,8 @@ func NewFactsNodeTransfer(config FactsNodeTransferConfig) transfer.NodeTransfer 
 	return func(ctx transfer.NodeContext, in state.State) state.State {
 		facts := config.Facts
 		sources := config.Sources
-		callResults := config.CallResults
 		callOutcome := config.CallOutcome
-		read, materialize := callResultReader(ctx, facts, callResults, callOutcome, config.Visibility)
+		read, materialize := callResultReader(ctx, facts, callOutcome, config.Visibility)
 
 		out := materialize(ctx.Point, in)
 		if facts.NoNormalReturn(ctx.Point) {
