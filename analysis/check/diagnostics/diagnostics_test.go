@@ -66,13 +66,23 @@ func TestAnnotationAssignabilityDoesNotTrustCastEscape(t *testing.T) {
 	}
 }
 
-func TestAnnotationAssignabilitySkipsNonLiteralSources(t *testing.T) {
+func TestAnnotationAssignabilitySkipsUnannotatedIdentifierSources(t *testing.T) {
 	diags := runDiagnostics(t, `
 		local y = value
 		local x: number = y
 	`)
 	if len(diags) != 0 {
-		t.Fatalf("diagnostics = %#v, want none for non-literal source", diags)
+		t.Fatalf("diagnostics = %#v, want none for unannotated identifier source", diags)
+	}
+}
+
+func TestAnnotationAssignabilitySkipsAnnotatedIdentifierWithoutPointProof(t *testing.T) {
+	diags := runDiagnostics(t, `
+		local x: string? = value
+		local s: string = x
+	`)
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v, want none without point-local source proof", diags)
 	}
 }
 
@@ -212,6 +222,39 @@ local p: LocalPoint = {x = 1, y = 2}
 				t.Fatalf("message = %q", d.Message)
 			}
 		})
+	}
+}
+
+func TestUnresolvedValueReferencesReportsImplicitGlobalReads(t *testing.T) {
+	diags := runDiagnosticsWithGlobals(t, `
+		local x = missing + known
+		missing = 42
+		print(known)
+	`, []string{"known", "print"})
+	if len(diags) != 1 {
+		t.Fatalf("diagnostics = %d, want 1: %#v", len(diags), diags)
+	}
+	d := diags[0]
+	if d.Code != CodeUnresolvedValueReference || d.Severity != diagnostic.SeverityError {
+		t.Fatalf("diagnostic code/severity = %s/%s", d.Code, d.Severity)
+	}
+	if d.Position.Line != 2 || !strings.Contains(d.Message, "missing") {
+		t.Fatalf("diagnostic = %#v, want unresolved read of missing on line 2", d)
+	}
+}
+
+func TestUnresolvedValueReferencesReportsNestedReads(t *testing.T) {
+	diags := runDiagnosticsWithGlobals(t, `
+		local t = {[key] = {value = source}}
+		sink[t[other]] = value
+	`, []string{"sink", "value"})
+	if len(diags) != 3 {
+		t.Fatalf("diagnostics = %d, want 3: %#v", len(diags), diags)
+	}
+	for _, d := range diags {
+		if d.Code != CodeUnresolvedValueReference {
+			t.Fatalf("diagnostic code = %s, want %s: %#v", d.Code, CodeUnresolvedValueReference, diags)
+		}
 	}
 }
 
@@ -629,11 +672,16 @@ func TestPrecheckAllowsForwardGotoAcrossNestedBlocks(t *testing.T) {
 
 func runDiagnostics(t *testing.T, src string) []diagnostic.Diagnostic {
 	t.Helper()
+	return runDiagnosticsWithGlobals(t, src, []string{"test", "type", "value"})
+}
+
+func runDiagnosticsWithGlobals(t *testing.T, src string, globals []string) []diagnostic.Diagnostic {
+	t.Helper()
 	stmts, err := parse.ParseString(src, "diagnostics_test.lua")
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
-	result, err := check.CheckChunk(stmts, check.Config{Registry: standard.Registry()})
+	result, err := check.CheckChunk(stmts, check.Config{Registry: standard.Registry(), Globals: globals})
 	if err != nil {
 		t.Fatalf("check: %v", err)
 	}

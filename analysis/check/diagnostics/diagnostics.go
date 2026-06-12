@@ -22,6 +22,7 @@ const (
 	CodeReturnContractType         diagnostic.Code = "type.return.contract"
 	CodeDirectCallResultAssignment diagnostic.Code = "type.call.direct.result_assignment"
 	CodeUnresolvedTypeReference    diagnostic.Code = "type.reference.unresolved"
+	CodeUnresolvedValueReference   diagnostic.Code = "value.reference.unresolved"
 	CodeBreakOutsideLoop           diagnostic.Code = "syntax.break.outside_loop"
 	CodeDuplicateLabel             diagnostic.Code = "syntax.label.duplicate"
 	CodeGotoUndefinedLabel         diagnostic.Code = "syntax.goto.undefined"
@@ -46,6 +47,7 @@ func produceWithResolver(result *check.Result, config Config, parent typeannotat
 	defs := directCallDefinitions(result, inheritedDefs)
 	var out []diagnostic.Diagnostic
 	out = append(out, UnresolvedTypeReferences(config).Produce(result)...)
+	out = append(out, UnresolvedValueReferences(config).Produce(result)...)
 	out = append(out, AnnotationAssignability(config).Produce(result)...)
 	out = append(out, ReturnContract(config).Produce(result)...)
 	out = append(out, produceDirectCallContract(result, config, defs)...)

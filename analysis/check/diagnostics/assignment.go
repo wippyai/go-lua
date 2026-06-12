@@ -6,9 +6,15 @@ import (
 	"github.com/wippyai/go-lua/analysis/check"
 	"github.com/wippyai/go-lua/analysis/diagnostic"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
+	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
 	"github.com/wippyai/go-lua/analysis/lua/typeannotation"
 	"github.com/wippyai/go-lua/analysis/lua/valueexpr"
+	"github.com/wippyai/go-lua/analysis/type/kind"
 	"github.com/wippyai/go-lua/analysis/type/subst"
 	"github.com/wippyai/go-lua/analysis/type/subtype"
 	"github.com/wippyai/go-lua/analysis/type/typ"
@@ -34,14 +40,14 @@ func (p AnnotationAssignability) Produce(result *check.Result) []diagnostic.Diag
 		if !ok {
 			continue
 		}
-		if d, ok := p.localAssignment(result, fact); ok {
+		if d, ok := p.localAssignment(result, point, fact); ok {
 			out = append(out, d)
 		}
 	}
 	return out
 }
 
-func (p AnnotationAssignability) localAssignment(result *check.Result, fact semantics.LocalAssignmentFact) (diagnostic.Diagnostic, bool) {
+func (p AnnotationAssignability) localAssignment(result *check.Result, point cfg.Point, fact semantics.LocalAssignmentFact) (diagnostic.Diagnostic, bool) {
 	if fact.Type == nil || fact.Expr == nil {
 		return diagnostic.Diagnostic{}, false
 	}
@@ -52,6 +58,9 @@ func (p AnnotationAssignability) localAssignment(result *check.Result, fact sema
 	got, ok := literalType(fact.Expr)
 	if !ok {
 		got, ok = projectedOptionalIndexType(result, p.Resolver, fact.Expr)
+	}
+	if !ok {
+		got, ok = annotatedIdentifierType(result, p.Resolver, point, fact.Expr)
 	}
 	if !ok || !clearMismatch(got, want) {
 		return p.objectLiteralAssignment(result, fact.Name, want, fact.Expr, fact.Type)
@@ -157,6 +166,94 @@ func shouldProjectOptionalIndex(result *check.Result, expr ast.Expr) bool {
 	}
 	container, ok := result.ExpressionPath(attr.Object)
 	return ok && len(container.Segments) > 0
+}
+
+func annotatedIdentifierType(result *check.Result, resolver typeannotation.Resolver, point cfg.Point, expr ast.Expr) (typ.Type, bool) {
+	if result == nil {
+		return nil, false
+	}
+	ident, ok := expr.(*ast.IdentExpr)
+	if !ok {
+		return nil, false
+	}
+	declared, ok := newExpressionTyper(result, resolver).typeOf(expr)
+	if !ok {
+		return nil, false
+	}
+	path, ok := result.ExpressionPath(ident)
+	if !ok || path.Symbol == 0 || len(path.Segments) != 0 {
+		return nil, false
+	}
+	value, ok := result.SymbolValueAt(point, path.Symbol)
+	if !ok {
+		return nil, false
+	}
+	return refineDeclaredTypeWithValue(result, declared, value)
+}
+
+func refineDeclaredTypeWithValue(result *check.Result, declared typ.Type, value product.Value) (typ.Type, bool) {
+	if declared == nil {
+		return nil, false
+	}
+	out := declared
+	p := product.PresenceOf(value)
+	switch {
+	case presence.Equal(p, presence.Present()):
+		withoutNil := projectionWithoutNil(out)
+		if withoutNil != nil && !typ.IsNever(withoutNil) {
+			out = withoutNil
+		}
+	case presence.Equal(p, presence.Absent()):
+		out = typ.Nil
+	}
+	if result != nil && result.Registry() != nil {
+		if runtimeType, ok := runtimeKindType(result.Registry(), value, p); ok {
+			out = runtimeType
+		}
+	}
+	return out, true
+}
+
+func runtimeKindType(reg *axis.Registry, value product.Value, p presence.Value) (typ.Type, bool) {
+	kinds := product.Get(reg, value, runtimekind.Key)
+	if kinds.IsBottom() || kinds.IsTop() {
+		return nil, false
+	}
+	var members []typ.Type
+	for _, tag := range kinds.Tags() {
+		switch tag {
+		case runtimekind.Nil:
+			members = append(members, typ.Nil)
+		case runtimekind.Boolean:
+			members = append(members, typ.Boolean)
+		case runtimekind.Number:
+			members = append(members, typ.Number)
+		case runtimekind.String:
+			members = append(members, typ.String)
+		case runtimekind.Table:
+			members = append(members, typ.NewMap(typ.Any, typ.Unknown))
+		case runtimekind.Function:
+			members = append(members, typ.Func().Build())
+		default:
+			return nil, false
+		}
+	}
+	if len(members) == 0 {
+		return nil, false
+	}
+	t := typ.NewUnion(members...)
+	if presence.Equal(p, presence.Maybe()) && !typeIncludesNil(t) {
+		t = typ.NewOptional(t)
+	}
+	return t, true
+}
+
+func typeIncludesNil(t typ.Type) bool {
+	if t == nil {
+		return false
+	}
+	normalized := typ.NormalizeNilType(t)
+	return (normalized != nil && normalized.Kind() == kind.Nil) || projectionHasNil(t)
 }
 
 func expectedTypeAtSegments(root typ.Type, segments []segment.Segment) (typ.Type, bool) {

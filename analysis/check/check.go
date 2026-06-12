@@ -9,6 +9,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/effect/signature"
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
+	statekey "github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	factapply "github.com/wippyai/go-lua/analysis/engine/factapply"
@@ -262,6 +263,13 @@ func (r *Result) LocalSymbols(stmt *ast.LocalAssignStmt) []symbol.ID {
 	return r.bindings.LocalSymbols(stmt)
 }
 
+func (r *Result) IsImplicitGlobalUse(ident *ast.IdentExpr) bool {
+	if r == nil || r.bindings == nil {
+		return false
+	}
+	return r.bindings.IsImplicitGlobalUse(ident)
+}
+
 func (r *Result) TypeRef(ref *ast.TypeRefExpr) (bind.TypeDecl, bool) {
 	if r == nil || r.bindings == nil {
 		return bind.TypeDecl{}, false
@@ -295,6 +303,21 @@ func (r *Result) TypeDefParams(stmt *ast.TypeDefStmt) []bind.TypeDecl {
 		return nil
 	}
 	return r.bindings.TypeDefParams(stmt)
+}
+
+func (r *Result) SymbolValueAt(point cfg.Point, id symbol.ID) (product.Value, bool) {
+	if r == nil || id == 0 {
+		return product.Value{}, false
+	}
+	st, ok := r.StateAt(point)
+	if !ok {
+		return product.Value{}, false
+	}
+	value := st.ReadValue(r.registry, statekey.SymbolValue(id))
+	if product.Equal(r.registry, value, product.Bottom(r.registry)) {
+		return product.Value{}, false
+	}
+	return value, true
 }
 
 func New(config Config) (*Checker, error) {
