@@ -134,49 +134,32 @@ func TestMarkerMethods(t *testing.T) {
 	Freeze{}.EffectLabel()
 }
 
-func TestSelectors(t *testing.T) {
-	r := BorrowsOnly()
-	if !HasBorrow(r) {
-		t.Error("BorrowsOnly should have borrow")
-	}
+func TestRowNormalization(t *testing.T) {
+	r := effect.Row{Labels: []effect.Label{
+		Borrow{Param: effect.ParamRef{Index: 0}},
+		Store{Param: effect.ParamRef{Index: 0}, Into: effect.ParamRef{Index: 1}},
+		Send{FromParam: 2},
+		Freeze{Param: effect.ParamRef{Index: 3}},
+		BorrowAll{},
+	}}
 
-	if !BorrowsAllParams(r) {
-		t.Error("BorrowsOnly should borrow all params")
+	borrow, ok := effect.NormalizeLabel(r.Labels[0]).(Borrow)
+	if !ok || borrow.Param.Index != 0 {
+		t.Fatal("Should normalize borrow label")
 	}
-
-	r2 := WithBorrow(0)
-	if !HasBorrow(r2) {
-		t.Error("WithBorrow should have borrow")
+	store, ok := effect.NormalizeLabel(r.Labels[1]).(Store)
+	if !ok || store.Param.Index != 0 || store.Into.Index != 1 {
+		t.Fatal("Should normalize store label")
 	}
-
-	b := GetBorrow(r2, 0)
-	if b == nil {
-		t.Error("Should find borrow for param 0")
+	send, ok := effect.NormalizeLabel(r.Labels[2]).(Send)
+	if !ok || send.FromParam != 2 {
+		t.Fatal("Should normalize send label")
 	}
-
-	if GetBorrow(r2, 1) != nil {
-		t.Error("Should not find borrow for param 1")
+	freeze, ok := effect.NormalizeLabel(r.Labels[3]).(Freeze)
+	if !ok || freeze.Param.Index != 3 {
+		t.Fatal("Should normalize freeze label")
 	}
-
-	r3 := WithStore(0, 1)
-	if !HasStore(r3) {
-		t.Error("WithStore should have store")
-	}
-
-	s := GetStore(r3, 0)
-	if s == nil {
-		t.Error("Should find store for param 0")
-	}
-
-	if GetStore(r3, 1) != nil {
-		t.Error("Should not find store for param 1")
-	}
-
-	if !HasSend(WithSend(2)) {
-		t.Error("WithSend should have send")
-	}
-
-	if !HasFreeze(WithFreeze(0)) {
-		t.Error("WithFreeze should have freeze")
+	if _, ok := effect.NormalizeLabel(r.Labels[4]).(BorrowAll); !ok {
+		t.Fatal("Should normalize borrow_all label")
 	}
 }

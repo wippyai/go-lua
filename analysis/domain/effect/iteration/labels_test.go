@@ -45,36 +45,37 @@ func TestIteratorImplementsLabel(t *testing.T) {
 func TestIteratorEffects(t *testing.T) {
 	r := effect.Row{Labels: []effect.Label{Iterator{Source: effect.ParamRef{Index: 0}, Kind: IterateIndexed}}}
 
-	if !HasIterator(r) {
+	if !r.Has(func(l effect.Label) bool {
+		_, ok := l.(Iterator)
+		return ok
+	}) {
 		t.Error("Should have iterator")
 	}
 
-	iter := GetIterator(r)
-	if iter == nil {
-		t.Fatal("Should find iterator")
+	iter, ok := effect.NormalizeLabel(r.Labels[0]).(Iterator)
+	if !ok {
+		t.Fatal("Should normalize iterator label")
 	}
 	if iter.Source.Index != 0 {
 		t.Errorf("Iterator source index = %d, want 0", iter.Source.Index)
 	}
-
-	if !IsIndexedIterator(r) {
+	if iter.Kind != IterateIndexed {
 		t.Error("Should be indexed iterator")
 	}
 
-	if IsKeyedIterator(r) {
-		t.Error("Should not be keyed iterator")
-	}
-
 	r2 := effect.Row{Labels: []effect.Label{Iterator{Source: effect.ParamRef{Index: 0}, Kind: IterateKeyed}}}
-	if !IsKeyedIterator(r2) {
+	iter2, ok := effect.NormalizeLabel(r2.Labels[0]).(Iterator)
+	if !ok {
+		t.Fatal("Should normalize keyed iterator label")
+	}
+	if iter2.Kind != IterateKeyed {
 		t.Error("Should be keyed iterator")
 	}
 
-	if IsIndexedIterator(r2) {
-		t.Error("Should not be indexed iterator")
-	}
-
-	if IsIndexedIterator(effect.Empty) || IsKeyedIterator(effect.Empty) {
+	if effect.Empty.Has(func(l effect.Label) bool {
+		_, ok := l.(Iterator)
+		return ok
+	}) {
 		t.Error("Empty row should not be any iterator")
 	}
 }

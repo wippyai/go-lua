@@ -111,6 +111,24 @@ func TestIndexMapReadonlyMapCompatibleKeys(t *testing.T) {
 	assertType(t, got, typ.NewOptional(typ.Boolean))
 }
 
+func TestIndexRecordMapComponentIntegerAdmission(t *testing.T) {
+	rec := typetable.NewRecord().
+		MapComponent(typ.Integer, typ.Boolean).
+		Build()
+
+	got, ok := Index(rec, typ.LiteralInt(7))
+	if !ok {
+		t.Fatal("Index(record integer map component, literal int key) failed")
+	}
+	assertType(t, got, typ.NewOptional(typ.Boolean))
+
+	got, ok = Index(rec, typ.Integer)
+	if !ok {
+		t.Fatal("Index(record integer map component, integer key) failed")
+	}
+	assertType(t, got, typ.NewOptional(typ.Boolean))
+}
+
 func TestIndexArrayAndTupleIntegerReads(t *testing.T) {
 	arr := typ.NewArray(typ.String)
 

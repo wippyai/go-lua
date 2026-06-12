@@ -122,3 +122,26 @@ func TestRecordTailFieldTypeKeepsOptionalMapValueShape(t *testing.T) {
 		t.Fatalf("tail = %v, want %v", tail, want)
 	}
 }
+
+func TestMapComponentKeyAdmitsTypeUsesCanonicalPredicate(t *testing.T) {
+	if !MapComponentKeyAdmitsType(typ.String, typ.String) {
+		t.Fatal("expected string key domain to admit string key type")
+	}
+	if MapComponentKeyAdmitsType(typ.LiteralString("raw"), typ.String) {
+		t.Fatal("did not expect literal string domain to admit broad string key type")
+	}
+
+	if !MapComponentKeyAdmitsType(typ.Integer, typ.Integer) {
+		t.Fatal("expected integer key domain to admit integer key type")
+	}
+	if MapComponentKeyAdmitsType(typ.LiteralInt(7), typ.Integer) {
+		t.Fatal("did not expect literal int domain to admit broad integer key type")
+	}
+
+	if !MapComponentKeyAdmitsType(typ.String, typ.NewUnion(typ.LiteralString("raw"), typ.LiteralString("name"))) {
+		t.Fatal("expected string key domain to admit union of string literals")
+	}
+	if MapComponentKeyAdmitsType(typ.LiteralString("raw"), typ.NewUnion(typ.LiteralString("raw"), typ.LiteralString("name"))) {
+		t.Fatal("did not expect exact literal domain to admit partially matching union key type")
+	}
+}

@@ -149,45 +149,31 @@ func TestManifestEffectLabelRoundTripPreservesRowsAndSelectors(t *testing.T) {
 	p1 := effect.ParamRef{Index: 1}
 	p2 := effect.ParamRef{Index: 2}
 	cases := []struct {
-		name     string
-		label    effect.Label
-		selector func(effect.Row) bool
+		name  string
+		label effect.Label
 	}{
-		{"control throw", control.Throw{}, control.HasThrow},
-		{"control diverge", control.Diverge{}, control.HasDiverge},
-		{"control io", control.IO{}, control.HasIO},
-		{"dispatch module load", dispatch.ModuleLoad{}, dispatch.HasModuleLoad},
-		{"dispatch variadic transform", dispatch.VariadicTransform{}, dispatch.HasVariadicTransform},
-		{"dispatch type predicate", dispatch.TypePredicate{}, dispatch.HasTypePredicate},
-		{"dispatch type value method", dispatch.TypeValueMethod{}, dispatch.HasTypeValueMethod},
-		{"dispatch callable type", dispatch.CallableType{}, dispatch.HasCallableType},
-		{"iteration iterator", iteration.Iterator{Source: p0, Kind: iteration.IterateIndexed}, iteration.HasIterator},
-		{"mutation mutate", mutation.Mutate{Target: p0, Transform: mutation.ElementUnion{Source: p1}, LengthDelta: expr.Add(expr.PL(0), expr.C(1))}, mutation.HasMutate},
-		{"mutation length change", mutation.LengthChange{Target: p1, Delta: -2}, nil},
-		{"mutation table mutator", mutation.TableMutator{Target: p0, Value: p1}, mutation.HasTableMutator},
-		{"ownership borrow", ownership.Borrow{Param: p0}, ownership.HasBorrow},
-		{"ownership store", ownership.Store{Param: p0, Into: p1}, ownership.HasStore},
-		{"ownership borrow all", ownership.BorrowAll{}, ownership.BorrowsAllParams},
-		{"ownership send", ownership.Send{FromParam: 1}, ownership.HasSend},
-		{"ownership freeze", ownership.Freeze{Param: p2}, ownership.HasFreeze},
-		{"postcondition normal return present", postcondition.NormalReturnRefinement{Target: p0, Refinement: postcondition.Present{}}, func(r effect.Row) bool {
-			return r.Has(func(label effect.Label) bool {
-				got, ok := effect.NormalizeLabel(label).(postcondition.NormalReturnRefinement)
-				return ok && got.Target.Index == 0
-			})
-		}},
-		{"returns return", returns.Return{ReturnIndex: 0, Transform: returns.ElementOf{Source: p0}}, func(r effect.Row) bool {
-			return returns.GetReturn(r, 0) != nil
-		}},
-		{"returns error return", returns.ErrorReturn{ValueIndex: 0, ErrorIndex: 1}, func(r effect.Row) bool {
-			return returns.GetErrorReturn(r, 0) != nil
-		}},
-		{"returns return length", returns.ReturnLength{ReturnIndex: 0, Length: expr.MinExpr(expr.PL(0), expr.C(3))}, func(r effect.Row) bool {
-			return returns.GetReturnLength(r, 0) != nil
-		}},
-		{"returns correlated return", returns.CorrelatedReturn{Indices: []int{0, 2}}, func(r effect.Row) bool {
-			return returns.GetCorrelatedReturn(r, 2) != nil
-		}},
+		{"control throw", control.Throw{}},
+		{"control diverge", control.Diverge{}},
+		{"control io", control.IO{}},
+		{"dispatch module load", dispatch.ModuleLoad{}},
+		{"dispatch variadic transform", dispatch.VariadicTransform{}},
+		{"dispatch type predicate", dispatch.TypePredicate{}},
+		{"dispatch type value method", dispatch.TypeValueMethod{}},
+		{"dispatch callable type", dispatch.CallableType{}},
+		{"iteration iterator", iteration.Iterator{Source: p0, Kind: iteration.IterateIndexed}},
+		{"mutation mutate", mutation.Mutate{Target: p0, Transform: mutation.ElementUnion{Source: p1}, LengthDelta: expr.Add(expr.PL(0), expr.C(1))}},
+		{"mutation length change", mutation.LengthChange{Target: p1, Delta: -2}},
+		{"mutation table mutator", mutation.TableMutator{Target: p0, Value: p1}},
+		{"ownership borrow", ownership.Borrow{Param: p0}},
+		{"ownership store", ownership.Store{Param: p0, Into: p1}},
+		{"ownership borrow all", ownership.BorrowAll{}},
+		{"ownership send", ownership.Send{FromParam: 1}},
+		{"ownership freeze", ownership.Freeze{Param: p2}},
+		{"postcondition normal return present", postcondition.NormalReturnRefinement{Target: p0, Refinement: postcondition.Present{}}},
+		{"returns return", returns.Return{ReturnIndex: 0, Transform: returns.ElementOf{Source: p0}}},
+		{"returns error return", returns.ErrorReturn{ValueIndex: 0, ErrorIndex: 1}},
+		{"returns return length", returns.ReturnLength{ReturnIndex: 0, Length: expr.MinExpr(expr.PL(0), expr.C(3))}},
+		{"returns correlated return", returns.CorrelatedReturn{Indices: []int{0, 2}}},
 	}
 
 	for _, tt := range cases {
@@ -200,11 +186,18 @@ func TestManifestEffectLabelRoundTripPreservesRowsAndSelectors(t *testing.T) {
 			if got.Hash() != row.Hash() {
 				t.Fatalf("roundtrip hash = %d, want %d", got.Hash(), row.Hash())
 			}
-			if tt.selector != nil && !tt.selector(got) {
-				t.Fatalf("selector did not find %T after manifest roundtrip in %v", tt.label, got)
+			if !rowHasLabel(got, tt.label) {
+				t.Fatalf("roundtrip row missing %T in %v", tt.label, got)
 			}
 		})
 	}
+}
+
+func rowHasLabel(row effect.Row, want effect.Label) bool {
+	want = effect.NormalizeLabel(want)
+	return row.Has(func(got effect.Label) bool {
+		return got != nil && got.Equals(want)
+	})
 }
 
 func TestManifestEffectLabelRoundTripCoversNestedKinds(t *testing.T) {
@@ -260,8 +253,10 @@ func TestManifestEffectPointerLabelsNormalizeToValues(t *testing.T) {
 	if got.Hash() != row.Hash() {
 		t.Fatalf("roundtrip pointer hash = %d, want %d", got.Hash(), row.Hash())
 	}
-	if !control.HasIO(got) || !iteration.IsKeyedIterator(got) || !mutation.HasMutate(got) || !ownership.HasBorrow(got) || returns.GetReturn(got, 0) == nil {
-		t.Fatalf("selectors did not find normalized pointer labels after roundtrip in %v", got)
+	for _, want := range row.Labels {
+		if !rowHasLabel(got, want) {
+			t.Fatalf("roundtrip pointer row missing %T in %v", want, got)
+		}
 	}
 	for _, label := range got.Labels {
 		if effect.NormalizeLabel(label) != label {

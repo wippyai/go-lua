@@ -256,6 +256,32 @@ func TestMarkerMethods(t *testing.T) {
 	StringUnpackValue{}.returnType()
 }
 
+func TestRowNormalization(t *testing.T) {
+	r := effect.Row{Labels: []effect.Label{
+		Return{ReturnIndex: 0, Transform: ElementOf{Source: effect.ParamRef{Index: 0}}},
+		ErrorReturn{ValueIndex: 0, ErrorIndex: 1},
+		ReturnLength{ReturnIndex: 0, Length: expr.PL(0)},
+		CorrelatedReturn{Indices: []int{0, 1, 2}},
+	}}
+
+	ret, ok := effect.NormalizeLabel(r.Labels[0]).(Return)
+	if !ok || ret.ReturnIndex != 0 {
+		t.Fatal("Should normalize return label")
+	}
+	errRet, ok := effect.NormalizeLabel(r.Labels[1]).(ErrorReturn)
+	if !ok || errRet.ValueIndex != 0 || errRet.ErrorIndex != 1 {
+		t.Fatal("Should normalize error return label")
+	}
+	retLen, ok := effect.NormalizeLabel(r.Labels[2]).(ReturnLength)
+	if !ok || retLen.ReturnIndex != 0 {
+		t.Fatal("Should normalize return length label")
+	}
+	corr, ok := effect.NormalizeLabel(r.Labels[3]).(CorrelatedReturn)
+	if !ok || len(corr.Indices) != 3 {
+		t.Fatal("Should normalize correlated return label")
+	}
+}
+
 func TestReturnLengthEqualsNonMatch(t *testing.T) {
 	rl := ReturnLength{ReturnIndex: 0}
 	if rl.Equals(Return{}) {

@@ -205,19 +205,24 @@ func TestMarkerMethods(t *testing.T) {
 }
 
 func TestMutateEffect(t *testing.T) {
-	m := Mutates(0, ElementUnion{Source: effect.ParamRef{Index: 1}})
+	r := effect.Row{Labels: []effect.Label{Mutate{
+		Target:    effect.ParamRef{Index: 0},
+		Transform: ElementUnion{Source: effect.ParamRef{Index: 1}},
+	}}}
 
-	if !HasMutate(m) {
+	if !r.Has(func(l effect.Label) bool {
+		_, ok := l.(Mutate)
+		return ok
+	}) {
 		t.Error("Should have mutation")
 	}
 
-	got := GetMutate(m, 0)
-	if got == nil {
-		t.Error("Should find mutation for param 0")
+	got, ok := effect.NormalizeLabel(r.Labels[0]).(Mutate)
+	if !ok {
+		t.Fatal("Should normalize mutation label")
 	}
-
-	if GetMutate(m, 1) != nil {
-		t.Error("Should not find mutation for param 1")
+	if got.Target.Index != 0 {
+		t.Errorf("Mutation target index = %d, want 0", got.Target.Index)
 	}
 }
 
@@ -227,16 +232,25 @@ func TestTableMutatorEffects(t *testing.T) {
 		Value:  effect.ParamRef{Index: 1},
 	}}}
 
-	if !HasTableMutator(r) {
+	if !r.Has(func(l effect.Label) bool {
+		_, ok := l.(TableMutator)
+		return ok
+	}) {
 		t.Error("Should have table mutator")
 	}
 
-	mut := GetTableMutator(r)
-	if mut == nil {
-		t.Error("Should find table mutator")
+	mut, ok := effect.NormalizeLabel(r.Labels[0]).(TableMutator)
+	if !ok {
+		t.Fatal("Should normalize table mutator label")
+	}
+	if mut.Target.Index != 0 || mut.Value.Index != 1 {
+		t.Error("Should find normalized table mutator")
 	}
 
-	if GetTableMutator(effect.Empty) != nil {
+	if effect.Empty.Has(func(l effect.Label) bool {
+		_, ok := l.(TableMutator)
+		return ok
+	}) {
 		t.Error("Empty row should not have table mutator")
 	}
 }

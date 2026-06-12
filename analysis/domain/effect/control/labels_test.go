@@ -38,36 +38,12 @@ func TestLabels(t *testing.T) {
 	}
 }
 
-func TestSelectors(t *testing.T) {
-	tests := []struct {
-		name string
-		row  effect.Row
-		has  func(effect.Row) bool
-	}{
-		{"throw", Throws(), HasThrow},
-		{"diverge", MayDiverge(), HasDiverge},
-		{"io", WithIO(), HasIO},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if !tt.has(tt.row) {
-				t.Error("selector should find constructor label")
-			}
-
-			if tt.has(effect.Empty) {
-				t.Error("selector should not match empty row")
-			}
-		})
-	}
-}
-
 func TestRowFormatting(t *testing.T) {
 	tests := []struct {
 		row  effect.Row
 		want string
 	}{
-		{Throws(), "{throw}"},
+		{effect.Row{Labels: []effect.Label{Throw{}}}, "{throw}"},
 		{effect.Row{Labels: []effect.Label{Throw{}, IO{}}}, "{throw, io}"},
 		{effect.Open("rho", Throw{}), "{throw | rho}"},
 	}
@@ -86,15 +62,24 @@ func TestRowFiltering(t *testing.T) {
 		return ok
 	})
 
-	if HasIO(filtered) {
+	if filtered.Has(func(l effect.Label) bool {
+		_, ok := l.(IO)
+		return ok
+	}) {
 		t.Error("Without should remove IO")
 	}
 
-	if !HasThrow(filtered) {
+	if !filtered.Has(func(l effect.Label) bool {
+		_, ok := l.(Throw)
+		return ok
+	}) {
 		t.Error("Without should keep Throw")
 	}
 
-	if !HasDiverge(filtered) {
+	if !filtered.Has(func(l effect.Label) bool {
+		_, ok := l.(Diverge)
+		return ok
+	}) {
 		t.Error("Without should keep Diverge")
 	}
 }

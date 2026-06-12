@@ -5,6 +5,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/normalize"
 	"github.com/wippyai/go-lua/analysis/type/subst"
 	"github.com/wippyai/go-lua/analysis/type/subtype"
+	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/unwrap"
 )
@@ -92,7 +93,7 @@ func indexInRecord(r *typ.Record, key typ.Type, depth int, mode indexMode) field
 		if index, ok := literalIntKey(key); ok {
 			return indexIntInRecord(r, index)
 		}
-		if r.HasMapComponent() && mapKeyStaticallyAdmitsIndexKey(key, r.MapKey) {
+		if r.HasMapComponent() && typetable.MapComponentKeyAdmitsType(r.MapKey, key) {
 			return fieldResult{t: r.MapValue, ok: true, nilable: true}
 		}
 		if r.Open {
@@ -109,7 +110,7 @@ func indexStringInRecord(r *typ.Record, name string) fieldResult {
 	if member := r.GetStaticStringIndex(name); member != nil {
 		return fieldResult{t: member.Type, ok: true, nilable: member.Optional}
 	}
-	if r.HasMapComponent() && mapKeyStaticallyAdmitsIndexKey(typ.LiteralString(name), r.MapKey) {
+	if r.HasMapComponent() && typetable.MapComponentKeyMayContainString(r.MapKey, name) {
 		return fieldResult{t: r.MapValue, ok: true, nilable: true}
 	}
 	if r.Open {
@@ -122,7 +123,7 @@ func indexIntInRecord(r *typ.Record, index int64) fieldResult {
 	if member := r.GetStaticIntIndex(index); member != nil {
 		return fieldResult{t: member.Type, ok: true, nilable: member.Optional}
 	}
-	if r.HasMapComponent() && mapKeyStaticallyAdmitsIndexKey(typ.LiteralInt(index), r.MapKey) {
+	if r.HasMapComponent() && typetable.MapComponentKeyMayContainInt(r.MapKey, index) {
 		return fieldResult{t: r.MapValue, ok: true, nilable: true}
 	}
 	if r.Open {
@@ -133,7 +134,7 @@ func indexIntInRecord(r *typ.Record, index int64) fieldResult {
 
 func indexInMap(keyDomain typ.Type, value typ.Type, key typ.Type, depth int, mode indexMode) fieldResult {
 	return indexByKeyVariants(key, depth, mode, true, func(key typ.Type) fieldResult {
-		if !mapKeyStaticallyAdmitsIndexKey(key, keyDomain) {
+		if !typetable.MapComponentKeyAdmitsType(keyDomain, key) {
 			return fieldResult{}
 		}
 		if value == nil {
@@ -291,12 +292,6 @@ func indexKeyUnion(u *typ.Union, depth int, mode indexMode, missingNil bool, pro
 		return fieldResult{}
 	}
 	return fieldResult{t: normalize.UnionForEvidence(out...), ok: true, nilable: nilable}
-}
-
-// mapKeyStaticallyAdmitsIndexKey is the bracket-read admission check: every
-// possible index key must be a subtype of the map key domain.
-func mapKeyStaticallyAdmitsIndexKey(key typ.Type, keyDomain typ.Type) bool {
-	return key != nil && keyDomain != nil && subtype.IsSubtype(key, keyDomain)
 }
 
 func literalStringKey(t typ.Type) (string, bool) {

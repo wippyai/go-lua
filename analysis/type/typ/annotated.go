@@ -127,19 +127,6 @@ func unwrapAnnotated(t Type) Type {
 	return t
 }
 
-func unwrapAnnotations(t Type) Type {
-	for {
-		ann, ok := t.(*Annotated)
-		if !ok {
-			return t
-		}
-		if ann.Inner == nil || ann.Inner == t {
-			return t
-		}
-		t = ann.Inner
-	}
-}
-
 func formatFloat(f float64) string {
 	if f == float64(int64(f)) {
 		return strconv.FormatInt(int64(f), 10)

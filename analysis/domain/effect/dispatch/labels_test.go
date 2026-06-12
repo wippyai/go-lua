@@ -39,29 +39,3 @@ func TestLabels(t *testing.T) {
 		})
 	}
 }
-
-func TestSelectors(t *testing.T) {
-	tests := []struct {
-		name string
-		row  effect.Row
-		has  func(effect.Row) bool
-	}{
-		{"module load", WithModuleLoad(), HasModuleLoad},
-		{"variadic transform", WithVariadicTransform(), HasVariadicTransform},
-		{"type predicate", WithTypePredicate(), HasTypePredicate},
-		{"type value method", WithTypeValueMethod(), HasTypeValueMethod},
-		{"callable type", WithCallableType(), HasCallableType},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if !tt.has(tt.row) {
-				t.Error("selector should find constructor label")
-			}
-
-			if tt.has(effect.Empty) {
-				t.Error("selector should not match empty row")
-			}
-		})
-	}
-}

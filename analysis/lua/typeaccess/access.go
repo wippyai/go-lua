@@ -4,7 +4,6 @@ package typeaccess
 import (
 	"github.com/wippyai/go-lua/analysis/type/normalize"
 	"github.com/wippyai/go-lua/analysis/type/subst"
-	"github.com/wippyai/go-lua/analysis/type/subtype"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/unwrap"
@@ -89,7 +88,7 @@ func fieldInRecord(r *typ.Record, name string) fieldResult {
 		return fieldResult{t: member.Type, ok: true, nilable: member.Optional}
 	}
 	if r.HasMapComponent() {
-		if mapKeyStaticallyAdmitsFieldName(r.MapKey, name) {
+		if typetable.MapComponentKeyMayContainString(r.MapKey, name) {
 			return fieldResult{t: r.MapValue, ok: true, nilable: true}
 		}
 	}
@@ -100,19 +99,13 @@ func fieldInRecord(r *typ.Record, name string) fieldResult {
 }
 
 func fieldInMap(key typ.Type, value typ.Type, name string) fieldResult {
-	if !mapKeyStaticallyAdmitsFieldName(key, name) {
+	if !typetable.MapComponentKeyMayContainString(key, name) {
 		return fieldResult{}
 	}
 	if value == nil {
 		return fieldResult{t: typ.Nil, ok: true}
 	}
 	return fieldResult{t: value, ok: true, nilable: true}
-}
-
-// mapKeyStaticallyAdmitsFieldName is the dot-read admission check: the exact
-// field literal must be a subtype of the map key domain.
-func mapKeyStaticallyAdmitsFieldName(key typ.Type, name string) bool {
-	return key != nil && subtype.IsSubtype(typ.LiteralString(name), key)
 }
 
 func fieldInUnion(u *typ.Union, name string, depth int) fieldResult {
