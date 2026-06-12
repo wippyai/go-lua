@@ -101,6 +101,46 @@ func TestAnnotationAssignabilityReportsMaybeParameterWithoutNarrowing(t *testing
 	}
 }
 
+func TestAnnotationAssignabilityUsesSolvedTypeTestState(t *testing.T) {
+	diags := runDiagnostics(t, `
+		function f(x: string | number)
+			if type(x) == "string" then
+				local n: number = x
+			else
+				local s: string = x
+			end
+		end
+	`)
+	if len(diags) != 2 {
+		t.Fatalf("diagnostics = %d, want 2: %#v", len(diags), diags)
+	}
+	for _, d := range diags {
+		if d.Code != CodeAssignmentType || !strings.Contains(d.Message, "cannot assign") {
+			t.Fatalf("diagnostic = %#v, want assignment mismatch", d)
+		}
+	}
+}
+
+func TestAnnotationAssignabilityUsesSolvedTypeNotState(t *testing.T) {
+	diags := runDiagnostics(t, `
+		function f(x: string | number)
+			if type(x) ~= "string" then
+				local s: string = x
+			else
+				local n: number = x
+			end
+		end
+	`)
+	if len(diags) != 2 {
+		t.Fatalf("diagnostics = %d, want 2: %#v", len(diags), diags)
+	}
+	for _, d := range diags {
+		if d.Code != CodeAssignmentType || !strings.Contains(d.Message, "cannot assign") {
+			t.Fatalf("diagnostic = %#v, want assignment mismatch", d)
+		}
+	}
+}
+
 func TestAnnotationAssignabilityAcceptsAssertedMaybeParameter(t *testing.T) {
 	diags := runDiagnosticsWithSignatures(t, `
 		function f(x: string?)

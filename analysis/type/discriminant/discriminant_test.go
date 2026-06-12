@@ -182,3 +182,38 @@ func TestNarrowByPathLiteralReturnsNeverForImpossibleSingleVariant(t *testing.T)
 		t.Fatalf("narrowed type = %s/%v, want never/true", got, ok)
 	}
 }
+
+func TestNarrowByPathLiteralNotKeepsNonMatchingVariant(t *testing.T) {
+	dog := typetable.NewRecord().
+		Field("kind", LiteralString("dog")).
+		Field("bark", Func().Returns().Build()).
+		Build()
+	cat := typetable.NewRecord().
+		Field("kind", LiteralString("cat")).
+		Field("meow", Func().Returns().Build()).
+		Build()
+
+	got, ok := NarrowByPathLiteralNot(NewUnion(dog, cat), []segment.Segment{
+		{Kind: segment.SegmentField, Name: "kind"},
+	}, LiteralString("dog"))
+	if !ok {
+		t.Fatal("expected strict negative discriminant narrowing")
+	}
+	if !TypeEquals(got, cat) {
+		t.Fatalf("narrowed type = %s, want cat variant %s", got, cat)
+	}
+}
+
+func TestNarrowByPathLiteralNotReturnsNeverForMatchingSingleVariant(t *testing.T) {
+	dog := typetable.NewRecord().
+		Field("kind", LiteralString("dog")).
+		Field("bark", Func().Returns().Build()).
+		Build()
+
+	got, ok := NarrowByPathLiteralNot(dog, []segment.Segment{
+		{Kind: segment.SegmentField, Name: "kind"},
+	}, LiteralString("dog"))
+	if !ok || got != Never {
+		t.Fatalf("narrowed type = %s/%v, want never/true", got, ok)
+	}
+}

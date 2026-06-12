@@ -34,20 +34,21 @@ func (p AnnotationAssignability) Produce(result *check.Result) []diagnostic.Diag
 	if graph == nil {
 		return nil
 	}
+	envs := literalEnvironments(result)
 	var out []diagnostic.Diagnostic
 	for _, point := range graph.RPO() {
 		fact, ok := result.LocalAssignment(point)
 		if !ok {
 			continue
 		}
-		if d, ok := p.localAssignment(result, point, fact); ok {
+		if d, ok := p.localAssignment(result, point, fact, envs[point]); ok {
 			out = append(out, d)
 		}
 	}
 	return out
 }
 
-func (p AnnotationAssignability) localAssignment(result *check.Result, point cfg.Point, fact semantics.LocalAssignmentFact) (diagnostic.Diagnostic, bool) {
+func (p AnnotationAssignability) localAssignment(result *check.Result, point cfg.Point, fact semantics.LocalAssignmentFact, env literalEnv) (diagnostic.Diagnostic, bool) {
 	if fact.Type == nil || fact.Expr == nil {
 		return diagnostic.Diagnostic{}, false
 	}
@@ -58,6 +59,9 @@ func (p AnnotationAssignability) localAssignment(result *check.Result, point cfg
 	got, ok := literalType(fact.Expr)
 	if !ok {
 		got, ok = projectedOptionalIndexType(result, p.Resolver, fact.Expr)
+	}
+	if !ok {
+		got, ok = projectedFlowSourceType(result, p.Resolver, point, env, fact.Expr)
 	}
 	if !ok {
 		got, ok = annotatedIdentifierType(result, p.Resolver, point, fact.Expr)
@@ -168,6 +172,36 @@ func shouldProjectOptionalIndex(result *check.Result, expr ast.Expr) bool {
 	return ok && len(container.Segments) > 0
 }
 
+func projectedFlowSourceType(result *check.Result, resolver typeannotation.Resolver, point cfg.Point, env literalEnv, expr ast.Expr) (typ.Type, bool) {
+	switch e := expr.(type) {
+	case *ast.AttrGetExpr:
+		if e.KeySyntax == ast.AttrKeyIndex && !shouldProjectOptionalIndex(result, e) {
+			return nil, false
+		}
+		got, ok := newFlowExpressionTyper(result, resolver, point, env).typeOf(expr)
+		if !ok {
+			return nil, false
+		}
+		raw, rawOK := newExpressionTyper(result, resolver).typeOf(expr)
+		if !rawOK || !typ.SameNodeOrAcyclicEqual(got, raw) {
+			return got, true
+		}
+		return nil, false
+	case *ast.IdentExpr:
+		got, ok := newFlowExpressionTyper(result, resolver, point, env).typeOf(expr)
+		if !ok {
+			return nil, false
+		}
+		raw, rawOK := newExpressionTyper(result, resolver).typeOf(expr)
+		if !rawOK || !typ.SameNodeOrAcyclicEqual(got, raw) {
+			return got, true
+		}
+		return nil, false
+	default:
+		return nil, false
+	}
+}
+
 func annotatedIdentifierType(result *check.Result, resolver typeannotation.Resolver, point cfg.Point, expr ast.Expr) (typ.Type, bool) {
 	if result == nil {
 		return nil, false
@@ -207,7 +241,10 @@ func refineDeclaredTypeWithValue(result *check.Result, declared typ.Type, value 
 		out = typ.Nil
 	}
 	if result != nil && result.Registry() != nil {
-		if runtimeType, ok := runtimeKindType(result.Registry(), value, p); ok {
+		kinds := product.Get(result.Registry(), value, runtimekind.Key)
+		if refined, ok := refineTypeByRuntimeKindSet(out, kinds, p); ok {
+			out = refined
+		} else if runtimeType, ok := runtimeKindType(result.Registry(), value, p); ok {
 			out = runtimeType
 		}
 	}
