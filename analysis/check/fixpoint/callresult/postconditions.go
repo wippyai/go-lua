@@ -114,7 +114,7 @@ func signatureNoNormalReturnFacts(config SignatureNoNormalReturnConfig) map[cfg.
 			Registry: config.Registry,
 			Point:    point,
 			Node:     config.Graph.Node(point),
-		}, callProducerForSite(site))
+		}, factflow.CallProducerFromSite(site))
 		if !ok {
 			continue
 		}
@@ -154,7 +154,7 @@ func summaryPostconditionFacts(config SummaryPostconditionConfig) summaryPostcon
 			Registry: config.Registry,
 			Point:    point,
 			Node:     config.Graph.Node(point),
-		}, callProducerForSite(site))
+		}, factflow.CallProducerFromSite(site))
 		if !ok {
 			continue
 		}
@@ -219,19 +219,11 @@ func signatureForSite(config SignaturePostconditionConfig, point cfg.Point, site
 		Graph: config.Graph,
 		Point: point,
 		Node:  config.Graph.Node(point),
-	}, callProducerForSite(site))
+	}, factflow.CallProducerFromSite(site))
 	if !ok {
 		return signature.Function{}, false
 	}
 	return config.Signatures.Lookup(name)
-}
-
-func callProducerForSite(site factflow.CallSite) factflow.CallProducer {
-	return factflow.NewCallProducer(factflow.CallProducerConfig{
-		CalleeSymbol:  site.CalleeSymbol(),
-		CalleePath:    site.CalleePath(),
-		ResultTargets: site.ResultTargets(),
-	})
 }
 
 func normalReturnRefinementLabels(sig signature.Function) []postcondition.NormalReturnRefinement {

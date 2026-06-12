@@ -339,6 +339,41 @@ func TestDTOConstructorsAndAccessorsCopySlices(t *testing.T) {
 	}
 }
 
+func TestCallProducerFromSiteProjectsOnlyNarrowProducerEvidence(t *testing.T) {
+	calleePath := path.NewPath(symbol.ID(21), "svc").Field("call")
+	receiverPath := path.NewPath(symbol.ID(21), "svc")
+	targetPath := path.NewPath(symbol.ID(22), "out")
+	targets := []CallResultTarget{
+		NewCallResultTarget(CallResultTargetLocalAssignment, 0, 0, symbol.ID(22), targetPath),
+	}
+	site := NewCallSite(CallSiteConfig{
+		Context:         CallSiteContextAssignmentSource,
+		CalleeSymbol:    symbol.ID(21),
+		CalleePath:      calleePath,
+		ReceiverPath:    receiverPath,
+		HasReceiverPath: true,
+		MethodName:      "call",
+		ExprIndex:       3,
+		TypeArgs:        []TypeRef{TypeRef(1)},
+		ResultTargets:   targets,
+		Final:           true,
+		Adjusted:        true,
+	})
+
+	producer := CallProducerFromSite(site)
+	if producer.CalleeSymbol() != site.CalleeSymbol() || !producer.CalleePath().Equal(site.CalleePath()) {
+		t.Fatalf("producer callee = %v/%v, want %v/%v", producer.CalleeSymbol(), producer.CalleePath(), site.CalleeSymbol(), site.CalleePath())
+	}
+	gotTargets := producer.ResultTargets()
+	if len(gotTargets) != 1 || gotTargets[0].Kind() != CallResultTargetLocalAssignment || !gotTargets[0].TargetPath().Equal(targetPath) {
+		t.Fatalf("producer targets = %#v, want copied local assignment target", gotTargets)
+	}
+	gotTargets[0] = NewCallResultTarget(CallResultTargetReturn, 0, 0, 0, path.Path{})
+	if got := producer.ResultTargets(); got[0].Kind() != CallResultTargetLocalAssignment {
+		t.Fatalf("projected producer exposed mutable result targets, got %v", got[0].Kind())
+	}
+}
+
 func TestTransferOwnedEnumsAreIndependentContracts(t *testing.T) {
 	kinds := []ValueSourceKind{
 		ValueSourceUnknown,

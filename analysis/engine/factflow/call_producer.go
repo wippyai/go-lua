@@ -31,6 +31,16 @@ func NewCallProducer(config CallProducerConfig) CallProducer {
 	}
 }
 
+// CallProducerFromSite projects rich call-site evidence to the narrow producer
+// fact used by call-result lookup.
+func CallProducerFromSite(site CallSite) CallProducer {
+	return NewCallProducer(CallProducerConfig{
+		CalleeSymbol:  site.CalleeSymbol(),
+		CalleePath:    site.CalleePath(),
+		ResultTargets: site.ResultTargets(),
+	})
+}
+
 // CalleeSymbol returns the callee's symbol identity.
 func (c CallProducer) CalleeSymbol() symbol.ID { return c.calleeSymbol }
 

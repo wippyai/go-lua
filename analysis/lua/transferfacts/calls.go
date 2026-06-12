@@ -24,7 +24,7 @@ func (l *lowerer) callProducer(fact semantics.CallFact) (factflow.CallProducer, 
 	return factflow.NewCallProducer(factflow.CallProducerConfig{
 		CalleeSymbol:  calleeSymbol,
 		CalleePath:    calleePath,
-		ResultTargets: l.callProducerResultTargets(fact.ResultTargets),
+		ResultTargets: l.strictProducerResultTargets(fact.ResultTargets),
 	}), true
 }
 
@@ -60,7 +60,7 @@ func (l *lowerer) callSite(fact semantics.CallFact) factflow.CallSite {
 		ExprIndex:       fact.ExprIndex,
 		ArgumentSources: l.valueSources(fact.ArgumentSources),
 		TypeArgs:        l.typeRefs(fact.TypeArgs),
-		ResultTargets:   l.callSiteResultTargets(fact.ResultTargets),
+		ResultTargets:   l.evidenceCallSiteResultTargets(fact.ResultTargets),
 		Final:           fact.Final,
 		Expanded:        fact.Expanded,
 		Adjusted:        fact.Adjusted,
