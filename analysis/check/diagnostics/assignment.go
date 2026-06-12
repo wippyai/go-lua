@@ -221,7 +221,7 @@ func annotatedIdentifierType(result *check.Result, resolver typeannotation.Resol
 	if !ok || path.Symbol == 0 || len(path.Segments) != 0 {
 		return nil, false
 	}
-	value, ok := result.SymbolValueAt(point, path.Symbol)
+	value, ok := result.SymbolValueAtBoundary(point, path.Symbol)
 	if !ok {
 		return nil, false
 	}

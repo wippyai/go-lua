@@ -112,7 +112,7 @@ func (p expressionTyper) flowOriginType(accessPath pathdom.Path) (typ.Type, bool
 	if p.result == nil || p.result.Registry() == nil || accessPath.Symbol == 0 {
 		return nil, false
 	}
-	value, ok := p.result.SymbolValueAt(p.point, accessPath.Symbol)
+	value, ok := p.result.SymbolValueAtBoundary(p.point, accessPath.Symbol)
 	if !ok || product.Equal(p.result.Registry(), value, product.Bottom(p.result.Registry())) {
 		return nil, false
 	}
@@ -128,7 +128,7 @@ func (p expressionTyper) flowRootType(t typ.Type, accessPath pathdom.Path) typ.T
 	if root.Symbol == 0 {
 		return t
 	}
-	if value, ok := p.result.SymbolValueAt(p.point, root.Symbol); ok {
+	if value, ok := p.result.SymbolValueAtBoundary(p.point, root.Symbol); ok {
 		if refined, ok := refineDeclaredTypeWithValue(p.result, t, value); ok {
 			t = refined
 		}

@@ -64,14 +64,17 @@ type Checker struct {
 }
 
 type Result struct {
-	registry   *axis.Registry
-	bindings   *bind.Result
-	cfg        *cfgbuild.Result
-	semantics  *semantics.Result
-	signatures signaturelookup.Source
-	facts      factflow.Facts
-	flow       transfer.Result
-	functions  []*Result
+	registry    *axis.Registry
+	bindings    *bind.Result
+	cfg         *cfgbuild.Result
+	semantics   *semantics.Result
+	signatures  signaturelookup.Source
+	facts       factflow.Facts
+	flow        transfer.Result
+	visibility  *visibility.Resolver
+	sources     sourcevalue.SourceValues
+	callResults factapply.CallResultProvider
+	functions   []*Result
 }
 
 func (r *Result) Registry() *axis.Registry {
@@ -585,13 +588,16 @@ func (c *Checker) run(bindings *bind.Result, built *cfgbuild.Result, sem *semant
 		WidenDelay: config.WidenDelay,
 	})
 	return &Result{
-		registry:   config.Registry,
-		bindings:   bindings,
-		cfg:        built,
-		semantics:  sem,
-		signatures: config.Signatures,
-		facts:      facts,
-		flow:       flow,
+		registry:    config.Registry,
+		bindings:    bindings,
+		cfg:         built,
+		semantics:   sem,
+		signatures:  config.Signatures,
+		facts:       facts,
+		flow:        flow,
+		visibility:  resolver,
+		sources:     sources,
+		callResults: callResults,
 	}
 }
 

@@ -13,6 +13,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/typewitness"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/standard"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
@@ -446,6 +447,92 @@ end
 	assertRuntimeKind(t, reg, got, runtimekind.Singleton(runtimekind.String))
 }
 
+func TestReadBoundaryCallResultAssignmentSourceSeesTypeWitness(t *testing.T) {
+	reg := standard.Registry()
+	stmts := parseChunk(t, `
+type Point = {x: number, y: number}
+local data: any = {}
+local v = Point(data)
+`)
+
+	result, err := CheckChunk(stmts, Config{Registry: reg})
+	if err != nil {
+		t.Fatalf("CheckChunk: %v", err)
+	}
+
+	assign := stmts[2].(*ast.LocalAssignStmt)
+	point := requireLocalAssignmentPoint(t, result, assign, 0)
+	fact, ok := result.facts.LocalAssignment(point)
+	if !ok {
+		t.Fatalf("missing lowered local assignment at %d", point)
+	}
+	source := fact.Source()
+	if source.Kind != factflow.ValueSourceCall || !source.HasCallPoint {
+		t.Fatalf("assignment source = %#v, want call result source", source)
+	}
+	v := mustLocalAt(t, result, assign, 0)
+	raw, ok := result.StateAt(point)
+	if !ok {
+		t.Fatalf("missing raw state at assignment point")
+	}
+	if got := raw.ReadValue(reg, key.SymbolValue(v)); !product.Equal(reg, got, product.Bottom(reg)) {
+		t.Fatalf("raw assignment input target = %v, want bottom before assignment materialization", got)
+	}
+
+	got, ok := result.SourceValueAtBoundary(point, source)
+	if !ok {
+		t.Fatalf("SourceValueAtBoundary returned false")
+	}
+	assertConcreteTypeWitness(t, reg, got)
+	target, ok := result.SymbolValueAtBoundary(point, v)
+	if !ok {
+		t.Fatalf("SymbolValueAtBoundary for assigned local returned false")
+	}
+	assertConcreteTypeWitness(t, reg, target)
+}
+
+func TestReadBoundaryBranchSuccessorExpressionSeesEdgeRefinement(t *testing.T) {
+	reg := standard.Registry()
+	stmts := parseChunk(t, `
+type Point = {x: number, y: number}
+function validate(data: any)
+	local _, err = Point:is(data)
+	if err == nil then
+		local narrowed = data
+	end
+end
+`)
+
+	parent, err := CheckChunk(stmts, Config{Registry: reg})
+	if err != nil {
+		t.Fatalf("CheckChunk: %v", err)
+	}
+	functions := parent.FunctionResults()
+	if len(functions) != 1 {
+		t.Fatalf("function results = %d, want 1", len(functions))
+	}
+	result := functions[0]
+	fn := result.Function()
+
+	data := mustParamSlot(t, result.bindings, fn, 0).Symbol
+	typeIsStmt := fn.Stmts[0].(*ast.LocalAssignStmt)
+	typeIsPoint := requireLocalAssignmentPoint(t, result, typeIsStmt, 1)
+	if before, ok := result.SymbolValueAtBoundary(typeIsPoint, data); ok {
+		if witness := product.Get(reg, before, typewitness.Key); !witness.IsTop() {
+			t.Fatalf("pre-branch data witness = %v, want no concrete witness", witness)
+		}
+	}
+
+	ifStmt := fn.Stmts[1].(*ast.IfStmt)
+	thenLocal := ifStmt.Then[0].(*ast.LocalAssignStmt)
+	thenPoint := requireLocalAssignmentPoint(t, result, thenLocal, 0)
+	got, ok := result.ExpressionValueAtBoundary(thenPoint, thenLocal.Exprs[0])
+	if !ok {
+		t.Fatalf("ExpressionValueAtBoundary returned false")
+	}
+	assertConcreteTypeWitness(t, reg, got)
+}
+
 func TestCheckChunkUserExpressionValueOverridesDefaultStaticReadProjector(t *testing.T) {
 	reg := standard.Registry()
 	stmts := parseChunk(t, `local out = t.name`)
@@ -688,6 +775,14 @@ func assertPresence(t *testing.T, _ *axis.Registry, got product.Value, want pres
 	t.Helper()
 	if gotPresence := product.PresenceOf(got); !presence.Equal(gotPresence, want) {
 		t.Fatalf("presence = %s, want %s", gotPresence, want)
+	}
+}
+
+func assertConcreteTypeWitness(t *testing.T, reg *axis.Registry, got product.Value) {
+	t.Helper()
+	witness := product.Get(reg, got, typewitness.Key)
+	if _, ok := witness.Type(); !ok {
+		t.Fatalf("type witness = %v, want concrete witness", witness)
 	}
 }
 
