@@ -76,6 +76,7 @@ func FromResult(result ResultReader) Summary {
 		NormalReturnParams:              projectNormalReturnParams(reg, result, exit),
 		NormalReturnParamConditions:     projectNormalReturnParamConditions(reg, result),
 		NormalReturnParamEqualities:     projectNormalReturnParamEqualities(reg, result),
+		NormalReturnFacts:               projectNormalReturnFacts(reg, result, exit),
 		ReturnConditionParamRefinements: projectReturnConditionParamRefinements(reg, result),
 		ReturnPresenceRelations:         projectReturnPresenceRelations(result),
 	}
