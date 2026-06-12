@@ -182,6 +182,13 @@ func (r *Result) FunctionDefinition(point cfg.Point) (cfgfacts.FunctionDefinitio
 	return r.semantics.FunctionDefinition(point)
 }
 
+func (r *Result) NumericFor(point cfg.Point) (cfgfacts.NumericForFact, bool) {
+	if r == nil || r.semantics == nil {
+		return cfgfacts.NumericForFact{}, false
+	}
+	return r.semantics.NumericFor(point)
+}
+
 func (r *Result) Function() *ast.FunctionExpr {
 	if r == nil || r.semantics == nil {
 		return nil

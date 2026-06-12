@@ -21,6 +21,7 @@ const (
 	CodeDirectCallArgType          diagnostic.Code = "type.call.direct.argument_type"
 	CodeReturnContractType         diagnostic.Code = "type.return.contract"
 	CodeDirectCallResultAssignment diagnostic.Code = "type.call.direct.result_assignment"
+	CodeNumericForOperand          diagnostic.Code = "type.for.numeric_operand"
 	CodeUnresolvedTypeReference    diagnostic.Code = "type.reference.unresolved"
 	CodeUnresolvedValueReference   diagnostic.Code = "value.reference.unresolved"
 	CodeBreakOutsideLoop           diagnostic.Code = "syntax.break.outside_loop"
@@ -52,6 +53,7 @@ func produceWithResolver(result *check.Result, config Config, parent typeannotat
 	out = append(out, ReturnContract(config).Produce(result)...)
 	out = append(out, produceDirectCallContract(result, config, defs)...)
 	out = append(out, produceDirectCallResultAssignment(result, config, defs)...)
+	out = append(out, NumericForOperands(config).Produce(result)...)
 	out = append(out, MemberCall(config).Produce(result)...)
 	for _, fn := range result.FunctionResults() {
 		out = append(out, produceWithResolver(fn, config, resolver, defs)...)

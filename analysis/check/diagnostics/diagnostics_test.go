@@ -364,6 +364,60 @@ func TestMemberCallSkipsUnnarrowedPrimitiveMethod(t *testing.T) {
 	}
 }
 
+func TestNumericForReportsStringInit(t *testing.T) {
+	diags := runDiagnostics(t, `
+		for i = "one", 10 do
+		end
+	`)
+	if len(diags) != 1 {
+		t.Fatalf("diagnostics = %d, want 1: %#v", len(diags), diags)
+	}
+	d := diags[0]
+	if d.Code != CodeNumericForOperand || d.Severity != diagnostic.SeverityError {
+		t.Fatalf("diagnostic code/severity = %s/%s", d.Code, d.Severity)
+	}
+	if !strings.Contains(d.Message, "initial value") || !strings.Contains(d.Message, `"one"`) {
+		t.Fatalf("message = %q", d.Message)
+	}
+}
+
+func TestNumericForReportsStringLimitAndStep(t *testing.T) {
+	diags := runDiagnostics(t, `
+		for i = 1, "ten", "one" do
+		end
+	`)
+	if len(diags) != 2 {
+		t.Fatalf("diagnostics = %d, want 2: %#v", len(diags), diags)
+	}
+	if diags[0].Code != CodeNumericForOperand || !strings.Contains(diags[0].Message, "limit") {
+		t.Fatalf("first diagnostic = %#v, want limit numeric-for operand", diags[0])
+	}
+	if diags[1].Code != CodeNumericForOperand || !strings.Contains(diags[1].Message, "step") {
+		t.Fatalf("second diagnostic = %#v, want step numeric-for operand", diags[1])
+	}
+}
+
+func TestNumericForAcceptsNumbersAndDefaultStep(t *testing.T) {
+	diags := runDiagnostics(t, `
+		for i = 1, 10 do
+		end
+	`)
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v, want none", diags)
+	}
+}
+
+func TestNumericForSkipsUnknownAndPartlyNumericUnion(t *testing.T) {
+	diags := runDiagnostics(t, `
+		local mixed: number | string = value
+		for i = value, mixed do
+		end
+	`)
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v, want none for unknown and partly numeric union", diags)
+	}
+}
+
 func TestDirectCallReportsNonCallableTarget(t *testing.T) {
 	diags := runDiagnostics(t, `
 		local x: number = 42
