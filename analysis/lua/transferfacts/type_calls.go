@@ -115,11 +115,11 @@ func (l *lowerer) addTypeIsBranchRefinements(input *factflow.FactsInput, graph c
 				)
 			}
 			for _, cond := range edges {
-				appendBranchRefinement(input.BranchRefinementSets, branch,
+				appendBranchRefinement(input.BranchRefinements, branch,
 					branchRefinementOnEdge(argPath, factflow.NewValueConstraint(value), cond),
 				)
 				if hasValuePath {
-					appendBranchRefinement(input.BranchRefinementSets, branch,
+					appendBranchRefinement(input.BranchRefinements, branch,
 						branchRefinementOnEdge(valuePath, factflow.NewValueConstraint(value), cond),
 					)
 				}
@@ -148,7 +148,7 @@ func (l *lowerer) addTypeIsConditionBranchRefinements(
 		if !ok {
 			continue
 		}
-		appendBranchRefinement(input.BranchRefinementSets, branch,
+		appendBranchRefinement(input.BranchRefinements, branch,
 			branchRefinementOnEdge(argPath, factflow.NewValueConstraint(value), successCond),
 		)
 	}
@@ -330,10 +330,7 @@ func typeIsKillsPath(candidate path.Path, targets typeIsTargets) bool {
 
 func absentPresenceEdges(input *factflow.FactsInput, branch cfg.Point, target path.Path) []bool {
 	var out []bool
-	if fact, ok := input.BranchRefinements[branch]; ok && fact.TargetPath().Equal(target) {
-		out = appendAbsentPresenceEdges(out, fact)
-	}
-	if set, ok := input.BranchRefinementSets[branch]; ok {
+	if set, ok := input.BranchRefinements[branch]; ok {
 		for _, fact := range set.Refinements() {
 			if fact.TargetPath().Equal(target) {
 				out = appendAbsentPresenceEdges(out, fact)

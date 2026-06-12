@@ -49,7 +49,7 @@ func TestLowerClaimsToSidecarsWithoutProofRefinements(t *testing.T) {
 	assertLoweredAssertion(t, facts, typeSource, assertion.Type(), factflow.ValueSourceExpression)
 	assertLoweredAssertion(t, facts, anySource, assertion.Any(), factflow.ValueSourceExpression)
 	assertLoweredAssertion(t, facts, nonNilSource, assertion.NonNil(), factflow.ValueSourceExpression)
-	if _, ok := facts.BranchRefinement(points[2]); ok {
+	if len(facts.BranchRefinements(points[2])) != 0 {
 		t.Fatalf("x! assignment produced branch/presence refinement")
 	}
 }
@@ -123,7 +123,7 @@ local a, b, c, d = x as number, x :: number, x as any, x :: any
 		})
 	}
 	for _, point := range built.Graph.RPO() {
-		if _, ok := facts.BranchRefinement(point); ok {
+		if len(facts.BranchRefinements(point)) != 0 {
 			t.Fatalf("parsed source cast emitted branch refinement at point %d", point)
 		}
 	}
@@ -150,7 +150,7 @@ if x :: number then end
 		t.Run(tc.name, func(t *testing.T) {
 			stmt := mustIfStmt(t, stmts, tc.index)
 			point := requireStmtPoints(t, built, stmt, 1)[0]
-			if _, ok := facts.BranchRefinement(point); ok {
+			if len(facts.BranchRefinements(point)) != 0 {
 				t.Fatalf("%s emitted branch refinement at point %d", tc.name, point)
 			}
 
@@ -414,7 +414,7 @@ func TestLowerClaimRefinementsApplyIndicatorsWithoutMutatingBaseValues(t *testin
 				}
 			}
 			if tc.checkNoRefinement {
-				if _, ok := facts.BranchRefinement(tc.point); ok {
+				if len(facts.BranchRefinements(tc.point)) != 0 {
 					t.Fatalf("%s assignment produced branch refinement", tc.name)
 				}
 			}

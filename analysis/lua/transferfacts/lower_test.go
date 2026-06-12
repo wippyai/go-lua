@@ -97,12 +97,9 @@ func assertLoweredBranchValuePresence(
 	hasFalse bool,
 ) {
 	t.Helper()
-	refinement, ok := facts.BranchRefinement(point)
+	refinement, ok := branchRefinementAt(facts.BranchRefinements(point), wantPath)
 	if !ok {
 		t.Fatalf("missing branch refinement at point %d", point)
-	}
-	if !refinement.TargetPath().Equal(wantPath) {
-		t.Fatalf("branch target path = %#v, want %#v", refinement.TargetPath(), wantPath)
 	}
 	assertOptionalValuePresence(t, "true edge", refinement.TrueValue, wantTrue, hasTrue)
 	assertOptionalValuePresence(t, "false edge", refinement.FalseValue, wantFalse, hasFalse)
@@ -142,12 +139,9 @@ func assertLoweredBranchValueRefinement(
 	wantFalse valueRefinementExpectation,
 ) {
 	t.Helper()
-	refinement, ok := facts.BranchRefinement(point)
+	refinement, ok := branchRefinementAt(facts.BranchRefinements(point), wantPath)
 	if !ok {
 		t.Fatalf("missing branch refinement at point %d", point)
-	}
-	if !refinement.TargetPath().Equal(wantPath) {
-		t.Fatalf("branch target path = %#v, want %#v", refinement.TargetPath(), wantPath)
 	}
 	trueValue, ok := refinement.TrueValue()
 	if !ok {
@@ -209,7 +203,7 @@ func assertLoweredBranchPathEquality(
 	if inequality.ActiveOnEdge(true) != !wantTrue || inequality.ActiveOnEdge(false) != !wantFalse {
 		t.Fatalf("inequality relation active true/false = %v/%v, want %v/%v", inequality.ActiveOnEdge(true), inequality.ActiveOnEdge(false), !wantTrue, !wantFalse)
 	}
-	if _, ok := facts.BranchRefinement(point); ok {
+	if len(facts.BranchRefinements(point)) != 0 {
 		t.Fatalf("path equality relation at point %d also lowered as branch refinement", point)
 	}
 }
@@ -451,7 +445,7 @@ func assertNoPointFact(t *testing.T, facts factflow.Facts, point cfg.Point) {
 	if _, ok := facts.PathDescendantInvalidation(point); ok {
 		t.Fatalf("point %d lowered as path descendant invalidation", point)
 	}
-	if _, ok := facts.BranchRefinement(point); ok {
+	if len(facts.BranchRefinements(point)) != 0 {
 		t.Fatalf("point %d lowered as branch refinement", point)
 	}
 	if relations := facts.BranchPathRelations(point); len(relations) != 0 {
@@ -496,4 +490,13 @@ func assertNoCompilerASTTypes(t *testing.T, typ reflect.Type) {
 		}
 	}
 	walk(typ)
+}
+
+func branchRefinementAt(refinements []factflow.BranchRefinement, wantPath path.Path) (factflow.BranchRefinement, bool) {
+	for _, refinement := range refinements {
+		if refinement.TargetPath().Equal(wantPath) {
+			return refinement, true
+		}
+	}
+	return factflow.BranchRefinement{}, false
 }

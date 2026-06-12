@@ -10,8 +10,7 @@ type FactsInput struct {
 	PathAssignments             map[cfg.Point]PathAssignment
 	PathDescendantInvalidations map[cfg.Point]PathDescendantInvalidation
 	NoNormalReturns             map[cfg.Point]struct{}
-	BranchRefinements           map[cfg.Point]BranchRefinement
-	BranchRefinementSets        map[cfg.Point]BranchRefinementSet
+	BranchRefinements           map[cfg.Point]BranchRefinementSet
 	BranchPresenceRelations     map[cfg.Point]BranchPresenceRelationSet
 	BranchPathRelations         map[cfg.Point]BranchPathRelationSet
 	PostconditionRefinements    map[cfg.Point]PostconditionRefinementSet
@@ -34,8 +33,7 @@ type Facts struct {
 	pathAssignments             map[cfg.Point]PathAssignment
 	pathDescendantInvalidations map[cfg.Point]PathDescendantInvalidation
 	noNormalReturns             map[cfg.Point]struct{}
-	branchRefinements           map[cfg.Point]BranchRefinement
-	branchRefinementSets        map[cfg.Point]BranchRefinementSet
+	branchRefinements           map[cfg.Point]BranchRefinementSet
 	branchPresenceRelations     map[cfg.Point]BranchPresenceRelationSet
 	branchPathRelations         map[cfg.Point]BranchPathRelationSet
 	postconditionRefinements    map[cfg.Point]PostconditionRefinementSet
@@ -59,8 +57,7 @@ func NewFacts(input FactsInput) Facts {
 		pathAssignments:             copyPathAssignmentMap(input.PathAssignments),
 		pathDescendantInvalidations: copyPathDescendantInvalidationMap(input.PathDescendantInvalidations),
 		noNormalReturns:             copyNoNormalReturnMap(input.NoNormalReturns),
-		branchRefinements:           copyBranchRefinementMap(input.BranchRefinements),
-		branchRefinementSets:        copyBranchRefinementSetMap(input.BranchRefinementSets),
+		branchRefinements:           copyBranchRefinementSetMap(input.BranchRefinements),
 		branchPresenceRelations:     copyBranchPresenceRelationMap(input.BranchPresenceRelations),
 		branchPathRelations:         copyBranchPathRelationMap(input.BranchPathRelations),
 		postconditionRefinements:    copyPostconditionRefinementMap(input.PostconditionRefinements),
@@ -87,13 +84,13 @@ func (f Facts) WithBranchPresenceRelations(relations map[cfg.Point]BranchPresenc
 	return f
 }
 
-// WithBranchRefinementSets returns f plus the supplied branch-edge value
+// WithBranchRefinements returns f plus the supplied branch-edge value
 // refinements.
-func (f Facts) WithBranchRefinementSets(refinements map[cfg.Point]BranchRefinementSet) Facts {
+func (f Facts) WithBranchRefinements(refinements map[cfg.Point]BranchRefinementSet) Facts {
 	if len(refinements) == 0 {
 		return f
 	}
-	f.branchRefinementSets = mergeBranchRefinementSetMap(f.branchRefinementSets, refinements)
+	f.branchRefinements = mergeBranchRefinementSetMap(f.branchRefinements, refinements)
 	return f
 }
 
@@ -170,25 +167,12 @@ func (f Facts) NoNormalReturn(point cfg.Point) bool {
 	return ok
 }
 
-// BranchRefinement returns the branch-edge value refinement at point.
-func (f Facts) BranchRefinement(point cfg.Point) (BranchRefinement, bool) {
-	fact, ok := f.branchRefinements[point]
-	if !ok {
-		return BranchRefinement{}, false
-	}
-	return fact.copy(), true
-}
-
 // BranchRefinements returns all branch-edge value refinements at point.
 func (f Facts) BranchRefinements(point cfg.Point) []BranchRefinement {
-	var out []BranchRefinement
-	if fact, ok := f.branchRefinements[point]; ok {
-		out = append(out, fact.copy())
+	if set, ok := f.branchRefinements[point]; ok {
+		return set.Refinements()
 	}
-	if set, ok := f.branchRefinementSets[point]; ok {
-		out = append(out, set.Refinements()...)
-	}
-	return out
+	return nil
 }
 
 // BranchPresenceRelations returns branch-triggered presence relations at point.

@@ -74,7 +74,7 @@ func WithSummaryPostconditions(config SummaryPostconditionConfig) factflow.Facts
 	facts := summaryPostconditionFacts(config)
 	out := config.Facts.WithPostconditionRefinements(facts.refinements)
 	out = out.WithPostconditionPathRelations(facts.pathRelations)
-	out = out.WithBranchRefinementSets(facts.branchRefinements)
+	out = out.WithBranchRefinements(facts.branchRefinements)
 	return out.WithBranchPresenceRelations(facts.branchPresenceRelations)
 }
 

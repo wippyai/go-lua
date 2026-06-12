@@ -123,17 +123,6 @@ func (s BranchRefinementSet) copy() BranchRefinementSet {
 	return BranchRefinementSet{refinements: copyBranchRefinementSlice(s.refinements)}
 }
 
-func copyBranchRefinementMap(in map[cfg.Point]BranchRefinement) map[cfg.Point]BranchRefinement {
-	if len(in) == 0 {
-		return nil
-	}
-	out := make(map[cfg.Point]BranchRefinement, len(in))
-	for point, fact := range in {
-		out[point] = fact.copy()
-	}
-	return out
-}
-
 func copyBranchRefinementSetMap(in map[cfg.Point]BranchRefinementSet) map[cfg.Point]BranchRefinementSet {
 	if len(in) == 0 {
 		return nil

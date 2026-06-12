@@ -393,15 +393,13 @@ func TestFactsCarrierCopiesAndReturnsFalseForMissingFacts(t *testing.T) {
 		PathDescendantInvalidations: map[cfg.Point]PathDescendantInvalidation{
 			point: NewPathDescendantInvalidation(path.NewPath(symbol.ID(36), "item").Field("container")),
 		},
-		BranchRefinements: map[cfg.Point]BranchRefinement{
-			point: NewBranchRefinement(
-				path.NewPath(symbol.ID(34), "value").Field("ready"),
-				valueRefinementWithPresenceRuntime(presence.Present(), runtimekind.Singleton(runtimekind.Table)), true,
-				valueRefinementWithPresenceRuntime(presence.Absent(), runtimekind.Singleton(runtimekind.Nil)), true,
-			),
-		},
-		BranchRefinementSets: map[cfg.Point]BranchRefinementSet{
+		BranchRefinements: map[cfg.Point]BranchRefinementSet{
 			point: NewBranchRefinementSet(
+				NewBranchRefinement(
+					path.NewPath(symbol.ID(34), "value").Field("ready"),
+					valueRefinementWithPresenceRuntime(presence.Present(), runtimekind.Singleton(runtimekind.Table)), true,
+					valueRefinementWithPresenceRuntime(presence.Absent(), runtimekind.Singleton(runtimekind.Nil)), true,
+				),
 				NewBranchRefinement(
 					path.NewPath(symbol.ID(44), "other").Field("ready"),
 					valueRefinementWithPresence(presence.Present()), true,
@@ -489,12 +487,12 @@ func TestFactsCarrierCopiesAndReturnsFalseForMissingFacts(t *testing.T) {
 	input.OrdinaryAssignments[point] = NewRootAssignment(symbol.ID(41), path.NewPath(symbol.ID(41), "changed"), callSource)
 	input.PathAssignments[point] = NewPathAssignment(path.NewPath(symbol.ID(42), "changed").Field("field"), callSource)
 	input.PathDescendantInvalidations[point] = NewPathDescendantInvalidation(path.NewPath(symbol.ID(53), "changed"))
-	input.BranchRefinements[point] = NewBranchRefinement(
-		path.NewPath(symbol.ID(43), "changed").Field("field"),
-		valueRefinementWithPresence(presence.Absent()), true,
-		valueRefinementWithPresence(presence.Present()), true,
-	)
-	input.BranchRefinementSets[point] = NewBranchRefinementSet(
+	input.BranchRefinements[point] = NewBranchRefinementSet(
+		NewBranchRefinement(
+			path.NewPath(symbol.ID(43), "changed").Field("field"),
+			valueRefinementWithPresence(presence.Absent()), true,
+			valueRefinementWithPresence(presence.Present()), true,
+		),
 		NewBranchRefinement(
 			path.NewPath(symbol.ID(45), "changed").Field("field"),
 			valueRefinementWithPresence(presence.Absent()), true,
@@ -543,9 +541,6 @@ func TestFactsCarrierCopiesAndReturnsFalseForMissingFacts(t *testing.T) {
 	}
 	if _, ok := facts.PathDescendantInvalidation(missing); ok {
 		t.Fatal("missing path descendant invalidation returned ok")
-	}
-	if _, ok := facts.BranchRefinement(missing); ok {
-		t.Fatal("missing branch refinement returned ok")
 	}
 	if got := facts.BranchRefinements(missing); len(got) != 0 {
 		t.Fatalf("missing branch refinements = %#v, want empty", got)
@@ -618,14 +613,15 @@ func TestFactsCarrierCopiesAndReturnsFalseForMissingFacts(t *testing.T) {
 	invalidationAgain, _ := facts.PathDescendantInvalidation(point)
 	assertDirectField(t, invalidationAgain.ContainerPath(), "container")
 
-	branchRefinement, ok := facts.BranchRefinement(point)
-	if !ok {
-		t.Fatal("branch refinement missing")
+	branchRefinements := facts.BranchRefinements(point)
+	if len(branchRefinements) != 2 {
+		t.Fatalf("branch refinements len = %d, want 2", len(branchRefinements))
 	}
+	branchRefinement := branchRefinements[0]
 	assertPathEqual(t, branchRefinement.TargetPath(), path.NewPath(symbol.ID(34), "value").Field("ready"))
 	branchRefinementPath := branchRefinement.TargetPath()
 	branchRefinementPath.Segments[0].Name = "mutated"
-	branchRefinementAgain, _ := facts.BranchRefinement(point)
+	branchRefinementAgain := facts.BranchRefinements(point)[0]
 	assertDirectField(t, branchRefinementAgain.TargetPath(), "ready")
 	trueValue, ok := branchRefinementAgain.TrueValue()
 	if !ok {
@@ -637,11 +633,6 @@ func TestFactsCarrierCopiesAndReturnsFalseForMissingFacts(t *testing.T) {
 		t.Fatalf("branch false value missing")
 	}
 	assertValueRefinementConstraint(t, "branch false", falseValue, presence.Absent(), runtimekind.Singleton(runtimekind.Nil))
-	branchRefinements := facts.BranchRefinements(point)
-	if len(branchRefinements) != 2 {
-		t.Fatalf("branch refinements len = %d, want 2", len(branchRefinements))
-	}
-	assertPathEqual(t, branchRefinements[0].TargetPath(), path.NewPath(symbol.ID(34), "value").Field("ready"))
 	assertPathEqual(t, branchRefinements[1].TargetPath(), path.NewPath(symbol.ID(44), "other").Field("ready"))
 	branchRefinements[1] = NewBranchRefinement(
 		path.NewPath(symbol.ID(46), "mutated"),

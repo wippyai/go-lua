@@ -324,7 +324,7 @@ func TestLowerSkipsUnknownTypeGuardBranchRefinements(t *testing.T) {
 
 	facts := lowerFacts(t, result, built.Graph, standard.Registry())
 	point := requireStmtPoints(t, built, typeStmt, 1)[0]
-	if _, ok := facts.BranchRefinement(point); ok {
+	if len(facts.BranchRefinements(point)) != 0 {
 		t.Fatalf("unknown type guard branch point %d lowered as branch refinement", point)
 	}
 }

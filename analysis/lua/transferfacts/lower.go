@@ -39,8 +39,7 @@ func Lower(result *semantics.Result, graph cfg.Graph, config Config) factflow.Fa
 		OrdinaryAssignments:         make(map[cfg.Point]factflow.RootAssignment),
 		PathAssignments:             make(map[cfg.Point]factflow.PathAssignment),
 		PathDescendantInvalidations: make(map[cfg.Point]factflow.PathDescendantInvalidation),
-		BranchRefinements:           make(map[cfg.Point]factflow.BranchRefinement),
-		BranchRefinementSets:        make(map[cfg.Point]factflow.BranchRefinementSet),
+		BranchRefinements:           make(map[cfg.Point]factflow.BranchRefinementSet),
 		BranchPresenceRelations:     make(map[cfg.Point]factflow.BranchPresenceRelationSet),
 		BranchPathRelations:         make(map[cfg.Point]factflow.BranchPathRelationSet),
 		PostconditionRefinements:    make(map[cfg.Point]factflow.PostconditionRefinementSet),
@@ -106,7 +105,7 @@ func Lower(result *semantics.Result, graph cfg.Graph, config Config) factflow.Fa
 		}
 		if fact, ok := result.BranchCondition(point); ok {
 			if lowered, ok := l.branchRefinement(fact); ok {
-				input.BranchRefinements[point] = lowered
+				appendBranchRefinement(input.BranchRefinements, point, lowered)
 			}
 			if lowered, ok := l.branchPathRelations(fact); ok {
 				input.BranchPathRelations[point] = lowered

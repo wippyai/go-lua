@@ -141,11 +141,13 @@ func TestWithSignatureRelationsLowersErrorReturnToBranchPresenceRelations(t *tes
 				HasCallPoint: true,
 			}),
 		},
-		BranchRefinements: map[cfg.Point]factflow.BranchRefinement{
-			branch: factflow.NewBranchRefinement(
-				errPath,
-				factflow.NewValueConstraint(product.NewWithPresence(standard.Registry(), product.ShapeTop, presence.Absent())), true,
-				factflow.NewValueConstraint(product.NewWithPresence(standard.Registry(), product.ShapeTop, presence.Present())), true,
+		BranchRefinements: map[cfg.Point]factflow.BranchRefinementSet{
+			branch: factflow.NewBranchRefinementSet(
+				factflow.NewBranchRefinement(
+					errPath,
+					factflow.NewValueConstraint(product.NewWithPresence(standard.Registry(), product.ShapeTop, presence.Absent())), true,
+					factflow.NewValueConstraint(product.NewWithPresence(standard.Registry(), product.ShapeTop, presence.Present())), true,
+				),
 			),
 		},
 	})
@@ -218,11 +220,13 @@ func TestWithSignatureRelationsStopsAtErrorReturnTargetReassignment(t *testing.T
 		OrdinaryAssignments: map[cfg.Point]factflow.RootAssignment{
 			reassignErr: factflow.NewRootAssignment(err, errPath, factflow.ValueSource{Kind: factflow.ValueSourceNil}),
 		},
-		BranchRefinements: map[cfg.Point]factflow.BranchRefinement{
-			branch: factflow.NewBranchRefinement(
-				errPath,
-				factflow.NewValueConstraint(product.NewWithPresence(standard.Registry(), product.ShapeTop, presence.Absent())), true,
-				factflow.NewValueConstraint(product.NewWithPresence(standard.Registry(), product.ShapeTop, presence.Present())), true,
+		BranchRefinements: map[cfg.Point]factflow.BranchRefinementSet{
+			branch: factflow.NewBranchRefinementSet(
+				factflow.NewBranchRefinement(
+					errPath,
+					factflow.NewValueConstraint(product.NewWithPresence(standard.Registry(), product.ShapeTop, presence.Absent())), true,
+					factflow.NewValueConstraint(product.NewWithPresence(standard.Registry(), product.ShapeTop, presence.Present())), true,
+				),
 			),
 		},
 	})
@@ -648,11 +652,13 @@ func TestWithSummaryPostconditionsLowersReturnPresenceRelations(t *testing.T) {
 				HasCallPoint: true,
 			}),
 		},
-		BranchRefinements: map[cfg.Point]factflow.BranchRefinement{
-			branch: factflow.NewBranchRefinement(
-				errPath,
-				factflow.NewValueConstraint(product.NewWithPresence(reg, product.ShapeTop, presence.Present())), true,
-				factflow.NewValueConstraint(product.NewWithPresence(reg, product.ShapeTop, presence.Absent())), true,
+		BranchRefinements: map[cfg.Point]factflow.BranchRefinementSet{
+			branch: factflow.NewBranchRefinementSet(
+				factflow.NewBranchRefinement(
+					errPath,
+					factflow.NewValueConstraint(product.NewWithPresence(reg, product.ShapeTop, presence.Present())), true,
+					factflow.NewValueConstraint(product.NewWithPresence(reg, product.ShapeTop, presence.Absent())), true,
+				),
 			),
 		},
 	})

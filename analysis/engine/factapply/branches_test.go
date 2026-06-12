@@ -40,8 +40,10 @@ func TestFactsEdgeTransferAppliesNilRefinementsOnRootValue(t *testing.T) {
 		EntryState: initial,
 		EdgeTransfer: NewFactsEdgeTransfer(FactsEdgeTransferConfig{
 			Facts: factflow.NewFacts(factflow.FactsInput{
-				BranchRefinements: map[cfg.Point]factflow.BranchRefinement{
-					branch: branchWithPresence(pathdom.NewPath(target, "x"), presence.Absent(), true, presence.Present(), true),
+				BranchRefinements: map[cfg.Point]factflow.BranchRefinementSet{
+					branch: factflow.NewBranchRefinementSet(
+						branchWithPresence(pathdom.NewPath(target, "x"), presence.Absent(), true, presence.Present(), true),
+					),
 				},
 			}),
 		}),
@@ -74,11 +76,9 @@ func TestFactsEdgeTransferAppliesMultipleRefinementsOnSameBranchEdge(t *testing.
 		EntryState: initial,
 		EdgeTransfer: NewFactsEdgeTransfer(FactsEdgeTransferConfig{
 			Facts: factflow.NewFacts(factflow.FactsInput{
-				BranchRefinements: map[cfg.Point]factflow.BranchRefinement{
-					branch: branchWithPresence(pathdom.NewPath(firstTarget, "first"), presence.Present(), true, presence.Absent(), true),
-				},
-				BranchRefinementSets: map[cfg.Point]factflow.BranchRefinementSet{
+				BranchRefinements: map[cfg.Point]factflow.BranchRefinementSet{
 					branch: factflow.NewBranchRefinementSet(
+						branchWithPresence(pathdom.NewPath(firstTarget, "first"), presence.Present(), true, presence.Absent(), true),
 						branchWithPresence(pathdom.NewPath(secondTarget, "second"), presence.Present(), true, presence.Absent(), true),
 					),
 				},
@@ -118,8 +118,10 @@ func TestFactsEdgeTransferAppliesBranchPresenceRelationFromErrorPath(t *testing.
 		EntryState: initial,
 		EdgeTransfer: NewFactsEdgeTransfer(FactsEdgeTransferConfig{
 			Facts: factflow.NewFacts(factflow.FactsInput{
-				BranchRefinements: map[cfg.Point]factflow.BranchRefinement{
-					branch: branchWithPresence(errPath, presence.Absent(), true, presence.Present(), true),
+				BranchRefinements: map[cfg.Point]factflow.BranchRefinementSet{
+					branch: factflow.NewBranchRefinementSet(
+						branchWithPresence(errPath, presence.Absent(), true, presence.Present(), true),
+					),
 				},
 				BranchPresenceRelations: map[cfg.Point]factflow.BranchPresenceRelationSet{
 					branch: factflow.NewBranchPresenceRelationSet(
@@ -435,8 +437,10 @@ func TestFactsEdgeTransferErrorReturnRelationDoesNotInventFalsyNilBranch(t *test
 		EntryState: initial,
 		EdgeTransfer: NewFactsEdgeTransfer(FactsEdgeTransferConfig{
 			Facts: factflow.NewFacts(factflow.FactsInput{
-				BranchRefinements: map[cfg.Point]factflow.BranchRefinement{
-					branch: branchWithPresence(errPath, presence.Present(), true, presence.Bottom(), false),
+				BranchRefinements: map[cfg.Point]factflow.BranchRefinementSet{
+					branch: factflow.NewBranchRefinementSet(
+						branchWithPresence(errPath, presence.Present(), true, presence.Bottom(), false),
+					),
 				},
 				BranchPresenceRelations: map[cfg.Point]factflow.BranchPresenceRelationSet{
 					branch: factflow.NewBranchPresenceRelationSet(
@@ -494,8 +498,8 @@ func TestFactsEdgeTransferOneSidedTruthyFalsyRefinements(t *testing.T) {
 				EntryState: initial,
 				EdgeTransfer: NewFactsEdgeTransfer(FactsEdgeTransferConfig{
 					Facts: factflow.NewFacts(factflow.FactsInput{
-						BranchRefinements: map[cfg.Point]factflow.BranchRefinement{
-							branch: tc.fact,
+						BranchRefinements: map[cfg.Point]factflow.BranchRefinementSet{
+							branch: factflow.NewBranchRefinementSet(tc.fact),
 						},
 					}),
 				}),
@@ -532,8 +536,10 @@ func TestFactsEdgeTransferRefinesStaticMemberPathThroughVisibility(t *testing.T)
 		EntryState: initial,
 		EdgeTransfer: NewFactsEdgeTransfer(FactsEdgeTransferConfig{
 			Facts: factflow.NewFacts(factflow.FactsInput{
-				BranchRefinements: map[cfg.Point]factflow.BranchRefinement{
-					branch: branchWithPresence(targetPath, presence.Present(), true, presence.Absent(), true),
+				BranchRefinements: map[cfg.Point]factflow.BranchRefinementSet{
+					branch: factflow.NewBranchRefinementSet(
+						branchWithPresence(targetPath, presence.Present(), true, presence.Absent(), true),
+					),
 				},
 			}),
 			Visibility: visibility.NewResolver(visibilityBuilder.Build()),
@@ -565,8 +571,10 @@ func TestFactsEdgeTransferRefinesRuntimeKindOnRootValue(t *testing.T) {
 		EntryState: initial,
 		EdgeTransfer: NewFactsEdgeTransfer(FactsEdgeTransferConfig{
 			Facts: factflow.NewFacts(factflow.FactsInput{
-				BranchRefinements: map[cfg.Point]factflow.BranchRefinement{
-					branch: branchWithRuntimeKind(pathdom.NewPath(target, "x"), runtimekind.Singleton(runtimekind.Table), true, runtimekind.Value{}, false),
+				BranchRefinements: map[cfg.Point]factflow.BranchRefinementSet{
+					branch: factflow.NewBranchRefinementSet(
+						branchWithRuntimeKind(pathdom.NewPath(target, "x"), runtimekind.Singleton(runtimekind.Table), true, runtimekind.Value{}, false),
+					),
 				},
 			}),
 		}),
@@ -601,8 +609,10 @@ func TestFactsEdgeTransferRefinesRuntimeKindOnStaticMemberPath(t *testing.T) {
 		EntryState: initial,
 		EdgeTransfer: NewFactsEdgeTransfer(FactsEdgeTransferConfig{
 			Facts: factflow.NewFacts(factflow.FactsInput{
-				BranchRefinements: map[cfg.Point]factflow.BranchRefinement{
-					branch: branchWithRuntimeKind(targetPath, runtimekind.Singleton(runtimekind.Function), true, runtimekind.Value{}, false),
+				BranchRefinements: map[cfg.Point]factflow.BranchRefinementSet{
+					branch: factflow.NewBranchRefinementSet(
+						branchWithRuntimeKind(targetPath, runtimekind.Singleton(runtimekind.Function), true, runtimekind.Value{}, false),
+					),
 				},
 			}),
 			Visibility: visibility.NewResolver(visibilityBuilder.Build()),
@@ -634,8 +644,10 @@ func TestFactsEdgeTransferRuntimeKindContradictionGoesBottom(t *testing.T) {
 		EntryState: initial,
 		EdgeTransfer: NewFactsEdgeTransfer(FactsEdgeTransferConfig{
 			Facts: factflow.NewFacts(factflow.FactsInput{
-				BranchRefinements: map[cfg.Point]factflow.BranchRefinement{
-					branch: branchWithRuntimeKind(pathdom.NewPath(target, "x"), runtimekind.Singleton(runtimekind.Table), true, runtimekind.Value{}, false),
+				BranchRefinements: map[cfg.Point]factflow.BranchRefinementSet{
+					branch: factflow.NewBranchRefinementSet(
+						branchWithRuntimeKind(pathdom.NewPath(target, "x"), runtimekind.Singleton(runtimekind.Table), true, runtimekind.Value{}, false),
+					),
 				},
 			}),
 		}),
@@ -668,8 +680,10 @@ func TestFactsEdgeTransferAppliesGenericProductConstraintAxis(t *testing.T) {
 		EntryState: initial,
 		EdgeTransfer: NewFactsEdgeTransfer(FactsEdgeTransferConfig{
 			Facts: factflow.NewFacts(factflow.FactsInput{
-				BranchRefinements: map[cfg.Point]factflow.BranchRefinement{
-					branch: factflow.NewBranchRefinement(pathdom.NewPath(target, "x"), trueRefinement, true, factflow.ValueRefinement{}, false),
+				BranchRefinements: map[cfg.Point]factflow.BranchRefinementSet{
+					branch: factflow.NewBranchRefinementSet(
+						factflow.NewBranchRefinement(pathdom.NewPath(target, "x"), trueRefinement, true, factflow.ValueRefinement{}, false),
+					),
 				},
 			}),
 		}),
@@ -699,8 +713,10 @@ func TestFactsEdgeTransferNoopsWithoutBranchConditionOrVisibility(t *testing.T) 
 			EntryState: initial,
 			EdgeTransfer: NewFactsEdgeTransfer(FactsEdgeTransferConfig{
 				Facts: factflow.NewFacts(factflow.FactsInput{
-					BranchRefinements: map[cfg.Point]factflow.BranchRefinement{
-						graph.Entry(): branchWithPresence(pathdom.NewPath(target, "x"), presence.Absent(), true, presence.Present(), true),
+					BranchRefinements: map[cfg.Point]factflow.BranchRefinementSet{
+						graph.Entry(): factflow.NewBranchRefinementSet(
+							branchWithPresence(pathdom.NewPath(target, "x"), presence.Absent(), true, presence.Present(), true),
+						),
 					},
 				}),
 			}),
@@ -731,8 +747,10 @@ func TestFactsEdgeTransferNoopsWithoutBranchConditionOrVisibility(t *testing.T) 
 			EntryState: initial,
 			EdgeTransfer: NewFactsEdgeTransfer(FactsEdgeTransferConfig{
 				Facts: factflow.NewFacts(factflow.FactsInput{
-					BranchRefinements: map[cfg.Point]factflow.BranchRefinement{
-						branch: branchWithPresence(targetPath, presence.Present(), true, presence.Absent(), true),
+					BranchRefinements: map[cfg.Point]factflow.BranchRefinementSet{
+						branch: factflow.NewBranchRefinementSet(
+							branchWithPresence(targetPath, presence.Present(), true, presence.Absent(), true),
+						),
 					},
 				}),
 			}),
@@ -765,8 +783,10 @@ func TestFactsEdgeTransferJoinRestoresMaybePresence(t *testing.T) {
 		EntryState: initial,
 		EdgeTransfer: NewFactsEdgeTransfer(FactsEdgeTransferConfig{
 			Facts: factflow.NewFacts(factflow.FactsInput{
-				BranchRefinements: map[cfg.Point]factflow.BranchRefinement{
-					branch: branchWithPresence(pathdom.NewPath(target, "x"), presence.Absent(), true, presence.Present(), true),
+				BranchRefinements: map[cfg.Point]factflow.BranchRefinementSet{
+					branch: factflow.NewBranchRefinementSet(
+						branchWithPresence(pathdom.NewPath(target, "x"), presence.Absent(), true, presence.Present(), true),
+					),
 				},
 			}),
 		}),
@@ -799,11 +819,13 @@ func TestFactsEdgeTransferJoinRestoresRuntimeKindUnion(t *testing.T) {
 		EntryState: initial,
 		EdgeTransfer: NewFactsEdgeTransfer(FactsEdgeTransferConfig{
 			Facts: factflow.NewFacts(factflow.FactsInput{
-				BranchRefinements: map[cfg.Point]factflow.BranchRefinement{
-					branch: branchWithRuntimeKind(
-						pathdom.NewPath(target, "x"),
-						runtimekind.Singleton(runtimekind.Table), true,
-						runtimekind.Singleton(runtimekind.Function), true,
+				BranchRefinements: map[cfg.Point]factflow.BranchRefinementSet{
+					branch: factflow.NewBranchRefinementSet(
+						branchWithRuntimeKind(
+							pathdom.NewPath(target, "x"),
+							runtimekind.Singleton(runtimekind.Table), true,
+							runtimekind.Singleton(runtimekind.Function), true,
+						),
 					),
 				},
 			}),
