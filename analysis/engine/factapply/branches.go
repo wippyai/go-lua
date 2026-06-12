@@ -10,6 +10,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/engine/visibility"
+	"github.com/wippyai/go-lua/analysis/ir/cfg"
 )
 
 func applyBranchRefinement(
@@ -19,19 +20,30 @@ func applyBranchRefinement(
 	targetPath pathdom.Path,
 	refinement factflow.ValueRefinement,
 ) state.State {
+	return applyValueRefinementAt(ctx.Registry, resolver, ctx.Edge.From, out, targetPath, refinement)
+}
+
+func applyValueRefinementAt(
+	reg *axis.Registry,
+	resolver *visibility.Resolver,
+	point cfg.Point,
+	out state.State,
+	targetPath pathdom.Path,
+	refinement factflow.ValueRefinement,
+) state.State {
 	if targetPath.Symbol == 0 {
 		return out
 	}
 	if len(targetPath.Segments) == 0 {
-		return out.UpdateValue(ctx.Registry, key.SymbolValue(targetPath.Symbol), func(value product.Value) product.Value {
-			return refineProductValue(ctx.Registry, value, refinement)
+		return out.UpdateValue(reg, key.SymbolValue(targetPath.Symbol), func(value product.Value) product.Value {
+			return refineProductValue(reg, value, refinement)
 		})
 	}
 	if resolver == nil {
 		return out
 	}
-	updated, ok := updatePathAt(ctx.Registry, out, resolver, ctx.Edge.From, targetPath, func(value product.Value) product.Value {
-		return refineProductValue(ctx.Registry, value, refinement)
+	updated, ok := updatePathAt(reg, out, resolver, point, targetPath, func(value product.Value) product.Value {
+		return refineProductValue(reg, value, refinement)
 	})
 	if !ok {
 		return out

@@ -40,6 +40,7 @@ func Lower(result *semantics.Result, graph cfg.Graph, config Config) factflow.Fa
 		PathDescendantInvalidations: make(map[cfg.Point]factflow.PathDescendantInvalidation),
 		BranchRefinements:           make(map[cfg.Point]factflow.BranchRefinement),
 		BranchPathRelations:         make(map[cfg.Point]factflow.BranchPathRelationSet),
+		PostconditionRefinements:    make(map[cfg.Point]factflow.PostconditionRefinementSet),
 		Returns:                     make(map[cfg.Point]factflow.Return),
 		Calls:                       make(map[cfg.Point]factflow.CallProducer),
 		CallSites:                   make(map[cfg.Point]factflow.CallSite),
@@ -78,6 +79,9 @@ func Lower(result *semantics.Result, graph cfg.Graph, config Config) factflow.Fa
 			for _, source := range fact.ArgumentSources {
 				l.addAssertionOverlaysForSource(&input, source)
 				l.addObjectLiteral(&input, result, source)
+			}
+			if lowered, ok := l.assertPostconditionRefinement(fact); ok {
+				input.PostconditionRefinements[point] = factflow.NewPostconditionRefinementSet(lowered)
 			}
 			if lowered, ok := l.callProducer(fact); ok {
 				input.Calls[point] = lowered

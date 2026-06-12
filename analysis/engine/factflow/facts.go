@@ -13,6 +13,7 @@ type FactsInput struct {
 	BranchRefinementSets        map[cfg.Point]BranchRefinementSet
 	BranchPresenceRelations     map[cfg.Point]BranchPresenceRelationSet
 	BranchPathRelations         map[cfg.Point]BranchPathRelationSet
+	PostconditionRefinements    map[cfg.Point]PostconditionRefinementSet
 	Returns                     map[cfg.Point]Return
 	Calls                       map[cfg.Point]CallProducer
 	CallSites                   map[cfg.Point]CallSite
@@ -31,6 +32,7 @@ type Facts struct {
 	branchRefinementSets        map[cfg.Point]BranchRefinementSet
 	branchPresenceRelations     map[cfg.Point]BranchPresenceRelationSet
 	branchPathRelations         map[cfg.Point]BranchPathRelationSet
+	postconditionRefinements    map[cfg.Point]PostconditionRefinementSet
 	returns                     map[cfg.Point]Return
 	calls                       map[cfg.Point]CallProducer
 	callSites                   map[cfg.Point]CallSite
@@ -50,6 +52,7 @@ func NewFacts(input FactsInput) Facts {
 		branchRefinementSets:        copyBranchRefinementSetMap(input.BranchRefinementSets),
 		branchPresenceRelations:     copyBranchPresenceRelationMap(input.BranchPresenceRelations),
 		branchPathRelations:         copyBranchPathRelationMap(input.BranchPathRelations),
+		postconditionRefinements:    copyPostconditionRefinementMap(input.PostconditionRefinements),
 		returns:                     copyReturnMap(input.Returns),
 		calls:                       copyCallProducerMap(input.Calls),
 		callSites:                   copyCallSiteMap(input.CallSites),
@@ -139,6 +142,15 @@ func (f Facts) BranchPresenceRelations(point cfg.Point) []BranchPresenceRelation
 func (f Facts) BranchPathRelations(point cfg.Point) []BranchPathRelation {
 	if set, ok := f.branchPathRelations[point]; ok {
 		return set.Relations()
+	}
+	return nil
+}
+
+// PostconditionRefinements returns node-local refinements that hold after point
+// completes normally.
+func (f Facts) PostconditionRefinements(point cfg.Point) []PostconditionRefinement {
+	if set, ok := f.postconditionRefinements[point]; ok {
+		return set.Refinements()
 	}
 	return nil
 }

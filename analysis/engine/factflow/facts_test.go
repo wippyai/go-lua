@@ -145,6 +145,25 @@ func TestDTOConstructorsAndAccessorsCopySlices(t *testing.T) {
 	pathRelationSetRelations[0] = NewBranchPathEquality(path.NewPath(symbol.ID(26), "mutated"), path.NewPath(symbol.ID(27), "mutated"), false, true)
 	assertPathEqual(t, pathRelationSet.Relations()[0].LeftPath(), path.NewPath(symbol.ID(24), "left").Field("value"))
 
+	postconditionTarget := path.NewPath(symbol.ID(28), "post").Field("value")
+	postcondition := NewPostconditionRefinement(postconditionTarget, trueRefinement)
+	assertPathEqual(t, postcondition.TargetPath(), postconditionTarget)
+	if got := postcondition.Value(); got.IsEmpty() {
+		t.Fatalf("postcondition value = %#v, want non-empty", got)
+	}
+	postconditionTarget.Segments[0].Name = "changed"
+	assertDirectField(t, postcondition.TargetPath(), "value")
+	gotPostconditionTarget := postcondition.TargetPath()
+	gotPostconditionTarget.Segments[0].Name = "changed-again"
+	assertDirectField(t, postcondition.TargetPath(), "value")
+	postconditionSet := NewPostconditionRefinementSet(postcondition)
+	postconditionSetRefinements := postconditionSet.Refinements()
+	if len(postconditionSetRefinements) != 1 {
+		t.Fatalf("postcondition set len = %d, want 1", len(postconditionSetRefinements))
+	}
+	postconditionSetRefinements[0] = NewPostconditionRefinement(path.NewPath(symbol.ID(29), "mutated"), falseRefinement)
+	assertPathEqual(t, postconditionSet.Refinements()[0].TargetPath(), path.NewPath(symbol.ID(28), "post").Field("value"))
+
 	entrySuffix := path.Path{Segments: []segment.Segment{{Kind: segment.SegmentField, Name: "field"}}}
 	entry := NewObjectEntry(entrySuffix, source)
 	entrySuffix.Segments[0].Name = "changed"
@@ -433,6 +452,14 @@ func TestFactsCarrierCopiesAndReturnsFalseForMissingFacts(t *testing.T) {
 				),
 			),
 		},
+		PostconditionRefinements: map[cfg.Point]PostconditionRefinementSet{
+			point: NewPostconditionRefinementSet(
+				NewPostconditionRefinement(
+					path.NewPath(symbol.ID(63), "post").Field("value"),
+					valueRefinementWithPresenceRuntime(presence.Present(), runtimekind.Singleton(runtimekind.String)),
+				),
+			),
+		},
 		Returns: map[cfg.Point]Return{
 			point: NewReturn([]ValueSource{source, callSource}),
 		},
@@ -517,6 +544,12 @@ func TestFactsCarrierCopiesAndReturnsFalseForMissingFacts(t *testing.T) {
 			true,
 		),
 	)
+	input.PostconditionRefinements[point] = NewPostconditionRefinementSet(
+		NewPostconditionRefinement(
+			path.NewPath(symbol.ID(64), "changed"),
+			valueRefinementWithPresence(presence.Absent()),
+		),
+	)
 	input.Returns[point] = NewReturn([]ValueSource{{Kind: ValueSourceNil}})
 	input.Calls[point] = NewCallProducer(CallProducerConfig{Context: CallProducerContextAssignment})
 	input.CallSites[point] = NewCallSite(CallSiteConfig{Context: CallSiteContextStatement})
@@ -549,6 +582,9 @@ func TestFactsCarrierCopiesAndReturnsFalseForMissingFacts(t *testing.T) {
 	}
 	if got := facts.BranchPathRelations(missing); len(got) != 0 {
 		t.Fatalf("missing branch path relations = %#v, want empty", got)
+	}
+	if got := facts.PostconditionRefinements(missing); len(got) != 0 {
+		t.Fatalf("missing postcondition refinements = %#v, want empty", got)
 	}
 	if _, ok := facts.Return(missing); ok {
 		t.Fatal("missing return returned ok")
@@ -670,6 +706,16 @@ func TestFactsCarrierCopiesAndReturnsFalseForMissingFacts(t *testing.T) {
 	pathRelations[0] = NewBranchPathEquality(path.NewPath(symbol.ID(61), "mutated"), path.NewPath(symbol.ID(62), "mutated"), false, true)
 	pathRelationsAgain := facts.BranchPathRelations(point)
 	assertPathEqual(t, pathRelationsAgain[0].LeftPath(), path.NewPath(symbol.ID(57), "left").Field("value"))
+
+	postconditions := facts.PostconditionRefinements(point)
+	if len(postconditions) != 1 {
+		t.Fatalf("postcondition refinements len = %d, want 1", len(postconditions))
+	}
+	assertPathEqual(t, postconditions[0].TargetPath(), path.NewPath(symbol.ID(63), "post").Field("value"))
+	assertValueRefinementConstraint(t, "postcondition", postconditions[0].Value(), presence.Present(), runtimekind.Singleton(runtimekind.String))
+	postconditions[0] = NewPostconditionRefinement(path.NewPath(symbol.ID(65), "mutated"), valueRefinementWithPresence(presence.Absent()))
+	postconditionsAgain := facts.PostconditionRefinements(point)
+	assertPathEqual(t, postconditionsAgain[0].TargetPath(), path.NewPath(symbol.ID(63), "post").Field("value"))
 
 	ret, ok := facts.Return(point)
 	if !ok {

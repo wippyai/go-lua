@@ -37,6 +37,9 @@ func NewFactsNodeTransfer(config FactsNodeTransferConfig) transfer.NodeTransfer 
 		if fact, ok := facts.PathDescendantInvalidation(ctx.Point); ok {
 			out = applyPathDescendantInvalidation(ctx, config.Visibility, out, fact)
 		}
+		for _, fact := range facts.PostconditionRefinements(ctx.Point) {
+			out = applyPostconditionRefinement(ctx, config.Visibility, out, fact)
+		}
 		if sources == nil {
 			return out
 		}
