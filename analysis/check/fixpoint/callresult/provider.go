@@ -179,8 +179,8 @@ func paramConditionValue(condition summary.ParamCondition) (bool, bool) {
 	}
 }
 
-// WithSupplementalResults composes two call outcome providers. Primary outcome
-// fields are preserved; supplemental results fill only missing result slots.
+// WithSupplementalResults composes two call outcome providers. Result slots are
+// primary-by-index; all non-slot side facts are accumulated.
 func WithSupplementalResults(primary, supplemental factapply.CallOutcomeProvider) factapply.CallOutcomeProvider {
 	if primary == nil {
 		return supplemental
@@ -191,25 +191,45 @@ func WithSupplementalResults(primary, supplemental factapply.CallOutcomeProvider
 	return func(ctx transfer.NodeContext, site factflow.CallSite, in state.State, read func(cfg.Point) state.State) factapply.CallOutcome {
 		out := primary(ctx, site, in, read)
 		second := supplemental(ctx, site, in, read)
-		if len(out.Results) == 0 {
-			out.Results = second.Results
-			return out
-		}
-		if len(second.Results) == 0 {
-			return out
-		}
-		seen := make(map[int]struct{}, len(out.Results))
-		for _, result := range out.Results {
-			seen[result.Index] = struct{}{}
-		}
-		for _, result := range second.Results {
-			if _, ok := seen[result.Index]; ok {
-				continue
-			}
-			out.Results = append(out.Results, result)
-		}
+		out = withSupplementalResultSlots(out, second.Results)
+		return withSupplementalOutcomeFacts(out, second)
+	}
+}
+
+func withSupplementalResultSlots(out factapply.CallOutcome, results []factapply.CallResult) factapply.CallOutcome {
+	if len(results) == 0 {
 		return out
 	}
+	if len(out.Results) == 0 {
+		out.Results = append(out.Results, results...)
+		return out
+	}
+	seen := make(map[int]struct{}, len(out.Results))
+	for _, result := range out.Results {
+		seen[result.Index] = struct{}{}
+	}
+	for _, result := range results {
+		if _, ok := seen[result.Index]; ok {
+			continue
+		}
+		out.Results = append(out.Results, result)
+	}
+	return out
+}
+
+func withSupplementalOutcomeFacts(out, second factapply.CallOutcome) factapply.CallOutcome {
+	out.PathRefinements = append(out.PathRefinements, second.PathRefinements...)
+	out.ParamPathRefinements = append(out.ParamPathRefinements, second.ParamPathRefinements...)
+	out.ParamConditions = append(out.ParamConditions, second.ParamConditions...)
+	out.ParamPathRelations = append(out.ParamPathRelations, second.ParamPathRelations...)
+	out.PathStaticMembers = append(out.PathStaticMembers, second.PathStaticMembers...)
+	out.DynamicIndexFacts = append(out.DynamicIndexFacts, second.DynamicIndexFacts...)
+	out.BranchProofs = append(out.BranchProofs, second.BranchProofs...)
+	out.ChannelSelects = append(out.ChannelSelects, second.ChannelSelects...)
+	out.EffectDeltas = append(out.EffectDeltas, second.EffectDeltas...)
+	out.ReturnConditionRefinements = append(out.ReturnConditionRefinements, second.ReturnConditionRefinements...)
+	out.ReturnPresenceRelations = append(out.ReturnPresenceRelations, second.ReturnPresenceRelations...)
+	return out
 }
 
 func dynamicIndexAdmission(admission summary.DynamicIndexAdmission) factapply.CallDynamicIndexAdmission {
