@@ -66,6 +66,9 @@ type OrdinaryAssignmentFact struct {
 	Path      path.Path
 	HasPath   bool
 
+	ContainerPath    path.Path
+	HasContainerPath bool
+
 	Lhs []ast.Expr
 	Rhs []ast.Expr
 }

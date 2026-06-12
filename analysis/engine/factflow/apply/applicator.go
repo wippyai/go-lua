@@ -24,8 +24,8 @@ type FactsEdgeTransferConfig struct {
 
 // NewFactsNodeTransfer returns a generic node transfer that applies point-local
 // transfer facts. It intentionally handles only root assignment, member/path
-// assignment, call return-slot production, and return-slot facts; branch-edge
-// refinements are handled by NewFactsEdgeTransfer.
+// assignment, descendant path invalidation, call return-slot production, and
+// return-slot facts; branch-edge refinements are handled by NewFactsEdgeTransfer.
 func NewFactsNodeTransfer(config FactsNodeTransferConfig) transfer.NodeTransfer {
 	return func(ctx transfer.NodeContext, in state.State) state.State {
 		facts := config.Facts
@@ -34,6 +34,9 @@ func NewFactsNodeTransfer(config FactsNodeTransferConfig) transfer.NodeTransfer 
 		read, materialize := callResultReader(ctx, facts, callResults)
 
 		out := materialize(ctx.Point, in)
+		if fact, ok := facts.PathDescendantInvalidation(ctx.Point); ok {
+			out = applyPathDescendantInvalidation(ctx, config.Visibility, out, fact)
+		}
 		if sources == nil {
 			return out
 		}

@@ -41,6 +41,26 @@ func applyPathAssignment(
 	return written, true
 }
 
+func applyPathDescendantInvalidation(
+	ctx transfer.NodeContext,
+	resolver *visibility.Resolver,
+	out state.State,
+	fact factflow.PathDescendantInvalidation,
+) state.State {
+	if resolver == nil {
+		return out
+	}
+	containerPath := fact.ContainerPath()
+	if containerPath.IsEmpty() {
+		return out
+	}
+	invalidated, ok := invalidatePathDescendantsAt(out, resolver, ctx.Point, containerPath)
+	if !ok {
+		return out
+	}
+	return invalidated
+}
+
 func copyPath(p pathdom.Path) pathdom.Path {
 	if len(p.Segments) == 0 {
 		return p

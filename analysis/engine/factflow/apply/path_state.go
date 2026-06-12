@@ -51,3 +51,16 @@ func invalidatePathSubtreeAt(
 	}
 	return s.InvalidatePathKeySubtree(pathKey)
 }
+
+func invalidatePathDescendantsAt(
+	s state.State,
+	resolver *visibility.Resolver,
+	point cfg.Point,
+	path pathdom.Path,
+) (state.State, bool) {
+	pathKey := resolver.KeyAt(point, path)
+	if pathKey == "" {
+		return s, false
+	}
+	return s.InvalidatePathKeyDescendants(pathKey)
+}

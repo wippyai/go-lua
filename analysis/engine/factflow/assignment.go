@@ -61,11 +61,44 @@ func (a PathAssignment) copy() PathAssignment {
 	return a
 }
 
+// PathDescendantInvalidation describes a write through an unresolved descendant
+// of a statically known container path.
+type PathDescendantInvalidation struct {
+	containerPath path.Path
+}
+
+// NewPathDescendantInvalidation creates a descendant-only invalidation fact for
+// a statically known container path.
+func NewPathDescendantInvalidation(containerPath path.Path) PathDescendantInvalidation {
+	return PathDescendantInvalidation{containerPath: copyPath(containerPath)}
+}
+
+// ContainerPath returns the invalidated container's path identity.
+func (i PathDescendantInvalidation) ContainerPath() path.Path {
+	return copyPath(i.containerPath)
+}
+
+func (i PathDescendantInvalidation) copy() PathDescendantInvalidation {
+	i.containerPath = copyPath(i.containerPath)
+	return i
+}
+
 func copyRootAssignmentMap(in map[cfg.Point]RootAssignment) map[cfg.Point]RootAssignment {
 	if len(in) == 0 {
 		return nil
 	}
 	out := make(map[cfg.Point]RootAssignment, len(in))
+	for point, fact := range in {
+		out[point] = fact.copy()
+	}
+	return out
+}
+
+func copyPathDescendantInvalidationMap(in map[cfg.Point]PathDescendantInvalidation) map[cfg.Point]PathDescendantInvalidation {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[cfg.Point]PathDescendantInvalidation, len(in))
 	for point, fact := range in {
 		out[point] = fact.copy()
 	}

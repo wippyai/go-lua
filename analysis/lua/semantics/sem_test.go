@@ -253,6 +253,14 @@ func TestExtractChunkOrdinaryAssignmentsResolveStaticMemberPaths(t *testing.T) {
 	if dynamicFact.HasPath {
 		t.Fatalf("dynamic index path resolved unexpectedly: %v", dynamicFact.Path)
 	}
+	if !dynamicFact.HasContainerPath || !dynamicFact.ContainerPath.Equal(path.NewPath(tSym, "t")) {
+		t.Fatalf("dynamic index container path = %v/%v, want t", dynamicFact.ContainerPath, dynamicFact.HasContainerPath)
+	}
+	dynamicFact.ContainerPath.Symbol = 999
+	dynamicAgain, _ := result.OrdinaryAssignment(requireStmtPoints(t, built, dynamicWrite, 1)[0])
+	if !dynamicAgain.ContainerPath.Equal(path.NewPath(tSym, "t")) {
+		t.Fatalf("ordinary assignment exposed mutable container path: %v", dynamicAgain.ContainerPath)
+	}
 }
 
 func TestExtractChunkObjectLiteralStaticEntriesAndDynamicSkip(t *testing.T) {

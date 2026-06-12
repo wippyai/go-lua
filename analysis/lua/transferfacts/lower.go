@@ -31,15 +31,16 @@ func Lower(result *semantics.Result, graph cfg.Graph, config Config) factflow.Fa
 		callPoints: callPointsByExpr(result, graph),
 	}
 	input := factflow.FactsInput{
-		LocalAssignments:    make(map[cfg.Point]factflow.RootAssignment),
-		OrdinaryAssignments: make(map[cfg.Point]factflow.RootAssignment),
-		PathAssignments:     make(map[cfg.Point]factflow.PathAssignment),
-		BranchRefinements:   make(map[cfg.Point]factflow.BranchRefinement),
-		Returns:             make(map[cfg.Point]factflow.Return),
-		Calls:               make(map[cfg.Point]factflow.CallProducer),
-		CallSites:           make(map[cfg.Point]factflow.CallSite),
-		ObjectLiterals:      make(map[factflow.ExprRef]factflow.ObjectLiteral),
-		ValueOverlays:       make(map[factflow.ExprRef]factflow.ValueOverlay),
+		LocalAssignments:            make(map[cfg.Point]factflow.RootAssignment),
+		OrdinaryAssignments:         make(map[cfg.Point]factflow.RootAssignment),
+		PathAssignments:             make(map[cfg.Point]factflow.PathAssignment),
+		PathDescendantInvalidations: make(map[cfg.Point]factflow.PathDescendantInvalidation),
+		BranchRefinements:           make(map[cfg.Point]factflow.BranchRefinement),
+		Returns:                     make(map[cfg.Point]factflow.Return),
+		Calls:                       make(map[cfg.Point]factflow.CallProducer),
+		CallSites:                   make(map[cfg.Point]factflow.CallSite),
+		ObjectLiterals:              make(map[factflow.ExprRef]factflow.ObjectLiteral),
+		ValueOverlays:               make(map[factflow.ExprRef]factflow.ValueOverlay),
 	}
 	for _, point := range graph.RPO() {
 		if fact, ok := result.LocalAssignment(point); ok {
@@ -54,6 +55,8 @@ func Lower(result *semantics.Result, graph cfg.Graph, config Config) factflow.Fa
 				input.PathAssignments[point] = lowered
 				l.addAssertionOverlaysForSource(&input, fact.Source)
 				l.addObjectLiteral(&input, result, fact.Source)
+			} else if lowered, ok := l.pathDescendantInvalidation(fact); ok {
+				input.PathDescendantInvalidations[point] = lowered
 			} else if lowered, ok := l.ordinaryAssignment(fact); ok {
 				input.OrdinaryAssignments[point] = lowered
 				l.addAssertionOverlaysForSource(&input, fact.Source)

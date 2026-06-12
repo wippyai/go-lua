@@ -22,6 +22,17 @@ func Resolve(expr ast.Expr, bindings *bind.Result) (path.Path, bool) {
 	}
 }
 
+// ResolveContainer extracts the receiver/container path for an attribute/index
+// expression. The full expression may still be unresolvable when its key is
+// dynamic.
+func ResolveContainer(expr ast.Expr, bindings *bind.Result) (path.Path, bool) {
+	attr, ok := expr.(*ast.AttrGetExpr)
+	if !ok {
+		return path.Path{}, false
+	}
+	return Resolve(attr.Object, bindings)
+}
+
 func resolveIdent(expr *ast.IdentExpr, bindings *bind.Result) (path.Path, bool) {
 	if expr == nil || bindings == nil {
 		return path.Path{}, false

@@ -291,6 +291,70 @@ func TestInvalidatePathKeySubtreeRemovesStructuredDescendants(t *testing.T) {
 	}
 }
 
+func TestInvalidatePathKeyDescendantsKeepsContainerAndUnrelatedPaths(t *testing.T) {
+	reg := product.DefaultRegistry()
+	valueDomain := product.Domain(reg)
+	present := presentValue(reg)
+	bottom := valueDomain.Bottom()
+	container := pathdom.PathKey("sym60@2.item")
+	child := pathdom.PathKey("sym60@2.item.count")
+	deepChild := pathdom.PathKey("sym60@2.item.name.first")
+	siblingPrefixCollision := pathdom.PathKey("sym60@2.itemized.count")
+	root := pathdom.PathKey("sym60@2")
+	otherVersion := pathdom.PathKey("sym60@3.item.count")
+	otherSymbol := pathdom.PathKey("sym61@2.item.count")
+	placeholderContainer := pathdom.PathKey("$0.item")
+	placeholderChild := pathdom.PathKey("$0.item.count")
+
+	s := State{}.
+		WritePathKey(reg, container, present).
+		WritePathKey(reg, child, present).
+		WritePathKey(reg, deepChild, present).
+		WritePathKey(reg, siblingPrefixCollision, present).
+		WritePathKey(reg, root, present).
+		WritePathKey(reg, otherVersion, present).
+		WritePathKey(reg, otherSymbol, present).
+		WritePathKey(reg, placeholderContainer, present).
+		WritePathKey(reg, placeholderChild, present)
+
+	invalidPrefix, ok := s.InvalidatePathKeyDescendants(pathdom.PathKey(".item"))
+	if ok {
+		t.Fatal("InvalidatePathKeyDescendants accepted invalid path key")
+	}
+	if !Domain(reg).Equal(invalidPrefix, s) {
+		t.Fatal("invalid path-key prefix changed state")
+	}
+
+	out, ok := s.InvalidatePathKeyDescendants(container)
+	if !ok {
+		t.Fatal("InvalidatePathKeyDescendants rejected versioned prefix")
+	}
+	for _, removed := range []pathdom.PathKey{child, deepChild} {
+		if got := out.ReadPathKey(reg, removed); !valueDomain.Equal(got, bottom) {
+			t.Fatalf("%s = %s, want bottom", removed, formatValue(reg, got))
+		}
+	}
+	for _, kept := range []pathdom.PathKey{container, siblingPrefixCollision, root, otherVersion, otherSymbol, placeholderContainer, placeholderChild} {
+		if got := out.ReadPathKey(reg, kept); !valueDomain.Equal(got, present) {
+			t.Fatalf("%s = %s, want present", kept, formatValue(reg, got))
+		}
+	}
+	if got := s.ReadPathKey(reg, child); !valueDomain.Equal(got, present) {
+		t.Fatalf("original child changed to %s", formatValue(reg, got))
+	}
+
+	out, ok = out.InvalidatePathKeyDescendants(placeholderContainer)
+	if !ok {
+		t.Fatal("InvalidatePathKeyDescendants rejected placeholder prefix")
+	}
+	if got := out.ReadPathKey(reg, placeholderContainer); !valueDomain.Equal(got, present) {
+		t.Fatalf("%s = %s, want present", placeholderContainer, formatValue(reg, got))
+	}
+	if got := out.ReadPathKey(reg, placeholderChild); !valueDomain.Equal(got, bottom) {
+		t.Fatalf("%s = %s, want bottom", placeholderChild, formatValue(reg, got))
+	}
+}
+
 func TestTopLanesReadTopAndRejectFiniteUpdates(t *testing.T) {
 	reg := product.DefaultRegistry()
 	valueDomain := product.Domain(reg)
@@ -344,6 +408,9 @@ func TestTopLanesReadTopAndRejectFiniteUpdates(t *testing.T) {
 	})
 	requirePanic(t, func() {
 		top.InvalidatePathKeySubtree(pathKey)
+	})
+	requirePanic(t, func() {
+		top.InvalidatePathKeyDescendants(pathKey)
 	})
 }
 

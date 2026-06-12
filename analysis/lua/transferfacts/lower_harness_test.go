@@ -278,6 +278,9 @@ func TestLowerOrdinaryAssignmentsSplitsRootAndStaticPathWrites(t *testing.T) {
 	if _, ok := facts.OrdinaryAssignment(dotPoint); ok {
 		t.Fatalf("dot path assignment also lowered as root assignment")
 	}
+	if _, ok := facts.PathDescendantInvalidation(dotPoint); ok {
+		t.Fatalf("dot path assignment also lowered as descendant invalidation")
+	}
 
 	indexPoint := requireStmtPoints(t, built, indexWrite, 1)[0]
 	indexFact, ok := facts.PathAssignment(indexPoint)
@@ -287,6 +290,9 @@ func TestLowerOrdinaryAssignmentsSplitsRootAndStaticPathWrites(t *testing.T) {
 	if !indexFact.TargetPath().Equal(path.NewPath(tSym, "t").IndexStr("x")) {
 		t.Fatalf("static index path assignment target = %v", indexFact.TargetPath())
 	}
+	if _, ok := facts.PathDescendantInvalidation(indexPoint); ok {
+		t.Fatalf("static index path assignment also lowered as descendant invalidation")
+	}
 
 	dynamicPoint := requireStmtPoints(t, built, dynamicWrite, 1)[0]
 	if _, ok := facts.PathAssignment(dynamicPoint); ok {
@@ -294,6 +300,13 @@ func TestLowerOrdinaryAssignmentsSplitsRootAndStaticPathWrites(t *testing.T) {
 	}
 	if _, ok := facts.OrdinaryAssignment(dynamicPoint); ok {
 		t.Fatalf("dynamic index lowered as ordinary root assignment")
+	}
+	invalidation, ok := facts.PathDescendantInvalidation(dynamicPoint)
+	if !ok {
+		t.Fatalf("dynamic index did not lower as descendant invalidation")
+	}
+	if !invalidation.ContainerPath().Equal(path.NewPath(tSym, "t")) {
+		t.Fatalf("dynamic index invalidation container = %v", invalidation.ContainerPath())
 	}
 
 	rootPoint := requireStmtPoints(t, built, rootWrite, 1)[0]
@@ -306,5 +319,8 @@ func TestLowerOrdinaryAssignmentsSplitsRootAndStaticPathWrites(t *testing.T) {
 	}
 	if _, ok := facts.PathAssignment(rootPoint); ok {
 		t.Fatalf("root ordinary assignment also lowered as path assignment")
+	}
+	if _, ok := facts.PathDescendantInvalidation(rootPoint); ok {
+		t.Fatalf("root ordinary assignment also lowered as descendant invalidation")
 	}
 }

@@ -4,48 +4,51 @@ import "github.com/wippyai/go-lua/analysis/ir/cfg"
 
 // FactsInput carries point-keyed facts used to construct an immutable Facts snapshot.
 type FactsInput struct {
-	LocalAssignments        map[cfg.Point]RootAssignment
-	OrdinaryAssignments     map[cfg.Point]RootAssignment
-	PathAssignments         map[cfg.Point]PathAssignment
-	BranchRefinements       map[cfg.Point]BranchRefinement
-	BranchRefinementSets    map[cfg.Point]BranchRefinementSet
-	BranchPresenceRelations map[cfg.Point]BranchPresenceRelationSet
-	Returns                 map[cfg.Point]Return
-	Calls                   map[cfg.Point]CallProducer
-	CallSites               map[cfg.Point]CallSite
-	ObjectLiterals          map[ExprRef]ObjectLiteral
-	ValueOverlays           map[ExprRef]ValueOverlay
+	LocalAssignments            map[cfg.Point]RootAssignment
+	OrdinaryAssignments         map[cfg.Point]RootAssignment
+	PathAssignments             map[cfg.Point]PathAssignment
+	PathDescendantInvalidations map[cfg.Point]PathDescendantInvalidation
+	BranchRefinements           map[cfg.Point]BranchRefinement
+	BranchRefinementSets        map[cfg.Point]BranchRefinementSet
+	BranchPresenceRelations     map[cfg.Point]BranchPresenceRelationSet
+	Returns                     map[cfg.Point]Return
+	Calls                       map[cfg.Point]CallProducer
+	CallSites                   map[cfg.Point]CallSite
+	ObjectLiterals              map[ExprRef]ObjectLiteral
+	ValueOverlays               map[ExprRef]ValueOverlay
 }
 
 // Facts is an immutable point-keyed transfer facts snapshot.
 type Facts struct {
-	localAssignments        map[cfg.Point]RootAssignment
-	ordinaryAssignments     map[cfg.Point]RootAssignment
-	pathAssignments         map[cfg.Point]PathAssignment
-	branchRefinements       map[cfg.Point]BranchRefinement
-	branchRefinementSets    map[cfg.Point]BranchRefinementSet
-	branchPresenceRelations map[cfg.Point]BranchPresenceRelationSet
-	returns                 map[cfg.Point]Return
-	calls                   map[cfg.Point]CallProducer
-	callSites               map[cfg.Point]CallSite
-	objectLiterals          map[ExprRef]ObjectLiteral
-	valueOverlays           map[ExprRef]ValueOverlay
+	localAssignments            map[cfg.Point]RootAssignment
+	ordinaryAssignments         map[cfg.Point]RootAssignment
+	pathAssignments             map[cfg.Point]PathAssignment
+	pathDescendantInvalidations map[cfg.Point]PathDescendantInvalidation
+	branchRefinements           map[cfg.Point]BranchRefinement
+	branchRefinementSets        map[cfg.Point]BranchRefinementSet
+	branchPresenceRelations     map[cfg.Point]BranchPresenceRelationSet
+	returns                     map[cfg.Point]Return
+	calls                       map[cfg.Point]CallProducer
+	callSites                   map[cfg.Point]CallSite
+	objectLiterals              map[ExprRef]ObjectLiteral
+	valueOverlays               map[ExprRef]ValueOverlay
 }
 
 // NewFacts copies the supplied point-keyed facts into an immutable snapshot.
 func NewFacts(input FactsInput) Facts {
 	return Facts{
-		localAssignments:        copyRootAssignmentMap(input.LocalAssignments),
-		ordinaryAssignments:     copyRootAssignmentMap(input.OrdinaryAssignments),
-		pathAssignments:         copyPathAssignmentMap(input.PathAssignments),
-		branchRefinements:       copyBranchRefinementMap(input.BranchRefinements),
-		branchRefinementSets:    copyBranchRefinementSetMap(input.BranchRefinementSets),
-		branchPresenceRelations: copyBranchPresenceRelationMap(input.BranchPresenceRelations),
-		returns:                 copyReturnMap(input.Returns),
-		calls:                   copyCallProducerMap(input.Calls),
-		callSites:               copyCallSiteMap(input.CallSites),
-		objectLiterals:          copyObjectLiteralMap(input.ObjectLiterals),
-		valueOverlays:           copyValueOverlayMap(input.ValueOverlays),
+		localAssignments:            copyRootAssignmentMap(input.LocalAssignments),
+		ordinaryAssignments:         copyRootAssignmentMap(input.OrdinaryAssignments),
+		pathAssignments:             copyPathAssignmentMap(input.PathAssignments),
+		pathDescendantInvalidations: copyPathDescendantInvalidationMap(input.PathDescendantInvalidations),
+		branchRefinements:           copyBranchRefinementMap(input.BranchRefinements),
+		branchRefinementSets:        copyBranchRefinementSetMap(input.BranchRefinementSets),
+		branchPresenceRelations:     copyBranchPresenceRelationMap(input.BranchPresenceRelations),
+		returns:                     copyReturnMap(input.Returns),
+		calls:                       copyCallProducerMap(input.Calls),
+		callSites:                   copyCallSiteMap(input.CallSites),
+		objectLiterals:              copyObjectLiteralMap(input.ObjectLiterals),
+		valueOverlays:               copyValueOverlayMap(input.ValueOverlays),
 	}
 }
 
@@ -82,6 +85,16 @@ func (f Facts) PathAssignment(point cfg.Point) (PathAssignment, bool) {
 	fact, ok := f.pathAssignments[point]
 	if !ok {
 		return PathAssignment{}, false
+	}
+	return fact.copy(), true
+}
+
+// PathDescendantInvalidation returns the descendant-only path invalidation fact
+// at point.
+func (f Facts) PathDescendantInvalidation(point cfg.Point) (PathDescendantInvalidation, bool) {
+	fact, ok := f.pathDescendantInvalidations[point]
+	if !ok {
+		return PathDescendantInvalidation{}, false
 	}
 	return fact.copy(), true
 }

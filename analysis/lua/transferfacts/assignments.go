@@ -34,3 +34,10 @@ func (l *lowerer) pathAssignment(fact semantics.OrdinaryAssignmentFact) (factflo
 	}
 	return factflow.NewPathAssignment(fact.Path, l.valueSource(fact.Source)), true
 }
+
+func (l *lowerer) pathDescendantInvalidation(fact semantics.OrdinaryAssignmentFact) (factflow.PathDescendantInvalidation, bool) {
+	if fact.HasPath || !fact.HasContainerPath || fact.ContainerPath.Symbol == 0 {
+		return factflow.PathDescendantInvalidation{}, false
+	}
+	return factflow.NewPathDescendantInvalidation(fact.ContainerPath), true
+}

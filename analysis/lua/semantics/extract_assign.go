@@ -69,18 +69,21 @@ func (r *Result) extractAssign(stmt *ast.AssignStmt, bindings *bind.Result, poin
 			id, hasSymbol = bindings.SymbolOf(ident)
 		}
 		targetPath, hasPath := pathexpr.Resolve(target, bindings)
+		containerPath, hasContainerPath := pathexpr.ResolveContainer(target, bindings)
 		r.ordinaryAssignments[assignPoints[i]] = OrdinaryAssignmentFact{
-			Stmt:      stmt,
-			Index:     i,
-			Target:    target,
-			Value:     exprAt(stmt.Rhs, i),
-			Source:    sources[i],
-			Symbol:    id,
-			HasSymbol: hasSymbol && id != 0,
-			Path:      targetPath,
-			HasPath:   hasPath,
-			Lhs:       lhs,
-			Rhs:       rhs,
+			Stmt:             stmt,
+			Index:            i,
+			Target:           target,
+			Value:            exprAt(stmt.Rhs, i),
+			Source:           sources[i],
+			Symbol:           id,
+			HasSymbol:        hasSymbol && id != 0,
+			Path:             targetPath,
+			HasPath:          hasPath,
+			ContainerPath:    containerPath,
+			HasContainerPath: hasContainerPath,
+			Lhs:              lhs,
+			Rhs:              rhs,
 		}
 	}
 	return nil

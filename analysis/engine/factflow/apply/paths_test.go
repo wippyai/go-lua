@@ -88,6 +88,42 @@ func TestFactsNodeTransferPathAssignmentInvalidatesSubtreeBeforeWriting(t *testi
 	assertPathValue(t, reg, got, siblingKey, present)
 }
 
+func TestFactsNodeTransferPathDescendantInvalidationKeepsContainer(t *testing.T) {
+	reg := product.DefaultRegistry()
+	point := cfg.Point(20)
+	target := symbol.ID(111)
+	containerPath := path.NewPath(target, "item")
+	containerKey := path.PathKey("sym111@1")
+	countKey := path.PathKey("sym111@1.count")
+	nameKey := path.PathKey("sym111@1.name")
+	unrelatedKey := path.PathKey("sym112@1.count")
+	present := presentValue(reg)
+	in := state.State{}.
+		WritePathKey(reg, containerKey, present).
+		WritePathKey(reg, countKey, present).
+		WritePathKey(reg, nameKey, present).
+		WritePathKey(reg, unrelatedKey, present)
+	visibilityBuilder := visibility.NewBuilder()
+	visibilityBuilder.Define(point, target, "item")
+
+	got := NewFactsNodeTransfer(FactsNodeTransferConfig{
+		Facts: factflow.NewFacts(factflow.FactsInput{
+			PathDescendantInvalidations: map[cfg.Point]factflow.PathDescendantInvalidation{
+				point: factflow.NewPathDescendantInvalidation(containerPath),
+			},
+		}),
+		Visibility: visibility.NewResolver(visibilityBuilder.Build()),
+	})(transfer.NodeContext{
+		Registry: reg,
+		Point:    point,
+	}, in)
+
+	assertPathValue(t, reg, got, containerKey, present)
+	assertPathValue(t, reg, got, countKey, product.Bottom(reg))
+	assertPathValue(t, reg, got, nameKey, product.Bottom(reg))
+	assertPathValue(t, reg, got, unrelatedKey, present)
+}
+
 func TestFactsNodeTransferPathAssignmentRequiresVisibility(t *testing.T) {
 	reg := product.DefaultRegistry()
 	point := cfg.Point(17)

@@ -250,6 +250,7 @@ func copyLocalAssignmentFact(fact LocalAssignmentFact) LocalAssignmentFact {
 
 func copyOrdinaryAssignmentFact(fact OrdinaryAssignmentFact) OrdinaryAssignmentFact {
 	fact.Path = copyPath(fact.Path)
+	fact.ContainerPath = copyPath(fact.ContainerPath)
 	fact.Lhs = copyExprs(fact.Lhs)
 	fact.Rhs = copyExprs(fact.Rhs)
 	return fact

@@ -394,6 +394,9 @@ func assertNoPointFact(t *testing.T, facts factflow.Facts, point cfg.Point) {
 	if _, ok := facts.PathAssignment(point); ok {
 		t.Fatalf("point %d lowered as path assignment", point)
 	}
+	if _, ok := facts.PathDescendantInvalidation(point); ok {
+		t.Fatalf("point %d lowered as path descendant invalidation", point)
+	}
 	if _, ok := facts.BranchRefinement(point); ok {
 		t.Fatalf("point %d lowered as branch refinement", point)
 	}

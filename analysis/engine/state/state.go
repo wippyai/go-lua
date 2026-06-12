@@ -173,6 +173,26 @@ func (s State) InvalidatePathKeySubtree(pathKey pathdom.PathKey) (State, bool) {
 	return out, true
 }
 
+// InvalidatePathKeyDescendants removes finite path refinements below pathKey
+// while preserving the exact pathKey refinement. It returns false when pathKey
+// is not a recognized structural path-key spelling.
+func (s State) InvalidatePathKeyDescendants(pathKey pathdom.PathKey) (State, bool) {
+	prefix, ok := parseStatePathKey(pathKey)
+	if !ok {
+		return s, false
+	}
+	if s.pathsTop {
+		panic("state: cannot invalidate path descendants in top path lane")
+	}
+	paths, changed := deletePathDescendants(s.paths, prefix)
+	if !changed {
+		return s, true
+	}
+	out := s
+	out.paths = paths
+	return out, true
+}
+
 // Domain builds the State lattice as the product of two pointwise map lattices
 // over product.Value.
 func Domain(reg *axis.Registry) lattice.Lattice[State] {
@@ -364,6 +384,33 @@ func deletePathSubtree(
 	return out, true
 }
 
+func deletePathDescendants(
+	in map[pathdom.PathKey]product.Value,
+	prefix statePathKey,
+) (map[pathdom.PathKey]product.Value, bool) {
+	if len(in) == 0 {
+		return in, false
+	}
+	out := make(map[pathdom.PathKey]product.Value, len(in))
+	changed := false
+	for pathKey, value := range in {
+		keyAddr, ok := parseStatePathKey(pathKey)
+		remove := ok && keyAddr.hasStrictPrefix(prefix)
+		if remove {
+			changed = true
+			continue
+		}
+		out[pathKey] = value
+	}
+	if !changed {
+		return in, false
+	}
+	if len(out) == 0 {
+		return nil, true
+	}
+	return out, true
+}
+
 func (k statePathKey) hasPrefix(prefix statePathKey) bool {
 	if k.versioned || prefix.versioned {
 		return k.versioned &&
@@ -373,6 +420,18 @@ func (k statePathKey) hasPrefix(prefix statePathKey) bool {
 			segmentsHavePrefix(k.segments, prefix.segments)
 	}
 	return k.stable.HasPrefix(prefix.stable)
+}
+
+func (k statePathKey) hasStrictPrefix(prefix statePathKey) bool {
+	if k.versioned || prefix.versioned {
+		return k.versioned &&
+			prefix.versioned &&
+			k.sym == prefix.sym &&
+			k.version == prefix.version &&
+			segmentsHaveStrictPrefix(k.segments, prefix.segments)
+	}
+	remainder, ok := k.stable.RemainderAfterPrefix(prefix.stable)
+	return ok && len(remainder) > 0
 }
 
 func segmentsHavePrefix(segments, prefix []segment.Segment) bool {
@@ -385,4 +444,8 @@ func segmentsHavePrefix(segments, prefix []segment.Segment) bool {
 		}
 	}
 	return true
+}
+
+func segmentsHaveStrictPrefix(segments, prefix []segment.Segment) bool {
+	return len(prefix) < len(segments) && segmentsHavePrefix(segments, prefix)
 }

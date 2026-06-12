@@ -61,6 +61,15 @@ func TestDTOConstructorsAndAccessorsCopySlices(t *testing.T) {
 	gotPathTarget.Segments[0].Name = "changed-again"
 	assertDirectField(t, pathAssignment.TargetPath(), "field")
 
+	invalidationTarget := path.NewPath(symbol.ID(23), "item").Field("child")
+	invalidation := NewPathDescendantInvalidation(invalidationTarget)
+	assertPathEqual(t, invalidation.ContainerPath(), invalidationTarget)
+	invalidationTarget.Segments[0].Name = "changed"
+	assertDirectField(t, invalidation.ContainerPath(), "child")
+	gotInvalidationTarget := invalidation.ContainerPath()
+	gotInvalidationTarget.Segments[0].Name = "changed-again"
+	assertDirectField(t, invalidation.ContainerPath(), "child")
+
 	branchTarget := path.NewPath(symbol.ID(15), "value").Field("ready")
 	trueRefinement := valueRefinementWithPresenceRuntime(presence.Present(), runtimekind.Singleton(runtimekind.Table))
 	falseRefinement := valueRefinementWithPresenceRuntime(presence.Absent(), runtimekind.Singleton(runtimekind.Nil))
@@ -358,6 +367,9 @@ func TestFactsCarrierCopiesAndReturnsFalseForMissingFacts(t *testing.T) {
 		PathAssignments: map[cfg.Point]PathAssignment{
 			point: NewPathAssignment(path.NewPath(symbol.ID(33), "table").Field("field"), source),
 		},
+		PathDescendantInvalidations: map[cfg.Point]PathDescendantInvalidation{
+			point: NewPathDescendantInvalidation(path.NewPath(symbol.ID(36), "item").Field("container")),
+		},
 		BranchRefinements: map[cfg.Point]BranchRefinement{
 			point: NewBranchRefinement(
 				path.NewPath(symbol.ID(34), "value").Field("ready"),
@@ -436,6 +448,7 @@ func TestFactsCarrierCopiesAndReturnsFalseForMissingFacts(t *testing.T) {
 	input.LocalAssignments[point] = NewRootAssignment(symbol.ID(40), path.NewPath(symbol.ID(40), "changed"), callSource)
 	input.OrdinaryAssignments[point] = NewRootAssignment(symbol.ID(41), path.NewPath(symbol.ID(41), "changed"), callSource)
 	input.PathAssignments[point] = NewPathAssignment(path.NewPath(symbol.ID(42), "changed").Field("field"), callSource)
+	input.PathDescendantInvalidations[point] = NewPathDescendantInvalidation(path.NewPath(symbol.ID(53), "changed"))
 	input.BranchRefinements[point] = NewBranchRefinement(
 		path.NewPath(symbol.ID(43), "changed").Field("field"),
 		valueRefinementWithPresence(presence.Absent()), true,
@@ -472,6 +485,9 @@ func TestFactsCarrierCopiesAndReturnsFalseForMissingFacts(t *testing.T) {
 	}
 	if _, ok := facts.PathAssignment(missing); ok {
 		t.Fatal("missing path assignment returned ok")
+	}
+	if _, ok := facts.PathDescendantInvalidation(missing); ok {
+		t.Fatal("missing path descendant invalidation returned ok")
 	}
 	if _, ok := facts.BranchRefinement(missing); ok {
 		t.Fatal("missing branch refinement returned ok")
@@ -527,6 +543,16 @@ func TestFactsCarrierCopiesAndReturnsFalseForMissingFacts(t *testing.T) {
 	pathAssignmentPath.Segments[0].Name = "mutated"
 	pathAssignmentAgain, _ := facts.PathAssignment(point)
 	assertDirectField(t, pathAssignmentAgain.TargetPath(), "field")
+
+	invalidationFact, ok := facts.PathDescendantInvalidation(point)
+	if !ok {
+		t.Fatal("path descendant invalidation missing")
+	}
+	assertPathEqual(t, invalidationFact.ContainerPath(), path.NewPath(symbol.ID(36), "item").Field("container"))
+	invalidationPath := invalidationFact.ContainerPath()
+	invalidationPath.Segments[0].Name = "mutated"
+	invalidationAgain, _ := facts.PathDescendantInvalidation(point)
+	assertDirectField(t, invalidationAgain.ContainerPath(), "container")
 
 	branchRefinement, ok := facts.BranchRefinement(point)
 	if !ok {
