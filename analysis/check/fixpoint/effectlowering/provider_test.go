@@ -25,6 +25,7 @@ import (
 	sourcevalue "github.com/wippyai/go-lua/analysis/engine/sourcevalue"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
+	"github.com/wippyai/go-lua/analysis/engine/visibility"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/type/projection"
@@ -230,14 +231,20 @@ func TestSignatureOutcomeProviderNormalReturnRefinementDoesNotApplyWithoutExpres
 	assertStatePresence(t, reg, flow[graph.Exit()], key.SymbolValue(argSymbol), presence.Maybe())
 }
 
-func TestWithSignatureMutationsLowersTableMutatorToDescendantInvalidation(t *testing.T) {
+func TestSignatureOutcomeProviderLowersTableMutatorToParamPathInvalidationAndApplies(t *testing.T) {
+	reg := standard.Registry()
 	graph := cfg.New()
 	call := graph.AddNode(cfg.NodeCall)
 	graph.AddEdge(graph.Entry(), call, false)
 	graph.AddEdge(call, graph.Exit(), false)
 
 	argExpr := factflow.ExprRef(901)
-	argPath := path.NewPath(symbol.ID(902), "items")
+	argSymbol := symbol.ID(902)
+	argPath := path.NewPath(argSymbol, "items")
+	containerKey := path.PathKey("sym902@1")
+	childKey := path.PathKey("sym902@1.child")
+	unrelatedKey := path.PathKey("sym903@1.child")
+	present := product.NewWithPresence(reg, product.ShapeTop, presence.Present())
 	facts := factflow.NewFacts(factflow.FactsInput{
 		CallSites: map[cfg.Point]factflow.CallSite{
 			call: factflow.NewCallSite(factflow.CallSiteConfig{
@@ -253,8 +260,7 @@ func TestWithSignatureMutationsLowersTableMutatorToDescendantInvalidation(t *tes
 		},
 	})
 
-	got := WithSignatureMutations(SignatureMutationConfig{
-		Graph: graph,
+	provider := SignatureOutcomeProvider(SignatureOutcomeProviderConfig{
 		Signatures: signatureMap{
 			"table.insert": {
 				Effect: effect.Empty.With(
@@ -266,20 +272,39 @@ func TestWithSignatureMutationsLowersTableMutatorToDescendantInvalidation(t *tes
 		NameFor: StaticName("table.insert"),
 		Facts:   facts,
 	})
-
-	invalidation, ok := got.PathDescendantInvalidation(call)
+	site, ok := facts.CallSite(call)
 	if !ok {
-		t.Fatalf("missing path descendant invalidation")
+		t.Fatalf("missing call site")
 	}
-	if !invalidation.ContainerPath().Equal(argPath) {
-		t.Fatalf("invalidation path = %s, want %s", invalidation.ContainerPath(), argPath)
+	got := provider(transfer.NodeContext{Graph: graph, Registry: reg, Point: call, Node: graph.Node(call)}, site, state.State{}, nil)
+
+	if len(got.ParamPathInvalidations) != 1 {
+		t.Fatalf("param path invalidations = %d, want 1: %#v", len(got.ParamPathInvalidations), got.ParamPathInvalidations)
 	}
-	if assignment, ok := got.PathAssignment(call); ok {
-		t.Fatalf("unexpected path assignment: %#v", assignment)
+	if !got.ParamPathInvalidations[0].Path.Equal(path.NewPlaceholder(0)) {
+		t.Fatalf("invalidation path = %s, want $0", got.ParamPathInvalidations[0].Path.String())
 	}
+	visibilityBuilder := visibility.NewBuilder()
+	visibilityBuilder.Define(call, argSymbol, "items")
+	flow := transfer.Run(transfer.Config{
+		Graph:    graph,
+		Registry: reg,
+		EntryState: state.State{}.
+			WritePathKey(reg, containerKey, present).
+			WritePathKey(reg, childKey, present).
+			WritePathKey(reg, unrelatedKey, present),
+		NodeTransfer: factapply.NewFactsNodeTransfer(factapply.FactsNodeTransferConfig{
+			Facts:       facts,
+			CallOutcome: provider,
+			Visibility:  visibility.NewResolver(visibilityBuilder.Build()),
+		}),
+	})
+	assertPathValue(t, reg, flow[graph.Exit()], containerKey, present)
+	assertPathValue(t, reg, flow[graph.Exit()], childKey, product.Bottom(reg))
+	assertPathValue(t, reg, flow[graph.Exit()], unrelatedKey, present)
 }
 
-func TestWithSignatureMutationsLowersStoreIntoContainerArgument(t *testing.T) {
+func TestSignatureOutcomeProviderLowersStoreIntoContainerArgument(t *testing.T) {
 	graph := cfg.New()
 	call := graph.AddNode(cfg.NodeCall)
 	graph.AddEdge(graph.Entry(), call, false)
@@ -288,7 +313,6 @@ func TestWithSignatureMutationsLowersStoreIntoContainerArgument(t *testing.T) {
 	containerExpr := factflow.ExprRef(911)
 	insertedExpr := factflow.ExprRef(912)
 	containerPath := path.NewPath(symbol.ID(913), "container")
-	insertedPath := path.NewPath(symbol.ID(914), "inserted")
 	facts := factflow.NewFacts(factflow.FactsInput{
 		CallSites: map[cfg.Point]factflow.CallSite{
 			call: factflow.NewCallSite(factflow.CallSiteConfig{
@@ -301,12 +325,11 @@ func TestWithSignatureMutationsLowersStoreIntoContainerArgument(t *testing.T) {
 		},
 		ExpressionPaths: map[factflow.ExprRef]path.Path{
 			containerExpr: containerPath,
-			insertedExpr:  insertedPath,
+			insertedExpr:  path.NewPath(symbol.ID(914), "inserted"),
 		},
 	})
 
-	got := WithSignatureMutations(SignatureMutationConfig{
-		Graph: graph,
+	provider := SignatureOutcomeProvider(SignatureOutcomeProviderConfig{
 		Signatures: signatureMap{
 			"store": {
 				Effect: effect.Empty.With(ownership.Store{
@@ -318,20 +341,18 @@ func TestWithSignatureMutationsLowersStoreIntoContainerArgument(t *testing.T) {
 		NameFor: StaticName("store"),
 		Facts:   facts,
 	})
-
-	invalidation, ok := got.PathDescendantInvalidation(call)
+	site, ok := facts.CallSite(call)
 	if !ok {
-		t.Fatalf("missing path descendant invalidation")
+		t.Fatalf("missing call site")
 	}
-	if !invalidation.ContainerPath().Equal(containerPath) {
-		t.Fatalf("invalidation path = %s, want container path %s", invalidation.ContainerPath(), containerPath)
-	}
-	if invalidation.ContainerPath().Equal(insertedPath) {
-		t.Fatalf("invalidation used inserted value path %s", insertedPath)
+	got := provider(transfer.NodeContext{Graph: graph, Point: call, Node: graph.Node(call)}, site, state.State{}, nil)
+
+	if len(got.ParamPathInvalidations) != 1 || !got.ParamPathInvalidations[0].Path.Equal(path.NewPlaceholder(0)) {
+		t.Fatalf("param path invalidations = %#v, want container argument $0", got.ParamPathInvalidations)
 	}
 }
 
-func TestWithSignatureMutationsSkipsStoreWithoutKnownDestination(t *testing.T) {
+func TestSignatureOutcomeProviderSkipsStoreWithoutKnownDestination(t *testing.T) {
 	graph := cfg.New()
 	call := graph.AddNode(cfg.NodeCall)
 	graph.AddEdge(graph.Entry(), call, false)
@@ -355,8 +376,7 @@ func TestWithSignatureMutationsSkipsStoreWithoutKnownDestination(t *testing.T) {
 		},
 	})
 
-	got := WithSignatureMutations(SignatureMutationConfig{
-		Graph: graph,
+	provider := SignatureOutcomeProvider(SignatureOutcomeProviderConfig{
 		Signatures: signatureMap{
 			"store": {
 				Effect: effect.Empty.With(ownership.Store{
@@ -368,18 +388,27 @@ func TestWithSignatureMutationsSkipsStoreWithoutKnownDestination(t *testing.T) {
 		NameFor: StaticName("store"),
 		Facts:   facts,
 	})
+	site, ok := facts.CallSite(call)
+	if !ok {
+		t.Fatalf("missing call site")
+	}
+	got := provider(transfer.NodeContext{Graph: graph, Point: call, Node: graph.Node(call)}, site, state.State{}, nil)
 
-	if invalidation, ok := got.PathDescendantInvalidation(call); ok {
-		t.Fatalf("unexpected path descendant invalidation for store without destination: %#v", invalidation)
+	if len(got.ParamPathInvalidations) != 0 {
+		t.Fatalf("param path invalidations = %#v, want none", got.ParamPathInvalidations)
 	}
 }
 
-func TestWithSignatureMutationsSkipsTargetWithoutExpressionPath(t *testing.T) {
+func TestSignatureOutcomeProviderParamPathInvalidationDoesNotApplyWithoutExpressionPath(t *testing.T) {
+	reg := standard.Registry()
 	graph := cfg.New()
 	call := graph.AddNode(cfg.NodeCall)
 	graph.AddEdge(graph.Entry(), call, false)
 	graph.AddEdge(call, graph.Exit(), false)
 
+	argSymbol := symbol.ID(921)
+	childKey := path.PathKey("sym921@1.child")
+	present := product.NewWithPresence(reg, product.ShapeTop, presence.Present())
 	facts := factflow.NewFacts(factflow.FactsInput{
 		CallSites: map[cfg.Point]factflow.CallSite{
 			call: factflow.NewCallSite(factflow.CallSiteConfig{
@@ -392,8 +421,7 @@ func TestWithSignatureMutationsSkipsTargetWithoutExpressionPath(t *testing.T) {
 		},
 	})
 
-	got := WithSignatureMutations(SignatureMutationConfig{
-		Graph: graph,
+	provider := SignatureOutcomeProvider(SignatureOutcomeProviderConfig{
 		Signatures: signatureMap{
 			"table.insert": {
 				Effect: effect.Empty.With(mutation.TableMutator{
@@ -405,10 +433,28 @@ func TestWithSignatureMutationsSkipsTargetWithoutExpressionPath(t *testing.T) {
 		NameFor: StaticName("table.insert"),
 		Facts:   facts,
 	})
-
-	if invalidation, ok := got.PathDescendantInvalidation(call); ok {
-		t.Fatalf("unexpected path descendant invalidation: %#v", invalidation)
+	site, ok := facts.CallSite(call)
+	if !ok {
+		t.Fatalf("missing call site")
 	}
+	got := provider(transfer.NodeContext{Graph: graph, Registry: reg, Point: call, Node: graph.Node(call)}, site, state.State{}, nil)
+
+	if len(got.ParamPathInvalidations) != 1 || !got.ParamPathInvalidations[0].Path.Equal(path.NewPlaceholder(0)) {
+		t.Fatalf("param path invalidations = %#v, want unresolved $0", got.ParamPathInvalidations)
+	}
+	visibilityBuilder := visibility.NewBuilder()
+	visibilityBuilder.Define(call, argSymbol, "items")
+	flow := transfer.Run(transfer.Config{
+		Graph:      graph,
+		Registry:   reg,
+		EntryState: state.State{}.WritePathKey(reg, childKey, present),
+		NodeTransfer: factapply.NewFactsNodeTransfer(factapply.FactsNodeTransferConfig{
+			Facts:       facts,
+			CallOutcome: provider,
+			Visibility:  visibility.NewResolver(visibilityBuilder.Build()),
+		}),
+	})
+	assertPathValue(t, reg, flow[graph.Exit()], childKey, present)
 }
 
 func TestWithSignatureNoNormalReturnsMarksNeverReturnCallAndApplies(t *testing.T) {
@@ -1189,6 +1235,13 @@ func assertStatePresence(t *testing.T, reg *axis.Registry, st state.State, slot 
 	t.Helper()
 	if got := product.PresenceOf(st.ReadValue(reg, slot)); !presence.Equal(got, want) {
 		t.Fatalf("state[%s] presence = %s, want %s", slot, got, want)
+	}
+}
+
+func assertPathValue(t *testing.T, reg *axis.Registry, st state.State, pathKey path.PathKey, want product.Value) {
+	t.Helper()
+	if got := st.ReadPathKey(reg, pathKey); !product.Equal(reg, got, want) {
+		t.Fatalf("state path[%s] = %v, want %v", pathKey, got, want)
 	}
 }
 

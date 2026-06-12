@@ -220,6 +220,7 @@ func withSupplementalResultSlots(out factapply.CallOutcome, results []factapply.
 func withSupplementalOutcomeFacts(out, second factapply.CallOutcome) factapply.CallOutcome {
 	out.PathRefinements = append(out.PathRefinements, second.PathRefinements...)
 	out.ParamPathRefinements = append(out.ParamPathRefinements, second.ParamPathRefinements...)
+	out.ParamPathInvalidations = append(out.ParamPathInvalidations, second.ParamPathInvalidations...)
 	out.ParamConditions = append(out.ParamConditions, second.ParamConditions...)
 	out.ParamPathRelations = append(out.ParamPathRelations, second.ParamPathRelations...)
 	out.PathStaticMembers = append(out.PathStaticMembers, second.PathStaticMembers...)

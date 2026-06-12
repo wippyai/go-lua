@@ -126,6 +126,13 @@ func applyCallOutcomeFacts(
 		}
 		out = applyValueRefinementAt(ctx.Registry, resolver, ctx.Point, out, targetPath, factflow.NewValueConstraint(fact.Value))
 	}
+	for _, fact := range outcome.ParamPathInvalidations {
+		targetPath, ok := fact.Path.Substitute(paramBindings)
+		if !ok {
+			continue
+		}
+		out = applyPathDescendantInvalidation(ctx, resolver, out, factflow.NewPathDescendantInvalidation(targetPath))
+	}
 	for _, condition := range outcome.ParamConditions {
 		out = applyCallParamCondition(ctx, facts, resolver, out, site, condition)
 	}

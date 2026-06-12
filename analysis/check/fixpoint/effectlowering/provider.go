@@ -6,6 +6,8 @@ import (
 	"strings"
 
 	"github.com/wippyai/go-lua/analysis/domain/effect"
+	"github.com/wippyai/go-lua/analysis/domain/effect/mutation"
+	"github.com/wippyai/go-lua/analysis/domain/effect/ownership"
 	"github.com/wippyai/go-lua/analysis/domain/effect/postcondition"
 	"github.com/wippyai/go-lua/analysis/domain/effect/returns"
 	"github.com/wippyai/go-lua/analysis/domain/effect/signature"
@@ -66,6 +68,7 @@ func SignatureOutcomeProvider(config SignatureOutcomeProviderConfig) factapply.C
 		out := factapply.CallOutcome{
 			ReturnPresenceRelations: signatureReturnPresenceRelations(sig),
 			ParamPathRefinements:    signatureParamPathRefinements(ctx, sig, site),
+			ParamPathInvalidations:  signatureParamPathInvalidations(sig, site),
 		}
 		if sig.Type == nil || len(sig.Type.Returns) == 0 {
 			return out
@@ -87,6 +90,60 @@ func SignatureOutcomeProvider(config SignatureOutcomeProviderConfig) factapply.C
 		out.Results = results
 		return out
 	}
+}
+
+func signatureParamPathInvalidations(sig signature.Function, site factflow.CallSite) []factapply.CallParamPathInvalidation {
+	targets := activeMutationTargets(sig)
+	if len(targets) == 0 {
+		return nil
+	}
+	args := site.ArgumentSources()
+	var out []factapply.CallParamPathInvalidation
+	for _, target := range targets {
+		argIndex, ok := effect.ResolveParamIndex(target, len(args))
+		if !ok || !callArgumentSourceCanBindPath(args[argIndex]) {
+			continue
+		}
+		if len(out) != 0 {
+			continue
+		}
+		out = append(out, factapply.CallParamPathInvalidation{
+			Path: pathdom.NewPlaceholder(argIndex),
+		})
+	}
+	return out
+}
+
+func activeMutationTargets(sig signature.Function) []effect.ParamRef {
+	if len(sig.Effect.Labels) == 0 {
+		return nil
+	}
+	out := make([]effect.ParamRef, 0, len(sig.Effect.Labels))
+	for _, label := range sig.Effect.Labels {
+		switch normalized := effect.NormalizeLabel(label).(type) {
+		case mutation.TableMutator:
+			out = append(out, normalized.Target)
+		case *mutation.TableMutator:
+			if normalized != nil {
+				out = append(out, normalized.Target)
+			}
+		case mutation.LengthChange:
+			out = append(out, normalized.Target)
+		case *mutation.LengthChange:
+			if normalized != nil {
+				out = append(out, normalized.Target)
+			}
+		case ownership.Store:
+			if normalized.Into.Index >= 0 {
+				out = append(out, normalized.Into)
+			}
+		case *ownership.Store:
+			if normalized != nil && normalized.Into.Index >= 0 {
+				out = append(out, normalized.Into)
+			}
+		}
+	}
+	return out
 }
 
 func signatureParamPathRefinements(

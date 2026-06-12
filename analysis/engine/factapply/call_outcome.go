@@ -14,6 +14,7 @@ type CallOutcome struct {
 
 	PathRefinements            []CallPathRefinement
 	ParamPathRefinements       []CallParamPathRefinement
+	ParamPathInvalidations     []CallParamPathInvalidation
 	ParamConditions            []CallParamCondition
 	ParamPathRelations         []CallParamPathRelation
 	PathStaticMembers          []CallPathStaticMember
@@ -38,6 +39,12 @@ type CallPathRefinement struct {
 type CallParamPathRefinement struct {
 	Path  pathdom.Path
 	Value product.Value
+}
+
+// CallParamPathInvalidation records that descendants below a parameter
+// placeholder path were invalidated by a normal-returning call.
+type CallParamPathInvalidation struct {
+	Path pathdom.Path
 }
 
 // CallParamCondition records that a normal return selects the truthiness facts
