@@ -2,8 +2,12 @@ package transferfacts
 
 import (
 	"github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
+	"github.com/wippyai/go-lua/analysis/lua/valueexpr"
+	"github.com/wippyai/go-lua/compiler/ast"
 )
 
 func (l *lowerer) localAssignment(fact semantics.LocalAssignmentFact) (factflow.RootAssignment, bool) {
@@ -11,7 +15,23 @@ func (l *lowerer) localAssignment(fact semantics.LocalAssignmentFact) (factflow.
 		return factflow.RootAssignment{}, false
 	}
 	target := path.NewPath(fact.Symbol, fact.Name)
-	return factflow.NewRootAssignment(fact.Symbol, target, l.valueSource(fact.Source)), true
+	source := l.valueSource(fact.Source)
+	if declaredValueApplies(fact) {
+		if declared, ok := l.declaredValue(fact.Type); ok {
+			return factflow.NewRootAssignmentWithDeclaredValue(fact.Symbol, target, source, declared), true
+		}
+	}
+	return factflow.NewRootAssignment(fact.Symbol, target, source), true
+}
+
+func declaredValueApplies(fact semantics.LocalAssignmentFact) bool {
+	if fact.Type == nil || fact.Source.Kind != factflow.ValueSourceExpression {
+		return false
+	}
+	if _, ok := valueexpr.LiteralType(fact.Expr); !ok {
+		return false
+	}
+	return true
 }
 
 func (l *lowerer) ordinaryAssignment(fact semantics.OrdinaryAssignmentFact) (factflow.RootAssignment, bool) {
@@ -40,4 +60,15 @@ func (l *lowerer) pathDescendantInvalidation(fact semantics.OrdinaryAssignmentFa
 		return factflow.PathDescendantInvalidation{}, false
 	}
 	return factflow.NewPathDescendantInvalidation(fact.ContainerPath), true
+}
+
+func (l *lowerer) declaredValue(expr ast.TypeExpr) (product.Value, bool) {
+	if expr == nil {
+		return product.Value{}, false
+	}
+	t, ok := newTypeResolver(l.bindings).Type(expr)
+	if !ok {
+		return product.Value{}, false
+	}
+	return typevalue.FromType(l.registry, t), true
 }

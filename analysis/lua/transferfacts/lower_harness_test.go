@@ -6,6 +6,9 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
+	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/standard"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
@@ -38,6 +41,44 @@ func TestLowerPanicsWithoutRegistryOnEmptyInputs(t *testing.T) {
 	}()
 
 	_ = Lower(nil, nil, Config{})
+}
+
+func TestLowerAnnotatedLiteralLocalCarriesDeclaredValue(t *testing.T) {
+	reg := standard.Registry()
+	stmts, bindings, built, result := parseSemanticChunk(t, `local x: string | number = 42`)
+
+	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings})
+	points := requireStmtPoints(t, built, mustLocalStmt(t, stmts, 0), 1)
+	fact, ok := facts.LocalAssignment(points[0])
+	if !ok {
+		t.Fatalf("missing local assignment at point %d", points[0])
+	}
+	declared, ok := fact.DeclaredValue()
+	if !ok {
+		t.Fatalf("missing declared value")
+	}
+	if got := product.PresenceOf(declared); !presence.Equal(got, presence.Present()) {
+		t.Fatalf("declared presence = %s, want present", got)
+	}
+	wantKind := runtimekind.Join(runtimekind.Singleton(runtimekind.String), runtimekind.Singleton(runtimekind.Number))
+	if got := product.Get(reg, declared, runtimekind.Key); !runtimekind.Equal(got, wantKind) {
+		t.Fatalf("declared runtime kind = %s, want %s", got, wantKind)
+	}
+}
+
+func TestLowerAnnotatedIdentifierLocalDoesNotCarryDeclaredValue(t *testing.T) {
+	reg := standard.Registry()
+	stmts, bindings, built, result := parseSemanticChunk(t, `local x: string? = value`, "value")
+
+	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings})
+	points := requireStmtPoints(t, built, mustLocalStmt(t, stmts, 0), 1)
+	fact, ok := facts.LocalAssignment(points[0])
+	if !ok {
+		t.Fatalf("missing local assignment at point %d", points[0])
+	}
+	if declared, ok := fact.DeclaredValue(); ok {
+		t.Fatalf("unexpected declared value for identifier source: %v", declared)
+	}
 }
 
 func TestLowerDoesNotLowerDeclarationOrControlSidecars(t *testing.T) {

@@ -2,6 +2,7 @@ package factflow
 
 import (
 	"github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/symbol"
 )
@@ -11,6 +12,9 @@ type RootAssignment struct {
 	targetSymbol symbol.ID
 	targetPath   path.Path
 	source       ValueSource
+
+	declaredValue    product.Value
+	hasDeclaredValue bool
 }
 
 // NewRootAssignment creates a root-symbol assignment fact.
@@ -22,6 +26,15 @@ func NewRootAssignment(targetSymbol symbol.ID, targetPath path.Path, source Valu
 	}
 }
 
+// NewRootAssignmentWithDeclaredValue creates a root assignment fact that can
+// write declared type evidence when its source has no value evidence.
+func NewRootAssignmentWithDeclaredValue(targetSymbol symbol.ID, targetPath path.Path, source ValueSource, declaredValue product.Value) RootAssignment {
+	fact := NewRootAssignment(targetSymbol, targetPath, source)
+	fact.declaredValue = declaredValue
+	fact.hasDeclaredValue = true
+	return fact
+}
+
 // TargetSymbol returns the assignment target's symbol identity.
 func (a RootAssignment) TargetSymbol() symbol.ID { return a.targetSymbol }
 
@@ -30,6 +43,12 @@ func (a RootAssignment) TargetPath() path.Path { return copyPath(a.targetPath) }
 
 // Source returns the value assigned to the target.
 func (a RootAssignment) Source() ValueSource { return a.source }
+
+// DeclaredValue returns conservative declared type evidence to write when
+// Source has no value evidence.
+func (a RootAssignment) DeclaredValue() (product.Value, bool) {
+	return a.declaredValue, a.hasDeclaredValue
+}
 
 func (a RootAssignment) copy() RootAssignment {
 	a.targetPath = copyPath(a.targetPath)

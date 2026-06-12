@@ -63,6 +63,34 @@ func TestCheckChunkAssignsLocalFromExpressionValue(t *testing.T) {
 	}
 }
 
+func TestCheckChunkSeedsDeclaredLocalValueWhenLiteralSourceUnresolved(t *testing.T) {
+	reg := standard.Registry()
+	stmts := parseChunk(t, `local x: string | number = 42`)
+
+	result, err := CheckChunk(stmts, Config{Registry: reg})
+	if err != nil {
+		t.Fatalf("CheckChunk: %v", err)
+	}
+
+	stmt := stmts[0].(*ast.LocalAssignStmt)
+	x := mustLocalAt(t, result, stmt, 0)
+	assign := requireLocalAssignmentPoint(t, result, stmt, 0)
+	succs := result.Graph().Successors(assign)
+	if len(succs) != 1 {
+		t.Fatalf("assignment successors = %v, want one successor", succs)
+	}
+	after, ok := result.StateAt(succs[0])
+	if !ok {
+		t.Fatalf("missing state after local assignment")
+	}
+	got := after.ReadValue(reg, key.SymbolValue(x))
+	if product.Equal(reg, got, product.Bottom(reg)) {
+		t.Fatalf("symbol value is bottom after annotated local assignment")
+	}
+	assertPresence(t, reg, got, presence.Present())
+	assertRuntimeKind(t, reg, got, runtimekind.Join(runtimekind.Singleton(runtimekind.String), runtimekind.Singleton(runtimekind.Number)))
+}
+
 func TestCheckFunctionRunsIntraprocedurally(t *testing.T) {
 	reg := standard.Registry()
 	fn := parseFunction(t, "function f(a) local b = a return b end")
@@ -550,6 +578,18 @@ func requireCheckStmtPoint(t *testing.T, built *cfgbuild.Result, stmt ast.Stmt) 
 		t.Fatalf("stmt points = %v, want one point", points)
 	}
 	return points[0]
+}
+
+func requireLocalAssignmentPoint(t *testing.T, result *Result, stmt *ast.LocalAssignStmt, index int) cfg.Point {
+	t.Helper()
+	for _, point := range result.Graph().RPO() {
+		fact, ok := result.LocalAssignment(point)
+		if ok && fact.Stmt == stmt && fact.Index == index {
+			return point
+		}
+	}
+	t.Fatalf("missing local assignment point for index %d", index)
+	return 0
 }
 
 func assertProductEqual(t *testing.T, reg *axis.Registry, got, want product.Value) {

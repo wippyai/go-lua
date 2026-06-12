@@ -5,6 +5,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/standard"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
@@ -75,6 +76,36 @@ func TestFactsNodeTransferAppliesOrdinaryAssignmentThroughResolver(t *testing.T)
 	})
 
 	assertValue(t, reg, got[graph.Exit()], key.SymbolValue(target), assigned)
+	assertResolverCall(t, resolver, assign, source)
+}
+
+func TestFactsNodeTransferRootAssignmentUsesDeclaredValueWhenSourceMissing(t *testing.T) {
+	reg := standard.Registry()
+	graph := cfg.New()
+	assign := graph.AddNode(cfg.NodeAssign)
+	graph.AddEdge(graph.Entry(), assign, false)
+	graph.AddEdge(assign, graph.Exit(), false)
+
+	source := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: factflow.ExprRef(12), HasExpr: true}
+	target := symbol.ID(103)
+	declared := product.Set(reg, presentValue(reg), runtimekind.Key, runtimekind.Singleton(runtimekind.String))
+	resolver := &recordingSourceValues{}
+
+	got := transfer.Run(transfer.Config{
+		Graph:    graph,
+		Registry: reg,
+		NodeTransfer: NewFactsNodeTransfer(FactsNodeTransferConfig{
+			Facts: factflow.NewFacts(factflow.FactsInput{
+				LocalAssignments: map[cfg.Point]factflow.RootAssignment{
+					assign: factflow.NewRootAssignmentWithDeclaredValue(target, path.NewPath(target, "local"), source, declared),
+				},
+			}),
+			Sources: resolver,
+		}),
+	})
+
+	assertValue(t, reg, got[graph.Exit()], key.SymbolValue(target), declared)
+	assertRuntimeKind(t, reg, got[graph.Exit()].ReadValue(reg, key.SymbolValue(target)), runtimekind.Singleton(runtimekind.String))
 	assertResolverCall(t, resolver, assign, source)
 }
 

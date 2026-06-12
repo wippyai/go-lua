@@ -23,7 +23,8 @@ func applyRootAssignmentFact(
 	out state.State,
 	fact factflow.RootAssignment,
 ) state.State {
-	out, targetPath, applied := applyRootAssignment(ctx, resolver, sources, read, in, out, fact.TargetSymbol(), fact.TargetPath(), fact.Source())
+	declared, hasDeclared := fact.DeclaredValue()
+	out, targetPath, applied := applyRootAssignment(ctx, resolver, sources, read, in, out, fact.TargetSymbol(), fact.TargetPath(), fact.Source(), declared, hasDeclared)
 	if applied {
 		out = applyObjectLiteralEntries(ctx, resolver, facts, sources, read, in, out, targetPath, fact.Source())
 	}
@@ -40,6 +41,8 @@ func applyRootAssignment(
 	target symbol.ID,
 	targetPath pathdom.Path,
 	source factflow.ValueSource,
+	declared product.Value,
+	hasDeclared bool,
 ) (state.State, pathdom.Path, bool) {
 	root, ok := rootAssignmentTarget(target, targetPath)
 	if !ok {
@@ -47,7 +50,10 @@ func applyRootAssignment(
 	}
 	value, ok := sources.ValueOfSource(ctx.Point, source, in, read)
 	if !ok {
-		return out, pathdom.Path{}, false
+		if !hasDeclared {
+			return out, pathdom.Path{}, false
+		}
+		value = declared
 	}
 	targetPath = rootAssignmentPath(root, targetPath)
 	return writeRootSymbol(ctx, resolver, out, root, targetPath, value), targetPath, true

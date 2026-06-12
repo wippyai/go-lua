@@ -121,6 +121,21 @@ func TestAnnotationAssignabilityUsesSolvedTypeTestState(t *testing.T) {
 	}
 }
 
+func TestAnnotationAssignabilityUsesDeclaredLocalValueForTypeTestState(t *testing.T) {
+	diags := runDiagnostics(t, `
+		local y: string | number = 42
+		if type(y) == "string" then
+			local n: number = y
+		end
+	`)
+	if len(diags) != 1 {
+		t.Fatalf("diagnostics = %d, want 1: %#v", len(diags), diags)
+	}
+	if d := diags[0]; d.Code != CodeAssignmentType || !strings.Contains(d.Message, "string") || !strings.Contains(d.Message, "number") {
+		t.Fatalf("diagnostic = %#v, want string-to-number assignment mismatch", d)
+	}
+}
+
 func TestAnnotationAssignabilityUsesSolvedTypeNotState(t *testing.T) {
 	diags := runDiagnostics(t, `
 		function f(x: string | number)
