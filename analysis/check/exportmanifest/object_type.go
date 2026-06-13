@@ -30,9 +30,66 @@ func pathExportRecordType(result *body.Result, point cfg.Point, root pathdom.Pat
 	fields := make(map[string]typ.Type)
 	staticStrings := make(map[string]typ.Type)
 	staticInts := make(map[int]typ.Type)
+	addLocalObjectLiteralMembers(result, point, root, fields, staticStrings, staticInts)
 	addStateStaticMembers(result, point, root, fields, staticStrings, staticInts)
 	addFunctionDefinitionMembers(result, root, fields, staticStrings, staticInts)
 	return recordFromMemberMaps(fields, staticStrings, staticInts)
+}
+
+func addLocalObjectLiteralMembers(
+	result *body.Result,
+	point cfg.Point,
+	root pathdom.Path,
+	fields map[string]typ.Type,
+	staticStrings map[string]typ.Type,
+	staticInts map[int]typ.Type,
+) {
+	if root.Symbol == 0 || result.Graph() == nil || rootReassignedBefore(result, point, root) {
+		return
+	}
+	for _, candidate := range result.Graph().RPO() {
+		fact, ok := result.LocalAssignment(candidate)
+		if !ok || !fact.HasSymbol || fact.Symbol != root.Symbol {
+			continue
+		}
+		literal, ok := result.ObjectLiteral(fact.Expr)
+		if !ok {
+			return
+		}
+		addObjectLiteralEntries(result, point, root, literal.Entries, fields, staticStrings, staticInts)
+		return
+	}
+}
+
+func rootReassignedBefore(result *body.Result, point cfg.Point, root pathdom.Path) bool {
+	for _, candidate := range result.Graph().RPO() {
+		if candidate == point {
+			return false
+		}
+		fact, ok := result.OrdinaryAssignment(candidate)
+		if ok && fact.HasSymbol && fact.Symbol == root.Symbol {
+			return true
+		}
+	}
+	return false
+}
+
+func addObjectLiteralEntries(
+	result *body.Result,
+	point cfg.Point,
+	root pathdom.Path,
+	entries []semantics.ObjectEntryFact,
+	fields map[string]typ.Type,
+	staticStrings map[string]typ.Type,
+	staticInts map[int]typ.Type,
+) {
+	for _, entry := range entries {
+		member, ok := directMemberSegment(root.Segments, entry.Suffix.Segments)
+		if !ok {
+			continue
+		}
+		addObjectEntryType(fields, staticStrings, staticInts, member, objectEntryFactType(result, point, entry))
+	}
 }
 
 func addStateStaticMembers(
@@ -148,13 +205,19 @@ func objectLiteralType(result *body.Result, point cfg.Point, entries []semantics
 	}
 	projected := make([]objectEntry, 0, len(entries))
 	for _, entry := range entries {
-		t, ok := sourceType(result, point, entry.Source)
-		if !ok {
-			t = typ.Unknown
-		}
-		projected = append(projected, objectEntry{suffix: entry.Suffix.Segments, t: t})
+		projected = append(projected, objectEntry{suffix: entry.Suffix.Segments, t: objectEntryFactType(result, point, entry)})
 	}
 	return objectEntriesType(result, point, nil, projected)
+}
+
+func objectEntryFactType(result *body.Result, point cfg.Point, entry semantics.ObjectEntryFact) typ.Type {
+	if t, ok := exprType(result, point, entry.Value); ok {
+		return t
+	}
+	if t, ok := sourceType(result, point, entry.Source); ok {
+		return t
+	}
+	return typ.Unknown
 }
 
 type objectEntry struct {

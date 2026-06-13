@@ -84,6 +84,53 @@ func TestCheckAndExportPublishesReturnedTableDottedFunctionMember(t *testing.T) 
 	}
 }
 
+func TestCheckAndExportPrefersReturnedTableSourceMembersOverShallowSummary(t *testing.T) {
+	mod := CheckAndExport(`
+		local provider: { value: number } = { value = 1 }
+		function provider.meta(): { name: string }
+			return { name = "model" }
+		end
+		return provider
+	`, "provider")
+	if len(mod.Errors) != 0 {
+		t.Fatalf("module errors = %#v, want none", mod.Errors)
+	}
+
+	rec := requireExportRecord(t, mod)
+	field := rec.GetField("value")
+	if field == nil {
+		t.Fatalf("export fields = %#v, want value field", rec.Fields)
+	}
+	if !typ.TypeEquals(field.Type, typ.LiteralInt(1)) {
+		t.Fatalf("value field type = %v, want literal 1", field.Type)
+	}
+	requireFunctionField(t, rec, "meta")
+}
+
+func TestRequireCheckAndExportedReturnedTableDottedMemberKeepsReturnType(t *testing.T) {
+	mod := CheckAndExport(`
+		local provider = {}
+		function provider.meta(): { name: string }
+			return { name = "model" }
+		end
+		return provider
+	`, "provider")
+	if len(mod.Errors) != 0 {
+		t.Fatalf("module errors = %#v, want none", mod.Errors)
+	}
+
+	result := Check(`
+		local provider = require("provider")
+		local n: number = provider.meta()
+	`, WithStdlib(), WithModule("provider", mod))
+	if len(result.Diagnostics) != 1 {
+		t.Fatalf("diagnostics = %d, want 1: %#v", len(result.Diagnostics), result.Diagnostics)
+	}
+	if result.Diagnostics[0].Code != diagnostics.CodeAssignmentType {
+		t.Fatalf("diagnostic code = %s, want %s", result.Diagnostics[0].Code, diagnostics.CodeAssignmentType)
+	}
+}
+
 func TestCheckAndExportPublishesReturnedTableFunctionMemberParams(t *testing.T) {
 	mod := CheckAndExport(`
 		local client = {}

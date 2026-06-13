@@ -5,7 +5,9 @@ import (
 	"github.com/wippyai/go-lua/analysis/check/body"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/program"
 	"github.com/wippyai/go-lua/analysis/module/manifest"
+	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/analysis/type/unwrap"
 )
 
 // FromProgramResult publishes the manifest evidence currently represented by
@@ -29,12 +31,119 @@ func exportType(result program.Result) (typ.Type, bool) {
 	if root == nil {
 		return nil, false
 	}
-	if summary, ok := result.Snapshot().Read(result.RootKey()); ok {
-		if t, ok := typeList(root.Registry(), summary.Returns); ok && !typ.IsUnknown(t) {
-			return t, true
+	source, sourceOK := rootReturnType(root)
+	summary, summaryOK := summaryReturnType(result, root)
+	if sourceOK && hasRecordMembers(source) {
+		if summaryOK {
+			if merged, ok := mergeRecordMembers(summary, source); ok {
+				return merged, true
+			}
 		}
+		return source, true
 	}
-	return rootReturnType(root)
+	if summaryOK {
+		return summary, true
+	}
+	if sourceOK {
+		return source, true
+	}
+	return nil, false
+}
+
+func summaryReturnType(result program.Result, root *body.Result) (typ.Type, bool) {
+	summary, ok := result.Snapshot().Read(result.RootKey())
+	if !ok {
+		return nil, false
+	}
+	t, ok := typeList(root.Registry(), summary.Returns)
+	if !ok || typ.IsUnknown(t) {
+		return nil, false
+	}
+	return t, true
+}
+
+func hasRecordMembers(t typ.Type) bool {
+	rec, ok := unwrap.Annotated(t).(*typ.Record)
+	return ok && (len(rec.Fields) > 0 || len(rec.StaticMembers) > 0)
+}
+
+func mergeRecordMembers(summary, source typ.Type) (typ.Type, bool) {
+	summaryRecord, ok := unwrap.Annotated(summary).(*typ.Record)
+	if !ok {
+		return nil, false
+	}
+	sourceRecord, ok := unwrap.Annotated(source).(*typ.Record)
+	if !ok {
+		return nil, false
+	}
+	fields := mergeFields(summaryRecord.Fields, sourceRecord.Fields)
+	staticMembers := mergeStaticMembers(summaryRecord.StaticMembers, sourceRecord.StaticMembers)
+	parts := typ.RecordParts{
+		Fields:        fields,
+		StaticMembers: staticMembers,
+		Metatable:     preferredType(sourceRecord.Metatable, summaryRecord.Metatable),
+		MapKey:        preferredType(sourceRecord.MapKey, summaryRecord.MapKey),
+		MapValue:      preferredType(sourceRecord.MapValue, summaryRecord.MapValue),
+		Open:          summaryRecord.Open || sourceRecord.Open,
+	}
+	return typetable.RebuildRecord(parts), true
+}
+
+func mergeFields(summary, source []typ.Field) []typ.Field {
+	if len(summary) == 0 {
+		return append([]typ.Field(nil), source...)
+	}
+	byName := make(map[string]typ.Field, len(summary)+len(source))
+	for _, field := range summary {
+		byName[field.Name] = field
+	}
+	for _, field := range source {
+		byName[field.Name] = field
+	}
+	out := make([]typ.Field, 0, len(byName))
+	for _, field := range byName {
+		out = append(out, field)
+	}
+	return out
+}
+
+func mergeStaticMembers(summary, source []typ.StaticMember) []typ.StaticMember {
+	if len(summary) == 0 {
+		return append([]typ.StaticMember(nil), source...)
+	}
+	byKey := make(map[staticMemberKey]typ.StaticMember, len(summary)+len(source))
+	for _, member := range summary {
+		byKey[keyForStaticMember(member)] = member
+	}
+	for _, member := range source {
+		byKey[keyForStaticMember(member)] = member
+	}
+	out := make([]typ.StaticMember, 0, len(byKey))
+	for _, member := range byKey {
+		out = append(out, member)
+	}
+	return out
+}
+
+type staticMemberKey struct {
+	kind  typ.StaticMemberKind
+	name  string
+	index int64
+}
+
+func keyForStaticMember(member typ.StaticMember) staticMemberKey {
+	return staticMemberKey{
+		kind:  member.Kind,
+		name:  member.Name,
+		index: member.Index,
+	}
+}
+
+func preferredType(primary, fallback typ.Type) typ.Type {
+	if primary != nil {
+		return primary
+	}
+	return fallback
 }
 
 func rootReturnType(result *body.Result) (typ.Type, bool) {
