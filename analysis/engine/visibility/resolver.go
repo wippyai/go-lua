@@ -4,7 +4,6 @@ import (
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
-	"github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/ir/ssa"
 	"github.com/wippyai/go-lua/analysis/symbol"
@@ -71,34 +70,32 @@ func (r *Resolver) KeyForVersion(sym symbol.ID, version int, segments []segment.
 	if sym == 0 || version <= 0 {
 		return ""
 	}
-	rootKey := r.rootKey(sym, version)
-	if len(segments) == 0 {
-		return rootKey
-	}
-	if len(segments) == 1 && r != nil {
-		cacheKey := singleSegment{
-			root: versionedRoot{sym: sym, version: version},
-			seg:  segments[0],
-		}
-		if cached, ok := r.single[cacheKey]; ok {
-			return cached
-		}
-		key := pathdom.PathKey(string(rootKey) + segment.FormatSegments(segments))
-		r.single[cacheKey] = key
-		return key
-	}
-	return pathdom.PathKey(string(rootKey) + segment.FormatSegments(segments))
-}
-
-func (r *Resolver) rootKey(sym symbol.ID, version int) pathdom.PathKey {
 	if r != nil {
 		cacheKey := versionedRoot{sym: sym, version: version}
-		if cached, ok := r.root[cacheKey]; ok {
-			return cached
+		if len(segments) == 0 {
+			if cached, ok := r.root[cacheKey]; ok {
+				return cached
+			}
+			rootKey := pathdom.PathKey(pathaddr.VersionedRootString(sym, version))
+			r.root[cacheKey] = rootKey
+			return rootKey
 		}
-		rootKey := pathdom.PathKey(key.SymbolVersionRoot(sym, version))
-		r.root[cacheKey] = rootKey
-		return rootKey
+		if len(segments) == 1 {
+			singleKey := singleSegment{root: cacheKey, seg: segments[0]}
+			if cached, ok := r.single[singleKey]; ok {
+				return cached
+			}
+			key, ok := pathaddr.LocalKeyForVersion(sym, version, segments)
+			if !ok {
+				return ""
+			}
+			r.single[singleKey] = key.PathKey()
+			return key.PathKey()
+		}
 	}
-	return pathdom.PathKey(key.SymbolVersionRoot(sym, version))
+	key, ok := pathaddr.LocalKeyForVersion(sym, version, segments)
+	if !ok {
+		return ""
+	}
+	return key.PathKey()
 }

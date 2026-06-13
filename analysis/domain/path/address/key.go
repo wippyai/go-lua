@@ -87,7 +87,7 @@ func namedRootNeedsEncoding(key pathdom.PathKey) bool {
 	if _, _, ok := ParseSymbolPathKey(key); ok {
 		return true
 	}
-	if isCurrentSymbolPathKey(key) {
+	if _, _, _, ok := ParseResolverPath(key); ok {
 		return true
 	}
 	_, _, ok := parseEncodedNamedRootKey(string(key))
@@ -130,33 +130,6 @@ func parseEncodedNamedRootKey(key string) (string, []segment.Segment, bool) {
 		return "", nil, false
 	}
 	return key[rootStart:rootEnd], segments, true
-}
-
-func isCurrentSymbolPathKey(key pathdom.PathKey) bool {
-	s := string(key)
-	if !strings.HasPrefix(s, "sym") {
-		return false
-	}
-	i := 3
-	for i < len(s) {
-		ch := s[i]
-		if ch < '0' || ch > '9' {
-			break
-		}
-		i++
-	}
-	n, parsed := keycodec.ParseUnsignedDecimal(s[3:i])
-	if !parsed || n == 0 {
-		return false
-	}
-	if i < len(s) && s[i] == '@' {
-		_, next, ok := keycodec.ParsePositiveIntAfterAt(s, i+1)
-		if !ok {
-			return false
-		}
-		i = next
-	}
-	return segment.ValidFormattedSegments(s[i:])
 }
 
 func parseRootAndSuffix(key pathdom.PathKey) (root string, suffix string, ok bool) {

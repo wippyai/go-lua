@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
@@ -160,7 +161,7 @@ func TestFromResultDropsNonParameterNormalReturnFactPaths(t *testing.T) {
 	validPlaceholderKey := pathdom.PathKey("$0.already")
 	invalidKeys := []pathdom.PathKey{
 		normalReturnFactProjectTestKey(symbol.ID(912), ".local"),
-		pathdom.PathKey(key.SymbolRoot(param) + ".versionless"),
+		pathdom.PathKey("sym911.versionless"),
 		pathdom.PathKey("s911.stable"),
 		pathdom.PathKey("ret[0].value"),
 		pathdom.PathKey("global.value"),
@@ -302,7 +303,7 @@ func (r normalReturnFactProjectResultStub) ParameterValueSlots() []key.Value {
 }
 
 func normalReturnFactProjectTestKey(sym symbol.ID, suffix string) pathdom.PathKey {
-	return pathdom.PathKey(key.SymbolVersionRoot(sym, 1) + suffix)
+	return pathdom.PathKey(pathaddr.VersionedRootString(sym, 1) + suffix)
 }
 
 func assertDynamicAdmission(

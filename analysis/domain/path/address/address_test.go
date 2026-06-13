@@ -120,6 +120,28 @@ func TestTypedLocalAndStableKeysAreNotInterchangeable(t *testing.T) {
 	}
 }
 
+func TestParseResolverPathAndLocalKeyForVersionRoundTrip(t *testing.T) {
+	key := pathdom.PathKey(`sym42@3.field["k"]`)
+	sym, version, suffix, ok := ParseResolverPath(key)
+	if !ok || sym != 42 || version != 3 || suffix != `.field["k"]` {
+		t.Fatalf("ParseResolverPath = %d/%d/%q/%v, want 42/3/.field[\"k\"]/true", sym, version, suffix, ok)
+	}
+	segments, ok := segment.InternFormattedSegments(suffix)
+	if !ok {
+		t.Fatal("InternFormattedSegments failed")
+	}
+	local, ok := LocalKeyForVersion(sym, version, segments)
+	if !ok || local.PathKey() != key {
+		t.Fatalf("LocalKeyForVersion = %q/%v, want %q/true", local.PathKey(), ok, key)
+	}
+	if _, _, _, ok := ParseResolverPath(pathdom.PathKey("s42.field")); ok {
+		t.Fatal("ParseResolverPath accepted stable address spelling")
+	}
+	if _, _, _, ok := ParseResolverPath(pathdom.PathKey("$0.field")); ok {
+		t.Fatal("ParseResolverPath accepted placeholder spelling")
+	}
+}
+
 func TestStableSeparatesSymbolAndRootIdentity(t *testing.T) {
 	symbolAddr, ok := StableOfPath(pathdom.NewPath(7, "x"))
 	if !ok {
@@ -177,6 +199,22 @@ func TestStablePrefixParentAndRemainderAreStructured(t *testing.T) {
 	again, _ := entryAddr.RemainderAfterPrefix(rootAddr)
 	if again[0].Name != "nodes" {
 		t.Fatalf("remainder was not defensive: %#v", again)
+	}
+}
+
+func TestSegmentBoundaryHelpersRespectWholeSegments(t *testing.T) {
+	segments := []segment.Segment{
+		{Kind: segment.SegmentField, Name: "field"},
+		{Kind: segment.SegmentField, Name: "deep"},
+	}
+	prefix := []segment.Segment{{Kind: segment.SegmentField, Name: "field"}}
+	sibling := []segment.Segment{{Kind: segment.SegmentField, Name: "fieldish"}}
+
+	if !SegmentsHasPrefix(segments, prefix) || !SegmentsHasStrictPrefix(segments, prefix) {
+		t.Fatalf("segment prefix helpers rejected a real prefix: %#v / %#v", segments, prefix)
+	}
+	if SegmentsHasPrefix(segments, sibling) || SegmentsHasStrictPrefix(segments, sibling) {
+		t.Fatalf("segment prefix helpers accepted a boundary collision: %#v / %#v", segments, sibling)
 	}
 }
 

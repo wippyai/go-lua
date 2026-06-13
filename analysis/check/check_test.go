@@ -9,6 +9,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/effect/returns"
 	"github.com/wippyai/go-lua/analysis/domain/effect/signature"
 	"github.com/wippyai/go-lua/analysis/domain/path"
+	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
@@ -167,7 +168,7 @@ func TestCheckFunctionSeedsDeclaredParameterEntryState(t *testing.T) {
 	got := entry.ReadValue(reg, key.SymbolValue(slot.Symbol))
 	assertPresence(t, reg, got, presence.Maybe())
 	assertRuntimeKind(t, reg, got, runtimekind.Singleton(runtimekind.String))
-	if pathValue := entry.ReadPathKey(reg, key.ResolverPath(key.SymbolVersionRoot(slot.Symbol, 1)).PathKey()); !product.Equal(reg, pathValue, product.Bottom(reg)) {
+	if pathValue := entry.ReadPathKey(reg, pathaddr.LocalKey(pathaddr.VersionedRootString(slot.Symbol, 1)).PathKey()); !product.Equal(reg, pathValue, product.Bottom(reg)) {
 		t.Fatalf("entry path lane for parameter root = %v, want bottom", pathValue)
 	}
 }
@@ -178,7 +179,7 @@ func TestCheckFunctionParameterEntryStateKeepsExplicitEntryValueAndPath(t *testi
 	bindings := bind.BindFunction(fn, bind.Options{})
 	slot := mustParamSlot(t, bindings, fn, 0)
 	explicitValue := product.NewWithPresence(reg, product.ShapeTop, presence.Present())
-	pathKey := key.ResolverPath(key.SymbolVersionRoot(slot.Symbol, 1)).PathKey()
+	pathKey := pathaddr.LocalKey(pathaddr.VersionedRootString(slot.Symbol, 1)).PathKey()
 	explicitPath := product.NewWithPresence(reg, product.ShapeTop, presence.Absent())
 	entryState := state.State{}.
 		WriteValue(reg, key.SymbolValue(slot.Symbol), explicitValue).
@@ -420,8 +421,8 @@ end
 		runtimekind.Singleton(runtimekind.String),
 	)
 	entry := state.State{}.
-		WritePathKey(reg, path.PathKey(key.SymbolVersionRoot(tSym, 1)+".left"), stringValue).
-		WritePathKey(reg, path.PathKey(key.SymbolVersionRoot(tSym, 1)+".right"), product.Top())
+		WritePathKey(reg, path.PathKey(pathaddr.VersionedRootString(tSym, 1)+".left"), stringValue).
+		WritePathKey(reg, path.PathKey(pathaddr.VersionedRootString(tSym, 1)+".right"), product.Top())
 
 	result, err := CheckBoundChunk(stmts, bindings, Config{
 		Registry:   reg,

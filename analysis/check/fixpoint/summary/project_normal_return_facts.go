@@ -2,8 +2,8 @@ package summary
 
 import (
 	"github.com/wippyai/go-lua/analysis/domain/path"
+	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
-	"github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/engine/state"
@@ -185,7 +185,7 @@ func normalReturnFactPlaceholderPath(pathKey path.PathKey, params []path.Path) (
 		}
 		return normalReturnFactPlaceholderPathWithSuffix(index, suffix)
 	}
-	sym, version, suffix, ok := key.ParseResolverPath(pathKey)
+	sym, version, suffix, ok := pathaddr.ParseResolverPath(pathKey)
 	if !ok || version <= 0 {
 		return path.Path{}, false
 	}

@@ -52,7 +52,7 @@ func StableFromKey(key pathdom.PathKey) (Stable, bool) {
 	if sym, segments, ok := ParseSymbolPathKey(key); ok {
 		return stableOfSymbolOwnedSegments(sym, segments)
 	}
-	if isCurrentSymbolPathKey(key) {
+	if _, _, _, ok := ParseResolverPath(key); ok {
 		return Stable{}, false
 	}
 	if root, segments, ok := parseEncodedNamedRootKey(string(key)); ok {

@@ -4,7 +4,6 @@ import (
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
-	"github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/symbol"
 )
@@ -51,7 +50,7 @@ type parsedKey struct {
 }
 
 func parse(pathKey pathdom.PathKey) (parsedKey, bool) {
-	sym, version, suffix, ok := key.ParseResolverPath(pathKey)
+	sym, version, suffix, ok := pathaddr.ParseResolverPath(pathKey)
 	if ok && version > 0 {
 		segments, ok := segment.InternFormattedSegments(suffix)
 		if !ok {
@@ -103,7 +102,7 @@ func (k parsedKey) hasPrefix(prefix parsedKey) bool {
 			prefix.versioned &&
 			k.sym == prefix.sym &&
 			k.version == prefix.version &&
-			segmentSliceHasPrefix(k.segments, prefix.segments)
+			pathaddr.SegmentsHasPrefix(k.segments, prefix.segments)
 	}
 	return k.stable.HasPrefix(prefix.stable)
 }
@@ -114,24 +113,8 @@ func (k parsedKey) hasStrictPrefix(prefix parsedKey) bool {
 			prefix.versioned &&
 			k.sym == prefix.sym &&
 			k.version == prefix.version &&
-			segmentSliceHasStrictPrefix(k.segments, prefix.segments)
+			pathaddr.SegmentsHasStrictPrefix(k.segments, prefix.segments)
 	}
 	remainder, ok := k.stable.RemainderAfterPrefix(prefix.stable)
 	return ok && len(remainder) > 0
-}
-
-func segmentSliceHasPrefix(segments, prefix []segment.Segment) bool {
-	if len(prefix) > len(segments) {
-		return false
-	}
-	for i := range prefix {
-		if segments[i] != prefix[i] {
-			return false
-		}
-	}
-	return true
-}
-
-func segmentSliceHasStrictPrefix(segments, prefix []segment.Segment) bool {
-	return len(prefix) < len(segments) && segmentSliceHasPrefix(segments, prefix)
 }
