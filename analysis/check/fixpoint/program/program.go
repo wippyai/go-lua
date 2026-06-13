@@ -14,7 +14,9 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	factapply "github.com/wippyai/go-lua/analysis/engine/factapply"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
+	"github.com/wippyai/go-lua/analysis/lua/typeresolve"
 	"github.com/wippyai/go-lua/analysis/symbol"
+	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
 
@@ -53,9 +55,9 @@ func RunBoundChunk(stmts []ast.Stmt, bindings *bind.Result, config Config) (Resu
 	keys := collectKeys(bindings, rootKey(config.RootKey), stmts)
 	keyFor := keyFunc(keys)
 	functions := make([]query.Function, 0, 1+len(keys.functions))
-	functions = append(functions, chunkFunction(keys.rootKey, stmts, bindings, config.Check, keyFor))
+	functions = append(functions, chunkFunction(keys.rootKey, stmts, bindings, config.Check, keyFor, keys.functionTypes))
 	for _, origin := range keys.functions {
-		functions = append(functions, boundFunction(origin.key, origin.funcExpr, bindings, config.Check, keyFor))
+		functions = append(functions, boundFunction(origin.key, origin.funcExpr, bindings, config.Check, keyFor, keys.functionTypes))
 	}
 
 	snapshot, err := query.Run(query.Config{
@@ -94,16 +96,19 @@ func RunFunction(fn *ast.FunctionExpr, config Config) (Result, error) {
 func RunBoundFunction(fn *ast.FunctionExpr, bindings *bind.Result, config Config) (Result, error) {
 	stmts := functionStmts(fn)
 	keys := collectKeys(bindings, rootKey(config.RootKey), stmts)
+	if fnType, ok := lowerFunctionExprType(fn, bindings); ok {
+		keys.functionTypes[keys.rootKey] = fnType
+	}
 	keyFor := keyFunc(keys)
 	functions := make([]query.Function, 0, 1+len(keys.functions))
-	functions = append(functions, boundFunction(keys.rootKey, fn, bindings, config.Check, keyFor))
+	functions = append(functions, boundFunction(keys.rootKey, fn, bindings, config.Check, keyFor, keys.functionTypes))
 	seen := map[summary.SummaryKey]struct{}{keys.rootKey: {}}
 	for _, origin := range keys.functions {
 		if _, ok := seen[origin.key]; ok {
 			continue
 		}
 		seen[origin.key] = struct{}{}
-		functions = append(functions, boundFunction(origin.key, origin.funcExpr, bindings, config.Check, keyFor))
+		functions = append(functions, boundFunction(origin.key, origin.funcExpr, bindings, config.Check, keyFor, keys.functionTypes))
 	}
 
 	snapshot, err := query.Run(query.Config{
@@ -164,19 +169,21 @@ type keyedFunction struct {
 }
 
 type programKeys struct {
-	rootKey      summary.SummaryKey
-	functions    []keyedFunction
-	functionKeys map[symbol.ID]summary.SummaryKey
-	targetKeys   map[symbol.ID]summary.SummaryKey
-	pathKeys     map[path.PathKey]summary.SummaryKey
+	rootKey       summary.SummaryKey
+	functions     []keyedFunction
+	functionKeys  map[symbol.ID]summary.SummaryKey
+	targetKeys    map[symbol.ID]summary.SummaryKey
+	pathKeys      map[path.PathKey]summary.SummaryKey
+	functionTypes map[summary.SummaryKey]*typ.Function
 }
 
 func collectKeys(bindings *bind.Result, root summary.SummaryKey, stmts ...[]ast.Stmt) programKeys {
 	out := programKeys{
-		rootKey:      root,
-		functionKeys: make(map[symbol.ID]summary.SummaryKey),
-		targetKeys:   make(map[symbol.ID]summary.SummaryKey),
-		pathKeys:     make(map[path.PathKey]summary.SummaryKey),
+		rootKey:       root,
+		functionKeys:  make(map[symbol.ID]summary.SummaryKey),
+		targetKeys:    make(map[symbol.ID]summary.SummaryKey),
+		pathKeys:      make(map[path.PathKey]summary.SummaryKey),
+		functionTypes: make(map[summary.SummaryKey]*typ.Function),
 	}
 	if bindings == nil {
 		return out
@@ -189,6 +196,9 @@ func collectKeys(bindings *bind.Result, root summary.SummaryKey, stmts ...[]ast.
 		key := summary.DefaultSummaryKey(ref.FromSymbol(origin.Symbol))
 		out.functions = append(out.functions, keyedFunction{funcExpr: origin.Func, key: key})
 		out.functionKeys[origin.Symbol] = key
+		if fnType, ok := lowerFunctionExprType(origin.Func, bindings); ok {
+			out.functionTypes[key] = fnType
+		}
 		if origin.HasTargetSymbol && origin.TargetSymbol != 0 {
 			out.targetKeys[origin.TargetSymbol] = key
 		}
@@ -206,12 +216,19 @@ func rootKey(configured summary.SummaryKey) summary.SummaryKey {
 	return summary.DefaultSummaryKey(ref.Root())
 }
 
-func chunkFunction(key summary.SummaryKey, stmts []ast.Stmt, bindings *bind.Result, config body.Config, keyFor callresult.KeyFunc) query.Function {
+func chunkFunction(
+	key summary.SummaryKey,
+	stmts []ast.Stmt,
+	bindings *bind.Result,
+	config body.Config,
+	keyFor callresult.KeyFunc,
+	functionTypes map[summary.SummaryKey]*typ.Function,
+) query.Function {
 	captured := cloneCheckConfig(config)
 	return query.Function{
 		Key: key,
 		Body: func(ctx query.Context) (summary.Summary, error) {
-			config := checkConfigWithSummaries(captured, ctx.Summaries, keyFor)
+			config := checkConfigWithSummaries(captured, ctx.Summaries, keyFor, functionTypes)
 			result, err := body.CheckBoundChunk(stmts, bindings, config)
 			if err != nil {
 				return summary.Summary{}, err
@@ -221,12 +238,19 @@ func chunkFunction(key summary.SummaryKey, stmts []ast.Stmt, bindings *bind.Resu
 	}
 }
 
-func boundFunction(key summary.SummaryKey, fn *ast.FunctionExpr, bindings *bind.Result, config body.Config, keyFor callresult.KeyFunc) query.Function {
+func boundFunction(
+	key summary.SummaryKey,
+	fn *ast.FunctionExpr,
+	bindings *bind.Result,
+	config body.Config,
+	keyFor callresult.KeyFunc,
+	functionTypes map[summary.SummaryKey]*typ.Function,
+) query.Function {
 	captured := cloneCheckConfig(config)
 	return query.Function{
 		Key: key,
 		Body: func(ctx query.Context) (summary.Summary, error) {
-			config := checkConfigWithSummaries(captured, ctx.Summaries, keyFor)
+			config := checkConfigWithSummaries(captured, ctx.Summaries, keyFor, functionTypes)
 			result, err := body.CheckBoundFunction(fn, bindings, config)
 			if err != nil {
 				return summary.Summary{}, err
@@ -240,12 +264,26 @@ func keyFunc(keys programKeys) callresult.KeyFunc {
 	return callresult.ByCalleeIdentity(keys.targetKeys, keys.pathKeys)
 }
 
-func checkConfigWithSummaries(config body.Config, summaries summary.Reader, keyFor callresult.KeyFunc) body.Config {
+func checkConfigWithSummaries(
+	config body.Config,
+	summaries summary.Reader,
+	keyFor callresult.KeyFunc,
+	functionTypes map[summary.SummaryKey]*typ.Function,
+) body.Config {
 	out := cloneCheckConfig(config)
-	out.CallOutcome = factapply.WithSupplementalCallOutcome(
-		callresult.OutcomeProvider(summaries, keyFor),
-		out.CallOutcome,
-	)
+	baseFactory := out.CallOutcomeFactory
+	out.CallOutcomeFactory = func(ctx body.CallOutcomeContext) factapply.CallOutcomeProvider {
+		primary := callresult.OutcomeProvider(callresult.ProviderConfig{
+			Summaries:     summaries,
+			KeyFor:        keyFor,
+			FunctionTypes: functionTypes,
+			Sources:       ctx.Sources,
+		})
+		if baseFactory == nil {
+			return primary
+		}
+		return factapply.WithSupplementalCallOutcome(primary, baseFactory(ctx))
+	}
 	return out
 }
 
@@ -263,7 +301,7 @@ func materializeChunk(
 	keyFor callresult.KeyFunc,
 	keys programKeys,
 ) (*body.Result, error) {
-	config = checkConfigWithSummaries(config, summaries, keyFor)
+	config = checkConfigWithSummaries(config, summaries, keyFor, keys.functionTypes)
 	root, err := body.CheckBoundChunk(stmts, bindings, config)
 	if err != nil {
 		return nil, err
@@ -279,7 +317,7 @@ func materializeFunction(
 	keyFor callresult.KeyFunc,
 	keys programKeys,
 ) (*body.Result, error) {
-	config = checkConfigWithSummaries(config, summaries, keyFor)
+	config = checkConfigWithSummaries(config, summaries, keyFor, keys.functionTypes)
 	root, err := body.CheckBoundFunction(fn, bindings, config)
 	if err != nil {
 		return nil, err
@@ -338,4 +376,71 @@ func functionStmts(fn *ast.FunctionExpr) []ast.Stmt {
 		return nil
 	}
 	return fn.Stmts
+}
+
+func lowerFunctionExprType(fn *ast.FunctionExpr, bindings *bind.Result) (*typ.Function, bool) {
+	if fn == nil || bindings == nil {
+		return nil, false
+	}
+	resolver := typeresolve.New(bindings)
+	builder := typ.Func()
+	for _, decl := range bindings.FunctionTypeParams(fn) {
+		t, ok := resolver.Decl(decl)
+		param, paramOK := t.(*typ.TypeParam)
+		if !ok || !paramOK || param == nil {
+			return nil, false
+		}
+		builder.TypeParamRef(param)
+	}
+	if fn.ParList != nil {
+		for i, name := range fn.ParList.Names {
+			paramType := functionTypeExprAt(fn.ParList.Types, i)
+			if paramType == nil {
+				return nil, false
+			}
+			t, ok := resolver.Type(paramType)
+			if !ok {
+				return nil, false
+			}
+			builder.Param(name, t)
+		}
+		if fn.ParList.HasVargs {
+			if fn.ParList.VarargType == nil {
+				return nil, false
+			}
+			t, ok := resolver.Type(fn.ParList.VarargType)
+			if !ok {
+				return nil, false
+			}
+			builder.Variadic(t)
+		}
+	}
+	returns := make([]typ.Type, 0, len(fn.ReturnTypes))
+	for _, ret := range functionReturnTypeExprs(fn.ReturnTypes) {
+		t, ok := resolver.Type(ret)
+		if !ok {
+			return nil, false
+		}
+		returns = append(returns, t)
+	}
+	if len(returns) != 0 {
+		builder.Returns(returns...)
+	}
+	return builder.Build(), true
+}
+
+func functionTypeExprAt(types []ast.TypeExpr, index int) ast.TypeExpr {
+	if index < 0 || index >= len(types) {
+		return nil
+	}
+	return types[index]
+}
+
+func functionReturnTypeExprs(types []ast.TypeExpr) []ast.TypeExpr {
+	if len(types) == 1 {
+		if tuple, ok := types[0].(*ast.TupleTypeExpr); ok {
+			return append([]ast.TypeExpr(nil), tuple.Elements...)
+		}
+	}
+	return append([]ast.TypeExpr(nil), types...)
 }

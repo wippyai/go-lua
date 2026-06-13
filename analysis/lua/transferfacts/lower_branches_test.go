@@ -290,6 +290,32 @@ func TestLowerLiteralDiscriminantBranchRefinesRootOnBothEdges(t *testing.T) {
 	assertVariantOriginRefinementType(t, "false edge", falseValue, right)
 }
 
+func TestLowerTruthyInstantiatedResultBranchRefinesRootOnBothEdges(t *testing.T) {
+	resultType, valueCase, errorCase := instantiatedResultTypeParamFixture()
+	root := symbol.ID(802)
+	rootPath := path.NewPath(root, "result")
+	l := lowerer{
+		registry:    standard.Registry(),
+		symbolTypes: map[symbol.ID]typ.Type{root: resultType},
+	}
+
+	refinements := l.branchRefinementsForCheck(branchcond.Check{
+		Kind: branchcond.CheckTruthy,
+		Path: rootPath.Field("ok"),
+	})
+	rootFamily, _, ok := discriminant.OriginOfType(resultType)
+	if !ok {
+		t.Fatal("missing root origin for Result<T>")
+	}
+
+	trueValue := requireBranchRefinementValueAt(t, refinements, rootPath, true)
+	falseValue := requireBranchRefinementValueAt(t, refinements, rootPath, false)
+	assertVariantOriginRefinementType(t, "true edge", trueValue, valueCase)
+	assertVariantOriginRefinementType(t, "false edge", falseValue, errorCase)
+	assertVariantOriginRefinementFamily(t, "true edge", trueValue, rootFamily)
+	assertVariantOriginRefinementFamily(t, "false edge", falseValue, rootFamily)
+}
+
 func assertVariantOriginRefinementType(t *testing.T, label string, refinement factflow.ValueRefinement, want typ.Type) {
 	t.Helper()
 	constraint, ok := refinement.Constraint()
@@ -306,6 +332,21 @@ func assertVariantOriginRefinementType(t *testing.T, label string, refinement fa
 	}
 	if !typ.SameNodeOrAcyclicEqual(got, want) {
 		t.Fatalf("%s origin type = %v, want %v", label, got, want)
+	}
+}
+
+func assertVariantOriginRefinementFamily(t *testing.T, label string, refinement factflow.ValueRefinement, want uint64) {
+	t.Helper()
+	constraint, ok := refinement.Constraint()
+	if !ok {
+		t.Fatalf("%s constraint missing", label)
+	}
+	origin := product.Get(standard.Registry(), constraint, variantorigin.Key)
+	if origin.IsBottom() || origin.IsTop() {
+		t.Fatalf("%s variant origin = %v, want family %d", label, origin, want)
+	}
+	if origin.Family() != want {
+		t.Fatalf("%s origin family = %d, want %d", label, origin.Family(), want)
 	}
 }
 
@@ -344,6 +385,20 @@ func branchRefinementIndex(refinements []factflow.BranchRefinement, wantPath pat
 	return -1
 }
 
+func requireBranchRefinementValueAt(t *testing.T, refinements []factflow.BranchRefinement, wantPath path.Path, cond bool) factflow.ValueRefinement {
+	t.Helper()
+	for _, refinement := range refinements {
+		if !refinement.TargetPath().Equal(wantPath) {
+			continue
+		}
+		if value, ok := refinement.ValueForEdge(cond); ok {
+			return value
+		}
+	}
+	t.Fatalf("missing %t-edge refinement for %s in %#v", cond, wantPath, refinements)
+	return factflow.ValueRefinement{}
+}
+
 func assertRootRefinementsBeforeDescendants(t *testing.T, refinements []factflow.BranchRefinement) {
 	t.Helper()
 	seenDescendant := false
@@ -356,6 +411,20 @@ func assertRootRefinementsBeforeDescendants(t *testing.T, refinements []factflow
 		}
 		seenDescendant = true
 	}
+}
+
+func instantiatedResultTypeParamFixture() (typ.Type, typ.Type, typ.Type) {
+	tp := typ.NewTypeParam("T", nil)
+	valueCase := typetable.NewRecord().
+		Field("ok", typ.LiteralBool(true)).
+		Field("value", tp).
+		Build()
+	errorCase := typetable.NewRecord().
+		Field("ok", typ.LiteralBool(false)).
+		Field("error", typ.String).
+		Build()
+	result := typ.NewGeneric("Result", []*typ.TypeParam{tp}, typ.NewUnion(valueCase, errorCase))
+	return typ.Instantiate(result, tp), valueCase, errorCase
 }
 
 func TestLowerPathInequalityBranchRelation(t *testing.T) {

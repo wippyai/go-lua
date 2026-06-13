@@ -11,8 +11,9 @@ import (
 )
 
 // AnnotationAssignability reports clear contradictions between a local
-// annotation and a syntactically known source literal. Broader flow-to-type
-// projection belongs in later producers once the relevant value axes own it.
+// annotation and a syntactically known source literal or scalar operator
+// expression. Broader flow-to-type projection belongs in later producers once
+// the relevant value axes own it.
 type AnnotationAssignability Config
 
 func (p AnnotationAssignability) Produce(result *check.Result) []diagnostic.Diagnostic {
@@ -59,6 +60,9 @@ func (p AnnotationAssignability) localAssignment(result *check.Result, point cfg
 	}
 	if !ok {
 		got, ok = boundarySourceType(result, point, fact.Source)
+	}
+	if !ok {
+		got, ok = localScalarOperatorSourceType(result, p.Resolver, fact.Expr)
 	}
 	if !ok {
 		got, ok = projectedFlowSourceType(result, p.Resolver, point, env, fact.Expr)

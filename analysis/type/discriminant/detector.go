@@ -135,6 +135,12 @@ func (d *Detector) collectRequiredTags(t typ.Type) map[string]uint64 {
 		return d.RequiredTags(v.Target)
 	case *typ.Recursive:
 		return d.RequiredTags(v.Body)
+	case *typ.Instantiated:
+		expanded, ok := expandInstantiated(v)
+		if !ok {
+			return nil
+		}
+		return d.RequiredTags(expanded)
 	case *typ.Record:
 		tags := make(map[string]uint64)
 		for _, field := range v.Fields {

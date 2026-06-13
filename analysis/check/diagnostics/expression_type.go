@@ -64,10 +64,22 @@ func (p expressionTyper) typeOfDepth(expr ast.Expr, depth int) (typ.Type, bool) 
 		return p.annotatedPathType(e)
 	case *ast.AttrGetExpr:
 		return p.attrType(e, depth+1)
-	case *ast.UnaryLenOpExpr:
-		return p.unaryType("#", e.Expr, depth+1)
+	case *ast.LogicalOpExpr:
+		return p.binaryType(e.Lhs, e.Operator, e.Rhs, depth+1)
+	case *ast.RelationalOpExpr:
+		return p.binaryType(e.Lhs, e.Operator, e.Rhs, depth+1)
+	case *ast.StringConcatOpExpr:
+		return p.binaryType(e.Lhs, "..", e.Rhs, depth+1)
 	case *ast.ArithmeticOpExpr:
 		return p.binaryType(e.Lhs, e.Operator, e.Rhs, depth+1)
+	case *ast.UnaryMinusOpExpr:
+		return p.unaryType("-", e.Expr, depth+1)
+	case *ast.UnaryNotOpExpr:
+		return p.unaryType("not", e.Expr, depth+1)
+	case *ast.UnaryLenOpExpr:
+		return p.unaryType("#", e.Expr, depth+1)
+	case *ast.UnaryBNotOpExpr:
+		return p.unaryType("~", e.Expr, depth+1)
 	default:
 		return nil, false
 	}

@@ -69,6 +69,19 @@ func NarrowByOrigin(t typ.Type, familyID uint64, cases []int) (typ.Type, bool) {
 	return normalize.UnionForEvidence(out...), true
 }
 
+// OriginByPathLiteral returns origin evidence for the cases whose path admits
+// lit. The returned bool reports whether the origin was strictly narrowed.
+func OriginByPathLiteral(t typ.Type, suffix []segment.Segment, lit typ.Type) (uint64, []int, bool) {
+	return originByPathLiteral(t, suffix, lit, false)
+}
+
+// OriginByPathLiteralNot returns origin evidence for the cases whose path does
+// not admit lit. The returned bool reports whether the origin was strictly
+// narrowed.
+func OriginByPathLiteralNot(t typ.Type, suffix []segment.Segment, lit typ.Type) (uint64, []int, bool) {
+	return originByPathLiteral(t, suffix, lit, true)
+}
+
 // TypeFromOrigin reconstructs the structural union represented by origin
 // evidence previously registered from a source type.
 func TypeFromOrigin(familyID uint64, cases []int) (typ.Type, bool) {
@@ -131,6 +144,31 @@ func ProjectOrigin(familyID uint64, cases []int, suffix []segment.Segment) (uint
 	return outFamily, outCases, true
 }
 
+func originByPathLiteral(t typ.Type, suffix []segment.Segment, lit typ.Type, negate bool) (uint64, []int, bool) {
+	if t == nil || len(suffix) == 0 || lit == nil {
+		return 0, nil, false
+	}
+	family, ok := originFamilyOf(t)
+	if !ok {
+		return 0, nil, false
+	}
+	out := make([]int, 0, len(family.cases))
+	changed := false
+	for _, c := range family.cases {
+		matches := pathAdmitsLiteral(c.typ, suffix, lit, 0)
+		if matches != negate {
+			out = append(out, c.index)
+			continue
+		}
+		changed = true
+	}
+	out = compactInts(out)
+	if !changed || len(out) == 0 {
+		return 0, nil, false
+	}
+	return family.id, out, true
+}
+
 // NarrowOriginByPath keeps parent cases whose path projection is compatible
 // with constraint. When equal is false it keeps the cases proven incompatible.
 func NarrowOriginByPath(parentFamily uint64, parentCases []int, suffix []segment.Segment, constraintFamily uint64, constraintCases []int, equal bool) ([]int, bool) {
@@ -177,6 +215,12 @@ func originFamilyOf(t typ.Type) (originFamily, bool) {
 		return originFamilyOf(v.UnaliasedTarget())
 	case *typ.Optional:
 		return originFamilyOf(v.Inner)
+	case *typ.Instantiated:
+		expanded, ok := expandInstantiated(v)
+		if !ok {
+			return originFamily{}, false
+		}
+		return originFamilyOf(expanded)
 	case *typ.Union:
 		return closedRecordUnionFamily(v)
 	case *typ.Record:
@@ -252,6 +296,12 @@ func recordOf(t typ.Type) (*typ.Record, bool) {
 	switch v := unwrap.Annotated(typ.NormalizeNilType(t)).(type) {
 	case *typ.Alias:
 		return recordOf(v.UnaliasedTarget())
+	case *typ.Instantiated:
+		expanded, ok := expandInstantiated(v)
+		if !ok {
+			return nil, false
+		}
+		return recordOf(expanded)
 	case *typ.Record:
 		return v, true
 	default:

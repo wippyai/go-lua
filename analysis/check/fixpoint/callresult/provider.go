@@ -4,21 +4,43 @@ package callresult
 import (
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/summary"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/typewitness"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/variantorigin"
+	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	factapply "github.com/wippyai/go-lua/analysis/engine/factapply"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
+	sourcevalue "github.com/wippyai/go-lua/analysis/engine/sourcevalue"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
+	"github.com/wippyai/go-lua/analysis/lua/typecall"
 	"github.com/wippyai/go-lua/analysis/symbol"
+	"github.com/wippyai/go-lua/analysis/type/discriminant"
+	"github.com/wippyai/go-lua/analysis/type/refinement"
+	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
 // KeyFunc maps one call producer in context to an exact summary key.
 type KeyFunc func(ctx transfer.NodeContext, call factflow.CallProducer) (summary.SummaryKey, bool)
 
+// ProviderConfig configures summary-backed call outcomes.
+type ProviderConfig struct {
+	Summaries     summary.Reader
+	KeyFor        KeyFunc
+	FunctionTypes map[summary.SummaryKey]*typ.Function
+	Sources       sourcevalue.SourceValues
+}
+
 // OutcomeProvider returns a generic call-boundary outcome provider backed by
 // exact summary reads.
-func OutcomeProvider(summaries summary.Reader, keyFor KeyFunc) factapply.CallOutcomeProvider {
-	return func(ctx transfer.NodeContext, site factflow.CallSite, _ state.State, _ func(cfg.Point) state.State) factapply.CallOutcome {
+func OutcomeProvider(config ProviderConfig) factapply.CallOutcomeProvider {
+	summaries := config.Summaries
+	keyFor := config.KeyFor
+	functionTypes := cloneFunctionTypes(config.FunctionTypes)
+	sources := config.Sources
+	return func(ctx transfer.NodeContext, site factflow.CallSite, in state.State, read func(cfg.Point) state.State) factapply.CallOutcome {
 		if summaries == nil || keyFor == nil {
 			return factapply.CallOutcome{}
 		}
@@ -30,6 +52,7 @@ func OutcomeProvider(summaries summary.Reader, keyFor KeyFunc) factapply.CallOut
 		if !ok {
 			return factapply.CallOutcome{}
 		}
+		got = specializeGenericSummary(ctx, site, got, functionTypes[key], sources, in, read)
 		return outcomeFromSummary(got, func(index int) bool {
 			if index < 0 || index >= len(got.NormalReturnParams) {
 				return false
@@ -37,6 +60,159 @@ func OutcomeProvider(summaries summary.Reader, keyFor KeyFunc) factapply.CallOut
 			return summary.UsefulNormalReturnParam(ctx.Registry, got.NormalReturnParams[index])
 		})
 	}
+}
+
+func specializeGenericSummary(
+	ctx transfer.NodeContext,
+	site factflow.CallSite,
+	got summary.Summary,
+	fn *typ.Function,
+	sources sourcevalue.SourceValues,
+	in state.State,
+	read func(cfg.Point) state.State,
+) summary.Summary {
+	if ctx.Registry == nil || fn == nil || len(fn.TypeParams) == 0 || sources == nil {
+		return got
+	}
+	args := callArgumentTypes(ctx, site, sources, in, read)
+	if len(args) == 0 {
+		return got
+	}
+	instantiated, violations := typecall.InstantiateGenericCall(fn, args)
+	if len(violations) != 0 || instantiated == nil || instantiated == fn {
+		return got
+	}
+	return specializeSummaryReturns(ctx.Registry, got, instantiated.Returns)
+}
+
+func callArgumentTypes(
+	ctx transfer.NodeContext,
+	site factflow.CallSite,
+	sources sourcevalue.SourceValues,
+	in state.State,
+	read func(cfg.Point) state.State,
+) []typ.Type {
+	if sources == nil {
+		return nil
+	}
+	argSources := site.ArgumentSources()
+	if len(argSources) == 0 {
+		return nil
+	}
+	args := make([]typ.Type, len(argSources))
+	seen := false
+	for i, source := range argSources {
+		value, ok := sources.ValueOfSource(ctx.Point, source, in, read)
+		if !ok {
+			continue
+		}
+		t, ok := typeFromValue(ctx.Registry, value)
+		if !ok {
+			continue
+		}
+		args[i] = t
+		seen = true
+	}
+	if !seen {
+		return nil
+	}
+	return args
+}
+
+func typeFromValue(reg *axis.Registry, value product.Value) (typ.Type, bool) {
+	if reg == nil {
+		return nil, false
+	}
+	if witness := product.Get(reg, value, typewitness.Key); !witness.IsTop() {
+		if t, ok := witness.Type(); ok {
+			return t, true
+		}
+	}
+	origin := product.Get(reg, value, variantorigin.Key)
+	if origin.IsBottom() || origin.IsTop() {
+		return nil, false
+	}
+	return discriminant.TypeFromOrigin(origin.Family(), origin.Cases())
+}
+
+func specializeSummaryReturns(reg *axis.Registry, got summary.Summary, returns []typ.Type) summary.Summary {
+	if reg == nil || len(got.Returns) == 0 || len(returns) == 0 {
+		return got
+	}
+	returns = callResultReturnTypes(got, returns)
+	nextReturns := make([]product.Value, len(got.Returns))
+	copy(nextReturns, got.Returns)
+	changed := false
+	for i := range nextReturns {
+		if i >= len(returns) {
+			break
+		}
+		ret := returns[i]
+		if ret == nil || typ.IsAny(ret) || typ.IsUnknown(ret) || refinement.ContainsFreeTypeParam(ret) {
+			continue
+		}
+		declared := typevalue.WithWitness(reg, typevalue.FromType(reg, ret), ret)
+		next := joinInstantiatedReturnValue(reg, nextReturns[i], declared)
+		if product.Equal(reg, nextReturns[i], next) {
+			continue
+		}
+		nextReturns[i] = next
+		changed = true
+	}
+	if !changed {
+		return got
+	}
+	out := got.Clone()
+	out.Returns = nextReturns
+	return summary.Normalize(reg, out)
+}
+
+func callResultReturnTypes(got summary.Summary, returns []typ.Type) []typ.Type {
+	if len(returns) == 1 && len(got.Returns) > 1 {
+		if tuple, ok := returns[0].(*typ.Tuple); ok {
+			return append([]typ.Type(nil), tuple.Elements...)
+		}
+	}
+	return returns
+}
+
+func joinInstantiatedReturnValue(reg *axis.Registry, value product.Value, declared product.Value) product.Value {
+	joined := product.Join(reg, value, declared)
+	declaredWitness := product.Get(reg, declared, typewitness.Key)
+	if !declaredWitness.IsBottom() && !declaredWitness.IsTop() {
+		joinedWitness := product.Get(reg, joined, typewitness.Key)
+		if joinedWitness.IsTop() {
+			joined = product.Set(reg, joined, typewitness.Key, declaredWitness)
+		}
+	}
+	declaredOrigin := product.Get(reg, declared, variantorigin.Key)
+	if declaredOrigin.IsBottom() || declaredOrigin.IsTop() {
+		return joined
+	}
+	joinedOrigin := product.Get(reg, joined, variantorigin.Key)
+	if !joinedOrigin.IsTop() && !originContainsFreeTypeParam(joinedOrigin) {
+		return joined
+	}
+	return product.Set(reg, joined, variantorigin.Key, declaredOrigin)
+}
+
+func originContainsFreeTypeParam(origin variantorigin.Value) bool {
+	if origin.IsBottom() || origin.IsTop() {
+		return false
+	}
+	t, ok := discriminant.TypeFromOrigin(origin.Family(), origin.Cases())
+	return ok && refinement.ContainsFreeTypeParam(t)
+}
+
+func cloneFunctionTypes(in map[summary.SummaryKey]*typ.Function) map[summary.SummaryKey]*typ.Function {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[summary.SummaryKey]*typ.Function, len(in))
+	for key, fn := range in {
+		out[key] = fn
+	}
+	return out
 }
 
 func outcomeFromSummary(got summary.Summary, usefulNormalReturnParam func(int) bool) factapply.CallOutcome {

@@ -12,6 +12,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/evidence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/typewitness"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/standard"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
@@ -20,6 +21,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/cfgbuild"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
 	"github.com/wippyai/go-lua/analysis/symbol"
+	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/parse"
 )
@@ -52,6 +54,31 @@ func TestLowerLiteralExpressionValues(t *testing.T) {
 	assertExpressionValue(t, facts, nilSource.ExprRef, presence.Absent(), runtimekind.Singleton(runtimekind.Nil))
 	assertExpressionValue(t, facts, numberSource.ExprRef, presence.Present(), runtimekind.Singleton(runtimekind.Number))
 	assertExpressionValue(t, facts, tableSource.ExprRef, presence.Present(), runtimekind.Singleton(runtimekind.Table))
+}
+
+func TestLowerAnnotatedFunctionExpressionValueWitness(t *testing.T) {
+	stmts, bindings, built, result := parseSemanticChunk(t, `
+local cb = function(item: string): number
+    return 1
+end
+`)
+	reg := standard.Registry()
+	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings})
+	point := requireStmtPoints(t, built, stmts[0], 1)[0]
+	source := mustLocalSource(t, facts, point)
+	value, ok := facts.ExpressionValue(source.ExprRef)
+	if !ok {
+		t.Fatalf("missing expression value for ref %d", source.ExprRef)
+	}
+	witness := product.Get(reg, value, typewitness.Key)
+	got, ok := witness.Type()
+	if !ok {
+		t.Fatalf("function expression witness = %#v, want concrete function type", witness)
+	}
+	want := typ.Func().Param("item", typ.String).Returns(typ.Number).Build()
+	if !typ.TypeEquals(got, want) {
+		t.Fatalf("function expression witness = %v, want %v", got, want)
+	}
 }
 
 func mustLocalSource(t *testing.T, facts factflow.Facts, point cfg.Point) factflow.ValueSource {

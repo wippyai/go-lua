@@ -85,6 +85,12 @@ func (c *checker) run(bindings *bind.Result, built *cfgbuild.Result, sem *semant
 		VarargValue:      config.VarargValue,
 	})
 	callOutcome := config.CallOutcome
+	if config.CallOutcomeFactory != nil {
+		callOutcome = factapply.WithSupplementalCallOutcome(
+			config.CallOutcomeFactory(CallOutcomeContext{Facts: facts, Sources: sources}),
+			callOutcome,
+		)
+	}
 	if hasSignatures(config.Signatures) {
 		callOutcome = factapply.WithSupplementalCallOutcome(callOutcome, effectlowering.SignatureOutcomeProvider(effectlowering.SignatureOutcomeProviderConfig{
 			Signatures:    config.Signatures,

@@ -44,6 +44,12 @@ func narrowByPathLiteral(t typ.Type, suffix []segment.Segment, lit typ.Type, dep
 		return narrowByPathLiteral(v.UnaliasedTarget(), suffix, lit, depth+1)
 	case *typ.Optional:
 		return narrowByPathLiteral(v.Inner, suffix, lit, depth+1)
+	case *typ.Instantiated:
+		expanded, ok := expandInstantiated(v)
+		if !ok {
+			return t, false
+		}
+		return narrowByPathLiteral(expanded, suffix, lit, depth+1)
 	case *typ.Union:
 		out := make([]typ.Type, 0, len(v.Members))
 		for _, member := range v.Members {
@@ -72,6 +78,12 @@ func narrowByPathLiteralNot(t typ.Type, suffix []segment.Segment, lit typ.Type, 
 		return narrowByPathLiteralNot(v.UnaliasedTarget(), suffix, lit, depth+1)
 	case *typ.Optional:
 		return narrowByPathLiteralNot(v.Inner, suffix, lit, depth+1)
+	case *typ.Instantiated:
+		expanded, ok := expandInstantiated(v)
+		if !ok {
+			return t, false
+		}
+		return narrowByPathLiteralNot(expanded, suffix, lit, depth+1)
 	case *typ.Union:
 		out := make([]typ.Type, 0, len(v.Members))
 		for _, member := range v.Members {

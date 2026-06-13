@@ -44,6 +44,31 @@ func TestProjectExactPresentDropsNil(t *testing.T) {
 	assertRuntimeKind(t, reg, got, runtimekind.Singleton(runtimekind.String))
 }
 
+func TestProjectExactPresentMergesOptionalFieldTypeFromRoot(t *testing.T) {
+	reg := standard.Registry()
+	point := cfg.Point(9)
+	profileSym := symbol.ID(19)
+	resolver := testResolver(point, profileSym, "opt")
+	rootPath := path.NewPath(profileSym, "opt")
+	readPath := rootPath.Field("label")
+	childKey := resolver.KeyAt(point, readPath)
+	profileType := typ.NewAlias(
+		"__test_Profile",
+		typetable.NewRecord().OptField("label", typ.String).Build(),
+	)
+	rootValue := typevalue.WithWitness(reg, product.Top(), profileType)
+	in := state.State{}.
+		WriteValue(reg, key.SymbolValue(profileSym), rootValue).
+		WritePathKey(reg, childKey, product.NewWithPresence(reg, product.ShapeTop, presence.Present()))
+
+	got, ok := Project(Config{Registry: reg, Visibility: resolver}, point, readPath, in)
+	if !ok {
+		t.Fatalf("Project returned false")
+	}
+	assertPresence(t, reg, got, presence.Present())
+	assertRuntimeKind(t, reg, got, runtimekind.Singleton(runtimekind.String))
+}
+
 func TestProjectExactAbsentReturnsNil(t *testing.T) {
 	reg := standard.Registry()
 	point := cfg.Point(2)

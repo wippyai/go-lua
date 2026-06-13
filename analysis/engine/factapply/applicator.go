@@ -80,7 +80,9 @@ func NewFactsNodeTransfer(config FactsNodeTransferConfig) transfer.NodeTransfer 
 }
 
 // NewFactsEdgeTransfer returns a generic edge transfer that applies
-// branch refinements for the selected branch edge.
+// branch refinements for the selected branch edge, including root-origin
+// narrowing recovered from descendant path refinements when flow state carries
+// the structural root type.
 func NewFactsEdgeTransfer(config FactsEdgeTransferConfig) transfer.EdgeTransfer {
 	return func(ctx transfer.EdgeContext, out state.State) state.State {
 		if !ctx.HasCond {

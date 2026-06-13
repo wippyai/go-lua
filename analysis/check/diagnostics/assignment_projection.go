@@ -146,6 +146,40 @@ func literalType(expr ast.Expr) (typ.Type, bool) {
 	return valueexpr.LiteralType(expr)
 }
 
+func localScalarOperatorSourceType(result *check.Result, resolver typeannotation.Resolver, expr ast.Expr) (typ.Type, bool) {
+	if !isScalarOperatorExpression(expr) {
+		return nil, false
+	}
+	return newExpressionTyper(result, resolver).typeOf(expr)
+}
+
+func isScalarOperatorExpression(expr ast.Expr) bool {
+	switch e := expr.(type) {
+	case *ast.LogicalOpExpr:
+		return true
+	case *ast.RelationalOpExpr:
+		return true
+	case *ast.StringConcatOpExpr:
+		return true
+	case *ast.ArithmeticOpExpr:
+		return true
+	case *ast.UnaryMinusOpExpr:
+		return true
+	case *ast.UnaryNotOpExpr:
+		return true
+	case *ast.UnaryLenOpExpr:
+		return true
+	case *ast.UnaryBNotOpExpr:
+		return true
+	case *ast.CastExpr:
+		return isScalarOperatorExpression(e.Expr)
+	case *ast.NonNilAssertExpr:
+		return isScalarOperatorExpression(e.Expr)
+	default:
+		return false
+	}
+}
+
 func projectedOptionalIndexType(result *check.Result, resolver typeannotation.Resolver, expr ast.Expr) (typ.Type, bool) {
 	if !shouldProjectOptionalIndex(result, expr) {
 		return nil, false

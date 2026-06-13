@@ -54,30 +54,32 @@ func Project(config Config, point cfg.Point, p pathdom.Path, in state.State) (pr
 		return readPathValue(reg, config.Visibility, point, p, in)
 	}
 
+	exactPresent := product.Value{}
+	hasExactPresent := false
 	if exact, ok := exactPathValue(reg, config.Visibility, point, p, in); ok {
 		switch gotPresence := product.PresenceOf(exact); {
 		case presence.Equal(gotPresence, presence.Present()):
-			return withoutNilRuntimeKind(reg, product.WithPresence(reg, exact, presence.Present())), true
+			exactPresent = withoutNilRuntimeKind(reg, product.WithPresence(reg, exact, presence.Present()))
+			hasExactPresent = true
 		case presence.Equal(gotPresence, presence.Absent()):
 			return product.Absent(reg), true
 		}
 	}
 
-	root := p
-	root.Segments = nil
-	if rootValue, ok := readPathValue(reg, config.Visibility, point, root, in); ok {
-		if projected, ok := projectFromValueEvidence(reg, rootValue, p.Segments); ok {
-			return projected, true
+	if projected, ok, blocked := projectFromStructuralEvidence(config, point, p, in); ok {
+		if hasExactPresent {
+			if merged := product.Meet(reg, projected, exactPresent); !product.Equal(reg, merged, product.Bottom(reg)) {
+				return merged, true
+			}
+			return exactPresent, true
 		}
-	}
-
-	parent := p.Parent()
-	parentValue, hasParent := Project(config, point, parent, in)
-	if !runtimeMayBeTable(reg, parentValue, hasParent) {
+		return projected, true
+	} else if blocked && !hasExactPresent {
 		return product.Value{}, false
 	}
-	if projected, ok := projectFromValueEvidence(reg, parentValue, p.Segments[len(p.Segments)-1:]); ok {
-		return projected, true
+
+	if hasExactPresent {
+		return exactPresent, true
 	}
 
 	keyType, ok := segmentKeyType(p.Segments[len(p.Segments)-1])
@@ -89,6 +91,28 @@ func Project(config Config, point cfg.Point, p pathdom.Path, in state.State) (pr
 		return product.Value{}, false
 	}
 	return typevalue.FromType(reg, projected), true
+}
+
+func projectFromStructuralEvidence(config Config, point cfg.Point, p pathdom.Path, in state.State) (product.Value, bool, bool) {
+	reg := config.Registry
+	root := p
+	root.Segments = nil
+	if rootValue, ok := readPathValue(reg, config.Visibility, point, root, in); ok {
+		if projected, ok := projectFromValueEvidence(reg, rootValue, p.Segments); ok {
+			return projected, true, false
+		}
+	}
+
+	parent := p.Parent()
+	parentValue, hasParent := Project(config, point, parent, in)
+	if !runtimeMayBeTable(reg, parentValue, hasParent) {
+		return product.Value{}, false, true
+	}
+	if projected, ok := projectFromValueEvidence(reg, parentValue, p.Segments[len(p.Segments)-1:]); ok {
+		return projected, true, false
+	}
+
+	return product.Value{}, false, false
 }
 
 func exactPathValue(

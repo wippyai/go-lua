@@ -16,6 +16,12 @@ func fieldAtPath(t typ.Type, suffix []segment.Segment, depth int) (typ.Type, boo
 		return fieldAtPath(v.UnaliasedTarget(), suffix, depth+1)
 	case *typ.Optional:
 		return fieldAtPath(v.Inner, suffix, depth+1)
+	case *typ.Instantiated:
+		expanded, ok := expandInstantiated(v)
+		if !ok {
+			return nil, false
+		}
+		return fieldAtPath(expanded, suffix, depth+1)
 	case *typ.Union:
 		out := make([]typ.Type, 0, len(v.Members))
 		for _, member := range v.Members {

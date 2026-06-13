@@ -410,6 +410,61 @@ func TestInstantiateGenericCallSubstitutesGenericAliasReturn(t *testing.T) {
 	assertType(t, got, want)
 }
 
+func TestInstantiateGenericCallInfersCallbackReturn(t *testing.T) {
+	result := resultGeneric()
+	profile := typetable.NewRecord().Field("id", typ.String).Build()
+	fnParamT := typ.NewTypeParam("T", nil)
+	fnParamU := typ.NewTypeParam("U", nil)
+	fn := typ.Func().
+		TypeParamRef(fnParamT).
+		TypeParamRef(fnParamU).
+		Param("result", typ.Instantiate(result, fnParamT)).
+		Param("fn", typ.Func().Param("item", fnParamT).Returns(fnParamU).Build()).
+		Returns(typ.Instantiate(result, fnParamU)).
+		Build()
+
+	callback := typ.Func().Param("item", profile).Returns(typ.String).Build()
+	got, violations := InstantiateGenericCall(fn, []typ.Type{typ.Instantiate(result, profile), callback})
+	if len(violations) != 0 {
+		t.Fatalf("violations = %#v, want none", violations)
+	}
+	want := typ.Func().
+		Param("result", typ.Instantiate(result, profile)).
+		Param("fn", typ.Func().Param("item", profile).Returns(typ.String).Build()).
+		Returns(typ.Instantiate(result, typ.String)).
+		Build()
+	assertType(t, got, want)
+}
+
+func TestInstantiateGenericCallInfersCallbackResultReturn(t *testing.T) {
+	result := resultGeneric()
+	profile := typetable.NewRecord().Field("id", typ.String).Build()
+	fnParamT := typ.NewTypeParam("T", nil)
+	fnParamU := typ.NewTypeParam("U", nil)
+	fn := typ.Func().
+		TypeParamRef(fnParamT).
+		TypeParamRef(fnParamU).
+		Param("result", typ.Instantiate(result, fnParamT)).
+		Param("fn", typ.Func().Param("item", fnParamT).Returns(typ.Instantiate(result, fnParamU)).Build()).
+		Returns(typ.Instantiate(result, fnParamU)).
+		Build()
+
+	callback := typ.Func().
+		Param("item", profile).
+		Returns(typ.Instantiate(result, typ.Number)).
+		Build()
+	got, violations := InstantiateGenericCall(fn, []typ.Type{typ.Instantiate(result, profile), callback})
+	if len(violations) != 0 {
+		t.Fatalf("violations = %#v, want none", violations)
+	}
+	want := typ.Func().
+		Param("result", typ.Instantiate(result, profile)).
+		Param("fn", typ.Func().Param("item", profile).Returns(typ.Instantiate(result, typ.Number)).Build()).
+		Returns(typ.Instantiate(result, typ.Number)).
+		Build()
+	assertType(t, got, want)
+}
+
 func TestInstantiateGenericCallPreservesUninferredTypeParam(t *testing.T) {
 	resultParam := typ.NewTypeParam("T", nil)
 	result := typ.NewGeneric("Result", []*typ.TypeParam{resultParam},
@@ -429,6 +484,12 @@ func TestInstantiateGenericCallPreservesUninferredTypeParam(t *testing.T) {
 		t.Fatalf("type params = %d, want uninferred param preserved", len(got.TypeParams))
 	}
 	assertType(t, got.Returns[0], typ.Instantiate(result, fnParam))
+}
+
+func resultGeneric() *typ.Generic {
+	resultParam := typ.NewTypeParam("T", nil)
+	return typ.NewGeneric("Result", []*typ.TypeParam{resultParam},
+		typetable.NewRecord().Field("value", resultParam).Build())
 }
 
 func assertType(t *testing.T, got typ.Type, want typ.Type) {

@@ -108,6 +108,12 @@ func (l *lowerer) expressionValue(expr ast.Expr) (product.Value, bool) {
 		value := typevalue.FromType(l.registry, t)
 		return typevalue.WithWitness(l.registry, value, t), true
 	}
+	if fn, ok := expr.(*ast.FunctionExpr); ok {
+		if t, ok := l.functionExpressionType(fn); ok {
+			value := typevalue.FromType(l.registry, t)
+			return typevalue.WithWitness(l.registry, value, t), true
+		}
+	}
 	kind, ok := valueexpr.RuntimeKind(expr)
 	if ok {
 		value := product.NewWithPresence(l.registry, product.ShapeTop, presence.Present())
@@ -122,6 +128,40 @@ func (l *lowerer) expressionValue(expr ast.Expr) (product.Value, bool) {
 		return typevalue.FromType(l.registry, t), true
 	}
 	return product.Value{}, false
+}
+
+func (l *lowerer) functionExpressionType(fn *ast.FunctionExpr) (typ.Type, bool) {
+	if fn == nil {
+		return nil, false
+	}
+	expr := &ast.FunctionTypeExpr{
+		TypeParams: fn.TypeParams,
+		Returns:    fn.ReturnTypes,
+	}
+	if fn.ParList != nil {
+		expr.Params = make([]ast.FunctionParamExpr, 0, len(fn.ParList.Names))
+		for i, name := range fn.ParList.Names {
+			paramType := typeExprAt(fn.ParList.Types, i)
+			if paramType == nil {
+				return nil, false
+			}
+			expr.Params = append(expr.Params, ast.FunctionParamExpr{Name: name, Type: paramType})
+		}
+		if fn.ParList.HasVargs {
+			if fn.ParList.VarargType == nil {
+				return nil, false
+			}
+			expr.Variadic = fn.ParList.VarargType
+		}
+	}
+	return typeresolve.New(l.bindings).Type(expr)
+}
+
+func typeExprAt(types []ast.TypeExpr, index int) ast.TypeExpr {
+	if index < 0 || index >= len(types) {
+		return nil
+	}
+	return types[index]
 }
 
 func (l *lowerer) scalarOperationType(expr ast.Expr) (typ.Type, bool) {

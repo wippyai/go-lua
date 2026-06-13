@@ -67,6 +67,40 @@ func TestAnnotationAssignabilityDoesNotTrustCastEscape(t *testing.T) {
 	}
 }
 
+func TestAnnotationAssignabilityReportsScalarOperatorRHS(t *testing.T) {
+	cases := []struct {
+		name string
+		src  string
+	}{
+		{name: "arithmetic", src: `local bad: string = 1 + 2`},
+		{name: "relational", src: `local bad: string = 1 < 2`},
+		{name: "concat", src: `local bad: number = "a" .. "b"`},
+		{name: "logical", src: `local bad: number = true and false`},
+		{name: "unary minus", src: `local bad: string = -1`},
+		{name: "unary not", src: `local bad: number = not false`},
+		{name: "unary len", src: `local bad: string = #"abc"`},
+		{name: "unary bitnot", src: `local bad: string = ~1`},
+		{name: "cast wrapper", src: `local bad: string = (1 + 2) as number`},
+		{name: "non-nil wrapper", src: `local bad: string = (1 + 2)!`},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			diags := runDiagnostics(t, tc.src)
+			if len(diags) != 1 {
+				t.Fatalf("diagnostics = %d, want 1: %#v", len(diags), diags)
+			}
+			d := diags[0]
+			if d.Code != CodeAssignmentType || d.Severity != diagnostic.SeverityError {
+				t.Fatalf("diagnostic code/severity = %s/%s", d.Code, d.Severity)
+			}
+			if !strings.Contains(d.Message, "cannot assign") {
+				t.Fatalf("message = %q, want assignment mismatch", d.Message)
+			}
+		})
+	}
+}
+
 func TestAnnotationAssignabilityPreservesGradualUntypedDynamicMapWrite(t *testing.T) {
 	diags := runDiagnostics(t, `
 		function f(raw, key: string)

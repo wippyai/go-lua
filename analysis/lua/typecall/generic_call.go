@@ -144,9 +144,20 @@ func inferTypeParamBindings(formal typ.Type, actual typ.Type, index int, binding
 				inferTypeParamBindings(elem, a.Elements[i], index, bindings, depth+1)
 			}
 		}
+	case *typ.Function:
+		inferFunctionBindings(f, actual, index, bindings, depth+1)
 	case *typ.Record:
 		inferRecordBindings(f, actual, index, bindings, depth+1)
 	case *typ.Instantiated:
+		if a, ok := actual.(*typ.Instantiated); ok && sameGeneric(f.Generic, a.Generic) {
+			for i, arg := range f.TypeArgs {
+				if i >= len(a.TypeArgs) {
+					break
+				}
+				inferTypeParamBindings(arg, a.TypeArgs[i], index, bindings, depth+1)
+			}
+			return
+		}
 		expanded := subst.ExpandInstantiated(f)
 		if expanded != nil && expanded != formal {
 			inferTypeParamBindings(expanded, actual, index, bindings, depth+1)
@@ -159,6 +170,47 @@ func inferTypeParamBindings(formal typ.Type, actual typ.Type, index int, binding
 		for _, member := range f.Members {
 			inferTypeParamBindings(member, actual, index, bindings, depth+1)
 		}
+	}
+}
+
+func inferFunctionBindings(formal *typ.Function, actual typ.Type, index int, bindings map[*typ.TypeParam]inferredArg, depth int) {
+	if formal == nil || depth > typ.DefaultRecursionDepth {
+		return
+	}
+	actual = unwrap.Annotated(actual)
+	if alias, ok := actual.(*typ.Alias); ok {
+		actual = alias.UnaliasedTarget()
+	}
+	if inst, ok := actual.(*typ.Instantiated); ok {
+		expanded := subst.ExpandInstantiated(inst)
+		if expanded != nil && expanded != actual {
+			actual = expanded
+		}
+	}
+	actualFn, ok := actual.(*typ.Function)
+	if !ok || actualFn == nil {
+		return
+	}
+	for i, param := range formal.Params {
+		if i >= len(actualFn.Params) {
+			break
+		}
+		inferTypeParamBindings(param.Type, actualFn.Params[i].Type, index, bindings, depth+1)
+	}
+	if formal.Variadic != nil {
+		if actualFn.Variadic != nil {
+			inferTypeParamBindings(formal.Variadic, actualFn.Variadic, index, bindings, depth+1)
+		} else {
+			for i := len(formal.Params); i < len(actualFn.Params); i++ {
+				inferTypeParamBindings(formal.Variadic, actualFn.Params[i].Type, index, bindings, depth+1)
+			}
+		}
+	}
+	for i, ret := range formal.Returns {
+		if i >= len(actualFn.Returns) {
+			break
+		}
+		inferTypeParamBindings(ret, actualFn.Returns[i], index, bindings, depth+1)
 	}
 }
 
@@ -203,6 +255,13 @@ func inferRecordBindings(formal *typ.Record, actual typ.Type, index int, binding
 			inferTypeParamBindings(member.Type, actualMember.Type, index, bindings, depth+1)
 		}
 	}
+}
+
+func sameGeneric(left *typ.Generic, right *typ.Generic) bool {
+	if left == nil || right == nil {
+		return false
+	}
+	return left == right || typ.SameNodeOrAcyclicEqual(left, right)
 }
 
 func bindTypeParam(param *typ.TypeParam, actual typ.Type, index int, bindings map[*typ.TypeParam]inferredArg) {

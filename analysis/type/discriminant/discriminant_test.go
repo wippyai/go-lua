@@ -218,6 +218,67 @@ func TestNarrowByPathLiteralNotReturnsNeverForMatchingSingleVariant(t *testing.T
 	}
 }
 
+func TestNarrowByPathLiteralExpandsInstantiatedResult(t *testing.T) {
+	resultProfile, valueCase, errorCase := resultProfileDiscriminantFixture()
+	okPath := []segment.Segment{{Kind: segment.SegmentField, Name: "ok"}}
+
+	got, ok := NarrowByPathLiteral(resultProfile, okPath, LiteralBool(true))
+	if !ok {
+		t.Fatal("expected instantiated Result<Profile> to narrow on ok = true")
+	}
+	if !TypeEquals(got, valueCase) {
+		t.Fatalf("ok = true narrowed type = %s, want value variant %s", got, valueCase)
+	}
+
+	got, ok = NarrowByPathLiteral(resultProfile, okPath, LiteralBool(false))
+	if !ok {
+		t.Fatal("expected instantiated Result<Profile> to narrow on ok = false")
+	}
+	if !TypeEquals(got, errorCase) {
+		t.Fatalf("ok = false narrowed type = %s, want error variant %s", got, errorCase)
+	}
+}
+
+func TestOriginOfTypeExpandsInstantiatedResult(t *testing.T) {
+	resultProfile, valueCase, errorCase := resultProfileDiscriminantFixture()
+
+	family, cases, ok := OriginOfType(resultProfile)
+	if !ok {
+		t.Fatal("missing origin for instantiated Result<Profile>")
+	}
+	got, ok := TypeFromOrigin(family, cases)
+	if !ok {
+		t.Fatal("missing reconstructed origin type for instantiated Result<Profile>")
+	}
+	want := NewUnion(valueCase, errorCase)
+	if !TypeEquals(got, want) {
+		t.Fatalf("origin type = %s, want %s", got, want)
+	}
+}
+
+func TestOriginByPathLiteralExpandsInstantiatedResult(t *testing.T) {
+	resultProfile, valueCase, errorCase := resultProfileDiscriminantFixture()
+	okPath := []segment.Segment{{Kind: segment.SegmentField, Name: "ok"}}
+
+	family, cases, ok := OriginByPathLiteral(resultProfile, okPath, LiteralBool(true))
+	if !ok {
+		t.Fatal("missing ok = true origin cases for instantiated Result<Profile>")
+	}
+	got, ok := NarrowByOrigin(resultProfile, family, cases)
+	if !ok || !TypeEquals(got, valueCase) {
+		t.Fatalf("ok = true origin narrowed type = %s/%v, want value variant", got, ok)
+	}
+
+	family, cases, ok = OriginByPathLiteral(resultProfile, okPath, LiteralBool(false))
+	if !ok {
+		t.Fatal("missing ok = false origin cases for instantiated Result<Profile>")
+	}
+	got, ok = NarrowByOrigin(resultProfile, family, cases)
+	if !ok || !TypeEquals(got, errorCase) {
+		t.Fatalf("ok = false origin narrowed type = %s/%v, want error variant", got, ok)
+	}
+}
+
 func TestOriginProjectsAndNarrowsClosedRecordUnion(t *testing.T) {
 	chanInt := NewAlias("__test_ChanInt", typetable.NewRecord().
 		Field("__tag", LiteralString("int")).
@@ -302,4 +363,32 @@ func TestOriginNarrowByPathIncompatibleConstraintIsNoop(t *testing.T) {
 	}, otherFamily, otherCases, false); ok {
 		t.Fatal("incompatible constraint narrowed root cases")
 	}
+}
+
+func resultProfileDiscriminantFixture() (Type, Type, Type) {
+	profile := typetable.NewRecord().
+		Field("id", String).
+		Field("count", Number).
+		Field("label", NewOptional(String)).
+		Build()
+	tp := NewTypeParam("T", nil)
+	result := NewGeneric("Result", []*TypeParam{tp}, NewUnion(
+		typetable.NewRecord().
+			Field("ok", LiteralBool(true)).
+			Field("value", tp).
+			Build(),
+		typetable.NewRecord().
+			Field("ok", LiteralBool(false)).
+			Field("error", String).
+			Build(),
+	))
+	valueCase := typetable.NewRecord().
+		Field("ok", LiteralBool(true)).
+		Field("value", profile).
+		Build()
+	errorCase := typetable.NewRecord().
+		Field("ok", LiteralBool(false)).
+		Field("error", String).
+		Build()
+	return Instantiate(result, profile), valueCase, errorCase
 }

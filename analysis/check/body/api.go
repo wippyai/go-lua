@@ -28,11 +28,12 @@ type Config struct {
 	Registry *axis.Registry
 	Globals  []string
 
-	ExpressionValues map[factflow.ExprRef]product.Value
-	ExpressionValue  sourcevalue.ExpressionValueProvider
-	VarargValue      sourcevalue.VarargValueProvider
-	CallOutcome      factapply.CallOutcomeProvider
-	Signatures       signaturelookup.Source
+	ExpressionValues   map[factflow.ExprRef]product.Value
+	ExpressionValue    sourcevalue.ExpressionValueProvider
+	VarargValue        sourcevalue.VarargValueProvider
+	CallOutcome        factapply.CallOutcomeProvider
+	CallOutcomeFactory CallOutcomeFactory
+	Signatures         signaturelookup.Source
 
 	Visibility *visibility.Resolver
 
@@ -60,6 +61,13 @@ type Result struct {
 	callOutcome factapply.CallOutcomeProvider
 	functions   []*Result
 }
+
+type CallOutcomeContext struct {
+	Facts   factflow.Facts
+	Sources sourcevalue.SourceValues
+}
+
+type CallOutcomeFactory func(CallOutcomeContext) factapply.CallOutcomeProvider
 
 func newChecker(config Config) (*checker, error) {
 	if config.Registry == nil {
