@@ -1,4 +1,4 @@
-package diagnostics
+package precheck
 
 import (
 	"fmt"
@@ -7,20 +7,23 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 )
 
-// Precheck produces bounded structural diagnostics directly from AST. It
-// intentionally stays outside CFG build and fixed-point solve state.
-func Precheck(stmts []ast.Stmt, config Config) []diagnostic.Diagnostic {
-	var out []diagnostic.Diagnostic
-	out = append(out, Structural(config).Produce(stmts)...)
-	return out
+const (
+	CodeBreakOutsideLoop   diagnostic.Code = "syntax.break.outside_loop"
+	CodeDuplicateLabel     diagnostic.Code = "syntax.label.duplicate"
+	CodeGotoUndefinedLabel diagnostic.Code = "syntax.goto.undefined"
+)
+
+// Precheck produces bounded structural diagnostics directly from AST.
+func Precheck(stmts []ast.Stmt) []diagnostic.Diagnostic {
+	return Structural{}.Produce(stmts)
 }
 
 // Structural reports AST-local control-flow diagnostics that CFG construction
 // cannot emit when a chunk is unsupported.
-type Structural Config
+type Structural struct{}
 
 // Produce walks the AST and reports structural control-flow diagnostics.
-func (p Structural) Produce(stmts []ast.Stmt) []diagnostic.Diagnostic {
+func (Structural) Produce(stmts []ast.Stmt) []diagnostic.Diagnostic {
 	var s structuralScanner
 	s.scanChunk(stmts)
 	return s.out

@@ -3,6 +3,7 @@ package typeaccess
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
@@ -249,4 +250,27 @@ func TestIndexOptionalAliasInstantiatedContainer(t *testing.T) {
 		}
 		assertType(t, got, typ.Number)
 	})
+}
+
+func TestProjectSegmentsMixedFieldAndRuntimeIndex(t *testing.T) {
+	rec := typetable.NewRecord().
+		Field("items", typ.NewArray(typ.String)).
+		Build()
+
+	got, ok := ProjectSegments(rec, []segment.Segment{
+		{Kind: segment.SegmentField, Name: "items"},
+		{Kind: segment.SegmentIndexInt, Index: 1},
+	})
+	if !ok {
+		t.Fatal("ProjectSegments(record.items[1]) failed")
+	}
+	assertType(t, got, typ.NewOptional(typ.String))
+}
+
+func TestProjectSegmentsRejectsUnsupportedSegmentKinds(t *testing.T) {
+	rec := typetable.NewRecord().Build()
+
+	if _, ok := ProjectSegments(rec, []segment.Segment{{Kind: segment.SegmentKind(255)}}); ok {
+		t.Fatal("ProjectSegments unsupported segment kind succeeded")
+	}
 }

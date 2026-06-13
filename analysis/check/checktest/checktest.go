@@ -11,6 +11,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/check/diagnostics"
 	"github.com/wippyai/go-lua/analysis/diagnostic"
 	"github.com/wippyai/go-lua/analysis/domain/value/standard"
+	"github.com/wippyai/go-lua/analysis/lua/precheck"
 	"github.com/wippyai/go-lua/analysis/module/manifest"
 	"github.com/wippyai/go-lua/analysis/module/signaturelookup"
 	"github.com/wippyai/go-lua/analysis/type/typ"
@@ -100,23 +101,23 @@ func checkSource(src, filename string, opts ...Option) Result {
 	}
 	reg := standard.Registry()
 	signatures := cfg.signatureSource()
-	precheck := diagnostics.Precheck(stmts, diagnostics.Config{Registry: reg})
+	structural := precheck.Precheck(stmts)
 	checked, err := check.CheckChunk(stmts, check.Config{Registry: reg, Signatures: signatures})
 	if err != nil {
 		if errors.Is(err, check.ErrUnsupportedCFG) {
-			setDefaultFile(precheck, filename)
-			return Result{Diagnostics: precheck}
+			setDefaultFile(structural, filename)
+			return Result{Diagnostics: structural}
 		}
 		diags := append([]diagnostic.Diagnostic{{
 			Position: diagnostic.Position{File: filename},
 			Code:     diagnostic.Code("check"),
 			Message:  err.Error(),
 			Severity: diagnostic.SeverityError,
-		}}, precheck...)
+		}}, structural...)
 		setDefaultFile(diags, filename)
 		return Result{Diagnostics: diags}
 	}
-	diags := append(precheck, diagnostics.Produce(checked, diagnostics.Config{Registry: reg})...)
+	diags := append(structural, diagnostics.Produce(checked, diagnostics.Config{Registry: reg})...)
 	setDefaultFile(diags, filename)
 	return Result{Diagnostics: diags}
 }

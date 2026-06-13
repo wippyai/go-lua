@@ -3,14 +3,11 @@ package factapply
 import (
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
-	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine/channelselect"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/visibility"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
-	"github.com/wippyai/go-lua/analysis/type/typ"
-	"github.com/wippyai/go-lua/analysis/type/unwrap"
 )
 
 func applyChannelSelectCaseEquality(
@@ -38,7 +35,7 @@ func applyChannelSelectCasePathEquality(
 	resultChannelPath pathdom.Path,
 	casePath pathdom.Path,
 ) (state.State, bool) {
-	resultPath, ok := channelSelectResultPathFromChannel(resultChannelPath)
+	resultPath, ok := channelselect.ResultPathFromChannel(resultChannelPath)
 	if !ok || resolver == nil {
 		return out, false
 	}
@@ -55,17 +52,17 @@ func applyChannelSelectCasePathEquality(
 	if !ok {
 		return out, false
 	}
-	caseType, ok := channelSelectResultCaseTypeFromValue(reg, result.value, selectFact.Select, selectFact.Index)
+	resultType, ok := valueWitnessType(reg, result.value)
+	if !ok {
+		return out, false
+	}
+	caseType, ok := channelselect.ResultCaseTypeFromValue(resultType, string(selectFact.Select), selectFact.Index)
 	if !ok {
 		return out, false
 	}
 	value := typevalue.WithWitness(reg, typevalue.FromType(reg, caseType), caseType)
 	out = invalidateChannelSelectResultDescendants(resolver, point, out, resultPath)
 	return result.write(out, value), true
-}
-
-func channelSelectResultPathFromChannel(p pathdom.Path) (pathdom.Path, bool) {
-	return channelselect.ResultPathFromChannelField(p)
 }
 
 func channelSelectReceiveFact(
@@ -83,35 +80,6 @@ func channelSelectReceiveFact(
 		}
 	}
 	return state.ChannelSelectFact{}, false
-}
-
-func channelSelectResultCaseTypeFromValue(
-	reg *axis.Registry,
-	value product.Value,
-	selectID state.ChannelSelectID,
-	index int,
-) (typ.Type, bool) {
-	resultType, ok := valueWitnessType(reg, value)
-	if !ok {
-		return nil, false
-	}
-	resultType = unwrap.Annotations(resultType)
-	if union, ok := resultType.(*typ.Union); ok {
-		for _, member := range union.Members {
-			if channelSelectCaseTypeMatches(member, selectID, index) {
-				return member, true
-			}
-		}
-		return nil, false
-	}
-	if channelSelectCaseTypeMatches(resultType, selectID, index) {
-		return resultType, true
-	}
-	return nil, false
-}
-
-func channelSelectCaseTypeMatches(caseType typ.Type, selectID state.ChannelSelectID, index int) bool {
-	return channelselect.CaseTypeMatches(caseType, string(selectID), index)
 }
 
 func invalidateChannelSelectResultDescendants(

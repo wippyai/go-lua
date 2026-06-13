@@ -154,7 +154,7 @@ func projectFromValueEvidence(reg *axis.Registry, value product.Value, suffix []
 	if !ok {
 		return product.Value{}, false
 	}
-	projected, ok := projectSegmentsType(parentType, suffix)
+	projected, ok := typeaccess.ProjectSegments(parentType, suffix)
 	if !ok {
 		return product.Value{}, false
 	}
@@ -177,31 +177,6 @@ func structuralTypeFromValue(reg *axis.Registry, value product.Value) (typ.Type,
 		return discriminant.TypeFromOrigin(origin.Family(), origin.Cases())
 	}
 	return nil, false
-}
-
-func projectSegmentsType(t typ.Type, suffix []segment.Segment) (typ.Type, bool) {
-	current := t
-	for _, seg := range suffix {
-		next, ok := projectSegmentType(current, seg)
-		if !ok {
-			return nil, false
-		}
-		current = next
-	}
-	return current, current != nil
-}
-
-func projectSegmentType(t typ.Type, seg segment.Segment) (typ.Type, bool) {
-	switch seg.Kind {
-	case segment.SegmentField:
-		return typeaccess.Field(t, seg.Name)
-	case segment.SegmentIndexString:
-		return typeaccess.RuntimeIndex(t, typ.LiteralString(seg.Name))
-	case segment.SegmentIndexInt:
-		return typeaccess.RuntimeIndex(t, typ.LiteralInt(int64(seg.Index)))
-	default:
-		return nil, false
-	}
 }
 
 func runtimeMayBeTable(reg *axis.Registry, value product.Value, hasValue bool) bool {

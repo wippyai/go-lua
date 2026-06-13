@@ -25,9 +25,6 @@ const (
 	CodeChannelSelectExhaustive    diagnostic.Code = "channel.select.exhaustiveness"
 	CodeUnresolvedTypeReference    diagnostic.Code = "type.reference.unresolved"
 	CodeUnresolvedValueReference   diagnostic.Code = "value.reference.unresolved"
-	CodeBreakOutsideLoop           diagnostic.Code = "syntax.break.outside_loop"
-	CodeDuplicateLabel             diagnostic.Code = "syntax.label.duplicate"
-	CodeGotoUndefinedLabel         diagnostic.Code = "syntax.goto.undefined"
 )
 
 type Config struct {

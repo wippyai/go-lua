@@ -11,7 +11,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
-	"github.com/wippyai/go-lua/analysis/type/normalize"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
@@ -79,7 +78,7 @@ func channelSelectResultValue(
 	if reg == nil || len(cases) == 0 {
 		return product.Value{}, false
 	}
-	caseTypes := make([]typ.Type, 0, len(cases))
+	resultCases := make([]channelselect.ResultCase, 0, len(cases))
 	for _, event := range cases {
 		payloadValue, ok := event.PayloadValue()
 		if !ok {
@@ -89,17 +88,19 @@ func channelSelectResultValue(
 		if !ok {
 			continue
 		}
-		caseTypes = append(caseTypes, channelSelectResultCaseType(selectID, event.Index(), payloadType))
+		resultCases = append(resultCases, channelselect.ResultCase{
+			Index:   event.Index(),
+			Payload: payloadType,
+		})
 	}
-	if len(caseTypes) == 0 {
+	if len(resultCases) == 0 {
 		return product.Value{}, false
 	}
-	resultType := normalize.UnionForEvidence(caseTypes...)
+	resultType, ok := channelselect.ResultValueType(string(selectID), resultCases)
+	if !ok {
+		return product.Value{}, false
+	}
 	return typevalue.WithWitness(reg, typevalue.FromType(reg, resultType), resultType), true
-}
-
-func channelSelectResultCaseType(selectID factflow.ChannelSelectID, index int, payload typ.Type) typ.Type {
-	return channelselect.ResultCaseType(string(selectID), index, payload)
 }
 
 func valueWitnessType(reg *axis.Registry, value product.Value) (typ.Type, bool) {

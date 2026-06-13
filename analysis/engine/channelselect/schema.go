@@ -5,6 +5,7 @@ import (
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/type/kind"
+	"github.com/wippyai/go-lua/analysis/type/normalize"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/unwrap"
@@ -17,6 +18,12 @@ const (
 	caseIndexField     = "__channel_select_case_index"
 )
 
+// ResultCase describes one internal select result union member.
+type ResultCase struct {
+	Index   int
+	Payload typ.Type
+}
+
 // ResultCaseType builds one member of the internal select result union:
 // { channel = marker, value = payload }.
 func ResultCaseType(selectID string, index int, payload typ.Type) typ.Type {
@@ -24,6 +31,18 @@ func ResultCaseType(selectID string, index int, payload typ.Type) typ.Type {
 		Field(ResultChannelField, CaseMarkerType(selectID, index)).
 		Field(ResultValueField, payload).
 		Build()
+}
+
+// ResultValueType builds the internal select result union from case payloads.
+func ResultValueType(selectID string, cases []ResultCase) (typ.Type, bool) {
+	if len(cases) == 0 {
+		return nil, false
+	}
+	caseTypes := make([]typ.Type, 0, len(cases))
+	for _, c := range cases {
+		caseTypes = append(caseTypes, ResultCaseType(selectID, c.Index, c.Payload))
+	}
+	return normalize.UnionForEvidence(caseTypes...), true
 }
 
 // CaseMarkerType builds the opaque channel identity marker stored in a select
@@ -58,6 +77,23 @@ func ResultChannelFieldType(caseType typ.Type) (typ.Type, bool) {
 	return field.Type, true
 }
 
+// ResultCaseTypeFromValue returns the matching select result case type, if any.
+func ResultCaseTypeFromValue(resultType typ.Type, selectID string, index int) (typ.Type, bool) {
+	resultType = unwrap.Annotations(resultType)
+	if union, ok := resultType.(*typ.Union); ok {
+		for _, member := range union.Members {
+			if CaseTypeMatches(member, selectID, index) {
+				return member, true
+			}
+		}
+		return nil, false
+	}
+	if CaseTypeMatches(resultType, selectID, index) {
+		return resultType, true
+	}
+	return nil, false
+}
+
 // CaseMarker decodes a select result channel marker.
 func CaseMarker(t typ.Type) (string, int, bool) {
 	marker, ok := unwrap.Alias(unwrap.Annotations(t)).(*typ.Record)
@@ -88,8 +124,8 @@ func CaseMarker(t typ.Type) (string, int, bool) {
 	return id, int(index), true
 }
 
-// ResultPathFromChannelField returns the select result path for result.channel.
-func ResultPathFromChannelField(p pathdom.Path) (pathdom.Path, bool) {
+// ResultPathFromChannel returns the select result path for result.channel.
+func ResultPathFromChannel(p pathdom.Path) (pathdom.Path, bool) {
 	seg, ok := p.LastSegment()
 	if !ok || seg.Kind != segment.SegmentField || seg.Name != ResultChannelField {
 		return pathdom.Path{}, false

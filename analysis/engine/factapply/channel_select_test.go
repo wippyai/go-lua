@@ -174,7 +174,11 @@ func assertChannelSelectCasePayload(
 	want typ.Type,
 ) {
 	t.Helper()
-	caseType, ok := channelSelectResultCaseTypeFromValue(reg, value, selectID, index)
+	resultType, ok := valueWitnessType(reg, value)
+	if !ok {
+		t.Fatalf("missing channel select witness in %s", formatValue(reg, value))
+	}
+	caseType, ok := channelselect.ResultCaseTypeFromValue(resultType, string(selectID), index)
 	if !ok {
 		t.Fatalf("missing channel select case %d in %s", index, formatValue(reg, value))
 	}

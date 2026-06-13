@@ -859,50 +859,6 @@ func TestReturnContractSkipsUninferredGenericDirectCallReturn(t *testing.T) {
 	}
 }
 
-func TestPrecheckReportsStructuralBreakAndGoto(t *testing.T) {
-	cases := []struct {
-		name string
-		src  string
-		code diagnostic.Code
-	}{
-		{name: "break outside loop", src: `break`, code: CodeBreakOutsideLoop},
-		{name: "break in nested function", src: `
-			while true do
-				local f = function() break end
-			end
-		`, code: CodeBreakOutsideLoop},
-		{name: "goto missing label", src: `goto missing`, code: CodeGotoUndefinedLabel},
-		{name: "duplicate label", src: "::dup::\n::dup::", code: CodeDuplicateLabel},
-	}
-	for _, tc := range cases {
-		tc := tc
-		t.Run(tc.name, func(t *testing.T) {
-			stmts := mustStmts(t, tc.src)
-			diags := Precheck(stmts, Config{Registry: standard.Registry()})
-			if len(diags) != 1 {
-				t.Fatalf("diagnostics = %d, want 1: %#v", len(diags), diags)
-			}
-			if diags[0].Code != tc.code {
-				t.Fatalf("diagnostic code = %s, want %s", diags[0].Code, tc.code)
-			}
-		})
-	}
-}
-
-func TestPrecheckAllowsForwardGotoAcrossNestedBlocks(t *testing.T) {
-	cases := []string{
-		"goto target\n do\n  local x = 1\n end\n::target::",
-		"if true then\n  local x = 1\n end\n goto target\n::target::",
-	}
-	for _, src := range cases {
-		stmts := mustStmts(t, src)
-		diags := Precheck(stmts, Config{Registry: standard.Registry()})
-		if len(diags) != 0 {
-			t.Fatalf("diagnostics = %#v, want none", diags)
-		}
-	}
-}
-
 func runDiagnostics(t *testing.T, src string) []diagnostic.Diagnostic {
 	t.Helper()
 	return runDiagnosticsWithGlobals(t, src, []string{"test", "type", "value"})

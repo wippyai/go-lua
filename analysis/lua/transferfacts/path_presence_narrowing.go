@@ -5,6 +5,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
+	"github.com/wippyai/go-lua/analysis/lua/typeaccess"
 	"github.com/wippyai/go-lua/analysis/type/kind"
 	"github.com/wippyai/go-lua/analysis/type/normalize"
 	"github.com/wippyai/go-lua/analysis/type/typ"
@@ -70,7 +71,7 @@ func pathCanBePresent(t typ.Type, suffix []segment.Segment, depth int) bool {
 	projected := t
 	var ok bool
 	for _, seg := range suffix {
-		projected, ok = projectSegmentType(projected, seg)
+		projected, ok = typeaccess.ProjectSegment(projected, seg)
 		if !ok {
 			return false
 		}

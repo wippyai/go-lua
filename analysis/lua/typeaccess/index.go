@@ -1,6 +1,7 @@
 package typeaccess
 
 import (
+	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/type/kind"
 	"github.com/wippyai/go-lua/analysis/type/normalize"
 	"github.com/wippyai/go-lua/analysis/type/subst"
@@ -27,6 +28,34 @@ func Index(container typ.Type, key typ.Type) (typ.Type, bool) {
 // missing table slots can produce nil, but non-table indexing still fails.
 func RuntimeIndex(container typ.Type, key typ.Type) (typ.Type, bool) {
 	return indexDepth(container, key, 0, indexRuntime).materialize()
+}
+
+// ProjectSegment resolves one Lua path segment against a type using the
+// runtime semantics required for table reads.
+func ProjectSegment(container typ.Type, seg segment.Segment) (typ.Type, bool) {
+	switch seg.Kind {
+	case segment.SegmentField:
+		return Field(container, seg.Name)
+	case segment.SegmentIndexString:
+		return RuntimeIndex(container, typ.LiteralString(seg.Name))
+	case segment.SegmentIndexInt:
+		return RuntimeIndex(container, typ.LiteralInt(int64(seg.Index)))
+	default:
+		return nil, false
+	}
+}
+
+// ProjectSegments resolves a sequence of Lua path segments against a type.
+func ProjectSegments(container typ.Type, segments []segment.Segment) (typ.Type, bool) {
+	current := container
+	for _, seg := range segments {
+		next, ok := ProjectSegment(current, seg)
+		if !ok {
+			return nil, false
+		}
+		current = next
+	}
+	return current, current != nil
 }
 
 func indexDepth(container typ.Type, key typ.Type, depth int, mode indexMode) fieldResult {

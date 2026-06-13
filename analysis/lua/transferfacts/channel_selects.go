@@ -4,7 +4,6 @@ import (
 	"strconv"
 
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
-	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
@@ -90,27 +89,7 @@ func (l *lowerer) channelSelectPathType(p pathdom.Path) (typ.Type, bool) {
 	if !ok {
 		return nil, false
 	}
-	for _, seg := range p.Segments {
-		next, ok := channelSelectSegmentType(current, seg)
-		if !ok {
-			return nil, false
-		}
-		current = next
-	}
-	return current, true
-}
-
-func channelSelectSegmentType(container typ.Type, seg segment.Segment) (typ.Type, bool) {
-	switch seg.Kind {
-	case segment.SegmentField:
-		return typeaccess.Field(container, seg.Name)
-	case segment.SegmentIndexString:
-		return typeaccess.RuntimeIndex(container, typ.LiteralString(seg.Name))
-	case segment.SegmentIndexInt:
-		return typeaccess.RuntimeIndex(container, typ.LiteralInt(int64(seg.Index)))
-	default:
-		return nil, false
-	}
+	return typeaccess.ProjectSegments(current, p.Segments)
 }
 
 func channelPayloadType(channelType typ.Type) (typ.Type, bool) {

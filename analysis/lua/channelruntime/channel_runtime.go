@@ -3,7 +3,6 @@ package channelruntime
 
 import (
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
-	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/lua/pathexpr"
 	"github.com/wippyai/go-lua/analysis/lua/typeaccess"
@@ -53,7 +52,8 @@ func IsReceiveCaseCall(call *ast.FuncCallExpr, bindings *bind.Result) bool {
 	return ok && IsChannelType(channelType)
 }
 
-// PathType resolves the annotated type for a path, following record fields.
+// PathType resolves the annotated type for a path, following field and index
+// projections.
 func PathType(bindings *bind.Result, p pathdom.Path) (typ.Type, bool) {
 	if bindings == nil || p.Symbol == 0 {
 		return nil, false
@@ -66,14 +66,7 @@ func PathType(bindings *bind.Result, p pathdom.Path) (typ.Type, bool) {
 	if !ok {
 		return nil, false
 	}
-	for _, seg := range p.Segments {
-		next, ok := segmentType(current, seg)
-		if !ok {
-			return nil, false
-		}
-		current = next
-	}
-	return current, true
+	return typeaccess.ProjectSegments(current, p.Segments)
 }
 
 // IsChannelType reports whether t is the ambient Channel<T> instantiation.
@@ -89,19 +82,6 @@ func ChannelPayloadType(t typ.Type) (typ.Type, bool) {
 		return nil, false
 	}
 	return inst.TypeArgs[0], true
-}
-
-func segmentType(container typ.Type, seg segment.Segment) (typ.Type, bool) {
-	switch seg.Kind {
-	case segment.SegmentField:
-		return typeaccess.Field(container, seg.Name)
-	case segment.SegmentIndexString:
-		return typeaccess.RuntimeIndex(container, typ.LiteralString(seg.Name))
-	case segment.SegmentIndexInt:
-		return typeaccess.RuntimeIndex(container, typ.LiteralInt(int64(seg.Index)))
-	default:
-		return nil, false
-	}
 }
 
 func symbolKind(bindings *bind.Result, id symbol.ID) symbol.Kind {
