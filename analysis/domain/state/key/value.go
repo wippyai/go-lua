@@ -1,7 +1,7 @@
 package key
 
 import (
-	"github.com/wippyai/go-lua/analysis/domain/path/keycodec"
+	"github.com/wippyai/go-lua/analysis/internal/keycodec"
 	"github.com/wippyai/go-lua/analysis/symbol"
 )
 

@@ -4,8 +4,8 @@ import (
 	"strconv"
 
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
-	"github.com/wippyai/go-lua/analysis/domain/path/keycodec"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
+	"github.com/wippyai/go-lua/analysis/internal/keycodec"
 	"github.com/wippyai/go-lua/analysis/symbol"
 )
 

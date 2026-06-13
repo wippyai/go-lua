@@ -1,4 +1,4 @@
-// Package keycodec owns small, shared string codecs for path-like map keys.
+// Package keycodec owns small, shared string codecs for compact map keys.
 package keycodec
 
 // PrefixedDecimalKey returns prefix followed by value in base 10 and suffix.
