@@ -4,6 +4,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/typeaccess"
 	"github.com/wippyai/go-lua/analysis/lua/typecall"
 	"github.com/wippyai/go-lua/analysis/type/kind"
+	"github.com/wippyai/go-lua/analysis/type/normalize"
 	"github.com/wippyai/go-lua/analysis/type/projection"
 	"github.com/wippyai/go-lua/analysis/type/subtype"
 	"github.com/wippyai/go-lua/analysis/type/typ"
@@ -105,7 +106,7 @@ func elementOfDepth(t typ.Type, depth int) (typ.Type, bool) {
 			}
 			return tt.Elements[0], true
 		}
-		return typ.NewUnion(tt.Elements...), true
+		return normalize.UnionForEvidence(tt.Elements...), true
 	case *typ.Union:
 		members := make([]typ.Type, 0, len(tt.Members))
 		for _, member := range tt.Members {
@@ -125,7 +126,7 @@ func elementOfDepth(t typ.Type, depth int) (typ.Type, bool) {
 		if len(members) == 0 {
 			return nil, false
 		}
-		return typ.NewUnion(members...), true
+		return normalize.UnionForEvidence(members...), true
 	default:
 		return nil, false
 	}

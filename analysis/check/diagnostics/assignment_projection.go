@@ -9,6 +9,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
 	"github.com/wippyai/go-lua/analysis/lua/typeannotation"
 	"github.com/wippyai/go-lua/analysis/lua/valueexpr"
+	"github.com/wippyai/go-lua/analysis/type/normalize"
 	"github.com/wippyai/go-lua/analysis/type/subst"
 	"github.com/wippyai/go-lua/analysis/type/subtype"
 	"github.com/wippyai/go-lua/analysis/type/typ"
@@ -85,7 +86,7 @@ func dynamicIndexWriteValueType(t typ.Type, depth int) (typ.Type, bool) {
 		if len(members) == 0 {
 			return nil, false
 		}
-		return typ.NewUnion(members...), true
+		return normalize.UnionForEvidence(members...), true
 	case *typ.Intersection:
 		var members []typ.Type
 		for _, member := range tt.Members {
@@ -98,7 +99,7 @@ func dynamicIndexWriteValueType(t typ.Type, depth int) (typ.Type, bool) {
 		if len(members) == 0 {
 			return nil, false
 		}
-		return typ.NewIntersection(members...), true
+		return normalize.IntersectionForMeet(members...), true
 	case *typ.Record:
 		if tt.HasMapComponent() && tt.MapValue != nil {
 			return tt.MapValue, true
@@ -293,7 +294,7 @@ func expectedSegmentType(t typ.Type, seg segment.Segment) (typ.Type, bool) {
 		if len(matches) == 0 {
 			return nil, false
 		}
-		return typ.NewUnion(matches...), true
+		return normalize.UnionForEvidence(matches...), true
 	case *typ.Intersection:
 		var matches []typ.Type
 		for _, member := range tt.Members {
@@ -304,7 +305,7 @@ func expectedSegmentType(t typ.Type, seg segment.Segment) (typ.Type, bool) {
 		if len(matches) == 0 {
 			return nil, false
 		}
-		return typ.NewIntersection(matches...), true
+		return normalize.IntersectionForMeet(matches...), true
 	case *typ.Array:
 		if seg.Kind != segment.SegmentIndexInt {
 			return nil, false
