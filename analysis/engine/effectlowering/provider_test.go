@@ -1048,6 +1048,94 @@ func TestSignatureOutcomeProviderTypeProjectionUsesDeclaredReturnTypeWhenProject
 	assertRuntimeKind(t, reg, got[0].Value, runtimekind.Singleton(runtimekind.Number))
 }
 
+func TestActiveReturnTransformClassificationMatrix(t *testing.T) {
+	tests := []struct {
+		name       string
+		label      effect.Label
+		wantActive bool
+	}{
+		{
+			name:       "same as",
+			label:      returns.Return{ReturnIndex: 0, Transform: returns.SameAs{Source: effect.ParamRef{Index: 0}}},
+			wantActive: true,
+		},
+		{
+			name:       "element of",
+			label:      returns.Return{ReturnIndex: 0, Transform: returns.ElementOf{Source: effect.ParamRef{Index: 0}}},
+			wantActive: true,
+		},
+		{
+			name:       "optional element of",
+			label:      returns.Return{ReturnIndex: 0, Transform: returns.OptionalElementOf{Source: effect.ParamRef{Index: 0}}},
+			wantActive: true,
+		},
+		{
+			name:       "callback return",
+			label:      returns.Return{ReturnIndex: 0, Transform: returns.CallbackReturn{CallbackParam: effect.ParamRef{Index: 0}}},
+			wantActive: true,
+		},
+		{
+			name:       "array of callback return",
+			label:      returns.Return{ReturnIndex: 0, Transform: returns.ArrayOfCallbackReturn{CallbackParam: effect.ParamRef{Index: 0}}},
+			wantActive: true,
+		},
+		{
+			name: "type projection",
+			label: returns.Return{ReturnIndex: 0, Transform: returns.TypeProjection{
+				Source: effect.ParamRef{Index: 0},
+				Projection: projection.Projection{Steps: []projection.Step{
+					projection.Field("payload"),
+					projection.CallableReturn(),
+				}},
+			}},
+			wantActive: true,
+		},
+		{
+			name:       "deep element",
+			label:      returns.Return{ReturnIndex: 0, Transform: returns.DeepElementOf{Source: effect.ParamRef{Index: 0}}},
+			wantActive: false,
+		},
+		{
+			name:       "string unpack",
+			label:      returns.Return{ReturnIndex: 0, Transform: returns.StringUnpackValue{Format: effect.ParamRef{Index: 0}}},
+			wantActive: false,
+		},
+		{
+			name:       "select case",
+			label:      returns.Return{ReturnIndex: 0, Transform: returns.SelectCaseOfParam{Source: effect.ParamRef{Index: 0}}},
+			wantActive: false,
+		},
+		{
+			name: "select result",
+			label: returns.Return{ReturnIndex: 0, Transform: returns.SelectResultOfCases{
+				Cases:   effect.ParamRef{Index: 0},
+				Default: effect.ParamRef{Index: 1},
+			}},
+			wantActive: false,
+		},
+		{
+			name:       "return length",
+			label:      returns.ReturnLength{ReturnIndex: 0, Length: expr.PL(0)},
+			wantActive: false,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			transform, ok := activeReturnTransform(signature.Function{Effect: effect.Empty.With(tc.label)}, 0)
+			if ok != tc.wantActive {
+				t.Fatalf("active = %v, want %v", ok, tc.wantActive)
+			}
+			if tc.wantActive && transform == nil {
+				t.Fatal("active transform = nil, want concrete return transform")
+			}
+			if !tc.wantActive && transform != nil {
+				t.Fatalf("active transform = %#v, want none", transform)
+			}
+		})
+	}
+}
+
 func TestSignatureOutcomeProviderReservedReturnTransformsUseOnlyDeclaredReturnType(t *testing.T) {
 	reg := standard.Registry()
 	point := cfg.Point(22)

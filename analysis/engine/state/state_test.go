@@ -1,6 +1,7 @@
 package state
 
 import (
+	"fmt"
 	"os/exec"
 	"strings"
 	"testing"
@@ -19,6 +20,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/state/heapidentity"
 	"github.com/wippyai/go-lua/analysis/engine/state/pathevidence"
 	"github.com/wippyai/go-lua/analysis/symbol"
+	latticelaws "github.com/wippyai/go-lua/analysis/test/laws/lattice"
 )
 
 func TestBottomReadsProductBottom(t *testing.T) {
@@ -196,6 +198,211 @@ func TestDomainPointwiseOperations(t *testing.T) {
 	}
 	if !stateDomain.Equal(a, a.Clone()) {
 		t.Fatalf("Clone should preserve state equality")
+	}
+}
+
+func TestStateLatticeLaws(t *testing.T) {
+	reg := standard.Registry()
+	d := Domain(reg)
+	suite := latticelaws.LawSuite[State]{
+		Name:   "state.State",
+		Domain: d,
+		Sample: stateLawSample(reg),
+		Format: stateLawFormat(reg),
+	}
+	suite.Run(t)
+}
+
+func TestStateOrderConsistencyAndJoinMonotonicity(t *testing.T) {
+	reg := standard.Registry()
+	d := Domain(reg)
+	sample := stateLawSample(reg)
+
+	for _, a := range sample {
+		for _, b := range sample {
+			eq := d.Equal(a, b)
+			le := d.LessOrEq(a, b)
+			ge := d.LessOrEq(b, a)
+			if eq != (le && ge) {
+				t.Fatalf("equality/order mismatch: a=%s b=%s equal=%v less-or-eq=%v reverse=%v",
+					stateLawFormat(reg)(a), stateLawFormat(reg)(b), eq, le, ge)
+			}
+		}
+	}
+
+	for _, a := range sample {
+		for _, b := range sample {
+			if !d.LessOrEq(a, b) {
+				continue
+			}
+			for _, c := range sample {
+				left := d.Join(a, c)
+				right := d.Join(b, c)
+				if !d.LessOrEq(left, right) {
+					t.Fatalf("join monotonicity failed: %s ⊑ %s but Join(%s,%s)=%s ⊑ Join(%s,%s)=%s does not hold",
+						stateLawFormat(reg)(a), stateLawFormat(reg)(b),
+						stateLawFormat(reg)(a), stateLawFormat(reg)(c), stateLawFormat(reg)(left),
+						stateLawFormat(reg)(b), stateLawFormat(reg)(c), stateLawFormat(reg)(right))
+				}
+				left = d.Join(c, a)
+				right = d.Join(c, b)
+				if !d.LessOrEq(left, right) {
+					t.Fatalf("join monotonicity failed on left argument: %s ⊑ %s but Join(%s,%s)=%s ⊑ Join(%s,%s)=%s does not hold",
+						stateLawFormat(reg)(a), stateLawFormat(reg)(b),
+						stateLawFormat(reg)(c), stateLawFormat(reg)(a), stateLawFormat(reg)(left),
+						stateLawFormat(reg)(c), stateLawFormat(reg)(b), stateLawFormat(reg)(right))
+				}
+			}
+		}
+	}
+}
+
+func TestStateCloneIndependenceAcrossLanes(t *testing.T) {
+	reg := standard.Registry()
+	fx := stateLawFixtureFor(reg)
+
+	original := State{}.
+		WriteValue(reg, fx.valueSlot, fx.present).
+		WritePathKey(reg, fx.pathKey, fx.present).
+		WritePathStaticMember(fx.staticKey, fx.present).
+		WriteDynamicIndexFact(reg, fx.dynamicKey, fx.dynamicFact).
+		WriteHeapTableObject(reg, fx.heapID, heapidentity.TableObject{
+			Root: fx.present,
+			StaticMembers: map[pathdom.PathKey]product.Value{
+				fx.staticKey: fx.present,
+			},
+		}).
+		WriteEffectDelta(fx.effectKey, fx.effectDelta).
+		WriteEscapePlacement(fx.escapeID, escapeplacement.Stack).
+		AddChannelSelectFact(fx.channelFact).
+		AddBranchProof(fx.proof)
+
+	cloneOnlyProof := pathevidence.BranchProof{
+		Kind:  pathevidence.BranchProofPathNotEqual,
+		Path:  fx.pathKey,
+		Other: pathdom.PathKey("sym201@1.other"),
+	}
+	clone := original.Clone()
+	clone.values[fx.valueSlot] = fx.absent
+	clone = clone.WritePathKey(reg, fx.pathKey, fx.absent)
+	clone = clone.WritePathStaticMember(fx.staticKey, fx.absent)
+	clone = clone.AddBranchProof(cloneOnlyProof)
+	clone.dynamicIndex[fx.dynamicKey] = dynamicindex.Bottom(reg)
+	clone.heapTableIdentity[fx.heapID] = heapidentity.BottomObject(reg)
+	clone.effectDeltas[fx.effectKey] = effectdelta.Bottom(reg)
+	clone.escapePlacement[fx.escapeID] = escapeplacement.Unknown
+	clone.channelSelect = clone.channelSelect.Add(channelselectfact.Fact{
+		Select: "clone-only",
+		Kind:   channelselectfact.FactCase,
+		Case:   fx.pathKey,
+		Index:  7,
+	})
+
+	if got := original.ReadValue(reg, fx.valueSlot); !product.Equal(reg, got, fx.present) {
+		t.Fatalf("original value slot mutated through clone: %s", formatValue(reg, got))
+	}
+	if got := original.ReadPathKey(reg, fx.pathKey); !product.Equal(reg, got, fx.present) {
+		t.Fatalf("original path key mutated through clone: %s", formatValue(reg, got))
+	}
+	if got, ok := original.ReadPathStaticMember(fx.staticKey); !ok || !product.Equal(reg, got, fx.present) {
+		t.Fatalf("original static member mutated through clone: %s ok=%v", formatValue(reg, got), ok)
+	}
+	if got := original.ReadDynamicIndexFact(reg, fx.dynamicKey); !dynamicindex.Domain(reg).Equal(got, fx.dynamicFact) {
+		t.Fatalf("original dynamic index mutated through clone: %#v", got)
+	}
+	if got := original.ReadHeapTableObject(reg, fx.heapID); !product.Equal(reg, got.Root, fx.present) ||
+		!product.Equal(reg, got.StaticMembers[fx.staticKey], fx.present) {
+		t.Fatalf("original heap object mutated through clone: %#v", got)
+	}
+	if got := original.ReadEffectDelta(fx.effectKey); !effectdelta.Domain(reg).Equal(got, fx.effectDelta) {
+		t.Fatalf("original effect delta mutated through clone: %#v", got)
+	}
+	if got := original.ReadEscapePlacement(fx.escapeID); got != escapeplacement.Stack {
+		t.Fatalf("original escape placement mutated through clone: %v", got)
+	}
+	if !original.HasChannelSelectFact(fx.channelFact) {
+		t.Fatalf("original channel-select fact mutated through clone")
+	}
+	if !original.HasBranchProof(fx.proof) {
+		t.Fatalf("original branch proof mutated through clone")
+	}
+
+	if got := clone.ReadValue(reg, fx.valueSlot); !product.Equal(reg, got, fx.absent) {
+		t.Fatalf("clone value slot = %s, want absent", formatValue(reg, got))
+	}
+	if got := clone.ReadPathKey(reg, fx.pathKey); !product.Equal(reg, got, fx.absent) {
+		t.Fatalf("clone path key = %s, want absent", formatValue(reg, got))
+	}
+	if got, ok := clone.ReadPathStaticMember(fx.staticKey); !ok || !product.Equal(reg, got, fx.absent) {
+		t.Fatalf("clone static member = %s ok=%v, want absent", formatValue(reg, got), ok)
+	}
+	if got := clone.ReadDynamicIndexFact(reg, fx.dynamicKey); dynamicindex.Domain(reg).Equal(got, fx.dynamicFact) {
+		t.Fatalf("clone dynamic index did not change")
+	}
+	if got := clone.ReadHeapTableObject(reg, fx.heapID); product.Equal(reg, got.Root, fx.present) {
+		t.Fatalf("clone heap object root did not change")
+	}
+	if got := clone.ReadEffectDelta(fx.effectKey); effectdelta.Domain(reg).Equal(got, fx.effectDelta) {
+		t.Fatalf("clone effect delta did not change")
+	}
+	if got := clone.ReadEscapePlacement(fx.escapeID); got != escapeplacement.Unknown {
+		t.Fatalf("clone escape placement = %v, want unknown", got)
+	}
+	if !clone.HasChannelSelectFact(fx.channelFact) || !clone.HasChannelSelectFact(channelselectfact.Fact{
+		Select: "clone-only",
+		Kind:   channelselectfact.FactCase,
+		Case:   fx.pathKey,
+		Index:  7,
+	}) {
+		t.Fatalf("clone channel-select update did not stick")
+	}
+	if !clone.HasBranchProof(fx.proof) || !clone.HasBranchProof(cloneOnlyProof) {
+		t.Fatalf("clone branch proof updates did not stick")
+	}
+}
+
+func TestStateBottomWritesRemoveExplicitBottomEntries(t *testing.T) {
+	reg := standard.Registry()
+	valueDomain := product.Domain(reg)
+	fx := stateLawFixtureFor(reg)
+
+	state := State{}.
+		WriteValue(reg, fx.valueSlot, fx.present).
+		WritePathKey(reg, fx.pathKey, fx.present).
+		WriteDynamicIndexFact(reg, fx.dynamicKey, fx.dynamicFact).
+		WriteHeapTableObject(reg, fx.heapID, heapidentity.TableObject{
+			Root: fx.present,
+			StaticMembers: map[pathdom.PathKey]product.Value{
+				fx.staticKey: fx.present,
+			},
+		}).
+		WriteEffectDelta(fx.effectKey, fx.effectDelta).
+		WriteEscapePlacement(fx.escapeID, escapeplacement.Stack)
+
+	state = state.WriteValue(reg, fx.valueSlot, valueDomain.Bottom())
+	state = state.WritePathKey(reg, fx.pathKey, valueDomain.Bottom())
+	state = state.WriteDynamicIndexFact(reg, fx.dynamicKey, dynamicindex.Bottom(reg))
+	state = state.WriteHeapTableObject(reg, fx.heapID, heapidentity.BottomObject(reg))
+	state = state.WriteEffectDelta(fx.effectKey, effectdelta.Bottom(reg))
+	state = state.WriteEscapePlacement(fx.escapeID, escapeplacement.Bottom)
+
+	if _, ok := state.values[fx.valueSlot]; ok {
+		t.Fatalf("value slot kept explicit bottom entry")
+	}
+	if _, ok := state.PathRefinementsSnapshot().Refinements[fx.pathKey]; ok {
+		t.Fatalf("path refinement kept explicit bottom entry")
+	}
+	if _, ok := state.dynamicIndex[fx.dynamicKey]; ok {
+		t.Fatalf("dynamic index kept explicit bottom entry")
+	}
+	if _, ok := state.heapTableIdentity[fx.heapID]; ok {
+		t.Fatalf("heap identity kept explicit bottom entry")
+	}
+	if _, ok := state.effectDeltas[fx.effectKey]; ok {
+		t.Fatalf("effect delta kept explicit bottom entry")
+	}
+	if _, ok := state.escapePlacement[fx.escapeID]; ok {
+		t.Fatalf("escape placement kept explicit bottom entry")
 	}
 }
 
@@ -1019,6 +1226,127 @@ func TestStatePackageDoesNotImportLuaPackages(t *testing.T) {
 				t.Fatalf("state package imports forbidden dependency %q", dep)
 			}
 		}
+	}
+}
+
+type stateLawFixture struct {
+	valueSlot   key.Value
+	returnSlot  int
+	pathKey     pathdom.PathKey
+	staticKey   pathdom.PathKey
+	dynamicKey  dynamicindex.Key
+	heapID      identity.ID
+	effectKey   effectdelta.Key
+	escapeID    identity.ID
+	channelFact channelselectfact.Fact
+	proof       pathevidence.BranchProof
+	present     product.Value
+	absent      product.Value
+	dynamicFact dynamicindex.Fact
+	effectDelta effectdelta.Value
+}
+
+func stateLawFixtureFor(reg *axis.Registry) stateLawFixture {
+	present := presentValue(reg)
+	absent := absentValue(reg)
+	pathKey := pathdom.PathKey("sym201@1.field")
+	staticKey := pathdom.PathKey("sym201@1.shared")
+	tableKey := pathdom.PathKey("sym201@1.table")
+	valueSlot := key.SymbolValue(symbol.ID(201))
+	returnSlot := 3
+	dynamicKey := dynamicindex.Key{Table: tableKey, Site: "dyn"}
+	heapID := identity.ID{Kind: "table", Site: "state-law", Index: 1}
+	effectKey := effectdelta.Key{Target: tableKey, Site: "effect", Kind: effectdelta.Mutation}
+	escapeID := identity.ID{Kind: "table", Site: "escape-law", Index: 1}
+	channelFact := channelselectfact.Fact{Select: "select-law", Kind: channelselectfact.FactSelect, Result: pathKey}
+	proof := pathevidence.BranchProof{Kind: pathevidence.BranchProofPathPresence, Path: pathKey, Presence: presence.Present()}
+	dynamicFact := dynamicindex.Fact{
+		KeyPresence: presence.Present(),
+		KeyValue:    present,
+		Value:       present,
+		Admission:   dynamicindex.AdmissionAdmitted,
+	}
+	effectDelta := effectdelta.Value{Before: present, After: present, Change: effectdelta.ChangeChanged}
+
+	return stateLawFixture{
+		valueSlot:   valueSlot,
+		returnSlot:  returnSlot,
+		pathKey:     pathKey,
+		staticKey:   staticKey,
+		dynamicKey:  dynamicKey,
+		heapID:      heapID,
+		effectKey:   effectKey,
+		escapeID:    escapeID,
+		channelFact: channelFact,
+		proof:       proof,
+		present:     present,
+		absent:      absent,
+		dynamicFact: dynamicFact,
+		effectDelta: effectDelta,
+	}
+}
+
+func stateLawSample(reg *axis.Registry) []State {
+	fx := stateLawFixtureFor(reg)
+	bottom := Domain(reg).Bottom()
+	top := Domain(reg).Top()
+
+	valueState := State{}.
+		WriteValue(reg, fx.valueSlot, fx.present).
+		WriteReturnSlot(reg, fx.returnSlot, fx.absent)
+	pathState := State{}.
+		WritePathKey(reg, fx.pathKey, fx.present).
+		WritePathStaticMember(fx.staticKey, fx.present).
+		AddBranchProof(fx.proof)
+	dynamicState := State{}.WriteDynamicIndexFact(reg, fx.dynamicKey, fx.dynamicFact)
+	heapState := State{}.WriteHeapTableObject(reg, fx.heapID, heapidentity.TableObject{
+		Root: fx.present,
+		StaticMembers: map[pathdom.PathKey]product.Value{
+			fx.staticKey: fx.present,
+		},
+	})
+	effectState := State{}.
+		WriteEffectDelta(fx.effectKey, fx.effectDelta).
+		WriteEscapePlacement(fx.escapeID, escapeplacement.Stack)
+	channelState := State{}.AddChannelSelectFact(fx.channelFact)
+	fullState := valueState.
+		WritePathKey(reg, fx.pathKey, fx.present).
+		WritePathStaticMember(fx.staticKey, fx.present).
+		WriteDynamicIndexFact(reg, fx.dynamicKey, fx.dynamicFact).
+		WriteHeapTableObject(reg, fx.heapID, heapidentity.TableObject{
+			Root: fx.present,
+			StaticMembers: map[pathdom.PathKey]product.Value{
+				fx.staticKey: fx.present,
+			},
+		}).
+		WriteEffectDelta(fx.effectKey, fx.effectDelta).
+		WriteEscapePlacement(fx.escapeID, escapeplacement.Stack).
+		AddChannelSelectFact(fx.channelFact).
+		AddBranchProof(fx.proof)
+
+	return []State{bottom, top, valueState, pathState, dynamicState, heapState, effectState, channelState, fullState}
+}
+
+func stateLawFormat(reg *axis.Registry) func(State) string {
+	fx := stateLawFixtureFor(reg)
+	return func(s State) string {
+		static := "absent"
+		if got, ok := s.ReadPathStaticMember(fx.staticKey); ok {
+			static = formatValue(reg, got)
+		}
+		return fmt.Sprintf(
+			"v=%s ret=%s path=%s static=%s dyn=%#v heap-root=%s effect=%#v esc=%v chan=%v proof=%v",
+			formatValue(reg, s.ReadValue(reg, fx.valueSlot)),
+			formatValue(reg, s.ReadReturnSlot(reg, fx.returnSlot)),
+			formatValue(reg, s.ReadPathKey(reg, fx.pathKey)),
+			static,
+			s.ReadDynamicIndexFact(reg, fx.dynamicKey),
+			formatValue(reg, s.ReadHeapTableObject(reg, fx.heapID).Root),
+			s.ReadEffectDelta(fx.effectKey),
+			s.ReadEscapePlacement(fx.escapeID),
+			s.HasChannelSelectFact(fx.channelFact),
+			s.HasBranchProof(fx.proof),
+		)
 	}
 }
 

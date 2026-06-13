@@ -162,6 +162,81 @@ func TestReturnTransforms_String(t *testing.T) {
 	}
 }
 
+func TestReturnTransformsClassification(t *testing.T) {
+	tests := []struct {
+		name  string
+		rt    ReturnType
+		class string
+	}{
+		{"element", ElementOf{Source: effect.ParamRef{Index: 0}}, "actively lowered by effectlowering"},
+		{"optional element", OptionalElementOf{Source: effect.ParamRef{Index: 0}}, "actively lowered by effectlowering"},
+		{"callback return", CallbackReturn{CallbackParam: effect.ParamRef{Index: 1}}, "actively lowered by effectlowering"},
+		{"array callback return", ArrayOfCallbackReturn{CallbackParam: effect.ParamRef{Index: 1}}, "actively lowered by effectlowering"},
+		{"same as", SameAs{Source: effect.ParamRef{Index: 0}}, "actively lowered by effectlowering"},
+		{"type projection", TypeProjection{
+			Source: effect.ParamRef{Index: 0},
+			Projection: projection.Projection{Steps: []projection.Step{
+				projection.Field("payload"),
+				projection.CallableReturn(),
+			}},
+		}, "actively lowered by effectlowering"},
+		{"deep element", DeepElementOf{Source: effect.ParamRef{Index: 0}}, "reserved/falls back to declared returns"},
+		{"string unpack", StringUnpackValue{Format: effect.ParamRef{Index: 0}}, "reserved/falls back to declared returns"},
+		{"select case", SelectCaseOfParam{Source: effect.ParamRef{Index: 0}}, "reserved/falls back to declared returns"},
+		{"select result", SelectResultOfCases{Cases: effect.ParamRef{Index: 0}, Default: effect.ParamRef{Index: 1}}, "reserved/falls back to declared returns"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := classifyReturnType(tt.rt); got != tt.class {
+				t.Fatalf("classification = %q, want %q", got, tt.class)
+			}
+		})
+	}
+}
+
+func TestReturnLabelClassification(t *testing.T) {
+	tests := []struct {
+		name  string
+		label effect.Label
+		class string
+	}{
+		{"error return", ErrorReturn{ValueIndex: 0, ErrorIndex: 1}, "actively lowered by effectlowering"},
+		{"return length", ReturnLength{ReturnIndex: 0, Length: expr.PL(0)}, "data-only"},
+		{"correlated return", CorrelatedReturn{Indices: []int{0, 1, 2}}, "data-only"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := classifyReturnLabel(tt.label); got != tt.class {
+				t.Fatalf("classification = %q, want %q", got, tt.class)
+			}
+		})
+	}
+}
+
+func classifyReturnType(rt ReturnType) string {
+	switch rt.(type) {
+	case ElementOf, *ElementOf, OptionalElementOf, *OptionalElementOf, CallbackReturn, *CallbackReturn, ArrayOfCallbackReturn, *ArrayOfCallbackReturn, SameAs, *SameAs, TypeProjection, *TypeProjection:
+		return "actively lowered by effectlowering"
+	case DeepElementOf, *DeepElementOf, StringUnpackValue, *StringUnpackValue, SelectCaseOfParam, *SelectCaseOfParam, SelectResultOfCases, *SelectResultOfCases:
+		return "reserved/falls back to declared returns"
+	default:
+		return "unknown"
+	}
+}
+
+func classifyReturnLabel(label effect.Label) string {
+	switch label.(type) {
+	case ErrorReturn, *ErrorReturn:
+		return "actively lowered by effectlowering"
+	case ReturnLength, *ReturnLength, CorrelatedReturn, *CorrelatedReturn:
+		return "data-only"
+	default:
+		return "unknown"
+	}
+}
+
 func TestTypeProjectionTransform(t *testing.T) {
 	base := TypeProjection{
 		Source: effect.ParamRef{Index: 0},
@@ -220,6 +295,8 @@ func TestReturnTypeInterface(t *testing.T) {
 		DeepElementOf{},
 		StringUnpackValue{},
 		TypeProjection{},
+		SelectCaseOfParam{},
+		SelectResultOfCases{},
 	}
 
 	for _, rt := range returnTypes {
@@ -254,6 +331,8 @@ func TestMarkerMethods(t *testing.T) {
 	SameAs{}.returnType()
 	DeepElementOf{}.returnType()
 	StringUnpackValue{}.returnType()
+	SelectCaseOfParam{}.returnType()
+	SelectResultOfCases{}.returnType()
 }
 
 func TestRowNormalization(t *testing.T) {

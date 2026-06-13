@@ -270,6 +270,50 @@ func TestManifestEffectLabelRoundTripCoversNestedKinds(t *testing.T) {
 	}
 }
 
+func TestManifestEffectLabelRoundTripCoversReturnStatusMatrix(t *testing.T) {
+	p0 := effect.ParamRef{Index: 0}
+	p1 := effect.ParamRef{Index: 1}
+	p2 := effect.ParamRef{Index: 2}
+	tests := []struct {
+		name   string
+		status string
+		label  effect.Label
+	}{
+		{"actively lowered", "actively lowered by effectlowering", returns.Return{ReturnIndex: 0, Transform: returns.ElementOf{Source: p0}}},
+		{"actively lowered optional", "actively lowered by effectlowering", returns.Return{ReturnIndex: 0, Transform: returns.OptionalElementOf{Source: p0}}},
+		{"actively lowered callback", "actively lowered by effectlowering", returns.Return{ReturnIndex: 0, Transform: returns.CallbackReturn{CallbackParam: p1}}},
+		{"actively lowered array callback", "actively lowered by effectlowering", returns.Return{ReturnIndex: 0, Transform: returns.ArrayOfCallbackReturn{CallbackParam: p1}}},
+		{"actively lowered same as", "actively lowered by effectlowering", returns.Return{ReturnIndex: 0, Transform: returns.SameAs{Source: p0}}},
+		{"actively lowered projection", "actively lowered by effectlowering", returns.Return{ReturnIndex: 0, Transform: returns.TypeProjection{
+			Source: p0,
+			Projection: projection.Projection{Steps: []projection.Step{
+				projection.Field("payload"),
+				projection.CallableReturn(),
+			}},
+		}}},
+		{"reserved deep element", "reserved/falls back to declared returns", returns.Return{ReturnIndex: 0, Transform: returns.DeepElementOf{Source: p0}}},
+		{"reserved string unpack", "reserved/falls back to declared returns", returns.Return{ReturnIndex: 0, Transform: returns.StringUnpackValue{Format: p2}}},
+		{"reserved select case", "reserved/falls back to declared returns", returns.Return{ReturnIndex: 0, Transform: returns.SelectCaseOfParam{Source: p0}}},
+		{"reserved select result", "reserved/falls back to declared returns", returns.Return{ReturnIndex: 0, Transform: returns.SelectResultOfCases{Cases: p0, Default: p1}}},
+		{"data-only error return", "actively lowered by effectlowering", returns.ErrorReturn{ValueIndex: 0, ErrorIndex: 1}},
+		{"data-only return length", "data-only", returns.ReturnLength{ReturnIndex: 0, Length: expr.MinExpr(expr.PL(0), expr.C(3))}},
+		{"data-only correlated return", "data-only", returns.CorrelatedReturn{Indices: []int{0, 2}}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.status+" / "+tt.name, func(t *testing.T) {
+			row := effect.Open("rho", tt.label)
+			got := mustRoundTripEffectRow(t, row)
+			if !got.Equals(row) {
+				t.Fatalf("roundtrip row = %v, want %v", got, row)
+			}
+			if !rowHasLabel(got, tt.label) {
+				t.Fatalf("roundtrip row missing %T in %v", tt.label, got)
+			}
+		})
+	}
+}
+
 func TestManifestEffectPointerLabelsNormalizeToValues(t *testing.T) {
 	row := effect.Row{Labels: []effect.Label{
 		&control.IO{},

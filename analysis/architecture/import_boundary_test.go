@@ -13,6 +13,7 @@ const modulePath = "github.com/wippyai/go-lua"
 
 type listedPackage struct {
 	ImportPath string
+	Name       string
 	Imports    []string
 }
 
@@ -70,7 +71,44 @@ func TestLowerLayerImportBoundaries(t *testing.T) {
 			name:     "check body stays below fixpoint owners",
 			patterns: []string{modulePath + "/analysis/check/body"},
 			banned: []string{
+				modulePath + "/analysis/check/diagnostics",
 				modulePath + "/analysis/check/fixpoint",
+			},
+		},
+		{
+			name:     "engine factflow stays syntax check type and state independent",
+			patterns: []string{modulePath + "/analysis/engine/factflow"},
+			banned: []string{
+				modulePath + "/analysis/check",
+				modulePath + "/analysis/engine/state",
+				modulePath + "/analysis/lua",
+				modulePath + "/analysis/type",
+			},
+		},
+		{
+			name:     "engine transfer stays generic",
+			patterns: []string{modulePath + "/analysis/engine/transfer"},
+			banned: []string{
+				modulePath + "/analysis/check",
+				modulePath + "/analysis/lua",
+				modulePath + "/analysis/type",
+			},
+		},
+		{
+			name:     "engine solve stays generic",
+			patterns: []string{modulePath + "/analysis/engine/solve"},
+			banned: []string{
+				modulePath + "/analysis/check",
+				modulePath + "/analysis/lua",
+				modulePath + "/analysis/type",
+			},
+		},
+		{
+			name:     "engine state stays below check and lua",
+			patterns: []string{modulePath + "/analysis/engine/state"},
+			banned: []string{
+				modulePath + "/analysis/check",
+				modulePath + "/analysis/lua",
 			},
 		},
 	}
@@ -123,6 +161,57 @@ func TestCheckSplitDirectImportBoundaries(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestCheckCorePackagesDoNotImportDiagnosticsOrFixpoint(t *testing.T) {
+	tests := []struct {
+		name    string
+		pattern string
+		banned  []string
+	}{
+		{
+			name:    "body stays below fixpoint and diagnostics",
+			pattern: modulePath + "/analysis/check/body",
+			banned: []string{
+				modulePath + "/analysis/check/diagnostics",
+				modulePath + "/analysis/check/fixpoint",
+			},
+		},
+		{
+			name:    "program stays below diagnostics",
+			pattern: modulePath + "/analysis/check/fixpoint/program",
+			banned: []string{
+				modulePath + "/analysis/check/diagnostics",
+			},
+		},
+		{
+			name:    "summary stays below diagnostics",
+			pattern: modulePath + "/analysis/check/fixpoint/summary",
+			banned: []string{
+				modulePath + "/analysis/check/diagnostics",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			for _, dep := range productionDeps(t, tt.pattern) {
+				for _, banned := range tt.banned {
+					if forbiddenImport(dep, banned, false) {
+						t.Fatalf("%s imports forbidden dependency %q", tt.pattern, dep)
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestActiveCheckTreeHasNoPipelinePackages(t *testing.T) {
+	for _, pkg := range productionPackages(t, modulePath+"/analysis/check/...") {
+		if pkg.Name == "pipeline" {
+			t.Fatalf("%s uses forbidden package name %q", pkg.ImportPath, pkg.Name)
+		}
 	}
 }
 
