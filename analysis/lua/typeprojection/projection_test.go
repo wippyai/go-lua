@@ -3,6 +3,7 @@ package typeprojection
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/type/annotation"
 	"github.com/wippyai/go-lua/analysis/type/projection"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
@@ -101,6 +102,79 @@ func TestApplyChainFieldCallableReturn(t *testing.T) {
 		t.Fatal("Apply field callable return chain failed")
 	}
 	assertProjectionType(t, got, typ.Boolean)
+}
+
+func TestElementOfContainerShapes(t *testing.T) {
+	cases := []struct {
+		name string
+		in   typ.Type
+		want typ.Type
+	}{
+		{name: "array", in: typ.NewArray(typ.String), want: typ.String},
+		{name: "map", in: typ.NewMap(typ.String, typ.Number), want: typ.Number},
+		{name: "readonly map", in: typ.NewReadonlyMap(typ.String, typ.Boolean), want: typ.Boolean},
+		{name: "single tuple", in: typ.NewTuple(typ.Integer), want: typ.Integer},
+		{name: "multi tuple", in: typ.NewTuple(typ.String, typ.Number), want: typ.NewUnion(typ.String, typ.Number)},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, ok := ElementOf(tc.in)
+			if !ok {
+				t.Fatal("ElementOf failed")
+			}
+			assertProjectionType(t, got, tc.want)
+		})
+	}
+}
+
+func TestElementOfUnwrapsOptionalAliasAndAnnotated(t *testing.T) {
+	source := typ.NewAnnotated(
+		typ.NewAlias("MaybeItems", typ.NewOptional(typ.NewArray(typ.String))),
+		[]annotation.Annotation{{Name: "source"}},
+	)
+
+	got, ok := ElementOf(source)
+	if !ok {
+		t.Fatal("ElementOf failed")
+	}
+	assertProjectionType(t, got, typ.String)
+}
+
+func TestElementOfUnionProjectsMembersAndSkipsNil(t *testing.T) {
+	source := typ.NewUnion(
+		typ.NewArray(typ.String),
+		typ.NewReadonlyMap(typ.String, typ.Number),
+		typ.Nil,
+	)
+
+	got, ok := ElementOf(source)
+	if !ok {
+		t.Fatal("ElementOf failed")
+	}
+	assertProjectionType(t, got, typ.NewUnion(typ.String, typ.Number))
+}
+
+func TestElementOfRejectsNonContainerUnionMember(t *testing.T) {
+	if got, ok := ElementOf(typ.NewUnion(typ.NewArray(typ.String), typ.Boolean)); ok || got != nil {
+		t.Fatalf("ElementOf succeeded: %v", got)
+	}
+}
+
+func TestElementOfRejectsEmptyTuple(t *testing.T) {
+	if got, ok := ElementOf(typ.NewTuple()); ok || got != nil {
+		t.Fatalf("ElementOf succeeded: %v", got)
+	}
+}
+
+func TestElementOfRejectsPastRecursionDepth(t *testing.T) {
+	var source typ.Type = typ.NewArray(typ.String)
+	for i := 0; i <= typ.DefaultRecursionDepth; i++ {
+		source = typ.NewAnnotated(source, []annotation.Annotation{{Name: "depth"}})
+	}
+
+	if got, ok := ElementOf(source); ok || got != nil {
+		t.Fatalf("ElementOf succeeded: %v", got)
+	}
 }
 
 func assertProjectionType(t *testing.T, got typ.Type, want typ.Type) {

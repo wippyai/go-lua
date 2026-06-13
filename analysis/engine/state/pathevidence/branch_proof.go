@@ -2,9 +2,9 @@ package pathevidence
 
 import (
 	"sort"
-	"strings"
 
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 )
 
@@ -86,12 +86,8 @@ func equivalentPathKeysForProof(pathKey pathdom.PathKey, proof BranchProof) []pa
 }
 
 func rebaseEquivalentPathKey(pathKey, from, to pathdom.PathKey) (pathdom.PathKey, bool) {
-	if from == "" || to == "" || !pathKeyInSubtree(pathKey, from) {
-		return "", false
-	}
-	suffix := strings.TrimPrefix(string(pathKey), string(from))
-	rebased := pathdom.PathKey(string(to) + suffix)
-	if rebased == pathKey || !pathKeyInSubtree(rebased, rebased) {
+	rebased, ok := pathaddr.RebasePathKey(pathKey, from, to)
+	if !ok || !pathKeyInSubtree(rebased, rebased) {
 		return "", false
 	}
 	return rebased, true

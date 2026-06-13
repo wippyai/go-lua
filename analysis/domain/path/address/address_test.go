@@ -505,3 +505,108 @@ func TestContainerRefConstructorsValidateSymbolKeyPair(t *testing.T) {
 		t.Fatalf("ContainerRefOfStable accepted named root: %#v/%v", ref, ok)
 	}
 }
+
+func TestStructuralKeyVersionedPrefixRelationsUseSegmentBoundaries(t *testing.T) {
+	prefix := mustStructuralKey(t, pathdom.PathKey("sym40@3.field"))
+
+	for _, key := range []pathdom.PathKey{
+		pathdom.PathKey("sym40@3.field"),
+		pathdom.PathKey("sym40@3.field.deep"),
+	} {
+		if got := mustStructuralKey(t, key); !got.HasPrefix(prefix) {
+			t.Fatalf("%s should be under %s", key, prefix.PathKey())
+		}
+	}
+
+	for _, key := range []pathdom.PathKey{
+		pathdom.PathKey("sym40@3"),
+		pathdom.PathKey("sym40@3.fieldish"),
+		pathdom.PathKey("sym40.field.deep"),
+		pathdom.PathKey("sym40@4.field.deep"),
+		pathdom.PathKey("sym41@3.field.deep"),
+	} {
+		if got, ok := StructuralKeyFromPathKey(key); ok && got.HasPrefix(prefix) {
+			t.Fatalf("%s should not be under %s", key, prefix.PathKey())
+		}
+	}
+}
+
+func TestStructuralKeyStablePrefixRelationsUseSegmentBoundaries(t *testing.T) {
+	placeholder := mustStructuralKey(t, pathdom.PathKey("$0.field"))
+	placeholderChild := mustStructuralKey(t, pathdom.PathKey("$0.field.deep"))
+	placeholderSibling := mustStructuralKey(t, pathdom.PathKey("$0.fieldish"))
+	retChild := mustStructuralKey(t, pathdom.PathKey("ret[1].field.deep"))
+
+	if !placeholderChild.HasPrefix(placeholder) || !placeholderChild.HasStrictPrefix(placeholder) {
+		t.Fatalf("%s should be a strict descendant of %s", placeholderChild.PathKey(), placeholder.PathKey())
+	}
+	if placeholder.HasStrictPrefix(placeholder) {
+		t.Fatalf("%s should not be a strict descendant of itself", placeholder.PathKey())
+	}
+	if placeholderSibling.HasPrefix(placeholder) {
+		t.Fatalf("%s should not be under %s", placeholderSibling.PathKey(), placeholder.PathKey())
+	}
+	if retChild.HasPrefix(placeholder) {
+		t.Fatalf("%s should not be under %s", retChild.PathKey(), placeholder.PathKey())
+	}
+}
+
+func TestStructuralKeyRejectsInvalidSpellings(t *testing.T) {
+	for _, key := range []pathdom.PathKey{
+		pathdom.PathKey(""),
+		pathdom.PathKey(".field"),
+		pathdom.PathKey("sym1@1[bad]"),
+		pathdom.PathKey("sym1@1."),
+		pathdom.PathKey("sym1.field"),
+		pathdom.PathKey("ret[1"),
+	} {
+		if got, ok := StructuralKeyFromPathKey(key); ok || got.PathKey() != "" {
+			t.Fatalf("StructuralKeyFromPathKey(%q) = %s/%v, want rejected", key, got.PathKey(), ok)
+		}
+	}
+}
+
+func TestRebasePathKeyPreservesStructuralBoundaries(t *testing.T) {
+	got, ok := RebasePathKey(
+		pathdom.PathKey("sym10@1.child.name"),
+		pathdom.PathKey("sym10@1.child"),
+		pathdom.PathKey("sym20@1.leaf"),
+	)
+	if !ok || got != pathdom.PathKey("sym20@1.leaf.name") {
+		t.Fatalf("RebasePathKey(versioned) = %s/%v, want sym20@1.leaf.name/true", got, ok)
+	}
+
+	if got, ok := RebasePathKey(
+		pathdom.PathKey("sym10@1.childish.name"),
+		pathdom.PathKey("sym10@1.child"),
+		pathdom.PathKey("sym20@1.leaf"),
+	); ok || got != "" {
+		t.Fatalf("RebasePathKey(boundary collision) = %s/%v, want rejected", got, ok)
+	}
+
+	got, ok = RebasePathKey(
+		pathdom.PathKey("$0.child.name"),
+		pathdom.PathKey("$0.child"),
+		pathdom.PathKey("ret[1].leaf"),
+	)
+	if !ok || got != pathdom.PathKey("ret[1].leaf.name") {
+		t.Fatalf("RebasePathKey(stable) = %s/%v, want ret[1].leaf.name/true", got, ok)
+	}
+
+	if got, ok := RebasePathKey(
+		pathdom.PathKey("sym10@1.child.name"),
+		pathdom.PathKey("sym10@1.child"),
+		pathdom.PathKey("s20.leaf"),
+	); ok || got != "" {
+		t.Fatalf("RebasePathKey(mixed local/stable) = %s/%v, want rejected", got, ok)
+	}
+}
+
+func mustStructuralKey(t *testing.T, key pathdom.PathKey) StructuralKey {
+	t.Helper()
+	got, ok := StructuralKeyFromPathKey(key)
+	if !ok {
+		t.Fatalf("StructuralKeyFromPathKey(%q) failed", key)
+	}
+	return got
+}

@@ -13,16 +13,15 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
-	"github.com/wippyai/go-lua/analysis/type/kind"
 	"github.com/wippyai/go-lua/analysis/type/projection"
 	"github.com/wippyai/go-lua/analysis/type/typ"
-	"github.com/wippyai/go-lua/analysis/type/unwrap"
 )
 
 // ReturnTypeOps carries caller-owned type operations needed by return
 // transforms that are not part of engine ownership.
 type ReturnTypeOps struct {
 	CallableReturn func(typ.Type) (typ.Type, bool)
+	ElementOf      func(typ.Type) (typ.Type, bool)
 	TypeProjection func(typ.Type, projection.Projection) (typ.Type, bool)
 }
 
@@ -49,19 +48,19 @@ func signatureReturnValue(
 		}
 		return sameAsReturnValue(ctx, facts, sources, transform.Source, in, read)
 	case returns.ElementOf:
-		return elementOfReturnValue(ctx, facts, sig, transform.Source)
+		return elementOfReturnValue(ctx, facts, sig, transform.Source, returnTypeOps)
 	case *returns.ElementOf:
 		if transform == nil {
 			return product.Value{}, false
 		}
-		return elementOfReturnValue(ctx, facts, sig, transform.Source)
+		return elementOfReturnValue(ctx, facts, sig, transform.Source, returnTypeOps)
 	case returns.OptionalElementOf:
-		return optionalElementOfReturnValue(ctx, facts, sig, transform.Source)
+		return optionalElementOfReturnValue(ctx, facts, sig, transform.Source, returnTypeOps)
 	case *returns.OptionalElementOf:
 		if transform == nil {
 			return product.Value{}, false
 		}
-		return optionalElementOfReturnValue(ctx, facts, sig, transform.Source)
+		return optionalElementOfReturnValue(ctx, facts, sig, transform.Source, returnTypeOps)
 	case returns.CallbackReturn:
 		return callbackReturnValue(ctx, facts, sig, transform.CallbackParam, false, returnTypeOps)
 	case *returns.CallbackReturn:
@@ -116,7 +115,11 @@ func elementOfReturnValue(
 	facts factflow.Facts,
 	sig signature.Function,
 	ref effect.ParamRef,
+	returnTypeOps ReturnTypeOps,
 ) (product.Value, bool) {
+	if returnTypeOps.ElementOf == nil {
+		return product.Value{}, false
+	}
 	site, ok := facts.CallSite(ctx.Point)
 	if !ok {
 		return product.Value{}, false
@@ -126,7 +129,7 @@ func elementOfReturnValue(
 	if !ok || sig.Type == nil || argIndex < 0 || argIndex >= len(sig.Type.Params) {
 		return product.Value{}, false
 	}
-	elem, ok := elementTypeOf(sig.Type.Params[argIndex].Type)
+	elem, ok := returnTypeOps.ElementOf(sig.Type.Params[argIndex].Type)
 	if !ok {
 		return product.Value{}, false
 	}
@@ -138,8 +141,9 @@ func optionalElementOfReturnValue(
 	facts factflow.Facts,
 	sig signature.Function,
 	ref effect.ParamRef,
+	returnTypeOps ReturnTypeOps,
 ) (product.Value, bool) {
-	value, ok := elementOfReturnValue(ctx, facts, sig, ref)
+	value, ok := elementOfReturnValue(ctx, facts, sig, ref, returnTypeOps)
 	if !ok {
 		return product.Value{}, false
 	}
@@ -242,74 +246,4 @@ func activeReturnTransform(sig signature.Function, index int) (returns.ReturnTyp
 		}
 	}
 	return nil, false
-}
-
-func elementTypeOf(t typ.Type) (typ.Type, bool) {
-	return elementTypeOfDepth(t, 0)
-}
-
-func elementTypeOfDepth(t typ.Type, depth int) (typ.Type, bool) {
-	if depth > typ.DefaultRecursionDepth {
-		return nil, false
-	}
-	t = unwrap.NormalizeNil(t)
-	if t == nil {
-		return nil, false
-	}
-	switch tt := t.(type) {
-	case *typ.Annotated:
-		return elementTypeOfDepth(tt.Inner, depth+1)
-	case *typ.Alias:
-		return elementTypeOfDepth(tt.UnaliasedTarget(), depth+1)
-	case *typ.Optional:
-		return elementTypeOfDepth(tt.Inner, depth+1)
-	case *typ.Array:
-		if unwrap.NormalizeNil(tt.Element) == nil {
-			return nil, false
-		}
-		return tt.Element, true
-	case *typ.Map:
-		if unwrap.NormalizeNil(tt.Value) == nil {
-			return nil, false
-		}
-		return tt.Value, true
-	case *typ.ReadonlyMap:
-		if unwrap.NormalizeNil(tt.Value) == nil {
-			return nil, false
-		}
-		return tt.Value, true
-	case *typ.Tuple:
-		if len(tt.Elements) == 0 {
-			return nil, false
-		}
-		if len(tt.Elements) == 1 {
-			if unwrap.NormalizeNil(tt.Elements[0]) == nil {
-				return nil, false
-			}
-			return tt.Elements[0], true
-		}
-		return typ.NewUnion(tt.Elements...), true
-	case *typ.Union:
-		members := make([]typ.Type, 0, len(tt.Members))
-		for _, member := range tt.Members {
-			member = unwrap.NormalizeNil(member)
-			if member == nil {
-				continue
-			}
-			if member.Kind() == kind.Nil {
-				continue
-			}
-			elem, ok := elementTypeOfDepth(member, depth+1)
-			if !ok {
-				return nil, false
-			}
-			members = append(members, elem)
-		}
-		if len(members) == 0 {
-			return nil, false
-		}
-		return typ.NewUnion(members...), true
-	default:
-		return nil, false
-	}
 }

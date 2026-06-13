@@ -50,6 +50,7 @@ func staticName(name string) SignatureNameFunc {
 func testReturnTypeOps() ReturnTypeOps {
 	return ReturnTypeOps{
 		CallableReturn: testCallableReturn,
+		ElementOf:      testElementOf,
 		TypeProjection: testTypeProjection,
 	}
 }
@@ -60,6 +61,22 @@ func testCallableReturn(t typ.Type) (typ.Type, bool) {
 		return nil, false
 	}
 	return fn.Returns[0], true
+}
+
+func testElementOf(t typ.Type) (typ.Type, bool) {
+	switch tt := unwrap.Alias(t).(type) {
+	case *typ.Array:
+		return tt.Element, tt.Element != nil
+	case *typ.Map:
+		return tt.Value, tt.Value != nil
+	case *typ.Tuple:
+		if len(tt.Elements) == 0 {
+			return nil, false
+		}
+		return typ.NewUnion(tt.Elements...), true
+	default:
+		return nil, false
+	}
 }
 
 func testTypeProjection(source typ.Type, p projection.Projection) (typ.Type, bool) {
@@ -703,8 +720,9 @@ func TestSignatureOutcomeProviderElementOfTupleReturnsElementUnionRuntimeKind(t 
 				Effect: effect.Empty.With(returns.Return{ReturnIndex: 0, Transform: returns.ElementOf{Source: effect.ParamRef{Index: 0}}}),
 			},
 		},
-		NameFor: staticName("f"),
-		Facts:   signatureOutcomeProviderFacts(point, []factflow.ValueSource{{Kind: factflow.ValueSourceExpression}}),
+		NameFor:       staticName("f"),
+		ReturnTypeOps: testReturnTypeOps(),
+		Facts:         signatureOutcomeProviderFacts(point, []factflow.ValueSource{{Kind: factflow.ValueSourceExpression}}),
 	})
 
 	got := provider(transfer.NodeContext{Registry: reg, Point: point}, factflow.NewCallSite(factflow.CallSiteConfig{}), state.State{}, nil).Results
@@ -728,8 +746,9 @@ func TestSignatureOutcomeProviderOptionalElementOfArrayKeepsMaybePresence(t *tes
 				Effect: effect.Empty.With(returns.Return{ReturnIndex: 0, Transform: returns.OptionalElementOf{Source: effect.ParamRef{Index: 0}}}),
 			},
 		},
-		NameFor: staticName("f"),
-		Facts:   signatureOutcomeProviderFacts(point, []factflow.ValueSource{{Kind: factflow.ValueSourceExpression}}),
+		NameFor:       staticName("f"),
+		ReturnTypeOps: testReturnTypeOps(),
+		Facts:         signatureOutcomeProviderFacts(point, []factflow.ValueSource{{Kind: factflow.ValueSourceExpression}}),
 	})
 
 	got := provider(transfer.NodeContext{Registry: reg, Point: point}, factflow.NewCallSite(factflow.CallSiteConfig{}), state.State{}, nil).Results

@@ -9,6 +9,7 @@ import (
 func signatureReturnTypeOps() effectlowering.ReturnTypeOps {
 	return effectlowering.ReturnTypeOps{
 		CallableReturn: typecall.CallableReturn,
+		ElementOf:      typeprojection.ElementOf,
 		TypeProjection: typeprojection.Apply,
 	}
 }
