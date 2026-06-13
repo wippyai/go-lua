@@ -2,6 +2,7 @@ package refinement
 
 import (
 	"github.com/wippyai/go-lua/analysis/internal/recursion"
+	"github.com/wippyai/go-lua/analysis/type/transform"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/unwrap"
 )
@@ -118,7 +119,7 @@ func expandClosedUnionInstantiatedBody(inst *typ.Instantiated) typ.Type {
 	}
 	params := inst.Generic.TypeParams
 	args := inst.TypeArgs
-	return typ.Rewrite(inst.Generic.Body, func(node typ.Type) (typ.Type, bool) {
+	return transform.Rewrite(inst.Generic.Body, func(node typ.Type) (typ.Type, bool) {
 		tp, ok := node.(*typ.TypeParam)
 		if !ok {
 			return nil, false

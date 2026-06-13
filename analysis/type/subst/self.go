@@ -3,6 +3,7 @@ package subst
 import (
 	"github.com/wippyai/go-lua/analysis/type/inspect"
 	"github.com/wippyai/go-lua/analysis/type/kind"
+	"github.com/wippyai/go-lua/analysis/type/transform"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/unwrap"
 )
@@ -17,7 +18,7 @@ func Self(t typ.Type, selfType typ.Type) typ.Type {
 	if !containsSubstitutableSelf(t) {
 		return t
 	}
-	return typ.Rewrite(t, func(n typ.Type) (typ.Type, bool) {
+	return transform.Rewrite(t, func(n typ.Type) (typ.Type, bool) {
 		if n.Kind() == kind.Self {
 			return selfType, true
 		}
@@ -163,7 +164,7 @@ func SelfValue(t typ.Type, selfType typ.Type) typ.Type {
 	if t == nil || selfType == nil {
 		return t
 	}
-	return typ.Rewrite(t, func(n typ.Type) (typ.Type, bool) {
+	return transform.Rewrite(t, func(n typ.Type) (typ.Type, bool) {
 		if n.Kind() == kind.Self {
 			return selfType, true
 		}

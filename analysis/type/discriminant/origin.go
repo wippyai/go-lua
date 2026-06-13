@@ -209,7 +209,7 @@ func NarrowOriginByPath(parentFamily uint64, parentCases []int, suffix []segment
 }
 
 func originFamilyOf(t typ.Type) (originFamily, bool) {
-	t = unwrap.Annotated(typ.NormalizeNilType(t))
+	t = unwrap.Annotated(unwrap.NormalizeNil(t))
 	switch v := t.(type) {
 	case *typ.Alias:
 		return originFamilyOf(v.UnaliasedTarget())
@@ -293,7 +293,7 @@ func taggedRecordFamily(r *typ.Record) (originFamily, bool) {
 }
 
 func recordOf(t typ.Type) (*typ.Record, bool) {
-	switch v := unwrap.Annotated(typ.NormalizeNilType(t)).(type) {
+	switch v := unwrap.Annotated(unwrap.NormalizeNil(t)).(type) {
 	case *typ.Alias:
 		return recordOf(v.UnaliasedTarget())
 	case *typ.Instantiated:

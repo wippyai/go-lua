@@ -16,6 +16,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/kind"
 	"github.com/wippyai/go-lua/analysis/type/projection"
 	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/analysis/type/unwrap"
 )
 
 // ReturnTypeOps carries caller-owned type operations needed by return
@@ -251,7 +252,7 @@ func elementTypeOfDepth(t typ.Type, depth int) (typ.Type, bool) {
 	if depth > typ.DefaultRecursionDepth {
 		return nil, false
 	}
-	t = typ.NormalizeNilType(t)
+	t = unwrap.NormalizeNil(t)
 	if t == nil {
 		return nil, false
 	}
@@ -263,17 +264,17 @@ func elementTypeOfDepth(t typ.Type, depth int) (typ.Type, bool) {
 	case *typ.Optional:
 		return elementTypeOfDepth(tt.Inner, depth+1)
 	case *typ.Array:
-		if typ.NormalizeNilType(tt.Element) == nil {
+		if unwrap.NormalizeNil(tt.Element) == nil {
 			return nil, false
 		}
 		return tt.Element, true
 	case *typ.Map:
-		if typ.NormalizeNilType(tt.Value) == nil {
+		if unwrap.NormalizeNil(tt.Value) == nil {
 			return nil, false
 		}
 		return tt.Value, true
 	case *typ.ReadonlyMap:
-		if typ.NormalizeNilType(tt.Value) == nil {
+		if unwrap.NormalizeNil(tt.Value) == nil {
 			return nil, false
 		}
 		return tt.Value, true
@@ -282,7 +283,7 @@ func elementTypeOfDepth(t typ.Type, depth int) (typ.Type, bool) {
 			return nil, false
 		}
 		if len(tt.Elements) == 1 {
-			if typ.NormalizeNilType(tt.Elements[0]) == nil {
+			if unwrap.NormalizeNil(tt.Elements[0]) == nil {
 				return nil, false
 			}
 			return tt.Elements[0], true
@@ -291,7 +292,7 @@ func elementTypeOfDepth(t typ.Type, depth int) (typ.Type, bool) {
 	case *typ.Union:
 		members := make([]typ.Type, 0, len(tt.Members))
 		for _, member := range tt.Members {
-			member = typ.NormalizeNilType(member)
+			member = unwrap.NormalizeNil(member)
 			if member == nil {
 				continue
 			}

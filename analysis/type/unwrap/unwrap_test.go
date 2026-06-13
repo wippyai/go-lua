@@ -20,6 +20,28 @@ func TestAlias(t *testing.T) {
 	})
 }
 
+func TestNormalizeNil(t *testing.T) {
+	t.Run("nil interface", func(t *testing.T) {
+		if got := unwrap.NormalizeNil(nil); got != nil {
+			t.Fatalf("NormalizeNil(nil) = %T, want nil", got)
+		}
+	})
+
+	t.Run("typed nil", func(t *testing.T) {
+		var arr *typ.Array
+		var input typ.Type = arr
+		if got := unwrap.NormalizeNil(input); got != nil {
+			t.Fatalf("NormalizeNil(typed nil) = %T, want nil", got)
+		}
+	})
+
+	t.Run("non-nil", func(t *testing.T) {
+		if got := unwrap.NormalizeNil(typ.String); got != typ.String {
+			t.Fatalf("NormalizeNil(string) = %T, want string", got)
+		}
+	})
+}
+
 func TestAnnotated(t *testing.T) {
 	t.Run("unwraps one annotation layer", func(t *testing.T) {
 		ann := typ.NewAnnotated(typ.Number, []annotation.Annotation{{Name: "min", Arg: float64(0)}})

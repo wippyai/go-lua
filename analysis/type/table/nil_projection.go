@@ -3,6 +3,7 @@ package table
 import (
 	"github.com/wippyai/go-lua/analysis/type/kind"
 	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/analysis/type/unwrap"
 )
 
 type nilProjectionMode uint8
@@ -13,7 +14,7 @@ const (
 )
 
 func withoutNil(t typ.Type, mode nilProjectionMode) (nonNil typ.Type, nilable bool) {
-	t = typ.NormalizeNilType(t)
+	t = unwrap.NormalizeNil(t)
 	if t == nil {
 		return nil, false
 	}
@@ -70,7 +71,7 @@ func projectUnionWithoutNil(u *typ.Union, mode nilProjectionMode) (typ.Type, boo
 	members := make([]typ.Type, 0, len(u.Members))
 	nilable := false
 	for _, member := range u.Members {
-		member = typ.NormalizeNilType(member)
+		member = unwrap.NormalizeNil(member)
 		if member == nil {
 			continue
 		}

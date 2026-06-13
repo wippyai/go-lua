@@ -6,6 +6,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/internal/recursion"
 	"github.com/wippyai/go-lua/analysis/type/inspect"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
+	"github.com/wippyai/go-lua/analysis/type/transform"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
@@ -88,7 +89,7 @@ func genericBodySelfInstantiates(g *typ.Generic) bool {
 		return false
 	}
 	found := false
-	typ.Rewrite(g.Body, func(n typ.Type) (typ.Type, bool) {
+	transform.Rewrite(g.Body, func(n typ.Type) (typ.Type, bool) {
 		if found {
 			return n, true
 		}

@@ -27,11 +27,6 @@ func unwrapAliasForEquals(t Type, guard recursion.Guard) Type {
 	}
 }
 
-// NormalizeNilType converts typed nil Type implementations to nil.
-func NormalizeNilType(t Type) Type {
-	return normalizeNilType(t)
-}
-
 func normalizeNilType(t Type) Type {
 	if t == nil {
 		return nil

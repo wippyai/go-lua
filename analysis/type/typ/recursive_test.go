@@ -638,8 +638,8 @@ func TestOpenRecursiveWrapperHashRefreshesForEquality(t *testing.T) {
 	if !typeEquals(staleWrapper, freshWrapper) {
 		t.Fatal("wrapper built before recursive SetBody should remain structurally equal to a fresh wrapper")
 	}
-	if equalityHash(staleWrapper) != equalityHash(freshWrapper) {
-		t.Fatalf("equality hash should refresh open recursive wrapper: %d vs %d", equalityHash(staleWrapper), equalityHash(freshWrapper))
+	if EqualityHash(staleWrapper) != EqualityHash(freshWrapper) {
+		t.Fatalf("equality hash should refresh open recursive wrapper: %d vs %d", EqualityHash(staleWrapper), EqualityHash(freshWrapper))
 	}
 }
 
@@ -876,8 +876,8 @@ func TestEqualityHashReadonlyMapRefreshesOpenRecursiveKeyAndValue(t *testing.T) 
 			if !typeEquals(staleWrapper, freshWrapper) {
 				t.Fatal("ReadonlyMap built before SetBody should remain structurally equal to a fresh wrapper")
 			}
-			if equalityHash(staleWrapper) != equalityHash(freshWrapper) {
-				t.Fatalf("equality hash should refresh ReadonlyMap wrapper: %d vs %d", equalityHash(staleWrapper), equalityHash(freshWrapper))
+			if EqualityHash(staleWrapper) != EqualityHash(freshWrapper) {
+				t.Fatalf("equality hash should refresh ReadonlyMap wrapper: %d vs %d", EqualityHash(staleWrapper), EqualityHash(freshWrapper))
 			}
 		})
 	}
@@ -892,8 +892,8 @@ func TestEqualityHashStaticMemberIncludesTypeInOpenRecursiveWrapper(t *testing.T
 		StaticStringIndex("node", NewArray(node)).
 		Build()
 
-	if equalityHash(direct) == equalityHash(nested) {
-		t.Fatal("equalityHash() ignored static member type in open recursive wrapper")
+	if EqualityHash(direct) == EqualityHash(nested) {
+		t.Fatal("EqualityHash() ignored static member type in open recursive wrapper")
 	}
 }
 

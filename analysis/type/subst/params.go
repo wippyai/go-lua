@@ -1,6 +1,7 @@
 package subst
 
 import (
+	"github.com/wippyai/go-lua/analysis/type/transform"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
@@ -12,7 +13,7 @@ func Substitute(t typ.Type, subs map[string]typ.Type) typ.Type {
 	if len(subs) == 0 {
 		return t
 	}
-	return typ.Rewrite(t, func(n typ.Type) (typ.Type, bool) {
+	return transform.Rewrite(t, func(n typ.Type) (typ.Type, bool) {
 		if tp, ok := n.(*typ.TypeParam); ok {
 			if sub, ok := subs[tp.Name]; ok {
 				return sub, true
@@ -53,7 +54,7 @@ func substituteParams(t typ.Type, subs []paramSubstitution) typ.Type {
 	if fn, ok := t.(*typ.Function); ok {
 		return substituteFunctionParams(fn, subs)
 	}
-	return typ.Rewrite(t, func(n typ.Type) (typ.Type, bool) {
+	return transform.Rewrite(t, func(n typ.Type) (typ.Type, bool) {
 		if tp, ok := n.(*typ.TypeParam); ok {
 			if arg, found := lookupParamSubstitution(tp, subs); found {
 				return arg, true

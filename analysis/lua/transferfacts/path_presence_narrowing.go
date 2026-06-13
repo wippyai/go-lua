@@ -37,7 +37,7 @@ func narrowTypeByPathPresence(t typ.Type, suffix []segment.Segment, depth int) (
 	if t == nil || len(suffix) == 0 || depth > typ.DefaultRecursionDepth {
 		return nil, false
 	}
-	switch v := unwrap.Annotated(typ.NormalizeNilType(t)).(type) {
+	switch v := unwrap.Annotated(unwrap.NormalizeNil(t)).(type) {
 	case *typ.Alias:
 		return narrowTypeByPathPresence(v.UnaliasedTarget(), suffix, depth+1)
 	case *typ.Optional:
@@ -83,7 +83,7 @@ func typeCanBePresent(t typ.Type, depth int) bool {
 	if t == nil || depth > typ.DefaultRecursionDepth {
 		return true
 	}
-	switch v := unwrap.Annotated(typ.NormalizeNilType(t)).(type) {
+	switch v := unwrap.Annotated(unwrap.NormalizeNil(t)).(type) {
 	case *typ.Alias:
 		return typeCanBePresent(v.UnaliasedTarget(), depth+1)
 	case *typ.Optional:

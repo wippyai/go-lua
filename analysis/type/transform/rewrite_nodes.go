@@ -1,15 +1,18 @@
-package typ
+package transform
 
-import "github.com/wippyai/go-lua/analysis/internal/recursion"
+import (
+	"github.com/wippyai/go-lua/analysis/internal/recursion"
+	"github.com/wippyai/go-lua/analysis/type/typ"
+)
 
-func rewriteFunction(v *Function, orig Type, fn func(Type) (Type, bool), guard recursion.Guard, memo map[rewriteKey]Type) Type {
+func rewriteFunction(v *typ.Function, orig typ.Type, fn func(typ.Type) (typ.Type, bool), guard recursion.Guard, memo map[rewriteKey]typ.Type) typ.Type {
 	changed := false
 
-	var typeParams []*TypeParam
-	var typeParamReplacements map[*TypeParam]*TypeParam
+	var typeParams []*typ.TypeParam
+	var typeParamReplacements map[*typ.TypeParam]*typ.TypeParam
 	for i, p := range v.TypeParams {
 		newParamType := rewriteDepth(p, fn, guard, memo)
-		newParam, ok := newParamType.(*TypeParam)
+		newParam, ok := newParamType.(*typ.TypeParam)
 		if !ok || newParam == p {
 			if typeParams != nil {
 				typeParams[i] = p
@@ -17,39 +20,39 @@ func rewriteFunction(v *Function, orig Type, fn func(Type) (Type, bool), guard r
 			continue
 		}
 		if typeParams == nil {
-			typeParams = make([]*TypeParam, len(v.TypeParams))
+			typeParams = make([]*typ.TypeParam, len(v.TypeParams))
 			copy(typeParams, v.TypeParams)
 		}
 		changed = true
 		typeParams[i] = newParam
 		if typeParamReplacements == nil {
-			typeParamReplacements = make(map[*TypeParam]*TypeParam)
+			typeParamReplacements = make(map[*typ.TypeParam]*typ.TypeParam)
 		}
 		typeParamReplacements[p] = newParam
 	}
 	rewriteChild := rewriteFnWithTypeParamReplacements(fn, typeParamReplacements)
 
-	var params []Param
+	var params []typ.Param
 	for i, p := range v.Params {
 		newType := rewriteDepth(p.Type, rewriteChild, guard, memo)
 		if newType != p.Type {
 			if params == nil {
-				params = make([]Param, len(v.Params))
+				params = make([]typ.Param, len(v.Params))
 				copy(params, v.Params)
 			}
 			changed = true
-			params[i] = Param{Name: p.Name, Type: newType, Optional: p.Optional}
+			params[i] = typ.Param{Name: p.Name, Type: newType, Optional: p.Optional}
 		} else if params != nil {
 			params[i] = p
 		}
 	}
 
-	var returns []Type
+	var returns []typ.Type
 	for i, r := range v.Returns {
 		newRet := rewriteDepth(r, rewriteChild, guard, memo)
 		if newRet != r {
 			if returns == nil {
-				returns = make([]Type, len(v.Returns))
+				returns = make([]typ.Type, len(v.Returns))
 				copy(returns, v.Returns)
 			}
 			changed = true
@@ -59,7 +62,7 @@ func rewriteFunction(v *Function, orig Type, fn func(Type) (Type, bool), guard r
 		}
 	}
 
-	var variadic Type
+	var variadic typ.Type
 	if v.Variadic != nil {
 		variadic = rewriteDepth(v.Variadic, rewriteChild, guard, memo)
 		if variadic != v.Variadic {
@@ -83,38 +86,38 @@ func rewriteFunction(v *Function, orig Type, fn func(Type) (Type, bool), guard r
 	if returns != nil {
 		returnsSrc = returns
 	}
-	return buildFunctionType(
-		typeParamSrc,
-		paramSrc,
-		variadic,
-		returnsSrc,
-	)
+	return typ.RebuildFunction(typ.FunctionParts{
+		TypeParams: typeParamSrc,
+		Params:     paramSrc,
+		Variadic:   variadic,
+		Returns:    returnsSrc,
+	})
 }
 
-func rewriteMeta(v *Meta, orig Type, fn func(Type) (Type, bool), guard recursion.Guard, memo map[rewriteKey]Type) Type {
+func rewriteMeta(v *typ.Meta, orig typ.Type, fn func(typ.Type) (typ.Type, bool), guard recursion.Guard, memo map[rewriteKey]typ.Type) typ.Type {
 	of := rewriteDepth(v.Of, fn, guard, memo)
 	if of == v.Of {
 		return orig
 	}
-	return NewMeta(of)
+	return typ.NewMeta(of)
 }
 
-func rewriteTypeParam(v *TypeParam, orig Type, fn func(Type) (Type, bool), guard recursion.Guard, memo map[rewriteKey]Type) Type {
+func rewriteTypeParam(v *typ.TypeParam, orig typ.Type, fn func(typ.Type) (typ.Type, bool), guard recursion.Guard, memo map[rewriteKey]typ.Type) typ.Type {
 	constraint := rewriteDepth(v.Constraint, fn, guard, memo)
 	if constraint == v.Constraint {
 		return orig
 	}
-	return NewTypeParam(v.Name, constraint)
+	return typ.NewTypeParam(v.Name, constraint)
 }
 
-func rewriteGeneric(v *Generic, orig Type, fn func(Type) (Type, bool), guard recursion.Guard, memo map[rewriteKey]Type) Type {
+func rewriteGeneric(v *typ.Generic, orig typ.Type, fn func(typ.Type) (typ.Type, bool), guard recursion.Guard, memo map[rewriteKey]typ.Type) typ.Type {
 	changed := false
 
-	var typeParams []*TypeParam
-	var typeParamReplacements map[*TypeParam]*TypeParam
+	var typeParams []*typ.TypeParam
+	var typeParamReplacements map[*typ.TypeParam]*typ.TypeParam
 	for i, p := range v.TypeParams {
 		newParamType := rewriteDepth(p, fn, guard, memo)
-		newParam, ok := newParamType.(*TypeParam)
+		newParam, ok := newParamType.(*typ.TypeParam)
 		if !ok || newParam == p {
 			if typeParams != nil {
 				typeParams[i] = p
@@ -122,13 +125,13 @@ func rewriteGeneric(v *Generic, orig Type, fn func(Type) (Type, bool), guard rec
 			continue
 		}
 		if typeParams == nil {
-			typeParams = make([]*TypeParam, len(v.TypeParams))
+			typeParams = make([]*typ.TypeParam, len(v.TypeParams))
 			copy(typeParams, v.TypeParams)
 		}
 		changed = true
 		typeParams[i] = newParam
 		if typeParamReplacements == nil {
-			typeParamReplacements = make(map[*TypeParam]*TypeParam)
+			typeParamReplacements = make(map[*typ.TypeParam]*typ.TypeParam)
 		}
 		typeParamReplacements[p] = newParam
 	}
@@ -144,15 +147,15 @@ func rewriteGeneric(v *Generic, orig Type, fn func(Type) (Type, bool), guard rec
 	if typeParams != nil {
 		typeParamSrc = typeParams
 	}
-	return NewGeneric(v.Name, typeParamSrc, body)
+	return typ.NewGeneric(v.Name, typeParamSrc, body)
 }
 
-func rewriteFnWithTypeParamReplacements(fn func(Type) (Type, bool), replacements map[*TypeParam]*TypeParam) func(Type) (Type, bool) {
+func rewriteFnWithTypeParamReplacements(fn func(typ.Type) (typ.Type, bool), replacements map[*typ.TypeParam]*typ.TypeParam) func(typ.Type) (typ.Type, bool) {
 	if len(replacements) == 0 {
 		return fn
 	}
-	return func(t Type) (Type, bool) {
-		if tp, ok := t.(*TypeParam); ok {
+	return func(t typ.Type) (typ.Type, bool) {
+		if tp, ok := t.(*typ.TypeParam); ok {
 			if replacement, ok := replacements[tp]; ok {
 				return replacement, true
 			}
@@ -161,19 +164,19 @@ func rewriteFnWithTypeParamReplacements(fn func(Type) (Type, bool), replacements
 	}
 }
 
-func rewriteRecursive(v *Recursive, orig Type, fn func(Type) (Type, bool), guard recursion.Guard, memo map[rewriteKey]Type) Type {
+func rewriteRecursive(v *typ.Recursive, orig typ.Type, fn func(typ.Type) (typ.Type, bool), guard recursion.Guard, memo map[rewriteKey]typ.Type) typ.Type {
 	if v.Body == nil {
 		return orig
 	}
-	var replacement *Recursive
-	replacementNode := func() *Recursive {
+	var replacement *typ.Recursive
+	replacementNode := func() *typ.Recursive {
 		if replacement == nil {
-			replacement = NewRecursivePlaceholder(v.Name)
+			replacement = typ.NewRecursivePlaceholder(v.Name)
 		}
 		return replacement
 	}
-	selfAware := func(t Type) (Type, bool) {
-		if IsRecursiveRef(t, v) {
+	selfAware := func(t typ.Type) (typ.Type, bool) {
+		if typ.IsRecursiveRef(t, v) {
 			return replacementNode(), true
 		}
 		return fn(t)
@@ -187,29 +190,29 @@ func rewriteRecursive(v *Recursive, orig Type, fn func(Type) (Type, bool), guard
 	return replacement
 }
 
-func rewriteRecord(v *Record, orig Type, fn func(Type) (Type, bool), guard recursion.Guard, memo map[rewriteKey]Type) Type {
+func rewriteRecord(v *typ.Record, orig typ.Type, fn func(typ.Type) (typ.Type, bool), guard recursion.Guard, memo map[rewriteKey]typ.Type) typ.Type {
 	changed := false
 
-	var fields []Field
+	var fields []typ.Field
 	for i, f := range v.Fields {
 		newType := rewriteDepth(f.Type, fn, guard, memo)
 		if newType != f.Type {
 			if fields == nil {
-				fields = make([]Field, len(v.Fields))
+				fields = make([]typ.Field, len(v.Fields))
 				copy(fields, v.Fields)
 			}
 			changed = true
-			fields[i] = Field{Name: f.Name, Type: newType, Optional: f.Optional, Readonly: f.Readonly}
+			fields[i] = typ.Field{Name: f.Name, Type: newType, Optional: f.Optional, Readonly: f.Readonly}
 		} else if fields != nil {
 			fields[i] = f
 		}
 	}
-	var staticMembers []StaticMember
+	var staticMembers []typ.StaticMember
 	for i, m := range v.StaticMembers {
 		newType := rewriteDepth(m.Type, fn, guard, memo)
 		if newType != m.Type {
 			if staticMembers == nil {
-				staticMembers = make([]StaticMember, len(v.StaticMembers))
+				staticMembers = make([]typ.StaticMember, len(v.StaticMembers))
 				copy(staticMembers, v.StaticMembers)
 			}
 			changed = true
@@ -219,7 +222,7 @@ func rewriteRecord(v *Record, orig Type, fn func(Type) (Type, bool), guard recur
 		}
 	}
 
-	var metatable Type
+	var metatable typ.Type
 	if v.Metatable != nil {
 		metatable = rewriteDepth(v.Metatable, fn, guard, memo)
 		if metatable != v.Metatable {
@@ -252,5 +255,13 @@ func rewriteRecord(v *Record, orig Type, fn func(Type) (Type, bool), guard recur
 	if staticMembers != nil {
 		staticMembersSrc = staticMembers
 	}
-	return buildRecordType(fieldsSrc, staticMembersSrc, metatable, mapKey, mapValue, v.Open, true)
+	return typ.RebuildRecord(typ.RecordParts{
+		Fields:        fieldsSrc,
+		StaticMembers: staticMembersSrc,
+		Metatable:     metatable,
+		MapKey:        mapKey,
+		MapValue:      mapValue,
+		Open:          v.Open,
+		AssumeSorted:  true,
+	})
 }

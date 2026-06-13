@@ -19,6 +19,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/kind"
 	"github.com/wippyai/go-lua/analysis/type/subtype"
 	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/analysis/type/unwrap"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
 
@@ -261,7 +262,7 @@ func scalarRuntimeKindType(reg *axis.Registry, value product.Value) (typ.Type, b
 	if presence.Equal(product.PresenceOf(value), presence.Maybe()) && !typeIncludesNil(t) {
 		t = typ.NewOptional(t)
 	}
-	if normalized := typ.NormalizeNilType(t); normalized != nil && normalized.Kind() == kind.Nil {
+	if normalized := unwrap.NormalizeNil(t); normalized != nil && normalized.Kind() == kind.Nil {
 		return typ.Nil, true
 	}
 	return t, true

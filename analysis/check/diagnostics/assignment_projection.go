@@ -19,6 +19,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/subst"
 	"github.com/wippyai/go-lua/analysis/type/subtype"
 	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/analysis/type/unwrap"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
 
@@ -351,7 +352,7 @@ func typeIncludesNil(t typ.Type) bool {
 	if t == nil {
 		return false
 	}
-	normalized := typ.NormalizeNilType(t)
+	normalized := unwrap.NormalizeNil(t)
 	return (normalized != nil && normalized.Kind() == kind.Nil) || projectionHasNil(t)
 }
 

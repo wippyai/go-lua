@@ -247,7 +247,7 @@ func refineTypeByRuntimeKindSetDepth(t typ.Type, kinds runtimekind.Value, keepNi
 		}
 		return normalize.UnionForEvidence(out...), true
 	default:
-		normalized := typ.NormalizeNilType(unwrap.Annotated(t))
+		normalized := unwrap.NormalizeNil(unwrap.Annotated(t))
 		if normalized == nil {
 			return nil, false
 		}
@@ -362,7 +362,7 @@ func projectionHasNilDepth(t typ.Type, depth int) bool {
 	if t == nil || depth > typ.DefaultRecursionDepth || typ.IsAny(t) || typ.IsUnknown(t) || typ.IsNever(t) {
 		return false
 	}
-	t = typ.NormalizeNilType(unwrap.Annotated(t))
+	t = unwrap.NormalizeNil(unwrap.Annotated(t))
 	if t == nil {
 		return false
 	}

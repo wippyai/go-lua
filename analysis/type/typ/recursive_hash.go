@@ -225,10 +225,6 @@ func EqualityHash(t Type) uint64 {
 	return t.Hash()
 }
 
-func equalityHash(t Type) uint64 {
-	return EqualityHash(t)
-}
-
 func typeEqualityHash(t Type) uint64 {
 	return EqualityHash(t)
 }

@@ -139,5 +139,5 @@ func presenceFromType(t typ.Type) (presence.Value, bool) {
 }
 
 func normalize(t typ.Type) typ.Type {
-	return unwrap.Annotated(typ.NormalizeNilType(t))
+	return unwrap.Annotated(unwrap.NormalizeNil(t))
 }
