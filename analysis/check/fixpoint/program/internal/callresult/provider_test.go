@@ -589,7 +589,7 @@ func TestProductionImportsAreBounded(t *testing.T) {
 }
 
 func TestFactapplyDoesNotImportSummary(t *testing.T) {
-	out, err := exec.Command("go", "list", "-f", "{{range .Imports}}{{.}}\n{{end}}", "../../../engine/factapply").Output()
+	out, err := exec.Command("go", "list", "-f", "{{range .Imports}}{{.}}\n{{end}}", "../../../../../engine/factapply").Output()
 	if err != nil {
 		t.Fatalf("go list imports factapply error = %v", err)
 	}

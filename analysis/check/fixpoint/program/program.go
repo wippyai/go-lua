@@ -6,7 +6,7 @@ import (
 	"slices"
 
 	"github.com/wippyai/go-lua/analysis/check/body"
-	"github.com/wippyai/go-lua/analysis/check/fixpoint/callresult"
+	"github.com/wippyai/go-lua/analysis/check/fixpoint/program/internal/callresult"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/query"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/ref"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/summary"
