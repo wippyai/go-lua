@@ -107,7 +107,7 @@ func (b *FunctionBuilder) Returns(types ...Type) *FunctionBuilder {
 
 // Build creates the function type.
 func (b *FunctionBuilder) Build() *Function {
-	return buildFunctionType(
+	return newCanonicalFunction(
 		b.typeParams,
 		b.params,
 		b.variadic,

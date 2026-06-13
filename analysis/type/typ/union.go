@@ -73,7 +73,7 @@ func NewUnion(members ...Type) Type {
 	if hasNil {
 		// If single member + nil, return Optional
 		if len(unique) == 1 {
-			return newOptionalNode(unique[0])
+			return newRawOptionalNode(unique[0])
 		}
 
 		unique = append([]Type{Nil}, unique...)
@@ -92,7 +92,7 @@ func NewUnion(members ...Type) Type {
 		return unique[0]
 	}
 
-	return newNormalizedUnion(unique, uniqueHashes)
+	return newCanonicalUnion(unique, uniqueHashes)
 }
 
 func (u *Union) Kind() kind.Kind { return kind.Union }

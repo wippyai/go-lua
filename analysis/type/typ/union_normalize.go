@@ -5,7 +5,8 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/kind"
 )
 
-func newNormalizedUnion(members []Type, memberHashes []uint64) Type {
+// typ owns hash-stable node materialization once semantic normalization has already happened.
+func newCanonicalUnion(members []Type, memberHashes []uint64) Type {
 	if len(members) == 0 {
 		return Never
 	}

@@ -60,13 +60,14 @@ func NewOptional(inner Type) Type {
 			hashes = append(hashes, u.memberHashes...)
 		}
 
-		return newNormalizedUnion(members, hashes)
+		return newCanonicalUnion(members, hashes)
 	}
 
-	return newOptionalNode(inner)
+	return newRawOptionalNode(inner)
 }
 
-func newOptionalNode(inner Type) Type {
+// typ owns hash-stable node materialization; callers here already decided the optional shape.
+func newRawOptionalNode(inner Type) Type {
 	if inner == nil || inner.Kind() == kind.Nil {
 		return Nil
 	}

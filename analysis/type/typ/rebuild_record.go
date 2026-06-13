@@ -26,7 +26,7 @@ type RecordParts struct {
 
 // RebuildRecord rebuilds a record from already-computed structural parts.
 func RebuildRecord(parts RecordParts) *Record {
-	return buildRecordType(
+	return newCanonicalRecord(
 		parts.Fields,
 		parts.StaticMembers,
 		parts.Metatable,
@@ -37,7 +37,8 @@ func RebuildRecord(parts RecordParts) *Record {
 	)
 }
 
-func buildRecordType(fields []Field, staticMembers []StaticMember, metatable, mapKey, mapValue Type, open bool, assumeSorted bool) *Record {
+// typ owns hash-stable node materialization; table/normalize decide the record's semantic shape.
+func newCanonicalRecord(fields []Field, staticMembers []StaticMember, metatable, mapKey, mapValue Type, open bool, assumeSorted bool) *Record {
 	sorted := make([]Field, len(fields))
 	copy(sorted, fields)
 	if !assumeSorted || !fieldsSortedByName(sorted) {

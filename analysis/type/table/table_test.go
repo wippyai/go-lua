@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/type/annotation"
+	"github.com/wippyai/go-lua/analysis/type/kind"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
@@ -35,6 +36,35 @@ func TestNormalizeKeyPreservesAliasToOptionalPayload(t *testing.T) {
 	}
 	if !typ.TypeEquals(alias.Target, typ.String) {
 		t.Fatalf("alias target = %v, want string", alias.Target)
+	}
+}
+
+func TestNormalizeKeyPolicyOutputShape(t *testing.T) {
+	got := NormalizeKey(typ.NewUnion(typ.String, typ.Boolean, typ.Nil))
+	union, ok := got.(*typ.Union)
+	if !ok {
+		t.Fatalf("NormalizeKey(string|boolean|nil) = %T, want union node", got)
+	}
+	if len(union.Members) != 2 {
+		t.Fatalf("normalized key member count = %d, want 2", len(union.Members))
+	}
+	seen := map[kind.Kind]int{}
+	for _, member := range union.Members {
+		if member == nil {
+			t.Fatal("normalized key contains nil member")
+		}
+		if member.Kind() == kind.Nil || member.Kind() == kind.Optional {
+			t.Fatalf("normalized key member kind = %s, want non-nil key payload", member.Kind())
+		}
+		seen[member.Kind()]++
+	}
+	if seen[kind.String] != 1 || seen[kind.Boolean] != 1 {
+		t.Fatalf("normalized key member kinds = %#v, want one string and one boolean", seen)
+	}
+
+	alias := typ.NewAlias("Key", typ.String)
+	if got := NormalizeKey(alias); got != alias {
+		t.Fatalf("NormalizeKey(non-nil alias) = %p, want original alias %p", got, alias)
 	}
 }
 
@@ -141,6 +171,143 @@ func TestRecordConstructionSplitsNilableOptionalPayloads(t *testing.T) {
 	})
 	assertField(t, rebuilt, "ok", typ.Boolean)
 	assertStaticInt(t, rebuilt, 1, typ.Integer)
+}
+
+func TestRecordNormalizationPolicyOutputShape(t *testing.T) {
+	ann := []annotation.Annotation{{Name: "tag"}}
+	rec := RebuildRecord(typ.RecordParts{
+		Fields: []typ.Field{
+			{
+				Name:     "union",
+				Type:     typ.NewUnion(typ.String, typ.Boolean, typ.Nil),
+				Optional: true,
+			},
+			{
+				Name:     "alias",
+				Type:     typ.NewAlias("MaybeString", typ.NewOptional(typ.String)),
+				Optional: true,
+			},
+			{
+				Name:     "annotated",
+				Type:     typ.NewAnnotated(typ.NewOptional(typ.Integer), ann),
+				Optional: true,
+			},
+		},
+		StaticMembers: []typ.StaticMember{{
+			Kind:     typ.StaticMemberStringIndex,
+			Name:     "raw",
+			Type:     typ.NewOptional(typ.Number),
+			Optional: true,
+			Readonly: true,
+		}},
+		MapKey:   typ.NewAlias("MaybeKey", typ.NewOptional(typ.String)),
+		MapValue: typ.Boolean,
+		Open:     true,
+	})
+
+	if !rec.Open {
+		t.Fatal("record rebuild dropped open flag")
+	}
+	keyAlias, ok := rec.MapKey.(*typ.Alias)
+	if !ok {
+		t.Fatalf("record map key = %T, want alias-preserved normalized key", rec.MapKey)
+	}
+	if keyAlias.Name != "MaybeKey" || keyAlias.Target != typ.String {
+		t.Fatalf("record map key alias = %s -> %v, want MaybeKey -> string", keyAlias.Name, keyAlias.Target)
+	}
+	if rec.MapValue != typ.Boolean {
+		t.Fatalf("record map value = %v, want boolean singleton", rec.MapValue)
+	}
+
+	unionField := rec.GetField("union")
+	if unionField == nil || !unionField.Optional {
+		t.Fatalf("union field = %#v, want optional field", unionField)
+	}
+	unionPayload, ok := unionField.Type.(*typ.Union)
+	if !ok {
+		t.Fatalf("union field payload = %T, want union node", unionField.Type)
+	}
+	if len(unionPayload.Members) != 2 {
+		t.Fatalf("union field payload member count = %d, want 2", len(unionPayload.Members))
+	}
+	for _, member := range unionPayload.Members {
+		if member.Kind() == kind.Nil || member.Kind() == kind.Optional {
+			t.Fatalf("union field payload retained nil-capable member kind %s", member.Kind())
+		}
+	}
+
+	aliasField := rec.GetField("alias")
+	if aliasField == nil || !aliasField.Optional {
+		t.Fatalf("alias field = %#v, want optional field", aliasField)
+	}
+	if aliasField.Type != typ.String {
+		t.Fatalf("alias field payload = %T %v, want structural string singleton", aliasField.Type, aliasField.Type)
+	}
+	if _, ok := aliasField.Type.(*typ.Alias); ok {
+		t.Fatal("alias field payload preserved alias, want structural payload projection")
+	}
+
+	annotatedField := rec.GetField("annotated")
+	if annotatedField == nil || !annotatedField.Optional {
+		t.Fatalf("annotated field = %#v, want optional field", annotatedField)
+	}
+	annotatedPayload, ok := annotatedField.Type.(*typ.Annotated)
+	if !ok {
+		t.Fatalf("annotated field payload = %T, want annotated node", annotatedField.Type)
+	}
+	if annotatedPayload.Inner != typ.Integer {
+		t.Fatalf("annotated inner = %v, want integer singleton", annotatedPayload.Inner)
+	}
+	if len(annotatedPayload.Annotations) != 1 || annotatedPayload.Annotations[0].Name != "tag" {
+		t.Fatalf("annotations = %#v, want preserved tag annotation", annotatedPayload.Annotations)
+	}
+
+	static := rec.GetStaticStringIndex("raw")
+	if static == nil || !static.Optional || !static.Readonly {
+		t.Fatalf("static member = %#v, want optional readonly member", static)
+	}
+	if static.Type != typ.Number {
+		t.Fatalf("static member payload = %T %v, want number singleton", static.Type, static.Type)
+	}
+}
+
+func TestRecordNormalizationNoOpPreservesShape(t *testing.T) {
+	fields := []typ.Field{
+		{Name: "name", Type: typ.String},
+		{Name: "status", Type: typ.Boolean, Readonly: true},
+	}
+	members := []typ.StaticMember{{
+		Kind: typ.StaticMemberStringIndex,
+		Name: "raw",
+		Type: typ.Number,
+	}}
+	parts := typ.RecordParts{
+		Fields:        fields,
+		StaticMembers: members,
+		MapKey:        typ.String,
+		MapValue:      typ.Boolean,
+	}
+
+	got := recordPartsWithTableNormalization(parts)
+	if len(got.Fields) != len(fields) {
+		t.Fatalf("field count = %d, want %d", len(got.Fields), len(fields))
+	}
+	for i := range fields {
+		if got.Fields[i] != fields[i] {
+			t.Fatalf("field[%d] = %#v, want %#v", i, got.Fields[i], fields[i])
+		}
+	}
+	if len(got.StaticMembers) != len(members) {
+		t.Fatalf("static member count = %d, want %d", len(got.StaticMembers), len(members))
+	}
+	for i := range members {
+		if got.StaticMembers[i] != members[i] {
+			t.Fatalf("static member[%d] = %#v, want %#v", i, got.StaticMembers[i], members[i])
+		}
+	}
+	if got.MapKey != typ.String || got.MapValue != typ.Boolean {
+		t.Fatalf("no-op map component = [%v]: %v, want original string:boolean", got.MapKey, got.MapValue)
+	}
 }
 
 func TestSplitNilableFieldType(t *testing.T) {

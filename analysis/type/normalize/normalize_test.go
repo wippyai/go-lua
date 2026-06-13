@@ -99,6 +99,60 @@ func TestUnionForEvidence(t *testing.T) {
 	}
 }
 
+func TestUnionForEvidenceRawContainerPolicy(t *testing.T) {
+	rawNested := &typ.Union{
+		Members: []typ.Type{
+			typ.Number,
+			typ.Integer,
+			typ.LiteralString("ready"),
+			typ.String,
+			typ.String,
+			nil,
+			typ.Never,
+			typ.Unknown,
+			typ.NewUnion(typ.Boolean, typ.Boolean),
+			typ.NewOptional(typ.Number),
+		},
+	}
+
+	got := UnionForEvidence(rawNested)
+	union, ok := got.(*typ.Union)
+	if !ok {
+		t.Fatalf("UnionForEvidence(raw union) = %T %[1]v, want concrete union", got)
+	}
+
+	assertExactMembers(t, "raw union policy members", union.Members, []typ.Type{
+		typ.Nil,
+		typ.Boolean,
+		typ.Number,
+		typ.String,
+	})
+}
+
+func TestUnionForEvidenceRawUnknownNilPolicy(t *testing.T) {
+	rawNested := &typ.Union{
+		Members: []typ.Type{
+			nil,
+			typ.Never,
+			typ.Unknown,
+			typ.Nil,
+		},
+	}
+
+	got := UnionForEvidence(rawNested)
+	if !typ.TypeEquals(got, typ.NewOptional(typ.Unknown)) {
+		t.Fatalf("UnionForEvidence(raw unknown/nil union) = %T %[1]v, want optional unknown", got)
+	}
+
+	optional, ok := got.(*typ.Optional)
+	if !ok {
+		t.Fatalf("UnionForEvidence(raw unknown/nil union) = %T %[1]v, want optional", got)
+	}
+	if !typ.TypeEquals(optional.Inner, typ.Unknown) {
+		t.Fatalf("optional inner = %v, want unknown", optional.Inner)
+	}
+}
+
 func TestIntersectionForMeet(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -132,6 +186,51 @@ func TestIntersectionForMeet(t *testing.T) {
 	}
 }
 
+func TestIntersectionForMeetRawContainerPolicy(t *testing.T) {
+	rawNested := &typ.Intersection{
+		Members: []typ.Type{
+			typ.Any,
+			typ.String,
+			typ.String,
+			nil,
+			&typ.Intersection{
+				Members: []typ.Type{
+					typ.Boolean,
+					typ.Any,
+				},
+			},
+		},
+	}
+
+	got := IntersectionForMeet(rawNested, typ.Nil)
+	inter, ok := got.(*typ.Intersection)
+	if !ok {
+		t.Fatalf("IntersectionForMeet(raw intersection, nil) = %T %[1]v, want concrete intersection", got)
+	}
+
+	assertExactMembers(t, "raw intersection policy members", inter.Members, []typ.Type{
+		typ.Nil,
+		typ.Boolean,
+		typ.String,
+	})
+}
+
+func TestIntersectionForMeetRawNilAcceptancePolicy(t *testing.T) {
+	rawNested := &typ.Intersection{
+		Members: []typ.Type{
+			nil,
+			typ.Any,
+			typ.NewOptional(typ.String),
+			typ.Nil,
+		},
+	}
+
+	got := IntersectionForMeet(rawNested)
+	if !typ.TypeEquals(got, typ.Nil) {
+		t.Fatalf("IntersectionForMeet(raw optional/nil intersection) = %T %[1]v, want nil", got)
+	}
+}
+
 func intersectionHasMember(inter *typ.Intersection, want typ.Type) bool {
 	for _, member := range inter.Members {
 		if typ.TypeEquals(member, want) {
@@ -139,4 +238,17 @@ func intersectionHasMember(inter *typ.Intersection, want typ.Type) bool {
 		}
 	}
 	return false
+}
+
+func assertExactMembers(t *testing.T, label string, got, want []typ.Type) {
+	t.Helper()
+
+	if len(got) != len(want) {
+		t.Fatalf("%s length = %d (%v), want %d (%v)", label, len(got), got, len(want), want)
+	}
+	for i := range want {
+		if !typ.TypeEquals(got[i], want[i]) {
+			t.Fatalf("%s[%d] = %v, want %v; full members = %v", label, i, got[i], want[i], got)
+		}
+	}
 }

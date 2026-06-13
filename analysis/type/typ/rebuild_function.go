@@ -15,7 +15,7 @@ type FunctionParts struct {
 
 // RebuildFunction rebuilds a function from already-computed structural parts.
 func RebuildFunction(parts FunctionParts) *Function {
-	return buildFunctionType(
+	return newCanonicalFunction(
 		parts.TypeParams,
 		parts.Params,
 		parts.Variadic,
@@ -23,7 +23,8 @@ func RebuildFunction(parts FunctionParts) *Function {
 	)
 }
 
-func buildFunctionType(
+// typ owns hash-stable node materialization; higher-level builders decide function semantics.
+func newCanonicalFunction(
 	typeParams []*TypeParam,
 	params []Param,
 	variadic Type,
