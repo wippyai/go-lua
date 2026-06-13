@@ -224,6 +224,51 @@ func TestLowerCallSiteUsesSemanticArgumentSources(t *testing.T) {
 	}
 }
 
+func TestLowerNestedExpressionProducerCallIsReadableSlotZero(t *testing.T) {
+	inner := &ast.FuncCallExpr{Func: ident("g")}
+	outer := &ast.FuncCallExpr{Func: ident("f"), Args: []ast.Expr{inner}}
+	stmt := &ast.FuncCallStmt{Expr: outer}
+	stmts := []ast.Stmt{stmt}
+	bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"f", "g"}})
+	built := cfgbuild.BuildChunk(stmts, bindings)
+	result, err := semantics.ExtractChunk(stmts, bindings, built)
+	if err != nil {
+		t.Fatalf("ExtractChunk: %v", err)
+	}
+
+	facts := lowerFacts(t, result, built.Graph, standard.Registry())
+	points := requireStmtPoints(t, built, stmt, 2)
+	innerSite, ok := facts.CallSite(points[0])
+	if !ok {
+		t.Fatalf("missing inner call site")
+	}
+	if innerSite.Context() != factflow.CallSiteContextExpressionProducer {
+		t.Fatalf("inner call context = %v, want expression producer", innerSite.Context())
+	}
+	targets := innerSite.ResultTargets()
+	if len(targets) != 1 || targets[0].Kind() != factflow.CallResultTargetExpression || targets[0].ResultIndex() != 0 {
+		t.Fatalf("inner call targets = %#v", targets)
+	}
+	producer, ok := facts.Call(points[0])
+	if !ok {
+		t.Fatalf("missing nested call producer")
+	}
+	if producerTargets := producer.ResultTargets(); len(producerTargets) != 1 || producerTargets[0].Kind() != factflow.CallResultTargetExpression || producerTargets[0].ResultIndex() != 0 {
+		t.Fatalf("nested producer targets = %#v", producerTargets)
+	}
+	outerSite, ok := facts.CallSite(points[1])
+	if !ok {
+		t.Fatalf("missing outer call site")
+	}
+	args := outerSite.ArgumentSources()
+	if len(args) != 1 || args[0].Kind != factflow.ValueSourceCall || args[0].CallPoint != points[0] || !args[0].HasCallPoint || args[0].ResultIndex != 0 {
+		t.Fatalf("outer argument sources = %#v, want inner call source", args)
+	}
+	if _, ok := facts.Call(points[1]); ok {
+		t.Fatalf("outer statement call unexpectedly lowered as producer")
+	}
+}
+
 func TestLowerCallSiteMapsUnknownContextExplicitly(t *testing.T) {
 	l := lowerer{exprs: make(map[any]factflow.ExprRef)}
 	site := l.callSite(semantics.CallFact{

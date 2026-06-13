@@ -16,6 +16,7 @@ const (
 	CallSiteContextReturnSource
 	CallSiteContextIteratorSource
 	CallSiteContextCondition
+	CallSiteContextExpressionProducer
 )
 
 // CallSiteConfig carries constructor input for CallSite.

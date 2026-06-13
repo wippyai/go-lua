@@ -736,7 +736,7 @@ func TestCopyConfigCopiesMutableFields(t *testing.T) {
 
 func TestCheckChunkReturnsUnsupportedCFG(t *testing.T) {
 	reg := standard.Registry()
-	stmts := parseChunk(t, "print(value())")
+	stmts := parseChunk(t, "print(value() and true)")
 
 	_, err := CheckChunk(stmts, Config{Registry: reg})
 	if !errors.Is(err, ErrUnsupportedCFG) {

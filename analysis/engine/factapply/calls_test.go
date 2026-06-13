@@ -289,6 +289,37 @@ func TestFactsNodeTransferCallProducerClearsStaleReturnSlotsWithoutOutcome(t *te
 	assertValue(t, reg, got, key.SymbolValue(target), absentValue(reg))
 }
 
+func TestFactsNodeTransferExpressionProducerClearsSlotZero(t *testing.T) {
+	reg := standard.Registry()
+	point := cfg.Point(26)
+	stale := presentValue(reg)
+	in := state.State{}.WriteReturnSlot(reg, 0, stale)
+
+	got := NewFactsNodeTransfer(FactsNodeTransferConfig{
+		Facts: factflow.NewFacts(factflow.FactsInput{
+			CallSites: map[cfg.Point]factflow.CallSite{
+				point: factflow.NewCallSite(factflow.CallSiteConfig{
+					Context: factflow.CallSiteContextExpressionProducer,
+					ResultTargets: []factflow.CallResultTarget{
+						factflow.NewCallResultTarget(
+							factflow.CallResultTargetExpression,
+							factflow.NoValueSourceIndex,
+							0,
+							0,
+							path.Path{},
+						),
+					},
+				}),
+			},
+		}),
+	})(transfer.NodeContext{
+		Registry: reg,
+		Point:    point,
+	}, in)
+
+	assertValue(t, reg, got, key.ReturnSlot(0), product.Bottom(reg))
+}
+
 func TestFactsNodeTransferMissingCallOutcomeProviderOrNoResultsLeavesStateUnchanged(t *testing.T) {
 	reg := standard.Registry()
 	point := cfg.Point(24)

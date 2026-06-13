@@ -92,12 +92,20 @@ func (r *Result) extractGenericFor(stmt *ast.GenericForStmt, bindings *bind.Resu
 	if len(points) == 0 {
 		return nil
 	}
-	calls := topLevelValueListCalls(stmt.Exprs)
+	calls, ok := valueListCalls(stmt.Exprs, bindings)
+	if !ok {
+		return ErrPointMismatch
+	}
 	if len(points) != len(calls)+1+len(stmt.Names) {
 		return ErrPointMismatch
 	}
+	resolver := callPointResolver(calls, points)
 	for i, call := range calls {
-		r.calls[points[i]] = buildCallFact(stmt, nil, CallContextIteratorSource, stmt.Exprs, call.index, call.call, bindings, nil)
+		context, exprs := CallContextExpressionProducer, []ast.Expr(nil)
+		if topLevelValueListCall(stmt.Exprs, call) {
+			context, exprs = CallContextIteratorSource, stmt.Exprs
+		}
+		r.calls[points[i]] = buildCallFact(stmt, nil, context, exprs, call.index, call.call, bindings, nil, resolver)
 	}
 	var symbols []symbol.ID
 	if bindings != nil {
@@ -107,7 +115,7 @@ func (r *Result) extractGenericFor(stmt *ast.GenericForStmt, bindings *bind.Resu
 		Stmt:          stmt,
 		Names:         copyStrings(stmt.Names),
 		Exprs:         copyExprs(stmt.Exprs),
-		Sources:       copyValueSources(iteratorValueSources(stmt.Exprs, callPointsByExprIndex(calls, points))),
+		Sources:       copyValueSources(iteratorValueSources(stmt.Exprs, resolver)),
 		Symbols:       copySymbols(symbols),
 		HasSymbols:    completeSymbols(symbols, len(stmt.Names)),
 		VariableIndex: cfgfacts.NoGenericForVariableIndex,

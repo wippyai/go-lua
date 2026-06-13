@@ -11,19 +11,28 @@ func (r *Result) extractBranch(stmt ast.Stmt, kind BranchKind, condition ast.Exp
 	if len(points) == 0 {
 		return nil
 	}
-	calls := branchConditionCalls(condition)
+	calls, ok := branchConditionCalls(condition, bindings)
+	if !ok {
+		return ErrPointMismatch
+	}
 	if len(points) != len(calls)+1 {
 		return ErrPointMismatch
 	}
+	resolver := callPointResolver(calls, points)
+	conditionCall, _, hasConditionCall := branchcond.PredicateCall(condition)
 	for i, call := range calls {
-		r.calls[points[i]] = buildCallFact(stmt, nil, CallContextCondition, []ast.Expr{condition}, call.index, call.call, bindings, nil)
+		context, exprs, exprIndex := CallContextExpressionProducer, []ast.Expr(nil), call.index
+		if hasConditionCall && call.call == conditionCall {
+			context, exprs, exprIndex = CallContextCondition, []ast.Expr{condition}, 0
+		}
+		r.calls[points[i]] = buildCallFact(stmt, nil, context, exprs, exprIndex, call.call, bindings, nil, resolver)
 	}
 	branchPoint := points[len(calls)]
 	fact := BranchConditionFact{
 		Kind:      kind,
 		Stmt:      stmt,
 		Condition: condition,
-		Source:    conditionValueSource(condition, callPointsByExprIndex(calls, points)),
+		Source:    conditionValueSource(condition, resolver),
 		Check:     branchcond.Normalize(condition, bindings),
 	}
 	switch stmt := stmt.(type) {
@@ -38,10 +47,10 @@ func (r *Result) extractBranch(stmt ast.Stmt, kind BranchKind, condition ast.Exp
 	return nil
 }
 
-func branchConditionCalls(condition ast.Expr) []indexedCall {
-	call, _, ok := branchcond.PredicateCall(condition)
+func branchConditionCalls(condition ast.Expr, bindings *bind.Result) ([]indexedCall, bool) {
+	_, _, ok := branchcond.PredicateCall(condition)
 	if !ok {
-		return nil
+		return nil, true
 	}
-	return []indexedCall{{index: 0, call: call}}
+	return exprCalls(condition, bindings)
 }

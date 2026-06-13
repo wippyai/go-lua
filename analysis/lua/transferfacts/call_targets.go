@@ -27,6 +27,8 @@ func lowerCallResultTarget(target semantics.CallResultTarget) factflow.CallResul
 		targetKind = factflow.CallResultTargetOrdinaryAssignment
 	case semantics.CallResultTargetReturn:
 		return factflow.NewCallResultTarget(factflow.CallResultTargetReturn, target.Index, target.ResultIndex, 0, path.Path{})
+	case semantics.CallResultTargetExpression:
+		return factflow.NewCallResultTarget(factflow.CallResultTargetExpression, target.Index, target.ResultIndex, 0, path.Path{})
 	}
 	targetSymbol := symbol.ID(0)
 	if target.HasSymbol {

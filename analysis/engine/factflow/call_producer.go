@@ -13,7 +13,8 @@ type CallProducerConfig struct {
 	ResultTargets []CallResultTarget
 }
 
-// CallProducer describes a top-level assignment or return call producer.
+// CallProducer describes a call whose return slots can be read by value-source
+// consumers.
 type CallProducer struct {
 	calleeSymbol symbol.ID
 	calleePath   path.Path
@@ -42,7 +43,7 @@ func CallProducerFromSite(site CallSite) CallProducer {
 
 func callProducerFromFactSite(site CallSite) (CallProducer, bool) {
 	switch site.Context() {
-	case CallSiteContextAssignmentSource, CallSiteContextReturnSource:
+	case CallSiteContextAssignmentSource, CallSiteContextReturnSource, CallSiteContextExpressionProducer:
 	default:
 		return CallProducer{}, false
 	}
@@ -75,6 +76,8 @@ func strictProducerResultTarget(target CallResultTarget) bool {
 		return target.TargetSymbol() != 0 && len(target.TargetPath().Segments) == 0
 	case CallResultTargetReturn:
 		return true
+	case CallResultTargetExpression:
+		return target.ResultIndex() >= 0
 	default:
 		return false
 	}

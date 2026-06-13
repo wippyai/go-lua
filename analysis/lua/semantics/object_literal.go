@@ -7,16 +7,16 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 )
 
-func (r *Result) extractObjectLiterals(exprs []ast.Expr) {
+func (r *Result) extractObjectLiterals(exprs []ast.Expr, resolver sourceprovenance.CallPointResolver) {
 	if r == nil {
 		return
 	}
 	for _, expr := range exprs {
-		r.extractObjectLiteral(expr)
+		r.extractObjectLiteral(expr, resolver)
 	}
 }
 
-func (r *Result) extractObjectLiteral(expr ast.Expr) {
+func (r *Result) extractObjectLiteral(expr ast.Expr, resolver sourceprovenance.CallPointResolver) {
 	table, ok := pathexpr.ObjectLiteralTable(expr)
 	if !ok || table == nil {
 		return
@@ -31,7 +31,7 @@ func (r *Result) extractObjectLiteral(expr ast.Expr) {
 					Key:    entry.Key,
 					Value:  entry.Value,
 					Suffix: entry.Suffix,
-					Source: objectEntryValueSource(entry.Value, entry.Field != nil && entry.Field.Key == nil && entry.Final),
+					Source: objectEntryValueSource(entry.Value, entry.Field != nil && entry.Field.Key == nil && entry.Final, resolver),
 				}
 			}
 			r.objectLiterals[expr] = ObjectLiteralFact{
@@ -45,10 +45,10 @@ func (r *Result) extractObjectLiteral(expr ast.Expr) {
 		if field == nil {
 			continue
 		}
-		r.extractObjectLiteral(field.Value)
+		r.extractObjectLiteral(field.Value, resolver)
 	}
 }
 
-func objectEntryValueSource(expr ast.Expr, final bool) sourceprovenance.ASTSource {
-	return sourceprovenance.SourceForExpr(expr, factflow.NoValueSourceIndex, factflow.NoValueSourceIndex, 0, final, false, nil)
+func objectEntryValueSource(expr ast.Expr, final bool, resolver sourceprovenance.CallPointResolver) sourceprovenance.ASTSource {
+	return sourceprovenance.SourceForExpr(expr, factflow.NoValueSourceIndex, factflow.NoValueSourceIndex, 0, final, false, resolver)
 }

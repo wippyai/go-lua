@@ -420,11 +420,12 @@ func TestFactsCallDerivesProducerFromCanonicalCallSite(t *testing.T) {
 
 func TestFactsCallKeepsProducerProjectionNarrow(t *testing.T) {
 	points := map[string]cfg.Point{
-		"statement":        cfg.Point(40),
-		"condition":        cfg.Point(41),
-		"iterator":         cfg.Point(42),
-		"memberAssignment": cfg.Point(43),
-		"returnSource":     cfg.Point(44),
+		"statement":          cfg.Point(40),
+		"condition":          cfg.Point(41),
+		"iterator":           cfg.Point(42),
+		"memberAssignment":   cfg.Point(43),
+		"returnSource":       cfg.Point(44),
+		"expressionProducer": cfg.Point(45),
 	}
 	facts := NewFacts(FactsInput{
 		CallSites: map[cfg.Point]CallSite{
@@ -454,6 +455,13 @@ func TestFactsCallKeepsProducerProjectionNarrow(t *testing.T) {
 					NewCallResultTarget(CallResultTargetReturn, 0, 0, 0, path.Path{}),
 				},
 			}),
+			points["expressionProducer"]: NewCallSite(CallSiteConfig{
+				Context:      CallSiteContextExpressionProducer,
+				CalleeSymbol: symbol.ID(56),
+				ResultTargets: []CallResultTarget{
+					NewCallResultTarget(CallResultTargetExpression, NoValueSourceIndex, 0, 0, path.Path{}),
+				},
+			}),
 		},
 	})
 
@@ -476,6 +484,13 @@ func TestFactsCallKeepsProducerProjectionNarrow(t *testing.T) {
 	if targets := returnProducer.ResultTargets(); len(targets) != 1 || targets[0].Kind() != CallResultTargetReturn {
 		t.Fatalf("return-source producer targets = %#v, want one return target", targets)
 	}
+	expressionProducer, ok := facts.Call(points["expressionProducer"])
+	if !ok {
+		t.Fatal("expression producer call missing")
+	}
+	if targets := expressionProducer.ResultTargets(); len(targets) != 1 || targets[0].Kind() != CallResultTargetExpression || targets[0].ResultIndex() != 0 {
+		t.Fatalf("expression producer targets = %#v, want slot-zero expression target", targets)
+	}
 }
 
 func TestTransferOwnedEnumsAreIndependentContracts(t *testing.T) {
@@ -497,8 +512,9 @@ func TestTransferOwnedEnumsAreIndependentContracts(t *testing.T) {
 		CallSiteContextReturnSource,
 		CallSiteContextIteratorSource,
 		CallSiteContextCondition,
+		CallSiteContextExpressionProducer,
 	}
-	if len(siteContexts) != 6 || siteContexts[5] != CallSiteContextCondition {
+	if len(siteContexts) != 7 || siteContexts[6] != CallSiteContextExpressionProducer {
 		t.Fatalf("unexpected call site contexts: %#v", siteContexts)
 	}
 
@@ -507,8 +523,9 @@ func TestTransferOwnedEnumsAreIndependentContracts(t *testing.T) {
 		CallResultTargetLocalAssignment,
 		CallResultTargetOrdinaryAssignment,
 		CallResultTargetReturn,
+		CallResultTargetExpression,
 	}
-	if len(targets) != 4 || targets[2] != CallResultTargetOrdinaryAssignment {
+	if len(targets) != 5 || targets[4] != CallResultTargetExpression {
 		t.Fatalf("unexpected call result target kinds: %#v", targets)
 	}
 }

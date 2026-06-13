@@ -26,6 +26,7 @@ const (
 	CallContextReturnSource
 	CallContextIteratorSource
 	CallContextCondition
+	CallContextExpressionProducer
 )
 
 type CallResultTargetKind uint8
@@ -35,6 +36,7 @@ const (
 	CallResultTargetLocalAssignment
 	CallResultTargetOrdinaryAssignment
 	CallResultTargetReturn
+	CallResultTargetExpression
 )
 
 const NoCallResultIndex = -1

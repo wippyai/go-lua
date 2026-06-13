@@ -58,6 +58,42 @@ func TestLowerObjectLiteralSidecarUsesAssignmentExprRef(t *testing.T) {
 	}
 }
 
+func TestLowerObjectLiteralEntryCallSourcePointsAtNestedProducer(t *testing.T) {
+	makeCall := &ast.FuncCallExpr{Func: ident("make")}
+	table := &ast.TableExpr{Fields: []*ast.Field{{
+		Key:       stringLit("x"),
+		KeySyntax: ast.AttrKeyDot,
+		Value:     makeCall,
+	}}}
+	local := localAssign([]string{"t"}, table)
+	stmts := []ast.Stmt{local}
+	bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"make"}})
+	built := cfgbuild.BuildChunk(stmts, bindings)
+	result, err := semantics.ExtractChunk(stmts, bindings, built)
+	if err != nil {
+		t.Fatalf("ExtractChunk: %v", err)
+	}
+
+	facts := lowerFacts(t, result, built.Graph, standard.Registry())
+	points := requireStmtPoints(t, built, local, 2)
+	localFact, ok := facts.LocalAssignment(points[1])
+	if !ok {
+		t.Fatalf("missing local assignment fact")
+	}
+	literal, ok := facts.ObjectLiteral(localFact.Source().ExprRef)
+	if !ok {
+		t.Fatalf("missing object literal sidecar")
+	}
+	entries := literal.Entries()
+	if len(entries) != 1 {
+		t.Fatalf("literal entries = %#v, want one", entries)
+	}
+	source := entries[0].Source()
+	if source.Kind != factflow.ValueSourceCall || source.CallPoint != points[0] || !source.HasCallPoint || source.ResultIndex != 0 {
+		t.Fatalf("entry source = %#v, want call point %d", source, points[0])
+	}
+}
+
 func TestLowerWrappedObjectLiteralKeepsAssertionRefinementAndEntries(t *testing.T) {
 	leafValue := number("1")
 	table := &ast.TableExpr{Fields: []*ast.Field{

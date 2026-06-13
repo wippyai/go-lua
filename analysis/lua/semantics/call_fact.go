@@ -70,7 +70,7 @@ func returnResultTarget(stmt *ast.ReturnStmt, index, resultIndex int, openTail b
 	}
 }
 
-func buildCallFact(sourceStmt ast.Stmt, callStmt *ast.FuncCallStmt, context CallContextKind, exprs []ast.Expr, exprIndex int, call *ast.FuncCallExpr, bindings *bind.Result, assignmentTargets []CallResultTarget) CallFact {
+func buildCallFact(sourceStmt ast.Stmt, callStmt *ast.FuncCallStmt, context CallContextKind, exprs []ast.Expr, exprIndex int, call *ast.FuncCallExpr, bindings *bind.Result, assignmentTargets []CallResultTarget, resolver sourceprovenance.CallPointResolver) CallFact {
 	final, allowExpansion, openTail := callListFlags(context, exprs, exprIndex)
 	expanded, adjusted, shapedOpenTail := sourceprovenance.ValueShape(call, final, allowExpansion, openTail)
 	calleePath, hasCalleePath, receiverPath, hasReceiverPath, methodPath, hasMethodPath := resolveCallPaths(call, bindings)
@@ -94,7 +94,7 @@ func buildCallFact(sourceStmt ast.Stmt, callStmt *ast.FuncCallStmt, context Call
 		Method:          call.Method,
 		Args:            copyExprs(call.Args),
 		TypeArgs:        copyTypeExprs(call.TypeArgs),
-		ArgumentSources: argumentValueSources(call.Args),
+		ArgumentSources: argumentValueSources(call.Args, resolver),
 		CalleePath:      calleePath,
 		HasCalleePath:   hasCalleePath,
 		ReceiverPath:    receiverPath,
@@ -122,6 +122,8 @@ func callListFlags(context CallContextKind, exprs []ast.Expr, exprIndex int) (fi
 		openTail = context == CallContextReturnSource
 		return final, allowExpansion, openTail
 	case CallContextCondition:
+		return true, false, false
+	case CallContextExpressionProducer:
 		return true, false, false
 	default:
 		return false, false, false
@@ -161,6 +163,12 @@ func callResultTargets(context CallContextKind, sourceStmt ast.Stmt, exprIndex i
 	case CallContextReturnSource:
 		stmt, _ := sourceStmt.(*ast.ReturnStmt)
 		return []CallResultTarget{returnResultTarget(stmt, exprIndex, 0, openTail)}
+	case CallContextExpressionProducer:
+		return []CallResultTarget{{
+			Kind:        CallResultTargetExpression,
+			Index:       exprIndex,
+			ResultIndex: 0,
+		}}
 	default:
 		return nil
 	}

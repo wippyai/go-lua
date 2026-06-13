@@ -698,6 +698,59 @@ func TestBuildChunkAssignmentAndReturnCallsPrecedeValuePoints(t *testing.T) {
 	requireEdge(t, graph, returnPoints[1], graph.Exit(), false)
 }
 
+func TestBuildChunkNestedReturnCallsPrecedeReturnPoint(t *testing.T) {
+	inner := &ast.FuncCallExpr{
+		Func: ident("fn"),
+		Args: []ast.Expr{&ast.AttrGetExpr{
+			Object:    ident("result"),
+			Key:       stringLit("value"),
+			KeySyntax: ast.AttrKeyDot,
+		}},
+	}
+	outer := &ast.FuncCallExpr{Func: ident("ok"), Args: []ast.Expr{inner}}
+	ret := &ast.ReturnStmt{Exprs: []ast.Expr{outer}}
+	stmts := []ast.Stmt{ret}
+	bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"fn", "ok", "result"}})
+	result := BuildChunk(stmts, bindings)
+	if result == nil || result.Graph == nil {
+		t.Fatalf("BuildChunk returned nil")
+	}
+	graph := result.Graph
+
+	points := requireStmtPoints(t, result, ret, 3)
+	for i, want := range []cfg.NodeKind{cfg.NodeCall, cfg.NodeCall, cfg.NodeReturn} {
+		requirePointKind(t, graph, points[i], want)
+	}
+	requireEdge(t, graph, graph.Entry(), points[0], false)
+	requireEdge(t, graph, points[0], points[1], false)
+	requireEdge(t, graph, points[1], points[2], false)
+	requireEdge(t, graph, points[2], graph.Exit(), false)
+}
+
+func TestBuildChunkNestedLocalAssignmentCallsPrecedeAssignment(t *testing.T) {
+	inner := &ast.FuncCallExpr{
+		Func: ident("profile"),
+		Args: []ast.Expr{stringLit("r"), number("1"), &ast.NilExpr{}},
+	}
+	outer := &ast.FuncCallExpr{Func: ident("ok"), Args: []ast.Expr{inner}}
+	local := localAssign([]string{"r"}, outer)
+	stmts := []ast.Stmt{local}
+	bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"profile", "ok"}})
+	result := BuildChunk(stmts, bindings)
+	if result == nil || result.Graph == nil {
+		t.Fatalf("BuildChunk returned nil")
+	}
+	graph := result.Graph
+
+	points := requireStmtPoints(t, result, local, 3)
+	for i, want := range []cfg.NodeKind{cfg.NodeCall, cfg.NodeCall, cfg.NodeAssign} {
+		requirePointKind(t, graph, points[i], want)
+	}
+	requireEdge(t, graph, graph.Entry(), points[0], false)
+	requireEdge(t, graph, points[0], points[1], false)
+	requireEdge(t, graph, points[1], points[2], false)
+}
+
 func TestBuildChunkAssertionWrappedCallsProduceCallPoints(t *testing.T) {
 	makeCall := &ast.FuncCallExpr{Func: ident("make")}
 	makeCast := &ast.CastExpr{Expr: makeCall, Type: &ast.PrimitiveTypeExpr{Name: "number"}}
@@ -1819,11 +1872,20 @@ func TestBuildChunkUnsupportedExpressionCoverageReturnsNil(t *testing.T) {
 			}},
 		},
 		{
-			name: "nested call argument",
-			stmt: &ast.FuncCallStmt{Expr: &ast.FuncCallExpr{
-				Func: ident("print"),
-				Args: []ast.Expr{&ast.FuncCallExpr{Func: ident("value")}},
-			}},
+			name: "short circuit rhs call",
+			stmt: localAssign([]string{"x"}, &ast.LogicalOpExpr{
+				Operator: "and",
+				Lhs:      ident("ok"),
+				Rhs:      &ast.FuncCallExpr{Func: ident("value")},
+			}),
+		},
+		{
+			name: "short circuit lhs call",
+			stmt: localAssign([]string{"x"}, &ast.LogicalOpExpr{
+				Operator: "or",
+				Lhs:      &ast.FuncCallExpr{Func: ident("value")},
+				Rhs:      ident("fallback"),
+			}),
 		},
 		{
 			name: "number for init call",
@@ -1846,6 +1908,35 @@ func TestBuildChunkUnsupportedExpressionCoverageReturnsNil(t *testing.T) {
 	}
 }
 
+func TestBuildChunkAllowsLogicalGlobalTypePathPredicateWithoutCallNode(t *testing.T) {
+	valueForType := ident("value")
+	valueForCompare := ident("value")
+	ret := &ast.ReturnStmt{Exprs: []ast.Expr{&ast.LogicalOpExpr{
+		Operator: "and",
+		Lhs: &ast.RelationalOpExpr{
+			Operator: "==",
+			Lhs:      typeCall(valueForType),
+			Rhs:      stringLit("number"),
+		},
+		Rhs: &ast.RelationalOpExpr{
+			Operator: ">",
+			Lhs:      valueForCompare,
+			Rhs:      number("0"),
+		},
+	}}}
+	stmts := []ast.Stmt{ret}
+	bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"type", "value"}})
+	result := BuildChunk(stmts, bindings)
+	if result == nil || result.Graph == nil {
+		t.Fatalf("BuildChunk returned nil for logical global type(path) predicate")
+	}
+	points := requireStmtPoints(t, result, ret, 1)
+	requirePointKind(t, result.Graph, points[0], cfg.NodeReturn)
+	if calls := pointsOfKind(result.Graph, cfg.NodeCall); len(calls) != 0 {
+		t.Fatalf("call node count = %d, want none for expression-covered type predicate", len(calls))
+	}
+}
+
 func TestBuildChunkAllowsNestedGlobalTypePathCallArgument(t *testing.T) {
 	x := ident("x")
 	stmts := []ast.Stmt{
@@ -1860,9 +1951,28 @@ func TestBuildChunkAllowsNestedGlobalTypePathCallArgument(t *testing.T) {
 	if result == nil || result.Graph == nil {
 		t.Fatalf("BuildChunk returned nil for nested global type(path) call argument")
 	}
-	if points := result.StmtPoints.PointsFor(stmts[1]); len(points) != 1 {
-		t.Fatalf("call statement points = %v, want one outer call point", points)
+	points := requireStmtPoints(t, result, stmts[1], 2)
+	requirePointKind(t, result.Graph, points[0], cfg.NodeCall)
+	requirePointKind(t, result.Graph, points[1], cfg.NodeCall)
+	requireEdge(t, result.Graph, points[0], points[1], false)
+}
+
+func TestBuildChunkNestedCallStatementArgumentsAreSequenced(t *testing.T) {
+	inner := &ast.FuncCallExpr{Func: ident("g")}
+	outer := &ast.FuncCallExpr{Func: ident("f"), Args: []ast.Expr{inner}}
+	stmt := &ast.FuncCallStmt{Expr: outer}
+	stmts := []ast.Stmt{stmt}
+	bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"f", "g"}})
+	result := BuildChunk(stmts, bindings)
+	if result == nil || result.Graph == nil {
+		t.Fatalf("BuildChunk returned nil")
 	}
+
+	points := requireStmtPoints(t, result, stmt, 2)
+	requirePointKind(t, result.Graph, points[0], cfg.NodeCall)
+	requirePointKind(t, result.Graph, points[1], cfg.NodeCall)
+	requireEdge(t, result.Graph, result.Graph.Entry(), points[0], false)
+	requireEdge(t, result.Graph, points[0], points[1], false)
 }
 
 func TestBuildChunkAllowsMethodCallOnIndexedCallReceiver(t *testing.T) {
@@ -1882,9 +1992,11 @@ func TestBuildChunkAllowsMethodCallOnIndexedCallReceiver(t *testing.T) {
 	if result == nil || result.Graph == nil {
 		t.Fatalf("BuildChunk returned nil for method call on indexed call receiver")
 	}
-	if points := result.StmtPoints.PointsFor(stmts[0]); len(points) != 1 {
-		t.Fatalf("call statement points = %v, want one outer call point", points)
-	}
+	points := requireStmtPoints(t, result, stmts[0], 2)
+	requirePointKind(t, result.Graph, points[0], cfg.NodeCall)
+	requirePointKind(t, result.Graph, points[1], cfg.NodeCall)
+	requireEdge(t, result.Graph, result.Graph.Entry(), points[0], false)
+	requireEdge(t, result.Graph, points[0], points[1], false)
 }
 
 func TestBuildChunkBreakOutsideLoopReturnsNil(t *testing.T) {

@@ -3,7 +3,7 @@ package cfgbuild
 import (
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/branchcond"
-	"github.com/wippyai/go-lua/analysis/lua/channelruntime"
+	"github.com/wippyai/go-lua/analysis/lua/callorder"
 	"github.com/wippyai/go-lua/analysis/lua/pathexpr"
 	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
 	"github.com/wippyai/go-lua/compiler/ast"
@@ -19,40 +19,35 @@ func (b *builder) hasUnsupportedExprs(exprs ...ast.Expr) bool {
 }
 
 func (b *builder) hasUnsupportedValueListExprs(exprs ...ast.Expr) bool {
-	for _, expr := range exprs {
-		call, ok := sourceprovenance.Call(expr)
-		if !ok {
-			if !b.exprCovered(expr) {
-				return true
-			}
-			continue
-		}
-		if b.hasUnsupportedExprInCall(call) {
-			return true
-		}
-	}
-	return false
+	_, ok := b.valueListCalls(exprs)
+	return !ok
 }
 
 func (b *builder) hasUnsupportedExprInCall(expr ast.Expr) bool {
-	call, ok := sourceprovenance.Call(expr)
-	if !ok {
-		return !b.exprCovered(expr)
-	}
-	if b.channelSelectCallCovered(call) {
-		return false
-	}
-	if !b.exprCovered(call.Func) || !b.exprCovered(call.Receiver) {
-		return true
-	}
-	return b.hasUnsupportedExprs(call.Args...)
+	_, ok := b.exprCalls(expr)
+	return !ok
 }
 
 func (b *builder) appendValueListCalls(state flowState, stmt ast.Stmt, exprs []ast.Expr) flowState {
-	for _, expr := range exprs {
-		if _, ok := sourceprovenance.Call(expr); ok {
-			state = b.appendCall(state, stmt)
-		}
+	calls, ok := b.valueListCalls(exprs)
+	if !ok {
+		b.unsupported = true
+		return flowState{current: state.current}
+	}
+	for range calls {
+		state = b.appendCall(state, stmt)
+	}
+	return state
+}
+
+func (b *builder) appendExprCalls(state flowState, stmt ast.Stmt, expr ast.Expr) flowState {
+	calls, ok := b.exprCalls(expr)
+	if !ok {
+		b.unsupported = true
+		return flowState{current: state.current}
+	}
+	for range calls {
+		state = b.appendCall(state, stmt)
 	}
 	return state
 }
@@ -71,8 +66,31 @@ func (b *builder) appendConditionCall(state flowState, stmt ast.Stmt, expr ast.E
 	if _, _, ok := branchcond.PredicateCall(expr); !ok {
 		return state, 0, false
 	}
-	next := b.appendCall(state, stmt)
-	return next, next.current, next.live
+	calls, ok := b.exprCalls(expr)
+	if !ok {
+		b.unsupported = true
+		return flowState{current: state.current}, 0, false
+	}
+	first := cfg.Point(0)
+	for range calls {
+		state = b.appendCall(state, stmt)
+		if first == 0 {
+			first = state.current
+		}
+	}
+	return state, first, state.live && first != 0
+}
+
+func (b *builder) valueListCalls(exprs []ast.Expr) ([]callorder.Occurrence, bool) {
+	return callorder.ValueList(exprs, b.callOrderOptions())
+}
+
+func (b *builder) exprCalls(expr ast.Expr) ([]callorder.Occurrence, bool) {
+	return callorder.Expr(expr, b.callOrderOptions())
+}
+
+func (b *builder) callOrderOptions() callorder.Options {
+	return callorder.LuaOptions(b.bindings)
 }
 
 func (b *builder) exprCovered(expr ast.Expr) bool {
@@ -153,45 +171,4 @@ func (b *builder) pureTypeCallCovered(call *ast.FuncCallExpr) bool {
 	}
 	_, ok = pathexpr.Resolve(call.Args[0], b.bindings)
 	return ok
-}
-
-func (b *builder) channelSelectCallCovered(call *ast.FuncCallExpr) bool {
-	if !channelruntime.IsSelectCall(call, b.bindings) {
-		return false
-	}
-	table, ok := call.Args[0].(*ast.TableExpr)
-	if !ok {
-		return false
-	}
-	return b.channelSelectTableCovered(table)
-}
-
-func (b *builder) channelSelectTableCovered(table *ast.TableExpr) bool {
-	if table == nil {
-		return false
-	}
-	for _, field := range table.Fields {
-		if field == nil || b.channelSelectDefaultField(field) {
-			continue
-		}
-		if !b.channelSelectCaseCallCovered(field.Value) {
-			return false
-		}
-	}
-	return true
-}
-
-func (b *builder) channelSelectDefaultField(field *ast.Field) bool {
-	if field == nil {
-		return false
-	}
-	return ast.KeyName(field.Key) == "default"
-}
-
-func (b *builder) channelSelectCaseCallCovered(expr ast.Expr) bool {
-	call, ok := sourceprovenance.Call(expr)
-	if !ok || !channelruntime.IsReceiveCaseCall(call, b.bindings) {
-		return false
-	}
-	return b.exprCovered(call.Receiver)
 }

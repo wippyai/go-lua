@@ -39,7 +39,7 @@ func (b *builder) buildStmt(state flowState, stmt ast.Stmt) flowState {
 			b.unsupported = true
 			return flowState{current: state.current}
 		}
-		return b.appendCall(state, stmt)
+		return b.appendExprCalls(state, stmt, stmt.Expr)
 	case *ast.ReturnStmt:
 		if b.hasUnsupportedValueListExprs(stmt.Exprs...) {
 			b.unsupported = true

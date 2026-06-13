@@ -59,6 +59,8 @@ func callSiteContext(kind semantics.CallContextKind) factflow.CallSiteContext {
 		return factflow.CallSiteContextIteratorSource
 	case semantics.CallContextCondition:
 		return factflow.CallSiteContextCondition
+	case semantics.CallContextExpressionProducer:
+		return factflow.CallSiteContextExpressionProducer
 	default:
 		return factflow.CallSiteContextUnknown
 	}

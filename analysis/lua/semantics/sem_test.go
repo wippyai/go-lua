@@ -801,6 +801,78 @@ func TestExtractChunkAssignmentAndReturnCallFactsUseLuaListRules(t *testing.T) {
 	}
 }
 
+func TestExtractChunkNestedStatementArgumentCallSourcesPointAtInnerCall(t *testing.T) {
+	inner := &ast.FuncCallExpr{Func: ident("g")}
+	outer := &ast.FuncCallExpr{Func: ident("f"), Args: []ast.Expr{inner}}
+	stmt := &ast.FuncCallStmt{Expr: outer}
+	stmts := []ast.Stmt{stmt}
+	bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"f", "g"}})
+	built := cfgbuild.BuildChunk(stmts, bindings)
+
+	result, err := ExtractChunk(stmts, bindings, built)
+	if err != nil {
+		t.Fatalf("ExtractChunk: %v", err)
+	}
+
+	points := requireStmtPoints(t, built, stmt, 2)
+	innerFact, ok := result.Call(points[0])
+	if !ok {
+		t.Fatalf("missing inner call fact")
+	}
+	if innerFact.Call != inner || innerFact.Context != CallContextExpressionProducer || !innerFact.Final || !innerFact.Adjusted {
+		t.Fatalf("inner call fact = %#v", innerFact)
+	}
+	if len(innerFact.ResultTargets) != 1 || innerFact.ResultTargets[0].Kind != CallResultTargetExpression || innerFact.ResultTargets[0].ResultIndex != 0 {
+		t.Fatalf("inner result targets = %#v", innerFact.ResultTargets)
+	}
+	outerFact, ok := result.Call(points[1])
+	if !ok {
+		t.Fatalf("missing outer call fact")
+	}
+	if outerFact.Call != outer || outerFact.Context != CallContextStatement || outerFact.Stmt != stmt {
+		t.Fatalf("outer call fact = %#v", outerFact)
+	}
+	if len(outerFact.ArgumentSources) != 1 {
+		t.Fatalf("outer argument sources = %#v, want one", outerFact.ArgumentSources)
+	}
+	arg := outerFact.ArgumentSources[0]
+	if arg.Kind != factflow.ValueSourceCall || arg.Expr != inner || arg.CallPoint != points[0] || !arg.HasCallPoint || arg.ResultIndex != 0 {
+		t.Fatalf("outer argument source = %#v, want inner call point %d", arg, points[0])
+	}
+}
+
+func TestExtractChunkObjectLiteralEntryCallSourcePointsAtNestedCall(t *testing.T) {
+	makeCall := &ast.FuncCallExpr{Func: ident("make")}
+	table := &ast.TableExpr{Fields: []*ast.Field{{
+		Key:       stringLit("x"),
+		KeySyntax: ast.AttrKeyDot,
+		Value:     makeCall,
+	}}}
+	local := localAssign([]string{"t"}, table)
+	stmts := []ast.Stmt{local}
+	bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"make"}})
+	built := cfgbuild.BuildChunk(stmts, bindings)
+
+	result, err := ExtractChunk(stmts, bindings, built)
+	if err != nil {
+		t.Fatalf("ExtractChunk: %v", err)
+	}
+
+	points := requireStmtPoints(t, built, local, 2)
+	callFact, ok := result.Call(points[0])
+	if !ok || callFact.Call != makeCall || callFact.Context != CallContextExpressionProducer {
+		t.Fatalf("make call fact = %#v, ok=%v", callFact, ok)
+	}
+	literal, ok := result.ObjectLiteral(table)
+	if !ok || len(literal.Entries) != 1 {
+		t.Fatalf("object literal = %#v, ok=%v", literal, ok)
+	}
+	entrySource := literal.Entries[0].Source
+	if entrySource.Kind != factflow.ValueSourceCall || entrySource.Expr != makeCall || entrySource.CallPoint != points[0] || !entrySource.HasCallPoint {
+		t.Fatalf("object entry source = %#v, want make call point %d", entrySource, points[0])
+	}
+}
+
 func TestExtractChunkConditionAndIteratorCallFactsUseDeferredContexts(t *testing.T) {
 	readyIdent := ident("ready")
 	readyCall := &ast.FuncCallExpr{Func: readyIdent}
@@ -1121,7 +1193,7 @@ end
 
 	result := newResult(nil)
 	targets := localResultTargets(local, bindings)
-	callFact := buildCallFact(local, nil, CallContextAssignmentSource, local.Exprs, 0, selectCall, bindings, targets)
+	callFact := buildCallFact(local, nil, CallContextAssignmentSource, local.Exprs, 0, selectCall, bindings, targets, nil)
 	secondFact := callFact
 	secondFact.ChannelSelect.ResultTarget.Path = path.NewPath(symbol.ID(9999), "second")
 	result.calls[2] = secondFact
@@ -1211,7 +1283,7 @@ local result = channel.select { obj:case_receive() }
 				t.Fatalf("local expr = %T, want *ast.FuncCallExpr", local.Exprs[0])
 			}
 			targets := localResultTargets(local, bindings)
-			callFact := buildCallFact(local, nil, CallContextAssignmentSource, local.Exprs, 0, selectCall, bindings, targets)
+			callFact := buildCallFact(local, nil, CallContextAssignmentSource, local.Exprs, 0, selectCall, bindings, targets, nil)
 			if callFact.HasChannelSelect {
 				t.Fatalf("unanchored call produced channel select fact: %#v", callFact.ChannelSelect)
 			}

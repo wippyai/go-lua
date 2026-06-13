@@ -2,6 +2,8 @@ package semantics
 
 import (
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
+	"github.com/wippyai/go-lua/analysis/lua/bind"
+	"github.com/wippyai/go-lua/analysis/lua/callorder"
 	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
@@ -25,48 +27,87 @@ func callPointsByExprIndex(calls []indexedCall, points []cfg.Point) map[int]cfg.
 	return out
 }
 
-func topLevelValueListCalls(exprs []ast.Expr) []indexedCall {
-	var calls []indexedCall
-	for i, expr := range exprs {
-		call, ok := sourceprovenance.Call(expr)
-		if !ok {
-			continue
-		}
-		calls = append(calls, indexedCall{index: i, call: call})
+func valueListCalls(exprs []ast.Expr, bindings *bind.Result) ([]indexedCall, bool) {
+	ordered, ok := callorder.ValueList(exprs, callorder.LuaOptions(bindings))
+	if !ok {
+		return nil, false
 	}
-	return calls
+	calls := make([]indexedCall, len(ordered))
+	for i, call := range ordered {
+		calls[i] = indexedCall{index: call.ExprIndex, call: call.Call}
+	}
+	return calls, true
 }
 
-func assignmentValueSources(exprs []ast.Expr, targetCount int, callPoints map[int]cfg.Point) []sourceprovenance.ASTSource {
-	return sourceprovenance.AssignmentSources(exprs, targetCount, callPointResolverByExprIndex(callPoints))
+func exprCalls(expr ast.Expr, bindings *bind.Result) ([]indexedCall, bool) {
+	ordered, ok := callorder.Expr(expr, callorder.LuaOptions(bindings))
+	if !ok {
+		return nil, false
+	}
+	calls := make([]indexedCall, len(ordered))
+	for i, call := range ordered {
+		calls[i] = indexedCall{index: call.ExprIndex, call: call.Call}
+	}
+	return calls, true
 }
 
-func assignmentValueSource(exprs []ast.Expr, targetIndex int, callPoints map[int]cfg.Point) sourceprovenance.ASTSource {
-	return sourceprovenance.AssignmentSources(exprs, targetIndex+1, callPointResolverByExprIndex(callPoints))[targetIndex]
+func callPointsByCall(calls []indexedCall, points []cfg.Point) map[*ast.FuncCallExpr]cfg.Point {
+	if len(calls) == 0 {
+		return nil
+	}
+	out := make(map[*ast.FuncCallExpr]cfg.Point, len(calls))
+	for i, call := range calls {
+		if i >= len(points) {
+			break
+		}
+		out[call.call] = points[i]
+	}
+	return out
 }
 
-func returnValueSources(exprs []ast.Expr, callPoints map[int]cfg.Point) []sourceprovenance.ASTSource {
-	return sourceprovenance.ValueListSources(exprs, true, callPointResolverByExprIndex(callPoints))
+func assignmentValueSources(exprs []ast.Expr, targetCount int, resolver sourceprovenance.CallPointResolver) []sourceprovenance.ASTSource {
+	return sourceprovenance.AssignmentSources(exprs, targetCount, resolver)
 }
 
-func iteratorValueSources(exprs []ast.Expr, callPoints map[int]cfg.Point) []sourceprovenance.ASTSource {
-	return sourceprovenance.ValueListSources(exprs, false, callPointResolverByExprIndex(callPoints))
+func assignmentValueSource(exprs []ast.Expr, targetIndex int, resolver sourceprovenance.CallPointResolver) sourceprovenance.ASTSource {
+	return sourceprovenance.AssignmentSources(exprs, targetIndex+1, resolver)[targetIndex]
 }
 
-func argumentValueSources(exprs []ast.Expr) []sourceprovenance.ASTSource {
-	return sourceprovenance.ValueListSources(exprs, false, nil)
+func returnValueSources(exprs []ast.Expr, resolver sourceprovenance.CallPointResolver) []sourceprovenance.ASTSource {
+	return sourceprovenance.ValueListSources(exprs, true, resolver)
 }
 
-func conditionValueSource(expr ast.Expr, callPoints map[int]cfg.Point) sourceprovenance.ASTSource {
-	return sourceprovenance.ConditionSource(expr, callPointResolverByExprIndex(callPoints))
+func iteratorValueSources(exprs []ast.Expr, resolver sourceprovenance.CallPointResolver) []sourceprovenance.ASTSource {
+	return sourceprovenance.ValueListSources(exprs, false, resolver)
 }
 
-func callPointResolverByExprIndex(callPoints map[int]cfg.Point) sourceprovenance.CallPointResolver {
-	if len(callPoints) == 0 {
+func argumentValueSources(exprs []ast.Expr, resolver sourceprovenance.CallPointResolver) []sourceprovenance.ASTSource {
+	return sourceprovenance.ValueListSources(exprs, false, resolver)
+}
+
+func conditionValueSource(expr ast.Expr, resolver sourceprovenance.CallPointResolver) sourceprovenance.ASTSource {
+	return sourceprovenance.ConditionSource(expr, resolver)
+}
+
+func callPointResolver(calls []indexedCall, points []cfg.Point) sourceprovenance.CallPointResolver {
+	callPoints := callPointsByCall(calls, points)
+	exprPoints := callPointsByExprIndex(calls, points)
+	if len(callPoints) == 0 && len(exprPoints) == 0 {
 		return nil
 	}
 	return func(exprIndex int, call *ast.FuncCallExpr) (cfg.Point, bool) {
-		point, ok := callPoints[exprIndex]
+		if point, ok := callPoints[call]; ok {
+			return point, true
+		}
+		point, ok := exprPoints[exprIndex]
 		return point, ok
 	}
+}
+
+func topLevelValueListCall(exprs []ast.Expr, call indexedCall) bool {
+	if call.index < 0 || call.index >= len(exprs) {
+		return false
+	}
+	top, ok := sourceprovenance.Call(exprs[call.index])
+	return ok && top == call.call
 }

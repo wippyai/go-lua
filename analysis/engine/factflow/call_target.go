@@ -13,6 +13,7 @@ const (
 	CallResultTargetLocalAssignment
 	CallResultTargetOrdinaryAssignment
 	CallResultTargetReturn
+	CallResultTargetExpression
 )
 
 // CallResultTarget describes one target that consumes a call result.

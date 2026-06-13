@@ -309,7 +309,18 @@ end`), body.Config{
 	if len(got.ReturnConditionParamRefinements) == 0 {
 		t.Fatalf("return condition param refinements missing: %#v", got)
 	}
-	refinement := got.ReturnConditionParamRefinements[0]
+	var refinement summary.ReturnConditionParamRefinement
+	found := false
+	for _, candidate := range got.ReturnConditionParamRefinements {
+		if candidate.ReturnIndex == 0 && candidate.ReturnValue && candidate.Target.PlaceholderIndex() == 0 {
+			refinement = candidate
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("truthy return condition refinement missing: %#v", got.ReturnConditionParamRefinements)
+	}
 	if refinement.ReturnIndex != 0 || !refinement.ReturnValue || refinement.Target.PlaceholderIndex() != 0 {
 		t.Fatalf("return condition refinement = %#v, want truthy ret[0] -> $0", refinement)
 	}
