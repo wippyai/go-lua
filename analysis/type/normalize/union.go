@@ -21,7 +21,6 @@ func unionForEvidence(members []typ.Type) typ.Type {
 		return typ.Any
 	}
 	if len(flat) > 0 {
-		flat = canonicalPolicyMembers(flat)
 		flat = applyUnionSubsumption(flat)
 	}
 	if len(flat) == 0 && hasUnknown {
@@ -31,9 +30,21 @@ func unionForEvidence(members []typ.Type) typ.Type {
 		return typ.Unknown
 	}
 	if hasNil {
-		flat = append(flat, typ.Nil)
+		nonNil := typ.MaterializeUnion(flat)
+		if nonNil == typ.Never {
+			return typ.Nil
+		}
+		if nonNil.Kind() != kind.Union {
+			return typ.NewOptional(nonNil)
+		}
+
+		union := nonNil.(*typ.Union)
+		withNil := make([]typ.Type, 0, len(union.Members)+1)
+		withNil = append(withNil, typ.Nil)
+		withNil = append(withNil, union.Members...)
+		return typ.MaterializeUnion(withNil)
 	}
-	return typ.NewUnion(flat...)
+	return typ.MaterializeUnion(flat)
 }
 
 func flattenUnionForRelationEvidence(members []typ.Type) (flat []typ.Type, hasNil, hasUnknown, hasAny bool) {
@@ -76,19 +87,6 @@ func flattenUnionForRelationEvidence(members []typ.Type) (flat []typ.Type, hasNi
 		addMember(member)
 	}
 	return flat, hasNil, hasUnknown, hasAny
-}
-
-func canonicalPolicyMembers(members []typ.Type) []typ.Type {
-	normalized := typ.NewUnion(members...)
-	if u, ok := unwrap.Annotated(normalized).(*typ.Union); ok {
-		out := make([]typ.Type, len(u.Members))
-		copy(out, u.Members)
-		return out
-	}
-	if normalized == typ.Never {
-		return nil
-	}
-	return []typ.Type{normalized}
 }
 
 func applyUnionSubsumption(members []typ.Type) []typ.Type {

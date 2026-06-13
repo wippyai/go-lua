@@ -13,9 +13,19 @@ func TestUnionForEvidence(t *testing.T) {
 		want    typ.Type
 	}{
 		{
+			name:    "empty evidence is never",
+			members: nil,
+			want:    typ.Never,
+		},
+		{
 			name:    "flattens union inputs",
 			members: []typ.Type{typ.NewUnion(typ.String, typ.Number), typ.Boolean},
 			want:    typ.NewUnion(typ.String, typ.Number, typ.Boolean),
+		},
+		{
+			name:    "nil plus scalar remains optional",
+			members: []typ.Type{typ.Nil, typ.String},
+			want:    typ.NewOptional(typ.String),
 		},
 		{
 			name:    "flattens optional inputs",
@@ -159,6 +169,7 @@ func TestIntersectionForMeet(t *testing.T) {
 		members []typ.Type
 		want    typ.Type
 	}{
+		{name: "empty meet is any", members: nil, want: typ.Any},
 		{name: "flattens intersection inputs", members: []typ.Type{typ.NewIntersection(typ.Any, typ.String), typ.Boolean}, want: typ.NewIntersection(typ.String, typ.Boolean)},
 		{name: "any identity left", members: []typ.Type{typ.Any, typ.String}, want: typ.String},
 		{name: "any identity right", members: []typ.Type{typ.String, typ.Any}, want: typ.String},

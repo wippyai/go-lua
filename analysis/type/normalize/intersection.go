@@ -66,7 +66,7 @@ func IntersectionForMeet(members ...typ.Type) typ.Type {
 		flat = append(flat, typ.Nil)
 	}
 
-	return typ.NewIntersection(flat...)
+	return typ.MaterializeIntersection(flat)
 }
 
 func intersectionMemberAcceptsNil(t typ.Type) bool {
