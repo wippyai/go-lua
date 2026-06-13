@@ -2,7 +2,7 @@ package refinement
 
 import (
 	"github.com/wippyai/go-lua/analysis/internal/recursion"
-	"github.com/wippyai/go-lua/analysis/type/transform"
+	"github.com/wippyai/go-lua/analysis/type/subst"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/unwrap"
 )
@@ -105,35 +105,15 @@ func closedUnionOf(t typ.Type) *typ.Union {
 		case *typ.Optional:
 			t = v.Inner
 		case *typ.Instantiated:
-			t = expandClosedUnionInstantiatedBody(v)
+			expanded, ok := subst.ExpandInstantiatedChanged(v)
+			if !ok {
+				return nil
+			}
+			t = expanded
 		default:
 			return nil
 		}
 	}
-}
-
-func expandClosedUnionInstantiatedBody(inst *typ.Instantiated) typ.Type {
-	if inst == nil || inst.Generic == nil || inst.Generic.Body == nil ||
-		len(inst.Generic.TypeParams) != len(inst.TypeArgs) {
-		return inst
-	}
-	params := inst.Generic.TypeParams
-	args := inst.TypeArgs
-	return transform.Rewrite(inst.Generic.Body, func(node typ.Type) (typ.Type, bool) {
-		tp, ok := node.(*typ.TypeParam)
-		if !ok {
-			return nil, false
-		}
-		for i, param := range params {
-			if param == nil || args[i] == nil {
-				continue
-			}
-			if tp == param || tp.Equals(param) {
-				return args[i], true
-			}
-		}
-		return nil, false
-	})
 }
 
 func isRefinableStructuralAnnotation(t typ.Type, guard recursion.Guard) bool {
