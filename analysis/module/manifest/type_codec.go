@@ -5,6 +5,7 @@ import (
 
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/analysis/type/typeexpr"
 )
 
 func encodeType(t typ.Type) (*typeWire, error) {
@@ -157,19 +158,19 @@ func decodeType(w *typeWire) (typ.Type, error) {
 		if err != nil {
 			return nil, err
 		}
-		return typ.NewOptional(inner), nil
+		return typeexpr.Optional(inner), nil
 	case "union":
 		members, err := decodeTypeList(w.Members)
 		if err != nil {
 			return nil, err
 		}
-		return typ.NewUnion(members...), nil
+		return typeexpr.Union(members...), nil
 	case "intersection":
 		members, err := decodeTypeList(w.Members)
 		if err != nil {
 			return nil, err
 		}
-		return typ.NewIntersection(members...), nil
+		return typeexpr.Intersection(members...), nil
 	case "tuple":
 		elements, err := decodeTypeList(w.Elements)
 		if err != nil {

@@ -6,6 +6,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/ambient"
 	luatable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/analysis/type/typeexpr"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
 
@@ -26,19 +27,19 @@ func Type(expr ast.TypeExpr, resolver Resolver) (typ.Type, bool) {
 		if !ok {
 			return nil, false
 		}
-		return typ.NewOptional(inner), true
+		return typeexpr.Optional(inner), true
 	case *ast.UnionTypeExpr:
 		members, ok := typeList(e.Types, resolver)
 		if !ok {
 			return nil, false
 		}
-		return typ.NewUnion(members...), true
+		return typeexpr.Union(members...), true
 	case *ast.IntersectionTypeExpr:
 		members, ok := typeList(e.Types, resolver)
 		if !ok {
 			return nil, false
 		}
-		return typ.NewIntersection(members...), true
+		return typeexpr.Intersection(members...), true
 	case *ast.ArrayTypeExpr:
 		return array(e, resolver)
 	case *ast.MapTypeExpr:
