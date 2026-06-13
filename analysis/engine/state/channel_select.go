@@ -1,54 +1,28 @@
 package state
 
-import pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+import "github.com/wippyai/go-lua/analysis/engine/state/channelselectfact"
 
-type ChannelSelectID string
+type ChannelSelectID = channelselectfact.ID
 
-type ChannelSelectFactKind uint8
+type ChannelSelectFactKind = channelselectfact.Kind
 
 const (
-	ChannelSelectFactSelect ChannelSelectFactKind = iota + 1
-	ChannelSelectFactReceive
-	ChannelSelectFactCase
+	ChannelSelectFactSelect  = channelselectfact.FactSelect
+	ChannelSelectFactReceive = channelselectfact.FactReceive
+	ChannelSelectFactCase    = channelselectfact.FactCase
 )
 
-type ChannelSelectFact struct {
-	Select ChannelSelectID
-	Kind   ChannelSelectFactKind
-	Result pathdom.PathKey
-	Case   pathdom.PathKey
-	Index  int
-}
+type ChannelSelectFact = channelselectfact.Fact
 
 func (s State) AddChannelSelectFact(fact ChannelSelectFact) State {
 	if fact.Select == "" {
 		return s
 	}
-	facts := cloneChannelSelectSet(s.channelSelect)
-	if facts == nil {
-		facts = make(map[ChannelSelectFact]struct{}, 1)
-	}
-	facts[fact] = struct{}{}
 	out := s.reachable()
-	out.channelSelect = facts
+	out.channelSelect = out.channelSelect.Add(fact)
 	return out
 }
 
 func (s State) HasChannelSelectFact(fact ChannelSelectFact) bool {
-	if s.channelSelectBottom {
-		return false
-	}
-	_, ok := s.channelSelect[fact]
-	return ok
-}
-
-func cloneChannelSelectSet(in map[ChannelSelectFact]struct{}) map[ChannelSelectFact]struct{} {
-	if len(in) == 0 {
-		return nil
-	}
-	out := make(map[ChannelSelectFact]struct{}, len(in))
-	for k := range in {
-		out[k] = struct{}{}
-	}
-	return out
+	return s.channelSelect.Has(fact)
 }

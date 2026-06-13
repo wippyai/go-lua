@@ -1,10 +1,9 @@
 package state
 
 import (
-	"sort"
-
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/engine/state/channelselectfact"
 	"github.com/wippyai/go-lua/analysis/engine/state/dynamicindex"
 	effectdelta "github.com/wippyai/go-lua/analysis/engine/state/effectdelta"
 	"github.com/wippyai/go-lua/analysis/engine/state/pathevidence"
@@ -77,20 +76,18 @@ func (s State) BranchProofsSnapshot() BranchProofsSnapshot {
 type ChannelSelectFactsSnapshot struct {
 	Bottom bool
 	Top    bool
-	Facts  []ChannelSelectFact
+	Facts  []channelselectfact.Fact
 }
 
 // ChannelSelectFactsSnapshot returns finite must channel-select facts in stable
 // order. Bottom is explicit; Top means the reachable must lane contains no
 // facts.
 func (s State) ChannelSelectFactsSnapshot() ChannelSelectFactsSnapshot {
-	if s.channelSelectBottom {
-		return ChannelSelectFactsSnapshot{Bottom: true}
-	}
-	facts := channelSelectFactsFromSet(s.channelSelect)
+	snapshot := s.channelSelect.Snapshot()
 	return ChannelSelectFactsSnapshot{
-		Top:   len(facts) == 0,
-		Facts: facts,
+		Bottom: snapshot.Bottom,
+		Top:    snapshot.Top,
+		Facts:  snapshot.Facts,
 	}
 }
 
@@ -106,34 +103,4 @@ func (s State) EffectDeltasSnapshot() EffectDeltasSnapshot {
 		return EffectDeltasSnapshot{Top: true}
 	}
 	return EffectDeltasSnapshot{Deltas: effectdelta.CloneMap(s.effectDeltas)}
-}
-
-func channelSelectFactsFromSet(in map[ChannelSelectFact]struct{}) []ChannelSelectFact {
-	if len(in) == 0 {
-		return nil
-	}
-	out := make([]ChannelSelectFact, 0, len(in))
-	for fact := range in {
-		out = append(out, fact)
-	}
-	sort.Slice(out, func(i, j int) bool {
-		return channelSelectFactLess(out[i], out[j])
-	})
-	return out
-}
-
-func channelSelectFactLess(a, b ChannelSelectFact) bool {
-	if a.Select != b.Select {
-		return a.Select < b.Select
-	}
-	if a.Kind != b.Kind {
-		return a.Kind < b.Kind
-	}
-	if a.Result != b.Result {
-		return a.Result < b.Result
-	}
-	if a.Case != b.Case {
-		return a.Case < b.Case
-	}
-	return a.Index < b.Index
 }

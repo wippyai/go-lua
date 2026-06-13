@@ -8,6 +8,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/engine/state/channelselectfact"
 	"github.com/wippyai/go-lua/analysis/engine/state/dynamicindex"
 	effectdelta "github.com/wippyai/go-lua/analysis/engine/state/effectdelta"
 	"github.com/wippyai/go-lua/analysis/engine/state/escapeplacement"
@@ -22,12 +23,11 @@ type State struct {
 	values       map[key.Value]product.Value
 	pathEvidence pathevidence.Lane
 
-	dynamicIndex        map[dynamicindex.Key]dynamicindex.Fact
-	heapTableIdentity   map[identity.ID]heapidentity.TableObject
-	effectDeltas        map[effectdelta.Key]effectdelta.Value
-	channelSelect       map[ChannelSelectFact]struct{}
-	escapePlacement     map[identity.ID]escapeplacement.Value
-	channelSelectBottom bool
+	dynamicIndex      map[dynamicindex.Key]dynamicindex.Fact
+	heapTableIdentity map[identity.ID]heapidentity.TableObject
+	effectDeltas      map[effectdelta.Key]effectdelta.Value
+	channelSelect     channelselectfact.Lane
+	escapePlacement   map[identity.ID]escapeplacement.Value
 
 	valuesTop bool
 
@@ -45,9 +45,8 @@ func (s State) Clone() State {
 		dynamicIndex:         dynamicindex.CloneMap(s.dynamicIndex),
 		heapTableIdentity:    heapidentity.CloneMap(s.heapTableIdentity),
 		effectDeltas:         effectdelta.CloneMap(s.effectDeltas),
-		channelSelect:        cloneChannelSelectSet(s.channelSelect),
+		channelSelect:        s.channelSelect.Clone(),
 		escapePlacement:      escapeplacement.CloneMap(s.escapePlacement),
-		channelSelectBottom:  s.channelSelectBottom,
 		valuesTop:            s.valuesTop,
 		dynamicIndexTop:      s.dynamicIndexTop,
 		heapTableIdentityTop: s.heapTableIdentityTop,
@@ -134,14 +133,14 @@ func Domain(reg *axis.Registry) lattice.Lattice[State] {
 		dynamicIndex:      dynamicindex.MapDomain(reg),
 		heapTableIdentity: heapidentity.MapDomain(reg),
 		effectDeltas:      effectdelta.MapDomain(reg),
-		channelSelect:     mustSetDomain[ChannelSelectFact](),
+		channelSelect:     channelselectfact.Domain(),
 		escapePlacement:   escapeplacement.MapDomain(),
 	}
 	return lattice.Lattice[State]{
 		Bottom: func() State {
 			return State{
-				pathEvidence:        ops.pathEvidence.Bottom(),
-				channelSelectBottom: true,
+				pathEvidence:  ops.pathEvidence.Bottom(),
+				channelSelect: ops.channelSelect.Bottom(),
 			}
 		},
 		Top: func() State {
@@ -160,7 +159,7 @@ func Domain(reg *axis.Registry) lattice.Lattice[State] {
 				ops.dynamicIndex.Equal(ops.dynamicIndexLane(a), ops.dynamicIndexLane(b)) &&
 				ops.heapTableIdentity.Equal(ops.heapTableIdentityLane(a), ops.heapTableIdentityLane(b)) &&
 				ops.effectDeltas.Equal(ops.effectDeltaLane(a), ops.effectDeltaLane(b)) &&
-				ops.channelSelect.Equal(ops.channelSelectLane(a), ops.channelSelectLane(b)) &&
+				ops.channelSelect.Equal(a.channelSelect, b.channelSelect) &&
 				ops.escapePlacement.Equal(ops.escapePlacementLane(a), ops.escapePlacementLane(b))
 		},
 		LessOrEq: func(a, b State) bool {
@@ -169,7 +168,7 @@ func Domain(reg *axis.Registry) lattice.Lattice[State] {
 				ops.dynamicIndex.LessOrEq(ops.dynamicIndexLane(a), ops.dynamicIndexLane(b)) &&
 				ops.heapTableIdentity.LessOrEq(ops.heapTableIdentityLane(a), ops.heapTableIdentityLane(b)) &&
 				ops.effectDeltas.LessOrEq(ops.effectDeltaLane(a), ops.effectDeltaLane(b)) &&
-				ops.channelSelect.LessOrEq(ops.channelSelectLane(a), ops.channelSelectLane(b)) &&
+				ops.channelSelect.LessOrEq(a.channelSelect, b.channelSelect) &&
 				ops.escapePlacement.LessOrEq(ops.escapePlacementLane(a), ops.escapePlacementLane(b))
 		},
 		Join: func(a, b State) State {
@@ -179,7 +178,7 @@ func Domain(reg *axis.Registry) lattice.Lattice[State] {
 				ops.dynamicIndex.Join(ops.dynamicIndexLane(a), ops.dynamicIndexLane(b)),
 				ops.heapTableIdentity.Join(ops.heapTableIdentityLane(a), ops.heapTableIdentityLane(b)),
 				ops.effectDeltas.Join(ops.effectDeltaLane(a), ops.effectDeltaLane(b)),
-				ops.channelSelect.Join(ops.channelSelectLane(a), ops.channelSelectLane(b)),
+				ops.channelSelect.Join(a.channelSelect, b.channelSelect),
 				ops.escapePlacement.Join(ops.escapePlacementLane(a), ops.escapePlacementLane(b)),
 			)
 		},
@@ -190,7 +189,7 @@ func Domain(reg *axis.Registry) lattice.Lattice[State] {
 				ops.dynamicIndex.Widen(ops.dynamicIndexLane(prev), ops.dynamicIndexLane(next)),
 				ops.heapTableIdentity.Widen(ops.heapTableIdentityLane(prev), ops.heapTableIdentityLane(next)),
 				ops.effectDeltas.Widen(ops.effectDeltaLane(prev), ops.effectDeltaLane(next)),
-				ops.channelSelect.Widen(ops.channelSelectLane(prev), ops.channelSelectLane(next)),
+				ops.channelSelect.Widen(prev.channelSelect, next.channelSelect),
 				ops.escapePlacement.Widen(ops.escapePlacementLane(prev), ops.escapePlacementLane(next)),
 			)
 		},
@@ -203,7 +202,7 @@ type domainOps struct {
 	dynamicIndex      lattice.Lattice[map[dynamicindex.Key]dynamicindex.Fact]
 	heapTableIdentity lattice.Lattice[map[identity.ID]heapidentity.TableObject]
 	effectDeltas      lattice.Lattice[map[effectdelta.Key]effectdelta.Value]
-	channelSelect     lattice.Lattice[mustSetLane[ChannelSelectFact]]
+	channelSelect     lattice.Lattice[channelselectfact.Lane]
 	escapePlacement   lattice.Lattice[map[identity.ID]escapeplacement.Value]
 }
 
@@ -235,13 +234,6 @@ func (o domainOps) effectDeltaLane(s State) map[effectdelta.Key]effectdelta.Valu
 	return s.effectDeltas
 }
 
-func (o domainOps) channelSelectLane(s State) mustSetLane[ChannelSelectFact] {
-	return mustSetLane[ChannelSelectFact]{
-		bottom: s.channelSelectBottom,
-		values: s.channelSelect,
-	}
-}
-
 func (o domainOps) escapePlacementLane(s State) map[identity.ID]escapeplacement.Value {
 	if s.escapePlacementTop {
 		return o.escapePlacement.Top()
@@ -255,7 +247,7 @@ func (o domainOps) fromLanes(
 	dynamicIndex map[dynamicindex.Key]dynamicindex.Fact,
 	heapTableIdentity map[identity.ID]heapidentity.TableObject,
 	effectDeltas map[effectdelta.Key]effectdelta.Value,
-	channelSelect mustSetLane[ChannelSelectFact],
+	channelSelect channelselectfact.Lane,
 	escapePlacement map[identity.ID]escapeplacement.Value,
 ) State {
 	out := State{}
@@ -280,8 +272,7 @@ func (o domainOps) fromLanes(
 	} else {
 		out.effectDeltas = effectDeltas
 	}
-	out.channelSelect = channelSelect.values
-	out.channelSelectBottom = channelSelect.bottom
+	out.channelSelect = channelSelect
 	if o.escapePlacement.Equal(escapePlacement, o.escapePlacement.Top()) {
 		out.escapePlacementTop = true
 	} else {
@@ -292,7 +283,7 @@ func (o domainOps) fromLanes(
 
 func (s State) reachable() State {
 	s.pathEvidence = s.pathEvidence.Reachable()
-	s.channelSelectBottom = false
+	s.channelSelect = s.channelSelect.Reachable()
 	return s
 }
 

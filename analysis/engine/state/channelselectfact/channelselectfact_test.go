@@ -1,0 +1,125 @@
+package channelselectfact
+
+import (
+	"reflect"
+	"testing"
+
+	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+)
+
+func TestSnapshotsBottomTopAndReachableEmpty(t *testing.T) {
+	bottom := Bottom().Snapshot()
+	if !bottom.Bottom || bottom.Top || len(bottom.Facts) != 0 {
+		t.Fatalf("bottom snapshot = %#v, want explicit bottom", bottom)
+	}
+
+	top := Top().Snapshot()
+	if top.Bottom || !top.Top || len(top.Facts) != 0 {
+		t.Fatalf("top snapshot = %#v, want empty top", top)
+	}
+
+	reachable := Bottom().Reachable().Snapshot()
+	if reachable.Bottom || !reachable.Top || len(reachable.Facts) != 0 {
+		t.Fatalf("reachable empty snapshot = %#v, want empty top", reachable)
+	}
+}
+
+func TestMustSetJoinIntersectionAndWiden(t *testing.T) {
+	domain := Domain()
+	common := Fact{Select: "select-1", Kind: FactSelect, Result: pathdom.PathKey("sym1@1.result")}
+	leftOnly := Fact{Select: "select-1", Kind: FactReceive, Case: pathdom.PathKey("sym1@1.left"), Index: 0}
+	rightOnly := Fact{Select: "select-1", Kind: FactCase, Case: pathdom.PathKey("sym1@1.right"), Index: 1}
+
+	left := Top().Add(common).Add(leftOnly)
+	right := Top().Add(common).Add(rightOnly)
+	joined := domain.Join(left, right)
+
+	if !joined.Has(common) {
+		t.Fatalf("common fact was dropped")
+	}
+	if joined.Has(leftOnly) || joined.Has(rightOnly) {
+		t.Fatalf("left/right-only facts survived join: %#v", joined.Snapshot())
+	}
+	if widened := domain.Widen(left, right); !domain.Equal(widened, joined) {
+		t.Fatalf("widen = %#v, want join %#v", widened.Snapshot(), joined.Snapshot())
+	}
+	if !domain.Equal(domain.Join(domain.Bottom(), left), left) {
+		t.Fatalf("bottom should be join identity")
+	}
+}
+
+func TestOrderLawsWhenFactsDrop(t *testing.T) {
+	domain := Domain()
+	common := Fact{Select: "select-1", Kind: FactSelect, Result: pathdom.PathKey("sym1@1.result")}
+	leftOnly := Fact{Select: "select-1", Kind: FactReceive, Case: pathdom.PathKey("sym1@1.left"), Index: 0}
+
+	left := Top().Add(common).Add(leftOnly)
+	joined := domain.Join(left, Top().Add(common))
+
+	if !domain.LessOrEq(left, joined) {
+		t.Fatalf("left should be <= joined after dropping must facts")
+	}
+	if domain.LessOrEq(joined, left) {
+		t.Fatalf("joined should not be <= left when left has more must facts")
+	}
+}
+
+func TestCloneAddIsolation(t *testing.T) {
+	common := Fact{Select: "select-1", Kind: FactSelect, Result: pathdom.PathKey("sym1@1.result")}
+	extra := Fact{Select: "select-1", Kind: FactReceive, Case: pathdom.PathKey("sym1@1.case"), Index: 0}
+
+	original := Top().Add(common)
+	clone := original.Clone().Add(extra)
+
+	if original.Has(extra) || !clone.Has(extra) {
+		t.Fatalf("clone add mutated original or missed clone fact")
+	}
+	if !original.Has(common) || !clone.Has(common) {
+		t.Fatalf("clone did not preserve original facts")
+	}
+}
+
+func TestSnapshotStableOrdering(t *testing.T) {
+	facts := []Fact{
+		{Select: "b", Kind: FactSelect, Result: pathdom.PathKey("a"), Case: pathdom.PathKey("a"), Index: 0},
+		{Select: "a", Kind: FactCase, Result: pathdom.PathKey("a"), Case: pathdom.PathKey("a"), Index: 0},
+		{Select: "a", Kind: FactReceive, Result: pathdom.PathKey("b"), Case: pathdom.PathKey("a"), Index: 0},
+		{Select: "a", Kind: FactReceive, Result: pathdom.PathKey("a"), Case: pathdom.PathKey("b"), Index: 0},
+		{Select: "a", Kind: FactReceive, Result: pathdom.PathKey("a"), Case: pathdom.PathKey("a"), Index: 1},
+		{Select: "a", Kind: FactReceive, Result: pathdom.PathKey("a"), Case: pathdom.PathKey("a"), Index: 0},
+		{Select: "a", Kind: FactSelect, Result: pathdom.PathKey("z"), Case: pathdom.PathKey("z"), Index: 9},
+	}
+	want := []Fact{
+		{Select: "a", Kind: FactSelect, Result: pathdom.PathKey("z"), Case: pathdom.PathKey("z"), Index: 9},
+		{Select: "a", Kind: FactReceive, Result: pathdom.PathKey("a"), Case: pathdom.PathKey("a"), Index: 0},
+		{Select: "a", Kind: FactReceive, Result: pathdom.PathKey("a"), Case: pathdom.PathKey("a"), Index: 1},
+		{Select: "a", Kind: FactReceive, Result: pathdom.PathKey("a"), Case: pathdom.PathKey("b"), Index: 0},
+		{Select: "a", Kind: FactReceive, Result: pathdom.PathKey("b"), Case: pathdom.PathKey("a"), Index: 0},
+		{Select: "a", Kind: FactCase, Result: pathdom.PathKey("a"), Case: pathdom.PathKey("a"), Index: 0},
+		{Select: "b", Kind: FactSelect, Result: pathdom.PathKey("a"), Case: pathdom.PathKey("a"), Index: 0},
+	}
+
+	lane := Top()
+	for _, fact := range facts {
+		lane = lane.Add(fact)
+	}
+	if got := lane.Snapshot().Facts; !reflect.DeepEqual(got, want) {
+		t.Fatalf("snapshot facts = %#v, want %#v", got, want)
+	}
+}
+
+func TestValidationIgnoresEmptySelectAndKeepsNegativeIndex(t *testing.T) {
+	emptySelect := Fact{Select: "", Kind: FactSelect, Result: pathdom.PathKey("sym1@1.result")}
+	if got := Bottom().Add(emptySelect).Snapshot(); !got.Bottom {
+		t.Fatalf("empty select add changed bottom lane: %#v", got)
+	}
+
+	negativeIndex := Fact{Select: "select-1", Kind: FactReceive, Case: pathdom.PathKey("sym1@1.case"), Index: -1}
+	lane := Top().Add(negativeIndex)
+	if !lane.Has(negativeIndex) {
+		t.Fatalf("negative index fact should be retained")
+	}
+	if got := lane.Snapshot().Facts; len(got) != 1 || got[0] != negativeIndex {
+		t.Fatalf("negative index snapshot = %#v, want retained fact", got)
+	}
+}

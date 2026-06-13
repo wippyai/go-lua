@@ -269,7 +269,9 @@ func TestWritesFromStateBottomProduceReachableState(t *testing.T) {
 		{"escape-placement", bottom.WriteEscapePlacement(escapeID, escapeplacement.Stack)},
 	}
 	for _, tc := range cases {
-		if tc.state.pathEvidence.StaticMembersBottom() || tc.state.pathEvidence.ProofsBottom() || tc.state.channelSelectBottom {
+		if tc.state.pathEvidence.StaticMembersBottom() ||
+			tc.state.pathEvidence.ProofsBottom() ||
+			tc.state.ChannelSelectFactsSnapshot().Bottom {
 			t.Fatalf("%s write left partial must-lane bottom: %#v", tc.name, tc.state)
 		}
 		if !stateDomain.LessOrEq(bottom, tc.state) {
