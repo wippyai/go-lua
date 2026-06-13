@@ -3,9 +3,17 @@ package subst
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/type/inspect"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
+
+func requireNoInstantiated(t *testing.T, tt typ.Type) {
+	t.Helper()
+	if inspect.ContainsInstantiated(tt) {
+		t.Fatalf("type still contains instantiated node: %v", tt)
+	}
+}
 
 func TestSubstitute(t *testing.T) {
 	t.Run("empty subs", func(t *testing.T) {
@@ -292,6 +300,108 @@ func TestExpandInstantiated(t *testing.T) {
 		}
 	})
 
+	t.Run("normalizes direct optional map key parameter", func(t *testing.T) {
+		tp := typ.NewTypeParam("T", nil)
+		generic := typ.NewGeneric("Map", []*typ.TypeParam{tp}, typ.NewMap(tp, typ.Number))
+
+		expanded := ExpandInstantiated(typ.Instantiate(generic, typ.NewOptional(typ.String)))
+		result, ok := expanded.(*typ.Map)
+		if !ok {
+			t.Fatalf("expected map, got %T", expanded)
+		}
+		if !typ.TypeEquals(result.Key, typ.String) {
+			t.Fatalf("instantiated map key = %v, want string", result.Key)
+		}
+	})
+
+	t.Run("normalizes direct optional readonly map key parameter", func(t *testing.T) {
+		tp := typ.NewTypeParam("T", nil)
+		generic := typ.NewGeneric("ReadonlyMap", []*typ.TypeParam{tp}, typ.NewReadonlyMap(tp, typ.Number))
+
+		expanded := ExpandInstantiated(typ.Instantiate(generic, typ.NewOptional(typ.String)))
+		result, ok := expanded.(*typ.ReadonlyMap)
+		if !ok {
+			t.Fatalf("expected readonly map, got %T", expanded)
+		}
+		if !typ.TypeEquals(result.Key, typ.String) {
+			t.Fatalf("instantiated readonly map key = %v, want string", result.Key)
+		}
+	})
+
+	t.Run("normalizes direct optional record map key parameter", func(t *testing.T) {
+		tp := typ.NewTypeParam("T", nil)
+		generic := typ.NewGeneric("RecordMap", []*typ.TypeParam{tp}, typetable.NewRecord().
+			MapComponent(tp, typ.Number).
+			Build())
+
+		expanded := ExpandInstantiated(typ.Instantiate(generic, typ.NewOptional(typ.String)))
+		result, ok := expanded.(*typ.Record)
+		if !ok {
+			t.Fatalf("expected record, got %T", expanded)
+		}
+		if !typ.TypeEquals(result.MapKey, typ.String) {
+			t.Fatalf("instantiated record map key = %v, want string", result.MapKey)
+		}
+	})
+
+	t.Run("splits direct optional field payload parameter", func(t *testing.T) {
+		tp := typ.NewTypeParam("T", nil)
+		generic := typ.NewGeneric("OptionalField", []*typ.TypeParam{tp}, typetable.NewRecord().
+			OptField("value", tp).
+			Build())
+
+		expanded := ExpandInstantiated(typ.Instantiate(generic, typ.NewOptional(typ.String)))
+		result, ok := expanded.(*typ.Record)
+		if !ok {
+			t.Fatalf("expected record, got %T", expanded)
+		}
+		field := result.GetField("value")
+		if field == nil || !field.Optional {
+			t.Fatalf("value field = %#v, want optional field", field)
+		}
+		if !typ.TypeEquals(field.Type, typ.String) {
+			t.Fatalf("value field type = %v, want string", field.Type)
+		}
+	})
+
+	t.Run("expands and splits static member payload parameters", func(t *testing.T) {
+		tp := typ.NewTypeParam("T", nil)
+		boxParam := typ.NewTypeParam("U", nil)
+		optionalBox := typ.NewGeneric("OptionalBox", []*typ.TypeParam{boxParam}, typ.NewOptional(boxParam))
+		generic := typ.NewGeneric("StaticMembers", []*typ.TypeParam{tp}, typetable.RebuildRecord(typ.RecordParts{
+			StaticMembers: []typ.StaticMember{
+				{
+					Kind:     typ.StaticMemberStringIndex,
+					Name:     "direct",
+					Type:     tp,
+					Optional: true,
+				},
+				{
+					Kind:     typ.StaticMemberStringIndex,
+					Name:     "boxed",
+					Type:     typ.Instantiate(optionalBox, tp),
+					Optional: true,
+				},
+			},
+		}))
+
+		expanded := ExpandInstantiated(typ.Instantiate(generic, typ.NewOptional(typ.String)))
+		result, ok := expanded.(*typ.Record)
+		if !ok {
+			t.Fatalf("expected record, got %T", expanded)
+		}
+		for _, name := range []string{"direct", "boxed"} {
+			member := result.GetStaticStringIndex(name)
+			if member == nil || !member.Optional {
+				t.Fatalf("static member %q = %#v, want optional member", name, member)
+			}
+			if !typ.TypeEquals(member.Type, typ.String) {
+				t.Fatalf("static member %q type = %v, want string", name, member.Type)
+			}
+		}
+		requireNoInstantiated(t, result)
+	})
+
 	t.Run("optional", func(t *testing.T) {
 		tp := typ.NewTypeParam("T", nil)
 		generic := typ.NewGeneric("Opt", []*typ.TypeParam{tp}, typ.NewOptional(tp))
@@ -351,6 +461,39 @@ func TestExpandInstantiated(t *testing.T) {
 		}
 		if inst.Generic != node || len(inst.TypeArgs) != 1 || inst.TypeArgs[0] != typ.String {
 			t.Fatalf("param instantiation = %v, want Node<string>", inst)
+		}
+	})
+
+	t.Run("expands recursive instantiated record field", func(t *testing.T) {
+		tp := typ.NewTypeParam("T", nil)
+		node := typ.NewGeneric("Node", []*typ.TypeParam{tp}, nil)
+		node.SetBody(typetable.NewRecord().
+			Field("value", tp).
+			Field("next", typ.NewOptional(typ.Instantiate(node, tp))).
+			Build())
+		wrapper := typetable.NewRecord().
+			Field("node", typ.Instantiate(node, typ.String)).
+			Build()
+
+		result := ExpandInstantiated(wrapper)
+		resultRec, ok := result.(*typ.Record)
+		if !ok {
+			t.Fatalf("result should be record, got %T", result)
+		}
+		field := resultRec.GetField("node")
+		if field == nil {
+			t.Fatal("missing node field")
+		}
+		if _, ok := field.Type.(*typ.Instantiated); ok {
+			t.Fatalf("node field remained a lazy instantiation: %v", field.Type)
+		}
+		nodeRec, ok := field.Type.(*typ.Record)
+		if !ok {
+			t.Fatalf("node field type = %T %v, want expanded record", field.Type, field.Type)
+		}
+		value := nodeRec.GetField("value")
+		if value == nil || value.Type != typ.String {
+			t.Fatalf("value field = %v, want string field", value)
 		}
 	})
 }

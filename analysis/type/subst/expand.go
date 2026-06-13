@@ -10,7 +10,8 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
-// ExpandInstantiated expands generic instantiations to their structural form.
+// ExpandInstantiated expands generic instantiations to their Lua
+// table-normalized structural form.
 //
 // For Instantiated{Generic: Array<T>, TypeArgs: [number]}, returns the Array
 // body with T replaced by number. This enables structural comparison and
@@ -24,7 +25,7 @@ func ExpandInstantiated(t typ.Type) typ.Type {
 	memo := getExpandMemo()
 	defer putExpandMemo(memo)
 	guard := typ.GuardForDepth(typ.DefaultRecursionDepth)
-	return expandInstantiatedGuard(t, guard, memo)
+	return expandInstantiatedGuardMode(t, guard, memo, expandModeStructural)
 }
 
 // ExpandInstantiatedChanged expands generic instantiations and reports whether
@@ -39,31 +40,47 @@ func ExpandInstantiatedChanged(t typ.Type) (typ.Type, bool) {
 
 const expandMemoMaxEntries = 2048
 
+type expandMode uint8
+
+const (
+	expandModeStructural expandMode = iota
+	expandModeTablePolicy
+)
+
+type expandMemoKey struct {
+	t    typ.Type
+	mode expandMode
+}
+
 var expandMemoPool = sync.Pool{
 	New: func() any {
-		return make(map[typ.Type]typ.Type, 32)
+		return make(map[expandMemoKey]typ.Type, 32)
 	},
 }
 
-func getExpandMemo() map[typ.Type]typ.Type {
-	return expandMemoPool.Get().(map[typ.Type]typ.Type)
+func getExpandMemo() map[expandMemoKey]typ.Type {
+	return expandMemoPool.Get().(map[expandMemoKey]typ.Type)
 }
 
-func putExpandMemo(m map[typ.Type]typ.Type) {
+func putExpandMemo(m map[expandMemoKey]typ.Type) {
 	if len(m) > expandMemoMaxEntries {
-		expandMemoPool.Put(make(map[typ.Type]typ.Type, 32))
+		expandMemoPool.Put(make(map[expandMemoKey]typ.Type, 32))
 		return
 	}
 	clear(m)
 	expandMemoPool.Put(m)
 }
 
-func expandInstantiatedGuard(t typ.Type, guard recursion.Guard, memo map[typ.Type]typ.Type) typ.Type {
-	if t == nil || !inspect.ContainsInstantiated(t) {
+func expandInstantiatedGuardMode(t typ.Type, guard recursion.Guard, memo map[expandMemoKey]typ.Type, mode expandMode) typ.Type {
+	if t == nil {
+		return t
+	}
+	if mode == expandModeStructural && !inspect.ContainsInstantiated(t) {
 		return t
 	}
 
-	if cached, ok := memo[t]; ok {
+	key := expandMemoKey{t: t, mode: mode}
+	if cached, ok := memo[key]; ok {
 		return cached
 	}
 
@@ -81,9 +98,10 @@ func expandInstantiatedGuard(t typ.Type, guard recursion.Guard, memo map[typ.Typ
 		t = ann.Inner
 	}
 
-	memo[orig] = orig
-	result := expandInstantiatedCore(t, orig, next, memo)
-	memo[orig] = result
+	key = expandMemoKey{t: orig, mode: mode}
+	memo[key] = orig
+	result := expandInstantiatedCore(t, orig, next, memo, mode)
+	memo[key] = result
 	return result
 }
 
@@ -112,7 +130,7 @@ func genericBodySelfInstantiates(g *typ.Generic) bool {
 	return found
 }
 
-func expandInstantiatedCore(t typ.Type, orig typ.Type, guard recursion.Guard, memo map[typ.Type]typ.Type) typ.Type {
+func expandInstantiatedCore(t typ.Type, orig typ.Type, guard recursion.Guard, memo map[expandMemoKey]typ.Type, mode expandMode) typ.Type {
 	switch v := t.(type) {
 	case *typ.Instantiated:
 		if v.Generic == nil || len(v.TypeArgs) != len(v.Generic.TypeParams) || v.Generic.Body == nil {
@@ -120,9 +138,9 @@ func expandInstantiatedCore(t typ.Type, orig typ.Type, guard recursion.Guard, me
 		}
 		body := Params(v.Generic.Body, v.Generic.TypeParams, v.TypeArgs)
 		body = Self(body, orig)
-		return expandInstantiatedGuard(body, guard, memo)
+		return expandInstantiatedGuardMode(body, guard, memo, expandModeTablePolicy)
 	case *typ.Optional:
-		inner := expandInstantiatedGuard(v.Inner, guard, memo)
+		inner := expandInstantiatedGuardMode(v.Inner, guard, memo, mode)
 		if inner == v.Inner {
 			return orig
 		}
@@ -130,7 +148,7 @@ func expandInstantiatedCore(t typ.Type, orig typ.Type, guard recursion.Guard, me
 	case *typ.Union:
 		var members []typ.Type
 		for i, m := range v.Members {
-			newMember := expandInstantiatedGuard(m, guard, memo)
+			newMember := expandInstantiatedGuardMode(m, guard, memo, mode)
 			if newMember != m {
 				if members == nil {
 					members = make([]typ.Type, len(v.Members))
@@ -148,7 +166,7 @@ func expandInstantiatedCore(t typ.Type, orig typ.Type, guard recursion.Guard, me
 	case *typ.Intersection:
 		var members []typ.Type
 		for i, m := range v.Members {
-			newMember := expandInstantiatedGuard(m, guard, memo)
+			newMember := expandInstantiatedGuardMode(m, guard, memo, mode)
 			if newMember != m {
 				if members == nil {
 					members = make([]typ.Type, len(v.Members))
@@ -164,21 +182,27 @@ func expandInstantiatedCore(t typ.Type, orig typ.Type, guard recursion.Guard, me
 		}
 		return typ.NewIntersection(members...)
 	case *typ.Array:
-		elem := expandInstantiatedGuard(v.Element, guard, memo)
+		elem := expandInstantiatedGuardMode(v.Element, guard, memo, mode)
 		if elem == v.Element {
 			return orig
 		}
 		return typ.NewArray(elem)
 	case *typ.Map:
-		key := expandInstantiatedGuard(v.Key, guard, memo)
-		value := expandInstantiatedGuard(v.Value, guard, memo)
+		key := expandInstantiatedGuardMode(v.Key, guard, memo, mode)
+		value := expandInstantiatedGuardMode(v.Value, guard, memo, mode)
+		if mode == expandModeTablePolicy {
+			return typetable.NewMap(key, value)
+		}
 		if key == v.Key && value == v.Value {
 			return orig
 		}
 		return typetable.NewMap(key, value)
 	case *typ.ReadonlyMap:
-		key := expandInstantiatedGuard(v.Key, guard, memo)
-		value := expandInstantiatedGuard(v.Value, guard, memo)
+		key := expandInstantiatedGuardMode(v.Key, guard, memo, mode)
+		value := expandInstantiatedGuardMode(v.Value, guard, memo, mode)
+		if mode == expandModeTablePolicy {
+			return typetable.NewReadonlyMap(key, value)
+		}
 		if key == v.Key && value == v.Value {
 			return orig
 		}
@@ -186,7 +210,7 @@ func expandInstantiatedCore(t typ.Type, orig typ.Type, guard recursion.Guard, me
 	case *typ.Tuple:
 		var elems []typ.Type
 		for i, e := range v.Elements {
-			newElem := expandInstantiatedGuard(e, guard, memo)
+			newElem := expandInstantiatedGuardMode(e, guard, memo, mode)
 			if newElem != e {
 				if elems == nil {
 					elems = make([]typ.Type, len(v.Elements))
@@ -207,7 +231,7 @@ func expandInstantiatedCore(t typ.Type, orig typ.Type, guard recursion.Guard, me
 		for i, p := range v.Params {
 			newType := p.Type
 			if !isRecursiveInstantiated(p.Type) {
-				newType = expandInstantiatedGuard(p.Type, guard, memo)
+				newType = expandInstantiatedGuardMode(p.Type, guard, memo, mode)
 			}
 			if newType != p.Type {
 				if params == nil {
@@ -223,7 +247,7 @@ func expandInstantiatedCore(t typ.Type, orig typ.Type, guard recursion.Guard, me
 
 		var returns []typ.Type
 		for i, r := range v.Returns {
-			newRet := expandInstantiatedGuard(r, guard, memo)
+			newRet := expandInstantiatedGuardMode(r, guard, memo, mode)
 			if newRet != r {
 				if returns == nil {
 					returns = make([]typ.Type, len(v.Returns))
@@ -238,7 +262,7 @@ func expandInstantiatedCore(t typ.Type, orig typ.Type, guard recursion.Guard, me
 
 		variadic := v.Variadic
 		if v.Variadic != nil {
-			newVariadic := expandInstantiatedGuard(v.Variadic, guard, memo)
+			newVariadic := expandInstantiatedGuardMode(v.Variadic, guard, memo, mode)
 			if newVariadic != v.Variadic {
 				changed = true
 				variadic = newVariadic
@@ -267,7 +291,7 @@ func expandInstantiatedCore(t typ.Type, orig typ.Type, guard recursion.Guard, me
 		changed := false
 		var fields []typ.Field
 		for i, f := range v.Fields {
-			newType := expandInstantiatedGuard(f.Type, guard, memo)
+			newType := expandInstantiatedGuardMode(f.Type, guard, memo, mode)
 			if newType != f.Type {
 				if fields == nil {
 					fields = make([]typ.Field, len(v.Fields))
@@ -280,9 +304,31 @@ func expandInstantiatedCore(t typ.Type, orig typ.Type, guard recursion.Guard, me
 			}
 		}
 
+		var staticMembers []typ.StaticMember
+		for i, m := range v.StaticMembers {
+			newType := expandInstantiatedGuardMode(m.Type, guard, memo, mode)
+			if newType != m.Type {
+				if staticMembers == nil {
+					staticMembers = make([]typ.StaticMember, len(v.StaticMembers))
+					copy(staticMembers, v.StaticMembers)
+				}
+				changed = true
+				staticMembers[i] = typ.StaticMember{
+					Kind:     m.Kind,
+					Name:     m.Name,
+					Index:    m.Index,
+					Type:     newType,
+					Optional: m.Optional,
+					Readonly: m.Readonly,
+				}
+			} else if staticMembers != nil {
+				staticMembers[i] = m
+			}
+		}
+
 		metatable := v.Metatable
 		if v.Metatable != nil {
-			newMetatable := expandInstantiatedGuard(v.Metatable, guard, memo)
+			newMetatable := expandInstantiatedGuardMode(v.Metatable, guard, memo, mode)
 			if newMetatable != v.Metatable {
 				changed = true
 				metatable = newMetatable
@@ -292,17 +338,17 @@ func expandInstantiatedCore(t typ.Type, orig typ.Type, guard recursion.Guard, me
 		mapKey := v.MapKey
 		mapValue := v.MapValue
 		if v.HasMapComponent() {
-			mapKey = expandInstantiatedGuard(v.MapKey, guard, memo)
+			mapKey = expandInstantiatedGuardMode(v.MapKey, guard, memo, mode)
 			if mapKey != v.MapKey {
 				changed = true
 			}
-			mapValue = expandInstantiatedGuard(v.MapValue, guard, memo)
+			mapValue = expandInstantiatedGuardMode(v.MapValue, guard, memo, mode)
 			if mapValue != v.MapValue {
 				changed = true
 			}
 		}
 
-		if !changed {
+		if !changed && mode == expandModeStructural {
 			return orig
 		}
 
@@ -310,9 +356,13 @@ func expandInstantiatedCore(t typ.Type, orig typ.Type, guard recursion.Guard, me
 		if fields != nil {
 			fieldsSrc = fields
 		}
+		staticMembersSrc := v.StaticMembers
+		if staticMembers != nil {
+			staticMembersSrc = staticMembers
+		}
 		return typetable.RebuildRecord(typ.RecordParts{
 			Fields:        fieldsSrc,
-			StaticMembers: v.StaticMembers,
+			StaticMembers: staticMembersSrc,
 			Metatable:     metatable,
 			MapKey:        mapKey,
 			MapValue:      mapValue,
@@ -320,7 +370,7 @@ func expandInstantiatedCore(t typ.Type, orig typ.Type, guard recursion.Guard, me
 			AssumeSorted:  true,
 		})
 	case *typ.Alias:
-		target := expandInstantiatedGuard(v.Target, guard, memo)
+		target := expandInstantiatedGuardMode(v.Target, guard, memo, mode)
 		if target == v.Target {
 			return orig
 		}
@@ -330,7 +380,7 @@ func expandInstantiatedCore(t typ.Type, orig typ.Type, guard recursion.Guard, me
 		var methods []typ.Method
 		for idx := range v.Methods {
 			m := v.Methods[idx]
-			newType := expandInstantiatedGuard(m.Type, guard, memo)
+			newType := expandInstantiatedGuardMode(m.Type, guard, memo, mode)
 			fn, ok := newType.(*typ.Function)
 			if !ok {
 				fn = m.Type
