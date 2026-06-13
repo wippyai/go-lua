@@ -12,7 +12,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/symbol"
 )
 
-func (c *Checker) signatureNameForCall(bindings *bind.Result) effectlowering.SignatureNameFunc {
+func (c *checker) signatureNameForCall(bindings *bind.Result) effectlowering.SignatureNameFunc {
 	return func(_ transfer.NodeContext, call factflow.CallProducer) (string, bool) {
 		result := Result{bindings: bindings}
 		return result.stableCalleeName(call.CalleeSymbol(), call.CalleePath())

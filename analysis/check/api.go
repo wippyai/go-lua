@@ -47,7 +47,7 @@ type Config struct {
 	WidenDelay func(cfg.Point) int
 }
 
-type Checker struct {
+type checker struct {
 	config Config
 }
 
@@ -65,43 +65,43 @@ type Result struct {
 	functions   []*Result
 }
 
-func New(config Config) (*Checker, error) {
+func newChecker(config Config) (*checker, error) {
 	if config.Registry == nil {
 		return nil, ErrRegistryRequired
 	}
-	return &Checker{config: copyConfig(config)}, nil
+	return &checker{config: copyConfig(config)}, nil
 }
 
 func CheckChunk(stmts []ast.Stmt, config Config) (*Result, error) {
-	checker, err := New(config)
+	checker, err := newChecker(config)
 	if err != nil {
 		return nil, err
 	}
-	return checker.CheckChunk(stmts)
+	return checker.checkChunk(stmts)
 }
 
 // CheckBoundChunk checks a chunk using caller-supplied lexical bindings.
 func CheckBoundChunk(stmts []ast.Stmt, bindings *bind.Result, config Config) (*Result, error) {
-	checker, err := New(config)
+	checker, err := newChecker(config)
 	if err != nil {
 		return nil, err
 	}
-	return checker.CheckBoundChunk(stmts, bindings)
+	return checker.checkBoundChunkWithSummaries(stmts, bindings)
 }
 
 func CheckFunction(fn *ast.FunctionExpr, config Config) (*Result, error) {
-	checker, err := New(config)
+	checker, err := newChecker(config)
 	if err != nil {
 		return nil, err
 	}
-	return checker.CheckFunction(fn)
+	return checker.checkFunction(fn)
 }
 
 // CheckBoundFunction checks a function using caller-supplied lexical bindings.
 func CheckBoundFunction(fn *ast.FunctionExpr, bindings *bind.Result, config Config) (*Result, error) {
-	checker, err := New(config)
+	checker, err := newChecker(config)
 	if err != nil {
 		return nil, err
 	}
-	return checker.CheckBoundFunction(fn, bindings)
+	return checker.checkBoundFunction(fn, bindings)
 }

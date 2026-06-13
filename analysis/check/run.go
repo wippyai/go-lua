@@ -16,12 +16,12 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 )
 
-func (c *Checker) CheckChunk(stmts []ast.Stmt) (*Result, error) {
+func (c *checker) checkChunk(stmts []ast.Stmt) (*Result, error) {
 	bindings := bind.BindChunk(stmts, bind.Options{Globals: configGlobals(c.config)})
-	return c.CheckBoundChunk(stmts, bindings)
+	return c.checkBoundChunkWithSummaries(stmts, bindings)
 }
 
-func (c *Checker) CheckBoundChunk(stmts []ast.Stmt, bindings *bind.Result) (*Result, error) {
+func (c *checker) checkBoundChunkWithSummaries(stmts []ast.Stmt, bindings *bind.Result) (*Result, error) {
 	summaries, err := c.functionSummaries(stmts, bindings)
 	if err != nil {
 		return nil, err
@@ -30,7 +30,7 @@ func (c *Checker) CheckBoundChunk(stmts []ast.Stmt, bindings *bind.Result) (*Res
 	return checker.checkBoundChunk(stmts, bindings, summaries)
 }
 
-func (c *Checker) checkBoundChunk(stmts []ast.Stmt, bindings *bind.Result, summaries summaryApplication) (*Result, error) {
+func (c *checker) checkBoundChunk(stmts []ast.Stmt, bindings *bind.Result, summaries summaryApplication) (*Result, error) {
 	built := cfgbuild.BuildChunk(stmts, bindings)
 	if built == nil || built.Graph == nil {
 		return nil, ErrUnsupportedCFG
@@ -44,12 +44,12 @@ func (c *Checker) checkBoundChunk(stmts []ast.Stmt, bindings *bind.Result, summa
 	return result, nil
 }
 
-func (c *Checker) CheckFunction(fn *ast.FunctionExpr) (*Result, error) {
+func (c *checker) checkFunction(fn *ast.FunctionExpr) (*Result, error) {
 	bindings := bind.BindFunction(fn, bind.Options{Globals: configGlobals(c.config)})
-	return c.CheckBoundFunction(fn, bindings)
+	return c.checkBoundFunction(fn, bindings)
 }
 
-func (c *Checker) CheckBoundFunction(fn *ast.FunctionExpr, bindings *bind.Result) (*Result, error) {
+func (c *checker) checkBoundFunction(fn *ast.FunctionExpr, bindings *bind.Result) (*Result, error) {
 	var stmts []ast.Stmt
 	if fn != nil {
 		stmts = fn.Stmts
@@ -67,7 +67,7 @@ func (c *Checker) CheckBoundFunction(fn *ast.FunctionExpr, bindings *bind.Result
 	return result, nil
 }
 
-func (c *Checker) checkBoundFunctionBody(fn *ast.FunctionExpr, bindings *bind.Result) (*Result, error) {
+func (c *checker) checkBoundFunctionBody(fn *ast.FunctionExpr, bindings *bind.Result) (*Result, error) {
 	built := cfgbuild.BuildFunction(fn, bindings)
 	if built == nil || built.Graph == nil {
 		return nil, ErrUnsupportedCFG
@@ -79,7 +79,7 @@ func (c *Checker) checkBoundFunctionBody(fn *ast.FunctionExpr, bindings *bind.Re
 	return c.run(bindings, built, sem), nil
 }
 
-func (c *Checker) run(bindings *bind.Result, built *cfgbuild.Result, sem *semantics.Result) *Result {
+func (c *checker) run(bindings *bind.Result, built *cfgbuild.Result, sem *semantics.Result) *Result {
 	config := c.config
 	facts := transferfacts.Lower(sem, built.Graph, transferfacts.Config{Registry: config.Registry, Bindings: bindings})
 	if hasSignatures(config.Signatures) {
@@ -167,7 +167,7 @@ func (c *Checker) run(bindings *bind.Result, built *cfgbuild.Result, sem *semant
 	}
 }
 
-func (c *Checker) attachFunctionResults(parent *Result, bindings *bind.Result, fn *ast.FunctionExpr, summaries summaryApplication) {
+func (c *checker) attachFunctionResults(parent *Result, bindings *bind.Result, fn *ast.FunctionExpr, summaries summaryApplication) {
 	if parent == nil || bindings == nil {
 		return
 	}
@@ -181,7 +181,7 @@ func (c *Checker) attachFunctionResults(parent *Result, bindings *bind.Result, f
 	}
 }
 
-func (c *Checker) checkNestedFunction(fn *ast.FunctionExpr, bindings *bind.Result, summaries summaryApplication) (*Result, bool) {
+func (c *checker) checkNestedFunction(fn *ast.FunctionExpr, bindings *bind.Result, summaries summaryApplication) (*Result, bool) {
 	checker := c.withSummaryApplication(summaries)
 	result, err := checker.checkBoundFunctionBody(fn, bindings)
 	if err != nil {

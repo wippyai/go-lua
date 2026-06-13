@@ -33,7 +33,7 @@ type summaryTargets struct {
 	paths   map[path.PathKey]summary.SummaryKey
 }
 
-func (c *Checker) functionSummaries(stmts []ast.Stmt, bindings *bind.Result) (summaryApplication, error) {
+func (c *checker) functionSummaries(stmts []ast.Stmt, bindings *bind.Result) (summaryApplication, error) {
 	if c.config.SummaryResults != nil && c.config.SummaryKeyFor != nil {
 		return summaryApplication{summaries: c.config.SummaryResults, keyFor: c.config.SummaryKeyFor}, nil
 	}
@@ -100,7 +100,7 @@ func collectSummaryFunctions(bindings *bind.Result, stmts []ast.Stmt) ([]summary
 	return functions, targets
 }
 
-func (c *Checker) withSummaryApplication(summaries summaryApplication) *Checker {
+func (c *checker) withSummaryApplication(summaries summaryApplication) *checker {
 	if !summaries.ok() {
 		return c
 	}
@@ -108,5 +108,5 @@ func (c *Checker) withSummaryApplication(summaries summaryApplication) *Checker 
 	config.SummaryResults = summaries.summaries
 	config.SummaryKeyFor = summaries.keyFor
 	config.CallOutcome = callresult.OutcomeProvider(summaries.summaries, summaries.keyFor)
-	return &Checker{config: config}
+	return &checker{config: config}
 }

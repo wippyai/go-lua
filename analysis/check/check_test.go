@@ -31,10 +31,10 @@ import (
 	"github.com/wippyai/go-lua/compiler/parse"
 )
 
-func TestNewRequiresRegistry(t *testing.T) {
-	_, err := New(Config{})
+func TestCheckChunkRequiresRegistry(t *testing.T) {
+	_, err := CheckChunk(nil, Config{})
 	if !errors.Is(err, ErrRegistryRequired) {
-		t.Fatalf("New error = %v, want ErrRegistryRequired", err)
+		t.Fatalf("CheckChunk error = %v, want ErrRegistryRequired", err)
 	}
 }
 
