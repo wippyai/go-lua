@@ -1,0 +1,299 @@
+package effectlowering
+
+import (
+	"github.com/wippyai/go-lua/analysis/domain/effect"
+	"github.com/wippyai/go-lua/analysis/domain/effect/returns"
+	"github.com/wippyai/go-lua/analysis/domain/effect/signature"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
+	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
+	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
+	sourcevalue "github.com/wippyai/go-lua/analysis/engine/sourcevalue"
+	"github.com/wippyai/go-lua/analysis/engine/state"
+	"github.com/wippyai/go-lua/analysis/engine/transfer"
+	"github.com/wippyai/go-lua/analysis/ir/cfg"
+	"github.com/wippyai/go-lua/analysis/lua/typecall"
+	"github.com/wippyai/go-lua/analysis/lua/typeprojection"
+	"github.com/wippyai/go-lua/analysis/type/kind"
+	"github.com/wippyai/go-lua/analysis/type/typ"
+)
+
+func signatureReturnValue(
+	ctx transfer.NodeContext,
+	facts factflow.Facts,
+	sources sourcevalue.SourceValues,
+	sig signature.Function,
+	index int,
+	in state.State,
+	read func(cfg.Point) state.State,
+) (product.Value, bool) {
+	transform, ok := activeReturnTransform(sig, index)
+	if !ok {
+		return product.Value{}, false
+	}
+	switch transform := transform.(type) {
+	case returns.SameAs:
+		return sameAsReturnValue(ctx, facts, sources, transform.Source, in, read)
+	case *returns.SameAs:
+		if transform == nil {
+			return product.Value{}, false
+		}
+		return sameAsReturnValue(ctx, facts, sources, transform.Source, in, read)
+	case returns.ElementOf:
+		return elementOfReturnValue(ctx, facts, sig, transform.Source)
+	case *returns.ElementOf:
+		if transform == nil {
+			return product.Value{}, false
+		}
+		return elementOfReturnValue(ctx, facts, sig, transform.Source)
+	case returns.OptionalElementOf:
+		return optionalElementOfReturnValue(ctx, facts, sig, transform.Source)
+	case *returns.OptionalElementOf:
+		if transform == nil {
+			return product.Value{}, false
+		}
+		return optionalElementOfReturnValue(ctx, facts, sig, transform.Source)
+	case returns.CallbackReturn:
+		return callbackReturnValue(ctx, facts, sig, transform.CallbackParam, false)
+	case *returns.CallbackReturn:
+		if transform == nil {
+			return product.Value{}, false
+		}
+		return callbackReturnValue(ctx, facts, sig, transform.CallbackParam, false)
+	case returns.ArrayOfCallbackReturn:
+		return callbackReturnValue(ctx, facts, sig, transform.CallbackParam, true)
+	case *returns.ArrayOfCallbackReturn:
+		if transform == nil {
+			return product.Value{}, false
+		}
+		return callbackReturnValue(ctx, facts, sig, transform.CallbackParam, true)
+	case returns.TypeProjection:
+		return typeProjectionReturnValue(ctx, facts, sig, transform)
+	case *returns.TypeProjection:
+		if transform == nil {
+			return product.Value{}, false
+		}
+		return typeProjectionReturnValue(ctx, facts, sig, *transform)
+	default:
+		return product.Value{}, false
+	}
+}
+
+func sameAsReturnValue(
+	ctx transfer.NodeContext,
+	facts factflow.Facts,
+	sources sourcevalue.SourceValues,
+	ref effect.ParamRef,
+	in state.State,
+	read func(cfg.Point) state.State,
+) (product.Value, bool) {
+	if sources == nil {
+		return product.Value{}, false
+	}
+	site, ok := facts.CallSite(ctx.Point)
+	if !ok {
+		return product.Value{}, false
+	}
+	args := site.ArgumentSources()
+	argIndex, ok := effect.ResolveParamIndex(ref, len(args))
+	if !ok {
+		return product.Value{}, false
+	}
+	return sourcevalue.WithExpressionRefinements(ctx.Registry, sources, facts.ExpressionRefinements()).ValueOfSource(ctx.Point, args[argIndex], in, read)
+}
+
+func elementOfReturnValue(
+	ctx transfer.NodeContext,
+	facts factflow.Facts,
+	sig signature.Function,
+	ref effect.ParamRef,
+) (product.Value, bool) {
+	site, ok := facts.CallSite(ctx.Point)
+	if !ok {
+		return product.Value{}, false
+	}
+	args := site.ArgumentSources()
+	argIndex, ok := effect.ResolveParamIndex(ref, len(args))
+	if !ok || sig.Type == nil || argIndex < 0 || argIndex >= len(sig.Type.Params) {
+		return product.Value{}, false
+	}
+	elem, ok := elementTypeOf(sig.Type.Params[argIndex].Type)
+	if !ok {
+		return product.Value{}, false
+	}
+	return returnValueFromType(ctx.Registry, elem), true
+}
+
+func optionalElementOfReturnValue(
+	ctx transfer.NodeContext,
+	facts factflow.Facts,
+	sig signature.Function,
+	ref effect.ParamRef,
+) (product.Value, bool) {
+	value, ok := elementOfReturnValue(ctx, facts, sig, ref)
+	if !ok {
+		return product.Value{}, false
+	}
+	return product.WithPresence(ctx.Registry, value, presence.Maybe()), true
+}
+
+func callbackReturnValue(
+	ctx transfer.NodeContext,
+	facts factflow.Facts,
+	sig signature.Function,
+	ref effect.ParamRef,
+	array bool,
+) (product.Value, bool) {
+	site, ok := facts.CallSite(ctx.Point)
+	if !ok {
+		return product.Value{}, false
+	}
+	args := site.ArgumentSources()
+	argIndex, ok := effect.ResolveParamIndex(ref, len(args))
+	if !ok || sig.Type == nil || argIndex < 0 || argIndex >= len(sig.Type.Params) {
+		return product.Value{}, false
+	}
+	ret, ok := typecall.CallableReturn(sig.Type.Params[argIndex].Type)
+	if !ok {
+		return product.Value{}, false
+	}
+	if array {
+		ret = typ.NewArray(ret)
+	}
+	return returnValueFromType(ctx.Registry, ret), true
+}
+
+func typeProjectionReturnValue(
+	ctx transfer.NodeContext,
+	facts factflow.Facts,
+	sig signature.Function,
+	transform returns.TypeProjection,
+) (product.Value, bool) {
+	site, ok := facts.CallSite(ctx.Point)
+	if !ok {
+		return product.Value{}, false
+	}
+	args := site.ArgumentSources()
+	argIndex, ok := effect.ResolveParamIndex(transform.Source, len(args))
+	if !ok || sig.Type == nil || argIndex < 0 || argIndex >= len(sig.Type.Params) {
+		return product.Value{}, false
+	}
+	projected, ok := typeprojection.Apply(sig.Type.Params[argIndex].Type, transform.Projection)
+	if !ok {
+		return product.Value{}, false
+	}
+	return returnValueFromType(ctx.Registry, projected), true
+}
+
+func returnValueFromType(reg *axis.Registry, t typ.Type) product.Value {
+	return typevalue.WithWitness(reg, typevalue.FromType(reg, t), t)
+}
+
+func activeReturnTransform(sig signature.Function, index int) (returns.ReturnType, bool) {
+	for _, label := range sig.Effect.Labels {
+		ret, ok := effect.NormalizeLabel(label).(returns.Return)
+		if !ok || ret.ReturnIndex != index {
+			continue
+		}
+		switch transform := ret.Transform.(type) {
+		case returns.SameAs, returns.ElementOf, returns.OptionalElementOf, returns.CallbackReturn, returns.ArrayOfCallbackReturn, returns.TypeProjection:
+			return ret.Transform, true
+		case *returns.SameAs:
+			if transform != nil {
+				return transform, true
+			}
+		case *returns.ElementOf:
+			if transform != nil {
+				return transform, true
+			}
+		case *returns.OptionalElementOf:
+			if transform != nil {
+				return transform, true
+			}
+		case *returns.CallbackReturn:
+			if transform != nil {
+				return transform, true
+			}
+		case *returns.ArrayOfCallbackReturn:
+			if transform != nil {
+				return transform, true
+			}
+		case *returns.TypeProjection:
+			if transform != nil {
+				return transform, true
+			}
+		}
+	}
+	return nil, false
+}
+
+func elementTypeOf(t typ.Type) (typ.Type, bool) {
+	return elementTypeOfDepth(t, 0)
+}
+
+func elementTypeOfDepth(t typ.Type, depth int) (typ.Type, bool) {
+	if depth > typ.DefaultRecursionDepth {
+		return nil, false
+	}
+	t = typ.NormalizeNilType(t)
+	if t == nil {
+		return nil, false
+	}
+	switch tt := t.(type) {
+	case *typ.Annotated:
+		return elementTypeOfDepth(tt.Inner, depth+1)
+	case *typ.Alias:
+		return elementTypeOfDepth(tt.UnaliasedTarget(), depth+1)
+	case *typ.Optional:
+		return elementTypeOfDepth(tt.Inner, depth+1)
+	case *typ.Array:
+		if typ.NormalizeNilType(tt.Element) == nil {
+			return nil, false
+		}
+		return tt.Element, true
+	case *typ.Map:
+		if typ.NormalizeNilType(tt.Value) == nil {
+			return nil, false
+		}
+		return tt.Value, true
+	case *typ.ReadonlyMap:
+		if typ.NormalizeNilType(tt.Value) == nil {
+			return nil, false
+		}
+		return tt.Value, true
+	case *typ.Tuple:
+		if len(tt.Elements) == 0 {
+			return nil, false
+		}
+		if len(tt.Elements) == 1 {
+			if typ.NormalizeNilType(tt.Elements[0]) == nil {
+				return nil, false
+			}
+			return tt.Elements[0], true
+		}
+		return typ.NewUnion(tt.Elements...), true
+	case *typ.Union:
+		members := make([]typ.Type, 0, len(tt.Members))
+		for _, member := range tt.Members {
+			member = typ.NormalizeNilType(member)
+			if member == nil {
+				continue
+			}
+			if member.Kind() == kind.Nil {
+				continue
+			}
+			elem, ok := elementTypeOfDepth(member, depth+1)
+			if !ok {
+				return nil, false
+			}
+			members = append(members, elem)
+		}
+		if len(members) == 0 {
+			return nil, false
+		}
+		return typ.NewUnion(members...), true
+	default:
+		return nil, false
+	}
+}
