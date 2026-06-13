@@ -555,6 +555,64 @@ func TestExtractChunkFunctionDefinitionWithNilBindingsHasNoTargetSymbol(t *testi
 	}
 }
 
+func TestExtractChunkMemberFunctionDefinitionFactAtNoopHasNoTargetSymbol(t *testing.T) {
+	tests := []struct {
+		name string
+		stmt *ast.FuncDefStmt
+	}{
+		{
+			name: "dotted",
+			stmt: &ast.FuncDefStmt{
+				Name: &ast.FuncName{Func: dot(ident("module"), "f")},
+				Func: function(nil),
+			},
+		},
+		{
+			name: "method",
+			stmt: &ast.FuncDefStmt{
+				Name: &ast.FuncName{Receiver: ident("module"), Method: "f"},
+				Func: function(nil),
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			moduleDecl := localAssign([]string{"module"}, &ast.TableExpr{})
+			stmts := []ast.Stmt{moduleDecl, tt.stmt, &ast.ReturnStmt{Exprs: []ast.Expr{ident("module")}}}
+			bindings := bind.BindChunk(stmts, bind.Options{})
+			built := cfgbuild.BuildChunk(stmts, bindings)
+			if built == nil || built.Graph == nil {
+				t.Fatalf("BuildChunk returned nil")
+			}
+
+			points := requireStmtPoints(t, built, tt.stmt, 1)
+			node := built.Graph.Node(points[0])
+			if node == nil || node.Kind != cfg.NodeNoop {
+				t.Fatalf("member function point kind = %#v, want noop", node)
+			}
+
+			result, err := ExtractChunk(stmts, bindings, built)
+			if err != nil {
+				t.Fatalf("ExtractChunk: %v", err)
+			}
+			fact, ok := result.FunctionDefinition(points[0])
+			if !ok {
+				t.Fatalf("missing function definition fact")
+			}
+			if fact.Stmt != tt.stmt || fact.Name != tt.stmt.Name || fact.Func != tt.stmt.Func {
+				t.Fatalf("function definition fact = %#v", fact)
+			}
+			if fact.TargetSymbol != 0 || fact.HasTargetSymbol {
+				t.Fatalf("member function target = %d/%v, want 0/false", fact.TargetSymbol, fact.HasTargetSymbol)
+			}
+			if _, ok := result.OrdinaryAssignment(points[0]); ok {
+				t.Fatalf("member function definition point produced ordinary assignment fact")
+			}
+		})
+	}
+}
+
 func TestExtractChunkLabelFactPreservesIdentity(t *testing.T) {
 	label := &ast.LabelStmt{Name: "again"}
 	stmts := []ast.Stmt{label}

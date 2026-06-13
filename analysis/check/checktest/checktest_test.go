@@ -55,6 +55,73 @@ func TestCheckAndExportPublishesRootObjectLiteralExport(t *testing.T) {
 	}
 }
 
+func TestCheckAndExportPublishesReturnedTableDottedFunctionMember(t *testing.T) {
+	mod := CheckAndExport(`
+		local provider = {}
+		function provider.meta(): { name: string }
+			return { name = "model" }
+		end
+		return provider
+	`, "provider")
+	if len(mod.Errors) != 0 {
+		t.Fatalf("module errors = %#v, want none", mod.Errors)
+	}
+
+	fn := requireFunctionField(t, requireExportRecord(t, mod), "meta")
+	if len(fn.Returns) != 1 {
+		t.Fatalf("meta returns = %d, want 1", len(fn.Returns))
+	}
+	ret, ok := fn.Returns[0].(*typ.Record)
+	if !ok {
+		t.Fatalf("meta return = %T %[1]v, want record", fn.Returns[0])
+	}
+	field := ret.GetField("name")
+	if field == nil {
+		t.Fatalf("meta return fields = %#v, want name", ret.Fields)
+	}
+	if !typ.TypeEquals(field.Type, typ.String) {
+		t.Fatalf("name field type = %v, want string", field.Type)
+	}
+}
+
+func TestCheckAndExportPublishesReturnedTableFunctionMemberParams(t *testing.T) {
+	mod := CheckAndExport(`
+		local client = {}
+		function client.invoke(model_id: string, payload: any, options: any)
+		end
+		return client
+	`, "client")
+	if len(mod.Errors) != 0 {
+		t.Fatalf("module errors = %#v, want none", mod.Errors)
+	}
+
+	fn := requireFunctionField(t, requireExportRecord(t, mod), "invoke")
+	if len(fn.Params) != 3 {
+		t.Fatalf("invoke params = %#v, want 3 params", fn.Params)
+	}
+	if fn.Params[0].Name != "model_id" || !typ.TypeEquals(fn.Params[0].Type, typ.String) {
+		t.Fatalf("first invoke param = %#v, want model_id: string", fn.Params[0])
+	}
+}
+
+func TestCheckAndExportPublishesReturnedTableMethodFunctionMember(t *testing.T) {
+	mod := CheckAndExport(`
+		local client = {}
+		function client:invoke(model_id: string): string
+			return model_id
+		end
+		return client
+	`, "client")
+	if len(mod.Errors) != 0 {
+		t.Fatalf("module errors = %#v, want none", mod.Errors)
+	}
+
+	fn := requireFunctionField(t, requireExportRecord(t, mod), "invoke")
+	if len(fn.Returns) != 1 || !typ.TypeEquals(fn.Returns[0], typ.String) {
+		t.Fatalf("invoke returns = %#v, want string", fn.Returns)
+	}
+}
+
 func TestCheckAndExportPublishesLocalTypeDefinitions(t *testing.T) {
 	mod := CheckAndExport(`
 		type User = { name: string }
@@ -244,4 +311,29 @@ func providerManifest(path string) *manifest.Manifest {
 		Field("meta", typ.Func().Returns(typ.String).Build()).
 		Build())
 	return m
+}
+
+func requireExportRecord(t *testing.T, mod *ModuleResult) *typ.Record {
+	t.Helper()
+	if mod == nil || mod.Manifest == nil {
+		t.Fatal("CheckAndExport did not return module manifest")
+	}
+	rec, ok := mod.Manifest.Export.(*typ.Record)
+	if !ok {
+		t.Fatalf("export = %T %[1]v, want record", mod.Manifest.Export)
+	}
+	return rec
+}
+
+func requireFunctionField(t *testing.T, rec *typ.Record, name string) *typ.Function {
+	t.Helper()
+	field := rec.GetField(name)
+	if field == nil {
+		t.Fatalf("export fields = %#v, want %s field", rec.Fields, name)
+	}
+	fn, ok := field.Type.(*typ.Function)
+	if !ok {
+		t.Fatalf("%s field type = %T %[1]v, want function", name, field.Type)
+	}
+	return fn
 }

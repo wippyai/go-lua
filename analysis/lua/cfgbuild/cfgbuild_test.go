@@ -22,6 +22,14 @@ func stringLit(value string) *ast.StringExpr {
 	return &ast.StringExpr{Value: value}
 }
 
+func dot(obj ast.Expr, name string) *ast.AttrGetExpr {
+	return &ast.AttrGetExpr{
+		Object:    obj,
+		Key:       stringLit(name),
+		KeySyntax: ast.AttrKeyDot,
+	}
+}
+
 func typeCall(arg ast.Expr) *ast.FuncCallExpr {
 	return &ast.FuncCallExpr{Func: ident("type"), Args: []ast.Expr{arg}}
 }
@@ -1814,19 +1822,15 @@ func TestBuildChunkBreakInsideRepeatReachesJoinPath(t *testing.T) {
 	requireEdge(t, graph, join, afterAssign, false)
 }
 
-func TestBuildChunkUnsupportedFunctionDefinitionTargetsReturnNil(t *testing.T) {
+func TestBuildChunkMemberFunctionDefinitionCreatesMetadataNoop(t *testing.T) {
 	tests := []struct {
 		name string
-		stmt ast.Stmt
+		stmt *ast.FuncDefStmt
 	}{
 		{
 			name: "dotted function definition",
 			stmt: &ast.FuncDefStmt{
-				Name: &ast.FuncName{Func: &ast.AttrGetExpr{
-					Object:    ident("module"),
-					Key:       &ast.StringExpr{Value: "f"},
-					KeySyntax: ast.AttrKeyDot,
-				}},
+				Name: &ast.FuncName{Func: dot(ident("module"), "f")},
 				Func: function(nil),
 			},
 		},
@@ -1841,12 +1845,46 @@ func TestBuildChunkUnsupportedFunctionDefinitionTargetsReturnNil(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			stmts := []ast.Stmt{tt.stmt}
+			moduleDecl := localAssign([]string{"module"}, &ast.TableExpr{})
+			bodyStmt := localAssign([]string{"inside"}, number("1"))
+			tt.stmt.Func.Stmts = []ast.Stmt{bodyStmt}
+			stmts := []ast.Stmt{moduleDecl, tt.stmt, &ast.ReturnStmt{Exprs: []ast.Expr{ident("module")}}}
 			bindings := bind.BindChunk(stmts, bind.Options{})
-			if result := BuildChunk(stmts, bindings); result != nil {
-				t.Fatalf("BuildChunk returned graph for unsupported %s", tt.name)
+			result := BuildChunk(stmts, bindings)
+			if result == nil || result.Graph == nil {
+				t.Fatalf("BuildChunk returned nil for %s", tt.name)
+			}
+			points := requireStmtPoints(t, result, tt.stmt, 1)
+			requirePointKind(t, result.Graph, points[0], cfg.NodeNoop)
+			if fact, ok := result.Meta.Assignment(points[0]); ok {
+				t.Fatalf("member function definition produced assignment fact %#v", fact)
+			}
+			requireTargetCount(t, result.Graph, result.Meta, mustLocalAt(t, bindings, moduleDecl, 0), 1)
+			requireTargetCount(t, result.Graph, result.Meta, mustLocalAt(t, bindings, bodyStmt, 0), 0)
+			if got := result.StmtPoints.PointsFor(bodyStmt); len(got) != 0 {
+				t.Fatalf("nested member function body statement mapped to parent CFG points %v", got)
 			}
 		})
+	}
+}
+
+func TestBuildChunkUnsupportedFunctionDefinitionTargetsReturnNil(t *testing.T) {
+	stmt := &ast.FuncDefStmt{
+		Name: &ast.FuncName{Func: &ast.AttrGetExpr{
+			Object:    ident("module"),
+			Key:       typeCall(ident("name")),
+			KeySyntax: ast.AttrKeyIndex,
+		}},
+		Func: function(nil),
+	}
+	stmts := []ast.Stmt{
+		localAssign([]string{"module"}, &ast.TableExpr{}),
+		stmt,
+		&ast.ReturnStmt{Exprs: []ast.Expr{ident("module")}},
+	}
+	bindings := bind.BindChunk(stmts, bind.Options{})
+	if result := BuildChunk(stmts, bindings); result != nil {
+		t.Fatalf("BuildChunk returned graph for unsupported dynamic function definition target")
 	}
 }
 

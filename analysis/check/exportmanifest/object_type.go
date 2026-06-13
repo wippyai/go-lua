@@ -90,15 +90,12 @@ func addFunctionDefinitionMembers(
 		if !ok || fact.Name == nil || fact.Func == nil {
 			continue
 		}
-		target, ok := result.ExpressionPath(fact.Name.Func)
-		if !ok {
-			continue
-		}
 		if fact.Name.Method != "" {
-			if !target.Equal(root) {
+			receiver, ok := result.ExpressionPath(fact.Name.Receiver)
+			if !ok || !receiver.Equal(root) {
 				continue
 			}
-			if t, ok := functionExpressionType(result, fact.Func); ok {
+			if t, ok := functionDefinitionMemberType(result, fact.Func); ok {
 				addObjectEntryType(fields, staticStrings, staticInts, segment.Segment{
 					Kind: segment.SegmentField,
 					Name: fact.Name.Method,
@@ -106,14 +103,31 @@ func addFunctionDefinitionMembers(
 			}
 			continue
 		}
+		target, ok := result.ExpressionPath(fact.Name.Func)
+		if !ok {
+			continue
+		}
 		member, ok := directMemberSegment(root.Segments, target.Segments)
 		if !ok || target.Symbol != root.Symbol {
 			continue
 		}
-		if t, ok := functionExpressionType(result, fact.Func); ok {
+		if t, ok := functionDefinitionMemberType(result, fact.Func); ok {
 			addObjectEntryType(fields, staticStrings, staticInts, member, t)
 		}
 	}
+}
+
+func functionDefinitionMemberType(result *body.Result, fn *ast.FunctionExpr) (typ.Type, bool) {
+	t, ok := functionExpressionType(result, fn)
+	if !ok {
+		return nil, false
+	}
+	// Cross-module member publication is intentionally single-return until
+	// imported tuple facts can preserve sibling correlations.
+	if f, ok := t.(*typ.Function); ok && len(f.Returns) > 1 {
+		return nil, false
+	}
+	return t, true
 }
 
 func directMemberSegment(prefix, target []segment.Segment) (segment.Segment, bool) {
