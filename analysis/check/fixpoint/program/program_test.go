@@ -3,7 +3,7 @@ package program
 import (
 	"testing"
 
-	"github.com/wippyai/go-lua/analysis/check"
+	"github.com/wippyai/go-lua/analysis/check/body"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/ref"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/summary"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
@@ -38,7 +38,7 @@ return f()
 	}
 
 	result, err := RunBoundChunk(stmts, bindings, Config{
-		Check: check.Config{
+		Check: body.Config{
 			Registry:        reg,
 			ExpressionValue: fixedExpressionValue(want),
 		},
@@ -75,7 +75,7 @@ end
 	requireAgain := mustBoundLocalAt(t, bindings, secondLocal, 0)
 
 	result, err := RunBoundChunk(stmts, bindings, Config{
-		Check: check.Config{Registry: reg},
+		Check: body.Config{Registry: reg},
 	})
 	if err != nil {
 		t.Fatalf("RunBoundChunk: %v", err)
@@ -103,7 +103,7 @@ func TestRunChunkUsesExactConfiguredRootKey(t *testing.T) {
 	}
 
 	result, err := RunChunk(stmts, Config{
-		Check: check.Config{
+		Check: body.Config{
 			Registry:        reg,
 			ExpressionValue: fixedExpressionValue(want),
 		},

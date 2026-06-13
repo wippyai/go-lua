@@ -1,4 +1,4 @@
-package check
+package body
 
 import (
 	"github.com/wippyai/go-lua/analysis/domain/effect/signature"
@@ -163,6 +163,17 @@ func (r *Result) FunctionResults() []*Result {
 		return nil
 	}
 	return append([]*Result(nil), r.functions...)
+}
+
+// WithFunctionResults returns result after replacing its materialized nested
+// function results. Program-level fixed-point materialization owns population;
+// body analysis itself runs exactly one body.
+func WithFunctionResults(result *Result, functions []*Result) *Result {
+	if result == nil {
+		return nil
+	}
+	result.functions = append([]*Result(nil), functions...)
+	return result
 }
 
 func (r *Result) SymbolName(id symbol.ID) string {

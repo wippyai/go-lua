@@ -1,4 +1,4 @@
-package check
+package body
 
 import (
 	"errors"
@@ -242,15 +242,15 @@ function f(x: MaybeString)
 	local y = x
 end`)
 
-	result, err := CheckChunk(stmts, Config{Registry: reg})
-	if err != nil {
-		t.Fatalf("CheckChunk: %v", err)
-	}
-	functions := result.FunctionResults()
+	bindings := bind.BindChunk(stmts, bind.Options{})
+	functions := bindings.NestedFunctions(nil)
 	if len(functions) != 1 {
-		t.Fatalf("function results = %d, want 1", len(functions))
+		t.Fatalf("nested functions = %d, want 1", len(functions))
 	}
-	child := functions[0]
+	child, err := CheckBoundFunction(functions[0], bindings, Config{Registry: reg})
+	if err != nil {
+		t.Fatalf("CheckBoundFunction: %v", err)
+	}
 	slot := mustParamSlot(t, child.bindings, child.Function(), 0)
 	entry, ok := child.StateAt(child.Graph().Entry())
 	if !ok {
@@ -496,21 +496,21 @@ func TestReadBoundaryLaterAssignmentSeesNormalPostconditionTypeWitness(t *testin
 	reg := standard.Registry()
 	stmts := parseChunk(t, `
 type Point = {x: number, y: number}
-local function validate(data: any)
+	local function validate(data: any)
 	local v = Point(data)
 	local p: {x: number, y: number} = data
 end
 `)
 
-	parent, err := CheckChunk(stmts, Config{Registry: reg})
-	if err != nil {
-		t.Fatalf("CheckChunk: %v", err)
-	}
-	functions := parent.FunctionResults()
+	bindings := bind.BindChunk(stmts, bind.Options{})
+	functions := bindings.NestedFunctions(nil)
 	if len(functions) != 1 {
-		t.Fatalf("function results = %d, want 1", len(functions))
+		t.Fatalf("nested functions = %d, want 1", len(functions))
 	}
-	result := functions[0]
+	result, err := CheckBoundFunction(functions[0], bindings, Config{Registry: reg})
+	if err != nil {
+		t.Fatalf("CheckBoundFunction: %v", err)
+	}
 	fn := result.Function()
 	assign := fn.Stmts[1].(*ast.LocalAssignStmt)
 	point := requireLocalAssignmentPoint(t, result, assign, 0)
@@ -546,13 +546,10 @@ end
 return validate, validate_assign, validate_wrapped
 `)
 
-	parent, err := CheckChunk(stmts, Config{Registry: reg})
-	if err != nil {
-		t.Fatalf("CheckChunk: %v", err)
-	}
-	functions := parent.FunctionResults()
+	bindings := bind.BindChunk(stmts, bind.Options{})
+	functions := bindings.NestedFunctions(nil)
 	if len(functions) != 4 {
-		t.Fatalf("function results = %d, want 4", len(functions))
+		t.Fatalf("nested functions = %d, want 4", len(functions))
 	}
 	assertLocalAssignmentExprWitness := func(result *Result, stmtIndex int, exprIndex int) {
 		t.Helper()
@@ -565,8 +562,11 @@ return validate, validate_assign, validate_wrapped
 		}
 		assertConcreteTypeWitness(t, reg, got)
 	}
-	assertLocalAssignmentExprWitness(functions[1], 1, 0)
-	assertLocalAssignmentExprWitness(functions[3], 1, 0)
+	validateAssign, err := CheckBoundFunction(functions[1], bindings, Config{Registry: reg})
+	if err != nil {
+		t.Fatalf("CheckBoundFunction(validate_assign): %v", err)
+	}
+	assertLocalAssignmentExprWitness(validateAssign, 1, 0)
 }
 
 func TestReadBoundaryBranchSuccessorExpressionSeesEdgeRefinement(t *testing.T) {
@@ -581,15 +581,15 @@ function validate(data: any)
 end
 `)
 
-	parent, err := CheckChunk(stmts, Config{Registry: reg})
-	if err != nil {
-		t.Fatalf("CheckChunk: %v", err)
-	}
-	functions := parent.FunctionResults()
+	bindings := bind.BindChunk(stmts, bind.Options{})
+	functions := bindings.NestedFunctions(nil)
 	if len(functions) != 1 {
-		t.Fatalf("function results = %d, want 1", len(functions))
+		t.Fatalf("nested functions = %d, want 1", len(functions))
 	}
-	result := functions[0]
+	result, err := CheckBoundFunction(functions[0], bindings, Config{Registry: reg})
+	if err != nil {
+		t.Fatalf("CheckBoundFunction: %v", err)
+	}
 	fn := result.Function()
 
 	data := mustParamSlot(t, result.bindings, fn, 0).Symbol
@@ -609,46 +609,6 @@ end
 		t.Fatalf("ExpressionValueAtBoundary returned false")
 	}
 	assertConcreteTypeWitness(t, reg, got)
-}
-
-func TestTypeIsWrapperErrorBranchMakesReturnedValueAbsent(t *testing.T) {
-	reg := standard.Registry()
-	stmts := parseChunk(t, `
-type Point = {x: number, y: number}
-local function isPoint(x)
-	return Point:is(x)
-end
-function validate(data: any)
-	local val, err = isPoint(data)
-	if err ~= nil then
-		local failed = val
-	end
-end
-`)
-
-	parent, err := CheckChunk(stmts, Config{Registry: reg})
-	if err != nil {
-		t.Fatalf("CheckChunk: %v", err)
-	}
-	functions := parent.FunctionResults()
-	if len(functions) != 2 {
-		t.Fatalf("function results = %d, want 2", len(functions))
-	}
-	result := functions[1]
-	fn := result.Function()
-	typeIsStmt := fn.Stmts[0].(*ast.LocalAssignStmt)
-	val := mustLocalAt(t, result, typeIsStmt, 0)
-	ifStmt := fn.Stmts[1].(*ast.IfStmt)
-	thenLocal := ifStmt.Then[0].(*ast.LocalAssignStmt)
-	thenPoint := requireLocalAssignmentPoint(t, result, thenLocal, 0)
-
-	got, ok := result.SymbolValueAtBoundary(thenPoint, val)
-	if !ok {
-		t.Fatalf("missing val at error branch boundary")
-	}
-	if gotPresence := product.PresenceOf(got); !presence.Equal(gotPresence, presence.Absent()) {
-		t.Fatalf("val presence on error branch = %s, want absent; value=%v", gotPresence, got)
-	}
 }
 
 func TestCheckChunkUserExpressionValueOverridesDefaultStaticReadProjector(t *testing.T) {

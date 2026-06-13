@@ -1,4 +1,4 @@
-package check
+package body
 
 import (
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"

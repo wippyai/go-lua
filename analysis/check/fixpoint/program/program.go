@@ -5,7 +5,7 @@ import (
 	"maps"
 	"slices"
 
-	"github.com/wippyai/go-lua/analysis/check"
+	"github.com/wippyai/go-lua/analysis/check/body"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/callresult"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/functiontarget"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/query"
@@ -19,7 +19,7 @@ import (
 
 // Config configures fixed-point analysis for one Lua program.
 type Config struct {
-	Check check.Config
+	Check body.Config
 
 	RootKey summary.SummaryKey
 	Seed    summary.Reader
@@ -35,12 +35,13 @@ type Result struct {
 	functionKeys map[symbol.ID]summary.SummaryKey
 	targetKeys   map[symbol.ID]summary.SummaryKey
 	pathKeys     map[path.PathKey]summary.SummaryKey
+	rootResult   *body.Result
 }
 
 // RunChunk binds stmts once and runs fixed-point summary equations over the
 // chunk plus all discovered function expressions.
 func RunChunk(stmts []ast.Stmt, config Config) (Result, error) {
-	bindings := bind.BindChunk(stmts, bind.Options{Globals: config.Check.Globals})
+	bindings := bind.BindChunk(stmts, bind.Options{Globals: body.Globals(config.Check)})
 	return RunBoundChunk(stmts, bindings, config)
 }
 
@@ -66,12 +67,65 @@ func RunBoundChunk(stmts []ast.Stmt, bindings *bind.Result, config Config) (Resu
 	if err != nil {
 		return Result{}, err
 	}
+	root, err := materializeChunk(stmts, bindings, config.Check, snapshot, keyFor, keys)
+	if err != nil {
+		return Result{}, err
+	}
 	return Result{
 		snapshot:     snapshot,
 		rootKey:      keys.rootKey,
 		functionKeys: maps.Clone(keys.functionKeys),
 		targetKeys:   maps.Clone(keys.targetKeys),
 		pathKeys:     maps.Clone(keys.pathKeys),
+		rootResult:   root,
+	}, nil
+}
+
+// RunFunction binds fn once and runs fixed-point summary equations over that
+// function plus all discovered nested function expressions.
+func RunFunction(fn *ast.FunctionExpr, config Config) (Result, error) {
+	bindings := bind.BindFunction(fn, bind.Options{Globals: body.Globals(config.Check)})
+	return RunBoundFunction(fn, bindings, config)
+}
+
+// RunBoundFunction runs fixed-point summary equations over fn using
+// caller-owned lexical bindings.
+func RunBoundFunction(fn *ast.FunctionExpr, bindings *bind.Result, config Config) (Result, error) {
+	stmts := functionStmts(fn)
+	keys := collectKeys(bindings, rootKey(config.RootKey), stmts)
+	keyFor := keyFunc(keys)
+	functions := make([]query.Function, 0, 1+len(keys.functions))
+	functions = append(functions, boundFunction(keys.rootKey, fn, bindings, config.Check, keyFor))
+	seen := map[summary.SummaryKey]struct{}{keys.rootKey: {}}
+	for _, origin := range keys.functions {
+		if _, ok := seen[origin.key]; ok {
+			continue
+		}
+		seen[origin.key] = struct{}{}
+		functions = append(functions, boundFunction(origin.key, origin.funcExpr, bindings, config.Check, keyFor))
+	}
+
+	snapshot, err := query.Run(query.Config{
+		Registry:   config.Check.Registry,
+		Functions:  functions,
+		Seed:       config.Seed,
+		WidenAt:    config.WidenAt,
+		WidenDelay: config.WidenDelay,
+	})
+	if err != nil {
+		return Result{}, err
+	}
+	root, err := materializeFunction(fn, bindings, config.Check, snapshot, keyFor, keys)
+	if err != nil {
+		return Result{}, err
+	}
+	return Result{
+		snapshot:     snapshot,
+		rootKey:      keys.rootKey,
+		functionKeys: maps.Clone(keys.functionKeys),
+		targetKeys:   maps.Clone(keys.targetKeys),
+		pathKeys:     maps.Clone(keys.pathKeys),
+		rootResult:   root,
 	}, nil
 }
 
@@ -80,6 +134,10 @@ func (r Result) Snapshot() summary.Snapshot { return r.snapshot }
 
 // RootKey returns the summary key used for the chunk root.
 func (r Result) RootKey() summary.SummaryKey { return r.rootKey }
+
+// RootResult returns the root body result materialized from the converged
+// summary snapshot.
+func (r Result) RootResult() *body.Result { return r.rootResult }
 
 // FunctionKey returns the summary key for a function identity symbol.
 func (r Result) FunctionKey(id symbol.ID) (summary.SummaryKey, bool) {
@@ -147,13 +205,13 @@ func rootKey(configured summary.SummaryKey) summary.SummaryKey {
 	return summary.DefaultSummaryKey(ref.Root())
 }
 
-func chunkFunction(key summary.SummaryKey, stmts []ast.Stmt, bindings *bind.Result, config check.Config, keyFor callresult.KeyFunc) query.Function {
+func chunkFunction(key summary.SummaryKey, stmts []ast.Stmt, bindings *bind.Result, config body.Config, keyFor callresult.KeyFunc) query.Function {
 	captured := cloneCheckConfig(config)
 	return query.Function{
 		Key: key,
 		Body: func(ctx query.Context) (summary.Summary, error) {
 			config := checkConfigWithSummaries(captured, ctx.Summaries, keyFor)
-			result, err := check.CheckBoundChunk(stmts, bindings, config)
+			result, err := body.CheckBoundChunk(stmts, bindings, config)
 			if err != nil {
 				return summary.Summary{}, err
 			}
@@ -162,13 +220,13 @@ func chunkFunction(key summary.SummaryKey, stmts []ast.Stmt, bindings *bind.Resu
 	}
 }
 
-func boundFunction(key summary.SummaryKey, fn *ast.FunctionExpr, bindings *bind.Result, config check.Config, keyFor callresult.KeyFunc) query.Function {
+func boundFunction(key summary.SummaryKey, fn *ast.FunctionExpr, bindings *bind.Result, config body.Config, keyFor callresult.KeyFunc) query.Function {
 	captured := cloneCheckConfig(config)
 	return query.Function{
 		Key: key,
 		Body: func(ctx query.Context) (summary.Summary, error) {
 			config := checkConfigWithSummaries(captured, ctx.Summaries, keyFor)
-			result, err := check.CheckBoundFunction(fn, bindings, config)
+			result, err := body.CheckBoundFunction(fn, bindings, config)
 			if err != nil {
 				return summary.Summary{}, err
 			}
@@ -181,16 +239,102 @@ func keyFunc(keys programKeys) callresult.KeyFunc {
 	return callresult.ByCalleeIdentity(keys.targetKeys, keys.pathKeys)
 }
 
-func checkConfigWithSummaries(config check.Config, summaries summary.Reader, keyFor callresult.KeyFunc) check.Config {
+func checkConfigWithSummaries(config body.Config, summaries summary.Reader, keyFor callresult.KeyFunc) body.Config {
 	out := cloneCheckConfig(config)
-	out.CallOutcome = callresult.OutcomeProvider(summaries, keyFor)
-	out.SummaryResults = summaries
-	out.SummaryKeyFor = keyFor
+	out.CallOutcome = callresult.WithSupplementalResults(
+		callresult.OutcomeProvider(summaries, keyFor),
+		out.CallOutcome,
+	)
 	return out
 }
 
-func cloneCheckConfig(config check.Config) check.Config {
+func cloneCheckConfig(config body.Config) body.Config {
 	config.Globals = slices.Clone(config.Globals)
 	config.ExpressionValues = maps.Clone(config.ExpressionValues)
 	return config
+}
+
+func materializeChunk(
+	stmts []ast.Stmt,
+	bindings *bind.Result,
+	config body.Config,
+	summaries summary.Reader,
+	keyFor callresult.KeyFunc,
+	keys programKeys,
+) (*body.Result, error) {
+	config = checkConfigWithSummaries(config, summaries, keyFor)
+	root, err := body.CheckBoundChunk(stmts, bindings, config)
+	if err != nil {
+		return nil, err
+	}
+	return materializeFunctionTree(root, nil, bindings, config, keys)
+}
+
+func materializeFunction(
+	fn *ast.FunctionExpr,
+	bindings *bind.Result,
+	config body.Config,
+	summaries summary.Reader,
+	keyFor callresult.KeyFunc,
+	keys programKeys,
+) (*body.Result, error) {
+	config = checkConfigWithSummaries(config, summaries, keyFor)
+	root, err := body.CheckBoundFunction(fn, bindings, config)
+	if err != nil {
+		return nil, err
+	}
+	return materializeFunctionTree(root, fn, bindings, config, keys)
+}
+
+func materializeFunctionTree(
+	root *body.Result,
+	fn *ast.FunctionExpr,
+	bindings *bind.Result,
+	config body.Config,
+	keys programKeys,
+) (*body.Result, error) {
+	if root == nil || bindings == nil {
+		return root, nil
+	}
+	results := make(map[*ast.FunctionExpr]*body.Result, len(keys.functions))
+	for _, origin := range keys.functions {
+		if origin.funcExpr == nil {
+			continue
+		}
+		if origin.funcExpr == fn {
+			results[origin.funcExpr] = root
+			continue
+		}
+		result, err := body.CheckBoundFunction(origin.funcExpr, bindings, config)
+		if err != nil {
+			return nil, err
+		}
+		results[origin.funcExpr] = result
+	}
+	var attach func(parent *body.Result, owner *ast.FunctionExpr)
+	attach = func(parent *body.Result, owner *ast.FunctionExpr) {
+		if parent == nil {
+			return
+		}
+		nested := bindings.NestedFunctions(owner)
+		children := make([]*body.Result, 0, len(nested))
+		for _, childFn := range nested {
+			child := results[childFn]
+			if child == nil {
+				continue
+			}
+			attach(child, childFn)
+			children = append(children, child)
+		}
+		body.WithFunctionResults(parent, children)
+	}
+	attach(root, fn)
+	return root, nil
+}
+
+func functionStmts(fn *ast.FunctionExpr) []ast.Stmt {
+	if fn == nil {
+		return nil
+	}
+	return fn.Stmts
 }

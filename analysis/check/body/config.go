@@ -1,4 +1,4 @@
-package check
+package body
 
 import (
 	"strings"
@@ -55,6 +55,11 @@ func configGlobals(config Config) []string {
 		}
 	}
 	return globals
+}
+
+// Globals returns the lexical globals implied by a body configuration.
+func Globals(config Config) []string {
+	return configGlobals(config)
 }
 
 func hasSignatures(source signaturelookup.Source) bool {

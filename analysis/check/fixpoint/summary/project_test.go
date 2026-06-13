@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/wippyai/go-lua/analysis/check"
+	"github.com/wippyai/go-lua/analysis/check/body"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/summary"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
@@ -27,7 +27,7 @@ func TestFromResultProjectsReturnSlotsFromExitState(t *testing.T) {
 	first := projectValue(reg, axisKey, projectMarkA)
 	stmts := projectParseChunk(t, "return 1, nil")
 
-	result := projectCheckChunk(t, stmts, check.Config{
+	result := projectCheckChunk(t, stmts, body.Config{
 		Registry: reg,
 		ExpressionValue: func(_ cfg.Point, _ factflow.ExprRef, source factflow.ValueSource, _ state.State) (product.Value, bool) {
 			switch source.TargetIndex {
@@ -51,7 +51,7 @@ func TestFromResultProjectsReturnSlotsFromExitState(t *testing.T) {
 
 func TestFromResultNoExplicitReturnProjectsEmptySummary(t *testing.T) {
 	reg, _ := projectTestRegistry(t)
-	result := projectCheckChunk(t, projectParseChunk(t, "local x = 1"), check.Config{Registry: reg})
+	result := projectCheckChunk(t, projectParseChunk(t, "local x = 1"), body.Config{Registry: reg})
 
 	if got := summary.FromResult(result); len(got.Returns) != 0 {
 		t.Fatalf("FromResult returned %#v, want empty summary", got)
@@ -60,7 +60,7 @@ func TestFromResultNoExplicitReturnProjectsEmptySummary(t *testing.T) {
 
 func TestFromResultUnresolvedReturnExpressionNormalizesBottomSlot(t *testing.T) {
 	reg, _ := projectTestRegistry(t)
-	result := projectCheckChunk(t, projectParseChunk(t, "return unknown"), check.Config{Registry: reg})
+	result := projectCheckChunk(t, projectParseChunk(t, "return unknown"), body.Config{Registry: reg})
 
 	if got := summary.FromResult(result); len(got.Returns) != 0 {
 		t.Fatalf("FromResult returned %#v, want empty summary", got)
@@ -76,7 +76,7 @@ func TestFromResultReadsJoinedExitReturnSlot(t *testing.T) {
 	byExpr := make(map[factflow.ExprRef]product.Value)
 	stmts := projectParseChunk(t, "if c then return 1 else return 2 end")
 
-	result := projectCheckChunk(t, stmts, check.Config{
+	result := projectCheckChunk(t, stmts, body.Config{
 		Registry: reg,
 		Globals:  []string{"c"},
 		ExpressionValue: func(_ cfg.Point, expr factflow.ExprRef, source factflow.ValueSource, _ state.State) (product.Value, bool) {
@@ -113,7 +113,7 @@ function f(): number | string
 	return 1
 end`)
 
-	result := projectCheckFunction(t, fn, check.Config{
+	result := projectCheckFunction(t, fn, body.Config{
 		Registry: reg,
 		ExpressionValue: func(_ cfg.Point, _ factflow.ExprRef, source factflow.ValueSource, _ state.State) (product.Value, bool) {
 			if source.TargetIndex != 0 {
@@ -141,7 +141,7 @@ function f(): {kind: "a", value: number} | {kind: "b", value: string}
 	return {kind = "a", value = 1}
 end`)
 
-	result := projectCheckFunction(t, fn, check.Config{
+	result := projectCheckFunction(t, fn, body.Config{
 		Registry: reg,
 		ExpressionValue: func(_ cfg.Point, _ factflow.ExprRef, source factflow.ValueSource, _ state.State) (product.Value, bool) {
 			if source.TargetIndex != 0 {
@@ -169,7 +169,7 @@ func TestFromResultIgnoresDeadReturnFacts(t *testing.T) {
 	var seen int
 	stmts := projectParseChunk(t, "do return 1 end\nreturn 2")
 
-	result := projectCheckChunk(t, stmts, check.Config{
+	result := projectCheckChunk(t, stmts, body.Config{
 		Registry: reg,
 		ExpressionValue: func(_ cfg.Point, _ factflow.ExprRef, source factflow.ValueSource, _ state.State) (product.Value, bool) {
 			if source.TargetIndex != 0 || seen >= len(values) {
@@ -199,7 +199,7 @@ func TestFromResultProjectsStrictNormalReturnParamConstraint(t *testing.T) {
 	result := projectCheckFunction(t, projectParseFunction(t, `
 function f(x: string?)
 	assert(x)
-end`), check.Config{Registry: reg})
+end`), body.Config{Registry: reg})
 
 	got := summary.FromResult(result)
 
@@ -221,7 +221,7 @@ function f(x: string?)
 	if x == nil then
 		error("missing")
 	end
-end`), check.Config{
+end`), body.Config{
 		Registry: reg,
 		Signatures: signaturelookup.Source{
 			IncludeStdlib: true,
@@ -246,7 +246,7 @@ func TestFromResultDoesNotProjectUnchangedParamEntryAssumption(t *testing.T) {
 	result := projectCheckFunction(t, projectParseFunction(t, `
 function f(x: string?)
 	local y = x
-end`), check.Config{Registry: reg})
+end`), body.Config{Registry: reg})
 
 	got := summary.FromResult(result)
 	if len(got.NormalReturnParams) != 1 {
@@ -264,7 +264,7 @@ function f(x: string?, c: boolean)
 	if c then
 		assert(x)
 	end
-end`), check.Config{Registry: reg})
+end`), body.Config{Registry: reg})
 
 	got := summary.FromResult(result)
 	if len(got.NormalReturnParams) != 2 {
@@ -283,7 +283,7 @@ func TestFromResultDoesNotProjectReassignedParamAssert(t *testing.T) {
 function f(x: string?)
 	x = "fallback"
 	assert(x)
-end`), check.Config{Registry: reg})
+end`), body.Config{Registry: reg})
 
 	got := summary.FromResult(result)
 	if len(got.NormalReturnParams) != 1 {
@@ -299,7 +299,7 @@ func TestFromResultProjectsReturnTruthyParamRefinement(t *testing.T) {
 	result := projectCheckFunction(t, projectParseFunction(t, `
 function f(value: any)
 	return type(value) == "number" and value > 0
-end`), check.Config{
+end`), body.Config{
 		Registry: reg,
 		Globals:  []string{"type"},
 	})
@@ -326,7 +326,7 @@ function process(x: number): (number?, string?)
 		return nil, "negative"
 	end
 	return x * 2, nil
-end`), check.Config{Registry: reg})
+end`), body.Config{Registry: reg})
 
 	got := summary.FromResult(result)
 
@@ -351,7 +351,7 @@ function fetch(ok: boolean): (number?, string?)
 		return nil, "failed"
 	end
 	return 1
-end`), check.Config{Registry: reg})
+end`), body.Config{Registry: reg})
 
 	got := summary.FromResult(result)
 
@@ -370,7 +370,7 @@ func TestFromResultUsesDeclaredArityForOpenTailReturn(t *testing.T) {
 	result := projectCheckFunction(t, projectParseFunction(t, `
 function fetch(ok: boolean): (number?, string?)
 	return open_db(ok)
-end`), check.Config{Registry: reg})
+end`), body.Config{Registry: reg})
 
 	got := summary.FromResult(result)
 
@@ -390,7 +390,7 @@ function fetch(ok: boolean): (number?, string?)
 		return 1, nil
 	end
 	return nil, "failed"
-end`), check.Config{Registry: reg})
+end`), body.Config{Registry: reg})
 
 	got := summary.FromResult(result)
 
@@ -475,18 +475,18 @@ func projectValue(reg *axis.Registry, axisKey axis.Key[projectMark], mark projec
 	return product.Set(reg, product.NewWithPresence(reg, product.ShapeTop, presence.Present()), axisKey, mark)
 }
 
-func projectCheckChunk(t *testing.T, stmts []ast.Stmt, config check.Config) *check.Result {
+func projectCheckChunk(t *testing.T, stmts []ast.Stmt, config body.Config) *body.Result {
 	t.Helper()
-	result, err := check.CheckChunk(stmts, config)
+	result, err := body.CheckChunk(stmts, config)
 	if err != nil {
 		t.Fatalf("CheckChunk: %v", err)
 	}
 	return result
 }
 
-func projectCheckFunction(t *testing.T, fn *ast.FunctionExpr, config check.Config) *check.Result {
+func projectCheckFunction(t *testing.T, fn *ast.FunctionExpr, config body.Config) *body.Result {
 	t.Helper()
-	result, err := check.CheckFunction(fn, config)
+	result, err := body.CheckFunction(fn, config)
 	if err != nil {
 		t.Fatalf("CheckFunction: %v", err)
 	}

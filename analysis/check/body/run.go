@@ -1,4 +1,4 @@
-package check
+package body
 
 import (
 	"fmt"
@@ -18,19 +18,10 @@ import (
 
 func (c *checker) checkChunk(stmts []ast.Stmt) (*Result, error) {
 	bindings := bind.BindChunk(stmts, bind.Options{Globals: configGlobals(c.config)})
-	return c.checkBoundChunkWithSummaries(stmts, bindings)
+	return c.checkBoundChunk(stmts, bindings)
 }
 
-func (c *checker) checkBoundChunkWithSummaries(stmts []ast.Stmt, bindings *bind.Result) (*Result, error) {
-	summaries, err := c.functionSummaries(stmts, bindings)
-	if err != nil {
-		return nil, err
-	}
-	checker := c.withSummaryApplication(summaries)
-	return checker.checkBoundChunk(stmts, bindings, summaries)
-}
-
-func (c *checker) checkBoundChunk(stmts []ast.Stmt, bindings *bind.Result, summaries summaryApplication) (*Result, error) {
+func (c *checker) checkBoundChunk(stmts []ast.Stmt, bindings *bind.Result) (*Result, error) {
 	built := cfgbuild.BuildChunk(stmts, bindings)
 	if built == nil || built.Graph == nil {
 		return nil, ErrUnsupportedCFG
@@ -39,9 +30,7 @@ func (c *checker) checkBoundChunk(stmts []ast.Stmt, bindings *bind.Result, summa
 	if err != nil {
 		return nil, fmt.Errorf("check: extract chunk semantics: %w", err)
 	}
-	result := c.run(bindings, built, sem)
-	c.attachFunctionResults(result, bindings, nil, summaries)
-	return result, nil
+	return c.run(bindings, built, sem), nil
 }
 
 func (c *checker) checkFunction(fn *ast.FunctionExpr) (*Result, error) {
@@ -50,24 +39,6 @@ func (c *checker) checkFunction(fn *ast.FunctionExpr) (*Result, error) {
 }
 
 func (c *checker) checkBoundFunction(fn *ast.FunctionExpr, bindings *bind.Result) (*Result, error) {
-	var stmts []ast.Stmt
-	if fn != nil {
-		stmts = fn.Stmts
-	}
-	summaries, err := c.functionSummaries(stmts, bindings)
-	if err != nil {
-		return nil, err
-	}
-	checker := c.withSummaryApplication(summaries)
-	result, err := checker.checkBoundFunctionBody(fn, bindings)
-	if err != nil {
-		return nil, err
-	}
-	checker.attachFunctionResults(result, bindings, fn, summaries)
-	return result, nil
-}
-
-func (c *checker) checkBoundFunctionBody(fn *ast.FunctionExpr, bindings *bind.Result) (*Result, error) {
 	built := cfgbuild.BuildFunction(fn, bindings)
 	if built == nil || built.Graph == nil {
 		return nil, ErrUnsupportedCFG
@@ -115,9 +86,6 @@ func (c *checker) run(bindings *bind.Result, built *cfgbuild.Result, sem *semant
 		VarargValue:      config.VarargValue,
 	})
 	callOutcome := config.CallOutcome
-	if callOutcome == nil && config.SummaryResults != nil && config.SummaryKeyFor != nil {
-		callOutcome = callresult.OutcomeProvider(config.SummaryResults, config.SummaryKeyFor)
-	}
 	if hasSignatures(config.Signatures) {
 		callOutcome = callresult.WithSupplementalResults(callOutcome, effectlowering.SignatureOutcomeProvider(effectlowering.SignatureOutcomeProviderConfig{
 			Signatures: config.Signatures,
@@ -165,27 +133,4 @@ func (c *checker) run(bindings *bind.Result, built *cfgbuild.Result, sem *semant
 		sources:     sources,
 		callOutcome: callOutcome,
 	}
-}
-
-func (c *checker) attachFunctionResults(parent *Result, bindings *bind.Result, fn *ast.FunctionExpr, summaries summaryApplication) {
-	if parent == nil || bindings == nil {
-		return
-	}
-	for _, nested := range bindings.NestedFunctions(fn) {
-		child, ok := c.checkNestedFunction(nested, bindings, summaries)
-		if !ok {
-			continue
-		}
-		c.attachFunctionResults(child, bindings, nested, summaries)
-		parent.functions = append(parent.functions, child)
-	}
-}
-
-func (c *checker) checkNestedFunction(fn *ast.FunctionExpr, bindings *bind.Result, summaries summaryApplication) (*Result, bool) {
-	checker := c.withSummaryApplication(summaries)
-	result, err := checker.checkBoundFunctionBody(fn, bindings)
-	if err != nil {
-		return nil, false
-	}
-	return result, true
 }

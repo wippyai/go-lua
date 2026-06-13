@@ -13,6 +13,7 @@ const modulePath = "github.com/wippyai/go-lua"
 
 type listedPackage struct {
 	ImportPath string
+	Imports    []string
 }
 
 func TestLowerLayerImportBoundaries(t *testing.T) {
@@ -56,14 +57,60 @@ func TestLowerLayerImportBoundaries(t *testing.T) {
 				modulePath + "/analysis/check/fixpoint",
 			},
 		},
+		{
+			name:     "check body stays below program fixpoint owners",
+			patterns: []string{modulePath + "/analysis/check/body"},
+			banned: []string{
+				modulePath + "/analysis/check/fixpoint/program",
+				modulePath + "/analysis/check/fixpoint/query",
+				modulePath + "/analysis/check/fixpoint/functiontarget",
+			},
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			for _, dep := range productionDeps(t, tt.patterns...) {
 				for _, banned := range tt.banned {
-					if dep == banned || strings.HasPrefix(dep, banned+"/") {
+					if forbiddenImport(dep, banned, false) {
 						t.Fatalf("%s imports forbidden dependency %q", strings.Join(tt.patterns, " "), dep)
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestCheckSplitDirectImportBoundaries(t *testing.T) {
+	tests := []struct {
+		name    string
+		pkg     string
+		banned  []string
+		exactly bool
+	}{
+		{
+			name: "program does not import public check facade",
+			pkg:  modulePath + "/analysis/check/fixpoint/program",
+			banned: []string{
+				modulePath + "/analysis/check",
+			},
+			exactly: true,
+		},
+		{
+			name: "public check facade does not import query solver directly",
+			pkg:  modulePath + "/analysis/check",
+			banned: []string{
+				modulePath + "/analysis/check/fixpoint/query",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			for _, imp := range productionImports(t, tt.pkg) {
+				for _, banned := range tt.banned {
+					if forbiddenImport(imp, banned, tt.exactly) {
+						t.Fatalf("%s imports forbidden dependency %q", tt.pkg, imp)
 					}
 				}
 			}
@@ -95,4 +142,28 @@ func productionDeps(t *testing.T, patterns ...string) []string {
 		deps = append(deps, pkg.ImportPath)
 	}
 	return deps
+}
+
+func productionImports(t *testing.T, pattern string) []string {
+	t.Helper()
+
+	args := []string{"list", "-json", pattern}
+	cmd := exec.Command("go", args...)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("go %s failed: %v\n%s", strings.Join(args, " "), err, out)
+	}
+
+	var pkg listedPackage
+	if err := json.Unmarshal(out, &pkg); err != nil {
+		t.Fatalf("decode go list output: %v", err)
+	}
+	return pkg.Imports
+}
+
+func forbiddenImport(dep, banned string, exactly bool) bool {
+	if exactly {
+		return dep == banned
+	}
+	return dep == banned || strings.HasPrefix(dep, banned+"/")
 }

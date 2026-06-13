@@ -1,4 +1,4 @@
-package check
+package body
 
 import (
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
