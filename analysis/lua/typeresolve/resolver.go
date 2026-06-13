@@ -1,4 +1,5 @@
-package transferfacts
+// Package typeresolve resolves Lua lexical type references into typ.Type values.
+package typeresolve
 
 import (
 	"github.com/wippyai/go-lua/analysis/lua/bind"
@@ -7,16 +8,25 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 )
 
-type typeResolver struct {
-	bindings *bind.Result
+// Bindings is the lexical type-binding surface required by Resolver.
+type Bindings interface {
+	TypeRef(*ast.TypeRefExpr) (bind.TypeDecl, bool)
+	PrimitiveTypeRef(*ast.PrimitiveTypeExpr) (bind.TypeDecl, bool)
+	TypeDefParams(*ast.TypeDefStmt) []bind.TypeDecl
+}
+
+// Resolver resolves AST type expressions through lexical type bindings.
+type Resolver struct {
+	bindings Bindings
 	cache    map[bind.TypeDeclID]typ.Type
 	params   map[bind.TypeDeclID]*typ.TypeParam
 	active   map[bind.TypeDeclID]bool
 	current  []ast.TypeExpr
 }
 
-func newTypeResolver(bindings *bind.Result) *typeResolver {
-	return &typeResolver{
+// New creates a lexical type resolver over bindings.
+func New(bindings Bindings) *Resolver {
+	return &Resolver{
 		bindings: bindings,
 		cache:    make(map[bind.TypeDeclID]typ.Type),
 		params:   make(map[bind.TypeDeclID]*typ.TypeParam),
@@ -24,7 +34,8 @@ func newTypeResolver(bindings *bind.Result) *typeResolver {
 	}
 }
 
-func (r *typeResolver) Type(expr ast.TypeExpr) (typ.Type, bool) {
+// Type lowers an AST type expression to a typ.Type.
+func (r *Resolver) Type(expr ast.TypeExpr) (typ.Type, bool) {
 	if r == nil {
 		return typeannotation.Type(expr, nil)
 	}
@@ -34,14 +45,17 @@ func (r *typeResolver) Type(expr ast.TypeExpr) (typ.Type, bool) {
 	return t, ok
 }
 
-func (r *typeResolver) Decl(decl bind.TypeDecl) (typ.Type, bool) {
+// Decl resolves a bound type declaration.
+func (r *Resolver) Decl(decl bind.TypeDecl) (typ.Type, bool) {
 	if r == nil {
 		return nil, false
 	}
 	return r.resolveDecl(decl)
 }
 
-func (r *typeResolver) ResolveTypeRef(path []string) (typ.Type, bool) {
+// ResolveTypeRef resolves a typeannotation reference through the current
+// expression's lexical bindings.
+func (r *Resolver) ResolveTypeRef(path []string) (typ.Type, bool) {
 	if len(path) != 1 {
 		return nil, false
 	}
@@ -52,7 +66,14 @@ func (r *typeResolver) ResolveTypeRef(path []string) (typ.Type, bool) {
 	return r.resolveDecl(decl)
 }
 
-func (r *typeResolver) resolveDecl(decl bind.TypeDecl) (typ.Type, bool) {
+func (r *Resolver) currentBinding(name string) (bind.TypeDecl, bool) {
+	if r == nil || r.bindings == nil || name == "" || len(r.current) == 0 {
+		return bind.TypeDecl{}, false
+	}
+	return BindingInExpr(r.bindings, r.current[len(r.current)-1], name)
+}
+
+func (r *Resolver) resolveDecl(decl bind.TypeDecl) (typ.Type, bool) {
 	if decl.ID == 0 {
 		return nil, false
 	}
@@ -71,7 +92,7 @@ func (r *typeResolver) resolveDecl(decl bind.TypeDecl) (typ.Type, bool) {
 	return nil, false
 }
 
-func (r *typeResolver) resolveAlias(decl bind.TypeDecl, stmt *ast.TypeDefStmt) (typ.Type, bool) {
+func (r *Resolver) resolveAlias(decl bind.TypeDecl, stmt *ast.TypeDefStmt) (typ.Type, bool) {
 	if stmt == nil {
 		return nil, false
 	}
@@ -84,17 +105,22 @@ func (r *typeResolver) resolveAlias(decl bind.TypeDecl, stmt *ast.TypeDefStmt) (
 	r.active[decl.ID] = true
 	var t typ.Type
 	var ok bool
-	if params := r.bindings.TypeDefParams(stmt); len(params) > 0 {
+	var params []bind.TypeDecl
+	if r.bindings != nil {
+		params = r.bindings.TypeDefParams(stmt)
+	}
+	if len(params) > 0 {
 		typeParams := make([]*typ.TypeParam, 0, len(params))
 		for _, param := range params {
-			tp, ok := r.resolveTypeParam(param)
-			if !ok {
+			tp, paramOK := r.resolveTypeParam(param)
+			if !paramOK {
 				delete(r.active, decl.ID)
 				return nil, false
 			}
 			typeParams = append(typeParams, tp)
 		}
-		body, ok := r.Type(stmt.Type)
+		var body typ.Type
+		body, ok = r.Type(stmt.Type)
 		if ok {
 			t = typ.NewGeneric(decl.Name, typeParams, body)
 		}
@@ -109,7 +135,7 @@ func (r *typeResolver) resolveAlias(decl bind.TypeDecl, stmt *ast.TypeDefStmt) (
 	return t, true
 }
 
-func (r *typeResolver) resolveTypeParam(decl bind.TypeDecl) (*typ.TypeParam, bool) {
+func (r *Resolver) resolveTypeParam(decl bind.TypeDecl) (*typ.TypeParam, bool) {
 	if decl.ID == 0 {
 		return nil, false
 	}

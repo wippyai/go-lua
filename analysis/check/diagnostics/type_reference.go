@@ -7,6 +7,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/check"
 	"github.com/wippyai/go-lua/analysis/diagnostic"
 	"github.com/wippyai/go-lua/analysis/lua/cfgfacts"
+	"github.com/wippyai/go-lua/analysis/lua/typeresolve"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
 
@@ -101,7 +102,7 @@ func unresolvedTypeRefs(
 		return nil
 	}
 	var out []diagnostic.Diagnostic
-	walkTypeNameExpr(expr, func(ref *ast.TypeRefExpr) bool {
+	typeresolve.WalkTypeNameExpr(expr, func(ref *ast.TypeRefExpr) bool {
 		if ref == nil {
 			return true
 		}
@@ -115,7 +116,7 @@ func unresolvedTypeRefs(
 		out = append(out, unresolvedTypeDiagnostic(ref, typeRefName(ref)))
 		return true
 	}, func(prim *ast.PrimitiveTypeExpr) bool {
-		if prim == nil || isBuiltinPrimitiveTypeName(prim.Name) {
+		if prim == nil || typeresolve.BuiltinPrimitiveName(prim.Name) {
 			return true
 		}
 		if _, ok := seenPrimitives[prim]; ok {

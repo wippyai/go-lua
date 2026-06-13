@@ -5,6 +5,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/lua/cfgfacts"
 	"github.com/wippyai/go-lua/analysis/lua/typeannotation"
+	"github.com/wippyai/go-lua/analysis/lua/typeresolve"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
@@ -127,7 +128,7 @@ func (r *resultResolver) PrimitiveTypeResolved(expr *ast.PrimitiveTypeExpr) bool
 	if r == nil || expr == nil {
 		return false
 	}
-	if isBuiltinPrimitiveTypeName(expr.Name) {
+	if typeresolve.BuiltinPrimitiveName(expr.Name) {
 		return true
 	}
 	if r.result != nil {
@@ -178,7 +179,7 @@ func (r *resultResolver) currentBinding(name string) (bind.TypeDecl, bool) {
 	if r == nil || r.result == nil || name == "" || len(r.current) == 0 {
 		return bind.TypeDecl{}, false
 	}
-	return typeBindingInExpr(r.result, r.current[len(r.current)-1], name)
+	return typeresolve.BindingInExpr(r.result, r.current[len(r.current)-1], name)
 }
 
 func (r *resultResolver) namedBinding(name string) (bind.TypeDecl, bool) {
@@ -322,120 +323,4 @@ func resolveFallback(path []string, resolvers ...typeannotation.Resolver) (typ.T
 		}
 	}
 	return nil, false
-}
-
-func typeBindingInExpr(result *check.Result, expr ast.TypeExpr, name string) (bind.TypeDecl, bool) {
-	if result == nil || expr == nil || name == "" {
-		return bind.TypeDecl{}, false
-	}
-	var found bind.TypeDecl
-	var ok bool
-	walkTypeNameExpr(expr, func(ref *ast.TypeRefExpr) bool {
-		if ref == nil || len(ref.Path) != 1 || ref.Path[0] != name {
-			return true
-		}
-		decl, hasDecl := result.TypeRef(ref)
-		if !hasDecl {
-			return true
-		}
-		found, ok = decl, true
-		return false
-	}, func(prim *ast.PrimitiveTypeExpr) bool {
-		if prim == nil || prim.Name != name || isBuiltinPrimitiveTypeName(prim.Name) {
-			return true
-		}
-		decl, hasDecl := result.PrimitiveTypeRef(prim)
-		if !hasDecl {
-			return true
-		}
-		found, ok = decl, true
-		return false
-	})
-	return found, ok
-}
-
-func walkTypeExpr(expr ast.TypeExpr, visit func(*ast.TypeRefExpr) bool) bool {
-	return walkTypeNameExpr(expr, visit, func(*ast.PrimitiveTypeExpr) bool { return true })
-}
-
-func walkTypeNameExpr(expr ast.TypeExpr, visitRef func(*ast.TypeRefExpr) bool, visitPrimitive func(*ast.PrimitiveTypeExpr) bool) bool {
-	switch expr := expr.(type) {
-	case nil:
-	case *ast.PrimitiveTypeExpr:
-		return visitPrimitive(expr)
-	case *ast.SelfTypeExpr, *ast.LiteralTypeExpr, *ast.TypeOfExpr:
-	case *ast.OptionalTypeExpr:
-		return walkTypeNameExpr(expr.Inner, visitRef, visitPrimitive)
-	case *ast.UnionTypeExpr:
-		return walkTypeNameExprs(expr.Types, visitRef, visitPrimitive)
-	case *ast.IntersectionTypeExpr:
-		return walkTypeNameExprs(expr.Types, visitRef, visitPrimitive)
-	case *ast.ArrayTypeExpr:
-		return walkTypeNameExpr(expr.Element, visitRef, visitPrimitive)
-	case *ast.MapTypeExpr:
-		return walkTypeNameExpr(expr.Key, visitRef, visitPrimitive) && walkTypeNameExpr(expr.Value, visitRef, visitPrimitive)
-	case *ast.RecordTypeExpr:
-		for _, field := range expr.Fields {
-			if !walkTypeNameExpr(field.Type, visitRef, visitPrimitive) {
-				return false
-			}
-		}
-	case *ast.FunctionTypeExpr:
-		for _, param := range expr.TypeParams {
-			if !walkTypeNameExpr(param.Constraint, visitRef, visitPrimitive) {
-				return false
-			}
-		}
-		for _, param := range expr.Params {
-			if !walkTypeNameExpr(param.Type, visitRef, visitPrimitive) {
-				return false
-			}
-		}
-		return walkTypeNameExpr(expr.Variadic, visitRef, visitPrimitive) && walkTypeNameExprs(expr.Returns, visitRef, visitPrimitive)
-	case *ast.AssertsTypeExpr:
-		return walkTypeNameExpr(expr.NarrowTo, visitRef, visitPrimitive)
-	case *ast.TypeRefExpr:
-		return visitRef(expr)
-	case *ast.GenericTypeExpr:
-		if !walkTypeNameExpr(expr.Base, visitRef, visitPrimitive) {
-			return false
-		}
-		return walkTypeNameExprs(expr.Args, visitRef, visitPrimitive)
-	case *ast.MetaTypeExpr:
-		return walkTypeNameExpr(expr.Inner, visitRef, visitPrimitive)
-	case *ast.TupleTypeExpr:
-		return walkTypeNameExprs(expr.Elements, visitRef, visitPrimitive)
-	case *ast.KeyOfExpr:
-		return walkTypeNameExpr(expr.Inner, visitRef, visitPrimitive)
-	case *ast.IndexAccessExpr:
-		return walkTypeNameExpr(expr.Object, visitRef, visitPrimitive) && walkTypeNameExpr(expr.Index, visitRef, visitPrimitive)
-	case *ast.ConditionalTypeExpr:
-		return walkTypeNameExpr(expr.Check, visitRef, visitPrimitive) &&
-			walkTypeNameExpr(expr.Extends, visitRef, visitPrimitive) &&
-			walkTypeNameExpr(expr.Then, visitRef, visitPrimitive) &&
-			walkTypeNameExpr(expr.Else, visitRef, visitPrimitive)
-	}
-	return true
-}
-
-func walkTypeExprs(exprs []ast.TypeExpr, visit func(*ast.TypeRefExpr) bool) bool {
-	return walkTypeNameExprs(exprs, visit, func(*ast.PrimitiveTypeExpr) bool { return true })
-}
-
-func walkTypeNameExprs(exprs []ast.TypeExpr, visitRef func(*ast.TypeRefExpr) bool, visitPrimitive func(*ast.PrimitiveTypeExpr) bool) bool {
-	for _, expr := range exprs {
-		if !walkTypeNameExpr(expr, visitRef, visitPrimitive) {
-			return false
-		}
-	}
-	return true
-}
-
-func isBuiltinPrimitiveTypeName(name string) bool {
-	switch name {
-	case "nil", "boolean", "number", "integer", "string", "any", "unknown", "never", "self":
-		return true
-	default:
-		return false
-	}
 }

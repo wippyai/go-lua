@@ -7,6 +7,7 @@ import (
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
 	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
+	"github.com/wippyai/go-lua/analysis/lua/typeresolve"
 	"github.com/wippyai/go-lua/analysis/lua/valueexpr"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
@@ -125,7 +126,7 @@ func (l *lowerer) declaredValue(expr ast.TypeExpr) (product.Value, bool) {
 	if expr == nil {
 		return product.Value{}, false
 	}
-	t, ok := newTypeResolver(l.bindings).Type(expr)
+	t, ok := typeresolve.New(l.bindings).Type(expr)
 	if !ok {
 		return product.Value{}, false
 	}

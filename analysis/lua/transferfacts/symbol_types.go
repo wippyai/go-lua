@@ -4,17 +4,18 @@ import (
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
+	"github.com/wippyai/go-lua/analysis/lua/typeresolve"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
 
-func lowerSymbolTypes(bindings *bind.Result, graph cfg.Graph, result *semantics.Result, resolver *typeResolver) map[symbol.ID]typ.Type {
+func lowerSymbolTypes(bindings *bind.Result, graph cfg.Graph, result *semantics.Result, resolver *typeresolve.Resolver) map[symbol.ID]typ.Type {
 	if bindings == nil || graph == nil || result == nil {
 		return nil
 	}
 	if resolver == nil {
-		resolver = newTypeResolver(bindings)
+		resolver = typeresolve.New(bindings)
 	}
 	out := make(map[symbol.ID]typ.Type)
 	add := func(id symbol.ID, expr ast.TypeExpr) {

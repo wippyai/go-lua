@@ -9,6 +9,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
+	"github.com/wippyai/go-lua/analysis/lua/typeresolve"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
@@ -29,7 +30,7 @@ func Lower(result *semantics.Result, graph cfg.Graph, config Config) factflow.Fa
 	if result == nil || graph == nil {
 		return factflow.NewFacts(factflow.FactsInput{})
 	}
-	typeResolver := newTypeResolver(config.Bindings)
+	typeResolver := typeresolve.New(config.Bindings)
 	l := lowerer{
 		registry:             config.Registry,
 		bindings:             config.Bindings,

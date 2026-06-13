@@ -11,6 +11,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/pathexpr"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
 	"github.com/wippyai/go-lua/analysis/lua/typeoperator"
+	"github.com/wippyai/go-lua/analysis/lua/typeresolve"
 	"github.com/wippyai/go-lua/analysis/lua/valueexpr"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/compiler/ast"
@@ -176,7 +177,7 @@ func (l *lowerer) identType(expr *ast.IdentExpr) (typ.Type, bool) {
 	if !ok {
 		return nil, false
 	}
-	return newTypeResolver(l.bindings).Type(exprType)
+	return typeresolve.New(l.bindings).Type(exprType)
 }
 
 func (l *lowerer) binaryOperationType(leftExpr ast.Expr, op string, rightExpr ast.Expr) (typ.Type, bool) {

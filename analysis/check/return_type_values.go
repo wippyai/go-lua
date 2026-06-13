@@ -3,6 +3,7 @@ package check
 import (
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
+	"github.com/wippyai/go-lua/analysis/lua/typeresolve"
 )
 
 // ReturnTypeValues materializes declared return-type evidence for summary
@@ -15,7 +16,7 @@ func (r *Result) ReturnTypeValues() []product.Value {
 	if len(returnTypes) == 0 {
 		return nil
 	}
-	resolver := newEntryTypeResolver(r.bindings)
+	resolver := typeresolve.New(r.bindings)
 	out := make([]product.Value, 0, len(returnTypes))
 	for _, expr := range returnTypes {
 		t, ok := resolver.Type(expr)
