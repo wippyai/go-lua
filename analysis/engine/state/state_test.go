@@ -15,6 +15,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/state/dynamicindex"
 	effectdelta "github.com/wippyai/go-lua/analysis/engine/state/effectdelta"
 	"github.com/wippyai/go-lua/analysis/engine/state/escapeplacement"
+	"github.com/wippyai/go-lua/analysis/engine/state/heapidentity"
 	"github.com/wippyai/go-lua/analysis/engine/state/pathevidence"
 	"github.com/wippyai/go-lua/analysis/symbol"
 )
@@ -261,7 +262,7 @@ func TestWritesFromStateBottomProduceReachableState(t *testing.T) {
 		{"path", bottom.WritePathKey(reg, pathKey, present)},
 		{"static-member", bottom.WritePathStaticMember(pathKey, present)},
 		{"dynamic-index", bottom.WriteDynamicIndexFact(reg, dynamicKey, dynamicFact)},
-		{"heap-table", bottom.WriteHeapTableObject(reg, heapID, HeapTableObject{Root: present})},
+		{"heap-table", bottom.WriteHeapTableObject(reg, heapID, heapidentity.TableObject{Root: present})},
 		{"branch-proof", bottom.AddBranchProof(proof)},
 		{"effect-delta", bottom.WriteEffectDelta(effectKey, effectDelta)},
 		{"channel-select", bottom.AddChannelSelectFact(channel)},
@@ -393,23 +394,20 @@ func TestDynamicIndexKeysPointwiseFacts(t *testing.T) {
 	}
 }
 
-func TestHeapTableIdentityObjectsJoinAndCopy(t *testing.T) {
+func TestHeapTableIdentityFacadeReadWriteAndCopy(t *testing.T) {
 	reg := standard.Registry()
 	valueDomain := product.Domain(reg)
 	stateDomain := Domain(reg)
 	id := identity.ID{Kind: "table", Site: "alloc", Index: 1}
-	otherID := identity.ID{Kind: "table", Site: "alloc", Index: 2}
 	staticCommon := pathdom.PathKey("sym90@1.table.name")
-	staticLeft := pathdom.PathKey("sym90@1.table.left")
 	dynCommon := dynamicindex.Key{Table: pathdom.PathKey("sym90@1.table"), Site: "dyn"}
 	present := presentValue(reg)
 	absent := absentValue(reg)
 
-	leftObject := HeapTableObject{
+	object := heapidentity.TableObject{
 		Root: present,
 		StaticMembers: map[pathdom.PathKey]product.Value{
 			staticCommon: present,
-			staticLeft:   present,
 		},
 		DynamicIndexFacts: map[dynamicindex.Key]dynamicindex.Fact{
 			dynCommon: {
@@ -420,61 +418,22 @@ func TestHeapTableIdentityObjectsJoinAndCopy(t *testing.T) {
 			},
 		},
 	}
-	rightObject := HeapTableObject{
-		Root: absent,
-		StaticMembers: map[pathdom.PathKey]product.Value{
-			staticCommon: absent,
-		},
-		DynamicIndexFacts: map[dynamicindex.Key]dynamicindex.Fact{
-			dynCommon: {
-				KeyPresence: presence.Absent(),
-				KeyValue:    absent,
-				Value:       absent,
-				Admission:   dynamicindex.AdmissionRejected,
-			},
-		},
-	}
 
-	if got := (State{}).ReadHeapTableObject(reg, id); !heapTableObjectDomain(reg).Equal(got, heapTableObjectBottom(reg)) {
+	if got := (State{}).ReadHeapTableObject(reg, id); !heapidentity.ObjectDomain(reg).Equal(got, heapidentity.BottomObject(reg)) {
 		t.Fatalf("empty heap object = %#v, want bottom", got)
 	}
 
-	left := State{}.
-		WriteHeapTableObject(reg, id, leftObject).
-		WriteHeapTableObject(reg, otherID, HeapTableObject{Root: present})
-	right := State{}.WriteHeapTableObject(reg, id, rightObject)
-	if !stateDomain.Equal(stateDomain.Join(stateDomain.Bottom(), left), left) {
+	written := State{}.WriteHeapTableObject(reg, id, object)
+	if !stateDomain.Equal(stateDomain.Join(stateDomain.Bottom(), written), written) {
 		t.Fatalf("state bottom should be join identity for heap table identity")
 	}
-
-	joined := stateDomain.Join(left, right)
-	got := joined.ReadHeapTableObject(reg, id)
-	if !valueDomain.Equal(got.Root, product.Top()) {
-		t.Fatalf("joined heap root = %s, want top", formatValue(reg, got.Root))
+	if got := written.ReadHeapTableObject(reg, id); !valueDomain.Equal(got.Root, present) {
+		t.Fatalf("heap object root = %s, want present", formatValue(reg, got.Root))
 	}
-	if gotStatic, ok := got.StaticMembers[staticCommon]; !ok || !valueDomain.Equal(gotStatic, product.Top()) {
-		t.Fatalf("joined heap static member = %s ok=%v, want top common fact", formatValue(reg, gotStatic), ok)
-	}
-	if _, ok := got.StaticMembers[staticLeft]; ok {
-		t.Fatalf("left-only heap static member survived must join")
-	}
-	if gotDynamic := got.DynamicIndexFacts[dynCommon]; !presence.Equal(gotDynamic.KeyPresence, presence.Maybe()) || gotDynamic.Admission != dynamicindex.AdmissionUnknown {
-		t.Fatalf("joined heap dynamic fact = %#v, want joined fact", gotDynamic)
-	}
-	if other := joined.ReadHeapTableObject(reg, otherID); !valueDomain.Equal(other.Root, present) {
-		t.Fatalf("disjoint heap identity did not survive pointwise join")
-	}
-	if widened := stateDomain.Widen(left, right); !stateDomain.Equal(widened, joined) {
-		t.Fatalf("heap identity widen differs from join")
-	}
-	if !stateDomain.LessOrEq(left, joined) || stateDomain.LessOrEq(joined, left) {
-		t.Fatalf("heap identity order should combine pointwise root/dynamic with must static children")
-	}
-
-	read := left.ReadHeapTableObject(reg, id)
+	read := written.ReadHeapTableObject(reg, id)
 	read.StaticMembers[staticCommon] = absent
 	read.DynamicIndexFacts[dynCommon] = dynamicindex.Fact{Admission: dynamicindex.AdmissionRejected}
-	again := left.ReadHeapTableObject(reg, id)
+	again := written.ReadHeapTableObject(reg, id)
 	if !valueDomain.Equal(again.StaticMembers[staticCommon], present) {
 		t.Fatalf("heap object read exposed mutable static members")
 	}
@@ -970,7 +929,7 @@ func TestTopLanesReadTopAndRejectFiniteUpdates(t *testing.T) {
 	if got := top.ReadDynamicIndexFact(reg, dynamicKey); !dynamicindex.Domain(reg).Equal(got, dynamicindex.Top()) {
 		t.Fatalf("top dynamic-index read = %#v, want top", got)
 	}
-	if got := top.ReadHeapTableObject(reg, heapID); !heapTableObjectDomain(reg).Equal(got, heapTableObjectTop()) {
+	if got := top.ReadHeapTableObject(reg, heapID); !heapidentity.ObjectDomain(reg).Equal(got, heapidentity.TopObject()) {
 		t.Fatalf("top heap-object read = %#v, want top", got)
 	}
 	if got := top.ReadEffectDelta(effectKey); !effectdelta.Domain(reg).Equal(got, effectdelta.Top()) {
@@ -1026,7 +985,7 @@ func TestTopLanesReadTopAndRejectFiniteUpdates(t *testing.T) {
 		top.WriteDynamicIndexFact(reg, dynamicKey, dynamicFact)
 	})
 	requirePanic(t, func() {
-		top.WriteHeapTableObject(reg, heapID, HeapTableObject{Root: present})
+		top.WriteHeapTableObject(reg, heapID, heapidentity.TableObject{Root: present})
 	})
 	requirePanic(t, func() {
 		top.WriteEffectDelta(effectKey, effectDelta)
