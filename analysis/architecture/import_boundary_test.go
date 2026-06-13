@@ -58,6 +58,15 @@ func TestLowerLayerImportBoundaries(t *testing.T) {
 			},
 		},
 		{
+			name:     "engine signature effect lowering stays lua and check free",
+			patterns: []string{modulePath + "/analysis/engine/factapply/effectlowering"},
+			banned: []string{
+				modulePath + "/analysis/check",
+				modulePath + "/analysis/lua",
+				modulePath + "/compiler",
+			},
+		},
+		{
 			name:     "check body stays below fixpoint owners",
 			patterns: []string{modulePath + "/analysis/check/body"},
 			banned: []string{

@@ -13,11 +13,17 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
-	"github.com/wippyai/go-lua/analysis/lua/typecall"
-	"github.com/wippyai/go-lua/analysis/lua/typeprojection"
 	"github.com/wippyai/go-lua/analysis/type/kind"
+	"github.com/wippyai/go-lua/analysis/type/projection"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
+
+// ReturnTypeOps carries caller-owned type operations needed by return
+// transforms that are not part of engine ownership.
+type ReturnTypeOps struct {
+	CallableReturn func(typ.Type) (typ.Type, bool)
+	TypeProjection func(typ.Type, projection.Projection) (typ.Type, bool)
+}
 
 func signatureReturnValue(
 	ctx transfer.NodeContext,
@@ -27,6 +33,7 @@ func signatureReturnValue(
 	index int,
 	in state.State,
 	read func(cfg.Point) state.State,
+	returnTypeOps ReturnTypeOps,
 ) (product.Value, bool) {
 	transform, ok := activeReturnTransform(sig, index)
 	if !ok {
@@ -55,26 +62,26 @@ func signatureReturnValue(
 		}
 		return optionalElementOfReturnValue(ctx, facts, sig, transform.Source)
 	case returns.CallbackReturn:
-		return callbackReturnValue(ctx, facts, sig, transform.CallbackParam, false)
+		return callbackReturnValue(ctx, facts, sig, transform.CallbackParam, false, returnTypeOps)
 	case *returns.CallbackReturn:
 		if transform == nil {
 			return product.Value{}, false
 		}
-		return callbackReturnValue(ctx, facts, sig, transform.CallbackParam, false)
+		return callbackReturnValue(ctx, facts, sig, transform.CallbackParam, false, returnTypeOps)
 	case returns.ArrayOfCallbackReturn:
-		return callbackReturnValue(ctx, facts, sig, transform.CallbackParam, true)
+		return callbackReturnValue(ctx, facts, sig, transform.CallbackParam, true, returnTypeOps)
 	case *returns.ArrayOfCallbackReturn:
 		if transform == nil {
 			return product.Value{}, false
 		}
-		return callbackReturnValue(ctx, facts, sig, transform.CallbackParam, true)
+		return callbackReturnValue(ctx, facts, sig, transform.CallbackParam, true, returnTypeOps)
 	case returns.TypeProjection:
-		return typeProjectionReturnValue(ctx, facts, sig, transform)
+		return typeProjectionReturnValue(ctx, facts, sig, transform, returnTypeOps)
 	case *returns.TypeProjection:
 		if transform == nil {
 			return product.Value{}, false
 		}
-		return typeProjectionReturnValue(ctx, facts, sig, *transform)
+		return typeProjectionReturnValue(ctx, facts, sig, *transform, returnTypeOps)
 	default:
 		return product.Value{}, false
 	}
@@ -144,7 +151,11 @@ func callbackReturnValue(
 	sig signature.Function,
 	ref effect.ParamRef,
 	array bool,
+	returnTypeOps ReturnTypeOps,
 ) (product.Value, bool) {
+	if returnTypeOps.CallableReturn == nil {
+		return product.Value{}, false
+	}
 	site, ok := facts.CallSite(ctx.Point)
 	if !ok {
 		return product.Value{}, false
@@ -154,7 +165,7 @@ func callbackReturnValue(
 	if !ok || sig.Type == nil || argIndex < 0 || argIndex >= len(sig.Type.Params) {
 		return product.Value{}, false
 	}
-	ret, ok := typecall.CallableReturn(sig.Type.Params[argIndex].Type)
+	ret, ok := returnTypeOps.CallableReturn(sig.Type.Params[argIndex].Type)
 	if !ok {
 		return product.Value{}, false
 	}
@@ -169,7 +180,11 @@ func typeProjectionReturnValue(
 	facts factflow.Facts,
 	sig signature.Function,
 	transform returns.TypeProjection,
+	returnTypeOps ReturnTypeOps,
 ) (product.Value, bool) {
+	if returnTypeOps.TypeProjection == nil {
+		return product.Value{}, false
+	}
 	site, ok := facts.CallSite(ctx.Point)
 	if !ok {
 		return product.Value{}, false
@@ -179,7 +194,7 @@ func typeProjectionReturnValue(
 	if !ok || sig.Type == nil || argIndex < 0 || argIndex >= len(sig.Type.Params) {
 		return product.Value{}, false
 	}
-	projected, ok := typeprojection.Apply(sig.Type.Params[argIndex].Type, transform.Projection)
+	projected, ok := returnTypeOps.TypeProjection(sig.Type.Params[argIndex].Type, transform.Projection)
 	if !ok {
 		return product.Value{}, false
 	}

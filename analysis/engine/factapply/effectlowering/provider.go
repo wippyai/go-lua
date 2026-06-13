@@ -24,10 +24,11 @@ type SignatureLookup interface {
 // SignatureOutcomeProviderConfig carries the signature/effect lookup plus the generic
 // fact/source read models needed to resolve call argument values.
 type SignatureOutcomeProviderConfig struct {
-	Signatures SignatureLookup
-	NameFor    SignatureNameFunc
-	Facts      factflow.Facts
-	Sources    sourcevalue.SourceValues
+	Signatures    SignatureLookup
+	NameFor       SignatureNameFunc
+	ReturnTypeOps ReturnTypeOps
+	Facts         factflow.Facts
+	Sources       sourcevalue.SourceValues
 }
 
 // SignatureOutcomeProvider materializes declared signature return types into
@@ -35,6 +36,7 @@ type SignatureOutcomeProviderConfig struct {
 func SignatureOutcomeProvider(config SignatureOutcomeProviderConfig) factapply.CallOutcomeProvider {
 	signatures := config.Signatures
 	nameFor := config.NameFor
+	returnTypeOps := config.ReturnTypeOps
 	facts := config.Facts
 	sources := config.Sources
 	return func(ctx transfer.NodeContext, site factflow.CallSite, in state.State, read func(cfg.Point) state.State) factapply.CallOutcome {
@@ -60,7 +62,7 @@ func SignatureOutcomeProvider(config SignatureOutcomeProviderConfig) factapply.C
 		}
 		results := make([]factapply.CallResult, 0, len(sig.Type.Returns))
 		for i, ret := range sig.Type.Returns {
-			value, ok := signatureReturnValue(ctx, facts, sources, sig, i, in, read)
+			value, ok := signatureReturnValue(ctx, facts, sources, sig, i, in, read, returnTypeOps)
 			if !ok && ret != nil {
 				value, ok = returnValueFromType(ctx.Registry, ret), true
 			}

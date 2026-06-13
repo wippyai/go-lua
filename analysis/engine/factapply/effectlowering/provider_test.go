@@ -1,7 +1,6 @@
 package effectlowering
 
 import (
-	"os/exec"
 	"strings"
 	"testing"
 
@@ -31,6 +30,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/projection"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/analysis/type/unwrap"
 )
 
 type signatureMap map[string]signature.Function
@@ -45,6 +45,57 @@ func staticName(name string) SignatureNameFunc {
 	return func(transfer.NodeContext, factflow.CallProducer) (string, bool) {
 		return name, name != ""
 	}
+}
+
+func testReturnTypeOps() ReturnTypeOps {
+	return ReturnTypeOps{
+		CallableReturn: testCallableReturn,
+		TypeProjection: testTypeProjection,
+	}
+}
+
+func testCallableReturn(t typ.Type) (typ.Type, bool) {
+	fn, ok := unwrap.Alias(t).(*typ.Function)
+	if !ok || fn == nil || len(fn.Returns) == 0 || fn.Returns[0] == nil {
+		return nil, false
+	}
+	return fn.Returns[0], true
+}
+
+func testTypeProjection(source typ.Type, p projection.Projection) (typ.Type, bool) {
+	current := source
+	for _, step := range p.Steps {
+		switch step.Kind {
+		case projection.StepField:
+			record, ok := unwrap.Alias(current).(*typ.Record)
+			if !ok || record == nil {
+				return nil, false
+			}
+			field := record.GetField(step.Field)
+			if field == nil || field.Type == nil {
+				return nil, false
+			}
+			current = field.Type
+		case projection.StepCallableReturn:
+			next, ok := testCallableReturn(current)
+			if !ok {
+				return nil, false
+			}
+			current = next
+		case projection.StepGenericArg:
+			if step.Index < 0 {
+				return nil, false
+			}
+			inst, ok := unwrap.Alias(current).(*typ.Instantiated)
+			if !ok || inst == nil || step.Index >= len(inst.TypeArgs) || inst.TypeArgs[step.Index] == nil {
+				return nil, false
+			}
+			current = inst.TypeArgs[step.Index]
+		default:
+			return nil, false
+		}
+	}
+	return current, current != nil
 }
 
 func TestSignatureOutcomeProviderMaterializesDeclaredReturns(t *testing.T) {
@@ -605,8 +656,9 @@ func TestSignatureOutcomeProviderElementOfArrayReturnsElementRuntimeKind(t *test
 				Effect: effect.Empty.With(returns.Return{ReturnIndex: 0, Transform: returns.ElementOf{Source: effect.ParamRef{Index: 0}}}),
 			},
 		},
-		NameFor: staticName("f"),
-		Facts:   signatureOutcomeProviderFacts(point, []factflow.ValueSource{{Kind: factflow.ValueSourceExpression}}),
+		NameFor:       staticName("f"),
+		ReturnTypeOps: testReturnTypeOps(),
+		Facts:         signatureOutcomeProviderFacts(point, []factflow.ValueSource{{Kind: factflow.ValueSourceExpression}}),
 	})
 
 	got := provider(transfer.NodeContext{Registry: reg, Point: point}, factflow.NewCallSite(factflow.CallSiteConfig{}), state.State{}, nil).Results
@@ -628,8 +680,9 @@ func TestSignatureOutcomeProviderElementOfMapReturnsValueRuntimeKind(t *testing.
 				Effect: effect.Empty.With(returns.Return{ReturnIndex: 0, Transform: returns.ElementOf{Source: effect.ParamRef{Index: 0}}}),
 			},
 		},
-		NameFor: staticName("f"),
-		Facts:   signatureOutcomeProviderFacts(point, []factflow.ValueSource{{Kind: factflow.ValueSourceExpression}}),
+		NameFor:       staticName("f"),
+		ReturnTypeOps: testReturnTypeOps(),
+		Facts:         signatureOutcomeProviderFacts(point, []factflow.ValueSource{{Kind: factflow.ValueSourceExpression}}),
 	})
 
 	got := provider(transfer.NodeContext{Registry: reg, Point: point}, factflow.NewCallSite(factflow.CallSiteConfig{}), state.State{}, nil).Results
@@ -725,8 +778,9 @@ func TestSignatureOutcomeProviderCallbackReturnProjectsFirstReturnRuntimeKind(t 
 				Effect: effect.Empty.With(returns.Return{ReturnIndex: 0, Transform: returns.CallbackReturn{CallbackParam: effect.ParamRef{Index: 0}}}),
 			},
 		},
-		NameFor: staticName("f"),
-		Facts:   signatureOutcomeProviderFacts(point, []factflow.ValueSource{{Kind: factflow.ValueSourceExpression}}),
+		NameFor:       staticName("f"),
+		ReturnTypeOps: testReturnTypeOps(),
+		Facts:         signatureOutcomeProviderFacts(point, []factflow.ValueSource{{Kind: factflow.ValueSourceExpression}}),
 	})
 
 	got := provider(transfer.NodeContext{Registry: reg, Point: point}, factflow.NewCallSite(factflow.CallSiteConfig{}), state.State{}, nil).Results
@@ -751,7 +805,8 @@ func TestSignatureOutcomeProviderCallbackReturnResolvesNegativeParamRef(t *testi
 				Effect: effect.Empty.With(returns.Return{ReturnIndex: 0, Transform: returns.CallbackReturn{CallbackParam: effect.ParamRef{Index: -1}}}),
 			},
 		},
-		NameFor: staticName("f"),
+		NameFor:       staticName("f"),
+		ReturnTypeOps: testReturnTypeOps(),
 		Facts: signatureOutcomeProviderFacts(point, []factflow.ValueSource{
 			{Kind: factflow.ValueSourceExpression},
 			{Kind: factflow.ValueSourceExpression},
@@ -779,8 +834,9 @@ func TestSignatureOutcomeProviderArrayOfCallbackReturnProjectsTableRuntimeKind(t
 				Effect: effect.Empty.With(returns.Return{ReturnIndex: 0, Transform: returns.ArrayOfCallbackReturn{CallbackParam: effect.ParamRef{Index: 0}}}),
 			},
 		},
-		NameFor: staticName("f"),
-		Facts:   signatureOutcomeProviderFacts(point, []factflow.ValueSource{{Kind: factflow.ValueSourceExpression}}),
+		NameFor:       staticName("f"),
+		ReturnTypeOps: testReturnTypeOps(),
+		Facts:         signatureOutcomeProviderFacts(point, []factflow.ValueSource{{Kind: factflow.ValueSourceExpression}}),
 	})
 
 	got := provider(transfer.NodeContext{Registry: reg, Point: point}, factflow.NewCallSite(factflow.CallSiteConfig{}), state.State{}, nil).Results
@@ -832,8 +888,9 @@ func TestSignatureOutcomeProviderCallbackReturnUsesDeclaredReturnTypeWhenProject
 						Effect: effect.Empty.With(returns.Return{ReturnIndex: 0, Transform: returns.CallbackReturn{CallbackParam: tc.ref}}),
 					},
 				},
-				NameFor: staticName("f"),
-				Facts:   signatureOutcomeProviderFacts(tc.point, tc.args),
+				NameFor:       staticName("f"),
+				ReturnTypeOps: testReturnTypeOps(),
+				Facts:         signatureOutcomeProviderFacts(tc.point, tc.args),
 			})
 
 			got := provider(transfer.NodeContext{Registry: reg, Point: tc.point}, factflow.NewCallSite(factflow.CallSiteConfig{}), state.State{}, nil).Results
@@ -866,8 +923,9 @@ func TestSignatureOutcomeProviderTypeProjectionFieldReturnsFieldRuntimeKind(t *t
 				}}),
 			},
 		},
-		NameFor: staticName("f"),
-		Facts:   signatureOutcomeProviderFacts(point, []factflow.ValueSource{{Kind: factflow.ValueSourceExpression}}),
+		NameFor:       staticName("f"),
+		ReturnTypeOps: testReturnTypeOps(),
+		Facts:         signatureOutcomeProviderFacts(point, []factflow.ValueSource{{Kind: factflow.ValueSourceExpression}}),
 	})
 
 	got := provider(transfer.NodeContext{Registry: reg, Point: point}, factflow.NewCallSite(factflow.CallSiteConfig{}), state.State{}, nil).Results
@@ -894,8 +952,9 @@ func TestSignatureOutcomeProviderTypeProjectionCallableReturnReturnsFirstReturnR
 				}}),
 			},
 		},
-		NameFor: staticName("f"),
-		Facts:   signatureOutcomeProviderFacts(point, []factflow.ValueSource{{Kind: factflow.ValueSourceExpression}}),
+		NameFor:       staticName("f"),
+		ReturnTypeOps: testReturnTypeOps(),
+		Facts:         signatureOutcomeProviderFacts(point, []factflow.ValueSource{{Kind: factflow.ValueSourceExpression}}),
 	})
 
 	got := provider(transfer.NodeContext{Registry: reg, Point: point}, factflow.NewCallSite(factflow.CallSiteConfig{}), state.State{}, nil).Results
@@ -925,8 +984,9 @@ func TestSignatureOutcomeProviderTypeProjectionGenericArgReturnsArgRuntimeKind(t
 				}}),
 			},
 		},
-		NameFor: staticName("f"),
-		Facts:   signatureOutcomeProviderFacts(point, []factflow.ValueSource{{Kind: factflow.ValueSourceExpression}}),
+		NameFor:       staticName("f"),
+		ReturnTypeOps: testReturnTypeOps(),
+		Facts:         signatureOutcomeProviderFacts(point, []factflow.ValueSource{{Kind: factflow.ValueSourceExpression}}),
 	})
 
 	got := provider(transfer.NodeContext{Registry: reg, Point: point}, factflow.NewCallSite(factflow.CallSiteConfig{}), state.State{}, nil).Results
@@ -956,8 +1016,9 @@ func TestSignatureOutcomeProviderTypeProjectionUsesDeclaredReturnTypeWhenProject
 				}}),
 			},
 		},
-		NameFor: staticName("f"),
-		Facts:   signatureOutcomeProviderFacts(point, []factflow.ValueSource{{Kind: factflow.ValueSourceExpression}}),
+		NameFor:       staticName("f"),
+		ReturnTypeOps: testReturnTypeOps(),
+		Facts:         signatureOutcomeProviderFacts(point, []factflow.ValueSource{{Kind: factflow.ValueSourceExpression}}),
 	})
 
 	got := provider(transfer.NodeContext{Registry: reg, Point: point}, factflow.NewCallSite(factflow.CallSiteConfig{}), state.State{}, nil).Results
@@ -1153,60 +1214,6 @@ func TestSupplementalResultsKeepsPrimarySlotOverSignatureSameAs(t *testing.T) {
 	got := factapply.WithSupplementalCallOutcome(primary, signatures)(transfer.NodeContext{Registry: reg, Point: point}, factflow.NewCallSite(factflow.CallSiteConfig{}), state.State{}, nil).Results
 
 	assertCallOutcomeResults(t, reg, got, []product.Value{primaryValue})
-}
-
-func TestProductionImportsAreBounded(t *testing.T) {
-	out, err := exec.Command("go", "list", "-f", "{{range .Imports}}{{.}}\n{{end}}", ".").Output()
-	if err != nil {
-		t.Fatalf("go list imports . error = %v", err)
-	}
-	allowed := map[string]bool{
-		"github.com/wippyai/go-lua/analysis/check/fixpoint/summary":        true,
-		"github.com/wippyai/go-lua/analysis/domain/effect":                 true,
-		"github.com/wippyai/go-lua/analysis/domain/effect/mutation":        true,
-		"github.com/wippyai/go-lua/analysis/domain/effect/ownership":       true,
-		"github.com/wippyai/go-lua/analysis/domain/effect/postcondition":   true,
-		"github.com/wippyai/go-lua/analysis/domain/effect/returns":         true,
-		"github.com/wippyai/go-lua/analysis/domain/effect/signature":       true,
-		"github.com/wippyai/go-lua/analysis/domain/path":                   true,
-		"github.com/wippyai/go-lua/analysis/domain/value/axis":             true,
-		"github.com/wippyai/go-lua/analysis/domain/value/axis/presence":    true,
-		"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind": true,
-		"github.com/wippyai/go-lua/analysis/domain/value/product":          true,
-		"github.com/wippyai/go-lua/analysis/domain/value/typevalue":        true,
-		"github.com/wippyai/go-lua/analysis/engine/factflow":               true,
-		"github.com/wippyai/go-lua/analysis/engine/factapply":              true,
-		"github.com/wippyai/go-lua/analysis/engine/sourcevalue":            true,
-		"github.com/wippyai/go-lua/analysis/engine/state":                  true,
-		"github.com/wippyai/go-lua/analysis/engine/transfer":               true,
-		"github.com/wippyai/go-lua/analysis/ir/cfg":                        true,
-		"github.com/wippyai/go-lua/analysis/lua/typeaccess":                true,
-		"github.com/wippyai/go-lua/analysis/lua/typecall":                  true,
-		"github.com/wippyai/go-lua/analysis/lua/typeprojection":            true,
-		"github.com/wippyai/go-lua/analysis/symbol":                        true,
-		"github.com/wippyai/go-lua/analysis/type/kind":                     true,
-		"github.com/wippyai/go-lua/analysis/type/typ":                      true,
-		"strings": true,
-	}
-	for _, dep := range strings.Fields(string(out)) {
-		if !allowed[dep] {
-			t.Fatalf("unexpected production import %q", dep)
-		}
-	}
-
-	forbidden := []string{"/__old", "/adapter", "/query", "/compiler", "/analysis/lua", "/cfgbuild", "/semantics", "/diagnostic", "/diagnostics", "/store", "/session"}
-	for _, dep := range strings.Fields(string(out)) {
-		if dep == "github.com/wippyai/go-lua/analysis/lua/typeaccess" ||
-			dep == "github.com/wippyai/go-lua/analysis/lua/typecall" ||
-			dep == "github.com/wippyai/go-lua/analysis/lua/typeprojection" {
-			continue
-		}
-		for _, forbiddenPart := range forbidden {
-			if strings.Contains(dep, forbiddenPart) {
-				t.Fatalf("forbidden production import %q matched %q", dep, forbiddenPart)
-			}
-		}
-	}
 }
 
 func assertCallOutcomeResults(t *testing.T, reg *axis.Registry, got []factapply.CallResult, want []product.Value) {
