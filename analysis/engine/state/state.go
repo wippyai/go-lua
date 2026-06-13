@@ -8,6 +8,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/engine/state/escapeplacement"
 )
 
 // State carries point-local abstract values and facts. Missing entries in
@@ -23,7 +24,7 @@ type State struct {
 	branchProofs            map[BranchProof]struct{}
 	effectDeltas            map[EffectDeltaKey]EffectDelta
 	channelSelect           map[ChannelSelectFact]struct{}
-	escapePlacement         map[identity.ID]EscapePlacement
+	escapePlacement         map[identity.ID]escapeplacement.Value
 	pathStaticMembersBottom bool
 	branchProofsBottom      bool
 	channelSelectBottom     bool
@@ -48,7 +49,7 @@ func (s State) Clone() State {
 		branchProofs:            cloneBranchProofSet(s.branchProofs),
 		effectDeltas:            cloneEffectDeltaMap(s.effectDeltas),
 		channelSelect:           cloneChannelSelectSet(s.channelSelect),
-		escapePlacement:         cloneEscapePlacementMap(s.escapePlacement),
+		escapePlacement:         escapeplacement.CloneMap(s.escapePlacement),
 		pathStaticMembersBottom: s.pathStaticMembersBottom,
 		branchProofsBottom:      s.branchProofsBottom,
 		channelSelectBottom:     s.channelSelectBottom,
@@ -142,7 +143,7 @@ func Domain(reg *axis.Registry) lattice.Lattice[State] {
 		branchProofs:      mustSetDomain[BranchProof](),
 		effectDeltas:      effectDeltaMapDomain(reg),
 		channelSelect:     mustSetDomain[ChannelSelectFact](),
-		escapePlacement:   escapePlacementMapDomain(),
+		escapePlacement:   escapeplacement.MapDomain(),
 	}
 	return lattice.Lattice[State]{
 		Bottom: func() State {
@@ -222,7 +223,7 @@ type domainOps struct {
 	branchProofs      lattice.Lattice[mustSetLane[BranchProof]]
 	effectDeltas      lattice.Lattice[map[EffectDeltaKey]EffectDelta]
 	channelSelect     lattice.Lattice[mustSetLane[ChannelSelectFact]]
-	escapePlacement   lattice.Lattice[map[identity.ID]EscapePlacement]
+	escapePlacement   lattice.Lattice[map[identity.ID]escapeplacement.Value]
 }
 
 func (o domainOps) valueLane(s State) map[key.Value]product.Value {
@@ -281,7 +282,7 @@ func (o domainOps) channelSelectLane(s State) mustSetLane[ChannelSelectFact] {
 	}
 }
 
-func (o domainOps) escapePlacementLane(s State) map[identity.ID]EscapePlacement {
+func (o domainOps) escapePlacementLane(s State) map[identity.ID]escapeplacement.Value {
 	if s.escapePlacementTop {
 		return o.escapePlacement.Top()
 	}
@@ -297,7 +298,7 @@ func (o domainOps) fromLanes(
 	branchProofs mustSetLane[BranchProof],
 	effectDeltas map[EffectDeltaKey]EffectDelta,
 	channelSelect mustSetLane[ChannelSelectFact],
-	escapePlacement map[identity.ID]EscapePlacement,
+	escapePlacement map[identity.ID]escapeplacement.Value,
 ) State {
 	out := State{}
 	if o.values.Equal(values, o.values.Top()) {

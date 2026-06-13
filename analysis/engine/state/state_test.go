@@ -12,6 +12,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/standard"
+	"github.com/wippyai/go-lua/analysis/engine/state/escapeplacement"
 	"github.com/wippyai/go-lua/analysis/symbol"
 )
 
@@ -264,7 +265,7 @@ func TestWritesFromStateBottomProduceReachableState(t *testing.T) {
 		{"branch-proof", bottom.AddBranchProof(proof)},
 		{"effect-delta", bottom.WriteEffectDelta(reg, effectKey, effectDelta)},
 		{"channel-select", bottom.AddChannelSelectFact(channel)},
-		{"escape-placement", bottom.WriteEscapePlacement(escapeID, EscapePlacementStack)},
+		{"escape-placement", bottom.WriteEscapePlacement(escapeID, escapeplacement.Stack)},
 	}
 	for _, tc := range cases {
 		if tc.state.pathStaticMembersBottom || tc.state.branchProofsBottom || tc.state.channelSelectBottom {
@@ -634,25 +635,25 @@ func TestEscapePlacementOrderAndCopy(t *testing.T) {
 	id := identity.ID{Kind: "table", Site: "escape", Index: 1}
 	otherID := identity.ID{Kind: "table", Site: "escape", Index: 2}
 
-	if got := (State{}).ReadEscapePlacement(id); got != EscapePlacementBottom {
+	if got := (State{}).ReadEscapePlacement(id); got != escapeplacement.Bottom {
 		t.Fatalf("empty escape placement = %v, want bottom", got)
 	}
-	if !stateDomain.Equal(State{}.WriteEscapePlacement(id, EscapePlacementStack), State{}.WriteEscapePlacement(id, EscapePlacementStack)) {
+	if !stateDomain.Equal(State{}.WriteEscapePlacement(id, escapeplacement.Stack), State{}.WriteEscapePlacement(id, escapeplacement.Stack)) {
 		t.Fatalf("equal escape placements compare different")
 	}
 
 	left := State{}.
-		WriteEscapePlacement(id, EscapePlacementStack).
-		WriteEscapePlacement(otherID, EscapePlacementOwnedHeap)
-	right := State{}.WriteEscapePlacement(id, EscapePlacementEscaped)
+		WriteEscapePlacement(id, escapeplacement.Stack).
+		WriteEscapePlacement(otherID, escapeplacement.OwnedHeap)
+	right := State{}.WriteEscapePlacement(id, escapeplacement.Escaped)
 	if !stateDomain.Equal(stateDomain.Join(stateDomain.Bottom(), left), left) {
 		t.Fatalf("state bottom should be join identity for escape placement")
 	}
 	joined := stateDomain.Join(left, right)
-	if got := joined.ReadEscapePlacement(id); got != EscapePlacementEscaped {
+	if got := joined.ReadEscapePlacement(id); got != escapeplacement.Escaped {
 		t.Fatalf("joined escape placement = %v, want escaped", got)
 	}
-	if got := joined.ReadEscapePlacement(otherID); got != EscapePlacementOwnedHeap {
+	if got := joined.ReadEscapePlacement(otherID); got != escapeplacement.OwnedHeap {
 		t.Fatalf("disjoint escape placement did not survive pointwise join: %v", got)
 	}
 	if widened := stateDomain.Widen(left, right); !stateDomain.Equal(widened, joined) {
@@ -661,11 +662,11 @@ func TestEscapePlacementOrderAndCopy(t *testing.T) {
 	if !stateDomain.LessOrEq(left, joined) || stateDomain.LessOrEq(joined, left) {
 		t.Fatalf("escape placement order should move toward escaped/unknown")
 	}
-	clone := left.Clone().WriteEscapePlacement(id, EscapePlacementUnknown)
-	if got := left.ReadEscapePlacement(id); got != EscapePlacementStack {
+	clone := left.Clone().WriteEscapePlacement(id, escapeplacement.Unknown)
+	if got := left.ReadEscapePlacement(id); got != escapeplacement.Stack {
 		t.Fatalf("escape placement clone write mutated original: %v", got)
 	}
-	if got := clone.ReadEscapePlacement(id); got != EscapePlacementUnknown {
+	if got := clone.ReadEscapePlacement(id); got != escapeplacement.Unknown {
 		t.Fatalf("escape placement clone write = %v, want unknown", got)
 	}
 }
@@ -895,7 +896,7 @@ func TestTopLanesReadTopAndRejectFiniteUpdates(t *testing.T) {
 	if got := top.ReadEffectDelta(reg, effectKey); !effectDeltaDomain(reg).Equal(got, effectDeltaTop()) {
 		t.Fatalf("top effect-delta read = %#v, want top", got)
 	}
-	if got := top.ReadEscapePlacement(escapeID); got != EscapePlacementUnknown {
+	if got := top.ReadEscapePlacement(escapeID); got != escapeplacement.Unknown {
 		t.Fatalf("top escape-placement read = %v, want unknown", got)
 	}
 	if _, ok := top.ReadPathStaticMember(pathKey); ok {
@@ -951,7 +952,7 @@ func TestTopLanesReadTopAndRejectFiniteUpdates(t *testing.T) {
 		top.WriteEffectDelta(reg, effectKey, effectDelta)
 	})
 	requirePanic(t, func() {
-		top.WriteEscapePlacement(escapeID, EscapePlacementStack)
+		top.WriteEscapePlacement(escapeID, escapeplacement.Stack)
 	})
 }
 
