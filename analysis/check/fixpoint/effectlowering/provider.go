@@ -12,6 +12,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/effect/returns"
 	"github.com/wippyai/go-lua/analysis/domain/effect/signature"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
@@ -77,7 +78,7 @@ func SignatureOutcomeProvider(config SignatureOutcomeProviderConfig) factapply.C
 		for i, ret := range sig.Type.Returns {
 			value, ok := signatureReturnValue(ctx, facts, sources, sig, i, in, read)
 			if !ok && ret != nil {
-				value, ok = typevalue.FromType(ctx.Registry, ret), true
+				value, ok = returnValueFromType(ctx.Registry, ret), true
 			}
 			if !ok {
 				continue
@@ -360,7 +361,7 @@ func elementOfReturnValue(
 	if !ok {
 		return product.Value{}, false
 	}
-	return typevalue.FromType(ctx.Registry, elem), true
+	return returnValueFromType(ctx.Registry, elem), true
 }
 
 func optionalElementOfReturnValue(
@@ -399,7 +400,7 @@ func callbackReturnValue(
 	if array {
 		ret = typ.NewArray(ret)
 	}
-	return typevalue.FromType(ctx.Registry, ret), true
+	return returnValueFromType(ctx.Registry, ret), true
 }
 
 func typeProjectionReturnValue(
@@ -421,7 +422,11 @@ func typeProjectionReturnValue(
 	if !ok {
 		return product.Value{}, false
 	}
-	return typevalue.FromType(ctx.Registry, projected), true
+	return returnValueFromType(ctx.Registry, projected), true
+}
+
+func returnValueFromType(reg *axis.Registry, t typ.Type) product.Value {
+	return typevalue.WithWitness(reg, typevalue.FromType(reg, t), t)
 }
 
 func activeReturnTransform(sig signature.Function, index int) (returns.ReturnType, bool) {

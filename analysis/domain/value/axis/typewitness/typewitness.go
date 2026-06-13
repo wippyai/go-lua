@@ -2,6 +2,7 @@ package typewitness
 
 import (
 	internal "github.com/wippyai/go-lua/analysis/internal/hash"
+	"github.com/wippyai/go-lua/analysis/type/inspect"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
@@ -23,7 +24,7 @@ func Bottom() Value { return Value{state: bottom} }
 func Top() Value    { return Value{state: top} }
 
 func Of(t typ.Type) Value {
-	if t == nil || typ.IsAny(t) || typ.IsUnknown(t) {
+	if t == nil || typ.IsAny(t) || typ.IsUnknown(t) || inspect.ContainsTypeParam(t) {
 		return Top()
 	}
 	return Value{state: concrete, t: t}

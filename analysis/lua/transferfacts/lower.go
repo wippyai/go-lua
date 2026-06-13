@@ -90,7 +90,7 @@ func Lower(result *semantics.Result, graph cfg.Graph, config Config) factflow.Fa
 		if fact, ok := result.Return(point); ok {
 			input.Returns[point] = factflow.NewReturn(l.returnValueSources(fact.Sources, result))
 			if relations := l.typeIsReturnPresenceRelations(fact.Sources, result); len(relations) != 0 {
-				input.ReturnPresenceRelations[point] = factflow.NewReturnPresenceRelationSet(relations...)
+				appendReturnPresenceRelations(input.ReturnPresenceRelations, point, relations...)
 			}
 			for _, source := range fact.Sources {
 				l.addAssertionRefinementsForSource(&input, source)
@@ -129,6 +129,7 @@ func Lower(result *semantics.Result, graph cfg.Graph, config Config) factflow.Fa
 		}
 	}
 	l.addTypeIsBranchRefinements(&input, graph, result)
+	l.addReturnPresenceRelations(&input, graph, result)
 	input.ExpressionValues = l.expressionValues
 	input.ExpressionPaths = l.expressionPaths
 	input.ExpressionConditions = l.expressionConditions

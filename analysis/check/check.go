@@ -236,24 +236,7 @@ func (r *Result) SymbolTypeAnnotation(id symbol.ID) (ast.TypeExpr, bool) {
 	if r == nil || r.bindings == nil || id == 0 {
 		return nil, false
 	}
-	if fn, ok := r.bindings.DeclaringFunction(id); ok {
-		for _, slot := range r.bindings.ParamSlots(fn) {
-			if slot.Symbol == id && slot.Type != nil {
-				return slot.Type, true
-			}
-		}
-	}
-	graph := r.Graph()
-	if graph == nil {
-		return nil, false
-	}
-	for _, point := range graph.RPO() {
-		fact, ok := r.LocalAssignment(point)
-		if ok && fact.Symbol == id && fact.Type != nil {
-			return fact.Type, true
-		}
-	}
-	return nil, false
+	return r.bindings.SymbolTypeAnnotation(id)
 }
 
 func (r *Result) ExpressionPath(expr ast.Expr) (path.Path, bool) {
@@ -300,7 +283,61 @@ func (r *Result) ReturnPresenceRelations(point cfg.Point) []factflow.ReturnPrese
 	if r == nil {
 		return nil
 	}
-	return r.facts.ReturnPresenceRelations(point)
+	relations := r.facts.ReturnPresenceRelations(point)
+	if delegated := r.openTailReturnPresenceRelations(point); len(delegated) != 0 {
+		relations = append(relations, delegated...)
+	}
+	return relations
+}
+
+func (r *Result) openTailReturnPresenceRelations(point cfg.Point) []factflow.ReturnPresenceRelation {
+	if r == nil || r.callOutcome == nil {
+		return nil
+	}
+	ret, ok := r.facts.Return(point)
+	if !ok {
+		return nil
+	}
+	sources := ret.Sources()
+	if len(sources) != 1 {
+		return nil
+	}
+	source := sources[0]
+	if source.Kind != factflow.ValueSourceCall || !source.HasCallPoint || !source.OpenTail || !source.Expanded {
+		return nil
+	}
+	site, ok := r.facts.CallSite(source.CallPoint)
+	if !ok {
+		return nil
+	}
+	in, ok := r.StateAt(source.CallPoint)
+	if !ok {
+		return nil
+	}
+	graph := r.Graph()
+	ctx := transfer.NodeContext{
+		Graph:    graph,
+		Point:    source.CallPoint,
+		Registry: r.registry,
+		Read:     r.boundaryRead,
+	}
+	if graph != nil {
+		ctx.Node = graph.Node(source.CallPoint)
+	}
+	outcome := r.callOutcome(ctx, site, in, r.boundaryRead)
+	if len(outcome.ReturnPresenceRelations) == 0 {
+		return nil
+	}
+	out := make([]factflow.ReturnPresenceRelation, 0, len(outcome.ReturnPresenceRelations))
+	for _, relation := range outcome.ReturnPresenceRelations {
+		out = append(out, factflow.NewReturnPresenceRelation(
+			relation.TriggerIndex,
+			relation.TriggerPresence,
+			relation.TargetIndex,
+			relation.TargetPresence,
+		))
+	}
+	return out
 }
 
 func (r *Result) ExpressionCondition(ref factflow.ExprRef) (factflow.ExpressionCondition, bool) {

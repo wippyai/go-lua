@@ -71,20 +71,19 @@ func (p AnnotationAssignability) localAssignment(result *check.Result, point cfg
 		return p.objectLiteralAssignment(result, fact.Name, want, fact.Expr, fact.Type)
 	}
 	got, ok := literalType(fact.Expr)
+	optionalIndexProjection := false
 	if !ok {
 		got, ok = projectedOptionalIndexType(result, p.Resolver, fact.Expr)
+		optionalIndexProjection = ok
+	}
+	if !ok {
+		got, ok = boundarySourceType(result, point, fact.Source)
 	}
 	if !ok {
 		got, ok = projectedFlowSourceType(result, p.Resolver, point, env, fact.Expr)
 	}
 	if !ok {
 		got, ok = annotatedIdentifierType(result, p.Resolver, point, fact.Expr)
-	}
-	if !ok || topLikeType(got) {
-		if boundaryGot, boundaryOK := boundarySourceType(result, point, fact.Source); boundaryOK {
-			got = boundaryGot
-			ok = true
-		}
 	}
 	if !ok {
 		got, ok = explicitTopLikeExpressionType(result, p.Resolver, fact.Expr)
@@ -95,7 +94,14 @@ func (p AnnotationAssignability) localAssignment(result *check.Result, point cfg
 	if !ok {
 		return p.objectLiteralAssignment(result, fact.Name, want, fact.Expr, fact.Type)
 	}
-	if boundaryTypeMismatch(result, point, got, want, boundaryValueFromASTSource(fact.Source)) {
+	if !optionalIndexProjection {
+		got = refineAssignmentSourceType(result, point, fact.Expr, got)
+	}
+	readBoundary := boundaryValueFromASTSource(fact.Source)
+	if optionalIndexProjection {
+		readBoundary = nil
+	}
+	if boundaryTypeMismatch(result, point, got, want, readBoundary) {
 		return assignmentDiagnostic(fact.Name, want, got, fact.Expr, fact.Type), true
 	}
 	return p.objectLiteralAssignment(result, fact.Name, want, fact.Expr, fact.Type)
@@ -369,6 +375,27 @@ func annotatedIdentifierType(result *check.Result, resolver typeannotation.Resol
 	return refineDeclaredTypeWithValue(result, declared, value)
 }
 
+func refineAssignmentSourceType(result *check.Result, point cfg.Point, expr ast.Expr, got typ.Type) typ.Type {
+	if got == nil {
+		return got
+	}
+	if result == nil {
+		return got
+	}
+	if _, ok := result.ExpressionPath(expr); !ok {
+		return got
+	}
+	value, ok := result.ExpressionValueAtBoundary(point, expr)
+	if !ok {
+		return got
+	}
+	refined, ok := refineDeclaredTypeWithValue(result, got, value)
+	if !ok {
+		return got
+	}
+	return refined
+}
+
 func refineDeclaredTypeWithValue(result *check.Result, declared typ.Type, value product.Value) (typ.Type, bool) {
 	if declared == nil {
 		return nil, false
@@ -386,14 +413,14 @@ func refineDeclaredTypeWithValue(result *check.Result, declared typ.Type, value 
 	}
 	if result != nil && result.Registry() != nil {
 		origin := product.Get(result.Registry(), value, variantorigin.Key)
+		witness := product.Get(result.Registry(), value, typewitness.Key)
+		if t, ok := witness.Type(); ok {
+			out = witnessTypeForPresence(t, p)
+		}
 		if !origin.IsBottom() && !origin.IsTop() {
 			if refined, ok := discriminant.NarrowByOrigin(out, origin.Family(), origin.Cases()); ok {
 				out = refined
 			}
-		}
-		witness := product.Get(result.Registry(), value, typewitness.Key)
-		if t, ok := witness.Type(); ok {
-			out = t
 		}
 		kinds := product.Get(result.Registry(), value, runtimekind.Key)
 		if refined, ok := refineTypeByRuntimeKindSet(out, kinds, p); ok {

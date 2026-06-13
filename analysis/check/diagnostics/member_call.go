@@ -7,6 +7,8 @@ import (
 	"github.com/wippyai/go-lua/analysis/diagnostic"
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
+	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
 	"github.com/wippyai/go-lua/analysis/lua/typeaccess"
@@ -51,24 +53,23 @@ func (p MemberCall) call(result *check.Result, point cfg.Point, fact semantics.C
 	if !ok || receiver.Symbol == 0 {
 		return diagnostic.Diagnostic{}, false
 	}
-	baseExpr, ok := result.SymbolTypeAnnotation(receiver.Symbol)
-	if !ok {
-		return diagnostic.Diagnostic{}, false
-	}
-	baseType, ok := lowerType(baseExpr, p.Resolver)
+	baseType, ok := p.receiverType(result, point, fact, receiver, env)
 	if !ok {
 		return diagnostic.Diagnostic{}, false
 	}
 	narrowed, narrowedByDiscriminant := applyLiteralNarrowing(baseType, receiver, env)
 	receiverType := narrowed
 	if !narrowedByDiscriminant {
-		if !unionReceiver(baseType) {
+		receiverType = baseType
+		if !unionReceiver(baseType) && !projectionHasNil(receiverType) {
 			return diagnostic.Diagnostic{}, false
 		}
-		receiverType = baseType
 	}
 	if typ.IsNever(receiverType) || typ.IsAny(receiverType) || typ.IsUnknown(receiverType) {
 		return diagnostic.Diagnostic{}, false
+	}
+	if projectionHasNil(receiverType) {
+		return memberDiagnostic(result, fact, callExpr, receiverType, member, point), true
 	}
 
 	memberType, status := typecall.MemberCall(receiverType, member)
@@ -82,6 +83,51 @@ func (p MemberCall) call(result *check.Result, point cfg.Point, fact semantics.C
 	default:
 		return diagnostic.Diagnostic{}, false
 	}
+}
+
+func (p MemberCall) receiverType(result *check.Result, point cfg.Point, fact semantics.CallFact, receiver path.Path, env literalEnv) (typ.Type, bool) {
+	if fact.Receiver != nil {
+		if t, ok := newFlowExpressionTyper(result, p.Resolver, point, env).typeOf(fact.Receiver); ok {
+			return t, true
+		}
+	}
+	if baseExpr, ok := result.SymbolTypeAnnotation(receiver.Symbol); ok {
+		return lowerType(baseExpr, p.Resolver)
+	}
+	value, ok := result.PathValueAtBoundary(point, receiver)
+	if !ok {
+		return nil, false
+	}
+	return receiverTypeFromBoundary(result, value)
+}
+
+func receiverTypeFromBoundary(result *check.Result, value product.Value) (typ.Type, bool) {
+	t, ok := concreteBoundaryType(result, value)
+	if !ok {
+		switch p := product.PresenceOf(value); {
+		case presence.Equal(p, presence.Absent()):
+			return typ.Nil, true
+		default:
+			return nil, false
+		}
+	}
+	return typeWithBoundaryPresence(t, value), true
+}
+
+func typeWithBoundaryPresence(t typ.Type, value product.Value) typ.Type {
+	switch p := product.PresenceOf(value); {
+	case presence.Equal(p, presence.Absent()):
+		return typ.Nil
+	case presence.Equal(p, presence.Maybe()):
+		if !projectionHasNil(t) {
+			return typ.NewOptional(t)
+		}
+	case presence.Equal(p, presence.Present()):
+		if withoutNil := projectionWithoutNil(t); withoutNil != nil && !typ.IsNever(withoutNil) {
+			return withoutNil
+		}
+	}
+	return t
 }
 
 func callMemberAccess(fact semantics.CallFact) (path.Path, string, *ast.FuncCallExpr, bool) {

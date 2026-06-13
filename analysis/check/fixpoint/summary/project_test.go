@@ -9,6 +9,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/typewitness"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/variantorigin"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/standard"
@@ -16,6 +17,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/module/signaturelookup"
+	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/parse"
 )
@@ -316,6 +318,92 @@ end`), check.Config{
 	}
 }
 
+func TestFromResultInfersErrorReturnPresenceRelations(t *testing.T) {
+	reg := standard.Registry()
+	result := projectCheckFunction(t, projectParseFunction(t, `
+function process(x: number): (number?, string?)
+	if x < 0 then
+		return nil, "negative"
+	end
+	return x * 2, nil
+end`), check.Config{Registry: reg})
+
+	got := summary.FromResult(result)
+
+	projectAssertReturnPresenceRelation(t, got.ReturnPresenceRelations, 1, presence.Present(), 0, presence.Absent())
+	projectAssertReturnPresenceRelation(t, got.ReturnPresenceRelations, 1, presence.Absent(), 0, presence.Present())
+	if len(got.Returns) != 2 {
+		t.Fatalf("returns = %d, want 2", len(got.Returns))
+	}
+	if gotPresence := product.PresenceOf(got.Returns[0]); !presence.Equal(gotPresence, presence.Maybe()) {
+		t.Fatalf("return 0 presence = %s, want maybe", gotPresence)
+	}
+	if gotPresence := product.PresenceOf(got.Returns[1]); !presence.Equal(gotPresence, presence.Maybe()) {
+		t.Fatalf("return 1 presence = %s, want maybe", gotPresence)
+	}
+}
+
+func TestFromResultTreatsOmittedEstablishedReturnSlotsAsAbsent(t *testing.T) {
+	reg := standard.Registry()
+	result := projectCheckFunction(t, projectParseFunction(t, `
+function fetch(ok: boolean): (number?, string?)
+	if not ok then
+		return nil, "failed"
+	end
+	return 1
+end`), check.Config{Registry: reg})
+
+	got := summary.FromResult(result)
+
+	projectAssertReturnPresenceRelation(t, got.ReturnPresenceRelations, 1, presence.Present(), 0, presence.Absent())
+	projectAssertReturnPresenceRelation(t, got.ReturnPresenceRelations, 1, presence.Absent(), 0, presence.Present())
+	if len(got.Returns) != 2 {
+		t.Fatalf("returns = %d, want 2", len(got.Returns))
+	}
+	if gotPresence := product.PresenceOf(got.Returns[1]); !presence.Equal(gotPresence, presence.Maybe()) {
+		t.Fatalf("return 1 presence = %s, want maybe from explicit error or omitted nil", gotPresence)
+	}
+}
+
+func TestFromResultUsesDeclaredArityForOpenTailReturn(t *testing.T) {
+	reg := standard.Registry()
+	result := projectCheckFunction(t, projectParseFunction(t, `
+function fetch(ok: boolean): (number?, string?)
+	return open_db(ok)
+end`), check.Config{Registry: reg})
+
+	got := summary.FromResult(result)
+
+	if len(got.Returns) != 2 {
+		t.Fatalf("returns = %d, want declared arity 2 for open-tail return", len(got.Returns))
+	}
+	if gotPresence := product.PresenceOf(got.Returns[1]); !presence.Equal(gotPresence, presence.Maybe()) {
+		t.Fatalf("return 1 presence = %s, want maybe from declared return slot", gotPresence)
+	}
+}
+
+func TestFromResultPreservesDeclaredReturnTypeWitness(t *testing.T) {
+	reg := standard.Registry()
+	result := projectCheckFunction(t, projectParseFunction(t, `
+function fetch(ok: boolean): (number?, string?)
+	if ok then
+		return 1, nil
+	end
+	return nil, "failed"
+end`), check.Config{Registry: reg})
+
+	got := summary.FromResult(result)
+
+	if len(got.Returns) != 2 {
+		t.Fatalf("returns = %d, want 2", len(got.Returns))
+	}
+	witness := product.Get(reg, got.Returns[0], typewitness.Key)
+	gotType, ok := witness.Type()
+	if !ok || !typ.TypeEquals(gotType, typ.NewOptional(typ.Number)) {
+		t.Fatalf("return 0 witness = %v/%v, want number?", gotType, ok)
+	}
+}
+
 func TestFromResultMissingReadModelReturnsEmptySummary(t *testing.T) {
 	if got := summary.FromResult(nil); len(got.Returns) != 0 {
 		t.Fatalf("FromResult(nil) returned %#v, want empty summary", got)
@@ -432,4 +520,31 @@ func projectAssertValue(t *testing.T, reg *axis.Registry, got, want product.Valu
 	if !product.Equal(reg, got, want) {
 		t.Fatalf("value = %v, want %v", got, want)
 	}
+}
+
+func projectAssertReturnPresenceRelation(
+	t *testing.T,
+	relations []summary.ReturnPresenceRelation,
+	trigger int,
+	triggerPresence presence.Value,
+	target int,
+	targetPresence presence.Value,
+) {
+	t.Helper()
+	for _, relation := range relations {
+		if relation.TriggerIndex == trigger &&
+			presence.Equal(relation.TriggerPresence, triggerPresence) &&
+			relation.TargetIndex == target &&
+			presence.Equal(relation.TargetPresence, targetPresence) {
+			return
+		}
+	}
+	t.Fatalf(
+		"return presence relations = %#v, want %d/%s -> %d/%s",
+		relations,
+		trigger,
+		triggerPresence,
+		target,
+		targetPresence,
+	)
 }

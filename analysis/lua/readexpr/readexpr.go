@@ -8,6 +8,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/typewitness"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/variantorigin"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
@@ -62,12 +63,20 @@ func Project(config Config, point cfg.Point, p pathdom.Path, in state.State) (pr
 		}
 	}
 
+	root := p
+	root.Segments = nil
+	if rootValue, ok := readPathValue(reg, config.Visibility, point, root, in); ok {
+		if projected, ok := projectFromValueEvidence(reg, rootValue, p.Segments); ok {
+			return projected, true
+		}
+	}
+
 	parent := p.Parent()
-	parentValue, hasParent := readPathValue(reg, config.Visibility, point, parent, in)
+	parentValue, hasParent := Project(config, point, parent, in)
 	if !runtimeMayBeTable(reg, parentValue, hasParent) {
 		return product.Value{}, false
 	}
-	if projected, ok := projectFromParentOrigin(reg, parentValue, p.Segments[len(p.Segments)-1]); ok {
+	if projected, ok := projectFromValueEvidence(reg, parentValue, p.Segments[len(p.Segments)-1:]); ok {
 		return projected, true
 	}
 
@@ -137,20 +146,49 @@ func readPathValue(
 	return value, true
 }
 
-func projectFromParentOrigin(reg *axis.Registry, parentValue product.Value, seg segment.Segment) (product.Value, bool) {
-	origin := product.Get(reg, parentValue, variantorigin.Key)
-	if origin.IsBottom() || origin.IsTop() {
+func projectFromValueEvidence(reg *axis.Registry, value product.Value, suffix []segment.Segment) (product.Value, bool) {
+	if len(suffix) == 0 {
 		return product.Value{}, false
 	}
-	parentType, ok := discriminant.TypeFromOrigin(origin.Family(), origin.Cases())
+	parentType, ok := structuralTypeFromValue(reg, value)
 	if !ok {
 		return product.Value{}, false
 	}
-	projected, ok := projectSegmentType(parentType, seg)
+	projected, ok := projectSegmentsType(parentType, suffix)
 	if !ok {
 		return product.Value{}, false
 	}
 	return typevalue.FromType(reg, projected), true
+}
+
+func structuralTypeFromValue(reg *axis.Registry, value product.Value) (typ.Type, bool) {
+	origin := product.Get(reg, value, variantorigin.Key)
+	if witness := product.Get(reg, value, typewitness.Key); !witness.IsTop() {
+		if t, ok := witness.Type(); ok {
+			if !origin.IsBottom() && !origin.IsTop() {
+				if narrowed, ok := discriminant.NarrowByOrigin(t, origin.Family(), origin.Cases()); ok {
+					return narrowed, true
+				}
+			}
+			return t, true
+		}
+	}
+	if !origin.IsBottom() && !origin.IsTop() {
+		return discriminant.TypeFromOrigin(origin.Family(), origin.Cases())
+	}
+	return nil, false
+}
+
+func projectSegmentsType(t typ.Type, suffix []segment.Segment) (typ.Type, bool) {
+	current := t
+	for _, seg := range suffix {
+		next, ok := projectSegmentType(current, seg)
+		if !ok {
+			return nil, false
+		}
+		current = next
+	}
+	return current, current != nil
 }
 
 func projectSegmentType(t typ.Type, seg segment.Segment) (typ.Type, bool) {

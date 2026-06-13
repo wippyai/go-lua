@@ -25,9 +25,6 @@ import (
 type boundaryValueReader func(*check.Result, cfg.Point) (product.Value, bool)
 
 func boundaryTypeMismatch(result *check.Result, point cfg.Point, got, want typ.Type, read boundaryValueReader) bool {
-	if !topLikeType(got) {
-		return clearMismatch(got, want)
-	}
 	if want == nil || typ.IsAny(want) || typ.IsUnknown(want) {
 		return false
 	}
@@ -35,6 +32,9 @@ func boundaryTypeMismatch(result *check.Result, point cfg.Point, got, want typ.T
 		if value, ok := read(result, point); ok && boundaryValueAdmissible(result, value, want) {
 			return false
 		}
+	}
+	if !topLikeType(got) {
+		return clearMismatch(got, want)
 	}
 	return true
 }
@@ -178,6 +178,9 @@ func boundaryValueAdmissible(result *check.Result, value product.Value, want typ
 	if presence.Equal(product.PresenceOf(value), presence.Absent()) {
 		return subtype.IsSubtype(typ.Nil, want)
 	}
+	if presence.Equal(product.PresenceOf(value), presence.Maybe()) && !subtype.IsSubtype(typ.Nil, want) {
+		return false
+	}
 	if gotEvidence := product.Get(reg, value, evidence.Key); evidence.Equal(gotEvidence, evidence.GradualTop()) {
 		return true
 	}
@@ -197,19 +200,41 @@ func concreteBoundaryType(result *check.Result, value product.Value) (typ.Type, 
 		return nil, false
 	}
 	reg := result.Registry()
-	if presence.Equal(product.PresenceOf(value), presence.Absent()) {
+	valuePresence := product.PresenceOf(value)
+	if presence.Equal(valuePresence, presence.Absent()) {
 		return typ.Nil, true
 	}
-	if witness := product.Get(reg, value, typewitness.Key); !witness.IsTop() {
-		return witness.Type()
-	}
 	origin := product.Get(reg, value, variantorigin.Key)
+	if witness := product.Get(reg, value, typewitness.Key); !witness.IsTop() {
+		if t, ok := witness.Type(); ok {
+			t = witnessTypeForPresence(t, valuePresence)
+			if !origin.IsBottom() && !origin.IsTop() {
+				if narrowed, ok := discriminant.NarrowByOrigin(t, origin.Family(), origin.Cases()); ok {
+					return narrowed, true
+				}
+			}
+			return t, true
+		}
+		return nil, false
+	}
 	if !origin.IsBottom() && !origin.IsTop() {
 		if t, ok := discriminant.TypeFromOrigin(origin.Family(), origin.Cases()); ok {
 			return t, true
 		}
 	}
 	return scalarRuntimeKindType(reg, value)
+}
+
+func witnessTypeForPresence(t typ.Type, p presence.Value) typ.Type {
+	if presence.Equal(p, presence.Absent()) {
+		return typ.Nil
+	}
+	if presence.Equal(p, presence.Present()) {
+		if withoutNil := projectionWithoutNil(t); withoutNil != nil && !typ.IsNever(withoutNil) {
+			return withoutNil
+		}
+	}
+	return t
 }
 
 func scalarRuntimeKindType(reg *axis.Registry, value product.Value) (typ.Type, bool) {

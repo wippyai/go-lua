@@ -376,6 +376,29 @@ func (r *Result) LocalSymbolAt(stmt *ast.LocalAssignStmt, index int) (symbol.ID,
 	return ids[index], true
 }
 
+// SymbolTypeAnnotation returns the declared type expression for a parameter or
+// local declaration symbol.
+func (r *Result) SymbolTypeAnnotation(id symbol.ID) (ast.TypeExpr, bool) {
+	if r == nil || id == 0 {
+		return nil, false
+	}
+	if fn, ok := r.DeclaringFunction(id); ok {
+		for _, slot := range r.ParamSlots(fn) {
+			if slot.Symbol == id && slot.Type != nil {
+				return slot.Type, true
+			}
+		}
+	}
+	for stmt, ids := range r.localSymbols {
+		for i, sym := range ids {
+			if sym == id && i < len(stmt.Types) && stmt.Types[i] != nil {
+				return stmt.Types[i], true
+			}
+		}
+	}
+	return nil, false
+}
+
 // NumForSymbol returns the loop variable symbol for a numeric for statement.
 func (r *Result) NumForSymbol(stmt *ast.NumberForStmt) (symbol.ID, bool) {
 	if r == nil || stmt == nil {

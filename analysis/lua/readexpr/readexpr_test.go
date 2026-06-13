@@ -112,6 +112,47 @@ func TestProjectNoExactProofUsesNarrowedParentOrigin(t *testing.T) {
 	assertRuntimeKind(t, reg, got, runtimekind.Singleton(runtimekind.String))
 }
 
+func TestProjectNestedPathUsesNarrowedRootOrigin(t *testing.T) {
+	reg := standard.Registry()
+	point := cfg.Point(8)
+	result := symbol.ID(18)
+	resolver := testResolver(point, result, "result")
+	readPath := path.NewPath(result, "result").Field("value").Field("error")
+	errChan := typ.NewAlias("__test_ChanErr", typetable.NewRecord().Field("__tag", typ.LiteralString("err")).Build())
+	okChan := typ.NewAlias("__test_ChanOK", typetable.NewRecord().Field("__tag", typ.LiteralString("ok")).Build())
+	errCase := typetable.NewRecord().
+		Field("channel", errChan).
+		Field("value", typetable.NewRecord().Field("error", typ.String).Build()).
+		Build()
+	okCase := typetable.NewRecord().
+		Field("channel", okChan).
+		Field("value", typetable.NewRecord().Field("data", typ.Number).Build()).
+		Build()
+	union := typ.NewUnion(okCase, errCase)
+	rootFamily, rootCases, ok := discriminant.OriginOfType(union)
+	if !ok {
+		t.Fatal("missing root origin")
+	}
+	errFamily, errCases, ok := discriminant.OriginOfType(errChan)
+	if !ok {
+		t.Fatal("missing channel origin")
+	}
+	narrowedCases, ok := discriminant.NarrowOriginByPath(rootFamily, rootCases, []segment.Segment{{Kind: segment.SegmentField, Name: "channel"}}, errFamily, errCases, true)
+	if !ok {
+		t.Fatal("failed to narrow root origin")
+	}
+	rootValue := typevalue.WithWitness(reg, typevalue.FromType(reg, union), union)
+	rootValue = product.Set(reg, rootValue, variantorigin.Key, variantorigin.Of(rootFamily, narrowedCases))
+	in := state.State{}.WriteValue(reg, key.SymbolValue(result), rootValue)
+
+	got, ok := Project(Config{Registry: reg, Visibility: resolver}, point, readPath, in)
+	if !ok {
+		t.Fatalf("Project returned false")
+	}
+	assertPresence(t, reg, got, presence.Present())
+	assertRuntimeKind(t, reg, got, runtimekind.Singleton(runtimekind.String))
+}
+
 func TestProjectRootIdentifierReadsSymbolState(t *testing.T) {
 	reg := standard.Registry()
 	point := cfg.Point(6)

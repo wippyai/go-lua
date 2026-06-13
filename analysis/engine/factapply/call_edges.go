@@ -149,7 +149,7 @@ func applyCallReturnPresenceRelation(
 		target.TargetPath(),
 		relation.TargetPresence,
 	)
-	refinement, ok := branchPresenceRelationRefinement(ctx, branchRefinements, branchRelation)
+	refinement, ok := branchPresenceRelationRefinement(ctx, resolver, out, branchRefinements, branchRelation)
 	if !ok {
 		return out
 	}

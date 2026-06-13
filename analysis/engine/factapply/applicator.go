@@ -93,7 +93,7 @@ func NewFactsEdgeTransfer(config FactsEdgeTransferConfig) transfer.EdgeTransfer 
 			out = applyBranchRefinement(ctx, config.Visibility, out, fact.TargetPath(), refinement)
 		}
 		for _, relation := range config.Facts.BranchPresenceRelations(ctx.Edge.From) {
-			refinement, ok := branchPresenceRelationRefinement(ctx, branchRefinements, relation)
+			refinement, ok := branchPresenceRelationRefinement(ctx, config.Visibility, out, branchRefinements, relation)
 			if !ok {
 				continue
 			}

@@ -1,6 +1,7 @@
 package check_test
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/check"
@@ -66,6 +67,143 @@ func TestErrorReturnSignatureRefinesValuePresenceAcrossErrorBranch(t *testing.T)
 	}
 }
 
+func TestErrorReturnLocalFunctionSummaryRefinesValuePresenceAcrossGuard(t *testing.T) {
+	reg := standard.Registry()
+	stmts := parseChunk(t, `
+		local function process(x: number): (number?, string?)
+			if x < 0 then
+				return nil, "negative"
+			end
+			return x * 2, nil
+		end
+		local result, err = process(5)
+		if err ~= nil then
+			return
+		end
+		local n: number = result
+	`)
+	result, err := check.CheckChunk(stmts, check.Config{Registry: reg})
+	if err != nil {
+		t.Fatalf("CheckChunk: %v", err)
+	}
+
+	assign := stmts[1].(*ast.LocalAssignStmt)
+	value := localSymbolAt(t, result, assign, 0)
+	branch := firstBranchPoint(t, result)
+	normalPoint := branchSuccessor(t, result.Graph(), branch, false)
+	normalState := stateAt(t, result, normalPoint)
+	assertSymbolPresence(t, reg, normalState, value, presence.Present())
+	nPoint := localAssignmentPointByName(t, result, "n")
+	nValue, ok := result.SymbolValueAtBoundary(nPoint, value)
+	if !ok {
+		t.Fatalf("missing result boundary value at n assignment")
+	}
+	if got := product.PresenceOf(nValue); !presence.Equal(got, presence.Present()) {
+		t.Fatalf("result boundary presence at n assignment = %s, want present", got)
+	}
+	if diags := diagnostics.Produce(result, diagnostics.Config{Registry: reg}); len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v, want none", diags)
+	}
+}
+
+func TestErrorReturnLocalFunctionWithoutGuardKeepsReceiverOptional(t *testing.T) {
+	reg := standard.Registry()
+	stmts := parseChunk(t, `
+		type DB = {release: fun(self)}
+		local real_db: DB = {release = function(self) end}
+		local function fetch(ok: boolean): (DB?, string?)
+			if not ok then
+				return nil, "failed"
+			end
+			return real_db
+		end
+		local function use(ok: boolean)
+			local db, err = fetch(ok)
+			db:release()
+		end
+	`)
+	result, err := check.CheckChunk(stmts, check.Config{Registry: reg})
+	if err != nil {
+		t.Fatalf("CheckChunk: %v", err)
+	}
+
+	diags := diagnostics.Produce(result, diagnostics.Config{Registry: reg})
+	for _, d := range diags {
+		if d.Code == diagnostics.CodeMissingMember && strings.Contains(d.Message, "release") {
+			return
+		}
+	}
+	t.Fatalf("diagnostics = %#v, want optional receiver diagnostic for release", diags)
+}
+
+func TestErrorReturnDelegatedTailCallRefinesReceiverAcrossGuard(t *testing.T) {
+	reg := standard.Registry()
+	stmts := parseChunk(t, `
+		type DB = {release: fun(self)}
+		local real_db: DB = {release = function(self) end}
+		local function open_db(ok: boolean): (DB?, string?)
+			if not ok then
+				return nil, "failed"
+			end
+			return real_db
+		end
+		local function get_db(ok: boolean): (DB?, string?)
+			return open_db(ok)
+		end
+		local function use(ok: boolean)
+			local db, err = get_db(ok)
+			if err then
+				return
+			end
+			db:release()
+		end
+	`)
+	result, err := check.CheckChunk(stmts, check.Config{Registry: reg})
+	if err != nil {
+		t.Fatalf("CheckChunk: %v", err)
+	}
+
+	if diags := diagnostics.Produce(result, diagnostics.Config{Registry: reg}); len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v, want none", diags)
+	}
+}
+
+func TestErrorReturnDelegatedTailCallDoesNotInventRelationFromOptionalDeclaration(t *testing.T) {
+	reg := standard.Registry()
+	stmts := parseChunk(t, `
+		type DB = {release: fun(self)}
+		local real_db: DB = {release = function(self) end}
+		local function uncertain(ok: boolean): (DB?, string?)
+			if ok then
+				return nil, nil
+			end
+			return real_db, nil
+		end
+		local function wrap(ok: boolean): (DB?, string?)
+			return uncertain(ok)
+		end
+		local function use(ok: boolean)
+			local db, err = wrap(ok)
+			if err then
+				return
+			end
+			db:release()
+		end
+	`)
+	result, err := check.CheckChunk(stmts, check.Config{Registry: reg})
+	if err != nil {
+		t.Fatalf("CheckChunk: %v", err)
+	}
+
+	diags := diagnostics.Produce(result, diagnostics.Config{Registry: reg})
+	for _, d := range diags {
+		if d.Code == diagnostics.CodeMissingMember && strings.Contains(d.Message, "release") {
+			return
+		}
+	}
+	t.Fatalf("diagnostics = %#v, want optional receiver diagnostic for release", diags)
+}
+
 func parseChunk(t *testing.T, src string) []ast.Stmt {
 	t.Helper()
 	stmts, err := parse.ParseString(src, "error_return_integration_test.lua")
@@ -93,6 +231,18 @@ func firstBranchPoint(t *testing.T, result *check.Result) cfg.Point {
 		}
 	}
 	t.Fatalf("missing branch condition")
+	return 0
+}
+
+func localAssignmentPointByName(t *testing.T, result *check.Result, name string) cfg.Point {
+	t.Helper()
+	for _, point := range result.Graph().RPO() {
+		fact, ok := result.LocalAssignment(point)
+		if ok && fact.Name == name {
+			return point
+		}
+	}
+	t.Fatalf("missing local assignment %q", name)
 	return 0
 }
 

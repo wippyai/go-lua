@@ -18,6 +18,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/typewitness"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/standard"
 	factapply "github.com/wippyai/go-lua/analysis/engine/factapply"
@@ -78,6 +79,7 @@ func TestSignatureOutcomeProviderMaterializesOptionalDeclaredReturn(t *testing.T
 	}
 	assertPresence(t, reg, got[0].Value, presence.Maybe())
 	assertRuntimeKind(t, reg, got[0].Value, runtimekind.Singleton(runtimekind.String))
+	assertTypeWitness(t, reg, got[0].Value, typ.NewOptional(typ.String))
 }
 
 func TestSignatureOutcomeProviderLowersErrorReturnToReturnPresenceRelations(t *testing.T) {
@@ -607,6 +609,7 @@ func TestSignatureOutcomeProviderElementOfArrayReturnsElementRuntimeKind(t *test
 		t.Fatalf("got %d results, want 1: %#v", len(got), got)
 	}
 	assertRuntimeKind(t, reg, got[0].Value, runtimekind.Singleton(runtimekind.String))
+	assertTypeWitness(t, reg, got[0].Value, typ.String)
 }
 
 func TestSignatureOutcomeProviderElementOfMapReturnsValueRuntimeKind(t *testing.T) {
@@ -1256,6 +1259,15 @@ func assertPresence(t *testing.T, _ *axis.Registry, got product.Value, want pres
 	t.Helper()
 	if gotPresence := product.PresenceOf(got); !presence.Equal(gotPresence, want) {
 		t.Fatalf("presence = %s, want %s", gotPresence, want)
+	}
+}
+
+func assertTypeWitness(t *testing.T, reg *axis.Registry, got product.Value, want typ.Type) {
+	t.Helper()
+	witness := product.Get(reg, got, typewitness.Key)
+	gotType, ok := witness.Type()
+	if !ok || !typ.TypeEquals(gotType, want) {
+		t.Fatalf("type witness = %v/%v, want %v", gotType, ok, want)
 	}
 }
 

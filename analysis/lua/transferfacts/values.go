@@ -12,7 +12,9 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/pathexpr"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
 	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
+	"github.com/wippyai/go-lua/analysis/lua/typeoperator"
 	"github.com/wippyai/go-lua/analysis/lua/valueexpr"
+	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
 
@@ -246,11 +248,95 @@ func (l *lowerer) expressionValue(expr ast.Expr) (product.Value, bool) {
 		return typevalue.WithWitness(l.registry, value, t), true
 	}
 	kind, ok := valueexpr.RuntimeKind(expr)
-	if !ok {
-		return product.Value{}, false
+	if ok {
+		value := product.NewWithPresence(l.registry, product.ShapeTop, presence.Present())
+		return product.Set(l.registry, value, runtimekind.Key, kind), true
 	}
-	value := product.NewWithPresence(l.registry, product.ShapeTop, presence.Present())
-	return product.Set(l.registry, value, runtimekind.Key, kind), true
+	if ident, ok := expr.(*ast.IdentExpr); ok {
+		if t, ok := l.identType(ident); ok {
+			return typevalue.FromType(l.registry, t), true
+		}
+	}
+	if t, ok := l.scalarOperationType(expr); ok {
+		return typevalue.FromType(l.registry, t), true
+	}
+	return product.Value{}, false
+}
+
+func (l *lowerer) scalarOperationType(expr ast.Expr) (typ.Type, bool) {
+	switch expr := expr.(type) {
+	case *ast.ArithmeticOpExpr:
+		return l.binaryOperationType(expr.Lhs, expr.Operator, expr.Rhs)
+	case *ast.RelationalOpExpr:
+		return l.binaryOperationType(expr.Lhs, expr.Operator, expr.Rhs)
+	case *ast.StringConcatOpExpr:
+		return l.binaryOperationType(expr.Lhs, "..", expr.Rhs)
+	case *ast.LogicalOpExpr:
+		return l.binaryOperationType(expr.Lhs, expr.Operator, expr.Rhs)
+	case *ast.UnaryMinusOpExpr:
+		return l.unaryOperationType("-", expr.Expr)
+	case *ast.UnaryNotOpExpr:
+		return l.unaryOperationType("not", expr.Expr)
+	case *ast.UnaryLenOpExpr:
+		return l.unaryOperationType("#", expr.Expr)
+	case *ast.UnaryBNotOpExpr:
+		return l.unaryOperationType("~", expr.Expr)
+	case *ast.CastExpr:
+		return l.scalarOperationType(expr.Expr)
+	case *ast.NonNilAssertExpr:
+		return l.scalarOperationType(expr.Expr)
+	default:
+		return nil, false
+	}
+}
+
+func (l *lowerer) expressionOperandType(expr ast.Expr) (typ.Type, bool) {
+	if t, ok := valueexpr.LiteralType(expr); ok {
+		return t, true
+	}
+	if ident, ok := expr.(*ast.IdentExpr); ok {
+		return l.identType(ident)
+	}
+	return l.scalarOperationType(expr)
+}
+
+func (l *lowerer) identType(expr *ast.IdentExpr) (typ.Type, bool) {
+	if l == nil || l.bindings == nil || expr == nil {
+		return nil, false
+	}
+	id, ok := l.bindings.SymbolOf(expr)
+	if !ok || id == 0 {
+		return nil, false
+	}
+	t, ok := l.symbolTypes[id]
+	if ok && t != nil {
+		return t, true
+	}
+	exprType, ok := l.bindings.SymbolTypeAnnotation(id)
+	if !ok {
+		return nil, false
+	}
+	return newTypeResolver(l.bindings).Type(exprType)
+}
+
+func (l *lowerer) binaryOperationType(leftExpr ast.Expr, op string, rightExpr ast.Expr) (typ.Type, bool) {
+	left, ok := l.expressionOperandType(leftExpr)
+	if !ok {
+		return nil, false
+	}
+	right, ok := l.expressionOperandType(rightExpr)
+	if !ok {
+		return nil, false
+	}
+	return typeoperator.BinaryOp(left, op, right)
+}
+
+func (l *lowerer) unaryOperationType(op string, expr ast.Expr) (typ.Type, bool) {
+	operand, ok := l.expressionOperandType(expr)
+	if !ok {
+		return nil, false
+	}
+	return typeoperator.UnaryOp(op, operand)
 }
 
 func (l *lowerer) exprRef(expr any) (factflow.ExprRef, bool) {

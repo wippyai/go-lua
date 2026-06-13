@@ -5,6 +5,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/variantorigin"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
@@ -72,6 +73,8 @@ func refineProductValue(reg *axis.Registry, value product.Value, refinement fact
 
 func branchPresenceRelationRefinement(
 	ctx transfer.EdgeContext,
+	resolver *visibility.Resolver,
+	out state.State,
 	branchRefinements []factflow.BranchRefinement,
 	relation factflow.BranchPresenceRelation,
 ) (factflow.ValueRefinement, bool) {
@@ -86,7 +89,57 @@ func branchPresenceRelationRefinement(
 		}
 		return presenceRefinement(ctx.Registry, relation.TargetPresence()), true
 	}
+	if branchEdgeImpliesAbsentFromNonFalseFalsy(ctx, resolver, out, branchRefinements, relation) {
+		return presenceRefinement(ctx.Registry, relation.TargetPresence()), true
+	}
 	return factflow.ValueRefinement{}, false
+}
+
+func branchEdgeImpliesAbsentFromNonFalseFalsy(
+	ctx transfer.EdgeContext,
+	resolver *visibility.Resolver,
+	out state.State,
+	branchRefinements []factflow.BranchRefinement,
+	relation factflow.BranchPresenceRelation,
+) bool {
+	if !presence.Equal(relation.TriggerPresence(), presence.Absent()) {
+		return false
+	}
+	triggerPath := relation.TriggerPath()
+	for _, branchRefinement := range branchRefinements {
+		if !branchRefinement.TargetPath().Equal(triggerPath) {
+			continue
+		}
+		if _, ok := branchRefinement.ValueForEdge(ctx.Edge.Cond); ok {
+			continue
+		}
+		opposite, ok := branchRefinement.ValueForEdge(!ctx.Edge.Cond)
+		if !ok || !refinementHasPresence(opposite, presence.Present()) {
+			continue
+		}
+		if branchTriggerCanBeFalse(ctx, resolver, out, triggerPath) {
+			continue
+		}
+		return true
+	}
+	return false
+}
+
+func branchTriggerCanBeFalse(
+	ctx transfer.EdgeContext,
+	resolver *visibility.Resolver,
+	out state.State,
+	triggerPath pathdom.Path,
+) bool {
+	current, ok := resolvePathValueAt(ctx.Registry, resolver, ctx.Edge.From, out, triggerPath)
+	if !ok {
+		return true
+	}
+	kinds := product.Get(ctx.Registry, current.value, runtimekind.Key)
+	if kinds.IsBottom() || kinds.IsTop() {
+		return true
+	}
+	return kinds.Contains(runtimekind.Boolean)
 }
 
 func refinementHasPresence(refinement factflow.ValueRefinement, want presence.Value) bool {

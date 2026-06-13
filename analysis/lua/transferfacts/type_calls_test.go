@@ -178,6 +178,34 @@ return Point:is(data)
 	assertReturnPresenceRelation(t, relations, 1, presence.Absent(), 0, presence.Present())
 }
 
+func TestLowerExplicitErrorReturnsPublishPresenceRelation(t *testing.T) {
+	reg := standard.Registry()
+	_, bindings, built, result := parseSemanticFunction(t, `
+function process(x: number): (number?, string?)
+	if x < 0 then
+		return nil, "negative"
+	end
+	return x * 2, nil
+end`)
+	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings})
+
+	relations := allReturnPresenceRelations(built.Graph, facts)
+	assertReturnPresenceRelation(t, relations, 1, presence.Present(), 0, presence.Absent())
+	assertReturnPresenceRelation(t, relations, 1, presence.Absent(), 0, presence.Present())
+}
+
+func TestLowerReturnPresenceUnknownSourceBlocksMustRelation(t *testing.T) {
+	reg := standard.Registry()
+	_, bindings, built, result := parseSemanticFunction(t, `
+function process(value: number?): (number?, string?)
+	return value, nil
+end`)
+	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings})
+
+	relations := allReturnPresenceRelations(built.Graph, facts)
+	assertNoReturnPresenceRelation(t, relations, 1, presence.Absent(), 0, presence.Present())
+}
+
 func TestLowerTypeCastCallIgnoresValueShadow(t *testing.T) {
 	reg := standard.Registry()
 	stmts, bindings, built, result := parseSemanticChunk(t, `
@@ -249,4 +277,32 @@ func assertReturnPresenceRelation(
 	}
 	t.Fatalf("missing return presence relation %d/%s -> %d/%s in %#v",
 		triggerIndex, triggerPresence, targetIndex, targetPresence, relations)
+}
+
+func assertNoReturnPresenceRelation(
+	t *testing.T,
+	relations []factflow.ReturnPresenceRelation,
+	triggerIndex int,
+	triggerPresence presence.Value,
+	targetIndex int,
+	targetPresence presence.Value,
+) {
+	t.Helper()
+	for _, relation := range relations {
+		if relation.TriggerIndex() == triggerIndex &&
+			presence.Equal(relation.TriggerPresence(), triggerPresence) &&
+			relation.TargetIndex() == targetIndex &&
+			presence.Equal(relation.TargetPresence(), targetPresence) {
+			t.Fatalf("return presence relation %d/%s -> %d/%s unexpectedly present in %#v",
+				triggerIndex, triggerPresence, targetIndex, targetPresence, relations)
+		}
+	}
+}
+
+func allReturnPresenceRelations(graph cfg.Graph, facts factflow.Facts) []factflow.ReturnPresenceRelation {
+	var out []factflow.ReturnPresenceRelation
+	for _, point := range graph.RPO() {
+		out = append(out, facts.ReturnPresenceRelations(point)...)
+	}
+	return out
 }

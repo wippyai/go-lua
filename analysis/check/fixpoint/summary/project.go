@@ -4,6 +4,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/typewitness"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/variantorigin"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
@@ -82,7 +83,11 @@ func FromResult(result ResultReader) Summary {
 		ReturnPresenceRelations:         projectReturnPresenceRelations(result),
 	}
 
-	arity := 0
+	var declared []product.Value
+	if reader, ok := result.(returnTypeValueReader); ok {
+		declared = reader.ReturnTypeValues()
+	}
+	arity := len(declared)
 	for _, point := range result.ReturnPoints() {
 		pointArity, ok := result.ReturnArity(point)
 		if ok && pointArity > arity {
@@ -90,24 +95,37 @@ func FromResult(result ResultReader) Summary {
 		}
 	}
 	if arity > 0 {
-		var declared []product.Value
-		if reader, ok := result.(returnTypeValueReader); ok {
-			declared = reader.ReturnTypeValues()
-		}
-		summary.Returns = make([]product.Value, arity)
-		for i := range summary.Returns {
-			value := exit.ReadValue(reg, key.ReturnSlot(i))
-			if i < len(declared) {
-				value = joinDeclaredReturnValue(reg, value, declared[i])
-			}
-			summary.Returns[i] = value
-		}
+		summary.Returns = projectReturnSlots(reg, result, exit, arity, declared)
 	}
 	return Normalize(reg, summary)
 }
 
+func projectReturnSlots(
+	reg *axis.Registry,
+	_ ResultReader,
+	exit state.State,
+	arity int,
+	declared []product.Value,
+) []product.Value {
+	returns := make([]product.Value, arity)
+	for i := range returns {
+		returns[i] = exit.ReadValue(reg, key.ReturnSlot(i))
+		if i < len(declared) {
+			returns[i] = joinDeclaredReturnValue(reg, returns[i], declared[i])
+		}
+	}
+	return returns
+}
+
 func joinDeclaredReturnValue(reg *axis.Registry, value product.Value, declared product.Value) product.Value {
 	joined := product.Join(reg, value, declared)
+	declaredWitness := product.Get(reg, declared, typewitness.Key)
+	if !declaredWitness.IsBottom() && !declaredWitness.IsTop() {
+		joinedWitness := product.Get(reg, joined, typewitness.Key)
+		if joinedWitness.IsTop() {
+			joined = product.Set(reg, joined, typewitness.Key, declaredWitness)
+		}
+	}
 	declaredOrigin := product.Get(reg, declared, variantorigin.Key)
 	if declaredOrigin.IsBottom() || declaredOrigin.IsTop() {
 		return joined
@@ -289,18 +307,17 @@ func returnConditionSource(source factflow.ValueSource) bool {
 
 func projectReturnPresenceRelations(result ResultReader) []ReturnPresenceRelation {
 	reader, ok := result.(returnPresenceRelationReader)
-	if !ok {
-		return nil
-	}
 	var out []ReturnPresenceRelation
-	for _, point := range result.ReturnPoints() {
-		for _, relation := range reader.ReturnPresenceRelations(point) {
-			out = append(out, ReturnPresenceRelation{
-				TriggerIndex:    relation.TriggerIndex(),
-				TriggerPresence: relation.TriggerPresence(),
-				TargetIndex:     relation.TargetIndex(),
-				TargetPresence:  relation.TargetPresence(),
-			})
+	if ok {
+		for _, point := range result.ReturnPoints() {
+			for _, relation := range reader.ReturnPresenceRelations(point) {
+				out = append(out, ReturnPresenceRelation{
+					TriggerIndex:    relation.TriggerIndex(),
+					TriggerPresence: relation.TriggerPresence(),
+					TargetIndex:     relation.TargetIndex(),
+					TargetPresence:  relation.TargetPresence(),
+				})
+			}
 		}
 	}
 	return normalizeReturnPresenceRelations(out)

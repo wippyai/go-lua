@@ -23,7 +23,7 @@ func (r *Result) ReturnTypeValues() []product.Value {
 			out = append(out, product.Top())
 			continue
 		}
-		out = append(out, typevalue.FromType(r.registry, t))
+		out = append(out, typevalue.WithWitness(r.registry, typevalue.FromType(r.registry, t), t))
 	}
 	return out
 }
