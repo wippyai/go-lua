@@ -2,7 +2,7 @@ package subtype
 
 import (
 	"github.com/wippyai/go-lua/analysis/type/kind"
-	"github.com/wippyai/go-lua/analysis/type/nodeid"
+	"github.com/wippyai/go-lua/analysis/type/internal/nodeid"
 	"github.com/wippyai/go-lua/analysis/type/subst"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
