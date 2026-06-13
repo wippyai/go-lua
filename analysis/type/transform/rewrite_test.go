@@ -70,6 +70,54 @@ func replaceNumber(replacement typ.Type) func(typ.Type) (typ.Type, bool) {
 	}
 }
 
+func requireRewriteUnionMembers(t *testing.T, got typ.Type, wants ...typ.Type) *typ.Union {
+	t.Helper()
+	union, ok := got.(*typ.Union)
+	if !ok {
+		t.Fatalf("expected Union, got %T %[1]v", got)
+	}
+	if len(union.Members) != len(wants) {
+		t.Fatalf("union members = %v, want %v", union.Members, wants)
+	}
+	for _, want := range wants {
+		found := false
+		for _, member := range union.Members {
+			if typ.TypeEquals(member, want) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("union members = %v, missing %v", union.Members, want)
+		}
+	}
+	return union
+}
+
+func requireRewriteIntersectionMembers(t *testing.T, got typ.Type, wants ...typ.Type) *typ.Intersection {
+	t.Helper()
+	intersection, ok := got.(*typ.Intersection)
+	if !ok {
+		t.Fatalf("expected Intersection, got %T %[1]v", got)
+	}
+	if len(intersection.Members) != len(wants) {
+		t.Fatalf("intersection members = %v, want %v", intersection.Members, wants)
+	}
+	for _, want := range wants {
+		found := false
+		for _, member := range intersection.Members {
+			if typ.TypeEquals(member, want) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("intersection members = %v, missing %v", intersection.Members, want)
+		}
+	}
+	return intersection
+}
+
 func TestRewrite_Nil(t *testing.T) {
 	result := Rewrite(nil, replaceNumber(typ.String))
 	if result != nil {
@@ -121,6 +169,30 @@ func TestRewrite_Union(t *testing.T) {
 	}
 }
 
+func TestRewrite_UnionReplacementFlattensNestedUnionMember(t *testing.T) {
+	nested := typ.NewUnion(typ.String, typ.Integer)
+	result := Rewrite(typ.NewUnion(typ.Number, typ.Boolean), replaceNumber(nested))
+
+	union := requireRewriteUnionMembers(t, result, typ.String, typ.Integer, typ.Boolean)
+	for _, member := range union.Members {
+		if _, ok := member.(*typ.Union); ok {
+			t.Fatalf("expected rewritten nested union to flatten, got member %v in %v", member, union.Members)
+		}
+	}
+}
+
+func TestRewrite_UnionReplacementExpandsOptionalMember(t *testing.T) {
+	optionalString := typ.NewOptional(typ.String)
+	result := Rewrite(typ.NewUnion(typ.Number, typ.Boolean), replaceNumber(optionalString))
+
+	union := requireRewriteUnionMembers(t, result, typ.Nil, typ.String, typ.Boolean)
+	for _, member := range union.Members {
+		if _, ok := member.(*typ.Optional); ok {
+			t.Fatalf("expected rewritten optional union member to expand, got member %v in %v", member, union.Members)
+		}
+	}
+}
+
 func TestRewrite_Intersection(t *testing.T) {
 	rec := newRecord().Field("x", typ.Boolean).Build()
 	inter := typ.NewIntersection(typ.Number, rec)
@@ -137,6 +209,19 @@ func TestRewrite_Intersection(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("expected String in intersection, got %v", result)
+	}
+}
+
+func TestRewrite_IntersectionReplacementFlattensNestedIntersectionMember(t *testing.T) {
+	nested := typ.NewIntersection(typ.String, typ.Integer)
+	rec := newRecord().Field("x", typ.Boolean).Build()
+	result := Rewrite(typ.NewIntersection(typ.Number, rec), replaceNumber(nested))
+
+	intersection := requireRewriteIntersectionMembers(t, result, typ.String, typ.Integer, rec)
+	for _, member := range intersection.Members {
+		if _, ok := member.(*typ.Intersection); ok {
+			t.Fatalf("expected rewritten nested intersection to flatten, got member %v in %v", member, intersection.Members)
+		}
 	}
 }
 
