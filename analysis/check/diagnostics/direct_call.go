@@ -75,6 +75,13 @@ func (p directCallContract) call(
 		return p.callFunction(result, point, fact, name, def)
 	}
 
+	if sig, ok := result.CallSignature(site); ok && sig.Type != nil {
+		contract := lowerDirectFunctionType(sig.Type)
+		contract.name = name
+		contract.declSpan = ast.SpanOf(fact.Call)
+		return p.directFunctionCall(result, point, fact, contract)
+	}
+
 	baseExpr, ok := result.SymbolTypeAnnotation(site.CalleeSymbol())
 	if !ok {
 		return diagnostic.Diagnostic{}, false
