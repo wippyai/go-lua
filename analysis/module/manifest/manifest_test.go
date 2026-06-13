@@ -93,6 +93,39 @@ func TestManifestRoundTrip(t *testing.T) {
 	}
 }
 
+func TestManifestRoundTripNormalizesMapKeysOnDecode(t *testing.T) {
+	mapKey := typ.NewUnion(typ.String, typ.Nil)
+
+	m := New("example/keys")
+	m.DefineType("Writable", typ.NewMap(mapKey, typ.Number))
+	m.DefineType("Readonly", typ.NewReadonlyMap(mapKey, typ.Number))
+
+	data, err := Encode(m)
+	if err != nil {
+		t.Fatalf("Encode: %v", err)
+	}
+	got, err := Decode(data)
+	if err != nil {
+		t.Fatalf("Decode: %v", err)
+	}
+
+	writable, ok := got.Types["Writable"].(*typ.Map)
+	if !ok {
+		t.Fatalf("Writable = %T, want *typ.Map", got.Types["Writable"])
+	}
+	if !typ.TypeEquals(writable.Key, typ.String) {
+		t.Fatalf("Writable key = %v, want string", writable.Key)
+	}
+
+	readonly, ok := got.Types["Readonly"].(*typ.ReadonlyMap)
+	if !ok {
+		t.Fatalf("Readonly = %T, want *typ.ReadonlyMap", got.Types["Readonly"])
+	}
+	if !typ.TypeEquals(readonly.Key, typ.String) {
+		t.Fatalf("Readonly key = %v, want string", readonly.Key)
+	}
+}
+
 func TestManifestRoundTripNamedFunctionSignatureEffects(t *testing.T) {
 	row := effect.Open("rho",
 		control.IO{},

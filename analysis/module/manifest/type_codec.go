@@ -3,6 +3,7 @@ package manifest
 import (
 	"fmt"
 
+	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
@@ -192,7 +193,7 @@ func decodeType(w *typeWire) (typ.Type, error) {
 		if err != nil {
 			return nil, err
 		}
-		return typ.NewMap(key, value), nil
+		return typetable.NewMap(key, value), nil
 	case "readonlyMap":
 		key, err := decodeType(w.Key)
 		if err != nil {
@@ -202,7 +203,7 @@ func decodeType(w *typeWire) (typ.Type, error) {
 		if err != nil {
 			return nil, err
 		}
-		return typ.NewReadonlyMap(key, value), nil
+		return typetable.NewReadonlyMap(key, value), nil
 	case "record":
 		return decodeRecord(w)
 	case "interface":
