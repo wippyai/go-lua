@@ -1,7 +1,7 @@
 package body
 
 import (
-	"github.com/wippyai/go-lua/analysis/check/body/readexpr"
+	"github.com/wippyai/go-lua/analysis/check/body/internal/readexpr"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	factapply "github.com/wippyai/go-lua/analysis/engine/factapply"

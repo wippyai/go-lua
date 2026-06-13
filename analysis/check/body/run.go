@@ -3,7 +3,7 @@ package body
 import (
 	"fmt"
 
-	"github.com/wippyai/go-lua/analysis/check/body/readexpr"
+	"github.com/wippyai/go-lua/analysis/check/body/internal/readexpr"
 	factapply "github.com/wippyai/go-lua/analysis/engine/factapply"
 	"github.com/wippyai/go-lua/analysis/engine/factapply/effectlowering"
 	sourcevalue "github.com/wippyai/go-lua/analysis/engine/sourcevalue"

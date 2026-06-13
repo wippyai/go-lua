@@ -3,7 +3,6 @@ package factapply
 import (
 	"testing"
 
-	"github.com/wippyai/go-lua/analysis/check/body/readexpr"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
@@ -282,6 +281,13 @@ func TestFactsEdgeTransferDescendantTruthyNarrowsRootOriginFromFlowType(t *testi
 			okKey := resolver.KeyForVersion(target, version.ID, okPath.Segments)
 			valueKey := resolver.KeyForVersion(target, version.ID, valuePath.Segments)
 			staleValue := typevalue.FromType(reg, typ.NewOptional(profile))
+			facts := factflow.NewFacts(factflow.FactsInput{
+				BranchRefinements: map[cfg.Point]factflow.BranchRefinementSet{
+					branch: factflow.NewBranchRefinementSet(
+						branchWithPresence(okPath, presence.Present(), true, presence.Bottom(), false),
+					),
+				},
+			})
 			initial := state.State{}.
 				WriteValue(reg, key.SymbolValue(target), tc.rootValue).
 				WritePathKey(reg, valueKey, staleValue)
@@ -291,13 +297,7 @@ func TestFactsEdgeTransferDescendantTruthyNarrowsRootOriginFromFlowType(t *testi
 				Registry:   reg,
 				EntryState: initial,
 				EdgeTransfer: NewFactsEdgeTransfer(FactsEdgeTransferConfig{
-					Facts: factflow.NewFacts(factflow.FactsInput{
-						BranchRefinements: map[cfg.Point]factflow.BranchRefinementSet{
-							branch: factflow.NewBranchRefinementSet(
-								branchWithPresence(okPath, presence.Present(), true, presence.Bottom(), false),
-							),
-						},
-					}),
+					Facts:      facts,
 					Visibility: resolver,
 				}),
 			})
@@ -306,15 +306,6 @@ func TestFactsEdgeTransferDescendantTruthyNarrowsRootOriginFromFlowType(t *testi
 			assertVariantOriginType(t, reg, thenState, target, resultType, valueCase)
 			assertPathValue(t, reg, thenState, valueKey, product.Bottom(reg))
 			assertPathValue(t, reg, thenState, okKey, presentValue(reg))
-
-			projected, ok := readexpr.Project(readexpr.Config{Registry: reg, Visibility: resolver}, thenPoint, valuePath, thenState)
-			if !ok {
-				t.Fatal("project result.value after result.ok refinement failed")
-			}
-			if gotPresence := product.PresenceOf(projected); !presence.Equal(gotPresence, presence.Present()) {
-				t.Fatalf("result.value presence = %s, want present", gotPresence)
-			}
-			assertRuntimeKind(t, reg, projected, runtimekind.Singleton(runtimekind.Table))
 			assertPathValue(t, reg, got[elsePoint], valueKey, staleValue)
 		})
 	}
