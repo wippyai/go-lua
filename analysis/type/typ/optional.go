@@ -63,6 +63,17 @@ func NewOptional(inner Type) Type {
 		return newCanonicalUnion(members, hashes)
 	}
 
+	return MaterializeOptional(inner)
+}
+
+// MaterializeOptional builds the hash-stable optional node for an already-selected inner type.
+//
+// It performs only low-level node materialization owned by typ: hash/cache/
+// contains flag computation plus the canonical Optional node invariants for
+// nil/Nil and already-Optional inputs. It is not semantic type-expression
+// construction: Any is kept as the optional inner type, and Union is not
+// interpreted as nil plus its members.
+func MaterializeOptional(inner Type) Type {
 	return newRawOptionalNode(inner)
 }
 

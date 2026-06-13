@@ -47,6 +47,50 @@ func TestOptionalOfAny(t *testing.T) {
 	}
 }
 
+func TestMaterializeOptionalOfAnyKeepsRawOptional(t *testing.T) {
+	o := MaterializeOptional(Any)
+	opt, ok := o.(*Optional)
+	if !ok {
+		t.Fatalf("MaterializeOptional(any) = %T %[1]v, want optional", o)
+	}
+	if opt.Inner != Any {
+		t.Fatalf("Inner = %v, want any", opt.Inner)
+	}
+	if o == Any {
+		t.Fatalf("MaterializeOptional(any) collapsed to any")
+	}
+
+	equal := MaterializeOptional(Any)
+	if !o.Equals(equal) {
+		t.Fatalf("materialized optionals should be equal: %v vs %v", o, equal)
+	}
+	if o.Hash() != equal.Hash() {
+		t.Fatalf("materialized optional hashes should match: %d vs %d", o.Hash(), equal.Hash())
+	}
+	if !opt.containsAny {
+		t.Fatalf("containsAny cache flag was not set")
+	}
+}
+
+func TestMaterializeOptionalDoesNotInterpretUnion(t *testing.T) {
+	u := NewUnion(Number, String)
+
+	o := MaterializeOptional(u)
+	opt, ok := o.(*Optional)
+	if !ok {
+		t.Fatalf("MaterializeOptional(union) = %T %[1]v, want optional", o)
+	}
+	if opt.Inner != u {
+		t.Fatalf("Inner = %v, want original union %v", opt.Inner, u)
+	}
+	if opt.Inner.Kind() != kind.Union {
+		t.Fatalf("Inner kind = %v, want union", opt.Inner.Kind())
+	}
+	if opt.Inner.(*Union).Contains(Nil) {
+		t.Fatalf("materialized optional expanded union with nil: %v", opt.Inner)
+	}
+}
+
 func TestOptionalEquality(t *testing.T) {
 	o1 := NewOptional(Number)
 	o2 := NewOptional(Number)
