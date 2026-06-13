@@ -92,12 +92,12 @@ func projectNormalReturnFacts(reg *axis.Registry, result ResultReader, exit stat
 				Path: target,
 			}
 			switch kind {
-			case BranchProofPathPresence:
+			case pathevidence.BranchProofPathPresence:
 				if stateProof.Presence.IsBottom() || stateProof.Presence.IsTop() {
 					continue
 				}
 				proof.Presence = stateProof.Presence
-			case BranchProofPathEqual, BranchProofPathNotEqual:
+			case pathevidence.BranchProofPathEqual, pathevidence.BranchProofPathNotEqual:
 				other, ok := projectPath(stateProof.Other)
 				if !ok {
 					continue
@@ -117,7 +117,7 @@ func projectNormalReturnFacts(reg *axis.Registry, result ResultReader, exit stat
 				continue
 			}
 			fact := ChannelSelectFact{
-				Select: string(stateFact.Select),
+				Select: channelselectfact.ID(stateFact.Select),
 				Kind:   kind,
 				Index:  stateFact.Index,
 			}
@@ -225,27 +225,27 @@ func effectDeltaIsTop(delta EffectDelta) bool {
 	return delta.Value == effectdelta.Top()
 }
 
-func projectBranchProofKind(kind pathevidence.BranchProofKind) (BranchProofKind, bool) {
+func projectBranchProofKind(kind pathevidence.BranchProofKind) (pathevidence.BranchProofKind, bool) {
 	switch kind {
 	case pathevidence.BranchProofPathPresence:
-		return BranchProofPathPresence, true
+		return pathevidence.BranchProofPathPresence, true
 	case pathevidence.BranchProofPathEqual:
-		return BranchProofPathEqual, true
+		return pathevidence.BranchProofPathEqual, true
 	case pathevidence.BranchProofPathNotEqual:
-		return BranchProofPathNotEqual, true
+		return pathevidence.BranchProofPathNotEqual, true
 	default:
 		return 0, false
 	}
 }
 
-func projectChannelSelectKind(kind channelselectfact.Kind) (ChannelSelectFactKind, bool) {
+func projectChannelSelectKind(kind channelselectfact.Kind) (channelselectfact.Kind, bool) {
 	switch kind {
 	case channelselectfact.FactSelect:
-		return ChannelSelectFactSelect, true
+		return channelselectfact.FactSelect, true
 	case channelselectfact.FactReceive:
-		return ChannelSelectFactReceive, true
+		return channelselectfact.FactReceive, true
 	case channelselectfact.FactCase:
-		return ChannelSelectFactCase, true
+		return channelselectfact.FactCase, true
 	default:
 		return 0, false
 	}

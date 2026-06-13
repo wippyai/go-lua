@@ -4,11 +4,12 @@ import (
 	"sort"
 
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/engine/state/channelselectfact"
 )
 
 type channelSelectFactKey struct {
 	selectID string
-	kind     ChannelSelectFactKind
+	kind     channelselectfact.Kind
 	result   pathdom.PathKey
 	casePath pathdom.PathKey
 	index    int
@@ -103,7 +104,7 @@ func optionalPlaceholderPath(path pathdom.Path) bool {
 
 func channelSelectFactKeyOf(fact ChannelSelectFact) channelSelectFactKey {
 	return channelSelectFactKey{
-		selectID: fact.Select,
+		selectID: string(fact.Select),
 		kind:     fact.Kind,
 		result:   fact.Result.Key(),
 		casePath: fact.Case.Key(),

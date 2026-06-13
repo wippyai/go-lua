@@ -5,8 +5,10 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/engine/state/channelselectfact"
 	"github.com/wippyai/go-lua/analysis/engine/state/dynamicindex"
 	effectdelta "github.com/wippyai/go-lua/analysis/engine/state/effectdelta"
+	"github.com/wippyai/go-lua/analysis/engine/state/pathevidence"
 )
 
 // NormalReturnFacts is the summary-local payload lane for facts that hold on a
@@ -39,36 +41,18 @@ type DynamicIndexFact struct {
 	Value dynamicindex.Fact
 }
 
-// BranchProofKind classifies a summary-local branch proof.
-type BranchProofKind uint8
-
-const (
-	BranchProofPathPresence BranchProofKind = iota + 1
-	BranchProofPathEqual
-	BranchProofPathNotEqual
-)
-
 // BranchProof records a must branch proof over placeholder paths.
 type BranchProof struct {
-	Kind     BranchProofKind
+	Kind     pathevidence.BranchProofKind
 	Path     pathdom.Path
 	Presence presence.Value
 	Other    pathdom.Path
 }
 
-// ChannelSelectFactKind classifies a summary-local channel select fact.
-type ChannelSelectFactKind uint8
-
-const (
-	ChannelSelectFactSelect ChannelSelectFactKind = iota + 1
-	ChannelSelectFactReceive
-	ChannelSelectFactCase
-)
-
 // ChannelSelectFact records a must channel-select fact with stable caller-provided IDs.
 type ChannelSelectFact struct {
-	Select string
-	Kind   ChannelSelectFactKind
+	Select channelselectfact.ID
+	Kind   channelselectfact.Kind
 	Result pathdom.Path
 	Case   pathdom.Path
 	Index  int

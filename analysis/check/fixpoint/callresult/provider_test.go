@@ -17,8 +17,10 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	sourcevalue "github.com/wippyai/go-lua/analysis/engine/sourcevalue"
 	"github.com/wippyai/go-lua/analysis/engine/state"
+	"github.com/wippyai/go-lua/analysis/engine/state/channelselectfact"
 	"github.com/wippyai/go-lua/analysis/engine/state/dynamicindex"
 	effectdelta "github.com/wippyai/go-lua/analysis/engine/state/effectdelta"
+	"github.com/wippyai/go-lua/analysis/engine/state/pathevidence"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/symbol"
@@ -74,15 +76,15 @@ func TestOutcomeProviderMapsSummaryReturnsAndNormalReturnFacts(t *testing.T) {
 				},
 				BranchProofs: []summary.BranchProof{
 					{
-						Kind:  summary.BranchProofPathEqual,
+						Kind:  pathevidence.BranchProofPathEqual,
 						Path:  path.NewPlaceholder(0).Field("left"),
 						Other: path.NewPlaceholder(1).Field("right"),
 					},
 				},
 				ChannelSelects: []summary.ChannelSelectFact{
 					{
-						Select: "summary.select",
-						Kind:   summary.ChannelSelectFactReceive,
+						Select: channelselectfact.ID("summary.select"),
+						Kind:   channelselectfact.FactReceive,
 						Result: path.NewPlaceholder(0).Field("result"),
 						Case:   path.NewPlaceholder(1).Field("case"),
 						Index:  2,
@@ -415,14 +417,16 @@ func TestProductionImportsAreBounded(t *testing.T) {
 		t.Fatalf("go list imports . error = %v", err)
 	}
 	allowed := map[string]bool{
-		"github.com/wippyai/go-lua/analysis/check/fixpoint/summary": true,
-		"github.com/wippyai/go-lua/analysis/domain/path":            true,
-		"github.com/wippyai/go-lua/analysis/engine/factapply":       true,
-		"github.com/wippyai/go-lua/analysis/engine/factflow":        true,
-		"github.com/wippyai/go-lua/analysis/engine/state":           true,
-		"github.com/wippyai/go-lua/analysis/engine/transfer":        true,
-		"github.com/wippyai/go-lua/analysis/ir/cfg":                 true,
-		"github.com/wippyai/go-lua/analysis/symbol":                 true,
+		"github.com/wippyai/go-lua/analysis/check/fixpoint/summary":         true,
+		"github.com/wippyai/go-lua/analysis/domain/path":                    true,
+		"github.com/wippyai/go-lua/analysis/engine/factapply":               true,
+		"github.com/wippyai/go-lua/analysis/engine/factflow":                true,
+		"github.com/wippyai/go-lua/analysis/engine/state/channelselectfact": true,
+		"github.com/wippyai/go-lua/analysis/engine/state/pathevidence":      true,
+		"github.com/wippyai/go-lua/analysis/engine/state":                   true,
+		"github.com/wippyai/go-lua/analysis/engine/transfer":                true,
+		"github.com/wippyai/go-lua/analysis/ir/cfg":                         true,
+		"github.com/wippyai/go-lua/analysis/symbol":                         true,
 	}
 	for _, imp := range strings.Fields(string(out)) {
 		if !allowed[imp] {

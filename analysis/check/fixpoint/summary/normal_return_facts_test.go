@@ -7,8 +7,10 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/engine/state/channelselectfact"
 	"github.com/wippyai/go-lua/analysis/engine/state/dynamicindex"
 	effectdelta "github.com/wippyai/go-lua/analysis/engine/state/effectdelta"
+	"github.com/wippyai/go-lua/analysis/engine/state/pathevidence"
 	"github.com/wippyai/go-lua/analysis/symbol"
 )
 
@@ -32,14 +34,14 @@ func TestNormalReturnFactsNormalizeDropsNonPlaceholderPaths(t *testing.T) {
 			{Table: placeholder, Site: "caller.dynamic.1", Value: dynamicindex.Fact{KeyPresence: presence.Present()}},
 		},
 		BranchProofs: []BranchProof{
-			{Kind: BranchProofPathPresence, Path: concrete, Presence: presence.Present()},
-			{Kind: BranchProofPathPresence, Path: placeholder, Presence: presence.Present()},
-			{Kind: BranchProofPathEqual, Path: placeholder, Other: concrete},
-			{Kind: BranchProofPathEqual, Path: placeholder, Other: pathdom.NewPlaceholder(1)},
+			{Kind: pathevidence.BranchProofPathPresence, Path: concrete, Presence: presence.Present()},
+			{Kind: pathevidence.BranchProofPathPresence, Path: placeholder, Presence: presence.Present()},
+			{Kind: pathevidence.BranchProofPathEqual, Path: placeholder, Other: concrete},
+			{Kind: pathevidence.BranchProofPathEqual, Path: placeholder, Other: pathdom.NewPlaceholder(1)},
 		},
 		ChannelSelects: []ChannelSelectFact{
-			{Select: "select-concrete", Kind: ChannelSelectFactReceive, Result: concrete, Index: 0},
-			{Select: "select-placeholder", Kind: ChannelSelectFactReceive, Result: placeholder, Index: 0},
+			{Select: channelselectfact.ID("select-concrete"), Kind: channelselectfact.FactReceive, Result: concrete, Index: 0},
+			{Select: channelselectfact.ID("select-placeholder"), Kind: channelselectfact.FactReceive, Result: placeholder, Index: 0},
 		},
 		EffectDeltas: []EffectDelta{
 			{Target: concrete, Site: "caller.effect.ignored", Kind: effectdelta.Mutation, Value: effectdelta.Value{Before: value, After: value, Change: effectdelta.ChangeChanged}},
@@ -83,7 +85,7 @@ func TestNormalReturnFactsCloneIsolatesPayload(t *testing.T) {
 			},
 		}},
 		BranchProofs: []BranchProof{{
-			Kind:     BranchProofPathPresence,
+			Kind:     pathevidence.BranchProofPathPresence,
 			Path:     pathdom.NewPlaceholder(0).Field("ok"),
 			Presence: presence.Present(),
 		}},
@@ -127,12 +129,12 @@ func TestNormalReturnFactsJoinUsesStateLaneSemantics(t *testing.T) {
 			{Table: p0, Site: "caller.dynamic.left", Value: dynamicindex.Fact{KeyPresence: presence.Present(), KeyValue: leftValue, Value: leftValue, Admission: dynamicindex.AdmissionAdmitted}},
 		},
 		BranchProofs: []BranchProof{
-			{Kind: BranchProofPathPresence, Path: commonPath, Presence: presence.Present()},
-			{Kind: BranchProofPathPresence, Path: leftOnly, Presence: presence.Present()},
+			{Kind: pathevidence.BranchProofPathPresence, Path: commonPath, Presence: presence.Present()},
+			{Kind: pathevidence.BranchProofPathPresence, Path: leftOnly, Presence: presence.Present()},
 		},
 		ChannelSelects: []ChannelSelectFact{
-			{Select: "select-common", Kind: ChannelSelectFactSelect, Result: commonPath, Index: 0},
-			{Select: "select-left", Kind: ChannelSelectFactReceive, Case: leftOnly, Index: 1},
+			{Select: channelselectfact.ID("select-common"), Kind: channelselectfact.FactSelect, Result: commonPath, Index: 0},
+			{Select: channelselectfact.ID("select-left"), Kind: channelselectfact.FactReceive, Case: leftOnly, Index: 1},
 		},
 		EffectDeltas: []EffectDelta{
 			{Target: commonPath, Site: "caller.effect.common", Kind: effectdelta.Mutation, Value: effectdelta.Value{Before: leftValue, After: leftValue, Change: effectdelta.ChangeChanged}},
@@ -153,12 +155,12 @@ func TestNormalReturnFactsJoinUsesStateLaneSemantics(t *testing.T) {
 			},
 		}},
 		BranchProofs: []BranchProof{
-			{Kind: BranchProofPathPresence, Path: commonPath, Presence: presence.Present()},
-			{Kind: BranchProofPathPresence, Path: p0.Field("right"), Presence: presence.Present()},
+			{Kind: pathevidence.BranchProofPathPresence, Path: commonPath, Presence: presence.Present()},
+			{Kind: pathevidence.BranchProofPathPresence, Path: p0.Field("right"), Presence: presence.Present()},
 		},
 		ChannelSelects: []ChannelSelectFact{
-			{Select: "select-common", Kind: ChannelSelectFactSelect, Result: commonPath, Index: 0},
-			{Select: "select-right", Kind: ChannelSelectFactCase, Case: p0.Field("right"), Index: 2},
+			{Select: channelselectfact.ID("select-common"), Kind: channelselectfact.FactSelect, Result: commonPath, Index: 0},
+			{Select: channelselectfact.ID("select-right"), Kind: channelselectfact.FactCase, Case: p0.Field("right"), Index: 2},
 		},
 		EffectDeltas: []EffectDelta{{
 			Target: commonPath,
@@ -227,7 +229,7 @@ func TestNormalReturnFactsEqualAndLessOrEqAccountForLane(t *testing.T) {
 	p0 := pathdom.NewPlaceholder(0)
 	left := Summary{NormalReturnFacts: NormalReturnFacts{
 		PathRefinements: []PathValueFact{{Path: p0, Value: presentProduct(reg)}},
-		BranchProofs:    []BranchProof{{Kind: BranchProofPathPresence, Path: p0, Presence: presence.Present()}},
+		BranchProofs:    []BranchProof{{Kind: pathevidence.BranchProofPathPresence, Path: p0, Presence: presence.Present()}},
 	}}
 	right := Summary{NormalReturnFacts: NormalReturnFacts{
 		PathRefinements: []PathValueFact{{Path: p0, Value: product.Top()}},

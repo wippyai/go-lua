@@ -7,6 +7,8 @@ import (
 	factapply "github.com/wippyai/go-lua/analysis/engine/factapply"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/state"
+	"github.com/wippyai/go-lua/analysis/engine/state/channelselectfact"
+	"github.com/wippyai/go-lua/analysis/engine/state/pathevidence"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/symbol"
@@ -119,7 +121,7 @@ func outcomeFromSummary(got summary.Summary, usefulNormalReturnParam func(int) b
 		out.ChannelSelects = make([]factapply.CallChannelSelectFact, len(facts.ChannelSelects))
 		for i, fact := range facts.ChannelSelects {
 			out.ChannelSelects[i] = factapply.CallChannelSelectFact{
-				Select: fact.Select,
+				Select: string(fact.Select),
 				Kind:   channelSelectKind(fact.Kind),
 				Result: copyPath(fact.Result),
 				Case:   copyPath(fact.Case),
@@ -228,26 +230,26 @@ func withSupplementalOutcomeFacts(out, second factapply.CallOutcome) factapply.C
 	return out
 }
 
-func branchProofKind(kind summary.BranchProofKind) factapply.CallBranchProofKind {
+func branchProofKind(kind pathevidence.BranchProofKind) factapply.CallBranchProofKind {
 	switch kind {
-	case summary.BranchProofPathPresence:
+	case pathevidence.BranchProofPathPresence:
 		return factapply.CallBranchProofPathPresence
-	case summary.BranchProofPathEqual:
+	case pathevidence.BranchProofPathEqual:
 		return factapply.CallBranchProofPathEqual
-	case summary.BranchProofPathNotEqual:
+	case pathevidence.BranchProofPathNotEqual:
 		return factapply.CallBranchProofPathNotEqual
 	default:
 		return 0
 	}
 }
 
-func channelSelectKind(kind summary.ChannelSelectFactKind) factapply.CallChannelSelectFactKind {
+func channelSelectKind(kind channelselectfact.Kind) factapply.CallChannelSelectFactKind {
 	switch kind {
-	case summary.ChannelSelectFactSelect:
+	case channelselectfact.FactSelect:
 		return factapply.CallChannelSelectFactSelect
-	case summary.ChannelSelectFactReceive:
+	case channelselectfact.FactReceive:
 		return factapply.CallChannelSelectFactReceive
-	case summary.ChannelSelectFactCase:
+	case channelselectfact.FactCase:
 		return factapply.CallChannelSelectFactCase
 	default:
 		return 0

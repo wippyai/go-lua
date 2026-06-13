@@ -144,13 +144,13 @@ func TestFromResultProjectsNormalReturnFactsFromExitSnapshots(t *testing.T) {
 	assertDynamicAdmission(t, got.DynamicIndexFacts, "dyn-rejected", pathdom.NewPlaceholder(0).Field("items").IndexStr("rejected"), dynamicindex.AdmissionRejected)
 	assertDynamicAdmission(t, got.DynamicIndexFacts, "dyn-unknown", pathdom.NewPlaceholder(1).Field("items"), dynamicindex.AdmissionUnknown)
 
-	assertBranchProof(t, got.BranchProofs, BranchProofPathPresence, pathdom.NewPlaceholder(0).Field("ready"), pathdom.Path{}, presence.Present())
-	assertBranchProof(t, got.BranchProofs, BranchProofPathEqual, pathdom.NewPlaceholder(0).Field("left"), pathdom.NewPlaceholder(1).Field("right"), presence.Bottom())
-	assertBranchProof(t, got.BranchProofs, BranchProofPathNotEqual, pathdom.NewPlaceholder(0).Field("a"), pathdom.NewPlaceholder(1).Field("b"), presence.Bottom())
+	assertBranchProof(t, got.BranchProofs, pathevidence.BranchProofPathPresence, pathdom.NewPlaceholder(0).Field("ready"), pathdom.Path{}, presence.Present())
+	assertBranchProof(t, got.BranchProofs, pathevidence.BranchProofPathEqual, pathdom.NewPlaceholder(0).Field("left"), pathdom.NewPlaceholder(1).Field("right"), presence.Bottom())
+	assertBranchProof(t, got.BranchProofs, pathevidence.BranchProofPathNotEqual, pathdom.NewPlaceholder(0).Field("a"), pathdom.NewPlaceholder(1).Field("b"), presence.Bottom())
 
-	assertChannelSelect(t, got.ChannelSelects, "select-kind", ChannelSelectFactSelect, pathdom.NewPlaceholder(0).Field("selectResult"), pathdom.Path{})
-	assertChannelSelect(t, got.ChannelSelects, "receive-kind", ChannelSelectFactReceive, pathdom.NewPlaceholder(0).Field("receiveResult"), pathdom.NewPlaceholder(1).Field("receiveCase"))
-	assertChannelSelect(t, got.ChannelSelects, "case-kind", ChannelSelectFactCase, pathdom.Path{}, pathdom.NewPlaceholder(1).Field("casePath"))
+	assertChannelSelect(t, got.ChannelSelects, "select-kind", channelselectfact.FactSelect, pathdom.NewPlaceholder(0).Field("selectResult"), pathdom.Path{})
+	assertChannelSelect(t, got.ChannelSelects, "receive-kind", channelselectfact.FactReceive, pathdom.NewPlaceholder(0).Field("receiveResult"), pathdom.NewPlaceholder(1).Field("receiveCase"))
+	assertChannelSelect(t, got.ChannelSelects, "case-kind", channelselectfact.FactCase, pathdom.Path{}, pathdom.NewPlaceholder(1).Field("casePath"))
 
 	assertEffectDelta(t, got.EffectDeltas, "effect-mutation", pathdom.NewPlaceholder(0).Field("mutation"), effectdelta.Mutation, effectdelta.ChangeChanged)
 	assertEffectDelta(t, got.EffectDeltas, "effect-escape", pathdom.NewPlaceholder(0).Field("escape"), effectdelta.Escape, effectdelta.ChangeNone)
@@ -327,7 +327,7 @@ func assertDynamicAdmission(
 func assertBranchProof(
 	t *testing.T,
 	proofs []BranchProof,
-	kind BranchProofKind,
+	kind pathevidence.BranchProofKind,
 	path pathdom.Path,
 	other pathdom.Path,
 	wantPresence presence.Value,
@@ -338,11 +338,11 @@ func assertBranchProof(
 			continue
 		}
 		switch kind {
-		case BranchProofPathPresence:
+		case pathevidence.BranchProofPathPresence:
 			if presence.Equal(proof.Presence, wantPresence) {
 				return
 			}
-		case BranchProofPathEqual, BranchProofPathNotEqual:
+		case pathevidence.BranchProofPathEqual, pathevidence.BranchProofPathNotEqual:
 			if proof.Other.Equal(other) {
 				return
 			}
@@ -355,13 +355,13 @@ func assertChannelSelect(
 	t *testing.T,
 	facts []ChannelSelectFact,
 	selectID string,
-	kind ChannelSelectFactKind,
+	kind channelselectfact.Kind,
 	result pathdom.Path,
 	casePath pathdom.Path,
 ) {
 	t.Helper()
 	for _, fact := range facts {
-		if fact.Select == selectID &&
+		if string(fact.Select) == selectID &&
 			fact.Kind == kind &&
 			fact.Result.Equal(result) &&
 			fact.Case.Equal(casePath) {

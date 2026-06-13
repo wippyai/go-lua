@@ -5,10 +5,11 @@ import (
 
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
+	"github.com/wippyai/go-lua/analysis/engine/state/pathevidence"
 )
 
 type branchProofKey struct {
-	kind     BranchProofKind
+	kind     pathevidence.BranchProofKind
 	path     pathdom.PathKey
 	presence presence.Value
 	other    pathdom.PathKey
@@ -25,12 +26,12 @@ func normalizeBranchProofs(in []BranchProof) []BranchProof {
 		}
 		proof.Path = cloneSummaryPath(proof.Path)
 		switch proof.Kind {
-		case BranchProofPathPresence:
+		case pathevidence.BranchProofPathPresence:
 			if proof.Presence.IsBottom() || proof.Presence.IsTop() {
 				continue
 			}
 			proof.Other = pathdom.Path{}
-		case BranchProofPathEqual, BranchProofPathNotEqual:
+		case pathevidence.BranchProofPathEqual, pathevidence.BranchProofPathNotEqual:
 			if !proof.Other.IsPlaceholder() {
 				continue
 			}
