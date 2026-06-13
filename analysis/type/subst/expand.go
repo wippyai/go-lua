@@ -27,6 +27,16 @@ func ExpandInstantiated(t typ.Type) typ.Type {
 	return expandInstantiatedGuard(t, guard, memo)
 }
 
+// ExpandInstantiatedChanged expands generic instantiations and reports whether
+// the result differs from the input.
+func ExpandInstantiatedChanged(t typ.Type) (typ.Type, bool) {
+	expanded := ExpandInstantiated(t)
+	if expanded == nil || expanded == t {
+		return nil, false
+	}
+	return expanded, true
+}
+
 const expandMemoMaxEntries = 2048
 
 var expandMemoPool = sync.Pool{

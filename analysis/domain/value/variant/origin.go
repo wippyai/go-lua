@@ -8,6 +8,7 @@ import (
 	internal "github.com/wippyai/go-lua/analysis/internal/hash"
 	"github.com/wippyai/go-lua/analysis/type/discriminant"
 	"github.com/wippyai/go-lua/analysis/type/normalize"
+	"github.com/wippyai/go-lua/analysis/type/subst"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/unwrap"
 )
@@ -217,7 +218,7 @@ func originFamilyOf(t typ.Type) (originFamily, bool) {
 	case *typ.Optional:
 		return originFamilyOf(v.Inner)
 	case *typ.Instantiated:
-		expanded, ok := expandInstantiated(v)
+		expanded, ok := subst.ExpandInstantiatedChanged(v)
 		if !ok {
 			return originFamily{}, false
 		}
@@ -298,7 +299,7 @@ func recordOf(t typ.Type) (*typ.Record, bool) {
 	case *typ.Alias:
 		return recordOf(v.UnaliasedTarget())
 	case *typ.Instantiated:
-		expanded, ok := expandInstantiated(v)
+		expanded, ok := subst.ExpandInstantiatedChanged(v)
 		if !ok {
 			return nil, false
 		}

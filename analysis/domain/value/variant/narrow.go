@@ -3,6 +3,7 @@ package variant
 import (
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/type/normalize"
+	"github.com/wippyai/go-lua/analysis/type/subst"
 	"github.com/wippyai/go-lua/analysis/type/subtype"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/unwrap"
@@ -45,7 +46,7 @@ func narrowByPathLiteral(t typ.Type, suffix []segment.Segment, lit typ.Type, dep
 	case *typ.Optional:
 		return narrowByPathLiteral(v.Inner, suffix, lit, depth+1)
 	case *typ.Instantiated:
-		expanded, ok := expandInstantiated(v)
+		expanded, ok := subst.ExpandInstantiatedChanged(v)
 		if !ok {
 			return t, false
 		}
@@ -79,7 +80,7 @@ func narrowByPathLiteralNot(t typ.Type, suffix []segment.Segment, lit typ.Type, 
 	case *typ.Optional:
 		return narrowByPathLiteralNot(v.Inner, suffix, lit, depth+1)
 	case *typ.Instantiated:
-		expanded, ok := expandInstantiated(v)
+		expanded, ok := subst.ExpandInstantiatedChanged(v)
 		if !ok {
 			return t, false
 		}

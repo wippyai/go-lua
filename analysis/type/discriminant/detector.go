@@ -5,6 +5,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/type/kind"
 	"github.com/wippyai/go-lua/analysis/type/literal"
+	"github.com/wippyai/go-lua/analysis/type/subst"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/unwrap"
 )
@@ -136,7 +137,7 @@ func (d *Detector) collectRequiredTags(t typ.Type) map[string]uint64 {
 	case *typ.Recursive:
 		return d.RequiredTags(v.Body)
 	case *typ.Instantiated:
-		expanded, ok := expandInstantiated(v)
+		expanded, ok := subst.ExpandInstantiatedChanged(v)
 		if !ok {
 			return nil
 		}

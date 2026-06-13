@@ -354,3 +354,36 @@ func TestExpandInstantiated(t *testing.T) {
 		}
 	})
 }
+
+func TestExpandInstantiatedChanged(t *testing.T) {
+	t.Run("nil", func(t *testing.T) {
+		expanded, ok := ExpandInstantiatedChanged(nil)
+		if expanded != nil || ok {
+			t.Fatalf("nil expansion = (%v, %v), want (nil, false)", expanded, ok)
+		}
+	})
+
+	t.Run("non-instantiated", func(t *testing.T) {
+		expanded, ok := ExpandInstantiatedChanged(typ.String)
+		if expanded != nil || ok {
+			t.Fatalf("non-instantiated expansion = (%v, %v), want (nil, false)", expanded, ok)
+		}
+	})
+
+	t.Run("instantiated", func(t *testing.T) {
+		tp := typ.NewTypeParam("T", nil)
+		generic := typ.NewGeneric("Array", []*typ.TypeParam{tp}, typ.NewArray(tp))
+		inst := typ.Instantiate(generic, typ.Number)
+		expanded, ok := ExpandInstantiatedChanged(inst)
+		if !ok {
+			t.Fatal("instantiated type should report changed")
+		}
+		arr, ok := expanded.(*typ.Array)
+		if !ok {
+			t.Fatalf("expanded type = %T, want array", expanded)
+		}
+		if arr.Element != typ.Number {
+			t.Fatalf("expanded element = %v, want number", arr.Element)
+		}
+	})
+}

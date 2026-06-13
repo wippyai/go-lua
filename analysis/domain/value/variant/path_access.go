@@ -3,6 +3,7 @@ package variant
 import (
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/type/normalize"
+	"github.com/wippyai/go-lua/analysis/type/subst"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/unwrap"
 )
@@ -17,7 +18,7 @@ func fieldAtPath(t typ.Type, suffix []segment.Segment, depth int) (typ.Type, boo
 	case *typ.Optional:
 		return fieldAtPath(v.Inner, suffix, depth+1)
 	case *typ.Instantiated:
-		expanded, ok := expandInstantiated(v)
+		expanded, ok := subst.ExpandInstantiatedChanged(v)
 		if !ok {
 			return nil, false
 		}
