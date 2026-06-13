@@ -7,6 +7,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/engine/state"
+	"github.com/wippyai/go-lua/analysis/engine/state/channelselectfact"
 	"github.com/wippyai/go-lua/analysis/engine/state/dynamicindex"
 	effectdelta "github.com/wippyai/go-lua/analysis/engine/state/effectdelta"
 	"github.com/wippyai/go-lua/analysis/engine/state/pathevidence"
@@ -237,13 +238,13 @@ func projectBranchProofKind(kind pathevidence.BranchProofKind) (BranchProofKind,
 	}
 }
 
-func projectChannelSelectKind(kind state.ChannelSelectFactKind) (ChannelSelectFactKind, bool) {
+func projectChannelSelectKind(kind channelselectfact.Kind) (ChannelSelectFactKind, bool) {
 	switch kind {
-	case state.ChannelSelectFactSelect:
+	case channelselectfact.FactSelect:
 		return ChannelSelectFactSelect, true
-	case state.ChannelSelectFactReceive:
+	case channelselectfact.FactReceive:
 		return ChannelSelectFactReceive, true
-	case state.ChannelSelectFactCase:
+	case channelselectfact.FactCase:
 		return ChannelSelectFactCase, true
 	default:
 		return 0, false

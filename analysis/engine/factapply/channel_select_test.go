@@ -12,6 +12,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/channelselect"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/state"
+	"github.com/wippyai/go-lua/analysis/engine/state/channelselectfact"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/engine/visibility"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
@@ -46,8 +47,8 @@ func TestFactsNodeTransferMaterializesChannelSelectResultCases(t *testing.T) {
 	}, state.State{})
 
 	resultValue := got.ReadReturnSlot(reg, 0)
-	assertChannelSelectCasePayload(t, reg, resultValue, state.ChannelSelectID(selectID), 0, eventPayload)
-	assertChannelSelectCasePayload(t, reg, resultValue, state.ChannelSelectID(selectID), 1, stopPayload)
+	assertChannelSelectCasePayload(t, reg, resultValue, channelselectfact.ID(selectID), 0, eventPayload)
+	assertChannelSelectCasePayload(t, reg, resultValue, channelselectfact.ID(selectID), 1, stopPayload)
 }
 
 func TestFactsEdgeTransferChannelSelectEqualityNarrowsPayload(t *testing.T) {
@@ -84,16 +85,16 @@ func TestFactsEdgeTransferChannelSelectEqualityNarrowsPayload(t *testing.T) {
 	initial := state.State{}.
 		WriteValue(reg, key.SymbolValue(result), resultValue).
 		WritePathKey(reg, pathdom.PathKey("sym724@1.value"), typeValue(reg, stopPayload)).
-		AddChannelSelectFact(state.ChannelSelectFact{
-			Select: state.ChannelSelectID(selectID),
-			Kind:   state.ChannelSelectFactReceive,
+		AddChannelSelectFact(channelselectfact.Fact{
+			Select: channelselectfact.ID(selectID),
+			Kind:   channelselectfact.FactReceive,
 			Result: pathdom.PathKey("sym724@1"),
 			Case:   pathdom.PathKey("sym725@1"),
 			Index:  0,
 		}).
-		AddChannelSelectFact(state.ChannelSelectFact{
-			Select: state.ChannelSelectID(selectID),
-			Kind:   state.ChannelSelectFactReceive,
+		AddChannelSelectFact(channelselectfact.Fact{
+			Select: channelselectfact.ID(selectID),
+			Kind:   channelselectfact.FactReceive,
 			Result: pathdom.PathKey("sym724@1"),
 			Case:   pathdom.PathKey("sym726@1"),
 			Index:  1,
@@ -116,7 +117,7 @@ func TestFactsEdgeTransferChannelSelectEqualityNarrowsPayload(t *testing.T) {
 	})
 
 	thenValue := got[thenPoint].ReadValue(reg, key.SymbolValue(result))
-	assertChannelSelectCasePayload(t, reg, thenValue, state.ChannelSelectID(selectID), 0, eventPayload)
+	assertChannelSelectCasePayload(t, reg, thenValue, channelselectfact.ID(selectID), 0, eventPayload)
 	if got := got[thenPoint].ReadPathKey(reg, pathdom.PathKey("sym724@1.value")); !product.Equal(reg, got, product.Bottom(reg)) {
 		t.Fatalf("stale result.value path = %s, want bottom", formatValue(reg, got))
 	}
@@ -169,7 +170,7 @@ func assertChannelSelectCasePayload(
 	t *testing.T,
 	reg *axis.Registry,
 	value product.Value,
-	selectID state.ChannelSelectID,
+	selectID channelselectfact.ID,
 	index int,
 	want typ.Type,
 ) {

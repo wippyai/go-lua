@@ -9,6 +9,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/standard"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/state"
+	"github.com/wippyai/go-lua/analysis/engine/state/channelselectfact"
 	"github.com/wippyai/go-lua/analysis/engine/state/dynamicindex"
 	effectdelta "github.com/wippyai/go-lua/analysis/engine/state/effectdelta"
 	"github.com/wippyai/go-lua/analysis/engine/state/pathevidence"
@@ -261,9 +262,9 @@ func TestFactsNodeTransferAppliesChannelSelectFactsWithPathKeys(t *testing.T) {
 	visibilityBuilder := visibility.NewBuilder()
 	visibilityBuilder.Define(point, result, "select")
 	visibilityBuilder.Define(point, selectedCase, "select")
-	want := state.ChannelSelectFact{
-		Select: state.ChannelSelectID("select-1"),
-		Kind:   state.ChannelSelectFactReceive,
+	want := channelselectfact.Fact{
+		Select: channelselectfact.ID("select-1"),
+		Kind:   channelselectfact.FactReceive,
 		Result: pathdom.PathKey("sym406@1.result"),
 		Case:   pathdom.PathKey("sym407@1.case"),
 		Index:  2,
@@ -538,9 +539,9 @@ func TestFactsNodeTransferCallOutcomeRebasesStateLaneFacts(t *testing.T) {
 		t.Fatalf("branch proof missing: %#v", proof)
 	}
 
-	selectFact := state.ChannelSelectFact{
-		Select: state.ChannelSelectID("callee.select"),
-		Kind:   state.ChannelSelectFactReceive,
+	selectFact := channelselectfact.Fact{
+		Select: channelselectfact.ID("callee.select"),
+		Kind:   channelselectfact.FactReceive,
 		Result: pathdom.PathKey("sym505@1.result"),
 		Case:   pathdom.PathKey("sym506@1.case"),
 		Index:  3,

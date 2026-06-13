@@ -6,6 +6,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine/channelselect"
 	"github.com/wippyai/go-lua/analysis/engine/state"
+	"github.com/wippyai/go-lua/analysis/engine/state/channelselectfact"
 	"github.com/wippyai/go-lua/analysis/engine/visibility"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 )
@@ -69,17 +70,17 @@ func channelSelectReceiveFact(
 	out state.State,
 	resultKey pathdom.PathKey,
 	caseKey pathdom.PathKey,
-) (state.ChannelSelectFact, bool) {
+) (channelselectfact.Fact, bool) {
 	snapshot := out.ChannelSelectFactsSnapshot()
 	if snapshot.Bottom {
-		return state.ChannelSelectFact{}, false
+		return channelselectfact.Fact{}, false
 	}
 	for _, fact := range snapshot.Facts {
-		if fact.Kind == state.ChannelSelectFactReceive && fact.Result == resultKey && fact.Case == caseKey {
+		if fact.Kind == channelselectfact.FactReceive && fact.Result == resultKey && fact.Case == caseKey {
 			return fact, true
 		}
 	}
-	return state.ChannelSelectFact{}, false
+	return channelselectfact.Fact{}, false
 }
 
 func invalidateChannelSelectResultDescendants(

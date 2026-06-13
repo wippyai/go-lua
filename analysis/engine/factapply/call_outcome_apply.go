@@ -4,6 +4,7 @@ import (
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/state"
+	"github.com/wippyai/go-lua/analysis/engine/state/channelselectfact"
 	"github.com/wippyai/go-lua/analysis/engine/state/dynamicindex"
 	effectdelta "github.com/wippyai/go-lua/analysis/engine/state/effectdelta"
 	"github.com/wippyai/go-lua/analysis/engine/state/pathevidence"
@@ -260,47 +261,47 @@ func callChannelSelectFactAt(
 	point cfg.Point,
 	bindings []pathdom.Path,
 	event CallChannelSelectFact,
-) (state.ChannelSelectFact, bool) {
+) (channelselectfact.Fact, bool) {
 	kind, ok := callChannelSelectKind(event.Kind)
 	if !ok {
-		return state.ChannelSelectFact{}, false
+		return channelselectfact.Fact{}, false
 	}
-	fact := state.ChannelSelectFact{
-		Select: state.ChannelSelectID(event.Select),
+	fact := channelselectfact.Fact{
+		Select: channelselectfact.ID(event.Select),
 		Kind:   kind,
 		Index:  event.Index,
 	}
 	if !event.Result.IsEmpty() {
 		resultPath, ok := event.Result.Substitute(bindings)
 		if !ok {
-			return state.ChannelSelectFact{}, false
+			return channelselectfact.Fact{}, false
 		}
 		fact.Result = factPathKeyAt(resolver, point, resultPath)
 		if fact.Result == "" {
-			return state.ChannelSelectFact{}, false
+			return channelselectfact.Fact{}, false
 		}
 	}
 	if !event.Case.IsEmpty() {
 		casePath, ok := event.Case.Substitute(bindings)
 		if !ok {
-			return state.ChannelSelectFact{}, false
+			return channelselectfact.Fact{}, false
 		}
 		fact.Case = factPathKeyAt(resolver, point, casePath)
 		if fact.Case == "" {
-			return state.ChannelSelectFact{}, false
+			return channelselectfact.Fact{}, false
 		}
 	}
 	return fact, true
 }
 
-func callChannelSelectKind(kind CallChannelSelectFactKind) (state.ChannelSelectFactKind, bool) {
+func callChannelSelectKind(kind CallChannelSelectFactKind) (channelselectfact.Kind, bool) {
 	switch kind {
 	case CallChannelSelectFactSelect:
-		return state.ChannelSelectFactSelect, true
+		return channelselectfact.FactSelect, true
 	case CallChannelSelectFactReceive:
-		return state.ChannelSelectFactReceive, true
+		return channelselectfact.FactReceive, true
 	case CallChannelSelectFactCase:
-		return state.ChannelSelectFactCase, true
+		return channelselectfact.FactCase, true
 	default:
 		return 0, false
 	}

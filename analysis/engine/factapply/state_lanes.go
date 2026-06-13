@@ -9,6 +9,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	sourcevalue "github.com/wippyai/go-lua/analysis/engine/sourcevalue"
 	"github.com/wippyai/go-lua/analysis/engine/state"
+	"github.com/wippyai/go-lua/analysis/engine/state/channelselectfact"
 	"github.com/wippyai/go-lua/analysis/engine/state/dynamicindex"
 	"github.com/wippyai/go-lua/analysis/engine/state/pathevidence"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
@@ -204,39 +205,39 @@ func channelSelectFactAt(
 	resolver *visibility.Resolver,
 	point cfg.Point,
 	event factflow.ChannelSelect,
-) (state.ChannelSelectFact, bool) {
+) (channelselectfact.Fact, bool) {
 	kind, ok := channelSelectKind(event.Kind())
 	if !ok {
-		return state.ChannelSelectFact{}, false
+		return channelselectfact.Fact{}, false
 	}
-	fact := state.ChannelSelectFact{
-		Select: state.ChannelSelectID(event.SelectID()),
+	fact := channelselectfact.Fact{
+		Select: channelselectfact.ID(event.SelectID()),
 		Kind:   kind,
 		Index:  event.Index(),
 	}
 	if resultPath, ok := event.ResultPath(); ok {
 		fact.Result = factPathKeyAt(resolver, point, resultPath)
 		if fact.Result == "" {
-			return state.ChannelSelectFact{}, false
+			return channelselectfact.Fact{}, false
 		}
 	}
 	if casePath, ok := event.CasePath(); ok {
 		fact.Case = factPathKeyAt(resolver, point, casePath)
 		if fact.Case == "" {
-			return state.ChannelSelectFact{}, false
+			return channelselectfact.Fact{}, false
 		}
 	}
 	return fact, true
 }
 
-func channelSelectKind(kind factflow.ChannelSelectKind) (state.ChannelSelectFactKind, bool) {
+func channelSelectKind(kind factflow.ChannelSelectKind) (channelselectfact.Kind, bool) {
 	switch kind {
 	case factflow.ChannelSelectSelect:
-		return state.ChannelSelectFactSelect, true
+		return channelselectfact.FactSelect, true
 	case factflow.ChannelSelectReceive:
-		return state.ChannelSelectFactReceive, true
+		return channelselectfact.FactReceive, true
 	case factflow.ChannelSelectCase:
-		return state.ChannelSelectFactCase, true
+		return channelselectfact.FactCase, true
 	default:
 		return 0, false
 	}

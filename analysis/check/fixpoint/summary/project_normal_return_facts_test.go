@@ -11,6 +11,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/standard"
 	"github.com/wippyai/go-lua/analysis/engine/state"
+	"github.com/wippyai/go-lua/analysis/engine/state/channelselectfact"
 	"github.com/wippyai/go-lua/analysis/engine/state/dynamicindex"
 	effectdelta "github.com/wippyai/go-lua/analysis/engine/state/effectdelta"
 	"github.com/wippyai/go-lua/analysis/engine/state/pathevidence"
@@ -79,22 +80,22 @@ func TestFromResultProjectsNormalReturnFactsFromExitSnapshots(t *testing.T) {
 			Path:  branchNotEqualLeftKey,
 			Other: branchNotEqualRightKey,
 		}).
-		AddChannelSelectFact(state.ChannelSelectFact{
+		AddChannelSelectFact(channelselectfact.Fact{
 			Select: "select-kind",
-			Kind:   state.ChannelSelectFactSelect,
+			Kind:   channelselectfact.FactSelect,
 			Result: selectResultKey,
 			Index:  0,
 		}).
-		AddChannelSelectFact(state.ChannelSelectFact{
+		AddChannelSelectFact(channelselectfact.Fact{
 			Select: "receive-kind",
-			Kind:   state.ChannelSelectFactReceive,
+			Kind:   channelselectfact.FactReceive,
 			Result: receiveResultKey,
 			Case:   receiveCaseKey,
 			Index:  1,
 		}).
-		AddChannelSelectFact(state.ChannelSelectFact{
+		AddChannelSelectFact(channelselectfact.Fact{
 			Select: "case-kind",
-			Kind:   state.ChannelSelectFactCase,
+			Kind:   channelselectfact.FactCase,
 			Case:   casePathKey,
 			Index:  2,
 		}).
@@ -189,9 +190,9 @@ func TestFromResultDropsNonParameterNormalReturnFactPaths(t *testing.T) {
 			Path:  invalidKeys[1],
 			Other: validParamKey,
 		}).
-		AddChannelSelectFact(state.ChannelSelectFact{
+		AddChannelSelectFact(channelselectfact.Fact{
 			Select: "invalid-result",
-			Kind:   state.ChannelSelectFactReceive,
+			Kind:   channelselectfact.FactReceive,
 			Result: invalidKeys[1],
 			Index:  0,
 		})
@@ -244,7 +245,7 @@ func TestFromResultSkipsTopSnapshotsAndTopNormalReturnFacts(t *testing.T) {
 			Path:     normalReturnFactProjectTestKey(param, ".proof"),
 			Presence: presence.Top(),
 		}).
-		AddChannelSelectFact(state.ChannelSelectFact{
+		AddChannelSelectFact(channelselectfact.Fact{
 			Select: "invalid-kind",
 			Kind:   0,
 			Result: normalReturnFactProjectTestKey(param, ".result"),

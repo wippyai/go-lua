@@ -3,7 +3,6 @@ package state
 import (
 	"github.com/wippyai/go-lua/analysis/domain/lattice"
 	"github.com/wippyai/go-lua/analysis/domain/lattice/lift"
-	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
@@ -292,17 +291,6 @@ func cloneValueMap(in map[key.Value]product.Value) map[key.Value]product.Value {
 		return nil
 	}
 	out := make(map[key.Value]product.Value, len(in))
-	for k, v := range in {
-		out[k] = v
-	}
-	return out
-}
-
-func clonePathMap(in map[pathdom.PathKey]product.Value) map[pathdom.PathKey]product.Value {
-	if len(in) == 0 {
-		return nil
-	}
-	out := make(map[pathdom.PathKey]product.Value, len(in))
 	for k, v := range in {
 		out[k] = v
 	}

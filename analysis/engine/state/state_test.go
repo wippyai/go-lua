@@ -12,6 +12,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/standard"
+	"github.com/wippyai/go-lua/analysis/engine/state/channelselectfact"
 	"github.com/wippyai/go-lua/analysis/engine/state/dynamicindex"
 	effectdelta "github.com/wippyai/go-lua/analysis/engine/state/effectdelta"
 	"github.com/wippyai/go-lua/analysis/engine/state/escapeplacement"
@@ -242,7 +243,7 @@ func TestWritesFromStateBottomProduceReachableState(t *testing.T) {
 	heapID := identity.ID{Kind: "table", Site: "bottom-write", Index: 1}
 	proof := pathevidence.BranchProof{Kind: pathevidence.BranchProofPathPresence, Path: pathKey, Presence: presence.Present()}
 	effectKey := effectdelta.Key{Target: pathdom.PathKey("sym65@1.table"), Site: "effect", Kind: effectdelta.Mutation}
-	channel := ChannelSelectFact{Select: "select-bottom", Kind: ChannelSelectFactSelect, Result: pathKey}
+	channel := channelselectfact.Fact{Select: "select-bottom", Kind: channelselectfact.FactSelect, Result: pathKey}
 	escapeID := identity.ID{Kind: "table", Site: "escape-bottom", Index: 1}
 	present := presentValue(reg)
 
@@ -559,9 +560,9 @@ func TestEffectDeltasPointwiseJoin(t *testing.T) {
 
 func TestChannelSelectFactsUseMustJoin(t *testing.T) {
 	stateDomain := Domain(standard.Registry())
-	common := ChannelSelectFact{Select: "select-1", Kind: ChannelSelectFactSelect, Result: pathdom.PathKey("sym120@1.result")}
-	leftOnly := ChannelSelectFact{Select: "select-1", Kind: ChannelSelectFactReceive, Case: pathdom.PathKey("sym120@1.left"), Index: 0}
-	rightOnly := ChannelSelectFact{Select: "select-1", Kind: ChannelSelectFactCase, Case: pathdom.PathKey("sym120@1.right"), Index: 1}
+	common := channelselectfact.Fact{Select: "select-1", Kind: channelselectfact.FactSelect, Result: pathdom.PathKey("sym120@1.result")}
+	leftOnly := channelselectfact.Fact{Select: "select-1", Kind: channelselectfact.FactReceive, Case: pathdom.PathKey("sym120@1.left"), Index: 0}
+	rightOnly := channelselectfact.Fact{Select: "select-1", Kind: channelselectfact.FactCase, Case: pathdom.PathKey("sym120@1.right"), Index: 1}
 	left := State{}.AddChannelSelectFact(common).AddChannelSelectFact(leftOnly)
 	right := State{}.AddChannelSelectFact(common).AddChannelSelectFact(rightOnly)
 
