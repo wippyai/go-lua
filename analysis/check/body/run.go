@@ -3,8 +3,7 @@ package body
 import (
 	"fmt"
 
-	"github.com/wippyai/go-lua/analysis/check/fixpoint/callresult"
-	"github.com/wippyai/go-lua/analysis/check/fixpoint/effectlowering"
+	"github.com/wippyai/go-lua/analysis/check/effectlowering"
 	factapply "github.com/wippyai/go-lua/analysis/engine/factapply"
 	sourcevalue "github.com/wippyai/go-lua/analysis/engine/sourcevalue"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
@@ -87,7 +86,7 @@ func (c *checker) run(bindings *bind.Result, built *cfgbuild.Result, sem *semant
 	})
 	callOutcome := config.CallOutcome
 	if hasSignatures(config.Signatures) {
-		callOutcome = callresult.WithSupplementalResults(callOutcome, effectlowering.SignatureOutcomeProvider(effectlowering.SignatureOutcomeProviderConfig{
+		callOutcome = factapply.WithSupplementalCallOutcome(callOutcome, effectlowering.SignatureOutcomeProvider(effectlowering.SignatureOutcomeProviderConfig{
 			Signatures: config.Signatures,
 			NameFor:    c.signatureNameForCall(bindings),
 			Facts:      facts,

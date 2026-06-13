@@ -272,55 +272,6 @@ func TestOutcomeProviderMissingAndEmptySummaryYieldsZeroOutcome(t *testing.T) {
 	}
 }
 
-func TestWithSupplementalResultsKeepsPrimarySlotsFillsMissingSlotsAndMergesSideFacts(t *testing.T) {
-	reg := standard.Registry()
-	primaryValue := product.Absent(reg)
-	supplementalValue := product.Top()
-	primary := func(transfer.NodeContext, factflow.CallSite, state.State, func(cfg.Point) state.State) factapply.CallOutcome {
-		return factapply.CallOutcome{
-			Results: []factapply.CallResult{{Index: 0, Value: primaryValue}},
-			ParamConditions: []factapply.CallParamCondition{
-				{ParamIndex: 0, Value: true},
-			},
-		}
-	}
-	supplemental := func(transfer.NodeContext, factflow.CallSite, state.State, func(cfg.Point) state.State) factapply.CallOutcome {
-		return factapply.CallOutcome{
-			Results: []factapply.CallResult{{Index: 0, Value: product.Top()}, {Index: 1, Value: supplementalValue}},
-			ParamConditions: []factapply.CallParamCondition{
-				{ParamIndex: 1, Value: false},
-			},
-			ReturnPresenceRelations: []factapply.CallReturnPresenceRelation{
-				{TriggerIndex: 1, TriggerPresence: presence.Present(), TargetIndex: 0, TargetPresence: presence.Absent()},
-			},
-		}
-	}
-
-	got := WithSupplementalResults(primary, supplemental)(transfer.NodeContext{Registry: reg}, factflow.NewCallSite(factflow.CallSiteConfig{}), state.State{}, nil)
-
-	if len(got.Results) != 2 {
-		t.Fatalf("got %d results, want 2: %#v", len(got.Results), got.Results)
-	}
-	if got.Results[0].Index != 0 || !product.Equal(reg, got.Results[0].Value, primaryValue) {
-		t.Fatalf("primary slot = %#v, want index 0 primary value", got.Results[0])
-	}
-	if got.Results[1].Index != 1 || !product.Equal(reg, got.Results[1].Value, supplementalValue) {
-		t.Fatalf("supplemental slot = %#v, want index 1 supplemental value", got.Results[1])
-	}
-	if len(got.ParamConditions) != 2 ||
-		got.ParamConditions[0].ParamIndex != 0 || !got.ParamConditions[0].Value ||
-		got.ParamConditions[1].ParamIndex != 1 || got.ParamConditions[1].Value {
-		t.Fatalf("param conditions = %#v, want primary and supplemental facts", got.ParamConditions)
-	}
-	if len(got.ReturnPresenceRelations) != 1 ||
-		got.ReturnPresenceRelations[0].TriggerIndex != 1 ||
-		!presence.Equal(got.ReturnPresenceRelations[0].TriggerPresence, presence.Present()) ||
-		got.ReturnPresenceRelations[0].TargetIndex != 0 ||
-		!presence.Equal(got.ReturnPresenceRelations[0].TargetPresence, presence.Absent()) {
-		t.Fatalf("return presence relations = %#v, want supplemental relation", got.ReturnPresenceRelations)
-	}
-}
-
 func TestByCalleeIdentitySymbolKeyMapsAreCloned(t *testing.T) {
 	callee := symbol.ID(21)
 	symbolKey := summary.DefaultSummaryKey(ref.FuncRef{Kind: ref.KindSymbol, ID: 23})

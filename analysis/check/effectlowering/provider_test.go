@@ -5,7 +5,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/wippyai/go-lua/analysis/check/fixpoint/callresult"
 	"github.com/wippyai/go-lua/analysis/domain/constraint/expr"
 	"github.com/wippyai/go-lua/analysis/domain/effect"
 	"github.com/wippyai/go-lua/analysis/domain/effect/mutation"
@@ -1107,7 +1106,7 @@ func TestSupplementalResultsKeepsPrimarySlotsAndFillsMissingSignatureSlots(t *te
 		NameFor: staticName("f"),
 	})
 
-	got := callresult.WithSupplementalResults(primary, signatures)(transfer.NodeContext{Registry: reg}, factflow.NewCallSite(factflow.CallSiteConfig{}), state.State{}, nil).Results
+	got := factapply.WithSupplementalCallOutcome(primary, signatures)(transfer.NodeContext{Registry: reg}, factflow.NewCallSite(factflow.CallSiteConfig{}), state.State{}, nil).Results
 
 	if len(got) != 2 {
 		t.Fatalf("got %d results, want 2: %#v", len(got), got)
@@ -1151,7 +1150,7 @@ func TestSupplementalResultsKeepsPrimarySlotOverSignatureSameAs(t *testing.T) {
 		}),
 	})
 
-	got := callresult.WithSupplementalResults(primary, signatures)(transfer.NodeContext{Registry: reg, Point: point}, factflow.NewCallSite(factflow.CallSiteConfig{}), state.State{}, nil).Results
+	got := factapply.WithSupplementalCallOutcome(primary, signatures)(transfer.NodeContext{Registry: reg, Point: point}, factflow.NewCallSite(factflow.CallSiteConfig{}), state.State{}, nil).Results
 
 	assertCallOutcomeResults(t, reg, got, []product.Value{primaryValue})
 }
@@ -1162,7 +1161,6 @@ func TestProductionImportsAreBounded(t *testing.T) {
 		t.Fatalf("go list imports . error = %v", err)
 	}
 	allowed := map[string]bool{
-		"github.com/wippyai/go-lua/analysis/check/fixpoint/callresult":     true,
 		"github.com/wippyai/go-lua/analysis/check/fixpoint/summary":        true,
 		"github.com/wippyai/go-lua/analysis/domain/effect":                 true,
 		"github.com/wippyai/go-lua/analysis/domain/effect/mutation":        true,

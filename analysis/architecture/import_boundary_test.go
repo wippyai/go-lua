@@ -58,12 +58,10 @@ func TestLowerLayerImportBoundaries(t *testing.T) {
 			},
 		},
 		{
-			name:     "check body stays below program fixpoint owners",
+			name:     "check body stays below fixpoint owners",
 			patterns: []string{modulePath + "/analysis/check/body"},
 			banned: []string{
-				modulePath + "/analysis/check/fixpoint/program",
-				modulePath + "/analysis/check/fixpoint/query",
-				modulePath + "/analysis/check/fixpoint/functiontarget",
+				modulePath + "/analysis/check/fixpoint",
 			},
 		},
 	}

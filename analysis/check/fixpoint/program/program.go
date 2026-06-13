@@ -12,6 +12,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/ref"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/summary"
 	"github.com/wippyai/go-lua/analysis/domain/path"
+	factapply "github.com/wippyai/go-lua/analysis/engine/factapply"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/compiler/ast"
@@ -241,7 +242,7 @@ func keyFunc(keys programKeys) callresult.KeyFunc {
 
 func checkConfigWithSummaries(config body.Config, summaries summary.Reader, keyFor callresult.KeyFunc) body.Config {
 	out := cloneCheckConfig(config)
-	out.CallOutcome = callresult.WithSupplementalResults(
+	out.CallOutcome = factapply.WithSupplementalCallOutcome(
 		callresult.OutcomeProvider(summaries, keyFor),
 		out.CallOutcome,
 	)

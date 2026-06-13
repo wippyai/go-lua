@@ -3,7 +3,7 @@ package body
 import (
 	"strings"
 
-	"github.com/wippyai/go-lua/analysis/check/fixpoint/effectlowering"
+	"github.com/wippyai/go-lua/analysis/check/effectlowering"
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"

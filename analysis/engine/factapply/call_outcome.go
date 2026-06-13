@@ -24,6 +24,60 @@ type CallResult struct {
 // outcome payload.
 type CallOutcomeProvider func(ctx transfer.NodeContext, site factflow.CallSite, in state.State, read func(cfg.Point) state.State) CallOutcome
 
+// WithSupplementalCallOutcome composes two call outcome providers. Result
+// slots are primary-by-index; all non-slot side facts are accumulated.
+func WithSupplementalCallOutcome(primary, supplemental CallOutcomeProvider) CallOutcomeProvider {
+	if primary == nil {
+		return supplemental
+	}
+	if supplemental == nil {
+		return primary
+	}
+	return func(ctx transfer.NodeContext, site factflow.CallSite, in state.State, read func(cfg.Point) state.State) CallOutcome {
+		out := primary(ctx, site, in, read)
+		second := supplemental(ctx, site, in, read)
+		out = withSupplementalResultSlots(out, second.Results)
+		return withSupplementalOutcomeFacts(out, second)
+	}
+}
+
+func withSupplementalResultSlots(out CallOutcome, results []CallResult) CallOutcome {
+	if len(results) == 0 {
+		return out
+	}
+	if len(out.Results) == 0 {
+		out.Results = append(out.Results, results...)
+		return out
+	}
+	seen := make(map[int]struct{}, len(out.Results))
+	for _, result := range out.Results {
+		seen[result.Index] = struct{}{}
+	}
+	for _, result := range results {
+		if _, ok := seen[result.Index]; ok {
+			continue
+		}
+		out.Results = append(out.Results, result)
+	}
+	return out
+}
+
+func withSupplementalOutcomeFacts(out, second CallOutcome) CallOutcome {
+	out.PathRefinements = append(out.PathRefinements, second.PathRefinements...)
+	out.ParamPathRefinements = append(out.ParamPathRefinements, second.ParamPathRefinements...)
+	out.ParamPathInvalidations = append(out.ParamPathInvalidations, second.ParamPathInvalidations...)
+	out.ParamConditions = append(out.ParamConditions, second.ParamConditions...)
+	out.ParamPathRelations = append(out.ParamPathRelations, second.ParamPathRelations...)
+	out.PathStaticMembers = append(out.PathStaticMembers, second.PathStaticMembers...)
+	out.DynamicIndexFacts = append(out.DynamicIndexFacts, second.DynamicIndexFacts...)
+	out.BranchProofs = append(out.BranchProofs, second.BranchProofs...)
+	out.ChannelSelects = append(out.ChannelSelects, second.ChannelSelects...)
+	out.EffectDeltas = append(out.EffectDeltas, second.EffectDeltas...)
+	out.ReturnConditionRefinements = append(out.ReturnConditionRefinements, second.ReturnConditionRefinements...)
+	out.ReturnPresenceRelations = append(out.ReturnPresenceRelations, second.ReturnPresenceRelations...)
+	return out
+}
+
 // CallOutcome is the generic payload produced at a call boundary. It carries
 // return-slot values plus normal-return facts expressed over placeholder paths
 // such as $0 and $1. Fact application rebases those paths at the caller.
