@@ -896,6 +896,57 @@ func TestBuildChunkIfCreatesBranchAndJoin(t *testing.T) {
 	}
 }
 
+func TestBuildChunkEmitsExplicitBranchEdgesAndPlainNonBranchEdges(t *testing.T) {
+	cond := ident("x")
+	thenStmt := localAssign([]string{"thenValue"}, number("1"))
+	elseStmt := localAssign([]string{"elseValue"}, number("2"))
+	stmts := []ast.Stmt{
+		localAssign([]string{"x"}, number("0")),
+		&ast.IfStmt{
+			Condition: cond,
+			Then:      []ast.Stmt{thenStmt},
+			Else:      []ast.Stmt{elseStmt},
+		},
+	}
+	bindings := bind.BindChunk(stmts, bind.Options{})
+	result := BuildChunk(stmts, bindings)
+	if result == nil {
+		t.Fatal("BuildChunk returned nil")
+	}
+	graph := result.Graph
+
+	if succs := graph.Successors(graph.Exit()); len(succs) != 0 {
+		t.Fatalf("exit successors = %v, want none", succs)
+	}
+
+	branch := firstBranch(t, graph)
+	branchSuccs := graph.Successors(branch)
+	if len(branchSuccs) != 2 {
+		t.Fatalf("branch successors = %v, want exactly two", branchSuccs)
+	}
+	branchConds := map[bool]bool{}
+	for _, succ := range branchSuccs {
+		cond, ok := graph.EdgeCond(branch, succ)
+		if !ok {
+			t.Fatalf("branch edge %d -> %d is missing an edge condition", branch, succ)
+		}
+		branchConds[cond] = true
+	}
+	if !branchConds[true] || !branchConds[false] {
+		t.Fatalf("branch %d edge conditions = %v, want explicit true and false edges", branch, branchConds)
+	}
+
+	for _, edge := range graph.Edges() {
+		from := graph.Node(edge.From)
+		if from == nil {
+			t.Fatalf("edge %d -> %d has missing source node", edge.From, edge.To)
+		}
+		if from.Kind != cfg.NodeBranch && edge.Cond {
+			t.Fatalf("non-branch edge %d -> %d carried condition true", edge.From, edge.To)
+		}
+	}
+}
+
 func TestBuildChunkEmptyIfMaterializesDistinctBranchArms(t *testing.T) {
 	cond := ident("x")
 	stmts := []ast.Stmt{

@@ -65,59 +65,41 @@ func MapComponentKeyMayContainStaticMember(key typ.Type, member typ.StaticMember
 // MapComponentKeyMayContainString reports whether a map-component key domain
 // may include the string key.
 func MapComponentKeyMayContainString(key typ.Type, name string) bool {
-	if key == nil {
-		return false
-	}
-	if typ.IsAny(key) || typ.IsUnknown(key) {
-		return true
-	}
-	switch k := key.(type) {
-	case *typ.Alias:
-		return MapComponentKeyMayContainString(k.Target, name)
-	case *typ.Union:
-		for _, member := range k.Members {
-			if MapComponentKeyMayContainString(member, name) {
-				return true
-			}
+	return mapComponentKeyMayContainAny(key, func(k typ.Type) bool {
+		if typ.IsAny(k) || typ.IsUnknown(k) {
+			return true
 		}
-		return false
-	case *typ.Literal:
-		return k.Base == kind.String && k.Value == name
-	default:
+		if k, ok := k.(*typ.Literal); ok {
+			return k.Base == kind.String && k.Value == name
+		}
 		return k.Kind() == kind.String
-	}
+	})
 }
 
 // MapComponentKeyMayContainInt reports whether a map-component key domain may
 // include the integer key.
 func MapComponentKeyMayContainInt(key typ.Type, index int64) bool {
-	if key == nil {
-		return false
-	}
-	if typ.IsAny(key) || typ.IsUnknown(key) {
-		return true
-	}
-	switch k := key.(type) {
-	case *typ.Alias:
-		return MapComponentKeyMayContainInt(k.Target, index)
-	case *typ.Union:
-		for _, member := range k.Members {
-			if MapComponentKeyMayContainInt(member, index) {
-				return true
+	return mapComponentKeyMayContainAny(key, func(k typ.Type) bool {
+		if typ.IsAny(k) || typ.IsUnknown(k) {
+			return true
+		}
+		if k, ok := k.(*typ.Literal); ok {
+			switch k.Base {
+			case kind.Integer:
+				return k.Value == index
+			case kind.Number:
+				number, ok := k.Value.(float64)
+				return ok && number == float64(index)
+			default:
+				return false
 			}
 		}
-		return false
-	case *typ.Literal:
-		switch k.Base {
-		case kind.Integer:
-			return k.Value == index
-		case kind.Number:
-			number, ok := k.Value.(float64)
-			return ok && number == float64(index)
-		default:
-			return false
-		}
-	default:
 		return k.Kind() == kind.Integer || k.Kind() == kind.Number
-	}
+	})
+}
+
+func mapComponentKeyMayContainAny(key typ.Type, match func(typ.Type) bool) bool {
+	return keyDomainAny(key, keyDomainTraversal{
+		aliasPolicy: keyDomainAliasTarget,
+	}, match)
 }

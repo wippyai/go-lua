@@ -82,31 +82,31 @@ func mapComponentKeyAdmitsLiteral(keyDomain typ.Type, lit *typ.Literal) bool {
 }
 
 func mapComponentKeyAdmitsStringType(keyDomain typ.Type) bool {
-	return mapComponentKeyDomainAdmits(keyDomain, func(k typ.Type) bool {
+	return mapComponentKeyDomainAdmitsAny(keyDomain, func(k typ.Type) bool {
 		return k.Kind() == kind.String || typ.IsAny(k) || typ.IsUnknown(k)
 	})
 }
 
 func mapComponentKeyAdmitsIntType(keyDomain typ.Type) bool {
-	return mapComponentKeyDomainAdmits(keyDomain, func(k typ.Type) bool {
+	return mapComponentKeyDomainAdmitsAny(keyDomain, func(k typ.Type) bool {
 		return k.Kind() == kind.Integer || k.Kind() == kind.Number || typ.IsAny(k) || typ.IsUnknown(k)
 	})
 }
 
 func mapComponentKeyAdmitsNumberType(keyDomain typ.Type) bool {
-	return mapComponentKeyDomainAdmits(keyDomain, func(k typ.Type) bool {
+	return mapComponentKeyDomainAdmitsAny(keyDomain, func(k typ.Type) bool {
 		return k.Kind() == kind.Number || typ.IsAny(k) || typ.IsUnknown(k)
 	})
 }
 
 func mapComponentKeyAdmitsBooleanType(keyDomain typ.Type) bool {
-	return mapComponentKeyDomainAdmits(keyDomain, func(k typ.Type) bool {
+	return mapComponentKeyDomainAdmitsAny(keyDomain, func(k typ.Type) bool {
 		return k.Kind() == kind.Boolean || typ.IsAny(k) || typ.IsUnknown(k)
 	})
 }
 
 func mapComponentKeyAdmitsStringLiteral(keyDomain typ.Type, name string) bool {
-	return mapComponentKeyDomainAdmits(keyDomain, func(k typ.Type) bool {
+	return mapComponentKeyDomainAdmitsAny(keyDomain, func(k typ.Type) bool {
 		switch lit := k.(type) {
 		case *typ.Literal:
 			other, ok := lit.Value.(string)
@@ -118,7 +118,7 @@ func mapComponentKeyAdmitsStringLiteral(keyDomain typ.Type, name string) bool {
 }
 
 func mapComponentKeyAdmitsIntLiteral(keyDomain typ.Type, index int64) bool {
-	return mapComponentKeyDomainAdmits(keyDomain, func(k typ.Type) bool {
+	return mapComponentKeyDomainAdmitsAny(keyDomain, func(k typ.Type) bool {
 		switch lit := k.(type) {
 		case *typ.Literal:
 			if lit.Base != kind.Integer {
@@ -137,7 +137,7 @@ func mapComponentKeyAdmitsNumberLiteral(keyDomain typ.Type, lit *typ.Literal) bo
 	if !ok {
 		return false
 	}
-	return mapComponentKeyDomainAdmits(keyDomain, func(k typ.Type) bool {
+	return mapComponentKeyDomainAdmitsAny(keyDomain, func(k typ.Type) bool {
 		switch lit := k.(type) {
 		case *typ.Literal:
 			other, ok := lit.Value.(float64)
@@ -149,7 +149,7 @@ func mapComponentKeyAdmitsNumberLiteral(keyDomain typ.Type, lit *typ.Literal) bo
 }
 
 func mapComponentKeyAdmitsBooleanLiteral(keyDomain typ.Type, value bool) bool {
-	return mapComponentKeyDomainAdmits(keyDomain, func(k typ.Type) bool {
+	return mapComponentKeyDomainAdmitsAny(keyDomain, func(k typ.Type) bool {
 		switch lit := k.(type) {
 		case *typ.Literal:
 			other, ok := lit.Value.(bool)
@@ -160,30 +160,10 @@ func mapComponentKeyAdmitsBooleanLiteral(keyDomain typ.Type, value bool) bool {
 	})
 }
 
-func mapComponentKeyDomainAdmits(keyDomain typ.Type, match func(typ.Type) bool) bool {
-	switch k := unwrap.Annotated(keyDomain).(type) {
-	case nil:
-		return false
-	case *typ.Alias:
-		return mapComponentKeyDomainAdmits(k.UnaliasedTarget(), match)
-	case *typ.Union:
-		if len(k.Members) == 0 {
-			return false
-		}
-		for _, member := range k.Members {
-			if mapComponentKeyDomainAdmits(member, match) {
-				return true
-			}
-		}
-		return false
-	case *typ.Intersection:
-		for _, member := range k.Members {
-			if !mapComponentKeyDomainAdmits(member, match) {
-				return false
-			}
-		}
-		return true
-	default:
-		return match(k)
-	}
+func mapComponentKeyDomainAdmitsAny(keyDomain typ.Type, match func(typ.Type) bool) bool {
+	return keyDomainAny(keyDomain, keyDomainTraversal{
+		unwrapAnnotated: true,
+		aliasPolicy:     keyDomainAliasUnaliasedTarget,
+		intersections:   keyDomainIntersectionAll,
+	}, match)
 }
