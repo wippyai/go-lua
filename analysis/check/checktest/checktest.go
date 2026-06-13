@@ -10,6 +10,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/check/body"
 	"github.com/wippyai/go-lua/analysis/check/checktest/internal/precheck"
 	"github.com/wippyai/go-lua/analysis/check/diagnostics"
+	"github.com/wippyai/go-lua/analysis/check/exportmanifest"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/program"
 	"github.com/wippyai/go-lua/analysis/diagnostic"
 	"github.com/wippyai/go-lua/analysis/domain/value/standard"
@@ -29,6 +30,7 @@ type config struct {
 
 type Result struct {
 	Diagnostics []diagnostic.Diagnostic
+	checked     *program.Result
 }
 
 type ModuleResult struct {
@@ -72,8 +74,13 @@ func Check(src string, opts ...Option) Result {
 
 func CheckAndExport(src, name string, opts ...Option) *ModuleResult {
 	result := checkSource(src, name, opts...)
-	m := manifest.New(name)
-	m.SetExport(typ.Unknown)
+	var m *manifest.Manifest
+	if result.checked != nil {
+		m = exportmanifest.FromProgramResult(name, *result.checked)
+	} else {
+		m = manifest.New(name)
+		m.SetExport(typ.Unknown)
+	}
 	return &ModuleResult{Errors: result.Diagnostics, Manifest: m}
 }
 
@@ -125,7 +132,7 @@ func checkSource(src, filename string, opts ...Option) Result {
 	}
 	diags := append(structural, diagnostics.Produce(checked.RootResult())...)
 	setDefaultFile(diags, filename)
-	return Result{Diagnostics: diags}
+	return Result{Diagnostics: diags, checked: &checked}
 }
 
 func applyOptions(opts []Option) config {

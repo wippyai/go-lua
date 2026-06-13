@@ -32,6 +32,55 @@ func TestCheckAndExportReturnsManifestAndDiagnostics(t *testing.T) {
 	}
 }
 
+func TestCheckAndExportPublishesRootObjectLiteralExport(t *testing.T) {
+	mod := CheckAndExport(`return { value = 1 }`, "mod")
+	if mod == nil || mod.Manifest == nil {
+		t.Fatal("CheckAndExport did not return module manifest")
+	}
+	if len(mod.Errors) != 0 {
+		t.Fatalf("module errors = %#v, want none", mod.Errors)
+	}
+	rec, ok := mod.Manifest.Export.(*typ.Record)
+	if !ok {
+		t.Fatalf("export = %T %[1]v, want record", mod.Manifest.Export)
+	}
+	field := rec.GetField("value")
+	if field == nil {
+		t.Fatalf("export fields = %#v, want value field", rec.Fields)
+	}
+	if !typ.TypeEquals(field.Type, typ.LiteralInt(1)) {
+		t.Fatalf("value field type = %v, want literal 1", field.Type)
+	}
+}
+
+func TestCheckAndExportPublishesLocalTypeDefinitions(t *testing.T) {
+	mod := CheckAndExport(`
+		type User = { name: string }
+		return { value = 1 }
+	`, "mod")
+	if mod == nil || mod.Manifest == nil {
+		t.Fatal("CheckAndExport did not return module manifest")
+	}
+	if len(mod.Errors) != 0 {
+		t.Fatalf("module errors = %#v, want none", mod.Errors)
+	}
+	got, ok := mod.Manifest.Types["User"]
+	if !ok {
+		t.Fatalf("manifest types = %#v, want User", mod.Manifest.Types)
+	}
+	rec, ok := got.(*typ.Record)
+	if !ok {
+		t.Fatalf("User type = %T %[1]v, want record", got)
+	}
+	field := rec.GetField("name")
+	if field == nil {
+		t.Fatalf("User fields = %#v, want name field", rec.Fields)
+	}
+	if !typ.TypeEquals(field.Type, typ.String) {
+		t.Fatalf("name field type = %v, want string", field.Type)
+	}
+}
+
 func TestCheckDoesNotReportUnsupportedCFGAsTypeDiagnostic(t *testing.T) {
 	result := Check(`
 		local t = {}
