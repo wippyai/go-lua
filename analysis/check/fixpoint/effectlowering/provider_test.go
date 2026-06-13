@@ -41,13 +41,20 @@ func (m signatureMap) Lookup(name string) (signature.Function, bool) {
 	return sig, ok
 }
 
+func staticName(name string) SignatureNameFunc {
+	name = strings.TrimSpace(name)
+	return func(transfer.NodeContext, factflow.CallProducer) (string, bool) {
+		return name, name != ""
+	}
+}
+
 func TestSignatureOutcomeProviderMaterializesDeclaredReturns(t *testing.T) {
 	reg := standard.Registry()
 	provider := SignatureOutcomeProvider(SignatureOutcomeProviderConfig{
 		Signatures: signatureMap{
 			"f": {Type: typ.Func().Returns(typ.Number, typ.String).Build()},
 		},
-		NameFor: StaticName("f"),
+		NameFor: staticName("f"),
 	})
 
 	got := provider(transfer.NodeContext{Registry: reg}, factflow.NewCallSite(factflow.CallSiteConfig{
@@ -67,7 +74,7 @@ func TestSignatureOutcomeProviderMaterializesOptionalDeclaredReturn(t *testing.T
 		Signatures: signatureMap{
 			"f": {Type: typ.Func().Returns(typ.NewOptional(typ.String)).Build()},
 		},
-		NameFor: StaticName("f"),
+		NameFor: staticName("f"),
 	})
 
 	got := provider(transfer.NodeContext{Registry: reg}, factflow.NewCallSite(factflow.CallSiteConfig{
@@ -87,7 +94,7 @@ func TestSignatureOutcomeProviderLowersErrorReturnToReturnPresenceRelations(t *t
 		Signatures: signatureMap{
 			"f": {Effect: effect.Empty.With(returns.ErrorReturn{ValueIndex: 0, ErrorIndex: 1})},
 		},
-		NameFor: StaticName("f"),
+		NameFor: staticName("f"),
 	})
 
 	got := provider(transfer.NodeContext{}, factflow.NewCallSite(factflow.CallSiteConfig{}), state.State{}, nil)
@@ -271,7 +278,7 @@ func TestSignatureOutcomeProviderLowersTableMutatorToParamPathInvalidationAndApp
 				),
 			},
 		},
-		NameFor: StaticName("table.insert"),
+		NameFor: staticName("table.insert"),
 		Facts:   facts,
 	})
 	site, ok := facts.CallSite(call)
@@ -340,7 +347,7 @@ func TestSignatureOutcomeProviderLowersStoreIntoContainerArgument(t *testing.T) 
 				}),
 			},
 		},
-		NameFor: StaticName("store"),
+		NameFor: staticName("store"),
 		Facts:   facts,
 	})
 	site, ok := facts.CallSite(call)
@@ -387,7 +394,7 @@ func TestSignatureOutcomeProviderSkipsStoreWithoutKnownDestination(t *testing.T)
 				}),
 			},
 		},
-		NameFor: StaticName("store"),
+		NameFor: staticName("store"),
 		Facts:   facts,
 	})
 	site, ok := facts.CallSite(call)
@@ -432,7 +439,7 @@ func TestSignatureOutcomeProviderParamPathInvalidationDoesNotApplyWithoutExpress
 				}),
 			},
 		},
-		NameFor: StaticName("table.insert"),
+		NameFor: staticName("table.insert"),
 		Facts:   facts,
 	})
 	site, ok := facts.CallSite(call)
@@ -481,7 +488,7 @@ func TestWithSignatureNoNormalReturnsMarksNeverReturnCallAndApplies(t *testing.T
 		Signatures: signatureMap{
 			"error": {Type: typ.Func().Param("message", typ.Any).Returns(typ.Never).Build()},
 		},
-		NameFor: StaticName("error"),
+		NameFor: staticName("error"),
 		Facts:   facts,
 	})
 
@@ -512,7 +519,7 @@ func TestSignatureOutcomeProviderSameAsReturnsArgumentValue(t *testing.T) {
 				Effect: effect.Empty.With(returns.Return{ReturnIndex: 0, Transform: returns.SameAs{Source: effect.ParamRef{Index: 0}}}),
 			},
 		},
-		NameFor: StaticName("f"),
+		NameFor: staticName("f"),
 		Facts: signatureOutcomeProviderFacts(point, []factflow.ValueSource{{
 			Kind:    factflow.ValueSourceExpression,
 			ExprRef: argRef,
@@ -545,7 +552,7 @@ func TestSignatureOutcomeProviderSameAsResolvesNegativeParamRef(t *testing.T) {
 				Effect: effect.Empty.With(returns.Return{ReturnIndex: 0, Transform: returns.SameAs{Source: effect.ParamRef{Index: -1}}}),
 			},
 		},
-		NameFor: StaticName("f"),
+		NameFor: staticName("f"),
 		Facts: signatureOutcomeProviderFacts(point, []factflow.ValueSource{
 			{Kind: factflow.ValueSourceExpression, ExprRef: firstRef, HasExpr: true},
 			{Kind: factflow.ValueSourceExpression, ExprRef: lastRef, HasExpr: true},
@@ -574,7 +581,7 @@ func TestSignatureOutcomeProviderSameAsUsesDeclaredReturnTypeWhenArgumentProject
 				Effect: effect.Empty.With(returns.Return{ReturnIndex: 0, Transform: returns.SameAs{Source: effect.ParamRef{Index: 1}}}),
 			},
 		},
-		NameFor: StaticName("f"),
+		NameFor: staticName("f"),
 		Facts: signatureOutcomeProviderFacts(point, []factflow.ValueSource{
 			{Kind: factflow.ValueSourceExpression, ExprRef: factflow.ExprRef(10), HasExpr: true},
 		}),
@@ -599,7 +606,7 @@ func TestSignatureOutcomeProviderElementOfArrayReturnsElementRuntimeKind(t *test
 				Effect: effect.Empty.With(returns.Return{ReturnIndex: 0, Transform: returns.ElementOf{Source: effect.ParamRef{Index: 0}}}),
 			},
 		},
-		NameFor: StaticName("f"),
+		NameFor: staticName("f"),
 		Facts:   signatureOutcomeProviderFacts(point, []factflow.ValueSource{{Kind: factflow.ValueSourceExpression}}),
 	})
 
@@ -622,7 +629,7 @@ func TestSignatureOutcomeProviderElementOfMapReturnsValueRuntimeKind(t *testing.
 				Effect: effect.Empty.With(returns.Return{ReturnIndex: 0, Transform: returns.ElementOf{Source: effect.ParamRef{Index: 0}}}),
 			},
 		},
-		NameFor: StaticName("f"),
+		NameFor: staticName("f"),
 		Facts:   signatureOutcomeProviderFacts(point, []factflow.ValueSource{{Kind: factflow.ValueSourceExpression}}),
 	})
 
@@ -644,7 +651,7 @@ func TestSignatureOutcomeProviderElementOfTupleReturnsElementUnionRuntimeKind(t 
 				Effect: effect.Empty.With(returns.Return{ReturnIndex: 0, Transform: returns.ElementOf{Source: effect.ParamRef{Index: 0}}}),
 			},
 		},
-		NameFor: StaticName("f"),
+		NameFor: staticName("f"),
 		Facts:   signatureOutcomeProviderFacts(point, []factflow.ValueSource{{Kind: factflow.ValueSourceExpression}}),
 	})
 
@@ -669,7 +676,7 @@ func TestSignatureOutcomeProviderOptionalElementOfArrayKeepsMaybePresence(t *tes
 				Effect: effect.Empty.With(returns.Return{ReturnIndex: 0, Transform: returns.OptionalElementOf{Source: effect.ParamRef{Index: 0}}}),
 			},
 		},
-		NameFor: StaticName("f"),
+		NameFor: staticName("f"),
 		Facts:   signatureOutcomeProviderFacts(point, []factflow.ValueSource{{Kind: factflow.ValueSourceExpression}}),
 	})
 
@@ -694,7 +701,7 @@ func TestSignatureOutcomeProviderElementOfUsesDeclaredReturnTypeWhenParamProject
 				Effect: effect.Empty.With(returns.Return{ReturnIndex: 0, Transform: returns.ElementOf{Source: effect.ParamRef{Index: 1}}}),
 			},
 		},
-		NameFor: StaticName("f"),
+		NameFor: staticName("f"),
 		Facts:   signatureOutcomeProviderFacts(point, []factflow.ValueSource{{Kind: factflow.ValueSourceExpression}}),
 	})
 
@@ -719,7 +726,7 @@ func TestSignatureOutcomeProviderCallbackReturnProjectsFirstReturnRuntimeKind(t 
 				Effect: effect.Empty.With(returns.Return{ReturnIndex: 0, Transform: returns.CallbackReturn{CallbackParam: effect.ParamRef{Index: 0}}}),
 			},
 		},
-		NameFor: StaticName("f"),
+		NameFor: staticName("f"),
 		Facts:   signatureOutcomeProviderFacts(point, []factflow.ValueSource{{Kind: factflow.ValueSourceExpression}}),
 	})
 
@@ -745,7 +752,7 @@ func TestSignatureOutcomeProviderCallbackReturnResolvesNegativeParamRef(t *testi
 				Effect: effect.Empty.With(returns.Return{ReturnIndex: 0, Transform: returns.CallbackReturn{CallbackParam: effect.ParamRef{Index: -1}}}),
 			},
 		},
-		NameFor: StaticName("f"),
+		NameFor: staticName("f"),
 		Facts: signatureOutcomeProviderFacts(point, []factflow.ValueSource{
 			{Kind: factflow.ValueSourceExpression},
 			{Kind: factflow.ValueSourceExpression},
@@ -773,7 +780,7 @@ func TestSignatureOutcomeProviderArrayOfCallbackReturnProjectsTableRuntimeKind(t
 				Effect: effect.Empty.With(returns.Return{ReturnIndex: 0, Transform: returns.ArrayOfCallbackReturn{CallbackParam: effect.ParamRef{Index: 0}}}),
 			},
 		},
-		NameFor: StaticName("f"),
+		NameFor: staticName("f"),
 		Facts:   signatureOutcomeProviderFacts(point, []factflow.ValueSource{{Kind: factflow.ValueSourceExpression}}),
 	})
 
@@ -826,7 +833,7 @@ func TestSignatureOutcomeProviderCallbackReturnUsesDeclaredReturnTypeWhenProject
 						Effect: effect.Empty.With(returns.Return{ReturnIndex: 0, Transform: returns.CallbackReturn{CallbackParam: tc.ref}}),
 					},
 				},
-				NameFor: StaticName("f"),
+				NameFor: staticName("f"),
 				Facts:   signatureOutcomeProviderFacts(tc.point, tc.args),
 			})
 
@@ -860,7 +867,7 @@ func TestSignatureOutcomeProviderTypeProjectionFieldReturnsFieldRuntimeKind(t *t
 				}}),
 			},
 		},
-		NameFor: StaticName("f"),
+		NameFor: staticName("f"),
 		Facts:   signatureOutcomeProviderFacts(point, []factflow.ValueSource{{Kind: factflow.ValueSourceExpression}}),
 	})
 
@@ -888,7 +895,7 @@ func TestSignatureOutcomeProviderTypeProjectionCallableReturnReturnsFirstReturnR
 				}}),
 			},
 		},
-		NameFor: StaticName("f"),
+		NameFor: staticName("f"),
 		Facts:   signatureOutcomeProviderFacts(point, []factflow.ValueSource{{Kind: factflow.ValueSourceExpression}}),
 	})
 
@@ -919,7 +926,7 @@ func TestSignatureOutcomeProviderTypeProjectionGenericArgReturnsArgRuntimeKind(t
 				}}),
 			},
 		},
-		NameFor: StaticName("f"),
+		NameFor: staticName("f"),
 		Facts:   signatureOutcomeProviderFacts(point, []factflow.ValueSource{{Kind: factflow.ValueSourceExpression}}),
 	})
 
@@ -950,7 +957,7 @@ func TestSignatureOutcomeProviderTypeProjectionUsesDeclaredReturnTypeWhenProject
 				}}),
 			},
 		},
-		NameFor: StaticName("f"),
+		NameFor: staticName("f"),
 		Facts:   signatureOutcomeProviderFacts(point, []factflow.ValueSource{{Kind: factflow.ValueSourceExpression}}),
 	})
 
@@ -1019,7 +1026,7 @@ func TestSignatureOutcomeProviderReservedReturnTransformsUseOnlyDeclaredReturnTy
 						Effect: effect.Empty.With(tc.label),
 					},
 				},
-				NameFor: StaticName("f"),
+				NameFor: staticName("f"),
 				Facts: signatureOutcomeProviderFacts(point, []factflow.ValueSource{
 					{Kind: factflow.ValueSourceExpression},
 					{Kind: factflow.ValueSourceExpression},
@@ -1097,7 +1104,7 @@ func TestSupplementalResultsKeepsPrimarySlotsAndFillsMissingSignatureSlots(t *te
 		Signatures: signatureMap{
 			"f": {Type: typ.Func().Returns(typ.Number, typ.String).Build()},
 		},
-		NameFor: StaticName("f"),
+		NameFor: staticName("f"),
 	})
 
 	got := callresult.WithSupplementalResults(primary, signatures)(transfer.NodeContext{Registry: reg}, factflow.NewCallSite(factflow.CallSiteConfig{}), state.State{}, nil).Results
@@ -1130,7 +1137,7 @@ func TestSupplementalResultsKeepsPrimarySlotOverSignatureSameAs(t *testing.T) {
 				Effect: effect.Empty.With(returns.Return{ReturnIndex: 0, Transform: returns.SameAs{Source: effect.ParamRef{Index: 0}}}),
 			},
 		},
-		NameFor: StaticName("f"),
+		NameFor: staticName("f"),
 		Facts: signatureOutcomeProviderFacts(point, []factflow.ValueSource{{
 			Kind:    factflow.ValueSourceExpression,
 			ExprRef: argRef,

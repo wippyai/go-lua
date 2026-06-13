@@ -3,8 +3,6 @@
 package effectlowering
 
 import (
-	"strings"
-
 	"github.com/wippyai/go-lua/analysis/domain/effect/signature"
 	factapply "github.com/wippyai/go-lua/analysis/engine/factapply"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
@@ -76,14 +74,5 @@ func SignatureOutcomeProvider(config SignatureOutcomeProviderConfig) factapply.C
 		}
 		out.Results = results
 		return out
-	}
-}
-
-// StaticName resolves one known stable name. It is useful in tests and small
-// static compositions.
-func StaticName(name string) SignatureNameFunc {
-	name = strings.TrimSpace(name)
-	return func(transfer.NodeContext, factflow.CallProducer) (string, bool) {
-		return name, name != ""
 	}
 }

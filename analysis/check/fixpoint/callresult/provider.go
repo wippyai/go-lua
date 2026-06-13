@@ -237,18 +237,6 @@ func copyPath(p pathdom.Path) pathdom.Path {
 	return out
 }
 
-// ByCalleeSymbol maps callee symbol IDs to exact summary keys.
-func ByCalleeSymbol(keys map[symbol.ID]summary.SummaryKey) KeyFunc {
-	cloned := make(map[symbol.ID]summary.SummaryKey, len(keys))
-	for id, key := range keys {
-		cloned[id] = key
-	}
-	return func(_ transfer.NodeContext, call factflow.CallProducer) (summary.SummaryKey, bool) {
-		key, ok := cloned[call.CalleeSymbol()]
-		return key, ok
-	}
-}
-
 // ByCalleeIdentity maps direct callee symbols and exact callee access paths to
 // summary keys. Symbol keys are checked first because direct locals are the
 // narrowest identity for function values.

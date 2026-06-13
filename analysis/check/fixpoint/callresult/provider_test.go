@@ -26,7 +26,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/symbol"
 )
 
-func TestOutcomeProviderReadsSummaryReturnsByCalleeSymbol(t *testing.T) {
+func TestOutcomeProviderReadsSummaryReturnsByCalleeIdentity(t *testing.T) {
 	reg := standard.Registry()
 	callee := symbol.ID(17)
 	key := summary.DefaultSummaryKey(ref.FuncRef{Kind: ref.KindSymbol, ID: 18})
@@ -35,7 +35,7 @@ func TestOutcomeProviderReadsSummaryReturnsByCalleeSymbol(t *testing.T) {
 	provider := OutcomeProvider(summary.NewSnapshot(reg, summary.EntrySummary{
 		Key:     key,
 		Summary: summary.Summary{Returns: []product.Value{first, second}},
-	}), ByCalleeSymbol(map[symbol.ID]summary.SummaryKey{callee: key}))
+	}), ByCalleeIdentity(map[symbol.ID]summary.SummaryKey{callee: key}, nil))
 
 	got := provider(transfer.NodeContext{Registry: reg}, factflow.NewCallSite(factflow.CallSiteConfig{
 		CalleeSymbol: callee,
@@ -100,7 +100,7 @@ func TestOutcomeProviderMapsSummaryReturnsAndNormalReturnFacts(t *testing.T) {
 				},
 			},
 		},
-	}), ByCalleeSymbol(map[symbol.ID]summary.SummaryKey{callee: key}))
+	}), ByCalleeIdentity(map[symbol.ID]summary.SummaryKey{callee: key}, nil))
 
 	got := provider(transfer.NodeContext{Registry: reg}, factflow.NewCallSite(factflow.CallSiteConfig{
 		CalleeSymbol: callee,
@@ -189,7 +189,7 @@ func TestOutcomeProviderMapsNormalReturnFacts(t *testing.T) {
 				},
 			},
 		},
-	}), ByCalleeSymbol(map[symbol.ID]summary.SummaryKey{callee: key}))
+	}), ByCalleeIdentity(map[symbol.ID]summary.SummaryKey{callee: key}, nil))
 
 	got := provider(transfer.NodeContext{Registry: reg}, factflow.NewCallSite(factflow.CallSiteConfig{
 		CalleeSymbol: callee,
@@ -245,7 +245,7 @@ func TestOutcomeProviderMissingAndEmptySummaryYieldsZeroOutcome(t *testing.T) {
 	}{
 		{
 			name:     "nil reader",
-			provider: OutcomeProvider(nil, ByCalleeSymbol(map[symbol.ID]summary.SummaryKey{callee: key})),
+			provider: OutcomeProvider(nil, ByCalleeIdentity(map[symbol.ID]summary.SummaryKey{callee: key}, nil)),
 		},
 		{
 			name:     "nil key func",
@@ -253,15 +253,15 @@ func TestOutcomeProviderMissingAndEmptySummaryYieldsZeroOutcome(t *testing.T) {
 		},
 		{
 			name:     "missing key",
-			provider: OutcomeProvider(snap, ByCalleeSymbol(map[symbol.ID]summary.SummaryKey{})),
+			provider: OutcomeProvider(snap, ByCalleeIdentity(map[symbol.ID]summary.SummaryKey{}, nil)),
 		},
 		{
 			name:     "missing summary",
-			provider: OutcomeProvider(snap, ByCalleeSymbol(map[symbol.ID]summary.SummaryKey{callee: missingKey})),
+			provider: OutcomeProvider(snap, ByCalleeIdentity(map[symbol.ID]summary.SummaryKey{callee: missingKey}, nil)),
 		},
 		{
 			name:     "empty returns",
-			provider: OutcomeProvider(summary.NewSnapshot(reg, summary.EntrySummary{Key: key, Summary: summary.Summary{Returns: nil}}), ByCalleeSymbol(map[symbol.ID]summary.SummaryKey{callee: key})),
+			provider: OutcomeProvider(summary.NewSnapshot(reg, summary.EntrySummary{Key: key, Summary: summary.Summary{Returns: nil}}), ByCalleeIdentity(map[symbol.ID]summary.SummaryKey{callee: key}, nil)),
 		},
 	}
 
@@ -321,12 +321,12 @@ func TestWithSupplementalResultsKeepsPrimarySlotsFillsMissingSlotsAndMergesSideF
 	}
 }
 
-func TestByCalleeSymbolKeyMapsAreCloned(t *testing.T) {
+func TestByCalleeIdentitySymbolKeyMapsAreCloned(t *testing.T) {
 	callee := symbol.ID(21)
 	symbolKey := summary.DefaultSummaryKey(ref.FuncRef{Kind: ref.KindSymbol, ID: 23})
 
 	symbolMap := map[symbol.ID]summary.SummaryKey{callee: symbolKey}
-	keyFor := ByCalleeSymbol(symbolMap)
+	keyFor := ByCalleeIdentity(symbolMap, nil)
 	symbolMap[callee] = summary.DefaultSummaryKey(ref.FuncRef{Kind: ref.KindSymbol, ID: 25})
 
 	got, ok := keyFor(transfer.NodeContext{}, factflow.NewCallProducer(factflow.CallProducerConfig{CalleeSymbol: callee}))
@@ -403,7 +403,7 @@ func TestOutcomeProviderIntegratesWithFactflowCallRead(t *testing.T) {
 			CallOutcome: OutcomeProvider(summary.NewSnapshot(reg, summary.EntrySummary{
 				Key:     calleeKey,
 				Summary: summary.Summary{Returns: []product.Value{callValue}},
-			}), ByCalleeSymbol(map[symbol.ID]summary.SummaryKey{symbol.ID(28): calleeKey})),
+			}), ByCalleeIdentity(map[symbol.ID]summary.SummaryKey{symbol.ID(28): calleeKey}, nil)),
 		}),
 	})
 
