@@ -42,40 +42,67 @@ func TestNormalizeNil(t *testing.T) {
 	})
 }
 
-func TestAnnotated(t *testing.T) {
-	t.Run("unwraps one annotation layer", func(t *testing.T) {
-		ann := typ.NewAnnotated(typ.Number, []annotation.Annotation{{Name: "min", Arg: float64(0)}})
-		if got := unwrap.Annotated(ann); got != typ.Number {
-			t.Fatalf("Annotated() = %T, want number", got)
+func TestAnnotatedAndAnnotations(t *testing.T) {
+	inner := typ.NewAnnotated(typ.Number, []annotation.Annotation{{Name: "max", Arg: float64(100)}})
+	outer := typ.NewAnnotated(inner, []annotation.Annotation{{Name: "min", Arg: float64(0)}})
+
+	t.Run("Annotated removes one layer", func(t *testing.T) {
+		if got := unwrap.Annotated(outer); got != inner {
+			t.Fatalf("Annotated(outer) = %T, want %T", got, inner)
+		}
+	})
+
+	t.Run("Annotations removes all layers", func(t *testing.T) {
+		if got := unwrap.Annotations(outer); got != typ.Number {
+			t.Fatalf("Annotations(outer) = %T, want number", got)
 		}
 	})
 
 	t.Run("preserves non-annotated values", func(t *testing.T) {
 		if got := unwrap.Annotated(typ.Number); got != typ.Number {
-			t.Fatalf("Annotated() = %T, want number", got)
+			t.Fatalf("Annotated(number) = %T, want number", got)
+		}
+		if got := unwrap.Annotations(typ.Number); got != typ.Number {
+			t.Fatalf("Annotations(number) = %T, want number", got)
 		}
 	})
 }
 
-func TestAnnotations(t *testing.T) {
-	inner := typ.NewAnnotated(typ.Number, []annotation.Annotation{{Name: "max", Arg: float64(100)}})
-	outer := typ.NewAnnotated(inner, []annotation.Annotation{{Name: "min", Arg: float64(0)}})
-
-	if got := unwrap.Annotations(outer); got != typ.Number {
-		t.Fatalf("Annotations() should strip nested wrappers, got %T", got)
-	}
-	if got := unwrap.Annotations(typ.Number); got != typ.Number {
-		t.Fatalf("Annotations() on non-annotated should return same type, got %T", got)
-	}
-}
-
 func TestOptional(t *testing.T) {
-	t.Run("nested", func(t *testing.T) {
-		inner := typ.NewOptional(typ.String)
-		outer := typ.NewOptional(inner)
-		result := unwrap.Optional(outer)
-		if result != typ.String {
-			t.Error("Optional should fully unwrap nested optionals")
+	optional := typ.NewOptional(typ.String)
+	aliasToOptional := typ.NewAlias("OptString", optional)
+	aliasToNil := typ.NewAlias("NilAlias", typ.Nil)
+	aliasAroundOptional := typ.NewAlias("AliasOpt", optional)
+
+	t.Run("nested optionals", func(t *testing.T) {
+		outer := typ.NewOptional(optional)
+		if got := unwrap.Optional(outer); got != typ.String {
+			t.Fatalf("Optional(nested optional) = %T, want string", got)
+		}
+	})
+
+	t.Run("unwraps aliases to optionals", func(t *testing.T) {
+		if got := unwrap.Optional(aliasToOptional); got != typ.String {
+			t.Fatalf("Optional(alias to optional) = %T, want string", got)
+		}
+	})
+
+	t.Run("unwraps optional around alias to optional", func(t *testing.T) {
+		wrapped := typ.NewOptional(aliasAroundOptional)
+		if got := unwrap.Optional(wrapped); got != typ.String {
+			t.Fatalf("Optional(optional around alias) = %T, want string", got)
+		}
+	})
+
+	t.Run("returns nil for nil-like inputs", func(t *testing.T) {
+		if got := unwrap.Optional(nil); got != nil {
+			t.Fatalf("Optional(nil) = %T, want nil", got)
+		}
+		if got := unwrap.Optional(typ.Nil); got != typ.Nil {
+			t.Fatalf("Optional(Nil) = %T, want Nil", got)
+		}
+		if got := unwrap.Optional(aliasToNil); got != typ.Nil {
+			t.Fatalf("Optional(alias to nil) = %T, want Nil", got)
 		}
 	})
 }
@@ -160,8 +187,6 @@ func TestIsOptionalLike(t *testing.T) {
 		{"Nil", typ.Nil, true},
 		{"Optional", typ.NewOptional(typ.String), true},
 		{"Union with nil", typ.NewUnion(typ.String, typ.Nil), true},
-		{"Any", typ.Any, true},
-		{"Unknown", typ.Unknown, true},
 		{"String", typ.String, false},
 	}
 

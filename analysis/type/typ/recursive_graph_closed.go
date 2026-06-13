@@ -15,7 +15,7 @@ func recursiveContainsGraphClosedMemo(t Type, seen map[*Recursive]bool, memo map
 	if t == nil {
 		return true
 	}
-	t = unwrapAnnotated(t)
+	t = unwrapAnnotatedOrNil(t)
 	if t == nil {
 		return true
 	}

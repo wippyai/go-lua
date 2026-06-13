@@ -37,18 +37,18 @@ func SameNode(a, b Type) bool {
 	return a == b
 }
 
-// SameNodeOrAcyclicEqual reports identity or structural equality for products
-// that cannot contain recursive cycles. Recursive product-family equivalence is
-// a domain relation; generic constructors and hot convergence paths must not
-// prove it by unfolding structural equality.
+// SameNodeOrAcyclicEqual reports the identity-or-acyclic-equality fast path.
+// It is intentionally narrower than TypeEquals: recursive product-family
+// equivalence is a domain relation, and callers that need that must use the
+// full recursive equality machinery.
 func SameNodeOrAcyclicEqual(a, b Type) bool {
 	return sameNodeOrAcyclicEqual(a, b)
 }
 
-// sameNodeOrAcyclicEqual reports identity or structural equality for products
-// that cannot contain recursive cycles. Recursive product-family equivalence is
-// a domain relation; generic constructors and hot convergence paths must not
-// prove it by unfolding structural equality.
+// sameNodeOrAcyclicEqual reports the identity-or-acyclic-equality fast path.
+// It is intentionally narrower than TypeEquals: recursive product-family
+// equivalence is a domain relation, and callers that need that must use the
+// full recursive equality machinery.
 func sameNodeOrAcyclicEqual(a, b Type) bool {
 	if a == b {
 		return true

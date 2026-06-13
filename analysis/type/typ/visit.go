@@ -121,3 +121,10 @@ func unwrapTransparentWrappers(t Type) Type {
 		t = ann.Inner
 	}
 }
+
+func unwrapAnnotatedOrNil(t Type) Type {
+	if t == nil {
+		return nil
+	}
+	return unwrapAnnotated(t)
+}

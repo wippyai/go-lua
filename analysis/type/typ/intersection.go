@@ -40,11 +40,7 @@ func NewIntersection(members ...Type) Type {
 
 	var addMember func(Type)
 	addMember = func(m Type) {
-		if m == nil {
-			return
-		}
-
-		unwrapped := unwrapAnnotated(m)
+		unwrapped := unwrapAnnotatedOrNil(m)
 		if unwrapped == nil {
 			return
 		}

@@ -41,15 +41,7 @@ func NewUnion(members ...Type) Type {
 
 	var addMember func(Type)
 	addMember = func(m Type) {
-		if m == nil {
-			return
-		}
-
-		// Unwrap Annotated to access structural type for flattening.
-		// Annotations delegate Kind() to their inner type, so type
-		// assertions on concrete wrappers (Union, Optional) require
-		// operating on the unwrapped type.
-		unwrapped := unwrapAnnotated(m)
+		unwrapped := unwrapAnnotatedOrNil(m)
 		if unwrapped == nil {
 			return
 		}

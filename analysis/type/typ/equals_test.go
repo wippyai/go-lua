@@ -473,6 +473,22 @@ func TestTypeEqualsOpenRecursiveWrapperUsesCoinductiveWalk(t *testing.T) {
 	}
 }
 
+func TestSameNodeOrAcyclicEqualRejectsRecursiveContainingWrappers(t *testing.T) {
+	left := NewRecursivePlaceholder("Node")
+	right := NewRecursivePlaceholder("Node")
+	leftWrapper := Func().Returns(left).Build()
+	rightWrapper := Func().Returns(right).Build()
+	left.SetBody(newRecord().OptField("next", left).Build())
+	right.SetBody(newRecord().OptField("next", right).Build())
+
+	if SameNodeOrAcyclicEqual(leftWrapper, rightWrapper) {
+		t.Fatal("recursive-containing wrappers should not be accepted by the acyclic fast path")
+	}
+	if !typeEquals(leftWrapper, rightWrapper) {
+		t.Fatal("full recursive equality should still compare equivalent wrappers")
+	}
+}
+
 func TestTypeEqualsMutualRecursion(t *testing.T) {
 	recA := NewRecursivePlaceholder("A")
 	recB := NewRecursivePlaceholder("B")

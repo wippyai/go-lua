@@ -1,6 +1,12 @@
-// Package unwrap provides shared type unwrapping and predicate operations.
+// Package unwrap provides the public wrapper contract shared by type analyses.
 //
-// These are pure operations on types that do not depend on subtype checking.
+// The helpers here do not change type behavior; they only define how callers
+// peel the wrapper layers they care about:
+//   - Annotated removes one annotation layer.
+//   - Annotations removes all annotation layers.
+//   - Alias removes aliases through transparent annotations but preserves Optional.
+//   - Optional removes aliases and optionals.
+//   - RecordWithAliasPolicy follows aliases and intentionally leaves annotations in place.
 package unwrap
 
 import (
@@ -10,7 +16,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
-// NormalizeNil converts typed nil Type implementations to nil.
+// NormalizeNil converts typed-nil Type implementations to nil.
 func NormalizeNil(t typ.Type) typ.Type {
 	if t == nil {
 		return nil
@@ -25,7 +31,7 @@ func NormalizeNil(t typ.Type) typ.Type {
 	return t
 }
 
-// Annotated unwraps a single Annotated layer.
+// Annotated unwraps a single Annotated layer and returns the inner type.
 func Annotated(t typ.Type) typ.Type {
 	if a, ok := t.(*typ.Annotated); ok {
 		if a.Inner == nil {
@@ -36,8 +42,7 @@ func Annotated(t typ.Type) typ.Type {
 	return t
 }
 
-// Annotations strips all Annotated wrappers, returning the innermost
-// non-Annotated type.
+// Annotations strips every Annotated wrapper and returns the first non-annotated type.
 func Annotations(t typ.Type) typ.Type {
 	for {
 		ann, ok := t.(*typ.Annotated)
@@ -51,7 +56,8 @@ func Annotations(t typ.Type) typ.Type {
 	}
 }
 
-// Alias unwraps only Alias wrappers, preserving Optional.
+// Alias unwraps Alias wrappers, first through transparent annotations, and
+// preserves Optional wrappers.
 func Alias(t typ.Type) typ.Type {
 	for depth := 0; depth <= typ.DefaultRecursionDepth; depth++ {
 		t = transparent(t)
@@ -68,8 +74,8 @@ func Alias(t typ.Type) typ.Type {
 	return nil
 }
 
-// Optional unwraps Optional to get the inner non-nil type.
-// Also unwraps Alias. Returns nil if type is nil or Nil.
+// Optional unwraps Alias and Optional wrappers to get the first non-optional type.
+// It returns nil for nil inputs; typ.Nil remains typ.Nil as the nil-like sentinel.
 func Optional(t typ.Type) typ.Type {
 	for depth := 0; depth <= typ.DefaultRecursionDepth; depth++ {
 		t = transparent(t)
@@ -129,7 +135,8 @@ func RecordWithAliasPolicy(t typ.Type, policy RecordAliasPolicy) *typ.Record {
 	return rec
 }
 
-// IsOptionalLike returns true if the type is Optional or contains nil.
+// IsOptionalLike returns true when t is nil-like, optional, or a union that
+// contains a nil-like member. Aliases are resolved before the check.
 func IsOptionalLike(t typ.Type) bool {
 	if t == nil {
 		return true

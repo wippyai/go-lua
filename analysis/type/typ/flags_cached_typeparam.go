@@ -1,10 +1,7 @@
 package typ
 
 func knownContainsTypeParam(t Type) bool {
-	if t == nil {
-		return false
-	}
-	t = unwrapAnnotated(t)
+	t = unwrapAnnotatedOrNil(t)
 	if t == nil {
 		return false
 	}
