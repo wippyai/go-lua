@@ -150,6 +150,10 @@ func dynamicIndexFactEqual(reg *axis.Registry, a, b DynamicIndexFact) bool {
 		a.Admission == b.Admission
 }
 
+func presenceLessOrEq(a, b presence.Value) bool {
+	return presence.Join(a, b) == b
+}
+
 func dynamicIndexFactLessOrEq(reg *axis.Registry, a, b DynamicIndexFact) bool {
 	return presenceLessOrEq(a.KeyPresence, b.KeyPresence) &&
 		product.LessOrEq(reg, a.KeyValue, b.KeyValue) &&
