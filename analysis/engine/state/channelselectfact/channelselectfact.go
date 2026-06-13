@@ -5,6 +5,7 @@ import (
 	"sort"
 
 	"github.com/wippyai/go-lua/analysis/domain/lattice"
+	"github.com/wippyai/go-lua/analysis/domain/lattice/lift"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 )
 
@@ -46,43 +47,36 @@ func Top() Lane {
 }
 
 func Domain() lattice.Lattice[Lane] {
+	factDomain := lift.MustSet[Fact]()
 	return lattice.Lattice[Lane]{
 		Bottom: Bottom,
 		Top:    Top,
 		Equal: func(a, b Lane) bool {
-			if a.bottom || b.bottom {
-				return a.bottom && b.bottom
-			}
-			return finiteSetEqual(a.facts, b.facts)
+			return factDomain.Equal(factLane(a), factLane(b))
 		},
 		LessOrEq: func(a, b Lane) bool {
-			switch {
-			case a.bottom:
-				return true
-			case b.bottom:
-				return false
-			default:
-				return finiteMustSetLessOrEq(a.facts, b.facts)
-			}
+			return factDomain.LessOrEq(factLane(a), factLane(b))
 		},
 		Join: func(a, b Lane) Lane {
-			if a.bottom {
-				return b.Clone()
-			}
-			if b.bottom {
-				return a.Clone()
-			}
-			return Lane{facts: finiteSetIntersection(a.facts, b.facts)}
+			return laneFromFactLane(factDomain.Join(factLane(a), factLane(b)))
 		},
 		Widen: func(prev, next Lane) Lane {
-			if prev.bottom {
-				return next.Clone()
-			}
-			if next.bottom {
-				return prev.Clone()
-			}
-			return Lane{facts: finiteSetIntersection(prev.facts, next.facts)}
+			return laneFromFactLane(factDomain.Widen(factLane(prev), factLane(next)))
 		},
+	}
+}
+
+func factLane(l Lane) lift.MustSetLane[Fact] {
+	if l.bottom {
+		return lift.MustSetBottom[Fact]()
+	}
+	return lift.MustSetValues(l.facts)
+}
+
+func laneFromFactLane(l lift.MustSetLane[Fact]) Lane {
+	return Lane{
+		bottom: l.Bottom(),
+		facts:  cloneSet(l.Values()),
 	}
 }
 
@@ -168,43 +162,6 @@ func cloneSet(in map[Fact]struct{}) map[Fact]struct{} {
 	out := make(map[Fact]struct{}, len(in))
 	for k := range in {
 		out[k] = struct{}{}
-	}
-	return out
-}
-
-func finiteSetEqual(a, b map[Fact]struct{}) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for v := range a {
-		if _, ok := b[v]; !ok {
-			return false
-		}
-	}
-	return true
-}
-
-func finiteMustSetLessOrEq(a, b map[Fact]struct{}) bool {
-	for v := range b {
-		if _, ok := a[v]; !ok {
-			return false
-		}
-	}
-	return true
-}
-
-func finiteSetIntersection(a, b map[Fact]struct{}) map[Fact]struct{} {
-	if len(a) == 0 || len(b) == 0 {
-		return nil
-	}
-	out := make(map[Fact]struct{})
-	for v := range a {
-		if _, ok := b[v]; ok {
-			out[v] = struct{}{}
-		}
-	}
-	if len(out) == 0 {
-		return nil
 	}
 	return out
 }
