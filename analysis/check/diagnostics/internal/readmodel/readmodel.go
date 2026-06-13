@@ -252,12 +252,9 @@ func scalarRuntimeKindType(reg *axis.Registry, value product.Value) (typ.Type, b
 			return nil, false
 		}
 	}
-	if len(members) == 0 {
+	t, ok := runtimeKindEvidenceUnion(product.PresenceOf(value), members)
+	if !ok {
 		return nil, false
-	}
-	t := typ.NewUnion(members...)
-	if presence.Equal(product.PresenceOf(value), presence.Maybe()) && !typeIncludesNil(t) {
-		t = typ.NewOptional(t)
 	}
 	if normalized := unwrap.NormalizeNil(t); normalized != nil && normalized.Kind() == kind.Nil {
 		return typ.Nil, true
@@ -289,10 +286,14 @@ func runtimeKindType(reg *axis.Registry, value product.Value, p presence.Value) 
 			return nil, false
 		}
 	}
+	return runtimeKindEvidenceUnion(p, members)
+}
+
+func runtimeKindEvidenceUnion(p presence.Value, members []typ.Type) (typ.Type, bool) {
 	if len(members) == 0 {
 		return nil, false
 	}
-	t := typ.NewUnion(members...)
+	t := normalize.UnionForEvidence(members...)
 	if presence.Equal(p, presence.Maybe()) && !typeIncludesNil(t) {
 		t = typ.NewOptional(t)
 	}

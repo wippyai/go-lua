@@ -96,5 +96,5 @@ func projectUnionWithoutNil(u *typ.Union, mode nilProjectionMode) (typ.Type, boo
 	if len(members) == 1 {
 		return members[0], true
 	}
-	return typ.NewUnion(members...), true
+	return typ.MaterializeUnion(members), true
 }
