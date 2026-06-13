@@ -9,6 +9,8 @@ import (
 // Summary is the fixed-point analysis summary payload for one function entry.
 type Summary struct {
 	Returns                         []product.Value
+	ParamObligations                []product.Value
+	ParamMemberCallObligations      []ParamMemberCallObligation
 	NormalReturnParams              []product.Value
 	NormalReturnParamConditions     []ParamCondition
 	NormalReturnParamEqualities     []ParamEquality
@@ -20,6 +22,8 @@ type Summary struct {
 // Clone returns an independent copy of s.
 func (s Summary) Clone() Summary {
 	if len(s.Returns) == 0 &&
+		len(s.ParamObligations) == 0 &&
+		len(s.ParamMemberCallObligations) == 0 &&
 		len(s.NormalReturnParams) == 0 &&
 		len(s.NormalReturnParamConditions) == 0 &&
 		len(s.NormalReturnParamEqualities) == 0 &&
@@ -32,6 +36,14 @@ func (s Summary) Clone() Summary {
 	if len(s.Returns) > 0 {
 		out.Returns = make([]product.Value, len(s.Returns))
 		copy(out.Returns, s.Returns)
+	}
+	if len(s.ParamObligations) > 0 {
+		out.ParamObligations = make([]product.Value, len(s.ParamObligations))
+		copy(out.ParamObligations, s.ParamObligations)
+	}
+	if len(s.ParamMemberCallObligations) > 0 {
+		out.ParamMemberCallObligations = make([]ParamMemberCallObligation, len(s.ParamMemberCallObligations))
+		copy(out.ParamMemberCallObligations, s.ParamMemberCallObligations)
 	}
 	if len(s.NormalReturnParams) > 0 {
 		out.NormalReturnParams = make([]product.Value, len(s.NormalReturnParams))

@@ -16,7 +16,7 @@ func projectNormalReturnParamEqualities(reg *axis.Registry, result ResultReader)
 	if graph == nil {
 		return nil
 	}
-	params := normalReturnParamPaths(result)
+	params := parameterValuePaths(result)
 	if len(params) == 0 {
 		return nil
 	}

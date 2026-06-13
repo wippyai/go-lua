@@ -67,6 +67,7 @@ func withSupplementalOutcomeFacts(out, second CallOutcome) CallOutcome {
 	out.NormalReturnFacts.ChannelSelects = append(out.NormalReturnFacts.ChannelSelects, second.NormalReturnFacts.ChannelSelects...)
 	out.NormalReturnFacts.EffectDeltas = append(out.NormalReturnFacts.EffectDeltas, second.NormalReturnFacts.EffectDeltas...)
 	out.ParamPathRefinements = append(out.ParamPathRefinements, second.ParamPathRefinements...)
+	out.ParamObligations = append(out.ParamObligations, second.ParamObligations...)
 	out.ParamPathInvalidations = append(out.ParamPathInvalidations, second.ParamPathInvalidations...)
 	out.ParamConditions = append(out.ParamConditions, second.ParamConditions...)
 	out.ParamPathRelations = append(out.ParamPathRelations, second.ParamPathRelations...)
@@ -82,12 +83,21 @@ type CallOutcome struct {
 	Results []CallResult
 
 	NormalReturnFacts          callboundary.NormalReturnFacts
+	ParamObligations           []CallParamObligation
 	ParamPathRefinements       []CallParamPathRefinement
 	ParamPathInvalidations     []CallParamPathInvalidation
 	ParamConditions            []CallParamCondition
 	ParamPathRelations         []CallParamPathRelation
 	ReturnConditionRefinements []CallReturnConditionRefinement
 	ReturnPresenceRelations    []CallReturnPresenceRelation
+}
+
+// CallParamObligation records a pre-call value constraint for one explicit
+// argument. It is diagnostic evidence only and is not applied as a normal-return
+// refinement to caller state.
+type CallParamObligation struct {
+	ParamIndex int
+	Value      product.Value
 }
 
 // CallParamPathRefinement records a normal-return value constraint for a

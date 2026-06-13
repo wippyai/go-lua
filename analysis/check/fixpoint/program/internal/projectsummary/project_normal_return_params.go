@@ -62,7 +62,7 @@ func normalReturnParamConstraint(reg *axis.Registry, entry, exit product.Value) 
 	return exit, true
 }
 
-func normalReturnParamPaths(result ResultReader) []path.Path {
+func parameterValuePaths(result ResultReader) []path.Path {
 	slotReader, ok := result.(parameterValueSlotReader)
 	if !ok {
 		return nil

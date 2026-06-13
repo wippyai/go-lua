@@ -19,6 +19,22 @@ func normalReturnParamAt(reg *axis.Registry, s Summary, i int) product.Value {
 	return product.Bottom(reg)
 }
 
+func paramObligationAt(reg *axis.Registry, s Summary, i int) product.Value {
+	if i < len(s.ParamObligations) {
+		return s.ParamObligations[i]
+	}
+	return product.Top()
+}
+
+// UsefulParamObligation reports whether a parameter obligation carries
+// caller-checkable pre-call information.
+func UsefulParamObligation(reg *axis.Registry, value product.Value) bool {
+	if reg == nil {
+		return false
+	}
+	return !product.Equal(reg, value, product.Bottom(reg)) && !product.Equal(reg, value, product.Top())
+}
+
 // UsefulNormalReturnParam reports whether a normal-return parameter lane carries
 // caller-applicable information.
 func UsefulNormalReturnParam(reg *axis.Registry, value product.Value) bool {

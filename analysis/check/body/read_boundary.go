@@ -79,6 +79,32 @@ func (r *Result) SymbolValueAtBoundary(point cfg.Point, id symbol.ID) (product.V
 	return r.PathValueAtBoundary(point, pathdom.NewPath(id, r.SymbolName(id)))
 }
 
+// CallOutcomeAt resolves the configured call-boundary evidence for point.
+func (r *Result) CallOutcomeAt(point cfg.Point) (factapply.CallOutcome, bool) {
+	if r == nil || r.registry == nil || r.callOutcome == nil {
+		return factapply.CallOutcome{}, false
+	}
+	site, ok := r.facts.CallSite(point)
+	if !ok {
+		return factapply.CallOutcome{}, false
+	}
+	in, ok := r.StateAt(point)
+	if !ok {
+		return factapply.CallOutcome{}, false
+	}
+	graph := r.Graph()
+	ctx := transfer.NodeContext{
+		Graph:    graph,
+		Point:    point,
+		Registry: r.registry,
+		Read:     r.boundaryRead,
+	}
+	if graph != nil {
+		ctx.Node = graph.Node(point)
+	}
+	return r.callOutcome(ctx, site, in, r.boundaryRead), true
+}
+
 func (r *Result) callResultValueAtBoundary(source factflow.ValueSource) (product.Value, bool) {
 	if !source.HasCallPoint || source.ResultIndex < 0 {
 		return product.Value{}, false

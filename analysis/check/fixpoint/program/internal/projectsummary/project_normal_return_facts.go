@@ -15,7 +15,7 @@ import (
 )
 
 func projectNormalReturnFacts(reg *axis.Registry, result ResultReader, exit state.State) callboundary.NormalReturnFacts {
-	params := normalReturnParamPaths(result)
+	params := parameterValuePaths(result)
 	if len(params) == 0 {
 		return callboundary.NormalReturnFacts{}
 	}

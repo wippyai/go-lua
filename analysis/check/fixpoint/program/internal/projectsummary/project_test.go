@@ -295,6 +295,67 @@ end`), body.Config{Registry: reg})
 	}
 }
 
+func TestFromResultProjectsParamObligationFromTypedMemberArgument(t *testing.T) {
+	reg := standard.Registry()
+	result := projectCheckFunction(t, projectParseFunction(t, `
+function f(client: {invoke: (model_id: string, payload: any, options: any) -> ()}, model_id)
+	return client.invoke(model_id, {}, {})
+end`), body.Config{Registry: reg})
+
+	got := summaryprojection.FromResult(result)
+
+	projectAssertParamObligationKind(t, reg, got, 1, runtimekind.Singleton(runtimekind.String))
+	if len(got.NormalReturnParams) > 1 && !product.Equal(reg, got.NormalReturnParams[1], product.Top()) {
+		t.Fatalf("normal return param 1 = %#v, want no post-return refinement", got.NormalReturnParams[1])
+	}
+}
+
+func TestFromResultProjectsParamObligationFromArithmeticOperand(t *testing.T) {
+	reg := standard.Registry()
+	result := projectCheckFunction(t, projectParseFunction(t, `
+function f(tokens)
+	return tokens * 2
+end`), body.Config{Registry: reg})
+
+	got := summaryprojection.FromResult(result)
+
+	projectAssertParamObligationKind(t, reg, got, 0, runtimekind.Singleton(runtimekind.Number))
+}
+
+func TestFromResultDoesNotProjectGuardedParamObligation(t *testing.T) {
+	reg := standard.Registry()
+	result := projectCheckFunction(t, projectParseFunction(t, `
+function f(x)
+	if type(x) == "number" then
+		return x * 2
+	end
+end`), body.Config{
+		Registry: reg,
+		Globals:  []string{"type"},
+	})
+
+	got := summaryprojection.FromResult(result)
+
+	if len(got.ParamObligations) != 0 {
+		t.Fatalf("param obligations = %#v, want none for guarded use", got.ParamObligations)
+	}
+}
+
+func TestFromResultDoesNotProjectReassignedParamObligation(t *testing.T) {
+	reg := standard.Registry()
+	result := projectCheckFunction(t, projectParseFunction(t, `
+function f(x)
+	x = 1
+	return x * 2
+end`), body.Config{Registry: reg})
+
+	got := summaryprojection.FromResult(result)
+
+	if len(got.ParamObligations) != 0 {
+		t.Fatalf("param obligations = %#v, want none for reassigned param", got.ParamObligations)
+	}
+}
+
 func TestFromResultProjectsReturnTruthyParamRefinement(t *testing.T) {
 	reg := standard.Registry()
 	result := projectCheckFunction(t, projectParseFunction(t, `
@@ -531,6 +592,22 @@ func projectAssertValue(t *testing.T, reg *axis.Registry, got, want product.Valu
 	t.Helper()
 	if !product.Equal(reg, got, want) {
 		t.Fatalf("value = %v, want %v", got, want)
+	}
+}
+
+func projectAssertParamObligationKind(
+	t *testing.T,
+	reg *axis.Registry,
+	got summary.Summary,
+	param int,
+	want runtimekind.Value,
+) {
+	t.Helper()
+	if len(got.ParamObligations) <= param {
+		t.Fatalf("param obligations = %#v, want obligation at %d", got.ParamObligations, param)
+	}
+	if kind := product.Get(reg, got.ParamObligations[param], runtimekind.Key); !runtimekind.Equal(kind, want) {
+		t.Fatalf("param obligation %d runtime kind = %s, want %s", param, kind, want)
 	}
 }
 

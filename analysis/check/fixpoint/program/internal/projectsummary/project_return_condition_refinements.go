@@ -19,7 +19,7 @@ func projectReturnConditionParamRefinements(
 	if !ok {
 		return nil
 	}
-	params := normalReturnParamPaths(result)
+	params := parameterValuePaths(result)
 	if len(params) == 0 {
 		return nil
 	}

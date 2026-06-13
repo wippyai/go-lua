@@ -241,6 +241,35 @@ func TestOutcomeProviderMapsNormalReturnFacts(t *testing.T) {
 	}
 }
 
+func TestOutcomeProviderMapsParamObligationsDistinctFromNormalReturnRefinements(t *testing.T) {
+	reg := standard.Registry()
+	callee := symbol.ID(147)
+	key := summary.DefaultSummaryKey(ref.FuncRef{Kind: ref.KindSymbol, ID: 148})
+	obligation := typevalue.WithWitness(reg, typevalue.FromType(reg, typ.String), typ.String)
+	provider := OutcomeProvider(ProviderConfig{
+		Summaries: summary.NewSnapshot(reg, summary.EntrySummary{
+			Key: key,
+			Summary: summary.Summary{
+				ParamObligations: []product.Value{obligation},
+			},
+		}),
+		KeyFor: ByCalleeIdentity(map[symbol.ID]summary.SummaryKey{callee: key}, nil),
+	})
+
+	got := provider(transfer.NodeContext{Registry: reg}, factflow.NewCallSite(factflow.CallSiteConfig{
+		CalleeSymbol: callee,
+	}), state.State{}, nil)
+
+	if len(got.ParamObligations) != 1 ||
+		got.ParamObligations[0].ParamIndex != 0 ||
+		!product.Equal(reg, got.ParamObligations[0].Value, obligation) {
+		t.Fatalf("param obligations = %#v, want mapped summary obligation", got.ParamObligations)
+	}
+	if len(got.ParamPathRefinements) != 0 {
+		t.Fatalf("param path refinements = %#v, want none for pre-call obligation", got.ParamPathRefinements)
+	}
+}
+
 func TestOutcomeProviderSpecializesGenericReturnFromArgument(t *testing.T) {
 	reg := standard.Registry()
 	callee := symbol.ID(217)
@@ -702,6 +731,7 @@ func assertEmptyOutcome(t *testing.T, got factapply.CallOutcome) {
 	t.Helper()
 	if len(got.Results) != 0 ||
 		len(got.NormalReturnFacts.PathRefinements) != 0 ||
+		len(got.ParamObligations) != 0 ||
 		len(got.ParamPathRefinements) != 0 ||
 		len(got.ParamConditions) != 0 ||
 		len(got.ParamPathRelations) != 0 ||

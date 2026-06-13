@@ -12,6 +12,12 @@ func Normalize(reg *axis.Registry, s Summary) Summary {
 	for len(out.Returns) > 0 && product.Equal(reg, out.Returns[len(out.Returns)-1], bottom) {
 		out.Returns = out.Returns[:len(out.Returns)-1]
 	}
+	top := product.Top()
+	for len(out.ParamObligations) > 0 &&
+		product.Equal(reg, out.ParamObligations[len(out.ParamObligations)-1], top) {
+		out.ParamObligations = out.ParamObligations[:len(out.ParamObligations)-1]
+	}
+	out.ParamMemberCallObligations = normalizeParamMemberCallObligations(out.ParamMemberCallObligations)
 	for len(out.NormalReturnParams) > 0 &&
 		product.Equal(reg, out.NormalReturnParams[len(out.NormalReturnParams)-1], bottom) {
 		out.NormalReturnParams = out.NormalReturnParams[:len(out.NormalReturnParams)-1]
@@ -28,6 +34,8 @@ func Normalize(reg *axis.Registry, s Summary) Summary {
 	)
 	out.ReturnPresenceRelations = normalizeReturnPresenceRelations(out.ReturnPresenceRelations)
 	if len(out.Returns) == 0 &&
+		len(out.ParamObligations) == 0 &&
+		len(out.ParamMemberCallObligations) == 0 &&
 		len(out.NormalReturnParams) == 0 &&
 		len(out.NormalReturnParamConditions) == 0 &&
 		len(out.NormalReturnParamEqualities) == 0 &&
@@ -55,6 +63,12 @@ func Equal(reg *axis.Registry, a, b Summary) bool {
 			return false
 		}
 	}
+	n = max(len(a.ParamObligations), len(b.ParamObligations))
+	for i := range n {
+		if !product.Equal(reg, paramObligationAt(reg, a, i), paramObligationAt(reg, b, i)) {
+			return false
+		}
+	}
 	n = max(normalReturnParamCount(reg, a), normalReturnParamCount(reg, b))
 	for i := range n {
 		if normalReturnParamConditionAt(reg, a, i) != normalReturnParamConditionAt(reg, b, i) {
@@ -62,6 +76,7 @@ func Equal(reg *axis.Registry, a, b Summary) bool {
 		}
 	}
 	return paramEqualitiesSummaryEqual(reg, a, b) &&
+		paramMemberCallObligationsEqual(a.ParamMemberCallObligations, b.ParamMemberCallObligations) &&
 		normalReturnFactsEqual(reg, a.NormalReturnFacts, b.NormalReturnFacts) &&
 		returnConditionParamRefinementsEqual(reg, a.ReturnConditionParamRefinements, b.ReturnConditionParamRefinements) &&
 		returnPresenceRelationsEqual(a.ReturnPresenceRelations, b.ReturnPresenceRelations)
@@ -89,6 +104,12 @@ func LessOrEq(reg *axis.Registry, a, b Summary) bool {
 			return false
 		}
 	}
+	n = max(len(a.ParamObligations), len(b.ParamObligations))
+	for i := range n {
+		if !product.LessOrEq(reg, paramObligationAt(reg, b, i), paramObligationAt(reg, a, i)) {
+			return false
+		}
+	}
 	n = max(normalReturnParamCount(reg, a), normalReturnParamCount(reg, b))
 	for i := range n {
 		if !paramConditionLessOrEq(normalReturnParamConditionAt(reg, a, i), normalReturnParamConditionAt(reg, b, i)) {
@@ -96,6 +117,7 @@ func LessOrEq(reg *axis.Registry, a, b Summary) bool {
 		}
 	}
 	return paramEqualitiesSummaryLessOrEq(reg, a, b) &&
+		paramMemberCallObligationsLessOrEq(a.ParamMemberCallObligations, b.ParamMemberCallObligations) &&
 		normalReturnFactsLessOrEq(reg, a.NormalReturnFacts, b.NormalReturnFacts) &&
 		returnConditionParamRefinementsLessOrEq(reg, a.ReturnConditionParamRefinements, b.ReturnConditionParamRefinements) &&
 		returnPresenceRelationsLessOrEq(a.ReturnPresenceRelations, b.ReturnPresenceRelations)
@@ -106,6 +128,7 @@ func LessOrEq(reg *axis.Registry, a, b Summary) bool {
 // normal-return parameter arity are top/no-constraint.
 func Join(reg *axis.Registry, a, b Summary) Summary {
 	returns := max(len(a.Returns), len(b.Returns))
+	obligations := max(len(a.ParamObligations), len(b.ParamObligations))
 	params := max(len(a.NormalReturnParams), len(b.NormalReturnParams))
 	conditions := max(normalReturnParamCount(reg, a), normalReturnParamCount(reg, b))
 	if summaryBottom(a) {
@@ -114,7 +137,8 @@ func Join(reg *axis.Registry, a, b Summary) Summary {
 	if summaryBottom(b) {
 		return Normalize(reg, a)
 	}
-	if returns == 0 && params == 0 && conditions == 0 &&
+	if returns == 0 && obligations == 0 && params == 0 && conditions == 0 &&
+		len(a.ParamMemberCallObligations) == 0 && len(b.ParamMemberCallObligations) == 0 &&
 		len(a.NormalReturnParamEqualities) == 0 && len(b.NormalReturnParamEqualities) == 0 &&
 		normalReturnFactsEmpty(a.NormalReturnFacts) && normalReturnFactsEmpty(b.NormalReturnFacts) &&
 		len(a.ReturnConditionParamRefinements) == 0 && len(b.ReturnConditionParamRefinements) == 0 &&
@@ -127,6 +151,12 @@ func Join(reg *axis.Registry, a, b Summary) Summary {
 	}
 	for i := range returns {
 		out.Returns[i] = product.Join(reg, returnAt(reg, a, i), returnAt(reg, b, i))
+	}
+	if obligations > 0 {
+		out.ParamObligations = make([]product.Value, obligations)
+	}
+	for i := range obligations {
+		out.ParamObligations[i] = product.Meet(reg, paramObligationAt(reg, a, i), paramObligationAt(reg, b, i))
 	}
 	if params > 0 {
 		out.NormalReturnParams = make([]product.Value, params)
@@ -143,6 +173,10 @@ func Join(reg *axis.Registry, a, b Summary) Summary {
 			normalReturnParamConditionAt(reg, b, i),
 		)
 	}
+	out.ParamMemberCallObligations = joinParamMemberCallObligations(
+		a.ParamMemberCallObligations,
+		b.ParamMemberCallObligations,
+	)
 	out.NormalReturnParamEqualities = joinParamEqualities(reg, a, b)
 	out.NormalReturnFacts = joinNormalReturnFacts(reg, a.NormalReturnFacts, b.NormalReturnFacts)
 	out.ReturnConditionParamRefinements = joinReturnConditionParamRefinements(
@@ -159,6 +193,7 @@ func Join(reg *axis.Registry, a, b Summary) Summary {
 // normal-return parameter arity are top/no-constraint.
 func Widen(reg *axis.Registry, prev, next Summary) Summary {
 	returns := max(len(prev.Returns), len(next.Returns))
+	obligations := max(len(prev.ParamObligations), len(next.ParamObligations))
 	params := max(len(prev.NormalReturnParams), len(next.NormalReturnParams))
 	conditions := max(normalReturnParamCount(reg, prev), normalReturnParamCount(reg, next))
 	if summaryBottom(prev) {
@@ -167,7 +202,8 @@ func Widen(reg *axis.Registry, prev, next Summary) Summary {
 	if summaryBottom(next) {
 		return Normalize(reg, prev)
 	}
-	if returns == 0 && params == 0 && conditions == 0 &&
+	if returns == 0 && obligations == 0 && params == 0 && conditions == 0 &&
+		len(prev.ParamMemberCallObligations) == 0 && len(next.ParamMemberCallObligations) == 0 &&
 		len(prev.NormalReturnParamEqualities) == 0 && len(next.NormalReturnParamEqualities) == 0 &&
 		normalReturnFactsEmpty(prev.NormalReturnFacts) && normalReturnFactsEmpty(next.NormalReturnFacts) &&
 		len(prev.ReturnConditionParamRefinements) == 0 && len(next.ReturnConditionParamRefinements) == 0 &&
@@ -180,6 +216,16 @@ func Widen(reg *axis.Registry, prev, next Summary) Summary {
 	}
 	for i := range returns {
 		out.Returns[i] = product.Widen(reg, returnAt(reg, prev, i), returnAt(reg, next, i))
+	}
+	if obligations > 0 {
+		out.ParamObligations = make([]product.Value, obligations)
+	}
+	for i := range obligations {
+		out.ParamObligations[i] = product.Meet(
+			reg,
+			paramObligationAt(reg, prev, i),
+			paramObligationAt(reg, next, i),
+		)
 	}
 	if params > 0 {
 		out.NormalReturnParams = make([]product.Value, params)
@@ -200,6 +246,10 @@ func Widen(reg *axis.Registry, prev, next Summary) Summary {
 			normalReturnParamConditionAt(reg, next, i),
 		)
 	}
+	out.ParamMemberCallObligations = joinParamMemberCallObligations(
+		prev.ParamMemberCallObligations,
+		next.ParamMemberCallObligations,
+	)
 	out.NormalReturnParamEqualities = joinParamEqualities(reg, prev, next)
 	out.NormalReturnFacts = widenNormalReturnFacts(reg, prev.NormalReturnFacts, next.NormalReturnFacts)
 	out.ReturnConditionParamRefinements = joinReturnConditionParamRefinements(
@@ -213,6 +263,8 @@ func Widen(reg *axis.Registry, prev, next Summary) Summary {
 
 func summaryBottom(s Summary) bool {
 	return len(s.Returns) == 0 &&
+		len(s.ParamObligations) == 0 &&
+		len(s.ParamMemberCallObligations) == 0 &&
 		len(s.NormalReturnParams) == 0 &&
 		len(s.NormalReturnParamConditions) == 0 &&
 		len(s.NormalReturnParamEqualities) == 0 &&

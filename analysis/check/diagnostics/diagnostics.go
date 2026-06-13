@@ -44,6 +44,7 @@ func produceWithResolver(result *body.Result, parent typeannotation.Resolver, in
 	out = append(out, annotationAssignability(context).Produce(result)...)
 	out = append(out, produceReturnContract(result, context, defs)...)
 	out = append(out, produceDirectCallContract(result, context, defs)...)
+	out = append(out, produceCallParamObligations(result, context, defs)...)
 	out = append(out, produceDirectCallResultAssignment(result, context, defs)...)
 	out = append(out, numericForOperands(context).Produce(result)...)
 	out = append(out, memberCall(context).Produce(result)...)

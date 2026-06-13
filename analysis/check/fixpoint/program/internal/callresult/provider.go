@@ -54,12 +54,19 @@ func OutcomeProvider(config ProviderConfig) factapply.CallOutcomeProvider {
 			return factapply.CallOutcome{}
 		}
 		got = specializeGenericSummary(ctx, site, got, functionTypes[key], sources, in, read)
-		return outcomeFromSummary(got, func(index int) bool {
+		out := outcomeFromSummary(got, func(index int) bool {
+			if index < 0 || index >= len(got.ParamObligations) {
+				return false
+			}
+			return summary.UsefulParamObligation(ctx.Registry, got.ParamObligations[index])
+		}, func(index int) bool {
 			if index < 0 || index >= len(got.NormalReturnParams) {
 				return false
 			}
 			return summary.UsefulNormalReturnParam(ctx.Registry, got.NormalReturnParams[index])
 		})
+		out.ParamObligations = append(out.ParamObligations, memberCallParamObligations(ctx, site, got, sources, in, read)...)
+		return out
 	}
 }
 
@@ -216,13 +223,26 @@ func cloneFunctionTypes(in map[summary.SummaryKey]*typ.Function) map[summary.Sum
 	return out
 }
 
-func outcomeFromSummary(got summary.Summary, usefulNormalReturnParam func(int) bool) factapply.CallOutcome {
+func outcomeFromSummary(
+	got summary.Summary,
+	usefulParamObligation func(int) bool,
+	usefulNormalReturnParam func(int) bool,
+) factapply.CallOutcome {
 	out := factapply.CallOutcome{}
 	if len(got.Returns) != 0 {
 		out.Results = make([]factapply.CallResult, len(got.Returns))
 		for i, value := range got.Returns {
 			out.Results[i] = factapply.CallResult{Index: i, Value: value}
 		}
+	}
+	for i, value := range got.ParamObligations {
+		if usefulParamObligation == nil || !usefulParamObligation(i) {
+			continue
+		}
+		out.ParamObligations = append(out.ParamObligations, factapply.CallParamObligation{
+			ParamIndex: i,
+			Value:      value,
+		})
 	}
 	for i, value := range got.NormalReturnParams {
 		if usefulNormalReturnParam == nil || !usefulNormalReturnParam(i) {
@@ -275,6 +295,60 @@ func outcomeFromSummary(got summary.Summary, usefulNormalReturnParam func(int) b
 				TargetPresence:  relation.TargetPresence,
 			}
 		}
+	}
+	return out
+}
+
+func memberCallParamObligations(
+	ctx transfer.NodeContext,
+	site factflow.CallSite,
+	got summary.Summary,
+	sources sourcevalue.SourceValues,
+	in state.State,
+	read func(cfg.Point) state.State,
+) []factapply.CallParamObligation {
+	if ctx.Registry == nil || sources == nil || len(got.ParamMemberCallObligations) == 0 {
+		return nil
+	}
+	args := site.ArgumentSources()
+	if len(args) == 0 {
+		return nil
+	}
+	var out []factapply.CallParamObligation
+	for _, obligation := range got.ParamMemberCallObligations {
+		if obligation.ReceiverParam < 0 || obligation.ReceiverParam >= len(args) ||
+			obligation.ArgParam < 0 || obligation.ArgParam >= len(args) ||
+			obligation.MemberParamIndex < 0 || obligation.Member == "" {
+			continue
+		}
+		receiverValue, ok := sources.ValueOfSource(ctx.Point, args[obligation.ReceiverParam], in, read)
+		if !ok {
+			continue
+		}
+		receiverType, ok := typeFromValue(ctx.Registry, receiverValue)
+		if !ok {
+			continue
+		}
+		memberType, status := typecall.MemberCall(receiverType, obligation.Member)
+		if status != typecall.MemberCallOK {
+			continue
+		}
+		callable, ok := typecall.Callable(memberType)
+		if !ok || callable == nil || obligation.MemberParamIndex >= len(callable.Params) {
+			continue
+		}
+		want := callable.Params[obligation.MemberParamIndex].Type
+		if want == nil || typ.IsAny(want) || typ.IsUnknown(want) || refinement.ContainsFreeTypeParam(want) {
+			continue
+		}
+		value := typevalue.WithWitness(ctx.Registry, typevalue.FromType(ctx.Registry, want), want)
+		if !summary.UsefulParamObligation(ctx.Registry, value) {
+			continue
+		}
+		out = append(out, factapply.CallParamObligation{
+			ParamIndex: obligation.ArgParam,
+			Value:      value,
+		})
 	}
 	return out
 }

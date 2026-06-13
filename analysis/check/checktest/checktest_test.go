@@ -174,6 +174,62 @@ func TestRequireCheckAndExportedReturnedTableDottedMemberChecksArgs(t *testing.T
 	}
 }
 
+func TestCheckHelperSummaryObligationChecksImportedMemberForwardedArg(t *testing.T) {
+	mod := CheckAndExport(`
+		local client = {}
+		function client.invoke(model_id: string, payload: any, options: any)
+		end
+		return client
+	`, "bedrock_client")
+	if len(mod.Errors) != 0 {
+		t.Fatalf("module errors = %#v, want none", mod.Errors)
+	}
+
+	result := Check(`
+		local bedrock_client = require("bedrock_client")
+		local function helper(client, model_id)
+			return client.invoke(model_id, {}, {})
+		end
+		local contract_args = nil :: any
+		local model_id = contract_args.model
+		helper(bedrock_client, model_id)
+	`, WithStdlib(), WithModule("bedrock_client", mod))
+	if len(result.Diagnostics) != 1 {
+		t.Fatalf("diagnostics = %d, want 1: %#v", len(result.Diagnostics), result.Diagnostics)
+	}
+	if result.Diagnostics[0].Code != diagnostics.CodeDirectCallArgType {
+		t.Fatalf("diagnostic code = %s, want %s", result.Diagnostics[0].Code, diagnostics.CodeDirectCallArgType)
+	}
+}
+
+func TestCheckHelperSummaryObligationChecksArithmeticParam(t *testing.T) {
+	provider := CheckAndExport(`
+		local provider = {}
+		function provider.meta(): {name: string}
+			return {name = "model"}
+		end
+		return provider
+	`, "provider")
+	if len(provider.Errors) != 0 {
+		t.Fatalf("provider errors = %#v, want none", provider.Errors)
+	}
+
+	result := Check(`
+		local provider = require("provider")
+		local function scale(tokens)
+			return tokens * 4
+		end
+		local m = provider.meta()
+		scale(m)
+	`, WithStdlib(), WithModule("provider", provider))
+	if len(result.Diagnostics) != 1 {
+		t.Fatalf("diagnostics = %d, want 1: %#v", len(result.Diagnostics), result.Diagnostics)
+	}
+	if result.Diagnostics[0].Code != diagnostics.CodeDirectCallArgType {
+		t.Fatalf("diagnostic code = %s, want %s", result.Diagnostics[0].Code, diagnostics.CodeDirectCallArgType)
+	}
+}
+
 func TestCheckAndExportPublishesReturnedTableMethodFunctionMember(t *testing.T) {
 	mod := CheckAndExport(`
 		local client = {}
