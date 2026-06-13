@@ -4,6 +4,7 @@ import (
 	"sort"
 
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/engine/callboundary"
 	"github.com/wippyai/go-lua/analysis/engine/state/channelselectfact"
 )
 
@@ -15,11 +16,11 @@ type channelSelectFactKey struct {
 	index    int
 }
 
-func normalizeChannelSelectFacts(in []ChannelSelectFact) []ChannelSelectFact {
+func normalizeChannelSelectFacts(in []callboundary.ChannelSelectFact) []callboundary.ChannelSelectFact {
 	if len(in) == 0 {
 		return nil
 	}
-	seen := make(map[channelSelectFactKey]ChannelSelectFact, len(in))
+	seen := make(map[channelSelectFactKey]callboundary.ChannelSelectFact, len(in))
 	for _, fact := range in {
 		if fact.Select == "" || fact.Kind == 0 || fact.Index < 0 {
 			continue
@@ -34,11 +35,11 @@ func normalizeChannelSelectFacts(in []ChannelSelectFact) []ChannelSelectFact {
 	return sortedChannelSelectFacts(seen)
 }
 
-func cloneChannelSelectFacts(in []ChannelSelectFact) []ChannelSelectFact {
+func cloneChannelSelectFacts(in []callboundary.ChannelSelectFact) []callboundary.ChannelSelectFact {
 	if len(in) == 0 {
 		return nil
 	}
-	out := make([]ChannelSelectFact, len(in))
+	out := make([]callboundary.ChannelSelectFact, len(in))
 	for i, fact := range in {
 		fact.Result = cloneSummaryPath(fact.Result)
 		fact.Case = cloneSummaryPath(fact.Case)
@@ -47,7 +48,7 @@ func cloneChannelSelectFacts(in []ChannelSelectFact) []ChannelSelectFact {
 	return out
 }
 
-func channelSelectFactsEqual(a, b []ChannelSelectFact) bool {
+func channelSelectFactsEqual(a, b []callboundary.ChannelSelectFact) bool {
 	a = normalizeChannelSelectFacts(a)
 	b = normalizeChannelSelectFacts(b)
 	if len(a) != len(b) {
@@ -61,7 +62,7 @@ func channelSelectFactsEqual(a, b []ChannelSelectFact) bool {
 	return true
 }
 
-func channelSelectFactsLessOrEq(a, b []ChannelSelectFact) bool {
+func channelSelectFactsLessOrEq(a, b []callboundary.ChannelSelectFact) bool {
 	aSet := channelSelectFactsSet(a)
 	for _, fact := range normalizeChannelSelectFacts(b) {
 		if _, ok := aSet[channelSelectFactKeyOf(fact)]; !ok {
@@ -71,13 +72,13 @@ func channelSelectFactsLessOrEq(a, b []ChannelSelectFact) bool {
 	return true
 }
 
-func joinChannelSelectFacts(a, b []ChannelSelectFact) []ChannelSelectFact {
+func joinChannelSelectFacts(a, b []callboundary.ChannelSelectFact) []callboundary.ChannelSelectFact {
 	aSet := channelSelectFactsSet(a)
 	bSet := channelSelectFactsSet(b)
 	if len(aSet) == 0 || len(bSet) == 0 {
 		return nil
 	}
-	out := make(map[channelSelectFactKey]ChannelSelectFact)
+	out := make(map[channelSelectFactKey]callboundary.ChannelSelectFact)
 	for key, fact := range aSet {
 		if _, ok := bSet[key]; ok {
 			out[key] = fact
@@ -86,12 +87,12 @@ func joinChannelSelectFacts(a, b []ChannelSelectFact) []ChannelSelectFact {
 	return sortedChannelSelectFacts(out)
 }
 
-func channelSelectFactsSet(in []ChannelSelectFact) map[channelSelectFactKey]ChannelSelectFact {
+func channelSelectFactsSet(in []callboundary.ChannelSelectFact) map[channelSelectFactKey]callboundary.ChannelSelectFact {
 	out := normalizeChannelSelectFacts(in)
 	if len(out) == 0 {
 		return nil
 	}
-	m := make(map[channelSelectFactKey]ChannelSelectFact, len(out))
+	m := make(map[channelSelectFactKey]callboundary.ChannelSelectFact, len(out))
 	for _, fact := range out {
 		m[channelSelectFactKeyOf(fact)] = fact
 	}
@@ -102,7 +103,7 @@ func optionalPlaceholderPath(path pathdom.Path) bool {
 	return path.IsEmpty() || path.IsPlaceholder()
 }
 
-func channelSelectFactKeyOf(fact ChannelSelectFact) channelSelectFactKey {
+func channelSelectFactKeyOf(fact callboundary.ChannelSelectFact) channelSelectFactKey {
 	return channelSelectFactKey{
 		selectID: string(fact.Select),
 		kind:     fact.Kind,
@@ -112,11 +113,11 @@ func channelSelectFactKeyOf(fact ChannelSelectFact) channelSelectFactKey {
 	}
 }
 
-func sortedChannelSelectFacts(in map[channelSelectFactKey]ChannelSelectFact) []ChannelSelectFact {
+func sortedChannelSelectFacts(in map[channelSelectFactKey]callboundary.ChannelSelectFact) []callboundary.ChannelSelectFact {
 	if len(in) == 0 {
 		return nil
 	}
-	out := make([]ChannelSelectFact, 0, len(in))
+	out := make([]callboundary.ChannelSelectFact, 0, len(in))
 	for _, fact := range in {
 		out = append(out, fact)
 	}

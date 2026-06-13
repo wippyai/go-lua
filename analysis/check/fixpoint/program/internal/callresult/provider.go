@@ -10,6 +10,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/domain/value/variant"
+	"github.com/wippyai/go-lua/analysis/engine/callboundary"
 	factapply "github.com/wippyai/go-lua/analysis/engine/factapply"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	sourcevalue "github.com/wippyai/go-lua/analysis/engine/sourcevalue"
@@ -252,68 +253,7 @@ func outcomeFromSummary(got summary.Summary, usefulNormalReturnParam func(int) b
 			Right: pathdom.NewPlaceholder(equality.Right),
 		})
 	}
-	facts := got.NormalReturnFacts
-	if len(facts.PathRefinements) != 0 {
-		for _, fact := range facts.PathRefinements {
-			out.PathRefinements = append(out.PathRefinements, factapply.CallPathRefinement{
-				Path:  copyPath(fact.Path),
-				Value: fact.Value,
-			})
-		}
-	}
-	if len(facts.PathStaticMembers) != 0 {
-		out.PathStaticMembers = make([]factapply.CallPathStaticMember, len(facts.PathStaticMembers))
-		for i, fact := range facts.PathStaticMembers {
-			out.PathStaticMembers[i] = factapply.CallPathStaticMember{
-				Path:  copyPath(fact.Path),
-				Value: fact.Value,
-			}
-		}
-	}
-	if len(facts.DynamicIndexFacts) != 0 {
-		out.DynamicIndexFacts = make([]factapply.CallDynamicIndexFact, len(facts.DynamicIndexFacts))
-		for i, fact := range facts.DynamicIndexFacts {
-			out.DynamicIndexFacts[i] = factapply.CallDynamicIndexFact{
-				Table: copyPath(fact.Table),
-				Site:  fact.Site,
-				Value: fact.Value,
-			}
-		}
-	}
-	if len(facts.BranchProofs) != 0 {
-		out.BranchProofs = make([]factapply.CallBranchProof, len(facts.BranchProofs))
-		for i, proof := range facts.BranchProofs {
-			out.BranchProofs[i] = factapply.CallBranchProof{
-				Kind:     proof.Kind,
-				Path:     copyPath(proof.Path),
-				Presence: proof.Presence,
-				Other:    copyPath(proof.Other),
-			}
-		}
-	}
-	if len(facts.ChannelSelects) != 0 {
-		out.ChannelSelects = make([]factapply.CallChannelSelectFact, len(facts.ChannelSelects))
-		for i, fact := range facts.ChannelSelects {
-			out.ChannelSelects[i] = factapply.CallChannelSelectFact{
-				Select: fact.Select,
-				Kind:   fact.Kind,
-				Result: copyPath(fact.Result),
-				Case:   copyPath(fact.Case),
-				Index:  fact.Index,
-			}
-		}
-	}
-	if len(facts.EffectDeltas) != 0 {
-		out.EffectDeltas = make([]factapply.CallEffectDelta, len(facts.EffectDeltas))
-		for i, delta := range facts.EffectDeltas {
-			out.EffectDeltas[i] = factapply.CallEffectDelta{
-				Target: copyPath(delta.Target),
-				Site:   delta.Site,
-				Kind:   delta.Kind,
-				Value:  delta.Value,
-			}
-		}
-	}
+	out.NormalReturnFacts = cloneNormalReturnFacts(got.NormalReturnFacts)
 	if len(got.ReturnConditionParamRefinements) != 0 {
 		out.ReturnConditionRefinements = make([]factapply.CallReturnConditionRefinement, len(got.ReturnConditionParamRefinements))
 		for i, refinement := range got.ReturnConditionParamRefinements {
@@ -334,6 +274,55 @@ func outcomeFromSummary(got summary.Summary, usefulNormalReturnParam func(int) b
 				TargetIndex:     relation.TargetIndex,
 				TargetPresence:  relation.TargetPresence,
 			}
+		}
+	}
+	return out
+}
+
+func cloneNormalReturnFacts(in callboundary.NormalReturnFacts) callboundary.NormalReturnFacts {
+	out := callboundary.NormalReturnFacts{}
+	if len(in.PathRefinements) != 0 {
+		out.PathRefinements = make([]callboundary.PathValueFact, len(in.PathRefinements))
+		for i, fact := range in.PathRefinements {
+			fact.Path = copyPath(fact.Path)
+			out.PathRefinements[i] = fact
+		}
+	}
+	if len(in.PathStaticMembers) != 0 {
+		out.PathStaticMembers = make([]callboundary.PathStaticMemberFact, len(in.PathStaticMembers))
+		for i, fact := range in.PathStaticMembers {
+			fact.Path = copyPath(fact.Path)
+			out.PathStaticMembers[i] = fact
+		}
+	}
+	if len(in.DynamicIndexFacts) != 0 {
+		out.DynamicIndexFacts = make([]callboundary.DynamicIndexFact, len(in.DynamicIndexFacts))
+		for i, fact := range in.DynamicIndexFacts {
+			fact.Table = copyPath(fact.Table)
+			out.DynamicIndexFacts[i] = fact
+		}
+	}
+	if len(in.BranchProofs) != 0 {
+		out.BranchProofs = make([]callboundary.BranchProof, len(in.BranchProofs))
+		for i, proof := range in.BranchProofs {
+			proof.Path = copyPath(proof.Path)
+			proof.Other = copyPath(proof.Other)
+			out.BranchProofs[i] = proof
+		}
+	}
+	if len(in.ChannelSelects) != 0 {
+		out.ChannelSelects = make([]callboundary.ChannelSelectFact, len(in.ChannelSelects))
+		for i, fact := range in.ChannelSelects {
+			fact.Result = copyPath(fact.Result)
+			fact.Case = copyPath(fact.Case)
+			out.ChannelSelects[i] = fact
+		}
+	}
+	if len(in.EffectDeltas) != 0 {
+		out.EffectDeltas = make([]callboundary.EffectDelta, len(in.EffectDeltas))
+		for i, delta := range in.EffectDeltas {
+			delta.Target = copyPath(delta.Target)
+			out.EffectDeltas[i] = delta
 		}
 	}
 	return out

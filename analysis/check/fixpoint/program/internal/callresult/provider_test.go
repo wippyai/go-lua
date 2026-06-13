@@ -14,6 +14,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/standard"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
+	"github.com/wippyai/go-lua/analysis/engine/callboundary"
 	factapply "github.com/wippyai/go-lua/analysis/engine/factapply"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	sourcevalue "github.com/wippyai/go-lua/analysis/engine/sourcevalue"
@@ -63,14 +64,14 @@ func TestOutcomeProviderMapsSummaryReturnsAndNormalReturnFacts(t *testing.T) {
 			Key: key,
 			Summary: summary.Summary{
 				Returns: []product.Value{ret},
-				NormalReturnFacts: summary.NormalReturnFacts{
-					PathRefinements: []summary.PathValueFact{
+				NormalReturnFacts: callboundary.NormalReturnFacts{
+					PathRefinements: []callboundary.PathValueFact{
 						{Path: path.NewPlaceholder(0).Field("field"), Value: absent},
 					},
-					PathStaticMembers: []summary.PathStaticMemberFact{
+					PathStaticMembers: []callboundary.PathStaticMemberFact{
 						{Path: path.NewPlaceholder(0).Field("static"), Value: present},
 					},
-					DynamicIndexFacts: []summary.DynamicIndexFact{
+					DynamicIndexFacts: []callboundary.DynamicIndexFact{
 						{
 							Table: path.NewPlaceholder(0).Field("items"),
 							Site:  "summary.dynamic",
@@ -82,14 +83,14 @@ func TestOutcomeProviderMapsSummaryReturnsAndNormalReturnFacts(t *testing.T) {
 							},
 						},
 					},
-					BranchProofs: []summary.BranchProof{
+					BranchProofs: []callboundary.BranchProof{
 						{
 							Kind:  pathevidence.BranchProofPathEqual,
 							Path:  path.NewPlaceholder(0).Field("left"),
 							Other: path.NewPlaceholder(1).Field("right"),
 						},
 					},
-					ChannelSelects: []summary.ChannelSelectFact{
+					ChannelSelects: []callboundary.ChannelSelectFact{
 						{
 							Select: channelselectfact.ID("summary.select"),
 							Kind:   channelselectfact.FactReceive,
@@ -98,7 +99,7 @@ func TestOutcomeProviderMapsSummaryReturnsAndNormalReturnFacts(t *testing.T) {
 							Index:  2,
 						},
 					},
-					EffectDeltas: []summary.EffectDelta{
+					EffectDeltas: []callboundary.EffectDelta{
 						{
 							Target: path.NewPlaceholder(0).Field("items"),
 							Site:   "summary.effect",
@@ -117,47 +118,47 @@ func TestOutcomeProviderMapsSummaryReturnsAndNormalReturnFacts(t *testing.T) {
 	}), state.State{}, nil)
 
 	assertCallOutcomeResults(t, reg, got.Results, []product.Value{ret})
-	if len(got.PathRefinements) != 1 ||
-		!got.PathRefinements[0].Path.Equal(path.NewPlaceholder(0).Field("field")) ||
-		!product.Equal(reg, got.PathRefinements[0].Value, absent) {
-		t.Fatalf("path refinements = %#v, want mapped summary path refinement", got.PathRefinements)
+	if len(got.NormalReturnFacts.PathRefinements) != 1 ||
+		!got.NormalReturnFacts.PathRefinements[0].Path.Equal(path.NewPlaceholder(0).Field("field")) ||
+		!product.Equal(reg, got.NormalReturnFacts.PathRefinements[0].Value, absent) {
+		t.Fatalf("path refinements = %#v, want mapped summary path refinement", got.NormalReturnFacts.PathRefinements)
 	}
-	if len(got.PathStaticMembers) != 1 ||
-		!got.PathStaticMembers[0].Path.Equal(path.NewPlaceholder(0).Field("static")) ||
-		!product.Equal(reg, got.PathStaticMembers[0].Value, present) {
-		t.Fatalf("path static members = %#v, want mapped summary static member", got.PathStaticMembers)
+	if len(got.NormalReturnFacts.PathStaticMembers) != 1 ||
+		!got.NormalReturnFacts.PathStaticMembers[0].Path.Equal(path.NewPlaceholder(0).Field("static")) ||
+		!product.Equal(reg, got.NormalReturnFacts.PathStaticMembers[0].Value, present) {
+		t.Fatalf("path static members = %#v, want mapped summary static member", got.NormalReturnFacts.PathStaticMembers)
 	}
-	if len(got.DynamicIndexFacts) != 1 ||
-		!got.DynamicIndexFacts[0].Table.Equal(path.NewPlaceholder(0).Field("items")) ||
-		got.DynamicIndexFacts[0].Site != "summary.dynamic" ||
-		!presence.Equal(got.DynamicIndexFacts[0].Value.KeyPresence, presence.Present()) ||
-		!product.Equal(reg, got.DynamicIndexFacts[0].Value.KeyValue, present) ||
-		!product.Equal(reg, got.DynamicIndexFacts[0].Value.Value, absent) ||
-		got.DynamicIndexFacts[0].Value.Admission != dynamicindex.AdmissionAdmitted {
-		t.Fatalf("dynamic-index facts = %#v, want mapped summary dynamic fact", got.DynamicIndexFacts)
+	if len(got.NormalReturnFacts.DynamicIndexFacts) != 1 ||
+		!got.NormalReturnFacts.DynamicIndexFacts[0].Table.Equal(path.NewPlaceholder(0).Field("items")) ||
+		got.NormalReturnFacts.DynamicIndexFacts[0].Site != "summary.dynamic" ||
+		!presence.Equal(got.NormalReturnFacts.DynamicIndexFacts[0].Value.KeyPresence, presence.Present()) ||
+		!product.Equal(reg, got.NormalReturnFacts.DynamicIndexFacts[0].Value.KeyValue, present) ||
+		!product.Equal(reg, got.NormalReturnFacts.DynamicIndexFacts[0].Value.Value, absent) ||
+		got.NormalReturnFacts.DynamicIndexFacts[0].Value.Admission != dynamicindex.AdmissionAdmitted {
+		t.Fatalf("dynamic-index facts = %#v, want mapped summary dynamic fact", got.NormalReturnFacts.DynamicIndexFacts)
 	}
-	if len(got.BranchProofs) != 1 ||
-		got.BranchProofs[0].Kind != pathevidence.BranchProofPathEqual ||
-		!got.BranchProofs[0].Path.Equal(path.NewPlaceholder(0).Field("left")) ||
-		!got.BranchProofs[0].Other.Equal(path.NewPlaceholder(1).Field("right")) {
-		t.Fatalf("branch proofs = %#v, want mapped summary branch proof", got.BranchProofs)
+	if len(got.NormalReturnFacts.BranchProofs) != 1 ||
+		got.NormalReturnFacts.BranchProofs[0].Kind != pathevidence.BranchProofPathEqual ||
+		!got.NormalReturnFacts.BranchProofs[0].Path.Equal(path.NewPlaceholder(0).Field("left")) ||
+		!got.NormalReturnFacts.BranchProofs[0].Other.Equal(path.NewPlaceholder(1).Field("right")) {
+		t.Fatalf("branch proofs = %#v, want mapped summary branch proof", got.NormalReturnFacts.BranchProofs)
 	}
-	if len(got.ChannelSelects) != 1 ||
-		got.ChannelSelects[0].Kind != channelselectfact.FactReceive ||
-		got.ChannelSelects[0].Select != channelselectfact.ID("summary.select") ||
-		!got.ChannelSelects[0].Result.Equal(path.NewPlaceholder(0).Field("result")) ||
-		!got.ChannelSelects[0].Case.Equal(path.NewPlaceholder(1).Field("case")) ||
-		got.ChannelSelects[0].Index != 2 {
-		t.Fatalf("channel selects = %#v, want mapped summary channel select", got.ChannelSelects)
+	if len(got.NormalReturnFacts.ChannelSelects) != 1 ||
+		got.NormalReturnFacts.ChannelSelects[0].Kind != channelselectfact.FactReceive ||
+		got.NormalReturnFacts.ChannelSelects[0].Select != channelselectfact.ID("summary.select") ||
+		!got.NormalReturnFacts.ChannelSelects[0].Result.Equal(path.NewPlaceholder(0).Field("result")) ||
+		!got.NormalReturnFacts.ChannelSelects[0].Case.Equal(path.NewPlaceholder(1).Field("case")) ||
+		got.NormalReturnFacts.ChannelSelects[0].Index != 2 {
+		t.Fatalf("channel selects = %#v, want mapped summary channel select", got.NormalReturnFacts.ChannelSelects)
 	}
-	if len(got.EffectDeltas) != 1 ||
-		got.EffectDeltas[0].Kind != effectdelta.Mutation ||
-		got.EffectDeltas[0].Site != "summary.effect" ||
-		!got.EffectDeltas[0].Target.Equal(path.NewPlaceholder(0).Field("items")) ||
-		!product.Equal(reg, got.EffectDeltas[0].Value.Before, present) ||
-		!product.Equal(reg, got.EffectDeltas[0].Value.After, absent) ||
-		got.EffectDeltas[0].Value.Change != effectdelta.ChangeChanged {
-		t.Fatalf("effect deltas = %#v, want mapped summary effect delta", got.EffectDeltas)
+	if len(got.NormalReturnFacts.EffectDeltas) != 1 ||
+		got.NormalReturnFacts.EffectDeltas[0].Kind != effectdelta.Mutation ||
+		got.NormalReturnFacts.EffectDeltas[0].Site != "summary.effect" ||
+		!got.NormalReturnFacts.EffectDeltas[0].Target.Equal(path.NewPlaceholder(0).Field("items")) ||
+		!product.Equal(reg, got.NormalReturnFacts.EffectDeltas[0].Value.Before, present) ||
+		!product.Equal(reg, got.NormalReturnFacts.EffectDeltas[0].Value.After, absent) ||
+		got.NormalReturnFacts.EffectDeltas[0].Value.Change != effectdelta.ChangeChanged {
+		t.Fatalf("effect deltas = %#v, want mapped summary effect delta", got.NormalReturnFacts.EffectDeltas)
 	}
 }
 
@@ -259,8 +260,8 @@ func TestOutcomeProviderSpecializesGenericReturnFromArgument(t *testing.T) {
 			Key: key,
 			Summary: summary.Summary{
 				Returns: []product.Value{rawReturn},
-				NormalReturnFacts: summary.NormalReturnFacts{
-					PathRefinements: []summary.PathValueFact{
+				NormalReturnFacts: callboundary.NormalReturnFacts{
+					PathRefinements: []callboundary.PathValueFact{
 						{Path: path.NewPlaceholder(0).Field("ok"), Value: present},
 					},
 				},
@@ -281,10 +282,10 @@ func TestOutcomeProviderSpecializesGenericReturnFromArgument(t *testing.T) {
 	}), state.State{}, nil)
 
 	assertCallOutcomeResultType(t, reg, got.Results, typ.Instantiate(result, profile))
-	if len(got.PathRefinements) != 1 ||
-		!got.PathRefinements[0].Path.Equal(path.NewPlaceholder(0).Field("ok")) ||
-		!product.Equal(reg, got.PathRefinements[0].Value, present) {
-		t.Fatalf("path refinements = %#v, want preserved summary fact", got.PathRefinements)
+	if len(got.NormalReturnFacts.PathRefinements) != 1 ||
+		!got.NormalReturnFacts.PathRefinements[0].Path.Equal(path.NewPlaceholder(0).Field("ok")) ||
+		!product.Equal(reg, got.NormalReturnFacts.PathRefinements[0].Value, present) {
+		t.Fatalf("path refinements = %#v, want preserved summary fact", got.NormalReturnFacts.PathRefinements)
 	}
 }
 
@@ -568,6 +569,7 @@ func TestProductionImportsAreBounded(t *testing.T) {
 		"github.com/wippyai/go-lua/analysis/domain/value/product":            true,
 		"github.com/wippyai/go-lua/analysis/domain/value/typevalue":          true,
 		"github.com/wippyai/go-lua/analysis/domain/value/variant":            true,
+		"github.com/wippyai/go-lua/analysis/engine/callboundary":             true,
 		"github.com/wippyai/go-lua/analysis/engine/factapply":                true,
 		"github.com/wippyai/go-lua/analysis/engine/factflow":                 true,
 		"github.com/wippyai/go-lua/analysis/engine/sourcevalue":              true,
@@ -699,15 +701,15 @@ func assertCallOutcomeResults(t *testing.T, reg *axis.Registry, got []factapply.
 func assertEmptyOutcome(t *testing.T, got factapply.CallOutcome) {
 	t.Helper()
 	if len(got.Results) != 0 ||
-		len(got.PathRefinements) != 0 ||
+		len(got.NormalReturnFacts.PathRefinements) != 0 ||
 		len(got.ParamPathRefinements) != 0 ||
 		len(got.ParamConditions) != 0 ||
 		len(got.ParamPathRelations) != 0 ||
-		len(got.PathStaticMembers) != 0 ||
-		len(got.DynamicIndexFacts) != 0 ||
-		len(got.BranchProofs) != 0 ||
-		len(got.ChannelSelects) != 0 ||
-		len(got.EffectDeltas) != 0 ||
+		len(got.NormalReturnFacts.PathStaticMembers) != 0 ||
+		len(got.NormalReturnFacts.DynamicIndexFacts) != 0 ||
+		len(got.NormalReturnFacts.BranchProofs) != 0 ||
+		len(got.NormalReturnFacts.ChannelSelects) != 0 ||
+		len(got.NormalReturnFacts.EffectDeltas) != 0 ||
 		len(got.ReturnConditionRefinements) != 0 ||
 		len(got.ReturnPresenceRelations) != 0 {
 		t.Fatalf("provider returned non-empty outcome: %#v", got)

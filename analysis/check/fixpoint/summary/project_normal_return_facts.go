@@ -6,6 +6,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/engine/callboundary"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/state/channelselectfact"
 	"github.com/wippyai/go-lua/analysis/engine/state/dynamicindex"
@@ -13,15 +14,15 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/state/pathevidence"
 )
 
-func projectNormalReturnFacts(reg *axis.Registry, result ResultReader, exit state.State) NormalReturnFacts {
+func projectNormalReturnFacts(reg *axis.Registry, result ResultReader, exit state.State) callboundary.NormalReturnFacts {
 	params := normalReturnParamPaths(result)
 	if len(params) == 0 {
-		return NormalReturnFacts{}
+		return callboundary.NormalReturnFacts{}
 	}
 	projectPath := func(pathKey path.PathKey) (path.Path, bool) {
 		return normalReturnFactPlaceholderPath(pathKey, params)
 	}
-	out := NormalReturnFacts{}
+	out := callboundary.NormalReturnFacts{}
 
 	if snapshot := exit.PathRefinementsSnapshot(); !snapshot.Top {
 		bottom := product.Bottom(reg)
@@ -34,7 +35,7 @@ func projectNormalReturnFacts(reg *axis.Registry, result ResultReader, exit stat
 			if !ok {
 				continue
 			}
-			out.PathRefinements = append(out.PathRefinements, PathValueFact{
+			out.PathRefinements = append(out.PathRefinements, callboundary.PathValueFact{
 				Path:  target,
 				Value: value,
 			})
@@ -51,7 +52,7 @@ func projectNormalReturnFacts(reg *axis.Registry, result ResultReader, exit stat
 			if !ok {
 				continue
 			}
-			out.PathStaticMembers = append(out.PathStaticMembers, PathStaticMemberFact{
+			out.PathStaticMembers = append(out.PathStaticMembers, callboundary.PathStaticMemberFact{
 				Path:  target,
 				Value: value,
 			})
@@ -64,7 +65,7 @@ func projectNormalReturnFacts(reg *axis.Registry, result ResultReader, exit stat
 			if !ok {
 				continue
 			}
-			fact := DynamicIndexFact{
+			fact := callboundary.DynamicIndexFact{
 				Table: table,
 				Site:  stateKey.Site,
 				Value: stateFact,
@@ -87,7 +88,7 @@ func projectNormalReturnFacts(reg *axis.Registry, result ResultReader, exit stat
 			if !ok {
 				continue
 			}
-			proof := BranchProof{
+			proof := callboundary.BranchProof{
 				Kind: kind,
 				Path: target,
 			}
@@ -116,7 +117,7 @@ func projectNormalReturnFacts(reg *axis.Registry, result ResultReader, exit stat
 			if !ok {
 				continue
 			}
-			fact := ChannelSelectFact{
+			fact := callboundary.ChannelSelectFact{
 				Select: channelselectfact.ID(stateFact.Select),
 				Kind:   kind,
 				Index:  stateFact.Index,
@@ -145,13 +146,13 @@ func projectNormalReturnFacts(reg *axis.Registry, result ResultReader, exit stat
 			if !ok {
 				continue
 			}
-			delta := EffectDelta{
+			delta := callboundary.EffectDelta{
 				Target: target,
 				Site:   stateKey.Site,
 				Kind:   stateKey.Kind,
 				Value:  stateDelta,
 			}
-			if effectDeltaEqual(reg, delta, EffectDelta{Value: effectdelta.Bottom(reg)}) ||
+			if effectDeltaEqual(reg, delta, callboundary.EffectDelta{Value: effectdelta.Bottom(reg)}) ||
 				effectDeltaIsTop(delta) {
 				continue
 			}
@@ -217,11 +218,11 @@ func normalReturnFactPlaceholderPathWithSuffix(index int, suffix string) (path.P
 	return out, true
 }
 
-func dynamicIndexFactIsTop(reg *axis.Registry, fact DynamicIndexFact) bool {
+func dynamicIndexFactIsTop(reg *axis.Registry, fact callboundary.DynamicIndexFact) bool {
 	return dynamicindex.Domain(reg).Equal(fact.Value, dynamicindex.Top())
 }
 
-func effectDeltaIsTop(delta EffectDelta) bool {
+func effectDeltaIsTop(delta callboundary.EffectDelta) bool {
 	return delta.Value == effectdelta.Top()
 }
 

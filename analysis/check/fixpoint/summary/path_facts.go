@@ -6,15 +6,16 @@ import (
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/engine/callboundary"
 )
 
 type pathValueFactKey pathdom.PathKey
 
-func normalizePathValueFacts(reg *axis.Registry, in []PathValueFact) []PathValueFact {
+func normalizePathValueFacts(reg *axis.Registry, in []callboundary.PathValueFact) []callboundary.PathValueFact {
 	if len(in) == 0 {
 		return nil
 	}
-	merged := make(map[pathValueFactKey]PathValueFact, len(in))
+	merged := make(map[pathValueFactKey]callboundary.PathValueFact, len(in))
 	bottom := product.Bottom(reg)
 	for _, fact := range in {
 		if !fact.Path.IsPlaceholder() || product.Equal(reg, fact.Value, bottom) {
@@ -32,11 +33,11 @@ func normalizePathValueFacts(reg *axis.Registry, in []PathValueFact) []PathValue
 	return sortedPathValueFacts(merged)
 }
 
-func normalizePathStaticMemberFacts(reg *axis.Registry, in []PathStaticMemberFact) []PathStaticMemberFact {
+func normalizePathStaticMemberFacts(reg *axis.Registry, in []callboundary.PathStaticMemberFact) []callboundary.PathStaticMemberFact {
 	if len(in) == 0 {
 		return nil
 	}
-	merged := make(map[pathValueFactKey]PathStaticMemberFact, len(in))
+	merged := make(map[pathValueFactKey]callboundary.PathStaticMemberFact, len(in))
 	for _, fact := range in {
 		if !fact.Path.IsPlaceholder() {
 			continue
@@ -53,11 +54,11 @@ func normalizePathStaticMemberFacts(reg *axis.Registry, in []PathStaticMemberFac
 	return sortedPathStaticMemberFacts(merged)
 }
 
-func clonePathValueFacts(in []PathValueFact) []PathValueFact {
+func clonePathValueFacts(in []callboundary.PathValueFact) []callboundary.PathValueFact {
 	if len(in) == 0 {
 		return nil
 	}
-	out := make([]PathValueFact, len(in))
+	out := make([]callboundary.PathValueFact, len(in))
 	for i, fact := range in {
 		fact.Path = cloneSummaryPath(fact.Path)
 		out[i] = fact
@@ -65,11 +66,11 @@ func clonePathValueFacts(in []PathValueFact) []PathValueFact {
 	return out
 }
 
-func clonePathStaticMemberFacts(in []PathStaticMemberFact) []PathStaticMemberFact {
+func clonePathStaticMemberFacts(in []callboundary.PathStaticMemberFact) []callboundary.PathStaticMemberFact {
 	if len(in) == 0 {
 		return nil
 	}
-	out := make([]PathStaticMemberFact, len(in))
+	out := make([]callboundary.PathStaticMemberFact, len(in))
 	for i, fact := range in {
 		fact.Path = cloneSummaryPath(fact.Path)
 		out[i] = fact
@@ -77,7 +78,7 @@ func clonePathStaticMemberFacts(in []PathStaticMemberFact) []PathStaticMemberFac
 	return out
 }
 
-func pathValueFactsEqual(reg *axis.Registry, a, b []PathValueFact) bool {
+func pathValueFactsEqual(reg *axis.Registry, a, b []callboundary.PathValueFact) bool {
 	a = normalizePathValueFacts(reg, a)
 	b = normalizePathValueFacts(reg, b)
 	if len(a) != len(b) {
@@ -91,7 +92,7 @@ func pathValueFactsEqual(reg *axis.Registry, a, b []PathValueFact) bool {
 	return true
 }
 
-func pathStaticMemberFactsEqual(reg *axis.Registry, a, b []PathStaticMemberFact) bool {
+func pathStaticMemberFactsEqual(reg *axis.Registry, a, b []callboundary.PathStaticMemberFact) bool {
 	a = normalizePathStaticMemberFacts(reg, a)
 	b = normalizePathStaticMemberFacts(reg, b)
 	if len(a) != len(b) {
@@ -105,7 +106,7 @@ func pathStaticMemberFactsEqual(reg *axis.Registry, a, b []PathStaticMemberFact)
 	return true
 }
 
-func pathValueFactsLessOrEq(reg *axis.Registry, a, b []PathValueFact) bool {
+func pathValueFactsLessOrEq(reg *axis.Registry, a, b []callboundary.PathValueFact) bool {
 	aMap := pathValueFactsMap(reg, a)
 	bMap := pathValueFactsMap(reg, b)
 	bottom := product.Bottom(reg)
@@ -129,7 +130,7 @@ func pathValueFactsLessOrEq(reg *axis.Registry, a, b []PathValueFact) bool {
 	return true
 }
 
-func pathStaticMemberFactsLessOrEq(reg *axis.Registry, a, b []PathStaticMemberFact) bool {
+func pathStaticMemberFactsLessOrEq(reg *axis.Registry, a, b []callboundary.PathStaticMemberFact) bool {
 	aMap := pathStaticMemberFactsMap(reg, a)
 	bMap := pathStaticMemberFactsMap(reg, b)
 	for key, bv := range bMap {
@@ -141,40 +142,40 @@ func pathStaticMemberFactsLessOrEq(reg *axis.Registry, a, b []PathStaticMemberFa
 	return true
 }
 
-func joinPathValueFacts(reg *axis.Registry, a, b []PathValueFact) []PathValueFact {
+func joinPathValueFacts(reg *axis.Registry, a, b []callboundary.PathValueFact) []callboundary.PathValueFact {
 	return combinePathValueMaps(reg, pathValueFactsMap(reg, a), pathValueFactsMap(reg, b), product.Join)
 }
 
-func widenPathValueFacts(reg *axis.Registry, prev, next []PathValueFact) []PathValueFact {
+func widenPathValueFacts(reg *axis.Registry, prev, next []callboundary.PathValueFact) []callboundary.PathValueFact {
 	return combinePathValueMaps(reg, pathValueFactsMap(reg, prev), pathValueFactsMap(reg, next), product.Widen)
 }
 
-func joinPathStaticMemberFacts(reg *axis.Registry, a, b []PathStaticMemberFact) []PathStaticMemberFact {
+func joinPathStaticMemberFacts(reg *axis.Registry, a, b []callboundary.PathStaticMemberFact) []callboundary.PathStaticMemberFact {
 	return combinePathStaticMemberMaps(reg, pathStaticMemberFactsMap(reg, a), pathStaticMemberFactsMap(reg, b), product.Join)
 }
 
-func widenPathStaticMemberFacts(reg *axis.Registry, prev, next []PathStaticMemberFact) []PathStaticMemberFact {
+func widenPathStaticMemberFacts(reg *axis.Registry, prev, next []callboundary.PathStaticMemberFact) []callboundary.PathStaticMemberFact {
 	return combinePathStaticMemberMaps(reg, pathStaticMemberFactsMap(reg, prev), pathStaticMemberFactsMap(reg, next), product.Widen)
 }
 
-func pathValueFactsMap(reg *axis.Registry, in []PathValueFact) map[pathValueFactKey]PathValueFact {
+func pathValueFactsMap(reg *axis.Registry, in []callboundary.PathValueFact) map[pathValueFactKey]callboundary.PathValueFact {
 	out := normalizePathValueFacts(reg, in)
 	if len(out) == 0 {
 		return nil
 	}
-	m := make(map[pathValueFactKey]PathValueFact, len(out))
+	m := make(map[pathValueFactKey]callboundary.PathValueFact, len(out))
 	for _, fact := range out {
 		m[pathValueFactKey(fact.Path.Key())] = fact
 	}
 	return m
 }
 
-func pathStaticMemberFactsMap(reg *axis.Registry, in []PathStaticMemberFact) map[pathValueFactKey]PathStaticMemberFact {
+func pathStaticMemberFactsMap(reg *axis.Registry, in []callboundary.PathStaticMemberFact) map[pathValueFactKey]callboundary.PathStaticMemberFact {
 	out := normalizePathStaticMemberFacts(reg, in)
 	if len(out) == 0 {
 		return nil
 	}
-	m := make(map[pathValueFactKey]PathStaticMemberFact, len(out))
+	m := make(map[pathValueFactKey]callboundary.PathStaticMemberFact, len(out))
 	for _, fact := range out {
 		m[pathValueFactKey(fact.Path.Key())] = fact
 	}
@@ -183,16 +184,16 @@ func pathStaticMemberFactsMap(reg *axis.Registry, in []PathStaticMemberFact) map
 
 func combinePathValueMaps(
 	reg *axis.Registry,
-	a map[pathValueFactKey]PathValueFact,
-	b map[pathValueFactKey]PathValueFact,
+	a map[pathValueFactKey]callboundary.PathValueFact,
+	b map[pathValueFactKey]callboundary.PathValueFact,
 	combine func(*axis.Registry, product.Value, product.Value) product.Value,
-) []PathValueFact {
+) []callboundary.PathValueFact {
 	keys := unionPathValueKeys(a, b)
 	if len(keys) == 0 {
 		return nil
 	}
 	bottom := product.Bottom(reg)
-	out := make(map[pathValueFactKey]PathValueFact, len(keys))
+	out := make(map[pathValueFactKey]callboundary.PathValueFact, len(keys))
 	for _, key := range keys {
 		left, lok := a[key]
 		right, rok := b[key]
@@ -215,14 +216,14 @@ func combinePathValueMaps(
 
 func combinePathStaticMemberMaps(
 	reg *axis.Registry,
-	a map[pathValueFactKey]PathStaticMemberFact,
-	b map[pathValueFactKey]PathStaticMemberFact,
+	a map[pathValueFactKey]callboundary.PathStaticMemberFact,
+	b map[pathValueFactKey]callboundary.PathStaticMemberFact,
 	combine func(*axis.Registry, product.Value, product.Value) product.Value,
-) []PathStaticMemberFact {
+) []callboundary.PathStaticMemberFact {
 	if len(a) == 0 || len(b) == 0 {
 		return nil
 	}
-	out := make(map[pathValueFactKey]PathStaticMemberFact)
+	out := make(map[pathValueFactKey]callboundary.PathStaticMemberFact)
 	for key, left := range a {
 		right, ok := b[key]
 		if !ok {
@@ -234,11 +235,11 @@ func combinePathStaticMemberMaps(
 	return sortedPathStaticMemberFacts(out)
 }
 
-func sortedPathValueFacts(in map[pathValueFactKey]PathValueFact) []PathValueFact {
+func sortedPathValueFacts(in map[pathValueFactKey]callboundary.PathValueFact) []callboundary.PathValueFact {
 	if len(in) == 0 {
 		return nil
 	}
-	out := make([]PathValueFact, 0, len(in))
+	out := make([]callboundary.PathValueFact, 0, len(in))
 	for _, fact := range in {
 		out = append(out, fact)
 	}
@@ -246,11 +247,11 @@ func sortedPathValueFacts(in map[pathValueFactKey]PathValueFact) []PathValueFact
 	return out
 }
 
-func sortedPathStaticMemberFacts(in map[pathValueFactKey]PathStaticMemberFact) []PathStaticMemberFact {
+func sortedPathStaticMemberFacts(in map[pathValueFactKey]callboundary.PathStaticMemberFact) []callboundary.PathStaticMemberFact {
 	if len(in) == 0 {
 		return nil
 	}
-	out := make([]PathStaticMemberFact, 0, len(in))
+	out := make([]callboundary.PathStaticMemberFact, 0, len(in))
 	for _, fact := range in {
 		out = append(out, fact)
 	}

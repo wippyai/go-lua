@@ -10,6 +10,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/standard"
+	"github.com/wippyai/go-lua/analysis/engine/callboundary"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/state/channelselectfact"
 	"github.com/wippyai/go-lua/analysis/engine/state/dynamicindex"
@@ -312,7 +313,7 @@ func normalReturnFactProjectTestKey(sym symbol.ID, suffix string) pathdom.PathKe
 
 func assertDynamicAdmission(
 	t *testing.T,
-	facts []DynamicIndexFact,
+	facts []callboundary.DynamicIndexFact,
 	site string,
 	table pathdom.Path,
 	admission dynamicindex.Admission,
@@ -326,7 +327,7 @@ func assertDynamicAdmission(
 
 func assertBranchProof(
 	t *testing.T,
-	proofs []BranchProof,
+	proofs []callboundary.BranchProof,
 	kind pathevidence.BranchProofKind,
 	path pathdom.Path,
 	other pathdom.Path,
@@ -353,7 +354,7 @@ func assertBranchProof(
 
 func assertChannelSelect(
 	t *testing.T,
-	facts []ChannelSelectFact,
+	facts []callboundary.ChannelSelectFact,
 	selectID string,
 	kind channelselectfact.Kind,
 	result pathdom.Path,
@@ -373,7 +374,7 @@ func assertChannelSelect(
 
 func assertEffectDelta(
 	t *testing.T,
-	deltas []EffectDelta,
+	deltas []callboundary.EffectDelta,
 	site string,
 	target pathdom.Path,
 	kind effectdelta.Kind,

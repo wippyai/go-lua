@@ -3,6 +3,7 @@ package summary
 
 import (
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/engine/callboundary"
 )
 
 // Summary is the fixed-point analysis summary payload for one function entry.
@@ -11,7 +12,7 @@ type Summary struct {
 	NormalReturnParams              []product.Value
 	NormalReturnParamConditions     []ParamCondition
 	NormalReturnParamEqualities     []ParamEquality
-	NormalReturnFacts               NormalReturnFacts
+	NormalReturnFacts               callboundary.NormalReturnFacts
 	ReturnConditionParamRefinements []ReturnConditionParamRefinement
 	ReturnPresenceRelations         []ReturnPresenceRelation
 }

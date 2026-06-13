@@ -1,73 +1,12 @@
 package summary
 
 import (
-	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
-	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
-	"github.com/wippyai/go-lua/analysis/domain/value/product"
-	"github.com/wippyai/go-lua/analysis/engine/state/channelselectfact"
-	"github.com/wippyai/go-lua/analysis/engine/state/dynamicindex"
-	effectdelta "github.com/wippyai/go-lua/analysis/engine/state/effectdelta"
-	"github.com/wippyai/go-lua/analysis/engine/state/pathevidence"
+	"github.com/wippyai/go-lua/analysis/engine/callboundary"
 )
 
-// NormalReturnFacts is the summary-local payload lane for facts that hold on a
-// normal return and can cross function boundaries through placeholder paths.
-type NormalReturnFacts struct {
-	PathRefinements   []PathValueFact
-	PathStaticMembers []PathStaticMemberFact
-	DynamicIndexFacts []DynamicIndexFact
-	BranchProofs      []BranchProof
-	ChannelSelects    []ChannelSelectFact
-	EffectDeltas      []EffectDelta
-}
-
-// PathValueFact records a pointwise placeholder-path value refinement.
-type PathValueFact struct {
-	Path  pathdom.Path
-	Value product.Value
-}
-
-// PathStaticMemberFact records a must static-member fact for a placeholder path.
-type PathStaticMemberFact struct {
-	Path  pathdom.Path
-	Value product.Value
-}
-
-// DynamicIndexFact records a pointwise dynamic index fact for a placeholder table.
-type DynamicIndexFact struct {
-	Table pathdom.Path
-	Site  dynamicindex.Site
-	Value dynamicindex.Fact
-}
-
-// BranchProof records a must branch proof over placeholder paths.
-type BranchProof struct {
-	Kind     pathevidence.BranchProofKind
-	Path     pathdom.Path
-	Presence presence.Value
-	Other    pathdom.Path
-}
-
-// ChannelSelectFact records a must channel-select fact with stable caller-provided IDs.
-type ChannelSelectFact struct {
-	Select channelselectfact.ID
-	Kind   channelselectfact.Kind
-	Result pathdom.Path
-	Case   pathdom.Path
-	Index  int
-}
-
-// EffectDelta records a pointwise effect delta for a placeholder target path.
-type EffectDelta struct {
-	Target pathdom.Path
-	Site   effectdelta.Site
-	Kind   effectdelta.Kind
-	Value  effectdelta.Value
-}
-
-func normalizeNormalReturnFacts(reg *axis.Registry, in NormalReturnFacts) NormalReturnFacts {
-	out := NormalReturnFacts{
+func normalizeNormalReturnFacts(reg *axis.Registry, in callboundary.NormalReturnFacts) callboundary.NormalReturnFacts {
+	out := callboundary.NormalReturnFacts{
 		PathRefinements:   normalizePathValueFacts(reg, in.PathRefinements),
 		PathStaticMembers: normalizePathStaticMemberFacts(reg, in.PathStaticMembers),
 		DynamicIndexFacts: normalizeDynamicIndexFacts(reg, in.DynamicIndexFacts),
@@ -76,16 +15,16 @@ func normalizeNormalReturnFacts(reg *axis.Registry, in NormalReturnFacts) Normal
 		EffectDeltas:      normalizeEffectDeltas(reg, in.EffectDeltas),
 	}
 	if normalReturnFactsEmpty(out) {
-		return NormalReturnFacts{}
+		return callboundary.NormalReturnFacts{}
 	}
 	return out
 }
 
-func cloneNormalReturnFacts(in NormalReturnFacts) NormalReturnFacts {
+func cloneNormalReturnFacts(in callboundary.NormalReturnFacts) callboundary.NormalReturnFacts {
 	if normalReturnFactsEmpty(in) {
-		return NormalReturnFacts{}
+		return callboundary.NormalReturnFacts{}
 	}
-	return NormalReturnFacts{
+	return callboundary.NormalReturnFacts{
 		PathRefinements:   clonePathValueFacts(in.PathRefinements),
 		PathStaticMembers: clonePathStaticMemberFacts(in.PathStaticMembers),
 		DynamicIndexFacts: cloneDynamicIndexFacts(in.DynamicIndexFacts),
@@ -95,7 +34,7 @@ func cloneNormalReturnFacts(in NormalReturnFacts) NormalReturnFacts {
 	}
 }
 
-func normalReturnFactsEqual(reg *axis.Registry, a, b NormalReturnFacts) bool {
+func normalReturnFactsEqual(reg *axis.Registry, a, b callboundary.NormalReturnFacts) bool {
 	a = normalizeNormalReturnFacts(reg, a)
 	b = normalizeNormalReturnFacts(reg, b)
 	return pathValueFactsEqual(reg, a.PathRefinements, b.PathRefinements) &&
@@ -106,7 +45,7 @@ func normalReturnFactsEqual(reg *axis.Registry, a, b NormalReturnFacts) bool {
 		effectDeltasEqual(reg, a.EffectDeltas, b.EffectDeltas)
 }
 
-func normalReturnFactsLessOrEq(reg *axis.Registry, a, b NormalReturnFacts) bool {
+func normalReturnFactsLessOrEq(reg *axis.Registry, a, b callboundary.NormalReturnFacts) bool {
 	a = normalizeNormalReturnFacts(reg, a)
 	b = normalizeNormalReturnFacts(reg, b)
 	return pathValueFactsLessOrEq(reg, a.PathRefinements, b.PathRefinements) &&
@@ -117,8 +56,8 @@ func normalReturnFactsLessOrEq(reg *axis.Registry, a, b NormalReturnFacts) bool 
 		effectDeltasLessOrEq(reg, a.EffectDeltas, b.EffectDeltas)
 }
 
-func joinNormalReturnFacts(reg *axis.Registry, a, b NormalReturnFacts) NormalReturnFacts {
-	return normalizeNormalReturnFacts(reg, NormalReturnFacts{
+func joinNormalReturnFacts(reg *axis.Registry, a, b callboundary.NormalReturnFacts) callboundary.NormalReturnFacts {
+	return normalizeNormalReturnFacts(reg, callboundary.NormalReturnFacts{
 		PathRefinements:   joinPathValueFacts(reg, a.PathRefinements, b.PathRefinements),
 		PathStaticMembers: joinPathStaticMemberFacts(reg, a.PathStaticMembers, b.PathStaticMembers),
 		DynamicIndexFacts: joinDynamicIndexFacts(reg, a.DynamicIndexFacts, b.DynamicIndexFacts),
@@ -128,8 +67,8 @@ func joinNormalReturnFacts(reg *axis.Registry, a, b NormalReturnFacts) NormalRet
 	})
 }
 
-func widenNormalReturnFacts(reg *axis.Registry, prev, next NormalReturnFacts) NormalReturnFacts {
-	return normalizeNormalReturnFacts(reg, NormalReturnFacts{
+func widenNormalReturnFacts(reg *axis.Registry, prev, next callboundary.NormalReturnFacts) callboundary.NormalReturnFacts {
+	return normalizeNormalReturnFacts(reg, callboundary.NormalReturnFacts{
 		PathRefinements:   widenPathValueFacts(reg, prev.PathRefinements, next.PathRefinements),
 		PathStaticMembers: widenPathStaticMemberFacts(reg, prev.PathStaticMembers, next.PathStaticMembers),
 		DynamicIndexFacts: widenDynamicIndexFacts(reg, prev.DynamicIndexFacts, next.DynamicIndexFacts),
@@ -139,7 +78,7 @@ func widenNormalReturnFacts(reg *axis.Registry, prev, next NormalReturnFacts) No
 	})
 }
 
-func normalReturnFactsEmpty(facts NormalReturnFacts) bool {
+func normalReturnFactsEmpty(facts callboundary.NormalReturnFacts) bool {
 	return len(facts.PathRefinements) == 0 &&
 		len(facts.PathStaticMembers) == 0 &&
 		len(facts.DynamicIndexFacts) == 0 &&

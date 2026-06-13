@@ -7,6 +7,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/standard"
+	"github.com/wippyai/go-lua/analysis/engine/callboundary"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/state/channelselectfact"
@@ -323,8 +324,10 @@ func TestFactsNodeTransferCallOutcomeRebasesPathRefinement(t *testing.T) {
 		}),
 		CallOutcome: func(transfer.NodeContext, factflow.CallSite, state.State, func(cfg.Point) state.State) CallOutcome {
 			return CallOutcome{
-				PathRefinements: []CallPathRefinement{
-					{Path: pathdom.NewPlaceholder(0).Field("field"), Value: refinement},
+				NormalReturnFacts: callboundary.NormalReturnFacts{
+					PathRefinements: []callboundary.PathValueFact{
+						{Path: pathdom.NewPlaceholder(0).Field("field"), Value: refinement},
+					},
 				},
 			}
 		},
@@ -367,8 +370,10 @@ func TestFactsNodeTransferStatementCallOutcomeDoesNotWriteReturnSlots(t *testing
 		CallOutcome: func(transfer.NodeContext, factflow.CallSite, state.State, func(cfg.Point) state.State) CallOutcome {
 			return CallOutcome{
 				Results: []CallResult{{Index: 0, Value: returnValue}},
-				PathStaticMembers: []CallPathStaticMember{
-					{Path: pathdom.NewPlaceholder(0).Field("side"), Value: sideValue},
+				NormalReturnFacts: callboundary.NormalReturnFacts{
+					PathStaticMembers: []callboundary.PathStaticMemberFact{
+						{Path: pathdom.NewPlaceholder(0).Field("side"), Value: sideValue},
+					},
 				},
 			}
 		},
@@ -420,9 +425,11 @@ func TestFactsNodeTransferCallOutcomeBindsReceiverBeforeExplicitArgs(t *testing.
 		}),
 		CallOutcome: func(transfer.NodeContext, factflow.CallSite, state.State, func(cfg.Point) state.State) CallOutcome {
 			return CallOutcome{
-				PathStaticMembers: []CallPathStaticMember{
-					{Path: pathdom.NewPlaceholder(0).Field("self"), Value: receiverValue},
-					{Path: pathdom.NewPlaceholder(1).Field("value"), Value: argValue},
+				NormalReturnFacts: callboundary.NormalReturnFacts{
+					PathStaticMembers: []callboundary.PathStaticMemberFact{
+						{Path: pathdom.NewPlaceholder(0).Field("self"), Value: receiverValue},
+						{Path: pathdom.NewPlaceholder(1).Field("value"), Value: argValue},
+					},
 				},
 			}
 		},
@@ -473,43 +480,45 @@ func TestFactsNodeTransferCallOutcomeRebasesStateLaneFacts(t *testing.T) {
 		}),
 		CallOutcome: func(transfer.NodeContext, factflow.CallSite, state.State, func(cfg.Point) state.State) CallOutcome {
 			return CallOutcome{
-				DynamicIndexFacts: []CallDynamicIndexFact{
-					{
-						Table: pathdom.NewPlaceholder(0).Field("items"),
-						Site:  "callee.dynamic",
-						Value: dynamicindex.Fact{
-							KeyPresence: presence.Present(),
-							KeyValue:    present,
-							Value:       absent,
-							Admission:   dynamicindex.AdmissionAdmitted,
+				NormalReturnFacts: callboundary.NormalReturnFacts{
+					DynamicIndexFacts: []callboundary.DynamicIndexFact{
+						{
+							Table: pathdom.NewPlaceholder(0).Field("items"),
+							Site:  "callee.dynamic",
+							Value: dynamicindex.Fact{
+								KeyPresence: presence.Present(),
+								KeyValue:    present,
+								Value:       absent,
+								Admission:   dynamicindex.AdmissionAdmitted,
+							},
 						},
 					},
-				},
-				BranchProofs: []CallBranchProof{
-					{
-						Kind:  pathevidence.BranchProofPathEqual,
-						Path:  pathdom.NewPlaceholder(0).Field("left"),
-						Other: pathdom.NewPlaceholder(1).Field("right"),
+					BranchProofs: []callboundary.BranchProof{
+						{
+							Kind:  pathevidence.BranchProofPathEqual,
+							Path:  pathdom.NewPlaceholder(0).Field("left"),
+							Other: pathdom.NewPlaceholder(1).Field("right"),
+						},
 					},
-				},
-				ChannelSelects: []CallChannelSelectFact{
-					{
-						Select: channelselectfact.ID("callee.select"),
-						Kind:   channelselectfact.FactReceive,
-						Result: pathdom.NewPlaceholder(0).Field("result"),
-						Case:   pathdom.NewPlaceholder(1).Field("case"),
-						Index:  3,
+					ChannelSelects: []callboundary.ChannelSelectFact{
+						{
+							Select: channelselectfact.ID("callee.select"),
+							Kind:   channelselectfact.FactReceive,
+							Result: pathdom.NewPlaceholder(0).Field("result"),
+							Case:   pathdom.NewPlaceholder(1).Field("case"),
+							Index:  3,
+						},
 					},
-				},
-				EffectDeltas: []CallEffectDelta{
-					{
-						Target: pathdom.NewPlaceholder(0).Field("items"),
-						Site:   "callee.effect",
-						Kind:   effectdelta.Mutation,
-						Value: effectdelta.Value{
-							Before: present,
-							After:  absent,
-							Change: effectdelta.ChangeChanged,
+					EffectDeltas: []callboundary.EffectDelta{
+						{
+							Target: pathdom.NewPlaceholder(0).Field("items"),
+							Site:   "callee.effect",
+							Kind:   effectdelta.Mutation,
+							Value: effectdelta.Value{
+								Before: present,
+								After:  absent,
+								Change: effectdelta.ChangeChanged,
+							},
 						},
 					},
 				},

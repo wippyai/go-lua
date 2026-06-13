@@ -5,6 +5,7 @@ import (
 
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
+	"github.com/wippyai/go-lua/analysis/engine/callboundary"
 	"github.com/wippyai/go-lua/analysis/engine/state/dynamicindex"
 )
 
@@ -13,11 +14,11 @@ type dynamicIndexFactKey struct {
 	site  dynamicindex.Site
 }
 
-func normalizeDynamicIndexFacts(reg *axis.Registry, in []DynamicIndexFact) []DynamicIndexFact {
+func normalizeDynamicIndexFacts(reg *axis.Registry, in []callboundary.DynamicIndexFact) []callboundary.DynamicIndexFact {
 	if len(in) == 0 {
 		return nil
 	}
-	merged := make(map[dynamicIndexFactKey]DynamicIndexFact, len(in))
+	merged := make(map[dynamicIndexFactKey]callboundary.DynamicIndexFact, len(in))
 	bottom := dynamicIndexFactBottom(reg)
 	for _, fact := range in {
 		if !fact.Table.IsPlaceholder() || fact.Site == "" {
@@ -37,11 +38,11 @@ func normalizeDynamicIndexFacts(reg *axis.Registry, in []DynamicIndexFact) []Dyn
 	return sortedDynamicIndexFacts(merged)
 }
 
-func cloneDynamicIndexFacts(in []DynamicIndexFact) []DynamicIndexFact {
+func cloneDynamicIndexFacts(in []callboundary.DynamicIndexFact) []callboundary.DynamicIndexFact {
 	if len(in) == 0 {
 		return nil
 	}
-	out := make([]DynamicIndexFact, len(in))
+	out := make([]callboundary.DynamicIndexFact, len(in))
 	for i, fact := range in {
 		fact.Table = cloneSummaryPath(fact.Table)
 		out[i] = fact
@@ -49,7 +50,7 @@ func cloneDynamicIndexFacts(in []DynamicIndexFact) []DynamicIndexFact {
 	return out
 }
 
-func dynamicIndexFactsEqual(reg *axis.Registry, a, b []DynamicIndexFact) bool {
+func dynamicIndexFactsEqual(reg *axis.Registry, a, b []callboundary.DynamicIndexFact) bool {
 	a = normalizeDynamicIndexFacts(reg, a)
 	b = normalizeDynamicIndexFacts(reg, b)
 	if len(a) != len(b) {
@@ -63,7 +64,7 @@ func dynamicIndexFactsEqual(reg *axis.Registry, a, b []DynamicIndexFact) bool {
 	return true
 }
 
-func dynamicIndexFactsLessOrEq(reg *axis.Registry, a, b []DynamicIndexFact) bool {
+func dynamicIndexFactsLessOrEq(reg *axis.Registry, a, b []callboundary.DynamicIndexFact) bool {
 	aMap := dynamicIndexFactsMap(reg, a)
 	bMap := dynamicIndexFactsMap(reg, b)
 	bottom := dynamicIndexFactBottom(reg)
@@ -87,20 +88,20 @@ func dynamicIndexFactsLessOrEq(reg *axis.Registry, a, b []DynamicIndexFact) bool
 	return true
 }
 
-func joinDynamicIndexFacts(reg *axis.Registry, a, b []DynamicIndexFact) []DynamicIndexFact {
+func joinDynamicIndexFacts(reg *axis.Registry, a, b []callboundary.DynamicIndexFact) []callboundary.DynamicIndexFact {
 	return combineDynamicIndexMaps(reg, dynamicIndexFactsMap(reg, a), dynamicIndexFactsMap(reg, b), joinDynamicIndexFact)
 }
 
-func widenDynamicIndexFacts(reg *axis.Registry, prev, next []DynamicIndexFact) []DynamicIndexFact {
+func widenDynamicIndexFacts(reg *axis.Registry, prev, next []callboundary.DynamicIndexFact) []callboundary.DynamicIndexFact {
 	return combineDynamicIndexMaps(reg, dynamicIndexFactsMap(reg, prev), dynamicIndexFactsMap(reg, next), widenDynamicIndexFact)
 }
 
-func dynamicIndexFactsMap(reg *axis.Registry, in []DynamicIndexFact) map[dynamicIndexFactKey]DynamicIndexFact {
+func dynamicIndexFactsMap(reg *axis.Registry, in []callboundary.DynamicIndexFact) map[dynamicIndexFactKey]callboundary.DynamicIndexFact {
 	out := normalizeDynamicIndexFacts(reg, in)
 	if len(out) == 0 {
 		return nil
 	}
-	m := make(map[dynamicIndexFactKey]DynamicIndexFact, len(out))
+	m := make(map[dynamicIndexFactKey]callboundary.DynamicIndexFact, len(out))
 	for _, fact := range out {
 		m[dynamicIndexKeyOf(fact)] = fact
 	}
@@ -109,14 +110,14 @@ func dynamicIndexFactsMap(reg *axis.Registry, in []DynamicIndexFact) map[dynamic
 
 func combineDynamicIndexMaps(
 	reg *axis.Registry,
-	a map[dynamicIndexFactKey]DynamicIndexFact,
-	b map[dynamicIndexFactKey]DynamicIndexFact,
-	combine func(*axis.Registry, DynamicIndexFact, DynamicIndexFact) DynamicIndexFact,
-) []DynamicIndexFact {
+	a map[dynamicIndexFactKey]callboundary.DynamicIndexFact,
+	b map[dynamicIndexFactKey]callboundary.DynamicIndexFact,
+	combine func(*axis.Registry, callboundary.DynamicIndexFact, callboundary.DynamicIndexFact) callboundary.DynamicIndexFact,
+) []callboundary.DynamicIndexFact {
 	if len(a) == 0 && len(b) == 0 {
 		return nil
 	}
-	out := make(map[dynamicIndexFactKey]DynamicIndexFact, len(a)+len(b))
+	out := make(map[dynamicIndexFactKey]callboundary.DynamicIndexFact, len(a)+len(b))
 	for key, left := range a {
 		if right, ok := b[key]; ok {
 			out[key] = combine(reg, left, right)
@@ -133,43 +134,43 @@ func combineDynamicIndexMaps(
 	return sortedDynamicIndexFacts(out)
 }
 
-func dynamicIndexFactBottom(reg *axis.Registry) DynamicIndexFact {
-	return DynamicIndexFact{Value: dynamicindex.Bottom(reg)}
+func dynamicIndexFactBottom(reg *axis.Registry) callboundary.DynamicIndexFact {
+	return callboundary.DynamicIndexFact{Value: dynamicindex.Bottom(reg)}
 }
 
-func dynamicIndexFactEqual(reg *axis.Registry, a, b DynamicIndexFact) bool {
+func dynamicIndexFactEqual(reg *axis.Registry, a, b callboundary.DynamicIndexFact) bool {
 	return dynamicindex.Domain(reg).Equal(a.Value, b.Value)
 }
 
-func dynamicIndexFactLessOrEq(reg *axis.Registry, a, b DynamicIndexFact) bool {
+func dynamicIndexFactLessOrEq(reg *axis.Registry, a, b callboundary.DynamicIndexFact) bool {
 	return dynamicindex.Domain(reg).LessOrEq(a.Value, b.Value)
 }
 
-func joinDynamicIndexFact(reg *axis.Registry, a, b DynamicIndexFact) DynamicIndexFact {
-	return DynamicIndexFact{
+func joinDynamicIndexFact(reg *axis.Registry, a, b callboundary.DynamicIndexFact) callboundary.DynamicIndexFact {
+	return callboundary.DynamicIndexFact{
 		Table: a.Table,
 		Site:  a.Site,
 		Value: dynamicindex.Domain(reg).Join(a.Value, b.Value),
 	}
 }
 
-func widenDynamicIndexFact(reg *axis.Registry, prev, next DynamicIndexFact) DynamicIndexFact {
-	return DynamicIndexFact{
+func widenDynamicIndexFact(reg *axis.Registry, prev, next callboundary.DynamicIndexFact) callboundary.DynamicIndexFact {
+	return callboundary.DynamicIndexFact{
 		Table: prev.Table,
 		Site:  prev.Site,
 		Value: dynamicindex.Domain(reg).Widen(prev.Value, next.Value),
 	}
 }
 
-func dynamicIndexKeyOf(fact DynamicIndexFact) dynamicIndexFactKey {
+func dynamicIndexKeyOf(fact callboundary.DynamicIndexFact) dynamicIndexFactKey {
 	return dynamicIndexFactKey{table: fact.Table.Key(), site: fact.Site}
 }
 
-func sortedDynamicIndexFacts(in map[dynamicIndexFactKey]DynamicIndexFact) []DynamicIndexFact {
+func sortedDynamicIndexFacts(in map[dynamicIndexFactKey]callboundary.DynamicIndexFact) []callboundary.DynamicIndexFact {
 	if len(in) == 0 {
 		return nil
 	}
-	out := make([]DynamicIndexFact, 0, len(in))
+	out := make([]callboundary.DynamicIndexFact, 0, len(in))
 	for _, fact := range in {
 		out = append(out, fact)
 	}

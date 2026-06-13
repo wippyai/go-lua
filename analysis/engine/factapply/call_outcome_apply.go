@@ -2,6 +2,7 @@ package factapply
 
 import (
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/engine/callboundary"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/state/channelselectfact"
@@ -23,7 +24,8 @@ func applyCallOutcomeFacts(
 ) state.State {
 	bindings := callPlaceholderBindings(facts, site)
 	paramBindings := callArgumentPlaceholderBindings(facts, site)
-	for _, fact := range outcome.PathRefinements {
+	normalReturnFacts := outcome.NormalReturnFacts
+	for _, fact := range normalReturnFacts.PathRefinements {
 		targetPath, ok := fact.Path.Substitute(bindings)
 		if !ok {
 			continue
@@ -50,7 +52,7 @@ func applyCallOutcomeFacts(
 	for _, relation := range outcome.ParamPathRelations {
 		out = applyCallParamPathRelation(ctx, resolver, out, paramBindings, relation)
 	}
-	for _, fact := range outcome.PathStaticMembers {
+	for _, fact := range normalReturnFacts.PathStaticMembers {
 		targetPath, ok := fact.Path.Substitute(bindings)
 		if !ok {
 			continue
@@ -61,7 +63,7 @@ func applyCallOutcomeFacts(
 		}
 		out = out.WritePathStaticMember(targetKey, fact.Value)
 	}
-	for _, fact := range outcome.DynamicIndexFacts {
+	for _, fact := range normalReturnFacts.DynamicIndexFacts {
 		tablePath, ok := fact.Table.Substitute(bindings)
 		if !ok {
 			continue
@@ -75,21 +77,21 @@ func applyCallOutcomeFacts(
 			Site:  fact.Site,
 		}, fact.Value)
 	}
-	for _, proof := range outcome.BranchProofs {
+	for _, proof := range normalReturnFacts.BranchProofs {
 		stateProof, ok := callBranchProofAt(resolver, ctx.Point, bindings, proof)
 		if !ok {
 			continue
 		}
 		out = out.AddBranchProof(stateProof)
 	}
-	for _, event := range outcome.ChannelSelects {
+	for _, event := range normalReturnFacts.ChannelSelects {
 		fact, ok := callChannelSelectFactAt(resolver, ctx.Point, bindings, event)
 		if !ok {
 			continue
 		}
 		out = out.AddChannelSelectFact(fact)
 	}
-	for _, delta := range outcome.EffectDeltas {
+	for _, delta := range normalReturnFacts.EffectDeltas {
 		targetPath, ok := delta.Target.Substitute(bindings)
 		if !ok {
 			continue
@@ -209,7 +211,7 @@ func callBranchProofAt(
 	resolver *visibility.Resolver,
 	point cfg.Point,
 	bindings []pathdom.Path,
-	proof CallBranchProof,
+	proof callboundary.BranchProof,
 ) (pathevidence.BranchProof, bool) {
 	targetPath, ok := proof.Path.Substitute(bindings)
 	if !ok {
@@ -249,7 +251,7 @@ func callChannelSelectFactAt(
 	resolver *visibility.Resolver,
 	point cfg.Point,
 	bindings []pathdom.Path,
-	event CallChannelSelectFact,
+	event callboundary.ChannelSelectFact,
 ) (channelselectfact.Fact, bool) {
 	switch event.Kind {
 	case channelselectfact.FactSelect, channelselectfact.FactReceive, channelselectfact.FactCase:

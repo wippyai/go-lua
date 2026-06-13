@@ -5,6 +5,7 @@ import (
 
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
+	"github.com/wippyai/go-lua/analysis/engine/callboundary"
 	effectdelta "github.com/wippyai/go-lua/analysis/engine/state/effectdelta"
 )
 
@@ -14,12 +15,12 @@ type effectDeltaKey struct {
 	kind   effectdelta.Kind
 }
 
-func normalizeEffectDeltas(reg *axis.Registry, in []EffectDelta) []EffectDelta {
+func normalizeEffectDeltas(reg *axis.Registry, in []callboundary.EffectDelta) []callboundary.EffectDelta {
 	if len(in) == 0 {
 		return nil
 	}
 	domain := effectdelta.Domain(reg)
-	merged := make(map[effectDeltaKey]EffectDelta, len(in))
+	merged := make(map[effectDeltaKey]callboundary.EffectDelta, len(in))
 	bottom := domain.Bottom()
 	for _, delta := range in {
 		if !delta.Target.IsPlaceholder() || delta.Site == "" || delta.Kind == 0 {
@@ -39,11 +40,11 @@ func normalizeEffectDeltas(reg *axis.Registry, in []EffectDelta) []EffectDelta {
 	return sortedEffectDeltas(merged)
 }
 
-func cloneEffectDeltas(in []EffectDelta) []EffectDelta {
+func cloneEffectDeltas(in []callboundary.EffectDelta) []callboundary.EffectDelta {
 	if len(in) == 0 {
 		return nil
 	}
-	out := make([]EffectDelta, len(in))
+	out := make([]callboundary.EffectDelta, len(in))
 	for i, delta := range in {
 		delta.Target = cloneSummaryPath(delta.Target)
 		out[i] = delta
@@ -51,7 +52,7 @@ func cloneEffectDeltas(in []EffectDelta) []EffectDelta {
 	return out
 }
 
-func effectDeltasEqual(reg *axis.Registry, a, b []EffectDelta) bool {
+func effectDeltasEqual(reg *axis.Registry, a, b []callboundary.EffectDelta) bool {
 	a = normalizeEffectDeltas(reg, a)
 	b = normalizeEffectDeltas(reg, b)
 	if len(a) != len(b) {
@@ -65,10 +66,10 @@ func effectDeltasEqual(reg *axis.Registry, a, b []EffectDelta) bool {
 	return true
 }
 
-func effectDeltasLessOrEq(reg *axis.Registry, a, b []EffectDelta) bool {
+func effectDeltasLessOrEq(reg *axis.Registry, a, b []callboundary.EffectDelta) bool {
 	aMap := effectDeltasMap(reg, a)
 	bMap := effectDeltasMap(reg, b)
-	bottom := EffectDelta{Value: effectdelta.Domain(reg).Bottom()}
+	bottom := callboundary.EffectDelta{Value: effectdelta.Domain(reg).Bottom()}
 	for key, av := range aMap {
 		bv, ok := bMap[key]
 		if !ok {
@@ -89,20 +90,20 @@ func effectDeltasLessOrEq(reg *axis.Registry, a, b []EffectDelta) bool {
 	return true
 }
 
-func joinEffectDeltas(reg *axis.Registry, a, b []EffectDelta) []EffectDelta {
+func joinEffectDeltas(reg *axis.Registry, a, b []callboundary.EffectDelta) []callboundary.EffectDelta {
 	return combineEffectDeltaMaps(reg, effectDeltasMap(reg, a), effectDeltasMap(reg, b), joinEffectDelta)
 }
 
-func widenEffectDeltas(reg *axis.Registry, prev, next []EffectDelta) []EffectDelta {
+func widenEffectDeltas(reg *axis.Registry, prev, next []callboundary.EffectDelta) []callboundary.EffectDelta {
 	return combineEffectDeltaMaps(reg, effectDeltasMap(reg, prev), effectDeltasMap(reg, next), widenEffectDelta)
 }
 
-func effectDeltasMap(reg *axis.Registry, in []EffectDelta) map[effectDeltaKey]EffectDelta {
+func effectDeltasMap(reg *axis.Registry, in []callboundary.EffectDelta) map[effectDeltaKey]callboundary.EffectDelta {
 	out := normalizeEffectDeltas(reg, in)
 	if len(out) == 0 {
 		return nil
 	}
-	m := make(map[effectDeltaKey]EffectDelta, len(out))
+	m := make(map[effectDeltaKey]callboundary.EffectDelta, len(out))
 	for _, delta := range out {
 		m[effectDeltaKeyOf(delta)] = delta
 	}
@@ -111,14 +112,14 @@ func effectDeltasMap(reg *axis.Registry, in []EffectDelta) map[effectDeltaKey]Ef
 
 func combineEffectDeltaMaps(
 	reg *axis.Registry,
-	a map[effectDeltaKey]EffectDelta,
-	b map[effectDeltaKey]EffectDelta,
-	combine func(*axis.Registry, EffectDelta, EffectDelta) EffectDelta,
-) []EffectDelta {
+	a map[effectDeltaKey]callboundary.EffectDelta,
+	b map[effectDeltaKey]callboundary.EffectDelta,
+	combine func(*axis.Registry, callboundary.EffectDelta, callboundary.EffectDelta) callboundary.EffectDelta,
+) []callboundary.EffectDelta {
 	if len(a) == 0 && len(b) == 0 {
 		return nil
 	}
-	out := make(map[effectDeltaKey]EffectDelta, len(a)+len(b))
+	out := make(map[effectDeltaKey]callboundary.EffectDelta, len(a)+len(b))
 	for key, left := range a {
 		if right, ok := b[key]; ok {
 			out[key] = combine(reg, left, right)
@@ -135,16 +136,16 @@ func combineEffectDeltaMaps(
 	return sortedEffectDeltas(out)
 }
 
-func effectDeltaEqual(reg *axis.Registry, a, b EffectDelta) bool {
+func effectDeltaEqual(reg *axis.Registry, a, b callboundary.EffectDelta) bool {
 	return effectdelta.Domain(reg).Equal(a.Value, b.Value)
 }
 
-func effectDeltaLessOrEq(reg *axis.Registry, a, b EffectDelta) bool {
+func effectDeltaLessOrEq(reg *axis.Registry, a, b callboundary.EffectDelta) bool {
 	return effectdelta.Domain(reg).LessOrEq(a.Value, b.Value)
 }
 
-func joinEffectDelta(reg *axis.Registry, a, b EffectDelta) EffectDelta {
-	return EffectDelta{
+func joinEffectDelta(reg *axis.Registry, a, b callboundary.EffectDelta) callboundary.EffectDelta {
+	return callboundary.EffectDelta{
 		Target: a.Target,
 		Site:   a.Site,
 		Kind:   a.Kind,
@@ -152,8 +153,8 @@ func joinEffectDelta(reg *axis.Registry, a, b EffectDelta) EffectDelta {
 	}
 }
 
-func widenEffectDelta(reg *axis.Registry, prev, next EffectDelta) EffectDelta {
-	return EffectDelta{
+func widenEffectDelta(reg *axis.Registry, prev, next callboundary.EffectDelta) callboundary.EffectDelta {
+	return callboundary.EffectDelta{
 		Target: prev.Target,
 		Site:   prev.Site,
 		Kind:   prev.Kind,
@@ -161,15 +162,15 @@ func widenEffectDelta(reg *axis.Registry, prev, next EffectDelta) EffectDelta {
 	}
 }
 
-func effectDeltaKeyOf(delta EffectDelta) effectDeltaKey {
+func effectDeltaKeyOf(delta callboundary.EffectDelta) effectDeltaKey {
 	return effectDeltaKey{target: delta.Target.Key(), site: delta.Site, kind: delta.Kind}
 }
 
-func sortedEffectDeltas(in map[effectDeltaKey]EffectDelta) []EffectDelta {
+func sortedEffectDeltas(in map[effectDeltaKey]callboundary.EffectDelta) []callboundary.EffectDelta {
 	if len(in) == 0 {
 		return nil
 	}
-	out := make([]EffectDelta, 0, len(in))
+	out := make([]callboundary.EffectDelta, 0, len(in))
 	for _, delta := range in {
 		out = append(out, delta)
 	}

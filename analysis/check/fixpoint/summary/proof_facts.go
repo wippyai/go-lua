@@ -5,6 +5,7 @@ import (
 
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
+	"github.com/wippyai/go-lua/analysis/engine/callboundary"
 	"github.com/wippyai/go-lua/analysis/engine/state/pathevidence"
 )
 
@@ -15,11 +16,11 @@ type branchProofKey struct {
 	other    pathdom.PathKey
 }
 
-func normalizeBranchProofs(in []BranchProof) []BranchProof {
+func normalizeBranchProofs(in []callboundary.BranchProof) []callboundary.BranchProof {
 	if len(in) == 0 {
 		return nil
 	}
-	seen := make(map[branchProofKey]BranchProof, len(in))
+	seen := make(map[branchProofKey]callboundary.BranchProof, len(in))
 	for _, proof := range in {
 		if !proof.Path.IsPlaceholder() {
 			continue
@@ -45,11 +46,11 @@ func normalizeBranchProofs(in []BranchProof) []BranchProof {
 	return sortedBranchProofs(seen)
 }
 
-func cloneBranchProofs(in []BranchProof) []BranchProof {
+func cloneBranchProofs(in []callboundary.BranchProof) []callboundary.BranchProof {
 	if len(in) == 0 {
 		return nil
 	}
-	out := make([]BranchProof, len(in))
+	out := make([]callboundary.BranchProof, len(in))
 	for i, proof := range in {
 		proof.Path = cloneSummaryPath(proof.Path)
 		proof.Other = cloneSummaryPath(proof.Other)
@@ -58,7 +59,7 @@ func cloneBranchProofs(in []BranchProof) []BranchProof {
 	return out
 }
 
-func branchProofsEqual(a, b []BranchProof) bool {
+func branchProofsEqual(a, b []callboundary.BranchProof) bool {
 	a = normalizeBranchProofs(a)
 	b = normalizeBranchProofs(b)
 	if len(a) != len(b) {
@@ -72,7 +73,7 @@ func branchProofsEqual(a, b []BranchProof) bool {
 	return true
 }
 
-func branchProofsLessOrEq(a, b []BranchProof) bool {
+func branchProofsLessOrEq(a, b []callboundary.BranchProof) bool {
 	aSet := branchProofsSet(a)
 	for _, proof := range normalizeBranchProofs(b) {
 		if _, ok := aSet[branchProofKeyOf(proof)]; !ok {
@@ -82,13 +83,13 @@ func branchProofsLessOrEq(a, b []BranchProof) bool {
 	return true
 }
 
-func joinBranchProofs(a, b []BranchProof) []BranchProof {
+func joinBranchProofs(a, b []callboundary.BranchProof) []callboundary.BranchProof {
 	aSet := branchProofsSet(a)
 	bSet := branchProofsSet(b)
 	if len(aSet) == 0 || len(bSet) == 0 {
 		return nil
 	}
-	out := make(map[branchProofKey]BranchProof)
+	out := make(map[branchProofKey]callboundary.BranchProof)
 	for key, proof := range aSet {
 		if _, ok := bSet[key]; ok {
 			out[key] = proof
@@ -97,19 +98,19 @@ func joinBranchProofs(a, b []BranchProof) []BranchProof {
 	return sortedBranchProofs(out)
 }
 
-func branchProofsSet(in []BranchProof) map[branchProofKey]BranchProof {
+func branchProofsSet(in []callboundary.BranchProof) map[branchProofKey]callboundary.BranchProof {
 	out := normalizeBranchProofs(in)
 	if len(out) == 0 {
 		return nil
 	}
-	m := make(map[branchProofKey]BranchProof, len(out))
+	m := make(map[branchProofKey]callboundary.BranchProof, len(out))
 	for _, proof := range out {
 		m[branchProofKeyOf(proof)] = proof
 	}
 	return m
 }
 
-func branchProofKeyOf(proof BranchProof) branchProofKey {
+func branchProofKeyOf(proof callboundary.BranchProof) branchProofKey {
 	return branchProofKey{
 		kind:     proof.Kind,
 		path:     proof.Path.Key(),
@@ -118,11 +119,11 @@ func branchProofKeyOf(proof BranchProof) branchProofKey {
 	}
 }
 
-func sortedBranchProofs(in map[branchProofKey]BranchProof) []BranchProof {
+func sortedBranchProofs(in map[branchProofKey]callboundary.BranchProof) []callboundary.BranchProof {
 	if len(in) == 0 {
 		return nil
 	}
-	out := make([]BranchProof, 0, len(in))
+	out := make([]callboundary.BranchProof, 0, len(in))
 	for _, proof := range in {
 		out = append(out, proof)
 	}

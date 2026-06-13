@@ -9,6 +9,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/standard"
+	"github.com/wippyai/go-lua/analysis/engine/callboundary"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
@@ -80,6 +81,11 @@ func TestWithSupplementalCallOutcomeKeepsPrimarySlotsFillsMissingSlotsAndMergesS
 	primary := func(transfer.NodeContext, factflow.CallSite, state.State, func(cfg.Point) state.State) CallOutcome {
 		return CallOutcome{
 			Results: []CallResult{{Index: 0, Value: primaryValue}},
+			NormalReturnFacts: callboundary.NormalReturnFacts{
+				PathRefinements: []callboundary.PathValueFact{
+					{Path: pathdom.NewPlaceholder(0), Value: primaryValue},
+				},
+			},
 			ParamConditions: []CallParamCondition{
 				{ParamIndex: 0, Value: true},
 			},
@@ -88,6 +94,11 @@ func TestWithSupplementalCallOutcomeKeepsPrimarySlotsFillsMissingSlotsAndMergesS
 	supplemental := func(transfer.NodeContext, factflow.CallSite, state.State, func(cfg.Point) state.State) CallOutcome {
 		return CallOutcome{
 			Results: []CallResult{{Index: 0, Value: product.Top()}, {Index: 1, Value: supplementalValue}},
+			NormalReturnFacts: callboundary.NormalReturnFacts{
+				PathRefinements: []callboundary.PathValueFact{
+					{Path: pathdom.NewPlaceholder(1), Value: supplementalValue},
+				},
+			},
 			ParamConditions: []CallParamCondition{
 				{ParamIndex: 1, Value: false},
 			},
@@ -112,6 +123,11 @@ func TestWithSupplementalCallOutcomeKeepsPrimarySlotsFillsMissingSlotsAndMergesS
 		got.ParamConditions[0].ParamIndex != 0 || !got.ParamConditions[0].Value ||
 		got.ParamConditions[1].ParamIndex != 1 || got.ParamConditions[1].Value {
 		t.Fatalf("param conditions = %#v, want primary and supplemental facts", got.ParamConditions)
+	}
+	if len(got.NormalReturnFacts.PathRefinements) != 2 ||
+		!got.NormalReturnFacts.PathRefinements[0].Path.Equal(pathdom.NewPlaceholder(0)) ||
+		!got.NormalReturnFacts.PathRefinements[1].Path.Equal(pathdom.NewPlaceholder(1)) {
+		t.Fatalf("normal return facts = %#v, want primary and supplemental path refinements", got.NormalReturnFacts)
 	}
 	if len(got.ReturnPresenceRelations) != 1 ||
 		got.ReturnPresenceRelations[0].TriggerIndex != 1 ||

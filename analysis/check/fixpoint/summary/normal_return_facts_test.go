@@ -7,6 +7,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/engine/callboundary"
 	"github.com/wippyai/go-lua/analysis/engine/state/channelselectfact"
 	"github.com/wippyai/go-lua/analysis/engine/state/dynamicindex"
 	effectdelta "github.com/wippyai/go-lua/analysis/engine/state/effectdelta"
@@ -20,30 +21,30 @@ func TestNormalReturnFactsNormalizeDropsNonPlaceholderPaths(t *testing.T) {
 	concrete := pathdom.NewPath(symbol.ID(10), "arg").Field("field")
 	value := presentProduct(reg)
 
-	got := Normalize(reg, Summary{NormalReturnFacts: NormalReturnFacts{
-		PathRefinements: []PathValueFact{
+	got := Normalize(reg, Summary{NormalReturnFacts: callboundary.NormalReturnFacts{
+		PathRefinements: []callboundary.PathValueFact{
 			{Path: concrete, Value: value},
 			{Path: placeholder, Value: value},
 		},
-		PathStaticMembers: []PathStaticMemberFact{
+		PathStaticMembers: []callboundary.PathStaticMemberFact{
 			{Path: concrete, Value: value},
 			{Path: placeholder, Value: value},
 		},
-		DynamicIndexFacts: []DynamicIndexFact{
+		DynamicIndexFacts: []callboundary.DynamicIndexFact{
 			{Table: concrete, Site: "caller.dynamic.ignored", Value: dynamicindex.Fact{KeyPresence: presence.Present()}},
 			{Table: placeholder, Site: "caller.dynamic.1", Value: dynamicindex.Fact{KeyPresence: presence.Present()}},
 		},
-		BranchProofs: []BranchProof{
+		BranchProofs: []callboundary.BranchProof{
 			{Kind: pathevidence.BranchProofPathPresence, Path: concrete, Presence: presence.Present()},
 			{Kind: pathevidence.BranchProofPathPresence, Path: placeholder, Presence: presence.Present()},
 			{Kind: pathevidence.BranchProofPathEqual, Path: placeholder, Other: concrete},
 			{Kind: pathevidence.BranchProofPathEqual, Path: placeholder, Other: pathdom.NewPlaceholder(1)},
 		},
-		ChannelSelects: []ChannelSelectFact{
+		ChannelSelects: []callboundary.ChannelSelectFact{
 			{Select: channelselectfact.ID("select-concrete"), Kind: channelselectfact.FactReceive, Result: concrete, Index: 0},
 			{Select: channelselectfact.ID("select-placeholder"), Kind: channelselectfact.FactReceive, Result: placeholder, Index: 0},
 		},
-		EffectDeltas: []EffectDelta{
+		EffectDeltas: []callboundary.EffectDelta{
 			{Target: concrete, Site: "caller.effect.ignored", Kind: effectdelta.Mutation, Value: effectdelta.Value{Before: value, After: value, Change: effectdelta.ChangeChanged}},
 			{Target: placeholder, Site: "caller.effect.1", Kind: effectdelta.Mutation, Value: effectdelta.Value{Before: value, After: value, Change: effectdelta.ChangeChanged}},
 		},
@@ -72,9 +73,9 @@ func TestNormalReturnFactsNormalizeDropsNonPlaceholderPaths(t *testing.T) {
 
 func TestNormalReturnFactsCloneIsolatesPayload(t *testing.T) {
 	reg := mustRegistry(t)
-	original := Summary{NormalReturnFacts: NormalReturnFacts{
-		PathRefinements: []PathValueFact{{Path: pathdom.NewPlaceholder(0).Field("value"), Value: presentProduct(reg)}},
-		DynamicIndexFacts: []DynamicIndexFact{{
+	original := Summary{NormalReturnFacts: callboundary.NormalReturnFacts{
+		PathRefinements: []callboundary.PathValueFact{{Path: pathdom.NewPlaceholder(0).Field("value"), Value: presentProduct(reg)}},
+		DynamicIndexFacts: []callboundary.DynamicIndexFact{{
 			Table: pathdom.NewPlaceholder(0),
 			Site:  "caller.dynamic.clone",
 			Value: dynamicindex.Fact{
@@ -84,7 +85,7 @@ func TestNormalReturnFactsCloneIsolatesPayload(t *testing.T) {
 				Admission:   dynamicindex.AdmissionAdmitted,
 			},
 		}},
-		BranchProofs: []BranchProof{{
+		BranchProofs: []callboundary.BranchProof{{
 			Kind:     pathevidence.BranchProofPathPresence,
 			Path:     pathdom.NewPlaceholder(0).Field("ok"),
 			Presence: presence.Present(),
@@ -115,36 +116,36 @@ func TestNormalReturnFactsJoinUsesStateLaneSemantics(t *testing.T) {
 	leftValue := presentProduct(reg)
 	rightValue := absentProduct(reg)
 
-	left := Summary{NormalReturnFacts: NormalReturnFacts{
-		PathRefinements: []PathValueFact{
+	left := Summary{NormalReturnFacts: callboundary.NormalReturnFacts{
+		PathRefinements: []callboundary.PathValueFact{
 			{Path: commonPath, Value: leftValue},
 			{Path: leftOnly, Value: leftValue},
 		},
-		PathStaticMembers: []PathStaticMemberFact{
+		PathStaticMembers: []callboundary.PathStaticMemberFact{
 			{Path: commonPath, Value: leftValue},
 			{Path: leftOnly, Value: leftValue},
 		},
-		DynamicIndexFacts: []DynamicIndexFact{
+		DynamicIndexFacts: []callboundary.DynamicIndexFact{
 			{Table: p0, Site: "caller.dynamic.common", Value: dynamicindex.Fact{KeyPresence: presence.Present(), KeyValue: leftValue, Value: leftValue, Admission: dynamicindex.AdmissionAdmitted}},
 			{Table: p0, Site: "caller.dynamic.left", Value: dynamicindex.Fact{KeyPresence: presence.Present(), KeyValue: leftValue, Value: leftValue, Admission: dynamicindex.AdmissionAdmitted}},
 		},
-		BranchProofs: []BranchProof{
+		BranchProofs: []callboundary.BranchProof{
 			{Kind: pathevidence.BranchProofPathPresence, Path: commonPath, Presence: presence.Present()},
 			{Kind: pathevidence.BranchProofPathPresence, Path: leftOnly, Presence: presence.Present()},
 		},
-		ChannelSelects: []ChannelSelectFact{
+		ChannelSelects: []callboundary.ChannelSelectFact{
 			{Select: channelselectfact.ID("select-common"), Kind: channelselectfact.FactSelect, Result: commonPath, Index: 0},
 			{Select: channelselectfact.ID("select-left"), Kind: channelselectfact.FactReceive, Case: leftOnly, Index: 1},
 		},
-		EffectDeltas: []EffectDelta{
+		EffectDeltas: []callboundary.EffectDelta{
 			{Target: commonPath, Site: "caller.effect.common", Kind: effectdelta.Mutation, Value: effectdelta.Value{Before: leftValue, After: leftValue, Change: effectdelta.ChangeChanged}},
 			{Target: leftOnly, Site: "caller.effect.left", Kind: effectdelta.Mutation, Value: effectdelta.Value{Before: leftValue, After: leftValue, Change: effectdelta.ChangeChanged}},
 		},
 	}}
-	right := Summary{NormalReturnFacts: NormalReturnFacts{
-		PathRefinements:   []PathValueFact{{Path: commonPath, Value: rightValue}},
-		PathStaticMembers: []PathStaticMemberFact{{Path: commonPath, Value: rightValue}},
-		DynamicIndexFacts: []DynamicIndexFact{{
+	right := Summary{NormalReturnFacts: callboundary.NormalReturnFacts{
+		PathRefinements:   []callboundary.PathValueFact{{Path: commonPath, Value: rightValue}},
+		PathStaticMembers: []callboundary.PathStaticMemberFact{{Path: commonPath, Value: rightValue}},
+		DynamicIndexFacts: []callboundary.DynamicIndexFact{{
 			Table: p0,
 			Site:  "caller.dynamic.common",
 			Value: dynamicindex.Fact{
@@ -154,15 +155,15 @@ func TestNormalReturnFactsJoinUsesStateLaneSemantics(t *testing.T) {
 				Admission:   dynamicindex.AdmissionRejected,
 			},
 		}},
-		BranchProofs: []BranchProof{
+		BranchProofs: []callboundary.BranchProof{
 			{Kind: pathevidence.BranchProofPathPresence, Path: commonPath, Presence: presence.Present()},
 			{Kind: pathevidence.BranchProofPathPresence, Path: p0.Field("right"), Presence: presence.Present()},
 		},
-		ChannelSelects: []ChannelSelectFact{
+		ChannelSelects: []callboundary.ChannelSelectFact{
 			{Select: channelselectfact.ID("select-common"), Kind: channelselectfact.FactSelect, Result: commonPath, Index: 0},
 			{Select: channelselectfact.ID("select-right"), Kind: channelselectfact.FactCase, Case: p0.Field("right"), Index: 2},
 		},
-		EffectDeltas: []EffectDelta{{
+		EffectDeltas: []callboundary.EffectDelta{{
 			Target: commonPath,
 			Site:   "caller.effect.common",
 			Kind:   effectdelta.Mutation,
@@ -227,12 +228,12 @@ func TestNormalReturnFactsJoinUsesStateLaneSemantics(t *testing.T) {
 func TestNormalReturnFactsEqualAndLessOrEqAccountForLane(t *testing.T) {
 	reg := mustRegistry(t)
 	p0 := pathdom.NewPlaceholder(0)
-	left := Summary{NormalReturnFacts: NormalReturnFacts{
-		PathRefinements: []PathValueFact{{Path: p0, Value: presentProduct(reg)}},
-		BranchProofs:    []BranchProof{{Kind: pathevidence.BranchProofPathPresence, Path: p0, Presence: presence.Present()}},
+	left := Summary{NormalReturnFacts: callboundary.NormalReturnFacts{
+		PathRefinements: []callboundary.PathValueFact{{Path: p0, Value: presentProduct(reg)}},
+		BranchProofs:    []callboundary.BranchProof{{Kind: pathevidence.BranchProofPathPresence, Path: p0, Presence: presence.Present()}},
 	}}
-	right := Summary{NormalReturnFacts: NormalReturnFacts{
-		PathRefinements: []PathValueFact{{Path: p0, Value: product.Top()}},
+	right := Summary{NormalReturnFacts: callboundary.NormalReturnFacts{
+		PathRefinements: []callboundary.PathValueFact{{Path: p0, Value: product.Top()}},
 	}}
 
 	if Equal(reg, left, right) {
@@ -249,7 +250,7 @@ func TestNormalReturnFactsEqualAndLessOrEqAccountForLane(t *testing.T) {
 	}
 }
 
-func findPathRefinement(facts []PathValueFact, path pathdom.Path) *PathValueFact {
+func findPathRefinement(facts []callboundary.PathValueFact, path pathdom.Path) *callboundary.PathValueFact {
 	for i := range facts {
 		if facts[i].Path.Equal(path) {
 			return &facts[i]
@@ -258,7 +259,7 @@ func findPathRefinement(facts []PathValueFact, path pathdom.Path) *PathValueFact
 	return nil
 }
 
-func findDynamicIndexFact(facts []DynamicIndexFact, site string) *DynamicIndexFact {
+func findDynamicIndexFact(facts []callboundary.DynamicIndexFact, site string) *callboundary.DynamicIndexFact {
 	for i := range facts {
 		if string(facts[i].Site) == site {
 			return &facts[i]
@@ -267,7 +268,7 @@ func findDynamicIndexFact(facts []DynamicIndexFact, site string) *DynamicIndexFa
 	return nil
 }
 
-func findEffectDelta(deltas []EffectDelta, site string) *EffectDelta {
+func findEffectDelta(deltas []callboundary.EffectDelta, site string) *callboundary.EffectDelta {
 	for i := range deltas {
 		if string(deltas[i].Site) == site {
 			return &deltas[i]
