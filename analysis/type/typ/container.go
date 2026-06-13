@@ -73,6 +73,11 @@ type Map struct {
 
 // NewMap creates a map type.
 func NewMap(key, value Type) *Map {
+	return RebuildMap(key, value)
+}
+
+// RebuildMap rebuilds a hash-stable map node from already-computed key/value types.
+func RebuildMap(key, value Type) *Map {
 	if key == nil {
 		key = Unknown
 	}
@@ -134,6 +139,11 @@ type ReadonlyMap struct {
 
 // NewReadonlyMap creates a read-only key/value view type.
 func NewReadonlyMap(key, value Type) *ReadonlyMap {
+	return RebuildReadonlyMap(key, value)
+}
+
+// RebuildReadonlyMap rebuilds a hash-stable read-only map node from already-computed key/value types.
+func RebuildReadonlyMap(key, value Type) *ReadonlyMap {
 	if key == nil {
 		key = Unknown
 	}

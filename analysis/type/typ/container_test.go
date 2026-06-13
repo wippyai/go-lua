@@ -92,6 +92,42 @@ func TestMapNilKeyValueDefaultsToUnknown(t *testing.T) {
 	}
 }
 
+func TestRebuildMapNilKeyValueDefaultsToUnknown(t *testing.T) {
+	m := RebuildMap(nil, nil)
+
+	if m.Key != Unknown {
+		t.Errorf("Key: got %v, want Unknown", m.Key)
+	}
+	if m.Value != Unknown {
+		t.Errorf("Value: got %v, want Unknown", m.Value)
+	}
+}
+
+func TestRebuildMapMatchesNewMapHash(t *testing.T) {
+	rebuilt := RebuildMap(String, Number)
+	constructed := NewMap(String, Number)
+
+	if rebuilt.Hash() != constructed.Hash() {
+		t.Fatalf("RebuildMap hash = %d, want NewMap hash %d", rebuilt.Hash(), constructed.Hash())
+	}
+	if !rebuilt.Equals(constructed) {
+		t.Fatal("RebuildMap should equal NewMap for identical key/value types")
+	}
+}
+
+func TestRebuildMapCachesContainsFlagsFromKeyAndValue(t *testing.T) {
+	key := NewTypeParam("K", nil)
+	value := NewOptional(Any)
+	m := RebuildMap(key, value)
+
+	if !m.containsTypeParam {
+		t.Fatal("containsTypeParam should include key type")
+	}
+	if !m.containsAny {
+		t.Fatal("containsAny should include value type")
+	}
+}
+
 func TestMapKeyPreservesNilableKey(t *testing.T) {
 	key := NewOptional(String)
 	m := NewMap(key, Number)
@@ -120,6 +156,73 @@ func TestMapEquality(t *testing.T) {
 
 	if m1.Hash() != m2.Hash() {
 		t.Error("Equal maps should have same hash")
+	}
+}
+
+func TestReadonlyMap(t *testing.T) {
+	m := NewReadonlyMap(String, Number)
+
+	if m.Kind() != kind.ReadonlyMap {
+		t.Errorf("Kind: got %v, want ReadonlyMap", m.Kind())
+	}
+
+	if m.Key != String {
+		t.Error("Key should be String")
+	}
+
+	if m.Value != Number {
+		t.Error("Value should be Number")
+	}
+
+	if m.String() != "readonly {[string]: number}" {
+		t.Errorf("String: got %q, want %q", m.String(), "readonly {[string]: number}")
+	}
+}
+
+func TestReadonlyMapNilKeyValueDefaultsToUnknown(t *testing.T) {
+	m := NewReadonlyMap(nil, nil)
+
+	if m.Key != Unknown {
+		t.Errorf("Key: got %v, want Unknown", m.Key)
+	}
+	if m.Value != Unknown {
+		t.Errorf("Value: got %v, want Unknown", m.Value)
+	}
+}
+
+func TestRebuildReadonlyMapNilKeyValueDefaultsToUnknown(t *testing.T) {
+	m := RebuildReadonlyMap(nil, nil)
+
+	if m.Key != Unknown {
+		t.Errorf("Key: got %v, want Unknown", m.Key)
+	}
+	if m.Value != Unknown {
+		t.Errorf("Value: got %v, want Unknown", m.Value)
+	}
+}
+
+func TestRebuildReadonlyMapMatchesNewReadonlyMapHash(t *testing.T) {
+	rebuilt := RebuildReadonlyMap(String, Number)
+	constructed := NewReadonlyMap(String, Number)
+
+	if rebuilt.Hash() != constructed.Hash() {
+		t.Fatalf("RebuildReadonlyMap hash = %d, want NewReadonlyMap hash %d", rebuilt.Hash(), constructed.Hash())
+	}
+	if !rebuilt.Equals(constructed) {
+		t.Fatal("RebuildReadonlyMap should equal NewReadonlyMap for identical key/value types")
+	}
+}
+
+func TestRebuildReadonlyMapCachesContainsFlagsFromKeyAndValue(t *testing.T) {
+	key := NewOptional(Any)
+	value := NewTypeParam("V", nil)
+	m := RebuildReadonlyMap(key, value)
+
+	if !m.containsAny {
+		t.Fatal("containsAny should include key type")
+	}
+	if !m.containsTypeParam {
+		t.Fatal("containsTypeParam should include value type")
 	}
 }
 
