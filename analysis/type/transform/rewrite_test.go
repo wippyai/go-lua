@@ -156,6 +156,36 @@ func TestRewrite_Map(t *testing.T) {
 	}
 }
 
+func TestRewrite_MapNormalizesRewrittenNilableKey(t *testing.T) {
+	m := typ.NewMap(typ.Number, typ.Number)
+	result := Rewrite(m, replaceNumber(typ.NewOptional(typ.String)))
+	mp, ok := result.(*typ.Map)
+	if !ok {
+		t.Fatalf("expected Map, got %T", result)
+	}
+	if !typ.TypeEquals(mp.Key, typ.String) {
+		t.Fatalf("expected normalized key String, got %v", mp.Key)
+	}
+	if !typ.TypeEquals(mp.Value, typ.NewOptional(typ.String)) {
+		t.Fatalf("expected value optional String, got %v", mp.Value)
+	}
+}
+
+func TestRewrite_ReadonlyMapNormalizesRewrittenNilableKey(t *testing.T) {
+	m := typ.NewReadonlyMap(typ.Number, typ.Number)
+	result := Rewrite(m, replaceNumber(typ.NewUnion(typ.String, typ.Nil)))
+	mp, ok := result.(*typ.ReadonlyMap)
+	if !ok {
+		t.Fatalf("expected ReadonlyMap, got %T", result)
+	}
+	if !typ.TypeEquals(mp.Key, typ.String) {
+		t.Fatalf("expected normalized key String, got %v", mp.Key)
+	}
+	if !typ.TypeEquals(mp.Value, typ.NewUnion(typ.String, typ.Nil)) {
+		t.Fatalf("expected value string|nil, got %v", mp.Value)
+	}
+}
+
 func TestRewrite_Tuple(t *testing.T) {
 	tup := typ.NewTuple(typ.Number, typ.Boolean)
 	result := Rewrite(tup, replaceNumber(typ.String))

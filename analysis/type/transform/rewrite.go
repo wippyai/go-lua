@@ -5,6 +5,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/internal/recursion"
 	"github.com/wippyai/go-lua/analysis/type/kind"
+	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
@@ -154,7 +155,7 @@ func rewriteDepth(t typ.Type, fn func(typ.Type) (typ.Type, bool), guard recursio
 			out = t
 			break
 		}
-		out = typ.NewMap(keyType, valueType)
+		out = typetable.NewMap(keyType, valueType)
 	case *typ.ReadonlyMap:
 		keyType := rewriteDepth(tt.Key, fn, next, memo)
 		valueType := rewriteDepth(tt.Value, fn, next, memo)
@@ -162,7 +163,7 @@ func rewriteDepth(t typ.Type, fn func(typ.Type) (typ.Type, bool), guard recursio
 			out = t
 			break
 		}
-		out = typ.NewReadonlyMap(keyType, valueType)
+		out = typetable.NewReadonlyMap(keyType, valueType)
 	case *typ.Tuple:
 		var elems []typ.Type
 		for i, e := range tt.Elements {
