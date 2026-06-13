@@ -7,12 +7,12 @@ import (
 
 // NewMap creates a map type with table-key normalization.
 func NewMap(key, value typ.Type) *typ.Map {
-	return typ.NewMap(NormalizeKey(key), value)
+	return typ.RebuildMap(NormalizeKey(key), value)
 }
 
 // NewReadonlyMap creates a read-only map type with table-key normalization.
 func NewReadonlyMap(key, value typ.Type) *typ.ReadonlyMap {
-	return typ.NewReadonlyMap(NormalizeKey(key), value)
+	return typ.RebuildReadonlyMap(NormalizeKey(key), value)
 }
 
 // RecordBuilder provides a fluent API for constructing Lua table record types.
