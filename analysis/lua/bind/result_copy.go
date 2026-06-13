@@ -1,26 +1,9 @@
 package bind
 
 import (
-	"sort"
-
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
-
-func normalizeNames(names []string) []string {
-	seen := make(map[string]struct{}, len(names))
-	for _, name := range names {
-		if name != "" {
-			seen[name] = struct{}{}
-		}
-	}
-	out := make([]string, 0, len(seen))
-	for name := range seen {
-		out = append(out, name)
-	}
-	sort.Strings(out)
-	return out
-}
 
 func cloneSymbols(ids []symbol.ID) []symbol.ID {
 	if len(ids) == 0 {
