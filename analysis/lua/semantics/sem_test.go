@@ -1088,18 +1088,32 @@ func TestExtractChunkCallFactResolvesMethodPaths(t *testing.T) {
 }
 
 func TestExtractChunkChannelSelectFacts(t *testing.T) {
-	stmts, err := parse.ParseString(`local result = channel.select { events_ch:case_receive(), stop_ch:case_receive() }`, "test")
+	stmts, err := parse.ParseString(`
+type Event = {kind: string}
+type Stop = {reason: string}
+
+function handle(events_ch: Channel<Event>, stop_ch: Channel<Stop>)
+	local result = channel.select { events_ch:case_receive(), stop_ch:case_receive() }
+end
+`, "test")
 	if err != nil {
 		t.Fatalf("ParseString: %v", err)
 	}
-	if len(stmts) != 1 {
-		t.Fatalf("parsed stmts = %d, want 1", len(stmts))
+	var fn *ast.FunctionExpr
+	for _, stmt := range stmts {
+		if def, ok := stmt.(*ast.FuncDefStmt); ok {
+			fn = def.Func
+			break
+		}
 	}
-	local, ok := stmts[0].(*ast.LocalAssignStmt)
+	if fn == nil || len(fn.Stmts) != 1 {
+		t.Fatalf("parsed function = %#v", fn)
+	}
+	local, ok := fn.Stmts[0].(*ast.LocalAssignStmt)
 	if !ok {
-		t.Fatalf("stmt = %T, want *ast.LocalAssignStmt", stmts[0])
+		t.Fatalf("stmt = %T, want *ast.LocalAssignStmt", fn.Stmts[0])
 	}
-	bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"channel", "events_ch", "stop_ch"}})
+	bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"channel"}})
 	selectCall, ok := local.Exprs[0].(*ast.FuncCallExpr)
 	if !ok {
 		t.Fatalf("local expr = %T, want *ast.FuncCallExpr", local.Exprs[0])
@@ -1158,6 +1172,50 @@ func TestExtractChunkChannelSelectFacts(t *testing.T) {
 	again := result.ChannelSelects()
 	if !again[0].Cases[0].ChannelPath.Equal(originalCasePath) {
 		t.Fatalf("ChannelSelects exposed mutable channel path")
+	}
+}
+
+func TestExtractChunkChannelSelectFactsRejectsUnanchoredCalls(t *testing.T) {
+	tests := []struct {
+		name string
+		src  string
+	}{
+		{
+			name: "arbitrary select callee",
+			src: `
+local ch: Channel<string>
+local result = foo.select { ch:case_receive() }
+`,
+		},
+		{
+			name: "arbitrary case receive receiver",
+			src: `
+local obj: {case_receive: () -> string}
+local result = channel.select { obj:case_receive() }
+`,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			stmts, err := parse.ParseString(tt.src, "test")
+			if err != nil {
+				t.Fatalf("ParseString: %v", err)
+			}
+			bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"channel", "foo"}})
+			local, ok := stmts[len(stmts)-1].(*ast.LocalAssignStmt)
+			if !ok {
+				t.Fatalf("last stmt = %T, want *ast.LocalAssignStmt", stmts[len(stmts)-1])
+			}
+			selectCall, ok := local.Exprs[0].(*ast.FuncCallExpr)
+			if !ok {
+				t.Fatalf("local expr = %T, want *ast.FuncCallExpr", local.Exprs[0])
+			}
+			targets := localResultTargets(local, bindings)
+			callFact := buildCallFact(local, nil, CallContextAssignmentSource, local.Exprs, 0, selectCall, bindings, targets)
+			if callFact.HasChannelSelect {
+				t.Fatalf("unanchored call produced channel select fact: %#v", callFact.ChannelSelect)
+			}
+		})
 	}
 }
 

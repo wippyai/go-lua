@@ -3,6 +3,7 @@ package cfgbuild
 import (
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/branchcond"
+	"github.com/wippyai/go-lua/analysis/lua/channelruntime"
 	"github.com/wippyai/go-lua/analysis/lua/pathexpr"
 	"github.com/wippyai/go-lua/analysis/lua/valueexpr"
 	"github.com/wippyai/go-lua/compiler/ast"
@@ -37,6 +38,9 @@ func (b *builder) hasUnsupportedExprInCall(expr ast.Expr) bool {
 	call, ok := valueexpr.Call(expr)
 	if !ok {
 		return !b.exprCovered(expr)
+	}
+	if b.channelSelectCallCovered(call) {
+		return false
 	}
 	if !b.exprCovered(call.Func) || !b.exprCovered(call.Receiver) {
 		return true
@@ -148,4 +152,45 @@ func (b *builder) pureTypeCallCovered(call *ast.FuncCallExpr) bool {
 	}
 	_, ok = pathexpr.Resolve(call.Args[0], b.bindings)
 	return ok
+}
+
+func (b *builder) channelSelectCallCovered(call *ast.FuncCallExpr) bool {
+	if !channelruntime.IsSelectCall(call, b.bindings) {
+		return false
+	}
+	table, ok := call.Args[0].(*ast.TableExpr)
+	if !ok {
+		return false
+	}
+	return b.channelSelectTableCovered(table)
+}
+
+func (b *builder) channelSelectTableCovered(table *ast.TableExpr) bool {
+	if table == nil {
+		return false
+	}
+	for _, field := range table.Fields {
+		if field == nil || b.channelSelectDefaultField(field) {
+			continue
+		}
+		if !b.channelSelectCaseCallCovered(field.Value) {
+			return false
+		}
+	}
+	return true
+}
+
+func (b *builder) channelSelectDefaultField(field *ast.Field) bool {
+	if field == nil {
+		return false
+	}
+	return ast.KeyName(field.Key) == "default"
+}
+
+func (b *builder) channelSelectCaseCallCovered(expr ast.Expr) bool {
+	call, ok := valueexpr.Call(expr)
+	if !ok || !channelruntime.IsReceiveCaseCall(call, b.bindings) {
+		return false
+	}
+	return b.exprCovered(call.Receiver)
 }

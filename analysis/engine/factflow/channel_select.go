@@ -2,6 +2,7 @@ package factflow
 
 import (
 	"github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 )
 
@@ -29,7 +30,11 @@ type ChannelSelectConfig struct {
 	CasePath    path.Path
 	HasCasePath bool
 
-	Index int
+	PayloadValue    product.Value
+	HasPayloadValue bool
+
+	Index      int
+	HasDefault bool
 }
 
 // ChannelSelect describes select/case/result path evidence at a CFG point.
@@ -43,7 +48,11 @@ type ChannelSelect struct {
 	casePath    path.Path
 	hasCasePath bool
 
-	index int
+	payloadValue    product.Value
+	hasPayloadValue bool
+
+	index      int
+	hasDefault bool
 }
 
 // ChannelSelectSet groups channel-select facts emitted at the same CFG point.
@@ -54,13 +63,16 @@ type ChannelSelectSet struct {
 // NewChannelSelect creates a channel-select evidence event.
 func NewChannelSelect(config ChannelSelectConfig) ChannelSelect {
 	return ChannelSelect{
-		selectID:      config.SelectID,
-		kind:          config.Kind,
-		resultPath:    copyPath(config.ResultPath),
-		hasResultPath: config.HasResultPath,
-		casePath:      copyPath(config.CasePath),
-		hasCasePath:   config.HasCasePath,
-		index:         config.Index,
+		selectID:        config.SelectID,
+		kind:            config.Kind,
+		resultPath:      copyPath(config.ResultPath),
+		hasResultPath:   config.HasResultPath,
+		casePath:        copyPath(config.CasePath),
+		hasCasePath:     config.HasCasePath,
+		payloadValue:    config.PayloadValue,
+		hasPayloadValue: config.HasPayloadValue,
+		index:           config.Index,
+		hasDefault:      config.HasDefault,
 	}
 }
 
@@ -91,8 +103,19 @@ func (s ChannelSelect) CasePath() (path.Path, bool) {
 	return copyPath(s.casePath), true
 }
 
+// PayloadValue returns payload value evidence for receive cases, if present.
+func (s ChannelSelect) PayloadValue() (product.Value, bool) {
+	if !s.hasPayloadValue {
+		return product.Value{}, false
+	}
+	return s.payloadValue, true
+}
+
 // Index returns the select case index.
 func (s ChannelSelect) Index() int { return s.index }
+
+// HasDefault reports whether this select event had an explicit default case.
+func (s ChannelSelect) HasDefault() bool { return s.hasDefault }
 
 func (s ChannelSelect) copy() ChannelSelect {
 	s.resultPath = copyPath(s.resultPath)

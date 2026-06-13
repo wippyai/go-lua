@@ -41,6 +41,91 @@ func assignmentValueType(result *check.Result, resolver typeannotation.Resolver,
 	return boundaryExprType(result, resolver, expr)
 }
 
+func assignmentTargetType(result *check.Result, resolver typeannotation.Resolver, fact semantics.OrdinaryAssignmentFact) (typ.Type, bool) {
+	if fact.HasPath && fact.Path.Symbol != 0 && len(fact.Path.Segments) > 0 {
+		return newExpressionTyper(result, resolver).typeOf(fact.Target)
+	}
+	if !fact.HasContainerPath || fact.ContainerPath.Symbol == 0 {
+		return nil, false
+	}
+	attr, ok := fact.Target.(*ast.AttrGetExpr)
+	if !ok || attr.KeySyntax != ast.AttrKeyIndex {
+		return nil, false
+	}
+	return dynamicIndexAssignmentTargetType(result, resolver, attr)
+}
+
+func dynamicIndexAssignmentTargetType(result *check.Result, resolver typeannotation.Resolver, attr *ast.AttrGetExpr) (typ.Type, bool) {
+	typer := newExpressionTyper(result, resolver)
+	if t, ok := typer.typeOf(attr); ok {
+		return t, true
+	}
+	if attr == nil || attr.Key == nil {
+		return nil, false
+	}
+	if _, ok := typer.typeOf(attr.Key); ok {
+		return nil, false
+	}
+	container, ok := typer.typeOf(attr.Object)
+	if !ok {
+		return nil, false
+	}
+	return dynamicIndexWriteValueType(container, 0)
+}
+
+func dynamicIndexWriteValueType(t typ.Type, depth int) (typ.Type, bool) {
+	if t == nil || depth > typ.DefaultRecursionDepth {
+		return nil, false
+	}
+	switch tt := transparentExpectedType(t).(type) {
+	case *typ.Optional:
+		return dynamicIndexWriteValueType(tt.Inner, depth+1)
+	case *typ.Union:
+		var members []typ.Type
+		for _, member := range tt.Members {
+			value, ok := dynamicIndexWriteValueType(member, depth+1)
+			if !ok {
+				continue
+			}
+			members = append(members, value)
+		}
+		if len(members) == 0 {
+			return nil, false
+		}
+		return typ.NewUnion(members...), true
+	case *typ.Intersection:
+		var members []typ.Type
+		for _, member := range tt.Members {
+			value, ok := dynamicIndexWriteValueType(member, depth+1)
+			if !ok {
+				continue
+			}
+			members = append(members, value)
+		}
+		if len(members) == 0 {
+			return nil, false
+		}
+		return typ.NewIntersection(members...), true
+	case *typ.Record:
+		if tt.HasMapComponent() && tt.MapValue != nil {
+			return tt.MapValue, true
+		}
+	case *typ.Map:
+		if tt.Value != nil {
+			return tt.Value, true
+		}
+	case *typ.ReadonlyMap:
+		if tt.Value != nil {
+			return tt.Value, true
+		}
+	case *typ.Array:
+		if tt.Element != nil {
+			return tt.Element, true
+		}
+	}
+	return nil, false
+}
+
 func clearMismatch(got, want typ.Type) bool {
 	if got == nil || want == nil || typ.IsAny(got) || typ.IsUnknown(got) || typ.IsAny(want) || typ.IsUnknown(want) {
 		return false

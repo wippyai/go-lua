@@ -141,6 +141,38 @@ func assertLoweredBranchValuePresence(
 	assertOptionalValuePresence(t, "false edge", refinement.FalseValue, wantFalse, hasFalse)
 }
 
+func assertLoweredBranchPresenceProof(
+	t *testing.T,
+	facts factflow.Facts,
+	point cfg.Point,
+	wantPath path.Path,
+	wantPresence presence.Value,
+	wantTrue bool,
+	wantFalse bool,
+) {
+	t.Helper()
+	for _, proof := range facts.BranchProofs(point) {
+		if proof.Kind() != factflow.BranchProofPathPresence || !proof.Path().Equal(wantPath) {
+			continue
+		}
+		gotPresence, ok := proof.Presence()
+		if !ok || !presence.Equal(gotPresence, wantPresence) {
+			continue
+		}
+		if proof.ActiveOnEdge(true) != wantTrue || proof.ActiveOnEdge(false) != wantFalse {
+			t.Fatalf(
+				"branch presence proof active true/false = %v/%v, want %v/%v",
+				proof.ActiveOnEdge(true),
+				proof.ActiveOnEdge(false),
+				wantTrue,
+				wantFalse,
+			)
+		}
+		return
+	}
+	t.Fatalf("missing branch presence proof at point %d for %s presence %s", point, wantPath, wantPresence)
+}
+
 func assertOptionalValuePresence(
 	t *testing.T,
 	label string,

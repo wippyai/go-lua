@@ -136,6 +136,7 @@ type ChannelSelectFact struct {
 	Call         *ast.FuncCallExpr
 	ResultTarget CallResultTarget
 	Cases        []ChannelSelectCaseFact
+	HasDefault   bool
 }
 
 type ChannelSelectCaseFact struct {

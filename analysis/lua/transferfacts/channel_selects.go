@@ -3,9 +3,16 @@ package transferfacts
 import (
 	"strconv"
 
+	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/path/segment"
+	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
+	"github.com/wippyai/go-lua/analysis/lua/channelruntime"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
+	"github.com/wippyai/go-lua/analysis/lua/typeaccess"
+	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
 func (l *lowerer) channelSelects(point cfg.Point, result *semantics.Result) []factflow.ChannelSelect {
@@ -28,12 +35,14 @@ func (l *lowerer) channelSelectEvents(point cfg.Point, fact semantics.ChannelSel
 			ResultPath:    fact.ResultTarget.Path,
 			HasResultPath: true,
 			Index:         fact.ResultTarget.ResultIndex,
+			HasDefault:    fact.HasDefault,
 		}),
 	}
 	for i, c := range fact.Cases {
 		if !c.HasChannelPath || c.ChannelPath.IsEmpty() {
 			continue
 		}
+		payloadValue, hasPayloadValue := l.channelSelectPayloadValue(c.ChannelPath)
 		events = append(events,
 			factflow.NewChannelSelect(factflow.ChannelSelectConfig{
 				SelectID:    selectID,
@@ -43,15 +52,67 @@ func (l *lowerer) channelSelectEvents(point cfg.Point, fact semantics.ChannelSel
 				Index:       i,
 			}),
 			factflow.NewChannelSelect(factflow.ChannelSelectConfig{
-				SelectID:      selectID,
-				Kind:          factflow.ChannelSelectReceive,
-				ResultPath:    fact.ResultTarget.Path,
-				HasResultPath: true,
-				CasePath:      c.ChannelPath,
-				HasCasePath:   true,
-				Index:         i,
+				SelectID:        selectID,
+				Kind:            factflow.ChannelSelectReceive,
+				ResultPath:      fact.ResultTarget.Path,
+				HasResultPath:   true,
+				CasePath:        c.ChannelPath,
+				HasCasePath:     true,
+				PayloadValue:    payloadValue,
+				HasPayloadValue: hasPayloadValue,
+				Index:           i,
 			}),
 		)
 	}
 	return events
+}
+
+func (l *lowerer) channelSelectPayloadValue(channelPath pathdom.Path) (product.Value, bool) {
+	if l == nil || l.registry == nil {
+		return product.Value{}, false
+	}
+	channelType, ok := l.channelSelectPathType(channelPath)
+	if !ok {
+		return product.Value{}, false
+	}
+	payloadType, ok := channelPayloadType(channelType)
+	if !ok {
+		return product.Value{}, false
+	}
+	return typevalue.WithWitness(l.registry, typevalue.FromType(l.registry, payloadType), payloadType), true
+}
+
+func (l *lowerer) channelSelectPathType(p pathdom.Path) (typ.Type, bool) {
+	if l == nil || p.Symbol == 0 {
+		return nil, false
+	}
+	current, ok := l.symbolTypes[p.Symbol]
+	if !ok {
+		return nil, false
+	}
+	for _, seg := range p.Segments {
+		next, ok := channelSelectSegmentType(current, seg)
+		if !ok {
+			return nil, false
+		}
+		current = next
+	}
+	return current, true
+}
+
+func channelSelectSegmentType(container typ.Type, seg segment.Segment) (typ.Type, bool) {
+	switch seg.Kind {
+	case segment.SegmentField:
+		return typeaccess.Field(container, seg.Name)
+	case segment.SegmentIndexString:
+		return typeaccess.RuntimeIndex(container, typ.LiteralString(seg.Name))
+	case segment.SegmentIndexInt:
+		return typeaccess.RuntimeIndex(container, typ.LiteralInt(int64(seg.Index)))
+	default:
+		return nil, false
+	}
+}
+
+func channelPayloadType(channelType typ.Type) (typ.Type, bool) {
+	return channelruntime.ChannelPayloadType(channelType)
 }

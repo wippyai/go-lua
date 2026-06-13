@@ -42,7 +42,8 @@ func applyBranchPathEquality(
 	leftPath pathdom.Path,
 	rightPath pathdom.Path,
 ) state.State {
-	return applyPathEqualityAt(ctx.Registry, resolver, ctx.Edge.From, out, leftPath, rightPath)
+	out = applyPathEqualityAt(ctx.Registry, resolver, ctx.Edge.From, out, leftPath, rightPath)
+	return applyChannelSelectCaseEquality(ctx.Registry, resolver, ctx.Edge.From, out, leftPath, rightPath)
 }
 
 func applyPathEqualityAt(

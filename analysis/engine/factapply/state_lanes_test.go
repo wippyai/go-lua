@@ -180,6 +180,74 @@ func TestFactsEdgeTransferAddsPointLevelBranchProofsOnBothBranchOutputs(t *testi
 	}
 }
 
+func TestFactsEdgeTransferBranchProofsRespectEdgesAndJoinByIntersection(t *testing.T) {
+	reg := standard.Registry()
+	graph := cfg.New()
+	branch := graph.AddNode(cfg.NodeBranch)
+	thenPoint := graph.AddNode(cfg.NodeNoop)
+	elsePoint := graph.AddNode(cfg.NodeNoop)
+	join := graph.AddNode(cfg.NodeJoin)
+	graph.AddEdge(graph.Entry(), branch, false)
+	graph.AddEdge(branch, thenPoint, true)
+	graph.AddEdge(branch, elsePoint, false)
+	graph.AddEdge(thenPoint, join, false)
+	graph.AddEdge(elsePoint, join, false)
+	graph.AddEdge(join, graph.Exit(), false)
+
+	err := symbol.ID(430)
+	left := symbol.ID(431)
+	right := symbol.ID(432)
+	errPath := pathdom.NewPath(err, "err")
+	leftPath := pathdom.NewPath(left, "left").Field("value")
+	rightPath := pathdom.NewPath(right, "right").Field("value")
+	visibilityBuilder := visibility.NewBuilder()
+	visibilityBuilder.Define(branch, err, "err")
+	visibilityBuilder.Define(branch, left, "left")
+	visibilityBuilder.Define(branch, right, "right")
+	oneSided := state.BranchProof{
+		Kind:     state.BranchProofPathPresence,
+		Path:     pathdom.PathKey("sym430@1"),
+		Presence: presence.Present(),
+	}
+	twoSided := state.BranchProof{
+		Kind:  state.BranchProofPathEqual,
+		Path:  pathdom.PathKey("sym431@1.value"),
+		Other: pathdom.PathKey("sym432@1.value"),
+	}
+
+	got := transfer.Run(transfer.Config{
+		Graph:    graph,
+		Registry: reg,
+		EdgeTransfer: NewFactsEdgeTransfer(FactsEdgeTransferConfig{
+			Facts: factflow.NewFacts(factflow.FactsInput{
+				BranchProofs: map[cfg.Point]factflow.BranchProofSet{
+					branch: factflow.NewBranchProofSet(
+						factflow.NewBranchPathPresenceProofOnEdge(errPath, presence.Present(), true),
+						factflow.NewBranchPathEqualityProof(leftPath, rightPath),
+					),
+				},
+			}),
+			Visibility: visibility.NewResolver(visibilityBuilder.Build()),
+		}),
+	})
+
+	if !got[thenPoint].HasBranchProof(oneSided) || !got[thenPoint].HasBranchProof(twoSided) {
+		t.Fatalf("true branch proofs missing one-sided or two-sided proof")
+	}
+	if got[elsePoint].HasBranchProof(oneSided) {
+		t.Fatalf("false branch kept true-edge-only proof")
+	}
+	if !got[elsePoint].HasBranchProof(twoSided) {
+		t.Fatalf("false branch dropped two-sided proof")
+	}
+	if got[join].HasBranchProof(oneSided) {
+		t.Fatalf("one-sided proof survived join")
+	}
+	if !got[join].HasBranchProof(twoSided) {
+		t.Fatalf("two-sided proof did not survive join")
+	}
+}
+
 func TestFactsNodeTransferAppliesChannelSelectFactsWithPathKeys(t *testing.T) {
 	reg := standard.Registry()
 	point := cfg.Point(403)

@@ -48,6 +48,9 @@ func TestStateLaneEventConstructorsAndAccessorsCopyPaths(t *testing.T) {
 	presenceProof := NewBranchPathPresenceProof(proofPath, presence.Present())
 	proofPath.Root = "changed"
 	assertPathEqual(t, presenceProof.Path(), path.NewPath(symbol.ID(103), "err"))
+	if !presenceProof.ActiveOnEdge(true) || !presenceProof.ActiveOnEdge(false) {
+		t.Fatalf("point-level presence proof should be active on both edges")
+	}
 	if got, ok := presenceProof.Presence(); !ok || !presence.Equal(got, presence.Present()) {
 		t.Fatalf("presence proof = %s/%v, want present/true", got, ok)
 	}
@@ -62,10 +65,14 @@ func TestStateLaneEventConstructorsAndAccessorsCopyPaths(t *testing.T) {
 	rightPath := path.NewPath(symbol.ID(105), "right").Field("value")
 	equalityProof := NewBranchPathEqualityProof(leftPath, rightPath)
 	inequalityProof := NewBranchPathInequalityProof(leftPath, rightPath)
+	falseEdgeProof := NewBranchPathEqualityProofOnEdge(leftPath, rightPath, false)
 	leftPath.Segments[0].Name = "changed"
 	rightPath.Segments[0].Name = "changed"
 	if equalityProof.Kind() != BranchProofPathEqual || inequalityProof.Kind() != BranchProofPathNotEqual {
 		t.Fatalf("proof kinds = %v/%v", equalityProof.Kind(), inequalityProof.Kind())
+	}
+	if falseEdgeProof.ActiveOnEdge(true) || !falseEdgeProof.ActiveOnEdge(false) {
+		t.Fatalf("false-edge proof active true/false = %v/%v, want false/true", falseEdgeProof.ActiveOnEdge(true), falseEdgeProof.ActiveOnEdge(false))
 	}
 	assertDirectField(t, equalityProof.Path(), "value")
 	otherPath, ok := equalityProof.OtherPath()

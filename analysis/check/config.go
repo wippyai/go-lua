@@ -39,6 +39,11 @@ func mergeExpressionValues(base, override map[factflow.ExprRef]product.Value) ma
 func configGlobals(config Config) []string {
 	globals := append([]string(nil), config.Globals...)
 	if hasSignatures(config.Signatures) {
+		for _, m := range config.Signatures.Manifests {
+			if m != nil && m.Path != "" {
+				globals = append(globals, m.Path)
+			}
+		}
 		for name := range config.Signatures.Signatures() {
 			root := name
 			if dot := strings.IndexByte(root, '.'); dot >= 0 {

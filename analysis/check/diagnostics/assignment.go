@@ -26,12 +26,10 @@ func (p AnnotationAssignability) Produce(result *check.Result) []diagnostic.Diag
 	envs := literalEnvironments(result)
 	var out []diagnostic.Diagnostic
 	for _, point := range graph.RPO() {
-		fact, ok := result.LocalAssignment(point)
-		if !ok {
-			continue
-		}
-		if d, ok := p.localAssignment(result, point, fact, envs[point]); ok {
-			out = append(out, d)
+		if fact, ok := result.LocalAssignment(point); ok {
+			if d, ok := p.localAssignment(result, point, fact, envs[point]); ok {
+				out = append(out, d)
+			}
 		}
 		if fact, ok := result.OrdinaryAssignment(point); ok {
 			if d, ok := p.pathAssignment(result, point, fact); ok {
@@ -91,10 +89,10 @@ func (p AnnotationAssignability) localAssignment(result *check.Result, point cfg
 }
 
 func (p AnnotationAssignability) pathAssignment(result *check.Result, point cfg.Point, fact semantics.OrdinaryAssignmentFact) (diagnostic.Diagnostic, bool) {
-	if fact.Target == nil || fact.Value == nil || !fact.HasPath || fact.Path.Symbol == 0 || len(fact.Path.Segments) == 0 {
+	if fact.Target == nil || fact.Value == nil {
 		return diagnostic.Diagnostic{}, false
 	}
-	want, ok := newExpressionTyper(result, p.Resolver).typeOf(fact.Target)
+	want, ok := assignmentTargetType(result, p.Resolver, fact)
 	if !ok || topLikeType(want) || refinement.ContainsFreeTypeParam(want) {
 		return diagnostic.Diagnostic{}, false
 	}

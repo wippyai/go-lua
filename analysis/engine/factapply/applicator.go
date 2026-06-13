@@ -47,7 +47,9 @@ func NewFactsNodeTransfer(config FactsNodeTransferConfig) transfer.NodeTransfer 
 		for _, fact := range facts.PostconditionPathRelations(ctx.Point) {
 			out = applyPostconditionPathRelation(ctx, config.Visibility, out, fact)
 		}
-		for _, fact := range facts.ChannelSelects(ctx.Point) {
+		channelSelects := facts.ChannelSelects(ctx.Point)
+		out = applyChannelSelectResult(ctx, out, channelSelects)
+		for _, fact := range channelSelects {
 			out = applyChannelSelect(ctx, config.Visibility, out, fact)
 		}
 		if sources == nil {
@@ -106,6 +108,9 @@ func NewFactsEdgeTransfer(config FactsEdgeTransferConfig) transfer.EdgeTransfer 
 			out = applyBranchPathRelation(ctx, config.Visibility, out, relation)
 		}
 		for _, proof := range config.Facts.BranchProofs(ctx.Edge.From) {
+			if !proof.ActiveOnEdge(ctx.Edge.Cond) {
+				continue
+			}
 			out = applyBranchProof(ctx, config.Visibility, out, proof)
 		}
 		out = applyCallOutcomeEdgeFacts(ctx, config.Facts, config.CallOutcome, config.Visibility, branchRefinements, out)

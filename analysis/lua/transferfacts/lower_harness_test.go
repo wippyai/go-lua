@@ -8,6 +8,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/typewitness"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/standard"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
@@ -17,6 +18,9 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/cfgfacts"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
 	"github.com/wippyai/go-lua/analysis/symbol"
+	"github.com/wippyai/go-lua/analysis/type/ambient"
+	typetable "github.com/wippyai/go-lua/analysis/type/table"
+	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
 
@@ -444,13 +448,25 @@ func TestLowerOrdinaryAssignmentsSplitsRootAndStaticPathWrites(t *testing.T) {
 }
 
 func TestLowerChannelSelectFacts(t *testing.T) {
+	reg := standard.Registry()
 	point := cfg.Point(700)
 	resultPath := path.NewPath(symbol.ID(701), "result")
 	wantCases := []path.Path{
 		path.NewPath(symbol.ID(702), "events_ch"),
 		path.NewPath(symbol.ID(703), "stop_ch"),
 	}
-	events := (&lowerer{}).channelSelectEvents(point, semantics.ChannelSelectFact{
+	payloadTypes := []typ.Type{
+		typetable.NewRecord().Field("kind", typ.String).Build(),
+		typetable.NewRecord().Field("reason", typ.String).Build(),
+	}
+	channelGeneric := ambient.ChannelGeneric()
+	events := (&lowerer{
+		registry: reg,
+		symbolTypes: map[symbol.ID]typ.Type{
+			wantCases[0].Symbol: typ.Instantiate(channelGeneric, payloadTypes[0]),
+			wantCases[1].Symbol: typ.Instantiate(channelGeneric, payloadTypes[1]),
+		},
+	}).channelSelectEvents(point, semantics.ChannelSelectFact{
 		ResultTarget: semantics.CallResultTarget{
 			Kind:        semantics.CallResultTargetLocalAssignment,
 			Path:        resultPath,
@@ -491,6 +507,15 @@ func TestLowerChannelSelectFacts(t *testing.T) {
 		}
 		if got, ok := receiveEvent.CasePath(); !ok || !got.Equal(wantCase) {
 			t.Fatalf("receive case path %d = %v/%v, want %v", i, got, ok, wantCase)
+		}
+		payload, ok := receiveEvent.PayloadValue()
+		if !ok {
+			t.Fatalf("receive event %d missing payload value", i)
+		}
+		witness := product.Get(reg, payload, typewitness.Key)
+		payloadType, ok := witness.Type()
+		if !ok || !typ.TypeEquals(payloadType, payloadTypes[i]) {
+			t.Fatalf("receive payload type %d = %v/%v, want %v", i, payloadType, ok, payloadTypes[i])
 		}
 	}
 }

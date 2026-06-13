@@ -67,6 +67,18 @@ func TestAnnotationAssignabilityDoesNotTrustCastEscape(t *testing.T) {
 	}
 }
 
+func TestAnnotationAssignabilityPreservesGradualUntypedDynamicMapWrite(t *testing.T) {
+	diags := runDiagnostics(t, `
+		function f(raw, key: string)
+			local map: {[string]: string} = {}
+			map[key] = raw
+		end
+	`)
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v, want none for unannotated gradual source", diags)
+	}
+}
+
 func TestAnnotationAssignabilitySkipsUnannotatedIdentifierSources(t *testing.T) {
 	diags := runDiagnostics(t, `
 		local y = value

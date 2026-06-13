@@ -44,10 +44,7 @@ func boundarySourceType(result *check.Result, point cfg.Point, source sourceprov
 	if !ok {
 		return nil, false
 	}
-	if t, ok := concreteBoundaryType(result, value); ok {
-		return t, true
-	}
-	return nil, false
+	return concreteBoundaryType(result, value)
 }
 
 func boundaryExprType(result *check.Result, resolver typeannotation.Resolver, expr ast.Expr) (typ.Type, bool) {

@@ -23,6 +23,10 @@ type BranchProof struct {
 	Other    pathdom.PathKey
 }
 
+// AddBranchProof records a must fact that survived onto this control-flow
+// edge. State joins keep only facts proven by all incoming predecessors, so
+// these facts may be used for later aliasing/readback until path invalidation
+// removes them.
 func (s State) AddBranchProof(proof BranchProof) State {
 	if proof.Kind == 0 {
 		return s

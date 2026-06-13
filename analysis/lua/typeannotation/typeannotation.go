@@ -3,6 +3,7 @@ package typeannotation
 import (
 	"strings"
 
+	"github.com/wippyai/go-lua/analysis/type/ambient"
 	luatable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/compiler/ast"
@@ -245,6 +246,11 @@ func typeList(exprs []ast.TypeExpr, resolver Resolver) ([]typ.Type, bool) {
 func ref(path []string, resolver Resolver) typ.Type {
 	if resolver != nil {
 		if t, ok := resolver.ResolveTypeRef(path); ok {
+			return t
+		}
+	}
+	if len(path) == 1 {
+		if t, ok := ambient.Lookup(path[0]); ok {
 			return t
 		}
 	}

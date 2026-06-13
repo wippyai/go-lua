@@ -41,10 +41,18 @@ func TestLowerIdentifierNilTruthyFalsyBranches(t *testing.T) {
 
 	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings})
 	xPath := path.NewPath(mustIdentSymbol(t, bindings, nilRead), "x")
-	assertLoweredBranchValuePresence(t, facts, requireStmtPoints(t, built, nilStmt, 1)[0], xPath, presence.Absent(), true, presence.Present(), true)
-	assertLoweredBranchValuePresence(t, facts, requireStmtPoints(t, built, notNilStmt, 1)[0], xPath, presence.Present(), true, presence.Absent(), true)
-	assertLoweredBranchValuePresence(t, facts, requireStmtPoints(t, built, truthyStmt, 1)[0], xPath, presence.Present(), true, presence.Bottom(), false)
-	assertLoweredBranchValuePresence(t, facts, requireStmtPoints(t, built, falsyStmt, 1)[0], xPath, presence.Bottom(), false, presence.Present(), true)
+	nilPoint := requireStmtPoints(t, built, nilStmt, 1)[0]
+	notNilPoint := requireStmtPoints(t, built, notNilStmt, 1)[0]
+	truthyPoint := requireStmtPoints(t, built, truthyStmt, 1)[0]
+	falsyPoint := requireStmtPoints(t, built, falsyStmt, 1)[0]
+	assertLoweredBranchValuePresence(t, facts, nilPoint, xPath, presence.Absent(), true, presence.Present(), true)
+	assertLoweredBranchPresenceProof(t, facts, nilPoint, xPath, presence.Absent(), true, false)
+	assertLoweredBranchPresenceProof(t, facts, nilPoint, xPath, presence.Present(), false, true)
+	assertLoweredBranchValuePresence(t, facts, notNilPoint, xPath, presence.Present(), true, presence.Absent(), true)
+	assertLoweredBranchValuePresence(t, facts, truthyPoint, xPath, presence.Present(), true, presence.Bottom(), false)
+	assertLoweredBranchPresenceProof(t, facts, truthyPoint, xPath, presence.Present(), true, false)
+	assertLoweredBranchValuePresence(t, facts, falsyPoint, xPath, presence.Bottom(), false, presence.Present(), true)
+	assertLoweredBranchPresenceProof(t, facts, falsyPoint, xPath, presence.Present(), false, true)
 }
 
 func TestLowerMemberPathBranchRefinement(t *testing.T) {
@@ -62,6 +70,28 @@ func TestLowerMemberPathBranchRefinement(t *testing.T) {
 	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings})
 	wantPath := path.NewPath(mustIdentSymbol(t, bindings, rootRead), "t").Field("child")
 	assertLoweredBranchValuePresence(t, facts, requireStmtPoints(t, built, memberStmt, 1)[0], wantPath, presence.Present(), true, presence.Absent(), true)
+}
+
+func TestLowerTypeGuardBranchProof(t *testing.T) {
+	decl := localAssign([]string{"x"}, ident("input"))
+	typeRead := ident("x")
+	typeStmt := &ast.IfStmt{Condition: &ast.RelationalOpExpr{
+		Operator: "==",
+		Lhs:      typeCall(typeRead),
+		Rhs:      stringLit("string"),
+	}}
+	stmts := []ast.Stmt{decl, typeStmt}
+	bindings := bind.BindChunk(stmts, bind.Options{})
+	built := cfgbuild.BuildChunk(stmts, bindings)
+	result, err := semantics.ExtractChunk(stmts, bindings, built)
+	if err != nil {
+		t.Fatalf("ExtractChunk: %v", err)
+	}
+
+	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings})
+	point := requireStmtPoints(t, built, typeStmt, 1)[0]
+	xPath := path.NewPath(mustIdentSymbol(t, bindings, typeRead), "x")
+	assertLoweredBranchPresenceProof(t, facts, point, xPath, presence.Present(), true, false)
 }
 
 func TestLowerLogicalAndBranchPublishesTrueEdgeConjunctRefinements(t *testing.T) {

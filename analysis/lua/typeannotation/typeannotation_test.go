@@ -198,6 +198,24 @@ func TestTypeGenericInstantiation(t *testing.T) {
 	}
 }
 
+func TestTypeAmbientChannelInstantiation(t *testing.T) {
+	event := typ.RebuildRecord(typ.RecordParts{Fields: []typ.Field{{Name: "kind", Type: typ.String}}})
+	got, ok := Type(&ast.GenericTypeExpr{
+		Base: &ast.TypeRefExpr{Path: []string{"Channel"}},
+		Args: []ast.TypeExpr{&ast.TypeRefExpr{Path: []string{"Event"}}},
+	}, resolver{"Event": event})
+	if !ok {
+		t.Fatal("Type returned ok=false")
+	}
+	inst, ok := got.(*typ.Instantiated)
+	if !ok {
+		t.Fatalf("Type() = %T, want *typ.Instantiated", got)
+	}
+	if inst.Generic.Name != "Channel" || len(inst.TypeArgs) != 1 || inst.TypeArgs[0] != event {
+		t.Fatalf("channel instantiation = %#v", inst)
+	}
+}
+
 func TestTypeGenericInstantiationRejectsUnresolvedBase(t *testing.T) {
 	got, ok := Type(&ast.GenericTypeExpr{
 		Base: &ast.TypeRefExpr{Path: []string{"Box"}},

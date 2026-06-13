@@ -23,6 +23,15 @@ func appendBranchRefinement(out map[cfg.Point]factflow.BranchRefinementSet, poin
 	out[point] = factflow.NewBranchRefinementSet(existing...)
 }
 
+func appendBranchProofs(out map[cfg.Point]factflow.BranchProofSet, point cfg.Point, proofs ...factflow.BranchProof) {
+	if len(proofs) == 0 {
+		return
+	}
+	existing := out[point].Proofs()
+	existing = append(existing, proofs...)
+	out[point] = factflow.NewBranchProofSet(existing...)
+}
+
 func appendBranchPresenceRelations(out map[cfg.Point]factflow.BranchPresenceRelationSet, point cfg.Point, relations ...factflow.BranchPresenceRelation) {
 	if len(relations) == 0 {
 		return
