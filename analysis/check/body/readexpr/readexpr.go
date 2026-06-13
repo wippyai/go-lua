@@ -12,13 +12,13 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/variantorigin"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
+	"github.com/wippyai/go-lua/analysis/domain/value/variant"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	sourcevalue "github.com/wippyai/go-lua/analysis/engine/sourcevalue"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/visibility"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/typeaccess"
-	"github.com/wippyai/go-lua/analysis/type/discriminant"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
@@ -190,7 +190,7 @@ func structuralTypeFromValue(reg *axis.Registry, value product.Value) (typ.Type,
 	if witness := product.Get(reg, value, typewitness.Key); !witness.IsTop() {
 		if t, ok := witness.Type(); ok {
 			if !origin.IsBottom() && !origin.IsTop() {
-				if narrowed, ok := discriminant.NarrowByOrigin(t, origin.Family(), origin.Cases()); ok {
+				if narrowed, ok := variant.NarrowByOrigin(t, origin.Family(), origin.Cases()); ok {
 					return narrowed, true
 				}
 			}
@@ -198,7 +198,7 @@ func structuralTypeFromValue(reg *axis.Registry, value product.Value) (typ.Type,
 		}
 	}
 	if !origin.IsBottom() && !origin.IsTop() {
-		return discriminant.TypeFromOrigin(origin.Family(), origin.Cases())
+		return variant.TypeFromOrigin(origin.Family(), origin.Cases())
 	}
 	return nil, false
 }

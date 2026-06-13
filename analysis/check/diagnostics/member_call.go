@@ -9,12 +9,12 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/domain/value/variant"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
 	"github.com/wippyai/go-lua/analysis/lua/typeaccess"
 	"github.com/wippyai/go-lua/analysis/lua/typecall"
 	"github.com/wippyai/go-lua/analysis/symbol"
-	"github.com/wippyai/go-lua/analysis/type/discriminant"
 	"github.com/wippyai/go-lua/analysis/type/normalize"
 	"github.com/wippyai/go-lua/analysis/type/subtype"
 	"github.com/wippyai/go-lua/analysis/type/typ"
@@ -171,7 +171,7 @@ func applyLiteralNarrowing(base typ.Type, receiver path.Path, env literalEnv) (t
 				changed = true
 			}
 		} else {
-			if narrowed, ok := discriminant.NarrowByPathLiteral(out, suffix, lit); ok {
+			if narrowed, ok := variant.NarrowByPathLiteral(out, suffix, lit); ok {
 				out = narrowed
 				changed = true
 			}

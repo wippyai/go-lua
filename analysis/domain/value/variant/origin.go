@@ -1,4 +1,4 @@
-package discriminant
+package variant
 
 import (
 	"sort"
@@ -6,6 +6,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	internal "github.com/wippyai/go-lua/analysis/internal/hash"
+	"github.com/wippyai/go-lua/analysis/type/discriminant"
 	"github.com/wippyai/go-lua/analysis/type/normalize"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/unwrap"
@@ -242,7 +243,7 @@ func closedRecordUnionFamily(u *typ.Union) (originFamily, bool) {
 		}
 		records = append(records, rec)
 	}
-	if !NewDetector().ClosedRecordSetConflicts(records) {
+	if !discriminant.NewDetector().ClosedRecordSetConflicts(records) {
 		return originFamily{}, false
 	}
 	id := internal.FnvString("discriminant.union.family")
@@ -263,7 +264,7 @@ func taggedRecordFamily(r *typ.Record) (originFamily, bool) {
 	if r == nil {
 		return originFamily{}, false
 	}
-	tags := NewDetector().RequiredTags(r)
+	tags := discriminant.NewDetector().RequiredTags(r)
 	if len(tags) == 0 {
 		return originFamily{}, false
 	}

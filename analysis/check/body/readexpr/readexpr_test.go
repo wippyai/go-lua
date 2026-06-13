@@ -13,11 +13,11 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/standard"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
+	"github.com/wippyai/go-lua/analysis/domain/value/variant"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/visibility"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/symbol"
-	"github.com/wippyai/go-lua/analysis/type/discriminant"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
@@ -115,15 +115,15 @@ func TestProjectNoExactProofUsesNarrowedParentOrigin(t *testing.T) {
 		Field("value", typ.String).
 		Build()
 	union := typ.NewUnion(intCase, strCase)
-	rootFamily, rootCases, ok := discriminant.OriginOfType(union)
+	rootFamily, rootCases, ok := variant.OriginOfType(union)
 	if !ok {
 		t.Fatal("missing root origin")
 	}
-	constraintFamily, constraintCases, ok := discriminant.OriginOfType(chanStr)
+	constraintFamily, constraintCases, ok := variant.OriginOfType(chanStr)
 	if !ok {
 		t.Fatal("missing channel origin")
 	}
-	strCases, ok := discriminant.NarrowOriginByPath(rootFamily, rootCases, []segment.Segment{{Kind: segment.SegmentField, Name: "channel"}}, constraintFamily, constraintCases, true)
+	strCases, ok := variant.NarrowOriginByPath(rootFamily, rootCases, []segment.Segment{{Kind: segment.SegmentField, Name: "channel"}}, constraintFamily, constraintCases, true)
 	if !ok {
 		t.Fatal("failed to narrow root origin")
 	}
@@ -154,15 +154,15 @@ func TestProjectNestedPathUsesNarrowedRootOrigin(t *testing.T) {
 		Field("value", typetable.NewRecord().Field("data", typ.Number).Build()).
 		Build()
 	union := typ.NewUnion(okCase, errCase)
-	rootFamily, rootCases, ok := discriminant.OriginOfType(union)
+	rootFamily, rootCases, ok := variant.OriginOfType(union)
 	if !ok {
 		t.Fatal("missing root origin")
 	}
-	errFamily, errCases, ok := discriminant.OriginOfType(errChan)
+	errFamily, errCases, ok := variant.OriginOfType(errChan)
 	if !ok {
 		t.Fatal("missing channel origin")
 	}
-	narrowedCases, ok := discriminant.NarrowOriginByPath(rootFamily, rootCases, []segment.Segment{{Kind: segment.SegmentField, Name: "channel"}}, errFamily, errCases, true)
+	narrowedCases, ok := variant.NarrowOriginByPath(rootFamily, rootCases, []segment.Segment{{Kind: segment.SegmentField, Name: "channel"}}, errFamily, errCases, true)
 	if !ok {
 		t.Fatal("failed to narrow root origin")
 	}

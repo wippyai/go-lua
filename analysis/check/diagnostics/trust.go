@@ -9,13 +9,13 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/typewitness"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/variantorigin"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/domain/value/variant"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
 	"github.com/wippyai/go-lua/analysis/lua/typeannotation"
 	"github.com/wippyai/go-lua/analysis/lua/valueexpr"
 	"github.com/wippyai/go-lua/analysis/symbol"
-	"github.com/wippyai/go-lua/analysis/type/discriminant"
 	"github.com/wippyai/go-lua/analysis/type/kind"
 	"github.com/wippyai/go-lua/analysis/type/subtype"
 	"github.com/wippyai/go-lua/analysis/type/typ"
@@ -207,7 +207,7 @@ func concreteBoundaryType(result *check.Result, value product.Value) (typ.Type, 
 		if t, ok := witness.Type(); ok {
 			t = witnessTypeForPresence(t, valuePresence)
 			if !origin.IsBottom() && !origin.IsTop() {
-				if narrowed, ok := discriminant.NarrowByOrigin(t, origin.Family(), origin.Cases()); ok {
+				if narrowed, ok := variant.NarrowByOrigin(t, origin.Family(), origin.Cases()); ok {
 					return narrowed, true
 				}
 			}
@@ -216,7 +216,7 @@ func concreteBoundaryType(result *check.Result, value product.Value) (typ.Type, 
 		return nil, false
 	}
 	if !origin.IsBottom() && !origin.IsTop() {
-		if t, ok := discriminant.TypeFromOrigin(origin.Family(), origin.Cases()); ok {
+		if t, ok := variant.TypeFromOrigin(origin.Family(), origin.Cases()); ok {
 			return t, true
 		}
 	}

@@ -9,7 +9,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/variantorigin"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/standard"
-	"github.com/wippyai/go-lua/analysis/type/discriminant"
+	"github.com/wippyai/go-lua/analysis/domain/value/variant"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
@@ -94,7 +94,7 @@ func TestFromTypeMaterializesVariantOrigin(t *testing.T) {
 		Build()
 	union := typ.NewUnion(left, right)
 
-	family, cases, ok := discriminant.OriginOfType(union)
+	family, cases, ok := variant.OriginOfType(union)
 	if !ok {
 		t.Fatal("origin helper did not recognize record union")
 	}

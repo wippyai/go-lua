@@ -9,12 +9,12 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/typewitness"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/variantorigin"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/domain/value/variant"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
 	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
 	"github.com/wippyai/go-lua/analysis/lua/typeannotation"
 	"github.com/wippyai/go-lua/analysis/lua/valueexpr"
-	"github.com/wippyai/go-lua/analysis/type/discriminant"
 	"github.com/wippyai/go-lua/analysis/type/kind"
 	"github.com/wippyai/go-lua/analysis/type/subst"
 	"github.com/wippyai/go-lua/analysis/type/subtype"
@@ -300,7 +300,7 @@ func refineDeclaredTypeWithValue(result *check.Result, declared typ.Type, value 
 			out = witnessTypeForPresence(t, p)
 		}
 		if !origin.IsBottom() && !origin.IsTop() {
-			if refined, ok := discriminant.NarrowByOrigin(out, origin.Family(), origin.Cases()); ok {
+			if refined, ok := variant.NarrowByOrigin(out, origin.Family(), origin.Cases()); ok {
 				out = refined
 			}
 		}

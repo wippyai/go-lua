@@ -12,11 +12,11 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/variantorigin"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/standard"
+	"github.com/wippyai/go-lua/analysis/domain/value/variant"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/symbol"
-	"github.com/wippyai/go-lua/analysis/type/discriminant"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
@@ -101,7 +101,7 @@ func assertVariantOriginType(t *testing.T, reg *axis.Registry, gotState state.St
 	if origin.IsBottom() || origin.IsTop() {
 		t.Fatalf("variant origin = %v, want concrete in %s", origin, formatValue(reg, value))
 	}
-	got, ok := discriminant.NarrowByOrigin(base, origin.Family(), origin.Cases())
+	got, ok := variant.NarrowByOrigin(base, origin.Family(), origin.Cases())
 	if !ok {
 		t.Fatalf("origin family %d cases %v did not narrow %s", origin.Family(), origin.Cases(), base)
 	}

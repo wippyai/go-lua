@@ -9,6 +9,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/variantorigin"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
+	"github.com/wippyai/go-lua/analysis/domain/value/variant"
 	factapply "github.com/wippyai/go-lua/analysis/engine/factapply"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	sourcevalue "github.com/wippyai/go-lua/analysis/engine/sourcevalue"
@@ -17,7 +18,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/typecall"
 	"github.com/wippyai/go-lua/analysis/symbol"
-	"github.com/wippyai/go-lua/analysis/type/discriminant"
 	"github.com/wippyai/go-lua/analysis/type/refinement"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
@@ -132,7 +132,7 @@ func typeFromValue(reg *axis.Registry, value product.Value) (typ.Type, bool) {
 	if origin.IsBottom() || origin.IsTop() {
 		return nil, false
 	}
-	return discriminant.TypeFromOrigin(origin.Family(), origin.Cases())
+	return variant.TypeFromOrigin(origin.Family(), origin.Cases())
 }
 
 func specializeSummaryReturns(reg *axis.Registry, got summary.Summary, returns []typ.Type) summary.Summary {
@@ -200,7 +200,7 @@ func originContainsFreeTypeParam(origin variantorigin.Value) bool {
 	if origin.IsBottom() || origin.IsTop() {
 		return false
 	}
-	t, ok := discriminant.TypeFromOrigin(origin.Family(), origin.Cases())
+	t, ok := variant.TypeFromOrigin(origin.Family(), origin.Cases())
 	return ok && refinement.ContainsFreeTypeParam(t)
 }
 

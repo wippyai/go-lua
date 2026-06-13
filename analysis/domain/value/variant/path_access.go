@@ -1,4 +1,4 @@
-package discriminant
+package variant
 
 import (
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"

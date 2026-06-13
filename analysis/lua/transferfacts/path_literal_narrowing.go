@@ -5,9 +5,9 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/variantorigin"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
+	"github.com/wippyai/go-lua/analysis/domain/value/variant"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/lua/branchcond"
-	"github.com/wippyai/go-lua/analysis/type/discriminant"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
@@ -19,7 +19,7 @@ func (l *lowerer) rootLiteralRefinement(target path.Path, lit typ.Type, cond boo
 	if !ok {
 		return factflow.BranchRefinement{}, false
 	}
-	narrowed, ok := discriminant.NarrowByPathLiteral(rootType, target.Segments, lit)
+	narrowed, ok := variant.NarrowByPathLiteral(rootType, target.Segments, lit)
 	if !ok || typ.SameNodeOrAcyclicEqual(rootType, narrowed) {
 		return factflow.BranchRefinement{}, false
 	}
@@ -41,8 +41,8 @@ func (l *lowerer) literalBranchRefinement(target path.Path, kind branchcond.Chec
 		return factflow.BranchRefinement{}, false
 	}
 	lit := typ.LiteralString(literal)
-	matched, hasMatched := discriminant.NarrowByPathLiteral(rootType, target.Segments, lit)
-	unmatched, hasUnmatched := discriminant.NarrowByPathLiteralNot(rootType, target.Segments, lit)
+	matched, hasMatched := variant.NarrowByPathLiteral(rootType, target.Segments, lit)
+	unmatched, hasUnmatched := variant.NarrowByPathLiteralNot(rootType, target.Segments, lit)
 	if !hasMatched && !hasUnmatched {
 		return factflow.BranchRefinement{}, false
 	}
@@ -76,9 +76,9 @@ func (l *lowerer) rootLiteralValueConstraint(rootType typ.Type, narrowed typ.Typ
 	var cases []int
 	var ok bool
 	if negate {
-		family, cases, ok = discriminant.OriginByPathLiteralNot(rootType, target.Segments, lit)
+		family, cases, ok = variant.OriginByPathLiteralNot(rootType, target.Segments, lit)
 	} else {
-		family, cases, ok = discriminant.OriginByPathLiteral(rootType, target.Segments, lit)
+		family, cases, ok = variant.OriginByPathLiteral(rootType, target.Segments, lit)
 	}
 	if ok {
 		value = product.Set(l.registry, value, variantorigin.Key, variantorigin.Of(family, cases))

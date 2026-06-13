@@ -9,12 +9,12 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/variantorigin"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
+	"github.com/wippyai/go-lua/analysis/domain/value/variant"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/typeaccess"
 	"github.com/wippyai/go-lua/analysis/lua/typeannotation"
 	"github.com/wippyai/go-lua/analysis/lua/typeoperator"
 	"github.com/wippyai/go-lua/analysis/lua/valueexpr"
-	"github.com/wippyai/go-lua/analysis/type/discriminant"
 	"github.com/wippyai/go-lua/analysis/type/kind"
 	"github.com/wippyai/go-lua/analysis/type/normalize"
 	"github.com/wippyai/go-lua/analysis/type/subst"
@@ -132,7 +132,7 @@ func (p expressionTyper) flowOriginType(accessPath pathdom.Path) (typ.Type, bool
 	if origin.IsBottom() || origin.IsTop() {
 		return nil, false
 	}
-	return discriminant.TypeFromOrigin(origin.Family(), origin.Cases())
+	return variant.TypeFromOrigin(origin.Family(), origin.Cases())
 }
 
 func (p expressionTyper) flowRootType(t typ.Type, accessPath pathdom.Path) typ.Type {
@@ -164,12 +164,12 @@ func applyLiteralPathNarrowing(base typ.Type, receiver pathdom.Path, env literal
 		}
 		lit := typ.LiteralString(c.value)
 		if c.negated {
-			if narrowed, ok := discriminant.NarrowByPathLiteralNot(out, suffix, lit); ok {
+			if narrowed, ok := variant.NarrowByPathLiteralNot(out, suffix, lit); ok {
 				out = narrowed
 				changed = true
 			}
 		} else {
-			if narrowed, ok := discriminant.NarrowByPathLiteral(out, suffix, lit); ok {
+			if narrowed, ok := variant.NarrowByPathLiteral(out, suffix, lit); ok {
 				out = narrowed
 				changed = true
 			}

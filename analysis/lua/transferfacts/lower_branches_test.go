@@ -9,13 +9,13 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/variantorigin"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/standard"
+	"github.com/wippyai/go-lua/analysis/domain/value/variant"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/lua/branchcond"
 	"github.com/wippyai/go-lua/analysis/lua/cfgbuild"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
 	"github.com/wippyai/go-lua/analysis/symbol"
-	"github.com/wippyai/go-lua/analysis/type/discriminant"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/compiler/ast"
@@ -303,7 +303,7 @@ func TestLowerTruthyInstantiatedResultBranchRefinesRootOnBothEdges(t *testing.T)
 		Kind: branchcond.CheckTruthy,
 		Path: rootPath.Field("ok"),
 	})
-	rootFamily, _, ok := discriminant.OriginOfType(resultType)
+	rootFamily, _, ok := variant.OriginOfType(resultType)
 	if !ok {
 		t.Fatal("missing root origin for Result<T>")
 	}
@@ -326,7 +326,7 @@ func assertVariantOriginRefinementType(t *testing.T, label string, refinement fa
 	if origin.IsBottom() || origin.IsTop() {
 		t.Fatalf("%s variant origin = %v, want concrete", label, origin)
 	}
-	got, ok := discriminant.TypeFromOrigin(origin.Family(), origin.Cases())
+	got, ok := variant.TypeFromOrigin(origin.Family(), origin.Cases())
 	if !ok {
 		t.Fatalf("%s origin type unavailable", label)
 	}

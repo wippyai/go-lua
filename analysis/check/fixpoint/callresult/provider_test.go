@@ -567,6 +567,7 @@ func TestProductionImportsAreBounded(t *testing.T) {
 		"github.com/wippyai/go-lua/analysis/domain/value/axis/variantorigin": true,
 		"github.com/wippyai/go-lua/analysis/domain/value/product":            true,
 		"github.com/wippyai/go-lua/analysis/domain/value/typevalue":          true,
+		"github.com/wippyai/go-lua/analysis/domain/value/variant":            true,
 		"github.com/wippyai/go-lua/analysis/engine/factapply":                true,
 		"github.com/wippyai/go-lua/analysis/engine/factflow":                 true,
 		"github.com/wippyai/go-lua/analysis/engine/sourcevalue":              true,
@@ -577,7 +578,6 @@ func TestProductionImportsAreBounded(t *testing.T) {
 		"github.com/wippyai/go-lua/analysis/ir/cfg":                          true,
 		"github.com/wippyai/go-lua/analysis/lua/typecall":                    true,
 		"github.com/wippyai/go-lua/analysis/symbol":                          true,
-		"github.com/wippyai/go-lua/analysis/type/discriminant":               true,
 		"github.com/wippyai/go-lua/analysis/type/refinement":                 true,
 		"github.com/wippyai/go-lua/analysis/type/typ":                        true,
 	}

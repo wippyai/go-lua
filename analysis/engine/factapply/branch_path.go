@@ -6,12 +6,12 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/variantorigin"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/domain/value/variant"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/engine/visibility"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
-	"github.com/wippyai/go-lua/analysis/type/discriminant"
 )
 
 type pathValue struct {
@@ -136,7 +136,7 @@ func projectPathOriginValue(reg *axis.Registry, out state.State, targetPath path
 	if origin.IsBottom() || origin.IsTop() {
 		return product.Value{}, false
 	}
-	family, cases, ok := discriminant.ProjectOrigin(origin.Family(), origin.Cases(), targetPath.Segments)
+	family, cases, ok := variant.ProjectOrigin(origin.Family(), origin.Cases(), targetPath.Segments)
 	if !ok {
 		return product.Value{}, false
 	}
@@ -172,7 +172,7 @@ func applyPathOriginRelation(
 	if rootOrigin.IsBottom() || rootOrigin.IsTop() {
 		return out
 	}
-	cases, ok := discriminant.NarrowOriginByPath(
+	cases, ok := variant.NarrowOriginByPath(
 		rootOrigin.Family(),
 		rootOrigin.Cases(),
 		parentPath.Segments,

@@ -9,12 +9,12 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/variantorigin"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
+	"github.com/wippyai/go-lua/analysis/domain/value/variant"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/engine/visibility"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
-	"github.com/wippyai/go-lua/analysis/type/discriminant"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
@@ -97,11 +97,11 @@ func applyDescendantTruthyRootOriginRefinement(
 	if !ok {
 		return out
 	}
-	family, cases, ok := discriminant.OriginByPathLiteral(rootType, targetPath.Segments, typ.LiteralBool(true))
+	family, cases, ok := variant.OriginByPathLiteral(rootType, targetPath.Segments, typ.LiteralBool(true))
 	if !ok {
 		return out
 	}
-	narrowedType, ok := discriminant.NarrowByOrigin(rootType, family, cases)
+	narrowedType, ok := variant.NarrowByOrigin(rootType, family, cases)
 	if !ok {
 		return out
 	}
@@ -123,7 +123,7 @@ func structuralTypeFromRootValue(reg *axis.Registry, value product.Value) (typ.T
 	if witness := product.Get(reg, value, typewitness.Key); !witness.IsTop() {
 		if t, ok := witness.Type(); ok {
 			if !origin.IsBottom() && !origin.IsTop() {
-				if narrowed, ok := discriminant.NarrowByOrigin(t, origin.Family(), origin.Cases()); ok {
+				if narrowed, ok := variant.NarrowByOrigin(t, origin.Family(), origin.Cases()); ok {
 					return narrowed, true
 				}
 			}
@@ -131,7 +131,7 @@ func structuralTypeFromRootValue(reg *axis.Registry, value product.Value) (typ.T
 		}
 	}
 	if !origin.IsBottom() && !origin.IsTop() {
-		return discriminant.TypeFromOrigin(origin.Family(), origin.Cases())
+		return variant.TypeFromOrigin(origin.Family(), origin.Cases())
 	}
 	return nil, false
 }
