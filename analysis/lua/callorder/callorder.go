@@ -1,4 +1,5 @@
-// Package callorder enumerates Lua call expressions in evaluation order.
+// Package callorder owns Lua expression call evaluation order shared by cfgbuild and semantics.
+// It returns ok=false for unsupported or unsafe call-order shapes.
 package callorder
 
 import (
@@ -57,15 +58,6 @@ func ValueList(exprs []ast.Expr, options Options) ([]Occurrence, bool) {
 func Expr(expr ast.Expr, options Options) ([]Occurrence, bool) {
 	var calls []Occurrence
 	if !collectExpr(expr, NoExprIndex, options, &calls) {
-		return nil, false
-	}
-	return calls, true
-}
-
-// Call returns all supported calls involved in evaluating call, including call.
-func Call(call *ast.FuncCallExpr, exprIndex int, options Options) ([]Occurrence, bool) {
-	var calls []Occurrence
-	if !collectCall(call, exprIndex, options, &calls) {
 		return nil, false
 	}
 	return calls, true

@@ -135,10 +135,6 @@ func clearMismatch(got, want typ.Type) bool {
 	return true
 }
 
-func literalType(expr ast.Expr) (typ.Type, bool) {
-	return valueexpr.LiteralType(expr)
-}
-
 func localScalarOperatorSourceType(result *body.Result, resolver typeannotation.Resolver, expr ast.Expr) (typ.Type, bool) {
 	if !isScalarOperatorExpression(expr) {
 		return nil, false

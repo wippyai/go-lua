@@ -6,6 +6,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/diagnostic"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
+	"github.com/wippyai/go-lua/analysis/lua/valueexpr"
 	"github.com/wippyai/go-lua/analysis/type/refinement"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/compiler/ast"
@@ -53,7 +54,7 @@ func (p annotationAssignability) localAssignment(result *body.Result, point cfg.
 	if directCallResultOwner(result, fact.Source) || directCallExpressionOwner(result, fact.Expr) {
 		return p.objectLiteralAssignment(result, fact.Name, want, fact.Expr, fact.Type)
 	}
-	got, ok := literalType(fact.Expr)
+	got, ok := valueexpr.LiteralType(fact.Expr)
 	optionalIndexProjection := false
 	if !ok {
 		got, ok = projectedOptionalIndexType(result, p.resolver, fact.Expr)
@@ -121,7 +122,7 @@ func (p annotationAssignability) objectLiteralAssignment(result *body.Result, na
 		if !ok {
 			continue
 		}
-		got, ok := literalType(entry.Value)
+		got, ok := valueexpr.LiteralType(entry.Value)
 		if !ok || !clearMismatch(got, expected) {
 			continue
 		}

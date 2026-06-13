@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
+	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
@@ -20,7 +21,7 @@ func TestLiteralTypeRecognizesObviousLiterals(t *testing.T) {
 		{name: "string", expr: &ast.StringExpr{Value: "hello"}, want: typ.LiteralString("hello")},
 		{name: "integer", expr: &ast.NumberExpr{Value: "42"}, want: typ.LiteralInt(42)},
 		{name: "float", expr: &ast.NumberExpr{Value: "3.5"}, want: typ.LiteralNumber(3.5)},
-		{name: "wrapped int", expr: &ast.NonNilAssertExpr{Expr: &ast.CastExpr{Expr: &ast.NumberExpr{Value: "0x10"}}}, want: typ.LiteralInt(16)},
+		{name: "wrapped int", expr: wrappedExpr(&ast.NumberExpr{Value: "0x10"}), want: typ.LiteralInt(16)},
 	}
 
 	for _, tt := range tests {
@@ -53,6 +54,20 @@ func TestLiteralTypeRejectsNonLiterals(t *testing.T) {
 	}
 }
 
+func TestLiteralTypeUnwrapsAssertionAndCast(t *testing.T) {
+	expr := &ast.CastExpr{Expr: &ast.NonNilAssertExpr{Expr: &ast.StringExpr{Value: "wrapped"}}}
+	got, ok := LiteralType(expr)
+	if !ok {
+		t.Fatal("LiteralType returned false")
+	}
+	if !got.Equals(typ.LiteralString("wrapped")) {
+		t.Fatalf("LiteralType = %v, want %v", got, typ.LiteralString("wrapped"))
+	}
+	if inner := sourceprovenance.AssertionInner(expr); inner != expr.Expr.(*ast.NonNilAssertExpr).Expr {
+		t.Fatalf("AssertionInner = %T, want *ast.StringExpr", inner)
+	}
+}
+
 func TestRuntimeKindRecognizesObviousRuntimeValues(t *testing.T) {
 	tests := []struct {
 		name string
@@ -65,7 +80,7 @@ func TestRuntimeKindRecognizesObviousRuntimeValues(t *testing.T) {
 		{name: "string", expr: &ast.StringExpr{Value: "hello"}, want: runtimekind.Singleton(runtimekind.String)},
 		{name: "table", expr: &ast.TableExpr{}, want: runtimekind.Singleton(runtimekind.Table)},
 		{name: "function", expr: &ast.FunctionExpr{}, want: runtimekind.Singleton(runtimekind.Function)},
-		{name: "wrapped table", expr: &ast.NonNilAssertExpr{Expr: &ast.CastExpr{Expr: &ast.TableExpr{}}}, want: runtimekind.Singleton(runtimekind.Table)},
+		{name: "wrapped table", expr: wrappedExpr(&ast.TableExpr{}), want: runtimekind.Singleton(runtimekind.Table)},
 	}
 
 	for _, tt := range tests {
@@ -90,4 +105,23 @@ func TestRuntimeKindRejectsNonObviousValues(t *testing.T) {
 			t.Fatalf("case %d: RuntimeKind = %v/%v, want false/bottom", i, got, ok)
 		}
 	}
+}
+
+func TestRuntimeKindUnwrapsAssertionAndCast(t *testing.T) {
+	expr := &ast.NonNilAssertExpr{Expr: &ast.CastExpr{Expr: &ast.FunctionExpr{}}}
+	got, ok := RuntimeKind(expr)
+	if !ok {
+		t.Fatal("RuntimeKind returned false")
+	}
+	want := runtimekind.Singleton(runtimekind.Function)
+	if !runtimekind.Equal(got, want) {
+		t.Fatalf("RuntimeKind = %v, want %v", got, want)
+	}
+	if inner := sourceprovenance.AssertionInner(expr); inner != expr.Expr.(*ast.CastExpr).Expr {
+		t.Fatalf("AssertionInner = %T, want *ast.FunctionExpr", inner)
+	}
+}
+
+func wrappedExpr(inner ast.Expr) ast.Expr {
+	return &ast.CastExpr{Expr: &ast.NonNilAssertExpr{Expr: inner}}
 }

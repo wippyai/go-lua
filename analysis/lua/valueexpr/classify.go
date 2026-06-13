@@ -1,3 +1,5 @@
+// Package valueexpr owns syntactic Lua expression value classification shared
+// by transfer facts and diagnostics, including assertion/cast unwrapping.
 package valueexpr
 
 import (

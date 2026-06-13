@@ -1,4 +1,5 @@
-// Package channelruntime owns recognition of Lua channel runtime constructs.
+// Package channelruntime recognizes the ambient Lua channel runtime ABI, not
+// arbitrary user-authored APIs.
 package channelruntime
 
 import (
@@ -48,13 +49,13 @@ func IsReceiveCaseCall(call *ast.FuncCallExpr, bindings *bind.Result) bool {
 	if !ok || channelPath.IsEmpty() {
 		return false
 	}
-	channelType, ok := PathType(bindings, channelPath)
-	return ok && IsChannelType(channelType)
+	channelType, ok := pathType(bindings, channelPath)
+	return ok && isChannelType(channelType)
 }
 
-// PathType resolves the annotated type for a path, following field and index
+// pathType resolves the annotated type for a path, following field and index
 // projections.
-func PathType(bindings *bind.Result, p pathdom.Path) (typ.Type, bool) {
+func pathType(bindings *bind.Result, p pathdom.Path) (typ.Type, bool) {
 	if bindings == nil || p.Symbol == 0 {
 		return nil, false
 	}
@@ -69,8 +70,8 @@ func PathType(bindings *bind.Result, p pathdom.Path) (typ.Type, bool) {
 	return typeaccess.ProjectSegments(current, p.Segments)
 }
 
-// IsChannelType reports whether t is the ambient Channel<T> instantiation.
-func IsChannelType(t typ.Type) bool {
+// isChannelType reports whether t is the ambient Channel<T> instantiation.
+func isChannelType(t typ.Type) bool {
 	inst, ok := unwrap.Alias(unwrap.Annotations(t)).(*typ.Instantiated)
 	return ok && inst.Generic != nil && inst.Generic.Name == ambient.Channel && len(inst.TypeArgs) == 1 && inst.TypeArgs[0] != nil
 }
