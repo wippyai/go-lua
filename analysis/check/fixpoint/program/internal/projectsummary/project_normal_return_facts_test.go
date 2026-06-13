@@ -1,4 +1,4 @@
-package summary
+package projectsummary
 
 import (
 	"testing"
@@ -385,4 +385,48 @@ func assertEffectDelta(
 	if delta == nil || !delta.Target.Equal(target) || delta.Kind != kind || delta.Value.Change != change {
 		t.Fatalf("effect delta %q = %#v, want target %s kind %d change %d", site, delta, target, kind, change)
 	}
+}
+
+func normalReturnFactsEmpty(facts callboundary.NormalReturnFacts) bool {
+	return len(facts.PathRefinements) == 0 &&
+		len(facts.PathStaticMembers) == 0 &&
+		len(facts.DynamicIndexFacts) == 0 &&
+		len(facts.BranchProofs) == 0 &&
+		len(facts.ChannelSelects) == 0 &&
+		len(facts.EffectDeltas) == 0
+}
+
+func findPathRefinement(facts []callboundary.PathValueFact, path pathdom.Path) *callboundary.PathValueFact {
+	for i := range facts {
+		if facts[i].Path.Equal(path) {
+			return &facts[i]
+		}
+	}
+	return nil
+}
+
+func findDynamicIndexFact(facts []callboundary.DynamicIndexFact, site string) *callboundary.DynamicIndexFact {
+	for i := range facts {
+		if string(facts[i].Site) == site {
+			return &facts[i]
+		}
+	}
+	return nil
+}
+
+func findEffectDelta(deltas []callboundary.EffectDelta, site string) *callboundary.EffectDelta {
+	for i := range deltas {
+		if string(deltas[i].Site) == site {
+			return &deltas[i]
+		}
+	}
+	return nil
+}
+
+func presentProduct(reg *axis.Registry) product.Value {
+	return product.NewWithPresence(reg, product.ShapeTop, presence.Present())
+}
+
+func absentProduct(reg *axis.Registry) product.Value {
+	return product.NewWithPresence(reg, product.ShapeTop, presence.Absent())
 }

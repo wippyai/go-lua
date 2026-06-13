@@ -7,6 +7,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/check/body"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/program/internal/callresult"
+	summaryprojection "github.com/wippyai/go-lua/analysis/check/fixpoint/program/internal/projectsummary"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/query"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/ref"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/summary"
@@ -345,7 +346,7 @@ func chunkFunction(
 			if err != nil {
 				return summary.Summary{}, err
 			}
-			return summary.FromResult(result), nil
+			return summaryprojection.FromResult(result), nil
 		},
 	}
 }
@@ -367,7 +368,7 @@ func boundFunction(
 			if err != nil {
 				return summary.Summary{}, err
 			}
-			return summary.FromResult(result), nil
+			return summaryprojection.FromResult(result), nil
 		},
 	}
 }

@@ -1,13 +1,14 @@
-package summary
+package projectsummary
 
 import (
+	"github.com/wippyai/go-lua/analysis/check/fixpoint/summary"
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/branchcond"
 )
 
-func projectNormalReturnParamConditions(reg *axis.Registry, result ResultReader) []ParamCondition {
+func projectNormalReturnParamConditions(reg *axis.Registry, result ResultReader) []summary.ParamCondition {
 	branchReader, ok := result.(branchConditionReader)
 	if !ok {
 		return nil
@@ -20,7 +21,7 @@ func projectNormalReturnParamConditions(reg *axis.Registry, result ResultReader)
 	if len(params) == 0 {
 		return nil
 	}
-	var out []ParamCondition
+	var out []summary.ParamCondition
 	for _, point := range graph.RPO() {
 		fact, ok := branchReader.BranchCondition(point)
 		if !ok {
@@ -35,9 +36,9 @@ func projectNormalReturnParamConditions(reg *axis.Registry, result ResultReader)
 			continue
 		}
 		if out == nil {
-			out = make([]ParamCondition, len(params))
+			out = make([]summary.ParamCondition, len(params))
 			for i := range out {
-				out[i] = ParamConditionTop
+				out[i] = summary.ParamConditionTop
 			}
 		}
 		out[paramIndex] = meetParamCondition(out[paramIndex], condition)
@@ -84,24 +85,24 @@ func normalReturnParamCondition(
 	check branchcond.Check,
 	normalCond bool,
 	params []path.Path,
-) (int, ParamCondition, bool) {
+) (int, summary.ParamCondition, bool) {
 	paramIndex, ok := normalReturnParamIndex(check.Path, params)
 	if !ok {
-		return 0, ParamConditionBottom, false
+		return 0, summary.ParamConditionBottom, false
 	}
 	switch check.Kind {
 	case branchcond.CheckTruthy:
 		if normalCond {
-			return paramIndex, ParamConditionTruthy, true
+			return paramIndex, summary.ParamConditionTruthy, true
 		}
-		return paramIndex, ParamConditionFalsy, true
+		return paramIndex, summary.ParamConditionFalsy, true
 	case branchcond.CheckFalsy:
 		if normalCond {
-			return paramIndex, ParamConditionFalsy, true
+			return paramIndex, summary.ParamConditionFalsy, true
 		}
-		return paramIndex, ParamConditionTruthy, true
+		return paramIndex, summary.ParamConditionTruthy, true
 	default:
-		return 0, ParamConditionBottom, false
+		return 0, summary.ParamConditionBottom, false
 	}
 }
 
@@ -117,15 +118,15 @@ func normalReturnParamIndex(target path.Path, params []path.Path) (int, bool) {
 	return 0, false
 }
 
-func meetParamCondition(a, b ParamCondition) ParamCondition {
-	if a == ParamConditionTop {
+func meetParamCondition(a, b summary.ParamCondition) summary.ParamCondition {
+	if a == summary.ParamConditionTop {
 		return b
 	}
-	if b == ParamConditionTop || a == b {
+	if b == summary.ParamConditionTop || a == b {
 		return a
 	}
-	if a == ParamConditionBottom || b == ParamConditionBottom {
-		return ParamConditionBottom
+	if a == summary.ParamConditionBottom || b == summary.ParamConditionBottom {
+		return summary.ParamConditionBottom
 	}
-	return ParamConditionBottom
+	return summary.ParamConditionBottom
 }

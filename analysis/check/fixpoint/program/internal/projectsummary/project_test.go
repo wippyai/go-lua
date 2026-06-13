@@ -1,10 +1,11 @@
-package summary_test
+package projectsummary_test
 
 import (
 	"strings"
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/check/body"
+	summaryprojection "github.com/wippyai/go-lua/analysis/check/fixpoint/program/internal/projectsummary"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/summary"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
@@ -40,7 +41,7 @@ func TestFromResultProjectsReturnSlotsFromExitState(t *testing.T) {
 			}
 		},
 	})
-	got := summary.FromResult(result)
+	got := summaryprojection.FromResult(result)
 
 	if len(got.Returns) != 2 {
 		t.Fatalf("FromResult returned %d slots, want 2", len(got.Returns))
@@ -53,7 +54,7 @@ func TestFromResultNoExplicitReturnProjectsEmptySummary(t *testing.T) {
 	reg, _ := projectTestRegistry(t)
 	result := projectCheckChunk(t, projectParseChunk(t, "local x = 1"), body.Config{Registry: reg})
 
-	if got := summary.FromResult(result); len(got.Returns) != 0 {
+	if got := summaryprojection.FromResult(result); len(got.Returns) != 0 {
 		t.Fatalf("FromResult returned %#v, want empty summary", got)
 	}
 }
@@ -62,7 +63,7 @@ func TestFromResultUnresolvedReturnExpressionNormalizesBottomSlot(t *testing.T) 
 	reg, _ := projectTestRegistry(t)
 	result := projectCheckChunk(t, projectParseChunk(t, "return unknown"), body.Config{Registry: reg})
 
-	if got := summary.FromResult(result); len(got.Returns) != 0 {
+	if got := summaryprojection.FromResult(result); len(got.Returns) != 0 {
 		t.Fatalf("FromResult returned %#v, want empty summary", got)
 	}
 }
@@ -94,7 +95,7 @@ func TestFromResultReadsJoinedExitReturnSlot(t *testing.T) {
 			return value, true
 		},
 	})
-	got := summary.FromResult(result)
+	got := summaryprojection.FromResult(result)
 
 	if len(got.Returns) != 1 {
 		t.Fatalf("FromResult returned %d slots, want 1", len(got.Returns))
@@ -122,7 +123,7 @@ end`)
 			return numberValue, true
 		},
 	})
-	got := summary.FromResult(result)
+	got := summaryprojection.FromResult(result)
 
 	if len(got.Returns) != 1 {
 		t.Fatalf("FromResult returned %d slots, want 1", len(got.Returns))
@@ -150,7 +151,7 @@ end`)
 			return tableValue, true
 		},
 	})
-	got := summary.FromResult(result)
+	got := summaryprojection.FromResult(result)
 
 	if len(got.Returns) != 1 {
 		t.Fatalf("FromResult returned %d slots, want 1", len(got.Returns))
@@ -183,7 +184,7 @@ func TestFromResultIgnoresDeadReturnFacts(t *testing.T) {
 	if got := result.ReturnPoints(); len(got) != 1 {
 		t.Fatalf("ReturnPoints returned %d points, want only the reachable return", len(got))
 	}
-	got := summary.FromResult(result)
+	got := summaryprojection.FromResult(result)
 
 	if len(got.Returns) != 1 {
 		t.Fatalf("FromResult returned %d slots, want 1", len(got.Returns))
@@ -201,7 +202,7 @@ function f(x: string?)
 	assert(x)
 end`), body.Config{Registry: reg})
 
-	got := summary.FromResult(result)
+	got := summaryprojection.FromResult(result)
 
 	if len(got.NormalReturnParams) != 1 {
 		t.Fatalf("normal return params = %d, want 1: %#v", len(got.NormalReturnParams), got)
@@ -228,7 +229,7 @@ end`), body.Config{
 		},
 	})
 
-	got := summary.FromResult(result)
+	got := summaryprojection.FromResult(result)
 
 	if len(got.NormalReturnParams) != 1 {
 		t.Fatalf("normal return params = %d, want 1: %#v", len(got.NormalReturnParams), got)
@@ -248,7 +249,7 @@ function f(x: string?)
 	local y = x
 end`), body.Config{Registry: reg})
 
-	got := summary.FromResult(result)
+	got := summaryprojection.FromResult(result)
 	if len(got.NormalReturnParams) != 1 {
 		t.Fatalf("normal return params = %#v, want one explicit top", got.NormalReturnParams)
 	}
@@ -266,7 +267,7 @@ function f(x: string?, c: boolean)
 	end
 end`), body.Config{Registry: reg})
 
-	got := summary.FromResult(result)
+	got := summaryprojection.FromResult(result)
 	if len(got.NormalReturnParams) != 2 {
 		t.Fatalf("normal return params = %#v, want explicit top slots", got.NormalReturnParams)
 	}
@@ -285,7 +286,7 @@ function f(x: string?)
 	assert(x)
 end`), body.Config{Registry: reg})
 
-	got := summary.FromResult(result)
+	got := summaryprojection.FromResult(result)
 	if len(got.NormalReturnParams) != 1 {
 		t.Fatalf("normal return params = %#v, want one explicit top", got.NormalReturnParams)
 	}
@@ -304,7 +305,7 @@ end`), body.Config{
 		Globals:  []string{"type"},
 	})
 
-	got := summary.FromResult(result)
+	got := summaryprojection.FromResult(result)
 
 	if len(got.ReturnConditionParamRefinements) == 0 {
 		t.Fatalf("return condition param refinements missing: %#v", got)
@@ -339,7 +340,7 @@ function process(x: number): (number?, string?)
 	return x * 2, nil
 end`), body.Config{Registry: reg})
 
-	got := summary.FromResult(result)
+	got := summaryprojection.FromResult(result)
 
 	projectAssertReturnPresenceRelation(t, got.ReturnPresenceRelations, 1, presence.Present(), 0, presence.Absent())
 	projectAssertReturnPresenceRelation(t, got.ReturnPresenceRelations, 1, presence.Absent(), 0, presence.Present())
@@ -364,7 +365,7 @@ function fetch(ok: boolean): (number?, string?)
 	return 1
 end`), body.Config{Registry: reg})
 
-	got := summary.FromResult(result)
+	got := summaryprojection.FromResult(result)
 
 	projectAssertReturnPresenceRelation(t, got.ReturnPresenceRelations, 1, presence.Present(), 0, presence.Absent())
 	projectAssertReturnPresenceRelation(t, got.ReturnPresenceRelations, 1, presence.Absent(), 0, presence.Present())
@@ -383,7 +384,7 @@ function fetch(ok: boolean): (number?, string?)
 	return open_db(ok)
 end`), body.Config{Registry: reg})
 
-	got := summary.FromResult(result)
+	got := summaryprojection.FromResult(result)
 
 	if len(got.Returns) != 2 {
 		t.Fatalf("returns = %d, want declared arity 2 for open-tail return", len(got.Returns))
@@ -403,7 +404,7 @@ function fetch(ok: boolean): (number?, string?)
 	return nil, "failed"
 end`), body.Config{Registry: reg})
 
-	got := summary.FromResult(result)
+	got := summaryprojection.FromResult(result)
 
 	if len(got.Returns) != 2 {
 		t.Fatalf("returns = %d, want 2", len(got.Returns))
@@ -416,7 +417,7 @@ end`), body.Config{Registry: reg})
 }
 
 func TestFromResultMissingReadModelReturnsEmptySummary(t *testing.T) {
-	if got := summary.FromResult(nil); len(got.Returns) != 0 {
+	if got := summaryprojection.FromResult(nil); len(got.Returns) != 0 {
 		t.Fatalf("FromResult(nil) returned %#v, want empty summary", got)
 	}
 }

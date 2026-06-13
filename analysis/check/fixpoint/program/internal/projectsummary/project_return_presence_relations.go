@@ -1,12 +1,14 @@
-package summary
+package projectsummary
 
-func projectReturnPresenceRelations(result ResultReader) []ReturnPresenceRelation {
+import "github.com/wippyai/go-lua/analysis/check/fixpoint/summary"
+
+func projectReturnPresenceRelations(result ResultReader) []summary.ReturnPresenceRelation {
 	reader, ok := result.(returnPresenceRelationReader)
-	var out []ReturnPresenceRelation
+	var out []summary.ReturnPresenceRelation
 	if ok {
 		for _, point := range result.ReturnPoints() {
 			for _, relation := range reader.ReturnPresenceRelations(point) {
-				out = append(out, ReturnPresenceRelation{
+				out = append(out, summary.ReturnPresenceRelation{
 					TriggerIndex:    relation.TriggerIndex(),
 					TriggerPresence: relation.TriggerPresence(),
 					TargetIndex:     relation.TargetIndex(),
@@ -15,5 +17,5 @@ func projectReturnPresenceRelations(result ResultReader) []ReturnPresenceRelatio
 			}
 		}
 	}
-	return normalizeReturnPresenceRelations(out)
+	return out
 }

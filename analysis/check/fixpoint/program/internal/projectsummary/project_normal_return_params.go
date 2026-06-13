@@ -1,4 +1,4 @@
-package summary
+package projectsummary
 
 import (
 	"github.com/wippyai/go-lua/analysis/domain/path"

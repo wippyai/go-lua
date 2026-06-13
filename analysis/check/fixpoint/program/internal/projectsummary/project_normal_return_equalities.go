@@ -1,12 +1,13 @@
-package summary
+package projectsummary
 
 import (
+	"github.com/wippyai/go-lua/analysis/check/fixpoint/summary"
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/lua/branchcond"
 )
 
-func projectNormalReturnParamEqualities(reg *axis.Registry, result ResultReader) []ParamEquality {
+func projectNormalReturnParamEqualities(reg *axis.Registry, result ResultReader) []summary.ParamEquality {
 	branchReader, ok := result.(branchConditionReader)
 	if !ok {
 		return nil
@@ -19,7 +20,7 @@ func projectNormalReturnParamEqualities(reg *axis.Registry, result ResultReader)
 	if len(params) == 0 {
 		return nil
 	}
-	var out []ParamEquality
+	var out []summary.ParamEquality
 	for _, point := range graph.RPO() {
 		fact, ok := branchReader.BranchCondition(point)
 		if !ok {
@@ -35,36 +36,36 @@ func projectNormalReturnParamEqualities(reg *axis.Registry, result ResultReader)
 		}
 		out = append(out, equality)
 	}
-	return normalizeParamEqualities(out)
+	return out
 }
 
 func normalReturnParamEquality(
 	check branchcond.Check,
 	normalCond bool,
 	params []path.Path,
-) (ParamEquality, bool) {
+) (summary.ParamEquality, bool) {
 	switch check.Kind {
 	case branchcond.CheckPathEqual:
 		if !normalCond {
-			return ParamEquality{}, false
+			return summary.ParamEquality{}, false
 		}
 	case branchcond.CheckPathNot:
 		if normalCond {
-			return ParamEquality{}, false
+			return summary.ParamEquality{}, false
 		}
 	default:
-		return ParamEquality{}, false
+		return summary.ParamEquality{}, false
 	}
 	left, ok := normalReturnParamIndex(check.Path, params)
 	if !ok {
-		return ParamEquality{}, false
+		return summary.ParamEquality{}, false
 	}
 	right, ok := normalReturnParamIndex(check.OtherPath, params)
 	if !ok {
-		return ParamEquality{}, false
+		return summary.ParamEquality{}, false
 	}
 	if left == right {
-		return ParamEquality{}, false
+		return summary.ParamEquality{}, false
 	}
-	return ParamEquality{Left: left, Right: right}, true
+	return summary.ParamEquality{Left: left, Right: right}, true
 }

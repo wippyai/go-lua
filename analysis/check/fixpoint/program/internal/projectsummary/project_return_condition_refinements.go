@@ -1,6 +1,7 @@
-package summary
+package projectsummary
 
 import (
+	"github.com/wippyai/go-lua/analysis/check/fixpoint/summary"
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
@@ -9,7 +10,7 @@ import (
 func projectReturnConditionParamRefinements(
 	reg *axis.Registry,
 	result ResultReader,
-) []ReturnConditionParamRefinement {
+) []summary.ReturnConditionParamRefinement {
 	sourceReader, ok := result.(returnValueSourceReader)
 	if !ok {
 		return nil
@@ -22,7 +23,7 @@ func projectReturnConditionParamRefinements(
 	if len(params) == 0 {
 		return nil
 	}
-	var out []ReturnConditionParamRefinement
+	var out []summary.ReturnConditionParamRefinement
 	for _, point := range result.ReturnPoints() {
 		sources, ok := sourceReader.ReturnValueSources(point)
 		if !ok {
@@ -40,7 +41,7 @@ func projectReturnConditionParamRefinements(
 			out = appendReturnConditionParamRefinements(reg, out, returnIndex, false, condition.RefinementsForValue(false), params)
 		}
 	}
-	return normalizeReturnConditionParamRefinements(reg, out)
+	return out
 }
 
 func returnConditionSource(source factflow.ValueSource) bool {
@@ -52,22 +53,23 @@ func returnConditionSource(source factflow.ValueSource) bool {
 
 func appendReturnConditionParamRefinements(
 	reg *axis.Registry,
-	out []ReturnConditionParamRefinement,
+	out []summary.ReturnConditionParamRefinement,
 	returnIndex int,
 	returnValue bool,
 	refinements []factflow.PostconditionRefinement,
 	params []path.Path,
-) []ReturnConditionParamRefinement {
+) []summary.ReturnConditionParamRefinement {
+	_ = reg
 	for _, refinement := range refinements {
 		target, ok := paramPlaceholderPath(refinement.TargetPath(), params)
 		if !ok {
 			continue
 		}
 		value, ok := refinement.Value().Constraint()
-		if !ok || !usefulReturnConditionValue(reg, value) {
+		if !ok {
 			continue
 		}
-		out = append(out, ReturnConditionParamRefinement{
+		out = append(out, summary.ReturnConditionParamRefinement{
 			ReturnIndex: returnIndex,
 			ReturnValue: returnValue,
 			Target:      target,

@@ -1,4 +1,4 @@
-package summary
+package projectsummary
 
 import (
 	"github.com/wippyai/go-lua/analysis/domain/path"
@@ -70,8 +70,8 @@ func projectNormalReturnFacts(reg *axis.Registry, result ResultReader, exit stat
 				Site:  stateKey.Site,
 				Value: stateFact,
 			}
-			if dynamicIndexFactEqual(reg, fact, dynamicIndexFactBottom(reg)) ||
-				dynamicIndexFactIsTop(reg, fact) {
+			domain := dynamicindex.Domain(reg)
+			if domain.Equal(fact.Value, dynamicindex.Bottom(reg)) || domain.Equal(fact.Value, dynamicindex.Top()) {
 				continue
 			}
 			out.DynamicIndexFacts = append(out.DynamicIndexFacts, fact)
@@ -152,8 +152,8 @@ func projectNormalReturnFacts(reg *axis.Registry, result ResultReader, exit stat
 				Kind:   stateKey.Kind,
 				Value:  stateDelta,
 			}
-			if effectDeltaEqual(reg, delta, callboundary.EffectDelta{Value: effectdelta.Bottom(reg)}) ||
-				effectDeltaIsTop(delta) {
+			domain := effectdelta.Domain(reg)
+			if domain.Equal(delta.Value, domain.Bottom()) || domain.Equal(delta.Value, effectdelta.Top()) {
 				continue
 			}
 			out.EffectDeltas = append(out.EffectDeltas, delta)
@@ -216,14 +216,6 @@ func normalReturnFactPlaceholderPathWithSuffix(index int, suffix string) (path.P
 		out = out.Append(seg)
 	}
 	return out, true
-}
-
-func dynamicIndexFactIsTop(reg *axis.Registry, fact callboundary.DynamicIndexFact) bool {
-	return dynamicindex.Domain(reg).Equal(fact.Value, dynamicindex.Top())
-}
-
-func effectDeltaIsTop(delta callboundary.EffectDelta) bool {
-	return delta.Value == effectdelta.Top()
 }
 
 func projectBranchProofKind(kind pathevidence.BranchProofKind) (pathevidence.BranchProofKind, bool) {

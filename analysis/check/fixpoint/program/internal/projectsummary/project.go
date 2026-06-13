@@ -1,6 +1,7 @@
-package summary
+package projectsummary
 
 import (
+	"github.com/wippyai/go-lua/analysis/check/fixpoint/summary"
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
@@ -59,18 +60,18 @@ type expressionConditionReader interface {
 }
 
 // FromResult projects one completed check result into a fixed-point summary.
-func FromResult(result ResultReader) Summary {
+func FromResult(result ResultReader) summary.Summary {
 	if result == nil {
-		return Summary{}
+		return summary.Summary{}
 	}
 	reg := result.Registry()
 	graph := result.Graph()
 	exit, ok := result.ExitState()
 	if reg == nil || graph == nil || !ok {
-		return Summary{}
+		return summary.Summary{}
 	}
 
-	summary := Summary{
+	out := summary.Summary{
 		NormalReturnParams:              projectNormalReturnParams(reg, result, exit),
 		NormalReturnParamConditions:     projectNormalReturnParamConditions(reg, result),
 		NormalReturnParamEqualities:     projectNormalReturnParamEqualities(reg, result),
@@ -91,7 +92,7 @@ func FromResult(result ResultReader) Summary {
 		}
 	}
 	if arity > 0 {
-		summary.Returns = projectReturnSlots(reg, result, exit, arity, declared)
+		out.Returns = projectReturnSlots(reg, result, exit, arity, declared)
 	}
-	return Normalize(reg, summary)
+	return summary.Normalize(reg, out)
 }
