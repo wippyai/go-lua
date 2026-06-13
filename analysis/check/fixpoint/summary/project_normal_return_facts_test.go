@@ -11,6 +11,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/standard"
 	"github.com/wippyai/go-lua/analysis/engine/state"
+	effectdelta "github.com/wippyai/go-lua/analysis/engine/state/effectdelta"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/symbol"
 )
@@ -95,32 +96,32 @@ func TestFromResultProjectsNormalReturnFactsFromExitSnapshots(t *testing.T) {
 			Case:   casePathKey,
 			Index:  2,
 		}).
-		WriteEffectDelta(reg, state.EffectDeltaKey{
+		WriteEffectDelta(effectdelta.Key{
 			Target: mutationKey,
 			Site:   "effect-mutation",
-			Kind:   state.EffectDeltaMutation,
-		}, state.EffectDelta{
+			Kind:   effectdelta.Mutation,
+		}, effectdelta.Value{
 			Before: value0,
 			After:  value1,
-			Change: state.EffectDeltaChangeChanged,
+			Change: effectdelta.ChangeChanged,
 		}).
-		WriteEffectDelta(reg, state.EffectDeltaKey{
+		WriteEffectDelta(effectdelta.Key{
 			Target: escapeKey,
 			Site:   "effect-escape",
-			Kind:   state.EffectDeltaEscape,
-		}, state.EffectDelta{
+			Kind:   effectdelta.Escape,
+		}, effectdelta.Value{
 			Before: value0,
 			After:  value0,
-			Change: state.EffectDeltaChangeNone,
+			Change: effectdelta.ChangeNone,
 		}).
-		WriteEffectDelta(reg, state.EffectDeltaKey{
+		WriteEffectDelta(effectdelta.Key{
 			Target: callKey,
 			Site:   "effect-call",
-			Kind:   state.EffectDeltaCall,
-		}, state.EffectDelta{
+			Kind:   effectdelta.Call,
+		}, effectdelta.Value{
 			Before: value1,
 			After:  value0,
-			Change: state.EffectDeltaChangeUnknown,
+			Change: effectdelta.ChangeUnknown,
 		})
 
 	got := FromResult(normalReturnFactProjectTestResult(reg, exit, param0, param1)).NormalReturnFacts
@@ -148,9 +149,9 @@ func TestFromResultProjectsNormalReturnFactsFromExitSnapshots(t *testing.T) {
 	assertChannelSelect(t, got.ChannelSelects, "receive-kind", ChannelSelectFactReceive, pathdom.NewPlaceholder(0).Field("receiveResult"), pathdom.NewPlaceholder(1).Field("receiveCase"))
 	assertChannelSelect(t, got.ChannelSelects, "case-kind", ChannelSelectFactCase, pathdom.Path{}, pathdom.NewPlaceholder(1).Field("casePath"))
 
-	assertEffectDelta(t, got.EffectDeltas, "effect-mutation", pathdom.NewPlaceholder(0).Field("mutation"), EffectDeltaMutation, EffectDeltaChangeChanged)
-	assertEffectDelta(t, got.EffectDeltas, "effect-escape", pathdom.NewPlaceholder(0).Field("escape"), EffectDeltaEscape, EffectDeltaChangeNone)
-	assertEffectDelta(t, got.EffectDeltas, "effect-call", pathdom.NewPlaceholder(1).Field("call"), EffectDeltaCall, EffectDeltaChangeUnknown)
+	assertEffectDelta(t, got.EffectDeltas, "effect-mutation", pathdom.NewPlaceholder(0).Field("mutation"), effectdelta.Mutation, effectdelta.ChangeChanged)
+	assertEffectDelta(t, got.EffectDeltas, "effect-escape", pathdom.NewPlaceholder(0).Field("escape"), effectdelta.Escape, effectdelta.ChangeNone)
+	assertEffectDelta(t, got.EffectDeltas, "effect-call", pathdom.NewPlaceholder(1).Field("call"), effectdelta.Call, effectdelta.ChangeUnknown)
 }
 
 func TestFromResultDropsNonParameterNormalReturnFactPaths(t *testing.T) {
@@ -224,10 +225,10 @@ func TestFromResultSkipsTopSnapshotsAndTopNormalReturnFacts(t *testing.T) {
 		Value:       product.Top(),
 		Admission:   state.DynamicIndexAdmissionUnknown,
 	}
-	topEffect := state.EffectDelta{
+	topEffect := effectdelta.Value{
 		Before: product.Top(),
 		After:  product.Top(),
-		Change: state.EffectDeltaChangeUnknown,
+		Change: effectdelta.ChangeUnknown,
 	}
 	exit := state.State{}.
 		WritePathKey(reg, paramKey, product.Top()).
@@ -247,10 +248,10 @@ func TestFromResultSkipsTopSnapshotsAndTopNormalReturnFacts(t *testing.T) {
 			Result: normalReturnFactProjectTestKey(param, ".result"),
 			Index:  0,
 		}).
-		WriteEffectDelta(reg, state.EffectDeltaKey{
+		WriteEffectDelta(effectdelta.Key{
 			Target: normalReturnFactProjectTestKey(param, ".effect"),
 			Site:   "effect-top",
-			Kind:   state.EffectDeltaMutation,
+			Kind:   effectdelta.Mutation,
 		}, topEffect)
 
 	got := FromResult(normalReturnFactProjectTestResult(reg, exit, param)).NormalReturnFacts
@@ -372,12 +373,12 @@ func assertEffectDelta(
 	deltas []EffectDelta,
 	site string,
 	target pathdom.Path,
-	kind EffectDeltaKind,
-	change EffectDeltaChange,
+	kind effectdelta.Kind,
+	change effectdelta.Change,
 ) {
 	t.Helper()
 	delta := findEffectDelta(deltas, site)
-	if delta == nil || !delta.Target.Equal(target) || delta.Kind != kind || delta.Change != change {
+	if delta == nil || !delta.Target.Equal(target) || delta.Kind != kind || delta.Value.Change != change {
 		t.Fatalf("effect delta %q = %#v, want target %s kind %d change %d", site, delta, target, kind, change)
 	}
 }

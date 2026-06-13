@@ -7,6 +7,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	effectdelta "github.com/wippyai/go-lua/analysis/engine/state/effectdelta"
 	"github.com/wippyai/go-lua/analysis/symbol"
 )
 
@@ -40,8 +41,8 @@ func TestNormalReturnFactsNormalizeDropsNonPlaceholderPaths(t *testing.T) {
 			{Select: "select-placeholder", Kind: ChannelSelectFactReceive, Result: placeholder, Index: 0},
 		},
 		EffectDeltas: []EffectDelta{
-			{Target: concrete, Site: "caller.effect.ignored", Kind: EffectDeltaMutation, Before: value, After: value, Change: EffectDeltaChangeChanged},
-			{Target: placeholder, Site: "caller.effect.1", Kind: EffectDeltaMutation, Before: value, After: value, Change: EffectDeltaChangeChanged},
+			{Target: concrete, Site: "caller.effect.ignored", Kind: effectdelta.Mutation, Value: effectdelta.Value{Before: value, After: value, Change: effectdelta.ChangeChanged}},
+			{Target: placeholder, Site: "caller.effect.1", Kind: effectdelta.Mutation, Value: effectdelta.Value{Before: value, After: value, Change: effectdelta.ChangeChanged}},
 		},
 	}})
 
@@ -131,8 +132,8 @@ func TestNormalReturnFactsJoinUsesStateLaneSemantics(t *testing.T) {
 			{Select: "select-left", Kind: ChannelSelectFactReceive, Case: leftOnly, Index: 1},
 		},
 		EffectDeltas: []EffectDelta{
-			{Target: commonPath, Site: "caller.effect.common", Kind: EffectDeltaMutation, Before: leftValue, After: leftValue, Change: EffectDeltaChangeChanged},
-			{Target: leftOnly, Site: "caller.effect.left", Kind: EffectDeltaMutation, Before: leftValue, After: leftValue, Change: EffectDeltaChangeChanged},
+			{Target: commonPath, Site: "caller.effect.common", Kind: effectdelta.Mutation, Value: effectdelta.Value{Before: leftValue, After: leftValue, Change: effectdelta.ChangeChanged}},
+			{Target: leftOnly, Site: "caller.effect.left", Kind: effectdelta.Mutation, Value: effectdelta.Value{Before: leftValue, After: leftValue, Change: effectdelta.ChangeChanged}},
 		},
 	}}
 	right := Summary{NormalReturnFacts: NormalReturnFacts{
@@ -157,10 +158,8 @@ func TestNormalReturnFactsJoinUsesStateLaneSemantics(t *testing.T) {
 		EffectDeltas: []EffectDelta{{
 			Target: commonPath,
 			Site:   "caller.effect.common",
-			Kind:   EffectDeltaMutation,
-			Before: rightValue,
-			After:  rightValue,
-			Change: EffectDeltaChangeNone,
+			Kind:   effectdelta.Mutation,
+			Value:  effectdelta.Value{Before: rightValue, After: rightValue, Change: effectdelta.ChangeNone},
 		}},
 	}}
 
@@ -198,8 +197,8 @@ func TestNormalReturnFactsJoinUsesStateLaneSemantics(t *testing.T) {
 		t.Fatalf("EffectDeltas = %#v, want common joined and left-only retained", got.EffectDeltas)
 	}
 	if common := findEffectDelta(got.EffectDeltas, "caller.effect.common"); common == nil ||
-		!presence.Equal(product.PresenceOf(common.Before), presence.Maybe()) ||
-		common.Change != EffectDeltaChangeUnknown {
+		!presence.Equal(product.PresenceOf(common.Value.Before), presence.Maybe()) ||
+		common.Value.Change != effectdelta.ChangeUnknown {
 		t.Fatalf("common effect delta did not pointwise join: %#v", common)
 	}
 	if leftOnlyDelta := findEffectDelta(got.EffectDeltas, "caller.effect.left"); leftOnlyDelta == nil ||
@@ -263,7 +262,7 @@ func findDynamicIndexFact(facts []DynamicIndexFact, site string) *DynamicIndexFa
 
 func findEffectDelta(deltas []EffectDelta, site string) *EffectDelta {
 	for i := range deltas {
-		if deltas[i].Site == site {
+		if string(deltas[i].Site) == site {
 			return &deltas[i]
 		}
 	}

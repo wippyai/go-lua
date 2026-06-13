@@ -5,27 +5,28 @@ import (
 
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
-	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	effectdelta "github.com/wippyai/go-lua/analysis/engine/state/effectdelta"
 )
 
 type effectDeltaKey struct {
 	target pathdom.PathKey
-	site   string
-	kind   EffectDeltaKind
+	site   effectdelta.Site
+	kind   effectdelta.Kind
 }
 
 func normalizeEffectDeltas(reg *axis.Registry, in []EffectDelta) []EffectDelta {
 	if len(in) == 0 {
 		return nil
 	}
+	domain := effectdelta.Domain(reg)
 	merged := make(map[effectDeltaKey]EffectDelta, len(in))
-	bottom := effectDeltaBottom(reg)
+	bottom := domain.Bottom()
 	for _, delta := range in {
 		if !delta.Target.IsPlaceholder() || delta.Site == "" || delta.Kind == 0 {
 			continue
 		}
 		delta.Target = cloneSummaryPath(delta.Target)
-		if effectDeltaEqual(reg, delta, bottom) {
+		if domain.Equal(delta.Value, bottom) {
 			continue
 		}
 		key := effectDeltaKeyOf(delta)
@@ -67,7 +68,7 @@ func effectDeltasEqual(reg *axis.Registry, a, b []EffectDelta) bool {
 func effectDeltasLessOrEq(reg *axis.Registry, a, b []EffectDelta) bool {
 	aMap := effectDeltasMap(reg, a)
 	bMap := effectDeltasMap(reg, b)
-	bottom := effectDeltaBottom(reg)
+	bottom := EffectDelta{Value: effectdelta.Domain(reg).Bottom()}
 	for key, av := range aMap {
 		bv, ok := bMap[key]
 		if !ok {
@@ -134,24 +135,12 @@ func combineEffectDeltaMaps(
 	return sortedEffectDeltas(out)
 }
 
-func effectDeltaBottom(reg *axis.Registry) EffectDelta {
-	return EffectDelta{
-		Before: product.Bottom(reg),
-		After:  product.Bottom(reg),
-		Change: EffectDeltaChangeBottom,
-	}
-}
-
 func effectDeltaEqual(reg *axis.Registry, a, b EffectDelta) bool {
-	return product.Equal(reg, a.Before, b.Before) &&
-		product.Equal(reg, a.After, b.After) &&
-		a.Change == b.Change
+	return effectdelta.Domain(reg).Equal(a.Value, b.Value)
 }
 
 func effectDeltaLessOrEq(reg *axis.Registry, a, b EffectDelta) bool {
-	return product.LessOrEq(reg, a.Before, b.Before) &&
-		product.LessOrEq(reg, a.After, b.After) &&
-		effectDeltaChangeLessOrEq(a.Change, b.Change)
+	return effectdelta.Domain(reg).LessOrEq(a.Value, b.Value)
 }
 
 func joinEffectDelta(reg *axis.Registry, a, b EffectDelta) EffectDelta {
@@ -159,9 +148,7 @@ func joinEffectDelta(reg *axis.Registry, a, b EffectDelta) EffectDelta {
 		Target: a.Target,
 		Site:   a.Site,
 		Kind:   a.Kind,
-		Before: product.Join(reg, a.Before, b.Before),
-		After:  product.Join(reg, a.After, b.After),
-		Change: effectDeltaChangeJoin(a.Change, b.Change),
+		Value:  effectdelta.Domain(reg).Join(a.Value, b.Value),
 	}
 }
 
@@ -170,27 +157,8 @@ func widenEffectDelta(reg *axis.Registry, prev, next EffectDelta) EffectDelta {
 		Target: prev.Target,
 		Site:   prev.Site,
 		Kind:   prev.Kind,
-		Before: product.Widen(reg, prev.Before, next.Before),
-		After:  product.Widen(reg, prev.After, next.After),
-		Change: effectDeltaChangeJoin(prev.Change, next.Change),
+		Value:  effectdelta.Domain(reg).Widen(prev.Value, next.Value),
 	}
-}
-
-func effectDeltaChangeLessOrEq(a, b EffectDeltaChange) bool {
-	return a == b || a == EffectDeltaChangeBottom || b == EffectDeltaChangeUnknown
-}
-
-func effectDeltaChangeJoin(a, b EffectDeltaChange) EffectDeltaChange {
-	if a == b {
-		return a
-	}
-	if a == EffectDeltaChangeBottom {
-		return b
-	}
-	if b == EffectDeltaChangeBottom {
-		return a
-	}
-	return EffectDeltaChangeUnknown
 }
 
 func effectDeltaKeyOf(delta EffectDelta) effectDeltaKey {

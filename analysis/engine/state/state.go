@@ -8,6 +8,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	effectdelta "github.com/wippyai/go-lua/analysis/engine/state/effectdelta"
 	"github.com/wippyai/go-lua/analysis/engine/state/escapeplacement"
 )
 
@@ -22,7 +23,7 @@ type State struct {
 	dynamicIndex            map[DynamicIndexKey]DynamicIndexFact
 	heapTableIdentity       map[identity.ID]HeapTableObject
 	branchProofs            map[BranchProof]struct{}
-	effectDeltas            map[EffectDeltaKey]EffectDelta
+	effectDeltas            map[effectdelta.Key]effectdelta.Value
 	channelSelect           map[ChannelSelectFact]struct{}
 	escapePlacement         map[identity.ID]escapeplacement.Value
 	pathStaticMembersBottom bool
@@ -47,7 +48,7 @@ func (s State) Clone() State {
 		dynamicIndex:            cloneDynamicIndexMap(s.dynamicIndex),
 		heapTableIdentity:       cloneHeapTableObjectMap(s.heapTableIdentity),
 		branchProofs:            cloneBranchProofSet(s.branchProofs),
-		effectDeltas:            cloneEffectDeltaMap(s.effectDeltas),
+		effectDeltas:            effectdelta.CloneMap(s.effectDeltas),
 		channelSelect:           cloneChannelSelectSet(s.channelSelect),
 		escapePlacement:         escapeplacement.CloneMap(s.escapePlacement),
 		pathStaticMembersBottom: s.pathStaticMembersBottom,
@@ -141,7 +142,7 @@ func Domain(reg *axis.Registry) lattice.Lattice[State] {
 		dynamicIndex:      dynamicIndexMapDomain(reg),
 		heapTableIdentity: heapTableIdentityMapDomain(reg),
 		branchProofs:      mustSetDomain[BranchProof](),
-		effectDeltas:      effectDeltaMapDomain(reg),
+		effectDeltas:      effectdelta.MapDomain(reg),
 		channelSelect:     mustSetDomain[ChannelSelectFact](),
 		escapePlacement:   escapeplacement.MapDomain(),
 	}
@@ -221,7 +222,7 @@ type domainOps struct {
 	dynamicIndex      lattice.Lattice[map[DynamicIndexKey]DynamicIndexFact]
 	heapTableIdentity lattice.Lattice[map[identity.ID]HeapTableObject]
 	branchProofs      lattice.Lattice[mustSetLane[BranchProof]]
-	effectDeltas      lattice.Lattice[map[EffectDeltaKey]EffectDelta]
+	effectDeltas      lattice.Lattice[map[effectdelta.Key]effectdelta.Value]
 	channelSelect     lattice.Lattice[mustSetLane[ChannelSelectFact]]
 	escapePlacement   lattice.Lattice[map[identity.ID]escapeplacement.Value]
 }
@@ -268,7 +269,7 @@ func (o domainOps) branchProofLane(s State) mustSetLane[BranchProof] {
 	}
 }
 
-func (o domainOps) effectDeltaLane(s State) map[EffectDeltaKey]EffectDelta {
+func (o domainOps) effectDeltaLane(s State) map[effectdelta.Key]effectdelta.Value {
 	if s.effectDeltasTop {
 		return o.effectDeltas.Top()
 	}
@@ -296,7 +297,7 @@ func (o domainOps) fromLanes(
 	dynamicIndex map[DynamicIndexKey]DynamicIndexFact,
 	heapTableIdentity map[identity.ID]HeapTableObject,
 	branchProofs mustSetLane[BranchProof],
-	effectDeltas map[EffectDeltaKey]EffectDelta,
+	effectDeltas map[effectdelta.Key]effectdelta.Value,
 	channelSelect mustSetLane[ChannelSelectFact],
 	escapePlacement map[identity.ID]escapeplacement.Value,
 ) State {

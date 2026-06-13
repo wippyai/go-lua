@@ -4,6 +4,7 @@ import (
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/state"
+	effectdelta "github.com/wippyai/go-lua/analysis/engine/state/effectdelta"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/engine/visibility"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
@@ -99,19 +100,11 @@ func applyCallOutcomeFacts(
 		if targetKey == "" {
 			continue
 		}
-		kind, ok := callEffectDeltaKind(delta.Kind)
-		if !ok {
-			continue
-		}
-		out = out.WriteEffectDelta(ctx.Registry, state.EffectDeltaKey{
+		out = out.WriteEffectDelta(effectdelta.Key{
 			Target: targetKey,
-			Site:   state.EffectSite(delta.Site),
-			Kind:   kind,
-		}, state.EffectDelta{
-			Before: delta.Before,
-			After:  delta.After,
-			Change: callEffectDeltaChange(delta.Change),
-		})
+			Site:   delta.Site,
+			Kind:   delta.Kind,
+		}, delta.Value)
 	}
 	return out
 }
@@ -326,31 +319,5 @@ func callChannelSelectKind(kind CallChannelSelectFactKind) (state.ChannelSelectF
 		return state.ChannelSelectFactCase, true
 	default:
 		return 0, false
-	}
-}
-
-func callEffectDeltaKind(kind CallEffectDeltaKind) (state.EffectDeltaKind, bool) {
-	switch kind {
-	case CallEffectDeltaMutation:
-		return state.EffectDeltaMutation, true
-	case CallEffectDeltaEscape:
-		return state.EffectDeltaEscape, true
-	case CallEffectDeltaCall:
-		return state.EffectDeltaCall, true
-	default:
-		return 0, false
-	}
-}
-
-func callEffectDeltaChange(change CallEffectDeltaChange) state.EffectDeltaChange {
-	switch change {
-	case CallEffectDeltaChangeNone:
-		return state.EffectDeltaChangeNone
-	case CallEffectDeltaChangeChanged:
-		return state.EffectDeltaChangeChanged
-	case CallEffectDeltaChangeUnknown:
-		return state.EffectDeltaChangeUnknown
-	default:
-		return state.EffectDeltaChangeBottom
 	}
 }

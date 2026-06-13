@@ -5,6 +5,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	effectdelta "github.com/wippyai/go-lua/analysis/engine/state/effectdelta"
 )
 
 // NormalReturnFacts is the summary-local payload lane for facts that hold on a
@@ -85,33 +86,12 @@ type ChannelSelectFact struct {
 	Index  int
 }
 
-// EffectDeltaKind classifies a summary-local effect delta.
-type EffectDeltaKind uint8
-
-const (
-	EffectDeltaMutation EffectDeltaKind = iota + 1
-	EffectDeltaEscape
-	EffectDeltaCall
-)
-
-// EffectDeltaChange summarizes whether an effect changed its target.
-type EffectDeltaChange uint8
-
-const (
-	EffectDeltaChangeBottom EffectDeltaChange = iota
-	EffectDeltaChangeNone
-	EffectDeltaChangeChanged
-	EffectDeltaChangeUnknown
-)
-
 // EffectDelta records a pointwise effect delta for a placeholder target path.
 type EffectDelta struct {
 	Target pathdom.Path
-	Site   string
-	Kind   EffectDeltaKind
-	Before product.Value
-	After  product.Value
-	Change EffectDeltaChange
+	Site   effectdelta.Site
+	Kind   effectdelta.Kind
+	Value  effectdelta.Value
 }
 
 func normalizeNormalReturnFacts(reg *axis.Registry, in NormalReturnFacts) NormalReturnFacts {

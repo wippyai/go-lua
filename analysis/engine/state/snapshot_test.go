@@ -7,6 +7,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/standard"
+	effectdelta "github.com/wippyai/go-lua/analysis/engine/state/effectdelta"
 )
 
 func TestSnapshotsCloneFiniteLanes(t *testing.T) {
@@ -18,7 +19,7 @@ func TestSnapshotsCloneFiniteLanes(t *testing.T) {
 	pathKey := pathdom.PathKey("sym130@1.path")
 	memberKey := pathdom.PathKey("sym130@1.member")
 	dynamicKey := DynamicIndexKey{Table: pathdom.PathKey("sym130@1.table"), Site: "dyn"}
-	effectKey := EffectDeltaKey{Target: pathdom.PathKey("sym130@1.table"), Site: "effect", Kind: EffectDeltaMutation}
+	effectKey := effectdelta.Key{Target: pathdom.PathKey("sym130@1.table"), Site: "effect", Kind: effectdelta.Mutation}
 	proof := BranchProof{Kind: BranchProofPathPresence, Path: pathKey, Presence: presence.Present()}
 	otherProof := BranchProof{Kind: BranchProofPathNotEqual, Path: pathKey, Other: memberKey}
 	selectFact := ChannelSelectFact{Select: "select-snapshot", Kind: ChannelSelectFactSelect, Result: pathKey}
@@ -35,8 +36,8 @@ func TestSnapshotsCloneFiniteLanes(t *testing.T) {
 		Value:       absent,
 		Admission:   DynamicIndexAdmissionRejected,
 	}
-	effectDelta := EffectDelta{Before: present, After: present, Change: EffectDeltaChangeChanged}
-	otherEffectDelta := EffectDelta{Before: absent, After: absent, Change: EffectDeltaChangeNone}
+	effectDelta := effectdelta.Value{Before: present, After: present, Change: effectdelta.ChangeChanged}
+	otherEffectDelta := effectdelta.Value{Before: absent, After: absent, Change: effectdelta.ChangeNone}
 
 	s := State{}.
 		WritePathKey(reg, pathKey, present).
@@ -44,7 +45,7 @@ func TestSnapshotsCloneFiniteLanes(t *testing.T) {
 		WriteDynamicIndexFact(reg, dynamicKey, dynamicFact).
 		AddBranchProof(proof).
 		AddChannelSelectFact(selectFact).
-		WriteEffectDelta(reg, effectKey, effectDelta)
+		WriteEffectDelta(effectKey, effectDelta)
 
 	pathSnapshot := s.PathRefinementsSnapshot()
 	if pathSnapshot.Top || len(pathSnapshot.Refinements) != 1 {
@@ -111,10 +112,10 @@ func TestSnapshotsCloneFiniteLanes(t *testing.T) {
 		t.Fatalf("effect-delta snapshot = %#v, want one finite delta", effectSnapshot)
 	}
 	effectSnapshot.Deltas[effectKey] = otherEffectDelta
-	if got := s.ReadEffectDelta(reg, effectKey); !effectDeltaDomain(reg).Equal(got, effectDelta) {
+	if got := s.ReadEffectDelta(effectKey); !effectdelta.Domain(reg).Equal(got, effectDelta) {
 		t.Fatalf("effect-delta snapshot mutation changed state to %#v", got)
 	}
-	if got := s.EffectDeltasSnapshot().Deltas[effectKey]; !effectDeltaDomain(reg).Equal(got, effectDelta) {
+	if got := s.EffectDeltasSnapshot().Deltas[effectKey]; !effectdelta.Domain(reg).Equal(got, effectDelta) {
 		t.Fatalf("fresh effect-delta snapshot = %#v, want original delta", got)
 	}
 }

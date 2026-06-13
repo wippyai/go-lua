@@ -12,6 +12,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/standard"
+	effectdelta "github.com/wippyai/go-lua/analysis/engine/state/effectdelta"
 	"github.com/wippyai/go-lua/analysis/engine/state/escapeplacement"
 	"github.com/wippyai/go-lua/analysis/symbol"
 )
@@ -240,7 +241,7 @@ func TestWritesFromStateBottomProduceReachableState(t *testing.T) {
 	dynamicKey := DynamicIndexKey{Table: pathdom.PathKey("sym65@1.table"), Site: "dyn"}
 	heapID := identity.ID{Kind: "table", Site: "bottom-write", Index: 1}
 	proof := BranchProof{Kind: BranchProofPathPresence, Path: pathKey, Presence: presence.Present()}
-	effectKey := EffectDeltaKey{Target: pathdom.PathKey("sym65@1.table"), Site: "effect", Kind: EffectDeltaMutation}
+	effectKey := effectdelta.Key{Target: pathdom.PathKey("sym65@1.table"), Site: "effect", Kind: effectdelta.Mutation}
 	channel := ChannelSelectFact{Select: "select-bottom", Kind: ChannelSelectFactSelect, Result: pathKey}
 	escapeID := identity.ID{Kind: "table", Site: "escape-bottom", Index: 1}
 	present := presentValue(reg)
@@ -251,7 +252,7 @@ func TestWritesFromStateBottomProduceReachableState(t *testing.T) {
 		Value:       present,
 		Admission:   DynamicIndexAdmissionAdmitted,
 	}
-	effectDelta := EffectDelta{Before: present, After: present, Change: EffectDeltaChangeChanged}
+	effectDelta := effectdelta.Value{Before: present, After: present, Change: effectdelta.ChangeChanged}
 
 	cases := []struct {
 		name  string
@@ -263,7 +264,7 @@ func TestWritesFromStateBottomProduceReachableState(t *testing.T) {
 		{"dynamic-index", bottom.WriteDynamicIndexFact(reg, dynamicKey, dynamicFact)},
 		{"heap-table", bottom.WriteHeapTableObject(reg, heapID, HeapTableObject{Root: present})},
 		{"branch-proof", bottom.AddBranchProof(proof)},
-		{"effect-delta", bottom.WriteEffectDelta(reg, effectKey, effectDelta)},
+		{"effect-delta", bottom.WriteEffectDelta(effectKey, effectDelta)},
 		{"channel-select", bottom.AddChannelSelectFact(channel)},
 		{"escape-placement", bottom.WriteEscapePlacement(escapeID, escapeplacement.Stack)},
 	}
@@ -555,31 +556,30 @@ func TestEquivalentPathKeysFollowEqualityProofs(t *testing.T) {
 
 func TestEffectDeltasPointwiseJoin(t *testing.T) {
 	reg := standard.Registry()
-	valueDomain := product.Domain(reg)
 	stateDomain := Domain(reg)
-	common := EffectDeltaKey{Target: pathdom.PathKey("sym110@1.table"), Site: "call", Kind: EffectDeltaMutation}
-	leftOnly := EffectDeltaKey{Target: pathdom.PathKey("sym110@1.left"), Site: "call", Kind: EffectDeltaMutation}
-	presentDelta := EffectDelta{Before: presentValue(reg), After: presentValue(reg), Change: EffectDeltaChangeChanged}
-	absentDelta := EffectDelta{Before: absentValue(reg), After: absentValue(reg), Change: EffectDeltaChangeNone}
+	common := effectdelta.Key{Target: pathdom.PathKey("sym110@1.table"), Site: "call", Kind: effectdelta.Mutation}
+	leftOnly := effectdelta.Key{Target: pathdom.PathKey("sym110@1.left"), Site: "call", Kind: effectdelta.Mutation}
+	presentDelta := effectdelta.Value{Before: presentValue(reg), After: presentValue(reg), Change: effectdelta.ChangeChanged}
+	absentDelta := effectdelta.Value{Before: absentValue(reg), After: absentValue(reg), Change: effectdelta.ChangeNone}
 
-	if got := (State{}).ReadEffectDelta(reg, common); !effectDeltaDomain(reg).Equal(got, effectDeltaBottom(reg)) {
+	if got := (State{}).ReadEffectDelta(common); !effectdelta.Domain(reg).Equal(got, effectdelta.Bottom(reg)) {
 		t.Fatalf("empty effect delta = %#v, want bottom", got)
 	}
-	if !stateDomain.Equal(State{}.WriteEffectDelta(reg, common, presentDelta), State{}.WriteEffectDelta(reg, common, presentDelta)) {
+	if !stateDomain.Equal(State{}.WriteEffectDelta(common, presentDelta), State{}.WriteEffectDelta(common, presentDelta)) {
 		t.Fatalf("equal effect deltas compare different")
 	}
 
-	left := State{}.WriteEffectDelta(reg, common, presentDelta).WriteEffectDelta(reg, leftOnly, presentDelta)
-	right := State{}.WriteEffectDelta(reg, common, absentDelta)
+	left := State{}.WriteEffectDelta(common, presentDelta).WriteEffectDelta(leftOnly, presentDelta)
+	right := State{}.WriteEffectDelta(common, absentDelta)
 	if !stateDomain.Equal(stateDomain.Join(stateDomain.Bottom(), left), left) {
 		t.Fatalf("state bottom should be join identity for effect deltas")
 	}
 	joined := stateDomain.Join(left, right)
-	got := joined.ReadEffectDelta(reg, common)
-	if !valueDomain.Equal(got.Before, product.Top()) || !valueDomain.Equal(got.After, product.Top()) || got.Change != EffectDeltaChangeUnknown {
+	got := joined.ReadEffectDelta(common)
+	if !effectdelta.Domain(reg).Equal(got, effectdelta.Top()) {
 		t.Fatalf("joined effect delta = %#v, want joined values and unknown change", got)
 	}
-	if got := joined.ReadEffectDelta(reg, leftOnly); !effectDeltaDomain(reg).Equal(got, presentDelta) {
+	if got := joined.ReadEffectDelta(leftOnly); !effectdelta.Domain(reg).Equal(got, presentDelta) {
 		t.Fatalf("disjoint effect delta did not survive pointwise join: %#v", got)
 	}
 	if widened := stateDomain.Widen(left, right); !stateDomain.Equal(widened, joined) {
@@ -588,11 +588,11 @@ func TestEffectDeltasPointwiseJoin(t *testing.T) {
 	if !stateDomain.LessOrEq(left, joined) || stateDomain.LessOrEq(joined, left) {
 		t.Fatalf("effect delta order should be pointwise")
 	}
-	clone := left.Clone().WriteEffectDelta(reg, common, absentDelta)
-	if got := left.ReadEffectDelta(reg, common); !effectDeltaDomain(reg).Equal(got, presentDelta) {
+	clone := left.Clone().WriteEffectDelta(common, absentDelta)
+	if got := left.ReadEffectDelta(common); !effectdelta.Domain(reg).Equal(got, presentDelta) {
 		t.Fatalf("effect delta clone write mutated original: %#v", got)
 	}
-	if got := clone.ReadEffectDelta(reg, common); !effectDeltaDomain(reg).Equal(got, absentDelta) {
+	if got := clone.ReadEffectDelta(common); !effectdelta.Domain(reg).Equal(got, absentDelta) {
 		t.Fatalf("effect delta clone write = %#v, want absent delta", got)
 	}
 }
@@ -867,7 +867,7 @@ func TestTopLanesReadTopAndRejectFiniteUpdates(t *testing.T) {
 	pathKey := pathdom.PathKey("sym50@1.field")
 	dynamicKey := DynamicIndexKey{Table: pathdom.PathKey("sym50@1.table"), Site: "dyn"}
 	heapID := identity.ID{Kind: "table", Site: "top", Index: 1}
-	effectKey := EffectDeltaKey{Target: pathdom.PathKey("sym50@1.table"), Site: "effect", Kind: EffectDeltaMutation}
+	effectKey := effectdelta.Key{Target: pathdom.PathKey("sym50@1.table"), Site: "effect", Kind: effectdelta.Mutation}
 	escapeID := identity.ID{Kind: "table", Site: "escape-top", Index: 1}
 	present := presentValue(reg)
 	dynamicFact := DynamicIndexFact{
@@ -876,7 +876,7 @@ func TestTopLanesReadTopAndRejectFiniteUpdates(t *testing.T) {
 		Value:       present,
 		Admission:   DynamicIndexAdmissionAdmitted,
 	}
-	effectDelta := EffectDelta{Before: present, After: present, Change: EffectDeltaChangeChanged}
+	effectDelta := effectdelta.Value{Before: present, After: present, Change: effectdelta.ChangeChanged}
 
 	if got := top.ReadValue(reg, slot); !valueDomain.Equal(got, product.Top()) {
 		t.Fatalf("top value read = %s, want top", formatValue(reg, got))
@@ -893,7 +893,7 @@ func TestTopLanesReadTopAndRejectFiniteUpdates(t *testing.T) {
 	if got := top.ReadHeapTableObject(reg, heapID); !heapTableObjectDomain(reg).Equal(got, heapTableObjectTop()) {
 		t.Fatalf("top heap-object read = %#v, want top", got)
 	}
-	if got := top.ReadEffectDelta(reg, effectKey); !effectDeltaDomain(reg).Equal(got, effectDeltaTop()) {
+	if got := top.ReadEffectDelta(effectKey); !effectdelta.Domain(reg).Equal(got, effectdelta.Top()) {
 		t.Fatalf("top effect-delta read = %#v, want top", got)
 	}
 	if got := top.ReadEscapePlacement(escapeID); got != escapeplacement.Unknown {
@@ -949,7 +949,7 @@ func TestTopLanesReadTopAndRejectFiniteUpdates(t *testing.T) {
 		top.WriteHeapTableObject(reg, heapID, HeapTableObject{Root: present})
 	})
 	requirePanic(t, func() {
-		top.WriteEffectDelta(reg, effectKey, effectDelta)
+		top.WriteEffectDelta(effectKey, effectDelta)
 	})
 	requirePanic(t, func() {
 		top.WriteEscapePlacement(escapeID, escapeplacement.Stack)

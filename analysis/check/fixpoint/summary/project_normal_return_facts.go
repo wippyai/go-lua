@@ -7,6 +7,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/engine/state"
+	effectdelta "github.com/wippyai/go-lua/analysis/engine/state/effectdelta"
 )
 
 func projectNormalReturnFacts(reg *axis.Registry, result ResultReader, exit state.State) NormalReturnFacts {
@@ -148,24 +149,14 @@ func projectNormalReturnFacts(reg *axis.Registry, result ResultReader, exit stat
 			if !ok {
 				continue
 			}
-			kind, ok := projectEffectDeltaKind(stateKey.Kind)
-			if !ok {
-				continue
-			}
-			change, ok := projectEffectDeltaChange(stateDelta.Change)
-			if !ok {
-				continue
-			}
 			delta := EffectDelta{
 				Target: target,
-				Site:   string(stateKey.Site),
-				Kind:   kind,
-				Before: stateDelta.Before,
-				After:  stateDelta.After,
-				Change: change,
+				Site:   stateKey.Site,
+				Kind:   stateKey.Kind,
+				Value:  stateDelta,
 			}
-			if effectDeltaEqual(reg, delta, effectDeltaBottom(reg)) ||
-				effectDeltaIsTop(reg, delta) {
+			if effectDeltaEqual(reg, delta, EffectDelta{Value: effectdelta.Bottom(reg)}) ||
+				effectDeltaIsTop(delta) {
 				continue
 			}
 			out.EffectDeltas = append(out.EffectDeltas, delta)
@@ -237,10 +228,8 @@ func dynamicIndexFactIsTop(reg *axis.Registry, fact DynamicIndexFact) bool {
 		fact.Admission == DynamicIndexAdmissionUnknown
 }
 
-func effectDeltaIsTop(reg *axis.Registry, delta EffectDelta) bool {
-	return product.Equal(reg, delta.Before, product.Top()) &&
-		product.Equal(reg, delta.After, product.Top()) &&
-		delta.Change == EffectDeltaChangeUnknown
+func effectDeltaIsTop(delta EffectDelta) bool {
+	return delta.Value == effectdelta.Top()
 }
 
 func projectDynamicIndexAdmission(admission state.DynamicIndexAdmission) (DynamicIndexAdmission, bool) {
@@ -281,33 +270,5 @@ func projectChannelSelectKind(kind state.ChannelSelectFactKind) (ChannelSelectFa
 		return ChannelSelectFactCase, true
 	default:
 		return 0, false
-	}
-}
-
-func projectEffectDeltaKind(kind state.EffectDeltaKind) (EffectDeltaKind, bool) {
-	switch kind {
-	case state.EffectDeltaMutation:
-		return EffectDeltaMutation, true
-	case state.EffectDeltaEscape:
-		return EffectDeltaEscape, true
-	case state.EffectDeltaCall:
-		return EffectDeltaCall, true
-	default:
-		return 0, false
-	}
-}
-
-func projectEffectDeltaChange(change state.EffectDeltaChange) (EffectDeltaChange, bool) {
-	switch change {
-	case state.EffectDeltaChangeBottom:
-		return EffectDeltaChangeBottom, true
-	case state.EffectDeltaChangeNone:
-		return EffectDeltaChangeNone, true
-	case state.EffectDeltaChangeChanged:
-		return EffectDeltaChangeChanged, true
-	case state.EffectDeltaChangeUnknown:
-		return EffectDeltaChangeUnknown, true
-	default:
-		return EffectDeltaChangeBottom, false
 	}
 }

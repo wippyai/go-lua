@@ -136,10 +136,8 @@ func outcomeFromSummary(got summary.Summary, usefulNormalReturnParam func(int) b
 			out.EffectDeltas[i] = factapply.CallEffectDelta{
 				Target: copyPath(delta.Target),
 				Site:   delta.Site,
-				Kind:   effectDeltaKind(delta.Kind),
-				Before: delta.Before,
-				After:  delta.After,
-				Change: effectDeltaChange(delta.Change),
+				Kind:   delta.Kind,
+				Value:  delta.Value,
 			}
 		}
 	}
@@ -269,32 +267,6 @@ func channelSelectKind(kind summary.ChannelSelectFactKind) factapply.CallChannel
 		return factapply.CallChannelSelectFactCase
 	default:
 		return 0
-	}
-}
-
-func effectDeltaKind(kind summary.EffectDeltaKind) factapply.CallEffectDeltaKind {
-	switch kind {
-	case summary.EffectDeltaMutation:
-		return factapply.CallEffectDeltaMutation
-	case summary.EffectDeltaEscape:
-		return factapply.CallEffectDeltaEscape
-	case summary.EffectDeltaCall:
-		return factapply.CallEffectDeltaCall
-	default:
-		return 0
-	}
-}
-
-func effectDeltaChange(change summary.EffectDeltaChange) factapply.CallEffectDeltaChange {
-	switch change {
-	case summary.EffectDeltaChangeNone:
-		return factapply.CallEffectDeltaChangeNone
-	case summary.EffectDeltaChangeChanged:
-		return factapply.CallEffectDeltaChangeChanged
-	case summary.EffectDeltaChangeUnknown:
-		return factapply.CallEffectDeltaChangeUnknown
-	default:
-		return factapply.CallEffectDeltaChangeBottom
 	}
 }
 

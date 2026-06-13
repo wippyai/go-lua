@@ -17,6 +17,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	sourcevalue "github.com/wippyai/go-lua/analysis/engine/sourcevalue"
 	"github.com/wippyai/go-lua/analysis/engine/state"
+	effectdelta "github.com/wippyai/go-lua/analysis/engine/state/effectdelta"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/symbol"
@@ -88,10 +89,8 @@ func TestOutcomeProviderMapsSummaryReturnsAndNormalReturnFacts(t *testing.T) {
 					{
 						Target: path.NewPlaceholder(0).Field("items"),
 						Site:   "summary.effect",
-						Kind:   summary.EffectDeltaMutation,
-						Before: present,
-						After:  absent,
-						Change: summary.EffectDeltaChangeChanged,
+						Kind:   effectdelta.Mutation,
+						Value:  effectdelta.Value{Before: present, After: absent, Change: effectdelta.ChangeChanged},
 					},
 				},
 			},
@@ -137,12 +136,12 @@ func TestOutcomeProviderMapsSummaryReturnsAndNormalReturnFacts(t *testing.T) {
 		t.Fatalf("channel selects = %#v, want mapped summary channel select", got.ChannelSelects)
 	}
 	if len(got.EffectDeltas) != 1 ||
-		got.EffectDeltas[0].Kind != factapply.CallEffectDeltaMutation ||
+		got.EffectDeltas[0].Kind != effectdelta.Mutation ||
 		got.EffectDeltas[0].Site != "summary.effect" ||
 		!got.EffectDeltas[0].Target.Equal(path.NewPlaceholder(0).Field("items")) ||
-		!product.Equal(reg, got.EffectDeltas[0].Before, present) ||
-		!product.Equal(reg, got.EffectDeltas[0].After, absent) ||
-		got.EffectDeltas[0].Change != factapply.CallEffectDeltaChangeChanged {
+		!product.Equal(reg, got.EffectDeltas[0].Value.Before, present) ||
+		!product.Equal(reg, got.EffectDeltas[0].Value.After, absent) ||
+		got.EffectDeltas[0].Value.Change != effectdelta.ChangeChanged {
 		t.Fatalf("effect deltas = %#v, want mapped summary effect delta", got.EffectDeltas)
 	}
 }

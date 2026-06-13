@@ -6,6 +6,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/state"
+	effectdelta "github.com/wippyai/go-lua/analysis/engine/state/effectdelta"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 )
@@ -150,33 +151,12 @@ type CallChannelSelectFact struct {
 	Index  int
 }
 
-// CallEffectDeltaKind classifies a normal-return effect delta.
-type CallEffectDeltaKind uint8
-
-const (
-	CallEffectDeltaMutation CallEffectDeltaKind = iota + 1
-	CallEffectDeltaEscape
-	CallEffectDeltaCall
-)
-
-// CallEffectDeltaChange summarizes whether an effect changed its target.
-type CallEffectDeltaChange uint8
-
-const (
-	CallEffectDeltaChangeBottom CallEffectDeltaChange = iota
-	CallEffectDeltaChangeNone
-	CallEffectDeltaChangeChanged
-	CallEffectDeltaChangeUnknown
-)
-
 // CallEffectDelta records a normal-return effect delta for a placeholder path.
 type CallEffectDelta struct {
 	Target pathdom.Path
-	Site   string
-	Kind   CallEffectDeltaKind
-	Before product.Value
-	After  product.Value
-	Change CallEffectDeltaChange
+	Site   effectdelta.Site
+	Kind   effectdelta.Kind
+	Value  effectdelta.Value
 }
 
 // CallReturnConditionRefinement records a parameter-relative value refinement

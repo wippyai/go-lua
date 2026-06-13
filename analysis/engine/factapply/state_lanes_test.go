@@ -9,6 +9,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/standard"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/state"
+	effectdelta "github.com/wippyai/go-lua/analysis/engine/state/effectdelta"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/engine/visibility"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
@@ -499,10 +500,12 @@ func TestFactsNodeTransferCallOutcomeRebasesStateLaneFacts(t *testing.T) {
 					{
 						Target: pathdom.NewPlaceholder(0).Field("items"),
 						Site:   "callee.effect",
-						Kind:   CallEffectDeltaMutation,
-						Before: present,
-						After:  absent,
-						Change: CallEffectDeltaChangeChanged,
+						Kind:   effectdelta.Mutation,
+						Value: effectdelta.Value{
+							Before: present,
+							After:  absent,
+							Change: effectdelta.ChangeChanged,
+						},
 					},
 				},
 			}
@@ -542,15 +545,15 @@ func TestFactsNodeTransferCallOutcomeRebasesStateLaneFacts(t *testing.T) {
 		t.Fatalf("channel-select fact missing: %#v", selectFact)
 	}
 
-	effectKey := state.EffectDeltaKey{
+	effectKey := effectdelta.Key{
 		Target: pathdom.PathKey("sym505@1.items"),
-		Site:   state.EffectSite("callee.effect"),
-		Kind:   state.EffectDeltaMutation,
+		Site:   "callee.effect",
+		Kind:   effectdelta.Mutation,
 	}
-	gotEffect := got.ReadEffectDelta(reg, effectKey)
+	gotEffect := got.ReadEffectDelta(effectKey)
 	if !product.Equal(reg, gotEffect.Before, present) ||
 		!product.Equal(reg, gotEffect.After, absent) ||
-		gotEffect.Change != state.EffectDeltaChangeChanged {
+		gotEffect.Change != effectdelta.ChangeChanged {
 		t.Fatalf("effect delta = %#v, want rebased delta", gotEffect)
 	}
 }

@@ -5,6 +5,7 @@ import (
 
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	effectdelta "github.com/wippyai/go-lua/analysis/engine/state/effectdelta"
 )
 
 type PathRefinementsSnapshot struct {
@@ -96,7 +97,7 @@ func (s State) ChannelSelectFactsSnapshot() ChannelSelectFactsSnapshot {
 
 type EffectDeltasSnapshot struct {
 	Top    bool
-	Deltas map[EffectDeltaKey]EffectDelta
+	Deltas map[effectdelta.Key]effectdelta.Value
 }
 
 // EffectDeltasSnapshot returns finite effect deltas unless the lane is top.
@@ -105,7 +106,7 @@ func (s State) EffectDeltasSnapshot() EffectDeltasSnapshot {
 	if s.effectDeltasTop {
 		return EffectDeltasSnapshot{Top: true}
 	}
-	return EffectDeltasSnapshot{Deltas: cloneEffectDeltaMap(s.effectDeltas)}
+	return EffectDeltasSnapshot{Deltas: effectdelta.CloneMap(s.effectDeltas)}
 }
 
 func branchProofsFromSet(in map[BranchProof]struct{}) []BranchProof {
