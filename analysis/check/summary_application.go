@@ -8,7 +8,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/ref"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/summary"
 	"github.com/wippyai/go-lua/analysis/domain/path"
-	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/lua/pathexpr"
 	"github.com/wippyai/go-lua/analysis/symbol"
@@ -178,11 +177,14 @@ func collectFunctionPathTargetsInTable(out map[*ast.FunctionExpr]path.Path, root
 	}
 	arrayIndex := 0
 	for _, field := range table.Fields {
-		suffix, ok := summaryObjectEntrySuffix(field, &arrayIndex)
+		suffix, ok := pathexpr.ResolveTableFieldSuffix(field, &arrayIndex)
 		if !ok {
 			continue
 		}
-		target := appendPath(root, suffix)
+		if !suffix.CanNameSummaryPath() {
+			continue
+		}
+		target := appendPath(root, suffix.Path)
 		collectFunctionPathTargetsInExpr(out, target, field.Value)
 	}
 }
@@ -200,67 +202,12 @@ func unwrapFunctionValueTarget(expr ast.Expr) ast.Expr {
 	}
 }
 
-func summaryObjectEntrySuffix(field *ast.Field, arrayIndex *int) (path.Path, bool) {
-	if field == nil {
-		return path.Path{}, false
-	}
-	if field.Key == nil {
-		*arrayIndex = *arrayIndex + 1
-		return path.Path{Segments: []segment.Segment{{Kind: segment.SegmentIndexInt, Index: *arrayIndex}}}, true
-	}
-	switch key := field.Key.(type) {
-	case *ast.StringExpr:
-		if key.Value == "" {
-			return path.Path{}, false
-		}
-		switch field.KeySyntax {
-		case ast.AttrKeyDot:
-			return path.Path{Segments: []segment.Segment{{Kind: segment.SegmentField, Name: key.Value}}}, true
-		case ast.AttrKeyIndex:
-			return path.Path{Segments: []segment.Segment{{Kind: segment.SegmentIndexString, Name: key.Value}}}, true
-		default:
-			return path.Path{}, false
-		}
-	case *ast.NumberExpr:
-		if field.KeySyntax != ast.AttrKeyIndex {
-			return path.Path{}, false
-		}
-		index, ok := parseSummaryStaticNonNegativeDecimalInt(key.Value)
-		if !ok {
-			return path.Path{}, false
-		}
-		return path.Path{Segments: []segment.Segment{{Kind: segment.SegmentIndexInt, Index: index}}}, true
-	default:
-		return path.Path{}, false
-	}
-}
-
 func appendPath(root path.Path, suffix path.Path) path.Path {
 	out := root
 	for _, seg := range suffix.Segments {
 		out = out.Append(seg)
 	}
 	return out
-}
-
-func parseSummaryStaticNonNegativeDecimalInt(s string) (int, bool) {
-	if s == "" {
-		return 0, false
-	}
-	maxInt := int(^uint(0) >> 1)
-	value := 0
-	for i := 0; i < len(s); i++ {
-		ch := s[i]
-		if ch < '0' || ch > '9' {
-			return 0, false
-		}
-		digit := int(ch - '0')
-		if value > (maxInt-digit)/10 {
-			return 0, false
-		}
-		value = value*10 + digit
-	}
-	return value, true
 }
 
 func (c *Checker) withSummaryApplication(summaries summaryApplication) *Checker {

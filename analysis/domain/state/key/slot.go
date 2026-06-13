@@ -8,6 +8,33 @@ type Slot struct {
 	key    Value
 }
 
+// SymbolSlot returns the canonical slot for a symbol value.
+func SymbolSlot(sym symbol.ID) (Slot, bool) {
+	if sym == 0 {
+		return Slot{}, false
+	}
+	return Slot{symbol: sym}, true
+}
+
+// KeySlot returns a slot for a non-symbol value key.
+func KeySlot(key Value) (Slot, bool) {
+	if key == "" {
+		return Slot{}, false
+	}
+	if _, ok := ParseSymbolValue(key); ok {
+		return Slot{}, false
+	}
+	return Slot{key: key}, true
+}
+
+// SlotOfValue returns the canonical slot for a value key.
+func SlotOfValue(value Value) (Slot, bool) {
+	if sym, ok := ParseSymbolValue(value); ok {
+		return SymbolSlot(sym)
+	}
+	return KeySlot(value)
+}
+
 // Symbol returns the symbol for a symbol slot.
 func (s Slot) Symbol() (symbol.ID, bool) {
 	return s.symbol, s.symbol != 0

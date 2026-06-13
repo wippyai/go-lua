@@ -396,7 +396,10 @@ func TestContainerRefOwnsSymbolContainerIdentity(t *testing.T) {
 	if !ok {
 		t.Fatal("SymbolPathKeyOf failed")
 	}
-	ref := ContainerRef{root: path.Symbol, key: key}
+	ref, ok := ContainerRefFromKey(path.Symbol, key)
+	if !ok {
+		t.Fatal("ContainerRefFromKey failed")
+	}
 	if !ref.IsValid() {
 		t.Fatalf("ContainerRef = %#v, want valid ref", ref)
 	}
@@ -404,7 +407,10 @@ func TestContainerRefOwnsSymbolContainerIdentity(t *testing.T) {
 		t.Fatalf("ContainerRef root = %d, want %d", got, path.Symbol)
 	}
 
-	again := ContainerRef{root: path.Symbol, key: key}
+	again, ok := ContainerRefOfPath(path)
+	if !ok {
+		t.Fatal("ContainerRefOfPath failed")
+	}
 	if !ref.Equal(again) {
 		t.Fatalf("ContainerRef equality = %#v/%#v, want equal", ref, again)
 	}
@@ -426,7 +432,38 @@ func TestContainerRefRejectsUnresolvedPaths(t *testing.T) {
 	if ref.IsValid() {
 		t.Fatalf("zero ContainerRef should be invalid: %#v", ref)
 	}
-	if stable, ok := (ContainerRef{key: ""}).Stable(); ok || stable.Key() != "" {
-		t.Fatalf("ContainerRef.Stable(empty) = %#v/%v, want rejected", stable, ok)
+	if ref, ok := ContainerRefFromKey(31, ""); ok || ref.IsValid() {
+		t.Fatalf("ContainerRefFromKey(empty) = %#v/%v, want rejected", ref, ok)
+	}
+	if stable, ok := ref.Stable(); ok || stable.Key() != "" {
+		t.Fatalf("zero ContainerRef.Stable = %#v/%v, want rejected", stable, ok)
+	}
+}
+
+func TestContainerRefConstructorsValidateSymbolKeyPair(t *testing.T) {
+	path := pathdom.NewPath(31, "rows").Field("items")
+	ref, ok := ContainerRefOfPath(path)
+	if !ok {
+		t.Fatal("ContainerRefOfPath failed")
+	}
+	if got, want := ref.Key(), SymbolPathKey(31, path.Segments); got != want {
+		t.Fatalf("ContainerRefOfPath key = %s, want %s", got, want)
+	}
+
+	if ref, ok := ContainerRefFromKey(32, ref.Key()); ok || ref.IsValid() {
+		t.Fatalf("ContainerRefFromKey accepted mismatched root/key: %#v/%v", ref, ok)
+	}
+	versioned := path
+	versioned.Version = 1
+	if ref, ok := ContainerRefFromKey(31, versioned.Key()); ok || ref.IsValid() {
+		t.Fatalf("ContainerRefFromKey accepted versioned path key: %#v/%v", ref, ok)
+	}
+
+	namedRoot, ok := StableOfPath(pathdom.Path{Root: "rows"}.Field("items"))
+	if !ok {
+		t.Fatal("StableOfPath(named root) failed")
+	}
+	if ref, ok := ContainerRefOfStable(namedRoot); ok || ref.IsValid() {
+		t.Fatalf("ContainerRefOfStable accepted named root: %#v/%v", ref, ok)
 	}
 }

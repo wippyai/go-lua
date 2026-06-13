@@ -10,8 +10,9 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 )
 
-// State carries point-local abstract values. Absence in either lane denotes
-// product.Bottom for the registry used by the caller.
+// State carries point-local abstract values and facts. Missing entries in
+// finite value-like lanes denote bottom for the caller's domain; must-fact
+// lanes record bottom explicitly with their corresponding flags.
 type State struct {
 	values map[key.Value]product.Value
 	paths  map[pathdom.PathKey]product.Value
@@ -128,8 +129,8 @@ func (s State) UpdateReturnSlot(reg *axis.Registry, index int, fn func(product.V
 	return s.UpdateValue(reg, key.ReturnSlot(index), fn)
 }
 
-// Domain builds the State lattice as the product of two pointwise map lattices
-// over product.Value.
+// Domain builds the State lattice as a product of value, path, must-fact,
+// identity, effect, channel-select, and placement lanes.
 func Domain(reg *axis.Registry) lattice.Lattice[State] {
 	valueDomain := product.Domain(reg)
 	ops := domainOps{

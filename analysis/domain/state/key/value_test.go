@@ -22,7 +22,10 @@ func TestValueConstructorsAreStableAndTyped(t *testing.T) {
 }
 
 func TestSlotMethods(t *testing.T) {
-	symbolSlot := Slot{symbol: 42}
+	symbolSlot, ok := SymbolSlot(42)
+	if !ok {
+		t.Fatal("SymbolSlot(42) failed")
+	}
 	if got, ok := symbolSlot.Symbol(); !ok || got != 42 {
 		t.Fatalf("Slot{symbol:42}.Symbol = %d/%v, want 42/true", got, ok)
 	}
@@ -33,12 +36,46 @@ func TestSlotMethods(t *testing.T) {
 		t.Fatalf("Slot{symbol:42}.Value = %q/%v, want s42/true", got, ok)
 	}
 
-	keySlot := Slot{key: ReturnSlot(1)}
+	keySlot, ok := KeySlot(ReturnSlot(1))
+	if !ok {
+		t.Fatal("KeySlot(r1) failed")
+	}
 	if got, ok := keySlot.Key(); !ok || got != ReturnSlot(1) {
 		t.Fatalf("Slot{key:r1}.Key = %q/%v, want r1/true", got, ok)
 	}
 	if got, ok := keySlot.Value(); !ok || got != ReturnSlot(1) {
 		t.Fatalf("Slot{key:r1}.Value = %q/%v, want r1/true", got, ok)
+	}
+}
+
+func TestSlotConstructorsCanonicalizeValueKeys(t *testing.T) {
+	if slot, ok := SymbolSlot(0); ok || slot != (Slot{}) {
+		t.Fatalf("SymbolSlot(0) = %#v/%v, want zero false", slot, ok)
+	}
+	if slot, ok := KeySlot(""); ok || slot != (Slot{}) {
+		t.Fatalf("KeySlot(empty) = %#v/%v, want zero false", slot, ok)
+	}
+	if slot, ok := KeySlot(SymbolValue(42)); ok || slot != (Slot{}) {
+		t.Fatalf("KeySlot(symbol value) = %#v/%v, want zero false", slot, ok)
+	}
+
+	symbolSlot, ok := SlotOfValue(SymbolValue(42))
+	if !ok {
+		t.Fatal("SlotOfValue(s42) failed")
+	}
+	if got, ok := symbolSlot.Symbol(); !ok || got != 42 {
+		t.Fatalf("SlotOfValue(s42).Symbol = %d/%v, want 42/true", got, ok)
+	}
+
+	returnSlot, ok := SlotOfValue(ReturnSlot(2))
+	if !ok {
+		t.Fatal("SlotOfValue(r2) failed")
+	}
+	if got, ok := returnSlot.Key(); !ok || got != ReturnSlot(2) {
+		t.Fatalf("SlotOfValue(r2).Key = %q/%v, want r2/true", got, ok)
+	}
+	if symbolSlot.Equal(returnSlot) {
+		t.Fatalf("distinct slot constructors produced equal slots: %#v", symbolSlot)
 	}
 }
 

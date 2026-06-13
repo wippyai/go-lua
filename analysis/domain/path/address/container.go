@@ -11,9 +11,40 @@ type ContainerRef struct {
 	key  pathdom.PathKey
 }
 
+// ContainerRefOfPath lowers a resolved symbol-rooted path to a container ref.
+func ContainerRefOfPath(path pathdom.Path) (ContainerRef, bool) {
+	stable, ok := StableOfPath(path)
+	if !ok {
+		return ContainerRef{}, false
+	}
+	return ContainerRefOfStable(stable)
+}
+
+// ContainerRefOfStable lowers a symbol-rooted stable address to a container ref.
+func ContainerRefOfStable(stable Stable) (ContainerRef, bool) {
+	root, ok := stable.Symbol()
+	if !ok {
+		return ContainerRef{}, false
+	}
+	return ContainerRefFromKey(root, stable.Key())
+}
+
+// ContainerRefFromKey builds a container ref from a symbol root and stable key.
+func ContainerRefFromKey(root symbol.ID, key pathdom.PathKey) (ContainerRef, bool) {
+	ref := ContainerRef{root: root, key: key}
+	if !ref.IsValid() {
+		return ContainerRef{}, false
+	}
+	return ref, true
+}
+
 // IsValid reports whether ref names a real symbol-rooted container.
 func (r ContainerRef) IsValid() bool {
-	return r.root != 0 && r.key != ""
+	if r.root == 0 || r.key == "" {
+		return false
+	}
+	root, _, ok := ParseSymbolPathKey(r.key)
+	return ok && root == r.root
 }
 
 // Equal reports semantic container identity equality.
