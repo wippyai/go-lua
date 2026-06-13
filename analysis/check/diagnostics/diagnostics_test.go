@@ -4,7 +4,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/wippyai/go-lua/analysis/check"
+	"github.com/wippyai/go-lua/analysis/check/body"
+	"github.com/wippyai/go-lua/analysis/check/fixpoint/program"
 	"github.com/wippyai/go-lua/analysis/diagnostic"
 	"github.com/wippyai/go-lua/analysis/domain/value/standard"
 	"github.com/wippyai/go-lua/analysis/module/signaturelookup"
@@ -749,13 +750,15 @@ func TestDirectCallAcceptsExplicitNilCheckOptional(t *testing.T) {
 
 func TestReturnContractReportsLiteralMismatch(t *testing.T) {
 	fn := mustFunctionExpr(t, `function f(): number return "hello" end`)
-	result, err := check.CheckFunction(fn, check.Config{
-		Registry: standard.Registry(),
+	result, err := program.RunFunction(fn, program.Config{
+		Check: body.Config{
+			Registry: standard.Registry(),
+		},
 	})
 	if err != nil {
 		t.Fatalf("check: %v", err)
 	}
-	diags := Produce(result)
+	diags := Produce(result.RootResult())
 	if len(diags) != 1 {
 		t.Fatalf("diagnostics = %d, want 1: %#v", len(diags), diags)
 	}
@@ -917,15 +920,17 @@ func runDiagnosticsFull(t *testing.T, src string, globals []string, signatures s
 		t.Fatalf("parse: %v", err)
 	}
 	reg := standard.Registry()
-	result, err := check.CheckChunk(stmts, check.Config{
-		Registry:   reg,
-		Globals:    globals,
-		Signatures: signatures,
+	result, err := program.RunChunk(stmts, program.Config{
+		Check: body.Config{
+			Registry:   reg,
+			Globals:    globals,
+			Signatures: signatures,
+		},
 	})
 	if err != nil {
 		t.Fatalf("check: %v", err)
 	}
-	return Produce(result)
+	return Produce(result.RootResult())
 }
 
 func mustStmts(t *testing.T, src string) []ast.Stmt {

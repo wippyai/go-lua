@@ -3,7 +3,7 @@ package diagnostics
 import (
 	"fmt"
 
-	"github.com/wippyai/go-lua/analysis/check"
+	"github.com/wippyai/go-lua/analysis/check/body"
 	"github.com/wippyai/go-lua/analysis/diagnostic"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
@@ -22,11 +22,11 @@ import (
 // resolve to a known callable contract.
 type directCallContract producerContext
 
-func (p directCallContract) Produce(result *check.Result) []diagnostic.Diagnostic {
+func (p directCallContract) Produce(result *body.Result) []diagnostic.Diagnostic {
 	return produceDirectCallContract(result, producerContext(p), nil)
 }
 
-func produceDirectCallContract(result *check.Result, context producerContext, inherited map[symbol.ID]*ast.FunctionExpr) []diagnostic.Diagnostic {
+func produceDirectCallContract(result *body.Result, context producerContext, inherited map[symbol.ID]*ast.FunctionExpr) []diagnostic.Diagnostic {
 	if result == nil {
 		return nil
 	}
@@ -59,7 +59,7 @@ func produceDirectCallContract(result *check.Result, context producerContext, in
 }
 
 func (p directCallContract) call(
-	result *check.Result,
+	result *body.Result,
 	point cfg.Point,
 	fact semantics.CallFact,
 	site factflow.CallSite,
@@ -117,7 +117,7 @@ type directCallResult struct {
 }
 
 func (p directCallContract) callFunction(
-	result *check.Result,
+	result *body.Result,
 	point cfg.Point,
 	fact semantics.CallFact,
 	name string,
@@ -133,7 +133,7 @@ func (p directCallContract) callFunction(
 }
 
 func (p directCallContract) directFunctionCall(
-	result *check.Result,
+	result *body.Result,
 	point cfg.Point,
 	fact semantics.CallFact,
 	contract directFunctionContract,
@@ -191,7 +191,7 @@ func (p directCallContract) directFunctionCall(
 	return diagnostic.Diagnostic{}, false
 }
 
-func directCallArgumentTypeMismatch(result *check.Result, point cfg.Point, got, want typ.Type, read boundaryValueReader) bool {
+func directCallArgumentTypeMismatch(result *body.Result, point cfg.Point, got, want typ.Type, read boundaryValueReader) bool {
 	if !boundaryTypeMismatch(result, point, got, want, nil) {
 		return false
 	}
@@ -203,7 +203,7 @@ func directCallArgumentTypeMismatch(result *check.Result, point cfg.Point, got, 
 	return true
 }
 
-func boundaryCallArgumentSourceType(result *check.Result, point cfg.Point, fact semantics.CallFact, index int) (typ.Type, bool) {
+func boundaryCallArgumentSourceType(result *body.Result, point cfg.Point, fact semantics.CallFact, index int) (typ.Type, bool) {
 	if index < 0 || index >= len(fact.ArgumentSources) {
 		return nil, false
 	}
@@ -211,7 +211,7 @@ func boundaryCallArgumentSourceType(result *check.Result, point cfg.Point, fact 
 }
 
 func boundaryCallArgumentReader(fact semantics.CallFact, index int, argumentExpr ast.Expr) boundaryValueReader {
-	return func(result *check.Result, point cfg.Point) (product.Value, bool) {
+	return func(result *body.Result, point cfg.Point) (product.Value, bool) {
 		if index >= 0 && index < len(fact.ArgumentSources) {
 			if value, ok := boundaryValueFromASTSource(fact.ArgumentSources[index])(result, point); ok {
 				return value, true
@@ -513,7 +513,7 @@ func argTypeDiagnostic(point cfg.Point, call *ast.FuncCallExpr, name string, ind
 	}
 }
 
-func directCallDefinitions(result *check.Result, parent map[symbol.ID]*ast.FunctionExpr) map[symbol.ID]*ast.FunctionExpr {
+func directCallDefinitions(result *body.Result, parent map[symbol.ID]*ast.FunctionExpr) map[symbol.ID]*ast.FunctionExpr {
 	if result == nil {
 		return parent
 	}

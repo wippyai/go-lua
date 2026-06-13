@@ -1,7 +1,7 @@
 package diagnostics
 
 import (
-	"github.com/wippyai/go-lua/analysis/check"
+	"github.com/wippyai/go-lua/analysis/check/body"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/evidence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
@@ -23,9 +23,9 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 )
 
-type boundaryValueReader func(*check.Result, cfg.Point) (product.Value, bool)
+type boundaryValueReader func(*body.Result, cfg.Point) (product.Value, bool)
 
-func boundaryTypeMismatch(result *check.Result, point cfg.Point, got, want typ.Type, read boundaryValueReader) bool {
+func boundaryTypeMismatch(result *body.Result, point cfg.Point, got, want typ.Type, read boundaryValueReader) bool {
 	if want == nil || typ.IsAny(want) || typ.IsUnknown(want) {
 		return false
 	}
@@ -40,7 +40,7 @@ func boundaryTypeMismatch(result *check.Result, point cfg.Point, got, want typ.T
 	return true
 }
 
-func boundarySourceType(result *check.Result, point cfg.Point, source sourceprovenance.ASTSource) (typ.Type, bool) {
+func boundarySourceType(result *body.Result, point cfg.Point, source sourceprovenance.ASTSource) (typ.Type, bool) {
 	value, ok := boundaryValueFromSource(result, point, source)
 	if !ok {
 		return nil, false
@@ -48,14 +48,14 @@ func boundarySourceType(result *check.Result, point cfg.Point, source sourceprov
 	return concreteBoundaryType(result, value)
 }
 
-func boundaryExprType(result *check.Result, resolver typeannotation.Resolver, expr ast.Expr) (typ.Type, bool) {
+func boundaryExprType(result *body.Result, resolver typeannotation.Resolver, expr ast.Expr) (typ.Type, bool) {
 	if t, ok := valueexpr.LiteralType(expr); ok {
 		return t, true
 	}
 	return newExpressionTyper(result, resolver).typeOf(expr)
 }
 
-func explicitTopLikeExpressionType(result *check.Result, resolver typeannotation.Resolver, expr ast.Expr) (typ.Type, bool) {
+func explicitTopLikeExpressionType(result *body.Result, resolver typeannotation.Resolver, expr ast.Expr) (typ.Type, bool) {
 	t, ok := newExpressionTyper(result, resolver).typeOf(expr)
 	if !ok || !topLikeType(t) {
 		return nil, false
@@ -63,7 +63,7 @@ func explicitTopLikeExpressionType(result *check.Result, resolver typeannotation
 	return t, true
 }
 
-func explicitTopLikeCallSourceType(result *check.Result, resolver typeannotation.Resolver, expr ast.Expr) (typ.Type, bool) {
+func explicitTopLikeCallSourceType(result *body.Result, resolver typeannotation.Resolver, expr ast.Expr) (typ.Type, bool) {
 	call, ok := expr.(*ast.FuncCallExpr)
 	if !ok || call == nil {
 		return nil, false
@@ -81,7 +81,7 @@ func explicitTopLikeCallSourceType(result *check.Result, resolver typeannotation
 	return nil, false
 }
 
-func explicitTopLikeCallFactSourceType(result *check.Result, resolver typeannotation.Resolver, source sourceprovenance.ASTSource) (typ.Type, bool) {
+func explicitTopLikeCallFactSourceType(result *body.Result, resolver typeannotation.Resolver, source sourceprovenance.ASTSource) (typ.Type, bool) {
 	if result == nil || source.Kind != factflow.ValueSourceCall || !source.HasCallPoint {
 		return nil, false
 	}
@@ -117,7 +117,7 @@ func explicitTopLikeCallFactSourceType(result *check.Result, resolver typeannota
 	return nil, false
 }
 
-func explicitTopLikePathRootType(result *check.Result, resolver typeannotation.Resolver, id symbol.ID) (typ.Type, bool) {
+func explicitTopLikePathRootType(result *body.Result, resolver typeannotation.Resolver, id symbol.ID) (typ.Type, bool) {
 	if result == nil || id == 0 {
 		return nil, false
 	}
@@ -133,7 +133,7 @@ func explicitTopLikePathRootType(result *check.Result, resolver typeannotation.R
 }
 
 func boundaryValueFromExpr(expr ast.Expr) boundaryValueReader {
-	return func(result *check.Result, point cfg.Point) (product.Value, bool) {
+	return func(result *body.Result, point cfg.Point) (product.Value, bool) {
 		if result == nil || expr == nil {
 			return product.Value{}, false
 		}
@@ -142,12 +142,12 @@ func boundaryValueFromExpr(expr ast.Expr) boundaryValueReader {
 }
 
 func boundaryValueFromASTSource(source sourceprovenance.ASTSource) boundaryValueReader {
-	return func(result *check.Result, point cfg.Point) (product.Value, bool) {
+	return func(result *body.Result, point cfg.Point) (product.Value, bool) {
 		return boundaryValueFromSource(result, point, source)
 	}
 }
 
-func boundaryValueFromSource(result *check.Result, point cfg.Point, source sourceprovenance.ASTSource) (product.Value, bool) {
+func boundaryValueFromSource(result *body.Result, point cfg.Point, source sourceprovenance.ASTSource) (product.Value, bool) {
 	if result == nil {
 		return product.Value{}, false
 	}
@@ -168,7 +168,7 @@ func boundaryValueFromSource(result *check.Result, point cfg.Point, source sourc
 	return product.Value{}, false
 }
 
-func boundaryValueAdmissible(result *check.Result, value product.Value, want typ.Type) bool {
+func boundaryValueAdmissible(result *body.Result, value product.Value, want typ.Type) bool {
 	if result == nil || result.Registry() == nil || want == nil {
 		return false
 	}
@@ -193,7 +193,7 @@ func boundaryValueAdmissible(result *check.Result, value product.Value, want typ
 	return false
 }
 
-func concreteBoundaryType(result *check.Result, value product.Value) (typ.Type, bool) {
+func concreteBoundaryType(result *body.Result, value product.Value) (typ.Type, bool) {
 	if result == nil || result.Registry() == nil {
 		return nil, false
 	}

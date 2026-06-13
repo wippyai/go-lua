@@ -1,7 +1,7 @@
 package diagnostics
 
 import (
-	"github.com/wippyai/go-lua/analysis/check"
+	"github.com/wippyai/go-lua/analysis/check/body"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
@@ -25,18 +25,18 @@ import (
 )
 
 type expressionTyper struct {
-	result   *check.Result
+	result   *body.Result
 	resolver typeannotation.Resolver
 	point    cfg.Point
 	env      literalEnv
 	flow     bool
 }
 
-func newExpressionTyper(result *check.Result, resolver typeannotation.Resolver) expressionTyper {
+func newExpressionTyper(result *body.Result, resolver typeannotation.Resolver) expressionTyper {
 	return expressionTyper{result: result, resolver: resolver}
 }
 
-func newFlowExpressionTyper(result *check.Result, resolver typeannotation.Resolver, point cfg.Point, env literalEnv) expressionTyper {
+func newFlowExpressionTyper(result *body.Result, resolver typeannotation.Resolver, point cfg.Point, env literalEnv) expressionTyper {
 	return expressionTyper{result: result, resolver: resolver, point: point, env: env, flow: true}
 }
 

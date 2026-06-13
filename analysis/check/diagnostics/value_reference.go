@@ -3,7 +3,7 @@ package diagnostics
 import (
 	"fmt"
 
-	"github.com/wippyai/go-lua/analysis/check"
+	"github.com/wippyai/go-lua/analysis/check/body"
 	"github.com/wippyai/go-lua/analysis/diagnostic"
 	"github.com/wippyai/go-lua/analysis/lua/typeannotation"
 	"github.com/wippyai/go-lua/analysis/lua/typeresolve"
@@ -15,7 +15,7 @@ import (
 // to binding policy and are not reported here.
 type unresolvedValueReferences producerContext
 
-func (p unresolvedValueReferences) Produce(result *check.Result) []diagnostic.Diagnostic {
+func (p unresolvedValueReferences) Produce(result *body.Result) []diagnostic.Diagnostic {
 	if result == nil {
 		return nil
 	}

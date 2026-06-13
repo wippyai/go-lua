@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/wippyai/go-lua/analysis/check"
+	"github.com/wippyai/go-lua/analysis/check/body"
 	"github.com/wippyai/go-lua/analysis/diagnostic"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/engine/channelselect"
@@ -27,7 +27,7 @@ type channelSelectDiagnosticCase struct {
 	name string
 }
 
-func (p channelSelectExhaustiveness) Produce(result *check.Result) []diagnostic.Diagnostic {
+func (p channelSelectExhaustiveness) Produce(result *body.Result) []diagnostic.Diagnostic {
 	_ = p
 	graph := result.Graph()
 	if graph == nil {
@@ -60,7 +60,7 @@ func (p channelSelectExhaustiveness) Produce(result *check.Result) []diagnostic.
 	return out
 }
 
-func channelSelectDiagnosticInfos(result *check.Result) []channelSelectDiagnosticInfo {
+func channelSelectDiagnosticInfos(result *body.Result) []channelSelectDiagnosticInfo {
 	graph := result.Graph()
 	if graph == nil {
 		return nil
@@ -96,7 +96,7 @@ func channelSelectDiagnosticInfos(result *check.Result) []channelSelectDiagnosti
 	return out
 }
 
-func channelSelectBranchConditions(result *check.Result, graph cfg.Graph) []semantics.BranchConditionFact {
+func channelSelectBranchConditions(result *body.Result, graph cfg.Graph) []semantics.BranchConditionFact {
 	var out []semantics.BranchConditionFact
 	for _, point := range graph.RPO() {
 		branch, ok := result.BranchCondition(point)
@@ -130,7 +130,7 @@ func hasElseIf(stmt *ast.IfStmt) bool {
 }
 
 func channelSelectChainDiagnostic(
-	result *check.Result,
+	result *body.Result,
 	head *ast.IfStmt,
 	byIf map[*ast.IfStmt]semantics.BranchConditionFact,
 	selects []channelSelectDiagnosticInfo,

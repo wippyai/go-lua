@@ -1,7 +1,7 @@
 package diagnostics
 
 import (
-	"github.com/wippyai/go-lua/analysis/check"
+	"github.com/wippyai/go-lua/analysis/check/body"
 	"github.com/wippyai/go-lua/analysis/diagnostic"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
@@ -16,7 +16,7 @@ import (
 // the relevant value axes own it.
 type annotationAssignability producerContext
 
-func (p annotationAssignability) Produce(result *check.Result) []diagnostic.Diagnostic {
+func (p annotationAssignability) Produce(result *body.Result) []diagnostic.Diagnostic {
 	if result == nil {
 		return nil
 	}
@@ -41,7 +41,7 @@ func (p annotationAssignability) Produce(result *check.Result) []diagnostic.Diag
 	return out
 }
 
-func (p annotationAssignability) localAssignment(result *check.Result, point cfg.Point, fact semantics.LocalAssignmentFact, env literalEnv) (diagnostic.Diagnostic, bool) {
+func (p annotationAssignability) localAssignment(result *body.Result, point cfg.Point, fact semantics.LocalAssignmentFact, env literalEnv) (diagnostic.Diagnostic, bool) {
 	if fact.Type == nil || fact.Expr == nil {
 		return diagnostic.Diagnostic{}, false
 	}
@@ -92,7 +92,7 @@ func (p annotationAssignability) localAssignment(result *check.Result, point cfg
 	return p.objectLiteralAssignment(result, fact.Name, want, fact.Expr, fact.Type)
 }
 
-func (p annotationAssignability) pathAssignment(result *check.Result, point cfg.Point, fact semantics.OrdinaryAssignmentFact) (diagnostic.Diagnostic, bool) {
+func (p annotationAssignability) pathAssignment(result *body.Result, point cfg.Point, fact semantics.OrdinaryAssignmentFact) (diagnostic.Diagnostic, bool) {
 	if fact.Target == nil || fact.Value == nil {
 		return diagnostic.Diagnostic{}, false
 	}
@@ -110,7 +110,7 @@ func (p annotationAssignability) pathAssignment(result *check.Result, point cfg.
 	return pathAssignmentDiagnostic(fact.Target, fact.Value, got, want), true
 }
 
-func (p annotationAssignability) objectLiteralAssignment(result *check.Result, name string, want typ.Type, expr ast.Expr, annotation ast.TypeExpr) (diagnostic.Diagnostic, bool) {
+func (p annotationAssignability) objectLiteralAssignment(result *body.Result, name string, want typ.Type, expr ast.Expr, annotation ast.TypeExpr) (diagnostic.Diagnostic, bool) {
 	fact, ok := result.ObjectLiteral(expr)
 	if !ok {
 		return diagnostic.Diagnostic{}, false

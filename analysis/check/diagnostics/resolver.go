@@ -1,7 +1,7 @@
 package diagnostics
 
 import (
-	"github.com/wippyai/go-lua/analysis/check"
+	"github.com/wippyai/go-lua/analysis/check/body"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/lua/cfgfacts"
 	"github.com/wippyai/go-lua/analysis/lua/typeannotation"
@@ -11,7 +11,7 @@ import (
 )
 
 type resultResolver struct {
-	result *check.Result
+	result *body.Result
 
 	aliases    map[bind.TypeDeclID]*ast.TypeDefStmt
 	interfaces map[bind.TypeDeclID]*ast.InterfaceDefStmt
@@ -32,7 +32,7 @@ type typeDeclKey struct {
 	id   bind.TypeDeclID
 }
 
-func newResultResolver(result *check.Result, parent typeannotation.Resolver) *resultResolver {
+func newResultResolver(result *body.Result, parent typeannotation.Resolver) *resultResolver {
 	r := &resultResolver{
 		result:     result,
 		aliases:    make(map[bind.TypeDeclID]*ast.TypeDefStmt),

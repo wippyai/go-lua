@@ -1,7 +1,7 @@
 package diagnostics
 
 import (
-	"github.com/wippyai/go-lua/analysis/check"
+	"github.com/wippyai/go-lua/analysis/check/body"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
@@ -9,7 +9,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 )
 
-func directCallResultOwner(result *check.Result, source sourceprovenance.ASTSource) bool {
+func directCallResultOwner(result *body.Result, source sourceprovenance.ASTSource) bool {
 	if result == nil || source.Kind != factflow.ValueSourceCall || !source.HasCallPoint {
 		return false
 	}
@@ -20,7 +20,7 @@ func directCallResultOwner(result *check.Result, source sourceprovenance.ASTSour
 	return directCallPointResultOwner(result, source.CallPoint, fact)
 }
 
-func directCallExpressionOwner(result *check.Result, expr ast.Expr) bool {
+func directCallExpressionOwner(result *body.Result, expr ast.Expr) bool {
 	call, ok := expr.(*ast.FuncCallExpr)
 	if !ok || result == nil {
 		return false
@@ -39,7 +39,7 @@ func directCallExpressionOwner(result *check.Result, expr ast.Expr) bool {
 	return false
 }
 
-func directCallPointResultOwner(result *check.Result, point cfg.Point, fact semantics.CallFact) bool {
+func directCallPointResultOwner(result *body.Result, point cfg.Point, fact semantics.CallFact) bool {
 	site, ok := result.CallSite(point)
 	if !ok || site.CalleeSymbol() == 0 {
 		return false

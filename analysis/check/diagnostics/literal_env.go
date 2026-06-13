@@ -3,7 +3,7 @@ package diagnostics
 import (
 	"sort"
 
-	"github.com/wippyai/go-lua/analysis/check"
+	"github.com/wippyai/go-lua/analysis/check/body"
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
@@ -20,7 +20,7 @@ type literalEnv struct {
 	constraints []literalConstraint
 }
 
-func literalEnvironments(result *check.Result) map[cfg.Point]literalEnv {
+func literalEnvironments(result *body.Result) map[cfg.Point]literalEnv {
 	graph := result.Graph()
 	if graph == nil {
 		return nil
@@ -50,7 +50,7 @@ func literalEnvironments(result *check.Result) map[cfg.Point]literalEnv {
 	return in
 }
 
-func joinPredecessorEnvs(result *check.Result, graph cfg.Graph, point cfg.Point, out map[cfg.Point]literalEnv) literalEnv {
+func joinPredecessorEnvs(result *body.Result, graph cfg.Graph, point cfg.Point, out map[cfg.Point]literalEnv) literalEnv {
 	preds := graph.Predecessors(point)
 	if len(preds) == 0 {
 		return literalEnv{}
@@ -67,7 +67,7 @@ func joinPredecessorEnvs(result *check.Result, graph cfg.Graph, point cfg.Point,
 	return env
 }
 
-func applyLiteralEdge(result *check.Result, graph cfg.Graph, from, to cfg.Point, env literalEnv) literalEnv {
+func applyLiteralEdge(result *body.Result, graph cfg.Graph, from, to cfg.Point, env literalEnv) literalEnv {
 	cond, ok := graph.EdgeCond(from, to)
 	if !ok {
 		return env

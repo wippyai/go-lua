@@ -4,7 +4,7 @@
 package diagnostics
 
 import (
-	"github.com/wippyai/go-lua/analysis/check"
+	"github.com/wippyai/go-lua/analysis/check/body"
 	"github.com/wippyai/go-lua/analysis/diagnostic"
 	"github.com/wippyai/go-lua/analysis/lua/typeannotation"
 	"github.com/wippyai/go-lua/analysis/symbol"
@@ -30,11 +30,11 @@ type producerContext struct {
 	resolver typeannotation.Resolver
 }
 
-func Produce(result *check.Result) []diagnostic.Diagnostic {
+func Produce(result *body.Result) []diagnostic.Diagnostic {
 	return produceWithResolver(result, nil, nil)
 }
 
-func produceWithResolver(result *check.Result, parent typeannotation.Resolver, inheritedDefs map[symbol.ID]*ast.FunctionExpr) []diagnostic.Diagnostic {
+func produceWithResolver(result *body.Result, parent typeannotation.Resolver, inheritedDefs map[symbol.ID]*ast.FunctionExpr) []diagnostic.Diagnostic {
 	resolver := newResultResolver(result, parent)
 	context := producerContext{resolver: resolver}
 	defs := directCallDefinitions(result, inheritedDefs)

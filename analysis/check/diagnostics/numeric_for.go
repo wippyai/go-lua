@@ -3,7 +3,7 @@ package diagnostics
 import (
 	"fmt"
 
-	"github.com/wippyai/go-lua/analysis/check"
+	"github.com/wippyai/go-lua/analysis/check/body"
 	"github.com/wippyai/go-lua/analysis/diagnostic"
 	"github.com/wippyai/go-lua/analysis/lua/cfgfacts"
 	"github.com/wippyai/go-lua/analysis/type/kind"
@@ -18,7 +18,7 @@ import (
 // to be numbers. Unknown, any, and partly numeric unions are left to runtime.
 type numericForOperands producerContext
 
-func (p numericForOperands) Produce(result *check.Result) []diagnostic.Diagnostic {
+func (p numericForOperands) Produce(result *body.Result) []diagnostic.Diagnostic {
 	if result == nil {
 		return nil
 	}

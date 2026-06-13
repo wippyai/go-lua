@@ -96,7 +96,7 @@ func TestCheckSplitDirectImportBoundaries(t *testing.T) {
 		exactly bool
 	}{
 		{
-			name: "program does not import public check facade",
+			name: "program does not import public check facade exactly",
 			pkg:  modulePath + "/analysis/check/fixpoint/program",
 			banned: []string{
 				modulePath + "/analysis/check",
@@ -104,10 +104,11 @@ func TestCheckSplitDirectImportBoundaries(t *testing.T) {
 			exactly: true,
 		},
 		{
-			name: "public check facade does not import query solver directly",
-			pkg:  modulePath + "/analysis/check",
+			name: "program does not import diagnostics or fixture harnesses",
+			pkg:  modulePath + "/analysis/check/fixpoint/program",
 			banned: []string{
-				modulePath + "/analysis/check/fixpoint/query",
+				modulePath + "/analysis/check/diagnostics",
+				modulePath + "/analysis/check/checktest",
 			},
 		},
 	}

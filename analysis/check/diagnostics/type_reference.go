@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/wippyai/go-lua/analysis/check"
+	"github.com/wippyai/go-lua/analysis/check/body"
 	"github.com/wippyai/go-lua/analysis/diagnostic"
 	"github.com/wippyai/go-lua/analysis/lua/cfgfacts"
 	"github.com/wippyai/go-lua/analysis/lua/typeresolve"
@@ -15,7 +15,7 @@ import (
 // the lexical type namespace or parent function scopes.
 type unresolvedTypeReferences producerContext
 
-func (p unresolvedTypeReferences) Produce(result *check.Result) []diagnostic.Diagnostic {
+func (p unresolvedTypeReferences) Produce(result *body.Result) []diagnostic.Diagnostic {
 	if result == nil {
 		return nil
 	}

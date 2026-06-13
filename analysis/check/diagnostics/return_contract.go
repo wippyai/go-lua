@@ -3,7 +3,7 @@ package diagnostics
 import (
 	"fmt"
 
-	"github.com/wippyai/go-lua/analysis/check"
+	"github.com/wippyai/go-lua/analysis/check/body"
 	"github.com/wippyai/go-lua/analysis/diagnostic"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
@@ -23,11 +23,11 @@ import (
 // proven by the solved return facts.
 type returnContract producerContext
 
-func (p returnContract) Produce(result *check.Result) []diagnostic.Diagnostic {
+func (p returnContract) Produce(result *body.Result) []diagnostic.Diagnostic {
 	return produceReturnContract(result, producerContext(p), nil)
 }
 
-func produceReturnContract(result *check.Result, context producerContext, inherited map[symbol.ID]*ast.FunctionExpr) []diagnostic.Diagnostic {
+func produceReturnContract(result *body.Result, context producerContext, inherited map[symbol.ID]*ast.FunctionExpr) []diagnostic.Diagnostic {
 	if result == nil {
 		return nil
 	}
@@ -69,7 +69,7 @@ func produceReturnContract(result *check.Result, context producerContext, inheri
 	return out
 }
 
-func returnValueType(result *check.Result, resolver typeannotation.Resolver, point cfg.Point, expr ast.Expr, source sourceprovenance.ASTSource, inherited map[symbol.ID]*ast.FunctionExpr) (typ.Type, bool) {
+func returnValueType(result *body.Result, resolver typeannotation.Resolver, point cfg.Point, expr ast.Expr, source sourceprovenance.ASTSource, inherited map[symbol.ID]*ast.FunctionExpr) (typ.Type, bool) {
 	if got, ok := valueexpr.LiteralType(expr); ok {
 		return got, true
 	}
@@ -88,7 +88,7 @@ func returnValueType(result *check.Result, resolver typeannotation.Resolver, poi
 	return nil, false
 }
 
-func directCallReturnSourceType(result *check.Result, resolver typeannotation.Resolver, source sourceprovenance.ASTSource, inherited map[symbol.ID]*ast.FunctionExpr) (typ.Type, bool) {
+func directCallReturnSourceType(result *body.Result, resolver typeannotation.Resolver, source sourceprovenance.ASTSource, inherited map[symbol.ID]*ast.FunctionExpr) (typ.Type, bool) {
 	if result == nil || source.Kind != factflow.ValueSourceCall || !source.HasCallPoint {
 		return nil, false
 	}
@@ -193,11 +193,11 @@ func returnContractDiagnostic(expr ast.Expr, annotation ast.TypeExpr, got, want 
 // contracts and annotated local targets that receive those call results.
 type directCallResultAssignment producerContext
 
-func (p directCallResultAssignment) Produce(result *check.Result) []diagnostic.Diagnostic {
+func (p directCallResultAssignment) Produce(result *body.Result) []diagnostic.Diagnostic {
 	return produceDirectCallResultAssignment(result, producerContext(p), nil)
 }
 
-func produceDirectCallResultAssignment(result *check.Result, context producerContext, inherited map[symbol.ID]*ast.FunctionExpr) []diagnostic.Diagnostic {
+func produceDirectCallResultAssignment(result *body.Result, context producerContext, inherited map[symbol.ID]*ast.FunctionExpr) []diagnostic.Diagnostic {
 	if result == nil {
 		return nil
 	}
@@ -256,7 +256,7 @@ func produceDirectCallResultAssignment(result *check.Result, context producerCon
 }
 
 func boundaryCallResultReader(callPoint cfg.Point, resultIndex int) boundaryValueReader {
-	return func(result *check.Result, point cfg.Point) (product.Value, bool) {
+	return func(result *body.Result, point cfg.Point) (product.Value, bool) {
 		if resultIndex < 0 {
 			return product.Value{}, false
 		}
@@ -268,7 +268,7 @@ func boundaryCallResultReader(callPoint cfg.Point, resultIndex int) boundaryValu
 	}
 }
 
-func directCallResultContract(result *check.Result, point cfg.Point, fact semantics.CallFact, site factflow.CallSite, def *ast.FunctionExpr, resolver typeannotation.Resolver) (directFunctionContract, string, bool) {
+func directCallResultContract(result *body.Result, point cfg.Point, fact semantics.CallFact, site factflow.CallSite, def *ast.FunctionExpr, resolver typeannotation.Resolver) (directFunctionContract, string, bool) {
 	name := result.SymbolName(site.CalleeSymbol())
 	if name == "" {
 		name = "call target"
@@ -330,7 +330,7 @@ func directCallResultContract(result *check.Result, point cfg.Point, fact semant
 	return contract, name, true
 }
 
-func directCallArgsCompatible(result *check.Result, point cfg.Point, fact semantics.CallFact, contract directFunctionContract, resolver typeannotation.Resolver) bool {
+func directCallArgsCompatible(result *body.Result, point cfg.Point, fact semantics.CallFact, contract directFunctionContract, resolver typeannotation.Resolver) bool {
 	if fact.Call == nil {
 		return false
 	}
@@ -375,7 +375,7 @@ func directCallArgsCompatible(result *check.Result, point cfg.Point, fact semant
 }
 
 func instantiateDirectFunctionContract(
-	result *check.Result,
+	result *body.Result,
 	point cfg.Point,
 	fact semantics.CallFact,
 	contract directFunctionContract,
@@ -395,7 +395,7 @@ func instantiateDirectFunctionContract(
 	return instantiated, violations
 }
 
-func directCallArgumentTypes(result *check.Result, resolver typeannotation.Resolver, point cfg.Point, fact semantics.CallFact) []typ.Type {
+func directCallArgumentTypes(result *body.Result, resolver typeannotation.Resolver, point cfg.Point, fact semantics.CallFact) []typ.Type {
 	if fact.Call == nil {
 		return nil
 	}

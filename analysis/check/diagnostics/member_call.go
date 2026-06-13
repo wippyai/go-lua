@@ -3,7 +3,7 @@ package diagnostics
 import (
 	"fmt"
 
-	"github.com/wippyai/go-lua/analysis/check"
+	"github.com/wippyai/go-lua/analysis/check/body"
 	"github.com/wippyai/go-lua/analysis/diagnostic"
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
@@ -26,7 +26,7 @@ import (
 // impossible after active literal-discriminant branch narrowing.
 type memberCall producerContext
 
-func (p memberCall) Produce(result *check.Result) []diagnostic.Diagnostic {
+func (p memberCall) Produce(result *body.Result) []diagnostic.Diagnostic {
 	if result == nil {
 		return nil
 	}
@@ -48,7 +48,7 @@ func (p memberCall) Produce(result *check.Result) []diagnostic.Diagnostic {
 	return out
 }
 
-func (p memberCall) call(result *check.Result, point cfg.Point, fact semantics.CallFact, env literalEnv) (diagnostic.Diagnostic, bool) {
+func (p memberCall) call(result *body.Result, point cfg.Point, fact semantics.CallFact, env literalEnv) (diagnostic.Diagnostic, bool) {
 	receiver, member, callExpr, ok := callMemberAccess(fact)
 	if !ok || receiver.Symbol == 0 {
 		return diagnostic.Diagnostic{}, false
@@ -85,7 +85,7 @@ func (p memberCall) call(result *check.Result, point cfg.Point, fact semantics.C
 	}
 }
 
-func (p memberCall) receiverType(result *check.Result, point cfg.Point, fact semantics.CallFact, receiver path.Path, env literalEnv) (typ.Type, bool) {
+func (p memberCall) receiverType(result *body.Result, point cfg.Point, fact semantics.CallFact, receiver path.Path, env literalEnv) (typ.Type, bool) {
 	if fact.Receiver != nil {
 		if t, ok := newFlowExpressionTyper(result, p.resolver, point, env).typeOf(fact.Receiver); ok {
 			return t, true
@@ -101,7 +101,7 @@ func (p memberCall) receiverType(result *check.Result, point cfg.Point, fact sem
 	return receiverTypeFromBoundary(result, value)
 }
 
-func receiverTypeFromBoundary(result *check.Result, value product.Value) (typ.Type, bool) {
+func receiverTypeFromBoundary(result *body.Result, value product.Value) (typ.Type, bool) {
 	t, ok := concreteBoundaryType(result, value)
 	if !ok {
 		switch p := product.PresenceOf(value); {
@@ -274,7 +274,7 @@ func suffixFromReceiver(receiver, target path.Path) ([]segment.Segment, bool) {
 	return append([]segment.Segment(nil), target.Segments[len(receiver.Segments):]...), true
 }
 
-func memberDiagnostic(result *check.Result, fact semantics.CallFact, call *ast.FuncCallExpr, receiver typ.Type, member string, point cfg.Point) diagnostic.Diagnostic {
+func memberDiagnostic(result *body.Result, fact semantics.CallFact, call *ast.FuncCallExpr, receiver typ.Type, member string, point cfg.Point) diagnostic.Diagnostic {
 	span := ast.SpanOf(call)
 	name := result.SymbolName(callRootSymbol(fact))
 	if name == "" {
@@ -309,7 +309,7 @@ func memberDiagnostic(result *check.Result, fact semantics.CallFact, call *ast.F
 	}
 }
 
-func notCallableDiagnostic(result *check.Result, fact semantics.CallFact, call *ast.FuncCallExpr, receiver, memberType typ.Type, member string, point cfg.Point) diagnostic.Diagnostic {
+func notCallableDiagnostic(result *body.Result, fact semantics.CallFact, call *ast.FuncCallExpr, receiver, memberType typ.Type, member string, point cfg.Point) diagnostic.Diagnostic {
 	span := ast.SpanOf(call)
 	name := result.SymbolName(callRootSymbol(fact))
 	if name == "" {

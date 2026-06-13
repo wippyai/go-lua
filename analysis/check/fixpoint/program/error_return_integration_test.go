@@ -1,11 +1,12 @@
-package check_test
+package program_test
 
 import (
 	"strings"
 	"testing"
 
-	"github.com/wippyai/go-lua/analysis/check"
+	"github.com/wippyai/go-lua/analysis/check/body"
 	"github.com/wippyai/go-lua/analysis/check/diagnostics"
+	"github.com/wippyai/go-lua/analysis/check/fixpoint/program"
 	"github.com/wippyai/go-lua/analysis/domain/effect"
 	"github.com/wippyai/go-lua/analysis/domain/effect/returns"
 	"github.com/wippyai/go-lua/analysis/domain/effect/signature"
@@ -42,15 +43,12 @@ func TestErrorReturnSignatureRefinesValuePresenceAcrossErrorBranch(t *testing.T)
 			local failed = value
 		end
 	`)
-	result, err := check.CheckChunk(stmts, check.Config{
+	result := runChunk(t, stmts, body.Config{
 		Registry: reg,
 		Signatures: signaturelookup.Source{
 			Manifests: []*manifest.Manifest{m},
 		},
 	})
-	if err != nil {
-		t.Fatalf("CheckChunk: %v", err)
-	}
 
 	value := localSymbolAt(t, result, stmts[0].(*ast.LocalAssignStmt), 0)
 	branch := firstBranchPoint(t, result)
@@ -82,10 +80,7 @@ func TestErrorReturnLocalFunctionSummaryRefinesValuePresenceAcrossGuard(t *testi
 		end
 		local n: number = result
 	`)
-	result, err := check.CheckChunk(stmts, check.Config{Registry: reg})
-	if err != nil {
-		t.Fatalf("CheckChunk: %v", err)
-	}
+	result := runChunk(t, stmts, body.Config{Registry: reg})
 
 	assign := stmts[1].(*ast.LocalAssignStmt)
 	value := localSymbolAt(t, result, assign, 0)
@@ -122,10 +117,7 @@ func TestErrorReturnLocalFunctionWithoutGuardKeepsReceiverOptional(t *testing.T)
 			db:release()
 		end
 	`)
-	result, err := check.CheckChunk(stmts, check.Config{Registry: reg})
-	if err != nil {
-		t.Fatalf("CheckChunk: %v", err)
-	}
+	result := runChunk(t, stmts, body.Config{Registry: reg})
 
 	diags := diagnostics.Produce(result)
 	for _, d := range diags {
@@ -158,10 +150,7 @@ func TestErrorReturnDelegatedTailCallRefinesReceiverAcrossGuard(t *testing.T) {
 			db:release()
 		end
 	`)
-	result, err := check.CheckChunk(stmts, check.Config{Registry: reg})
-	if err != nil {
-		t.Fatalf("CheckChunk: %v", err)
-	}
+	result := runChunk(t, stmts, body.Config{Registry: reg})
 
 	if diags := diagnostics.Produce(result); len(diags) != 0 {
 		t.Fatalf("diagnostics = %#v, want none", diags)
@@ -190,10 +179,7 @@ func TestErrorReturnDelegatedTailCallDoesNotInventRelationFromOptionalDeclaratio
 			db:release()
 		end
 	`)
-	result, err := check.CheckChunk(stmts, check.Config{Registry: reg})
-	if err != nil {
-		t.Fatalf("CheckChunk: %v", err)
-	}
+	result := runChunk(t, stmts, body.Config{Registry: reg})
 
 	diags := diagnostics.Produce(result)
 	for _, d := range diags {
@@ -202,6 +188,15 @@ func TestErrorReturnDelegatedTailCallDoesNotInventRelationFromOptionalDeclaratio
 		}
 	}
 	t.Fatalf("diagnostics = %#v, want optional receiver diagnostic for release", diags)
+}
+
+func runChunk(t *testing.T, stmts []ast.Stmt, config body.Config) *body.Result {
+	t.Helper()
+	result, err := program.RunChunk(stmts, program.Config{Check: config})
+	if err != nil {
+		t.Fatalf("RunChunk: %v", err)
+	}
+	return result.RootResult()
 }
 
 func parseChunk(t *testing.T, src string) []ast.Stmt {
@@ -213,7 +208,7 @@ func parseChunk(t *testing.T, src string) []ast.Stmt {
 	return stmts
 }
 
-func localSymbolAt(t *testing.T, result *check.Result, stmt *ast.LocalAssignStmt, index int) symbol.ID {
+func localSymbolAt(t *testing.T, result *body.Result, stmt *ast.LocalAssignStmt, index int) symbol.ID {
 	t.Helper()
 	locals := result.LocalSymbols(stmt)
 	if index < 0 || index >= len(locals) || locals[index] == 0 {
@@ -222,7 +217,7 @@ func localSymbolAt(t *testing.T, result *check.Result, stmt *ast.LocalAssignStmt
 	return locals[index]
 }
 
-func firstBranchPoint(t *testing.T, result *check.Result) cfg.Point {
+func firstBranchPoint(t *testing.T, result *body.Result) cfg.Point {
 	t.Helper()
 	graph := result.Graph()
 	for _, point := range graph.RPO() {
@@ -234,7 +229,7 @@ func firstBranchPoint(t *testing.T, result *check.Result) cfg.Point {
 	return 0
 }
 
-func localAssignmentPointByName(t *testing.T, result *check.Result, name string) cfg.Point {
+func localAssignmentPointByName(t *testing.T, result *body.Result, name string) cfg.Point {
 	t.Helper()
 	for _, point := range result.Graph().RPO() {
 		fact, ok := result.LocalAssignment(point)
@@ -258,7 +253,7 @@ func branchSuccessor(t *testing.T, graph cfg.Graph, branch cfg.Point, cond bool)
 	return 0
 }
 
-func stateAt(t *testing.T, result *check.Result, point cfg.Point) state.State {
+func stateAt(t *testing.T, result *body.Result, point cfg.Point) state.State {
 	t.Helper()
 	got, ok := result.StateAt(point)
 	if !ok {

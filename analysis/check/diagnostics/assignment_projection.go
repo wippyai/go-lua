@@ -1,7 +1,7 @@
 package diagnostics
 
 import (
-	"github.com/wippyai/go-lua/analysis/check"
+	"github.com/wippyai/go-lua/analysis/check/body"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
@@ -24,7 +24,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 )
 
-func assignmentValueType(result *check.Result, resolver typeannotation.Resolver, point cfg.Point, expr ast.Expr, source sourceprovenance.ASTSource) (typ.Type, bool) {
+func assignmentValueType(result *body.Result, resolver typeannotation.Resolver, point cfg.Point, expr ast.Expr, source sourceprovenance.ASTSource) (typ.Type, bool) {
 	if got, ok := valueexpr.LiteralType(expr); ok {
 		return got, true
 	}
@@ -43,7 +43,7 @@ func assignmentValueType(result *check.Result, resolver typeannotation.Resolver,
 	return boundaryExprType(result, resolver, expr)
 }
 
-func assignmentTargetType(result *check.Result, resolver typeannotation.Resolver, fact semantics.OrdinaryAssignmentFact) (typ.Type, bool) {
+func assignmentTargetType(result *body.Result, resolver typeannotation.Resolver, fact semantics.OrdinaryAssignmentFact) (typ.Type, bool) {
 	if fact.HasPath && fact.Path.Symbol != 0 && len(fact.Path.Segments) > 0 {
 		return newExpressionTyper(result, resolver).typeOf(fact.Target)
 	}
@@ -57,7 +57,7 @@ func assignmentTargetType(result *check.Result, resolver typeannotation.Resolver
 	return dynamicIndexAssignmentTargetType(result, resolver, attr)
 }
 
-func dynamicIndexAssignmentTargetType(result *check.Result, resolver typeannotation.Resolver, attr *ast.AttrGetExpr) (typ.Type, bool) {
+func dynamicIndexAssignmentTargetType(result *body.Result, resolver typeannotation.Resolver, attr *ast.AttrGetExpr) (typ.Type, bool) {
 	typer := newExpressionTyper(result, resolver)
 	if t, ok := typer.typeOf(attr); ok {
 		return t, true
@@ -148,7 +148,7 @@ func literalType(expr ast.Expr) (typ.Type, bool) {
 	return valueexpr.LiteralType(expr)
 }
 
-func localScalarOperatorSourceType(result *check.Result, resolver typeannotation.Resolver, expr ast.Expr) (typ.Type, bool) {
+func localScalarOperatorSourceType(result *body.Result, resolver typeannotation.Resolver, expr ast.Expr) (typ.Type, bool) {
 	if !isScalarOperatorExpression(expr) {
 		return nil, false
 	}
@@ -182,7 +182,7 @@ func isScalarOperatorExpression(expr ast.Expr) bool {
 	}
 }
 
-func projectedOptionalIndexType(result *check.Result, resolver typeannotation.Resolver, expr ast.Expr) (typ.Type, bool) {
+func projectedOptionalIndexType(result *body.Result, resolver typeannotation.Resolver, expr ast.Expr) (typ.Type, bool) {
 	if !shouldProjectOptionalIndex(result, expr) {
 		return nil, false
 	}
@@ -193,7 +193,7 @@ func projectedOptionalIndexType(result *check.Result, resolver typeannotation.Re
 	return got, true
 }
 
-func shouldProjectOptionalIndex(result *check.Result, expr ast.Expr) bool {
+func shouldProjectOptionalIndex(result *body.Result, expr ast.Expr) bool {
 	attr, ok := expr.(*ast.AttrGetExpr)
 	if !ok || attr.KeySyntax != ast.AttrKeyIndex {
 		return false
@@ -205,7 +205,7 @@ func shouldProjectOptionalIndex(result *check.Result, expr ast.Expr) bool {
 	return ok && len(container.Segments) > 0
 }
 
-func projectedFlowSourceType(result *check.Result, resolver typeannotation.Resolver, point cfg.Point, env literalEnv, expr ast.Expr) (typ.Type, bool) {
+func projectedFlowSourceType(result *body.Result, resolver typeannotation.Resolver, point cfg.Point, env literalEnv, expr ast.Expr) (typ.Type, bool) {
 	switch e := expr.(type) {
 	case *ast.AttrGetExpr:
 		if e.KeySyntax == ast.AttrKeyIndex && !shouldProjectOptionalIndex(result, e) {
@@ -235,7 +235,7 @@ func projectedFlowSourceType(result *check.Result, resolver typeannotation.Resol
 	}
 }
 
-func annotatedIdentifierType(result *check.Result, resolver typeannotation.Resolver, point cfg.Point, expr ast.Expr) (typ.Type, bool) {
+func annotatedIdentifierType(result *body.Result, resolver typeannotation.Resolver, point cfg.Point, expr ast.Expr) (typ.Type, bool) {
 	if result == nil {
 		return nil, false
 	}
@@ -258,7 +258,7 @@ func annotatedIdentifierType(result *check.Result, resolver typeannotation.Resol
 	return refineDeclaredTypeWithValue(result, declared, value)
 }
 
-func refineAssignmentSourceType(result *check.Result, point cfg.Point, expr ast.Expr, got typ.Type) typ.Type {
+func refineAssignmentSourceType(result *body.Result, point cfg.Point, expr ast.Expr, got typ.Type) typ.Type {
 	if got == nil {
 		return got
 	}
@@ -279,7 +279,7 @@ func refineAssignmentSourceType(result *check.Result, point cfg.Point, expr ast.
 	return refined
 }
 
-func refineDeclaredTypeWithValue(result *check.Result, declared typ.Type, value product.Value) (typ.Type, bool) {
+func refineDeclaredTypeWithValue(result *body.Result, declared typ.Type, value product.Value) (typ.Type, bool) {
 	if declared == nil {
 		return nil, false
 	}
