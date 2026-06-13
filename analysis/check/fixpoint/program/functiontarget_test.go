@@ -1,4 +1,4 @@
-package functiontarget
+package program
 
 import (
 	"testing"
@@ -53,16 +53,16 @@ func TestCollectNestedTablePathsAndWrappers(t *testing.T) {
 	stmts := []ast.Stmt{localStmt}
 	bindings := bind.BindChunk(stmts, bind.Options{})
 
-	got := Collect(bindings, stmts)
+	got := collectFunctionPathTargets(bindings, stmts)
 	if len(got) != 3 {
 		t.Fatalf("Collect returned %d targets, want 3: %#v", len(got), got)
 	}
 
-	moduleID := mustLocalSymbol(t, bindings, localStmt, 0)
+	moduleID := mustCollectLocalSymbol(t, bindings, localStmt, 0)
 	base := path.NewPath(moduleID, bindings.Name(moduleID))
-	assertPathTarget(t, got, nestedFn, base.Field("nested").Field("inner"))
-	assertPathTarget(t, got, castedFn, base.Field("nested").Field("casted"))
-	assertPathTarget(t, got, assertedFn, base.Field("nested").Field("asserted"))
+	assertCollectedPathTarget(t, got, nestedFn, base.Field("nested").Field("inner"))
+	assertCollectedPathTarget(t, got, castedFn, base.Field("nested").Field("casted"))
+	assertCollectedPathTarget(t, got, assertedFn, base.Field("nested").Field("asserted"))
 }
 
 func TestCollectScansFunctionOriginsBodies(t *testing.T) {
@@ -82,21 +82,21 @@ func TestCollectScansFunctionOriginsBodies(t *testing.T) {
 	stmts := []ast.Stmt{localStmt}
 	bindings := bind.BindChunk(stmts, bind.Options{})
 
-	got := Collect(bindings, stmts)
+	got := collectFunctionPathTargets(bindings, stmts)
 	if len(got) != 2 {
 		t.Fatalf("Collect returned %d targets, want 2: %#v", len(got), got)
 	}
 
-	outerID := mustLocalSymbol(t, bindings, localStmt, 0)
+	outerID := mustCollectLocalSymbol(t, bindings, localStmt, 0)
 	base := path.NewPath(outerID, bindings.Name(outerID))
-	assertPathTarget(t, got, outerFn, base)
+	assertCollectedPathTarget(t, got, outerFn, base)
 
 	innerStmt := outerFn.Stmts[0].(*ast.LocalAssignStmt)
-	innerID := mustLocalSymbol(t, bindings, innerStmt, 0)
-	assertPathTarget(t, got, innerFn, path.NewPath(innerID, bindings.Name(innerID)))
+	innerID := mustCollectLocalSymbol(t, bindings, innerStmt, 0)
+	assertCollectedPathTarget(t, got, innerFn, path.NewPath(innerID, bindings.Name(innerID)))
 }
 
-func assertPathTarget(t *testing.T, got map[*ast.FunctionExpr]path.Path, fn *ast.FunctionExpr, want path.Path) {
+func assertCollectedPathTarget(t *testing.T, got map[*ast.FunctionExpr]path.Path, fn *ast.FunctionExpr, want path.Path) {
 	t.Helper()
 	path, ok := got[fn]
 	if !ok {
@@ -107,7 +107,7 @@ func assertPathTarget(t *testing.T, got map[*ast.FunctionExpr]path.Path, fn *ast
 	}
 }
 
-func mustLocalSymbol(t *testing.T, bindings *bind.Result, stmt *ast.LocalAssignStmt, index int) symbol.ID {
+func mustCollectLocalSymbol(t *testing.T, bindings *bind.Result, stmt *ast.LocalAssignStmt, index int) symbol.ID {
 	t.Helper()
 	locals := bindings.LocalSymbols(stmt)
 	if index < 0 || index >= len(locals) {

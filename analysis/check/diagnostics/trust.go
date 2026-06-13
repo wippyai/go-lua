@@ -82,7 +82,7 @@ func explicitTopLikeCallSourceType(result *body.Result, resolver typeannotation.
 }
 
 func explicitTopLikeCallFactSourceType(result *body.Result, resolver typeannotation.Resolver, source sourceprovenance.ASTSource) (typ.Type, bool) {
-	if result == nil || source.Kind != factflow.ValueSourceCall || !source.HasCallPoint {
+	if result == nil || source.Kind != sourceprovenance.SourceCall || !source.HasCallPoint {
 		return nil, false
 	}
 	fact, ok := result.Call(source.CallPoint)
@@ -151,7 +151,7 @@ func boundaryValueFromSource(result *body.Result, point cfg.Point, source source
 	if result == nil {
 		return product.Value{}, false
 	}
-	if source.Kind == factflow.ValueSourceCall {
+	if source.Kind == sourceprovenance.SourceCall {
 		shape, ok := factflow.NewValueSourceShape(source.Final, source.Expanded, source.Adjusted, source.OpenTail)
 		if !ok {
 			return product.Value{}, false

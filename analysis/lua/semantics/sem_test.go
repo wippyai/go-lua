@@ -6,12 +6,12 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
-	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/lua/branchcond"
 	"github.com/wippyai/go-lua/analysis/lua/cfgbuild"
 	"github.com/wippyai/go-lua/analysis/lua/cfgfacts"
+	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/parse"
@@ -117,7 +117,7 @@ func assertEntry(t *testing.T, got ObjectEntryFact, wantIndex int, wantSuffix pa
 	if got.Index != wantIndex || got.Value != wantValue || got.Source.Expr != wantValue {
 		t.Fatalf("entry = %#v, want index %d value %p", got, wantIndex, wantValue)
 	}
-	if got.Source.Kind != factflow.ValueSourceExpression || got.Source.ExprIndex != factflow.NoValueSourceIndex || got.Source.TargetIndex != factflow.NoValueSourceIndex {
+	if got.Source.Kind != sourceprovenance.SourceExpression || got.Source.ExprIndex != sourceprovenance.NoSourceIndex || got.Source.TargetIndex != sourceprovenance.NoSourceIndex {
 		t.Fatalf("entry source = %#v, want expression source without value-list indexes", got.Source)
 	}
 	if !got.Suffix.Equal(wantSuffix) {
@@ -478,13 +478,13 @@ func TestExtractChunkObjectLiteralSkipsFinalExpandingArrayField(t *testing.T) {
 	if entries[0].Value != nonFinalVararg || !entries[0].Suffix.Equal(intSuffix(1)) {
 		t.Fatalf("non-final vararg entry = %#v", entries[0])
 	}
-	if entries[0].Source.Kind != factflow.ValueSourceVararg || entries[0].Source.Final || !entries[0].Source.Adjusted || entries[0].Source.Expanded {
+	if entries[0].Source.Kind != sourceprovenance.SourceVararg || entries[0].Source.Final || !entries[0].Source.Adjusted || entries[0].Source.Expanded {
 		t.Fatalf("non-final vararg source = %#v, want adjusted single value", entries[0].Source)
 	}
 	if entries[1].Value != keyedVararg || !entries[1].Suffix.Equal(fieldChainSuffix("key")) {
 		t.Fatalf("keyed vararg entry = %#v", entries[1])
 	}
-	if entries[1].Source.Kind != factflow.ValueSourceVararg || entries[1].Source.Final || !entries[1].Source.Adjusted || entries[1].Source.Expanded {
+	if entries[1].Source.Kind != sourceprovenance.SourceVararg || entries[1].Source.Final || !entries[1].Source.Adjusted || entries[1].Source.Expanded {
 		t.Fatalf("keyed vararg source = %#v, want adjusted single value", entries[1].Source)
 	}
 	for _, entry := range entries {
@@ -755,7 +755,7 @@ func TestExtractChunkAssignmentAndReturnCallFactsUseLuaListRules(t *testing.T) {
 	if !ok {
 		t.Fatalf("missing local a fact")
 	}
-	if aFact.Source.Kind != factflow.ValueSourceCall || aFact.Source.Expr != makeCall || aFact.Source.ExprIndex != 0 || aFact.Source.ResultIndex != 0 || !aFact.Source.Adjusted || aFact.Source.CallPoint != localPoints[0] || !aFact.Source.HasCallPoint {
+	if aFact.Source.Kind != sourceprovenance.SourceCall || aFact.Source.Expr != makeCall || aFact.Source.ExprIndex != 0 || aFact.Source.ResultIndex != 0 || !aFact.Source.Adjusted || aFact.Source.CallPoint != localPoints[0] || !aFact.Source.HasCallPoint {
 		t.Fatalf("a source = %#v", aFact.Source)
 	}
 	bFact, ok := result.LocalAssignment(localPoints[3])
@@ -766,10 +766,10 @@ func TestExtractChunkAssignmentAndReturnCallFactsUseLuaListRules(t *testing.T) {
 	if !ok {
 		t.Fatalf("missing local c fact")
 	}
-	if bFact.Source.Kind != factflow.ValueSourceCall || bFact.Source.Expr != packCall || !bFact.Source.Expanded || bFact.Source.ResultIndex != 0 || bFact.Source.CallPoint != localPoints[1] || !bFact.Source.HasCallPoint {
+	if bFact.Source.Kind != sourceprovenance.SourceCall || bFact.Source.Expr != packCall || !bFact.Source.Expanded || bFact.Source.ResultIndex != 0 || bFact.Source.CallPoint != localPoints[1] || !bFact.Source.HasCallPoint {
 		t.Fatalf("b source = %#v", bFact.Source)
 	}
-	if cFact.Source.Kind != factflow.ValueSourceCall || cFact.Source.Expr != packCall || !cFact.Source.Expanded || cFact.Source.ResultIndex != 1 || cFact.Source.CallPoint != localPoints[1] || !cFact.Source.HasCallPoint {
+	if cFact.Source.Kind != sourceprovenance.SourceCall || cFact.Source.Expr != packCall || !cFact.Source.Expanded || cFact.Source.ResultIndex != 1 || cFact.Source.CallPoint != localPoints[1] || !cFact.Source.HasCallPoint {
 		t.Fatalf("c source = %#v", cFact.Source)
 	}
 
@@ -788,15 +788,15 @@ func TestExtractChunkAssignmentAndReturnCallFactsUseLuaListRules(t *testing.T) {
 	if !ok {
 		t.Fatalf("missing return fact")
 	}
-	if len(returnFact.Sources) != 2 || returnFact.Sources[0].Kind != factflow.ValueSourceExpression || returnFact.Sources[0].Expr != aRead {
+	if len(returnFact.Sources) != 2 || returnFact.Sources[0].Kind != sourceprovenance.SourceExpression || returnFact.Sources[0].Expr != aRead {
 		t.Fatalf("return first source = %#v", returnFact.Sources)
 	}
-	if returnFact.Sources[1].Kind != factflow.ValueSourceCall || returnFact.Sources[1].Expr != tailCall || !returnFact.Sources[1].Expanded || !returnFact.Sources[1].OpenTail || returnFact.Sources[1].CallPoint != returnPoints[0] || !returnFact.Sources[1].HasCallPoint {
+	if returnFact.Sources[1].Kind != sourceprovenance.SourceCall || returnFact.Sources[1].Expr != tailCall || !returnFact.Sources[1].Expanded || !returnFact.Sources[1].OpenTail || returnFact.Sources[1].CallPoint != returnPoints[0] || !returnFact.Sources[1].HasCallPoint {
 		t.Fatalf("return tail source = %#v", returnFact.Sources[1])
 	}
-	returnFact.Sources[1].Kind = factflow.ValueSourceNil
+	returnFact.Sources[1].Kind = sourceprovenance.SourceNil
 	returnAgain, _ := result.Return(returnPoints[1])
-	if returnAgain.Sources[1].Kind != factflow.ValueSourceCall {
+	if returnAgain.Sources[1].Kind != sourceprovenance.SourceCall {
 		t.Fatalf("Return exposed mutable sources slice")
 	}
 }
@@ -836,7 +836,7 @@ func TestExtractChunkNestedStatementArgumentCallSourcesPointAtInnerCall(t *testi
 		t.Fatalf("outer argument sources = %#v, want one", outerFact.ArgumentSources)
 	}
 	arg := outerFact.ArgumentSources[0]
-	if arg.Kind != factflow.ValueSourceCall || arg.Expr != inner || arg.CallPoint != points[0] || !arg.HasCallPoint || arg.ResultIndex != 0 {
+	if arg.Kind != sourceprovenance.SourceCall || arg.Expr != inner || arg.CallPoint != points[0] || !arg.HasCallPoint || arg.ResultIndex != 0 {
 		t.Fatalf("outer argument source = %#v, want inner call point %d", arg, points[0])
 	}
 }
@@ -868,7 +868,7 @@ func TestExtractChunkObjectLiteralEntryCallSourcePointsAtNestedCall(t *testing.T
 		t.Fatalf("object literal = %#v, ok=%v", literal, ok)
 	}
 	entrySource := literal.Entries[0].Source
-	if entrySource.Kind != factflow.ValueSourceCall || entrySource.Expr != makeCall || entrySource.CallPoint != points[0] || !entrySource.HasCallPoint {
+	if entrySource.Kind != sourceprovenance.SourceCall || entrySource.Expr != makeCall || entrySource.CallPoint != points[0] || !entrySource.HasCallPoint {
 		t.Fatalf("object entry source = %#v, want make call point %d", entrySource, points[0])
 	}
 }
@@ -915,10 +915,10 @@ func TestExtractChunkConditionAndIteratorCallFactsUseDeferredContexts(t *testing
 	if !ok {
 		t.Fatalf("missing condition branch fact")
 	}
-	if branchFact.Source.Kind != factflow.ValueSourceCall || branchFact.Source.Expr != readyCall || branchFact.Source.CallPoint != ifPoints[0] || !branchFact.Source.HasCallPoint {
+	if branchFact.Source.Kind != sourceprovenance.SourceCall || branchFact.Source.Expr != readyCall || branchFact.Source.CallPoint != ifPoints[0] || !branchFact.Source.HasCallPoint {
 		t.Fatalf("condition source = %#v", branchFact.Source)
 	}
-	if branchFact.Source.TargetIndex != factflow.NoValueSourceIndex || !branchFact.Source.Adjusted || branchFact.Source.Expanded {
+	if branchFact.Source.TargetIndex != sourceprovenance.NoSourceIndex || !branchFact.Source.Adjusted || branchFact.Source.Expanded {
 		t.Fatalf("condition source flags = %#v", branchFact.Source)
 	}
 
@@ -951,15 +951,15 @@ func TestExtractChunkConditionAndIteratorCallFactsUseDeferredContexts(t *testing
 	if len(genericFact.Sources) != 2 {
 		t.Fatalf("generic for sources = %#v", genericFact.Sources)
 	}
-	if genericFact.Sources[0].Kind != factflow.ValueSourceCall || genericFact.Sources[0].Expr != iterCall || genericFact.Sources[0].CallPoint != loopPoints[0] || !genericFact.Sources[0].HasCallPoint || !genericFact.Sources[0].Adjusted {
+	if genericFact.Sources[0].Kind != sourceprovenance.SourceCall || genericFact.Sources[0].Expr != iterCall || genericFact.Sources[0].CallPoint != loopPoints[0] || !genericFact.Sources[0].HasCallPoint || !genericFact.Sources[0].Adjusted {
 		t.Fatalf("first generic source = %#v", genericFact.Sources[0])
 	}
-	if genericFact.Sources[1].Kind != factflow.ValueSourceCall || genericFact.Sources[1].Expr != stateCall || genericFact.Sources[1].CallPoint != loopPoints[1] || !genericFact.Sources[1].HasCallPoint || !genericFact.Sources[1].Expanded || genericFact.Sources[1].OpenTail {
+	if genericFact.Sources[1].Kind != sourceprovenance.SourceCall || genericFact.Sources[1].Expr != stateCall || genericFact.Sources[1].CallPoint != loopPoints[1] || !genericFact.Sources[1].HasCallPoint || !genericFact.Sources[1].Expanded || genericFact.Sources[1].OpenTail {
 		t.Fatalf("final generic source = %#v", genericFact.Sources[1])
 	}
-	genericFact.Sources[0].Kind = factflow.ValueSourceNil
+	genericFact.Sources[0].Kind = sourceprovenance.SourceNil
 	genericAgain, _ := result.GenericFor(loopPoints[2])
-	if genericAgain.Sources[0].Kind != factflow.ValueSourceCall {
+	if genericAgain.Sources[0].Kind != sourceprovenance.SourceCall {
 		t.Fatalf("GenericFor exposed mutable sources slice")
 	}
 }
@@ -1008,7 +1008,7 @@ func TestExtractChunkAssertionWrappedCallProducersKeepOuterSources(t *testing.T)
 		t.Fatalf("return call = %#v, ok=%v", returnCall, ok)
 	}
 	returnFact, ok := result.Return(returnPoints[1])
-	if !ok || len(returnFact.Sources) != 1 || returnFact.Sources[0].Kind != factflow.ValueSourceCall || returnFact.Sources[0].Expr != barCast || returnFact.Sources[0].CallPoint != returnPoints[0] || !returnFact.Sources[0].HasCallPoint {
+	if !ok || len(returnFact.Sources) != 1 || returnFact.Sources[0].Kind != sourceprovenance.SourceCall || returnFact.Sources[0].Expr != barCast || returnFact.Sources[0].CallPoint != returnPoints[0] || !returnFact.Sources[0].HasCallPoint {
 		t.Fatalf("return sources = %#v, ok=%v", returnFact.Sources, ok)
 	}
 
@@ -1018,7 +1018,7 @@ func TestExtractChunkAssertionWrappedCallProducersKeepOuterSources(t *testing.T)
 		t.Fatalf("condition call = %#v, ok=%v", conditionCall, ok)
 	}
 	branchFact, ok := result.BranchCondition(ifPoints[1])
-	if !ok || branchFact.Source.Kind != factflow.ValueSourceCall || branchFact.Source.Expr != readyCast || branchFact.Source.CallPoint != ifPoints[0] || !branchFact.Source.HasCallPoint {
+	if !ok || branchFact.Source.Kind != sourceprovenance.SourceCall || branchFact.Source.Expr != readyCast || branchFact.Source.CallPoint != ifPoints[0] || !branchFact.Source.HasCallPoint {
 		t.Fatalf("branch source = %#v, ok=%v", branchFact.Source, ok)
 	}
 
@@ -1028,7 +1028,7 @@ func TestExtractChunkAssertionWrappedCallProducersKeepOuterSources(t *testing.T)
 		t.Fatalf("iterator call = %#v, ok=%v", iterCallFact, ok)
 	}
 	genericFact, ok := result.GenericFor(loopPoints[1])
-	if !ok || len(genericFact.Sources) != 1 || genericFact.Sources[0].Kind != factflow.ValueSourceCall || genericFact.Sources[0].Expr != iterCast || genericFact.Sources[0].CallPoint != loopPoints[0] || !genericFact.Sources[0].HasCallPoint {
+	if !ok || len(genericFact.Sources) != 1 || genericFact.Sources[0].Kind != sourceprovenance.SourceCall || genericFact.Sources[0].Expr != iterCast || genericFact.Sources[0].CallPoint != loopPoints[0] || !genericFact.Sources[0].HasCallPoint {
 		t.Fatalf("generic sources = %#v, ok=%v", genericFact.Sources, ok)
 	}
 }
@@ -1040,7 +1040,7 @@ func assertWrappedCallSource(t *testing.T, result *Result, callPoint, assignPoin
 		t.Fatalf("call fact = %#v, ok=%v", callFact, ok)
 	}
 	assignFact, ok := result.LocalAssignment(assignPoint)
-	if !ok || assignFact.Source.Kind != factflow.ValueSourceCall || assignFact.Source.Expr != outerExpr || assignFact.Source.CallPoint != callPoint || !assignFact.Source.HasCallPoint {
+	if !ok || assignFact.Source.Kind != sourceprovenance.SourceCall || assignFact.Source.Expr != outerExpr || assignFact.Source.CallPoint != callPoint || !assignFact.Source.HasCallPoint {
 		t.Fatalf("assignment source = %#v, ok=%v", assignFact.Source, ok)
 	}
 }
@@ -1079,10 +1079,10 @@ func TestExtractChunkAssignmentValueSourcesHandleAdjustRetNilFillAndVararg(t *te
 	if !ok {
 		t.Fatalf("missing second adjusted assignment")
 	}
-	if first.Source.Kind != factflow.ValueSourceCall || first.Source.Expr != singleCall || !first.Source.Final || !first.Source.Adjusted || first.Source.Expanded || first.Source.CallPoint != adjustedPoints[0] || !first.Source.HasCallPoint {
+	if first.Source.Kind != sourceprovenance.SourceCall || first.Source.Expr != singleCall || !first.Source.Final || !first.Source.Adjusted || first.Source.Expanded || first.Source.CallPoint != adjustedPoints[0] || !first.Source.HasCallPoint {
 		t.Fatalf("first adjusted source = %#v", first.Source)
 	}
-	if second.Source.Kind != factflow.ValueSourceNil || second.Source.ExprIndex != factflow.NoValueSourceIndex {
+	if second.Source.Kind != sourceprovenance.SourceNil || second.Source.ExprIndex != sourceprovenance.NoSourceIndex {
 		t.Fatalf("second adjusted source = %#v", second.Source)
 	}
 
@@ -1095,10 +1095,10 @@ func TestExtractChunkAssignmentValueSourcesHandleAdjustRetNilFillAndVararg(t *te
 	if !ok {
 		t.Fatalf("missing r assignment")
 	}
-	if qFact.Source.Kind != factflow.ValueSourceVararg || qFact.Source.Expr != vararg || !qFact.Source.Expanded || qFact.Source.ResultIndex != 0 {
+	if qFact.Source.Kind != sourceprovenance.SourceVararg || qFact.Source.Expr != vararg || !qFact.Source.Expanded || qFact.Source.ResultIndex != 0 {
 		t.Fatalf("q source = %#v", qFact.Source)
 	}
-	if rFact.Source.Kind != factflow.ValueSourceVararg || rFact.Source.Expr != vararg || !rFact.Source.Expanded || rFact.Source.ResultIndex != 1 {
+	if rFact.Source.Kind != sourceprovenance.SourceVararg || rFact.Source.Expr != vararg || !rFact.Source.Expanded || rFact.Source.ResultIndex != 1 {
 		t.Fatalf("r source = %#v", rFact.Source)
 	}
 
@@ -1107,7 +1107,7 @@ func TestExtractChunkAssignmentValueSourcesHandleAdjustRetNilFillAndVararg(t *te
 	if !ok {
 		t.Fatalf("missing vararg return fact")
 	}
-	if len(returnFact.Sources) != 2 || returnFact.Sources[1].Kind != factflow.ValueSourceVararg || !returnFact.Sources[1].Expanded || !returnFact.Sources[1].OpenTail {
+	if len(returnFact.Sources) != 2 || returnFact.Sources[1].Kind != sourceprovenance.SourceVararg || !returnFact.Sources[1].Expanded || !returnFact.Sources[1].OpenTail {
 		t.Fatalf("vararg return sources = %#v", returnFact.Sources)
 	}
 }
@@ -1145,16 +1145,16 @@ func TestExtractChunkCallFactResolvesMethodPaths(t *testing.T) {
 	if !fact.HasCalleePath || !fact.CalleePath.Equal(methodPath) {
 		t.Fatalf("callee path = %#v, want %#v", fact.CalleePath, methodPath)
 	}
-	if len(fact.ArgumentSources) != 1 || fact.ArgumentSources[0].Kind != factflow.ValueSourceExpression || fact.ArgumentSources[0].Expr != arg || fact.ArgumentSources[0].ExprIndex != 0 || fact.ArgumentSources[0].TargetIndex != 0 || fact.ArgumentSources[0].ResultIndex != 0 || !fact.ArgumentSources[0].Final {
+	if len(fact.ArgumentSources) != 1 || fact.ArgumentSources[0].Kind != sourceprovenance.SourceExpression || fact.ArgumentSources[0].Expr != arg || fact.ArgumentSources[0].ExprIndex != 0 || fact.ArgumentSources[0].TargetIndex != 0 || fact.ArgumentSources[0].ResultIndex != 0 || !fact.ArgumentSources[0].Final {
 		t.Fatalf("method argument sources = %#v", fact.ArgumentSources)
 	}
-	fact.ArgumentSources[0].Kind = factflow.ValueSourceNil
+	fact.ArgumentSources[0].Kind = sourceprovenance.SourceNil
 	fact.MethodPath.Segments[0].Name = "mutated"
 	again, _ := result.Call(point)
 	if !again.MethodPath.Equal(methodPath) {
 		t.Fatalf("Call exposed mutable method path: %#v", again.MethodPath)
 	}
-	if again.ArgumentSources[0].Kind != factflow.ValueSourceExpression {
+	if again.ArgumentSources[0].Kind != sourceprovenance.SourceExpression {
 		t.Fatalf("Call exposed mutable argument sources: %#v", again.ArgumentSources)
 	}
 }

@@ -1,7 +1,6 @@
 package semantics
 
 import (
-	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/lua/pathexpr"
 	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
 	"github.com/wippyai/go-lua/compiler/ast"
@@ -50,5 +49,5 @@ func (r *Result) extractObjectLiteral(expr ast.Expr, resolver sourceprovenance.C
 }
 
 func objectEntryValueSource(expr ast.Expr, final bool, resolver sourceprovenance.CallPointResolver) sourceprovenance.ASTSource {
-	return sourceprovenance.SourceForExpr(expr, factflow.NoValueSourceIndex, factflow.NoValueSourceIndex, 0, final, false, resolver)
+	return sourceprovenance.SourceForExpr(expr, sourceprovenance.NoSourceIndex, sourceprovenance.NoSourceIndex, 0, final, false, resolver)
 }

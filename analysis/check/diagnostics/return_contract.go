@@ -89,7 +89,7 @@ func returnValueType(result *body.Result, resolver typeannotation.Resolver, poin
 }
 
 func directCallReturnSourceType(result *body.Result, resolver typeannotation.Resolver, source sourceprovenance.ASTSource, inherited map[symbol.ID]*ast.FunctionExpr) (typ.Type, bool) {
-	if result == nil || source.Kind != factflow.ValueSourceCall || !source.HasCallPoint {
+	if result == nil || source.Kind != sourceprovenance.SourceCall || !source.HasCallPoint {
 		return nil, false
 	}
 	fact, ok := result.Call(source.CallPoint)
@@ -121,7 +121,7 @@ func returnSourceAt(fact semantics.ReturnFact, index int) sourceprovenance.ASTSo
 	if index >= 0 && index < len(fact.Sources) {
 		return fact.Sources[index]
 	}
-	return sourceprovenance.NewUnknownSource(factflow.NoValueSourceIndex)
+	return sourceprovenance.NewUnknownSource(sourceprovenance.NoSourceIndex)
 }
 
 func lowerReturnTypes(fn *ast.FunctionExpr, resolver typeannotation.Resolver) ([]directCallResult, bool) {

@@ -31,7 +31,7 @@ func (l *lowerer) returnValueSources(sources []sourceprovenance.ASTSource, resul
 }
 
 func (l *lowerer) expandTypeIsOpenTailReturnSource(source sourceprovenance.ASTSource, result *semantics.Result) []sourceprovenance.ASTSource {
-	if source.Kind != factflow.ValueSourceCall || !source.OpenTail || !source.Expanded ||
+	if source.Kind != sourceprovenance.SourceCall || !source.OpenTail || !source.Expanded ||
 		!source.HasCallPoint || result == nil {
 		return []sourceprovenance.ASTSource{source}
 	}
@@ -56,7 +56,7 @@ func (l *lowerer) valueSource(source sourceprovenance.ASTSource) factflow.ValueS
 	if hasExpr {
 		l.addExpressionPath(exprRef, source.Expr)
 		l.addExpressionCondition(exprRef, source.Expr)
-		if source.Kind == factflow.ValueSourceExpression {
+		if source.Kind == sourceprovenance.SourceExpression {
 			l.addExpressionValue(exprRef, source.Expr)
 		}
 	}
@@ -65,18 +65,18 @@ func (l *lowerer) valueSource(source sourceprovenance.ASTSource) factflow.ValueS
 		panic("transferfacts: invalid value source shape")
 	}
 	switch source.Kind {
-	case factflow.ValueSourceExpression:
+	case sourceprovenance.SourceExpression:
 		return mustValueSource(factflow.NewExpressionValueSource(exprRef, source.ExprIndex, source.TargetIndex, source.ResultIndex, shape))
-	case factflow.ValueSourceCall:
+	case sourceprovenance.SourceCall:
 		if !source.HasCallPoint {
 			return factflow.NewUnknownValueSource(source.TargetIndex)
 		}
 		return mustValueSource(factflow.NewCallValueSource(exprRef, source.ExprIndex, source.TargetIndex, source.ResultIndex, source.CallPoint, shape))
-	case factflow.ValueSourceVararg:
+	case sourceprovenance.SourceVararg:
 		return mustValueSource(factflow.NewVarargValueSource(exprRef, source.ExprIndex, source.TargetIndex, source.ResultIndex, shape))
-	case factflow.ValueSourceNil:
+	case sourceprovenance.SourceNil:
 		return factflow.NewNilValueSource(source.TargetIndex)
-	case factflow.ValueSourceUnknown:
+	case sourceprovenance.SourceUnknown:
 		return factflow.NewUnknownValueSource(source.TargetIndex)
 	default:
 		panic("transferfacts: unknown value source kind")

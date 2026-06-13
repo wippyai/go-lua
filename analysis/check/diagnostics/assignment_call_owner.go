@@ -2,7 +2,6 @@ package diagnostics
 
 import (
 	"github.com/wippyai/go-lua/analysis/check/body"
-	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
 	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
@@ -10,7 +9,7 @@ import (
 )
 
 func directCallResultOwner(result *body.Result, source sourceprovenance.ASTSource) bool {
-	if result == nil || source.Kind != factflow.ValueSourceCall || !source.HasCallPoint {
+	if result == nil || source.Kind != sourceprovenance.SourceCall || !source.HasCallPoint {
 		return false
 	}
 	fact, ok := result.Call(source.CallPoint)

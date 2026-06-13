@@ -27,7 +27,7 @@ func (l *lowerer) localAssignment(fact semantics.LocalAssignmentFact) (factflow.
 }
 
 func declaredValueApplies(fact semantics.LocalAssignmentFact) bool {
-	if fact.Type == nil || fact.Source.Kind != factflow.ValueSourceExpression {
+	if fact.Type == nil || fact.Source.Kind != sourceprovenance.SourceExpression {
 		return false
 	}
 	if _, ok := valueexpr.LiteralType(fact.Expr); !ok {
@@ -70,7 +70,7 @@ func (l *lowerer) dynamicIndexWrite(fact semantics.OrdinaryAssignmentFact) (fact
 	}
 	keySource, readKey := l.dynamicIndexKeySource(fact.Target)
 	source := l.valueSource(fact.Source)
-	readValue := fact.Source.Kind != factflow.ValueSourceUnknown
+	readValue := fact.Source.Kind != sourceprovenance.SourceUnknown
 	return factflow.NewDynamicIndexWrite(
 		fact.ContainerPath,
 		keySource,
@@ -92,14 +92,14 @@ func (l *lowerer) dynamicIndexKeySource(target ast.Expr) (factflow.ValueSource, 
 	if !ok || attr.Key == nil || sourceprovenance.CanProduceMultipleValues(attr.Key) {
 		return factflow.NewUnknownValueSource(factflow.NoValueSourceIndex), false
 	}
-	shape, ok := factflow.NewValueSourceShape(true, false, false, false)
+	shape, ok := sourceprovenance.NewSourceShape(true, false, false, false)
 	if !ok {
 		panic("transferfacts: invalid dynamic index key source shape")
 	}
 	source, ok := sourceprovenance.NewExpressionSource(
 		attr.Key,
-		factflow.NoValueSourceIndex,
-		factflow.NoValueSourceIndex,
+		sourceprovenance.NoSourceIndex,
+		sourceprovenance.NoSourceIndex,
 		0,
 		shape,
 	)

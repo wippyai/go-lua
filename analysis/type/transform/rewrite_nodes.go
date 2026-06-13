@@ -2,6 +2,7 @@ package transform
 
 import (
 	"github.com/wippyai/go-lua/analysis/internal/recursion"
+	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
@@ -255,7 +256,7 @@ func rewriteRecord(v *typ.Record, orig typ.Type, fn func(typ.Type) (typ.Type, bo
 	if staticMembers != nil {
 		staticMembersSrc = staticMembers
 	}
-	return typ.RebuildRecord(typ.RecordParts{
+	return typetable.RebuildRecord(typ.RecordParts{
 		Fields:        fieldsSrc,
 		StaticMembers: staticMembersSrc,
 		Metatable:     metatable,

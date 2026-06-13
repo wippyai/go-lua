@@ -163,7 +163,7 @@ func (l *lowerer) typeIsReturnPresenceRelations(sources []sourceprovenance.ASTSo
 	}
 	var out []factflow.ReturnPresenceRelation
 	for _, source := range sources {
-		if source.Kind != factflow.ValueSourceCall || !source.OpenTail || !source.Expanded || !source.HasCallPoint {
+		if source.Kind != sourceprovenance.SourceCall || !source.OpenTail || !source.Expanded || !source.HasCallPoint {
 			continue
 		}
 		fact, ok := result.Call(source.CallPoint)

@@ -29,6 +29,11 @@ func (b *testRecordBuilder) OptField(name string, t typ.Type) *testRecordBuilder
 	return b
 }
 
+func (b *testRecordBuilder) OptStaticStringIndex(name string, t typ.Type) *testRecordBuilder {
+	b.parts.StaticMembers = append(b.parts.StaticMembers, typ.StaticMember{Kind: typ.StaticMemberStringIndex, Name: name, Type: t, Optional: true})
+	return b
+}
+
 func (b *testRecordBuilder) ReadonlyField(name string, t typ.Type) *testRecordBuilder {
 	b.parts.Fields = append(b.parts.Fields, typ.Field{Name: name, Type: t, Readonly: true})
 	return b
@@ -36,6 +41,12 @@ func (b *testRecordBuilder) ReadonlyField(name string, t typ.Type) *testRecordBu
 
 func (b *testRecordBuilder) Metatable(t typ.Type) *testRecordBuilder {
 	b.parts.Metatable = t
+	return b
+}
+
+func (b *testRecordBuilder) MapComponent(key, value typ.Type) *testRecordBuilder {
+	b.parts.MapKey = key
+	b.parts.MapValue = value
 	return b
 }
 
@@ -254,6 +265,53 @@ func TestRewrite_Record(t *testing.T) {
 	y := r.GetField("y")
 	if y == nil || y.Type != typ.String || !y.Optional {
 		t.Fatalf("expected y optional String, got %v", y)
+	}
+}
+
+func TestRewrite_RecordNormalizesNilableOptionalFieldPayload(t *testing.T) {
+	rec := newRecord().OptField("maybe", typ.Number).Build()
+	result := Rewrite(rec, replaceNumber(typ.NewUnion(typ.String, typ.Nil)))
+	r, ok := result.(*typ.Record)
+	if !ok {
+		t.Fatalf("expected Record, got %T", result)
+	}
+	field := r.GetField("maybe")
+	if field == nil || !field.Optional {
+		t.Fatalf("expected maybe optional field, got %v", field)
+	}
+	if !typ.TypeEquals(field.Type, typ.String) {
+		t.Fatalf("expected normalized field payload String, got %v", field.Type)
+	}
+}
+
+func TestRewrite_RecordNormalizesNilableOptionalStaticMemberPayload(t *testing.T) {
+	rec := newRecord().OptStaticStringIndex("maybe", typ.Number).Build()
+	result := Rewrite(rec, replaceNumber(typ.NewOptional(typ.String)))
+	r, ok := result.(*typ.Record)
+	if !ok {
+		t.Fatalf("expected Record, got %T", result)
+	}
+	member := r.GetStaticStringIndex("maybe")
+	if member == nil || !member.Optional {
+		t.Fatalf("expected maybe optional static member, got %v", member)
+	}
+	if !typ.TypeEquals(member.Type, typ.String) {
+		t.Fatalf("expected normalized static member payload String, got %v", member.Type)
+	}
+}
+
+func TestRewrite_RecordNormalizesRewrittenMapKey(t *testing.T) {
+	rec := newRecord().MapComponent(typ.Number, typ.Boolean).Build()
+	result := Rewrite(rec, replaceNumber(typ.NewOptional(typ.String)))
+	r, ok := result.(*typ.Record)
+	if !ok {
+		t.Fatalf("expected Record, got %T", result)
+	}
+	if !typ.TypeEquals(r.MapKey, typ.String) {
+		t.Fatalf("expected normalized map key String, got %v", r.MapKey)
+	}
+	if r.MapValue != typ.Boolean {
+		t.Fatalf("expected map value Boolean, got %v", r.MapValue)
 	}
 }
 

@@ -9,7 +9,7 @@ import (
 
 type sourceExprRefKey struct {
 	expr         ast.Expr
-	kind         factflow.ValueSourceKind
+	kind         sourceprovenance.SourceKind
 	exprIndex    int
 	targetIndex  int
 	resultIndex  int
@@ -45,7 +45,7 @@ func sourceScopedExprRef(source sourceprovenance.ASTSource) bool {
 		return false
 	}
 	switch source.Kind {
-	case factflow.ValueSourceCall, factflow.ValueSourceVararg:
+	case sourceprovenance.SourceCall, sourceprovenance.SourceVararg:
 		return true
 	default:
 		return false

@@ -1,14 +1,61 @@
 package sourceprovenance
 
 import (
-	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
 
+// SourceKind classifies Lua AST provenance for one value-list slot.
+type SourceKind uint8
+
+const (
+	SourceUnknown SourceKind = iota
+	SourceExpression
+	SourceCall
+	SourceVararg
+	SourceNil
+)
+
+// NoSourceIndex marks an index field that does not point at a source,
+// target, or result slot.
+const NoSourceIndex = -1
+
+// SourceShape describes Lua value-list shape flags for an AST source.
+type SourceShape struct {
+	Final    bool
+	Expanded bool
+	Adjusted bool
+	OpenTail bool
+}
+
+// NewSourceShape creates a validated Lua value-list shape.
+func NewSourceShape(final, expanded, adjusted, openTail bool) (SourceShape, bool) {
+	shape := SourceShape{
+		Final:    final,
+		Expanded: expanded,
+		Adjusted: adjusted,
+		OpenTail: openTail,
+	}
+	return shape, shape.Valid()
+}
+
+// Valid reports whether the shape flags form a supported Lua value-list shape.
+func (s SourceShape) Valid() bool {
+	if s.Expanded && s.Adjusted {
+		return false
+	}
+	if s.Expanded && !s.Final {
+		return false
+	}
+	if s.OpenTail && (!s.Expanded || !s.Final) {
+		return false
+	}
+	return true
+}
+
 // ASTSource describes Lua AST provenance for one value-list slot.
 type ASTSource struct {
-	Kind factflow.ValueSourceKind
+	Kind SourceKind
 	Expr ast.Expr
 
 	ExprIndex    int
@@ -24,9 +71,9 @@ type ASTSource struct {
 }
 
 // NewExpressionSource creates an AST-backed expression value source.
-func NewExpressionSource(expr ast.Expr, exprIndex, targetIndex, resultIndex int, shape factflow.ValueSourceShape) (ASTSource, bool) {
+func NewExpressionSource(expr ast.Expr, exprIndex, targetIndex, resultIndex int, shape SourceShape) (ASTSource, bool) {
 	source := astSourceWithShape(ASTSource{
-		Kind:        factflow.ValueSourceExpression,
+		Kind:        SourceExpression,
 		Expr:        expr,
 		ExprIndex:   exprIndex,
 		TargetIndex: targetIndex,
@@ -36,9 +83,9 @@ func NewExpressionSource(expr ast.Expr, exprIndex, targetIndex, resultIndex int,
 }
 
 // NewCallSource creates an AST-backed call result source with a resolved CFG call point.
-func NewCallSource(expr ast.Expr, exprIndex, targetIndex, resultIndex int, callPoint cfg.Point, shape factflow.ValueSourceShape) (ASTSource, bool) {
+func NewCallSource(expr ast.Expr, exprIndex, targetIndex, resultIndex int, callPoint cfg.Point, shape SourceShape) (ASTSource, bool) {
 	source := astSourceWithShape(ASTSource{
-		Kind:         factflow.ValueSourceCall,
+		Kind:         SourceCall,
 		Expr:         expr,
 		ExprIndex:    exprIndex,
 		TargetIndex:  targetIndex,
@@ -50,9 +97,9 @@ func NewCallSource(expr ast.Expr, exprIndex, targetIndex, resultIndex int, callP
 }
 
 // NewVarargSource creates an AST-backed vararg value source.
-func NewVarargSource(expr ast.Expr, exprIndex, targetIndex, resultIndex int, shape factflow.ValueSourceShape) (ASTSource, bool) {
+func NewVarargSource(expr ast.Expr, exprIndex, targetIndex, resultIndex int, shape SourceShape) (ASTSource, bool) {
 	source := astSourceWithShape(ASTSource{
-		Kind:        factflow.ValueSourceVararg,
+		Kind:        SourceVararg,
 		Expr:        expr,
 		ExprIndex:   exprIndex,
 		TargetIndex: targetIndex,
@@ -64,26 +111,26 @@ func NewVarargSource(expr ast.Expr, exprIndex, targetIndex, resultIndex int, sha
 // NewNilSource creates a nil-fill source for a target slot.
 func NewNilSource(targetIndex int) ASTSource {
 	return ASTSource{
-		Kind:        factflow.ValueSourceNil,
-		ExprIndex:   factflow.NoValueSourceIndex,
+		Kind:        SourceNil,
+		ExprIndex:   NoSourceIndex,
 		TargetIndex: targetIndex,
-		ResultIndex: factflow.NoValueSourceIndex,
+		ResultIndex: NoSourceIndex,
 	}
 }
 
 // NewUnknownSource creates an explicit unknown source for a target slot.
 func NewUnknownSource(targetIndex int) ASTSource {
 	return ASTSource{
-		Kind:        factflow.ValueSourceUnknown,
-		ExprIndex:   factflow.NoValueSourceIndex,
+		Kind:        SourceUnknown,
+		ExprIndex:   NoSourceIndex,
 		TargetIndex: targetIndex,
-		ResultIndex: factflow.NoValueSourceIndex,
+		ResultIndex: NoSourceIndex,
 	}
 }
 
 // Shape returns the source's value-list shape flags.
-func (s ASTSource) Shape() factflow.ValueSourceShape {
-	return factflow.ValueSourceShape{
+func (s ASTSource) Shape() SourceShape {
+	return SourceShape{
 		Final:    s.Final,
 		Expanded: s.Expanded,
 		Adjusted: s.Adjusted,
@@ -100,26 +147,26 @@ func (s ASTSource) Valid() bool {
 		return false
 	}
 	switch s.Kind {
-	case factflow.ValueSourceUnknown:
+	case SourceUnknown:
 		return s.Expr == nil &&
-			s.ExprIndex == factflow.NoValueSourceIndex &&
-			s.ResultIndex == factflow.NoValueSourceIndex &&
+			s.ExprIndex == NoSourceIndex &&
+			s.ResultIndex == NoSourceIndex &&
 			!s.HasCallPoint &&
 			s.CallPoint == 0 &&
 			!s.Final &&
 			!s.Expanded &&
 			!s.Adjusted &&
 			!s.OpenTail
-	case factflow.ValueSourceExpression:
+	case SourceExpression:
 		return s.Expr != nil && !s.HasCallPoint && s.CallPoint == 0
-	case factflow.ValueSourceCall:
+	case SourceCall:
 		return s.HasCallPoint && s.CallPoint != 0 && s.ResultIndex >= 0
-	case factflow.ValueSourceVararg:
+	case SourceVararg:
 		return s.Expr != nil && !s.HasCallPoint && s.CallPoint == 0
-	case factflow.ValueSourceNil:
+	case SourceNil:
 		return s.Expr == nil &&
-			s.ExprIndex == factflow.NoValueSourceIndex &&
-			s.ResultIndex == factflow.NoValueSourceIndex &&
+			s.ExprIndex == NoSourceIndex &&
+			s.ResultIndex == NoSourceIndex &&
 			!s.HasCallPoint &&
 			s.CallPoint == 0 &&
 			!s.Final &&
@@ -131,7 +178,7 @@ func (s ASTSource) Valid() bool {
 	}
 }
 
-func astSourceWithShape(source ASTSource, shape factflow.ValueSourceShape) ASTSource {
+func astSourceWithShape(source ASTSource, shape SourceShape) ASTSource {
 	source.Final = shape.Final
 	source.Expanded = shape.Expanded
 	source.Adjusted = shape.Adjusted

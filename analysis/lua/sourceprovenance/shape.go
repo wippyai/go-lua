@@ -1,7 +1,6 @@
 package sourceprovenance
 
 import (
-	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
@@ -41,13 +40,13 @@ func ValueShape(expr ast.Expr, final, allowExpansion, openTail bool) (expanded, 
 }
 
 func ConditionSource(expr ast.Expr, resolver CallPointResolver) ASTSource {
-	shape := mustValueSourceShape(factflow.NewValueSourceShape(true, false, CanProduceMultipleValues(expr), false))
-	return sourceForExprShape(expr, 0, factflow.NoValueSourceIndex, 0, shape, resolver)
+	shape := mustSourceShape(NewSourceShape(true, false, CanProduceMultipleValues(expr), false))
+	return sourceForExprShape(expr, 0, NoSourceIndex, 0, shape, resolver)
 }
 
 func SourceForExpr(expr ast.Expr, exprIndex, targetIndex, resultIndex int, final, openTail bool, resolver CallPointResolver) ASTSource {
 	expanded, adjusted, shapedOpenTail := ValueShape(expr, final, true, openTail)
-	shape := mustValueSourceShape(factflow.NewValueSourceShape(final, expanded, adjusted, shapedOpenTail))
+	shape := mustSourceShape(NewSourceShape(final, expanded, adjusted, shapedOpenTail))
 	return sourceForExprShape(expr, exprIndex, targetIndex, resultIndex, shape, resolver)
 }
 
@@ -76,24 +75,24 @@ func nilFillSource(targetIndex int) ASTSource {
 	return NewNilSource(targetIndex)
 }
 
-func sourceForExprShape(expr ast.Expr, exprIndex, targetIndex, resultIndex int, shape factflow.ValueSourceShape, resolver CallPointResolver) ASTSource {
+func sourceForExprShape(expr ast.Expr, exprIndex, targetIndex, resultIndex int, shape SourceShape, resolver CallPointResolver) ASTSource {
 	switch valueSourceKind(expr) {
-	case factflow.ValueSourceCall:
+	case SourceCall:
 		point, ok := resolveCallPoint(resolver, exprIndex, expr)
 		if !ok || point == 0 {
 			return NewUnknownSource(targetIndex)
 		}
 		return mustASTSource(NewCallSource(expr, exprIndex, targetIndex, resultIndex, point, shape))
-	case factflow.ValueSourceVararg:
+	case SourceVararg:
 		return mustASTSource(NewVarargSource(expr, exprIndex, targetIndex, resultIndex, shape))
 	default:
 		return mustASTSource(NewExpressionSource(expr, exprIndex, targetIndex, resultIndex, shape))
 	}
 }
 
-func mustValueSourceShape(shape factflow.ValueSourceShape, ok bool) factflow.ValueSourceShape {
+func mustSourceShape(shape SourceShape, ok bool) SourceShape {
 	if !ok {
-		panic("sourceprovenance: invalid value source shape")
+		panic("sourceprovenance: invalid source shape")
 	}
 	return shape
 }
@@ -115,14 +114,14 @@ func resolveCallPoint(resolver CallPointResolver, exprIndex int, expr ast.Expr) 
 	return 0, false
 }
 
-func valueSourceKind(expr ast.Expr) factflow.ValueSourceKind {
+func valueSourceKind(expr ast.Expr) SourceKind {
 	switch TopLevelProducer(expr).Kind {
 	case ProducerCall:
-		return factflow.ValueSourceCall
+		return SourceCall
 	case ProducerVararg:
-		return factflow.ValueSourceVararg
+		return SourceVararg
 	default:
-		return factflow.ValueSourceExpression
+		return SourceExpression
 	}
 }
 
