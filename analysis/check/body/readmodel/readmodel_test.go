@@ -15,6 +15,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
 	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
 	"github.com/wippyai/go-lua/analysis/type/kind"
+	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/parse"
@@ -52,6 +53,46 @@ func TestValueTypeAbsentProjectsNil(t *testing.T) {
 		t.Fatalf("ValueType returned false")
 	}
 	assertSameType(t, got, typ.Nil)
+}
+
+func TestValueTypeWithPresenceAddsNilForMaybeWitness(t *testing.T) {
+	reg := standard.Registry()
+	result, err := body.CheckChunk(nil, body.Config{Registry: reg})
+	if err != nil {
+		t.Fatalf("CheckChunk: %v", err)
+	}
+	value := product.NewWithPresence(reg, product.ShapeTop, presence.Maybe())
+	value = typevalue.WithWitness(reg, value, typ.String)
+
+	got, ok := New(result).ValueTypeWithPresence(value)
+	if !ok {
+		t.Fatalf("ValueTypeWithPresence returned false")
+	}
+	assertSameType(t, got, typ.NewOptional(typ.String))
+}
+
+func TestVariantOriginTypeProjectsStructuralUnion(t *testing.T) {
+	reg := standard.Registry()
+	result, err := body.CheckChunk(nil, body.Config{Registry: reg})
+	if err != nil {
+		t.Fatalf("CheckChunk: %v", err)
+	}
+	okCase := typetable.NewRecord().
+		Field("kind", typ.LiteralString("ok")).
+		Field("value", typ.Number).
+		Build()
+	errCase := typetable.NewRecord().
+		Field("kind", typ.LiteralString("err")).
+		Field("error", typ.String).
+		Build()
+	union := typ.NewUnion(okCase, errCase)
+	value := typevalue.FromType(reg, union)
+
+	got, ok := New(result).VariantOriginType(value)
+	if !ok {
+		t.Fatalf("VariantOriginType returned false")
+	}
+	assertSameType(t, got, union)
 }
 
 func TestRuntimeKindProjection(t *testing.T) {

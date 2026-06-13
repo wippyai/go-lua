@@ -1,5 +1,5 @@
-// Package stdlib exposes clean effect signatures for bounded standard-library
-// functions used by module metadata.
+// Package stdlib exposes signaturelookup-private effect signatures for bounded
+// standard-library functions used by module metadata.
 package stdlib
 
 import (

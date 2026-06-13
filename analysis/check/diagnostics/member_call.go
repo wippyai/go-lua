@@ -8,7 +8,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/diagnostic"
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
-	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/variant"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
@@ -103,32 +102,7 @@ func (p memberCall) receiverType(result *body.Result, point cfg.Point, fact sema
 }
 
 func receiverTypeFromBoundary(result *body.Result, value product.Value) (typ.Type, bool) {
-	t, ok := readmodel.New(result).ValueType(value)
-	if !ok {
-		switch p := product.PresenceOf(value); {
-		case presence.Equal(p, presence.Absent()):
-			return typ.Nil, true
-		default:
-			return nil, false
-		}
-	}
-	return typeWithBoundaryPresence(t, value), true
-}
-
-func typeWithBoundaryPresence(t typ.Type, value product.Value) typ.Type {
-	switch p := product.PresenceOf(value); {
-	case presence.Equal(p, presence.Absent()):
-		return typ.Nil
-	case presence.Equal(p, presence.Maybe()):
-		if !projectionHasNil(t) {
-			return typ.NewOptional(t)
-		}
-	case presence.Equal(p, presence.Present()):
-		if withoutNil := projectionWithoutNil(t); withoutNil != nil && !typ.IsNever(withoutNil) {
-			return withoutNil
-		}
-	}
-	return t
+	return readmodel.New(result).ValueTypeWithPresence(value)
 }
 
 func callMemberAccess(fact semantics.CallFact) (path.Path, string, *ast.FuncCallExpr, bool) {

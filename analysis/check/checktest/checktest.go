@@ -8,11 +8,11 @@ import (
 	"sort"
 
 	"github.com/wippyai/go-lua/analysis/check/body"
+	"github.com/wippyai/go-lua/analysis/check/checktest/internal/precheck"
 	"github.com/wippyai/go-lua/analysis/check/diagnostics"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/program"
 	"github.com/wippyai/go-lua/analysis/diagnostic"
 	"github.com/wippyai/go-lua/analysis/domain/value/standard"
-	"github.com/wippyai/go-lua/analysis/lua/precheck"
 	"github.com/wippyai/go-lua/analysis/module/manifest"
 	"github.com/wippyai/go-lua/analysis/module/signaturelookup"
 	"github.com/wippyai/go-lua/analysis/type/typ"

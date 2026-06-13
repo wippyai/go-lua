@@ -68,6 +68,32 @@ func (r Reader) ValueType(value product.Value) (typ.Type, bool) {
 	return concreteBoundaryType(r.result.Registry(), value)
 }
 
+func (r Reader) ValueTypeWithPresence(value product.Value) (typ.Type, bool) {
+	t, ok := r.ValueType(value)
+	if !ok {
+		if presence.Equal(product.PresenceOf(value), presence.Absent()) {
+			return typ.Nil, true
+		}
+		return nil, false
+	}
+	return typeWithBoundaryPresence(t, value), true
+}
+
+func (r Reader) VariantOriginType(value product.Value) (typ.Type, bool) {
+	if r.result == nil || r.result.Registry() == nil {
+		return nil, false
+	}
+	reg := r.result.Registry()
+	if product.Equal(reg, value, product.Bottom(reg)) {
+		return nil, false
+	}
+	origin := product.Get(reg, value, variantorigin.Key)
+	if origin.IsBottom() || origin.IsTop() {
+		return nil, false
+	}
+	return variant.TypeFromOrigin(origin.Family(), origin.Cases())
+}
+
 func (r Reader) RefineDeclaredType(declared typ.Type, value product.Value) (typ.Type, bool) {
 	if declared == nil {
 		return nil, false
@@ -183,6 +209,22 @@ func witnessTypeForPresence(t typ.Type, p presence.Value) typ.Type {
 		return typ.Nil
 	}
 	if presence.Equal(p, presence.Present()) {
+		if withoutNil := projectionWithoutNil(t); withoutNil != nil && !typ.IsNever(withoutNil) {
+			return withoutNil
+		}
+	}
+	return t
+}
+
+func typeWithBoundaryPresence(t typ.Type, value product.Value) typ.Type {
+	switch p := product.PresenceOf(value); {
+	case presence.Equal(p, presence.Absent()):
+		return typ.Nil
+	case presence.Equal(p, presence.Maybe()):
+		if !projectionHasNil(t) {
+			return typ.NewOptional(t)
+		}
+	case presence.Equal(p, presence.Present()):
 		if withoutNil := projectionWithoutNil(t); withoutNil != nil && !typ.IsNever(withoutNil) {
 			return withoutNil
 		}

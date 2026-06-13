@@ -5,8 +5,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/check/body/readmodel"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
-	"github.com/wippyai/go-lua/analysis/domain/value/axis/variantorigin"
-	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/variant"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/typeaccess"
@@ -118,18 +116,14 @@ func (p expressionTyper) annotatedPathType(expr ast.Expr) (typ.Type, bool) {
 }
 
 func (p expressionTyper) flowOriginType(accessPath pathdom.Path) (typ.Type, bool) {
-	if p.result == nil || p.result.Registry() == nil || accessPath.Symbol == 0 {
+	if p.result == nil || accessPath.Symbol == 0 {
 		return nil, false
 	}
 	value, ok := p.result.SymbolValueAtBoundary(p.point, accessPath.Symbol)
-	if !ok || product.Equal(p.result.Registry(), value, product.Bottom(p.result.Registry())) {
+	if !ok {
 		return nil, false
 	}
-	origin := product.Get(p.result.Registry(), value, variantorigin.Key)
-	if origin.IsBottom() || origin.IsTop() {
-		return nil, false
-	}
-	return variant.TypeFromOrigin(origin.Family(), origin.Cases())
+	return readmodel.New(p.result).VariantOriginType(value)
 }
 
 func (p expressionTyper) flowRootType(t typ.Type, accessPath pathdom.Path) typ.Type {

@@ -5,7 +5,7 @@ package signaturelookup
 import (
 	"github.com/wippyai/go-lua/analysis/domain/effect/signature"
 	"github.com/wippyai/go-lua/analysis/module/manifest"
-	"github.com/wippyai/go-lua/analysis/module/stdlib"
+	"github.com/wippyai/go-lua/analysis/module/signaturelookup/internal/stdlib"
 )
 
 // Source is a narrow read view over effect-bearing function signatures.

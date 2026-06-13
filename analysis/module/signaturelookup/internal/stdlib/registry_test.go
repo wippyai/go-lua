@@ -293,7 +293,7 @@ func TestRegistrySignaturesManifestRoundTrip(t *testing.T) {
 }
 
 func TestTypePackageDoesNotImportEffect(t *testing.T) {
-	root := filepath.Clean("../../type/typ")
+	root := filepath.Clean("../../../../type/typ")
 	fset := token.NewFileSet()
 	err := filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
 		if err != nil {
