@@ -487,15 +487,15 @@ func TestFactsNodeTransferCallOutcomeRebasesStateLaneFacts(t *testing.T) {
 				},
 				BranchProofs: []CallBranchProof{
 					{
-						Kind:  CallBranchProofPathEqual,
+						Kind:  pathevidence.BranchProofPathEqual,
 						Path:  pathdom.NewPlaceholder(0).Field("left"),
 						Other: pathdom.NewPlaceholder(1).Field("right"),
 					},
 				},
 				ChannelSelects: []CallChannelSelectFact{
 					{
-						Select: "callee.select",
-						Kind:   CallChannelSelectFactReceive,
+						Select: channelselectfact.ID("callee.select"),
+						Kind:   channelselectfact.FactReceive,
 						Result: pathdom.NewPlaceholder(0).Field("result"),
 						Case:   pathdom.NewPlaceholder(1).Field("case"),
 						Index:  3,

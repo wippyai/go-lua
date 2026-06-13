@@ -220,13 +220,13 @@ func callBranchProofAt(
 		return pathevidence.BranchProof{}, false
 	}
 	switch proof.Kind {
-	case CallBranchProofPathPresence:
+	case pathevidence.BranchProofPathPresence:
 		return pathevidence.BranchProof{
 			Kind:     pathevidence.BranchProofPathPresence,
 			Path:     pathKey,
 			Presence: proof.Presence,
 		}, true
-	case CallBranchProofPathEqual, CallBranchProofPathNotEqual:
+	case pathevidence.BranchProofPathEqual, pathevidence.BranchProofPathNotEqual:
 		otherPath, ok := proof.Other.Substitute(bindings)
 		if !ok {
 			return pathevidence.BranchProof{}, false
@@ -236,23 +236,12 @@ func callBranchProofAt(
 			return pathevidence.BranchProof{}, false
 		}
 		return pathevidence.BranchProof{
-			Kind:  callBranchProofKind(proof.Kind),
+			Kind:  proof.Kind,
 			Path:  pathKey,
 			Other: otherKey,
 		}, true
 	default:
 		return pathevidence.BranchProof{}, false
-	}
-}
-
-func callBranchProofKind(kind CallBranchProofKind) pathevidence.BranchProofKind {
-	switch kind {
-	case CallBranchProofPathEqual:
-		return pathevidence.BranchProofPathEqual
-	case CallBranchProofPathNotEqual:
-		return pathevidence.BranchProofPathNotEqual
-	default:
-		return pathevidence.BranchProofPathPresence
 	}
 }
 
@@ -262,13 +251,14 @@ func callChannelSelectFactAt(
 	bindings []pathdom.Path,
 	event CallChannelSelectFact,
 ) (channelselectfact.Fact, bool) {
-	kind, ok := callChannelSelectKind(event.Kind)
-	if !ok {
+	switch event.Kind {
+	case channelselectfact.FactSelect, channelselectfact.FactReceive, channelselectfact.FactCase:
+	default:
 		return channelselectfact.Fact{}, false
 	}
 	fact := channelselectfact.Fact{
-		Select: channelselectfact.ID(event.Select),
-		Kind:   kind,
+		Select: event.Select,
+		Kind:   event.Kind,
 		Index:  event.Index,
 	}
 	if !event.Result.IsEmpty() {
@@ -292,17 +282,4 @@ func callChannelSelectFactAt(
 		}
 	}
 	return fact, true
-}
-
-func callChannelSelectKind(kind CallChannelSelectFactKind) (channelselectfact.Kind, bool) {
-	switch kind {
-	case CallChannelSelectFactSelect:
-		return channelselectfact.FactSelect, true
-	case CallChannelSelectFactReceive:
-		return channelselectfact.FactReceive, true
-	case CallChannelSelectFactCase:
-		return channelselectfact.FactCase, true
-	default:
-		return 0, false
-	}
 }

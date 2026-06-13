@@ -7,8 +7,6 @@ import (
 	factapply "github.com/wippyai/go-lua/analysis/engine/factapply"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/state"
-	"github.com/wippyai/go-lua/analysis/engine/state/channelselectfact"
-	"github.com/wippyai/go-lua/analysis/engine/state/pathevidence"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/symbol"
@@ -110,7 +108,7 @@ func outcomeFromSummary(got summary.Summary, usefulNormalReturnParam func(int) b
 		out.BranchProofs = make([]factapply.CallBranchProof, len(facts.BranchProofs))
 		for i, proof := range facts.BranchProofs {
 			out.BranchProofs[i] = factapply.CallBranchProof{
-				Kind:     branchProofKind(proof.Kind),
+				Kind:     proof.Kind,
 				Path:     copyPath(proof.Path),
 				Presence: proof.Presence,
 				Other:    copyPath(proof.Other),
@@ -121,8 +119,8 @@ func outcomeFromSummary(got summary.Summary, usefulNormalReturnParam func(int) b
 		out.ChannelSelects = make([]factapply.CallChannelSelectFact, len(facts.ChannelSelects))
 		for i, fact := range facts.ChannelSelects {
 			out.ChannelSelects[i] = factapply.CallChannelSelectFact{
-				Select: string(fact.Select),
-				Kind:   channelSelectKind(fact.Kind),
+				Select: fact.Select,
+				Kind:   fact.Kind,
 				Result: copyPath(fact.Result),
 				Case:   copyPath(fact.Case),
 				Index:  fact.Index,
@@ -228,32 +226,6 @@ func withSupplementalOutcomeFacts(out, second factapply.CallOutcome) factapply.C
 	out.ReturnConditionRefinements = append(out.ReturnConditionRefinements, second.ReturnConditionRefinements...)
 	out.ReturnPresenceRelations = append(out.ReturnPresenceRelations, second.ReturnPresenceRelations...)
 	return out
-}
-
-func branchProofKind(kind pathevidence.BranchProofKind) factapply.CallBranchProofKind {
-	switch kind {
-	case pathevidence.BranchProofPathPresence:
-		return factapply.CallBranchProofPathPresence
-	case pathevidence.BranchProofPathEqual:
-		return factapply.CallBranchProofPathEqual
-	case pathevidence.BranchProofPathNotEqual:
-		return factapply.CallBranchProofPathNotEqual
-	default:
-		return 0
-	}
-}
-
-func channelSelectKind(kind channelselectfact.Kind) factapply.CallChannelSelectFactKind {
-	switch kind {
-	case channelselectfact.FactSelect:
-		return factapply.CallChannelSelectFactSelect
-	case channelselectfact.FactReceive:
-		return factapply.CallChannelSelectFactReceive
-	case channelselectfact.FactCase:
-		return factapply.CallChannelSelectFactCase
-	default:
-		return 0
-	}
 }
 
 func copyPath(p pathdom.Path) pathdom.Path {

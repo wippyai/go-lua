@@ -6,8 +6,10 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/state"
+	"github.com/wippyai/go-lua/analysis/engine/state/channelselectfact"
 	"github.com/wippyai/go-lua/analysis/engine/state/dynamicindex"
 	effectdelta "github.com/wippyai/go-lua/analysis/engine/state/effectdelta"
+	"github.com/wippyai/go-lua/analysis/engine/state/pathevidence"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 )
@@ -102,37 +104,19 @@ type CallDynamicIndexFact struct {
 	Value dynamicindex.Fact
 }
 
-// CallBranchProofKind classifies a normal-return branch proof.
-type CallBranchProofKind uint8
-
-const (
-	CallBranchProofPathPresence CallBranchProofKind = iota + 1
-	CallBranchProofPathEqual
-	CallBranchProofPathNotEqual
-)
-
 // CallBranchProof records a must branch proof over placeholder paths.
 type CallBranchProof struct {
-	Kind     CallBranchProofKind
+	Kind     pathevidence.BranchProofKind
 	Path     pathdom.Path
 	Presence presence.Value
 	Other    pathdom.Path
 }
 
-// CallChannelSelectFactKind classifies a normal-return channel-select fact.
-type CallChannelSelectFactKind uint8
-
-const (
-	CallChannelSelectFactSelect CallChannelSelectFactKind = iota + 1
-	CallChannelSelectFactReceive
-	CallChannelSelectFactCase
-)
-
 // CallChannelSelectFact records a must channel-select fact over optional
 // placeholder paths.
 type CallChannelSelectFact struct {
-	Select string
-	Kind   CallChannelSelectFactKind
+	Select channelselectfact.ID
+	Kind   channelselectfact.Kind
 	Result pathdom.Path
 	Case   pathdom.Path
 	Index  int

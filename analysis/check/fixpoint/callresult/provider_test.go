@@ -127,14 +127,14 @@ func TestOutcomeProviderMapsSummaryReturnsAndNormalReturnFacts(t *testing.T) {
 		t.Fatalf("dynamic-index facts = %#v, want mapped summary dynamic fact", got.DynamicIndexFacts)
 	}
 	if len(got.BranchProofs) != 1 ||
-		got.BranchProofs[0].Kind != factapply.CallBranchProofPathEqual ||
+		got.BranchProofs[0].Kind != pathevidence.BranchProofPathEqual ||
 		!got.BranchProofs[0].Path.Equal(path.NewPlaceholder(0).Field("left")) ||
 		!got.BranchProofs[0].Other.Equal(path.NewPlaceholder(1).Field("right")) {
 		t.Fatalf("branch proofs = %#v, want mapped summary branch proof", got.BranchProofs)
 	}
 	if len(got.ChannelSelects) != 1 ||
-		got.ChannelSelects[0].Kind != factapply.CallChannelSelectFactReceive ||
-		got.ChannelSelects[0].Select != "summary.select" ||
+		got.ChannelSelects[0].Kind != channelselectfact.FactReceive ||
+		got.ChannelSelects[0].Select != channelselectfact.ID("summary.select") ||
 		!got.ChannelSelects[0].Result.Equal(path.NewPlaceholder(0).Field("result")) ||
 		!got.ChannelSelects[0].Case.Equal(path.NewPlaceholder(1).Field("case")) ||
 		got.ChannelSelects[0].Index != 2 {
