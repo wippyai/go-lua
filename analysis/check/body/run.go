@@ -3,13 +3,13 @@ package body
 import (
 	"fmt"
 
+	"github.com/wippyai/go-lua/analysis/check/body/readexpr"
 	"github.com/wippyai/go-lua/analysis/check/effectlowering"
 	factapply "github.com/wippyai/go-lua/analysis/engine/factapply"
 	sourcevalue "github.com/wippyai/go-lua/analysis/engine/sourcevalue"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/lua/cfgbuild"
-	"github.com/wippyai/go-lua/analysis/lua/readexpr"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
 	"github.com/wippyai/go-lua/analysis/lua/transferfacts"
 	"github.com/wippyai/go-lua/compiler/ast"

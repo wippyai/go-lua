@@ -116,6 +116,50 @@ func TestCheckSplitDirectImportBoundaries(t *testing.T) {
 	}
 }
 
+func TestLuaProductionPackagesDoNotImportEngineReadBoundaries(t *testing.T) {
+	banned := []string{
+		modulePath + "/analysis/engine/sourcevalue",
+		modulePath + "/analysis/engine/state",
+		modulePath + "/analysis/engine/visibility",
+	}
+
+	for _, pkg := range productionPackages(t, modulePath+"/analysis/lua/...") {
+		for _, imp := range pkg.Imports {
+			for _, bannedImport := range banned {
+				if forbiddenImport(imp, bannedImport, false) {
+					t.Fatalf("%s imports forbidden dependency %q", pkg.ImportPath, imp)
+				}
+			}
+		}
+	}
+}
+
+func productionPackages(t *testing.T, patterns ...string) []listedPackage {
+	t.Helper()
+
+	args := append([]string{"list", "-json"}, patterns...)
+	cmd := exec.Command("go", args...)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("go %s failed: %v\n%s", strings.Join(args, " "), err, out)
+	}
+
+	dec := json.NewDecoder(bytes.NewReader(out))
+	var pkgs []listedPackage
+	for {
+		var pkg listedPackage
+		err := dec.Decode(&pkg)
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			t.Fatalf("decode go list output: %v", err)
+		}
+		pkgs = append(pkgs, pkg)
+	}
+	return pkgs
+}
+
 func productionDeps(t *testing.T, patterns ...string) []string {
 	t.Helper()
 

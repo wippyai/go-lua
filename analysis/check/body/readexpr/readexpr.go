@@ -1,4 +1,4 @@
-// Package readexpr projects static Lua table/index reads from semantic facts.
+// Package readexpr adapts Lua expression paths to check-body state reads.
 package readexpr
 
 import (
