@@ -15,6 +15,54 @@ func requireNoInstantiated(t *testing.T, tt typ.Type) {
 	}
 }
 
+func requireUnionShape(t *testing.T, got typ.Type, wants ...typ.Type) *typ.Union {
+	t.Helper()
+	union, ok := got.(*typ.Union)
+	if !ok {
+		t.Fatalf("expanded type = %T %[1]v, want union", got)
+	}
+	if len(union.Members) != len(wants) {
+		t.Fatalf("union members = %v, want %d members", union.Members, len(wants))
+	}
+	for _, want := range wants {
+		found := false
+		for _, member := range union.Members {
+			if typ.TypeEquals(member, want) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("union members = %v, missing %v", union.Members, want)
+		}
+	}
+	return union
+}
+
+func requireIntersectionShape(t *testing.T, got typ.Type, wants ...typ.Type) *typ.Intersection {
+	t.Helper()
+	intersection, ok := got.(*typ.Intersection)
+	if !ok {
+		t.Fatalf("expanded type = %T %[1]v, want intersection", got)
+	}
+	if len(intersection.Members) != len(wants) {
+		t.Fatalf("intersection members = %v, want %d members", intersection.Members, len(wants))
+	}
+	for _, want := range wants {
+		found := false
+		for _, member := range intersection.Members {
+			if typ.TypeEquals(member, want) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("intersection members = %v, missing %v", intersection.Members, want)
+		}
+	}
+	return intersection
+}
+
 func TestSubstitute(t *testing.T) {
 	t.Run("empty subs", func(t *testing.T) {
 		if Substitute(typ.String, nil) != typ.String {
@@ -259,6 +307,63 @@ func TestExpandInstantiated(t *testing.T) {
 		if arr.Element != typ.Number {
 			t.Error("element should be Number")
 		}
+	})
+
+	t.Run("flattens union member expanded from type parameter", func(t *testing.T) {
+		tp := typ.NewTypeParam("T", nil)
+		boxParam := typ.NewTypeParam("U", nil)
+		box := typ.NewGeneric("Box", []*typ.TypeParam{boxParam}, boxParam)
+		generic := typ.NewGeneric("UnionBox", []*typ.TypeParam{tp}, typ.NewUnion(
+			typ.Instantiate(box, tp),
+			typ.Boolean,
+		))
+
+		expanded := ExpandInstantiated(typ.Instantiate(generic, typ.NewUnion(typ.String, typ.Number)))
+		union := requireUnionShape(t, expanded, typ.String, typ.Number, typ.Boolean)
+		for _, member := range union.Members {
+			if _, ok := member.(*typ.Union); ok {
+				t.Fatalf("expanded union preserved nested union member: %v", union.Members)
+			}
+		}
+		requireNoInstantiated(t, expanded)
+	})
+
+	t.Run("collapses optional union member expanded from type parameter", func(t *testing.T) {
+		tp := typ.NewTypeParam("T", nil)
+		boxParam := typ.NewTypeParam("U", nil)
+		box := typ.NewGeneric("Box", []*typ.TypeParam{boxParam}, boxParam)
+		generic := typ.NewGeneric("NilableUnionBox", []*typ.TypeParam{tp}, typ.NewUnion(
+			typ.Instantiate(box, tp),
+			typ.Boolean,
+		))
+
+		expanded := ExpandInstantiated(typ.Instantiate(generic, typ.NewOptional(typ.String)))
+		union := requireUnionShape(t, expanded, typ.Nil, typ.String, typ.Boolean)
+		for _, member := range union.Members {
+			if _, ok := member.(*typ.Optional); ok {
+				t.Fatalf("expanded union preserved optional member instead of nil + payload: %v", union.Members)
+			}
+		}
+		requireNoInstantiated(t, expanded)
+	})
+
+	t.Run("flattens intersection member expanded from type parameter", func(t *testing.T) {
+		tp := typ.NewTypeParam("T", nil)
+		boxParam := typ.NewTypeParam("U", nil)
+		box := typ.NewGeneric("Box", []*typ.TypeParam{boxParam}, boxParam)
+		generic := typ.NewGeneric("IntersectionBox", []*typ.TypeParam{tp}, typ.NewIntersection(
+			typ.Instantiate(box, tp),
+			typ.Boolean,
+		))
+
+		expanded := ExpandInstantiated(typ.Instantiate(generic, typ.NewIntersection(typ.String, typ.Number)))
+		intersection := requireIntersectionShape(t, expanded, typ.String, typ.Number, typ.Boolean)
+		for _, member := range intersection.Members {
+			if _, ok := member.(*typ.Intersection); ok {
+				t.Fatalf("expanded intersection preserved nested intersection member: %v", intersection.Members)
+			}
+		}
+		requireNoInstantiated(t, expanded)
 	})
 
 	t.Run("normalizes instantiated table keys", func(t *testing.T) {
