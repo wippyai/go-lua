@@ -3,6 +3,7 @@ package subtype
 import (
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/analysis/type/typeexpr"
 	"github.com/wippyai/go-lua/analysis/type/unwrap"
 )
 
@@ -82,7 +83,7 @@ func (c *checker) checkMapToRecord(sub *typ.Map, super *typ.Record, depth int) b
 		}
 		expected := sf.Type
 		if sf.Optional && !unwrap.IsOptionalLike(expected) {
-			expected = typ.NewOptional(expected)
+			expected = typeexpr.Optional(expected)
 		}
 		if !c.check(sub.Value, expected, depth+1) {
 			return false

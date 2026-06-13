@@ -8,6 +8,7 @@ import (
 
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/analysis/type/typeexpr"
 )
 
 func TestIsClosedUnionAnnotationRecognizesInstantiatedGenericUnion(t *testing.T) {
@@ -155,7 +156,7 @@ func TestPruneLessPreciseRefinableUnionMembersDropsDominatedSoftAlternative(t *t
 
 	got := PruneLessPreciseRefinableUnionMembers(typ.NewUnion(soft, precise), func(candidate, baseline typ.Type) bool {
 		return typ.TypeEquals(candidate, precise) && typ.TypeEquals(baseline, soft)
-	}, typ.NewUnion)
+	}, typeexpr.Union)
 	if !typ.TypeEquals(got, precise) {
 		t.Fatalf("pruned union = %v, want %v", got, precise)
 	}

@@ -4,6 +4,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/internal/recursion"
 	"github.com/wippyai/go-lua/analysis/type/subst"
 	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/analysis/type/typeexpr"
 	"github.com/wippyai/go-lua/analysis/type/unwrap"
 )
 
@@ -93,7 +94,7 @@ func PruneLessPreciseRefinableUnionMembers(t typ.Type, morePrecise MorePreciseFu
 	if normalizeUnion != nil {
 		return normalizeUnion(keep...)
 	}
-	return typ.NewUnion(keep...)
+	return typeexpr.Union(keep...)
 }
 
 // closedUnionOf unwraps Annotated/Alias/Optional layers to expose an

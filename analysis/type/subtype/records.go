@@ -5,6 +5,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/subst"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/analysis/type/typeexpr"
 	"github.com/wippyai/go-lua/analysis/type/unwrap"
 )
 
@@ -54,7 +55,7 @@ func (c *checker) checkRecordMember(subType typ.Type, subOptional, subReadonly b
 	}
 	effectiveSuper := superType
 	if superOptional {
-		effectiveSuper = typ.NewOptional(superType)
+		effectiveSuper = typeexpr.Optional(superType)
 	}
 	if superReadonly {
 		if !c.check(subType, effectiveSuper, depth+1) {
