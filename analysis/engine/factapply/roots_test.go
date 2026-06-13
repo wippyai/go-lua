@@ -10,6 +10,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/standard"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/state"
+	"github.com/wippyai/go-lua/analysis/engine/state/pathevidence"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/engine/visibility"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
@@ -109,8 +110,8 @@ func TestFactsNodeTransferRootAssignmentAddsPathEqualityProofForPathSource(t *te
 		Point:    point,
 	}, state.State{})
 
-	proof := state.BranchProof{
-		Kind:  state.BranchProofPathEqual,
+	proof := pathevidence.BranchProof{
+		Kind:  pathevidence.BranchProofPathEqual,
 		Path:  path.PathKey("sym112@1"),
 		Other: path.PathKey("sym113@1"),
 	}

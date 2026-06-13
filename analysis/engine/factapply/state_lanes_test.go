@@ -10,6 +10,7 @@ import (
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	effectdelta "github.com/wippyai/go-lua/analysis/engine/state/effectdelta"
+	"github.com/wippyai/go-lua/analysis/engine/state/pathevidence"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/engine/visibility"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
@@ -146,13 +147,13 @@ func TestFactsEdgeTransferAddsPointLevelBranchProofsOnBothBranchOutputs(t *testi
 	visibilityBuilder.Define(branch, err, "err")
 	visibilityBuilder.Define(branch, left, "left")
 	visibilityBuilder.Define(branch, right, "right")
-	wantPresence := state.BranchProof{
-		Kind:     state.BranchProofPathPresence,
+	wantPresence := pathevidence.BranchProof{
+		Kind:     pathevidence.BranchProofPathPresence,
 		Path:     pathdom.PathKey("sym403@1"),
 		Presence: presence.Present(),
 	}
-	wantEquality := state.BranchProof{
-		Kind:  state.BranchProofPathEqual,
+	wantEquality := pathevidence.BranchProof{
+		Kind:  pathevidence.BranchProofPathEqual,
 		Path:  pathdom.PathKey("sym404@1.value"),
 		Other: pathdom.PathKey("sym405@1.value"),
 	}
@@ -205,13 +206,13 @@ func TestFactsEdgeTransferBranchProofsRespectEdgesAndJoinByIntersection(t *testi
 	visibilityBuilder.Define(branch, err, "err")
 	visibilityBuilder.Define(branch, left, "left")
 	visibilityBuilder.Define(branch, right, "right")
-	oneSided := state.BranchProof{
-		Kind:     state.BranchProofPathPresence,
+	oneSided := pathevidence.BranchProof{
+		Kind:     pathevidence.BranchProofPathPresence,
 		Path:     pathdom.PathKey("sym430@1"),
 		Presence: presence.Present(),
 	}
-	twoSided := state.BranchProof{
-		Kind:  state.BranchProofPathEqual,
+	twoSided := pathevidence.BranchProof{
+		Kind:  pathevidence.BranchProofPathEqual,
 		Path:  pathdom.PathKey("sym431@1.value"),
 		Other: pathdom.PathKey("sym432@1.value"),
 	}
@@ -525,8 +526,8 @@ func TestFactsNodeTransferCallOutcomeRebasesStateLaneFacts(t *testing.T) {
 		t.Fatalf("dynamic-index fact = %#v, want rebased fact", gotDynamic)
 	}
 
-	proof := state.BranchProof{
-		Kind:  state.BranchProofPathEqual,
+	proof := pathevidence.BranchProof{
+		Kind:  pathevidence.BranchProofPathEqual,
 		Path:  pathdom.PathKey("sym505@1.left"),
 		Other: pathdom.PathKey("sym506@1.right"),
 	}

@@ -7,6 +7,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/standard"
 	"github.com/wippyai/go-lua/analysis/engine/state"
+	"github.com/wippyai/go-lua/analysis/engine/state/pathevidence"
 	"github.com/wippyai/go-lua/analysis/engine/visibility"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/symbol"
@@ -119,8 +120,8 @@ func TestPathStateAdapterInvalidateSubtreeDropsEquivalentStaticMemberFacts(t *te
 	present := presentValue(reg)
 	in := state.State{}.
 		WritePathStaticMember(originalKey, present).
-		AddBranchProof(state.BranchProof{
-			Kind:  state.BranchProofPathEqual,
+		AddBranchProof(pathevidence.BranchProof{
+			Kind:  pathevidence.BranchProofPathEqual,
 			Path:  aliasKey,
 			Other: originalKey,
 		})
@@ -132,8 +133,8 @@ func TestPathStateAdapterInvalidateSubtreeDropsEquivalentStaticMemberFacts(t *te
 	if got, ok := out.ReadPathStaticMember(originalKey); ok {
 		t.Fatalf("static member %s = %s, want removed through alias invalidation", originalKey, formatValue(reg, got))
 	}
-	if out.HasBranchProof(state.BranchProof{
-		Kind:  state.BranchProofPathEqual,
+	if out.HasBranchProof(pathevidence.BranchProof{
+		Kind:  pathevidence.BranchProofPathEqual,
 		Path:  aliasKey,
 		Other: originalKey,
 	}) {

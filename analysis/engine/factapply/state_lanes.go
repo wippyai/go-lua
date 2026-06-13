@@ -9,6 +9,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	sourcevalue "github.com/wippyai/go-lua/analysis/engine/sourcevalue"
 	"github.com/wippyai/go-lua/analysis/engine/state"
+	"github.com/wippyai/go-lua/analysis/engine/state/pathevidence"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/engine/visibility"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
@@ -128,44 +129,44 @@ func branchProofAt(
 	resolver *visibility.Resolver,
 	point cfg.Point,
 	proof factflow.BranchProof,
-) (state.BranchProof, bool) {
+) (pathevidence.BranchProof, bool) {
 	pathKey := factPathKeyAt(resolver, point, proof.Path())
 	if pathKey == "" {
-		return state.BranchProof{}, false
+		return pathevidence.BranchProof{}, false
 	}
 	switch proof.Kind() {
 	case factflow.BranchProofPathPresence:
 		value, ok := proof.Presence()
 		if !ok {
-			return state.BranchProof{}, false
+			return pathevidence.BranchProof{}, false
 		}
-		return state.BranchProof{
-			Kind:     state.BranchProofPathPresence,
+		return pathevidence.BranchProof{
+			Kind:     pathevidence.BranchProofPathPresence,
 			Path:     pathKey,
 			Presence: value,
 		}, true
 	case factflow.BranchProofPathEqual:
 		other, ok := branchProofOtherPathKeyAt(resolver, point, proof)
 		if !ok {
-			return state.BranchProof{}, false
+			return pathevidence.BranchProof{}, false
 		}
-		return state.BranchProof{
-			Kind:  state.BranchProofPathEqual,
+		return pathevidence.BranchProof{
+			Kind:  pathevidence.BranchProofPathEqual,
 			Path:  pathKey,
 			Other: other,
 		}, true
 	case factflow.BranchProofPathNotEqual:
 		other, ok := branchProofOtherPathKeyAt(resolver, point, proof)
 		if !ok {
-			return state.BranchProof{}, false
+			return pathevidence.BranchProof{}, false
 		}
-		return state.BranchProof{
-			Kind:  state.BranchProofPathNotEqual,
+		return pathevidence.BranchProof{
+			Kind:  pathevidence.BranchProofPathNotEqual,
 			Path:  pathKey,
 			Other: other,
 		}, true
 	default:
-		return state.BranchProof{}, false
+		return pathevidence.BranchProof{}, false
 	}
 }
 

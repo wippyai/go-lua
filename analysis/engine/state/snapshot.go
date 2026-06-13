@@ -6,6 +6,7 @@ import (
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	effectdelta "github.com/wippyai/go-lua/analysis/engine/state/effectdelta"
+	"github.com/wippyai/go-lua/analysis/engine/state/pathevidence"
 )
 
 type PathRefinementsSnapshot struct {
@@ -17,10 +18,11 @@ type PathRefinementsSnapshot struct {
 // is top. When Top is true, Refinements is empty and callers must not
 // manufacture finite facts from it.
 func (s State) PathRefinementsSnapshot() PathRefinementsSnapshot {
-	if s.pathsTop {
-		return PathRefinementsSnapshot{Top: true}
+	snapshot := s.pathEvidence.PathRefinementsSnapshot()
+	return PathRefinementsSnapshot{
+		Top:         snapshot.Top,
+		Refinements: snapshot.Refinements,
 	}
-	return PathRefinementsSnapshot{Refinements: clonePathMap(s.paths)}
 }
 
 type PathStaticMembersSnapshot struct {
@@ -32,13 +34,11 @@ type PathStaticMembersSnapshot struct {
 // PathStaticMembersSnapshot returns finite must-static-member facts. Bottom is
 // explicit; Top means the reachable must lane contains no finite facts.
 func (s State) PathStaticMembersSnapshot() PathStaticMembersSnapshot {
-	if s.pathStaticMembersBottom {
-		return PathStaticMembersSnapshot{Bottom: true}
-	}
-	members := clonePathMap(s.pathStaticMembers)
+	snapshot := s.pathEvidence.PathStaticMembersSnapshot()
 	return PathStaticMembersSnapshot{
-		Top:     len(members) == 0,
-		Members: members,
+		Bottom:  snapshot.Bottom,
+		Top:     snapshot.Top,
+		Members: snapshot.Members,
 	}
 }
 
@@ -59,19 +59,17 @@ func (s State) DynamicIndexFactsSnapshot() DynamicIndexFactsSnapshot {
 type BranchProofsSnapshot struct {
 	Bottom bool
 	Top    bool
-	Proofs []BranchProof
+	Proofs []pathevidence.BranchProof
 }
 
 // BranchProofsSnapshot returns finite must branch proofs in stable order.
 // Bottom is explicit; Top means the reachable must lane contains no proofs.
 func (s State) BranchProofsSnapshot() BranchProofsSnapshot {
-	if s.branchProofsBottom {
-		return BranchProofsSnapshot{Bottom: true}
-	}
-	proofs := branchProofsFromSet(s.branchProofs)
+	snapshot := s.pathEvidence.BranchProofsSnapshot()
 	return BranchProofsSnapshot{
-		Top:    len(proofs) == 0,
-		Proofs: proofs,
+		Bottom: snapshot.Bottom,
+		Top:    snapshot.Top,
+		Proofs: snapshot.Proofs,
 	}
 }
 
@@ -107,33 +105,6 @@ func (s State) EffectDeltasSnapshot() EffectDeltasSnapshot {
 		return EffectDeltasSnapshot{Top: true}
 	}
 	return EffectDeltasSnapshot{Deltas: effectdelta.CloneMap(s.effectDeltas)}
-}
-
-func branchProofsFromSet(in map[BranchProof]struct{}) []BranchProof {
-	if len(in) == 0 {
-		return nil
-	}
-	out := make([]BranchProof, 0, len(in))
-	for proof := range in {
-		out = append(out, proof)
-	}
-	sort.Slice(out, func(i, j int) bool {
-		return branchProofLess(out[i], out[j])
-	})
-	return out
-}
-
-func branchProofLess(a, b BranchProof) bool {
-	if a.Kind != b.Kind {
-		return a.Kind < b.Kind
-	}
-	if a.Path != b.Path {
-		return a.Path < b.Path
-	}
-	if a.Other != b.Other {
-		return a.Other < b.Other
-	}
-	return a.Presence.String() < b.Presence.String()
 }
 
 func channelSelectFactsFromSet(in map[ChannelSelectFact]struct{}) []ChannelSelectFact {

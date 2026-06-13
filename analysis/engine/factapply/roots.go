@@ -7,6 +7,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	sourcevalue "github.com/wippyai/go-lua/analysis/engine/sourcevalue"
 	"github.com/wippyai/go-lua/analysis/engine/state"
+	"github.com/wippyai/go-lua/analysis/engine/state/pathevidence"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/engine/visibility"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
@@ -118,8 +119,8 @@ func applyRootAssignmentPathProof(
 	if targetKey == "" || sourceKey == "" || targetKey == sourceKey {
 		return out
 	}
-	return out.AddBranchProof(state.BranchProof{
-		Kind:  state.BranchProofPathEqual,
+	return out.AddBranchProof(pathevidence.BranchProof{
+		Kind:  pathevidence.BranchProofPathEqual,
 		Path:  targetKey,
 		Other: sourceKey,
 	})

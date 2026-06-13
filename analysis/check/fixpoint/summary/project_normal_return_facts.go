@@ -8,6 +8,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	effectdelta "github.com/wippyai/go-lua/analysis/engine/state/effectdelta"
+	"github.com/wippyai/go-lua/analysis/engine/state/pathevidence"
 )
 
 func projectNormalReturnFacts(reg *axis.Registry, result ResultReader, exit state.State) NormalReturnFacts {
@@ -247,13 +248,13 @@ func projectDynamicIndexAdmission(admission state.DynamicIndexAdmission) (Dynami
 	}
 }
 
-func projectBranchProofKind(kind state.BranchProofKind) (BranchProofKind, bool) {
+func projectBranchProofKind(kind pathevidence.BranchProofKind) (BranchProofKind, bool) {
 	switch kind {
-	case state.BranchProofPathPresence:
+	case pathevidence.BranchProofPathPresence:
 		return BranchProofPathPresence, true
-	case state.BranchProofPathEqual:
+	case pathevidence.BranchProofPathEqual:
 		return BranchProofPathEqual, true
-	case state.BranchProofPathNotEqual:
+	case pathevidence.BranchProofPathNotEqual:
 		return BranchProofPathNotEqual, true
 	default:
 		return 0, false

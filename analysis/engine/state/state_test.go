@@ -14,6 +14,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/standard"
 	effectdelta "github.com/wippyai/go-lua/analysis/engine/state/effectdelta"
 	"github.com/wippyai/go-lua/analysis/engine/state/escapeplacement"
+	"github.com/wippyai/go-lua/analysis/engine/state/pathevidence"
 	"github.com/wippyai/go-lua/analysis/symbol"
 )
 
@@ -135,7 +136,7 @@ func TestUpdateHelpersReadCurrentAndCanonicalizeBottom(t *testing.T) {
 	if _, ok := s2.values[slot]; ok {
 		t.Fatalf("UpdateValue to bottom kept finite value entry")
 	}
-	if _, ok := s2.paths[pathKey]; ok {
+	if _, ok := s2.PathRefinementsSnapshot().Refinements[pathKey]; ok {
 		t.Fatalf("UpdatePathKey to bottom kept finite path entry")
 	}
 	if !stateDomain.Equal(State{}.WriteReturnSlot(reg, retSlot, absent), State{}.WriteValue(reg, key.ReturnSlot(retSlot), absent)) {
@@ -204,9 +205,6 @@ func TestExplicitBottomEntriesCanonicalizeToAbsence(t *testing.T) {
 		values: map[key.Value]product.Value{
 			key.ReturnSlot(0): bottom,
 		},
-		paths: map[pathdom.PathKey]product.Value{
-			pathdom.PathKey("sym1@1.field"): bottom,
-		},
 	}
 
 	if !stateDomain.Equal(explicit, State{}) {
@@ -216,8 +214,8 @@ func TestExplicitBottomEntriesCanonicalizeToAbsence(t *testing.T) {
 	if !stateDomain.Equal(joined, State{}) {
 		t.Fatalf("Join should canonicalize bottom entries away, got %s", formatState(reg, joined))
 	}
-	if len(joined.values) != 0 || len(joined.paths) != 0 {
-		t.Fatalf("Join kept bottom entries: values=%d paths=%d", len(joined.values), len(joined.paths))
+	if len(joined.values) != 0 {
+		t.Fatalf("Join kept bottom entries: values=%d", len(joined.values))
 	}
 
 	withValue := State{}.WriteValue(reg, key.ReturnSlot(0), presentValue(reg))
@@ -240,7 +238,7 @@ func TestWritesFromStateBottomProduceReachableState(t *testing.T) {
 	pathKey := pathdom.PathKey("sym65@1.member")
 	dynamicKey := DynamicIndexKey{Table: pathdom.PathKey("sym65@1.table"), Site: "dyn"}
 	heapID := identity.ID{Kind: "table", Site: "bottom-write", Index: 1}
-	proof := BranchProof{Kind: BranchProofPathPresence, Path: pathKey, Presence: presence.Present()}
+	proof := pathevidence.BranchProof{Kind: pathevidence.BranchProofPathPresence, Path: pathKey, Presence: presence.Present()}
 	effectKey := effectdelta.Key{Target: pathdom.PathKey("sym65@1.table"), Site: "effect", Kind: effectdelta.Mutation}
 	channel := ChannelSelectFact{Select: "select-bottom", Kind: ChannelSelectFactSelect, Result: pathKey}
 	escapeID := identity.ID{Kind: "table", Site: "escape-bottom", Index: 1}
@@ -269,7 +267,7 @@ func TestWritesFromStateBottomProduceReachableState(t *testing.T) {
 		{"escape-placement", bottom.WriteEscapePlacement(escapeID, escapeplacement.Stack)},
 	}
 	for _, tc := range cases {
-		if tc.state.pathStaticMembersBottom || tc.state.branchProofsBottom || tc.state.channelSelectBottom {
+		if tc.state.pathEvidence.StaticMembersBottom() || tc.state.pathEvidence.ProofsBottom() || tc.state.channelSelectBottom {
 			t.Fatalf("%s write left partial must-lane bottom: %#v", tc.name, tc.state)
 		}
 		if !stateDomain.LessOrEq(bottom, tc.state) {
@@ -486,9 +484,9 @@ func TestHeapTableIdentityObjectsJoinAndCopy(t *testing.T) {
 
 func TestBranchProofsUseMustJoin(t *testing.T) {
 	stateDomain := Domain(standard.Registry())
-	common := BranchProof{Kind: BranchProofPathPresence, Path: pathdom.PathKey("sym100@1.err"), Presence: presence.Present()}
-	leftOnly := BranchProof{Kind: BranchProofPathEqual, Path: pathdom.PathKey("sym100@1.a"), Other: pathdom.PathKey("sym100@1.b")}
-	rightOnly := BranchProof{Kind: BranchProofPathNotEqual, Path: pathdom.PathKey("sym100@1.a"), Other: pathdom.PathKey("sym100@1.c")}
+	common := pathevidence.BranchProof{Kind: pathevidence.BranchProofPathPresence, Path: pathdom.PathKey("sym100@1.err"), Presence: presence.Present()}
+	leftOnly := pathevidence.BranchProof{Kind: pathevidence.BranchProofPathEqual, Path: pathdom.PathKey("sym100@1.a"), Other: pathdom.PathKey("sym100@1.b")}
+	rightOnly := pathevidence.BranchProof{Kind: pathevidence.BranchProofPathNotEqual, Path: pathdom.PathKey("sym100@1.a"), Other: pathdom.PathKey("sym100@1.c")}
 	left := State{}.AddBranchProof(common).AddBranchProof(leftOnly)
 	right := State{}.AddBranchProof(common).AddBranchProof(rightOnly)
 
@@ -519,18 +517,18 @@ func TestBranchProofsUseMustJoin(t *testing.T) {
 
 func TestEquivalentPathKeysFollowEqualityProofs(t *testing.T) {
 	s := State{}.
-		AddBranchProof(BranchProof{
-			Kind:  BranchProofPathEqual,
+		AddBranchProof(pathevidence.BranchProof{
+			Kind:  pathevidence.BranchProofPathEqual,
 			Path:  pathdom.PathKey("sym10@1"),
 			Other: pathdom.PathKey("sym20@1"),
 		}).
-		AddBranchProof(BranchProof{
-			Kind:  BranchProofPathEqual,
+		AddBranchProof(pathevidence.BranchProof{
+			Kind:  pathevidence.BranchProofPathEqual,
 			Path:  pathdom.PathKey("sym20@1.child"),
 			Other: pathdom.PathKey("sym30@1.leaf"),
 		}).
-		AddBranchProof(BranchProof{
-			Kind:  BranchProofPathNotEqual,
+		AddBranchProof(pathevidence.BranchProof{
+			Kind:  pathevidence.BranchProofPathNotEqual,
 			Path:  pathdom.PathKey("sym10@1"),
 			Other: pathdom.PathKey("sym40@1"),
 		})
@@ -686,9 +684,9 @@ func TestInvalidatePathKeySubtreeRemovesStructuredDescendants(t *testing.T) {
 	placeholderPrefix := pathdom.PathKey("$0.field")
 	placeholderChild := pathdom.PathKey("$0.field.deep")
 	placeholderSibling := pathdom.PathKey("$0.fieldish")
-	prefixProof := BranchProof{Kind: BranchProofPathPresence, Path: prefix, Presence: presence.Present()}
-	childProof := BranchProof{Kind: BranchProofPathEqual, Path: child, Other: otherSymbol}
-	otherProof := BranchProof{Kind: BranchProofPathNotEqual, Path: otherSymbol, Other: otherVersion}
+	prefixProof := pathevidence.BranchProof{Kind: pathevidence.BranchProofPathPresence, Path: prefix, Presence: presence.Present()}
+	childProof := pathevidence.BranchProof{Kind: pathevidence.BranchProofPathEqual, Path: child, Other: otherSymbol}
+	otherProof := pathevidence.BranchProof{Kind: pathevidence.BranchProofPathNotEqual, Path: otherSymbol, Other: otherVersion}
 
 	s := State{}.
 		WritePathKey(reg, root, present).
@@ -779,7 +777,7 @@ func TestInvalidatePathKeySubtreeRemovesBranchProofsWithOtherUnderSubtree(t *tes
 	prefix := pathdom.PathKey("sym70@2.field")
 	otherInside := pathdom.PathKey("sym70@2.field.deep")
 	outside := pathdom.PathKey("sym72@2.field")
-	proof := BranchProof{Kind: BranchProofPathEqual, Path: outside, Other: otherInside}
+	proof := pathevidence.BranchProof{Kind: pathevidence.BranchProofPathEqual, Path: outside, Other: otherInside}
 
 	s := State{}.
 		WritePathKey(reg, prefix, present).
@@ -823,8 +821,8 @@ func TestInvalidatePathKeyDescendantsKeepsContainerAndUnrelatedPaths(t *testing.
 	otherSymbol := pathdom.PathKey("sym61@2.item.count")
 	placeholderContainer := pathdom.PathKey("$0.item")
 	placeholderChild := pathdom.PathKey("$0.item.count")
-	containerProof := BranchProof{Kind: BranchProofPathPresence, Path: container, Presence: presence.Present()}
-	childProof := BranchProof{Kind: BranchProofPathEqual, Path: child, Other: otherSymbol}
+	containerProof := pathevidence.BranchProof{Kind: pathevidence.BranchProofPathPresence, Path: container, Presence: presence.Present()}
+	childProof := pathevidence.BranchProof{Kind: pathevidence.BranchProofPathEqual, Path: child, Other: otherSymbol}
 
 	s := State{}.
 		WritePathKey(reg, container, present).
@@ -906,7 +904,7 @@ func TestInvalidatePathKeyDescendantsFromRootRemovesStaticMembersAndBranchProofs
 	child := pathdom.PathKey("sym80@1.field")
 	descendant := pathdom.PathKey("sym80@1.field.deep")
 	outside := pathdom.PathKey("sym81@1.field")
-	proof := BranchProof{Kind: BranchProofPathNotEqual, Path: outside, Other: descendant}
+	proof := pathevidence.BranchProof{Kind: pathevidence.BranchProofPathNotEqual, Path: outside, Other: descendant}
 
 	s := State{}.
 		WritePathKey(reg, root, present).

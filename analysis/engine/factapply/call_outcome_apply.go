@@ -5,6 +5,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	effectdelta "github.com/wippyai/go-lua/analysis/engine/state/effectdelta"
+	"github.com/wippyai/go-lua/analysis/engine/state/pathevidence"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/engine/visibility"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
@@ -225,49 +226,49 @@ func callBranchProofAt(
 	point cfg.Point,
 	bindings []pathdom.Path,
 	proof CallBranchProof,
-) (state.BranchProof, bool) {
+) (pathevidence.BranchProof, bool) {
 	targetPath, ok := proof.Path.Substitute(bindings)
 	if !ok {
-		return state.BranchProof{}, false
+		return pathevidence.BranchProof{}, false
 	}
 	pathKey := factPathKeyAt(resolver, point, targetPath)
 	if pathKey == "" {
-		return state.BranchProof{}, false
+		return pathevidence.BranchProof{}, false
 	}
 	switch proof.Kind {
 	case CallBranchProofPathPresence:
-		return state.BranchProof{
-			Kind:     state.BranchProofPathPresence,
+		return pathevidence.BranchProof{
+			Kind:     pathevidence.BranchProofPathPresence,
 			Path:     pathKey,
 			Presence: proof.Presence,
 		}, true
 	case CallBranchProofPathEqual, CallBranchProofPathNotEqual:
 		otherPath, ok := proof.Other.Substitute(bindings)
 		if !ok {
-			return state.BranchProof{}, false
+			return pathevidence.BranchProof{}, false
 		}
 		otherKey := factPathKeyAt(resolver, point, otherPath)
 		if otherKey == "" {
-			return state.BranchProof{}, false
+			return pathevidence.BranchProof{}, false
 		}
-		return state.BranchProof{
+		return pathevidence.BranchProof{
 			Kind:  callBranchProofKind(proof.Kind),
 			Path:  pathKey,
 			Other: otherKey,
 		}, true
 	default:
-		return state.BranchProof{}, false
+		return pathevidence.BranchProof{}, false
 	}
 }
 
-func callBranchProofKind(kind CallBranchProofKind) state.BranchProofKind {
+func callBranchProofKind(kind CallBranchProofKind) pathevidence.BranchProofKind {
 	switch kind {
 	case CallBranchProofPathEqual:
-		return state.BranchProofPathEqual
+		return pathevidence.BranchProofPathEqual
 	case CallBranchProofPathNotEqual:
-		return state.BranchProofPathNotEqual
+		return pathevidence.BranchProofPathNotEqual
 	default:
-		return state.BranchProofPathPresence
+		return pathevidence.BranchProofPathPresence
 	}
 }
 

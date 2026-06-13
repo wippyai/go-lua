@@ -8,6 +8,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/standard"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/state"
+	"github.com/wippyai/go-lua/analysis/engine/state/pathevidence"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/engine/visibility"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
@@ -107,8 +108,8 @@ func TestFactsNodeTransferPathAssignmentInvalidatesEquivalentPathProofs(t *testi
 		WritePathKey(reg, originalKey, present).
 		WritePathKey(reg, originalChildKey, present).
 		WritePathKey(reg, siblingKey, present).
-		AddBranchProof(state.BranchProof{
-			Kind:  state.BranchProofPathEqual,
+		AddBranchProof(pathevidence.BranchProof{
+			Kind:  pathevidence.BranchProofPathEqual,
 			Path:  path.PathKey("sym108@1"),
 			Other: path.PathKey("sym109@1"),
 		})

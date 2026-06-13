@@ -8,6 +8,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/standard"
 	effectdelta "github.com/wippyai/go-lua/analysis/engine/state/effectdelta"
+	"github.com/wippyai/go-lua/analysis/engine/state/pathevidence"
 )
 
 func TestSnapshotsCloneFiniteLanes(t *testing.T) {
@@ -20,8 +21,8 @@ func TestSnapshotsCloneFiniteLanes(t *testing.T) {
 	memberKey := pathdom.PathKey("sym130@1.member")
 	dynamicKey := DynamicIndexKey{Table: pathdom.PathKey("sym130@1.table"), Site: "dyn"}
 	effectKey := effectdelta.Key{Target: pathdom.PathKey("sym130@1.table"), Site: "effect", Kind: effectdelta.Mutation}
-	proof := BranchProof{Kind: BranchProofPathPresence, Path: pathKey, Presence: presence.Present()}
-	otherProof := BranchProof{Kind: BranchProofPathNotEqual, Path: pathKey, Other: memberKey}
+	proof := pathevidence.BranchProof{Kind: pathevidence.BranchProofPathPresence, Path: pathKey, Presence: presence.Present()}
+	otherProof := pathevidence.BranchProof{Kind: pathevidence.BranchProofPathNotEqual, Path: pathKey, Other: memberKey}
 	selectFact := ChannelSelectFact{Select: "select-snapshot", Kind: ChannelSelectFactSelect, Result: pathKey}
 	otherSelectFact := ChannelSelectFact{Select: "select-snapshot", Kind: ChannelSelectFactCase, Case: memberKey, Index: 1}
 	dynamicFact := DynamicIndexFact{

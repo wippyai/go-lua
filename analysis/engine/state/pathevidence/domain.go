@@ -1,22 +1,100 @@
-package state
+package pathevidence
 
 import (
 	"github.com/wippyai/go-lua/analysis/domain/lattice"
+	"github.com/wippyai/go-lua/analysis/domain/lattice/lift"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 )
 
-func (s State) ReadPathStaticMember(pathKey pathdom.PathKey) (product.Value, bool) {
-	return s.pathEvidence.ReadPathStaticMember(pathKey)
+// Domain builds the lattice for the coupled path-evidence lane.
+func Domain(reg *axis.Registry) lattice.Lattice[Lane] {
+	valueDomain := product.Domain(reg)
+	ops := domainOps{
+		refinements:   lift.Map[pathdom.PathKey, product.Value](valueDomain),
+		staticMembers: mustMapDomain[pathdom.PathKey, product.Value](valueDomain),
+		proofs:        mustSetDomain[BranchProof](),
+	}
+	return lattice.Lattice[Lane]{
+		Bottom: func() Lane {
+			return Lane{
+				staticMembersBottom: true,
+				proofsBottom:        true,
+			}
+		},
+		Top: func() Lane {
+			return Lane{refinementsTop: true}
+		},
+		Equal: func(a, b Lane) bool {
+			return ops.refinements.Equal(ops.refinementLane(a), ops.refinementLane(b)) &&
+				ops.staticMembers.Equal(ops.staticMemberLane(a), ops.staticMemberLane(b)) &&
+				ops.proofs.Equal(ops.proofLane(a), ops.proofLane(b))
+		},
+		LessOrEq: func(a, b Lane) bool {
+			return ops.refinements.LessOrEq(ops.refinementLane(a), ops.refinementLane(b)) &&
+				ops.staticMembers.LessOrEq(ops.staticMemberLane(a), ops.staticMemberLane(b)) &&
+				ops.proofs.LessOrEq(ops.proofLane(a), ops.proofLane(b))
+		},
+		Join: func(a, b Lane) Lane {
+			return ops.fromLanes(
+				ops.refinements.Join(ops.refinementLane(a), ops.refinementLane(b)),
+				ops.staticMembers.Join(ops.staticMemberLane(a), ops.staticMemberLane(b)),
+				ops.proofs.Join(ops.proofLane(a), ops.proofLane(b)),
+			)
+		},
+		Widen: func(prev, next Lane) Lane {
+			return ops.fromLanes(
+				ops.refinements.Widen(ops.refinementLane(prev), ops.refinementLane(next)),
+				ops.staticMembers.Widen(ops.staticMemberLane(prev), ops.staticMemberLane(next)),
+				ops.proofs.Widen(ops.proofLane(prev), ops.proofLane(next)),
+			)
+		},
+	}
 }
 
-func (s State) WritePathStaticMember(pathKey pathdom.PathKey, value product.Value) State {
-	pathEvidence, reachable := s.pathEvidence.WritePathStaticMember(pathKey, value)
-	if !reachable {
-		return s
+type domainOps struct {
+	refinements   lattice.Lattice[map[pathdom.PathKey]product.Value]
+	staticMembers lattice.Lattice[mustMapLane[pathdom.PathKey, product.Value]]
+	proofs        lattice.Lattice[mustSetLane[BranchProof]]
+}
+
+func (o domainOps) refinementLane(l Lane) map[pathdom.PathKey]product.Value {
+	if l.refinementsTop {
+		return o.refinements.Top()
 	}
-	out := s.reachable()
-	out.pathEvidence = pathEvidence
+	return l.refinements
+}
+
+func (o domainOps) staticMemberLane(l Lane) mustMapLane[pathdom.PathKey, product.Value] {
+	return mustMapLane[pathdom.PathKey, product.Value]{
+		bottom: l.staticMembersBottom,
+		values: l.staticMembers,
+	}
+}
+
+func (o domainOps) proofLane(l Lane) mustSetLane[BranchProof] {
+	return mustSetLane[BranchProof]{
+		bottom: l.proofsBottom,
+		values: l.proofs,
+	}
+}
+
+func (o domainOps) fromLanes(
+	refinements map[pathdom.PathKey]product.Value,
+	staticMembers mustMapLane[pathdom.PathKey, product.Value],
+	proofs mustSetLane[BranchProof],
+) Lane {
+	out := Lane{}
+	if o.refinements.Equal(refinements, o.refinements.Top()) {
+		out.refinementsTop = true
+	} else {
+		out.refinements = refinements
+	}
+	out.staticMembers = staticMembers.values
+	out.staticMembersBottom = staticMembers.bottom
+	out.proofs = proofs.values
+	out.proofsBottom = proofs.bottom
 	return out
 }
 
@@ -175,8 +253,8 @@ func finiteSetEqual[T comparable](a, b map[T]struct{}) bool {
 	if len(a) != len(b) {
 		return false
 	}
-	for v := range a {
-		if _, ok := b[v]; !ok {
+	for k := range a {
+		if _, ok := b[k]; !ok {
 			return false
 		}
 	}
@@ -184,8 +262,8 @@ func finiteSetEqual[T comparable](a, b map[T]struct{}) bool {
 }
 
 func finiteMustSetLessOrEq[T comparable](a, b map[T]struct{}) bool {
-	for v := range b {
-		if _, ok := a[v]; !ok {
+	for k := range b {
+		if _, ok := a[k]; !ok {
 			return false
 		}
 	}
@@ -197,9 +275,9 @@ func finiteSetIntersection[T comparable](a, b map[T]struct{}) map[T]struct{} {
 		return nil
 	}
 	out := make(map[T]struct{})
-	for v := range a {
-		if _, ok := b[v]; ok {
-			out[v] = struct{}{}
+	for k := range a {
+		if _, ok := b[k]; ok {
+			out[k] = struct{}{}
 		}
 	}
 	if len(out) == 0 {

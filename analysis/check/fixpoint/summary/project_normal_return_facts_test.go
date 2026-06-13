@@ -12,6 +12,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/standard"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	effectdelta "github.com/wippyai/go-lua/analysis/engine/state/effectdelta"
+	"github.com/wippyai/go-lua/analysis/engine/state/pathevidence"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/symbol"
 )
@@ -62,18 +63,18 @@ func TestFromResultProjectsNormalReturnFactsFromExitSnapshots(t *testing.T) {
 			Value:       value1,
 			Admission:   state.DynamicIndexAdmissionUnknown,
 		}).
-		AddBranchProof(state.BranchProof{
-			Kind:     state.BranchProofPathPresence,
+		AddBranchProof(pathevidence.BranchProof{
+			Kind:     pathevidence.BranchProofPathPresence,
 			Path:     branchPresenceKey,
 			Presence: presence.Present(),
 		}).
-		AddBranchProof(state.BranchProof{
-			Kind:  state.BranchProofPathEqual,
+		AddBranchProof(pathevidence.BranchProof{
+			Kind:  pathevidence.BranchProofPathEqual,
 			Path:  branchEqualLeftKey,
 			Other: branchEqualRightKey,
 		}).
-		AddBranchProof(state.BranchProof{
-			Kind:  state.BranchProofPathNotEqual,
+		AddBranchProof(pathevidence.BranchProof{
+			Kind:  pathevidence.BranchProofPathNotEqual,
 			Path:  branchNotEqualLeftKey,
 			Other: branchNotEqualRightKey,
 		}).
@@ -177,13 +178,13 @@ func TestFromResultDropsNonParameterNormalReturnFactPaths(t *testing.T) {
 		exit = exit.WritePathKey(reg, pathKey, value)
 	}
 	exit = exit.
-		AddBranchProof(state.BranchProof{
-			Kind:  state.BranchProofPathEqual,
+		AddBranchProof(pathevidence.BranchProof{
+			Kind:  pathevidence.BranchProofPathEqual,
 			Path:  validParamKey,
 			Other: invalidKeys[0],
 		}).
-		AddBranchProof(state.BranchProof{
-			Kind:  state.BranchProofPathNotEqual,
+		AddBranchProof(pathevidence.BranchProof{
+			Kind:  pathevidence.BranchProofPathNotEqual,
 			Path:  invalidKeys[1],
 			Other: validParamKey,
 		}).
@@ -242,8 +243,8 @@ func TestFromResultSkipsTopSnapshotsAndTopNormalReturnFacts(t *testing.T) {
 			Table: normalReturnFactProjectTestKey(param, ".table"),
 			Site:  "dynamic-top",
 		}, topDynamic).
-		AddBranchProof(state.BranchProof{
-			Kind:     state.BranchProofPathPresence,
+		AddBranchProof(pathevidence.BranchProof{
+			Kind:     pathevidence.BranchProofPathPresence,
 			Path:     normalReturnFactProjectTestKey(param, ".proof"),
 			Presence: presence.Top(),
 		}).
