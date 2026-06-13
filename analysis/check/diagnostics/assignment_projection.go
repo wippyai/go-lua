@@ -2,25 +2,16 @@ package diagnostics
 
 import (
 	"github.com/wippyai/go-lua/analysis/check/body"
+	"github.com/wippyai/go-lua/analysis/check/body/readmodel"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
-	"github.com/wippyai/go-lua/analysis/domain/value/axis"
-	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
-	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
-	"github.com/wippyai/go-lua/analysis/domain/value/axis/typewitness"
-	"github.com/wippyai/go-lua/analysis/domain/value/axis/variantorigin"
-	"github.com/wippyai/go-lua/analysis/domain/value/product"
-	"github.com/wippyai/go-lua/analysis/domain/value/variant"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
 	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
 	"github.com/wippyai/go-lua/analysis/lua/typeannotation"
 	"github.com/wippyai/go-lua/analysis/lua/valueexpr"
-	"github.com/wippyai/go-lua/analysis/type/kind"
 	"github.com/wippyai/go-lua/analysis/type/subst"
 	"github.com/wippyai/go-lua/analysis/type/subtype"
-	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
-	"github.com/wippyai/go-lua/analysis/type/unwrap"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
 
@@ -31,7 +22,7 @@ func assignmentValueType(result *body.Result, resolver typeannotation.Resolver, 
 	if got, ok := projectedOptionalIndexType(result, resolver, expr); ok {
 		return got, true
 	}
-	if got, ok := boundarySourceType(result, point, source); ok {
+	if got, ok := readmodel.New(result).SourceType(point, source); ok {
 		return got, true
 	}
 	if got, ok := explicitTopLikeCallSourceType(result, resolver, expr); ok {
@@ -255,7 +246,7 @@ func annotatedIdentifierType(result *body.Result, resolver typeannotation.Resolv
 	if !ok {
 		return nil, false
 	}
-	return refineDeclaredTypeWithValue(result, declared, value)
+	return readmodel.New(result).RefineDeclaredType(declared, value)
 }
 
 func refineAssignmentSourceType(result *body.Result, point cfg.Point, expr ast.Expr, got typ.Type) typ.Type {
@@ -272,89 +263,11 @@ func refineAssignmentSourceType(result *body.Result, point cfg.Point, expr ast.E
 	if !ok {
 		return got
 	}
-	refined, ok := refineDeclaredTypeWithValue(result, got, value)
+	refined, ok := readmodel.New(result).RefineDeclaredType(got, value)
 	if !ok {
 		return got
 	}
 	return refined
-}
-
-func refineDeclaredTypeWithValue(result *body.Result, declared typ.Type, value product.Value) (typ.Type, bool) {
-	if declared == nil {
-		return nil, false
-	}
-	out := declared
-	p := product.PresenceOf(value)
-	switch {
-	case presence.Equal(p, presence.Present()):
-		withoutNil := projectionWithoutNil(out)
-		if withoutNil != nil && !typ.IsNever(withoutNil) {
-			out = withoutNil
-		}
-	case presence.Equal(p, presence.Absent()):
-		return typ.Nil, true
-	}
-	if result != nil && result.Registry() != nil {
-		origin := product.Get(result.Registry(), value, variantorigin.Key)
-		witness := product.Get(result.Registry(), value, typewitness.Key)
-		if t, ok := witness.Type(); ok {
-			out = witnessTypeForPresence(t, p)
-		}
-		if !origin.IsBottom() && !origin.IsTop() {
-			if refined, ok := variant.NarrowByOrigin(out, origin.Family(), origin.Cases()); ok {
-				out = refined
-			}
-		}
-		kinds := product.Get(result.Registry(), value, runtimekind.Key)
-		if refined, ok := refineTypeByRuntimeKindSet(out, kinds, p); ok {
-			out = refined
-		} else if runtimeType, ok := runtimeKindType(result.Registry(), value, p); ok {
-			out = runtimeType
-		}
-	}
-	return out, true
-}
-
-func runtimeKindType(reg *axis.Registry, value product.Value, p presence.Value) (typ.Type, bool) {
-	kinds := product.Get(reg, value, runtimekind.Key)
-	if kinds.IsBottom() || kinds.IsTop() {
-		return nil, false
-	}
-	var members []typ.Type
-	for _, tag := range kinds.Tags() {
-		switch tag {
-		case runtimekind.Nil:
-			members = append(members, typ.Nil)
-		case runtimekind.Boolean:
-			members = append(members, typ.Boolean)
-		case runtimekind.Number:
-			members = append(members, typ.Number)
-		case runtimekind.String:
-			members = append(members, typ.String)
-		case runtimekind.Table:
-			members = append(members, typetable.NewMap(typ.Any, typ.Unknown))
-		case runtimekind.Function:
-			members = append(members, typ.Func().Build())
-		default:
-			return nil, false
-		}
-	}
-	if len(members) == 0 {
-		return nil, false
-	}
-	t := typ.NewUnion(members...)
-	if presence.Equal(p, presence.Maybe()) && !typeIncludesNil(t) {
-		t = typ.NewOptional(t)
-	}
-	return t, true
-}
-
-func typeIncludesNil(t typ.Type) bool {
-	if t == nil {
-		return false
-	}
-	normalized := unwrap.NormalizeNil(t)
-	return (normalized != nil && normalized.Kind() == kind.Nil) || projectionHasNil(t)
 }
 
 func expectedTypeAtSegments(root typ.Type, segments []segment.Segment) (typ.Type, bool) {

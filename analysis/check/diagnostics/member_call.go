@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/wippyai/go-lua/analysis/check/body"
+	"github.com/wippyai/go-lua/analysis/check/body/readmodel"
 	"github.com/wippyai/go-lua/analysis/diagnostic"
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
@@ -102,7 +103,7 @@ func (p memberCall) receiverType(result *body.Result, point cfg.Point, fact sema
 }
 
 func receiverTypeFromBoundary(result *body.Result, value product.Value) (typ.Type, bool) {
-	t, ok := concreteBoundaryType(result, value)
+	t, ok := readmodel.New(result).ValueType(value)
 	if !ok {
 		switch p := product.PresenceOf(value); {
 		case presence.Equal(p, presence.Absent()):

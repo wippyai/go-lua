@@ -2,13 +2,11 @@ package diagnostics
 
 import (
 	"github.com/wippyai/go-lua/analysis/check/body"
+	"github.com/wippyai/go-lua/analysis/check/body/readmodel"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
-	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
-	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/variantorigin"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
-	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/domain/value/variant"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/typeaccess"
@@ -16,7 +14,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/typeoperator"
 	"github.com/wippyai/go-lua/analysis/lua/valueexpr"
 	"github.com/wippyai/go-lua/analysis/type/kind"
-	"github.com/wippyai/go-lua/analysis/type/normalize"
 	"github.com/wippyai/go-lua/analysis/type/subst"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
@@ -141,7 +138,7 @@ func (p expressionTyper) flowRootType(t typ.Type, accessPath pathdom.Path) typ.T
 		return t
 	}
 	if value, ok := p.result.SymbolValueAtBoundary(p.point, root.Symbol); ok {
-		if refined, ok := refineDeclaredTypeWithValue(p.result, t, value); ok {
+		if refined, ok := readmodel.New(p.result).RefineDeclaredType(t, value); ok {
 			t = refined
 		}
 	}
@@ -181,91 +178,6 @@ func applyLiteralPathNarrowing(base typ.Type, receiver pathdom.Path, env literal
 func rootPath(p pathdom.Path) pathdom.Path {
 	p.Segments = nil
 	return p
-}
-
-func refineTypeByRuntimeKindSet(t typ.Type, kinds runtimekind.Value, p presence.Value) (typ.Type, bool) {
-	if kinds.IsBottom() || kinds.IsTop() {
-		return nil, false
-	}
-	keepNil := presence.Equal(p, presence.Maybe()) && projectionHasNil(t)
-	return refineTypeByRuntimeKindSetDepth(t, kinds, keepNil, 0)
-}
-
-func refineTypeByRuntimeKindSetDepth(t typ.Type, kinds runtimekind.Value, keepNil bool, depth int) (typ.Type, bool) {
-	if t == nil || depth > typ.DefaultRecursionDepth || typ.IsAny(t) || typ.IsUnknown(t) {
-		return nil, false
-	}
-	switch v := unwrap.Annotated(t).(type) {
-	case *typ.Alias:
-		return refineTypeByRuntimeKindSetDepth(v.UnaliasedTarget(), kinds, keepNil, depth+1)
-	case *typ.Instantiated:
-		expanded := subst.ExpandInstantiated(v)
-		if expanded == nil || expanded == t {
-			return nil, false
-		}
-		return refineTypeByRuntimeKindSetDepth(expanded, kinds, keepNil, depth+1)
-	case *typ.Optional:
-		innerKinds := kinds.Without(runtimekind.Nil)
-		inner, ok := refineTypeByRuntimeKindSetDepth(v.Inner, innerKinds, false, depth+1)
-		includeNil := keepNil || kinds.Contains(runtimekind.Nil)
-		if !ok {
-			if includeNil {
-				return typ.Nil, true
-			}
-			return nil, false
-		}
-		if typ.IsNever(inner) {
-			if includeNil {
-				return typ.Nil, true
-			}
-			return typ.Never, true
-		}
-		if includeNil {
-			return typ.NewOptional(inner), true
-		}
-		return inner, true
-	case *typ.Union:
-		out := make([]typ.Type, 0, len(v.Members))
-		changed := false
-		for _, member := range v.Members {
-			refined, ok := refineTypeByRuntimeKindSetDepth(member, kinds, keepNil, depth+1)
-			if !ok {
-				out = append(out, member)
-				continue
-			}
-			if typ.IsNever(refined) {
-				changed = true
-				continue
-			}
-			if !typ.SameNodeOrAcyclicEqual(refined, member) {
-				changed = true
-			}
-			out = append(out, refined)
-		}
-		if !changed {
-			return t, true
-		}
-		return normalize.UnionForEvidence(out...), true
-	default:
-		normalized := unwrap.NormalizeNil(unwrap.Annotated(t))
-		if normalized == nil {
-			return nil, false
-		}
-		if normalized.Kind() == kind.Nil {
-			if keepNil || kinds.Contains(runtimekind.Nil) {
-				return typ.Nil, true
-			}
-			return typ.Never, true
-		}
-		memberKinds, ok := typevalue.RuntimeKindFromType(normalized)
-		if !ok || memberKinds.IsTop() || memberKinds.IsBottom() {
-			return nil, false
-		}
-		if runtimekind.Intersect(memberKinds, kinds).IsBottom() {
-			return typ.Never, true
-		}
-		return t, true
-	}
 }
 
 func expressionSegmentType(t typ.Type, seg segment.Segment) (typ.Type, bool) {
@@ -327,7 +239,7 @@ func (p expressionTyper) refineFlowExpressionType(expr ast.Expr, t typ.Type) typ
 	if !ok {
 		return t
 	}
-	refined, ok := refineDeclaredTypeWithValue(p.result, t, value)
+	refined, ok := readmodel.New(p.result).RefineDeclaredType(t, value)
 	if !ok {
 		return t
 	}

@@ -2,6 +2,7 @@ package diagnostics
 
 import (
 	"github.com/wippyai/go-lua/analysis/check/body"
+	"github.com/wippyai/go-lua/analysis/check/body/readmodel"
 	"github.com/wippyai/go-lua/analysis/diagnostic"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
@@ -59,7 +60,7 @@ func (p annotationAssignability) localAssignment(result *body.Result, point cfg.
 		optionalIndexProjection = ok
 	}
 	if !ok {
-		got, ok = boundarySourceType(result, point, fact.Source)
+		got, ok = readmodel.New(result).SourceType(point, fact.Source)
 	}
 	if !ok {
 		got, ok = localScalarOperatorSourceType(result, p.resolver, fact.Expr)

@@ -1,0 +1,390 @@
+package readmodel
+
+import (
+	"github.com/wippyai/go-lua/analysis/check/body"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/evidence"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/typewitness"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/variantorigin"
+	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
+	"github.com/wippyai/go-lua/analysis/domain/value/variant"
+	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
+	"github.com/wippyai/go-lua/analysis/ir/cfg"
+	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
+	"github.com/wippyai/go-lua/analysis/type/kind"
+	"github.com/wippyai/go-lua/analysis/type/normalize"
+	"github.com/wippyai/go-lua/analysis/type/subst"
+	"github.com/wippyai/go-lua/analysis/type/subtype"
+	typetable "github.com/wippyai/go-lua/analysis/type/table"
+	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/analysis/type/unwrap"
+)
+
+// Reader projects solved body boundary values into typed diagnostic read data.
+type Reader struct {
+	result *body.Result
+}
+
+func New(result *body.Result) Reader {
+	return Reader{result: result}
+}
+
+func (r Reader) SourceValue(point cfg.Point, source sourceprovenance.ASTSource) (product.Value, bool) {
+	if r.result == nil {
+		return product.Value{}, false
+	}
+	switch source.Kind {
+	case sourceprovenance.SourceExpression:
+		if source.Expr == nil {
+			return product.Value{}, false
+		}
+		return r.result.ExpressionValueAtBoundary(point, source.Expr)
+	case sourceprovenance.SourceCall, sourceprovenance.SourceVararg, sourceprovenance.SourceNil, sourceprovenance.SourceUnknown:
+		valueSource, ok := valueSourceFromASTSource(source)
+		if !ok {
+			return product.Value{}, false
+		}
+		return r.result.SourceValueAtBoundary(point, valueSource)
+	default:
+		return product.Value{}, false
+	}
+}
+
+func (r Reader) SourceType(point cfg.Point, source sourceprovenance.ASTSource) (typ.Type, bool) {
+	value, ok := r.SourceValue(point, source)
+	if !ok {
+		return nil, false
+	}
+	return r.ValueType(value)
+}
+
+func (r Reader) ValueType(value product.Value) (typ.Type, bool) {
+	if r.result == nil || r.result.Registry() == nil {
+		return nil, false
+	}
+	return concreteBoundaryType(r.result.Registry(), value)
+}
+
+func (r Reader) RefineDeclaredType(declared typ.Type, value product.Value) (typ.Type, bool) {
+	if declared == nil {
+		return nil, false
+	}
+	out := declared
+	p := product.PresenceOf(value)
+	switch {
+	case presence.Equal(p, presence.Present()):
+		withoutNil := projectionWithoutNil(out)
+		if withoutNil != nil && !typ.IsNever(withoutNil) {
+			out = withoutNil
+		}
+	case presence.Equal(p, presence.Absent()):
+		return typ.Nil, true
+	}
+	if r.result != nil && r.result.Registry() != nil {
+		reg := r.result.Registry()
+		origin := product.Get(reg, value, variantorigin.Key)
+		witness := product.Get(reg, value, typewitness.Key)
+		if t, ok := witness.Type(); ok {
+			out = witnessTypeForPresence(t, p)
+		}
+		if !origin.IsBottom() && !origin.IsTop() {
+			if refined, ok := variant.NarrowByOrigin(out, origin.Family(), origin.Cases()); ok {
+				out = refined
+			}
+		}
+		kinds := product.Get(reg, value, runtimekind.Key)
+		if refined, ok := refineTypeByRuntimeKindSet(out, kinds, p); ok {
+			out = refined
+		} else if runtimeType, ok := runtimeKindType(reg, value, p); ok {
+			out = runtimeType
+		}
+	}
+	return out, true
+}
+
+func (r Reader) ValueAdmissible(value product.Value, want typ.Type) bool {
+	if r.result == nil || r.result.Registry() == nil || want == nil {
+		return false
+	}
+	reg := r.result.Registry()
+	if presence.Equal(product.PresenceOf(value), presence.Absent()) {
+		return subtype.IsSubtype(typ.Nil, want)
+	}
+	if presence.Equal(product.PresenceOf(value), presence.Maybe()) && !subtype.IsSubtype(typ.Nil, want) {
+		return false
+	}
+	if gotEvidence := product.Get(reg, value, evidence.Key); evidence.Equal(gotEvidence, evidence.GradualTop()) {
+		return true
+	}
+	if witness := product.Get(reg, value, typewitness.Key); !witness.IsTop() {
+		if t, ok := witness.Type(); ok && subtype.IsSubtype(t, want) {
+			return true
+		}
+	}
+	if projected, ok := concreteBoundaryType(reg, value); ok && subtype.IsSubtype(projected, want) {
+		return true
+	}
+	return false
+}
+
+func valueSourceFromASTSource(source sourceprovenance.ASTSource) (factflow.ValueSource, bool) {
+	shape, ok := factflow.NewValueSourceShape(source.Final, source.Expanded, source.Adjusted, source.OpenTail)
+	if !ok {
+		return factflow.ValueSource{}, false
+	}
+	switch source.Kind {
+	case sourceprovenance.SourceCall:
+		return factflow.NewCallValueSource(0, source.ExprIndex, source.TargetIndex, source.ResultIndex, source.CallPoint, shape)
+	case sourceprovenance.SourceVararg:
+		return factflow.NewVarargValueSource(0, source.ExprIndex, source.TargetIndex, source.ResultIndex, shape)
+	case sourceprovenance.SourceNil:
+		return factflow.NewNilValueSource(source.TargetIndex), true
+	case sourceprovenance.SourceUnknown:
+		return factflow.NewUnknownValueSource(source.TargetIndex), true
+	default:
+		return factflow.ValueSource{}, false
+	}
+}
+
+func concreteBoundaryType(reg *axis.Registry, value product.Value) (typ.Type, bool) {
+	if reg == nil {
+		return nil, false
+	}
+	valuePresence := product.PresenceOf(value)
+	if presence.Equal(valuePresence, presence.Absent()) {
+		return typ.Nil, true
+	}
+	origin := product.Get(reg, value, variantorigin.Key)
+	if witness := product.Get(reg, value, typewitness.Key); !witness.IsTop() {
+		if t, ok := witness.Type(); ok {
+			t = witnessTypeForPresence(t, valuePresence)
+			if !origin.IsBottom() && !origin.IsTop() {
+				if narrowed, ok := variant.NarrowByOrigin(t, origin.Family(), origin.Cases()); ok {
+					return narrowed, true
+				}
+			}
+			return t, true
+		}
+		return nil, false
+	}
+	if !origin.IsBottom() && !origin.IsTop() {
+		if t, ok := variant.TypeFromOrigin(origin.Family(), origin.Cases()); ok {
+			return t, true
+		}
+	}
+	return scalarRuntimeKindType(reg, value)
+}
+
+func witnessTypeForPresence(t typ.Type, p presence.Value) typ.Type {
+	if presence.Equal(p, presence.Absent()) {
+		return typ.Nil
+	}
+	if presence.Equal(p, presence.Present()) {
+		if withoutNil := projectionWithoutNil(t); withoutNil != nil && !typ.IsNever(withoutNil) {
+			return withoutNil
+		}
+	}
+	return t
+}
+
+func scalarRuntimeKindType(reg *axis.Registry, value product.Value) (typ.Type, bool) {
+	kinds := product.Get(reg, value, runtimekind.Key)
+	if kinds.IsBottom() || kinds.IsTop() {
+		return nil, false
+	}
+	var members []typ.Type
+	for _, tag := range kinds.Tags() {
+		switch tag {
+		case runtimekind.Nil:
+			members = append(members, typ.Nil)
+		case runtimekind.Boolean:
+			members = append(members, typ.Boolean)
+		case runtimekind.Number:
+			members = append(members, typ.Number)
+		case runtimekind.String:
+			members = append(members, typ.String)
+		default:
+			return nil, false
+		}
+	}
+	if len(members) == 0 {
+		return nil, false
+	}
+	t := typ.NewUnion(members...)
+	if presence.Equal(product.PresenceOf(value), presence.Maybe()) && !typeIncludesNil(t) {
+		t = typ.NewOptional(t)
+	}
+	if normalized := unwrap.NormalizeNil(t); normalized != nil && normalized.Kind() == kind.Nil {
+		return typ.Nil, true
+	}
+	return t, true
+}
+
+func runtimeKindType(reg *axis.Registry, value product.Value, p presence.Value) (typ.Type, bool) {
+	kinds := product.Get(reg, value, runtimekind.Key)
+	if kinds.IsBottom() || kinds.IsTop() {
+		return nil, false
+	}
+	var members []typ.Type
+	for _, tag := range kinds.Tags() {
+		switch tag {
+		case runtimekind.Nil:
+			members = append(members, typ.Nil)
+		case runtimekind.Boolean:
+			members = append(members, typ.Boolean)
+		case runtimekind.Number:
+			members = append(members, typ.Number)
+		case runtimekind.String:
+			members = append(members, typ.String)
+		case runtimekind.Table:
+			members = append(members, typetable.NewMap(typ.Any, typ.Unknown))
+		case runtimekind.Function:
+			members = append(members, typ.Func().Build())
+		default:
+			return nil, false
+		}
+	}
+	if len(members) == 0 {
+		return nil, false
+	}
+	t := typ.NewUnion(members...)
+	if presence.Equal(p, presence.Maybe()) && !typeIncludesNil(t) {
+		t = typ.NewOptional(t)
+	}
+	return t, true
+}
+
+func refineTypeByRuntimeKindSet(t typ.Type, kinds runtimekind.Value, p presence.Value) (typ.Type, bool) {
+	if kinds.IsBottom() || kinds.IsTop() {
+		return nil, false
+	}
+	keepNil := presence.Equal(p, presence.Maybe()) && projectionHasNil(t)
+	return refineTypeByRuntimeKindSetDepth(t, kinds, keepNil, 0)
+}
+
+func refineTypeByRuntimeKindSetDepth(t typ.Type, kinds runtimekind.Value, keepNil bool, depth int) (typ.Type, bool) {
+	if t == nil || depth > typ.DefaultRecursionDepth || typ.IsAny(t) || typ.IsUnknown(t) {
+		return nil, false
+	}
+	switch v := unwrap.Annotated(t).(type) {
+	case *typ.Alias:
+		return refineTypeByRuntimeKindSetDepth(v.UnaliasedTarget(), kinds, keepNil, depth+1)
+	case *typ.Instantiated:
+		expanded := subst.ExpandInstantiated(v)
+		if expanded == nil || expanded == t {
+			return nil, false
+		}
+		return refineTypeByRuntimeKindSetDepth(expanded, kinds, keepNil, depth+1)
+	case *typ.Optional:
+		innerKinds := kinds.Without(runtimekind.Nil)
+		inner, ok := refineTypeByRuntimeKindSetDepth(v.Inner, innerKinds, false, depth+1)
+		includeNil := keepNil || kinds.Contains(runtimekind.Nil)
+		if !ok {
+			if includeNil {
+				return typ.Nil, true
+			}
+			return nil, false
+		}
+		if typ.IsNever(inner) {
+			if includeNil {
+				return typ.Nil, true
+			}
+			return typ.Never, true
+		}
+		if includeNil {
+			return typ.NewOptional(inner), true
+		}
+		return inner, true
+	case *typ.Union:
+		out := make([]typ.Type, 0, len(v.Members))
+		changed := false
+		for _, member := range v.Members {
+			refined, ok := refineTypeByRuntimeKindSetDepth(member, kinds, keepNil, depth+1)
+			if !ok {
+				out = append(out, member)
+				continue
+			}
+			if typ.IsNever(refined) {
+				changed = true
+				continue
+			}
+			if !typ.SameNodeOrAcyclicEqual(refined, member) {
+				changed = true
+			}
+			out = append(out, refined)
+		}
+		if !changed {
+			return t, true
+		}
+		return normalize.UnionForEvidence(out...), true
+	default:
+		normalized := unwrap.NormalizeNil(unwrap.Annotated(t))
+		if normalized == nil {
+			return nil, false
+		}
+		if normalized.Kind() == kind.Nil {
+			if keepNil || kinds.Contains(runtimekind.Nil) {
+				return typ.Nil, true
+			}
+			return typ.Never, true
+		}
+		memberKinds, ok := typevalue.RuntimeKindFromType(normalized)
+		if !ok || memberKinds.IsTop() || memberKinds.IsBottom() {
+			return nil, false
+		}
+		if runtimekind.Intersect(memberKinds, kinds).IsBottom() {
+			return typ.Never, true
+		}
+		return t, true
+	}
+}
+
+func typeIncludesNil(t typ.Type) bool {
+	if t == nil {
+		return false
+	}
+	normalized := unwrap.NormalizeNil(t)
+	return (normalized != nil && normalized.Kind() == kind.Nil) || projectionHasNil(t)
+}
+
+func projectionHasNil(t typ.Type) bool {
+	return projectionHasNilDepth(t, 0)
+}
+
+func projectionHasNilDepth(t typ.Type, depth int) bool {
+	if t == nil || depth > typ.DefaultRecursionDepth || typ.IsAny(t) || typ.IsUnknown(t) || typ.IsNever(t) {
+		return false
+	}
+	t = unwrap.NormalizeNil(unwrap.Annotated(t))
+	if t == nil {
+		return false
+	}
+	if t.Kind() == kind.Nil {
+		return true
+	}
+	switch v := t.(type) {
+	case *typ.Optional:
+		return true
+	case *typ.Union:
+		for _, member := range v.Members {
+			if projectionHasNilDepth(member, depth+1) {
+				return true
+			}
+		}
+		return false
+	case *typ.Alias:
+		return projectionHasNilDepth(v.UnaliasedTarget(), depth+1)
+	case *typ.Instantiated:
+		expanded := subst.ExpandInstantiated(v)
+		return expanded != nil && expanded != t && projectionHasNilDepth(expanded, depth+1)
+	default:
+		return false
+	}
+}
+
+func projectionWithoutNil(t typ.Type) typ.Type {
+	return typetable.PresentReadonlyEntryValue(t)
+}

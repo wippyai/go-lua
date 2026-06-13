@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/wippyai/go-lua/analysis/check/body"
+	"github.com/wippyai/go-lua/analysis/check/body/readmodel"
 	"github.com/wippyai/go-lua/analysis/diagnostic"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
@@ -196,7 +197,7 @@ func directCallArgumentTypeMismatch(result *body.Result, point cfg.Point, got, w
 		return false
 	}
 	if read != nil {
-		if value, ok := read(result, point); ok && boundaryValueAdmissible(result, value, want) {
+		if value, ok := read(result, point); ok && readmodel.New(result).ValueAdmissible(value, want) {
 			return false
 		}
 	}
@@ -207,7 +208,7 @@ func boundaryCallArgumentSourceType(result *body.Result, point cfg.Point, fact s
 	if index < 0 || index >= len(fact.ArgumentSources) {
 		return nil, false
 	}
-	return boundarySourceType(result, point, fact.ArgumentSources[index])
+	return readmodel.New(result).SourceType(point, fact.ArgumentSources[index])
 }
 
 func boundaryCallArgumentReader(fact semantics.CallFact, index int, argumentExpr ast.Expr) boundaryValueReader {

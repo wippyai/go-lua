@@ -2,24 +2,14 @@ package diagnostics
 
 import (
 	"github.com/wippyai/go-lua/analysis/check/body"
-	"github.com/wippyai/go-lua/analysis/domain/value/axis"
-	"github.com/wippyai/go-lua/analysis/domain/value/axis/evidence"
-	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
-	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
-	"github.com/wippyai/go-lua/analysis/domain/value/axis/typewitness"
-	"github.com/wippyai/go-lua/analysis/domain/value/axis/variantorigin"
+	"github.com/wippyai/go-lua/analysis/check/body/readmodel"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
-	"github.com/wippyai/go-lua/analysis/domain/value/variant"
-	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
 	"github.com/wippyai/go-lua/analysis/lua/typeannotation"
 	"github.com/wippyai/go-lua/analysis/lua/valueexpr"
 	"github.com/wippyai/go-lua/analysis/symbol"
-	"github.com/wippyai/go-lua/analysis/type/kind"
-	"github.com/wippyai/go-lua/analysis/type/subtype"
 	"github.com/wippyai/go-lua/analysis/type/typ"
-	"github.com/wippyai/go-lua/analysis/type/unwrap"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
 
@@ -30,7 +20,7 @@ func boundaryTypeMismatch(result *body.Result, point cfg.Point, got, want typ.Ty
 		return false
 	}
 	if read != nil {
-		if value, ok := read(result, point); ok && boundaryValueAdmissible(result, value, want) {
+		if value, ok := read(result, point); ok && readmodel.New(result).ValueAdmissible(value, want) {
 			return false
 		}
 	}
@@ -38,14 +28,6 @@ func boundaryTypeMismatch(result *body.Result, point cfg.Point, got, want typ.Ty
 		return clearMismatch(got, want)
 	}
 	return true
-}
-
-func boundarySourceType(result *body.Result, point cfg.Point, source sourceprovenance.ASTSource) (typ.Type, bool) {
-	value, ok := boundaryValueFromSource(result, point, source)
-	if !ok {
-		return nil, false
-	}
-	return concreteBoundaryType(result, value)
 }
 
 func boundaryExprType(result *body.Result, resolver typeannotation.Resolver, expr ast.Expr) (typ.Type, bool) {
@@ -143,129 +125,8 @@ func boundaryValueFromExpr(expr ast.Expr) boundaryValueReader {
 
 func boundaryValueFromASTSource(source sourceprovenance.ASTSource) boundaryValueReader {
 	return func(result *body.Result, point cfg.Point) (product.Value, bool) {
-		return boundaryValueFromSource(result, point, source)
+		return readmodel.New(result).SourceValue(point, source)
 	}
-}
-
-func boundaryValueFromSource(result *body.Result, point cfg.Point, source sourceprovenance.ASTSource) (product.Value, bool) {
-	if result == nil {
-		return product.Value{}, false
-	}
-	if source.Kind == sourceprovenance.SourceCall {
-		shape, ok := factflow.NewValueSourceShape(source.Final, source.Expanded, source.Adjusted, source.OpenTail)
-		if !ok {
-			return product.Value{}, false
-		}
-		valueSource, ok := factflow.NewCallValueSource(0, source.ExprIndex, source.TargetIndex, source.ResultIndex, source.CallPoint, shape)
-		if !ok {
-			return product.Value{}, false
-		}
-		return result.SourceValueAtBoundary(point, valueSource)
-	}
-	if source.Expr != nil {
-		return result.ExpressionValueAtBoundary(point, source.Expr)
-	}
-	return product.Value{}, false
-}
-
-func boundaryValueAdmissible(result *body.Result, value product.Value, want typ.Type) bool {
-	if result == nil || result.Registry() == nil || want == nil {
-		return false
-	}
-	reg := result.Registry()
-	if presence.Equal(product.PresenceOf(value), presence.Absent()) {
-		return subtype.IsSubtype(typ.Nil, want)
-	}
-	if presence.Equal(product.PresenceOf(value), presence.Maybe()) && !subtype.IsSubtype(typ.Nil, want) {
-		return false
-	}
-	if gotEvidence := product.Get(reg, value, evidence.Key); evidence.Equal(gotEvidence, evidence.GradualTop()) {
-		return true
-	}
-	if witness := product.Get(reg, value, typewitness.Key); !witness.IsTop() {
-		if t, ok := witness.Type(); ok && subtype.IsSubtype(t, want) {
-			return true
-		}
-	}
-	if projected, ok := concreteBoundaryType(result, value); ok && subtype.IsSubtype(projected, want) {
-		return true
-	}
-	return false
-}
-
-func concreteBoundaryType(result *body.Result, value product.Value) (typ.Type, bool) {
-	if result == nil || result.Registry() == nil {
-		return nil, false
-	}
-	reg := result.Registry()
-	valuePresence := product.PresenceOf(value)
-	if presence.Equal(valuePresence, presence.Absent()) {
-		return typ.Nil, true
-	}
-	origin := product.Get(reg, value, variantorigin.Key)
-	if witness := product.Get(reg, value, typewitness.Key); !witness.IsTop() {
-		if t, ok := witness.Type(); ok {
-			t = witnessTypeForPresence(t, valuePresence)
-			if !origin.IsBottom() && !origin.IsTop() {
-				if narrowed, ok := variant.NarrowByOrigin(t, origin.Family(), origin.Cases()); ok {
-					return narrowed, true
-				}
-			}
-			return t, true
-		}
-		return nil, false
-	}
-	if !origin.IsBottom() && !origin.IsTop() {
-		if t, ok := variant.TypeFromOrigin(origin.Family(), origin.Cases()); ok {
-			return t, true
-		}
-	}
-	return scalarRuntimeKindType(reg, value)
-}
-
-func witnessTypeForPresence(t typ.Type, p presence.Value) typ.Type {
-	if presence.Equal(p, presence.Absent()) {
-		return typ.Nil
-	}
-	if presence.Equal(p, presence.Present()) {
-		if withoutNil := projectionWithoutNil(t); withoutNil != nil && !typ.IsNever(withoutNil) {
-			return withoutNil
-		}
-	}
-	return t
-}
-
-func scalarRuntimeKindType(reg *axis.Registry, value product.Value) (typ.Type, bool) {
-	kinds := product.Get(reg, value, runtimekind.Key)
-	if kinds.IsBottom() || kinds.IsTop() {
-		return nil, false
-	}
-	var members []typ.Type
-	for _, tag := range kinds.Tags() {
-		switch tag {
-		case runtimekind.Nil:
-			members = append(members, typ.Nil)
-		case runtimekind.Boolean:
-			members = append(members, typ.Boolean)
-		case runtimekind.Number:
-			members = append(members, typ.Number)
-		case runtimekind.String:
-			members = append(members, typ.String)
-		default:
-			return nil, false
-		}
-	}
-	if len(members) == 0 {
-		return nil, false
-	}
-	t := typ.NewUnion(members...)
-	if presence.Equal(product.PresenceOf(value), presence.Maybe()) && !typeIncludesNil(t) {
-		t = typ.NewOptional(t)
-	}
-	if normalized := unwrap.NormalizeNil(t); normalized != nil && normalized.Kind() == kind.Nil {
-		return typ.Nil, true
-	}
-	return t, true
 }
 
 func topLikeType(t typ.Type) bool {
