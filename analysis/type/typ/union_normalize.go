@@ -5,6 +5,34 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/kind"
 )
 
+// MaterializeUnion builds the hash-stable union node for already-selected members.
+//
+// It performs only low-level node materialization owned by typ: nil Type
+// interface filtering, duplicate removal, deterministic member ordering,
+// hash/cache/contains flag computation, and empty/single cardinality collapse.
+// It does not apply union semantics: nested unions are kept as members,
+// Optional is not interpreted as nil plus inner, and no Any/Unknown/Never/nil
+// or literal/base relation policy is applied.
+func MaterializeUnion(members []Type) Type {
+	filtered := filterNilTypes(members)
+	unique, uniqueHashes := deduplicateTypesWithHashes(filtered)
+	sortHashedTypes(unique, uniqueHashes)
+	return newCanonicalUnion(unique, uniqueHashes)
+}
+
+func filterNilTypes(types []Type) []Type {
+	if len(types) == 0 {
+		return nil
+	}
+	filtered := make([]Type, 0, len(types))
+	for _, t := range types {
+		if t != nil {
+			filtered = append(filtered, t)
+		}
+	}
+	return filtered
+}
+
 // typ owns hash-stable node materialization once semantic normalization has already happened.
 func newCanonicalUnion(members []Type, memberHashes []uint64) Type {
 	if len(members) == 0 {

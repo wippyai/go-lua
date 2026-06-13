@@ -54,6 +54,87 @@ func TestUnionSingle(t *testing.T) {
 	}
 }
 
+func TestMaterializeUnionCardinalityCollapse(t *testing.T) {
+	if got := MaterializeUnion(nil); got != Never {
+		t.Fatalf("MaterializeUnion(nil) = %v, want never", got)
+	}
+	if got := MaterializeUnion([]Type{Number}); got != Number {
+		t.Fatalf("MaterializeUnion(single) = %v, want number", got)
+	}
+}
+
+func TestMaterializeUnionDedupesOrdersAndCachesHash(t *testing.T) {
+	left := MaterializeUnion([]Type{String, Number, String})
+	right := MaterializeUnion([]Type{Number, String})
+
+	u, ok := left.(*Union)
+	if !ok {
+		t.Fatalf("MaterializeUnion() = %T %[1]v, want union", left)
+	}
+	if len(u.Members) != 2 {
+		t.Fatalf("members = %v, want two deduped members", u.Members)
+	}
+	for i := 1; i < len(u.memberHashes); i++ {
+		if u.memberHashes[i-1] > u.memberHashes[i] {
+			t.Fatalf("member hashes not sorted: %v", u.memberHashes)
+		}
+	}
+	if !left.Equals(right) {
+		t.Fatalf("materialized unions should be order-independent: %v vs %v", left, right)
+	}
+	if left.Hash() != right.Hash() {
+		t.Fatalf("materialized union hash should be order-independent: %d vs %d", left.Hash(), right.Hash())
+	}
+
+	withFlags := MaterializeUnion([]Type{Number, Any}).(*Union)
+	if !withFlags.containsAny {
+		t.Fatalf("containsAny cache flag was not set")
+	}
+}
+
+func TestMaterializeUnionDoesNotFlattenNestedUnion(t *testing.T) {
+	inner := NewUnion(Number, String)
+
+	materialized := MaterializeUnion([]Type{inner, Boolean})
+	u, ok := materialized.(*Union)
+	if !ok {
+		t.Fatalf("MaterializeUnion() = %T %[1]v, want union", materialized)
+	}
+	if len(u.Members) != 2 {
+		t.Fatalf("materialized nested union members = %v, want nested union plus boolean", u.Members)
+	}
+	if !u.Contains(inner) {
+		t.Fatalf("materialized union should keep nested union member: %v", u.Members)
+	}
+	if u.Contains(Number) || u.Contains(String) {
+		t.Fatalf("materialized union flattened nested member: %v", u.Members)
+	}
+
+	constructed := NewUnion(inner, Boolean).(*Union)
+	if len(constructed.Members) != 3 {
+		t.Fatalf("NewUnion() members = %v, want flattened constructor behavior", constructed.Members)
+	}
+}
+
+func TestMaterializeUnionDoesNotInterpretOptional(t *testing.T) {
+	optionalString := NewOptional(String)
+
+	materialized := MaterializeUnion([]Type{optionalString, Nil})
+	u, ok := materialized.(*Union)
+	if !ok {
+		t.Fatalf("MaterializeUnion(optional, nil) = %T %[1]v, want union", materialized)
+	}
+	if len(u.Members) != 2 || !u.Contains(optionalString) || !u.Contains(Nil) {
+		t.Fatalf("materialized union members = %v, want optional string and nil", u.Members)
+	}
+
+	constructed := NewUnion(optionalString)
+	opt, ok := constructed.(*Optional)
+	if !ok || opt.Inner != String {
+		t.Fatalf("NewUnion(optional) = %T %[1]v, want optional string", constructed)
+	}
+}
+
 func TestUnionDeduplicatesTransparentAlias(t *testing.T) {
 	u := NewUnion(NewAlias("AliasNumber", Number), Number)
 	if _, ok := u.(*Union); ok {

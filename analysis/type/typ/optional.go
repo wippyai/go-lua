@@ -30,7 +30,7 @@ type Optional struct {
 //   - nil or Nil → Nil (already optional)
 //   - T? → T? (already optional)
 //   - Any → Any (Any already includes nil)
-//   - Union → adds nil and re-normalizes through NewUnion
+//   - Union → adds nil and materializes the canonical union shape
 func NewOptional(inner Type) Type {
 	if inner == nil || inner.Kind() == kind.Nil {
 		return Nil

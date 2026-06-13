@@ -20,6 +20,82 @@ func TestIntersectionSingle(t *testing.T) {
 	}
 }
 
+func TestMaterializeIntersectionCardinalityCollapse(t *testing.T) {
+	if got := MaterializeIntersection(nil); got != Any {
+		t.Fatalf("MaterializeIntersection(nil) = %v, want any", got)
+	}
+	if got := MaterializeIntersection([]Type{Number}); got != Number {
+		t.Fatalf("MaterializeIntersection(single) = %v, want number", got)
+	}
+}
+
+func TestMaterializeIntersectionDedupesOrdersAndCachesHash(t *testing.T) {
+	left := MaterializeIntersection([]Type{String, Number, String})
+	right := MaterializeIntersection([]Type{Number, String})
+
+	i, ok := left.(*Intersection)
+	if !ok {
+		t.Fatalf("MaterializeIntersection() = %T %[1]v, want intersection", left)
+	}
+	if len(i.Members) != 2 {
+		t.Fatalf("members = %v, want two deduped members", i.Members)
+	}
+	for idx := 1; idx < len(i.Members); idx++ {
+		if unionMemberHash(i.Members[idx-1]) > unionMemberHash(i.Members[idx]) {
+			t.Fatalf("members not sorted by hash: %v", i.Members)
+		}
+	}
+	if !left.Equals(right) {
+		t.Fatalf("materialized intersections should be order-independent: %v vs %v", left, right)
+	}
+	if left.Hash() != right.Hash() {
+		t.Fatalf("materialized intersection hash should be order-independent: %d vs %d", left.Hash(), right.Hash())
+	}
+
+	withFlags := MaterializeIntersection([]Type{Number, Never}).(*Intersection)
+	if !withFlags.containsNever {
+		t.Fatalf("containsNever cache flag was not set")
+	}
+}
+
+func TestMaterializeIntersectionDoesNotFlattenNestedIntersection(t *testing.T) {
+	inner := NewIntersection(Number, String)
+
+	materialized := MaterializeIntersection([]Type{inner, Boolean})
+	i, ok := materialized.(*Intersection)
+	if !ok {
+		t.Fatalf("MaterializeIntersection() = %T %[1]v, want intersection", materialized)
+	}
+	if len(i.Members) != 2 {
+		t.Fatalf("materialized nested intersection members = %v, want nested intersection plus boolean", i.Members)
+	}
+	requireIntersectionMembers(t, materialized, inner, Boolean)
+	for _, member := range i.Members {
+		if typeEquals(member, Number) || typeEquals(member, String) {
+			t.Fatalf("materialized intersection flattened nested member: %v", i.Members)
+		}
+	}
+
+	constructed := NewIntersection(inner, Boolean).(*Intersection)
+	if len(constructed.Members) != 3 {
+		t.Fatalf("NewIntersection() members = %v, want flattened constructor behavior", constructed.Members)
+	}
+}
+
+func TestMaterializeIntersectionDoesNotInterpretOptional(t *testing.T) {
+	optionalString := NewOptional(String)
+
+	materialized := MaterializeIntersection([]Type{optionalString, Nil})
+	i, ok := materialized.(*Intersection)
+	if !ok {
+		t.Fatalf("MaterializeIntersection(optional, nil) = %T %[1]v, want intersection", materialized)
+	}
+	if len(i.Members) != 2 {
+		t.Fatalf("materialized intersection members = %v, want optional string and nil", i.Members)
+	}
+	requireIntersectionMembers(t, materialized, optionalString, Nil)
+}
+
 func TestIntersectionBasic(t *testing.T) {
 	i := NewIntersection(Number, String)
 

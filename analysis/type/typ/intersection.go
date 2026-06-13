@@ -59,17 +59,45 @@ func NewIntersection(members ...Type) Type {
 		addMember(m)
 	}
 
-	// Deduplicate by hash + structural equality (collision-safe).
-	unique, uniqueHashes := deduplicateTypesWithHashes(flat)
-	sortHashedTypes(unique, uniqueHashes)
+	// Materialize after semantic flattening.
+	return MaterializeIntersection(flat)
+}
 
-	if len(unique) == 0 {
+// MaterializeIntersection builds the hash-stable intersection node for
+// already-selected members.
+//
+// It performs only low-level node materialization owned by typ: nil Type
+// interface filtering, duplicate removal, deterministic member ordering,
+// hash/cache/contains flag computation, and empty/single cardinality collapse.
+// It does not apply intersection semantics: nested intersections are kept as
+// members, Optional is not interpreted as nil plus inner, and no
+// Any/Unknown/Never/nil or literal/base relation policy is applied.
+func MaterializeIntersection(members []Type) Type {
+	filtered := filterNilTypes(members)
+	unique, uniqueHashes := deduplicateTypesWithHashes(filtered)
+	sortHashedTypes(unique, uniqueHashes)
+	return newCanonicalIntersection(unique, uniqueHashes)
+}
+
+func newCanonicalIntersection(members []Type, memberHashes []uint64) Type {
+	if len(members) == 0 {
 		return Any
 	}
 
-	if len(unique) == 1 {
-		return unique[0]
+	if len(members) == 1 {
+		return members[0]
 	}
+	if len(memberHashes) != len(members) {
+		memberHashes = make([]uint64, len(members))
+		for i, m := range members {
+			memberHashes[i] = unionMemberHash(m)
+		}
+	}
+
+	membersCopy := make([]Type, len(members))
+	copy(membersCopy, members)
+	hashesCopy := make([]uint64, len(memberHashes))
+	copy(hashesCopy, memberHashes)
 
 	h := uint64(kind.Intersection)
 	containsAny := false
@@ -78,8 +106,8 @@ func NewIntersection(members ...Type) Type {
 	containsInstantiated := false
 	containsRecursive := false
 	containsOpenRecursive := false
-	for i, m := range unique {
-		h = hash.MixHash(h, uniqueHashes[i])
+	for i, m := range membersCopy {
+		h = hash.MixHash(h, hashesCopy[i])
 		if !containsAny && knownContainsAny(m) {
 			containsAny = true
 		}
@@ -101,7 +129,7 @@ func NewIntersection(members ...Type) Type {
 	}
 
 	return &Intersection{
-		Members:               unique,
+		Members:               membersCopy,
 		hash:                  h,
 		containsAny:           containsAny,
 		containsNever:         containsNever,
