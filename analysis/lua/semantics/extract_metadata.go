@@ -27,7 +27,7 @@ func (r *Result) extractInterfaceDef(stmt *ast.InterfaceDefStmt, points []cfg.Po
 	if len(points) == 0 {
 		return nil
 	}
-	if len(points) < 1 {
+	if len(points) != 1 {
 		return ErrPointMismatch
 	}
 	r.meta.SetTypeDefinition(points[0], cfgfacts.TypeDefinitionFact{
@@ -42,7 +42,7 @@ func (r *Result) extractFunctionDefinition(stmt *ast.FuncDefStmt, bindings *bind
 	if len(points) == 0 {
 		return nil
 	}
-	if len(points) < 1 {
+	if len(points) != 1 {
 		return ErrPointMismatch
 	}
 	id, hasSymbol := symbol.ID(0), false
@@ -136,7 +136,7 @@ func (r *Result) extractLabel(stmt *ast.LabelStmt, points []cfg.Point) error {
 	if len(points) == 0 {
 		return nil
 	}
-	if len(points) < 1 {
+	if len(points) != 1 {
 		return ErrPointMismatch
 	}
 	r.meta.SetLabel(points[0], cfgfacts.LabelFact{
@@ -150,7 +150,7 @@ func (r *Result) extractGoto(stmt *ast.GotoStmt, points []cfg.Point) error {
 	if len(points) == 0 {
 		return nil
 	}
-	if len(points) < 1 {
+	if len(points) != 1 {
 		return ErrPointMismatch
 	}
 	r.meta.SetGoto(points[0], cfgfacts.GotoFact{

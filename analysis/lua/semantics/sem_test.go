@@ -1723,3 +1723,50 @@ func TestExtractReportsPointMismatch(t *testing.T) {
 		t.Fatalf("extractLocalAssign mismatch = %v, want ErrPointMismatch", err)
 	}
 }
+
+func TestExtractSinglePointMetadataReportsExtraPointMismatch(t *testing.T) {
+	tests := []struct {
+		name string
+		err  func() error
+	}{
+		{
+			name: "function definition",
+			err: func() error {
+				stmt := &ast.FuncDefStmt{
+					Name: &ast.FuncName{Func: ident("f")},
+					Func: function(nil),
+				}
+				return newResult(nil).extractFunctionDefinition(stmt, nil, []cfg.Point{1, 2})
+			},
+		},
+		{
+			name: "label",
+			err: func() error {
+				stmt := &ast.LabelStmt{Name: "again"}
+				return newResult(nil).extractLabel(stmt, []cfg.Point{1, 2})
+			},
+		},
+		{
+			name: "goto",
+			err: func() error {
+				stmt := &ast.GotoStmt{Label: "again"}
+				return newResult(nil).extractGoto(stmt, []cfg.Point{1, 2})
+			},
+		},
+		{
+			name: "interface definition",
+			err: func() error {
+				stmt := &ast.InterfaceDefStmt{Name: "Shape"}
+				return newResult(nil).extractInterfaceDef(stmt, []cfg.Point{1, 2})
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if err := tt.err(); !errors.Is(err, ErrPointMismatch) {
+				t.Fatalf("extra-point mismatch = %v, want ErrPointMismatch", err)
+			}
+		})
+	}
+}

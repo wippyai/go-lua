@@ -1,5 +1,5 @@
-// Package lattice defines the abstract-domain contract used by fixed-point
-// analyses.
+// Package lattice owns the minimal finite-height lattice interface used by the
+// solver and domain packages; concrete domains live elsewhere.
 //
 // Every abstract domain exposes a Lattice value. The contract is the algebraic
 // foundation for fixed-point algorithms: a domain that satisfies the laws
