@@ -8,6 +8,7 @@ import (
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/transform"
 	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/analysis/type/typeexpr"
 )
 
 // ExpandInstantiated expands generic instantiations to their Lua
@@ -144,7 +145,7 @@ func expandInstantiatedCore(t typ.Type, orig typ.Type, guard recursion.Guard, me
 		if inner == v.Inner {
 			return orig
 		}
-		return typ.NewOptional(inner)
+		return typeexpr.Optional(inner)
 	case *typ.Union:
 		var members []typ.Type
 		for i, m := range v.Members {
@@ -162,7 +163,7 @@ func expandInstantiatedCore(t typ.Type, orig typ.Type, guard recursion.Guard, me
 		if members == nil {
 			return orig
 		}
-		return typ.NewUnion(members...)
+		return typeexpr.Union(members...)
 	case *typ.Intersection:
 		var members []typ.Type
 		for i, m := range v.Members {
@@ -180,7 +181,7 @@ func expandInstantiatedCore(t typ.Type, orig typ.Type, guard recursion.Guard, me
 		if members == nil {
 			return orig
 		}
-		return typ.NewIntersection(members...)
+		return typeexpr.Intersection(members...)
 	case *typ.Array:
 		elem := expandInstantiatedGuardMode(v.Element, guard, memo, mode)
 		if elem == v.Element {

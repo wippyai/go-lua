@@ -7,6 +7,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/kind"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/analysis/type/typeexpr"
 )
 
 // Rewrite traverses a type tree and applies fn at each node.
@@ -102,7 +103,7 @@ func rewriteDepth(t typ.Type, fn func(typ.Type) (typ.Type, bool), guard recursio
 			out = t
 			break
 		}
-		out = typ.NewOptional(inner)
+		out = typeexpr.Optional(inner)
 	case *typ.Union:
 		var members []typ.Type
 		for i, m := range tt.Members {
@@ -121,7 +122,7 @@ func rewriteDepth(t typ.Type, fn func(typ.Type) (typ.Type, bool), guard recursio
 			out = t
 			break
 		}
-		out = typ.NewUnion(members...)
+		out = typeexpr.Union(members...)
 	case *typ.Intersection:
 		var members []typ.Type
 		for i, m := range tt.Members {
@@ -140,7 +141,7 @@ func rewriteDepth(t typ.Type, fn func(typ.Type) (typ.Type, bool), guard recursio
 			out = t
 			break
 		}
-		out = typ.NewIntersection(members...)
+		out = typeexpr.Intersection(members...)
 	case *typ.Array:
 		elem := rewriteDepth(tt.Element, fn, next, memo)
 		if elem == tt.Element {
