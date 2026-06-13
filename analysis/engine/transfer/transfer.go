@@ -62,24 +62,8 @@ type Config struct {
 // Result maps each reachable CFG point in Graph.RPO() to its input state.
 type Result map[cfg.Point]state.State
 
-// Runner is a reusable wrapper around Config.
-type Runner struct {
-	config Config
-}
-
-// New creates a runner for config.
-func New(config Config) Runner {
-	return Runner{config: config}
-}
-
 // Run executes a one-off forward transfer run.
 func Run(config Config) Result {
-	return New(config).Run()
-}
-
-// Run solves the configured forward dataflow system.
-func (r Runner) Run() Result {
-	config := r.config
 	validateConfig(config)
 
 	graph := config.Graph
