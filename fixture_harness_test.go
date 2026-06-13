@@ -14,6 +14,7 @@ import (
 	testutil "github.com/wippyai/go-lua/analysis/check/checktest"
 	diag "github.com/wippyai/go-lua/analysis/diagnostic"
 	typemanifest "github.com/wippyai/go-lua/analysis/module/manifest"
+	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
@@ -183,6 +184,7 @@ func runCheckPhase(t *testing.T, s namedSuite) {
 	for _, pkg := range s.Suite.Packages {
 		if m := resolvePackageManifest(pkg); m != nil {
 			baseOpts = append(baseOpts, testutil.WithManifest(pkg, m))
+			baseOpts = append(baseOpts, testutil.WithGlobals(pkg))
 		} else {
 			t.Fatalf("unknown system package: %s", pkg)
 		}
@@ -419,9 +421,9 @@ func fixtureTimeManifest() *typemanifest.Manifest {
 	m.DefineType("Time", timeType)
 	m.DefineType("Duration", durationType)
 
-	moduleType := typ.NewInterface("time", []typ.Method{
-		{Name: "now", Type: typ.Func().Returns(timeType).Build()},
-	})
+	moduleType := typetable.NewRecord().
+		Field("now", typ.Func().Returns(timeType).Build()).
+		Build()
 	m.SetExport(moduleType)
 
 	return m
@@ -429,9 +431,9 @@ func fixtureTimeManifest() *typemanifest.Manifest {
 
 func fixtureUuidManifest() *typemanifest.Manifest {
 	m := typemanifest.New("uuid")
-	m.SetExport(typ.NewInterface("uuid", []typ.Method{
-		{Name: "v7", Type: typ.Func().Returns(typ.String).Build()},
-	}))
+	m.SetExport(typetable.NewRecord().
+		Field("v7", typ.Func().Returns(typ.String).Build()).
+		Build())
 	return m
 }
 

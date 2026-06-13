@@ -15,6 +15,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/lua/cfgbuild"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
+	"github.com/wippyai/go-lua/analysis/module/importlookup"
 	"github.com/wippyai/go-lua/analysis/module/signaturelookup"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
@@ -34,6 +35,7 @@ type Config struct {
 	CallOutcome        factapply.CallOutcomeProvider
 	CallOutcomeFactory CallOutcomeFactory
 	Signatures         signaturelookup.Source
+	ModuleExports      importlookup.Source
 
 	Visibility *visibility.Resolver
 

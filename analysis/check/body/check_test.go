@@ -273,6 +273,7 @@ func TestCheckChunkManifestSameAsSignatureUsesArgumentSourceValue(t *testing.T) 
 
 	result, err := CheckChunk(stmts, Config{
 		Registry: reg,
+		Globals:  []string{"id"},
 		Signatures: signaturelookup.Source{
 			Manifests: []*manifest.Manifest{m},
 		},

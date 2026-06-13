@@ -50,6 +50,8 @@ func fieldDepth(t typ.Type, name string, depth int) fieldResult {
 	switch v := unwrap.Annotated(t).(type) {
 	case *typ.Record:
 		return fieldInRecord(v, name)
+	case *typ.Interface:
+		return fieldInInterface(v, t, name)
 	case *typ.Map:
 		return fieldInMap(v.Key, v.Value, name)
 	case *typ.ReadonlyMap:
@@ -75,6 +77,18 @@ func fieldDepth(t typ.Type, name string, depth int) fieldResult {
 	default:
 		return fieldResult{}
 	}
+}
+
+func fieldInInterface(i *typ.Interface, receiver typ.Type, name string) fieldResult {
+	if i == nil {
+		return fieldResult{}
+	}
+	for _, method := range i.Methods {
+		if method.Name == name {
+			return fieldResult{t: subst.Self(method.Type, receiver), ok: true}
+		}
+	}
+	return fieldResult{}
 }
 
 func fieldInRecord(r *typ.Record, name string) fieldResult {

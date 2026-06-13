@@ -12,6 +12,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/cfgbuild"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
 	"github.com/wippyai/go-lua/analysis/lua/transferfacts"
+	"github.com/wippyai/go-lua/analysis/lua/typecall"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
 
@@ -91,6 +92,18 @@ func (c *checker) run(bindings *bind.Result, built *cfgbuild.Result, sem *semant
 			callOutcome,
 		)
 	}
+	if hasModuleExports(config.ModuleExports) {
+		callOutcome = factapply.WithSupplementalCallOutcome(callOutcome, effectlowering.ModuleLoadOutcomeProvider(effectlowering.ModuleLoadOutcomeProviderConfig{
+			Exports: config.ModuleExports,
+			NameFor: c.signatureNameForCall(bindings),
+			Facts:   facts,
+			Sources: sources,
+		}))
+	}
+	callOutcome = factapply.WithSupplementalCallOutcome(callOutcome, effectlowering.CallableValueOutcomeProvider(effectlowering.CallableValueOutcomeProviderConfig{
+		CalleeValue: calleeValueProvider(config.Registry, facts, resolver),
+		Callable:    typecall.Callable,
+	}))
 	if hasSignatures(config.Signatures) {
 		callOutcome = factapply.WithSupplementalCallOutcome(callOutcome, effectlowering.SignatureOutcomeProvider(effectlowering.SignatureOutcomeProviderConfig{
 			Signatures:    config.Signatures,
@@ -105,6 +118,7 @@ func (c *checker) run(bindings *bind.Result, built *cfgbuild.Result, sem *semant
 		built.Graph,
 		bindings,
 		sem.Function(),
+		config.ModuleExports,
 		config.EntryState,
 		config.Initial,
 	)

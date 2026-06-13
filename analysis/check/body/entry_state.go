@@ -11,6 +11,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/lua/typeresolve"
+	"github.com/wippyai/go-lua/analysis/module/importlookup"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
 
@@ -24,10 +25,12 @@ func parameterEntryState(
 	graph cfg.Graph,
 	bindings *bind.Result,
 	fn *ast.FunctionExpr,
+	moduleExports importlookup.Source,
 	entry state.State,
 	initial transfer.InitialState,
 ) (state.State, transfer.InitialState) {
 	seeds := functionParamEntrySeeds(reg, bindings, fn)
+	seeds = append(seeds, ambientModuleGlobalEntrySeeds(reg, bindings, moduleExports)...)
 	if len(seeds) == 0 {
 		return entry, initial
 	}
@@ -78,6 +81,29 @@ func functionParamEntrySeeds(reg *axis.Registry, bindings *bind.Result, fn *ast.
 			slot:  valueSlot,
 			value: typevalue.FromType(reg, t),
 		})
+	}
+	return seeds
+}
+
+func ambientModuleGlobalEntrySeeds(reg *axis.Registry, bindings *bind.Result, exports importlookup.Source) []paramEntrySeed {
+	if reg == nil || bindings == nil || len(exports.Manifests) == 0 {
+		return nil
+	}
+	seeds := make([]paramEntrySeed, 0, len(exports.Manifests))
+	for _, m := range exports.Manifests {
+		if m == nil || m.Path == "" || m.Export == nil {
+			continue
+		}
+		id, ok := bindings.GlobalSymbol(m.Path)
+		if !ok || id == 0 || bindings.IsImplicitGlobalSymbol(id) {
+			continue
+		}
+		valueSlot := key.SymbolValue(id)
+		if valueSlot == "" {
+			continue
+		}
+		exportValue := typevalue.WithWitness(reg, typevalue.FromType(reg, m.Export), m.Export)
+		seeds = append(seeds, paramEntrySeed{slot: valueSlot, value: exportValue})
 	}
 	return seeds
 }

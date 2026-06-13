@@ -34,6 +34,9 @@ func (r *Result) stableCalleeName(callee symbol.ID, calleePath path.Path) (strin
 	if !ok || kind != symbol.Global {
 		return "", false
 	}
+	if r.bindings.IsImplicitGlobalSymbol(root) {
+		return "", false
+	}
 	name := r.bindings.Name(root)
 	if name == "" {
 		return "", false

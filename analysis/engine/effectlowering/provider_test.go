@@ -156,6 +156,35 @@ func TestSignatureOutcomeProviderMaterializesOptionalDeclaredReturn(t *testing.T
 	assertTypeWitness(t, reg, got[0].Value, typ.NewOptional(typ.String))
 }
 
+func TestSignatureOutcomeProviderMaterializesInterfaceDeclaredReturnAsPresent(t *testing.T) {
+	reg := standard.Registry()
+	iface := typ.NewInterface("Resource", []typ.Method{
+		{
+			Name: "close",
+			Type: typ.Func().
+				Param("self", typ.Self).
+				Returns(typ.Nil).
+				Build(),
+		},
+	})
+	provider := SignatureOutcomeProvider(SignatureOutcomeProviderConfig{
+		Signatures: signatureMap{
+			"f": {Type: typ.Func().Returns(iface).Build()},
+		},
+		NameFor: staticName("f"),
+	})
+
+	got := provider(transfer.NodeContext{Registry: reg}, factflow.NewCallSite(factflow.CallSiteConfig{
+		CalleeSymbol: symbol.ID(19),
+	}), state.State{}, nil).Results
+
+	if len(got) != 1 {
+		t.Fatalf("got %d results, want 1: %#v", len(got), got)
+	}
+	assertPresence(t, reg, got[0].Value, presence.Present())
+	assertTypeWitness(t, reg, got[0].Value, iface)
+}
+
 func TestSignatureOutcomeProviderLowersErrorReturnToReturnPresenceRelations(t *testing.T) {
 	provider := SignatureOutcomeProvider(SignatureOutcomeProviderConfig{
 		Signatures: signatureMap{

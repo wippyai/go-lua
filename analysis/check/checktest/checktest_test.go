@@ -1,11 +1,13 @@
 package checktest
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/check/diagnostics"
 	"github.com/wippyai/go-lua/analysis/domain/effect/signature"
 	"github.com/wippyai/go-lua/analysis/module/manifest"
+	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
@@ -98,7 +100,7 @@ func TestWithManifestThreadsFunctionSignaturesIntoActiveChecking(t *testing.T) {
 		Type: typ.Func().Returns(typ.Number).Build(),
 	})
 
-	mismatch := Check(`local x: string = f()`, WithManifest("test", m))
+	mismatch := Check(`local x: string = f()`, WithManifest("test", m), WithGlobals("f"))
 	if len(mismatch.Diagnostics) != 1 {
 		t.Fatalf("mismatch diagnostics = %d, want 1: %#v", len(mismatch.Diagnostics), mismatch.Diagnostics)
 	}
@@ -106,7 +108,7 @@ func TestWithManifestThreadsFunctionSignaturesIntoActiveChecking(t *testing.T) {
 		t.Fatalf("diagnostic code = %s, want %s", mismatch.Diagnostics[0].Code, diagnostics.CodeDirectCallResultAssignment)
 	}
 
-	matching := Check(`local x: number = f()`, WithManifest("test", m))
+	matching := Check(`local x: number = f()`, WithManifest("test", m), WithGlobals("f"))
 	if len(matching.Diagnostics) != 0 {
 		t.Fatalf("matching diagnostics = %#v, want none", matching.Diagnostics)
 	}
@@ -123,19 +125,19 @@ func TestWithManifestDoesNotResolveLocalAliasByName(t *testing.T) {
 			return 1
 		end
 		local x: string = f()
-	`, WithManifest("test", m))
+	`, WithManifest("test", m), WithGlobals("f"))
 	if len(result.Diagnostics) != 0 {
 		t.Fatalf("diagnostics = %#v, want none for local f shadowing manifest f", result.Diagnostics)
 	}
 }
 
-func TestWithManifestResolvesDottedGlobalStaticCalleePathOnly(t *testing.T) {
+func TestWithManifestResolvesExplicitDottedGlobalStaticCalleePathOnly(t *testing.T) {
 	m := manifest.New("test")
 	m.DefineFunctionSignature("pkg.make", signature.Function{
 		Type: typ.Func().Returns(typ.Number).Build(),
 	})
 
-	globalMismatch := Check(`local x: string = pkg.make()`, WithManifest("test", m))
+	globalMismatch := Check(`local x: string = pkg.make()`, WithManifest("test", m), WithGlobals("pkg"))
 	if len(globalMismatch.Diagnostics) != 1 {
 		t.Fatalf("global diagnostics = %d, want 1: %#v", len(globalMismatch.Diagnostics), globalMismatch.Diagnostics)
 	}
@@ -146,8 +148,100 @@ func TestWithManifestResolvesDottedGlobalStaticCalleePathOnly(t *testing.T) {
 	localRoot := Check(`
 		local pkg = {}
 		local x: string = pkg.make()
-	`, WithManifest("test", m))
+	`, WithManifest("test", m), WithGlobals("pkg"))
 	if len(localRoot.Diagnostics) != 0 {
 		t.Fatalf("local-root diagnostics = %#v, want none", localRoot.Diagnostics)
 	}
+}
+
+func TestRequireManifestExportTypesImportedValueAndMemberCall(t *testing.T) {
+	m := providerManifest("provider")
+
+	ok := Check(`
+		local provider = require("provider")
+		local n: number = provider.value
+		local s: string = provider.meta()
+	`, WithStdlib(), WithManifest("provider", m))
+	if len(ok.Diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want none for typed imported provider", ok.Diagnostics)
+	}
+
+	mismatch := Check(`
+		local provider = require("provider")
+		local n: number = provider.meta()
+	`, WithStdlib(), WithManifest("provider", m))
+	if len(mismatch.Diagnostics) != 1 {
+		t.Fatalf("mismatch diagnostics = %d, want 1: %#v", len(mismatch.Diagnostics), mismatch.Diagnostics)
+	}
+	if mismatch.Diagnostics[0].Code != diagnostics.CodeAssignmentType {
+		t.Fatalf("diagnostic code = %s, want %s", mismatch.Diagnostics[0].Code, diagnostics.CodeAssignmentType)
+	}
+}
+
+func TestRequireManifestExportFailsClosedForUnknownOrDynamicPath(t *testing.T) {
+	m := providerManifest("provider")
+
+	unknown := Check(`
+		local provider = require("missing")
+		local n: number = provider.meta()
+	`, WithStdlib(), WithManifest("provider", m))
+	if len(unknown.Diagnostics) != 0 {
+		t.Fatalf("unknown diagnostics = %#v, want none without manifest precision", unknown.Diagnostics)
+	}
+
+	dynamic := Check(`
+		local provider = require(module_name)
+		local n: number = provider.meta()
+	`, WithStdlib(), WithManifest("provider", m), WithGlobals("module_name"))
+	if len(dynamic.Diagnostics) != 0 {
+		t.Fatalf("dynamic diagnostics = %#v, want none without exact literal precision", dynamic.Diagnostics)
+	}
+}
+
+func TestRequireManifestExportMatchesExactPathOnly(t *testing.T) {
+	provider := providerManifest("provider")
+	fooProvider := providerManifest("foo.provider")
+
+	for _, tc := range []struct {
+		name string
+		call string
+		m    *manifest.Manifest
+	}{
+		{name: "provider does not match foo.provider", call: "foo.provider", m: provider},
+		{name: "foo.provider does not match provider", call: "provider", m: fooProvider},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			result := Check(fmt.Sprintf(`
+				local provider = require(%q)
+				local n: number = provider.meta()
+			`, tc.call), WithStdlib(), WithManifest(tc.m.Path, tc.m))
+			if len(result.Diagnostics) != 0 {
+				t.Fatalf("diagnostics = %#v, want none without exact manifest match", result.Diagnostics)
+			}
+		})
+	}
+}
+
+func TestManifestPathsAndSignatureRootsAreNotGlobalImports(t *testing.T) {
+	m := providerManifest("provider")
+	m.DefineFunctionSignature("provider.meta", signature.Function{
+		Type: typ.Func().Returns(typ.String).Build(),
+	})
+
+	result := Check(`local n: number = provider.meta()`, WithStdlib(), WithManifest("provider", m))
+	if len(result.Diagnostics) != 1 {
+		t.Fatalf("diagnostics = %d, want unresolved provider only: %#v", len(result.Diagnostics), result.Diagnostics)
+	}
+	if result.Diagnostics[0].Code != diagnostics.CodeUnresolvedValueReference {
+		t.Fatalf("diagnostic code = %s, want %s", result.Diagnostics[0].Code, diagnostics.CodeUnresolvedValueReference)
+	}
+}
+
+func providerManifest(path string) *manifest.Manifest {
+	m := manifest.New(path)
+	m.SetExport(typetable.NewRecord().
+		Field("value", typ.Number).
+		Field("meta", typ.Func().Returns(typ.String).Build()).
+		Build())
+	return m
 }

@@ -11,17 +11,17 @@ import (
 )
 
 func TestDirectCallReportsManifestSignatureWrongArgumentType(t *testing.T) {
-	diags := runDiagnosticsWithSignatures(t, `imported(42, 1)`, directCallSignatureSource())
+	diags := runDiagnosticsWithImportedSignature(t, `imported(42, 1)`)
 	requireDirectCallDiagnostic(t, diags, CodeDirectCallArgType)
 }
 
 func TestDirectCallReportsManifestSignatureTooFewArgs(t *testing.T) {
-	diags := runDiagnosticsWithSignatures(t, `imported("ok")`, directCallSignatureSource())
+	diags := runDiagnosticsWithImportedSignature(t, `imported("ok")`)
 	requireDirectCallDiagnostic(t, diags, CodeDirectCallTooFewArgs)
 }
 
 func TestDirectCallAcceptsManifestSignatureArguments(t *testing.T) {
-	diags := runDiagnosticsWithSignatures(t, `imported("ok", 42)`, directCallSignatureSource())
+	diags := runDiagnosticsWithImportedSignature(t, `imported("ok", 42)`)
 	if len(diags) != 0 {
 		t.Fatalf("diagnostics = %#v, want none for matching manifest signature call", diags)
 	}
@@ -36,6 +36,21 @@ func TestDirectCallManifestSignatureDoesNotOverrideLocalShadow(t *testing.T) {
 	if len(diags) != 0 {
 		t.Fatalf("diagnostics = %#v, want none for local function shadowing manifest signature", diags)
 	}
+}
+
+func TestDirectCallManifestSignatureRequiresExplicitGlobal(t *testing.T) {
+	diags := runDiagnosticsWithSignatures(t, `imported(42, 1)`, directCallSignatureSource())
+	if len(diags) != 1 {
+		t.Fatalf("diagnostics = %d, want unresolved imported only: %#v", len(diags), diags)
+	}
+	if diags[0].Code != CodeUnresolvedValueReference {
+		t.Fatalf("diagnostic code = %s, want %s", diags[0].Code, CodeUnresolvedValueReference)
+	}
+}
+
+func runDiagnosticsWithImportedSignature(t *testing.T, src string) []diagnostic.Diagnostic {
+	t.Helper()
+	return runDiagnosticsFull(t, src, []string{"test", "type", "value", "imported"}, directCallSignatureSource())
 }
 
 func directCallSignatureSource() signaturelookup.Source {

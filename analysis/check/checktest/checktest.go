@@ -14,6 +14,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/program"
 	"github.com/wippyai/go-lua/analysis/diagnostic"
 	"github.com/wippyai/go-lua/analysis/domain/value/standard"
+	"github.com/wippyai/go-lua/analysis/module/importlookup"
 	"github.com/wippyai/go-lua/analysis/module/manifest"
 	"github.com/wippyai/go-lua/analysis/module/signaturelookup"
 	"github.com/wippyai/go-lua/analysis/type/typ"
@@ -24,6 +25,7 @@ type Option func(*config)
 
 type config struct {
 	stdlib    bool
+	globals   []string
 	manifests map[string]*manifest.Manifest
 	modules   map[string]*ModuleResult
 }
@@ -41,6 +43,12 @@ type ModuleResult struct {
 func WithStdlib() Option {
 	return func(c *config) {
 		c.stdlib = true
+	}
+}
+
+func WithGlobals(names ...string) Option {
+	return func(c *config) {
+		c.globals = append(c.globals, names...)
 	}
 }
 
@@ -109,11 +117,14 @@ func checkSource(src, filename string, opts ...Option) Result {
 	}
 	reg := standard.Registry()
 	signatures := cfg.signatureSource()
+	moduleExports := cfg.moduleExportSource()
 	structural := precheck.Precheck(stmts)
 	checked, err := program.RunChunk(stmts, program.Config{
 		Check: body.Config{
-			Registry:   reg,
-			Signatures: signatures,
+			Registry:      reg,
+			Globals:       cfg.globals,
+			Signatures:    signatures,
+			ModuleExports: moduleExports,
 		},
 	})
 	if err != nil {
@@ -146,6 +157,18 @@ func applyOptions(opts []Option) config {
 }
 
 func (c config) signatureSource() signaturelookup.Source {
+	manifests := c.orderedManifests()
+	return signaturelookup.Source{
+		Manifests:     manifests,
+		IncludeStdlib: c.stdlib,
+	}
+}
+
+func (c config) moduleExportSource() importlookup.Source {
+	return importlookup.Source{Manifests: c.orderedManifests()}
+}
+
+func (c config) orderedManifests() []*manifest.Manifest {
 	manifests := make([]*manifest.Manifest, 0, len(c.manifests)+len(c.modules))
 	names := make([]string, 0, len(c.manifests))
 	for name := range c.manifests {
@@ -165,10 +188,7 @@ func (c config) signatureSource() signaturelookup.Source {
 			manifests = append(manifests, mod.Manifest)
 		}
 	}
-	return signaturelookup.Source{
-		Manifests:     manifests,
-		IncludeStdlib: c.stdlib,
-	}
+	return manifests
 }
 
 func setDefaultFile(diags []diagnostic.Diagnostic, filename string) {

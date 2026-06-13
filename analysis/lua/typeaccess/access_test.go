@@ -24,6 +24,29 @@ func TestFieldDirectRecordField(t *testing.T) {
 	}
 }
 
+func TestFieldInterfaceMethodSubstitutesSelf(t *testing.T) {
+	iface := typ.NewInterface("Reader", []typ.Method{
+		{
+			Name: "read",
+			Type: typ.Func().
+				Param("self", typ.Self).
+				Returns(typ.Self).
+				Build(),
+		},
+	})
+
+	got, ok := Field(iface, "read")
+	if !ok {
+		t.Fatal("Field(interface method, read) failed")
+	}
+	want := typ.Func().Param("self", iface).Returns(iface).Build()
+	assertType(t, got, want)
+
+	if _, ok := Field(iface, "missing"); ok {
+		t.Fatal("Field(interface method, missing) succeeded")
+	}
+}
+
 func TestBuiltinTableTopMarkerAccess(t *testing.T) {
 	tableTop := typ.NewInterface("table", nil)
 

@@ -40,6 +40,7 @@ func fixtureDiagnostics(s namedSuite) (diags []diag.Diagnostic, entryFile string
 	for _, pkg := range s.Suite.Packages {
 		if m := resolvePackageManifest(pkg); m != nil {
 			baseOpts = append(baseOpts, testutil.WithManifest(pkg, m))
+			baseOpts = append(baseOpts, testutil.WithGlobals(pkg))
 		} else {
 			return nil, ""
 		}

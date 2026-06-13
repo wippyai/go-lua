@@ -45,6 +45,7 @@ func TestErrorReturnSignatureRefinesValuePresenceAcrossErrorBranch(t *testing.T)
 	`)
 	result := runChunk(t, stmts, body.Config{
 		Registry: reg,
+		Globals:  []string{"f"},
 		Signatures: signaturelookup.Source{
 			Manifests: []*manifest.Manifest{m},
 		},

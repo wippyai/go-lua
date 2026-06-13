@@ -61,6 +61,22 @@ func TestFromTypeMaterializesOptionalAndUnionPresence(t *testing.T) {
 	assertRuntimeKind(t, reg, gotNil, runtimekind.Singleton(runtimekind.Nil))
 }
 
+func TestFromTypeMaterializesInterfacePresence(t *testing.T) {
+	reg := standard.Registry()
+	iface := typ.NewInterface("Resource", []typ.Method{
+		{
+			Name: "close",
+			Type: typ.Func().
+				Param("self", typ.Self).
+				Returns(typ.Nil).
+				Build(),
+		},
+	})
+
+	got := FromType(reg, iface)
+	assertPresence(t, got, presence.Present())
+}
+
 func TestFromTypeLeavesUnknownAndAnyAsTop(t *testing.T) {
 	reg := standard.Registry()
 

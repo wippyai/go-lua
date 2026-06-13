@@ -134,6 +134,9 @@ func presenceFromType(t typ.Type) (presence.Value, bool) {
 		if _, ok := RuntimeKindFromType(t); ok {
 			return presence.Present(), true
 		}
+		if t.Kind() == kind.Interface {
+			return presence.Present(), true
+		}
 		return presence.Bottom(), false
 	}
 }

@@ -46,6 +46,16 @@ func (r *Result) IsImplicitGlobalUse(ident *ast.IdentExpr) bool {
 	return ok
 }
 
+// IsImplicitGlobalSymbol reports whether id was created by an unresolved
+// global read rather than by the configured global set or a write target.
+func (r *Result) IsImplicitGlobalSymbol(id symbol.ID) bool {
+	if r == nil || id == 0 {
+		return false
+	}
+	_, ok := r.implicitGlobalSymbols[id]
+	return ok
+}
+
 // ResolvesToGlobal reports whether ident is bound to the global named name.
 func (r *Result) ResolvesToGlobal(ident *ast.IdentExpr, name string) bool {
 	if r == nil || ident == nil || name == "" || ident.Value != name {
@@ -57,6 +67,16 @@ func (r *Result) ResolvesToGlobal(ident *ast.IdentExpr, name string) bool {
 	}
 	kind, ok := r.Kind(id)
 	return ok && kind == symbol.Global
+}
+
+// GlobalSymbol returns the declaration symbol for a configured or discovered
+// global name.
+func (r *Result) GlobalSymbol(name string) (symbol.ID, bool) {
+	if r == nil || name == "" {
+		return 0, false
+	}
+	g, ok := r.globals[name]
+	return g.id, ok && g.id != 0
 }
 
 // Name returns the declaration name for a symbol.
