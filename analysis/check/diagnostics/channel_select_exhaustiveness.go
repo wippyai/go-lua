@@ -14,7 +14,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 )
 
-type ChannelSelectExhaustiveness Config
+type channelSelectExhaustiveness producerContext
 
 type channelSelectDiagnosticInfo struct {
 	result     pathdom.Path
@@ -27,7 +27,7 @@ type channelSelectDiagnosticCase struct {
 	name string
 }
 
-func (p ChannelSelectExhaustiveness) Produce(result *check.Result) []diagnostic.Diagnostic {
+func (p channelSelectExhaustiveness) Produce(result *check.Result) []diagnostic.Diagnostic {
 	_ = p
 	graph := result.Graph()
 	if graph == nil {

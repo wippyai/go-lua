@@ -11,15 +11,15 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 )
 
-// UnresolvedTypeReferences reports annotation references that do not resolve in
-// the lexical type namespace or configured external resolvers.
-type UnresolvedTypeReferences Config
+// unresolvedTypeReferences reports annotation references that do not resolve in
+// the lexical type namespace or parent function scopes.
+type unresolvedTypeReferences producerContext
 
-func (p UnresolvedTypeReferences) Produce(result *check.Result) []diagnostic.Diagnostic {
+func (p unresolvedTypeReferences) Produce(result *check.Result) []diagnostic.Diagnostic {
 	if result == nil {
 		return nil
 	}
-	resolver, ok := p.Resolver.(*resultResolver)
+	resolver, ok := p.resolver.(*resultResolver)
 	if !ok || resolver == nil {
 		return nil
 	}

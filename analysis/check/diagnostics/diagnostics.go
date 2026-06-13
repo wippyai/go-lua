@@ -6,7 +6,6 @@ package diagnostics
 import (
 	"github.com/wippyai/go-lua/analysis/check"
 	"github.com/wippyai/go-lua/analysis/diagnostic"
-	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/lua/typeannotation"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/compiler/ast"
@@ -27,35 +26,30 @@ const (
 	CodeUnresolvedValueReference   diagnostic.Code = "value.reference.unresolved"
 )
 
-type Config struct {
-	Registry *axis.Registry
-	Resolver typeannotation.Resolver
+type producerContext struct {
+	resolver typeannotation.Resolver
 }
 
-type Producer interface {
-	Produce(*check.Result) []diagnostic.Diagnostic
+func Produce(result *check.Result) []diagnostic.Diagnostic {
+	return produceWithResolver(result, nil, nil)
 }
 
-func Produce(result *check.Result, config Config) []diagnostic.Diagnostic {
-	return produceWithResolver(result, config, nil, nil)
-}
-
-func produceWithResolver(result *check.Result, config Config, parent typeannotation.Resolver, inheritedDefs map[symbol.ID]*ast.FunctionExpr) []diagnostic.Diagnostic {
-	resolver := newResultResolver(result, config.Resolver, parent)
-	config.Resolver = resolver
+func produceWithResolver(result *check.Result, parent typeannotation.Resolver, inheritedDefs map[symbol.ID]*ast.FunctionExpr) []diagnostic.Diagnostic {
+	resolver := newResultResolver(result, parent)
+	context := producerContext{resolver: resolver}
 	defs := directCallDefinitions(result, inheritedDefs)
 	var out []diagnostic.Diagnostic
-	out = append(out, UnresolvedTypeReferences(config).Produce(result)...)
-	out = append(out, UnresolvedValueReferences(config).Produce(result)...)
-	out = append(out, AnnotationAssignability(config).Produce(result)...)
-	out = append(out, produceReturnContract(result, config, defs)...)
-	out = append(out, produceDirectCallContract(result, config, defs)...)
-	out = append(out, produceDirectCallResultAssignment(result, config, defs)...)
-	out = append(out, NumericForOperands(config).Produce(result)...)
-	out = append(out, MemberCall(config).Produce(result)...)
-	out = append(out, ChannelSelectExhaustiveness(config).Produce(result)...)
+	out = append(out, unresolvedTypeReferences(context).Produce(result)...)
+	out = append(out, unresolvedValueReferences(context).Produce(result)...)
+	out = append(out, annotationAssignability(context).Produce(result)...)
+	out = append(out, produceReturnContract(result, context, defs)...)
+	out = append(out, produceDirectCallContract(result, context, defs)...)
+	out = append(out, produceDirectCallResultAssignment(result, context, defs)...)
+	out = append(out, numericForOperands(context).Produce(result)...)
+	out = append(out, memberCall(context).Produce(result)...)
+	out = append(out, channelSelectExhaustiveness(context).Produce(result)...)
 	for _, fn := range result.FunctionResults() {
-		out = append(out, produceWithResolver(fn, config, resolver, defs)...)
+		out = append(out, produceWithResolver(fn, resolver, defs)...)
 	}
 	return out
 }

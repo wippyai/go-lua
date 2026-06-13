@@ -19,15 +19,15 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 )
 
-// ReturnContract reports explicit return annotation mismatches that are already
+// returnContract reports explicit return annotation mismatches that are already
 // proven by the solved return facts.
-type ReturnContract Config
+type returnContract producerContext
 
-func (p ReturnContract) Produce(result *check.Result) []diagnostic.Diagnostic {
-	return produceReturnContract(result, Config(p), nil)
+func (p returnContract) Produce(result *check.Result) []diagnostic.Diagnostic {
+	return produceReturnContract(result, producerContext(p), nil)
 }
 
-func produceReturnContract(result *check.Result, config Config, inherited map[symbol.ID]*ast.FunctionExpr) []diagnostic.Diagnostic {
+func produceReturnContract(result *check.Result, context producerContext, inherited map[symbol.ID]*ast.FunctionExpr) []diagnostic.Diagnostic {
 	if result == nil {
 		return nil
 	}
@@ -35,8 +35,8 @@ func produceReturnContract(result *check.Result, config Config, inherited map[sy
 	if fn == nil {
 		return nil
 	}
-	producer := ReturnContract(config)
-	returns, ok := lowerReturnTypes(fn, producer.Resolver)
+	producer := returnContract(context)
+	returns, ok := lowerReturnTypes(fn, producer.resolver)
 	if !ok || len(returns) == 0 {
 		return nil
 	}
@@ -48,7 +48,7 @@ func produceReturnContract(result *check.Result, config Config, inherited map[sy
 		}
 		for i, expr := range fact.Exprs {
 			source := returnSourceAt(fact, i)
-			got, ok := returnValueType(result, producer.Resolver, point, expr, source, inherited)
+			got, ok := returnValueType(result, producer.resolver, point, expr, source, inherited)
 			if !ok {
 				continue
 			}
@@ -189,15 +189,15 @@ func returnContractDiagnostic(expr ast.Expr, annotation ast.TypeExpr, got, want 
 	}
 }
 
-// DirectCallResultAssignment reports mismatches between direct-call return
+// directCallResultAssignment reports mismatches between direct-call return
 // contracts and annotated local targets that receive those call results.
-type DirectCallResultAssignment Config
+type directCallResultAssignment producerContext
 
-func (p DirectCallResultAssignment) Produce(result *check.Result) []diagnostic.Diagnostic {
-	return produceDirectCallResultAssignment(result, Config(p), nil)
+func (p directCallResultAssignment) Produce(result *check.Result) []diagnostic.Diagnostic {
+	return produceDirectCallResultAssignment(result, producerContext(p), nil)
 }
 
-func produceDirectCallResultAssignment(result *check.Result, config Config, inherited map[symbol.ID]*ast.FunctionExpr) []diagnostic.Diagnostic {
+func produceDirectCallResultAssignment(result *check.Result, context producerContext, inherited map[symbol.ID]*ast.FunctionExpr) []diagnostic.Diagnostic {
 	if result == nil {
 		return nil
 	}
@@ -206,7 +206,7 @@ func produceDirectCallResultAssignment(result *check.Result, config Config, inhe
 		return nil
 	}
 	defs := directCallDefinitions(result, inherited)
-	producer := DirectCallResultAssignment(config)
+	producer := directCallResultAssignment(context)
 	var out []diagnostic.Diagnostic
 	for _, point := range graph.RPO() {
 		fact, ok := result.Call(point)
@@ -222,7 +222,7 @@ func produceDirectCallResultAssignment(result *check.Result, config Config, inhe
 				continue
 			}
 		}
-		contract, name, ok := directCallResultContract(result, point, fact, site, defs[site.CalleeSymbol()], producer.Resolver)
+		contract, name, ok := directCallResultContract(result, point, fact, site, defs[site.CalleeSymbol()], producer.resolver)
 		if !ok {
 			continue
 		}
@@ -234,7 +234,7 @@ func produceDirectCallResultAssignment(result *check.Result, config Config, inhe
 			if !ok {
 				continue
 			}
-			want, ok := lowerType(wantExpr, producer.Resolver)
+			want, ok := lowerType(wantExpr, producer.resolver)
 			if !ok || typ.IsAny(want) || typ.IsUnknown(want) || refinement.ContainsFreeTypeParam(want) {
 				continue
 			}

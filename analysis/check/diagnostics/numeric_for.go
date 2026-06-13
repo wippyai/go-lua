@@ -14,11 +14,11 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 )
 
-// NumericForOperands reports numeric-for operands that are statically known not
+// numericForOperands reports numeric-for operands that are statically known not
 // to be numbers. Unknown, any, and partly numeric unions are left to runtime.
-type NumericForOperands Config
+type numericForOperands producerContext
 
-func (p NumericForOperands) Produce(result *check.Result) []diagnostic.Diagnostic {
+func (p numericForOperands) Produce(result *check.Result) []diagnostic.Diagnostic {
 	if result == nil {
 		return nil
 	}
@@ -26,7 +26,7 @@ func (p NumericForOperands) Produce(result *check.Result) []diagnostic.Diagnosti
 	if graph == nil {
 		return nil
 	}
-	typer := newExpressionTyper(result, p.Resolver)
+	typer := newExpressionTyper(result, p.resolver)
 	var out []diagnostic.Diagnostic
 	for _, point := range graph.RPO() {
 		fact, ok := result.NumericFor(point)

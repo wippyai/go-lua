@@ -10,13 +10,13 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 )
 
-// AnnotationAssignability reports clear contradictions between a local
+// annotationAssignability reports clear contradictions between a local
 // annotation and a syntactically known source literal or scalar operator
 // expression. Broader flow-to-type projection belongs in later producers once
 // the relevant value axes own it.
-type AnnotationAssignability Config
+type annotationAssignability producerContext
 
-func (p AnnotationAssignability) Produce(result *check.Result) []diagnostic.Diagnostic {
+func (p annotationAssignability) Produce(result *check.Result) []diagnostic.Diagnostic {
 	if result == nil {
 		return nil
 	}
@@ -41,11 +41,11 @@ func (p AnnotationAssignability) Produce(result *check.Result) []diagnostic.Diag
 	return out
 }
 
-func (p AnnotationAssignability) localAssignment(result *check.Result, point cfg.Point, fact semantics.LocalAssignmentFact, env literalEnv) (diagnostic.Diagnostic, bool) {
+func (p annotationAssignability) localAssignment(result *check.Result, point cfg.Point, fact semantics.LocalAssignmentFact, env literalEnv) (diagnostic.Diagnostic, bool) {
 	if fact.Type == nil || fact.Expr == nil {
 		return diagnostic.Diagnostic{}, false
 	}
-	want, ok := lowerType(fact.Type, p.Resolver)
+	want, ok := lowerType(fact.Type, p.resolver)
 	if !ok {
 		return diagnostic.Diagnostic{}, false
 	}
@@ -55,26 +55,26 @@ func (p AnnotationAssignability) localAssignment(result *check.Result, point cfg
 	got, ok := literalType(fact.Expr)
 	optionalIndexProjection := false
 	if !ok {
-		got, ok = projectedOptionalIndexType(result, p.Resolver, fact.Expr)
+		got, ok = projectedOptionalIndexType(result, p.resolver, fact.Expr)
 		optionalIndexProjection = ok
 	}
 	if !ok {
 		got, ok = boundarySourceType(result, point, fact.Source)
 	}
 	if !ok {
-		got, ok = localScalarOperatorSourceType(result, p.Resolver, fact.Expr)
+		got, ok = localScalarOperatorSourceType(result, p.resolver, fact.Expr)
 	}
 	if !ok {
-		got, ok = projectedFlowSourceType(result, p.Resolver, point, env, fact.Expr)
+		got, ok = projectedFlowSourceType(result, p.resolver, point, env, fact.Expr)
 	}
 	if !ok {
-		got, ok = annotatedIdentifierType(result, p.Resolver, point, fact.Expr)
+		got, ok = annotatedIdentifierType(result, p.resolver, point, fact.Expr)
 	}
 	if !ok {
-		got, ok = explicitTopLikeExpressionType(result, p.Resolver, fact.Expr)
+		got, ok = explicitTopLikeExpressionType(result, p.resolver, fact.Expr)
 	}
 	if !ok {
-		got, ok = explicitTopLikeCallFactSourceType(result, p.Resolver, fact.Source)
+		got, ok = explicitTopLikeCallFactSourceType(result, p.resolver, fact.Source)
 	}
 	if !ok {
 		return p.objectLiteralAssignment(result, fact.Name, want, fact.Expr, fact.Type)
@@ -92,15 +92,15 @@ func (p AnnotationAssignability) localAssignment(result *check.Result, point cfg
 	return p.objectLiteralAssignment(result, fact.Name, want, fact.Expr, fact.Type)
 }
 
-func (p AnnotationAssignability) pathAssignment(result *check.Result, point cfg.Point, fact semantics.OrdinaryAssignmentFact) (diagnostic.Diagnostic, bool) {
+func (p annotationAssignability) pathAssignment(result *check.Result, point cfg.Point, fact semantics.OrdinaryAssignmentFact) (diagnostic.Diagnostic, bool) {
 	if fact.Target == nil || fact.Value == nil {
 		return diagnostic.Diagnostic{}, false
 	}
-	want, ok := assignmentTargetType(result, p.Resolver, fact)
+	want, ok := assignmentTargetType(result, p.resolver, fact)
 	if !ok || topLikeType(want) || refinement.ContainsFreeTypeParam(want) {
 		return diagnostic.Diagnostic{}, false
 	}
-	got, ok := assignmentValueType(result, p.Resolver, point, fact.Value, fact.Source)
+	got, ok := assignmentValueType(result, p.resolver, point, fact.Value, fact.Source)
 	if !ok {
 		return diagnostic.Diagnostic{}, false
 	}
@@ -110,7 +110,7 @@ func (p AnnotationAssignability) pathAssignment(result *check.Result, point cfg.
 	return pathAssignmentDiagnostic(fact.Target, fact.Value, got, want), true
 }
 
-func (p AnnotationAssignability) objectLiteralAssignment(result *check.Result, name string, want typ.Type, expr ast.Expr, annotation ast.TypeExpr) (diagnostic.Diagnostic, bool) {
+func (p annotationAssignability) objectLiteralAssignment(result *check.Result, name string, want typ.Type, expr ast.Expr, annotation ast.TypeExpr) (diagnostic.Diagnostic, bool) {
 	fact, ok := result.ObjectLiteral(expr)
 	if !ok {
 		return diagnostic.Diagnostic{}, false

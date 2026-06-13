@@ -102,7 +102,10 @@ func checkSource(src, filename string, opts ...Option) Result {
 	reg := standard.Registry()
 	signatures := cfg.signatureSource()
 	structural := precheck.Precheck(stmts)
-	checked, err := check.CheckChunk(stmts, check.Config{Registry: reg, Signatures: signatures})
+	checked, err := check.CheckChunk(stmts, check.Config{
+		Registry:   reg,
+		Signatures: signatures,
+	})
 	if err != nil {
 		if errors.Is(err, check.ErrUnsupportedCFG) {
 			setDefaultFile(structural, filename)
@@ -117,7 +120,7 @@ func checkSource(src, filename string, opts ...Option) Result {
 		setDefaultFile(diags, filename)
 		return Result{Diagnostics: diags}
 	}
-	diags := append(structural, diagnostics.Produce(checked, diagnostics.Config{Registry: reg})...)
+	diags := append(structural, diagnostics.Produce(checked)...)
 	setDefaultFile(diags, filename)
 	return Result{Diagnostics: diags}
 }

@@ -62,7 +62,7 @@ func TestErrorReturnSignatureRefinesValuePresenceAcrossErrorBranch(t *testing.T)
 	elseState := stateAt(t, result, elsePoint)
 	assertSymbolPresence(t, reg, elseState, value, presence.Absent())
 
-	if diags := diagnostics.Produce(result, diagnostics.Config{Registry: reg}); len(diags) != 0 {
+	if diags := diagnostics.Produce(result); len(diags) != 0 {
 		t.Fatalf("diagnostics = %#v, want none", diags)
 	}
 }
@@ -101,7 +101,7 @@ func TestErrorReturnLocalFunctionSummaryRefinesValuePresenceAcrossGuard(t *testi
 	if got := product.PresenceOf(nValue); !presence.Equal(got, presence.Present()) {
 		t.Fatalf("result boundary presence at n assignment = %s, want present", got)
 	}
-	if diags := diagnostics.Produce(result, diagnostics.Config{Registry: reg}); len(diags) != 0 {
+	if diags := diagnostics.Produce(result); len(diags) != 0 {
 		t.Fatalf("diagnostics = %#v, want none", diags)
 	}
 }
@@ -127,7 +127,7 @@ func TestErrorReturnLocalFunctionWithoutGuardKeepsReceiverOptional(t *testing.T)
 		t.Fatalf("CheckChunk: %v", err)
 	}
 
-	diags := diagnostics.Produce(result, diagnostics.Config{Registry: reg})
+	diags := diagnostics.Produce(result)
 	for _, d := range diags {
 		if d.Code == diagnostics.CodeMissingMember && strings.Contains(d.Message, "release") {
 			return
@@ -163,7 +163,7 @@ func TestErrorReturnDelegatedTailCallRefinesReceiverAcrossGuard(t *testing.T) {
 		t.Fatalf("CheckChunk: %v", err)
 	}
 
-	if diags := diagnostics.Produce(result, diagnostics.Config{Registry: reg}); len(diags) != 0 {
+	if diags := diagnostics.Produce(result); len(diags) != 0 {
 		t.Fatalf("diagnostics = %#v, want none", diags)
 	}
 }
@@ -195,7 +195,7 @@ func TestErrorReturnDelegatedTailCallDoesNotInventRelationFromOptionalDeclaratio
 		t.Fatalf("CheckChunk: %v", err)
 	}
 
-	diags := diagnostics.Produce(result, diagnostics.Config{Registry: reg})
+	diags := diagnostics.Produce(result)
 	for _, d := range diags {
 		if d.Code == diagnostics.CodeMissingMember && strings.Contains(d.Message, "release") {
 			return

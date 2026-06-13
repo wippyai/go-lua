@@ -22,11 +22,11 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 )
 
-// MemberCall reports calls through statically known table members that are
+// memberCall reports calls through statically known table members that are
 // impossible after active literal-discriminant branch narrowing.
-type MemberCall Config
+type memberCall producerContext
 
-func (p MemberCall) Produce(result *check.Result) []diagnostic.Diagnostic {
+func (p memberCall) Produce(result *check.Result) []diagnostic.Diagnostic {
 	if result == nil {
 		return nil
 	}
@@ -48,7 +48,7 @@ func (p MemberCall) Produce(result *check.Result) []diagnostic.Diagnostic {
 	return out
 }
 
-func (p MemberCall) call(result *check.Result, point cfg.Point, fact semantics.CallFact, env literalEnv) (diagnostic.Diagnostic, bool) {
+func (p memberCall) call(result *check.Result, point cfg.Point, fact semantics.CallFact, env literalEnv) (diagnostic.Diagnostic, bool) {
 	receiver, member, callExpr, ok := callMemberAccess(fact)
 	if !ok || receiver.Symbol == 0 {
 		return diagnostic.Diagnostic{}, false
@@ -85,14 +85,14 @@ func (p MemberCall) call(result *check.Result, point cfg.Point, fact semantics.C
 	}
 }
 
-func (p MemberCall) receiverType(result *check.Result, point cfg.Point, fact semantics.CallFact, receiver path.Path, env literalEnv) (typ.Type, bool) {
+func (p memberCall) receiverType(result *check.Result, point cfg.Point, fact semantics.CallFact, receiver path.Path, env literalEnv) (typ.Type, bool) {
 	if fact.Receiver != nil {
-		if t, ok := newFlowExpressionTyper(result, p.Resolver, point, env).typeOf(fact.Receiver); ok {
+		if t, ok := newFlowExpressionTyper(result, p.resolver, point, env).typeOf(fact.Receiver); ok {
 			return t, true
 		}
 	}
 	if baseExpr, ok := result.SymbolTypeAnnotation(receiver.Symbol); ok {
-		return lowerType(baseExpr, p.Resolver)
+		return lowerType(baseExpr, p.resolver)
 	}
 	value, ok := result.PathValueAtBoundary(point, receiver)
 	if !ok {

@@ -749,11 +749,13 @@ func TestDirectCallAcceptsExplicitNilCheckOptional(t *testing.T) {
 
 func TestReturnContractReportsLiteralMismatch(t *testing.T) {
 	fn := mustFunctionExpr(t, `function f(): number return "hello" end`)
-	result, err := check.CheckFunction(fn, check.Config{Registry: standard.Registry()})
+	result, err := check.CheckFunction(fn, check.Config{
+		Registry: standard.Registry(),
+	})
 	if err != nil {
 		t.Fatalf("check: %v", err)
 	}
-	diags := Produce(result, Config{Registry: standard.Registry()})
+	diags := Produce(result)
 	if len(diags) != 1 {
 		t.Fatalf("diagnostics = %d, want 1: %#v", len(diags), diags)
 	}
@@ -923,7 +925,7 @@ func runDiagnosticsFull(t *testing.T, src string, globals []string, signatures s
 	if err != nil {
 		t.Fatalf("check: %v", err)
 	}
-	return Produce(result, Config{Registry: reg})
+	return Produce(result)
 }
 
 func mustStmts(t *testing.T, src string) []ast.Stmt {

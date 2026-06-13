@@ -10,12 +10,12 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 )
 
-// UnresolvedValueReferences reports value reads that the binder had to bind as
+// unresolvedValueReferences reports value reads that the binder had to bind as
 // implicit globals. Predeclared globals and global assignment targets are left
 // to binding policy and are not reported here.
-type UnresolvedValueReferences Config
+type unresolvedValueReferences producerContext
 
-func (p UnresolvedValueReferences) Produce(result *check.Result) []diagnostic.Diagnostic {
+func (p unresolvedValueReferences) Produce(result *check.Result) []diagnostic.Diagnostic {
 	if result == nil {
 		return nil
 	}
@@ -25,7 +25,7 @@ func (p UnresolvedValueReferences) Produce(result *check.Result) []diagnostic.Di
 	}
 	var out []diagnostic.Diagnostic
 	seen := make(map[*ast.IdentExpr]struct{})
-	resolver := p.Resolver
+	resolver := p.resolver
 	emitExpr := func(expr ast.Expr) {
 		walkValueExpr(expr, resolver, func(ident *ast.IdentExpr) {
 			if ident == nil {

@@ -18,15 +18,15 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 )
 
-// DirectCallContract reports contract mismatches for direct function calls that
+// directCallContract reports contract mismatches for direct function calls that
 // resolve to a known callable contract.
-type DirectCallContract Config
+type directCallContract producerContext
 
-func (p DirectCallContract) Produce(result *check.Result) []diagnostic.Diagnostic {
-	return produceDirectCallContract(result, Config(p), nil)
+func (p directCallContract) Produce(result *check.Result) []diagnostic.Diagnostic {
+	return produceDirectCallContract(result, producerContext(p), nil)
 }
 
-func produceDirectCallContract(result *check.Result, config Config, inherited map[symbol.ID]*ast.FunctionExpr) []diagnostic.Diagnostic {
+func produceDirectCallContract(result *check.Result, context producerContext, inherited map[symbol.ID]*ast.FunctionExpr) []diagnostic.Diagnostic {
 	if result == nil {
 		return nil
 	}
@@ -35,7 +35,7 @@ func produceDirectCallContract(result *check.Result, config Config, inherited ma
 		return nil
 	}
 	defs := directCallDefinitions(result, inherited)
-	producer := DirectCallContract(config)
+	producer := directCallContract(context)
 	var out []diagnostic.Diagnostic
 	for _, point := range graph.RPO() {
 		fact, ok := result.Call(point)
@@ -58,7 +58,7 @@ func produceDirectCallContract(result *check.Result, config Config, inherited ma
 	return out
 }
 
-func (p DirectCallContract) call(
+func (p directCallContract) call(
 	result *check.Result,
 	point cfg.Point,
 	fact semantics.CallFact,
@@ -78,7 +78,7 @@ func (p DirectCallContract) call(
 	if !ok {
 		return diagnostic.Diagnostic{}, false
 	}
-	baseType, ok := lowerType(baseExpr, p.Resolver)
+	baseType, ok := lowerType(baseExpr, p.resolver)
 	if !ok {
 		return diagnostic.Diagnostic{}, false
 	}
@@ -116,14 +116,14 @@ type directCallResult struct {
 	explicit bool
 }
 
-func (p DirectCallContract) callFunction(
+func (p directCallContract) callFunction(
 	result *check.Result,
 	point cfg.Point,
 	fact semantics.CallFact,
 	name string,
 	fn *ast.FunctionExpr,
 ) (diagnostic.Diagnostic, bool) {
-	contract, ok := lowerDirectFunctionContractInScope(fn, p.Resolver)
+	contract, ok := lowerDirectFunctionContractInScope(fn, p.resolver)
 	if !ok {
 		return diagnostic.Diagnostic{}, false
 	}
@@ -132,7 +132,7 @@ func (p DirectCallContract) callFunction(
 	return p.directFunctionCall(result, point, fact, contract)
 }
 
-func (p DirectCallContract) directFunctionCall(
+func (p directCallContract) directFunctionCall(
 	result *check.Result,
 	point cfg.Point,
 	fact semantics.CallFact,
@@ -147,7 +147,7 @@ func (p DirectCallContract) directFunctionCall(
 	if len(args) < required {
 		return tooFewArgsDiagnostic(point, call, contract.name, required, len(args), contract.declSpan), true
 	}
-	contract, violations := instantiateDirectFunctionContract(result, point, fact, contract, p.Resolver)
+	contract, violations := instantiateDirectFunctionContract(result, point, fact, contract, p.resolver)
 	if len(violations) > 0 {
 		violation := violations[0]
 		if violation.Index >= 0 && violation.Index < len(args) {
@@ -170,12 +170,12 @@ func (p DirectCallContract) directFunctionCall(
 		} else {
 			break
 		}
-		got, ok := projectedFlowSourceType(result, p.Resolver, point, literalEnv{}, arg)
+		got, ok := projectedFlowSourceType(result, p.resolver, point, literalEnv{}, arg)
 		if !ok {
 			got, ok = boundaryCallArgumentSourceType(result, point, fact, i)
 		}
 		if !ok {
-			got, ok = boundaryExprType(result, p.Resolver, arg)
+			got, ok = boundaryExprType(result, p.resolver, arg)
 		}
 		if !ok {
 			continue
@@ -210,14 +210,14 @@ func boundaryCallArgumentSourceType(result *check.Result, point cfg.Point, fact 
 	return boundarySourceType(result, point, fact.ArgumentSources[index])
 }
 
-func boundaryCallArgumentReader(fact semantics.CallFact, index int, fallback ast.Expr) boundaryValueReader {
+func boundaryCallArgumentReader(fact semantics.CallFact, index int, argumentExpr ast.Expr) boundaryValueReader {
 	return func(result *check.Result, point cfg.Point) (product.Value, bool) {
 		if index >= 0 && index < len(fact.ArgumentSources) {
 			if value, ok := boundaryValueFromASTSource(fact.ArgumentSources[index])(result, point); ok {
 				return value, true
 			}
 		}
-		return boundaryValueFromExpr(fallback)(result, point)
+		return boundaryValueFromExpr(argumentExpr)(result, point)
 	}
 }
 
@@ -514,6 +514,9 @@ func argTypeDiagnostic(point cfg.Point, call *ast.FuncCallExpr, name string, ind
 }
 
 func directCallDefinitions(result *check.Result, parent map[symbol.ID]*ast.FunctionExpr) map[symbol.ID]*ast.FunctionExpr {
+	if result == nil {
+		return parent
+	}
 	graph := result.Graph()
 	if graph == nil {
 		return parent

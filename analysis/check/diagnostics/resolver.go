@@ -24,8 +24,7 @@ type resultResolver struct {
 
 	current []ast.TypeExpr
 
-	explicit typeannotation.Resolver
-	parent   typeannotation.Resolver
+	parent typeannotation.Resolver
 }
 
 type typeDeclKey struct {
@@ -33,7 +32,7 @@ type typeDeclKey struct {
 	id   bind.TypeDeclID
 }
 
-func newResultResolver(result *check.Result, explicit, parent typeannotation.Resolver) *resultResolver {
+func newResultResolver(result *check.Result, parent typeannotation.Resolver) *resultResolver {
 	r := &resultResolver{
 		result:     result,
 		aliases:    make(map[bind.TypeDeclID]*ast.TypeDefStmt),
@@ -44,7 +43,6 @@ func newResultResolver(result *check.Result, explicit, parent typeannotation.Res
 		cache:      make(map[bind.TypeDeclID]typ.Type),
 		params:     make(map[bind.TypeDeclID]*typ.TypeParam),
 		active:     make(map[typeDeclKey]bool),
-		explicit:   explicit,
 		parent:     parent,
 	}
 	if result == nil || result.Graph() == nil {
@@ -83,7 +81,7 @@ func newResultResolver(result *check.Result, explicit, parent typeannotation.Res
 
 func (r *resultResolver) ResolveTypeRef(path []string) (typ.Type, bool) {
 	if len(path) != 1 {
-		return resolveFallback(path, r.explicit, r.parent)
+		return resolveInParentScope(path, r.parent)
 	}
 	if decl, ok := r.currentBinding(path[0]); ok {
 		if t, ok := r.resolveDecl(decl); ok {
@@ -95,7 +93,7 @@ func (r *resultResolver) ResolveTypeRef(path []string) (typ.Type, bool) {
 			return t, true
 		}
 	}
-	return resolveFallback(path, r.explicit, r.parent)
+	return resolveInParentScope(path, r.parent)
 }
 
 func (r *resultResolver) Type(expr ast.TypeExpr) (typ.Type, bool) {
@@ -120,7 +118,7 @@ func (r *resultResolver) TypeRefResolved(ref *ast.TypeRefExpr) bool {
 			return r.declVisible(decl)
 		}
 	}
-	_, ok := resolveFallback(ref.Path, r.explicit, r.parent)
+	_, ok := resolveInParentScope(ref.Path, r.parent)
 	return ok || !r.hasKnownTypeName(ref.Path[0])
 }
 
@@ -136,7 +134,7 @@ func (r *resultResolver) PrimitiveTypeResolved(expr *ast.PrimitiveTypeExpr) bool
 			return r.declVisible(decl)
 		}
 	}
-	_, ok := resolveFallback([]string{expr.Name}, r.explicit, r.parent)
+	_, ok := resolveInParentScope([]string{expr.Name}, r.parent)
 	return ok || !r.hasKnownTypeName(expr.Name)
 }
 
@@ -256,7 +254,7 @@ func (r *resultResolver) resolveAlias(decl bind.TypeDecl, stmt *ast.TypeDefStmt)
 	}
 	delete(r.active, key)
 	if !ok {
-		return resolveFallback([]string{decl.Name}, r.explicit, r.parent)
+		return resolveInParentScope([]string{decl.Name}, r.parent)
 	}
 	r.cache[decl.ID] = t
 	return t, true
@@ -313,14 +311,12 @@ func lowerType(expr ast.TypeExpr, resolver typeannotation.Resolver) (typ.Type, b
 	return typeannotation.Type(expr, resolver)
 }
 
-func resolveFallback(path []string, resolvers ...typeannotation.Resolver) (typ.Type, bool) {
-	for _, resolver := range resolvers {
-		if resolver == nil {
-			continue
-		}
-		if t, ok := resolver.ResolveTypeRef(path); ok {
-			return t, true
-		}
+func resolveInParentScope(path []string, parent typeannotation.Resolver) (typ.Type, bool) {
+	if parent == nil {
+		return nil, false
+	}
+	if t, ok := parent.ResolveTypeRef(path); ok {
+		return t, true
 	}
 	return nil, false
 }
