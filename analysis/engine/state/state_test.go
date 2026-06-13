@@ -771,6 +771,44 @@ func TestInvalidatePathKeySubtreeRemovesStructuredDescendants(t *testing.T) {
 	}
 }
 
+func TestInvalidatePathKeySubtreeRemovesBranchProofsWithOtherUnderSubtree(t *testing.T) {
+	reg := standard.Registry()
+	valueDomain := product.Domain(reg)
+	present := presentValue(reg)
+	bottom := valueDomain.Bottom()
+	prefix := pathdom.PathKey("sym70@2.field")
+	otherInside := pathdom.PathKey("sym70@2.field.deep")
+	outside := pathdom.PathKey("sym72@2.field")
+	proof := BranchProof{Kind: BranchProofPathEqual, Path: outside, Other: otherInside}
+
+	s := State{}.
+		WritePathKey(reg, prefix, present).
+		WritePathKey(reg, otherInside, present).
+		WritePathKey(reg, outside, present).
+		WritePathStaticMember(otherInside, present).
+		AddBranchProof(proof)
+
+	out, ok := s.InvalidatePathKeySubtree(prefix)
+	if !ok {
+		t.Fatal("InvalidatePathKeySubtree rejected versioned prefix")
+	}
+	if got := out.ReadPathKey(reg, prefix); !valueDomain.Equal(got, bottom) {
+		t.Fatalf("%s = %s, want bottom", prefix, formatValue(reg, got))
+	}
+	if got := out.ReadPathKey(reg, otherInside); !valueDomain.Equal(got, bottom) {
+		t.Fatalf("%s = %s, want bottom", otherInside, formatValue(reg, got))
+	}
+	if got := out.ReadPathKey(reg, outside); !valueDomain.Equal(got, present) {
+		t.Fatalf("%s = %s, want present", outside, formatValue(reg, got))
+	}
+	if got, ok := out.ReadPathStaticMember(otherInside); ok {
+		t.Fatalf("static member %s = %s, want removed", otherInside, formatValue(reg, got))
+	}
+	if out.HasBranchProof(proof) {
+		t.Fatalf("branch proof with Other under invalidated subtree survived")
+	}
+}
+
 func TestInvalidatePathKeyDescendantsKeepsContainerAndUnrelatedPaths(t *testing.T) {
 	reg := standard.Registry()
 	valueDomain := product.Domain(reg)
@@ -856,6 +894,49 @@ func TestInvalidatePathKeyDescendantsKeepsContainerAndUnrelatedPaths(t *testing.
 	}
 	if got := out.ReadPathKey(reg, placeholderChild); !valueDomain.Equal(got, bottom) {
 		t.Fatalf("%s = %s, want bottom", placeholderChild, formatValue(reg, got))
+	}
+}
+
+func TestInvalidatePathKeyDescendantsFromRootRemovesStaticMembersAndBranchProofs(t *testing.T) {
+	reg := standard.Registry()
+	valueDomain := product.Domain(reg)
+	present := presentValue(reg)
+	bottom := valueDomain.Bottom()
+	root := pathdom.PathKey("sym80@1")
+	child := pathdom.PathKey("sym80@1.field")
+	descendant := pathdom.PathKey("sym80@1.field.deep")
+	outside := pathdom.PathKey("sym81@1.field")
+	proof := BranchProof{Kind: BranchProofPathNotEqual, Path: outside, Other: descendant}
+
+	s := State{}.
+		WritePathKey(reg, root, present).
+		WritePathKey(reg, child, present).
+		WritePathKey(reg, descendant, present).
+		WritePathKey(reg, outside, present).
+		WritePathStaticMember(child, present).
+		WritePathStaticMember(descendant, present).
+		AddBranchProof(proof)
+
+	out, ok := s.InvalidatePathKeyDescendants(root)
+	if !ok {
+		t.Fatal("InvalidatePathKeyDescendants rejected versioned root")
+	}
+	if got := out.ReadPathKey(reg, root); !valueDomain.Equal(got, present) {
+		t.Fatalf("%s = %s, want present", root, formatValue(reg, got))
+	}
+	for _, removed := range []pathdom.PathKey{child, descendant} {
+		if got := out.ReadPathKey(reg, removed); !valueDomain.Equal(got, bottom) {
+			t.Fatalf("%s = %s, want bottom", removed, formatValue(reg, got))
+		}
+		if got, ok := out.ReadPathStaticMember(removed); ok {
+			t.Fatalf("static member %s = %s, want removed", removed, formatValue(reg, got))
+		}
+	}
+	if got := out.ReadPathKey(reg, outside); !valueDomain.Equal(got, present) {
+		t.Fatalf("%s = %s, want present", outside, formatValue(reg, got))
+	}
+	if out.HasBranchProof(proof) {
+		t.Fatalf("branch proof with Other under root descendant survived descendant invalidation")
 	}
 }
 

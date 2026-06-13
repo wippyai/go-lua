@@ -104,6 +104,43 @@ func TestPathStateAdapterInvalidateSubtreeUsesResolvedKeyAndRejectsUnresolvedPat
 	assertStateEqual(t, reg, unchanged, s)
 }
 
+func TestPathStateAdapterInvalidateSubtreeDropsEquivalentStaticMemberFacts(t *testing.T) {
+	reg := standard.Registry()
+	point := cfg.Point(10)
+	alias := symbol.ID(43)
+	original := symbol.ID(44)
+	builder := visibility.NewBuilder()
+	builder.Define(point, alias, "alias")
+	builder.Define(point, original, "original")
+	resolver := visibility.NewResolver(builder.Build())
+	aliasPath := path.NewPath(alias, "alias").Field("value")
+	aliasKey := path.PathKey("sym43@1.value")
+	originalKey := path.PathKey("sym44@1.value")
+	present := presentValue(reg)
+	in := state.State{}.
+		WritePathStaticMember(originalKey, present).
+		AddBranchProof(state.BranchProof{
+			Kind:  state.BranchProofPathEqual,
+			Path:  aliasKey,
+			Other: originalKey,
+		})
+
+	out, ok := invalidatePathSubtreeAt(in, resolver, point, aliasPath)
+	if !ok {
+		t.Fatal("invalidatePathSubtreeAt rejected visible alias path")
+	}
+	if got, ok := out.ReadPathStaticMember(originalKey); ok {
+		t.Fatalf("static member %s = %s, want removed through alias invalidation", originalKey, formatValue(reg, got))
+	}
+	if out.HasBranchProof(state.BranchProof{
+		Kind:  state.BranchProofPathEqual,
+		Path:  aliasKey,
+		Other: originalKey,
+	}) {
+		t.Fatalf("equivalent branch proof survived alias invalidation")
+	}
+}
+
 func resolverWithVisibleVersion(point cfg.Point, sym symbol.ID, root string) *visibility.Resolver {
 	builder := visibility.NewBuilder()
 	builder.Define(point, sym, root)

@@ -182,6 +182,11 @@ func TestFromResultDropsNonParameterNormalReturnFactPaths(t *testing.T) {
 			Path:  validParamKey,
 			Other: invalidKeys[0],
 		}).
+		AddBranchProof(state.BranchProof{
+			Kind:  state.BranchProofPathNotEqual,
+			Path:  invalidKeys[1],
+			Other: validParamKey,
+		}).
 		AddChannelSelectFact(state.ChannelSelectFact{
 			Select: "invalid-result",
 			Kind:   state.ChannelSelectFactReceive,
@@ -201,7 +206,7 @@ func TestFromResultDropsNonParameterNormalReturnFactPaths(t *testing.T) {
 		t.Fatalf("PathRefinements = %#v, want parameter resolver key rebased", got.PathRefinements)
 	}
 	if len(got.BranchProofs) != 0 {
-		t.Fatalf("BranchProofs = %#v, want proof with non-parameter other path dropped", got.BranchProofs)
+		t.Fatalf("BranchProofs = %#v, want proofs with non-parameter path or other path dropped", got.BranchProofs)
 	}
 	if len(got.ChannelSelects) != 0 {
 		t.Fatalf("ChannelSelects = %#v, want fact with non-parameter result path dropped", got.ChannelSelects)
