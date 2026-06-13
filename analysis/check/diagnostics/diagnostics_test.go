@@ -489,6 +489,71 @@ func TestMemberCallAcceptsUnionReceiverWhenAllAlternativesCallable(t *testing.T)
 	}
 }
 
+func TestMemberCallReportsWrongArgumentType(t *testing.T) {
+	diags := runDiagnostics(t, `
+		type Client = {invoke: (model_id: string, payload: any) -> ()}
+		local c: Client = value
+		c.invoke(42, {})
+	`)
+	if len(diags) != 1 {
+		t.Fatalf("diagnostics = %d, want 1: %#v", len(diags), diags)
+	}
+	d := diags[0]
+	if d.Code != CodeDirectCallArgType || d.Severity != diagnostic.SeverityError {
+		t.Fatalf("diagnostic code/severity = %s/%s", d.Code, d.Severity)
+	}
+	if !strings.Contains(d.Message, "argument 1") || !strings.Contains(d.Message, "string") {
+		t.Fatalf("message = %q", d.Message)
+	}
+}
+
+func TestMemberCallReportsTooFewArgs(t *testing.T) {
+	diags := runDiagnostics(t, `
+		type Client = {invoke: (model_id: string, payload: number) -> ()}
+		local c: Client = value
+		c.invoke("model")
+	`)
+	if len(diags) != 1 {
+		t.Fatalf("diagnostics = %d, want 1: %#v", len(diags), diags)
+	}
+	d := diags[0]
+	if d.Code != CodeDirectCallTooFewArgs || d.Severity != diagnostic.SeverityError {
+		t.Fatalf("diagnostic code/severity = %s/%s", d.Code, d.Severity)
+	}
+	if !strings.Contains(d.Message, "expects 2 arguments") || !strings.Contains(d.Message, "got 1") {
+		t.Fatalf("message = %q", d.Message)
+	}
+}
+
+func TestColonMemberCallConsumesReceiverParameter(t *testing.T) {
+	diags := runDiagnostics(t, `
+		type ClientSelf = {id: string}
+		type Client = {id: string, invoke: (self: ClientSelf, model_id: string) -> ()}
+		local c: Client = value
+		c:invoke(42)
+	`)
+	if len(diags) != 1 {
+		t.Fatalf("diagnostics = %d, want 1: %#v", len(diags), diags)
+	}
+	d := diags[0]
+	if d.Code != CodeDirectCallArgType || d.Severity != diagnostic.SeverityError {
+		t.Fatalf("diagnostic code/severity = %s/%s", d.Code, d.Severity)
+	}
+	if !strings.Contains(d.Message, "argument 1") || !strings.Contains(d.Message, "string") {
+		t.Fatalf("message = %q", d.Message)
+	}
+
+	ok := runDiagnostics(t, `
+		type ClientSelf = {id: string}
+		type Client = {id: string, invoke: (self: ClientSelf, model_id: string) -> ()}
+		local c: Client = value
+		c:invoke("model")
+	`)
+	if len(ok) != 0 {
+		t.Fatalf("diagnostics = %#v, want none for matching colon call", ok)
+	}
+}
+
 func TestMemberCallSkipsUnreachableDiscriminantBranch(t *testing.T) {
 	diags := runDiagnostics(t, `
 		type Dog = {kind: "dog", bark: () -> ()}
@@ -504,13 +569,13 @@ func TestMemberCallSkipsUnreachableDiscriminantBranch(t *testing.T) {
 	}
 }
 
-func TestMemberCallSkipsUnnarrowedPrimitiveMethod(t *testing.T) {
+func TestMemberCallAcceptsUnnarrowedPrimitiveMethod(t *testing.T) {
 	diags := runDiagnostics(t, `
 		local value: string = "abc"
-		value.upper()
+		value:upper()
 	`)
 	if len(diags) != 0 {
-		t.Fatalf("diagnostics = %#v, want no discriminant-member diagnostic without narrowing proof", diags)
+		t.Fatalf("diagnostics = %#v, want none", diags)
 	}
 }
 

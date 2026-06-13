@@ -16,6 +16,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/typecall"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/type/normalize"
+	"github.com/wippyai/go-lua/analysis/type/subst"
 	"github.com/wippyai/go-lua/analysis/type/subtype"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/unwrap"
@@ -59,11 +60,10 @@ func (p memberCall) call(result *body.Result, point cfg.Point, fact semantics.Ca
 	}
 	narrowed, narrowedByDiscriminant := applyLiteralNarrowing(baseType, receiver, env)
 	receiverType := narrowed
+	reportMemberShape := narrowedByDiscriminant
 	if !narrowedByDiscriminant {
 		receiverType = baseType
-		if !unionReceiver(baseType) && !projectionHasNil(receiverType) {
-			return diagnostic.Diagnostic{}, false
-		}
+		reportMemberShape = unionReceiver(baseType) || projectionHasNil(receiverType)
 	}
 	if typ.IsNever(receiverType) || typ.IsAny(receiverType) || typ.IsUnknown(receiverType) {
 		return diagnostic.Diagnostic{}, false
@@ -75,14 +75,84 @@ func (p memberCall) call(result *body.Result, point cfg.Point, fact semantics.Ca
 	memberType, status := typecall.MemberCall(receiverType, member)
 	switch status {
 	case typecall.MemberCallOK:
-		return diagnostic.Diagnostic{}, false
+		return p.callableMemberContract(result, point, fact, receiverType, memberType, member)
 	case typecall.MemberCallMissing:
+		if !reportMemberShape {
+			return diagnostic.Diagnostic{}, false
+		}
 		return memberDiagnostic(result, fact, callExpr, receiverType, member, point), true
 	case typecall.MemberCallNotCallable:
+		if !reportMemberShape {
+			return diagnostic.Diagnostic{}, false
+		}
 		return notCallableDiagnostic(result, fact, callExpr, receiverType, memberType, member, point), true
 	default:
 		return diagnostic.Diagnostic{}, false
 	}
+}
+
+func (p memberCall) callableMemberContract(result *body.Result, point cfg.Point, fact semantics.CallFact, receiverType, memberType typ.Type, member string) (diagnostic.Diagnostic, bool) {
+	callable, ok := typecall.Callable(memberType)
+	if !ok {
+		return diagnostic.Diagnostic{}, false
+	}
+	if substituted, ok := subst.Self(callable, receiverType).(*typ.Function); ok {
+		callable = substituted
+	}
+	contract := lowerDirectFunctionType(callable)
+	contract.name = memberCallContractName(result, fact, member)
+	contract.declSpan = ast.SpanOf(fact.Call)
+	if fact.Receiver != nil && fact.Method != "" {
+		contract = colonMemberCallContract(receiverType, contract)
+	}
+	return directCallContract(p).directFunctionCall(result, point, fact, contract)
+}
+
+func colonMemberCallContract(receiverType typ.Type, contract directFunctionContract) directFunctionContract {
+	if !colonMemberCallConsumesReceiver(contract, receiverType) {
+		return contract
+	}
+	return memberContractWithoutReceiver(contract)
+}
+
+func colonMemberCallConsumesReceiver(contract directFunctionContract, receiverType typ.Type) bool {
+	if len(contract.params) == 0 {
+		return false
+	}
+	if contract.source != nil && len(contract.source.Params) > 0 && contract.source.Params[0].Name == "self" {
+		return true
+	}
+	self := contract.params[0]
+	if !self.explicit || self.typ == nil || typ.IsAny(self.typ) || typ.IsUnknown(self.typ) {
+		return false
+	}
+	return subtype.IsSubtype(receiverType, self.typ)
+}
+
+func memberContractWithoutReceiver(contract directFunctionContract) directFunctionContract {
+	shifted := contract
+	shifted.params = append([]directCallParam(nil), contract.params[1:]...)
+	if contract.source != nil && len(contract.source.Params) > 0 {
+		sourceParams := append([]typ.Param(nil), contract.source.Params[1:]...)
+		shifted.source = typ.RebuildFunction(typ.FunctionParts{
+			TypeParams: contract.source.TypeParams,
+			Params:     sourceParams,
+			Variadic:   contract.source.Variadic,
+			Returns:    contract.source.Returns,
+		})
+	}
+	return shifted
+}
+
+func memberCallContractName(result *body.Result, fact semantics.CallFact, member string) string {
+	name := result.SymbolName(callRootSymbol(fact))
+	if name == "" {
+		name = "receiver"
+	}
+	if member == "" {
+		return name
+	}
+	return name + "." + member
 }
 
 func (p memberCall) receiverType(result *body.Result, point cfg.Point, fact semantics.CallFact, receiver path.Path, env literalEnv) (typ.Type, bool) {

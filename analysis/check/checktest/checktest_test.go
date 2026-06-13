@@ -151,6 +151,29 @@ func TestCheckAndExportPublishesReturnedTableFunctionMemberParams(t *testing.T) 
 	}
 }
 
+func TestRequireCheckAndExportedReturnedTableDottedMemberChecksArgs(t *testing.T) {
+	mod := CheckAndExport(`
+		local client = {}
+		function client.invoke(model_id: string, payload: any, options: any)
+		end
+		return client
+	`, "bedrock_client")
+	if len(mod.Errors) != 0 {
+		t.Fatalf("module errors = %#v, want none", mod.Errors)
+	}
+
+	result := Check(`
+		local client = require("bedrock_client")
+		client.invoke(42, {}, {})
+	`, WithStdlib(), WithModule("bedrock_client", mod))
+	if len(result.Diagnostics) != 1 {
+		t.Fatalf("diagnostics = %d, want 1: %#v", len(result.Diagnostics), result.Diagnostics)
+	}
+	if result.Diagnostics[0].Code != diagnostics.CodeDirectCallArgType {
+		t.Fatalf("diagnostic code = %s, want %s", result.Diagnostics[0].Code, diagnostics.CodeDirectCallArgType)
+	}
+}
+
 func TestCheckAndExportPublishesReturnedTableMethodFunctionMember(t *testing.T) {
 	mod := CheckAndExport(`
 		local client = {}
