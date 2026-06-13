@@ -18,6 +18,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/kind"
 	"github.com/wippyai/go-lua/analysis/type/subst"
 	"github.com/wippyai/go-lua/analysis/type/subtype"
+	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/unwrap"
 	"github.com/wippyai/go-lua/compiler/ast"
@@ -331,7 +332,7 @@ func runtimeKindType(reg *axis.Registry, value product.Value, p presence.Value) 
 		case runtimekind.String:
 			members = append(members, typ.String)
 		case runtimekind.Table:
-			members = append(members, typ.NewMap(typ.Any, typ.Unknown))
+			members = append(members, typetable.NewMap(typ.Any, typ.Unknown))
 		case runtimekind.Function:
 			members = append(members, typ.Func().Build())
 		default:

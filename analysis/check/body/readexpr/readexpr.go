@@ -19,6 +19,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/visibility"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/typeaccess"
+	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
@@ -86,7 +87,7 @@ func Project(config Config, point cfg.Point, p pathdom.Path, in state.State) (pr
 	if !ok {
 		return product.Value{}, false
 	}
-	projected, ok := typeaccess.RuntimeIndex(typ.NewMap(typ.Any, typ.Unknown), keyType)
+	projected, ok := typeaccess.RuntimeIndex(typetable.NewMap(typ.Any, typ.Unknown), keyType)
 	if !ok {
 		return product.Value{}, false
 	}
