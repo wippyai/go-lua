@@ -47,6 +47,9 @@ func IsClosedUnionAnnotation(t typ.Type) bool {
 	return true
 }
 
+// MorePreciseFunc reports whether candidate is strictly more precise than baseline.
+type MorePreciseFunc func(candidate, baseline typ.Type) bool
+
 // PruneLessPreciseRefinableUnionMembers removes refinable structural
 // placeholder members from a union when another member carries comparable,
 // strictly more precise evidence for the same runtime shape.
