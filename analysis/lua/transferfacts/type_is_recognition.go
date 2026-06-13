@@ -20,7 +20,8 @@ func (l *lowerer) typeIsCall(fact semantics.CallFact) (typ.Type, path.Path, bool
 }
 
 func (l *lowerer) typeIsCallExpr(call *ast.FuncCallExpr) (typ.Type, path.Path, bool) {
-	if call == nil || call.Receiver == nil || call.Method != "is" || len(call.Args) != 1 || len(call.TypeArgs) != 0 {
+	call, ok := branchcond.TypeIsCall(call)
+	if !ok {
 		return nil, path.Path{}, false
 	}
 	t, ok := l.typeValueExpr(call.Receiver)
@@ -121,6 +122,9 @@ func branchRefinementOnEdge(target path.Path, value factflow.ValueRefinement, co
 func typeIsConditionSuccessEdge(condition ast.Expr, call *ast.FuncCallExpr) (bool, bool) {
 	conditionCall, negated, ok := branchcond.PredicateCall(condition)
 	if !ok || conditionCall != call {
+		return false, false
+	}
+	if _, ok := branchcond.TypeIsCall(conditionCall); !ok {
 		return false, false
 	}
 	return !negated, true

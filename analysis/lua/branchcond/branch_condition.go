@@ -5,7 +5,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/lua/pathexpr"
-	"github.com/wippyai/go-lua/analysis/lua/valueexpr"
+	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
 
@@ -36,15 +36,29 @@ type Check struct {
 // PredicateCall returns the direct call whose boolean result selects a branch.
 // The negated flag is true when the branch condition is `not call(...)`.
 func PredicateCall(expr ast.Expr) (*ast.FuncCallExpr, bool, bool) {
-	switch expr := valueexpr.AssertionInner(expr).(type) {
+	switch expr := sourceprovenance.AssertionInner(expr).(type) {
 	case *ast.FuncCallExpr:
 		return expr, false, true
 	case *ast.UnaryNotOpExpr:
-		call, ok := valueexpr.Call(expr.Expr)
+		call, ok := sourceprovenance.Call(expr.Expr)
 		return call, true, ok
 	default:
 		return nil, false, false
 	}
+}
+
+// TypeCall reports whether expr is a direct one-argument `type(...)` call
+// shape after stripping assertion wrappers. Semantic resolution of the callee
+// stays with the caller.
+func TypeCall(expr ast.Expr) (*ast.FuncCallExpr, bool) {
+	return typeCallShape(expr, "", false)
+}
+
+// TypeIsCall reports whether expr is a direct one-argument `:is(...)` call
+// shape after stripping assertion wrappers. Semantic resolution of the
+// receiver stays with the caller.
+func TypeIsCall(expr ast.Expr) (*ast.FuncCallExpr, bool) {
+	return typeCallShape(expr, "is", true)
 }
 
 func Normalize(expr ast.Expr, bindings *bind.Result) Check {
@@ -215,7 +229,7 @@ func typeComparisonOperands(callExpr, literalExpr ast.Expr, bindings *bind.Resul
 	if !ok {
 		return path.Path{}, "", false
 	}
-	call, ok := callExpr.(*ast.FuncCallExpr)
+	call, ok := TypeCall(callExpr)
 	if !ok {
 		return path.Path{}, "", false
 	}
@@ -227,14 +241,28 @@ func typeComparisonOperands(callExpr, literalExpr ast.Expr, bindings *bind.Resul
 }
 
 func typeCallSubjectPath(call *ast.FuncCallExpr, bindings *bind.Result) (path.Path, bool) {
-	if call == nil || call.Receiver != nil || call.Method != "" || len(call.Args) != 1 || len(call.TypeArgs) != 0 {
-		return path.Path{}, false
-	}
 	fn, ok := call.Func.(*ast.IdentExpr)
 	if !ok || !bindings.ResolvesToGlobal(fn, "type") {
 		return path.Path{}, false
 	}
 	return pathexpr.Resolve(call.Args[0], bindings)
+}
+
+func typeCallShape(expr ast.Expr, method string, hasReceiver bool) (*ast.FuncCallExpr, bool) {
+	call, ok := sourceprovenance.AssertionInner(expr).(*ast.FuncCallExpr)
+	if !ok || call == nil || len(call.Args) != 1 || len(call.TypeArgs) != 0 {
+		return nil, false
+	}
+	if hasReceiver {
+		if call.Receiver == nil || call.Method != method {
+			return nil, false
+		}
+		return call, true
+	}
+	if call.Receiver != nil || call.Method != "" {
+		return nil, false
+	}
+	return call, true
 }
 
 func nilComparisonPath(lhs, rhs ast.Expr, bindings *bind.Result) (path.Path, bool) {

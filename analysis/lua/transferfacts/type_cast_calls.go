@@ -3,6 +3,7 @@ package transferfacts
 import (
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
+	"github.com/wippyai/go-lua/analysis/lua/branchcond"
 	"github.com/wippyai/go-lua/analysis/lua/pathexpr"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
 	"github.com/wippyai/go-lua/analysis/lua/typeresolve"
@@ -27,14 +28,15 @@ func (l *lowerer) typeCastCallResultValue(fact semantics.CallFact) (factflow.Cal
 }
 
 func (l *lowerer) directTypeCastCall(fact semantics.CallFact) (typ.Type, path.Path, bool) {
-	if fact.Call == nil || fact.Receiver != nil || fact.Method != "" || len(fact.Args) != 1 || len(fact.TypeArgs) != 0 {
+	call, ok := branchcond.TypeCall(fact.Call)
+	if !ok {
 		return nil, path.Path{}, false
 	}
 	t, ok := l.typeValueExpr(fact.Func)
 	if !ok {
 		return nil, path.Path{}, false
 	}
-	argPath, ok := pathexpr.Resolve(fact.Args[0], l.bindings)
+	argPath, ok := pathexpr.Resolve(call.Args[0], l.bindings)
 	if !ok || argPath.IsEmpty() {
 		return nil, path.Path{}, false
 	}

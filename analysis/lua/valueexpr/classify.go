@@ -2,6 +2,7 @@ package valueexpr
 
 import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
+	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/parse/numparse"
@@ -11,7 +12,7 @@ import (
 // runtime literals. It looks through assertion wrappers that do not change the
 // underlying runtime value.
 func LiteralType(expr ast.Expr) (typ.Type, bool) {
-	switch inner := AssertionInner(expr).(type) {
+	switch inner := sourceprovenance.AssertionInner(expr).(type) {
 	case *ast.NilExpr:
 		return typ.Nil, true
 	case *ast.TrueExpr:
@@ -37,7 +38,7 @@ func LiteralType(expr ast.Expr) (typ.Type, bool) {
 // expression. It only unwraps assertion/cast wrappers that do not alter the
 // underlying runtime value.
 func RuntimeKind(expr ast.Expr) (runtimekind.Value, bool) {
-	switch AssertionInner(expr).(type) {
+	switch sourceprovenance.AssertionInner(expr).(type) {
 	case *ast.NilExpr:
 		return runtimekind.Singleton(runtimekind.Nil), true
 	case *ast.TrueExpr, *ast.FalseExpr:

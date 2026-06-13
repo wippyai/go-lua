@@ -41,6 +41,10 @@ func typeCall(arg ast.Expr) *ast.FuncCallExpr {
 	return &ast.FuncCallExpr{Func: ident("type"), Args: []ast.Expr{arg}}
 }
 
+func typeIsCall(receiver, arg ast.Expr) *ast.FuncCallExpr {
+	return &ast.FuncCallExpr{Receiver: receiver, Method: "is", Args: []ast.Expr{arg}}
+}
+
 func call(name string) *ast.FuncCallExpr {
 	return &ast.FuncCallExpr{Func: ident(name)}
 }
@@ -229,6 +233,45 @@ func TestNormalizeTypeComparisons(t *testing.T) {
 			wantPath := path.NewPath(mustIdentSymbol(t, bindings, root), "obj").Field("kind")
 			assertCheck(t, Normalize(expr, bindings), tt.wantKind, wantPath, tt.typeName)
 		})
+	}
+}
+
+func TestTypeCallShapeRecognition(t *testing.T) {
+	root := ident("obj")
+	plain := typeCall(dot(root, "kind"))
+	wrapped := &ast.CastExpr{Expr: plain, Type: primitiveType("any"), Syntax: ast.CastSyntaxAs}
+
+	if got, ok := TypeCall(plain); !ok || got != plain {
+		t.Fatalf("TypeCall(plain) = %p, %v; want %p, true", got, ok, plain)
+	}
+	if got, ok := TypeCall(wrapped); !ok || got != plain {
+		t.Fatalf("TypeCall(wrapped) = %p, %v; want %p, true", got, ok, plain)
+	}
+	if _, ok := TypeCall(typeIsCall(dot(root, "kind"), root)); ok {
+		t.Fatalf("TypeCall accepted receiver method call shape")
+	}
+	if _, ok := TypeCall(&ast.FuncCallExpr{Func: ident("type"), Args: []ast.Expr{dot(root, "kind"), stringLit("extra")}}); ok {
+		t.Fatalf("TypeCall accepted wrong-arity type call")
+	}
+}
+
+func TestTypeIsCallShapeRecognition(t *testing.T) {
+	root := ident("Point")
+	arg := dot(ident("data"), "item")
+	plain := typeIsCall(root, arg)
+	wrapped := &ast.NonNilAssertExpr{Expr: plain}
+
+	if got, ok := TypeIsCall(plain); !ok || got != plain {
+		t.Fatalf("TypeIsCall(plain) = %p, %v; want %p, true", got, ok, plain)
+	}
+	if got, ok := TypeIsCall(wrapped); !ok || got != plain {
+		t.Fatalf("TypeIsCall(wrapped) = %p, %v; want %p, true", got, ok, plain)
+	}
+	if _, ok := TypeIsCall(typeCall(arg)); ok {
+		t.Fatalf("TypeIsCall accepted direct function call shape")
+	}
+	if _, ok := TypeIsCall(&ast.FuncCallExpr{Receiver: root, Method: "is", Args: []ast.Expr{arg, stringLit("extra")}}); ok {
+		t.Fatalf("TypeIsCall accepted wrong-arity method call")
 	}
 }
 

@@ -3,7 +3,6 @@ package semantics
 import (
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
-	"github.com/wippyai/go-lua/analysis/lua/valueexpr"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
 
@@ -29,7 +28,7 @@ func callPointsByExprIndex(calls []indexedCall, points []cfg.Point) map[int]cfg.
 func topLevelValueListCalls(exprs []ast.Expr) []indexedCall {
 	var calls []indexedCall
 	for i, expr := range exprs {
-		call, ok := valueexpr.Call(expr)
+		call, ok := sourceprovenance.Call(expr)
 		if !ok {
 			continue
 		}

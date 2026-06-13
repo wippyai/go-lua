@@ -5,7 +5,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/branchcond"
 	"github.com/wippyai/go-lua/analysis/lua/channelruntime"
 	"github.com/wippyai/go-lua/analysis/lua/pathexpr"
-	"github.com/wippyai/go-lua/analysis/lua/valueexpr"
+	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
 
@@ -20,7 +20,7 @@ func (b *builder) hasUnsupportedExprs(exprs ...ast.Expr) bool {
 
 func (b *builder) hasUnsupportedValueListExprs(exprs ...ast.Expr) bool {
 	for _, expr := range exprs {
-		call, ok := valueexpr.Call(expr)
+		call, ok := sourceprovenance.Call(expr)
 		if !ok {
 			if !b.exprCovered(expr) {
 				return true
@@ -35,7 +35,7 @@ func (b *builder) hasUnsupportedValueListExprs(exprs ...ast.Expr) bool {
 }
 
 func (b *builder) hasUnsupportedExprInCall(expr ast.Expr) bool {
-	call, ok := valueexpr.Call(expr)
+	call, ok := sourceprovenance.Call(expr)
 	if !ok {
 		return !b.exprCovered(expr)
 	}
@@ -50,7 +50,7 @@ func (b *builder) hasUnsupportedExprInCall(expr ast.Expr) bool {
 
 func (b *builder) appendValueListCalls(state flowState, stmt ast.Stmt, exprs []ast.Expr) flowState {
 	for _, expr := range exprs {
-		if _, ok := valueexpr.Call(expr); ok {
+		if _, ok := sourceprovenance.Call(expr); ok {
 			state = b.appendCall(state, stmt)
 		}
 	}
@@ -136,14 +136,15 @@ func (b *builder) exprCoveredMode(expr ast.Expr, allowProjectedCalls bool) bool 
 }
 
 func (b *builder) attrObjectCovered(expr ast.Expr) bool {
-	if call, ok := valueexpr.Call(expr); ok {
+	if call, ok := sourceprovenance.Call(expr); ok {
 		return !b.hasUnsupportedExprInCall(call)
 	}
 	return b.exprCovered(expr)
 }
 
 func (b *builder) pureTypeCallCovered(call *ast.FuncCallExpr) bool {
-	if call == nil || call.Receiver != nil || call.Method != "" || len(call.Args) != 1 || len(call.TypeArgs) != 0 {
+	call, ok := branchcond.TypeCall(call)
+	if !ok {
 		return false
 	}
 	fn, ok := call.Func.(*ast.IdentExpr)
@@ -188,7 +189,7 @@ func (b *builder) channelSelectDefaultField(field *ast.Field) bool {
 }
 
 func (b *builder) channelSelectCaseCallCovered(expr ast.Expr) bool {
-	call, ok := valueexpr.Call(expr)
+	call, ok := sourceprovenance.Call(expr)
 	if !ok || !channelruntime.IsReceiveCaseCall(call, b.bindings) {
 		return false
 	}

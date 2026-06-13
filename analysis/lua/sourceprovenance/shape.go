@@ -3,7 +3,6 @@ package sourceprovenance
 import (
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
-	"github.com/wippyai/go-lua/analysis/lua/valueexpr"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
 
@@ -36,13 +35,13 @@ func ValueListSources(exprs []ast.Expr, openTailFinal bool, resolver CallPointRe
 
 func ValueShape(expr ast.Expr, final, allowExpansion, openTail bool) (expanded, adjusted, shapedOpenTail bool) {
 	expanded = final && allowExpansion && canExpandFinal(expr)
-	adjusted = valueexpr.CanProduceMultipleValues(expr) && !expanded
+	adjusted = CanProduceMultipleValues(expr) && !expanded
 	shapedOpenTail = openTail && expanded
 	return expanded, adjusted, shapedOpenTail
 }
 
 func ConditionSource(expr ast.Expr, resolver CallPointResolver) ASTSource {
-	shape := mustValueSourceShape(factflow.NewValueSourceShape(true, false, valueexpr.CanProduceMultipleValues(expr), false))
+	shape := mustValueSourceShape(factflow.NewValueSourceShape(true, false, CanProduceMultipleValues(expr), false))
 	return sourceForExprShape(expr, 0, factflow.NoValueSourceIndex, 0, shape, resolver)
 }
 
@@ -110,17 +109,17 @@ func resolveCallPoint(resolver CallPointResolver, exprIndex int, expr ast.Expr) 
 	if resolver == nil {
 		return 0, false
 	}
-	if call, ok := valueexpr.Call(expr); ok {
+	if call, ok := Call(expr); ok {
 		return resolver(exprIndex, call)
 	}
 	return 0, false
 }
 
 func valueSourceKind(expr ast.Expr) factflow.ValueSourceKind {
-	switch valueexpr.TopLevelProducer(expr).Kind {
-	case valueexpr.ProducerCall:
+	switch TopLevelProducer(expr).Kind {
+	case ProducerCall:
 		return factflow.ValueSourceCall
-	case valueexpr.ProducerVararg:
+	case ProducerVararg:
 		return factflow.ValueSourceVararg
 	default:
 		return factflow.ValueSourceExpression
@@ -128,5 +127,5 @@ func valueSourceKind(expr ast.Expr) factflow.ValueSourceKind {
 }
 
 func canExpandFinal(expr ast.Expr) bool {
-	return valueexpr.CanProduceMultipleValues(expr) && !valueexpr.AdjustRet(expr)
+	return CanProduceMultipleValues(expr) && !AdjustRet(expr)
 }

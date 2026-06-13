@@ -89,7 +89,7 @@ func (l *lowerer) pathDescendantInvalidation(fact semantics.OrdinaryAssignmentFa
 
 func (l *lowerer) dynamicIndexKeySource(target ast.Expr) (factflow.ValueSource, bool) {
 	attr, ok := target.(*ast.AttrGetExpr)
-	if !ok || attr.Key == nil || valueexpr.CanProduceMultipleValues(attr.Key) {
+	if !ok || attr.Key == nil || sourceprovenance.CanProduceMultipleValues(attr.Key) {
 		return factflow.NewUnknownValueSource(factflow.NoValueSourceIndex), false
 	}
 	shape, ok := factflow.NewValueSourceShape(true, false, false, false)
