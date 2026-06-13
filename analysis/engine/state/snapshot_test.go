@@ -7,6 +7,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/standard"
+	"github.com/wippyai/go-lua/analysis/engine/state/dynamicindex"
 	effectdelta "github.com/wippyai/go-lua/analysis/engine/state/effectdelta"
 	"github.com/wippyai/go-lua/analysis/engine/state/pathevidence"
 )
@@ -19,23 +20,23 @@ func TestSnapshotsCloneFiniteLanes(t *testing.T) {
 
 	pathKey := pathdom.PathKey("sym130@1.path")
 	memberKey := pathdom.PathKey("sym130@1.member")
-	dynamicKey := DynamicIndexKey{Table: pathdom.PathKey("sym130@1.table"), Site: "dyn"}
+	dynamicKey := dynamicindex.Key{Table: pathdom.PathKey("sym130@1.table"), Site: "dyn"}
 	effectKey := effectdelta.Key{Target: pathdom.PathKey("sym130@1.table"), Site: "effect", Kind: effectdelta.Mutation}
 	proof := pathevidence.BranchProof{Kind: pathevidence.BranchProofPathPresence, Path: pathKey, Presence: presence.Present()}
 	otherProof := pathevidence.BranchProof{Kind: pathevidence.BranchProofPathNotEqual, Path: pathKey, Other: memberKey}
 	selectFact := ChannelSelectFact{Select: "select-snapshot", Kind: ChannelSelectFactSelect, Result: pathKey}
 	otherSelectFact := ChannelSelectFact{Select: "select-snapshot", Kind: ChannelSelectFactCase, Case: memberKey, Index: 1}
-	dynamicFact := DynamicIndexFact{
+	dynamicFact := dynamicindex.Fact{
 		KeyPresence: presence.Present(),
 		KeyValue:    present,
 		Value:       present,
-		Admission:   DynamicIndexAdmissionAdmitted,
+		Admission:   dynamicindex.AdmissionAdmitted,
 	}
-	otherDynamicFact := DynamicIndexFact{
+	otherDynamicFact := dynamicindex.Fact{
 		KeyPresence: presence.Absent(),
 		KeyValue:    absent,
 		Value:       absent,
-		Admission:   DynamicIndexAdmissionRejected,
+		Admission:   dynamicindex.AdmissionRejected,
 	}
 	effectDelta := effectdelta.Value{Before: present, After: present, Change: effectdelta.ChangeChanged}
 	otherEffectDelta := effectdelta.Value{Before: absent, After: absent, Change: effectdelta.ChangeNone}
@@ -77,10 +78,10 @@ func TestSnapshotsCloneFiniteLanes(t *testing.T) {
 		t.Fatalf("dynamic-index snapshot = %#v, want one finite fact", dynamicSnapshot)
 	}
 	dynamicSnapshot.Facts[dynamicKey] = otherDynamicFact
-	if got := s.ReadDynamicIndexFact(reg, dynamicKey); !dynamicIndexFactDomain(reg).Equal(got, dynamicFact) {
+	if got := s.ReadDynamicIndexFact(reg, dynamicKey); !dynamicindex.Domain(reg).Equal(got, dynamicFact) {
 		t.Fatalf("dynamic-index snapshot mutation changed state to %#v", got)
 	}
-	if got := s.DynamicIndexFactsSnapshot().Facts[dynamicKey]; !dynamicIndexFactDomain(reg).Equal(got, dynamicFact) {
+	if got := s.DynamicIndexFactsSnapshot().Facts[dynamicKey]; !dynamicindex.Domain(reg).Equal(got, dynamicFact) {
 		t.Fatalf("fresh dynamic-index snapshot = %#v, want original fact", got)
 	}
 

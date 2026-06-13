@@ -5,6 +5,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/engine/state/dynamicindex"
 	effectdelta "github.com/wippyai/go-lua/analysis/engine/state/effectdelta"
 )
 
@@ -31,24 +32,11 @@ type PathStaticMemberFact struct {
 	Value product.Value
 }
 
-// DynamicIndexAdmission summarizes whether a dynamic index write was admitted.
-type DynamicIndexAdmission uint8
-
-const (
-	DynamicIndexAdmissionBottom DynamicIndexAdmission = iota
-	DynamicIndexAdmissionAdmitted
-	DynamicIndexAdmissionRejected
-	DynamicIndexAdmissionUnknown
-)
-
 // DynamicIndexFact records a pointwise dynamic index fact for a placeholder table.
 type DynamicIndexFact struct {
-	Table       pathdom.Path
-	Site        string
-	KeyPresence presence.Value
-	KeyValue    product.Value
-	Value       product.Value
-	Admission   DynamicIndexAdmission
+	Table pathdom.Path
+	Site  dynamicindex.Site
+	Value dynamicindex.Fact
 }
 
 // BranchProofKind classifies a summary-local branch proof.

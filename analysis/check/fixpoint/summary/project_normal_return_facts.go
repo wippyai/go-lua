@@ -7,6 +7,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/engine/state"
+	"github.com/wippyai/go-lua/analysis/engine/state/dynamicindex"
 	effectdelta "github.com/wippyai/go-lua/analysis/engine/state/effectdelta"
 	"github.com/wippyai/go-lua/analysis/engine/state/pathevidence"
 )
@@ -62,17 +63,10 @@ func projectNormalReturnFacts(reg *axis.Registry, result ResultReader, exit stat
 			if !ok {
 				continue
 			}
-			admission, ok := projectDynamicIndexAdmission(stateFact.Admission)
-			if !ok {
-				continue
-			}
 			fact := DynamicIndexFact{
-				Table:       table,
-				Site:        string(stateKey.Site),
-				KeyPresence: stateFact.KeyPresence,
-				KeyValue:    stateFact.KeyValue,
-				Value:       stateFact.Value,
-				Admission:   admission,
+				Table: table,
+				Site:  stateKey.Site,
+				Value: stateFact,
 			}
 			if dynamicIndexFactEqual(reg, fact, dynamicIndexFactBottom(reg)) ||
 				dynamicIndexFactIsTop(reg, fact) {
@@ -223,29 +217,11 @@ func normalReturnFactPlaceholderPathWithSuffix(index int, suffix string) (path.P
 }
 
 func dynamicIndexFactIsTop(reg *axis.Registry, fact DynamicIndexFact) bool {
-	return fact.KeyPresence.IsTop() &&
-		product.Equal(reg, fact.KeyValue, product.Top()) &&
-		product.Equal(reg, fact.Value, product.Top()) &&
-		fact.Admission == DynamicIndexAdmissionUnknown
+	return dynamicindex.Domain(reg).Equal(fact.Value, dynamicindex.Top())
 }
 
 func effectDeltaIsTop(delta EffectDelta) bool {
 	return delta.Value == effectdelta.Top()
-}
-
-func projectDynamicIndexAdmission(admission state.DynamicIndexAdmission) (DynamicIndexAdmission, bool) {
-	switch admission {
-	case state.DynamicIndexAdmissionBottom:
-		return DynamicIndexAdmissionBottom, true
-	case state.DynamicIndexAdmissionAdmitted:
-		return DynamicIndexAdmissionAdmitted, true
-	case state.DynamicIndexAdmissionRejected:
-		return DynamicIndexAdmissionRejected, true
-	case state.DynamicIndexAdmissionUnknown:
-		return DynamicIndexAdmissionUnknown, true
-	default:
-		return DynamicIndexAdmissionBottom, false
-	}
 }
 
 func projectBranchProofKind(kind pathevidence.BranchProofKind) (BranchProofKind, bool) {

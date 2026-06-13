@@ -17,6 +17,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	sourcevalue "github.com/wippyai/go-lua/analysis/engine/sourcevalue"
 	"github.com/wippyai/go-lua/analysis/engine/state"
+	"github.com/wippyai/go-lua/analysis/engine/state/dynamicindex"
 	effectdelta "github.com/wippyai/go-lua/analysis/engine/state/effectdelta"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
@@ -61,12 +62,14 @@ func TestOutcomeProviderMapsSummaryReturnsAndNormalReturnFacts(t *testing.T) {
 				},
 				DynamicIndexFacts: []summary.DynamicIndexFact{
 					{
-						Table:       path.NewPlaceholder(0).Field("items"),
-						Site:        "summary.dynamic",
-						KeyPresence: presence.Present(),
-						KeyValue:    present,
-						Value:       absent,
-						Admission:   summary.DynamicIndexAdmissionAdmitted,
+						Table: path.NewPlaceholder(0).Field("items"),
+						Site:  "summary.dynamic",
+						Value: dynamicindex.Fact{
+							KeyPresence: presence.Present(),
+							KeyValue:    present,
+							Value:       absent,
+							Admission:   dynamicindex.AdmissionAdmitted,
+						},
 					},
 				},
 				BranchProofs: []summary.BranchProof{
@@ -115,10 +118,10 @@ func TestOutcomeProviderMapsSummaryReturnsAndNormalReturnFacts(t *testing.T) {
 	if len(got.DynamicIndexFacts) != 1 ||
 		!got.DynamicIndexFacts[0].Table.Equal(path.NewPlaceholder(0).Field("items")) ||
 		got.DynamicIndexFacts[0].Site != "summary.dynamic" ||
-		!presence.Equal(got.DynamicIndexFacts[0].KeyPresence, presence.Present()) ||
-		!product.Equal(reg, got.DynamicIndexFacts[0].KeyValue, present) ||
-		!product.Equal(reg, got.DynamicIndexFacts[0].Value, absent) ||
-		got.DynamicIndexFacts[0].Admission != factapply.CallDynamicIndexAdmissionAdmitted {
+		!presence.Equal(got.DynamicIndexFacts[0].Value.KeyPresence, presence.Present()) ||
+		!product.Equal(reg, got.DynamicIndexFacts[0].Value.KeyValue, present) ||
+		!product.Equal(reg, got.DynamicIndexFacts[0].Value.Value, absent) ||
+		got.DynamicIndexFacts[0].Value.Admission != dynamicindex.AdmissionAdmitted {
 		t.Fatalf("dynamic-index facts = %#v, want mapped summary dynamic fact", got.DynamicIndexFacts)
 	}
 	if len(got.BranchProofs) != 1 ||

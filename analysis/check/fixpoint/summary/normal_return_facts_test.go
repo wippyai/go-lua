@@ -7,6 +7,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/engine/state/dynamicindex"
 	effectdelta "github.com/wippyai/go-lua/analysis/engine/state/effectdelta"
 	"github.com/wippyai/go-lua/analysis/symbol"
 )
@@ -27,8 +28,8 @@ func TestNormalReturnFactsNormalizeDropsNonPlaceholderPaths(t *testing.T) {
 			{Path: placeholder, Value: value},
 		},
 		DynamicIndexFacts: []DynamicIndexFact{
-			{Table: concrete, Site: "caller.dynamic.ignored", KeyPresence: presence.Present()},
-			{Table: placeholder, Site: "caller.dynamic.1", KeyPresence: presence.Present()},
+			{Table: concrete, Site: "caller.dynamic.ignored", Value: dynamicindex.Fact{KeyPresence: presence.Present()}},
+			{Table: placeholder, Site: "caller.dynamic.1", Value: dynamicindex.Fact{KeyPresence: presence.Present()}},
 		},
 		BranchProofs: []BranchProof{
 			{Kind: BranchProofPathPresence, Path: concrete, Presence: presence.Present()},
@@ -72,12 +73,14 @@ func TestNormalReturnFactsCloneIsolatesPayload(t *testing.T) {
 	original := Summary{NormalReturnFacts: NormalReturnFacts{
 		PathRefinements: []PathValueFact{{Path: pathdom.NewPlaceholder(0).Field("value"), Value: presentProduct(reg)}},
 		DynamicIndexFacts: []DynamicIndexFact{{
-			Table:       pathdom.NewPlaceholder(0),
-			Site:        "caller.dynamic.clone",
-			KeyPresence: presence.Present(),
-			KeyValue:    presentProduct(reg),
-			Value:       presentProduct(reg),
-			Admission:   DynamicIndexAdmissionAdmitted,
+			Table: pathdom.NewPlaceholder(0),
+			Site:  "caller.dynamic.clone",
+			Value: dynamicindex.Fact{
+				KeyPresence: presence.Present(),
+				KeyValue:    presentProduct(reg),
+				Value:       presentProduct(reg),
+				Admission:   dynamicindex.AdmissionAdmitted,
+			},
 		}},
 		BranchProofs: []BranchProof{{
 			Kind:     BranchProofPathPresence,
@@ -120,8 +123,8 @@ func TestNormalReturnFactsJoinUsesStateLaneSemantics(t *testing.T) {
 			{Path: leftOnly, Value: leftValue},
 		},
 		DynamicIndexFacts: []DynamicIndexFact{
-			{Table: p0, Site: "caller.dynamic.common", KeyPresence: presence.Present(), KeyValue: leftValue, Value: leftValue, Admission: DynamicIndexAdmissionAdmitted},
-			{Table: p0, Site: "caller.dynamic.left", KeyPresence: presence.Present(), KeyValue: leftValue, Value: leftValue, Admission: DynamicIndexAdmissionAdmitted},
+			{Table: p0, Site: "caller.dynamic.common", Value: dynamicindex.Fact{KeyPresence: presence.Present(), KeyValue: leftValue, Value: leftValue, Admission: dynamicindex.AdmissionAdmitted}},
+			{Table: p0, Site: "caller.dynamic.left", Value: dynamicindex.Fact{KeyPresence: presence.Present(), KeyValue: leftValue, Value: leftValue, Admission: dynamicindex.AdmissionAdmitted}},
 		},
 		BranchProofs: []BranchProof{
 			{Kind: BranchProofPathPresence, Path: commonPath, Presence: presence.Present()},
@@ -140,12 +143,14 @@ func TestNormalReturnFactsJoinUsesStateLaneSemantics(t *testing.T) {
 		PathRefinements:   []PathValueFact{{Path: commonPath, Value: rightValue}},
 		PathStaticMembers: []PathStaticMemberFact{{Path: commonPath, Value: rightValue}},
 		DynamicIndexFacts: []DynamicIndexFact{{
-			Table:       p0,
-			Site:        "caller.dynamic.common",
-			KeyPresence: presence.Absent(),
-			KeyValue:    rightValue,
-			Value:       rightValue,
-			Admission:   DynamicIndexAdmissionRejected,
+			Table: p0,
+			Site:  "caller.dynamic.common",
+			Value: dynamicindex.Fact{
+				KeyPresence: presence.Absent(),
+				KeyValue:    rightValue,
+				Value:       rightValue,
+				Admission:   dynamicindex.AdmissionRejected,
+			},
 		}},
 		BranchProofs: []BranchProof{
 			{Kind: BranchProofPathPresence, Path: commonPath, Presence: presence.Present()},
@@ -179,8 +184,8 @@ func TestNormalReturnFactsJoinUsesStateLaneSemantics(t *testing.T) {
 		t.Fatalf("DynamicIndexFacts = %#v, want common joined and left-only retained", got.DynamicIndexFacts)
 	}
 	if common := findDynamicIndexFact(got.DynamicIndexFacts, "caller.dynamic.common"); common == nil ||
-		!presence.Equal(common.KeyPresence, presence.Maybe()) ||
-		common.Admission != DynamicIndexAdmissionUnknown {
+		!presence.Equal(common.Value.KeyPresence, presence.Maybe()) ||
+		common.Value.Admission != dynamicindex.AdmissionUnknown {
 		t.Fatalf("common dynamic index fact did not pointwise join: %#v", common)
 	}
 	if leftOnlyFact := findDynamicIndexFact(got.DynamicIndexFacts, "caller.dynamic.left"); leftOnlyFact == nil ||
@@ -253,7 +258,7 @@ func findPathRefinement(facts []PathValueFact, path pathdom.Path) *PathValueFact
 
 func findDynamicIndexFact(facts []DynamicIndexFact, site string) *DynamicIndexFact {
 	for i := range facts {
-		if facts[i].Site == site {
+		if string(facts[i].Site) == site {
 			return &facts[i]
 		}
 	}

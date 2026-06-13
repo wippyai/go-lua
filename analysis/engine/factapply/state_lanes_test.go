@@ -9,6 +9,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/standard"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/state"
+	"github.com/wippyai/go-lua/analysis/engine/state/dynamicindex"
 	effectdelta "github.com/wippyai/go-lua/analysis/engine/state/effectdelta"
 	"github.com/wippyai/go-lua/analysis/engine/state/pathevidence"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
@@ -113,11 +114,11 @@ func TestFactsNodeTransferAppliesDynamicIndexWriteKeyValueAdmission(t *testing.T
 		Point:    point,
 	}, state.State{})
 
-	gotFact := got.ReadDynamicIndexFact(reg, state.DynamicIndexKey{Table: tableKey, Site: dynamicIndexSite(point)})
+	gotFact := got.ReadDynamicIndexFact(reg, dynamicindex.Key{Table: tableKey, Site: dynamicIndexSite(point)})
 	if !presence.Equal(gotFact.KeyPresence, presence.Present()) ||
 		!product.Equal(reg, gotFact.KeyValue, keyValue) ||
 		!product.Equal(reg, gotFact.Value, writeValue) ||
-		gotFact.Admission != state.DynamicIndexAdmissionAdmitted {
+		gotFact.Admission != dynamicindex.AdmissionAdmitted {
 		t.Fatalf("dynamic-index fact = %#v, want key/value/admitted mapping", gotFact)
 	}
 	if len(sources.calls) != 2 || sources.calls[0].source != keySource || sources.calls[1].source != valueSource {
@@ -473,12 +474,14 @@ func TestFactsNodeTransferCallOutcomeRebasesStateLaneFacts(t *testing.T) {
 			return CallOutcome{
 				DynamicIndexFacts: []CallDynamicIndexFact{
 					{
-						Table:       pathdom.NewPlaceholder(0).Field("items"),
-						Site:        "callee.dynamic",
-						KeyPresence: presence.Present(),
-						KeyValue:    present,
-						Value:       absent,
-						Admission:   CallDynamicIndexAdmissionAdmitted,
+						Table: pathdom.NewPlaceholder(0).Field("items"),
+						Site:  "callee.dynamic",
+						Value: dynamicindex.Fact{
+							KeyPresence: presence.Present(),
+							KeyValue:    present,
+							Value:       absent,
+							Admission:   dynamicindex.AdmissionAdmitted,
+						},
 					},
 				},
 				BranchProofs: []CallBranchProof{
@@ -517,12 +520,12 @@ func TestFactsNodeTransferCallOutcomeRebasesStateLaneFacts(t *testing.T) {
 		Point:    point,
 	}, state.State{})
 
-	dynamicKey := state.DynamicIndexKey{Table: pathdom.PathKey("sym505@1.items"), Site: state.DynamicIndexSite("callee.dynamic")}
+	dynamicKey := dynamicindex.Key{Table: pathdom.PathKey("sym505@1.items"), Site: dynamicindex.Site("callee.dynamic")}
 	gotDynamic := got.ReadDynamicIndexFact(reg, dynamicKey)
 	if !presence.Equal(gotDynamic.KeyPresence, presence.Present()) ||
 		!product.Equal(reg, gotDynamic.KeyValue, present) ||
 		!product.Equal(reg, gotDynamic.Value, absent) ||
-		gotDynamic.Admission != state.DynamicIndexAdmissionAdmitted {
+		gotDynamic.Admission != dynamicindex.AdmissionAdmitted {
 		t.Fatalf("dynamic-index fact = %#v, want rebased fact", gotDynamic)
 	}
 

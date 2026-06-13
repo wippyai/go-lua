@@ -5,6 +5,7 @@ import (
 
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/engine/state/dynamicindex"
 	effectdelta "github.com/wippyai/go-lua/analysis/engine/state/effectdelta"
 	"github.com/wippyai/go-lua/analysis/engine/state/pathevidence"
 )
@@ -44,7 +45,7 @@ func (s State) PathStaticMembersSnapshot() PathStaticMembersSnapshot {
 
 type DynamicIndexFactsSnapshot struct {
 	Top   bool
-	Facts map[DynamicIndexKey]DynamicIndexFact
+	Facts map[dynamicindex.Key]dynamicindex.Fact
 }
 
 // DynamicIndexFactsSnapshot returns finite dynamic-index facts unless the lane
@@ -53,7 +54,7 @@ func (s State) DynamicIndexFactsSnapshot() DynamicIndexFactsSnapshot {
 	if s.dynamicIndexTop {
 		return DynamicIndexFactsSnapshot{Top: true}
 	}
-	return DynamicIndexFactsSnapshot{Facts: cloneDynamicIndexMap(s.dynamicIndex)}
+	return DynamicIndexFactsSnapshot{Facts: dynamicindex.CloneMap(s.dynamicIndex)}
 }
 
 type BranchProofsSnapshot struct {

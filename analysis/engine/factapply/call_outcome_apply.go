@@ -4,6 +4,7 @@ import (
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/state"
+	"github.com/wippyai/go-lua/analysis/engine/state/dynamicindex"
 	effectdelta "github.com/wippyai/go-lua/analysis/engine/state/effectdelta"
 	"github.com/wippyai/go-lua/analysis/engine/state/pathevidence"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
@@ -68,15 +69,10 @@ func applyCallOutcomeFacts(
 		if tableKey == "" {
 			continue
 		}
-		out = out.WriteDynamicIndexFact(ctx.Registry, state.DynamicIndexKey{
+		out = out.WriteDynamicIndexFact(ctx.Registry, dynamicindex.Key{
 			Table: tableKey,
-			Site:  state.DynamicIndexSite(fact.Site),
-		}, state.DynamicIndexFact{
-			KeyPresence: fact.KeyPresence,
-			KeyValue:    fact.KeyValue,
-			Value:       fact.Value,
-			Admission:   callDynamicIndexAdmission(fact.Admission),
-		})
+			Site:  fact.Site,
+		}, fact.Value)
 	}
 	for _, proof := range outcome.BranchProofs {
 		stateProof, ok := callBranchProofAt(resolver, ctx.Point, bindings, proof)
@@ -206,19 +202,6 @@ func bindPlaceholderPath(bindings []pathdom.Path, index int, p pathdom.Path) []p
 	}
 	bindings[index] = p
 	return bindings
-}
-
-func callDynamicIndexAdmission(admission CallDynamicIndexAdmission) state.DynamicIndexAdmission {
-	switch admission {
-	case CallDynamicIndexAdmissionAdmitted:
-		return state.DynamicIndexAdmissionAdmitted
-	case CallDynamicIndexAdmissionRejected:
-		return state.DynamicIndexAdmissionRejected
-	case CallDynamicIndexAdmissionUnknown:
-		return state.DynamicIndexAdmissionUnknown
-	default:
-		return state.DynamicIndexAdmissionBottom
-	}
 }
 
 func callBranchProofAt(

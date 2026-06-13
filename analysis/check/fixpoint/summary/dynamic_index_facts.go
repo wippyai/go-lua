@@ -5,13 +5,12 @@ import (
 
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
-	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
-	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/engine/state/dynamicindex"
 )
 
 type dynamicIndexFactKey struct {
 	table pathdom.PathKey
-	site  string
+	site  dynamicindex.Site
 }
 
 func normalizeDynamicIndexFacts(reg *axis.Registry, in []DynamicIndexFact) []DynamicIndexFact {
@@ -135,69 +134,31 @@ func combineDynamicIndexMaps(
 }
 
 func dynamicIndexFactBottom(reg *axis.Registry) DynamicIndexFact {
-	return DynamicIndexFact{
-		KeyPresence: presence.Bottom(),
-		KeyValue:    product.Bottom(reg),
-		Value:       product.Bottom(reg),
-		Admission:   DynamicIndexAdmissionBottom,
-	}
+	return DynamicIndexFact{Value: dynamicindex.Bottom(reg)}
 }
 
 func dynamicIndexFactEqual(reg *axis.Registry, a, b DynamicIndexFact) bool {
-	return presence.Equal(a.KeyPresence, b.KeyPresence) &&
-		product.Equal(reg, a.KeyValue, b.KeyValue) &&
-		product.Equal(reg, a.Value, b.Value) &&
-		a.Admission == b.Admission
-}
-
-func presenceLessOrEq(a, b presence.Value) bool {
-	return presence.Join(a, b) == b
+	return dynamicindex.Domain(reg).Equal(a.Value, b.Value)
 }
 
 func dynamicIndexFactLessOrEq(reg *axis.Registry, a, b DynamicIndexFact) bool {
-	return presenceLessOrEq(a.KeyPresence, b.KeyPresence) &&
-		product.LessOrEq(reg, a.KeyValue, b.KeyValue) &&
-		product.LessOrEq(reg, a.Value, b.Value) &&
-		dynamicIndexAdmissionLessOrEq(a.Admission, b.Admission)
+	return dynamicindex.Domain(reg).LessOrEq(a.Value, b.Value)
 }
 
 func joinDynamicIndexFact(reg *axis.Registry, a, b DynamicIndexFact) DynamicIndexFact {
 	return DynamicIndexFact{
-		Table:       a.Table,
-		Site:        a.Site,
-		KeyPresence: presence.Join(a.KeyPresence, b.KeyPresence),
-		KeyValue:    product.Join(reg, a.KeyValue, b.KeyValue),
-		Value:       product.Join(reg, a.Value, b.Value),
-		Admission:   dynamicIndexAdmissionJoin(a.Admission, b.Admission),
+		Table: a.Table,
+		Site:  a.Site,
+		Value: dynamicindex.Domain(reg).Join(a.Value, b.Value),
 	}
 }
 
 func widenDynamicIndexFact(reg *axis.Registry, prev, next DynamicIndexFact) DynamicIndexFact {
 	return DynamicIndexFact{
-		Table:       prev.Table,
-		Site:        prev.Site,
-		KeyPresence: presence.Widen(prev.KeyPresence, next.KeyPresence),
-		KeyValue:    product.Widen(reg, prev.KeyValue, next.KeyValue),
-		Value:       product.Widen(reg, prev.Value, next.Value),
-		Admission:   dynamicIndexAdmissionJoin(prev.Admission, next.Admission),
+		Table: prev.Table,
+		Site:  prev.Site,
+		Value: dynamicindex.Domain(reg).Widen(prev.Value, next.Value),
 	}
-}
-
-func dynamicIndexAdmissionLessOrEq(a, b DynamicIndexAdmission) bool {
-	return a == b || a == DynamicIndexAdmissionBottom || b == DynamicIndexAdmissionUnknown
-}
-
-func dynamicIndexAdmissionJoin(a, b DynamicIndexAdmission) DynamicIndexAdmission {
-	if a == b {
-		return a
-	}
-	if a == DynamicIndexAdmissionBottom {
-		return b
-	}
-	if b == DynamicIndexAdmissionBottom {
-		return a
-	}
-	return DynamicIndexAdmissionUnknown
 }
 
 func dynamicIndexKeyOf(fact DynamicIndexFact) dynamicIndexFactKey {

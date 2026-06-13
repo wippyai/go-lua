@@ -8,6 +8,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/engine/state/dynamicindex"
 	effectdelta "github.com/wippyai/go-lua/analysis/engine/state/effectdelta"
 	"github.com/wippyai/go-lua/analysis/engine/state/escapeplacement"
 	"github.com/wippyai/go-lua/analysis/engine/state/pathevidence"
@@ -20,7 +21,7 @@ type State struct {
 	values       map[key.Value]product.Value
 	pathEvidence pathevidence.Lane
 
-	dynamicIndex        map[DynamicIndexKey]DynamicIndexFact
+	dynamicIndex        map[dynamicindex.Key]dynamicindex.Fact
 	heapTableIdentity   map[identity.ID]HeapTableObject
 	effectDeltas        map[effectdelta.Key]effectdelta.Value
 	channelSelect       map[ChannelSelectFact]struct{}
@@ -40,7 +41,7 @@ func (s State) Clone() State {
 	return State{
 		values:               cloneValueMap(s.values),
 		pathEvidence:         s.pathEvidence.Clone(),
-		dynamicIndex:         cloneDynamicIndexMap(s.dynamicIndex),
+		dynamicIndex:         dynamicindex.CloneMap(s.dynamicIndex),
 		heapTableIdentity:    cloneHeapTableObjectMap(s.heapTableIdentity),
 		effectDeltas:         effectdelta.CloneMap(s.effectDeltas),
 		channelSelect:        cloneChannelSelectSet(s.channelSelect),
@@ -129,7 +130,7 @@ func Domain(reg *axis.Registry) lattice.Lattice[State] {
 	ops := domainOps{
 		values:            lift.Map[key.Value, product.Value](valueDomain),
 		pathEvidence:      pathevidence.Domain(reg),
-		dynamicIndex:      dynamicIndexMapDomain(reg),
+		dynamicIndex:      dynamicindex.MapDomain(reg),
 		heapTableIdentity: heapTableIdentityMapDomain(reg),
 		effectDeltas:      effectdelta.MapDomain(reg),
 		channelSelect:     mustSetDomain[ChannelSelectFact](),
@@ -198,7 +199,7 @@ func Domain(reg *axis.Registry) lattice.Lattice[State] {
 type domainOps struct {
 	values            lattice.Lattice[map[key.Value]product.Value]
 	pathEvidence      lattice.Lattice[pathevidence.Lane]
-	dynamicIndex      lattice.Lattice[map[DynamicIndexKey]DynamicIndexFact]
+	dynamicIndex      lattice.Lattice[map[dynamicindex.Key]dynamicindex.Fact]
 	heapTableIdentity lattice.Lattice[map[identity.ID]HeapTableObject]
 	effectDeltas      lattice.Lattice[map[effectdelta.Key]effectdelta.Value]
 	channelSelect     lattice.Lattice[mustSetLane[ChannelSelectFact]]
@@ -212,7 +213,7 @@ func (o domainOps) valueLane(s State) map[key.Value]product.Value {
 	return s.values
 }
 
-func (o domainOps) dynamicIndexLane(s State) map[DynamicIndexKey]DynamicIndexFact {
+func (o domainOps) dynamicIndexLane(s State) map[dynamicindex.Key]dynamicindex.Fact {
 	if s.dynamicIndexTop {
 		return o.dynamicIndex.Top()
 	}
@@ -250,7 +251,7 @@ func (o domainOps) escapePlacementLane(s State) map[identity.ID]escapeplacement.
 func (o domainOps) fromLanes(
 	values map[key.Value]product.Value,
 	pathEvidence pathevidence.Lane,
-	dynamicIndex map[DynamicIndexKey]DynamicIndexFact,
+	dynamicIndex map[dynamicindex.Key]dynamicindex.Fact,
 	heapTableIdentity map[identity.ID]HeapTableObject,
 	effectDeltas map[effectdelta.Key]effectdelta.Value,
 	channelSelect mustSetLane[ChannelSelectFact],

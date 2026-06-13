@@ -9,6 +9,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	sourcevalue "github.com/wippyai/go-lua/analysis/engine/sourcevalue"
 	"github.com/wippyai/go-lua/analysis/engine/state"
+	"github.com/wippyai/go-lua/analysis/engine/state/dynamicindex"
 	"github.com/wippyai/go-lua/analysis/engine/state/pathevidence"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/engine/visibility"
@@ -48,7 +49,7 @@ func applyDynamicIndexWrite(
 	if tableKey == "" {
 		return out
 	}
-	return out.WriteDynamicIndexFact(ctx.Registry, state.DynamicIndexKey{
+	return out.WriteDynamicIndexFact(ctx.Registry, dynamicindex.Key{
 		Table: tableKey,
 		Site:  dynamicIndexSite(ctx.Point),
 	}, dynamicIndexFact(ctx, sources, read, in, fact))
@@ -60,8 +61,8 @@ func dynamicIndexFact(
 	read func(cfg.Point) state.State,
 	in state.State,
 	fact factflow.DynamicIndexWrite,
-) state.DynamicIndexFact {
-	out := state.DynamicIndexFact{
+) dynamicindex.Fact {
+	out := dynamicindex.Fact{
 		KeyPresence: presence.Bottom(),
 		KeyValue:    product.Bottom(ctx.Registry),
 		Value:       product.Bottom(ctx.Registry),
@@ -82,20 +83,20 @@ func dynamicIndexFact(
 	return out
 }
 
-func dynamicIndexSite(point cfg.Point) state.DynamicIndexSite {
-	return state.DynamicIndexSite("factflow.dynamic_index_write@" + strconv.Itoa(int(point)))
+func dynamicIndexSite(point cfg.Point) dynamicindex.Site {
+	return dynamicindex.Site("factflow.dynamic_index_write@" + strconv.Itoa(int(point)))
 }
 
-func dynamicIndexAdmission(admission factflow.DynamicIndexAdmission) state.DynamicIndexAdmission {
+func dynamicIndexAdmission(admission factflow.DynamicIndexAdmission) dynamicindex.Admission {
 	switch admission {
 	case factflow.DynamicIndexAdmissionAdmitted:
-		return state.DynamicIndexAdmissionAdmitted
+		return dynamicindex.AdmissionAdmitted
 	case factflow.DynamicIndexAdmissionRejected:
-		return state.DynamicIndexAdmissionRejected
+		return dynamicindex.AdmissionRejected
 	case factflow.DynamicIndexAdmissionUnknown:
-		return state.DynamicIndexAdmissionUnknown
+		return dynamicindex.AdmissionUnknown
 	default:
-		return state.DynamicIndexAdmissionUnknown
+		return dynamicindex.AdmissionUnknown
 	}
 }
 

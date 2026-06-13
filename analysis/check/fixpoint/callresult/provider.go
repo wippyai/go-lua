@@ -98,12 +98,9 @@ func outcomeFromSummary(got summary.Summary, usefulNormalReturnParam func(int) b
 		out.DynamicIndexFacts = make([]factapply.CallDynamicIndexFact, len(facts.DynamicIndexFacts))
 		for i, fact := range facts.DynamicIndexFacts {
 			out.DynamicIndexFacts[i] = factapply.CallDynamicIndexFact{
-				Table:       copyPath(fact.Table),
-				Site:        fact.Site,
-				KeyPresence: fact.KeyPresence,
-				KeyValue:    fact.KeyValue,
-				Value:       fact.Value,
-				Admission:   dynamicIndexAdmission(fact.Admission),
+				Table: copyPath(fact.Table),
+				Site:  fact.Site,
+				Value: fact.Value,
 			}
 		}
 	}
@@ -229,19 +226,6 @@ func withSupplementalOutcomeFacts(out, second factapply.CallOutcome) factapply.C
 	out.ReturnConditionRefinements = append(out.ReturnConditionRefinements, second.ReturnConditionRefinements...)
 	out.ReturnPresenceRelations = append(out.ReturnPresenceRelations, second.ReturnPresenceRelations...)
 	return out
-}
-
-func dynamicIndexAdmission(admission summary.DynamicIndexAdmission) factapply.CallDynamicIndexAdmission {
-	switch admission {
-	case summary.DynamicIndexAdmissionAdmitted:
-		return factapply.CallDynamicIndexAdmissionAdmitted
-	case summary.DynamicIndexAdmissionRejected:
-		return factapply.CallDynamicIndexAdmissionRejected
-	case summary.DynamicIndexAdmissionUnknown:
-		return factapply.CallDynamicIndexAdmissionUnknown
-	default:
-		return factapply.CallDynamicIndexAdmissionBottom
-	}
 }
 
 func branchProofKind(kind summary.BranchProofKind) factapply.CallBranchProofKind {

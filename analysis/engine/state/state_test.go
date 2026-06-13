@@ -12,6 +12,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/standard"
+	"github.com/wippyai/go-lua/analysis/engine/state/dynamicindex"
 	effectdelta "github.com/wippyai/go-lua/analysis/engine/state/effectdelta"
 	"github.com/wippyai/go-lua/analysis/engine/state/escapeplacement"
 	"github.com/wippyai/go-lua/analysis/engine/state/pathevidence"
@@ -236,7 +237,7 @@ func TestWritesFromStateBottomProduceReachableState(t *testing.T) {
 
 	slot := key.SymbolValue(symbol.ID(65))
 	pathKey := pathdom.PathKey("sym65@1.member")
-	dynamicKey := DynamicIndexKey{Table: pathdom.PathKey("sym65@1.table"), Site: "dyn"}
+	dynamicKey := dynamicindex.Key{Table: pathdom.PathKey("sym65@1.table"), Site: "dyn"}
 	heapID := identity.ID{Kind: "table", Site: "bottom-write", Index: 1}
 	proof := pathevidence.BranchProof{Kind: pathevidence.BranchProofPathPresence, Path: pathKey, Presence: presence.Present()}
 	effectKey := effectdelta.Key{Target: pathdom.PathKey("sym65@1.table"), Site: "effect", Kind: effectdelta.Mutation}
@@ -244,11 +245,11 @@ func TestWritesFromStateBottomProduceReachableState(t *testing.T) {
 	escapeID := identity.ID{Kind: "table", Site: "escape-bottom", Index: 1}
 	present := presentValue(reg)
 
-	dynamicFact := DynamicIndexFact{
+	dynamicFact := dynamicindex.Fact{
 		KeyPresence: presence.Present(),
 		KeyValue:    present,
 		Value:       present,
-		Admission:   DynamicIndexAdmissionAdmitted,
+		Admission:   dynamicindex.AdmissionAdmitted,
 	}
 	effectDelta := effectdelta.Value{Before: present, After: present, Change: effectdelta.ChangeChanged}
 
@@ -334,22 +335,22 @@ func TestDynamicIndexKeysPointwiseFacts(t *testing.T) {
 	reg := standard.Registry()
 	valueDomain := product.Domain(reg)
 	stateDomain := Domain(reg)
-	common := DynamicIndexKey{Table: pathdom.PathKey("sym80@1.table"), Site: "common"}
-	leftOnly := DynamicIndexKey{Table: pathdom.PathKey("sym80@1.table"), Site: "left"}
-	presentFact := DynamicIndexFact{
+	common := dynamicindex.Key{Table: pathdom.PathKey("sym80@1.table"), Site: "common"}
+	leftOnly := dynamicindex.Key{Table: pathdom.PathKey("sym80@1.table"), Site: "left"}
+	presentFact := dynamicindex.Fact{
 		KeyPresence: presence.Present(),
 		KeyValue:    presentValue(reg),
 		Value:       presentValue(reg),
-		Admission:   DynamicIndexAdmissionAdmitted,
+		Admission:   dynamicindex.AdmissionAdmitted,
 	}
-	absentFact := DynamicIndexFact{
+	absentFact := dynamicindex.Fact{
 		KeyPresence: presence.Absent(),
 		KeyValue:    absentValue(reg),
 		Value:       absentValue(reg),
-		Admission:   DynamicIndexAdmissionRejected,
+		Admission:   dynamicindex.AdmissionRejected,
 	}
 
-	if got := (State{}).ReadDynamicIndexFact(reg, common); !dynamicIndexFactDomain(reg).Equal(got, dynamicIndexFactBottom(reg)) {
+	if got := (State{}).ReadDynamicIndexFact(reg, common); !dynamicindex.Domain(reg).Equal(got, dynamicindex.Bottom(reg)) {
 		t.Fatalf("empty dynamic index fact = %#v, want bottom", got)
 	}
 
@@ -370,10 +371,10 @@ func TestDynamicIndexKeysPointwiseFacts(t *testing.T) {
 	if !presence.Equal(got.KeyPresence, presence.Maybe()) ||
 		!valueDomain.Equal(got.KeyValue, product.Top()) ||
 		!valueDomain.Equal(got.Value, product.Top()) ||
-		got.Admission != DynamicIndexAdmissionUnknown {
+		got.Admission != dynamicindex.AdmissionUnknown {
 		t.Fatalf("joined dynamic fact = %#v, want joined key/value/admission atoms", got)
 	}
-	if got := joined.ReadDynamicIndexFact(reg, leftOnly); !dynamicIndexFactDomain(reg).Equal(got, presentFact) {
+	if got := joined.ReadDynamicIndexFact(reg, leftOnly); !dynamicindex.Domain(reg).Equal(got, presentFact) {
 		t.Fatalf("disjoint dynamic index fact did not survive pointwise join: %#v", got)
 	}
 	if widened := stateDomain.Widen(left, right); !stateDomain.Equal(widened, joined) {
@@ -384,10 +385,10 @@ func TestDynamicIndexKeysPointwiseFacts(t *testing.T) {
 	}
 
 	clone := left.Clone().WriteDynamicIndexFact(reg, common, absentFact)
-	if got := left.ReadDynamicIndexFact(reg, common); !dynamicIndexFactDomain(reg).Equal(got, presentFact) {
+	if got := left.ReadDynamicIndexFact(reg, common); !dynamicindex.Domain(reg).Equal(got, presentFact) {
 		t.Fatalf("dynamic index clone write mutated original: %#v", got)
 	}
-	if got := clone.ReadDynamicIndexFact(reg, common); !dynamicIndexFactDomain(reg).Equal(got, absentFact) {
+	if got := clone.ReadDynamicIndexFact(reg, common); !dynamicindex.Domain(reg).Equal(got, absentFact) {
 		t.Fatalf("dynamic index clone write = %#v, want absent fact", got)
 	}
 }
@@ -400,7 +401,7 @@ func TestHeapTableIdentityObjectsJoinAndCopy(t *testing.T) {
 	otherID := identity.ID{Kind: "table", Site: "alloc", Index: 2}
 	staticCommon := pathdom.PathKey("sym90@1.table.name")
 	staticLeft := pathdom.PathKey("sym90@1.table.left")
-	dynCommon := DynamicIndexKey{Table: pathdom.PathKey("sym90@1.table"), Site: "dyn"}
+	dynCommon := dynamicindex.Key{Table: pathdom.PathKey("sym90@1.table"), Site: "dyn"}
 	present := presentValue(reg)
 	absent := absentValue(reg)
 
@@ -410,12 +411,12 @@ func TestHeapTableIdentityObjectsJoinAndCopy(t *testing.T) {
 			staticCommon: present,
 			staticLeft:   present,
 		},
-		DynamicIndexFacts: map[DynamicIndexKey]DynamicIndexFact{
+		DynamicIndexFacts: map[dynamicindex.Key]dynamicindex.Fact{
 			dynCommon: {
 				KeyPresence: presence.Present(),
 				KeyValue:    present,
 				Value:       present,
-				Admission:   DynamicIndexAdmissionAdmitted,
+				Admission:   dynamicindex.AdmissionAdmitted,
 			},
 		},
 	}
@@ -424,12 +425,12 @@ func TestHeapTableIdentityObjectsJoinAndCopy(t *testing.T) {
 		StaticMembers: map[pathdom.PathKey]product.Value{
 			staticCommon: absent,
 		},
-		DynamicIndexFacts: map[DynamicIndexKey]DynamicIndexFact{
+		DynamicIndexFacts: map[dynamicindex.Key]dynamicindex.Fact{
 			dynCommon: {
 				KeyPresence: presence.Absent(),
 				KeyValue:    absent,
 				Value:       absent,
-				Admission:   DynamicIndexAdmissionRejected,
+				Admission:   dynamicindex.AdmissionRejected,
 			},
 		},
 	}
@@ -457,7 +458,7 @@ func TestHeapTableIdentityObjectsJoinAndCopy(t *testing.T) {
 	if _, ok := got.StaticMembers[staticLeft]; ok {
 		t.Fatalf("left-only heap static member survived must join")
 	}
-	if gotDynamic := got.DynamicIndexFacts[dynCommon]; !presence.Equal(gotDynamic.KeyPresence, presence.Maybe()) || gotDynamic.Admission != DynamicIndexAdmissionUnknown {
+	if gotDynamic := got.DynamicIndexFacts[dynCommon]; !presence.Equal(gotDynamic.KeyPresence, presence.Maybe()) || gotDynamic.Admission != dynamicindex.AdmissionUnknown {
 		t.Fatalf("joined heap dynamic fact = %#v, want joined fact", gotDynamic)
 	}
 	if other := joined.ReadHeapTableObject(reg, otherID); !valueDomain.Equal(other.Root, present) {
@@ -472,12 +473,12 @@ func TestHeapTableIdentityObjectsJoinAndCopy(t *testing.T) {
 
 	read := left.ReadHeapTableObject(reg, id)
 	read.StaticMembers[staticCommon] = absent
-	read.DynamicIndexFacts[dynCommon] = DynamicIndexFact{Admission: DynamicIndexAdmissionRejected}
+	read.DynamicIndexFacts[dynCommon] = dynamicindex.Fact{Admission: dynamicindex.AdmissionRejected}
 	again := left.ReadHeapTableObject(reg, id)
 	if !valueDomain.Equal(again.StaticMembers[staticCommon], present) {
 		t.Fatalf("heap object read exposed mutable static members")
 	}
-	if again.DynamicIndexFacts[dynCommon].Admission != DynamicIndexAdmissionAdmitted {
+	if again.DynamicIndexFacts[dynCommon].Admission != dynamicindex.AdmissionAdmitted {
 		t.Fatalf("heap object read exposed mutable dynamic facts")
 	}
 }
@@ -944,16 +945,16 @@ func TestTopLanesReadTopAndRejectFiniteUpdates(t *testing.T) {
 	top := Domain(reg).Top()
 	slot := key.SymbolValue(symbol.ID(50))
 	pathKey := pathdom.PathKey("sym50@1.field")
-	dynamicKey := DynamicIndexKey{Table: pathdom.PathKey("sym50@1.table"), Site: "dyn"}
+	dynamicKey := dynamicindex.Key{Table: pathdom.PathKey("sym50@1.table"), Site: "dyn"}
 	heapID := identity.ID{Kind: "table", Site: "top", Index: 1}
 	effectKey := effectdelta.Key{Target: pathdom.PathKey("sym50@1.table"), Site: "effect", Kind: effectdelta.Mutation}
 	escapeID := identity.ID{Kind: "table", Site: "escape-top", Index: 1}
 	present := presentValue(reg)
-	dynamicFact := DynamicIndexFact{
+	dynamicFact := dynamicindex.Fact{
 		KeyPresence: presence.Present(),
 		KeyValue:    present,
 		Value:       present,
-		Admission:   DynamicIndexAdmissionAdmitted,
+		Admission:   dynamicindex.AdmissionAdmitted,
 	}
 	effectDelta := effectdelta.Value{Before: present, After: present, Change: effectdelta.ChangeChanged}
 
@@ -966,7 +967,7 @@ func TestTopLanesReadTopAndRejectFiniteUpdates(t *testing.T) {
 	if got := top.ReadPathKey(reg, pathKey); !valueDomain.Equal(got, product.Top()) {
 		t.Fatalf("top path read = %s, want top", formatValue(reg, got))
 	}
-	if got := top.ReadDynamicIndexFact(reg, dynamicKey); !dynamicIndexFactDomain(reg).Equal(got, dynamicIndexFactTop()) {
+	if got := top.ReadDynamicIndexFact(reg, dynamicKey); !dynamicindex.Domain(reg).Equal(got, dynamicindex.Top()) {
 		t.Fatalf("top dynamic-index read = %#v, want top", got)
 	}
 	if got := top.ReadHeapTableObject(reg, heapID); !heapTableObjectDomain(reg).Equal(got, heapTableObjectTop()) {

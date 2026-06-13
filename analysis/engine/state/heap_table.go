@@ -7,6 +7,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/engine/state/dynamicindex"
 )
 
 type HeapTableObject struct {
@@ -14,7 +15,7 @@ type HeapTableObject struct {
 
 	Root                 product.Value
 	StaticMembers        map[pathdom.PathKey]product.Value
-	DynamicIndexFacts    map[DynamicIndexKey]DynamicIndexFact
+	DynamicIndexFacts    map[dynamicindex.Key]dynamicindex.Fact
 	dynamicIndexFactsTop bool
 }
 
@@ -65,7 +66,7 @@ func heapTableIdentityMapDomain(reg *axis.Registry) lattice.Lattice[map[identity
 func heapTableObjectDomain(reg *axis.Registry) lattice.Lattice[HeapTableObject] {
 	valueDomain := product.Domain(reg)
 	staticDomain := mustMapDomain[pathdom.PathKey, product.Value](valueDomain)
-	dynamicDomain := dynamicIndexMapDomain(reg)
+	dynamicDomain := dynamicindex.MapDomain(reg)
 	return lattice.Lattice[HeapTableObject]{
 		Bottom: func() HeapTableObject { return heapTableObjectBottom(reg) },
 		Top:    heapTableObjectTop,
@@ -144,8 +145,8 @@ func heapStaticLane(object HeapTableObject) mustMapLane[pathdom.PathKey, product
 
 func heapDynamicLane(
 	object HeapTableObject,
-	domain lattice.Lattice[map[DynamicIndexKey]DynamicIndexFact],
-) map[DynamicIndexKey]DynamicIndexFact {
+	domain lattice.Lattice[map[dynamicindex.Key]dynamicindex.Fact],
+) map[dynamicindex.Key]dynamicindex.Fact {
 	if object.dynamicIndexFactsTop {
 		return domain.Top()
 	}
@@ -155,8 +156,8 @@ func heapDynamicLane(
 func heapTableObjectFromLanes(
 	root product.Value,
 	static mustMapLane[pathdom.PathKey, product.Value],
-	dynamic map[DynamicIndexKey]DynamicIndexFact,
-	dynamicDomain lattice.Lattice[map[DynamicIndexKey]DynamicIndexFact],
+	dynamic map[dynamicindex.Key]dynamicindex.Fact,
+	dynamicDomain lattice.Lattice[map[dynamicindex.Key]dynamicindex.Fact],
 ) HeapTableObject {
 	object := HeapTableObject{
 		Root:          root,
@@ -165,7 +166,7 @@ func heapTableObjectFromLanes(
 	if dynamicDomain.Equal(dynamic, dynamicDomain.Top()) {
 		object.dynamicIndexFactsTop = true
 	} else {
-		object.DynamicIndexFacts = cloneDynamicIndexMap(dynamic)
+		object.DynamicIndexFacts = dynamicindex.CloneMap(dynamic)
 	}
 	return object
 }
@@ -184,7 +185,7 @@ func cloneHeapTableObjectMap(in map[identity.ID]HeapTableObject) map[identity.ID
 func copyHeapTableObject(in HeapTableObject) HeapTableObject {
 	out := in
 	out.StaticMembers = clonePathMap(in.StaticMembers)
-	out.DynamicIndexFacts = cloneDynamicIndexMap(in.DynamicIndexFacts)
+	out.DynamicIndexFacts = dynamicindex.CloneMap(in.DynamicIndexFacts)
 	return out
 }
 

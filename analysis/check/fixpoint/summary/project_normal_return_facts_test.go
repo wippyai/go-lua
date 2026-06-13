@@ -11,6 +11,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/standard"
 	"github.com/wippyai/go-lua/analysis/engine/state"
+	"github.com/wippyai/go-lua/analysis/engine/state/dynamicindex"
 	effectdelta "github.com/wippyai/go-lua/analysis/engine/state/effectdelta"
 	"github.com/wippyai/go-lua/analysis/engine/state/pathevidence"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
@@ -45,23 +46,23 @@ func TestFromResultProjectsNormalReturnFactsFromExitSnapshots(t *testing.T) {
 	exit := state.State{}.
 		WritePathKey(reg, refineKey, value0).
 		WritePathStaticMember(staticKey, product.Top()).
-		WriteDynamicIndexFact(reg, state.DynamicIndexKey{Table: dynAdmittedKey, Site: "dyn-admitted"}, state.DynamicIndexFact{
+		WriteDynamicIndexFact(reg, dynamicindex.Key{Table: dynAdmittedKey, Site: "dyn-admitted"}, dynamicindex.Fact{
 			KeyPresence: presence.Present(),
 			KeyValue:    value0,
 			Value:       value1,
-			Admission:   state.DynamicIndexAdmissionAdmitted,
+			Admission:   dynamicindex.AdmissionAdmitted,
 		}).
-		WriteDynamicIndexFact(reg, state.DynamicIndexKey{Table: dynRejectedKey, Site: "dyn-rejected"}, state.DynamicIndexFact{
+		WriteDynamicIndexFact(reg, dynamicindex.Key{Table: dynRejectedKey, Site: "dyn-rejected"}, dynamicindex.Fact{
 			KeyPresence: presence.Absent(),
 			KeyValue:    value1,
 			Value:       value0,
-			Admission:   state.DynamicIndexAdmissionRejected,
+			Admission:   dynamicindex.AdmissionRejected,
 		}).
-		WriteDynamicIndexFact(reg, state.DynamicIndexKey{Table: dynUnknownKey, Site: "dyn-unknown"}, state.DynamicIndexFact{
+		WriteDynamicIndexFact(reg, dynamicindex.Key{Table: dynUnknownKey, Site: "dyn-unknown"}, dynamicindex.Fact{
 			KeyPresence: presence.Maybe(),
 			KeyValue:    value0,
 			Value:       value1,
-			Admission:   state.DynamicIndexAdmissionUnknown,
+			Admission:   dynamicindex.AdmissionUnknown,
 		}).
 		AddBranchProof(pathevidence.BranchProof{
 			Kind:     pathevidence.BranchProofPathPresence,
@@ -138,9 +139,9 @@ func TestFromResultProjectsNormalReturnFactsFromExitSnapshots(t *testing.T) {
 		t.Fatalf("PathStaticMembers = %#v, want top $0.member fact", got.PathStaticMembers)
 	}
 
-	assertDynamicAdmission(t, got.DynamicIndexFacts, "dyn-admitted", pathdom.NewPlaceholder(0).Field("items").IndexStr("admitted"), DynamicIndexAdmissionAdmitted)
-	assertDynamicAdmission(t, got.DynamicIndexFacts, "dyn-rejected", pathdom.NewPlaceholder(0).Field("items").IndexStr("rejected"), DynamicIndexAdmissionRejected)
-	assertDynamicAdmission(t, got.DynamicIndexFacts, "dyn-unknown", pathdom.NewPlaceholder(1).Field("items"), DynamicIndexAdmissionUnknown)
+	assertDynamicAdmission(t, got.DynamicIndexFacts, "dyn-admitted", pathdom.NewPlaceholder(0).Field("items").IndexStr("admitted"), dynamicindex.AdmissionAdmitted)
+	assertDynamicAdmission(t, got.DynamicIndexFacts, "dyn-rejected", pathdom.NewPlaceholder(0).Field("items").IndexStr("rejected"), dynamicindex.AdmissionRejected)
+	assertDynamicAdmission(t, got.DynamicIndexFacts, "dyn-unknown", pathdom.NewPlaceholder(1).Field("items"), dynamicindex.AdmissionUnknown)
 
 	assertBranchProof(t, got.BranchProofs, BranchProofPathPresence, pathdom.NewPlaceholder(0).Field("ready"), pathdom.Path{}, presence.Present())
 	assertBranchProof(t, got.BranchProofs, BranchProofPathEqual, pathdom.NewPlaceholder(0).Field("left"), pathdom.NewPlaceholder(1).Field("right"), presence.Bottom())
@@ -225,12 +226,7 @@ func TestFromResultSkipsTopSnapshotsAndTopNormalReturnFacts(t *testing.T) {
 	}
 
 	paramKey := normalReturnFactProjectTestKey(param, ".value")
-	topDynamic := state.DynamicIndexFact{
-		KeyPresence: presence.Top(),
-		KeyValue:    product.Top(),
-		Value:       product.Top(),
-		Admission:   state.DynamicIndexAdmissionUnknown,
-	}
+	topDynamic := dynamicindex.Top()
 	topEffect := effectdelta.Value{
 		Before: product.Top(),
 		After:  product.Top(),
@@ -239,7 +235,7 @@ func TestFromResultSkipsTopSnapshotsAndTopNormalReturnFacts(t *testing.T) {
 	exit := state.State{}.
 		WritePathKey(reg, paramKey, product.Top()).
 		WritePathStaticMember(normalReturnFactProjectTestKey(param, ".member"), product.Bottom(reg)).
-		WriteDynamicIndexFact(reg, state.DynamicIndexKey{
+		WriteDynamicIndexFact(reg, dynamicindex.Key{
 			Table: normalReturnFactProjectTestKey(param, ".table"),
 			Site:  "dynamic-top",
 		}, topDynamic).
@@ -318,11 +314,11 @@ func assertDynamicAdmission(
 	facts []DynamicIndexFact,
 	site string,
 	table pathdom.Path,
-	admission DynamicIndexAdmission,
+	admission dynamicindex.Admission,
 ) {
 	t.Helper()
 	fact := findDynamicIndexFact(facts, site)
-	if fact == nil || !fact.Table.Equal(table) || fact.Admission != admission {
+	if fact == nil || !fact.Table.Equal(table) || fact.Value.Admission != admission {
 		t.Fatalf("dynamic index %q = %#v, want table %s admission %d", site, fact, table, admission)
 	}
 }

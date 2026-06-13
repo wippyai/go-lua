@@ -6,6 +6,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/state"
+	"github.com/wippyai/go-lua/analysis/engine/state/dynamicindex"
 	effectdelta "github.com/wippyai/go-lua/analysis/engine/state/effectdelta"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
@@ -93,26 +94,12 @@ type CallPathStaticMember struct {
 	Value product.Value
 }
 
-// CallDynamicIndexAdmission summarizes whether a dynamic index write was
-// admitted at the callee boundary.
-type CallDynamicIndexAdmission uint8
-
-const (
-	CallDynamicIndexAdmissionBottom CallDynamicIndexAdmission = iota
-	CallDynamicIndexAdmissionAdmitted
-	CallDynamicIndexAdmissionRejected
-	CallDynamicIndexAdmissionUnknown
-)
-
 // CallDynamicIndexFact records a normal-return dynamic-index fact for a
 // placeholder-rooted table path.
 type CallDynamicIndexFact struct {
-	Table       pathdom.Path
-	Site        string
-	KeyPresence presence.Value
-	KeyValue    product.Value
-	Value       product.Value
-	Admission   CallDynamicIndexAdmission
+	Table pathdom.Path
+	Site  dynamicindex.Site
+	Value dynamicindex.Fact
 }
 
 // CallBranchProofKind classifies a normal-return branch proof.
