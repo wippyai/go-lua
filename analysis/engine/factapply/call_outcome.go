@@ -90,6 +90,7 @@ func withSupplementalOutcomeFacts(out, second CallOutcome) CallOutcome {
 	out.NormalReturnFacts.BranchProofs = append(out.NormalReturnFacts.BranchProofs, second.NormalReturnFacts.BranchProofs...)
 	out.NormalReturnFacts.ChannelSelects = append(out.NormalReturnFacts.ChannelSelects, second.NormalReturnFacts.ChannelSelects...)
 	out.NormalReturnFacts.EffectDeltas = append(out.NormalReturnFacts.EffectDeltas, second.NormalReturnFacts.EffectDeltas...)
+	out.NormalReturnFacts.EscapeEvents = append(out.NormalReturnFacts.EscapeEvents, second.NormalReturnFacts.EscapeEvents...)
 	out.ParamPathRefinements = append(out.ParamPathRefinements, second.ParamPathRefinements...)
 	out.ParamObligations = append(out.ParamObligations, second.ParamObligations...)
 	out.ParamPathInvalidations = append(out.ParamPathInvalidations, second.ParamPathInvalidations...)

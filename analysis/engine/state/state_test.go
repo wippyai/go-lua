@@ -912,6 +912,20 @@ func TestPlacementOrderAndCopy(t *testing.T) {
 	}
 }
 
+func TestPlacementCanBeReadThroughValueIdentity(t *testing.T) {
+	reg := standard.Registry()
+	id := identity.ID{Kind: "table", Site: "literal", Index: 7}
+	value := product.Set(reg, product.Top(), identity.Key, identity.Singleton(id))
+	state := State{}.WritePlacement(id, placement.OwnedHeap)
+
+	if got := placementOfValue(reg, state, value); got != placement.OwnedHeap {
+		t.Fatalf("placement through identity = %v, want owned heap", got)
+	}
+	if got := placementOfValue(reg, state, product.Top()); got != placement.Bottom {
+		t.Fatalf("placement without identity = %v, want bottom", got)
+	}
+}
+
 func TestInvalidatePathKeySubtreeRemovesStructuredDescendants(t *testing.T) {
 	reg := standard.Registry()
 	valueDomain := product.Domain(reg)
@@ -1010,6 +1024,15 @@ func TestInvalidatePathKeySubtreeRemovesStructuredDescendants(t *testing.T) {
 	if got := out.ReadPathKey(reg, placeholderSibling); !valueDomain.Equal(got, present) {
 		t.Fatalf("%s = %s, want present", placeholderSibling, formatValue(reg, got))
 	}
+}
+
+func placementOfValue(reg *axis.Registry, state State, value product.Value) placement.Value {
+	idValue := product.Get(reg, value, identity.Key)
+	id, ok := idValue.ID()
+	if !ok {
+		return placement.Bottom
+	}
+	return state.ReadPlacement(id)
 }
 
 func TestInvalidatePathKeySubtreeRemovesBranchProofsWithOtherUnderSubtree(t *testing.T) {

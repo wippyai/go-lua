@@ -10,6 +10,7 @@ import (
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/engine/callboundary"
 	factapply "github.com/wippyai/go-lua/analysis/engine/factapply"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
@@ -67,6 +68,74 @@ func activeMutationTargets(sig signature.Function) []effect.ParamRef {
 		}
 	}
 	return out
+}
+
+func signatureEscapeEvents(sig signature.Function, site factflow.CallSite) []callboundary.EscapeEventFact {
+	if len(sig.Effect.Labels) == 0 {
+		return nil
+	}
+	args := site.ArgumentSources()
+	out := make([]callboundary.EscapeEventFact, 0, len(sig.Effect.Labels))
+	appendArg := func(index int, kind callboundary.EscapeEventKind) {
+		if index < 0 || index >= len(args) || !callArgumentSourceCanBindPath(args[index]) {
+			return
+		}
+		out = append(out, callboundary.EscapeEventFact{
+			Target:    pathdom.NewPlaceholder(index),
+			Kind:      kind,
+			Recursive: true,
+		})
+	}
+	appendParam := func(ref effect.ParamRef, kind callboundary.EscapeEventKind) {
+		index, ok := effect.ResolveParamIndex(ref, len(args))
+		if !ok {
+			return
+		}
+		appendArg(index, kind)
+	}
+	for _, label := range sig.Effect.Labels {
+		switch normalized := effect.NormalizeLabel(label).(type) {
+		case ownership.Send:
+			start, ok := sendStartIndex(normalized.FromParam, len(args))
+			if !ok {
+				continue
+			}
+			for i := start; i < len(args); i++ {
+				appendArg(i, callboundary.EscapeEventSend)
+			}
+		case *ownership.Send:
+			if normalized != nil {
+				start, ok := sendStartIndex(normalized.FromParam, len(args))
+				if !ok {
+					continue
+				}
+				for i := start; i < len(args); i++ {
+					appendArg(i, callboundary.EscapeEventSend)
+				}
+			}
+		case ownership.Store:
+			appendParam(normalized.Param, callboundary.EscapeEventStore)
+		case *ownership.Store:
+			if normalized != nil {
+				appendParam(normalized.Param, callboundary.EscapeEventStore)
+			}
+		}
+	}
+	return out
+}
+
+func sendStartIndex(fromParam, argCount int) (int, bool) {
+	if argCount <= 0 {
+		return 0, false
+	}
+	start := fromParam
+	if start < 0 {
+		start = argCount + start
+	}
+	if start < 0 || start >= argCount {
+		return 0, false
+	}
+	return start, true
 }
 
 func signatureParamPathRefinements(

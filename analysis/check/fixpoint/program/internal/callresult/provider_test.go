@@ -140,6 +140,13 @@ func TestOutcomeProviderMapsSummaryReturnsAndNormalReturnFacts(t *testing.T) {
 							Value:  effectdelta.Value{Before: present, After: absent, Change: effectdelta.ChangeChanged},
 						},
 					},
+					EscapeEvents: []callboundary.EscapeEventFact{
+						{
+							Target:    path.NewPlaceholder(0).Field("sent"),
+							Kind:      callboundary.EscapeEventSend,
+							Recursive: true,
+						},
+					},
 				},
 			},
 		}),
@@ -192,6 +199,12 @@ func TestOutcomeProviderMapsSummaryReturnsAndNormalReturnFacts(t *testing.T) {
 		!product.Equal(reg, got.NormalReturnFacts.EffectDeltas[0].Value.After, absent) ||
 		got.NormalReturnFacts.EffectDeltas[0].Value.Change != effectdelta.ChangeChanged {
 		t.Fatalf("effect deltas = %#v, want mapped summary effect delta", got.NormalReturnFacts.EffectDeltas)
+	}
+	if len(got.NormalReturnFacts.EscapeEvents) != 1 ||
+		!got.NormalReturnFacts.EscapeEvents[0].Target.Equal(path.NewPlaceholder(0).Field("sent")) ||
+		got.NormalReturnFacts.EscapeEvents[0].Kind != callboundary.EscapeEventSend ||
+		!got.NormalReturnFacts.EscapeEvents[0].Recursive {
+		t.Fatalf("escape events = %#v, want mapped summary escape event", got.NormalReturnFacts.EscapeEvents)
 	}
 }
 
@@ -958,6 +971,7 @@ func assertEmptyOutcome(t *testing.T, got factapply.CallOutcome) {
 		len(got.NormalReturnFacts.BranchProofs) != 0 ||
 		len(got.NormalReturnFacts.ChannelSelects) != 0 ||
 		len(got.NormalReturnFacts.EffectDeltas) != 0 ||
+		len(got.NormalReturnFacts.EscapeEvents) != 0 ||
 		len(got.ReturnConditionRefinements) != 0 ||
 		len(got.ReturnPresenceRelations) != 0 {
 		t.Fatalf("provider returned non-empty outcome: %#v", got)

@@ -107,6 +107,21 @@ func applyCallOutcomeFacts(
 			Kind:   delta.Kind,
 		}, delta.Value)
 	}
+	for _, event := range normalReturnFacts.EscapeEvents {
+		targetPath, ok := event.Target.Substitute(bindings)
+		if !ok {
+			continue
+		}
+		targetKey := factPathKeyAt(resolver, ctx.Point, targetPath)
+		if targetKey == "" {
+			continue
+		}
+		out = out.WriteEffectDelta(effectdelta.Key{
+			Target: targetKey,
+			Site:   callboundary.EscapeEventEffectSite(event.Kind, event.Recursive),
+			Kind:   effectdelta.Escape,
+		}, effectdelta.Top())
+	}
 	return out
 }
 

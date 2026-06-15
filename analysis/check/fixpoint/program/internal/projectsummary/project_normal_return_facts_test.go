@@ -43,6 +43,7 @@ func TestFromResultProjectsNormalReturnFactsFromExitSnapshots(t *testing.T) {
 	casePathKey := normalReturnFactProjectTestKey(param1, ".casePath")
 	mutationKey := normalReturnFactProjectTestKey(param0, ".mutation")
 	escapeKey := normalReturnFactProjectTestKey(param0, ".escape")
+	sendEventKey := normalReturnFactProjectTestKey(param0, ".sent")
 	callKey := normalReturnFactProjectTestKey(param1, ".call")
 
 	exit := state.State{}.
@@ -119,6 +120,11 @@ func TestFromResultProjectsNormalReturnFactsFromExitSnapshots(t *testing.T) {
 			Change: effectdelta.ChangeNone,
 		}).
 		WriteEffectDelta(effectdelta.Key{
+			Target: sendEventKey,
+			Site:   callboundary.EscapeEventEffectSite(callboundary.EscapeEventSend, true),
+			Kind:   effectdelta.Escape,
+		}, effectdelta.Top()).
+		WriteEffectDelta(effectdelta.Key{
 			Target: callKey,
 			Site:   "effect-call",
 			Kind:   effectdelta.Call,
@@ -156,6 +162,7 @@ func TestFromResultProjectsNormalReturnFactsFromExitSnapshots(t *testing.T) {
 	assertEffectDelta(t, got.EffectDeltas, "effect-mutation", pathdom.NewPlaceholder(0).Field("mutation"), effectdelta.Mutation, effectdelta.ChangeChanged)
 	assertEffectDelta(t, got.EffectDeltas, "effect-escape", pathdom.NewPlaceholder(0).Field("escape"), effectdelta.Escape, effectdelta.ChangeNone)
 	assertEffectDelta(t, got.EffectDeltas, "effect-call", pathdom.NewPlaceholder(1).Field("call"), effectdelta.Call, effectdelta.ChangeUnknown)
+	assertEscapeEvent(t, got.EscapeEvents, pathdom.NewPlaceholder(0).Field("sent"), callboundary.EscapeEventSend, true)
 }
 
 func TestFromResultDropsNonParameterNormalReturnFactPaths(t *testing.T) {
@@ -387,13 +394,30 @@ func assertEffectDelta(
 	}
 }
 
+func assertEscapeEvent(
+	t *testing.T,
+	events []callboundary.EscapeEventFact,
+	target pathdom.Path,
+	kind callboundary.EscapeEventKind,
+	recursive bool,
+) {
+	t.Helper()
+	for _, event := range events {
+		if event.Target.Equal(target) && event.Kind == kind && event.Recursive == recursive {
+			return
+		}
+	}
+	t.Fatalf("escape events = %#v, want target %s kind %d recursive=%v", events, target, kind, recursive)
+}
+
 func normalReturnFactsEmpty(facts callboundary.NormalReturnFacts) bool {
 	return len(facts.PathRefinements) == 0 &&
 		len(facts.PathStaticMembers) == 0 &&
 		len(facts.DynamicIndexFacts) == 0 &&
 		len(facts.BranchProofs) == 0 &&
 		len(facts.ChannelSelects) == 0 &&
-		len(facts.EffectDeltas) == 0
+		len(facts.EffectDeltas) == 0 &&
+		len(facts.EscapeEvents) == 0
 }
 
 func findPathRefinement(facts []callboundary.PathValueFact, path pathdom.Path) *callboundary.PathValueFact {

@@ -3,6 +3,8 @@
 package callboundary
 
 import (
+	"strings"
+
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
@@ -89,4 +91,73 @@ type EscapeEventFact struct {
 	Target    pathdom.Path
 	Kind      EscapeEventKind
 	Recursive bool
+}
+
+const escapeEventEffectSitePrefix = "escape-event."
+
+// EscapeEventEffectSite is the reserved effect-delta site used while a
+// placeholder escape event is materialized inside point state.
+func EscapeEventEffectSite(kind EscapeEventKind, recursive bool) effectdelta.Site {
+	name := escapeEventKindName(kind)
+	if name == "" {
+		name = "opaque"
+	}
+	if recursive {
+		name += ".recursive"
+	}
+	return effectdelta.Site(escapeEventEffectSitePrefix + name)
+}
+
+// EscapeEventFromEffectSite recognizes effect-delta sites produced by
+// EscapeEventEffectSite.
+func EscapeEventFromEffectSite(site effectdelta.Site) (EscapeEventKind, bool, bool) {
+	name, ok := strings.CutPrefix(string(site), escapeEventEffectSitePrefix)
+	if !ok {
+		return EscapeEventNone, false, false
+	}
+	recursive := false
+	if base, ok := strings.CutSuffix(name, ".recursive"); ok {
+		name = base
+		recursive = true
+	}
+	kind, ok := escapeEventKindByName(name)
+	return kind, recursive, ok
+}
+
+func escapeEventKindName(kind EscapeEventKind) string {
+	switch kind {
+	case EscapeEventBorrow:
+		return "borrow"
+	case EscapeEventRetain:
+		return "retain"
+	case EscapeEventStore:
+		return "store"
+	case EscapeEventSend:
+		return "send"
+	case EscapeEventExport:
+		return "export"
+	case EscapeEventOpaque:
+		return "opaque"
+	default:
+		return ""
+	}
+}
+
+func escapeEventKindByName(name string) (EscapeEventKind, bool) {
+	switch name {
+	case "borrow":
+		return EscapeEventBorrow, true
+	case "retain":
+		return EscapeEventRetain, true
+	case "store":
+		return EscapeEventStore, true
+	case "send":
+		return EscapeEventSend, true
+	case "export":
+		return EscapeEventExport, true
+	case "opaque":
+		return EscapeEventOpaque, true
+	default:
+		return EscapeEventNone, false
+	}
 }

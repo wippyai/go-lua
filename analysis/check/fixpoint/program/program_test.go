@@ -9,6 +9,9 @@ import (
 	"github.com/wippyai/go-lua/analysis/check/diagnostics"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/ref"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/summary"
+	"github.com/wippyai/go-lua/analysis/domain/effect"
+	"github.com/wippyai/go-lua/analysis/domain/effect/ownership"
+	"github.com/wippyai/go-lua/analysis/domain/effect/signature"
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
@@ -19,10 +22,12 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/standard"
 	"github.com/wippyai/go-lua/analysis/domain/value/variant"
+	"github.com/wippyai/go-lua/analysis/engine/callboundary"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
+	"github.com/wippyai/go-lua/analysis/module/manifest"
 	"github.com/wippyai/go-lua/analysis/module/signaturelookup"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/type/refinement"
@@ -151,6 +156,47 @@ end
 	}
 	assertSummaryNormalReturnParam(t, reg, result.Snapshot(), valueKey, 0, presence.Present(), runtimekind.Singleton(runtimekind.String))
 	assertSummaryNormalReturnParam(t, reg, result.Snapshot(), againKey, 0, presence.Present(), runtimekind.Singleton(runtimekind.String))
+}
+
+func TestRunChunkReexportsManifestSendEffectAsEscapeEvent(t *testing.T) {
+	reg := standard.Registry()
+	stmts := parseChunk(t, `
+local forward = function(payload)
+	runtime.send(payload)
+end
+`)
+	local := stmts[0].(*ast.LocalAssignStmt)
+	bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"runtime"}})
+	forwardSym := mustBoundLocalAt(t, bindings, local, 0)
+	m := manifest.New("actor_runtime")
+	m.DefineFunctionSignature("runtime.send", signature.Function{
+		Effect: effect.Empty.With(ownership.Send{FromParam: 0}),
+	})
+
+	result, err := RunBoundChunk(stmts, bindings, Config{
+		Check: body.Config{
+			Registry: reg,
+			Globals:  []string{"runtime"},
+			Signatures: signaturelookup.Source{
+				Manifests: []*manifest.Manifest{m},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("RunBoundChunk: %v", err)
+	}
+	forwardKey, ok := result.TargetKey(forwardSym)
+	if !ok {
+		t.Fatalf("TargetKey(forward) missing")
+	}
+	assertSummaryEscapeEvent(
+		t,
+		result.Snapshot(),
+		forwardKey,
+		path.NewPlaceholder(0),
+		callboundary.EscapeEventSend,
+		true,
+	)
 }
 
 func TestRunChunkSpecializesGenericSummaryReturnAtCallSite(t *testing.T) {
@@ -979,6 +1025,27 @@ func assertSummaryReturn(t *testing.T, reg *axis.Registry, snapshot summary.Snap
 	if !product.Equal(reg, got.Returns[0], want) {
 		t.Fatalf("summary %s return = %v, want %v", key.Ref, got.Returns[0], want)
 	}
+}
+
+func assertSummaryEscapeEvent(
+	t *testing.T,
+	snapshot summary.Snapshot,
+	key summary.SummaryKey,
+	target path.Path,
+	kind callboundary.EscapeEventKind,
+	recursive bool,
+) {
+	t.Helper()
+	got, ok := snapshot.Read(key)
+	if !ok {
+		t.Fatalf("summary %s missing", key.Ref)
+	}
+	for _, event := range got.NormalReturnFacts.EscapeEvents {
+		if event.Target.Equal(target) && event.Kind == kind && event.Recursive == recursive {
+			return
+		}
+	}
+	t.Fatalf("summary %s escape events = %#v, want target %s kind %d recursive=%v", key.Ref, got.NormalReturnFacts.EscapeEvents, target, kind, recursive)
 }
 
 func assertSummaryNormalReturnParam(

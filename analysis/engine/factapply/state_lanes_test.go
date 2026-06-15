@@ -521,6 +521,13 @@ func TestFactsNodeTransferCallOutcomeRebasesStateLaneFacts(t *testing.T) {
 							},
 						},
 					},
+					EscapeEvents: []callboundary.EscapeEventFact{
+						{
+							Target:    pathdom.NewPlaceholder(0).Field("sent"),
+							Kind:      callboundary.EscapeEventSend,
+							Recursive: true,
+						},
+					},
 				},
 			}
 		},
@@ -569,5 +576,15 @@ func TestFactsNodeTransferCallOutcomeRebasesStateLaneFacts(t *testing.T) {
 		!product.Equal(reg, gotEffect.After, absent) ||
 		gotEffect.Change != effectdelta.ChangeChanged {
 		t.Fatalf("effect delta = %#v, want rebased delta", gotEffect)
+	}
+
+	escapeKey := effectdelta.Key{
+		Target: pathdom.PathKey("sym505@1.sent"),
+		Site:   callboundary.EscapeEventEffectSite(callboundary.EscapeEventSend, true),
+		Kind:   effectdelta.Escape,
+	}
+	gotEscape := got.ReadEffectDelta(escapeKey)
+	if gotEscape.Change != effectdelta.ChangeUnknown {
+		t.Fatalf("escape event delta = %#v, want rebased escape event", gotEscape)
 	}
 }

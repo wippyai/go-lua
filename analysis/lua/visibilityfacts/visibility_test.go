@@ -74,6 +74,33 @@ func TestResolverSeedsEntryForPathUsingLocalWithoutAssignment(t *testing.T) {
 	}
 }
 
+func TestResolverSeedsEntryForRootCallArgumentPath(t *testing.T) {
+	stmts, bindings := parseBoundChunk(t, `local payload`)
+	payloadSym := mustLocalSymbolAt(t, bindings, stmts[0].(*ast.LocalAssignStmt), 0)
+	payloadPath := pathdom.NewPath(payloadSym, "payload")
+	graph, points := linearGraph(cfg.NodeCall)
+	callPoint := points[0]
+	argRef := factflow.ExprRef(17)
+	facts := factflow.NewFacts(factflow.FactsInput{
+		CallSites: map[cfg.Point]factflow.CallSite{
+			callPoint: factflow.NewCallSite(factflow.CallSiteConfig{
+				Context: factflow.CallSiteContextStatement,
+				ArgumentSources: []factflow.ValueSource{
+					{Kind: factflow.ValueSourceExpression, ExprRef: argRef, HasExpr: true},
+				},
+			}),
+		},
+		ExpressionPaths: map[factflow.ExprRef]pathdom.Path{
+			argRef: payloadPath,
+		},
+	})
+
+	resolver := Resolver(bindings, graph, facts)
+	if got := resolver.KeyAt(callPoint, payloadPath); got == "" {
+		t.Fatalf("root call argument path has no visibility at call point")
+	}
+}
+
 func TestResolverSeedsEntryForAssignedGlobalPath(t *testing.T) {
 	_, bindings := parseBoundChunk(t, `g = 1`, "g")
 	globalSym, ok := bindings.GlobalSymbol("g")

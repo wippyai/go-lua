@@ -20,6 +20,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/standard"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
+	"github.com/wippyai/go-lua/analysis/engine/callboundary"
 	factapply "github.com/wippyai/go-lua/analysis/engine/factapply"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	sourcevalue "github.com/wippyai/go-lua/analysis/engine/sourcevalue"
@@ -580,6 +581,46 @@ func TestSignatureOutcomeProviderSkipsStoreWithoutKnownDestination(t *testing.T)
 	if len(got.ParamPathInvalidations) != 0 {
 		t.Fatalf("param path invalidations = %#v, want none", got.ParamPathInvalidations)
 	}
+}
+
+func TestSignatureOutcomeProviderLowersOwnershipSendAndStoreEscapeEvents(t *testing.T) {
+	point := cfg.Point(912)
+	arg0 := factflow.ExprRef(912)
+	arg1 := factflow.ExprRef(913)
+	arg2 := factflow.ExprRef(914)
+	facts := factflow.NewFacts(factflow.FactsInput{
+		CallSites: map[cfg.Point]factflow.CallSite{
+			point: factflow.NewCallSite(factflow.CallSiteConfig{
+				Context: factflow.CallSiteContextStatement,
+				ArgumentSources: []factflow.ValueSource{
+					{Kind: factflow.ValueSourceExpression, ExprRef: arg0, HasExpr: true},
+					{Kind: factflow.ValueSourceExpression, ExprRef: arg1, HasExpr: true},
+					{Kind: factflow.ValueSourceExpression, ExprRef: arg2, HasExpr: true},
+				},
+			}),
+		},
+	})
+
+	provider := SignatureOutcomeProvider(SignatureOutcomeProviderConfig{
+		Signatures: signatureMap{
+			"send": {
+				Effect: effect.Empty.
+					With(ownership.Store{Param: effect.ParamRef{Index: 0}, Into: effect.ParamRef{Index: 2}}).
+					With(ownership.Send{FromParam: 1}),
+			},
+		},
+		NameFor: staticName("send"),
+		Facts:   facts,
+	})
+	site, ok := facts.CallSite(point)
+	if !ok {
+		t.Fatalf("missing call site")
+	}
+	got := provider(transfer.NodeContext{Point: point}, site, state.State{}, nil)
+
+	assertEscapeEvent(t, got.NormalReturnFacts.EscapeEvents, path.NewPlaceholder(0), callboundary.EscapeEventStore, true)
+	assertEscapeEvent(t, got.NormalReturnFacts.EscapeEvents, path.NewPlaceholder(1), callboundary.EscapeEventSend, true)
+	assertEscapeEvent(t, got.NormalReturnFacts.EscapeEvents, path.NewPlaceholder(2), callboundary.EscapeEventSend, true)
 }
 
 func TestSignatureOutcomeProviderParamPathInvalidationDoesNotApplyWithoutExpressionPath(t *testing.T) {
@@ -1496,6 +1537,22 @@ func assertCallOutcomeResults(t *testing.T, reg *axis.Registry, got []factapply.
 			t.Fatalf("got result[%d].Value = %v, want %v", i, got[i].Value, value)
 		}
 	}
+}
+
+func assertEscapeEvent(
+	t *testing.T,
+	events []callboundary.EscapeEventFact,
+	target path.Path,
+	kind callboundary.EscapeEventKind,
+	recursive bool,
+) {
+	t.Helper()
+	for _, event := range events {
+		if event.Target.Equal(target) && event.Kind == kind && event.Recursive == recursive {
+			return
+		}
+	}
+	t.Fatalf("escape events = %#v, want target %s kind %d recursive=%v", events, target, kind, recursive)
 }
 
 func signatureOutcomeProviderFacts(point cfg.Point, args []factflow.ValueSource) factflow.Facts {

@@ -66,6 +66,7 @@ func SignatureOutcomeProvider(config SignatureOutcomeProviderConfig) factapply.C
 			ParamPathRefinements:    signatureParamPathRefinements(ctx, sig, site),
 			ParamPathInvalidations:  signatureParamPathInvalidations(sig, site),
 		}
+		out.NormalReturnFacts.EscapeEvents = signatureEscapeEvents(sig, site)
 		if sig.Type == nil || len(sig.Type.Returns) == 0 {
 			return out
 		}

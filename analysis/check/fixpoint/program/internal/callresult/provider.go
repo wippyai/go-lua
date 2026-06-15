@@ -1179,6 +1179,13 @@ func cloneNormalReturnFacts(in callboundary.NormalReturnFacts) callboundary.Norm
 			out.EffectDeltas[i] = delta
 		}
 	}
+	if len(in.EscapeEvents) != 0 {
+		out.EscapeEvents = make([]callboundary.EscapeEventFact, len(in.EscapeEvents))
+		for i, event := range in.EscapeEvents {
+			event.Target = copyPath(event.Target)
+			out.EscapeEvents[i] = event
+		}
+	}
 	return out
 }
 

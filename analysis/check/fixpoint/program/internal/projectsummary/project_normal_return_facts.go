@@ -147,6 +147,16 @@ func projectNormalReturnFacts(reg *axis.Registry, result ResultReader, exit stat
 			if !ok {
 				continue
 			}
+			if stateKey.Kind == effectdelta.Escape {
+				if kind, recursive, ok := callboundary.EscapeEventFromEffectSite(stateKey.Site); ok {
+					out.EscapeEvents = append(out.EscapeEvents, callboundary.EscapeEventFact{
+						Target:    target,
+						Kind:      kind,
+						Recursive: recursive,
+					})
+					continue
+				}
+			}
 			delta := callboundary.EffectDelta{
 				Target: target,
 				Site:   stateKey.Site,
