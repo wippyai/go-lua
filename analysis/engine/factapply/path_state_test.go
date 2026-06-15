@@ -41,43 +41,6 @@ func TestPathStateAdaptersUseResolvedKeysAndRejectMissingVersion(t *testing.T) {
 	assertStateEqual(t, reg, unchanged, s)
 }
 
-func TestPathStateAdapterUpdateUsesResolvedKeyAndSkipsUnresolvedPath(t *testing.T) {
-	reg := standard.Registry()
-	point := cfg.Point(8)
-	sym := symbol.ID(31)
-	resolver := resolverWithVisibleVersion(point, sym, "x")
-	targetPath := path.NewPath(sym, "x").Field("field")
-	pathKey := path.PathKey("sym31@1.field")
-	present := presentValue(reg)
-	bottom := product.Bottom(reg)
-
-	s := state.State{}.WritePathKey(reg, pathKey, present)
-	updated, ok := updatePathAt(reg, s, resolver, point, targetPath, func(got product.Value) product.Value {
-		if !product.Equal(reg, got, present) {
-			t.Fatalf("updatePathAt read %s, want present", formatValue(reg, got))
-		}
-		return bottom
-	})
-	if !ok {
-		t.Fatal("updatePathAt rejected visible version")
-	}
-	assertPathValue(t, reg, updated, pathKey, bottom)
-	assertPathValue(t, reg, s, pathKey, present)
-
-	called := false
-	unchanged, ok := updatePathAt(reg, s, visibility.NewResolver(visibility.NewTable(nil)), point, targetPath, func(product.Value) product.Value {
-		called = true
-		return absentValue(reg)
-	})
-	if ok {
-		t.Fatal("updatePathAt accepted missing visible version")
-	}
-	if called {
-		t.Fatal("updatePathAt called transform for unresolved path")
-	}
-	assertStateEqual(t, reg, unchanged, s)
-}
-
 func TestPathStateAdapterInvalidateSubtreeUsesResolvedKeyAndRejectsUnresolvedPath(t *testing.T) {
 	reg := standard.Registry()
 	point := cfg.Point(9)

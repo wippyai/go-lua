@@ -29,21 +29,6 @@ func writePathAt(
 	return out, true
 }
 
-func updatePathAt(
-	reg *axis.Registry,
-	s state.State,
-	resolver *visibility.Resolver,
-	point cfg.Point,
-	path pathdom.Path,
-	fn func(product.Value) product.Value,
-) (state.State, bool) {
-	pathKey := resolver.KeyAt(point, path)
-	if pathKey == "" {
-		return s, false
-	}
-	return s.UpdatePathKey(reg, pathKey, fn), true
-}
-
 func invalidatePathSubtreeAt(
 	s state.State,
 	resolver *visibility.Resolver,

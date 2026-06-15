@@ -71,7 +71,7 @@ func materializeCallOutcome(
 ) state.State {
 	siteView, ok := facts.CallSiteView(ctx.Point)
 	if !ok {
-		return out
+		return applyChannelSelectResult(ctx, resolver, out, facts.ChannelSelects(ctx.Point))
 	}
 	hasProducer := callproducer.Has(facts, ctx.Point)
 	if hasProducer {

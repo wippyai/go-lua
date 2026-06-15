@@ -9,6 +9,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/standard"
+	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine/callboundary"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/sourcevalue"
@@ -18,6 +19,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/visibility"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/symbol"
+	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
 func TestFactsNodeTransferCallOutcomeAppliesParamCondition(t *testing.T) {
@@ -138,6 +140,36 @@ func TestWithSupplementalCallOutcomeKeepsPrimarySlotsFillsMissingSlotsAndMergesS
 		got.ReturnPresenceRelations[0].TargetIndex != 0 ||
 		!presence.Equal(got.ReturnPresenceRelations[0].TargetPresence, presence.Absent()) {
 		t.Fatalf("return presence relations = %#v, want supplemental relation", got.ReturnPresenceRelations)
+	}
+}
+
+func TestWithSupplementalCallOutcomePreservesPrimaryNonTypeEvidence(t *testing.T) {
+	reg := standard.Registry()
+	primaryValue := product.NewWithPresence(reg, product.ShapeTop, presence.Present())
+	supplementalValue := typeValue(reg, typ.String)
+	primary := func(transfer.NodeContext, factflow.CallSite, state.State, func(cfg.Point) state.State) CallOutcome {
+		return CallOutcome{Results: []CallResult{{Index: 0, Value: primaryValue}}}
+	}
+	supplemental := func(transfer.NodeContext, factflow.CallSite, state.State, func(cfg.Point) state.State) CallOutcome {
+		return CallOutcome{Results: []CallResult{{Index: 0, Value: supplementalValue}}}
+	}
+
+	got := WithSupplementalCallOutcome(primary, supplemental)(
+		transfer.NodeContext{Registry: reg},
+		factflow.NewCallSite(factflow.CallSiteConfig{}),
+		state.State{},
+		nil,
+	)
+
+	if len(got.Results) != 1 {
+		t.Fatalf("got %d results, want 1: %#v", len(got.Results), got.Results)
+	}
+	if gotPresence := product.PresenceOf(got.Results[0].Value); !presence.Equal(gotPresence, presence.Present()) {
+		t.Fatalf("presence = %s, want present", gotPresence)
+	}
+	gotType, ok := typevalue.TypeOf(reg, got.Results[0].Value)
+	if !ok || !typ.TypeEquals(gotType, typ.String) {
+		t.Fatalf("type = %v/%v, want string", gotType, ok)
 	}
 }
 

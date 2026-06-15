@@ -50,14 +50,12 @@ func NewFactsNodeTransfer(config FactsNodeTransferConfig) transfer.NodeTransfer 
 			out = applyPathDescendantInvalidation(ctx, config.Visibility, out, fact)
 		}
 		for _, fact := range facts.PostconditionRefinements(ctx.Point) {
-			out = applyPostconditionRefinement(ctx, config.Visibility, out, fact)
+			out = applyValueRefinementAt(ctx.Registry, config.Visibility, ctx.Point, out, fact.TargetPath(), fact.Value())
 		}
 		for _, fact := range facts.PostconditionPathRelations(ctx.Point) {
 			out = applyPostconditionPathRelation(ctx, config.Visibility, config.ProjectPath, out, fact)
 		}
-		channelSelects := facts.ChannelSelects(ctx.Point)
-		out = applyChannelSelectResult(ctx, config.Visibility, out, channelSelects)
-		for _, fact := range channelSelects {
+		for _, fact := range facts.ChannelSelects(ctx.Point) {
 			out = applyChannelSelect(ctx, config.Visibility, out, fact)
 		}
 		if sources == nil {

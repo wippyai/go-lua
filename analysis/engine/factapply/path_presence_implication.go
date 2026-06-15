@@ -55,7 +55,7 @@ func callOutcomePresenceRelationCanPublishAt(
 	facts factflow.Facts,
 	cache *callOutcomeTraversalCache,
 	callPoint cfg.Point,
-	targets []callOutcomeResultTargetView,
+	targets []factflow.CallResultTargetView,
 	point cfg.Point,
 ) bool {
 	if graph == nil {
@@ -72,7 +72,7 @@ func callOutcomePresenceRelationCanPublishAt(
 		if !callOutcomeRelatableTarget(triggerTarget) {
 			continue
 		}
-		triggerAssign, ok := callOutcomeResultAssignmentPoint(cache, graph, facts, callPoint, triggerTarget, triggerTarget.target.ResultIndex())
+		triggerAssign, ok := callOutcomeResultAssignmentPoint(cache, graph, facts, callPoint, triggerTarget, triggerTarget.ResultIndex())
 		if !ok {
 			continue
 		}
@@ -80,7 +80,7 @@ func callOutcomePresenceRelationCanPublishAt(
 			if !callOutcomeRelatableTarget(target) {
 				continue
 			}
-			targetAssign, ok := callOutcomeResultAssignmentPoint(cache, graph, facts, callPoint, target, target.target.ResultIndex())
+			targetAssign, ok := callOutcomeResultAssignmentPoint(cache, graph, facts, callPoint, target, target.ResultIndex())
 			if !ok {
 				continue
 			}
@@ -103,7 +103,7 @@ func publishCallReturnPresenceImplication(
 	cache *callOutcomeTraversalCache,
 	resolver *visibility.Resolver,
 	callPoint cfg.Point,
-	targets []callOutcomeResultTargetView,
+	targets []factflow.CallResultTargetView,
 	relation CallReturnPresenceRelation,
 	out state.State,
 ) state.State {
@@ -126,8 +126,8 @@ func publishCallReturnPresenceImplication(
 	if ctx.Point != callOutcomeLaterPoint(cache, ctx.Graph, targetAssign, triggerAssign) {
 		return out
 	}
-	triggerKey := factPathKeyAt(resolver, ctx.Point, triggerTarget.target.TargetPath())
-	targetKey := factPathKeyAt(resolver, ctx.Point, target.target.TargetPath())
+	triggerKey := factPathKeyAt(resolver, ctx.Point, triggerTarget.TargetPath())
+	targetKey := factPathKeyAt(resolver, ctx.Point, target.TargetPath())
 	if triggerKey == "" || targetKey == "" {
 		return out
 	}

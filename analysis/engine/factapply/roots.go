@@ -167,7 +167,7 @@ func numFloorForSource(
 		return 0, false
 	}
 	if value, ok := facts.ExpressionValue(source.ExprRef); ok {
-		if floor, ok := numFloorForValue(ctx.Registry, value); ok {
+		if floor, ok := exactIntegerValue(ctx.Registry, value); ok {
 			return floor, true
 		}
 	}
@@ -268,10 +268,6 @@ func exactIntegerSource(ctx transfer.NodeContext, facts factflow.Facts, source f
 		return 0, false
 	}
 	return exactIntegerValue(ctx.Registry, value)
-}
-
-func numFloorForValue(reg *axis.Registry, value product.Value) (int64, bool) {
-	return exactIntegerValue(reg, value)
 }
 
 func exactIntegerValue(reg *axis.Registry, value product.Value) (int64, bool) {

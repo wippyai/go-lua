@@ -60,22 +60,21 @@ func withSupplementalResultSlots(reg *axis.Registry, out CallOutcome, results []
 			out.Results = append(out.Results, result)
 			continue
 		}
-		// Quality-aware merge: a concrete supplemental slot replaces a top-like
-		// primary slot. Concrete-vs-concrete keeps the primary (provider order).
-		// This stops a generic any/unknown declared return (e.g. require, or any
-		// signature returning any) from shadowing a more specific provider such
-		// as module-load export rehydration or a witnessed callable return,
-		// while still keeping the any result when no better provider exists.
-		if slotTopLike(reg, out.Results[pos].Value) && !slotTopLike(reg, result.Value) {
-			out.Results[pos].Value = result.Value
+		// Quality-aware merge: a concrete supplemental slot refines a primary
+		// slot that lacks specific type evidence. Concrete-vs-concrete keeps the
+		// primary (provider order). The meet preserves non-type axes already
+		// carried by the primary result.
+		if resultSlotLacksSpecificTypeEvidence(reg, out.Results[pos].Value) && !resultSlotLacksSpecificTypeEvidence(reg, result.Value) {
+			out.Results[pos].Value = product.Meet(reg, out.Results[pos].Value, result.Value)
 		}
 	}
 	return out
 }
 
-// slotTopLike reports whether a result slot carries no concrete type evidence
-// (absent type, any, or unknown).
-func slotTopLike(reg *axis.Registry, value product.Value) bool {
+// resultSlotLacksSpecificTypeEvidence reports whether a result slot carries no
+// usable type evidence. `any` and `unknown` are weak evidence here; they are not
+// trusted claims.
+func resultSlotLacksSpecificTypeEvidence(reg *axis.Registry, value product.Value) bool {
 	t, ok := typevalue.TypeOf(reg, value)
 	if !ok {
 		return true

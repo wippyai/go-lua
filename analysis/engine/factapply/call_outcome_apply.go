@@ -147,7 +147,7 @@ func applyCallParamCondition(
 		return out
 	}
 	for _, refinement := range expressionCondition.RefinementsForValue(condition.Value) {
-		out = applyPostconditionRefinement(ctx, resolver, out, refinement)
+		out = applyValueRefinementAt(ctx.Registry, resolver, ctx.Point, out, refinement.TargetPath(), refinement.Value())
 	}
 	for _, relation := range expressionCondition.PathRelationsForValue(condition.Value) {
 		out = applyPostconditionPathRelation(ctx, resolver, projectPath, out, relation)
