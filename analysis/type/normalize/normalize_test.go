@@ -43,9 +43,19 @@ func TestUnionForEvidence(t *testing.T) {
 			want:    typ.MaterializeOptional(typ.Unknown),
 		},
 		{
-			name:    "any absorbs",
-			members: []typ.Type{typ.Any, typ.String},
+			name:    "any alone collapses by cardinality",
+			members: []typ.Type{typ.Any},
 			want:    typ.Any,
+		},
+		{
+			name:    "any preserves concrete evidence",
+			members: []typ.Type{typ.Any, typ.String},
+			want:    typ.MaterializeUnion([]typ.Type{typ.Any, typ.String}),
+		},
+		{
+			name:    "any plus nil preserves nilability",
+			members: []typ.Type{typ.Any, typ.Nil},
+			want:    typ.MaterializeOptional(typ.Any),
 		},
 		{
 			name:    "never identity",
@@ -78,9 +88,9 @@ func TestUnionForEvidence(t *testing.T) {
 			want:    typ.Unknown,
 		},
 		{
-			name:    "any absorbs concrete projection",
+			name:    "any does not absorb concrete projection",
 			members: []typ.Type{typ.Any, typ.String},
-			want:    typ.Any,
+			want:    typ.MaterializeUnion([]typ.Type{typ.Any, typ.String}),
 		},
 		{
 			name:    "never is ignored as an impossible projection",
@@ -106,6 +116,24 @@ func TestUnionForEvidence(t *testing.T) {
 				t.Fatalf("UnionForEvidence(%v) = %v, want %v", tt.members, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestUnionForEvidenceAnyEvidenceShape(t *testing.T) {
+	got := UnionForEvidence(typ.Any, typ.String)
+	union, ok := got.(*typ.Union)
+	if !ok {
+		t.Fatalf("UnionForEvidence(any, string) = %T %[1]v, want explicit union", got)
+	}
+	assertExactMembers(t, "any/string evidence members", union.Members, typ.MaterializeUnion([]typ.Type{typ.Any, typ.String}).(*typ.Union).Members)
+
+	got = UnionForEvidence(typ.Any, typ.Nil)
+	optional, ok := got.(*typ.Optional)
+	if !ok {
+		t.Fatalf("UnionForEvidence(any, nil) = %T %[1]v, want explicit optional", got)
+	}
+	if !typ.TypeEquals(optional.Inner, typ.Any) {
+		t.Fatalf("optional inner = %v, want any", optional.Inner)
 	}
 }
 

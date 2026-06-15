@@ -823,13 +823,35 @@ func validateAnnotations(val LValue, annotations []annotation.Annotation, path s
 	}
 	for _, ann := range annotations {
 		if fn := validate.Default.Get(ann.Name); fn != nil {
-			if err := fn(val, ann.Arg); err != nil {
+			if err := fn(val, annotationValidationArg(ann.Arg)); err != nil {
 				if path != "" && err.Field == "" {
 					err.Field = path
 				}
 				return err
 			}
 		}
+	}
+	return nil
+}
+
+func annotationValidationArg(arg annotation.Payload) any {
+	if arg.IsNone() {
+		return nil
+	}
+	if v, ok := arg.AsString(); ok {
+		return v
+	}
+	if v, ok := arg.AsBool(); ok {
+		return v
+	}
+	if v, ok := arg.AsInt(); ok {
+		return v
+	}
+	if v, ok := arg.AsInt64(); ok {
+		return v
+	}
+	if v, ok := arg.AsFloat64(); ok {
+		return v
 	}
 	return nil
 }

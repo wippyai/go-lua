@@ -356,8 +356,8 @@ func BenchmarkValidate_Annotated_MinMax(b *testing.B) {
 	defer L.Close()
 	ann := &LType{
 		inner: typ.NewAnnotated(typ.Number, []annotation.Annotation{
-			{Name: "min", Arg: float64(0)},
-			{Name: "max", Arg: float64(100)},
+			{Name: "min", Arg: annotation.Float64Arg(0)},
+			{Name: "max", Arg: annotation.Float64Arg(100)},
 		}),
 	}
 	for b.ResetTimer(); b.N > 0; b.N-- {
@@ -370,7 +370,7 @@ func BenchmarkValidate_Annotated_Pattern(b *testing.B) {
 	defer L.Close()
 	ann := &LType{
 		inner: typ.NewAnnotated(typ.String, []annotation.Annotation{
-			{Name: "pattern", Arg: "^[a-z]+$"},
+			{Name: "pattern", Arg: annotation.StringArg("^[a-z]+$")},
 		}),
 	}
 	for b.ResetTimer(); b.N > 0; b.N-- {
@@ -384,12 +384,12 @@ func BenchmarkValidate_Record_Annotated(b *testing.B) {
 	rec := &LType{
 		inner: typetable.NewRecord().
 			AnnotatedField("name", typ.String, false, []annotation.Annotation{
-				{Name: "min_len", Arg: float64(1)},
-				{Name: "max_len", Arg: float64(100)},
+				{Name: "min_len", Arg: annotation.Float64Arg(1)},
+				{Name: "max_len", Arg: annotation.Float64Arg(100)},
 			}).
 			AnnotatedField("age", typ.Number, false, []annotation.Annotation{
-				{Name: "min", Arg: float64(0)},
-				{Name: "max", Arg: float64(150)},
+				{Name: "min", Arg: annotation.Float64Arg(0)},
+				{Name: "max", Arg: annotation.Float64Arg(150)},
 			}).
 			Build(),
 	}

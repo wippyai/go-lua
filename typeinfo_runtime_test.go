@@ -205,7 +205,7 @@ func TestTypeInfoRuntime_AnnotatedArrayField(t *testing.T) {
 
 	manifest := typemanifest.New("typeinfo_annotated_array")
 	listType := typ.NewAnnotated(typ.NewArray(typ.Number), []annotation.Annotation{
-		{Name: "min_len", Arg: float64(1)},
+		{Name: "min_len", Arg: annotation.Float64Arg(1)},
 	})
 	holderType := typetable.NewRecord().Field("items", listType).Build()
 	manifest.DefineType("Holder", holderType)

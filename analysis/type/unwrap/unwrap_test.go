@@ -44,8 +44,8 @@ func TestNormalizeNil(t *testing.T) {
 }
 
 func TestAnnotatedAndAnnotations(t *testing.T) {
-	inner := typ.NewAnnotated(typ.Number, []annotation.Annotation{{Name: "max", Arg: float64(100)}})
-	outer := typ.NewAnnotated(inner, []annotation.Annotation{{Name: "min", Arg: float64(0)}})
+	inner := typ.NewAnnotated(typ.Number, []annotation.Annotation{{Name: "max", Arg: annotation.Float64Arg(100)}})
+	outer := typ.NewAnnotated(inner, []annotation.Annotation{{Name: "min", Arg: annotation.Float64Arg(0)}})
 
 	t.Run("Annotated removes one layer", func(t *testing.T) {
 		if got := unwrap.Annotated(outer); got != inner {

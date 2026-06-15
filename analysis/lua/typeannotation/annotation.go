@@ -30,23 +30,23 @@ func Annotations(exprs []ast.AnnotationExpr) ([]annotation.Annotation, bool) {
 	return out, true
 }
 
-func annotationArg(expr ast.Expr) (any, bool) {
+func annotationArg(expr ast.Expr) (annotation.Payload, bool) {
 	switch e := expr.(type) {
 	case *ast.StringExpr:
-		return e.Value, true
+		return annotation.StringArg(e.Value), true
 	case *ast.TrueExpr:
-		return true, true
+		return annotation.BoolArg(true), true
 	case *ast.FalseExpr:
-		return false, true
+		return annotation.BoolArg(false), true
 	case *ast.NumberExpr:
 		if i, ok := numparse.ParseIntegerLiteral(e.Value); ok {
-			return i, true
+			return annotation.Int64Arg(i), true
 		}
 		if f, ok := numparse.ParseFloatLiteral(e.Value); ok {
-			return f, true
+			return annotation.Float64Arg(f), true
 		}
-		return nil, false
+		return annotation.Payload{}, false
 	default:
-		return nil, false
+		return annotation.Payload{}, false
 	}
 }

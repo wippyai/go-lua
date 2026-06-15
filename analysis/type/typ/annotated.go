@@ -71,20 +71,21 @@ func (a *Annotated) String() string {
 		for _, ann := range a.Annotations {
 			sb.WriteString(" @")
 			sb.WriteString(ann.Name)
-			if ann.Arg != nil {
+			if !ann.Arg.IsNone() {
 				sb.WriteString("(")
-				switch v := ann.Arg.(type) {
-				case string:
+				if v, ok := ann.Arg.AsString(); ok {
 					sb.WriteString("\"")
 					sb.WriteString(v)
 					sb.WriteString("\"")
-				case float64:
+				} else if v, ok := ann.Arg.AsFloat64(); ok {
 					sb.WriteString(formatFloat(v))
-				case int64:
+				} else if v, ok := ann.Arg.AsInt64(); ok {
 					sb.WriteString(strconv.FormatInt(v, 10))
-				case int:
+				} else if v, ok := ann.Arg.AsInt(); ok {
 					sb.WriteString(strconv.FormatInt(int64(v), 10))
-				default:
+				} else if v, ok := ann.Arg.AsBool(); ok {
+					sb.WriteString(strconv.FormatBool(v))
+				} else {
 					sb.WriteString("...")
 				}
 				sb.WriteString(")")

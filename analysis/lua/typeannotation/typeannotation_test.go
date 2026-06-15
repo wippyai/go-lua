@@ -146,7 +146,7 @@ func TestTypeRecordReadonlyAndFieldAnnotations(t *testing.T) {
 	if !ok {
 		t.Fatalf("field type = %T, want *typ.Annotated", field.Type)
 	}
-	if len(ann.Annotations) != 1 || !ann.Annotations[0].Equal(annotation.Annotation{Name: "min_len", Arg: int64(1)}) {
+	if len(ann.Annotations) != 1 || !ann.Annotations[0].Equal(annotation.Annotation{Name: "min_len", Arg: annotation.Int64Arg(1)}) {
 		t.Fatalf("annotations = %#v, want min_len(1)", ann.Annotations)
 	}
 }
@@ -253,7 +253,7 @@ func TestAnnotationsRejectUnsupportedArgs(t *testing.T) {
 		Name: "hex",
 		Args: []ast.Expr{&ast.NumberExpr{Value: "0x10"}},
 	}})
-	if !ok || len(anns) != 1 || !anns[0].Equal(annotation.Annotation{Name: "hex", Arg: int64(16)}) {
+	if !ok || len(anns) != 1 || !anns[0].Equal(annotation.Annotation{Name: "hex", Arg: annotation.Int64Arg(16)}) {
 		t.Fatalf("Annotations(hex) = %#v/%v, want int64(16)", anns, ok)
 	}
 

@@ -596,8 +596,8 @@ func TestAnnotation_MinMax(t *testing.T) {
 
 	// number @min(0) @max(100)
 	annotatedType := typ.NewAnnotated(typ.Number, []annotation.Annotation{
-		{Name: "min", Arg: float64(0)},
-		{Name: "max", Arg: float64(100)},
+		{Name: "min", Arg: annotation.Float64Arg(0)},
+		{Name: "max", Arg: annotation.Float64Arg(100)},
 	})
 	lt := NewLType(annotatedType)
 
@@ -631,8 +631,8 @@ func TestAnnotation_MinLen_MaxLen(t *testing.T) {
 
 	// string @min_len(2) @max_len(10)
 	annotatedType := typ.NewAnnotated(typ.String, []annotation.Annotation{
-		{Name: "min_len", Arg: float64(2)},
-		{Name: "max_len", Arg: float64(10)},
+		{Name: "min_len", Arg: annotation.Float64Arg(2)},
+		{Name: "max_len", Arg: annotation.Float64Arg(10)},
 	})
 	lt := NewLType(annotatedType)
 
@@ -666,7 +666,7 @@ func TestAnnotation_Pattern(t *testing.T) {
 
 	// string @pattern("^[a-z]+$")
 	annotatedType := typ.NewAnnotated(typ.String, []annotation.Annotation{
-		{Name: "pattern", Arg: "^[a-z]+$"},
+		{Name: "pattern", Arg: annotation.StringArg("^[a-z]+$")},
 	})
 	lt := NewLType(annotatedType)
 
@@ -700,11 +700,11 @@ func TestAnnotation_RecordFieldAnnotations(t *testing.T) {
 	// type User = {age: number @min(0) @max(150), name: string @min_len(1)}
 	userType := typetable.NewRecord().
 		AnnotatedField("age", typ.Number, false, []annotation.Annotation{
-			{Name: "min", Arg: float64(0)},
-			{Name: "max", Arg: float64(150)},
+			{Name: "min", Arg: annotation.Float64Arg(0)},
+			{Name: "max", Arg: annotation.Float64Arg(150)},
 		}).
 		AnnotatedField("name", typ.String, false, []annotation.Annotation{
-			{Name: "min_len", Arg: float64(1)},
+			{Name: "min_len", Arg: annotation.Float64Arg(1)},
 		}).
 		Build()
 	lt := NewLType(userType)
@@ -776,7 +776,7 @@ func TestAnnotation_NestedRecordAnnotations(t *testing.T) {
 	// type Person = {name: string, address: Address}
 	addressType := typetable.NewRecord().
 		AnnotatedField("zip", typ.String, false, []annotation.Annotation{
-			{Name: "pattern", Arg: "^[0-9]{5}$"},
+			{Name: "pattern", Arg: annotation.StringArg("^[0-9]{5}$")},
 		}).
 		Build()
 
@@ -832,7 +832,7 @@ func TestAnnotation_ErrorPath(t *testing.T) {
 	// Test that error paths are correct for nested structures
 	addressType := typetable.NewRecord().
 		AnnotatedField("zip", typ.String, false, []annotation.Annotation{
-			{Name: "min_len", Arg: float64(5)},
+			{Name: "min_len", Arg: annotation.Float64Arg(5)},
 		}).
 		Build()
 
@@ -859,8 +859,8 @@ func TestAnnotation_ErrorPath(t *testing.T) {
 func TestAnnotation_TypeString(t *testing.T) {
 	// Verify annotated types render correctly
 	annotatedType := typ.NewAnnotated(typ.Number, []annotation.Annotation{
-		{Name: "min", Arg: float64(0)},
-		{Name: "max", Arg: float64(100)},
+		{Name: "min", Arg: annotation.Float64Arg(0)},
+		{Name: "max", Arg: annotation.Float64Arg(100)},
 	})
 
 	expected := "number @min(0) @max(100)"

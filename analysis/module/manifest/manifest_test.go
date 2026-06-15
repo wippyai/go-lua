@@ -61,7 +61,7 @@ func TestManifestRoundTrip(t *testing.T) {
 			ReadonlyField("id", typ.Integer).
 			OptField("name", typ.String).
 			Build(),
-		[]annotation.Annotation{{Name: "sealed", Arg: true}},
+		[]annotation.Annotation{{Name: "sealed", Arg: annotation.BoolArg(true)}},
 	))
 	m.SetExport(typ.Func().
 		TypeParam("T", typ.NewRef("", "User")).

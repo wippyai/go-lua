@@ -16,10 +16,7 @@ func UnionForEvidence(members ...typ.Type) typ.Type {
 }
 
 func unionForEvidence(members []typ.Type) typ.Type {
-	flat, hasNil, hasUnknown, hasAny := flattenUnionForRelationEvidence(members)
-	if hasAny {
-		return typ.Any
-	}
+	flat, hasNil, hasUnknown := flattenUnionForRelationEvidence(members)
 	if len(flat) > 0 {
 		flat = applyUnionSubsumption(flat)
 	}
@@ -35,7 +32,7 @@ func unionForEvidence(members []typ.Type) typ.Type {
 			return typ.Nil
 		}
 		if nonNil.Kind() != kind.Union {
-			return Optional(nonNil)
+			return typ.MaterializeOptional(nonNil)
 		}
 
 		union := nonNil.(*typ.Union)
@@ -69,7 +66,7 @@ func Optional(inner typ.Type) typ.Type {
 	return typ.MaterializeOptional(inner)
 }
 
-func flattenUnionForRelationEvidence(members []typ.Type) (flat []typ.Type, hasNil, hasUnknown, hasAny bool) {
+func flattenUnionForRelationEvidence(members []typ.Type) (flat []typ.Type, hasNil, hasUnknown bool) {
 	flat = make([]typ.Type, 0, len(members))
 	var addMember func(typ.Type)
 	addMember = func(member typ.Type) {
@@ -87,7 +84,7 @@ func flattenUnionForRelationEvidence(members []typ.Type) (flat []typ.Type, hasNi
 			hasUnknown = true
 			return
 		case kind.Any:
-			hasAny = true
+			flat = append(flat, member)
 			return
 		case kind.Nil:
 			hasNil = true
@@ -108,7 +105,7 @@ func flattenUnionForRelationEvidence(members []typ.Type) (flat []typ.Type, hasNi
 	for _, member := range members {
 		addMember(member)
 	}
-	return flat, hasNil, hasUnknown, hasAny
+	return flat, hasNil, hasUnknown
 }
 
 func applyUnionSubsumption(members []typ.Type) []typ.Type {

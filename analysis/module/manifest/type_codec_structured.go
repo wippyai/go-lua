@@ -177,26 +177,25 @@ func encodeAnnotations(annotations []annotation.Annotation) ([]annotationWire, e
 	out := make([]annotationWire, 0, len(annotations))
 	for _, ann := range annotations {
 		encoded := annotationWire{Name: ann.Name}
-		switch v := ann.Arg.(type) {
-		case nil:
+		if ann.Arg.IsNone() {
 			encoded.Kind = "nil"
-		case string:
+		} else if v, ok := ann.Arg.AsString(); ok {
 			encoded.Kind = "string"
 			encoded.String = &v
-		case bool:
+		} else if v, ok := ann.Arg.AsBool(); ok {
 			encoded.Kind = "bool"
 			encoded.Bool = &v
-		case int:
+		} else if v, ok := ann.Arg.AsInt(); ok {
 			encoded.Kind = "int"
 			encoded.Int = &v
-		case int64:
+		} else if v, ok := ann.Arg.AsInt64(); ok {
 			encoded.Kind = "int64"
 			encoded.Int64 = &v
-		case float64:
+		} else if v, ok := ann.Arg.AsFloat64(); ok {
 			encoded.Kind = "float64"
 			encoded.Float64 = &v
-		default:
-			return nil, fmt.Errorf("annotation %q has unsupported arg %T", ann.Name, ann.Arg)
+		} else {
+			return nil, fmt.Errorf("annotation %q has unsupported arg", ann.Name)
 		}
 		out = append(out, encoded)
 	}
@@ -209,39 +208,39 @@ func decodeAnnotations(nodes []annotationWire) ([]annotation.Annotation, error) 
 	}
 	out := make([]annotation.Annotation, 0, len(nodes))
 	for _, node := range nodes {
-		var arg any
+		var payload annotation.Payload
 		switch node.Kind {
 		case "", "nil":
-			arg = nil
+			payload = annotation.Payload{}
 		case "string":
 			if node.String == nil {
 				return nil, fmt.Errorf("annotation %q missing string arg", node.Name)
 			}
-			arg = *node.String
+			payload = annotation.StringArg(*node.String)
 		case "bool":
 			if node.Bool == nil {
 				return nil, fmt.Errorf("annotation %q missing bool arg", node.Name)
 			}
-			arg = *node.Bool
+			payload = annotation.BoolArg(*node.Bool)
 		case "int":
 			if node.Int == nil {
 				return nil, fmt.Errorf("annotation %q missing int arg", node.Name)
 			}
-			arg = *node.Int
+			payload = annotation.IntArg(*node.Int)
 		case "int64":
 			if node.Int64 == nil {
 				return nil, fmt.Errorf("annotation %q missing int64 arg", node.Name)
 			}
-			arg = *node.Int64
+			payload = annotation.Int64Arg(*node.Int64)
 		case "float64":
 			if node.Float64 == nil {
 				return nil, fmt.Errorf("annotation %q missing float64 arg", node.Name)
 			}
-			arg = *node.Float64
+			payload = annotation.Float64Arg(*node.Float64)
 		default:
 			return nil, fmt.Errorf("annotation %q has unknown arg kind %q", node.Name, node.Kind)
 		}
-		out = append(out, annotation.Annotation{Name: node.Name, Arg: arg})
+		out = append(out, annotation.Annotation{Name: node.Name, Arg: payload})
 	}
 	return out, nil
 }

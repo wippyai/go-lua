@@ -157,13 +157,13 @@ func TestUnionNestedOptionalAndUnionNilDedups(t *testing.T) {
 }
 
 func TestUnionAnnotatedMembersDoNotPanic(t *testing.T) {
-	annotatedOpt := typ.NewAnnotated(Optional(typ.String), []annotation.Annotation{{Name: "min_len", Arg: int64(1)}})
+	annotatedOpt := typ.NewAnnotated(Optional(typ.String), []annotation.Annotation{{Name: "min_len", Arg: annotation.Int64Arg(1)}})
 	if got := Union(annotatedOpt, typ.Number); got == nil {
 		t.Fatal("union should not be nil")
 	}
 
 	inner := Union(typ.String, typ.Number)
-	annotatedUnion := typ.NewAnnotated(inner, []annotation.Annotation{{Name: "max_len", Arg: int64(255)}})
+	annotatedUnion := typ.NewAnnotated(inner, []annotation.Annotation{{Name: "max_len", Arg: annotation.Int64Arg(255)}})
 	if got := Union(annotatedUnion, typ.Boolean); got == nil {
 		t.Fatal("union should not be nil")
 	}
@@ -216,7 +216,7 @@ func TestOptionalUnionAddsNilAndMaterializesUnion(t *testing.T) {
 
 func TestOptionalAnnotatedUnionDoesNotPanic(t *testing.T) {
 	inner := Union(typ.String, typ.Number)
-	annotated := typ.NewAnnotated(inner, []annotation.Annotation{{Name: "max_len", Arg: int64(255)}})
+	annotated := typ.NewAnnotated(inner, []annotation.Annotation{{Name: "max_len", Arg: annotation.Int64Arg(255)}})
 	if got := Optional(annotated); got == nil {
 		t.Fatal("optional should not be nil")
 	}

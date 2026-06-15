@@ -184,7 +184,7 @@ func (vc *ValidationContext) validateValue(val LValue, t typ.Type, path *pathBui
 func (vc *ValidationContext) checkAnnotations(val LValue, annotations []annotation.Annotation, path *pathBuilder, errors *[]*validate.Error) {
 	for _, ann := range annotations {
 		if fn := vc.registry.Get(ann.Name); fn != nil {
-			if err := fn(val, ann.Arg); err != nil {
+			if err := fn(val, annotationValidationArg(ann.Arg)); err != nil {
 				err.Field = path.String()
 				*errors = append(*errors, err)
 			}

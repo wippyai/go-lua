@@ -342,12 +342,12 @@ func TestCallableReturnUnionProjectionPolicy(t *testing.T) {
 		want     typ.Type
 	}{
 		{
-			name: "any absorbs concrete projection",
+			name: "any preserves concrete projection",
 			receiver: typeexpr.Union(
 				callableReturning(typ.Any),
 				callableReturning(typ.String),
 			),
-			want: typ.Any,
+			want: typeexpr.Union(typ.Any, typ.String),
 		},
 		{
 			name: "optional return preserves nilability",

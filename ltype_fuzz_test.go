@@ -102,7 +102,7 @@ func FuzzTypeDecodeToValidation(f *testing.F) {
 		typ.LiteralString("active"),
 		typ.NewInterface("table", nil),
 		typ.NewTuple(typ.Number, typ.String),
-		typ.NewAnnotated(typ.Number, []annotation.Annotation{{Name: "min", Arg: float64(0)}}),
+		typ.NewAnnotated(typ.Number, []annotation.Annotation{{Name: "min", Arg: annotation.Float64Arg(0)}}),
 	}
 
 	for _, seed := range seeds {

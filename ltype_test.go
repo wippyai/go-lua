@@ -1060,7 +1060,7 @@ func TestTypeMethodIs_AnnotatedType(t *testing.T) {
 
 	annotated := &LType{
 		inner: typ.NewAnnotated(typ.Number, []annotation.Annotation{
-			{Name: "min", Arg: float64(0)},
+			{Name: "min", Arg: annotation.Float64Arg(0)},
 		}),
 		name: "NonNegative",
 	}
@@ -1105,7 +1105,7 @@ func TestTypeMethodIs_AnnotatedArrayMinLen(t *testing.T) {
 
 	annotated := &LType{
 		inner: typ.NewAnnotated(typ.NewArray(typ.Number), []annotation.Annotation{
-			{Name: "min_len", Arg: float64(1)},
+			{Name: "min_len", Arg: annotation.Float64Arg(1)},
 		}),
 		name: "NumList",
 	}
