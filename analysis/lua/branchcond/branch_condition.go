@@ -7,6 +7,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/pathexpr"
 	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
 	"github.com/wippyai/go-lua/compiler/ast"
+	"github.com/wippyai/go-lua/compiler/parse/numparse"
 )
 
 type CheckKind uint8
@@ -23,6 +24,8 @@ const (
 	CheckLiteralNot
 	CheckPathEqual
 	CheckPathNot
+	CheckLenGe
+	CheckIndexInRange
 )
 
 type Check struct {
@@ -31,6 +34,7 @@ type Check struct {
 	OtherPath     path.Path
 	TypeName      string
 	LiteralString string
+	LenFloor      int64
 }
 
 // PredicateCall returns the direct call whose boolean result selects a branch.
@@ -73,6 +77,15 @@ func Normalize(expr ast.Expr, bindings *bind.Result) Check {
 		}
 	case *ast.RelationalOpExpr:
 		if !isSupportedRelop(expr.Operator) {
+			return Check{}
+		}
+		if check, ok := normalizeLengthFloorComparison(expr, bindings); ok {
+			return check
+		}
+		if check, ok := normalizeIndexInRangeComparison(expr, bindings); ok {
+			return check
+		}
+		if !isEqualityRelop(expr.Operator) {
 			return Check{}
 		}
 		if check, ok := normalizeTypeComparison(expr, bindings); ok {
@@ -202,7 +215,7 @@ func stringLiteralComparisonOperands(pathExpr, literalExpr ast.Expr, bindings *b
 
 func SupportsTypeComparison(expr ast.Expr, bindings *bind.Result) bool {
 	rel, ok := expr.(*ast.RelationalOpExpr)
-	if !ok || !isSupportedRelop(rel.Operator) {
+	if !ok || !isEqualityRelop(rel.Operator) {
 		return false
 	}
 	_, ok = normalizeTypeComparison(rel, bindings)
@@ -276,5 +289,118 @@ func nilComparisonPath(lhs, rhs ast.Expr, bindings *bind.Result) (path.Path, boo
 }
 
 func isSupportedRelop(op string) bool {
+	switch op {
+	case "==", "~=", "<", ">", "<=", ">=":
+		return true
+	default:
+		return false
+	}
+}
+
+func isEqualityRelop(op string) bool {
 	return op == "==" || op == "~="
+}
+
+// normalizeLengthFloorComparison recognizes a non-empty / lower-bound guard on
+// an array length, such as #xs > 0, #xs >= 1, or #xs ~= 0, and lowers it to a
+// canonical CheckLenGe{Path: xs, LenFloor: k} that holds on the true edge.
+func normalizeLengthFloorComparison(expr *ast.RelationalOpExpr, bindings *bind.Result) (Check, bool) {
+	if arrayPath, floor, ok := lengthFloorOperands(expr.Lhs, expr.Operator, expr.Rhs, bindings); ok {
+		return Check{Kind: CheckLenGe, Path: arrayPath, LenFloor: floor}, true
+	}
+	if arrayPath, floor, ok := lengthFloorOperands(expr.Rhs, flipRelop(expr.Operator), expr.Lhs, bindings); ok {
+		return Check{Kind: CheckLenGe, Path: arrayPath, LenFloor: floor}, true
+	}
+	return Check{}, false
+}
+
+// normalizeIndexInRangeComparison recognizes an index upper-bound guard such as
+// `i <= #xs` or `#xs >= i`. On the true edge it proves reads `xs[i]` are
+// in-range when paired with a positive index fact.
+func normalizeIndexInRangeComparison(expr *ast.RelationalOpExpr, bindings *bind.Result) (Check, bool) {
+	if indexPath, arrayPath, ok := indexLenBoundOperands(expr.Lhs, expr.Operator, expr.Rhs, bindings); ok {
+		return Check{Kind: CheckIndexInRange, Path: indexPath, OtherPath: arrayPath}, true
+	}
+	if indexPath, arrayPath, ok := indexLenBoundOperands(expr.Rhs, flipRelop(expr.Operator), expr.Lhs, bindings); ok {
+		return Check{Kind: CheckIndexInRange, Path: indexPath, OtherPath: arrayPath}, true
+	}
+	return Check{}, false
+}
+
+func indexLenBoundOperands(indexExpr ast.Expr, op string, lenExpr ast.Expr, bindings *bind.Result) (path.Path, path.Path, bool) {
+	if op != "<=" {
+		return path.Path{}, path.Path{}, false
+	}
+	indexPath, ok := pathexpr.Resolve(indexExpr, bindings)
+	if !ok || indexPath.IsEmpty() {
+		return path.Path{}, path.Path{}, false
+	}
+	lenOp, ok := lenExpr.(*ast.UnaryLenOpExpr)
+	if !ok {
+		return path.Path{}, path.Path{}, false
+	}
+	arrayPath, ok := pathexpr.Resolve(lenOp.Expr, bindings)
+	if !ok || arrayPath.IsEmpty() {
+		return path.Path{}, path.Path{}, false
+	}
+	return indexPath, arrayPath, true
+}
+
+// lengthFloorOperands matches `#array <op> const` and returns the array path and
+// the proven floor on its length when op establishes a positive lower bound.
+func lengthFloorOperands(lenExpr ast.Expr, op string, constExpr ast.Expr, bindings *bind.Result) (path.Path, int64, bool) {
+	lenOp, ok := lenExpr.(*ast.UnaryLenOpExpr)
+	if !ok {
+		return path.Path{}, 0, false
+	}
+	arrayPath, ok := pathexpr.Resolve(lenOp.Expr, bindings)
+	if !ok || arrayPath.IsEmpty() {
+		return path.Path{}, 0, false
+	}
+	c, ok := constExpr.(*ast.NumberExpr)
+	if !ok {
+		return path.Path{}, 0, false
+	}
+	value, ok := numparse.ParseIntegerLiteral(c.Value)
+	if !ok {
+		return path.Path{}, 0, false
+	}
+	floor, ok := lengthFloorForRelop(op, value)
+	if !ok || floor <= 0 {
+		return path.Path{}, 0, false
+	}
+	return arrayPath, floor, true
+}
+
+// lengthFloorForRelop computes the proven length lower bound from `len <op> c`.
+func lengthFloorForRelop(op string, c int64) (int64, bool) {
+	switch op {
+	case ">":
+		return c + 1, true
+	case ">=":
+		return c, true
+	case "~=":
+		// len ~= 0 proves len >= 1 since length is non-negative.
+		if c == 0 {
+			return 1, true
+		}
+		return 0, false
+	default:
+		return 0, false
+	}
+}
+
+func flipRelop(op string) string {
+	switch op {
+	case "<":
+		return ">"
+	case ">":
+		return "<"
+	case "<=":
+		return ">="
+	case ">=":
+		return "<="
+	default:
+		return op
+	}
 }

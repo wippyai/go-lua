@@ -25,6 +25,18 @@ func TestSnapshotsCloneFiniteLanes(t *testing.T) {
 	effectKey := effectdelta.Key{Target: pathdom.PathKey("sym130@1.table"), Site: "effect", Kind: effectdelta.Mutation}
 	proof := pathevidence.BranchProof{Kind: pathevidence.BranchProofPathPresence, Path: pathKey, Presence: presence.Present()}
 	otherProof := pathevidence.BranchProof{Kind: pathevidence.BranchProofPathNotEqual, Path: pathKey, Other: memberKey}
+	implication := pathevidence.PathPresenceImplication{
+		Trigger:         pathKey,
+		TriggerPresence: presence.Absent(),
+		Target:          memberKey,
+		TargetPresence:  presence.Present(),
+	}
+	otherImplication := pathevidence.PathPresenceImplication{
+		Trigger:         memberKey,
+		TriggerPresence: presence.Present(),
+		Target:          pathKey,
+		TargetPresence:  presence.Absent(),
+	}
 	selectFact := channelselectfact.Fact{Select: "select-snapshot", Kind: channelselectfact.FactSelect, Result: pathKey}
 	otherSelectFact := channelselectfact.Fact{Select: "select-snapshot", Kind: channelselectfact.FactCase, Case: memberKey, Index: 1}
 	dynamicFact := dynamicindex.Fact{
@@ -47,6 +59,7 @@ func TestSnapshotsCloneFiniteLanes(t *testing.T) {
 		WritePathStaticMember(memberKey, present).
 		WriteDynamicIndexFact(reg, dynamicKey, dynamicFact).
 		AddBranchProof(proof).
+		AddPathPresenceImplication(implication).
 		AddChannelSelectFact(selectFact).
 		WriteEffectDelta(effectKey, effectDelta)
 
@@ -98,6 +111,18 @@ func TestSnapshotsCloneFiniteLanes(t *testing.T) {
 		t.Fatalf("fresh branch-proof snapshot = %#v, want original proof", got)
 	}
 
+	implicationSnapshot := s.PathPresenceImplicationsSnapshot()
+	if implicationSnapshot.Bottom || implicationSnapshot.Top || len(implicationSnapshot.Implications) != 1 {
+		t.Fatalf("path-presence implication snapshot = %#v, want one finite implication", implicationSnapshot)
+	}
+	implicationSnapshot.Implications[0] = otherImplication
+	if !s.HasPathPresenceImplication(implication) || s.HasPathPresenceImplication(otherImplication) {
+		t.Fatalf("path-presence implication snapshot mutation changed state")
+	}
+	if got := s.PathPresenceImplicationsSnapshot().Implications[0]; got != implication {
+		t.Fatalf("fresh path-presence implication snapshot = %#v, want original implication", got)
+	}
+
 	channelSnapshot := s.ChannelSelectFactsSnapshot()
 	if channelSnapshot.Bottom || channelSnapshot.Top || len(channelSnapshot.Facts) != 1 {
 		t.Fatalf("channel-select snapshot = %#v, want one finite fact", channelSnapshot)
@@ -130,7 +155,7 @@ func TestSnapshotTopBottomAndEmptyLanes(t *testing.T) {
 	empty := State{}
 
 	topPaths := top.PathRefinementsSnapshot()
-	if !topPaths.Top || len(topPaths.Refinements) != 0 {
+	if topPaths.Bottom || !topPaths.Top || len(topPaths.Refinements) != 0 {
 		t.Fatalf("top path snapshot = %#v, want top with no finite facts", topPaths)
 	}
 	topDynamic := top.DynamicIndexFactsSnapshot()
@@ -149,14 +174,18 @@ func TestSnapshotTopBottomAndEmptyLanes(t *testing.T) {
 	if topProofs.Bottom || !topProofs.Top || len(topProofs.Proofs) != 0 {
 		t.Fatalf("top branch-proof snapshot = %#v, want top with no finite facts", topProofs)
 	}
+	topImplications := top.PathPresenceImplicationsSnapshot()
+	if topImplications.Bottom || !topImplications.Top || len(topImplications.Implications) != 0 {
+		t.Fatalf("top path-presence implication snapshot = %#v, want top with no finite facts", topImplications)
+	}
 	topChannel := top.ChannelSelectFactsSnapshot()
 	if topChannel.Bottom || !topChannel.Top || len(topChannel.Facts) != 0 {
 		t.Fatalf("top channel-select snapshot = %#v, want top with no finite facts", topChannel)
 	}
 
 	bottomPaths := bottom.PathRefinementsSnapshot()
-	if bottomPaths.Top || len(bottomPaths.Refinements) != 0 {
-		t.Fatalf("bottom path snapshot = %#v, want finite empty pointwise lane", bottomPaths)
+	if !bottomPaths.Bottom || bottomPaths.Top || len(bottomPaths.Refinements) != 0 {
+		t.Fatalf("bottom path snapshot = %#v, want explicit bottom", bottomPaths)
 	}
 	bottomDynamic := bottom.DynamicIndexFactsSnapshot()
 	if bottomDynamic.Top || len(bottomDynamic.Facts) != 0 {
@@ -174,14 +203,18 @@ func TestSnapshotTopBottomAndEmptyLanes(t *testing.T) {
 	if !bottomProofs.Bottom || bottomProofs.Top || len(bottomProofs.Proofs) != 0 {
 		t.Fatalf("bottom branch-proof snapshot = %#v, want explicit bottom", bottomProofs)
 	}
+	bottomImplications := bottom.PathPresenceImplicationsSnapshot()
+	if !bottomImplications.Bottom || bottomImplications.Top || len(bottomImplications.Implications) != 0 {
+		t.Fatalf("bottom path-presence implication snapshot = %#v, want explicit bottom", bottomImplications)
+	}
 	bottomChannel := bottom.ChannelSelectFactsSnapshot()
 	if !bottomChannel.Bottom || bottomChannel.Top || len(bottomChannel.Facts) != 0 {
 		t.Fatalf("bottom channel-select snapshot = %#v, want explicit bottom", bottomChannel)
 	}
 
 	emptyPaths := empty.PathRefinementsSnapshot()
-	if emptyPaths.Top || len(emptyPaths.Refinements) != 0 {
-		t.Fatalf("empty path snapshot = %#v, want finite empty pointwise lane", emptyPaths)
+	if emptyPaths.Bottom || !emptyPaths.Top || len(emptyPaths.Refinements) != 0 {
+		t.Fatalf("empty path snapshot = %#v, want reachable top/empty", emptyPaths)
 	}
 	emptyDynamic := empty.DynamicIndexFactsSnapshot()
 	if emptyDynamic.Top || len(emptyDynamic.Facts) != 0 {
@@ -198,6 +231,10 @@ func TestSnapshotTopBottomAndEmptyLanes(t *testing.T) {
 	emptyProofs := empty.BranchProofsSnapshot()
 	if emptyProofs.Bottom || !emptyProofs.Top || len(emptyProofs.Proofs) != 0 {
 		t.Fatalf("empty branch-proof snapshot = %#v, want reachable top/empty", emptyProofs)
+	}
+	emptyImplications := empty.PathPresenceImplicationsSnapshot()
+	if emptyImplications.Bottom || !emptyImplications.Top || len(emptyImplications.Implications) != 0 {
+		t.Fatalf("empty path-presence implication snapshot = %#v, want reachable top/empty", emptyImplications)
 	}
 	emptyChannel := empty.ChannelSelectFactsSnapshot()
 	if emptyChannel.Bottom || !emptyChannel.Top || len(emptyChannel.Facts) != 0 {

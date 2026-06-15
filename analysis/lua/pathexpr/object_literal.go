@@ -31,18 +31,12 @@ func ObjectEntries(table *ast.TableExpr) []ObjectEntry {
 // ObjectLiteralTable unwraps assertion/cast wrappers and returns the underlying
 // table constructor when present.
 func ObjectLiteralTable(expr ast.Expr) (*ast.TableExpr, bool) {
-	for {
-		switch wrapped := expr.(type) {
-		case *ast.CastExpr:
-			expr = wrapped.Expr
-		case *ast.NonNilAssertExpr:
-			expr = wrapped.Expr
-		case *ast.TableExpr:
-			return wrapped, true
-		default:
-			return nil, false
-		}
+	inner, ok := sourceprovenance.ProofInner(expr)
+	if !ok {
+		return nil, false
 	}
+	table, ok := inner.(*ast.TableExpr)
+	return table, ok
 }
 
 func objectEntries(table *ast.TableExpr, prefix path.Path) []ObjectEntry {

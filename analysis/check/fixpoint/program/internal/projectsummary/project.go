@@ -79,7 +79,7 @@ func FromResult(result ResultReader) summary.Summary {
 		NormalReturnParamEqualities:     projectNormalReturnParamEqualities(reg, result),
 		NormalReturnFacts:               projectNormalReturnFacts(reg, result, exit),
 		ReturnConditionParamRefinements: projectReturnConditionParamRefinements(reg, result),
-		ReturnPresenceRelations:         projectReturnPresenceRelations(result),
+		ReturnPresenceRelations:         projectReturnPresenceRelations(reg, result),
 	}
 
 	var declared []product.Value

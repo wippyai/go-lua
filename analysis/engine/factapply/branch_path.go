@@ -2,16 +2,23 @@ package factapply
 
 import (
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/typewitness"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/variantorigin"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/domain/value/variant"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/engine/visibility"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
+	"github.com/wippyai/go-lua/analysis/type/access"
+	"github.com/wippyai/go-lua/analysis/type/table"
+	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
 type pathValue struct {
@@ -22,12 +29,13 @@ type pathValue struct {
 func applyBranchPathRelation(
 	ctx transfer.EdgeContext,
 	resolver *visibility.Resolver,
+	projectPath PathTypeProjector,
 	out state.State,
 	relation factflow.BranchPathRelation,
 ) state.State {
 	switch relation.Kind() {
 	case factflow.BranchPathRelationEqual:
-		return applyBranchPathEquality(ctx, resolver, out, relation.LeftPath(), relation.RightPath())
+		return applyBranchPathEquality(ctx, resolver, projectPath, out, relation.LeftPath(), relation.RightPath())
 	case factflow.BranchPathRelationNotEqual:
 		return applyBranchPathInequality(ctx, resolver, out, relation.LeftPath(), relation.RightPath())
 	default:
@@ -38,27 +46,31 @@ func applyBranchPathRelation(
 func applyBranchPathEquality(
 	ctx transfer.EdgeContext,
 	resolver *visibility.Resolver,
+	projectPath PathTypeProjector,
 	out state.State,
 	leftPath pathdom.Path,
 	rightPath pathdom.Path,
 ) state.State {
-	out = applyPathEqualityAt(ctx.Registry, resolver, ctx.Edge.From, out, leftPath, rightPath)
-	return applyChannelSelectCaseEquality(ctx.Registry, resolver, ctx.Edge.From, out, leftPath, rightPath)
+	if selected, ok := applyChannelSelectCaseEquality(ctx.Registry, resolver, ctx.Edge.From, out, leftPath, rightPath); ok {
+		return selected
+	}
+	return applyPathEqualityAt(ctx.Registry, resolver, projectPath, ctx.Edge.From, out, leftPath, rightPath)
 }
 
 func applyPathEqualityAt(
 	reg *axis.Registry,
 	resolver *visibility.Resolver,
+	projectPath PathTypeProjector,
 	point cfg.Point,
 	out state.State,
 	leftPath pathdom.Path,
 	rightPath pathdom.Path,
 ) state.State {
-	left, ok := resolvePathValueAt(reg, resolver, point, out, leftPath)
+	left, ok := resolvePathValueAt(reg, resolver, point, out, leftPath, projectPath)
 	if !ok {
 		return out
 	}
-	right, ok := resolvePathValueAt(reg, resolver, point, out, rightPath)
+	right, ok := resolvePathValueAt(reg, resolver, point, out, rightPath, projectPath)
 	if !ok {
 		return out
 	}
@@ -77,6 +89,9 @@ func applyBranchPathInequality(
 	leftPath pathdom.Path,
 	rightPath pathdom.Path,
 ) state.State {
+	if selected, ok := applyChannelSelectCaseInequality(ctx.Registry, resolver, ctx.Edge.From, out, leftPath, rightPath); ok {
+		return selected
+	}
 	out = applyPathOriginRelation(ctx.Registry, resolver, ctx.Edge.From, out, leftPath, rightPath, false)
 	out = applyPathOriginRelation(ctx.Registry, resolver, ctx.Edge.From, out, rightPath, leftPath, false)
 	return out
@@ -88,6 +103,7 @@ func resolvePathValueAt(
 	point cfg.Point,
 	out state.State,
 	targetPath pathdom.Path,
+	projectors ...PathTypeProjector,
 ) (pathValue, bool) {
 	if targetPath.Symbol == 0 {
 		return pathValue{}, false
@@ -111,10 +127,13 @@ func resolvePathValueAt(
 	value := out.ReadPathKey(reg, pathKey)
 	if product.Equal(reg, value, product.Bottom(reg)) {
 		projected, ok := projectPathOriginValue(reg, out, targetPath)
-		if !ok {
+		if ok {
+			value = projected
+		} else if projected, ok := projectPathStructuralValue(reg, out, targetPath, firstPathTypeProjector(projectors)); ok {
+			value = projected
+		} else {
 			return pathValue{}, false
 		}
-		value = projected
 	}
 	return pathValue{
 		value: value,
@@ -122,6 +141,91 @@ func resolvePathValueAt(
 			return s.WritePathKey(reg, pathKey, value)
 		},
 	}, true
+}
+
+func firstPathTypeProjector(projectors []PathTypeProjector) PathTypeProjector {
+	if len(projectors) == 0 {
+		return nil
+	}
+	return projectors[0]
+}
+
+func projectPathStructuralValue(reg *axis.Registry, out state.State, targetPath pathdom.Path, projectPath PathTypeProjector) (product.Value, bool) {
+	if targetPath.Symbol == 0 || len(targetPath.Segments) == 0 {
+		return product.Value{}, false
+	}
+	if projectPath == nil {
+		projectPath = defaultPathTypeProjector
+	}
+	root := out.ReadValue(reg, key.SymbolValue(targetPath.Symbol))
+	if product.Equal(reg, root, product.Bottom(reg)) {
+		return product.Value{}, false
+	}
+	rootType, ok := structuralTypeFromPathValue(reg, root)
+	if !ok {
+		return product.Value{}, false
+	}
+	projected, ok := projectPath(rootType, targetPath)
+	if !ok {
+		return product.Value{}, false
+	}
+	return typevalue.WithWitness(reg, typevalue.FromType(reg, projected), projected), true
+}
+
+func defaultPathTypeProjector(root typ.Type, p pathdom.Path) (typ.Type, bool) {
+	current := root
+	for _, seg := range p.Segments {
+		var ok bool
+		switch seg.Kind {
+		case segment.SegmentField, segment.SegmentIndexString:
+			current, ok = access.Field(current, seg.Name)
+		case segment.SegmentIndexInt:
+			current, ok = access.RuntimeIndex(current, typ.LiteralInt(int64(seg.Index)))
+		default:
+			return nil, false
+		}
+		if !ok {
+			return nil, false
+		}
+	}
+	return current, current != nil
+}
+
+func structuralTypeFromPathValue(reg *axis.Registry, value product.Value) (typ.Type, bool) {
+	origin := product.Get(reg, value, variantorigin.Key)
+	valuePresence := product.PresenceOf(value)
+	if witness := product.Get(reg, value, typewitness.Key); !witness.IsTop() {
+		if t, ok := witness.Type(); ok {
+			t = typeForPathValuePresence(t, valuePresence)
+			if !origin.IsBottom() && !origin.IsTop() {
+				if narrowed, ok := variant.NarrowByOrigin(t, origin.Family(), origin.Cases()); ok {
+					return narrowed, true
+				}
+				if narrowed, ok := variant.TypeFromOrigin(origin.Family(), origin.Cases()); ok {
+					return typeForPathValuePresence(narrowed, valuePresence), true
+				}
+			}
+			return t, true
+		}
+	}
+	if !origin.IsBottom() && !origin.IsTop() {
+		if t, ok := variant.TypeFromOrigin(origin.Family(), origin.Cases()); ok {
+			return typeForPathValuePresence(t, valuePresence), true
+		}
+	}
+	return nil, false
+}
+
+func typeForPathValuePresence(t typ.Type, p presence.Value) typ.Type {
+	switch {
+	case presence.Equal(p, presence.Absent()):
+		return typ.Nil
+	case presence.Equal(p, presence.Present()):
+		if present := table.PresentReadonlyEntryValue(t); present != nil {
+			return present
+		}
+	}
+	return t
 }
 
 func projectPathOriginValue(reg *axis.Registry, out state.State, targetPath pathdom.Path) (product.Value, bool) {

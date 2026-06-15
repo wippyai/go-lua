@@ -6,12 +6,13 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/annotation"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/analysis/type/typeexpr"
 	"github.com/wippyai/go-lua/analysis/type/unwrap"
 )
 
 func TestAlias(t *testing.T) {
 	t.Run("preserves optional", func(t *testing.T) {
-		opt := typ.NewOptional(typ.String)
+		opt := typeexpr.Optional(typ.String)
 		alias := typ.NewAlias("OptString", opt)
 		result := unwrap.Alias(alias)
 		if _, ok := result.(*typ.Optional); !ok {
@@ -69,13 +70,13 @@ func TestAnnotatedAndAnnotations(t *testing.T) {
 }
 
 func TestOptional(t *testing.T) {
-	optional := typ.NewOptional(typ.String)
+	optional := typeexpr.Optional(typ.String)
 	aliasToOptional := typ.NewAlias("OptString", optional)
 	aliasToNil := typ.NewAlias("NilAlias", typ.Nil)
 	aliasAroundOptional := typ.NewAlias("AliasOpt", optional)
 
 	t.Run("nested optionals", func(t *testing.T) {
-		outer := typ.NewOptional(optional)
+		outer := typeexpr.Optional(optional)
 		if got := unwrap.Optional(outer); got != typ.String {
 			t.Fatalf("Optional(nested optional) = %T, want string", got)
 		}
@@ -88,7 +89,7 @@ func TestOptional(t *testing.T) {
 	})
 
 	t.Run("unwraps optional around alias to optional", func(t *testing.T) {
-		wrapped := typ.NewOptional(aliasAroundOptional)
+		wrapped := typeexpr.Optional(aliasAroundOptional)
 		if got := unwrap.Optional(wrapped); got != typ.String {
 			t.Fatalf("Optional(optional around alias) = %T, want string", got)
 		}
@@ -185,8 +186,8 @@ func TestIsOptionalLike(t *testing.T) {
 	}{
 		{"nil type", nil, true},
 		{"Nil", typ.Nil, true},
-		{"Optional", typ.NewOptional(typ.String), true},
-		{"Union with nil", typ.NewUnion(typ.String, typ.Nil), true},
+		{"Optional", typeexpr.Optional(typ.String), true},
+		{"Union with nil", typeexpr.Union(typ.String, typ.Nil), true},
 		{"String", typ.String, false},
 	}
 

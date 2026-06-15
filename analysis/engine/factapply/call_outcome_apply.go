@@ -18,6 +18,7 @@ func applyCallOutcomeFacts(
 	ctx transfer.NodeContext,
 	facts factflow.Facts,
 	resolver *visibility.Resolver,
+	projectPath PathTypeProjector,
 	out state.State,
 	site factflow.CallSite,
 	outcome CallOutcome,
@@ -47,10 +48,10 @@ func applyCallOutcomeFacts(
 		out = applyPathDescendantInvalidation(ctx, resolver, out, factflow.NewPathDescendantInvalidation(targetPath))
 	}
 	for _, condition := range outcome.ParamConditions {
-		out = applyCallParamCondition(ctx, facts, resolver, out, site, condition)
+		out = applyCallParamCondition(ctx, facts, resolver, projectPath, out, site, condition)
 	}
 	for _, relation := range outcome.ParamPathRelations {
-		out = applyCallParamPathRelation(ctx, resolver, out, paramBindings, relation)
+		out = applyCallParamPathRelation(ctx, resolver, projectPath, out, paramBindings, relation)
 	}
 	for _, fact := range normalReturnFacts.PathStaticMembers {
 		targetPath, ok := fact.Path.Substitute(bindings)
@@ -113,6 +114,7 @@ func applyCallParamCondition(
 	ctx transfer.NodeContext,
 	facts factflow.Facts,
 	resolver *visibility.Resolver,
+	projectPath PathTypeProjector,
 	out state.State,
 	site factflow.CallSite,
 	condition CallParamCondition,
@@ -133,7 +135,7 @@ func applyCallParamCondition(
 		out = applyPostconditionRefinement(ctx, resolver, out, refinement)
 	}
 	for _, relation := range expressionCondition.PathRelationsForValue(condition.Value) {
-		out = applyPostconditionPathRelation(ctx, resolver, out, relation)
+		out = applyPostconditionPathRelation(ctx, resolver, projectPath, out, relation)
 	}
 	return out
 }
@@ -141,6 +143,7 @@ func applyCallParamCondition(
 func applyCallParamPathRelation(
 	ctx transfer.NodeContext,
 	resolver *visibility.Resolver,
+	projectPath PathTypeProjector,
 	out state.State,
 	bindings []pathdom.Path,
 	relation CallParamPathRelation,
@@ -155,7 +158,7 @@ func applyCallParamPathRelation(
 		if !ok || left.Equal(right) {
 			return out
 		}
-		return applyPathEqualityAt(ctx.Registry, resolver, ctx.Point, out, left, right)
+		return applyPathEqualityAt(ctx.Registry, resolver, projectPath, ctx.Point, out, left, right)
 	default:
 		return out
 	}

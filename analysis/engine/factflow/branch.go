@@ -13,6 +13,18 @@ import (
 type ValueRefinement struct {
 	constraint    product.Value
 	hasConstraint bool
+
+	// negatedLiteral marks a descendant literal constraint as the negated edge
+	// of a discriminant equality guard: the subject path provably does not hold
+	// the constraint literal. The applicator removes the matching variant-origin
+	// cases from the root rather than meeting the literal in.
+	negatedLiteral bool
+
+	// falsyAbsent marks the falsy edge of a bare truthiness guard (if x then):
+	// the subject is falsy, which proves it absent only when its present type can
+	// never be the boolean false. The applicator applies the Absent constraint
+	// conditionally on that runtime-kind check so a boolean subject is not narrowed.
+	falsyAbsent bool
 }
 
 // NewValueRefinement creates an empty value refinement.
@@ -24,6 +36,31 @@ func NewValueRefinement() ValueRefinement {
 // constraint.
 func NewValueConstraint(constraint product.Value) ValueRefinement {
 	return ValueRefinement{constraint: constraint, hasConstraint: true}
+}
+
+// NewNegatedLiteralConstraint creates a value refinement carrying a descendant
+// literal the subject path provably does not hold. It drives negated
+// discriminant narrowing on the root.
+func NewNegatedLiteralConstraint(constraint product.Value) ValueRefinement {
+	return ValueRefinement{constraint: constraint, hasConstraint: true, negatedLiteral: true}
+}
+
+// NegatedLiteral reports whether the constraint is a provably-absent literal.
+func (r ValueRefinement) NegatedLiteral() bool {
+	return r.negatedLiteral
+}
+
+// NewFalsyAbsentConstraint creates a value refinement carrying an Absent presence
+// the applicator applies only when the subject's present type can never be the
+// boolean false, i.e. the falsy edge of a bare truthiness guard proves nil.
+func NewFalsyAbsentConstraint(constraint product.Value) ValueRefinement {
+	return ValueRefinement{constraint: constraint, hasConstraint: true, falsyAbsent: true}
+}
+
+// FalsyAbsent reports whether the constraint is a conditional falsy-edge Absent
+// proof that holds only for a subject that can never be the boolean false.
+func (r ValueRefinement) FalsyAbsent() bool {
+	return r.falsyAbsent
 }
 
 // WithConstraint returns r additionally constrained by constraint.
@@ -60,10 +97,36 @@ type BranchRefinement struct {
 	hasFalseValue bool
 }
 
+// BranchLenRefinement records a proven length floor for an array path that
+// holds on a branch's true edge: a non-empty/in-range guard such as #xs > 0
+// raises len(xs) >= Lo. It is a must-fact applied only on the true edge; the
+// false edge and merges do not carry it.
+type BranchLenRefinement struct {
+	arrayPath path.Path
+	lo        int64
+}
+
+// NewBranchLenRefinement creates a true-edge length-floor fact for arrayPath.
+func NewBranchLenRefinement(arrayPath path.Path, lo int64) BranchLenRefinement {
+	return BranchLenRefinement{arrayPath: copyPath(arrayPath), lo: lo}
+}
+
+// ArrayPath returns the array path whose length floor this fact raises.
+func (r BranchLenRefinement) ArrayPath() path.Path { return copyPath(r.arrayPath) }
+
+// Floor returns the proven lower bound on the array length.
+func (r BranchLenRefinement) Floor() int64 { return r.lo }
+
+func (r BranchLenRefinement) copy() BranchLenRefinement {
+	r.arrayPath = copyPath(r.arrayPath)
+	return r
+}
+
 // BranchRefinementSet groups branch-edge refinements emitted at the same CFG
 // branch point.
 type BranchRefinementSet struct {
 	refinements []BranchRefinement
+	lenFloors   []BranchLenRefinement
 }
 
 // NewBranchRefinement creates a branch refinement fact.
@@ -86,6 +149,19 @@ func NewBranchRefinement(
 // NewBranchRefinementSet creates a branch refinement set.
 func NewBranchRefinementSet(refinements ...BranchRefinement) BranchRefinementSet {
 	return BranchRefinementSet{refinements: copyBranchRefinementSlice(refinements)}
+}
+
+// WithLenRefinements returns s extended with true-edge length-floor facts.
+func (s BranchRefinementSet) WithLenRefinements(lenFloors ...BranchLenRefinement) BranchRefinementSet {
+	out := s.copy()
+	out.lenFloors = append(out.lenFloors, copyBranchLenRefinementSlice(lenFloors)...)
+	return out
+}
+
+// LenRefinements returns the true-edge length-floor facts in deterministic
+// order.
+func (s BranchRefinementSet) LenRefinements() []BranchLenRefinement {
+	return copyBranchLenRefinementSlice(s.lenFloors)
 }
 
 // TargetPath returns the refined path.
@@ -120,7 +196,21 @@ func (s BranchRefinementSet) Refinements() []BranchRefinement {
 }
 
 func (s BranchRefinementSet) copy() BranchRefinementSet {
-	return BranchRefinementSet{refinements: copyBranchRefinementSlice(s.refinements)}
+	return BranchRefinementSet{
+		refinements: copyBranchRefinementSlice(s.refinements),
+		lenFloors:   copyBranchLenRefinementSlice(s.lenFloors),
+	}
+}
+
+func copyBranchLenRefinementSlice(in []BranchLenRefinement) []BranchLenRefinement {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]BranchLenRefinement, len(in))
+	for i, fact := range in {
+		out[i] = fact.copy()
+	}
+	return out
 }
 
 func copyBranchRefinementSetMap(in map[cfg.Point]BranchRefinementSet) map[cfg.Point]BranchRefinementSet {
@@ -146,9 +236,12 @@ func mergeBranchRefinementSetMap(
 		out = make(map[cfg.Point]BranchRefinementSet, len(add))
 	}
 	for point, set := range add {
-		refinements := out[point].Refinements()
+		existing := out[point]
+		refinements := existing.Refinements()
 		refinements = append(refinements, set.Refinements()...)
-		out[point] = NewBranchRefinementSet(refinements...)
+		merged := NewBranchRefinementSet(refinements...)
+		lenFloors := append(existing.LenRefinements(), set.LenRefinements()...)
+		out[point] = merged.WithLenRefinements(lenFloors...)
 	}
 	return out
 }

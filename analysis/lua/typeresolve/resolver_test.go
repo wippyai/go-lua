@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/lua/bind"
+	"github.com/wippyai/go-lua/analysis/type/refinement"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/unwrap"
 	"github.com/wippyai/go-lua/compiler/ast"
@@ -128,6 +129,41 @@ type Wrap = Alias
 	}
 	if got != typ.String {
 		t.Fatalf("Decl = %T/%#v, want string", got, got)
+	}
+}
+
+func TestResolverDeclBuildsClosedRecursiveAliasWithBinderBindings(t *testing.T) {
+	stmts, err := parse.Parse(strings.NewReader(`
+type Node = {
+	id: string,
+	children: {Node},
+}
+`), "test")
+	if err != nil {
+		t.Fatalf("Parse error: %v", err)
+	}
+	if len(stmts) != 1 {
+		t.Fatalf("got %d statements, want 1", len(stmts))
+	}
+	stmt, ok := stmts[0].(*ast.TypeDefStmt)
+	if !ok {
+		t.Fatalf("stmt = %T, want *ast.TypeDefStmt", stmts[0])
+	}
+	bindings := bind.BindChunk(stmts, bind.Options{})
+	decl, ok := bindings.TypeDef(stmt)
+	if !ok {
+		t.Fatal("TypeDef binding missing")
+	}
+
+	got, ok := New(bindings).Decl(decl)
+	if !ok {
+		t.Fatal("Decl returned ok=false")
+	}
+	if _, ok := unwrap.Annotations(got).(*typ.Recursive); !ok {
+		t.Fatalf("Decl = %T/%#v, want recursive alias", got, got)
+	}
+	if refinement.ContainsFreeTypeParam(got) {
+		t.Fatalf("recursive alias contains free/open references: %v", got)
 	}
 }
 

@@ -28,6 +28,6 @@ if root.child then
     local name: string = root.child:label()
 end
 
-local direct: Node = root.child -- expect-error
+local direct: Node = root.child -- expect-error: cannot assign Node#
 
 return "ok"

@@ -17,34 +17,46 @@ func (r *Result) extractObjectLiterals(exprs []ast.Expr, resolver sourceprovenan
 
 func (r *Result) extractObjectLiteral(expr ast.Expr, resolver sourceprovenance.CallPointResolver) {
 	table, ok := pathexpr.ObjectLiteralTable(expr)
-	if !ok || table == nil {
-		return
-	}
-	if _, exists := r.objectLiterals[expr]; !exists {
-		if base := pathexpr.ObjectEntries(table); len(base) != 0 {
-			entries := make([]ObjectEntryFact, len(base))
-			for i, entry := range base {
-				entries[i] = ObjectEntryFact{
-					Field:  entry.Field,
-					Index:  entry.Index,
-					Key:    entry.Key,
-					Value:  entry.Value,
-					Suffix: entry.Suffix,
-					Source: objectEntryValueSource(entry.Value, entry.Field != nil && entry.Field.Key == nil && entry.Final, resolver),
+	if ok && table != nil {
+		if _, exists := r.objectLiterals[expr]; !exists {
+			if base := pathexpr.ObjectEntries(table); len(base) != 0 {
+				entries := make([]ObjectEntryFact, len(base))
+				for i, entry := range base {
+					entries[i] = ObjectEntryFact{
+						Field:  entry.Field,
+						Index:  entry.Index,
+						Key:    entry.Key,
+						Value:  entry.Value,
+						Suffix: entry.Suffix,
+						Source: objectEntryValueSource(entry.Value, entry.Field != nil && entry.Field.Key == nil && entry.Final, resolver),
+					}
+				}
+				r.objectLiterals[expr] = ObjectLiteralFact{
+					Expr:    expr,
+					Table:   table,
+					Entries: entries,
 				}
 			}
-			r.objectLiterals[expr] = ObjectLiteralFact{
-				Expr:    expr,
-				Table:   table,
-				Entries: entries,
+		}
+		for _, field := range table.Fields {
+			if field == nil {
+				continue
 			}
+			r.extractObjectLiteral(field.Value, resolver)
 		}
+		return
 	}
-	for _, field := range table.Fields {
-		if field == nil {
-			continue
+
+	switch expr := expr.(type) {
+	case *ast.CastExpr:
+		if _, ok := sourceprovenance.ProofInner(expr); !ok {
+			return
 		}
-		r.extractObjectLiteral(field.Value, resolver)
+		r.extractObjectLiteral(expr.Expr, resolver)
+	case *ast.NonNilAssertExpr:
+		r.extractObjectLiteral(expr.Expr, resolver)
+	case *ast.FuncCallExpr:
+		r.extractObjectLiterals(expr.Args, resolver)
 	}
 }
 

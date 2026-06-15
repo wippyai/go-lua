@@ -31,58 +31,6 @@ func NewCallProducer(config CallProducerConfig) CallProducer {
 	}
 }
 
-// CallProducerFromSite projects rich call-site evidence to the narrow producer
-// fact used by call-result lookup.
-func CallProducerFromSite(site CallSite) CallProducer {
-	return NewCallProducer(CallProducerConfig{
-		CalleeSymbol:  site.CalleeSymbol(),
-		CalleePath:    site.CalleePath(),
-		ResultTargets: site.ResultTargets(),
-	})
-}
-
-func callProducerFromFactSite(site CallSite) (CallProducer, bool) {
-	switch site.Context() {
-	case CallSiteContextAssignmentSource, CallSiteContextReturnSource, CallSiteContextExpressionProducer:
-	default:
-		return CallProducer{}, false
-	}
-	return NewCallProducer(CallProducerConfig{
-		CalleeSymbol:  site.CalleeSymbol(),
-		CalleePath:    site.CalleePath(),
-		ResultTargets: strictProducerResultTargets(site.ResultTargets()),
-	}), true
-}
-
-func strictProducerResultTargets(targets []CallResultTarget) []CallResultTarget {
-	if len(targets) == 0 {
-		return nil
-	}
-	out := make([]CallResultTarget, 0, len(targets))
-	for _, target := range targets {
-		if !strictProducerResultTarget(target) {
-			continue
-		}
-		out = append(out, target.copy())
-	}
-	return out
-}
-
-func strictProducerResultTarget(target CallResultTarget) bool {
-	switch target.Kind() {
-	case CallResultTargetLocalAssignment:
-		return target.TargetSymbol() != 0
-	case CallResultTargetOrdinaryAssignment:
-		return target.TargetSymbol() != 0 && len(target.TargetPath().Segments) == 0
-	case CallResultTargetReturn:
-		return true
-	case CallResultTargetExpression:
-		return target.ResultIndex() >= 0
-	default:
-		return false
-	}
-}
-
 // CalleeSymbol returns the callee's symbol identity.
 func (c CallProducer) CalleeSymbol() symbol.ID { return c.calleeSymbol }
 

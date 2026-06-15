@@ -3,6 +3,7 @@ package factapply
 import (
 	"sort"
 
+	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/typewitness"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
@@ -11,6 +12,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
+	"github.com/wippyai/go-lua/analysis/engine/visibility"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
@@ -22,6 +24,7 @@ type channelSelectResultGroup struct {
 
 func applyChannelSelectResult(
 	ctx transfer.NodeContext,
+	resolver *visibility.Resolver,
 	out state.State,
 	events []factflow.ChannelSelect,
 ) state.State {
@@ -30,7 +33,7 @@ func applyChannelSelectResult(
 		if !group.hasResult || group.resultIndex < 0 || len(group.cases) == 0 {
 			continue
 		}
-		resultValue, ok := channelSelectResultValue(ctx.Registry, selectID, group.cases)
+		resultValue, ok := channelSelectResultValue(ctx, resolver, out, selectID, group.cases)
 		if !ok {
 			continue
 		}
@@ -57,6 +60,8 @@ func channelSelectResultGroups(events []factflow.ChannelSelect) map[factflow.Cha
 		case factflow.ChannelSelectReceive:
 			if _, ok := event.PayloadValue(); ok {
 				group.cases = append(group.cases, event)
+			} else if _, ok := event.CasePath(); ok {
+				group.cases = append(group.cases, event)
 			}
 		}
 		groups[selectID] = group
@@ -71,20 +76,19 @@ func channelSelectResultGroups(events []factflow.ChannelSelect) map[factflow.Cha
 }
 
 func channelSelectResultValue(
-	reg *axis.Registry,
+	ctx transfer.NodeContext,
+	resolver *visibility.Resolver,
+	out state.State,
 	selectID factflow.ChannelSelectID,
 	cases []factflow.ChannelSelect,
 ) (product.Value, bool) {
+	reg := ctx.Registry
 	if reg == nil || len(cases) == 0 {
 		return product.Value{}, false
 	}
 	resultCases := make([]channelselect.ResultCase, 0, len(cases))
 	for _, event := range cases {
-		payloadValue, ok := event.PayloadValue()
-		if !ok {
-			continue
-		}
-		payloadType, ok := valueWitnessType(reg, payloadValue)
+		payloadType, ok := channelSelectEventPayloadType(ctx, resolver, out, event)
 		if !ok {
 			continue
 		}
@@ -101,6 +105,39 @@ func channelSelectResultValue(
 		return product.Value{}, false
 	}
 	return typevalue.WithWitness(reg, typevalue.FromType(reg, resultType), resultType), true
+}
+
+func channelSelectEventPayloadType(
+	ctx transfer.NodeContext,
+	resolver *visibility.Resolver,
+	out state.State,
+	event factflow.ChannelSelect,
+) (typ.Type, bool) {
+	if payloadValue, ok := event.PayloadValue(); ok {
+		return valueWitnessType(ctx.Registry, payloadValue)
+	}
+	casePath, ok := event.CasePath()
+	if !ok {
+		return nil, false
+	}
+	return channelSelectCasePathPayloadType(ctx, resolver, out, casePath)
+}
+
+func channelSelectCasePathPayloadType(
+	ctx transfer.NodeContext,
+	resolver *visibility.Resolver,
+	out state.State,
+	casePath pathdom.Path,
+) (typ.Type, bool) {
+	resolved, ok := resolvePathValueAt(ctx.Registry, resolver, ctx.Point, out, casePath)
+	if !ok {
+		return nil, false
+	}
+	channelType, ok := valueWitnessType(ctx.Registry, resolved.value)
+	if !ok {
+		return nil, false
+	}
+	return channelselect.ChannelPayloadType(channelType)
 }
 
 func valueWitnessType(reg *axis.Registry, value product.Value) (typ.Type, bool) {

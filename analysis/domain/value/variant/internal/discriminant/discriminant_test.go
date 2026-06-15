@@ -4,17 +4,18 @@ import (
 	"testing"
 
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
-	. "github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/analysis/type/typeexpr"
 )
 
 func TestRecordsConflictOnRequiredLiteral(t *testing.T) {
 	a := typetable.NewRecord().
-		Field("kind", LiteralString("a")).
-		Field("x", Number).
+		Field("kind", typ.LiteralString("a")).
+		Field("x", typ.Number).
 		Build()
 	b := typetable.NewRecord().
-		Field("kind", LiteralString("b")).
-		Field("y", String).
+		Field("kind", typ.LiteralString("b")).
+		Field("y", typ.String).
 		Build()
 
 	d := NewDetector()
@@ -29,14 +30,14 @@ func TestRecordsConflictOnRequiredLiteral(t *testing.T) {
 
 func TestRecordsDoNotConflictOnMultipleDifferingLiteralsWithCleanResidual(t *testing.T) {
 	a := typetable.NewRecord().
-		Field("status_code", LiteralInt(401)).
-		Field("message", LiteralString("invalid key")).
-		Field("ok", Boolean).
+		Field("status_code", typ.LiteralInt(401)).
+		Field("message", typ.LiteralString("invalid key")).
+		Field("ok", typ.Boolean).
 		Build()
 	b := typetable.NewRecord().
-		Field("status_code", LiteralInt(400)).
-		Field("message", LiteralString("invalid model")).
-		Field("ok", Boolean).
+		Field("status_code", typ.LiteralInt(400)).
+		Field("message", typ.LiteralString("invalid model")).
+		Field("ok", typ.Boolean).
 		Build()
 
 	d := NewDetector()
@@ -54,21 +55,21 @@ func TestRecordsDoNotConflictOnMultipleDifferingLiteralsWithCleanResidual(t *tes
 
 func TestRecordsConflictOnNestedRequiredLiteral(t *testing.T) {
 	leftPayload := typetable.NewRecord().
-		Field("__tag", LiteralString("left")).
-		Field("value", Number).
+		Field("__tag", typ.LiteralString("left")).
+		Field("value", typ.Number).
 		Build()
 	rightPayload := typetable.NewRecord().
-		Field("__tag", LiteralString("right")).
-		Field("value", Number).
+		Field("__tag", typ.LiteralString("right")).
+		Field("value", typ.Number).
 		Build()
 	a := typetable.NewRecord().
-		Field("kind", LiteralString("event")).
-		Field("payload_kind", LiteralString("left")).
+		Field("kind", typ.LiteralString("event")).
+		Field("payload_kind", typ.LiteralString("left")).
 		Field("payload", leftPayload).
 		Build()
 	b := typetable.NewRecord().
-		Field("kind", LiteralString("event")).
-		Field("payload_kind", LiteralString("right")).
+		Field("kind", typ.LiteralString("event")).
+		Field("payload_kind", typ.LiteralString("right")).
 		Field("payload", rightPayload).
 		Build()
 
@@ -82,32 +83,32 @@ func TestRecordsConflictOnNestedRequiredLiteral(t *testing.T) {
 }
 
 func TestRequiredTagsPreservesNestedNonRecursiveTag(t *testing.T) {
-	chanInt := NewAlias("__test_ChanInt", typetable.NewRecord().
-		Field("__tag", LiteralString("int")).
+	chanInt := typ.NewAlias("__test_ChanInt", typetable.NewRecord().
+		Field("__tag", typ.LiteralString("int")).
 		Build())
 	errCase := typetable.NewRecord().
 		Field("channel", chanInt).
-		Field("value", typetable.NewRecord().Field("error", String).Build()).
+		Field("value", typetable.NewRecord().Field("error", typ.String).Build()).
 		Build()
 
 	d := NewDetector()
 	tags := d.RequiredTags(errCase)
-	if tags["channel.__tag"] != EqualityHash(LiteralString("int")) {
+	if tags["channel.__tag"] != typ.EqualityHash(typ.LiteralString("int")) {
 		t.Fatalf("nested channel tag was not summarized: %v", tags)
 	}
 }
 
 func TestRequiredTagsRecursiveCycleSummarizesFiniteTags(t *testing.T) {
-	node := NewRecursive("Node", func(self Type) Type {
+	node := typ.NewRecursive("Node", func(self typ.Type) typ.Type {
 		return typetable.NewRecord().
-			Field("kind", LiteralString("node")).
+			Field("kind", typ.LiteralString("node")).
 			Field("next", self).
 			Build()
 	})
 
 	d := NewDetector()
 	tags := d.RequiredTags(node)
-	if tags["kind"] != EqualityHash(LiteralString("node")) {
+	if tags["kind"] != typ.EqualityHash(typ.LiteralString("node")) {
 		t.Fatalf("recursive top-level tag was not summarized: %v", tags)
 	}
 	if _, ok := tags["next.kind"]; ok {
@@ -116,14 +117,14 @@ func TestRequiredTagsRecursiveCycleSummarizesFiniteTags(t *testing.T) {
 }
 
 func TestClosedRecordSetConflict(t *testing.T) {
-	conflicting := []*Record{
+	conflicting := []*typ.Record{
 		typetable.NewRecord().
-			Field("kind", LiteralString("a")).
-			Field("x", Number).
+			Field("kind", typ.LiteralString("a")).
+			Field("x", typ.Number).
 			Build(),
 		typetable.NewRecord().
-			Field("kind", LiteralString("b")).
-			Field("y", String).
+			Field("kind", typ.LiteralString("b")).
+			Field("y", typ.String).
 			Build(),
 	}
 	d := NewDetector()
@@ -131,18 +132,114 @@ func TestClosedRecordSetConflict(t *testing.T) {
 		t.Fatal("closed record set with required literal variants did not conflict")
 	}
 
-	clean := []*Record{
+	clean := []*typ.Record{
 		typetable.NewRecord().
-			Field("from", Func().Param("self", Self).Returns(Self).Build()).
-			Field("where", Func().Param("self", Self).Param("clause", String).Returns(Self).Build()).
+			Field("from", typ.Func().Param("self", typ.Self).Returns(typ.Self).Build()).
+			Field("where", typ.Func().Param("self", typ.Self).Param("clause", typ.String).Returns(typ.Self).Build()).
 			Build(),
 		typetable.NewRecord().
-			Field("from", Func().Param("self", Self).Returns(Self).Build()).
-			Field("where", Func().Param("self", Self).Param("clause", String).Returns(Self).Build()).
-			Field("limit", Number).
+			Field("from", typ.Func().Param("self", typ.Self).Returns(typ.Self).Build()).
+			Field("where", typ.Func().Param("self", typ.Self).Param("clause", typ.String).Returns(typ.Self).Build()).
+			Field("limit", typ.Number).
 			Build(),
 	}
 	if d.ClosedRecordSetConflicts(clean) {
 		t.Fatal("records without required literal discriminants reported a conflict")
+	}
+}
+
+func TestRequiredTagsReturnsDefensiveCopy(t *testing.T) {
+	rec := typetable.NewRecord().
+		Field("kind", typ.LiteralString("event")).
+		Build()
+
+	d := NewDetector()
+	tags := d.RequiredTags(rec)
+	tags["kind"] = 0
+	tags["extra"] = typ.EqualityHash(typ.LiteralString("mutated"))
+
+	got := d.RequiredTags(rec)
+	if got["kind"] != typ.EqualityHash(typ.LiteralString("event")) {
+		t.Fatalf("cached tag was mutated through returned map: %v", got)
+	}
+	if _, ok := got["extra"]; ok {
+		t.Fatalf("cached tags include caller mutation: %v", got)
+	}
+}
+
+func TestStaticMemberTagPathAndConflict(t *testing.T) {
+	a := typetable.NewRecord().
+		StaticStringIndex("kind", typ.LiteralString("a")).
+		Field("payload", typ.Number).
+		Build()
+	b := typetable.NewRecord().
+		StaticStringIndex("kind", typ.LiteralString("b")).
+		Field("payload", typ.Number).
+		Build()
+
+	d := NewDetector()
+	tags := d.RequiredTags(a)
+	if tags[`["kind"]`] != typ.EqualityHash(typ.LiteralString("a")) {
+		t.Fatalf("static string member tag path was not extracted: %v", tags)
+	}
+	if !d.RecordsConflict(a, b) {
+		t.Fatal("static member literal tag did not report a record conflict")
+	}
+}
+
+func TestCommonUnionTagsKeepsOnlyIdenticalTags(t *testing.T) {
+	left := typetable.NewRecord().
+		Field("kind", typ.LiteralString("event")).
+		Field("side", typ.LiteralString("left")).
+		Build()
+	right := typetable.NewRecord().
+		Field("kind", typ.LiteralString("event")).
+		Field("side", typ.LiteralString("right")).
+		Build()
+
+	tags := NewDetector().RequiredTags(typeexpr.Union(left, right))
+	if tags["kind"] != typ.EqualityHash(typ.LiteralString("event")) {
+		t.Fatalf("common identical union tag missing: %v", tags)
+	}
+	if _, ok := tags["side"]; ok {
+		t.Fatalf("differing union tag was retained: %v", tags)
+	}
+}
+
+func TestPresenceConflictIgnoresOptionalAndLiteralFields(t *testing.T) {
+	a := typetable.NewRecord().
+		Field("kind", typ.LiteralString("a")).
+		OptField("payload", typ.Number).
+		Build()
+	b := typetable.NewRecord().
+		Field("kind", typ.LiteralString("b")).
+		OptField("other", typ.String).
+		Build()
+
+	if NewDetector().RecordsPresenceConflict(a, b) {
+		t.Fatal("optional or literal fields reported a presence conflict")
+	}
+}
+
+func TestNilDetectorReceiverBehavior(t *testing.T) {
+	rec := typetable.NewRecord().
+		Field("kind", typ.LiteralString("event")).
+		Build()
+
+	var d *Detector
+	if tags := d.RequiredTags(nil); tags != nil {
+		t.Fatalf("nil RequiredTags result = %v, want nil", tags)
+	}
+	if !d.HasRequiredTag(rec) {
+		t.Fatal("nil detector receiver did not collect required tags")
+	}
+	if !d.ClosedRecordSetConflicts([]*typ.Record{
+		typetable.NewRecord().Field("kind", typ.LiteralString("a")).Build(),
+		typetable.NewRecord().Field("kind", typ.LiteralString("b")).Build(),
+	}) {
+		t.Fatal("nil detector receiver did not detect closed-set tag conflict")
+	}
+	if d.RecordsPresenceConflict(nil, rec) {
+		t.Fatal("nil record reported a presence conflict")
 	}
 }

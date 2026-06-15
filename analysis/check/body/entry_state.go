@@ -26,10 +26,11 @@ func parameterEntryState(
 	bindings *bind.Result,
 	fn *ast.FunctionExpr,
 	moduleExports importlookup.Source,
+	typeResolver *typeresolve.Resolver,
 	entry state.State,
 	initial transfer.InitialState,
 ) (state.State, transfer.InitialState) {
-	seeds := functionParamEntrySeeds(reg, bindings, fn)
+	seeds := functionParamEntrySeeds(reg, bindings, fn, typeResolver)
 	seeds = append(seeds, ambientModuleGlobalEntrySeeds(reg, bindings, moduleExports)...)
 	if len(seeds) == 0 {
 		return entry, initial
@@ -51,12 +52,15 @@ func parameterEntryState(
 	}
 }
 
-func functionParamEntrySeeds(reg *axis.Registry, bindings *bind.Result, fn *ast.FunctionExpr) []paramEntrySeed {
+func functionParamEntrySeeds(reg *axis.Registry, bindings *bind.Result, fn *ast.FunctionExpr, resolver *typeresolve.Resolver) []paramEntrySeed {
 	if reg == nil || bindings == nil || fn == nil {
 		return nil
 	}
-	resolver := typeresolve.New(bindings)
+	if resolver == nil {
+		resolver = typeresolve.New(bindings)
+	}
 	slots := bindings.ParamSlots(fn)
+	expectedSig, hasExpectedSig := expectedFunctionSignature(bindings, resolver, fn)
 	seeds := make([]paramEntrySeed, 0, len(slots))
 	for _, slot := range slots {
 		if slot.Symbol == 0 {
@@ -67,6 +71,24 @@ func functionParamEntrySeeds(reg *axis.Registry, bindings *bind.Result, fn *ast.
 			continue
 		}
 		if slot.Type == nil {
+			if slot.Name == "self" {
+				if t, ok := methodReceiverType(bindings, resolver, fn); ok {
+					seeds = append(seeds, paramEntrySeed{
+						slot:  valueSlot,
+						value: typevalue.WithWitness(reg, typevalue.FromType(reg, t), t),
+					})
+					continue
+				}
+			}
+			if hasExpectedSig && !slot.ImplicitSelf {
+				if t, ok := contextualParamType(expectedSig, slot.SourceIndex); ok {
+					seeds = append(seeds, paramEntrySeed{
+						slot:  valueSlot,
+						value: typevalue.WithWitness(reg, typevalue.FromType(reg, t), t),
+					})
+					continue
+				}
+			}
 			seeds = append(seeds, paramEntrySeed{
 				slot:  valueSlot,
 				value: product.Set(reg, product.Top(), evidence.Key, evidence.GradualTop()),
@@ -79,7 +101,7 @@ func functionParamEntrySeeds(reg *axis.Registry, bindings *bind.Result, fn *ast.
 		}
 		seeds = append(seeds, paramEntrySeed{
 			slot:  valueSlot,
-			value: typevalue.FromType(reg, t),
+			value: typevalue.WithWitness(reg, typevalue.FromType(reg, t), t),
 		})
 	}
 	return seeds

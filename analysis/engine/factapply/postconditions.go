@@ -19,12 +19,13 @@ func applyPostconditionRefinement(
 func applyPostconditionPathRelation(
 	ctx transfer.NodeContext,
 	resolver *visibility.Resolver,
+	projectPath PathTypeProjector,
 	out state.State,
 	fact factflow.PostconditionPathRelation,
 ) state.State {
 	switch fact.Kind() {
 	case factflow.PostconditionPathRelationEqual:
-		return applyPathEqualityAt(ctx.Registry, resolver, ctx.Point, out, fact.LeftPath(), fact.RightPath())
+		return applyPathEqualityAt(ctx.Registry, resolver, projectPath, ctx.Point, out, fact.LeftPath(), fact.RightPath())
 	default:
 		return out
 	}

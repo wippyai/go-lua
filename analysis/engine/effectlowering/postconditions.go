@@ -3,6 +3,7 @@ package effectlowering
 import (
 	"github.com/wippyai/go-lua/analysis/domain/effect/signature"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
+	"github.com/wippyai/go-lua/analysis/engine/callproducer"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
@@ -41,7 +42,7 @@ func signatureNoNormalReturnFacts(config SignatureNoNormalReturnConfig) map[cfg.
 			Registry: config.Registry,
 			Point:    point,
 			Node:     config.Graph.Node(point),
-		}, factflow.CallProducerFromSite(site))
+		}, callproducer.FromSite(site))
 		if !ok {
 			continue
 		}

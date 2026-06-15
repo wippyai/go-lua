@@ -6,6 +6,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/annotation"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/analysis/type/typeexpr"
 )
 
 func TestLTypeBasic(t *testing.T) {
@@ -86,7 +87,7 @@ func TestLTypeOptional(t *testing.T) {
 	L := NewState()
 	defer L.Close()
 
-	optNumber := &LType{inner: typ.NewOptional(typ.Number)}
+	optNumber := &LType{inner: typeexpr.Optional(typ.Number)}
 
 	tests := []struct {
 		name     string
@@ -203,7 +204,7 @@ func TestLTypeUnion(t *testing.T) {
 	defer L.Close()
 
 	// number | string
-	numOrStr := &LType{inner: typ.NewUnion(typ.Number, typ.String)}
+	numOrStr := &LType{inner: typeexpr.Union(typ.Number, typ.String)}
 
 	tests := []struct {
 		name     string
@@ -379,7 +380,7 @@ func TestLTypeMethods(t *testing.T) {
 
 	arrayType := &LType{inner: typ.NewArray(typ.Number)}
 	mapType := &LType{inner: typ.NewMap(typ.String, typ.Number)}
-	optType := &LType{inner: typ.NewOptional(typ.Number)}
+	optType := &LType{inner: typeexpr.Optional(typ.Number)}
 	fnType := &LType{inner: typ.Func().Param("a", typ.Number).Returns(typ.String).Build()}
 
 	// Test :kind()
@@ -539,7 +540,7 @@ func TestLTypeIterators(t *testing.T) {
 	// Test :variants() iterator
 	t.Run("variants iterator", func(t *testing.T) {
 		unionType := &LType{
-			inner: typ.NewUnion(typ.Number, typ.String, typ.Boolean),
+			inner: typeexpr.Union(typ.Number, typ.String, typ.Boolean),
 		}
 
 		variantsMethod := L.typeGetField(unionType, "variants")
@@ -1208,7 +1209,7 @@ func TestTypeMethodIs_UnionType(t *testing.T) {
 
 	// number | string
 	unionType := &LType{
-		inner: typ.NewUnion(typ.Number, typ.String),
+		inner: typeexpr.Union(typ.Number, typ.String),
 	}
 
 	tests := []struct {
@@ -1262,7 +1263,7 @@ func TestTypeMethodIs_OptionalType(t *testing.T) {
 
 	// number?
 	optionalType := &LType{
-		inner: typ.NewOptional(typ.Number),
+		inner: typeexpr.Optional(typ.Number),
 	}
 
 	tests := []struct {

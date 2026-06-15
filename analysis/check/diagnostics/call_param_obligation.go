@@ -64,16 +64,24 @@ func (p callParamObligations) call(
 	inherited map[symbol.ID]*ast.FunctionExpr,
 ) (diagnostic.Diagnostic, bool) {
 	args := fact.Call.Args
+	// Colon method calls pass the receiver as the implicit first parameter, so
+	// obligation parameter indices (function-parameter space, self at 0) are
+	// shifted by one relative to the explicit argument list.
+	receiverOffset := 0
+	if fact.Receiver != nil && fact.Method != "" {
+		receiverOffset = 1
+	}
 	seen := make(map[int]struct{}, len(obligations))
 	for _, obligation := range obligations {
 		i := obligation.ParamIndex
-		if i < 0 || i >= len(args) {
+		argIndex := i - receiverOffset
+		if argIndex < 0 || argIndex >= len(args) {
 			continue
 		}
-		if _, ok := seen[i]; ok {
+		if _, ok := seen[argIndex]; ok {
 			continue
 		}
-		seen[i] = struct{}{}
+		seen[argIndex] = struct{}{}
 		if explicitContractParam(result, point, fact, i, p.resolver, inherited) {
 			continue
 		}
@@ -81,23 +89,32 @@ func (p callParamObligations) call(
 		if !ok || want == nil || typ.IsAny(want) || typ.IsUnknown(want) || refinement.ContainsFreeTypeParam(want) {
 			continue
 		}
-		got, ok := projectedFlowSourceType(result, p.resolver, point, literalEnv{}, args[i])
+		got, ok := untrustedTopLikeExpressionTypeAt(result, p.resolver, point, args[argIndex])
+		untrustedTopLike := ok
 		if !ok {
-			got, ok = boundaryCallArgumentSourceType(result, point, fact, i)
+			got, ok = projectedFlowSourceType(result, p.resolver, point, literalEnv{}, args[argIndex])
 		}
 		if !ok {
-			got, ok = boundaryExprType(result, p.resolver, args[i])
+			got, ok = boundaryCallArgumentSourceType(result, point, fact, argIndex)
 		}
 		if !ok {
-			got, ok = boundaryExpressionType(result, point, args[i])
+			got, ok = boundaryExprType(result, p.resolver, args[argIndex])
+		}
+		if !ok {
+			got, ok = boundaryExpressionType(result, point, args[argIndex])
 		}
 		if !ok {
 			got = typ.Unknown
 		}
-		if !callParamObligationTypeMismatch(result, point, got, want, boundaryCallArgumentReader(fact, i, args[i])) {
+		readBoundary := boundaryCallArgumentReader(fact, argIndex, args[argIndex])
+		if untrustedTopLike {
+			if !boundaryProofTypeMismatch(result, point, got, want, readBoundary) {
+				continue
+			}
+		} else if !callParamObligationTypeMismatch(result, point, got, want, readBoundary, args[argIndex]) {
 			continue
 		}
-		return callParamObligationDiagnostic(point, fact.Call, callObligationName(result, fact), i, got, want, args[i]), true
+		return callParamObligationDiagnostic(fact.Call, callObligationName(result, fact), argIndex, got, want, args[argIndex]), true
 	}
 	return diagnostic.Diagnostic{}, false
 }
@@ -114,7 +131,6 @@ func boundaryExpressionType(result *body.Result, point cfg.Point, expr ast.Expr)
 }
 
 func callParamObligationDiagnostic(
-	point cfg.Point,
 	call *ast.FuncCallExpr,
 	name string,
 	index int,
@@ -122,17 +138,17 @@ func callParamObligationDiagnostic(
 	want typ.Type,
 	arg ast.Expr,
 ) diagnostic.Diagnostic {
-	d := argTypeDiagnostic(point, call, name, index, got, want, arg, ast.SpanOf(call))
+	d := argTypeDiagnostic(call, name, index, got, want, arg, ast.SpanOf(call))
 	d.Message = fmt.Sprintf("argument %d expected %s, got %s", index+1, formatType(want), formatType(got))
 	return d
 }
 
-func callParamObligationTypeMismatch(result *body.Result, point cfg.Point, got, want typ.Type, read boundaryValueReader) bool {
+func callParamObligationTypeMismatch(result *body.Result, point cfg.Point, got, want typ.Type, read boundaryValueReader, arg ast.Expr) bool {
 	if want == nil || typ.IsAny(want) || typ.IsUnknown(want) {
 		return false
 	}
 	if !topLikeType(got) {
-		return clearMismatch(got, want)
+		return clearMismatch(result, got, want)
 	}
 	if read != nil {
 		if value, ok := read(result, point); ok {
@@ -141,7 +157,29 @@ func callParamObligationTypeMismatch(result *body.Result, point cfg.Point, got, 
 			}
 		}
 	}
-	return true
+	// A top-like got is an unresolved argument type. An inline table literal or a
+	// member-function reference is typed and validated by its own structural
+	// producer, so reporting it here as an unknown mismatch is a duplicate false
+	// positive; every other argument form remains reportable against the concrete
+	// obligation.
+	return obligationReportableArgument(arg)
+}
+
+// obligationReportableArgument reports whether a top-like (unresolved) argument
+// expression should be reported against a concrete summary obligation. Inline
+// table literals and member-function references carry their own structural
+// validation, so they are excluded; plain value references remain reportable.
+func obligationReportableArgument(arg ast.Expr) bool {
+	switch a := arg.(type) {
+	case *ast.TableExpr, *ast.FunctionExpr:
+		return false
+	case *ast.AttrGetExpr:
+		return a.KeySyntax == ast.AttrKeyIndex
+	case *ast.CastExpr:
+		return obligationReportableArgument(a.Expr)
+	default:
+		return true
+	}
 }
 
 func readmodelType(result *body.Result, value product.Value) (typ.Type, bool) {

@@ -20,6 +20,11 @@ type NodeTransfer func(ctx NodeContext, in state.State) state.State
 // EdgeTransfer maps node output across a single CFG edge.
 type EdgeTransfer func(ctx EdgeContext, out state.State) state.State
 
+// Stats holds caller-owned observational counters for transfer runs.
+type Stats struct {
+	Solver solve.Stats
+}
+
 // NodeContext is the generic context passed to node transfer hooks.
 type NodeContext struct {
 	Graph    cfg.Graph
@@ -57,6 +62,9 @@ type Config struct {
 	// WidenAt and WidenDelay are forwarded directly to the solver.
 	WidenAt    func(cfg.Point) bool
 	WidenDelay func(cfg.Point) int
+
+	// Stats, when non-nil, receives observational counters for this run.
+	Stats *Stats
 }
 
 // Result maps each reachable CFG point in Graph.RPO() to its input state.
@@ -130,9 +138,17 @@ func Run(config Config) Result {
 		},
 		WidenAt:    config.WidenAt,
 		WidenDelay: config.WidenDelay,
+		Stats:      solverStats(config.Stats),
 	}
 
 	return Result(solve.Solve(sys))
+}
+
+func solverStats(stats *Stats) *solve.Stats {
+	if stats == nil {
+		return nil
+	}
+	return &stats.Solver
 }
 
 func validateConfig(config Config) {

@@ -3,10 +3,12 @@ package typecall
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/type/ambient"
 	"github.com/wippyai/go-lua/analysis/type/annotation"
 	"github.com/wippyai/go-lua/analysis/type/normalize"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/analysis/type/typeexpr"
 )
 
 func TestCallableDirectFunction(t *testing.T) {
@@ -21,7 +23,7 @@ func TestCallableDirectFunction(t *testing.T) {
 	}
 	assertType(t, got, fn)
 
-	got, ok = Callable(typ.NewOptional(fn))
+	got, ok = Callable(typeexpr.Optional(fn))
 	if !ok {
 		t.Fatal("Callable(optional function) failed")
 	}
@@ -91,7 +93,7 @@ func TestGetMetamethodWrappers(t *testing.T) {
 	})
 
 	t.Run("optional", func(t *testing.T) {
-		got, ok := GetMetamethod(typ.NewOptional(rec), "__call")
+		got, ok := GetMetamethod(typeexpr.Optional(rec), "__call")
 		if !ok {
 			t.Fatal("GetMetamethod(optional record, __call) failed")
 		}
@@ -147,17 +149,17 @@ func TestCallableUnionAndIntersection(t *testing.T) {
 	fn := typ.Func().Returns(typ.String).Build()
 	rec := recordWithMetamethod("__call", fn)
 
-	got, ok := Callable(typ.NewUnion(fn, rec))
+	got, ok := Callable(typeexpr.Union(fn, rec))
 	if !ok {
 		t.Fatal("Callable(union of callable members) failed")
 	}
 	assertType(t, got, fn)
 
-	if _, ok := Callable(typ.NewUnion(fn, typ.String)); ok {
+	if _, ok := Callable(typeexpr.Union(fn, typ.String)); ok {
 		t.Fatal("Callable(union with non-callable member) succeeded")
 	}
 
-	got, ok = Callable(typ.NewIntersection(typ.String, fn))
+	got, ok = Callable(typeexpr.Intersection(typ.String, fn))
 	if !ok {
 		t.Fatal("Callable(intersection with callable member) failed")
 	}
@@ -168,7 +170,7 @@ func TestCallableUnionRequiresStableRepresentative(t *testing.T) {
 	stringFn := typ.Func().Returns(typ.String).Build()
 	numberFn := typ.Func().Returns(typ.Number).Build()
 
-	if _, ok := Callable(typ.NewUnion(stringFn, numberFn)); ok {
+	if _, ok := Callable(typeexpr.Union(stringFn, numberFn)); ok {
 		t.Fatal("Callable(union with different function witnesses) succeeded")
 	}
 }
@@ -207,7 +209,7 @@ func TestGetMetamethodUnionFailsWhenOneBranchLacksMetamethod(t *testing.T) {
 	withCall := recordWithMetamethod("__call", typ.Func().Returns(typ.String).Build())
 	withoutCall := typetable.NewRecord().Field("name", typ.String).Build()
 
-	if _, ok := GetMetamethod(typ.NewUnion(withCall, withoutCall), "__call"); ok {
+	if _, ok := GetMetamethod(typeexpr.Union(withCall, withoutCall), "__call"); ok {
 		t.Fatal("GetMetamethod(union, __call) succeeded when one branch lacked the metamethod")
 	}
 }
@@ -216,7 +218,7 @@ func TestCallableUnionFailsWhenOneRecordBranchLacksCall(t *testing.T) {
 	withCall := recordWithMetamethod("__call", typ.Func().Returns(typ.String).Build())
 	withoutCall := typetable.NewRecord().Field("name", typ.String).Build()
 
-	if _, ok := Callable(typ.NewUnion(withCall, withoutCall)); ok {
+	if _, ok := Callable(typeexpr.Union(withCall, withoutCall)); ok {
 		t.Fatal("Callable(union with one non-callable record branch) succeeded")
 	}
 }
@@ -230,7 +232,7 @@ func TestMemberCallUnionRequiresCallableMemberOnEveryAlternative(t *testing.T) {
 		t.Fatalf("MemberCall(string, upper) type = %v, want callable", stringMethod)
 	}
 
-	if _, status := MemberCall(typ.NewUnion(typ.String, typ.Number), "upper"); status != MemberCallMissing {
+	if _, status := MemberCall(typeexpr.Union(typ.String, typ.Number), "upper"); status != MemberCallMissing {
 		t.Fatalf("MemberCall(string|number, upper) status = %v, want missing", status)
 	}
 
@@ -240,11 +242,11 @@ func TestMemberCallUnionRequiresCallableMemberOnEveryAlternative(t *testing.T) {
 	right := typetable.NewRecord().
 		Field("run", typ.Func().Returns(typ.Number).Build()).
 		Build()
-	member, status := MemberCall(typ.NewUnion(left, right), "run")
+	member, status := MemberCall(typeexpr.Union(left, right), "run")
 	if status != MemberCallOK {
 		t.Fatalf("MemberCall(callable record union, run) status = %v, want ok", status)
 	}
-	assertType(t, member, typ.NewUnion(
+	assertType(t, member, typeexpr.Union(
 		typ.Func().Returns(typ.String).Build(),
 		typ.Func().Returns(typ.Number).Build(),
 	))
@@ -259,11 +261,44 @@ func TestMemberCallRejectsOptionalUnionMember(t *testing.T) {
 		OptField("run", callable).
 		Build()
 
-	member, status := MemberCall(typ.NewUnion(left, right), "run")
+	member, status := MemberCall(typeexpr.Union(left, right), "run")
 	if status != MemberCallNotCallable {
 		t.Fatalf("MemberCall(optional member union, run) status = %v, want not-callable", status)
 	}
-	assertType(t, member, typ.NewOptional(callable))
+	assertType(t, member, typeexpr.Optional(callable))
+}
+
+func TestMemberCallAmbientChannelReceive(t *testing.T) {
+	channel := typ.Instantiate(ambient.ChannelGeneric(), typ.String)
+	member, status := MemberCall(channel, "receive")
+	if status != MemberCallOK {
+		t.Fatalf("MemberCall(Channel<string>, receive) status = %v, want ok", status)
+	}
+	fn, ok := member.(*typ.Function)
+	if !ok {
+		t.Fatalf("receive member = %T %[1]v, want function", member)
+	}
+	if len(fn.Params) != 1 || !typ.TypeEquals(fn.Params[0].Type, channel) {
+		t.Fatalf("receive params = %#v, want self Channel<string>", fn.Params)
+	}
+	if len(fn.Returns) != 2 || !typ.TypeEquals(fn.Returns[0], typ.String) || !typ.TypeEquals(fn.Returns[1], typ.Boolean) {
+		t.Fatalf("receive returns = %#v, want string, boolean", fn.Returns)
+	}
+}
+
+func TestMemberCallAmbientChannelCaseReceive(t *testing.T) {
+	channel := typeexpr.Optional(typ.Instantiate(ambient.ChannelGeneric(), typ.Number))
+	member, status := MemberCall(channel, "case_receive")
+	if status != MemberCallOK {
+		t.Fatalf("MemberCall(Channel<number>?, case_receive) status = %v, want ok", status)
+	}
+	fn, ok := member.(*typ.Function)
+	if !ok {
+		t.Fatalf("case_receive member = %T %[1]v, want function", member)
+	}
+	if len(fn.Params) != 1 || !typ.TypeEquals(fn.Params[0].Type, typ.Instantiate(ambient.ChannelGeneric(), typ.Number)) {
+		t.Fatalf("case_receive params = %#v, want self Channel<number>", fn.Params)
+	}
 }
 
 func TestCallableReturnFirstReturn(t *testing.T) {
@@ -285,7 +320,7 @@ func TestCallableReturnUnionProjectionUsesNormalizePackage(t *testing.T) {
 	}
 
 	returns := []typ.Type{typ.Unknown, typ.String, typ.Never}
-	got, ok := CallableReturn(typ.NewUnion(
+	got, ok := CallableReturn(typeexpr.Union(
 		callableReturning(returns[0]),
 		callableReturning(returns[1]),
 		callableReturning(returns[2]),
@@ -308,7 +343,7 @@ func TestCallableReturnUnionProjectionPolicy(t *testing.T) {
 	}{
 		{
 			name: "any absorbs concrete projection",
-			receiver: typ.NewUnion(
+			receiver: typeexpr.Union(
 				callableReturning(typ.Any),
 				callableReturning(typ.String),
 			),
@@ -316,11 +351,11 @@ func TestCallableReturnUnionProjectionPolicy(t *testing.T) {
 		},
 		{
 			name: "optional return preserves nilability",
-			receiver: typ.NewUnion(
-				callableReturning(typ.NewOptional(typ.Number)),
+			receiver: typeexpr.Union(
+				callableReturning(typeexpr.Optional(typ.Number)),
 				callableReturning(typ.String),
 			),
-			want: typ.NewUnion(typ.Nil, typ.String, typ.Number),
+			want: typeexpr.Union(typ.Nil, typ.String, typ.Number),
 		},
 	}
 
@@ -410,6 +445,173 @@ func TestInstantiateGenericCallSubstitutesGenericAliasReturn(t *testing.T) {
 	assertType(t, got, want)
 }
 
+func TestInstantiateGenericCallInfersArrayElementOptionalReturn(t *testing.T) {
+	param := typ.NewTypeParam("T", nil)
+	fn := typ.Func().
+		TypeParamRef(param).
+		Param("list", typ.NewArray(param)).
+		Returns(typeexpr.Optional(param)).
+		Build()
+
+	got, violations := InstantiateGenericCall(fn, []typ.Type{typ.NewArray(typ.String)})
+	if len(violations) != 0 {
+		t.Fatalf("violations = %#v, want none", violations)
+	}
+	want := typ.Func().
+		Param("list", typ.NewArray(typ.String)).
+		Returns(typeexpr.Optional(typ.String)).
+		Build()
+	assertType(t, got, want)
+}
+
+func TestInstantiateGenericCallInfersChannelCallbackOptionalReturn(t *testing.T) {
+	input := typ.NewTypeParam("T", nil)
+	output := typ.NewTypeParam("U", nil)
+	payload := typetable.NewRecord().Field("id", typ.String).Build()
+	fn := typ.Func().
+		TypeParamRef(input).
+		TypeParamRef(output).
+		Param("channel", typ.Instantiate(ambient.ChannelGeneric(), input)).
+		Param("fn", typ.Func().Param("value", input).Returns(output).Build()).
+		Returns(typeexpr.Optional(output)).
+		Build()
+	callback := typ.Func().
+		Param("value", payload).
+		Returns(typ.String).
+		Build()
+
+	got, violations := InstantiateGenericCall(fn, []typ.Type{
+		typ.Instantiate(ambient.ChannelGeneric(), payload),
+		callback,
+	})
+	if len(violations) != 0 {
+		t.Fatalf("violations = %#v, want none", violations)
+	}
+	want := typ.Func().
+		Param("channel", typ.Instantiate(ambient.ChannelGeneric(), payload)).
+		Param("fn", typ.Func().Param("value", payload).Returns(typ.String).Build()).
+		Returns(typeexpr.Optional(typ.String)).
+		Build()
+	assertType(t, got, want)
+}
+
+func TestInstantiateGenericCallInfersChannelFromNestedOptionsObject(t *testing.T) {
+	input := typ.NewTypeParam("T", nil)
+	witness := typetable.NewRecord().
+		Field("decode", typ.Func().Param("raw", typ.Any).Returns(input).Build()).
+		Build()
+	options := typetable.NewRecord().
+		Field("channel", typ.Instantiate(ambient.ChannelGeneric(), input)).
+		Field("schema", typetable.NewRecord().Field("witness", witness).Build()).
+		Build()
+	payload := typetable.NewRecord().Field("id", typ.String).Build()
+	actual := typetable.NewRecord().
+		Field("channel", typ.Instantiate(ambient.ChannelGeneric(), payload)).
+		Field("schema", typetable.NewRecord().Field("witness", typetable.NewRecord().
+			Field("decode", typ.Func().Param("raw", typ.Any).Returns(payload).Build()).
+			Build()).Build()).
+		Build()
+	fn := typ.Func().
+		TypeParamRef(input).
+		Param("topic", typ.String).
+		Param("options", options).
+		Returns(typ.Instantiate(ambient.ChannelGeneric(), input)).
+		Build()
+
+	got, violations := InstantiateGenericCall(fn, []typ.Type{typ.String, actual})
+	if len(violations) != 0 {
+		t.Fatalf("violations = %#v, want none", violations)
+	}
+	assertType(t, got.Returns[0], typ.Instantiate(ambient.ChannelGeneric(), payload))
+}
+
+func TestInstantiateGenericCallInfersChannelFromPartialInstantiatedOptionsObject(t *testing.T) {
+	input := typ.NewTypeParam("T", nil)
+	witness := typetable.NewRecord().
+		Field("decode", typ.Func().Param("raw", typ.Any).Returns(input).Build()).
+		Build()
+	optionsBody := typetable.NewRecord().
+		Field("channel", typ.Instantiate(ambient.ChannelGeneric(), input)).
+		Field("schema", typetable.NewRecord().Field("witness", witness).Build()).
+		Build()
+	options := typ.NewGeneric("ListenOptions", []*typ.TypeParam{input}, optionsBody)
+	payload := typetable.NewRecord().Field("id", typ.String).Build()
+	actual := typetable.NewRecord().
+		Field("channel", typ.Instantiate(ambient.ChannelGeneric(), payload)).
+		Build()
+	fn := typ.Func().
+		TypeParamRef(input).
+		Param("topic", typ.String).
+		Param("options", typ.Instantiate(options, input)).
+		Returns(typ.Instantiate(ambient.ChannelGeneric(), input)).
+		Build()
+
+	got, violations := InstantiateGenericCall(fn, []typ.Type{typ.String, actual})
+	if len(violations) != 0 {
+		t.Fatalf("violations = %#v, want none", violations)
+	}
+	assertType(t, got.Returns[0], typ.Instantiate(ambient.ChannelGeneric(), payload))
+}
+
+func TestInstantiateGenericCallRejectsConflictingInstantiatedOptionsObject(t *testing.T) {
+	input := typ.NewTypeParam("T", nil)
+	optionsBody := typetable.NewRecord().
+		Field("channel", typ.Instantiate(ambient.ChannelGeneric(), input)).
+		Field("decode", typ.Func().Param("raw", typ.Any).Returns(input).Build()).
+		Build()
+	options := typ.NewGeneric("ListenOptions", []*typ.TypeParam{input}, optionsBody)
+	event := typetable.NewRecord().Field("id", typ.String).Build()
+	timer := typetable.NewRecord().Field("elapsed", typ.Number).Build()
+	actual := typetable.NewRecord().
+		Field("channel", typ.Instantiate(ambient.ChannelGeneric(), event)).
+		Field("decode", typ.Func().Param("raw", typ.Any).Returns(timer).Build()).
+		Build()
+	fn := typ.Func().
+		TypeParamRef(input).
+		Param("topic", typ.String).
+		Param("options", typ.Instantiate(options, input)).
+		Returns(typ.Instantiate(ambient.ChannelGeneric(), input)).
+		Build()
+
+	_, violations := InstantiateGenericCall(fn, []typ.Type{typ.String, actual})
+	if len(violations) != 1 {
+		t.Fatalf("violations = %#v, want one conflicting options violation", violations)
+	}
+	if violations[0].Index != 1 {
+		t.Fatalf("violation index = %d, want 1", violations[0].Index)
+	}
+	assertType(t, violations[0].Got, actual)
+}
+
+func TestInstantiateGenericCallInfersRecursiveWitnessType(t *testing.T) {
+	input := typ.NewTypeParam("T", nil)
+	witness := typ.NewGeneric("Type", []*typ.TypeParam{input},
+		typetable.NewRecord().
+			Field("decode", typ.Func().Param("raw", typ.Any).Returns(input).Build()).
+			Build())
+	node := typ.NewRecursive("Node", func(self typ.Type) typ.Type {
+		return typetable.NewRecord().
+			Field("id", typ.String).
+			Field("children", typ.NewArray(self)).
+			Build()
+	})
+	fn := typ.Func().
+		TypeParamRef(input).
+		Param("data", typ.String).
+		Param("witness", typ.Instantiate(witness, input)).
+		Returns(input).
+		Build()
+
+	got, violations := InstantiateGenericCall(fn, []typ.Type{
+		typ.String,
+		typ.Instantiate(witness, node),
+	})
+	if len(violations) != 0 {
+		t.Fatalf("violations = %#v, want none", violations)
+	}
+	assertType(t, got.Returns[0], node)
+}
+
 func TestInstantiateGenericCallInfersCallbackReturn(t *testing.T) {
 	result := resultGeneric()
 	profile := typetable.NewRecord().Field("id", typ.String).Build()
@@ -461,6 +663,56 @@ func TestInstantiateGenericCallInfersCallbackResultReturn(t *testing.T) {
 		Param("result", typ.Instantiate(result, profile)).
 		Param("fn", typ.Func().Param("item", profile).Returns(typ.Instantiate(result, typ.Number)).Build()).
 		Returns(typ.Instantiate(result, typ.Number)).
+		Build()
+	assertType(t, got, want)
+}
+
+func TestInstantiateGenericCallInfersCallbackResultReturnFromStructuralUnionAlias(t *testing.T) {
+	errorType := typetable.NewRecord().Field("message", typ.String).Build()
+	resultParam := typ.NewTypeParam("T", nil)
+	result := typ.NewGeneric("Result", []*typ.TypeParam{resultParam}, typeexpr.Union(
+		typetable.NewRecord().
+			Field("ok", typ.LiteralBool(true)).
+			Field("value", resultParam).
+			Build(),
+		typetable.NewRecord().
+			Field("ok", typ.LiteralBool(false)).
+			Field("error", errorType).
+			Build(),
+	))
+	stringResult := typ.NewAlias("StringResult", typeexpr.Union(
+		typetable.NewRecord().
+			Field("ok", typ.LiteralBool(true)).
+			Field("value", typ.String).
+			Build(),
+		typetable.NewRecord().
+			Field("ok", typ.LiteralBool(false)).
+			Field("error", errorType).
+			Build(),
+	))
+	profile := typetable.NewRecord().Field("id", typ.String).Build()
+	fnParamT := typ.NewTypeParam("T", nil)
+	fnParamU := typ.NewTypeParam("U", nil)
+	fn := typ.Func().
+		TypeParamRef(fnParamT).
+		TypeParamRef(fnParamU).
+		Param("result", typ.Instantiate(result, fnParamT)).
+		Param("fn", typ.Func().Param("item", fnParamT).Returns(typ.Instantiate(result, fnParamU)).Build()).
+		Returns(typ.Instantiate(result, fnParamU)).
+		Build()
+
+	callback := typ.Func().
+		Param("item", profile).
+		Returns(stringResult).
+		Build()
+	got, violations := InstantiateGenericCall(fn, []typ.Type{typ.Instantiate(result, profile), callback})
+	if len(violations) != 0 {
+		t.Fatalf("violations = %#v, want none", violations)
+	}
+	want := typ.Func().
+		Param("result", typ.Instantiate(result, profile)).
+		Param("fn", typ.Func().Param("item", profile).Returns(typ.Instantiate(result, typ.String)).Build()).
+		Returns(typ.Instantiate(result, typ.String)).
 		Build()
 	assertType(t, got, want)
 }

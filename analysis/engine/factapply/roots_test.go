@@ -8,6 +8,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/standard"
+	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/state/pathevidence"
@@ -15,6 +16,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/visibility"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/symbol"
+	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
 func TestFactsNodeTransferAppliesLocalAssignmentThroughResolver(t *testing.T) {
@@ -117,6 +119,58 @@ func TestFactsNodeTransferRootAssignmentAddsPathEqualityProofForPathSource(t *te
 	}
 	if !got.HasBranchProof(proof) {
 		t.Fatalf("missing path equality proof %#v", proof)
+	}
+}
+
+func TestFactsNodeTransferRootAssignmentPropagatesNumericFloorThroughIncrement(t *testing.T) {
+	reg := standard.Registry()
+	point := cfg.Point(13)
+	target := symbol.ID(113)
+	targetPath := path.NewPath(target, "i")
+	targetKey := targetPath.Key()
+	leftRef := factflow.ExprRef(131)
+	oneRef := factflow.ExprRef(132)
+	incRef := factflow.ExprRef(133)
+	left := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: leftRef, HasExpr: true}
+	one := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: oneRef, HasExpr: true}
+	inc := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: incRef, HasExpr: true}
+	op, ok := factflow.NewBinaryExpressionOperation("+", left, one)
+	if !ok {
+		t.Fatal("NewBinaryExpressionOperation returned false")
+	}
+	oneType := typ.LiteralInt(1)
+	oneValue := typevalue.WithWitness(reg, typevalue.FromType(reg, oneType), oneType)
+	visibilityBuilder := visibility.NewBuilder()
+	visibilityBuilder.Define(point, target, "i")
+	sources := &recordingSourceValues{
+		values: map[factflow.ValueSource]product.Value{inc: typevalue.FromType(reg, typ.Integer)},
+	}
+
+	got := NewFactsNodeTransfer(FactsNodeTransferConfig{
+		Facts: factflow.NewFacts(factflow.FactsInput{
+			RootAssignments: map[cfg.Point]factflow.RootAssignment{
+				point: factflow.NewRootAssignment(factflow.RootAssignmentOrdinaryRootWrite, target, targetPath, inc),
+			},
+			ExpressionPaths: map[factflow.ExprRef]path.Path{
+				leftRef: targetPath,
+			},
+			ExpressionValues: map[factflow.ExprRef]product.Value{
+				oneRef: oneValue,
+			},
+			ExpressionOperations: map[factflow.ExprRef]factflow.ExpressionOperation{
+				incRef: op,
+			},
+		}),
+		Sources:    sources,
+		Visibility: visibility.NewResolver(visibilityBuilder.Build()),
+	})(transfer.NodeContext{
+		Registry: reg,
+		Point:    point,
+	}, state.State{}.WriteNumFloor(targetKey, 1))
+
+	floor, ok := got.ReadNumFloor(targetKey)
+	if !ok || floor != 2 {
+		t.Fatalf("numeric floor for i = %d/%v, want 2/true", floor, ok)
 	}
 }
 

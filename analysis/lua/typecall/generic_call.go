@@ -2,6 +2,7 @@ package typecall
 
 import (
 	"github.com/wippyai/go-lua/analysis/type/normalize"
+	"github.com/wippyai/go-lua/analysis/type/refinement"
 	"github.com/wippyai/go-lua/analysis/type/subst"
 	"github.com/wippyai/go-lua/analysis/type/subtype"
 	"github.com/wippyai/go-lua/analysis/type/typ"
@@ -69,6 +70,7 @@ func InstantiateGenericCall(fn *typ.Function, args []typ.Type) (*typ.Function, [
 	if !ok {
 		return fn, violations
 	}
+	violations = append(violations, validateInstantiatedArguments(instantiated, args)...)
 	return instantiated, violations
 }
 
@@ -88,6 +90,258 @@ func callParamType(fn *typ.Function, index int) (typ.Type, bool) {
 		return fn.Variadic, true
 	}
 	return nil, false
+}
+
+func validateInstantiatedArguments(fn *typ.Function, args []typ.Type) []ArgumentConstraintViolation {
+	if fn == nil || len(args) == 0 {
+		return nil
+	}
+	var violations []ArgumentConstraintViolation
+	for i, actual := range args {
+		if actual == nil {
+			continue
+		}
+		if refinement.ContainsFreeTypeParam(actual) {
+			continue
+		}
+		formal, ok := callParamType(fn, i)
+		if !ok || formal == nil || refinement.ContainsFreeTypeParam(formal) {
+			continue
+		}
+		if instantiatedArgumentAssignable(actual, formal, 0) {
+			continue
+		}
+		violations = append(violations, ArgumentConstraintViolation{
+			Index:      i,
+			Got:        actual,
+			Constraint: formal,
+		})
+	}
+	return violations
+}
+
+func instantiatedArgumentAssignable(actual typ.Type, formal typ.Type, depth int) bool {
+	if actual == nil || formal == nil || depth > typ.DefaultRecursionDepth {
+		return true
+	}
+	actual = unwrap.Annotated(actual)
+	formal = unwrap.Annotated(formal)
+	if formal == nil || refinement.ContainsFreeTypeParam(formal) {
+		return true
+	}
+
+	if actualInst, ok := actual.(*typ.Instantiated); ok {
+		if formalInst, ok := formal.(*typ.Instantiated); ok && sameGeneric(actualInst.Generic, formalInst.Generic) {
+			return instantiatedArgsAssignable(actualInst, formalInst, depth+1)
+		}
+	}
+
+	switch f := formal.(type) {
+	case *typ.Alias:
+		return instantiatedArgumentAssignable(actual, f.UnaliasedTarget(), depth+1)
+	case *typ.Optional:
+		if a, ok := actual.(*typ.Optional); ok {
+			return instantiatedArgumentAssignable(a.Inner, f.Inner, depth+1)
+		}
+		return instantiatedArgumentAssignable(actual, f.Inner, depth+1)
+	case *typ.Instantiated:
+		expanded := expandFormalInstantiatedForInference(f)
+		if expanded != nil && expanded != formal {
+			return instantiatedArgumentAssignable(actual, expanded, depth+1)
+		}
+	case *typ.Record:
+		if actualRecord, ok := actualRecordForValidation(actual, depth+1); ok {
+			return providedRecordFieldsAssignable(actualRecord, f, depth+1)
+		}
+	}
+	if underSpecifiedFunctionLiteral(actual, formal) {
+		return true
+	}
+
+	return subtype.IsFreshAssignable(actual, formal)
+}
+
+func underSpecifiedFunctionLiteral(actual typ.Type, formal typ.Type) bool {
+	actualFn, actualOK := actual.(*typ.Function)
+	formalFn, formalOK := formal.(*typ.Function)
+	if !actualOK || !formalOK || actualFn == nil || formalFn == nil {
+		return false
+	}
+	return len(actualFn.Returns) == 0 && len(formalFn.Returns) != 0
+}
+
+func instantiatedArgsAssignable(actual *typ.Instantiated, formal *typ.Instantiated, depth int) bool {
+	if actual == nil || formal == nil || len(actual.TypeArgs) != len(formal.TypeArgs) {
+		return false
+	}
+	for i, actualArg := range actual.TypeArgs {
+		formalArg := formal.TypeArgs[i]
+		if subtype.IsSubtype(actualArg, formalArg) && subtype.IsSubtype(formalArg, actualArg) {
+			continue
+		}
+		if freshPrecisionArgumentAssignable(actualArg, formalArg, depth+1) {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+func freshPrecisionArgumentAssignable(actual typ.Type, formal typ.Type, depth int) bool {
+	if actual == nil || formal == nil || depth > typ.DefaultRecursionDepth {
+		return false
+	}
+	if !subtype.IsFreshAssignable(actual, formal) {
+		return false
+	}
+	return hasFreshPrecisionShape(actual, formal, depth+1)
+}
+
+func hasFreshPrecisionShape(actual typ.Type, formal typ.Type, depth int) bool {
+	if actual == nil || formal == nil || depth > typ.DefaultRecursionDepth {
+		return false
+	}
+	actual = unwrap.Annotated(actual)
+	formal = unwrap.Annotated(formal)
+	if alias, ok := actual.(*typ.Alias); ok {
+		return hasFreshPrecisionShape(alias.UnaliasedTarget(), formal, depth+1)
+	}
+	if alias, ok := formal.(*typ.Alias); ok {
+		return hasFreshPrecisionShape(actual, alias.UnaliasedTarget(), depth+1)
+	}
+	if subtype.IsSubtype(actual, formal) && subtype.IsSubtype(formal, actual) {
+		return false
+	}
+	if _, ok := actual.(*typ.Literal); ok {
+		return true
+	}
+	if opt, ok := actual.(*typ.Optional); ok {
+		if formalOpt, ok := formal.(*typ.Optional); ok {
+			return hasFreshPrecisionShape(opt.Inner, formalOpt.Inner, depth+1)
+		}
+		return hasFreshPrecisionShape(opt.Inner, formal, depth+1)
+	}
+	if opt, ok := formal.(*typ.Optional); ok {
+		return hasFreshPrecisionShape(actual, opt.Inner, depth+1)
+	}
+	if union, ok := actual.(*typ.Union); ok {
+		for _, member := range union.Members {
+			if hasFreshPrecisionShape(member, formal, depth+1) {
+				return true
+			}
+		}
+		return false
+	}
+	if union, ok := formal.(*typ.Union); ok {
+		for _, member := range union.Members {
+			if subtype.IsFreshAssignable(actual, member) && hasFreshPrecisionShape(actual, member, depth+1) {
+				return true
+			}
+		}
+		return false
+	}
+	if actualInst, ok := actual.(*typ.Instantiated); ok {
+		if formalInst, ok := formal.(*typ.Instantiated); ok && sameGeneric(actualInst.Generic, formalInst.Generic) {
+			for i, actualArg := range actualInst.TypeArgs {
+				if i >= len(formalInst.TypeArgs) {
+					return false
+				}
+				if hasFreshPrecisionShape(actualArg, formalInst.TypeArgs[i], depth+1) {
+					return true
+				}
+			}
+			return false
+		}
+	}
+	actualRecord, actualOK := actualRecordForValidation(actual, depth+1)
+	formalRecord, formalOK := actualRecordForValidation(formal, depth+1)
+	if actualOK && formalOK {
+		for _, field := range actualRecord.Fields {
+			formalField := formalRecord.GetField(field.Name)
+			if formalField == nil || formalField.Type == nil || field.Type == nil {
+				continue
+			}
+			if hasFreshPrecisionShape(field.Type, formalField.Type, depth+1) {
+				return true
+			}
+		}
+		for _, member := range actualRecord.StaticMembers {
+			formalMember := formalRecord.GetStaticMember(member.Kind, member.Name, member.Index)
+			if formalMember == nil || formalMember.Type == nil || member.Type == nil {
+				continue
+			}
+			if hasFreshPrecisionShape(member.Type, formalMember.Type, depth+1) {
+				return true
+			}
+		}
+		if actualRecord.HasMapComponent() && formalRecord.HasMapComponent() {
+			return hasFreshPrecisionShape(actualRecord.MapKey, formalRecord.MapKey, depth+1) ||
+				hasFreshPrecisionShape(actualRecord.MapValue, formalRecord.MapValue, depth+1)
+		}
+		return false
+	}
+	actualFn, actualFnOK := actual.(*typ.Function)
+	formalFn, formalFnOK := formal.(*typ.Function)
+	if actualFnOK && formalFnOK {
+		for i, ret := range actualFn.Returns {
+			if i >= len(formalFn.Returns) {
+				break
+			}
+			if hasFreshPrecisionShape(ret, formalFn.Returns[i], depth+1) {
+				return true
+			}
+		}
+		return false
+	}
+	return false
+}
+
+func actualRecordForValidation(actual typ.Type, depth int) (*typ.Record, bool) {
+	if actual == nil || depth > typ.DefaultRecursionDepth {
+		return nil, false
+	}
+	actual = unwrap.Annotated(actual)
+	switch a := actual.(type) {
+	case *typ.Alias:
+		return actualRecordForValidation(a.UnaliasedTarget(), depth+1)
+	case *typ.Instantiated:
+		expanded := subst.ExpandInstantiated(a)
+		if expanded != nil && expanded != actual {
+			return actualRecordForValidation(expanded, depth+1)
+		}
+	case *typ.Record:
+		return a, true
+	}
+	return nil, false
+}
+
+func providedRecordFieldsAssignable(actual *typ.Record, formal *typ.Record, depth int) bool {
+	if actual == nil || formal == nil || depth > typ.DefaultRecursionDepth {
+		return true
+	}
+	for _, field := range actual.Fields {
+		formalField := formal.GetField(field.Name)
+		if formalField == nil || formalField.Type == nil || field.Type == nil {
+			continue
+		}
+		if !instantiatedArgumentAssignable(field.Type, formalField.Type, depth+1) {
+			return false
+		}
+	}
+	for _, member := range actual.StaticMembers {
+		formalMember := formal.GetStaticMember(member.Kind, member.Name, member.Index)
+		if formalMember == nil || formalMember.Type == nil || member.Type == nil {
+			continue
+		}
+		if !instantiatedArgumentAssignable(member.Type, formalMember.Type, depth+1) {
+			return false
+		}
+	}
+	if actual.HasMapComponent() && formal.HasMapComponent() {
+		return instantiatedArgumentAssignable(actual.MapKey, formal.MapKey, depth+1) &&
+			instantiatedArgumentAssignable(actual.MapValue, formal.MapValue, depth+1)
+	}
+	return true
 }
 
 func inferTypeParamBindings(formal typ.Type, actual typ.Type, index int, bindings map[*typ.TypeParam]inferredArg, depth int) {
@@ -158,7 +412,7 @@ func inferTypeParamBindings(formal typ.Type, actual typ.Type, index int, binding
 			}
 			return
 		}
-		expanded := subst.ExpandInstantiated(f)
+		expanded := expandFormalInstantiatedForInference(f)
 		if expanded != nil && expanded != formal {
 			inferTypeParamBindings(expanded, actual, index, bindings, depth+1)
 		}
@@ -171,6 +425,16 @@ func inferTypeParamBindings(formal typ.Type, actual typ.Type, index int, binding
 			inferTypeParamBindings(member, actual, index, bindings, depth+1)
 		}
 	}
+}
+
+func expandFormalInstantiatedForInference(inst *typ.Instantiated) typ.Type {
+	if inst == nil || inst.Generic == nil ||
+		inst.Generic.Body == nil ||
+		len(inst.TypeArgs) != len(inst.Generic.TypeParams) {
+		return inst
+	}
+	body := subst.Params(inst.Generic.Body, inst.Generic.TypeParams, inst.TypeArgs)
+	return subst.Self(body, inst)
 }
 
 func inferFunctionBindings(formal *typ.Function, actual typ.Type, index int, bindings map[*typ.TypeParam]inferredArg, depth int) {
@@ -227,6 +491,12 @@ func inferRecordBindings(formal *typ.Record, actual typ.Type, index int, binding
 		if expanded != nil && expanded != actual {
 			actual = expanded
 		}
+	}
+	if union, ok := actual.(*typ.Union); ok {
+		for _, member := range union.Members {
+			inferRecordBindings(formal, member, index, bindings, depth+1)
+		}
+		return
 	}
 	record, ok := actual.(*typ.Record)
 	if !ok || record == nil {

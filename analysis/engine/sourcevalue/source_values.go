@@ -2,6 +2,9 @@ package sourcevalue
 
 import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/evidence"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/typewitness"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/variantorigin"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/state"
@@ -16,6 +19,14 @@ type SourceValues interface {
 // ExpressionValueProvider resolves an opaque expression reference into a value.
 type ExpressionValueProvider func(point cfg.Point, expr factflow.ExprRef, source factflow.ValueSource, in state.State) (product.Value, bool)
 
+// ExpressionOperationEvaluator materializes a lowered expression operation from
+// already-resolved operand values.
+type ExpressionOperationEvaluator func(op factflow.ExpressionOperation, left product.Value, right product.Value) (product.Value, bool)
+
+// ObjectLiteralEvaluator materializes an object literal from lowered entry
+// sources.
+type ObjectLiteralEvaluator func(lit factflow.ObjectLiteral, resolve func(factflow.ValueSource) (product.Value, bool)) (product.Value, bool)
+
 // VarargValueProvider resolves a vararg value source. It is intentionally
 // optional because the generic transfer engine cannot infer vararg shape.
 type VarargValueProvider func(point cfg.Point, source factflow.ValueSource, in state.State, read func(cfg.Point) state.State) (product.Value, bool)
@@ -25,8 +36,18 @@ type SourceValuesConfig struct {
 	Registry *axis.Registry
 
 	ExpressionValues map[factflow.ExprRef]product.Value
-	ExpressionValue  ExpressionValueProvider
-	VarargValue      VarargValueProvider
+	// ExpressionPaths identifies the expressions whose value is an access path
+	// (an identifier or member chain) resolved point-sensitively from flow
+	// state. Their entries in ExpressionValues hold only the static declared
+	// type, so the flow-aware ExpressionValue provider must resolve them instead
+	// to observe branch narrowing recorded along CFG edges.
+	ExpressionPaths map[factflow.ExprRef]struct{}
+	ObjectLiterals  map[factflow.ExprRef]factflow.ObjectLiteral
+	ObjectLiteral   ObjectLiteralEvaluator
+	ExpressionOps   map[factflow.ExprRef]factflow.ExpressionOperation
+	ExpressionOp    ExpressionOperationEvaluator
+	ExpressionValue ExpressionValueProvider
+	VarargValue     VarargValueProvider
 }
 
 // NewSourceValues creates a generic ValueSource resolver. It stays independent
@@ -39,6 +60,11 @@ func NewSourceValues(config SourceValuesConfig) SourceValues {
 	return sourceValueResolver{
 		registry:         registry,
 		expressionValues: copyExpressionValues(config.ExpressionValues),
+		pathBacked:       copyExprRefSet(config.ExpressionPaths),
+		objectLiterals:   copyObjectLiterals(config.ObjectLiterals),
+		objectLiteral:    config.ObjectLiteral,
+		expressionOps:    copyExpressionOps(config.ExpressionOps),
+		expressionOp:     config.ExpressionOp,
 		expressionValue:  config.ExpressionValue,
 		varargValue:      config.VarargValue,
 	}
@@ -48,6 +74,11 @@ type sourceValueResolver struct {
 	registry *axis.Registry
 
 	expressionValues map[factflow.ExprRef]product.Value
+	pathBacked       map[factflow.ExprRef]struct{}
+	objectLiterals   map[factflow.ExprRef]factflow.ObjectLiteral
+	objectLiteral    ObjectLiteralEvaluator
+	expressionOps    map[factflow.ExprRef]factflow.ExpressionOperation
+	expressionOp     ExpressionOperationEvaluator
 	expressionValue  ExpressionValueProvider
 	varargValue      VarargValueProvider
 }
@@ -62,7 +93,7 @@ func (r sourceValueResolver) ValueOfSource(
 	case factflow.ValueSourceNil:
 		return product.Absent(r.registry), true
 	case factflow.ValueSourceExpression:
-		return r.valueOfExpression(point, source, in)
+		return r.valueOfExpression(point, source, in, read)
 	case factflow.ValueSourceCall:
 		return r.valueOfCall(source, read)
 	case factflow.ValueSourceVararg:
@@ -79,17 +110,151 @@ func (r sourceValueResolver) valueOfExpression(
 	point cfg.Point,
 	source factflow.ValueSource,
 	in state.State,
+	read func(cfg.Point) state.State,
 ) (product.Value, bool) {
 	if !source.HasExpr {
 		return product.Value{}, false
 	}
-	if value, ok := r.expressionValues[source.ExprRef]; ok {
+	cached, hasCached := r.expressionValues[source.ExprRef]
+	_, pathBacked := r.pathBacked[source.ExprRef]
+	if hasCached && !pathBacked && hasTopOrigin(r.registry, cached) {
+		return cached, true
+	}
+	if value, ok := r.valueOfObjectLiteral(point, source.ExprRef, in, read); ok {
+		return value, true
+	}
+	if hasCached && !pathBacked {
+		return cached, true
+	}
+	// A path-backed expression (an identifier or member chain) is resolved
+	// point-sensitively from flow state so it observes branch narrowing recorded
+	// along CFG edges. Its cached entry holds only the static declared type, so
+	// the flow value is preferred whenever it carries a concrete type; when flow
+	// state holds no type witness for the path the cached declared type is the
+	// sound fallback (flow narrowing is always a subtype of the declaration).
+	if pathBacked && hasCached {
+		if flowValue, ok := r.flowExpressionValue(point, source, in, read); ok && carriesType(r.registry, flowValue) {
+			return flowValue, true
+		}
+		return cached, true
+	}
+	return r.flowExpressionValue(point, source, in, read)
+}
+
+func hasTopOrigin(reg *axis.Registry, value product.Value) bool {
+	ev := product.Get(reg, value, evidence.Key)
+	return ev.IsGradualTop() || ev.IsExplicitTop()
+}
+
+// carriesType reports whether value holds concrete semantic evidence the
+// resolver can project: a type witness, variant-origin narrowing, or explicit
+// top evidence. A path-backed value whose only precision is variant origin must
+// still win over the cached declared type so discriminant guards refine local
+// aliases instead of being overwritten by declarations.
+func carriesType(reg *axis.Registry, value product.Value) bool {
+	if witness := product.Get(reg, value, typewitness.Key); !witness.IsTop() {
+		if _, ok := witness.Type(); ok {
+			return true
+		}
+	}
+	origin := product.Get(reg, value, variantorigin.Key)
+	if !origin.IsBottom() && !origin.IsTop() {
+		return true
+	}
+	ev := product.Get(reg, value, evidence.Key)
+	return ev.IsGradualTop() || ev.IsExplicitTop()
+}
+
+func (r sourceValueResolver) flowExpressionValue(
+	point cfg.Point,
+	source factflow.ValueSource,
+	in state.State,
+	read func(cfg.Point) state.State,
+) (product.Value, bool) {
+	if value, ok := r.valueOfExpressionOperation(point, source.ExprRef, in, read, nil); ok {
 		return value, true
 	}
 	if r.expressionValue == nil {
 		return product.Value{}, false
 	}
 	return r.expressionValue(point, source.ExprRef, source, in)
+}
+
+func (r sourceValueResolver) valueOfObjectLiteral(
+	point cfg.Point,
+	expr factflow.ExprRef,
+	in state.State,
+	read func(cfg.Point) state.State,
+) (product.Value, bool) {
+	if r.objectLiteral == nil {
+		return product.Value{}, false
+	}
+	lit, ok := r.objectLiterals[expr]
+	if !ok {
+		return product.Value{}, false
+	}
+	return r.objectLiteral(lit, func(source factflow.ValueSource) (product.Value, bool) {
+		return r.ValueOfSource(point, source, in, read)
+	})
+}
+
+func (r sourceValueResolver) valueOfExpressionOperation(
+	point cfg.Point,
+	expr factflow.ExprRef,
+	in state.State,
+	read func(cfg.Point) state.State,
+	active map[factflow.ExprRef]bool,
+) (product.Value, bool) {
+	if r.expressionOp == nil {
+		return product.Value{}, false
+	}
+	op, ok := r.expressionOps[expr]
+	if !ok {
+		return product.Value{}, false
+	}
+	if active[expr] {
+		return product.Value{}, false
+	}
+	if active == nil {
+		active = make(map[factflow.ExprRef]bool, 1)
+	}
+	active[expr] = true
+	left, ok := r.valueOfOperationSource(point, op.Left(), in, read, active)
+	if !ok {
+		delete(active, expr)
+		return product.Value{}, false
+	}
+	var right product.Value
+	if op.Kind() == factflow.ExpressionOperationBinary {
+		right, ok = r.valueOfOperationSource(point, op.Right(), in, read, active)
+		if !ok {
+			delete(active, expr)
+			return product.Value{}, false
+		}
+	}
+	delete(active, expr)
+	return r.expressionOp(op, left, right)
+}
+
+func (r sourceValueResolver) valueOfOperationSource(
+	point cfg.Point,
+	source factflow.ValueSource,
+	in state.State,
+	read func(cfg.Point) state.State,
+	active map[factflow.ExprRef]bool,
+) (product.Value, bool) {
+	if source.Kind == factflow.ValueSourceExpression && source.HasExpr {
+		if value, ok := r.expressionValues[source.ExprRef]; ok {
+			return value, true
+		}
+		if value, ok := r.valueOfExpressionOperation(point, source.ExprRef, in, read, active); ok {
+			return value, true
+		}
+		if _, exists := r.expressionOps[source.ExprRef]; exists {
+			return product.Value{}, false
+		}
+	}
+	return r.ValueOfSource(point, source, in, read)
 }
 
 func (r sourceValueResolver) valueOfCall(source factflow.ValueSource, read func(cfg.Point) state.State) (product.Value, bool) {
@@ -106,6 +271,39 @@ func copyExpressionValues(in map[factflow.ExprRef]product.Value) map[factflow.Ex
 	out := make(map[factflow.ExprRef]product.Value, len(in))
 	for ref, value := range in {
 		out[ref] = value
+	}
+	return out
+}
+
+func copyExprRefSet(in map[factflow.ExprRef]struct{}) map[factflow.ExprRef]struct{} {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[factflow.ExprRef]struct{}, len(in))
+	for ref := range in {
+		out[ref] = struct{}{}
+	}
+	return out
+}
+
+func copyObjectLiterals(in map[factflow.ExprRef]factflow.ObjectLiteral) map[factflow.ExprRef]factflow.ObjectLiteral {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[factflow.ExprRef]factflow.ObjectLiteral, len(in))
+	for ref, lit := range in {
+		out[ref] = lit
+	}
+	return out
+}
+
+func copyExpressionOps(in map[factflow.ExprRef]factflow.ExpressionOperation) map[factflow.ExprRef]factflow.ExpressionOperation {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[factflow.ExprRef]factflow.ExpressionOperation, len(in))
+	for ref, op := range in {
+		out[ref] = op
 	}
 	return out
 }

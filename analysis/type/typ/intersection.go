@@ -27,42 +27,6 @@ type Intersection struct {
 	strCache              stringCache
 }
 
-// NewIntersection creates a normalized intersection type.
-// Returns Any for empty intersections, the single type for one member,
-// or a normalized Intersection for multiple distinct members.
-func NewIntersection(members ...Type) Type {
-	if len(members) == 0 {
-		return Any
-	}
-
-	// Flatten and collect
-	flat := make([]Type, 0, len(members))
-
-	var addMember func(Type)
-	addMember = func(m Type) {
-		unwrapped := unwrapAnnotatedOrNil(m)
-		if unwrapped == nil {
-			return
-		}
-
-		if unwrapped.Kind() == kind.Intersection {
-			for _, member := range unwrapped.(*Intersection).Members {
-				addMember(member)
-			}
-			return
-		}
-
-		flat = append(flat, m)
-	}
-
-	for _, m := range members {
-		addMember(m)
-	}
-
-	// Materialize after semantic flattening.
-	return MaterializeIntersection(flat)
-}
-
 // MaterializeIntersection builds the hash-stable intersection node for
 // already-selected members.
 //

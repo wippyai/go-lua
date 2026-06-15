@@ -4,40 +4,29 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/lattice"
 	"github.com/wippyai/go-lua/analysis/domain/lattice/lift"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/placement"
 )
 
-type Value uint8
+type Value = placement.Value
 
 const (
-	Bottom Value = iota
-	Stack
-	OwnedHeap
-	Escaped
-	Unknown
+	Bottom    = placement.Bottom
+	Stack     = placement.Stack
+	OwnedHeap = placement.OwnedHeap
+	Escaped   = placement.SharedHeap
+	Unknown   = placement.Unknown
 )
 
 func Domain() lattice.Lattice[Value] {
 	return lattice.Lattice[Value]{
-		Bottom: func() Value { return Bottom },
-		Top:    func() Value { return Unknown },
-		Equal: func(a, b Value) bool {
-			return a == b
-		},
+		Bottom: func() Value { return placement.Bottom },
+		Top:    func() Value { return placement.Unknown },
+		Equal:  placement.Equal,
 		LessOrEq: func(a, b Value) bool {
-			return a <= b
+			return placement.LessOrEq(a, b)
 		},
-		Join: func(a, b Value) Value {
-			if a > b {
-				return a
-			}
-			return b
-		},
-		Widen: func(prev, next Value) Value {
-			if prev > next {
-				return prev
-			}
-			return next
-		},
+		Join:  placement.Join,
+		Widen: placement.Widen,
 	}
 }
 

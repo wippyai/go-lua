@@ -471,3 +471,71 @@ func TestSupportsTypeComparison(t *testing.T) {
 		}
 	})
 }
+
+func lenOf(expr ast.Expr) *ast.UnaryLenOpExpr {
+	return &ast.UnaryLenOpExpr{Expr: expr}
+}
+
+func TestNormalizeLengthFloorGuards(t *testing.T) {
+	tests := []struct {
+		name      string
+		build     func(arr *ast.IdentExpr) ast.Expr
+		wantFloor int64
+	}{
+		{
+			name:      "greater than zero",
+			build:     func(arr *ast.IdentExpr) ast.Expr { return &ast.RelationalOpExpr{Operator: ">", Lhs: lenOf(arr), Rhs: number("0")} },
+			wantFloor: 1,
+		},
+		{
+			name:      "greater equal one",
+			build:     func(arr *ast.IdentExpr) ast.Expr { return &ast.RelationalOpExpr{Operator: ">=", Lhs: lenOf(arr), Rhs: number("1")} },
+			wantFloor: 1,
+		},
+		{
+			name:      "not equal zero",
+			build:     func(arr *ast.IdentExpr) ast.Expr { return &ast.RelationalOpExpr{Operator: "~=", Lhs: lenOf(arr), Rhs: number("0")} },
+			wantFloor: 1,
+		},
+		{
+			name:      "reversed zero less than len",
+			build:     func(arr *ast.IdentExpr) ast.Expr { return &ast.RelationalOpExpr{Operator: "<", Lhs: number("0"), Rhs: lenOf(arr)} },
+			wantFloor: 1,
+		},
+		{
+			name:      "greater than two",
+			build:     func(arr *ast.IdentExpr) ast.Expr { return &ast.RelationalOpExpr{Operator: ">", Lhs: lenOf(arr), Rhs: number("2")} },
+			wantFloor: 3,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			arr := ident("xs")
+			expr := tt.build(arr)
+			bindings := bindReturn(expr)
+			check := Normalize(expr, bindings)
+			if check.Kind != CheckLenGe {
+				t.Fatalf("want CheckLenGe, got kind %d", check.Kind)
+			}
+			if check.LenFloor != tt.wantFloor {
+				t.Fatalf("want floor %d, got %d", tt.wantFloor, check.LenFloor)
+			}
+			wantPath := path.NewPath(mustIdentSymbol(t, bindings, arr), "xs")
+			if check.Path.Key() != wantPath.Key() {
+				t.Fatalf("want array path %v, got %v", wantPath, check.Path)
+			}
+		})
+	}
+}
+
+func TestNormalizeLengthFloorRejectsNonGuards(t *testing.T) {
+	// len <= c and len < c do not establish a positive lower bound.
+	for _, op := range []string{"<", "<=", "=="} {
+		arr := ident("xs")
+		expr := &ast.RelationalOpExpr{Operator: op, Lhs: lenOf(arr), Rhs: number("5")}
+		bindings := bindReturn(expr)
+		if check := Normalize(expr, bindings); check.Kind == CheckLenGe {
+			t.Fatalf("operator %q must not produce a length floor", op)
+		}
+	}
+}

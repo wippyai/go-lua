@@ -7,10 +7,10 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/value/variant"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
-	"github.com/wippyai/go-lua/analysis/lua/typeaccess"
 	"github.com/wippyai/go-lua/analysis/lua/typeannotation"
 	"github.com/wippyai/go-lua/analysis/lua/typeoperator"
 	"github.com/wippyai/go-lua/analysis/lua/valueexpr"
+	"github.com/wippyai/go-lua/analysis/type/access"
 	"github.com/wippyai/go-lua/analysis/type/kind"
 	"github.com/wippyai/go-lua/analysis/type/subst"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
@@ -20,11 +20,12 @@ import (
 )
 
 type expressionTyper struct {
-	result   *body.Result
-	resolver typeannotation.Resolver
-	point    cfg.Point
-	env      literalEnv
-	flow     bool
+	result        *body.Result
+	resolver      typeannotation.Resolver
+	point         cfg.Point
+	env           literalEnv
+	flow          bool
+	witnessRefine bool
 }
 
 func newExpressionTyper(result *body.Result, resolver typeannotation.Resolver) expressionTyper {
@@ -32,7 +33,16 @@ func newExpressionTyper(result *body.Result, resolver typeannotation.Resolver) e
 }
 
 func newFlowExpressionTyper(result *body.Result, resolver typeannotation.Resolver, point cfg.Point, env literalEnv) expressionTyper {
-	return expressionTyper{result: result, resolver: resolver, point: point, env: env, flow: true}
+	return expressionTyper{result: result, resolver: resolver, point: point, env: env, flow: true, witnessRefine: true}
+}
+
+// newStructuralFlowExpressionTyper types expressions under active flow narrowing
+// but suppresses structural witness refinement, so the result reflects the
+// declared/origin type narrowed only by sound discriminant narrowing. This keeps
+// absence proofs from trusting a partial observed table-literal snapshot that may
+// omit declared fields.
+func newStructuralFlowExpressionTyper(result *body.Result, resolver typeannotation.Resolver, point cfg.Point, env literalEnv) expressionTyper {
+	return expressionTyper{result: result, resolver: resolver, point: point, env: env, flow: true, witnessRefine: false}
 }
 
 func (p expressionTyper) typeOf(expr ast.Expr) (typ.Type, bool) {
@@ -57,6 +67,8 @@ func (p expressionTyper) typeOfDepth(expr ast.Expr, depth int) (typ.Type, bool) 
 		return projectionWithoutNil(t), true
 	case *ast.IdentExpr:
 		return p.annotatedPathType(e)
+	case *ast.FuncCallExpr:
+		return p.callResultType(e)
 	case *ast.AttrGetExpr:
 		return p.attrType(e, depth+1)
 	case *ast.LogicalOpExpr:
@@ -92,7 +104,7 @@ func (p expressionTyper) annotatedPathType(expr ast.Expr) (typ.Type, bool) {
 		if !loweredOK {
 			return nil, false
 		}
-		t = lowered
+		t = transparentComparableType(p.result, lowered)
 	} else if p.flow {
 		lowered, loweredOK := p.flowOriginType(accessPath)
 		if !loweredOK {
@@ -115,6 +127,25 @@ func (p expressionTyper) annotatedPathType(expr ast.Expr) (typ.Type, bool) {
 	return p.refineFlowExpressionType(expr, t), true
 }
 
+// broadType returns the un-narrowed declared shape of a path expression: the
+// lowered annotation when present, otherwise the full variant-origin family. It
+// reflects what the receiver could be before any flow narrowing, so callers can
+// tell discriminant collapse apart from a single-shape observed snapshot.
+func (p expressionTyper) broadType(expr ast.Expr) (typ.Type, bool) {
+	accessPath, ok := p.result.ExpressionPath(expr)
+	if !ok || accessPath.Symbol == 0 || len(accessPath.Segments) != 0 {
+		return nil, false
+	}
+	if annotation, ok := p.result.SymbolTypeAnnotation(accessPath.Symbol); ok {
+		return lowerType(annotation, p.resolver)
+	}
+	value, ok := p.result.SymbolValueAtBoundary(p.point, accessPath.Symbol)
+	if !ok {
+		return nil, false
+	}
+	return readmodel.New(p.result).FullVariantOriginType(value)
+}
+
 func (p expressionTyper) flowOriginType(accessPath pathdom.Path) (typ.Type, bool) {
 	if p.result == nil || accessPath.Symbol == 0 {
 		return nil, false
@@ -131,8 +162,14 @@ func (p expressionTyper) flowRootType(t typ.Type, accessPath pathdom.Path) typ.T
 	if root.Symbol == 0 {
 		return t
 	}
-	if value, ok := p.result.SymbolValueAtBoundary(p.point, root.Symbol); ok {
-		if refined, ok := readmodel.New(p.result).RefineDeclaredType(t, value); ok {
+	if p.witnessRefine {
+		if value, ok := p.result.SymbolValueAtBoundary(p.point, root.Symbol); ok {
+			if refined, ok := readmodel.New(p.result).RefineDeclaredType(t, value); ok {
+				t = refined
+			}
+		}
+	} else if value, ok := p.result.SymbolValueAtBoundary(p.point, root.Symbol); ok {
+		if refined, ok := readmodel.New(p.result).NarrowDeclaredByOrigin(t, value); ok {
 			t = refined
 		}
 	}
@@ -177,10 +214,10 @@ func rootPath(p pathdom.Path) pathdom.Path {
 func expressionSegmentType(t typ.Type, seg segment.Segment) (typ.Type, bool) {
 	switch seg.Kind {
 	case segment.SegmentField:
-		if field, ok := typeaccess.Field(t, seg.Name); ok {
+		if field, ok := access.Field(t, seg.Name); ok {
 			return field, true
 		}
-		if typeaccess.MissingFieldReadsNil(t) {
+		if access.MissingFieldReadsNil(t) {
 			return typ.Nil, true
 		}
 		return nil, false
@@ -189,10 +226,25 @@ func expressionSegmentType(t typ.Type, seg segment.Segment) (typ.Type, bool) {
 		if !ok {
 			return nil, false
 		}
-		return typeaccess.RuntimeIndex(t, key)
+		return access.RuntimeIndex(t, key)
 	default:
 		return nil, false
 	}
+}
+
+// callResultType types the first result of a call expression from its solved
+// call-result slot, preserving boundary presence so an optional result reads as
+// optional. It lets index/field projections over a call result (make()[1]) be
+// typed without a symbol path.
+func (p expressionTyper) callResultType(call *ast.FuncCallExpr) (typ.Type, bool) {
+	if p.result == nil || call == nil {
+		return nil, false
+	}
+	value, ok := p.result.CallExprResultValue(call, 0)
+	if !ok {
+		return nil, false
+	}
+	return readmodel.New(p.result).ValueTypeWithPresence(value)
 }
 
 func (p expressionTyper) attrType(expr *ast.AttrGetExpr, depth int) (typ.Type, bool) {
@@ -218,7 +270,7 @@ func (p expressionTyper) attrType(expr *ast.AttrGetExpr, depth int) (typ.Type, b
 	if !ok {
 		return nil, false
 	}
-	t, ok := typeaccess.RuntimeIndex(container, key)
+	t, ok := access.RuntimeIndex(container, key)
 	if !ok {
 		return nil, false
 	}
@@ -226,7 +278,7 @@ func (p expressionTyper) attrType(expr *ast.AttrGetExpr, depth int) (typ.Type, b
 }
 
 func (p expressionTyper) refineFlowExpressionType(expr ast.Expr, t typ.Type) typ.Type {
-	if !p.flow || p.result == nil || expr == nil || t == nil {
+	if !p.flow || !p.witnessRefine || p.result == nil || expr == nil || t == nil {
 		return t
 	}
 	value, ok := p.result.ExpressionValueAtBoundary(p.point, expr)

@@ -17,9 +17,9 @@ import (
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
-	"github.com/wippyai/go-lua/analysis/lua/typeaccess"
 	"github.com/wippyai/go-lua/analysis/lua/typeannotation"
 	"github.com/wippyai/go-lua/analysis/lua/typecall"
+	luatypeprojection "github.com/wippyai/go-lua/analysis/lua/typeprojection"
 	"github.com/wippyai/go-lua/analysis/lua/typeresolve"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/type/refinement"
@@ -259,7 +259,7 @@ func (p paramObligationProjector) receiverType(receiver pathdom.Path) (typ.Type,
 				if len(receiver.Segments) == 0 {
 					return base, true
 				}
-				if projected, ok := typeaccess.ProjectSegments(base, receiver.Segments); ok {
+				if projected, ok := luatypeprojection.ApplySegments(base, receiver.Segments); ok {
 					return projected, true
 				}
 			}

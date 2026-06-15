@@ -33,6 +33,26 @@ func ResolveContainer(expr ast.Expr, bindings *bind.Result) (path.Path, bool) {
 	return Resolve(attr.Object, bindings)
 }
 
+// ResolveFuncName extracts the static assignment target for a function
+// definition name. Method definitions target receiver.method; self parameter
+// semantics are handled by binding, not by path resolution.
+func ResolveFuncName(name *ast.FuncName, bindings *bind.Result) (path.Path, bool) {
+	if name == nil {
+		return path.Path{}, false
+	}
+	if name.Method != "" {
+		receiver, ok := Resolve(name.Receiver, bindings)
+		if !ok || receiver.IsEmpty() {
+			return path.Path{}, false
+		}
+		return receiver.Field(name.Method), true
+	}
+	if name.Receiver != nil {
+		return path.Path{}, false
+	}
+	return Resolve(name.Func, bindings)
+}
+
 func resolveIdent(expr *ast.IdentExpr, bindings *bind.Result) (path.Path, bool) {
 	if expr == nil || bindings == nil {
 		return path.Path{}, false

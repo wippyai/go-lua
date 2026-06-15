@@ -24,48 +24,6 @@ type Optional struct {
 	strCache              stringCache
 }
 
-// NewOptional creates an optional type (T | nil).
-//
-// Normalization rules:
-//   - nil or Nil → Nil (already optional)
-//   - T? → T? (already optional)
-//   - Any → Any (Any already includes nil)
-//   - Union → adds nil and materializes the canonical union shape
-func NewOptional(inner Type) Type {
-	if inner == nil || inner.Kind() == kind.Nil {
-		return Nil
-	}
-
-	if inner.Kind() == kind.Optional {
-		return inner
-	}
-
-	if IsAny(inner) {
-		return Any
-	}
-
-	if inner.Kind() == kind.Union {
-		u := unwrapAnnotated(inner).(*Union)
-		for _, member := range u.Members {
-			if member != nil && member.Kind() == kind.Nil {
-				return inner
-			}
-		}
-		members := make([]Type, 0, len(u.Members)+1)
-		hashes := make([]uint64, 0, len(u.Members)+1)
-		members = append(members, Nil)
-		hashes = append(hashes, Nil.Hash())
-		members = append(members, u.Members...)
-		if len(u.memberHashes) == len(u.Members) {
-			hashes = append(hashes, u.memberHashes...)
-		}
-
-		return newCanonicalUnion(members, hashes)
-	}
-
-	return MaterializeOptional(inner)
-}
-
 // MaterializeOptional builds the hash-stable optional node for an already-selected inner type.
 //
 // It performs only low-level node materialization owned by typ: hash/cache/

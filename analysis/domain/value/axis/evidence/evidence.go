@@ -1,20 +1,40 @@
 package evidence
 
-import internal "github.com/wippyai/go-lua/analysis/internal/hash"
+import (
+	"github.com/wippyai/go-lua/analysis/domain/value/axis"
+	internal "github.com/wippyai/go-lua/analysis/internal/hash"
+)
+
+var Key = axis.NewKey[Value]("evidence")
+
+func Spec() axis.Spec[Value] {
+	return axis.Spec[Value]{
+		Key:      Key,
+		Bottom:   Bottom,
+		Top:      Top,
+		Equal:    Equal,
+		LessOrEq: func(a, b Value) bool { return b.Covers(a) },
+		Join:     Join,
+		Meet:     Meet,
+		Widen:    Widen,
+		Hash:     Value.Hash,
+	}
+}
 
 // Value is the SemanticEvidence axis abstraction of the path-sensitive proofs
 // attached to a value.
 //
-// The first non-trivial proof carried here is GradualTop: the value is the
-// dynamic top introduced by an unannotated source, not a strict declared `any`.
-// Keeping that proof in the product carrier makes it part of Equal and Hash, so
-// query/change detection observes the semantic distinction instead of recovering
-// it from driver-side maps.
+// The first non-trivial proofs carried here distinguish gradual top values
+// introduced by unannotated Lua from explicit top values introduced by `any` or
+// `unknown` annotations. Keeping those proofs in the product carrier makes them
+// part of Equal and Hash, so query/change detection observes the semantic
+// distinction instead of recovering it from driver-side maps.
 type Value uint8
 
 const (
 	bottom Value = iota
 	gradualTop
+	explicitTop
 	top
 )
 
@@ -34,9 +54,20 @@ func GradualTop() Value {
 	return gradualTop
 }
 
+// ExplicitTop proves that a dynamic top came from an explicit `any` or
+// `unknown` annotation, so it is not admissible as structural proof.
+func ExplicitTop() Value {
+	return explicitTop
+}
+
 // IsGradualTop reports whether this evidence proves the gradual top.
 func (v Value) IsGradualTop() bool {
 	return v == gradualTop
+}
+
+// IsExplicitTop reports whether this evidence proves explicit top.
+func (v Value) IsExplicitTop() bool {
+	return v == explicitTop
 }
 
 // Join keeps only evidence proven on all incoming paths.
@@ -53,12 +84,22 @@ func Join(a, b Value) Value {
 	return top
 }
 
-// Meet is the greatest lower bound of the evidence chain.
+// Meet is the greatest lower bound. Gradual and explicit top evidence are
+// sibling proofs, so meeting them yields bottom rather than either proof.
 func Meet(a, b Value) Value {
-	if a < b {
+	if a == b {
 		return a
 	}
-	return b
+	if a == top {
+		return b
+	}
+	if b == top {
+		return a
+	}
+	if a == bottom || b == bottom {
+		return bottom
+	}
+	return bottom
 }
 
 // Widen accelerates an ascending chain. The evidence lattice is finite, so Widen
@@ -89,6 +130,8 @@ func (v Value) String() string {
 		return "bottom"
 	case gradualTop:
 		return "gradual-top"
+	case explicitTop:
+		return "explicit-top"
 	case top:
 		return "top"
 	default:

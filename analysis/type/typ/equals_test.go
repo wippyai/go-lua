@@ -71,9 +71,9 @@ func TestTypeEqualsRef(t *testing.T) {
 }
 
 func TestTypeEqualsOptional(t *testing.T) {
-	o1 := NewOptional(Number)
-	o2 := NewOptional(Number)
-	o3 := NewOptional(String)
+	o1 := MaterializeOptional(Number)
+	o2 := MaterializeOptional(Number)
+	o3 := MaterializeOptional(String)
 
 	if !typeEquals(o1, o2) {
 		t.Error("number? should equal number?")
@@ -85,9 +85,9 @@ func TestTypeEqualsOptional(t *testing.T) {
 }
 
 func TestTypeEqualsUnion(t *testing.T) {
-	u1 := NewUnion(Number, String)
-	u2 := NewUnion(Number, String)
-	u3 := NewUnion(Number, Boolean)
+	u1 := MaterializeUnion([]Type{Number, String})
+	u2 := MaterializeUnion([]Type{Number, String})
+	u3 := MaterializeUnion([]Type{Number, Boolean})
 
 	if !typeEquals(u1, u2) {
 		t.Error("number | string should equal number | string")
@@ -201,9 +201,9 @@ func TestTypeEqualsNilNil(t *testing.T) {
 }
 
 func TestTypeEqualsIntersection(t *testing.T) {
-	i1 := NewIntersection(Number, String)
-	i2 := NewIntersection(Number, String)
-	i3 := NewIntersection(Number, Boolean)
+	i1 := MaterializeIntersection([]Type{Number, String})
+	i2 := MaterializeIntersection([]Type{Number, String})
+	i3 := MaterializeIntersection([]Type{Number, Boolean})
 
 	if !typeEquals(i1, i2) {
 		t.Error("same intersections should be equal")
@@ -214,8 +214,8 @@ func TestTypeEqualsIntersection(t *testing.T) {
 }
 
 func TestTypeEqualsIntersectionLength(t *testing.T) {
-	i1 := NewIntersection(Number, String)
-	i2 := NewIntersection(Number, String, Boolean)
+	i1 := MaterializeIntersection([]Type{Number, String})
+	i2 := MaterializeIntersection([]Type{Number, String, Boolean})
 
 	if typeEquals(i1, i2) {
 		t.Error("intersections of different lengths should not be equal")
@@ -308,8 +308,8 @@ func TestTypeEqualsLiteralBool(t *testing.T) {
 
 func TestTypeEqualsUnionOrder(t *testing.T) {
 	// Unions should be order-independent after normalization
-	u1 := NewUnion(Number, String)
-	u2 := NewUnion(String, Number)
+	u1 := MaterializeUnion([]Type{Number, String})
+	u2 := MaterializeUnion([]Type{String, Number})
 
 	if !typeEquals(u1, u2) {
 		t.Error("unions with same members in different order should be equal")
@@ -505,8 +505,8 @@ func TestTypeEqualsMutualRecursion(t *testing.T) {
 }
 
 func TestTypeEqualsNestedOptional(t *testing.T) {
-	o1 := NewOptional(NewOptional(Number))
-	o2 := NewOptional(NewOptional(Number))
+	o1 := MaterializeOptional(MaterializeOptional(Number))
+	o2 := MaterializeOptional(MaterializeOptional(Number))
 
 	if !typeEquals(o1, o2) {
 		t.Error("nested optionals should be equal")
@@ -514,9 +514,9 @@ func TestTypeEqualsNestedOptional(t *testing.T) {
 }
 
 func TestTypeEqualsNestedUnion(t *testing.T) {
-	inner := NewUnion(Number, String)
-	u1 := NewUnion(inner, Boolean)
-	u2 := NewUnion(inner, Boolean)
+	inner := MaterializeUnion([]Type{Number, String})
+	u1 := MaterializeUnion([]Type{inner, Boolean})
+	u2 := MaterializeUnion([]Type{inner, Boolean})
 
 	if !typeEquals(u1, u2) {
 		t.Error("unions with same nested union should be equal")

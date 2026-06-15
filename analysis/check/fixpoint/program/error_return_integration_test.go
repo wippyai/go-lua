@@ -1,7 +1,6 @@
 package program_test
 
 import (
-	"strings"
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/check/body"
@@ -21,6 +20,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/module/signaturelookup"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/analysis/type/typeexpr"
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/parse"
 )
@@ -30,7 +30,7 @@ func TestErrorReturnSignatureRefinesValuePresenceAcrossErrorBranch(t *testing.T)
 	m := manifest.New("test")
 	m.DefineFunctionSignature("f", signature.Function{
 		Type: typ.Func().
-			Returns(typ.NewOptional(typ.Number), typ.NewOptional(typ.String)).
+			Returns(typeexpr.Optional(typ.Number), typeexpr.Optional(typ.String)).
 			Build(),
 		Effect: effect.Empty.With(returns.ErrorReturn{ValueIndex: 0, ErrorIndex: 1}),
 	})
@@ -122,7 +122,7 @@ func TestErrorReturnLocalFunctionWithoutGuardKeepsReceiverOptional(t *testing.T)
 
 	diags := diagnostics.Produce(result)
 	for _, d := range diags {
-		if d.Code == diagnostics.CodeMissingMember && strings.Contains(d.Message, "release") {
+		if d.Code == diagnostics.CodeOptionalMethodCall {
 			return
 		}
 	}
@@ -184,11 +184,47 @@ func TestErrorReturnDelegatedTailCallDoesNotInventRelationFromOptionalDeclaratio
 
 	diags := diagnostics.Produce(result)
 	for _, d := range diags {
-		if d.Code == diagnostics.CodeMissingMember && strings.Contains(d.Message, "release") {
+		if d.Code == diagnostics.CodeOptionalMethodCall {
 			return
 		}
 	}
 	t.Fatalf("diagnostics = %#v, want optional receiver diagnostic for release", diags)
+}
+
+func TestErrorReturnGuardRefinesCallbackArgument(t *testing.T) {
+	reg := standard.Registry()
+	stmts := parseChunk(t, `
+		type Err = {kind: string, message: string}
+		type User = {id: string, name: string, roles: {string}}
+		type Session = {id: string, user: User}
+		local users: {[string]: User} = {
+			u1 = {id = "u1", name = "Ada", roles = {"admin"}},
+		}
+		local M = {}
+		function M.find_user(id: string): (User?, Err?)
+			local user = users[id]
+			if not user then
+				return nil, {kind = "not_found", message = id}
+			end
+			return user, nil
+		end
+		function M.create_session(user: User, now: number): (Session?, Err?)
+			return {id = user.id, user = user}, nil
+		end
+		function M.with_user(id: string, now: number, fn: (User, number) -> (Session?, Err?)): (Session?, Err?)
+			local user, err = M.find_user(id)
+			if err then
+				return nil, err
+			end
+			return fn(user, now)
+		end
+	local session, err = M.with_user("u1", 1, M.create_session)
+	`)
+	result := runChunk(t, stmts, body.Config{Registry: reg})
+
+	if diags := diagnostics.Produce(result); len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v, want callback user argument refined after error guard", diags)
+	}
 }
 
 func runChunk(t *testing.T, stmts []ast.Stmt, config body.Config) *body.Result {

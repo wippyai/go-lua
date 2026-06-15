@@ -6,6 +6,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/check/body"
 	"github.com/wippyai/go-lua/analysis/check/diagnostics/internal/readmodel"
 	"github.com/wippyai/go-lua/analysis/diagnostic"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
@@ -13,6 +14,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/typeannotation"
 	"github.com/wippyai/go-lua/analysis/lua/typecall"
 	"github.com/wippyai/go-lua/analysis/symbol"
+	"github.com/wippyai/go-lua/analysis/type/normalize"
 	"github.com/wippyai/go-lua/analysis/type/refinement"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/unwrap"
@@ -43,14 +45,16 @@ func produceDirectCallContract(result *body.Result, context producerContext, inh
 		if !ok || fact.Call == nil {
 			continue
 		}
-		if _, _, _, ok := callMemberAccess(fact); ok {
-			continue
-		}
 		site, ok := result.CallSite(point)
 		if !ok || site.CalleeSymbol() == 0 {
 			continue
 		}
-		d, ok := producer.call(result, point, fact, site, defs[site.CalleeSymbol()])
+		if _, _, _, member := callMemberAccess(fact); member {
+			if _, hasSignature := result.CallSignature(site); !hasSignature {
+				continue
+			}
+		}
+		d, ok := producer.call(result, point, fact, site, defs[site.CalleeSymbol()], defs)
 		if !ok {
 			continue
 		}
@@ -65,21 +69,26 @@ func (p directCallContract) call(
 	fact semantics.CallFact,
 	site factflow.CallSite,
 	def *ast.FunctionExpr,
+	defs map[symbol.ID]*ast.FunctionExpr,
 ) (diagnostic.Diagnostic, bool) {
 	name := result.SymbolName(site.CalleeSymbol())
 	if name == "" {
 		name = "call target"
 	}
 
+	if d, ok := p.possiblyNilCallee(result, point, fact, name); ok {
+		return d, true
+	}
+
 	if def != nil {
-		return p.callFunction(result, point, fact, name, def)
+		return p.callFunction(result, point, fact, name, def, defs)
 	}
 
 	if sig, ok := result.CallSignature(site); ok && sig.Type != nil {
 		contract := lowerDirectFunctionType(sig.Type)
 		contract.name = name
 		contract.declSpan = ast.SpanOf(fact.Call)
-		return p.directFunctionCall(result, point, fact, contract)
+		return p.directFunctionCall(result, point, fact, contract, defs)
 	}
 
 	baseExpr, ok := result.SymbolTypeAnnotation(site.CalleeSymbol())
@@ -100,7 +109,103 @@ func (p directCallContract) call(
 	contract := lowerDirectFunctionType(callable)
 	contract.name = name
 	contract.declSpan = ast.SpanOf(fact.Call)
-	return p.directFunctionCall(result, point, fact, contract)
+	return p.directFunctionCall(result, point, fact, contract, defs)
+}
+
+// possiblyNilCallee flags a direct call whose callee value is possibly nil
+// after flow narrowing. A member access is owned by the member-call producer.
+func (p directCallContract) possiblyNilCallee(
+	result *body.Result,
+	point cfg.Point,
+	fact semantics.CallFact,
+	name string,
+) (diagnostic.Diagnostic, bool) {
+	if _, _, _, member := callMemberAccess(fact); member {
+		return diagnostic.Diagnostic{}, false
+	}
+	if fact.Func == nil || fact.Call == nil {
+		return diagnostic.Diagnostic{}, false
+	}
+	calleeType, ok := calleeFlowType(result, p.resolver, point, fact.Func)
+	if !ok {
+		if t, ok := boundaryMaybeNilCalleeType(result, point, fact.Func); ok {
+			return directPossiblyNilCalleeDiagnostic(point, fact.Call, name, t), true
+		}
+		return diagnostic.Diagnostic{}, false
+	}
+	if typ.IsAny(calleeType) || typ.IsUnknown(calleeType) || typ.IsNever(calleeType) {
+		return diagnostic.Diagnostic{}, false
+	}
+	if !projectionHasNil(calleeType) {
+		return diagnostic.Diagnostic{}, false
+	}
+	return directPossiblyNilCalleeDiagnostic(point, fact.Call, name, calleeType), true
+}
+
+// calleeFlowType resolves the callee value's type with nil presence after flow
+// narrowing. The post-solve boundary value reflects truthiness guards and is
+// available for inferred callees; the flow typer covers annotated callees.
+func calleeFlowType(result *body.Result, resolver typeannotation.Resolver, point cfg.Point, callee ast.Expr) (typ.Type, bool) {
+	if value, ok := result.ExpressionValueAtBoundary(point, callee); ok {
+		if t, ok := readmodel.New(result).ValueTypeWithPresence(value); ok {
+			return t, true
+		}
+	}
+	return newFlowExpressionTyper(result, resolver, point, literalEnv{}).typeOf(callee)
+}
+
+// boundaryMaybeNilCalleeType detects a callee whose flow value is possibly nil
+// when no concrete type witness is recoverable. The presence axis carries the
+// narrowing-aware nil signal: Maybe means the value may be nil at the call, so
+// the callee is possibly-nil even when its type cannot be pinned. Present or
+// Absent presence (e.g. after a truthiness guard) does not flag here.
+func boundaryMaybeNilCalleeType(result *body.Result, point cfg.Point, callee ast.Expr) (typ.Type, bool) {
+	value, ok := result.ExpressionValueAtBoundary(point, callee)
+	if !ok {
+		return nil, false
+	}
+	if !presence.Equal(product.PresenceOf(value), presence.Maybe()) {
+		return nil, false
+	}
+	inner := typ.Unknown
+	if t, ok := readmodel.New(result).ValueType(value); ok && t != nil && !typ.IsUnknown(t) && !typ.IsAny(t) {
+		inner = t
+	}
+	if projectionHasNil(inner) {
+		return inner, true
+	}
+	return normalize.Optional(inner), true
+}
+
+func directPossiblyNilCalleeDiagnostic(point cfg.Point, call *ast.FuncCallExpr, name string, calleeType typ.Type) diagnostic.Diagnostic {
+	span := ast.SpanOf(call)
+	return diagnostic.Diagnostic{
+		Position: diagnostic.Position{
+			Line:      span.StartLine,
+			Column:    span.StartCol,
+			EndLine:   span.EndLine,
+			EndColumn: span.EndCol,
+		},
+		Span:     span,
+		Code:     CodeNotCallable,
+		Severity: diagnostic.SeverityError,
+		Message:  fmt.Sprintf("%s is %s, possibly nil and not callable", name, formatType(calleeType)),
+		Explanation: diagnostic.NewExplanation(
+			diagnostic.Evidence{
+				Kind:    diagnostic.EvidenceAbstractFact,
+				Trust:   diagnostic.TrustProven,
+				Span:    span,
+				Message: fmt.Sprintf("call at CFG point %d resolves to %s", point, name),
+			},
+			diagnostic.Evidence{
+				Kind:    diagnostic.EvidenceAbstractFact,
+				Trust:   diagnostic.TrustProven,
+				Span:    span,
+				Message: fmt.Sprintf("%s is %s at the call", name, formatType(calleeType)),
+			},
+		),
+		Labels: []diagnostic.Label{{Span: span, Message: "possibly-nil call target"}},
+	}
 }
 
 type directFunctionContract struct {
@@ -130,6 +235,7 @@ func (p directCallContract) callFunction(
 	fact semantics.CallFact,
 	name string,
 	fn *ast.FunctionExpr,
+	defs map[symbol.ID]*ast.FunctionExpr,
 ) (diagnostic.Diagnostic, bool) {
 	contract, ok := lowerDirectFunctionContractInScope(fn, p.resolver)
 	if !ok {
@@ -137,7 +243,7 @@ func (p directCallContract) callFunction(
 	}
 	contract.name = name
 	contract.declSpan = ast.SpanOf(fn)
-	return p.directFunctionCall(result, point, fact, contract)
+	return p.directFunctionCall(result, point, fact, contract, defs)
 }
 
 func (p directCallContract) directFunctionCall(
@@ -145,6 +251,7 @@ func (p directCallContract) directFunctionCall(
 	point cfg.Point,
 	fact semantics.CallFact,
 	contract directFunctionContract,
+	defs map[symbol.ID]*ast.FunctionExpr,
 ) (diagnostic.Diagnostic, bool) {
 	call := fact.Call
 	if call == nil {
@@ -155,11 +262,11 @@ func (p directCallContract) directFunctionCall(
 	if len(args) < required {
 		return tooFewArgsDiagnostic(point, call, contract.name, required, len(args), contract.declSpan), true
 	}
-	contract, violations := instantiateDirectFunctionContract(result, point, fact, contract, p.resolver)
+	contract, violations := instantiateDirectFunctionContract(result, point, fact, contract, p.resolver, defs)
 	if len(violations) > 0 {
 		violation := violations[0]
 		if violation.Index >= 0 && violation.Index < len(args) {
-			return argTypeDiagnostic(point, call, contract.name, violation.Index, violation.Got, violation.Constraint, args[violation.Index], contract.declSpan), true
+			return argTypeDiagnostic(call, contract.name, violation.Index, violation.Got, violation.Constraint, args[violation.Index], contract.declSpan), true
 		}
 	}
 	for i, arg := range args {
@@ -178,7 +285,11 @@ func (p directCallContract) directFunctionCall(
 		} else {
 			break
 		}
-		got, ok := projectedFlowSourceType(result, p.resolver, point, literalEnv{}, arg)
+		got, ok := untrustedTopLikeExpressionTypeAt(result, p.resolver, point, arg)
+		untrustedTopLike := ok
+		if !ok {
+			got, ok = projectedFlowSourceType(result, p.resolver, point, literalEnv{}, arg)
+		}
 		if !ok {
 			got, ok = boundaryCallArgumentSourceType(result, point, fact, i)
 		}
@@ -191,10 +302,15 @@ func (p directCallContract) directFunctionCall(
 		if refinement.ContainsFreeTypeParam(want) {
 			continue
 		}
-		if !directCallArgumentTypeMismatch(result, point, got, want, boundaryCallArgumentReader(fact, i, arg)) {
+		readBoundary := boundaryCallArgumentReader(fact, i, arg)
+		if untrustedTopLike {
+			if !boundaryProofTypeMismatch(result, point, got, want, readBoundary) {
+				continue
+			}
+		} else if !directCallArgumentTypeMismatch(result, point, got, want, readBoundary) {
 			continue
 		}
-		return argTypeDiagnostic(point, call, contract.name, i, got, want, arg, contract.declSpan), true
+		return argTypeDiagnostic(call, contract.name, i, got, want, arg, contract.declSpan), true
 	}
 	return diagnostic.Diagnostic{}, false
 }
@@ -489,7 +605,7 @@ func tooFewArgsDiagnostic(point cfg.Point, call *ast.FuncCallExpr, name string, 
 	}
 }
 
-func argTypeDiagnostic(point cfg.Point, call *ast.FuncCallExpr, name string, index int, got, want typ.Type, arg ast.Expr, declSpan ast.Span) diagnostic.Diagnostic {
+func argTypeDiagnostic(call *ast.FuncCallExpr, name string, index int, got, want typ.Type, arg ast.Expr, declSpan ast.Span) diagnostic.Diagnostic {
 	span := ast.SpanOf(call)
 	argSpan := ast.SpanOf(arg)
 	return diagnostic.Diagnostic{

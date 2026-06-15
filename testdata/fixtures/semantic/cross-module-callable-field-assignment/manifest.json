@@ -1,0 +1,7 @@
+{
+  "description": "Cross-module callable fields copied through local registries preserve parameter and return contracts across reassignment.",
+  "files": [
+    "protocol.lua",
+    "main.lua"
+  ]
+}

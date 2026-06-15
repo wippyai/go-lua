@@ -44,6 +44,12 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/lattice"
 )
 
+// Stats holds caller-owned observational counters for one or more Solve runs.
+// Solve never retains ownership beyond the call and does not synchronize access.
+type Stats struct {
+	TransferCalls int
+}
+
 // EquationSystem describes a monotone equation system to be solved.
 //
 // Cell is the index of an equation (program point, path key, summary slot);
@@ -103,6 +109,9 @@ type EquationSystem[Cell comparable, State any] struct {
 	// x in the lattice order, be monotone, and be deterministic. Nil means the raw
 	// Join/Widen result is stored.
 	Abstract func(Cell, State) State
+
+	// Stats, when non-nil, receives observational counters for this solve run.
+	Stats *Stats
 }
 
 // Solve computes the converged solution of sys by Kildall worklist iteration and
@@ -153,6 +162,7 @@ type solveState[Cell comparable, State any] struct {
 	widenAt    func(Cell) bool
 	widenDelay func(Cell) int
 	abstract   func(Cell, State) State
+	stats      *Stats
 
 	// order is the canonical index of each cell, fixing deterministic
 	// re-queue ordering. Only cells in sys.Cells receive an order; emitted-only
@@ -179,8 +189,12 @@ type solveState[Cell comparable, State any] struct {
 	inQueue map[Cell]struct{}
 
 	// active is the cell currently in Transfer; read attributes dependency
-	// edges to it.
-	active Cell
+	// edges to it. activeReadSelf tracks whether the current Transfer has read
+	// its own cell in this visit, and activeSelfChanged remembers whether a
+	// self-emit moved the value before that self-read was observed.
+	active            Cell
+	activeReadSelf    bool
+	activeSelfChanged bool
 }
 
 type edge[Cell comparable] struct {
@@ -213,6 +227,7 @@ func newState[Cell comparable, State any](sys EquationSystem[Cell, State]) *solv
 		widenAt:      widenAt,
 		widenDelay:   widenDelay,
 		abstract:     abstract,
+		stats:        sys.Stats,
 		order:        make(map[Cell]int, n),
 		cur:          make(map[Cell]State, n),
 		visits:       make(map[Cell]int, n),
@@ -263,8 +278,8 @@ func (s *solveState[Cell, State]) enqueue(c Cell) {
 func (s *solveState[Cell, State]) recordDependency(d Cell) {
 	e := edge[Cell]{from: d, to: s.active}
 	if e.from == e.to {
-		// A cell reading itself is already re-queued by its own emit; no edge
-		// needed and it keeps the dependents lists minimal.
+		// Self-reads are tracked separately from the dependency graph so the
+		// solver can distinguish a real self-read from a no-op self-emit.
 		return
 	}
 	if _, ok := s.dependEdge[e]; ok {
@@ -303,11 +318,19 @@ func (s *solveState[Cell, State]) emit(d Cell, v State) {
 }
 
 // requeueChanged re-queues a cell whose value moved and every cell that read
-// it, in deterministic order. The changed cell is itself re-queued only when it
-// is a system cell (present in Cells); a cell that is merely emitted into and
-// has no equation of its own is never visited, per the EquationSystem contract.
+// it, in deterministic order. A changed cell is re-queued only when it is a
+// system cell (present in Cells) or when it is the active cell and that active
+// transfer has actually read itself in this visit. A cell that is merely
+// emitted into and has no equation of its own is never visited, per the
+// EquationSystem contract.
 func (s *solveState[Cell, State]) requeueChanged(d Cell) {
-	if _, isCell := s.order[d]; isCell {
+	if d == s.active {
+		if s.activeReadSelf {
+			s.enqueue(d)
+		} else {
+			s.activeSelfChanged = true
+		}
+	} else if _, isCell := s.order[d]; isCell {
 		s.enqueue(d)
 	}
 	deps := s.dependents[d]
@@ -339,6 +362,12 @@ func (s *solveState[Cell, State]) indexOf(c Cell) int {
 
 func (s *solveState[Cell, State]) run() {
 	read := func(d Cell) State {
+		if d == s.active {
+			s.activeReadSelf = true
+			if s.activeSelfChanged {
+				s.enqueue(d)
+			}
+		}
 		s.recordDependency(d)
 		return s.curOf(d)
 	}
@@ -352,6 +381,11 @@ func (s *solveState[Cell, State]) run() {
 		delete(s.inQueue, c)
 
 		s.active = c
+		s.activeReadSelf = false
+		s.activeSelfChanged = false
+		if s.stats != nil {
+			s.stats.TransferCalls++
+		}
 		s.transfer(c, read, emit)
 		s.visits[c]++
 	}

@@ -130,6 +130,12 @@ func signaturePostconditionValue(ctx transfer.NodeContext, refinement postcondit
 		if r != nil {
 			return product.NewWithPresence(ctx.Registry, product.ShapeTop, presence.Present()), true
 		}
+	case postcondition.Absent:
+		return product.Absent(ctx.Registry), true
+	case *postcondition.Absent:
+		if r != nil {
+			return product.Absent(ctx.Registry), true
+		}
 	}
 	return product.Value{}, false
 }

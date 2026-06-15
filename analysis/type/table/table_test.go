@@ -6,15 +6,16 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/annotation"
 	"github.com/wippyai/go-lua/analysis/type/kind"
 	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/analysis/type/typeexpr"
 )
 
 func TestNormalizeKeyRemovesNilAlternatives(t *testing.T) {
-	if got := NormalizeKey(typ.NewOptional(typ.String)); !typ.TypeEquals(got, typ.String) {
+	if got := NormalizeKey(typeexpr.Optional(typ.String)); !typ.TypeEquals(got, typ.String) {
 		t.Fatalf("NormalizeKey(optional string) = %v, want string", got)
 	}
 
-	got := NormalizeKey(typ.NewUnion(typ.String, typ.Boolean, typ.Nil))
-	want := typ.NewUnion(typ.String, typ.Boolean)
+	got := NormalizeKey(typeexpr.Union(typ.String, typ.Boolean, typ.Nil))
+	want := typeexpr.Union(typ.String, typ.Boolean)
 	if !typ.TypeEquals(got, want) {
 		t.Fatalf("NormalizeKey(string|boolean|nil) = %v, want %v", got, want)
 	}
@@ -25,7 +26,7 @@ func TestNormalizeKeyRemovesNilAlternatives(t *testing.T) {
 }
 
 func TestNormalizeKeyPreservesAliasToOptionalPayload(t *testing.T) {
-	maybeKey := typ.NewAlias("MaybeKey", typ.NewOptional(typ.String))
+	maybeKey := typ.NewAlias("MaybeKey", typeexpr.Optional(typ.String))
 	got := NormalizeKey(maybeKey)
 	alias, ok := got.(*typ.Alias)
 	if !ok {
@@ -40,7 +41,7 @@ func TestNormalizeKeyPreservesAliasToOptionalPayload(t *testing.T) {
 }
 
 func TestNormalizeKeyPolicyOutputShape(t *testing.T) {
-	got := NormalizeKey(typ.NewUnion(typ.String, typ.Boolean, typ.Nil))
+	got := NormalizeKey(typeexpr.Union(typ.String, typ.Boolean, typ.Nil))
 	union, ok := got.(*typ.Union)
 	if !ok {
 		t.Fatalf("NormalizeKey(string|boolean|nil) = %T, want union node", got)
@@ -79,12 +80,12 @@ func TestProjectNilLeavesAbsentTypeAlone(t *testing.T) {
 }
 
 func TestConstructorsNormalizeKeys(t *testing.T) {
-	m := NewMap(typ.NewOptional(typ.String), typ.Number)
+	m := NewMap(typeexpr.Optional(typ.String), typ.Number)
 	if !typ.TypeEquals(m.Key, typ.String) {
 		t.Fatalf("map key = %v, want string", m.Key)
 	}
 
-	ro := NewReadonlyMap(typ.NewUnion(typ.String, typ.Nil), typ.Number)
+	ro := NewReadonlyMap(typeexpr.Union(typ.String, typ.Nil), typ.Number)
 	if !typ.TypeEquals(ro.Key, typ.String) {
 		t.Fatalf("readonly map key = %v, want string", ro.Key)
 	}
@@ -92,7 +93,7 @@ func TestConstructorsNormalizeKeys(t *testing.T) {
 
 func TestNewRecordMapComponentNormalizesKey(t *testing.T) {
 	rec := NewRecord().
-		MapComponent(typ.NewOptional(typ.String), typ.Number).
+		MapComponent(typeexpr.Optional(typ.String), typ.Number).
 		Build()
 	if !rec.HasMapComponent() {
 		t.Fatal("record should have map component")
@@ -104,7 +105,7 @@ func TestNewRecordMapComponentNormalizesKey(t *testing.T) {
 
 func TestRebuildRecordNormalizesMapKey(t *testing.T) {
 	rec := RebuildRecord(typ.RecordParts{
-		MapKey:   typ.NewOptional(typ.String),
+		MapKey:   typeexpr.Optional(typ.String),
 		MapValue: typ.Number,
 	})
 	if !typ.TypeEquals(rec.MapKey, typ.String) {
@@ -145,11 +146,11 @@ func TestRecordConstructionSplitsNilableOptionalPayloads(t *testing.T) {
 	}
 
 	built := NewRecord().
-		OptField("error", typ.NewOptional(typ.String)).
+		OptField("error", typeexpr.Optional(typ.String)).
 		AddStaticMember(typ.StaticMember{
 			Kind:     typ.StaticMemberStringIndex,
 			Name:     "raw",
-			Type:     typ.NewUnion(typ.Number, typ.Nil),
+			Type:     typeexpr.Union(typ.Number, typ.Nil),
 			Optional: true,
 		}).
 		Build()
@@ -159,13 +160,13 @@ func TestRecordConstructionSplitsNilableOptionalPayloads(t *testing.T) {
 	rebuilt := RebuildRecord(typ.RecordParts{
 		Fields: []typ.Field{{
 			Name:     "ok",
-			Type:     typ.NewUnion(typ.Boolean, typ.Nil),
+			Type:     typeexpr.Union(typ.Boolean, typ.Nil),
 			Optional: true,
 		}},
 		StaticMembers: []typ.StaticMember{{
 			Kind:     typ.StaticMemberIntIndex,
 			Index:    1,
-			Type:     typ.NewOptional(typ.Integer),
+			Type:     typeexpr.Optional(typ.Integer),
 			Optional: true,
 		}},
 	})
@@ -179,28 +180,28 @@ func TestRecordNormalizationPolicyOutputShape(t *testing.T) {
 		Fields: []typ.Field{
 			{
 				Name:     "union",
-				Type:     typ.NewUnion(typ.String, typ.Boolean, typ.Nil),
+				Type:     typeexpr.Union(typ.String, typ.Boolean, typ.Nil),
 				Optional: true,
 			},
 			{
 				Name:     "alias",
-				Type:     typ.NewAlias("MaybeString", typ.NewOptional(typ.String)),
+				Type:     typ.NewAlias("MaybeString", typeexpr.Optional(typ.String)),
 				Optional: true,
 			},
 			{
 				Name:     "annotated",
-				Type:     typ.NewAnnotated(typ.NewOptional(typ.Integer), ann),
+				Type:     typ.NewAnnotated(typeexpr.Optional(typ.Integer), ann),
 				Optional: true,
 			},
 		},
 		StaticMembers: []typ.StaticMember{{
 			Kind:     typ.StaticMemberStringIndex,
 			Name:     "raw",
-			Type:     typ.NewOptional(typ.Number),
+			Type:     typeexpr.Optional(typ.Number),
 			Optional: true,
 			Readonly: true,
 		}},
-		MapKey:   typ.NewAlias("MaybeKey", typ.NewOptional(typ.String)),
+		MapKey:   typ.NewAlias("MaybeKey", typeexpr.Optional(typ.String)),
 		MapValue: typ.Boolean,
 		Open:     true,
 	})
@@ -312,7 +313,7 @@ func TestRecordNormalizationNoOpPreservesShape(t *testing.T) {
 
 func TestSplitNilableFieldType(t *testing.T) {
 	t.Run("optional", func(t *testing.T) {
-		inner, optional := splitNilableFieldType(typ.NewOptional(typ.String))
+		inner, optional := splitNilableFieldType(typeexpr.Optional(typ.String))
 		if !optional {
 			t.Fatal("expected optional")
 		}
@@ -322,18 +323,18 @@ func TestSplitNilableFieldType(t *testing.T) {
 	})
 
 	t.Run("union with nil", func(t *testing.T) {
-		inner, optional := splitNilableFieldType(typ.NewUnion(typ.String, typ.Boolean, typ.Nil))
+		inner, optional := splitNilableFieldType(typeexpr.Union(typ.String, typ.Boolean, typ.Nil))
 		if !optional {
 			t.Fatal("expected optional")
 		}
-		want := typ.NewUnion(typ.String, typ.Boolean)
+		want := typeexpr.Union(typ.String, typ.Boolean)
 		if !typ.TypeEquals(inner, want) {
 			t.Fatalf("inner = %v, want %v", inner, want)
 		}
 	})
 
 	t.Run("alias to optional", func(t *testing.T) {
-		maybeString := typ.NewAlias("MaybeString", typ.NewOptional(typ.String))
+		maybeString := typ.NewAlias("MaybeString", typeexpr.Optional(typ.String))
 		inner, optional := splitNilableFieldType(maybeString)
 		if !optional {
 			t.Fatal("expected optional")
@@ -369,7 +370,7 @@ func TestSplitNilableFieldType(t *testing.T) {
 
 	t.Run("annotated optional", func(t *testing.T) {
 		ann := []annotation.Annotation{{Name: "tag"}}
-		inner, optional := splitNilableFieldType(typ.NewAnnotated(typ.NewOptional(typ.String), ann))
+		inner, optional := splitNilableFieldType(typ.NewAnnotated(typeexpr.Optional(typ.String), ann))
 		if !optional {
 			t.Fatal("expected optional")
 		}
@@ -385,22 +386,22 @@ func TestSplitNilableFieldType(t *testing.T) {
 
 func TestPresentReadonlyEntryValue(t *testing.T) {
 	t.Run("optional", func(t *testing.T) {
-		got := PresentReadonlyEntryValue(typ.NewOptional(typ.String))
+		got := PresentReadonlyEntryValue(typeexpr.Optional(typ.String))
 		if !typ.TypeEquals(got, typ.String) {
 			t.Fatalf("present readonly entry = %v, want string", got)
 		}
 	})
 
 	t.Run("union with nil", func(t *testing.T) {
-		got := PresentReadonlyEntryValue(typ.NewUnion(typ.String, typ.Boolean, typ.Nil))
-		want := typ.NewUnion(typ.String, typ.Boolean)
+		got := PresentReadonlyEntryValue(typeexpr.Union(typ.String, typ.Boolean, typ.Nil))
+		want := typeexpr.Union(typ.String, typ.Boolean)
 		if !typ.TypeEquals(got, want) {
 			t.Fatalf("present readonly entry = %v, want %v", got, want)
 		}
 	})
 
 	t.Run("alias to optional", func(t *testing.T) {
-		maybeString := typ.NewAlias("MaybeString", typ.NewOptional(typ.String))
+		maybeString := typ.NewAlias("MaybeString", typeexpr.Optional(typ.String))
 		got := PresentReadonlyEntryValue(maybeString)
 		if !typ.TypeEquals(got, typ.String) {
 			t.Fatalf("present readonly entry = %v, want string", got)
@@ -470,7 +471,7 @@ func TestIsLike(t *testing.T) {
 		{"array", typ.NewArray(typ.String), true},
 		{"tuple", typ.NewTuple(typ.String), true},
 		{"interface", typ.NewInterface("Reader", nil), true},
-		{"intersection", typ.NewIntersection(rec, typ.NewInterface("Reader", nil)), true},
+		{"intersection", typeexpr.Intersection(rec, typ.NewInterface("Reader", nil)), true},
 		{"alias to table", typ.NewAlias("Alias", rec), true},
 		{"recursive table", recursiveTable, true},
 		{"builtin top marker", typ.NewInterface("table", nil), true},
@@ -489,12 +490,12 @@ func TestIsLike(t *testing.T) {
 
 func TestSplitNilableFieldPreservesRecursiveUnionMemberHashes(t *testing.T) {
 	recA := typ.NewRecursive("Node", func(self typ.Type) typ.Type {
-		return NewRecord().Field("next", typ.NewOptional(self)).Build()
+		return NewRecord().Field("next", typeexpr.Optional(self)).Build()
 	})
 	recB := typ.NewRecursive("Node", func(self typ.Type) typ.Type {
-		return NewRecord().Field("next", typ.NewOptional(self)).Field("name", typ.String).Build()
+		return NewRecord().Field("next", typeexpr.Optional(self)).Field("name", typ.String).Build()
 	})
-	u, ok := typ.NewUnion(typ.Nil, recA, recB).(*typ.Union)
+	u, ok := typeexpr.Union(typ.Nil, recA, recB).(*typ.Union)
 	if !ok {
 		t.Fatalf("expected union")
 	}
@@ -503,7 +504,7 @@ func TestSplitNilableFieldPreservesRecursiveUnionMemberHashes(t *testing.T) {
 	if !optional {
 		t.Fatalf("expected optional")
 	}
-	want := typ.NewUnion(recA, recB)
+	want := typeexpr.Union(recA, recB)
 	if !typ.TypeEquals(got, want) {
 		t.Fatalf("inner = %v, want %v", got, want)
 	}

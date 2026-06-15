@@ -13,6 +13,7 @@ func normalizeNormalReturnFacts(reg *axis.Registry, in callboundary.NormalReturn
 		BranchProofs:      normalizeBranchProofs(in.BranchProofs),
 		ChannelSelects:    normalizeChannelSelectFacts(in.ChannelSelects),
 		EffectDeltas:      normalizeEffectDeltas(reg, in.EffectDeltas),
+		EscapeEvents:      normalizeEscapeEventFacts(in.EscapeEvents),
 	}
 	if normalReturnFactsEmpty(out) {
 		return callboundary.NormalReturnFacts{}
@@ -31,6 +32,7 @@ func cloneNormalReturnFacts(in callboundary.NormalReturnFacts) callboundary.Norm
 		BranchProofs:      cloneBranchProofs(in.BranchProofs),
 		ChannelSelects:    cloneChannelSelectFacts(in.ChannelSelects),
 		EffectDeltas:      cloneEffectDeltas(in.EffectDeltas),
+		EscapeEvents:      cloneEscapeEventFacts(in.EscapeEvents),
 	}
 }
 
@@ -42,7 +44,8 @@ func normalReturnFactsEqual(reg *axis.Registry, a, b callboundary.NormalReturnFa
 		dynamicIndexFactsEqual(reg, a.DynamicIndexFacts, b.DynamicIndexFacts) &&
 		branchProofsEqual(a.BranchProofs, b.BranchProofs) &&
 		channelSelectFactsEqual(a.ChannelSelects, b.ChannelSelects) &&
-		effectDeltasEqual(reg, a.EffectDeltas, b.EffectDeltas)
+		effectDeltasEqual(reg, a.EffectDeltas, b.EffectDeltas) &&
+		escapeEventFactsEqual(a.EscapeEvents, b.EscapeEvents)
 }
 
 func normalReturnFactsLessOrEq(reg *axis.Registry, a, b callboundary.NormalReturnFacts) bool {
@@ -53,7 +56,8 @@ func normalReturnFactsLessOrEq(reg *axis.Registry, a, b callboundary.NormalRetur
 		dynamicIndexFactsLessOrEq(reg, a.DynamicIndexFacts, b.DynamicIndexFacts) &&
 		branchProofsLessOrEq(a.BranchProofs, b.BranchProofs) &&
 		channelSelectFactsLessOrEq(a.ChannelSelects, b.ChannelSelects) &&
-		effectDeltasLessOrEq(reg, a.EffectDeltas, b.EffectDeltas)
+		effectDeltasLessOrEq(reg, a.EffectDeltas, b.EffectDeltas) &&
+		escapeEventFactsLessOrEq(a.EscapeEvents, b.EscapeEvents)
 }
 
 func joinNormalReturnFacts(reg *axis.Registry, a, b callboundary.NormalReturnFacts) callboundary.NormalReturnFacts {
@@ -64,6 +68,7 @@ func joinNormalReturnFacts(reg *axis.Registry, a, b callboundary.NormalReturnFac
 		BranchProofs:      joinBranchProofs(a.BranchProofs, b.BranchProofs),
 		ChannelSelects:    joinChannelSelectFacts(a.ChannelSelects, b.ChannelSelects),
 		EffectDeltas:      joinEffectDeltas(reg, a.EffectDeltas, b.EffectDeltas),
+		EscapeEvents:      joinEscapeEventFacts(a.EscapeEvents, b.EscapeEvents),
 	})
 }
 
@@ -75,6 +80,7 @@ func widenNormalReturnFacts(reg *axis.Registry, prev, next callboundary.NormalRe
 		BranchProofs:      joinBranchProofs(prev.BranchProofs, next.BranchProofs),
 		ChannelSelects:    joinChannelSelectFacts(prev.ChannelSelects, next.ChannelSelects),
 		EffectDeltas:      widenEffectDeltas(reg, prev.EffectDeltas, next.EffectDeltas),
+		EscapeEvents:      widenEscapeEventFacts(prev.EscapeEvents, next.EscapeEvents),
 	})
 }
 
@@ -84,5 +90,6 @@ func normalReturnFactsEmpty(facts callboundary.NormalReturnFacts) bool {
 		len(facts.DynamicIndexFacts) == 0 &&
 		len(facts.BranchProofs) == 0 &&
 		len(facts.ChannelSelects) == 0 &&
-		len(facts.EffectDeltas) == 0
+		len(facts.EffectDeltas) == 0 &&
+		len(facts.EscapeEvents) == 0
 }

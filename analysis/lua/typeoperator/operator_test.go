@@ -5,6 +5,7 @@ import (
 
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/analysis/type/typeexpr"
 )
 
 func TestBinaryOpPrimitiveArithmeticAndConcat(t *testing.T) {
@@ -45,7 +46,7 @@ func TestBinaryOpPrimitiveComparisons(t *testing.T) {
 		right typ.Type
 	}{
 		{name: "equality across unrelated types", left: typ.String, op: "==", right: typ.Number},
-		{name: "inequality with nil", left: typ.NewOptional(typ.String), op: "~=", right: typ.Nil},
+		{name: "inequality with nil", left: typeexpr.Optional(typ.String), op: "~=", right: typ.Nil},
 		{name: "numeric less than", left: typ.Integer, op: "<", right: typ.Number},
 		{name: "string literal greater equal", left: typ.LiteralString("b"), op: ">=", right: typ.String},
 	}
@@ -72,7 +73,7 @@ func TestUnaryOpPrimitives(t *testing.T) {
 		operand typ.Type
 		want    typ.Type
 	}{
-		{name: "not optional", op: "not", operand: typ.NewOptional(typ.String), want: typ.Boolean},
+		{name: "not optional", op: "not", operand: typeexpr.Optional(typ.String), want: typ.Boolean},
 		{name: "integer negation", op: "-", operand: typ.Integer, want: typ.Integer},
 		{name: "number negation", op: "-", operand: typ.Number, want: typ.Number},
 		{name: "bitwise not", op: "~", operand: typ.LiteralInt(7), want: typ.Integer},
@@ -94,20 +95,20 @@ func TestUnaryOpPrimitives(t *testing.T) {
 }
 
 func TestOperatorOptionalAndNilRejection(t *testing.T) {
-	if _, ok := BinaryOp(typ.NewOptional(typ.Integer), "+", typ.Integer); ok {
+	if _, ok := BinaryOp(typeexpr.Optional(typ.Integer), "+", typ.Integer); ok {
 		t.Fatal("BinaryOp(optional integer, +, integer) succeeded")
 	}
 	if _, ok := BinaryOp(typ.Nil, "..", typ.String); ok {
 		t.Fatal("BinaryOp(nil, .., string) succeeded")
 	}
-	if _, ok := UnaryOp("#", typ.NewOptional(typ.NewArray(typ.String))); ok {
+	if _, ok := UnaryOp("#", typeexpr.Optional(typ.NewArray(typ.String))); ok {
 		t.Fatal("UnaryOp(#, optional array) succeeded")
 	}
 	if _, ok := UnaryOp("-", typ.Nil); ok {
 		t.Fatal("UnaryOp(-, nil) succeeded")
 	}
 
-	got, ok := BinaryOp(typ.Nil, "==", typ.NewOptional(typ.Integer))
+	got, ok := BinaryOp(typ.Nil, "==", typeexpr.Optional(typ.Integer))
 	if !ok {
 		t.Fatal("BinaryOp(nil, ==, optional integer) failed")
 	}
@@ -121,23 +122,23 @@ func TestOperatorOptionalAndNilRejection(t *testing.T) {
 }
 
 func TestOperatorUnionDistributionRequiresEveryVariant(t *testing.T) {
-	got, ok := BinaryOp(typ.NewUnion(typ.Integer, typ.Number), "+", typ.Integer)
+	got, ok := BinaryOp(typeexpr.Union(typ.Integer, typ.Number), "+", typ.Integer)
 	if !ok {
 		t.Fatal("BinaryOp(integer | number, +, integer) failed")
 	}
 	assertType(t, got, typ.Number)
 
-	if _, ok := BinaryOp(typ.NewUnion(typ.Integer, typ.String), "+", typ.Integer); ok {
+	if _, ok := BinaryOp(typeexpr.Union(typ.Integer, typ.String), "+", typ.Integer); ok {
 		t.Fatal("BinaryOp(integer | string, +, integer) succeeded")
 	}
 
-	got, ok = UnaryOp("#", typ.NewUnion(typ.String, typ.NewArray(typ.Number)))
+	got, ok = UnaryOp("#", typeexpr.Union(typ.String, typ.NewArray(typ.Number)))
 	if !ok {
 		t.Fatal("UnaryOp(#, string | number[]) failed")
 	}
 	assertType(t, got, typ.Integer)
 
-	if _, ok := UnaryOp("#", typ.NewUnion(typ.String, typ.Number)); ok {
+	if _, ok := UnaryOp("#", typeexpr.Union(typ.String, typ.Number)); ok {
 		t.Fatal("UnaryOp(#, string | number) succeeded")
 	}
 }
@@ -154,8 +155,8 @@ func TestBinaryOpLogicalTruthiness(t *testing.T) {
 		{name: "false or returns right", left: typ.False, op: "or", right: typ.String, want: typ.String},
 		{name: "true and returns right", left: typ.True, op: "and", right: typ.Number, want: typ.Number},
 		{name: "truthy string or returns left", left: typ.String, op: "or", right: typ.Number, want: typ.String},
-		{name: "boolean and splits false or right", left: typ.Boolean, op: "and", right: typ.String, want: typ.NewUnion(typ.False, typ.String)},
-		{name: "boolean or splits true or right", left: typ.Boolean, op: "or", right: typ.String, want: typ.NewUnion(typ.True, typ.String)},
+		{name: "boolean and splits false or right", left: typ.Boolean, op: "and", right: typ.String, want: typeexpr.Union(typ.False, typ.String)},
+		{name: "boolean or splits true or right", left: typ.Boolean, op: "or", right: typ.String, want: typeexpr.Union(typ.True, typ.String)},
 		{name: "any and stays dynamic", left: typ.Any, op: "and", right: typ.String, want: typ.Any},
 		{name: "unknown or is unknown", left: typ.Unknown, op: "or", right: typ.String, want: typ.Unknown},
 		{name: "truthy left or unknown stays left", left: typ.True, op: "or", right: typ.Unknown, want: typ.True},
@@ -174,19 +175,19 @@ func TestBinaryOpLogicalTruthiness(t *testing.T) {
 }
 
 func TestBinaryOpLogicalUnionDistribution(t *testing.T) {
-	got, ok := BinaryOp(typ.NewUnion(typ.Nil, typ.String), "or", typ.Number)
+	got, ok := BinaryOp(typeexpr.Union(typ.Nil, typ.String), "or", typ.Number)
 	if !ok {
 		t.Fatal("BinaryOp(nil | string, or, number) failed")
 	}
-	assertType(t, got, typ.NewUnion(typ.String, typ.Number))
+	assertType(t, got, typeexpr.Union(typ.String, typ.Number))
 
-	got, ok = BinaryOp(typ.NewUnion(typ.False, typ.String), "and", typ.Number)
+	got, ok = BinaryOp(typeexpr.Union(typ.False, typ.String), "and", typ.Number)
 	if !ok {
 		t.Fatal("BinaryOp(false | string, and, number) failed")
 	}
-	assertType(t, got, typ.NewUnion(typ.False, typ.Number))
+	assertType(t, got, typeexpr.Union(typ.False, typ.Number))
 
-	got, ok = BinaryOp(typ.NewUnion(typ.Unknown, typ.Nil), "or", typ.Number)
+	got, ok = BinaryOp(typeexpr.Union(typ.Unknown, typ.Nil), "or", typ.Number)
 	if !ok {
 		t.Fatal("BinaryOp(unknown | nil, or, number) failed")
 	}

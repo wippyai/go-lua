@@ -25,25 +25,31 @@ func (l *lowerer) callSite(fact semantics.CallFact) factflow.CallSite {
 	if fact.HasMethodPath {
 		methodPath = fact.MethodPath
 	}
+	receiverSource := factflow.ValueSource{}
+	if fact.HasReceiverSource {
+		receiverSource = l.valueSource(fact.ReceiverSource)
+	}
 	return factflow.NewCallSite(factflow.CallSiteConfig{
-		Context:         callSiteContext(fact.Context),
-		CalleeSymbol:    calleeSymbol,
-		CalleePath:      calleePath,
-		ReceiverPath:    receiverPath,
-		HasReceiverPath: fact.HasReceiverPath,
-		MethodPath:      methodPath,
-		HasMethodPath:   fact.HasMethodPath,
-		MethodName:      fact.Method,
-		ExprRef:         exprRef,
-		HasExpr:         hasExpr,
-		ExprIndex:       fact.ExprIndex,
-		ArgumentSources: l.valueSources(fact.ArgumentSources),
-		TypeArgs:        l.typeRefs(fact.TypeArgs),
-		ResultTargets:   l.evidenceCallSiteResultTargets(fact.ResultTargets),
-		Final:           fact.Final,
-		Expanded:        fact.Expanded,
-		Adjusted:        fact.Adjusted,
-		OpenTail:        fact.OpenTail,
+		Context:           callSiteContext(fact.Context),
+		CalleeSymbol:      calleeSymbol,
+		CalleePath:        calleePath,
+		ReceiverPath:      receiverPath,
+		HasReceiverPath:   fact.HasReceiverPath,
+		MethodPath:        methodPath,
+		HasMethodPath:     fact.HasMethodPath,
+		MethodName:        fact.Method,
+		ReceiverSource:    receiverSource,
+		HasReceiverSource: fact.HasReceiverSource,
+		ExprRef:           exprRef,
+		HasExpr:           hasExpr,
+		ExprIndex:         fact.ExprIndex,
+		ArgumentSources:   l.valueSources(fact.ArgumentSources),
+		TypeArgs:          l.typeRefs(fact.TypeArgs),
+		ResultTargets:     l.evidenceCallSiteResultTargets(fact.ResultTargets),
+		Final:             fact.Final,
+		Expanded:          fact.Expanded,
+		Adjusted:          fact.Adjusted,
+		OpenTail:          fact.OpenTail,
 	})
 }
 

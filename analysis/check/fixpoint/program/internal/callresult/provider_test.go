@@ -10,6 +10,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/standard"
@@ -29,6 +30,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/subst"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/analysis/type/typeexpr"
 )
 
 func TestOutcomeProviderReadsSummaryReturnsByCalleeIdentity(t *testing.T) {
@@ -42,7 +44,7 @@ func TestOutcomeProviderReadsSummaryReturnsByCalleeIdentity(t *testing.T) {
 			Key:     key,
 			Summary: summary.Summary{Returns: []product.Value{first, second}},
 		}),
-		KeyFor: ByCalleeIdentity(map[symbol.ID]summary.SummaryKey{callee: key}, nil),
+		KeyFor: ByCalleeIdentity(map[symbol.ID]summary.SummaryKey{callee: key}),
 	})
 
 	got := provider(transfer.NodeContext{Registry: reg}, factflow.NewCallSite(factflow.CallSiteConfig{
@@ -50,6 +52,37 @@ func TestOutcomeProviderReadsSummaryReturnsByCalleeIdentity(t *testing.T) {
 	}), state.State{}, nil)
 
 	assertCallOutcomeResults(t, reg, got.Results, []product.Value{first, second})
+}
+
+func TestOutcomeProviderRehydratesDeclaredReturnWhenSummarySlotIsTopLike(t *testing.T) {
+	reg := standard.Registry()
+	callee := symbol.ID(19)
+	key := summary.DefaultSummaryKey(ref.FuncRef{Kind: ref.KindSymbol, ID: 20})
+	channel := typetable.NewRecord().
+		Field("receive", typ.Func().Returns(typ.String).Build()).
+		Build()
+	provider := OutcomeProvider(ProviderConfig{
+		Summaries: summary.NewSnapshot(reg, summary.EntrySummary{
+			Key:     key,
+			Summary: summary.Summary{Returns: []product.Value{product.Top()}},
+		}),
+		KeyFor: ByCalleeIdentity(map[symbol.ID]summary.SummaryKey{callee: key}),
+		FunctionTypes: map[summary.SummaryKey]*typ.Function{
+			key: typ.Func().Returns(channel).Build(),
+		},
+	})
+
+	got := provider(transfer.NodeContext{Registry: reg}, factflow.NewCallSite(factflow.CallSiteConfig{
+		CalleeSymbol: callee,
+	}), state.State{}, nil)
+
+	if len(got.Results) != 1 {
+		t.Fatalf("results = %#v, want one declared return", got.Results)
+	}
+	gotType, ok := typevalue.TypeOf(reg, got.Results[0].Value)
+	if !ok || !typ.TypeEquals(gotType, channel) {
+		t.Fatalf("result type = %v/%v, want %v", gotType, ok, channel)
+	}
 }
 
 func TestOutcomeProviderMapsSummaryReturnsAndNormalReturnFacts(t *testing.T) {
@@ -110,7 +143,7 @@ func TestOutcomeProviderMapsSummaryReturnsAndNormalReturnFacts(t *testing.T) {
 				},
 			},
 		}),
-		KeyFor: ByCalleeIdentity(map[symbol.ID]summary.SummaryKey{callee: key}, nil),
+		KeyFor: ByCalleeIdentity(map[symbol.ID]summary.SummaryKey{callee: key}),
 	})
 
 	got := provider(transfer.NodeContext{Registry: reg}, factflow.NewCallSite(factflow.CallSiteConfig{
@@ -162,6 +195,65 @@ func TestOutcomeProviderMapsSummaryReturnsAndNormalReturnFacts(t *testing.T) {
 	}
 }
 
+func TestOutcomeProviderJoinMaterializesRawOptionalFactPayloadRecord(t *testing.T) {
+	reg := standard.Registry()
+	calleePath := path.NewPath(symbol.ID(127), "module").Field("make")
+	leftKey := summary.DefaultSummaryKey(ref.FuncRef{Kind: ref.KindSymbol, ID: 128})
+	rightKey := summary.DefaultSummaryKey(ref.FuncRef{Kind: ref.KindSymbol, ID: 129})
+	optionalString := typ.MaterializeOptional(typ.String)
+	optionalInteger := typ.MaterializeOptional(typ.Integer)
+	facts := callboundary.NormalReturnFacts{
+		PathRefinements: []callboundary.PathValueFact{
+			{Path: path.NewPlaceholder(0).Field("value"), Value: providerValueForType(reg, optionalString)},
+		},
+		PathStaticMembers: []callboundary.PathStaticMemberFact{
+			{Path: path.NewPlaceholder(0).IndexInt(1), Value: providerValueForType(reg, optionalInteger)},
+		},
+	}
+	provider := OutcomeProvider(ProviderConfig{
+		Summaries: summary.NewSnapshot(reg,
+			summary.EntrySummary{
+				Key:     leftKey,
+				Summary: summary.Summary{NormalReturnFacts: facts},
+			},
+			summary.EntrySummary{
+				Key:     rightKey,
+				Summary: summary.Summary{NormalReturnFacts: facts},
+			},
+		),
+		PathMultiKeys: map[path.PathKey][]summary.SummaryKey{
+			calleePath.Key(): {leftKey, rightKey},
+		},
+	})
+
+	got := provider(transfer.NodeContext{Registry: reg}, factflow.NewCallSite(factflow.CallSiteConfig{
+		CalleePath: calleePath,
+	}), state.State{}, nil)
+
+	if len(got.Results) != 1 || got.Results[0].Index != 0 {
+		t.Fatalf("results = %#v, want synthesized return slot 0", got.Results)
+	}
+	gotType, ok := typevalue.TypeOf(reg, got.Results[0].Value)
+	if !ok {
+		t.Fatalf("result value has no type witness: %#v", got.Results[0].Value)
+	}
+	record, ok := gotType.(*typ.Record)
+	if !ok {
+		t.Fatalf("result type = %T %[1]v, want record", gotType)
+	}
+	if record.HasMapComponent() {
+		t.Fatalf("result record map component = [%v]: %v, want none", record.MapKey, record.MapValue)
+	}
+	field := record.GetField("value")
+	if field == nil || field.Optional || !typ.TypeEquals(field.Type, optionalString) {
+		t.Fatalf("field value = %#v, want required %v payload", field, optionalString)
+	}
+	member := record.GetStaticIntIndex(1)
+	if member == nil || member.Optional || !typ.TypeEquals(member.Type, optionalInteger) {
+		t.Fatalf("static member [1] = %#v, want required %v payload", member, optionalInteger)
+	}
+}
+
 func TestOutcomeProviderMapsNormalReturnFacts(t *testing.T) {
 	reg := standard.Registry()
 	callee := symbol.ID(137)
@@ -202,7 +294,7 @@ func TestOutcomeProviderMapsNormalReturnFacts(t *testing.T) {
 				},
 			},
 		}),
-		KeyFor: ByCalleeIdentity(map[symbol.ID]summary.SummaryKey{callee: key}, nil),
+		KeyFor: ByCalleeIdentity(map[symbol.ID]summary.SummaryKey{callee: key}),
 	})
 
 	got := provider(transfer.NodeContext{Registry: reg}, factflow.NewCallSite(factflow.CallSiteConfig{
@@ -253,7 +345,7 @@ func TestOutcomeProviderMapsParamObligationsDistinctFromNormalReturnRefinements(
 				ParamObligations: []product.Value{obligation},
 			},
 		}),
-		KeyFor: ByCalleeIdentity(map[symbol.ID]summary.SummaryKey{callee: key}, nil),
+		KeyFor: ByCalleeIdentity(map[symbol.ID]summary.SummaryKey{callee: key}),
 	})
 
 	got := provider(transfer.NodeContext{Registry: reg}, factflow.NewCallSite(factflow.CallSiteConfig{
@@ -267,6 +359,45 @@ func TestOutcomeProviderMapsParamObligationsDistinctFromNormalReturnRefinements(
 	}
 	if len(got.ParamPathRefinements) != 0 {
 		t.Fatalf("param path refinements = %#v, want none for pre-call obligation", got.ParamPathRefinements)
+	}
+}
+
+func TestOutcomeProviderAddsFunctionTypeParamObligations(t *testing.T) {
+	reg := standard.Registry()
+	callee := symbol.ID(157)
+	key := summary.DefaultSummaryKey(ref.FuncRef{Kind: ref.KindSymbol, ID: 158})
+	fn := typ.Func().
+		Param("url", typ.String).
+		Param("options", typetable.NewMap(typ.Any, typ.Any)).
+		Returns(typ.Any).
+		Build()
+	provider := OutcomeProvider(ProviderConfig{
+		Summaries: summary.NewSnapshot(reg, summary.EntrySummary{
+			Key:     key,
+			Summary: summary.Summary{},
+		}),
+		KeyFor:        ByCalleeIdentity(map[symbol.ID]summary.SummaryKey{callee: key}),
+		FunctionTypes: map[summary.SummaryKey]*typ.Function{key: fn},
+	})
+
+	got := provider(transfer.NodeContext{Registry: reg}, factflow.NewCallSite(factflow.CallSiteConfig{
+		CalleeSymbol: callee,
+		ArgumentSources: []factflow.ValueSource{
+			providerExpressionSource(t, 1, 0),
+			providerExpressionSource(t, 2, 1),
+		},
+	}), state.State{}, nil)
+
+	if len(got.ParamObligations) != 2 ||
+		got.ParamObligations[0].ParamIndex != 0 ||
+		got.ParamObligations[1].ParamIndex != 1 {
+		t.Fatalf("param obligations = %#v, want explicit concrete params", got.ParamObligations)
+	}
+	if gotType, ok := typevalue.TypeOf(reg, got.ParamObligations[0].Value); !ok || !typ.TypeEquals(gotType, typ.String) {
+		t.Fatalf("param obligation type = %v/%v, want string", gotType, ok)
+	}
+	if len(got.ParamPathRefinements) != 0 {
+		t.Fatalf("param path refinements = %#v, want none for function-type pre-call obligation", got.ParamPathRefinements)
 	}
 }
 
@@ -296,7 +427,7 @@ func TestOutcomeProviderSpecializesGenericReturnFromArgument(t *testing.T) {
 				},
 			},
 		}),
-		KeyFor:        ByCalleeIdentity(map[symbol.ID]summary.SummaryKey{callee: key}, nil),
+		KeyFor:        ByCalleeIdentity(map[symbol.ID]summary.SummaryKey{callee: key}),
 		FunctionTypes: map[summary.SummaryKey]*typ.Function{key: fn},
 		Sources: providerSourceValues(reg, map[factflow.ExprRef]product.Value{
 			1: providerValueForType(reg, profile),
@@ -339,7 +470,7 @@ func TestOutcomeProviderSpecializesGenericTupleReturnAcrossSlots(t *testing.T) {
 				providerValueForType(reg, fnParamB),
 			}},
 		}),
-		KeyFor:        ByCalleeIdentity(map[symbol.ID]summary.SummaryKey{callee: key}, nil),
+		KeyFor:        ByCalleeIdentity(map[symbol.ID]summary.SummaryKey{callee: key}),
 		FunctionTypes: map[summary.SummaryKey]*typ.Function{key: fn},
 		Sources: providerSourceValues(reg, map[factflow.ExprRef]product.Value{
 			1: providerValueForType(reg, typ.LiteralInt(42)),
@@ -383,7 +514,7 @@ func TestOutcomeProviderSpecializesGenericReturnFromCallbackReturn(t *testing.T)
 			Key:     key,
 			Summary: summary.Summary{Returns: []product.Value{rawReturn}},
 		}),
-		KeyFor:        ByCalleeIdentity(map[symbol.ID]summary.SummaryKey{callee: key}, nil),
+		KeyFor:        ByCalleeIdentity(map[symbol.ID]summary.SummaryKey{callee: key}),
 		FunctionTypes: map[summary.SummaryKey]*typ.Function{key: fn},
 		Sources: providerSourceValues(reg, map[factflow.ExprRef]product.Value{
 			1: providerValueForType(reg, typ.Instantiate(result, profile)),
@@ -400,6 +531,60 @@ func TestOutcomeProviderSpecializesGenericReturnFromCallbackReturn(t *testing.T)
 	}), state.State{}, nil)
 
 	assertCallOutcomeResultType(t, reg, got.Results, typ.Instantiate(result, typ.String))
+}
+
+func TestOutcomeProviderSpecializesGenericReturnFromSolvedCallbackSummary(t *testing.T) {
+	reg := standard.Registry()
+	callee := symbol.ID(247)
+	callbackSym := symbol.ID(248)
+	key := summary.DefaultSummaryKey(ref.FuncRef{Kind: ref.KindSymbol, ID: 249})
+	callbackKey := summary.DefaultSummaryKey(ref.FromSymbol(callbackSym))
+	result := providerResultGeneric()
+	profile := providerProfileType()
+	fnParamT := typ.NewTypeParam("T", nil)
+	fnParamU := typ.NewTypeParam("U", nil)
+	fn := typ.Func().
+		TypeParamRef(fnParamT).
+		TypeParamRef(fnParamU).
+		Param("result", typ.Instantiate(result, fnParamT)).
+		Param("fn", typ.Func().Param("item", fnParamT).Returns(fnParamU).Build()).
+		Returns(typ.Instantiate(result, fnParamU)).
+		Build()
+	callback := typ.Func().Param("item", profile).Build()
+	rawReturn := providerValueForType(reg, typ.Instantiate(result, fnParamU))
+	provider := OutcomeProvider(ProviderConfig{
+		Summaries: summary.NewSnapshot(reg,
+			summary.EntrySummary{
+				Key:     key,
+				Summary: summary.Summary{Returns: []product.Value{rawReturn}},
+			},
+			summary.EntrySummary{
+				Key:     callbackKey,
+				Summary: summary.Summary{Returns: []product.Value{providerValueForType(reg, typ.Number)}},
+			},
+		),
+		KeyFor:       ByCalleeIdentity(map[symbol.ID]summary.SummaryKey{callee: key}),
+		Facts:        factflow.NewFacts(factflow.FactsInput{ExpressionFunctions: map[factflow.ExprRef]symbol.ID{2: callbackSym}}),
+		FunctionKeys: map[symbol.ID]summary.SummaryKey{callbackSym: callbackKey},
+		FunctionTypes: map[summary.SummaryKey]*typ.Function{
+			key:         fn,
+			callbackKey: callback,
+		},
+		Sources: providerSourceValues(reg, map[factflow.ExprRef]product.Value{
+			1: providerValueForType(reg, typ.Instantiate(result, profile)),
+			2: providerValueForType(reg, callback),
+		}),
+	})
+
+	got := provider(transfer.NodeContext{Registry: reg}, factflow.NewCallSite(factflow.CallSiteConfig{
+		CalleeSymbol: callee,
+		ArgumentSources: []factflow.ValueSource{
+			providerExpressionSource(t, 1, 0),
+			providerExpressionSource(t, 2, 1),
+		},
+	}), state.State{}, nil)
+
+	assertCallOutcomeResultType(t, reg, got.Results, typ.Instantiate(result, typ.Number))
 }
 
 func TestOutcomeProviderSpecializesGenericReturnFromCallbackResultReturn(t *testing.T) {
@@ -424,7 +609,7 @@ func TestOutcomeProviderSpecializesGenericReturnFromCallbackResultReturn(t *test
 			Key:     key,
 			Summary: summary.Summary{Returns: []product.Value{rawReturn}},
 		}),
-		KeyFor:        ByCalleeIdentity(map[symbol.ID]summary.SummaryKey{callee: key}, nil),
+		KeyFor:        ByCalleeIdentity(map[symbol.ID]summary.SummaryKey{callee: key}),
 		FunctionTypes: map[summary.SummaryKey]*typ.Function{key: fn},
 		Sources: providerSourceValues(reg, map[factflow.ExprRef]product.Value{
 			1: providerValueForType(reg, typ.Instantiate(result, profile)),
@@ -461,7 +646,7 @@ func TestOutcomeProviderMissingAndEmptySummaryYieldsZeroOutcome(t *testing.T) {
 	}{
 		{
 			name:     "nil reader",
-			provider: OutcomeProvider(ProviderConfig{KeyFor: ByCalleeIdentity(map[symbol.ID]summary.SummaryKey{callee: key}, nil)}),
+			provider: OutcomeProvider(ProviderConfig{KeyFor: ByCalleeIdentity(map[symbol.ID]summary.SummaryKey{callee: key})}),
 		},
 		{
 			name:     "nil key func",
@@ -469,17 +654,17 @@ func TestOutcomeProviderMissingAndEmptySummaryYieldsZeroOutcome(t *testing.T) {
 		},
 		{
 			name:     "missing key",
-			provider: OutcomeProvider(ProviderConfig{Summaries: snap, KeyFor: ByCalleeIdentity(map[symbol.ID]summary.SummaryKey{}, nil)}),
+			provider: OutcomeProvider(ProviderConfig{Summaries: snap, KeyFor: ByCalleeIdentity(map[symbol.ID]summary.SummaryKey{})}),
 		},
 		{
 			name:     "missing summary",
-			provider: OutcomeProvider(ProviderConfig{Summaries: snap, KeyFor: ByCalleeIdentity(map[symbol.ID]summary.SummaryKey{callee: missingKey}, nil)}),
+			provider: OutcomeProvider(ProviderConfig{Summaries: snap, KeyFor: ByCalleeIdentity(map[symbol.ID]summary.SummaryKey{callee: missingKey})}),
 		},
 		{
 			name: "empty returns",
 			provider: OutcomeProvider(ProviderConfig{
 				Summaries: summary.NewSnapshot(reg, summary.EntrySummary{Key: key, Summary: summary.Summary{Returns: nil}}),
-				KeyFor:    ByCalleeIdentity(map[symbol.ID]summary.SummaryKey{callee: key}, nil),
+				KeyFor:    ByCalleeIdentity(map[symbol.ID]summary.SummaryKey{callee: key}),
 			}),
 		},
 	}
@@ -496,38 +681,66 @@ func TestByCalleeIdentitySymbolKeyMapsAreCloned(t *testing.T) {
 	symbolKey := summary.DefaultSummaryKey(ref.FuncRef{Kind: ref.KindSymbol, ID: 23})
 
 	symbolMap := map[symbol.ID]summary.SummaryKey{callee: symbolKey}
-	keyFor := ByCalleeIdentity(symbolMap, nil)
+	keyFor := ByCalleeIdentity(symbolMap)
 	symbolMap[callee] = summary.DefaultSummaryKey(ref.FuncRef{Kind: ref.KindSymbol, ID: 25})
 
-	got, ok := keyFor(transfer.NodeContext{}, factflow.NewCallProducer(factflow.CallProducerConfig{CalleeSymbol: callee}))
+	got, ok := keyFor(transfer.NodeContext{}, factflow.NewCallSite(factflow.CallSiteConfig{CalleeSymbol: callee}))
 	if !ok || got != symbolKey {
 		t.Fatalf("symbol key = %v, %v; want %v, true", got, ok, symbolKey)
 	}
 }
 
-func TestByCalleeIdentityPrefersSymbolAndUsesPathWhenSymbolMissing(t *testing.T) {
+func TestOutcomeProviderUsesCurrentCalleeValueIdentityForPathSummary(t *testing.T) {
+	reg := standard.Registry()
 	symbolKey := summary.DefaultSummaryKey(ref.FuncRef{Kind: ref.KindSymbol, ID: 31})
-	pathKey := summary.DefaultSummaryKey(ref.FuncRef{Kind: ref.KindSymbol, ID: 32})
+	identityKey := summary.DefaultSummaryKey(ref.FuncRef{Kind: ref.KindSymbol, ID: 32})
 	calleeSymbol := symbol.ID(33)
 	calleePath := path.NewPath(symbol.ID(34), "module").Field("call")
-	keyFor := ByCalleeIdentity(
-		map[symbol.ID]summary.SummaryKey{calleeSymbol: symbolKey},
-		map[path.PathKey]summary.SummaryKey{calleePath.Key(): pathKey},
-	)
+	fnID := identity.LuaFunction(35)
+	calleeSlot := path.PathKey("callee.current")
+	ret := product.Absent(reg)
+	provider := OutcomeProvider(ProviderConfig{
+		Summaries: summary.NewSnapshot(reg,
+			summary.EntrySummary{Key: symbolKey, Summary: summary.Summary{Returns: []product.Value{product.Top()}}},
+			summary.EntrySummary{Key: identityKey, Summary: summary.Summary{Returns: []product.Value{ret}}},
+		),
+		KeyFor:      ByCalleeIdentity(map[symbol.ID]summary.SummaryKey{calleeSymbol: symbolKey}),
+		FunctionIDs: map[identity.ID]summary.SummaryKey{fnID: identityKey},
+		CalleeValue: func(ctx transfer.NodeContext, site factflow.CallSite, in state.State, read func(cfg.Point) state.State) (product.Value, bool) {
+			if site.CalleePath().IsEmpty() {
+				return product.Value{}, false
+			}
+			return in.ReadPathKey(ctx.Registry, calleeSlot), true
+		},
+	})
 
-	got, ok := keyFor(transfer.NodeContext{}, factflow.NewCallProducer(factflow.CallProducerConfig{
+	got := provider(transfer.NodeContext{Registry: reg}, factflow.NewCallSite(factflow.CallSiteConfig{
 		CalleeSymbol: calleeSymbol,
 		CalleePath:   calleePath,
-	}))
-	if !ok || got != symbolKey {
-		t.Fatalf("symbol key = %v, %v; want %v, true", got, ok, symbolKey)
+	}), state.State{}, nil)
+	assertCallOutcomeResults(t, reg, got.Results, []product.Value{product.Top()})
+
+	identityValue := product.NewWithPresence(reg, product.ShapeTop, presence.Present())
+	identityValue = product.Set(reg, identityValue, identity.Key, identity.Singleton(fnID))
+	got = provider(transfer.NodeContext{Registry: reg}, factflow.NewCallSite(factflow.CallSiteConfig{
+		CalleePath: calleePath,
+	}), state.State{}.WritePathKey(reg, calleeSlot, identityValue), nil)
+	assertCallOutcomeResults(t, reg, got.Results, []product.Value{ret})
+
+	otherValue := product.NewWithPresence(reg, product.ShapeTop, presence.Present())
+	otherValue = product.Set(reg, otherValue, identity.Key, identity.Singleton(identity.LuaFunction(36)))
+	got = provider(transfer.NodeContext{Registry: reg}, factflow.NewCallSite(factflow.CallSiteConfig{
+		CalleePath: calleePath,
+	}), state.State{}.WritePathKey(reg, calleeSlot, otherValue), nil)
+	if len(got.Results) != 0 {
+		t.Fatalf("different path identity results = %#v, want none", got.Results)
 	}
 
-	got, ok = keyFor(transfer.NodeContext{}, factflow.NewCallProducer(factflow.CallProducerConfig{
+	got = provider(transfer.NodeContext{Registry: reg}, factflow.NewCallSite(factflow.CallSiteConfig{
 		CalleePath: calleePath,
-	}))
-	if !ok || got != pathKey {
-		t.Fatalf("path key = %v, %v; want %v, true", got, ok, pathKey)
+	}), state.State{}, nil)
+	if len(got.Results) != 0 {
+		t.Fatalf("missing path identity results = %#v, want none", got.Results)
 	}
 }
 
@@ -575,7 +788,7 @@ func TestOutcomeProviderIntegratesWithFactflowCallRead(t *testing.T) {
 					Key:     calleeKey,
 					Summary: summary.Summary{Returns: []product.Value{callValue}},
 				}),
-				KeyFor: ByCalleeIdentity(map[symbol.ID]summary.SummaryKey{symbol.ID(28): calleeKey}, nil),
+				KeyFor: ByCalleeIdentity(map[symbol.ID]summary.SummaryKey{symbol.ID(28): calleeKey}),
 			}),
 		}),
 	})
@@ -593,6 +806,9 @@ func TestProductionImportsAreBounded(t *testing.T) {
 		"github.com/wippyai/go-lua/analysis/check/fixpoint/summary":          true,
 		"github.com/wippyai/go-lua/analysis/domain/path":                     true,
 		"github.com/wippyai/go-lua/analysis/domain/value/axis":               true,
+		"github.com/wippyai/go-lua/analysis/domain/value/axis/evidence":      true,
+		"github.com/wippyai/go-lua/analysis/domain/value/axis/identity":      true,
+		"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind":   true,
 		"github.com/wippyai/go-lua/analysis/domain/value/axis/typewitness":   true,
 		"github.com/wippyai/go-lua/analysis/domain/value/axis/variantorigin": true,
 		"github.com/wippyai/go-lua/analysis/domain/value/product":            true,
@@ -606,9 +822,11 @@ func TestProductionImportsAreBounded(t *testing.T) {
 		"github.com/wippyai/go-lua/analysis/engine/state/pathevidence":       true,
 		"github.com/wippyai/go-lua/analysis/engine/state":                    true,
 		"github.com/wippyai/go-lua/analysis/engine/transfer":                 true,
+		"github.com/wippyai/go-lua/analysis/ir/dominance":                    true,
 		"github.com/wippyai/go-lua/analysis/ir/cfg":                          true,
 		"github.com/wippyai/go-lua/analysis/lua/typecall":                    true,
 		"github.com/wippyai/go-lua/analysis/symbol":                          true,
+		"github.com/wippyai/go-lua/analysis/type/normalize":                  true,
 		"github.com/wippyai/go-lua/analysis/type/refinement":                 true,
 		"github.com/wippyai/go-lua/analysis/type/typ":                        true,
 	}
@@ -641,7 +859,7 @@ func providerResultGeneric() *typ.Generic {
 		Field("ok", typ.LiteralBool(false)).
 		Field("error", typ.String).
 		Build()
-	return typ.NewGeneric("Result", []*typ.TypeParam{param}, typ.NewUnion(okRecord, errRecord))
+	return typ.NewGeneric("Result", []*typ.TypeParam{param}, typeexpr.Union(okRecord, errRecord))
 }
 
 func providerProfileType() typ.Type {

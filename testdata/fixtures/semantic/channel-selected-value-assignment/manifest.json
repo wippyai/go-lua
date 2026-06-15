@@ -1,0 +1,8 @@
+{
+  "description": "Assigned channel.select values refine only after channel equality proves the selected case.",
+  "packages": ["channel"],
+  "files": [
+    "protocol.lua",
+    "main.lua"
+  ]
+}

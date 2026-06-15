@@ -2,6 +2,7 @@ package transferfacts
 
 import (
 	"github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/variantorigin"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
@@ -25,7 +26,7 @@ func (l *lowerer) rootLiteralRefinement(target path.Path, lit typ.Type, cond boo
 	}
 	root := target
 	root.Segments = nil
-	value := l.rootLiteralValueConstraint(rootType, narrowed, target, lit, false)
+	value := l.rootLiteralValueConstraint(rootType, narrowed, target.Segments, lit, false)
 	if cond {
 		return factflow.NewBranchRefinement(root, value, true, factflow.ValueRefinement{}, false), true
 	}
@@ -36,18 +37,20 @@ func (l *lowerer) literalBranchRefinement(target path.Path, kind branchcond.Chec
 	if target.Symbol == 0 || len(target.Segments) == 0 {
 		return factflow.BranchRefinement{}, false
 	}
+	lit := typ.LiteralString(literal)
 	rootType, ok := l.symbolTypes[target.Symbol]
+	if !ok {
+		return l.descendantLiteralRefinement(target, kind, lit)
+	}
+	anchorType, anchor, rest, ok := narrowAnchor(rootType, target, lit)
 	if !ok {
 		return factflow.BranchRefinement{}, false
 	}
-	lit := typ.LiteralString(literal)
-	matched, hasMatched := variant.NarrowByPathLiteral(rootType, target.Segments, lit)
-	unmatched, hasUnmatched := variant.NarrowByPathLiteralNot(rootType, target.Segments, lit)
+	matched, hasMatched := variant.NarrowByPathLiteral(anchorType, rest, lit)
+	unmatched, hasUnmatched := variant.NarrowByPathLiteralNot(anchorType, rest, lit)
 	if !hasMatched && !hasUnmatched {
 		return factflow.BranchRefinement{}, false
 	}
-	root := target
-	root.Segments = nil
 	var trueValue factflow.ValueRefinement
 	var hasTrue bool
 	var falseValue factflow.ValueRefinement
@@ -60,25 +63,75 @@ func (l *lowerer) literalBranchRefinement(target path.Path, kind branchcond.Chec
 		matchedNegate, unmatchedNegate = unmatchedNegate, matchedNegate
 	}
 	if hasMatched {
-		trueValue = l.rootLiteralValueConstraint(rootType, matched, target, lit, matchedNegate)
+		trueValue = l.rootLiteralValueConstraint(anchorType, matched, rest, lit, matchedNegate)
 		hasTrue = true
 	}
 	if hasUnmatched {
-		falseValue = l.rootLiteralValueConstraint(rootType, unmatched, target, lit, unmatchedNegate)
+		falseValue = l.rootLiteralValueConstraint(anchorType, unmatched, rest, lit, unmatchedNegate)
 		hasFalse = true
 	}
-	return factflow.NewBranchRefinement(root, trueValue, hasTrue, falseValue, hasFalse), true
+	return factflow.NewBranchRefinement(anchor, trueValue, hasTrue, falseValue, hasFalse), true
 }
 
-func (l *lowerer) rootLiteralValueConstraint(rootType typ.Type, narrowed typ.Type, target path.Path, lit typ.Type, negate bool) factflow.ValueRefinement {
+// narrowAnchor finds the location at which a discriminant literal check narrows a
+// type. It walks prefixes of target.Segments from shortest to longest and returns
+// the first prefix whose member type is a discriminated union narrowable by the
+// remaining suffix. The shortest match is the root itself (whole-symbol unions);
+// a deeper match handles a discriminated union held in a nested field, such as a
+// generic payload field whose own discriminant tag is checked. The returned
+// anchor path keys the refinement at that location so reads of the nested union
+// see the narrowed arm.
+func narrowAnchor(rootType typ.Type, target path.Path, lit typ.Type) (typ.Type, path.Path, []segment.Segment, bool) {
+	segments := target.Segments
+	for j := 0; j < len(segments); j++ {
+		prefix := segments[:j]
+		rest := segments[j:]
+		anchorType := rootType
+		if j > 0 {
+			t, ok := variant.FieldAtPath(rootType, prefix)
+			if !ok {
+				continue
+			}
+			anchorType = t
+		}
+		if _, ok := variant.NarrowByPathLiteral(anchorType, rest, lit); ok {
+			anchor := target
+			anchor.Segments = append([]segment.Segment(nil), prefix...)
+			return anchorType, anchor, rest, true
+		}
+		if _, ok := variant.NarrowByPathLiteralNot(anchorType, rest, lit); ok {
+			anchor := target
+			anchor.Segments = append([]segment.Segment(nil), prefix...)
+			return anchorType, anchor, rest, true
+		}
+	}
+	return nil, path.Path{}, nil, false
+}
+
+// descendantLiteralRefinement narrows a discriminated-union root whose static
+// type is not annotated, such as a generic-for loop variable. The literal value
+// is recorded on the discriminant descendant path so the applicator narrows the
+// root by the value's runtime variant origin: the equal edge keeps the cases
+// whose discriminant admits lit, and the negated edge removes them.
+func (l *lowerer) descendantLiteralRefinement(target path.Path, kind branchcond.CheckKind, lit typ.Type) (factflow.BranchRefinement, bool) {
+	witness := typevalue.WithWitness(l.registry, typevalue.FromType(l.registry, lit), lit)
+	equalEdge := factflow.NewValueConstraint(witness)
+	notEqualEdge := factflow.NewNegatedLiteralConstraint(witness)
+	if kind == branchcond.CheckLiteralNot {
+		return factflow.NewBranchRefinement(target, notEqualEdge, true, equalEdge, true), true
+	}
+	return factflow.NewBranchRefinement(target, equalEdge, true, notEqualEdge, true), true
+}
+
+func (l *lowerer) rootLiteralValueConstraint(anchorType typ.Type, narrowed typ.Type, rest []segment.Segment, lit typ.Type, negate bool) factflow.ValueRefinement {
 	value := typevalue.FromType(l.registry, narrowed)
 	var family uint64
 	var cases []int
 	var ok bool
 	if negate {
-		family, cases, ok = variant.OriginByPathLiteralNot(rootType, target.Segments, lit)
+		family, cases, ok = variant.OriginByPathLiteralNot(anchorType, rest, lit)
 	} else {
-		family, cases, ok = variant.OriginByPathLiteral(rootType, target.Segments, lit)
+		family, cases, ok = variant.OriginByPathLiteral(anchorType, rest, lit)
 	}
 	if ok {
 		value = product.Set(l.registry, value, variantorigin.Key, variantorigin.Of(family, cases))

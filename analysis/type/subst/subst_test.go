@@ -6,6 +6,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/inspect"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/analysis/type/typeexpr"
 )
 
 func requireNoInstantiated(t *testing.T, tt typ.Type) {
@@ -222,9 +223,9 @@ func TestSelf(t *testing.T) {
 		rec := typ.NewRecursive("Node", func(self typ.Type) typ.Type {
 			return typetable.NewRecord().Field("next", self).Build()
 		})
-		arg := typ.NewUnion(typ.Self, rec)
+		arg := typeexpr.Union(typ.Self, rec)
 		result := Self(arg, typ.String)
-		if !typ.TypeEquals(result, typ.NewUnion(typ.String, rec)) {
+		if !typ.TypeEquals(result, typeexpr.Union(typ.String, rec)) {
 			t.Fatalf("union self substitution = %v", result)
 		}
 	})
@@ -242,6 +243,50 @@ func TestSelf(t *testing.T) {
 			Build()
 		if got := Self(wrapper, typ.String); got != wrapper {
 			t.Fatalf("recursive payload without Self should be returned unchanged, got %v", got)
+		}
+	})
+}
+
+func TestSelfRef(t *testing.T) {
+	t.Run("rewrites receiver ref but preserves unrelated same-name ref", func(t *testing.T) {
+		receiverRef := typ.NewRef("", "Receiver")
+		unrelatedRef := typ.NewRef("", "Receiver")
+		fn := typ.Func().
+			Param("self", receiverRef).
+			Param("payload", typetable.NewRecord().
+				Field("target", receiverRef).
+				Field("shadow", unrelatedRef).
+				Build()).
+			Returns(receiverRef, unrelatedRef).
+			Build()
+
+		result, ok := SelfRef(fn, typ.String).(*typ.Function)
+		if !ok {
+			t.Fatalf("result should be function, got %T", result)
+		}
+		if result.Params[0].Type != typ.String {
+			t.Fatalf("self param type = %v, want string", result.Params[0].Type)
+		}
+		payload, ok := result.Params[1].Type.(*typ.Record)
+		if !ok {
+			t.Fatalf("payload type = %T, want record", result.Params[1].Type)
+		}
+		target := payload.GetField("target")
+		if target == nil || target.Type != typ.String {
+			t.Fatalf("receiver ref field = %v, want string", target)
+		}
+		shadow := payload.GetField("shadow")
+		if shadow == nil || shadow.Type != unrelatedRef {
+			t.Fatalf("unrelated same-name ref was rewritten: got %v, want %v", shadow, unrelatedRef)
+		}
+		if len(result.Returns) != 2 {
+			t.Fatalf("returns length = %d, want 2", len(result.Returns))
+		}
+		if result.Returns[0] != typ.String {
+			t.Fatalf("first return = %v, want string", result.Returns[0])
+		}
+		if result.Returns[1] != unrelatedRef {
+			t.Fatalf("unrelated return ref was rewritten: got %v, want %v", result.Returns[1], unrelatedRef)
 		}
 	})
 }
@@ -313,12 +358,12 @@ func TestExpandInstantiated(t *testing.T) {
 		tp := typ.NewTypeParam("T", nil)
 		boxParam := typ.NewTypeParam("U", nil)
 		box := typ.NewGeneric("Box", []*typ.TypeParam{boxParam}, boxParam)
-		generic := typ.NewGeneric("UnionBox", []*typ.TypeParam{tp}, typ.NewUnion(
+		generic := typ.NewGeneric("UnionBox", []*typ.TypeParam{tp}, typeexpr.Union(
 			typ.Instantiate(box, tp),
 			typ.Boolean,
 		))
 
-		expanded := ExpandInstantiated(typ.Instantiate(generic, typ.NewUnion(typ.String, typ.Number)))
+		expanded := ExpandInstantiated(typ.Instantiate(generic, typeexpr.Union(typ.String, typ.Number)))
 		union := requireUnionShape(t, expanded, typ.String, typ.Number, typ.Boolean)
 		for _, member := range union.Members {
 			if _, ok := member.(*typ.Union); ok {
@@ -332,12 +377,12 @@ func TestExpandInstantiated(t *testing.T) {
 		tp := typ.NewTypeParam("T", nil)
 		boxParam := typ.NewTypeParam("U", nil)
 		box := typ.NewGeneric("Box", []*typ.TypeParam{boxParam}, boxParam)
-		generic := typ.NewGeneric("NilableUnionBox", []*typ.TypeParam{tp}, typ.NewUnion(
+		generic := typ.NewGeneric("NilableUnionBox", []*typ.TypeParam{tp}, typeexpr.Union(
 			typ.Instantiate(box, tp),
 			typ.Boolean,
 		))
 
-		expanded := ExpandInstantiated(typ.Instantiate(generic, typ.NewOptional(typ.String)))
+		expanded := ExpandInstantiated(typ.Instantiate(generic, typeexpr.Optional(typ.String)))
 		union := requireUnionShape(t, expanded, typ.Nil, typ.String, typ.Boolean)
 		for _, member := range union.Members {
 			if _, ok := member.(*typ.Optional); ok {
@@ -351,12 +396,12 @@ func TestExpandInstantiated(t *testing.T) {
 		tp := typ.NewTypeParam("T", nil)
 		boxParam := typ.NewTypeParam("U", nil)
 		box := typ.NewGeneric("Box", []*typ.TypeParam{boxParam}, boxParam)
-		generic := typ.NewGeneric("IntersectionBox", []*typ.TypeParam{tp}, typ.NewIntersection(
+		generic := typ.NewGeneric("IntersectionBox", []*typ.TypeParam{tp}, typeexpr.Intersection(
 			typ.Instantiate(box, tp),
 			typ.Boolean,
 		))
 
-		expanded := ExpandInstantiated(typ.Instantiate(generic, typ.NewIntersection(typ.String, typ.Number)))
+		expanded := ExpandInstantiated(typ.Instantiate(generic, typeexpr.Intersection(typ.String, typ.Number)))
 		intersection := requireIntersectionShape(t, expanded, typ.String, typ.Number, typ.Boolean)
 		for _, member := range intersection.Members {
 			if _, ok := member.(*typ.Intersection); ok {
@@ -369,7 +414,7 @@ func TestExpandInstantiated(t *testing.T) {
 	t.Run("normalizes instantiated table keys", func(t *testing.T) {
 		tp := typ.NewTypeParam("T", nil)
 		optionalParam := typ.NewTypeParam("U", nil)
-		optionalGeneric := typ.NewGeneric("OptionalKey", []*typ.TypeParam{optionalParam}, typ.NewOptional(optionalParam))
+		optionalGeneric := typ.NewGeneric("OptionalKey", []*typ.TypeParam{optionalParam}, typeexpr.Optional(optionalParam))
 		nilableKey := typ.Instantiate(optionalGeneric, tp)
 
 		mapGeneric := typ.NewGeneric("Map", []*typ.TypeParam{tp}, typ.NewMap(nilableKey, typ.Number))
@@ -409,7 +454,7 @@ func TestExpandInstantiated(t *testing.T) {
 		tp := typ.NewTypeParam("T", nil)
 		generic := typ.NewGeneric("Map", []*typ.TypeParam{tp}, typ.NewMap(tp, typ.Number))
 
-		expanded := ExpandInstantiated(typ.Instantiate(generic, typ.NewOptional(typ.String)))
+		expanded := ExpandInstantiated(typ.Instantiate(generic, typeexpr.Optional(typ.String)))
 		result, ok := expanded.(*typ.Map)
 		if !ok {
 			t.Fatalf("expected map, got %T", expanded)
@@ -423,7 +468,7 @@ func TestExpandInstantiated(t *testing.T) {
 		tp := typ.NewTypeParam("T", nil)
 		generic := typ.NewGeneric("ReadonlyMap", []*typ.TypeParam{tp}, typ.NewReadonlyMap(tp, typ.Number))
 
-		expanded := ExpandInstantiated(typ.Instantiate(generic, typ.NewOptional(typ.String)))
+		expanded := ExpandInstantiated(typ.Instantiate(generic, typeexpr.Optional(typ.String)))
 		result, ok := expanded.(*typ.ReadonlyMap)
 		if !ok {
 			t.Fatalf("expected readonly map, got %T", expanded)
@@ -439,7 +484,7 @@ func TestExpandInstantiated(t *testing.T) {
 			MapComponent(tp, typ.Number).
 			Build())
 
-		expanded := ExpandInstantiated(typ.Instantiate(generic, typ.NewOptional(typ.String)))
+		expanded := ExpandInstantiated(typ.Instantiate(generic, typeexpr.Optional(typ.String)))
 		result, ok := expanded.(*typ.Record)
 		if !ok {
 			t.Fatalf("expected record, got %T", expanded)
@@ -455,7 +500,7 @@ func TestExpandInstantiated(t *testing.T) {
 			OptField("value", tp).
 			Build())
 
-		expanded := ExpandInstantiated(typ.Instantiate(generic, typ.NewOptional(typ.String)))
+		expanded := ExpandInstantiated(typ.Instantiate(generic, typeexpr.Optional(typ.String)))
 		result, ok := expanded.(*typ.Record)
 		if !ok {
 			t.Fatalf("expected record, got %T", expanded)
@@ -472,7 +517,7 @@ func TestExpandInstantiated(t *testing.T) {
 	t.Run("expands and splits static member payload parameters", func(t *testing.T) {
 		tp := typ.NewTypeParam("T", nil)
 		boxParam := typ.NewTypeParam("U", nil)
-		optionalBox := typ.NewGeneric("OptionalBox", []*typ.TypeParam{boxParam}, typ.NewOptional(boxParam))
+		optionalBox := typ.NewGeneric("OptionalBox", []*typ.TypeParam{boxParam}, typeexpr.Optional(boxParam))
 		generic := typ.NewGeneric("StaticMembers", []*typ.TypeParam{tp}, typetable.RebuildRecord(typ.RecordParts{
 			StaticMembers: []typ.StaticMember{
 				{
@@ -490,7 +535,7 @@ func TestExpandInstantiated(t *testing.T) {
 			},
 		}))
 
-		expanded := ExpandInstantiated(typ.Instantiate(generic, typ.NewOptional(typ.String)))
+		expanded := ExpandInstantiated(typ.Instantiate(generic, typeexpr.Optional(typ.String)))
 		result, ok := expanded.(*typ.Record)
 		if !ok {
 			t.Fatalf("expected record, got %T", expanded)
@@ -509,9 +554,9 @@ func TestExpandInstantiated(t *testing.T) {
 
 	t.Run("optional", func(t *testing.T) {
 		tp := typ.NewTypeParam("T", nil)
-		generic := typ.NewGeneric("Opt", []*typ.TypeParam{tp}, typ.NewOptional(tp))
+		generic := typ.NewGeneric("Opt", []*typ.TypeParam{tp}, typeexpr.Optional(tp))
 		inst := typ.Instantiate(generic, typ.String)
-		opt := typ.NewOptional(inst)
+		opt := typeexpr.Optional(inst)
 		result := ExpandInstantiated(opt)
 		if result == opt {
 			t.Error("should expand nested instantiated")
@@ -549,7 +594,7 @@ func TestExpandInstantiated(t *testing.T) {
 		node := typ.NewGeneric("Node", []*typ.TypeParam{tp}, nil)
 		node.SetBody(typetable.NewRecord().
 			Field("value", tp).
-			Field("next", typ.NewOptional(typ.Instantiate(node, tp))).
+			Field("next", typeexpr.Optional(typ.Instantiate(node, tp))).
 			Build())
 		fn := typ.Func().
 			Param("node", typ.Instantiate(node, typ.String)).
@@ -574,7 +619,7 @@ func TestExpandInstantiated(t *testing.T) {
 		node := typ.NewGeneric("Node", []*typ.TypeParam{tp}, nil)
 		node.SetBody(typetable.NewRecord().
 			Field("value", tp).
-			Field("next", typ.NewOptional(typ.Instantiate(node, tp))).
+			Field("next", typeexpr.Optional(typ.Instantiate(node, tp))).
 			Build())
 		wrapper := typetable.NewRecord().
 			Field("node", typ.Instantiate(node, typ.String)).

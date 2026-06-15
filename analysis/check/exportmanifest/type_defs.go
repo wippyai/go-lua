@@ -11,7 +11,7 @@ func publishTypeDefinitions(m *manifest.Manifest, result *body.Result) {
 	if m == nil || result == nil || result.Graph() == nil {
 		return
 	}
-	resolver := typeresolve.New(result)
+	resolver := typeresolve.NewWithExternal(result, result.ModuleTypes())
 	for _, point := range result.Graph().RPO() {
 		fact, ok := result.TypeDefinition(point)
 		if !ok {

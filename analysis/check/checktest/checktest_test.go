@@ -5,10 +5,14 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/check/diagnostics"
+	"github.com/wippyai/go-lua/analysis/domain/effect"
+	"github.com/wippyai/go-lua/analysis/domain/effect/postcondition"
+	"github.com/wippyai/go-lua/analysis/domain/effect/returns"
 	"github.com/wippyai/go-lua/analysis/domain/effect/signature"
 	"github.com/wippyai/go-lua/analysis/module/manifest"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/analysis/type/typeexpr"
 )
 
 func TestCheckRunsActiveDiagnostics(t *testing.T) {
@@ -18,6 +22,37 @@ func TestCheckRunsActiveDiagnostics(t *testing.T) {
 	}
 	if result.Diagnostics[0].Position.File != "test.lua" {
 		t.Fatalf("diagnostic file = %q, want test.lua", result.Diagnostics[0].Position.File)
+	}
+}
+
+// A method reached through a recursive type's self-referential field must
+// resolve to the field type's method and yield its declared return type. A
+// recursive alias resolves to a closed mu-type whose self-references project
+// structurally; without that, the member call falls back to any and the
+// string assignment fails.
+func TestCheckRecursiveSelfFieldMethodResolvesReturn(t *testing.T) {
+	result := Check(`
+type Node = {
+    name: string,
+    child: Node?,
+    label: (self: Node) -> string,
+}
+local function make_node(name: string): Node
+    return {
+        name = name,
+        child = nil,
+        label = function(self: Node): string
+            return self.name
+        end,
+    }
+end
+local root = make_node("root")
+if root.child then
+    local name: string = root.child:label()
+end
+`)
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("diagnostics = %d, want 0: %#v", len(result.Diagnostics), result.Diagnostics)
 	}
 }
 
@@ -84,6 +119,69 @@ func TestCheckAndExportPublishesReturnedTableDottedFunctionMember(t *testing.T) 
 	}
 }
 
+func TestCheckAndExportPublishesReturnedTableDottedFunctionMemberMultiReturns(t *testing.T) {
+	mod := CheckAndExport(`
+		local client = {}
+		function client.fetch(id: string): (number?, string?)
+			if id == "" then
+				return nil, "missing"
+			end
+			return 1, nil
+		end
+		return client
+	`, "client")
+	if len(mod.Errors) != 0 {
+		t.Fatalf("module errors = %#v, want none", mod.Errors)
+	}
+
+	fn := requireFunctionField(t, requireExportRecord(t, mod), "fetch")
+	if len(fn.Returns) != 2 {
+		t.Fatalf("fetch returns = %d, want 2", len(fn.Returns))
+	}
+	if !typ.TypeEquals(fn.Returns[0], typeexpr.Optional(typ.Number)) {
+		t.Fatalf("fetch return 1 = %v, want number?", fn.Returns[0])
+	}
+	if !typ.TypeEquals(fn.Returns[1], typeexpr.Optional(typ.String)) {
+		t.Fatalf("fetch return 2 = %v, want string?", fn.Returns[1])
+	}
+	sig, ok := mod.Manifest.FunctionSignatures["client.fetch"]
+	if !ok {
+		t.Fatalf("missing client.fetch function signature: %#v", mod.Manifest.FunctionSignatures)
+	}
+	if !typ.TypeEquals(sig.Type, fn) {
+		t.Fatalf("signature type = %v, want exported fetch type %v", sig.Type, fn)
+	}
+	if !hasErrorReturn(sig.Effect, 0, 1) {
+		t.Fatalf("signature type = %v effect = %v, want ErrorReturn(0, 1)", sig.Type, sig.Effect)
+	}
+}
+
+func TestCheckAndExportPublishesNormalReturnAbsentParamRefinement(t *testing.T) {
+	mod := CheckAndExport(`
+		local test = {}
+		function test.is_nil(val: any, msg: string?)
+			if val ~= nil then
+				error(msg or "expected nil", 2)
+			end
+		end
+		return test
+	`, "test", WithStdlib())
+	if len(mod.Errors) != 0 {
+		t.Fatalf("module errors = %#v, want none", mod.Errors)
+	}
+
+	sig, ok := mod.Manifest.FunctionSignatures["test.is_nil"]
+	if !ok {
+		t.Fatalf("missing test.is_nil function signature: %#v", mod.Manifest.FunctionSignatures)
+	}
+	if !hasNormalReturnAbsentRefinement(sig.Effect, 0) {
+		t.Fatalf("signature effect = %v, want normal return absent refinement for param 0", sig.Effect)
+	}
+	if hasNormalReturnAbsentRefinement(sig.Effect, 1) {
+		t.Fatalf("signature effect = %v, did not expect absent refinement for msg param", sig.Effect)
+	}
+}
+
 func TestCheckAndExportPrefersReturnedTableSourceMembersOverShallowSummary(t *testing.T) {
 	mod := CheckAndExport(`
 		local provider: { value: number } = { value = 1 }
@@ -126,8 +224,1015 @@ func TestRequireCheckAndExportedReturnedTableDottedMemberKeepsReturnType(t *test
 	if len(result.Diagnostics) != 1 {
 		t.Fatalf("diagnostics = %d, want 1: %#v", len(result.Diagnostics), result.Diagnostics)
 	}
+	if result.Diagnostics[0].Code != diagnostics.CodeDirectCallResultAssignment {
+		t.Fatalf("diagnostic code = %s, want %s", result.Diagnostics[0].Code, diagnostics.CodeDirectCallResultAssignment)
+	}
+}
+
+func TestRequireCheckAndExportedReturnedTableDottedMemberKeepsMultiReturns(t *testing.T) {
+	mod := CheckAndExport(`
+		local client = {}
+		function client.fetch(id: string): (number?, string?)
+			return nil, "missing"
+		end
+		return client
+	`, "client")
+	if len(mod.Errors) != 0 {
+		t.Fatalf("module errors = %#v, want none", mod.Errors)
+	}
+
+	result := Check(`
+		local client = require("client")
+		local value, err = client.fetch("id")
+		local e: number = err
+	`, WithStdlib(), WithModule("client", mod))
+	if len(result.Diagnostics) != 1 {
+		t.Fatalf("diagnostics = %d, want 1: %#v", len(result.Diagnostics), result.Diagnostics)
+	}
 	if result.Diagnostics[0].Code != diagnostics.CodeAssignmentType {
 		t.Fatalf("diagnostic code = %s, want %s", result.Diagnostics[0].Code, diagnostics.CodeAssignmentType)
+	}
+}
+
+func TestRequireCheckAndExportedReturnedTableDottedMemberUsesSignatureErrorReturnCorrelation(t *testing.T) {
+	mod := CheckAndExport(`
+		local client = {}
+		function client.fetch(id: string): (number?, string?)
+			if id == "" then
+				return nil, "missing"
+			end
+			return 1, nil
+		end
+		return client
+	`, "client")
+	if len(mod.Errors) != 0 {
+		t.Fatalf("module errors = %#v, want none", mod.Errors)
+	}
+
+	result := Check(`
+		local client = require("client")
+		local value, err = client.fetch("id")
+		if err == nil then
+			local n: number = value
+		end
+	`, WithStdlib(), WithModule("client", mod))
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want none after imported error-return correlation", result.Diagnostics)
+	}
+}
+
+func TestCheckAndExportPublishesErrorReturnFromImportedGenericResultField(t *testing.T) {
+	resultMod := CheckAndExport(`
+		type Result<T> = { ok: true, value: T } | { ok: false, error: string }
+		local result = {}
+		result.Result = Result
+		return result
+	`, "result")
+	if len(resultMod.Errors) != 0 {
+		t.Fatalf("result module errors = %#v, want none", resultMod.Errors)
+	}
+
+	repoMod := CheckAndExport(`
+		local result = require("result")
+		type User = { id: string, email: string }
+		local repo = {}
+		function repo.find_by_id(id: string): Result<User>
+			if id == "" then
+				return { ok = false, error = "missing" }
+			end
+			return { ok = true, value = { id = id, email = "a@test" } }
+		end
+		return repo
+	`, "repo", WithStdlib(), WithModule("result", resultMod))
+	if len(repoMod.Errors) != 0 {
+		t.Fatalf("repo module errors = %#v, want none", repoMod.Errors)
+	}
+
+	serviceMod := CheckAndExport(`
+		local repo = require("repo")
+		local service = {}
+		function service.get_email(id: string): (string?, string?)
+			local r = repo.find_by_id(id)
+			if r.ok then
+				return r.value.email, nil
+			end
+			return nil, r.error
+		end
+		return service
+	`, "service", WithStdlib(), WithModule("result", resultMod), WithModule("repo", repoMod))
+	if len(serviceMod.Errors) != 0 {
+		t.Fatalf("service module errors = %#v, want none", serviceMod.Errors)
+	}
+
+	sig, ok := serviceMod.Manifest.FunctionSignatures["service.get_email"]
+	if !ok {
+		t.Fatalf("missing service.get_email function signature: %#v", serviceMod.Manifest.FunctionSignatures)
+	}
+	if !hasErrorReturn(sig.Effect, 0, 1) {
+		t.Fatalf("signature type = %v effect = %v, want ErrorReturn(0, 1)", sig.Type, sig.Effect)
+	}
+}
+
+func TestCheckAndExportPublishesErrorReturnFromLocalGenericResultField(t *testing.T) {
+	mod := CheckAndExport(`
+		type Result<T> = { ok: true, value: T } | { ok: false, error: string }
+		type User = { id: string, email: string }
+		local service = {}
+		function service.get_email(r: Result<User>): (string?, string?)
+			if r.ok then
+				return r.value.email, nil
+			end
+			return nil, r.error
+		end
+		return service
+	`, "service")
+	if len(mod.Errors) != 0 {
+		t.Fatalf("module errors = %#v, want none", mod.Errors)
+	}
+
+	sig, ok := mod.Manifest.FunctionSignatures["service.get_email"]
+	if !ok {
+		t.Fatalf("missing service.get_email function signature: %#v", mod.Manifest.FunctionSignatures)
+	}
+	if !hasErrorReturn(sig.Effect, 0, 1) {
+		t.Fatalf("signature type = %v effect = %v, want ErrorReturn(0, 1)", sig.Type, sig.Effect)
+	}
+}
+
+func TestRequireCheckAndExportedGenericMemberSignatureInstantiatesReturn(t *testing.T) {
+	resultMod := CheckAndExport(`
+		type Result<T> = { ok: true, value: T } | { ok: false, error: string }
+		local M = {}
+		function M.ok<T>(value: T): Result<T>
+			return { ok = true, value = value }
+		end
+		function M.map<T, U>(result: Result<T>, fn: (T) -> U): Result<U>
+			if result.ok then
+				return M.ok(fn(result.value))
+			end
+			return { ok = false, error = result.error }
+		end
+		return M
+	`, "result")
+	if len(resultMod.Errors) != 0 {
+		t.Fatalf("result module errors = %#v, want none", resultMod.Errors)
+	}
+	sig, ok := resultMod.Manifest.FunctionSignatures["result.map"]
+	if !ok {
+		t.Fatalf("missing result.map function signature: %#v", resultMod.Manifest.FunctionSignatures)
+	}
+	if sig.Type == nil || len(sig.Type.TypeParams) != 2 {
+		t.Fatalf("result.map signature = %v, want two type params", sig.Type)
+	}
+
+	checked := Check(`
+		local result = require("result")
+		type StringResult = { ok: true, value: string } | { ok: false, error: string }
+		local decoded: StringResult = result.ok("name")
+		local mapped = result.map(decoded, function(value: string)
+			return #value
+		end)
+		if mapped.ok then
+			local n: number = mapped.value
+		end
+	`, WithStdlib(), WithModule("result", resultMod))
+	if len(checked.Diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want imported generic return instantiated", checked.Diagnostics)
+	}
+}
+
+func TestRequireCheckAndExportedGenericMemberSignatureInstantiatesImportedCallbackReturn(t *testing.T) {
+	protocolMod := CheckAndExport(`
+		type User = { id: string, retries: number }
+		local M = {}
+		M.User = User
+		return M
+	`, "protocol")
+	if len(protocolMod.Errors) != 0 {
+		t.Fatalf("protocol module errors = %#v, want none", protocolMod.Errors)
+	}
+	resultMod := CheckAndExport(`
+		type Result<T> = { ok: true, value: T } | { ok: false, error: string }
+		local M = {}
+		function M.ok<T>(value: T): Result<T>
+			return { ok = true, value = value }
+		end
+		function M.map<T, U>(result: Result<T>, fn: (T) -> U): Result<U>
+			if result.ok then
+				return M.ok(fn(result.value))
+			end
+			return { ok = false, error = result.error }
+		end
+		return M
+	`, "result")
+	if len(resultMod.Errors) != 0 {
+		t.Fatalf("result module errors = %#v, want none", resultMod.Errors)
+	}
+
+	checked := Check(`
+		local protocol = require("protocol")
+		local result = require("result")
+		type UserResult = { ok: true, value: protocol.User } | { ok: false, error: string }
+		local decoded: UserResult = result.ok({ id = "u1", retries = 2 })
+		local mapped = result.map(decoded, function(user: protocol.User)
+			return user.id .. ":" .. tostring(user.retries)
+		end)
+		if mapped.ok then
+			local text: string = mapped.value
+		end
+	`, WithStdlib(), WithModule("protocol", protocolMod), WithModule("result", resultMod))
+	if len(checked.Diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want imported callback return instantiated", checked.Diagnostics)
+	}
+}
+
+func TestRequireCheckAndExportedGenericMemberSignatureSeedsUnannotatedCallbackParam(t *testing.T) {
+	resultMod := CheckAndExport(`
+		type Result<T> = { ok: true, value: T } | { ok: false, error: string }
+		local M = {}
+		function M.ok<T>(value: T): Result<T>
+			return { ok = true, value = value }
+		end
+		function M.map<T, U>(result: Result<T>, fn: (T) -> U): Result<U>
+			if result.ok then
+				return M.ok(fn(result.value))
+			end
+			return { ok = false, error = result.error }
+		end
+		return M
+	`, "result")
+	if len(resultMod.Errors) != 0 {
+		t.Fatalf("result module errors = %#v, want none", resultMod.Errors)
+	}
+
+	checked := Check(`
+		local result = require("result")
+		type User = { id: string, retries: number }
+		type UserResult = { ok: true, value: User } | { ok: false, error: string }
+		local decoded: UserResult = result.ok({ id = "u1", retries = 2 })
+		local mapped = result.map(decoded, function(user)
+			return user.id
+		end)
+		if mapped.ok then
+			local id: string = mapped.value
+			local wrong_id: number = mapped.value
+		end
+	`, WithStdlib(), WithModule("result", resultMod))
+	if len(checked.Diagnostics) != 1 {
+		t.Fatalf("diagnostics = %#v, want one wrong_id diagnostic", checked.Diagnostics)
+	}
+	if checked.Diagnostics[0].Code != diagnostics.CodeAssignmentType {
+		t.Fatalf("diagnostic code = %s, want %s", checked.Diagnostics[0].Code, diagnostics.CodeAssignmentType)
+	}
+}
+
+func TestRequireCheckAndExportedGenericMemberSignatureInstantiatesNestedCallbackResult(t *testing.T) {
+	protocolMod := CheckAndExport(`
+		type User = { id: string, retries: number }
+		type Audit = { user_id: string, event: string }
+		local M = {}
+		M.User = User
+		M.Audit = Audit
+		return M
+	`, "protocol")
+	if len(protocolMod.Errors) != 0 {
+		t.Fatalf("protocol module errors = %#v, want none", protocolMod.Errors)
+	}
+	resultMod := CheckAndExport(`
+		type Result<T> = { ok: true, value: T } | { ok: false, error: string }
+		local M = {}
+		function M.ok<T>(value: T): Result<T>
+			return { ok = true, value = value }
+		end
+		function M.and_then<T, U>(result: Result<T>, fn: (T) -> Result<U>): Result<U>
+			if result.ok then
+				return fn(result.value)
+			end
+			return { ok = false, error = result.error }
+		end
+		return M
+	`, "result")
+	if len(resultMod.Errors) != 0 {
+		t.Fatalf("result module errors = %#v, want none", resultMod.Errors)
+	}
+
+	checked := Check(`
+		local protocol = require("protocol")
+		local result = require("result")
+		type UserResult = { ok: true, value: protocol.User } | { ok: false, error: string }
+		local decoded: UserResult = result.ok({ id = "u1", retries = 2 })
+		local audit = result.and_then(decoded, function(user: protocol.User)
+			return result.ok({ user_id = user.id, event = "created" })
+		end)
+		if audit.ok then
+			local event: string = audit.value.event
+			local wrong_event: number = audit.value.event
+		end
+	`, WithStdlib(), WithModule("protocol", protocolMod), WithModule("result", resultMod))
+	if len(checked.Diagnostics) != 1 {
+		t.Fatalf("diagnostics = %#v, want one wrong_event diagnostic", checked.Diagnostics)
+	}
+	if checked.Diagnostics[0].Code != diagnostics.CodeAssignmentType {
+		t.Fatalf("diagnostic code = %s, want %s", checked.Diagnostics[0].Code, diagnostics.CodeAssignmentType)
+	}
+}
+
+func TestRequireCheckAndExportedGenericMemberSignatureRejectsAnnotatedCallResult(t *testing.T) {
+	resultMod := CheckAndExport(`
+		type Result<T> = { ok: true, value: T } | { ok: false, error: string }
+		local M = {}
+		function M.ok<T>(value: T): Result<T>
+			return { ok = true, value = value }
+		end
+		function M.map<T, U>(result: Result<T>, fn: (T) -> U): Result<U>
+			if result.ok then
+				return M.ok(fn(result.value))
+			end
+			return { ok = false, error = result.error }
+		end
+		return M
+	`, "result")
+	if len(resultMod.Errors) != 0 {
+		t.Fatalf("result module errors = %#v, want none", resultMod.Errors)
+	}
+
+	checked := Check(`
+		local result = require("result")
+		type StringResult = { ok: true, value: string } | { ok: false, error: string }
+		type NumberResult = { ok: true, value: number } | { ok: false, error: string }
+		local decoded: StringResult = result.ok("u1")
+		local wrong_result: NumberResult = result.map(decoded, function(value: string)
+			return value .. ":mapped"
+		end)
+	`, WithStdlib(), WithModule("result", resultMod))
+	if len(checked.Diagnostics) != 1 {
+		t.Fatalf("diagnostics = %#v, want one annotated generic call-result diagnostic", checked.Diagnostics)
+	}
+	if checked.Diagnostics[0].Code != diagnostics.CodeAssignmentType {
+		t.Fatalf("diagnostic code = %s, want %s", checked.Diagnostics[0].Code, diagnostics.CodeAssignmentType)
+	}
+}
+
+func TestRequireCheckAcceptsImportedRecordAssignmentsAndReturns(t *testing.T) {
+	protocolMod := CheckAndExport(`
+		type Snapshot = { id: string }
+		local M = {}
+		M.Snapshot = Snapshot
+		return M
+	`, "protocol")
+	if len(protocolMod.Errors) != 0 {
+		t.Fatalf("protocol module errors = %#v, want none", protocolMod.Errors)
+	}
+
+	checked := Check(`
+		local protocol = require("protocol")
+		local snapshot: protocol.Snapshot = { id = "u1" }
+		local function make_snapshot(): protocol.Snapshot
+			return { id = "u2" }
+		end
+	`, WithStdlib(), WithModule("protocol", protocolMod))
+	if len(checked.Diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want none for imported record assignment and return", checked.Diagnostics)
+	}
+}
+
+func TestCheckRejectsAnnotatedLocalFunctionExpressionParamMismatch(t *testing.T) {
+	checked := Check(`
+		type User = { id: string, retries: number }
+		type Audit = { user_id: string, event: string }
+		type AuditResult = { ok: true, value: Audit } | { ok: false, error: string }
+		type UserAuditHandler = (User) -> AuditResult
+		local wrong_handler: UserAuditHandler = function(audit: Audit): AuditResult
+			return { ok = true, value = audit }
+		end
+	`)
+	if len(checked.Diagnostics) != 1 {
+		t.Fatalf("diagnostics = %#v, want one function parameter mismatch diagnostic", checked.Diagnostics)
+	}
+	if checked.Diagnostics[0].Code != diagnostics.CodeAssignmentType {
+		t.Fatalf("diagnostic code = %s, want %s", checked.Diagnostics[0].Code, diagnostics.CodeAssignmentType)
+	}
+}
+
+func TestRequireCheckAndExportedGenericMemberSignatureInstantiatesObjectLiteralArgument(t *testing.T) {
+	resultMod := CheckAndExport(`
+		type Result<T> = { ok: true, value: T } | { ok: false, error: string }
+		local M = {}
+		function M.ok<T>(value: T): Result<T>
+			return { ok = true, value = value }
+		end
+		return M
+	`, "result")
+	if len(resultMod.Errors) != 0 {
+		t.Fatalf("result module errors = %#v, want none", resultMod.Errors)
+	}
+
+	checked := Check(`
+		local result = require("result")
+		local wrapped = result.ok({ user_id = "u1", event = "created" })
+		if wrapped.ok then
+			local event: string = wrapped.value.event
+			local wrong_event: number = wrapped.value.event
+		end
+	`, WithStdlib(), WithModule("result", resultMod))
+	if len(checked.Diagnostics) != 1 {
+		t.Fatalf("diagnostics = %#v, want one wrong_event diagnostic", checked.Diagnostics)
+	}
+	if checked.Diagnostics[0].Code != diagnostics.CodeAssignmentType {
+		t.Fatalf("diagnostic code = %s, want %s", checked.Diagnostics[0].Code, diagnostics.CodeAssignmentType)
+	}
+}
+
+func TestRequireCheckAndExportedGenericMemberSignatureInstantiatesNestedObjectLiteralChannel(t *testing.T) {
+	processMod := CheckAndExport(`
+		type ListenOptions<T> = {
+			channel: Channel<T>,
+			schema: {
+				witness: {
+					decode: (any) -> T,
+				},
+			},
+		}
+		local M = {}
+		function M.listen_nested<T>(topic: string, options: ListenOptions<T>): Channel<T>
+			return options.channel
+		end
+		function M.receive_map<T, U>(channel: Channel<T>, fn: (T) -> U): U?
+			local value, ok = channel:receive()
+			if ok then
+				return fn(value)
+			end
+			return nil
+		end
+		return M
+	`, "process")
+	if len(processMod.Errors) != 0 {
+		t.Fatalf("process module errors = %#v, want none", processMod.Errors)
+	}
+
+	checked := Check(`
+		local process = require("process")
+		type Node = { id: string }
+		type Source = { nodes: Channel<Node> }
+		local function node_type(): { decode: (any) -> Node }
+			return { decode = function(raw: any): Node return { id = tostring(raw) } end }
+		end
+		local function handle(source: Source)
+			local node_ch = process.listen_nested("nodes", {
+				channel = source.nodes,
+				schema = { witness = node_type() },
+			})
+			local mapped = process.receive_map(node_ch, function(node)
+				local node_id: string = node.id
+				local bad_node_id: number = node.id
+				return node_id
+			end)
+			if mapped then
+				local id: string = mapped
+				local wrong_id: number = mapped
+			end
+		end
+	`, WithStdlib(), WithModule("process", processMod))
+	if len(checked.Diagnostics) != 2 {
+		t.Fatalf("diagnostics = %#v, want bad_node_id and wrong_id diagnostics", checked.Diagnostics)
+	}
+	for _, diag := range checked.Diagnostics {
+		if diag.Code != diagnostics.CodeAssignmentType {
+			t.Fatalf("diagnostic code = %s, want %s", diag.Code, diagnostics.CodeAssignmentType)
+		}
+	}
+}
+
+func TestRequireCheckAndExportedGenericMemberSignatureFeedsChannelReceive(t *testing.T) {
+	processMod := CheckAndExport(`
+		type ListenOptions<T> = {
+			channel: Channel<T>,
+		}
+		local M = {}
+		function M.listen<T>(topic: string, options: ListenOptions<T>): Channel<T>
+			return options.channel
+		end
+		return M
+	`, "process")
+	if len(processMod.Errors) != 0 {
+		t.Fatalf("process module errors = %#v, want none", processMod.Errors)
+	}
+
+	checked := Check(`
+		local process = require("process")
+		type Node = { id: string }
+		type Source = { nodes: Channel<Node> }
+		local function handle(source: Source)
+			local node_ch = process.listen("nodes", {
+				channel = source.nodes,
+			})
+			local node, ok = node_ch:receive()
+			if ok then
+				local id: string = node.id
+				local wrong_id: number = node.id
+			end
+		end
+	`, WithStdlib(), WithModule("process", processMod))
+	if len(checked.Diagnostics) != 1 {
+		t.Fatalf("diagnostics = %#v, want one wrong_id diagnostic", checked.Diagnostics)
+	}
+	if checked.Diagnostics[0].Code != diagnostics.CodeAssignmentType {
+		t.Fatalf("diagnostic code = %s, want %s", checked.Diagnostics[0].Code, diagnostics.CodeAssignmentType)
+	}
+}
+
+func TestRequireCheckAndExportedReceiveMapKeepsCallbackContextAfterPriorReceive(t *testing.T) {
+	processMod := CheckAndExport(`
+		type ListenOptions<T> = {
+			channel: Channel<T>,
+			schema: {
+				witness: {
+					decode: (any) -> T,
+				},
+			},
+		}
+		local M = {}
+		function M.listen_nested<T>(topic: string, options: ListenOptions<T>): Channel<T>
+			return options.channel
+		end
+		function M.receive_map<T, U>(channel: Channel<T>, fn: (T) -> U): U?
+			local value, ok = channel:receive()
+			if ok then
+				return fn(value)
+			end
+			return nil
+		end
+		return M
+	`, "process")
+	if len(processMod.Errors) != 0 {
+		t.Fatalf("process module errors = %#v, want none", processMod.Errors)
+	}
+
+	checked := Check(`
+		local process = require("process")
+		type Node = { id: string, children: {Node} }
+		type Source = { nodes: Channel<Node> }
+		local function node_type(): { decode: (any) -> Node }
+			return { decode = function(raw: any): Node return { id = tostring(raw), children = {} } end }
+		end
+		local function handle(source: Source)
+			local node_ch = process.listen_nested("nodes", {
+				channel = source.nodes,
+				schema = { witness = node_type() },
+			})
+			local node, node_ok = node_ch:receive()
+			if node_ok then
+				local node_id: string = node.id
+			end
+			local mapped = process.receive_map(node_ch, function(decoded)
+				local decoded_id: string = decoded.id
+				local bad_decoded_id: number = decoded.id
+				return decoded_id
+			end)
+			if mapped then
+				local accepted: string = mapped
+				local bad_mapped: number = mapped
+			end
+			local summary = process.receive_map(node_ch, function(decoded)
+				return {
+					id = decoded.id,
+					label = decoded.id .. ":node",
+				}
+			end)
+			if summary then
+				local id: string = summary.id
+				local label: string = summary.label
+				local bad_id: number = summary.id
+				local bad_label: number = summary.label
+			end
+		end
+	`, WithStdlib(), WithModule("process", processMod))
+	if len(checked.Diagnostics) != 4 {
+		t.Fatalf("diagnostics = %#v, want callback/member mismatch diagnostics", checked.Diagnostics)
+	}
+	for _, diag := range checked.Diagnostics {
+		if diag.Code != diagnostics.CodeAssignmentType {
+			t.Fatalf("diagnostic code = %s, want %s", diag.Code, diagnostics.CodeAssignmentType)
+		}
+	}
+}
+
+func TestRequireCheckAndExportedReceiveMapSeedsCallbackFromImportedSourceChannel(t *testing.T) {
+	protocolMod := CheckAndExport(`
+		type Type<T> = {
+			decode: (any) -> T,
+		}
+		type RawRecord = {
+			id: string,
+			amount: number,
+		}
+		type Node = {
+			id: string,
+			children: {Node},
+		}
+		type Source = {
+			records: Channel<RawRecord>,
+			nodes: Channel<Node>,
+		}
+		local M = {}
+		function M.raw_record_array_type(): Type<{RawRecord}>
+			return {
+				decode = function(raw: any): {RawRecord}
+					return {{ id = tostring(raw), amount = 1 }}
+				end,
+			}
+		end
+		function M.node_type(): Type<Node>
+			return {
+				decode = function(raw: any): Node
+					return { id = tostring(raw), children = {} }
+				end,
+			}
+		end
+		return M
+	`, "protocol", WithStdlib())
+	if len(protocolMod.Errors) != 0 {
+		t.Fatalf("protocol module errors = %#v, want none", protocolMod.Errors)
+	}
+	jsonMod := CheckAndExport(`
+		type Type<T> = {
+			decode: (any) -> T,
+		}
+		local M = {}
+		function M.decode_map<T, U>(data: string, witness: Type<T>, fn: (T) -> U): U
+			return fn(witness.decode(data))
+		end
+		function M.decode_many_map<T, U>(data: string, witness: Type<{T}>, fn: (T) -> U): {U}
+			local out: {U} = {}
+			for _, item in ipairs(witness.decode(data)) do
+				table.insert(out, fn(item))
+			end
+			return out
+		end
+		return M
+	`, "json",
+		WithStdlib(),
+		WithManifest("channel", ChannelManifest()),
+		WithGlobals("channel"),
+		WithModule("protocol", protocolMod))
+	if len(jsonMod.Errors) != 0 {
+		t.Fatalf("json module errors = %#v, want none", jsonMod.Errors)
+	}
+	processMod := CheckAndExport(`
+		type ListenOptions<T> = {
+			channel: Channel<T>,
+			schema: {
+				witness: {
+					decode: (any) -> T,
+				},
+			},
+		}
+		local M = {}
+		function M.listen_nested<T>(topic: string, options: ListenOptions<T>): Channel<T>
+			return options.channel
+		end
+		function M.receive_map<T, U>(channel: Channel<T>, fn: (T) -> U): U?
+			local value, ok = channel:receive()
+			if ok then
+				return fn(value)
+			end
+			return nil
+		end
+		return M
+	`, "process",
+		WithStdlib(),
+		WithManifest("channel", ChannelManifest()),
+		WithGlobals("channel"),
+		WithModule("protocol", protocolMod),
+		WithModule("json", jsonMod))
+	if len(processMod.Errors) != 0 {
+		t.Fatalf("process module errors = %#v, want none", processMod.Errors)
+	}
+
+	checked := Check(`
+		local protocol = require("protocol")
+		local json = require("json")
+		local process = require("process")
+		local function handle(source: protocol.Source)
+			local root_label = json.decode_map("{}", protocol.node_type(), function(decoded)
+				local decoded_id: string = decoded.id
+				local bad_decoded_id: number = decoded.id
+				return decoded_id
+			end)
+			local accepted_label: string = root_label
+			local bad_label: number = root_label
+
+			local row_labels = json.decode_many_map("[]", protocol.raw_record_array_type(), function(row)
+				local row_amount: number = row.amount
+				local bad_row_amount: string = row.amount
+				return row.id .. tostring(row_amount)
+			end)
+			local accepted_labels: {string} = row_labels
+			local bad_labels: {number} = row_labels
+
+			local node_ch = process.listen_nested("nodes", {
+				channel = source.nodes,
+				schema = { witness = protocol.node_type() },
+			})
+			local node, node_ok = node_ch:receive()
+			if node_ok then
+				local node_id: string = node.id
+				for _, child in ipairs(node.children) do
+					local child_id: string = child.id
+				end
+			end
+			local mapped = process.receive_map(node_ch, function(decoded)
+				local decoded_id: string = decoded.id
+				local bad_decoded_id: number = decoded.id
+				return decoded_id
+			end)
+			if mapped then
+				local accepted: string = mapped
+				local bad_mapped: number = mapped
+			end
+		end
+	`, WithStdlib(),
+		WithManifest("channel", ChannelManifest()),
+		WithGlobals("channel"),
+		WithModule("protocol", protocolMod),
+		WithModule("json", jsonMod),
+		WithModule("process", processMod))
+	if len(checked.Diagnostics) != 6 {
+		t.Fatalf("diagnostics = %#v, want json and receive_map mismatch diagnostics", checked.Diagnostics)
+	}
+	for _, diag := range checked.Diagnostics {
+		if diag.Code != diagnostics.CodeAssignmentType {
+			t.Fatalf("diagnostic code = %s, want %s", diag.Code, diagnostics.CodeAssignmentType)
+		}
+	}
+}
+
+func TestRequireCheckAndExportedGenericSignatureInstantiatesRecursiveWitness(t *testing.T) {
+	protocolMod := CheckAndExport(`
+		type Type<T> = {
+			decode: (any) -> T,
+		}
+		type Node = {
+			id: string,
+			children: {Node},
+		}
+		local M = {}
+		function M.node_type(): Type<Node>
+			return {
+				decode = function(raw: any): Node
+					return { id = tostring(raw), children = {} }
+				end,
+			}
+		end
+		return M
+	`, "protocol", WithStdlib())
+	if len(protocolMod.Errors) != 0 {
+		t.Fatalf("protocol module errors = %#v, want none", protocolMod.Errors)
+	}
+	jsonMod := CheckAndExport(`
+		type Type<T> = {
+			decode: (any) -> T,
+		}
+		local M = {}
+		function M.decode<T>(data: string, witness: Type<T>): T
+			return witness.decode(data)
+		end
+		return M
+	`, "json")
+	if len(jsonMod.Errors) != 0 {
+		t.Fatalf("json module errors = %#v, want none", jsonMod.Errors)
+	}
+
+	checked := Check(`
+		local protocol = require("protocol")
+		local json = require("json")
+		local root = json.decode("{}", protocol.node_type())
+		local id: string = root.id
+		local wrong_id: number = root.id
+		for _, child in ipairs(root.children) do
+			local child_id: string = child.id
+			local wrong_child_id: number = child.id
+		end
+	`, WithStdlib(), WithModule("protocol", protocolMod), WithModule("json", jsonMod))
+	if len(checked.Diagnostics) != 2 {
+		t.Fatalf("diagnostics = %#v, want wrong root and child id diagnostics", checked.Diagnostics)
+	}
+	for _, diag := range checked.Diagnostics {
+		if diag.Code != diagnostics.CodeAssignmentType {
+			t.Fatalf("diagnostic code = %s, want %s", diag.Code, diagnostics.CodeAssignmentType)
+		}
+	}
+}
+
+func TestRequireCheckAndExportedGenericSignatureInstantiatesRecursiveUnionWitness(t *testing.T) {
+	protocolMod := CheckAndExport(`
+		type Type<T> = {
+			decode: (any) -> T,
+		}
+		type TextNode = {
+			kind: "text",
+			value: string,
+		}
+		type GroupNode = {
+			kind: "group",
+			children: {TreeNode},
+		}
+		type TreeNode = TextNode | GroupNode
+		type RawRecord = {
+			id: string,
+			amount: number,
+		}
+		type Node = {
+			id: string,
+			children: {Node},
+		}
+		local M = {}
+		function M.raw_record_type(): Type<RawRecord>
+			return {
+				decode = function(raw: any): RawRecord
+					return { id = tostring(raw), amount = 1 }
+				end,
+			}
+		end
+		function M.node_type(): Type<Node>
+			return {
+				decode = function(raw: any): Node
+					return { id = tostring(raw), children = {} }
+				end,
+			}
+		end
+		function M.tree_type(): Type<TreeNode>
+			return {
+				decode = function(raw: any): TreeNode
+					return {
+						kind = "group",
+						children = {
+							{
+								kind = "text",
+								value = tostring(raw),
+							},
+						},
+					}
+				end,
+			}
+		end
+		return M
+	`, "protocol", WithStdlib())
+	if len(protocolMod.Errors) != 0 {
+		t.Fatalf("protocol module errors = %#v, want none", protocolMod.Errors)
+	}
+	jsonMod := CheckAndExport(`
+		type Type<T> = {
+			decode: (any) -> T,
+		}
+		local M = {}
+		function M.decode<T>(data: string, witness: Type<T>): T
+			return witness.decode(data)
+		end
+		return M
+	`, "json")
+	if len(jsonMod.Errors) != 0 {
+		t.Fatalf("json module errors = %#v, want none", jsonMod.Errors)
+	}
+
+	checked := Check(`
+		local protocol = require("protocol")
+		local json = require("json")
+		local record = json.decode("{}", protocol.raw_record_type())
+		local id: string = record.id
+		local root = json.decode("{}", protocol.node_type())
+		local root_id: string = root.id
+		local tree = json.decode("{}", protocol.tree_type())
+		if tree.kind == "group" then
+			local first = tree.children[1]
+			if first and first.kind == "text" then
+				local value: string = first.value
+				local bad_value: number = first.value
+			end
+		end
+		if tree.kind == "text" then
+			local children = tree.children
+		end
+	`, WithStdlib(), WithModule("protocol", protocolMod), WithModule("json", jsonMod))
+	if len(checked.Diagnostics) != 2 {
+		t.Fatalf("diagnostics = %#v, want recursive union witness mismatch diagnostics", checked.Diagnostics)
+	}
+	messages := make([]string, 0, len(checked.Diagnostics))
+	for _, diag := range checked.Diagnostics {
+		messages = append(messages, diag.Message)
+		if diag.Code != diagnostics.CodeAssignmentType && diag.Code != diagnostics.CodeMissingMember {
+			t.Fatalf("diagnostic code = %s, want assignment or member-read diagnostic", diag.Code)
+		}
+	}
+	if !hasDiagnosticMessage(messages, "cannot assign string to number") ||
+		!hasDiagnosticMessage(messages, `has no member "children"`) {
+		t.Fatalf("diagnostics = %#v, want first.value mismatch and text.children missing-member", messages)
+	}
+}
+
+func TestRequireCheckAndExportedGenericSignatureSeedsCallbackParamFromRecursiveWitness(t *testing.T) {
+	protocolMod := CheckAndExport(`
+		type Type<T> = {
+			decode: (any) -> T,
+		}
+		type Node = {
+			id: string,
+			children: {Node},
+		}
+		local M = {}
+		function M.node_type(): Type<Node>
+			return {
+				decode = function(raw: any): Node
+					return { id = tostring(raw), children = {} }
+				end,
+			}
+		end
+		return M
+	`, "protocol", WithStdlib())
+	if len(protocolMod.Errors) != 0 {
+		t.Fatalf("protocol module errors = %#v, want none", protocolMod.Errors)
+	}
+	jsonMod := CheckAndExport(`
+		type Type<T> = {
+			decode: (any) -> T,
+		}
+		local M = {}
+		function M.decode_map<T, U>(data: string, witness: Type<T>, fn: (T) -> U): U
+			return fn(witness.decode(data))
+		end
+		return M
+	`, "json")
+	if len(jsonMod.Errors) != 0 {
+		t.Fatalf("json module errors = %#v, want none", jsonMod.Errors)
+	}
+
+	checked := Check(`
+		local protocol = require("protocol")
+		local json = require("json")
+		local label = json.decode_map("{}", protocol.node_type(), function(node)
+			local node_id: string = node.id
+			local bad_node_id: number = node.id
+			return node_id
+		end)
+		local accepted: string = label
+		local bad_label: number = label
+	`, WithStdlib(), WithModule("protocol", protocolMod), WithModule("json", jsonMod))
+	if len(checked.Diagnostics) != 2 {
+		t.Fatalf("diagnostics = %#v, want bad_node_id and bad_label diagnostics", checked.Diagnostics)
+	}
+	for _, diag := range checked.Diagnostics {
+		if diag.Code != diagnostics.CodeAssignmentType {
+			t.Fatalf("diagnostic code = %s, want %s", diag.Code, diagnostics.CodeAssignmentType)
+		}
+	}
+}
+
+func TestRequireCheckAndExportedIsNilUsesNormalReturnRefinementForSiblingReturn(t *testing.T) {
+	testMod := CheckAndExport(`
+		local test = {}
+		function test.is_nil(val: any, msg: string?)
+			if val ~= nil then
+				error(msg or "expected nil", 2)
+			end
+		end
+		return test
+	`, "test", WithStdlib())
+	if len(testMod.Errors) != 0 {
+		t.Fatalf("test module errors = %#v, want none", testMod.Errors)
+	}
+
+	clientMod := CheckAndExport(`
+		local client = {}
+		type Response = {
+			metadata: {
+				response_id: string,
+			},
+		}
+		function client.request(ok: boolean): (Response?, string?)
+			if ok then
+				return {
+					metadata = {
+						response_id = "resp-123",
+					},
+				}, nil
+			end
+			return nil, "failed"
+		end
+		return client
+	`, "client", WithStdlib())
+	if len(clientMod.Errors) != 0 {
+		t.Fatalf("client module errors = %#v, want none", clientMod.Errors)
+	}
+
+	result := Check(`
+		local test = require("test")
+		local client = require("client")
+		local response, err = client.request(true)
+		test.is_nil(err, "no error expected")
+		local id: string = response.metadata.response_id
+	`, WithStdlib(), WithModule("test", testMod), WithModule("client", clientMod))
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want none after imported is_nil normal-return refinement", result.Diagnostics)
 	}
 }
 
@@ -276,6 +1381,134 @@ func TestCheckAndExportPublishesLocalTypeDefinitions(t *testing.T) {
 	}
 }
 
+func TestCheckAndExportedTypeAliasResolvesInImporterWithoutValueField(t *testing.T) {
+	protocolMod := CheckAndExport(`
+		type User = { id: string }
+		return { version = "v1" }
+	`, "protocol")
+	if len(protocolMod.Errors) != 0 {
+		t.Fatalf("protocol module errors = %#v, want none", protocolMod.Errors)
+	}
+	if _, ok := protocolMod.Manifest.Types["User"]; !ok {
+		t.Fatalf("manifest types = %#v, want User type export", protocolMod.Manifest.Types)
+	}
+	if rec := requireExportRecord(t, protocolMod); rec.GetField("User") != nil {
+		t.Fatalf("export fields = %#v, did not expect type alias as value field", rec.Fields)
+	}
+
+	result := Check(`
+		local protocol = require("protocol")
+		local user: protocol.User = { id = "u1" }
+		local wrong: protocol.User = { id = 42 }
+	`, WithStdlib(), WithModule("protocol", protocolMod))
+	if len(result.Diagnostics) != 1 {
+		t.Fatalf("diagnostics = %d, want one type mismatch: %#v", len(result.Diagnostics), result.Diagnostics)
+	}
+	if result.Diagnostics[0].Code != diagnostics.CodeAssignmentType {
+		t.Fatalf("diagnostic code = %s, want %s", result.Diagnostics[0].Code, diagnostics.CodeAssignmentType)
+	}
+}
+
+func TestCheckAndExportPublishesDirectAssignedRHSObjectShape(t *testing.T) {
+	mod := CheckAndExport(`
+		local Widget = {}
+		function Widget.new(): { id: string }
+			return { id = "w1" }
+		end
+		local M = {}
+		M.Widget = Widget
+		return M
+	`, "widget", WithStdlib())
+	if len(mod.Errors) != 0 {
+		t.Fatalf("module errors = %#v, want none", mod.Errors)
+	}
+
+	result := Check(`
+		local widget = require("widget")
+		local made = widget.Widget.new()
+		local id: string = made.id
+		local wrong: number = made.id
+	`, WithStdlib(), WithModule("widget", mod))
+	if len(result.Diagnostics) != 1 {
+		t.Fatalf("diagnostics = %d, want one wrong id diagnostic: %#v", len(result.Diagnostics), result.Diagnostics)
+	}
+	if result.Diagnostics[0].Code != diagnostics.CodeAssignmentType {
+		t.Fatalf("diagnostic code = %s, want %s", result.Diagnostics[0].Code, diagnostics.CodeAssignmentType)
+	}
+}
+
+func TestCheckAndExportPublishesAssignedMetatableClassTableShape(t *testing.T) {
+	mod := CheckAndExport(`
+		type Widget = {
+			label: (self: Widget) -> string,
+		}
+		local Widget = {}
+		Widget.__index = Widget
+		function Widget.new(): Widget
+			local self: Widget = {
+				label = Widget.label,
+			}
+			setmetatable(self, Widget)
+			return self
+		end
+		function Widget:label(): string
+			return "ok"
+		end
+		local M = {}
+		M.Widget = Widget
+		M.new = Widget.new
+		return M
+	`, "widget", WithStdlib())
+	if len(mod.Errors) != 0 {
+		t.Fatalf("module errors = %#v, want none", mod.Errors)
+	}
+
+	export := requireExportRecord(t, mod)
+	classField := export.GetField("Widget")
+	if classField == nil {
+		t.Fatalf("export fields = %#v, want Widget class table field", export.Fields)
+	}
+	classRecord, ok := classField.Type.(*typ.Record)
+	if !ok {
+		t.Fatalf("Widget field type = %T %[1]v, want record", classField.Type)
+	}
+	requireFunctionField(t, classRecord, "new")
+	requireFunctionField(t, classRecord, "label")
+	requireFunctionField(t, export, "new")
+
+	result := Check(`
+		local widget = require("widget")
+		local instance = widget.new()
+		local label: string = instance:label()
+		local wrong: number = instance:label()
+	`, WithStdlib(), WithModule("widget", mod))
+	if len(result.Diagnostics) != 1 {
+		t.Fatalf("diagnostics = %d, want one wrong label diagnostic: %#v", len(result.Diagnostics), result.Diagnostics)
+	}
+	if result.Diagnostics[0].Code != diagnostics.CodeAssignmentType {
+		t.Fatalf("diagnostic code = %s, want %s", result.Diagnostics[0].Code, diagnostics.CodeAssignmentType)
+	}
+}
+
+func TestCheckAndExportUnsupportedModuleStaysUnknownNotAny(t *testing.T) {
+	mod := CheckAndExport(`
+		break
+		return { value = 1 }
+	`, "unsupported")
+	if len(mod.Errors) == 0 {
+		t.Fatal("module errors = none, want structural evidence for unsupported module")
+	}
+	if mod == nil || mod.Manifest == nil {
+		t.Fatal("CheckAndExport did not return module manifest")
+	}
+	if !typ.IsUnknown(mod.Manifest.Export) {
+		t.Fatalf("export = %T %[1]v, want unknown", mod.Manifest.Export)
+	}
+	if typ.IsAny(mod.Manifest.Export) {
+		t.Fatalf("export = %v, did not expect any fallback", mod.Manifest.Export)
+	}
+}
+
 func TestCheckDoesNotReportUnsupportedCFGAsTypeDiagnostic(t *testing.T) {
 	result := Check(`
 		local t = {}
@@ -319,8 +1552,11 @@ func TestWithManifestDoesNotResolveLocalAliasByName(t *testing.T) {
 		end
 		local x: string = f()
 	`, WithManifest("test", m), WithGlobals("f"))
-	if len(result.Diagnostics) != 0 {
-		t.Fatalf("diagnostics = %#v, want none for local f shadowing manifest f", result.Diagnostics)
+	if len(result.Diagnostics) != 1 {
+		t.Fatalf("diagnostics = %#v, want local-function assignment mismatch only", result.Diagnostics)
+	}
+	if result.Diagnostics[0].Code != diagnostics.CodeAssignmentType {
+		t.Fatalf("diagnostic code = %s, want %s", result.Diagnostics[0].Code, diagnostics.CodeAssignmentType)
 	}
 }
 
@@ -430,6 +1666,64 @@ func TestManifestPathsAndSignatureRootsAreNotGlobalImports(t *testing.T) {
 	}
 }
 
+func TestCheckAndExportUsesCapturedImportedRootSignature(t *testing.T) {
+	jsonMod := CheckAndExport(`
+		local json = {}
+		function json.decode(src: string): any
+			return {}
+		end
+		return json
+	`, "json")
+	if len(jsonMod.Errors) != 0 {
+		t.Fatalf("json module errors = %#v, want none", jsonMod.Errors)
+	}
+
+	clientMod := CheckAndExport(`
+		local json = require("json")
+		local client = {}
+		function client.decode()
+			return json.decode(42)
+		end
+		return client
+	`, "client", WithStdlib(), WithModule("json", jsonMod))
+	if len(clientMod.Errors) != 1 {
+		t.Fatalf("client module errors = %d, want 1: %#v", len(clientMod.Errors), clientMod.Errors)
+	}
+	if clientMod.Errors[0].Code != diagnostics.CodeDirectCallArgType {
+		t.Fatalf("diagnostic code = %s, want %s", clientMod.Errors[0].Code, diagnostics.CodeDirectCallArgType)
+	}
+}
+
+func TestCheckAndExportUsesCapturedStaticMemberImportAliasSignature(t *testing.T) {
+	httpMod := CheckAndExport(`
+		local http_client = {}
+		function http_client.get(url: string): any
+			return {}
+		end
+		return http_client
+	`, "http_client")
+	if len(httpMod.Errors) != 0 {
+		t.Fatalf("http_client module errors = %#v, want none", httpMod.Errors)
+	}
+
+	clientMod := CheckAndExport(`
+		local http_client = require("http_client")
+		local client = {
+			_http_client = http_client,
+		}
+		function client.request()
+			return client._http_client.get(42)
+		end
+		return client
+	`, "client", WithStdlib(), WithModule("http_client", httpMod))
+	if len(clientMod.Errors) != 1 {
+		t.Fatalf("client module errors = %d, want 1: %#v", len(clientMod.Errors), clientMod.Errors)
+	}
+	if clientMod.Errors[0].Code != diagnostics.CodeDirectCallArgType {
+		t.Fatalf("diagnostic code = %s, want %s", clientMod.Errors[0].Code, diagnostics.CodeDirectCallArgType)
+	}
+}
+
 func providerManifest(path string) *manifest.Manifest {
 	m := manifest.New(path)
 	m.SetExport(typetable.NewRecord().
@@ -462,4 +1756,21 @@ func requireFunctionField(t *testing.T, rec *typ.Record, name string) *typ.Funct
 		t.Fatalf("%s field type = %T %[1]v, want function", name, field.Type)
 	}
 	return fn
+}
+
+func hasErrorReturn(row effect.Row, valueIndex, errorIndex int) bool {
+	return row.Has(func(label effect.Label) bool {
+		err, ok := effect.NormalizeLabel(label).(returns.ErrorReturn)
+		return ok && err.ValueIndex == valueIndex && err.ErrorIndex == errorIndex
+	})
+}
+
+func hasNormalReturnAbsentRefinement(row effect.Row, paramIndex int) bool {
+	return row.Has(func(label effect.Label) bool {
+		refinement, ok := effect.NormalizeLabel(label).(postcondition.NormalReturnRefinement)
+		if !ok || refinement.Target.Index != paramIndex {
+			return false
+		}
+		return postcondition.Absent{}.Equals(refinement.Refinement)
+	})
 }

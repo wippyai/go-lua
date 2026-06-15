@@ -12,7 +12,7 @@ func TestShortBoundsRecursiveProduct(t *testing.T) {
 	node := typ.NewRecursive("Node", func(self typ.Type) typ.Type {
 		return &typ.Record{
 			Fields: []typ.Field{
-				{Name: "next", Type: typ.NewOptional(self)},
+				{Name: "next", Type: typ.MaterializeOptional(self)},
 				{Name: "payload", Type: typ.NewMap(typ.String, self)},
 			},
 		}
@@ -28,7 +28,7 @@ func TestShortBoundsRecursiveProduct(t *testing.T) {
 			},
 		})
 	}
-	huge := typ.NewUnion(members...)
+	huge := typ.MaterializeUnion(members)
 
 	got := format.Short(huge)
 	if len(got) > format.DefaultOptions.MaxBytes {

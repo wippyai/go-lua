@@ -1,11 +1,9 @@
 package cfgbuild
 
 import (
-	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/lua/cfgfacts"
-	"github.com/wippyai/go-lua/analysis/lua/pathexpr"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
 
@@ -63,11 +61,7 @@ func BuildChunk(stmts []ast.Stmt, bindings *bind.Result) *Result {
 		return nil
 	}
 	graph := cfg.New()
-	b := builder{
-		graph:                    graph,
-		bindings:                 bindings,
-		memberFuncDefReturnPaths: returnedPaths(stmts, bindings),
-	}
+	b := builder{graph: graph, bindings: bindings}
 
 	state := b.buildStmts(liveAt(graph.Entry()), stmts)
 	if b.unsupported {
@@ -86,8 +80,6 @@ type builder struct {
 	bindings     *bind.Result
 	breakTargets []cfg.Point
 	unsupported  bool
-
-	memberFuncDefReturnPaths []pathdom.Path
 }
 
 type flowState struct {
@@ -103,24 +95,4 @@ func liveAt(point cfg.Point) flowState {
 
 func branchPath(point cfg.Point, cond bool) flowState {
 	return flowState{current: point, live: true, pendingCond: true, cond: cond}
-}
-
-func returnedPaths(stmts []ast.Stmt, bindings *bind.Result) []pathdom.Path {
-	if bindings == nil {
-		return nil
-	}
-	var paths []pathdom.Path
-	for _, stmt := range stmts {
-		ret, ok := stmt.(*ast.ReturnStmt)
-		if !ok {
-			continue
-		}
-		for _, expr := range ret.Exprs {
-			p, ok := pathexpr.Resolve(expr, bindings)
-			if ok && !p.IsEmpty() {
-				paths = append(paths, p)
-			}
-		}
-	}
-	return paths
 }

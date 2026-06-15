@@ -15,6 +15,8 @@ const (
 	BranchProofPathPresence
 	BranchProofPathEqual
 	BranchProofPathNotEqual
+	BranchProofPathTruthy
+	BranchProofIndexInRange
 )
 
 // BranchProof describes one path-shaped fact emitted by branch/postcondition
@@ -68,6 +70,18 @@ func NewBranchPathPresenceProofForEdges(
 // branch edge.
 func NewBranchPathPresenceProofOnEdge(targetPath path.Path, value presence.Value, cond bool) BranchProof {
 	return NewBranchPathPresenceProofForEdges(targetPath, value, cond, !cond)
+}
+
+// NewBranchPathTruthyProofOnEdge records that targetPath is truthy on one
+// branch edge. It is semantic edge evidence used for root-origin recovery; it
+// is not replayed into the persistent path-proof state lane.
+func NewBranchPathTruthyProofOnEdge(targetPath path.Path, cond bool) BranchProof {
+	return BranchProof{
+		kind:          BranchProofPathTruthy,
+		path:          copyPath(targetPath),
+		activeOnTrue:  cond,
+		activeOnFalse: !cond,
+	}
 }
 
 // NewBranchPathEqualityProof creates a path-equality proof fact.
@@ -126,6 +140,19 @@ func NewBranchPathInequalityProofForEdges(
 // one branch edge.
 func NewBranchPathInequalityProofOnEdge(leftPath path.Path, rightPath path.Path, cond bool) BranchProof {
 	return NewBranchPathInequalityProofForEdges(leftPath, rightPath, cond, !cond)
+}
+
+// NewBranchIndexInRangeProofOnEdge records that indexPath is a proven in-range
+// index for arrayPath on one branch edge.
+func NewBranchIndexInRangeProofOnEdge(indexPath path.Path, arrayPath path.Path, cond bool) BranchProof {
+	return BranchProof{
+		kind:          BranchProofIndexInRange,
+		path:          copyPath(indexPath),
+		otherPath:     copyPath(arrayPath),
+		hasOtherPath:  true,
+		activeOnTrue:  cond,
+		activeOnFalse: !cond,
+	}
 }
 
 // NewBranchProofSet creates a branch proof set.

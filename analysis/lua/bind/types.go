@@ -102,6 +102,17 @@ func (r *Result) FunctionTypeParams(fn *ast.FunctionExpr) []TypeDecl {
 	return cloneTypeDecls(r.functionTypeParams[fn])
 }
 
+// MethodReceiverType returns the type declaration that types the implicit
+// self receiver of a colon-method function. It is the sibling type whose name
+// matches the method receiver, recorded when the method is bound.
+func (r *Result) MethodReceiverType(fn *ast.FunctionExpr) (TypeDecl, bool) {
+	if r == nil || fn == nil {
+		return TypeDecl{}, false
+	}
+	decl, ok := r.methodReceiverTypes[fn]
+	return decl, ok && decl.ID != 0
+}
+
 func (r *Result) newTypeDecl(kind TypeDeclKind, name string, typeDef *ast.TypeDefStmt, iface *ast.InterfaceDefStmt, constraint ast.TypeExpr) TypeDecl {
 	if name == "" {
 		return TypeDecl{}
@@ -162,12 +173,38 @@ func (b *binder) lookupType(name string) (TypeDecl, bool) {
 	return TypeDecl{}, false
 }
 
-func (b *binder) bindTypeDef(stmt *ast.TypeDefStmt) {
+// declareTypeDef introduces the alias name into the current type scope. It is
+// idempotent per statement: hoisting may run before the in-order walk reaches
+// the statement, and bindTypeDef must not re-declare it.
+func (b *binder) declareTypeDef(stmt *ast.TypeDefStmt) {
 	if stmt == nil {
+		return
+	}
+	if _, ok := b.result.typeDefDecls[stmt]; ok {
 		return
 	}
 	decl := b.result.newTypeDecl(TypeDeclAlias, stmt.Name, stmt, nil, nil)
 	b.defineType(stmt.Name, decl)
+}
+
+// declareInterfaceDef introduces the interface name into the current type
+// scope. It is idempotent per statement.
+func (b *binder) declareInterfaceDef(stmt *ast.InterfaceDefStmt) {
+	if stmt == nil {
+		return
+	}
+	if _, ok := b.result.interfaceDecls[stmt]; ok {
+		return
+	}
+	decl := b.result.newTypeDecl(TypeDeclInterface, stmt.Name, nil, stmt, nil)
+	b.defineType(stmt.Name, decl)
+}
+
+func (b *binder) bindTypeDef(stmt *ast.TypeDefStmt) {
+	if stmt == nil {
+		return
+	}
+	b.declareTypeDef(stmt)
 	b.bindTypeParamConstraints(stmt.TypeParams)
 	b.pushTypeScope()
 	params := b.defineTypeParams(stmt.TypeParams)
@@ -182,8 +219,7 @@ func (b *binder) bindInterfaceDef(stmt *ast.InterfaceDefStmt) {
 	if stmt == nil {
 		return
 	}
-	decl := b.result.newTypeDecl(TypeDeclInterface, stmt.Name, nil, stmt, nil)
-	b.defineType(stmt.Name, decl)
+	b.declareInterfaceDef(stmt)
 	for _, ref := range stmt.Extends {
 		b.bindTypeRef(ref)
 	}

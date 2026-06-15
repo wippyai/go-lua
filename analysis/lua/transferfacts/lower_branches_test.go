@@ -18,6 +18,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/symbol"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/analysis/type/typeexpr"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
 
@@ -49,7 +50,8 @@ func TestLowerIdentifierNilTruthyFalsyBranches(t *testing.T) {
 	assertLoweredBranchPresenceProof(t, facts, nilPoint, xPath, presence.Absent(), true, false)
 	assertLoweredBranchPresenceProof(t, facts, nilPoint, xPath, presence.Present(), false, true)
 	assertLoweredBranchValuePresence(t, facts, notNilPoint, xPath, presence.Present(), true, presence.Absent(), true)
-	assertLoweredBranchValuePresence(t, facts, truthyPoint, xPath, presence.Present(), true, presence.Bottom(), false)
+	assertLoweredBranchValuePresence(t, facts, truthyPoint, xPath, presence.Present(), true, presence.Absent(), true)
+	assertLoweredBranchFalsyAbsent(t, facts, truthyPoint, xPath, false)
 	assertLoweredBranchPresenceProof(t, facts, truthyPoint, xPath, presence.Present(), true, false)
 	assertLoweredBranchValuePresence(t, facts, falsyPoint, xPath, presence.Bottom(), false, presence.Present(), true)
 	assertLoweredBranchPresenceProof(t, facts, falsyPoint, xPath, presence.Present(), false, true)
@@ -179,13 +181,13 @@ end
 func TestLowerMemberPathBranchRefinementOrdersRootBeforeChild(t *testing.T) {
 	template := typetable.NewRecord().
 		Field("kind", typ.LiteralString("template")).
-		Field("data_func", typ.NewOptional(typ.String)).
+		Field("data_func", typeexpr.Optional(typ.String)).
 		Build()
 	component := typetable.NewRecord().
 		Field("kind", typ.LiteralString("component")).
 		Field("url", typ.String).
 		Build()
-	pageType := typ.NewUnion(template, component)
+	pageType := typeexpr.Union(template, component)
 	page := symbol.ID(701)
 	rootPath := path.NewPath(page, "page")
 	childPath := rootPath.Field("data_func")
@@ -261,7 +263,7 @@ func TestLowerLiteralDiscriminantBranchRefinesRootOnBothEdges(t *testing.T) {
 		Field("tag", typ.LiteralString("b")).
 		Field("value", typ.Number).
 		Build()
-	rootType := typ.NewUnion(left, right)
+	rootType := typeexpr.Union(left, right)
 	root := symbol.ID(801)
 	rootPath := path.NewPath(root, "r")
 	l := lowerer{
@@ -423,7 +425,7 @@ func instantiatedResultTypeParamFixture() (typ.Type, typ.Type, typ.Type) {
 		Field("ok", typ.LiteralBool(false)).
 		Field("error", typ.String).
 		Build()
-	result := typ.NewGeneric("Result", []*typ.TypeParam{tp}, typ.NewUnion(valueCase, errorCase))
+	result := typ.NewGeneric("Result", []*typ.TypeParam{tp}, typeexpr.Union(valueCase, errorCase))
 	return typ.Instantiate(result, tp), valueCase, errorCase
 }
 

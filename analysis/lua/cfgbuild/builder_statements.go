@@ -1,7 +1,6 @@
 package cfgbuild
 
 import (
-	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/cfgfacts"
 	"github.com/wippyai/go-lua/analysis/lua/pathexpr"
@@ -109,47 +108,12 @@ func (b *builder) buildLocalAssign(state flowState, stmt *ast.LocalAssignStmt) f
 }
 
 func (b *builder) buildFuncDef(state flowState, stmt *ast.FuncDefStmt) flowState {
-	id, ok := b.bindings.FuncDefTargetSymbol(stmt)
-	if !ok {
-		if b.hasReturnedMemberFuncDefTarget(stmt) {
-			return b.appendNodeForStmt(state, cfg.NodeNoop, stmt)
-		}
+	target, ok := pathexpr.ResolveFuncName(stmt.Name, b.bindings)
+	if !ok || target.Symbol == 0 {
 		b.unsupported = true
 		return flowState{current: state.current}
 	}
-	return b.appendAssign(state, id, stmt)
-}
-
-func (b *builder) hasReturnedMemberFuncDefTarget(stmt *ast.FuncDefStmt) bool {
-	if stmt == nil || stmt.Name == nil {
-		return false
-	}
-	container, ok := b.memberFuncDefContainerPath(stmt)
-	if !ok {
-		return false
-	}
-	for _, returned := range b.memberFuncDefReturnPaths {
-		if container.Equal(returned) {
-			return true
-		}
-	}
-	return false
-}
-
-func (b *builder) memberFuncDefContainerPath(stmt *ast.FuncDefStmt) (pathdom.Path, bool) {
-	if stmt.Name.Method != "" {
-		receiver, ok := pathexpr.Resolve(stmt.Name.Receiver, b.bindings)
-		return receiver, ok && !receiver.IsEmpty()
-	}
-	if stmt.Name.Receiver != nil {
-		return pathdom.Path{}, false
-	}
-	target, ok := pathexpr.Resolve(stmt.Name.Func, b.bindings)
-	if !ok || target.IsEmpty() || len(target.Segments) == 0 {
-		return pathdom.Path{}, false
-	}
-	container := target.Parent()
-	return container, !container.IsEmpty()
+	return b.appendAssign(state, target.Symbol, stmt)
 }
 
 func (b *builder) buildLabel(state flowState, stmt *ast.LabelStmt) flowState {

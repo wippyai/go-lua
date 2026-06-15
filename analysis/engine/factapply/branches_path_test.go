@@ -17,6 +17,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/symbol"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/analysis/type/typeexpr"
 )
 
 func TestFactsEdgeTransferAppliesPathEqualityRelationRootRoot(t *testing.T) {
@@ -125,7 +126,7 @@ func TestFactsEdgeTransferPathComparisonNarrowsParentVariantOrigin(t *testing.T)
 		Field("channel", chanStr).
 		Field("value", typ.String).
 		Build()
-	union := typ.NewUnion(intCase, strCase)
+	union := typeexpr.Union(intCase, strCase)
 
 	result := symbol.ID(325)
 	ch1 := symbol.ID(326)

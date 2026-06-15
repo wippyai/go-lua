@@ -1,6 +1,8 @@
 package diagnostics
 
 import (
+	"strings"
+
 	"github.com/wippyai/go-lua/analysis/check/body"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/lua/cfgfacts"
@@ -21,10 +23,13 @@ type resultResolver struct {
 	cache      map[bind.TypeDeclID]typ.Type
 	params     map[bind.TypeDeclID]*typ.TypeParam
 	active     map[typeDeclKey]bool
+	activeRec  map[bind.TypeDeclID]*typ.Recursive
+	generic    map[bind.TypeDeclID]bool
 
 	current []ast.TypeExpr
 
-	parent typeannotation.Resolver
+	parent     typeannotation.Resolver
+	moduleRefs typeannotation.Resolver
 }
 
 type typeDeclKey struct {
@@ -43,7 +48,12 @@ func newResultResolver(result *body.Result, parent typeannotation.Resolver) *res
 		cache:      make(map[bind.TypeDeclID]typ.Type),
 		params:     make(map[bind.TypeDeclID]*typ.TypeParam),
 		active:     make(map[typeDeclKey]bool),
+		activeRec:  make(map[bind.TypeDeclID]*typ.Recursive),
+		generic:    make(map[bind.TypeDeclID]bool),
 		parent:     parent,
+	}
+	if result != nil {
+		r.moduleRefs = result.ModuleTypes()
 	}
 	if result == nil || result.Graph() == nil {
 		return r
@@ -81,7 +91,21 @@ func newResultResolver(result *body.Result, parent typeannotation.Resolver) *res
 
 func (r *resultResolver) ResolveTypeRef(path []string) (typ.Type, bool) {
 	if len(path) != 1 {
-		return resolveInParentScope(path, r.parent)
+		if t, ok := resolveInParentScope(path, r.parent); ok {
+			return t, true
+		}
+		if r.moduleRefs != nil {
+			if r.result != nil && len(path) > 1 {
+				if modulePath, ok := r.result.RequireAliasModulePath(path[0]); ok {
+					rewritten := append(strings.Split(modulePath, "."), path[1:]...)
+					if t, ok := r.moduleRefs.ResolveTypeRef(rewritten); ok {
+						return t, true
+					}
+				}
+			}
+			return r.moduleRefs.ResolveTypeRef(path)
+		}
+		return nil, false
 	}
 	if decl, ok := r.currentBinding(path[0]); ok {
 		if t, ok := r.resolveDecl(decl); ok {
@@ -110,12 +134,15 @@ func (r *resultResolver) TypeRefResolved(ref *ast.TypeRefExpr) bool {
 	if r == nil || ref == nil || len(ref.Path) == 0 {
 		return false
 	}
-	if len(ref.Path) != 1 {
+	if _, ok := r.ResolveTypeRef(ref.Path); ok {
 		return true
 	}
+	if len(ref.Path) != 1 {
+		return false
+	}
 	if r.result != nil {
-		if decl, ok := r.result.TypeRef(ref); ok {
-			return r.declVisible(decl)
+		if _, ok := r.result.TypeRef(ref); ok {
+			return true
 		}
 	}
 	_, ok := resolveInParentScope(ref.Path, r.parent)
@@ -130,8 +157,8 @@ func (r *resultResolver) PrimitiveTypeResolved(expr *ast.PrimitiveTypeExpr) bool
 		return true
 	}
 	if r.result != nil {
-		if decl, ok := r.result.PrimitiveTypeRef(expr); ok {
-			return r.declVisible(decl)
+		if _, ok := r.result.PrimitiveTypeRef(expr); ok {
+			return true
 		}
 	}
 	_, ok := resolveInParentScope([]string{expr.Name}, r.parent)
@@ -224,18 +251,34 @@ func (r *resultResolver) resolveAlias(decl bind.TypeDecl, stmt *ast.TypeDefStmt)
 	}
 	key := typeDeclKey{kind: decl.Kind, id: decl.ID}
 	if r.active[key] {
+		// A direct self-reference reached during this alias's own body
+		// resolution binds to a shared recursive placeholder so the resulting
+		// type is a closed mu-type whose self-references downstream projection
+		// and the subtype checker can unfold, rather than a Ref resolved only
+		// by name. Generic decls recurse through their Generic body and keep a
+		// plain Ref placeholder.
+		if !r.generic[decl.ID] {
+			rec, ok := r.activeRec[decl.ID]
+			if !ok {
+				rec = typ.NewRecursivePlaceholder(decl.Name)
+				r.activeRec[decl.ID] = rec
+			}
+			return rec, true
+		}
 		return typ.NewRef("", decl.Name), true
 	}
 	r.active[key] = true
 	var t typ.Type
 	var ok bool
 	if params := r.result.TypeDefParams(stmt); len(params) > 0 {
+		r.generic[decl.ID] = true
 		typeParams := make([]*typ.TypeParam, 0, len(params))
 		typeParamScope := make(map[string]*typ.TypeParam, len(params))
 		for _, param := range params {
 			tp, ok := r.resolveTypeParam(param)
 			if !ok {
 				delete(r.active, key)
+				delete(r.generic, decl.ID)
 				return nil, false
 			}
 			typeParams = append(typeParams, tp)
@@ -252,9 +295,16 @@ func (r *resultResolver) resolveAlias(decl bind.TypeDecl, stmt *ast.TypeDefStmt)
 	} else {
 		t, ok = r.Type(stmt.Type)
 	}
+	rec := r.activeRec[decl.ID]
 	delete(r.active, key)
+	delete(r.activeRec, decl.ID)
+	delete(r.generic, decl.ID)
 	if !ok {
 		return resolveInParentScope([]string{decl.Name}, r.parent)
+	}
+	if rec != nil {
+		rec.SetBody(t)
+		t = rec
 	}
 	r.cache[decl.ID] = t
 	return t, true

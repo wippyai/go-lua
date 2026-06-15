@@ -29,6 +29,12 @@ type Options struct {
 	// ExpressionCoveredCall reports pure predicate calls that are fully modeled
 	// by the enclosing expression and therefore do not need a runtime call node.
 	ExpressionCoveredCall func(*ast.FuncCallExpr, ast.Expr) bool
+
+	// AllowShortCircuitCalls permits calls under logical expressions. Callers
+	// that enable it must preserve Lua short-circuit control flow in their own
+	// lowering; the default rejects these shapes so they are not accidentally
+	// treated as unconditional call sequences.
+	AllowShortCircuitCalls bool
 }
 
 // LuaOptions returns the default call-order policy for Lua analysis.
@@ -98,7 +104,8 @@ func collectExpr(expr ast.Expr, exprIndex int, options Options, calls *[]Occurre
 	case *ast.FunctionExpr:
 		return true
 	case *ast.LogicalOpExpr:
-		if containsCall(expr.Lhs, options) || containsCall(expr.Rhs, options) {
+		if !options.AllowShortCircuitCalls &&
+			(containsCall(expr.Lhs, options) || containsCall(expr.Rhs, options)) {
 			return false
 		}
 		return collectExpr(expr.Lhs, exprIndex, options, calls) &&

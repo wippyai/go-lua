@@ -68,6 +68,17 @@ func TestLiteralTypeUnwrapsAssertionAndCast(t *testing.T) {
 	}
 }
 
+func TestLiteralTypeDoesNotUseAnyCastAsProof(t *testing.T) {
+	expr := &ast.CastExpr{
+		Expr: &ast.StringExpr{Value: "wrapped"},
+		Type: &ast.PrimitiveTypeExpr{Name: "any"},
+	}
+
+	if got, ok := LiteralType(expr); ok || got != nil {
+		t.Fatalf("LiteralType(any cast) = %v/%v, want nil/false", got, ok)
+	}
+}
+
 func TestRuntimeKindRecognizesObviousRuntimeValues(t *testing.T) {
 	tests := []struct {
 		name string

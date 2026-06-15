@@ -1,0 +1,9 @@
+{
+  "description": "Compact channel.select narrowing through a cross-module typed wrapper returned by composed call summaries.",
+  "packages": ["channel"],
+  "files": [
+    "protocol.lua",
+    "source.lua",
+    "main.lua"
+  ]
+}

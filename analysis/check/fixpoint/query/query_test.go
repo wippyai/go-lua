@@ -70,14 +70,17 @@ func TestBodyReadCreatesDependencyAndObservesUpdatedValue(t *testing.T) {
 	source := summary.DefaultSummaryKey(ref.FuncRef{Kind: ref.KindSymbol, ID: 3})
 	dependent := summary.DefaultSummaryKey(ref.FuncRef{Kind: ref.KindSymbol, ID: 4})
 	sourceVisits := 0
+	stats := Stats{}
 
 	snap, err := Run(Config{
 		Registry: reg,
+		Stats:    &stats,
 		Functions: []Function{
 			{
 				Key: source,
-				Body: func(Context) (summary.Summary, error) {
+				Body: func(ctx Context) (summary.Summary, error) {
 					sourceVisits++
+					_, _ = ctx.Summaries.Read(source)
 					if sourceVisits == 1 {
 						return oneReturn(testValue(reg, queryTestLow)), nil
 					}
@@ -110,6 +113,12 @@ func TestBodyReadCreatesDependencyAndObservesUpdatedValue(t *testing.T) {
 	if value := product.Get(reg, got.Returns[0], queryTestKey); value != queryTestHigh {
 		t.Fatalf("dependent observed axis %v, want high", value)
 	}
+	if stats.BodyInvocations <= 2 {
+		t.Fatalf("BodyInvocations = %d, want requeued body invocations", stats.BodyInvocations)
+	}
+	if stats.Solver.TransferCalls != stats.BodyInvocations {
+		t.Fatalf("Solver.TransferCalls = %d, BodyInvocations = %d", stats.Solver.TransferCalls, stats.BodyInvocations)
+	}
 }
 
 func TestMissingReturnSlotsAreBottomInJoinAndWiden(t *testing.T) {
@@ -124,8 +133,9 @@ func TestMissingReturnSlotsAreBottomInJoinAndWiden(t *testing.T) {
 		Functions: []Function{
 			{
 				Key: joinKey,
-				Body: func(Context) (summary.Summary, error) {
+				Body: func(ctx Context) (summary.Summary, error) {
 					joinVisits++
+					_, _ = ctx.Summaries.Read(joinKey)
 					if joinVisits == 1 {
 						return oneReturn(product.Absent(reg)), nil
 					}
@@ -134,8 +144,9 @@ func TestMissingReturnSlotsAreBottomInJoinAndWiden(t *testing.T) {
 			},
 			{
 				Key: widenKey,
-				Body: func(Context) (summary.Summary, error) {
+				Body: func(ctx Context) (summary.Summary, error) {
 					widenVisits++
+					_, _ = ctx.Summaries.Read(widenKey)
 					if widenVisits == 1 {
 						return oneReturn(product.Absent(reg)), nil
 					}
@@ -250,8 +261,9 @@ func TestWidenHooksAreForwardedForSummaryKeys(t *testing.T) {
 		Registry: reg,
 		Functions: []Function{{
 			Key: key,
-			Body: func(Context) (summary.Summary, error) {
+			Body: func(ctx Context) (summary.Summary, error) {
 				visits++
+				_, _ = ctx.Summaries.Read(key)
 				if visits == 1 {
 					return oneReturn(product.Absent(reg)), nil
 				}

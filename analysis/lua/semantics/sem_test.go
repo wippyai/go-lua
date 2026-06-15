@@ -322,7 +322,7 @@ func TestExtractChunkObjectLiteralThroughAssertionWrappers(t *testing.T) {
 	}}
 	asCast := &ast.CastExpr{
 		Expr:   asTable,
-		Type:   &ast.PrimitiveTypeExpr{Name: "any"},
+		Type:   &ast.PrimitiveTypeExpr{Name: "number"},
 		Syntax: ast.CastSyntaxAs,
 	}
 	colonTable := &ast.TableExpr{Fields: []*ast.Field{
@@ -330,6 +330,14 @@ func TestExtractChunkObjectLiteralThroughAssertionWrappers(t *testing.T) {
 	}}
 	colonCast := &ast.CastExpr{
 		Expr:   colonTable,
+		Type:   &ast.PrimitiveTypeExpr{Name: "number"},
+		Syntax: ast.CastSyntaxColonColon,
+	}
+	anyTable := &ast.TableExpr{Fields: []*ast.Field{
+		{Key: stringLit("raw"), KeySyntax: ast.AttrKeyDot, Value: number("5")},
+	}}
+	anyCast := &ast.CastExpr{
+		Expr:   anyTable,
 		Type:   &ast.PrimitiveTypeExpr{Name: "any"},
 		Syntax: ast.CastSyntaxColonColon,
 	}
@@ -342,13 +350,13 @@ func TestExtractChunkObjectLiteralThroughAssertionWrappers(t *testing.T) {
 	}}
 	nestedCast := &ast.CastExpr{
 		Expr:   nestedTable,
-		Type:   &ast.PrimitiveTypeExpr{Name: "any"},
+		Type:   &ast.PrimitiveTypeExpr{Name: "number"},
 		Syntax: ast.CastSyntaxAs,
 	}
 	rootTable := &ast.TableExpr{Fields: []*ast.Field{
 		{Key: stringLit("nested"), KeySyntax: ast.AttrKeyDot, Value: nestedCast},
 	}}
-	local := localAssign([]string{"a", "b", "c", "d"}, asCast, colonCast, nonNil, rootTable)
+	local := localAssign([]string{"a", "b", "c", "d", "e"}, asCast, colonCast, nonNil, rootTable, anyCast)
 	stmts := []ast.Stmt{local}
 	bindings := bind.BindChunk(stmts, bind.Options{})
 	built := cfgbuild.BuildChunk(stmts, bindings)
@@ -381,6 +389,12 @@ func TestExtractChunkObjectLiteralThroughAssertionWrappers(t *testing.T) {
 	}
 	if _, ok := result.ObjectLiteral(asTable); ok {
 		t.Fatalf("wrapped table also keyed by inner table")
+	}
+	if _, ok := result.ObjectLiteral(anyCast); ok {
+		t.Fatalf("any cast produced object literal proof sidecar")
+	}
+	if _, ok := result.ObjectLiteral(anyTable); ok {
+		t.Fatalf("any-cast wrapped table also keyed by inner table")
 	}
 
 	rootFact, ok := result.ObjectLiteral(rootTable)
@@ -446,6 +460,104 @@ func TestExtractChunkObjectLiteralNestedStaticEntriesFlatten(t *testing.T) {
 			t.Fatalf("dynamic nested field was included: %#v", entry)
 		}
 	}
+}
+
+func TestExtractChunkObjectLiteralCallArgumentEntriesAndSources(t *testing.T) {
+	userID := stringLit("u1")
+	profile := &ast.TableExpr{Fields: []*ast.Field{{
+		Key:       stringLit("user_id"),
+		KeySyntax: ast.AttrKeyDot,
+		Value:     userID,
+	}}}
+	event := stringLit("created")
+	makeCall := &ast.FuncCallExpr{Func: ident("make_event")}
+	arg := &ast.TableExpr{Fields: []*ast.Field{
+		{Key: stringLit("profile"), KeySyntax: ast.AttrKeyDot, Value: profile},
+		{Key: stringLit("event"), KeySyntax: ast.AttrKeyDot, Value: event},
+		{Key: stringLit("generated"), KeySyntax: ast.AttrKeyDot, Value: makeCall},
+	}}
+	okCall := &ast.FuncCallExpr{Func: dot(ident("result"), "ok"), Args: []ast.Expr{arg}}
+	local := localAssign([]string{"wrapped"}, okCall)
+	stmts := []ast.Stmt{local}
+	bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"make_event", "result"}})
+	built := cfgbuild.BuildChunk(stmts, bindings)
+
+	result, err := ExtractChunk(stmts, bindings, built)
+	if err != nil {
+		t.Fatalf("ExtractChunk: %v", err)
+	}
+
+	points := requireStmtPoints(t, built, local, 3)
+	okFact, ok := result.Call(points[1])
+	if !ok || okFact.Call != okCall {
+		t.Fatalf("ok call fact = %#v, ok=%v", okFact, ok)
+	}
+	if len(okFact.ArgumentSources) != 1 || okFact.ArgumentSources[0].Kind != sourceprovenance.SourceExpression || okFact.ArgumentSources[0].Expr != arg {
+		t.Fatalf("ok call argument sources = %#v, want table argument expression", okFact.ArgumentSources)
+	}
+
+	fact, ok := result.ObjectLiteral(arg)
+	if !ok {
+		t.Fatalf("missing call argument object literal sidecar")
+	}
+	if fact.Expr != arg || fact.Table != arg {
+		t.Fatalf("call argument object literal identity = %#v", fact)
+	}
+	if len(fact.Entries) != 4 {
+		t.Fatalf("call argument entries = %#v, want root, nested, and call-valued entries", fact.Entries)
+	}
+	assertEntry(t, fact.Entries[0], 0, fieldChainSuffix("profile"), profile)
+	assertEntry(t, fact.Entries[1], 0, fieldChainSuffix("profile", "user_id"), userID)
+	assertEntry(t, fact.Entries[2], 1, fieldChainSuffix("event"), event)
+	generated := fact.Entries[3]
+	if generated.Index != 2 || generated.Value != makeCall || !generated.Suffix.Equal(fieldChainSuffix("generated")) {
+		t.Fatalf("generated entry = %#v", generated)
+	}
+	if generated.Source.Kind != sourceprovenance.SourceCall || generated.Source.Expr != makeCall || generated.Source.CallPoint != points[0] || !generated.Source.HasCallPoint {
+		t.Fatalf("generated source = %#v, want make_event call point %d", generated.Source, points[0])
+	}
+
+	nestedFact, ok := result.ObjectLiteral(profile)
+	if !ok || len(nestedFact.Entries) != 1 {
+		t.Fatalf("nested object literal = %#v, ok=%v", nestedFact, ok)
+	}
+	assertEntry(t, nestedFact.Entries[0], 0, fieldChainSuffix("user_id"), userID)
+}
+
+func TestExtractFunctionObjectLiteralReturnCallArgument(t *testing.T) {
+	event := stringLit("created")
+	arg := &ast.TableExpr{Fields: []*ast.Field{{
+		Key:       stringLit("event"),
+		KeySyntax: ast.AttrKeyDot,
+		Value:     event,
+	}}}
+	okCall := &ast.FuncCallExpr{Func: dot(ident("result"), "ok"), Args: []ast.Expr{arg}}
+	ret := &ast.ReturnStmt{Exprs: []ast.Expr{okCall}}
+	fn := function(nil, ret)
+	bindings := bind.BindFunction(fn, bind.Options{Globals: []string{"result"}})
+	built := cfgbuild.BuildFunction(fn, bindings)
+
+	result, err := ExtractFunction(fn, bindings, built)
+	if err != nil {
+		t.Fatalf("ExtractFunction: %v", err)
+	}
+
+	points := requireStmtPoints(t, built, ret, 2)
+	okFact, ok := result.Call(points[0])
+	if !ok || okFact.Call != okCall || okFact.Context != CallContextReturnSource {
+		t.Fatalf("return call fact = %#v, ok=%v", okFact, ok)
+	}
+	if len(okFact.ArgumentSources) != 1 || okFact.ArgumentSources[0].Kind != sourceprovenance.SourceExpression || okFact.ArgumentSources[0].Expr != arg {
+		t.Fatalf("return call argument sources = %#v, want table argument expression", okFact.ArgumentSources)
+	}
+	fact, ok := result.ObjectLiteral(arg)
+	if !ok {
+		t.Fatalf("missing returned call argument object literal sidecar")
+	}
+	if len(fact.Entries) != 1 {
+		t.Fatalf("returned call argument entries = %#v, want event entry", fact.Entries)
+	}
+	assertEntry(t, fact.Entries[0], 0, fieldChainSuffix("event"), event)
 }
 
 func TestExtractChunkObjectLiteralSkipsFinalExpandingArrayField(t *testing.T) {
@@ -521,6 +633,10 @@ func TestExtractChunkFunctionDefinitionFactPreservesIdentity(t *testing.T) {
 	if fact.TargetSymbol != mustIdentSymbol(t, bindings, target) || !fact.HasTargetSymbol {
 		t.Fatalf("function definition target = %d/%v", fact.TargetSymbol, fact.HasTargetSymbol)
 	}
+	wantPath := path.NewPath(mustIdentSymbol(t, bindings, target), "f")
+	if !fact.HasTargetPath || !fact.TargetPath.Equal(wantPath) {
+		t.Fatalf("function definition target path = %v/%v, want %v", fact.TargetPath, fact.HasTargetPath, wantPath)
+	}
 	if _, ok := result.OrdinaryAssignment(points[0]); ok {
 		t.Fatalf("function definition point produced ordinary assignment fact")
 	}
@@ -553,9 +669,12 @@ func TestExtractChunkFunctionDefinitionWithNilBindingsHasNoTargetSymbol(t *testi
 	if fact.TargetSymbol != 0 || fact.HasTargetSymbol {
 		t.Fatalf("function definition target = %d/%v, want 0/false", fact.TargetSymbol, fact.HasTargetSymbol)
 	}
+	if fact.HasTargetPath || !fact.TargetPath.IsEmpty() {
+		t.Fatalf("function definition target path = %v/%v, want empty/false", fact.TargetPath, fact.HasTargetPath)
+	}
 }
 
-func TestExtractChunkMemberFunctionDefinitionFactAtNoopHasNoTargetSymbol(t *testing.T) {
+func TestExtractChunkMemberFunctionDefinitionFactPublishesPathAssignment(t *testing.T) {
 	tests := []struct {
 		name string
 		stmt *ast.FuncDefStmt
@@ -579,7 +698,9 @@ func TestExtractChunkMemberFunctionDefinitionFactAtNoopHasNoTargetSymbol(t *test
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			moduleDecl := localAssign([]string{"module"}, &ast.TableExpr{})
-			stmts := []ast.Stmt{moduleDecl, tt.stmt, &ast.ReturnStmt{Exprs: []ast.Expr{ident("module")}}}
+			bodyStmt := localAssign([]string{"inside"}, number("1"))
+			tt.stmt.Func.Stmts = []ast.Stmt{bodyStmt}
+			stmts := []ast.Stmt{moduleDecl, tt.stmt}
 			bindings := bind.BindChunk(stmts, bind.Options{})
 			built := cfgbuild.BuildChunk(stmts, bindings)
 			if built == nil || built.Graph == nil {
@@ -588,8 +709,8 @@ func TestExtractChunkMemberFunctionDefinitionFactAtNoopHasNoTargetSymbol(t *test
 
 			points := requireStmtPoints(t, built, tt.stmt, 1)
 			node := built.Graph.Node(points[0])
-			if node == nil || node.Kind != cfg.NodeNoop {
-				t.Fatalf("member function point kind = %#v, want noop", node)
+			if node == nil || node.Kind != cfg.NodeAssign {
+				t.Fatalf("member function point kind = %#v, want assign", node)
 			}
 
 			result, err := ExtractChunk(stmts, bindings, built)
@@ -606,8 +727,25 @@ func TestExtractChunkMemberFunctionDefinitionFactAtNoopHasNoTargetSymbol(t *test
 			if fact.TargetSymbol != 0 || fact.HasTargetSymbol {
 				t.Fatalf("member function target = %d/%v, want 0/false", fact.TargetSymbol, fact.HasTargetSymbol)
 			}
-			if _, ok := result.OrdinaryAssignment(points[0]); ok {
-				t.Fatalf("member function definition point produced ordinary assignment fact")
+			wantPath := path.NewPath(mustLocalAt(t, bindings, moduleDecl, 0), "module").Field("f")
+			if !fact.HasTargetPath || !fact.TargetPath.Equal(wantPath) {
+				t.Fatalf("member function target path = %v/%v, want %v", fact.TargetPath, fact.HasTargetPath, wantPath)
+			}
+			assign, ok := result.OrdinaryAssignment(points[0])
+			if !ok {
+				t.Fatalf("missing member function ordinary assignment fact")
+			}
+			if assign.Value != tt.stmt.Func || assign.Source.Kind != sourceprovenance.SourceExpression || assign.Source.Expr != tt.stmt.Func {
+				t.Fatalf("member function assignment source = %#v value %p, want function expression %p", assign.Source, assign.Value, tt.stmt.Func)
+			}
+			if !assign.HasPath || !assign.Path.Equal(wantPath) {
+				t.Fatalf("member function assignment path = %v/%v, want %v", assign.Path, assign.HasPath, wantPath)
+			}
+			if assign.HasSymbol || assign.Symbol != 0 {
+				t.Fatalf("member function assignment symbol = %d/%v, want 0/false", assign.Symbol, assign.HasSymbol)
+			}
+			if got := built.StmtPoints.PointsFor(bodyStmt); len(got) != 0 {
+				t.Fatalf("nested member function body statement mapped to parent CFG points %v", got)
 			}
 		})
 	}
@@ -761,6 +899,47 @@ func TestExtractChunkCallReturnBranchAndTypeFacts(t *testing.T) {
 	}
 }
 
+func TestExtractParsedFunctionChannelReceiveCallFact(t *testing.T) {
+	stmts, err := parse.ParseString(`
+local function handle(ch)
+	local value, ok = ch:receive()
+	if ok then
+		local id = value.id
+	end
+end
+`, "test.lua")
+	if err != nil {
+		t.Fatalf("ParseString: %v", err)
+	}
+	bindings := bind.BindChunk(stmts, bind.Options{})
+	functions := bindings.NestedFunctions(nil)
+	if len(functions) != 1 {
+		t.Fatalf("nested functions = %d, want 1", len(functions))
+	}
+	built := cfgbuild.BuildFunction(functions[0], bindings)
+	result, err := ExtractFunction(functions[0], bindings, built)
+	if err != nil {
+		t.Fatalf("ExtractFunction: %v", err)
+	}
+	var found bool
+	for _, point := range built.Graph.RPO() {
+		fact, ok := result.Call(point)
+		if !ok || fact.Method != "receive" {
+			continue
+		}
+		found = true
+		if fact.Context != CallContextAssignmentSource {
+			t.Fatalf("receive context = %v, want assignment source", fact.Context)
+		}
+		if len(fact.ResultTargets) != 2 {
+			t.Fatalf("receive result targets = %#v, want value and ok", fact.ResultTargets)
+		}
+	}
+	if !found {
+		t.Fatal("missing receive call fact")
+	}
+}
+
 func TestExtractChunkAssignmentAndReturnCallFactsUseLuaListRules(t *testing.T) {
 	makeIdent := ident("make")
 	makeCall := &ast.FuncCallExpr{Func: makeIdent}
@@ -856,6 +1035,60 @@ func TestExtractChunkAssignmentAndReturnCallFactsUseLuaListRules(t *testing.T) {
 	returnAgain, _ := result.Return(returnPoints[1])
 	if returnAgain.Sources[1].Kind != sourceprovenance.SourceCall {
 		t.Fatalf("Return exposed mutable sources slice")
+	}
+}
+
+func TestExtractChunkValueShortCircuitAssignmentCallFacts(t *testing.T) {
+	orMakeCall := &ast.FuncCallExpr{Func: ident("make")}
+	orExpr := &ast.LogicalOpExpr{
+		Operator: "or",
+		Lhs:      ident("cached"),
+		Rhs:      orMakeCall,
+	}
+	orLocal := localAssign([]string{"x"}, orExpr)
+	andMakeCall := &ast.FuncCallExpr{Func: ident("make")}
+	andExpr := &ast.LogicalOpExpr{
+		Operator: "and",
+		Lhs:      ident("guard"),
+		Rhs:      andMakeCall,
+	}
+	andLocal := localAssign([]string{"y"}, andExpr)
+	stmts := []ast.Stmt{orLocal, andLocal}
+	bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"cached", "guard", "make"}})
+	built := cfgbuild.BuildChunk(stmts, bindings)
+	if built == nil || built.Graph == nil {
+		t.Fatalf("BuildChunk returned nil")
+	}
+
+	result, err := ExtractChunk(stmts, bindings, built)
+	if err != nil {
+		t.Fatalf("ExtractChunk: %v", err)
+	}
+
+	orPoints := requireStmtPoints(t, built, orLocal, 2)
+	orCallFact, ok := result.Call(orPoints[0])
+	if !ok || orCallFact.Call != orMakeCall || orCallFact.Context != CallContextExpressionProducer || orCallFact.ExprIndex != 0 {
+		t.Fatalf("or call fact = %#v, ok=%v", orCallFact, ok)
+	}
+	if len(orCallFact.ResultTargets) != 1 || orCallFact.ResultTargets[0].Kind != CallResultTargetExpression || orCallFact.ResultTargets[0].ResultIndex != 0 {
+		t.Fatalf("or call result targets = %#v", orCallFact.ResultTargets)
+	}
+	orAssign, ok := result.LocalAssignment(orPoints[1])
+	if !ok || orAssign.Source.Kind != sourceprovenance.SourceExpression || orAssign.Source.Expr != orExpr {
+		t.Fatalf("or assignment source = %#v, ok=%v", orAssign.Source, ok)
+	}
+
+	andPoints := requireStmtPoints(t, built, andLocal, 2)
+	andCallFact, ok := result.Call(andPoints[0])
+	if !ok || andCallFact.Call != andMakeCall || andCallFact.Context != CallContextExpressionProducer || andCallFact.ExprIndex != 0 {
+		t.Fatalf("and call fact = %#v, ok=%v", andCallFact, ok)
+	}
+	if len(andCallFact.ResultTargets) != 1 || andCallFact.ResultTargets[0].Kind != CallResultTargetExpression || andCallFact.ResultTargets[0].ResultIndex != 0 {
+		t.Fatalf("and call result targets = %#v", andCallFact.ResultTargets)
+	}
+	andAssign, ok := result.LocalAssignment(andPoints[1])
+	if !ok || andAssign.Source.Kind != sourceprovenance.SourceExpression || andAssign.Source.Expr != andExpr {
+		t.Fatalf("and assignment source = %#v, ok=%v", andAssign.Source, ok)
 	}
 }
 
@@ -978,6 +1211,36 @@ func TestExtractChunkConditionAndIteratorCallFactsUseDeferredContexts(t *testing
 	}
 	if branchFact.Source.TargetIndex != sourceprovenance.NoSourceIndex || !branchFact.Source.Adjusted || branchFact.Source.Expanded {
 		t.Fatalf("condition source flags = %#v", branchFact.Source)
+	}
+
+	canAccessCall := &ast.FuncCallExpr{Func: ident("can_access"), Args: []ast.Expr{ident("page")}}
+	guardCondition := &ast.LogicalOpExpr{
+		Operator: "and",
+		Lhs:      ident("mr"),
+		Rhs: &ast.LogicalOpExpr{
+			Operator: "or",
+			Lhs:      &ast.UnaryNotOpExpr{Expr: dot(ident("page"), "secure")},
+			Rhs:      canAccessCall,
+		},
+	}
+	guardStmt := &ast.IfStmt{Condition: guardCondition}
+	guardStmts := []ast.Stmt{guardStmt}
+	guardBindings := bind.BindChunk(guardStmts, bind.Options{Globals: []string{"can_access", "mr", "page"}})
+	guardBuilt := cfgbuild.BuildChunk(guardStmts, guardBindings)
+	guardResult, err := ExtractChunk(guardStmts, guardBindings, guardBuilt)
+	if err != nil {
+		t.Fatalf("ExtractChunk nested guard: %v", err)
+	}
+	guardPoints := requireStmtPoints(t, guardBuilt, guardStmt, 2)
+	guardCall, ok := guardResult.Call(guardPoints[0])
+	if !ok {
+		t.Fatalf("missing nested condition call fact")
+	}
+	if guardCall.Context != CallContextExpressionProducer || guardCall.Call != canAccessCall {
+		t.Fatalf("nested condition call fact = %#v", guardCall)
+	}
+	if _, ok := guardResult.BranchCondition(guardPoints[1]); !ok {
+		t.Fatalf("missing nested condition branch fact")
 	}
 
 	loopPoints := requireStmtPoints(t, built, loop, 4)

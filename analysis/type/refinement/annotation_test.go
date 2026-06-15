@@ -13,7 +13,7 @@ import (
 
 func TestIsClosedUnionAnnotationRecognizesInstantiatedGenericUnion(t *testing.T) {
 	tp := typ.NewTypeParam("T", nil)
-	result := typ.NewGeneric("Result", []*typ.TypeParam{tp}, typ.NewUnion(
+	result := typ.NewGeneric("Result", []*typ.TypeParam{tp}, typeexpr.Union(
 		typetable.NewRecord().Field("ok", typ.LiteralBool(true)).Field("value", tp).Build(),
 		typetable.NewRecord().Field("ok", typ.LiteralBool(false)).Field("error", typ.String).Build(),
 	))
@@ -27,7 +27,7 @@ func TestIsClosedUnionAnnotationRejectsNestedInstantiatedAnyOrUnknown(t *testing
 	t.Run("any", func(t *testing.T) {
 		tp := typ.NewTypeParam("T", nil)
 		inner := typ.NewGeneric("MaybeAny", []*typ.TypeParam{tp}, typ.Any)
-		outer := typ.NewGeneric("Wrapper", []*typ.TypeParam{tp}, typ.NewUnion(
+		outer := typ.NewGeneric("Wrapper", []*typ.TypeParam{tp}, typeexpr.Union(
 			typ.Instantiate(inner, tp),
 			typetable.NewRecord().Field("value", tp).Build(),
 		))
@@ -40,7 +40,7 @@ func TestIsClosedUnionAnnotationRejectsNestedInstantiatedAnyOrUnknown(t *testing
 	t.Run("unknown", func(t *testing.T) {
 		tp := typ.NewTypeParam("T", nil)
 		inner := typ.NewGeneric("MaybeUnknown", []*typ.TypeParam{tp}, typ.Unknown)
-		outer := typ.NewGeneric("Wrapper", []*typ.TypeParam{tp}, typ.NewUnion(
+		outer := typ.NewGeneric("Wrapper", []*typ.TypeParam{tp}, typeexpr.Union(
 			typ.Instantiate(inner, tp),
 			typetable.NewRecord().Field("value", tp).Build(),
 		))
@@ -59,7 +59,7 @@ func TestExpandInstantiatedPreservesSameNameFunctionBinder(t *testing.T) {
 		Param("value", inner).
 		Returns(inner).
 		Build()
-	generic := typ.NewGeneric("Wrapper", []*typ.TypeParam{outer}, typ.NewUnion(
+	generic := typ.NewGeneric("Wrapper", []*typ.TypeParam{outer}, typeexpr.Union(
 		typetable.NewRecord().Field("value", outer).Build(),
 		fn,
 	))
@@ -95,7 +95,7 @@ func TestExpandInstantiatedPreservesSameNameFunctionBinder(t *testing.T) {
 func TestIsClosedUnionAnnotationHandlesSelfInstantiatingGenericUnionWithoutHang(t *testing.T) {
 	tp := typ.NewTypeParam("T", nil)
 	generic := typ.NewGeneric("Loop", []*typ.TypeParam{tp}, nil)
-	generic.SetBody(typ.NewUnion(
+	generic.SetBody(typeexpr.Union(
 		typetable.NewRecord().Field("value", tp).Build(),
 		typ.Instantiate(generic, tp),
 	))
@@ -133,12 +133,12 @@ func TestIsRefinableAnnotation(t *testing.T) {
 		{"nil", nil, false},
 		{"any", typ.Any, false},
 		{"unknown", typ.Unknown, false},
-		{"optional any", typ.NewOptional(typ.Any), false},
+		{"optional any", typeexpr.Optional(typ.Any), false},
 		{"array any", typ.NewArray(typ.Any), true},
 		{"map string any", typ.NewMap(typ.String, typ.Any), true},
 		{"map string any array", typ.NewMap(typ.String, typ.NewArray(typ.Any)), true},
 		{"open table top", typetable.NewRecord().SetOpen(true).Build(), true},
-		{"array or open table top", typ.NewUnion(typ.NewArray(typ.Any), typetable.NewRecord().SetOpen(true).Build()), true},
+		{"array or open table top", typeexpr.Union(typ.NewArray(typ.Any), typetable.NewRecord().SetOpen(true).Build()), true},
 		{"record map any", typetable.NewRecord().MapComponent(typ.String, typ.Any).Build(), true},
 		{"record", typetable.NewRecord().Field("id", typ.String).Build(), false},
 	}
@@ -154,7 +154,7 @@ func TestPruneLessPreciseRefinableUnionMembersDropsDominatedSoftAlternative(t *t
 	soft := typ.NewMap(typ.String, typ.NewArray(typ.Any))
 	precise := typ.NewMap(typ.String, typ.NewArray(typetable.NewRecord().Field("id", typ.String).Build()))
 
-	got := PruneLessPreciseRefinableUnionMembers(typ.NewUnion(soft, precise), func(candidate, baseline typ.Type) bool {
+	got := PruneLessPreciseRefinableUnionMembers(typeexpr.Union(soft, precise), func(candidate, baseline typ.Type) bool {
 		return typ.TypeEquals(candidate, precise) && typ.TypeEquals(baseline, soft)
 	}, typeexpr.Union)
 	if !typ.TypeEquals(got, precise) {

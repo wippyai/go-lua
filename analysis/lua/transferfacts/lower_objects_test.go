@@ -58,6 +58,22 @@ func TestLowerObjectLiteralSidecarUsesAssignmentExprRef(t *testing.T) {
 	}
 }
 
+func TestLowerExplicitAnyObjectLiteralDeclarationUsesDeclaredContract(t *testing.T) {
+	stmts, _, built, result := parseSemanticChunk(t, `local raw: any = { id = "cfg" }`)
+	facts := lowerFacts(t, result, built.Graph, standard.Registry())
+	point := requireStmtPoints(t, built, stmts[0], 1)[0]
+	fact, ok := facts.RootAssignment(point)
+	if !ok {
+		t.Fatal("missing root assignment fact")
+	}
+	if !fact.DeclaredValueContracts() {
+		t.Fatalf("root assignment = %#v, want declared contract for explicit any object literal", fact)
+	}
+	if _, ok := fact.DeclaredValue(); !ok {
+		t.Fatalf("root assignment = %#v, want declared value", fact)
+	}
+}
+
 func TestLowerObjectLiteralEntryCallSourcePointsAtNestedProducer(t *testing.T) {
 	makeCall := &ast.FuncCallExpr{Func: ident("make")}
 	table := &ast.TableExpr{Fields: []*ast.Field{{
@@ -94,7 +110,7 @@ func TestLowerObjectLiteralEntryCallSourcePointsAtNestedProducer(t *testing.T) {
 	}
 }
 
-func TestLowerWrappedObjectLiteralKeepsAssertionRefinementAndEntries(t *testing.T) {
+func TestLowerAnyCastObjectLiteralPublishesClaimNotEntries(t *testing.T) {
 	leafValue := number("1")
 	table := &ast.TableExpr{Fields: []*ast.Field{
 		{Key: stringLit("leaf"), KeySyntax: ast.AttrKeyDot, Value: leafValue},
@@ -123,15 +139,9 @@ func TestLowerWrappedObjectLiteralKeepsAssertionRefinementAndEntries(t *testing.
 	}
 	source := localFact.Source()
 	assertLoweredAssertion(t, facts, source, assertion.Any(), factflow.ValueSourceExpression)
-	literal, ok := facts.ObjectLiteral(source.ExprRef)
-	if !ok {
-		t.Fatalf("missing object literal sidecar for wrapped assignment expr ref %d", source.ExprRef)
+	if literal, ok := facts.ObjectLiteral(source.ExprRef); ok {
+		t.Fatalf("any-cast object literal sidecar = %#v, want none", literal)
 	}
-	entries := literal.Entries()
-	if len(entries) != 1 {
-		t.Fatalf("literal entries = %#v, want one static entry", entries)
-	}
-	assertLoweredObjectEntry(t, entries[0], fieldSuffix("leaf"), factflow.ValueSourceExpression)
 }
 
 func TestLowerNestedObjectLiteralEntriesUnderAssignmentExprRef(t *testing.T) {
@@ -175,4 +185,13 @@ func TestLowerNestedObjectLiteralEntriesUnderAssignmentExprRef(t *testing.T) {
 	assertLoweredObjectEntry(t, entries[0], fieldSuffix("x"), factflow.ValueSourceExpression)
 	assertLoweredObjectEntry(t, entries[1], fieldSuffix("a"), factflow.ValueSourceExpression)
 	assertLoweredObjectEntry(t, entries[2], fieldChainSuffix("a", "b"), factflow.ValueSourceExpression)
+	nestedSource := entries[1].Source()
+	nestedLiteral, ok := facts.ObjectLiteral(nestedSource.ExprRef)
+	if !ok {
+		t.Fatalf("missing nested object literal sidecar for ref %d", nestedSource.ExprRef)
+	}
+	if got := len(nestedLiteral.Entries()); got != 1 {
+		t.Fatalf("nested literal entries = %d, want one static entry", got)
+	}
+	assertLoweredObjectEntry(t, nestedLiteral.Entries()[0], fieldSuffix("b"), factflow.ValueSourceExpression)
 }

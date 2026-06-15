@@ -4,14 +4,18 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/evidence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/typewitness"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/variantorigin"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/standard"
 	"github.com/wippyai/go-lua/analysis/domain/value/variant"
+	"github.com/wippyai/go-lua/analysis/type/ambient"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/analysis/type/typeexpr"
 )
 
 func TestFromTypeMaterializesConcreteRuntimeKinds(t *testing.T) {
@@ -43,12 +47,12 @@ func TestFromTypeMaterializesConcreteRuntimeKinds(t *testing.T) {
 func TestFromTypeMaterializesOptionalAndUnionPresence(t *testing.T) {
 	reg := standard.Registry()
 
-	optionalString := typ.NewOptional(typ.String)
+	optionalString := typeexpr.Optional(typ.String)
 	gotOptional := FromType(reg, optionalString)
 	assertPresence(t, gotOptional, presence.Maybe())
 	assertRuntimeKind(t, reg, gotOptional, runtimekind.Singleton(runtimekind.String))
 
-	stringOrNumber := typ.NewUnion(typ.String, typ.Number)
+	stringOrNumber := typeexpr.Union(typ.String, typ.Number)
 	gotUnion := FromType(reg, stringOrNumber)
 	assertPresence(t, gotUnion, presence.Present())
 	assertRuntimeKind(t, reg, gotUnion, runtimekind.Join(
@@ -77,7 +81,15 @@ func TestFromTypeMaterializesInterfacePresence(t *testing.T) {
 	assertPresence(t, got, presence.Present())
 }
 
-func TestFromTypeLeavesUnknownAndAnyAsTop(t *testing.T) {
+func TestFromTypeMaterializesInstantiatedAmbientInterfacePresence(t *testing.T) {
+	reg := standard.Registry()
+	channel := typ.Instantiate(ambient.ChannelGeneric(), typ.String)
+
+	got := FromType(reg, channel)
+	assertPresence(t, got, presence.Present())
+}
+
+func TestFromTypeMarksUnknownAndAnyAsExplicitTop(t *testing.T) {
 	reg := standard.Registry()
 
 	for _, tt := range []struct {
@@ -89,8 +101,8 @@ func TestFromTypeLeavesUnknownAndAnyAsTop(t *testing.T) {
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			got := FromType(reg, tt.typ)
-			if !product.Equal(reg, got, product.Top()) {
-				t.Fatalf("FromType(%s) = %v, want product top", tt.typ, got)
+			if gotEvidence := product.Get(reg, got, evidence.Key); !evidence.Equal(gotEvidence, evidence.ExplicitTop()) {
+				t.Fatalf("FromType(%s) evidence = %s, want explicit-top", tt.typ, gotEvidence)
 			}
 			assertPresence(t, got, presence.Top())
 			assertRuntimeKind(t, reg, got, runtimekind.Top())
@@ -108,7 +120,7 @@ func TestFromTypeMaterializesVariantOrigin(t *testing.T) {
 		Field("kind", typ.LiteralString("right")).
 		Field("value", typ.String).
 		Build()
-	union := typ.NewUnion(left, right)
+	union := typeexpr.Union(left, right)
 
 	family, cases, ok := variant.OriginOfType(union)
 	if !ok {
@@ -127,6 +139,48 @@ func TestFromTypeMaterializesVariantOrigin(t *testing.T) {
 	}
 }
 
+func TestTypeOfPrefersWitnessOverVariantOrigin(t *testing.T) {
+	reg := standard.Registry()
+	left := typetable.NewRecord().
+		Field("kind", typ.LiteralString("left")).
+		Field("value", typ.Number).
+		Build()
+	right := typetable.NewRecord().
+		Field("kind", typ.LiteralString("right")).
+		Field("value", typ.String).
+		Build()
+	union := typeexpr.Union(left, right)
+
+	value := WithWitness(reg, FromType(reg, union), left)
+	if witness := product.Get(reg, value, typewitness.Key); witness.IsBottom() || witness.IsTop() {
+		t.Fatalf("type witness = %v, want concrete", witness)
+	}
+	if origin := product.Get(reg, value, variantorigin.Key); origin.IsBottom() || origin.IsTop() {
+		t.Fatalf("variant origin = %v, want concrete", origin)
+	}
+
+	got, ok := TypeOf(reg, value)
+	if !ok || !typ.TypeEquals(got, left) {
+		t.Fatalf("TypeOf(witnessed value) = %v/%v, want %v", got, ok, left)
+	}
+}
+
+func TestFromTypeMaterializesClosedGenericInstantiationAsConcreteTable(t *testing.T) {
+	reg := standard.Registry()
+	param := typ.NewTypeParam("T", nil)
+	box := typ.NewGeneric("Box", []*typ.TypeParam{param},
+		typetable.NewRecord().Field("value", param).Build())
+	inst := typ.Instantiate(box, typ.String)
+
+	got := FromType(reg, inst)
+	assertPresence(t, got, presence.Present())
+	assertRuntimeKind(t, reg, got, runtimekind.Singleton(runtimekind.Table))
+	gotType, ok := TypeOf(reg, WithWitness(reg, got, inst))
+	if !ok || !typ.TypeEquals(gotType, inst) {
+		t.Fatalf("TypeOf(instantiated value) = %v/%v, want %v", gotType, ok, inst)
+	}
+}
+
 func TestRuntimeKindFromType(t *testing.T) {
 	tests := []struct {
 		name string
@@ -140,12 +194,12 @@ func TestRuntimeKindFromType(t *testing.T) {
 		{name: "table", typ: typetable.NewRecord().Build(), want: runtimekind.Singleton(runtimekind.Table), ok: true},
 		{name: "function", typ: typ.Func().Build(), want: runtimekind.Singleton(runtimekind.Function), ok: true},
 		{name: "nil", typ: typ.Nil, want: runtimekind.Singleton(runtimekind.Nil), ok: true},
-		{name: "optional string ignores nil", typ: typ.NewOptional(typ.String), want: runtimekind.Singleton(runtimekind.String), ok: true},
-		{name: "string number union joins", typ: typ.NewUnion(typ.String, typ.Number), want: runtimekind.Join(
+		{name: "optional string ignores nil", typ: typeexpr.Optional(typ.String), want: runtimekind.Singleton(runtimekind.String), ok: true},
+		{name: "string number union joins", typ: typeexpr.Union(typ.String, typ.Number), want: runtimekind.Join(
 			runtimekind.Singleton(runtimekind.String),
 			runtimekind.Singleton(runtimekind.Number),
 		), ok: true},
-		{name: "nil-only union", typ: typ.NewUnion(typ.Nil), want: runtimekind.Singleton(runtimekind.Nil), ok: true},
+		{name: "nil-only union", typ: typeexpr.Union(typ.Nil), want: runtimekind.Singleton(runtimekind.Nil), ok: true},
 		{name: "unknown has no concrete kind", typ: typ.Unknown, ok: false},
 		{name: "any has no concrete kind", typ: typ.Any, ok: false},
 	}

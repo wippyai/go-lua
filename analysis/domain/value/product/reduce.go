@@ -3,27 +3,25 @@ package product
 import (
 	"sort"
 
-	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 )
 
 const maxReducerPasses = 32
 
-func reduce(reg *axis.Registry, shape Shape, p presence.Value, slots []slot) (Shape, presence.Value, []slot) {
+func reduce(rt *registryRuntime, shape Shape, p presence.Value, slots []slot) (Shape, presence.Value, []slot) {
 	shape, p, _ = reducePresenceShape(shape, p)
-	if isProductBottom(reg, p, slots) {
-		return ShapeBottom, presence.Bottom(), bottomSlots(reg)
+	if rt.isProductBottom(p, slots) {
+		return ShapeBottom, presence.Bottom(), rt.bottomSlots
 	}
 
-	reducers := reg.Reducers()
-	if len(reducers) == 0 {
+	if len(rt.reducers) == 0 {
 		return shape, p, slots
 	}
 
-	editor := newReduceEditor(reg, p, slots)
+	editor := newReduceEditor(rt, p, slots)
 	for pass := 0; pass < maxReducerPasses; pass++ {
 		changed := false
-		for _, reducer := range reducers {
+		for _, reducer := range rt.reducers {
 			reducerChanged := reducer(editor)
 			editorChanged := editor.consumeChanged()
 			if reducerChanged || editorChanged {
@@ -37,29 +35,13 @@ func reduce(reg *axis.Registry, shape Shape, p presence.Value, slots []slot) (Sh
 			changed = true
 		}
 		if editor.isProductBottom() {
-			return ShapeBottom, presence.Bottom(), bottomSlots(reg)
+			return ShapeBottom, presence.Bottom(), rt.bottomSlots
 		}
 		if !changed {
 			return shape, editor.presence, editor.slots()
 		}
 	}
 	panic("product: reducer loop did not converge")
-}
-
-func isProductBottom(reg *axis.Registry, p presence.Value, slots []slot) bool {
-	if presence.Equal(p, presence.Bottom()) {
-		return true
-	}
-	for _, slot := range slots {
-		spec, ok := reg.LookupErased(slot.key)
-		if !ok {
-			panic("product: unregistered axis slot " + slot.key)
-		}
-		if spec.EqualAny(slot.value, spec.BottomAny()) {
-			return true
-		}
-	}
-	return false
 }
 
 func reducePresenceShape(shape Shape, p presence.Value) (Shape, presence.Value, bool) {
@@ -83,62 +65,66 @@ func reducePresenceShape(shape Shape, p presence.Value) (Shape, presence.Value, 
 }
 
 type reduceEditor struct {
-	reg      *axis.Registry
+	rt       *registryRuntime
 	presence presence.Value
 	values   map[string]any
 	changed  bool
 }
 
-func newReduceEditor(reg *axis.Registry, p presence.Value, slots []slot) *reduceEditor {
+func newReduceEditor(rt *registryRuntime, p presence.Value, slots []slot) *reduceEditor {
 	values := make(map[string]any, len(slots))
 	for _, slot := range slots {
 		values[slot.key] = slot.value
 	}
-	return &reduceEditor{reg: reg, presence: p, values: values}
+	return &reduceEditor{rt: rt, presence: p, values: values}
 }
 
 func (e *reduceEditor) GetAny(key string) (any, bool) {
 	if key == presence.Key.ID() {
-		return e.presence, true
+		panic("product: presence is a core lane; use presence.Get")
 	}
-	spec, ok := e.reg.LookupErased(key)
+	info, ok := e.rt.axis(key)
 	if !ok {
 		return nil, false
 	}
 	if v, ok := e.values[key]; ok {
 		return v, true
 	}
-	return spec.TopAny(), true
+	return info.topAny, true
 }
 
 func (e *reduceEditor) SetAny(key string, value any) {
 	if key == presence.Key.ID() {
-		next, ok := value.(presence.Value)
-		if !ok {
-			panic("product: reducer wrote non-presence value to presence")
-		}
-		if !presence.Equal(e.presence, next) {
-			e.presence = next
-			e.changed = true
-		}
-		return
+		panic("product: presence is a core lane; use presence.Set")
 	}
-	spec, ok := e.reg.LookupErased(key)
+	info, ok := e.rt.axis(key)
 	if !ok {
 		panic("product: reducer wrote unregistered axis " + key)
 	}
-	if spec.IsTopAny(value) {
+	if info.spec.IsTopAny(value) {
 		if _, exists := e.values[key]; exists {
 			delete(e.values, key)
 			e.changed = true
 		}
 		return
 	}
-	if cur, exists := e.values[key]; exists && spec.EqualAny(cur, value) {
+	if cur, exists := e.values[key]; exists && info.spec.EqualAny(cur, value) {
 		return
 	}
 	e.values[key] = value
 	e.changed = true
+}
+
+func (e *reduceEditor) Presence() presence.Value {
+	return e.presence
+}
+
+func (e *reduceEditor) SetPresence(p presence.Value) {
+	next := normalizePresence(p)
+	if !presence.Equal(e.presence, next) {
+		e.presence = next
+		e.changed = true
+	}
 }
 
 func (e *reduceEditor) consumeChanged() bool {
@@ -152,11 +138,11 @@ func (e *reduceEditor) isProductBottom() bool {
 		return true
 	}
 	for key, value := range e.values {
-		spec, ok := e.reg.LookupErased(key)
+		info, ok := e.rt.axis(key)
 		if !ok {
 			panic("product: unregistered axis slot " + key)
 		}
-		if spec.EqualAny(value, spec.BottomAny()) {
+		if info.spec.EqualAny(value, info.bottomAny) {
 			return true
 		}
 	}

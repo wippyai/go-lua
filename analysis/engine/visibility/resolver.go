@@ -49,11 +49,11 @@ func (r *Resolver) KeyAt(point cfg.Point, path pathdom.Path) pathdom.PathKey {
 		return ""
 	}
 	if path.IsPlaceholder() {
-		key, ok := pathaddr.LocalKeyOfPath(path)
+		local, ok := pathaddr.LocalOfPath(path)
 		if !ok {
 			return ""
 		}
-		return key.PathKey()
+		return local.LocalKey().PathKey()
 	}
 	if path.Symbol == 0 || r == nil || r.source == nil {
 		return ""

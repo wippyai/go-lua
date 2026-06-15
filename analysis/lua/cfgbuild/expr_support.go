@@ -4,6 +4,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/branchcond"
 	"github.com/wippyai/go-lua/analysis/lua/callorder"
+	"github.com/wippyai/go-lua/analysis/lua/cfgfacts"
 	"github.com/wippyai/go-lua/analysis/lua/pathexpr"
 	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
 	"github.com/wippyai/go-lua/compiler/ast"
@@ -34,8 +35,14 @@ func (b *builder) appendValueListCalls(state flowState, stmt ast.Stmt, exprs []a
 		b.unsupported = true
 		return flowState{current: state.current}
 	}
-	for range calls {
-		state = b.appendCall(state, stmt)
+	if len(calls) == 0 {
+		return state
+	}
+	for _, expr := range exprs {
+		state = b.appendValueExprCalls(state, stmt, expr)
+		if b.unsupported {
+			return flowState{current: state.current}
+		}
 	}
 	return state
 }
@@ -46,27 +53,28 @@ func (b *builder) appendExprCalls(state flowState, stmt ast.Stmt, expr ast.Expr)
 		b.unsupported = true
 		return flowState{current: state.current}
 	}
-	for range calls {
-		state = b.appendCall(state, stmt)
+	if len(calls) == 0 {
+		return state
 	}
-	return state
+	return b.appendValueExprCalls(state, stmt, expr)
 }
 
 func (b *builder) hasUnsupportedConditionExpr(expr ast.Expr) bool {
-	if call, _, ok := branchcond.PredicateCall(expr); ok {
-		return b.hasUnsupportedExprInCall(call)
-	}
 	if b.conditionExprCovered(expr) {
 		return false
 	}
-	return !branchcond.SupportsTypeComparison(expr, b.bindings)
+	if branchcond.SupportsTypeComparison(expr, b.bindings) {
+		return false
+	}
+	if unsupportedTypePredicateComparison(expr) {
+		return true
+	}
+	_, ok := b.conditionExprCalls(expr)
+	return !ok
 }
 
 func (b *builder) appendConditionCall(state flowState, stmt ast.Stmt, expr ast.Expr) (flowState, cfg.Point, bool) {
-	if _, _, ok := branchcond.PredicateCall(expr); !ok {
-		return state, 0, false
-	}
-	calls, ok := b.exprCalls(expr)
+	calls, ok := b.conditionExprCalls(expr)
 	if !ok {
 		b.unsupported = true
 		return flowState{current: state.current}, 0, false
@@ -89,8 +97,163 @@ func (b *builder) exprCalls(expr ast.Expr) ([]callorder.Occurrence, bool) {
 	return callorder.Expr(expr, b.callOrderOptions())
 }
 
+func (b *builder) conditionExprCalls(expr ast.Expr) ([]callorder.Occurrence, bool) {
+	return callorder.Expr(expr, b.conditionCallOrderOptions())
+}
+
 func (b *builder) callOrderOptions() callorder.Options {
-	return callorder.LuaOptions(b.bindings)
+	options := callorder.LuaOptions(b.bindings)
+	options.AllowShortCircuitCalls = true
+	return options
+}
+
+func (b *builder) conditionCallOrderOptions() callorder.Options {
+	options := callorder.LuaOptions(b.bindings)
+	options.AllowShortCircuitCalls = true
+	return options
+}
+
+func (b *builder) appendValueExprCalls(state flowState, stmt ast.Stmt, expr ast.Expr) flowState {
+	if b.unsupported || !state.live {
+		return state
+	}
+	inner := sourceprovenance.AssertionInner(expr)
+	if inner != expr {
+		return b.appendValueExprCalls(state, stmt, inner)
+	}
+	switch expr := inner.(type) {
+	case nil:
+		return state
+	case *ast.TrueExpr, *ast.FalseExpr, *ast.NilExpr, *ast.NumberExpr, *ast.StringExpr, *ast.Comma3Expr:
+		return state
+	case *ast.IdentExpr:
+		return state
+	case *ast.AttrGetExpr:
+		state = b.appendValueExprCalls(state, stmt, expr.Object)
+		return b.appendValueExprCalls(state, stmt, expr.Key)
+	case *ast.TableExpr:
+		for _, field := range expr.Fields {
+			if field == nil {
+				continue
+			}
+			state = b.appendValueExprCalls(state, stmt, field.Key)
+			state = b.appendValueExprCalls(state, stmt, field.Value)
+			if b.unsupported {
+				return flowState{current: state.current}
+			}
+		}
+		return state
+	case *ast.FuncCallExpr:
+		return b.appendValueCall(state, stmt, expr)
+	case *ast.FunctionExpr:
+		return state
+	case *ast.LogicalOpExpr:
+		return b.appendShortCircuitValueCalls(state, stmt, expr)
+	case *ast.RelationalOpExpr:
+		if b.expressionCoveredRelationalCall(expr) {
+			return state
+		}
+		state = b.appendValueExprCalls(state, stmt, expr.Lhs)
+		return b.appendValueExprCalls(state, stmt, expr.Rhs)
+	case *ast.StringConcatOpExpr:
+		state = b.appendValueExprCalls(state, stmt, expr.Lhs)
+		return b.appendValueExprCalls(state, stmt, expr.Rhs)
+	case *ast.ArithmeticOpExpr:
+		state = b.appendValueExprCalls(state, stmt, expr.Lhs)
+		return b.appendValueExprCalls(state, stmt, expr.Rhs)
+	case *ast.UnaryMinusOpExpr:
+		return b.appendValueExprCalls(state, stmt, expr.Expr)
+	case *ast.UnaryNotOpExpr:
+		return b.appendValueExprCalls(state, stmt, expr.Expr)
+	case *ast.UnaryLenOpExpr:
+		return b.appendValueExprCalls(state, stmt, expr.Expr)
+	case *ast.UnaryBNotOpExpr:
+		return b.appendValueExprCalls(state, stmt, expr.Expr)
+	default:
+		b.unsupported = true
+		return flowState{current: state.current}
+	}
+}
+
+func (b *builder) appendValueCall(state flowState, stmt ast.Stmt, call *ast.FuncCallExpr) flowState {
+	if call == nil {
+		return state
+	}
+	options := b.callOrderOptions()
+	if options.ExpressionCoveredCall != nil && options.ExpressionCoveredCall(call, call) {
+		return state
+	}
+	if options.OpaqueCall != nil && options.OpaqueCall(call) {
+		return b.appendCall(state, stmt)
+	}
+	if call.Receiver != nil {
+		state = b.appendValueExprCalls(state, stmt, call.Receiver)
+	} else {
+		state = b.appendValueExprCalls(state, stmt, call.Func)
+	}
+	for _, arg := range call.Args {
+		state = b.appendValueExprCalls(state, stmt, arg)
+		if b.unsupported {
+			return flowState{current: state.current}
+		}
+	}
+	return b.appendCall(state, stmt)
+}
+
+func (b *builder) appendShortCircuitValueCalls(state flowState, stmt ast.Stmt, expr *ast.LogicalOpExpr) flowState {
+	if expr == nil {
+		return state
+	}
+	state = b.appendValueExprCalls(state, stmt, expr.Lhs)
+	if b.unsupported || !state.live {
+		return state
+	}
+	rhsCalls, ok := callorder.Expr(expr.Rhs, b.callOrderOptions())
+	if !ok {
+		b.unsupported = true
+		return flowState{current: state.current}
+	}
+	if len(rhsCalls) == 0 {
+		return state
+	}
+	rhsCond, ok := shortCircuitRHSCond(expr.Operator)
+	if !ok {
+		b.unsupported = true
+		return flowState{current: state.current}
+	}
+	branch := b.graph.AddBranch()
+	b.connect(state, branch)
+	b.meta.SetShortCircuitGuard(branch, cfgfacts.ShortCircuitGuardFact{Stmt: stmt, Condition: expr.Lhs})
+	join := b.graph.AddNode(cfg.NodeJoin)
+	b.graph.AddEdge(branch, join, !rhsCond)
+	rhsState := b.appendValueExprCalls(branchPath(branch, rhsCond), stmt, expr.Rhs)
+	b.connect(rhsState, join)
+	return flowState{current: join, live: len(b.graph.Predecessors(join)) > 0}
+}
+
+func shortCircuitRHSCond(operator string) (bool, bool) {
+	switch operator {
+	case "and":
+		return true, true
+	case "or":
+		return false, true
+	default:
+		return false, false
+	}
+}
+
+func (b *builder) expressionCoveredRelationalCall(expr *ast.RelationalOpExpr) bool {
+	if expr == nil {
+		return false
+	}
+	options := b.callOrderOptions()
+	if call, ok := sourceprovenance.Call(expr.Lhs); ok && options.ExpressionCoveredCall != nil && options.ExpressionCoveredCall(call, expr) {
+		return true
+	}
+	if call, ok := sourceprovenance.Call(expr.Rhs); ok && options.ExpressionCoveredCall != nil && options.ExpressionCoveredCall(call, expr) {
+		return true
+	}
+	return false
 }
 
 func (b *builder) exprCovered(expr ast.Expr) bool {
@@ -171,4 +334,27 @@ func (b *builder) pureTypeCallCovered(call *ast.FuncCallExpr) bool {
 	}
 	_, ok = pathexpr.Resolve(call.Args[0], b.bindings)
 	return ok
+}
+
+func unsupportedTypePredicateComparison(expr ast.Expr) bool {
+	rel, ok := expr.(*ast.RelationalOpExpr)
+	if !ok {
+		return false
+	}
+	if rel.Operator != "==" && rel.Operator != "~=" {
+		return false
+	}
+	return typePredicateLikeCall(rel.Lhs) || typePredicateLikeCall(rel.Rhs)
+}
+
+func typePredicateLikeCall(expr ast.Expr) bool {
+	call, ok := sourceprovenance.Call(expr)
+	if !ok || call == nil {
+		return false
+	}
+	if call.Method == "type" {
+		return true
+	}
+	fn, ok := call.Func.(*ast.IdentExpr)
+	return ok && fn.Value == "type"
 }

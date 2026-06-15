@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/wippyai/go-lua/analysis/check/body"
+	"github.com/wippyai/go-lua/analysis/check/diagnostics/internal/readmodel"
 	"github.com/wippyai/go-lua/analysis/diagnostic"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
@@ -15,6 +16,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/valueexpr"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/type/refinement"
+	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
@@ -76,7 +78,7 @@ func returnValueType(result *body.Result, resolver typeannotation.Resolver, poin
 	if got, ok := directCallReturnSourceType(result, resolver, source, inherited); ok {
 		return got, true
 	}
-	if got, ok := projectedOptionalIndexType(result, resolver, expr); ok {
+	if got, ok := projectedOptionalIndexType(result, resolver, point, expr); ok {
 		return got, true
 	}
 	if got, ok := explicitTopLikeExpressionType(result, resolver, expr); ok {
@@ -100,7 +102,7 @@ func directCallReturnSourceType(result *body.Result, resolver typeannotation.Res
 	if !ok || site.CalleeSymbol() == 0 {
 		return nil, false
 	}
-	contract, _, ok := directCallResultContract(result, source.CallPoint, fact, site, inherited[site.CalleeSymbol()], resolver)
+	contract, _, ok := directCallResultContract(result, source.CallPoint, fact, site, inherited[site.CalleeSymbol()], inherited, resolver)
 	if !ok {
 		return nil, false
 	}
@@ -222,7 +224,7 @@ func produceDirectCallResultAssignment(result *body.Result, context producerCont
 				continue
 			}
 		}
-		contract, name, ok := directCallResultContract(result, point, fact, site, defs[site.CalleeSymbol()], producer.resolver)
+		contract, name, ok := directCallResultContract(result, point, fact, site, defs[site.CalleeSymbol()], defs, producer.resolver)
 		if !ok {
 			continue
 		}
@@ -268,7 +270,7 @@ func boundaryCallResultReader(callPoint cfg.Point, resultIndex int) boundaryValu
 	}
 }
 
-func directCallResultContract(result *body.Result, point cfg.Point, fact semantics.CallFact, site factflow.CallSite, def *ast.FunctionExpr, resolver typeannotation.Resolver) (directFunctionContract, string, bool) {
+func directCallResultContract(result *body.Result, point cfg.Point, fact semantics.CallFact, site factflow.CallSite, def *ast.FunctionExpr, defs map[symbol.ID]*ast.FunctionExpr, resolver typeannotation.Resolver) (directFunctionContract, string, bool) {
 	name := result.SymbolName(site.CalleeSymbol())
 	if name == "" {
 		name = "call target"
@@ -281,11 +283,11 @@ func directCallResultContract(result *body.Result, point cfg.Point, fact semanti
 		contract.name = name
 		contract.declSpan = ast.SpanOf(def)
 		var violations []typecall.ArgumentConstraintViolation
-		contract, violations = instantiateDirectFunctionContract(result, point, fact, contract, resolver)
+		contract, violations = instantiateDirectFunctionContract(result, point, fact, contract, resolver, defs)
 		if len(violations) > 0 {
 			return directFunctionContract{}, "", false
 		}
-		if !directCallArgsCompatible(result, point, fact, contract, resolver) {
+		if !directCallArgsCompatible(result, point, fact, contract, resolver, defs) {
 			return directFunctionContract{}, "", false
 		}
 		return contract, name, true
@@ -295,11 +297,11 @@ func directCallResultContract(result *body.Result, point cfg.Point, fact semanti
 		contract.name = name
 		contract.declSpan = ast.SpanOf(fact.Call)
 		var violations []typecall.ArgumentConstraintViolation
-		contract, violations = instantiateDirectFunctionContract(result, point, fact, contract, resolver)
+		contract, violations = instantiateDirectFunctionContract(result, point, fact, contract, resolver, defs)
 		if len(violations) > 0 {
 			return directFunctionContract{}, "", false
 		}
-		if !directCallArgsCompatible(result, point, fact, contract, resolver) {
+		if !directCallArgsCompatible(result, point, fact, contract, resolver, defs) {
 			return directFunctionContract{}, "", false
 		}
 		return contract, name, true
@@ -320,17 +322,17 @@ func directCallResultContract(result *body.Result, point cfg.Point, fact semanti
 	contract.name = name
 	contract.declSpan = ast.SpanOf(fact.Call)
 	var violations []typecall.ArgumentConstraintViolation
-	contract, violations = instantiateDirectFunctionContract(result, point, fact, contract, resolver)
+	contract, violations = instantiateDirectFunctionContract(result, point, fact, contract, resolver, defs)
 	if len(violations) > 0 {
 		return directFunctionContract{}, "", false
 	}
-	if !directCallArgsCompatible(result, point, fact, contract, resolver) {
+	if !directCallArgsCompatible(result, point, fact, contract, resolver, defs) {
 		return directFunctionContract{}, "", false
 	}
 	return contract, name, true
 }
 
-func directCallArgsCompatible(result *body.Result, point cfg.Point, fact semantics.CallFact, contract directFunctionContract, resolver typeannotation.Resolver) bool {
+func directCallArgsCompatible(result *body.Result, point cfg.Point, fact semantics.CallFact, contract directFunctionContract, resolver typeannotation.Resolver, defs map[symbol.ID]*ast.FunctionExpr) bool {
 	if fact.Call == nil {
 		return false
 	}
@@ -339,7 +341,7 @@ func directCallArgsCompatible(result *body.Result, point cfg.Point, fact semanti
 	if len(args) < required {
 		return false
 	}
-	contract, violations := instantiateDirectFunctionContract(result, point, fact, contract, resolver)
+	contract, violations := instantiateDirectFunctionContract(result, point, fact, contract, resolver, defs)
 	if len(violations) > 0 {
 		return false
 	}
@@ -380,11 +382,12 @@ func instantiateDirectFunctionContract(
 	fact semantics.CallFact,
 	contract directFunctionContract,
 	resolver typeannotation.Resolver,
+	defs map[symbol.ID]*ast.FunctionExpr,
 ) (directFunctionContract, []typecall.ArgumentConstraintViolation) {
 	if contract.source == nil || len(contract.source.TypeParams) == 0 || fact.Call == nil {
 		return contract, nil
 	}
-	args := directCallArgumentTypes(result, resolver, point, fact)
+	args := directCallArgumentTypes(result, resolver, point, fact, defs)
 	fn, violations := typecall.InstantiateGenericCall(contract.source, args)
 	if fn == nil || fn == contract.source {
 		return contract, violations
@@ -395,21 +398,117 @@ func instantiateDirectFunctionContract(
 	return instantiated, violations
 }
 
-func directCallArgumentTypes(result *body.Result, resolver typeannotation.Resolver, point cfg.Point, fact semantics.CallFact) []typ.Type {
+func directCallArgumentTypes(result *body.Result, resolver typeannotation.Resolver, point cfg.Point, fact semantics.CallFact, defs map[symbol.ID]*ast.FunctionExpr) []typ.Type {
 	if fact.Call == nil {
 		return nil
 	}
+	site, hasSite := result.CallSite(point)
 	args := make([]typ.Type, len(fact.Call.Args))
 	for i, arg := range fact.Call.Args {
-		got, ok := boundaryExprType(result, resolver, arg)
+		got, ok := directObjectLiteralArgumentType(result, resolver, point, arg, defs)
+		if !ok {
+			got, ok = projectedFlowSourceType(result, resolver, point, literalEnv{}, arg)
+		}
 		if !ok {
 			got, ok = boundaryCallArgumentSourceType(result, point, fact, i)
+		}
+		if !ok {
+			got, ok = boundaryExprType(result, resolver, arg)
+		}
+		if !ok && hasSite {
+			got, ok = boundaryCallArgumentValueSourceType(result, point, site, i)
 		}
 		if ok {
 			args[i] = got
 		}
 	}
 	return args
+}
+
+func boundaryCallArgumentValueSourceType(result *body.Result, point cfg.Point, site factflow.CallSite, index int) (typ.Type, bool) {
+	sources := site.ArgumentSources()
+	if index < 0 || index >= len(sources) {
+		return nil, false
+	}
+	value, ok := result.SourceValueAtBoundary(point, sources[index])
+	if !ok {
+		return nil, false
+	}
+	return readmodel.New(result).ValueType(value)
+}
+
+func directObjectLiteralArgumentType(result *body.Result, resolver typeannotation.Resolver, point cfg.Point, expr ast.Expr, defs map[symbol.ID]*ast.FunctionExpr) (typ.Type, bool) {
+	inner, ok := sourceprovenance.ProofInner(expr)
+	if !ok {
+		return nil, false
+	}
+	table, ok := inner.(*ast.TableExpr)
+	if !ok {
+		return nil, false
+	}
+	builder := typetable.NewRecord()
+	seen := false
+	for _, field := range table.Fields {
+		name, ok := directObjectLiteralFieldName(field)
+		if !ok || name == "" || field.Value == nil {
+			continue
+		}
+		t, ok := directObjectLiteralFieldType(result, resolver, point, field.Value, defs)
+		if !ok || t == nil {
+			continue
+		}
+		builder.Field(name, t)
+		seen = true
+	}
+	if !seen {
+		return nil, false
+	}
+	return builder.Build(), true
+}
+
+func directObjectLiteralFieldName(field *ast.Field) (string, bool) {
+	if field == nil || field.Key == nil {
+		return "", false
+	}
+	switch key := field.Key.(type) {
+	case *ast.StringExpr:
+		return key.Value, key.Value != ""
+	case *ast.IdentExpr:
+		return key.Value, key.Value != ""
+	default:
+		return "", false
+	}
+}
+
+func directObjectLiteralFieldType(result *body.Result, resolver typeannotation.Resolver, point cfg.Point, expr ast.Expr, defs map[symbol.ID]*ast.FunctionExpr) (typ.Type, bool) {
+	if t, ok := boundaryExprType(result, resolver, expr); ok {
+		return t, true
+	}
+	if t, ok := directFunctionValueType(result, resolver, expr, defs); ok {
+		return t, true
+	}
+	if t, ok := directObjectLiteralArgumentType(result, resolver, point, expr, defs); ok {
+		return t, true
+	}
+	return nil, false
+}
+
+func directFunctionValueType(result *body.Result, resolver typeannotation.Resolver, expr ast.Expr, defs map[symbol.ID]*ast.FunctionExpr) (typ.Type, bool) {
+	if fn, ok := expr.(*ast.FunctionExpr); ok {
+		return lowerFunctionExprType(fn, resolver)
+	}
+	if result == nil || len(defs) == 0 || expr == nil {
+		return nil, false
+	}
+	p, ok := result.ExpressionPath(expr)
+	if !ok || p.Symbol == 0 || len(p.Segments) != 0 {
+		return nil, false
+	}
+	def, ok := defs[p.Symbol]
+	if !ok || def == nil {
+		return nil, false
+	}
+	return lowerFunctionExprType(def, resolver)
 }
 
 func directCallResultAssignmentDiagnostic(point cfg.Point, call *ast.FuncCallExpr, name string, index int, got, want typ.Type, annotation ast.TypeExpr) diagnostic.Diagnostic {

@@ -1,0 +1,3 @@
+{
+  "description": "Composed any values remain untrusted across direct annotations, casts, raw field guards, and call arguments until a validator constructs a precise record."
+}

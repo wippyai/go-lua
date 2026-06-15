@@ -36,7 +36,8 @@ func applyObjectLiteralEntries(
 		if resolver.KeyAt(ctx.Point, entryPath) == "" {
 			continue
 		}
-		value, ok := sources.ValueOfSource(ctx.Point, entry.Source(), in, read)
+		source := entry.Source()
+		value, ok := sources.ValueOfSource(ctx.Point, source, in, readWithSamePointCallSource(ctx.Point, source, read, out))
 		if !ok {
 			continue
 		}

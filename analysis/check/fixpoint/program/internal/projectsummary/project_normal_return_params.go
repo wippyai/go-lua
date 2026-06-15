@@ -44,7 +44,7 @@ func projectNormalReturnParams(reg *axis.Registry, result ResultReader, exit sta
 		if !ok {
 			continue
 		}
-		out[i] = value
+		out[i] = portableBoundaryValue(reg, value)
 	}
 	return out
 }

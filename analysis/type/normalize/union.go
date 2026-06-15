@@ -25,7 +25,7 @@ func unionForEvidence(members []typ.Type) typ.Type {
 	}
 	if len(flat) == 0 && hasUnknown {
 		if hasNil {
-			return typ.NewOptional(typ.Unknown)
+			return Optional(typ.Unknown)
 		}
 		return typ.Unknown
 	}
@@ -35,7 +35,7 @@ func unionForEvidence(members []typ.Type) typ.Type {
 			return typ.Nil
 		}
 		if nonNil.Kind() != kind.Union {
-			return typ.NewOptional(nonNil)
+			return Optional(nonNil)
 		}
 
 		union := nonNil.(*typ.Union)
@@ -45,6 +45,28 @@ func unionForEvidence(members []typ.Type) typ.Type {
 		return typ.MaterializeUnion(withNil)
 	}
 	return typ.MaterializeUnion(flat)
+}
+
+// Optional applies the shared semantic optional construction policy
+// used when evidence proves a value may also be nil.
+func Optional(inner typ.Type) typ.Type {
+	if inner == nil {
+		return typ.Nil
+	}
+	unwrapped := unwrap.Annotated(inner)
+	if unwrapped == nil || unwrapped.Kind() == kind.Nil {
+		return typ.Nil
+	}
+	if unwrapped.Kind() == kind.Optional {
+		return inner
+	}
+	if typ.IsAny(unwrapped) {
+		return typ.Any
+	}
+	if unwrapped.Kind() == kind.Union {
+		return UnionForEvidence(typ.Nil, inner)
+	}
+	return typ.MaterializeOptional(inner)
 }
 
 func flattenUnionForRelationEvidence(members []typ.Type) (flat []typ.Type, hasNil, hasUnknown, hasAny bool) {

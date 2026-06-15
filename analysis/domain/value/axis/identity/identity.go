@@ -23,6 +23,15 @@ type ID struct {
 	Index uint64
 }
 
+// LuaFunction returns the stable identity token for a Lua function expression
+// bound by the Lua binder.
+func LuaFunction(symbol uint64) ID {
+	if symbol == 0 {
+		return ID{}
+	}
+	return ID{Kind: "lua.function", Site: "symbol", Index: symbol}
+}
+
 func (id ID) String() string {
 	return id.Kind + ":" + id.Site + "#" + strconv.FormatUint(id.Index, 10)
 }

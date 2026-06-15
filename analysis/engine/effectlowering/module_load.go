@@ -4,6 +4,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/typewitness"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/engine/callproducer"
 	factapply "github.com/wippyai/go-lua/analysis/engine/factapply"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	sourcevalue "github.com/wippyai/go-lua/analysis/engine/sourcevalue"
@@ -41,7 +42,7 @@ func ModuleLoadOutcomeProvider(config ModuleLoadOutcomeProviderConfig) factapply
 		if exports == nil || nameFor == nil || sources == nil {
 			return factapply.CallOutcome{}
 		}
-		name, ok := nameFor(ctx, factflow.CallProducerFromSite(site))
+		name, ok := nameFor(ctx, callproducer.FromSite(site))
 		if !ok || name != "require" {
 			return factapply.CallOutcome{}
 		}

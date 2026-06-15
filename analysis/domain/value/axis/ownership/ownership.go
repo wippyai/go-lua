@@ -1,6 +1,25 @@
 package ownership
 
-import internal "github.com/wippyai/go-lua/analysis/internal/hash"
+import (
+	"github.com/wippyai/go-lua/analysis/domain/value/axis"
+	internal "github.com/wippyai/go-lua/analysis/internal/hash"
+)
+
+var Key = axis.NewKey[Value]("ownership")
+
+func Spec() axis.Spec[Value] {
+	return axis.Spec[Value]{
+		Key:      Key,
+		Bottom:   Bottom,
+		Top:      Top,
+		Equal:    Equal,
+		LessOrEq: func(a, b Value) bool { return b.Covers(a) },
+		Join:     Join,
+		Meet:     Meet,
+		Widen:    Widen,
+		Hash:     Value.Hash,
+	}
+}
 
 // Value is the Ownership/Linearity axis abstraction of how a value is owned.
 //

@@ -1055,8 +1055,12 @@ func TestLexicalTypeNames(t *testing.T) {
 	if _, ok := r.TypeRef(outsideBlockUse); ok {
 		t.Fatalf("block-local type resolved outside its block")
 	}
-	if _, ok := r.TypeRef(beforeDefUse); ok {
-		t.Fatalf("later type declaration resolved before its declaration")
+	laterDecl, ok := r.TypeDef(laterDef)
+	if !ok {
+		t.Fatalf("later type declaration missing")
+	}
+	if got := mustTypeRef(t, r, beforeDefUse); got.ID != laterDecl.ID {
+		t.Fatalf("forward use resolved to %#v, want later declaration %#v", got, laterDecl)
 	}
 	selfDecl, ok := r.TypeDef(selfDef)
 	if !ok {

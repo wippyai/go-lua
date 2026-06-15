@@ -4,6 +4,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/lua/cfgfacts"
+	"github.com/wippyai/go-lua/analysis/lua/pathexpr"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
@@ -49,14 +50,42 @@ func (r *Result) extractFunctionDefinition(stmt *ast.FuncDefStmt, bindings *bind
 	if bindings != nil {
 		id, hasSymbol = bindings.FuncDefTargetSymbol(stmt)
 	}
+	targetPath, hasTargetPath := pathexpr.ResolveFuncName(stmt.Name, bindings)
+	if hasTargetPath && targetPath.IsEmpty() {
+		hasTargetPath = false
+	}
 	r.meta.SetFunctionDefinition(points[0], cfgfacts.FunctionDefinitionFact{
 		Stmt:            stmt,
 		Name:            stmt.Name,
 		Func:            stmt.Func,
 		TargetSymbol:    id,
 		HasTargetSymbol: hasSymbol,
+		TargetPath:      targetPath,
+		HasTargetPath:   hasTargetPath,
 	})
+	if hasTargetPath && len(targetPath.Segments) != 0 && stmt.Func != nil {
+		container := targetPath.Parent()
+		r.assignmentFacts[points[0]] = OrdinaryAssignmentFact{
+			Stmt:             nil,
+			Index:            0,
+			Target:           functionDefinitionTargetExpr(stmt),
+			Value:            stmt.Func,
+			Source:           assignmentValueSource([]ast.Expr{stmt.Func}, 0, nil),
+			Path:             targetPath,
+			HasPath:          true,
+			ContainerPath:    container,
+			HasContainerPath: !container.IsEmpty(),
+			Rhs:              []ast.Expr{stmt.Func},
+		}
+	}
 	return nil
+}
+
+func functionDefinitionTargetExpr(stmt *ast.FuncDefStmt) ast.Expr {
+	if stmt == nil || stmt.Name == nil || stmt.Name.Method != "" {
+		return nil
+	}
+	return stmt.Name.Func
 }
 
 func (r *Result) extractNumberFor(stmt *ast.NumberForStmt, bindings *bind.Result, points []cfg.Point) error {

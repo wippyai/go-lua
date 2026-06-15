@@ -5,6 +5,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/type/annotation"
 	"github.com/wippyai/go-lua/analysis/type/kind"
+	luatable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
@@ -57,7 +58,7 @@ func TestTypePrimitivesAndRefs(t *testing.T) {
 }
 
 func TestTypeResolver(t *testing.T) {
-	named := typ.RebuildRecord(typ.RecordParts{Fields: []typ.Field{{Name: "id", Type: typ.String}}})
+	named := luatable.RebuildRecord(typ.RecordParts{Fields: []typ.Field{{Name: "id", Type: typ.String}}})
 	got, ok := Type(&ast.TypeRefExpr{Path: []string{"models", "User"}}, resolver{"models.User": named})
 	if !ok {
 		t.Fatal("Type returned ok=false")
@@ -199,7 +200,7 @@ func TestTypeGenericInstantiation(t *testing.T) {
 }
 
 func TestTypeAmbientChannelInstantiation(t *testing.T) {
-	event := typ.RebuildRecord(typ.RecordParts{Fields: []typ.Field{{Name: "kind", Type: typ.String}}})
+	event := luatable.RebuildRecord(typ.RecordParts{Fields: []typ.Field{{Name: "kind", Type: typ.String}}})
 	got, ok := Type(&ast.GenericTypeExpr{
 		Base: &ast.TypeRefExpr{Path: []string{"Channel"}},
 		Args: []ast.TypeExpr{&ast.TypeRefExpr{Path: []string{"Event"}}},

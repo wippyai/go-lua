@@ -118,8 +118,8 @@ func TestRecordFieldsSorted(t *testing.T) {
 }
 
 func TestRecordOptionalMembersPreserveNilablePayloads(t *testing.T) {
-	optionalString := NewOptional(String)
-	optionalNumber := NewOptional(Number)
+	optionalString := MaterializeOptional(String)
+	optionalNumber := MaterializeOptional(Number)
 	assertOptionalPayload := func(t *testing.T, got Type, want Type) {
 		t.Helper()
 		if _, ok := got.(*Optional); !ok {

@@ -1,6 +1,11 @@
 package cfgfacts
 
-import "github.com/wippyai/go-lua/analysis/ir/cfg"
+import (
+	"sort"
+
+	"github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/ir/cfg"
+)
 
 // Metadata stores Lua sidecar facts keyed by CFG point.
 type Metadata struct {
@@ -12,6 +17,7 @@ type Metadata struct {
 	genericFors     map[cfg.Point]GenericForFact
 	labels          map[cfg.Point]LabelFact
 	gotos           map[cfg.Point]GotoFact
+	shortCircuits   map[cfg.Point]ShortCircuitGuardFact
 }
 
 // Assignment returns the assignment fact for point.
@@ -62,7 +68,10 @@ func (m *Metadata) SetTypeDefinition(point cfg.Point, fact TypeDefinitionFact) {
 // FunctionDefinition returns the function-definition fact for point.
 func (m Metadata) FunctionDefinition(point cfg.Point) (FunctionDefinitionFact, bool) {
 	fact, ok := m.functionDefs[point]
-	return fact, ok
+	if !ok {
+		return FunctionDefinitionFact{}, false
+	}
+	return copyFunctionDefinitionFact(fact), true
 }
 
 // SetFunctionDefinition records a function-definition fact for point.
@@ -70,7 +79,20 @@ func (m *Metadata) SetFunctionDefinition(point cfg.Point, fact FunctionDefinitio
 	if m.functionDefs == nil {
 		m.functionDefs = make(map[cfg.Point]FunctionDefinitionFact)
 	}
-	m.functionDefs[point] = fact
+	m.functionDefs[point] = copyFunctionDefinitionFact(fact)
+}
+
+func copyFunctionDefinitionFact(fact FunctionDefinitionFact) FunctionDefinitionFact {
+	fact.TargetPath = copyPath(fact.TargetPath)
+	return fact
+}
+
+func copyPath(p path.Path) path.Path {
+	if len(p.Segments) == 0 {
+		return p
+	}
+	p.Segments = append(p.Segments[:0:0], p.Segments...)
+	return p
 }
 
 // NumericFor returns the numeric-for fact for point.
@@ -116,6 +138,34 @@ func (m *Metadata) SetLabel(point cfg.Point, fact LabelFact) {
 		m.labels = make(map[cfg.Point]LabelFact)
 	}
 	m.labels[point] = fact
+}
+
+// ShortCircuitGuard returns the short-circuit guard fact for point.
+func (m Metadata) ShortCircuitGuard(point cfg.Point) (ShortCircuitGuardFact, bool) {
+	fact, ok := m.shortCircuits[point]
+	return fact, ok
+}
+
+// SetShortCircuitGuard records a short-circuit guard fact for point.
+func (m *Metadata) SetShortCircuitGuard(point cfg.Point, fact ShortCircuitGuardFact) {
+	if m.shortCircuits == nil {
+		m.shortCircuits = make(map[cfg.Point]ShortCircuitGuardFact)
+	}
+	m.shortCircuits[point] = fact
+}
+
+// ShortCircuitGuardPoints returns the points carrying short-circuit guard facts
+// in ascending order for deterministic extraction.
+func (m Metadata) ShortCircuitGuardPoints() []cfg.Point {
+	if len(m.shortCircuits) == 0 {
+		return nil
+	}
+	points := make([]cfg.Point, 0, len(m.shortCircuits))
+	for point := range m.shortCircuits {
+		points = append(points, point)
+	}
+	sort.Slice(points, func(i, j int) bool { return points[i] < points[j] })
+	return points
 }
 
 // Goto returns the goto fact for point.

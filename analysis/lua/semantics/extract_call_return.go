@@ -31,6 +31,7 @@ func (r *Result) extractCall(stmt *ast.FuncCallStmt, bindings *bind.Result, poin
 		}
 		r.calls[points[i]] = buildCallFact(stmt, callStmt, context, exprs, exprIndex, occurrence.call, bindings, nil, resolver)
 	}
+	r.extractObjectLiteral(stmt.Expr, resolver)
 	return nil
 }
 
@@ -59,5 +60,6 @@ func (r *Result) extractReturn(stmt *ast.ReturnStmt, bindings *bind.Result, poin
 		Exprs:   copyExprs(stmt.Exprs),
 		Sources: returnValueSources(stmt.Exprs, resolver),
 	}
+	r.extractObjectLiterals(stmt.Exprs, resolver)
 	return nil
 }

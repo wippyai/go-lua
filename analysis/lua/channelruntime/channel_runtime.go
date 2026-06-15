@@ -6,7 +6,7 @@ import (
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/lua/pathexpr"
-	"github.com/wippyai/go-lua/analysis/lua/typeaccess"
+	luatypeprojection "github.com/wippyai/go-lua/analysis/lua/typeprojection"
 	"github.com/wippyai/go-lua/analysis/lua/typeresolve"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/type/ambient"
@@ -42,7 +42,7 @@ func IsSelectCall(call *ast.FuncCallExpr, bindings *bind.Result) bool {
 // IsReceiveCaseCall reports whether call is a Channel<T>:case_receive() runtime
 // case. The receiver must resolve to a path whose static annotation is Channel.
 func IsReceiveCaseCall(call *ast.FuncCallExpr, bindings *bind.Result) bool {
-	if call == nil || call.Receiver == nil || call.Method != caseReceiveMethod || len(call.Args) != 0 || len(call.TypeArgs) != 0 {
+	if !IsReceiveCaseSyntax(call, bindings) {
 		return false
 	}
 	channelPath, ok := pathexpr.Resolve(call.Receiver, bindings)
@@ -51,6 +51,18 @@ func IsReceiveCaseCall(call *ast.FuncCallExpr, bindings *bind.Result) bool {
 	}
 	channelType, ok := pathType(bindings, channelPath)
 	return ok && isChannelType(channelType)
+}
+
+// IsReceiveCaseSyntax reports whether call has the runtime receive-case shape.
+// It does not prove the receiver is Channel<T>; callers that have a richer
+// module-aware type resolver must perform that proof before publishing payload
+// evidence.
+func IsReceiveCaseSyntax(call *ast.FuncCallExpr, bindings *bind.Result) bool {
+	if call == nil || bindings == nil || call.Receiver == nil || call.Method != caseReceiveMethod || len(call.Args) != 0 || len(call.TypeArgs) != 0 {
+		return false
+	}
+	channelPath, ok := pathexpr.Resolve(call.Receiver, bindings)
+	return ok && !channelPath.IsEmpty()
 }
 
 // pathType resolves the annotated type for a path, following field and index
@@ -67,7 +79,7 @@ func pathType(bindings *bind.Result, p pathdom.Path) (typ.Type, bool) {
 	if !ok {
 		return nil, false
 	}
-	return typeaccess.ProjectSegments(current, p.Segments)
+	return luatypeprojection.ApplySegments(current, p.Segments)
 }
 
 // isChannelType reports whether t is the ambient Channel<T> instantiation.

@@ -8,12 +8,12 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/state"
-	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/lua/cfgfacts"
 	"github.com/wippyai/go-lua/analysis/lua/pathexpr"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
+	"github.com/wippyai/go-lua/analysis/module/typelookup"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
@@ -23,6 +23,15 @@ func (r *Result) Registry() *axis.Registry {
 		return nil
 	}
 	return r.registry
+}
+
+// ModuleTypes returns the module type-definition read model used while
+// checking this body.
+func (r *Result) ModuleTypes() typelookup.Source {
+	if r == nil {
+		return typelookup.Source{}
+	}
+	return r.moduleTypes
 }
 
 func (r *Result) Graph() cfg.Graph {
@@ -59,21 +68,6 @@ func (r *Result) EntryState() (state.State, bool) {
 	return r.StateAt(graph.Entry())
 }
 
-func (r *Result) ReturnPoints() []cfg.Point {
-	graph := r.Graph()
-	if graph == nil {
-		return nil
-	}
-	points := graph.RPO()
-	out := make([]cfg.Point, 0, len(points))
-	for _, point := range points {
-		if _, ok := r.ReturnFact(point); ok {
-			out = append(out, point)
-		}
-	}
-	return out
-}
-
 func (r *Result) ReturnFact(point cfg.Point) (semantics.ReturnFact, bool) {
 	if r == nil || r.semantics == nil {
 		return semantics.ReturnFact{}, false
@@ -86,6 +80,17 @@ func (r *Result) LocalAssignment(point cfg.Point) (semantics.LocalAssignmentFact
 		return semantics.LocalAssignmentFact{}, false
 	}
 	return r.semantics.LocalAssignment(point)
+}
+
+// RequireAliasModulePath resolves a local require-binding alias to the module
+// path it imports. A statement such as local store_mod = require("store") binds
+// the alias store_mod to module path store, so a qualified type reference
+// store_mod.Store can be resolved against the importing module's manifest.
+func (r *Result) RequireAliasModulePath(name string) (string, bool) {
+	if r == nil || name == "" {
+		return "", false
+	}
+	return r.modules.ModulePathForAlias(name)
 }
 
 func (r *Result) ObjectLiteral(expr ast.Expr) (semantics.ObjectLiteralFact, bool) {
@@ -158,6 +163,20 @@ func (r *Result) Function() *ast.FunctionExpr {
 	return r.semantics.Function()
 }
 
+func (r *Result) FunctionSymbol(fn *ast.FunctionExpr) (symbol.ID, bool) {
+	if r == nil || r.bindings == nil || fn == nil {
+		return 0, false
+	}
+	return r.bindings.FunctionSymbol(fn)
+}
+
+func (r *Result) ExpressionFunction(expr factflow.ExprRef) (symbol.ID, bool) {
+	if r == nil {
+		return 0, false
+	}
+	return r.facts.ExpressionFunction(expr)
+}
+
 func (r *Result) FunctionResults() []*Result {
 	if r == nil || len(r.functions) == 0 {
 		return nil
@@ -198,97 +217,14 @@ func (r *Result) ExpressionPath(expr ast.Expr) (path.Path, bool) {
 }
 
 func (r *Result) CallSignature(site factflow.CallSite) (signature.Function, bool) {
-	if r == nil {
+	if r == nil || r.signatureID == nil {
 		return signature.Function{}, false
 	}
-	name, ok := r.stableCalleeName(site.CalleeSymbol(), site.CalleePath())
+	name, ok := r.signatureID.nameForSite(site)
 	if !ok {
 		return signature.Function{}, false
 	}
 	return r.signatures.Lookup(name)
-}
-
-func (r *Result) ReturnArity(point cfg.Point) (int, bool) {
-	if r == nil {
-		return 0, false
-	}
-	fact, ok := r.facts.Return(point)
-	if !ok {
-		return 0, false
-	}
-	return len(fact.Sources()), true
-}
-
-func (r *Result) ReturnValueSources(point cfg.Point) ([]factflow.ValueSource, bool) {
-	if r == nil {
-		return nil, false
-	}
-	fact, ok := r.facts.Return(point)
-	if !ok {
-		return nil, false
-	}
-	return fact.Sources(), true
-}
-
-func (r *Result) ReturnPresenceRelations(point cfg.Point) []factflow.ReturnPresenceRelation {
-	if r == nil {
-		return nil
-	}
-	relations := r.facts.ReturnPresenceRelations(point)
-	if delegated := r.openTailReturnPresenceRelations(point); len(delegated) != 0 {
-		relations = append(relations, delegated...)
-	}
-	return relations
-}
-
-func (r *Result) openTailReturnPresenceRelations(point cfg.Point) []factflow.ReturnPresenceRelation {
-	if r == nil || r.callOutcome == nil {
-		return nil
-	}
-	ret, ok := r.facts.Return(point)
-	if !ok {
-		return nil
-	}
-	sources := ret.Sources()
-	if len(sources) != 1 {
-		return nil
-	}
-	source := sources[0]
-	if source.Kind != factflow.ValueSourceCall || !source.HasCallPoint || !source.OpenTail || !source.Expanded {
-		return nil
-	}
-	site, ok := r.facts.CallSite(source.CallPoint)
-	if !ok {
-		return nil
-	}
-	in, ok := r.StateAt(source.CallPoint)
-	if !ok {
-		return nil
-	}
-	graph := r.Graph()
-	ctx := transfer.NodeContext{
-		Graph:    graph,
-		Point:    source.CallPoint,
-		Registry: r.registry,
-		Read:     r.boundaryRead,
-	}
-	if graph != nil {
-		ctx.Node = graph.Node(source.CallPoint)
-	}
-	outcome := r.callOutcome(ctx, site, in, r.boundaryRead)
-	if len(outcome.ReturnPresenceRelations) == 0 {
-		return nil
-	}
-	out := make([]factflow.ReturnPresenceRelation, 0, len(outcome.ReturnPresenceRelations))
-	for _, relation := range outcome.ReturnPresenceRelations {
-		out = append(out, factflow.NewReturnPresenceRelation(
-			relation.TriggerIndex,
-			relation.TriggerPresence,
-			relation.TargetIndex,
-			relation.TargetPresence,
-		))
-	}
-	return out
 }
 
 func (r *Result) ExpressionCondition(ref factflow.ExprRef) (factflow.ExpressionCondition, bool) {
@@ -296,54 +232,6 @@ func (r *Result) ExpressionCondition(ref factflow.ExprRef) (factflow.ExpressionC
 		return factflow.ExpressionCondition{}, false
 	}
 	return r.facts.ExpressionCondition(ref)
-}
-
-func (r *Result) ParameterValueSlots() []statekey.Value {
-	if r == nil || r.bindings == nil {
-		return nil
-	}
-	slots := r.bindings.ParamSlots(r.Function())
-	out := make([]statekey.Value, 0, len(slots))
-	for _, slot := range slots {
-		valueSlot := statekey.SymbolValue(slot.Symbol)
-		if valueSlot == "" {
-			continue
-		}
-		out = append(out, valueSlot)
-	}
-	return out
-}
-
-func (r *Result) ReassignedParameterValueSlots() map[statekey.Value]struct{} {
-	if r == nil || r.bindings == nil {
-		return nil
-	}
-	params := make(map[statekey.Value]struct{})
-	for _, slot := range r.ParameterValueSlots() {
-		params[slot] = struct{}{}
-	}
-	if len(params) == 0 {
-		return nil
-	}
-	out := make(map[statekey.Value]struct{})
-	graph := r.Graph()
-	if graph == nil {
-		return nil
-	}
-	for _, point := range graph.RPO() {
-		assignment, ok := r.facts.RootAssignment(point)
-		if !ok || assignment.Kind() != factflow.RootAssignmentOrdinaryRootWrite {
-			continue
-		}
-		slot := statekey.SymbolValue(assignment.TargetSymbol())
-		if _, ok := params[slot]; ok {
-			out[slot] = struct{}{}
-		}
-	}
-	if len(out) == 0 {
-		return nil
-	}
-	return out
 }
 
 func (r *Result) LocalSymbols(stmt *ast.LocalAssignStmt) []symbol.ID {

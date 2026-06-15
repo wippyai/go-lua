@@ -119,7 +119,7 @@ func functionExpressionType(result *body.Result, fn *ast.FunctionExpr) (typ.Type
 			expr.Variadic = fn.ParList.VarargType
 		}
 	}
-	return typeresolve.New(result).Type(expr)
+	return typeresolve.NewWithExternal(result, result.ModuleTypes()).Type(expr)
 }
 
 func typeExprAt(types []ast.TypeExpr, index int) ast.TypeExpr {

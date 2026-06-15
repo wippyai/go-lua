@@ -2,6 +2,7 @@ package factapply
 
 import (
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/engine/callproducer"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	sourcevalue "github.com/wippyai/go-lua/analysis/engine/sourcevalue"
 	"github.com/wippyai/go-lua/analysis/engine/state"
@@ -15,6 +16,7 @@ func callResultReader(
 	facts factflow.Facts,
 	outcomeProvider CallOutcomeProvider,
 	resolver *visibility.Resolver,
+	projectPath PathTypeProjector,
 ) (func(cfg.Point) state.State, func(cfg.Point, state.State) state.State) {
 	rawRead := ctx.Read
 	if rawRead == nil {
@@ -34,7 +36,7 @@ func callResultReader(
 		}
 		active[point] = true
 		activeBase[point] = base
-		out := materializeCallOutcome(callContextAt(ctx, point, read), facts, outcomeProvider, resolver, read, base, base)
+		out := materializeCallOutcome(callContextAt(ctx, point, read), facts, outcomeProvider, resolver, projectPath, read, base, base)
 		delete(active, point)
 		delete(activeBase, point)
 		cache[point] = out
@@ -62,19 +64,21 @@ func materializeCallOutcome(
 	facts factflow.Facts,
 	outcomeProvider CallOutcomeProvider,
 	resolver *visibility.Resolver,
+	projectPath PathTypeProjector,
 	read func(cfg.Point) state.State,
 	in state.State,
 	out state.State,
 ) state.State {
-	site, ok := facts.CallSite(ctx.Point)
+	siteView, ok := facts.CallSiteView(ctx.Point)
 	if !ok {
 		return out
 	}
-	_, hasProducer := facts.Call(ctx.Point)
+	hasProducer := callproducer.Has(facts, ctx.Point)
 	if hasProducer {
-		out = clearCallProducerReturnSlots(ctx, site, out)
+		out = clearCallProducerReturnSlots(ctx, siteView, out)
 	}
 	if outcomeProvider != nil {
+		site := siteView.CallSite()
 		outcome := outcomeProvider(ctx, site, in, read)
 		if hasProducer {
 			for _, result := range outcome.Results {
@@ -84,8 +88,9 @@ func materializeCallOutcome(
 				out = out.WriteReturnSlot(ctx.Registry, result.Index, result.Value)
 			}
 		}
-		out = applyCallOutcomeFacts(ctx, facts, resolver, out, site, outcome)
+		out = applyCallOutcomeFacts(ctx, facts, resolver, projectPath, out, site, outcome)
 	}
+	out = applyChannelSelectResult(ctx, resolver, out, facts.ChannelSelects(ctx.Point))
 	if hasProducer {
 		for _, result := range facts.CallResultValues(ctx.Point) {
 			out = constrainReturnSlot(ctx, out, result)
@@ -94,13 +99,14 @@ func materializeCallOutcome(
 	return out
 }
 
-func clearCallProducerReturnSlots(ctx transfer.NodeContext, site factflow.CallSite, out state.State) state.State {
-	for _, target := range site.ResultTargets() {
+func clearCallProducerReturnSlots(ctx transfer.NodeContext, site factflow.CallSiteView, out state.State) state.State {
+	site.ForEachResultTarget(func(target factflow.CallResultTargetView) bool {
 		if target.ResultIndex() < 0 {
-			continue
+			return true
 		}
 		out = out.WriteReturnSlot(ctx.Registry, target.ResultIndex(), product.Bottom(ctx.Registry))
-	}
+		return true
+	})
 	return out
 }
 
@@ -125,7 +131,7 @@ func applyReturn(
 	fact factflow.Return,
 ) state.State {
 	for i, source := range fact.Sources() {
-		value, ok := sources.ValueOfSource(ctx.Point, source, in, read)
+		value, ok := sources.ValueOfSource(ctx.Point, source, in, readWithSamePointCallSource(ctx.Point, source, read, out))
 		if !ok {
 			continue
 		}

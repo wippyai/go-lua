@@ -20,9 +20,10 @@ import (
 // ReturnTypeOps carries caller-owned type operations needed by return
 // transforms that are not part of engine ownership.
 type ReturnTypeOps struct {
-	CallableReturn func(typ.Type) (typ.Type, bool)
-	ElementOf      func(typ.Type) (typ.Type, bool)
-	TypeProjection func(typ.Type, projection.Projection) (typ.Type, bool)
+	CallableReturn         func(typ.Type) (typ.Type, bool)
+	ElementOf              func(typ.Type) (typ.Type, bool)
+	TypeProjection         func(typ.Type, projection.Projection) (typ.Type, bool)
+	InstantiateGenericCall func(*typ.Function, []typ.Type) (*typ.Function, bool)
 }
 
 func signatureReturnValue(
@@ -208,6 +209,86 @@ func typeProjectionReturnValue(
 
 func returnValueFromType(reg *axis.Registry, t typ.Type) product.Value {
 	return typevalue.WithWitness(reg, typevalue.FromType(reg, t), t)
+}
+
+func instantiateSignatureForCall(
+	ctx transfer.NodeContext,
+	facts factflow.Facts,
+	sources sourcevalue.SourceValues,
+	argumentType SignatureArgumentTypeFunc,
+	sig signature.Function,
+	site factflow.CallSite,
+	in state.State,
+	read func(cfg.Point) state.State,
+	returnTypeOps ReturnTypeOps,
+) signature.Function {
+	if sig.Type == nil || len(sig.Type.TypeParams) == 0 || returnTypeOps.InstantiateGenericCall == nil ||
+		(sources == nil && argumentType == nil) {
+		return sig
+	}
+	args, ok := signatureCallArgumentTypes(ctx, facts, sources, argumentType, site, in, read)
+	if !ok {
+		return sig
+	}
+	instantiated, ok := returnTypeOps.InstantiateGenericCall(sig.Type, args)
+	if !ok || instantiated == nil {
+		return sig
+	}
+	sig.Type = instantiated
+	return sig
+}
+
+func signatureCallArgumentTypes(
+	ctx transfer.NodeContext,
+	facts factflow.Facts,
+	sources sourcevalue.SourceValues,
+	argumentType SignatureArgumentTypeFunc,
+	site factflow.CallSite,
+	in state.State,
+	read func(cfg.Point) state.State,
+) ([]typ.Type, bool) {
+	if factSite, ok := facts.CallSite(ctx.Point); ok {
+		site = factSite
+	}
+	argSources := site.ArgumentSources()
+	if len(argSources) == 0 {
+		return nil, false
+	}
+	resolver := sourcevalue.WithExpressionRefinements(ctx.Registry, sources, facts.ExpressionRefinements())
+	args := make([]typ.Type, len(argSources))
+	seen := false
+	for i, source := range argSources {
+		t, ok := signatureCallArgumentType(ctx, source, in, read, argumentType, resolver)
+		if !ok {
+			continue
+		}
+		args[i] = t
+		seen = true
+	}
+	return args, seen
+}
+
+func signatureCallArgumentType(
+	ctx transfer.NodeContext,
+	source factflow.ValueSource,
+	in state.State,
+	read func(cfg.Point) state.State,
+	argumentType SignatureArgumentTypeFunc,
+	resolver sourcevalue.SourceValues,
+) (typ.Type, bool) {
+	if argumentType != nil {
+		if t, ok := argumentType(ctx, source, in, read); ok {
+			return t, true
+		}
+	}
+	if resolver == nil {
+		return nil, false
+	}
+	value, ok := resolver.ValueOfSource(ctx.Point, source, in, read)
+	if !ok {
+		return nil, false
+	}
+	return typevalue.TypeOf(ctx.Registry, value)
 }
 
 func activeReturnTransform(sig signature.Function, index int) (returns.ReturnType, bool) {

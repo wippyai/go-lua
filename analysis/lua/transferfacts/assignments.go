@@ -7,8 +7,10 @@ import (
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
 	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
-	"github.com/wippyai/go-lua/analysis/lua/typeresolve"
+	"github.com/wippyai/go-lua/analysis/lua/typecall"
 	"github.com/wippyai/go-lua/analysis/lua/valueexpr"
+	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/analysis/type/unwrap"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
 
@@ -18,7 +20,7 @@ func (l *lowerer) localAssignment(fact semantics.LocalAssignmentFact) (factflow.
 	}
 	target := path.NewPath(fact.Symbol, fact.Name)
 	source := l.valueSource(fact.Source)
-	if declaredValueApplies(fact) {
+	if l.declaredValueApplies(fact) {
 		if declared, ok := l.declaredValue(fact.Type); ok {
 			return factflow.NewRootAssignmentWithDeclaredContractValue(factflow.RootAssignmentLocalDeclaration, fact.Symbol, target, source, declared), true
 		}
@@ -26,14 +28,108 @@ func (l *lowerer) localAssignment(fact semantics.LocalAssignmentFact) (factflow.
 	return factflow.NewRootAssignment(factflow.RootAssignmentLocalDeclaration, fact.Symbol, target, source), true
 }
 
-func declaredValueApplies(fact semantics.LocalAssignmentFact) bool {
+func (l *lowerer) declaredValueApplies(fact semantics.LocalAssignmentFact) bool {
 	if fact.Type == nil || fact.Source.Kind != sourceprovenance.SourceExpression {
 		return false
 	}
-	if _, ok := valueexpr.LiteralType(fact.Expr); !ok {
+	if _, ok := valueexpr.LiteralType(fact.Expr); ok {
+		return true
+	}
+	t, ok := l.resolveType(fact.Type)
+	if !ok {
 		return false
 	}
-	return true
+	if typ.IsAny(t) || typ.IsUnknown(t) {
+		return true
+	}
+	if !tableConstructorExpr(fact.Expr) {
+		return false
+	}
+	// A table constructor declared as a method-bearing record (the class/builder
+	// instance pattern) carries the declared contract value. Such literals wire
+	// method fields to callables defined later in the module or across modules,
+	// which resolve to nothing at construction and drop out of the inferred
+	// record; the declared annotation is the checked contract for the local.
+	if recordWithCallableField(t) {
+		return true
+	}
+	// A non-empty table constructor declared as an array carries the declared
+	// array contract value. A homogeneous array literal infers positionally as a
+	// fixed-arity tuple with per-element-precise types; the declared annotation
+	// is the authoritative array contract for the local. The literal is still
+	// verified element-wise against the annotation at the assignment site. An
+	// empty literal is left to its inferred value so later table.insert flow
+	// tracks populated indexes precisely.
+	return reachesArray(t) && nonEmptyTableConstructor(fact.Expr)
+}
+
+func nonEmptyTableConstructor(expr ast.Expr) bool {
+	inner, ok := sourceprovenance.ProofInner(expr)
+	if !ok {
+		return false
+	}
+	table, ok := inner.(*ast.TableExpr)
+	return ok && len(table.Fields) > 0
+}
+
+func reachesArray(t typ.Type) bool {
+	return reachesArrayDepth(t, 0)
+}
+
+func reachesArrayDepth(t typ.Type, depth int) bool {
+	if t == nil || depth > typ.DefaultRecursionDepth {
+		return false
+	}
+	switch v := unwrap.Annotated(t).(type) {
+	case *typ.Array:
+		return true
+	case *typ.Alias:
+		return reachesArrayDepth(v.UnaliasedTarget(), depth+1)
+	case *typ.Recursive:
+		if v.Body == nil || v.Body == t {
+			return false
+		}
+		return reachesArrayDepth(v.Body, depth+1)
+	default:
+		return false
+	}
+}
+
+func tableConstructorExpr(expr ast.Expr) bool {
+	inner, ok := sourceprovenance.ProofInner(expr)
+	if !ok {
+		return false
+	}
+	_, ok = inner.(*ast.TableExpr)
+	return ok
+}
+
+func recordWithCallableField(t typ.Type) bool {
+	return recordWithCallableFieldDepth(t, 0)
+}
+
+func recordWithCallableFieldDepth(t typ.Type, depth int) bool {
+	if t == nil || depth > typ.DefaultRecursionDepth {
+		return false
+	}
+	switch v := unwrap.Annotated(t).(type) {
+	case *typ.Alias:
+		return recordWithCallableFieldDepth(v.UnaliasedTarget(), depth+1)
+	case *typ.Recursive:
+		if v.Body == nil || v.Body == t {
+			return false
+		}
+		return recordWithCallableFieldDepth(v.Body, depth+1)
+	case *typ.Record:
+		for i := range v.Fields {
+			if _, ok := typecall.Callable(v.Fields[i].Type); ok {
+				return true
+			}
+		}
+		return false
+	default:
+		return false
+	}
 }
 
 func (l *lowerer) ordinaryAssignment(fact semantics.OrdinaryAssignmentFact) (factflow.RootAssignment, bool) {
@@ -126,9 +222,10 @@ func (l *lowerer) declaredValue(expr ast.TypeExpr) (product.Value, bool) {
 	if expr == nil {
 		return product.Value{}, false
 	}
-	t, ok := typeresolve.New(l.bindings).Type(expr)
+	t, ok := l.resolveType(expr)
 	if !ok {
 		return product.Value{}, false
 	}
-	return typevalue.FromType(l.registry, t), true
+	value := typevalue.FromType(l.registry, t)
+	return typevalue.WithWitness(l.registry, value, t), true
 }

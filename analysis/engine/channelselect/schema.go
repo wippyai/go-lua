@@ -4,6 +4,7 @@ package channelselect
 import (
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
+	"github.com/wippyai/go-lua/analysis/type/ambient"
 	"github.com/wippyai/go-lua/analysis/type/kind"
 	"github.com/wippyai/go-lua/analysis/type/normalize"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
@@ -43,6 +44,17 @@ func ResultValueType(selectID string, cases []ResultCase) (typ.Type, bool) {
 		caseTypes = append(caseTypes, ResultCaseType(selectID, c.Index, c.Payload))
 	}
 	return normalize.UnionForEvidence(caseTypes...), true
+}
+
+// ChannelPayloadType returns the payload carried by the ambient Channel<T>
+// type. The select engine owns this check so flow-sensitive select result
+// materialization does not need to depend on Lua lowering packages.
+func ChannelPayloadType(t typ.Type) (typ.Type, bool) {
+	inst, ok := unwrap.Alias(unwrap.Annotations(t)).(*typ.Instantiated)
+	if !ok || inst.Generic == nil || inst.Generic.Name != ambient.Channel || len(inst.TypeArgs) != 1 || inst.TypeArgs[0] == nil {
+		return nil, false
+	}
+	return inst.TypeArgs[0], true
 }
 
 // CaseMarkerType builds the opaque channel identity marker stored in a select

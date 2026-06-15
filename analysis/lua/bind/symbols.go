@@ -10,6 +10,12 @@ type globalSymbol struct {
 	predeclared bool
 }
 
+// LocalOrigin identifies the local declaration slot that introduced a symbol.
+type LocalOrigin struct {
+	Stmt  *ast.LocalAssignStmt
+	Index int
+}
+
 // SymbolOf returns the declaration symbol bound to an identifier occurrence.
 func (r *Result) SymbolOf(ident *ast.IdentExpr) (symbol.ID, bool) {
 	if r == nil || ident == nil {
@@ -114,6 +120,21 @@ func (r *Result) LocalSymbolAt(stmt *ast.LocalAssignStmt, index int) (symbol.ID,
 		return 0, false
 	}
 	return ids[index], true
+}
+
+// LocalOrigin returns the declaration statement and slot for a local symbol.
+func (r *Result) LocalOrigin(id symbol.ID) (LocalOrigin, bool) {
+	if r == nil || id == 0 {
+		return LocalOrigin{}, false
+	}
+	for stmt, ids := range r.localSymbols {
+		for i, sym := range ids {
+			if sym == id {
+				return LocalOrigin{Stmt: stmt, Index: i}, true
+			}
+		}
+	}
+	return LocalOrigin{}, false
 }
 
 // SymbolTypeAnnotation returns the declared type expression for a parameter or

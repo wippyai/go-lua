@@ -8,6 +8,11 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/domain/value/standard"
+	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
+	typenormalize "github.com/wippyai/go-lua/analysis/type/normalize"
+	typetable "github.com/wippyai/go-lua/analysis/type/table"
+	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
 func TestSummaryKeyComparableAndDeterministicOrdering(t *testing.T) {
@@ -255,6 +260,50 @@ func TestJoinWithMissingReturnSlot(t *testing.T) {
 	}
 	if !product.Equal(reg, got.Returns[0], product.Top()) {
 		t.Fatalf("Join missing slot with top = %#v, want top", got.Returns[0])
+	}
+}
+
+func TestJoinReturnSlotsPreservesNilRecordUnionWitness(t *testing.T) {
+	reg := standard.Registry()
+	record := typetable.NewRecord().Field("answer", typ.String).Build()
+	recordValue := typevalue.WithWitness(reg, typevalue.FromType(reg, record), record)
+
+	got := Join(reg,
+		Summary{Returns: []product.Value{product.Absent(reg)}},
+		Summary{Returns: []product.Value{recordValue}},
+	)
+	if len(got.Returns) != 1 {
+		t.Fatalf("Join returned %d slots, want 1", len(got.Returns))
+	}
+	gotType, ok := typevalue.TypeOf(reg, got.Returns[0])
+	wantType := typenormalize.Optional(record)
+	if !ok || !typ.TypeEquals(gotType, wantType) {
+		t.Fatalf("joined return type = %v/%v, want %v", gotType, ok, wantType)
+	}
+	if gotPresence := product.PresenceOf(got.Returns[0]); !presence.Equal(gotPresence, presence.Maybe()) {
+		t.Fatalf("joined return presence = %s, want maybe", gotPresence)
+	}
+}
+
+func TestWidenReturnSlotsPreservesNilRecordUnionWitness(t *testing.T) {
+	reg := standard.Registry()
+	record := typetable.NewRecord().Field("answer", typ.String).Build()
+	recordValue := typevalue.WithWitness(reg, typevalue.FromType(reg, record), record)
+
+	got := Widen(reg,
+		Summary{Returns: []product.Value{product.Absent(reg)}},
+		Summary{Returns: []product.Value{recordValue}},
+	)
+	if len(got.Returns) != 1 {
+		t.Fatalf("Widen returned %d slots, want 1", len(got.Returns))
+	}
+	gotType, ok := typevalue.TypeOf(reg, got.Returns[0])
+	wantType := typenormalize.Optional(record)
+	if !ok || !typ.TypeEquals(gotType, wantType) {
+		t.Fatalf("widened return type = %v/%v, want %v", gotType, ok, wantType)
+	}
+	if gotPresence := product.PresenceOf(got.Returns[0]); !presence.Equal(gotPresence, presence.Maybe()) {
+		t.Fatalf("widened return presence = %s, want maybe", gotPresence)
 	}
 }
 

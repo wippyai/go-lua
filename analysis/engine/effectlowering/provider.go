@@ -4,16 +4,22 @@ package effectlowering
 
 import (
 	"github.com/wippyai/go-lua/analysis/domain/effect/signature"
+	"github.com/wippyai/go-lua/analysis/engine/callproducer"
 	factapply "github.com/wippyai/go-lua/analysis/engine/factapply"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	sourcevalue "github.com/wippyai/go-lua/analysis/engine/sourcevalue"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
+	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
 // SignatureNameFunc maps one call producer in context to a stable signature name.
 type SignatureNameFunc func(ctx transfer.NodeContext, call factflow.CallProducer) (string, bool)
+
+// SignatureArgumentTypeFunc resolves a call argument source to a type when the
+// caller owns stronger evidence than the generic source-value projection.
+type SignatureArgumentTypeFunc func(ctx transfer.NodeContext, source factflow.ValueSource, in state.State, read func(cfg.Point) state.State) (typ.Type, bool)
 
 // SignatureLookup is the bounded read view required for signature-backed call
 // results.
@@ -29,6 +35,7 @@ type SignatureOutcomeProviderConfig struct {
 	ReturnTypeOps ReturnTypeOps
 	Facts         factflow.Facts
 	Sources       sourcevalue.SourceValues
+	ArgumentType  SignatureArgumentTypeFunc
 }
 
 // SignatureOutcomeProvider materializes declared signature return types into
@@ -39,11 +46,12 @@ func SignatureOutcomeProvider(config SignatureOutcomeProviderConfig) factapply.C
 	returnTypeOps := config.ReturnTypeOps
 	facts := config.Facts
 	sources := config.Sources
+	argumentType := config.ArgumentType
 	return func(ctx transfer.NodeContext, site factflow.CallSite, in state.State, read func(cfg.Point) state.State) factapply.CallOutcome {
 		if signatures == nil || nameFor == nil {
 			return factapply.CallOutcome{}
 		}
-		call := factflow.CallProducerFromSite(site)
+		call := callproducer.FromSite(site)
 		name, ok := nameFor(ctx, call)
 		if !ok {
 			return factapply.CallOutcome{}
@@ -52,6 +60,7 @@ func SignatureOutcomeProvider(config SignatureOutcomeProviderConfig) factapply.C
 		if !ok {
 			return factapply.CallOutcome{}
 		}
+		sig = instantiateSignatureForCall(ctx, facts, sources, argumentType, sig, site, in, read, returnTypeOps)
 		out := factapply.CallOutcome{
 			ReturnPresenceRelations: signatureReturnPresenceRelations(sig),
 			ParamPathRefinements:    signatureParamPathRefinements(ctx, sig, site),

@@ -30,7 +30,8 @@ func applyPathStaticMemberWrite(
 	if targetKey == "" {
 		return out
 	}
-	value, ok := sources.ValueOfSource(ctx.Point, fact.Source(), in, read)
+	source := fact.Source()
+	value, ok := sources.ValueOfSource(ctx.Point, source, in, readWithSamePointCallSource(ctx.Point, source, read, out))
 	if !ok {
 		return out
 	}
@@ -53,7 +54,7 @@ func applyDynamicIndexWrite(
 	return out.WriteDynamicIndexFact(ctx.Registry, dynamicindex.Key{
 		Table: tableKey,
 		Site:  dynamicIndexSite(ctx.Point),
-	}, dynamicIndexFact(ctx, sources, read, in, fact))
+	}, dynamicIndexFact(ctx, sources, read, in, out, fact))
 }
 
 func dynamicIndexFact(
@@ -61,6 +62,7 @@ func dynamicIndexFact(
 	sources sourcevalue.SourceValues,
 	read func(cfg.Point) state.State,
 	in state.State,
+	current state.State,
 	fact factflow.DynamicIndexWrite,
 ) dynamicindex.Fact {
 	out := dynamicindex.Fact{
@@ -71,13 +73,15 @@ func dynamicIndexFact(
 	}
 	readKey, readValue := dynamicIndexReadback(fact.ReadbackIntent())
 	if readKey {
-		if keyValue, ok := sources.ValueOfSource(ctx.Point, fact.KeySource(), in, read); ok {
+		keySource := fact.KeySource()
+		if keyValue, ok := sources.ValueOfSource(ctx.Point, keySource, in, readWithSamePointCallSource(ctx.Point, keySource, read, current)); ok {
 			out.KeyValue = keyValue
 			out.KeyPresence = product.PresenceOf(keyValue)
 		}
 	}
 	if readValue {
-		if value, ok := sources.ValueOfSource(ctx.Point, fact.Source(), in, read); ok {
+		source := fact.Source()
+		if value, ok := sources.ValueOfSource(ctx.Point, source, in, readWithSamePointCallSource(ctx.Point, source, read, current)); ok {
 			out.Value = value
 		}
 	}
@@ -167,6 +171,16 @@ func branchProofAt(
 			Path:  pathKey,
 			Other: other,
 		}, true
+	case factflow.BranchProofIndexInRange:
+		other, ok := branchProofOtherPathKeyAt(resolver, point, proof)
+		if !ok {
+			return pathevidence.BranchProof{}, false
+		}
+		return pathevidence.BranchProof{
+			Kind:  pathevidence.BranchProofIndexInRange,
+			Path:  pathKey,
+			Other: other,
+		}, true
 	default:
 		return pathevidence.BranchProof{}, false
 	}
@@ -226,6 +240,10 @@ func channelSelectFactAt(
 		if fact.Case == "" {
 			return channelselectfact.Fact{}, false
 		}
+	}
+	if payload, ok := event.PayloadValue(); ok {
+		fact.Payload = payload
+		fact.HasPayload = true
 	}
 	return fact, true
 }

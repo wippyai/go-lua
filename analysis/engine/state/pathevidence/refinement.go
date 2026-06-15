@@ -9,11 +9,8 @@ import (
 // ReadPathKey reads a point-local path refinement key. Missing keys read as
 // product.Bottom(reg).
 func (l Lane) ReadPathKey(reg *axis.Registry, pathKey pathdom.PathKey) product.Value {
-	if pathKey == "" {
+	if pathKey == "" || l.refinementsBottom {
 		return product.Bottom(reg)
-	}
-	if l.refinementsTop {
-		return product.Top()
 	}
 	if v, ok := l.refinements[pathKey]; ok {
 		return v
@@ -28,13 +25,10 @@ func (l Lane) WritePathKey(reg *axis.Registry, pathKey pathdom.PathKey, value pr
 	if pathKey == "" {
 		return l, false
 	}
-	if l.refinementsTop {
-		panic("state: cannot finite-write path key into top path lane")
-	}
 	valueDomain := product.Domain(reg)
 	if valueDomain.Equal(value, valueDomain.Bottom()) {
 		refinements, changed := deletePathValueEntry(l.refinements, pathKey)
-		if !changed {
+		if !changed && !l.refinementsBottom {
 			return l, false
 		}
 		out := l.Reachable()

@@ -19,6 +19,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/projection"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/analysis/type/typeexpr"
 )
 
 func TestManifestDefineTypeAndSetExport(t *testing.T) {
@@ -51,7 +52,7 @@ func TestManifestDefineTypeAndSetExport(t *testing.T) {
 func TestManifestRoundTrip(t *testing.T) {
 	m := New("example/module")
 	m.Version = "v1"
-	m.DefineType("Status", typ.NewUnion(
+	m.DefineType("Status", typeexpr.Union(
 		typ.LiteralString("ready"),
 		typ.LiteralString("pending"),
 	))
@@ -94,7 +95,7 @@ func TestManifestRoundTrip(t *testing.T) {
 }
 
 func TestManifestRoundTripNormalizesMapKeysOnDecode(t *testing.T) {
-	mapKey := typ.NewUnion(typ.String, typ.Nil)
+	mapKey := typ.MaterializeUnion([]typ.Type{typ.String, typ.Nil})
 
 	m := New("example/keys")
 	m.DefineType("Writable", typ.NewMap(mapKey, typ.Number))
@@ -132,6 +133,7 @@ func TestManifestRoundTripNamedFunctionSignatureEffects(t *testing.T) {
 		ownership.Store{Param: effect.ParamRef{Index: 0}, Into: effect.ParamRef{Index: 1}},
 		mutation.LengthChange{Target: effect.ParamRef{Index: 1}, Delta: -1},
 		postcondition.NormalReturnRefinement{Target: effect.ParamRef{Index: 0}, Refinement: postcondition.Present{}},
+		postcondition.NormalReturnRefinement{Target: effect.ParamRef{Index: 1}, Refinement: postcondition.Absent{}},
 		returns.Return{ReturnIndex: 0, Transform: returns.ElementOf{Source: effect.ParamRef{Index: 1}}},
 		returns.ReturnLength{ReturnIndex: 0, Length: expr.Add(expr.PL(1), expr.C(1))},
 	)
@@ -203,6 +205,7 @@ func TestManifestEffectLabelRoundTripPreservesRowsAndSelectors(t *testing.T) {
 		{"ownership send", ownership.Send{FromParam: 1}},
 		{"ownership freeze", ownership.Freeze{Param: p2}},
 		{"postcondition normal return present", postcondition.NormalReturnRefinement{Target: p0, Refinement: postcondition.Present{}}},
+		{"postcondition normal return absent", postcondition.NormalReturnRefinement{Target: p1, Refinement: postcondition.Absent{}}},
 		{"returns return", returns.Return{ReturnIndex: 0, Transform: returns.ElementOf{Source: p0}}},
 		{"returns error return", returns.ErrorReturn{ValueIndex: 0, ErrorIndex: 1}},
 		{"returns return length", returns.ReturnLength{ReturnIndex: 0, Length: expr.MinExpr(expr.PL(0), expr.C(3))}},

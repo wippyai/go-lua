@@ -6,6 +6,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/annotation"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/analysis/type/typeexpr"
 )
 
 // ---------------------------------------------------------------------------
@@ -68,7 +69,7 @@ func BenchmarkValidate_Any(b *testing.B) {
 func BenchmarkValidate_OptionalNumber_Hit(b *testing.B) {
 	L := NewState()
 	defer L.Close()
-	optNum := &LType{inner: typ.NewOptional(typ.Number)}
+	optNum := &LType{inner: typeexpr.Optional(typ.Number)}
 	for b.ResetTimer(); b.N > 0; b.N-- {
 		optNum.Validate(L, LNumber(42))
 	}
@@ -77,7 +78,7 @@ func BenchmarkValidate_OptionalNumber_Hit(b *testing.B) {
 func BenchmarkValidate_OptionalNumber_Nil(b *testing.B) {
 	L := NewState()
 	defer L.Close()
-	optNum := &LType{inner: typ.NewOptional(typ.Number)}
+	optNum := &LType{inner: typeexpr.Optional(typ.Number)}
 	for b.ResetTimer(); b.N > 0; b.N-- {
 		optNum.Validate(L, LNil)
 	}
@@ -86,7 +87,7 @@ func BenchmarkValidate_OptionalNumber_Nil(b *testing.B) {
 func BenchmarkValidate_OptionalTable_Hit(b *testing.B) {
 	L := NewState()
 	defer L.Close()
-	optTable := &LType{inner: typ.NewOptional(typ.NewInterface("table", nil))}
+	optTable := &LType{inner: typeexpr.Optional(typ.NewInterface("table", nil))}
 	tbl := L.NewTable()
 	for b.ResetTimer(); b.N > 0; b.N-- {
 		optTable.Validate(L, tbl)
@@ -297,7 +298,7 @@ func BenchmarkValidate_Array_1000(b *testing.B) {
 func BenchmarkValidate_Union_2Members(b *testing.B) {
 	L := NewState()
 	defer L.Close()
-	u := &LType{inner: typ.NewUnion(typ.Number, typ.String)}
+	u := &LType{inner: typeexpr.Union(typ.Number, typ.String)}
 	for b.ResetTimer(); b.N > 0; b.N-- {
 		u.Validate(L, LString("hello"))
 	}
@@ -307,7 +308,7 @@ func BenchmarkValidate_Union_5Literals(b *testing.B) {
 	L := NewState()
 	defer L.Close()
 	u := &LType{
-		inner: typ.NewUnion(
+		inner: typeexpr.Union(
 			typ.LiteralString("active"),
 			typ.LiteralString("draft"),
 			typ.LiteralString("archived"),
@@ -409,7 +410,7 @@ func BenchmarkValidate_Intersection(b *testing.B) {
 	defer L.Close()
 	recA := typetable.NewRecord().Field("x", typ.Number).Build()
 	recB := typetable.NewRecord().Field("y", typ.String).Build()
-	inter := &LType{inner: typ.NewIntersection(recA, recB)}
+	inter := &LType{inner: typeexpr.Intersection(recA, recB)}
 	tbl := L.NewTable()
 	tbl.RawSetString("x", LNumber(1))
 	tbl.RawSetString("y", LString("hello"))
@@ -454,7 +455,7 @@ func BenchmarkValidate_RefResolution(b *testing.B) {
 	defer L.Close()
 	resolver := &typeResolver{
 		types: map[string]typ.Type{
-			"Status": typ.NewUnion(typ.LiteralString("active"), typ.LiteralString("draft")),
+			"Status": typeexpr.Union(typ.LiteralString("active"), typ.LiteralString("draft")),
 		},
 	}
 	rec := &LType{

@@ -11,8 +11,10 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/standard"
 	"github.com/wippyai/go-lua/analysis/engine/callboundary"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
+	"github.com/wippyai/go-lua/analysis/engine/sourcevalue"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
+	"github.com/wippyai/go-lua/analysis/engine/visibility"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/symbol"
 )
@@ -365,6 +367,32 @@ func TestFactsEdgeTransferCallOutcomeAppliesReturnPresenceRelation(t *testing.T)
 	assertValue(t, reg, falseOut, key.SymbolValue(valuePath.Symbol), presentValue(reg))
 }
 
+func TestFactsEdgeTransferCallOutcomeReturnPresenceMatchesUnversionedBranchPath(t *testing.T) {
+	reg := standard.Registry()
+	graph, facts, branch, thenPoint, elsePoint, valuePath, value := callOutcomeReturnPresenceGraph(reg, false, true)
+	edgeTransfer := NewFactsEdgeTransfer(FactsEdgeTransferConfig{
+		Facts:       facts,
+		CallOutcome: callOutcomeReturnPresenceProvider(),
+	})
+	in := state.State{}.WriteValue(reg, key.SymbolValue(value), product.Top())
+
+	trueOut := edgeTransfer(transfer.EdgeContext{
+		Graph:    graph,
+		Registry: reg,
+		Edge:     cfg.Edge{From: branch, To: thenPoint, Cond: true},
+		HasCond:  true,
+	}, in)
+	falseOut := edgeTransfer(transfer.EdgeContext{
+		Graph:    graph,
+		Registry: reg,
+		Edge:     cfg.Edge{From: branch, To: elsePoint, Cond: false},
+		HasCond:  true,
+	}, in)
+
+	assertValue(t, reg, trueOut, key.SymbolValue(valuePath.Symbol), absentValue(reg))
+	assertValue(t, reg, falseOut, key.SymbolValue(valuePath.Symbol), presentValue(reg))
+}
+
 func TestFactsEdgeTransferCallOutcomeReturnPresenceStopsAtReassignment(t *testing.T) {
 	reg := standard.Registry()
 	graph, facts, branch, thenPoint, _, _, value := callOutcomeReturnPresenceGraph(reg, true)
@@ -384,9 +412,169 @@ func TestFactsEdgeTransferCallOutcomeReturnPresenceStopsAtReassignment(t *testin
 	assertValue(t, reg, got, key.SymbolValue(value), product.Top())
 }
 
+func TestFactsNodeTransferCallOutcomeReturnPresencePersistsForLaterPathRefinement(t *testing.T) {
+	reg := standard.Registry()
+	graph := cfg.New()
+	call := graph.AddNode(cfg.NodeCall)
+	assignValue := graph.AddNode(cfg.NodeAssign)
+	assignErr := graph.AddNode(cfg.NodeAssign)
+	refineErr := graph.AddNode(cfg.NodeCall)
+	graph.AddEdge(graph.Entry(), call, false)
+	graph.AddEdge(call, assignValue, false)
+	graph.AddEdge(assignValue, assignErr, false)
+	graph.AddEdge(assignErr, refineErr, false)
+	graph.AddEdge(refineErr, graph.Exit(), false)
+
+	value := symbol.ID(641)
+	err := symbol.ID(642)
+	valuePath := pathdom.NewPath(value, "value")
+	errPath := pathdom.NewPath(err, "err")
+	facts := callOutcomePersistentPresenceFacts(reg, call, assignValue, assignErr, refineErr, value, err, valuePath, errPath, false)
+	resolver := callOutcomePersistentPresenceResolver(graph, assignValue, assignErr, refineErr, 0, value, err)
+
+	flow := transfer.Run(transfer.Config{
+		Graph:    graph,
+		Registry: reg,
+		NodeTransfer: NewFactsNodeTransfer(FactsNodeTransferConfig{
+			Facts:       facts,
+			Sources:     sourcevalue.NewSourceValues(sourcevalue.SourceValuesConfig{Registry: reg}),
+			CallOutcome: callOutcomeReturnPresenceProvider(),
+			Visibility:  resolver,
+		}),
+	})
+
+	assertValue(t, reg, flow[graph.Exit()], key.SymbolValue(value), presentValue(reg))
+	assertValue(t, reg, flow[graph.Exit()], key.SymbolValue(err), absentValue(reg))
+}
+
+func TestFactsNodeTransferCallOutcomeReturnPresenceInvalidatesOnResultPathWrite(t *testing.T) {
+	reg := standard.Registry()
+	graph := cfg.New()
+	call := graph.AddNode(cfg.NodeCall)
+	assignValue := graph.AddNode(cfg.NodeAssign)
+	assignErr := graph.AddNode(cfg.NodeAssign)
+	reassignErr := graph.AddNode(cfg.NodeAssign)
+	refineErr := graph.AddNode(cfg.NodeCall)
+	graph.AddEdge(graph.Entry(), call, false)
+	graph.AddEdge(call, assignValue, false)
+	graph.AddEdge(assignValue, assignErr, false)
+	graph.AddEdge(assignErr, reassignErr, false)
+	graph.AddEdge(reassignErr, refineErr, false)
+	graph.AddEdge(refineErr, graph.Exit(), false)
+
+	value := symbol.ID(646)
+	err := symbol.ID(647)
+	valuePath := pathdom.NewPath(value, "value")
+	errPath := pathdom.NewPath(err, "err")
+	facts := callOutcomePersistentPresenceFacts(reg, call, assignValue, assignErr, refineErr, value, err, valuePath, errPath, false)
+	rootAssignments := map[cfg.Point]factflow.RootAssignment{
+		assignValue: factflow.NewRootAssignment(factflow.RootAssignmentLocalDeclaration, value, valuePath, factflow.ValueSource{
+			Kind:         factflow.ValueSourceCall,
+			TargetIndex:  0,
+			ResultIndex:  0,
+			CallPoint:    call,
+			HasCallPoint: true,
+		}),
+		assignErr: factflow.NewRootAssignment(factflow.RootAssignmentLocalDeclaration, err, errPath, factflow.ValueSource{
+			Kind:         factflow.ValueSourceCall,
+			TargetIndex:  1,
+			ResultIndex:  1,
+			CallPoint:    call,
+			HasCallPoint: true,
+		}),
+		reassignErr: factflow.NewRootAssignment(factflow.RootAssignmentOrdinaryRootWrite, err, errPath, factflow.ValueSource{
+			Kind: factflow.ValueSourceNil,
+		}),
+	}
+	facts = factflow.NewFacts(factflow.FactsInput{
+		CallSites:                callOutcomePersistentPresenceCallSites(call, value, err, valuePath, errPath),
+		RootAssignments:          rootAssignments,
+		PostconditionRefinements: callOutcomePersistentPresenceRefinements(reg, refineErr, errPath),
+	})
+	resolver := callOutcomePersistentPresenceResolver(graph, assignValue, assignErr, refineErr, reassignErr, value, err)
+
+	flow := transfer.Run(transfer.Config{
+		Graph:    graph,
+		Registry: reg,
+		NodeTransfer: NewFactsNodeTransfer(FactsNodeTransferConfig{
+			Facts:       facts,
+			Sources:     sourcevalue.NewSourceValues(sourcevalue.SourceValuesConfig{Registry: reg}),
+			CallOutcome: callOutcomeReturnPresenceProvider(),
+			Visibility:  resolver,
+		}),
+	})
+
+	assertValue(t, reg, flow[graph.Exit()], key.SymbolValue(value), product.Top())
+	assertValue(t, reg, flow[graph.Exit()], key.SymbolValue(err), absentValue(reg))
+}
+
+func TestFactsNodeTransferCallOutcomeReturnPresenceSkipsIrrelevantAssignment(t *testing.T) {
+	reg := standard.Registry()
+	graph := cfg.New()
+	call := graph.AddNode(cfg.NodeCall)
+	assignValue := graph.AddNode(cfg.NodeAssign)
+	assignErr := graph.AddNode(cfg.NodeAssign)
+	assignOther := graph.AddNode(cfg.NodeAssign)
+	graph.AddEdge(graph.Entry(), call, false)
+	graph.AddEdge(call, assignValue, false)
+	graph.AddEdge(assignValue, assignErr, false)
+	graph.AddEdge(assignErr, assignOther, false)
+	graph.AddEdge(assignOther, graph.Exit(), false)
+
+	value := symbol.ID(651)
+	err := symbol.ID(652)
+	other := symbol.ID(653)
+	valuePath := pathdom.NewPath(value, "value")
+	errPath := pathdom.NewPath(err, "err")
+	otherPath := pathdom.NewPath(other, "other")
+	facts := factflow.NewFacts(factflow.FactsInput{
+		CallSites: callOutcomePersistentPresenceCallSites(call, value, err, valuePath, errPath),
+		RootAssignments: map[cfg.Point]factflow.RootAssignment{
+			assignValue: factflow.NewRootAssignment(factflow.RootAssignmentLocalDeclaration, value, valuePath, factflow.ValueSource{
+				Kind:         factflow.ValueSourceCall,
+				TargetIndex:  0,
+				ResultIndex:  0,
+				CallPoint:    call,
+				HasCallPoint: true,
+			}),
+			assignErr: factflow.NewRootAssignment(factflow.RootAssignmentLocalDeclaration, err, errPath, factflow.ValueSource{
+				Kind:         factflow.ValueSourceCall,
+				TargetIndex:  1,
+				ResultIndex:  1,
+				CallPoint:    call,
+				HasCallPoint: true,
+			}),
+			assignOther: factflow.NewRootAssignment(factflow.RootAssignmentLocalDeclaration, other, otherPath, factflow.ValueSource{
+				Kind: factflow.ValueSourceNil,
+			}),
+		},
+	})
+
+	providerCalls := 0
+	transferFn := NewFactsNodeTransfer(FactsNodeTransferConfig{
+		Facts:   facts,
+		Sources: sourcevalue.NewSourceValues(sourcevalue.SourceValuesConfig{Registry: reg}),
+		CallOutcome: func(transfer.NodeContext, factflow.CallSite, state.State, func(cfg.Point) state.State) CallOutcome {
+			providerCalls++
+			return callOutcomeReturnPresenceProvider()(transfer.NodeContext{}, factflow.CallSite{}, state.State{}, nil)
+		},
+	})
+	transferFn(transfer.NodeContext{
+		Graph:    graph,
+		Registry: reg,
+		Point:    assignOther,
+		Node:     graph.Node(assignOther),
+	}, state.State{})
+
+	if providerCalls != 0 {
+		t.Fatalf("call outcome provider called %d times for unrelated assignment, want 0", providerCalls)
+	}
+}
+
 func callOutcomeReturnPresenceGraph(
 	reg *axis.Registry,
 	kill bool,
+	versionedTargets ...bool,
 ) (cfg.Graph, factflow.Facts, cfg.Point, cfg.Point, cfg.Point, pathdom.Path, symbol.ID) {
 	graph := cfg.New()
 	call := graph.AddNode(cfg.NodeCall)
@@ -415,6 +603,11 @@ func callOutcomeReturnPresenceGraph(
 	err := symbol.ID(632)
 	valuePath := pathdom.NewPath(value, "value")
 	errPath := pathdom.NewPath(err, "err")
+	branchErrPath := errPath
+	if len(versionedTargets) != 0 && versionedTargets[0] {
+		valuePath.Version = 1
+		errPath.Version = 1
+	}
 	rootAssignments := map[cfg.Point]factflow.RootAssignment{
 		assignValue: factflow.NewRootAssignment(factflow.RootAssignmentLocalDeclaration, value, valuePath, factflow.ValueSource{
 			Kind:         factflow.ValueSourceCall,
@@ -453,7 +646,7 @@ func callOutcomeReturnPresenceGraph(
 		BranchRefinements: map[cfg.Point]factflow.BranchRefinementSet{
 			branch: factflow.NewBranchRefinementSet(
 				factflow.NewBranchRefinement(
-					errPath,
+					branchErrPath,
 					factflow.NewValueConstraint(product.NewWithPresence(reg, product.ShapeTop, presence.Present())), true,
 					factflow.NewValueConstraint(product.NewWithPresence(reg, product.ShapeTop, presence.Absent())), true,
 				),
@@ -463,9 +656,105 @@ func callOutcomeReturnPresenceGraph(
 	return graph, facts, branch, thenPoint, elsePoint, valuePath, value
 }
 
+func callOutcomePersistentPresenceFacts(
+	reg *axis.Registry,
+	call cfg.Point,
+	assignValue cfg.Point,
+	assignErr cfg.Point,
+	refineErr cfg.Point,
+	value symbol.ID,
+	err symbol.ID,
+	valuePath pathdom.Path,
+	errPath pathdom.Path,
+	_ bool,
+) factflow.Facts {
+	return factflow.NewFacts(factflow.FactsInput{
+		CallSites: callOutcomePersistentPresenceCallSites(call, value, err, valuePath, errPath),
+		RootAssignments: map[cfg.Point]factflow.RootAssignment{
+			assignValue: factflow.NewRootAssignment(factflow.RootAssignmentLocalDeclaration, value, valuePath, factflow.ValueSource{
+				Kind:         factflow.ValueSourceCall,
+				TargetIndex:  0,
+				ResultIndex:  0,
+				CallPoint:    call,
+				HasCallPoint: true,
+			}),
+			assignErr: factflow.NewRootAssignment(factflow.RootAssignmentLocalDeclaration, err, errPath, factflow.ValueSource{
+				Kind:         factflow.ValueSourceCall,
+				TargetIndex:  1,
+				ResultIndex:  1,
+				CallPoint:    call,
+				HasCallPoint: true,
+			}),
+		},
+		PostconditionRefinements: callOutcomePersistentPresenceRefinements(reg, refineErr, errPath),
+	})
+}
+
+func callOutcomePersistentPresenceCallSites(
+	call cfg.Point,
+	value symbol.ID,
+	err symbol.ID,
+	valuePath pathdom.Path,
+	errPath pathdom.Path,
+) map[cfg.Point]factflow.CallSite {
+	return map[cfg.Point]factflow.CallSite{
+		call: factflow.NewCallSite(factflow.CallSiteConfig{
+			Context: factflow.CallSiteContextAssignmentSource,
+			ResultTargets: []factflow.CallResultTarget{
+				factflow.NewCallResultTarget(factflow.CallResultTargetLocalAssignment, 0, 0, value, valuePath),
+				factflow.NewCallResultTarget(factflow.CallResultTargetLocalAssignment, 1, 1, err, errPath),
+			},
+		}),
+	}
+}
+
+func callOutcomePersistentPresenceRefinements(
+	reg *axis.Registry,
+	refineErr cfg.Point,
+	errPath pathdom.Path,
+) map[cfg.Point]factflow.PostconditionRefinementSet {
+	return map[cfg.Point]factflow.PostconditionRefinementSet{
+		refineErr: factflow.NewPostconditionRefinementSet(
+			factflow.NewPostconditionRefinement(errPath, factflow.NewValueConstraint(absentValue(reg))),
+		),
+	}
+}
+
+func callOutcomePersistentPresenceResolver(
+	graph cfg.Graph,
+	assignValue cfg.Point,
+	assignErr cfg.Point,
+	refineErr cfg.Point,
+	reassignErr cfg.Point,
+	value symbol.ID,
+	err symbol.ID,
+) *visibility.Resolver {
+	builder := visibility.NewBuilder()
+	valueVersion := builder.Define(assignValue, value, "value")
+	errVersion := builder.Define(assignErr, err, "err")
+	for _, point := range graph.RPO() {
+		if point != graph.Entry() && point != assignValue {
+			builder.SetVisible(point, value, valueVersion)
+		}
+		if point != graph.Entry() && point != assignErr {
+			builder.SetVisible(point, err, errVersion)
+		}
+	}
+	if reassignErr != 0 {
+		builder.SetVisible(reassignErr, err, errVersion)
+		builder.SetVisible(refineErr, err, errVersion)
+		builder.SetVisible(graph.Exit(), err, errVersion)
+	}
+	return visibility.NewResolver(builder.Build())
+}
+
 func callOutcomeReturnPresenceProvider() CallOutcomeProvider {
 	return func(transfer.NodeContext, factflow.CallSite, state.State, func(cfg.Point) state.State) CallOutcome {
 		return CallOutcome{
+			Results: []CallResult{
+				{Index: 0, Value: product.Top()},
+				{Index: 1, Value: product.Top()},
+			},
 			ReturnPresenceRelations: []CallReturnPresenceRelation{
 				{
 					TriggerIndex:    1,

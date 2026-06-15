@@ -35,6 +35,21 @@ func assertOccurrences(t *testing.T, got []Occurrence, want ...*ast.FuncCallExpr
 	}
 }
 
+func assertValueOccurrences(t *testing.T, got []Occurrence, exprIndex int, want ...*ast.FuncCallExpr) {
+	t.Helper()
+	if len(got) != len(want) {
+		t.Fatalf("occurrences = %#v, want %d calls", got, len(want))
+	}
+	for i, wantCall := range want {
+		if got[i].ExprIndex != exprIndex {
+			t.Fatalf("occurrence %d expr index = %d, want %d", i, got[i].ExprIndex, exprIndex)
+		}
+		if got[i].Call != wantCall {
+			t.Fatalf("occurrence %d call = %s, want %s", i, callLabel(got[i].Call), callLabel(wantCall))
+		}
+	}
+}
+
 func callLabel(call *ast.FuncCallExpr) string {
 	if call == nil {
 		return "<nil>"
@@ -98,6 +113,46 @@ func TestExprRejectsLogicalShortCircuitWithRuntimeCalls(t *testing.T) {
 			t.Fatalf("case %d Expr = %#v/%v, want nil/false", i, got, ok)
 		}
 	}
+}
+
+func TestValueListAllowsLogicalShortCircuitCallsWhenOptedIn(t *testing.T) {
+	makeCall := call("make")
+	cachedOrMake := &ast.LogicalOpExpr{
+		Operator: "or",
+		Lhs:      ident("cached"),
+		Rhs:      makeCall,
+	}
+	guardedCall := call("make")
+	guardAndMake := &ast.LogicalOpExpr{
+		Operator: "and",
+		Lhs:      ident("guard"),
+		Rhs:      guardedCall,
+	}
+	lhsCall := call("cached")
+	callOrFallback := &ast.LogicalOpExpr{
+		Operator: "or",
+		Lhs:      lhsCall,
+		Rhs:      ident("fallback"),
+	}
+	options := Options{AllowShortCircuitCalls: true}
+
+	got, ok := ValueList([]ast.Expr{cachedOrMake}, options)
+	if !ok {
+		t.Fatal("ValueList rejected cached or make() with short-circuit calls enabled")
+	}
+	assertValueOccurrences(t, got, 0, makeCall)
+
+	got, ok = ValueList([]ast.Expr{guardAndMake}, options)
+	if !ok {
+		t.Fatal("ValueList rejected guard and make() with short-circuit calls enabled")
+	}
+	assertValueOccurrences(t, got, 0, guardedCall)
+
+	got, ok = ValueList([]ast.Expr{callOrFallback}, options)
+	if !ok {
+		t.Fatal("ValueList rejected call() or fallback with short-circuit calls enabled")
+	}
+	assertValueOccurrences(t, got, 0, lhsCall)
 }
 
 func TestExprUnwrapsAssertionWrappers(t *testing.T) {

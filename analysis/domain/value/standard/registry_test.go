@@ -11,6 +11,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/evidence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/ownership"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/placement"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/variantorigin"
@@ -27,6 +28,7 @@ func TestRegistryBundleFrozenAndStable(t *testing.T) {
 		"typewitness",
 		"escape",
 		"ownership",
+		"placement",
 		"evidence",
 		"assertion",
 	}
@@ -38,6 +40,9 @@ func TestRegistryBundleFrozenAndStable(t *testing.T) {
 	}
 	if _, ok := reg.LookupErased(presence.Key.ID()); ok {
 		t.Fatalf("presence must be core, not registered as a sparse standard axis")
+	}
+	if spec, ok := reg.LookupErased(placement.Key.ID()); !ok || spec.ID() != placement.Key.ID() {
+		t.Fatalf("placement axis missing from standard registry")
 	}
 }
 
@@ -136,6 +141,40 @@ func TestAssertionAxisStoresSparsifiesAndAffectsIdentity(t *testing.T) {
 	}
 }
 
+func TestOwnershipAndPlacementStoreInStandardProduct(t *testing.T) {
+	reg := Registry()
+	unique := ownership.Unique()
+
+	stack := product.Set(reg, product.Top(), ownership.Key, unique)
+	stack = product.Set(reg, stack, placement.Key, placement.Stack)
+	if got := product.Get(reg, stack, ownership.Key); got != unique {
+		t.Fatalf("ownership value = %s, want %s", got, unique)
+	}
+	if got := product.Get(reg, stack, placement.Key); got != placement.Stack {
+		t.Fatalf("placement value = %s, want %s", got, placement.Stack)
+	}
+
+	sharedHeap := product.Set(reg, stack, placement.Key, placement.SharedHeap)
+	if product.Equal(reg, stack, sharedHeap) {
+		t.Fatalf("changing placement stack -> shared-heap should affect product equality")
+	}
+	if product.Hash(reg, stack) == product.Hash(reg, sharedHeap) {
+		t.Fatalf("changing placement stack -> shared-heap should affect product hash")
+	}
+
+	ownershipOnly := product.Set(reg, product.Top(), ownership.Key, unique)
+	placementTop := product.Set(reg, stack, placement.Key, placement.Unknown)
+	if got := product.Get(reg, placementTop, ownership.Key); got != unique {
+		t.Fatalf("ownership after placement sparsify = %s, want %s", got, unique)
+	}
+	if got := product.Get(reg, placementTop, placement.Key); got != placement.Unknown {
+		t.Fatalf("placement after sparsify = %s, want %s", got, placement.Unknown)
+	}
+	if !product.Equal(reg, placementTop, ownershipOnly) {
+		t.Fatalf("setting placement unknown should sparsify to ownership-only product, got %s", formatValue(placementTop))
+	}
+}
+
 func registrySpecIDs(reg *axis.Registry) []string {
 	specs := reg.Specs()
 	ids := make([]string, len(specs))
@@ -150,7 +189,9 @@ func standardProductSample(reg *axis.Registry, bottom, top product.Value) []prod
 	absent := product.WithPresence(reg, top, presence.Absent())
 	fresh := product.Set(reg, top, escape.Key, escape.Fresh())
 	unique := product.Set(reg, top, ownership.Key, ownership.Unique())
+	stack := product.Set(reg, top, placement.Key, placement.Stack)
 	gradual := product.Set(reg, top, evidence.Key, evidence.GradualTop())
+	explicit := product.Set(reg, top, evidence.Key, evidence.ExplicitTop())
 	claimed := product.Set(reg, top, assertion.Key, assertion.Type())
 	variant := product.Set(reg, top, variantorigin.Key, variantorigin.Singleton(7, 1))
 	ident := product.Set(reg, top, identity.Key, identity.Singleton(identity.ID{Kind: "alloc", Site: "sample", Index: 1}))
@@ -167,7 +208,9 @@ func standardProductSample(reg *axis.Registry, bottom, top product.Value) []prod
 		absent,
 		fresh,
 		unique,
+		stack,
 		gradual,
+		explicit,
 		claimed,
 		variant,
 		ident,

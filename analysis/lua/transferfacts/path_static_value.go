@@ -6,7 +6,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
-	"github.com/wippyai/go-lua/analysis/lua/typeaccess"
+	luatypeprojection "github.com/wippyai/go-lua/analysis/lua/typeprojection"
 	"github.com/wippyai/go-lua/analysis/type/unwrap"
 )
 
@@ -30,7 +30,7 @@ func (l *lowerer) pathStaticValue(target path.Path) (product.Value, bool) {
 	if !ok {
 		return product.Value{}, false
 	}
-	t, ok = typeaccess.ProjectSegments(t, target.Segments)
+	t, ok = luatypeprojection.ApplySegments(t, target.Segments)
 	if !ok {
 		return product.Value{}, false
 	}

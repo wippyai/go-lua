@@ -105,3 +105,15 @@ func TestObjectLiteralTableUnwrapsWrappers(t *testing.T) {
 		t.Fatalf("ObjectLiteralTable rejected non-table = %v/%v, want nil/false", got, ok)
 	}
 }
+
+func TestObjectLiteralTableDoesNotUnwrapAnyCast(t *testing.T) {
+	table := &ast.TableExpr{}
+	expr := &ast.CastExpr{
+		Expr: table,
+		Type: &ast.PrimitiveTypeExpr{Name: "any"},
+	}
+
+	if got, ok := ObjectLiteralTable(expr); ok || got != nil {
+		t.Fatalf("ObjectLiteralTable(any cast) = %v/%v, want nil/false", got, ok)
+	}
+}

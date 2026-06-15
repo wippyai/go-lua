@@ -1,5 +1,5 @@
 {
-  "description": "Iterating an untyped active_sessions map yields any-typed values, so time.Time:sub must reject them",
+  "description": "Iterating a locally populated active_sessions map preserves inferred time.Time fields without treating the unannotated map as any",
   "packages": ["time"],
-  "check": {"errors": 1}
+  "check": {"errors": 0}
 }

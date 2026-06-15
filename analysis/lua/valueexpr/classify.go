@@ -14,7 +14,11 @@ import (
 // runtime literals. It looks through assertion wrappers that do not change the
 // underlying runtime value.
 func LiteralType(expr ast.Expr) (typ.Type, bool) {
-	switch inner := sourceprovenance.AssertionInner(expr).(type) {
+	inner, ok := sourceprovenance.ProofInner(expr)
+	if !ok {
+		return nil, false
+	}
+	switch inner := inner.(type) {
 	case *ast.NilExpr:
 		return typ.Nil, true
 	case *ast.TrueExpr:

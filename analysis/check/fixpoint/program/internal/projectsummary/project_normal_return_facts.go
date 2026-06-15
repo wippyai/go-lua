@@ -5,6 +5,7 @@ import (
 	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/evidence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/engine/callboundary"
 	"github.com/wippyai/go-lua/analysis/engine/state"
@@ -37,7 +38,7 @@ func projectNormalReturnFacts(reg *axis.Registry, result ResultReader, exit stat
 			}
 			out.PathRefinements = append(out.PathRefinements, callboundary.PathValueFact{
 				Path:  target,
-				Value: value,
+				Value: portableBoundaryValue(reg, value),
 			})
 		}
 	}
@@ -161,6 +162,10 @@ func projectNormalReturnFacts(reg *axis.Registry, result ResultReader, exit stat
 	}
 
 	return out
+}
+
+func portableBoundaryValue(reg *axis.Registry, value product.Value) product.Value {
+	return product.Set(reg, value, evidence.Key, evidence.Top())
 }
 
 func normalReturnFactPlaceholderPath(pathKey path.PathKey, params []path.Path) (path.Path, bool) {

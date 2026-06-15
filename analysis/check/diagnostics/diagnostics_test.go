@@ -9,6 +9,9 @@ import (
 	"github.com/wippyai/go-lua/analysis/diagnostic"
 	"github.com/wippyai/go-lua/analysis/domain/value/standard"
 	"github.com/wippyai/go-lua/analysis/module/signaturelookup"
+	typetable "github.com/wippyai/go-lua/analysis/type/table"
+	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/analysis/type/typeexpr"
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/parse"
 )
@@ -34,6 +37,67 @@ func TestAnnotationAssignabilityAcceptsSubtypeLiteral(t *testing.T) {
 	diags := runDiagnostics(t, `local x: number = 42`)
 	if len(diags) != 0 {
 		t.Fatalf("diagnostics = %#v, want none", diags)
+	}
+}
+
+func TestExplicitNilFieldFreshAssignableSuppressesMismatch(t *testing.T) {
+	got := typetable.NewRecord().
+		Field("id", typ.String).
+		Field("error", typ.Nil).
+		Build()
+	want := typetable.NewRecord().
+		Field("id", typ.String).
+		Field("error", typeexpr.Optional(typ.String)).
+		Build()
+
+	if !explicitNilFieldFreshAssignable(got, typeexpr.Optional(want)) {
+		t.Fatal("explicit nil field should be fresh-assignable to nilable field contract")
+	}
+}
+
+func TestAnnotationAssignabilityReportsNominalGenericArgumentMismatch(t *testing.T) {
+	diags := runDiagnostics(t, `
+function f(ch: Channel<string>)
+    local bad: Channel<number> = ch
+end
+`)
+	if len(diags) != 1 {
+		t.Fatalf("diagnostics = %d, want 1: %#v", len(diags), diags)
+	}
+	if diags[0].Code != CodeAssignmentType {
+		t.Fatalf("diagnostic code = %s, want %s", diags[0].Code, CodeAssignmentType)
+	}
+}
+
+func TestAnnotationAssignabilityReportsRecursiveUnionArrayElementMismatch(t *testing.T) {
+	diags := runDiagnostics(t, `
+type TextNode = { kind: "text", value: string }
+type GroupNode = { kind: "group", children: {TreeNode} }
+type TreeNode = TextNode | GroupNode
+
+function f(tree: TreeNode)
+    if tree.kind == "group" then
+        local first = tree.children[1]
+        if first and first.kind == "text" then
+            local value: string = first.value
+            local bad_value: number = first.value
+        end
+    end
+    if tree.kind == "text" then
+        local children = tree.children
+    end
+end
+`)
+	if len(diags) != 2 {
+		t.Fatalf("diagnostics = %d, want 2: %#v", len(diags), diags)
+	}
+	messages := make([]string, 0, len(diags))
+	for _, diag := range diags {
+		messages = append(messages, diag.Message)
+	}
+	if !containsDiagnosticMessage(messages, "cannot assign string to number") ||
+		!containsDiagnosticMessage(messages, `has no member "children"`) {
+		t.Fatalf("diagnostics = %#v, want first.value mismatch and text.children missing-member", messages)
 	}
 }
 
@@ -102,15 +166,201 @@ func TestAnnotationAssignabilityReportsScalarOperatorRHS(t *testing.T) {
 	}
 }
 
-func TestAnnotationAssignabilityPreservesGradualUntypedDynamicMapWrite(t *testing.T) {
+func TestAnnotationAssignabilityReportsChannelSelectBranchPayloadMismatch(t *testing.T) {
+	diags := runDiagnosticsWithGlobals(t, `
+type Event = { kind: "event", id: string, attempt: number }
+type Timer = { kind: "timer", elapsed: number }
+type Stop = { kind: "stop", reason: string }
+type Source = { primary: Channel<Event>, timers: Channel<Timer>, stops: Channel<Stop> }
+function consume(source: Source)
+	local result = channel.select {
+		source.primary:case_receive(),
+		source.timers:case_receive(),
+		source.stops:case_receive(),
+	}
+	if result.channel == source.primary then
+		local event = result.value
+		local wrong: number = event.id
+	end
+	if result.channel == source.timers then
+		local timer = result.value
+		local wrong: string = timer.elapsed
+	end
+end
+`, []string{"channel"})
+	if len(diags) != 2 {
+		t.Fatalf("diagnostics = %d, want 2: %#v", len(diags), diags)
+	}
+	messages := diagnosticMessages(diags)
+	if !containsDiagnosticMessage(messages, "cannot assign string to number") ||
+		!containsDiagnosticMessage(messages, "cannot assign number to string") {
+		t.Fatalf("diagnostics = %#v, want string->number and number->string channel payload mismatches", messages)
+	}
+}
+
+func TestAnnotationAssignabilityChannelSelectDirectParameterBranches(t *testing.T) {
+	diags := runDiagnosticsWithGlobals(t, `
+type Event = { id: string }
+type Timer = { elapsed: number }
+function consume(primary: Channel<Event>, timers: Channel<Timer>): string
+	local result = channel.select {
+		primary:case_receive(),
+		timers:case_receive(),
+	}
+	if result.channel == primary then
+		local event = result.value
+		local id: string = event.id
+		local wrong: number = event.id
+		return id
+	end
+	if result.channel == timers then
+		local timer = result.value
+		local elapsed: number = timer.elapsed
+		local wrong: string = timer.elapsed
+		return tostring(elapsed)
+	end
+	return ""
+end
+`, []string{"channel"})
+	if len(diags) != 2 {
+		t.Fatalf("diagnostics = %d, want 2: %#v", len(diags), diags)
+	}
+	messages := diagnosticMessages(diags)
+	if !containsDiagnosticMessage(messages, "cannot assign string to number") ||
+		!containsDiagnosticMessage(messages, "cannot assign number to string") {
+		t.Fatalf("diagnostics = %#v, want direct-param channel payload mismatches only", messages)
+	}
+}
+
+func TestAnnotationAssignabilityRejectsGradualUntypedDynamicMapWriteWithoutProof(t *testing.T) {
 	diags := runDiagnostics(t, `
 		function f(raw, key: string)
 			local map: {[string]: string} = {}
 			map[key] = raw
 		end
 	`)
-	if len(diags) != 0 {
-		t.Fatalf("diagnostics = %#v, want none for unannotated gradual source", diags)
+	if len(diags) != 1 {
+		t.Fatalf("diagnostics = %d, want 1 for unproven dynamic source: %#v", len(diags), diags)
+	}
+	if d := diags[0]; d.Code != CodeAssignmentType || !strings.Contains(d.Message, "string") {
+		t.Fatalf("diagnostic = %#v, want typed map assignment error", d)
+	}
+}
+
+func TestAnnotationAssignabilityRejectsExplicitAnyAsProof(t *testing.T) {
+	diags := runDiagnostics(t, `
+		type Payload = {id: string, count: number}
+		local raw: any = {id = "cfg", count = 2}
+		local payload: Payload = raw
+		if raw.id then
+			local id: string = raw.id
+		end
+		local function consume(payload: Payload): number
+			return payload.count + 1
+		end
+		local count = consume(raw)
+	`)
+	if len(diags) != 3 {
+		t.Fatalf("diagnostics = %d, want 3: %#v", len(diags), diags)
+	}
+	var assignment, field, call bool
+	for _, d := range diags {
+		msg := d.Message
+		assignment = assignment || strings.Contains(msg, "cannot assign any to") && strings.Contains(msg, "id: string")
+		field = field || strings.Contains(msg, "cannot assign any to string")
+		call = call || strings.Contains(msg, "argument 1 is any") && strings.Contains(msg, "id: string")
+	}
+	if !assignment || !field || !call {
+		t.Fatalf("diagnostics = %#v, want explicit-any assignment, field, and call errors", diags)
+	}
+}
+
+func TestAnnotationAssignabilityRejectsExplicitAnyFieldThroughIPairs(t *testing.T) {
+	diags := runDiagnosticsWithSignatures(t, `
+local raw: any = nil
+local pages = {
+	{ id = raw, route = "/ok" },
+}
+local accessible: {[string]: string} = {}
+for _, page in ipairs(pages) do
+	accessible[page.route] = page.id
+end
+`, signaturelookup.Source{IncludeStdlib: true})
+	if len(diags) != 1 {
+		t.Fatalf("diagnostics = %d, want typed map assignment error: %#v", len(diags), diags)
+	}
+	if d := diags[0]; d.Code != CodeAssignmentType || !strings.Contains(d.Message, "string") {
+		t.Fatalf("diagnostic = %#v, want string map assignment error", d)
+	}
+}
+
+func TestAnnotationAssignabilityRejectsExplicitAnyFieldAfterEqualityGuard(t *testing.T) {
+	diags := runDiagnosticsWithSignatures(t, `
+local raw: any = nil
+local pages = {
+	{ id = raw, route = "/ok" },
+}
+local routes: {[string]: string} = { ["/ok"] = "page:ok" }
+local accessible: {[string]: string} = {}
+for _, page in ipairs(pages) do
+	local route = page.route
+	if route and routes[route] == page.id then
+		accessible[route] = page.id
+	end
+end
+`, signaturelookup.Source{IncludeStdlib: true})
+	if len(diags) != 1 {
+		t.Fatalf("diagnostics = %d, want typed map assignment error: %#v", len(diags), diags)
+	}
+	if d := diags[0]; d.Code != CodeAssignmentType || !strings.Contains(d.Message, "string") {
+		t.Fatalf("diagnostic = %#v, want string map assignment error", d)
+	}
+}
+
+func TestAnnotationAssignabilityRejectsExplicitAnyFieldThroughFixtureGuardShape(t *testing.T) {
+	diags := runDiagnosticsFull(t, `
+local unknown_id: any = nil
+local all_pages = {
+	{ id = unknown_id, mount_route = "/ok/:part(.*)*", secure = false },
+}
+local routes_map: {[string]: string} = {
+	["/ok/:part(.*)*"] = "page:ok",
+}
+local accessible: {[string]: string} = {}
+
+for _, page in ipairs(all_pages) do
+	local mr = page.mount_route
+	if mr and routes_map[mr] == page.id and (not page.secure or can_access(page)) then
+		accessible[mr] = page.id
+	end
+end
+`, []string{"test", "type", "value", "can_access"}, signaturelookup.Source{IncludeStdlib: true})
+	if len(diags) != 1 {
+		t.Fatalf("diagnostics = %d, want typed map assignment error: %#v", len(diags), diags)
+	}
+	if d := diags[0]; d.Code != CodeAssignmentType || !strings.Contains(d.Message, "string") {
+		t.Fatalf("diagnostic = %#v, want string map assignment error", d)
+	}
+}
+
+func TestDirectCallRejectsGradualTopThroughOrDefault(t *testing.T) {
+	diags := runDiagnostics(t, `
+local http = {
+	get = function(url: string, options: table)
+		return { url = url, options = options }, nil
+	end,
+}
+
+local function main(args)
+	local url = (args and args.url) or "http://localhost:8085/hello"
+	return http.get(url, { timeout = "2s" })
+end
+`)
+	if len(diags) != 1 {
+		t.Fatalf("diagnostics = %d, want gradual-top string argument error: %#v", len(diags), diags)
+	}
+	if d := diags[0]; d.Code != CodeDirectCallArgType || !strings.Contains(d.Message, "string") {
+		t.Fatalf("diagnostic = %#v, want direct call string argument error", d)
 	}
 }
 
@@ -145,6 +395,48 @@ func TestAnnotationAssignabilityReportsMaybeParameterWithoutNarrowing(t *testing
 	}
 	if d := diags[0]; d.Code != CodeAssignmentType || !strings.Contains(d.Message, "string?") {
 		t.Fatalf("diagnostic = %#v, want optional parameter assignment error", d)
+	}
+}
+
+func TestAnnotationAssignabilityReportsMissingUnionMapEntry(t *testing.T) {
+	diags := runDiagnostics(t, `
+		type Allow = {kind: "allow", reason: string}
+		type Deny = {kind: "deny", reason: string}
+		type Decision = Allow | Deny
+		local cache: {[string]: Decision} = {}
+		local missing: Decision = cache["missing"]
+	`)
+	if len(diags) != 1 {
+		t.Fatalf("diagnostics = %d, want missing-key optionality error: %#v", len(diags), diags)
+	}
+	if d := diags[0]; d.Code != CodeAssignmentType || !strings.Contains(d.Message, "nil |") {
+		t.Fatalf("diagnostic = %#v, want nilable union assignment error", d)
+	}
+}
+
+func TestAnnotationAssignabilityReportsMissingUnionMapEntryUnderInferredReturn(t *testing.T) {
+	diags := runDiagnostics(t, `
+		type Task = {kind: "task", id: string}
+		type Timer = {kind: "timer", id: string}
+		type Envelope = Task | Timer
+		type State = {processed: {[string]: Envelope}, counters: {[string]: number}}
+		type Actor = {state: State}
+		local function new_actor(): Actor
+			return {state = {processed = {}, counters = {}}}
+		end
+		local actor = new_actor()
+		actor.state.processed["m1"] = {kind = "task", id = "m1"}
+		actor.state.counters["task"] = 1
+		local missing_processed: Envelope = actor.state.processed["missing"]
+		local missing_counter: number = actor.state.counters["missing"]
+	`)
+	if len(diags) != 2 {
+		t.Fatalf("diagnostics = %d, want processed and counter missing-key errors: %#v", len(diags), diags)
+	}
+	messages := diagnosticMessages(diags)
+	if !containsDiagnosticMessage(messages, "nil |") ||
+		!containsDiagnosticMessage(messages, "number?") {
+		t.Fatalf("diagnostics = %#v, want both missing-key assignment errors", messages)
 	}
 }
 
@@ -246,6 +538,78 @@ func TestAnnotationAssignabilitySkipsRootLiteralIndexProjection(t *testing.T) {
 	}
 }
 
+func TestAnnotationAssignabilityAcceptsWhileIndexReadProvenInRange(t *testing.T) {
+	diags := runDiagnostics(t, `
+		function first(xs: {number}): number
+			local i: number = 1
+			while i <= #xs do
+				local v: number = xs[i]
+				if v > 0 then
+					return v
+				end
+				i = i + 1
+			end
+			return 0
+		end
+	`)
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v, want none for proven in-range positive index", diags)
+	}
+}
+
+func TestAnnotationAssignabilityAcceptsInferredFunctionFieldAliasReturn(t *testing.T) {
+	diags := runDiagnostics(t, `
+		type Res = { answer: string }
+		local M = {
+			dep = {
+				get = function()
+					return nil
+				end,
+			},
+		}
+		function M.run()
+			return M.dep.get()
+		end
+		M.dep = {
+			get = function()
+				return { answer = "ok" }
+			end,
+		}
+		local f: fun(): Res = M.run
+		local res = f()
+		local answer: string = res.answer
+	`)
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v, want none for current function-field alias return", diags)
+	}
+}
+
+func TestAnnotationAssignabilityRejectsReassignedFunctionFieldAliasReturn(t *testing.T) {
+	diags := runDiagnostics(t, `
+		type Res = { answer: string }
+		local M = {
+			dep = {
+				get = function()
+					return nil
+				end,
+			},
+		}
+		function M.run()
+			return M.dep.get()
+		end
+		M.run = function()
+			return nil
+		end
+		local f: fun(): Res = M.run
+	`)
+	if len(diags) != 1 {
+		t.Fatalf("diagnostics = %d, want 1: %#v", len(diags), diags)
+	}
+	if d := diags[0]; d.Code != CodeAssignmentType {
+		t.Fatalf("diagnostic = %#v, want assignment mismatch for reassigned wrapper", d)
+	}
+}
+
 func TestAnnotationAssignabilityReportsNestedOptionalIndexProjection(t *testing.T) {
 	diags := runDiagnostics(t, `
 		type Response = {
@@ -336,14 +700,6 @@ func TestUnresolvedLexicalTypeReferences(t *testing.T) {
 		line int
 	}{
 		{
-			name: "used before definition",
-			src: `
-local p: Point = {x = 10, y = 20}
-type Point = {x: number, y: number}
-`,
-			line: 2,
-		},
-		{
 			name: "not visible outside block",
 			src: `
 if true then
@@ -372,6 +728,23 @@ local p: LocalPoint = {x = 1, y = 2}
 				t.Fatalf("message = %q", d.Message)
 			}
 		})
+	}
+}
+
+func TestForwardTypeReferenceResolves(t *testing.T) {
+	// Type declarations are not order-dependent within a scope: a sibling
+	// alias may reference one declared later, including through a recursive
+	// cycle. The forward reference must resolve without an unresolved-type
+	// diagnostic.
+	diags := runDiagnostics(t, `
+type Group = {kind: "group", children: {Node}}
+type Node = {kind: "leaf"} | Group
+local p: Node = {kind = "leaf"}
+`)
+	for _, d := range diags {
+		if d.Code == CodeUnresolvedTypeReference {
+			t.Fatalf("forward type reference reported unresolved: %#v", d)
+		}
 	}
 }
 
@@ -489,11 +862,65 @@ func TestMemberCallAcceptsUnionReceiverWhenAllAlternativesCallable(t *testing.T)
 	}
 }
 
+func TestMemberCallReportsOptionalSymbolReceiver(t *testing.T) {
+	diags := runDiagnostics(t, `
+		type Message = {topic: (self: Message) -> string}
+		function f(m: Message?)
+			m:topic()
+		end
+	`)
+	if len(diags) != 1 {
+		t.Fatalf("diagnostics = %d, want 1: %#v", len(diags), diags)
+	}
+	d := diags[0]
+	if d.Code != CodeOptionalMethodCall || d.Severity != diagnostic.SeverityError {
+		t.Fatalf("diagnostic code/severity = %s/%s", d.Code, d.Severity)
+	}
+	if !strings.Contains(d.Message, "cannot call method on optional value without nil check") {
+		t.Fatalf("message = %q", d.Message)
+	}
+}
+
+func TestMemberCallReportsOptionalExpressionReceiver(t *testing.T) {
+	diags := runDiagnostics(t, `
+		type Message = {topic: (self: Message) -> string}
+		local function make(): {Message}
+			return {}
+		end
+		local _: string = make()[1]:topic()
+	`)
+	if len(diags) != 1 {
+		t.Fatalf("diagnostics = %d, want 1: %#v", len(diags), diags)
+	}
+	d := diags[0]
+	if d.Code != CodeOptionalMethodCall || d.Severity != diagnostic.SeverityError {
+		t.Fatalf("diagnostic code/severity = %s/%s", d.Code, d.Severity)
+	}
+	if !strings.Contains(d.Message, "cannot call method on optional value without nil check") {
+		t.Fatalf("message = %q", d.Message)
+	}
+}
+
+func TestMemberCallAcceptsNarrowedOptionalReceiver(t *testing.T) {
+	diags := runDiagnostics(t, `
+		type Message = {topic: (self: Message) -> string}
+		function f(m: Message?)
+			if m then
+				m:topic()
+			end
+		end
+	`)
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v, want none after nil check", diags)
+	}
+}
+
 func TestMemberCallReportsWrongArgumentType(t *testing.T) {
 	diags := runDiagnostics(t, `
 		type Client = {invoke: (model_id: string, payload: any) -> ()}
-		local c: Client = value
-		c.invoke(42, {})
+		function f(c: Client)
+			c.invoke(42, {})
+		end
 	`)
 	if len(diags) != 1 {
 		t.Fatalf("diagnostics = %d, want 1: %#v", len(diags), diags)
@@ -510,8 +937,9 @@ func TestMemberCallReportsWrongArgumentType(t *testing.T) {
 func TestMemberCallReportsTooFewArgs(t *testing.T) {
 	diags := runDiagnostics(t, `
 		type Client = {invoke: (model_id: string, payload: number) -> ()}
-		local c: Client = value
-		c.invoke("model")
+		function f(c: Client)
+			c.invoke("model")
+		end
 	`)
 	if len(diags) != 1 {
 		t.Fatalf("diagnostics = %d, want 1: %#v", len(diags), diags)
@@ -529,8 +957,9 @@ func TestColonMemberCallConsumesReceiverParameter(t *testing.T) {
 	diags := runDiagnostics(t, `
 		type ClientSelf = {id: string}
 		type Client = {id: string, invoke: (self: ClientSelf, model_id: string) -> ()}
-		local c: Client = value
-		c:invoke(42)
+		function f(c: Client)
+			c:invoke(42)
+		end
 	`)
 	if len(diags) != 1 {
 		t.Fatalf("diagnostics = %d, want 1: %#v", len(diags), diags)
@@ -546,8 +975,9 @@ func TestColonMemberCallConsumesReceiverParameter(t *testing.T) {
 	ok := runDiagnostics(t, `
 		type ClientSelf = {id: string}
 		type Client = {id: string, invoke: (self: ClientSelf, model_id: string) -> ()}
-		local c: Client = value
-		c:invoke("model")
+		function f(c: Client)
+			c:invoke("model")
+		end
 	`)
 	if len(ok) != 0 {
 		t.Fatalf("diagnostics = %#v, want none for matching colon call", ok)
@@ -624,8 +1054,9 @@ func TestNumericForAcceptsNumbersAndDefaultStep(t *testing.T) {
 
 func TestNumericForSkipsUnknownAndPartlyNumericUnion(t *testing.T) {
 	diags := runDiagnostics(t, `
-		local mixed: number | string = value
-		for i = value, mixed do
+		function f(value, mixed: number | string)
+			for i = value, mixed do
+			end
 		end
 	`)
 	if len(diags) != 0 {
@@ -694,6 +1125,73 @@ func TestDirectCallReportsWrongArgumentType(t *testing.T) {
 	}
 	if len(d.Explanation.Evidence()) < 2 {
 		t.Fatalf("explanation evidence = %#v, want call and parameter evidence", d.Explanation.Evidence())
+	}
+}
+
+func TestDirectCallUsesGenericResultFalseEdgeBoundaryProof(t *testing.T) {
+	diags := runDiagnostics(t, `
+		type Result<T> = { ok: true, value: T } | { ok: false, error: string }
+
+		local function err<T>(message: string): Result<T>
+			return { ok = false, error = message }
+		end
+
+		local function map_result<T, U>(result: Result<T>, fn: (T) -> U): Result<U>
+			if result.ok then
+				return { ok = true, value = fn(result.value) }
+			end
+			return err(result.error)
+		end
+
+		local r = map_result({ ok = true, value = "x" }, function(value: string): number
+			return #value
+		end)
+	`)
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v, want generic false-edge result.error accepted", diags)
+	}
+}
+
+func TestDirectCallUsesLoopLocalMethodReturnBoundaryProof(t *testing.T) {
+	diags := runDiagnostics(t, `
+		type Message = {
+			from: fun(self: Message): string,
+			payload: fun(self: Message): any,
+		}
+
+		type Channel = {
+			receive: fun(self: Channel): (Message, boolean),
+		}
+
+		local process = {}
+		function process.listen(): Channel
+			error("stub")
+		end
+		function process.send(pid: string, topic: string): boolean
+			return true
+		end
+
+		local done = false
+		coroutine.spawn(function()
+			local ch = process.listen()
+			while not done do
+				local msg, ok = ch:receive()
+				if not ok then
+					break
+				end
+				local p = msg:payload()
+				local data = p and p:data() or nil
+				local reply_to = msg:from()
+				if type(data) ~= "table" or type(data.amount) ~= "number" then
+					process.send(reply_to, "nak")
+				else
+					process.send(reply_to, "ack")
+				end
+			end
+		end)
+	`)
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v, want loop-local method return accepted", diags)
 	}
 }
 
@@ -996,6 +1494,23 @@ func runDiagnosticsFull(t *testing.T, src string, globals []string, signatures s
 		t.Fatalf("check: %v", err)
 	}
 	return Produce(result.RootResult())
+}
+
+func diagnosticMessages(diags []diagnostic.Diagnostic) []string {
+	out := make([]string, len(diags))
+	for i, diag := range diags {
+		out[i] = diag.Message
+	}
+	return out
+}
+
+func containsDiagnosticMessage(messages []string, want string) bool {
+	for _, message := range messages {
+		if strings.Contains(message, want) {
+			return true
+		}
+	}
+	return false
 }
 
 func mustStmts(t *testing.T, src string) []ast.Stmt {

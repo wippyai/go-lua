@@ -28,7 +28,7 @@ func callPointsByExprIndex(calls []indexedCall, points []cfg.Point) map[int]cfg.
 }
 
 func valueListCalls(exprs []ast.Expr, bindings *bind.Result) ([]indexedCall, bool) {
-	ordered, ok := callorder.ValueList(exprs, callorder.LuaOptions(bindings))
+	ordered, ok := callorder.ValueList(exprs, valueCallOrderOptions(bindings))
 	if !ok {
 		return nil, false
 	}
@@ -40,7 +40,7 @@ func valueListCalls(exprs []ast.Expr, bindings *bind.Result) ([]indexedCall, boo
 }
 
 func exprCalls(expr ast.Expr, bindings *bind.Result) ([]indexedCall, bool) {
-	ordered, ok := callorder.Expr(expr, callorder.LuaOptions(bindings))
+	ordered, ok := callorder.Expr(expr, valueCallOrderOptions(bindings))
 	if !ok {
 		return nil, false
 	}
@@ -49,6 +49,24 @@ func exprCalls(expr ast.Expr, bindings *bind.Result) ([]indexedCall, bool) {
 		calls[i] = indexedCall{index: call.ExprIndex, call: call.Call}
 	}
 	return calls, true
+}
+
+func conditionExprCalls(expr ast.Expr, bindings *bind.Result) ([]indexedCall, bool) {
+	ordered, ok := callorder.Expr(expr, valueCallOrderOptions(bindings))
+	if !ok {
+		return nil, false
+	}
+	calls := make([]indexedCall, len(ordered))
+	for i, call := range ordered {
+		calls[i] = indexedCall{index: call.ExprIndex, call: call.Call}
+	}
+	return calls, true
+}
+
+func valueCallOrderOptions(bindings *bind.Result) callorder.Options {
+	options := callorder.LuaOptions(bindings)
+	options.AllowShortCircuitCalls = true
+	return options
 }
 
 func callPointsByCall(calls []indexedCall, points []cfg.Point) map[*ast.FuncCallExpr]cfg.Point {

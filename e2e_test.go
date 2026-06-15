@@ -7,6 +7,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/check/checktest"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/analysis/type/typeexpr"
 	"github.com/wippyai/go-lua/compiler/parse"
 )
 
@@ -450,7 +451,7 @@ func TestE2E_UnionTypeValidation(t *testing.T) {
 	OpenBase(L)
 
 	// Create number | string type
-	unionType := NewLType(typ.NewUnion(typ.Number, typ.String))
+	unionType := NewLType(typeexpr.Union(typ.Number, typ.String))
 	L.SetGlobal("NumOrString", unionType)
 
 	tests := []struct {
@@ -496,7 +497,7 @@ func TestE2E_OptionalTypeValidation(t *testing.T) {
 	OpenBase(L)
 
 	// Create number? type
-	optionalType := NewLType(typ.NewOptional(typ.Number))
+	optionalType := NewLType(typeexpr.Optional(typ.Number))
 	L.SetGlobal("OptNumber", optionalType)
 
 	tests := []struct {
@@ -550,7 +551,7 @@ func TestE2E_TypeIntrospection(t *testing.T) {
 	L.SetGlobal("StrNumMap", mapType)
 
 	// Optional type for inner() test
-	optType := NewLType(typ.NewOptional(typ.Boolean))
+	optType := NewLType(typeexpr.Optional(typ.Boolean))
 	L.SetGlobal("OptBool", optType)
 
 	// Function type for ret()/params() test

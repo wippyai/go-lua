@@ -37,6 +37,17 @@ func TestNormalReturnRefinementEqualsHashAndString(t *testing.T) {
 	if !strings.Contains(text, "normal_return_refine") || !strings.Contains(text, "param[0]") || !strings.Contains(text, PresentKind) {
 		t.Fatalf("String = %q, want target and refinement", text)
 	}
+
+	absent := NormalReturnRefinement{
+		Target:     effect.ParamRef{Index: 0},
+		Refinement: Absent{},
+	}
+	if label.Equals(absent) {
+		t.Fatalf("present refinement should not equal absent refinement")
+	}
+	if !strings.Contains(absent.String(), AbsentKind) {
+		t.Fatalf("absent String = %q, want refinement kind", absent.String())
+	}
 }
 
 func TestNormalReturnRefinementNilRefinementBehaviorIsExplicit(t *testing.T) {
@@ -74,6 +85,25 @@ func TestPresentEqualsHashAndString(t *testing.T) {
 		t.Fatalf("Present should not equal nil")
 	}
 	if present.Hash() == 0 {
+		t.Fatalf("Hash should be non-zero")
+	}
+}
+
+func TestAbsentEqualsHashAndString(t *testing.T) {
+	absent := Absent{}
+	if absent.Kind() != AbsentKind {
+		t.Fatalf("Kind = %q, want %q", absent.Kind(), AbsentKind)
+	}
+	if absent.String() != AbsentKind {
+		t.Fatalf("String = %q, want %q", absent.String(), AbsentKind)
+	}
+	if !absent.Equals(Absent{}) || !absent.Equals(&Absent{}) {
+		t.Fatalf("Absent should equal value and pointer forms")
+	}
+	if absent.Equals(Present{}) || absent.Equals(nil) {
+		t.Fatalf("Absent should only equal absent refinements")
+	}
+	if absent.Hash() == 0 {
 		t.Fatalf("Hash should be non-zero")
 	}
 }

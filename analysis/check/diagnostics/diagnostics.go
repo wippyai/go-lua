@@ -14,6 +14,7 @@ import (
 const (
 	CodeAssignmentType             diagnostic.Code = "type.assignment"
 	CodeMissingMember              diagnostic.Code = "type.member.missing"
+	CodeOptionalMethodCall         diagnostic.Code = "type.call.optional_receiver"
 	CodeNotCallable                diagnostic.Code = "type.call.not_callable"
 	CodeDirectCallNotCallable      diagnostic.Code = "type.call.direct.not_callable"
 	CodeDirectCallTooFewArgs       diagnostic.Code = "type.call.direct.too_few_args"
@@ -48,6 +49,7 @@ func produceWithResolver(result *body.Result, parent typeannotation.Resolver, in
 	out = append(out, produceDirectCallResultAssignment(result, context, defs)...)
 	out = append(out, numericForOperands(context).Produce(result)...)
 	out = append(out, memberCall(context).Produce(result)...)
+	out = append(out, memberRead(context).Produce(result)...)
 	out = append(out, channelSelectExhaustiveness(context).Produce(result)...)
 	for _, fn := range result.FunctionResults() {
 		out = append(out, produceWithResolver(fn, resolver, defs)...)

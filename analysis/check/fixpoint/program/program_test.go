@@ -1,12 +1,17 @@
 package program
 
 import (
+	"os"
+	"strings"
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/check/body"
+	"github.com/wippyai/go-lua/analysis/check/diagnostics"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/ref"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/summary"
+	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/typewitness"
@@ -18,12 +23,62 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
+	"github.com/wippyai/go-lua/analysis/module/signaturelookup"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/type/refinement"
+	"github.com/wippyai/go-lua/analysis/type/subtype"
+	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/parse"
 )
+
+func TestProgramProductionUsesPreparedBodyAPI(t *testing.T) {
+	src, err := os.ReadFile("program.go")
+	if err != nil {
+		t.Fatalf("ReadFile(program.go): %v", err)
+	}
+	if strings.Contains(string(src), "body.CheckBound") {
+		t.Fatalf("program.go uses body.CheckBound*, want prepared statics with SolvePrepared")
+	}
+}
+
+func TestRunBoundChunkStatsObservePreparedStaticReuse(t *testing.T) {
+	reg := standard.Registry()
+	stmts := parseChunk(t, `
+local f = function()
+	return 1
+end
+return f()
+`)
+	bindings := bind.BindChunk(stmts, bind.Options{})
+	stats := Stats{}
+
+	if _, err := RunBoundChunk(stmts, bindings, Config{
+		Check: body.Config{Registry: reg},
+		Stats: &stats,
+	}); err != nil {
+		t.Fatalf("RunBoundChunk: %v", err)
+	}
+
+	prepares := stats.Body.StaticChunkPrepares + stats.Body.StaticFunctionPrepares
+	if stats.Body.StaticChunkPrepares != 1 || stats.Body.StaticFunctionPrepares != 1 {
+		t.Fatalf("body prepares = chunk:%d function:%d, want 1/1", stats.Body.StaticChunkPrepares, stats.Body.StaticFunctionPrepares)
+	}
+	if stats.Body.BodySolves <= prepares {
+		t.Fatalf("BodySolves = %d, prepares = %d, want static reuse visible", stats.Body.BodySolves, prepares)
+	}
+	phaseSolves := stats.PrepassBodySolves + stats.SummaryBodySolves + stats.MaterializeBodySolves
+	if phaseSolves != stats.Body.BodySolves {
+		t.Fatalf("phase solves = %d, BodySolves = %d", phaseSolves, stats.Body.BodySolves)
+	}
+	if stats.PrepassBodySolves == 0 || stats.SummaryBodySolves == 0 || stats.MaterializeBodySolves == 0 {
+		t.Fatalf("phase stats = prepass:%d summary:%d materialize:%d, want all populated", stats.PrepassBodySolves, stats.SummaryBodySolves, stats.MaterializeBodySolves)
+	}
+	if stats.Query.BodyInvocations == 0 || stats.Query.Solver.TransferCalls != stats.Query.BodyInvocations {
+		t.Fatalf("query stats = %#v, want body invocations matching solver transfer calls", stats.Query)
+	}
+}
 
 func TestRunBoundChunkUsesSuppliedBindIdentityForLocalCallee(t *testing.T) {
 	reg := standard.Registry()
@@ -124,7 +179,8 @@ end)
 return mapped
 `)
 
-	result, err := RunChunk(stmts, Config{Check: body.Config{Registry: reg}})
+	bindings := bind.BindChunk(stmts, bind.Options{})
+	result, err := RunBoundChunk(stmts, bindings, Config{Check: body.Config{Registry: reg}})
 	if err != nil {
 		t.Fatalf("RunChunk: %v", err)
 	}
@@ -241,6 +297,379 @@ local n, s = pair(42, "hello")
 	assertBoundarySymbolType(t, reg, root, sPoint, mustResultLocalAt(t, root, pairStmt, 1), typ.LiteralString("hello"), "s")
 }
 
+func TestRunChunkMaterializesNestedCallbackMethodReturnLocals(t *testing.T) {
+	reg := standard.Registry()
+	stmts := parseChunk(t, `
+type Message = {
+	from: fun(self: Message): string,
+	payload: fun(self: Message): any,
+}
+
+type Channel = {
+	receive: fun(self: Channel): (Message, boolean),
+}
+
+local process = {}
+function process.listen(): Channel
+	error("stub")
+end
+function process.send(pid: string, topic: string): boolean
+	return true
+end
+
+local done = false
+coroutine.spawn(function()
+	local ch = process.listen()
+	while not done do
+		local msg, ok = ch:receive()
+		if not ok then
+			break
+		end
+		local reply_to = msg:from()
+		process.send(reply_to, "ack")
+	end
+end)
+`)
+
+	bindings := bind.BindChunk(stmts, bind.Options{})
+	listenFn := findFunctionForPath(t, bindings, stmts, "process.listen")
+	listenType, ok := lowerFunctionExprType(listenFn, bindings, nil)
+	if !ok || listenType == nil || len(listenType.Returns) != 1 {
+		t.Fatalf("process.listen type = %#v/%v, want one return", listenType, ok)
+	}
+	if witness := typewitness.Of(listenType.Returns[0]); witness.IsTop() || witness.IsBottom() {
+		t.Fatalf("process.listen declared return witness = %v for %v, want concrete", witness, listenType.Returns[0])
+	}
+	listenSym, ok := bindings.FunctionSymbol(listenFn)
+	if !ok || listenSym == 0 {
+		t.Fatalf("process.listen function symbol missing")
+	}
+	result, err := RunBoundChunk(stmts, bindings, Config{Check: body.Config{Registry: reg}})
+	if err != nil {
+		t.Fatalf("RunChunk: %v", err)
+	}
+	processPath := findRootLocalPath(t, result.RootResult(), "process")
+	listenKey, ok := result.PathKey(processPath.Field("listen").Key())
+	if !ok {
+		t.Fatalf("summary path key for process.listen missing")
+	}
+	functionKey, ok := result.FunctionKey(listenSym)
+	if !ok || functionKey != listenKey {
+		t.Fatalf("process.listen path key = %#v, function key = %#v/%v", listenKey, functionKey, ok)
+	}
+	child, chPoint, ch := findNestedLocalByName(t, result.RootResult(), "ch")
+	assertBoundarySymbolConcreteType(t, reg, child, chPoint, ch, "nested ch")
+	child, msgPoint, msg := findNestedLocalByName(t, result.RootResult(), "msg")
+	assertBoundarySymbolConcreteType(t, reg, child, msgPoint, msg, "nested msg")
+	child, point, reply := findNestedLocalByName(t, result.RootResult(), "reply_to")
+	assertBoundarySymbolType(t, reg, child, point, reply, typ.String, "nested reply_to")
+}
+
+func TestRunChunkFieldDefinedWrapperReturnUsesCallerPathContext(t *testing.T) {
+	reg := standard.Registry()
+	stmts := parseChunk(t, `
+local M = {
+	dep = {
+		get = function()
+			return nil
+		end,
+	},
+}
+
+function M.run()
+	return M.dep.get()
+end
+
+M.dep = {
+	get = function()
+		return { answer = "ok" }
+	end,
+}
+
+local res = M.run()
+local answer: string = res.answer
+return answer
+`)
+	bindings := bind.BindChunk(stmts, bind.Options{})
+	keys := collectKeys(bindings, rootKey(summary.SummaryKey{}), reg, nil, stmts)
+	if _, err := collectCallContextKeys(&keys, stmts, bindings, body.Config{Registry: reg}, nil); err != nil {
+		t.Fatalf("collectCallContextKeys: %v", err)
+	}
+	if len(keys.contexts) == 0 {
+		t.Fatalf("call contexts missing")
+	}
+	if !contextEntryHasFunctionIdentity(reg, keys.contexts) {
+		t.Fatalf("call contexts lack captured path function identity")
+	}
+
+	result, err := RunBoundChunk(stmts, bindings, Config{Check: body.Config{Registry: reg}})
+	if err != nil {
+		t.Fatalf("RunBoundChunk: %v", err)
+	}
+	root := result.RootResult()
+	if root == nil {
+		t.Fatalf("RootResult missing")
+	}
+	answerStmt := mustFindLocalAssign(t, stmts, "answer")
+	answerPoint := requireLocalAssignmentPoint(t, root, answerStmt, 0)
+	assertBoundaryExprRuntimeKind(t, reg, root, answerPoint, answerStmt.Exprs[0], runtimekind.Singleton(runtimekind.String), "res.answer")
+	if diags := diagnostics.Produce(root); len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v, want none", diags)
+	}
+}
+
+func TestRunChunkNonDominatingFieldDefinedWrapperReturnStaysMaybeNil(t *testing.T) {
+	reg := standard.Registry()
+	stmts := parseChunk(t, `
+local function run(flag: boolean)
+	local M = {
+		dep = {
+			get = function()
+				return nil
+			end,
+		},
+	}
+
+	function M.run()
+		return M.dep.get()
+	end
+
+	if flag then
+		M.dep = {
+			get = function()
+				return { answer = "ok" }
+			end,
+		}
+	end
+
+	local res = M.run()
+	local answer: string = res.answer
+	return answer
+end
+
+return run
+`)
+	result, err := RunChunk(stmts, Config{Check: body.Config{Registry: reg}})
+	if err != nil {
+		t.Fatalf("RunChunk: %v", err)
+	}
+	root := result.RootResult()
+	if root == nil {
+		t.Fatalf("RootResult missing")
+	}
+	if diags := diagnostics.Produce(root); len(diags) != 1 {
+		t.Fatalf("diagnostics = %#v, want one maybe-nil wrapper return diagnostic", diags)
+	}
+}
+
+func TestRunChunkNonDominatingFieldWriteCallAssignmentStaysMaybeNil(t *testing.T) {
+	reg := standard.Registry()
+	stmts := parseChunk(t, `
+local function run(flag: boolean)
+	local M = {
+		dep = {
+			get = function()
+				return nil
+			end,
+		},
+	}
+
+	if flag then
+		M.dep = {
+			get = function()
+				return { answer = "ok" }
+			end,
+		}
+	end
+
+	local res = M.dep.get()
+	local answer: string = res.answer
+	return answer
+end
+
+return run
+`)
+	result, err := RunChunk(stmts, Config{Check: body.Config{Registry: reg}})
+	if err != nil {
+		t.Fatalf("RunChunk: %v", err)
+	}
+	root := result.RootResult()
+	if root == nil {
+		t.Fatalf("RootResult missing")
+	}
+	if diags := diagnostics.Produce(root); len(diags) != 1 {
+		t.Fatalf("diagnostics = %#v, want one maybe-nil field call diagnostic", diags)
+	}
+}
+
+func TestRunChunkFieldDefinedWrapperAliasFunctionValueUsesCallerPathContext(t *testing.T) {
+	reg := standard.Registry()
+	stmts := parseChunk(t, `
+type Res = { answer: string }
+local M = {
+	dep = {
+		get = function()
+			return nil
+		end,
+	},
+}
+
+function M.run()
+	return M.dep.get()
+end
+
+M.dep = {
+	get = function()
+		return { answer = "ok" }
+	end,
+}
+
+local f: fun(): Res = M.run
+local res = f()
+local answer: string = res.answer
+return answer
+`)
+	bindings := bind.BindChunk(stmts, bind.Options{})
+	keys := collectKeys(bindings, rootKey(summary.SummaryKey{}), reg, nil, stmts)
+	if _, err := collectCallContextKeys(&keys, stmts, bindings, body.Config{Registry: reg}, nil); err != nil {
+		t.Fatalf("collectCallContextKeys: %v", err)
+	}
+	result, err := RunBoundChunk(stmts, bindings, Config{Check: body.Config{Registry: reg}})
+	if err != nil {
+		t.Fatalf("RunBoundChunk: %v", err)
+	}
+	root := result.RootResult()
+	fStmt := mustFindLocalAssign(t, stmts, "f")
+	fPoint := requireLocalAssignmentPoint(t, root, fStmt, 0)
+	fn, ok := root.FunctionValueTypeAtBoundary(fPoint, fStmt.Exprs[0])
+	if !ok {
+		t.Fatalf("function value type for M.run alias missing")
+	}
+	if len(fn.Returns) != 1 {
+		t.Fatalf("function value returns = %v, want one Res return", fn.Returns)
+	}
+	want := typetable.NewRecord().Field("answer", typ.String).Build()
+	if !subtype.IsSubtype(fn.Returns[0], want) {
+		t.Fatalf("function value return = %v, want subtype of %v", fn.Returns[0], want)
+	}
+	if diags := diagnostics.Produce(root); len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v, want none", diags)
+	}
+}
+
+func TestRunChunkSeedsMethodSelfFromMetatableIndexFactory(t *testing.T) {
+	reg := standard.Registry()
+	stmts := parseChunk(t, `
+local methods = {}
+local mt = { __index = methods }
+local node = {}
+
+type NodeInstance = {
+	id: string,
+}
+
+local function sink(value: NodeInstance)
+end
+
+function node.new()
+	local instance: NodeInstance = { id = "root" }
+	return setmetatable(instance, mt)
+end
+
+function methods:touch()
+	sink(self)
+end
+
+local instance: NodeInstance = { id = "root" }
+methods.touch(instance)
+`)
+	bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"setmetatable"}})
+	receivers := metatableMethodReceiverTypes(bindings, nil, stmts)
+	methods := mustBoundLocalAt(t, bindings, stmts[0].(*ast.LocalAssignStmt), 0)
+	if got, ok := receivers[methods]; !ok || !subtype.IsSubtype(got, typetable.NewRecord().Field("id", typ.String).Build()) {
+		t.Fatalf("metatable method receiver = %v/%v, want NodeInstance", got, ok)
+	}
+	result, err := RunChunk(stmts, Config{
+		Check: body.Config{
+			Registry: reg,
+			Globals:  []string{"setmetatable"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("RunChunk: %v", err)
+	}
+	root := result.RootResult()
+	if root == nil {
+		t.Fatal("RootResult missing")
+	}
+	if diags := diagnostics.Produce(root); len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v, want method self seeded from metatable factory", diags)
+	}
+}
+
+func TestRunChunkCallContextKeysAreScopedToOwningBody(t *testing.T) {
+	reg := standard.Registry()
+	stmts := parseChunk(t, `
+local methods = {}
+local mt = { __index = methods }
+local node = {}
+
+type NodeInstance = {
+	id: string,
+	_queued_commands: unknown[],
+}
+
+local function accept_node(value: NodeInstance)
+end
+
+function methods:check_self()
+	accept_node(self)
+	return true
+end
+
+function methods:seed_context()
+	return methods.check_self(self)
+end
+
+function methods:stdlib_calls(definitions)
+	self._queued_commands = table.create(10, 0)
+	for _, definition in ipairs(definitions) do
+		self._queued_commands[#self._queued_commands + 1] = definition
+	end
+	return self._queued_commands
+end
+
+function node.new()
+	local instance: NodeInstance = {
+		id = "root",
+		_queued_commands = {},
+	}
+	return setmetatable(instance, mt)
+end
+
+local instance: NodeInstance = node.new()
+methods.seed_context(instance)
+methods.stdlib_calls(instance, { "a", "b" })
+`)
+	result, err := RunChunk(stmts, Config{
+		Check: body.Config{
+			Registry:   reg,
+			Globals:    []string{"setmetatable"},
+			Signatures: signaturelookup.Source{IncludeStdlib: true},
+		},
+	})
+	if err != nil {
+		t.Fatalf("RunChunk: %v", err)
+	}
+	root := result.RootResult()
+	if root == nil {
+		t.Fatal("RootResult missing")
+	}
+	if diags := diagnostics.Produce(root); len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v, want stdlib calls isolated from method context keys", diags)
+	}
+}
+
 func TestRunChunkUsesExactConfiguredRootKey(t *testing.T) {
 	reg := standard.Registry()
 	want := product.Top()
@@ -265,6 +694,21 @@ func TestRunChunkUsesExactConfiguredRootKey(t *testing.T) {
 	if got, ok := result.Snapshot().Read(summary.DefaultSummaryKey(ref.Root())); ok {
 		t.Fatalf("default root summary = %#v, want missing exact key", got)
 	}
+}
+
+func contextEntryHasFunctionIdentity(reg *axis.Registry, contexts []keyedFunction) bool {
+	for _, context := range contexts {
+		snapshot := context.entryState.PathRefinementsSnapshot()
+		if snapshot.Top {
+			continue
+		}
+		for _, value := range snapshot.Refinements {
+			if _, ok := product.Get(reg, value, identity.Key).ID(); ok {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func fixedExpressionValue(value product.Value) func(cfg.Point, factflow.ExprRef, factflow.ValueSource, state.State) (product.Value, bool) {
@@ -435,25 +879,6 @@ func assertBoundaryExprRuntimeKind(
 	}
 }
 
-func assertBoundarySymbolRuntimeKind(
-	t *testing.T,
-	reg *axis.Registry,
-	result *body.Result,
-	point cfg.Point,
-	id symbol.ID,
-	want runtimekind.Value,
-	label string,
-) {
-	t.Helper()
-	value, ok := result.SymbolValueAtBoundary(point, id)
-	if !ok {
-		t.Fatalf("%s boundary value missing at %v", label, point)
-	}
-	if got := product.Get(reg, value, runtimekind.Key); !runtimekind.Equal(got, want) {
-		t.Fatalf("%s runtime kind = %s, want %s (value %#v)", label, got, want, value)
-	}
-}
-
 func assertBoundarySymbolType(
 	t *testing.T,
 	reg *axis.Registry,
@@ -472,6 +897,74 @@ func assertBoundarySymbolType(
 	if !typeOK || !typ.TypeEquals(gotType, want) {
 		t.Fatalf("%s structural type = %v, want %v (value %#v)", label, gotType, want, value)
 	}
+}
+
+func assertBoundarySymbolConcreteType(
+	t *testing.T,
+	reg *axis.Registry,
+	result *body.Result,
+	point cfg.Point,
+	id symbol.ID,
+	label string,
+) {
+	t.Helper()
+	value, ok := result.SymbolValueAtBoundary(point, id)
+	if !ok {
+		t.Fatalf("%s boundary value missing at %v", label, point)
+	}
+	gotType, typeOK := structuralTypeFromBoundaryValue(reg, value)
+	if !typeOK || typ.IsAny(gotType) || typ.IsUnknown(gotType) || typ.IsNever(gotType) {
+		t.Fatalf("%s structural type = %v/%v, want concrete (value %#v)", label, gotType, typeOK, value)
+	}
+}
+
+func findNestedLocalByName(t *testing.T, root *body.Result, name string) (*body.Result, cfg.Point, symbol.ID) {
+	t.Helper()
+	if root == nil {
+		t.Fatalf("root result missing")
+	}
+	for _, child := range root.FunctionResults() {
+		if child == nil || child.Graph() == nil {
+			continue
+		}
+		for _, point := range child.Graph().RPO() {
+			fact, ok := child.LocalAssignment(point)
+			if !ok || fact.Name != name || !fact.HasSymbol || fact.Symbol == 0 {
+				continue
+			}
+			return child, point, fact.Symbol
+		}
+	}
+	t.Fatalf("nested local assignment %q not found", name)
+	return nil, 0, 0
+}
+
+func findRootLocalPath(t *testing.T, result *body.Result, name string) path.Path {
+	t.Helper()
+	if result == nil || result.Graph() == nil {
+		t.Fatalf("root result missing")
+	}
+	for _, point := range result.Graph().RPO() {
+		fact, ok := result.LocalAssignment(point)
+		if !ok || fact.Name != name || !fact.HasSymbol || fact.Symbol == 0 {
+			continue
+		}
+		return path.NewPath(fact.Symbol, name)
+	}
+	t.Fatalf("root local assignment %q not found", name)
+	return path.Path{}
+}
+
+func findFunctionForPath(t *testing.T, bindings *bind.Result, stmts []ast.Stmt, want string) *ast.FunctionExpr {
+	t.Helper()
+	targets := collectFunctionPathTargets(bindings, stmts)
+	for fn, p := range targets {
+		if p.String() == want {
+			return fn
+		}
+	}
+	t.Fatalf("function path %q not found in %v", want, targets)
+	return nil
 }
 
 func assertSummaryReturn(t *testing.T, reg *axis.Registry, snapshot summary.Snapshot, key summary.SummaryKey, want product.Value) {

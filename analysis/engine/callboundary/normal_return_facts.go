@@ -12,8 +12,9 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/state/pathevidence"
 )
 
-// NormalReturnFacts is the payload lane for facts that hold on a normal return
-// and can cross function boundaries through placeholder paths.
+// NormalReturnFacts is the boundary payload schema for facts that hold on a
+// normal return and can cross function boundaries through placeholder paths.
+// State-lane behavior stays owned by state, summary, and fact application.
 type NormalReturnFacts struct {
 	PathRefinements   []PathValueFact
 	PathStaticMembers []PathStaticMemberFact
@@ -21,6 +22,7 @@ type NormalReturnFacts struct {
 	BranchProofs      []BranchProof
 	ChannelSelects    []ChannelSelectFact
 	EffectDeltas      []EffectDelta
+	EscapeEvents      []EscapeEventFact
 }
 
 // PathValueFact records a pointwise placeholder-path value refinement.
@@ -65,4 +67,26 @@ type EffectDelta struct {
 	Site   effectdelta.Site
 	Kind   effectdelta.Kind
 	Value  effectdelta.Value
+}
+
+// EscapeEventKind orders cross-boundary escape/seal strength for placeholder
+// paths. Larger values dominate smaller values for the same target scope.
+type EscapeEventKind uint8
+
+const (
+	EscapeEventNone EscapeEventKind = iota
+	EscapeEventBorrow
+	EscapeEventRetain
+	EscapeEventStore
+	EscapeEventSend
+	EscapeEventExport
+	EscapeEventOpaque
+)
+
+// EscapeEventFact records a compressed escape/seal event for a placeholder
+// target path. Recursive means the event applies to the entire target subtree.
+type EscapeEventFact struct {
+	Target    pathdom.Path
+	Kind      EscapeEventKind
+	Recursive bool
 }

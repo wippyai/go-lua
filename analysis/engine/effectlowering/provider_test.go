@@ -19,6 +19,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/typewitness"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/standard"
+	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	factapply "github.com/wippyai/go-lua/analysis/engine/factapply"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	sourcevalue "github.com/wippyai/go-lua/analysis/engine/sourcevalue"
@@ -26,10 +27,12 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/engine/visibility"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
+	"github.com/wippyai/go-lua/analysis/lua/typecall"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/type/projection"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/analysis/type/typeexpr"
 	"github.com/wippyai/go-lua/analysis/type/unwrap"
 )
 
@@ -52,6 +55,10 @@ func testReturnTypeOps() ReturnTypeOps {
 		CallableReturn: testCallableReturn,
 		ElementOf:      testElementOf,
 		TypeProjection: testTypeProjection,
+		InstantiateGenericCall: func(fn *typ.Function, args []typ.Type) (*typ.Function, bool) {
+			instantiated, violations := typecall.InstantiateGenericCall(fn, args)
+			return instantiated, instantiated != nil && len(violations) == 0
+		},
 	}
 }
 
@@ -73,7 +80,7 @@ func testElementOf(t typ.Type) (typ.Type, bool) {
 		if len(tt.Elements) == 0 {
 			return nil, false
 		}
-		return typ.NewUnion(tt.Elements...), true
+		return typeexpr.Union(tt.Elements...), true
 	default:
 		return nil, false
 	}
@@ -139,7 +146,7 @@ func TestSignatureOutcomeProviderMaterializesOptionalDeclaredReturn(t *testing.T
 	reg := standard.Registry()
 	provider := SignatureOutcomeProvider(SignatureOutcomeProviderConfig{
 		Signatures: signatureMap{
-			"f": {Type: typ.Func().Returns(typ.NewOptional(typ.String)).Build()},
+			"f": {Type: typ.Func().Returns(typeexpr.Optional(typ.String)).Build()},
 		},
 		NameFor: staticName("f"),
 	})
@@ -153,7 +160,7 @@ func TestSignatureOutcomeProviderMaterializesOptionalDeclaredReturn(t *testing.T
 	}
 	assertPresence(t, reg, got[0].Value, presence.Maybe())
 	assertRuntimeKind(t, reg, got[0].Value, runtimekind.Singleton(runtimekind.String))
-	assertTypeWitness(t, reg, got[0].Value, typ.NewOptional(typ.String))
+	assertTypeWitness(t, reg, got[0].Value, typeexpr.Optional(typ.String))
 }
 
 func TestSignatureOutcomeProviderMaterializesInterfaceDeclaredReturnAsPresent(t *testing.T) {
@@ -271,6 +278,77 @@ func TestSignatureOutcomeProviderLowersNormalReturnRefinementToParamPathRefineme
 		}),
 	})
 	assertStatePresence(t, reg, flow[graph.Exit()], key.SymbolValue(argSymbol), presence.Present())
+}
+
+func TestSignatureOutcomeProviderLowersAbsentNormalReturnRefinementAndApplies(t *testing.T) {
+	reg := standard.Registry()
+	graph := cfg.New()
+	call := graph.AddNode(cfg.NodeCall)
+	graph.AddEdge(graph.Entry(), call, false)
+	graph.AddEdge(call, graph.Exit(), false)
+
+	callee := symbol.ID(804)
+	argExpr := factflow.ExprRef(805)
+	argSymbol := symbol.ID(806)
+	argPath := path.NewPath(argSymbol, "err")
+	facts := factflow.NewFacts(factflow.FactsInput{
+		CallSites: map[cfg.Point]factflow.CallSite{
+			call: factflow.NewCallSite(factflow.CallSiteConfig{
+				Context:      factflow.CallSiteContextStatement,
+				CalleeSymbol: callee,
+				ArgumentSources: []factflow.ValueSource{
+					{Kind: factflow.ValueSourceExpression, ExprRef: argExpr, HasExpr: true},
+				},
+			}),
+		},
+		ExpressionPaths: map[factflow.ExprRef]path.Path{
+			argExpr: argPath,
+		},
+	})
+
+	provider := SignatureOutcomeProvider(SignatureOutcomeProviderConfig{
+		Signatures: signatureMap{
+			"isNil": {
+				Type: typ.Func().Param("v", typ.Any).Build(),
+				Effect: effect.Empty.With(postcondition.NormalReturnRefinement{
+					Target:     effect.ParamRef{Index: 0},
+					Refinement: postcondition.Absent{},
+				}),
+			},
+		},
+		NameFor: func(_ transfer.NodeContext, call factflow.CallProducer) (string, bool) {
+			if call.CalleeSymbol() != callee {
+				return "", false
+			}
+			return "isNil", true
+		},
+		Facts: facts,
+	})
+	site, ok := facts.CallSite(call)
+	if !ok {
+		t.Fatalf("missing call site")
+	}
+	got := provider(transfer.NodeContext{Graph: graph, Registry: reg, Point: call, Node: graph.Node(call)}, site, state.State{}, nil)
+
+	if len(got.ParamPathRefinements) != 1 {
+		t.Fatalf("param path refinements = %d, want 1: %#v", len(got.ParamPathRefinements), got.ParamPathRefinements)
+	}
+	if !got.ParamPathRefinements[0].Path.Equal(path.NewPlaceholder(0)) {
+		t.Fatalf("target path = %s, want $0", got.ParamPathRefinements[0].Path.String())
+	}
+	assertPresence(t, reg, got.ParamPathRefinements[0].Value, presence.Absent())
+
+	flow := transfer.Run(transfer.Config{
+		Graph:      graph,
+		Registry:   reg,
+		EntryState: state.State{}.WriteValue(reg, key.SymbolValue(argSymbol), product.Top()),
+		NodeTransfer: factapply.NewFactsNodeTransfer(factapply.FactsNodeTransferConfig{
+			Facts:       facts,
+			Sources:     sourcevalue.NewSourceValues(sourcevalue.SourceValuesConfig{Registry: reg}),
+			CallOutcome: provider,
+		}),
+	})
+	assertStatePresence(t, reg, flow[graph.Exit()], key.SymbolValue(argSymbol), presence.Absent())
 }
 
 func TestSignatureOutcomeProviderNormalReturnRefinementDoesNotApplyWithoutExpressionPath(t *testing.T) {
@@ -1045,9 +1123,62 @@ func TestSignatureOutcomeProviderTypeProjectionGenericArgReturnsArgRuntimeKind(t
 	assertRuntimeKind(t, reg, got[0].Value, runtimekind.Singleton(runtimekind.String))
 }
 
+func TestSignatureOutcomeProviderInstantiatesGenericDeclaredReturnFromArgumentWitnesses(t *testing.T) {
+	reg := standard.Registry()
+	point := cfg.Point(22)
+	resultParam := typ.NewTypeParam("T", nil)
+	resultGeneric := typ.NewGeneric("Result", []*typ.TypeParam{resultParam},
+		typetable.NewRecord().Field("value", resultParam).Build())
+	tParam := typ.NewTypeParam("T", nil)
+	uParam := typ.NewTypeParam("U", nil)
+	mapType := typ.Func().
+		TypeParamRef(tParam).
+		TypeParamRef(uParam).
+		Param("result", typ.Instantiate(resultGeneric, tParam)).
+		Param("fn", typ.Func().Param("value", tParam).Returns(uParam).Build()).
+		Returns(typ.Instantiate(resultGeneric, uParam)).
+		Build()
+	decodedRef := factflow.ExprRef(22)
+	callbackRef := factflow.ExprRef(23)
+	decodedType := typ.Instantiate(resultGeneric, typ.String)
+	callbackType := typ.Func().Param("value", typ.String).Returns(typ.Number).Build()
+	provider := SignatureOutcomeProvider(SignatureOutcomeProviderConfig{
+		Signatures: signatureMap{
+			"map": {Type: mapType},
+		},
+		NameFor:       staticName("map"),
+		ReturnTypeOps: testReturnTypeOps(),
+		Facts: signatureOutcomeProviderFacts(point, []factflow.ValueSource{
+			{Kind: factflow.ValueSourceExpression, ExprRef: decodedRef, HasExpr: true},
+			{Kind: factflow.ValueSourceExpression, ExprRef: callbackRef, HasExpr: true},
+		}),
+		Sources: sourcevalue.NewSourceValues(sourcevalue.SourceValuesConfig{
+			Registry: reg,
+			ExpressionValues: map[factflow.ExprRef]product.Value{
+				decodedRef:  typevalue.WithWitness(reg, typevalue.FromType(reg, decodedType), decodedType),
+				callbackRef: typevalue.WithWitness(reg, typevalue.FromType(reg, callbackType), callbackType),
+			},
+		}),
+	})
+
+	got := provider(transfer.NodeContext{Registry: reg, Point: point}, factflow.NewCallSite(factflow.CallSiteConfig{}), state.State{}, nil).Results
+
+	if len(got) != 1 {
+		t.Fatalf("got %d results, want 1: %#v", len(got), got)
+	}
+	gotType, ok := typevalue.TypeOf(reg, got[0].Value)
+	if !ok {
+		t.Fatalf("result type missing from value: %#v", got[0].Value)
+	}
+	wantType := typ.Instantiate(resultGeneric, typ.Number)
+	if !typ.TypeEquals(gotType, wantType) {
+		t.Fatalf("result type = %v, want %v", gotType, wantType)
+	}
+}
+
 func TestSignatureOutcomeProviderTypeProjectionUsesDeclaredReturnTypeWhenProjectionFails(t *testing.T) {
 	reg := standard.Registry()
-	point := cfg.Point(21)
+	point := cfg.Point(24)
 	record := typetable.NewRecord().
 		Field("name", typ.String).
 		Build()

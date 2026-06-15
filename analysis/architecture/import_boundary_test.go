@@ -59,11 +59,51 @@ func TestLowerLayerImportBoundaries(t *testing.T) {
 			},
 		},
 		{
+			name:     "lua moduleidentity stays below check and engine",
+			patterns: []string{modulePath + "/analysis/lua/moduleidentity"},
+			banned: []string{
+				modulePath + "/analysis/check",
+				modulePath + "/analysis/engine",
+			},
+		},
+		{
 			name:     "engine signature effect lowering stays lua and check free",
 			patterns: []string{modulePath + "/analysis/engine/effectlowering"},
 			banned: []string{
 				modulePath + "/analysis/check",
 				modulePath + "/analysis/lua",
+				modulePath + "/compiler",
+			},
+		},
+		{
+			name:     "engine sourcevalue stays read-model only",
+			patterns: []string{modulePath + "/analysis/engine/sourcevalue"},
+			banned: []string{
+				modulePath + "/analysis/check",
+				modulePath + "/analysis/engine/factapply",
+				modulePath + "/analysis/lua",
+				modulePath + "/compiler",
+			},
+		},
+		{
+			name:     "engine visibility stays generic",
+			patterns: []string{modulePath + "/analysis/engine/visibility"},
+			banned: []string{
+				modulePath + "/analysis/check",
+				modulePath + "/analysis/engine/factflow",
+				modulePath + "/analysis/lua",
+				modulePath + "/compiler",
+			},
+		},
+		{
+			name:     "engine callboundary stays boundary schema only",
+			patterns: []string{modulePath + "/analysis/engine/callboundary"},
+			banned: []string{
+				modulePath + "/analysis/check",
+				modulePath + "/analysis/engine/factapply",
+				modulePath + "/analysis/engine/factflow",
+				modulePath + "/analysis/lua",
+				modulePath + "/analysis/type",
 				modulePath + "/compiler",
 			},
 		},
@@ -83,6 +123,18 @@ func TestLowerLayerImportBoundaries(t *testing.T) {
 				modulePath + "/analysis/engine/state",
 				modulePath + "/analysis/lua",
 				modulePath + "/analysis/type",
+			},
+		},
+		{
+			name:     "engine callproducer stays projection only",
+			patterns: []string{modulePath + "/analysis/engine/callproducer"},
+			banned: []string{
+				modulePath + "/analysis/check",
+				modulePath + "/analysis/engine/factapply",
+				modulePath + "/analysis/engine/state",
+				modulePath + "/analysis/lua",
+				modulePath + "/analysis/type",
+				modulePath + "/compiler",
 			},
 		},
 		{
@@ -126,6 +178,55 @@ func TestLowerLayerImportBoundaries(t *testing.T) {
 	}
 }
 
+func TestLowLevelLeafImportBoundaries(t *testing.T) {
+	tests := []struct {
+		name     string
+		patterns []string
+		banned   []string
+	}{
+		{
+			name:     "type stays independent from domain values and paths",
+			patterns: []string{modulePath + "/analysis/type/..."},
+			banned: []string{
+				modulePath + "/analysis/domain/value",
+				modulePath + "/analysis/domain/path",
+			},
+		},
+		{
+			name:     "domain path stays independent from type and domain values",
+			patterns: []string{modulePath + "/analysis/domain/path/..."},
+			banned: []string{
+				modulePath + "/analysis/type",
+				modulePath + "/analysis/domain/value",
+			},
+		},
+		{
+			name: "domain value axis and product stay below type lua and check",
+			patterns: []string{
+				modulePath + "/analysis/domain/value/axis",
+				modulePath + "/analysis/domain/value/product",
+			},
+			banned: []string{
+				modulePath + "/analysis/type",
+				modulePath + "/analysis/lua",
+				modulePath + "/analysis/check",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			for _, dep := range productionDeps(t, tt.patterns...) {
+				for _, banned := range tt.banned {
+					if forbiddenImport(dep, banned, false) {
+						t.Fatalf("%s imports forbidden dependency %q", strings.Join(tt.patterns, " "), dep)
+					}
+				}
+			}
+		})
+	}
+}
+
 func TestCheckSplitDirectImportBoundaries(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -147,6 +248,13 @@ func TestCheckSplitDirectImportBoundaries(t *testing.T) {
 			banned: []string{
 				modulePath + "/analysis/check/diagnostics",
 				modulePath + "/analysis/check/checktest",
+			},
+		},
+		{
+			name: "sourcevalue does not directly import type semantics",
+			pkg:  modulePath + "/analysis/engine/sourcevalue",
+			banned: []string{
+				modulePath + "/analysis/type",
 			},
 		},
 	}
@@ -221,10 +329,14 @@ func TestLuaProductionPackagesDoNotImportEngineReadBoundaries(t *testing.T) {
 		modulePath + "/analysis/engine/state",
 		modulePath + "/analysis/engine/visibility",
 	}
+	visibilityAdapter := modulePath + "/analysis/lua/visibilityfacts"
 
 	for _, pkg := range productionPackages(t, modulePath+"/analysis/lua/...") {
 		for _, imp := range pkg.Imports {
 			for _, bannedImport := range banned {
+				if pkg.ImportPath == visibilityAdapter && bannedImport == modulePath+"/analysis/engine/visibility" {
+					continue
+				}
 				if forbiddenImport(imp, bannedImport, false) {
 					t.Fatalf("%s imports forbidden dependency %q", pkg.ImportPath, imp)
 				}

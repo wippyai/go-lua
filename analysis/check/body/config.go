@@ -3,6 +3,7 @@ package body
 import (
 	"strings"
 
+	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/module/importlookup"
@@ -14,6 +15,7 @@ func copyConfig(config Config) Config {
 	config.Globals = append([]string(nil), config.Globals...)
 	config.Signatures.Manifests = append([]*manifest.Manifest(nil), config.Signatures.Manifests...)
 	config.ModuleExports.Manifests = append([]*manifest.Manifest(nil), config.ModuleExports.Manifests...)
+	config.ModuleTypes.Manifests = append([]*manifest.Manifest(nil), config.ModuleTypes.Manifests...)
 	if len(config.ExpressionValues) != 0 {
 		values := make(map[factflow.ExprRef]product.Value, len(config.ExpressionValues))
 		for ref, value := range config.ExpressionValues {
@@ -22,6 +24,20 @@ func copyConfig(config Config) Config {
 		config.ExpressionValues = values
 	}
 	return config
+}
+
+func solveConfigFromConfig(config Config) SolveConfig {
+	return SolveConfig{
+		EntryState:                   config.EntryState,
+		Initial:                      config.Initial,
+		CallOutcome:                  config.CallOutcome,
+		CallOutcomeFactory:           config.CallOutcomeFactory,
+		SignatureArgumentType:        config.SignatureArgumentType,
+		SignatureArgumentTypeFactory: config.SignatureArgumentTypeFactory,
+		WidenAt:                      config.WidenAt,
+		WidenDelay:                   config.WidenDelay,
+		Stats:                        config.Stats,
+	}
 }
 
 func mergeExpressionValues(base, override map[factflow.ExprRef]product.Value) map[factflow.ExprRef]product.Value {
@@ -34,6 +50,17 @@ func mergeExpressionValues(base, override map[factflow.ExprRef]product.Value) ma
 	}
 	for ref, value := range override {
 		out[ref] = value
+	}
+	return out
+}
+
+func exprRefSet(paths map[factflow.ExprRef]pathdom.Path) map[factflow.ExprRef]struct{} {
+	if len(paths) == 0 {
+		return nil
+	}
+	out := make(map[factflow.ExprRef]struct{}, len(paths))
+	for ref := range paths {
+		out[ref] = struct{}{}
 	}
 	return out
 }

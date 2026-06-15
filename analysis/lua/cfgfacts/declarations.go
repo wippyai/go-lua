@@ -1,6 +1,7 @@
 package cfgfacts
 
 import (
+	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
@@ -24,6 +25,16 @@ type TypeDefinitionFact struct {
 	Interface *ast.InterfaceDefStmt
 }
 
+// ShortCircuitGuardFact records the guard operand tested by a synthetic branch
+// emitted for a short-circuit logical operand (the left operand of an and/or
+// whose right operand carries projected calls). It lets the semantics layer
+// rebuild a branch-condition fact at the branch point so the right-operand edge
+// inherits the guard's flow narrowing, exactly as an explicit if would.
+type ShortCircuitGuardFact struct {
+	Stmt      ast.Stmt
+	Condition ast.Expr
+}
+
 // FunctionDefinitionFact describes a function declaration associated with a CFG point.
 type FunctionDefinitionFact struct {
 	Stmt *ast.FuncDefStmt
@@ -32,4 +43,6 @@ type FunctionDefinitionFact struct {
 
 	TargetSymbol    symbol.ID
 	HasTargetSymbol bool
+	TargetPath      path.Path
+	HasTargetPath   bool
 }

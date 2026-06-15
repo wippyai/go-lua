@@ -5,6 +5,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/type/kind"
 	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/analysis/type/typeexpr"
 )
 
 type testRecordBuilder struct {
@@ -140,7 +141,7 @@ func TestRewrite_DirectReplacement(t *testing.T) {
 }
 
 func TestRewrite_Optional(t *testing.T) {
-	opt := typ.NewOptional(typ.Number)
+	opt := typeexpr.Optional(typ.Number)
 	result := Rewrite(opt, replaceNumber(typ.String))
 	o, ok := result.(*typ.Optional)
 	if !ok {
@@ -152,7 +153,7 @@ func TestRewrite_Optional(t *testing.T) {
 }
 
 func TestRewrite_Union(t *testing.T) {
-	u := typ.NewUnion(typ.Number, typ.Boolean)
+	u := typeexpr.Union(typ.Number, typ.Boolean)
 	result := Rewrite(u, replaceNumber(typ.String))
 	union, ok := result.(*typ.Union)
 	if !ok {
@@ -170,8 +171,8 @@ func TestRewrite_Union(t *testing.T) {
 }
 
 func TestRewrite_UnionReplacementFlattensNestedUnionMember(t *testing.T) {
-	nested := typ.NewUnion(typ.String, typ.Integer)
-	result := Rewrite(typ.NewUnion(typ.Number, typ.Boolean), replaceNumber(nested))
+	nested := typeexpr.Union(typ.String, typ.Integer)
+	result := Rewrite(typeexpr.Union(typ.Number, typ.Boolean), replaceNumber(nested))
 
 	union := requireRewriteUnionMembers(t, result, typ.String, typ.Integer, typ.Boolean)
 	for _, member := range union.Members {
@@ -182,8 +183,8 @@ func TestRewrite_UnionReplacementFlattensNestedUnionMember(t *testing.T) {
 }
 
 func TestRewrite_UnionReplacementExpandsOptionalMember(t *testing.T) {
-	optionalString := typ.NewOptional(typ.String)
-	result := Rewrite(typ.NewUnion(typ.Number, typ.Boolean), replaceNumber(optionalString))
+	optionalString := typeexpr.Optional(typ.String)
+	result := Rewrite(typeexpr.Union(typ.Number, typ.Boolean), replaceNumber(optionalString))
 
 	union := requireRewriteUnionMembers(t, result, typ.Nil, typ.String, typ.Boolean)
 	for _, member := range union.Members {
@@ -195,7 +196,7 @@ func TestRewrite_UnionReplacementExpandsOptionalMember(t *testing.T) {
 
 func TestRewrite_Intersection(t *testing.T) {
 	rec := newRecord().Field("x", typ.Boolean).Build()
-	inter := typ.NewIntersection(typ.Number, rec)
+	inter := typeexpr.Intersection(typ.Number, rec)
 	result := Rewrite(inter, replaceNumber(typ.String))
 	intersection, ok := result.(*typ.Intersection)
 	if !ok {
@@ -213,9 +214,9 @@ func TestRewrite_Intersection(t *testing.T) {
 }
 
 func TestRewrite_IntersectionReplacementFlattensNestedIntersectionMember(t *testing.T) {
-	nested := typ.NewIntersection(typ.String, typ.Integer)
+	nested := typeexpr.Intersection(typ.String, typ.Integer)
 	rec := newRecord().Field("x", typ.Boolean).Build()
-	result := Rewrite(typ.NewIntersection(typ.Number, rec), replaceNumber(nested))
+	result := Rewrite(typeexpr.Intersection(typ.Number, rec), replaceNumber(nested))
 
 	intersection := requireRewriteIntersectionMembers(t, result, typ.String, typ.Integer, rec)
 	for _, member := range intersection.Members {
@@ -254,7 +255,7 @@ func TestRewrite_Map(t *testing.T) {
 
 func TestRewrite_MapNormalizesRewrittenNilableKey(t *testing.T) {
 	m := typ.NewMap(typ.Number, typ.Number)
-	result := Rewrite(m, replaceNumber(typ.NewOptional(typ.String)))
+	result := Rewrite(m, replaceNumber(typeexpr.Optional(typ.String)))
 	mp, ok := result.(*typ.Map)
 	if !ok {
 		t.Fatalf("expected Map, got %T", result)
@@ -262,14 +263,14 @@ func TestRewrite_MapNormalizesRewrittenNilableKey(t *testing.T) {
 	if !typ.TypeEquals(mp.Key, typ.String) {
 		t.Fatalf("expected normalized key String, got %v", mp.Key)
 	}
-	if !typ.TypeEquals(mp.Value, typ.NewOptional(typ.String)) {
+	if !typ.TypeEquals(mp.Value, typeexpr.Optional(typ.String)) {
 		t.Fatalf("expected value optional String, got %v", mp.Value)
 	}
 }
 
 func TestRewrite_ReadonlyMapNormalizesRewrittenNilableKey(t *testing.T) {
 	m := typ.NewReadonlyMap(typ.Number, typ.Number)
-	result := Rewrite(m, replaceNumber(typ.NewUnion(typ.String, typ.Nil)))
+	result := Rewrite(m, replaceNumber(typeexpr.Union(typ.String, typ.Nil)))
 	mp, ok := result.(*typ.ReadonlyMap)
 	if !ok {
 		t.Fatalf("expected ReadonlyMap, got %T", result)
@@ -277,7 +278,7 @@ func TestRewrite_ReadonlyMapNormalizesRewrittenNilableKey(t *testing.T) {
 	if !typ.TypeEquals(mp.Key, typ.String) {
 		t.Fatalf("expected normalized key String, got %v", mp.Key)
 	}
-	if !typ.TypeEquals(mp.Value, typ.NewUnion(typ.String, typ.Nil)) {
+	if !typ.TypeEquals(mp.Value, typeexpr.Union(typ.String, typ.Nil)) {
 		t.Fatalf("expected value string|nil, got %v", mp.Value)
 	}
 }
@@ -355,7 +356,7 @@ func TestRewrite_Record(t *testing.T) {
 
 func TestRewrite_RecordNormalizesNilableOptionalFieldPayload(t *testing.T) {
 	rec := newRecord().OptField("maybe", typ.Number).Build()
-	result := Rewrite(rec, replaceNumber(typ.NewUnion(typ.String, typ.Nil)))
+	result := Rewrite(rec, replaceNumber(typeexpr.Union(typ.String, typ.Nil)))
 	r, ok := result.(*typ.Record)
 	if !ok {
 		t.Fatalf("expected Record, got %T", result)
@@ -371,7 +372,7 @@ func TestRewrite_RecordNormalizesNilableOptionalFieldPayload(t *testing.T) {
 
 func TestRewrite_RecordNormalizesNilableOptionalStaticMemberPayload(t *testing.T) {
 	rec := newRecord().OptStaticStringIndex("maybe", typ.Number).Build()
-	result := Rewrite(rec, replaceNumber(typ.NewOptional(typ.String)))
+	result := Rewrite(rec, replaceNumber(typeexpr.Optional(typ.String)))
 	r, ok := result.(*typ.Record)
 	if !ok {
 		t.Fatalf("expected Record, got %T", result)
@@ -387,7 +388,7 @@ func TestRewrite_RecordNormalizesNilableOptionalStaticMemberPayload(t *testing.T
 
 func TestRewrite_RecordNormalizesRewrittenMapKey(t *testing.T) {
 	rec := newRecord().MapComponent(typ.Number, typ.Boolean).Build()
-	result := Rewrite(rec, replaceNumber(typ.NewOptional(typ.String)))
+	result := Rewrite(rec, replaceNumber(typeexpr.Optional(typ.String)))
 	r, ok := result.(*typ.Record)
 	if !ok {
 		t.Fatalf("expected Record, got %T", result)
@@ -538,7 +539,7 @@ func TestRewrite_RecursiveBody(t *testing.T) {
 	node := typ.NewRecursive("Node", func(self typ.Type) typ.Type {
 		return newRecord().
 			Field("value", typ.Number).
-			Field("next", typ.NewOptional(self)).
+			Field("next", typeexpr.Optional(self)).
 			Build()
 	})
 
@@ -582,7 +583,7 @@ func TestRewrite_SelfSubstitution(t *testing.T) {
 }
 
 func TestRewrite_SelfInOptional(t *testing.T) {
-	opt := typ.NewOptional(typ.Self)
+	opt := typeexpr.Optional(typ.Self)
 	result := Rewrite(opt, replaceSelf(typ.Number))
 	o, ok := result.(*typ.Optional)
 	if !ok {
@@ -594,7 +595,7 @@ func TestRewrite_SelfInOptional(t *testing.T) {
 }
 
 func TestRewrite_SelfInUnion(t *testing.T) {
-	u := typ.NewUnion(typ.Self, typ.Boolean)
+	u := typeexpr.Union(typ.Self, typ.Boolean)
 	result := Rewrite(u, replaceSelf(typ.Number))
 	union, ok := result.(*typ.Union)
 	if !ok {
@@ -636,7 +637,7 @@ func TestRewrite_NoOpReturnsSamePointer(t *testing.T) {
 func TestRewrite_DepthLimit(t *testing.T) {
 	deep := typ.Number
 	for i := 0; i < 100; i++ {
-		deep = typ.NewOptional(deep)
+		deep = typeexpr.Optional(deep)
 	}
 	result := Rewrite(deep, replaceNumber(typ.String))
 	if result == nil {

@@ -60,7 +60,7 @@ func TestLocalPreservesVersionWhileStableIgnoresIt(t *testing.T) {
 	}
 }
 
-func TestLocalKeyOfPathPreservesPlaceholderAndReturnSlotStructure(t *testing.T) {
+func TestLocalKeyPreservesPlaceholderAndReturnSlotStructure(t *testing.T) {
 	tests := []struct {
 		name string
 		path pathdom.Path
@@ -80,12 +80,12 @@ func TestLocalKeyOfPathPreservesPlaceholderAndReturnSlotStructure(t *testing.T) 
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, ok := LocalKeyOfPath(tt.path)
+			local, ok := LocalOfPath(tt.path)
 			if !ok {
-				t.Fatal("LocalKeyOfPath rejected structural path")
+				t.Fatal("LocalOfPath rejected structural path")
 			}
-			if got.PathKey() != tt.want {
-				t.Fatalf("LocalKeyOfPath = %q, want %q", got.PathKey(), tt.want)
+			if got := local.LocalKey().PathKey(); got != tt.want {
+				t.Fatalf("Local.LocalKey() = %q, want %q", got, tt.want)
 			}
 		})
 	}
@@ -425,84 +425,6 @@ func TestRootAndSuffixVocabulary(t *testing.T) {
 	sibling := SuffixOfSegments([]segment.Segment{{Kind: segment.SegmentField, Name: "edges"}})
 	if suffix.Overlaps(sibling) {
 		t.Fatalf("%s should not overlap sibling %s", suffix.KeySuffix(), sibling.KeySuffix())
-	}
-}
-
-func TestContainerRefOwnsSymbolContainerIdentity(t *testing.T) {
-	path := pathdom.NewPath(31, "rows").Field("items")
-	key, ok := SymbolPathKeyOf(path)
-	if !ok {
-		t.Fatal("SymbolPathKeyOf failed")
-	}
-	ref, ok := ContainerRefFromKey(path.Symbol, key)
-	if !ok {
-		t.Fatal("ContainerRefFromKey failed")
-	}
-	if !ref.IsValid() {
-		t.Fatalf("ContainerRef = %#v, want valid ref", ref)
-	}
-	if got := ref.Root(); got != path.Symbol {
-		t.Fatalf("ContainerRef root = %d, want %d", got, path.Symbol)
-	}
-
-	again, ok := ContainerRefOfPath(path)
-	if !ok {
-		t.Fatal("ContainerRefOfPath failed")
-	}
-	if !ref.Equal(again) {
-		t.Fatalf("ContainerRef equality = %#v/%#v, want equal", ref, again)
-	}
-	gotStable, ok := ref.Stable()
-	if !ok {
-		t.Fatal("ContainerRef.Stable failed")
-	}
-	wantStable, _ := StableOfPath(path)
-	if !gotStable.Equal(wantStable) {
-		t.Fatalf("ContainerRef.Stable = %s, want %s", gotStable.Key(), wantStable.Key())
-	}
-}
-
-func TestContainerRefRejectsUnresolvedPaths(t *testing.T) {
-	if key, ok := SymbolPathKeyOf(pathdom.Path{Root: "rows"}); ok || key != "" {
-		t.Fatalf("SymbolPathKeyOf(unresolved) = %q/%v, want rejected", key, ok)
-	}
-	ref := ContainerRef{}
-	if ref.IsValid() {
-		t.Fatalf("zero ContainerRef should be invalid: %#v", ref)
-	}
-	if ref, ok := ContainerRefFromKey(31, ""); ok || ref.IsValid() {
-		t.Fatalf("ContainerRefFromKey(empty) = %#v/%v, want rejected", ref, ok)
-	}
-	if stable, ok := ref.Stable(); ok || stable.Key() != "" {
-		t.Fatalf("zero ContainerRef.Stable = %#v/%v, want rejected", stable, ok)
-	}
-}
-
-func TestContainerRefConstructorsValidateSymbolKeyPair(t *testing.T) {
-	path := pathdom.NewPath(31, "rows").Field("items")
-	ref, ok := ContainerRefOfPath(path)
-	if !ok {
-		t.Fatal("ContainerRefOfPath failed")
-	}
-	if got, want := ref.Key(), SymbolPathKey(31, path.Segments); got != want {
-		t.Fatalf("ContainerRefOfPath key = %s, want %s", got, want)
-	}
-
-	if ref, ok := ContainerRefFromKey(32, ref.Key()); ok || ref.IsValid() {
-		t.Fatalf("ContainerRefFromKey accepted mismatched root/key: %#v/%v", ref, ok)
-	}
-	versioned := path
-	versioned.Version = 1
-	if ref, ok := ContainerRefFromKey(31, versioned.Key()); ok || ref.IsValid() {
-		t.Fatalf("ContainerRefFromKey accepted versioned path key: %#v/%v", ref, ok)
-	}
-
-	namedRoot, ok := StableOfPath(pathdom.Path{Root: "rows"}.Field("items"))
-	if !ok {
-		t.Fatal("StableOfPath(named root) failed")
-	}
-	if ref, ok := ContainerRefOfStable(namedRoot); ok || ref.IsValid() {
-		t.Fatalf("ContainerRefOfStable accepted named root: %#v/%v", ref, ok)
 	}
 }
 

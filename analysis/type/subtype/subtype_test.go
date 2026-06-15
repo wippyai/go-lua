@@ -5,6 +5,7 @@ import (
 
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/analysis/type/typeexpr"
 )
 
 func TestPrimitiveStrictOrder(t *testing.T) {
@@ -25,7 +26,7 @@ func TestPrimitiveStrictOrder(t *testing.T) {
 	if !IsSubtype(typ.String, typ.Unknown) || IsSubtype(typ.Unknown, typ.String) {
 		t.Fatal("unknown should be target-top but not source-bottom")
 	}
-	if !IsSubtype(typ.Any, typ.NewOptional(typ.Unknown)) {
+	if !IsSubtype(typ.Any, typeexpr.Optional(typ.Unknown)) {
 		t.Fatal("unknown? should behave as a top target")
 	}
 }
@@ -42,10 +43,10 @@ func TestAnySourceStrictSubtypeBehavior(t *testing.T) {
 		{"concrete primitive", typ.String, false},
 		{"concrete record", record, false},
 		{"builtin table top marker", tableTop, true},
-		{"primitive union", typ.NewUnion(typ.String, typ.Number), false},
-		{"union with table top marker", typ.NewUnion(typ.String, tableTop), true},
-		{"intersection with concrete record", typ.NewIntersection(tableTop, record), false},
-		{"intersection with only accepted tops", typ.NewIntersection(tableTop, typ.Any), true},
+		{"primitive union", typeexpr.Union(typ.String, typ.Number), false},
+		{"union with table top marker", typeexpr.Union(typ.String, tableTop), true},
+		{"intersection with concrete record", typeexpr.Intersection(tableTop, record), false},
+		{"intersection with only accepted tops", typeexpr.Intersection(tableTop, typ.Any), true},
 	}
 
 	for _, tt := range tests {
@@ -61,10 +62,10 @@ func TestLiteralOptionalUnionAndIntersectionStrict(t *testing.T) {
 	if !IsSubtype(typ.LiteralInt(42), typ.Number) {
 		t.Fatal("integer literal should be a number")
 	}
-	if IsSubtype(typ.String, typ.NewUnion(typ.LiteralString("a"), typ.LiteralString("b"))) {
+	if IsSubtype(typ.String, typeexpr.Union(typ.LiteralString("a"), typ.LiteralString("b"))) {
 		t.Fatal("base string should not satisfy a literal-only union")
 	}
-	optNumber := typ.NewOptional(typ.Number)
+	optNumber := typeexpr.Optional(typ.Number)
 	if !IsSubtype(typ.Integer, optNumber) || !IsSubtype(typ.Nil, optNumber) {
 		t.Fatal("number? should accept integer and nil")
 	}
@@ -75,7 +76,7 @@ func TestLiteralOptionalUnionAndIntersectionStrict(t *testing.T) {
 	rec := typetable.NewRecord().Field("x", typ.Number).Field("y", typ.String).Build()
 	xOnly := typetable.NewRecord().Field("x", typ.Number).Build()
 	yOnly := typetable.NewRecord().Field("y", typ.String).Build()
-	if !IsSubtype(rec, typ.NewIntersection(xOnly, yOnly)) {
+	if !IsSubtype(rec, typeexpr.Intersection(xOnly, yOnly)) {
 		t.Fatal("record with both fields should satisfy both intersection members")
 	}
 }
@@ -99,7 +100,7 @@ func TestFunctionParameterReturnAndArity(t *testing.T) {
 	if IsSubtype(withLateRequired, requiresOne) {
 		t.Fatal("required parameter after optional still contributes to minimum arity")
 	}
-	if !IsSubtype(typ.Func().Build(), typ.Func().Returns(typ.NewOptional(typ.Unknown)).Build()) {
+	if !IsSubtype(typ.Func().Build(), typ.Func().Returns(typeexpr.Optional(typ.Unknown)).Build()) {
 		t.Fatal("missing Lua return should satisfy nilable return slot")
 	}
 }
@@ -118,7 +119,7 @@ func TestRecordWidthDepthReadonlyAndMutable(t *testing.T) {
 	}
 
 	dog := typ.LiteralString("dog")
-	animal := typ.NewUnion(dog, typ.LiteralString("cat"))
+	animal := typeexpr.Union(dog, typ.LiteralString("cat"))
 	mutableDog := typetable.NewRecord().Field("pet", dog).Build()
 	mutableAnimal := typetable.NewRecord().Field("pet", animal).Build()
 	if IsSubtype(mutableDog, mutableAnimal) || IsSubtype(mutableAnimal, mutableDog) {
@@ -131,6 +132,30 @@ func TestRecordWidthDepthReadonlyAndMutable(t *testing.T) {
 	}
 	if IsSubtype(readonlyAnimal, mutableAnimal) {
 		t.Fatal("readonly field should not satisfy mutable target")
+	}
+}
+
+func TestFreshRecordExplicitNilAssignableToNilableField(t *testing.T) {
+	status := typeexpr.Union(
+		typ.LiteralString("queued"),
+		typ.LiteralString("started"),
+		typ.LiteralString("completed"),
+		typ.LiteralString("failed"),
+	)
+	source := typetable.NewRecord().
+		Field("error", typ.Nil).
+		Field("status", typ.LiteralString("queued")).
+		Build()
+	target := typetable.NewRecord().
+		Field("error", typeexpr.Optional(typ.String)).
+		Field("status", status).
+		Build()
+
+	if !IsFreshAssignable(source, target) {
+		t.Fatal("fresh record with explicit nil field should assign to nilable field and literal-union field")
+	}
+	if !IsFreshAssignable(source, typeexpr.Optional(target)) {
+		t.Fatal("fresh record with explicit nil field should assign through optional record target")
 	}
 }
 
@@ -155,16 +180,16 @@ func TestReadonlyMapViews(t *testing.T) {
 
 	rec := typetable.NewRecord().
 		Field("id", typ.Integer).
-		OptField("name", typ.NewOptional(typ.String)).
+		OptField("name", typeexpr.Optional(typ.String)).
 		Build()
-	view := typ.NewReadonlyMap(typ.String, typ.NewUnion(typ.Number, typ.String))
+	view := typ.NewReadonlyMap(typ.String, typeexpr.Union(typ.Number, typ.String))
 	if !IsSubtype(rec, view) {
 		t.Fatal("record present entries should satisfy readonly map view")
 	}
 }
 
 func TestMapAdaptersNormalizeNilableKeys(t *testing.T) {
-	nilableString := typ.NewOptional(typ.String)
+	nilableString := typeexpr.Optional(typ.String)
 
 	if !IsSubtype(typ.NewMap(nilableString, typ.Integer), typ.NewReadonlyMap(typ.String, typ.Number)) {
 		t.Fatal("mutable map should normalize its key for readonly map view checks")
@@ -201,7 +226,7 @@ func TestBuiltinTableTopMarkerSubtyping(t *testing.T) {
 		typ.NewArray(typ.String),
 		typ.NewTuple(typ.String),
 		typ.NewInterface("NamedTableLike", nil),
-		typ.NewIntersection(typetable.NewRecord().Build(), typ.NewInterface("NamedTableLike", nil)),
+		typeexpr.Intersection(typetable.NewRecord().Build(), typ.NewInterface("NamedTableLike", nil)),
 		typ.Any,
 	}
 	for _, sub := range accepted {

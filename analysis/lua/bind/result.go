@@ -43,8 +43,9 @@ type Result struct {
 	primitiveTypeRefs  map[*ast.PrimitiveTypeExpr]TypeDecl
 	typeDefDecls       map[*ast.TypeDefStmt]TypeDecl
 	interfaceDecls     map[*ast.InterfaceDefStmt]TypeDecl
-	typeDefParams      map[*ast.TypeDefStmt][]TypeDecl
-	functionTypeParams map[*ast.FunctionExpr][]TypeDecl
+	typeDefParams       map[*ast.TypeDefStmt][]TypeDecl
+	functionTypeParams  map[*ast.FunctionExpr][]TypeDecl
+	methodReceiverTypes map[*ast.FunctionExpr]TypeDecl
 }
 
 func newResult(opts Options) *Result {
@@ -75,6 +76,7 @@ func newResult(opts Options) *Result {
 		interfaceDecls:        make(map[*ast.InterfaceDefStmt]TypeDecl),
 		typeDefParams:         make(map[*ast.TypeDefStmt][]TypeDecl),
 		functionTypeParams:    make(map[*ast.FunctionExpr][]TypeDecl),
+		methodReceiverTypes:   make(map[*ast.FunctionExpr]TypeDecl),
 	}
 	for _, name := range normalizeNames(opts.Globals) {
 		r.global(name, true)

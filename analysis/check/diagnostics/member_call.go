@@ -12,9 +12,9 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/variant"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
-	"github.com/wippyai/go-lua/analysis/lua/typeaccess"
 	"github.com/wippyai/go-lua/analysis/lua/typecall"
 	"github.com/wippyai/go-lua/analysis/symbol"
+	"github.com/wippyai/go-lua/analysis/type/access"
 	"github.com/wippyai/go-lua/analysis/type/normalize"
 	"github.com/wippyai/go-lua/analysis/type/subst"
 	"github.com/wippyai/go-lua/analysis/type/subtype"
@@ -42,6 +42,11 @@ func (p memberCall) Produce(result *body.Result) []diagnostic.Diagnostic {
 		if !ok {
 			continue
 		}
+		if site, ok := result.CallSite(point); ok {
+			if _, hasSignature := result.CallSignature(site); hasSignature {
+				continue
+			}
+		}
 		if d, ok := p.call(result, point, fact, envs[point]); ok {
 			out = append(out, d)
 		}
@@ -52,7 +57,7 @@ func (p memberCall) Produce(result *body.Result) []diagnostic.Diagnostic {
 func (p memberCall) call(result *body.Result, point cfg.Point, fact semantics.CallFact, env literalEnv) (diagnostic.Diagnostic, bool) {
 	receiver, member, callExpr, ok := callMemberAccess(fact)
 	if !ok || receiver.Symbol == 0 {
-		return diagnostic.Diagnostic{}, false
+		return p.expressionReceiverCall(result, point, fact, env)
 	}
 	baseType, ok := p.receiverType(result, point, fact, receiver, env)
 	if !ok {
@@ -69,6 +74,9 @@ func (p memberCall) call(result *body.Result, point cfg.Point, fact semantics.Ca
 		return diagnostic.Diagnostic{}, false
 	}
 	if projectionHasNil(receiverType) {
+		if fact.Receiver != nil && fact.Method != "" {
+			return optionalMethodCallDiagnostic(callExpr), true
+		}
 		return memberDiagnostic(result, fact, callExpr, receiverType, member, point), true
 	}
 
@@ -91,6 +99,52 @@ func (p memberCall) call(result *body.Result, point cfg.Point, fact semantics.Ca
 	}
 }
 
+// expressionReceiverCall handles a colon-method call whose receiver is an
+// expression with no resolvable symbol path (e.g. make()[1]:topic()). When the
+// receiver type is provably optional, calling a method on it without a nil check
+// is unsound and is reported here.
+func (p memberCall) expressionReceiverCall(result *body.Result, point cfg.Point, fact semantics.CallFact, env literalEnv) (diagnostic.Diagnostic, bool) {
+	if fact.Receiver == nil || fact.Method == "" || fact.Call == nil {
+		return diagnostic.Diagnostic{}, false
+	}
+	receiverType, ok := newFlowExpressionTyper(result, p.resolver, point, env).typeOf(fact.Receiver)
+	if !ok || receiverType == nil {
+		return diagnostic.Diagnostic{}, false
+	}
+	if typ.IsAny(receiverType) || typ.IsUnknown(receiverType) || typ.IsNever(receiverType) {
+		return diagnostic.Diagnostic{}, false
+	}
+	if !projectionHasNil(receiverType) {
+		return diagnostic.Diagnostic{}, false
+	}
+	return optionalMethodCallDiagnostic(fact.Call), true
+}
+
+func optionalMethodCallDiagnostic(call *ast.FuncCallExpr) diagnostic.Diagnostic {
+	span := ast.SpanOf(call)
+	return diagnostic.Diagnostic{
+		Position: diagnostic.Position{
+			Line:      span.StartLine,
+			Column:    span.StartCol,
+			EndLine:   span.EndLine,
+			EndColumn: span.EndCol,
+		},
+		Span:     span,
+		Code:     CodeOptionalMethodCall,
+		Severity: diagnostic.SeverityError,
+		Message:  "cannot call method on optional value without nil check",
+		Explanation: diagnostic.NewExplanation(
+			diagnostic.Evidence{
+				Kind:    diagnostic.EvidenceAbstractFact,
+				Trust:   diagnostic.TrustProven,
+				Span:    span,
+				Message: "receiver type at call is optional",
+			},
+		),
+		Labels: []diagnostic.Label{{Span: span, Message: "method call on optional receiver"}},
+	}
+}
+
 func (p memberCall) callableMemberContract(result *body.Result, point cfg.Point, fact semantics.CallFact, receiverType, memberType typ.Type, member string) (diagnostic.Diagnostic, bool) {
 	callable, ok := typecall.Callable(memberType)
 	if !ok {
@@ -105,7 +159,7 @@ func (p memberCall) callableMemberContract(result *body.Result, point cfg.Point,
 	if fact.Receiver != nil && fact.Method != "" {
 		contract = colonMemberCallContract(receiverType, contract)
 	}
-	return directCallContract(p).directFunctionCall(result, point, fact, contract)
+	return directCallContract(p).directFunctionCall(result, point, fact, contract, nil)
 }
 
 func colonMemberCallContract(receiverType typ.Type, contract directFunctionContract) directFunctionContract {
@@ -281,9 +335,9 @@ func typeAtPath(t typ.Type, suffix []segment.Segment, depth int) (typ.Type, bool
 	var ok bool
 	switch seg.Kind {
 	case segment.SegmentField, segment.SegmentIndexString:
-		current, ok = typeaccess.Field(t, seg.Name)
+		current, ok = access.Field(t, seg.Name)
 	case segment.SegmentIndexInt:
-		current, ok = typeaccess.Index(t, typ.LiteralInt(int64(seg.Index)))
+		current, ok = access.Index(t, typ.LiteralInt(int64(seg.Index)))
 	default:
 		ok = false
 	}

@@ -6,17 +6,22 @@ import (
 )
 
 type PathRefinementsSnapshot struct {
+	Bottom      bool
 	Top         bool
 	Refinements map[pathdom.PathKey]product.Value
 }
 
-// PathRefinementsSnapshot returns finite path refinements unless the path lane
-// is top. When Top is true, Refinements is empty.
+// PathRefinementsSnapshot returns finite must path refinements. Bottom is
+// explicit; Top means the reachable must lane contains no finite refinements.
 func (l Lane) PathRefinementsSnapshot() PathRefinementsSnapshot {
-	if l.refinementsTop {
-		return PathRefinementsSnapshot{Top: true}
+	if l.refinementsBottom {
+		return PathRefinementsSnapshot{Bottom: true}
 	}
-	return PathRefinementsSnapshot{Refinements: clonePathValueMap(l.refinements)}
+	refinements := clonePathValueMap(l.refinements)
+	return PathRefinementsSnapshot{
+		Top:         len(refinements) == 0,
+		Refinements: refinements,
+	}
 }
 
 type PathStaticMembersSnapshot struct {
@@ -52,5 +57,24 @@ func (l Lane) BranchProofsSnapshot() BranchProofsSnapshot {
 	return BranchProofsSnapshot{
 		Top:    len(proofs) == 0,
 		Proofs: proofs,
+	}
+}
+
+type PathPresenceImplicationsSnapshot struct {
+	Bottom       bool
+	Top          bool
+	Implications []PathPresenceImplication
+}
+
+// PathPresenceImplicationsSnapshot returns finite must path-presence
+// implications in stable order.
+func (l Lane) PathPresenceImplicationsSnapshot() PathPresenceImplicationsSnapshot {
+	if l.pathPresenceImplicationsBottom {
+		return PathPresenceImplicationsSnapshot{Bottom: true}
+	}
+	implications := pathPresenceImplicationsFromSet(l.pathPresenceImplications)
+	return PathPresenceImplicationsSnapshot{
+		Top:          len(implications) == 0,
+		Implications: implications,
 	}
 }

@@ -87,6 +87,17 @@ func assertPathValue(t *testing.T, reg *axis.Registry, gotState state.State, pat
 	}
 }
 
+func assertPathPresence(t *testing.T, reg *axis.Registry, gotState state.State, pathKey path.PathKey, want presence.Value) {
+	t.Helper()
+	got := gotState.ReadPathKey(reg, pathKey)
+	if product.Equal(reg, got, product.Bottom(reg)) {
+		t.Fatalf("path %s = bottom, want presence %s", pathKey, want)
+	}
+	if gotPresence := product.PresenceOf(got); !presence.Equal(gotPresence, want) {
+		t.Fatalf("path %s presence = %s in %s, want %s", pathKey, gotPresence, formatValue(reg, got), want)
+	}
+}
+
 func assertRuntimeKind(t *testing.T, reg *axis.Registry, got product.Value, want runtimekind.Value) {
 	t.Helper()
 	if kind := product.Get(reg, got, runtimekind.Key); !runtimekind.Equal(kind, want) {

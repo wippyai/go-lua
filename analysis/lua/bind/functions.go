@@ -168,6 +168,9 @@ type functionOriginDetails struct {
 	method          string
 	targetSymbol    symbol.ID
 	hasTargetSymbol bool
+
+	receiverType    TypeDecl
+	hasReceiverType bool
 }
 
 func (r *Result) registerFunction(fn, parent *ast.FunctionExpr, details functionOriginDetails) symbol.ID {
@@ -300,6 +303,9 @@ func (b *binder) bindFunction(fn *ast.FunctionExpr, method bool, origin function
 			Type:        typeAt(types, i),
 			SourceIndex: i,
 		})
+	}
+	if origin.hasReceiverType {
+		b.result.methodReceiverTypes[fn] = origin.receiverType
 	}
 	b.result.paramSymbols[fn] = params
 	if hasVargs {

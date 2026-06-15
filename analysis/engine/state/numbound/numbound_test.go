@@ -1,0 +1,127 @@
+package numbound
+
+import (
+	"testing"
+
+	"github.com/wippyai/go-lua/analysis/domain/lattice/lift"
+	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+)
+
+func keyOf(name string) pathdom.PathKey {
+	return pathdom.PathKey(name)
+}
+
+func floors(entries map[pathdom.PathKey]Floor) map[pathdom.PathKey]Floor {
+	return entries
+}
+
+func lift_mustValues(entries map[pathdom.PathKey]Floor) lift.MustMapLane[pathdom.PathKey, Floor] {
+	return lift.MustMapValues(entries)
+}
+
+func TestElemLatticeLaws(t *testing.T) {
+	d := elemDomain()
+	neg := Floor{Lo: -7}
+	a := Floor{Lo: 1}
+	b := Floor{Lo: 3}
+
+	if got := d.Top(); got.Lo != minFloor {
+		t.Fatalf("Top must be the unbounded numeric floor; got %d want %d", got.Lo, minFloor)
+	}
+	if got := d.Bottom(); got.Lo != maxFloor {
+		t.Fatalf("Bottom must be the unreachable max floor; got %d want %d", got.Lo, maxFloor)
+	}
+	if d.Equal(neg, d.Top()) {
+		t.Fatalf("negative concrete floors must not collapse to Top")
+	}
+	if !d.LessOrEq(b, a) {
+		t.Fatalf("higher floor must be lower in lattice: %v <= %v expected", b, a)
+	}
+	if d.LessOrEq(a, b) {
+		t.Fatalf("weaker floor must not be below stronger: %v <= %v unexpected", a, b)
+	}
+	if !d.LessOrEq(a, neg) {
+		t.Fatalf("positive floor must be below weaker negative floor: %v <= %v expected", a, neg)
+	}
+	if got := d.Join(a, b); got.Lo != 1 {
+		t.Fatalf("Join must be min(Lo); got %d want 1", got.Lo)
+	}
+	if got := d.Join(b, a); got.Lo != 1 {
+		t.Fatalf("Join must be commutative min; got %d want 1", got.Lo)
+	}
+	if got := d.Join(neg, a); got.Lo != -7 {
+		t.Fatalf("Join must preserve weaker negative floors; got %d want -7", got.Lo)
+	}
+	if got := d.Join(d.Bottom(), b); !d.Equal(got, b) {
+		t.Fatalf("Join with Bottom must yield the other operand; got %v", got)
+	}
+	if got := d.Join(d.Top(), b); !d.Equal(got, d.Top()) {
+		t.Fatalf("Join with Top must yield Top; got %v", got)
+	}
+	if !d.LessOrEq(d.Bottom(), b) {
+		t.Fatalf("Bottom must be below every element")
+	}
+	if !d.LessOrEq(neg, d.Top()) {
+		t.Fatalf("every concrete floor must be below Top")
+	}
+}
+
+func TestElemWidenAscendingChainTerminates(t *testing.T) {
+	d := elemDomain()
+	prev := Floor{Lo: -10}
+	for i := int64(-9); i < 1000; i++ {
+		next := d.Widen(prev, Floor{Lo: i})
+		if next.Lo > i {
+			t.Fatalf("Widen must not invent a higher floor: got %d", next.Lo)
+		}
+		if d.Equal(next, prev) {
+			if next.Lo != minFloor {
+				t.Fatalf("ascending chain must collapse to Top(%d); got %d", minFloor, next.Lo)
+			}
+			return
+		}
+		prev = next
+	}
+	t.Fatalf("ascending Widen chain did not terminate; final %v", prev)
+}
+
+func TestMapMustSemantics(t *testing.T) {
+	d := MapDomain()
+	a := lift_mustValues(floors(map[pathdom.PathKey]Floor{
+		keyOf("x"): {Lo: -4},
+		keyOf("y"): {Lo: 2},
+	}))
+	b := lift_mustValues(floors(map[pathdom.PathKey]Floor{
+		keyOf("x"): {Lo: 7},
+	}))
+
+	joined := d.Join(a, b)
+	vals := joined.Values()
+	if len(vals) != 1 {
+		t.Fatalf("join must keep only common keys; got %d", len(vals))
+	}
+	if f, ok := vals[keyOf("x")]; !ok || f.Lo != -4 {
+		t.Fatalf("common key floor must be min(-4,7)=-4; got %v ok=%v", f, ok)
+	}
+	if _, ok := vals[keyOf("y")]; ok {
+		t.Fatalf("non-common key must be dropped at the merge")
+	}
+}
+
+func TestMapWidenTerminates(t *testing.T) {
+	d := MapDomain()
+	acc := lift_mustValues(map[pathdom.PathKey]Floor{keyOf("x"): {Lo: -10}})
+	for i := int64(-9); i < 1000; i++ {
+		next := lift_mustValues(map[pathdom.PathKey]Floor{keyOf("x"): {Lo: i}})
+		widened := d.Widen(acc, next)
+		if d.Equal(widened, acc) {
+			floor, ok := widened.Values()[keyOf("x")]
+			if !ok || floor.Lo != minFloor {
+				t.Fatalf("map Widen chain must stabilize at Top floor; got %v ok=%v", floor, ok)
+			}
+			return
+		}
+		acc = widened
+	}
+	t.Fatalf("map Widen chain did not terminate")
+}

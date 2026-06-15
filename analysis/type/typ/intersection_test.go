@@ -6,20 +6,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/kind"
 )
 
-func TestIntersectionEmpty(t *testing.T) {
-	i := NewIntersection()
-	if i != Any {
-		t.Error("empty intersection should be Any")
-	}
-}
-
-func TestIntersectionSingle(t *testing.T) {
-	i := NewIntersection(Number)
-	if i != Number {
-		t.Error("single-member intersection should unwrap to member")
-	}
-}
-
 func TestMaterializeIntersectionCardinalityCollapse(t *testing.T) {
 	if got := MaterializeIntersection(nil); got != Any {
 		t.Fatalf("MaterializeIntersection(nil) = %v, want any", got)
@@ -59,7 +45,7 @@ func TestMaterializeIntersectionDedupesOrdersAndCachesHash(t *testing.T) {
 }
 
 func TestMaterializeIntersectionDoesNotFlattenNestedIntersection(t *testing.T) {
-	inner := NewIntersection(Number, String)
+	inner := MaterializeIntersection([]Type{Number, String})
 
 	materialized := MaterializeIntersection([]Type{inner, Boolean})
 	i, ok := materialized.(*Intersection)
@@ -75,15 +61,10 @@ func TestMaterializeIntersectionDoesNotFlattenNestedIntersection(t *testing.T) {
 			t.Fatalf("materialized intersection flattened nested member: %v", i.Members)
 		}
 	}
-
-	constructed := NewIntersection(inner, Boolean).(*Intersection)
-	if len(constructed.Members) != 3 {
-		t.Fatalf("NewIntersection() members = %v, want flattened constructor behavior", constructed.Members)
-	}
 }
 
 func TestMaterializeIntersectionDoesNotInterpretOptional(t *testing.T) {
-	optionalString := NewOptional(String)
+	optionalString := MaterializeOptional(String)
 
 	materialized := MaterializeIntersection([]Type{optionalString, Nil})
 	i, ok := materialized.(*Intersection)
@@ -96,8 +77,8 @@ func TestMaterializeIntersectionDoesNotInterpretOptional(t *testing.T) {
 	requireIntersectionMembers(t, materialized, optionalString, Nil)
 }
 
-func TestIntersectionBasic(t *testing.T) {
-	i := NewIntersection(Number, String)
+func TestMaterializeIntersectionKindAndMembers(t *testing.T) {
+	i := MaterializeIntersection([]Type{Number, String})
 
 	if i.Kind() != kind.Intersection {
 		t.Errorf("Kind: got %v, want Intersection", i.Kind())
@@ -109,30 +90,8 @@ func TestIntersectionBasic(t *testing.T) {
 	}
 }
 
-func TestNewIntersectionPreservesNeverMember(t *testing.T) {
-	requireIntersectionMembers(t, NewIntersection(Number, Never), Number, Never)
-}
-
-func TestNewIntersectionPreservesAnyMember(t *testing.T) {
-	requireIntersectionMembers(t, NewIntersection(Number, Any, String), Number, Any, String)
-}
-
-func TestNewIntersectionPreservesNilWithoutMeetPolicy(t *testing.T) {
-	requireIntersectionMembers(t, NewIntersection(Nil, NewOptional(String)), Nil, NewOptional(String))
-}
-
-func TestIntersectionFlattening(t *testing.T) {
-	inner := NewIntersection(Number, String)
-	outer := NewIntersection(inner, Boolean)
-
-	inter := outer.(*Intersection)
-	if len(inter.Members) != 3 {
-		t.Errorf("nested intersection should flatten, got %d members", len(inter.Members))
-	}
-}
-
-func TestIntersectionDeduplication(t *testing.T) {
-	i := NewIntersection(Number, String, Number)
+func TestMaterializeIntersectionDeduplication(t *testing.T) {
+	i := MaterializeIntersection([]Type{Number, String, Number})
 
 	inter := i.(*Intersection)
 	if len(inter.Members) != 2 {
@@ -140,20 +99,20 @@ func TestIntersectionDeduplication(t *testing.T) {
 	}
 }
 
-func TestIntersectionDedupHashCollision(t *testing.T) {
+func TestMaterializeIntersectionDedupHashCollision(t *testing.T) {
 	a := &fakeType{id: "a", hash: 101}
 	b := &fakeType{id: "b", hash: 101}
 
-	i := NewIntersection(a, b).(*Intersection)
+	i := MaterializeIntersection([]Type{a, b}).(*Intersection)
 	if len(i.Members) != 2 {
 		t.Errorf("hash collision should keep both members, got %d", len(i.Members))
 	}
 }
 
-func TestIntersectionEquality(t *testing.T) {
-	i1 := NewIntersection(Number, String)
-	i2 := NewIntersection(Number, String)
-	i3 := NewIntersection(Number, Boolean)
+func TestMaterializeIntersectionEquality(t *testing.T) {
+	i1 := MaterializeIntersection([]Type{Number, String})
+	i2 := MaterializeIntersection([]Type{Number, String})
+	i3 := MaterializeIntersection([]Type{Number, Boolean})
 
 	if !i1.Equals(i2) {
 		t.Error("number & string should equal number & string")
@@ -168,9 +127,9 @@ func TestIntersectionEquality(t *testing.T) {
 	}
 }
 
-func TestIntersectionOrderIndependence(t *testing.T) {
-	i1 := NewIntersection(Number, String)
-	i2 := NewIntersection(String, Number)
+func TestMaterializeIntersectionOrderIndependence(t *testing.T) {
+	i1 := MaterializeIntersection([]Type{Number, String})
+	i2 := MaterializeIntersection([]Type{String, Number})
 
 	if !i1.Equals(i2) {
 		t.Error("intersection order should not affect equality")
@@ -181,15 +140,15 @@ func TestIntersectionOrderIndependence(t *testing.T) {
 	}
 }
 
-func TestIntersectionNotEqualToPrimitive(t *testing.T) {
-	i := NewIntersection(Number, String)
+func TestMaterializeIntersectionNotEqualToPrimitive(t *testing.T) {
+	i := MaterializeIntersection([]Type{Number, String})
 	if i.Equals(Number) {
 		t.Error("intersection should not equal primitive")
 	}
 }
 
-func TestIntersectionString(t *testing.T) {
-	i := NewIntersection(Number, String).(*Intersection)
+func TestMaterializeIntersectionString(t *testing.T) {
+	i := MaterializeIntersection([]Type{Number, String}).(*Intersection)
 
 	s := i.String()
 	if s == "" {
@@ -197,11 +156,28 @@ func TestIntersectionString(t *testing.T) {
 	}
 }
 
+func TestMaterializeIntersectionConstructionHashesEachMemberOnce(t *testing.T) {
+	calls := 0
+	members := []Type{
+		&countingHashType{name: "third", hash: 30, calls: &calls},
+		&countingHashType{name: "first", hash: 10, calls: &calls},
+		&countingHashType{name: "second", hash: 20, calls: &calls},
+	}
+
+	i := MaterializeIntersection(members)
+	if _, ok := i.(*Intersection); !ok {
+		t.Fatalf("MaterializeIntersection() = %T, want intersection", i)
+	}
+	if calls != len(members) {
+		t.Fatalf("Hash calls = %d, want %d", calls, len(members))
+	}
+}
+
 func requireIntersectionMembers(t *testing.T, got Type, wants ...Type) {
 	t.Helper()
 	inter, ok := got.(*Intersection)
 	if !ok {
-		t.Fatalf("NewIntersection() = %T %[1]v, want intersection", got)
+		t.Fatalf("got %T %[1]v, want intersection", got)
 	}
 	if len(inter.Members) != len(wants) {
 		t.Fatalf("intersection members = %v, want %v", inter.Members, wants)

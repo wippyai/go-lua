@@ -48,9 +48,5 @@ func (r *Result) extractBranch(stmt ast.Stmt, kind BranchKind, condition ast.Exp
 }
 
 func branchConditionCalls(condition ast.Expr, bindings *bind.Result) ([]indexedCall, bool) {
-	_, _, ok := branchcond.PredicateCall(condition)
-	if !ok {
-		return nil, true
-	}
-	return exprCalls(condition, bindings)
+	return conditionExprCalls(condition, bindings)
 }

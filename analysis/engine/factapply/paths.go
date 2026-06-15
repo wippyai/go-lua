@@ -26,7 +26,8 @@ func applyPathAssignment(
 	if len(targetPath.Segments) == 0 {
 		return out, false
 	}
-	value, ok := sources.ValueOfSource(ctx.Point, fact.Source(), in, read)
+	source := fact.Source()
+	value, ok := sources.ValueOfSource(ctx.Point, source, in, readWithSamePointCallSource(ctx.Point, source, read, out))
 	if !ok {
 		return out, false
 	}

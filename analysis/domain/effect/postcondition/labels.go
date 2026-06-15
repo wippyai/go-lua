@@ -12,6 +12,7 @@ import (
 const (
 	NormalReturnRefinementKind = "postcondition.normalReturnRefinement"
 	PresentKind                = "present"
+	AbsentKind                 = "absent"
 )
 
 var _ effect.Label = NormalReturnRefinement{}
@@ -46,6 +47,28 @@ func (Present) Equals(other Refinement) bool {
 }
 func (Present) Hash() uint64 {
 	return hash.FnvString("postcondition.Present")
+}
+
+// Absent refines the target argument to be nil/absent after normal return.
+type Absent struct{}
+
+func (Absent) refinement()  {}
+func (Absent) Kind() string { return AbsentKind }
+func (Absent) String() string {
+	return AbsentKind
+}
+func (Absent) Equals(other Refinement) bool {
+	switch o := other.(type) {
+	case Absent:
+		return true
+	case *Absent:
+		return o != nil
+	default:
+		return false
+	}
+}
+func (Absent) Hash() uint64 {
+	return hash.FnvString("postcondition.Absent")
 }
 
 // NormalReturnRefinement declares that Target is refined if the call returns

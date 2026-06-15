@@ -32,6 +32,9 @@ type CallSiteConfig struct {
 	HasMethodPath   bool
 	MethodName      string
 
+	ReceiverSource    ValueSource
+	HasReceiverSource bool
+
 	ExprRef ExprRef
 	HasExpr bool
 
@@ -60,6 +63,9 @@ type CallSite struct {
 	hasMethodPath   bool
 	methodName      string
 
+	receiverSource    ValueSource
+	hasReceiverSource bool
+
 	exprRef ExprRef
 	hasExpr bool
 
@@ -75,27 +81,35 @@ type CallSite struct {
 	openTail bool
 }
 
+// CallSiteView provides read-only access to call-site evidence without
+// exposing mutable internal slices or path segment storage.
+type CallSiteView struct {
+	site CallSite
+}
+
 // NewCallSite creates a call-site evidence fact.
 func NewCallSite(config CallSiteConfig) CallSite {
 	return CallSite{
-		context:         config.Context,
-		calleeSymbol:    config.CalleeSymbol,
-		calleePath:      copyPath(config.CalleePath),
-		receiverPath:    copyPath(config.ReceiverPath),
-		hasReceiverPath: config.HasReceiverPath,
-		methodPath:      copyPath(config.MethodPath),
-		hasMethodPath:   config.HasMethodPath,
-		methodName:      config.MethodName,
-		exprRef:         config.ExprRef,
-		hasExpr:         config.HasExpr,
-		exprIndex:       config.ExprIndex,
-		argumentSources: copyValueSources(config.ArgumentSources),
-		typeArgs:        copyTypeRefs(config.TypeArgs),
-		resultTargets:   copyCallResultTargets(config.ResultTargets),
-		final:           config.Final,
-		expanded:        config.Expanded,
-		adjusted:        config.Adjusted,
-		openTail:        config.OpenTail,
+		context:           config.Context,
+		calleeSymbol:      config.CalleeSymbol,
+		calleePath:        copyPath(config.CalleePath),
+		receiverPath:      copyPath(config.ReceiverPath),
+		hasReceiverPath:   config.HasReceiverPath,
+		methodPath:        copyPath(config.MethodPath),
+		hasMethodPath:     config.HasMethodPath,
+		methodName:        config.MethodName,
+		receiverSource:    config.ReceiverSource,
+		hasReceiverSource: config.HasReceiverSource,
+		exprRef:           config.ExprRef,
+		hasExpr:           config.HasExpr,
+		exprIndex:         config.ExprIndex,
+		argumentSources:   copyValueSources(config.ArgumentSources),
+		typeArgs:          copyTypeRefs(config.TypeArgs),
+		resultTargets:     copyCallResultTargets(config.ResultTargets),
+		final:             config.Final,
+		expanded:          config.Expanded,
+		adjusted:          config.Adjusted,
+		openTail:          config.OpenTail,
 	}
 }
 
@@ -120,6 +134,12 @@ func (c CallSite) MethodPath() (path.Path, bool) {
 
 // MethodName returns the method name carried by receiver-call syntax.
 func (c CallSite) MethodName() string { return c.methodName }
+
+// ReceiverSource returns the value source for a colon-method call's receiver
+// expression, if the receiver was not a resolvable symbol path.
+func (c CallSite) ReceiverSource() (ValueSource, bool) {
+	return c.receiverSource, c.hasReceiverSource
+}
 
 // Expr returns the call expression reference, if present.
 func (c CallSite) Expr() (ExprRef, bool) { return c.exprRef, c.hasExpr }
@@ -151,6 +171,31 @@ func (c CallSite) Adjusted() bool { return c.adjusted }
 
 // OpenTail reports whether this call is an open tail return.
 func (c CallSite) OpenTail() bool { return c.openTail }
+
+// CallSite returns a defensive copy of the viewed call-site evidence.
+func (v CallSiteView) CallSite() CallSite { return v.site.copy() }
+
+// Context returns the call site's semantic context.
+func (v CallSiteView) Context() CallSiteContext { return v.site.context }
+
+// CalleeSymbol returns the callee's symbol identity.
+func (v CallSiteView) CalleeSymbol() symbol.ID { return v.site.calleeSymbol }
+
+// ResultTargetCount returns the number of result targets.
+func (v CallSiteView) ResultTargetCount() int { return len(v.site.resultTargets) }
+
+// ForEachResultTarget visits the call site's result targets without exposing
+// mutable internal slices. Returning false stops iteration.
+func (v CallSiteView) ForEachResultTarget(fn func(CallResultTargetView) bool) {
+	if fn == nil {
+		return
+	}
+	for i := range v.site.resultTargets {
+		if !fn(CallResultTargetView{target: v.site.resultTargets[i]}) {
+			return
+		}
+	}
+}
 
 func (c CallSite) copy() CallSite {
 	c.calleePath = copyPath(c.calleePath)

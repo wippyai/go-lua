@@ -17,20 +17,30 @@ type Bindings interface {
 
 // Resolver resolves AST type expressions through lexical type bindings.
 type Resolver struct {
-	bindings Bindings
-	cache    map[bind.TypeDeclID]typ.Type
-	params   map[bind.TypeDeclID]*typ.TypeParam
-	active   map[bind.TypeDeclID]bool
-	current  []ast.TypeExpr
+	bindings  Bindings
+	external  typeannotation.Resolver
+	cache     map[bind.TypeDeclID]typ.Type
+	params    map[bind.TypeDeclID]*typ.TypeParam
+	active    map[bind.TypeDeclID]bool
+	activeRec map[bind.TypeDeclID]*typ.Recursive
+	current   []ast.TypeExpr
 }
 
 // New creates a lexical type resolver over bindings.
 func New(bindings Bindings) *Resolver {
+	return NewWithExternal(bindings, nil)
+}
+
+// NewWithExternal creates a lexical resolver with a secondary qualified-name
+// resolver for module-boundary type definitions.
+func NewWithExternal(bindings Bindings, external typeannotation.Resolver) *Resolver {
 	return &Resolver{
-		bindings: bindings,
-		cache:    make(map[bind.TypeDeclID]typ.Type),
-		params:   make(map[bind.TypeDeclID]*typ.TypeParam),
-		active:   make(map[bind.TypeDeclID]bool),
+		bindings:  bindings,
+		external:  external,
+		cache:     make(map[bind.TypeDeclID]typ.Type),
+		params:    make(map[bind.TypeDeclID]*typ.TypeParam),
+		active:    make(map[bind.TypeDeclID]bool),
+		activeRec: make(map[bind.TypeDeclID]*typ.Recursive),
 	}
 }
 
@@ -54,16 +64,18 @@ func (r *Resolver) Decl(decl bind.TypeDecl) (typ.Type, bool) {
 }
 
 // ResolveTypeRef resolves a typeannotation reference through the current
-// expression's lexical bindings.
+// expression's lexical bindings, falling back to the external module-boundary
+// resolver for qualified or unbound names.
 func (r *Resolver) ResolveTypeRef(path []string) (typ.Type, bool) {
-	if len(path) != 1 {
-		return nil, false
+	if len(path) == 1 {
+		if decl, ok := r.currentBinding(path[0]); ok {
+			return r.resolveDecl(decl)
+		}
 	}
-	decl, ok := r.currentBinding(path[0])
-	if !ok {
-		return nil, false
+	if r.external != nil {
+		return r.external.ResolveTypeRef(path)
 	}
-	return r.resolveDecl(decl)
+	return nil, false
 }
 
 func (r *Resolver) currentBinding(name string) (bind.TypeDecl, bool) {
@@ -76,6 +88,9 @@ func (r *Resolver) currentBinding(name string) (bind.TypeDecl, bool) {
 func (r *Resolver) resolveDecl(decl bind.TypeDecl) (typ.Type, bool) {
 	if decl.ID == 0 {
 		return nil, false
+	}
+	if r.active[decl.ID] && decl.Kind == bind.TypeDeclAlias {
+		return r.activeAliasRef(decl)
 	}
 	switch decl.Kind {
 	case bind.TypeDeclParam:
@@ -90,6 +105,18 @@ func (r *Resolver) resolveDecl(decl bind.TypeDecl) (typ.Type, bool) {
 		}
 	}
 	return nil, false
+}
+
+func (r *Resolver) activeAliasRef(decl bind.TypeDecl) (typ.Type, bool) {
+	if decl.Type == nil || r.bindings == nil || len(r.bindings.TypeDefParams(decl.Type)) != 0 {
+		return typ.NewRef("", decl.Name), true
+	}
+	if rec := r.activeRec[decl.ID]; rec != nil {
+		return rec, true
+	}
+	rec := typ.NewRecursivePlaceholder(decl.Name)
+	r.activeRec[decl.ID] = rec
+	return rec, true
 }
 
 func (r *Resolver) resolveAlias(decl bind.TypeDecl, stmt *ast.TypeDefStmt) (typ.Type, bool) {
@@ -127,9 +154,15 @@ func (r *Resolver) resolveAlias(decl bind.TypeDecl, stmt *ast.TypeDefStmt) (typ.
 	} else {
 		t, ok = r.Type(stmt.Type)
 	}
+	rec := r.activeRec[decl.ID]
 	delete(r.active, decl.ID)
+	delete(r.activeRec, decl.ID)
 	if !ok {
 		return nil, false
+	}
+	if rec != nil {
+		rec.SetBody(t)
+		t = rec
 	}
 	r.cache[decl.ID] = t
 	return t, true

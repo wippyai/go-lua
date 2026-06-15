@@ -6,7 +6,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/branchcond"
 	"github.com/wippyai/go-lua/analysis/lua/pathexpr"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
-	"github.com/wippyai/go-lua/analysis/lua/typeresolve"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
@@ -52,5 +51,5 @@ func (l *lowerer) typeValueExpr(expr ast.Expr) (typ.Type, bool) {
 	if !ok {
 		return nil, false
 	}
-	return typeresolve.New(l.bindings).Decl(decl)
+	return l.resolveDecl(decl)
 }

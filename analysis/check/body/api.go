@@ -14,14 +14,19 @@ import (
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/lua/cfgbuild"
+	"github.com/wippyai/go-lua/analysis/lua/moduleidentity"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
+	"github.com/wippyai/go-lua/analysis/lua/typeresolve"
 	"github.com/wippyai/go-lua/analysis/module/importlookup"
 	"github.com/wippyai/go-lua/analysis/module/signaturelookup"
+	"github.com/wippyai/go-lua/analysis/module/typelookup"
+	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
 
 var (
 	ErrRegistryRequired = errors.New("check: registry is required")
+	ErrStaticRequired   = errors.New("check: prepared body is required")
 	ErrUnsupportedCFG   = errors.New("check: unsupported cfg")
 )
 
@@ -29,13 +34,16 @@ type Config struct {
 	Registry *axis.Registry
 	Globals  []string
 
-	ExpressionValues   map[factflow.ExprRef]product.Value
-	ExpressionValue    sourcevalue.ExpressionValueProvider
-	VarargValue        sourcevalue.VarargValueProvider
-	CallOutcome        factapply.CallOutcomeProvider
-	CallOutcomeFactory CallOutcomeFactory
-	Signatures         signaturelookup.Source
-	ModuleExports      importlookup.Source
+	ExpressionValues             map[factflow.ExprRef]product.Value
+	ExpressionValue              sourcevalue.ExpressionValueProvider
+	VarargValue                  sourcevalue.VarargValueProvider
+	CallOutcome                  factapply.CallOutcomeProvider
+	CallOutcomeFactory           CallOutcomeFactory
+	SignatureArgumentType        SignatureArgumentTypeFunc
+	SignatureArgumentTypeFactory SignatureArgumentTypeFactory
+	Signatures                   signaturelookup.Source
+	ModuleExports                importlookup.Source
+	ModuleTypes                  typelookup.Source
 
 	Visibility *visibility.Resolver
 
@@ -44,32 +52,94 @@ type Config struct {
 
 	WidenAt    func(cfg.Point) bool
 	WidenDelay func(cfg.Point) int
+
+	Stats *Stats
 }
 
 type checker struct {
 	config Config
 }
 
-type Result struct {
+// Stats holds caller-owned observational counters for body preparation and
+// solving. Static preparation never retains the stats pointer.
+type Stats struct {
+	StaticChunkPrepares    int
+	StaticFunctionPrepares int
+	BodySolves             int
+	Transfer               transfer.Stats
+}
+
+// Static is the reusable, entry-independent analysis artifact for one bound
+// chunk or function body.
+type Static struct {
 	registry    *axis.Registry
 	bindings    *bind.Result
 	cfg         *cfgbuild.Result
 	semantics   *semantics.Result
 	signatures  signaturelookup.Source
+	moduleTypes typelookup.Source
+	moduleLoads importlookup.Source
+	modules     moduleidentity.Projection
+	signatureID *signatureIdentityResolver
 	facts       factflow.Facts
-	flow        transfer.Result
 	visibility  *visibility.Resolver
 	sources     sourcevalue.SourceValues
-	callOutcome factapply.CallOutcomeProvider
-	functions   []*Result
+	calleeValue CalleeValueFunc
+	typeNS      *typeresolve.Resolver
+}
+
+// SolveConfig holds per-solve inputs for a prepared body. These fields may
+// close over caller summary readers or hold mutable caches, so they are never
+// retained by Static preparation.
+type SolveConfig struct {
+	EntryState state.State
+	Initial    transfer.InitialState
+
+	CallOutcome                  factapply.CallOutcomeProvider
+	CallOutcomeFactory           CallOutcomeFactory
+	SignatureArgumentType        SignatureArgumentTypeFunc
+	SignatureArgumentTypeFactory SignatureArgumentTypeFactory
+
+	WidenAt    func(cfg.Point) bool
+	WidenDelay func(cfg.Point) int
+
+	Stats *Stats
+}
+
+type Result struct {
+	registry     *axis.Registry
+	bindings     *bind.Result
+	cfg          *cfgbuild.Result
+	semantics    *semantics.Result
+	signatures   signaturelookup.Source
+	moduleTypes  typelookup.Source
+	modules      moduleidentity.Projection
+	signatureID  *signatureIdentityResolver
+	facts        factflow.Facts
+	flow         transfer.Result
+	boundary     map[cfg.Point]state.State
+	boundaryXfer transfer.NodeTransfer
+	visibility   *visibility.Resolver
+	sources      sourcevalue.SourceValues
+	callOutcome  factapply.CallOutcomeProvider
+	functions    []*Result
+	funcTypes    FunctionValueTypes
+	callExprPts  map[*ast.FuncCallExpr]cfg.Point
 }
 
 type CallOutcomeContext struct {
-	Facts   factflow.Facts
-	Sources sourcevalue.SourceValues
+	Facts       factflow.Facts
+	Sources     sourcevalue.SourceValues
+	CalleeValue CalleeValueFunc
 }
 
 type CallOutcomeFactory func(CallOutcomeContext) factapply.CallOutcomeProvider
+
+type CalleeValueFunc func(ctx transfer.NodeContext, site factflow.CallSite, in state.State, read func(cfg.Point) state.State) (product.Value, bool)
+
+type SignatureArgumentTypeFunc func(ctx transfer.NodeContext, source factflow.ValueSource, in state.State, read func(cfg.Point) state.State) (typ.Type, bool)
+
+type SignatureArgumentTypeFactory func(CallOutcomeContext) SignatureArgumentTypeFunc
 
 func newChecker(config Config) (*checker, error) {
 	if config.Registry == nil {
@@ -79,35 +149,78 @@ func newChecker(config Config) (*checker, error) {
 }
 
 func CheckChunk(stmts []ast.Stmt, config Config) (*Result, error) {
-	checker, err := newChecker(config)
+	prepared, err := PrepareChunk(stmts, config)
 	if err != nil {
 		return nil, err
 	}
-	return checker.checkChunk(stmts)
+	return SolvePrepared(prepared, solveConfigFromConfig(config))
 }
 
 // CheckBoundChunk checks a chunk using caller-supplied lexical bindings.
 func CheckBoundChunk(stmts []ast.Stmt, bindings *bind.Result, config Config) (*Result, error) {
-	checker, err := newChecker(config)
+	prepared, err := PrepareBoundChunk(stmts, bindings, config)
 	if err != nil {
 		return nil, err
 	}
-	return checker.checkBoundChunk(stmts, bindings)
+	return SolvePrepared(prepared, solveConfigFromConfig(config))
 }
 
 func CheckFunction(fn *ast.FunctionExpr, config Config) (*Result, error) {
-	checker, err := newChecker(config)
+	prepared, err := PrepareFunction(fn, config)
 	if err != nil {
 		return nil, err
 	}
-	return checker.checkFunction(fn)
+	return SolvePrepared(prepared, solveConfigFromConfig(config))
 }
 
 // CheckBoundFunction checks a function using caller-supplied lexical bindings.
 func CheckBoundFunction(fn *ast.FunctionExpr, bindings *bind.Result, config Config) (*Result, error) {
+	prepared, err := PrepareBoundFunction(fn, bindings, config)
+	if err != nil {
+		return nil, err
+	}
+	return SolvePrepared(prepared, solveConfigFromConfig(config))
+}
+
+func PrepareChunk(stmts []ast.Stmt, config Config) (*Static, error) {
 	checker, err := newChecker(config)
 	if err != nil {
 		return nil, err
 	}
-	return checker.checkBoundFunction(fn, bindings)
+	return checker.prepareChunk(stmts)
+}
+
+// PrepareBoundChunk prepares reusable static analysis for a chunk using
+// caller-supplied lexical bindings.
+func PrepareBoundChunk(stmts []ast.Stmt, bindings *bind.Result, config Config) (*Static, error) {
+	checker, err := newChecker(config)
+	if err != nil {
+		return nil, err
+	}
+	return checker.prepareBoundChunk(stmts, bindings)
+}
+
+func PrepareFunction(fn *ast.FunctionExpr, config Config) (*Static, error) {
+	checker, err := newChecker(config)
+	if err != nil {
+		return nil, err
+	}
+	return checker.prepareFunction(fn)
+}
+
+// PrepareBoundFunction prepares reusable static analysis for a function using
+// caller-supplied lexical bindings.
+func PrepareBoundFunction(fn *ast.FunctionExpr, bindings *bind.Result, config Config) (*Static, error) {
+	checker, err := newChecker(config)
+	if err != nil {
+		return nil, err
+	}
+	return checker.prepareBoundFunction(fn, bindings)
+}
+
+func SolvePrepared(prepared *Static, config SolveConfig) (*Result, error) {
+	if prepared == nil {
+		return nil, ErrStaticRequired
+	}
+	return prepared.Solve(config), nil
 }

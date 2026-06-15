@@ -4,16 +4,23 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/variantorigin"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/standard"
+	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
+	"github.com/wippyai/go-lua/analysis/domain/value/variant"
 	. "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/symbol"
+	typetable "github.com/wippyai/go-lua/analysis/type/table"
+	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/analysis/type/typeexpr"
 )
 
 func TestSourceValuesPanicsWithoutRegistry(t *testing.T) {
@@ -175,6 +182,48 @@ func TestSourceValuesExpressionAndVarargProvidersAreGenericHooks(t *testing.T) {
 	gotVararg, ok := resolver.ValueOfSource(cfg.Point(5), ValueSource{Kind: ValueSourceVararg}, state.State{}, nil)
 	if !ok || !product.Equal(reg, gotVararg, varargValue) {
 		t.Fatalf("vararg provider = %s/%v, want %s/true", formatValue(reg, gotVararg), ok, formatValue(reg, varargValue))
+	}
+}
+
+func TestSourceValuesPathBackedExpressionPrefersVariantOriginFlow(t *testing.T) {
+	reg := standard.Registry()
+	expr := ExprRef(77)
+	source := ValueSource{Kind: ValueSourceExpression, ExprRef: expr, HasExpr: true}
+	text := typetable.NewRecord().
+		Field("kind", typ.LiteralString("text")).
+		Field("value", typ.String).
+		Build()
+	group := typetable.NewRecord().
+		Field("kind", typ.LiteralString("group")).
+		Field("children", typ.NewArray(typ.Unknown)).
+		Build()
+	union := typeexpr.Union(text, group)
+	family, cases, ok := variant.OriginByPathLiteral(union, []segment.Segment{{Kind: segment.SegmentField, Name: "kind"}}, typ.LiteralString("text"))
+	if !ok {
+		t.Fatal("test union did not expose text origin")
+	}
+	cached := typevalue.WithWitness(reg, typevalue.FromType(reg, union), union)
+	flow := product.Set(reg, product.Top(), variantorigin.Key, variantorigin.Of(family, cases))
+	resolver := NewSourceValues(SourceValuesConfig{
+		Registry: reg,
+		ExpressionValues: map[ExprRef]product.Value{
+			expr: cached,
+		},
+		ExpressionPaths: map[ExprRef]struct{}{
+			expr: {},
+		},
+		ExpressionValue: func(point cfg.Point, got ExprRef, source ValueSource, in state.State) (product.Value, bool) {
+			return flow, true
+		},
+	})
+
+	got, ok := resolver.ValueOfSource(cfg.Point(9), source, state.State{}, nil)
+	if !ok {
+		t.Fatal("path-backed expression did not resolve")
+	}
+	gotOrigin := product.Get(reg, got, variantorigin.Key)
+	if gotOrigin.IsTop() || gotOrigin.IsBottom() || gotOrigin.Family() != family {
+		t.Fatalf("origin = %#v, want narrowed family %d", gotOrigin, family)
 	}
 }
 

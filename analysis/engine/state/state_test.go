@@ -51,6 +51,9 @@ func TestWriteReadValueSlots(t *testing.T) {
 	if got := s.ReadValue(reg, symSlot); !valueDomain.Equal(got, symValue) {
 		t.Fatalf("symbol slot = %s, want %s", formatValue(reg, got), formatValue(reg, symValue))
 	}
+	if got := s.ReadSymbolValue(reg, symbol.ID(10)); !valueDomain.Equal(got, symValue) {
+		t.Fatalf("symbol value = %s, want %s", formatValue(reg, got), formatValue(reg, symValue))
+	}
 	if got := s.ReadValue(reg, retSlot); !valueDomain.Equal(got, retValue) {
 		t.Fatalf("return slot = %s, want %s", formatValue(reg, got), formatValue(reg, retValue))
 	}
@@ -179,8 +182,8 @@ func TestDomainPointwiseOperations(t *testing.T) {
 	if got := joined.ReadPathKey(reg, pathKey); !valueDomain.Equal(got, product.Top()) {
 		t.Fatalf("joined shared path key = %s, want top", formatValue(reg, got))
 	}
-	if got := joined.ReadPathKey(reg, otherPathKey); !valueDomain.Equal(got, present) {
-		t.Fatalf("joined disjoint path key = %s, want present", formatValue(reg, got))
+	if got := joined.ReadPathKey(reg, otherPathKey); !valueDomain.Equal(got, product.Bottom(reg)) {
+		t.Fatalf("joined disjoint path key = %s, want bottom (dropped by must join)", formatValue(reg, got))
 	}
 
 	if widened := stateDomain.Widen(a, b); !stateDomain.Equal(widened, joined) {
@@ -449,6 +452,12 @@ func TestWritesFromStateBottomProduceReachableState(t *testing.T) {
 	dynamicKey := dynamicindex.Key{Table: pathdom.PathKey("sym65@1.table"), Site: "dyn"}
 	heapID := identity.ID{Kind: "table", Site: "bottom-write", Index: 1}
 	proof := pathevidence.BranchProof{Kind: pathevidence.BranchProofPathPresence, Path: pathKey, Presence: presence.Present()}
+	implication := pathevidence.PathPresenceImplication{
+		Trigger:         pathKey,
+		TriggerPresence: presence.Absent(),
+		Target:          pathdom.PathKey("sym65@1.value"),
+		TargetPresence:  presence.Present(),
+	}
 	effectKey := effectdelta.Key{Target: pathdom.PathKey("sym65@1.table"), Site: "effect", Kind: effectdelta.Mutation}
 	channel := channelselectfact.Fact{Select: "select-bottom", Kind: channelselectfact.FactSelect, Result: pathKey}
 	escapeID := identity.ID{Kind: "table", Site: "escape-bottom", Index: 1}
@@ -472,6 +481,7 @@ func TestWritesFromStateBottomProduceReachableState(t *testing.T) {
 		{"dynamic-index", bottom.WriteDynamicIndexFact(reg, dynamicKey, dynamicFact)},
 		{"heap-table", bottom.WriteHeapTableObject(reg, heapID, heapidentity.TableObject{Root: present})},
 		{"branch-proof", bottom.AddBranchProof(proof)},
+		{"path-presence-implication", bottom.AddPathPresenceImplication(implication)},
 		{"effect-delta", bottom.WriteEffectDelta(effectKey, effectDelta)},
 		{"channel-select", bottom.AddChannelSelectFact(channel)},
 		{"escape-placement", bottom.WriteEscapePlacement(escapeID, escapeplacement.Stack)},
@@ -479,6 +489,7 @@ func TestWritesFromStateBottomProduceReachableState(t *testing.T) {
 	for _, tc := range cases {
 		if tc.state.pathEvidence.StaticMembersBottom() ||
 			tc.state.pathEvidence.ProofsBottom() ||
+			tc.state.pathEvidence.PathPresenceImplicationsBottom() ||
 			tc.state.ChannelSelectFactsSnapshot().Bottom {
 			t.Fatalf("%s write left partial must-lane bottom: %#v", tc.name, tc.state)
 		}
@@ -488,7 +499,69 @@ func TestWritesFromStateBottomProduceReachableState(t *testing.T) {
 	}
 }
 
-func TestPathStaticMembersUseMustJoinSeparateFromPathRefinements(t *testing.T) {
+func TestPathPresenceImplicationsUseMustJoinAndInvalidate(t *testing.T) {
+	reg := standard.Registry()
+	stateDomain := Domain(reg)
+	common := pathevidence.PathPresenceImplication{
+		Trigger:         pathdom.PathKey("sym101@1.err"),
+		TriggerPresence: presence.Absent(),
+		Target:          pathdom.PathKey("sym101@1.value"),
+		TargetPresence:  presence.Present(),
+	}
+	leftOnly := pathevidence.PathPresenceImplication{
+		Trigger:         pathdom.PathKey("sym101@1.err"),
+		TriggerPresence: presence.Present(),
+		Target:          pathdom.PathKey("sym101@1.value"),
+		TargetPresence:  presence.Absent(),
+	}
+	rightOnly := pathevidence.PathPresenceImplication{
+		Trigger:         pathdom.PathKey("sym101@1.value"),
+		TriggerPresence: presence.Absent(),
+		Target:          pathdom.PathKey("sym101@1.err"),
+		TargetPresence:  presence.Present(),
+	}
+	left := State{}.AddPathPresenceImplication(common).AddPathPresenceImplication(leftOnly)
+	right := State{}.AddPathPresenceImplication(common).AddPathPresenceImplication(rightOnly)
+
+	if !left.HasPathPresenceImplication(common) {
+		t.Fatalf("missing inserted path-presence implication")
+	}
+	if !stateDomain.Equal(stateDomain.Join(stateDomain.Bottom(), left), left) {
+		t.Fatalf("state bottom should be join identity for path-presence implications")
+	}
+	joined := stateDomain.Join(left, right)
+	if !joined.HasPathPresenceImplication(common) {
+		t.Fatalf("common path-presence implication was dropped")
+	}
+	if joined.HasPathPresenceImplication(leftOnly) || joined.HasPathPresenceImplication(rightOnly) {
+		t.Fatalf("disjoint path-presence implication survived must join")
+	}
+	if widened := stateDomain.Widen(left, right); !stateDomain.Equal(widened, joined) {
+		t.Fatalf("path-presence implication widen differs from join")
+	}
+	clone := left.Clone().AddPathPresenceImplication(rightOnly)
+	if left.HasPathPresenceImplication(rightOnly) || !clone.HasPathPresenceImplication(rightOnly) {
+		t.Fatalf("path-presence implication clone write mutated original or missed clone")
+	}
+
+	out, ok := left.InvalidatePathKeySubtree(pathdom.PathKey("sym101@1.err"))
+	if !ok {
+		t.Fatal("InvalidatePathKeySubtree rejected trigger path")
+	}
+	if out.HasPathPresenceImplication(common) || out.HasPathPresenceImplication(leftOnly) {
+		t.Fatalf("trigger path-presence implication survived trigger invalidation")
+	}
+
+	out, ok = left.InvalidatePathKeySubtree(pathdom.PathKey("sym101@1.value"))
+	if !ok {
+		t.Fatal("InvalidatePathKeySubtree rejected target path")
+	}
+	if out.HasPathPresenceImplication(common) || out.HasPathPresenceImplication(leftOnly) {
+		t.Fatalf("target path-presence implication survived target invalidation")
+	}
+}
+
+func TestPathStaticMembersAndRefinementsUseMustJoin(t *testing.T) {
 	reg := standard.Registry()
 	valueDomain := product.Domain(reg)
 	stateDomain := Domain(reg)
@@ -508,11 +581,11 @@ func TestPathStaticMembersUseMustJoinSeparateFromPathRefinements(t *testing.T) {
 		WritePathStaticMember(rightOnly, present)
 
 	joined := stateDomain.Join(left, right)
-	if got := joined.ReadPathKey(reg, leftOnly); !valueDomain.Equal(got, present) {
-		t.Fatalf("disjoint refinement path was dropped: %s", formatValue(reg, got))
+	if got := joined.ReadPathKey(reg, leftOnly); !valueDomain.Equal(got, product.Bottom(reg)) {
+		t.Fatalf("left-only refinement survived must join: %s", formatValue(reg, got))
 	}
-	if got := joined.ReadPathKey(reg, rightOnly); !valueDomain.Equal(got, present) {
-		t.Fatalf("disjoint refinement path was dropped: %s", formatValue(reg, got))
+	if got := joined.ReadPathKey(reg, rightOnly); !valueDomain.Equal(got, product.Bottom(reg)) {
+		t.Fatalf("right-only refinement survived must join: %s", formatValue(reg, got))
 	}
 	if got, ok := joined.ReadPathStaticMember(common); !ok || !valueDomain.Equal(got, product.Top()) {
 		t.Fatalf("joined static member = %s ok=%v, want top common fact", formatValue(reg, got), ok)
@@ -1133,8 +1206,8 @@ func TestTopLanesReadTopAndRejectFiniteUpdates(t *testing.T) {
 	if got := top.ReadReturnSlot(reg, 0); !valueDomain.Equal(got, product.Top()) {
 		t.Fatalf("top return read = %s, want top", formatValue(reg, got))
 	}
-	if got := top.ReadPathKey(reg, pathKey); !valueDomain.Equal(got, product.Top()) {
-		t.Fatalf("top path read = %s, want top", formatValue(reg, got))
+	if got := top.ReadPathKey(reg, pathKey); !valueDomain.Equal(got, product.Bottom(reg)) {
+		t.Fatalf("top path read = %s, want bottom absence", formatValue(reg, got))
 	}
 	if got := top.ReadDynamicIndexFact(reg, dynamicKey); !dynamicindex.Domain(reg).Equal(got, dynamicindex.Top()) {
 		t.Fatalf("top dynamic-index read = %#v, want top", got)
@@ -1173,23 +1246,6 @@ func TestTopLanesReadTopAndRejectFiniteUpdates(t *testing.T) {
 			}
 			return present
 		})
-	})
-	requirePanic(t, func() {
-		top.WritePathKey(reg, pathKey, present)
-	})
-	requirePanic(t, func() {
-		top.UpdatePathKey(reg, pathKey, func(v product.Value) product.Value {
-			if !valueDomain.Equal(v, product.Top()) {
-				t.Fatalf("UpdatePathKey on top read %s, want top", formatValue(reg, v))
-			}
-			return present
-		})
-	})
-	requirePanic(t, func() {
-		top.InvalidatePathKeySubtree(pathKey)
-	})
-	requirePanic(t, func() {
-		top.InvalidatePathKeyDescendants(pathKey)
 	})
 	requirePanic(t, func() {
 		top.WriteDynamicIndexFact(reg, dynamicKey, dynamicFact)

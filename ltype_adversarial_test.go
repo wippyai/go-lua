@@ -9,6 +9,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/annotation"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/analysis/type/typeexpr"
 )
 
 // ---------------------------------------------------------------------------
@@ -174,7 +175,7 @@ func TestAdversarial_DeeplyNestedOptional(t *testing.T) {
 	// So this should all collapse to just Optional(Number)
 	inner := typ.Type(typ.Number)
 	for i := 0; i < 50; i++ {
-		inner = typ.NewOptional(inner)
+		inner = typeexpr.Optional(inner)
 	}
 
 	deepOpt := &LType{inner: inner}
@@ -215,9 +216,9 @@ func TestAdversarial_DeeplyNestedUnion(t *testing.T) {
 
 	// Union(Union(Union(... number | string ...)))
 	// NewUnion flattens, so this collapses to Union(number, string)
-	inner := typ.Type(typ.NewUnion(typ.Number, typ.String))
+	inner := typ.Type(typeexpr.Union(typ.Number, typ.String))
 	for i := 0; i < 30; i++ {
-		inner = typ.NewUnion(inner, typ.Boolean)
+		inner = typeexpr.Union(inner, typ.Boolean)
 	}
 
 	deepUnion := &LType{inner: inner}
@@ -318,12 +319,12 @@ func TestAdversarial_NilInEveryPosition(t *testing.T) {
 		LTypeNil,
 		LTypeAny,
 		LTypeNever,
-		{inner: typ.NewOptional(typ.Number)},
+		{inner: typeexpr.Optional(typ.Number)},
 		{inner: typ.NewArray(typ.Number)},
 		{inner: typ.NewMap(typ.String, typ.Number)},
 		{inner: typetable.NewRecord().Field("x", typ.Number).Build()},
 		{inner: typ.NewInterface("table", nil)},
-		{inner: typ.NewUnion(typ.Number, typ.String)},
+		{inner: typeexpr.Union(typ.Number, typ.String)},
 		{inner: typ.LiteralString("x")},
 		{inner: typ.NewTuple(typ.Number)},
 	}
@@ -499,7 +500,7 @@ func TestAdversarial_UnionOverlap(t *testing.T) {
 	defer L.Close()
 
 	// number | integer — integer is a subtype of number, both should match
-	u := &LType{inner: typ.NewUnion(typ.Number, typ.Integer)}
+	u := &LType{inner: typeexpr.Union(typ.Number, typ.Integer)}
 
 	if !u.Validate(L, LNumber(42.5)) {
 		t.Error("float should pass number|integer")
@@ -514,7 +515,7 @@ func TestAdversarial_UnionWithNever(t *testing.T) {
 	defer L.Close()
 
 	// number | never — never contributes nothing
-	u := &LType{inner: typ.NewUnion(typ.Number, typ.Never)}
+	u := &LType{inner: typeexpr.Union(typ.Number, typ.Never)}
 	if !u.Validate(L, LNumber(42)) {
 		t.Error("number should pass number|never")
 	}
@@ -528,7 +529,7 @@ func TestAdversarial_UnionWithAny(t *testing.T) {
 	defer L.Close()
 
 	// string | any — any swallows everything
-	u := &LType{inner: typ.NewUnion(typ.String, typ.Any)}
+	u := &LType{inner: typeexpr.Union(typ.String, typ.Any)}
 	if !u.Validate(L, LNumber(42)) {
 		t.Error("number should pass string|any")
 	}
@@ -1071,15 +1072,15 @@ func TestExploit_ValidateIsDisagreement(t *testing.T) {
 	// Verify these never disagree.
 	types := []typ.Type{
 		typ.Number, typ.String, typ.Boolean, typ.Integer,
-		typ.NewOptional(typ.Number),
+		typeexpr.Optional(typ.Number),
 		typ.NewArray(typ.Number),
 		typ.NewMap(typ.String, typ.Number),
 		typetable.NewRecord().Field("x", typ.Number).Build(),
-		typ.NewUnion(typ.Number, typ.String),
+		typeexpr.Union(typ.Number, typ.String),
 		typ.NewInterface("table", nil),
 		typ.LiteralString("hello"),
 		typ.LiteralInt(42),
-		typ.NewIntersection(
+		typeexpr.Intersection(
 			typetable.NewRecord().Field("x", typ.Number).Build(),
 			typetable.NewRecord().Field("y", typ.String).Build(),
 		),
@@ -1171,7 +1172,7 @@ func TestAdversarial_LiteralBoolInUnion(t *testing.T) {
 	defer L.Close()
 
 	// true | "yes" | 1 — mixed literal union
-	u := &LType{inner: typ.NewUnion(
+	u := &LType{inner: typeexpr.Union(
 		typ.LiteralBool(true),
 		typ.LiteralString("yes"),
 		typ.LiteralInt(1),
@@ -1239,7 +1240,7 @@ func TestAdversarial_UnionOfRecordsDiscriminant(t *testing.T) {
 		Field("width", typ.Number).
 		Field("height", typ.Number).
 		Build()
-	shape := &LType{inner: typ.NewUnion(circle, rect), name: "Shape"}
+	shape := &LType{inner: typeexpr.Union(circle, rect), name: "Shape"}
 	L.SetGlobal("Shape", shape)
 
 	err := L.DoString(`
@@ -1271,7 +1272,7 @@ func TestAdversarial_UnionRecordVsPrimitive(t *testing.T) {
 	defer L.Close()
 
 	// {x: number} | string — table or string
-	u := &LType{inner: typ.NewUnion(
+	u := &LType{inner: typeexpr.Union(
 		typetable.NewRecord().Field("x", typ.Number).Build(),
 		typ.String,
 	)}
@@ -1305,7 +1306,7 @@ func TestAdversarial_UnionSingleMember(t *testing.T) {
 	defer L.Close()
 
 	// Single-member union normalizes to the member itself
-	u := typ.NewUnion(typ.Number)
+	u := typeexpr.Union(typ.Number)
 	lt := &LType{inner: u}
 
 	if !lt.Validate(L, LNumber(42)) {
@@ -1321,7 +1322,7 @@ func TestAdversarial_UnionEmpty(t *testing.T) {
 	defer L.Close()
 
 	// Empty union normalizes to Never
-	u := typ.NewUnion()
+	u := typeexpr.Union()
 	lt := &LType{inner: u}
 
 	// Never rejects everything
@@ -1352,8 +1353,8 @@ func TestReflection_KindMethod(t *testing.T) {
 		"record":   {inner: typetable.NewRecord().Field("x", typ.Number).Build()},
 		"array":    {inner: typ.NewArray(typ.Number)},
 		"map":      {inner: typ.NewMap(typ.String, typ.Number)},
-		"optional": {inner: typ.NewOptional(typ.Number)},
-		"union":    {inner: typ.NewUnion(typ.Number, typ.String)},
+		"optional": {inner: typeexpr.Optional(typ.Number)},
+		"union":    {inner: typeexpr.Union(typ.Number, typ.String)},
 		"function": {inner: typ.Func().Returns(typ.Number).Build()},
 	}
 
@@ -1403,7 +1404,7 @@ func TestReflection_VariantsIterator(t *testing.T) {
 	defer L.Close()
 	OpenBase(L)
 
-	u := &LType{inner: typ.NewUnion(typ.Number, typ.String, typ.Boolean)}
+	u := &LType{inner: typeexpr.Union(typ.Number, typ.String, typ.Boolean)}
 	L.SetGlobal("MyUnion", u)
 
 	err := L.DoString(`
@@ -1424,7 +1425,7 @@ func TestReflection_InnerMethod(t *testing.T) {
 	defer L.Close()
 	OpenBase(L)
 
-	opt := &LType{inner: typ.NewOptional(typ.Number)}
+	opt := &LType{inner: typeexpr.Optional(typ.Number)}
 	L.SetGlobal("OptNum", opt)
 
 	err := L.DoString(`
@@ -1553,7 +1554,7 @@ func TestAdversarial_RecordFieldIsUnionOfRecords(t *testing.T) {
 		Field("url", typ.String).
 		Build()
 	outer := &LType{inner: typetable.NewRecord().
-		Field("payload", typ.NewUnion(textRec, imageRec)).
+		Field("payload", typeexpr.Union(textRec, imageRec)).
 		Build(),
 	}
 

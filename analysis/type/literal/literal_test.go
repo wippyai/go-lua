@@ -5,6 +5,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/type/kind"
 	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/analysis/type/typeexpr"
 )
 
 func TestExtractAliasOnlyFollowsAliases(t *testing.T) {
@@ -52,7 +53,7 @@ func TestPrimitiveBase(t *testing.T) {
 }
 
 func TestFamilyBaseLiteralUnion(t *testing.T) {
-	u := typ.NewUnion(typ.LiteralInt(1), typ.LiteralNumber(2.5))
+	u := typeexpr.Union(typ.LiteralInt(1), typ.LiteralNumber(2.5))
 
 	got, ok := FamilyBase(u)
 	if !ok {

@@ -8,15 +8,18 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/variantorigin"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/standard"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
+	"github.com/wippyai/go-lua/analysis/domain/value/variant"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
 	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
 	"github.com/wippyai/go-lua/analysis/type/kind"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/analysis/type/typeexpr"
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/parse"
 )
@@ -24,7 +27,7 @@ import (
 func TestValueTypeWitnessPresentProjectsConcreteType(t *testing.T) {
 	reg := standard.Registry()
 	value := product.NewWithPresence(reg, product.ShapeTop, presence.Present())
-	value = typevalue.WithWitness(reg, value, typ.NewOptional(typ.String))
+	value = typevalue.WithWitness(reg, value, typeexpr.Optional(typ.String))
 
 	got, ok := New(&body.Result{}).ValueType(value)
 	if ok {
@@ -55,6 +58,32 @@ func TestValueTypeAbsentProjectsNil(t *testing.T) {
 	assertSameType(t, got, typ.Nil)
 }
 
+func TestSourceValueReadsAnyAssertionClaimFromLocalAssignmentSource(t *testing.T) {
+	reg := standard.Registry()
+	stmts := parseChunk(t, `
+local request = ({id = "r1", retries = 2} :: any)
+`)
+	result, err := body.CheckChunk(stmts, body.Config{Registry: reg})
+	if err != nil {
+		t.Fatalf("CheckChunk: %v", err)
+	}
+	assign := stmts[0].(*ast.LocalAssignStmt)
+	point, fact := requireLocalAssignment(t, result, assign, 0)
+	reader := New(result)
+
+	value, ok := reader.SourceValue(point, fact.Source)
+	if !ok {
+		t.Fatalf("SourceValue returned false")
+	}
+	if !reader.ValueHasUntrustedTopOrigin(value) {
+		t.Fatalf("SourceValue did not preserve assertion.Any: %v", value)
+	}
+	got, ok := reader.SourceType(point, fact.Source)
+	if !ok || !typ.IsAny(got) {
+		t.Fatalf("SourceType = %v/%v, want any", got, ok)
+	}
+}
+
 func TestValueTypeWithPresenceAddsNilForMaybeWitness(t *testing.T) {
 	reg := standard.Registry()
 	result, err := body.CheckChunk(nil, body.Config{Registry: reg})
@@ -68,7 +97,23 @@ func TestValueTypeWithPresenceAddsNilForMaybeWitness(t *testing.T) {
 	if !ok {
 		t.Fatalf("ValueTypeWithPresence returned false")
 	}
-	assertSameType(t, got, typ.NewOptional(typ.String))
+	assertSameType(t, got, typeexpr.Optional(typ.String))
+}
+
+func TestValueTypeMaybeWitnessStaysConcrete(t *testing.T) {
+	reg := standard.Registry()
+	result, err := body.CheckChunk(nil, body.Config{Registry: reg})
+	if err != nil {
+		t.Fatalf("CheckChunk: %v", err)
+	}
+	value := product.NewWithPresence(reg, product.ShapeTop, presence.Maybe())
+	value = typevalue.WithWitness(reg, value, typ.String)
+
+	got, ok := New(result).ValueType(value)
+	if !ok {
+		t.Fatalf("ValueType returned false")
+	}
+	assertSameType(t, got, typ.String)
 }
 
 func TestVariantOriginTypeProjectsStructuralUnion(t *testing.T) {
@@ -85,7 +130,7 @@ func TestVariantOriginTypeProjectsStructuralUnion(t *testing.T) {
 		Field("kind", typ.LiteralString("err")).
 		Field("error", typ.String).
 		Build()
-	union := typ.NewUnion(okCase, errCase)
+	union := typeexpr.Union(okCase, errCase)
 	value := typevalue.FromType(reg, union)
 
 	got, ok := New(result).VariantOriginType(value)
@@ -156,11 +201,40 @@ func TestRefineDeclaredTypeOptionalByPresentEvidence(t *testing.T) {
 		runtimekind.Singleton(runtimekind.String),
 	)
 
-	got, ok := New(result).RefineDeclaredType(typ.NewOptional(typ.String), value)
+	got, ok := New(result).RefineDeclaredType(typeexpr.Optional(typ.String), value)
 	if !ok {
 		t.Fatalf("RefineDeclaredType returned false")
 	}
 	assertSameType(t, got, typ.String)
+}
+
+func TestValueTypeUsesOriginTypeWhenWitnessFamilyDoesNotReplay(t *testing.T) {
+	reg := standard.Registry()
+	result, err := body.CheckChunk(nil, body.Config{Registry: reg})
+	if err != nil {
+		t.Fatalf("CheckChunk: %v", err)
+	}
+	dog := typetable.NewRecord().
+		Field("kind", typ.LiteralString("dog")).
+		Field("bark", typ.String).
+		Build()
+	cat := typetable.NewRecord().
+		Field("kind", typ.LiteralString("cat")).
+		Field("meow", typ.String).
+		Build()
+	union := typeexpr.Union(dog, cat)
+	dogFamily, dogCases, ok := variant.OriginOfType(dog)
+	if !ok {
+		t.Fatal("missing dog origin")
+	}
+	value := typevalue.WithWitness(reg, typevalue.FromType(reg, union), union)
+	value = product.Set(reg, value, variantorigin.Key, variantorigin.Of(dogFamily, dogCases))
+
+	got, ok := New(result).ValueType(value)
+	if !ok {
+		t.Fatalf("ValueType returned false")
+	}
+	assertSameType(t, got, dog)
 }
 
 func TestSourceTypeReadsCallSourceThroughBoundary(t *testing.T) {

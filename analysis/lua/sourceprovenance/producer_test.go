@@ -46,3 +46,22 @@ func TestAssertionInnerStopsAtNonAssertion(t *testing.T) {
 		t.Fatalf("AssertionInner = %T %p, want ident %p", got, got, expr)
 	}
 }
+
+func TestProofInnerStopsAtAnyCast(t *testing.T) {
+	expr := &ast.IdentExpr{Value: "x"}
+	wrapped := &ast.NonNilAssertExpr{
+		Expr: &ast.CastExpr{
+			Expr: expr,
+			Type: &ast.PrimitiveTypeExpr{Name: "any"},
+		},
+	}
+
+	if got, ok := ProofInner(wrapped); ok || got != wrapped.Expr {
+		t.Fatalf("ProofInner(any cast) = %T/%v, want cast/false", got, ok)
+	}
+
+	typed := &ast.CastExpr{Expr: expr, Type: &ast.PrimitiveTypeExpr{Name: "number"}}
+	if got, ok := ProofInner(typed); !ok || got != expr {
+		t.Fatalf("ProofInner(number cast) = %T/%v, want ident/true", got, ok)
+	}
+}

@@ -19,18 +19,18 @@ func TestUnionForEvidence(t *testing.T) {
 		},
 		{
 			name:    "flattens union inputs",
-			members: []typ.Type{typ.NewUnion(typ.String, typ.Number), typ.Boolean},
-			want:    typ.NewUnion(typ.String, typ.Number, typ.Boolean),
+			members: []typ.Type{typ.MaterializeUnion([]typ.Type{typ.String, typ.Number}), typ.Boolean},
+			want:    typ.MaterializeUnion([]typ.Type{typ.String, typ.Number, typ.Boolean}),
 		},
 		{
 			name:    "nil plus scalar remains optional",
 			members: []typ.Type{typ.Nil, typ.String},
-			want:    typ.NewOptional(typ.String),
+			want:    typ.MaterializeOptional(typ.String),
 		},
 		{
 			name:    "flattens optional inputs",
-			members: []typ.Type{typ.NewOptional(typ.String), typ.Number},
-			want:    typ.NewUnion(typ.Nil, typ.String, typ.Number),
+			members: []typ.Type{typ.MaterializeOptional(typ.String), typ.Number},
+			want:    typ.MaterializeUnion([]typ.Type{typ.Nil, typ.String, typ.Number}),
 		},
 		{
 			name:    "filters unknown under concrete evidence",
@@ -40,7 +40,7 @@ func TestUnionForEvidence(t *testing.T) {
 		{
 			name:    "preserves unknown with nil",
 			members: []typ.Type{typ.Unknown, typ.Nil},
-			want:    typ.NewOptional(typ.Unknown),
+			want:    typ.MaterializeOptional(typ.Unknown),
 		},
 		{
 			name:    "any absorbs",
@@ -89,13 +89,13 @@ func TestUnionForEvidence(t *testing.T) {
 		},
 		{
 			name:    "nil and optional projections preserve nilability",
-			members: []typ.Type{typ.NewOptional(typ.String), typ.Number},
-			want:    typ.NewUnion(typ.Nil, typ.String, typ.Number),
+			members: []typ.Type{typ.MaterializeOptional(typ.String), typ.Number},
+			want:    typ.MaterializeUnion([]typ.Type{typ.Nil, typ.String, typ.Number}),
 		},
 		{
 			name:    "unknown plus nil remains optional unknown",
 			members: []typ.Type{typ.Unknown, typ.Nil},
-			want:    typ.NewOptional(typ.Unknown),
+			want:    typ.MaterializeOptional(typ.Unknown),
 		},
 	}
 
@@ -120,8 +120,8 @@ func TestUnionForEvidenceRawContainerPolicy(t *testing.T) {
 			nil,
 			typ.Never,
 			typ.Unknown,
-			typ.NewUnion(typ.Boolean, typ.Boolean),
-			typ.NewOptional(typ.Number),
+			typ.MaterializeUnion([]typ.Type{typ.Boolean, typ.Boolean}),
+			typ.MaterializeOptional(typ.Number),
 		},
 	}
 
@@ -150,7 +150,7 @@ func TestUnionForEvidenceRawUnknownNilPolicy(t *testing.T) {
 	}
 
 	got := UnionForEvidence(rawNested)
-	if !typ.TypeEquals(got, typ.NewOptional(typ.Unknown)) {
+	if !typ.TypeEquals(got, typ.MaterializeOptional(typ.Unknown)) {
 		t.Fatalf("UnionForEvidence(raw unknown/nil union) = %T %[1]v, want optional unknown", got)
 	}
 
@@ -163,6 +163,25 @@ func TestUnionForEvidenceRawUnknownNilPolicy(t *testing.T) {
 	}
 }
 
+func TestOptionalSemanticPolicy(t *testing.T) {
+	if got := Optional(nil); !typ.TypeEquals(got, typ.Nil) {
+		t.Fatalf("Optional(nil) = %v, want nil", got)
+	}
+	if got := Optional(typ.Any); !typ.TypeEquals(got, typ.Any) {
+		t.Fatalf("Optional(any) = %v, want any", got)
+	}
+	optionalString := typ.MaterializeOptional(typ.String)
+	if got := Optional(optionalString); !typ.TypeEquals(got, optionalString) {
+		t.Fatalf("Optional(string?) = %v, want string?", got)
+	}
+	union := typ.MaterializeUnion([]typ.Type{typ.String, typ.Number})
+	got := Optional(union)
+	want := typ.MaterializeUnion([]typ.Type{typ.Nil, typ.String, typ.Number})
+	if !typ.TypeEquals(got, want) {
+		t.Fatalf("Optional(union) = %v, want union with nil %v", got, want)
+	}
+}
+
 func TestIntersectionForMeet(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -170,12 +189,12 @@ func TestIntersectionForMeet(t *testing.T) {
 		want    typ.Type
 	}{
 		{name: "empty meet is any", members: nil, want: typ.Any},
-		{name: "flattens intersection inputs", members: []typ.Type{typ.NewIntersection(typ.Any, typ.String), typ.Boolean}, want: typ.NewIntersection(typ.String, typ.Boolean)},
+		{name: "flattens intersection inputs", members: []typ.Type{typ.MaterializeIntersection([]typ.Type{typ.Any, typ.String}), typ.Boolean}, want: typ.MaterializeIntersection([]typ.Type{typ.String, typ.Boolean})},
 		{name: "any identity left", members: []typ.Type{typ.Any, typ.String}, want: typ.String},
 		{name: "any identity right", members: []typ.Type{typ.String, typ.Any}, want: typ.String},
 		{name: "never absorbs left", members: []typ.Type{typ.Never, typ.String}, want: typ.Never},
 		{name: "never absorbs right", members: []typ.Type{typ.String, typ.Never}, want: typ.Never},
-		{name: "nil accepted by optional", members: []typ.Type{typ.Nil, typ.NewOptional(typ.String)}, want: typ.Nil},
+		{name: "nil accepted by optional", members: []typ.Type{typ.Nil, typ.MaterializeOptional(typ.String)}, want: typ.Nil},
 		{name: "nil accepted by unknown", members: []typ.Type{typ.Nil, typ.Unknown}, want: typ.Nil},
 	}
 	for _, tt := range tests {
@@ -231,7 +250,7 @@ func TestIntersectionForMeetRawNilAcceptancePolicy(t *testing.T) {
 		Members: []typ.Type{
 			nil,
 			typ.Any,
-			typ.NewOptional(typ.String),
+			typ.MaterializeOptional(typ.String),
 			typ.Nil,
 		},
 	}

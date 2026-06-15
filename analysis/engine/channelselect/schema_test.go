@@ -6,6 +6,7 @@ import (
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/analysis/type/typeexpr"
 	"github.com/wippyai/go-lua/analysis/type/unwrap"
 )
 
@@ -31,7 +32,7 @@ func TestResultValueTypeBuildsSelectUnion(t *testing.T) {
 
 func TestResultCaseTypeFromValueMatchesUnionMembers(t *testing.T) {
 	caseType := ResultCaseType("select-2", 7, typetable.NewRecord().Field("ok", typ.Boolean).Build())
-	union := typ.NewUnion(caseType, typ.String)
+	union := typeexpr.Union(caseType, typ.String)
 
 	got, ok := ResultCaseTypeFromValue(union, "select-2", 7)
 	if !ok {

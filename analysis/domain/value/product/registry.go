@@ -19,32 +19,6 @@ func RegistryWithAxes(specs ...axis.ErasedSpec) (*axis.Registry, error) {
 	return reg.Freeze(), nil
 }
 
-// ValidateRegistry reports whether reg is usable as a product carrier
-// registry. Presence is a core lane and must not appear as a sparse axis.
-func ValidateRegistry(reg *axis.Registry) error {
-	if reg == nil {
-		return fmt.Errorf("product: registry is required; pass a non-nil frozen registry")
-	}
-	if !reg.Frozen() {
-		return fmt.Errorf("product: registry must be frozen before use")
-	}
-	if _, ok := reg.LookupErased(presence.Key.ID()); ok {
-		return fmt.Errorf("product: presence is a core lane and must not be registered as a sparse axis")
-	}
-	for _, spec := range reg.Specs() {
-		if err := validateProductSparseAxis(spec); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func requireRegistry(reg *axis.Registry) {
-	if err := ValidateRegistry(reg); err != nil {
-		panic(err)
-	}
-}
-
 func registerProductSparseAxis(reg *axis.Registry, spec axis.ErasedSpec) error {
 	if spec == nil {
 		return reg.RegisterErased(spec)

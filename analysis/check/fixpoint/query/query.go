@@ -25,6 +25,12 @@ type Function struct {
 	Body Body
 }
 
+// Stats holds caller-owned observational counters for summary query runs.
+type Stats struct {
+	BodyInvocations int
+	Solver          solve.Stats
+}
+
 // Config configures a summary fixed-point run.
 type Config struct {
 	Registry   *axis.Registry
@@ -32,6 +38,7 @@ type Config struct {
 	Seed       summary.Reader
 	WidenAt    func(summary.SummaryKey) bool
 	WidenDelay func(summary.SummaryKey) int
+	Stats      *Stats
 }
 
 // Driver is a reusable validated summary fixed-point driver.
@@ -42,6 +49,7 @@ type Driver struct {
 	seed       summary.Reader
 	widenAt    func(summary.SummaryKey) bool
 	widenDelay func(summary.SummaryKey) int
+	Stats      *Stats
 }
 
 var ErrRegistryRequired = errors.New("query: registry is required")
@@ -74,6 +82,7 @@ func New(config Config) (*Driver, error) {
 		seed:       config.Seed,
 		widenAt:    config.WidenAt,
 		widenDelay: config.WidenDelay,
+		Stats:      config.Stats,
 	}, nil
 }
 
@@ -115,6 +124,9 @@ func (d *Driver) Run() (summary.Snapshot, error) {
 				return
 			}
 			body := byKey[key]
+			if d.Stats != nil {
+				d.Stats.BodyInvocations++
+			}
 			got, err := body(Context{
 				Key:       key,
 				Summaries: activeReader{reg: d.reg, known: d.known, seed: d.seed, read: read},
@@ -127,6 +139,7 @@ func (d *Driver) Run() (summary.Snapshot, error) {
 		},
 		WidenAt:    d.widenAt,
 		WidenDelay: d.widenDelay,
+		Stats:      solverStats(d.Stats),
 	})
 	if firstErr != nil {
 		return summary.Snapshot{}, firstErr
@@ -140,6 +153,13 @@ func (d *Driver) Run() (summary.Snapshot, error) {
 		})
 	}
 	return summary.NewSnapshot(d.reg, entries...), nil
+}
+
+func solverStats(stats *Stats) *solve.Stats {
+	if stats == nil {
+		return nil
+	}
+	return &stats.Solver
 }
 
 func summaryLattice(reg *axis.Registry) lattice.Lattice[summary.Summary] {

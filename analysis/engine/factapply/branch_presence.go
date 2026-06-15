@@ -21,7 +21,7 @@ func branchPresenceRelationRefinement(
 ) (factflow.ValueRefinement, bool) {
 	triggerPath := relation.TriggerPath()
 	for _, branchRefinement := range branchRefinements {
-		if !branchRefinement.TargetPath().Equal(triggerPath) {
+		if !pathsMatchForBranchRelation(branchRefinement.TargetPath(), triggerPath) {
 			continue
 		}
 		refinement, ok := branchRefinement.ValueForEdge(ctx.Edge.Cond)
@@ -48,7 +48,7 @@ func branchEdgeImpliesAbsentFromNonFalseFalsy(
 	}
 	triggerPath := relation.TriggerPath()
 	for _, branchRefinement := range branchRefinements {
-		if !branchRefinement.TargetPath().Equal(triggerPath) {
+		if !pathsMatchForBranchRelation(branchRefinement.TargetPath(), triggerPath) {
 			continue
 		}
 		if _, ok := branchRefinement.ValueForEdge(ctx.Edge.Cond); ok {

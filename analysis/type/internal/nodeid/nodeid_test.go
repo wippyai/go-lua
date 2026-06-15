@@ -9,7 +9,7 @@ import (
 
 func TestPointer(t *testing.T) {
 	rec := typetable.NewRecord().Field("name", typ.String).Build()
-	opt := typ.NewOptional(typ.String)
+	opt := typ.MaterializeOptional(typ.String)
 	if got := Pointer(nil); got != 0 {
 		t.Fatalf("Pointer(nil) = %d, want 0", got)
 	}

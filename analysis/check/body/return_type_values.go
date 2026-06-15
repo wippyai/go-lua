@@ -17,7 +17,7 @@ func (r *Result) ReturnTypeValues() []product.Value {
 	if len(returnTypes) == 0 {
 		return nil
 	}
-	resolver := typeresolve.New(r.bindings)
+	resolver := typeresolve.NewWithExternal(r.bindings, r.moduleTypes)
 	out := make([]product.Value, 0, len(returnTypes))
 	for _, expr := range returnTypes {
 		t, ok := resolver.Type(expr)

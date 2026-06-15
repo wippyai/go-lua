@@ -43,6 +43,11 @@ func narrowByPathLiteral(t typ.Type, suffix []segment.Segment, lit typ.Type, dep
 	switch v := unwrap.Annotated(t).(type) {
 	case *typ.Alias:
 		return narrowByPathLiteral(v.UnaliasedTarget(), suffix, lit, depth+1)
+	case *typ.Recursive:
+		if v.Body == nil || v.Body == t {
+			return nil, false
+		}
+		return narrowByPathLiteral(v.Body, suffix, lit, depth+1)
 	case *typ.Optional:
 		return narrowByPathLiteral(v.Inner, suffix, lit, depth+1)
 	case *typ.Instantiated:
@@ -77,6 +82,11 @@ func narrowByPathLiteralNot(t typ.Type, suffix []segment.Segment, lit typ.Type, 
 	switch v := unwrap.Annotated(t).(type) {
 	case *typ.Alias:
 		return narrowByPathLiteralNot(v.UnaliasedTarget(), suffix, lit, depth+1)
+	case *typ.Recursive:
+		if v.Body == nil || v.Body == t {
+			return nil, false
+		}
+		return narrowByPathLiteralNot(v.Body, suffix, lit, depth+1)
 	case *typ.Optional:
 		return narrowByPathLiteralNot(v.Inner, suffix, lit, depth+1)
 	case *typ.Instantiated:

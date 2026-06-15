@@ -3,14 +3,21 @@ package body
 import (
 	"github.com/wippyai/go-lua/analysis/check/body/internal/readexpr"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/state/key"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/evidence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	factapply "github.com/wippyai/go-lua/analysis/engine/factapply"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
-	sourcevalue "github.com/wippyai/go-lua/analysis/engine/sourcevalue"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
+	"github.com/wippyai/go-lua/analysis/ir/dominance"
+	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
 	"github.com/wippyai/go-lua/analysis/symbol"
+	"github.com/wippyai/go-lua/analysis/type/refinement"
+	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
 
@@ -21,9 +28,6 @@ func (r *Result) SourceValueAtBoundary(point cfg.Point, source factflow.ValueSou
 	if r == nil || r.registry == nil {
 		return product.Value{}, false
 	}
-	if source.Kind == factflow.ValueSourceCall {
-		return r.callResultValueAtBoundary(source)
-	}
 	in, ok := r.boundaryStateAt(point)
 	if !ok {
 		return product.Value{}, false
@@ -33,10 +37,50 @@ func (r *Result) SourceValueAtBoundary(point cfg.Point, source factflow.ValueSou
 		return product.Value{}, false
 	}
 	value, ok := sources.ValueOfSource(point, source, in, r.boundaryRead)
+	if ok {
+		if readableConcreteType(r.registry, value) {
+			return value, true
+		}
+	}
+	if recovered, recoveredOK := r.recoverRootDeclarationSource(point, source.ExprRef); recoveredOK {
+		if recoveredValue, ok := r.recoveredRootDeclarationValue(point, recovered, in); ok {
+			return recoveredValue, true
+		}
+	}
+	value, ok = sources.ValueOfSource(point, source, in, r.boundaryRead)
 	if !ok || product.Equal(r.registry, value, product.Bottom(r.registry)) {
 		return product.Value{}, false
 	}
 	return value, true
+}
+
+func readableConcreteType(reg *axis.Registry, value product.Value) bool {
+	if reg == nil {
+		return false
+	}
+	t, ok := typevalue.TypeOf(reg, value)
+	if !ok || t == nil || typ.IsAny(t) || typ.IsUnknown(t) || typ.IsNever(t) || refinement.ContainsFreeTypeParam(t) {
+		return false
+	}
+	ev := product.Get(reg, value, evidence.Key)
+	return !ev.IsExplicitTop() && !ev.IsGradualTop()
+}
+
+// LocalAssignmentSourceValueAtBoundary reads the lowered value source for the
+// semantic local assignment at point when it corresponds to source.
+func (r *Result) LocalAssignmentSourceValueAtBoundary(point cfg.Point, source sourceprovenance.ASTSource) (product.Value, bool) {
+	if r == nil {
+		return product.Value{}, false
+	}
+	fact, ok := r.LocalAssignment(point)
+	if !ok || fact.Source != source {
+		return product.Value{}, false
+	}
+	lowered, ok := r.facts.LocalAssignment(point)
+	if !ok {
+		return product.Value{}, false
+	}
+	return r.SourceValueAtBoundary(point, lowered.Source())
 }
 
 // ExpressionValueAtBoundary projects a Lua expression's product value at the
@@ -68,6 +112,74 @@ func (r *Result) PathValueAtBoundary(point cfg.Point, p pathdom.Path) (product.V
 		return product.Value{}, false
 	}
 	return value, true
+}
+
+// LengthFloorAtBoundary returns the proven length floor for array path p at the
+// diagnostic read boundary for point: a returned (lo, true) asserts len(p) >= lo.
+func (r *Result) LengthFloorAtBoundary(point cfg.Point, p pathdom.Path) (int64, bool) {
+	if r == nil || r.visibility == nil || p.IsEmpty() {
+		return 0, false
+	}
+	in, ok := r.boundaryStateAt(point)
+	if !ok {
+		return 0, false
+	}
+	pathKey := r.visibility.KeyAt(point, p)
+	if pathKey == "" {
+		return 0, false
+	}
+	return in.ReadLenFloor(pathKey)
+}
+
+// IndexInRangeAtBoundary reports whether the current boundary state proves
+// indexPath <= len(arrayPath). Callers must pair this with a separate proof that
+// indexPath is positive before dropping nil from a Lua array read.
+func (r *Result) IndexInRangeAtBoundary(point cfg.Point, indexPath, arrayPath pathdom.Path) bool {
+	if r == nil || r.visibility == nil || indexPath.IsEmpty() || arrayPath.IsEmpty() {
+		return false
+	}
+	in, ok := r.boundaryStateAt(point)
+	if !ok {
+		return false
+	}
+	indexKey := r.visibility.KeyAt(point, indexPath)
+	arrayKey := r.visibility.KeyAt(point, arrayPath)
+	if indexKey == "" || arrayKey == "" {
+		return false
+	}
+	return in.HasIndexInRangeProof(indexKey, arrayKey)
+}
+
+// NumericFloorAtBoundary returns the proven numeric lower bound for p at point:
+// a returned (lo, true) asserts value(p) >= lo at that boundary.
+func (r *Result) NumericFloorAtBoundary(point cfg.Point, p pathdom.Path) (int64, bool) {
+	if r == nil || r.visibility == nil || p.IsEmpty() {
+		return 0, false
+	}
+	in, ok := r.boundaryStateAt(point)
+	if !ok {
+		return 0, false
+	}
+	pathKey := numericFloorPathKeyAt(r.visibility, point, p)
+	if pathKey == "" {
+		return 0, false
+	}
+	return in.ReadNumFloor(pathKey)
+}
+
+func numericFloorPathKeyAt(resolver interface {
+	KeyAt(cfg.Point, pathdom.Path) pathdom.PathKey
+}, point cfg.Point, p pathdom.Path) pathdom.PathKey {
+	if p.Symbol == 0 {
+		return ""
+	}
+	if len(p.Segments) == 0 {
+		return p.Key()
+	}
+	if resolver == nil {
+		return ""
+	}
+	return resolver.KeyAt(point, p)
 }
 
 // SymbolValueAtBoundary reads a root symbol value at the diagnostic read
@@ -105,108 +217,127 @@ func (r *Result) CallOutcomeAt(point cfg.Point) (factapply.CallOutcome, bool) {
 	return r.callOutcome(ctx, site, in, r.boundaryRead), true
 }
 
-func (r *Result) callResultValueAtBoundary(source factflow.ValueSource) (product.Value, bool) {
-	if !source.HasCallPoint || source.ResultIndex < 0 {
+// CallExprResultValue resolves the product value of result slot resultIndex
+// produced by a syntactic call expression. It locates the call's own CFG point
+// and reads the solved call-result slot there, letting diagnostics type an
+// inner call result (e.g. the container of make()[1]) that has no symbol path.
+func (r *Result) CallExprResultValue(call *ast.FuncCallExpr, resultIndex int) (product.Value, bool) {
+	if r == nil || r.registry == nil || call == nil || resultIndex < 0 {
 		return product.Value{}, false
 	}
-	out, ok := r.nodeOutputAt(source.CallPoint)
+	point, ok := r.callExprPoint(call)
 	if !ok {
-		out, ok = r.StateAt(source.CallPoint)
+		return product.Value{}, false
 	}
+	source, ok := factflow.NewCallValueSource(0, factflow.NoValueSourceIndex, factflow.NoValueSourceIndex, resultIndex, point, factflow.ValueSourceShape{})
 	if !ok {
 		return product.Value{}, false
 	}
-	value := out.ReadReturnSlot(r.registry, source.ResultIndex)
-	if product.Equal(r.registry, value, product.Bottom(r.registry)) {
-		return product.Value{}, false
-	}
-	return value, true
+	return r.SourceValueAtBoundary(point, source)
 }
 
-func (r *Result) boundaryStateAt(point cfg.Point) (state.State, bool) {
-	if r == nil {
-		return state.State{}, false
+func (r *Result) callExprPoint(call *ast.FuncCallExpr) (cfg.Point, bool) {
+	if r == nil || r.semantics == nil {
+		return 0, false
 	}
-	if r.hasNodeLocalBoundaryEffects(point) {
-		if out, ok := r.nodeOutputAt(point); ok {
-			return out, true
+	if r.callExprPts == nil {
+		graph := r.Graph()
+		if graph == nil {
+			return 0, false
+		}
+		r.callExprPts = make(map[*ast.FuncCallExpr]cfg.Point)
+		for _, point := range graph.RPO() {
+			if fact, ok := r.semantics.Call(point); ok && fact.Call != nil {
+				r.callExprPts[fact.Call] = point
+			}
 		}
 	}
-	return r.StateAt(point)
+	point, ok := r.callExprPts[call]
+	return point, ok
 }
 
-func (r *Result) boundaryRead(point cfg.Point) state.State {
-	if out, ok := r.nodeOutputAt(point); ok {
-		return out
+func (r *Result) recoveredRootSourceValue(point cfg.Point, source factflow.ValueSource) (product.Value, bool) {
+	if source.Kind != factflow.ValueSourceExpression || !source.HasExpr {
+		return product.Value{}, false
 	}
-	if st, ok := r.StateAt(point); ok {
-		return st
+	recovered, ok := r.recoverRootDeclarationSource(point, source.ExprRef)
+	if !ok {
+		return product.Value{}, false
 	}
-	return state.State{}
+	return r.recoveredRootDeclarationValue(point, recovered, state.State{})
 }
 
-func (r *Result) nodeOutputAt(point cfg.Point) (state.State, bool) {
-	if r == nil || r.registry == nil {
-		return state.State{}, false
+func (r *Result) recoveredRootDeclarationValue(point cfg.Point, recovered recoveredRootSource, fallbackState state.State) (product.Value, bool) {
+	if r == nil || r.registry == nil || recovered.symbol == 0 {
+		return product.Value{}, false
+	}
+	declState, ok := r.boundaryStateAt(recovered.point)
+	if !ok {
+		declState = fallbackState
+	}
+	v := declState.ReadValue(r.registry, key.SymbolValue(recovered.symbol))
+	if readableConcreteType(r.registry, v) {
+		return v, true
+	}
+	if recovered.source.Kind == 0 {
+		return product.Value{}, false
+	}
+	if recoveredValue, ok := r.sourceValueAtPoint(recovered.point, recovered.source, declState, r.boundaryRead); ok {
+		if readableConcreteType(r.registry, recoveredValue) {
+			return recoveredValue, true
+		}
+	}
+	return product.Value{}, false
+}
+
+type recoveredRootSource struct {
+	point  cfg.Point
+	source factflow.ValueSource
+	symbol symbol.ID
+}
+
+func (r *Result) recoverRootDeclarationSource(point cfg.Point, expr factflow.ExprRef) (recoveredRootSource, bool) {
+	if r == nil || expr == 0 || point == 0 {
+		return recoveredRootSource{}, false
+	}
+	exprPath, ok := r.facts.ExpressionPath(expr)
+	if !ok || exprPath.Symbol == 0 || len(exprPath.Segments) != 0 {
+		return recoveredRootSource{}, false
 	}
 	graph := r.Graph()
 	if graph == nil {
-		return state.State{}, false
+		return recoveredRootSource{}, false
 	}
-	in, ok := r.StateAt(point)
-	if !ok {
-		return state.State{}, false
+	dom := dominance.ComputeImmediateDominatorInfo(graph)
+	if dom == nil {
+		return recoveredRootSource{}, false
 	}
-	transferFn := factapply.NewFactsNodeTransfer(factapply.FactsNodeTransferConfig{
-		Facts:       r.facts,
-		Sources:     r.sources,
-		CallOutcome: r.callOutcome,
-		Visibility:  r.visibility,
-	})
-	return transferFn(transfer.NodeContext{
-		Graph:    graph,
-		Registry: r.registry,
-		Point:    point,
-		Node:     graph.Node(point),
-		Read:     r.stateRead,
-	}, in), true
-}
-
-func (r *Result) stateRead(point cfg.Point) state.State {
-	if st, ok := r.StateAt(point); ok {
-		return st
-	}
-	return state.State{}
-}
-
-func (r *Result) hasNodeLocalBoundaryEffects(point cfg.Point) bool {
-	if _, ok := r.facts.RootAssignment(point); ok {
-		return true
-	}
-	if _, ok := r.facts.PathAssignment(point); ok {
-		return true
-	}
-	if _, ok := r.facts.PathDescendantInvalidation(point); ok {
-		return true
-	}
-	if _, ok := r.facts.Call(point); ok {
-		return true
-	}
-	if r.callOutcome != nil {
-		if _, ok := r.facts.CallSite(point); ok {
-			return true
+	idom := dom.Map()
+	visited := make(map[cfg.Point]struct{}, graph.Size())
+	for cursor := point; ; {
+		if _, ok := visited[cursor]; ok {
+			return recoveredRootSource{}, false
 		}
+		visited[cursor] = struct{}{}
+		if fact, ok := r.facts.RootAssignment(cursor); ok && fact.TargetSymbol() == exprPath.Symbol && len(fact.TargetPath().Segments) == 0 {
+			switch fact.Kind() {
+			case factflow.RootAssignmentLocalDeclaration:
+				return recoveredRootSource{
+					point:  cursor,
+					source: fact.Source(),
+					symbol: exprPath.Symbol,
+				}, true
+			case factflow.RootAssignmentOrdinaryRootWrite:
+				return recoveredRootSource{}, false
+			default:
+				return recoveredRootSource{}, false
+			}
+		}
+		parent, ok := idom[cursor]
+		if !ok || parent == cursor {
+			break
+		}
+		cursor = parent
 	}
-	if r.facts.NoNormalReturn(point) {
-		return true
-	}
-	return len(r.facts.PostconditionRefinements(point)) != 0 ||
-		len(r.facts.PostconditionPathRelations(point)) != 0
-}
-
-func (r *Result) boundarySources() sourcevalue.SourceValues {
-	if r == nil || r.sources == nil {
-		return nil
-	}
-	return sourcevalue.WithExpressionRefinements(r.registry, r.sources, r.facts.ExpressionRefinements())
+	return recoveredRootSource{}, false
 }

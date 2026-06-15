@@ -17,6 +17,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/module/importlookup"
 	"github.com/wippyai/go-lua/analysis/module/manifest"
 	"github.com/wippyai/go-lua/analysis/module/signaturelookup"
+	"github.com/wippyai/go-lua/analysis/module/typelookup"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/compiler/parse"
 )
@@ -118,6 +119,7 @@ func checkSource(src, filename string, opts ...Option) Result {
 	reg := standard.Registry()
 	signatures := cfg.signatureSource()
 	moduleExports := cfg.moduleExportSource()
+	moduleTypes := cfg.moduleTypeSource()
 	structural := precheck.Precheck(stmts)
 	checked, err := program.RunChunk(stmts, program.Config{
 		Check: body.Config{
@@ -125,6 +127,7 @@ func checkSource(src, filename string, opts ...Option) Result {
 			Globals:       cfg.globals,
 			Signatures:    signatures,
 			ModuleExports: moduleExports,
+			ModuleTypes:   moduleTypes,
 		},
 	})
 	if err != nil {
@@ -166,6 +169,10 @@ func (c config) signatureSource() signaturelookup.Source {
 
 func (c config) moduleExportSource() importlookup.Source {
 	return importlookup.Source{Manifests: c.orderedManifests()}
+}
+
+func (c config) moduleTypeSource() typelookup.Source {
+	return typelookup.Source{Manifests: c.orderedManifests()}
 }
 
 func (c config) orderedManifests() []*manifest.Manifest {

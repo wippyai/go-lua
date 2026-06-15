@@ -48,6 +48,10 @@ func TestNormalReturnFactsNormalizeDropsNonPlaceholderPaths(t *testing.T) {
 			{Target: concrete, Site: "caller.effect.ignored", Kind: effectdelta.Mutation, Value: effectdelta.Value{Before: value, After: value, Change: effectdelta.ChangeChanged}},
 			{Target: placeholder, Site: "caller.effect.1", Kind: effectdelta.Mutation, Value: effectdelta.Value{Before: value, After: value, Change: effectdelta.ChangeChanged}},
 		},
+		EscapeEvents: []callboundary.EscapeEventFact{
+			{Target: concrete, Kind: callboundary.EscapeEventSend, Recursive: true},
+			{Target: placeholder, Kind: callboundary.EscapeEventSend, Recursive: true},
+		},
 	}})
 
 	facts := got.NormalReturnFacts
@@ -68,6 +72,9 @@ func TestNormalReturnFactsNormalizeDropsNonPlaceholderPaths(t *testing.T) {
 	}
 	if len(facts.EffectDeltas) != 1 || facts.EffectDeltas[0].Site != "caller.effect.1" {
 		t.Fatalf("EffectDeltas = %#v, want stable caller site placeholder fact", facts.EffectDeltas)
+	}
+	if len(facts.EscapeEvents) != 1 || !facts.EscapeEvents[0].Target.Equal(placeholder) {
+		t.Fatalf("EscapeEvents = %#v, want only placeholder fact", facts.EscapeEvents)
 	}
 }
 
@@ -90,12 +97,18 @@ func TestNormalReturnFactsCloneIsolatesPayload(t *testing.T) {
 			Path:     pathdom.NewPlaceholder(0).Field("ok"),
 			Presence: presence.Present(),
 		}},
+		EscapeEvents: []callboundary.EscapeEventFact{{
+			Target:    pathdom.NewPlaceholder(0).Field("escape"),
+			Kind:      callboundary.EscapeEventSend,
+			Recursive: true,
+		}},
 	}}
 
 	cloned := original.Clone()
 	cloned.NormalReturnFacts.PathRefinements[0].Path = pathdom.NewPlaceholder(1)
 	cloned.NormalReturnFacts.DynamicIndexFacts[0].Site = "caller.dynamic.changed"
 	cloned.NormalReturnFacts.BranchProofs[0].Presence = presence.Absent()
+	cloned.NormalReturnFacts.EscapeEvents[0].Target = pathdom.NewPlaceholder(1)
 
 	if !original.NormalReturnFacts.PathRefinements[0].Path.Equal(pathdom.NewPlaceholder(0).Field("value")) {
 		t.Fatalf("mutating cloned path refinement changed original")
@@ -105,6 +118,9 @@ func TestNormalReturnFactsCloneIsolatesPayload(t *testing.T) {
 	}
 	if !presence.Equal(original.NormalReturnFacts.BranchProofs[0].Presence, presence.Present()) {
 		t.Fatalf("mutating cloned branch proof changed original")
+	}
+	if !original.NormalReturnFacts.EscapeEvents[0].Target.Equal(pathdom.NewPlaceholder(0).Field("escape")) {
+		t.Fatalf("mutating cloned escape event changed original")
 	}
 }
 
@@ -141,6 +157,10 @@ func TestNormalReturnFactsJoinUsesStateLaneSemantics(t *testing.T) {
 			{Target: commonPath, Site: "caller.effect.common", Kind: effectdelta.Mutation, Value: effectdelta.Value{Before: leftValue, After: leftValue, Change: effectdelta.ChangeChanged}},
 			{Target: leftOnly, Site: "caller.effect.left", Kind: effectdelta.Mutation, Value: effectdelta.Value{Before: leftValue, After: leftValue, Change: effectdelta.ChangeChanged}},
 		},
+		EscapeEvents: []callboundary.EscapeEventFact{
+			{Target: commonPath, Kind: callboundary.EscapeEventBorrow},
+			{Target: leftOnly, Kind: callboundary.EscapeEventRetain},
+		},
 	}}
 	right := Summary{NormalReturnFacts: callboundary.NormalReturnFacts{
 		PathRefinements:   []callboundary.PathValueFact{{Path: commonPath, Value: rightValue}},
@@ -168,6 +188,10 @@ func TestNormalReturnFactsJoinUsesStateLaneSemantics(t *testing.T) {
 			Site:   "caller.effect.common",
 			Kind:   effectdelta.Mutation,
 			Value:  effectdelta.Value{Before: rightValue, After: rightValue, Change: effectdelta.ChangeNone},
+		}},
+		EscapeEvents: []callboundary.EscapeEventFact{{
+			Target: commonPath,
+			Kind:   callboundary.EscapeEventSend,
 		}},
 	}}
 
@@ -213,6 +237,17 @@ func TestNormalReturnFactsJoinUsesStateLaneSemantics(t *testing.T) {
 		!effectDeltaEqual(reg, *leftOnlyDelta, left.NormalReturnFacts.EffectDeltas[1]) {
 		t.Fatalf("left-only effect delta = %#v, want original delta", leftOnlyDelta)
 	}
+	if len(got.EscapeEvents) != 2 {
+		t.Fatalf("EscapeEvents = %#v, want common strengthened and left-only retained", got.EscapeEvents)
+	}
+	if common := findEscapeEvent(got.EscapeEvents, commonPath, false); common == nil ||
+		common.Kind != callboundary.EscapeEventSend {
+		t.Fatalf("common escape event did not strengthen to send: %#v", common)
+	}
+	if leftOnlyEvent := findEscapeEvent(got.EscapeEvents, leftOnly, false); leftOnlyEvent == nil ||
+		leftOnlyEvent.Kind != callboundary.EscapeEventRetain {
+		t.Fatalf("left-only escape event = %#v, want original event", leftOnlyEvent)
+	}
 
 	widened := Widen(reg, left, right).NormalReturnFacts
 	if leftOnlyFact := findDynamicIndexFact(widened.DynamicIndexFacts, "caller.dynamic.left"); leftOnlyFact == nil ||
@@ -223,6 +258,10 @@ func TestNormalReturnFactsJoinUsesStateLaneSemantics(t *testing.T) {
 		!effectDeltaEqual(reg, *leftOnlyDelta, left.NormalReturnFacts.EffectDeltas[1]) {
 		t.Fatalf("widen left-only effect delta = %#v, want original delta", leftOnlyDelta)
 	}
+	if common := findEscapeEvent(widened.EscapeEvents, commonPath, false); common == nil ||
+		common.Kind != callboundary.EscapeEventSend {
+		t.Fatalf("widen common escape event = %#v, want strengthened event", common)
+	}
 }
 
 func TestNormalReturnFactsEqualAndLessOrEqAccountForLane(t *testing.T) {
@@ -231,9 +270,11 @@ func TestNormalReturnFactsEqualAndLessOrEqAccountForLane(t *testing.T) {
 	left := Summary{NormalReturnFacts: callboundary.NormalReturnFacts{
 		PathRefinements: []callboundary.PathValueFact{{Path: p0, Value: presentProduct(reg)}},
 		BranchProofs:    []callboundary.BranchProof{{Kind: pathevidence.BranchProofPathPresence, Path: p0, Presence: presence.Present()}},
+		EscapeEvents:    []callboundary.EscapeEventFact{{Target: p0, Kind: callboundary.EscapeEventBorrow}},
 	}}
 	right := Summary{NormalReturnFacts: callboundary.NormalReturnFacts{
 		PathRefinements: []callboundary.PathValueFact{{Path: p0, Value: product.Top()}},
+		EscapeEvents:    []callboundary.EscapeEventFact{{Target: p0, Kind: callboundary.EscapeEventSend}},
 	}}
 
 	if Equal(reg, left, right) {
@@ -247,6 +288,93 @@ func TestNormalReturnFactsEqualAndLessOrEqAccountForLane(t *testing.T) {
 	}
 	if !Equal(reg, left, Normalize(reg, left)) {
 		t.Fatalf("Equal should compare normalized normal return facts")
+	}
+}
+
+func TestNormalReturnFactsEscapeEventsCompressRecursiveParents(t *testing.T) {
+	reg := mustRegistry(t)
+	p0 := pathdom.NewPlaceholder(0)
+	child := p0.Field("child")
+	grandchild := child.Field("leaf")
+	sibling := p0.Field("sibling")
+
+	got := Normalize(reg, Summary{NormalReturnFacts: callboundary.NormalReturnFacts{
+		EscapeEvents: []callboundary.EscapeEventFact{
+			{Target: child, Kind: callboundary.EscapeEventBorrow},
+			{Target: child, Kind: callboundary.EscapeEventStore},
+			{Target: grandchild, Kind: callboundary.EscapeEventSend},
+			{Target: p0, Kind: callboundary.EscapeEventSend, Recursive: true},
+			{Target: sibling, Kind: callboundary.EscapeEventOpaque},
+			{Target: child.Field("stronger"), Kind: callboundary.EscapeEventOpaque},
+		},
+	}}).NormalReturnFacts.EscapeEvents
+
+	if len(got) != 3 {
+		t.Fatalf("EscapeEvents = %#v, want recursive parent plus stronger descendants", got)
+	}
+	if parent := findEscapeEvent(got, p0, true); parent == nil || parent.Kind != callboundary.EscapeEventSend {
+		t.Fatalf("parent recursive event = %#v, want send", parent)
+	}
+	if childEvent := findEscapeEvent(got, child, false); childEvent != nil {
+		t.Fatalf("non-recursive child send/store should be compressed by recursive parent: %#v", childEvent)
+	}
+	if grandchildEvent := findEscapeEvent(got, grandchild, false); grandchildEvent != nil {
+		t.Fatalf("grandchild send should be compressed by recursive parent: %#v", grandchildEvent)
+	}
+	if siblingEvent := findEscapeEvent(got, sibling, false); siblingEvent == nil ||
+		siblingEvent.Kind != callboundary.EscapeEventOpaque {
+		t.Fatalf("stronger sibling escape should remain distinct: %#v", siblingEvent)
+	}
+
+	childSend := Summary{NormalReturnFacts: callboundary.NormalReturnFacts{
+		EscapeEvents: []callboundary.EscapeEventFact{{Target: child, Kind: callboundary.EscapeEventSend}},
+	}}
+	parentRecursiveSend := Summary{NormalReturnFacts: callboundary.NormalReturnFacts{
+		EscapeEvents: []callboundary.EscapeEventFact{{Target: p0, Kind: callboundary.EscapeEventSend, Recursive: true}},
+	}}
+	if !LessOrEq(reg, childSend, parentRecursiveSend) {
+		t.Fatalf("recursive parent send should dominate child send")
+	}
+}
+
+func TestNormalReturnFactsEscapeEventsKeepNonRecursiveChildrenDistinct(t *testing.T) {
+	reg := mustRegistry(t)
+	p0 := pathdom.NewPlaceholder(0)
+	parent := p0.Field("parent")
+	child := parent.Field("child")
+	sibling := parent.Field("sibling")
+
+	got := Normalize(reg, Summary{NormalReturnFacts: callboundary.NormalReturnFacts{
+		EscapeEvents: []callboundary.EscapeEventFact{
+			{Target: parent, Kind: callboundary.EscapeEventSend},
+			{Target: child, Kind: callboundary.EscapeEventSend},
+			{Target: sibling, Kind: callboundary.EscapeEventSend},
+		},
+	}}).NormalReturnFacts.EscapeEvents
+
+	if len(got) != 3 {
+		t.Fatalf("EscapeEvents = %#v, want parent, child, and sibling preserved", got)
+	}
+	if findEscapeEvent(got, parent, false) == nil ||
+		findEscapeEvent(got, child, false) == nil ||
+		findEscapeEvent(got, sibling, false) == nil {
+		t.Fatalf("non-recursive escape facts must not imply children or siblings: %#v", got)
+	}
+
+	childSend := Summary{NormalReturnFacts: callboundary.NormalReturnFacts{
+		EscapeEvents: []callboundary.EscapeEventFact{{Target: child, Kind: callboundary.EscapeEventSend}},
+	}}
+	parentSend := Summary{NormalReturnFacts: callboundary.NormalReturnFacts{
+		EscapeEvents: []callboundary.EscapeEventFact{{Target: parent, Kind: callboundary.EscapeEventSend}},
+	}}
+	siblingSend := Summary{NormalReturnFacts: callboundary.NormalReturnFacts{
+		EscapeEvents: []callboundary.EscapeEventFact{{Target: sibling, Kind: callboundary.EscapeEventSend}},
+	}}
+	if LessOrEq(reg, childSend, parentSend) {
+		t.Fatalf("non-recursive parent send should not dominate child send")
+	}
+	if LessOrEq(reg, childSend, siblingSend) {
+		t.Fatalf("child send should not imply sibling send")
 	}
 }
 
@@ -272,6 +400,15 @@ func findEffectDelta(deltas []callboundary.EffectDelta, site string) *callbounda
 	for i := range deltas {
 		if string(deltas[i].Site) == site {
 			return &deltas[i]
+		}
+	}
+	return nil
+}
+
+func findEscapeEvent(events []callboundary.EscapeEventFact, target pathdom.Path, recursive bool) *callboundary.EscapeEventFact {
+	for i := range events {
+		if events[i].Target.Equal(target) && events[i].Recursive == recursive {
+			return &events[i]
 		}
 	}
 	return nil

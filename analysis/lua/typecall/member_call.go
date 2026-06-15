@@ -1,6 +1,7 @@
 package typecall
 
 import (
+	"github.com/wippyai/go-lua/analysis/type/ambient"
 	"github.com/wippyai/go-lua/analysis/type/normalize"
 	"github.com/wippyai/go-lua/analysis/type/subst"
 	"github.com/wippyai/go-lua/analysis/type/subtype"
@@ -39,6 +40,9 @@ type memberCallResult struct {
 func memberCallDepth(t typ.Type, name string, depth int) memberCallResult {
 	if stopDepth(t, depth) {
 		return memberCallResult{status: MemberCallMissing}
+	}
+	if method, ok := ambientChannelMethod(t, name, depth+1); ok {
+		return memberCallResult{t: method, status: MemberCallOK}
 	}
 	switch v := unwrap.Annotated(t).(type) {
 	case *typ.Union:
@@ -137,6 +141,50 @@ func stringMethod(name string, receiver typ.Type) (typ.Type, bool) {
 			Build(), true
 	default:
 		return nil, false
+	}
+}
+
+func ambientChannelMethod(receiver typ.Type, name string, depth int) (typ.Type, bool) {
+	channel, payload, ok := channelPayloadType(receiver, depth+1)
+	if !ok {
+		return nil, false
+	}
+	switch name {
+	case "receive":
+		return typ.Func().
+			Param("self", channel).
+			Returns(payload, typ.Boolean).
+			Build(), true
+	case "case_receive":
+		return typ.Func().
+			Param("self", channel).
+			Returns(typ.Unknown).
+			Build(), true
+	default:
+		return nil, false
+	}
+}
+
+func channelPayloadType(t typ.Type, depth int) (typ.Type, typ.Type, bool) {
+	if stopDepth(t, depth) {
+		return nil, nil, false
+	}
+	switch v := unwrap.Annotated(t).(type) {
+	case *typ.Optional:
+		return channelPayloadType(v.Inner, depth+1)
+	case *typ.Alias:
+		return channelPayloadType(v.UnaliasedTarget(), depth+1)
+	case *typ.Instantiated:
+		if v.Generic != nil && v.Generic.Name == ambient.Channel && len(v.TypeArgs) == 1 && v.TypeArgs[0] != nil {
+			return v, v.TypeArgs[0], true
+		}
+		expanded := subst.ExpandInstantiated(v)
+		if expanded == nil || expanded == t {
+			return nil, nil, false
+		}
+		return channelPayloadType(expanded, depth+1)
+	default:
+		return nil, nil, false
 	}
 }
 

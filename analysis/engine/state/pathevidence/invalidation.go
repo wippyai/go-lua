@@ -10,9 +10,6 @@ import (
 // descendant key. It returns false when pathKey is not a recognized structural
 // path-key spelling.
 func (l Lane) InvalidatePathKeySubtree(pathKey pathdom.PathKey) (Lane, bool) {
-	if l.refinementsTop {
-		panic("state: cannot invalidate path subtree in top path lane")
-	}
 	refinements, changed, ok := deletePathKeySubtree(l.refinements, pathKey)
 	if !ok {
 		return l, false
@@ -21,13 +18,17 @@ func (l Lane) InvalidatePathKeySubtree(pathKey pathdom.PathKey) (Lane, bool) {
 	proofs, proofChanged := deleteBranchProofsMatching(l.proofs, func(candidate pathdom.PathKey) bool {
 		return pathKeyInSubtree(candidate, pathKey)
 	})
-	if !changed && !staticChanged && !proofChanged {
+	implications, implicationChanged := deletePathPresenceImplicationsMatching(l.pathPresenceImplications, func(candidate pathdom.PathKey) bool {
+		return pathKeyInSubtree(candidate, pathKey)
+	})
+	if !changed && !staticChanged && !proofChanged && !implicationChanged {
 		return l, true
 	}
 	out := l
 	out.refinements = refinements
 	out.staticMembers = staticMembers
 	out.proofs = proofs
+	out.pathPresenceImplications = implications
 	return out, true
 }
 
@@ -35,9 +36,6 @@ func (l Lane) InvalidatePathKeySubtree(pathKey pathdom.PathKey) (Lane, bool) {
 // preserving exact pathKey evidence. It returns false when pathKey is not a
 // recognized structural path-key spelling.
 func (l Lane) InvalidatePathKeyDescendants(pathKey pathdom.PathKey) (Lane, bool) {
-	if l.refinementsTop {
-		panic("state: cannot invalidate path descendants in top path lane")
-	}
 	refinements, changed, ok := deletePathKeyDescendants(l.refinements, pathKey)
 	if !ok {
 		return l, false
@@ -46,13 +44,17 @@ func (l Lane) InvalidatePathKeyDescendants(pathKey pathdom.PathKey) (Lane, bool)
 	proofs, proofChanged := deleteBranchProofsMatching(l.proofs, func(candidate pathdom.PathKey) bool {
 		return pathKeyInDescendants(candidate, pathKey)
 	})
-	if !changed && !staticChanged && !proofChanged {
+	implications, implicationChanged := deletePathPresenceImplicationsMatching(l.pathPresenceImplications, func(candidate pathdom.PathKey) bool {
+		return pathKeyInDescendants(candidate, pathKey)
+	})
+	if !changed && !staticChanged && !proofChanged && !implicationChanged {
 		return l, true
 	}
 	out := l
 	out.refinements = refinements
 	out.staticMembers = staticMembers
 	out.proofs = proofs
+	out.pathPresenceImplications = implications
 	return out, true
 }
 

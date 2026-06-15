@@ -121,6 +121,43 @@ func TestPathDirectFieldName(t *testing.T) {
 	}
 }
 
+func TestPathDirectIntIndex(t *testing.T) {
+	tests := []struct {
+		name string
+		path Path
+		want int
+		ok   bool
+	}{
+		{
+			name: "integer index",
+			path: NewPath(1, "x").IndexInt(7),
+			want: 7,
+			ok:   true,
+		},
+		{
+			name: "field rejected",
+			path: NewPath(1, "x").Field("f"),
+		},
+		{
+			name: "nested integer index rejected",
+			path: NewPath(1, "x").Field("items").IndexInt(7),
+		},
+		{
+			name: "root only rejected",
+			path: NewPath(1, "x"),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, ok := tt.path.DirectIntIndex()
+			if got != tt.want || ok != tt.ok {
+				t.Fatalf("DirectIntIndex() = %d/%v, want %d/%v", got, ok, tt.want, tt.ok)
+			}
+		})
+	}
+}
+
 func TestPathSubstitute(t *testing.T) {
 	placeholder := Path{Root: "$0"}
 	arg := Path{Root: "vol"}
@@ -277,35 +314,6 @@ func TestPathLastSegment(t *testing.T) {
 	_, ok = root.LastSegment()
 	if ok {
 		t.Error("expected LastSegment to return ok=false for root path")
-	}
-}
-
-func TestPathIsFieldAccess(t *testing.T) {
-	field := NewPath(1, "x").Field("y")
-	if !field.IsFieldAccess() {
-		t.Error("expected IsFieldAccess=true for field access")
-	}
-
-	index := NewPath(1, "x").IndexInt(0)
-	if index.IsFieldAccess() {
-		t.Error("expected IsFieldAccess=false for index access")
-	}
-
-	root := NewPath(1, "x")
-	if root.IsFieldAccess() {
-		t.Error("expected IsFieldAccess=false for root path")
-	}
-}
-
-func TestPathFieldName(t *testing.T) {
-	p := NewPath(1, "x").Field("myField")
-	if name := p.FieldName(); name != "myField" {
-		t.Errorf("expected 'myField', got %q", name)
-	}
-
-	index := NewPath(1, "x").IndexInt(0)
-	if name := index.FieldName(); name != "" {
-		t.Errorf("expected empty string for index access, got %q", name)
 	}
 }
 

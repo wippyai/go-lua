@@ -15,6 +15,7 @@ const (
 	BranchIf
 	BranchWhile
 	BranchRepeat
+	BranchShortCircuit
 )
 
 type CallContextKind uint8
@@ -103,6 +104,9 @@ type CallFact struct {
 	HasReceiverPath bool
 	MethodPath      path.Path
 	HasMethodPath   bool
+
+	ReceiverSource    sourceprovenance.ASTSource
+	HasReceiverSource bool
 
 	ResultTargets []CallResultTarget
 

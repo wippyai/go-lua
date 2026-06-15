@@ -8,6 +8,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/annotation"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/analysis/type/typeexpr"
 )
 
 // errMessage extracts the message string from a validation error.
@@ -61,7 +62,7 @@ func TestOptionalInterface_Table(t *testing.T) {
 	defer L.Close()
 
 	// table? — the exact pattern that fails in production
-	optTable := &LType{inner: typ.NewOptional(typ.NewInterface("table", nil))}
+	optTable := &LType{inner: typeexpr.Optional(typ.NewInterface("table", nil))}
 
 	tbl := L.NewTable()
 	tbl.RawSetString("key", LString("value"))
@@ -93,7 +94,7 @@ func TestOptionalInterface_TableIs(t *testing.T) {
 	defer L.Close()
 
 	// table? validated via :is() — the exact call path that fails
-	optTable := &LType{inner: typ.NewOptional(typ.NewInterface("table", nil))}
+	optTable := &LType{inner: typeexpr.Optional(typ.NewInterface("table", nil))}
 
 	tbl := L.NewTable()
 	tbl.RawSetString("key", LString("value"))
@@ -151,7 +152,7 @@ func TestOptionalRecord(t *testing.T) {
 
 	// {x: number}?
 	inner := typetable.NewRecord().Field("x", typ.Number).Build()
-	optRecord := &LType{inner: typ.NewOptional(inner)}
+	optRecord := &LType{inner: typeexpr.Optional(inner)}
 
 	valid := L.NewTable()
 	valid.RawSetString("x", LNumber(1))
@@ -185,7 +186,7 @@ func TestOptionalArray(t *testing.T) {
 	defer L.Close()
 
 	// {number}?
-	optArray := &LType{inner: typ.NewOptional(typ.NewArray(typ.Number))}
+	optArray := &LType{inner: typeexpr.Optional(typ.NewArray(typ.Number))}
 
 	valid := L.NewTable()
 	valid.Append(LNumber(1))
@@ -220,7 +221,7 @@ func TestOptionalMap(t *testing.T) {
 	defer L.Close()
 
 	// {[string]: number}?
-	optMap := &LType{inner: typ.NewOptional(typ.NewMap(typ.String, typ.Number))}
+	optMap := &LType{inner: typeexpr.Optional(typ.NewMap(typ.String, typ.Number))}
 
 	valid := L.NewTable()
 	valid.RawSetString("a", LNumber(1))
@@ -254,7 +255,7 @@ func TestOptionalUnion(t *testing.T) {
 	defer L.Close()
 
 	// (number | string)?
-	optUnion := &LType{inner: typ.NewOptional(typ.NewUnion(typ.Number, typ.String))}
+	optUnion := &LType{inner: typeexpr.Optional(typeexpr.Union(typ.Number, typ.String))}
 
 	tests := []struct {
 		name  string
@@ -282,7 +283,7 @@ func TestOptionalLiteral(t *testing.T) {
 	defer L.Close()
 
 	// "active"?
-	optLiteral := &LType{inner: typ.NewOptional(typ.LiteralString("active"))}
+	optLiteral := &LType{inner: typeexpr.Optional(typ.LiteralString("active"))}
 
 	tests := []struct {
 		name  string
@@ -312,7 +313,7 @@ func TestOptionalAnnotated(t *testing.T) {
 	annotated := typ.NewAnnotated(typ.Number, []annotation.Annotation{
 		{Name: "min", Arg: float64(0)},
 	})
-	optAnnotated := &LType{inner: typ.NewOptional(annotated)}
+	optAnnotated := &LType{inner: typeexpr.Optional(annotated)}
 
 	tests := []struct {
 		name  string
@@ -339,7 +340,7 @@ func TestOptionalFunction(t *testing.T) {
 	defer L.Close()
 
 	// function?
-	optFunc := &LType{inner: typ.NewOptional(typ.Func().Param("x", typ.Number).Returns(typ.String).Build())}
+	optFunc := &LType{inner: typeexpr.Optional(typ.Func().Param("x", typ.Number).Returns(typ.String).Build())}
 
 	luaFn := L.NewFunction(func(L *LState) int { return 0 })
 	goFn := LGoFunc(func(L *LState) int { return 0 })
@@ -519,7 +520,7 @@ func TestRecordWithTypeLevelOptional(t *testing.T) {
 	rec := &LType{
 		inner: typetable.NewRecord().
 			Field("id", typ.String).
-			Field("content", typ.NewOptional(tableIface)).
+			Field("content", typeexpr.Optional(tableIface)).
 			Build(),
 	}
 
@@ -828,7 +829,7 @@ func TestArrayOfOptionalElements(t *testing.T) {
 	defer L.Close()
 
 	// {(number?)}  — array where elements can be number or nil
-	arrOfOpt := &LType{inner: typ.NewArray(typ.NewOptional(typ.Number))}
+	arrOfOpt := &LType{inner: typ.NewArray(typeexpr.Optional(typ.Number))}
 
 	valid := L.NewTable()
 	valid.Append(LNumber(1))
@@ -864,7 +865,7 @@ func TestMapWithOptionalValues(t *testing.T) {
 	defer L.Close()
 
 	// {[string]: number?}
-	mapOfOpt := &LType{inner: typ.NewMap(typ.String, typ.NewOptional(typ.Number))}
+	mapOfOpt := &LType{inner: typ.NewMap(typ.String, typeexpr.Optional(typ.Number))}
 
 	valid := L.NewTable()
 	valid.RawSetString("a", LNumber(1))
@@ -905,7 +906,7 @@ func TestUnionOfRecords(t *testing.T) {
 		Field("kind", typ.LiteralString("b")).
 		Field("y", typ.String).
 		Build()
-	unionRec := &LType{inner: typ.NewUnion(recA, recB)}
+	unionRec := &LType{inner: typeexpr.Union(recA, recB)}
 
 	validA := L.NewTable()
 	validA.RawSetString("kind", LString("a"))
@@ -1258,7 +1259,7 @@ func TestOptionalAliasType(t *testing.T) {
 
 	// type Score = number; Score?
 	alias := typ.NewAlias("Score", typ.Number)
-	optAlias := &LType{inner: typ.NewOptional(alias)}
+	optAlias := &LType{inner: typeexpr.Optional(alias)}
 
 	tests := []struct {
 		name  string
@@ -1378,7 +1379,7 @@ func TestIntersectionTypeValidation(t *testing.T) {
 	// {x: number} & {y: string} — value must satisfy both
 	recA := typetable.NewRecord().Field("x", typ.Number).Build()
 	recB := typetable.NewRecord().Field("y", typ.String).Build()
-	intersection := &LType{inner: typ.NewIntersection(recA, recB)}
+	intersection := &LType{inner: typeexpr.Intersection(recA, recB)}
 
 	// Has both x and y
 	valid := L.NewTable()
@@ -1419,7 +1420,7 @@ func TestIntersectionTypeIs(t *testing.T) {
 
 	recA := typetable.NewRecord().Field("x", typ.Number).Build()
 	recB := typetable.NewRecord().Field("y", typ.String).Build()
-	intersection := &LType{inner: typ.NewIntersection(recA, recB)}
+	intersection := &LType{inner: typeexpr.Intersection(recA, recB)}
 
 	valid := L.NewTable()
 	valid.RawSetString("x", LNumber(1))
@@ -1602,7 +1603,7 @@ func TestRecordWithRefField_Resolved(t *testing.T) {
 	// Simulates: type Status = "active" | "draft"
 	// type Input = {id: string, status: Status?}
 	// At runtime, the Record stores status as Ref("Status") which the resolver maps.
-	statusType := typ.NewUnion(typ.LiteralString("active"), typ.LiteralString("draft"))
+	statusType := typeexpr.Union(typ.LiteralString("active"), typ.LiteralString("draft"))
 
 	rec := &LType{
 		inner: typetable.NewRecord().
@@ -1650,7 +1651,7 @@ func TestRecordWithRefField_ResolvedIs(t *testing.T) {
 	L := NewState()
 	defer L.Close()
 
-	statusType := typ.NewUnion(typ.LiteralString("active"), typ.LiteralString("draft"))
+	statusType := typeexpr.Union(typ.LiteralString("active"), typ.LiteralString("draft"))
 
 	rec := &LType{
 		inner: typetable.NewRecord().
@@ -2237,7 +2238,7 @@ func TestUnionLiterals(t *testing.T) {
 
 	// "active" | "draft" | "archived"
 	statusUnion := &LType{
-		inner: typ.NewUnion(
+		inner: typeexpr.Union(
 			typ.LiteralString("active"),
 			typ.LiteralString("draft"),
 			typ.LiteralString("archived"),
@@ -2272,7 +2273,7 @@ func TestUnionLiteralsErrorDetail(t *testing.T) {
 	defer L.Close()
 
 	statusUnion := &LType{
-		inner: typ.NewUnion(
+		inner: typeexpr.Union(
 			typ.LiteralString("active"),
 			typ.LiteralString("draft"),
 		),
@@ -2309,8 +2310,8 @@ func TestDoubleOptional(t *testing.T) {
 	defer L.Close()
 
 	// number?? should normalize to number? (NewOptional already handles this)
-	inner := typ.NewOptional(typ.Number)
-	outer := typ.NewOptional(inner)
+	inner := typeexpr.Optional(typ.Number)
+	outer := typeexpr.Optional(inner)
 
 	doubleOpt := &LType{inner: outer}
 
@@ -2621,7 +2622,7 @@ func TestRecursiveOptionalType(t *testing.T) {
 			OptField("next", self).
 			Build()
 	})
-	optNode := &LType{inner: typ.NewOptional(nodeType)}
+	optNode := &LType{inner: typeexpr.Optional(nodeType)}
 
 	tests := []struct {
 		name  string
@@ -3440,7 +3441,7 @@ func TestTupleNilHoles(t *testing.T) {
 	defer L.Close()
 
 	// (number, string) — table with nil in position 2
-	tuple := &LType{inner: typ.NewTuple(typ.Number, typ.NewOptional(typ.String))}
+	tuple := &LType{inner: typ.NewTuple(typ.Number, typeexpr.Optional(typ.String))}
 
 	tbl := L.NewTable()
 	tbl.Append(LNumber(1))
@@ -3462,7 +3463,7 @@ func TestRecordFieldOptionalAndTypeOptional(t *testing.T) {
 	// Field is optional AND type is Optional(number) — double optional
 	rec := &LType{
 		inner: typetable.NewRecord().
-			OptField("count", typ.NewOptional(typ.Number)).
+			OptField("count", typeexpr.Optional(typ.Number)).
 			Build(),
 	}
 
@@ -3563,7 +3564,7 @@ func TestValidateAndIsConsistency(t *testing.T) {
 		{"number", LTypeNumber},
 		{"string", LTypeString},
 		{"boolean", LTypeBoolean},
-		{"optional number", &LType{inner: typ.NewOptional(typ.Number)}},
+		{"optional number", &LType{inner: typeexpr.Optional(typ.Number)}},
 		{"table", &LType{inner: typ.NewInterface("table", nil)}},
 		{"array", &LType{inner: typ.NewArray(typ.Number)}},
 	}

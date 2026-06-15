@@ -8,16 +8,18 @@ import (
 )
 
 type PathRefinementsSnapshot struct {
+	Bottom      bool
 	Top         bool
 	Refinements map[pathdom.PathKey]product.Value
 }
 
-// PathRefinementsSnapshot returns finite path refinements unless the path lane
-// is top. When Top is true, Refinements is empty and callers must not
-// manufacture finite facts from it.
+// PathRefinementsSnapshot returns finite must path refinements. Bottom is
+// explicit; Top means the reachable must lane contains no finite refinements
+// and callers must not manufacture finite facts from it.
 func (s State) PathRefinementsSnapshot() PathRefinementsSnapshot {
 	snapshot := s.pathEvidence.PathRefinementsSnapshot()
 	return PathRefinementsSnapshot{
+		Bottom:      snapshot.Bottom,
 		Top:         snapshot.Top,
 		Refinements: snapshot.Refinements,
 	}
@@ -54,6 +56,24 @@ func (s State) BranchProofsSnapshot() BranchProofsSnapshot {
 		Bottom: snapshot.Bottom,
 		Top:    snapshot.Top,
 		Proofs: snapshot.Proofs,
+	}
+}
+
+type PathPresenceImplicationsSnapshot struct {
+	Bottom       bool
+	Top          bool
+	Implications []pathevidence.PathPresenceImplication
+}
+
+// PathPresenceImplicationsSnapshot returns finite must path-presence
+// implications in stable order. Bottom is explicit; Top means the reachable
+// must lane contains no implications.
+func (s State) PathPresenceImplicationsSnapshot() PathPresenceImplicationsSnapshot {
+	snapshot := s.pathEvidence.PathPresenceImplicationsSnapshot()
+	return PathPresenceImplicationsSnapshot{
+		Bottom:       snapshot.Bottom,
+		Top:          snapshot.Top,
+		Implications: snapshot.Implications,
 	}
 }
 
@@ -143,6 +163,44 @@ func (s State) AddBranchProof(proof pathevidence.BranchProof) State {
 
 func (s State) HasBranchProof(proof pathevidence.BranchProof) bool {
 	return s.pathEvidence.HasBranchProof(proof)
+}
+
+func (s State) AddIndexInRangeProof(indexKey, arrayKey pathdom.PathKey) State {
+	if indexKey == "" || arrayKey == "" {
+		return s
+	}
+	return s.AddBranchProof(pathevidence.BranchProof{
+		Kind:  pathevidence.BranchProofIndexInRange,
+		Path:  indexKey,
+		Other: arrayKey,
+	})
+}
+
+func (s State) HasIndexInRangeProof(indexKey, arrayKey pathdom.PathKey) bool {
+	if indexKey == "" || arrayKey == "" {
+		return false
+	}
+	return s.HasBranchProof(pathevidence.BranchProof{
+		Kind:  pathevidence.BranchProofIndexInRange,
+		Path:  indexKey,
+		Other: arrayKey,
+	})
+}
+
+// AddPathPresenceImplication records a must path-presence implication that
+// remains valid until path invalidation removes either participating path.
+func (s State) AddPathPresenceImplication(implication pathevidence.PathPresenceImplication) State {
+	pathEvidence, reachable := s.pathEvidence.AddPathPresenceImplication(implication)
+	if !reachable {
+		return s
+	}
+	out := s.reachable()
+	out.pathEvidence = pathEvidence
+	return out
+}
+
+func (s State) HasPathPresenceImplication(implication pathevidence.PathPresenceImplication) bool {
+	return s.pathEvidence.HasPathPresenceImplication(implication)
 }
 
 func (s State) EquivalentPathKeys(pathKey pathdom.PathKey) []pathdom.PathKey {

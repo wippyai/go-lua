@@ -8,6 +8,14 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/unwrap"
 )
 
+// FieldAtPath resolves the static member type reached by following suffix from t,
+// descending through Alias/Recursive/Optional/Instantiated wrappers and lifting
+// the access pointwise over union members. It reports false when any segment is
+// not a static member of the type reached at that step.
+func FieldAtPath(t typ.Type, suffix []segment.Segment) (typ.Type, bool) {
+	return fieldAtPath(t, suffix, 0)
+}
+
 func fieldAtPath(t typ.Type, suffix []segment.Segment, depth int) (typ.Type, bool) {
 	if t == nil || len(suffix) == 0 || depth > typ.DefaultRecursionDepth {
 		return nil, false
@@ -15,6 +23,11 @@ func fieldAtPath(t typ.Type, suffix []segment.Segment, depth int) (typ.Type, boo
 	switch v := unwrap.Annotated(t).(type) {
 	case *typ.Alias:
 		return fieldAtPath(v.UnaliasedTarget(), suffix, depth+1)
+	case *typ.Recursive:
+		if v.Body == nil || v.Body == t {
+			return nil, false
+		}
+		return fieldAtPath(v.Body, suffix, depth+1)
 	case *typ.Optional:
 		return fieldAtPath(v.Inner, suffix, depth+1)
 	case *typ.Instantiated:

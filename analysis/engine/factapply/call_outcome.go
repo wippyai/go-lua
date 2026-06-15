@@ -2,13 +2,16 @@ package factapply
 
 import (
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine/callboundary"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
+	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
 // CallResult is one indexed abstract result produced by a call.
@@ -33,12 +36,12 @@ func WithSupplementalCallOutcome(primary, supplemental CallOutcomeProvider) Call
 	return func(ctx transfer.NodeContext, site factflow.CallSite, in state.State, read func(cfg.Point) state.State) CallOutcome {
 		out := primary(ctx, site, in, read)
 		second := supplemental(ctx, site, in, read)
-		out = withSupplementalResultSlots(out, second.Results)
+		out = withSupplementalResultSlots(ctx.Registry, out, second.Results)
 		return withSupplementalOutcomeFacts(out, second)
 	}
 }
 
-func withSupplementalResultSlots(out CallOutcome, results []CallResult) CallOutcome {
+func withSupplementalResultSlots(reg *axis.Registry, out CallOutcome, results []CallResult) CallOutcome {
 	if len(results) == 0 {
 		return out
 	}
@@ -46,17 +49,38 @@ func withSupplementalResultSlots(out CallOutcome, results []CallResult) CallOutc
 		out.Results = append(out.Results, results...)
 		return out
 	}
-	seen := make(map[int]struct{}, len(out.Results))
-	for _, result := range out.Results {
-		seen[result.Index] = struct{}{}
+	position := make(map[int]int, len(out.Results))
+	for i, result := range out.Results {
+		position[result.Index] = i
 	}
 	for _, result := range results {
-		if _, ok := seen[result.Index]; ok {
+		pos, ok := position[result.Index]
+		if !ok {
+			position[result.Index] = len(out.Results)
+			out.Results = append(out.Results, result)
 			continue
 		}
-		out.Results = append(out.Results, result)
+		// Quality-aware merge: a concrete supplemental slot replaces a top-like
+		// primary slot. Concrete-vs-concrete keeps the primary (provider order).
+		// This stops a generic any/unknown declared return (e.g. require, or any
+		// signature returning any) from shadowing a more specific provider such
+		// as module-load export rehydration or a witnessed callable return,
+		// while still keeping the any result when no better provider exists.
+		if slotTopLike(reg, out.Results[pos].Value) && !slotTopLike(reg, result.Value) {
+			out.Results[pos].Value = result.Value
+		}
 	}
 	return out
+}
+
+// slotTopLike reports whether a result slot carries no concrete type evidence
+// (absent type, any, or unknown).
+func slotTopLike(reg *axis.Registry, value product.Value) bool {
+	t, ok := typevalue.TypeOf(reg, value)
+	if !ok {
+		return true
+	}
+	return typ.IsAny(t) || typ.IsUnknown(t)
 }
 
 func withSupplementalOutcomeFacts(out, second CallOutcome) CallOutcome {

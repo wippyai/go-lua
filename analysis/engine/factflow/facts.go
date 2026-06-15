@@ -4,6 +4,7 @@ import (
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
+	"github.com/wippyai/go-lua/analysis/symbol"
 )
 
 // FactsInput carries point-keyed facts used to construct an immutable Facts snapshot.
@@ -27,6 +28,8 @@ type FactsInput struct {
 	CallSites                   map[cfg.Point]CallSite
 	ObjectLiterals              map[ExprRef]ObjectLiteral
 	ExpressionValues            map[ExprRef]product.Value
+	ExpressionOperations        map[ExprRef]ExpressionOperation
+	ExpressionFunctions         map[ExprRef]symbol.ID
 	ExpressionRefinements       map[ExprRef]ExpressionRefinement
 	ExpressionPaths             map[ExprRef]pathdom.Path
 	ExpressionConditions        map[ExprRef]ExpressionCondition
@@ -53,6 +56,8 @@ type Facts struct {
 	callSites                   map[cfg.Point]CallSite
 	objectLiterals              map[ExprRef]ObjectLiteral
 	expressionValues            map[ExprRef]product.Value
+	expressionOperations        map[ExprRef]ExpressionOperation
+	expressionFunctions         map[ExprRef]symbol.ID
 	expressionRefinements       map[ExprRef]ExpressionRefinement
 	expressionPaths             map[ExprRef]pathdom.Path
 	expressionConditions        map[ExprRef]ExpressionCondition
@@ -80,6 +85,8 @@ func NewFacts(input FactsInput) Facts {
 		callSites:                   copyCallSiteMap(input.CallSites),
 		objectLiterals:              copyObjectLiteralMap(input.ObjectLiterals),
 		expressionValues:            copyExpressionValueMap(input.ExpressionValues),
+		expressionOperations:        copyExpressionOperationMap(input.ExpressionOperations),
+		expressionFunctions:         copyExpressionFunctionMap(input.ExpressionFunctions),
 		expressionRefinements:       copyExpressionRefinementMap(input.ExpressionRefinements),
 		expressionPaths:             copyExpressionPathMap(input.ExpressionPaths),
 		expressionConditions:        copyExpressionConditionMap(input.ExpressionConditions),
@@ -226,6 +233,14 @@ func (f Facts) BranchRefinements(point cfg.Point) []BranchRefinement {
 	return nil
 }
 
+// BranchLenRefinements returns the true-edge length-floor facts at point.
+func (f Facts) BranchLenRefinements(point cfg.Point) []BranchLenRefinement {
+	if set, ok := f.branchRefinements[point]; ok {
+		return set.LenRefinements()
+	}
+	return nil
+}
+
 // BranchPresenceRelations returns branch-triggered presence relations at point.
 func (f Facts) BranchPresenceRelations(point cfg.Point) []BranchPresenceRelation {
 	if set, ok := f.branchPresenceRelations[point]; ok {
@@ -301,17 +316,6 @@ func (f Facts) Return(point cfg.Point) (Return, bool) {
 	return fact.copy(), true
 }
 
-// Call returns the narrow call producer projection for the canonical call-site
-// evidence at point. Only assignment/return-source calls are producer-eligible;
-// broad semantic call evidence remains available through CallSite.
-func (f Facts) Call(point cfg.Point) (CallProducer, bool) {
-	site, ok := f.callSites[point]
-	if !ok {
-		return CallProducer{}, false
-	}
-	return callProducerFromFactSite(site)
-}
-
 // CallSite returns the call-site evidence fact at point.
 func (f Facts) CallSite(point cfg.Point) (CallSite, bool) {
 	fact, ok := f.callSites[point]
@@ -319,6 +323,16 @@ func (f Facts) CallSite(point cfg.Point) (CallSite, bool) {
 		return CallSite{}, false
 	}
 	return fact.copy(), true
+}
+
+// CallSiteView returns a read-only call-site view at point. The view never
+// exposes mutable internal slices or path segment storage.
+func (f Facts) CallSiteView(point cfg.Point) (CallSiteView, bool) {
+	fact, ok := f.callSites[point]
+	if !ok {
+		return CallSiteView{}, false
+	}
+	return CallSiteView{site: fact}, true
 }
 
 // ObjectLiteral returns the static-entry sidecar for expr, if present.
@@ -330,6 +344,11 @@ func (f Facts) ObjectLiteral(expr ExprRef) (ObjectLiteral, bool) {
 	return fact.copy(), true
 }
 
+// ObjectLiterals returns static-entry sidecars keyed by expression.
+func (f Facts) ObjectLiterals() map[ExprRef]ObjectLiteral {
+	return copyObjectLiteralMap(f.objectLiterals)
+}
+
 // ExpressionValue returns the syntactically known value fact for expr, if present.
 func (f Facts) ExpressionValue(expr ExprRef) (product.Value, bool) {
 	value, ok := f.expressionValues[expr]
@@ -339,6 +358,27 @@ func (f Facts) ExpressionValue(expr ExprRef) (product.Value, bool) {
 // ExpressionValues returns syntactically known expression values keyed by expression.
 func (f Facts) ExpressionValues() map[ExprRef]product.Value {
 	return copyExpressionValueMap(f.expressionValues)
+}
+
+// ExpressionOperation returns the lowered operation fact for expr, if present.
+func (f Facts) ExpressionOperation(expr ExprRef) (ExpressionOperation, bool) {
+	op, ok := f.expressionOperations[expr]
+	if !ok {
+		return ExpressionOperation{}, false
+	}
+	return op.copy(), true
+}
+
+// ExpressionOperations returns lowered expression operations keyed by expression.
+func (f Facts) ExpressionOperations() map[ExprRef]ExpressionOperation {
+	return copyExpressionOperationMap(f.expressionOperations)
+}
+
+// ExpressionFunction returns the function identity symbol for expr, if expr is
+// a function literal with a bound function summary identity.
+func (f Facts) ExpressionFunction(expr ExprRef) (symbol.ID, bool) {
+	id, ok := f.expressionFunctions[expr]
+	return id, ok && id != 0
 }
 
 // ExpressionRefinement returns the source-value refinement fact for expr, if present.
@@ -397,6 +437,20 @@ func copyExpressionValueMap(in map[ExprRef]product.Value) map[ExprRef]product.Va
 	out := make(map[ExprRef]product.Value, len(in))
 	for ref, value := range in {
 		out[ref] = value
+	}
+	return out
+}
+
+func copyExpressionFunctionMap(in map[ExprRef]symbol.ID) map[ExprRef]symbol.ID {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[ExprRef]symbol.ID, len(in))
+	for ref, id := range in {
+		if ref == 0 || id == 0 {
+			continue
+		}
+		out[ref] = id
 	}
 	return out
 }

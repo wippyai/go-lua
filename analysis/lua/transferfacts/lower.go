@@ -12,6 +12,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/typeresolve"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/compiler/ast"
 )
 
 // Lower converts Lua semantic facts into the generic transfer fact DTOs consumed
@@ -19,8 +20,9 @@ import (
 // by factflow.Facts; higher semantic layers add branch, iterator, interproc,
 // and diagnostic facts separately.
 type Config struct {
-	Registry *axis.Registry
-	Bindings *bind.Result
+	Registry     *axis.Registry
+	Bindings     *bind.Result
+	TypeResolver *typeresolve.Resolver
 }
 
 func Lower(result *semantics.Result, graph cfg.Graph, config Config) factflow.Facts {
@@ -30,14 +32,21 @@ func Lower(result *semantics.Result, graph cfg.Graph, config Config) factflow.Fa
 	if result == nil || graph == nil {
 		return factflow.NewFacts(factflow.FactsInput{})
 	}
-	typeResolver := typeresolve.New(config.Bindings)
+	typeResolver := config.TypeResolver
+	if typeResolver == nil {
+		typeResolver = typeresolve.New(config.Bindings)
+	}
 	l := lowerer{
 		registry:             config.Registry,
 		bindings:             config.Bindings,
+		typeResolver:         typeResolver,
+		callPoints:           callPointsByExpr(builtCallFacts(graph, result)),
 		symbolTypes:          lowerSymbolTypes(config.Bindings, graph, result, typeResolver),
 		exprs:                make(map[any]factflow.ExprRef),
 		types:                make(map[any]factflow.TypeRef),
 		expressionValues:     make(map[factflow.ExprRef]product.Value),
+		expressionOperations: make(map[factflow.ExprRef]factflow.ExpressionOperation),
+		expressionFunctions:  make(map[factflow.ExprRef]symbol.ID),
 		expressionPaths:      make(map[factflow.ExprRef]pathdom.Path),
 		expressionConditions: make(map[factflow.ExprRef]factflow.ExpressionCondition),
 	}
@@ -59,6 +68,8 @@ func Lower(result *semantics.Result, graph cfg.Graph, config Config) factflow.Fa
 		CallSites:                   make(map[cfg.Point]factflow.CallSite),
 		ObjectLiterals:              make(map[factflow.ExprRef]factflow.ObjectLiteral),
 		ExpressionValues:            make(map[factflow.ExprRef]product.Value),
+		ExpressionOperations:        make(map[factflow.ExprRef]factflow.ExpressionOperation),
+		ExpressionFunctions:         make(map[factflow.ExprRef]symbol.ID),
 		ExpressionRefinements:       make(map[factflow.ExprRef]factflow.ExpressionRefinement),
 	}
 	for _, point := range graph.RPO() {
@@ -67,6 +78,7 @@ func Lower(result *semantics.Result, graph cfg.Graph, config Config) factflow.Fa
 				input.RootAssignments[point] = lowered
 				l.addAssertionRefinementsForSource(&input, fact.Source)
 				l.addObjectLiteral(&input, result, fact.Source)
+				l.addObjectLiteralExpectedType(&input, fact)
 			}
 		}
 		if fact, ok := result.OrdinaryAssignment(point); ok {
@@ -81,6 +93,7 @@ func Lower(result *semantics.Result, graph cfg.Graph, config Config) factflow.Fa
 				input.RootAssignments[point] = lowered
 				l.addAssertionRefinementsForSource(&input, fact.Source)
 				l.addObjectLiteral(&input, result, fact.Source)
+				l.addOrdinaryObjectLiteralExpectedType(&input, fact)
 			}
 			if lowered, ok := l.dynamicIndexWrite(fact); ok {
 				input.DynamicIndexWrites[point] = lowered
@@ -96,6 +109,7 @@ func Lower(result *semantics.Result, graph cfg.Graph, config Config) factflow.Fa
 			}
 			for _, source := range fact.Sources {
 				l.addAssertionRefinementsForSource(&input, source)
+				l.addObjectLiteral(&input, result, source)
 			}
 		}
 		if fact, ok := result.Call(point); ok {
@@ -124,6 +138,9 @@ func Lower(result *semantics.Result, graph cfg.Graph, config Config) factflow.Fa
 			if lowered := l.branchRefinements(fact); len(lowered) != 0 {
 				appendBranchRefinement(input.BranchRefinements, point, lowered...)
 			}
+			if lowered := l.branchLenRefinements(fact); len(lowered) != 0 {
+				appendBranchLenRefinement(input.BranchRefinements, point, lowered...)
+			}
 			if lowered, ok := l.branchPathRelations(fact); ok {
 				input.BranchPathRelations[point] = lowered
 			}
@@ -136,6 +153,8 @@ func Lower(result *semantics.Result, graph cfg.Graph, config Config) factflow.Fa
 	l.addTypeIsBranchRefinements(&input, graph, result)
 	l.addReturnPresenceRelations(&input, graph, result)
 	input.ExpressionValues = l.expressionValues
+	input.ExpressionOperations = l.expressionOperations
+	input.ExpressionFunctions = l.expressionFunctions
 	input.ExpressionPaths = l.expressionPaths
 	input.ExpressionConditions = l.expressionConditions
 	return factflow.NewFacts(input)
@@ -144,10 +163,51 @@ func Lower(result *semantics.Result, graph cfg.Graph, config Config) factflow.Fa
 type lowerer struct {
 	registry             *axis.Registry
 	bindings             *bind.Result
+	typeResolver         *typeresolve.Resolver
+	callPoints           map[*ast.FuncCallExpr]cfg.Point
 	symbolTypes          map[symbol.ID]typ.Type
 	exprs                map[any]factflow.ExprRef
 	types                map[any]factflow.TypeRef
 	expressionValues     map[factflow.ExprRef]product.Value
+	expressionOperations map[factflow.ExprRef]factflow.ExpressionOperation
+	expressionFunctions  map[factflow.ExprRef]symbol.ID
 	expressionPaths      map[factflow.ExprRef]pathdom.Path
 	expressionConditions map[factflow.ExprRef]factflow.ExpressionCondition
+}
+
+func callPointsByExpr(facts map[*ast.FuncCallExpr]cfg.Point) map[*ast.FuncCallExpr]cfg.Point {
+	if len(facts) == 0 {
+		return nil
+	}
+	out := make(map[*ast.FuncCallExpr]cfg.Point, len(facts))
+	for call, point := range facts {
+		if call == nil || point == 0 {
+			continue
+		}
+		out[call] = point
+	}
+	return out
+}
+
+func builtCallFacts(graph cfg.Graph, result *semantics.Result) map[*ast.FuncCallExpr]cfg.Point {
+	if graph == nil || result == nil {
+		return nil
+	}
+	out := make(map[*ast.FuncCallExpr]cfg.Point)
+	for _, point := range graph.RPO() {
+		fact, ok := result.Call(point)
+		if !ok || fact.Call == nil {
+			continue
+		}
+		out[fact.Call] = point
+	}
+	return out
+}
+
+func (l *lowerer) callPointForExpr(_ int, call *ast.FuncCallExpr) (cfg.Point, bool) {
+	if l == nil || call == nil || len(l.callPoints) == 0 {
+		return 0, false
+	}
+	point, ok := l.callPoints[call]
+	return point, ok && point != 0
 }

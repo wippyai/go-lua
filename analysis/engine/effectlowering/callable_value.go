@@ -8,7 +8,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
-	"github.com/wippyai/go-lua/analysis/type/refinement"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
@@ -47,7 +46,7 @@ func CallableValueOutcomeProvider(config CallableValueOutcomeProviderConfig) fac
 		}
 		results := make([]factapply.CallResult, 0, len(fn.Returns))
 		for i, ret := range fn.Returns {
-			if ret == nil || refinement.ContainsFreeTypeParam(ret) {
+			if ret == nil || typewitness.Of(ret).IsTop() {
 				continue
 			}
 			results = append(results, factapply.CallResult{

@@ -42,14 +42,14 @@ local function consume_source(source: protocol.EventSource): string
     if result.channel == source.primary then
         local event = result.value
         local id: string = event.id
-        local wrong: number = event.id -- expect-error
+        local wrong: number = event.id -- expect-error: cannot assign string to number
         direct = direct .. id
     end
 
     if result.channel == source.timers then
         local timer = result.value
         local elapsed: number = timer.elapsed
-        local wrong: string = timer.elapsed -- expect-error
+        local wrong: string = timer.elapsed -- expect-error: cannot assign number to string
         selected = selected .. tostring(elapsed)
     end
 

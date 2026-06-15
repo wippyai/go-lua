@@ -33,15 +33,6 @@ func SymbolStableKey(sym symbol.ID, segments []segment.Segment) StableKey {
 	return StableKey(keycodec.PrefixedDecimalKey('s', uint64(sym), segment.FormatSegments(segments)))
 }
 
-// SymbolPathKeyOf lowers a resolved path to its stable symbol-path key.
-func SymbolPathKeyOf(path pathdom.Path) (pathdom.PathKey, bool) {
-	if path.Symbol == 0 {
-		return "", false
-	}
-	key := SymbolPathKey(path.Symbol, path.Segments)
-	return key, key != ""
-}
-
 // ParseSymbolPathKey inverts SymbolPathKey and returns a defensive segment copy.
 func ParseSymbolPathKey(key pathdom.PathKey) (symbol.ID, []segment.Segment, bool) {
 	sym, segments, ok := parseInternedSymbolPathKey(key)

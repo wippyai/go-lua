@@ -11,6 +11,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/typewitness"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/standard"
+	"github.com/wippyai/go-lua/analysis/engine/callproducer"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
@@ -21,6 +22,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/ambient"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/analysis/type/typeexpr"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
 
@@ -75,6 +77,14 @@ func TestLowerAnnotatedLiteralLocalCarriesDeclaredValue(t *testing.T) {
 	wantKind := runtimekind.Join(runtimekind.Singleton(runtimekind.String), runtimekind.Singleton(runtimekind.Number))
 	if got := product.Get(reg, declared, runtimekind.Key); !runtimekind.Equal(got, wantKind) {
 		t.Fatalf("declared runtime kind = %s, want %s", got, wantKind)
+	}
+	witness := product.Get(reg, declared, typewitness.Key)
+	gotType, ok := witness.Type()
+	if !ok {
+		t.Fatalf("declared type witness = %v, want concrete type", witness)
+	}
+	if want := typeexpr.Union(typ.String, typ.Number); !typ.TypeEquals(gotType, want) {
+		t.Fatalf("declared type witness = %v, want %v", gotType, want)
 	}
 }
 
@@ -196,7 +206,7 @@ func TestLowerAssignmentsReturnsAndCallsPreserveValueListMetadata(t *testing.T) 
 	assertNoCompilerASTTypes(t, reflect.TypeOf(facts))
 
 	localPoints := requireStmtPoints(t, built, local, 5)
-	makeProducer, ok := facts.Call(localPoints[0])
+	makeProducer, ok := callproducer.FromFacts(facts, localPoints[0])
 	if !ok {
 		t.Fatalf("missing make call producer")
 	}
@@ -220,7 +230,7 @@ func TestLowerAssignmentsReturnsAndCallsPreserveValueListMetadata(t *testing.T) 
 		t.Fatalf("local a source = %#v", aSource)
 	}
 
-	packProducer, ok := facts.Call(localPoints[1])
+	packProducer, ok := callproducer.FromFacts(facts, localPoints[1])
 	if !ok {
 		t.Fatalf("missing pack call producer")
 	}
@@ -247,7 +257,7 @@ func TestLowerAssignmentsReturnsAndCallsPreserveValueListMetadata(t *testing.T) 
 	}
 
 	writePoints := requireStmtPoints(t, built, write, 2)
-	putProducer, ok := facts.Call(writePoints[0])
+	putProducer, ok := callproducer.FromFacts(facts, writePoints[0])
 	if !ok {
 		t.Fatalf("missing put call producer")
 	}
@@ -269,7 +279,7 @@ func TestLowerAssignmentsReturnsAndCallsPreserveValueListMetadata(t *testing.T) 
 	}
 
 	returnPoints := requireStmtPoints(t, built, ret, 2)
-	tailProducer, ok := facts.Call(returnPoints[0])
+	tailProducer, ok := callproducer.FromFacts(facts, returnPoints[0])
 	if !ok {
 		t.Fatalf("missing tail call producer")
 	}

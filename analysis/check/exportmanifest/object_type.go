@@ -7,9 +7,11 @@ import (
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
+	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/pathexpr"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
+	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/compiler/ast"
@@ -32,8 +34,117 @@ func pathExportRecordType(result *body.Result, point cfg.Point, root pathdom.Pat
 	staticInts := make(map[int]typ.Type)
 	addLocalObjectLiteralMembers(result, point, root, fields, staticStrings, staticInts)
 	addStateStaticMembers(result, point, root, fields, staticStrings, staticInts)
+	addOrdinaryAssignmentMembers(result, point, root, fields, staticStrings, staticInts)
 	addFunctionDefinitionMembers(result, root, fields, staticStrings, staticInts)
 	return recordFromMemberMaps(fields, staticStrings, staticInts)
+}
+
+// addOrdinaryAssignmentMembers publishes members written through direct
+// `root.member = value` (or `root[key] = value`) assignment statements. A module
+// that builds its export table by assigning fields onto a local after the table
+// literal publishes each member from the assignment RHS at the assignment
+// boundary. Reading the destination export path at the return boundary can see
+// later degraded state and should only be a guarded last resort.
+func addOrdinaryAssignmentMembers(
+	result *body.Result,
+	point cfg.Point,
+	root pathdom.Path,
+	fields map[string]typ.Type,
+	staticStrings map[string]typ.Type,
+	staticInts map[int]typ.Type,
+) {
+	if root.Symbol == 0 || result.Graph() == nil {
+		return
+	}
+	for _, candidate := range result.Graph().RPO() {
+		fact, ok := result.OrdinaryAssignment(candidate)
+		if !ok || !fact.HasPath || fact.Path.Symbol != root.Symbol {
+			continue
+		}
+		member, ok := directMemberSegment(root.Segments, fact.Path.Segments)
+		if !ok {
+			continue
+		}
+		t, ok := ordinaryAssignmentMemberType(result, candidate, root, fact)
+		if !ok {
+			continue
+		}
+		addObjectEntryType(fields, staticStrings, staticInts, member, t)
+	}
+}
+
+func ordinaryAssignmentMemberType(result *body.Result, point cfg.Point, root pathdom.Path, fact semantics.OrdinaryAssignmentFact) (typ.Type, bool) {
+	if t, ok, resolved := ordinaryAssignmentRHSMemberType(result, point, root, fact); ok || resolved {
+		return t, ok
+	}
+	return ordinaryAssignmentDestinationMemberType(result, point, fact.Path)
+}
+
+func ordinaryAssignmentRHSMemberType(result *body.Result, point cfg.Point, root pathdom.Path, fact semantics.OrdinaryAssignmentFact) (typ.Type, bool, bool) {
+	resolved := false
+	if value, ok := ordinaryAssignmentRHSValue(result, point, fact); ok {
+		resolved = true
+		if t, ok := valueType(result.Registry(), value); ok {
+			return t, true, true
+		}
+	}
+
+	expr := ordinaryAssignmentRHSExpr(fact)
+	if expr == nil {
+		return nil, false, resolved
+	}
+	if t, ok := ordinaryAssignmentRHSPathType(result, point, root, fact, expr); ok {
+		return t, true, true
+	}
+	if t, ok := exprType(result, point, expr); ok {
+		return t, true, true
+	}
+	return nil, false, resolved
+}
+
+func ordinaryAssignmentRHSValue(result *body.Result, point cfg.Point, fact semantics.OrdinaryAssignmentFact) (product.Value, bool) {
+	if fact.Source.Kind == sourceprovenance.SourceExpression {
+		expr := ordinaryAssignmentRHSExpr(fact)
+		if expr == nil {
+			return product.Value{}, false
+		}
+		return result.ExpressionValueAtBoundary(point, expr)
+	}
+	valueSource, ok := valueSourceFromASTSource(fact.Source)
+	if !ok {
+		return product.Value{}, false
+	}
+	return result.SourceValueAtBoundary(point, valueSource)
+}
+
+func ordinaryAssignmentRHSExpr(fact semantics.OrdinaryAssignmentFact) ast.Expr {
+	if fact.Source.Expr != nil {
+		return fact.Source.Expr
+	}
+	return fact.Value
+}
+
+func ordinaryAssignmentRHSPathType(result *body.Result, point cfg.Point, root pathdom.Path, fact semantics.OrdinaryAssignmentFact, expr ast.Expr) (typ.Type, bool) {
+	p, ok := result.ExpressionPath(expr)
+	if !ok || p.IsEmpty() || p.Equal(root) {
+		return nil, false
+	}
+	if fact.HasPath && p.Equal(fact.Path) {
+		return nil, false
+	}
+	return pathExportRecordType(result, point, p)
+}
+
+func ordinaryAssignmentDestinationMemberType(result *body.Result, point cfg.Point, p pathdom.Path) (typ.Type, bool) {
+	value, ok := result.PathValueAtBoundary(point, p)
+	if !ok {
+		return nil, false
+	}
+	t, ok := valueType(result.Registry(), value)
+	if !ok || typ.IsAny(t) || typ.IsUnknown(t) {
+		return nil, false
+	}
+	return t, true
 }
 
 func addLocalObjectLiteralMembers(
@@ -177,11 +288,6 @@ func addFunctionDefinitionMembers(
 func functionDefinitionMemberType(result *body.Result, fn *ast.FunctionExpr) (typ.Type, bool) {
 	t, ok := functionExpressionType(result, fn)
 	if !ok {
-		return nil, false
-	}
-	// Cross-module member publication is intentionally single-return until
-	// imported tuple facts can preserve sibling correlations.
-	if f, ok := t.(*typ.Function); ok && len(f.Returns) > 1 {
 		return nil, false
 	}
 	return t, true

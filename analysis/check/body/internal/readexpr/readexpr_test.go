@@ -7,6 +7,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/evidence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/variantorigin"
@@ -20,6 +21,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/symbol"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/analysis/type/typeexpr"
 )
 
 func TestProjectExactPresentDropsNil(t *testing.T) {
@@ -69,6 +71,29 @@ func TestProjectExactPresentMergesOptionalFieldTypeFromRoot(t *testing.T) {
 	assertRuntimeKind(t, reg, got, runtimekind.Singleton(runtimekind.String))
 }
 
+func TestProjectExactPresentChildInheritsExplicitTopEvidenceFromRoot(t *testing.T) {
+	reg := standard.Registry()
+	point := cfg.Point(10)
+	rawSym := symbol.ID(20)
+	resolver := testResolver(point, rawSym, "raw")
+	rootPath := path.NewPath(rawSym, "raw")
+	readPath := rootPath.Field("id")
+	childKey := resolver.KeyAt(point, readPath)
+	rootValue := typevalue.FromType(reg, typ.Any)
+	in := state.State{}.
+		WriteValue(reg, key.SymbolValue(rawSym), rootValue).
+		WritePathKey(reg, childKey, product.NewWithPresence(reg, product.ShapeTop, presence.Present()))
+
+	got, ok := Project(Config{Registry: reg, Visibility: resolver}, point, readPath, in)
+	if !ok {
+		t.Fatalf("Project returned false")
+	}
+	assertPresence(t, reg, got, presence.Present())
+	if gotEvidence := product.Get(reg, got, evidence.Key); !evidence.Equal(gotEvidence, evidence.ExplicitTop()) {
+		t.Fatalf("raw.id evidence = %s, want %s", gotEvidence, evidence.ExplicitTop())
+	}
+}
+
 func TestProjectExactAbsentReturnsNil(t *testing.T) {
 	reg := standard.Registry()
 	point := cfg.Point(2)
@@ -99,6 +124,27 @@ func TestProjectNoExactProofKeepsRuntimeIndexOptionality(t *testing.T) {
 	assertPresence(t, reg, got, presence.Top())
 }
 
+func TestProjectInRangeStructuralArrayIndexDropsNil(t *testing.T) {
+	reg := standard.Registry()
+	point := cfg.Point(13)
+	sym := symbol.ID(23)
+	resolver := testResolver(point, sym, "arr")
+	parentPath := path.NewPath(sym, "arr")
+	readPath := parentPath.IndexInt(2)
+	rootValue := typevalue.WithWitness(reg, product.Top(), typ.NewArray(typ.String))
+	parentKey := resolver.KeyAt(point, parentPath)
+	in := state.State{}.
+		WriteValue(reg, key.SymbolValue(sym), rootValue).
+		WriteLenFloor(parentKey, 2)
+
+	got, ok := Project(Config{Registry: reg, Visibility: resolver}, point, readPath, in)
+	if !ok {
+		t.Fatalf("Project returned false")
+	}
+	assertPresence(t, reg, got, presence.Present())
+	assertRuntimeKind(t, reg, got, runtimekind.Singleton(runtimekind.String))
+}
+
 func TestProjectNoExactProofUsesNarrowedParentOrigin(t *testing.T) {
 	reg := standard.Registry()
 	point := cfg.Point(7)
@@ -114,7 +160,7 @@ func TestProjectNoExactProofUsesNarrowedParentOrigin(t *testing.T) {
 		Field("channel", chanStr).
 		Field("value", typ.String).
 		Build()
-	union := typ.NewUnion(intCase, strCase)
+	union := typeexpr.Union(intCase, strCase)
 	rootFamily, rootCases, ok := variant.OriginOfType(union)
 	if !ok {
 		t.Fatal("missing root origin")
@@ -153,7 +199,7 @@ func TestProjectNestedPathUsesNarrowedRootOrigin(t *testing.T) {
 		Field("channel", okChan).
 		Field("value", typetable.NewRecord().Field("data", typ.Number).Build()).
 		Build()
-	union := typ.NewUnion(okCase, errCase)
+	union := typeexpr.Union(okCase, errCase)
 	rootFamily, rootCases, ok := variant.OriginOfType(union)
 	if !ok {
 		t.Fatal("missing root origin")
@@ -178,6 +224,82 @@ func TestProjectNestedPathUsesNarrowedRootOrigin(t *testing.T) {
 	assertRuntimeKind(t, reg, got, runtimekind.Singleton(runtimekind.String))
 }
 
+func TestProjectUsesOriginTypeWhenWitnessFamilyDoesNotReplay(t *testing.T) {
+	reg := standard.Registry()
+	point := cfg.Point(12)
+	petSym := symbol.ID(22)
+	resolver := testResolver(point, petSym, "pet")
+	readPath := path.NewPath(petSym, "pet").Field("bark")
+	dog := typetable.NewRecord().
+		Field("kind", typ.LiteralString("dog")).
+		Field("bark", typ.String).
+		Build()
+	cat := typetable.NewRecord().
+		Field("kind", typ.LiteralString("cat")).
+		Field("meow", typ.String).
+		Build()
+	union := typeexpr.Union(dog, cat)
+	dogFamily, dogCases, ok := variant.OriginOfType(dog)
+	if !ok {
+		t.Fatal("missing dog origin")
+	}
+	rootValue := typevalue.WithWitness(reg, typevalue.FromType(reg, union), union)
+	rootValue = product.Set(reg, rootValue, variantorigin.Key, variantorigin.Of(dogFamily, dogCases))
+	in := state.State{}.WriteValue(reg, key.SymbolValue(petSym), rootValue)
+
+	got, ok := Project(Config{Registry: reg, Visibility: resolver}, point, readPath, in)
+	if !ok {
+		t.Fatalf("Project returned false")
+	}
+	assertPresence(t, reg, got, presence.Present())
+	assertRuntimeKind(t, reg, got, runtimekind.Singleton(runtimekind.String))
+}
+
+func TestProjectPresentRootWitnessMakesNestedPathNonOptional(t *testing.T) {
+	reg := standard.Registry()
+	point := cfg.Point(10)
+	responseSym := symbol.ID(20)
+	resolver := testResolver(point, responseSym, "response")
+	responsePath := path.NewPath(responseSym, "response")
+	readPath := responsePath.Field("metadata").Field("response_id")
+	responseType := typetable.NewRecord().
+		Field("metadata", typetable.NewRecord().
+			Field("response_id", typ.String).
+			Build()).
+		Build()
+	rootType := typeexpr.Optional(responseType)
+	rootValue := typevalue.WithWitness(reg, typevalue.FromType(reg, rootType), rootType)
+	rootValue = product.WithPresence(reg, rootValue, presence.Present())
+	in := state.State{}.WriteValue(reg, key.SymbolValue(responseSym), rootValue)
+
+	got, ok := Project(Config{Registry: reg, Visibility: resolver}, point, readPath, in)
+	if !ok {
+		t.Fatalf("Project returned false")
+	}
+	assertPresence(t, reg, got, presence.Present())
+	assertRuntimeKind(t, reg, got, runtimekind.Singleton(runtimekind.String))
+}
+
+func TestProjectMaybeRootWitnessKeepsChildOptional(t *testing.T) {
+	reg := standard.Registry()
+	point := cfg.Point(11)
+	responseSym := symbol.ID(21)
+	resolver := testResolver(point, responseSym, "response")
+	responsePath := path.NewPath(responseSym, "response")
+	readPath := responsePath.Field("answer")
+	responseType := typetable.NewRecord().Field("answer", typ.String).Build()
+	rootValue := typevalue.WithWitness(reg, typevalue.FromType(reg, responseType), responseType)
+	rootValue = product.WithPresence(reg, rootValue, presence.Maybe())
+	in := state.State{}.WriteValue(reg, key.SymbolValue(responseSym), rootValue)
+
+	got, ok := Project(Config{Registry: reg, Visibility: resolver}, point, readPath, in)
+	if !ok {
+		t.Fatalf("Project returned false")
+	}
+	assertPresence(t, reg, got, presence.Maybe())
+	assertRuntimeKind(t, reg, got, runtimekind.Singleton(runtimekind.String))
+}
+
 func TestProjectRootIdentifierReadsSymbolState(t *testing.T) {
 	reg := standard.Registry()
 	point := cfg.Point(6)
@@ -197,6 +319,24 @@ func TestProjectRootIdentifierReadsSymbolState(t *testing.T) {
 	}
 	if !product.Equal(reg, got, want) {
 		t.Fatalf("Project root value = %v, want %v", got, want)
+	}
+}
+
+func TestProjectMemberOfExplicitTopRootCarriesExplicitTopEvidence(t *testing.T) {
+	reg := standard.Registry()
+	point := cfg.Point(11)
+	raw := symbol.ID(21)
+	resolver := testResolver(point, raw, "raw")
+	readPath := path.NewPath(raw, "raw").Field("id")
+	rootValue := product.Set(reg, product.Top(), evidence.Key, evidence.ExplicitTop())
+	in := state.State{}.WriteValue(reg, key.SymbolValue(raw), rootValue)
+
+	got, ok := Project(Config{Registry: reg, Visibility: resolver}, point, readPath, in)
+	if !ok {
+		t.Fatalf("Project returned false")
+	}
+	if gotEvidence := product.Get(reg, got, evidence.Key); !evidence.Equal(gotEvidence, evidence.ExplicitTop()) {
+		t.Fatalf("projected evidence = %s, want explicit-top", gotEvidence)
 	}
 }
 

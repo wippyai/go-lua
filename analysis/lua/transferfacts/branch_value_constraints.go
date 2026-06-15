@@ -5,8 +5,10 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/lua/branchcond"
+	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
 func refinementHasPresence(refinement factflow.ValueRefinement, want presence.Value) bool {
@@ -35,7 +37,28 @@ func (l *lowerer) typeMatchedRefinement(tag runtimekind.Tag) factflow.ValueRefin
 	if tag == runtimekind.Nil {
 		return value.WithConstraint(l.registry, l.presenceConstraint(presence.Absent()))
 	}
-	return value.WithConstraint(l.registry, l.presenceConstraint(presence.Present()))
+	value = value.WithConstraint(l.registry, l.presenceConstraint(presence.Present()))
+	if scalar, ok := scalarTypeForTag(tag); ok {
+		value = value.WithConstraint(l.registry, typevalue.WithWitness(l.registry, product.Top(), scalar))
+	}
+	return value
+}
+
+// scalarTypeForTag returns the concrete primitive type denoted by a runtime
+// type() tag, for the tags whose runtime kind pins a single scalar type. It
+// supplies the type witness a `type(x) == "T"` guard proves on its true edge,
+// so a gradual `any` subject narrows to T rather than staying opaque.
+func scalarTypeForTag(tag runtimekind.Tag) (typ.Type, bool) {
+	switch tag {
+	case runtimekind.String:
+		return typ.String, true
+	case runtimekind.Number:
+		return typ.Number, true
+	case runtimekind.Boolean:
+		return typ.Boolean, true
+	default:
+		return nil, false
+	}
 }
 
 func (l *lowerer) typeUnmatchedRefinement(tag runtimekind.Tag) factflow.ValueRefinement {
@@ -50,6 +73,10 @@ func (l *lowerer) presenceRefinement(value presence.Value) factflow.ValueRefinem
 	return factflow.NewValueConstraint(l.presenceConstraint(value))
 }
 
+func (l *lowerer) falsyAbsentRefinement() factflow.ValueRefinement {
+	return factflow.NewFalsyAbsentConstraint(l.presenceConstraint(presence.Absent()))
+}
+
 func (l *lowerer) presenceConstraint(value presence.Value) product.Value {
 	return product.NewWithPresence(l.registry, product.ShapeTop, value)
 }
@@ -60,4 +87,9 @@ func (l *lowerer) runtimeKindRefinement(value runtimekind.Value) factflow.ValueR
 
 func (l *lowerer) runtimeKindConstraint(value runtimekind.Value) product.Value {
 	return product.Set(l.registry, product.Top(), runtimekind.Key, value)
+}
+
+func (l *lowerer) boolLiteralRefinement(value bool) factflow.ValueRefinement {
+	lit := typ.LiteralBool(value)
+	return factflow.NewValueConstraint(typevalue.WithWitness(l.registry, typevalue.FromType(l.registry, lit), lit))
 }

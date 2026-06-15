@@ -7,32 +7,35 @@ import (
 )
 
 func Domain(reg *axis.Registry) lattice.Lattice[Value] {
-	requireRegistry(reg)
+	rt := mustRuntime(reg)
 	return lattice.Lattice[Value]{
-		Bottom: func() Value { return Bottom(reg) },
+		Bottom: rt.bottomValue,
 		Top:    Top,
 		Equal: func(a, b Value) bool {
-			return Equal(reg, a, b)
+			return equalRuntime(rt, a, b)
 		},
 		LessOrEq: func(a, b Value) bool {
-			return LessOrEq(reg, a, b)
+			return lessOrEqRuntime(rt, a, b)
 		},
 		Join: func(a, b Value) Value {
-			return Join(reg, a, b)
+			return joinRuntime(rt, a, b)
 		},
 		Meet: func(a, b Value) Value {
-			return Meet(reg, a, b)
+			return meetRuntime(rt, a, b)
 		},
 		Widen: func(prev, next Value) Value {
-			return Widen(reg, prev, next)
+			return widenRuntime(rt, prev, next)
 		},
 	}
 }
 
 func Equal(reg *axis.Registry, a, b Value) bool {
-	requireRegistry(reg)
-	validateValue(reg, a)
-	validateValue(reg, b)
+	return equalRuntime(mustRuntime(reg), a, b)
+}
+
+func equalRuntime(rt *registryRuntime, a, b Value) bool {
+	rt.validateValue(a)
+	rt.validateValue(b)
 	if a.n == b.n {
 		return true
 	}
@@ -42,8 +45,9 @@ func Equal(reg *axis.Registry, a, b Value) bool {
 	if !presence.Equal(PresenceOf(a), PresenceOf(b)) {
 		return false
 	}
-	for _, spec := range reg.Specs() {
-		if !spec.EqualAny(axisValue(spec, a), axisValue(spec, b)) {
+	for i := range rt.axes {
+		spec := rt.axes[i]
+		if !spec.spec.EqualAny(rt.axisValue(spec, a), rt.axisValue(spec, b)) {
 			return false
 		}
 	}
@@ -51,9 +55,12 @@ func Equal(reg *axis.Registry, a, b Value) bool {
 }
 
 func LessOrEq(reg *axis.Registry, a, b Value) bool {
-	requireRegistry(reg)
-	validateValue(reg, a)
-	validateValue(reg, b)
+	return lessOrEqRuntime(mustRuntime(reg), a, b)
+}
+
+func lessOrEqRuntime(rt *registryRuntime, a, b Value) bool {
+	rt.validateValue(a)
+	rt.validateValue(b)
 	if !shapeLessOrEq(ShapeOf(a), ShapeOf(b)) {
 		return false
 	}
@@ -61,8 +68,9 @@ func LessOrEq(reg *axis.Registry, a, b Value) bool {
 	if !presenceSpec.LessOrEq(PresenceOf(a), PresenceOf(b)) {
 		return false
 	}
-	for _, spec := range reg.Specs() {
-		if !spec.LessOrEqAny(axisValue(spec, a), axisValue(spec, b)) {
+	for i := range rt.axes {
+		spec := rt.axes[i]
+		if !spec.spec.LessOrEqAny(rt.axisValue(spec, a), rt.axisValue(spec, b)) {
 			return false
 		}
 	}
@@ -70,17 +78,21 @@ func LessOrEq(reg *axis.Registry, a, b Value) bool {
 }
 
 func Join(reg *axis.Registry, a, b Value) Value {
-	requireRegistry(reg)
-	validateValue(reg, a)
-	validateValue(reg, b)
-	slots := make([]slot, 0, len(reg.Specs()))
-	for _, spec := range reg.Specs() {
-		value := spec.JoinAny(axisValue(spec, a), axisValue(spec, b))
-		if !spec.IsTopAny(value) {
-			slots = append(slots, slot{key: spec.ID(), value: value})
+	return joinRuntime(mustRuntime(reg), a, b)
+}
+
+func joinRuntime(rt *registryRuntime, a, b Value) Value {
+	rt.validateValue(a)
+	rt.validateValue(b)
+	slots := make([]slot, 0, len(rt.canonicalAxes))
+	for i := range rt.canonicalAxes {
+		spec := rt.canonicalAxes[i]
+		value := spec.spec.JoinAny(rt.axisValue(spec, a), rt.axisValue(spec, b))
+		if !spec.spec.IsTopAny(value) {
+			slots = append(slots, slot{key: spec.id, value: value})
 		}
 	}
-	return intern(reg,
+	return internRuntime(rt,
 		shapeJoin(ShapeOf(a), ShapeOf(b)),
 		presence.Join(PresenceOf(a), PresenceOf(b)),
 		slots,
@@ -88,17 +100,21 @@ func Join(reg *axis.Registry, a, b Value) Value {
 }
 
 func Meet(reg *axis.Registry, a, b Value) Value {
-	requireRegistry(reg)
-	validateValue(reg, a)
-	validateValue(reg, b)
-	slots := make([]slot, 0, len(reg.Specs()))
-	for _, spec := range reg.Specs() {
-		value := spec.MeetAny(axisValue(spec, a), axisValue(spec, b))
-		if !spec.IsTopAny(value) {
-			slots = append(slots, slot{key: spec.ID(), value: value})
+	return meetRuntime(mustRuntime(reg), a, b)
+}
+
+func meetRuntime(rt *registryRuntime, a, b Value) Value {
+	rt.validateValue(a)
+	rt.validateValue(b)
+	slots := make([]slot, 0, len(rt.canonicalAxes))
+	for i := range rt.canonicalAxes {
+		spec := rt.canonicalAxes[i]
+		value := spec.spec.MeetAny(rt.axisValue(spec, a), rt.axisValue(spec, b))
+		if !spec.spec.IsTopAny(value) {
+			slots = append(slots, slot{key: spec.id, value: value})
 		}
 	}
-	return intern(reg,
+	return internRuntime(rt,
 		shapeMeet(ShapeOf(a), ShapeOf(b)),
 		presence.Meet(PresenceOf(a), PresenceOf(b)),
 		slots,
@@ -106,44 +122,23 @@ func Meet(reg *axis.Registry, a, b Value) Value {
 }
 
 func Widen(reg *axis.Registry, prev, next Value) Value {
-	requireRegistry(reg)
-	validateValue(reg, prev)
-	validateValue(reg, next)
-	slots := make([]slot, 0, len(reg.Specs()))
-	for _, spec := range reg.Specs() {
-		value := spec.WidenAny(axisValue(spec, prev), axisValue(spec, next))
-		if !spec.IsTopAny(value) {
-			slots = append(slots, slot{key: spec.ID(), value: value})
+	return widenRuntime(mustRuntime(reg), prev, next)
+}
+
+func widenRuntime(rt *registryRuntime, prev, next Value) Value {
+	rt.validateValue(prev)
+	rt.validateValue(next)
+	slots := make([]slot, 0, len(rt.canonicalAxes))
+	for i := range rt.canonicalAxes {
+		spec := rt.canonicalAxes[i]
+		value := spec.spec.WidenAny(rt.axisValue(spec, prev), rt.axisValue(spec, next))
+		if !spec.spec.IsTopAny(value) {
+			slots = append(slots, slot{key: spec.id, value: value})
 		}
 	}
-	return intern(reg,
+	return internRuntime(rt,
 		shapeWiden(ShapeOf(prev), ShapeOf(next)),
 		presence.Widen(PresenceOf(prev), PresenceOf(next)),
 		slots,
 	)
-}
-
-func axisValue(spec axis.ErasedSpec, v Value) any {
-	if v.n != nil {
-		for _, slot := range v.n.slots {
-			if slot.key == spec.ID() {
-				return slot.value
-			}
-		}
-	}
-	return spec.TopAny()
-}
-
-func validateValue(reg *axis.Registry, v Value) {
-	if v.n == nil {
-		return
-	}
-	if v.n.reg != reg {
-		panic("product: value belongs to a different registry")
-	}
-	for _, slot := range v.n.slots {
-		if _, ok := reg.LookupErased(slot.key); !ok {
-			panic("product: value contains slot outside registry: " + slot.key)
-		}
-	}
 }

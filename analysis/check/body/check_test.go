@@ -17,16 +17,24 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/typewitness"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/standard"
+	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
+	factapply "github.com/wippyai/go-lua/analysis/engine/factapply"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/state"
+	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/engine/visibility"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
+	"github.com/wippyai/go-lua/analysis/lua/branchcond"
 	"github.com/wippyai/go-lua/analysis/lua/cfgbuild"
 	"github.com/wippyai/go-lua/analysis/module/manifest"
 	"github.com/wippyai/go-lua/analysis/module/signaturelookup"
+	"github.com/wippyai/go-lua/analysis/module/typelookup"
 	"github.com/wippyai/go-lua/analysis/symbol"
+	"github.com/wippyai/go-lua/analysis/type/ambient"
+	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/analysis/type/typeexpr"
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/parse"
 )
@@ -62,6 +70,269 @@ func TestCheckChunkAssignsLocalFromExpressionValue(t *testing.T) {
 	assertProductEqual(t, reg, got, want)
 	if gotMark := product.Get(reg, got, markKey); gotMark != markLow {
 		t.Fatalf("custom axis = %v, want %v", gotMark, markLow)
+	}
+}
+
+func TestCheckChunkMissingUnionMapEntryUnderInferredReturnStaysOptional(t *testing.T) {
+	reg := standard.Registry()
+	stmts := parseChunk(t, `
+type Task = {kind: "task", id: string}
+type Timer = {kind: "timer", id: string}
+type Envelope = Task | Timer
+type State = {processed: {[string]: Envelope}, counters: {[string]: number}}
+type Actor = {state: State}
+local function new_actor(): Actor
+	return {state = {processed = {}, counters = {}}}
+end
+local actor = new_actor()
+actor.state.processed["m1"] = {kind = "task", id = "m1"}
+actor.state.counters["task"] = 1
+local missing_processed: Envelope = actor.state.processed["missing"]
+local missing_counter: number = actor.state.counters["missing"]
+`)
+	result, err := CheckChunk(stmts, Config{Registry: reg})
+	if err != nil {
+		t.Fatalf("CheckChunk: %v", err)
+	}
+
+	for _, name := range []string{"missing_processed", "missing_counter"} {
+		point, expr := requireLocalAssignmentExprByName(t, result, name)
+		got, ok := result.ExpressionValueAtBoundary(point, expr)
+		if !ok {
+			t.Fatalf("%s ExpressionValueAtBoundary returned false", name)
+		}
+		assertPresence(t, reg, got, presence.Maybe())
+	}
+}
+
+func requireLocalAssignmentExprByName(t *testing.T, result *Result, name string) (cfg.Point, ast.Expr) {
+	t.Helper()
+	for _, point := range result.Graph().RPO() {
+		fact, ok := result.LocalAssignment(point)
+		if !ok || fact.Name != name || fact.Expr == nil {
+			continue
+		}
+		return point, fact.Expr
+	}
+	t.Fatalf("local assignment %q not found", name)
+	return 0, nil
+}
+
+func TestBoundaryReadsUseMaterializedNodeOutputs(t *testing.T) {
+	reg := standard.Registry()
+	stmts := parseChunk(t, `local x = f()`)
+	callOutcomeCalls := 0
+
+	result, err := CheckChunk(stmts, Config{
+		Registry: reg,
+		Globals:  []string{"f"},
+		CallOutcome: func(ctx transfer.NodeContext, site factflow.CallSite, in state.State, read func(cfg.Point) state.State) factapply.CallOutcome {
+			callOutcomeCalls++
+			return factapply.CallOutcome{Results: []factapply.CallResult{{
+				Index: 0,
+				Value: typevalue.FromType(ctx.Registry, typ.String),
+			}}}
+		},
+	})
+	if err != nil {
+		t.Fatalf("CheckChunk: %v", err)
+	}
+	if callOutcomeCalls == 0 {
+		t.Fatal("call outcome provider was not exercised during analysis")
+	}
+
+	var point cfg.Point
+	var found bool
+	for _, candidate := range result.Graph().RPO() {
+		fact, ok := result.LocalAssignment(candidate)
+		if !ok || fact.Name != "x" {
+			continue
+		}
+		point = candidate
+		found = true
+		if _, ok := result.LocalAssignmentSourceValueAtBoundary(candidate, fact.Source); !ok {
+			t.Fatal("first boundary source read failed")
+		}
+		break
+	}
+	if !found {
+		t.Fatal("local assignment for x not found")
+	}
+	callsAfterFirstRead := callOutcomeCalls
+	fact, _ := result.LocalAssignment(point)
+	if _, ok := result.LocalAssignmentSourceValueAtBoundary(point, fact.Source); !ok {
+		t.Fatal("second boundary source read failed")
+	}
+	if callOutcomeCalls != callsAfterFirstRead {
+		t.Fatalf("repeated boundary read called call outcome provider %d extra times", callOutcomeCalls-callsAfterFirstRead)
+	}
+}
+
+func TestCheckFunctionWhileIndexReadCarriesRangeAndPositiveProofs(t *testing.T) {
+	reg := standard.Registry()
+	fn := parseFunction(t, `
+function first(xs: {number}): number
+	local i: number = 1
+	while i <= #xs do
+		local v: number = xs[i]
+		if v > 0 then
+			return v
+		end
+		i = i + 1
+	end
+	return 0
+end`)
+
+	result, err := CheckFunction(fn, Config{Registry: reg})
+	if err != nil {
+		t.Fatalf("CheckFunction: %v", err)
+	}
+	var branchPoint cfg.Point
+	var branchFound bool
+	for _, candidate := range result.Graph().RPO() {
+		fact, ok := result.BranchCondition(candidate)
+		if !ok || fact.While == nil {
+			continue
+		}
+		branchPoint = candidate
+		branchFound = true
+		if fact.Check.Kind != branchcond.CheckIndexInRange {
+			t.Fatalf("while check kind = %v, want CheckIndexInRange", fact.Check.Kind)
+		}
+		break
+	}
+	if !branchFound {
+		t.Fatal("while branch condition not found")
+	}
+	var iAssign cfg.Point
+	var iSymbol symbol.ID
+	for _, candidate := range result.Graph().RPO() {
+		fact, ok := result.LocalAssignment(candidate)
+		if ok && fact.Name == "i" {
+			iAssign = candidate
+			iSymbol = fact.Symbol
+			root, rootOK := result.facts.RootAssignment(candidate)
+			if !rootOK {
+				t.Fatalf("local i at point %d has no root assignment", candidate)
+			}
+			source := root.Source()
+			if !source.HasExpr {
+				t.Fatalf("local i root assignment source has no expr: %#v", source)
+			}
+			value, ok := result.facts.ExpressionValue(source.ExprRef)
+			if !ok {
+				t.Fatalf("local i source expr %d has no expression value", source.ExprRef)
+			}
+			if got, ok := typevalue.TypeOf(reg, value); !ok || !typ.TypeEquals(got, typ.LiteralInt(1)) {
+				t.Fatalf("local i source expr type = %v/%v, want literal 1", got, ok)
+			}
+			break
+		}
+	}
+	if iAssign == 0 {
+		t.Fatal("local i assignment not found")
+	}
+	var incAssign cfg.Point
+	for _, candidate := range result.Graph().RPO() {
+		fact, ok := result.OrdinaryAssignment(candidate)
+		if !ok || !fact.HasSymbol || fact.Symbol != iSymbol {
+			continue
+		}
+		incAssign = candidate
+		root, rootOK := result.facts.RootAssignment(candidate)
+		if !rootOK {
+			t.Fatalf("increment i at point %d has no root assignment", candidate)
+		}
+		source := root.Source()
+		if !source.HasExpr {
+			t.Fatalf("increment source has no expr: %#v", source)
+		}
+		if _, ok := result.facts.ExpressionOperation(source.ExprRef); !ok {
+			t.Fatalf("increment source expr %d has no expression operation", source.ExprRef)
+		}
+		break
+	}
+	if incAssign == 0 {
+		t.Fatal("increment i assignment not found")
+	}
+	proofs := result.facts.BranchProofs(branchPoint)
+	if len(proofs) == 0 {
+		t.Fatalf("branch %d lowered no branch proofs", branchPoint)
+	}
+	branchState, _ := result.StateAt(branchPoint)
+	if branchFloors := branchState.NumFloorsSnapshot().Floors; len(branchFloors) == 0 {
+		t.Fatalf("branch %d has no numeric floors before body", branchPoint)
+	}
+	if indexKey := result.visibility.KeyAt(branchPoint, proofs[0].Path()); indexKey == "" {
+		t.Fatalf("branch %d index proof path has no visibility key: %#v", branchPoint, proofs[0].Path())
+	}
+	otherPath, ok := proofs[0].OtherPath()
+	if !ok {
+		t.Fatalf("branch %d proof has no array path: %#v", branchPoint, proofs[0])
+	}
+	if arrayKey := result.visibility.KeyAt(branchPoint, otherPath); arrayKey == "" {
+		t.Fatalf("branch %d array proof path has no visibility key: %#v", branchPoint, otherPath)
+	}
+	var point cfg.Point
+	var attr *ast.AttrGetExpr
+	for _, candidate := range result.Graph().RPO() {
+		fact, ok := result.LocalAssignment(candidate)
+		if !ok || fact.Name != "v" {
+			continue
+		}
+		got, ok := fact.Expr.(*ast.AttrGetExpr)
+		if !ok {
+			t.Fatalf("v source = %T, want indexed attr", fact.Expr)
+		}
+		point = candidate
+		attr = got
+		break
+	}
+	if attr == nil {
+		t.Fatal("local v assignment not found")
+	}
+	arrayPath, ok := result.ExpressionPath(attr.Object)
+	if !ok {
+		t.Fatal("array expression path not found")
+	}
+	indexPath, ok := result.ExpressionPath(attr.Key)
+	if !ok {
+		t.Fatal("index expression path not found")
+	}
+	if !result.IndexInRangeAtBoundary(point, indexPath, arrayPath) {
+		st, _ := result.StateAt(point)
+		t.Fatalf("missing %s <= len(%s) proof at point %d from branch %d; proofs=%#v",
+			indexPath, arrayPath, point, branchPoint, st.BranchProofsSnapshot().Proofs)
+	}
+	floor, ok := result.NumericFloorAtBoundary(point, indexPath)
+	if !ok || floor < 1 {
+		st, _ := result.StateAt(point)
+		t.Fatalf("index numeric floor = %d/%v, want >=1 at point %d; floors=%#v",
+			floor, ok, point, st.NumFloorsSnapshot().Floors)
+	}
+}
+
+func TestCheckFunctionReturnSlotEvaluatesExpressionWithNestedCall(t *testing.T) {
+	reg := standard.Registry()
+	fn := parseFunction(t, `
+function f(user: { id: string, retries: number })
+	return user.id .. ":" .. tostring(user.retries)
+end`)
+
+	result, err := CheckFunction(fn, Config{
+		Registry:   reg,
+		Signatures: signaturelookup.Source{IncludeStdlib: true},
+	})
+	if err != nil {
+		t.Fatalf("CheckFunction: %v", err)
+	}
+	exit, ok := result.ExitState()
+	if !ok {
+		t.Fatalf("missing exit state")
+	}
+	got, ok := typevalue.TypeOf(reg, exit.ReadReturnSlot(reg, 0))
+	if !ok || !typ.TypeEquals(got, typ.String) {
+		t.Fatalf("return slot type = %v/%v, want string", got, ok)
 	}
 }
 
@@ -173,6 +444,38 @@ func TestCheckFunctionSeedsDeclaredParameterEntryState(t *testing.T) {
 	}
 }
 
+func TestCheckFunctionProjectsFieldFromDeclaredParameterWitness(t *testing.T) {
+	reg := standard.Registry()
+	stmts := parseChunk(t, `
+type User = { id: string, retries: number }
+function f(user: User)
+	local id = user.id
+	local retries = user.retries
+	return id, retries
+end`)
+
+	bindings := bind.BindChunk(stmts, bind.Options{})
+	functions := bindings.NestedFunctions(nil)
+	if len(functions) != 1 {
+		t.Fatalf("nested functions = %d, want 1", len(functions))
+	}
+	result, err := CheckBoundFunction(functions[0], bindings, Config{Registry: reg})
+	if err != nil {
+		t.Fatalf("CheckBoundFunction: %v", err)
+	}
+	fn := result.Function()
+	id := mustLocalAt(t, result, fn.Stmts[0].(*ast.LocalAssignStmt), 0)
+	retries := mustLocalAt(t, result, fn.Stmts[1].(*ast.LocalAssignStmt), 0)
+	exit, ok := result.ExitState()
+	if !ok {
+		t.Fatalf("missing exit state")
+	}
+	assertPresence(t, reg, exit.ReadValue(reg, key.SymbolValue(id)), presence.Present())
+	assertRuntimeKind(t, reg, exit.ReadValue(reg, key.SymbolValue(id)), runtimekind.Singleton(runtimekind.String))
+	assertPresence(t, reg, exit.ReadValue(reg, key.SymbolValue(retries)), presence.Present())
+	assertRuntimeKind(t, reg, exit.ReadValue(reg, key.SymbolValue(retries)), runtimekind.Singleton(runtimekind.Number))
+}
+
 func TestCheckFunctionParameterEntryStateKeepsExplicitEntryValueAndPath(t *testing.T) {
 	reg := standard.Registry()
 	fn := parseFunction(t, "function f(x: string?) return x end")
@@ -259,6 +562,46 @@ end`)
 	got := entry.ReadValue(reg, key.SymbolValue(slot.Symbol))
 	assertPresence(t, reg, got, presence.Maybe())
 	assertRuntimeKind(t, reg, got, runtimekind.Singleton(runtimekind.String))
+}
+
+func TestCheckFunctionSeedsImportedDeclaredParameterEntryState(t *testing.T) {
+	reg := standard.Registry()
+	event := typetable.NewRecord().Field("id", typ.String).Build()
+	source := typetable.NewRecord().
+		Field("primary", typ.Instantiate(ambient.ChannelGeneric(), event)).
+		Build()
+	protocol := manifest.New("protocol")
+	protocol.DefineType("Source", source)
+	stmts := parseChunk(t, `
+local protocol = require("protocol")
+function consume(source: protocol.Source)
+	local primary = source.primary
+end`)
+
+	bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"channel"}})
+	functions := bindings.NestedFunctions(nil)
+	if len(functions) != 1 {
+		t.Fatalf("nested functions = %d, want 1", len(functions))
+	}
+	result, err := CheckBoundFunction(functions[0], bindings, Config{
+		Registry: reg,
+		ModuleTypes: typelookup.Source{
+			Manifests: []*manifest.Manifest{protocol},
+		},
+	})
+	if err != nil {
+		t.Fatalf("CheckBoundFunction: %v", err)
+	}
+	slot := mustParamSlot(t, result.bindings, result.Function(), 0)
+	entry, ok := result.StateAt(result.Graph().Entry())
+	if !ok {
+		t.Fatalf("missing entry state")
+	}
+	got := entry.ReadValue(reg, key.SymbolValue(slot.Symbol))
+	gotType, ok := typevalue.TypeOf(reg, got)
+	if !ok || !typ.TypeEquals(gotType, source) {
+		t.Fatalf("imported parameter type = %v/%v, want %v", gotType, ok, source)
+	}
 }
 
 func TestCheckChunkManifestSameAsSignatureUsesArgumentSourceValue(t *testing.T) {
@@ -612,6 +955,618 @@ end
 	assertConcreteTypeWitness(t, reg, got)
 }
 
+func TestReadBoundaryPresentAliasDiscriminantRemovesDescendantNil(t *testing.T) {
+	reg := standard.Registry()
+	stmts := parseChunk(t, `
+type TextNode = { kind: "text", value: string }
+type GroupNode = { kind: "group", children: {TreeNode} }
+type TreeNode = TextNode | GroupNode
+
+function validate(tree: TreeNode)
+	if tree.kind == "group" then
+		local first = tree.children[1]
+		if first and first.kind == "text" then
+			local value = first.value
+		end
+	end
+end
+`)
+
+	bindings := bind.BindChunk(stmts, bind.Options{})
+	functions := bindings.NestedFunctions(nil)
+	if len(functions) != 1 {
+		t.Fatalf("nested functions = %d, want 1", len(functions))
+	}
+	result, err := CheckBoundFunction(functions[0], bindings, Config{Registry: reg})
+	if err != nil {
+		t.Fatalf("CheckBoundFunction: %v", err)
+	}
+	fn := result.Function()
+	outer := fn.Stmts[0].(*ast.IfStmt)
+	firstLocal := outer.Then[0].(*ast.LocalAssignStmt)
+	inner := outer.Then[1].(*ast.IfStmt)
+	valueLocal := inner.Then[0].(*ast.LocalAssignStmt)
+	valuePoint := requireLocalAssignmentPoint(t, result, valueLocal, 0)
+
+	firstSym := mustLocalAt(t, result, firstLocal, 0)
+	firstValue, ok := result.SymbolValueAtBoundary(valuePoint, firstSym)
+	if !ok {
+		t.Fatalf("first boundary value missing")
+	}
+	if !presence.Equal(product.PresenceOf(firstValue), presence.Present()) {
+		firstType, _ := typevalue.TypeOf(reg, firstValue)
+		t.Fatalf("first presence = %v type=%v, want present", product.PresenceOf(firstValue), firstType)
+	}
+	got, ok := result.ExpressionValueAtBoundary(valuePoint, valueLocal.Exprs[0])
+	if !ok {
+		t.Fatalf("ExpressionValueAtBoundary returned false")
+	}
+	gotType, ok := typevalue.TypeOf(reg, got)
+	if !ok || !typ.TypeEquals(gotType, typ.String) {
+		t.Fatalf("first.value type = %v/%v presence=%v, want string present", gotType, ok, product.PresenceOf(got))
+	}
+}
+
+func TestReadBoundaryChannelSelectBranchSeesPayloadWitness(t *testing.T) {
+	reg := standard.Registry()
+	stmts := parseChunk(t, `
+type Event = { id: string }
+type Retry = { attempt: number }
+type Timer = { elapsed: number }
+type Stop = { reason: string }
+function consume(primary: Channel<Event>, retry: Channel<Retry>, timers: Channel<Timer>, stops: Channel<Stop>)
+	local result = channel.select {
+		primary:case_receive(),
+		retry:case_receive(),
+		timers:case_receive(),
+		stops:case_receive(),
+	}
+	if result.channel == primary then
+		local event = result.value
+		local id = event.id
+		return id
+	end
+	if result.channel == retry then
+		local retry = result.value
+		local attempt = retry.attempt
+		return tostring(attempt)
+	end
+	if result.channel == timers then
+		local timer = result.value
+		local elapsed = timer.elapsed
+		return tostring(elapsed)
+	end
+	local fallback = result.value
+	return fallback.reason
+end
+`)
+
+	bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"channel"}})
+	functions := bindings.NestedFunctions(nil)
+	if len(functions) != 1 {
+		t.Fatalf("nested functions = %d, want 1", len(functions))
+	}
+	result, err := CheckBoundFunction(functions[0], bindings, Config{Registry: reg, Globals: []string{"channel"}})
+	if err != nil {
+		t.Fatalf("CheckBoundFunction: %v", err)
+	}
+	fn := result.Function()
+	selectLocal := fn.Stmts[0].(*ast.LocalAssignStmt)
+	resultSym := mustLocalAt(t, result, selectLocal, 0)
+	ifStmt := fn.Stmts[1].(*ast.IfStmt)
+	branchPoint := requireCheckStmtPoint(t, result.cfg, ifStmt)
+	relations := result.facts.BranchPathRelations(branchPoint)
+	if len(relations) == 0 {
+		t.Fatalf("missing branch path relation at %d", branchPoint)
+	}
+	thenLocal := ifStmt.Then[0].(*ast.LocalAssignStmt)
+	thenPoint := requireLocalAssignmentPoint(t, result, thenLocal, 0)
+	root, ok := result.SymbolValueAtBoundary(thenPoint, resultSym)
+	if !ok {
+		t.Fatalf("selected result root missing at branch boundary")
+	}
+	thenState, ok := result.StateAt(thenPoint)
+	if !ok {
+		t.Fatalf("missing then state")
+	}
+	channelFacts := thenState.ChannelSelectFactsSnapshot()
+	if channelFacts.Bottom || len(channelFacts.Facts) == 0 {
+		t.Fatalf("then branch has no channel-select facts: %#v", channelFacts)
+	}
+	got, ok := result.ExpressionValueAtBoundary(thenPoint, thenLocal.Exprs[0])
+	if !ok {
+		t.Fatalf("ExpressionValueAtBoundary returned false")
+	}
+	gotType, ok := typevalue.TypeOf(reg, got)
+	if !ok {
+		t.Fatalf("payload witness missing in %v", got)
+	}
+	want := typetable.NewRecord().Field("id", typ.String).Build()
+	if !typ.TypeEquals(gotType, want) {
+		rootType, _ := typevalue.TypeOf(reg, root)
+		t.Fatalf("selected payload type = %v, want %v; root at branch = %v; relations=%#v channelFacts=%#v", gotType, want, rootType, relations, channelFacts)
+	}
+	idLocal := ifStmt.Then[1].(*ast.LocalAssignStmt)
+	idPoint := requireLocalAssignmentPoint(t, result, idLocal, 0)
+	idValue, ok := result.ExpressionValueAtBoundary(idPoint, idLocal.Exprs[0])
+	if !ok {
+		t.Fatalf("id ExpressionValueAtBoundary returned false")
+	}
+	idType, ok := typevalue.TypeOf(reg, idValue)
+	if !ok || !typ.TypeEquals(idType, typ.String) {
+		t.Fatalf("selected payload id type = %v/%v, want string", idType, ok)
+	}
+
+	secondIf := fn.Stmts[3].(*ast.IfStmt)
+	secondLocal := secondIf.Then[0].(*ast.LocalAssignStmt)
+	secondPoint := requireLocalAssignmentPoint(t, result, secondLocal, 0)
+	secondValue, ok := result.ExpressionValueAtBoundary(secondPoint, secondLocal.Exprs[0])
+	if !ok {
+		t.Fatalf("second ExpressionValueAtBoundary returned false")
+	}
+	secondType, ok := typevalue.TypeOf(reg, secondValue)
+	if !ok {
+		t.Fatalf("second payload witness missing in %v", secondValue)
+	}
+	timerWant := typetable.NewRecord().Field("elapsed", typ.Number).Build()
+	if !typ.TypeEquals(secondType, timerWant) {
+		t.Fatalf("second selected payload type = %v, want %v", secondType, timerWant)
+	}
+
+	fallbackLocal := fn.Stmts[4].(*ast.LocalAssignStmt)
+	fallbackPoint := requireLocalAssignmentPoint(t, result, fallbackLocal, 0)
+	fallbackValue, ok := result.ExpressionValueAtBoundary(fallbackPoint, fallbackLocal.Exprs[0])
+	if !ok {
+		t.Fatalf("fallback ExpressionValueAtBoundary returned false")
+	}
+	fallbackType, ok := typevalue.TypeOf(reg, fallbackValue)
+	if !ok {
+		t.Fatalf("fallback payload witness missing in %v", fallbackValue)
+	}
+	stopWant := typetable.NewRecord().Field("reason", typ.String).Build()
+	if !typ.TypeEquals(fallbackType, stopWant) {
+		t.Fatalf("fallback selected payload type = %v, want %v", fallbackType, stopWant)
+	}
+}
+
+func TestReadBoundaryChannelSelectPayloadPathAssignmentCarriesNestedWitness(t *testing.T) {
+	reg := standard.Registry()
+	stmts := parseChunk(t, `
+type Leaf = { kind: "leaf", id: string }
+type Control = { kind: "control", name: string }
+type Timer = { kind: "timer", tick: number }
+type RouteA = { kind: "route_a", ch: Channel<Leaf | Control> }
+type RouteB = { kind: "route_b", ch: Channel<Control> }
+type Stream = {
+	kind: "stream",
+	router: {
+		selected: RouteA | RouteB,
+		fallback: Channel<Control>,
+	},
+}
+type Box = {
+	kind: "box",
+	next: Box | Stream | Other,
+}
+type Other = { kind: "other", reason: string }
+type Event = Stream | Box | Other
+function consume(events: Channel<Event>, controls: Channel<Control>, timers: Channel<Timer>)
+	local selected = channel.select {
+		events:case_receive(),
+		controls:case_receive(),
+		timers:case_receive(),
+	}
+	if selected.channel == events then
+		local payload = selected.value
+		if payload.kind == "stream" then
+			local route = payload.router.selected
+			if route.kind == "route_a" then
+				local routed = channel.select {
+					route.ch:case_receive(),
+					payload.router.fallback:case_receive(),
+				}
+				if routed.channel == route.ch then
+					local value = routed.value
+					if value.kind == "control" then
+						local name = value.name
+						return name
+					end
+					local id = value.id
+					return id
+				end
+				local fallback = routed.value
+				return fallback.name
+			end
+		end
+	end
+end
+`)
+
+	bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"channel"}})
+	functions := bindings.NestedFunctions(nil)
+	if len(functions) != 1 {
+		t.Fatalf("nested functions = %d, want 1", len(functions))
+	}
+	result, err := CheckBoundFunction(functions[0], bindings, Config{Registry: reg, Globals: []string{"channel"}})
+	if err != nil {
+		t.Fatalf("CheckBoundFunction: %v", err)
+	}
+	fn := result.Function()
+	outerIf := fn.Stmts[1].(*ast.IfStmt)
+	payloadLocal := outerIf.Then[0].(*ast.LocalAssignStmt)
+	streamIf := outerIf.Then[1].(*ast.IfStmt)
+	routeLocal := streamIf.Then[0].(*ast.LocalAssignStmt)
+	routeIf := streamIf.Then[1].(*ast.IfStmt)
+	routedLocal := routeIf.Then[0].(*ast.LocalAssignStmt)
+	routedIf := routeIf.Then[1].(*ast.IfStmt)
+	valueLocal := routedIf.Then[0].(*ast.LocalAssignStmt)
+	valueIf := routedIf.Then[1].(*ast.IfStmt)
+	nameLocal := valueIf.Then[0].(*ast.LocalAssignStmt)
+	idLocal := routedIf.Then[2].(*ast.LocalAssignStmt)
+	fallbackLocal := routeIf.Then[2].(*ast.LocalAssignStmt)
+
+	payloadPoint := requireLocalAssignmentPoint(t, result, payloadLocal, 0)
+	payloadSym := mustLocalAt(t, result, payloadLocal, 0)
+	payloadValue, ok := postAssignmentSymbolValue(t, result, payloadPoint, payloadSym)
+	if !ok {
+		t.Fatalf("payload local missing after assignment")
+	}
+	if payloadType, ok := typevalue.TypeOf(reg, payloadValue); !ok || typ.IsAny(payloadType) || typ.IsUnknown(payloadType) {
+		t.Fatalf("payload type = %v/%v, want concrete selected Event payload", payloadType, ok)
+	}
+
+	routePoint := requireLocalAssignmentPoint(t, result, routeLocal, 0)
+	routeSym := mustLocalAt(t, result, routeLocal, 0)
+	routeValue, ok := postAssignmentSymbolValue(t, result, routePoint, routeSym)
+	if !ok {
+		t.Fatalf("route local missing after assignment")
+	}
+	if routeType, ok := typevalue.TypeOf(reg, routeValue); !ok || !typ.TypeEquals(routeType, typeexpr.Union(
+		typetable.NewRecord().Field("kind", typ.LiteralString("route_a")).Field("ch", typ.Instantiate(ambient.ChannelGeneric(), typeexpr.Union(
+			typetable.NewRecord().Field("kind", typ.LiteralString("leaf")).Field("id", typ.String).Build(),
+			typetable.NewRecord().Field("kind", typ.LiteralString("control")).Field("name", typ.String).Build(),
+		))).Build(),
+		typetable.NewRecord().Field("kind", typ.LiteralString("route_b")).Field("ch", typ.Instantiate(ambient.ChannelGeneric(),
+			typetable.NewRecord().Field("kind", typ.LiteralString("control")).Field("name", typ.String).Build(),
+		)).Build(),
+	)) {
+		t.Fatalf("route type = %v/%v, want RouteA | RouteB", routeType, ok)
+	}
+
+	routedPoint := requireLocalAssignmentPoint(t, result, routedLocal, 0)
+	routedSym := mustLocalAt(t, result, routedLocal, 0)
+	routedValue, ok := postAssignmentSymbolValue(t, result, routedPoint, routedSym)
+	if !ok {
+		t.Fatalf("routed local missing after assignment")
+	}
+	routedType, ok := typevalue.TypeOf(reg, routedValue)
+	if !ok {
+		t.Fatalf("routed select witness missing in %v", routedValue)
+	}
+	if typ.IsAny(routedType) || typ.IsUnknown(routedType) {
+		t.Fatalf("routed select type = %v, want finite case union", routedType)
+	}
+
+	valuePoint := requireLocalAssignmentPoint(t, result, valueLocal, 0)
+	valueSym := mustLocalAt(t, result, valueLocal, 0)
+	value, ok := postAssignmentSymbolValue(t, result, valuePoint, valueSym)
+	if !ok {
+		t.Fatalf("selected nested value missing after assignment")
+	}
+	valueType, ok := typevalue.TypeOf(reg, value)
+	wantSelected := typeexpr.Union(
+		typetable.NewRecord().Field("kind", typ.LiteralString("leaf")).Field("id", typ.String).Build(),
+		typetable.NewRecord().Field("kind", typ.LiteralString("control")).Field("name", typ.String).Build(),
+	)
+	if !ok || !typ.TypeEquals(valueType, wantSelected) {
+		t.Fatalf("selected nested value type = %v/%v, want %v", valueType, ok, wantSelected)
+	}
+
+	namePoint := requireLocalAssignmentPoint(t, result, nameLocal, 0)
+	nameSym := mustLocalAt(t, result, nameLocal, 0)
+	nameValue, ok := postAssignmentSymbolValue(t, result, namePoint, nameSym)
+	if !ok {
+		t.Fatalf("control name missing after assignment")
+	}
+	nameType, ok := typevalue.TypeOf(reg, nameValue)
+	if !ok || !typ.TypeEquals(nameType, typ.String) {
+		t.Fatalf("control name type = %v/%v, want string", nameType, ok)
+	}
+
+	idPoint := requireLocalAssignmentPoint(t, result, idLocal, 0)
+	idSym := mustLocalAt(t, result, idLocal, 0)
+	idValue, ok := postAssignmentSymbolValue(t, result, idPoint, idSym)
+	if !ok {
+		t.Fatalf("leaf id missing after assignment")
+	}
+	idType, ok := typevalue.TypeOf(reg, idValue)
+	if !ok || !typ.TypeEquals(idType, typ.String) {
+		t.Fatalf("leaf id type = %v/%v, want string", idType, ok)
+	}
+
+	fallbackPoint := requireLocalAssignmentPoint(t, result, fallbackLocal, 0)
+	fallbackSym := mustLocalAt(t, result, fallbackLocal, 0)
+	fallback, ok := postAssignmentSymbolValue(t, result, fallbackPoint, fallbackSym)
+	if !ok {
+		t.Fatalf("fallback nested value missing after assignment")
+	}
+	fallbackType, ok := typevalue.TypeOf(reg, fallback)
+	wantFallback := typetable.NewRecord().Field("kind", typ.LiteralString("control")).Field("name", typ.String).Build()
+	if !ok || !typ.TypeEquals(fallbackType, wantFallback) {
+		t.Fatalf("fallback nested value type = %v/%v, want %v", fallbackType, ok, wantFallback)
+	}
+}
+
+func TestReadBoundaryDiscriminantUnlocksBoxChannelFields(t *testing.T) {
+	reg := standard.Registry()
+	stmts := parseChunk(t, `
+type Leaf = { kind: "leaf", id: string }
+type Deadline = { kind: "deadline", tick: number }
+type RouteA = { kind: "route_a", ch: Channel<Leaf> }
+type RouteB = { kind: "route_b", ch: Channel<Deadline> }
+type Box = {
+	kind: "box",
+	node: {
+		left: Channel<RouteA | RouteB>,
+		right: Channel<Leaf | Deadline>,
+	},
+}
+type Other = { kind: "other", reason: string }
+type Event = Box | Other
+function consume(events: Channel<Event>)
+	local selected = channel.select {
+		events:case_receive(),
+	}
+	local payload = selected.value
+	if payload.kind == "box" then
+		local left = payload.node.left
+		local boxed = channel.select {
+			payload.node.left:case_receive(),
+			payload.node.right:case_receive(),
+		}
+		return left
+	end
+	return nil
+end
+`)
+
+	bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"channel"}})
+	functions := bindings.NestedFunctions(nil)
+	if len(functions) != 1 {
+		t.Fatalf("nested functions = %d, want 1", len(functions))
+	}
+	result, err := CheckBoundFunction(functions[0], bindings, Config{Registry: reg, Globals: []string{"channel"}})
+	if err != nil {
+		t.Fatalf("CheckBoundFunction: %v", err)
+	}
+	fn := result.Function()
+	boxIf := fn.Stmts[2].(*ast.IfStmt)
+	leftLocal := boxIf.Then[0].(*ast.LocalAssignStmt)
+	leftPoint := requireLocalAssignmentPoint(t, result, leftLocal, 0)
+	leftValue, ok := result.ExpressionValueAtBoundary(leftPoint, leftLocal.Exprs[0])
+	if !ok {
+		t.Fatalf("payload.node.left missing at box branch boundary")
+	}
+	leftType, ok := typevalue.TypeOf(reg, leftValue)
+	want := typ.Instantiate(ambient.ChannelGeneric(), typeexpr.Union(
+		typetable.NewRecord().Field("kind", typ.LiteralString("route_a")).Field("ch", typ.Instantiate(ambient.ChannelGeneric(),
+			typetable.NewRecord().Field("kind", typ.LiteralString("leaf")).Field("id", typ.String).Build(),
+		)).Build(),
+		typetable.NewRecord().Field("kind", typ.LiteralString("route_b")).Field("ch", typ.Instantiate(ambient.ChannelGeneric(),
+			typetable.NewRecord().Field("kind", typ.LiteralString("deadline")).Field("tick", typ.Number).Build(),
+		)).Build(),
+	))
+	if !ok || !typ.TypeEquals(leftType, want) {
+		t.Fatalf("payload.node.left type = %v/%v, want %v", leftType, ok, want)
+	}
+}
+
+func postAssignmentSymbolValue(t *testing.T, result *Result, point cfg.Point, sym symbol.ID) (product.Value, bool) {
+	t.Helper()
+	succs := result.Graph().Successors(point)
+	if len(succs) != 1 {
+		t.Fatalf("assignment %d successors = %v, want one", point, succs)
+	}
+	post, ok := result.StateAt(succs[0])
+	if !ok {
+		t.Fatalf("missing state after assignment %d", point)
+	}
+	value := post.ReadValue(result.registry, key.SymbolValue(sym))
+	if product.Equal(result.registry, value, product.Bottom(result.registry)) {
+		return product.Value{}, false
+	}
+	return value, true
+}
+
+func TestReadBoundaryDiscriminatedReturnSourceSeesBranchOriginRefinement(t *testing.T) {
+	reg := standard.Registry()
+	stmts := parseChunk(t, `
+type Result<T> = { ok: true, value: T } | { ok: false, error: string }
+type User = { id: string, email: string }
+function get_email(id: string): (string?, string?)
+	local r: Result<User> = { ok = true, value = { id = id, email = "a@test" } }
+	if r.ok then
+		return r.value.email, nil
+	end
+	return nil, r.error
+end
+`)
+
+	bindings := bind.BindChunk(stmts, bind.Options{})
+	functions := bindings.NestedFunctions(nil)
+	if len(functions) != 1 {
+		t.Fatalf("nested functions = %d, want 1", len(functions))
+	}
+	result, err := CheckBoundFunction(functions[0], bindings, Config{Registry: reg})
+	if err != nil {
+		t.Fatalf("CheckBoundFunction: %v", err)
+	}
+
+	for _, point := range result.ReturnPoints() {
+		sources, ok := result.ReturnValueSources(point)
+		if !ok || len(sources) != 2 {
+			continue
+		}
+		second, ok := result.SourceValueAtBoundary(point, sources[1])
+		if !ok || !presence.Equal(product.PresenceOf(second), presence.Absent()) {
+			continue
+		}
+		first, ok := result.SourceValueAtBoundary(point, sources[0])
+		if !ok {
+			t.Fatalf("success return source at point %d was not readable", point)
+		}
+		if got := product.PresenceOf(first); !presence.Equal(got, presence.Present()) {
+			t.Fatalf("success return source presence = %s, want present", got)
+		}
+		return
+	}
+	t.Fatal("success return point not found")
+}
+
+func TestReadBoundaryGenericResultFalseEdgeProjectsErrorPresent(t *testing.T) {
+	reg := standard.Registry()
+	stmts := parseChunk(t, `
+type Result<T> = { ok: true, value: T } | { ok: false, error: string }
+type User = { id: string, email: string }
+
+local function err<T>(message: string): Result<T>
+	return { ok = false, error = message }
+end
+
+local function map_result<T, U>(result: Result<T>, fn: (T) -> U): Result<U>
+	if result.ok then
+		return { ok = true, value = fn(result.value) }
+	end
+	return err(result.error)
+end
+`)
+
+	bindings := bind.BindChunk(stmts, bind.Options{})
+	functions := bindings.NestedFunctions(nil)
+	if len(functions) != 2 {
+		t.Fatalf("nested functions = %d, want 2", len(functions))
+	}
+	result, err := CheckBoundFunction(functions[1], bindings, Config{Registry: reg})
+	if err != nil {
+		t.Fatalf("CheckBoundFunction: %v", err)
+	}
+
+	mapFn := result.Function()
+	ret := mapFn.Stmts[1].(*ast.ReturnStmt)
+	call := ret.Exprs[0].(*ast.FuncCallExpr)
+	arg := call.Args[0]
+	var point cfg.Point
+	found := false
+	for _, candidate := range result.ReturnPoints() {
+		fact, ok := result.ReturnFact(candidate)
+		if ok && fact.Stmt == ret {
+			point = candidate
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("return point for err(result.error) not found")
+	}
+	value, ok := result.ExpressionValueAtBoundary(point, arg)
+	if !ok {
+		t.Fatalf("result.error boundary value missing")
+	}
+	if got := product.PresenceOf(value); !presence.Equal(got, presence.Present()) {
+		t.Fatalf("result.error presence = %s, want present", got)
+	}
+	got, ok := typevalue.TypeOf(reg, value)
+	if !ok || !typ.TypeEquals(got, typ.String) {
+		t.Fatalf("result.error type = %v/%v, want string", got, ok)
+	}
+
+	for _, candidate := range result.Graph().RPO() {
+		fact, ok := result.Call(candidate)
+		if !ok || fact.Call != call {
+			continue
+		}
+		callValue, ok := result.ExpressionValueAtBoundary(candidate, arg)
+		if !ok {
+			t.Fatalf("call-point result.error boundary value missing")
+		}
+		if got := product.PresenceOf(callValue); !presence.Equal(got, presence.Present()) {
+			t.Fatalf("call-point result.error presence = %s, want present", got)
+		}
+		got, ok := typevalue.TypeOf(reg, callValue)
+		if !ok || !typ.TypeEquals(got, typ.String) {
+			t.Fatalf("call-point result.error type = %v/%v, want string", got, ok)
+		}
+		return
+	}
+	t.Fatalf("call point for err(result.error) not found")
+}
+
+func TestReadBoundarySignatureResultAssignmentSeesBranchOriginRefinement(t *testing.T) {
+	reg := standard.Registry()
+	userType := typetable.NewRecord().
+		Field("id", typ.String).
+		Field("email", typ.String).
+		Build()
+	resultUser := typeexpr.Union(
+		typetable.NewRecord().Field("ok", typ.LiteralBool(true)).Field("value", userType).Build(),
+		typetable.NewRecord().Field("ok", typ.LiteralBool(false)).Field("error", typ.String).Build(),
+	)
+	repoManifest := manifest.New("repo")
+	repoManifest.DefineFunctionSignature("repo.find_by_id", signature.Function{
+		Type: typ.Func().Param("id", typ.String).Returns(resultUser).Build(),
+	})
+	stmts := parseChunk(t, `
+function get_email(id: string): (string?, string?)
+	local r = repo.find_by_id(id)
+	if r.ok then
+		return r.value.email, nil
+	end
+	return nil, r.error
+end
+`)
+
+	bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"repo"}})
+	functions := bindings.NestedFunctions(nil)
+	if len(functions) != 1 {
+		t.Fatalf("nested functions = %d, want 1", len(functions))
+	}
+	result, err := CheckBoundFunction(functions[0], bindings, Config{
+		Registry: reg,
+		Globals:  []string{"repo"},
+		Signatures: signaturelookup.Source{
+			Manifests: []*manifest.Manifest{repoManifest},
+		},
+	})
+	if err != nil {
+		t.Fatalf("CheckBoundFunction: %v", err)
+	}
+
+	seenSuccess := false
+	seenFailure := false
+	for _, point := range result.ReturnPoints() {
+		sources, ok := result.ReturnValueSources(point)
+		if !ok || len(sources) != 2 {
+			continue
+		}
+		first, firstOK := result.SourceValueAtBoundary(point, sources[0])
+		second, secondOK := result.SourceValueAtBoundary(point, sources[1])
+		if !firstOK || !secondOK {
+			continue
+		}
+		switch {
+		case presence.Equal(product.PresenceOf(first), presence.Present()) &&
+			presence.Equal(product.PresenceOf(second), presence.Absent()):
+			seenSuccess = true
+		case presence.Equal(product.PresenceOf(first), presence.Absent()) &&
+			presence.Equal(product.PresenceOf(second), presence.Present()):
+			seenFailure = true
+		}
+	}
+	if !seenSuccess || !seenFailure {
+		t.Fatalf("return source presence success=%v failure=%v, want both discriminated paths", seenSuccess, seenFailure)
+	}
+}
+
 func TestCheckChunkUserExpressionValueOverridesDefaultStaticReadProjector(t *testing.T) {
 	reg := standard.Registry()
 	stmts := parseChunk(t, `local out = t.name`)
@@ -735,13 +1690,12 @@ func TestCopyConfigCopiesMutableFields(t *testing.T) {
 	}
 }
 
-func TestCheckChunkReturnsUnsupportedCFG(t *testing.T) {
+func TestCheckChunkAcceptsSequencedLogicalCallCFG(t *testing.T) {
 	reg := standard.Registry()
 	stmts := parseChunk(t, "print(value() and true)")
 
-	_, err := CheckChunk(stmts, Config{Registry: reg})
-	if !errors.Is(err, ErrUnsupportedCFG) {
-		t.Fatalf("CheckChunk error = %v, want ErrUnsupportedCFG", err)
+	if _, err := CheckChunk(stmts, Config{Registry: reg}); err != nil {
+		t.Fatalf("CheckChunk error = %v, want supported logical-call CFG", err)
 	}
 }
 

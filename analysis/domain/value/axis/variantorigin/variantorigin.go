@@ -3,8 +3,25 @@ package variantorigin
 import (
 	"slices"
 
+	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	internal "github.com/wippyai/go-lua/analysis/internal/hash"
 )
+
+var Key = axis.NewKey[Value]("variantorigin")
+
+func Spec() axis.Spec[Value] {
+	return axis.Spec[Value]{
+		Key:      Key,
+		Bottom:   Bottom,
+		Top:      Top,
+		Equal:    Equal,
+		LessOrEq: func(a, b Value) bool { return b.Covers(a) },
+		Join:     Join,
+		Meet:     Meet,
+		Widen:    Widen,
+		Hash:     Value.Hash,
+	}
+}
 
 type state uint8
 

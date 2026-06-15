@@ -33,7 +33,7 @@ func (c *checker) canWidenTo(narrow, wide typ.Type, depth int) bool {
 			return c.check(narrowOpt.Inner, opt.Inner, depth+1) ||
 				c.canWidenTo(narrowOpt.Inner, opt.Inner, depth+1)
 		}
-		if c.check(narrow, opt.Inner, depth+1) {
+		if c.check(narrow, opt.Inner, depth+1) || c.canWidenTo(narrow, opt.Inner, depth+1) {
 			return true
 		}
 	}
@@ -82,6 +82,9 @@ func (c *checker) canWidenTo(narrow, wide typ.Type, depth int) bool {
 	if subRec, ok := narrow.(*typ.Record); ok {
 		if supRec, ok := wide.(*typ.Record); ok {
 			return c.canWidenRecordTo(subRec, supRec, depth+1)
+		}
+		if supMap, ok := wide.(*typ.Map); ok {
+			return c.canWidenRecordToMap(subRec, supMap, depth+1)
 		}
 	}
 	if subMap, ok := narrow.(*typ.Map); ok {
@@ -150,6 +153,34 @@ func (c *checker) canWidenMapTo(narrow, wide *typ.Map, depth int) bool {
 		c.canWidenTo(narrow.Value, wide.Value, depth+1)
 }
 
+// canWidenRecordToMap reports whether a fresh record literal widens to a map
+// type. Each field name must inhabit the map key and each field value must be a
+// subtype of (or widen to) the map value, matching record-to-map subtyping while
+// allowing the per-field literal widening fresh constructors rely on. A record
+// map-component, when present, must likewise widen to the target map.
+func (c *checker) canWidenRecordToMap(narrow *typ.Record, wide *typ.Map, depth int) bool {
+	if narrow == nil || wide == nil {
+		return false
+	}
+	for _, f := range narrow.Fields {
+		if !c.check(typ.LiteralString(f.Name), wide.Key, depth+1) {
+			return false
+		}
+		if !c.check(f.Type, wide.Value, depth+1) && !c.canWidenTo(f.Type, wide.Value, depth+1) {
+			return false
+		}
+	}
+	if narrow.HasMapComponent() {
+		if !c.check(narrow.MapKey, wide.Key, depth+1) {
+			return false
+		}
+		if !c.check(narrow.MapValue, wide.Value, depth+1) && !c.canWidenTo(narrow.MapValue, wide.Value, depth+1) {
+			return false
+		}
+	}
+	return true
+}
+
 func (c *checker) functionParamsEquivalent(a, b *typ.Function, depth int) bool {
 	if a == nil || b == nil || len(a.Params) != len(b.Params) {
 		return false
@@ -179,7 +210,7 @@ func (c *checker) canWidenRecordTo(narrow, wide *typ.Record, depth int) bool {
 		if nf == nil {
 			continue
 		}
-		if !c.check(wf.Type, nf.Type, depth+1) && !c.canWidenTo(nf.Type, wf.Type, depth+1) {
+		if !c.check(nf.Type, wf.Type, depth+1) && !c.canWidenTo(nf.Type, wf.Type, depth+1) {
 			return false
 		}
 	}
@@ -188,7 +219,7 @@ func (c *checker) canWidenRecordTo(narrow, wide *typ.Record, depth int) bool {
 		if nm == nil {
 			continue
 		}
-		if !c.check(wm.Type, nm.Type, depth+1) && !c.canWidenTo(nm.Type, wm.Type, depth+1) {
+		if !c.check(nm.Type, wm.Type, depth+1) && !c.canWidenTo(nm.Type, wm.Type, depth+1) {
 			return false
 		}
 	}

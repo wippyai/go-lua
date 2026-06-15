@@ -7,6 +7,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/assertion"
 	"github.com/wippyai/go-lua/analysis/domain/value/standard"
+	"github.com/wippyai/go-lua/analysis/engine/callproducer"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
@@ -52,7 +53,7 @@ func TestLowerCallSitesPreserveAllSemanticContextsAndProducerStaysNarrow(t *test
 	if len(localTargets) != 1 || localTargets[0].Kind() != factflow.CallResultTargetLocalAssignment || localTargets[0].Index() != 0 || localTargets[0].ResultIndex() != 0 {
 		t.Fatalf("assignment-source call-site targets = %#v", localTargets)
 	}
-	if _, ok := facts.Call(localPoints[0]); !ok {
+	if _, ok := callproducer.FromFacts(facts, localPoints[0]); !ok {
 		t.Fatalf("assignment-source call point %d missing producer", localPoints[0])
 	}
 
@@ -67,7 +68,7 @@ func TestLowerCallSitesPreserveAllSemanticContextsAndProducerStaysNarrow(t *test
 	if len(statementSite.ResultTargets()) != 0 {
 		t.Fatalf("statement call-site targets = %#v, want none", statementSite.ResultTargets())
 	}
-	if _, ok := facts.Call(statementPoint); ok {
+	if _, ok := callproducer.FromFacts(facts, statementPoint); ok {
 		t.Fatalf("statement call point %d lowered as call producer", statementPoint)
 	}
 
@@ -79,7 +80,7 @@ func TestLowerCallSitesPreserveAllSemanticContextsAndProducerStaysNarrow(t *test
 	if conditionSite.Context() != factflow.CallSiteContextCondition || conditionSite.ExprIndex() != 0 || !conditionSite.Final() || !conditionSite.Adjusted() {
 		t.Fatalf("condition call site = context %v expr index %d final=%v adjusted=%v", conditionSite.Context(), conditionSite.ExprIndex(), conditionSite.Final(), conditionSite.Adjusted())
 	}
-	if _, ok := facts.Call(branchPoints[0]); ok {
+	if _, ok := callproducer.FromFacts(facts, branchPoints[0]); ok {
 		t.Fatalf("condition call point %d lowered as call producer", branchPoints[0])
 	}
 
@@ -91,7 +92,7 @@ func TestLowerCallSitesPreserveAllSemanticContextsAndProducerStaysNarrow(t *test
 	if iteratorSite.Context() != factflow.CallSiteContextIteratorSource || iteratorSite.ExprIndex() != 0 {
 		t.Fatalf("iterator call site = context %v expr index %d", iteratorSite.Context(), iteratorSite.ExprIndex())
 	}
-	if _, ok := facts.Call(genericPoints[0]); ok {
+	if _, ok := callproducer.FromFacts(facts, genericPoints[0]); ok {
 		t.Fatalf("iterator call point %d lowered as call producer", genericPoints[0])
 	}
 
@@ -107,7 +108,7 @@ func TestLowerCallSitesPreserveAllSemanticContextsAndProducerStaysNarrow(t *test
 	if len(returnTargets) != 1 || returnTargets[0].Kind() != factflow.CallResultTargetReturn || returnTargets[0].Index() != 0 || returnTargets[0].ResultIndex() != 0 {
 		t.Fatalf("return-source call-site targets = %#v", returnTargets)
 	}
-	if _, ok := facts.Call(returnPoints[0]); !ok {
+	if _, ok := callproducer.FromFacts(facts, returnPoints[0]); !ok {
 		t.Fatalf("return-source call point %d missing producer", returnPoints[0])
 	}
 }
@@ -178,7 +179,7 @@ func TestLowerCallSitePreservesPortableCallShapeAndArgumentOverlays(t *testing.T
 	if targets := site.ResultTargets(); len(targets) != 0 {
 		t.Fatalf("statement method call targets = %#v, want none", targets)
 	}
-	if _, ok := facts.Call(point); ok {
+	if _, ok := callproducer.FromFacts(facts, point); ok {
 		t.Fatalf("statement method call point %d lowered as call producer", point)
 	}
 
@@ -249,7 +250,7 @@ func TestLowerNestedExpressionProducerCallIsReadableSlotZero(t *testing.T) {
 	if len(targets) != 1 || targets[0].Kind() != factflow.CallResultTargetExpression || targets[0].ResultIndex() != 0 {
 		t.Fatalf("inner call targets = %#v", targets)
 	}
-	producer, ok := facts.Call(points[0])
+	producer, ok := callproducer.FromFacts(facts, points[0])
 	if !ok {
 		t.Fatalf("missing nested call producer")
 	}
@@ -264,7 +265,7 @@ func TestLowerNestedExpressionProducerCallIsReadableSlotZero(t *testing.T) {
 	if len(args) != 1 || args[0].Kind != factflow.ValueSourceCall || args[0].CallPoint != points[0] || !args[0].HasCallPoint || args[0].ResultIndex != 0 {
 		t.Fatalf("outer argument sources = %#v, want inner call source", args)
 	}
-	if _, ok := facts.Call(points[1]); ok {
+	if _, ok := callproducer.FromFacts(facts, points[1]); ok {
 		t.Fatalf("outer statement call unexpectedly lowered as producer")
 	}
 }
@@ -298,7 +299,7 @@ func TestLowerMemberOrdinaryCallTargetStaysCallSiteOnly(t *testing.T) {
 
 	facts := lowerFacts(t, result, built.Graph, standard.Registry())
 	points := requireStmtPoints(t, built, write, 2)
-	producer, ok := facts.Call(points[0])
+	producer, ok := callproducer.FromFacts(facts, points[0])
 	if !ok {
 		t.Fatalf("missing assignment call producer at point %d", points[0])
 	}

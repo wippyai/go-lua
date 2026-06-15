@@ -2,6 +2,7 @@ package semantics
 
 import (
 	"github.com/wippyai/go-lua/analysis/lua/bind"
+	"github.com/wippyai/go-lua/analysis/lua/branchcond"
 	"github.com/wippyai/go-lua/analysis/lua/cfgbuild"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
@@ -14,6 +15,7 @@ func ExtractChunk(stmts []ast.Stmt, bindings *bind.Result, built *cfgbuild.Resul
 	if err := r.extractStmts(stmts, bindings, built); err != nil {
 		return nil, err
 	}
+	r.extractShortCircuitGuards(bindings, built)
 	return r, nil
 }
 
@@ -27,7 +29,31 @@ func ExtractFunction(fn *ast.FunctionExpr, bindings *bind.Result, built *cfgbuil
 			return nil, err
 		}
 	}
+	r.extractShortCircuitGuards(bindings, built)
 	return r, nil
+}
+
+// extractShortCircuitGuards rebuilds branch-condition facts for the synthetic
+// branches emitted by short-circuit logical operands. The right-operand edge of
+// an and/or carrying projected calls inherits the guard operand's flow
+// narrowing the same way an explicit if condition would.
+func (r *Result) extractShortCircuitGuards(bindings *bind.Result, built *cfgbuild.Result) {
+	for _, point := range built.Meta.ShortCircuitGuardPoints() {
+		guard, ok := built.Meta.ShortCircuitGuard(point)
+		if !ok || guard.Condition == nil {
+			continue
+		}
+		if _, exists := r.branches[point]; exists {
+			continue
+		}
+		r.branches[point] = BranchConditionFact{
+			Kind:      BranchShortCircuit,
+			Stmt:      guard.Stmt,
+			Condition: guard.Condition,
+			Source:    conditionValueSource(guard.Condition, nil),
+			Check:     branchcond.Normalize(guard.Condition, bindings),
+		}
+	}
 }
 
 func (r *Result) extractStmts(stmts []ast.Stmt, bindings *bind.Result, built *cfgbuild.Result) error {

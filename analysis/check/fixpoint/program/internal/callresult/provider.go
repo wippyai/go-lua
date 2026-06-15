@@ -5,6 +5,9 @@ import (
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/summary"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/evidence"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/typewitness"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/variantorigin"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
@@ -17,21 +20,33 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
+	"github.com/wippyai/go-lua/analysis/ir/dominance"
 	"github.com/wippyai/go-lua/analysis/lua/typecall"
 	"github.com/wippyai/go-lua/analysis/symbol"
+	typenormalize "github.com/wippyai/go-lua/analysis/type/normalize"
 	"github.com/wippyai/go-lua/analysis/type/refinement"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
-// KeyFunc maps one call producer in context to an exact summary key.
-type KeyFunc func(ctx transfer.NodeContext, call factflow.CallProducer) (summary.SummaryKey, bool)
+// KeyFunc maps one call site in context to an exact summary key.
+type KeyFunc func(ctx transfer.NodeContext, site factflow.CallSite) (summary.SummaryKey, bool)
+
+// CalleeValueFunc resolves the current callee expression value at a call site.
+type CalleeValueFunc func(ctx transfer.NodeContext, site factflow.CallSite, in state.State, read func(cfg.Point) state.State) (product.Value, bool)
 
 // ProviderConfig configures summary-backed call outcomes.
 type ProviderConfig struct {
-	Summaries     summary.Reader
-	KeyFor        KeyFunc
-	FunctionTypes map[summary.SummaryKey]*typ.Function
-	Sources       sourcevalue.SourceValues
+	Summaries              summary.Reader
+	KeyFor                 KeyFunc
+	CalleeValue            CalleeValueFunc
+	Facts                  factflow.Facts
+	FunctionKeys           map[symbol.ID]summary.SummaryKey
+	FunctionExpressionKeys map[factflow.ExprRef]summary.SummaryKey
+	FunctionIDs            map[identity.ID]summary.SummaryKey
+	PathKeys               map[pathdom.PathKey]summary.SummaryKey
+	PathMultiKeys          map[pathdom.PathKey][]summary.SummaryKey
+	FunctionTypes          map[summary.SummaryKey]*typ.Function
+	Sources                sourcevalue.SourceValues
 }
 
 // OutcomeProvider returns a generic call-boundary outcome provider backed by
@@ -39,21 +54,39 @@ type ProviderConfig struct {
 func OutcomeProvider(config ProviderConfig) factapply.CallOutcomeProvider {
 	summaries := config.Summaries
 	keyFor := config.KeyFor
+	calleeValue := config.CalleeValue
+	facts := config.Facts
+	functionKeys := cloneFunctionKeys(config.FunctionKeys)
+	functionExpressionKeys := cloneFunctionExpressionKeys(config.FunctionExpressionKeys)
+	functionIDs := cloneFunctionIdentityKeys(config.FunctionIDs)
+	pathKeys := clonePathKeys(config.PathKeys)
+	pathMultiKeys := clonePathMultiKeys(config.PathMultiKeys)
 	functionTypes := cloneFunctionTypes(config.FunctionTypes)
 	sources := config.Sources
 	return func(ctx transfer.NodeContext, site factflow.CallSite, in state.State, read func(cfg.Point) state.State) factapply.CallOutcome {
-		if summaries == nil || keyFor == nil {
+		if summaries == nil {
 			return factapply.CallOutcome{}
 		}
-		key, ok := keyFor(ctx, factflow.CallProducerFromSite(site))
-		if !ok {
+		key, ok := summaryKeyForCall(ctx, site, in, read, keyFor, calleeValue, functionIDs, pathKeys)
+		var got summary.Summary
+		var fn *typ.Function
+		if ok {
+			var readOK bool
+			got, readOK = summaries.Read(key)
+			if !readOK {
+				return factapply.CallOutcome{}
+			}
+			fn = functionTypes[key]
+			got = applyDeclaredSummaryReturns(ctx.Registry, got, fn)
+			got = specializeGenericSummary(ctx, site, got, fn, summaries, facts, functionKeys, functionExpressionKeys, functionTypes, sources, in, read)
+		} else if joined, joinedOK := joinedSummaryForDefinitionPath(ctx, site, in, read, calleeValue, summaries, pathMultiKeys, functionTypes, facts, functionKeys, functionExpressionKeys, sources); joinedOK {
+			got = joined
+		} else {
+			if out, ok := unresolvedFunctionCallOutcome(ctx, site, in, read, calleeValue); ok {
+				return out
+			}
 			return factapply.CallOutcome{}
 		}
-		got, ok := summaries.Read(key)
-		if !ok {
-			return factapply.CallOutcome{}
-		}
-		got = specializeGenericSummary(ctx, site, got, functionTypes[key], sources, in, read)
 		out := outcomeFromSummary(got, func(index int) bool {
 			if index < 0 || index >= len(got.ParamObligations) {
 				return false
@@ -65,8 +98,430 @@ func OutcomeProvider(config ProviderConfig) factapply.CallOutcomeProvider {
 			}
 			return summary.UsefulNormalReturnParam(ctx.Registry, got.NormalReturnParams[index])
 		})
+		out.ParamObligations = append(out.ParamObligations, functionTypeParamObligations(ctx.Registry, site, fn)...)
 		out.ParamObligations = append(out.ParamObligations, memberCallParamObligations(ctx, site, got, sources, in, read)...)
 		return out
+	}
+}
+
+func joinedSummaryForDefinitionPath(
+	ctx transfer.NodeContext,
+	site factflow.CallSite,
+	in state.State,
+	read func(cfg.Point) state.State,
+	calleeValue CalleeValueFunc,
+	summaries summary.Reader,
+	pathMultiKeys map[pathdom.PathKey][]summary.SummaryKey,
+	functionTypes map[summary.SummaryKey]*typ.Function,
+	facts factflow.Facts,
+	functionKeys map[symbol.ID]summary.SummaryKey,
+	functionExpressionKeys map[factflow.ExprRef]summary.SummaryKey,
+	sources sourcevalue.SourceValues,
+) (summary.Summary, bool) {
+	if ctx.Registry == nil || summaries == nil || len(pathMultiKeys) == 0 {
+		return summary.Summary{}, false
+	}
+	calleePath := site.CalleePath()
+	if calleePath.IsEmpty() {
+		return summary.Summary{}, false
+	}
+	keys := pathMultiKeys[calleePath.Key()]
+	if len(keys) < 2 {
+		return summary.Summary{}, false
+	}
+	if calleeValue != nil {
+		if value, ok := calleeValue(ctx, site, in, read); ok {
+			if _, hasID := product.Get(ctx.Registry, value, identity.Key).ID(); hasID {
+				return summary.Summary{}, false
+			}
+		}
+	}
+	var out summary.Summary
+	seen := false
+	for _, key := range keys {
+		got, ok := summaries.Read(key)
+		if !ok {
+			continue
+		}
+		fn := functionTypes[key]
+		got = applyDeclaredSummaryReturns(ctx.Registry, got, fn)
+		got = specializeGenericSummary(ctx, site, got, fn, summaries, facts, functionKeys, functionExpressionKeys, functionTypes, sources, in, read)
+		if !seen {
+			out = got
+			seen = true
+			continue
+		}
+		out = joinPossibleCallSummaries(ctx.Registry, out, got)
+	}
+	return out, seen
+}
+
+func joinPossibleCallSummaries(reg *axis.Registry, left, right summary.Summary) summary.Summary {
+	left = materializeReturnRootTypesFromFacts(reg, left)
+	right = materializeReturnRootTypesFromFacts(reg, right)
+	out := summary.Join(reg, left, right)
+	for i := range out.Returns {
+		leftValue, leftOK := summaryReturnValueAt(reg, left, i)
+		rightValue, rightOK := summaryReturnValueAt(reg, right, i)
+		if !leftOK || !rightOK {
+			continue
+		}
+		leftType, leftTypeOK := typevalue.TypeOf(reg, leftValue)
+		rightType, rightTypeOK := typevalue.TypeOf(reg, rightValue)
+		if !leftTypeOK || !rightTypeOK {
+			continue
+		}
+		t := typenormalize.UnionForEvidence(leftType, rightType)
+		value := typevalue.FromType(reg, t)
+		out.Returns[i] = typevalue.WithWitness(reg, value, t)
+	}
+	return dropDescendantFactsBelowMaybeAbsentReturns(out)
+}
+
+func materializeReturnRootTypesFromFacts(reg *axis.Registry, sum summary.Summary) summary.Summary {
+	if reg == nil || len(sum.NormalReturnFacts.PathRefinements) == 0 && len(sum.NormalReturnFacts.PathStaticMembers) == 0 {
+		return sum
+	}
+	maxIndex := len(sum.Returns) - 1
+	for _, fact := range sum.NormalReturnFacts.PathRefinements {
+		if index := fact.Path.PlaceholderIndex(); index > maxIndex {
+			maxIndex = index
+		}
+	}
+	for _, fact := range sum.NormalReturnFacts.PathStaticMembers {
+		if index := fact.Path.PlaceholderIndex(); index > maxIndex {
+			maxIndex = index
+		}
+	}
+	if maxIndex < 0 {
+		return sum
+	}
+	if len(sum.Returns) <= maxIndex {
+		expanded := make([]product.Value, maxIndex+1)
+		copy(expanded, sum.Returns)
+		sum.Returns = expanded
+	}
+	for index := 0; index <= maxIndex; index++ {
+		if !returnSlotNeedsFactType(reg, sum.Returns[index]) {
+			continue
+		}
+		t, ok := returnRecordTypeFromFacts(reg, sum.NormalReturnFacts, index)
+		if !ok {
+			continue
+		}
+		value := typevalue.FromType(reg, t)
+		sum.Returns[index] = typevalue.WithWitness(reg, value, t)
+	}
+	return sum
+}
+
+func returnSlotNeedsFactType(reg *axis.Registry, value product.Value) bool {
+	if product.Equal(reg, value, product.Bottom(reg)) {
+		return true
+	}
+	_, ok := typevalue.TypeOf(reg, value)
+	return !ok
+}
+
+func returnRecordTypeFromFacts(reg *axis.Registry, facts callboundary.NormalReturnFacts, index int) (typ.Type, bool) {
+	var parts typ.RecordParts
+	seen := false
+	add := func(path pathdom.Path, value product.Value) {
+		if path.PlaceholderIndex() != index || len(path.Segments) != 1 {
+			return
+		}
+		t, ok := typevalue.TypeOf(reg, value)
+		if !ok || t == nil {
+			return
+		}
+		if name, ok := path.DirectFieldName(); ok {
+			parts.Fields = append(parts.Fields, typ.Field{Name: name, Type: t})
+			seen = true
+			return
+		}
+		if index, ok := path.DirectIntIndex(); ok {
+			parts.StaticMembers = append(parts.StaticMembers, typ.StaticMember{Kind: typ.StaticMemberIntIndex, Index: int64(index), Type: t})
+			seen = true
+		}
+	}
+	for _, fact := range facts.PathRefinements {
+		add(fact.Path, fact.Value)
+	}
+	for _, fact := range facts.PathStaticMembers {
+		add(fact.Path, fact.Value)
+	}
+	if !seen {
+		return nil, false
+	}
+	return typ.RebuildRecord(parts), true
+}
+
+func summaryReturnValueAt(reg *axis.Registry, sum summary.Summary, index int) (product.Value, bool) {
+	if index < 0 || index >= len(sum.Returns) {
+		return product.Value{}, false
+	}
+	value := sum.Returns[index]
+	if product.Equal(reg, value, product.Bottom(reg)) {
+		return product.Value{}, false
+	}
+	return value, true
+}
+
+func dropDescendantFactsBelowMaybeAbsentReturns(sum summary.Summary) summary.Summary {
+	if len(sum.Returns) == 0 {
+		return sum
+	}
+	maybeAbsent := make(map[int]struct{})
+	for i, value := range sum.Returns {
+		if !product.DefinitelyPresent(value) {
+			maybeAbsent[i] = struct{}{}
+		}
+	}
+	if len(maybeAbsent) == 0 {
+		return sum
+	}
+	facts := sum.NormalReturnFacts
+	facts.PathRefinements = filterPathValueFactsBelowReturns(facts.PathRefinements, maybeAbsent)
+	facts.PathStaticMembers = filterPathStaticMemberFactsBelowReturns(facts.PathStaticMembers, maybeAbsent)
+	facts.DynamicIndexFacts = filterDynamicIndexFactsBelowReturns(facts.DynamicIndexFacts, maybeAbsent)
+	facts.BranchProofs = filterBranchProofsBelowReturns(facts.BranchProofs, maybeAbsent)
+	facts.ChannelSelects = filterChannelSelectsBelowReturns(facts.ChannelSelects, maybeAbsent)
+	facts.EffectDeltas = filterEffectDeltasBelowReturns(facts.EffectDeltas, maybeAbsent)
+	sum.NormalReturnFacts = facts
+	return sum
+}
+
+func filterPathValueFactsBelowReturns(in []callboundary.PathValueFact, roots map[int]struct{}) []callboundary.PathValueFact {
+	out := in[:0]
+	for _, fact := range in {
+		if strictPlaceholderDescendant(fact.Path, roots) {
+			continue
+		}
+		out = append(out, fact)
+	}
+	return out
+}
+
+func filterPathStaticMemberFactsBelowReturns(in []callboundary.PathStaticMemberFact, roots map[int]struct{}) []callboundary.PathStaticMemberFact {
+	out := in[:0]
+	for _, fact := range in {
+		if strictPlaceholderDescendant(fact.Path, roots) {
+			continue
+		}
+		out = append(out, fact)
+	}
+	return out
+}
+
+func filterDynamicIndexFactsBelowReturns(in []callboundary.DynamicIndexFact, roots map[int]struct{}) []callboundary.DynamicIndexFact {
+	out := in[:0]
+	for _, fact := range in {
+		if strictPlaceholderDescendant(fact.Table, roots) {
+			continue
+		}
+		out = append(out, fact)
+	}
+	return out
+}
+
+func filterBranchProofsBelowReturns(in []callboundary.BranchProof, roots map[int]struct{}) []callboundary.BranchProof {
+	out := in[:0]
+	for _, fact := range in {
+		if strictPlaceholderDescendant(fact.Path, roots) || strictPlaceholderDescendant(fact.Other, roots) {
+			continue
+		}
+		out = append(out, fact)
+	}
+	return out
+}
+
+func filterChannelSelectsBelowReturns(in []callboundary.ChannelSelectFact, roots map[int]struct{}) []callboundary.ChannelSelectFact {
+	out := in[:0]
+	for _, fact := range in {
+		if strictPlaceholderDescendant(fact.Result, roots) || strictPlaceholderDescendant(fact.Case, roots) {
+			continue
+		}
+		out = append(out, fact)
+	}
+	return out
+}
+
+func filterEffectDeltasBelowReturns(in []callboundary.EffectDelta, roots map[int]struct{}) []callboundary.EffectDelta {
+	out := in[:0]
+	for _, fact := range in {
+		if strictPlaceholderDescendant(fact.Target, roots) {
+			continue
+		}
+		out = append(out, fact)
+	}
+	return out
+}
+
+func strictPlaceholderDescendant(p pathdom.Path, roots map[int]struct{}) bool {
+	if len(p.Segments) == 0 {
+		return false
+	}
+	index := p.PlaceholderIndex()
+	if index < 0 {
+		return false
+	}
+	_, ok := roots[index]
+	return ok
+}
+
+func unresolvedFunctionCallOutcome(
+	ctx transfer.NodeContext,
+	site factflow.CallSite,
+	in state.State,
+	read func(cfg.Point) state.State,
+	calleeValue CalleeValueFunc,
+) (factapply.CallOutcome, bool) {
+	if ctx.Registry == nil || calleeValue == nil {
+		return factapply.CallOutcome{}, false
+	}
+	value, ok := calleeValue(ctx, site, in, read)
+	if !ok {
+		return factapply.CallOutcome{}, false
+	}
+	if functionWitnessHasUsableReturns(ctx.Registry, value) {
+		return factapply.CallOutcome{}, false
+	}
+	if !product.Get(ctx.Registry, value, runtimekind.Key).Contains(runtimekind.Function) {
+		return factapply.CallOutcome{}, false
+	}
+	results := unknownResultSlots(ctx.Registry, site)
+	if len(results) == 0 {
+		return factapply.CallOutcome{}, false
+	}
+	return factapply.CallOutcome{Results: results}, true
+}
+
+func functionWitnessHasUsableReturns(reg *axis.Registry, value product.Value) bool {
+	if reg == nil {
+		return false
+	}
+	t, ok := product.Get(reg, value, typewitness.Key).Type()
+	if !ok {
+		return false
+	}
+	fn, ok := typecall.Callable(t)
+	return ok && fn != nil && len(fn.Returns) != 0
+}
+
+func unknownResultSlots(reg *axis.Registry, site factflow.CallSite) []factapply.CallResult {
+	if reg == nil {
+		return nil
+	}
+	unknown := product.Set(reg, product.Top(), evidence.Key, evidence.GradualTop())
+	seen := make(map[int]struct{})
+	var out []factapply.CallResult
+	for _, target := range site.ResultTargets() {
+		index := target.ResultIndex()
+		if index < 0 {
+			continue
+		}
+		if _, ok := seen[index]; ok {
+			continue
+		}
+		seen[index] = struct{}{}
+		out = append(out, factapply.CallResult{Index: index, Value: unknown})
+	}
+	return out
+}
+
+func summaryKeyForCall(
+	ctx transfer.NodeContext,
+	site factflow.CallSite,
+	in state.State,
+	read func(cfg.Point) state.State,
+	keyFor KeyFunc,
+	calleeValue CalleeValueFunc,
+	functionIDs map[identity.ID]summary.SummaryKey,
+	pathKeys map[pathdom.PathKey]summary.SummaryKey,
+) (summary.SummaryKey, bool) {
+	if keyFor != nil {
+		if key, ok := keyFor(ctx, site); ok {
+			return key, true
+		}
+	}
+	if key, ok := summaryKeyForCurrentCalleeIdentity(ctx, site, in, read, calleeValue, functionIDs); ok {
+		return key, true
+	}
+	return summaryKeyForDefinitionPath(ctx, site, in, read, calleeValue, pathKeys)
+}
+
+// summaryKeyForDefinitionPath resolves a member-call callee to its summary by the
+// callee's syntactic definition path. It is the sound fallback for a callee value
+// rehydrated across a closure boundary, where the function value carries no
+// runtime identity: the path resolves only when the current callee value holds no
+// conflicting identity, so a later reassignment (whose value carries the new
+// identity) is resolved by the current-identity route instead.
+func summaryKeyForDefinitionPath(
+	ctx transfer.NodeContext,
+	site factflow.CallSite,
+	in state.State,
+	read func(cfg.Point) state.State,
+	calleeValue CalleeValueFunc,
+	pathKeys map[pathdom.PathKey]summary.SummaryKey,
+) (summary.SummaryKey, bool) {
+	if len(pathKeys) == 0 {
+		return summary.SummaryKey{}, false
+	}
+	calleePath := site.CalleePath()
+	if calleePath.IsEmpty() {
+		return summary.SummaryKey{}, false
+	}
+	key, ok := pathKeys[calleePath.Key()]
+	if !ok {
+		return summary.SummaryKey{}, false
+	}
+	if calleeValue != nil {
+		if value, ok := calleeValue(ctx, site, in, read); ok {
+			if _, hasID := product.Get(ctx.Registry, value, identity.Key).ID(); hasID {
+				return summary.SummaryKey{}, false
+			}
+		}
+	}
+	return key, true
+}
+
+func summaryKeyForCurrentCalleeIdentity(
+	ctx transfer.NodeContext,
+	site factflow.CallSite,
+	in state.State,
+	read func(cfg.Point) state.State,
+	calleeValue CalleeValueFunc,
+	functionIDs map[identity.ID]summary.SummaryKey,
+) (summary.SummaryKey, bool) {
+	if calleeValue == nil || len(functionIDs) == 0 {
+		return summary.SummaryKey{}, false
+	}
+	value, ok := calleeValue(ctx, site, in, read)
+	if !ok {
+		return summary.SummaryKey{}, false
+	}
+	id, ok := product.Get(ctx.Registry, value, identity.Key).ID()
+	if !ok {
+		return summary.SummaryKey{}, false
+	}
+	key, ok := functionIDs[id]
+	return key, ok
+}
+
+// SummaryArgumentTypeProvider resolves call argument types using summary-backed
+// function expression identities, then falls back to generic source-value
+// projection. It is used by public signature lowering when imported generic
+// calls receive local callbacks whose return types are known only after the
+// program fixed point.
+func SummaryArgumentTypeProvider(config ProviderConfig) func(transfer.NodeContext, factflow.ValueSource, state.State, func(cfg.Point) state.State) (typ.Type, bool) {
+	summaries := config.Summaries
+	facts := config.Facts
+	functionKeys := cloneFunctionKeys(config.FunctionKeys)
+	functionExpressionKeys := cloneFunctionExpressionKeys(config.FunctionExpressionKeys)
+	functionTypes := cloneFunctionTypes(config.FunctionTypes)
+	sources := config.Sources
+	return func(ctx transfer.NodeContext, source factflow.ValueSource, in state.State, read func(cfg.Point) state.State) (typ.Type, bool) {
+		return callArgumentType(ctx, source, summaries, facts, functionKeys, functionExpressionKeys, functionTypes, sources, in, read)
 	}
 }
 
@@ -75,6 +530,11 @@ func specializeGenericSummary(
 	site factflow.CallSite,
 	got summary.Summary,
 	fn *typ.Function,
+	summaries summary.Reader,
+	facts factflow.Facts,
+	functionKeys map[symbol.ID]summary.SummaryKey,
+	functionExpressionKeys map[factflow.ExprRef]summary.SummaryKey,
+	functionTypes map[summary.SummaryKey]*typ.Function,
 	sources sourcevalue.SourceValues,
 	in state.State,
 	read func(cfg.Point) state.State,
@@ -82,7 +542,7 @@ func specializeGenericSummary(
 	if ctx.Registry == nil || fn == nil || len(fn.TypeParams) == 0 || sources == nil {
 		return got
 	}
-	args := callArgumentTypes(ctx, site, sources, in, read)
+	args := callArgumentTypes(ctx, site, summaries, facts, functionKeys, functionExpressionKeys, functionTypes, sources, in, read)
 	if len(args) == 0 {
 		return got
 	}
@@ -90,12 +550,24 @@ func specializeGenericSummary(
 	if len(violations) != 0 || instantiated == nil || instantiated == fn {
 		return got
 	}
-	return specializeSummaryReturns(ctx.Registry, got, instantiated.Returns)
+	return specializeSummaryReturns(ctx.Registry, got, fn.Returns, instantiated.Returns)
+}
+
+func applyDeclaredSummaryReturns(reg *axis.Registry, got summary.Summary, fn *typ.Function) summary.Summary {
+	if reg == nil || fn == nil || len(fn.TypeParams) != 0 || len(fn.Returns) == 0 {
+		return got
+	}
+	return specializeSummaryReturns(reg, got, fn.Returns, fn.Returns)
 }
 
 func callArgumentTypes(
 	ctx transfer.NodeContext,
 	site factflow.CallSite,
+	summaries summary.Reader,
+	facts factflow.Facts,
+	functionKeys map[symbol.ID]summary.SummaryKey,
+	functionExpressionKeys map[factflow.ExprRef]summary.SummaryKey,
+	functionTypes map[summary.SummaryKey]*typ.Function,
 	sources sourcevalue.SourceValues,
 	in state.State,
 	read func(cfg.Point) state.State,
@@ -110,11 +582,7 @@ func callArgumentTypes(
 	args := make([]typ.Type, len(argSources))
 	seen := false
 	for i, source := range argSources {
-		value, ok := sources.ValueOfSource(ctx.Point, source, in, read)
-		if !ok {
-			continue
-		}
-		t, ok := typeFromValue(ctx.Registry, value)
+		t, ok := callArgumentType(ctx, source, summaries, facts, functionKeys, functionExpressionKeys, functionTypes, sources, in, read)
 		if !ok {
 			continue
 		}
@@ -127,26 +595,235 @@ func callArgumentTypes(
 	return args
 }
 
-func typeFromValue(reg *axis.Registry, value product.Value) (typ.Type, bool) {
-	if reg == nil {
-		return nil, false
+func sourceValueAtArgument(
+	reg *axis.Registry,
+	point cfg.Point,
+	source factflow.ValueSource,
+	facts factflow.Facts,
+	graph cfg.Graph,
+	sources sourcevalue.SourceValues,
+	in state.State,
+	read func(cfg.Point) state.State,
+) (product.Value, bool) {
+	value, ok := valueOfSource(point, source, sources, in, read)
+	if t, okType := typeFromValue(reg, value); okType && usableRecoveredType(reg, value, t) {
+		return value, true
 	}
-	if witness := product.Get(reg, value, typewitness.Key); !witness.IsTop() {
-		if t, ok := witness.Type(); ok {
-			return t, true
-		}
+	if source.Kind != factflow.ValueSourceExpression || !source.HasExpr {
+		return value, ok
 	}
-	origin := product.Get(reg, value, variantorigin.Key)
-	if origin.IsBottom() || origin.IsTop() {
-		return nil, false
+	if value, ok := valueFromRootDeclarationSource(reg, point, source.ExprRef, facts, graph, sources, in, read); ok {
+		return value, true
 	}
-	return variant.TypeFromOrigin(origin.Family(), origin.Cases())
+	return value, ok
 }
 
-func specializeSummaryReturns(reg *axis.Registry, got summary.Summary, returns []typ.Type) summary.Summary {
+func valueFromRootDeclarationSource(
+	reg *axis.Registry,
+	point cfg.Point,
+	expr factflow.ExprRef,
+	facts factflow.Facts,
+	graph cfg.Graph,
+	sources sourcevalue.SourceValues,
+	in state.State,
+	read func(cfg.Point) state.State,
+) (product.Value, bool) {
+	if reg == nil {
+		return product.Value{}, false
+	}
+	exprPath, ok := facts.ExpressionPath(expr)
+	if !ok || exprPath.Symbol == 0 || len(exprPath.Segments) != 0 {
+		return product.Value{}, false
+	}
+	decl, ok := recoverRootDeclarationSource(point, exprPath.Symbol, facts, graph)
+	if !ok {
+		return product.Value{}, false
+	}
+	declState := in
+	if read != nil {
+		declState = read(decl.point)
+	}
+	if decl.symbol != 0 {
+		v := declState.ReadSymbolValue(reg, decl.symbol)
+		if !product.Equal(reg, v, product.Bottom(reg)) {
+			return v, true
+		}
+	}
+	return valueOfSource(decl.point, decl.source, sources, declState, read)
+}
+
+func valueOfSource(
+	point cfg.Point,
+	source factflow.ValueSource,
+	sources sourcevalue.SourceValues,
+	in state.State,
+	read func(cfg.Point) state.State,
+) (product.Value, bool) {
+	if sources == nil {
+		return product.Value{}, false
+	}
+	value, ok := sources.ValueOfSource(point, source, in, read)
+	if !ok {
+		return product.Value{}, false
+	}
+	return value, true
+}
+
+type recoveredRootDeclarationSource struct {
+	point  cfg.Point
+	source factflow.ValueSource
+	symbol symbol.ID
+}
+
+func recoverRootDeclarationSource(
+	point cfg.Point,
+	target symbol.ID,
+	facts factflow.Facts,
+	graph cfg.Graph,
+) (recoveredRootDeclarationSource, bool) {
+	if point == 0 || target == 0 || graph == nil {
+		return recoveredRootDeclarationSource{}, false
+	}
+	dominators := dominance.ComputeImmediateDominatorInfo(graph)
+	if dominators == nil {
+		return recoveredRootDeclarationSource{}, false
+	}
+	idom := dominators.Map()
+	visited := make(map[cfg.Point]struct{}, graph.Size())
+	var recovered recoveredRootDeclarationSource
+	for cursor := point; ; {
+		if _, ok := visited[cursor]; ok {
+			return recoveredRootDeclarationSource{}, false
+		}
+		visited[cursor] = struct{}{}
+		assignment, ok := facts.RootAssignment(cursor)
+		if ok && assignment.TargetSymbol() == target && len(assignment.TargetPath().Segments) == 0 {
+			switch assignment.Kind() {
+			case factflow.RootAssignmentLocalDeclaration:
+				recovered = recoveredRootDeclarationSource{
+					point:  cursor,
+					source: assignment.Source(),
+					symbol: target,
+				}
+				return recovered, true
+			case factflow.RootAssignmentOrdinaryRootWrite:
+				return recoveredRootDeclarationSource{}, false
+			default:
+				return recoveredRootDeclarationSource{}, false
+			}
+		}
+		parent, ok := idom[cursor]
+		if !ok || parent == cursor {
+			return recoveredRootDeclarationSource{}, false
+		}
+		cursor = parent
+	}
+}
+
+func callArgumentType(
+	ctx transfer.NodeContext,
+	source factflow.ValueSource,
+	summaries summary.Reader,
+	facts factflow.Facts,
+	functionKeys map[symbol.ID]summary.SummaryKey,
+	functionExpressionKeys map[factflow.ExprRef]summary.SummaryKey,
+	functionTypes map[summary.SummaryKey]*typ.Function,
+	sources sourcevalue.SourceValues,
+	in state.State,
+	read func(cfg.Point) state.State,
+) (typ.Type, bool) {
+	if t, ok := functionExpressionTypeFromSummary(ctx, source, summaries, facts, functionKeys, functionExpressionKeys, functionTypes); ok {
+		return t, true
+	}
+	if sources == nil {
+		return nil, false
+	}
+	value, ok := sourceValueAtArgument(ctx.Registry, ctx.Point, source, facts, ctx.Graph, sources, in, read)
+	if !ok {
+		return nil, false
+	}
+	t, ok := typeFromValue(ctx.Registry, value)
+	if !ok || !usableRecoveredType(ctx.Registry, value, t) {
+		return nil, false
+	}
+	return t, true
+}
+
+func usableRecoveredType(reg *axis.Registry, value product.Value, t typ.Type) bool {
+	if reg == nil || t == nil || typ.IsAny(t) || typ.IsUnknown(t) || typ.IsNever(t) || refinement.ContainsFreeTypeParam(t) {
+		return false
+	}
+	ev := product.Get(reg, value, evidence.Key)
+	return !ev.IsExplicitTop() && !ev.IsGradualTop()
+}
+
+func functionExpressionTypeFromSummary(
+	ctx transfer.NodeContext,
+	source factflow.ValueSource,
+	summaries summary.Reader,
+	facts factflow.Facts,
+	functionKeys map[symbol.ID]summary.SummaryKey,
+	functionExpressionKeys map[factflow.ExprRef]summary.SummaryKey,
+	functionTypes map[summary.SummaryKey]*typ.Function,
+) (typ.Type, bool) {
+	if !source.HasExpr || summaries == nil {
+		return nil, false
+	}
+	key, ok := functionExpressionKeys[source.ExprRef]
+	if !ok {
+		functionSymbol, ok := facts.ExpressionFunction(source.ExprRef)
+		if !ok || functionSymbol == 0 {
+			return nil, false
+		}
+		key, ok = functionKeys[functionSymbol]
+		if !ok {
+			return nil, false
+		}
+	}
+	fn := functionTypes[key]
+	if fn == nil {
+		return nil, false
+	}
+	sum, ok := summaries.Read(key)
+	if !ok || len(sum.Returns) == 0 {
+		return fn, true
+	}
+	out := functionTypeWithSummaryReturns(ctx.Registry, fn, sum.Returns)
+	return out, true
+}
+
+func functionTypeWithSummaryReturns(reg *axis.Registry, fn *typ.Function, returns []product.Value) *typ.Function {
+	if reg == nil || fn == nil || len(returns) == 0 {
+		return fn
+	}
+	outReturns := make([]typ.Type, 0, len(returns))
+	for _, ret := range returns {
+		t, ok := typeFromValue(reg, ret)
+		if !ok || t == nil || typ.IsAny(t) || typ.IsUnknown(t) || refinement.ContainsFreeTypeParam(t) {
+			return fn
+		}
+		outReturns = append(outReturns, t)
+	}
+	if len(outReturns) == 0 {
+		return fn
+	}
+	return typ.RebuildFunction(typ.FunctionParts{
+		TypeParams: fn.TypeParams,
+		Params:     fn.Params,
+		Variadic:   fn.Variadic,
+		Returns:    outReturns,
+	})
+}
+
+func typeFromValue(reg *axis.Registry, value product.Value) (typ.Type, bool) {
+	return typevalue.TypeOf(reg, value)
+}
+
+func specializeSummaryReturns(reg *axis.Registry, got summary.Summary, originalReturns []typ.Type, returns []typ.Type) summary.Summary {
 	if reg == nil || len(got.Returns) == 0 || len(returns) == 0 {
 		return got
 	}
+	originalReturns = callResultReturnTypes(got, originalReturns)
 	returns = callResultReturnTypes(got, returns)
 	nextReturns := make([]product.Value, len(got.Returns))
 	copy(nextReturns, got.Returns)
@@ -160,7 +837,7 @@ func specializeSummaryReturns(reg *axis.Registry, got summary.Summary, returns [
 			continue
 		}
 		declared := typevalue.WithWitness(reg, typevalue.FromType(reg, ret), ret)
-		next := joinInstantiatedReturnValue(reg, nextReturns[i], declared)
+		next := joinInstantiatedReturnValue(reg, nextReturns[i], declared, originalReturnTypeAt(originalReturns, i))
 		if product.Equal(reg, nextReturns[i], next) {
 			continue
 		}
@@ -175,6 +852,13 @@ func specializeSummaryReturns(reg *axis.Registry, got summary.Summary, returns [
 	return summary.Normalize(reg, out)
 }
 
+func originalReturnTypeAt(returns []typ.Type, index int) typ.Type {
+	if index < 0 || index >= len(returns) {
+		return nil
+	}
+	return returns[index]
+}
+
 func callResultReturnTypes(got summary.Summary, returns []typ.Type) []typ.Type {
 	if len(returns) == 1 && len(got.Returns) > 1 {
 		if tuple, ok := returns[0].(*typ.Tuple); ok {
@@ -184,7 +868,13 @@ func callResultReturnTypes(got summary.Summary, returns []typ.Type) []typ.Type {
 	return returns
 }
 
-func joinInstantiatedReturnValue(reg *axis.Registry, value product.Value, declared product.Value) product.Value {
+func joinInstantiatedReturnValue(reg *axis.Registry, value product.Value, declared product.Value, original typ.Type) product.Value {
+	if product.Equal(reg, value, product.Top()) {
+		return declared
+	}
+	if refinement.ContainsFreeTypeParam(original) || valueContainsFreeTypeParam(reg, value) {
+		return declared
+	}
 	joined := product.Join(reg, value, declared)
 	declaredWitness := product.Get(reg, declared, typewitness.Key)
 	if !declaredWitness.IsBottom() && !declaredWitness.IsTop() {
@@ -204,6 +894,11 @@ func joinInstantiatedReturnValue(reg *axis.Registry, value product.Value, declar
 	return product.Set(reg, joined, variantorigin.Key, declaredOrigin)
 }
 
+func valueContainsFreeTypeParam(reg *axis.Registry, value product.Value) bool {
+	t, ok := typevalue.TypeOf(reg, value)
+	return ok && refinement.ContainsFreeTypeParam(t)
+}
+
 func originContainsFreeTypeParam(origin variantorigin.Value) bool {
 	if origin.IsBottom() || origin.IsTop() {
 		return false
@@ -219,6 +914,64 @@ func cloneFunctionTypes(in map[summary.SummaryKey]*typ.Function) map[summary.Sum
 	out := make(map[summary.SummaryKey]*typ.Function, len(in))
 	for key, fn := range in {
 		out[key] = fn
+	}
+	return out
+}
+
+func cloneFunctionKeys(in map[symbol.ID]summary.SummaryKey) map[symbol.ID]summary.SummaryKey {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[symbol.ID]summary.SummaryKey, len(in))
+	for id, key := range in {
+		out[id] = key
+	}
+	return out
+}
+
+func cloneFunctionExpressionKeys(in map[factflow.ExprRef]summary.SummaryKey) map[factflow.ExprRef]summary.SummaryKey {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[factflow.ExprRef]summary.SummaryKey, len(in))
+	for expr, key := range in {
+		out[expr] = key
+	}
+	return out
+}
+
+func cloneFunctionIdentityKeys(in map[identity.ID]summary.SummaryKey) map[identity.ID]summary.SummaryKey {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[identity.ID]summary.SummaryKey, len(in))
+	for id, key := range in {
+		out[id] = key
+	}
+	return out
+}
+
+func clonePathKeys(in map[pathdom.PathKey]summary.SummaryKey) map[pathdom.PathKey]summary.SummaryKey {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[pathdom.PathKey]summary.SummaryKey, len(in))
+	for pathKey, key := range in {
+		out[pathKey] = key
+	}
+	return out
+}
+
+func clonePathMultiKeys(in map[pathdom.PathKey][]summary.SummaryKey) map[pathdom.PathKey][]summary.SummaryKey {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[pathdom.PathKey][]summary.SummaryKey, len(in))
+	for pathKey, keys := range in {
+		if len(keys) == 0 {
+			continue
+		}
+		out[pathKey] = append([]summary.SummaryKey(nil), keys...)
 	}
 	return out
 }
@@ -353,6 +1106,33 @@ func memberCallParamObligations(
 	return out
 }
 
+func functionTypeParamObligations(reg *axis.Registry, site factflow.CallSite, fn *typ.Function) []factapply.CallParamObligation {
+	if reg == nil || fn == nil || len(fn.Params) == 0 {
+		return nil
+	}
+	args := site.ArgumentSources()
+	limit := len(args)
+	if limit > len(fn.Params) {
+		limit = len(fn.Params)
+	}
+	var out []factapply.CallParamObligation
+	for i := 0; i < limit; i++ {
+		want := fn.Params[i].Type
+		if want == nil || typ.IsAny(want) || typ.IsUnknown(want) || refinement.ContainsFreeTypeParam(want) {
+			continue
+		}
+		value := typevalue.WithWitness(reg, typevalue.FromType(reg, want), want)
+		if !summary.UsefulParamObligation(reg, value) {
+			continue
+		}
+		out = append(out, factapply.CallParamObligation{
+			ParamIndex: i,
+			Value:      value,
+		})
+	}
+	return out
+}
+
 func cloneNormalReturnFacts(in callboundary.NormalReturnFacts) callboundary.NormalReturnFacts {
 	out := callboundary.NormalReturnFacts{}
 	if len(in.PathRefinements) != 0 {
@@ -422,27 +1202,18 @@ func copyPath(p pathdom.Path) pathdom.Path {
 	return out
 }
 
-// ByCalleeIdentity maps direct callee symbols and exact callee access paths to
-// summary keys. Symbol keys are checked first because direct locals are the
-// narrowest identity for function values.
-func ByCalleeIdentity(symbolKeys map[symbol.ID]summary.SummaryKey, pathKeys map[pathdom.PathKey]summary.SummaryKey) KeyFunc {
+// ByCalleeIdentity maps direct callee symbols to summary keys. Mutable callee
+// paths are intentionally not resolved here; path calls must go through current
+// value identity so reassignments and non-dominating writes stay sound.
+func ByCalleeIdentity(symbolKeys map[symbol.ID]summary.SummaryKey) KeyFunc {
 	clonedSymbols := make(map[symbol.ID]summary.SummaryKey, len(symbolKeys))
 	for id, key := range symbolKeys {
 		clonedSymbols[id] = key
 	}
-	clonedPaths := make(map[pathdom.PathKey]summary.SummaryKey, len(pathKeys))
-	for pathKey, key := range pathKeys {
-		clonedPaths[pathKey] = key
-	}
-	return func(_ transfer.NodeContext, call factflow.CallProducer) (summary.SummaryKey, bool) {
-		if key, ok := clonedSymbols[call.CalleeSymbol()]; ok {
+	return func(_ transfer.NodeContext, site factflow.CallSite) (summary.SummaryKey, bool) {
+		if key, ok := clonedSymbols[site.CalleeSymbol()]; ok {
 			return key, true
 		}
-		calleePath := call.CalleePath()
-		if calleePath.IsEmpty() {
-			return summary.SummaryKey{}, false
-		}
-		key, ok := clonedPaths[calleePath.Key()]
-		return key, ok
+		return summary.SummaryKey{}, false
 	}
 }

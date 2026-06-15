@@ -14,6 +14,7 @@ const (
 	BranchProofPathPresence BranchProofKind = iota + 1
 	BranchProofPathEqual
 	BranchProofPathNotEqual
+	BranchProofIndexInRange
 )
 
 type BranchProof struct {
@@ -137,7 +138,7 @@ func branchProofMatchesPath(proof BranchProof, matches func(pathdom.PathKey) boo
 		return true
 	}
 	switch proof.Kind {
-	case BranchProofPathEqual, BranchProofPathNotEqual:
+	case BranchProofPathEqual, BranchProofPathNotEqual, BranchProofIndexInRange:
 		return matches(proof.Other)
 	default:
 		return false

@@ -1,10 +1,29 @@
 package typewitness
 
 import (
+	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	internal "github.com/wippyai/go-lua/analysis/internal/hash"
+	typelit "github.com/wippyai/go-lua/analysis/type/literal"
 	"github.com/wippyai/go-lua/analysis/type/refinement"
 	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/analysis/type/unwrap"
 )
+
+var Key = axis.NewKey[Value]("typewitness")
+
+func Spec() axis.Spec[Value] {
+	return axis.Spec[Value]{
+		Key:      Key,
+		Bottom:   Bottom,
+		Top:      Top,
+		Equal:    Equal,
+		LessOrEq: func(a, b Value) bool { return Equal(Join(a, b), b) },
+		Join:     Join,
+		Meet:     Meet,
+		Widen:    Join,
+		Hash:     Value.Hash,
+	}
+}
 
 type state uint8
 
@@ -24,7 +43,19 @@ func Bottom() Value { return Value{state: bottom} }
 func Top() Value    { return Value{state: top} }
 
 func Of(t typ.Type) Value {
-	if t == nil || typ.IsAny(t) || typ.IsUnknown(t) || refinement.ContainsFreeTypeParam(t) {
+	t = unwrap.Alias(t)
+	if t == nil || typ.IsAny(t) || typ.IsUnknown(t) {
+		return Top()
+	}
+	switch t.(type) {
+	case *typ.TypeParam, *typ.Ref, *typ.Generic:
+		return Top()
+	case *typ.Instantiated:
+		if refinement.ContainsFreeTypeParam(t) {
+			return Top()
+		}
+	}
+	if t == nil {
 		return Top()
 	}
 	return Value{state: concrete, t: t}
@@ -53,7 +84,22 @@ func Join(a, b Value) Value {
 	if typ.SameNodeOrAcyclicEqual(a.t, b.t) {
 		return a
 	}
+	if base, ok := joinLiteralFamilyWitness(a.t, b.t); ok {
+		return Of(base)
+	}
 	return Top()
+}
+
+func joinLiteralFamilyWitness(a, b typ.Type) (typ.Type, bool) {
+	left, ok := typelit.FamilyBase(a)
+	if !ok {
+		return nil, false
+	}
+	right, ok := typelit.FamilyBase(b)
+	if !ok {
+		return nil, false
+	}
+	return typelit.MergeFamilyBases(left, right)
 }
 
 func Meet(a, b Value) Value {

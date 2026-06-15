@@ -10,18 +10,23 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/assertion"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/evidence"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/typewitness"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/standard"
+	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
+	"github.com/wippyai/go-lua/analysis/engine/callproducer"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/lua/cfgbuild"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
 	"github.com/wippyai/go-lua/analysis/symbol"
+	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/analysis/type/typeexpr"
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/parse"
 )
@@ -56,6 +61,47 @@ func TestLowerLiteralExpressionValues(t *testing.T) {
 	assertExpressionValue(t, facts, tableSource.ExprRef, presence.Present(), runtimekind.Singleton(runtimekind.Table))
 }
 
+func TestLowerReturnExpressionOperationUsesNestedCallSource(t *testing.T) {
+	reg := standard.Registry()
+	fn, bindings, built, result := parseSemanticFunction(t, `
+function f(user)
+	return user.id .. ":" .. tostring(user.retries)
+end`, "tostring")
+	ret, ok := fn.Stmts[0].(*ast.ReturnStmt)
+	if !ok {
+		t.Fatalf("stmt = %T, want return", fn.Stmts[0])
+	}
+
+	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings})
+	returnPoints := requireStmtPoints(t, built, ret, 2)
+	returnFact, ok := facts.Return(returnPoints[1])
+	if !ok {
+		t.Fatalf("missing return fact at point %d", returnPoints[1])
+	}
+	sources := returnFact.Sources()
+	if len(sources) != 1 || !sources[0].HasExpr {
+		t.Fatalf("return sources = %#v, want one expression source", sources)
+	}
+	op, ok := facts.ExpressionOperation(sources[0].ExprRef)
+	if !ok {
+		t.Fatalf("missing expression operation for return expr ref %d", sources[0].ExprRef)
+	}
+	if op.Kind() != factflow.ExpressionOperationBinary || op.Op() != ".." {
+		t.Fatalf("operation = %v %q, want binary concat", op.Kind(), op.Op())
+	}
+	right := op.Right()
+	if right.Kind != factflow.ValueSourceExpression || !right.HasExpr {
+		t.Fatalf("operation right source = %#v, want nested expression", right)
+	}
+	nested, ok := facts.ExpressionOperation(right.ExprRef)
+	if !ok {
+		t.Fatalf("missing nested operation for expr ref %d", right.ExprRef)
+	}
+	if nested.Right().Kind != factflow.ValueSourceCall || nested.Right().CallPoint != returnPoints[0] || !nested.Right().HasCallPoint {
+		t.Fatalf("nested operation right source = %#v, want nested tostring call at point %d", nested.Right(), returnPoints[0])
+	}
+}
+
 func TestLowerAnnotatedFunctionExpressionValueWitness(t *testing.T) {
 	stmts, bindings, built, result := parseSemanticChunk(t, `
 local cb = function(item: string): number
@@ -78,6 +124,166 @@ end
 	want := typ.Func().Param("item", typ.String).Returns(typ.Number).Build()
 	if !typ.TypeEquals(got, want) {
 		t.Fatalf("function expression witness = %v, want %v", got, want)
+	}
+	fn, ok := stmts[0].(*ast.LocalAssignStmt).Exprs[0].(*ast.FunctionExpr)
+	if !ok {
+		t.Fatalf("local source expr = %T, want function", stmts[0].(*ast.LocalAssignStmt).Exprs[0])
+	}
+	fnSymbol, ok := bindings.FunctionSymbol(fn)
+	if !ok || fnSymbol == 0 {
+		t.Fatalf("function symbol = %d/%v, want non-zero", fnSymbol, ok)
+	}
+	gotID, ok := product.Get(reg, value, identity.Key).ID()
+	if !ok || gotID != identity.LuaFunction(uint64(fnSymbol)) {
+		t.Fatalf("function expression identity = %v/%v, want %v", gotID, ok, identity.LuaFunction(uint64(fnSymbol)))
+	}
+}
+
+func TestLowerDynamicIndexReadExpressionValueUsesRuntimeIndexType(t *testing.T) {
+	stmts, bindings, built, result := parseSemanticChunk(t, `
+local users: {[string]: {id: string}} = {}
+local id: string = "u1"
+local user = users[id]
+`)
+	reg := standard.Registry()
+	facts := Lower(result, built.Graph, Config{
+		Registry:     reg,
+		Bindings:     bindings,
+		TypeResolver: nil,
+	})
+	local := mustLocalStmt(t, stmts, 2)
+	point := requireStmtPoints(t, built, local, 1)[0]
+	source := mustLocalSource(t, facts, point)
+	value, ok := facts.ExpressionValue(source.ExprRef)
+	if !ok {
+		t.Fatalf("missing expression value for dynamic index ref %d", source.ExprRef)
+	}
+	if got := product.PresenceOf(value); !presence.Equal(got, presence.Maybe()) {
+		t.Fatalf("dynamic index read presence = %s, want maybe", got)
+	}
+	got, ok := typevalue.TypeOf(reg, value)
+	want := typeexpr.Optional(typetable.NewRecord().Field("id", typ.String).Build())
+	if !ok || !typ.TypeEquals(got, want) {
+		t.Fatalf("dynamic index read type = %v/%v, want %v", got, ok, want)
+	}
+}
+
+func TestLowerUnannotatedFunctionExpressionValueCarriesIdentity(t *testing.T) {
+	stmts, bindings, built, result := parseSemanticChunk(t, `
+local cb = function(item)
+    return item
+end
+`)
+	reg := standard.Registry()
+	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings})
+	point := requireStmtPoints(t, built, stmts[0], 1)[0]
+	source := mustLocalSource(t, facts, point)
+	value, ok := facts.ExpressionValue(source.ExprRef)
+	if !ok {
+		t.Fatalf("missing expression value for ref %d", source.ExprRef)
+	}
+	fn, ok := stmts[0].(*ast.LocalAssignStmt).Exprs[0].(*ast.FunctionExpr)
+	if !ok {
+		t.Fatalf("local source expr = %T, want function", stmts[0].(*ast.LocalAssignStmt).Exprs[0])
+	}
+	fnSymbol, ok := bindings.FunctionSymbol(fn)
+	if !ok || fnSymbol == 0 {
+		t.Fatalf("function symbol = %d/%v, want non-zero", fnSymbol, ok)
+	}
+	gotID, ok := product.Get(reg, value, identity.Key).ID()
+	if !ok || gotID != identity.LuaFunction(uint64(fnSymbol)) {
+		t.Fatalf("function expression identity = %v/%v, want %v", gotID, ok, identity.LuaFunction(uint64(fnSymbol)))
+	}
+	if kind := product.Get(reg, value, runtimekind.Key); !kind.Contains(runtimekind.Function) {
+		t.Fatalf("function expression runtime kind = %v, want function", kind)
+	}
+}
+
+func TestLowerMemberFunctionDefinitionPublishesPathFunctionValue(t *testing.T) {
+	tests := []struct {
+		name     string
+		source   string
+		rootName string
+		field    string
+	}{
+		{
+			name: "dotted",
+			source: `
+local M = {}
+function M.run()
+    return 1
+end
+`,
+			rootName: "M",
+			field:    "run",
+		},
+		{
+			name: "method",
+			source: `
+local obj = {}
+function obj:method(value)
+    return value
+end
+`,
+			rootName: "obj",
+			field:    "method",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			stmts, bindings, built, result := parseSemanticChunk(t, tt.source)
+			decl := mustLocalStmt(t, stmts, 0)
+			def, ok := stmts[1].(*ast.FuncDefStmt)
+			if !ok || def.Func == nil {
+				t.Fatalf("statement = %T, want function definition", stmts[1])
+			}
+			reg := standard.Registry()
+			facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings})
+
+			point := requireStmtPoints(t, built, def, 1)[0]
+			wantPath := path.NewPath(mustLocalAt(t, bindings, decl, 0), tt.rootName).Field(tt.field)
+			pathFact, ok := facts.PathAssignment(point)
+			if !ok {
+				t.Fatalf("missing path assignment at point %d", point)
+			}
+			if !pathFact.TargetPath().Equal(wantPath) {
+				t.Fatalf("path assignment target = %v, want %v", pathFact.TargetPath(), wantPath)
+			}
+			staticWrite, ok := facts.PathStaticMemberWrite(point)
+			if !ok {
+				t.Fatalf("missing static member write at point %d", point)
+			}
+			if !staticWrite.TargetPath().Equal(wantPath) || staticWrite.Source() != pathFact.Source() {
+				t.Fatalf("static member write = %v %#v, want %v same source", staticWrite.TargetPath(), staticWrite.Source(), wantPath)
+			}
+			if _, ok := facts.OrdinaryAssignment(point); ok {
+				t.Fatalf("member function definition also lowered as root assignment")
+			}
+
+			source := pathFact.Source()
+			if source.Kind != factflow.ValueSourceExpression || !source.HasExpr || source.ExprRef == 0 {
+				t.Fatalf("path assignment source = %#v, want function expression source", source)
+			}
+			fnSymbol, ok := bindings.FunctionSymbol(def.Func)
+			if !ok || fnSymbol == 0 {
+				t.Fatalf("function symbol = %d/%v, want non-zero", fnSymbol, ok)
+			}
+			if got, ok := facts.ExpressionFunction(source.ExprRef); !ok || got != fnSymbol {
+				t.Fatalf("expression function = %d/%v, want %d", got, ok, fnSymbol)
+			}
+			value, ok := facts.ExpressionValue(source.ExprRef)
+			if !ok {
+				t.Fatalf("missing expression value for ref %d", source.ExprRef)
+			}
+			if kind := product.Get(reg, value, runtimekind.Key); !kind.Contains(runtimekind.Function) {
+				t.Fatalf("function definition value runtime kind = %v, want function", kind)
+			}
+			gotID, ok := product.Get(reg, value, identity.Key).ID()
+			if !ok || gotID != identity.LuaFunction(uint64(fnSymbol)) {
+				t.Fatalf("function definition identity = %v/%v, want %v", gotID, ok, identity.LuaFunction(uint64(fnSymbol)))
+			}
+		})
 	}
 }
 
@@ -114,7 +320,7 @@ func assertLoweredAssertion(t *testing.T, facts factflow.Facts, source factflow.
 	if !ok {
 		t.Fatalf("missing assertion for source ref %d", source.ExprRef)
 	}
-	assertAssertionOnlyProduct(t, claim.Refinement(), want)
+	assertClaimRefinementProduct(t, claim.Refinement(), want)
 	inner := claim.Source()
 	if inner.ExprRef == 0 || inner.ExprRef == source.ExprRef || inner.Kind != wantInnerKind {
 		t.Fatalf("assertion inner source = %#v, outer %#v", inner, source)
@@ -126,11 +332,17 @@ func refinementAssertion(t *testing.T, refinement factflow.ExpressionRefinement)
 	return product.Get(standard.Registry(), refinement.Refinement(), assertion.Key)
 }
 
-func assertAssertionOnlyProduct(t *testing.T, value product.Value, want assertion.Value) {
+func assertClaimRefinementProduct(t *testing.T, value product.Value, want assertion.Value) {
 	t.Helper()
 	reg := standard.Registry()
 	if got := product.Get(reg, value, assertion.Key); !assertion.Equal(got, want) {
 		t.Fatalf("assertion value = %s, want %s", got, want)
+	}
+	wantProduct := product.Set(reg, product.Top(), assertion.Key, want)
+	wantEvidence := evidence.Top()
+	if want.Has(assertion.AnyClaim) {
+		wantEvidence = evidence.ExplicitTop()
+		wantProduct = product.Set(reg, wantProduct, evidence.Key, wantEvidence)
 	}
 	if got := product.ShapeOf(value); got != product.ShapeTop {
 		t.Fatalf("assertion refinement shape = %s, want top", got)
@@ -141,11 +353,11 @@ func assertAssertionOnlyProduct(t *testing.T, value product.Value, want assertio
 	if got := product.Get(reg, value, runtimekind.Key); !runtimekind.Equal(got, runtimekind.Top()) {
 		t.Fatalf("assertion refinement runtime kind = %s, want top", got)
 	}
-	if got := product.Get(reg, value, evidence.Key); !evidence.Equal(got, evidence.Top()) {
-		t.Fatalf("assertion refinement evidence = %s, want top", got)
+	if got := product.Get(reg, value, evidence.Key); !evidence.Equal(got, wantEvidence) {
+		t.Fatalf("assertion refinement evidence = %s, want %s", got, wantEvidence)
 	}
-	if !product.Equal(reg, value, product.Set(reg, product.Top(), assertion.Key, want)) {
-		t.Fatalf("assertion refinement carried non-assertion axes")
+	if !product.Equal(reg, value, wantProduct) {
+		t.Fatalf("claim refinement carried unexpected axes")
 	}
 }
 
@@ -222,6 +434,27 @@ func assertOptionalValuePresence(
 	gotPresence := product.PresenceOf(constraint)
 	if !presence.Equal(gotPresence, want) {
 		t.Fatalf("%s presence = %s, want %s", label, gotPresence, want)
+	}
+}
+
+func assertLoweredBranchFalsyAbsent(
+	t *testing.T,
+	facts factflow.Facts,
+	point cfg.Point,
+	wantPath path.Path,
+	edge bool,
+) {
+	t.Helper()
+	refinement, ok := branchRefinementAt(facts.BranchRefinements(point), wantPath)
+	if !ok {
+		t.Fatalf("missing branch refinement at point %d", point)
+	}
+	value, ok := refinement.ValueForEdge(edge)
+	if !ok {
+		t.Fatalf("missing value refinement on edge %v", edge)
+	}
+	if !value.FalsyAbsent() {
+		t.Fatalf("value refinement on edge %v is not marked falsy-absent", edge)
 	}
 }
 
@@ -574,7 +807,7 @@ func assertNoPointFact(t *testing.T, facts factflow.Facts, point cfg.Point) {
 	if _, ok := facts.Return(point); ok {
 		t.Fatalf("point %d lowered as return", point)
 	}
-	if _, ok := facts.Call(point); ok {
+	if _, ok := callproducer.FromFacts(facts, point); ok {
 		t.Fatalf("point %d lowered as call producer", point)
 	}
 	if _, ok := facts.CallSite(point); ok {

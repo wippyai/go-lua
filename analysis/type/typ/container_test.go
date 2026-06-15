@@ -117,7 +117,7 @@ func TestRebuildMapMatchesNewMapHash(t *testing.T) {
 
 func TestRebuildMapCachesContainsFlagsFromKeyAndValue(t *testing.T) {
 	key := NewTypeParam("K", nil)
-	value := NewOptional(Any)
+	value := MaterializeOptional(Any)
 	m := RebuildMap(key, value)
 
 	if !m.containsTypeParam {
@@ -129,7 +129,7 @@ func TestRebuildMapCachesContainsFlagsFromKeyAndValue(t *testing.T) {
 }
 
 func TestMapKeyPreservesNilableKey(t *testing.T) {
-	key := NewOptional(String)
+	key := MaterializeOptional(String)
 	m := NewMap(key, Number)
 	if m.Key != key {
 		t.Fatalf("map key = %v, want original key", m.Key)
@@ -214,7 +214,7 @@ func TestRebuildReadonlyMapMatchesNewReadonlyMapHash(t *testing.T) {
 }
 
 func TestRebuildReadonlyMapCachesContainsFlagsFromKeyAndValue(t *testing.T) {
-	key := NewOptional(Any)
+	key := MaterializeOptional(Any)
 	value := NewTypeParam("V", nil)
 	m := RebuildReadonlyMap(key, value)
 

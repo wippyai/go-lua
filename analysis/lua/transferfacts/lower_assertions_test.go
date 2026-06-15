@@ -176,7 +176,7 @@ if x :: number then end
 	}
 }
 
-func TestLowerParsedAnyClaimCastsDoNotEraseRuntimeAxes(t *testing.T) {
+func TestLowerParsedAnyClaimCastsMarkUntrustedTop(t *testing.T) {
 	stmts, _, built, result := parseSemanticChunk(t, `
 local x = 0
 local a, b = x as any, x :: any
@@ -194,7 +194,12 @@ local a, b = x as any, x :: any
 		if !ok {
 			t.Fatalf("missing any claim refinement for source ref %d", source.ExprRef)
 		}
-		assertAssertionOnlyProduct(t, refinement.Refinement(), assertion.Any())
+		if got := product.Get(reg, refinement.Refinement(), assertion.Key); !assertion.Equal(got, assertion.Any()) {
+			t.Fatalf("refinement assertion = %s, want any", got)
+		}
+		if got := product.Get(reg, refinement.Refinement(), evidence.Key); !evidence.Equal(got, evidence.ExplicitTop()) {
+			t.Fatalf("refinement evidence = %s, want explicit-top", got)
+		}
 		inputValues[refinement.Source().ExprRef] = base
 	}
 
@@ -213,8 +218,9 @@ local a, b = x as any, x :: any
 		}
 		assigned := out.ReadValue(reg, key.SymbolValue(fact.TargetSymbol()))
 		want := product.Set(reg, base, assertion.Key, assertion.Any())
+		want = product.Set(reg, want, evidence.Key, evidence.ExplicitTop())
 		if !product.Equal(reg, assigned, want) {
-			t.Fatalf("assigned value changed axes other than assertion.Any at point %d", point)
+			t.Fatalf("assigned value changed axes other than assertion.Any and explicit-top at point %d", point)
 		}
 		if got := product.Get(reg, assigned, assertion.Key); !assertion.Equal(got, assertion.Any()) {
 			t.Fatalf("assigned assertion = %s, want any", got)
@@ -225,8 +231,8 @@ local a, b = x as any, x :: any
 		if got := product.Get(reg, assigned, runtimekind.Key); !runtimekind.Equal(got, runtimekind.Singleton(runtimekind.Table)) {
 			t.Fatalf("assigned runtime kind = %s, want table", got)
 		}
-		if got := product.Get(reg, assigned, evidence.Key); !evidence.Equal(got, evidence.Top()) {
-			t.Fatalf("assigned evidence = %s, want top", got)
+		if got := product.Get(reg, assigned, evidence.Key); !evidence.Equal(got, evidence.ExplicitTop()) {
+			t.Fatalf("assigned evidence = %s, want explicit-top", got)
 		}
 	}
 }
@@ -333,7 +339,8 @@ func TestLowerClaimRefinementsApplyIndicatorsWithoutMutatingBaseValues(t *testin
 		wantRuntimeKind   runtimekind.Value
 		checkRuntimeKind  bool
 		checkNoRefinement bool
-		checkNoProof      bool
+		checkEvidence     bool
+		wantEvidence      evidence.Value
 	}
 	cases := []sourceCase{
 		{
@@ -352,7 +359,8 @@ func TestLowerClaimRefinementsApplyIndicatorsWithoutMutatingBaseValues(t *testin
 			wantRuntimeKind:   runtimekind.Singleton(runtimekind.Table),
 			checkRuntimeKind:  true,
 			checkNoRefinement: true,
-			checkNoProof:      true,
+			checkEvidence:     true,
+			wantEvidence:      evidence.ExplicitTop(),
 		},
 		{
 			name:         "non-nil",
@@ -408,9 +416,9 @@ func TestLowerClaimRefinementsApplyIndicatorsWithoutMutatingBaseValues(t *testin
 			if got := product.Get(reg, assigned, testLowerSparseAxisKey); got != testLowerSparseAxisLow {
 				t.Fatalf("assigned sparse axis = %v, want %v", got, testLowerSparseAxisLow)
 			}
-			if tc.checkNoProof {
-				if got := product.Get(reg, assigned, evidence.Key); !evidence.Equal(got, evidence.Top()) {
-					t.Fatalf("assigned evidence = %s, want top", got)
+			if tc.checkEvidence {
+				if got := product.Get(reg, assigned, evidence.Key); !evidence.Equal(got, tc.wantEvidence) {
+					t.Fatalf("assigned evidence = %s, want %s", got, tc.wantEvidence)
 				}
 			}
 			if tc.checkNoRefinement {
@@ -485,7 +493,7 @@ func TestLowerNestedClaimRefinementsApplyCombinedIndicators(t *testing.T) {
 	}
 }
 
-func TestLowerNestedAnyClaimRefinementsStayAssertionOnly(t *testing.T) {
+func TestLowerNestedAnyClaimRefinementsKeepUntrustedTop(t *testing.T) {
 	stmts, _, built, result := parseSemanticChunk(t, `
 local x = 0
 local a, b = (x as any) as number, (x :: any) :: number
@@ -502,13 +510,18 @@ local a, b = (x as any) as number, (x :: any) :: number
 		if !ok {
 			t.Fatalf("missing outer assertion refinement for source ref %d", source.ExprRef)
 		}
-		assertAssertionOnlyProduct(t, outer.Refinement(), assertion.Type())
+		assertClaimRefinementProduct(t, outer.Refinement(), assertion.Type())
 		inner := outer.Source()
 		innerRefinement, ok := facts.ExpressionRefinement(inner.ExprRef)
 		if !ok {
 			t.Fatalf("missing inner any assertion refinement for source ref %d", inner.ExprRef)
 		}
-		assertAssertionOnlyProduct(t, innerRefinement.Refinement(), assertion.Any())
+		if got := product.Get(reg, innerRefinement.Refinement(), assertion.Key); !assertion.Equal(got, assertion.Any()) {
+			t.Fatalf("inner assertion = %s, want any", got)
+		}
+		if got := product.Get(reg, innerRefinement.Refinement(), evidence.Key); !evidence.Equal(got, evidence.ExplicitTop()) {
+			t.Fatalf("inner evidence = %s, want explicit-top", got)
+		}
 		inputValues[innerRefinement.Source().ExprRef] = product.NewWithPresence(reg, product.ShapeTop, presence.Present())
 	}
 
@@ -527,11 +540,12 @@ local a, b = (x as any) as number, (x :: any) :: number
 		}
 		assigned := out.ReadValue(reg, key.SymbolValue(fact.TargetSymbol()))
 		want := product.Set(reg, product.NewWithPresence(reg, product.ShapeTop, presence.Present()), assertion.Key, assertion.Of(assertion.TypeClaim, assertion.AnyClaim))
+		want = product.Set(reg, want, evidence.Key, evidence.ExplicitTop())
 		if !product.Equal(reg, assigned, want) {
-			t.Fatalf("assigned value = %v, want nested type+any claim without extra proof axes", assigned)
+			t.Fatalf("assigned value = %v, want nested type+any claim with explicit-top evidence", assigned)
 		}
-		if got := product.Get(reg, assigned, evidence.Key); !evidence.Equal(got, evidence.Top()) {
-			t.Fatalf("assigned evidence = %v, want top", got)
+		if got := product.Get(reg, assigned, evidence.Key); !evidence.Equal(got, evidence.ExplicitTop()) {
+			t.Fatalf("assigned evidence = %v, want explicit-top", got)
 		}
 	}
 }
@@ -669,7 +683,7 @@ func TestLowerExpandedClaimWrappedCallKeepsPerResultSlotRefinements(t *testing.T
 				if !ok {
 					t.Fatalf("missing refinement for source ref %d", source.ExprRef)
 				}
-				assertAssertionOnlyProduct(t, refinement.Refinement(), tc.want)
+				assertClaimRefinementProduct(t, refinement.Refinement(), tc.want)
 				inner := refinement.Source()
 				if inner.Kind != factflow.ValueSourceCall || inner.ExprRef != innerRef || inner.ResultIndex != resultIndex || inner.CallPoint != points[0] || !inner.HasCallPoint {
 					t.Fatalf("refinement source = %#v, want call ref %d result %d at point %d", inner, innerRef, resultIndex, points[0])

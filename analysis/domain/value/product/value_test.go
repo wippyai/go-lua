@@ -43,12 +43,6 @@ func TestRegistryWithAxesRejectsDuplicateIDs(t *testing.T) {
 	}
 }
 
-func TestValidateRegistryRejectsNil(t *testing.T) {
-	if err := ValidateRegistry(nil); err == nil || !strings.Contains(err.Error(), "registry is required") {
-		t.Fatalf("ValidateRegistry(nil) error = %v, want registry-required error", err)
-	}
-}
-
 func TestProductValuesAreScopedToRegistryIdentity(t *testing.T) {
 	regA := mustRegistry(t, syntheticSpec().Erase())
 	regB := mustRegistry(t, syntheticHighMeetSpec().Erase())
@@ -92,6 +86,58 @@ func TestProductValuesAreScopedToRegistryIdentity(t *testing.T) {
 	mustPanic(t, func() {
 		_ = Set(regB, aLow, syntheticKey, syntheticHigh)
 	})
+}
+
+func TestProductTypedKeyMismatchPanicsDeterministically(t *testing.T) {
+	reg := mustRegistry(t, syntheticSpec().Erase())
+	wrongKey := axis.NewKey[int](syntheticKey.ID())
+
+	mustPanicContaining(t, `product: axis "test.synthetic" has incompatible typed key type`, func() {
+		_ = Get(reg, Top(), wrongKey)
+	})
+	mustPanicContaining(t, `product: axis "test.synthetic" has incompatible typed key type`, func() {
+		_ = Set(reg, Top(), wrongKey, 1)
+	})
+}
+
+func TestBottomIsCachedPerRegistry(t *testing.T) {
+	regA := mustRegistry(t, syntheticSpec().Erase())
+	regB := mustRegistry(t, syntheticSpec().Erase())
+
+	bottomA1 := Bottom(regA)
+	bottomA2 := Bottom(regA)
+	bottomB := Bottom(regB)
+
+	if bottomA1.n == nil || bottomA2.n == nil || bottomB.n == nil {
+		t.Fatalf("Bottom(reg) must return interned nodes")
+	}
+	if bottomA1.n != bottomA2.n {
+		t.Fatalf("Bottom(reg) should reuse the same interned node for one registry")
+	}
+	if bottomA1.n == bottomB.n {
+		t.Fatalf("Bottom(reg) must not cross-share interned nodes between registries")
+	}
+}
+
+func TestFreshRegistryValuesStayIsolatedByPointerIdentity(t *testing.T) {
+	regA := mustRegistry(t, syntheticSpec().Erase())
+	regB := mustRegistry(t, syntheticSpec().Erase())
+
+	a := Set(regA, Top(), syntheticKey, syntheticLow)
+	b := Set(regB, Top(), syntheticKey, syntheticLow)
+
+	if a.n == nil || b.n == nil {
+		t.Fatalf("non-top sparse values must be interned nodes")
+	}
+	if a.n == b.n {
+		t.Fatalf("equivalent registries must not reuse product nodes across registry pointers")
+	}
+	if got := Get(regA, a, syntheticKey); got != syntheticLow {
+		t.Fatalf("regA value = %v, want %v", got, syntheticLow)
+	}
+	if got := Get(regB, b, syntheticKey); got != syntheticLow {
+		t.Fatalf("regB value = %v, want %v", got, syntheticLow)
+	}
 }
 
 func TestProductRegistryRejectsSparseAxisWithoutMeet(t *testing.T) {
@@ -237,6 +283,12 @@ func TestPresenceIsCoreLane(t *testing.T) {
 	if got := PresenceOf(present); !presence.Equal(got, presence.Present()) {
 		t.Fatalf("PresenceOf = %s, want present", got)
 	}
+	if !DefinitelyPresent(present) {
+		t.Fatalf("DefinitelyPresent(present) = false, want true")
+	}
+	if DefinitelyPresent(absent) || DefinitelyPresent(top) {
+		t.Fatalf("DefinitelyPresent should only accept proven-present values")
+	}
 	if Equal(reg, present, absent) {
 		t.Fatalf("different core presence values should not be equal")
 	}
@@ -246,10 +298,10 @@ func TestPresenceIsCoreLane(t *testing.T) {
 	if joined := Join(reg, present, absent); !Equal(reg, joined, top) {
 		t.Fatalf("present join absent should raise core presence to top, got %s", formatValue(joined))
 	}
-	mustPanic(t, func() {
+	mustPanicContaining(t, "product: presence is a core lane; use PresenceOf", func() {
 		_ = Get(reg, present, presence.Key)
 	})
-	mustPanic(t, func() {
+	mustPanicContaining(t, "product: presence is a core lane; use WithPresence", func() {
 		_ = Set(reg, top, presence.Key, presence.Present())
 	})
 
@@ -366,6 +418,38 @@ func TestSparseAxisReducerStillRunsWithRegistryScopedValues(t *testing.T) {
 	if got := Get(reg, v, secondSyntheticKey); got != syntheticHigh {
 		t.Fatalf("reducer mirror axis = %v, want %v", got, syntheticHigh)
 	}
+}
+
+func TestReducerCanUseExplicitPresenceHelpers(t *testing.T) {
+	reg := mustRegistry(t, presenceHelperReducerSpec().Erase())
+
+	v := Set(reg, Top(), syntheticKey, syntheticHigh)
+
+	if ShapeOf(v) != ShapeBottom {
+		t.Fatalf("ShapeOf = %s, want %s", ShapeOf(v), ShapeBottom)
+	}
+	if got := PresenceOf(v); !presence.Equal(got, presence.Absent()) {
+		t.Fatalf("PresenceOf = %s, want absent", got)
+	}
+	if got := Get(reg, v, syntheticKey); got != syntheticLow {
+		t.Fatalf("sparse slot = %v, want %v", got, syntheticLow)
+	}
+}
+
+func TestReducerGenericPresenceAccessPanics(t *testing.T) {
+	t.Run("Get", func(t *testing.T) {
+		reg := mustRegistry(t, presenceGenericGetReducerSpec().Erase())
+		mustPanicContaining(t, "product: presence is a core lane; use presence.Get", func() {
+			_ = Set(reg, Top(), syntheticKey, syntheticLow)
+		})
+	})
+
+	t.Run("Set", func(t *testing.T) {
+		reg := mustRegistry(t, presenceGenericSetReducerSpec().Erase())
+		mustPanicContaining(t, "product: presence is a core lane; use presence.Set", func() {
+			_ = Set(reg, Top(), syntheticKey, syntheticLow)
+		})
+	})
 }
 
 func mustRegistry(t *testing.T, specs ...axis.ErasedSpec) *axis.Registry {
@@ -514,6 +598,37 @@ func syntheticMirrorReducerSpec() axis.Spec[synthetic] {
 			return false
 		}
 		axis.Set(w, secondSyntheticKey, syntheticHigh)
+		return false
+	}
+	return spec
+}
+
+func presenceHelperReducerSpec() axis.Spec[synthetic] {
+	spec := syntheticSpec()
+	spec.Reducer = func(w axis.Writer) bool {
+		if !presence.Equal(presence.Get(w), presence.Top()) {
+			return false
+		}
+		presence.Set(w, presence.Absent())
+		axis.Set(w, syntheticKey, syntheticLow)
+		return false
+	}
+	return spec
+}
+
+func presenceGenericGetReducerSpec() axis.Spec[synthetic] {
+	spec := syntheticSpec()
+	spec.Reducer = func(w axis.Writer) bool {
+		_, _ = axis.Get(w, presence.Key)
+		return false
+	}
+	return spec
+}
+
+func presenceGenericSetReducerSpec() axis.Spec[synthetic] {
+	spec := syntheticSpec()
+	spec.Reducer = func(w axis.Writer) bool {
+		axis.Set(w, presence.Key, presence.Present())
 		return false
 	}
 	return spec

@@ -29,12 +29,18 @@ func (l *lowerer) branchRefinement(fact semantics.BranchConditionFact) (factflow
 		return factflow.NewBranchRefinement(
 			target,
 			l.typedPresenceRefinement(target, presence.Present()), true,
-			factflow.ValueRefinement{}, false,
+			l.falsyAbsentRefinement(), true,
 		), true
 	case branchcond.CheckFalsy:
+		trueValue := factflow.ValueRefinement{}
+		hasTrue := false
+		if len(target.Segments) != 0 {
+			trueValue = l.boolLiteralRefinement(false)
+			hasTrue = true
+		}
 		return factflow.NewBranchRefinement(
 			target,
-			factflow.ValueRefinement{}, false,
+			trueValue, hasTrue,
 			l.typedPresenceRefinement(target, presence.Present()), true,
 		), true
 	case branchcond.CheckLiteralEqual, branchcond.CheckLiteralNot:
@@ -44,6 +50,35 @@ func (l *lowerer) branchRefinement(fact semantics.BranchConditionFact) (factflow
 	default:
 		return factflow.BranchRefinement{}, false
 	}
+}
+
+// branchLenRefinements lowers non-empty / lower-bound length guards into
+// true-edge length-floor facts. A guard such as #xs > 0 raises len(xs) >= 1 on
+// the true edge only; the false edge and merges never carry it.
+func (l *lowerer) branchLenRefinements(fact semantics.BranchConditionFact) []factflow.BranchLenRefinement {
+	if fact.Check.Kind == branchcond.CheckLenGe {
+		if lowered, ok := l.branchLenRefinement(fact.Check); ok {
+			return []factflow.BranchLenRefinement{lowered}
+		}
+		return nil
+	}
+	if fact.Check.Kind != branchcond.CheckNone {
+		return nil
+	}
+	var out []factflow.BranchLenRefinement
+	for _, check := range branchcond.TruthyChecks(fact.Condition, l.bindings) {
+		if lowered, ok := l.branchLenRefinement(check); ok {
+			out = append(out, lowered)
+		}
+	}
+	return out
+}
+
+func (l *lowerer) branchLenRefinement(check branchcond.Check) (factflow.BranchLenRefinement, bool) {
+	if check.Kind != branchcond.CheckLenGe || check.Path.IsEmpty() || check.LenFloor <= 0 {
+		return factflow.BranchLenRefinement{}, false
+	}
+	return factflow.NewBranchLenRefinement(check.Path, check.LenFloor), true
 }
 
 func (l *lowerer) branchRefinements(fact semantics.BranchConditionFact) []factflow.BranchRefinement {

@@ -77,24 +77,21 @@ func TestEquivalentPathKeysRebaseThroughBranchProofs(t *testing.T) {
 	}
 }
 
-func TestDomainCanonicalizesExplicitBottomRefinement(t *testing.T) {
+func TestRefinementMustJoinDropsOneSidedEntry(t *testing.T) {
 	reg := standard.Registry()
 	domain := Domain(reg)
-	bottom := product.Bottom(reg)
-	explicit := Lane{
+	present := product.Top()
+	oneSided := Lane{
 		refinements: map[pathdom.PathKey]product.Value{
-			pathdom.PathKey("sym1@1.field"): bottom,
+			pathdom.PathKey("sym1@1.field"): present,
 		},
 	}
 
-	if !domain.Equal(explicit, Lane{}) {
-		t.Fatalf("explicit bottom refinement should equal absence")
-	}
-	joined := domain.Join(explicit, Lane{})
+	joined := domain.Join(oneSided, Lane{})
 	if !domain.Equal(joined, Lane{}) {
-		t.Fatalf("Join should canonicalize bottom refinement away")
+		t.Fatalf("must join should drop a refinement absent on the other edge")
 	}
 	if len(joined.refinements) != 0 {
-		t.Fatalf("Join kept bottom refinements: %d", len(joined.refinements))
+		t.Fatalf("must join kept one-sided refinement: %d", len(joined.refinements))
 	}
 }

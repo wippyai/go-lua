@@ -10,11 +10,113 @@ import (
 )
 
 type callOutcomePresenceTargets struct {
-	triggerTarget factflow.CallResultTarget
-	target        factflow.CallResultTarget
+	callPoint     cfg.Point
+	triggerTarget callOutcomeResultTargetView
+	target        callOutcomeResultTargetView
 	triggerAssign cfg.Point
 	targetAssign  cfg.Point
 	establish     cfg.Point
+}
+
+type callOutcomeResultTargetView struct {
+	target factflow.CallResultTargetView
+}
+
+func newCallOutcomeResultTargetView(target factflow.CallResultTargetView) callOutcomeResultTargetView {
+	return callOutcomeResultTargetView{
+		target: target,
+	}
+}
+
+type callOutcomeAssignmentKey struct {
+	callPoint   cfg.Point
+	resultIndex int
+	targetIndex int
+	targetPath  pathdom.PathKey
+}
+
+type callOutcomeActiveInKey struct {
+	callPoint     cfg.Point
+	triggerIndex  int
+	targetIndex   int
+	triggerAssign cfg.Point
+	targetAssign  cfg.Point
+	triggerPath   pathdom.PathKey
+	targetPath    pathdom.PathKey
+}
+
+type callOutcomeTraversalCache struct {
+	rpo                []cfg.Point
+	pointOrder         map[cfg.Point]int
+	targetsByCallPoint map[cfg.Point][]callOutcomeResultTargetView
+	assignmentPoints   map[callOutcomeAssignmentKey]cfg.Point
+	activeIn           map[callOutcomeActiveInKey]map[cfg.Point]bool
+}
+
+func (c *callOutcomeTraversalCache) graphRPO(graph cfg.Graph) []cfg.Point {
+	if graph == nil {
+		return nil
+	}
+	if c.rpo == nil {
+		c.rpo = graph.RPO()
+	}
+	return c.rpo
+}
+
+func (c *callOutcomeTraversalCache) graphPointOrder(graph cfg.Graph) map[cfg.Point]int {
+	if graph == nil {
+		return nil
+	}
+	if c.pointOrder == nil {
+		rpo := c.graphRPO(graph)
+		c.pointOrder = make(map[cfg.Point]int, len(rpo))
+		for i, point := range rpo {
+			c.pointOrder[point] = i
+		}
+	}
+	return c.pointOrder
+}
+
+func (c *callOutcomeTraversalCache) resultTargets(callPoint cfg.Point, site factflow.CallSiteView) []callOutcomeResultTargetView {
+	if c.targetsByCallPoint != nil {
+		if targets, ok := c.targetsByCallPoint[callPoint]; ok {
+			return targets
+		}
+	} else {
+		c.targetsByCallPoint = make(map[cfg.Point][]callOutcomeResultTargetView)
+	}
+	if site.ResultTargetCount() == 0 {
+		c.targetsByCallPoint[callPoint] = nil
+		return nil
+	}
+	targets := make([]callOutcomeResultTargetView, 0, site.ResultTargetCount())
+	site.ForEachResultTarget(func(target factflow.CallResultTargetView) bool {
+		targets = append(targets, newCallOutcomeResultTargetView(target))
+		return true
+	})
+	c.targetsByCallPoint[callPoint] = targets
+	return targets
+}
+
+func callOutcomeTargetForResult(targets []callOutcomeResultTargetView, resultIndex int) (callOutcomeResultTargetView, bool) {
+	if resultIndex < 0 {
+		return callOutcomeResultTargetView{}, false
+	}
+	for _, target := range targets {
+		if target.target.ResultIndex() == resultIndex {
+			return target, true
+		}
+	}
+	return callOutcomeResultTargetView{}, false
+}
+
+func callOutcomeRelatableTarget(target callOutcomeResultTargetView) bool {
+	switch target.target.Kind() {
+	case factflow.CallResultTargetLocalAssignment, factflow.CallResultTargetOrdinaryAssignment:
+		return target.target.TargetSymbol() != 0 && !target.target.TargetPathEmpty()
+	default:
+		return false
+	}
 }
 
 func applyCallOutcomeEdgeFacts(
@@ -28,11 +130,14 @@ func applyCallOutcomeEdgeFacts(
 	if outcomeProvider == nil || ctx.Graph == nil || !ctx.HasCond {
 		return out
 	}
-	for _, callPoint := range ctx.Graph.RPO() {
-		site, ok := facts.CallSite(callPoint)
+	cache := &callOutcomeTraversalCache{}
+	for _, callPoint := range cache.graphRPO(ctx.Graph) {
+		siteView, ok := facts.CallSiteView(callPoint)
 		if !ok {
 			continue
 		}
+		targets := cache.resultTargets(callPoint, siteView)
+		site := siteView.CallSite()
 		outcome := outcomeProvider(transfer.NodeContext{
 			Graph:    ctx.Graph,
 			Registry: ctx.Registry,
@@ -44,7 +149,7 @@ func applyCallOutcomeEdgeFacts(
 			out = applyCallReturnConditionRefinements(ctx, facts, resolver, callPoint, site, outcome, out)
 		}
 		if len(outcome.ReturnPresenceRelations) != 0 {
-			out = applyCallReturnPresenceRelations(ctx, facts, resolver, branchRefinements, callPoint, site, outcome, out)
+			out = applyCallReturnPresenceRelations(ctx, facts, cache, resolver, branchRefinements, callPoint, targets, outcome, out)
 		}
 	}
 	return out
@@ -90,10 +195,11 @@ func applyCallReturnConditionRefinements(
 func applyCallReturnPresenceRelations(
 	ctx transfer.EdgeContext,
 	facts factflow.Facts,
+	cache *callOutcomeTraversalCache,
 	resolver *visibility.Resolver,
 	branchRefinements []factflow.BranchRefinement,
 	callPoint cfg.Point,
-	site factflow.CallSite,
+	targets []callOutcomeResultTargetView,
 	outcome CallOutcome,
 	out state.State,
 ) state.State {
@@ -101,7 +207,7 @@ func applyCallReturnPresenceRelations(
 		return out
 	}
 	for _, relation := range outcome.ReturnPresenceRelations {
-		out = applyCallReturnPresenceRelation(ctx, facts, resolver, branchRefinements, callPoint, site, relation, out)
+		out = applyCallReturnPresenceRelation(ctx, facts, cache, resolver, branchRefinements, callPoint, targets, relation, out)
 	}
 	return out
 }
@@ -109,44 +215,46 @@ func applyCallReturnPresenceRelations(
 func applyCallReturnPresenceRelation(
 	ctx transfer.EdgeContext,
 	facts factflow.Facts,
+	cache *callOutcomeTraversalCache,
 	resolver *visibility.Resolver,
 	branchRefinements []factflow.BranchRefinement,
 	callPoint cfg.Point,
-	site factflow.CallSite,
+	targets []callOutcomeResultTargetView,
 	relation CallReturnPresenceRelation,
 	out state.State,
 ) state.State {
-	triggerTarget, ok := callOutcomeTargetForResult(site, relation.TriggerIndex)
+	triggerTarget, ok := callOutcomeTargetForResult(targets, relation.TriggerIndex)
 	if !ok || !callOutcomeRelatableTarget(triggerTarget) {
 		return out
 	}
-	target, ok := callOutcomeTargetForResult(site, relation.TargetIndex)
+	target, ok := callOutcomeTargetForResult(targets, relation.TargetIndex)
 	if !ok || !callOutcomeRelatableTarget(target) {
 		return out
 	}
-	triggerAssign, ok := callOutcomeResultAssignmentPoint(ctx.Graph, facts, callPoint, triggerTarget, relation.TriggerIndex)
+	triggerAssign, ok := callOutcomeResultAssignmentPoint(cache, ctx.Graph, facts, callPoint, triggerTarget, relation.TriggerIndex)
 	if !ok {
 		return out
 	}
-	targetAssign, ok := callOutcomeResultAssignmentPoint(ctx.Graph, facts, callPoint, target, relation.TargetIndex)
+	targetAssign, ok := callOutcomeResultAssignmentPoint(cache, ctx.Graph, facts, callPoint, target, relation.TargetIndex)
 	if !ok {
 		return out
 	}
-	targets := callOutcomePresenceTargets{
+	relationTargets := callOutcomePresenceTargets{
+		callPoint:     callPoint,
 		triggerTarget: triggerTarget,
 		target:        target,
 		triggerAssign: triggerAssign,
 		targetAssign:  targetAssign,
-		establish:     callOutcomeLaterPoint(ctx.Graph, targetAssign, triggerAssign),
+		establish:     callOutcomeLaterPoint(cache, ctx.Graph, targetAssign, triggerAssign),
 	}
-	activeIn := callOutcomeRelationActiveIn(ctx.Graph, facts, targets)
+	activeIn := callOutcomeRelationActiveIn(cache, ctx.Graph, facts, relationTargets)
 	if !activeIn[ctx.Edge.From] || !callOutcomeBranchRefinesPath(branchRefinements, triggerTarget) {
 		return out
 	}
 	branchRelation := factflow.NewBranchPresenceRelation(
-		triggerTarget.TargetPath(),
+		triggerTarget.target.TargetPath(),
 		relation.TriggerPresence,
-		target.TargetPath(),
+		target.target.TargetPath(),
 		relation.TargetPresence,
 	)
 	refinement, ok := branchPresenceRelationRefinement(ctx, resolver, out, branchRefinements, branchRelation)
@@ -174,48 +282,46 @@ func callOutcomeConditionBranchPoint(graph cfg.Graph, point cfg.Point) (cfg.Poin
 	return branch, true
 }
 
-func callOutcomeTargetForResult(site factflow.CallSite, resultIndex int) (factflow.CallResultTarget, bool) {
-	if resultIndex < 0 {
-		return factflow.CallResultTarget{}, false
-	}
-	for _, target := range site.ResultTargets() {
-		if target.ResultIndex() == resultIndex {
-			return target, true
-		}
-	}
-	return factflow.CallResultTarget{}, false
-}
-
-func callOutcomeRelatableTarget(target factflow.CallResultTarget) bool {
-	switch target.Kind() {
-	case factflow.CallResultTargetLocalAssignment, factflow.CallResultTargetOrdinaryAssignment:
-		return target.TargetSymbol() != 0 && !target.TargetPath().IsEmpty()
-	default:
-		return false
-	}
-}
-
 func callOutcomeResultAssignmentPoint(
+	cache *callOutcomeTraversalCache,
 	graph cfg.Graph,
 	facts factflow.Facts,
 	callPoint cfg.Point,
-	target factflow.CallResultTarget,
+	target callOutcomeResultTargetView,
 	resultIndex int,
 ) (cfg.Point, bool) {
-	for _, point := range graph.RPO() {
+	if cache == nil {
+		cache = &callOutcomeTraversalCache{}
+	}
+	key := callOutcomeAssignmentKey{
+		callPoint:   callPoint,
+		resultIndex: resultIndex,
+		targetIndex: target.target.Index(),
+		targetPath:  target.target.TargetPathKey(),
+	}
+	if cache.assignmentPoints != nil {
+		if point, ok := cache.assignmentPoints[key]; ok {
+			return point, point != 0
+		}
+	} else {
+		cache.assignmentPoints = make(map[callOutcomeAssignmentKey]cfg.Point)
+	}
+	for _, point := range cache.graphRPO(graph) {
 		if assignment, ok := facts.RootAssignment(point); ok &&
-			assignment.TargetPath().Equal(target.TargetPath()) &&
-			callOutcomeValueSourceConsumesResult(assignment.Source(), callPoint, target, resultIndex) {
+			target.target.TargetPathEqual(assignment.TargetPath()) &&
+			callOutcomeValueSourceConsumesResult(assignment.Source(), callPoint, target.target, resultIndex) {
+			cache.assignmentPoints[key] = point
 			return point, true
 		}
 	}
+	cache.assignmentPoints[key] = 0
 	return 0, false
 }
 
 func callOutcomeValueSourceConsumesResult(
 	source factflow.ValueSource,
 	callPoint cfg.Point,
-	target factflow.CallResultTarget,
+	target factflow.CallResultTargetView,
 	resultIndex int,
 ) bool {
 	if source.Kind != factflow.ValueSourceCall || !source.HasCallPoint || source.CallPoint != callPoint {
@@ -227,8 +333,8 @@ func callOutcomeValueSourceConsumesResult(
 	return source.TargetIndex == target.Index()
 }
 
-func callOutcomeLaterPoint(graph cfg.Graph, first, second cfg.Point) cfg.Point {
-	order := callOutcomePointOrder(graph)
+func callOutcomeLaterPoint(cache *callOutcomeTraversalCache, graph cfg.Graph, first, second cfg.Point) cfg.Point {
+	order := callOutcomePointOrder(cache, graph)
 	if order[second] > order[first] {
 		return second
 	}
@@ -236,11 +342,31 @@ func callOutcomeLaterPoint(graph cfg.Graph, first, second cfg.Point) cfg.Point {
 }
 
 func callOutcomeRelationActiveIn(
+	cache *callOutcomeTraversalCache,
 	graph cfg.Graph,
 	facts factflow.Facts,
 	targets callOutcomePresenceTargets,
 ) map[cfg.Point]bool {
-	rpo := graph.RPO()
+	if cache == nil {
+		cache = &callOutcomeTraversalCache{}
+	}
+	key := callOutcomeActiveInKey{
+		callPoint:     targets.callPoint,
+		triggerIndex:  targets.triggerTarget.target.Index(),
+		targetIndex:   targets.target.target.Index(),
+		triggerAssign: targets.triggerAssign,
+		targetAssign:  targets.targetAssign,
+		triggerPath:   targets.triggerTarget.target.TargetPathKey(),
+		targetPath:    targets.target.target.TargetPathKey(),
+	}
+	if cache.activeIn != nil {
+		if activeIn, ok := cache.activeIn[key]; ok {
+			return activeIn
+		}
+	} else {
+		cache.activeIn = make(map[callOutcomeActiveInKey]map[cfg.Point]bool)
+	}
+	rpo := cache.graphRPO(graph)
 	activeIn := make(map[cfg.Point]bool, len(rpo))
 	activeOut := make(map[cfg.Point]bool, len(rpo))
 	for changed := true; changed; {
@@ -264,6 +390,7 @@ func callOutcomeRelationActiveIn(
 			}
 		}
 	}
+	cache.activeIn[key] = activeIn
 	return activeIn
 }
 
@@ -298,27 +425,47 @@ func callOutcomeRelationKilledAt(
 }
 
 func callOutcomeRelationTargetPath(targetPath pathdom.Path, targets callOutcomePresenceTargets) bool {
-	return targetPath.Equal(targets.target.TargetPath()) || targetPath.Equal(targets.triggerTarget.TargetPath())
+	return targets.target.target.TargetPathEqual(targetPath) || targets.triggerTarget.target.TargetPathEqual(targetPath)
 }
 
 func callOutcomeBranchRefinesPath(
 	branchRefinements []factflow.BranchRefinement,
-	target factflow.CallResultTarget,
+	target callOutcomeResultTargetView,
 ) bool {
-	targetPath := target.TargetPath()
 	for _, refinement := range branchRefinements {
-		if refinement.TargetPath().Equal(targetPath) {
+		if pathsMatchForBranchRelation(refinement.TargetPath(), target.target.TargetPath()) {
 			return true
 		}
 	}
 	return false
 }
 
-func callOutcomePointOrder(graph cfg.Graph) map[cfg.Point]int {
-	rpo := graph.RPO()
-	out := make(map[cfg.Point]int, len(rpo))
-	for i, point := range rpo {
-		out[point] = i
+func pathsMatchForBranchRelation(left, right pathdom.Path) bool {
+	if left.Symbol != 0 || right.Symbol != 0 {
+		if left.Symbol != right.Symbol {
+			return false
+		}
+		if left.Version != 0 && right.Version != 0 && left.Version != right.Version {
+			return false
+		}
+	} else if left.Root != right.Root {
+		return false
 	}
-	return out
+	if len(left.Segments) != len(right.Segments) {
+		return false
+	}
+	for i := range left.Segments {
+		lseg, rseg := left.Segments[i], right.Segments[i]
+		if lseg.Kind != rseg.Kind || lseg.Name != rseg.Name || lseg.Index != rseg.Index {
+			return false
+		}
+	}
+	return true
+}
+
+func callOutcomePointOrder(cache *callOutcomeTraversalCache, graph cfg.Graph) map[cfg.Point]int {
+	if cache == nil {
+		cache = &callOutcomeTraversalCache{}
+	}
+	return cache.graphPointOrder(graph)
 }

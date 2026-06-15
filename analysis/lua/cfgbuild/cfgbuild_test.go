@@ -8,6 +8,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/cfgfacts"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/compiler/ast"
+	"github.com/wippyai/go-lua/compiler/parse"
 )
 
 func ident(name string) *ast.IdentExpr {
@@ -251,6 +252,53 @@ func TestBuildFunctionParamsBecomeLeadingAssignments(t *testing.T) {
 	requireEdge(t, graph, graph.Entry(), assigns[0], false)
 	requireEdge(t, graph, assigns[0], assigns[1], false)
 	requireEdge(t, graph, assigns[1], graph.Exit(), false)
+}
+
+func TestBuildFunctionAllowsChannelReceiveMultiAssign(t *testing.T) {
+	receive := &ast.FuncCallExpr{
+		Receiver: ident("ch"),
+		Method:   "receive",
+	}
+	stmt := localAssign([]string{"value", "ok"}, receive)
+	fn := function([]string{"ch"}, stmt, &ast.IfStmt{
+		Condition: ident("ok"),
+		Then: []ast.Stmt{
+			localAssign([]string{"id"}, dot(ident("value"), "id")),
+		},
+	})
+	bindings := bind.BindFunction(fn, bind.Options{})
+
+	result := BuildFunction(fn, bindings)
+	if result == nil || result.Graph == nil {
+		t.Fatal("BuildFunction returned nil for channel receive multi-assign")
+	}
+	assigns := pointsOfKind(result.Graph, cfg.NodeAssign)
+	if len(assigns) < 4 {
+		t.Fatalf("assign points = %v, want params, receive result assignments, and branch local", assigns)
+	}
+}
+
+func TestBuildParsedFunctionAllowsChannelReceiveMultiAssign(t *testing.T) {
+	stmts, err := parse.ParseString(`
+local function handle(ch)
+	local value, ok = ch:receive()
+	if ok then
+		local id = value.id
+	end
+end
+`, "test.lua")
+	if err != nil {
+		t.Fatalf("ParseString: %v", err)
+	}
+	bindings := bind.BindChunk(stmts, bind.Options{})
+	functions := bindings.NestedFunctions(nil)
+	if len(functions) != 1 {
+		t.Fatalf("nested functions = %d, want 1", len(functions))
+	}
+	result := BuildFunction(functions[0], bindings)
+	if result == nil || result.Graph == nil {
+		t.Fatal("BuildFunction returned nil for parsed channel receive multi-assign")
+	}
 }
 
 func TestBuildRequiresBindings(t *testing.T) {
@@ -826,6 +874,113 @@ func TestBuildChunkConditionCallPrecedesIfBranch(t *testing.T) {
 	requireEdge(t, graph, graph.Entry(), callPoint, false)
 	requireEdge(t, graph, callPoint, branch, false)
 	requireEdge(t, graph, branch, thenAssign, true)
+}
+
+func TestBuildChunkNestedLogicalConditionCallPrecedesIfBranch(t *testing.T) {
+	canAccessCall := &ast.FuncCallExpr{Func: ident("can_access"), Args: []ast.Expr{ident("page")}}
+	condition := &ast.LogicalOpExpr{
+		Operator: "and",
+		Lhs:      ident("mr"),
+		Rhs: &ast.LogicalOpExpr{
+			Operator: "or",
+			Lhs:      &ast.UnaryNotOpExpr{Expr: dot(ident("page"), "secure")},
+			Rhs:      canAccessCall,
+		},
+	}
+	thenStmt := localAssign([]string{"thenValue"}, number("1"))
+	stmt := &ast.IfStmt{
+		Condition: condition,
+		Then:      []ast.Stmt{thenStmt},
+	}
+	stmts := []ast.Stmt{stmt}
+	bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"can_access", "mr", "page"}})
+	result := BuildChunk(stmts, bindings)
+	if result == nil || result.Graph == nil {
+		t.Fatalf("BuildChunk returned nil")
+	}
+	graph := result.Graph
+
+	points := requireStmtPoints(t, result, stmt, 2)
+	callPoint, branch := points[0], points[1]
+	requirePointKind(t, graph, callPoint, cfg.NodeCall)
+	requirePointKind(t, graph, branch, cfg.NodeBranch)
+
+	thenAssign := nodeWithTarget(t, graph, result.Meta, mustLocalAt(t, bindings, thenStmt, 0), 0)
+	requireEdge(t, graph, graph.Entry(), callPoint, false)
+	requireEdge(t, graph, callPoint, branch, false)
+	requireEdge(t, graph, branch, thenAssign, true)
+}
+
+func TestBuildChunkValueShortCircuitOrRHSCallUsesConditionalPath(t *testing.T) {
+	makeCall := &ast.FuncCallExpr{Func: ident("make")}
+	stmt := localAssign([]string{"x"}, &ast.LogicalOpExpr{
+		Operator: "or",
+		Lhs:      ident("cached"),
+		Rhs:      makeCall,
+	})
+	stmts := []ast.Stmt{stmt}
+	bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"cached", "make"}})
+	result := BuildChunk(stmts, bindings)
+	if result == nil || result.Graph == nil {
+		t.Fatalf("BuildChunk returned nil")
+	}
+	graph := result.Graph
+
+	points := requireStmtPoints(t, result, stmt, 2)
+	callPoint, assignPoint := points[0], points[1]
+	requirePointKind(t, graph, callPoint, cfg.NodeCall)
+	requirePointKind(t, graph, assignPoint, cfg.NodeAssign)
+	branches := pointsOfKind(graph, cfg.NodeBranch)
+	if len(branches) != 1 {
+		t.Fatalf("branch nodes = %v, want one short-circuit branch", branches)
+	}
+	joins := pointsOfKind(graph, cfg.NodeJoin)
+	if len(joins) != 1 {
+		t.Fatalf("join nodes = %v, want one short-circuit join", joins)
+	}
+	branch, join := branches[0], joins[0]
+
+	requireEdge(t, graph, graph.Entry(), branch, false)
+	requireEdge(t, graph, branch, join, true)
+	requireEdge(t, graph, branch, callPoint, false)
+	requireEdge(t, graph, callPoint, join, false)
+	requireEdge(t, graph, join, assignPoint, false)
+}
+
+func TestBuildChunkValueShortCircuitAndRHSCallUsesConditionalPath(t *testing.T) {
+	makeCall := &ast.FuncCallExpr{Func: ident("make")}
+	stmt := localAssign([]string{"y"}, &ast.LogicalOpExpr{
+		Operator: "and",
+		Lhs:      ident("guard"),
+		Rhs:      makeCall,
+	})
+	stmts := []ast.Stmt{stmt}
+	bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"guard", "make"}})
+	result := BuildChunk(stmts, bindings)
+	if result == nil || result.Graph == nil {
+		t.Fatalf("BuildChunk returned nil")
+	}
+	graph := result.Graph
+
+	points := requireStmtPoints(t, result, stmt, 2)
+	callPoint, assignPoint := points[0], points[1]
+	requirePointKind(t, graph, callPoint, cfg.NodeCall)
+	requirePointKind(t, graph, assignPoint, cfg.NodeAssign)
+	branches := pointsOfKind(graph, cfg.NodeBranch)
+	if len(branches) != 1 {
+		t.Fatalf("branch nodes = %v, want one short-circuit branch", branches)
+	}
+	joins := pointsOfKind(graph, cfg.NodeJoin)
+	if len(joins) != 1 {
+		t.Fatalf("join nodes = %v, want one short-circuit join", joins)
+	}
+	branch, join := branches[0], joins[0]
+
+	requireEdge(t, graph, graph.Entry(), branch, false)
+	requireEdge(t, graph, branch, callPoint, true)
+	requireEdge(t, graph, branch, join, false)
+	requireEdge(t, graph, callPoint, join, false)
+	requireEdge(t, graph, join, assignPoint, false)
 }
 
 func TestBuildChunkWhileConditionCallBackedgeReevaluatesCall(t *testing.T) {
@@ -1822,7 +1977,7 @@ func TestBuildChunkBreakInsideRepeatReachesJoinPath(t *testing.T) {
 	requireEdge(t, graph, join, afterAssign, false)
 }
 
-func TestBuildChunkMemberFunctionDefinitionCreatesMetadataNoop(t *testing.T) {
+func TestBuildChunkMemberFunctionDefinitionCreatesAssignment(t *testing.T) {
 	tests := []struct {
 		name string
 		stmt *ast.FuncDefStmt
@@ -1848,18 +2003,19 @@ func TestBuildChunkMemberFunctionDefinitionCreatesMetadataNoop(t *testing.T) {
 			moduleDecl := localAssign([]string{"module"}, &ast.TableExpr{})
 			bodyStmt := localAssign([]string{"inside"}, number("1"))
 			tt.stmt.Func.Stmts = []ast.Stmt{bodyStmt}
-			stmts := []ast.Stmt{moduleDecl, tt.stmt, &ast.ReturnStmt{Exprs: []ast.Expr{ident("module")}}}
+			stmts := []ast.Stmt{moduleDecl, tt.stmt}
 			bindings := bind.BindChunk(stmts, bind.Options{})
 			result := BuildChunk(stmts, bindings)
 			if result == nil || result.Graph == nil {
 				t.Fatalf("BuildChunk returned nil for %s", tt.name)
 			}
 			points := requireStmtPoints(t, result, tt.stmt, 1)
-			requirePointKind(t, result.Graph, points[0], cfg.NodeNoop)
-			if fact, ok := result.Meta.Assignment(points[0]); ok {
-				t.Fatalf("member function definition produced assignment fact %#v", fact)
+			requirePointKind(t, result.Graph, points[0], cfg.NodeAssign)
+			moduleID := mustLocalAt(t, bindings, moduleDecl, 0)
+			if fact, ok := result.Meta.Assignment(points[0]); !ok || fact.Target != moduleID {
+				t.Fatalf("member function assignment fact = %#v/%v, want target %d", fact, ok, moduleID)
 			}
-			requireTargetCount(t, result.Graph, result.Meta, mustLocalAt(t, bindings, moduleDecl, 0), 1)
+			requireTargetCount(t, result.Graph, result.Meta, moduleID, 2)
 			requireTargetCount(t, result.Graph, result.Meta, mustLocalAt(t, bindings, bodyStmt, 0), 0)
 			if got := result.StmtPoints.PointsFor(bodyStmt); len(got) != 0 {
 				t.Fatalf("nested member function body statement mapped to parent CFG points %v", got)
@@ -1880,7 +2036,6 @@ func TestBuildChunkUnsupportedFunctionDefinitionTargetsReturnNil(t *testing.T) {
 	stmts := []ast.Stmt{
 		localAssign([]string{"module"}, &ast.TableExpr{}),
 		stmt,
-		&ast.ReturnStmt{Exprs: []ast.Expr{ident("module")}},
 	}
 	bindings := bind.BindChunk(stmts, bind.Options{})
 	if result := BuildChunk(stmts, bindings); result != nil {
@@ -1900,30 +2055,6 @@ func TestBuildChunkUnsupportedExpressionCoverageReturnsNil(t *testing.T) {
 				Key:       &ast.StringExpr{Value: "field"},
 				KeySyntax: ast.AttrKeyDot,
 			}}, number("1")),
-		},
-		{
-			name: "nested condition comparison call",
-			stmt: &ast.IfStmt{Condition: &ast.RelationalOpExpr{
-				Operator: "==",
-				Lhs:      &ast.FuncCallExpr{Func: ident("ready")},
-				Rhs:      &ast.TrueExpr{},
-			}},
-		},
-		{
-			name: "short circuit rhs call",
-			stmt: localAssign([]string{"x"}, &ast.LogicalOpExpr{
-				Operator: "and",
-				Lhs:      ident("ok"),
-				Rhs:      &ast.FuncCallExpr{Func: ident("value")},
-			}),
-		},
-		{
-			name: "short circuit lhs call",
-			stmt: localAssign([]string{"x"}, &ast.LogicalOpExpr{
-				Operator: "or",
-				Lhs:      &ast.FuncCallExpr{Func: ident("value")},
-				Rhs:      ident("fallback"),
-			}),
 		},
 		{
 			name: "number for init call",

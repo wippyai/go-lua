@@ -74,36 +74,39 @@ func buildCallFact(sourceStmt ast.Stmt, callStmt *ast.FuncCallStmt, context Call
 	final, allowExpansion, openTail := callListFlags(context, exprs, exprIndex)
 	expanded, adjusted, shapedOpenTail := sourceprovenance.ValueShape(call, final, allowExpansion, openTail)
 	calleePath, hasCalleePath, receiverPath, hasReceiverPath, methodPath, hasMethodPath := resolveCallPaths(call, bindings)
+	receiverSource, hasReceiverSource := methodReceiverSource(call, hasReceiverPath, resolver)
 	calleeSymbol, hasCalleeSymbol := symbol.ID(0), false
 	if hasCalleePath && calleePath.Symbol != 0 {
 		calleeSymbol = calleePath.Symbol
 		hasCalleeSymbol = true
 	}
 	fact := CallFact{
-		Stmt:            callStmt,
-		SourceStmt:      sourceStmt,
-		Context:         context,
-		Call:            call,
-		ExprIndex:       exprIndex,
-		Final:           final,
-		Expanded:        expanded,
-		Adjusted:        adjusted,
-		OpenTail:        shapedOpenTail,
-		Func:            call.Func,
-		Receiver:        call.Receiver,
-		Method:          call.Method,
-		Args:            copyExprs(call.Args),
-		TypeArgs:        copyTypeExprs(call.TypeArgs),
-		ArgumentSources: argumentValueSources(call.Args, resolver),
-		CalleePath:      calleePath,
-		HasCalleePath:   hasCalleePath,
-		ReceiverPath:    receiverPath,
-		HasReceiverPath: hasReceiverPath,
-		MethodPath:      methodPath,
-		HasMethodPath:   hasMethodPath,
-		ResultTargets:   callResultTargets(context, sourceStmt, exprIndex, adjusted, expanded, shapedOpenTail, assignmentTargets),
-		CalleeSymbol:    calleeSymbol,
-		HasCalleeSymbol: hasCalleeSymbol,
+		Stmt:              callStmt,
+		SourceStmt:        sourceStmt,
+		Context:           context,
+		Call:              call,
+		ExprIndex:         exprIndex,
+		Final:             final,
+		Expanded:          expanded,
+		Adjusted:          adjusted,
+		OpenTail:          shapedOpenTail,
+		Func:              call.Func,
+		Receiver:          call.Receiver,
+		Method:            call.Method,
+		Args:              copyExprs(call.Args),
+		TypeArgs:          copyTypeExprs(call.TypeArgs),
+		ArgumentSources:   argumentValueSources(call.Args, resolver),
+		CalleePath:        calleePath,
+		HasCalleePath:     hasCalleePath,
+		ReceiverPath:      receiverPath,
+		HasReceiverPath:   hasReceiverPath,
+		MethodPath:        methodPath,
+		HasMethodPath:     hasMethodPath,
+		ReceiverSource:    receiverSource,
+		HasReceiverSource: hasReceiverSource,
+		ResultTargets:     callResultTargets(context, sourceStmt, exprIndex, adjusted, expanded, shapedOpenTail, assignmentTargets),
+		CalleeSymbol:      calleeSymbol,
+		HasCalleeSymbol:   hasCalleeSymbol,
 	}
 	if selectFact, ok := channelSelectFact(fact, bindings); ok {
 		fact.ChannelSelect = selectFact
@@ -144,6 +147,23 @@ func resolveCallPaths(call *ast.FuncCallExpr, bindings *bind.Result) (path.Path,
 	}
 	calleePath, hasCalleePath := pathexpr.Resolve(call.Func, bindings)
 	return calleePath, hasCalleePath, path.Path{}, false, path.Path{}, false
+}
+
+// methodReceiverSource materializes a value source for a colon-method call's
+// receiver expression when the receiver is not a resolvable symbol path (an
+// anonymous prior call result or other expression). The receiver path already
+// covers symbol receivers, so this only supplements the call-result receiver
+// case, letting the callee value provider read the receiver's value to resolve
+// the method member.
+func methodReceiverSource(call *ast.FuncCallExpr, hasReceiverPath bool, resolver sourceprovenance.CallPointResolver) (sourceprovenance.ASTSource, bool) {
+	if call == nil || call.Receiver == nil || call.Method == "" || hasReceiverPath {
+		return sourceprovenance.ASTSource{}, false
+	}
+	source := sourceprovenance.SourceForExpr(call.Receiver, 0, 0, 0, true, false, resolver)
+	if source.Kind == sourceprovenance.SourceNil {
+		return sourceprovenance.ASTSource{}, false
+	}
+	return source, true
 }
 
 func callResultTargets(context CallContextKind, sourceStmt ast.Stmt, exprIndex int, adjusted, expanded, openTail bool, assignmentTargets []CallResultTarget) []CallResultTarget {

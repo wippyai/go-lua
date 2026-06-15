@@ -7,6 +7,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/annotation"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/analysis/type/typeexpr"
 	"github.com/wippyai/go-lua/compiler/parse"
 )
 
@@ -26,7 +27,7 @@ func FuzzManifestToValidation(f *testing.F) {
 	}{
 		{"Num", typ.Number},
 		{"Pt", typetable.NewRecord().Field("x", typ.Number).Build()},
-		{"Opt", typ.NewOptional(typ.String)},
+		{"Opt", typeexpr.Optional(typ.String)},
 		{"Arr", typ.NewArray(typ.Number)},
 	} {
 		m := typemanifest.New("m")
@@ -93,11 +94,11 @@ func FuzzManifestToValidation(f *testing.F) {
 func FuzzTypeDecodeToValidation(f *testing.F) {
 	seeds := []typ.Type{
 		typ.Number, typ.String, typ.Boolean,
-		typ.NewOptional(typ.Number),
+		typeexpr.Optional(typ.Number),
 		typ.NewArray(typ.String),
 		typ.NewMap(typ.String, typ.Number),
 		typetable.NewRecord().Field("x", typ.Number).OptField("y", typ.String).Build(),
-		typ.NewUnion(typ.Number, typ.String),
+		typeexpr.Union(typ.Number, typ.String),
 		typ.LiteralString("active"),
 		typ.NewInterface("table", nil),
 		typ.NewTuple(typ.Number, typ.String),
@@ -278,7 +279,7 @@ func FuzzLuaWithManifestTypes(f *testing.F) {
 		Field("x", typ.Number).
 		Field("y", typ.Number).
 		Build())
-	manifest.DefineType("Status", typ.NewUnion(
+	manifest.DefineType("Status", typeexpr.Union(
 		typ.LiteralString("active"),
 		typ.LiteralString("draft"),
 		typ.LiteralString("archived"),

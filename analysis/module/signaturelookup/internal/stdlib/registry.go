@@ -12,6 +12,8 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/effect/postcondition"
 	"github.com/wippyai/go-lua/analysis/domain/effect/returns"
 	"github.com/wippyai/go-lua/analysis/domain/effect/signature"
+	"github.com/wippyai/go-lua/analysis/type/normalize"
+	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
@@ -19,6 +21,7 @@ const (
 	Assert      = "assert"
 	Error       = "error"
 	Require     = "require"
+	ToString    = "tostring"
 	Type        = "type"
 	Pairs       = "pairs"
 	IPairs      = "ipairs"
@@ -55,6 +58,13 @@ var registry = map[string]signature.Function{
 			Build(),
 		dispatch.ModuleLoad{},
 		control.Throw{},
+	),
+	ToString: sig(
+		typ.Func().
+			Param("v", typ.Any).
+			Returns(typ.String).
+			Build(),
+		ownership.BorrowAll{},
 	),
 	Type: sig(
 		typ.Func().
@@ -109,6 +119,114 @@ var registry = map[string]signature.Function{
 			Transform:   returns.CallbackReturn{CallbackParam: effect.ParamRef{Index: 0}},
 		},
 	),
+
+	// Bare globals.
+	"print": sig(
+		typ.Func().
+			Variadic(typ.Any).
+			Build(),
+		ownership.BorrowAll{},
+		control.IO{},
+	),
+	"tonumber": sig(
+		typ.Func().
+			Param("v", typ.Any).
+			OptParam("base", typ.Integer).
+			Returns(normalize.Optional(typ.Number)).
+			Build(),
+		ownership.BorrowAll{},
+	),
+	"next": sig(
+		typ.Func().
+			Param("table", typ.Any).
+			OptParam("index", typ.Any).
+			Returns(normalize.Optional(typ.Any), normalize.Optional(typ.Any)).
+			Build(),
+	),
+	"select": sig(
+		// select(index, ...) -> ... ; index may be "#" (count) or a numeric
+		// position. The result is genuinely dynamic, so any is correct here.
+		typ.Func().
+			Param("index", typ.Any).
+			Variadic(typ.Any).
+			Returns(typ.Any).
+			Build(),
+		dispatch.VariadicTransform{},
+	),
+	"rawget": sig(
+		typ.Func().
+			Param("table", typ.Any).
+			Param("index", typ.Any).
+			Returns(typ.Any).
+			Build(),
+		ownership.BorrowAll{},
+	),
+	"rawset": sig(
+		typ.Func().
+			Param("table", typ.Any).
+			Param("index", typ.Any).
+			Param("value", typ.Any).
+			Returns(typ.Any).
+			Build(),
+		ownership.Store{
+			Param: effect.ParamRef{Index: 2},
+			Into:  effect.ParamRef{Index: 0},
+		},
+	),
+	"rawequal": sig(
+		typ.Func().
+			Param("v1", typ.Any).
+			Param("v2", typ.Any).
+			Returns(typ.Boolean).
+			Build(),
+		ownership.BorrowAll{},
+	),
+	"rawlen": sig(
+		typ.Func().
+			Param("v", typ.Any).
+			Returns(typ.Integer).
+			Build(),
+		ownership.BorrowAll{},
+	),
+	"setmetatable": func() signature.Function {
+		tp := typ.NewTypeParam("T", nil)
+		return sig(
+			typ.Func().
+				TypeParamRef(tp).
+				Param("table", tp).
+				Param("metatable", normalize.Optional(typ.Any)).
+				Returns(tp).
+				Build(),
+			ownership.Store{
+				Param: effect.ParamRef{Index: 1},
+				Into:  effect.ParamRef{Index: 0},
+			},
+		)
+	}(),
+	"getmetatable": sig(
+		typ.Func().
+			Param("object", typ.Any).
+			Returns(normalize.Optional(typ.Any)).
+			Build(),
+	),
+	"collectgarbage": sig(
+		typ.Func().
+			OptParam("opt", typ.String).
+			OptParam("arg", typ.Any).
+			Returns(typ.Any).
+			Build(),
+	),
+	"unpack": sig(
+		typ.Func().
+			Param("list", typ.Any).
+			OptParam("i", typ.Integer).
+			OptParam("j", typ.Integer).
+			Returns(typ.Any).
+			Build(),
+		ownership.BorrowAll{},
+	),
+
+	// table library.
 	TableInsert: sig(
 		typ.Func().
 			Param("list", typ.Any).
@@ -128,6 +246,338 @@ var registry = map[string]signature.Function{
 			Into:  effect.ParamRef{Index: 0},
 		},
 	),
+	"table.remove": func() signature.Function {
+		elem := typ.NewTypeParam("T", nil)
+		return sig(
+			typ.Func().
+				TypeParamRef(elem).
+				Param("list", typ.NewArray(elem)).
+				OptParam("pos", typ.Integer).
+				Returns(normalize.Optional(elem)).
+				Build(),
+			mutation.Mutate{
+				Target:    effect.ParamRef{Index: 0},
+				Transform: mutation.Unchanged{},
+			},
+			mutation.LengthChange{
+				Target: effect.ParamRef{Index: 0},
+				Delta:  -1,
+			},
+		)
+	}(),
+	"table.concat": sig(
+		typ.Func().
+			Param("list", typ.Any).
+			OptParam("sep", typ.String).
+			OptParam("i", typ.Integer).
+			OptParam("j", typ.Integer).
+			Returns(typ.String).
+			Build(),
+		ownership.BorrowAll{},
+	),
+	"table.sort": sig(
+		typ.Func().
+			Param("list", typ.Any).
+			OptParam("comp", typ.Any).
+			Build(),
+		mutation.Mutate{
+			Target:    effect.ParamRef{Index: 0},
+			Transform: mutation.Unchanged{},
+		},
+	),
+	"table.unpack": sig(
+		typ.Func().
+			Param("list", typ.Any).
+			OptParam("i", typ.Integer).
+			OptParam("j", typ.Integer).
+			Returns(typ.Any).
+			Build(),
+		ownership.BorrowAll{},
+	),
+	"table.pack": sig(
+		typ.Func().
+			Variadic(typ.Any).
+			Returns(typ.Any).
+			Build(),
+	),
+	"table.move": sig(
+		typ.Func().
+			Param("a1", typ.Any).
+			Param("f", typ.Integer).
+			Param("e", typ.Integer).
+			Param("t", typ.Integer).
+			OptParam("a2", typ.Any).
+			Returns(typ.Any).
+			Build(),
+	),
+	"table.create": sig(
+		typ.Func().
+			Param("narray", typ.Integer).
+			OptParam("nhash", typ.Integer).
+			Returns(typetable.NewRecord().Build()).
+			Build(),
+	),
+	"table.freeze": func() signature.Function {
+		tp := typ.NewTypeParam("T", nil)
+		return sig(
+			typ.Func().
+				TypeParamRef(tp).
+				Param("t", tp).
+				Returns(tp).
+				Build(),
+		)
+	}(),
+
+	// string library.
+	"string.byte": sig(
+		typ.Func().
+			Param("s", typ.String).
+			OptParam("i", typ.Integer).
+			OptParam("j", typ.Integer).
+			Returns(typ.Integer).
+			Build(),
+	),
+	"string.char": sig(
+		typ.Func().
+			Variadic(typ.Integer).
+			Returns(typ.String).
+			Build(),
+	),
+	"string.dump": sig(
+		typ.Func().
+			Param("function", typ.Any).
+			OptParam("strip", typ.Boolean).
+			Returns(typ.String).
+			Build(),
+	),
+	"string.find": sig(
+		typ.Func().
+			Param("s", typ.String).
+			Param("pattern", typ.String).
+			OptParam("init", typ.Integer).
+			OptParam("plain", typ.Boolean).
+			Returns(normalize.Optional(typ.Integer), normalize.Optional(typ.Integer)).
+			Build(),
+		returns.CorrelatedReturn{Indices: []int{0, 1}},
+	),
+	"string.format": sig(
+		typ.Func().
+			Param("formatstring", typ.String).
+			Variadic(typ.Any).
+			Returns(typ.String).
+			Build(),
+	),
+	"string.gmatch": sig(
+		typ.Func().
+			Param("s", typ.String).
+			Param("pattern", typ.String).
+			Returns(typ.Any).
+			Build(),
+	),
+	"string.gsub": sig(
+		typ.Func().
+			Param("s", typ.String).
+			Param("pattern", typ.String).
+			Param("repl", typ.Any).
+			OptParam("n", typ.Integer).
+			Returns(typ.String, typ.Integer).
+			Build(),
+	),
+	"string.len": sig(
+		typ.Func().
+			Param("s", typ.String).
+			Returns(typ.Integer).
+			Build(),
+	),
+	"string.lower": sig(
+		typ.Func().
+			Param("s", typ.String).
+			Returns(typ.String).
+			Build(),
+	),
+	"string.match": sig(
+		typ.Func().
+			Param("s", typ.String).
+			Param("pattern", typ.String).
+			OptParam("init", typ.Integer).
+			Returns(normalize.Optional(typ.String)).
+			Build(),
+	),
+	"string.pack": sig(
+		typ.Func().
+			Param("fmt", typ.String).
+			Variadic(typ.Any).
+			Returns(typ.String).
+			Build(),
+	),
+	"string.packsize": sig(
+		typ.Func().
+			Param("fmt", typ.String).
+			Returns(typ.Integer).
+			Build(),
+	),
+	"string.rep": sig(
+		typ.Func().
+			Param("s", typ.String).
+			Param("n", typ.Integer).
+			OptParam("sep", typ.String).
+			Returns(typ.String).
+			Build(),
+	),
+	"string.reverse": sig(
+		typ.Func().
+			Param("s", typ.String).
+			Returns(typ.String).
+			Build(),
+	),
+	"string.sub": sig(
+		typ.Func().
+			Param("s", typ.String).
+			Param("i", typ.Integer).
+			OptParam("j", typ.Integer).
+			Returns(typ.String).
+			Build(),
+	),
+	"string.unpack": sig(
+		typ.Func().
+			Param("fmt", typ.String).
+			Param("s", typ.String).
+			OptParam("pos", typ.Integer).
+			Returns(typ.Any).
+			Build(),
+		returns.Return{
+			ReturnIndex: 0,
+			Transform:   returns.StringUnpackValue{Format: effect.ParamRef{Index: 0}},
+		},
+	),
+	"string.upper": sig(
+		typ.Func().
+			Param("s", typ.String).
+			Returns(typ.String).
+			Build(),
+	),
+
+	// math library.
+	"math.abs":   sig(typ.Func().Param("x", typ.Number).Returns(typ.Number).Build()),
+	"math.acos":  sig(typ.Func().Param("x", typ.Number).Returns(typ.Number).Build()),
+	"math.asin":  sig(typ.Func().Param("x", typ.Number).Returns(typ.Number).Build()),
+	"math.atan":  sig(typ.Func().Param("y", typ.Number).OptParam("x", typ.Number).Returns(typ.Number).Build()),
+	"math.atan2": sig(typ.Func().Param("y", typ.Number).Param("x", typ.Number).Returns(typ.Number).Build()),
+	"math.ceil":  sig(typ.Func().Param("x", typ.Number).Returns(typ.Integer).Build()),
+	"math.cos":   sig(typ.Func().Param("x", typ.Number).Returns(typ.Number).Build()),
+	"math.cosh":  sig(typ.Func().Param("x", typ.Number).Returns(typ.Number).Build()),
+	"math.deg":   sig(typ.Func().Param("x", typ.Number).Returns(typ.Number).Build()),
+	"math.exp":   sig(typ.Func().Param("x", typ.Number).Returns(typ.Number).Build()),
+	"math.floor": sig(typ.Func().Param("x", typ.Number).Returns(typ.Integer).Build()),
+	"math.fmod":  sig(typ.Func().Param("x", typ.Number).Param("y", typ.Number).Returns(typ.Number).Build()),
+	"math.frexp": sig(typ.Func().Param("x", typ.Number).Returns(typ.Number, typ.Integer).Build()),
+	"math.ldexp": sig(typ.Func().Param("m", typ.Number).Param("e", typ.Integer).Returns(typ.Number).Build()),
+	"math.log":   sig(typ.Func().Param("x", typ.Number).OptParam("base", typ.Number).Returns(typ.Number).Build()),
+	"math.log10": sig(typ.Func().Param("x", typ.Number).Returns(typ.Number).Build()),
+	"math.max":   sig(typ.Func().Param("x", typ.Number).Variadic(typ.Number).Returns(typ.Number).Build()),
+	"math.min":   sig(typ.Func().Param("x", typ.Number).Variadic(typ.Number).Returns(typ.Number).Build()),
+	"math.mod":   sig(typ.Func().Param("x", typ.Number).Param("y", typ.Number).Returns(typ.Number).Build()),
+	"math.modf":  sig(typ.Func().Param("x", typ.Number).Returns(typ.Integer, typ.Number).Build()),
+	"math.pow":   sig(typ.Func().Param("x", typ.Number).Param("y", typ.Number).Returns(typ.Number).Build()),
+	"math.rad":   sig(typ.Func().Param("x", typ.Number).Returns(typ.Number).Build()),
+	"math.random": sig(typ.Func().
+		OptParam("m", typ.Integer).
+		OptParam("n", typ.Integer).
+		Returns(typ.Number).
+		Build()),
+	"math.randomseed": sig(typ.Func().
+		OptParam("x", typ.Integer).
+		OptParam("y", typ.Integer).
+		Build()),
+	"math.sin":       sig(typ.Func().Param("x", typ.Number).Returns(typ.Number).Build()),
+	"math.sinh":      sig(typ.Func().Param("x", typ.Number).Returns(typ.Number).Build()),
+	"math.sqrt":      sig(typ.Func().Param("x", typ.Number).Returns(typ.Number).Build()),
+	"math.tan":       sig(typ.Func().Param("x", typ.Number).Returns(typ.Number).Build()),
+	"math.tanh":      sig(typ.Func().Param("x", typ.Number).Returns(typ.Number).Build()),
+	"math.tointeger": sig(typ.Func().Param("x", typ.Any).Returns(normalize.Optional(typ.Integer)).Build()),
+	"math.type":      sig(typ.Func().Param("x", typ.Any).Returns(normalize.Optional(typ.String)).Build()),
+	"math.ult":       sig(typ.Func().Param("m", typ.Integer).Param("n", typ.Integer).Returns(typ.Boolean).Build()),
+
+	// coroutine library.
+	"coroutine.close": sig(typ.Func().
+		Param("co", typ.Any).
+		Returns(typ.Boolean, normalize.Optional(typ.Any)).
+		Build()),
+	"coroutine.create": sig(typ.Func().
+		Param("f", typ.Any).
+		Returns(typ.Any).
+		Build()),
+	"coroutine.isyieldable": sig(typ.Func().
+		OptParam("co", typ.Any).
+		Returns(typ.Boolean).
+		Build()),
+	"coroutine.resume": sig(typ.Func().
+		Param("co", typ.Any).
+		Variadic(typ.Any).
+		Returns(typ.Boolean, typ.Any).
+		Build()),
+	"coroutine.running": sig(typ.Func().
+		Returns(typ.Any, typ.Boolean).
+		Build()),
+	"coroutine.status": sig(typ.Func().
+		Param("co", typ.Any).
+		Returns(typ.String).
+		Build()),
+	"coroutine.wrap": sig(typ.Func().
+		Param("f", typ.Any).
+		Returns(typ.Any).
+		Build()),
+	"coroutine.yield": sig(typ.Func().
+		Variadic(typ.Any).
+		Returns(typ.Any).
+		Build()),
+
+	// os library.
+	"os.clock": sig(typ.Func().Returns(typ.Number).Build()),
+	"os.date": sig(typ.Func().
+		OptParam("format", typ.String).
+		OptParam("time", typ.Integer).
+		Returns(typ.Any).
+		Build()),
+	"os.difftime": sig(typ.Func().
+		Param("t2", typ.Number).
+		Param("t1", typ.Number).
+		Returns(typ.Number).
+		Build()),
+	"os.getenv": sig(typ.Func().
+		Param("varname", typ.String).
+		Returns(normalize.Optional(typ.String)).
+		Build()),
+	"os.time": sig(typ.Func().
+		OptParam("t", typ.Any).
+		Returns(typ.Integer).
+		Build()),
+	"os.tmpname": sig(typ.Func().
+		Returns(typ.String).
+		Build(),
+		control.IO{}),
+	"os.exit": sig(typ.Func().
+		OptParam("code", typ.Any).
+		OptParam("close", typ.Boolean).
+		Returns(typ.Never).
+		Build(),
+		control.IO{}),
+	"os.remove": sig(typ.Func().
+		Param("filename", typ.String).
+		Returns(normalize.Optional(typ.Boolean), normalize.Optional(typ.String)).
+		Build(),
+		control.IO{}),
+	"os.rename": sig(typ.Func().
+		Param("oldname", typ.String).
+		Param("newname", typ.String).
+		Returns(normalize.Optional(typ.Boolean), normalize.Optional(typ.String)).
+		Build(),
+		control.IO{}),
+	"os.execute": sig(typ.Func().
+		OptParam("command", typ.String).
+		Returns(typ.Any).
+		Build(),
+		control.IO{}),
 }
 
 // Lookup returns a cloned effect signature for a known stdlib function name.

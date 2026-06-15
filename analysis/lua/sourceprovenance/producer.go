@@ -69,3 +69,24 @@ func AssertionInner(expr ast.Expr) ast.Expr {
 		}
 	}
 }
+
+func ProofInner(expr ast.Expr) (ast.Expr, bool) {
+	for {
+		switch wrapped := expr.(type) {
+		case *ast.CastExpr:
+			if castTargetIsAny(wrapped.Type) {
+				return expr, false
+			}
+			expr = wrapped.Expr
+		case *ast.NonNilAssertExpr:
+			expr = wrapped.Expr
+		default:
+			return expr, true
+		}
+	}
+}
+
+func castTargetIsAny(t ast.TypeExpr) bool {
+	primitive, ok := t.(*ast.PrimitiveTypeExpr)
+	return ok && primitive.Name == "any"
+}

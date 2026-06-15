@@ -23,6 +23,7 @@ func FromProgramResult(path string, result program.Result) *manifest.Manifest {
 		m.SetExport(typ.Unknown)
 	}
 	publishTypeDefinitions(m, result.RootResult())
+	publishFunctionSignatures(m, path, result)
 	return m
 }
 

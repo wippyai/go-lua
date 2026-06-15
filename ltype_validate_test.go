@@ -6,6 +6,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/annotation"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/analysis/type/typeexpr"
 )
 
 // Test toString behavior for different type kinds
@@ -172,7 +173,7 @@ func TestValidationIntegration_PrimitiveTypes(t *testing.T) {
 func TestValidationIntegration_OptionalTypes(t *testing.T) {
 	ctx := DefaultValidationContext()
 
-	optNum := typ.NewOptional(typ.Number)
+	optNum := typeexpr.Optional(typ.Number)
 	lt := NewLType(optNum)
 
 	tests := []struct {
@@ -198,7 +199,7 @@ func TestValidationIntegration_OptionalTypes(t *testing.T) {
 func TestValidationIntegration_UnionTypes(t *testing.T) {
 	ctx := DefaultValidationContext()
 
-	strOrNum := typ.NewUnion(typ.String, typ.Number)
+	strOrNum := typeexpr.Union(typ.String, typ.Number)
 	lt := NewLType(strOrNum)
 
 	tests := []struct {

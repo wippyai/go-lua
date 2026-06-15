@@ -4,122 +4,63 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/analysis/type/typeexpr"
 )
 
-func TestRecordTailFieldTypeUsesStringMapComponent(t *testing.T) {
-	rec := NewRecord().
-		MapComponent(typ.String, typ.Number).
-		Build()
-
-	tail, ok := RecordTailFieldType(rec, "status")
-	if !ok {
-		t.Fatal("RecordTailFieldType returned ok=false")
+func TestMapComponentKeyMayContainString(t *testing.T) {
+	if !MapComponentKeyMayContainString(typ.String, "status") {
+		t.Fatal("expected string key domain to contain status")
 	}
-	want := typ.NewOptional(typ.Number)
-	if !typ.TypeEquals(tail, want) {
-		t.Fatalf("tail = %v, want %v", tail, want)
+	if !MapComponentKeyMayContainString(typ.LiteralString("raw"), "raw") {
+		t.Fatal("expected literal string key domain to contain exact raw key")
 	}
-	if !RecordMapTailMayContainFieldName(rec, "status") {
-		t.Fatal("expected string map tail to contain status field")
+	if MapComponentKeyMayContainString(typ.LiteralString("raw"), "other") {
+		t.Fatal("did not expect literal string key domain to contain unrelated key")
 	}
-}
-
-func TestRecordTailMayContainUsesExactMemberOverlapPolicy(t *testing.T) {
-	rec := NewRecord().
-		MapComponent(typ.LiteralString("raw"), typ.Number).
-		Build()
-	rawMember := typ.StaticMember{Kind: typ.StaticMemberStringIndex, Name: "raw"}
-	otherMember := typ.StaticMember{Kind: typ.StaticMemberStringIndex, Name: "other"}
-
-	if !RecordMapTailMayContainFieldName(rec, "raw") {
-		t.Fatal("expected map tail to contain exact raw field")
+	if !MapComponentKeyMayContainString(typeexpr.Union(typ.Integer, typ.LiteralString("raw")), "raw") {
+		t.Fatal("expected union key domain to contain raw string key")
 	}
-	if RecordMapTailMayContainFieldName(rec, "other") {
-		t.Fatal("did not expect map tail to contain unrelated field")
-	}
-	if !RecordMapTailMayContainStaticMember(rec, rawMember) {
-		t.Fatal("expected map tail to contain exact raw static member")
-	}
-	if RecordMapTailMayContainStaticMember(rec, otherMember) {
-		t.Fatal("did not expect map tail to contain unrelated static member")
-	}
-
-	tail, ok := RecordTailStaticMemberType(rec, rawMember)
-	if !ok {
-		t.Fatal("RecordTailStaticMemberType returned ok=false")
-	}
-	want := typ.NewOptional(typ.Number)
-	if !typ.TypeEquals(tail, want) {
-		t.Fatalf("static member tail = %v, want %v", tail, want)
+	if MapComponentKeyMayContainString(typeexpr.Union(typ.Integer, typ.LiteralString("raw")), "other") {
+		t.Fatal("did not expect union key domain to contain unrelated string key")
 	}
 }
 
-func TestRecordMapTailStaticMemberContainment(t *testing.T) {
-	rec := NewRecord().
-		MapComponent(typ.NewUnion(typ.LiteralString("raw"), typ.Integer), typ.Boolean).
-		Build()
+func TestMapComponentKeyMayContainInt(t *testing.T) {
+	if !MapComponentKeyMayContainInt(typ.Integer, 7) {
+		t.Fatal("expected integer key domain to contain int key")
+	}
+	if !MapComponentKeyMayContainInt(typ.Number, 7) {
+		t.Fatal("expected number key domain to contain integer-valued key")
+	}
+	if !MapComponentKeyMayContainInt(typ.LiteralInt(7), 7) {
+		t.Fatal("expected literal int key domain to contain exact int key")
+	}
+	if !MapComponentKeyMayContainInt(typ.LiteralNumber(7), 7) {
+		t.Fatal("expected integer-valued number literal key domain to contain int key")
+	}
+	if MapComponentKeyMayContainInt(typ.LiteralInt(7), 8) {
+		t.Fatal("did not expect literal int key domain to contain unrelated int key")
+	}
+}
+
+func TestMapComponentKeyMayContainStaticMember(t *testing.T) {
+	key := typeexpr.Union(typ.LiteralString("raw"), typ.Integer)
 	stringMember := typ.StaticMember{Kind: typ.StaticMemberStringIndex, Name: "raw"}
 	intMember := typ.StaticMember{Kind: typ.StaticMemberIntIndex, Index: 7}
 	missingString := typ.StaticMember{Kind: typ.StaticMemberStringIndex, Name: "other"}
+	unknownMember := typ.StaticMember{}
 
-	if !RecordMapTailMayContainStaticMember(rec, stringMember) {
-		t.Fatal("expected map tail to contain static string member")
+	if !MapComponentKeyMayContainStaticMember(key, stringMember) {
+		t.Fatal("expected key domain to contain exact static string member")
 	}
-	if !RecordMapTailMayContainStaticMember(rec, intMember) {
-		t.Fatal("expected map tail to contain static int member")
+	if !MapComponentKeyMayContainStaticMember(key, intMember) {
+		t.Fatal("expected key domain to contain static int member")
 	}
-	if RecordMapTailMayContainStaticMember(rec, missingString) {
-		t.Fatal("did not expect map tail to contain unrelated static string member")
+	if MapComponentKeyMayContainStaticMember(key, missingString) {
+		t.Fatal("did not expect key domain to contain unrelated static string member")
 	}
-
-	tail, ok := RecordTailStaticMemberType(rec, intMember)
-	if !ok {
-		t.Fatal("RecordTailStaticMemberType returned ok=false")
-	}
-	want := typ.NewOptional(typ.Boolean)
-	if !typ.TypeEquals(tail, want) {
-		t.Fatalf("static member tail = %v, want %v", tail, want)
-	}
-}
-
-func TestRecordTailTypeReturnsUnknownForOpenRecord(t *testing.T) {
-	rec := NewRecord().
-		SetOpen(true).
-		Build()
-
-	fieldTail, ok := RecordTailFieldType(rec, "missing")
-	if !ok {
-		t.Fatal("RecordTailFieldType(open record) returned ok=false")
-	}
-	if !typ.TypeEquals(fieldTail, typ.Unknown) {
-		t.Fatalf("field tail = %v, want unknown", fieldTail)
-	}
-
-	member := typ.StaticMember{Kind: typ.StaticMemberStringIndex, Name: "missing"}
-	memberTail, ok := RecordTailStaticMemberType(rec, member)
-	if !ok {
-		t.Fatal("RecordTailStaticMemberType(open record) returned ok=false")
-	}
-	if !typ.TypeEquals(memberTail, typ.Unknown) {
-		t.Fatalf("static member tail = %v, want unknown", memberTail)
-	}
-	if RecordMapTailMayContainFieldName(rec, "missing") {
-		t.Fatal("open record without map component should not report map-tail containment")
-	}
-}
-
-func TestRecordTailFieldTypeKeepsOptionalMapValueShape(t *testing.T) {
-	rec := NewRecord().
-		MapComponent(typ.String, typ.NewOptional(typ.Number)).
-		Build()
-
-	tail, ok := RecordTailFieldType(rec, "maybe")
-	if !ok {
-		t.Fatal("RecordTailFieldType returned ok=false")
-	}
-	want := typ.NewOptional(typ.Number)
-	if !typ.TypeEquals(tail, want) {
-		t.Fatalf("tail = %v, want %v", tail, want)
+	if MapComponentKeyMayContainStaticMember(key, unknownMember) {
+		t.Fatal("did not expect key domain to contain unsupported static member kind")
 	}
 }
 
@@ -138,10 +79,10 @@ func TestMapComponentKeyAdmitsTypeUsesCanonicalPredicate(t *testing.T) {
 		t.Fatal("did not expect literal int domain to admit broad integer key type")
 	}
 
-	if !MapComponentKeyAdmitsType(typ.String, typ.NewUnion(typ.LiteralString("raw"), typ.LiteralString("name"))) {
+	if !MapComponentKeyAdmitsType(typ.String, typeexpr.Union(typ.LiteralString("raw"), typ.LiteralString("name"))) {
 		t.Fatal("expected string key domain to admit union of string literals")
 	}
-	if MapComponentKeyAdmitsType(typ.LiteralString("raw"), typ.NewUnion(typ.LiteralString("raw"), typ.LiteralString("name"))) {
+	if MapComponentKeyAdmitsType(typ.LiteralString("raw"), typeexpr.Union(typ.LiteralString("raw"), typ.LiteralString("name"))) {
 		t.Fatal("did not expect exact literal domain to admit partially matching union key type")
 	}
 }

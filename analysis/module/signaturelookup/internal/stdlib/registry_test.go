@@ -19,6 +19,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/effect/postcondition"
 	"github.com/wippyai/go-lua/analysis/domain/effect/returns"
 	"github.com/wippyai/go-lua/analysis/module/manifest"
+	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
@@ -94,6 +95,14 @@ func TestLookupSeededFunctionTypes(t *testing.T) {
 				Param("list", typ.Any).
 				Param("pos_or_value", typ.Any).
 				OptParam("value", typ.Any).
+				Build(),
+		},
+		{
+			name: "table.create",
+			want: typ.Func().
+				Param("narray", typ.Integer).
+				OptParam("nhash", typ.Integer).
+				Returns(typetable.NewRecord().Build()).
 				Build(),
 		},
 	}
@@ -240,8 +249,27 @@ func TestSignaturesSeededNames(t *testing.T) {
 	}
 	sort.Strings(got)
 
-	want := []string{Error, IPairs, PCall, Pairs, Require, TableInsert, Type, XPCall}
-	want = append(want, Assert)
+	want := []string{
+		Assert, Error, Require, ToString, Type, Pairs, IPairs, PCall, XPCall,
+		"print", "tonumber", "next", "select", "rawget", "rawset", "rawequal",
+		"rawlen", "setmetatable", "getmetatable", "collectgarbage", "unpack",
+		TableInsert, "table.remove", "table.concat", "table.sort", "table.unpack",
+		"table.pack", "table.move", "table.create", "table.freeze",
+		"string.byte", "string.char", "string.dump", "string.find", "string.format",
+		"string.gmatch", "string.gsub", "string.len", "string.lower", "string.match",
+		"string.pack", "string.packsize", "string.rep", "string.reverse", "string.sub",
+		"string.unpack", "string.upper",
+		"math.abs", "math.acos", "math.asin", "math.atan", "math.atan2", "math.ceil",
+		"math.cos", "math.cosh", "math.deg", "math.exp", "math.floor", "math.fmod",
+		"math.frexp", "math.ldexp", "math.log", "math.log10", "math.max", "math.min",
+		"math.mod", "math.modf", "math.pow", "math.rad", "math.random", "math.randomseed",
+		"math.sin", "math.sinh", "math.sqrt", "math.tan", "math.tanh", "math.tointeger",
+		"math.type", "math.ult",
+		"coroutine.close", "coroutine.create", "coroutine.isyieldable", "coroutine.resume",
+		"coroutine.running", "coroutine.status", "coroutine.wrap", "coroutine.yield",
+		"os.clock", "os.date", "os.difftime", "os.getenv", "os.time", "os.tmpname",
+		"os.exit", "os.remove", "os.rename", "os.execute",
+	}
 	sort.Strings(want)
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("names = %v, want %v", got, want)

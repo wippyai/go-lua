@@ -2,6 +2,7 @@ package product
 
 import (
 	"fmt"
+	"reflect"
 
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
@@ -64,16 +65,7 @@ func Top() Value {
 }
 
 func Bottom(reg *axis.Registry) Value {
-	requireRegistry(reg)
-	return intern(reg, ShapeBottom, presence.Bottom(), bottomSlots(reg))
-}
-
-func bottomSlots(reg *axis.Registry) []slot {
-	slots := make([]slot, 0, len(reg.Specs()))
-	for _, spec := range reg.Specs() {
-		slots = append(slots, slot{key: spec.ID(), value: spec.BottomAny()})
-	}
-	return slots
+	return mustRuntime(reg).bottomValue()
 }
 
 func New(reg *axis.Registry, shape Shape) Value {
@@ -96,9 +88,9 @@ func ShapeOf(v Value) Shape {
 }
 
 func WithShape(reg *axis.Registry, v Value, shape Shape) Value {
-	requireRegistry(reg)
-	validateValue(reg, v)
-	return intern(reg, shape, PresenceOf(v), copySlots(v))
+	rt := mustRuntime(reg)
+	rt.validateValue(v)
+	return internRuntime(rt, shape, PresenceOf(v), copySlots(v))
 }
 
 func PresenceOf(v Value) presence.Value {
@@ -108,53 +100,76 @@ func PresenceOf(v Value) presence.Value {
 	return v.n.presence
 }
 
+// DefinitelyPresent reports whether v is proven non-nil/present.
+func DefinitelyPresent(v Value) bool {
+	return presence.Equal(PresenceOf(v), presence.Present())
+}
+
 func WithPresence(reg *axis.Registry, v Value, p presence.Value) Value {
-	requireRegistry(reg)
-	validateValue(reg, v)
-	return intern(reg, ShapeOf(v), p, copySlots(v))
+	rt := mustRuntime(reg)
+	rt.validateValue(v)
+	return internRuntime(rt, ShapeOf(v), p, copySlots(v))
 }
 
 // Get reads a typed axis value. If the axis is omitted, Get returns the axis
 // Top value.
 func Get[T any](reg *axis.Registry, v Value, key axis.Key[T]) T {
-	requireRegistry(reg)
-	validateValue(reg, v)
+	rt := mustRuntime(reg)
+	rt.validateValue(v)
 	if key.ID() == presence.Key.ID() {
 		panic("product: presence is a core lane; use PresenceOf")
 	}
-	spec, ok := axis.Lookup[T](reg, key)
+	info, ok := rt.axis(key.ID())
 	if !ok {
 		panic(fmt.Sprintf("product: unregistered axis %q", key.ID()))
 	}
+	wantType := reflect.TypeFor[T]()
 	if raw, ok := lookupSlot(v, key.ID()); ok {
+		if gotType := reflect.TypeOf(raw); gotType != info.topType {
+			panic(fmt.Sprintf("product: axis %q has value type %v, want registered axis type %v", key.ID(), gotType, info.topType))
+		}
+		if wantType != info.topType {
+			panic(fmt.Sprintf("product: axis %q has incompatible typed key type %v, want %v", key.ID(), wantType, info.topType))
+		}
 		tv, ok := raw.(T)
 		if !ok {
 			panic(fmt.Sprintf("product: axis %q has value type %T, want typed key value", key.ID(), raw))
 		}
 		return tv
 	}
-	return spec.Top()
+	if wantType != info.topType {
+		panic(fmt.Sprintf("product: axis %q has incompatible typed key type %v, want %v", key.ID(), wantType, info.topType))
+	}
+	tv, ok := info.topAny.(T)
+	if !ok {
+		panic(fmt.Sprintf("product: axis %q has top type %T, want typed key value", key.ID(), info.topAny))
+	}
+	return tv
 }
 
 // Set returns v with key set to value. Setting an axis to Top canonicalizes the
 // slot back to omission.
 func Set[T any](reg *axis.Registry, v Value, key axis.Key[T], value T) Value {
-	requireRegistry(reg)
-	validateValue(reg, v)
+	rt := mustRuntime(reg)
+	rt.validateValue(v)
 	if key.ID() == presence.Key.ID() {
 		panic("product: presence is a core lane; use WithPresence")
 	}
-	spec, ok := axis.Lookup[T](reg, key)
+	info, ok := rt.axis(key.ID())
 	if !ok {
 		panic(fmt.Sprintf("product: unregistered axis %q", key.ID()))
 	}
+	wantType := reflect.TypeFor[T]()
+	if wantType != info.topType {
+		panic(fmt.Sprintf("product: axis %q has incompatible typed key type %v, want %v", key.ID(), wantType, info.topType))
+	}
 	slots := copySlots(v)
-	if spec.Equal(value, spec.Top()) {
+	if info.spec.IsTopAny(value) {
 		slots = deleteSlot(slots, key.ID())
 	} else {
 		slots = upsertSlot(slots, key.ID(), value)
 	}
-	return intern(reg, ShapeOf(v), PresenceOf(v), slots)
+	return internRuntime(rt, ShapeOf(v), PresenceOf(v), slots)
 }
 
 func lookupSlot(v Value, key string) (any, bool) {
@@ -196,6 +211,13 @@ func upsertSlot(slots []slot, key string, value any) []slot {
 		if slots[i].key == key {
 			slots[i].value = value
 			return slots
+		}
+		if key < slots[i].key {
+			out := make([]slot, 0, len(slots)+1)
+			out = append(out, slots[:i]...)
+			out = append(out, slot{key: key, value: value})
+			out = append(out, slots[i:]...)
+			return out
 		}
 	}
 	return append(slots, slot{key: key, value: value})

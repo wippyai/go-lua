@@ -6,8 +6,25 @@ import (
 )
 
 func (b *binder) bindStmts(stmts []ast.Stmt) {
+	b.hoistTypeDecls(stmts)
 	for _, stmt := range stmts {
 		b.bindStmt(stmt)
+	}
+}
+
+// hoistTypeDecls pre-declares every type alias and interface in the current
+// type scope before any body is bound. Type declarations are not
+// order-dependent within a scope, so a sibling alias may reference one
+// declared later (forward reference) or reference itself through a chain
+// (recursive and mutually-recursive types).
+func (b *binder) hoistTypeDecls(stmts []ast.Stmt) {
+	for _, stmt := range stmts {
+		switch stmt := stmt.(type) {
+		case *ast.TypeDefStmt:
+			b.declareTypeDef(stmt)
+		case *ast.InterfaceDefStmt:
+			b.declareInterfaceDef(stmt)
+		}
 	}
 }
 
@@ -157,11 +174,33 @@ func (b *binder) bindFuncDef(stmt *ast.FuncDefStmt) {
 	if stmt.Name != nil && stmt.Name.Method != "" {
 		details.kind = FunctionOriginMethod
 		details.method = stmt.Name.Method
+		if name := receiverTypeName(stmt.Name.Receiver); name != "" {
+			if decl, ok := b.lookupType(name); ok {
+				details.receiverType = decl
+				details.hasReceiverType = true
+			}
+		}
 	} else if id, ok := b.result.FuncDefTargetSymbol(stmt); ok {
 		details.targetSymbol = id
 		details.hasTargetSymbol = true
 	}
 	b.bindFunction(stmt.Func, stmt.Name != nil && stmt.Name.Method != "", details)
+}
+
+// receiverTypeName returns the type name that a colon-method receiver
+// expression refers to. For `function R:m` the receiver is the identifier R;
+// for `function ns.R:m` it is the trailing field R. The returned name is used
+// to find the sibling type declaration that types the implicit self receiver.
+func receiverTypeName(receiver ast.Expr) string {
+	switch e := receiver.(type) {
+	case *ast.IdentExpr:
+		return e.Value
+	case *ast.AttrGetExpr:
+		if e.KeySyntax == ast.AttrKeyDot {
+			return ast.KeyName(e.Key)
+		}
+	}
+	return ""
 }
 
 func (b *binder) bindExprs(exprs []ast.Expr) {

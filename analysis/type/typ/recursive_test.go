@@ -210,7 +210,7 @@ func TestRecursiveInUnion(t *testing.T) {
 		return newRecord().OptField("next", self).Build()
 	})
 
-	union := NewUnion(rec, Nil)
+	union := MaterializeUnion([]Type{rec, Nil})
 
 	if union == nil {
 		t.Fatal("union should not be nil")
@@ -516,7 +516,7 @@ func TestRecursiveHashDeterminism(t *testing.T) {
 // TestRecursiveInOptional tests recursive type wrapped in optional.
 func TestRecursiveInOptional(t *testing.T) {
 	rec := NewRecursive("Node", func(self Type) Type {
-		return newRecord().Field("next", NewOptional(self)).Build()
+		return newRecord().Field("next", MaterializeOptional(self)).Build()
 	})
 
 	h1 := rec.Hash()
@@ -533,7 +533,7 @@ func TestRecursiveInOptional(t *testing.T) {
 // TestRecursiveInUnionMultiple tests recursive type in union with multiple members.
 func TestRecursiveInUnionMultiple(t *testing.T) {
 	rec := NewRecursive("Node", func(self Type) Type {
-		return newRecord().Field("value", NewUnion(self, Number, String)).Build()
+		return newRecord().Field("value", MaterializeUnion([]Type{self, Number, String})).Build()
 	})
 
 	h1 := rec.Hash()
@@ -584,7 +584,7 @@ func TestUnionKeepsMutualRecursiveFamiliesByIdentity(t *testing.T) {
 	recB2.SetBody(newRecord().OptField("a", recA2).Build())
 	recA2.SetBody(newRecord().OptField("b", recB2).Build())
 
-	union := NewUnion(recA1, recA2, Number)
+	union := MaterializeUnion([]Type{recA1, recA2, Number})
 	u, ok := union.(*Union)
 	if !ok {
 		t.Fatalf("expected union, got %T", union)
@@ -807,7 +807,7 @@ func TestRecursiveHashIntersection(t *testing.T) {
 	rec := NewRecursive("Combined", func(self Type) Type {
 		part1 := newRecord().Field("a", Number).Build()
 		part2 := newRecord().Field("b", String).OptField("next", self).Build()
-		return NewIntersection(part1, part2)
+		return MaterializeIntersection([]Type{part1, part2})
 	})
 
 	h1 := rec.Hash()

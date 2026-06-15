@@ -3,6 +3,10 @@ package summary
 import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
+	"github.com/wippyai/go-lua/analysis/type/kind"
+	typenormalize "github.com/wippyai/go-lua/analysis/type/normalize"
+	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
 // Normalize returns s with trailing bottom slots removed.
@@ -150,7 +154,7 @@ func Join(reg *axis.Registry, a, b Summary) Summary {
 		out.Returns = make([]product.Value, returns)
 	}
 	for i := range returns {
-		out.Returns[i] = product.Join(reg, returnAt(reg, a, i), returnAt(reg, b, i))
+		out.Returns[i] = joinReturnValue(reg, returnAt(reg, a, i), returnAt(reg, b, i))
 	}
 	if obligations > 0 {
 		out.ParamObligations = make([]product.Value, obligations)
@@ -188,6 +192,39 @@ func Join(reg *axis.Registry, a, b Summary) Summary {
 	return Normalize(reg, out)
 }
 
+func joinReturnValue(reg *axis.Registry, left, right product.Value) product.Value {
+	joined := product.Join(reg, left, right)
+	return preserveJoinedReturnTypeWitness(reg, joined, left, right)
+}
+
+func widenReturnValue(reg *axis.Registry, prev, next product.Value) product.Value {
+	widened := product.Widen(reg, prev, next)
+	return preserveJoinedReturnTypeWitness(reg, widened, prev, next)
+}
+
+func preserveJoinedReturnTypeWitness(reg *axis.Registry, joined, left, right product.Value) product.Value {
+	if _, ok := typevalue.TypeOf(reg, joined); ok {
+		return joined
+	}
+	leftType, leftOK := typevalue.TypeOf(reg, left)
+	rightType, rightOK := typevalue.TypeOf(reg, right)
+	if !leftOK || !rightOK {
+		return joined
+	}
+	switch {
+	case returnTypeIsNil(leftType) && !returnTypeIsNil(rightType):
+		return typevalue.WithWitness(reg, joined, typenormalize.UnionForEvidence(typ.Nil, rightType))
+	case returnTypeIsNil(rightType) && !returnTypeIsNil(leftType):
+		return typevalue.WithWitness(reg, joined, typenormalize.UnionForEvidence(leftType, typ.Nil))
+	default:
+		return joined
+	}
+}
+
+func returnTypeIsNil(t typ.Type) bool {
+	return t != nil && t.Kind() == kind.Nil
+}
+
 // Widen returns the componentwise widening from prev to next. Missing return and
 // value-constraint slots are bottom. Missing condition slots within the known
 // normal-return parameter arity are top/no-constraint.
@@ -215,7 +252,7 @@ func Widen(reg *axis.Registry, prev, next Summary) Summary {
 		out.Returns = make([]product.Value, returns)
 	}
 	for i := range returns {
-		out.Returns[i] = product.Widen(reg, returnAt(reg, prev, i), returnAt(reg, next, i))
+		out.Returns[i] = widenReturnValue(reg, returnAt(reg, prev, i), returnAt(reg, next, i))
 	}
 	if obligations > 0 {
 		out.ParamObligations = make([]product.Value, obligations)

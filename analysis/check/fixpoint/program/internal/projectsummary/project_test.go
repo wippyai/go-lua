@@ -17,8 +17,10 @@ import (
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
+	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/module/signaturelookup"
 	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/analysis/type/typeexpr"
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/parse"
 )
@@ -472,8 +474,43 @@ end`), body.Config{Registry: reg})
 	}
 	witness := product.Get(reg, got.Returns[0], typewitness.Key)
 	gotType, ok := witness.Type()
-	if !ok || !typ.TypeEquals(gotType, typ.NewOptional(typ.Number)) {
+	if !ok || !typ.TypeEquals(gotType, typeexpr.Optional(typ.Number)) {
 		t.Fatalf("return 0 witness = %v/%v, want number?", gotType, ok)
+	}
+}
+
+func TestFromResultPreservesDeclaredAliasReturnWithoutExplicitReturn(t *testing.T) {
+	reg := standard.Registry()
+	stmts := projectParseChunk(t, `
+type Message = {
+	from: fun(self: Message): string,
+}
+type Channel = {
+	receive: fun(self: Channel): (Message, boolean),
+}
+function listen(): Channel
+	error("stub")
+end
+`)
+	bindings := bind.BindChunk(stmts, bind.Options{})
+	def, ok := stmts[2].(*ast.FuncDefStmt)
+	if !ok || def.Func == nil {
+		t.Fatalf("stmt = %T, want function definition", stmts[2])
+	}
+	result, err := body.CheckBoundFunction(def.Func, bindings, body.Config{Registry: reg})
+	if err != nil {
+		t.Fatalf("CheckBoundFunction: %v", err)
+	}
+
+	got := summaryprojection.FromResult(result)
+
+	if len(got.Returns) != 1 {
+		t.Fatalf("returns = %d, want 1: %#v", len(got.Returns), got)
+	}
+	witness := product.Get(reg, got.Returns[0], typewitness.Key)
+	gotType, ok := witness.Type()
+	if !ok || typ.IsAny(gotType) || typ.IsUnknown(gotType) || typ.IsNever(gotType) {
+		t.Fatalf("return witness = %v/%v, want concrete Channel", gotType, ok)
 	}
 }
 

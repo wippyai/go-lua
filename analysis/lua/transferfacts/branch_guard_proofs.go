@@ -47,11 +47,17 @@ func (l *lowerer) branchProofsForCheckOnEdge(check branchcond.Check, cond bool) 
 		return []factflow.BranchProof{factflow.NewBranchPathPresenceProofOnEdge(target, presence.Absent(), cond)}
 	case branchcond.CheckTruthy:
 		if cond {
-			return []factflow.BranchProof{factflow.NewBranchPathPresenceProofOnEdge(target, presence.Present(), cond)}
+			return []factflow.BranchProof{
+				factflow.NewBranchPathPresenceProofOnEdge(target, presence.Present(), cond),
+				factflow.NewBranchPathTruthyProofOnEdge(target, cond),
+			}
 		}
 	case branchcond.CheckFalsy:
 		if !cond {
-			return []factflow.BranchProof{factflow.NewBranchPathPresenceProofOnEdge(target, presence.Present(), cond)}
+			return []factflow.BranchProof{
+				factflow.NewBranchPathPresenceProofOnEdge(target, presence.Present(), cond),
+				factflow.NewBranchPathTruthyProofOnEdge(target, cond),
+			}
 		}
 	case branchcond.CheckTypeEqual:
 		return branchTypePresenceProofOnEdge(target, check.TypeName, cond, cond)
@@ -83,6 +89,12 @@ func (l *lowerer) branchProofsForCheckOnEdge(check branchcond.Check, cond bool) 
 			return []factflow.BranchProof{factflow.NewBranchPathInequalityProofOnEdge(target, other, cond)}
 		}
 		return []factflow.BranchProof{factflow.NewBranchPathEqualityProofOnEdge(target, other, cond)}
+	case branchcond.CheckIndexInRange:
+		other := check.OtherPath
+		if !cond || other.IsEmpty() {
+			return nil
+		}
+		return []factflow.BranchProof{factflow.NewBranchIndexInRangeProofOnEdge(target, other, cond)}
 	}
 	return nil
 }

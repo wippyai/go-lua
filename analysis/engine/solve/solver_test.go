@@ -162,6 +162,31 @@ func TestSolve_MonotoneLeastFixedPoint(t *testing.T) {
 	assertMapEqual(t, cl.joinOnly(), got, want)
 }
 
+func TestSolve_StatsCountsActualTransferInvocations(t *testing.T) {
+	cl := capLattice{top: 10}
+	stats := Stats{}
+	visits := 0
+	sys := EquationSystem[string, int]{
+		Lattice: cl.joinOnly(),
+		Cells:   []string{"x"},
+		Transfer: func(cell string, read func(string) int, emit func(string, int)) {
+			visits++
+			if visits == 1 {
+				emit("x", 1)
+			}
+		},
+		Stats: &stats,
+	}
+
+	got := Solve(sys)
+	if got["x"] != 1 {
+		t.Fatalf("x = %d, want 1", got["x"])
+	}
+	if stats.TransferCalls != visits || stats.TransferCalls != 1 {
+		t.Fatalf("TransferCalls = %d, visits = %d, want 1", stats.TransferCalls, visits)
+	}
+}
+
 // TestSolve_DiamondRequeuesDependents checks the diamond dependency graph
 // converges: a feeds b and c, both feed d. A late bump to a must propagate
 // through both branches to d.
@@ -183,6 +208,7 @@ func TestSolve_DiamondRequeuesDependents(t *testing.T) {
 		Transfer: func(cell string, read func(string) int, emit func(string, int)) {
 			switch cell {
 			case "a":
+				_ = read("a")
 				aVisits++
 				// Two-step ascending source: 5 then 9, then stable.
 				if aVisits == 1 {
@@ -245,6 +271,7 @@ func TestSolve_SelfDependentReconverges(t *testing.T) {
 // value is Top.
 func TestSolve_WidenForcesTermination(t *testing.T) {
 	cl := capLattice{top: 50}
+	stats := Stats{}
 	sys := EquationSystem[string, int]{
 		Lattice: cl.lattice(), // Widen = jump-to-top
 		Cells:   []string{"x"},
@@ -254,11 +281,15 @@ func TestSolve_WidenForcesTermination(t *testing.T) {
 			emit("x", read("x")+1)
 		},
 		WidenAt: func(c string) bool { return c == "x" },
+		Stats:   &stats,
 	}
 
 	got := Solve(sys)
 	if got["x"] != cl.top {
 		t.Fatalf("widening did not drive x to Top: got %d, want %d", got["x"], cl.top)
+	}
+	if stats.TransferCalls < 2 {
+		t.Fatalf("TransferCalls = %d, want at least 2", stats.TransferCalls)
 	}
 }
 
