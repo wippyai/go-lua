@@ -136,7 +136,7 @@ func pathSymbols(graph cfg.Graph, facts factflow.Facts) map[symbol.ID]struct{} {
 			addPath(fact.LeftPath())
 			addPath(fact.RightPath())
 		}
-		for _, fact := range facts.BranchProofs(point) {
+		for _, fact := range facts.BranchPathEvidence(point) {
 			addProofPath(fact.Path())
 			if other, ok := fact.OtherPath(); ok {
 				addProofPath(other)

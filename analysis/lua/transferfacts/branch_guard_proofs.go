@@ -9,27 +9,27 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
 )
 
-func (l *lowerer) branchProofs(fact semantics.BranchConditionFact) []factflow.BranchProof {
+func (l *lowerer) branchPathEvidence(fact semantics.BranchConditionFact) []factflow.BranchPathEvidence {
 	if fact.Check.Kind != branchcond.CheckNone {
-		return l.branchProofsForCheck(fact.Check)
+		return l.branchPathEvidenceForCheck(fact.Check)
 	}
-	var out []factflow.BranchProof
+	var out []factflow.BranchPathEvidence
 	for _, check := range branchcond.TruthyChecks(fact.Condition, l.bindings) {
-		out = append(out, l.branchProofsForCheckOnEdge(check, true)...)
+		out = append(out, l.branchPathEvidenceForCheckOnEdge(check, true)...)
 	}
 	for _, check := range branchcond.FalsyChecks(fact.Condition, l.bindings) {
-		out = append(out, l.branchProofsForCheckOnEdge(check, false)...)
+		out = append(out, l.branchPathEvidenceForCheckOnEdge(check, false)...)
 	}
 	return out
 }
 
-func (l *lowerer) branchProofsForCheck(check branchcond.Check) []factflow.BranchProof {
-	out := l.branchProofsForCheckOnEdge(check, true)
-	out = append(out, l.branchProofsForCheckOnEdge(check, false)...)
+func (l *lowerer) branchPathEvidenceForCheck(check branchcond.Check) []factflow.BranchPathEvidence {
+	out := l.branchPathEvidenceForCheckOnEdge(check, true)
+	out = append(out, l.branchPathEvidenceForCheckOnEdge(check, false)...)
 	return out
 }
 
-func (l *lowerer) branchProofsForCheckOnEdge(check branchcond.Check, cond bool) []factflow.BranchProof {
+func (l *lowerer) branchPathEvidenceForCheckOnEdge(check branchcond.Check, cond bool) []factflow.BranchPathEvidence {
 	target := check.Path
 	if target.IsEmpty() {
 		return nil
@@ -37,39 +37,39 @@ func (l *lowerer) branchProofsForCheckOnEdge(check branchcond.Check, cond bool) 
 	switch check.Kind {
 	case branchcond.CheckNil:
 		if cond {
-			return []factflow.BranchProof{factflow.NewBranchPathPresenceProofOnEdge(target, presence.Absent(), cond)}
+			return []factflow.BranchPathEvidence{factflow.NewBranchPathPresenceEvidenceOnEdge(target, presence.Absent(), cond)}
 		}
-		return []factflow.BranchProof{factflow.NewBranchPathPresenceProofOnEdge(target, presence.Present(), cond)}
+		return []factflow.BranchPathEvidence{factflow.NewBranchPathPresenceEvidenceOnEdge(target, presence.Present(), cond)}
 	case branchcond.CheckNotNil:
 		if cond {
-			return []factflow.BranchProof{factflow.NewBranchPathPresenceProofOnEdge(target, presence.Present(), cond)}
+			return []factflow.BranchPathEvidence{factflow.NewBranchPathPresenceEvidenceOnEdge(target, presence.Present(), cond)}
 		}
-		return []factflow.BranchProof{factflow.NewBranchPathPresenceProofOnEdge(target, presence.Absent(), cond)}
+		return []factflow.BranchPathEvidence{factflow.NewBranchPathPresenceEvidenceOnEdge(target, presence.Absent(), cond)}
 	case branchcond.CheckTruthy:
 		if cond {
-			return []factflow.BranchProof{
-				factflow.NewBranchPathPresenceProofOnEdge(target, presence.Present(), cond),
-				factflow.NewBranchPathTruthyProofOnEdge(target, cond),
+			return []factflow.BranchPathEvidence{
+				factflow.NewBranchPathPresenceEvidenceOnEdge(target, presence.Present(), cond),
+				factflow.NewBranchPathTruthyEvidenceOnEdge(target, cond),
 			}
 		}
 	case branchcond.CheckFalsy:
 		if !cond {
-			return []factflow.BranchProof{
-				factflow.NewBranchPathPresenceProofOnEdge(target, presence.Present(), cond),
-				factflow.NewBranchPathTruthyProofOnEdge(target, cond),
+			return []factflow.BranchPathEvidence{
+				factflow.NewBranchPathPresenceEvidenceOnEdge(target, presence.Present(), cond),
+				factflow.NewBranchPathTruthyEvidenceOnEdge(target, cond),
 			}
 		}
 	case branchcond.CheckTypeEqual:
-		return branchTypePresenceProofOnEdge(target, check.TypeName, cond, cond)
+		return branchTypePresenceEvidenceOnEdge(target, check.TypeName, cond, cond)
 	case branchcond.CheckTypeNot:
-		return branchTypePresenceProofOnEdge(target, check.TypeName, !cond, cond)
+		return branchTypePresenceEvidenceOnEdge(target, check.TypeName, !cond, cond)
 	case branchcond.CheckLiteralEqual:
 		if cond {
-			return []factflow.BranchProof{factflow.NewBranchPathPresenceProofOnEdge(target, presence.Present(), cond)}
+			return []factflow.BranchPathEvidence{factflow.NewBranchPathPresenceEvidenceOnEdge(target, presence.Present(), cond)}
 		}
 	case branchcond.CheckLiteralNot:
 		if !cond {
-			return []factflow.BranchProof{factflow.NewBranchPathPresenceProofOnEdge(target, presence.Present(), cond)}
+			return []factflow.BranchPathEvidence{factflow.NewBranchPathPresenceEvidenceOnEdge(target, presence.Present(), cond)}
 		}
 	case branchcond.CheckPathEqual:
 		other := check.OtherPath
@@ -77,36 +77,36 @@ func (l *lowerer) branchProofsForCheckOnEdge(check branchcond.Check, cond bool) 
 			return nil
 		}
 		if cond {
-			return []factflow.BranchProof{factflow.NewBranchPathEqualityProofOnEdge(target, other, cond)}
+			return []factflow.BranchPathEvidence{factflow.NewBranchPathEqualityEvidenceOnEdge(target, other, cond)}
 		}
-		return []factflow.BranchProof{factflow.NewBranchPathInequalityProofOnEdge(target, other, cond)}
+		return []factflow.BranchPathEvidence{factflow.NewBranchPathInequalityEvidenceOnEdge(target, other, cond)}
 	case branchcond.CheckPathNot:
 		other := check.OtherPath
 		if other.IsEmpty() {
 			return nil
 		}
 		if cond {
-			return []factflow.BranchProof{factflow.NewBranchPathInequalityProofOnEdge(target, other, cond)}
+			return []factflow.BranchPathEvidence{factflow.NewBranchPathInequalityEvidenceOnEdge(target, other, cond)}
 		}
-		return []factflow.BranchProof{factflow.NewBranchPathEqualityProofOnEdge(target, other, cond)}
+		return []factflow.BranchPathEvidence{factflow.NewBranchPathEqualityEvidenceOnEdge(target, other, cond)}
 	case branchcond.CheckIndexInRange:
 		other := check.OtherPath
 		if !cond || other.IsEmpty() {
 			return nil
 		}
-		return []factflow.BranchProof{factflow.NewBranchIndexInRangeProofOnEdge(target, other, cond)}
+		return []factflow.BranchPathEvidence{factflow.NewBranchIndexInRangeEvidenceOnEdge(target, other, cond)}
 	}
 	return nil
 }
 
-func branchTypePresenceProofOnEdge(
+func branchTypePresenceEvidenceOnEdge(
 	targetPath path.Path,
 	typeName string,
 	matchesType bool,
 	cond bool,
-) []factflow.BranchProof {
+) []factflow.BranchPathEvidence {
 	// Runtime-kind narrowing is carried by BranchRefinement. The persistent
-	// proof lane only records the presence consequence that remains useful for
+	// evidence lane only records the presence consequence that remains useful for
 	// later path reads and invalidation.
 	tag, ok := runtimekind.ParseTag(typeName)
 	if !ok {
@@ -114,11 +114,11 @@ func branchTypePresenceProofOnEdge(
 	}
 	switch {
 	case tag == runtimekind.Nil && matchesType:
-		return []factflow.BranchProof{factflow.NewBranchPathPresenceProofOnEdge(targetPath, presence.Absent(), cond)}
+		return []factflow.BranchPathEvidence{factflow.NewBranchPathPresenceEvidenceOnEdge(targetPath, presence.Absent(), cond)}
 	case tag == runtimekind.Nil:
-		return []factflow.BranchProof{factflow.NewBranchPathPresenceProofOnEdge(targetPath, presence.Present(), cond)}
+		return []factflow.BranchPathEvidence{factflow.NewBranchPathPresenceEvidenceOnEdge(targetPath, presence.Present(), cond)}
 	case matchesType:
-		return []factflow.BranchProof{factflow.NewBranchPathPresenceProofOnEdge(targetPath, presence.Present(), cond)}
+		return []factflow.BranchPathEvidence{factflow.NewBranchPathPresenceEvidenceOnEdge(targetPath, presence.Present(), cond)}
 	default:
 		return nil
 	}

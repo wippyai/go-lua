@@ -74,7 +74,7 @@ func TestLowerMemberPathBranchRefinement(t *testing.T) {
 	assertLoweredBranchValuePresence(t, facts, requireStmtPoints(t, built, memberStmt, 1)[0], wantPath, presence.Present(), true, presence.Absent(), true)
 }
 
-func TestLowerTypeGuardBranchProof(t *testing.T) {
+func TestLowerTypeGuardBranchPathEvidence(t *testing.T) {
 	decl := localAssign([]string{"x"}, ident("input"))
 	typeRead := ident("x")
 	typeStmt := &ast.IfStmt{Condition: &ast.RelationalOpExpr{

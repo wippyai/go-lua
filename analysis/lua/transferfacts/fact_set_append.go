@@ -31,13 +31,13 @@ func appendBranchLenRefinement(out map[cfg.Point]factflow.BranchRefinementSet, p
 	out[point] = out[point].WithLenRefinements(lenFloors...)
 }
 
-func appendBranchProofs(out map[cfg.Point]factflow.BranchProofSet, point cfg.Point, proofs ...factflow.BranchProof) {
+func appendBranchPathEvidence(out map[cfg.Point]factflow.BranchPathEvidenceSet, point cfg.Point, proofs ...factflow.BranchPathEvidence) {
 	if len(proofs) == 0 {
 		return
 	}
-	existing := out[point].Proofs()
+	existing := out[point].Evidence()
 	existing = append(existing, proofs...)
-	out[point] = factflow.NewBranchProofSet(existing...)
+	out[point] = factflow.NewBranchPathEvidenceSet(existing...)
 }
 
 func appendBranchPresenceRelations(out map[cfg.Point]factflow.BranchPresenceRelationSet, point cfg.Point, relations ...factflow.BranchPresenceRelation) {

@@ -44,50 +44,50 @@ func TestStateLaneEventConstructorsAndAccessorsCopyPaths(t *testing.T) {
 		t.Fatalf("dynamic intent = %v/%v", dynamicWrite.Admission(), dynamicWrite.ReadbackIntent())
 	}
 
-	proofPath := path.NewPath(symbol.ID(103), "err")
-	presenceProof := NewBranchPathPresenceProof(proofPath, presence.Present())
-	proofPath.Root = "changed"
-	assertPathEqual(t, presenceProof.Path(), path.NewPath(symbol.ID(103), "err"))
-	if !presenceProof.ActiveOnEdge(true) || !presenceProof.ActiveOnEdge(false) {
-		t.Fatalf("point-level presence proof should be active on both edges")
+	evidencePath := path.NewPath(symbol.ID(103), "err")
+	presenceEvidence := NewBranchPathPresenceEvidence(evidencePath, presence.Present())
+	evidencePath.Root = "changed"
+	assertPathEqual(t, presenceEvidence.Path(), path.NewPath(symbol.ID(103), "err"))
+	if !presenceEvidence.ActiveOnEdge(true) || !presenceEvidence.ActiveOnEdge(false) {
+		t.Fatalf("point-level presence evidence should be active on both edges")
 	}
-	if got, ok := presenceProof.Presence(); !ok || !presence.Equal(got, presence.Present()) {
-		t.Fatalf("presence proof = %s/%v, want present/true", got, ok)
+	if got, ok := presenceEvidence.Presence(); !ok || !presence.Equal(got, presence.Present()) {
+		t.Fatalf("presence evidence = %s/%v, want present/true", got, ok)
 	}
-	if _, ok := presenceProof.OtherPath(); ok {
-		t.Fatalf("presence proof unexpectedly has other path")
+	if _, ok := presenceEvidence.OtherPath(); ok {
+		t.Fatalf("presence evidence unexpectedly has other path")
 	}
-	gotProofPath := presenceProof.Path()
-	gotProofPath.Root = "changed-again"
-	assertPathEqual(t, presenceProof.Path(), path.NewPath(symbol.ID(103), "err"))
+	gotEvidencePath := presenceEvidence.Path()
+	gotEvidencePath.Root = "changed-again"
+	assertPathEqual(t, presenceEvidence.Path(), path.NewPath(symbol.ID(103), "err"))
 
 	leftPath := path.NewPath(symbol.ID(104), "left").Field("value")
 	rightPath := path.NewPath(symbol.ID(105), "right").Field("value")
-	equalityProof := NewBranchPathEqualityProof(leftPath, rightPath)
-	inequalityProof := NewBranchPathInequalityProof(leftPath, rightPath)
-	falseEdgeProof := NewBranchPathEqualityProofOnEdge(leftPath, rightPath, false)
+	equalityEvidence := NewBranchPathEqualityEvidence(leftPath, rightPath)
+	inequalityEvidence := NewBranchPathInequalityEvidence(leftPath, rightPath)
+	falseEdgeEvidence := NewBranchPathEqualityEvidenceOnEdge(leftPath, rightPath, false)
 	leftPath.Segments[0].Name = "changed"
 	rightPath.Segments[0].Name = "changed"
-	if equalityProof.Kind() != BranchProofPathEqual || inequalityProof.Kind() != BranchProofPathNotEqual {
-		t.Fatalf("proof kinds = %v/%v", equalityProof.Kind(), inequalityProof.Kind())
+	if equalityEvidence.Kind() != BranchPathEvidenceEqual || inequalityEvidence.Kind() != BranchPathEvidenceNotEqual {
+		t.Fatalf("evidence kinds = %v/%v", equalityEvidence.Kind(), inequalityEvidence.Kind())
 	}
-	if falseEdgeProof.ActiveOnEdge(true) || !falseEdgeProof.ActiveOnEdge(false) {
-		t.Fatalf("false-edge proof active true/false = %v/%v, want false/true", falseEdgeProof.ActiveOnEdge(true), falseEdgeProof.ActiveOnEdge(false))
+	if falseEdgeEvidence.ActiveOnEdge(true) || !falseEdgeEvidence.ActiveOnEdge(false) {
+		t.Fatalf("false-edge evidence active true/false = %v/%v, want false/true", falseEdgeEvidence.ActiveOnEdge(true), falseEdgeEvidence.ActiveOnEdge(false))
 	}
-	assertDirectField(t, equalityProof.Path(), "value")
-	otherPath, ok := equalityProof.OtherPath()
+	assertDirectField(t, equalityEvidence.Path(), "value")
+	otherPath, ok := equalityEvidence.OtherPath()
 	if !ok {
-		t.Fatalf("equality proof other path missing")
+		t.Fatalf("equality evidence other path missing")
 	}
 	assertDirectField(t, otherPath, "value")
 	otherPath.Segments[0].Name = "changed-again"
-	otherAgain, _ := equalityProof.OtherPath()
+	otherAgain, _ := equalityEvidence.OtherPath()
 	assertDirectField(t, otherAgain, "value")
-	proofSet := NewBranchProofSet(presenceProof, equalityProof)
-	proofs := proofSet.Proofs()
-	proofs[0] = inequalityProof
-	if got := proofSet.Proofs(); got[0].Kind() != BranchProofPathPresence {
-		t.Fatalf("branch proof set exposed mutable slice, got %v", got[0].Kind())
+	evidenceSet := NewBranchPathEvidenceSet(presenceEvidence, equalityEvidence)
+	evidence := evidenceSet.Evidence()
+	evidence[0] = inequalityEvidence
+	if got := evidenceSet.Evidence(); got[0].Kind() != BranchPathEvidencePresence {
+		t.Fatalf("branch path evidence set exposed mutable slice, got %v", got[0].Kind())
 	}
 
 	resultPath := path.NewPath(symbol.ID(106), "select").Field("result")
@@ -150,10 +150,10 @@ func TestFactsStateLaneEventSnapshotsAreImmutable(t *testing.T) {
 				DynamicIndexReadbackKeyAndValue,
 			),
 		},
-		BranchProofs: map[cfg.Point]BranchProofSet{
-			point: NewBranchProofSet(
-				NewBranchPathPresenceProof(path.NewPath(symbol.ID(203), "err"), presence.Present()),
-				NewBranchPathEqualityProof(
+		BranchPathEvidence: map[cfg.Point]BranchPathEvidenceSet{
+			point: NewBranchPathEvidenceSet(
+				NewBranchPathPresenceEvidence(path.NewPath(symbol.ID(203), "err"), presence.Present()),
+				NewBranchPathEqualityEvidence(
 					path.NewPath(symbol.ID(204), "left").Field("value"),
 					path.NewPath(symbol.ID(205), "right").Field("value"),
 				),
@@ -182,7 +182,7 @@ func TestFactsStateLaneEventSnapshotsAreImmutable(t *testing.T) {
 	facts := NewFacts(input)
 	input.PathStaticMemberWrites[point] = NewPathStaticMemberWrite(path.NewPath(symbol.ID(208), "changed"), callSource)
 	input.DynamicIndexWrites[point] = NewDynamicIndexWrite(path.NewPath(symbol.ID(209), "changed"), callSource, callSource, DynamicIndexAdmissionRejected, DynamicIndexReadbackNone)
-	input.BranchProofs[point] = NewBranchProofSet(NewBranchPathInequalityProof(path.NewPath(symbol.ID(210), "changed"), path.NewPath(symbol.ID(211), "changed")))
+	input.BranchPathEvidence[point] = NewBranchPathEvidenceSet(NewBranchPathInequalityEvidence(path.NewPath(symbol.ID(210), "changed"), path.NewPath(symbol.ID(211), "changed")))
 	input.ChannelSelects[point] = NewChannelSelectSet(NewChannelSelect(ChannelSelectConfig{SelectID: ChannelSelectID("changed"), Kind: ChannelSelectReceive}))
 
 	if _, ok := facts.PathStaticMemberWrite(missing); ok {
@@ -191,8 +191,8 @@ func TestFactsStateLaneEventSnapshotsAreImmutable(t *testing.T) {
 	if _, ok := facts.DynamicIndexWrite(missing); ok {
 		t.Fatal("missing dynamic-index write returned ok")
 	}
-	if got := facts.BranchProofs(missing); len(got) != 0 {
-		t.Fatalf("missing branch proofs = %#v, want empty", got)
+	if got := facts.BranchPathEvidence(missing); len(got) != 0 {
+		t.Fatalf("missing branch path evidence = %#v, want empty", got)
 	}
 	if got := facts.ChannelSelects(missing); len(got) != 0 {
 		t.Fatalf("missing channel selects = %#v, want empty", got)
@@ -226,30 +226,30 @@ func TestFactsStateLaneEventSnapshotsAreImmutable(t *testing.T) {
 		t.Fatalf("dynamic write = %#v", dynamicAgain)
 	}
 
-	proofs := facts.BranchProofs(point)
-	if len(proofs) != 2 {
-		t.Fatalf("branch proofs len = %d, want 2", len(proofs))
+	evidence := facts.BranchPathEvidence(point)
+	if len(evidence) != 2 {
+		t.Fatalf("branch path evidence len = %d, want 2", len(evidence))
 	}
-	if proofs[0].Kind() != BranchProofPathPresence {
-		t.Fatalf("branch proof kind = %v, want presence", proofs[0].Kind())
+	if evidence[0].Kind() != BranchPathEvidencePresence {
+		t.Fatalf("branch path evidence kind = %v, want presence", evidence[0].Kind())
 	}
-	assertPathEqual(t, proofs[0].Path(), path.NewPath(symbol.ID(203), "err"))
-	if got, ok := proofs[0].Presence(); !ok || !presence.Equal(got, presence.Present()) {
-		t.Fatalf("branch proof presence = %s/%v, want present/true", got, ok)
+	assertPathEqual(t, evidence[0].Path(), path.NewPath(symbol.ID(203), "err"))
+	if got, ok := evidence[0].Presence(); !ok || !presence.Equal(got, presence.Present()) {
+		t.Fatalf("branch path evidence presence = %s/%v, want present/true", got, ok)
 	}
-	assertDirectField(t, proofs[1].Path(), "value")
-	otherPath, ok := proofs[1].OtherPath()
+	assertDirectField(t, evidence[1].Path(), "value")
+	otherPath, ok := evidence[1].OtherPath()
 	if !ok {
-		t.Fatal("branch equality other path missing")
+		t.Fatal("branch path equality evidence other path missing")
 	}
 	assertDirectField(t, otherPath, "value")
 	otherPath.Segments[0].Name = "mutated"
-	proofs[0] = NewBranchPathInequalityProof(path.NewPath(symbol.ID(212), "mutated"), path.NewPath(symbol.ID(213), "mutated"))
-	proofsAgain := facts.BranchProofs(point)
-	if proofsAgain[0].Kind() != BranchProofPathPresence {
-		t.Fatalf("facts branch proofs exposed mutable slice, got %v", proofsAgain[0].Kind())
+	evidence[0] = NewBranchPathInequalityEvidence(path.NewPath(symbol.ID(212), "mutated"), path.NewPath(symbol.ID(213), "mutated"))
+	evidenceAgain := facts.BranchPathEvidence(point)
+	if evidenceAgain[0].Kind() != BranchPathEvidencePresence {
+		t.Fatalf("facts branch path evidence exposed mutable slice, got %v", evidenceAgain[0].Kind())
 	}
-	otherAgain, _ := proofsAgain[1].OtherPath()
+	otherAgain, _ := evidenceAgain[1].OtherPath()
 	assertDirectField(t, otherAgain, "value")
 
 	selects := facts.ChannelSelects(point)

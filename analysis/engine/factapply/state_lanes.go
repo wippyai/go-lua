@@ -118,30 +118,30 @@ func dynamicIndexReadback(intent factflow.DynamicIndexReadbackIntent) (readKey b
 	}
 }
 
-func applyBranchProof(
+func applyBranchPathEvidence(
 	ctx transfer.EdgeContext,
 	resolver *visibility.Resolver,
 	out state.State,
-	proof factflow.BranchProof,
+	proof factflow.BranchPathEvidence,
 ) state.State {
-	stateProof, ok := branchProofAt(resolver, ctx.Edge.From, proof)
+	stateProof, ok := branchPathEvidenceAt(resolver, ctx.Edge.From, proof)
 	if !ok {
 		return out
 	}
 	return out.AddBranchProof(stateProof)
 }
 
-func branchProofAt(
+func branchPathEvidenceAt(
 	resolver *visibility.Resolver,
 	point cfg.Point,
-	proof factflow.BranchProof,
+	proof factflow.BranchPathEvidence,
 ) (pathevidence.BranchProof, bool) {
 	pathKey := factPathKeyAt(resolver, point, proof.Path())
 	if pathKey == "" {
 		return pathevidence.BranchProof{}, false
 	}
 	switch proof.Kind() {
-	case factflow.BranchProofPathPresence:
+	case factflow.BranchPathEvidencePresence:
 		value, ok := proof.Presence()
 		if !ok {
 			return pathevidence.BranchProof{}, false
@@ -151,8 +151,8 @@ func branchProofAt(
 			Path:     pathKey,
 			Presence: value,
 		}, true
-	case factflow.BranchProofPathEqual:
-		other, ok := branchProofOtherPathKeyAt(resolver, point, proof)
+	case factflow.BranchPathEvidenceEqual:
+		other, ok := branchPathEvidenceOtherPathKeyAt(resolver, point, proof)
 		if !ok {
 			return pathevidence.BranchProof{}, false
 		}
@@ -161,8 +161,8 @@ func branchProofAt(
 			Path:  pathKey,
 			Other: other,
 		}, true
-	case factflow.BranchProofPathNotEqual:
-		other, ok := branchProofOtherPathKeyAt(resolver, point, proof)
+	case factflow.BranchPathEvidenceNotEqual:
+		other, ok := branchPathEvidenceOtherPathKeyAt(resolver, point, proof)
 		if !ok {
 			return pathevidence.BranchProof{}, false
 		}
@@ -171,8 +171,8 @@ func branchProofAt(
 			Path:  pathKey,
 			Other: other,
 		}, true
-	case factflow.BranchProofIndexInRange:
-		other, ok := branchProofOtherPathKeyAt(resolver, point, proof)
+	case factflow.BranchPathEvidenceIndexInRange:
+		other, ok := branchPathEvidenceOtherPathKeyAt(resolver, point, proof)
 		if !ok {
 			return pathevidence.BranchProof{}, false
 		}
@@ -186,10 +186,10 @@ func branchProofAt(
 	}
 }
 
-func branchProofOtherPathKeyAt(
+func branchPathEvidenceOtherPathKeyAt(
 	resolver *visibility.Resolver,
 	point cfg.Point,
-	proof factflow.BranchProof,
+	proof factflow.BranchPathEvidence,
 ) (pathdom.PathKey, bool) {
 	otherPath, ok := proof.OtherPath()
 	if !ok {

@@ -128,7 +128,7 @@ func TestFactsNodeTransferAppliesDynamicIndexWriteKeyValueAdmission(t *testing.T
 	}
 }
 
-func TestFactsEdgeTransferAddsPointLevelBranchProofsOnBothBranchOutputs(t *testing.T) {
+func TestFactsEdgeTransferAddsPointLevelBranchPathEvidenceOnBothBranchOutputs(t *testing.T) {
 	reg := standard.Registry()
 	graph := cfg.New()
 	branch := graph.AddNode(cfg.NodeBranch)
@@ -166,10 +166,10 @@ func TestFactsEdgeTransferAddsPointLevelBranchProofsOnBothBranchOutputs(t *testi
 		Registry: reg,
 		EdgeTransfer: NewFactsEdgeTransfer(FactsEdgeTransferConfig{
 			Facts: factflow.NewFacts(factflow.FactsInput{
-				BranchProofs: map[cfg.Point]factflow.BranchProofSet{
-					branch: factflow.NewBranchProofSet(
-						factflow.NewBranchPathPresenceProof(errPath, presence.Present()),
-						factflow.NewBranchPathEqualityProof(leftPath, rightPath),
+				BranchPathEvidence: map[cfg.Point]factflow.BranchPathEvidenceSet{
+					branch: factflow.NewBranchPathEvidenceSet(
+						factflow.NewBranchPathPresenceEvidence(errPath, presence.Present()),
+						factflow.NewBranchPathEqualityEvidence(leftPath, rightPath),
 					),
 				},
 			}),
@@ -185,7 +185,7 @@ func TestFactsEdgeTransferAddsPointLevelBranchProofsOnBothBranchOutputs(t *testi
 	}
 }
 
-func TestFactsEdgeTransferBranchProofsRespectEdgesAndJoinByIntersection(t *testing.T) {
+func TestFactsEdgeTransferBranchPathEvidenceRespectEdgesAndJoinByIntersection(t *testing.T) {
 	reg := standard.Registry()
 	graph := cfg.New()
 	branch := graph.AddNode(cfg.NodeBranch)
@@ -225,10 +225,10 @@ func TestFactsEdgeTransferBranchProofsRespectEdgesAndJoinByIntersection(t *testi
 		Registry: reg,
 		EdgeTransfer: NewFactsEdgeTransfer(FactsEdgeTransferConfig{
 			Facts: factflow.NewFacts(factflow.FactsInput{
-				BranchProofs: map[cfg.Point]factflow.BranchProofSet{
-					branch: factflow.NewBranchProofSet(
-						factflow.NewBranchPathPresenceProofOnEdge(errPath, presence.Present(), true),
-						factflow.NewBranchPathEqualityProof(leftPath, rightPath),
+				BranchPathEvidence: map[cfg.Point]factflow.BranchPathEvidenceSet{
+					branch: factflow.NewBranchPathEvidenceSet(
+						factflow.NewBranchPathPresenceEvidenceOnEdge(errPath, presence.Present(), true),
+						factflow.NewBranchPathEqualityEvidence(leftPath, rightPath),
 					),
 				},
 			}),

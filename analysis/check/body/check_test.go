@@ -255,20 +255,20 @@ end`)
 	if incAssign == 0 {
 		t.Fatal("increment i assignment not found")
 	}
-	proofs := result.facts.BranchProofs(branchPoint)
-	if len(proofs) == 0 {
-		t.Fatalf("branch %d lowered no branch proofs", branchPoint)
+	evidence := result.facts.BranchPathEvidence(branchPoint)
+	if len(evidence) == 0 {
+		t.Fatalf("branch %d lowered no branch path evidence", branchPoint)
 	}
 	branchState, _ := result.StateAt(branchPoint)
 	if branchFloors := branchState.NumFloorsSnapshot().Floors; len(branchFloors) == 0 {
 		t.Fatalf("branch %d has no numeric floors before body", branchPoint)
 	}
-	if indexKey := result.visibility.KeyAt(branchPoint, proofs[0].Path()); indexKey == "" {
-		t.Fatalf("branch %d index proof path has no visibility key: %#v", branchPoint, proofs[0].Path())
+	if indexKey := result.visibility.KeyAt(branchPoint, evidence[0].Path()); indexKey == "" {
+		t.Fatalf("branch %d index evidence path has no visibility key: %#v", branchPoint, evidence[0].Path())
 	}
-	otherPath, ok := proofs[0].OtherPath()
+	otherPath, ok := evidence[0].OtherPath()
 	if !ok {
-		t.Fatalf("branch %d proof has no array path: %#v", branchPoint, proofs[0])
+		t.Fatalf("branch %d evidence has no array path: %#v", branchPoint, evidence[0])
 	}
 	if arrayKey := result.visibility.KeyAt(branchPoint, otherPath); arrayKey == "" {
 		t.Fatalf("branch %d array proof path has no visibility key: %#v", branchPoint, otherPath)

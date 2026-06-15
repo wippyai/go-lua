@@ -18,7 +18,7 @@ type FactsInput struct {
 	BranchRefinements           map[cfg.Point]BranchRefinementSet
 	BranchPresenceRelations     map[cfg.Point]BranchPresenceRelationSet
 	BranchPathRelations         map[cfg.Point]BranchPathRelationSet
-	BranchProofs                map[cfg.Point]BranchProofSet
+	BranchPathEvidence          map[cfg.Point]BranchPathEvidenceSet
 	ChannelSelects              map[cfg.Point]ChannelSelectSet
 	PostconditionRefinements    map[cfg.Point]PostconditionRefinementSet
 	PostconditionPathRelations  map[cfg.Point]PostconditionPathRelationSet
@@ -46,7 +46,7 @@ type Facts struct {
 	branchRefinements           map[cfg.Point]BranchRefinementSet
 	branchPresenceRelations     map[cfg.Point]BranchPresenceRelationSet
 	branchPathRelations         map[cfg.Point]BranchPathRelationSet
-	branchProofs                map[cfg.Point]BranchProofSet
+	branchPathEvidence          map[cfg.Point]BranchPathEvidenceSet
 	channelSelects              map[cfg.Point]ChannelSelectSet
 	postconditionRefinements    map[cfg.Point]PostconditionRefinementSet
 	postconditionPathRelations  map[cfg.Point]PostconditionPathRelationSet
@@ -75,7 +75,7 @@ func NewFacts(input FactsInput) Facts {
 		branchRefinements:           copyBranchRefinementSetMap(input.BranchRefinements),
 		branchPresenceRelations:     copyBranchPresenceRelationMap(input.BranchPresenceRelations),
 		branchPathRelations:         copyBranchPathRelationMap(input.BranchPathRelations),
-		branchProofs:                copyBranchProofMap(input.BranchProofs),
+		branchPathEvidence:          copyBranchPathEvidenceMap(input.BranchPathEvidence),
 		channelSelects:              copyChannelSelectMap(input.ChannelSelects),
 		postconditionRefinements:    copyPostconditionRefinementMap(input.PostconditionRefinements),
 		postconditionPathRelations:  copyPostconditionPathRelationMap(input.PostconditionPathRelations),
@@ -257,10 +257,10 @@ func (f Facts) BranchPathRelations(point cfg.Point) []BranchPathRelation {
 	return nil
 }
 
-// BranchProofs returns branch/postcondition proof facts at point.
-func (f Facts) BranchProofs(point cfg.Point) []BranchProof {
-	if set, ok := f.branchProofs[point]; ok {
-		return set.Proofs()
+// BranchPathEvidence returns branch/postcondition path evidence at point.
+func (f Facts) BranchPathEvidence(point cfg.Point) []BranchPathEvidence {
+	if set, ok := f.branchPathEvidence[point]; ok {
+		return set.Evidence()
 	}
 	return nil
 }

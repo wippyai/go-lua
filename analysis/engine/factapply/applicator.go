@@ -127,8 +127,8 @@ func NewFactsEdgeTransfer(config FactsEdgeTransferConfig) transfer.EdgeTransfer 
 			}
 			out = applyBranchPathRelation(ctx, config.Visibility, config.ProjectPath, out, relation)
 		}
-		for _, proof := range config.Facts.BranchProofs(ctx.Edge.From) {
-			if proof.Kind() == factflow.BranchProofPathTruthy && proof.ActiveOnEdge(!ctx.Edge.Cond) && !proof.ActiveOnEdge(ctx.Edge.Cond) {
+		for _, proof := range config.Facts.BranchPathEvidence(ctx.Edge.From) {
+			if proof.Kind() == factflow.BranchPathEvidenceTruthy && proof.ActiveOnEdge(!ctx.Edge.Cond) && !proof.ActiveOnEdge(ctx.Edge.Cond) {
 				out = applyDescendantTruthyOppositeRootOriginRefinement(
 					ctx.Registry,
 					config.Visibility,
@@ -140,7 +140,7 @@ func NewFactsEdgeTransfer(config FactsEdgeTransferConfig) transfer.EdgeTransfer 
 			if !proof.ActiveOnEdge(ctx.Edge.Cond) {
 				continue
 			}
-			out = applyBranchProof(ctx, config.Visibility, out, proof)
+			out = applyBranchPathEvidence(ctx, config.Visibility, out, proof)
 		}
 		out = applyCallOutcomeEdgeFacts(ctx, config.Facts, config.CallOutcome, config.Visibility, branchRefinements, out)
 		return out

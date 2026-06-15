@@ -390,8 +390,8 @@ func assertLoweredBranchPresenceProof(
 	wantFalse bool,
 ) {
 	t.Helper()
-	for _, proof := range facts.BranchProofs(point) {
-		if proof.Kind() != factflow.BranchProofPathPresence || !proof.Path().Equal(wantPath) {
+	for _, proof := range facts.BranchPathEvidence(point) {
+		if proof.Kind() != factflow.BranchPathEvidencePresence || !proof.Path().Equal(wantPath) {
 			continue
 		}
 		gotPresence, ok := proof.Presence()

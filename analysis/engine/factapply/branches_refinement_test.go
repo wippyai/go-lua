@@ -405,9 +405,9 @@ func TestFactsEdgeTransferDescendantTruthyFalseEdgeNarrowsRootOriginFromFlowType
 				branchWithPresence(okPath, presence.Present(), true, presence.Bottom(), false),
 			),
 		},
-		BranchProofs: map[cfg.Point]factflow.BranchProofSet{
-			branch: factflow.NewBranchProofSet(
-				factflow.NewBranchPathTruthyProofOnEdge(okPath, true),
+		BranchPathEvidence: map[cfg.Point]factflow.BranchPathEvidenceSet{
+			branch: factflow.NewBranchPathEvidenceSet(
+				factflow.NewBranchPathTruthyEvidenceOnEdge(okPath, true),
 			),
 		},
 	})

@@ -59,7 +59,7 @@ func Lower(result *semantics.Result, graph cfg.Graph, config Config) factflow.Fa
 		BranchRefinements:           make(map[cfg.Point]factflow.BranchRefinementSet),
 		BranchPresenceRelations:     make(map[cfg.Point]factflow.BranchPresenceRelationSet),
 		BranchPathRelations:         make(map[cfg.Point]factflow.BranchPathRelationSet),
-		BranchProofs:                make(map[cfg.Point]factflow.BranchProofSet),
+		BranchPathEvidence:          make(map[cfg.Point]factflow.BranchPathEvidenceSet),
 		ChannelSelects:              make(map[cfg.Point]factflow.ChannelSelectSet),
 		PostconditionRefinements:    make(map[cfg.Point]factflow.PostconditionRefinementSet),
 		CallResultValues:            make(map[cfg.Point]factflow.CallResultValueSet),
@@ -144,8 +144,8 @@ func Lower(result *semantics.Result, graph cfg.Graph, config Config) factflow.Fa
 			if lowered, ok := l.branchPathRelations(fact); ok {
 				input.BranchPathRelations[point] = lowered
 			}
-			if lowered := l.branchProofs(fact); len(lowered) != 0 {
-				appendBranchProofs(input.BranchProofs, point, lowered...)
+			if lowered := l.branchPathEvidence(fact); len(lowered) != 0 {
+				appendBranchPathEvidence(input.BranchPathEvidence, point, lowered...)
 			}
 			l.addAssertionRefinementsForSource(&input, fact.Source)
 		}
