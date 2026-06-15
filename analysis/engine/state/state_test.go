@@ -10,13 +10,13 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/placement"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/standard"
 	"github.com/wippyai/go-lua/analysis/engine/state/channelselectfact"
 	"github.com/wippyai/go-lua/analysis/engine/state/dynamicindex"
 	effectdelta "github.com/wippyai/go-lua/analysis/engine/state/effectdelta"
-	"github.com/wippyai/go-lua/analysis/engine/state/escapeplacement"
 	"github.com/wippyai/go-lua/analysis/engine/state/heapidentity"
 	"github.com/wippyai/go-lua/analysis/engine/state/pathevidence"
 	"github.com/wippyai/go-lua/analysis/symbol"
@@ -276,7 +276,7 @@ func TestStateCloneIndependenceAcrossLanes(t *testing.T) {
 			},
 		}).
 		WriteEffectDelta(fx.effectKey, fx.effectDelta).
-		WriteEscapePlacement(fx.escapeID, escapeplacement.Stack).
+		WritePlacement(fx.escapeID, placement.Stack).
 		AddChannelSelectFact(fx.channelFact).
 		AddBranchProof(fx.proof)
 
@@ -293,7 +293,7 @@ func TestStateCloneIndependenceAcrossLanes(t *testing.T) {
 	clone.dynamicIndex[fx.dynamicKey] = dynamicindex.Bottom(reg)
 	clone.heapTableIdentity[fx.heapID] = heapidentity.BottomObject(reg)
 	clone.effectDeltas[fx.effectKey] = effectdelta.Bottom(reg)
-	clone.escapePlacement[fx.escapeID] = escapeplacement.Unknown
+	clone.placement[fx.escapeID] = placement.Unknown
 	clone.channelSelect = clone.channelSelect.Add(channelselectfact.Fact{
 		Select: "clone-only",
 		Kind:   channelselectfact.FactCase,
@@ -320,8 +320,8 @@ func TestStateCloneIndependenceAcrossLanes(t *testing.T) {
 	if got := original.ReadEffectDelta(fx.effectKey); !effectdelta.Domain(reg).Equal(got, fx.effectDelta) {
 		t.Fatalf("original effect delta mutated through clone: %#v", got)
 	}
-	if got := original.ReadEscapePlacement(fx.escapeID); got != escapeplacement.Stack {
-		t.Fatalf("original escape placement mutated through clone: %v", got)
+	if got := original.ReadPlacement(fx.escapeID); got != placement.Stack {
+		t.Fatalf("original placement mutated through clone: %v", got)
 	}
 	if !original.HasChannelSelectFact(fx.channelFact) {
 		t.Fatalf("original channel-select fact mutated through clone")
@@ -348,8 +348,8 @@ func TestStateCloneIndependenceAcrossLanes(t *testing.T) {
 	if got := clone.ReadEffectDelta(fx.effectKey); effectdelta.Domain(reg).Equal(got, fx.effectDelta) {
 		t.Fatalf("clone effect delta did not change")
 	}
-	if got := clone.ReadEscapePlacement(fx.escapeID); got != escapeplacement.Unknown {
-		t.Fatalf("clone escape placement = %v, want unknown", got)
+	if got := clone.ReadPlacement(fx.escapeID); got != placement.Unknown {
+		t.Fatalf("clone placement = %v, want unknown", got)
 	}
 	if !clone.HasChannelSelectFact(fx.channelFact) || !clone.HasChannelSelectFact(channelselectfact.Fact{
 		Select: "clone-only",
@@ -380,14 +380,14 @@ func TestStateBottomWritesRemoveExplicitBottomEntries(t *testing.T) {
 			},
 		}).
 		WriteEffectDelta(fx.effectKey, fx.effectDelta).
-		WriteEscapePlacement(fx.escapeID, escapeplacement.Stack)
+		WritePlacement(fx.escapeID, placement.Stack)
 
 	state = state.WriteValue(reg, fx.valueSlot, valueDomain.Bottom())
 	state = state.WritePathKey(reg, fx.pathKey, valueDomain.Bottom())
 	state = state.WriteDynamicIndexFact(reg, fx.dynamicKey, dynamicindex.Bottom(reg))
 	state = state.WriteHeapTableObject(reg, fx.heapID, heapidentity.BottomObject(reg))
 	state = state.WriteEffectDelta(fx.effectKey, effectdelta.Bottom(reg))
-	state = state.WriteEscapePlacement(fx.escapeID, escapeplacement.Bottom)
+	state = state.WritePlacement(fx.escapeID, placement.Bottom)
 
 	if _, ok := state.values[fx.valueSlot]; ok {
 		t.Fatalf("value slot kept explicit bottom entry")
@@ -404,8 +404,8 @@ func TestStateBottomWritesRemoveExplicitBottomEntries(t *testing.T) {
 	if _, ok := state.effectDeltas[fx.effectKey]; ok {
 		t.Fatalf("effect delta kept explicit bottom entry")
 	}
-	if _, ok := state.escapePlacement[fx.escapeID]; ok {
-		t.Fatalf("escape placement kept explicit bottom entry")
+	if _, ok := state.placement[fx.escapeID]; ok {
+		t.Fatalf("placement kept explicit bottom entry")
 	}
 }
 
@@ -484,7 +484,7 @@ func TestWritesFromStateBottomProduceReachableState(t *testing.T) {
 		{"path-presence-implication", bottom.AddPathPresenceImplication(implication)},
 		{"effect-delta", bottom.WriteEffectDelta(effectKey, effectDelta)},
 		{"channel-select", bottom.AddChannelSelectFact(channel)},
-		{"escape-placement", bottom.WriteEscapePlacement(escapeID, escapeplacement.Stack)},
+		{"placement", bottom.WritePlacement(escapeID, placement.Stack)},
 	}
 	for _, tc := range cases {
 		if tc.state.pathEvidence.StaticMembersBottom() ||
@@ -871,44 +871,44 @@ func TestChannelSelectFactsUseMustJoin(t *testing.T) {
 	}
 }
 
-func TestEscapePlacementOrderAndCopy(t *testing.T) {
+func TestPlacementOrderAndCopy(t *testing.T) {
 	stateDomain := Domain(standard.Registry())
 	id := identity.ID{Kind: "table", Site: "escape", Index: 1}
 	otherID := identity.ID{Kind: "table", Site: "escape", Index: 2}
 
-	if got := (State{}).ReadEscapePlacement(id); got != escapeplacement.Bottom {
-		t.Fatalf("empty escape placement = %v, want bottom", got)
+	if got := (State{}).ReadPlacement(id); got != placement.Bottom {
+		t.Fatalf("empty placement = %v, want bottom", got)
 	}
-	if !stateDomain.Equal(State{}.WriteEscapePlacement(id, escapeplacement.Stack), State{}.WriteEscapePlacement(id, escapeplacement.Stack)) {
-		t.Fatalf("equal escape placements compare different")
+	if !stateDomain.Equal(State{}.WritePlacement(id, placement.Stack), State{}.WritePlacement(id, placement.Stack)) {
+		t.Fatalf("equal placements compare different")
 	}
 
 	left := State{}.
-		WriteEscapePlacement(id, escapeplacement.Stack).
-		WriteEscapePlacement(otherID, escapeplacement.OwnedHeap)
-	right := State{}.WriteEscapePlacement(id, escapeplacement.Escaped)
+		WritePlacement(id, placement.Stack).
+		WritePlacement(otherID, placement.OwnedHeap)
+	right := State{}.WritePlacement(id, placement.SharedHeap)
 	if !stateDomain.Equal(stateDomain.Join(stateDomain.Bottom(), left), left) {
-		t.Fatalf("state bottom should be join identity for escape placement")
+		t.Fatalf("state bottom should be join identity for placement")
 	}
 	joined := stateDomain.Join(left, right)
-	if got := joined.ReadEscapePlacement(id); got != escapeplacement.Escaped {
-		t.Fatalf("joined escape placement = %v, want escaped", got)
+	if got := joined.ReadPlacement(id); got != placement.SharedHeap {
+		t.Fatalf("joined placement = %v, want shared heap", got)
 	}
-	if got := joined.ReadEscapePlacement(otherID); got != escapeplacement.OwnedHeap {
-		t.Fatalf("disjoint escape placement did not survive pointwise join: %v", got)
+	if got := joined.ReadPlacement(otherID); got != placement.OwnedHeap {
+		t.Fatalf("disjoint placement did not survive pointwise join: %v", got)
 	}
 	if widened := stateDomain.Widen(left, right); !stateDomain.Equal(widened, joined) {
-		t.Fatalf("escape placement widen differs from join")
+		t.Fatalf("placement widen differs from join")
 	}
 	if !stateDomain.LessOrEq(left, joined) || stateDomain.LessOrEq(joined, left) {
-		t.Fatalf("escape placement order should move toward escaped/unknown")
+		t.Fatalf("placement order should move toward shared/unknown")
 	}
-	clone := left.Clone().WriteEscapePlacement(id, escapeplacement.Unknown)
-	if got := left.ReadEscapePlacement(id); got != escapeplacement.Stack {
-		t.Fatalf("escape placement clone write mutated original: %v", got)
+	clone := left.Clone().WritePlacement(id, placement.Unknown)
+	if got := left.ReadPlacement(id); got != placement.Stack {
+		t.Fatalf("placement clone write mutated original: %v", got)
 	}
-	if got := clone.ReadEscapePlacement(id); got != escapeplacement.Unknown {
-		t.Fatalf("escape placement clone write = %v, want unknown", got)
+	if got := clone.ReadPlacement(id); got != placement.Unknown {
+		t.Fatalf("placement clone write = %v, want unknown", got)
 	}
 }
 
@@ -1218,8 +1218,8 @@ func TestTopLanesReadTopAndRejectFiniteUpdates(t *testing.T) {
 	if got := top.ReadEffectDelta(effectKey); !effectdelta.Domain(reg).Equal(got, effectdelta.Top()) {
 		t.Fatalf("top effect-delta read = %#v, want top", got)
 	}
-	if got := top.ReadEscapePlacement(escapeID); got != escapeplacement.Unknown {
-		t.Fatalf("top escape-placement read = %v, want unknown", got)
+	if got := top.ReadPlacement(escapeID); got != placement.Unknown {
+		t.Fatalf("top placement read = %v, want unknown", got)
 	}
 	if _, ok := top.ReadPathStaticMember(pathKey); ok {
 		t.Fatalf("top static-member lane should read as unknown absence")
@@ -1257,7 +1257,7 @@ func TestTopLanesReadTopAndRejectFiniteUpdates(t *testing.T) {
 		top.WriteEffectDelta(effectKey, effectDelta)
 	})
 	requirePanic(t, func() {
-		top.WriteEscapePlacement(escapeID, escapeplacement.Stack)
+		top.WritePlacement(escapeID, placement.Stack)
 	})
 }
 
@@ -1363,7 +1363,7 @@ func stateLawSample(reg *axis.Registry) []State {
 	})
 	effectState := State{}.
 		WriteEffectDelta(fx.effectKey, fx.effectDelta).
-		WriteEscapePlacement(fx.escapeID, escapeplacement.Stack)
+		WritePlacement(fx.escapeID, placement.Stack)
 	channelState := State{}.AddChannelSelectFact(fx.channelFact)
 	fullState := valueState.
 		WritePathKey(reg, fx.pathKey, fx.present).
@@ -1376,7 +1376,7 @@ func stateLawSample(reg *axis.Registry) []State {
 			},
 		}).
 		WriteEffectDelta(fx.effectKey, fx.effectDelta).
-		WriteEscapePlacement(fx.escapeID, escapeplacement.Stack).
+		WritePlacement(fx.escapeID, placement.Stack).
 		AddChannelSelectFact(fx.channelFact).
 		AddBranchProof(fx.proof)
 
@@ -1391,7 +1391,7 @@ func stateLawFormat(reg *axis.Registry) func(State) string {
 			static = formatValue(reg, got)
 		}
 		return fmt.Sprintf(
-			"v=%s ret=%s path=%s static=%s dyn=%#v heap-root=%s effect=%#v esc=%v chan=%v proof=%v",
+			"v=%s ret=%s path=%s static=%s dyn=%#v heap-root=%s effect=%#v placement=%v chan=%v proof=%v",
 			formatValue(reg, s.ReadValue(reg, fx.valueSlot)),
 			formatValue(reg, s.ReadReturnSlot(reg, fx.returnSlot)),
 			formatValue(reg, s.ReadPathKey(reg, fx.pathKey)),
@@ -1399,7 +1399,7 @@ func stateLawFormat(reg *axis.Registry) func(State) string {
 			s.ReadDynamicIndexFact(reg, fx.dynamicKey),
 			formatValue(reg, s.ReadHeapTableObject(reg, fx.heapID).Root),
 			s.ReadEffectDelta(fx.effectKey),
-			s.ReadEscapePlacement(fx.escapeID),
+			s.ReadPlacement(fx.escapeID),
 			s.HasChannelSelectFact(fx.channelFact),
 			s.HasBranchProof(fx.proof),
 		)

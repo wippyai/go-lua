@@ -7,11 +7,11 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/placement"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/engine/state/channelselectfact"
 	"github.com/wippyai/go-lua/analysis/engine/state/dynamicindex"
 	effectdelta "github.com/wippyai/go-lua/analysis/engine/state/effectdelta"
-	"github.com/wippyai/go-lua/analysis/engine/state/escapeplacement"
 	"github.com/wippyai/go-lua/analysis/engine/state/heapidentity"
 	"github.com/wippyai/go-lua/analysis/engine/state/lenbound"
 	"github.com/wippyai/go-lua/analysis/engine/state/numbound"
@@ -30,7 +30,7 @@ type State struct {
 	heapTableIdentity map[identity.ID]heapidentity.TableObject
 	effectDeltas      map[effectdelta.Key]effectdelta.Value
 	channelSelect     channelselectfact.Lane
-	escapePlacement   map[identity.ID]escapeplacement.Value
+	placement         map[identity.ID]placement.Value
 	lenFloors         lift.MustMapLane[pathdom.PathKey, lenbound.Floor]
 	numFloors         lift.MustMapLane[pathdom.PathKey, numbound.Floor]
 
@@ -39,7 +39,7 @@ type State struct {
 	dynamicIndexTop      bool
 	heapTableIdentityTop bool
 	effectDeltasTop      bool
-	escapePlacementTop   bool
+	placementTop         bool
 }
 
 // Clone returns an independent copy of the finite lanes in s.
@@ -51,14 +51,14 @@ func (s State) Clone() State {
 		heapTableIdentity:    heapidentity.CloneMap(s.heapTableIdentity),
 		effectDeltas:         effectdelta.CloneMap(s.effectDeltas),
 		channelSelect:        s.channelSelect.Clone(),
-		escapePlacement:      escapeplacement.CloneMap(s.escapePlacement),
+		placement:            clonePlacementMap(s.placement),
 		lenFloors:            s.lenFloors.Clone(),
 		numFloors:            s.numFloors.Clone(),
 		valuesTop:            s.valuesTop,
 		dynamicIndexTop:      s.dynamicIndexTop,
 		heapTableIdentityTop: s.heapTableIdentityTop,
 		effectDeltasTop:      s.effectDeltasTop,
-		escapePlacementTop:   s.escapePlacementTop,
+		placementTop:         s.placementTop,
 	}
 }
 
@@ -149,7 +149,7 @@ func Domain(reg *axis.Registry) lattice.Lattice[State] {
 		heapTableIdentity: heapidentity.MapDomain(reg),
 		effectDeltas:      effectdelta.MapDomain(reg),
 		channelSelect:     channelselectfact.Domain(),
-		escapePlacement:   escapeplacement.MapDomain(),
+		placement:         placementMapDomain(),
 		lenFloors:         lenbound.MapDomain(),
 		numFloors:         numbound.MapDomain(),
 	}
@@ -169,7 +169,7 @@ func Domain(reg *axis.Registry) lattice.Lattice[State] {
 				dynamicIndexTop:      true,
 				heapTableIdentityTop: true,
 				effectDeltasTop:      true,
-				escapePlacementTop:   true,
+				placementTop:         true,
 				lenFloors:            ops.lenFloors.Top(),
 				numFloors:            ops.numFloors.Top(),
 			}
@@ -181,7 +181,7 @@ func Domain(reg *axis.Registry) lattice.Lattice[State] {
 				ops.heapTableIdentity.Equal(ops.heapTableIdentityLane(a), ops.heapTableIdentityLane(b)) &&
 				ops.effectDeltas.Equal(ops.effectDeltaLane(a), ops.effectDeltaLane(b)) &&
 				ops.channelSelect.Equal(a.channelSelect, b.channelSelect) &&
-				ops.escapePlacement.Equal(ops.escapePlacementLane(a), ops.escapePlacementLane(b)) &&
+				ops.placement.Equal(ops.placementLane(a), ops.placementLane(b)) &&
 				ops.lenFloors.Equal(a.lenFloors, b.lenFloors) &&
 				ops.numFloors.Equal(a.numFloors, b.numFloors)
 		},
@@ -192,7 +192,7 @@ func Domain(reg *axis.Registry) lattice.Lattice[State] {
 				ops.heapTableIdentity.LessOrEq(ops.heapTableIdentityLane(a), ops.heapTableIdentityLane(b)) &&
 				ops.effectDeltas.LessOrEq(ops.effectDeltaLane(a), ops.effectDeltaLane(b)) &&
 				ops.channelSelect.LessOrEq(a.channelSelect, b.channelSelect) &&
-				ops.escapePlacement.LessOrEq(ops.escapePlacementLane(a), ops.escapePlacementLane(b)) &&
+				ops.placement.LessOrEq(ops.placementLane(a), ops.placementLane(b)) &&
 				ops.lenFloors.LessOrEq(a.lenFloors, b.lenFloors) &&
 				ops.numFloors.LessOrEq(a.numFloors, b.numFloors)
 		},
@@ -204,7 +204,7 @@ func Domain(reg *axis.Registry) lattice.Lattice[State] {
 				ops.heapTableIdentity.Join(ops.heapTableIdentityLane(a), ops.heapTableIdentityLane(b)),
 				ops.effectDeltas.Join(ops.effectDeltaLane(a), ops.effectDeltaLane(b)),
 				ops.channelSelect.Join(a.channelSelect, b.channelSelect),
-				ops.escapePlacement.Join(ops.escapePlacementLane(a), ops.escapePlacementLane(b)),
+				ops.placement.Join(ops.placementLane(a), ops.placementLane(b)),
 				ops.lenFloors.Join(a.lenFloors, b.lenFloors),
 				ops.numFloors.Join(a.numFloors, b.numFloors),
 			)
@@ -217,7 +217,7 @@ func Domain(reg *axis.Registry) lattice.Lattice[State] {
 				ops.heapTableIdentity.Widen(ops.heapTableIdentityLane(prev), ops.heapTableIdentityLane(next)),
 				ops.effectDeltas.Widen(ops.effectDeltaLane(prev), ops.effectDeltaLane(next)),
 				ops.channelSelect.Widen(prev.channelSelect, next.channelSelect),
-				ops.escapePlacement.Widen(ops.escapePlacementLane(prev), ops.escapePlacementLane(next)),
+				ops.placement.Widen(ops.placementLane(prev), ops.placementLane(next)),
 				ops.lenFloors.Widen(prev.lenFloors, next.lenFloors),
 				ops.numFloors.Widen(prev.numFloors, next.numFloors),
 			)
@@ -232,7 +232,7 @@ type domainOps struct {
 	heapTableIdentity lattice.Lattice[map[identity.ID]heapidentity.TableObject]
 	effectDeltas      lattice.Lattice[map[effectdelta.Key]effectdelta.Value]
 	channelSelect     lattice.Lattice[channelselectfact.Lane]
-	escapePlacement   lattice.Lattice[map[identity.ID]escapeplacement.Value]
+	placement         lattice.Lattice[map[identity.ID]placement.Value]
 	lenFloors         lattice.Lattice[lift.MustMapLane[pathdom.PathKey, lenbound.Floor]]
 	numFloors         lattice.Lattice[lift.MustMapLane[pathdom.PathKey, numbound.Floor]]
 }
@@ -265,11 +265,11 @@ func (o domainOps) effectDeltaLane(s State) map[effectdelta.Key]effectdelta.Valu
 	return s.effectDeltas
 }
 
-func (o domainOps) escapePlacementLane(s State) map[identity.ID]escapeplacement.Value {
-	if s.escapePlacementTop {
-		return o.escapePlacement.Top()
+func (o domainOps) placementLane(s State) map[identity.ID]placement.Value {
+	if s.placementTop {
+		return o.placement.Top()
 	}
-	return s.escapePlacement
+	return s.placement
 }
 
 func (o domainOps) fromLanes(
@@ -279,7 +279,7 @@ func (o domainOps) fromLanes(
 	heapTableIdentity map[identity.ID]heapidentity.TableObject,
 	effectDeltas map[effectdelta.Key]effectdelta.Value,
 	channelSelect channelselectfact.Lane,
-	escapePlacement map[identity.ID]escapeplacement.Value,
+	placementLane map[identity.ID]placement.Value,
 	lenFloors lift.MustMapLane[pathdom.PathKey, lenbound.Floor],
 	numFloors lift.MustMapLane[pathdom.PathKey, numbound.Floor],
 ) State {
@@ -306,10 +306,10 @@ func (o domainOps) fromLanes(
 		out.effectDeltas = effectDeltas
 	}
 	out.channelSelect = channelSelect
-	if o.escapePlacement.Equal(escapePlacement, o.escapePlacement.Top()) {
-		out.escapePlacementTop = true
+	if o.placement.Equal(placementLane, o.placement.Top()) {
+		out.placementTop = true
 	} else {
-		out.escapePlacement = escapePlacement
+		out.placement = placementLane
 	}
 	out.lenFloors = lenFloors
 	out.numFloors = numFloors
@@ -348,6 +348,48 @@ func cloneNumFloors(in map[pathdom.PathKey]numbound.Floor) map[pathdom.PathKey]n
 		out[k] = v
 	}
 	return out
+}
+
+func placementDomain() lattice.Lattice[placement.Value] {
+	return lattice.Lattice[placement.Value]{
+		Bottom:   func() placement.Value { return placement.Bottom },
+		Top:      func() placement.Value { return placement.Unknown },
+		Equal:    placement.Equal,
+		LessOrEq: placement.LessOrEq,
+		Join:     placement.Join,
+		Widen:    placement.Widen,
+	}
+}
+
+func placementMapDomain() lattice.Lattice[map[identity.ID]placement.Value] {
+	return lift.Map[identity.ID, placement.Value](placementDomain())
+}
+
+func clonePlacementMap(in map[identity.ID]placement.Value) map[identity.ID]placement.Value {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[identity.ID]placement.Value, len(in))
+	for k, v := range in {
+		out[k] = v
+	}
+	return out
+}
+
+func deletePlacementEntry(in map[identity.ID]placement.Value, id identity.ID) (map[identity.ID]placement.Value, bool) {
+	if _, ok := in[id]; !ok {
+		return in, false
+	}
+	out := make(map[identity.ID]placement.Value, len(in)-1)
+	for k, v := range in {
+		if k != id {
+			out[k] = v
+		}
+	}
+	if len(out) == 0 {
+		return nil, true
+	}
+	return out, true
 }
 
 func cloneValueMap(in map[key.Value]product.Value) map[key.Value]product.Value {
