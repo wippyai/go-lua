@@ -63,39 +63,3 @@ func TestAnnotationPayloadKindsEqualAndHash(t *testing.T) {
 		})
 	}
 }
-
-func TestPayloadFromSupportsClosedSet(t *testing.T) {
-	tests := []struct {
-		name string
-		in   any
-		want Payload
-	}{
-		{name: "nil", in: nil, want: Payload{}},
-		{name: "string", in: "x", want: StringArg("x")},
-		{name: "bool", in: true, want: BoolArg(true)},
-		{name: "int", in: int(1), want: IntArg(1)},
-		{name: "int64", in: int64(1), want: Int64Arg(1)},
-		{name: "float64", in: float64(1.5), want: Float64Arg(1.5)},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got, ok := PayloadFrom(tt.in)
-			if !ok {
-				t.Fatal("supported payload was rejected")
-			}
-			if !got.Equal(tt.want) {
-				t.Fatalf("payload = %#v, want %#v", got, tt.want)
-			}
-			if got.Hash() != tt.want.Hash() {
-				t.Fatal("converted payload hash differs from constructor payload hash")
-			}
-		})
-	}
-}
-
-func TestPayloadFromRejectsUnsupportedPayload(t *testing.T) {
-	if got, ok := PayloadFrom(struct{ Value int }{Value: 1}); ok {
-		t.Fatalf("unsupported payload was accepted: %#v", got)
-	}
-}

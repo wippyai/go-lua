@@ -1,6 +1,7 @@
 package typecall
 
 import (
+	"github.com/wippyai/go-lua/analysis/type/access"
 	"github.com/wippyai/go-lua/analysis/type/normalize"
 	"github.com/wippyai/go-lua/analysis/type/subst"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
@@ -11,12 +12,6 @@ import (
 // GetMetamethod resolves a direct metatable field from t.
 func GetMetamethod(t typ.Type, name string) (typ.Type, bool) {
 	return metamethodDepth(t, name, 0)
-}
-
-// HasMetamethod reports whether GetMetamethod can resolve name on t.
-func HasMetamethod(t typ.Type, name string) bool {
-	_, ok := GetMetamethod(t, name)
-	return ok
 }
 
 func metamethodDepth(t typ.Type, name string, depth int) (typ.Type, bool) {
@@ -53,7 +48,7 @@ func metamethodInRecord(r *typ.Record, name string, depth int) (typ.Type, bool) 
 	if r == nil || r.Metatable == nil || typetable.IsMetatableUnconstrained(r.Metatable) {
 		return nil, false
 	}
-	return fieldAtDepth(r.Metatable, name, depth+1)
+	return access.Field(r.Metatable, name)
 }
 
 func metamethodInUnion(u *typ.Union, name string, depth int) (typ.Type, bool) {

@@ -1,6 +1,7 @@
 package typecall
 
 import (
+	"github.com/wippyai/go-lua/analysis/type/access"
 	"github.com/wippyai/go-lua/analysis/type/ambient"
 	"github.com/wippyai/go-lua/analysis/type/normalize"
 	"github.com/wippyai/go-lua/analysis/type/subst"
@@ -113,7 +114,7 @@ func memberCallSingle(t typ.Type, name string, depth int) memberCallResult {
 	if method, ok := stringMethod(name, t); ok {
 		return memberCallResult{t: method, status: MemberCallOK}
 	}
-	memberType, ok := fieldAtDepth(t, name, depth+1)
+	memberType, ok := access.Field(t, name)
 	if !ok {
 		return memberCallResult{status: MemberCallMissing}
 	}

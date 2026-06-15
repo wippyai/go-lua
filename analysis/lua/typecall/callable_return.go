@@ -1,6 +1,7 @@
 package typecall
 
 import (
+	"github.com/wippyai/go-lua/analysis/type/access"
 	"github.com/wippyai/go-lua/analysis/type/normalize"
 	"github.com/wippyai/go-lua/analysis/type/subst"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
@@ -71,7 +72,7 @@ func recordCallReturn(r *typ.Record, depth int) (typ.Type, bool) {
 	if r == nil || r.Metatable == nil || typetable.IsMetatableUnconstrained(r.Metatable) {
 		return nil, false
 	}
-	call, ok := fieldAtDepth(r.Metatable, "__call", depth+1)
+	call, ok := access.Field(r.Metatable, "__call")
 	if !ok {
 		return nil, false
 	}

@@ -2,16 +2,6 @@ package typeresolve
 
 import "github.com/wippyai/go-lua/compiler/ast"
 
-// WalkTypeExpr walks type references in expr.
-func WalkTypeExpr(expr ast.TypeExpr, visit func(*ast.TypeRefExpr) bool) bool {
-	return WalkTypeNameExpr(expr, visit, func(*ast.PrimitiveTypeExpr) bool { return true })
-}
-
-// WalkTypeExprs walks type references in exprs.
-func WalkTypeExprs(exprs []ast.TypeExpr, visit func(*ast.TypeRefExpr) bool) bool {
-	return WalkTypeNameExprs(exprs, visit, func(*ast.PrimitiveTypeExpr) bool { return true })
-}
-
 // WalkTypeNameExpr walks named type references, including primitive aliases.
 func WalkTypeNameExpr(
 	expr ast.TypeExpr,

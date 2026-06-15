@@ -1,18 +1,10 @@
 package typecall
 
 import (
-	"github.com/wippyai/go-lua/analysis/type/access"
 	"github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/unwrap"
 )
-
-func fieldAtDepth(t typ.Type, name string, depth int) (typ.Type, bool) {
-	if stopDepth(t, depth) {
-		return nil, false
-	}
-	return access.Field(t, name)
-}
 
 func specialAccessType(t typ.Type) (typ.Type, bool) {
 	if t == nil {

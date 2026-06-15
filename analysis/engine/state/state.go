@@ -350,19 +350,8 @@ func cloneNumFloors(in map[pathdom.PathKey]numbound.Floor) map[pathdom.PathKey]n
 	return out
 }
 
-func placementDomain() lattice.Lattice[placement.Value] {
-	return lattice.Lattice[placement.Value]{
-		Bottom:   func() placement.Value { return placement.Bottom },
-		Top:      func() placement.Value { return placement.Unknown },
-		Equal:    placement.Equal,
-		LessOrEq: placement.LessOrEq,
-		Join:     placement.Join,
-		Widen:    placement.Widen,
-	}
-}
-
 func placementMapDomain() lattice.Lattice[map[identity.ID]placement.Value] {
-	return lift.Map[identity.ID, placement.Value](placementDomain())
+	return lift.Map[identity.ID, placement.Value](placement.Spec().Lattice())
 }
 
 func clonePlacementMap(in map[identity.ID]placement.Value) map[identity.ID]placement.Value {

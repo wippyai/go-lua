@@ -51,8 +51,8 @@ func TestCallableRecordMetatableCall(t *testing.T) {
 	if _, ok := Callable(unconstrained); ok {
 		t.Fatal("Callable(record with unconstrained metatable) succeeded")
 	}
-	if HasMetamethod(unconstrained, "__call") {
-		t.Fatal("HasMetamethod(record with unconstrained metatable, __call) = true")
+	if got, ok := GetMetamethod(unconstrained, "__call"); ok || got != nil {
+		t.Fatalf("GetMetamethod(record with unconstrained metatable, __call) = %v/%v, want nil/false", got, ok)
 	}
 }
 

@@ -84,11 +84,6 @@ func (s SelectCaseOfParam) String() string {
 	return fmt.Sprintf("select_case(%s)", s.Source)
 }
 
-const (
-	SelectResultChannelField = "channel"
-	SelectResultValueField   = "value"
-)
-
 type SelectResultOfCases struct {
 	Cases   effect.ParamRef
 	Default effect.ParamRef

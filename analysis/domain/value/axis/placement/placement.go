@@ -45,11 +45,6 @@ const (
 	Unknown
 )
 
-const (
-	// EscapedHeap is a domain-name alias for SharedHeap at escape boundaries.
-	EscapedHeap = SharedHeap
-)
-
 // IsBottom reports whether the value is unreachable.
 func (v Value) IsBottom() bool { return v == Bottom }
 

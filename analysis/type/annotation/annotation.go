@@ -58,26 +58,6 @@ func Float64Arg(v float64) Payload {
 	return Payload{kind: payloadFloat64, f64: v}
 }
 
-// PayloadFrom converts the supported Go scalar values into a closed payload.
-func PayloadFrom(v any) (Payload, bool) {
-	switch v := v.(type) {
-	case nil:
-		return Payload{}, true
-	case string:
-		return StringArg(v), true
-	case bool:
-		return BoolArg(v), true
-	case int:
-		return IntArg(v), true
-	case int64:
-		return Int64Arg(v), true
-	case float64:
-		return Float64Arg(v), true
-	default:
-		return Payload{}, false
-	}
-}
-
 // IsNone reports whether the payload is absent.
 func (p Payload) IsNone() bool {
 	return p.kind == payloadNone
