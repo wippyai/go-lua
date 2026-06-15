@@ -13,6 +13,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/sourcevalue"
 	"github.com/wippyai/go-lua/analysis/engine/state"
+	effectdelta "github.com/wippyai/go-lua/analysis/engine/state/effectdelta"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/engine/visibility"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
@@ -227,6 +228,65 @@ func TestFactsNodeTransferCallOutcomeParamPathRefinementUsesArgumentNotReceiver(
 
 	assertValue(t, reg, got, key.SymbolValue(arg), present)
 	assertValue(t, reg, got, key.SymbolValue(receiver), product.Top())
+}
+
+func TestFactsNodeTransferCallOutcomeRebasesNestedEscapeEventToConsumerChildPath(t *testing.T) {
+	reg := standard.Registry()
+	point := cfg.Point(618)
+	consumer := symbol.ID(618)
+	argExpr := factflow.ExprRef(618)
+	rootPath := pathdom.NewPath(consumer, "producer")
+	childPath := rootPath.Field("child").Field("leaf")
+	facts := factflow.NewFacts(factflow.FactsInput{
+		CallSites: map[cfg.Point]factflow.CallSite{
+			point: factflow.NewCallSite(factflow.CallSiteConfig{
+				Context: factflow.CallSiteContextStatement,
+				ArgumentSources: []factflow.ValueSource{
+					{Kind: factflow.ValueSourceExpression, ExprRef: argExpr, HasExpr: true},
+				},
+			}),
+		},
+		ExpressionPaths: map[factflow.ExprRef]pathdom.Path{
+			argExpr: rootPath,
+		},
+	})
+	builder := visibility.NewBuilder()
+	builder.Define(point, consumer, "producer")
+	resolver := visibility.NewResolver(builder.Build())
+
+	got := NewFactsNodeTransfer(FactsNodeTransferConfig{
+		Facts: facts,
+		CallOutcome: func(transfer.NodeContext, factflow.CallSite, state.State, func(cfg.Point) state.State) CallOutcome {
+			return CallOutcome{
+				NormalReturnFacts: callboundary.NormalReturnFacts{
+					EscapeEvents: []callboundary.EscapeEventFact{
+						{
+							Target:    pathdom.NewPlaceholder(0).Field("child").Field("leaf"),
+							Kind:      callboundary.EscapeEventStore,
+							Recursive: true,
+						},
+					},
+				},
+			}
+		},
+		Visibility: resolver,
+	})(transfer.NodeContext{
+		Registry: reg,
+		Point:    point,
+	}, state.State{})
+
+	targetKey := resolver.KeyAt(point, childPath)
+	if targetKey == "" {
+		t.Fatalf("no visible key for %s", childPath)
+	}
+	gotDelta := got.ReadEffectDelta(effectdelta.Key{
+		Target: targetKey,
+		Site:   callboundary.EscapeEventEffectSite(callboundary.EscapeEventStore, true),
+		Kind:   effectdelta.Escape,
+	})
+	if !effectdelta.Domain(reg).Equal(gotDelta, effectdelta.Top()) {
+		t.Fatalf("escape delta = %#v, want rebased store on %s", gotDelta, childPath)
+	}
 }
 
 func TestFactsEdgeTransferCallOutcomeAppliesReturnConditionRefinement(t *testing.T) {

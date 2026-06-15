@@ -48,11 +48,7 @@ func ResultValueType(selectID string, cases []ResultCase) (typ.Type, bool) {
 
 // ChannelPayloadType returns the payload carried by the ambient Channel<T> type.
 func ChannelPayloadType(t typ.Type) (typ.Type, bool) {
-	inst, ok := unwrap.Alias(unwrap.Annotations(t)).(*typ.Instantiated)
-	if !ok || inst.Generic == nil || inst.Generic.Name != ambient.Channel || len(inst.TypeArgs) != 1 || inst.TypeArgs[0] == nil {
-		return nil, false
-	}
-	return inst.TypeArgs[0], true
+	return ambient.ChannelPayloadType(t)
 }
 
 // CaseMarkerType builds the opaque channel identity marker stored in a select

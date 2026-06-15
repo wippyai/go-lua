@@ -208,6 +208,60 @@ func TestOutcomeProviderMapsSummaryReturnsAndNormalReturnFacts(t *testing.T) {
 	}
 }
 
+func TestOutcomeProviderCarriesNestedSummaryEscapeEvents(t *testing.T) {
+	reg := standard.Registry()
+	callee := symbol.ID(39)
+	key := summary.DefaultSummaryKey(ref.FuncRef{Kind: ref.KindSymbol, ID: 40})
+	nested := providerNestedTableType()
+	provider := OutcomeProvider(ProviderConfig{
+		Summaries: summary.NewSnapshot(reg, summary.EntrySummary{
+			Key: key,
+			Summary: summary.Summary{
+				Returns: []product.Value{providerValueForType(reg, nested)},
+				NormalReturnFacts: callboundary.NormalReturnFacts{
+					EscapeEvents: []callboundary.EscapeEventFact{
+						{
+							Target: path.NewPlaceholder(0),
+							Kind:   callboundary.EscapeEventSend,
+						},
+						{
+							Target:    path.NewPlaceholder(0).Field("child"),
+							Kind:      callboundary.EscapeEventStore,
+							Recursive: true,
+						},
+					},
+				},
+			},
+		}),
+		KeyFor: ByCalleeIdentity(map[symbol.ID]summary.SummaryKey{callee: key}),
+	})
+
+	got := provider(transfer.NodeContext{Registry: reg}, factflow.NewCallSite(factflow.CallSiteConfig{
+		CalleeSymbol: callee,
+	}), state.State{}, nil)
+
+	if len(got.Results) != 1 {
+		t.Fatalf("results = %#v, want one nested-table return", got.Results)
+	}
+	gotType, ok := typevalue.TypeOf(reg, got.Results[0].Value)
+	if !ok || !typ.TypeEquals(gotType, nested) {
+		t.Fatalf("result type = %v/%v, want %v", gotType, ok, nested)
+	}
+	if len(got.NormalReturnFacts.EscapeEvents) != 2 {
+		t.Fatalf("escape events = %#v, want root and child facts", got.NormalReturnFacts.EscapeEvents)
+	}
+	if got.NormalReturnFacts.EscapeEvents[0].Kind != callboundary.EscapeEventSend ||
+		!got.NormalReturnFacts.EscapeEvents[0].Target.Equal(path.NewPlaceholder(0)) ||
+		got.NormalReturnFacts.EscapeEvents[0].Recursive {
+		t.Fatalf("root escape event = %#v, want non-recursive send on $0", got.NormalReturnFacts.EscapeEvents[0])
+	}
+	if got.NormalReturnFacts.EscapeEvents[1].Kind != callboundary.EscapeEventStore ||
+		!got.NormalReturnFacts.EscapeEvents[1].Target.Equal(path.NewPlaceholder(0).Field("child")) ||
+		!got.NormalReturnFacts.EscapeEvents[1].Recursive {
+		t.Fatalf("child escape event = %#v, want recursive store on $0.child", got.NormalReturnFacts.EscapeEvents[1])
+	}
+}
+
 func TestOutcomeProviderJoinMaterializesRawOptionalFactPayloadRecord(t *testing.T) {
 	reg := standard.Registry()
 	calleePath := path.NewPath(symbol.ID(127), "module").Field("make")
@@ -879,6 +933,14 @@ func providerProfileType() typ.Type {
 	return typetable.NewRecord().
 		Field("id", typ.String).
 		Field("count", typ.Number).
+		Build()
+}
+
+func providerNestedTableType() typ.Type {
+	return typetable.NewRecord().
+		Field("child", typetable.NewRecord().
+			Field("leaf", typ.String).
+			Build()).
 		Build()
 }
 

@@ -22,3 +22,17 @@ func TestLookupChannelGeneric(t *testing.T) {
 		t.Fatalf("channel body = %T/%v, want Channel interface", generic.Body, generic.Body)
 	}
 }
+
+func TestChannelPayloadType(t *testing.T) {
+	payload := typ.String
+	channel := typ.Instantiate(ChannelGeneric(), payload)
+
+	got, ok := ChannelPayloadType(channel)
+	if !ok || !typ.TypeEquals(got, payload) {
+		t.Fatalf("ChannelPayloadType(Channel<string>) = %v/%v, want %v", got, ok, payload)
+	}
+
+	if got, ok := ChannelPayloadType(typ.Number); ok || got != nil {
+		t.Fatalf("ChannelPayloadType(number) = %v/%v, want nil/false", got, ok)
+	}
+}

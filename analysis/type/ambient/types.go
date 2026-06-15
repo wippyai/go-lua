@@ -2,7 +2,10 @@
 // analysis type annotations.
 package ambient
 
-import "github.com/wippyai/go-lua/analysis/type/typ"
+import (
+	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/analysis/type/unwrap"
+)
 
 const Channel = "Channel"
 
@@ -20,4 +23,13 @@ func Lookup(name string) (typ.Type, bool) {
 func ChannelGeneric() *typ.Generic {
 	param := typ.NewTypeParam("T", nil)
 	return typ.NewGeneric(Channel, []*typ.TypeParam{param}, typ.NewInterface(Channel, nil))
+}
+
+// ChannelPayloadType returns the payload carried by the ambient Channel<T> type.
+func ChannelPayloadType(t typ.Type) (typ.Type, bool) {
+	inst, ok := unwrap.Alias(unwrap.Annotations(t)).(*typ.Instantiated)
+	if !ok || inst.Generic == nil || inst.Generic.Name != Channel || len(inst.TypeArgs) != 1 || inst.TypeArgs[0] == nil {
+		return nil, false
+	}
+	return inst.TypeArgs[0], true
 }
