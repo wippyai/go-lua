@@ -1,4 +1,4 @@
-// Package channelselect owns the internal select-result record schema.
+// Package channelselect owns pure channel-select result and payload type schema.
 package channelselect
 
 import (
@@ -46,9 +46,7 @@ func ResultValueType(selectID string, cases []ResultCase) (typ.Type, bool) {
 	return normalize.UnionForEvidence(caseTypes...), true
 }
 
-// ChannelPayloadType returns the payload carried by the ambient Channel<T>
-// type. The select engine owns this check so flow-sensitive select result
-// materialization does not need to depend on Lua lowering packages.
+// ChannelPayloadType returns the payload carried by the ambient Channel<T> type.
 func ChannelPayloadType(t typ.Type) (typ.Type, bool) {
 	inst, ok := unwrap.Alias(unwrap.Annotations(t)).(*typ.Instantiated)
 	if !ok || inst.Generic == nil || inst.Generic.Name != ambient.Channel || len(inst.TypeArgs) != 1 || inst.TypeArgs[0] == nil {

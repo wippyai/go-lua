@@ -3,6 +3,7 @@ package channelruntime
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/domain/effect/channelselect"
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/symbol"
@@ -168,7 +169,7 @@ local box: {inner: MessageChannel}
 	if !isChannelType(aliasType) {
 		t.Fatalf("pathType(alias) = %v, want Channel<T>", aliasType)
 	}
-	payload, ok := ChannelPayloadType(aliasType)
+	payload, ok := channelselect.ChannelPayloadType(aliasType)
 	if !ok || !typ.TypeEquals(payload, wantPayload) {
 		t.Fatalf("ChannelPayloadType(alias) = %v/%v, want %v", payload, ok, wantPayload)
 	}
@@ -181,13 +182,13 @@ local box: {inner: MessageChannel}
 	if !isChannelType(boxType) {
 		t.Fatalf("pathType(projected) = %v, want Channel<T>", boxType)
 	}
-	payload, ok = ChannelPayloadType(boxType)
+	payload, ok = channelselect.ChannelPayloadType(boxType)
 	if !ok || !typ.TypeEquals(payload, wantPayload) {
 		t.Fatalf("ChannelPayloadType(projected) = %v/%v, want %v", payload, ok, wantPayload)
 	}
 
 	aliased := typ.NewAlias("MessageChannelAlias", typ.Instantiate(ambient.ChannelGeneric(), wantPayload))
-	payload, ok = ChannelPayloadType(aliased)
+	payload, ok = channelselect.ChannelPayloadType(aliased)
 	if !ok || !typ.TypeEquals(payload, wantPayload) {
 		t.Fatalf("ChannelPayloadType(alias wrapper) = %v/%v, want %v", payload, ok, wantPayload)
 	}

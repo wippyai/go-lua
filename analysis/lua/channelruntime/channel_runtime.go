@@ -3,15 +3,14 @@
 package channelruntime
 
 import (
+	"github.com/wippyai/go-lua/analysis/domain/effect/channelselect"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/lua/pathexpr"
 	luatypeprojection "github.com/wippyai/go-lua/analysis/lua/typeprojection"
 	"github.com/wippyai/go-lua/analysis/lua/typeresolve"
 	"github.com/wippyai/go-lua/analysis/symbol"
-	"github.com/wippyai/go-lua/analysis/type/ambient"
 	"github.com/wippyai/go-lua/analysis/type/typ"
-	"github.com/wippyai/go-lua/analysis/type/unwrap"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
 
@@ -84,17 +83,8 @@ func pathType(bindings *bind.Result, p pathdom.Path) (typ.Type, bool) {
 
 // isChannelType reports whether t is the ambient Channel<T> instantiation.
 func isChannelType(t typ.Type) bool {
-	inst, ok := unwrap.Alias(unwrap.Annotations(t)).(*typ.Instantiated)
-	return ok && inst.Generic != nil && inst.Generic.Name == ambient.Channel && len(inst.TypeArgs) == 1 && inst.TypeArgs[0] != nil
-}
-
-// ChannelPayloadType returns the T carried by an ambient Channel<T>.
-func ChannelPayloadType(t typ.Type) (typ.Type, bool) {
-	inst, ok := unwrap.Alias(unwrap.Annotations(t)).(*typ.Instantiated)
-	if !ok || inst.Generic == nil || inst.Generic.Name != ambient.Channel || len(inst.TypeArgs) != 1 || inst.TypeArgs[0] == nil {
-		return nil, false
-	}
-	return inst.TypeArgs[0], true
+	_, ok := channelselect.ChannelPayloadType(t)
+	return ok
 }
 
 func symbolKind(bindings *bind.Result, id symbol.ID) symbol.Kind {
