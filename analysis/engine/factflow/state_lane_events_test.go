@@ -5,6 +5,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
+	"github.com/wippyai/go-lua/analysis/engine/dynamicindex"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/symbol"
 )
@@ -29,7 +30,7 @@ func TestStateLaneEventConstructorsAndAccessorsCopyPaths(t *testing.T) {
 		dynamicTable,
 		keySource,
 		source,
-		DynamicIndexAdmissionAdmitted,
+		dynamicindex.AdmissionAdmitted,
 		DynamicIndexReadbackKeyAndValue,
 	)
 	dynamicTable.Segments[0].Name = "changed"
@@ -40,7 +41,7 @@ func TestStateLaneEventConstructorsAndAccessorsCopyPaths(t *testing.T) {
 	if dynamicWrite.KeySource() != keySource || dynamicWrite.Source() != source {
 		t.Fatalf("dynamic sources = %#v/%#v, want %#v/%#v", dynamicWrite.KeySource(), dynamicWrite.Source(), keySource, source)
 	}
-	if dynamicWrite.Admission() != DynamicIndexAdmissionAdmitted || dynamicWrite.ReadbackIntent() != DynamicIndexReadbackKeyAndValue {
+	if dynamicWrite.Admission() != dynamicindex.AdmissionAdmitted || dynamicWrite.ReadbackIntent() != DynamicIndexReadbackKeyAndValue {
 		t.Fatalf("dynamic intent = %v/%v", dynamicWrite.Admission(), dynamicWrite.ReadbackIntent())
 	}
 
@@ -146,7 +147,7 @@ func TestFactsStateLaneEventSnapshotsAreImmutable(t *testing.T) {
 				path.NewPath(symbol.ID(202), "table").Field("dynamic"),
 				keySource,
 				source,
-				DynamicIndexAdmissionAdmitted,
+				dynamicindex.AdmissionAdmitted,
 				DynamicIndexReadbackKeyAndValue,
 			),
 		},
@@ -181,7 +182,7 @@ func TestFactsStateLaneEventSnapshotsAreImmutable(t *testing.T) {
 
 	facts := NewFacts(input)
 	input.PathStaticMemberWrites[point] = NewPathStaticMemberWrite(path.NewPath(symbol.ID(208), "changed"), callSource)
-	input.DynamicIndexWrites[point] = NewDynamicIndexWrite(path.NewPath(symbol.ID(209), "changed"), callSource, callSource, DynamicIndexAdmissionRejected, DynamicIndexReadbackNone)
+	input.DynamicIndexWrites[point] = NewDynamicIndexWrite(path.NewPath(symbol.ID(209), "changed"), callSource, callSource, dynamicindex.AdmissionRejected, DynamicIndexReadbackNone)
 	input.BranchPathEvidence[point] = NewBranchPathEvidenceSet(NewBranchPathInequalityEvidence(path.NewPath(symbol.ID(210), "changed"), path.NewPath(symbol.ID(211), "changed")))
 	input.ChannelSelects[point] = NewChannelSelectSet(NewChannelSelect(ChannelSelectConfig{SelectID: ChannelSelectID("changed"), Kind: ChannelSelectReceive}))
 
@@ -221,7 +222,7 @@ func TestFactsStateLaneEventSnapshotsAreImmutable(t *testing.T) {
 	dynamicAgain, _ := facts.DynamicIndexWrite(point)
 	assertDirectField(t, dynamicAgain.TablePath(), "dynamic")
 	if dynamicAgain.KeySource() != keySource || dynamicAgain.Source() != source ||
-		dynamicAgain.Admission() != DynamicIndexAdmissionAdmitted ||
+		dynamicAgain.Admission() != dynamicindex.AdmissionAdmitted ||
 		dynamicAgain.ReadbackIntent() != DynamicIndexReadbackKeyAndValue {
 		t.Fatalf("dynamic write = %#v", dynamicAgain)
 	}

@@ -12,6 +12,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/standard"
 	"github.com/wippyai/go-lua/analysis/engine/callproducer"
+	"github.com/wippyai/go-lua/analysis/engine/dynamicindex"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
@@ -425,7 +426,7 @@ func TestLowerOrdinaryAssignmentsSplitsRootAndStaticPathWrites(t *testing.T) {
 	if !dynamicFact.TablePath().Equal(path.NewPath(tSym, "t")) {
 		t.Fatalf("dynamic index table path = %v", dynamicFact.TablePath())
 	}
-	if dynamicFact.Admission() != factflow.DynamicIndexAdmissionUnknown {
+	if dynamicFact.Admission() != dynamicindex.AdmissionUnknown {
 		t.Fatalf("dynamic index admission = %v, want unknown", dynamicFact.Admission())
 	}
 	if dynamicFact.ReadbackIntent() != factflow.DynamicIndexReadbackKeyAndValue {

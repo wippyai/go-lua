@@ -6,7 +6,7 @@ import (
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/engine/callboundary"
-	"github.com/wippyai/go-lua/analysis/engine/state/dynamicindex"
+	"github.com/wippyai/go-lua/analysis/engine/dynamicindex"
 )
 
 type dynamicIndexFactKey struct {

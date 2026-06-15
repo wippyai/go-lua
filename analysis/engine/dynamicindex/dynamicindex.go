@@ -1,4 +1,4 @@
-// Package dynamicindex owns state-lane semantics for dynamic index writes.
+// Package dynamicindex owns resolved dynamic-index write facts and admission.
 package dynamicindex
 
 import (

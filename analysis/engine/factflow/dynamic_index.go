@@ -2,18 +2,8 @@ package factflow
 
 import (
 	"github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/engine/dynamicindex"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
-)
-
-// DynamicIndexAdmission describes whether a dynamic index write is admissible.
-// The event layer owns this typed intent; fact application later maps it onto
-// the state lane.
-type DynamicIndexAdmission uint8
-
-const (
-	DynamicIndexAdmissionUnknown DynamicIndexAdmission = iota
-	DynamicIndexAdmissionAdmitted
-	DynamicIndexAdmissionRejected
 )
 
 // DynamicIndexReadbackIntent describes which dynamic-index evidence a later
@@ -35,7 +25,7 @@ type DynamicIndexWrite struct {
 	keySource ValueSource
 	source    ValueSource
 
-	admission      DynamicIndexAdmission
+	admission      dynamicindex.Admission
 	readbackIntent DynamicIndexReadbackIntent
 }
 
@@ -44,7 +34,7 @@ func NewDynamicIndexWrite(
 	tablePath path.Path,
 	keySource ValueSource,
 	source ValueSource,
-	admission DynamicIndexAdmission,
+	admission dynamicindex.Admission,
 	readbackIntent DynamicIndexReadbackIntent,
 ) DynamicIndexWrite {
 	return DynamicIndexWrite{
@@ -66,7 +56,7 @@ func (w DynamicIndexWrite) KeySource() ValueSource { return w.keySource }
 func (w DynamicIndexWrite) Source() ValueSource { return w.source }
 
 // Admission returns the typed admission intent for this write.
-func (w DynamicIndexWrite) Admission() DynamicIndexAdmission { return w.admission }
+func (w DynamicIndexWrite) Admission() dynamicindex.Admission { return w.admission }
 
 // ReadbackIntent returns the typed post-write readback intent for this write.
 func (w DynamicIndexWrite) ReadbackIntent() DynamicIndexReadbackIntent {

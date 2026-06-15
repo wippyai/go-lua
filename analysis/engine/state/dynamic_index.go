@@ -2,7 +2,7 @@ package state
 
 import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
-	"github.com/wippyai/go-lua/analysis/engine/state/dynamicindex"
+	"github.com/wippyai/go-lua/analysis/engine/dynamicindex"
 )
 
 func (s State) ReadDynamicIndexFact(reg *axis.Registry, key dynamicindex.Key) dynamicindex.Fact {

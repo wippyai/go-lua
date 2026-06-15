@@ -8,7 +8,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
-	"github.com/wippyai/go-lua/analysis/engine/state/dynamicindex"
+	"github.com/wippyai/go-lua/analysis/engine/dynamicindex"
 )
 
 type TableObject struct {

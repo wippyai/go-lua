@@ -9,7 +9,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/standard"
-	"github.com/wippyai/go-lua/analysis/engine/state/dynamicindex"
+	"github.com/wippyai/go-lua/analysis/engine/dynamicindex"
 )
 
 func TestObjectDomainBottomTopLaws(t *testing.T) {

@@ -4,6 +4,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
+	"github.com/wippyai/go-lua/analysis/engine/dynamicindex"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
 	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
@@ -171,7 +172,7 @@ func (l *lowerer) dynamicIndexWrite(fact semantics.OrdinaryAssignmentFact) (fact
 		fact.ContainerPath,
 		keySource,
 		source,
-		factflow.DynamicIndexAdmissionUnknown,
+		dynamicindex.AdmissionUnknown,
 		dynamicIndexReadbackIntent(readKey, readValue),
 	), true
 }

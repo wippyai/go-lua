@@ -6,11 +6,11 @@ import (
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/engine/dynamicindex"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	sourcevalue "github.com/wippyai/go-lua/analysis/engine/sourcevalue"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/state/channelselectfact"
-	"github.com/wippyai/go-lua/analysis/engine/state/dynamicindex"
 	"github.com/wippyai/go-lua/analysis/engine/state/pathevidence"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/engine/visibility"
@@ -69,7 +69,7 @@ func dynamicIndexFact(
 		KeyPresence: presence.Bottom(),
 		KeyValue:    product.Bottom(ctx.Registry),
 		Value:       product.Bottom(ctx.Registry),
-		Admission:   dynamicIndexAdmission(fact.Admission()),
+		Admission:   fact.Admission(),
 	}
 	readKey, readValue := dynamicIndexReadback(fact.ReadbackIntent())
 	if readKey {
@@ -90,19 +90,6 @@ func dynamicIndexFact(
 
 func dynamicIndexSite(point cfg.Point) dynamicindex.Site {
 	return dynamicindex.Site("factflow.dynamic_index_write@" + strconv.Itoa(int(point)))
-}
-
-func dynamicIndexAdmission(admission factflow.DynamicIndexAdmission) dynamicindex.Admission {
-	switch admission {
-	case factflow.DynamicIndexAdmissionAdmitted:
-		return dynamicindex.AdmissionAdmitted
-	case factflow.DynamicIndexAdmissionRejected:
-		return dynamicindex.AdmissionRejected
-	case factflow.DynamicIndexAdmissionUnknown:
-		return dynamicindex.AdmissionUnknown
-	default:
-		return dynamicindex.AdmissionUnknown
-	}
 }
 
 func dynamicIndexReadback(intent factflow.DynamicIndexReadbackIntent) (readKey bool, readValue bool) {
