@@ -61,6 +61,9 @@ func LessOrEq(reg *axis.Registry, a, b Value) bool {
 func lessOrEqRuntime(rt *registryRuntime, a, b Value) bool {
 	rt.validateValue(a)
 	rt.validateValue(b)
+	if a.n == b.n {
+		return true
+	}
 	if !shapeLessOrEq(ShapeOf(a), ShapeOf(b)) {
 		return false
 	}
@@ -84,6 +87,9 @@ func Join(reg *axis.Registry, a, b Value) Value {
 func joinRuntime(rt *registryRuntime, a, b Value) Value {
 	rt.validateValue(a)
 	rt.validateValue(b)
+	if a.n == b.n {
+		return a
+	}
 	slots := make([]slot, 0, len(rt.canonicalAxes))
 	for i := range rt.canonicalAxes {
 		spec := rt.canonicalAxes[i]
@@ -106,6 +112,9 @@ func Meet(reg *axis.Registry, a, b Value) Value {
 func meetRuntime(rt *registryRuntime, a, b Value) Value {
 	rt.validateValue(a)
 	rt.validateValue(b)
+	if a.n == b.n {
+		return a
+	}
 	slots := make([]slot, 0, len(rt.canonicalAxes))
 	for i := range rt.canonicalAxes {
 		spec := rt.canonicalAxes[i]
@@ -128,6 +137,9 @@ func Widen(reg *axis.Registry, prev, next Value) Value {
 func widenRuntime(rt *registryRuntime, prev, next Value) Value {
 	rt.validateValue(prev)
 	rt.validateValue(next)
+	if prev.n == next.n {
+		return prev
+	}
 	slots := make([]slot, 0, len(rt.canonicalAxes))
 	for i := range rt.canonicalAxes {
 		spec := rt.canonicalAxes[i]

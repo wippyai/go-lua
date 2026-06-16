@@ -178,9 +178,9 @@ type solveState[Cell comparable, State any] struct {
 	widenChanges map[Cell]int
 
 	// dependents[d] is the set of cells whose Transfer has read d. When d's
-	// value changes, every dependent is re-queued. Stored as an
-	// insertion-ordered slice plus a membership set so the edge set dedups and
-	// the iteration order is stable.
+	// value changes, every dependent is re-queued. Stored as a canonical-order
+	// slice plus a membership set so the edge set dedups and the hot requeue path
+	// iterates without allocating or sorting.
 	dependents map[Cell][]Cell
 	dependEdge map[edge[Cell]]struct{}
 
@@ -273,8 +273,9 @@ func (s *solveState[Cell, State]) enqueue(c Cell) {
 }
 
 // recordDependency notes that the active cell read d, so a later change to d
-// re-queues the active cell. The edge set dedups; dependents preserves
-// insertion order for deterministic re-queueing.
+// re-queues the active cell. The edge set dedups; dependents stays sorted by
+// canonical Cells index so requeueChanged can run on every value change without
+// building a transient sorted copy.
 func (s *solveState[Cell, State]) recordDependency(d Cell) {
 	e := edge[Cell]{from: d, to: s.active}
 	if e.from == e.to {
@@ -286,7 +287,15 @@ func (s *solveState[Cell, State]) recordDependency(d Cell) {
 		return
 	}
 	s.dependEdge[e] = struct{}{}
-	s.dependents[d] = append(s.dependents[d], s.active)
+	deps := s.dependents[d]
+	activeIndex := s.indexOf(s.active)
+	insertAt := sort.Search(len(deps), func(i int) bool {
+		return s.indexOf(deps[i]) > activeIndex
+	})
+	deps = append(deps, s.active)
+	copy(deps[insertAt+1:], deps[insertAt:])
+	deps[insertAt] = s.active
+	s.dependents[d] = deps
 }
 
 // emit accumulates v into cell d via Join. Contributions that arrive before d's
@@ -337,16 +346,7 @@ func (s *solveState[Cell, State]) requeueChanged(d Cell) {
 	if len(deps) == 0 {
 		return
 	}
-	// Sort dependents by their canonical Cells index so enqueue order is
-	// reproducible. Cells absent from order (emitted-only) sort after ordered
-	// cells, then by no further key — but such cells are never the active
-	// reader, so they cannot be dependents; the missing-index branch is
-	// defensive only.
-	sorted := append([]Cell(nil), deps...)
-	sort.SliceStable(sorted, func(i, j int) bool {
-		return s.indexOf(sorted[i]) < s.indexOf(sorted[j])
-	})
-	for _, dep := range sorted {
+	for _, dep := range deps {
 		s.enqueue(dep)
 	}
 }

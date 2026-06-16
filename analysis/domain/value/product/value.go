@@ -90,6 +90,9 @@ func ShapeOf(v Value) Shape {
 func WithShape(reg *axis.Registry, v Value, shape Shape) Value {
 	rt := mustRuntime(reg)
 	rt.validateValue(v)
+	if ShapeOf(v) == shape {
+		return v
+	}
 	return internRuntime(rt, shape, PresenceOf(v), copySlots(v))
 }
 
@@ -108,6 +111,9 @@ func DefinitelyPresent(v Value) bool {
 func WithPresence(reg *axis.Registry, v Value, p presence.Value) Value {
 	rt := mustRuntime(reg)
 	rt.validateValue(v)
+	if presence.Equal(PresenceOf(v), p) {
+		return v
+	}
 	return internRuntime(rt, ShapeOf(v), p, copySlots(v))
 }
 
@@ -162,6 +168,13 @@ func Set[T any](reg *axis.Registry, v Value, key axis.Key[T], value T) Value {
 	wantType := reflect.TypeFor[T]()
 	if wantType != info.topType {
 		panic(fmt.Sprintf("product: axis %q has incompatible typed key type %v, want %v", key.ID(), wantType, info.topType))
+	}
+	if existing, ok := lookupSlot(v, key.ID()); ok {
+		if info.spec.EqualAny(existing, value) {
+			return v
+		}
+	} else if info.spec.IsTopAny(value) {
+		return v
 	}
 	slots := copySlots(v)
 	if info.spec.IsTopAny(value) {
