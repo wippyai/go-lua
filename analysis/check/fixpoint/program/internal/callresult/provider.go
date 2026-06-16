@@ -1034,12 +1034,8 @@ func memberCallParamObligations(
 		if !ok {
 			continue
 		}
-		memberType, status := typecall.MemberCall(receiverType, obligation.Member)
-		if status != typecall.MemberCallOK {
-			continue
-		}
-		callable, ok := typecall.Callable(memberType)
-		if !ok || callable == nil || obligation.MemberParamIndex >= len(callable.Params) {
+		callable, status, ok := typecall.MemberCallable(receiverType, obligation.Member)
+		if status != typecall.MemberCallOK || !ok || callable == nil || obligation.MemberParamIndex >= len(callable.Params) {
 			continue
 		}
 		want := callable.Params[obligation.MemberParamIndex].Type

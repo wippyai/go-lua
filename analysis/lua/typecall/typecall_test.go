@@ -301,6 +301,73 @@ func TestMemberCallAmbientChannelCaseReceive(t *testing.T) {
 	}
 }
 
+func TestMemberCallableBindsReceiverSelf(t *testing.T) {
+	method := typ.Func().
+		Param("receiver", typ.Self).
+		Param("next", typ.Self).
+		Returns(typ.Self).
+		Build()
+	receiver := typetable.NewRecord().
+		Field("chain", method).
+		Build()
+
+	got, status, ok := MemberCallable(receiver, "chain")
+	if status != MemberCallOK || !ok {
+		t.Fatalf("MemberCallable(receiver, chain) = status %v ok %v, want ok", status, ok)
+	}
+	if len(got.Params) != 2 {
+		t.Fatalf("params = %#v, want two receiver-bound params", got.Params)
+	}
+	if got.Params[0].Type != receiver || got.Params[1].Type != receiver {
+		t.Fatalf("params = %#v, want Self substituted with receiver", got.Params)
+	}
+	if len(got.Returns) != 1 || got.Returns[0] != receiver {
+		t.Fatalf("returns = %#v, want receiver", got.Returns)
+	}
+}
+
+func TestMemberCallableBindsReceiverSelfRef(t *testing.T) {
+	receiverRef := typ.NewRef("", "Builder")
+	unrelatedRef := typ.NewRef("", "Builder")
+	method := typ.Func().
+		Param("receiver", receiverRef).
+		Param("payload", typetable.NewRecord().
+			Field("target", receiverRef).
+			Field("shadow", unrelatedRef).
+			Build()).
+		Returns(receiverRef, unrelatedRef).
+		Build()
+	receiver := typetable.NewRecord().
+		Field("chain", method).
+		Build()
+
+	got, status, ok := MemberCallable(receiver, "chain")
+	if status != MemberCallOK || !ok {
+		t.Fatalf("MemberCallable(receiver, chain) = status %v ok %v, want ok", status, ok)
+	}
+	if len(got.Params) != 2 {
+		t.Fatalf("params = %#v, want two params", got.Params)
+	}
+	if got.Params[0].Type != receiver {
+		t.Fatalf("receiver param = %v, want concrete receiver", got.Params[0].Type)
+	}
+	payload, ok := got.Params[1].Type.(*typ.Record)
+	if !ok {
+		t.Fatalf("payload param = %T %[1]v, want record", got.Params[1].Type)
+	}
+	target := payload.GetField("target")
+	if target == nil || target.Type != receiver {
+		t.Fatalf("payload target = %v, want concrete receiver", target)
+	}
+	shadow := payload.GetField("shadow")
+	if shadow == nil || shadow.Type != unrelatedRef {
+		t.Fatalf("payload shadow = %v, want unrelated ref", shadow)
+	}
+	if len(got.Returns) != 2 || got.Returns[0] != receiver || got.Returns[1] != unrelatedRef {
+		t.Fatalf("returns = %#v, want receiver and unrelated ref", got.Returns)
+	}
+}
+
 func TestCallableReturnFirstReturn(t *testing.T) {
 	fn := typ.Func().
 		Param("input", typ.String).

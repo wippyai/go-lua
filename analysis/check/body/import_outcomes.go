@@ -13,7 +13,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/visibility"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/typecall"
-	"github.com/wippyai/go-lua/analysis/type/subst"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
@@ -122,22 +121,9 @@ func methodCalleeValue(
 }
 
 func methodTypeValue(reg *axis.Registry, typeValues *typevalue.Cache, receiverType typ.Type, method string) (product.Value, bool) {
-	memberType, status := typecall.MemberCall(receiverType, method)
-	if status != typecall.MemberCallOK {
+	methodType, status, ok := typecall.MemberCallable(receiverType, method)
+	if status != typecall.MemberCallOK || !ok || methodType == nil {
 		return product.Value{}, false
-	}
-	callable, ok := typecall.Callable(memberType)
-	if !ok || callable == nil {
-		return product.Value{}, false
-	}
-	var methodType typ.Type = callable
-	if substituted, ok := subst.Self(callable, receiverType).(*typ.Function); ok {
-		methodType = substituted
-	}
-	if fn, ok := methodType.(*typ.Function); ok {
-		if substituted, ok := subst.SelfRef(fn, receiverType).(*typ.Function); ok {
-			methodType = substituted
-		}
 	}
 	return typeValues.FromTypeWithWitness(reg, methodType), true
 }

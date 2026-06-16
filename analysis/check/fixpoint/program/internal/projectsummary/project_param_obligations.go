@@ -2,7 +2,6 @@ package projectsummary
 
 import (
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/summary"
-	"github.com/wippyai/go-lua/analysis/module/signature"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
@@ -21,6 +20,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/typecall"
 	luatypeprojection "github.com/wippyai/go-lua/analysis/lua/typeprojection"
 	"github.com/wippyai/go-lua/analysis/lua/typeresolve"
+	"github.com/wippyai/go-lua/analysis/module/signature"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/type/refinement"
 	"github.com/wippyai/go-lua/analysis/type/subtype"
@@ -219,12 +219,8 @@ func (p paramObligationProjector) callParamTypes(fact semantics.CallFact, site f
 	if !ok {
 		return nil
 	}
-	memberType, status := typecall.MemberCall(receiverType, member)
-	if status != typecall.MemberCallOK {
-		return nil
-	}
-	fn, ok := typecall.Callable(memberType)
-	if !ok {
+	fn, status, ok := typecall.MemberCallable(receiverType, member)
+	if status != typecall.MemberCallOK || !ok {
 		return nil
 	}
 	consumeReceiver := fact.Receiver != nil && fact.Method != "" && memberCallConsumesReceiver(fn, receiverType)

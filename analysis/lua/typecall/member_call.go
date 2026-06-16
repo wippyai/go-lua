@@ -33,6 +33,34 @@ func MemberCall(t typ.Type, name string) (typ.Type, MemberCallStatus) {
 	return res.t, res.status
 }
 
+// MemberCallable resolves a receiver member for call syntax, extracts a
+// concrete callable witness, and binds receiver-relative Self/SelfRef
+// references to the concrete receiver type.
+func MemberCallable(receiver typ.Type, name string) (*typ.Function, MemberCallStatus, bool) {
+	memberType, status := MemberCall(receiver, name)
+	if status != MemberCallOK {
+		return nil, status, false
+	}
+	callable, ok := Callable(memberType)
+	if !ok || callable == nil {
+		return nil, status, false
+	}
+	return bindMemberCallableReceiver(callable, receiver), status, true
+}
+
+func bindMemberCallableReceiver(callable *typ.Function, receiver typ.Type) *typ.Function {
+	if callable == nil {
+		return nil
+	}
+	if substituted, ok := subst.Self(callable, receiver).(*typ.Function); ok {
+		callable = substituted
+	}
+	if substituted, ok := subst.SelfRef(callable, receiver).(*typ.Function); ok {
+		callable = substituted
+	}
+	return callable
+}
+
 type memberCallResult struct {
 	t      typ.Type
 	status MemberCallStatus
