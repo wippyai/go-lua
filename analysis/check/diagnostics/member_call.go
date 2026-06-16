@@ -159,7 +159,7 @@ func (p memberCall) callableMemberContract(result *body.Result, point cfg.Point,
 	if fact.Receiver != nil && fact.Method != "" {
 		contract = colonMemberCallContract(receiverType, contract)
 	}
-	return directCallContract(p).directFunctionCall(result, point, fact, contract, nil)
+	return directCallContract(p).directFunctionCall(result, point, fact, contract, nil, literalEnv{})
 }
 
 func colonMemberCallContract(receiverType typ.Type, contract directFunctionContract) directFunctionContract {

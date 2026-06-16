@@ -42,6 +42,7 @@ func produceReturnContract(result *body.Result, context producerContext, inherit
 	if !ok || len(returns) == 0 {
 		return nil
 	}
+	envs := literalEnvironments(result)
 	var out []diagnostic.Diagnostic
 	for _, point := range result.ReturnPoints() {
 		fact, ok := result.ReturnFact(point)
@@ -50,19 +51,23 @@ func produceReturnContract(result *body.Result, context producerContext, inherit
 		}
 		for i, expr := range fact.Exprs {
 			source := returnSourceAt(fact, i)
-			got, ok := returnValueType(result, producer.resolver, point, expr, source, inherited)
-			if !ok {
-				continue
-			}
 			want, ok := returnTypeAt(returns, i)
 			if !ok || refinement.ContainsFreeTypeParam(want) {
 				continue
 			}
-			if !boundaryTypeMismatch(result, point, got, want, boundaryValueFromASTSource(source)) {
-				continue
-			}
 			annotation := typeExprAt(fn.ReturnTypes, i)
 			if annotation == nil {
+				continue
+			}
+			if mismatch, ok := objectLiteralMemberMismatch(result, point, expr, want, envs[point]); ok {
+				out = append(out, returnContractDiagnostic(mismatch.expr, annotation, mismatch.got, mismatch.want, i))
+				continue
+			}
+			got, ok := returnValueType(result, producer.resolver, point, expr, source, inherited)
+			if !ok {
+				continue
+			}
+			if !boundaryTypeMismatch(result, point, got, want, boundaryValueFromASTSource(source)) {
 				continue
 			}
 			out = append(out, returnContractDiagnostic(expr, annotation, got, want, i))
@@ -336,6 +341,7 @@ func directCallArgsCompatible(result *body.Result, point cfg.Point, fact semanti
 	if fact.Call == nil {
 		return false
 	}
+	env := literalEnvironments(result)[point]
 	args := fact.Call.Args
 	required := contract.requiredArity()
 	if len(args) < required {
@@ -367,6 +373,9 @@ func directCallArgsCompatible(result *body.Result, point cfg.Point, fact semanti
 		}
 		if !ok || refinement.ContainsFreeTypeParam(want) {
 			continue
+		}
+		if _, ok := objectLiteralMemberMismatch(result, point, arg, want, env); ok {
+			return false
 		}
 		if !boundaryTypeMismatch(result, point, got, want, boundaryCallArgumentReader(fact, i, arg)) {
 			continue

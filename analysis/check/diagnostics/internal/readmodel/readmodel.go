@@ -272,6 +272,9 @@ func (r Reader) ValueProofAdmissible(value product.Value, want typ.Type) bool {
 			return true
 		}
 	}
+	if t, ok := runtimeKindType(reg, value, product.PresenceOf(value)); ok && subtype.IsSubtype(t, want) {
+		return true
+	}
 	return false
 }
 

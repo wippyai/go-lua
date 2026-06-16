@@ -38,6 +38,7 @@ func produceCallParamObligations(
 	if graph == nil {
 		return nil
 	}
+	envs := literalEnvironments(result)
 	producer := callParamObligations(context)
 	var out []diagnostic.Diagnostic
 	for _, point := range graph.RPO() {
@@ -49,7 +50,7 @@ func produceCallParamObligations(
 		if !ok || len(outcome.ParamObligations) == 0 {
 			continue
 		}
-		if d, ok := producer.call(result, point, fact, outcome.ParamObligations, inherited); ok {
+		if d, ok := producer.call(result, point, fact, outcome.ParamObligations, inherited, envs[point]); ok {
 			out = append(out, d)
 		}
 	}
@@ -62,6 +63,7 @@ func (p callParamObligations) call(
 	fact semantics.CallFact,
 	obligations []factapply.CallParamObligation,
 	inherited map[symbol.ID]*ast.FunctionExpr,
+	env literalEnv,
 ) (diagnostic.Diagnostic, bool) {
 	args := fact.Call.Args
 	// Colon method calls pass the receiver as the implicit first parameter, so
@@ -88,6 +90,9 @@ func (p callParamObligations) call(
 		want, ok := readmodelType(result, obligation.Value)
 		if !ok || want == nil || typ.IsAny(want) || typ.IsUnknown(want) || refinement.ContainsFreeTypeParam(want) {
 			continue
+		}
+		if mismatch, ok := objectLiteralMemberMismatch(result, point, args[argIndex], want, env); ok {
+			return callParamObligationDiagnostic(fact.Call, callObligationName(result, fact), argIndex, mismatch.got, mismatch.want, mismatch.expr), true
 		}
 		got, ok := untrustedTopLikeExpressionTypeAt(result, p.resolver, point, args[argIndex])
 		untrustedTopLike := ok

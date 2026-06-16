@@ -45,6 +45,38 @@ end`)
 	}
 }
 
+func TestGenericForIPairsElementCarriesObjectLiteralGradualParameterField(t *testing.T) {
+	reg := standard.Registry()
+	fn := parseFunction(t, `
+function f(raw)
+	local pages = {
+		{ id = raw, route = "/ok" },
+	}
+	for _, page in ipairs(pages) do
+		local id = page.id
+	end
+end`)
+
+	result, err := CheckFunction(fn, Config{
+		Registry:   reg,
+		Signatures: signaturelookup.Source{IncludeStdlib: true},
+	})
+	if err != nil {
+		t.Fatalf("CheckFunction: %v", err)
+	}
+
+	loop := fn.Stmts[1].(*ast.GenericForStmt)
+	local := loop.Stmts[0].(*ast.LocalAssignStmt)
+	point := requireLocalAssignmentPoint(t, result, local, 0)
+	got, ok := result.ExpressionValueAtBoundary(point, local.Exprs[0])
+	if !ok {
+		t.Fatal("ExpressionValueAtBoundary returned false")
+	}
+	if gotEvidence := product.Get(reg, got, evidence.Key); !evidence.Equal(gotEvidence, evidence.GradualTop()) {
+		t.Fatalf("page.id evidence = %s, want %s", gotEvidence, evidence.GradualTop())
+	}
+}
+
 // TestGenericForLoopVarNegatedDiscriminantEdgeNarrowsRoot proves the else edge of
 // a discriminant equality guard narrows an un-annotated generic-for loop variable
 // to the complementary variant. The else-branch read item.payment_id must project

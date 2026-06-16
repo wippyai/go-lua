@@ -41,7 +41,7 @@ if second then
         print(label)
     end
 
-    local wrong_arg = second({id = 42, retries = "bad"})
+    local wrong_arg = second({id = 42, retries = "bad"}) -- expect-error
     print(wrong_arg)
 end
 

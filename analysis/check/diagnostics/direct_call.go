@@ -38,6 +38,7 @@ func produceDirectCallContract(result *body.Result, context producerContext, inh
 		return nil
 	}
 	defs := directCallDefinitions(result, inherited)
+	envs := literalEnvironments(result)
 	producer := directCallContract(context)
 	var out []diagnostic.Diagnostic
 	for _, point := range graph.RPO() {
@@ -54,7 +55,7 @@ func produceDirectCallContract(result *body.Result, context producerContext, inh
 				continue
 			}
 		}
-		d, ok := producer.call(result, point, fact, site, defs[site.CalleeSymbol()], defs)
+		d, ok := producer.call(result, point, fact, site, defs[site.CalleeSymbol()], defs, envs[point])
 		if !ok {
 			continue
 		}
@@ -70,6 +71,7 @@ func (p directCallContract) call(
 	site factflow.CallSite,
 	def *ast.FunctionExpr,
 	defs map[symbol.ID]*ast.FunctionExpr,
+	env literalEnv,
 ) (diagnostic.Diagnostic, bool) {
 	name := result.SymbolName(site.CalleeSymbol())
 	if name == "" {
@@ -81,14 +83,14 @@ func (p directCallContract) call(
 	}
 
 	if def != nil {
-		return p.callFunction(result, point, fact, name, def, defs)
+		return p.callFunction(result, point, fact, name, def, defs, env)
 	}
 
 	if sig, ok := result.CallSignature(site); ok && sig.Type != nil {
 		contract := lowerDirectFunctionType(sig.Type)
 		contract.name = name
 		contract.declSpan = ast.SpanOf(fact.Call)
-		return p.directFunctionCall(result, point, fact, contract, defs)
+		return p.directFunctionCall(result, point, fact, contract, defs, env)
 	}
 
 	baseExpr, ok := result.SymbolTypeAnnotation(site.CalleeSymbol())
@@ -109,7 +111,7 @@ func (p directCallContract) call(
 	contract := lowerDirectFunctionType(callable)
 	contract.name = name
 	contract.declSpan = ast.SpanOf(fact.Call)
-	return p.directFunctionCall(result, point, fact, contract, defs)
+	return p.directFunctionCall(result, point, fact, contract, defs, env)
 }
 
 // possiblyNilCallee flags a direct call whose callee value is possibly nil
@@ -236,6 +238,7 @@ func (p directCallContract) callFunction(
 	name string,
 	fn *ast.FunctionExpr,
 	defs map[symbol.ID]*ast.FunctionExpr,
+	env literalEnv,
 ) (diagnostic.Diagnostic, bool) {
 	contract, ok := lowerDirectFunctionContractInScope(fn, p.resolver)
 	if !ok {
@@ -243,7 +246,7 @@ func (p directCallContract) callFunction(
 	}
 	contract.name = name
 	contract.declSpan = ast.SpanOf(fn)
-	return p.directFunctionCall(result, point, fact, contract, defs)
+	return p.directFunctionCall(result, point, fact, contract, defs, env)
 }
 
 func (p directCallContract) directFunctionCall(
@@ -252,6 +255,7 @@ func (p directCallContract) directFunctionCall(
 	fact semantics.CallFact,
 	contract directFunctionContract,
 	defs map[symbol.ID]*ast.FunctionExpr,
+	env literalEnv,
 ) (diagnostic.Diagnostic, bool) {
 	call := fact.Call
 	if call == nil {
@@ -285,6 +289,12 @@ func (p directCallContract) directFunctionCall(
 		} else {
 			break
 		}
+		if refinement.ContainsFreeTypeParam(want) {
+			continue
+		}
+		if mismatch, ok := objectLiteralMemberMismatch(result, point, arg, want, env); ok {
+			return argTypeDiagnostic(call, contract.name, i, mismatch.got, mismatch.want, mismatch.expr, contract.declSpan), true
+		}
 		got, ok := untrustedTopLikeExpressionTypeAt(result, p.resolver, point, arg)
 		untrustedTopLike := ok
 		if !ok {
@@ -297,9 +307,6 @@ func (p directCallContract) directFunctionCall(
 			got, ok = boundaryExprType(result, p.resolver, arg)
 		}
 		if !ok {
-			continue
-		}
-		if refinement.ContainsFreeTypeParam(want) {
 			continue
 		}
 		readBoundary := boundaryCallArgumentReader(fact, i, arg)
