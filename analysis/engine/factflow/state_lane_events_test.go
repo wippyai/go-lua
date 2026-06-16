@@ -67,6 +67,8 @@ func TestStateLaneEventConstructorsAndAccessorsCopyPaths(t *testing.T) {
 	equalityEvidence := NewBranchPathEqualityEvidence(leftPath, rightPath)
 	inequalityEvidence := NewBranchPathInequalityEvidence(leftPath, rightPath)
 	falseEdgeEvidence := NewBranchPathEqualityEvidenceOnEdge(leftPath, rightPath, false)
+	frozenPath := path.NewPath(symbol.ID(106), "frozen")
+	frozenEvidence := NewBranchFrozenTableEvidenceOnEdge(frozenPath, true)
 	leftPath.Segments[0].Name = "changed"
 	rightPath.Segments[0].Name = "changed"
 	if equalityEvidence.Kind() != BranchPathEvidenceEqual || inequalityEvidence.Kind() != BranchPathEvidenceNotEqual {
@@ -74,6 +76,9 @@ func TestStateLaneEventConstructorsAndAccessorsCopyPaths(t *testing.T) {
 	}
 	if falseEdgeEvidence.ActiveOnEdge(true) || !falseEdgeEvidence.ActiveOnEdge(false) {
 		t.Fatalf("false-edge evidence active true/false = %v/%v, want false/true", falseEdgeEvidence.ActiveOnEdge(true), falseEdgeEvidence.ActiveOnEdge(false))
+	}
+	if frozenEvidence.Kind() != BranchPathEvidenceFrozenTable || !frozenEvidence.ActiveOnEdge(true) || frozenEvidence.ActiveOnEdge(false) {
+		t.Fatalf("frozen evidence kind/active = %v/%v/%v, want frozen/true/false", frozenEvidence.Kind(), frozenEvidence.ActiveOnEdge(true), frozenEvidence.ActiveOnEdge(false))
 	}
 	assertDirectField(t, equalityEvidence.Path(), "value")
 	otherPath, ok := equalityEvidence.OtherPath()
@@ -90,6 +95,9 @@ func TestStateLaneEventConstructorsAndAccessorsCopyPaths(t *testing.T) {
 	if got := evidenceSet.Evidence(); got[0].Kind() != BranchPathEvidencePresence {
 		t.Fatalf("branch path evidence set exposed mutable slice, got %v", got[0].Kind())
 	}
+	frozenAgain := frozenEvidence.Path()
+	frozenAgain.Root = "changed"
+	assertPathEqual(t, frozenEvidence.Path(), frozenPath)
 
 	resultPath := path.NewPath(symbol.ID(106), "select").Field("result")
 	casePath := path.NewPath(symbol.ID(107), "select").Field("case")

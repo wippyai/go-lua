@@ -8,17 +8,19 @@ import (
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/program"
 	"github.com/wippyai/go-lua/analysis/domain/effect"
 	"github.com/wippyai/go-lua/analysis/domain/effect/returns"
-	"github.com/wippyai/go-lua/analysis/module/signature"
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
-	"github.com/wippyai/go-lua/analysis/test/value/standard"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
+	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/module/manifest"
+	"github.com/wippyai/go-lua/analysis/module/signature"
 	"github.com/wippyai/go-lua/analysis/module/signaturelookup"
 	"github.com/wippyai/go-lua/analysis/symbol"
+	"github.com/wippyai/go-lua/analysis/test/value/standard"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/typeexpr"
 	"github.com/wippyai/go-lua/compiler/ast"
@@ -189,6 +191,47 @@ func TestErrorReturnDelegatedTailCallDoesNotInventRelationFromOptionalDeclaratio
 		}
 	}
 	t.Fatalf("diagnostics = %#v, want optional receiver diagnostic for release", diags)
+}
+
+func TestTableFreezeAndIsFrozenBranchCarryFrozenProof(t *testing.T) {
+	reg := standard.Registry()
+	stmts := parseChunk(t, `
+		table.freeze(t)
+		if table.isfrozen(t) then
+			local ok = t
+		end
+	`)
+	bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"table", "t"}})
+	tValue, ok := bindings.GlobalSymbol("t")
+	if !ok {
+		t.Fatal("missing global symbol for t")
+	}
+	entryID := identity.LuaTableLiteral(31, 31)
+	entryState := state.State{}.WriteValue(reg, key.SymbolValue(tValue), product.Set(reg, product.NewWithPresence(reg, product.ShapeTop, presence.Present()), identity.Key, identity.Singleton(entryID)))
+	result, err := body.CheckBoundChunk(stmts, bindings, body.Config{
+		Registry:   reg,
+		Globals:    []string{"table", "t"},
+		Signatures: signaturelookup.Source{IncludeStdlib: true},
+		EntryState: entryState,
+	})
+	if err != nil {
+		t.Fatalf("CheckBoundChunk: %v", err)
+	}
+
+	branch := firstBranchPoint(t, result)
+	branchState := stateAt(t, result, branch)
+	idValue := branchState.ReadValue(reg, key.SymbolValue(tValue))
+	tableID, ok := product.Get(reg, idValue, identity.Key).ID()
+	if !ok {
+		t.Fatalf("table value identity missing at branch point")
+	}
+	if !branchState.IsTableFrozen(tableID) {
+		t.Fatalf("branch state is not frozen for %s", tableID)
+	}
+
+	if diags := diagnostics.Produce(result); len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v, want none", diags)
+	}
 }
 
 func TestErrorReturnGuardRefinesCallbackArgument(t *testing.T) {

@@ -107,9 +107,13 @@ func dynamicIndexReadback(intent factflow.DynamicIndexReadbackIntent) (readKey b
 func applyBranchPathEvidence(
 	ctx transfer.EdgeContext,
 	resolver *visibility.Resolver,
+	projectPath PathTypeProjector,
 	out state.State,
 	proof factflow.BranchPathEvidence,
 ) state.State {
+	if proof.Kind() == factflow.BranchPathEvidenceFrozenTable {
+		return applyFrozenTableFact(ctx.Registry, resolver, projectPath, ctx.Edge.From, out, proof.Path())
+	}
 	stateProof, ok := branchPathEvidenceAt(resolver, ctx.Edge.From, proof)
 	if !ok {
 		return out

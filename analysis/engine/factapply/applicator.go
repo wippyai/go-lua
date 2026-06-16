@@ -143,7 +143,7 @@ func NewFactsEdgeTransfer(config FactsEdgeTransferConfig) transfer.EdgeTransfer 
 			if !proof.ActiveOnEdge(ctx.Edge.Cond) {
 				continue
 			}
-			out = applyBranchPathEvidence(ctx, config.Visibility, out, proof)
+			out = applyBranchPathEvidence(ctx, config.Visibility, config.ProjectPath, out, proof)
 		}
 		out = applyCallOutcomeEdgeFacts(ctx, config.Facts, config.CallOutcome, config.Visibility, config.ProjectPath, branchRefinements, out)
 		return out

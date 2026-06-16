@@ -17,6 +17,7 @@ const (
 	BranchPathEvidenceNotEqual
 	BranchPathEvidenceTruthy
 	BranchPathEvidenceIndexInRange
+	BranchPathEvidenceFrozenTable
 )
 
 // BranchPathEvidence describes one path-shaped fact emitted by branch/postcondition
@@ -150,6 +151,17 @@ func NewBranchIndexInRangeEvidenceOnEdge(indexPath path.Path, arrayPath path.Pat
 		path:          copyPath(indexPath),
 		otherPath:     copyPath(arrayPath),
 		hasOtherPath:  true,
+		activeOnTrue:  cond,
+		activeOnFalse: !cond,
+	}
+}
+
+// NewBranchFrozenTableEvidenceOnEdge records that targetPath resolves to a
+// frozen table identity on one branch edge.
+func NewBranchFrozenTableEvidenceOnEdge(targetPath path.Path, cond bool) BranchPathEvidence {
+	return BranchPathEvidence{
+		kind:          BranchPathEvidenceFrozenTable,
+		path:          copyPath(targetPath),
 		activeOnTrue:  cond,
 		activeOnFalse: !cond,
 	}

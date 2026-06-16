@@ -5,6 +5,7 @@ import (
 
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
@@ -145,6 +146,46 @@ func TestFactsEdgeTransferOneSidedTruthyFalsyRefinements(t *testing.T) {
 			assertValue(t, reg, got[thenPoint], key.SymbolValue(target), tc.wantTrue)
 			assertValue(t, reg, got[elsePoint], key.SymbolValue(target), tc.wantFalse)
 		})
+	}
+}
+
+func TestFactsEdgeTransferAppliesFrozenTableEvidenceOnlyOnSelectedEdge(t *testing.T) {
+	reg := standard.Registry()
+	graph := cfg.New()
+	branch := graph.AddNode(cfg.NodeBranch)
+	thenPoint := graph.AddNode(cfg.NodeNoop)
+	elsePoint := graph.AddNode(cfg.NodeNoop)
+	graph.AddEdge(graph.Entry(), branch, false)
+	graph.AddEdge(branch, thenPoint, true)
+	graph.AddEdge(branch, elsePoint, false)
+	graph.AddEdge(thenPoint, graph.Exit(), false)
+	graph.AddEdge(elsePoint, graph.Exit(), false)
+
+	target := symbol.ID(318)
+	tableID := identity.LuaTableLiteral(9, 9)
+	rootPath := pathdom.NewPath(target, "t")
+	initial := state.State{}.WriteValue(reg, key.SymbolValue(target), product.Set(reg, presentValue(reg), identity.Key, identity.Singleton(tableID)))
+
+	got := transfer.Run(transfer.Config{
+		Graph:      graph,
+		Registry:   reg,
+		EntryState: initial,
+		EdgeTransfer: NewFactsEdgeTransfer(FactsEdgeTransferConfig{
+			Facts: factflow.NewFacts(factflow.FactsInput{
+				BranchPathEvidence: map[cfg.Point]factflow.BranchPathEvidenceSet{
+					branch: factflow.NewBranchPathEvidenceSet(
+						factflow.NewBranchFrozenTableEvidenceOnEdge(rootPath, true),
+					),
+				},
+			}),
+		}),
+	})
+
+	if !got[thenPoint].IsTableFrozen(tableID) {
+		t.Fatalf("then edge state is not frozen for %s", tableID)
+	}
+	if got[elsePoint].IsTableFrozen(tableID) {
+		t.Fatalf("else edge state unexpectedly frozen for %s", tableID)
 	}
 }
 

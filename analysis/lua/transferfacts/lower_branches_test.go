@@ -213,6 +213,116 @@ func TestLowerMemberPathBranchRefinementOrdersRootBeforeChild(t *testing.T) {
 	}
 }
 
+func TestLowerTableIsFrozenDirectConditionPublishesFrozenTableProof(t *testing.T) {
+	reg := standard.Registry()
+	stmts, bindings, built, result := parseSemanticChunk(t, `
+local t = {}
+if table.isfrozen(t) then
+end
+`, "table")
+	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings})
+	ifStmt := mustIfStmt(t, stmts, 1)
+	branchPoint := requireStmtPoints(t, built, ifStmt, 2)[1]
+	target := path.NewPath(mustLocalAt(t, bindings, mustLocalStmt(t, stmts, 0), 0), "t")
+	branchFact, _ := result.BranchCondition(branchPoint)
+
+	proofs := facts.BranchPathEvidence(branchPoint)
+	if len(proofs) != 1 {
+		t.Fatalf("branch path evidence = %#v, want 1 frozen-table proof; condition=%T %#v", proofs, branchFact.Condition, branchFact.Condition)
+	}
+	proof := proofs[0]
+	if proof.Kind() != factflow.BranchPathEvidenceFrozenTable {
+		t.Fatalf("branch path evidence kind = %v, want frozen-table", proof.Kind())
+	}
+	if !proof.Path().Equal(target) {
+		t.Fatalf("branch path evidence path = %s, want %s", proof.Path(), target)
+	}
+	if !proof.ActiveOnEdge(true) || proof.ActiveOnEdge(false) {
+		t.Fatalf("branch path evidence active true/false = %v/%v, want true/false", proof.ActiveOnEdge(true), proof.ActiveOnEdge(false))
+	}
+}
+
+func TestLowerTableIsFrozenNegatedConditionPublishesFrozenTableProofOnFalseEdge(t *testing.T) {
+	reg := standard.Registry()
+	stmts, bindings, built, result := parseSemanticChunk(t, `
+local t = {}
+if not table.isfrozen(t) then
+end
+`, "table")
+	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings})
+	ifStmt := mustIfStmt(t, stmts, 1)
+	branchPoint := requireStmtPoints(t, built, ifStmt, 2)[1]
+	target := path.NewPath(mustLocalAt(t, bindings, mustLocalStmt(t, stmts, 0), 0), "t")
+	branchFact, _ := result.BranchCondition(branchPoint)
+
+	proofs := facts.BranchPathEvidence(branchPoint)
+	if len(proofs) != 1 {
+		t.Fatalf("branch path evidence = %#v, want 1 frozen-table proof; condition=%T %#v", proofs, branchFact.Condition, branchFact.Condition)
+	}
+	proof := proofs[0]
+	if proof.Kind() != factflow.BranchPathEvidenceFrozenTable {
+		t.Fatalf("branch path evidence kind = %v, want frozen-table", proof.Kind())
+	}
+	if !proof.Path().Equal(target) {
+		t.Fatalf("branch path evidence path = %s, want %s", proof.Path(), target)
+	}
+	if proof.ActiveOnEdge(true) || !proof.ActiveOnEdge(false) {
+		t.Fatalf("branch path evidence active true/false = %v/%v, want false/true", proof.ActiveOnEdge(true), proof.ActiveOnEdge(false))
+	}
+}
+
+func TestLowerTableIsFrozenConjunctionPublishesFrozenTableProofWithOtherGuards(t *testing.T) {
+	reg := standard.Registry()
+	stmts, bindings, built, result := parseSemanticChunk(t, `
+local t = {}
+local ok: boolean = true
+if table.isfrozen(t) and ok then
+end
+`, "table")
+	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings})
+	ifStmt := mustIfStmt(t, stmts, 2)
+	branchPoint := requireStmtPoints(t, built, ifStmt, 2)[1]
+	target := path.NewPath(mustLocalAt(t, bindings, mustLocalStmt(t, stmts, 0), 0), "t")
+
+	var foundFrozen bool
+	var foundOtherGuard bool
+	for _, proof := range facts.BranchPathEvidence(branchPoint) {
+		if proof.Kind() == factflow.BranchPathEvidenceFrozenTable && proof.Path().Equal(target) {
+			if !proof.ActiveOnEdge(true) || proof.ActiveOnEdge(false) {
+				t.Fatalf("frozen-table proof active true/false = %v/%v, want true/false", proof.ActiveOnEdge(true), proof.ActiveOnEdge(false))
+			}
+			foundFrozen = true
+			continue
+		}
+		if proof.Kind() == factflow.BranchPathEvidencePresence && proof.ActiveOnEdge(true) {
+			foundOtherGuard = true
+		}
+	}
+	if !foundFrozen {
+		t.Fatalf("missing frozen-table proof in conjunction: %#v", facts.BranchPathEvidence(branchPoint))
+	}
+	if !foundOtherGuard {
+		t.Fatalf("missing ordinary guard evidence in conjunction: %#v", facts.BranchPathEvidence(branchPoint))
+	}
+}
+
+func TestLowerTableIsFrozenIgnoresShadowedLocalTable(t *testing.T) {
+	reg := standard.Registry()
+	stmts, bindings, built, result := parseSemanticChunk(t, `
+local table = { isfrozen = function(value) return true end }
+local t = {}
+if table.isfrozen(t) then
+end
+`, "table")
+	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings})
+	ifStmt := mustIfStmt(t, stmts, 2)
+	branchPoint := requireStmtPoints(t, built, ifStmt, 2)[1]
+	branchFact, _ := result.BranchCondition(branchPoint)
+	if got := facts.BranchPathEvidence(branchPoint); len(got) != 0 {
+		t.Fatalf("branch path evidence = %#v, want none for shadowed table; condition=%T %#v", got, branchFact.Condition, branchFact.Condition)
+	}
+}
+
 func TestLowerCompoundBranchOrdersAllRootsBeforeDescendants(t *testing.T) {
 	fn, bindings, built, result := parseSemanticFunction(t, `
 function f(page: { data_func: string?, url: string? } | { other: string })
