@@ -78,6 +78,7 @@ func HasPostReturnEvidence(reg *axis.Registry, outcome factapply.CallOutcome) bo
 	return outcomeHasAuthoritativeResult(reg, outcome.Results) ||
 		len(outcome.NormalReturnFacts.PathRefinements) != 0 ||
 		len(outcome.NormalReturnFacts.PathStaticMembers) != 0 ||
+		len(outcome.NormalReturnFacts.PathInvalidations) != 0 ||
 		len(outcome.NormalReturnFacts.DynamicIndexFacts) != 0 ||
 		len(outcome.NormalReturnFacts.BranchProofs) != 0 ||
 		len(outcome.NormalReturnFacts.ChannelSelects) != 0 ||
@@ -125,6 +126,7 @@ func withSupplementalFacts(reg *axis.Registry, out, second factapply.CallOutcome
 	}
 	out.NormalReturnFacts.PathRefinements = append(out.NormalReturnFacts.PathRefinements, second.NormalReturnFacts.PathRefinements...)
 	out.NormalReturnFacts.PathStaticMembers = append(out.NormalReturnFacts.PathStaticMembers, second.NormalReturnFacts.PathStaticMembers...)
+	out.NormalReturnFacts.PathInvalidations = append(out.NormalReturnFacts.PathInvalidations, second.NormalReturnFacts.PathInvalidations...)
 	out.NormalReturnFacts.DynamicIndexFacts = append(out.NormalReturnFacts.DynamicIndexFacts, second.NormalReturnFacts.DynamicIndexFacts...)
 	out.NormalReturnFacts.BranchProofs = append(out.NormalReturnFacts.BranchProofs, second.NormalReturnFacts.BranchProofs...)
 	out.NormalReturnFacts.ChannelSelects = append(out.NormalReturnFacts.ChannelSelects, second.NormalReturnFacts.ChannelSelects...)

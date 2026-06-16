@@ -5,6 +5,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/program"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/summary"
 	"github.com/wippyai/go-lua/analysis/domain/effect"
+	"github.com/wippyai/go-lua/analysis/domain/effect/mutation"
 	"github.com/wippyai/go-lua/analysis/domain/effect/ownership"
 	"github.com/wippyai/go-lua/analysis/domain/effect/postcondition"
 	"github.com/wippyai/go-lua/analysis/domain/effect/returns"
@@ -149,6 +150,7 @@ func functionSummaryEffect(s summary.Summary, fn *typ.Function) effect.Row {
 	labels := errorReturnLabels(s.ReturnPresenceRelations, len(fn.Returns))
 	labels = append(labels, normalReturnParamRefinementLabels(s.NormalReturnParams, len(fn.Params))...)
 	labels = append(labels, normalReturnOwnershipLabels(s.NormalReturnFacts, len(fn.Params))...)
+	labels = append(labels, normalReturnMutationLabels(s.NormalReturnFacts, len(fn.Params))...)
 	if len(labels) == 0 {
 		return effect.Empty
 	}
@@ -206,6 +208,24 @@ func rootPlaceholderParam(p pathdom.Path, arity int) (int, bool) {
 		return 0, false
 	}
 	return idx, true
+}
+
+func normalReturnMutationLabels(facts callboundary.NormalReturnFacts, arity int) []effect.Label {
+	if arity <= 0 {
+		return nil
+	}
+	var out []effect.Label
+	for _, fact := range facts.PathInvalidations {
+		param, ok := rootPlaceholderParam(fact.Path, arity)
+		if !ok {
+			continue
+		}
+		out = append(out, mutation.TableMutator{
+			Target: effect.ParamRef{Index: param},
+			Value:  effect.ParamRef{Index: -1},
+		})
+	}
+	return out
 }
 
 func normalReturnParamRefinementLabels(values []product.Value, arity int) []effect.Label {

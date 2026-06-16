@@ -53,6 +53,15 @@ func applyCallOutcomeFacts(
 		if !ok {
 			continue
 		}
+		out = writePathInvalidationMarker(resolver, ctx.Point, out, targetPath)
+		out = applyPathDescendantInvalidation(ctx, resolver, out, factflow.NewPathDescendantInvalidation(targetPath))
+	}
+	for _, fact := range normalReturnFacts.PathInvalidations {
+		targetPath, ok := fact.Path.Substitute(bindings)
+		if !ok {
+			continue
+		}
+		out = writePathInvalidationMarker(resolver, ctx.Point, out, targetPath)
 		out = applyPathDescendantInvalidation(ctx, resolver, out, factflow.NewPathDescendantInvalidation(targetPath))
 	}
 	for _, condition := range outcome.ParamConditions {
@@ -153,6 +162,22 @@ func applyFrozenTableFact(
 		return out
 	}
 	return out.FreezeTable(id)
+}
+
+func writePathInvalidationMarker(
+	resolver *visibility.Resolver,
+	point cfg.Point,
+	out state.State,
+	targetPath pathdom.Path,
+) state.State {
+	if targetKey := factPathKeyAt(resolver, point, targetPath); targetKey != "" {
+		return out.WriteEffectDelta(effectdelta.Key{
+			Target: targetKey,
+			Site:   callboundary.PathInvalidationEffectSite(),
+			Kind:   effectdelta.Mutation,
+		}, effectdelta.Top())
+	}
+	return out
 }
 
 func applyEscapeEventPlacement(

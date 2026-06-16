@@ -167,6 +167,12 @@ func projectNormalReturnFacts(reg *axis.Registry, result ResultReader, exit stat
 				})
 				continue
 			}
+			if stateKey.Kind == effectdelta.Mutation && callboundary.IsPathInvalidationEffectSite(stateKey.Site) {
+				out.PathInvalidations = append(out.PathInvalidations, callboundary.PathInvalidationFact{
+					Path: target,
+				})
+				continue
+			}
 			if stateKey.Kind == effectdelta.Escape {
 				if kind, recursive, ok := callboundary.EscapeEventFromEffectSite(stateKey.Site); ok {
 					out.EscapeEvents = append(out.EscapeEvents, callboundary.EscapeEventFact{

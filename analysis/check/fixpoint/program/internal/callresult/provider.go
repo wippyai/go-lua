@@ -286,6 +286,7 @@ func dropDescendantFactsBelowMaybeAbsentReturns(sum summary.Summary) summary.Sum
 	facts := sum.NormalReturnFacts
 	facts.PathRefinements = filterPathValueFactsBelowReturns(facts.PathRefinements, maybeAbsent)
 	facts.PathStaticMembers = filterPathStaticMemberFactsBelowReturns(facts.PathStaticMembers, maybeAbsent)
+	facts.PathInvalidations = filterPathInvalidationFactsBelowReturns(facts.PathInvalidations, maybeAbsent)
 	facts.DynamicIndexFacts = filterDynamicIndexFactsBelowReturns(facts.DynamicIndexFacts, maybeAbsent)
 	facts.BranchProofs = filterBranchProofsBelowReturns(facts.BranchProofs, maybeAbsent)
 	facts.ChannelSelects = filterChannelSelectsBelowReturns(facts.ChannelSelects, maybeAbsent)
@@ -308,6 +309,17 @@ func filterPathValueFactsBelowReturns(in []callboundary.PathValueFact, roots map
 }
 
 func filterPathStaticMemberFactsBelowReturns(in []callboundary.PathStaticMemberFact, roots map[int]struct{}) []callboundary.PathStaticMemberFact {
+	out := in[:0]
+	for _, fact := range in {
+		if strictPlaceholderDescendant(fact.Path, roots) {
+			continue
+		}
+		out = append(out, fact)
+	}
+	return out
+}
+
+func filterPathInvalidationFactsBelowReturns(in []callboundary.PathInvalidationFact, roots map[int]struct{}) []callboundary.PathInvalidationFact {
 	out := in[:0]
 	for _, fact := range in {
 		if strictPlaceholderDescendant(fact.Path, roots) {
@@ -1120,6 +1132,13 @@ func cloneNormalReturnFacts(in callboundary.NormalReturnFacts) callboundary.Norm
 		for i, fact := range in.PathStaticMembers {
 			fact.Path = copyPath(fact.Path)
 			out.PathStaticMembers[i] = fact
+		}
+	}
+	if len(in.PathInvalidations) != 0 {
+		out.PathInvalidations = make([]callboundary.PathInvalidationFact, len(in.PathInvalidations))
+		for i, fact := range in.PathInvalidations {
+			fact.Path = copyPath(fact.Path)
+			out.PathInvalidations[i] = fact
 		}
 	}
 	if len(in.DynamicIndexFacts) != 0 {

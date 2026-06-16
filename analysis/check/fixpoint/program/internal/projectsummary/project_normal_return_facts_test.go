@@ -44,6 +44,7 @@ func TestFromResultProjectsNormalReturnFactsFromExitSnapshots(t *testing.T) {
 	receiveCaseKey := normalReturnFactProjectTestKey(param1, ".receiveCase")
 	casePathKey := normalReturnFactProjectTestKey(param1, ".casePath")
 	mutationKey := normalReturnFactProjectTestKey(param0, ".mutation")
+	invalidationKey := normalReturnFactProjectTestKey(param1, ".invalidated")
 	escapeKey := normalReturnFactProjectTestKey(param0, ".escape")
 	sendEventKey := normalReturnFactProjectTestKey(param0, ".sent")
 	freezeEventKey := normalReturnFactProjectTestKey(param1, ".pathFrozen")
@@ -131,6 +132,11 @@ func TestFromResultProjectsNormalReturnFactsFromExitSnapshots(t *testing.T) {
 			Change: effectdelta.ChangeChanged,
 		}).
 		WriteEffectDelta(effectdelta.Key{
+			Target: invalidationKey,
+			Site:   callboundary.PathInvalidationEffectSite(),
+			Kind:   effectdelta.Mutation,
+		}, effectdelta.Top()).
+		WriteEffectDelta(effectdelta.Key{
 			Target: escapeKey,
 			Site:   "effect-escape",
 			Kind:   effectdelta.Escape,
@@ -188,6 +194,7 @@ func TestFromResultProjectsNormalReturnFactsFromExitSnapshots(t *testing.T) {
 	assertChannelSelect(t, got.ChannelSelects, "case-kind", channelselectfact.FactCase, pathdom.Path{}, pathdom.NewPlaceholder(1).Field("casePath"))
 
 	assertEffectDelta(t, got.EffectDeltas, "effect-mutation", pathdom.NewPlaceholder(0).Field("mutation"), effectdelta.Mutation, effectdelta.ChangeChanged)
+	assertPathInvalidation(t, got.PathInvalidations, pathdom.NewPlaceholder(1).Field("invalidated"))
 	assertEffectDelta(t, got.EffectDeltas, "effect-escape", pathdom.NewPlaceholder(0).Field("escape"), effectdelta.Escape, effectdelta.ChangeNone)
 	assertEffectDelta(t, got.EffectDeltas, "effect-call", pathdom.NewPlaceholder(1).Field("call"), effectdelta.Call, effectdelta.ChangeUnknown)
 	assertEscapeEvent(t, got.EscapeEvents, pathdom.NewPlaceholder(0).Field("sent"), callboundary.EscapeEventSend, true)
@@ -520,9 +527,20 @@ func assertPathStaticMember(t *testing.T, reg *axis.Registry, facts []callbounda
 	t.Fatalf("PathStaticMembers = %#v, want %s = %#v", facts, target, want)
 }
 
+func assertPathInvalidation(t *testing.T, facts []callboundary.PathInvalidationFact, target pathdom.Path) {
+	t.Helper()
+	for _, fact := range facts {
+		if fact.Path.Equal(target) {
+			return
+		}
+	}
+	t.Fatalf("PathInvalidations = %#v, want %s", facts, target)
+}
+
 func normalReturnFactsEmpty(facts callboundary.NormalReturnFacts) bool {
 	return len(facts.PathRefinements) == 0 &&
 		len(facts.PathStaticMembers) == 0 &&
+		len(facts.PathInvalidations) == 0 &&
 		len(facts.DynamicIndexFacts) == 0 &&
 		len(facts.BranchProofs) == 0 &&
 		len(facts.ChannelSelects) == 0 &&

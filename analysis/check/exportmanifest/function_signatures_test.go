@@ -8,6 +8,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/program"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/summary"
 	"github.com/wippyai/go-lua/analysis/domain/effect"
+	"github.com/wippyai/go-lua/analysis/domain/effect/mutation"
 	"github.com/wippyai/go-lua/analysis/domain/effect/ownership"
 	"github.com/wippyai/go-lua/analysis/domain/effect/postcondition"
 	"github.com/wippyai/go-lua/analysis/domain/effect/returns"
@@ -105,6 +106,10 @@ func TestFunctionSummaryEffectExportsExactRootOwnershipBoundaryFacts(t *testing.
 				{Target: pathdom.NewPlaceholder(5)},
 				{Target: pathdom.NewPlaceholder(1).Field("child")},
 			},
+			PathInvalidations: []callboundary.PathInvalidationFact{
+				{Path: pathdom.NewPlaceholder(1)},
+				{Path: pathdom.NewPlaceholder(2).Field("child")},
+			},
 		},
 	}, typ.Func().
 		Param("sent", typ.Any).
@@ -120,6 +125,9 @@ func TestFunctionSummaryEffectExportsExactRootOwnershipBoundaryFacts(t *testing.
 	}
 	if !hasOwnershipStoreUnknown(got, 1) {
 		t.Fatalf("effect = %v, want root Store for param 1", got)
+	}
+	if !hasMutationTableMutator(got, 1) {
+		t.Fatalf("effect = %v, want root TableMutator for param 1", got)
 	}
 	if !hasOwnershipRetain(got, 2) {
 		t.Fatalf("effect = %v, want root Retain for param 2", got)
@@ -185,6 +193,13 @@ func hasOwnershipSendParam(row effect.Row, paramIndex int) bool {
 	return row.Has(func(label effect.Label) bool {
 		send, ok := effect.NormalizeLabel(label).(ownership.SendParam)
 		return ok && send.Param.Index == paramIndex
+	})
+}
+
+func hasMutationTableMutator(row effect.Row, paramIndex int) bool {
+	return row.Has(func(label effect.Label) bool {
+		mutator, ok := effect.NormalizeLabel(label).(mutation.TableMutator)
+		return ok && mutator.Target.Index == paramIndex && mutator.Value.Index == -1
 	})
 }
 

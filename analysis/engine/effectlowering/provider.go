@@ -64,11 +64,13 @@ func SignatureOutcomeProvider(config SignatureOutcomeProviderConfig) factapply.C
 		}
 		ownedSite := site.CallSite()
 		sig = instantiateSignatureForCall(ctx, facts, sources, expressionRefinements, argumentType, sig, ownedSite, in, read, returnTypeOps)
+		invalidations := signatureParamPathInvalidations(sig, ownedSite)
 		out := factapply.CallOutcome{
 			ReturnPresenceRelations: signatureReturnPresenceRelations(sig),
 			ParamPathRefinements:    signatureParamPathRefinements(ctx, sig, ownedSite),
-			ParamPathInvalidations:  signatureParamPathInvalidations(sig, ownedSite),
+			ParamPathInvalidations:  invalidations,
 		}
+		out.NormalReturnFacts.PathInvalidations = signatureNormalReturnPathInvalidations(invalidations)
 		out.NormalReturnFacts.EscapeEvents = signatureEscapeEvents(sig, ownedSite)
 		out.NormalReturnFacts.FrozenTables = signatureFrozenTables(sig, ownedSite)
 		if sig.Type == nil || len(sig.Type.Returns) == 0 {

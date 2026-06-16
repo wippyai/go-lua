@@ -6,6 +6,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/check/diagnostics"
 	"github.com/wippyai/go-lua/analysis/domain/effect"
+	"github.com/wippyai/go-lua/analysis/domain/effect/mutation"
 	"github.com/wippyai/go-lua/analysis/domain/effect/ownership"
 	"github.com/wippyai/go-lua/analysis/domain/effect/postcondition"
 	"github.com/wippyai/go-lua/analysis/domain/effect/returns"
@@ -1769,6 +1770,13 @@ func TestCheckAndExportReexportsImportedOwnershipEffectsAcrossModules(t *testing
 			Param: effect.ParamRef{Index: 0},
 		}),
 	})
+	runtime.DefineFunctionSignature("runtime.mutate_one", signature.Function{
+		Type: typ.Func().Param("container", typ.Any).Build(),
+		Effect: effect.Empty.With(mutation.TableMutator{
+			Target: effect.ParamRef{Index: 0},
+			Value:  effect.ParamRef{Index: -1},
+		}),
+	})
 
 	providerMod := CheckAndExport(`
 		local provider = {}
@@ -1778,6 +1786,9 @@ func TestCheckAndExportReexportsImportedOwnershipEffectsAcrossModules(t *testing
 		function provider.seal(payload: any)
 			runtime.freeze_one(payload)
 		end
+		function provider.mutate(container: any)
+			runtime.mutate_one(container)
+		end
 		return provider
 	`, "provider", WithManifest("runtime", runtime), WithGlobals("runtime"))
 	if len(providerMod.Errors) != 0 {
@@ -1785,6 +1796,7 @@ func TestCheckAndExportReexportsImportedOwnershipEffectsAcrossModules(t *testing
 	}
 	assertExportedSendParam(t, providerMod.Manifest, "provider.forward", 0)
 	assertExportedFreeze(t, providerMod.Manifest, "provider.seal", 0)
+	assertExportedTableMutator(t, providerMod.Manifest, "provider.mutate", 0)
 
 	consumerMod := CheckAndExport(`
 		local provider = require("provider")
@@ -1795,6 +1807,9 @@ func TestCheckAndExportReexportsImportedOwnershipEffectsAcrossModules(t *testing
 		function consumer.seal(payload: any)
 			provider.seal(payload)
 		end
+		function consumer.mutate(container: any)
+			provider.mutate(container)
+		end
 		return consumer
 	`, "consumer", WithStdlib(), WithModule("provider", providerMod))
 	if len(consumerMod.Errors) != 0 {
@@ -1802,6 +1817,7 @@ func TestCheckAndExportReexportsImportedOwnershipEffectsAcrossModules(t *testing
 	}
 	assertExportedSendParam(t, consumerMod.Manifest, "consumer.forward", 0)
 	assertExportedFreeze(t, consumerMod.Manifest, "consumer.seal", 0)
+	assertExportedTableMutator(t, consumerMod.Manifest, "consumer.mutate", 0)
 }
 
 func providerManifest(path string) *manifest.Manifest {
@@ -1880,5 +1896,19 @@ func assertExportedFreeze(t *testing.T, m *manifest.Manifest, name string, param
 		return ok && freeze.Param.Index == paramIndex
 	}) {
 		t.Fatalf("%s effect = %v, want Freeze(%d)", name, sig.Effect, paramIndex)
+	}
+}
+
+func assertExportedTableMutator(t *testing.T, m *manifest.Manifest, name string, paramIndex int) {
+	t.Helper()
+	sig, ok := m.FunctionSignatures[name]
+	if !ok {
+		t.Fatalf("missing %s function signature: %#v", name, m.FunctionSignatures)
+	}
+	if !sig.Effect.Has(func(label effect.Label) bool {
+		mutator, ok := effect.NormalizeLabel(label).(mutation.TableMutator)
+		return ok && mutator.Target.Index == paramIndex && mutator.Value.Index == -1
+	}) {
+		t.Fatalf("%s effect = %v, want TableMutator(%d)", name, sig.Effect, paramIndex)
 	}
 }

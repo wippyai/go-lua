@@ -20,6 +20,7 @@ import (
 type NormalReturnFacts struct {
 	PathRefinements   []PathValueFact
 	PathStaticMembers []PathStaticMemberFact
+	PathInvalidations []PathInvalidationFact
 	DynamicIndexFacts []DynamicIndexFact
 	BranchProofs      []BranchProof
 	ChannelSelects    []ChannelSelectFact
@@ -38,6 +39,22 @@ type PathValueFact struct {
 type PathStaticMemberFact struct {
 	Path  pathdom.Path
 	Value product.Value
+}
+
+// PathInvalidationFact records that descendants below a placeholder path were
+// invalidated by a normal-returning call.
+type PathInvalidationFact struct {
+	Path pathdom.Path
+}
+
+const pathInvalidationEffectSite = effectdelta.Site("path-descendant-invalidation")
+
+func PathInvalidationEffectSite() effectdelta.Site {
+	return pathInvalidationEffectSite
+}
+
+func IsPathInvalidationEffectSite(site effectdelta.Site) bool {
+	return site == pathInvalidationEffectSite
 }
 
 // DynamicIndexFact records a pointwise dynamic index fact for a placeholder table.

@@ -113,6 +113,9 @@ func TestOutcomeProviderMapsSummaryReturnsAndNormalReturnFacts(t *testing.T) {
 					PathStaticMembers: []callboundary.PathStaticMemberFact{
 						{Path: path.NewPlaceholder(0).Field("static"), Value: present},
 					},
+					PathInvalidations: []callboundary.PathInvalidationFact{
+						{Path: path.NewPlaceholder(0).Field("invalidated")},
+					},
 					DynamicIndexFacts: []callboundary.DynamicIndexFact{
 						{
 							Table: path.NewPlaceholder(0).Field("items"),
@@ -181,6 +184,10 @@ func TestOutcomeProviderMapsSummaryReturnsAndNormalReturnFacts(t *testing.T) {
 		!got.NormalReturnFacts.PathStaticMembers[0].Path.Equal(path.NewPlaceholder(0).Field("static")) ||
 		!product.Equal(reg, got.NormalReturnFacts.PathStaticMembers[0].Value, present) {
 		t.Fatalf("path static members = %#v, want mapped summary static member", got.NormalReturnFacts.PathStaticMembers)
+	}
+	if len(got.NormalReturnFacts.PathInvalidations) != 1 ||
+		!got.NormalReturnFacts.PathInvalidations[0].Path.Equal(path.NewPlaceholder(0).Field("invalidated")) {
+		t.Fatalf("path invalidations = %#v, want mapped summary invalidation", got.NormalReturnFacts.PathInvalidations)
 	}
 	if len(got.NormalReturnFacts.DynamicIndexFacts) != 1 ||
 		!got.NormalReturnFacts.DynamicIndexFacts[0].Table.Equal(path.NewPlaceholder(0).Field("items")) ||
@@ -1267,6 +1274,7 @@ func assertEmptyOutcome(t *testing.T, got factapply.CallOutcome) {
 		len(got.ParamConditions) != 0 ||
 		len(got.ParamPathRelations) != 0 ||
 		len(got.NormalReturnFacts.PathStaticMembers) != 0 ||
+		len(got.NormalReturnFacts.PathInvalidations) != 0 ||
 		len(got.NormalReturnFacts.DynamicIndexFacts) != 0 ||
 		len(got.NormalReturnFacts.BranchProofs) != 0 ||
 		len(got.NormalReturnFacts.ChannelSelects) != 0 ||

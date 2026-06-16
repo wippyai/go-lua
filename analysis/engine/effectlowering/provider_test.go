@@ -501,6 +501,10 @@ func TestSignatureOutcomeProviderLowersTableMutatorToParamPathInvalidationAndApp
 	if !got.ParamPathInvalidations[0].Path.Equal(path.NewPlaceholder(0)) {
 		t.Fatalf("invalidation path = %s, want $0", got.ParamPathInvalidations[0].Path.String())
 	}
+	if len(got.NormalReturnFacts.PathInvalidations) != 1 ||
+		!got.NormalReturnFacts.PathInvalidations[0].Path.Equal(path.NewPlaceholder(0)) {
+		t.Fatalf("normal-return invalidations = %#v, want $0", got.NormalReturnFacts.PathInvalidations)
+	}
 	visibilityBuilder := visibility.NewBuilder()
 	visibilityBuilder.Define(call, argSymbol, "items")
 	flow := transfer.Run(transfer.Config{
@@ -566,6 +570,10 @@ func TestSignatureOutcomeProviderLowersStoreIntoContainerArgument(t *testing.T) 
 
 	if len(got.ParamPathInvalidations) != 1 || !got.ParamPathInvalidations[0].Path.Equal(path.NewPlaceholder(0)) {
 		t.Fatalf("param path invalidations = %#v, want container argument $0", got.ParamPathInvalidations)
+	}
+	if len(got.NormalReturnFacts.PathInvalidations) != 1 ||
+		!got.NormalReturnFacts.PathInvalidations[0].Path.Equal(path.NewPlaceholder(0)) {
+		t.Fatalf("normal-return invalidations = %#v, want container argument $0", got.NormalReturnFacts.PathInvalidations)
 	}
 }
 

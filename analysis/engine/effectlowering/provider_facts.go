@@ -38,6 +38,17 @@ func signatureParamPathInvalidations(sig signature.Function, site factflow.CallS
 	return out
 }
 
+func signatureNormalReturnPathInvalidations(in []factapply.CallParamPathInvalidation) []callboundary.PathInvalidationFact {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]callboundary.PathInvalidationFact, 0, len(in))
+	for _, fact := range in {
+		out = append(out, callboundary.PathInvalidationFact{Path: fact.Path})
+	}
+	return out
+}
+
 func activeMutationTargets(sig signature.Function) []effect.ParamRef {
 	if len(sig.Effect.Labels) == 0 {
 		return nil
