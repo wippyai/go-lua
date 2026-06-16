@@ -10,7 +10,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/escape"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/evidence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
-	"github.com/wippyai/go-lua/analysis/domain/value/axis/ownership"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/placement"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
@@ -28,7 +27,6 @@ func TestRegistryBundleFrozenAndStable(t *testing.T) {
 		"typewitness",
 		"escape",
 		"placement",
-		"ownership",
 		"evidence",
 		"assertion",
 	}
@@ -141,16 +139,6 @@ func TestAssertionAxisStoresSparsifiesAndAffectsIdentity(t *testing.T) {
 	}
 }
 
-func TestOwnershipStoresInStandardProduct(t *testing.T) {
-	reg := Registry()
-	unique := ownership.Unique()
-
-	value := product.Set(reg, product.Top(), ownership.Key, unique)
-	if got := product.Get(reg, value, ownership.Key); got != unique {
-		t.Fatalf("ownership value = %s, want %s", got, unique)
-	}
-}
-
 func TestPlacementStoresInStandardProduct(t *testing.T) {
 	reg := Registry()
 	heap := placement.OwnedHeap
@@ -174,7 +162,6 @@ func standardProductSample(reg *axis.Registry, bottom, top product.Value) []prod
 	present := product.WithPresence(reg, top, presence.Present())
 	absent := product.WithPresence(reg, top, presence.Absent())
 	fresh := product.Set(reg, top, escape.Key, escape.Fresh())
-	unique := product.Set(reg, top, ownership.Key, ownership.Unique())
 	placementValue := product.Set(reg, top, placement.Key, placement.OwnedHeap)
 	gradual := product.Set(reg, top, evidence.Key, evidence.GradualTop())
 	explicit := product.Set(reg, top, evidence.Key, evidence.ExplicitTop())
@@ -193,7 +180,6 @@ func standardProductSample(reg *axis.Registry, bottom, top product.Value) []prod
 		present,
 		absent,
 		fresh,
-		unique,
 		placementValue,
 		gradual,
 		explicit,

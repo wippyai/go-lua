@@ -273,7 +273,6 @@ func TestRequiredSemanticSurfacesExist(t *testing.T) {
 		modulePath + "/analysis/domain/value/axis/escape",
 		modulePath + "/analysis/domain/value/axis/evidence",
 		modulePath + "/analysis/domain/value/axis/identity",
-		modulePath + "/analysis/domain/value/axis/ownership",
 		modulePath + "/analysis/domain/value/axis/placement",
 		modulePath + "/analysis/domain/value/axis/presence",
 		modulePath + "/analysis/domain/value/axis/runtimekind",

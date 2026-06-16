@@ -9,7 +9,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/escape"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/evidence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
-	"github.com/wippyai/go-lua/analysis/domain/value/axis/ownership"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/placement"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
@@ -70,14 +69,6 @@ func TestFiniteAxisSpecsLaws(t *testing.T) {
 			escape.Bottom(),
 			escape.Fresh(),
 			escape.Top(),
-		})
-	})
-
-	t.Run("ownership", func(t *testing.T) {
-		runAxisLaws(t, "ownership", ownership.Spec(), []ownership.Value{
-			ownership.Bottom(),
-			ownership.Unique(),
-			ownership.Top(),
 		})
 	})
 

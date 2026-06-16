@@ -6,7 +6,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/escape"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/evidence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
-	"github.com/wippyai/go-lua/analysis/domain/value/axis/ownership"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/placement"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/typewitness"
@@ -45,7 +44,6 @@ func defaultSpecs() []axis.ErasedSpec {
 		typewitness.Spec().Erase(),
 		escape.Spec().Erase(),
 		placement.Spec().Erase(),
-		ownership.Spec().Erase(),
 		evidence.Spec().Erase(),
 		assertion.Spec().Erase(),
 	}
