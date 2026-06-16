@@ -780,6 +780,69 @@ func TestFactsNodeTransferCallOutcomeRecursiveEscapeTerminatesOnCyclicHeapPlacem
 	}
 }
 
+func TestFactsNodeTransferCallOutcomeEscapeEventPlacementFromBottom(t *testing.T) {
+	tests := []struct {
+		name string
+		kind callboundary.EscapeEventKind
+		want placement.Value
+	}{
+		{name: "borrow", kind: callboundary.EscapeEventBorrow, want: placement.Bottom},
+		{name: "retain", kind: callboundary.EscapeEventRetain, want: placement.OwnedHeap},
+		{name: "store", kind: callboundary.EscapeEventStore, want: placement.OwnedHeap},
+		{name: "send", kind: callboundary.EscapeEventSend, want: placement.SharedHeap},
+		{name: "export", kind: callboundary.EscapeEventExport, want: placement.SharedHeap},
+		{name: "opaque", kind: callboundary.EscapeEventOpaque, want: placement.SharedHeap},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			reg := standard.Registry()
+			point := cfg.Point(710)
+			target := symbol.ID(710)
+			argExpr := factflow.ExprRef(710)
+			targetPath := pathdom.NewPath(target, "obj")
+			tableID := identity.ID{Kind: "lua.table", Site: "escape-placement", Index: 11}
+			tableValue := product.Set(reg, presentValue(reg), identity.Key, identity.Singleton(tableID))
+			facts := factflow.NewFacts(factflow.FactsInput{
+				CallSites: map[cfg.Point]factflow.CallSite{
+					point: factflow.NewCallSite(factflow.CallSiteConfig{
+						Context: factflow.CallSiteContextStatement,
+						ArgumentSources: []factflow.ValueSource{
+							{Kind: factflow.ValueSourceExpression, ExprRef: argExpr, HasExpr: true},
+						},
+					}),
+				},
+				ExpressionPaths: map[factflow.ExprRef]pathdom.Path{
+					argExpr: targetPath,
+				},
+			})
+			builder := visibility.NewBuilder()
+			builder.Define(point, target, "obj")
+			resolver := visibility.NewResolver(builder.Build())
+
+			got := NewFactsNodeTransfer(FactsNodeTransferConfig{
+				Facts: facts,
+				CallOutcome: func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) CallOutcome {
+					return CallOutcome{
+						NormalReturnFacts: callboundary.NormalReturnFacts{
+							EscapeEvents: []callboundary.EscapeEventFact{
+								{Target: pathdom.NewPlaceholder(0), Kind: tc.kind},
+							},
+						},
+					}
+				},
+				Visibility: resolver,
+			})(transfer.NodeContext{
+				Registry: reg,
+				Point:    point,
+			}, state.State{}.WriteValue(reg, key.SymbolValue(target), tableValue))
+
+			if gotPlacement := got.ReadPlacement(tableID); gotPlacement != tc.want {
+				t.Fatalf("placement[%v] = %s, want %s", tableID, gotPlacement, tc.want)
+			}
+		})
+	}
+}
+
 func TestFactsNodeTransferCallOutcomeEscapeBorrowDoesNotForcePlacement(t *testing.T) {
 	reg := standard.Registry()
 	point := cfg.Point(703)

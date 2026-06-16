@@ -1,6 +1,7 @@
 package exportmanifest
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/check/body"
@@ -13,10 +14,17 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/effect/postcondition"
 	"github.com/wippyai/go-lua/analysis/domain/effect/returns"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine/callboundary"
+	"github.com/wippyai/go-lua/analysis/engine/dynamicindex"
+	"github.com/wippyai/go-lua/analysis/engine/state/channelselectfact"
+	"github.com/wippyai/go-lua/analysis/engine/state/effectdelta"
+	"github.com/wippyai/go-lua/analysis/engine/state/heapidentity"
+	"github.com/wippyai/go-lua/analysis/engine/state/pathevidence"
+	"github.com/wippyai/go-lua/analysis/module/manifest"
 	"github.com/wippyai/go-lua/analysis/module/signature"
 	"github.com/wippyai/go-lua/analysis/module/signaturelookup"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
@@ -272,6 +280,248 @@ func TestFunctionSummaryOperationalEffectsPreservesDescendantBoundaryFacts(t *te
 		!got.StoreRelations[0].Source.Equal(pathdom.NewPlaceholder(0).Field("payload")) ||
 		!got.StoreRelations[0].Into.Equal(pathdom.NewPlaceholder(1).Field("bucket")) {
 		t.Fatalf("store relations = %#v", got.StoreRelations)
+	}
+}
+
+func TestFunctionSummaryOperationalEffectsLaneMatrixManifestRoundTrip(t *testing.T) {
+	reg := standard.Registry()
+	present := product.NewWithPresence(reg, product.ShapeTop, presence.Present())
+	absent := product.Absent(reg)
+	rawProduct := typevalue.WithWitness(
+		reg,
+		typevalue.FromType(reg, typ.LiteralString("raw-product-sentinel")),
+		typ.LiteralString("raw-product-sentinel"),
+	)
+	heapID := identity.ID{Kind: "test", Site: "lane-matrix", Index: 1}
+	fn := typ.Func().
+		Param("source", typ.Any).
+		Param("target", typ.Any).
+		Param("optional", typ.Any).
+		Returns(typeexpr.Optional(typ.Number), typeexpr.Optional(typ.String)).
+		Build()
+	sum := summary.Summary{
+		ParamObligations: []product.Value{
+			typevalue.FromType(reg, typ.LiteralString("param-obligation-sentinel")),
+		},
+		ParamMemberCallObligations: []summary.ParamMemberCallObligation{{
+			ReceiverParam:    0,
+			Member:           "precallSentinel",
+			ArgParam:         1,
+			MemberParamIndex: 0,
+		}},
+		NormalReturnParams: []product.Value{
+			present,
+			absent,
+			product.NewWithPresence(reg, product.ShapeTop, presence.Maybe()),
+		},
+		NormalReturnParamConditions: []summary.ParamCondition{
+			summary.ParamConditionTruthy,
+			summary.ParamConditionFalsy,
+		},
+		NormalReturnParamEqualities: []summary.ParamEquality{{Left: 0, Right: 1}},
+		ReturnConditionParamRefinements: []summary.ReturnConditionParamRefinement{{
+			ReturnIndex: 0,
+			ReturnValue: true,
+			Target:      pathdom.NewPlaceholder(0).Field("conditionalOnly"),
+			Value:       absent,
+		}},
+		ReturnPresenceRelations: []summary.ReturnPresenceRelation{{
+			TriggerIndex:    1,
+			TriggerPresence: presence.Present(),
+			TargetIndex:     0,
+			TargetPresence:  presence.Absent(),
+		}},
+		HeapTableObjects: map[identity.ID]heapidentity.TableObject{
+			heapID: heapidentity.NewTableObject(heapidentity.TableObjectConfig{
+				Root: present,
+				StaticMembers: map[pathdom.PathKey]product.Value{
+					pathdom.PathKey("heap-only.static"): rawProduct,
+				},
+				DynamicIndexFacts: map[dynamicindex.Key]dynamicindex.Fact{
+					{Table: pathdom.PathKey("heap-only.dynamic"), Site: "heap.dynamic"}: {
+						KeyPresence: presence.Present(),
+						KeyValue:    present,
+						Value:       absent,
+						Admission:   dynamicindex.AdmissionAdmitted,
+					},
+				},
+			}),
+		},
+		NormalReturnFacts: callboundary.NormalReturnFacts{
+			PathRefinements: []callboundary.PathValueFact{{
+				Path:  pathdom.NewPlaceholder(0).Field("rawProduct"),
+				Value: rawProduct,
+			}},
+			PathStaticMembers: []callboundary.PathStaticMemberFact{
+				{Path: pathdom.NewPlaceholder(0).Field("kind"), Value: typevalue.FromType(reg, typ.String)},
+				{Path: pathdom.NewPlaceholder(0).Field("staticRaw"), Value: present},
+			},
+			PathInvalidations: []callboundary.PathInvalidationFact{{
+				Path: pathdom.NewPlaceholder(1).Field("items"),
+			}},
+			DynamicIndexFacts: []callboundary.DynamicIndexFact{{
+				Table: pathdom.NewPlaceholder(0).Field("dynamicOnly"),
+				Site:  "callee.dynamic",
+				Value: dynamicindex.Fact{
+					KeyPresence: presence.Present(),
+					KeyValue:    present,
+					Value:       absent,
+					Admission:   dynamicindex.AdmissionAdmitted,
+				},
+			}},
+			BranchProofs: []callboundary.BranchProof{{
+				Kind:  pathevidence.BranchProofPathEqual,
+				Path:  pathdom.NewPlaceholder(0).Field("branchOnly"),
+				Other: pathdom.NewPlaceholder(1).Field("branchOther"),
+			}},
+			ChannelSelects: []callboundary.ChannelSelectFact{{
+				Select:     channelselectfact.ID("callee.select"),
+				Kind:       channelselectfact.FactReceive,
+				Result:     pathdom.NewPlaceholder(0).Field("selectResult"),
+				Case:       pathdom.NewPlaceholder(1).Field("selectCase"),
+				Index:      2,
+				HasDefault: true,
+			}},
+			FrozenTables: []callboundary.FrozenTableFact{{
+				Target: pathdom.NewPlaceholder(0).Field("sealed"),
+			}},
+			EffectDeltas: []callboundary.EffectDelta{{
+				Target: pathdom.NewPlaceholder(0).Field("genericEffect"),
+				Site:   "generic.effect",
+				Kind:   effectdelta.Mutation,
+				Value: effectdelta.Value{
+					Before: present,
+					After:  absent,
+					Change: effectdelta.ChangeChanged,
+				},
+			}},
+			EscapeEvents: []callboundary.EscapeEventFact{{
+				Target:    pathdom.NewPlaceholder(0).Field("payload"),
+				Kind:      callboundary.EscapeEventSend,
+				Recursive: true,
+			}},
+			StoreRelations: []callboundary.StoreRelationFact{{
+				Source: pathdom.NewPlaceholder(0).Field("payload"),
+				Into:   pathdom.NewPlaceholder(1).Field("items"),
+			}},
+		},
+	}
+	want := signature.OperationalEffects{
+		ReturnPresenceRelations: []signature.ReturnPresenceRelation{{
+			TriggerIndex:    1,
+			TriggerPresence: presence.Present(),
+			TargetIndex:     0,
+			TargetPresence:  presence.Absent(),
+		}},
+		NormalReturnPresenceRefinements: []signature.PathPresenceRefinement{
+			{Path: pathdom.NewPlaceholder(0), Presence: presence.Present()},
+			{Path: pathdom.NewPlaceholder(1), Presence: presence.Absent()},
+		},
+		PathStaticMembers: []signature.PathStaticMemberFact{{
+			Path: pathdom.NewPlaceholder(0).Field("kind"),
+			Type: typ.String,
+		}},
+		PathInvalidations: []signature.PathInvalidation{{
+			Path: pathdom.NewPlaceholder(1).Field("items"),
+		}},
+		FrozenTables: []signature.FrozenTable{{
+			Target: pathdom.NewPlaceholder(0).Field("sealed"),
+		}},
+		EscapeEvents: []signature.EscapeEvent{{
+			Target:    pathdom.NewPlaceholder(0).Field("payload"),
+			Kind:      signature.EscapeSend,
+			Recursive: true,
+		}},
+		StoreRelations: []signature.StoreRelation{{
+			Source: pathdom.NewPlaceholder(0).Field("payload"),
+			Into:   pathdom.NewPlaceholder(1).Field("items"),
+		}},
+	}
+
+	got := functionSummaryOperationalEffects(reg, sum, fn)
+	if got == nil {
+		t.Fatalf("operational effects = nil")
+	}
+	if !got.Equals(want) {
+		t.Fatalf("operational effects = %#v, want %#v", got, want)
+	}
+
+	m := manifest.New("example/lane-matrix")
+	m.DefineFunctionSignature("laneMatrix", signature.Function{Type: fn, OperationalEffects: got})
+	data, err := manifest.Encode(m)
+	if err != nil {
+		t.Fatalf("Encode: %v", err)
+	}
+	encoded := string(data)
+	for _, wantFragment := range []string{
+		`"operationalEffects"`,
+		`"returnPresenceRelations"`,
+		`"normalReturnPresenceRefinements"`,
+		`"pathStaticMembers"`,
+		`"pathInvalidations"`,
+		`"frozenTables"`,
+		`"escapeEvents"`,
+		`"storeRelations"`,
+	} {
+		if !strings.Contains(encoded, wantFragment) {
+			t.Fatalf("encoded manifest missing %s:\n%s", wantFragment, encoded)
+		}
+	}
+	for _, forbidden := range []string{
+		`"pathRefinements"`,
+		`"PathRefinements"`,
+		`"dynamicIndexFacts"`,
+		`"DynamicIndexFacts"`,
+		`"branchProofs"`,
+		`"BranchProofs"`,
+		`"channelSelects"`,
+		`"ChannelSelects"`,
+		`"effectDeltas"`,
+		`"EffectDeltas"`,
+		`"heapTableObjects"`,
+		`"HeapTableObjects"`,
+		`"paramObligations"`,
+		`"ParamObligations"`,
+		`"paramMemberCallObligations"`,
+		`"ParamMemberCallObligations"`,
+		`"normalReturnParamConditions"`,
+		`"NormalReturnParamConditions"`,
+		`"normalReturnParamEqualities"`,
+		`"NormalReturnParamEqualities"`,
+		`"returnConditionParamRefinements"`,
+		`"ReturnConditionParamRefinements"`,
+		"raw-product-sentinel",
+		"param-obligation-sentinel",
+		"precallSentinel",
+		"conditionalOnly",
+		"heap-only",
+		"heap.dynamic",
+		"staticRaw",
+		"dynamicOnly",
+		"callee.dynamic",
+		"branchOnly",
+		"branchOther",
+		"callee.select",
+		"selectResult",
+		"selectCase",
+		"genericEffect",
+		"generic.effect",
+	} {
+		if strings.Contains(encoded, forbidden) {
+			t.Fatalf("encoded manifest leaked forbidden fragment %q:\n%s", forbidden, encoded)
+		}
+	}
+
+	decoded, err := manifest.Decode(data)
+	if err != nil {
+		t.Fatalf("Decode: %v", err)
+	}
+	gotSig, ok := decoded.FunctionSignatures["laneMatrix"]
+	if !ok {
+		t.Fatalf("missing laneMatrix function signature")
+	}
+	if gotSig.OperationalEffects == nil || !gotSig.OperationalEffects.Equals(want) {
+		t.Fatalf("decoded operational effects = %#v, want %#v", gotSig.OperationalEffects, want)
 	}
 }
 
