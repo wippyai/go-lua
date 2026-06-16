@@ -34,7 +34,7 @@ func MapDomain() lattice.Lattice[lift.MustMapLane[pathdom.PathKey, Floor]] {
 // collapses to Top (Lo == 0) on any strict increase of the floor between
 // iterations, so the per-key ascending chain has height at most two
 // (no-floor-or-lower -> a single concrete floor -> collapse), which bounds the
-// fixpoint and protects the per-fixture deadline.
+// fixpoint and protects convergence in the engine.
 func elemDomain() lattice.Lattice[Floor] {
 	return floor.ElementDomain(floor.ElementOps[Floor]{
 		BottomLo: maxFloor,

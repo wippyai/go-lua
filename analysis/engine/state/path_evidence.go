@@ -7,74 +7,38 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/state/pathevidence"
 )
 
-type PathRefinementsSnapshot struct {
-	Bottom      bool
-	Top         bool
-	Refinements map[pathdom.PathKey]product.Value
-}
+type PathRefinementsSnapshot = pathevidence.PathRefinementsSnapshot
 
 // PathRefinementsSnapshot returns finite must path refinements. Bottom is
 // explicit; Top means the reachable must lane contains no finite refinements
 // and callers must not manufacture finite facts from it.
 func (s State) PathRefinementsSnapshot() PathRefinementsSnapshot {
-	snapshot := s.pathEvidence.PathRefinementsSnapshot()
-	return PathRefinementsSnapshot{
-		Bottom:      snapshot.Bottom,
-		Top:         snapshot.Top,
-		Refinements: snapshot.Refinements,
-	}
+	return s.pathEvidence.PathRefinementsSnapshot()
 }
 
-type PathStaticMembersSnapshot struct {
-	Bottom  bool
-	Top     bool
-	Members map[pathdom.PathKey]product.Value
-}
+type PathStaticMembersSnapshot = pathevidence.PathStaticMembersSnapshot
 
 // PathStaticMembersSnapshot returns finite must-static-member facts. Bottom is
 // explicit; Top means the reachable must lane contains no finite facts.
 func (s State) PathStaticMembersSnapshot() PathStaticMembersSnapshot {
-	snapshot := s.pathEvidence.PathStaticMembersSnapshot()
-	return PathStaticMembersSnapshot{
-		Bottom:  snapshot.Bottom,
-		Top:     snapshot.Top,
-		Members: snapshot.Members,
-	}
+	return s.pathEvidence.PathStaticMembersSnapshot()
 }
 
-type BranchProofsSnapshot struct {
-	Bottom bool
-	Top    bool
-	Proofs []pathevidence.BranchProof
-}
+type BranchProofsSnapshot = pathevidence.BranchProofsSnapshot
 
 // BranchProofsSnapshot returns finite must branch proofs in stable order.
 // Bottom is explicit; Top means the reachable must lane contains no proofs.
 func (s State) BranchProofsSnapshot() BranchProofsSnapshot {
-	snapshot := s.pathEvidence.BranchProofsSnapshot()
-	return BranchProofsSnapshot{
-		Bottom: snapshot.Bottom,
-		Top:    snapshot.Top,
-		Proofs: snapshot.Proofs,
-	}
+	return s.pathEvidence.BranchProofsSnapshot()
 }
 
-type PathPresenceImplicationsSnapshot struct {
-	Bottom       bool
-	Top          bool
-	Implications []pathevidence.PathPresenceImplication
-}
+type PathPresenceImplicationsSnapshot = pathevidence.PathPresenceImplicationsSnapshot
 
 // PathPresenceImplicationsSnapshot returns finite must path-presence
 // implications in stable order. Bottom is explicit; Top means the reachable
 // must lane contains no implications.
 func (s State) PathPresenceImplicationsSnapshot() PathPresenceImplicationsSnapshot {
-	snapshot := s.pathEvidence.PathPresenceImplicationsSnapshot()
-	return PathPresenceImplicationsSnapshot{
-		Bottom:       snapshot.Bottom,
-		Top:          snapshot.Top,
-		Implications: snapshot.Implications,
-	}
+	return s.pathEvidence.PathPresenceImplicationsSnapshot()
 }
 
 // ReadPathKey reads a point-local path refinement key. Missing keys read as
