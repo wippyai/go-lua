@@ -1,6 +1,7 @@
 package manifest
 
 import (
+	"encoding/json"
 	"fmt"
 	"sort"
 
@@ -13,6 +14,7 @@ import (
 type operationalEffectsWire struct {
 	ReturnPresenceRelations         []returnPresenceRelationWire `json:"returnPresenceRelations,omitempty"`
 	NormalReturnPresenceRefinements []pathPresenceRefinementWire `json:"normalReturnPresenceRefinements,omitempty"`
+	PathStaticMembers               []pathStaticMemberWire       `json:"pathStaticMembers,omitempty"`
 	PathInvalidations               []pathInvalidationWire       `json:"pathInvalidations,omitempty"`
 	FrozenTables                    []frozenTableWire            `json:"frozenTables,omitempty"`
 	EscapeEvents                    []escapeEventWire            `json:"escapeEvents,omitempty"`
@@ -29,6 +31,11 @@ type returnPresenceRelationWire struct {
 type pathPresenceRefinementWire struct {
 	Path     *placeholderPathWire `json:"path,omitempty"`
 	Presence string               `json:"presence"`
+}
+
+type pathStaticMemberWire struct {
+	Path *placeholderPathWire `json:"path,omitempty"`
+	Type *typeWire            `json:"type,omitempty"`
 }
 
 type pathInvalidationWire struct {
@@ -88,6 +95,23 @@ func encodeOperationalEffects(e *signature.OperationalEffects) (*operationalEffe
 		out.NormalReturnPresenceRefinements = append(out.NormalReturnPresenceRefinements, pathPresenceRefinementWire{
 			Path:     p,
 			Presence: pr,
+		})
+	}
+	for _, member := range e.PathStaticMembers {
+		p, err := encodePlaceholderPath(member.Path)
+		if err != nil {
+			return nil, fmt.Errorf("path static member path: %w", err)
+		}
+		if member.Type == nil {
+			return nil, fmt.Errorf("path static member type: missing")
+		}
+		t, err := encodeType(member.Type)
+		if err != nil {
+			return nil, fmt.Errorf("path static member type: %w", err)
+		}
+		out.PathStaticMembers = append(out.PathStaticMembers, pathStaticMemberWire{
+			Path: p,
+			Type: t,
 		})
 	}
 	for _, invalidation := range e.PathInvalidations {
@@ -169,6 +193,23 @@ func decodeOperationalEffects(w *operationalEffectsWire) (signature.OperationalE
 			Presence: pr,
 		})
 	}
+	for _, member := range w.PathStaticMembers {
+		p, err := decodePlaceholderPath(member.Path)
+		if err != nil {
+			return signature.OperationalEffects{}, fmt.Errorf("path static member path: %w", err)
+		}
+		t, err := decodeType(member.Type)
+		if err != nil {
+			return signature.OperationalEffects{}, fmt.Errorf("path static member type: %w", err)
+		}
+		if t == nil {
+			return signature.OperationalEffects{}, fmt.Errorf("path static member type: missing")
+		}
+		out.PathStaticMembers = append(out.PathStaticMembers, signature.PathStaticMemberFact{
+			Path: p,
+			Type: t,
+		})
+	}
 	for _, invalidation := range w.PathInvalidations {
 		p, err := decodePlaceholderPath(invalidation.Path)
 		if err != nil {
@@ -236,6 +277,13 @@ func canonicalizeOperationalEffectsWire(w *operationalEffectsWire) {
 		}
 		return left.Presence < right.Presence
 	})
+	sort.Slice(w.PathStaticMembers, func(i, j int) bool {
+		left, right := w.PathStaticMembers[i], w.PathStaticMembers[j]
+		if c := comparePlaceholderPathWire(left.Path, right.Path); c != 0 {
+			return c < 0
+		}
+		return typeWireKey(left.Type) < typeWireKey(right.Type)
+	})
 	sort.Slice(w.PathInvalidations, func(i, j int) bool {
 		return comparePlaceholderPathWire(w.PathInvalidations[i].Path, w.PathInvalidations[j].Path) < 0
 	})
@@ -259,6 +307,17 @@ func canonicalizeOperationalEffectsWire(w *operationalEffectsWire) {
 		}
 		return comparePlaceholderPathWire(left.Into, right.Into) < 0
 	})
+}
+
+func typeWireKey(w *typeWire) string {
+	if w == nil {
+		return ""
+	}
+	data, err := json.Marshal(w)
+	if err != nil {
+		return ""
+	}
+	return string(data)
 }
 
 func comparePlaceholderPathWire(a, b *placeholderPathWire) int {

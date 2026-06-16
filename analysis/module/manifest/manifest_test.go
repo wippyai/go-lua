@@ -155,6 +155,10 @@ func TestManifestRoundTripNamedFunctionSignatureEffects(t *testing.T) {
 			Path:     pathdom.NewPlaceholder(0).Field("ready"),
 			Presence: presence.Present(),
 		}},
+		PathStaticMembers: []signature.PathStaticMemberFact{{
+			Path: pathdom.NewPlaceholder(1).Field("kind"),
+			Type: typ.String,
+		}},
 		PathInvalidations: []signature.PathInvalidation{{
 			Path: pathdom.NewPlaceholder(1).Field("items"),
 		}},
@@ -182,6 +186,7 @@ func TestManifestRoundTripNamedFunctionSignatureEffects(t *testing.T) {
 	if !strings.Contains(string(data), `"functionSignatures"`) ||
 		!strings.Contains(string(data), `"effect"`) ||
 		!strings.Contains(string(data), `"operationalEffects"`) ||
+		!strings.Contains(string(data), `"pathStaticMembers"`) ||
 		!strings.Contains(string(data), `"suffix": ".payload"`) {
 		t.Fatalf("encoded manifest missing function signature effect data:\n%s", data)
 	}
@@ -263,6 +268,28 @@ func TestManifestEmptyOperationalEffectsAreAbsent(t *testing.T) {
 	}
 	if decoded.OperationalEffects != nil {
 		t.Fatalf("explicit empty operational wire decoded as %#v, want nil", decoded.OperationalEffects)
+	}
+}
+
+func TestManifestOperationalPathStaticMemberRequiresType(t *testing.T) {
+	fn := typ.Func().
+		Param("payload", typ.Any).
+		Build()
+	encodedType, err := encodeType(fn)
+	if err != nil {
+		t.Fatalf("encodeType: %v", err)
+	}
+	_, err = decodeFunctionSignature(functionSignatureWire{
+		Name: "static-member",
+		Type: encodedType,
+		OperationalEffects: &operationalEffectsWire{
+			PathStaticMembers: []pathStaticMemberWire{{
+				Path: &placeholderPathWire{Param: 0, Suffix: ".field"},
+			}},
+		},
+	})
+	if err == nil || !strings.Contains(err.Error(), "path static member type: missing") {
+		t.Fatalf("decodeFunctionSignature error = %v, want missing static-member type", err)
 	}
 }
 
@@ -357,6 +384,10 @@ func operationalEffectsOrderA() *signature.OperationalEffects {
 			{Path: pathdom.NewPlaceholder(1).Field("ready"), Presence: presence.Present()},
 			{Path: pathdom.NewPlaceholder(0).Field("missing"), Presence: presence.Absent()},
 		},
+		PathStaticMembers: []signature.PathStaticMemberFact{
+			{Path: pathdom.NewPlaceholder(1).Field("kind"), Type: typ.String},
+			{Path: pathdom.NewPlaceholder(0).Field("kind"), Type: typeexpr.Optional(typ.Number)},
+		},
 		PathInvalidations: []signature.PathInvalidation{
 			{Path: pathdom.NewPlaceholder(1).Field("items")},
 			{Path: pathdom.NewPlaceholder(0).Field("items")},
@@ -385,6 +416,10 @@ func operationalEffectsOrderB() *signature.OperationalEffects {
 		NormalReturnPresenceRefinements: []signature.PathPresenceRefinement{
 			{Path: pathdom.NewPlaceholder(0).Field("missing"), Presence: presence.Absent()},
 			{Path: pathdom.NewPlaceholder(1).Field("ready"), Presence: presence.Present()},
+		},
+		PathStaticMembers: []signature.PathStaticMemberFact{
+			{Path: pathdom.NewPlaceholder(0).Field("kind"), Type: typeexpr.Optional(typ.Number)},
+			{Path: pathdom.NewPlaceholder(1).Field("kind"), Type: typ.String},
 		},
 		PathInvalidations: []signature.PathInvalidation{
 			{Path: pathdom.NewPlaceholder(0).Field("items")},

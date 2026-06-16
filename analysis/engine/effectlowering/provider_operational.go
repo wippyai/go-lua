@@ -3,6 +3,7 @@ package effectlowering
 import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine/callboundary"
 	factapply "github.com/wippyai/go-lua/analysis/engine/factapply"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
@@ -15,6 +16,7 @@ func applyOperationalEffects(ctx transfer.NodeContext, out factapply.CallOutcome
 	}
 	out.ReturnPresenceRelations = operationalReturnPresenceRelations(*effects)
 	out.NormalReturnFacts.PathRefinements = operationalPathPresenceRefinements(ctx, *effects)
+	out.NormalReturnFacts.PathStaticMembers = operationalPathStaticMembers(ctx, *effects)
 	out.NormalReturnFacts.PathInvalidations = operationalPathInvalidations(*effects)
 	out.NormalReturnFacts.FrozenTables = operationalFrozenTables(*effects)
 	out.NormalReturnFacts.EscapeEvents = operationalEscapeEvents(*effects)
@@ -50,6 +52,24 @@ func operationalPathPresenceRefinements(ctx transfer.NodeContext, e signature.Op
 		}
 		out = append(out, callboundary.PathValueFact{
 			Path:  refinement.Path,
+			Value: value,
+		})
+	}
+	return out
+}
+
+func operationalPathStaticMembers(ctx transfer.NodeContext, e signature.OperationalEffects) []callboundary.PathStaticMemberFact {
+	if ctx.Registry == nil || len(e.PathStaticMembers) == 0 {
+		return nil
+	}
+	out := make([]callboundary.PathStaticMemberFact, 0, len(e.PathStaticMembers))
+	for _, fact := range e.PathStaticMembers {
+		if fact.Type == nil {
+			continue
+		}
+		value := typevalue.WithWitness(ctx.Registry, typevalue.FromType(ctx.Registry, fact.Type), fact.Type)
+		out = append(out, callboundary.PathStaticMemberFact{
+			Path:  fact.Path,
 			Value: value,
 		})
 	}

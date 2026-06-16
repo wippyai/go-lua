@@ -11,8 +11,10 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/effect/returns"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine/callboundary"
 	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
 	"github.com/wippyai/go-lua/analysis/module/manifest"
@@ -85,7 +87,7 @@ func publishFunctionDefinitionSignatures(
 		sig := signature.Function{Type: fn}
 		if summary, ok := functionSummary(prog, root, fact.Func); ok {
 			sig.Effect = functionSummaryEffect(summary, fn)
-			sig.OperationalEffects = functionSummaryOperationalEffects(summary, fn)
+			sig.OperationalEffects = functionSummaryOperationalEffects(root.Registry(), summary, fn)
 		}
 		m.DefineFunctionSignature(name, sig)
 	}
@@ -164,7 +166,7 @@ func functionSummaryEffect(s summary.Summary, fn *typ.Function) effect.Row {
 	return row
 }
 
-func functionSummaryOperationalEffects(s summary.Summary, fn *typ.Function) *signature.OperationalEffects {
+func functionSummaryOperationalEffects(reg *axis.Registry, s summary.Summary, fn *typ.Function) *signature.OperationalEffects {
 	if fn == nil {
 		return nil
 	}
@@ -172,6 +174,7 @@ func functionSummaryOperationalEffects(s summary.Summary, fn *typ.Function) *sig
 	out := signature.OperationalEffects{
 		ReturnPresenceRelations:         operationalReturnPresenceRelations(s.ReturnPresenceRelations, len(fn.Returns)),
 		NormalReturnPresenceRefinements: operationalNormalReturnPresenceRefinements(s.NormalReturnParams, arity),
+		PathStaticMembers:               operationalPathStaticMembers(s.NormalReturnFacts, arity, reg),
 		PathInvalidations:               operationalPathInvalidations(s.NormalReturnFacts, arity),
 		FrozenTables:                    operationalFrozenTables(s.NormalReturnFacts, arity),
 		EscapeEvents:                    operationalEscapeEvents(s.NormalReturnFacts, arity),
@@ -222,6 +225,27 @@ func operationalNormalReturnPresenceRefinements(values []product.Value, arity in
 		out = append(out, signature.PathPresenceRefinement{
 			Path:     pathdom.NewPlaceholder(i),
 			Presence: p,
+		})
+	}
+	return out
+}
+
+func operationalPathStaticMembers(facts callboundary.NormalReturnFacts, arity int, reg *axis.Registry) []signature.PathStaticMemberFact {
+	if arity <= 0 || len(facts.PathStaticMembers) == 0 || reg == nil {
+		return nil
+	}
+	out := make([]signature.PathStaticMemberFact, 0, len(facts.PathStaticMembers))
+	for _, fact := range facts.PathStaticMembers {
+		if !placeholderPathInArity(fact.Path, arity) {
+			continue
+		}
+		t, ok := typevalue.TypeOf(reg, fact.Value)
+		if !ok {
+			continue
+		}
+		out = append(out, signature.PathStaticMemberFact{
+			Path: fact.Path,
+			Type: t,
 		})
 	}
 	return out

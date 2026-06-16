@@ -192,7 +192,7 @@ func TestFunctionSummaryEffectExportsExactStoreRelationWithoutDegradedPair(t *te
 
 func TestFunctionSummaryOperationalEffectsPreservesDescendantBoundaryFacts(t *testing.T) {
 	reg := standard.Registry()
-	got := functionSummaryOperationalEffects(summary.Summary{
+	got := functionSummaryOperationalEffects(reg, summary.Summary{
 		ReturnPresenceRelations: []summary.ReturnPresenceRelation{
 			{
 				TriggerIndex:    1,
@@ -206,6 +206,11 @@ func TestFunctionSummaryOperationalEffectsPreservesDescendantBoundaryFacts(t *te
 			product.Absent(reg),
 		},
 		NormalReturnFacts: callboundary.NormalReturnFacts{
+			PathStaticMembers: []callboundary.PathStaticMemberFact{
+				{Path: pathdom.NewPlaceholder(0).Field("kind"), Value: typevalue.FromType(reg, typ.String)},
+				{Path: pathdom.NewPlaceholder(1).Field("kind"), Value: product.Top()},
+				{Path: pathdom.NewPlaceholder(2).Field("kind"), Value: typevalue.FromType(reg, typ.Boolean)},
+			},
 			PathInvalidations: []callboundary.PathInvalidationFact{
 				{Path: pathdom.NewPlaceholder(0).Field("items")},
 			},
@@ -235,6 +240,11 @@ func TestFunctionSummaryOperationalEffectsPreservesDescendantBoundaryFacts(t *te
 		got.ReturnPresenceRelations[0].TargetIndex != 0 ||
 		!presence.Equal(got.ReturnPresenceRelations[0].TargetPresence, presence.Absent()) {
 		t.Fatalf("return presence relations = %#v", got.ReturnPresenceRelations)
+	}
+	if len(got.PathStaticMembers) != 1 ||
+		!got.PathStaticMembers[0].Path.Equal(pathdom.NewPlaceholder(0).Field("kind")) ||
+		!typ.TypeEquals(got.PathStaticMembers[0].Type, typ.String) {
+		t.Fatalf("path static members = %#v", got.PathStaticMembers)
 	}
 	if len(got.NormalReturnPresenceRefinements) != 2 ||
 		!got.NormalReturnPresenceRefinements[0].Path.Equal(pathdom.NewPlaceholder(0)) ||
@@ -266,7 +276,7 @@ func TestFunctionSummaryOperationalEffectsPreservesDescendantBoundaryFacts(t *te
 }
 
 func TestFunctionSummaryOperationalEffectsEmptyIsAbsent(t *testing.T) {
-	got := functionSummaryOperationalEffects(summary.Summary{}, typ.Func().
+	got := functionSummaryOperationalEffects(standard.Registry(), summary.Summary{}, typ.Func().
 		Param("value", typ.Any).
 		Build())
 	if got != nil {

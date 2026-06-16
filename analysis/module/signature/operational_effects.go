@@ -4,6 +4,7 @@ import (
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
+	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
 // OperationalEffects carries analyzed, call-boundary facts across module
@@ -12,6 +13,7 @@ import (
 type OperationalEffects struct {
 	ReturnPresenceRelations         []ReturnPresenceRelation
 	NormalReturnPresenceRefinements []PathPresenceRefinement
+	PathStaticMembers               []PathStaticMemberFact
 	PathInvalidations               []PathInvalidation
 	FrozenTables                    []FrozenTable
 	EscapeEvents                    []EscapeEvent
@@ -28,6 +30,11 @@ type ReturnPresenceRelation struct {
 type PathPresenceRefinement struct {
 	Path     pathdom.Path
 	Presence presence.Value
+}
+
+type PathStaticMemberFact struct {
+	Path pathdom.Path
+	Type typ.Type
 }
 
 type PathInvalidation struct {
@@ -64,6 +71,7 @@ type StoreRelation struct {
 func (e OperationalEffects) IsEmpty() bool {
 	return len(e.ReturnPresenceRelations) == 0 &&
 		len(e.NormalReturnPresenceRefinements) == 0 &&
+		len(e.PathStaticMembers) == 0 &&
 		len(e.PathInvalidations) == 0 &&
 		len(e.FrozenTables) == 0 &&
 		len(e.EscapeEvents) == 0 &&
@@ -74,6 +82,7 @@ func (e OperationalEffects) Clone() OperationalEffects {
 	return OperationalEffects{
 		ReturnPresenceRelations:         cloneReturnPresenceRelations(e.ReturnPresenceRelations),
 		NormalReturnPresenceRefinements: clonePathPresenceRefinements(e.NormalReturnPresenceRefinements),
+		PathStaticMembers:               clonePathStaticMemberFacts(e.PathStaticMembers),
 		PathInvalidations:               clonePathInvalidations(e.PathInvalidations),
 		FrozenTables:                    cloneFrozenTables(e.FrozenTables),
 		EscapeEvents:                    cloneEscapeEvents(e.EscapeEvents),
@@ -84,6 +93,7 @@ func (e OperationalEffects) Clone() OperationalEffects {
 func (e OperationalEffects) Equals(other OperationalEffects) bool {
 	return equalReturnPresenceRelations(e.ReturnPresenceRelations, other.ReturnPresenceRelations) &&
 		equalPathPresenceRefinements(e.NormalReturnPresenceRefinements, other.NormalReturnPresenceRefinements) &&
+		equalPathStaticMemberFacts(e.PathStaticMembers, other.PathStaticMembers) &&
 		equalPathInvalidations(e.PathInvalidations, other.PathInvalidations) &&
 		equalFrozenTables(e.FrozenTables, other.FrozenTables) &&
 		equalEscapeEvents(e.EscapeEvents, other.EscapeEvents) &&
@@ -104,6 +114,17 @@ func clonePathPresenceRefinements(in []PathPresenceRefinement) []PathPresenceRef
 	out := make([]PathPresenceRefinement, len(in))
 	for i, fact := range in {
 		out[i] = PathPresenceRefinement{Path: clonePath(fact.Path), Presence: fact.Presence}
+	}
+	return out
+}
+
+func clonePathStaticMemberFacts(in []PathStaticMemberFact) []PathStaticMemberFact {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]PathStaticMemberFact, len(in))
+	for i, fact := range in {
+		out[i] = PathStaticMemberFact{Path: clonePath(fact.Path), Type: fact.Type}
 	}
 	return out
 }
@@ -178,6 +199,18 @@ func equalPathPresenceRefinements(a, b []PathPresenceRefinement) bool {
 	}
 	for i := range a {
 		if !a[i].Path.Equal(b[i].Path) || !presence.Equal(a[i].Presence, b[i].Presence) {
+			return false
+		}
+	}
+	return true
+}
+
+func equalPathStaticMemberFacts(a, b []PathStaticMemberFact) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if !a[i].Path.Equal(b[i].Path) || !typ.TypeEquals(a[i].Type, b[i].Type) {
 			return false
 		}
 	}

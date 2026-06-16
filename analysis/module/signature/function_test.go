@@ -75,6 +75,10 @@ func TestFunctionCloneCopiesOperationalEffects(t *testing.T) {
 				Kind:      EscapeSend,
 				Recursive: true,
 			}},
+			PathStaticMembers: []PathStaticMemberFact{{
+				Path: pathdom.NewPlaceholder(0).Field("member"),
+				Type: typ.String,
+			}},
 		},
 	}
 
@@ -88,12 +92,16 @@ func TestFunctionCloneCopiesOperationalEffects(t *testing.T) {
 
 	clone.OperationalEffects.EscapeEvents[0].Target.Segments[0].Name = "other"
 	clone.OperationalEffects.EscapeEvents[0].Kind = EscapeOpaque
+	clone.OperationalEffects.PathStaticMembers[0].Path.Segments[0].Name = "changed"
 
 	if got := original.OperationalEffects.EscapeEvents[0].Target.String(); got != "$0.child" {
 		t.Fatalf("clone mutation changed original target: %s", got)
 	}
 	if got := original.OperationalEffects.EscapeEvents[0].Kind; got != EscapeSend {
 		t.Fatalf("clone mutation changed original kind: %v", got)
+	}
+	if got := original.OperationalEffects.PathStaticMembers[0].Path.String(); got != "$0.member" {
+		t.Fatalf("clone mutation changed original static member path: %s", got)
 	}
 }
 
@@ -104,12 +112,18 @@ func TestFunctionEqualsDistinguishesOperationalEffectsAuthority(t *testing.T) {
 	withOperational := Function{Type: fn, OperationalEffects: &OperationalEffects{
 		FrozenTables: []FrozenTable{{Target: pathdom.NewPlaceholder(0)}},
 	}}
+	withStaticMembers := Function{Type: fn, OperationalEffects: &OperationalEffects{
+		PathStaticMembers: []PathStaticMemberFact{{Path: pathdom.NewPlaceholder(0), Type: typ.String}},
+	}}
 
 	if nilOperational.Equals(emptyOperational) {
 		t.Fatalf("nil operational effects should differ from authoritative empty effects")
 	}
 	if emptyOperational.Equals(withOperational) {
 		t.Fatalf("different operational effects should not compare equal")
+	}
+	if withOperational.Equals(withStaticMembers) {
+		t.Fatalf("different operational effects lanes should not compare equal")
 	}
 }
 

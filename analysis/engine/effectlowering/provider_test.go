@@ -913,6 +913,10 @@ func TestSignatureOutcomeProviderLowersOperationalEffectsNormalReturnFacts(t *te
 			Path:     path.NewPlaceholder(0).Field("ready"),
 			Presence: presence.Present(),
 		}},
+		PathStaticMembers: []signature.PathStaticMemberFact{{
+			Path: path.NewPlaceholder(1).Field("kind"),
+			Type: typ.String,
+		}},
 		PathInvalidations: []signature.PathInvalidation{{
 			Path: path.NewPlaceholder(1).Field("items"),
 		}},
@@ -947,6 +951,11 @@ func TestSignatureOutcomeProviderLowersOperationalEffectsNormalReturnFacts(t *te
 		t.Fatalf("path refinements = %#v", got.NormalReturnFacts.PathRefinements)
 	}
 	assertPresence(t, reg, got.NormalReturnFacts.PathRefinements[0].Value, presence.Present())
+	if len(got.NormalReturnFacts.PathStaticMembers) != 1 ||
+		!got.NormalReturnFacts.PathStaticMembers[0].Path.Equal(path.NewPlaceholder(1).Field("kind")) {
+		t.Fatalf("path static members = %#v", got.NormalReturnFacts.PathStaticMembers)
+	}
+	assertTypeWitness(t, reg, got.NormalReturnFacts.PathStaticMembers[0].Value, typ.String)
 	if len(got.NormalReturnFacts.PathInvalidations) != 1 ||
 		!got.NormalReturnFacts.PathInvalidations[0].Path.Equal(path.NewPlaceholder(1).Field("items")) {
 		t.Fatalf("path invalidations = %#v", got.NormalReturnFacts.PathInvalidations)
