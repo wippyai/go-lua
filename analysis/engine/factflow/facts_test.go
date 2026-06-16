@@ -9,9 +9,9 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
-	"github.com/wippyai/go-lua/analysis/test/value/standard"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/symbol"
+	"github.com/wippyai/go-lua/analysis/test/value/standard"
 )
 
 func TestDTOConstructorsAndAccessorsCopySlices(t *testing.T) {
@@ -769,6 +769,30 @@ func TestFactsCarrierCopiesAndReturnsFalseForMissingFacts(t *testing.T) {
 	callSiteView, ok := facts.CallSiteView(point)
 	if !ok {
 		t.Fatal("call site view missing")
+	}
+	if callSiteView.Context() != CallSiteContextAssignmentSource || callSiteView.CalleeSymbol() != symbol.ID(35) || callSiteView.ExprIndex() != 1 {
+		t.Fatalf("call site view context/symbol/expr index = %v/%v/%v", callSiteView.Context(), callSiteView.CalleeSymbol(), callSiteView.ExprIndex())
+	}
+	if receiverPath, ok := callSiteView.ReceiverPath(); !ok || !receiverPath.Equal(path.NewPath(symbol.ID(35), "callee")) {
+		t.Fatalf("call site view receiver path = %#v/%v", receiverPath, ok)
+	}
+	if methodPath, ok := callSiteView.MethodPath(); !ok || !methodPath.Equal(path.NewPath(symbol.ID(35), "callee").Field("site")) {
+		t.Fatalf("call site view method path = %#v/%v", methodPath, ok)
+	}
+	if callSiteView.MethodName() != "site" {
+		t.Fatalf("call site view method name = %q, want site", callSiteView.MethodName())
+	}
+	if expr, ok := callSiteView.Expr(); !ok || expr != ExprRef(5) {
+		t.Fatalf("call site view expr = %v/%v, want %v/true", expr, ok, ExprRef(5))
+	}
+	if !callSiteView.Final() || !callSiteView.Expanded() || callSiteView.Adjusted() || callSiteView.OpenTail() {
+		t.Fatalf("call site view flags were not preserved")
+	}
+	if args := callSiteView.ArgumentSources(); len(args) != 2 || args[0].Kind != ValueSourceExpression || args[1].Kind != ValueSourceCall {
+		t.Fatalf("call site view args = %#v", args)
+	}
+	if typeArgs := callSiteView.TypeArgs(); len(typeArgs) != 2 || typeArgs[0] != TypeRef(7) || typeArgs[1] != TypeRef(8) {
+		t.Fatalf("call site view type args = %#v", typeArgs)
 	}
 	copiedSite := callSiteView.CallSite()
 	copiedSite.calleePath.Segments[0].Name = "mutated-through-view-copy"

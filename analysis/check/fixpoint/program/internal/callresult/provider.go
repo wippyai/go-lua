@@ -64,11 +64,12 @@ func OutcomeProvider(config ProviderConfig) factapply.CallOutcomeProvider {
 	pathMultiKeys := clonePathMultiKeys(config.PathMultiKeys)
 	functionTypes := cloneFunctionTypes(config.FunctionTypes)
 	sources := config.Sources
-	return func(ctx transfer.NodeContext, site factflow.CallSite, in state.State, read func(cfg.Point) state.State) factapply.CallOutcome {
+	return func(ctx transfer.NodeContext, site factflow.CallSiteView, in state.State, read func(cfg.Point) state.State) factapply.CallOutcome {
 		if summaries == nil {
 			return factapply.CallOutcome{}
 		}
-		key, ok := summaryKeyForCall(ctx, site, in, read, keyFor, calleeValue, functionIDs, pathKeys)
+		ownedSite := site.CallSite()
+		key, ok := summaryKeyForCall(ctx, ownedSite, in, read, keyFor, calleeValue, functionIDs, pathKeys)
 		var got summary.Summary
 		var fn *typ.Function
 		if ok {
@@ -79,11 +80,11 @@ func OutcomeProvider(config ProviderConfig) factapply.CallOutcomeProvider {
 			}
 			fn = functionTypes[key]
 			got = applyDeclaredSummaryReturns(ctx.Registry, got, fn)
-			got = specializeGenericSummary(ctx, site, got, fn, summaries, facts, functionKeys, functionExpressionKeys, functionTypes, sources, in, read)
-		} else if joined, joinedOK := joinedSummaryForDefinitionPath(ctx, site, in, read, calleeValue, summaries, pathMultiKeys, functionTypes, facts, functionKeys, functionExpressionKeys, sources); joinedOK {
+			got = specializeGenericSummary(ctx, ownedSite, got, fn, summaries, facts, functionKeys, functionExpressionKeys, functionTypes, sources, in, read)
+		} else if joined, joinedOK := joinedSummaryForDefinitionPath(ctx, ownedSite, in, read, calleeValue, summaries, pathMultiKeys, functionTypes, facts, functionKeys, functionExpressionKeys, sources); joinedOK {
 			got = joined
 		} else {
-			if out, ok := unresolvedFunctionCallOutcome(ctx, site, in, read, calleeValue); ok {
+			if out, ok := unresolvedFunctionCallOutcome(ctx, ownedSite, in, read, calleeValue); ok {
 				return out
 			}
 			return factapply.CallOutcome{}
@@ -100,8 +101,8 @@ func OutcomeProvider(config ProviderConfig) factapply.CallOutcomeProvider {
 			return summary.UsefulNormalReturnParam(ctx.Registry, got.NormalReturnParams[index])
 		})
 		out.PostReturnAuthority = calloutcome.HasPostReturnEvidence(ctx.Registry, out)
-		out.ParamObligations = append(out.ParamObligations, functionTypeParamObligations(ctx.Registry, site, fn)...)
-		out.ParamObligations = append(out.ParamObligations, memberCallParamObligations(ctx, site, got, sources, in, read)...)
+		out.ParamObligations = append(out.ParamObligations, functionTypeParamObligations(ctx.Registry, ownedSite, fn)...)
+		out.ParamObligations = append(out.ParamObligations, memberCallParamObligations(ctx, ownedSite, got, sources, in, read)...)
 		return out
 	}
 }

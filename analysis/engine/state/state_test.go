@@ -401,7 +401,7 @@ func TestStateBottomWritesRemoveExplicitBottomEntries(t *testing.T) {
 	if _, ok := state.heapTableIdentity[fx.heapID]; ok {
 		t.Fatalf("heap identity kept explicit bottom entry")
 	}
-	if _, ok := state.effectDeltas[fx.effectKey]; ok {
+	if state.effectDeltas.hasFinite(fx.effectKey) {
 		t.Fatalf("effect delta kept explicit bottom entry")
 	}
 	if state.placement.hasFinite(fx.escapeID) {

@@ -81,8 +81,7 @@ func materializeCallOutcome(
 		out = clearCallProducerReturnSlots(ctx, siteView, out)
 	}
 	if outcomeProvider != nil {
-		site := siteView.CallSite()
-		outcome := outcomeProvider(ctx, site, in, read)
+		outcome := outcomeProvider(ctx, siteView, in, read)
 		if hasProducer {
 			for _, result := range outcome.Results {
 				if result.Index < 0 {
@@ -91,7 +90,7 @@ func materializeCallOutcome(
 				out = out.WriteReturnSlot(ctx.Registry, result.Index, result.Value)
 			}
 		}
-		out = applyCallOutcomeFacts(ctx, facts, resolver, projectPath, out, site, outcome)
+		out = applyCallOutcomeFacts(ctx, facts, resolver, projectPath, out, siteView, outcome)
 	}
 	out = applyChannelSelectResult(ctx, typeValues, resolver, projectPath, out, facts.ChannelSelects(ctx.Point))
 	if hasProducer {

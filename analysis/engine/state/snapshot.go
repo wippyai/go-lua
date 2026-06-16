@@ -46,8 +46,8 @@ type EffectDeltasSnapshot struct {
 // EffectDeltasSnapshot returns finite effect deltas unless the lane is top.
 // When Top is true, Deltas is empty.
 func (s State) EffectDeltasSnapshot() EffectDeltasSnapshot {
-	if s.effectDeltasTop {
+	if s.effectDeltas.top {
 		return EffectDeltasSnapshot{Top: true}
 	}
-	return EffectDeltasSnapshot{Deltas: effectdelta.CloneMap(s.effectDeltas)}
+	return EffectDeltasSnapshot{Deltas: s.effectDeltas.cloneValues()}
 }

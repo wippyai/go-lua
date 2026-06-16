@@ -145,7 +145,7 @@ func markedValue(reg *axis.Registry, markKey axis.Key[markValue], mark markValue
 }
 
 func staticCallOutcome(value product.Value) factapply.CallOutcomeProvider {
-	return func(_ transfer.NodeContext, _ factflow.CallSite, _ state.State, _ func(cfg.Point) state.State) factapply.CallOutcome {
+	return func(_ transfer.NodeContext, _ factflow.CallSiteView, _ state.State, _ func(cfg.Point) state.State) factapply.CallOutcome {
 		return factapply.CallOutcome{Results: []factapply.CallResult{{
 			Index: 0,
 			Value: value,

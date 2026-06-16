@@ -20,7 +20,7 @@ func applyCallOutcomeFacts(
 	resolver *visibility.Resolver,
 	projectPath PathTypeProjector,
 	out state.State,
-	site factflow.CallSite,
+	site factflow.CallSiteView,
 	outcome CallOutcome,
 ) state.State {
 	bindings := callPlaceholderBindings(facts, site)
@@ -131,7 +131,7 @@ func applyCallParamCondition(
 	resolver *visibility.Resolver,
 	projectPath PathTypeProjector,
 	out state.State,
-	site factflow.CallSite,
+	site factflow.CallSiteView,
 	condition CallParamCondition,
 ) state.State {
 	args := site.ArgumentSources()
@@ -179,7 +179,7 @@ func applyCallParamPathRelation(
 	}
 }
 
-func callPlaceholderBindings(facts factflow.Facts, site factflow.CallSite) []pathdom.Path {
+func callPlaceholderBindings(facts factflow.Facts, site factflow.CallSiteView) []pathdom.Path {
 	var bindings []pathdom.Path
 	offset := 0
 	if receiverPath, ok := site.ReceiverPath(); ok {
@@ -199,7 +199,7 @@ func callPlaceholderBindings(facts factflow.Facts, site factflow.CallSite) []pat
 	return bindings
 }
 
-func callArgumentPlaceholderBindings(facts factflow.Facts, site factflow.CallSite) []pathdom.Path {
+func callArgumentPlaceholderBindings(facts factflow.Facts, site factflow.CallSiteView) []pathdom.Path {
 	var bindings []pathdom.Path
 	for i, source := range site.ArgumentSources() {
 		if source.Kind != factflow.ValueSourceExpression || !source.HasExpr {

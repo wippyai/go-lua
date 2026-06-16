@@ -14,7 +14,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
-	"github.com/wippyai/go-lua/analysis/test/value/standard"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine/callboundary"
 	"github.com/wippyai/go-lua/analysis/engine/dynamicindex"
@@ -28,6 +27,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/symbol"
+	"github.com/wippyai/go-lua/analysis/test/value/standard"
 	"github.com/wippyai/go-lua/analysis/type/subst"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
@@ -50,7 +50,9 @@ func TestOutcomeProviderReadsSummaryReturnsByCalleeIdentity(t *testing.T) {
 
 	got := provider(transfer.NodeContext{Registry: reg}, factflow.NewCallSite(factflow.CallSiteConfig{
 		CalleeSymbol: callee,
-	}), state.State{}, nil)
+	}).View(),
+
+		state.State{}, nil)
 
 	if !got.PostReturnAuthority {
 		t.Fatalf("PostReturnAuthority = false, want true for matched summary")
@@ -78,7 +80,9 @@ func TestOutcomeProviderRehydratesDeclaredReturnWhenSummarySlotIsTopLike(t *test
 
 	got := provider(transfer.NodeContext{Registry: reg}, factflow.NewCallSite(factflow.CallSiteConfig{
 		CalleeSymbol: callee,
-	}), state.State{}, nil)
+	}).View(),
+
+		state.State{}, nil)
 
 	if len(got.Results) != 1 {
 		t.Fatalf("results = %#v, want one declared return", got.Results)
@@ -159,7 +163,9 @@ func TestOutcomeProviderMapsSummaryReturnsAndNormalReturnFacts(t *testing.T) {
 
 	got := provider(transfer.NodeContext{Registry: reg}, factflow.NewCallSite(factflow.CallSiteConfig{
 		CalleeSymbol: callee,
-	}), state.State{}, nil)
+	}).View(),
+
+		state.State{}, nil)
 
 	assertCallOutcomeResults(t, reg, got.Results, []product.Value{ret})
 	if len(got.NormalReturnFacts.PathRefinements) != 1 ||
@@ -242,7 +248,9 @@ func TestOutcomeProviderCarriesNestedSummaryEscapeEvents(t *testing.T) {
 
 	got := provider(transfer.NodeContext{Registry: reg}, factflow.NewCallSite(factflow.CallSiteConfig{
 		CalleeSymbol: callee,
-	}), state.State{}, nil)
+	}).View(),
+
+		state.State{}, nil)
 
 	if len(got.Results) != 1 {
 		t.Fatalf("results = %#v, want one nested-table return", got.Results)
@@ -299,7 +307,9 @@ func TestOutcomeProviderJoinMaterializesRawOptionalFactPayloadRecord(t *testing.
 
 	got := provider(transfer.NodeContext{Registry: reg}, factflow.NewCallSite(factflow.CallSiteConfig{
 		CalleePath: calleePath,
-	}), state.State{}, nil)
+	}).View(),
+
+		state.State{}, nil)
 
 	if len(got.Results) != 1 || got.Results[0].Index != 0 {
 		t.Fatalf("results = %#v, want synthesized return slot 0", got.Results)
@@ -370,7 +380,9 @@ func TestOutcomeProviderMapsNormalReturnFacts(t *testing.T) {
 
 	got := provider(transfer.NodeContext{Registry: reg}, factflow.NewCallSite(factflow.CallSiteConfig{
 		CalleeSymbol: callee,
-	}), state.State{}, nil)
+	}).View(),
+
+		state.State{}, nil)
 
 	if len(got.ParamPathRefinements) != 1 ||
 		!got.ParamPathRefinements[0].Path.Equal(path.NewPlaceholder(0)) ||
@@ -421,7 +433,9 @@ func TestOutcomeProviderMapsParamObligationsDistinctFromNormalReturnRefinements(
 
 	got := provider(transfer.NodeContext{Registry: reg}, factflow.NewCallSite(factflow.CallSiteConfig{
 		CalleeSymbol: callee,
-	}), state.State{}, nil)
+	}).View(),
+
+		state.State{}, nil)
 
 	if len(got.ParamObligations) != 1 ||
 		got.ParamObligations[0].ParamIndex != 0 ||
@@ -457,7 +471,9 @@ func TestOutcomeProviderAddsFunctionTypeParamObligations(t *testing.T) {
 			providerExpressionSource(t, 1, 0),
 			providerExpressionSource(t, 2, 1),
 		},
-	}), state.State{}, nil)
+	}).View(),
+
+		state.State{}, nil)
 
 	if len(got.ParamObligations) != 2 ||
 		got.ParamObligations[0].ParamIndex != 0 ||
@@ -510,7 +526,9 @@ func TestOutcomeProviderSpecializesGenericReturnFromArgument(t *testing.T) {
 		ArgumentSources: []factflow.ValueSource{
 			providerExpressionSource(t, 1, 0),
 		},
-	}), state.State{}, nil)
+	}).View(),
+
+		state.State{}, nil)
 
 	assertCallOutcomeResultType(t, reg, got.Results, typ.Instantiate(result, profile))
 	if len(got.NormalReturnFacts.PathRefinements) != 1 ||
@@ -555,7 +573,9 @@ func TestOutcomeProviderSpecializesGenericTupleReturnAcrossSlots(t *testing.T) {
 			providerExpressionSource(t, 1, 0),
 			providerExpressionSource(t, 2, 1),
 		},
-	}), state.State{}, nil)
+	}).View(),
+
+		state.State{}, nil)
 
 	assertCallOutcomeResultsTypes(t, reg, got.Results, []typ.Type{
 		typ.LiteralInt(42),
@@ -599,7 +619,9 @@ func TestOutcomeProviderSpecializesGenericReturnFromCallbackReturn(t *testing.T)
 			providerExpressionSource(t, 1, 0),
 			providerExpressionSource(t, 2, 1),
 		},
-	}), state.State{}, nil)
+	}).View(),
+
+		state.State{}, nil)
 
 	assertCallOutcomeResultType(t, reg, got.Results, typ.Instantiate(result, typ.String))
 }
@@ -653,7 +675,9 @@ func TestOutcomeProviderSpecializesGenericReturnFromSolvedCallbackSummary(t *tes
 			providerExpressionSource(t, 1, 0),
 			providerExpressionSource(t, 2, 1),
 		},
-	}), state.State{}, nil)
+	}).View(),
+
+		state.State{}, nil)
 
 	assertCallOutcomeResultType(t, reg, got.Results, typ.Instantiate(result, typ.Number))
 }
@@ -694,7 +718,9 @@ func TestOutcomeProviderSpecializesGenericReturnFromCallbackResultReturn(t *test
 			providerExpressionSource(t, 1, 0),
 			providerExpressionSource(t, 2, 1),
 		},
-	}), state.State{}, nil)
+	}).View(),
+
+		state.State{}, nil)
 
 	assertCallOutcomeResultType(t, reg, got.Results, typ.Instantiate(result, typ.Number))
 }
@@ -742,7 +768,7 @@ func TestOutcomeProviderMissingAndEmptySummaryYieldsZeroOutcome(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			assertEmptyOutcome(t, tc.provider(ctx, site, state.State{}, nil))
+			assertEmptyOutcome(t, tc.provider(ctx, site.View(), state.State{}, nil))
 		})
 	}
 
@@ -750,7 +776,7 @@ func TestOutcomeProviderMissingAndEmptySummaryYieldsZeroOutcome(t *testing.T) {
 		Summaries: summary.NewSnapshot(reg, summary.EntrySummary{Key: key, Summary: summary.Summary{Returns: nil}}),
 		KeyFor:    ByCalleeIdentity(map[symbol.ID]summary.SummaryKey{callee: key}),
 	})
-	if got := emptySummaryProvider(ctx, site, state.State{}, nil); got.PostReturnAuthority {
+	if got := emptySummaryProvider(ctx, site.View(), state.State{}, nil); got.PostReturnAuthority {
 		t.Fatalf("empty matched summary PostReturnAuthority = true, want false")
 	}
 }
@@ -770,7 +796,9 @@ func TestOutcomeProviderUnresolvedFunctionFallbackIsNotPostReturnAuthority(t *te
 		ResultTargets: []factflow.CallResultTarget{
 			factflow.NewCallResultTarget(factflow.CallResultTargetLocalAssignment, 0, 0, target, path.NewPath(target, "result")),
 		},
-	}), state.State{}, nil)
+	}).View(),
+
+		state.State{}, nil)
 
 	if got.PostReturnAuthority {
 		t.Fatalf("unresolved function fallback PostReturnAuthority = true, want false")
@@ -821,28 +849,40 @@ func TestOutcomeProviderUsesCurrentCalleeValueIdentityForPathSummary(t *testing.
 	got := provider(transfer.NodeContext{Registry: reg}, factflow.NewCallSite(factflow.CallSiteConfig{
 		CalleeSymbol: calleeSymbol,
 		CalleePath:   calleePath,
-	}), state.State{}, nil)
+	}).View(),
+
+		state.State{}, nil)
+
 	assertCallOutcomeResults(t, reg, got.Results, []product.Value{product.Top()})
 
 	identityValue := product.NewWithPresence(reg, product.ShapeTop, presence.Present())
 	identityValue = product.Set(reg, identityValue, identity.Key, identity.Singleton(fnID))
 	got = provider(transfer.NodeContext{Registry: reg}, factflow.NewCallSite(factflow.CallSiteConfig{
 		CalleePath: calleePath,
-	}), state.State{}.WritePathKey(reg, calleeSlot, identityValue), nil)
+	}).View(),
+
+		state.State{}.WritePathKey(reg, calleeSlot, identityValue), nil)
+
 	assertCallOutcomeResults(t, reg, got.Results, []product.Value{ret})
 
 	otherValue := product.NewWithPresence(reg, product.ShapeTop, presence.Present())
 	otherValue = product.Set(reg, otherValue, identity.Key, identity.Singleton(identity.LuaFunction(36)))
 	got = provider(transfer.NodeContext{Registry: reg}, factflow.NewCallSite(factflow.CallSiteConfig{
 		CalleePath: calleePath,
-	}), state.State{}.WritePathKey(reg, calleeSlot, otherValue), nil)
+	}).View(),
+
+		state.State{}.WritePathKey(reg, calleeSlot, otherValue), nil)
+
 	if len(got.Results) != 0 {
 		t.Fatalf("different path identity results = %#v, want none", got.Results)
 	}
 
 	got = provider(transfer.NodeContext{Registry: reg}, factflow.NewCallSite(factflow.CallSiteConfig{
 		CalleePath: calleePath,
-	}), state.State{}, nil)
+	}).View(),
+
+		state.State{}, nil)
+
 	if len(got.Results) != 0 {
 		t.Fatalf("missing path identity results = %#v, want none", got.Results)
 	}

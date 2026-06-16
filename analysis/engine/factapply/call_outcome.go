@@ -19,7 +19,7 @@ type CallResult struct {
 
 // CallOutcomeProvider resolves rich call-site evidence into one generic call
 // outcome payload.
-type CallOutcomeProvider func(ctx transfer.NodeContext, site factflow.CallSite, in state.State, read func(cfg.Point) state.State) CallOutcome
+type CallOutcomeProvider func(ctx transfer.NodeContext, site factflow.CallSiteView, in state.State, read func(cfg.Point) state.State) CallOutcome
 
 // CallOutcome is the generic payload produced at a call boundary. It carries
 // return-slot values plus normal-return facts expressed over placeholder paths

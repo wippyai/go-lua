@@ -28,11 +28,11 @@ type CallableValueOutcomeProviderConfig struct {
 func CallableValueOutcomeProvider(config CallableValueOutcomeProviderConfig) factapply.CallOutcomeProvider {
 	calleeValue := config.CalleeValue
 	callable := config.Callable
-	return func(ctx transfer.NodeContext, site factflow.CallSite, in state.State, read func(cfg.Point) state.State) factapply.CallOutcome {
+	return func(ctx transfer.NodeContext, site factflow.CallSiteView, in state.State, read func(cfg.Point) state.State) factapply.CallOutcome {
 		if calleeValue == nil || callable == nil {
 			return factapply.CallOutcome{}
 		}
-		value, ok := calleeValue(ctx, site, in, read)
+		value, ok := calleeValue(ctx, site.CallSite(), in, read)
 		if !ok {
 			return factapply.CallOutcome{}
 		}

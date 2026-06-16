@@ -10,7 +10,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/effect/ownership"
 	"github.com/wippyai/go-lua/analysis/domain/effect/postcondition"
 	"github.com/wippyai/go-lua/analysis/domain/effect/returns"
-	"github.com/wippyai/go-lua/analysis/module/signature"
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
@@ -18,7 +17,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/typewitness"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
-	"github.com/wippyai/go-lua/analysis/test/value/standard"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine/callboundary"
 	"github.com/wippyai/go-lua/analysis/engine/calloutcome"
@@ -30,7 +28,9 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/visibility"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/typecall"
+	"github.com/wippyai/go-lua/analysis/module/signature"
 	"github.com/wippyai/go-lua/analysis/symbol"
+	"github.com/wippyai/go-lua/analysis/test/value/standard"
 	"github.com/wippyai/go-lua/analysis/type/projection"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
@@ -135,7 +135,10 @@ func TestSignatureOutcomeProviderMaterializesDeclaredReturns(t *testing.T) {
 
 	got := provider(transfer.NodeContext{Registry: reg}, factflow.NewCallSite(factflow.CallSiteConfig{
 		CalleeSymbol: symbol.ID(17),
-	}), state.State{}, nil).Results
+	}).View(),
+
+		state.State{}, nil).
+		Results
 
 	if len(got) != 2 {
 		t.Fatalf("got %d results, want 2: %#v", len(got), got)
@@ -155,7 +158,10 @@ func TestSignatureOutcomeProviderMaterializesOptionalDeclaredReturn(t *testing.T
 
 	got := provider(transfer.NodeContext{Registry: reg}, factflow.NewCallSite(factflow.CallSiteConfig{
 		CalleeSymbol: symbol.ID(18),
-	}), state.State{}, nil).Results
+	}).View(),
+
+		state.State{}, nil).
+		Results
 
 	if len(got) != 1 {
 		t.Fatalf("got %d results, want 1: %#v", len(got), got)
@@ -185,7 +191,10 @@ func TestSignatureOutcomeProviderMaterializesInterfaceDeclaredReturnAsPresent(t 
 
 	got := provider(transfer.NodeContext{Registry: reg}, factflow.NewCallSite(factflow.CallSiteConfig{
 		CalleeSymbol: symbol.ID(19),
-	}), state.State{}, nil).Results
+	}).View(),
+
+		state.State{}, nil).
+		Results
 
 	if len(got) != 1 {
 		t.Fatalf("got %d results, want 1: %#v", len(got), got)
@@ -202,7 +211,7 @@ func TestSignatureOutcomeProviderLowersErrorReturnToReturnPresenceRelations(t *t
 		NameFor: staticName("f"),
 	})
 
-	got := provider(transfer.NodeContext{}, factflow.NewCallSite(factflow.CallSiteConfig{}), state.State{}, nil)
+	got := provider(transfer.NodeContext{}, factflow.NewCallSite(factflow.CallSiteConfig{}).View(), state.State{}, nil)
 
 	if !got.PostReturnAuthority {
 		t.Fatalf("PostReturnAuthority = false, want true for matched signature")
@@ -222,7 +231,7 @@ func TestSignatureOutcomeProviderWeakAnyReturnIsNotPostReturnAuthority(t *testin
 		NameFor: staticName("require"),
 	})
 
-	got := provider(transfer.NodeContext{Registry: standard.Registry()}, factflow.NewCallSite(factflow.CallSiteConfig{}), state.State{}, nil)
+	got := provider(transfer.NodeContext{Registry: standard.Registry()}, factflow.NewCallSite(factflow.CallSiteConfig{}).View(), state.State{}, nil)
 
 	if got.PostReturnAuthority {
 		t.Fatalf("PostReturnAuthority = true for weak any return, want false")
@@ -280,7 +289,7 @@ func TestSignatureOutcomeProviderLowersNormalReturnRefinementToParamPathRefineme
 	if !ok {
 		t.Fatalf("missing call site")
 	}
-	got := provider(transfer.NodeContext{Graph: graph, Registry: reg, Point: call, Node: graph.Node(call)}, site, state.State{}, nil)
+	got := provider(transfer.NodeContext{Graph: graph, Registry: reg, Point: call, Node: graph.Node(call)}, site.View(), state.State{}, nil)
 
 	if len(got.ParamPathRefinements) != 1 {
 		t.Fatalf("param path refinements = %d, want 1: %#v", len(got.ParamPathRefinements), got.ParamPathRefinements)
@@ -351,7 +360,7 @@ func TestSignatureOutcomeProviderLowersAbsentNormalReturnRefinementAndApplies(t 
 	if !ok {
 		t.Fatalf("missing call site")
 	}
-	got := provider(transfer.NodeContext{Graph: graph, Registry: reg, Point: call, Node: graph.Node(call)}, site, state.State{}, nil)
+	got := provider(transfer.NodeContext{Graph: graph, Registry: reg, Point: call, Node: graph.Node(call)}, site.View(), state.State{}, nil)
 
 	if len(got.ParamPathRefinements) != 1 {
 		t.Fatalf("param path refinements = %d, want 1: %#v", len(got.ParamPathRefinements), got.ParamPathRefinements)
@@ -419,7 +428,7 @@ func TestSignatureOutcomeProviderNormalReturnRefinementDoesNotApplyWithoutExpres
 	if !ok {
 		t.Fatalf("missing call site")
 	}
-	got := provider(transfer.NodeContext{Graph: graph, Registry: reg, Point: call, Node: graph.Node(call)}, site, state.State{}, nil)
+	got := provider(transfer.NodeContext{Graph: graph, Registry: reg, Point: call, Node: graph.Node(call)}, site.View(), state.State{}, nil)
 
 	if len(got.ParamPathRefinements) != 1 || !got.ParamPathRefinements[0].Path.Equal(path.NewPlaceholder(0)) {
 		t.Fatalf("param path refinements = %#v, want one unresolved $0 refinement", got.ParamPathRefinements)
@@ -482,7 +491,7 @@ func TestSignatureOutcomeProviderLowersTableMutatorToParamPathInvalidationAndApp
 	if !ok {
 		t.Fatalf("missing call site")
 	}
-	got := provider(transfer.NodeContext{Graph: graph, Registry: reg, Point: call, Node: graph.Node(call)}, site, state.State{}, nil)
+	got := provider(transfer.NodeContext{Graph: graph, Registry: reg, Point: call, Node: graph.Node(call)}, site.View(), state.State{}, nil)
 
 	if len(got.ParamPathInvalidations) != 1 {
 		t.Fatalf("param path invalidations = %d, want 1: %#v", len(got.ParamPathInvalidations), got.ParamPathInvalidations)
@@ -551,7 +560,7 @@ func TestSignatureOutcomeProviderLowersStoreIntoContainerArgument(t *testing.T) 
 	if !ok {
 		t.Fatalf("missing call site")
 	}
-	got := provider(transfer.NodeContext{Graph: graph, Point: call, Node: graph.Node(call)}, site, state.State{}, nil)
+	got := provider(transfer.NodeContext{Graph: graph, Point: call, Node: graph.Node(call)}, site.View(), state.State{}, nil)
 
 	if len(got.ParamPathInvalidations) != 1 || !got.ParamPathInvalidations[0].Path.Equal(path.NewPlaceholder(0)) {
 		t.Fatalf("param path invalidations = %#v, want container argument $0", got.ParamPathInvalidations)
@@ -598,7 +607,7 @@ func TestSignatureOutcomeProviderSkipsStoreWithoutKnownDestination(t *testing.T)
 	if !ok {
 		t.Fatalf("missing call site")
 	}
-	got := provider(transfer.NodeContext{Graph: graph, Point: call, Node: graph.Node(call)}, site, state.State{}, nil)
+	got := provider(transfer.NodeContext{Graph: graph, Point: call, Node: graph.Node(call)}, site.View(), state.State{}, nil)
 
 	if len(got.ParamPathInvalidations) != 0 {
 		t.Fatalf("param path invalidations = %#v, want none", got.ParamPathInvalidations)
@@ -638,7 +647,7 @@ func TestSignatureOutcomeProviderLowersOwnershipSendAndStoreEscapeEvents(t *test
 	if !ok {
 		t.Fatalf("missing call site")
 	}
-	got := provider(transfer.NodeContext{Point: point}, site, state.State{}, nil)
+	got := provider(transfer.NodeContext{Point: point}, site.View(), state.State{}, nil)
 
 	assertEscapeEvent(t, got.NormalReturnFacts.EscapeEvents, path.NewPlaceholder(0), callboundary.EscapeEventStore, true)
 	assertEscapeEvent(t, got.NormalReturnFacts.EscapeEvents, path.NewPlaceholder(1), callboundary.EscapeEventSend, true)
@@ -683,7 +692,7 @@ func TestSignatureOutcomeProviderParamPathInvalidationDoesNotApplyWithoutExpress
 	if !ok {
 		t.Fatalf("missing call site")
 	}
-	got := provider(transfer.NodeContext{Graph: graph, Registry: reg, Point: call, Node: graph.Node(call)}, site, state.State{}, nil)
+	got := provider(transfer.NodeContext{Graph: graph, Registry: reg, Point: call, Node: graph.Node(call)}, site.View(), state.State{}, nil)
 
 	if len(got.ParamPathInvalidations) != 1 || !got.ParamPathInvalidations[0].Path.Equal(path.NewPlaceholder(0)) {
 		t.Fatalf("param path invalidations = %#v, want unresolved $0", got.ParamPathInvalidations)
@@ -770,7 +779,7 @@ func TestSignatureOutcomeProviderSameAsReturnsArgumentValue(t *testing.T) {
 		}),
 	})
 
-	got := provider(transfer.NodeContext{Registry: reg, Point: point}, factflow.NewCallSite(factflow.CallSiteConfig{}), state.State{}, nil).Results
+	got := provider(transfer.NodeContext{Registry: reg, Point: point}, factflow.NewCallSite(factflow.CallSiteConfig{}).View(), state.State{}, nil).Results
 
 	assertCallOutcomeResults(t, reg, got, []product.Value{argValue})
 }
@@ -803,7 +812,7 @@ func TestSignatureOutcomeProviderSameAsResolvesNegativeParamRef(t *testing.T) {
 		}),
 	})
 
-	got := provider(transfer.NodeContext{Registry: reg, Point: point}, factflow.NewCallSite(factflow.CallSiteConfig{}), state.State{}, nil).Results
+	got := provider(transfer.NodeContext{Registry: reg, Point: point}, factflow.NewCallSite(factflow.CallSiteConfig{}).View(), state.State{}, nil).Results
 
 	assertCallOutcomeResults(t, reg, got, []product.Value{lastValue})
 }
@@ -825,7 +834,7 @@ func TestSignatureOutcomeProviderSameAsUsesDeclaredReturnTypeWhenArgumentProject
 		Sources: sourcevalue.NewSourceValues(sourcevalue.SourceValuesConfig{Registry: reg}),
 	})
 
-	got := provider(transfer.NodeContext{Registry: reg, Point: point}, factflow.NewCallSite(factflow.CallSiteConfig{}), state.State{}, nil).Results
+	got := provider(transfer.NodeContext{Registry: reg, Point: point}, factflow.NewCallSite(factflow.CallSiteConfig{}).View(), state.State{}, nil).Results
 
 	if len(got) != 1 {
 		t.Fatalf("got %d results, want 1: %#v", len(got), got)
@@ -848,7 +857,7 @@ func TestSignatureOutcomeProviderElementOfArrayReturnsElementRuntimeKind(t *test
 		Facts:         signatureOutcomeProviderFacts(point, []factflow.ValueSource{{Kind: factflow.ValueSourceExpression}}),
 	})
 
-	got := provider(transfer.NodeContext{Registry: reg, Point: point}, factflow.NewCallSite(factflow.CallSiteConfig{}), state.State{}, nil).Results
+	got := provider(transfer.NodeContext{Registry: reg, Point: point}, factflow.NewCallSite(factflow.CallSiteConfig{}).View(), state.State{}, nil).Results
 
 	if len(got) != 1 {
 		t.Fatalf("got %d results, want 1: %#v", len(got), got)
@@ -872,7 +881,7 @@ func TestSignatureOutcomeProviderElementOfMapReturnsValueRuntimeKind(t *testing.
 		Facts:         signatureOutcomeProviderFacts(point, []factflow.ValueSource{{Kind: factflow.ValueSourceExpression}}),
 	})
 
-	got := provider(transfer.NodeContext{Registry: reg, Point: point}, factflow.NewCallSite(factflow.CallSiteConfig{}), state.State{}, nil).Results
+	got := provider(transfer.NodeContext{Registry: reg, Point: point}, factflow.NewCallSite(factflow.CallSiteConfig{}).View(), state.State{}, nil).Results
 
 	if len(got) != 1 {
 		t.Fatalf("got %d results, want 1: %#v", len(got), got)
@@ -895,7 +904,7 @@ func TestSignatureOutcomeProviderElementOfTupleReturnsElementUnionRuntimeKind(t 
 		Facts:         signatureOutcomeProviderFacts(point, []factflow.ValueSource{{Kind: factflow.ValueSourceExpression}}),
 	})
 
-	got := provider(transfer.NodeContext{Registry: reg, Point: point}, factflow.NewCallSite(factflow.CallSiteConfig{}), state.State{}, nil).Results
+	got := provider(transfer.NodeContext{Registry: reg, Point: point}, factflow.NewCallSite(factflow.CallSiteConfig{}).View(), state.State{}, nil).Results
 
 	if len(got) != 1 {
 		t.Fatalf("got %d results, want 1: %#v", len(got), got)
@@ -921,7 +930,7 @@ func TestSignatureOutcomeProviderOptionalElementOfArrayKeepsMaybePresence(t *tes
 		Facts:         signatureOutcomeProviderFacts(point, []factflow.ValueSource{{Kind: factflow.ValueSourceExpression}}),
 	})
 
-	got := provider(transfer.NodeContext{Registry: reg, Point: point}, factflow.NewCallSite(factflow.CallSiteConfig{}), state.State{}, nil).Results
+	got := provider(transfer.NodeContext{Registry: reg, Point: point}, factflow.NewCallSite(factflow.CallSiteConfig{}).View(), state.State{}, nil).Results
 
 	if len(got) != 1 {
 		t.Fatalf("got %d results, want 1: %#v", len(got), got)
@@ -946,7 +955,7 @@ func TestSignatureOutcomeProviderElementOfUsesDeclaredReturnTypeWhenParamProject
 		Facts:   signatureOutcomeProviderFacts(point, []factflow.ValueSource{{Kind: factflow.ValueSourceExpression}}),
 	})
 
-	got := provider(transfer.NodeContext{Registry: reg, Point: point}, factflow.NewCallSite(factflow.CallSiteConfig{}), state.State{}, nil).Results
+	got := provider(transfer.NodeContext{Registry: reg, Point: point}, factflow.NewCallSite(factflow.CallSiteConfig{}).View(), state.State{}, nil).Results
 
 	if len(got) != 1 {
 		t.Fatalf("got %d results, want 1: %#v", len(got), got)
@@ -972,7 +981,7 @@ func TestSignatureOutcomeProviderCallbackReturnProjectsFirstReturnRuntimeKind(t 
 		Facts:         signatureOutcomeProviderFacts(point, []factflow.ValueSource{{Kind: factflow.ValueSourceExpression}}),
 	})
 
-	got := provider(transfer.NodeContext{Registry: reg, Point: point}, factflow.NewCallSite(factflow.CallSiteConfig{}), state.State{}, nil).Results
+	got := provider(transfer.NodeContext{Registry: reg, Point: point}, factflow.NewCallSite(factflow.CallSiteConfig{}).View(), state.State{}, nil).Results
 
 	if len(got) != 1 {
 		t.Fatalf("got %d results, want 1: %#v", len(got), got)
@@ -1002,7 +1011,7 @@ func TestSignatureOutcomeProviderCallbackReturnResolvesNegativeParamRef(t *testi
 		}),
 	})
 
-	got := provider(transfer.NodeContext{Registry: reg, Point: point}, factflow.NewCallSite(factflow.CallSiteConfig{}), state.State{}, nil).Results
+	got := provider(transfer.NodeContext{Registry: reg, Point: point}, factflow.NewCallSite(factflow.CallSiteConfig{}).View(), state.State{}, nil).Results
 
 	if len(got) != 1 {
 		t.Fatalf("got %d results, want 1: %#v", len(got), got)
@@ -1028,7 +1037,7 @@ func TestSignatureOutcomeProviderArrayOfCallbackReturnProjectsTableRuntimeKind(t
 		Facts:         signatureOutcomeProviderFacts(point, []factflow.ValueSource{{Kind: factflow.ValueSourceExpression}}),
 	})
 
-	got := provider(transfer.NodeContext{Registry: reg, Point: point}, factflow.NewCallSite(factflow.CallSiteConfig{}), state.State{}, nil).Results
+	got := provider(transfer.NodeContext{Registry: reg, Point: point}, factflow.NewCallSite(factflow.CallSiteConfig{}).View(), state.State{}, nil).Results
 
 	if len(got) != 1 {
 		t.Fatalf("got %d results, want 1: %#v", len(got), got)
@@ -1082,7 +1091,7 @@ func TestSignatureOutcomeProviderCallbackReturnUsesDeclaredReturnTypeWhenProject
 				Facts:         signatureOutcomeProviderFacts(tc.point, tc.args),
 			})
 
-			got := provider(transfer.NodeContext{Registry: reg, Point: tc.point}, factflow.NewCallSite(factflow.CallSiteConfig{}), state.State{}, nil).Results
+			got := provider(transfer.NodeContext{Registry: reg, Point: tc.point}, factflow.NewCallSite(factflow.CallSiteConfig{}).View(), state.State{}, nil).Results
 
 			if len(got) != 1 {
 				t.Fatalf("got %d results, want 1: %#v", len(got), got)
@@ -1117,7 +1126,7 @@ func TestSignatureOutcomeProviderTypeProjectionFieldReturnsFieldRuntimeKind(t *t
 		Facts:         signatureOutcomeProviderFacts(point, []factflow.ValueSource{{Kind: factflow.ValueSourceExpression}}),
 	})
 
-	got := provider(transfer.NodeContext{Registry: reg, Point: point}, factflow.NewCallSite(factflow.CallSiteConfig{}), state.State{}, nil).Results
+	got := provider(transfer.NodeContext{Registry: reg, Point: point}, factflow.NewCallSite(factflow.CallSiteConfig{}).View(), state.State{}, nil).Results
 
 	if len(got) != 1 {
 		t.Fatalf("got %d results, want 1: %#v", len(got), got)
@@ -1146,7 +1155,7 @@ func TestSignatureOutcomeProviderTypeProjectionCallableReturnReturnsFirstReturnR
 		Facts:         signatureOutcomeProviderFacts(point, []factflow.ValueSource{{Kind: factflow.ValueSourceExpression}}),
 	})
 
-	got := provider(transfer.NodeContext{Registry: reg, Point: point}, factflow.NewCallSite(factflow.CallSiteConfig{}), state.State{}, nil).Results
+	got := provider(transfer.NodeContext{Registry: reg, Point: point}, factflow.NewCallSite(factflow.CallSiteConfig{}).View(), state.State{}, nil).Results
 
 	if len(got) != 1 {
 		t.Fatalf("got %d results, want 1: %#v", len(got), got)
@@ -1178,7 +1187,7 @@ func TestSignatureOutcomeProviderTypeProjectionGenericArgReturnsArgRuntimeKind(t
 		Facts:         signatureOutcomeProviderFacts(point, []factflow.ValueSource{{Kind: factflow.ValueSourceExpression}}),
 	})
 
-	got := provider(transfer.NodeContext{Registry: reg, Point: point}, factflow.NewCallSite(factflow.CallSiteConfig{}), state.State{}, nil).Results
+	got := provider(transfer.NodeContext{Registry: reg, Point: point}, factflow.NewCallSite(factflow.CallSiteConfig{}).View(), state.State{}, nil).Results
 
 	if len(got) != 1 {
 		t.Fatalf("got %d results, want 1: %#v", len(got), got)
@@ -1224,7 +1233,7 @@ func TestSignatureOutcomeProviderInstantiatesGenericDeclaredReturnFromArgumentWi
 		}),
 	})
 
-	got := provider(transfer.NodeContext{Registry: reg, Point: point}, factflow.NewCallSite(factflow.CallSiteConfig{}), state.State{}, nil).Results
+	got := provider(transfer.NodeContext{Registry: reg, Point: point}, factflow.NewCallSite(factflow.CallSiteConfig{}).View(), state.State{}, nil).Results
 
 	if len(got) != 1 {
 		t.Fatalf("got %d results, want 1: %#v", len(got), got)
@@ -1263,7 +1272,7 @@ func TestSignatureOutcomeProviderTypeProjectionUsesDeclaredReturnTypeWhenProject
 		Facts:         signatureOutcomeProviderFacts(point, []factflow.ValueSource{{Kind: factflow.ValueSourceExpression}}),
 	})
 
-	got := provider(transfer.NodeContext{Registry: reg, Point: point}, factflow.NewCallSite(factflow.CallSiteConfig{}), state.State{}, nil).Results
+	got := provider(transfer.NodeContext{Registry: reg, Point: point}, factflow.NewCallSite(factflow.CallSiteConfig{}).View(), state.State{}, nil).Results
 
 	if len(got) != 1 {
 		t.Fatalf("got %d results, want 1: %#v", len(got), got)
@@ -1423,7 +1432,7 @@ func TestSignatureOutcomeProviderReservedReturnTransformsUseOnlyDeclaredReturnTy
 				}),
 			})
 
-			got := provider(transfer.NodeContext{Registry: reg, Point: point}, factflow.NewCallSite(factflow.CallSiteConfig{}), state.State{}, nil).Results
+			got := provider(transfer.NodeContext{Registry: reg, Point: point}, factflow.NewCallSite(factflow.CallSiteConfig{}).View(), state.State{}, nil).Results
 
 			if len(got) != 1 {
 				t.Fatalf("got %d results, want 1 declared result: %#v", len(got), got)
@@ -1487,7 +1496,7 @@ func TestActiveReturnTransformIgnoresReservedReturnTransforms(t *testing.T) {
 func TestSupplementalResultsKeepsPrimarySlotsAndFillsMissingSignatureSlots(t *testing.T) {
 	reg := standard.Registry()
 	primaryValue := product.Set(reg, product.Top(), runtimekind.Key, runtimekind.Singleton(runtimekind.Boolean))
-	primary := func(transfer.NodeContext, factflow.CallSite, state.State, func(cfg.Point) state.State) factapply.CallOutcome {
+	primary := func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) factapply.CallOutcome {
 		return factapply.CallOutcome{Results: []factapply.CallResult{{Index: 0, Value: primaryValue}}}
 	}
 	signatures := SignatureOutcomeProvider(SignatureOutcomeProviderConfig{
@@ -1497,7 +1506,7 @@ func TestSupplementalResultsKeepsPrimarySlotsAndFillsMissingSignatureSlots(t *te
 		NameFor: staticName("f"),
 	})
 
-	got := calloutcome.WithSupplemental(primary, signatures)(transfer.NodeContext{Registry: reg}, factflow.NewCallSite(factflow.CallSiteConfig{}), state.State{}, nil).Results
+	got := calloutcome.WithSupplemental(primary, signatures)(transfer.NodeContext{Registry: reg}, factflow.NewCallSite(factflow.CallSiteConfig{}).View(), state.State{}, nil).Results
 
 	if len(got) != 2 {
 		t.Fatalf("got %d results, want 2: %#v", len(got), got)
@@ -1517,7 +1526,7 @@ func TestSupplementalResultsKeepsPrimarySlotOverSignatureSameAs(t *testing.T) {
 	argRef := factflow.ExprRef(11)
 	primaryValue := product.Set(reg, product.Top(), runtimekind.Key, runtimekind.Singleton(runtimekind.Boolean))
 	argValue := product.Set(reg, product.Top(), runtimekind.Key, runtimekind.Singleton(runtimekind.String))
-	primary := func(transfer.NodeContext, factflow.CallSite, state.State, func(cfg.Point) state.State) factapply.CallOutcome {
+	primary := func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) factapply.CallOutcome {
 		return factapply.CallOutcome{Results: []factapply.CallResult{{Index: 0, Value: primaryValue}}}
 	}
 	signatures := SignatureOutcomeProvider(SignatureOutcomeProviderConfig{
@@ -1541,7 +1550,7 @@ func TestSupplementalResultsKeepsPrimarySlotOverSignatureSameAs(t *testing.T) {
 		}),
 	})
 
-	got := calloutcome.WithSupplemental(primary, signatures)(transfer.NodeContext{Registry: reg, Point: point}, factflow.NewCallSite(factflow.CallSiteConfig{}), state.State{}, nil).Results
+	got := calloutcome.WithSupplemental(primary, signatures)(transfer.NodeContext{Registry: reg, Point: point}, factflow.NewCallSite(factflow.CallSiteConfig{}).View(), state.State{}, nil).Results
 
 	assertCallOutcomeResults(t, reg, got, []product.Value{primaryValue})
 }

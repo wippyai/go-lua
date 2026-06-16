@@ -17,6 +17,20 @@ func FromSite(site factflow.CallSite) factflow.CallProducer {
 	})
 }
 
+// FromView projects read-only call-site evidence to the narrow producer DTO.
+func FromView(site factflow.CallSiteView) factflow.CallProducer {
+	targets := make([]factflow.CallResultTarget, 0, site.ResultTargetCount())
+	site.ForEachResultTarget(func(target factflow.CallResultTargetView) bool {
+		targets = append(targets, target.CallResultTarget())
+		return true
+	})
+	return factflow.NewCallProducer(factflow.CallProducerConfig{
+		CalleeSymbol:  site.CalleeSymbol(),
+		CalleePath:    site.CalleePath(),
+		ResultTargets: targets,
+	})
+}
+
 // FromFacts returns the strict call-result producer projection for point's
 // canonical call-site evidence.
 func FromFacts(facts factflow.Facts, point cfg.Point) (factflow.CallProducer, bool) {

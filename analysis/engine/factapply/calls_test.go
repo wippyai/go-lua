@@ -135,7 +135,7 @@ func TestFactsNodeTransferCallOutcomeProviderWritesReturnSlots(t *testing.T) {
 				}),
 			},
 		}),
-		CallOutcome: func(ctx transfer.NodeContext, site factflow.CallSite, gotIn state.State, read func(cfg.Point) state.State) CallOutcome {
+		CallOutcome: func(ctx transfer.NodeContext, site factflow.CallSiteView, gotIn state.State, read func(cfg.Point) state.State) CallOutcome {
 			providerCalled = true
 			if ctx.Point != point {
 				t.Fatalf("provider point = %d, want %d", ctx.Point, point)
@@ -200,7 +200,7 @@ func TestFactsNodeTransferAssignmentCallSourceConsumesProviderReturnSlotThroughR
 				},
 			}),
 			Sources: sources,
-			CallOutcome: func(ctx transfer.NodeContext, site factflow.CallSite, in state.State, read func(cfg.Point) state.State) CallOutcome {
+			CallOutcome: func(ctx transfer.NodeContext, site factflow.CallSiteView, in state.State, read func(cfg.Point) state.State) CallOutcome {
 				return CallOutcome{Results: []CallResult{{Index: 0, Value: callValue}}}
 			},
 		}),
@@ -241,7 +241,7 @@ func TestFactsNodeTransferCallResultTargetsDoNotDirectlyWriteTargets(t *testing.
 				}),
 			},
 		}),
-		CallOutcome: func(ctx transfer.NodeContext, site factflow.CallSite, in state.State, read func(cfg.Point) state.State) CallOutcome {
+		CallOutcome: func(ctx transfer.NodeContext, site factflow.CallSiteView, in state.State, read func(cfg.Point) state.State) CallOutcome {
 			return CallOutcome{Results: []CallResult{{Index: 0, Value: resultValue}}}
 		},
 	})(transfer.NodeContext{
@@ -342,13 +342,13 @@ func TestFactsNodeTransferMissingCallOutcomeProviderOrNoResultsLeavesStateUnchan
 		{name: "nil provider"},
 		{
 			name: "nil results",
-			provider: func(ctx transfer.NodeContext, site factflow.CallSite, in state.State, read func(cfg.Point) state.State) CallOutcome {
+			provider: func(ctx transfer.NodeContext, site factflow.CallSiteView, in state.State, read func(cfg.Point) state.State) CallOutcome {
 				return CallOutcome{}
 			},
 		},
 		{
 			name: "empty results",
-			provider: func(ctx transfer.NodeContext, site factflow.CallSite, in state.State, read func(cfg.Point) state.State) CallOutcome {
+			provider: func(ctx transfer.NodeContext, site factflow.CallSiteView, in state.State, read func(cfg.Point) state.State) CallOutcome {
 				return CallOutcome{Results: []CallResult{}}
 			},
 		},

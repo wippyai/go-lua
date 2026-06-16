@@ -7,7 +7,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
-	"github.com/wippyai/go-lua/analysis/test/value/standard"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine/callboundary"
 	factapply "github.com/wippyai/go-lua/analysis/engine/factapply"
@@ -15,6 +14,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
+	"github.com/wippyai/go-lua/analysis/test/value/standard"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
@@ -22,7 +22,7 @@ func TestWithSupplementalKeepsPrimarySlotsFillsMissingSlotsAndMergesSideFactsWit
 	reg := standard.Registry()
 	primaryValue := product.Absent(reg)
 	supplementalValue := product.Top()
-	primary := func(transfer.NodeContext, factflow.CallSite, state.State, func(cfg.Point) state.State) factapply.CallOutcome {
+	primary := func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) factapply.CallOutcome {
 		return factapply.CallOutcome{
 			Results: []factapply.CallResult{{Index: 0, Value: primaryValue}},
 			NormalReturnFacts: callboundary.NormalReturnFacts{
@@ -35,7 +35,7 @@ func TestWithSupplementalKeepsPrimarySlotsFillsMissingSlotsAndMergesSideFactsWit
 			},
 		}
 	}
-	supplemental := func(transfer.NodeContext, factflow.CallSite, state.State, func(cfg.Point) state.State) factapply.CallOutcome {
+	supplemental := func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) factapply.CallOutcome {
 		return factapply.CallOutcome{
 			Results: []factapply.CallResult{{Index: 0, Value: product.Top()}, {Index: 1, Value: supplementalValue}},
 			NormalReturnFacts: callboundary.NormalReturnFacts{
@@ -52,7 +52,7 @@ func TestWithSupplementalKeepsPrimarySlotsFillsMissingSlotsAndMergesSideFactsWit
 		}
 	}
 
-	got := WithSupplemental(primary, supplemental)(transfer.NodeContext{Registry: reg}, factflow.NewCallSite(factflow.CallSiteConfig{}), state.State{}, nil)
+	got := WithSupplemental(primary, supplemental)(transfer.NodeContext{Registry: reg}, factflow.NewCallSite(factflow.CallSiteConfig{}).View(), state.State{}, nil)
 
 	if len(got.Results) != 2 {
 		t.Fatalf("got %d results, want 2: %#v", len(got.Results), got.Results)
@@ -86,7 +86,7 @@ func TestWithSupplementalAuthorityBlocksSupplementalPostReturnFacts(t *testing.T
 	reg := standard.Registry()
 	primaryValue := product.Absent(reg)
 	supplementalValue := product.Top()
-	primary := func(transfer.NodeContext, factflow.CallSite, state.State, func(cfg.Point) state.State) factapply.CallOutcome {
+	primary := func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) factapply.CallOutcome {
 		return factapply.CallOutcome{
 			PostReturnAuthority: true,
 			Results:             []factapply.CallResult{{Index: 0, Value: primaryValue}},
@@ -103,7 +103,7 @@ func TestWithSupplementalAuthorityBlocksSupplementalPostReturnFacts(t *testing.T
 			},
 		}
 	}
-	supplemental := func(transfer.NodeContext, factflow.CallSite, state.State, func(cfg.Point) state.State) factapply.CallOutcome {
+	supplemental := func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) factapply.CallOutcome {
 		return factapply.CallOutcome{
 			PostReturnAuthority: true,
 			Results:             []factapply.CallResult{{Index: 1, Value: supplementalValue}},
@@ -124,7 +124,7 @@ func TestWithSupplementalAuthorityBlocksSupplementalPostReturnFacts(t *testing.T
 		}
 	}
 
-	got := WithSupplemental(primary, supplemental)(transfer.NodeContext{Registry: reg}, factflow.NewCallSite(factflow.CallSiteConfig{}), state.State{}, nil)
+	got := WithSupplemental(primary, supplemental)(transfer.NodeContext{Registry: reg}, factflow.NewCallSite(factflow.CallSiteConfig{}).View(), state.State{}, nil)
 
 	if !got.PostReturnAuthority {
 		t.Fatalf("PostReturnAuthority = false, want true")
@@ -158,7 +158,7 @@ func TestWithSupplementalPreservesPrimaryAuthorityWhenSupplementalIsWeak(t *test
 	reg := standard.Registry()
 	primaryValue := typeValue(reg, typ.String)
 	supplementalValue := product.Top()
-	primary := func(transfer.NodeContext, factflow.CallSite, state.State, func(cfg.Point) state.State) factapply.CallOutcome {
+	primary := func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) factapply.CallOutcome {
 		return factapply.CallOutcome{
 			PostReturnAuthority: true,
 			Results:             []factapply.CallResult{{Index: 0, Value: primaryValue}},
@@ -167,7 +167,7 @@ func TestWithSupplementalPreservesPrimaryAuthorityWhenSupplementalIsWeak(t *test
 			},
 		}
 	}
-	supplemental := func(transfer.NodeContext, factflow.CallSite, state.State, func(cfg.Point) state.State) factapply.CallOutcome {
+	supplemental := func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) factapply.CallOutcome {
 		return factapply.CallOutcome{
 			Results: []factapply.CallResult{{Index: 0, Value: supplementalValue}},
 			NormalReturnFacts: callboundary.NormalReturnFacts{
@@ -181,7 +181,7 @@ func TestWithSupplementalPreservesPrimaryAuthorityWhenSupplementalIsWeak(t *test
 		}
 	}
 
-	got := WithSupplemental(primary, supplemental)(transfer.NodeContext{Registry: reg}, factflow.NewCallSite(factflow.CallSiteConfig{}), state.State{}, nil)
+	got := WithSupplemental(primary, supplemental)(transfer.NodeContext{Registry: reg}, factflow.NewCallSite(factflow.CallSiteConfig{}).View(), state.State{}, nil)
 
 	if !got.PostReturnAuthority {
 		t.Fatal("PostReturnAuthority = false, want authoritative primary preserved")
@@ -201,16 +201,16 @@ func TestWithSupplementalPreservesPrimaryNonTypeEvidence(t *testing.T) {
 	reg := standard.Registry()
 	primaryValue := product.NewWithPresence(reg, product.ShapeTop, presence.Present())
 	supplementalValue := typeValue(reg, typ.String)
-	primary := func(transfer.NodeContext, factflow.CallSite, state.State, func(cfg.Point) state.State) factapply.CallOutcome {
+	primary := func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) factapply.CallOutcome {
 		return factapply.CallOutcome{Results: []factapply.CallResult{{Index: 0, Value: primaryValue}}}
 	}
-	supplemental := func(transfer.NodeContext, factflow.CallSite, state.State, func(cfg.Point) state.State) factapply.CallOutcome {
+	supplemental := func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) factapply.CallOutcome {
 		return factapply.CallOutcome{Results: []factapply.CallResult{{Index: 0, Value: supplementalValue}}}
 	}
 
 	got := WithSupplemental(primary, supplemental)(
 		transfer.NodeContext{Registry: reg},
-		factflow.NewCallSite(factflow.CallSiteConfig{}),
+		factflow.NewCallSite(factflow.CallSiteConfig{}).View(),
 		state.State{},
 		nil,
 	)

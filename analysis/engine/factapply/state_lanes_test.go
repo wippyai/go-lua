@@ -342,7 +342,7 @@ func TestFactsNodeTransferCallOutcomeRebasesPathRefinement(t *testing.T) {
 				argExpr: argPath,
 			},
 		}),
-		CallOutcome: func(transfer.NodeContext, factflow.CallSite, state.State, func(cfg.Point) state.State) CallOutcome {
+		CallOutcome: func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) CallOutcome {
 			return CallOutcome{
 				NormalReturnFacts: callboundary.NormalReturnFacts{
 					PathRefinements: []callboundary.PathValueFact{
@@ -387,7 +387,7 @@ func TestFactsNodeTransferStatementCallOutcomeDoesNotWriteReturnSlots(t *testing
 				argExpr: argPath,
 			},
 		}),
-		CallOutcome: func(transfer.NodeContext, factflow.CallSite, state.State, func(cfg.Point) state.State) CallOutcome {
+		CallOutcome: func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) CallOutcome {
 			return CallOutcome{
 				Results: []CallResult{{Index: 0, Value: returnValue}},
 				NormalReturnFacts: callboundary.NormalReturnFacts{
@@ -443,7 +443,7 @@ func TestFactsNodeTransferCallOutcomeBindsReceiverBeforeExplicitArgs(t *testing.
 				argExpr: argPath,
 			},
 		}),
-		CallOutcome: func(transfer.NodeContext, factflow.CallSite, state.State, func(cfg.Point) state.State) CallOutcome {
+		CallOutcome: func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) CallOutcome {
 			return CallOutcome{
 				NormalReturnFacts: callboundary.NormalReturnFacts{
 					PathStaticMembers: []callboundary.PathStaticMemberFact{
@@ -498,7 +498,7 @@ func TestFactsNodeTransferCallOutcomeRebasesStateLaneFacts(t *testing.T) {
 				secondExpr: secondPath,
 			},
 		}),
-		CallOutcome: func(transfer.NodeContext, factflow.CallSite, state.State, func(cfg.Point) state.State) CallOutcome {
+		CallOutcome: func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) CallOutcome {
 			return CallOutcome{
 				NormalReturnFacts: callboundary.NormalReturnFacts{
 					DynamicIndexFacts: []callboundary.DynamicIndexFact{

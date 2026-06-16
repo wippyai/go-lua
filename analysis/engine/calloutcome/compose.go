@@ -24,7 +24,7 @@ func WithSupplemental(primary, supplemental factapply.CallOutcomeProvider) facta
 	if supplemental == nil {
 		return primary
 	}
-	return func(ctx transfer.NodeContext, site factflow.CallSite, in state.State, read func(cfg.Point) state.State) factapply.CallOutcome {
+	return func(ctx transfer.NodeContext, site factflow.CallSiteView, in state.State, read func(cfg.Point) state.State) factapply.CallOutcome {
 		out := primary(ctx, site, in, read)
 		second := supplemental(ctx, site, in, read)
 		out = withSupplementalResultSlots(ctx.Registry, out, second.Results)

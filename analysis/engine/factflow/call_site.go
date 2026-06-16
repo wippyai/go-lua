@@ -87,6 +87,12 @@ type CallSiteView struct {
 	site CallSite
 }
 
+// NewCallSiteView wraps an owned call site in a read-only view.
+func NewCallSiteView(site CallSite) CallSiteView { return CallSiteView{site: site} }
+
+// View returns a read-only view of the owned call site.
+func (c CallSite) View() CallSiteView { return CallSiteView{site: c} }
+
 // NewCallSite creates a call-site evidence fact.
 func NewCallSite(config CallSiteConfig) CallSite {
 	return CallSite{
@@ -189,6 +195,45 @@ func (v CallSiteView) CalleePathKey() path.PathKey { return v.site.calleePath.Ke
 
 // CalleePathEqual reports whether p matches the callee path.
 func (v CallSiteView) CalleePathEqual(p path.Path) bool { return v.site.calleePath.Equal(p) }
+
+// ReceiverPath returns the receiver path identity, if one was resolved.
+func (v CallSiteView) ReceiverPath() (path.Path, bool) {
+	return copyPath(v.site.receiverPath), v.site.hasReceiverPath
+}
+
+// MethodPath returns the receiver-method path identity, if one was resolved.
+func (v CallSiteView) MethodPath() (path.Path, bool) {
+	return copyPath(v.site.methodPath), v.site.hasMethodPath
+}
+
+// MethodName returns the method name carried by receiver-call syntax.
+func (v CallSiteView) MethodName() string { return v.site.methodName }
+
+// Expr returns the call expression reference, if present.
+func (v CallSiteView) Expr() (ExprRef, bool) { return v.site.exprRef, v.site.hasExpr }
+
+// ExprIndex returns the expression's index in its containing value list.
+func (v CallSiteView) ExprIndex() int { return v.site.exprIndex }
+
+// ArgumentSources returns the ordered argument value sources.
+func (v CallSiteView) ArgumentSources() []ValueSource {
+	return copyValueSources(v.site.argumentSources)
+}
+
+// TypeArgs returns the ordered explicit type argument identities.
+func (v CallSiteView) TypeArgs() []TypeRef { return copyTypeRefs(v.site.typeArgs) }
+
+// Final reports whether this call is the final value-list expression.
+func (v CallSiteView) Final() bool { return v.site.final }
+
+// Expanded reports whether this call contributes multiple result slots.
+func (v CallSiteView) Expanded() bool { return v.site.expanded }
+
+// Adjusted reports whether this call is adjusted to one result.
+func (v CallSiteView) Adjusted() bool { return v.site.adjusted }
+
+// OpenTail reports whether this call is an open tail return.
+func (v CallSiteView) OpenTail() bool { return v.site.openTail }
 
 // ResultTargetCount returns the number of result targets.
 func (v CallSiteView) ResultTargetCount() int { return len(v.site.resultTargets) }

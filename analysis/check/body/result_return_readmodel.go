@@ -77,7 +77,7 @@ func (r *Result) openTailReturnPresenceRelations(point cfg.Point) []factflow.Ret
 	if graph != nil {
 		ctx.Node = graph.Node(source.CallPoint)
 	}
-	outcome := r.callOutcome(ctx, site, in, r.boundaryRead)
+	outcome := r.callOutcome(ctx, site.View(), in, r.boundaryRead)
 	if len(outcome.ReturnPresenceRelations) == 0 {
 		return nil
 	}

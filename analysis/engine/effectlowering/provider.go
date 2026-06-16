@@ -3,7 +3,6 @@
 package effectlowering
 
 import (
-	"github.com/wippyai/go-lua/analysis/module/signature"
 	"github.com/wippyai/go-lua/analysis/engine/calloutcome"
 	"github.com/wippyai/go-lua/analysis/engine/callproducer"
 	factapply "github.com/wippyai/go-lua/analysis/engine/factapply"
@@ -12,6 +11,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
+	"github.com/wippyai/go-lua/analysis/module/signature"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
@@ -49,11 +49,11 @@ func SignatureOutcomeProvider(config SignatureOutcomeProviderConfig) factapply.C
 	sources := config.Sources
 	argumentType := config.ArgumentType
 	expressionRefinements := facts.ExpressionRefinements()
-	return func(ctx transfer.NodeContext, site factflow.CallSite, in state.State, read func(cfg.Point) state.State) factapply.CallOutcome {
+	return func(ctx transfer.NodeContext, site factflow.CallSiteView, in state.State, read func(cfg.Point) state.State) factapply.CallOutcome {
 		if signatures == nil || nameFor == nil {
 			return factapply.CallOutcome{}
 		}
-		call := callproducer.FromSite(site)
+		call := callproducer.FromView(site)
 		name, ok := nameFor(ctx, call)
 		if !ok {
 			return factapply.CallOutcome{}
@@ -62,13 +62,14 @@ func SignatureOutcomeProvider(config SignatureOutcomeProviderConfig) factapply.C
 		if !ok {
 			return factapply.CallOutcome{}
 		}
-		sig = instantiateSignatureForCall(ctx, facts, sources, expressionRefinements, argumentType, sig, site, in, read, returnTypeOps)
+		ownedSite := site.CallSite()
+		sig = instantiateSignatureForCall(ctx, facts, sources, expressionRefinements, argumentType, sig, ownedSite, in, read, returnTypeOps)
 		out := factapply.CallOutcome{
 			ReturnPresenceRelations: signatureReturnPresenceRelations(sig),
-			ParamPathRefinements:    signatureParamPathRefinements(ctx, sig, site),
-			ParamPathInvalidations:  signatureParamPathInvalidations(sig, site),
+			ParamPathRefinements:    signatureParamPathRefinements(ctx, sig, ownedSite),
+			ParamPathInvalidations:  signatureParamPathInvalidations(sig, ownedSite),
 		}
-		out.NormalReturnFacts.EscapeEvents = signatureEscapeEvents(sig, site)
+		out.NormalReturnFacts.EscapeEvents = signatureEscapeEvents(sig, ownedSite)
 		if sig.Type == nil || len(sig.Type.Returns) == 0 {
 			out.PostReturnAuthority = calloutcome.HasPostReturnEvidence(ctx.Registry, out)
 			return out

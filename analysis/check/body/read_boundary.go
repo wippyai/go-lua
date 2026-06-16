@@ -215,7 +215,7 @@ func (r *Result) CallOutcomeAt(point cfg.Point) (factapply.CallOutcome, bool) {
 	if graph != nil {
 		ctx.Node = graph.Node(point)
 	}
-	return r.callOutcome(ctx, site, in, r.boundaryRead), true
+	return r.callOutcome(ctx, site.View(), in, r.boundaryRead), true
 }
 
 // CallExprResultValue resolves the product value of result slot resultIndex

@@ -126,7 +126,7 @@ func TestBoundaryReadsUseMaterializedNodeOutputs(t *testing.T) {
 	result, err := CheckChunk(stmts, Config{
 		Registry: reg,
 		Globals:  []string{"f"},
-		CallOutcome: func(ctx transfer.NodeContext, site factflow.CallSite, in state.State, read func(cfg.Point) state.State) factapply.CallOutcome {
+		CallOutcome: func(ctx transfer.NodeContext, site factflow.CallSiteView, in state.State, read func(cfg.Point) state.State) factapply.CallOutcome {
 			callOutcomeCalls++
 			return factapply.CallOutcome{Results: []factapply.CallResult{{
 				Index: 0,

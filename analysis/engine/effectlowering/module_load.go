@@ -39,11 +39,11 @@ func ModuleLoadOutcomeProvider(config ModuleLoadOutcomeProviderConfig) factapply
 	nameFor := config.NameFor
 	sources := config.Sources
 	expressionRefinements := config.ExpressionRefinements
-	return func(ctx transfer.NodeContext, site factflow.CallSite, in state.State, read func(cfg.Point) state.State) factapply.CallOutcome {
+	return func(ctx transfer.NodeContext, site factflow.CallSiteView, in state.State, read func(cfg.Point) state.State) factapply.CallOutcome {
 		if exports == nil || nameFor == nil || sources == nil {
 			return factapply.CallOutcome{}
 		}
-		name, ok := nameFor(ctx, callproducer.FromSite(site))
+		name, ok := nameFor(ctx, callproducer.FromView(site))
 		if !ok || name != "require" {
 			return factapply.CallOutcome{}
 		}

@@ -28,7 +28,7 @@ type State struct {
 
 	dynamicIndex      map[dynamicindex.Key]dynamicindex.Fact
 	heapTableIdentity map[identity.ID]heapidentity.TableObject
-	effectDeltas      map[effectdelta.Key]effectdelta.Value
+	effectDeltas      effectDeltaLane
 	channelSelect     channelselectfact.Lane
 	placement         placementLane
 	lenFloors         lift.MustMapLane[pathdom.PathKey, lenbound.Floor]
@@ -38,7 +38,6 @@ type State struct {
 
 	dynamicIndexTop      bool
 	heapTableIdentityTop bool
-	effectDeltasTop      bool
 }
 
 // TODO(perf): replace the remaining raw map fields with immutable lane handles
@@ -160,7 +159,7 @@ func Domain(reg *axis.Registry) lattice.Lattice[State] {
 				pathEvidence:         ops.pathEvidence.Top(),
 				dynamicIndexTop:      true,
 				heapTableIdentityTop: true,
-				effectDeltasTop:      true,
+				effectDeltas:         effectDeltaLane{top: true},
 				placement:            placementLane{top: true},
 				lenFloors:            ops.lenFloors.Top(),
 				numFloors:            ops.numFloors.Top(),
@@ -251,10 +250,7 @@ func (o domainOps) heapTableIdentityLane(s State) map[identity.ID]heapidentity.T
 }
 
 func (o domainOps) effectDeltaLane(s State) map[effectdelta.Key]effectdelta.Value {
-	if s.effectDeltasTop {
-		return o.effectDeltas.Top()
-	}
-	return s.effectDeltas
+	return s.effectDeltas.asMap(o.effectDeltas)
 }
 
 func (o domainOps) placementLane(s State) map[identity.ID]placement.Value {
@@ -289,11 +285,7 @@ func (o domainOps) fromLanes(
 	} else {
 		out.heapTableIdentity = heapTableIdentity
 	}
-	if o.effectDeltas.Equal(effectDeltas, o.effectDeltas.Top()) {
-		out.effectDeltasTop = true
-	} else {
-		out.effectDeltas = effectDeltas
-	}
+	out.effectDeltas = effectDeltaLaneFromMap(o.effectDeltas, effectDeltas)
 	out.channelSelect = channelSelect
 	out.placement = placementLaneFromMap(o.placement, placementLane)
 	out.lenFloors = lenFloors

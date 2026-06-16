@@ -40,8 +40,7 @@ func applyCallOutcomePresenceRelationPublishes(
 		if !callOutcomePresenceRelationCanPublishAt(ctx.Graph, facts, cache, callPoint, siteView, ctx.Point) {
 			continue
 		}
-		site := siteView.CallSite()
-		outcome := outcomeProvider(callContextAt(ctx, callPoint, read), site, out, read)
+		outcome := outcomeProvider(callContextAt(ctx, callPoint, read), siteView, out, read)
 		for _, relation := range outcome.ReturnPresenceRelations {
 			out = publishCallReturnPresenceImplication(ctx, facts, cache, resolver, callPoint, siteView, relation, out)
 		}

@@ -110,16 +110,15 @@ func applyCallOutcomeEdgeFacts(
 		if !ok {
 			continue
 		}
-		site := siteView.CallSite()
 		outcome := outcomeProvider(transfer.NodeContext{
 			Graph:    ctx.Graph,
 			Registry: ctx.Registry,
 			Point:    callPoint,
 			Node:     ctx.Graph.Node(callPoint),
 			Read:     emptyStateRead,
-		}, site, out, emptyStateRead)
+		}, siteView, out, emptyStateRead)
 		if len(outcome.ReturnConditionRefinements) != 0 {
-			out = applyCallReturnConditionRefinements(ctx, facts, resolver, projectPath, callPoint, site, outcome, out)
+			out = applyCallReturnConditionRefinements(ctx, facts, resolver, projectPath, callPoint, siteView, outcome, out)
 		}
 		if len(outcome.ReturnPresenceRelations) != 0 {
 			out = applyCallReturnPresenceRelations(ctx, facts, cache, resolver, projectPath, branchRefinements, callPoint, siteView, outcome, out)
@@ -134,7 +133,7 @@ func applyCallReturnConditionRefinements(
 	resolver *visibility.Resolver,
 	projectPath PathTypeProjector,
 	callPoint cfg.Point,
-	site factflow.CallSite,
+	site factflow.CallSiteView,
 	outcome CallOutcome,
 	out state.State,
 ) state.State {
