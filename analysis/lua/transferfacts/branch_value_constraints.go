@@ -91,5 +91,5 @@ func (l *lowerer) runtimeKindConstraint(value runtimekind.Value) product.Value {
 
 func (l *lowerer) boolLiteralRefinement(value bool) factflow.ValueRefinement {
 	lit := typ.LiteralBool(value)
-	return factflow.NewValueConstraint(typevalue.WithWitness(l.registry, typevalue.FromType(l.registry, lit), lit))
+	return factflow.NewValueConstraint(l.valueFromTypeWithWitness(lit))
 }

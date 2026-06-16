@@ -43,13 +43,15 @@ func (s State) WriteNumFloor(pathKey pathdom.PathKey, lo int64) State {
 	if pathKey == "" {
 		return s
 	}
+	if !s.numFloors.Bottom() {
+		if existing, ok := s.numFloors.Values()[pathKey]; ok && existing.Lo >= lo {
+			return s
+		}
+	}
 	out := s.reachable()
 	floors := cloneNumFloors(out.numFloors.Values())
 	if floors == nil {
 		floors = make(map[pathdom.PathKey]numbound.Floor, 1)
-	}
-	if existing, ok := floors[pathKey]; ok && existing.Lo >= lo {
-		return s
 	}
 	floors[pathKey] = numbound.Floor{Lo: lo}
 	out.numFloors = lift.MustMapValues(floors)

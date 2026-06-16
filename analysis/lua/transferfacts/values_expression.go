@@ -7,7 +7,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
-	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/lua/branchcond"
@@ -189,18 +188,17 @@ func (l *lowerer) addExpressionFunction(ref factflow.ExprRef, expr ast.Expr) {
 
 func (l *lowerer) expressionValue(expr ast.Expr) (product.Value, bool) {
 	if _, ok := sourceprovenance.ProofInner(expr); !ok {
-		value := typevalue.FromType(l.registry, typ.Any)
+		value := l.valueFromType(typ.Any)
 		return product.Set(l.registry, value, assertion.Key, assertion.Any()), true
 	}
 	if t, ok := valueexpr.LiteralType(expr); ok {
-		value := typevalue.FromType(l.registry, t)
-		return typevalue.WithWitness(l.registry, value, t), true
+		return l.valueFromTypeWithWitness(t), true
 	}
 	if fn, ok := expr.(*ast.FunctionExpr); ok {
 		value := product.NewWithPresence(l.registry, product.ShapeTop, presence.Present())
 		value = product.Set(l.registry, value, runtimekind.Key, runtimekind.Singleton(runtimekind.Function))
 		if t, ok := l.functionExpressionType(fn); ok {
-			value = typevalue.WithWitness(l.registry, typevalue.FromType(l.registry, t), t)
+			value = l.valueFromTypeWithWitness(t)
 		}
 		if id, ok := l.functionIdentity(fn); ok {
 			value = product.Set(l.registry, value, identity.Key, identity.Singleton(id))
@@ -214,16 +212,14 @@ func (l *lowerer) expressionValue(expr ast.Expr) (product.Value, bool) {
 	}
 	if ident, ok := expr.(*ast.IdentExpr); ok {
 		if t, ok := l.identType(ident); ok {
-			value := typevalue.FromType(l.registry, t)
-			return typevalue.WithWitness(l.registry, value, t), true
+			return l.valueFromTypeWithWitness(t), true
 		}
 	}
 	if t, ok := l.indexExpressionType(expr); ok {
-		value := typevalue.FromType(l.registry, t)
-		return typevalue.WithWitness(l.registry, value, t), true
+		return l.valueFromTypeWithWitness(t), true
 	}
 	if t, ok := l.scalarOperationType(expr); ok {
-		return typevalue.FromType(l.registry, t), true
+		return l.valueFromType(t), true
 	}
 	return product.Value{}, false
 }

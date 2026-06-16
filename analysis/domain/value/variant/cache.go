@@ -3,6 +3,8 @@ package variant
 import (
 	"strconv"
 
+	"github.com/wippyai/go-lua/analysis/domain/path/segment"
+	"github.com/wippyai/go-lua/analysis/domain/value/variant/internal/discriminant"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
@@ -13,9 +15,11 @@ import (
 // the expensive "does this type form a variant family?" proof for the same
 // immutable type node inside a check run.
 type Cache struct {
-	origins map[typ.Type]originCacheEntry
-	narrows map[narrowCacheKey]typeCacheEntry
-	types   map[originTypeCacheKey]typeCacheEntry
+	detector     *discriminant.Detector
+	origins      map[typ.Type]originCacheEntry
+	pathLiterals map[pathLiteralCacheKey]originEvidenceCacheEntry
+	narrows      map[narrowCacheKey]typeCacheEntry
+	types        map[originTypeCacheKey]typeCacheEntry
 }
 
 type originCacheEntry struct {
@@ -23,9 +27,28 @@ type originCacheEntry struct {
 	ok     bool
 }
 
+type originEvidenceCacheEntry struct {
+	family uint64
+	cases  []int
+	ok     bool
+}
+
 type typeCacheEntry struct {
 	t  typ.Type
 	ok bool
+}
+
+type pathLiteralCacheKey struct {
+	t      typ.Type
+	suffix originPathKey
+	lit    typ.Type
+	negate bool
+}
+
+type originPathKey struct {
+	count    int
+	segments [4]segment.Segment
+	overflow string
 }
 
 type narrowCacheKey struct {
@@ -46,7 +69,7 @@ type originCasesKey struct {
 }
 
 func NewCache() *Cache {
-	return &Cache{}
+	return &Cache{detector: discriminant.NewDetector()}
 }
 
 func (c *Cache) OriginOfType(t typ.Type) (uint64, []int, bool) {
@@ -69,12 +92,69 @@ func (c *Cache) originFamilyOf(t typ.Type) (originFamily, bool) {
 			return cached.family, cached.ok
 		}
 	}
-	family, ok := originFamilyOf(t)
+	family, ok := originFamilyOfWithDetector(t, c.discriminantDetector())
 	if c.origins == nil {
 		c.origins = make(map[typ.Type]originCacheEntry)
 	}
 	c.origins[t] = originCacheEntry{family: family, ok: ok}
 	return family, ok
+}
+
+func (c *Cache) discriminantDetector() *discriminant.Detector {
+	if c.detector == nil {
+		c.detector = discriminant.NewDetector()
+	}
+	return c.detector
+}
+
+func (c *Cache) OriginByPathLiteral(t typ.Type, suffix []segment.Segment, lit typ.Type) (uint64, []int, bool) {
+	if c == nil {
+		return OriginByPathLiteral(t, suffix, lit)
+	}
+	return c.originByPathLiteral(t, suffix, lit, false)
+}
+
+func (c *Cache) OriginByPathLiteralNot(t typ.Type, suffix []segment.Segment, lit typ.Type) (uint64, []int, bool) {
+	if c == nil {
+		return OriginByPathLiteralNot(t, suffix, lit)
+	}
+	return c.originByPathLiteral(t, suffix, lit, true)
+}
+
+func (c *Cache) originByPathLiteral(t typ.Type, suffix []segment.Segment, lit typ.Type, negate bool) (uint64, []int, bool) {
+	key := pathLiteralCacheKey{
+		t:      t,
+		suffix: originPathLiteralKey(suffix),
+		lit:    lit,
+		negate: negate,
+	}
+	if c.pathLiterals != nil {
+		if cached, ok := c.pathLiterals[key]; ok {
+			return cached.family, append([]int(nil), cached.cases...), cached.ok
+		}
+	}
+	family, cases, ok := originByPathLiteralWithCache(c, t, suffix, lit, negate)
+	if c.pathLiterals == nil {
+		c.pathLiterals = make(map[pathLiteralCacheKey]originEvidenceCacheEntry)
+	}
+	c.pathLiterals[key] = originEvidenceCacheEntry{
+		family: family,
+		cases:  append([]int(nil), cases...),
+		ok:     ok,
+	}
+	return family, cases, ok
+}
+
+func originPathLiteralKey(suffix []segment.Segment) originPathKey {
+	if len(suffix) == 0 {
+		return originPathKey{}
+	}
+	key := originPathKey{count: len(suffix)}
+	copy(key.segments[:], suffix)
+	if len(suffix) > len(key.segments) {
+		key.overflow = segment.FormatSegments(suffix)
+	}
+	return key
 }
 
 func (c *Cache) NarrowByOrigin(t typ.Type, familyID uint64, cases []int) (typ.Type, bool) {

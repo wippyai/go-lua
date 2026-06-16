@@ -31,6 +31,9 @@ func (s State) WriteEffectDelta(key effectdelta.Key, delta effectdelta.Value) St
 		out.effectDeltas = deltas
 		return out
 	}
+	if existing, ok := s.effectDeltas[key]; ok && existing == delta {
+		return s
+	}
 	deltas := effectdelta.CloneMap(s.effectDeltas)
 	if deltas == nil {
 		deltas = make(map[effectdelta.Key]effectdelta.Value, 1)

@@ -37,14 +37,13 @@ func applyCallOutcomePresenceRelationPublishes(
 		if !ok {
 			continue
 		}
-		targets := cache.resultTargets(callPoint, siteView)
-		if !callOutcomePresenceRelationCanPublishAt(ctx.Graph, facts, cache, callPoint, targets, ctx.Point) {
+		if !callOutcomePresenceRelationCanPublishAt(ctx.Graph, facts, cache, callPoint, siteView, ctx.Point) {
 			continue
 		}
 		site := siteView.CallSite()
 		outcome := outcomeProvider(callContextAt(ctx, callPoint, read), site, out, read)
 		for _, relation := range outcome.ReturnPresenceRelations {
-			out = publishCallReturnPresenceImplication(ctx, facts, cache, resolver, callPoint, targets, relation, out)
+			out = publishCallReturnPresenceImplication(ctx, facts, cache, resolver, callPoint, siteView, relation, out)
 		}
 	}
 	return out
@@ -55,7 +54,7 @@ func callOutcomePresenceRelationCanPublishAt(
 	facts factflow.Facts,
 	cache *callOutcomeTraversalCache,
 	callPoint cfg.Point,
-	targets []factflow.CallResultTargetView,
+	site factflow.CallSiteView,
 	point cfg.Point,
 ) bool {
 	if graph == nil {
@@ -65,31 +64,35 @@ func callOutcomePresenceRelationCanPublishAt(
 	if !ok || !callOutcomeAssignmentConsumesCall(assignment, callPoint) {
 		return false
 	}
-	if len(targets) == 0 {
+	if site.ResultTargetCount() == 0 {
 		return false
 	}
-	for _, triggerTarget := range targets {
+	canPublish := false
+	site.ForEachResultTarget(func(triggerTarget factflow.CallResultTargetView) bool {
 		if !callOutcomeRelatableTarget(triggerTarget) {
-			continue
+			return true
 		}
 		triggerAssign, ok := callOutcomeResultAssignmentPoint(cache, graph, facts, callPoint, triggerTarget, triggerTarget.ResultIndex())
 		if !ok {
-			continue
+			return true
 		}
-		for _, target := range targets {
+		site.ForEachResultTarget(func(target factflow.CallResultTargetView) bool {
 			if !callOutcomeRelatableTarget(target) {
-				continue
+				return true
 			}
 			targetAssign, ok := callOutcomeResultAssignmentPoint(cache, graph, facts, callPoint, target, target.ResultIndex())
 			if !ok {
-				continue
-			}
-			if callOutcomeLaterPoint(cache, graph, targetAssign, triggerAssign) == point {
 				return true
 			}
-		}
-	}
-	return false
+			if callOutcomeLaterPoint(cache, graph, targetAssign, triggerAssign) == point {
+				canPublish = true
+				return false
+			}
+			return true
+		})
+		return !canPublish
+	})
+	return canPublish
 }
 
 func callOutcomeAssignmentConsumesCall(assignment factflow.RootAssignment, callPoint cfg.Point) bool {
@@ -103,15 +106,15 @@ func publishCallReturnPresenceImplication(
 	cache *callOutcomeTraversalCache,
 	resolver *visibility.Resolver,
 	callPoint cfg.Point,
-	targets []factflow.CallResultTargetView,
+	site factflow.CallSiteView,
 	relation CallReturnPresenceRelation,
 	out state.State,
 ) state.State {
-	triggerTarget, ok := callOutcomeTargetForResult(targets, relation.TriggerIndex)
+	triggerTarget, ok := callOutcomeTargetForResult(site, relation.TriggerIndex)
 	if !ok || !callOutcomeRelatableTarget(triggerTarget) {
 		return out
 	}
-	target, ok := callOutcomeTargetForResult(targets, relation.TargetIndex)
+	target, ok := callOutcomeTargetForResult(site, relation.TargetIndex)
 	if !ok || !callOutcomeRelatableTarget(target) {
 		return out
 	}

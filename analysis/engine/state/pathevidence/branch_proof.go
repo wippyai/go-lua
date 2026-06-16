@@ -29,6 +29,11 @@ func (l Lane) AddBranchProof(proof BranchProof) (Lane, bool) {
 	if proof.Kind == 0 {
 		return l, false
 	}
+	if !l.proofsBottom {
+		if _, ok := l.proofs[proof]; ok {
+			return l, false
+		}
+	}
 	proofs := cloneBranchProofSet(l.proofs)
 	if proofs == nil {
 		proofs = make(map[BranchProof]struct{}, 1)

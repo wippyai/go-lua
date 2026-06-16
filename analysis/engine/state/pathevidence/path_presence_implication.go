@@ -21,6 +21,11 @@ func (l Lane) AddPathPresenceImplication(implication PathPresenceImplication) (L
 	if !validPathPresenceImplication(implication) {
 		return l, false
 	}
+	if !l.pathPresenceImplicationsBottom {
+		if _, ok := l.pathPresenceImplications[implication]; ok {
+			return l, false
+		}
+	}
 	implications := clonePathPresenceImplicationSet(l.pathPresenceImplications)
 	if implications == nil {
 		implications = make(map[PathPresenceImplication]struct{}, 1)

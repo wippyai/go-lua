@@ -45,10 +45,20 @@ func ProjectOrigin(familyID uint64, cases []int, suffix []segment.Segment) (uint
 }
 
 func originByPathLiteral(t typ.Type, suffix []segment.Segment, lit typ.Type, negate bool) (uint64, []int, bool) {
+	return originByPathLiteralWithCache(nil, t, suffix, lit, negate)
+}
+
+func originByPathLiteralWithCache(cache *Cache, t typ.Type, suffix []segment.Segment, lit typ.Type, negate bool) (uint64, []int, bool) {
 	if t == nil || len(suffix) == 0 || lit == nil {
 		return 0, nil, false
 	}
-	family, ok := originFamilyOf(t)
+	var family originFamily
+	var ok bool
+	if cache != nil {
+		family, ok = cache.originFamilyOf(t)
+	} else {
+		family, ok = originFamilyOf(t)
+	}
 	if !ok {
 		return 0, nil, false
 	}

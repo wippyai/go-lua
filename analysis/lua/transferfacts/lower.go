@@ -5,6 +5,7 @@ import (
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
@@ -23,6 +24,7 @@ type Config struct {
 	Registry     *axis.Registry
 	Bindings     *bind.Result
 	TypeResolver *typeresolve.Resolver
+	TypeValues   *typevalue.Cache
 }
 
 func Lower(result *semantics.Result, graph cfg.Graph, config Config) factflow.Facts {
@@ -40,6 +42,7 @@ func Lower(result *semantics.Result, graph cfg.Graph, config Config) factflow.Fa
 		registry:             config.Registry,
 		bindings:             config.Bindings,
 		typeResolver:         typeResolver,
+		typeValues:           config.TypeValues,
 		callPoints:           callPointsByExpr(builtCallFacts(graph, result)),
 		symbolTypes:          lowerSymbolTypes(config.Bindings, graph, result, typeResolver),
 		exprs:                make(map[any]factflow.ExprRef),
@@ -164,6 +167,7 @@ type lowerer struct {
 	registry             *axis.Registry
 	bindings             *bind.Result
 	typeResolver         *typeresolve.Resolver
+	typeValues           *typevalue.Cache
 	callPoints           map[*ast.FuncCallExpr]cfg.Point
 	symbolTypes          map[symbol.ID]typ.Type
 	exprs                map[any]factflow.ExprRef
@@ -173,6 +177,14 @@ type lowerer struct {
 	expressionFunctions  map[factflow.ExprRef]symbol.ID
 	expressionPaths      map[factflow.ExprRef]pathdom.Path
 	expressionConditions map[factflow.ExprRef]factflow.ExpressionCondition
+}
+
+func (l *lowerer) valueFromType(t typ.Type) product.Value {
+	return l.typeValues.FromType(l.registry, t)
+}
+
+func (l *lowerer) valueFromTypeWithWitness(t typ.Type) product.Value {
+	return l.typeValues.FromTypeWithWitness(l.registry, t)
 }
 
 func callPointsByExpr(facts map[*ast.FuncCallExpr]cfg.Point) map[*ast.FuncCallExpr]cfg.Point {

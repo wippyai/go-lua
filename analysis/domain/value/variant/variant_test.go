@@ -157,6 +157,31 @@ func TestCacheMatchesOriginNarrowAndReconstruct(t *testing.T) {
 	}
 }
 
+func TestCacheOriginByPathLiteralReturnsCopiedCases(t *testing.T) {
+	dog := typetable.NewRecord().
+		Field("kind", typ.LiteralString("dog")).
+		Field("bark", typ.Func().Returns().Build()).
+		Build()
+	cat := typetable.NewRecord().
+		Field("kind", typ.LiteralString("cat")).
+		Field("meow", typ.Func().Returns().Build()).
+		Build()
+	union := typeexpr.Union(dog, cat)
+	kindPath := []segment.Segment{{Kind: segment.SegmentField, Name: "kind"}}
+	cache := NewCache()
+
+	family, cases, ok := cache.OriginByPathLiteral(union, kindPath, typ.LiteralString("dog"))
+	if !ok || len(cases) != 1 {
+		t.Fatalf("cached path origin = %d/%v/%v, want one dog case", family, cases, ok)
+	}
+	cases[0] = 999
+
+	againFamily, againCases, ok := cache.OriginByPathLiteral(union, kindPath, typ.LiteralString("dog"))
+	if !ok || againFamily != family || len(againCases) != 1 || againCases[0] == 999 {
+		t.Fatalf("cached path origin after mutation = %d/%v/%v, want unmutated cached cases for family %d", againFamily, againCases, ok, family)
+	}
+}
+
 func TestNarrowByPathLiteralReturnsNeverForImpossibleSingleVariant(t *testing.T) {
 	dog := typetable.NewRecord().
 		Field("kind", typ.LiteralString("dog")).

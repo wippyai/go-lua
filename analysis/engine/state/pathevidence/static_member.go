@@ -20,6 +20,11 @@ func (l Lane) WritePathStaticMember(pathKey pathdom.PathKey, value product.Value
 	if pathKey == "" {
 		return l, false
 	}
+	if !l.staticMembersBottom {
+		if existing, ok := l.staticMembers[pathKey]; ok && existing == value {
+			return l, false
+		}
+	}
 	members := clonePathValueMap(l.staticMembers)
 	if members == nil {
 		members = make(map[pathdom.PathKey]product.Value, 1)

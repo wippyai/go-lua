@@ -3,7 +3,6 @@ package transferfacts
 import (
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
-	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	luatypeprojection "github.com/wippyai/go-lua/analysis/lua/typeprojection"
 	"github.com/wippyai/go-lua/analysis/type/kind"
@@ -26,7 +25,7 @@ func (l *lowerer) rootPresenceRefinement(target path.Path, cond bool) (factflow.
 	}
 	root := target
 	root.Segments = nil
-	value := factflow.NewValueConstraint(typevalue.FromType(l.registry, narrowed))
+	value := factflow.NewValueConstraint(l.valueFromType(narrowed))
 	if cond {
 		return factflow.NewBranchRefinement(root, value, true, factflow.ValueRefinement{}, false), true
 	}

@@ -103,6 +103,9 @@ func (s State) WriteValue(reg *axis.Registry, slot key.Value, value product.Valu
 		out.values = values
 		return out
 	}
+	if existing, ok := s.values[slot]; ok && valueDomain.Equal(existing, value) {
+		return s
+	}
 	values := cloneValueMap(s.values)
 	if values == nil {
 		values = make(map[key.Value]product.Value, 1)

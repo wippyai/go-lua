@@ -36,6 +36,9 @@ func (s State) WriteHeapTableObject(reg *axis.Registry, id identity.ID, object h
 		out.heapTableIdentity = objects
 		return out
 	}
+	if existing, ok := s.heapTableIdentity[id]; ok && domain.Equal(existing, object) {
+		return s
+	}
 	objects := heapidentity.CloneMap(s.heapTableIdentity)
 	if objects == nil {
 		objects = make(map[identity.ID]heapidentity.TableObject, 1)

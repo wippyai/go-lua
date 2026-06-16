@@ -76,6 +76,7 @@ func (c *checker) prepare(bindings *bind.Result, built *cfgbuild.Result, sem *se
 		Registry:     config.Registry,
 		Bindings:     bindings,
 		TypeResolver: typeResolver,
+		TypeValues:   config.TypeValues,
 	})
 	signatureID := newSignatureIdentityResolver(bindings, built.Graph, modules)
 	signatureNameForCall := signatureID.nameForCall

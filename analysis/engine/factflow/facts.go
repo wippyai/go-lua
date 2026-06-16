@@ -325,6 +325,12 @@ func (f Facts) CallSite(point cfg.Point) (CallSite, bool) {
 	return fact.copy(), true
 }
 
+// HasCallSites reports whether this immutable facts snapshot contains any
+// call-site evidence.
+func (f Facts) HasCallSites() bool {
+	return len(f.callSites) != 0
+}
+
 // CallSiteView returns a read-only call-site view at point. The view never
 // exposes mutable internal slices or path segment storage.
 func (f Facts) CallSiteView(point cfg.Point) (CallSiteView, bool) {

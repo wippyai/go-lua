@@ -3,7 +3,6 @@ package transferfacts
 import (
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
-	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine/dynamicindex"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
@@ -227,6 +226,5 @@ func (l *lowerer) declaredValue(expr ast.TypeExpr) (product.Value, bool) {
 	if !ok {
 		return product.Value{}, false
 	}
-	value := typevalue.FromType(l.registry, t)
-	return typevalue.WithWitness(l.registry, value, t), true
+	return l.valueFromTypeWithWitness(t), true
 }

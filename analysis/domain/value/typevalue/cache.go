@@ -1,6 +1,7 @@
 package typevalue
 
 import (
+	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/variant"
@@ -91,4 +92,24 @@ func (c *Cache) TypeFromVariantOrigin(family uint64, cases []int) (typ.Type, boo
 		c.variants = variant.NewCache()
 	}
 	return c.variants.TypeFromOrigin(family, cases)
+}
+
+func (c *Cache) OriginByPathLiteral(t typ.Type, suffix []segment.Segment, lit typ.Type) (uint64, []int, bool) {
+	if c == nil {
+		return variant.OriginByPathLiteral(t, suffix, lit)
+	}
+	if c.variants == nil {
+		c.variants = variant.NewCache()
+	}
+	return c.variants.OriginByPathLiteral(t, suffix, lit)
+}
+
+func (c *Cache) OriginByPathLiteralNot(t typ.Type, suffix []segment.Segment, lit typ.Type) (uint64, []int, bool) {
+	if c == nil {
+		return variant.OriginByPathLiteralNot(t, suffix, lit)
+	}
+	if c.variants == nil {
+		c.variants = variant.NewCache()
+	}
+	return c.variants.OriginByPathLiteralNot(t, suffix, lit)
 }

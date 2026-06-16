@@ -27,13 +27,15 @@ func (s State) WriteLenFloor(pathKey pathdom.PathKey, lo int64) State {
 	if pathKey == "" || lo <= 0 {
 		return s
 	}
+	if !s.lenFloors.Bottom() {
+		if existing, ok := s.lenFloors.Values()[pathKey]; ok && existing.Lo >= lo {
+			return s
+		}
+	}
 	out := s.reachable()
 	floors := cloneFloors(out.lenFloors.Values())
 	if floors == nil {
 		floors = make(map[pathdom.PathKey]lenbound.Floor, 1)
-	}
-	if existing, ok := floors[pathKey]; ok && existing.Lo >= lo {
-		return s
 	}
 	floors[pathKey] = lenbound.Floor{Lo: lo}
 	out.lenFloors = lift.MustMapValues(floors)

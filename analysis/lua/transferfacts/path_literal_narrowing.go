@@ -5,7 +5,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/variantorigin"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
-	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/domain/value/variant"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/lua/branchcond"
@@ -114,7 +113,7 @@ func narrowAnchor(rootType typ.Type, target path.Path, lit typ.Type) (typ.Type, 
 // root by the value's runtime variant origin: the equal edge keeps the cases
 // whose discriminant admits lit, and the negated edge removes them.
 func (l *lowerer) descendantLiteralRefinement(target path.Path, kind branchcond.CheckKind, lit typ.Type) (factflow.BranchRefinement, bool) {
-	witness := typevalue.WithWitness(l.registry, typevalue.FromType(l.registry, lit), lit)
+	witness := l.valueFromTypeWithWitness(lit)
 	equalEdge := factflow.NewValueConstraint(witness)
 	notEqualEdge := factflow.NewNegatedLiteralConstraint(witness)
 	if kind == branchcond.CheckLiteralNot {
@@ -124,14 +123,14 @@ func (l *lowerer) descendantLiteralRefinement(target path.Path, kind branchcond.
 }
 
 func (l *lowerer) rootLiteralValueConstraint(anchorType typ.Type, narrowed typ.Type, rest []segment.Segment, lit typ.Type, negate bool) factflow.ValueRefinement {
-	value := typevalue.FromType(l.registry, narrowed)
+	value := l.valueFromType(narrowed)
 	var family uint64
 	var cases []int
 	var ok bool
 	if negate {
-		family, cases, ok = variant.OriginByPathLiteralNot(anchorType, rest, lit)
+		family, cases, ok = l.typeValues.OriginByPathLiteralNot(anchorType, rest, lit)
 	} else {
-		family, cases, ok = variant.OriginByPathLiteral(anchorType, rest, lit)
+		family, cases, ok = l.typeValues.OriginByPathLiteral(anchorType, rest, lit)
 	}
 	if ok {
 		value = product.Set(l.registry, value, variantorigin.Key, variantorigin.Of(family, cases))

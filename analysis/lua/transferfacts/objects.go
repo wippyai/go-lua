@@ -1,7 +1,6 @@
 package transferfacts
 
 import (
-	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
 	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
@@ -59,7 +58,7 @@ func (l *lowerer) addObjectLiteralExpectedType(input *factflow.FactsInput, fact 
 	if !ok {
 		return
 	}
-	value := typevalue.WithWitness(l.registry, typevalue.FromType(l.registry, declared), declared)
+	value := l.valueFromTypeWithWitness(declared)
 	input.ObjectLiterals[exprRef] = lit.WithExpected(value)
 }
 
@@ -93,7 +92,7 @@ func (l *lowerer) addOrdinaryObjectLiteralExpectedType(input *factflow.FactsInpu
 	if !ok {
 		return
 	}
-	value := typevalue.WithWitness(l.registry, typevalue.FromType(l.registry, declared), declared)
+	value := l.valueFromTypeWithWitness(declared)
 	input.ObjectLiterals[exprRef] = lit.WithExpected(value)
 }
 

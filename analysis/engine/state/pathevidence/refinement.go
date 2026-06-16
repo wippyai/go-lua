@@ -35,6 +35,11 @@ func (l Lane) WritePathKey(reg *axis.Registry, pathKey pathdom.PathKey, value pr
 		out.refinements = refinements
 		return out, true
 	}
+	if !l.refinementsBottom {
+		if existing, ok := l.refinements[pathKey]; ok && valueDomain.Equal(existing, value) {
+			return l, false
+		}
+	}
 	refinements := clonePathValueMap(l.refinements)
 	if refinements == nil {
 		refinements = make(map[pathdom.PathKey]product.Value, 1)

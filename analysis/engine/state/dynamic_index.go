@@ -35,6 +35,9 @@ func (s State) WriteDynamicIndexFact(reg *axis.Registry, key dynamicindex.Key, f
 		out.dynamicIndex = facts
 		return out
 	}
+	if existing, ok := s.dynamicIndex[key]; ok && domain.Equal(existing, fact) {
+		return s
+	}
 	facts := dynamicindex.CloneMap(s.dynamicIndex)
 	if facts == nil {
 		facts = make(map[dynamicindex.Key]dynamicindex.Fact, 1)

@@ -36,11 +36,10 @@ type callOutcomeActiveInKey struct {
 }
 
 type callOutcomeTraversalCache struct {
-	rpo                []cfg.Point
-	pointOrder         map[cfg.Point]int
-	targetsByCallPoint map[cfg.Point][]factflow.CallResultTargetView
-	assignmentPoints   map[callOutcomeAssignmentKey]cfg.Point
-	activeIn           map[callOutcomeActiveInKey]map[cfg.Point]bool
+	rpo              []cfg.Point
+	pointOrder       map[cfg.Point]int
+	assignmentPoints map[callOutcomeAssignmentKey]cfg.Point
+	activeIn         map[callOutcomeActiveInKey]map[cfg.Point]bool
 }
 
 func (c *callOutcomeTraversalCache) graphRPO(graph cfg.Graph) []cfg.Point {
@@ -67,37 +66,21 @@ func (c *callOutcomeTraversalCache) graphPointOrder(graph cfg.Graph) map[cfg.Poi
 	return c.pointOrder
 }
 
-func (c *callOutcomeTraversalCache) resultTargets(callPoint cfg.Point, site factflow.CallSiteView) []factflow.CallResultTargetView {
-	if c.targetsByCallPoint != nil {
-		if targets, ok := c.targetsByCallPoint[callPoint]; ok {
-			return targets
-		}
-	} else {
-		c.targetsByCallPoint = make(map[cfg.Point][]factflow.CallResultTargetView)
-	}
-	if site.ResultTargetCount() == 0 {
-		c.targetsByCallPoint[callPoint] = nil
-		return nil
-	}
-	targets := make([]factflow.CallResultTargetView, 0, site.ResultTargetCount())
-	site.ForEachResultTarget(func(target factflow.CallResultTargetView) bool {
-		targets = append(targets, target)
-		return true
-	})
-	c.targetsByCallPoint[callPoint] = targets
-	return targets
-}
-
-func callOutcomeTargetForResult(targets []factflow.CallResultTargetView, resultIndex int) (factflow.CallResultTargetView, bool) {
+func callOutcomeTargetForResult(site factflow.CallSiteView, resultIndex int) (factflow.CallResultTargetView, bool) {
 	if resultIndex < 0 {
 		return factflow.CallResultTargetView{}, false
 	}
-	for _, target := range targets {
+	var found factflow.CallResultTargetView
+	ok := false
+	site.ForEachResultTarget(func(target factflow.CallResultTargetView) bool {
 		if target.ResultIndex() == resultIndex {
-			return target, true
+			found = target
+			ok = true
+			return false
 		}
-	}
-	return factflow.CallResultTargetView{}, false
+		return true
+	})
+	return found, ok
 }
 
 func callOutcomeRelatableTarget(target factflow.CallResultTargetView) bool {
@@ -127,7 +110,6 @@ func applyCallOutcomeEdgeFacts(
 		if !ok {
 			continue
 		}
-		targets := cache.resultTargets(callPoint, siteView)
 		site := siteView.CallSite()
 		outcome := outcomeProvider(transfer.NodeContext{
 			Graph:    ctx.Graph,
@@ -140,7 +122,7 @@ func applyCallOutcomeEdgeFacts(
 			out = applyCallReturnConditionRefinements(ctx, facts, resolver, projectPath, callPoint, site, outcome, out)
 		}
 		if len(outcome.ReturnPresenceRelations) != 0 {
-			out = applyCallReturnPresenceRelations(ctx, facts, cache, resolver, projectPath, branchRefinements, callPoint, targets, outcome, out)
+			out = applyCallReturnPresenceRelations(ctx, facts, cache, resolver, projectPath, branchRefinements, callPoint, siteView, outcome, out)
 		}
 	}
 	return out
@@ -193,7 +175,7 @@ func applyCallReturnPresenceRelations(
 	projectPath PathTypeProjector,
 	branchRefinements []factflow.BranchRefinement,
 	callPoint cfg.Point,
-	targets []factflow.CallResultTargetView,
+	site factflow.CallSiteView,
 	outcome CallOutcome,
 	out state.State,
 ) state.State {
@@ -201,7 +183,7 @@ func applyCallReturnPresenceRelations(
 		return out
 	}
 	for _, relation := range outcome.ReturnPresenceRelations {
-		out = applyCallReturnPresenceRelation(ctx, facts, cache, resolver, projectPath, branchRefinements, callPoint, targets, relation, out)
+		out = applyCallReturnPresenceRelation(ctx, facts, cache, resolver, projectPath, branchRefinements, callPoint, site, relation, out)
 	}
 	return out
 }
@@ -214,15 +196,15 @@ func applyCallReturnPresenceRelation(
 	projectPath PathTypeProjector,
 	branchRefinements []factflow.BranchRefinement,
 	callPoint cfg.Point,
-	targets []factflow.CallResultTargetView,
+	site factflow.CallSiteView,
 	relation CallReturnPresenceRelation,
 	out state.State,
 ) state.State {
-	triggerTarget, ok := callOutcomeTargetForResult(targets, relation.TriggerIndex)
+	triggerTarget, ok := callOutcomeTargetForResult(site, relation.TriggerIndex)
 	if !ok || !callOutcomeRelatableTarget(triggerTarget) {
 		return out
 	}
-	target, ok := callOutcomeTargetForResult(targets, relation.TargetIndex)
+	target, ok := callOutcomeTargetForResult(site, relation.TargetIndex)
 	if !ok || !callOutcomeRelatableTarget(target) {
 		return out
 	}

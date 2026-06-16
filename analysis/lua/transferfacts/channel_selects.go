@@ -5,7 +5,6 @@ import (
 
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
-	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/channelruntime"
@@ -178,7 +177,7 @@ func (l *lowerer) channelSelectPayloadValue(channelPath pathdom.Path) (product.V
 	if !ok {
 		return product.Value{}, false
 	}
-	return typevalue.WithWitness(l.registry, typevalue.FromType(l.registry, payloadType), payloadType), true
+	return l.valueFromTypeWithWitness(payloadType), true
 }
 
 func (l *lowerer) channelSelectPathType(p pathdom.Path) (typ.Type, bool) {

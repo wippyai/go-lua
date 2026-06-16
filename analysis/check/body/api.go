@@ -95,6 +95,13 @@ type Static struct {
 	signatureReturnOps    effectlowering.ReturnTypeOps
 }
 
+// HasCallSites reports whether the prepared body contains any statically
+// extracted call-site facts. It is a static-shape query; it does not solve the
+// body.
+func (s *Static) HasCallSites() bool {
+	return s != nil && s.facts.HasCallSites()
+}
+
 // SolveConfig holds per-solve inputs for a prepared body. These fields may
 // close over caller summary readers or hold mutable caches, so they are never
 // retained by Static preparation.

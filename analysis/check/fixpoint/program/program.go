@@ -587,12 +587,14 @@ func collectCallContextKeys(keys *programKeys, stmts []ast.Stmt, bindings *bind.
 	keys.enclosed = enclosed
 	inferred := newParamInference(config.Registry, enclosed)
 	symbolByKey := keys.functionSymbolsByKey()
-	prepass, err := solvePreparedCounted(prepared.root, cloneCheckConfig(config), prepassCounter(stats))
-	if err != nil {
-		return nil, err
-	}
-	if err := collectCallContextKeysFromResult(keys, nil, prepass, config, inferred, symbolByKey); err != nil {
-		return nil, err
+	if prepared.root.HasCallSites() {
+		prepass, err := solvePreparedCounted(prepared.root, cloneCheckConfig(config), prepassCounter(stats))
+		if err != nil {
+			return nil, err
+		}
+		if err := collectCallContextKeysFromResult(keys, nil, prepass, config, inferred, symbolByKey); err != nil {
+			return nil, err
+		}
 	}
 	// A call whose context-sensitive caller state matters can live inside a
 	// nested function body (e.g. a field-defined wrapper that calls a captured
@@ -603,7 +605,11 @@ func collectCallContextKeys(keys *programKeys, stmts []ast.Stmt, bindings *bind.
 		if fn.funcExpr == nil {
 			continue
 		}
-		functionPrepass, err := solvePreparedCounted(prepared.function(fn.funcExpr), cloneCheckConfig(config), prepassCounter(stats))
+		static := prepared.function(fn.funcExpr)
+		if !static.HasCallSites() {
+			continue
+		}
+		functionPrepass, err := solvePreparedCounted(static, cloneCheckConfig(config), prepassCounter(stats))
 		if err != nil {
 			return nil, err
 		}

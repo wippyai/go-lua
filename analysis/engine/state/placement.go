@@ -34,6 +34,9 @@ func (s State) WritePlacement(id identity.ID, value placement.Value) State {
 		out.placement = placements
 		return out
 	}
+	if existing, ok := s.placement[id]; ok && placement.Equal(existing, value) {
+		return s
+	}
 	placements := clonePlacementMap(s.placement)
 	if placements == nil {
 		placements = make(map[identity.ID]placement.Value, 1)

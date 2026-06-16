@@ -100,6 +100,11 @@ func (l Lane) Add(fact Fact) Lane {
 	if fact.Select == "" {
 		return l
 	}
+	if !l.bottom {
+		if _, ok := l.facts[fact]; ok {
+			return l
+		}
+	}
 	facts := cloneSet(l.facts)
 	if facts == nil {
 		facts = make(map[Fact]struct{}, 1)

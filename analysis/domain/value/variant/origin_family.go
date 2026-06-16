@@ -12,33 +12,40 @@ import (
 )
 
 func originFamilyOf(t typ.Type) (originFamily, bool) {
+	return originFamilyOfWithDetector(t, discriminant.NewDetector())
+}
+
+func originFamilyOfWithDetector(t typ.Type, detector *discriminant.Detector) (originFamily, bool) {
+	if detector == nil {
+		detector = discriminant.NewDetector()
+	}
 	t = unwrap.Annotated(unwrap.NormalizeNil(t))
 	switch v := t.(type) {
 	case *typ.Alias:
-		return originFamilyOf(v.UnaliasedTarget())
+		return originFamilyOfWithDetector(v.UnaliasedTarget(), detector)
 	case *typ.Recursive:
 		if v.Body == nil || v.Body == t {
 			return originFamily{}, false
 		}
-		return originFamilyOf(v.Body)
+		return originFamilyOfWithDetector(v.Body, detector)
 	case *typ.Optional:
-		return originFamilyOf(v.Inner)
+		return originFamilyOfWithDetector(v.Inner, detector)
 	case *typ.Instantiated:
 		expanded, ok := subst.ExpandInstantiatedChanged(v)
 		if !ok {
 			return originFamily{}, false
 		}
-		return originFamilyOf(expanded)
+		return originFamilyOfWithDetector(expanded, detector)
 	case *typ.Union:
-		return closedRecordUnionFamily(v)
+		return closedRecordUnionFamily(v, detector)
 	case *typ.Record:
-		return taggedRecordFamily(v)
+		return taggedRecordFamily(v, detector)
 	default:
 		return originFamily{}, false
 	}
 }
 
-func closedRecordUnionFamily(u *typ.Union) (originFamily, bool) {
+func closedRecordUnionFamily(u *typ.Union, detector *discriminant.Detector) (originFamily, bool) {
 	if u == nil {
 		return originFamily{}, false
 	}
@@ -65,7 +72,6 @@ func closedRecordUnionFamily(u *typ.Union) (originFamily, bool) {
 		}
 		records = append(records, rec)
 	}
-	detector := discriminant.NewDetector()
 	if !detector.ClosedRecordSetConflicts(records) && !detector.ClosedRecordSetPresenceConflicts(records) {
 		return originFamily{}, false
 	}
@@ -83,11 +89,10 @@ func closedRecordUnionFamily(u *typ.Union) (originFamily, bool) {
 	return family, true
 }
 
-func taggedRecordFamily(r *typ.Record) (originFamily, bool) {
+func taggedRecordFamily(r *typ.Record, detector *discriminant.Detector) (originFamily, bool) {
 	if r == nil {
 		return originFamily{}, false
 	}
-	detector := discriminant.NewDetector()
 	var tags []struct {
 		path string
 		hash uint64

@@ -3,7 +3,6 @@ package transferfacts
 import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/assertion"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
-	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
 	"github.com/wippyai/go-lua/analysis/type/typ"
@@ -38,7 +37,7 @@ func (l *lowerer) addAssertion(input *factflow.FactsInput, outer sourceprovenanc
 
 func (l *lowerer) assertionRefinement(value assertion.Value) product.Value {
 	if value.Has(assertion.AnyClaim) {
-		return product.Set(l.registry, typevalue.FromType(l.registry, typ.Any), assertion.Key, value)
+		return product.Set(l.registry, l.valueFromType(typ.Any), assertion.Key, value)
 	}
 	return product.Set(l.registry, product.Top(), assertion.Key, value)
 }

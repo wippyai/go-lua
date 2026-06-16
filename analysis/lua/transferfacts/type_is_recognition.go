@@ -4,7 +4,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
-	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/branchcond"
@@ -184,7 +183,7 @@ func (l *lowerer) typeIsReturnPresenceRelations(sources []sourceprovenance.ASTSo
 }
 
 func (l *lowerer) typeWitnessValue(t typ.Type) product.Value {
-	return typevalue.WithWitness(l.registry, typevalue.FromType(l.registry, t), t)
+	return l.valueFromTypeWithWitness(t)
 }
 
 type typeIsTargets struct {

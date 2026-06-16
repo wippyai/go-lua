@@ -278,9 +278,9 @@ func narrowNestedUnionDescendant(
 		var family uint64
 		var cases []int
 		if negated {
-			family, cases, ok = variant.OriginByPathLiteralNot(unionType, rest, lit)
+			family, cases, ok = typeValues.OriginByPathLiteralNot(unionType, rest, lit)
 		} else {
-			family, cases, ok = variant.OriginByPathLiteral(unionType, rest, lit)
+			family, cases, ok = typeValues.OriginByPathLiteral(unionType, rest, lit)
 		}
 		if !ok {
 			continue
@@ -377,9 +377,9 @@ func narrowRootByPathLiteralMatch(
 	var cases []int
 	var ok bool
 	if negate {
-		family, cases, ok = variant.OriginByPathLiteralNot(rootType, targetPath.Segments, lit)
+		family, cases, ok = typeValues.OriginByPathLiteralNot(rootType, targetPath.Segments, lit)
 	} else {
-		family, cases, ok = variant.OriginByPathLiteral(rootType, targetPath.Segments, lit)
+		family, cases, ok = typeValues.OriginByPathLiteral(rootType, targetPath.Segments, lit)
 	}
 	if !ok {
 		return out, false
