@@ -46,7 +46,7 @@ func (r *Result) StateAt(point cfg.Point) (state.State, bool) {
 	if !ok {
 		return state.State{}, false
 	}
-	return st.Clone(), true
+	return st.Snapshot(), true
 }
 
 func (r *Result) solvedStateAt(point cfg.Point) (state.State, bool) {

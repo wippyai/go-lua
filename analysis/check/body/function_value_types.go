@@ -135,7 +135,7 @@ func cloneFunctionValueTypes(in FunctionValueTypes) FunctionValueTypes {
 			copied := make([]FunctionValueContext, len(contexts))
 			for i, ctx := range contexts {
 				copied[i] = FunctionValueContext{
-					Entry: ctx.Entry.Clone(),
+					Entry: ctx.Entry.Snapshot(),
 					Type:  ctx.Type,
 				}
 			}

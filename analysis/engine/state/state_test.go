@@ -13,7 +13,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/placement"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
-	"github.com/wippyai/go-lua/analysis/test/value/standard"
 	"github.com/wippyai/go-lua/analysis/engine/dynamicindex"
 	"github.com/wippyai/go-lua/analysis/engine/state/channelselectfact"
 	effectdelta "github.com/wippyai/go-lua/analysis/engine/state/effectdelta"
@@ -21,6 +20,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/state/pathevidence"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	latticelaws "github.com/wippyai/go-lua/analysis/test/laws/lattice"
+	"github.com/wippyai/go-lua/analysis/test/value/standard"
 )
 
 func TestBottomReadsProductBottom(t *testing.T) {
@@ -199,8 +199,8 @@ func TestDomainPointwiseOperations(t *testing.T) {
 	if stateDomain.Equal(a, b) {
 		t.Fatalf("states with different pointwise lanes compare equal")
 	}
-	if !stateDomain.Equal(a, a.Clone()) {
-		t.Fatalf("Clone should preserve state equality")
+	if !stateDomain.Equal(a, a.Snapshot()) {
+		t.Fatalf("Snapshot should preserve state equality")
 	}
 }
 
@@ -285,16 +285,16 @@ func TestStateCloneIndependenceAcrossLanes(t *testing.T) {
 		Path:  fx.pathKey,
 		Other: pathdom.PathKey("sym201@1.other"),
 	}
-	clone := original.Clone()
-	clone.values[fx.valueSlot] = fx.absent
+	clone := original.Snapshot()
+	clone = clone.WriteValue(reg, fx.valueSlot, fx.absent)
 	clone = clone.WritePathKey(reg, fx.pathKey, fx.absent)
 	clone = clone.WritePathStaticMember(fx.staticKey, fx.absent)
 	clone = clone.AddBranchProof(cloneOnlyProof)
-	clone.dynamicIndex[fx.dynamicKey] = dynamicindex.Bottom(reg)
-	clone.heapTableIdentity[fx.heapID] = heapidentity.BottomObject(reg)
-	clone.effectDeltas[fx.effectKey] = effectdelta.Bottom(reg)
-	clone.placement[fx.escapeID] = placement.Unknown
-	clone.channelSelect = clone.channelSelect.Add(channelselectfact.Fact{
+	clone = clone.WriteDynamicIndexFact(reg, fx.dynamicKey, dynamicindex.Bottom(reg))
+	clone = clone.WriteHeapTableObject(reg, fx.heapID, heapidentity.BottomObject(reg))
+	clone = clone.WriteEffectDelta(fx.effectKey, effectdelta.Bottom(reg))
+	clone = clone.WritePlacement(fx.escapeID, placement.Unknown)
+	clone = clone.AddChannelSelectFact(channelselectfact.Fact{
 		Select: "clone-only",
 		Kind:   channelselectfact.FactCase,
 		Case:   fx.pathKey,
@@ -539,7 +539,7 @@ func TestPathPresenceImplicationsUseMustJoinAndInvalidate(t *testing.T) {
 	if widened := stateDomain.Widen(left, right); !stateDomain.Equal(widened, joined) {
 		t.Fatalf("path-presence implication widen differs from join")
 	}
-	clone := left.Clone().AddPathPresenceImplication(rightOnly)
+	clone := left.Snapshot().AddPathPresenceImplication(rightOnly)
 	if left.HasPathPresenceImplication(rightOnly) || !clone.HasPathPresenceImplication(rightOnly) {
 		t.Fatalf("path-presence implication clone write mutated original or missed clone")
 	}
@@ -606,7 +606,7 @@ func TestPathStaticMembersAndRefinementsUseMustJoin(t *testing.T) {
 		t.Fatalf("state bottom should be join identity for static members")
 	}
 
-	clone := left.Clone().WritePathStaticMember(common, absent)
+	clone := left.Snapshot().WritePathStaticMember(common, absent)
 	if got, _ := left.ReadPathStaticMember(common); !valueDomain.Equal(got, present) {
 		t.Fatalf("static member clone write mutated original: %s", formatValue(reg, got))
 	}
@@ -668,7 +668,7 @@ func TestDynamicIndexKeysPointwiseFacts(t *testing.T) {
 		t.Fatalf("dynamic index order should be pointwise")
 	}
 
-	clone := left.Clone().WriteDynamicIndexFact(reg, common, absentFact)
+	clone := left.Snapshot().WriteDynamicIndexFact(reg, common, absentFact)
 	if got := left.ReadDynamicIndexFact(reg, common); !dynamicindex.Domain(reg).Equal(got, presentFact) {
 		t.Fatalf("dynamic index clone write mutated original: %#v", got)
 	}
@@ -752,7 +752,7 @@ func TestBranchProofsUseMustJoin(t *testing.T) {
 	if !stateDomain.LessOrEq(left, joined) || stateDomain.LessOrEq(joined, left) {
 		t.Fatalf("branch proof order should move toward fewer must proofs")
 	}
-	clone := left.Clone().AddBranchProof(rightOnly)
+	clone := left.Snapshot().AddBranchProof(rightOnly)
 	if left.HasBranchProof(rightOnly) || !clone.HasBranchProof(rightOnly) {
 		t.Fatalf("branch proof clone write mutated original or missed clone")
 	}
@@ -829,7 +829,7 @@ func TestEffectDeltasPointwiseJoin(t *testing.T) {
 	if !stateDomain.LessOrEq(left, joined) || stateDomain.LessOrEq(joined, left) {
 		t.Fatalf("effect delta order should be pointwise")
 	}
-	clone := left.Clone().WriteEffectDelta(common, absentDelta)
+	clone := left.Snapshot().WriteEffectDelta(common, absentDelta)
 	if got := left.ReadEffectDelta(common); !effectdelta.Domain(reg).Equal(got, presentDelta) {
 		t.Fatalf("effect delta clone write mutated original: %#v", got)
 	}
@@ -865,7 +865,7 @@ func TestChannelSelectFactsUseMustJoin(t *testing.T) {
 	if !stateDomain.LessOrEq(left, joined) || stateDomain.LessOrEq(joined, left) {
 		t.Fatalf("channel select order should move toward fewer must facts")
 	}
-	clone := left.Clone().AddChannelSelectFact(rightOnly)
+	clone := left.Snapshot().AddChannelSelectFact(rightOnly)
 	if left.HasChannelSelectFact(rightOnly) || !clone.HasChannelSelectFact(rightOnly) {
 		t.Fatalf("channel select clone write mutated original or missed clone")
 	}
@@ -903,7 +903,7 @@ func TestPlacementOrderAndCopy(t *testing.T) {
 	if !stateDomain.LessOrEq(left, joined) || stateDomain.LessOrEq(joined, left) {
 		t.Fatalf("placement order should move toward shared/unknown")
 	}
-	clone := left.Clone().WritePlacement(id, placement.Unknown)
+	clone := left.Snapshot().WritePlacement(id, placement.Unknown)
 	if got := left.ReadPlacement(id); got != placement.Stack {
 		t.Fatalf("placement clone write mutated original: %v", got)
 	}

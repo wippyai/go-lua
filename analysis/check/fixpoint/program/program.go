@@ -1047,7 +1047,7 @@ func boundFunction(
 		Body: func(ctx query.Context) (summary.Summary, error) {
 			config := checkConfigWithSummaries(captured, ctx.Summaries, keyFor, functionKeys, functionExpressionKeys, functionIDs, pathKeys, pathMultiKeys, functionTypes)
 			if origin.hasEntryState {
-				config.EntryState = origin.entryState.Clone()
+				config.EntryState = origin.entryState.Snapshot()
 			}
 			result, err := solvePreparedCounted(prepared, config, summaryCounter(stats))
 			if err != nil {
@@ -1379,7 +1379,7 @@ func functionValueTypesFromSummaries(reg *axis.Registry, summaries summary.Reade
 			out.ContextsByIdentity = make(map[identity.ID][]body.FunctionValueContext)
 		}
 		out.ContextsByIdentity[id] = append(out.ContextsByIdentity[id], body.FunctionValueContext{
-			Entry: context.entryState.Clone(),
+			Entry: context.entryState.Snapshot(),
 			Type:  fn,
 		})
 	}

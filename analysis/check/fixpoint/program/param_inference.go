@@ -160,7 +160,7 @@ func applyParamSeeds(reg *axis.Registry, base state.State, seeds []paramSeed) st
 		return base
 	}
 	bottom := product.Bottom(reg)
-	out := base.Clone()
+	out := base.Snapshot()
 	for _, seed := range seeds {
 		if seed.slot == "" {
 			continue

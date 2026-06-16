@@ -42,24 +42,13 @@ type State struct {
 	placementTop         bool
 }
 
-// Clone returns an independent copy of the finite lanes in s.
-func (s State) Clone() State {
-	return State{
-		values:               cloneValueMap(s.values),
-		pathEvidence:         s.pathEvidence.Clone(),
-		dynamicIndex:         dynamicindex.CloneMap(s.dynamicIndex),
-		heapTableIdentity:    heapidentity.CloneMap(s.heapTableIdentity),
-		effectDeltas:         effectdelta.CloneMap(s.effectDeltas),
-		channelSelect:        s.channelSelect.Clone(),
-		placement:            clonePlacementMap(s.placement),
-		lenFloors:            s.lenFloors.Clone(),
-		numFloors:            s.numFloors.Clone(),
-		valuesTop:            s.valuesTop,
-		dynamicIndexTop:      s.dynamicIndexTop,
-		heapTableIdentityTop: s.heapTableIdentityTop,
-		effectDeltasTop:      s.effectDeltasTop,
-		placementTop:         s.placementTop,
-	}
+// TODO(perf): replace raw map fields with immutable lane handles so this
+// persistence contract is enforced by representation, not package convention.
+// Snapshot returns a point-in-time state value. State lanes are persistent by
+// convention: exported write APIs copy any lane they change, so unchanged lanes
+// can be shared safely across solver snapshots.
+func (s State) Snapshot() State {
+	return s
 }
 
 // ReadValue reads a value slot. Missing slots read as product.Bottom(reg).

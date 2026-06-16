@@ -39,6 +39,9 @@ func containsDynamicFlag(
 	if !knownContainsOpenRecursive(t) {
 		return false
 	}
+	if seen == nil {
+		seen = make(map[Type]bool)
+	}
 	if seen[t] {
 		return false
 	}
