@@ -10,7 +10,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/escape"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/evidence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
-	"github.com/wippyai/go-lua/analysis/domain/value/axis/placement"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/variantorigin"
@@ -26,7 +25,6 @@ func TestRegistryBundleFrozenAndStable(t *testing.T) {
 		"runtimekind",
 		"typewitness",
 		"escape",
-		"placement",
 		"evidence",
 		"assertion",
 	}
@@ -78,9 +76,6 @@ func TestRegistryWithAxesAddsCustomSparseAxis(t *testing.T) {
 
 func TestRegistryWithAxesRejectsDuplicateIDs(t *testing.T) {
 	if _, err := RegistryWithAxes(escape.Spec().Erase()); err == nil {
-		t.Fatalf("duplicate standard axis ID should fail")
-	}
-	if _, err := RegistryWithAxes(placement.Spec().Erase()); err == nil {
 		t.Fatalf("duplicate standard axis ID should fail")
 	}
 	if _, err := RegistryWithAxes(syntheticSpec().Erase(), syntheticSpec().Erase()); err == nil {
@@ -139,16 +134,6 @@ func TestAssertionAxisStoresSparsifiesAndAffectsIdentity(t *testing.T) {
 	}
 }
 
-func TestPlacementStoresInStandardProduct(t *testing.T) {
-	reg := Registry()
-	heap := placement.OwnedHeap
-
-	value := product.Set(reg, product.Top(), placement.Key, heap)
-	if got := product.Get(reg, value, placement.Key); got != heap {
-		t.Fatalf("placement value = %s, want %s", got, heap)
-	}
-}
-
 func registrySpecIDs(reg *axis.Registry) []string {
 	specs := reg.Specs()
 	ids := make([]string, len(specs))
@@ -162,7 +147,6 @@ func standardProductSample(reg *axis.Registry, bottom, top product.Value) []prod
 	present := product.WithPresence(reg, top, presence.Present())
 	absent := product.WithPresence(reg, top, presence.Absent())
 	fresh := product.Set(reg, top, escape.Key, escape.Fresh())
-	placementValue := product.Set(reg, top, placement.Key, placement.OwnedHeap)
 	gradual := product.Set(reg, top, evidence.Key, evidence.GradualTop())
 	explicit := product.Set(reg, top, evidence.Key, evidence.ExplicitTop())
 	claimed := product.Set(reg, top, assertion.Key, assertion.Type())
@@ -180,7 +164,6 @@ func standardProductSample(reg *axis.Registry, bottom, top product.Value) []prod
 		present,
 		absent,
 		fresh,
-		placementValue,
 		gradual,
 		explicit,
 		claimed,

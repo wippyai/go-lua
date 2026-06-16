@@ -9,7 +9,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/escape"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/evidence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
-	"github.com/wippyai/go-lua/analysis/domain/value/axis/placement"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/typewitness"
@@ -69,16 +68,6 @@ func TestFiniteAxisSpecsLaws(t *testing.T) {
 			escape.Bottom(),
 			escape.Fresh(),
 			escape.Top(),
-		})
-	})
-
-	t.Run("placement", func(t *testing.T) {
-		runAxisLaws(t, "placement", placement.Spec(), []placement.Value{
-			placement.Bottom,
-			placement.Stack,
-			placement.OwnedHeap,
-			placement.SharedHeap,
-			placement.Unknown,
 		})
 	})
 

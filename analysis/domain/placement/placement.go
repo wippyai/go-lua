@@ -1,15 +1,12 @@
 package placement
 
 import (
-	"github.com/wippyai/go-lua/analysis/domain/value/axis"
+	"github.com/wippyai/go-lua/analysis/domain/lattice"
 	internal "github.com/wippyai/go-lua/analysis/internal/hash"
 )
 
-var Key = axis.NewKey[Value]("placement")
-
-func Spec() axis.Spec[Value] {
-	return axis.Spec[Value]{
-		Key:      Key,
+func Lattice() lattice.Lattice[Value] {
+	return lattice.Lattice[Value]{
 		Bottom:   func() Value { return Bottom },
 		Top:      func() Value { return Unknown },
 		Equal:    Equal,
@@ -17,11 +14,10 @@ func Spec() axis.Spec[Value] {
 		Join:     Join,
 		Meet:     Meet,
 		Widen:    Widen,
-		Hash:     Value.Hash,
 	}
 }
 
-// Value is the allocation-placement axis abstraction.
+// Value is the allocation-placement abstraction.
 //
 // The chain is:
 //

@@ -3,10 +3,10 @@ package state
 import (
 	"github.com/wippyai/go-lua/analysis/domain/lattice"
 	"github.com/wippyai/go-lua/analysis/domain/lattice/lift"
+	"github.com/wippyai/go-lua/analysis/domain/placement"
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
-	"github.com/wippyai/go-lua/analysis/domain/value/axis/placement"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/engine/dynamicindex"
 	"github.com/wippyai/go-lua/analysis/engine/state/channelselectfact"
@@ -272,5 +272,5 @@ func (s State) reachable() State {
 }
 
 func placementMapDomain() lattice.Lattice[map[identity.ID]placement.Value] {
-	return lift.Map[identity.ID, placement.Value](placement.Spec().Lattice())
+	return lift.Map[identity.ID, placement.Value](placement.Lattice())
 }

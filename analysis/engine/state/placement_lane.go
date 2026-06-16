@@ -2,8 +2,8 @@ package state
 
 import (
 	"github.com/wippyai/go-lua/analysis/domain/lattice"
+	"github.com/wippyai/go-lua/analysis/domain/placement"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
-	"github.com/wippyai/go-lua/analysis/domain/value/axis/placement"
 )
 
 type placementLane struct {

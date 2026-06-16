@@ -273,12 +273,13 @@ func TestRequiredSemanticSurfacesExist(t *testing.T) {
 		modulePath + "/analysis/domain/value/axis/escape",
 		modulePath + "/analysis/domain/value/axis/evidence",
 		modulePath + "/analysis/domain/value/axis/identity",
-		modulePath + "/analysis/domain/value/axis/placement",
 		modulePath + "/analysis/domain/value/axis/presence",
 		modulePath + "/analysis/domain/value/axis/runtimekind",
 		modulePath + "/analysis/domain/value/axis/typewitness",
 		modulePath + "/analysis/domain/value/axis/variantorigin",
+		modulePath + "/analysis/domain/placement",
 		modulePath + "/analysis/domain/effect",
+		modulePath + "/analysis/domain/effect/capability",
 		modulePath + "/analysis/domain/effect/control",
 		modulePath + "/analysis/domain/effect/dispatch",
 		modulePath + "/analysis/domain/effect/iteration",
@@ -312,11 +313,25 @@ func TestValueAxisLeafDirectImportBoundaries(t *testing.T) {
 			continue
 		}
 		allowed := baseAllowed
-		if pkg.ImportPath == modulePath+"/analysis/domain/value/axis/typewitness" {
+		switch pkg.ImportPath {
+		case modulePath + "/analysis/domain/value/axis/typewitness":
 			allowed = typeWitnessAllowed
 		}
 		assertModuleImportsAllowed(t, pkg.ImportPath, pkg.Imports, allowed)
 	}
+}
+
+func TestPlacementDomainDirectImportBoundary(t *testing.T) {
+	allowed := allowSet(
+		modulePath+"/analysis/domain/lattice",
+		modulePath+"/analysis/internal/hash",
+	)
+	assertModuleImportsAllowed(
+		t,
+		modulePath+"/analysis/domain/placement",
+		productionImports(t, modulePath+"/analysis/domain/placement"),
+		allowed,
+	)
 }
 
 func TestDomainValuePackageDirectImportBoundaries(t *testing.T) {

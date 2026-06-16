@@ -6,11 +6,11 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/check/body"
 	"github.com/wippyai/go-lua/analysis/diagnostic"
-	"github.com/wippyai/go-lua/analysis/type/channelselect"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/branchcond"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
+	"github.com/wippyai/go-lua/analysis/type/channelselect"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
 
@@ -25,6 +25,13 @@ type channelSelectDiagnosticInfo struct {
 type channelSelectDiagnosticCase struct {
 	path pathdom.Path
 	name string
+}
+
+type channelSelectExhaustivenessEvidence struct {
+	resultChannel pathdom.Path
+	handled       []string
+	missing       []string
+	hasDefault    bool
 }
 
 func (p channelSelectExhaustiveness) Produce(result *body.Result) []diagnostic.Diagnostic {
@@ -164,16 +171,24 @@ func channelSelectChainDiagnostic(
 	if len(handled) >= len(info.cases) {
 		return diagnostic.Diagnostic{}, false
 	}
+	var handledNames []string
 	var missing []string
 	for i, c := range info.cases {
-		if !handled[i] {
+		if handled[i] {
+			handledNames = append(handledNames, c.name)
+		} else {
 			missing = append(missing, c.name)
 		}
 	}
 	if len(missing) == 0 {
 		return diagnostic.Diagnostic{}, false
 	}
-	return channelSelectExhaustivenessDiagnostic(head, missing), true
+	return channelSelectExhaustivenessDiagnostic(head, channelSelectExhaustivenessEvidence{
+		resultChannel: info.result.Field(channelselect.ResultChannelField),
+		handled:       handledNames,
+		missing:       missing,
+		hasDefault:    info.hasDefault,
+	}), true
 }
 
 func ifElseIfChain(head *ast.IfStmt) []*ast.IfStmt {
@@ -212,13 +227,13 @@ func pathsMatchPair(left, right, wantLeft, wantRight pathdom.Path) bool {
 		(left.Equal(wantRight) && right.Equal(wantLeft))
 }
 
-func channelSelectExhaustivenessDiagnostic(head *ast.IfStmt, missing []string) diagnostic.Diagnostic {
+func channelSelectExhaustivenessDiagnostic(head *ast.IfStmt, evidence channelSelectExhaustivenessEvidence) diagnostic.Diagnostic {
 	span := ast.SpanOf(head.Condition)
 	caseWord := "case"
-	if len(missing) > 1 {
+	if len(evidence.missing) > 1 {
 		caseWord = "cases"
 	}
-	message := fmt.Sprintf("channel select is not exhaustive; missing %s: %s", caseWord, strings.Join(missing, ", "))
+	message := fmt.Sprintf("channel select is not exhaustive; missing %s: %s", caseWord, strings.Join(evidence.missing, ", "))
 	return diagnostic.Diagnostic{
 		Position: diagnostic.Position{
 			Line:      span.StartLine,
@@ -226,17 +241,46 @@ func channelSelectExhaustivenessDiagnostic(head *ast.IfStmt, missing []string) d
 			EndLine:   span.EndLine,
 			EndColumn: span.EndCol,
 		},
-		Span:     span,
-		Code:     CodeChannelSelectExhaustive,
-		Severity: diagnostic.SeverityWarning,
-		Message:  message,
-		Explanation: diagnostic.NewExplanation(diagnostic.Evidence{
+		Span:        span,
+		Code:        CodeChannelSelectExhaustive,
+		Severity:    diagnostic.SeverityWarning,
+		Message:     message,
+		Explanation: channelSelectExhaustivenessExplanation(span, evidence),
+		Labels:      []diagnostic.Label{{Span: span, Message: "channel select case chain"}},
+		Help:        "Handle each channel select case explicitly in the if/elseif chain.",
+	}
+}
+
+func channelSelectExhaustivenessExplanation(span diagnostic.Span, evidence channelSelectExhaustivenessEvidence) diagnostic.Explanation {
+	items := []diagnostic.Evidence{
+		{
+			Kind:    diagnostic.EvidenceAbstractFact,
+			Trust:   diagnostic.TrustProven,
+			Span:    span,
+			Message: "channel select result channel path: " + evidence.resultChannel.String(),
+		},
+	}
+	if len(evidence.handled) > 0 {
+		items = append(items, diagnostic.Evidence{
+			Kind:    diagnostic.EvidenceAbstractFact,
+			Trust:   diagnostic.TrustProven,
+			Span:    span,
+			Message: "handled channel select cases: " + strings.Join(evidence.handled, ", "),
+		})
+	}
+	items = append(items, diagnostic.Evidence{
+		Kind:    diagnostic.EvidenceMissingProof,
+		Trust:   diagnostic.TrustProven,
+		Span:    span,
+		Message: "missing channel select cases: " + strings.Join(evidence.missing, ", "),
+	})
+	if !evidence.hasDefault {
+		items = append(items, diagnostic.Evidence{
 			Kind:    diagnostic.EvidenceMissingProof,
 			Trust:   diagnostic.TrustProven,
 			Span:    span,
-			Message: message,
-		}),
-		Labels: []diagnostic.Label{{Span: span, Message: "channel select case chain"}},
-		Help:   "Handle each channel select case explicitly in the if/elseif chain.",
+			Message: "no default case; every channel select case must be handled explicitly",
+		})
 	}
+	return diagnostic.NewExplanation(items...)
 }

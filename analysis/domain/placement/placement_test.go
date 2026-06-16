@@ -9,8 +9,8 @@ import (
 
 func TestPlacementLatticeLaws(t *testing.T) {
 	suite := latticelaws.LawSuite[Value]{
-		Name:   "axis.placement",
-		Domain: Spec().Lattice(),
+		Name:   "placement",
+		Domain: Lattice(),
 		Sample: []Value{
 			Bottom,
 			Stack,
@@ -26,7 +26,7 @@ func TestPlacementLatticeLaws(t *testing.T) {
 }
 
 func TestPlacementOrderJoinMeetAndWiden(t *testing.T) {
-	domain := Spec().Lattice()
+	domain := Lattice()
 
 	if got := domain.Bottom(); got != Bottom {
 		t.Fatalf("bottom = %v, want %v", got, Bottom)

@@ -194,6 +194,21 @@ end
 	if warning.Help != "Handle each channel select case explicitly in the if/elseif chain." {
 		t.Fatalf("warning help = %q", warning.Help)
 	}
+	evidence := warning.Explanation.Evidence()
+	if len(evidence) != 4 {
+		t.Fatalf("warning explanation evidence = %#v, want 4 precise items", evidence)
+	}
+	explanation := warning.Explanation.String()
+	for _, want := range []string{
+		"selected.channel",
+		"handled channel select cases: primary, timers",
+		"missing channel select cases: stops",
+		"no default case",
+	} {
+		if !strings.Contains(explanation, want) {
+			t.Fatalf("warning explanation = %q, want substring %q", explanation, want)
+		}
+	}
 }
 
 func TestChannelSelectExhaustivenessAcceptsExhaustiveChain(t *testing.T) {
