@@ -1,15 +1,16 @@
 package factapply
 
 import (
-	"github.com/wippyai/go-lua/analysis/domain/effect/channelselect"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
+	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/state/channelselectfact"
 	"github.com/wippyai/go-lua/analysis/engine/visibility"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
+	"github.com/wippyai/go-lua/analysis/type/channelselect"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
@@ -40,7 +41,7 @@ func applyChannelSelectCasePathEquality(
 	resultChannelPath pathdom.Path,
 	casePath pathdom.Path,
 ) (state.State, bool) {
-	resultPath, ok := channelselect.ResultPathFromChannel(resultChannelPath)
+	resultPath, ok := channelSelectResultPathFromChannel(resultChannelPath)
 	if !ok || resolver == nil {
 		return out, false
 	}
@@ -150,7 +151,7 @@ func applyChannelSelectCasePathInequality(
 	resultChannelPath pathdom.Path,
 	casePath pathdom.Path,
 ) (state.State, bool) {
-	resultPath, ok := channelselect.ResultPathFromChannel(resultChannelPath)
+	resultPath, ok := channelSelectResultPathFromChannel(resultChannelPath)
 	if !ok || resolver == nil {
 		return out, false
 	}
@@ -212,6 +213,14 @@ func channelSelectReceiveFact(
 		return fact, true
 	}
 	return channelselectfact.Fact{}, false
+}
+
+func channelSelectResultPathFromChannel(p pathdom.Path) (pathdom.Path, bool) {
+	seg, ok := p.LastSegment()
+	if !ok || seg.Kind != segment.SegmentField || seg.Name != channelselect.ResultChannelField {
+		return pathdom.Path{}, false
+	}
+	return p.Parent(), true
 }
 
 func rebasePathKeyToContext(pathKey pathdom.PathKey, contextKey pathdom.PathKey) (pathdom.PathKey, bool) {

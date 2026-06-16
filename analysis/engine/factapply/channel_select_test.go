@@ -3,12 +3,10 @@ package factapply
 import (
 	"testing"
 
-	"github.com/wippyai/go-lua/analysis/domain/effect/channelselect"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
-	"github.com/wippyai/go-lua/analysis/domain/value/standard"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/state"
@@ -18,11 +16,26 @@ import (
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/ir/ssa"
 	"github.com/wippyai/go-lua/analysis/symbol"
+	"github.com/wippyai/go-lua/analysis/test/value/standard"
 	"github.com/wippyai/go-lua/analysis/type/access"
 	"github.com/wippyai/go-lua/analysis/type/ambient"
+	"github.com/wippyai/go-lua/analysis/type/channelselect"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
+
+func TestChannelSelectResultPathFromChannel(t *testing.T) {
+	result := symbol.ID(719)
+	p := pathdom.NewPath(result, "result").Field(channelselect.ResultChannelField)
+
+	got, ok := channelSelectResultPathFromChannel(p)
+	if !ok {
+		t.Fatal("channelSelectResultPathFromChannel returned false")
+	}
+	if got.Root != "result" || got.Symbol != result || len(got.Segments) != 0 {
+		t.Fatalf("result path = %#v, want root result with no suffix", got)
+	}
+}
 
 func TestFactsNodeTransferMaterializesChannelSelectResultCases(t *testing.T) {
 	reg := standard.Registry()

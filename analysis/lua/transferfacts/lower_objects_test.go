@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/assertion"
-	"github.com/wippyai/go-lua/analysis/domain/value/standard"
+	"github.com/wippyai/go-lua/analysis/test/value/standard"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/lua/cfgbuild"

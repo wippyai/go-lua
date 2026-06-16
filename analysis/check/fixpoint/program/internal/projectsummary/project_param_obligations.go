@@ -2,7 +2,7 @@ package projectsummary
 
 import (
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/summary"
-	"github.com/wippyai/go-lua/analysis/domain/effect/signature"
+	"github.com/wippyai/go-lua/analysis/module/signature"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/state/key"

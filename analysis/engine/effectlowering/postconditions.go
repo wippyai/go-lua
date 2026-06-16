@@ -1,7 +1,7 @@
 package effectlowering
 
 import (
-	"github.com/wippyai/go-lua/analysis/domain/effect/signature"
+	"github.com/wippyai/go-lua/analysis/module/signature"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/engine/callproducer"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"

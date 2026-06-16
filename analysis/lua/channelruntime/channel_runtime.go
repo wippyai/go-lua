@@ -3,7 +3,7 @@
 package channelruntime
 
 import (
-	"github.com/wippyai/go-lua/analysis/domain/effect/channelselect"
+	"github.com/wippyai/go-lua/analysis/type/channelselect"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/lua/pathexpr"

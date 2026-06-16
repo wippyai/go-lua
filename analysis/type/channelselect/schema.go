@@ -2,8 +2,6 @@
 package channelselect
 
 import (
-	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
-	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/type/ambient"
 	"github.com/wippyai/go-lua/analysis/type/kind"
 	"github.com/wippyai/go-lua/analysis/type/normalize"
@@ -195,13 +193,4 @@ func CaseMarker(t typ.Type) (string, int, bool) {
 		return "", 0, false
 	}
 	return id, int(index), true
-}
-
-// ResultPathFromChannel returns the select result path for result.channel.
-func ResultPathFromChannel(p pathdom.Path) (pathdom.Path, bool) {
-	seg, ok := p.LastSegment()
-	if !ok || seg.Kind != segment.SegmentField || seg.Name != ResultChannelField {
-		return pathdom.Path{}, false
-	}
-	return p.Parent(), true
 }

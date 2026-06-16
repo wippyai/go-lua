@@ -3,7 +3,6 @@ package channelselect
 import (
 	"testing"
 
-	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/typeexpr"
@@ -96,16 +95,5 @@ func TestResultWithoutCaseNoDefaultCanBecomeNever(t *testing.T) {
 	}
 	if !typ.IsNever(got) {
 		t.Fatalf("ResultWithoutCase = %v, want never", got)
-	}
-}
-
-func TestResultPathFromChannel(t *testing.T) {
-	p := pathdom.NewPath(17, "result").Field(ResultChannelField)
-	got, ok := ResultPathFromChannel(p)
-	if !ok {
-		t.Fatal("ResultPathFromChannel returned false")
-	}
-	if got.Root != "result" || got.Symbol != 17 || len(got.Segments) != 0 {
-		t.Fatalf("result path = %#v, want root result with no suffix", got)
 	}
 }

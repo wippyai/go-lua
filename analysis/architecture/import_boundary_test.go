@@ -227,8 +227,19 @@ func TestLowLevelLeafImportBoundaries(t *testing.T) {
 			},
 		},
 		{
-			name:     "channel select schema stays engine check lua and compiler free",
-			patterns: []string{modulePath + "/analysis/domain/effect/channelselect"},
+			name:     "channel select type schema stays domain engine check lua and compiler free",
+			patterns: []string{modulePath + "/analysis/type/channelselect"},
+			banned: []string{
+				modulePath + "/analysis/domain",
+				modulePath + "/analysis/engine",
+				modulePath + "/analysis/check",
+				modulePath + "/analysis/lua",
+				modulePath + "/compiler",
+			},
+		},
+		{
+			name:     "module signature schema stays engine check lua and compiler free",
+			patterns: []string{modulePath + "/analysis/module/signature"},
 			banned: []string{
 				modulePath + "/analysis/engine",
 				modulePath + "/analysis/check",

@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"sort"
 
-	"github.com/wippyai/go-lua/analysis/domain/effect/signature"
+	"github.com/wippyai/go-lua/analysis/module/signature"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 

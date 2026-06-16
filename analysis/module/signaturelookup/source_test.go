@@ -11,7 +11,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/effect"
 	"github.com/wippyai/go-lua/analysis/domain/effect/control"
 	"github.com/wippyai/go-lua/analysis/domain/effect/dispatch"
-	"github.com/wippyai/go-lua/analysis/domain/effect/signature"
+	"github.com/wippyai/go-lua/analysis/module/signature"
 	"github.com/wippyai/go-lua/analysis/module/manifest"
 	"github.com/wippyai/go-lua/analysis/module/signaturelookup/internal/stdlib"
 	"github.com/wippyai/go-lua/analysis/type/typ"

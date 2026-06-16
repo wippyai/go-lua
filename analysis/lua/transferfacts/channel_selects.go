@@ -3,7 +3,7 @@ package transferfacts
 import (
 	"strconv"
 
-	"github.com/wippyai/go-lua/analysis/domain/effect/channelselect"
+	"github.com/wippyai/go-lua/analysis/type/channelselect"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
