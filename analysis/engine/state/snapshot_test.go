@@ -54,6 +54,8 @@ func TestSnapshotsCloneFiniteLanes(t *testing.T) {
 		Admission:   dynamicindex.AdmissionRejected,
 	}
 	heapID := identity.ID{Kind: "table", Site: "snapshot", Index: 1}
+	frozenID := identity.ID{Kind: "table", Site: "snapshot-freeze", Index: 1}
+	otherFrozenID := identity.ID{Kind: "table", Site: "snapshot-freeze", Index: 2}
 	effectDelta := effectdelta.Value{Before: present, After: present, Change: effectdelta.ChangeChanged}
 	otherEffectDelta := effectdelta.Value{Before: absent, After: absent, Change: effectdelta.ChangeNone}
 
@@ -68,6 +70,7 @@ func TestSnapshotsCloneFiniteLanes(t *testing.T) {
 		AddBranchProof(proof).
 		AddPathPresenceImplication(implication).
 		AddChannelSelectFact(selectFact).
+		FreezeTable(frozenID).
 		WriteEffectDelta(effectKey, effectDelta)
 
 	pathSnapshot := s.PathRefinementsSnapshot()
@@ -160,6 +163,18 @@ func TestSnapshotsCloneFiniteLanes(t *testing.T) {
 		t.Fatalf("fresh channel-select snapshot = %#v, want original fact", got)
 	}
 
+	frozenSnapshot := s.FrozenTablesSnapshot()
+	if frozenSnapshot.Bottom || frozenSnapshot.Top || len(frozenSnapshot.Tables) != 1 {
+		t.Fatalf("frozen-table snapshot = %#v, want one finite identity", frozenSnapshot)
+	}
+	frozenSnapshot.Tables[0] = otherFrozenID
+	if !s.IsTableFrozen(frozenID) || s.IsTableFrozen(otherFrozenID) {
+		t.Fatalf("frozen-table snapshot mutation changed state")
+	}
+	if got := s.FrozenTablesSnapshot().Tables[0]; got != frozenID {
+		t.Fatalf("fresh frozen-table snapshot = %#v, want original identity", got)
+	}
+
 	effectSnapshot := s.EffectDeltasSnapshot()
 	if effectSnapshot.Top || len(effectSnapshot.Deltas) != 1 {
 		t.Fatalf("effect-delta snapshot = %#v, want one finite delta", effectSnapshot)
@@ -211,6 +226,10 @@ func TestSnapshotTopBottomAndEmptyLanes(t *testing.T) {
 	if topChannel.Bottom || !topChannel.Top || len(topChannel.Facts) != 0 {
 		t.Fatalf("top channel-select snapshot = %#v, want top with no finite facts", topChannel)
 	}
+	topFrozen := top.FrozenTablesSnapshot()
+	if topFrozen.Bottom || !topFrozen.Top || len(topFrozen.Tables) != 0 {
+		t.Fatalf("top frozen-table snapshot = %#v, want top with no finite facts", topFrozen)
+	}
 
 	bottomPaths := bottom.PathRefinementsSnapshot()
 	if !bottomPaths.Bottom || bottomPaths.Top || len(bottomPaths.Refinements) != 0 {
@@ -244,6 +263,10 @@ func TestSnapshotTopBottomAndEmptyLanes(t *testing.T) {
 	if !bottomChannel.Bottom || bottomChannel.Top || len(bottomChannel.Facts) != 0 {
 		t.Fatalf("bottom channel-select snapshot = %#v, want explicit bottom", bottomChannel)
 	}
+	bottomFrozen := bottom.FrozenTablesSnapshot()
+	if !bottomFrozen.Bottom || bottomFrozen.Top || len(bottomFrozen.Tables) != 0 {
+		t.Fatalf("bottom frozen-table snapshot = %#v, want explicit bottom", bottomFrozen)
+	}
 
 	emptyPaths := empty.PathRefinementsSnapshot()
 	if emptyPaths.Bottom || !emptyPaths.Top || len(emptyPaths.Refinements) != 0 {
@@ -276,5 +299,9 @@ func TestSnapshotTopBottomAndEmptyLanes(t *testing.T) {
 	emptyChannel := empty.ChannelSelectFactsSnapshot()
 	if emptyChannel.Bottom || !emptyChannel.Top || len(emptyChannel.Facts) != 0 {
 		t.Fatalf("empty channel-select snapshot = %#v, want reachable top/empty", emptyChannel)
+	}
+	emptyFrozen := empty.FrozenTablesSnapshot()
+	if emptyFrozen.Bottom || !emptyFrozen.Top || len(emptyFrozen.Tables) != 0 {
+		t.Fatalf("empty frozen-table snapshot = %#v, want reachable top/empty", emptyFrozen)
 	}
 }

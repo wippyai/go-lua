@@ -25,6 +25,7 @@ type State struct {
 
 	dynamicIndex      dynamicIndexLane
 	heapTableIdentity heapTableIdentityLane
+	frozenTables      frozenTableLane
 	effectDeltas      effectDeltaLane
 	channelSelect     channelselectfact.Lane
 	placement         placementLane
@@ -96,7 +97,7 @@ func (s State) UpdateReturnSlot(reg *axis.Registry, index int, fn func(product.V
 }
 
 // Domain builds the State lattice as a product of value, path, must-fact,
-// identity, effect, channel-select, and placement lanes.
+// identity, frozen-table, effect, channel-select, and placement lanes.
 func Domain(reg *axis.Registry) lattice.Lattice[State] {
 	valueDomain := product.Domain(reg)
 	ops := domainOps{
@@ -104,6 +105,7 @@ func Domain(reg *axis.Registry) lattice.Lattice[State] {
 		pathEvidence:      pathevidence.Domain(reg),
 		dynamicIndex:      dynamicindex.MapDomain(reg),
 		heapTableIdentity: heapidentity.MapDomain(reg),
+		frozenTables:      frozenTableDomain(),
 		effectDeltas:      effectdelta.MapDomain(reg),
 		channelSelect:     channelselectfact.Domain(),
 		placement:         placementMapDomain(),
@@ -114,6 +116,7 @@ func Domain(reg *axis.Registry) lattice.Lattice[State] {
 		Bottom: func() State {
 			return State{
 				pathEvidence:  ops.pathEvidence.Bottom(),
+				frozenTables:  ops.frozenTables.Bottom(),
 				channelSelect: ops.channelSelect.Bottom(),
 				lenFloors:     ops.lenFloors.Bottom(),
 				numFloors:     ops.numFloors.Bottom(),
@@ -125,6 +128,7 @@ func Domain(reg *axis.Registry) lattice.Lattice[State] {
 				pathEvidence:      ops.pathEvidence.Top(),
 				dynamicIndex:      dynamicIndexLane{top: true},
 				heapTableIdentity: heapTableIdentityLane{top: true},
+				frozenTables:      ops.frozenTables.Top(),
 				effectDeltas:      effectDeltaLane{top: true},
 				placement:         placementLane{top: true},
 				lenFloors:         ops.lenFloors.Top(),
@@ -136,6 +140,7 @@ func Domain(reg *axis.Registry) lattice.Lattice[State] {
 				ops.pathEvidence.Equal(a.pathEvidence, b.pathEvidence) &&
 				ops.dynamicIndex.Equal(ops.dynamicIndexLane(a), ops.dynamicIndexLane(b)) &&
 				ops.heapTableIdentity.Equal(ops.heapTableIdentityLane(a), ops.heapTableIdentityLane(b)) &&
+				ops.frozenTables.Equal(a.frozenTables, b.frozenTables) &&
 				ops.effectDeltas.Equal(ops.effectDeltaLane(a), ops.effectDeltaLane(b)) &&
 				ops.channelSelect.Equal(a.channelSelect, b.channelSelect) &&
 				ops.placement.Equal(ops.placementLane(a), ops.placementLane(b)) &&
@@ -147,6 +152,7 @@ func Domain(reg *axis.Registry) lattice.Lattice[State] {
 				ops.pathEvidence.LessOrEq(a.pathEvidence, b.pathEvidence) &&
 				ops.dynamicIndex.LessOrEq(ops.dynamicIndexLane(a), ops.dynamicIndexLane(b)) &&
 				ops.heapTableIdentity.LessOrEq(ops.heapTableIdentityLane(a), ops.heapTableIdentityLane(b)) &&
+				ops.frozenTables.LessOrEq(a.frozenTables, b.frozenTables) &&
 				ops.effectDeltas.LessOrEq(ops.effectDeltaLane(a), ops.effectDeltaLane(b)) &&
 				ops.channelSelect.LessOrEq(a.channelSelect, b.channelSelect) &&
 				ops.placement.LessOrEq(ops.placementLane(a), ops.placementLane(b)) &&
@@ -159,6 +165,7 @@ func Domain(reg *axis.Registry) lattice.Lattice[State] {
 				ops.pathEvidence.Join(a.pathEvidence, b.pathEvidence),
 				ops.dynamicIndex.Join(ops.dynamicIndexLane(a), ops.dynamicIndexLane(b)),
 				ops.heapTableIdentity.Join(ops.heapTableIdentityLane(a), ops.heapTableIdentityLane(b)),
+				ops.frozenTables.Join(a.frozenTables, b.frozenTables),
 				ops.effectDeltas.Join(ops.effectDeltaLane(a), ops.effectDeltaLane(b)),
 				ops.channelSelect.Join(a.channelSelect, b.channelSelect),
 				ops.placement.Join(ops.placementLane(a), ops.placementLane(b)),
@@ -172,6 +179,7 @@ func Domain(reg *axis.Registry) lattice.Lattice[State] {
 				ops.pathEvidence.Widen(prev.pathEvidence, next.pathEvidence),
 				ops.dynamicIndex.Widen(ops.dynamicIndexLane(prev), ops.dynamicIndexLane(next)),
 				ops.heapTableIdentity.Widen(ops.heapTableIdentityLane(prev), ops.heapTableIdentityLane(next)),
+				ops.frozenTables.Widen(prev.frozenTables, next.frozenTables),
 				ops.effectDeltas.Widen(ops.effectDeltaLane(prev), ops.effectDeltaLane(next)),
 				ops.channelSelect.Widen(prev.channelSelect, next.channelSelect),
 				ops.placement.Widen(ops.placementLane(prev), ops.placementLane(next)),
@@ -187,6 +195,7 @@ type domainOps struct {
 	pathEvidence      lattice.Lattice[pathevidence.Lane]
 	dynamicIndex      lattice.Lattice[map[dynamicindex.Key]dynamicindex.Fact]
 	heapTableIdentity lattice.Lattice[map[identity.ID]heapidentity.TableObject]
+	frozenTables      lattice.Lattice[frozenTableLane]
 	effectDeltas      lattice.Lattice[map[effectdelta.Key]effectdelta.Value]
 	channelSelect     lattice.Lattice[channelselectfact.Lane]
 	placement         lattice.Lattice[map[identity.ID]placement.Value]
@@ -219,6 +228,7 @@ func (o domainOps) fromLanes(
 	pathEvidence pathevidence.Lane,
 	dynamicIndex map[dynamicindex.Key]dynamicindex.Fact,
 	heapTableIdentity map[identity.ID]heapidentity.TableObject,
+	frozenTables frozenTableLane,
 	effectDeltas map[effectdelta.Key]effectdelta.Value,
 	channelSelect channelselectfact.Lane,
 	placementLane map[identity.ID]placement.Value,
@@ -230,6 +240,7 @@ func (o domainOps) fromLanes(
 	out.pathEvidence = pathEvidence
 	out.dynamicIndex = dynamicIndexLaneFromMap(o.dynamicIndex, dynamicIndex)
 	out.heapTableIdentity = heapTableIdentityLaneFromMap(o.heapTableIdentity, heapTableIdentity)
+	out.frozenTables = frozenTables
 	out.effectDeltas = effectDeltaLaneFromMap(o.effectDeltas, effectDeltas)
 	out.channelSelect = channelSelect
 	out.placement = placementLaneFromMap(o.placement, placementLane)
@@ -240,6 +251,7 @@ func (o domainOps) fromLanes(
 
 func (s State) reachable() State {
 	s.pathEvidence = s.pathEvidence.Reachable()
+	s.frozenTables = s.frozenTables.reachable()
 	s.channelSelect = s.channelSelect.Reachable()
 	s.lenFloors = s.lenFloors.reachable()
 	s.numFloors = s.numFloors.reachable()

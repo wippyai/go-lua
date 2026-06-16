@@ -289,6 +289,7 @@ func dropDescendantFactsBelowMaybeAbsentReturns(sum summary.Summary) summary.Sum
 	facts.DynamicIndexFacts = filterDynamicIndexFactsBelowReturns(facts.DynamicIndexFacts, maybeAbsent)
 	facts.BranchProofs = filterBranchProofsBelowReturns(facts.BranchProofs, maybeAbsent)
 	facts.ChannelSelects = filterChannelSelectsBelowReturns(facts.ChannelSelects, maybeAbsent)
+	facts.FrozenTables = filterFrozenTablesBelowReturns(facts.FrozenTables, maybeAbsent)
 	facts.EffectDeltas = filterEffectDeltasBelowReturns(facts.EffectDeltas, maybeAbsent)
 	sum.NormalReturnFacts = facts
 	return sum
@@ -342,6 +343,17 @@ func filterChannelSelectsBelowReturns(in []callboundary.ChannelSelectFact, roots
 	out := in[:0]
 	for _, fact := range in {
 		if strictPlaceholderDescendant(fact.Result, roots) || strictPlaceholderDescendant(fact.Case, roots) {
+			continue
+		}
+		out = append(out, fact)
+	}
+	return out
+}
+
+func filterFrozenTablesBelowReturns(in []callboundary.FrozenTableFact, roots map[int]struct{}) []callboundary.FrozenTableFact {
+	out := in[:0]
+	for _, fact := range in {
+		if strictPlaceholderDescendant(fact.Target, roots) {
 			continue
 		}
 		out = append(out, fact)
@@ -1119,6 +1131,13 @@ func cloneNormalReturnFacts(in callboundary.NormalReturnFacts) callboundary.Norm
 			fact.Result = copyPath(fact.Result)
 			fact.Case = copyPath(fact.Case)
 			out.ChannelSelects[i] = fact
+		}
+	}
+	if len(in.FrozenTables) != 0 {
+		out.FrozenTables = make([]callboundary.FrozenTableFact, len(in.FrozenTables))
+		for i, fact := range in.FrozenTables {
+			fact.Target = copyPath(fact.Target)
+			out.FrozenTables[i] = fact
 		}
 	}
 	if len(in.EffectDeltas) != 0 {

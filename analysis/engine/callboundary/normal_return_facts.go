@@ -23,6 +23,7 @@ type NormalReturnFacts struct {
 	DynamicIndexFacts []DynamicIndexFact
 	BranchProofs      []BranchProof
 	ChannelSelects    []ChannelSelectFact
+	FrozenTables      []FrozenTableFact
 	EffectDeltas      []EffectDelta
 	EscapeEvents      []EscapeEventFact
 }
@@ -62,6 +63,11 @@ type ChannelSelectFact struct {
 	Case       pathdom.Path
 	Index      int
 	HasDefault bool
+}
+
+// FrozenTableFact records a must frozen-table fact for a placeholder path.
+type FrozenTableFact struct {
+	Target pathdom.Path
 }
 
 // EffectDelta records a pointwise effect delta for a placeholder target path.

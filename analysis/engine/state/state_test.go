@@ -360,6 +360,7 @@ func TestStateCloneIndependenceAcrossLanes(t *testing.T) {
 		})).
 		WriteEffectDelta(fx.effectKey, fx.effectDelta).
 		WritePlacement(fx.escapeID, placement.Stack).
+		FreezeTable(fx.freezeID).
 		AddChannelSelectFact(fx.channelFact).
 		AddBranchProof(fx.proof)
 
@@ -368,6 +369,7 @@ func TestStateCloneIndependenceAcrossLanes(t *testing.T) {
 		Path:  fx.pathKey,
 		Other: pathdom.PathKey("sym201@1.other"),
 	}
+	cloneOnlyFrozenID := identity.ID{Kind: "table", Site: "clone-only-freeze", Index: 1}
 	clone := original.Snapshot()
 	clone = clone.WriteValue(reg, fx.valueSlot, fx.absent)
 	clone = clone.WritePathKey(reg, fx.pathKey, fx.absent)
@@ -377,6 +379,7 @@ func TestStateCloneIndependenceAcrossLanes(t *testing.T) {
 	clone = clone.WriteHeapTableObject(reg, fx.heapID, heapidentity.BottomObject(reg))
 	clone = clone.WriteEffectDelta(fx.effectKey, effectdelta.Bottom(reg))
 	clone = clone.WritePlacement(fx.escapeID, placement.Unknown)
+	clone = clone.FreezeTable(cloneOnlyFrozenID)
 	clone = clone.AddChannelSelectFact(channelselectfact.Fact{
 		Select: "clone-only",
 		Kind:   channelselectfact.FactCase,
@@ -406,6 +409,9 @@ func TestStateCloneIndependenceAcrossLanes(t *testing.T) {
 	if got := original.ReadPlacement(fx.escapeID); got != placement.Stack {
 		t.Fatalf("original placement mutated through clone: %v", got)
 	}
+	if !original.IsTableFrozen(fx.freezeID) || original.IsTableFrozen(cloneOnlyFrozenID) {
+		t.Fatalf("original frozen-table lane mutated through clone")
+	}
 	if !original.HasChannelSelectFact(fx.channelFact) {
 		t.Fatalf("original channel-select fact mutated through clone")
 	}
@@ -433,6 +439,9 @@ func TestStateCloneIndependenceAcrossLanes(t *testing.T) {
 	}
 	if got := clone.ReadPlacement(fx.escapeID); got != placement.Unknown {
 		t.Fatalf("clone placement = %v, want unknown", got)
+	}
+	if !clone.IsTableFrozen(fx.freezeID) || !clone.IsTableFrozen(cloneOnlyFrozenID) {
+		t.Fatalf("clone frozen-table update did not stick")
 	}
 	if !clone.HasChannelSelectFact(fx.channelFact) || !clone.HasChannelSelectFact(channelselectfact.Fact{
 		Select: "clone-only",
@@ -544,6 +553,7 @@ func TestWritesFromStateBottomProduceReachableState(t *testing.T) {
 	effectKey := effectdelta.Key{Target: pathdom.PathKey("sym65@1.table"), Site: "effect", Kind: effectdelta.Mutation}
 	channel := channelselectfact.Fact{Select: "select-bottom", Kind: channelselectfact.FactSelect, Result: pathKey}
 	escapeID := identity.ID{Kind: "table", Site: "escape-bottom", Index: 1}
+	freezeID := identity.ID{Kind: "table", Site: "freeze-bottom", Index: 1}
 	present := presentValue(reg)
 
 	dynamicFact := dynamicindex.Fact{
@@ -568,12 +578,14 @@ func TestWritesFromStateBottomProduceReachableState(t *testing.T) {
 		{"effect-delta", bottom.WriteEffectDelta(effectKey, effectDelta)},
 		{"channel-select", bottom.AddChannelSelectFact(channel)},
 		{"placement", bottom.WritePlacement(escapeID, placement.Stack)},
+		{"frozen-table", bottom.FreezeTable(freezeID)},
 	}
 	for _, tc := range cases {
 		if tc.state.pathEvidence.StaticMembersBottom() ||
 			tc.state.pathEvidence.ProofsBottom() ||
 			tc.state.pathEvidence.PathPresenceImplicationsBottom() ||
-			tc.state.ChannelSelectFactsSnapshot().Bottom {
+			tc.state.ChannelSelectFactsSnapshot().Bottom ||
+			tc.state.frozenTables.bottom {
 			t.Fatalf("%s write left partial must-lane bottom: %#v", tc.name, tc.state)
 		}
 		if !stateDomain.LessOrEq(bottom, tc.state) {
@@ -956,6 +968,63 @@ func TestChannelSelectFactsUseMustJoin(t *testing.T) {
 	}
 }
 
+func TestFrozenTablesUseMustJoin(t *testing.T) {
+	stateDomain := Domain(standard.Registry())
+	common := identity.ID{Kind: "table", Site: "freeze", Index: 1}
+	leftOnly := identity.ID{Kind: "table", Site: "freeze", Index: 2}
+	rightOnly := identity.ID{Kind: "table", Site: "freeze", Index: 3}
+
+	if (State{}).IsTableFrozen(common) {
+		t.Fatalf("empty state reported table frozen")
+	}
+	if stateDomain.Bottom().IsTableFrozen(common) {
+		t.Fatalf("bottom state reported table frozen")
+	}
+	if stateDomain.Top().IsTableFrozen(common) {
+		t.Fatalf("top state reported table frozen")
+	}
+	if got := (State{}).FreezeTable(identity.ID{}); !stateDomain.Equal(got, State{}) {
+		t.Fatalf("freezing zero identity changed state")
+	}
+
+	written := State{}.FreezeTable(common)
+	if !written.IsTableFrozen(common) || written.IsTableFrozen(leftOnly) {
+		t.Fatalf("frozen table readback failed")
+	}
+	if !stateDomain.Equal(written.FreezeTable(common), written) {
+		t.Fatalf("freezing the same table twice changed state")
+	}
+	if !stateDomain.Equal(stateDomain.Join(stateDomain.Bottom(), written), written) {
+		t.Fatalf("state bottom should be join identity for frozen tables")
+	}
+
+	fromBottom := stateDomain.Bottom().FreezeTable(common)
+	if !fromBottom.IsTableFrozen(common) || fromBottom.frozenTables.bottom {
+		t.Fatalf("freeze from bottom did not produce reachable frozen-table lane")
+	}
+
+	left := State{}.FreezeTable(common).FreezeTable(leftOnly)
+	right := State{}.FreezeTable(common).FreezeTable(rightOnly)
+	joined := stateDomain.Join(left, right)
+	if !joined.IsTableFrozen(common) {
+		t.Fatalf("common frozen-table identity was dropped")
+	}
+	if joined.IsTableFrozen(leftOnly) || joined.IsTableFrozen(rightOnly) {
+		t.Fatalf("one-sided frozen-table identity survived must join")
+	}
+	if widened := stateDomain.Widen(left, right); !stateDomain.Equal(widened, joined) {
+		t.Fatalf("frozen-table widen differs from join")
+	}
+	if !stateDomain.LessOrEq(left, joined) || stateDomain.LessOrEq(joined, left) {
+		t.Fatalf("frozen-table order should move toward fewer must proofs")
+	}
+
+	clone := left.Snapshot().FreezeTable(rightOnly)
+	if left.IsTableFrozen(rightOnly) || !clone.IsTableFrozen(rightOnly) {
+		t.Fatalf("frozen-table snapshot write mutated original or missed clone")
+	}
+}
+
 func TestPlacementOrderAndCopy(t *testing.T) {
 	stateDomain := Domain(standard.Registry())
 	id := identity.ID{Kind: "table", Site: "escape", Index: 1}
@@ -1329,6 +1398,9 @@ func TestTopLanesReadTopAndRejectFiniteUpdates(t *testing.T) {
 	if got := top.ReadPlacement(escapeID); got != placement.Unknown {
 		t.Fatalf("top placement read = %v, want unknown", got)
 	}
+	if top.IsTableFrozen(heapID) {
+		t.Fatalf("top frozen-table read = true, want conservative false")
+	}
 	if _, ok := top.ReadPathStaticMember(pathKey); ok {
 		t.Fatalf("top static-member lane should read as unknown absence")
 	}
@@ -1402,6 +1474,7 @@ type stateLawFixture struct {
 	heapID      identity.ID
 	effectKey   effectdelta.Key
 	escapeID    identity.ID
+	freezeID    identity.ID
 	channelFact channelselectfact.Fact
 	proof       pathevidence.BranchProof
 	present     product.Value
@@ -1422,6 +1495,7 @@ func stateLawFixtureFor(reg *axis.Registry) stateLawFixture {
 	heapID := identity.ID{Kind: "table", Site: "state-law", Index: 1}
 	effectKey := effectdelta.Key{Target: tableKey, Site: "effect", Kind: effectdelta.Mutation}
 	escapeID := identity.ID{Kind: "table", Site: "escape-law", Index: 1}
+	freezeID := identity.ID{Kind: "table", Site: "freeze-law", Index: 1}
 	channelFact := channelselectfact.Fact{Select: "select-law", Kind: channelselectfact.FactSelect, Result: pathKey}
 	proof := pathevidence.BranchProof{Kind: pathevidence.BranchProofPathPresence, Path: pathKey, Presence: presence.Present()}
 	dynamicFact := dynamicindex.Fact{
@@ -1441,6 +1515,7 @@ func stateLawFixtureFor(reg *axis.Registry) stateLawFixture {
 		heapID:      heapID,
 		effectKey:   effectKey,
 		escapeID:    escapeID,
+		freezeID:    freezeID,
 		channelFact: channelFact,
 		proof:       proof,
 		present:     present,
@@ -1473,6 +1548,7 @@ func stateLawSample(reg *axis.Registry) []State {
 		WriteEffectDelta(fx.effectKey, fx.effectDelta).
 		WritePlacement(fx.escapeID, placement.Stack)
 	channelState := State{}.AddChannelSelectFact(fx.channelFact)
+	frozenState := State{}.FreezeTable(fx.freezeID)
 	fullState := valueState.
 		WritePathKey(reg, fx.pathKey, fx.present).
 		WritePathStaticMember(fx.staticKey, fx.present).
@@ -1485,10 +1561,11 @@ func stateLawSample(reg *axis.Registry) []State {
 		})).
 		WriteEffectDelta(fx.effectKey, fx.effectDelta).
 		WritePlacement(fx.escapeID, placement.Stack).
+		FreezeTable(fx.freezeID).
 		AddChannelSelectFact(fx.channelFact).
 		AddBranchProof(fx.proof)
 
-	return []State{bottom, top, valueState, pathState, dynamicState, heapState, effectState, channelState, fullState}
+	return []State{bottom, top, valueState, pathState, dynamicState, heapState, effectState, channelState, frozenState, fullState}
 }
 
 func stateLawFormat(reg *axis.Registry) func(State) string {
@@ -1499,7 +1576,7 @@ func stateLawFormat(reg *axis.Registry) func(State) string {
 			static = formatValue(reg, got)
 		}
 		return fmt.Sprintf(
-			"v=%s ret=%s path=%s static=%s dyn=%#v heap-root=%s effect=%#v placement=%v chan=%v proof=%v",
+			"v=%s ret=%s path=%s static=%s dyn=%#v heap-root=%s effect=%#v placement=%v frozen=%v chan=%v proof=%v",
 			formatValue(reg, s.ReadValue(reg, fx.valueSlot)),
 			formatValue(reg, s.ReadReturnSlot(reg, fx.returnSlot)),
 			formatValue(reg, s.ReadPathKey(reg, fx.pathKey)),
@@ -1508,6 +1585,7 @@ func stateLawFormat(reg *axis.Registry) func(State) string {
 			formatValue(reg, s.ReadHeapTableObject(reg, fx.heapID).Root()),
 			s.ReadEffectDelta(fx.effectKey),
 			s.ReadPlacement(fx.escapeID),
+			s.IsTableFrozen(fx.freezeID),
 			s.HasChannelSelectFact(fx.channelFact),
 			s.HasBranchProof(fx.proof),
 		)

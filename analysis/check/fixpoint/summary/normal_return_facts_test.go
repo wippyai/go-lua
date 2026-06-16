@@ -44,6 +44,10 @@ func TestNormalReturnFactsNormalizeDropsNonPlaceholderPaths(t *testing.T) {
 			{Select: channelselectfact.ID("select-concrete"), Kind: channelselectfact.FactReceive, Result: concrete, Index: 0},
 			{Select: channelselectfact.ID("select-placeholder"), Kind: channelselectfact.FactReceive, Result: placeholder, Index: 0},
 		},
+		FrozenTables: []callboundary.FrozenTableFact{
+			{Target: concrete},
+			{Target: placeholder},
+		},
 		EffectDeltas: []callboundary.EffectDelta{
 			{Target: concrete, Site: "caller.effect.ignored", Kind: effectdelta.Mutation, Value: effectdelta.Value{Before: value, After: value, Change: effectdelta.ChangeChanged}},
 			{Target: placeholder, Site: "caller.effect.1", Kind: effectdelta.Mutation, Value: effectdelta.Value{Before: value, After: value, Change: effectdelta.ChangeChanged}},
@@ -69,6 +73,9 @@ func TestNormalReturnFactsNormalizeDropsNonPlaceholderPaths(t *testing.T) {
 	}
 	if len(facts.ChannelSelects) != 1 || facts.ChannelSelects[0].Select != "select-placeholder" {
 		t.Fatalf("ChannelSelects = %#v, want only placeholder result fact", facts.ChannelSelects)
+	}
+	if len(facts.FrozenTables) != 1 || !facts.FrozenTables[0].Target.Equal(placeholder) {
+		t.Fatalf("FrozenTables = %#v, want only placeholder fact", facts.FrozenTables)
 	}
 	if len(facts.EffectDeltas) != 1 || facts.EffectDeltas[0].Site != "caller.effect.1" {
 		t.Fatalf("EffectDeltas = %#v, want stable caller site placeholder fact", facts.EffectDeltas)
@@ -97,6 +104,9 @@ func TestNormalReturnFactsCloneIsolatesPayload(t *testing.T) {
 			Path:     pathdom.NewPlaceholder(0).Field("ok"),
 			Presence: presence.Present(),
 		}},
+		FrozenTables: []callboundary.FrozenTableFact{{
+			Target: pathdom.NewPlaceholder(0).Field("frozen"),
+		}},
 		EscapeEvents: []callboundary.EscapeEventFact{{
 			Target:    pathdom.NewPlaceholder(0).Field("escape"),
 			Kind:      callboundary.EscapeEventSend,
@@ -108,6 +118,7 @@ func TestNormalReturnFactsCloneIsolatesPayload(t *testing.T) {
 	cloned.NormalReturnFacts.PathRefinements[0].Path = pathdom.NewPlaceholder(1)
 	cloned.NormalReturnFacts.DynamicIndexFacts[0].Site = "caller.dynamic.changed"
 	cloned.NormalReturnFacts.BranchProofs[0].Presence = presence.Absent()
+	cloned.NormalReturnFacts.FrozenTables[0].Target = pathdom.NewPlaceholder(1)
 	cloned.NormalReturnFacts.EscapeEvents[0].Target = pathdom.NewPlaceholder(1)
 
 	if !original.NormalReturnFacts.PathRefinements[0].Path.Equal(pathdom.NewPlaceholder(0).Field("value")) {
@@ -118,6 +129,9 @@ func TestNormalReturnFactsCloneIsolatesPayload(t *testing.T) {
 	}
 	if !presence.Equal(original.NormalReturnFacts.BranchProofs[0].Presence, presence.Present()) {
 		t.Fatalf("mutating cloned branch proof changed original")
+	}
+	if !original.NormalReturnFacts.FrozenTables[0].Target.Equal(pathdom.NewPlaceholder(0).Field("frozen")) {
+		t.Fatalf("mutating cloned frozen table fact changed original")
 	}
 	if !original.NormalReturnFacts.EscapeEvents[0].Target.Equal(pathdom.NewPlaceholder(0).Field("escape")) {
 		t.Fatalf("mutating cloned escape event changed original")
@@ -153,6 +167,10 @@ func TestNormalReturnFactsJoinUsesStateLaneSemantics(t *testing.T) {
 			{Select: channelselectfact.ID("select-common"), Kind: channelselectfact.FactSelect, Result: commonPath, Index: 0},
 			{Select: channelselectfact.ID("select-left"), Kind: channelselectfact.FactReceive, Case: leftOnly, Index: 1},
 		},
+		FrozenTables: []callboundary.FrozenTableFact{
+			{Target: commonPath},
+			{Target: leftOnly},
+		},
 		EffectDeltas: []callboundary.EffectDelta{
 			{Target: commonPath, Site: "caller.effect.common", Kind: effectdelta.Mutation, Value: effectdelta.Value{Before: leftValue, After: leftValue, Change: effectdelta.ChangeChanged}},
 			{Target: leftOnly, Site: "caller.effect.left", Kind: effectdelta.Mutation, Value: effectdelta.Value{Before: leftValue, After: leftValue, Change: effectdelta.ChangeChanged}},
@@ -182,6 +200,10 @@ func TestNormalReturnFactsJoinUsesStateLaneSemantics(t *testing.T) {
 		ChannelSelects: []callboundary.ChannelSelectFact{
 			{Select: channelselectfact.ID("select-common"), Kind: channelselectfact.FactSelect, Result: commonPath, Index: 0},
 			{Select: channelselectfact.ID("select-right"), Kind: channelselectfact.FactCase, Case: p0.Field("right"), Index: 2},
+		},
+		FrozenTables: []callboundary.FrozenTableFact{
+			{Target: commonPath},
+			{Target: p0.Field("right")},
 		},
 		EffectDeltas: []callboundary.EffectDelta{{
 			Target: commonPath,
@@ -225,6 +247,9 @@ func TestNormalReturnFactsJoinUsesStateLaneSemantics(t *testing.T) {
 	if len(got.ChannelSelects) != 1 || got.ChannelSelects[0].Select != "select-common" {
 		t.Fatalf("ChannelSelects = %#v, want only common must fact", got.ChannelSelects)
 	}
+	if len(got.FrozenTables) != 1 || !got.FrozenTables[0].Target.Equal(commonPath) {
+		t.Fatalf("FrozenTables = %#v, want only common must fact", got.FrozenTables)
+	}
 	if len(got.EffectDeltas) != 2 {
 		t.Fatalf("EffectDeltas = %#v, want common joined and left-only retained", got.EffectDeltas)
 	}
@@ -262,6 +287,9 @@ func TestNormalReturnFactsJoinUsesStateLaneSemantics(t *testing.T) {
 		common.Kind != callboundary.EscapeEventSend {
 		t.Fatalf("widen common escape event = %#v, want strengthened event", common)
 	}
+	if len(widened.FrozenTables) != 1 || !widened.FrozenTables[0].Target.Equal(commonPath) {
+		t.Fatalf("widen FrozenTables = %#v, want only common must fact", widened.FrozenTables)
+	}
 }
 
 func TestNormalReturnFactsEqualAndLessOrEqAccountForLane(t *testing.T) {
@@ -288,6 +316,24 @@ func TestNormalReturnFactsEqualAndLessOrEqAccountForLane(t *testing.T) {
 	}
 	if !Equal(reg, left, Normalize(reg, left)) {
 		t.Fatalf("Equal should compare normalized normal return facts")
+	}
+
+	frozen := Summary{NormalReturnFacts: callboundary.NormalReturnFacts{
+		FrozenTables: []callboundary.FrozenTableFact{{Target: p0}},
+	}}
+	if frozen.Clone().NormalReturnFacts.FrozenTables == nil || Normalize(reg, frozen).NormalReturnFacts.FrozenTables == nil {
+		t.Fatalf("FrozenTables should make normal return facts non-empty")
+	}
+	withFrozen := Summary{
+		Returns:           []product.Value{presentProduct(reg)},
+		NormalReturnFacts: frozen.NormalReturnFacts,
+	}
+	withoutFrozen := Summary{Returns: []product.Value{presentProduct(reg)}}
+	if !LessOrEq(reg, withFrozen, withoutFrozen) {
+		t.Fatalf("frozen table proof should be <= empty proof set")
+	}
+	if LessOrEq(reg, withoutFrozen, withFrozen) {
+		t.Fatalf("empty proof set should not be <= frozen table proof")
 	}
 }
 
