@@ -13,6 +13,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/factquery"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
+	"github.com/wippyai/go-lua/analysis/engine/visibility"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
 	"github.com/wippyai/go-lua/analysis/symbol"
@@ -161,26 +162,11 @@ func (r *Result) NumericFloorAtBoundary(point cfg.Point, p pathdom.Path) (int64,
 	if !ok {
 		return 0, false
 	}
-	pathKey := numericFloorPathKeyAt(r.visibility, point, p)
+	pathKey := visibility.RootOrVisibleKeyAt(r.visibility, point, p)
 	if pathKey == "" {
 		return 0, false
 	}
 	return in.ReadNumFloor(pathKey)
-}
-
-func numericFloorPathKeyAt(resolver interface {
-	KeyAt(cfg.Point, pathdom.Path) pathdom.PathKey
-}, point cfg.Point, p pathdom.Path) pathdom.PathKey {
-	if p.Symbol == 0 {
-		return ""
-	}
-	if len(p.Segments) == 0 {
-		return p.Key()
-	}
-	if resolver == nil {
-		return ""
-	}
-	return resolver.KeyAt(point, p)
 }
 
 // SymbolValueAtBoundary reads a root symbol value at the diagnostic read

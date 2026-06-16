@@ -139,7 +139,7 @@ func applyRootAssignmentNumFloor(
 	if resolver == nil || targetPath.Symbol == 0 || len(targetPath.Segments) != 0 {
 		return out
 	}
-	targetKey := numFloorKeyAt(resolver, ctx.Point, targetPath)
+	targetKey := visibility.RootOrVisibleKeyAt(resolver, ctx.Point, targetPath)
 	if targetKey == "" {
 		return out
 	}
@@ -147,17 +147,4 @@ func applyRootAssignmentNumFloor(
 		return out.WriteNumFloor(targetKey, floor)
 	}
 	return out.ClearNumFloor(targetKey)
-}
-
-func numFloorKeyAt(resolver *visibility.Resolver, point cfg.Point, p pathdom.Path) pathdom.PathKey {
-	if p.Symbol == 0 {
-		return ""
-	}
-	if len(p.Segments) == 0 {
-		return p.Key()
-	}
-	if resolver == nil {
-		return ""
-	}
-	return resolver.KeyAt(point, p)
 }

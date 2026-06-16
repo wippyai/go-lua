@@ -286,7 +286,7 @@ func TestCheckSplitDirectImportBoundaries(t *testing.T) {
 			},
 		},
 		{
-			name: "sourcevalue does not directly import type semantics",
+			name: "sourcevalue does not directly import any analysis/type packages",
 			pkg:  modulePath + "/analysis/engine/sourcevalue",
 			banned: []string{
 				modulePath + "/analysis/type",

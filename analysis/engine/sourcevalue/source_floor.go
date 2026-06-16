@@ -3,24 +3,18 @@ package sourcevalue
 import (
 	"math"
 
-	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/state"
+	"github.com/wippyai/go-lua/analysis/engine/visibility"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 )
-
-// PathKeyResolver resolves a path to the visibility-scoped key used by state
-// lower-bound tracking.
-type PathKeyResolver interface {
-	KeyAt(point cfg.Point, p pathdom.Path) pathdom.PathKey
-}
 
 // NumFloorForSource derives the proven numeric floor for a value source.
 func NumFloorForSource(
 	reg *axis.Registry,
-	resolver PathKeyResolver,
+	resolver visibility.PathKeyResolver,
 	point cfg.Point,
 	facts factflow.Facts,
 	in state.State,
@@ -31,7 +25,7 @@ func NumFloorForSource(
 
 func numFloorForSource(
 	reg *axis.Registry,
-	resolver PathKeyResolver,
+	resolver visibility.PathKeyResolver,
 	point cfg.Point,
 	facts factflow.Facts,
 	in state.State,
@@ -47,7 +41,7 @@ func numFloorForSource(
 		}
 	}
 	if p, ok := facts.ExpressionPath(source.ExprRef); ok {
-		pathKey := numFloorKeyAt(resolver, point, p)
+		pathKey := visibility.RootOrVisibleKeyAt(resolver, point, p)
 		if pathKey != "" {
 			if floor, ok := in.ReadNumFloor(pathKey); ok {
 				return floor, true
@@ -69,22 +63,9 @@ func numFloorForSource(
 	return numFloorForOperation(reg, resolver, point, facts, in, op, active)
 }
 
-func numFloorKeyAt(resolver PathKeyResolver, point cfg.Point, p pathdom.Path) pathdom.PathKey {
-	if p.Symbol == 0 {
-		return ""
-	}
-	if len(p.Segments) == 0 {
-		return p.Key()
-	}
-	if resolver == nil {
-		return ""
-	}
-	return resolver.KeyAt(point, p)
-}
-
 func numFloorForOperation(
 	reg *axis.Registry,
-	resolver PathKeyResolver,
+	resolver visibility.PathKeyResolver,
 	point cfg.Point,
 	facts factflow.Facts,
 	in state.State,
@@ -117,7 +98,7 @@ func numFloorForOperation(
 
 func numFloorPlusConstant(
 	reg *axis.Registry,
-	resolver PathKeyResolver,
+	resolver visibility.PathKeyResolver,
 	point cfg.Point,
 	facts factflow.Facts,
 	in state.State,

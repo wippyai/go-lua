@@ -14,6 +14,11 @@ type VersionSource interface {
 	VisibleVersion(cfg.Point, symbol.ID) ssa.Version
 }
 
+// PathKeyResolver resolves a source path to the point-visible state key.
+type PathKeyResolver interface {
+	KeyAt(cfg.Point, pathdom.Path) pathdom.PathKey
+}
+
 type versionedRoot struct {
 	sym     symbol.ID
 	version int
@@ -63,6 +68,22 @@ func (r *Resolver) KeyAt(point cfg.Point, path pathdom.Path) pathdom.PathKey {
 		return ""
 	}
 	return r.KeyForVersion(path.Symbol, version.ID, path.Segments)
+}
+
+// RootOrVisibleKeyAt returns the state key for facts that store root-symbol
+// paths under their structural key but require visibility normalization for
+// member paths.
+func RootOrVisibleKeyAt(resolver PathKeyResolver, point cfg.Point, path pathdom.Path) pathdom.PathKey {
+	if path.IsEmpty() || path.Symbol == 0 {
+		return ""
+	}
+	if len(path.Segments) == 0 {
+		return path.Key()
+	}
+	if resolver == nil {
+		return ""
+	}
+	return resolver.KeyAt(point, path)
 }
 
 // KeyForVersion returns a point-local state key for an explicit nonzero SSA version.

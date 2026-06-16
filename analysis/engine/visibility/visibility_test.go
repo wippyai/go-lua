@@ -168,6 +168,57 @@ func TestResolverKeyForVersionUsesExplicitVersion(t *testing.T) {
 	}
 }
 
+func TestRootOrVisibleKeyAtPolicy(t *testing.T) {
+	point := cfg.Point(17)
+	root := pathdom.NewPath(42, "x")
+	member := root.Field("field")
+	zeroSymbol := pathdom.Path{Root: "x"}
+	calls := 0
+	resolver := recordingPathKeyResolver{
+		key: pathdom.PathKey("sym42@17.field"),
+		onKeyAt: func(gotPoint cfg.Point, gotPath pathdom.Path) {
+			calls++
+			if gotPoint != point {
+				t.Fatalf("resolver point = %v, want %v", gotPoint, point)
+			}
+			if gotPath.Key() != member.Key() {
+				t.Fatalf("resolver path key = %q, want %q", gotPath.Key(), member.Key())
+			}
+			if gotPath.Symbol != member.Symbol || gotPath.Root != member.Root || gotPath.Version != member.Version {
+				t.Fatalf("resolver path = %#v, want %#v", gotPath, member)
+			}
+		},
+	}
+
+	if got := RootOrVisibleKeyAt(resolver, point, pathdom.Path{}); got != "" {
+		t.Fatalf("empty path key = %q, want empty", got)
+	}
+	if got := RootOrVisibleKeyAt(resolver, point, zeroSymbol); got != "" {
+		t.Fatalf("symbol-zero path key = %q, want empty", got)
+	}
+	if got := RootOrVisibleKeyAt(nil, point, root); got != root.Key() {
+		t.Fatalf("root path key = %q, want %q", got, root.Key())
+	}
+	if got := RootOrVisibleKeyAt(resolver, point, member); got != pathdom.PathKey("sym42@17.field") {
+		t.Fatalf("member path key = %q, want sym42@17.field", got)
+	}
+	if calls != 1 {
+		t.Fatalf("resolver KeyAt calls = %d, want 1", calls)
+	}
+}
+
+type recordingPathKeyResolver struct {
+	key     pathdom.PathKey
+	onKeyAt func(cfg.Point, pathdom.Path)
+}
+
+func (r recordingPathKeyResolver) KeyAt(point cfg.Point, p pathdom.Path) pathdom.PathKey {
+	if r.onKeyAt != nil {
+		r.onKeyAt(point, p)
+	}
+	return r.key
+}
+
 func TestResolverKeepsSameSymbolDifferentVersionsDistinctWhileStableIdentityIgnoresVersion(t *testing.T) {
 	pointV1 := cfg.Point(10)
 	pointV2 := cfg.Point(11)
