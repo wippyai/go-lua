@@ -94,8 +94,8 @@ var descriptors = map[string]Descriptor{
 	IterationIterator: descriptor(IterationIterator, "iteration", "Iterator", StatusImportOnly, "Import/stdlib operational vocabulary, but not exported as the same label."),
 
 	DispatchModuleLoad:        descriptor(DispatchModuleLoad, "dispatch", "ModuleLoad", StatusPartial, "Require provider hardcodes module name instead of honoring a full payload."),
-	DispatchTypePredicate:     descriptor(DispatchTypePredicate, "dispatch", "TypePredicate", StatusReserved, "Reserved dispatch vocabulary without active lowering semantics."),
-	DispatchVariadicTransform: descriptor(DispatchVariadicTransform, "dispatch", "VariadicTransform", StatusReserved, "Reserved dispatch vocabulary without active lowering semantics."),
+	DispatchTypePredicate:     descriptor(DispatchTypePredicate, "dispatch", "TypePredicate", StatusReservedHighRisk, "Reserved metadata; type() narrowing is syntax/factflow based, so stdlib must not declare this while inactive."),
+	DispatchVariadicTransform: descriptor(DispatchVariadicTransform, "dispatch", "VariadicTransform", StatusReservedHighRisk, "Reserved metadata; select() lowering ignores this, so stdlib must not declare it while inactive."),
 
 	MutationMutate:       descriptor(MutationMutate, "mutation", "Mutate", StatusPartial, "Mutation invalidation is active, but payload semantics are only partially consumed."),
 	MutationLengthChange: descriptor(MutationLengthChange, "mutation", "LengthChange", StatusPartial, "Length mutation vocabulary is present, but semantics are only partially consumed."),

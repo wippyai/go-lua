@@ -152,7 +152,6 @@ func TestLookupSeededEffects(t *testing.T) {
 		{
 			name: Type,
 			labels: []effect.Label{
-				dispatch.TypePredicate{},
 				ownership.BorrowAll{},
 			},
 		},
@@ -269,6 +268,39 @@ func TestStringFindDeclaresConservativeReturnsWithoutReservedCorrelation(t *test
 	for _, label := range got.Effect.Labels {
 		if correlated, ok := label.(returns.CorrelatedReturn); ok {
 			t.Fatalf("string.find must not declare inactive CorrelatedReturn: %v", correlated)
+		}
+	}
+}
+
+func TestTypeDeclaresBorrowWithoutReservedPredicate(t *testing.T) {
+	got, ok := Lookup(Type)
+	if !ok {
+		t.Fatalf("Lookup(%q) missing", Type)
+	}
+	if !hasLabel(got.Effect, ownership.BorrowAll{}) {
+		t.Fatalf("type effect missing BorrowAll: %v", got.Effect)
+	}
+	for _, label := range got.Effect.Labels {
+		if _, ok := label.(dispatch.TypePredicate); ok {
+			t.Fatalf("type must not declare inactive TypePredicate: %v", label)
+		}
+	}
+}
+
+func TestSelectDeclaresConservativeAnyWithoutReservedVariadicTransform(t *testing.T) {
+	got, ok := Lookup("select")
+	if !ok {
+		t.Fatal("Lookup(\"select\") missing")
+	}
+	if len(got.Type.Returns) != 1 {
+		t.Fatalf("select returns = %d, want 1", len(got.Type.Returns))
+	}
+	if !typ.TypeEquals(got.Type.Returns[0], typ.Any) {
+		t.Fatalf("select return = %v, want conservative declared Any", got.Type.Returns[0])
+	}
+	for _, label := range got.Effect.Labels {
+		if _, ok := label.(dispatch.VariadicTransform); ok {
+			t.Fatalf("select must not declare inactive VariadicTransform: %v", label)
 		}
 	}
 }

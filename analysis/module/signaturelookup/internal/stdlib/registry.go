@@ -71,7 +71,6 @@ var registry = map[string]signature.Function{
 			Param("v", typ.Any).
 			Returns(typ.String).
 			Build(),
-		dispatch.TypePredicate{},
 		ownership.BorrowAll{},
 	),
 	Pairs: sig(
@@ -151,7 +150,6 @@ var registry = map[string]signature.Function{
 			Variadic(typ.Any).
 			Returns(typ.Any).
 			Build(),
-		dispatch.VariadicTransform{},
 	),
 	"rawget": sig(
 		typ.Func().

@@ -45,8 +45,8 @@ func TestDescriptorsClassifyAuditedVocabularyExactlyOnce(t *testing.T) {
 		capability.IterationIterator: capability.StatusImportOnly,
 
 		capability.DispatchModuleLoad:        capability.StatusPartial,
-		capability.DispatchTypePredicate:     capability.StatusReserved,
-		capability.DispatchVariadicTransform: capability.StatusReserved,
+		capability.DispatchTypePredicate:     capability.StatusReservedHighRisk,
+		capability.DispatchVariadicTransform: capability.StatusReservedHighRisk,
 
 		capability.MutationMutate:       capability.StatusPartial,
 		capability.MutationLengthChange: capability.StatusPartial,
@@ -217,5 +217,44 @@ func TestCorrelatedReturnIsPinnedReservedHighRisk(t *testing.T) {
 	}
 	if !strings.Contains(desc.Rationale, "stdlib must not declare it while inactive") {
 		t.Fatalf("CorrelatedReturn rationale = %q, want stdlib quarantine rationale", desc.Rationale)
+	}
+}
+
+func TestInactiveDispatchLabelsArePinnedReservedHighRisk(t *testing.T) {
+	tests := []struct {
+		name      string
+		id        string
+		rationale string
+	}{
+		{
+			name:      "type predicate",
+			id:        capability.DispatchTypePredicate,
+			rationale: "type() narrowing is syntax/factflow based",
+		},
+		{
+			name:      "variadic transform",
+			id:        capability.DispatchVariadicTransform,
+			rationale: "select() lowering ignores this",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			desc, ok := capability.Lookup(tt.id)
+			if !ok {
+				t.Fatalf("missing descriptor %s", tt.id)
+			}
+			if desc.Status != capability.StatusReservedHighRisk {
+				t.Fatalf("%s status = %q, want %q", tt.id, desc.Status, capability.StatusReservedHighRisk)
+			}
+			if !strings.Contains(desc.Rationale, "Reserved metadata") {
+				t.Fatalf("%s rationale = %q, want reserved metadata rationale", tt.id, desc.Rationale)
+			}
+			if !strings.Contains(desc.Rationale, tt.rationale) {
+				t.Fatalf("%s rationale = %q, want %q", tt.id, desc.Rationale, tt.rationale)
+			}
+			if !strings.Contains(desc.Rationale, "stdlib must not declare") {
+				t.Fatalf("%s rationale = %q, want stdlib quarantine rationale", tt.id, desc.Rationale)
+			}
+		})
 	}
 }
