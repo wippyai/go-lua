@@ -1,13 +1,11 @@
-package body
+package sourcevalue
 
 import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
-	"github.com/wippyai/go-lua/analysis/domain/value/axis/escape"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/evidence"
-	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
@@ -30,7 +28,7 @@ func TestObjectLiteralTypeSeparatesDotFieldAndBracketStringMember(t *testing.T) 
 		indexSource: typevalue.WithWitness(reg, typevalue.FromType(reg, typ.Boolean), typ.Boolean),
 	}
 
-	got, ok := objectLiteralType(reg, lit, func(source factflow.ValueSource) (product.Value, bool) {
+	got, ok := ObjectLiteralType(reg, lit, func(source factflow.ValueSource) (product.Value, bool) {
 		value, ok := values[source]
 		return value, ok
 	})
@@ -60,7 +58,7 @@ func TestObjectLiteralTypeAdoptsExpectedRecordFieldAndStaticStringMemberBySegmen
 		factflow.NewObjectEntry(path.NewPlaceholder(0).IndexStr("member"), indexSource),
 	}).WithExpected(typevalue.WithWitness(reg, typevalue.FromType(reg, expected), expected))
 
-	got, ok := objectLiteralType(reg, lit, func(factflow.ValueSource) (product.Value, bool) {
+	got, ok := ObjectLiteralType(reg, lit, func(factflow.ValueSource) (product.Value, bool) {
 		return product.Value{}, false
 	})
 	if !ok {
@@ -102,7 +100,7 @@ func TestObjectLiteralTypePreservesNestedWitnessShape(t *testing.T) {
 		handlerSource: typevalue.WithWitness(reg, typevalue.FromType(reg, handlerType), handlerType),
 	}
 
-	got, ok := objectLiteralType(reg, lit, func(source factflow.ValueSource) (product.Value, bool) {
+	got, ok := ObjectLiteralType(reg, lit, func(source factflow.ValueSource) (product.Value, bool) {
 		value, ok := values[source]
 		return value, ok
 	})
@@ -139,7 +137,7 @@ func TestObjectLiteralTypeTreatsTopOriginEntryAsAny(t *testing.T) {
 				idSource: product.Set(reg, product.Top(), evidence.Key, tt.evidence),
 			}
 
-			got, ok := objectLiteralType(reg, lit, func(source factflow.ValueSource) (product.Value, bool) {
+			got, ok := ObjectLiteralType(reg, lit, func(source factflow.ValueSource) (product.Value, bool) {
 				value, ok := values[source]
 				return value, ok
 			})
@@ -169,7 +167,7 @@ func TestObjectLiteralTypeKeepsProvenSiblingWhenNestedEntryUnresolved(t *testing
 		factflow.NewObjectEntry(path.NewPlaceholder(0).Field("schema").Field("witness"), witnessSource),
 	})
 
-	got, ok := objectLiteralType(reg, lit, func(source factflow.ValueSource) (product.Value, bool) {
+	got, ok := ObjectLiteralType(reg, lit, func(source factflow.ValueSource) (product.Value, bool) {
 		if source == channelSource {
 			return typevalue.WithWitness(reg, typevalue.FromType(reg, channelType), channelType), true
 		}
@@ -202,7 +200,7 @@ func TestObjectLiteralTypeBuildsNestedSequenceWithTopOriginField(t *testing.T) {
 		routeSource: typevalue.WithWitness(reg, typevalue.FromType(reg, typ.String), typ.String),
 	}
 
-	got, ok := objectLiteralType(reg, lit, func(source factflow.ValueSource) (product.Value, bool) {
+	got, ok := ObjectLiteralType(reg, lit, func(source factflow.ValueSource) (product.Value, bool) {
 		value, ok := values[source]
 		return value, ok
 	})
@@ -230,7 +228,7 @@ func TestObjectLiteralTypePreservesPureSequenceAsTuple(t *testing.T) {
 		secondSource: typevalue.WithWitness(reg, typevalue.FromType(reg, typ.String), typ.String),
 	}
 
-	got, ok := objectLiteralType(reg, lit, func(source factflow.ValueSource) (product.Value, bool) {
+	got, ok := ObjectLiteralType(reg, lit, func(source factflow.ValueSource) (product.Value, bool) {
 		value, ok := values[source]
 		return value, ok
 	})
@@ -241,27 +239,5 @@ func TestObjectLiteralTypePreservesPureSequenceAsTuple(t *testing.T) {
 	want := typ.NewTuple(typ.Number, typ.String)
 	if !typ.TypeEquals(got, want) {
 		t.Fatalf("object literal sequence type = %v, want %v", got, want)
-	}
-}
-
-func TestObjectLiteralEvaluatorMarksConstructedValueFresh(t *testing.T) {
-	reg := standard.Registry()
-	source := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: factflow.ExprRef(1001), HasExpr: true}
-	litID := identity.LuaTableLiteral(7001, 1001)
-	lit := factflow.NewObjectLiteral([]factflow.ObjectEntry{
-		factflow.NewObjectEntry(path.NewPlaceholder(0).Field("id"), source),
-	}).WithIdentity(litID)
-
-	got, ok := objectLiteralEvaluator(reg, nil)(lit, func(source factflow.ValueSource) (product.Value, bool) {
-		return typevalue.WithWitness(reg, typevalue.FromType(reg, typ.String), typ.String), true
-	})
-	if !ok {
-		t.Fatal("objectLiteralEvaluator returned false")
-	}
-	if gotEscape := product.Get(reg, got, escape.Key); !escape.Equal(gotEscape, escape.Fresh()) {
-		t.Fatalf("object literal escape = %s, want fresh", gotEscape)
-	}
-	if gotID, ok := product.Get(reg, got, identity.Key).ID(); !ok || gotID != litID {
-		t.Fatalf("object literal identity = %v/%v, want %v", gotID, ok, litID)
 	}
 }

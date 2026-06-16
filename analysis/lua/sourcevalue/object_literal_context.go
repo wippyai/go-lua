@@ -1,4 +1,4 @@
-package body
+package sourcevalue
 
 import (
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
@@ -96,7 +96,7 @@ func objectLiteralFieldType(reg *axis.Registry, name string, lit factflow.Object
 		if !ok {
 			return nil, false
 		}
-		return objectLiteralEntryType(reg, nil, value)
+		return ObjectLiteralEntryType(reg, nil, value)
 	}
 	return nil, false
 }

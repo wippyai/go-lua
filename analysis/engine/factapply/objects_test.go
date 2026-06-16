@@ -7,6 +7,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/evidence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
@@ -297,7 +298,7 @@ func TestFactsNodeTransferReturnObjectLiteralWritesHeapObject(t *testing.T) {
 	objectSource := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: factflow.ExprRef(74), HasExpr: true}
 	entrySource := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: factflow.ExprRef(75), HasExpr: true}
 	rootValue := product.Set(reg, presentValue(reg), identity.Key, identity.Singleton(testTableLiteralID(objectSource.ExprRef)))
-	entryValue := absentValue(reg)
+	entryValue := product.Set(reg, product.Top(), evidence.Key, evidence.ExplicitTop())
 	sources := &recordingSourceValues{
 		values: map[factflow.ValueSource]product.Value{
 			objectSource: rootValue,
@@ -332,7 +333,7 @@ func TestFactsNodeTransferCallArgumentObjectLiteralWritesHeapObject(t *testing.T
 	objectSource := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: factflow.ExprRef(76), HasExpr: true}
 	entrySource := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: factflow.ExprRef(77), HasExpr: true}
 	rootValue := product.Set(reg, presentValue(reg), identity.Key, identity.Singleton(testTableLiteralID(objectSource.ExprRef)))
-	entryValue := absentValue(reg)
+	entryValue := product.Set(reg, product.Top(), evidence.Key, evidence.GradualTop())
 	sources := &recordingSourceValues{
 		values: map[factflow.ValueSource]product.Value{
 			objectSource: rootValue,

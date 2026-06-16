@@ -1,44 +1,28 @@
-package body
+package sourcevalue
 
 import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
-	"github.com/wippyai/go-lua/analysis/domain/value/axis/escape"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/evidence"
-	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	variantoriginpkg "github.com/wippyai/go-lua/analysis/domain/value/axis/variantorigin"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
-	sourcevalue "github.com/wippyai/go-lua/analysis/engine/sourcevalue"
+	luatypeprojection "github.com/wippyai/go-lua/analysis/lua/typeprojection"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
-func objectLiteralEvaluator(reg *axis.Registry, typeValues *typevalue.Cache) sourcevalue.ObjectLiteralEvaluator {
-	return func(lit factflow.ObjectLiteral, resolve func(factflow.ValueSource) (product.Value, bool)) (product.Value, bool) {
-		t, ok := objectLiteralTypeCached(reg, typeValues, lit, resolve)
-		if !ok {
-			return product.Value{}, false
-		}
-		value := typeValues.FromTypeWithWitness(reg, t)
-		if id, ok := lit.Identity(); ok {
-			value = product.Set(reg, value, identity.Key, identity.Singleton(id))
-		}
-		return product.Set(reg, value, escape.Key, escape.Fresh()), true
-	}
+func ObjectLiteralType(reg *axis.Registry, lit factflow.ObjectLiteral, resolve func(factflow.ValueSource) (product.Value, bool)) (typ.Type, bool) {
+	return ObjectLiteralTypeCached(reg, nil, lit, resolve)
 }
 
-func objectLiteralType(reg *axis.Registry, lit factflow.ObjectLiteral, resolve func(factflow.ValueSource) (product.Value, bool)) (typ.Type, bool) {
-	return objectLiteralTypeCached(reg, nil, lit, resolve)
-}
-
-func objectLiteralTypeCached(reg *axis.Registry, typeValues *typevalue.Cache, lit factflow.ObjectLiteral, resolve func(factflow.ValueSource) (product.Value, bool)) (typ.Type, bool) {
+func ObjectLiteralTypeCached(reg *axis.Registry, typeValues *typevalue.Cache, lit factflow.ObjectLiteral, resolve func(factflow.ValueSource) (product.Value, bool)) (typ.Type, bool) {
 	builder := typetable.NewConstructorBuilder()
 	expected, hasExpected := expectedRecord(reg, lit, resolve)
 	seen := false
 	for _, entry := range lit.Entries() {
 		segs := entry.Suffix().Segments
-		path, ok := objectLiteralConstructorPath(segs)
+		path, ok := luatypeprojection.ConstructorPathFromSegments(segs)
 		if !ok {
 			continue
 		}
@@ -52,7 +36,7 @@ func objectLiteralTypeCached(reg *axis.Registry, typeValues *typevalue.Cache, li
 			}
 			continue
 		}
-		t, ok := objectLiteralEntryType(reg, typeValues, value)
+		t, ok := ObjectLiteralEntryType(reg, typeValues, value)
 		if !ok {
 			if filled, ok := expectedRecordField(hasExpected, expected, segs); ok {
 				if !builder.Add(path, filled) {
@@ -80,7 +64,7 @@ func objectLiteralTypeCached(reg *axis.Registry, typeValues *typevalue.Cache, li
 	return builder.Build()
 }
 
-func objectLiteralEntryType(reg *axis.Registry, typeValues *typevalue.Cache, value product.Value) (typ.Type, bool) {
+func ObjectLiteralEntryType(reg *axis.Registry, typeValues *typevalue.Cache, value product.Value) (typ.Type, bool) {
 	if t, ok := typevalue.TypeOf(reg, value); ok {
 		origin := product.Get(reg, value, variantoriginpkg.Key)
 		if !origin.IsBottom() && !origin.IsTop() {

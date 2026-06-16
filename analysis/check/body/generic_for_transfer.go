@@ -14,6 +14,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/cfgfacts"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
 	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
+	luasourcevalue "github.com/wippyai/go-lua/analysis/lua/sourcevalue"
 	"github.com/wippyai/go-lua/analysis/lua/typeresolve"
 	"github.com/wippyai/go-lua/analysis/module/signaturelookup"
 	"github.com/wippyai/go-lua/analysis/type/projection"
@@ -159,7 +160,7 @@ func iteratorSourceType(reg *axis.Registry, sourceValue product.Value, assertedS
 	if hasAssertedSourceType {
 		return assertedSourceType, true
 	}
-	return objectLiteralEntryType(reg, nil, sourceValue)
+	return luasourcevalue.ObjectLiteralEntryType(reg, nil, sourceValue)
 }
 
 func genericForAssertedIteratorSourceType(generic cfgfacts.GenericForFact, sourceIndex int, resolver *typeresolve.Resolver) (typ.Type, bool) {

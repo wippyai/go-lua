@@ -1,17 +1,19 @@
-package body
+package typeprojection
 
 import (
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 )
 
-func objectLiteralConstructorPath(segs []segment.Segment) ([]typetable.ConstructorKey, bool) {
+// ConstructorPathFromSegments converts a static Lua path suffix into table
+// constructor keys.
+func ConstructorPathFromSegments(segs []segment.Segment) ([]typetable.ConstructorKey, bool) {
 	if len(segs) == 0 {
 		return nil, false
 	}
 	out := make([]typetable.ConstructorKey, 0, len(segs))
 	for _, seg := range segs {
-		key, ok := objectLiteralConstructorKey(seg)
+		key, ok := ConstructorKeyFromSegment(seg)
 		if !ok {
 			return nil, false
 		}
@@ -20,7 +22,9 @@ func objectLiteralConstructorPath(segs []segment.Segment) ([]typetable.Construct
 	return out, true
 }
 
-func objectLiteralConstructorKey(seg segment.Segment) (typetable.ConstructorKey, bool) {
+// ConstructorKeyFromSegment converts one static Lua path segment into a table
+// constructor key.
+func ConstructorKeyFromSegment(seg segment.Segment) (typetable.ConstructorKey, bool) {
 	switch seg.Kind {
 	case segment.SegmentField:
 		if seg.Name == "" {
