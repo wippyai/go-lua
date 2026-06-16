@@ -93,13 +93,13 @@ var descriptors = map[string]Descriptor{
 
 	IterationIterator: descriptor(IterationIterator, "iteration", "Iterator", StatusImportOnly, "Import/stdlib operational vocabulary, but not exported as the same label."),
 
-	DispatchModuleLoad:        descriptor(DispatchModuleLoad, "dispatch", "ModuleLoad", StatusPartial, "Require provider hardcodes module name instead of honoring a full payload."),
+	DispatchModuleLoad:        descriptor(DispatchModuleLoad, "dispatch", "ModuleLoad", StatusPartial, "Metadata marker for require-like signatures; operational module rehydration is currently name-bound to require and does not inspect this label."),
 	DispatchTypePredicate:     descriptor(DispatchTypePredicate, "dispatch", "TypePredicate", StatusReservedHighRisk, "Reserved metadata; type() narrowing is syntax/factflow based, so stdlib must not declare this while inactive."),
 	DispatchVariadicTransform: descriptor(DispatchVariadicTransform, "dispatch", "VariadicTransform", StatusReservedHighRisk, "Reserved metadata; select() lowering ignores this, so stdlib must not declare it while inactive."),
 
-	MutationMutate:       descriptor(MutationMutate, "mutation", "Mutate", StatusPartial, "Mutation invalidation is active, but payload semantics are only partially consumed."),
-	MutationLengthChange: descriptor(MutationLengthChange, "mutation", "LengthChange", StatusPartial, "Length mutation vocabulary is present, but semantics are only partially consumed."),
-	MutationTableMutator: descriptor(MutationTableMutator, "mutation", "TableMutator", StatusPartial, "Currently drives invalidation only; payloads are mostly ignored."),
+	MutationMutate:       descriptor(MutationMutate, "mutation", "Mutate", StatusPartial, "Operational lowering consumes only Target as a path-invalidation authority; Transform and LengthDelta are metadata until shape/length mutation semantics are implemented."),
+	MutationLengthChange: descriptor(MutationLengthChange, "mutation", "LengthChange", StatusPartial, "Operational lowering consumes only Target as a path-invalidation authority; Delta is metadata until length semantics are implemented."),
+	MutationTableMutator: descriptor(MutationTableMutator, "mutation", "TableMutator", StatusPartial, "Operational lowering consumes only Target as a path-invalidation authority; Value is metadata until element write semantics are implemented."),
 
 	ControlThrow: descriptor(ControlThrow, "control", "Throw", StatusReservedHighRisk, "Reserved metadata; control throw lowering is inactive, so stdlib must not declare it while behavior is represented by Never/postconditions/module-load."),
 	ControlIO:    descriptor(ControlIO, "control", "IO", StatusReservedHighRisk, "Reserved metadata; IO policy/enforcement is inactive, so stdlib must not declare it while inactive."),

@@ -47,6 +47,13 @@ func (m signatureMap) Lookup(name string) (signature.Function, bool) {
 	return sig, ok
 }
 
+type moduleExportMap map[string]typ.Type
+
+func (m moduleExportMap) LookupExport(path string) (typ.Type, bool) {
+	t, ok := m[path]
+	return t, ok
+}
+
 func staticName(name string) SignatureNameFunc {
 	name = strings.TrimSpace(name)
 	return func(transfer.NodeContext, factflow.CallProducer) (string, bool) {
@@ -241,6 +248,50 @@ func TestSignatureOutcomeProviderWeakAnyReturnIsNotPostReturnAuthority(t *testin
 	if len(got.Results) != 1 {
 		t.Fatalf("results = %#v, want one weak fallback result", got.Results)
 	}
+}
+
+func TestModuleLoadOutcomeProviderIsRequireNameBound(t *testing.T) {
+	reg := standard.Registry()
+	point := cfg.Point(243)
+	argRef := factflow.ExprRef(244)
+	modulePath := typ.LiteralString("pkg.mod")
+	modulePathValue := typevalue.WithWitness(reg, typevalue.FromType(reg, modulePath), modulePath)
+	site := factflow.NewCallSite(factflow.CallSiteConfig{
+		ArgumentSources: []factflow.ValueSource{{
+			Kind:    factflow.ValueSourceExpression,
+			ExprRef: argRef,
+			HasExpr: true,
+		}},
+	}).View()
+
+	providerFor := func(name string) factapply.CallOutcomeProvider {
+		return ModuleLoadOutcomeProvider(ModuleLoadOutcomeProviderConfig{
+			Exports: moduleExportMap{
+				"pkg.mod": typ.Number,
+			},
+			NameFor: staticName(name),
+			Sources: sourcevalue.NewSourceValues(sourcevalue.SourceValuesConfig{
+				Registry: reg,
+				ExpressionValues: map[factflow.ExprRef]product.Value{
+					argRef: modulePathValue,
+				},
+			}),
+		})
+	}
+
+	nonRequire := providerFor("loadModule")(transfer.NodeContext{Registry: reg, Point: point}, site, state.State{}, nil)
+	if len(nonRequire.Results) != 0 || nonRequire.PostReturnAuthority {
+		t.Fatalf("non-require module load outcome = %#v, want no operational rehydration", nonRequire)
+	}
+
+	got := providerFor("require")(transfer.NodeContext{Registry: reg, Point: point}, site, state.State{}, nil)
+	if len(got.Results) != 1 {
+		t.Fatalf("require module load results = %#v, want one export result", got.Results)
+	}
+	if !got.PostReturnAuthority {
+		t.Fatalf("PostReturnAuthority = false, want true for exact module export")
+	}
+	assertTypeWitness(t, reg, got.Results[0].Value, typ.Number)
 }
 
 func TestSignatureOutcomeProviderLowersNormalReturnRefinementToParamPathRefinementAndApplies(t *testing.T) {
@@ -594,6 +645,35 @@ func TestSignatureOutcomeProviderLowersMutateToParamPathInvalidationAndApplies(t
 	})
 	assertPathValue(t, reg, flow[graph.Exit()], containerKey, present)
 	assertPathValue(t, reg, flow[graph.Exit()], childKey, product.Bottom(reg))
+}
+
+func TestSignatureParamPathInvalidationTreatsMutationPayloadsAsMetadata(t *testing.T) {
+	site := factflow.NewCallSite(factflow.CallSiteConfig{
+		ArgumentSources: []factflow.ValueSource{
+			{Kind: factflow.ValueSourceExpression, ExprRef: factflow.ExprRef(930), HasExpr: true},
+			{Kind: factflow.ValueSourceExpression, ExprRef: factflow.ExprRef(931), HasExpr: true},
+			{Kind: factflow.ValueSourceExpression, ExprRef: factflow.ExprRef(932), HasExpr: true},
+		},
+	})
+	sig := signature.Function{
+		Effect: effect.Empty.With(
+			mutation.Mutate{
+				Target: effect.ParamRef{Index: 0},
+				Transform: mutation.ContainerElementUnion{
+					Container: effect.ParamRef{Index: 1},
+					Value:     effect.ParamRef{Index: 2},
+				},
+			},
+			mutation.LengthChange{Target: effect.ParamRef{Index: 0}, Delta: 99},
+			mutation.TableMutator{Target: effect.ParamRef{Index: 0}, Value: effect.ParamRef{Index: 2}},
+		),
+	}
+
+	got := signatureParamPathInvalidations(sig, site)
+
+	if len(got) != 1 || !got[0].Path.Equal(path.NewPlaceholder(0)) {
+		t.Fatalf("param path invalidations = %#v, want only target $0", got)
+	}
 }
 
 func TestSignatureOutcomeProviderLowersStoreIntoContainerArgument(t *testing.T) {

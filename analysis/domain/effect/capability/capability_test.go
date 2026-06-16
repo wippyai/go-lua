@@ -297,3 +297,53 @@ func TestInactiveControlLabelsArePinnedReservedHighRisk(t *testing.T) {
 		})
 	}
 }
+
+func TestPartialDispatchModuleLoadDocumentsRequireNameBinding(t *testing.T) {
+	desc, ok := capability.Lookup(capability.DispatchModuleLoad)
+	if !ok {
+		t.Fatal("missing ModuleLoad descriptor")
+	}
+	if desc.Status != capability.StatusPartial {
+		t.Fatalf("ModuleLoad status = %q, want %q", desc.Status, capability.StatusPartial)
+	}
+	for _, want := range []string{
+		"Metadata marker",
+		"name-bound to require",
+		"does not inspect this label",
+	} {
+		if !strings.Contains(desc.Rationale, want) {
+			t.Fatalf("ModuleLoad rationale = %q, want to contain %q", desc.Rationale, want)
+		}
+	}
+}
+
+func TestPartialMutationDescriptorsDocumentTargetOnlyLowering(t *testing.T) {
+	tests := []struct {
+		id      string
+		payload string
+	}{
+		{id: capability.MutationMutate, payload: "Transform and LengthDelta are metadata"},
+		{id: capability.MutationLengthChange, payload: "Delta is metadata"},
+		{id: capability.MutationTableMutator, payload: "Value is metadata"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.id, func(t *testing.T) {
+			desc, ok := capability.Lookup(tt.id)
+			if !ok {
+				t.Fatalf("missing descriptor %s", tt.id)
+			}
+			if desc.Status != capability.StatusPartial {
+				t.Fatalf("%s status = %q, want %q", tt.id, desc.Status, capability.StatusPartial)
+			}
+			for _, want := range []string{
+				"consumes only Target",
+				"path-invalidation authority",
+				tt.payload,
+			} {
+				if !strings.Contains(desc.Rationale, want) {
+					t.Fatalf("%s rationale = %q, want to contain %q", tt.id, desc.Rationale, want)
+				}
+			}
+		})
+	}
+}
