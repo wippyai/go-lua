@@ -15,6 +15,7 @@ import (
 const (
 	ResultChannelField = "channel"
 	ResultValueField   = "value"
+	DefaultCaseIndex   = -1
 	selectIDField      = "__channel_select_id"
 	caseIndexField     = "__channel_select_case_index"
 )
@@ -34,14 +35,28 @@ func ResultCaseType(selectID string, index int, payload typ.Type) typ.Type {
 		Build()
 }
 
+// ResultDefaultType builds the residual result member for a select default arm.
+func ResultDefaultType(selectID string) typ.Type {
+	return ResultCaseType(selectID, DefaultCaseIndex, typ.Nil)
+}
+
 // ResultValueType builds the internal select result union from case payloads.
 func ResultValueType(selectID string, cases []ResultCase) (typ.Type, bool) {
-	if len(cases) == 0 {
+	return ResultValueTypeWithDefault(selectID, cases, false)
+}
+
+// ResultValueTypeWithDefault builds the internal select result union from case
+// payloads plus an optional default arm.
+func ResultValueTypeWithDefault(selectID string, cases []ResultCase, hasDefault bool) (typ.Type, bool) {
+	if len(cases) == 0 && !hasDefault {
 		return nil, false
 	}
-	caseTypes := make([]typ.Type, 0, len(cases))
+	caseTypes := make([]typ.Type, 0, len(cases)+1)
 	for _, c := range cases {
 		caseTypes = append(caseTypes, ResultCaseType(selectID, c.Index, c.Payload))
+	}
+	if hasDefault {
+		caseTypes = append(caseTypes, ResultDefaultType(selectID))
 	}
 	return normalize.UnionForEvidence(caseTypes...), true
 }
@@ -68,6 +83,58 @@ func CaseTypeMatches(caseType typ.Type, selectID string, index int) bool {
 	}
 	gotSelectID, gotIndex, ok := CaseMarker(channelType)
 	return ok && gotSelectID == selectID && gotIndex == index
+}
+
+// ResultHasSelectID reports whether resultType contains any member for selectID.
+func ResultHasSelectID(resultType typ.Type, selectID string) bool {
+	resultType = unwrap.Annotations(resultType)
+	if union, ok := resultType.(*typ.Union); ok {
+		for _, member := range union.Members {
+			if resultCaseHasSelectID(member, selectID) {
+				return true
+			}
+		}
+		return false
+	}
+	return resultCaseHasSelectID(resultType, selectID)
+}
+
+func resultCaseHasSelectID(caseType typ.Type, selectID string) bool {
+	channelType, ok := ResultChannelFieldType(caseType)
+	if !ok {
+		return false
+	}
+	got, _, ok := CaseMarker(channelType)
+	return ok && got == selectID
+}
+
+// ResultWithoutCase removes one explicit receive case from resultType. Default
+// members are preserved, so a default-capable select does not collapse to never
+// just because all explicit receive cases were excluded.
+func ResultWithoutCase(resultType typ.Type, selectID string, index int) (typ.Type, bool) {
+	resultType = unwrap.Annotations(resultType)
+	if union, ok := resultType.(*typ.Union); ok {
+		kept := make([]typ.Type, 0, len(union.Members))
+		removed := false
+		for _, member := range union.Members {
+			if CaseTypeMatches(member, selectID, index) {
+				removed = true
+				continue
+			}
+			kept = append(kept, member)
+		}
+		if !removed {
+			return nil, false
+		}
+		if len(kept) == 0 {
+			return typ.Never, true
+		}
+		return normalize.UnionForEvidence(kept...), true
+	}
+	if CaseTypeMatches(resultType, selectID, index) {
+		return typ.Never, true
+	}
+	return nil, false
 }
 
 // ResultChannelFieldType returns the internal result case channel field type.

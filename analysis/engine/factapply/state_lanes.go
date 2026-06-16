@@ -212,9 +212,10 @@ func channelSelectFactAt(
 		return channelselectfact.Fact{}, false
 	}
 	fact := channelselectfact.Fact{
-		Select: channelselectfact.ID(event.SelectID()),
-		Kind:   kind,
-		Index:  event.Index(),
+		Select:     channelselectfact.ID(event.SelectID()),
+		Kind:       kind,
+		Index:      event.Index(),
+		HasDefault: event.HasDefault(),
 	}
 	if resultPath, ok := event.ResultPath(); ok {
 		fact.Result = factPathKeyAt(resolver, point, resultPath)

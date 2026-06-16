@@ -30,6 +30,28 @@ func TestResultValueTypeBuildsSelectUnion(t *testing.T) {
 	}
 }
 
+func TestResultValueTypeWithDefaultIncludesDefaultMember(t *testing.T) {
+	got, ok := ResultValueTypeWithDefault("select-default", []ResultCase{
+		{Index: 0, Payload: typ.String},
+	}, true)
+	if !ok {
+		t.Fatal("ResultValueTypeWithDefault returned no type")
+	}
+	union, ok := unwrap.Alias(unwrap.Annotations(got)).(*typ.Union)
+	if !ok {
+		t.Fatalf("ResultValueTypeWithDefault = %T, want union", got)
+	}
+	if len(union.Members) != 2 {
+		t.Fatalf("union members = %d, want explicit case plus default", len(union.Members))
+	}
+	if !ResultHasSelectID(got, "select-default") {
+		t.Fatalf("result type missing select-default marker: %v", got)
+	}
+	if _, ok := ResultCaseTypeFromValue(got, "select-default", DefaultCaseIndex); !ok {
+		t.Fatalf("result type missing default case marker: %v", got)
+	}
+}
+
 func TestResultCaseTypeFromValueMatchesUnionMembers(t *testing.T) {
 	caseType := ResultCaseType("select-2", 7, typetable.NewRecord().Field("ok", typ.Boolean).Build())
 	union := typeexpr.Union(caseType, typ.String)
@@ -40,6 +62,40 @@ func TestResultCaseTypeFromValueMatchesUnionMembers(t *testing.T) {
 	}
 	if !typ.TypeEquals(got, caseType) {
 		t.Fatalf("matched type = %v, want %v", got, caseType)
+	}
+}
+
+func TestResultWithoutCasePreservesDefaultMember(t *testing.T) {
+	result, ok := ResultValueTypeWithDefault("select-remove", []ResultCase{
+		{Index: 0, Payload: typ.String},
+	}, true)
+	if !ok {
+		t.Fatal("ResultValueTypeWithDefault returned no type")
+	}
+
+	got, ok := ResultWithoutCase(result, "select-remove", 0)
+	if !ok {
+		t.Fatal("ResultWithoutCase returned no type")
+	}
+	if !CaseTypeMatches(got, "select-remove", DefaultCaseIndex) {
+		t.Fatalf("ResultWithoutCase = %v, want default member", got)
+	}
+}
+
+func TestResultWithoutCaseNoDefaultCanBecomeNever(t *testing.T) {
+	result, ok := ResultValueType("select-remove", []ResultCase{
+		{Index: 0, Payload: typ.String},
+	})
+	if !ok {
+		t.Fatal("ResultValueType returned no type")
+	}
+
+	got, ok := ResultWithoutCase(result, "select-remove", 0)
+	if !ok {
+		t.Fatal("ResultWithoutCase returned no type")
+	}
+	if !typ.IsNever(got) {
+		t.Fatalf("ResultWithoutCase = %v, want never", got)
 	}
 }
 

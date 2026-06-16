@@ -56,11 +56,12 @@ type BranchProof struct {
 
 // ChannelSelectFact records a must channel-select fact with stable caller-provided IDs.
 type ChannelSelectFact struct {
-	Select channelselectfact.ID
-	Kind   channelselectfact.Kind
-	Result pathdom.Path
-	Case   pathdom.Path
-	Index  int
+	Select     channelselectfact.ID
+	Kind       channelselectfact.Kind
+	Result     pathdom.Path
+	Case       pathdom.Path
+	Index      int
+	HasDefault bool
 }
 
 // EffectDelta records a pointwise effect delta for a placeholder target path.

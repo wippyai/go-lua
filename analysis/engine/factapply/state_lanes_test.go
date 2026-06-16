@@ -270,19 +270,36 @@ func TestFactsNodeTransferAppliesChannelSelectFactsWithPathKeys(t *testing.T) {
 		Case:   pathdom.PathKey("sym407@1.case"),
 		Index:  2,
 	}
+	wantSelect := channelselectfact.Fact{
+		Select:     channelselectfact.ID("select-1"),
+		Kind:       channelselectfact.FactSelect,
+		Result:     pathdom.PathKey("sym406@1.result"),
+		Index:      0,
+		HasDefault: true,
+	}
 
 	got := NewFactsNodeTransfer(FactsNodeTransferConfig{
 		Facts: factflow.NewFacts(factflow.FactsInput{
 			ChannelSelects: map[cfg.Point]factflow.ChannelSelectSet{
-				point: factflow.NewChannelSelectSet(factflow.NewChannelSelect(factflow.ChannelSelectConfig{
-					SelectID:      factflow.ChannelSelectID("select-1"),
-					Kind:          factflow.ChannelSelectReceive,
-					ResultPath:    resultPath,
-					HasResultPath: true,
-					CasePath:      casePath,
-					HasCasePath:   true,
-					Index:         2,
-				})),
+				point: factflow.NewChannelSelectSet(
+					factflow.NewChannelSelect(factflow.ChannelSelectConfig{
+						SelectID:      factflow.ChannelSelectID("select-1"),
+						Kind:          factflow.ChannelSelectSelect,
+						ResultPath:    resultPath,
+						HasResultPath: true,
+						HasDefault:    true,
+						Index:         0,
+					}),
+					factflow.NewChannelSelect(factflow.ChannelSelectConfig{
+						SelectID:      factflow.ChannelSelectID("select-1"),
+						Kind:          factflow.ChannelSelectReceive,
+						ResultPath:    resultPath,
+						HasResultPath: true,
+						CasePath:      casePath,
+						HasCasePath:   true,
+						Index:         2,
+					}),
+				),
 			},
 		}),
 		Visibility: visibility.NewResolver(visibilityBuilder.Build()),
@@ -293,6 +310,9 @@ func TestFactsNodeTransferAppliesChannelSelectFactsWithPathKeys(t *testing.T) {
 
 	if !got.HasChannelSelectFact(want) {
 		t.Fatalf("channel-select fact missing: %#v", want)
+	}
+	if !got.HasChannelSelectFact(wantSelect) {
+		t.Fatalf("channel-select default fact missing: %#v", wantSelect)
 	}
 }
 

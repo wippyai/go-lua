@@ -53,6 +53,37 @@ func TestFactsNodeTransferMaterializesChannelSelectResultCases(t *testing.T) {
 	assertChannelSelectCasePayload(t, reg, resultValue, channelselectfact.ID(selectID), 1, stopPayload)
 }
 
+func TestFactsNodeTransferMaterializesChannelSelectDefaultResultCase(t *testing.T) {
+	reg := standard.Registry()
+	point := cfg.Point(721)
+	result := symbol.ID(724)
+	resultPath := pathdom.NewPath(result, "result")
+	selectID := factflow.ChannelSelectID("select-default")
+
+	got := NewFactsNodeTransfer(FactsNodeTransferConfig{
+		Facts: factflow.NewFacts(factflow.FactsInput{
+			ChannelSelects: map[cfg.Point]factflow.ChannelSelectSet{
+				point: factflow.NewChannelSelectSet(
+					factflow.NewChannelSelect(factflow.ChannelSelectConfig{
+						SelectID:      selectID,
+						Kind:          factflow.ChannelSelectSelect,
+						ResultPath:    resultPath,
+						HasResultPath: true,
+						HasDefault:    true,
+						Index:         0,
+					}),
+				),
+			},
+		}),
+	})(transfer.NodeContext{
+		Registry: reg,
+		Point:    point,
+	}, state.State{})
+
+	resultValue := got.ReadReturnSlot(reg, 0)
+	assertChannelSelectCasePayload(t, reg, resultValue, channelselectfact.ID(selectID), channelselect.DefaultCaseIndex, typ.Nil)
+}
+
 func TestFactsNodeTransferMaterializesChannelSelectResultFromVisibleCasePath(t *testing.T) {
 	reg := standard.Registry()
 	point := cfg.Point(730)
@@ -247,6 +278,86 @@ func TestFactsEdgeTransferChannelSelectInequalityRemovesCase(t *testing.T) {
 	}
 }
 
+func TestFactsEdgeTransferChannelSelectInequalityPreservesDefaultCase(t *testing.T) {
+	reg := standard.Registry()
+	graph := cfg.New()
+	branch := graph.AddNode(cfg.NodeBranch)
+	thenPoint := graph.AddNode(cfg.NodeNoop)
+	elsePoint := graph.AddNode(cfg.NodeNoop)
+	graph.AddEdge(graph.Entry(), branch, false)
+	graph.AddEdge(branch, thenPoint, true)
+	graph.AddEdge(branch, elsePoint, false)
+	graph.AddEdge(thenPoint, graph.Exit(), false)
+	graph.AddEdge(elsePoint, graph.Exit(), false)
+
+	result := symbol.ID(834)
+	events := symbol.ID(835)
+	resultPath := pathdom.NewPath(result, "result")
+	eventsPath := pathdom.NewPath(events, "events_ch")
+	selectID := factflow.ChannelSelectID("select-default-branch")
+	eventPayload := typetable.NewRecord().Field("kind", typ.String).Build()
+	eventsSet := factflow.NewChannelSelectSet(
+		factflow.NewChannelSelect(factflow.ChannelSelectConfig{
+			SelectID:      selectID,
+			Kind:          factflow.ChannelSelectSelect,
+			ResultPath:    resultPath,
+			HasResultPath: true,
+			HasDefault:    true,
+			Index:         0,
+		}),
+		channelSelectReceive(reg, selectID, resultPath, eventsPath, 0, eventPayload),
+	)
+	resultValue, ok := testChannelSelectResultValueWithDefault(reg, selectID, eventsSet.Events(), true)
+	if !ok {
+		t.Fatal("failed to build channel select result value")
+	}
+
+	visibilityBuilder := visibility.NewBuilder()
+	visibilityBuilder.Define(branch, result, "result")
+	visibilityBuilder.Define(branch, events, "events_ch")
+	resolver := visibility.NewResolver(visibilityBuilder.Build())
+	initial := state.State{}.
+		WriteValue(reg, key.SymbolValue(result), resultValue).
+		WritePathKey(reg, pathdom.PathKey("sym834@1.value"), typeValue(reg, eventPayload)).
+		AddChannelSelectFact(channelselectfact.Fact{
+			Select:     channelselectfact.ID(selectID),
+			Kind:       channelselectfact.FactSelect,
+			Result:     pathdom.PathKey("sym834@1"),
+			Index:      0,
+			HasDefault: true,
+		}).
+		AddChannelSelectFact(channelselectfact.Fact{
+			Select: channelselectfact.ID(selectID),
+			Kind:   channelselectfact.FactReceive,
+			Result: pathdom.PathKey("sym834@1"),
+			Case:   pathdom.PathKey("sym835@1"),
+			Index:  0,
+		})
+
+	got := transfer.Run(transfer.Config{
+		Graph:      graph,
+		Registry:   reg,
+		EntryState: initial,
+		EdgeTransfer: NewFactsEdgeTransfer(FactsEdgeTransferConfig{
+			Facts: factflow.NewFacts(factflow.FactsInput{
+				BranchPathRelations: map[cfg.Point]factflow.BranchPathRelationSet{
+					branch: factflow.NewBranchPathRelationSet(
+						factflow.NewBranchPathInequality(resultPath.Field("channel"), eventsPath, false, true),
+					),
+				},
+			}),
+			Visibility: resolver,
+		}),
+	})
+
+	elseValue := got[elsePoint].ReadValue(reg, key.SymbolValue(result))
+	assertNoChannelSelectCasePayload(t, reg, elseValue, channelselectfact.ID(selectID), 0)
+	assertChannelSelectCasePayload(t, reg, elseValue, channelselectfact.ID(selectID), channelselect.DefaultCaseIndex, typ.Nil)
+	if got := got[elsePoint].ReadPathKey(reg, pathdom.PathKey("sym834@1.value")); !product.Equal(reg, got, product.Bottom(reg)) {
+		t.Fatalf("stale result.value path = %s, want bottom", formatValue(reg, got))
+	}
+}
+
 func TestFactsEdgeTransferChannelSelectEqualityMatchesDriftingVersions(t *testing.T) {
 	reg := standard.Registry()
 	graph := cfg.New()
@@ -434,7 +545,16 @@ func testChannelSelectResultValue(
 	selectID factflow.ChannelSelectID,
 	events []factflow.ChannelSelect,
 ) (product.Value, bool) {
-	return channelSelectResultValue(transfer.NodeContext{Registry: reg}, nil, state.State{}, selectID, events)
+	return testChannelSelectResultValueWithDefault(reg, selectID, events, false)
+}
+
+func testChannelSelectResultValueWithDefault(
+	reg *axis.Registry,
+	selectID factflow.ChannelSelectID,
+	events []factflow.ChannelSelect,
+	hasDefault bool,
+) (product.Value, bool) {
+	return channelSelectResultValue(transfer.NodeContext{Registry: reg}, nil, state.State{}, selectID, events, hasDefault)
 }
 
 func assertChannelSelectCasePayload(

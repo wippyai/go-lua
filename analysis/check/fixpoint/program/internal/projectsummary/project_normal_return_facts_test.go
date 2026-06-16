@@ -83,10 +83,11 @@ func TestFromResultProjectsNormalReturnFactsFromExitSnapshots(t *testing.T) {
 			Other: branchNotEqualRightKey,
 		}).
 		AddChannelSelectFact(channelselectfact.Fact{
-			Select: "select-kind",
-			Kind:   channelselectfact.FactSelect,
-			Result: selectResultKey,
-			Index:  0,
+			Select:     "select-kind",
+			Kind:       channelselectfact.FactSelect,
+			Result:     selectResultKey,
+			Index:      0,
+			HasDefault: true,
 		}).
 		AddChannelSelectFact(channelselectfact.Fact{
 			Select: "receive-kind",
@@ -155,7 +156,10 @@ func TestFromResultProjectsNormalReturnFactsFromExitSnapshots(t *testing.T) {
 	assertBranchProof(t, got.BranchProofs, pathevidence.BranchProofPathEqual, pathdom.NewPlaceholder(0).Field("left"), pathdom.NewPlaceholder(1).Field("right"), presence.Bottom())
 	assertBranchProof(t, got.BranchProofs, pathevidence.BranchProofPathNotEqual, pathdom.NewPlaceholder(0).Field("a"), pathdom.NewPlaceholder(1).Field("b"), presence.Bottom())
 
-	assertChannelSelect(t, got.ChannelSelects, "select-kind", channelselectfact.FactSelect, pathdom.NewPlaceholder(0).Field("selectResult"), pathdom.Path{})
+	selectFact := assertChannelSelect(t, got.ChannelSelects, "select-kind", channelselectfact.FactSelect, pathdom.NewPlaceholder(0).Field("selectResult"), pathdom.Path{})
+	if !selectFact.HasDefault {
+		t.Fatalf("select-kind HasDefault = false, want true")
+	}
 	assertChannelSelect(t, got.ChannelSelects, "receive-kind", channelselectfact.FactReceive, pathdom.NewPlaceholder(0).Field("receiveResult"), pathdom.NewPlaceholder(1).Field("receiveCase"))
 	assertChannelSelect(t, got.ChannelSelects, "case-kind", channelselectfact.FactCase, pathdom.Path{}, pathdom.NewPlaceholder(1).Field("casePath"))
 
@@ -366,17 +370,18 @@ func assertChannelSelect(
 	kind channelselectfact.Kind,
 	result pathdom.Path,
 	casePath pathdom.Path,
-) {
+) callboundary.ChannelSelectFact {
 	t.Helper()
 	for _, fact := range facts {
 		if string(fact.Select) == selectID &&
 			fact.Kind == kind &&
 			fact.Result.Equal(result) &&
 			fact.Case.Equal(casePath) {
-			return
+			return fact
 		}
 	}
 	t.Fatalf("ChannelSelects = %#v, want %q kind %d", facts, selectID, kind)
+	return callboundary.ChannelSelectFact{}
 }
 
 func assertEffectDelta(

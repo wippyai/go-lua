@@ -10,9 +10,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/state/channelselectfact"
 	"github.com/wippyai/go-lua/analysis/engine/visibility"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
-	"github.com/wippyai/go-lua/analysis/type/normalize"
 	"github.com/wippyai/go-lua/analysis/type/typ"
-	"github.com/wippyai/go-lua/analysis/type/unwrap"
 )
 
 func applyChannelSelectCaseEquality(
@@ -62,7 +60,7 @@ func applyChannelSelectCasePathEquality(
 	if ok {
 		caseType, ok = channelselect.ResultCaseTypeFromValue(resultType, string(selectFact.Select), selectFact.Index)
 		if !ok {
-			if channelSelectResultHasSelectID(resultType, string(selectFact.Select)) {
+			if channelselect.ResultHasSelectID(resultType, string(selectFact.Select)) {
 				return state.Domain(reg).Bottom(), true
 			}
 			return out, false
@@ -99,7 +97,12 @@ func channelSelectRemainingTypeFromFacts(reg *axis.Registry, out state.State, se
 		return nil, false
 	}
 	cases := make([]channelselect.ResultCase, 0)
+	hasDefault := false
 	for _, fact := range snapshot.Facts {
+		if fact.Kind == channelselectfact.FactSelect && fact.Select == selectID && fact.HasDefault {
+			hasDefault = true
+			continue
+		}
 		if fact.Kind != channelselectfact.FactReceive || fact.Select != selectID || fact.Index == skipIndex {
 			continue
 		}
@@ -112,32 +115,10 @@ func channelSelectRemainingTypeFromFacts(reg *axis.Registry, out state.State, se
 			Payload: payloadType,
 		})
 	}
-	if len(cases) == 0 {
+	if len(cases) == 0 && !hasDefault {
 		return typ.Never, true
 	}
-	return channelselect.ResultValueType(string(selectID), cases)
-}
-
-func channelSelectResultHasSelectID(resultType typ.Type, selectID string) bool {
-	resultType = unwrap.Annotations(resultType)
-	if union, ok := resultType.(*typ.Union); ok {
-		for _, member := range union.Members {
-			if channelSelectCaseHasSelectID(member, selectID) {
-				return true
-			}
-		}
-		return false
-	}
-	return channelSelectCaseHasSelectID(resultType, selectID)
-}
-
-func channelSelectCaseHasSelectID(caseType typ.Type, selectID string) bool {
-	channelType, ok := channelselect.ResultChannelFieldType(caseType)
-	if !ok {
-		return false
-	}
-	got, _, ok := channelselect.CaseMarker(channelType)
-	return ok && got == selectID
+	return channelselect.ResultValueTypeWithDefault(string(selectID), cases, hasDefault)
 }
 
 func applyChannelSelectCaseInequality(
@@ -185,7 +166,7 @@ func applyChannelSelectCasePathInequality(
 	resultType, ok := valueWitnessType(reg, result.value)
 	var narrowed typ.Type
 	if ok {
-		narrowed, ok = channelSelectResultWithoutCase(resultType, string(selectFact.Select), selectFact.Index)
+		narrowed, ok = channelselect.ResultWithoutCase(resultType, string(selectFact.Select), selectFact.Index)
 		if !ok {
 			return out, false
 		}
@@ -198,32 +179,6 @@ func applyChannelSelectCasePathInequality(
 	value := typevalue.WithWitness(reg, typevalue.FromType(reg, narrowed), narrowed)
 	out = invalidateChannelSelectResultDescendants(resolver, point, out, resultPath)
 	return result.write(out, value), true
-}
-
-func channelSelectResultWithoutCase(resultType typ.Type, selectID string, index int) (typ.Type, bool) {
-	resultType = unwrap.Annotations(resultType)
-	if union, ok := resultType.(*typ.Union); ok {
-		kept := make([]typ.Type, 0, len(union.Members))
-		removed := false
-		for _, member := range union.Members {
-			if channelselect.CaseTypeMatches(member, selectID, index) {
-				removed = true
-				continue
-			}
-			kept = append(kept, member)
-		}
-		if !removed {
-			return nil, false
-		}
-		if len(kept) == 0 {
-			return typ.Never, true
-		}
-		return normalize.UnionForEvidence(kept...), true
-	}
-	if channelselect.CaseTypeMatches(resultType, selectID, index) {
-		return typ.Never, true
-	}
-	return nil, false
 }
 
 func channelSelectReceiveFact(

@@ -26,6 +26,7 @@ type Fact struct {
 	Result     pathdom.PathKey
 	Case       pathdom.PathKey
 	Index      int
+	HasDefault bool
 	Payload    product.Value
 	HasPayload bool
 }
@@ -155,7 +156,10 @@ func factLess(a, b Fact) bool {
 	if a.Case != b.Case {
 		return a.Case < b.Case
 	}
-	return a.Index < b.Index
+	if a.Index != b.Index {
+		return a.Index < b.Index
+	}
+	return !a.HasDefault && b.HasDefault
 }
 
 func cloneSet(in map[Fact]struct{}) map[Fact]struct{} {

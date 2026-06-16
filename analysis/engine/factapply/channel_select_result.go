@@ -19,6 +19,7 @@ import (
 type channelSelectResultGroup struct {
 	resultIndex int
 	hasResult   bool
+	hasDefault  bool
 	cases       []factflow.ChannelSelect
 }
 
@@ -30,10 +31,10 @@ func applyChannelSelectResult(
 ) state.State {
 	groups := channelSelectResultGroups(events)
 	for selectID, group := range groups {
-		if !group.hasResult || group.resultIndex < 0 || len(group.cases) == 0 {
+		if !group.hasResult || group.resultIndex < 0 || len(group.cases) == 0 && !group.hasDefault {
 			continue
 		}
-		resultValue, ok := channelSelectResultValue(ctx, resolver, out, selectID, group.cases)
+		resultValue, ok := channelSelectResultValue(ctx, resolver, out, selectID, group.cases, group.hasDefault)
 		if !ok {
 			continue
 		}
@@ -57,6 +58,7 @@ func channelSelectResultGroups(events []factflow.ChannelSelect) map[factflow.Cha
 		case factflow.ChannelSelectSelect:
 			group.resultIndex = event.Index()
 			group.hasResult = true
+			group.hasDefault = event.HasDefault()
 		case factflow.ChannelSelectReceive:
 			if _, ok := event.PayloadValue(); ok {
 				group.cases = append(group.cases, event)
@@ -81,9 +83,10 @@ func channelSelectResultValue(
 	out state.State,
 	selectID factflow.ChannelSelectID,
 	cases []factflow.ChannelSelect,
+	hasDefault bool,
 ) (product.Value, bool) {
 	reg := ctx.Registry
-	if reg == nil || len(cases) == 0 {
+	if reg == nil || len(cases) == 0 && !hasDefault {
 		return product.Value{}, false
 	}
 	resultCases := make([]channelselect.ResultCase, 0, len(cases))
@@ -97,10 +100,10 @@ func channelSelectResultValue(
 			Payload: payloadType,
 		})
 	}
-	if len(resultCases) == 0 {
+	if len(resultCases) == 0 && !hasDefault {
 		return product.Value{}, false
 	}
-	resultType, ok := channelselect.ResultValueType(string(selectID), resultCases)
+	resultType, ok := channelselect.ResultValueTypeWithDefault(string(selectID), resultCases, hasDefault)
 	if !ok {
 		return product.Value{}, false
 	}

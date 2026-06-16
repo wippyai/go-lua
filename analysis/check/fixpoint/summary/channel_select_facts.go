@@ -9,11 +9,12 @@ import (
 )
 
 type channelSelectFactKey struct {
-	selectID string
-	kind     channelselectfact.Kind
-	result   pathdom.PathKey
-	casePath pathdom.PathKey
-	index    int
+	selectID   string
+	kind       channelselectfact.Kind
+	result     pathdom.PathKey
+	casePath   pathdom.PathKey
+	index      int
+	hasDefault bool
 }
 
 func normalizeChannelSelectFacts(in []callboundary.ChannelSelectFact) []callboundary.ChannelSelectFact {
@@ -105,11 +106,12 @@ func optionalPlaceholderPath(path pathdom.Path) bool {
 
 func channelSelectFactKeyOf(fact callboundary.ChannelSelectFact) channelSelectFactKey {
 	return channelSelectFactKey{
-		selectID: string(fact.Select),
-		kind:     fact.Kind,
-		result:   fact.Result.Key(),
-		casePath: fact.Case.Key(),
-		index:    fact.Index,
+		selectID:   string(fact.Select),
+		kind:       fact.Kind,
+		result:     fact.Result.Key(),
+		casePath:   fact.Case.Key(),
+		index:      fact.Index,
+		hasDefault: fact.HasDefault,
 	}
 }
 
@@ -136,7 +138,10 @@ func sortedChannelSelectFacts(in map[channelSelectFactKey]callboundary.ChannelSe
 		if left.casePath != right.casePath {
 			return left.casePath < right.casePath
 		}
-		return left.index < right.index
+		if left.index != right.index {
+			return left.index < right.index
+		}
+		return !left.hasDefault && right.hasDefault
 	})
 	return out
 }

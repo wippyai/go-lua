@@ -277,9 +277,10 @@ func callChannelSelectFactAt(
 		return channelselectfact.Fact{}, false
 	}
 	fact := channelselectfact.Fact{
-		Select: event.Select,
-		Kind:   event.Kind,
-		Index:  event.Index,
+		Select:     event.Select,
+		Kind:       event.Kind,
+		Index:      event.Index,
+		HasDefault: event.HasDefault,
 	}
 	if !event.Result.IsEmpty() {
 		resultPath, ok := event.Result.Substitute(bindings)

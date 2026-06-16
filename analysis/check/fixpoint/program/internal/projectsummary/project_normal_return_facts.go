@@ -119,9 +119,10 @@ func projectNormalReturnFacts(reg *axis.Registry, result ResultReader, exit stat
 				continue
 			}
 			fact := callboundary.ChannelSelectFact{
-				Select: channelselectfact.ID(stateFact.Select),
-				Kind:   kind,
-				Index:  stateFact.Index,
+				Select:     channelselectfact.ID(stateFact.Select),
+				Kind:       kind,
+				Index:      stateFact.Index,
+				HasDefault: stateFact.HasDefault,
 			}
 			if stateFact.Result != "" {
 				resultPath, ok := projectPath(stateFact.Result)
