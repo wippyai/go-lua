@@ -6,8 +6,11 @@ import (
 	"github.com/wippyai/go-lua/analysis/check/body"
 	checkprogram "github.com/wippyai/go-lua/analysis/check/fixpoint/program"
 	"github.com/wippyai/go-lua/analysis/domain/placement"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
+	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/engine/state"
+	"github.com/wippyai/go-lua/analysis/engine/state/heapidentity"
 )
 
 type Target uint8
@@ -72,6 +75,7 @@ type Entry struct {
 	Reasons     []Reason
 	Obligations []Obligation
 	Blockers    []Blocker
+	Children    []identity.ID
 }
 
 type Plan struct {
@@ -117,6 +121,7 @@ func Merge(plans ...Plan) Plan {
 			if entry.HasObject {
 				aggregate.objects[entry.ID] = struct{}{}
 			}
+			aggregate.addChildren(entry.ID, entry.Children)
 			if entry.Frozen {
 				aggregate.frozen[entry.ID] = struct{}{}
 			}
@@ -142,9 +147,48 @@ func (p Plan) Placement(id identity.ID) (placement.Value, bool) {
 	return placement.Bottom, false
 }
 
+func (p Plan) MaxTargetDepth(target Target) int {
+	byID := make(map[identity.ID]Entry, len(p.Entries))
+	for _, entry := range p.Entries {
+		byID[entry.ID] = entry
+	}
+	var walk func(identity.ID, map[identity.ID]struct{}) int
+	walk = func(id identity.ID, seen map[identity.ID]struct{}) int {
+		if id == (identity.ID{}) {
+			return 0
+		}
+		entry, ok := byID[id]
+		if !ok || entry.Target != target {
+			return 0
+		}
+		if _, ok := seen[id]; ok {
+			return 0
+		}
+		nextSeen := make(map[identity.ID]struct{}, len(seen)+1)
+		for seenID := range seen {
+			nextSeen[seenID] = struct{}{}
+		}
+		nextSeen[id] = struct{}{}
+		depth := 1
+		for _, child := range entry.Children {
+			if childDepth := 1 + walk(child, nextSeen); childDepth > depth {
+				depth = childDepth
+			}
+		}
+		return depth
+	}
+	depth := 0
+	for _, entry := range p.Entries {
+		if candidate := walk(entry.ID, nil); candidate > depth {
+			depth = candidate
+		}
+	}
+	return depth
+}
+
 func FromState(st state.State) Plan {
 	aggregate := newAggregate()
-	aggregate.addState(st)
+	aggregate.addState(nil, st)
 	return aggregate.plan()
 }
 
@@ -153,6 +197,7 @@ type aggregate struct {
 	incomplete bool
 	blockers   map[Blocker]struct{}
 	objects    map[identity.ID]struct{}
+	children   map[identity.ID]map[identity.ID]struct{}
 	placements map[identity.ID]placement.Value
 	frozen     map[identity.ID]struct{}
 }
@@ -161,6 +206,7 @@ func newAggregate() aggregate {
 	return aggregate{
 		blockers:   make(map[Blocker]struct{}),
 		objects:    make(map[identity.ID]struct{}),
+		children:   make(map[identity.ID]map[identity.ID]struct{}),
 		placements: make(map[identity.ID]placement.Value),
 		frozen:     make(map[identity.ID]struct{}),
 	}
@@ -175,14 +221,14 @@ func (a *aggregate) addResult(result *body.Result) {
 	if !ok {
 		a.addBlocker(BlockerMissingExitState)
 	} else {
-		a.addState(exit)
+		a.addState(result.Registry(), exit)
 	}
 	for _, child := range result.FunctionResults() {
 		a.addResult(child)
 	}
 }
 
-func (a *aggregate) addState(st state.State) {
+func (a *aggregate) addState(reg *axis.Registry, st state.State) {
 	heap := st.HeapTableObjectsSnapshot()
 	placements := st.PlacementsSnapshot()
 	frozen := st.FrozenTablesSnapshot()
@@ -195,6 +241,11 @@ func (a *aggregate) addState(st state.State) {
 	}
 	for id := range heap.Objects {
 		a.objects[id] = struct{}{}
+	}
+	if reg != nil {
+		for id, object := range heap.Objects {
+			a.addChildren(id, heapObjectChildren(reg, object))
+		}
 	}
 	for id, value := range placements.Placements {
 		if prev, ok := a.placements[id]; ok {
@@ -212,6 +263,12 @@ func (a *aggregate) plan() Plan {
 	ids := make(map[identity.ID]struct{}, len(a.objects)+len(a.placements))
 	for id := range a.objects {
 		ids[id] = struct{}{}
+	}
+	for id, children := range a.children {
+		ids[id] = struct{}{}
+		for child := range children {
+			ids[child] = struct{}{}
+		}
 	}
 	for id := range a.placements {
 		ids[id] = struct{}{}
@@ -234,11 +291,28 @@ func (a *aggregate) plan() Plan {
 			Target:    targetForPlacement(value, hasPlacement),
 			HasObject: mapContains(a.objects, id),
 			Frozen:    mapContains(a.frozen, id),
+			Children:  orderedIDs(a.children[id]),
 		}
 		entry = annotate(entry, hasPlacement)
 		out.Entries = append(out.Entries, entry)
 	}
 	return out
+}
+
+func (a *aggregate) addChildren(parent identity.ID, children []identity.ID) {
+	if parent == (identity.ID{}) || len(children) == 0 {
+		return
+	}
+	set := a.children[parent]
+	if set == nil {
+		set = make(map[identity.ID]struct{}, len(children))
+		a.children[parent] = set
+	}
+	for _, child := range children {
+		if child != (identity.ID{}) {
+			set[child] = struct{}{}
+		}
+	}
 }
 
 func (a *aggregate) addBlocker(blocker Blocker) {
@@ -315,6 +389,32 @@ func orderedIDs(ids map[identity.ID]struct{}) []identity.ID {
 		return left.Index < right.Index
 	})
 	return out
+}
+
+func heapObjectChildren(reg *axis.Registry, object heapidentity.TableObject) []identity.ID {
+	ids := make(map[identity.ID]struct{})
+	for _, value := range object.StaticMembers() {
+		if id, ok := valueIdentity(reg, value); ok {
+			ids[id] = struct{}{}
+		}
+	}
+	for _, fact := range object.DynamicIndexFacts() {
+		if id, ok := valueIdentity(reg, fact.Value); ok {
+			ids[id] = struct{}{}
+		}
+	}
+	return orderedIDs(ids)
+}
+
+func valueIdentity(reg *axis.Registry, value product.Value) (identity.ID, bool) {
+	if reg == nil {
+		return identity.ID{}, false
+	}
+	id, ok := product.Get(reg, value, identity.Key).ID()
+	if !ok || id == (identity.ID{}) {
+		return identity.ID{}, false
+	}
+	return id, true
 }
 
 func orderedBlockers(in map[Blocker]struct{}) []Blocker {

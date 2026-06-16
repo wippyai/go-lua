@@ -1,12 +1,17 @@
 package placementplan
 
 import (
+	"fmt"
+	"strconv"
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/check/body"
+	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/placement"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/engine/dynamicindex"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/state/heapidentity"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
@@ -52,10 +57,10 @@ func TestAggregateJoinsDuplicatePlacementIdentities(t *testing.T) {
 	reg := standard.Registry()
 	id := testID(21)
 	aggregate := newAggregate()
-	aggregate.addState(state.State{}.
+	aggregate.addState(nil, state.State{}.
 		WriteHeapTableObject(reg, id, testObject()).
 		WritePlacement(id, placement.Stack))
-	aggregate.addState(state.State{}.
+	aggregate.addState(nil, state.State{}.
 		WriteHeapTableObject(reg, id, testObject()).
 		WritePlacement(id, placement.SharedHeap))
 
@@ -64,6 +69,68 @@ func TestAggregateJoinsDuplicatePlacementIdentities(t *testing.T) {
 	got, ok := plan.Placement(id)
 	if !ok || got != placement.SharedHeap {
 		t.Fatalf("Placement(%s) = %s/%v, want shared-heap/true", id, got, ok)
+	}
+}
+
+func TestPlanMaxTargetDepthUsesHeapObjectIdentityEdges(t *testing.T) {
+	reg := standard.Registry()
+	root := testID(31)
+	child := testID(32)
+	grandchild := testID(33)
+	stackSibling := testID(34)
+
+	st := state.State{}.
+		WriteHeapTableObject(reg, root, testObjectWithStaticChildren(reg, child, stackSibling)).
+		WritePlacement(root, placement.SharedHeap).
+		WriteHeapTableObject(reg, child, testObjectWithDynamicChildren(reg, grandchild)).
+		WritePlacement(child, placement.SharedHeap).
+		WriteHeapTableObject(reg, grandchild, testObject()).
+		WritePlacement(grandchild, placement.SharedHeap).
+		WriteHeapTableObject(reg, stackSibling, testObject()).
+		WritePlacement(stackSibling, placement.Stack)
+
+	aggregate := newAggregate()
+	aggregate.addState(reg, st)
+	plan := aggregate.plan()
+	if got := plan.MaxTargetDepth(TargetSharedHeap); got != 3 {
+		t.Fatalf("shared max depth = %d, want 3; entries=%#v", got, plan.Entries)
+	}
+	if got := plan.MaxTargetDepth(TargetStack); got != 1 {
+		t.Fatalf("stack max depth = %d, want 1; entries=%#v", got, plan.Entries)
+	}
+	rootEntry, ok := entryByID(plan, root)
+	if !ok {
+		t.Fatalf("missing root entry in %#v", plan.Entries)
+	}
+	if !hasChild(rootEntry.Children, child) || !hasChild(rootEntry.Children, stackSibling) {
+		t.Fatalf("root children = %v, want %s and %s", rootEntry.Children, child, stackSibling)
+	}
+}
+
+func TestMergePreservesPlacementChildEdges(t *testing.T) {
+	parent := testID(41)
+	child := testID(42)
+	left := Plan{Entries: []Entry{{
+		ID:        parent,
+		Target:    TargetSharedHeap,
+		Placement: placement.SharedHeap,
+		HasObject: true,
+		Children:  []identity.ID{child},
+	}}}
+	right := Plan{Entries: []Entry{{
+		ID:        child,
+		Target:    TargetSharedHeap,
+		Placement: placement.SharedHeap,
+		HasObject: true,
+	}}}
+
+	plan := Merge(left, right)
+	if got := plan.MaxTargetDepth(TargetSharedHeap); got != 2 {
+		t.Fatalf("merged shared max depth = %d, want 2; entries=%#v", got, plan.Entries)
+	}
+	parentEntry, ok := entryByID(plan, parent)
+	if !ok || !hasChild(parentEntry.Children, child) {
+		t.Fatalf("merged parent entry = %#v/%v, want child %s", parentEntry, ok, child)
 	}
 }
 
@@ -118,6 +185,34 @@ func TestFromResultProjectsStackObjectLiteralAllocations(t *testing.T) {
 
 func testObject() heapidentity.TableObject {
 	return heapidentity.NewTableObject(heapidentity.TableObjectConfig{Root: product.Top()})
+}
+
+func testObjectWithStaticChildren(reg *axis.Registry, ids ...identity.ID) heapidentity.TableObject {
+	members := make(map[pathdom.PathKey]product.Value, len(ids))
+	for i, id := range ids {
+		members[pathdom.PathKey(".child"+strconv.Itoa(i))] = valueWithIdentity(reg, id)
+	}
+	return heapidentity.NewTableObject(heapidentity.TableObjectConfig{
+		Root:          product.Top(),
+		StaticMembers: members,
+	})
+}
+
+func testObjectWithDynamicChildren(reg *axis.Registry, ids ...identity.ID) heapidentity.TableObject {
+	facts := make(map[dynamicindex.Key]dynamicindex.Fact, len(ids))
+	for i, id := range ids {
+		facts[dynamicindex.Key{Table: "test", Site: dynamicindex.Site(fmt.Sprintf("site%d", i))}] = dynamicindex.Fact{
+			Value: valueWithIdentity(reg, id),
+		}
+	}
+	return heapidentity.NewTableObject(heapidentity.TableObjectConfig{
+		Root:              product.Top(),
+		DynamicIndexFacts: facts,
+	})
+}
+
+func valueWithIdentity(reg *axis.Registry, id identity.ID) product.Value {
+	return product.Set(reg, product.Top(), identity.Key, identity.Singleton(id))
 }
 
 func testID(index uint64) identity.ID {
@@ -191,6 +286,15 @@ func hasObligation(in []Obligation, want Obligation) bool {
 }
 
 func hasBlocker(in []Blocker, want Blocker) bool {
+	for _, got := range in {
+		if got == want {
+			return true
+		}
+	}
+	return false
+}
+
+func hasChild(in []identity.ID, want identity.ID) bool {
 	for _, got := range in {
 		if got == want {
 			return true

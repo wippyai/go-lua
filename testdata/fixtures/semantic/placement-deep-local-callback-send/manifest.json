@@ -5,8 +5,12 @@
     "placement": {
       "require_complete": true,
       "min_stack": 1,
-      "min_shared_heap": 1,
-      "min_seal_before_share": 1,
+      "min_shared_heap": 3,
+      "min_shared_depth": 3,
+      "min_seal_before_share": 3,
+      "min_shared_heap_kind": {
+        "lua.table": 3
+      },
       "max_no_fact": 0,
       "max_unknown": 0
     }

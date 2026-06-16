@@ -45,10 +45,17 @@ type fixturePlacement struct {
 	MinStack           int  `json:"min_stack,omitempty"`
 	MinOwnedHeap       int  `json:"min_owned_heap,omitempty"`
 	MinSharedHeap      int  `json:"min_shared_heap,omitempty"`
+	MinStackDepth      int  `json:"min_stack_depth,omitempty"`
+	MinOwnedHeapDepth  int  `json:"min_owned_heap_depth,omitempty"`
+	MinSharedDepth     int  `json:"min_shared_depth,omitempty"`
 	MinOwnerIdentity   int  `json:"min_owner_identity,omitempty"`
 	MinSealBeforeShare int  `json:"min_seal_before_share,omitempty"`
 	MaxNoFact          *int `json:"max_no_fact,omitempty"`
 	MaxUnknown         *int `json:"max_unknown,omitempty"`
+
+	MinStackKind      map[string]int `json:"min_stack_kind,omitempty"`
+	MinOwnedHeapKind  map[string]int `json:"min_owned_heap_kind,omitempty"`
+	MinSharedHeapKind map[string]int `json:"min_shared_heap_kind,omitempty"`
 }
 
 type fixtureRun struct {
@@ -267,8 +274,14 @@ func verifyPlacementExpectations(t testing.TB, expect fixturePlacement, plan pla
 	assertMinPlacementCount(t, "stack", counts.stack, expect.MinStack, plan)
 	assertMinPlacementCount(t, "owned-heap", counts.ownedHeap, expect.MinOwnedHeap, plan)
 	assertMinPlacementCount(t, "shared-heap", counts.sharedHeap, expect.MinSharedHeap, plan)
+	assertMinPlacementCount(t, "stack depth", plan.MaxTargetDepth(placementplan.TargetStack), expect.MinStackDepth, plan)
+	assertMinPlacementCount(t, "owned-heap depth", plan.MaxTargetDepth(placementplan.TargetOwnedHeap), expect.MinOwnedHeapDepth, plan)
+	assertMinPlacementCount(t, "shared-heap depth", plan.MaxTargetDepth(placementplan.TargetSharedHeap), expect.MinSharedDepth, plan)
 	assertMinPlacementCount(t, "owner-identity obligations", counts.ownerIdentity, expect.MinOwnerIdentity, plan)
 	assertMinPlacementCount(t, "seal-before-share obligations", counts.sealBeforeShare, expect.MinSealBeforeShare, plan)
+	assertMinPlacementKindCounts(t, "stack", placementKindCounts(plan, placementplan.TargetStack), expect.MinStackKind, plan)
+	assertMinPlacementKindCounts(t, "owned-heap", placementKindCounts(plan, placementplan.TargetOwnedHeap), expect.MinOwnedHeapKind, plan)
+	assertMinPlacementKindCounts(t, "shared-heap", placementKindCounts(plan, placementplan.TargetSharedHeap), expect.MinSharedHeapKind, plan)
 	if expect.MaxNoFact != nil && counts.noFact > *expect.MaxNoFact {
 		t.Fatalf("placement no-fact count = %d, want <= %d; entries=%s", counts.noFact, *expect.MaxNoFact, formatPlacementEntries(plan))
 	}
@@ -314,10 +327,29 @@ func placementCounts(plan placementplan.Plan) fixturePlacementCounts {
 	return counts
 }
 
+func placementKindCounts(plan placementplan.Plan, target placementplan.Target) map[string]int {
+	counts := make(map[string]int)
+	for _, entry := range plan.Entries {
+		if entry.Target == target {
+			counts[entry.ID.Kind]++
+		}
+	}
+	return counts
+}
+
 func assertMinPlacementCount(t testing.TB, label string, got, want int, plan placementplan.Plan) {
 	t.Helper()
 	if got < want {
 		t.Fatalf("placement %s count = %d, want >= %d; entries=%s", label, got, want, formatPlacementEntries(plan))
+	}
+}
+
+func assertMinPlacementKindCounts(t testing.TB, label string, got map[string]int, want map[string]int, plan placementplan.Plan) {
+	t.Helper()
+	for kind, min := range want {
+		if got[kind] < min {
+			t.Fatalf("placement %s %q count = %d, want >= %d; all %s kinds=%v; entries=%s", label, kind, got[kind], min, label, got, formatPlacementEntries(plan))
+		}
 	}
 }
 
