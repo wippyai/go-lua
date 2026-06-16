@@ -395,7 +395,7 @@ func TestStateBottomWritesRemoveExplicitBottomEntries(t *testing.T) {
 	if _, ok := state.PathRefinementsSnapshot().Refinements[fx.pathKey]; ok {
 		t.Fatalf("path refinement kept explicit bottom entry")
 	}
-	if _, ok := state.dynamicIndex[fx.dynamicKey]; ok {
+	if state.dynamicIndex.hasFinite(fx.dynamicKey) {
 		t.Fatalf("dynamic index kept explicit bottom entry")
 	}
 	if _, ok := state.heapTableIdentity[fx.heapID]; ok {

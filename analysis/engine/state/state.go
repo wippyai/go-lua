@@ -26,7 +26,7 @@ type State struct {
 	values       map[key.Value]product.Value
 	pathEvidence pathevidence.Lane
 
-	dynamicIndex      map[dynamicindex.Key]dynamicindex.Fact
+	dynamicIndex      dynamicIndexLane
 	heapTableIdentity map[identity.ID]heapidentity.TableObject
 	effectDeltas      effectDeltaLane
 	channelSelect     channelselectfact.Lane
@@ -36,7 +36,6 @@ type State struct {
 
 	valuesTop bool
 
-	dynamicIndexTop      bool
 	heapTableIdentityTop bool
 }
 
@@ -157,7 +156,7 @@ func Domain(reg *axis.Registry) lattice.Lattice[State] {
 			return State{
 				valuesTop:            true,
 				pathEvidence:         ops.pathEvidence.Top(),
-				dynamicIndexTop:      true,
+				dynamicIndex:         dynamicIndexLane{top: true},
 				heapTableIdentityTop: true,
 				effectDeltas:         effectDeltaLane{top: true},
 				placement:            placementLane{top: true},
@@ -236,10 +235,7 @@ func (o domainOps) valueLane(s State) map[key.Value]product.Value {
 }
 
 func (o domainOps) dynamicIndexLane(s State) map[dynamicindex.Key]dynamicindex.Fact {
-	if s.dynamicIndexTop {
-		return o.dynamicIndex.Top()
-	}
-	return s.dynamicIndex
+	return s.dynamicIndex.asMap(o.dynamicIndex)
 }
 
 func (o domainOps) heapTableIdentityLane(s State) map[identity.ID]heapidentity.TableObject {
@@ -275,11 +271,7 @@ func (o domainOps) fromLanes(
 		out.values = values
 	}
 	out.pathEvidence = pathEvidence
-	if o.dynamicIndex.Equal(dynamicIndex, o.dynamicIndex.Top()) {
-		out.dynamicIndexTop = true
-	} else {
-		out.dynamicIndex = dynamicIndex
-	}
+	out.dynamicIndex = dynamicIndexLaneFromMap(o.dynamicIndex, dynamicIndex)
 	if o.heapTableIdentity.Equal(heapTableIdentity, o.heapTableIdentity.Top()) {
 		out.heapTableIdentityTop = true
 	} else {

@@ -6,28 +6,19 @@ import (
 )
 
 func (s State) ReadDynamicIndexFact(reg *axis.Registry, key dynamicindex.Key) dynamicindex.Fact {
-	if key.Table == "" {
-		return dynamicindex.Bottom(reg)
-	}
-	if s.dynamicIndexTop {
-		return dynamicindex.Top()
-	}
-	if fact, ok := s.dynamicIndex[key]; ok {
-		return fact
-	}
-	return dynamicindex.Bottom(reg)
+	return s.dynamicIndex.read(reg, key)
 }
 
 func (s State) WriteDynamicIndexFact(reg *axis.Registry, key dynamicindex.Key, fact dynamicindex.Fact) State {
 	if key.Table == "" {
 		return s
 	}
-	if s.dynamicIndexTop {
+	if s.dynamicIndex.top {
 		panic("state: cannot finite-write dynamic index fact into top dynamic-index lane")
 	}
 	domain := dynamicindex.Domain(reg)
 	if domain.Equal(fact, domain.Bottom()) {
-		facts, changed := dynamicindex.DeleteEntry(s.dynamicIndex, key)
+		facts, changed := s.dynamicIndex.without(key)
 		if !changed {
 			return s
 		}
@@ -35,15 +26,10 @@ func (s State) WriteDynamicIndexFact(reg *axis.Registry, key dynamicindex.Key, f
 		out.dynamicIndex = facts
 		return out
 	}
-	if existing, ok := s.dynamicIndex[key]; ok && domain.Equal(existing, fact) {
+	if domain.Equal(s.dynamicIndex.read(reg, key), fact) {
 		return s
 	}
-	facts := dynamicindex.CloneMap(s.dynamicIndex)
-	if facts == nil {
-		facts = make(map[dynamicindex.Key]dynamicindex.Fact, 1)
-	}
-	facts[key] = fact
 	out := s.reachable()
-	out.dynamicIndex = facts
+	out.dynamicIndex = s.dynamicIndex.with(key, fact)
 	return out
 }

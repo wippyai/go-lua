@@ -14,10 +14,10 @@ type DynamicIndexFactsSnapshot struct {
 // DynamicIndexFactsSnapshot returns finite dynamic-index facts unless the lane
 // is top. When Top is true, Facts is empty.
 func (s State) DynamicIndexFactsSnapshot() DynamicIndexFactsSnapshot {
-	if s.dynamicIndexTop {
+	if s.dynamicIndex.top {
 		return DynamicIndexFactsSnapshot{Top: true}
 	}
-	return DynamicIndexFactsSnapshot{Facts: dynamicindex.CloneMap(s.dynamicIndex)}
+	return DynamicIndexFactsSnapshot{Facts: s.dynamicIndex.cloneValues()}
 }
 
 type ChannelSelectFactsSnapshot struct {
