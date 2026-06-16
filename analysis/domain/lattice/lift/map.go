@@ -35,8 +35,8 @@ import (
 // it is absorbing for Join/Widen, it is the identity for Meet, and it is Equal
 // only to itself. Callers that build per-key states never synthesize the
 // sentinel; it exists solely so the lattice has a greatest element. (Map
-// states arising in the flow engine are always finite, key-explicit maps;
-// the sentinel is never produced by Join/Widen of two finite maps.)
+// states arising from finite maps remain key-explicit; the sentinel is never
+// produced by Join/Widen of two finite maps.)
 func Map[K comparable, V any](elem lattice.Lattice[V]) lattice.Lattice[map[K]V] {
 	// topSentinel is a unique map value denoting k -> elem.Top() for all k.
 	// It is recognized by reference identity (its backing pointer), never by

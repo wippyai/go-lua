@@ -25,10 +25,10 @@ type ModuleExportLookup interface {
 // ModuleLoadOutcomeProviderConfig carries module export lookup plus the generic
 // fact/source read models needed to resolve require's module path argument.
 type ModuleLoadOutcomeProviderConfig struct {
-	Exports ModuleExportLookup
-	NameFor SignatureNameFunc
-	Facts   factflow.Facts
-	Sources sourcevalue.SourceValues
+	Exports               ModuleExportLookup
+	NameFor               SignatureNameFunc
+	Sources               sourcevalue.SourceValues
+	ExpressionRefinements map[factflow.ExprRef]factflow.ExpressionRefinement
 }
 
 // ModuleLoadOutcomeProvider materializes require("exact-path") slot zero from
@@ -37,8 +37,8 @@ type ModuleLoadOutcomeProviderConfig struct {
 func ModuleLoadOutcomeProvider(config ModuleLoadOutcomeProviderConfig) factapply.CallOutcomeProvider {
 	exports := config.Exports
 	nameFor := config.NameFor
-	facts := config.Facts
 	sources := config.Sources
+	expressionRefinements := config.ExpressionRefinements
 	return func(ctx transfer.NodeContext, site factflow.CallSite, in state.State, read func(cfg.Point) state.State) factapply.CallOutcome {
 		if exports == nil || nameFor == nil || sources == nil {
 			return factapply.CallOutcome{}
@@ -51,7 +51,7 @@ func ModuleLoadOutcomeProvider(config ModuleLoadOutcomeProviderConfig) factapply
 		if len(args) != 1 {
 			return factapply.CallOutcome{}
 		}
-		value, ok := sourcevalue.WithExpressionRefinements(ctx.Registry, sources, facts.ExpressionRefinements()).ValueOfSource(ctx.Point, args[0], in, read)
+		value, ok := sourcevalue.WithExpressionRefinements(ctx.Registry, sources, expressionRefinements).ValueOfSource(ctx.Point, args[0], in, read)
 		if !ok {
 			return factapply.CallOutcome{}
 		}

@@ -36,6 +36,7 @@ type FactsEdgeTransferConfig struct {
 // assignment, descendant path invalidation, call return-slot production, and
 // return-slot facts; branch-edge refinements are handled by NewFactsEdgeTransfer.
 func NewFactsNodeTransfer(config FactsNodeTransferConfig) transfer.NodeTransfer {
+	expressionRefinements := config.Facts.ExpressionRefinements()
 	return func(ctx transfer.NodeContext, in state.State) state.State {
 		facts := config.Facts
 		sources := config.Sources
@@ -61,7 +62,7 @@ func NewFactsNodeTransfer(config FactsNodeTransferConfig) transfer.NodeTransfer 
 		if sources == nil {
 			return out
 		}
-		sources = sourcevalue.WithExpressionRefinements(ctx.Registry, sources, facts.ExpressionRefinements())
+		sources = sourcevalue.WithExpressionRefinements(ctx.Registry, sources, expressionRefinements)
 		if fact, ok := facts.PathStaticMemberWrite(ctx.Point); ok {
 			out = applyPathStaticMemberWrite(ctx, config.Visibility, sources, read, in, out, fact)
 		}

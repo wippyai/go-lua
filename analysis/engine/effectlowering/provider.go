@@ -48,6 +48,7 @@ func SignatureOutcomeProvider(config SignatureOutcomeProviderConfig) factapply.C
 	facts := config.Facts
 	sources := config.Sources
 	argumentType := config.ArgumentType
+	expressionRefinements := facts.ExpressionRefinements()
 	return func(ctx transfer.NodeContext, site factflow.CallSite, in state.State, read func(cfg.Point) state.State) factapply.CallOutcome {
 		if signatures == nil || nameFor == nil {
 			return factapply.CallOutcome{}
@@ -61,7 +62,7 @@ func SignatureOutcomeProvider(config SignatureOutcomeProviderConfig) factapply.C
 		if !ok {
 			return factapply.CallOutcome{}
 		}
-		sig = instantiateSignatureForCall(ctx, facts, sources, argumentType, sig, site, in, read, returnTypeOps)
+		sig = instantiateSignatureForCall(ctx, facts, sources, expressionRefinements, argumentType, sig, site, in, read, returnTypeOps)
 		out := factapply.CallOutcome{
 			ReturnPresenceRelations: signatureReturnPresenceRelations(sig),
 			ParamPathRefinements:    signatureParamPathRefinements(ctx, sig, site),
@@ -74,7 +75,7 @@ func SignatureOutcomeProvider(config SignatureOutcomeProviderConfig) factapply.C
 		}
 		results := make([]factapply.CallResult, 0, len(sig.Type.Returns))
 		for i, ret := range sig.Type.Returns {
-			value, ok := signatureReturnValue(ctx, facts, sources, sig, i, in, read, returnTypeOps)
+			value, ok := signatureReturnValue(ctx, facts, sources, expressionRefinements, sig, i, in, read, returnTypeOps)
 			if !ok && ret != nil {
 				value, ok = returnValueFromType(ctx.Registry, ret), true
 			}

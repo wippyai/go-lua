@@ -111,24 +111,25 @@ type SolveConfig struct {
 }
 
 type Result struct {
-	registry     *axis.Registry
-	bindings     *bind.Result
-	cfg          *cfgbuild.Result
-	semantics    *semantics.Result
-	signatures   signaturelookup.Source
-	moduleTypes  typelookup.Source
-	modules      moduleidentity.Projection
-	signatureID  *signatureIdentityResolver
-	facts        factflow.Facts
-	flow         transfer.Result
-	boundary     map[cfg.Point]state.State
-	boundaryXfer transfer.NodeTransfer
-	visibility   *visibility.Resolver
-	sources      sourcevalue.SourceValues
-	callOutcome  factapply.CallOutcomeProvider
-	functions    []*Result
-	funcTypes    FunctionValueTypes
-	callExprPts  map[*ast.FuncCallExpr]cfg.Point
+	registry        *axis.Registry
+	bindings        *bind.Result
+	cfg             *cfgbuild.Result
+	semantics       *semantics.Result
+	signatures      signaturelookup.Source
+	moduleTypes     typelookup.Source
+	modules         moduleidentity.Projection
+	signatureID     *signatureIdentityResolver
+	facts           factflow.Facts
+	exprRefinements map[factflow.ExprRef]factflow.ExpressionRefinement
+	flow            transfer.Result
+	boundary        map[cfg.Point]state.State
+	boundaryXfer    transfer.NodeTransfer
+	visibility      *visibility.Resolver
+	sources         sourcevalue.SourceValues
+	callOutcome     factapply.CallOutcomeProvider
+	functions       []*Result
+	funcTypes       FunctionValueTypes
+	callExprPts     map[*ast.FuncCallExpr]cfg.Point
 }
 
 type CallOutcomeContext struct {

@@ -30,6 +30,7 @@ func genericForNodeTransfer(
 	signatureID *signatureIdentityResolver,
 	typeResolver *typeresolve.Resolver,
 ) transfer.NodeTransfer {
+	expressionRefinements := facts.ExpressionRefinements()
 	return func(ctx transfer.NodeContext, in state.State) state.State {
 		out := in
 		if base != nil {
@@ -43,7 +44,7 @@ func genericForNodeTransfer(
 			fact.VariableIndex < 0 || fact.VariableIndex >= len(fact.Symbols) {
 			return out
 		}
-		value, ok := genericForVariableValue(ctx, fact, facts, sources, signatures, signatureID, typeResolver, in)
+		value, ok := genericForVariableValue(ctx, fact, facts, expressionRefinements, sources, signatures, signatureID, typeResolver, in)
 		if !ok {
 			return out
 		}
@@ -59,6 +60,7 @@ func genericForVariableValue(
 	ctx transfer.NodeContext,
 	generic cfgfacts.GenericForFact,
 	facts factflow.Facts,
+	expressionRefinements map[factflow.ExprRef]factflow.ExpressionRefinement,
 	sources sourcevalue.SourceValues,
 	signatures signaturelookup.Source,
 	signatureID *signatureIdentityResolver,
@@ -94,7 +96,7 @@ func genericForVariableValue(
 		return product.Value{}, false
 	}
 	assertedSourceType, hasAssertedSourceType := genericForAssertedIteratorSourceType(generic, sourceIndex, typeResolver)
-	refinedSources := sourcevalue.WithExpressionRefinements(ctx.Registry, sources, facts.ExpressionRefinements())
+	refinedSources := sourcevalue.WithExpressionRefinements(ctx.Registry, sources, expressionRefinements)
 	sourceValue, ok := refinedSources.ValueOfSource(ctx.Point, args[sourceIndex], in, ctx.Read)
 	if !ok {
 		return product.Value{}, false

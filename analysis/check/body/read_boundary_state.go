@@ -97,7 +97,7 @@ func (r *Result) boundarySources() sourcevalue.SourceValues {
 	if r == nil || r.sources == nil {
 		return nil
 	}
-	return sourcevalue.WithExpressionRefinements(r.registry, r.sources, r.facts.ExpressionRefinements())
+	return sourcevalue.WithExpressionRefinements(r.registry, r.sources, r.exprRefinements)
 }
 
 func (r *Result) sourceValueAtPoint(point cfg.Point, source factflow.ValueSource, st state.State, read func(cfg.Point) state.State) (product.Value, bool) {

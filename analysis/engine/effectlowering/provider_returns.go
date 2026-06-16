@@ -30,6 +30,7 @@ func signatureReturnValue(
 	ctx transfer.NodeContext,
 	facts factflow.Facts,
 	sources sourcevalue.SourceValues,
+	expressionRefinements map[factflow.ExprRef]factflow.ExpressionRefinement,
 	sig signature.Function,
 	index int,
 	in state.State,
@@ -42,12 +43,12 @@ func signatureReturnValue(
 	}
 	switch transform := transform.(type) {
 	case returns.SameAs:
-		return sameAsReturnValue(ctx, facts, sources, transform.Source, in, read)
+		return sameAsReturnValue(ctx, facts, sources, expressionRefinements, transform.Source, in, read)
 	case *returns.SameAs:
 		if transform == nil {
 			return product.Value{}, false
 		}
-		return sameAsReturnValue(ctx, facts, sources, transform.Source, in, read)
+		return sameAsReturnValue(ctx, facts, sources, expressionRefinements, transform.Source, in, read)
 	case returns.ElementOf:
 		return elementOfReturnValue(ctx, facts, sig, transform.Source, returnTypeOps)
 	case *returns.ElementOf:
@@ -92,6 +93,7 @@ func sameAsReturnValue(
 	ctx transfer.NodeContext,
 	facts factflow.Facts,
 	sources sourcevalue.SourceValues,
+	expressionRefinements map[factflow.ExprRef]factflow.ExpressionRefinement,
 	ref effect.ParamRef,
 	in state.State,
 	read func(cfg.Point) state.State,
@@ -108,7 +110,7 @@ func sameAsReturnValue(
 	if !ok {
 		return product.Value{}, false
 	}
-	return sourcevalue.WithExpressionRefinements(ctx.Registry, sources, facts.ExpressionRefinements()).ValueOfSource(ctx.Point, args[argIndex], in, read)
+	return sourcevalue.WithExpressionRefinements(ctx.Registry, sources, expressionRefinements).ValueOfSource(ctx.Point, args[argIndex], in, read)
 }
 
 func elementOfReturnValue(
@@ -215,6 +217,7 @@ func instantiateSignatureForCall(
 	ctx transfer.NodeContext,
 	facts factflow.Facts,
 	sources sourcevalue.SourceValues,
+	expressionRefinements map[factflow.ExprRef]factflow.ExpressionRefinement,
 	argumentType SignatureArgumentTypeFunc,
 	sig signature.Function,
 	site factflow.CallSite,
@@ -226,7 +229,7 @@ func instantiateSignatureForCall(
 		(sources == nil && argumentType == nil) {
 		return sig
 	}
-	args, ok := signatureCallArgumentTypes(ctx, facts, sources, argumentType, site, in, read)
+	args, ok := signatureCallArgumentTypes(ctx, facts, sources, expressionRefinements, argumentType, site, in, read)
 	if !ok {
 		return sig
 	}
@@ -242,6 +245,7 @@ func signatureCallArgumentTypes(
 	ctx transfer.NodeContext,
 	facts factflow.Facts,
 	sources sourcevalue.SourceValues,
+	expressionRefinements map[factflow.ExprRef]factflow.ExpressionRefinement,
 	argumentType SignatureArgumentTypeFunc,
 	site factflow.CallSite,
 	in state.State,
@@ -254,7 +258,7 @@ func signatureCallArgumentTypes(
 	if len(argSources) == 0 {
 		return nil, false
 	}
-	resolver := sourcevalue.WithExpressionRefinements(ctx.Registry, sources, facts.ExpressionRefinements())
+	resolver := sourcevalue.WithExpressionRefinements(ctx.Registry, sources, expressionRefinements)
 	args := make([]typ.Type, len(argSources))
 	seen := false
 	for i, source := range argSources {

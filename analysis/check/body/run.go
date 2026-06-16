@@ -183,20 +183,21 @@ func (s *Static) Solve(config SolveConfig) *Result {
 		Stats:      transferStats(config.Stats),
 	})
 	return &Result{
-		registry:     s.registry,
-		bindings:     s.bindings,
-		cfg:          s.cfg,
-		semantics:    s.semantics,
-		signatures:   s.signatures,
-		moduleTypes:  s.moduleTypes,
-		modules:      s.modules,
-		signatureID:  s.signatureID,
-		facts:        s.facts,
-		flow:         flow,
-		boundaryXfer: nodeTransfer,
-		visibility:   s.visibility,
-		sources:      s.sources,
-		callOutcome:  callOutcome,
+		registry:        s.registry,
+		bindings:        s.bindings,
+		cfg:             s.cfg,
+		semantics:       s.semantics,
+		signatures:      s.signatures,
+		moduleTypes:     s.moduleTypes,
+		modules:         s.modules,
+		signatureID:     s.signatureID,
+		facts:           s.facts,
+		exprRefinements: s.facts.ExpressionRefinements(),
+		flow:            flow,
+		boundaryXfer:    nodeTransfer,
+		visibility:      s.visibility,
+		sources:         s.sources,
+		callOutcome:     callOutcome,
 	}
 }
 
@@ -257,12 +258,13 @@ func preparedCallOutcomeSupplement(
 	calleeValue CalleeValueFunc,
 ) factapply.CallOutcomeProvider {
 	var out factapply.CallOutcomeProvider
+	expressionRefinements := facts.ExpressionRefinements()
 	if hasModuleExports(moduleLoads) {
 		out = calloutcome.WithSupplemental(out, effectlowering.ModuleLoadOutcomeProvider(effectlowering.ModuleLoadOutcomeProviderConfig{
-			Exports: moduleLoads,
-			NameFor: signatureID.nameForCall,
-			Facts:   facts,
-			Sources: sources,
+			Exports:               moduleLoads,
+			NameFor:               signatureID.nameForCall,
+			Sources:               sources,
+			ExpressionRefinements: expressionRefinements,
 		}))
 	}
 	return calloutcome.WithSupplemental(out, effectlowering.CallableValueOutcomeProvider(effectlowering.CallableValueOutcomeProviderConfig{
