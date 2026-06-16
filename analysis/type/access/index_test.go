@@ -281,3 +281,25 @@ func TestIndexOptionalAliasInstantiatedContainer(t *testing.T) {
 		assertType(t, got, typ.Number)
 	})
 }
+
+func TestIndexWrappedTopTypesPreserveAccessTopSemantics(t *testing.T) {
+	got, ok := Index(typ.NewAlias("Dynamic", typ.Any), typ.LiteralString("value"))
+	if !ok {
+		t.Fatal("Index(alias any, value) failed")
+	}
+	assertType(t, got, typ.Any)
+
+	got, ok = Index(typ.NewAlias("Opaque", typ.Unknown), typ.LiteralString("value"))
+	if !ok {
+		t.Fatal("Index(alias unknown, value) failed")
+	}
+	assertType(t, got, typ.Unknown)
+}
+
+func TestRuntimeIndexArrayWrappedDynamicKeyMayBeInteger(t *testing.T) {
+	got, ok := RuntimeIndex(typ.NewArray(typ.String), typ.NewAlias("DynamicKey", typ.Any))
+	if !ok {
+		t.Fatal("RuntimeIndex(array, alias any key) failed")
+	}
+	assertType(t, got, typeexpr.Optional(typ.String))
+}

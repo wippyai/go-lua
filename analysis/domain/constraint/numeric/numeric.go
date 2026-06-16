@@ -7,8 +7,9 @@ import (
 
 // Numeric constraints encode arithmetic relationships between paths.
 //
-// These constraints are used by theory solvers in the [theory] sub-package
-// to reason about numeric properties like array bounds and loop invariants.
+// This package is a reusable theory leaf. Higher analysis layers and solver
+// packages consume these constraints when wired, but the surface stays
+// independent of any single engine or pass.
 // Unlike type constraints, numeric constraints operate on values rather than types.
 //
 // # Supported Constraints
@@ -21,7 +22,7 @@ import (
 //
 // # Usage with Theory Solvers
 //
-// Numeric constraints are consumed by:
+// Numeric constraints are typically consumed by:
 //   - Difference Logic solver: handles Le, Lt, Ge, Gt constraints
 //   - Modular Arithmetic solver: handles ModEq constraints
 //

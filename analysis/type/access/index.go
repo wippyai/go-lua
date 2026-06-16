@@ -1,7 +1,6 @@
 package access
 
 import (
-	"github.com/wippyai/go-lua/analysis/type/subst"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/unwrap"
 )
@@ -44,41 +43,32 @@ func indexDepth(container typ.Type, key typ.Type, depth int, mode indexMode) fie
 }
 
 func indexDepthCore(container typ.Type, key typ.Type, depth int, mode indexMode) fieldResult {
-	switch v := unwrap.Annotated(container).(type) {
-	case *typ.Record:
-		return indexInRecord(v, key, depth+1, mode)
-	case *typ.Map:
-		return indexInMap(v.Key, v.Value, key, depth+1, mode)
-	case *typ.ReadonlyMap:
-		return indexInMap(v.Key, v.Value, key, depth+1, mode)
-	case *typ.Array:
-		return indexInArray(v, key, depth+1, mode)
-	case *typ.Tuple:
-		return indexInTuple(v, key, depth+1, mode)
-	case *typ.Union:
-		return indexInUnion(v, key, depth+1, mode)
-	case *typ.Intersection:
-		return indexInIntersection(v, key, depth+1, mode)
-	case *typ.Optional:
-		res := indexDepth(v.Inner, key, depth+1, mode)
+	return descendAccessWrappers(container, depth, func(t typ.Type, depth int) fieldResult {
+		if top, ok := specialAccessType(t); ok {
+			return fieldResult{t: top, ok: true}
+		}
+		switch v := unwrap.Annotated(t).(type) {
+		case *typ.Record:
+			return indexInRecord(v, key, depth+1, mode)
+		case *typ.Map:
+			return indexInMap(v.Key, v.Value, key, depth+1, mode)
+		case *typ.ReadonlyMap:
+			return indexInMap(v.Key, v.Value, key, depth+1, mode)
+		case *typ.Array:
+			return indexInArray(v, key, depth+1, mode)
+		case *typ.Tuple:
+			return indexInTuple(v, key, depth+1, mode)
+		case *typ.Union:
+			return indexInUnion(v, key, depth+1, mode)
+		case *typ.Intersection:
+			return indexInIntersection(v, key, depth+1, mode)
+		default:
+			return fieldResult{}
+		}
+	}, func(res fieldResult) fieldResult {
 		if res.ok {
 			res.nilable = true
 		}
 		return res
-	case *typ.Alias:
-		return indexDepth(v.UnaliasedTarget(), key, depth+1, mode)
-	case *typ.Recursive:
-		if v.Body == nil || v.Body == container {
-			return fieldResult{}
-		}
-		return indexDepth(v.Body, key, depth+1, mode)
-	case *typ.Instantiated:
-		expanded := subst.ExpandInstantiated(v)
-		if expanded == nil || expanded == container {
-			return fieldResult{}
-		}
-		return indexDepth(expanded, key, depth+1, mode)
-	default:
-		return fieldResult{}
-	}
+	})
 }

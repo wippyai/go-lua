@@ -1,8 +1,8 @@
-// Package ssa defines SSA value identifiers and phi metadata over CFG points.
+// Package ssa defines reusable SSA value identifiers and phi metadata over CFG points.
 //
-// CFG construction owns graph topology. SSA data is kept in this leaf package so
-// analysis layers can attach versions and phi nodes to cfg.Point values without
-// adding SSA state back to the CFG package.
+// CFG construction owns graph topology. This package is a small theory leaf so
+// higher layers can attach versions and phi nodes to cfg.Point values when SSA
+// wiring is enabled, without adding SSA state back to the CFG package.
 package ssa
 
 import (
@@ -59,6 +59,9 @@ type PhiOperand struct {
 }
 
 // PhiNode represents a phi function at a control flow join point.
+//
+// The type is intentionally kept as a standalone IR surface so dominance and
+// SSA wiring can consume it later without changing its shape.
 //
 // Phi nodes are the mechanism for merging variable versions after control
 // flow divergence. When an if/else or loop creates multiple definitions of

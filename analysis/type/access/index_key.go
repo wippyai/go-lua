@@ -3,44 +3,28 @@ package access
 import (
 	"github.com/wippyai/go-lua/analysis/type/kind"
 	"github.com/wippyai/go-lua/analysis/type/normalize"
-	"github.com/wippyai/go-lua/analysis/type/subst"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/unwrap"
 )
 
 func indexByKeyVariants(key typ.Type, depth int, mode indexMode, missingNil bool, project func(typ.Type) fieldResult) fieldResult {
-	if stopDepth(key, depth) {
-		return fieldResult{}
-	}
-	switch v := unwrap.Annotated(key).(type) {
-	case *typ.Union:
-		return indexKeyUnion(v, depth+1, mode, missingNil, project)
-	case *typ.Optional:
-		res := indexByKeyVariants(v.Inner, depth+1, mode, missingNil, project)
+	return descendAccessWrappers(key, depth, func(key typ.Type, depth int) fieldResult {
+		switch v := unwrap.Annotated(key).(type) {
+		case *typ.Union:
+			return indexKeyUnion(v, depth+1, mode, missingNil, project)
+		default:
+			res := project(key)
+			if !res.ok && mode == indexRuntime && missingNil {
+				return fieldResult{t: typ.Nil, ok: true}
+			}
+			return res
+		}
+	}, func(res fieldResult) fieldResult {
 		if res.ok {
 			res.nilable = true
 		}
 		return res
-	case *typ.Alias:
-		return indexByKeyVariants(v.UnaliasedTarget(), depth+1, mode, missingNil, project)
-	case *typ.Recursive:
-		if v.Body == nil || v.Body == key {
-			return fieldResult{}
-		}
-		return indexByKeyVariants(v.Body, depth+1, mode, missingNil, project)
-	case *typ.Instantiated:
-		expanded := subst.ExpandInstantiated(v)
-		if expanded == nil || expanded == key {
-			return fieldResult{}
-		}
-		return indexByKeyVariants(expanded, depth+1, mode, missingNil, project)
-	default:
-		res := project(key)
-		if !res.ok && mode == indexRuntime && missingNil {
-			return fieldResult{t: typ.Nil, ok: true}
-		}
-		return res
-	}
+	})
 }
 
 func indexKeyUnion(u *typ.Union, depth int, mode indexMode, missingNil bool, project func(typ.Type) fieldResult) fieldResult {

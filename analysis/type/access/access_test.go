@@ -99,6 +99,20 @@ func TestFieldOptionalAliasInstantiatedRecord(t *testing.T) {
 	})
 }
 
+func TestFieldWrappedTopTypesPreserveAccessTopSemantics(t *testing.T) {
+	got, ok := Field(typ.NewAlias("Dynamic", typ.Any), "value")
+	if !ok {
+		t.Fatal("Field(alias any, value) failed")
+	}
+	assertType(t, got, typ.Any)
+
+	got, ok = Field(typ.NewAlias("Opaque", typ.Unknown), "value")
+	if !ok {
+		t.Fatal("Field(alias unknown, value) failed")
+	}
+	assertType(t, got, typ.Unknown)
+}
+
 func TestFieldMapStringFieldOptionalityAndMissingPolicy(t *testing.T) {
 	m := typetable.NewMap(typ.String, typ.Number)
 

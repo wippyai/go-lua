@@ -2,7 +2,6 @@ package access
 
 import (
 	"github.com/wippyai/go-lua/analysis/type/kind"
-	"github.com/wippyai/go-lua/analysis/type/subst"
 	"github.com/wippyai/go-lua/analysis/type/subtype"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/unwrap"
@@ -35,37 +34,30 @@ func arrayRuntimeKeyMayBeInteger(key typ.Type, depth int) bool {
 	if typ.IsAny(key) || typ.IsUnknown(key) {
 		return true
 	}
-	switch v := unwrap.Annotated(key).(type) {
-	case *typ.Literal:
-		switch v.Base {
-		case kind.Integer:
+	return descendAccessWrappers(key, depth, func(key typ.Type, depth int) bool {
+		if typ.IsAny(key) || typ.IsUnknown(key) {
 			return true
-		case kind.Number:
-			number, ok := v.Value.(float64)
-			return ok && number == float64(int64(number))
-		default:
-			return false
 		}
-	case *typ.Union:
-		for _, member := range v.Members {
-			if arrayRuntimeKeyMayBeInteger(member, depth+1) {
+		switch v := unwrap.Annotated(key).(type) {
+		case *typ.Literal:
+			switch v.Base {
+			case kind.Integer:
 				return true
+			case kind.Number:
+				number, ok := v.Value.(float64)
+				return ok && number == float64(int64(number))
+			default:
+				return false
 			}
-		}
-		return false
-	case *typ.Optional:
-		return arrayRuntimeKeyMayBeInteger(v.Inner, depth+1)
-	case *typ.Alias:
-		return arrayRuntimeKeyMayBeInteger(v.UnaliasedTarget(), depth+1)
-	case *typ.Recursive:
-		if v.Body == nil || v.Body == key {
+		case *typ.Union:
+			for _, member := range v.Members {
+				if arrayRuntimeKeyMayBeInteger(member, depth+1) {
+					return true
+				}
+			}
 			return false
+		default:
+			return v.Kind() == kind.Integer || v.Kind() == kind.Number
 		}
-		return arrayRuntimeKeyMayBeInteger(v.Body, depth+1)
-	case *typ.Instantiated:
-		expanded := subst.ExpandInstantiated(v)
-		return expanded != nil && expanded != key && arrayRuntimeKeyMayBeInteger(expanded, depth+1)
-	default:
-		return v.Kind() == kind.Integer || v.Kind() == kind.Number
-	}
+	}, func(v bool) bool { return v })
 }
