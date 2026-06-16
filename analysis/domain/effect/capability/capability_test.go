@@ -321,12 +321,34 @@ func TestPartialDispatchModuleLoadDocumentsRequireNameBinding(t *testing.T) {
 
 func TestPartialMutationDescriptorsDocumentTargetOnlyLowering(t *testing.T) {
 	tests := []struct {
-		id      string
-		payload string
+		id   string
+		want []string
 	}{
-		{id: capability.MutationMutate, payload: "Transform and LengthDelta are metadata"},
-		{id: capability.MutationLengthChange, payload: "Delta is metadata"},
-		{id: capability.MutationTableMutator, payload: "Value is metadata"},
+		{
+			id: capability.MutationMutate,
+			want: []string{
+				"consumes only Target",
+				"path-invalidation authority",
+				"Transform and LengthDelta are metadata",
+			},
+		},
+		{
+			id: capability.MutationLengthChange,
+			want: []string{
+				"consumes Target",
+				"path-invalidation authority",
+				"positive Delta as a length-floor proof",
+				"negative Delta remains metadata",
+			},
+		},
+		{
+			id: capability.MutationTableMutator,
+			want: []string{
+				"consumes only Target",
+				"path-invalidation authority",
+				"Value is metadata",
+			},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.id, func(t *testing.T) {
@@ -337,11 +359,7 @@ func TestPartialMutationDescriptorsDocumentTargetOnlyLowering(t *testing.T) {
 			if desc.Status != capability.StatusPartial {
 				t.Fatalf("%s status = %q, want %q", tt.id, desc.Status, capability.StatusPartial)
 			}
-			for _, want := range []string{
-				"consumes only Target",
-				"path-invalidation authority",
-				tt.payload,
-			} {
+			for _, want := range tt.want {
 				if !strings.Contains(desc.Rationale, want) {
 					t.Fatalf("%s rationale = %q, want to contain %q", tt.id, desc.Rationale, want)
 				}

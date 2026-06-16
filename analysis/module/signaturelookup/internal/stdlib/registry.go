@@ -3,7 +3,11 @@
 package stdlib
 
 import (
+	"fmt"
+
 	"github.com/wippyai/go-lua/analysis/domain/effect"
+	"github.com/wippyai/go-lua/analysis/domain/effect/capability"
+	caplabel "github.com/wippyai/go-lua/analysis/domain/effect/capability/label"
 	"github.com/wippyai/go-lua/analysis/domain/effect/dispatch"
 	"github.com/wippyai/go-lua/analysis/domain/effect/iteration"
 	"github.com/wippyai/go-lua/analysis/domain/effect/mutation"
@@ -590,8 +594,22 @@ func Signatures() map[string]signature.Function {
 }
 
 func sig(fn *typ.Function, labels ...effect.Label) signature.Function {
+	for _, label := range labels {
+		mustAllowStdlibEffectLabel(label)
+	}
 	return signature.Function{
 		Type:   fn,
 		Effect: effect.Row{Labels: labels},
+	}
+}
+
+func mustAllowStdlibEffectLabel(label effect.Label) {
+	desc, ok := caplabel.DescriptorFor(label)
+	if !ok {
+		panic(fmt.Sprintf("stdlib: unaudited effect label %T: %v", label, label))
+	}
+	switch desc.Status {
+	case capability.StatusReserved, capability.StatusReservedHighRisk:
+		panic(fmt.Sprintf("stdlib: inactive effect label %s (%s): %v", desc.ID, desc.Status, label))
 	}
 }

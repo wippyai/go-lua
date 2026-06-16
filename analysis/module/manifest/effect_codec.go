@@ -5,6 +5,8 @@ import (
 	"sort"
 
 	"github.com/wippyai/go-lua/analysis/domain/effect"
+	"github.com/wippyai/go-lua/analysis/domain/effect/capability"
+	caplabel "github.com/wippyai/go-lua/analysis/domain/effect/capability/label"
 	"github.com/wippyai/go-lua/analysis/domain/effect/control"
 	"github.com/wippyai/go-lua/analysis/domain/effect/dispatch"
 	"github.com/wippyai/go-lua/analysis/domain/effect/iteration"
@@ -21,6 +23,9 @@ func encodeEffectRow(row effect.Row) (*effectRowWire, error) {
 
 	out := &effectRowWire{Labels: make([]effectLabelWire, 0, len(row.Labels))}
 	for _, label := range row.Labels {
+		if err := validateManifestEffectLabel(label); err != nil {
+			return nil, err
+		}
 		encoded, err := encodeEffectLabel(label)
 		if err != nil {
 			return nil, err
@@ -48,6 +53,9 @@ func decodeEffectRow(w *effectRowWire) (effect.Row, error) {
 		if err != nil {
 			return effect.Row{}, err
 		}
+		if err := validateManifestEffectLabel(decoded); err != nil {
+			return effect.Row{}, err
+		}
 		labels = append(labels, decoded)
 	}
 	var tail *effect.Var
@@ -55,6 +63,19 @@ func decodeEffectRow(w *effectRowWire) (effect.Row, error) {
 		tail = &effect.Var{Name: *w.Tail}
 	}
 	return effect.Row{Labels: labels, Tail: tail}, nil
+}
+
+func validateManifestEffectLabel(label effect.Label) error {
+	desc, ok := caplabel.DescriptorFor(label)
+	if !ok {
+		return fmt.Errorf("manifest: unaudited effect label %T", label)
+	}
+	switch desc.Status {
+	case capability.StatusReserved, capability.StatusReservedHighRisk:
+		return fmt.Errorf("manifest: inactive effect label %s (%s)", desc.ID, desc.Status)
+	default:
+		return nil
+	}
 }
 
 func encodeEffectLabel(label effect.Label) (effectLabelWire, error) {

@@ -12,6 +12,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/domain/effect"
 	"github.com/wippyai/go-lua/analysis/domain/effect/capability"
+	caplabel "github.com/wippyai/go-lua/analysis/domain/effect/capability/label"
 	"github.com/wippyai/go-lua/analysis/domain/effect/control"
 	"github.com/wippyai/go-lua/analysis/domain/effect/dispatch"
 	"github.com/wippyai/go-lua/analysis/domain/effect/iteration"
@@ -305,13 +306,9 @@ func TestSelectDeclaresConservativeAnyWithoutReservedVariadicTransform(t *testin
 func TestStdlibDoesNotDeclareReservedOrHighRiskEffectLabels(t *testing.T) {
 	for name, sig := range Signatures() {
 		for _, label := range sig.Effect.Labels {
-			id, ok := capabilityIDForStdlibLabel(label)
+			desc, ok := caplabel.DescriptorFor(label)
 			if !ok {
 				t.Fatalf("%s declares unaudited effect label %T: %v", name, label, label)
-			}
-			desc, ok := capability.Lookup(id)
-			if !ok {
-				t.Fatalf("%s declares effect label %T with no capability descriptor %q", name, label, id)
 			}
 			switch desc.Status {
 			case capability.StatusReserved, capability.StatusReservedHighRisk:
@@ -319,6 +316,18 @@ func TestStdlibDoesNotDeclareReservedOrHighRiskEffectLabels(t *testing.T) {
 			}
 		}
 	}
+}
+
+func TestStdlibSignatureConstructionRejectsInactiveEffectLabels(t *testing.T) {
+	mustPanicContaining(t, "inactive effect label", func() {
+		sig(typ.Func().Build(), control.IO{})
+	})
+	mustPanicContaining(t, "inactive effect label", func() {
+		sig(typ.Func().Build(), returns.Return{
+			ReturnIndex: 0,
+			Transform:   returns.StringUnpackValue{},
+		})
+	})
 }
 
 func TestLookupAndSignaturesCloneResults(t *testing.T) {
@@ -460,82 +469,16 @@ func hasLabel(row effect.Row, want effect.Label) bool {
 	})
 }
 
-func capabilityIDForStdlibLabel(label effect.Label) (string, bool) {
-	switch l := effect.NormalizeLabel(label).(type) {
-	case returns.Return:
-		return capabilityIDForReturnTransform(l.Transform)
-	case returns.ErrorReturn:
-		return capability.ReturnsErrorReturn, true
-	case returns.ReturnLength:
-		return capability.ReturnsReturnLength, true
-	case returns.CorrelatedReturn:
-		return capability.ReturnsCorrelatedReturn, true
-	case postcondition.NormalReturnRefinement:
-		return capability.PostconditionNormalReturnRefinement, true
-	case ownership.Borrow:
-		return capability.OwnershipBorrow, true
-	case ownership.Retain:
-		return capability.OwnershipRetain, true
-	case ownership.Store:
-		return capability.OwnershipStore, true
-	case ownership.Send:
-		return capability.OwnershipSend, true
-	case ownership.SendParam:
-		return capability.OwnershipSendParam, true
-	case ownership.Export:
-		return capability.OwnershipExport, true
-	case ownership.Opaque:
-		return capability.OwnershipOpaque, true
-	case ownership.Freeze:
-		return capability.OwnershipFreeze, true
-	case ownership.BorrowAll:
-		return capability.OwnershipBorrowAll, true
-	case iteration.Iterator:
-		return capability.IterationIterator, true
-	case dispatch.ModuleLoad:
-		return capability.DispatchModuleLoad, true
-	case dispatch.TypePredicate:
-		return capability.DispatchTypePredicate, true
-	case dispatch.VariadicTransform:
-		return capability.DispatchVariadicTransform, true
-	case mutation.Mutate:
-		return capability.MutationMutate, true
-	case mutation.LengthChange:
-		return capability.MutationLengthChange, true
-	case mutation.TableMutator:
-		return capability.MutationTableMutator, true
-	case control.Throw:
-		return capability.ControlThrow, true
-	case control.IO:
-		return capability.ControlIO, true
-	default:
-		return "", false
-	}
-}
-
-func capabilityIDForReturnTransform(transform returns.ReturnType) (string, bool) {
-	switch transform.(type) {
-	case returns.SameAs:
-		return capability.ReturnsReturnSameAs, true
-	case returns.ElementOf:
-		return capability.ReturnsReturnElementOf, true
-	case returns.OptionalElementOf:
-		return capability.ReturnsReturnOptionalElementOf, true
-	case returns.CallbackReturn:
-		return capability.ReturnsReturnCallbackReturn, true
-	case returns.ArrayOfCallbackReturn:
-		return capability.ReturnsReturnArrayOfCallbackReturn, true
-	case returns.TypeProjection:
-		return capability.ReturnsReturnTypeProjection, true
-	case returns.DeepElementOf:
-		return capability.ReturnsReturnDeepElementOf, true
-	case returns.StringUnpackValue:
-		return capability.ReturnsReturnStringUnpackValue, true
-	case returns.SelectCaseOfParam:
-		return capability.ReturnsReturnSelectCaseOfParam, true
-	case returns.SelectResultOfCases:
-		return capability.ReturnsReturnSelectResultOfCases, true
-	default:
-		return "", false
-	}
+func mustPanicContaining(t *testing.T, want string, f func()) {
+	t.Helper()
+	defer func() {
+		got := recover()
+		if got == nil {
+			t.Fatalf("expected panic containing %q", want)
+		}
+		if !strings.Contains(got.(string), want) {
+			t.Fatalf("panic = %q, want to contain %q", got, want)
+		}
+	}()
+	f()
 }
