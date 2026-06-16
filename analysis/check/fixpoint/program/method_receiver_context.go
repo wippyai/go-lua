@@ -59,7 +59,7 @@ func applyMetatableMethodReceiverEntryStatesTo(
 		if !ok {
 			continue
 		}
-		functions[i].entryState = applyParamSeeds(reg, functions[i].entryState, []paramSeed{seed})
+		functions[i].entryState = applyParamSeeds(reg, functions[i].entryState, functions[i].entryState, []paramSeed{seed})
 		functions[i].hasEntryState = true
 	}
 }

@@ -4,10 +4,12 @@ import (
 	statekey "github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/evidence"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/state"
+	"github.com/wippyai/go-lua/analysis/engine/state/heapidentity"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/compiler/ast"
@@ -33,6 +35,7 @@ type calleeArgs struct {
 	sites    int
 	joins    []product.Value
 	presence []int
+	heap     state.State
 }
 
 func newParamInference(reg *axis.Registry, enclosed map[symbol.ID]struct{}) *paramInference {
@@ -72,7 +75,7 @@ func (p *paramInference) candidate(callee symbol.ID) bool {
 // join for the callee function symbol. Arguments beyond the recorded length grow
 // the slice; missing arguments at a recorded index are absent for this call and
 // therefore join nil-presence Top, keeping the parameter at least as wide.
-func (p *paramInference) observe(callee symbol.ID, args []product.Value, present []bool) {
+func (p *paramInference) observe(callee symbol.ID, args []product.Value, present []bool, caller state.State) {
 	if p == nil || callee == 0 {
 		return
 	}
@@ -95,7 +98,19 @@ func (p *paramInference) observe(callee symbol.ID, args []product.Value, present
 		}
 		acc.joins[i] = product.Join(p.reg, acc.joins[i], args[i])
 		acc.presence[i]++
+		acc.heap = seedReachableHeapFromValue(p.reg, acc.heap, caller, args[i], map[identity.ID]struct{}{})
 	}
+}
+
+func (p *paramInference) seedSource(callee symbol.ID) state.State {
+	if p == nil {
+		return state.State{}
+	}
+	acc := p.params[callee]
+	if acc == nil {
+		return state.State{}
+	}
+	return acc.heap.Snapshot()
 }
 
 // paramSeed binds one inferred parameter value to its symbol value slot.
@@ -154,8 +169,10 @@ func (p *paramInference) paramSeeds(bindings *bind.Result, fn *ast.FunctionExpr,
 
 // applyParamSeeds writes inferred parameter seeds onto a clone of base. An
 // existing non-Bottom slot value is preserved so a caller-supplied entry state
-// is never overwritten by inference.
-func applyParamSeeds(reg *axis.Registry, base state.State, seeds []paramSeed) state.State {
+// is never overwritten by inference. When a written seed carries a singleton
+// table identity, reachable heap table objects are copied from source into the
+// callee entry state's heap sidecar without changing any summary or context key.
+func applyParamSeeds(reg *axis.Registry, base, source state.State, seeds []paramSeed) state.State {
 	if reg == nil || len(seeds) == 0 {
 		return base
 	}
@@ -169,8 +186,58 @@ func applyParamSeeds(reg *axis.Registry, base state.State, seeds []paramSeed) st
 			continue
 		}
 		out = out.WriteValue(reg, seed.slot, seed.value)
+		out = seedReachableHeapFromValue(reg, out, source, seed.value, map[identity.ID]struct{}{})
 	}
 	return out
+}
+
+func seedReachableHeapFromValue(
+	reg *axis.Registry,
+	dst, src state.State,
+	value product.Value,
+	seen map[identity.ID]struct{},
+) state.State {
+	if reg == nil {
+		return dst
+	}
+	id, ok := product.Get(reg, value, identity.Key).ID()
+	if !ok || id == (identity.ID{}) {
+		return dst
+	}
+	return seedReachableHeapFromID(reg, dst, src, id, seen)
+}
+
+func seedReachableHeapFromID(
+	reg *axis.Registry,
+	dst, src state.State,
+	id identity.ID,
+	seen map[identity.ID]struct{},
+) state.State {
+	if reg == nil || id == (identity.ID{}) {
+		return dst
+	}
+	if _, ok := seen[id]; ok {
+		return dst
+	}
+	seen[id] = struct{}{}
+	object := src.ReadHeapTableObject(reg, id)
+	objectDomain := heapidentity.ObjectDomain(reg)
+	if objectDomain.Equal(object, objectDomain.Bottom()) {
+		return dst
+	}
+	if existing := dst.ReadHeapTableObject(reg, id); !objectDomain.Equal(existing, objectDomain.Bottom()) {
+		object = objectDomain.Join(existing, object)
+	}
+	dst = dst.WriteHeapTableObject(reg, id, object)
+	dst = seedReachableHeapFromValue(reg, dst, src, object.Root(), seen)
+	for _, member := range object.StaticMembers() {
+		dst = seedReachableHeapFromValue(reg, dst, src, member, seen)
+	}
+	for _, fact := range object.DynamicIndexFacts() {
+		dst = seedReachableHeapFromValue(reg, dst, src, fact.KeyValue, seen)
+		dst = seedReachableHeapFromValue(reg, dst, src, fact.Value, seen)
+	}
+	return dst
 }
 
 // inferableParamValue rejects a joined argument value that carries no usable

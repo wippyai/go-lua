@@ -6,6 +6,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/engine/state"
+	"github.com/wippyai/go-lua/analysis/engine/state/heapidentity"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/compiler/ast"
@@ -106,6 +107,14 @@ func functionContextEntryHolds(reg *axis.Registry, entry, current state.State, s
 		if !ok || !product.LessOrEq(reg, want, got) {
 			return false
 		}
+	}
+	requiredHeap := entry.HeapTableObjectsSnapshot()
+	if requiredHeap.Top {
+		return false
+	}
+	currentHeap := current.HeapTableObjectsSnapshot()
+	if !currentHeap.Top && !heapidentity.MapDomain(reg).LessOrEq(requiredHeap.Objects, currentHeap.Objects) {
+		return false
 	}
 	return true
 }

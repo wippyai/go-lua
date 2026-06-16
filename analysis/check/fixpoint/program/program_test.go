@@ -11,7 +11,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/summary"
 	"github.com/wippyai/go-lua/analysis/domain/effect"
 	"github.com/wippyai/go-lua/analysis/domain/effect/ownership"
-	"github.com/wippyai/go-lua/analysis/module/signature"
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
@@ -20,7 +19,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/typewitness"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/variantorigin"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
-	"github.com/wippyai/go-lua/analysis/test/value/standard"
 	"github.com/wippyai/go-lua/analysis/domain/value/variant"
 	"github.com/wippyai/go-lua/analysis/engine/callboundary"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
@@ -28,8 +26,10 @@ import (
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/module/manifest"
+	"github.com/wippyai/go-lua/analysis/module/signature"
 	"github.com/wippyai/go-lua/analysis/module/signaturelookup"
 	"github.com/wippyai/go-lua/analysis/symbol"
+	"github.com/wippyai/go-lua/analysis/test/value/standard"
 	"github.com/wippyai/go-lua/analysis/type/refinement"
 	"github.com/wippyai/go-lua/analysis/type/subtype"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
@@ -598,6 +598,82 @@ return answer
 	if !subtype.IsSubtype(fn.Returns[0], want) {
 		t.Fatalf("function value return = %v, want subtype of %v", fn.Returns[0], want)
 	}
+	if diags := diagnostics.Produce(root); len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v, want none", diags)
+	}
+}
+
+func TestRunChunkSeedsReachableHeapForNestedLiteralParamRead(t *testing.T) {
+	reg := standard.Registry()
+	stmts := parseChunk(t, `
+local function read_name(payload)
+	local value: string = payload.user.profile.name
+	return value
+end
+
+local result = read_name({
+	user = {
+		profile = {
+			name = "ok",
+		},
+	},
+})
+
+local answer: string = result
+return answer
+`)
+
+	result, err := RunChunk(stmts, Config{Check: body.Config{Registry: reg}})
+	if err != nil {
+		t.Fatalf("RunChunk: %v", err)
+	}
+	root := result.RootResult()
+	if root == nil {
+		t.Fatalf("RootResult missing")
+	}
+	answerStmt := mustFindLocalAssign(t, stmts, "answer")
+	answerPoint := requireLocalAssignmentPoint(t, root, answerStmt, 0)
+	assertBoundaryExprRuntimeKind(t, reg, root, answerPoint, answerStmt.Exprs[0], runtimekind.Singleton(runtimekind.String), "answer")
+	if diags := diagnostics.Produce(root); len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v, want none", diags)
+	}
+}
+
+func TestRunChunkSeedsReachableHeapThroughForwardingChain(t *testing.T) {
+	reg := standard.Registry()
+	stmts := parseChunk(t, `
+local function read_name(payload)
+	local value: string = payload.user.profile.name
+	return value
+end
+
+local function forward(payload)
+	return read_name(payload)
+end
+
+local result = forward({
+	user = {
+		profile = {
+			name = "ok",
+		},
+	},
+})
+
+local answer: string = result
+return answer
+`)
+
+	result, err := RunChunk(stmts, Config{Check: body.Config{Registry: reg}})
+	if err != nil {
+		t.Fatalf("RunChunk: %v", err)
+	}
+	root := result.RootResult()
+	if root == nil {
+		t.Fatalf("RootResult missing")
+	}
+	answerStmt := mustFindLocalAssign(t, stmts, "answer")
+	answerPoint := requireLocalAssignmentPoint(t, root, answerStmt, 0)
+	assertBoundaryExprRuntimeKind(t, reg, root, answerPoint, answerStmt.Exprs[0], runtimekind.Singleton(runtimekind.String), "answer")
 	if diags := diagnostics.Produce(root); len(diags) != 0 {
 		t.Fatalf("diagnostics = %#v, want none", diags)
 	}

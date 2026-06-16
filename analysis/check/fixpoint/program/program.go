@@ -377,6 +377,7 @@ func (k programKeys) functionSymbolsByKey() map[summary.SummaryKey]symbol.ID {
 // flow state, where each argument carries its solved value.
 func observeCallArguments(
 	inferred *paramInference,
+	caller state.State,
 	prepass *body.Result,
 	point cfg.Point,
 	site factflow.CallSite,
@@ -405,7 +406,7 @@ func observeCallArguments(
 		args[i] = value
 		present[i] = true
 	}
-	inferred.observe(callee, args, present)
+	inferred.observe(callee, args, present, caller)
 }
 
 // applyInferredParamEntryStates attaches the joined call-site parameter seed to
@@ -417,23 +418,27 @@ func applyInferredParamEntryStates(keys *programKeys, bindings *bind.Result, inf
 	if keys == nil || bindings == nil || inferred == nil {
 		return
 	}
-	symbolByKey := keys.functionSymbolsByKey()
-	for i := range keys.functions {
-		fn := keys.functions[i].funcExpr
+	applyInferredParamEntryStatesTo(keys, bindings, inferred, keys.functions)
+	applyInferredParamEntryStatesTo(keys, bindings, inferred, keys.contexts)
+}
+
+func applyInferredParamEntryStatesTo(keys *programKeys, bindings *bind.Result, inferred *paramInference, functions []keyedFunction) {
+	for i := range functions {
+		fn := functions[i].funcExpr
 		if fn == nil {
 			continue
 		}
-		callee, ok := symbolByKey[keys.functions[i].key]
-		if !ok {
+		callee, ok := keys.functionSymbol(fn)
+		if !ok || callee == 0 {
 			continue
 		}
 		seeds := inferred.paramSeeds(bindings, fn, callee)
 		if len(seeds) == 0 {
 			continue
 		}
-		entry := keys.functions[i].entryState
-		keys.functions[i].entryState = applyParamSeeds(inferred.reg, entry, seeds)
-		keys.functions[i].hasEntryState = true
+		source := inferred.seedSource(callee)
+		functions[i].entryState = applyParamSeeds(inferred.reg, functions[i].entryState, source, seeds)
+		functions[i].hasEntryState = true
 		if keys.inferredParamSeeds == nil {
 			keys.inferredParamSeeds = make(map[*ast.FunctionExpr][]paramSeed)
 		}
@@ -609,7 +614,13 @@ func collectCallContextKeys(keys *programKeys, stmts []ast.Stmt, bindings *bind.
 		if !static.HasCallSites() {
 			continue
 		}
-		functionPrepass, err := solvePreparedCounted(static, cloneCheckConfig(config), prepassCounter(stats))
+		functionConfig := cloneCheckConfig(config)
+		if callee, ok := keys.functionSymbol(fn.funcExpr); ok && callee != 0 {
+			if seeds := inferred.paramSeeds(bindings, fn.funcExpr, callee); len(seeds) != 0 {
+				functionConfig.EntryState = applyParamSeeds(config.Registry, functionConfig.EntryState, inferred.seedSource(callee), seeds)
+			}
+		}
+		functionPrepass, err := solvePreparedCounted(static, functionConfig, prepassCounter(stats))
 		if err != nil {
 			return nil, err
 		}
@@ -667,13 +678,13 @@ func collectCallContextKeysFromResult(keys *programKeys, owner *ast.FunctionExpr
 		if fn == nil {
 			continue
 		}
-		observeCallArguments(inferred, prepass, point, site, baseKey, symbolByKey)
-		callRef := callContextRef{owner: owner, expr: expr}
-		if _, seen := keys.callContextKeys[callRef]; seen {
-			continue
-		}
 		in, ok := prepass.StateAt(point)
 		if !ok {
+			continue
+		}
+		observeCallArguments(inferred, in, prepass, point, site, baseKey, symbolByKey)
+		callRef := callContextRef{owner: owner, expr: expr}
+		if _, seen := keys.callContextKeys[callRef]; seen {
 			continue
 		}
 		entry, ok := callerPathEntryState(config.Registry, in)
@@ -747,12 +758,13 @@ func collectSignatureCallbackContextKeys(
 			continue
 		}
 		entry := state.State{}
-		if callerEntry, ok := prepass.StateAt(point); ok {
+		callerEntry, hasCallerEntry := prepass.StateAt(point)
+		if hasCallerEntry {
 			if pathEntry, ok := callerPathEntryState(config.Registry, callerEntry); ok {
 				entry = pathEntry
 			}
 		}
-		entry = applyParamSeeds(config.Registry, entry, seeds)
+		entry = applyParamSeeds(config.Registry, entry, callerEntry, seeds)
 		baseKey, ok := keys.functionKeys[callbackSymbol]
 		if !ok {
 			continue
@@ -1209,7 +1221,7 @@ func functionMaterializeConfig(config body.Config, keys programKeys, summaries s
 		return config
 	}
 	out := config
-	out.EntryState = applyParamSeeds(config.Registry, config.EntryState, seeds)
+	out.EntryState = applyParamSeeds(config.Registry, config.EntryState, config.EntryState, seeds)
 	return out
 }
 
