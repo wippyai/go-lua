@@ -13,6 +13,8 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/placement"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/typewitness"
@@ -652,6 +654,112 @@ func TestSignatureOutcomeProviderLowersOwnershipSendAndStoreEscapeEvents(t *test
 	assertEscapeEvent(t, got.NormalReturnFacts.EscapeEvents, path.NewPlaceholder(0), callboundary.EscapeEventStore, true)
 	assertEscapeEvent(t, got.NormalReturnFacts.EscapeEvents, path.NewPlaceholder(1), callboundary.EscapeEventSend, true)
 	assertEscapeEvent(t, got.NormalReturnFacts.EscapeEvents, path.NewPlaceholder(2), callboundary.EscapeEventSend, true)
+}
+
+func TestSignatureOutcomeProviderOwnershipEffectsApplyPlacementAndFreeze(t *testing.T) {
+	reg := standard.Registry()
+	graph := cfg.New()
+	call := graph.AddNode(cfg.NodeCall)
+	graph.AddEdge(graph.Entry(), call, false)
+	graph.AddEdge(call, graph.Exit(), false)
+
+	callee := symbol.ID(930)
+	storeSym := symbol.ID(931)
+	freezeSym := symbol.ID(932)
+	sendSym := symbol.ID(933)
+	containerSym := symbol.ID(934)
+	storeExpr := factflow.ExprRef(931)
+	freezeExpr := factflow.ExprRef(932)
+	sendExpr := factflow.ExprRef(933)
+	containerExpr := factflow.ExprRef(934)
+	storePath := path.NewPath(storeSym, "storeObj")
+	freezePath := path.NewPath(freezeSym, "freezeObj")
+	sendPath := path.NewPath(sendSym, "sendObj")
+	containerPath := path.NewPath(containerSym, "container")
+	storeID := identity.ID{Kind: "lua.table", Site: "ownership-apply", Index: 1}
+	freezeID := identity.ID{Kind: "lua.table", Site: "ownership-apply", Index: 2}
+	sendID := identity.ID{Kind: "lua.table", Site: "ownership-apply", Index: 3}
+	containerID := identity.ID{Kind: "lua.table", Site: "ownership-apply", Index: 4}
+	storeValue := product.Set(reg, product.Top(), identity.Key, identity.Singleton(storeID))
+	freezeValue := product.Set(reg, product.Top(), identity.Key, identity.Singleton(freezeID))
+	sendValue := product.Set(reg, product.Top(), identity.Key, identity.Singleton(sendID))
+	containerValue := product.Set(reg, product.Top(), identity.Key, identity.Singleton(containerID))
+	facts := factflow.NewFacts(factflow.FactsInput{
+		CallSites: map[cfg.Point]factflow.CallSite{
+			call: factflow.NewCallSite(factflow.CallSiteConfig{
+				Context:      factflow.CallSiteContextStatement,
+				CalleeSymbol: callee,
+				ArgumentSources: []factflow.ValueSource{
+					{Kind: factflow.ValueSourceExpression, ExprRef: storeExpr, HasExpr: true},
+					{Kind: factflow.ValueSourceExpression, ExprRef: freezeExpr, HasExpr: true},
+					{Kind: factflow.ValueSourceExpression, ExprRef: sendExpr, HasExpr: true},
+					{Kind: factflow.ValueSourceExpression, ExprRef: containerExpr, HasExpr: true},
+				},
+			}),
+		},
+		ExpressionPaths: map[factflow.ExprRef]path.Path{
+			storeExpr:     storePath,
+			freezeExpr:    freezePath,
+			sendExpr:      sendPath,
+			containerExpr: containerPath,
+		},
+	})
+	builder := visibility.NewBuilder()
+	builder.Define(call, storeSym, "storeObj")
+	builder.Define(call, freezeSym, "freezeObj")
+	builder.Define(call, sendSym, "sendObj")
+	builder.Define(call, containerSym, "container")
+	resolver := visibility.NewResolver(builder.Build())
+
+	provider := SignatureOutcomeProvider(SignatureOutcomeProviderConfig{
+		Signatures: signatureMap{
+			"ownershipEffects": {
+				Effect: effect.Empty.
+					With(ownership.Store{Param: effect.ParamRef{Index: 0}, Into: effect.ParamRef{Index: 3}}).
+					With(ownership.Send{FromParam: 2}).
+					With(ownership.Freeze{Param: effect.ParamRef{Index: 1}}),
+			},
+		},
+		NameFor: func(_ transfer.NodeContext, call factflow.CallProducer) (string, bool) {
+			if call.CalleeSymbol() != callee {
+				return "", false
+			}
+			return "ownershipEffects", true
+		},
+		Facts: facts,
+	})
+
+	flow := transfer.Run(transfer.Config{
+		Graph:    graph,
+		Registry: reg,
+		EntryState: state.State{}.
+			WriteValue(reg, key.SymbolValue(storeSym), storeValue).
+			WriteValue(reg, key.SymbolValue(freezeSym), freezeValue).
+			WriteValue(reg, key.SymbolValue(sendSym), sendValue).
+			WriteValue(reg, key.SymbolValue(containerSym), containerValue),
+		NodeTransfer: factapply.NewFactsNodeTransfer(factapply.FactsNodeTransferConfig{
+			Facts:       facts,
+			CallOutcome: provider,
+			Visibility:  resolver,
+		}),
+	})
+	got := flow[graph.Exit()]
+
+	if gotPlacement := got.ReadPlacement(storeID); gotPlacement != placement.OwnedHeap {
+		t.Fatalf("placement[%v] = %s, want %s", storeID, gotPlacement, placement.OwnedHeap)
+	}
+	if gotPlacement := got.ReadPlacement(sendID); gotPlacement != placement.SharedHeap {
+		t.Fatalf("placement[%v] = %s, want %s", sendID, gotPlacement, placement.SharedHeap)
+	}
+	if gotPlacement := got.ReadPlacement(containerID); gotPlacement != placement.SharedHeap {
+		t.Fatalf("placement[%v] = %s, want %s", containerID, gotPlacement, placement.SharedHeap)
+	}
+	if gotPlacement := got.ReadPlacement(freezeID); gotPlacement != placement.Bottom {
+		t.Fatalf("placement[%v] = %s, want freeze without escape placement", freezeID, gotPlacement)
+	}
+	if !got.IsTableFrozen(freezeID) {
+		t.Fatalf("freeze target %v was not frozen", freezeID)
+	}
 }
 
 func TestSignatureOutcomeProviderLowersOwnershipFreezeFrozenTableFact(t *testing.T) {
