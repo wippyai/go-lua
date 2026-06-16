@@ -193,7 +193,7 @@ func projectPathStructuralValueCached(typeValues *typevalue.Cache, reg *axis.Reg
 	if !ok {
 		return product.Value{}, false
 	}
-	return typevalue.WithWitness(reg, typevalue.FromTypeCached(typeValues, reg, projected), projected), true
+	return typeValues.FromTypeWithWitness(reg, projected), true
 }
 
 func structuralTypeFromPathValue(reg *axis.Registry, value product.Value) (typ.Type, bool) {
@@ -207,10 +207,10 @@ func structuralTypeFromPathValueCached(typeValues *typevalue.Cache, reg *axis.Re
 		if t, ok := witness.Type(); ok {
 			t = typeForPathValuePresence(t, valuePresence)
 			if !origin.IsBottom() && !origin.IsTop() {
-				if narrowed, ok := typevalue.NarrowVariantByOriginCached(typeValues, t, origin.Family(), origin.Cases()); ok {
+				if narrowed, ok := typeValues.NarrowVariantByOrigin(t, origin.Family(), origin.Cases()); ok {
 					return narrowed, true
 				}
-				if narrowed, ok := typevalue.TypeFromVariantOriginCached(typeValues, origin.Family(), origin.Cases()); ok {
+				if narrowed, ok := typeValues.TypeFromVariantOrigin(origin.Family(), origin.Cases()); ok {
 					return typeForPathValuePresence(narrowed, valuePresence), true
 				}
 			}
@@ -218,7 +218,7 @@ func structuralTypeFromPathValueCached(typeValues *typevalue.Cache, reg *axis.Re
 		}
 	}
 	if !origin.IsBottom() && !origin.IsTop() {
-		if t, ok := typevalue.TypeFromVariantOriginCached(typeValues, origin.Family(), origin.Cases()); ok {
+		if t, ok := typeValues.TypeFromVariantOrigin(origin.Family(), origin.Cases()); ok {
 			return typeForPathValuePresence(t, valuePresence), true
 		}
 	}

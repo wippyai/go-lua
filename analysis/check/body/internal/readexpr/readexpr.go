@@ -124,7 +124,7 @@ func unknownIndexReadValue(config Config, seg segment.Segment) (product.Value, b
 	if typ.IsUnknown(projected) {
 		return product.Top(), true
 	}
-	return typevalue.FromTypeCached(config.TypeValues, reg, projected), true
+	return config.TypeValues.FromType(reg, projected), true
 }
 
 // dropInBoundsIndexNil removes the soundly-optional nil from an array element
@@ -275,7 +275,7 @@ func projectFromValueEvidence(config Config, value product.Value, suffix []segme
 	if !ok {
 		return product.Value{}, false
 	}
-	return typevalue.WithWitness(reg, typevalue.FromTypeCached(config.TypeValues, reg, projected), projected), true
+	return config.TypeValues.FromTypeWithWitness(reg, projected), true
 }
 
 func structuralTypeFromValue(config Config, value product.Value) (typ.Type, bool) {
@@ -286,10 +286,10 @@ func structuralTypeFromValue(config Config, value product.Value) (typ.Type, bool
 		if t, ok := witness.Type(); ok {
 			t = typeForValuePresence(t, valuePresence)
 			if !origin.IsBottom() && !origin.IsTop() {
-				if narrowed, ok := typevalue.NarrowVariantByOriginCached(config.TypeValues, t, origin.Family(), origin.Cases()); ok {
+				if narrowed, ok := config.TypeValues.NarrowVariantByOrigin(t, origin.Family(), origin.Cases()); ok {
 					return narrowed, true
 				}
-				if narrowed, ok := typevalue.TypeFromVariantOriginCached(config.TypeValues, origin.Family(), origin.Cases()); ok {
+				if narrowed, ok := config.TypeValues.TypeFromVariantOrigin(origin.Family(), origin.Cases()); ok {
 					return typeForValuePresence(narrowed, valuePresence), true
 				}
 			}
@@ -297,7 +297,7 @@ func structuralTypeFromValue(config Config, value product.Value) (typ.Type, bool
 		}
 	}
 	if !origin.IsBottom() && !origin.IsTop() {
-		if t, ok := typevalue.TypeFromVariantOriginCached(config.TypeValues, origin.Family(), origin.Cases()); ok {
+		if t, ok := config.TypeValues.TypeFromVariantOrigin(origin.Family(), origin.Cases()); ok {
 			return typeForValuePresence(t, valuePresence), true
 		}
 	}

@@ -76,7 +76,7 @@ func functionParamEntrySeeds(reg *axis.Registry, typeValues *typevalue.Cache, bi
 				if t, ok := methodReceiverType(bindings, resolver, fn); ok {
 					seeds = append(seeds, paramEntrySeed{
 						slot:  valueSlot,
-						value: typevalue.WithWitness(reg, typevalue.FromTypeCached(typeValues, reg, t), t),
+						value: typeValues.FromTypeWithWitness(reg, t),
 					})
 					continue
 				}
@@ -85,7 +85,7 @@ func functionParamEntrySeeds(reg *axis.Registry, typeValues *typevalue.Cache, bi
 				if t, ok := contextualParamType(expectedSig, slot.SourceIndex); ok {
 					seeds = append(seeds, paramEntrySeed{
 						slot:  valueSlot,
-						value: typevalue.WithWitness(reg, typevalue.FromTypeCached(typeValues, reg, t), t),
+						value: typeValues.FromTypeWithWitness(reg, t),
 					})
 					continue
 				}
@@ -102,7 +102,7 @@ func functionParamEntrySeeds(reg *axis.Registry, typeValues *typevalue.Cache, bi
 		}
 		seeds = append(seeds, paramEntrySeed{
 			slot:  valueSlot,
-			value: typevalue.WithWitness(reg, typevalue.FromTypeCached(typeValues, reg, t), t),
+			value: typeValues.FromTypeWithWitness(reg, t),
 		})
 	}
 	return seeds
@@ -125,7 +125,7 @@ func ambientModuleGlobalEntrySeeds(reg *axis.Registry, typeValues *typevalue.Cac
 		if valueSlot == "" {
 			continue
 		}
-		exportValue := typevalue.WithWitness(reg, typevalue.FromTypeCached(typeValues, reg, m.Export), m.Export)
+		exportValue := typeValues.FromTypeWithWitness(reg, m.Export)
 		seeds = append(seeds, paramEntrySeed{slot: valueSlot, value: exportValue})
 	}
 	return seeds

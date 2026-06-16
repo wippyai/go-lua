@@ -76,7 +76,7 @@ func applyChannelSelectCasePathEquality(
 			return out, false
 		}
 	}
-	value := typevalue.WithWitness(reg, typevalue.FromTypeCached(typeValues, reg, caseType), caseType)
+	value := typeValues.FromTypeWithWitness(reg, caseType)
 	out = invalidateChannelSelectResultDescendants(resolver, point, out, resultPath)
 	return result.write(out, value), true
 }
@@ -185,7 +185,7 @@ func applyChannelSelectCasePathInequality(
 			return out, false
 		}
 	}
-	value := typevalue.WithWitness(reg, typevalue.FromTypeCached(typeValues, reg, narrowed), narrowed)
+	value := typeValues.FromTypeWithWitness(reg, narrowed)
 	out = invalidateChannelSelectResultDescendants(resolver, point, out, resultPath)
 	return result.write(out, value), true
 }

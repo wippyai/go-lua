@@ -17,7 +17,7 @@ func expressionOperationEvaluator(reg *axis.Registry, typeValues *typevalue.Cach
 		if !ok {
 			return topOriginOperationValue(reg, op, left, right)
 		}
-		value := typevalue.WithWitness(reg, typevalue.FromTypeCached(typeValues, reg, t), t)
+		value := typeValues.FromTypeWithWitness(reg, t)
 		if typ.IsAny(t) || typ.IsUnknown(t) || op.Op() == "and" || op.Op() == "or" {
 			value = inheritOperationTopOrigin(reg, value, left, right)
 		}

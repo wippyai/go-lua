@@ -130,14 +130,14 @@ func activeIterator(labels []effect.Label) (iteration.Iterator, bool) {
 func iteratorKeyValue(ctx transfer.NodeContext, typeValues *typevalue.Cache, iter iteration.Iterator, sourceValue product.Value, assertedSourceType typ.Type, hasAssertedSourceType bool) (product.Value, bool) {
 	switch iter.Kind {
 	case iteration.IterateIndexed:
-		return typevalue.WithWitness(ctx.Registry, typevalue.FromTypeCached(typeValues, ctx.Registry, typ.Integer), typ.Integer), true
+		return typeValues.FromTypeWithWitness(ctx.Registry, typ.Integer), true
 	case iteration.IterateKeyed:
 		if sourceType, ok := iteratorSourceType(ctx.Registry, sourceValue, assertedSourceType, hasAssertedSourceType); ok {
 			if keyType, ok := projection.KeyOf(sourceType); ok {
-				return typevalue.WithWitness(ctx.Registry, typevalue.FromTypeCached(typeValues, ctx.Registry, keyType), keyType), true
+				return typeValues.FromTypeWithWitness(ctx.Registry, keyType), true
 			}
 		}
-		return typevalue.WithWitness(ctx.Registry, typevalue.FromTypeCached(typeValues, ctx.Registry, typ.Any), typ.Any), true
+		return typeValues.FromTypeWithWitness(ctx.Registry, typ.Any), true
 	default:
 		return product.Value{}, false
 	}
@@ -152,7 +152,7 @@ func iteratorElementValue(ctx transfer.NodeContext, typeValues *typevalue.Cache,
 	if !ok {
 		return product.Value{}, false
 	}
-	return typevalue.WithWitness(ctx.Registry, typevalue.FromTypeCached(typeValues, ctx.Registry, elem), elem), true
+	return typeValues.FromTypeWithWitness(ctx.Registry, elem), true
 }
 
 func iteratorSourceType(reg *axis.Registry, sourceValue product.Value, assertedSourceType typ.Type, hasAssertedSourceType bool) (typ.Type, bool) {

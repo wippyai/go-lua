@@ -112,7 +112,7 @@ func channelSelectResultValue(
 	if !ok {
 		return product.Value{}, false
 	}
-	return typevalue.WithWitness(reg, typevalue.FromTypeCached(typeValues, reg, resultType), resultType), true
+	return typeValues.FromTypeWithWitness(reg, resultType), true
 }
 
 func channelSelectEventPayloadType(

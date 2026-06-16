@@ -285,13 +285,13 @@ func narrowNestedUnionDescendant(
 		if !ok {
 			continue
 		}
-		narrowedType, ok := typevalue.NarrowVariantByOriginCached(typeValues, unionType, family, cases)
+		narrowedType, ok := typeValues.NarrowVariantByOrigin(unionType, family, cases)
 		if !ok {
 			continue
 		}
 		anchorPath := targetPath
 		anchorPath.Segments = append([]segment.Segment(nil), prefix...)
-		constraint := typevalue.FromTypeCached(typeValues, reg, narrowedType)
+		constraint := typeValues.FromType(reg, narrowedType)
 		constraint = product.Set(reg, constraint, variantorigin.Key, variantorigin.Of(family, cases))
 		anchor, ok := resolvePathValueAtCached(typeValues, reg, resolver, point, out, anchorPath, projectPath)
 		if !ok {
@@ -384,11 +384,11 @@ func narrowRootByPathLiteralMatch(
 	if !ok {
 		return out, false
 	}
-	narrowedType, ok := typevalue.NarrowVariantByOriginCached(typeValues, rootType, family, cases)
+	narrowedType, ok := typeValues.NarrowVariantByOrigin(rootType, family, cases)
 	if !ok {
 		return out, false
 	}
-	constraint := typevalue.FromTypeCached(typeValues, reg, narrowedType)
+	constraint := typeValues.FromType(reg, narrowedType)
 	constraint = product.Set(reg, constraint, variantorigin.Key, variantorigin.Of(family, cases))
 	rootPath := targetPath
 	rootPath.Segments = nil
@@ -410,10 +410,10 @@ func structuralTypeFromRootValueCached(typeValues *typevalue.Cache, reg *axis.Re
 	if witness := product.Get(reg, value, typewitness.Key); !witness.IsTop() {
 		if t, ok := witness.Type(); ok {
 			if !origin.IsBottom() && !origin.IsTop() {
-				if narrowed, ok := typevalue.NarrowVariantByOriginCached(typeValues, t, origin.Family(), origin.Cases()); ok {
+				if narrowed, ok := typeValues.NarrowVariantByOrigin(t, origin.Family(), origin.Cases()); ok {
 					return narrowed, true
 				}
-				if narrowed, ok := typevalue.TypeFromVariantOriginCached(typeValues, origin.Family(), origin.Cases()); ok {
+				if narrowed, ok := typeValues.TypeFromVariantOrigin(origin.Family(), origin.Cases()); ok {
 					return narrowed, true
 				}
 			}
@@ -421,7 +421,7 @@ func structuralTypeFromRootValueCached(typeValues *typevalue.Cache, reg *axis.Re
 		}
 	}
 	if !origin.IsBottom() && !origin.IsTop() {
-		return typevalue.TypeFromVariantOriginCached(typeValues, origin.Family(), origin.Cases())
+		return typeValues.TypeFromVariantOrigin(origin.Family(), origin.Cases())
 	}
 	return nil, false
 }

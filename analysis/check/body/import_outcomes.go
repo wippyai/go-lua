@@ -53,7 +53,7 @@ func calleeValueProvider(
 		if !ok || projected == nil {
 			return product.Value{}, false
 		}
-		return typevalue.WithWitness(reg, typevalue.FromTypeCached(typeValues, reg, projected), projected), true
+		return typeValues.FromTypeWithWitness(reg, projected), true
 	}
 }
 
@@ -139,7 +139,7 @@ func methodTypeValue(reg *axis.Registry, typeValues *typevalue.Cache, receiverTy
 			methodType = substituted
 		}
 	}
-	return typevalue.WithWitness(reg, typevalue.FromTypeCached(typeValues, reg, methodType), methodType), true
+	return typeValues.FromTypeWithWitness(reg, methodType), true
 }
 
 func hasTypeWitness(reg *axis.Registry, value product.Value) bool {

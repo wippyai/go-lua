@@ -33,8 +33,8 @@ var (
 )
 
 type Config struct {
-	Registry *axis.Registry
-	Globals  []string
+	Registry   *axis.Registry
+	Globals    []string
 	TypeValues *typevalue.Cache
 
 	ExpressionValues             map[factflow.ExprRef]product.Value

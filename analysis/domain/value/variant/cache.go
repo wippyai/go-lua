@@ -31,12 +31,18 @@ type typeCacheEntry struct {
 type narrowCacheKey struct {
 	t      typ.Type
 	family uint64
-	cases  string
+	cases  originCasesKey
 }
 
 type originTypeCacheKey struct {
 	family uint64
-	cases  string
+	cases  originCasesKey
+}
+
+type originCasesKey struct {
+	count    int
+	values   [4]int
+	overflow string
 }
 
 func NewCache() *Cache {
@@ -129,15 +135,48 @@ func (c *Cache) TypeFromOrigin(familyID uint64, cases []int) (typ.Type, bool) {
 	return t, ok
 }
 
-func originCaseKey(cases []int) string {
+func originCaseKey(cases []int) originCasesKey {
 	if len(cases) == 0 {
-		return ""
+		return originCasesKey{}
 	}
-	compact := compactInts(append([]int(nil), cases...))
+	var key originCasesKey
+	for _, c := range cases {
+		if !insertOriginCase(&key, c) {
+			compact := compactInts(append([]int(nil), cases...))
+			return originCaseOverflowKey(compact)
+		}
+	}
+	return key
+}
+
+func insertOriginCase(key *originCasesKey, value int) bool {
+	i := 0
+	for i < key.count && key.values[i] < value {
+		i++
+	}
+	if i < key.count && key.values[i] == value {
+		return true
+	}
+	if key.count == len(key.values) {
+		return false
+	}
+	copy(key.values[i+1:], key.values[i:key.count])
+	key.values[i] = value
+	key.count++
+	return true
+}
+
+func originCaseOverflowKey(compact []int) originCasesKey {
+	key := originCasesKey{count: len(compact)}
+	copy(key.values[:], compact)
+	if len(compact) <= len(key.values) {
+		return key
+	}
 	buf := make([]byte, 0, len(compact)*4)
 	for _, c := range compact {
 		buf = strconv.AppendInt(buf, int64(c), 10)
 		buf = append(buf, ',')
 	}
-	return string(buf)
+	key.overflow = string(buf)
+	return key
 }

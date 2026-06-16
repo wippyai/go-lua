@@ -13,8 +13,9 @@ import (
 // callers own its lifetime, pass it through a check run, and discard it when
 // analysis inputs change. It deliberately avoids package-global memoization.
 type Cache struct {
-	variants *variant.Cache
-	values   map[typeValueCacheKey]product.Value
+	variants  *variant.Cache
+	values    map[typeValueCacheKey]product.Value
+	witnesses map[typeValueCacheKey]product.Value
 }
 
 type typeValueCacheKey struct {
@@ -41,6 +42,24 @@ func (c *Cache) FromType(reg *axis.Registry, t typ.Type) product.Value {
 		c.values = make(map[typeValueCacheKey]product.Value)
 	}
 	c.values[key] = value
+	return value
+}
+
+func (c *Cache) FromTypeWithWitness(reg *axis.Registry, t typ.Type) product.Value {
+	if c == nil {
+		return WithWitness(reg, FromType(reg, t), t)
+	}
+	key := typeValueCacheKey{reg: reg, typ: t}
+	if c.witnesses != nil {
+		if cached, ok := c.witnesses[key]; ok {
+			return cached
+		}
+	}
+	value := WithWitness(reg, c.FromType(reg, t), t)
+	if c.witnesses == nil {
+		c.witnesses = make(map[typeValueCacheKey]product.Value)
+	}
+	c.witnesses[key] = value
 	return value
 }
 
@@ -72,25 +91,4 @@ func (c *Cache) TypeFromVariantOrigin(family uint64, cases []int) (typ.Type, boo
 		c.variants = variant.NewCache()
 	}
 	return c.variants.TypeFromOrigin(family, cases)
-}
-
-func FromTypeCached(cache *Cache, reg *axis.Registry, t typ.Type) product.Value {
-	if cache == nil {
-		return FromType(reg, t)
-	}
-	return cache.FromType(reg, t)
-}
-
-func NarrowVariantByOriginCached(cache *Cache, t typ.Type, family uint64, cases []int) (typ.Type, bool) {
-	if cache == nil {
-		return variant.NarrowByOrigin(t, family, cases)
-	}
-	return cache.NarrowVariantByOrigin(t, family, cases)
-}
-
-func TypeFromVariantOriginCached(cache *Cache, family uint64, cases []int) (typ.Type, bool) {
-	if cache == nil {
-		return variant.TypeFromOrigin(family, cases)
-	}
-	return cache.TypeFromVariantOrigin(family, cases)
 }

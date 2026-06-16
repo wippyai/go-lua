@@ -18,7 +18,7 @@ func objectLiteralEvaluator(reg *axis.Registry, typeValues *typevalue.Cache) sou
 		if !ok {
 			return product.Value{}, false
 		}
-		value := typevalue.WithWitness(reg, typevalue.FromTypeCached(typeValues, reg, t), t)
+		value := typeValues.FromTypeWithWitness(reg, t)
 		return product.Set(reg, value, escape.Key, escape.Fresh()), true
 	}
 }
@@ -75,7 +75,7 @@ func objectLiteralEntryType(reg *axis.Registry, typeValues *typevalue.Cache, val
 	if t, ok := typevalue.TypeOf(reg, value); ok {
 		origin := product.Get(reg, value, variantoriginpkg.Key)
 		if !origin.IsBottom() && !origin.IsTop() {
-			if narrowed, ok := typevalue.NarrowVariantByOriginCached(typeValues, t, origin.Family(), origin.Cases()); ok {
+			if narrowed, ok := typeValues.NarrowVariantByOrigin(t, origin.Family(), origin.Cases()); ok {
 				return narrowed, true
 			}
 		}

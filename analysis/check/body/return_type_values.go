@@ -2,7 +2,6 @@ package body
 
 import (
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
-	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/lua/typeresolve"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
@@ -25,7 +24,7 @@ func (r *Result) ReturnTypeValues() []product.Value {
 			out = append(out, product.Top())
 			continue
 		}
-		out = append(out, typevalue.WithWitness(r.registry, typevalue.FromTypeCached(r.typeValues, r.registry, t), t))
+		out = append(out, r.typeValues.FromTypeWithWitness(r.registry, t))
 	}
 	return out
 }
