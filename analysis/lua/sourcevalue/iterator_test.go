@@ -6,7 +6,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/effect"
 	"github.com/wippyai/go-lua/analysis/domain/effect/iteration"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
-	"github.com/wippyai/go-lua/analysis/domain/value/axis/evidence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
@@ -75,16 +74,12 @@ func TestIteratorVariableValueRejectsInvalidVariableIndex(t *testing.T) {
 	}
 }
 
-func TestIteratorVariableValueKeepsCurrentKeyedUnknownFallback(t *testing.T) {
+func TestIteratorVariableValueRejectsUnprovenKeyedFallback(t *testing.T) {
 	reg := standard.Registry()
 	iter := iteration.Iterator{Source: effect.ParamRef{Index: 0}, Kind: iteration.IterateKeyed}
 
-	keyValue, ok := IteratorVariableValue(reg, nil, iter, 0, product.Top(), nil, false)
-	if !ok {
-		t.Fatal("IteratorVariableValue key returned false")
-	}
-	if gotEvidence := product.Get(reg, keyValue, evidence.Key); !evidence.Equal(gotEvidence, evidence.ExplicitTop()) {
-		t.Fatalf("keyed unknown fallback evidence = %s, want %s", gotEvidence, evidence.ExplicitTop())
+	if got, ok := IteratorVariableValue(reg, nil, iter, 0, product.Top(), nil, false); ok {
+		t.Fatalf("IteratorVariableValue synthesized keyed fallback value = %v, want false", got)
 	}
 }
 

@@ -30,7 +30,7 @@ func iteratorKeyValue(reg *axis.Registry, typeValues *typevalue.Cache, iter iter
 				return typeValues.FromTypeWithWitness(reg, keyType), true
 			}
 		}
-		return typeValues.FromTypeWithWitness(reg, typ.Any), true
+		return product.Value{}, false
 	default:
 		return product.Value{}, false
 	}

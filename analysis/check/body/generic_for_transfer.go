@@ -85,11 +85,7 @@ func genericForVariableValue(
 	if !ok {
 		return product.Value{}, false
 	}
-	sig, ok := signatures.Lookup(name)
-	if !ok {
-		return product.Value{}, false
-	}
-	iter, ok := iteration.ActiveIterator(sig.Effect.Labels)
+	iter, ok := genericForIterator(name, signatures)
 	if !ok {
 		return product.Value{}, false
 	}
@@ -108,6 +104,20 @@ func genericForVariableValue(
 		return value, true
 	}
 	return luasourcevalue.IteratorVariableValue(ctx.Registry, typeValues, iter, generic.VariableIndex, sourceValue, assertedSourceType, hasAssertedSourceType)
+}
+
+func genericForIterator(name string, signatures signaturelookup.Source) (iteration.Iterator, bool) {
+	if sig, ok := signatures.Lookup(name); ok {
+		return iteration.ActiveIterator(sig.Effect.Labels)
+	}
+	switch name {
+	case "pairs":
+		return iteration.Iterator{Source: effect.ParamRef{Index: 0}, Kind: iteration.IterateKeyed}, true
+	case "ipairs":
+		return iteration.Iterator{Source: effect.ParamRef{Index: 0}, Kind: iteration.IterateIndexed}, true
+	default:
+		return iteration.Iterator{}, false
+	}
 }
 
 func genericForLiteralContainerVariableValue(

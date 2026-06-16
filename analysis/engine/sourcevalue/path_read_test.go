@@ -1,0 +1,87 @@
+package sourcevalue
+
+import (
+	"testing"
+
+	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/path/segment"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/evidence"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
+	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/engine/state"
+	"github.com/wippyai/go-lua/analysis/engine/state/heapidentity"
+	"github.com/wippyai/go-lua/analysis/engine/visibility"
+	"github.com/wippyai/go-lua/analysis/ir/cfg"
+	"github.com/wippyai/go-lua/analysis/symbol"
+	"github.com/wippyai/go-lua/analysis/test/value/standard"
+)
+
+func TestExactPathValueReadsStaticMember(t *testing.T) {
+	reg := standard.Registry()
+	point := cfg.Point(1)
+	resolver := testResolver(point, symbol.ID(10), "obj")
+	readPath := pathdom.NewPath(symbol.ID(10), "obj").Field("name")
+	want := product.Set(reg, product.NewWithPresence(reg, product.ShapeTop, presence.Present()), runtimekind.Key, runtimekind.Singleton(runtimekind.String))
+	in := state.State{}.WritePathKey(reg, resolver.KeyAt(point, readPath), want)
+
+	got, ok := ExactPathValue(reg, resolver, point, readPath, in)
+	if !ok {
+		t.Fatal("ExactPathValue returned false")
+	}
+	assertPresence(t, reg, got, presence.Present())
+	assertRuntimeKind(t, reg, got, runtimekind.Singleton(runtimekind.String))
+}
+
+func TestHeapMemberFromValueReadsStaticMemberAndPreservesOwnerPresence(t *testing.T) {
+	reg := standard.Registry()
+	id := identity.LuaTableLiteral(7002, 211)
+	rootValue := product.Set(reg, product.NewWithPresence(reg, product.ShapeTop, presence.Present()), identity.Key, identity.Singleton(id))
+	memberValue := product.Set(reg, product.NewWithPresence(reg, product.ShapeTop, presence.Present()), runtimekind.Key, runtimekind.Singleton(runtimekind.String))
+	in := state.State{}.WriteHeapTableObject(reg, id, heapidentity.NewTableObject(heapidentity.TableObjectConfig{
+		Root: rootValue,
+		StaticMembers: map[pathdom.PathKey]product.Value{
+			pathdom.PathKey(".id"): memberValue,
+		},
+	}))
+
+	got, ok := HeapMemberFromValue(reg, in, rootValue, []segment.Segment{{Kind: segment.SegmentField, Name: "id"}})
+	if !ok {
+		t.Fatal("HeapMemberFromValue returned false")
+	}
+	assertPresence(t, reg, got, presence.Present())
+	assertRuntimeKind(t, reg, got, runtimekind.Singleton(runtimekind.String))
+}
+
+func TestInheritTopOriginEvidenceCopiesTopEvidence(t *testing.T) {
+	reg := standard.Registry()
+	child := product.NewWithPresence(reg, product.ShapeTop, presence.Present())
+	parent := product.Set(reg, product.Top(), evidence.Key, evidence.ExplicitTop())
+
+	got := InheritTopOriginEvidence(reg, child, parent)
+	if gotEvidence := product.Get(reg, got, evidence.Key); !evidence.Equal(gotEvidence, evidence.ExplicitTop()) {
+		t.Fatalf("evidence = %s, want explicit-top", gotEvidence)
+	}
+}
+
+func testResolver(point cfg.Point, sym symbol.ID, root string) *visibility.Resolver {
+	builder := visibility.NewBuilder()
+	builder.Define(point, sym, root)
+	return visibility.NewResolver(builder.Build())
+}
+
+func assertPresence(t *testing.T, reg *axis.Registry, got product.Value, want presence.Value) {
+	t.Helper()
+	if gotPresence := product.PresenceOf(got); !presence.Equal(gotPresence, want) {
+		t.Fatalf("presence = %s, want %s", gotPresence, want)
+	}
+}
+
+func assertRuntimeKind(t *testing.T, reg *axis.Registry, got product.Value, want runtimekind.Value) {
+	t.Helper()
+	if gotKind := product.Get(reg, got, runtimekind.Key); !runtimekind.Equal(gotKind, want) {
+		t.Fatalf("runtimekind = %s, want %s", gotKind, want)
+	}
+}

@@ -143,6 +143,77 @@ end`)
 	assertExpressionTypeAtBoundary(t, reg, result, exprLocal, typ.String)
 }
 
+func TestGenericForIPairsUsesConfiguredBuiltinWithoutSignatureLookup(t *testing.T) {
+	reg := standard.Registry()
+	stmts := parseChunk(t, `
+local pages: {string} = {"alpha", "beta"}
+for index, page in ipairs(pages) do
+	local index_copy = index
+	local page_copy = page
+end`)
+
+	result, err := CheckChunk(stmts, Config{
+		Registry: reg,
+		Globals:  []string{"ipairs"},
+	})
+	if err != nil {
+		t.Fatalf("CheckChunk: %v", err)
+	}
+
+	loop := stmts[1].(*ast.GenericForStmt)
+	indexLocal := loop.Stmts[0].(*ast.LocalAssignStmt)
+	pageLocal := loop.Stmts[1].(*ast.LocalAssignStmt)
+	assertExpressionTypeAtBoundary(t, reg, result, indexLocal, typ.Integer)
+	assertExpressionTypeAtBoundary(t, reg, result, pageLocal, typ.String)
+}
+
+func TestGenericForPairsUsesConfiguredBuiltinWithoutSignatureLookup(t *testing.T) {
+	reg := standard.Registry()
+	stmts := parseChunk(t, `
+local transform_config: {[string]: string} = {}
+for field_name, expression in pairs(transform_config) do
+	local field_copy = field_name
+	local expression_copy = expression
+end`)
+
+	result, err := CheckChunk(stmts, Config{
+		Registry: reg,
+		Globals:  []string{"pairs"},
+	})
+	if err != nil {
+		t.Fatalf("CheckChunk: %v", err)
+	}
+
+	loop := stmts[1].(*ast.GenericForStmt)
+	fieldLocal := loop.Stmts[0].(*ast.LocalAssignStmt)
+	exprLocal := loop.Stmts[1].(*ast.LocalAssignStmt)
+	assertExpressionTypeAtBoundary(t, reg, result, fieldLocal, typ.String)
+	assertExpressionTypeAtBoundary(t, reg, result, exprLocal, typ.String)
+}
+
+func TestGenericForMissingSignatureAndConfiguredBuiltinProofDoesNotSynthesizeLoopVariable(t *testing.T) {
+	reg := standard.Registry()
+	stmts := parseChunk(t, `
+local transform_config: {[string]: string} = {}
+for field_name, expression in pairs(transform_config) do
+	local field_copy = field_name
+end`)
+
+	result, err := CheckChunk(stmts, Config{
+		Registry: reg,
+	})
+	if err != nil {
+		t.Fatalf("CheckChunk: %v", err)
+	}
+
+	loop := stmts[1].(*ast.GenericForStmt)
+	local := loop.Stmts[0].(*ast.LocalAssignStmt)
+	point := requireLocalAssignmentPoint(t, result, local, 0)
+	if got, ok := result.ExpressionValueAtBoundary(point, local.Exprs[0]); ok {
+		t.Fatalf("ExpressionValueAtBoundary synthesized loop variable value = %v, want false", got)
+	}
+}
+
 func assertExpressionTypeAtBoundary(t *testing.T, reg *axis.Registry, result *Result, local *ast.LocalAssignStmt, want typ.Type) {
 	t.Helper()
 	point := requireLocalAssignmentPoint(t, result, local, 0)
