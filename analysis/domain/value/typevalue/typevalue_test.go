@@ -180,6 +180,41 @@ func TestIntegerLiteralValueProjectsExactIntegerWitness(t *testing.T) {
 	}
 }
 
+func TestStructuralTypeOfAppliesPresenceOptions(t *testing.T) {
+	reg := standard.Registry()
+	optionalString := typeexpr.Optional(typ.String)
+	presentOptional := WithWitness(reg,
+		product.WithPresence(reg, FromType(reg, optionalString), presence.Present()),
+		optionalString)
+	gotPresent, ok := StructuralTypeOf(reg, nil, presentOptional, StructuralTypeOptions{ApplyPresence: true})
+	if !ok || !typ.TypeEquals(gotPresent, typ.String) {
+		t.Fatalf("StructuralTypeOf(present optional) = %v/%v, want string/true", gotPresent, ok)
+	}
+
+	maybeString := WithWitness(reg,
+		product.WithPresence(reg, FromType(reg, typ.String), presence.Maybe()),
+		typ.String)
+	gotMaybePlain, ok := StructuralTypeOf(reg, nil, maybeString, StructuralTypeOptions{ApplyPresence: true})
+	if !ok || !typ.TypeEquals(gotMaybePlain, typ.String) {
+		t.Fatalf("StructuralTypeOf(maybe without optional) = %v/%v, want string/true", gotMaybePlain, ok)
+	}
+	gotMaybeOptional, ok := StructuralTypeOf(reg, nil, maybeString, StructuralTypeOptions{
+		ApplyPresence:     true,
+		OptionalWhenMaybe: true,
+	})
+	if !ok || !typ.TypeEquals(gotMaybeOptional, optionalString) {
+		t.Fatalf("StructuralTypeOf(maybe optional) = %v/%v, want %v/true", gotMaybeOptional, ok, optionalString)
+	}
+
+	absentString := WithWitness(reg,
+		product.WithPresence(reg, FromType(reg, typ.String), presence.Absent()),
+		typ.String)
+	gotAbsent, ok := StructuralTypeOf(reg, nil, absentString, StructuralTypeOptions{ApplyPresence: true})
+	if !ok || !typ.TypeEquals(gotAbsent, typ.Nil) {
+		t.Fatalf("StructuralTypeOf(absent) = %v/%v, want nil/true", gotAbsent, ok)
+	}
+}
+
 func TestFromTypeMaterializesClosedGenericInstantiationAsConcreteTable(t *testing.T) {
 	reg := standard.Registry()
 	param := typ.NewTypeParam("T", nil)

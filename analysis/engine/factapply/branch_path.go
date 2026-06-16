@@ -4,8 +4,6 @@ import (
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
-	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
-	"github.com/wippyai/go-lua/analysis/domain/value/axis/typewitness"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/variantorigin"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
@@ -15,8 +13,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/engine/visibility"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
-	"github.com/wippyai/go-lua/analysis/type/table"
-	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
 type pathValue struct {
@@ -185,7 +181,9 @@ func projectPathStructuralValueCached(typeValues *typevalue.Cache, reg *axis.Reg
 	if product.Equal(reg, root, product.Bottom(reg)) {
 		return product.Value{}, false
 	}
-	rootType, ok := structuralTypeFromPathValueCached(typeValues, reg, root)
+	rootType, ok := typevalue.StructuralTypeOf(reg, typeValues, root, typevalue.StructuralTypeOptions{
+		ApplyPresence: true,
+	})
 	if !ok {
 		return product.Value{}, false
 	}
@@ -194,47 +192,6 @@ func projectPathStructuralValueCached(typeValues *typevalue.Cache, reg *axis.Reg
 		return product.Value{}, false
 	}
 	return typeValues.FromTypeWithWitness(reg, projected), true
-}
-
-func structuralTypeFromPathValue(reg *axis.Registry, value product.Value) (typ.Type, bool) {
-	return structuralTypeFromPathValueCached(nil, reg, value)
-}
-
-func structuralTypeFromPathValueCached(typeValues *typevalue.Cache, reg *axis.Registry, value product.Value) (typ.Type, bool) {
-	origin := product.Get(reg, value, variantorigin.Key)
-	valuePresence := product.PresenceOf(value)
-	if witness := product.Get(reg, value, typewitness.Key); !witness.IsTop() {
-		if t, ok := witness.Type(); ok {
-			t = typeForPathValuePresence(t, valuePresence)
-			if !origin.IsBottom() && !origin.IsTop() {
-				if narrowed, ok := typeValues.NarrowVariantByOrigin(t, origin.Family(), origin.Cases()); ok {
-					return narrowed, true
-				}
-				if narrowed, ok := typeValues.TypeFromVariantOrigin(origin.Family(), origin.Cases()); ok {
-					return typeForPathValuePresence(narrowed, valuePresence), true
-				}
-			}
-			return t, true
-		}
-	}
-	if !origin.IsBottom() && !origin.IsTop() {
-		if t, ok := typeValues.TypeFromVariantOrigin(origin.Family(), origin.Cases()); ok {
-			return typeForPathValuePresence(t, valuePresence), true
-		}
-	}
-	return nil, false
-}
-
-func typeForPathValuePresence(t typ.Type, p presence.Value) typ.Type {
-	switch {
-	case presence.Equal(p, presence.Absent()):
-		return typ.Nil
-	case presence.Equal(p, presence.Present()):
-		if present := table.PresentReadonlyEntryValue(t); present != nil {
-			return present
-		}
-	}
-	return t
 }
 
 func projectPathOriginValue(reg *axis.Registry, out state.State, targetPath pathdom.Path) (product.Value, bool) {

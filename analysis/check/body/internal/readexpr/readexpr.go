@@ -10,8 +10,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
-	"github.com/wippyai/go-lua/analysis/domain/value/axis/typewitness"
-	"github.com/wippyai/go-lua/analysis/domain/value/axis/variantorigin"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
@@ -21,7 +19,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	luatypeprojection "github.com/wippyai/go-lua/analysis/lua/typeprojection"
 	"github.com/wippyai/go-lua/analysis/type/access"
-	"github.com/wippyai/go-lua/analysis/type/normalize"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
@@ -267,7 +264,10 @@ func projectFromValueEvidence(config Config, value product.Value, suffix []segme
 	if len(suffix) == 0 {
 		return product.Value{}, false
 	}
-	parentType, ok := structuralTypeFromValue(config, value)
+	parentType, ok := typevalue.StructuralTypeOf(reg, config.TypeValues, value, typevalue.StructuralTypeOptions{
+		ApplyPresence:     true,
+		OptionalWhenMaybe: true,
+	})
 	if !ok {
 		return product.Value{}, false
 	}
@@ -276,46 +276,6 @@ func projectFromValueEvidence(config Config, value product.Value, suffix []segme
 		return product.Value{}, false
 	}
 	return config.TypeValues.FromTypeWithWitness(reg, projected), true
-}
-
-func structuralTypeFromValue(config Config, value product.Value) (typ.Type, bool) {
-	reg := config.Registry
-	origin := product.Get(reg, value, variantorigin.Key)
-	valuePresence := product.PresenceOf(value)
-	if witness := product.Get(reg, value, typewitness.Key); !witness.IsTop() {
-		if t, ok := witness.Type(); ok {
-			t = typeForValuePresence(t, valuePresence)
-			if !origin.IsBottom() && !origin.IsTop() {
-				if narrowed, ok := config.TypeValues.NarrowVariantByOrigin(t, origin.Family(), origin.Cases()); ok {
-					return narrowed, true
-				}
-				if narrowed, ok := config.TypeValues.TypeFromVariantOrigin(origin.Family(), origin.Cases()); ok {
-					return typeForValuePresence(narrowed, valuePresence), true
-				}
-			}
-			return t, true
-		}
-	}
-	if !origin.IsBottom() && !origin.IsTop() {
-		if t, ok := config.TypeValues.TypeFromVariantOrigin(origin.Family(), origin.Cases()); ok {
-			return typeForValuePresence(t, valuePresence), true
-		}
-	}
-	return nil, false
-}
-
-func typeForValuePresence(t typ.Type, p presence.Value) typ.Type {
-	switch {
-	case presence.Equal(p, presence.Absent()):
-		return typ.Nil
-	case presence.Equal(p, presence.Present()):
-		if present := typetable.PresentReadonlyEntryValue(t); present != nil {
-			return present
-		}
-	case presence.Equal(p, presence.Maybe()):
-		return normalize.Optional(t)
-	}
-	return t
 }
 
 func runtimeMayBeTable(reg *axis.Registry, value product.Value, hasValue bool) bool {

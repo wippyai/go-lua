@@ -6,7 +6,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
-	"github.com/wippyai/go-lua/analysis/domain/value/axis/typewitness"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/variantorigin"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	valuerefine "github.com/wippyai/go-lua/analysis/domain/value/refinement"
@@ -201,7 +200,7 @@ func applyDescendantTruthyRootOriginRefinement(
 	if product.Equal(reg, rootValue, product.Bottom(reg)) {
 		return out
 	}
-	rootType, ok := structuralTypeFromRootValueCached(typeValues, reg, rootValue)
+	rootType, ok := typevalue.StructuralTypeOf(reg, typeValues, rootValue, typevalue.StructuralTypeOptions{})
 	if !ok {
 		return out
 	}
@@ -231,7 +230,7 @@ func applyDescendantLiteralRootOriginRefinement(
 	if product.Equal(reg, rootValue, product.Bottom(reg)) {
 		return out, false
 	}
-	rootType, ok := structuralTypeFromRootValueCached(typeValues, reg, rootValue)
+	rootType, ok := typevalue.StructuralTypeOf(reg, typeValues, rootValue, typevalue.StructuralTypeOptions{})
 	if !ok {
 		return out, false
 	}
@@ -322,7 +321,7 @@ func applyDescendantTruthyOppositeRootOriginRefinement(
 	if product.Equal(reg, rootValue, product.Bottom(reg)) {
 		return out
 	}
-	rootType, ok := structuralTypeFromRootValueCached(typeValues, reg, rootValue)
+	rootType, ok := typevalue.StructuralTypeOf(reg, typeValues, rootValue, typevalue.StructuralTypeOptions{})
 	if !ok {
 		return out
 	}
@@ -399,29 +398,4 @@ func narrowRootByPathLiteralMatch(
 func refinementHasPresentConstraint(refinement factflow.ValueRefinement) bool {
 	constraint, ok := refinement.Constraint()
 	return ok && presence.Equal(product.PresenceOf(constraint), presence.Present())
-}
-
-func structuralTypeFromRootValue(reg *axis.Registry, value product.Value) (typ.Type, bool) {
-	return structuralTypeFromRootValueCached(nil, reg, value)
-}
-
-func structuralTypeFromRootValueCached(typeValues *typevalue.Cache, reg *axis.Registry, value product.Value) (typ.Type, bool) {
-	origin := product.Get(reg, value, variantorigin.Key)
-	if witness := product.Get(reg, value, typewitness.Key); !witness.IsTop() {
-		if t, ok := witness.Type(); ok {
-			if !origin.IsBottom() && !origin.IsTop() {
-				if narrowed, ok := typeValues.NarrowVariantByOrigin(t, origin.Family(), origin.Cases()); ok {
-					return narrowed, true
-				}
-				if narrowed, ok := typeValues.TypeFromVariantOrigin(origin.Family(), origin.Cases()); ok {
-					return narrowed, true
-				}
-			}
-			return t, true
-		}
-	}
-	if !origin.IsBottom() && !origin.IsTop() {
-		return typeValues.TypeFromVariantOrigin(origin.Family(), origin.Cases())
-	}
-	return nil, false
 }
