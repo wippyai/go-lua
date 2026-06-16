@@ -2,12 +2,17 @@ package factapply
 
 import (
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/placement"
+	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/engine/callboundary"
 	"github.com/wippyai/go-lua/analysis/engine/dynamicindex"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/state/channelselectfact"
 	effectdelta "github.com/wippyai/go-lua/analysis/engine/state/effectdelta"
+	"github.com/wippyai/go-lua/analysis/engine/state/heapidentity"
 	"github.com/wippyai/go-lua/analysis/engine/state/pathevidence"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/engine/visibility"
@@ -99,8 +104,12 @@ func applyCallOutcomeFacts(
 		}, delta.Value)
 	}
 	for _, event := range normalReturnFacts.EscapeEvents {
-		targetKey, ok := callOutcomePathKeyAt(resolver, ctx.Point, bindings, event.Target)
+		targetPath, ok := event.Target.Substitute(bindings)
 		if !ok {
+			continue
+		}
+		targetKey := factPathKeyAt(resolver, ctx.Point, targetPath)
+		if targetKey == "" {
 			continue
 		}
 		out = out.WriteEffectDelta(effectdelta.Key{
@@ -108,8 +117,99 @@ func applyCallOutcomeFacts(
 			Site:   callboundary.EscapeEventEffectSite(event.Kind, event.Recursive),
 			Kind:   effectdelta.Escape,
 		}, effectdelta.Top())
+		out = applyEscapeEventPlacement(ctx.Registry, resolver, projectPath, ctx.Point, out, targetPath, event)
 	}
 	return out
+}
+
+func applyEscapeEventPlacement(
+	reg *axis.Registry,
+	resolver *visibility.Resolver,
+	projectPath PathTypeProjector,
+	point cfg.Point,
+	out state.State,
+	targetPath pathdom.Path,
+	event callboundary.EscapeEventFact,
+) state.State {
+	value, ok := escapeEventPlacement(event.Kind)
+	if !ok {
+		return out
+	}
+	target, ok := resolvePathValueAt(reg, resolver, point, out, targetPath, projectPath)
+	if !ok {
+		return out
+	}
+	id, ok := product.Get(reg, target.value, identity.Key).ID()
+	if !ok {
+		return out
+	}
+	if !event.Recursive {
+		return writeJoinedPlacement(out, id, value)
+	}
+	return markReachableHeapPlacement(reg, out, id, value, map[identity.ID]struct{}{})
+}
+
+func escapeEventPlacement(kind callboundary.EscapeEventKind) (placement.Value, bool) {
+	switch kind {
+	case callboundary.EscapeEventSend, callboundary.EscapeEventExport, callboundary.EscapeEventOpaque:
+		return placement.SharedHeap, true
+	case callboundary.EscapeEventStore, callboundary.EscapeEventRetain:
+		return placement.OwnedHeap, true
+	default:
+		return placement.Bottom, false
+	}
+}
+
+func markReachableHeapPlacement(
+	reg *axis.Registry,
+	out state.State,
+	id identity.ID,
+	value placement.Value,
+	seen map[identity.ID]struct{},
+) state.State {
+	if id == (identity.ID{}) {
+		return out
+	}
+	if _, ok := seen[id]; ok {
+		return out
+	}
+	seen[id] = struct{}{}
+	out = writeJoinedPlacement(out, id, value)
+	object := out.ReadHeapTableObject(reg, id)
+	objectDomain := heapidentity.ObjectDomain(reg)
+	if objectDomain.Equal(object, objectDomain.Bottom()) {
+		return out
+	}
+	out = markReachableHeapValuePlacement(reg, out, object.Root(), value, seen)
+	for _, member := range object.StaticMembers() {
+		out = markReachableHeapValuePlacement(reg, out, member, value, seen)
+	}
+	for _, fact := range object.DynamicIndexFacts() {
+		out = markReachableHeapValuePlacement(reg, out, fact.KeyValue, value, seen)
+		out = markReachableHeapValuePlacement(reg, out, fact.Value, value, seen)
+	}
+	return out
+}
+
+func markReachableHeapValuePlacement(
+	reg *axis.Registry,
+	out state.State,
+	value product.Value,
+	target placement.Value,
+	seen map[identity.ID]struct{},
+) state.State {
+	id, ok := product.Get(reg, value, identity.Key).ID()
+	if !ok {
+		return out
+	}
+	return markReachableHeapPlacement(reg, out, id, target, seen)
+}
+
+func writeJoinedPlacement(out state.State, id identity.ID, value placement.Value) state.State {
+	if id == (identity.ID{}) {
+		return out
+	}
+	return out.WritePlacement(id, placement.Join(out.ReadPlacement(id), value))
 }
 
 func callOutcomePathKeyAt(

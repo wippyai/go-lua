@@ -7,6 +7,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/placement"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/engine/callboundary"
@@ -227,6 +228,223 @@ func TestFactsNodeTransferCallOutcomeRebasesNestedEscapeEventToConsumerChildPath
 	}
 }
 
+func TestFactsNodeTransferCallOutcomeEscapeSendMarksIdentityPlacementAndEffectDelta(t *testing.T) {
+	reg := standard.Registry()
+	point := cfg.Point(701)
+	target := symbol.ID(701)
+	argExpr := factflow.ExprRef(701)
+	targetPath := pathdom.NewPath(target, "obj")
+	tableID := identity.ID{Kind: "lua.table", Site: "escape-placement", Index: 1}
+	tableValue := product.Set(reg, presentValue(reg), identity.Key, identity.Singleton(tableID))
+	facts := factflow.NewFacts(factflow.FactsInput{
+		CallSites: map[cfg.Point]factflow.CallSite{
+			point: factflow.NewCallSite(factflow.CallSiteConfig{
+				Context: factflow.CallSiteContextStatement,
+				ArgumentSources: []factflow.ValueSource{
+					{Kind: factflow.ValueSourceExpression, ExprRef: argExpr, HasExpr: true},
+				},
+			}),
+		},
+		ExpressionPaths: map[factflow.ExprRef]pathdom.Path{
+			argExpr: targetPath,
+		},
+	})
+	builder := visibility.NewBuilder()
+	builder.Define(point, target, "obj")
+	resolver := visibility.NewResolver(builder.Build())
+
+	got := NewFactsNodeTransfer(FactsNodeTransferConfig{
+		Facts: facts,
+		CallOutcome: func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) CallOutcome {
+			return CallOutcome{
+				NormalReturnFacts: callboundary.NormalReturnFacts{
+					EscapeEvents: []callboundary.EscapeEventFact{
+						{Target: pathdom.NewPlaceholder(0), Kind: callboundary.EscapeEventSend},
+					},
+				},
+			}
+		},
+		Visibility: resolver,
+	})(transfer.NodeContext{
+		Registry: reg,
+		Point:    point,
+	}, state.State{}.WriteValue(reg, key.SymbolValue(target), tableValue))
+
+	if gotPlacement := got.ReadPlacement(tableID); gotPlacement != placement.SharedHeap {
+		t.Fatalf("placement[%v] = %s, want %s", tableID, gotPlacement, placement.SharedHeap)
+	}
+	targetKey := resolver.KeyAt(point, targetPath)
+	assertEscapeEffectDelta(t, reg, got, targetKey, callboundary.EscapeEventSend, false)
+}
+
+func TestFactsNodeTransferCallOutcomeRecursiveEscapeSendMarksStaticMemberIdentityPlacement(t *testing.T) {
+	reg := standard.Registry()
+	point := cfg.Point(702)
+	target := symbol.ID(702)
+	argExpr := factflow.ExprRef(702)
+	targetPath := pathdom.NewPath(target, "obj")
+	rootID := identity.ID{Kind: "lua.table", Site: "escape-placement", Index: 2}
+	childID := identity.ID{Kind: "lua.table", Site: "escape-placement", Index: 3}
+	rootValue := product.Set(reg, presentValue(reg), identity.Key, identity.Singleton(rootID))
+	childValue := product.Set(reg, presentValue(reg), identity.Key, identity.Singleton(childID))
+	facts := factflow.NewFacts(factflow.FactsInput{
+		CallSites: map[cfg.Point]factflow.CallSite{
+			point: factflow.NewCallSite(factflow.CallSiteConfig{
+				Context: factflow.CallSiteContextStatement,
+				ArgumentSources: []factflow.ValueSource{
+					{Kind: factflow.ValueSourceExpression, ExprRef: argExpr, HasExpr: true},
+				},
+			}),
+		},
+		ExpressionPaths: map[factflow.ExprRef]pathdom.Path{
+			argExpr: targetPath,
+		},
+	})
+	builder := visibility.NewBuilder()
+	builder.Define(point, target, "obj")
+	resolver := visibility.NewResolver(builder.Build())
+	memberKey := pathdom.PathKey(".child")
+
+	got := NewFactsNodeTransfer(FactsNodeTransferConfig{
+		Facts: facts,
+		CallOutcome: func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) CallOutcome {
+			return CallOutcome{
+				NormalReturnFacts: callboundary.NormalReturnFacts{
+					EscapeEvents: []callboundary.EscapeEventFact{
+						{Target: pathdom.NewPlaceholder(0), Kind: callboundary.EscapeEventSend, Recursive: true},
+					},
+				},
+			}
+		},
+		Visibility: resolver,
+	})(transfer.NodeContext{
+		Registry: reg,
+		Point:    point,
+	}, state.State{}.
+		WriteValue(reg, key.SymbolValue(target), rootValue).
+		WriteHeapTableObject(reg, rootID, heapidentity.NewTableObject(heapidentity.TableObjectConfig{
+			Root:          rootValue,
+			StaticMembers: map[pathdom.PathKey]product.Value{memberKey: childValue},
+		})).
+		WriteHeapTableObject(reg, childID, heapidentity.NewTableObject(heapidentity.TableObjectConfig{
+			Root: childValue,
+		})))
+
+	if gotPlacement := got.ReadPlacement(rootID); gotPlacement != placement.SharedHeap {
+		t.Fatalf("placement[%v] = %s, want %s", rootID, gotPlacement, placement.SharedHeap)
+	}
+	if gotPlacement := got.ReadPlacement(childID); gotPlacement != placement.SharedHeap {
+		t.Fatalf("placement[%v] = %s, want %s", childID, gotPlacement, placement.SharedHeap)
+	}
+}
+
+func TestFactsNodeTransferCallOutcomeEscapeBorrowDoesNotForcePlacement(t *testing.T) {
+	reg := standard.Registry()
+	point := cfg.Point(703)
+	target := symbol.ID(703)
+	argExpr := factflow.ExprRef(703)
+	targetPath := pathdom.NewPath(target, "obj")
+	tableID := identity.ID{Kind: "lua.table", Site: "escape-placement", Index: 4}
+	tableValue := product.Set(reg, presentValue(reg), identity.Key, identity.Singleton(tableID))
+	facts := factflow.NewFacts(factflow.FactsInput{
+		CallSites: map[cfg.Point]factflow.CallSite{
+			point: factflow.NewCallSite(factflow.CallSiteConfig{
+				Context: factflow.CallSiteContextStatement,
+				ArgumentSources: []factflow.ValueSource{
+					{Kind: factflow.ValueSourceExpression, ExprRef: argExpr, HasExpr: true},
+				},
+			}),
+		},
+		ExpressionPaths: map[factflow.ExprRef]pathdom.Path{
+			argExpr: targetPath,
+		},
+	})
+	builder := visibility.NewBuilder()
+	builder.Define(point, target, "obj")
+	resolver := visibility.NewResolver(builder.Build())
+
+	got := NewFactsNodeTransfer(FactsNodeTransferConfig{
+		Facts: facts,
+		CallOutcome: func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) CallOutcome {
+			return CallOutcome{
+				NormalReturnFacts: callboundary.NormalReturnFacts{
+					EscapeEvents: []callboundary.EscapeEventFact{
+						{Target: pathdom.NewPlaceholder(0), Kind: callboundary.EscapeEventBorrow},
+					},
+				},
+			}
+		},
+		Visibility: resolver,
+	})(transfer.NodeContext{
+		Registry: reg,
+		Point:    point,
+	}, state.State{}.WriteValue(reg, key.SymbolValue(target), tableValue))
+
+	if gotPlacement := got.ReadPlacement(tableID); gotPlacement != placement.Bottom {
+		t.Fatalf("placement[%v] = %s, want %s", tableID, gotPlacement, placement.Bottom)
+	}
+}
+
+func TestFactsNodeTransferCallOutcomeEscapeStoreRetainDoesNotWeakenSharedHeap(t *testing.T) {
+	tests := []struct {
+		name string
+		kind callboundary.EscapeEventKind
+	}{
+		{name: "store", kind: callboundary.EscapeEventStore},
+		{name: "retain", kind: callboundary.EscapeEventRetain},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			reg := standard.Registry()
+			point := cfg.Point(704)
+			target := symbol.ID(704)
+			argExpr := factflow.ExprRef(704)
+			targetPath := pathdom.NewPath(target, "obj")
+			tableID := identity.ID{Kind: "lua.table", Site: "escape-placement", Index: 5}
+			tableValue := product.Set(reg, presentValue(reg), identity.Key, identity.Singleton(tableID))
+			facts := factflow.NewFacts(factflow.FactsInput{
+				CallSites: map[cfg.Point]factflow.CallSite{
+					point: factflow.NewCallSite(factflow.CallSiteConfig{
+						Context: factflow.CallSiteContextStatement,
+						ArgumentSources: []factflow.ValueSource{
+							{Kind: factflow.ValueSourceExpression, ExprRef: argExpr, HasExpr: true},
+						},
+					}),
+				},
+				ExpressionPaths: map[factflow.ExprRef]pathdom.Path{
+					argExpr: targetPath,
+				},
+			})
+			builder := visibility.NewBuilder()
+			builder.Define(point, target, "obj")
+			resolver := visibility.NewResolver(builder.Build())
+
+			got := NewFactsNodeTransfer(FactsNodeTransferConfig{
+				Facts: facts,
+				CallOutcome: func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) CallOutcome {
+					return CallOutcome{
+						NormalReturnFacts: callboundary.NormalReturnFacts{
+							EscapeEvents: []callboundary.EscapeEventFact{
+								{Target: pathdom.NewPlaceholder(0), Kind: tc.kind},
+							},
+						},
+					}
+				},
+				Visibility: resolver,
+			})(transfer.NodeContext{
+				Registry: reg,
+				Point:    point,
+			}, state.State{}.
+				WriteValue(reg, key.SymbolValue(target), tableValue).
+				WritePlacement(tableID, placement.SharedHeap))
+
+			if gotPlacement := got.ReadPlacement(tableID); gotPlacement != placement.SharedHeap {
+				t.Fatalf("placement[%v] = %s, want %s", tableID, gotPlacement, placement.SharedHeap)
+			}
+		})
+	}
+}
+
 func TestFactsNodeTransferCallOutcomeAppliesHeapTableObjects(t *testing.T) {
 	reg := standard.Registry()
 	point := cfg.Point(619)
@@ -261,6 +479,25 @@ func TestFactsNodeTransferCallOutcomeAppliesHeapTableObjects(t *testing.T) {
 	}
 	if member, ok := object.StaticMember(memberKey); !ok || !product.Equal(reg, member, value) {
 		t.Fatalf("heap object member = %#v/%v, want %#v", member, ok, value)
+	}
+}
+
+func assertEscapeEffectDelta(
+	t *testing.T,
+	reg *axis.Registry,
+	got state.State,
+	target pathdom.PathKey,
+	kind callboundary.EscapeEventKind,
+	recursive bool,
+) {
+	t.Helper()
+	gotDelta := got.ReadEffectDelta(effectdelta.Key{
+		Target: target,
+		Site:   callboundary.EscapeEventEffectSite(kind, recursive),
+		Kind:   effectdelta.Escape,
+	})
+	if !effectdelta.Domain(reg).Equal(gotDelta, effectdelta.Top()) {
+		t.Fatalf("escape delta = %#v, want kind %d recursive=%v on %s", gotDelta, kind, recursive, target)
 	}
 }
 
