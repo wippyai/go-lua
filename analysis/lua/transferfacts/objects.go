@@ -1,6 +1,7 @@
 package transferfacts
 
 import (
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
 	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
@@ -18,7 +19,7 @@ func (l *lowerer) addObjectLiteral(input *factflow.FactsInput, result *semantics
 	if !hasExpr {
 		return
 	}
-	lowered := l.objectLiteral(fact)
+	lowered := l.objectLiteral(fact).WithIdentity(identity.LuaTableLiteral(l.graphID, uint64(exprRef)))
 	if len(lowered.Entries()) == 0 {
 		return
 	}

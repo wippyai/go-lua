@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
@@ -238,6 +239,46 @@ func TestDeleteEntrySemantics(t *testing.T) {
 	}
 	if out, removed := DeleteEntry(map[identity.ID]TableObject{id: object}, id); !removed || out != nil {
 		t.Fatalf("deleting last entry should return nil/true, got %#v/%v", out, removed)
+	}
+}
+
+func TestStaticMemberSuffixKeyUsesCanonicalRelativeSegments(t *testing.T) {
+	tests := []struct {
+		name     string
+		segments []segment.Segment
+		want     pathdom.PathKey
+		ok       bool
+	}{
+		{
+			name:     "field",
+			segments: []segment.Segment{{Kind: segment.SegmentField, Name: "id"}},
+			want:     pathdom.PathKey(".id"),
+			ok:       true,
+		},
+		{
+			name:     "string index",
+			segments: []segment.Segment{{Kind: segment.SegmentIndexString, Name: "id"}},
+			want:     pathdom.PathKey("[\"id\"]"),
+			ok:       true,
+		},
+		{
+			name:     "int index",
+			segments: []segment.Segment{{Kind: segment.SegmentIndexInt, Index: 1}},
+			want:     pathdom.PathKey("[1]"),
+			ok:       true,
+		},
+		{
+			name: "empty",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, ok := StaticMemberSuffixKey(tc.segments)
+			if ok != tc.ok || got != tc.want {
+				t.Fatalf("StaticMemberSuffixKey(%#v) = %q/%v, want %q/%v", tc.segments, got, ok, tc.want, tc.ok)
+			}
+		})
 	}
 }
 

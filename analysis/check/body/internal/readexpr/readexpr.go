@@ -15,6 +15,7 @@ import (
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	sourcevalue "github.com/wippyai/go-lua/analysis/engine/sourcevalue"
 	"github.com/wippyai/go-lua/analysis/engine/state"
+	"github.com/wippyai/go-lua/analysis/engine/state/heapidentity"
 	"github.com/wippyai/go-lua/analysis/engine/visibility"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	luatypeprojection "github.com/wippyai/go-lua/analysis/lua/typeprojection"
@@ -79,6 +80,18 @@ func Project(config Config, point cfg.Point, p pathdom.Path, in state.State) (pr
 		}
 	}
 
+	if !hasExactPresent {
+		if heapProjected, ok := projectFromHeapIdentity(config, point, p, in); ok {
+			return heapProjected, true
+		}
+	}
+
+	if hasExactPresent {
+		if parentValue, hasParent := Project(config, point, p.Parent(), in); hasParent {
+			exactPresent = inheritTopOriginEvidence(reg, exactPresent, parentValue)
+		}
+	}
+
 	if projected, ok, blocked := projectFromStructuralEvidence(config, point, p, in); ok {
 		if hasExactPresent {
 			if merged := product.Meet(reg, projected, exactPresent); !product.Equal(reg, merged, product.Bottom(reg)) {
@@ -92,9 +105,6 @@ func Project(config Config, point cfg.Point, p pathdom.Path, in state.State) (pr
 	}
 
 	if hasExactPresent {
-		if parentValue, hasParent := Project(config, point, p.Parent(), in); hasParent {
-			exactPresent = inheritTopOriginEvidence(reg, exactPresent, parentValue)
-		}
 		return exactPresent, true
 	}
 
@@ -163,6 +173,60 @@ func inheritTopOriginEvidence(reg *axis.Registry, value, parent product.Value) p
 		return product.Set(reg, value, evidence.Key, parentEvidence)
 	}
 	return value
+}
+
+func projectFromHeapIdentity(config Config, point cfg.Point, p pathdom.Path, in state.State) (product.Value, bool) {
+	reg := config.Registry
+	root := p
+	root.Segments = nil
+	rootProjected := product.Value{}
+	hasRootProjected := false
+	if rootValue, ok := readPathValue(reg, config.Visibility, point, root, in); ok {
+		if projected, ok := heapMemberFromValue(config, in, rootValue, p.Segments); ok {
+			rootProjected = projected
+			hasRootProjected = true
+		}
+	}
+
+	parent := p.Parent()
+	parentValue, _ := Project(config, point, parent, in)
+	if projected, ok := heapMemberFromValue(config, in, parentValue, p.Segments[len(p.Segments)-1:]); ok {
+		if hasRootProjected {
+			if merged := product.Meet(reg, rootProjected, projected); !product.Equal(reg, merged, product.Bottom(reg)) {
+				return merged, true
+			}
+		}
+		return projected, true
+	}
+	if hasRootProjected {
+		return rootProjected, true
+	}
+	return product.Value{}, false
+}
+
+func heapMemberFromValue(config Config, in state.State, value product.Value, suffix []segment.Segment) (product.Value, bool) {
+	reg := config.Registry
+	ownerPresence := product.PresenceOf(value)
+	id, ok := product.Get(reg, value, identity.Key).ID()
+	if !ok {
+		return product.Value{}, false
+	}
+	key, ok := heapidentity.StaticMemberSuffixKey(suffix)
+	if !ok {
+		return product.Value{}, false
+	}
+	object := in.ReadHeapTableObject(reg, id)
+	if !product.Equal(reg, object.Root(), value) {
+		return product.Value{}, false
+	}
+	member, ok := object.StaticMember(key)
+	if !ok || product.Equal(reg, member, product.Bottom(reg)) {
+		return product.Value{}, false
+	}
+	if !presence.Equal(ownerPresence, presence.Present()) {
+		member = product.WithPresence(reg, member, presence.Join(product.PresenceOf(member), ownerPresence))
+	}
+	return member, true
 }
 
 func projectFromStructuralEvidence(config Config, point cfg.Point, p pathdom.Path, in state.State) (product.Value, bool, bool) {

@@ -8,17 +8,19 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/evidence"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/variantorigin"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
-	"github.com/wippyai/go-lua/analysis/test/value/standard"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/domain/value/variant"
 	"github.com/wippyai/go-lua/analysis/engine/state"
+	"github.com/wippyai/go-lua/analysis/engine/state/heapidentity"
 	"github.com/wippyai/go-lua/analysis/engine/visibility"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/symbol"
+	"github.com/wippyai/go-lua/analysis/test/value/standard"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/typeexpr"
@@ -107,6 +109,70 @@ func TestProjectExactAbsentReturnsNil(t *testing.T) {
 		t.Fatalf("Project returned false")
 	}
 	assertPresence(t, reg, got, presence.Absent())
+}
+
+func TestProjectUsesHeapIdentityMemberForAliasedRoot(t *testing.T) {
+	reg := standard.Registry()
+	point := cfg.Point(11)
+	sym := symbol.ID(21)
+	resolver := testResolver(point, sym, "alias")
+	rootPath := path.NewPath(sym, "alias")
+	readPath := rootPath.Field("id")
+	id := identity.LuaTableLiteral(7002, 211)
+	rootValue := product.Set(reg, product.NewWithPresence(reg, product.ShapeTop, presence.Present()), identity.Key, identity.Singleton(id))
+	memberValue := product.Set(
+		reg,
+		product.NewWithPresence(reg, product.ShapeTop, presence.Present()),
+		runtimekind.Key,
+		runtimekind.Singleton(runtimekind.String),
+	)
+	in := state.State{}.
+		WriteValue(reg, key.SymbolValue(sym), rootValue).
+		WriteHeapTableObject(reg, id, heapidentity.NewTableObject(heapidentity.TableObjectConfig{
+			Root: rootValue,
+			StaticMembers: map[path.PathKey]product.Value{
+				path.PathKey(".id"): memberValue,
+			},
+		}))
+
+	got, ok := Project(Config{Registry: reg, Visibility: resolver}, point, readPath, in)
+	if !ok {
+		t.Fatal("Project returned false")
+	}
+	assertPresence(t, reg, got, presence.Present())
+	assertRuntimeKind(t, reg, got, runtimekind.Singleton(runtimekind.String))
+}
+
+func TestProjectHeapIdentitySuffixDistinguishesFieldAndStringIndex(t *testing.T) {
+	reg := standard.Registry()
+	point := cfg.Point(12)
+	sym := symbol.ID(22)
+	resolver := testResolver(point, sym, "obj")
+	rootPath := path.NewPath(sym, "obj")
+	id := identity.LuaTableLiteral(7002, 212)
+	rootValue := product.Set(reg, product.NewWithPresence(reg, product.ShapeTop, presence.Present()), identity.Key, identity.Singleton(id))
+	fieldValue := product.Set(reg, product.NewWithPresence(reg, product.ShapeTop, presence.Present()), runtimekind.Key, runtimekind.Singleton(runtimekind.String))
+	indexValue := product.Set(reg, product.NewWithPresence(reg, product.ShapeTop, presence.Present()), runtimekind.Key, runtimekind.Singleton(runtimekind.Number))
+	in := state.State{}.
+		WriteValue(reg, key.SymbolValue(sym), rootValue).
+		WriteHeapTableObject(reg, id, heapidentity.NewTableObject(heapidentity.TableObjectConfig{
+			Root: rootValue,
+			StaticMembers: map[path.PathKey]product.Value{
+				path.PathKey(".id"):      fieldValue,
+				path.PathKey("[\"id\"]"): indexValue,
+			},
+		}))
+
+	fieldRead, ok := Project(Config{Registry: reg, Visibility: resolver}, point, rootPath.Field("id"), in)
+	if !ok {
+		t.Fatal("field Project returned false")
+	}
+	indexRead, ok := Project(Config{Registry: reg, Visibility: resolver}, point, rootPath.IndexStr("id"), in)
+	if !ok {
+		t.Fatal("index Project returned false")
+	}
+	assertRuntimeKind(t, reg, fieldRead, runtimekind.Singleton(runtimekind.String))
+	assertRuntimeKind(t, reg, indexRead, runtimekind.Singleton(runtimekind.Number))
 }
 
 func TestProjectNoExactProofKeepsRuntimeIndexOptionality(t *testing.T) {

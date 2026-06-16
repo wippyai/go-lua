@@ -32,6 +32,17 @@ func LuaFunction(symbol uint64) ID {
 	return ID{Kind: "lua.function", Site: "symbol", Index: symbol}
 }
 
+// LuaTableLiteral returns the stable identity token for a Lua table literal
+// expression reference lowered inside one CFG. The graph id is part of the
+// allocation-site key so summaries cannot alias unrelated functions whose
+// local expression refs happen to have the same ordinal.
+func LuaTableLiteral(graphID, exprRef uint64) ID {
+	if graphID == 0 || exprRef == 0 {
+		return ID{}
+	}
+	return ID{Kind: "lua.table", Site: "graph-expr", Index: internal.MixHash(graphID, exprRef)}
+}
+
 func (id ID) String() string {
 	return id.Kind + ":" + id.Site + "#" + strconv.FormatUint(id.Index, 10)
 }

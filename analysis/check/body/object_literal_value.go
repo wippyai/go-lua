@@ -4,6 +4,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/escape"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/evidence"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	variantoriginpkg "github.com/wippyai/go-lua/analysis/domain/value/axis/variantorigin"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
@@ -20,6 +21,9 @@ func objectLiteralEvaluator(reg *axis.Registry, typeValues *typevalue.Cache) sou
 			return product.Value{}, false
 		}
 		value := typeValues.FromTypeWithWitness(reg, t)
+		if id, ok := lit.Identity(); ok {
+			value = product.Set(reg, value, identity.Key, identity.Singleton(id))
+		}
 		return product.Set(reg, value, escape.Key, escape.Fresh()), true
 	}
 }

@@ -8,8 +8,8 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/effect"
 	"github.com/wippyai/go-lua/analysis/domain/effect/postcondition"
 	"github.com/wippyai/go-lua/analysis/domain/effect/returns"
-	"github.com/wippyai/go-lua/analysis/module/signature"
 	"github.com/wippyai/go-lua/analysis/module/manifest"
+	"github.com/wippyai/go-lua/analysis/module/signature"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/typeexpr"
@@ -22,6 +22,36 @@ func TestCheckRunsActiveDiagnostics(t *testing.T) {
 	}
 	if result.Diagnostics[0].Position.File != "test.lua" {
 		t.Fatalf("diagnostic file = %q, want test.lua", result.Diagnostics[0].Position.File)
+	}
+}
+
+func TestCheckAliasedObjectLiteralMemberReadUsesHeapIdentity(t *testing.T) {
+	result := Check(`
+local user = { id = "u1" }
+local alias = user
+local ok_id: string = alias.id
+local bad_id: number = alias.id
+`)
+	if len(result.Diagnostics) != 1 {
+		t.Fatalf("diagnostics = %#v, want one bad_id diagnostic", result.Diagnostics)
+	}
+	if result.Diagnostics[0].Code != diagnostics.CodeAssignmentType {
+		t.Fatalf("diagnostic code = %s, want %s", result.Diagnostics[0].Code, diagnostics.CodeAssignmentType)
+	}
+}
+
+func TestCheckAliasedNestedObjectLiteralMemberReadUsesNestedHeapIdentity(t *testing.T) {
+	result := Check(`
+local user = { profile = { id = "u1" } }
+local profile = user.profile
+local ok_id: string = profile.id
+local bad_id: number = profile.id
+`)
+	if len(result.Diagnostics) != 1 {
+		t.Fatalf("diagnostics = %#v, want one bad_id diagnostic", result.Diagnostics)
+	}
+	if result.Diagnostics[0].Code != diagnostics.CodeAssignmentType {
+		t.Fatalf("diagnostic code = %s, want %s", result.Diagnostics[0].Code, diagnostics.CodeAssignmentType)
 	}
 }
 

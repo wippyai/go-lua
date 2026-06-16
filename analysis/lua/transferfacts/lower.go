@@ -41,6 +41,7 @@ func Lower(result *semantics.Result, graph cfg.Graph, config Config) factflow.Fa
 	l := lowerer{
 		registry:             config.Registry,
 		bindings:             config.Bindings,
+		graphID:              graph.ID(),
 		typeResolver:         typeResolver,
 		typeValues:           config.TypeValues,
 		callPoints:           callPointsByExpr(builtCallFacts(graph, result)),
@@ -166,6 +167,7 @@ func Lower(result *semantics.Result, graph cfg.Graph, config Config) factflow.Fa
 type lowerer struct {
 	registry             *axis.Registry
 	bindings             *bind.Result
+	graphID              uint64
 	typeResolver         *typeresolve.Resolver
 	typeValues           *typevalue.Cache
 	callPoints           map[*ast.FuncCallExpr]cfg.Point

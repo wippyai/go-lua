@@ -2,6 +2,7 @@ package factflow
 
 import (
 	"github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 )
 
@@ -35,6 +36,7 @@ type ObjectLiteral struct {
 	entries     []ObjectEntry
 	expected    product.Value
 	hasExpected bool
+	identity    identity.ID
 }
 
 // NewObjectLiteral creates an object literal sidecar from static entries.
@@ -50,11 +52,27 @@ func (l ObjectLiteral) Entries() []ObjectEntry { return copyObjectEntries(l.entr
 // boolean reports whether a contextual record target is known for this literal.
 func (l ObjectLiteral) Expected() (product.Value, bool) { return l.expected, l.hasExpected }
 
+// Identity returns the stable literal identity when one was attached during
+// lowering.
+func (l ObjectLiteral) Identity() (identity.ID, bool) {
+	if l.identity == (identity.ID{}) {
+		return identity.ID{}, false
+	}
+	return l.identity, true
+}
+
 // WithExpected returns a copy carrying the declared contextual type value.
 func (l ObjectLiteral) WithExpected(value product.Value) ObjectLiteral {
 	out := l.copy()
 	out.expected = value
 	out.hasExpected = true
+	return out
+}
+
+// WithIdentity returns a copy carrying a stable literal identity.
+func (l ObjectLiteral) WithIdentity(id identity.ID) ObjectLiteral {
+	out := l.copy()
+	out.identity = id
 	return out
 }
 

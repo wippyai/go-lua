@@ -5,6 +5,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/lattice"
 	"github.com/wippyai/go-lua/analysis/domain/lattice/lift"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
@@ -60,6 +61,16 @@ func (o TableObject) DynamicIndexFact(key dynamicindex.Key) (dynamicindex.Fact, 
 // DynamicIndexFacts returns a defensive copy of finite dynamic-index facts.
 func (o TableObject) DynamicIndexFacts() map[dynamicindex.Key]dynamicindex.Fact {
 	return dynamicindex.CloneMap(o.dynamicIndexFacts)
+}
+
+// StaticMemberSuffixKey returns the canonical heap static-member key for a
+// relative suffix. It intentionally encodes only the suffix segments so
+// rootless member facts do not collapse to an empty path key.
+func StaticMemberSuffixKey(segments []segment.Segment) (pathdom.PathKey, bool) {
+	if len(segments) == 0 {
+		return "", false
+	}
+	return pathdom.PathKey(segment.FormatSegments(segments)), true
 }
 
 func ObjectDomain(reg *axis.Registry) lattice.Lattice[TableObject] {

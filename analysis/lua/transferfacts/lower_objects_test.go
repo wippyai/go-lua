@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/assertion"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/lua/cfgbuild"
@@ -57,6 +58,10 @@ func TestLowerObjectLiteralSidecarUsesAssignmentExprRef(t *testing.T) {
 	assertLoweredObjectEntry(t, entries[1], stringSuffix("key"), factflow.ValueSourceExpression)
 	if entries[0].Source().ExprRef == source.ExprRef || entries[1].Source().ExprRef == source.ExprRef {
 		t.Fatalf("entry source expr refs reused table expr ref: source=%#v entries=%#v", source, entries)
+	}
+	wantID := identity.LuaTableLiteral(built.Graph.ID(), uint64(source.ExprRef))
+	if gotID, ok := literal.Identity(); !ok || gotID != wantID {
+		t.Fatalf("literal identity = %v/%v, want %v", gotID, ok, wantID)
 	}
 }
 
@@ -206,4 +211,8 @@ func TestLowerNestedObjectLiteralEntriesUnderAssignmentExprRef(t *testing.T) {
 		t.Fatalf("nested literal entries = %d, want one static entry", got)
 	}
 	assertLoweredObjectEntry(t, nestedLiteral.Entries()[0], fieldSuffix("b"), factflow.ValueSourceExpression)
+	wantID := identity.LuaTableLiteral(built.Graph.ID(), uint64(nestedSource.ExprRef))
+	if gotID, ok := nestedLiteral.Identity(); !ok || gotID != wantID {
+		t.Fatalf("nested literal identity = %v/%v, want %v", gotID, ok, wantID)
+	}
 }
