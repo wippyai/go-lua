@@ -4,7 +4,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/effect"
 	"github.com/wippyai/go-lua/analysis/domain/effect/iteration"
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
-	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
@@ -17,7 +16,6 @@ import (
 	luasourcevalue "github.com/wippyai/go-lua/analysis/lua/sourcevalue"
 	"github.com/wippyai/go-lua/analysis/lua/typeresolve"
 	"github.com/wippyai/go-lua/analysis/module/signaturelookup"
-	"github.com/wippyai/go-lua/analysis/type/projection"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
@@ -89,7 +87,7 @@ func genericForVariableValue(
 	if !ok {
 		return product.Value{}, false
 	}
-	iter, ok := activeIterator(sig.Effect.Labels)
+	iter, ok := iteration.ActiveIterator(sig.Effect.Labels)
 	if !ok {
 		return product.Value{}, false
 	}
@@ -104,63 +102,7 @@ func genericForVariableValue(
 	if !ok {
 		return product.Value{}, false
 	}
-	switch generic.VariableIndex {
-	case 0:
-		return iteratorKeyValue(ctx, typeValues, iter, sourceValue, assertedSourceType, hasAssertedSourceType)
-	case 1:
-		return iteratorElementValue(ctx, typeValues, sourceValue, assertedSourceType, hasAssertedSourceType)
-	default:
-		return product.Value{}, false
-	}
-}
-
-func activeIterator(labels []effect.Label) (iteration.Iterator, bool) {
-	for _, label := range labels {
-		switch normalized := effect.NormalizeLabel(label).(type) {
-		case iteration.Iterator:
-			return normalized, true
-		case *iteration.Iterator:
-			if normalized != nil {
-				return *normalized, true
-			}
-		}
-	}
-	return iteration.Iterator{}, false
-}
-
-func iteratorKeyValue(ctx transfer.NodeContext, typeValues *typevalue.Cache, iter iteration.Iterator, sourceValue product.Value, assertedSourceType typ.Type, hasAssertedSourceType bool) (product.Value, bool) {
-	switch iter.Kind {
-	case iteration.IterateIndexed:
-		return typeValues.FromTypeWithWitness(ctx.Registry, typ.Integer), true
-	case iteration.IterateKeyed:
-		if sourceType, ok := iteratorSourceType(ctx.Registry, sourceValue, assertedSourceType, hasAssertedSourceType); ok {
-			if keyType, ok := projection.KeyOf(sourceType); ok {
-				return typeValues.FromTypeWithWitness(ctx.Registry, keyType), true
-			}
-		}
-		return typeValues.FromTypeWithWitness(ctx.Registry, typ.Any), true
-	default:
-		return product.Value{}, false
-	}
-}
-
-func iteratorElementValue(ctx transfer.NodeContext, typeValues *typevalue.Cache, sourceValue product.Value, assertedSourceType typ.Type, hasAssertedSourceType bool) (product.Value, bool) {
-	sourceType, ok := iteratorSourceType(ctx.Registry, sourceValue, assertedSourceType, hasAssertedSourceType)
-	if !ok {
-		return product.Value{}, false
-	}
-	elem, ok := projection.ElementOf(sourceType)
-	if !ok {
-		return product.Value{}, false
-	}
-	return typeValues.FromTypeWithWitness(ctx.Registry, elem), true
-}
-
-func iteratorSourceType(reg *axis.Registry, sourceValue product.Value, assertedSourceType typ.Type, hasAssertedSourceType bool) (typ.Type, bool) {
-	if hasAssertedSourceType {
-		return assertedSourceType, true
-	}
-	return luasourcevalue.ObjectLiteralEntryType(reg, nil, sourceValue)
+	return luasourcevalue.IteratorVariableValue(ctx.Registry, typeValues, iter, generic.VariableIndex, sourceValue, assertedSourceType, hasAssertedSourceType)
 }
 
 func genericForAssertedIteratorSourceType(generic cfgfacts.GenericForFact, sourceIndex int, resolver *typeresolve.Resolver) (typ.Type, bool) {

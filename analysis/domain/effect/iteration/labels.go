@@ -20,6 +20,20 @@ type Iterator struct {
 	Kind   IteratorKind
 }
 
+func ActiveIterator(labels []effect.Label) (Iterator, bool) {
+	for _, label := range labels {
+		switch normalized := effect.NormalizeLabel(label).(type) {
+		case Iterator:
+			return normalized, true
+		case *Iterator:
+			if normalized != nil {
+				return *normalized, true
+			}
+		}
+	}
+	return Iterator{}, false
+}
+
 func (Iterator) EffectLabel() {}
 func (i Iterator) String() string {
 	kind := "indexed"
