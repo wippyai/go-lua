@@ -366,7 +366,6 @@ var registry = map[string]signature.Function{
 			OptParam("plain", typ.Boolean).
 			Returns(normalize.Optional(typ.Integer), normalize.Optional(typ.Integer)).
 			Build(),
-		returns.CorrelatedReturn{Indices: []int{0, 1}},
 	),
 	"string.format": sig(
 		typ.Func().
@@ -453,10 +452,6 @@ var registry = map[string]signature.Function{
 			OptParam("pos", typ.Integer).
 			Returns(typ.Any).
 			Build(),
-		returns.Return{
-			ReturnIndex: 0,
-			Transform:   returns.StringUnpackValue{Format: effect.ParamRef{Index: 0}},
-		},
 	),
 	"string.upper": sig(
 		typ.Func().

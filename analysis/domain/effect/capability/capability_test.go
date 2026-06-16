@@ -29,7 +29,7 @@ func TestDescriptorsClassifyAuditedVocabularyExactlyOnce(t *testing.T) {
 		capability.ReturnsReturnStringUnpackValue:     capability.StatusReservedHighRisk,
 		capability.ReturnsReturnSelectCaseOfParam:     capability.StatusReserved,
 		capability.ReturnsReturnSelectResultOfCases:   capability.StatusReserved,
-		capability.ReturnsCorrelatedReturn:            capability.StatusReserved,
+		capability.ReturnsCorrelatedReturn:            capability.StatusReservedHighRisk,
 
 		capability.PostconditionNormalReturnRefinement: capability.StatusOperational,
 
@@ -192,5 +192,30 @@ func TestStringUnpackValueIsPinnedReservedHighRisk(t *testing.T) {
 	}
 	if desc.Status != capability.StatusReservedHighRisk {
 		t.Fatalf("StringUnpackValue status = %q, want %q", desc.Status, capability.StatusReservedHighRisk)
+	}
+	if !strings.Contains(desc.Rationale, "Reserved metadata") {
+		t.Fatalf("StringUnpackValue rationale = %q, want reserved metadata rationale", desc.Rationale)
+	}
+	if !strings.Contains(desc.Rationale, "stdlib must not declare it while inactive") {
+		t.Fatalf("StringUnpackValue rationale = %q, want stdlib quarantine rationale", desc.Rationale)
+	}
+}
+
+func TestCorrelatedReturnIsPinnedReservedHighRisk(t *testing.T) {
+	desc, ok := capability.Lookup(capability.ReturnsCorrelatedReturn)
+	if !ok {
+		t.Fatal("missing CorrelatedReturn descriptor")
+	}
+	if desc.Status == capability.StatusOperational {
+		t.Fatal("CorrelatedReturn must not be classified as operational")
+	}
+	if desc.Status != capability.StatusReservedHighRisk {
+		t.Fatalf("CorrelatedReturn status = %q, want %q", desc.Status, capability.StatusReservedHighRisk)
+	}
+	if !strings.Contains(desc.Rationale, "Reserved metadata") {
+		t.Fatalf("CorrelatedReturn rationale = %q, want reserved metadata rationale", desc.Rationale)
+	}
+	if !strings.Contains(desc.Rationale, "stdlib must not declare it while inactive") {
+		t.Fatalf("CorrelatedReturn rationale = %q, want stdlib quarantine rationale", desc.Rationale)
 	}
 }

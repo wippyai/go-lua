@@ -75,10 +75,10 @@ var descriptors = map[string]Descriptor{
 	ReturnsErrorReturn:                 descriptor(ReturnsErrorReturn, "returns", "ErrorReturn", StatusOperational, "Error return effect is actively lowered end-to-end."),
 	ReturnsReturnLength:                descriptor(ReturnsReturnLength, "returns", "ReturnLength", StatusReserved, "Data/codec vocabulary; not actively lowered into return semantics."),
 	ReturnsReturnDeepElementOf:         descriptor(ReturnsReturnDeepElementOf, "returns", "Return.DeepElementOf", StatusReserved, "Reserved transform; lowering falls back to declared returns."),
-	ReturnsReturnStringUnpackValue:     descriptor(ReturnsReturnStringUnpackValue, "returns", "Return.StringUnpackValue", StatusReservedHighRisk, "Declared by string.unpack stdlib data, but lowering ignores it and declared Any becomes the fallback."),
+	ReturnsReturnStringUnpackValue:     descriptor(ReturnsReturnStringUnpackValue, "returns", "Return.StringUnpackValue", StatusReservedHighRisk, "Reserved metadata; lowering ignores it, so stdlib must not declare it while inactive."),
 	ReturnsReturnSelectCaseOfParam:     descriptor(ReturnsReturnSelectCaseOfParam, "returns", "Return.SelectCaseOfParam", StatusReserved, "Reserved transform; lowering falls back to declared returns."),
 	ReturnsReturnSelectResultOfCases:   descriptor(ReturnsReturnSelectResultOfCases, "returns", "Return.SelectResultOfCases", StatusReserved, "Reserved transform; lowering falls back to declared returns."),
-	ReturnsCorrelatedReturn:            descriptor(ReturnsCorrelatedReturn, "returns", "CorrelatedReturn", StatusReserved, "Data/codec vocabulary; not actively lowered into return semantics."),
+	ReturnsCorrelatedReturn:            descriptor(ReturnsCorrelatedReturn, "returns", "CorrelatedReturn", StatusReservedHighRisk, "Reserved metadata; lowering ignores it, so stdlib must not declare it while inactive."),
 
 	PostconditionNormalReturnRefinement: descriptor(PostconditionNormalReturnRefinement, "postcondition", "NormalReturnRefinement", StatusOperational, "Normal-return refinement is actively consumed by postcondition handling."),
 

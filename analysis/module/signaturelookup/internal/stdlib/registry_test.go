@@ -19,6 +19,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/effect/postcondition"
 	"github.com/wippyai/go-lua/analysis/domain/effect/returns"
 	"github.com/wippyai/go-lua/analysis/module/manifest"
+	"github.com/wippyai/go-lua/analysis/type/normalize"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
@@ -224,6 +225,51 @@ func TestLookupSeededEffects(t *testing.T) {
 				t.Fatalf("effect label count = %d, want %d: %v", len(got.Effect.Labels), len(tt.labels), got.Effect)
 			}
 		})
+	}
+}
+
+func TestStringUnpackDeclaresConservativeAnyWithoutReservedTransform(t *testing.T) {
+	got, ok := Lookup("string.unpack")
+	if !ok {
+		t.Fatal("Lookup(\"string.unpack\") missing")
+	}
+	if len(got.Type.Returns) != 1 {
+		t.Fatalf("string.unpack returns = %d, want 1", len(got.Type.Returns))
+	}
+	if !typ.TypeEquals(got.Type.Returns[0], typ.Any) {
+		t.Fatalf("string.unpack return = %v, want conservative declared Any", got.Type.Returns[0])
+	}
+
+	for _, label := range got.Effect.Labels {
+		ret, ok := label.(returns.Return)
+		if !ok {
+			continue
+		}
+		if _, ok := ret.Transform.(returns.StringUnpackValue); ok {
+			t.Fatalf("string.unpack must not declare inactive StringUnpackValue transform: %v", ret)
+		}
+	}
+}
+
+func TestStringFindDeclaresConservativeReturnsWithoutReservedCorrelation(t *testing.T) {
+	got, ok := Lookup("string.find")
+	if !ok {
+		t.Fatal("Lookup(\"string.find\") missing")
+	}
+	if len(got.Type.Returns) != 2 {
+		t.Fatalf("string.find returns = %d, want 2", len(got.Type.Returns))
+	}
+	want := normalize.Optional(typ.Integer)
+	for i, gotReturn := range got.Type.Returns {
+		if !typ.TypeEquals(gotReturn, want) {
+			t.Fatalf("string.find return %d = %v, want conservative declared optional integer", i, gotReturn)
+		}
+	}
+
+	for _, label := range got.Effect.Labels {
+		if correlated, ok := label.(returns.CorrelatedReturn); ok {
+			t.Fatalf("string.find must not declare inactive CorrelatedReturn: %v", correlated)
+		}
 	}
 }
 
