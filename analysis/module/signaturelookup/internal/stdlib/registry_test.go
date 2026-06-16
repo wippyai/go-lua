@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/domain/effect"
+	"github.com/wippyai/go-lua/analysis/domain/effect/capability"
 	"github.com/wippyai/go-lua/analysis/domain/effect/control"
 	"github.com/wippyai/go-lua/analysis/domain/effect/dispatch"
 	"github.com/wippyai/go-lua/analysis/domain/effect/iteration"
@@ -129,7 +130,6 @@ func TestLookupSeededEffects(t *testing.T) {
 		{
 			name: Assert,
 			labels: []effect.Label{
-				control.Throw{},
 				postcondition.NormalReturnRefinement{
 					Target:     effect.ParamRef{Index: 0},
 					Refinement: postcondition.Present{},
@@ -137,16 +137,13 @@ func TestLookupSeededEffects(t *testing.T) {
 			},
 		},
 		{
-			name: Error,
-			labels: []effect.Label{
-				control.Throw{},
-			},
+			name:   Error,
+			labels: nil,
 		},
 		{
 			name: Require,
 			labels: []effect.Label{
 				dispatch.ModuleLoad{},
-				control.Throw{},
 			},
 		},
 		{
@@ -305,6 +302,25 @@ func TestSelectDeclaresConservativeAnyWithoutReservedVariadicTransform(t *testin
 	}
 }
 
+func TestStdlibDoesNotDeclareReservedOrHighRiskEffectLabels(t *testing.T) {
+	for name, sig := range Signatures() {
+		for _, label := range sig.Effect.Labels {
+			id, ok := capabilityIDForStdlibLabel(label)
+			if !ok {
+				t.Fatalf("%s declares unaudited effect label %T: %v", name, label, label)
+			}
+			desc, ok := capability.Lookup(id)
+			if !ok {
+				t.Fatalf("%s declares effect label %T with no capability descriptor %q", name, label, id)
+			}
+			switch desc.Status {
+			case capability.StatusReserved, capability.StatusReservedHighRisk:
+				t.Fatalf("%s declares inactive effect label %s (%s): %v", name, desc.ID, desc.Status, label)
+			}
+		}
+	}
+}
+
 func TestLookupAndSignaturesCloneResults(t *testing.T) {
 	first, ok := Lookup(Type)
 	if !ok {
@@ -442,4 +458,82 @@ func hasLabel(row effect.Row, want effect.Label) bool {
 	return row.Has(func(got effect.Label) bool {
 		return want.Equals(got)
 	})
+}
+
+func capabilityIDForStdlibLabel(label effect.Label) (string, bool) {
+	switch l := effect.NormalizeLabel(label).(type) {
+	case returns.Return:
+		return capabilityIDForReturnTransform(l.Transform)
+	case returns.ErrorReturn:
+		return capability.ReturnsErrorReturn, true
+	case returns.ReturnLength:
+		return capability.ReturnsReturnLength, true
+	case returns.CorrelatedReturn:
+		return capability.ReturnsCorrelatedReturn, true
+	case postcondition.NormalReturnRefinement:
+		return capability.PostconditionNormalReturnRefinement, true
+	case ownership.Borrow:
+		return capability.OwnershipBorrow, true
+	case ownership.Retain:
+		return capability.OwnershipRetain, true
+	case ownership.Store:
+		return capability.OwnershipStore, true
+	case ownership.SendParam:
+		return capability.OwnershipSendParam, true
+	case ownership.Export:
+		return capability.OwnershipExport, true
+	case ownership.Opaque:
+		return capability.OwnershipOpaque, true
+	case ownership.Freeze:
+		return capability.OwnershipFreeze, true
+	case ownership.BorrowAll:
+		return capability.OwnershipBorrowAll, true
+	case iteration.Iterator:
+		return capability.IterationIterator, true
+	case dispatch.ModuleLoad:
+		return capability.DispatchModuleLoad, true
+	case dispatch.TypePredicate:
+		return capability.DispatchTypePredicate, true
+	case dispatch.VariadicTransform:
+		return capability.DispatchVariadicTransform, true
+	case mutation.Mutate:
+		return capability.MutationMutate, true
+	case mutation.LengthChange:
+		return capability.MutationLengthChange, true
+	case mutation.TableMutator:
+		return capability.MutationTableMutator, true
+	case control.Throw:
+		return capability.ControlThrow, true
+	case control.IO:
+		return capability.ControlIO, true
+	default:
+		return "", false
+	}
+}
+
+func capabilityIDForReturnTransform(transform returns.ReturnType) (string, bool) {
+	switch transform.(type) {
+	case returns.SameAs:
+		return capability.ReturnsReturnSameAs, true
+	case returns.ElementOf:
+		return capability.ReturnsReturnElementOf, true
+	case returns.OptionalElementOf:
+		return capability.ReturnsReturnOptionalElementOf, true
+	case returns.CallbackReturn:
+		return capability.ReturnsReturnCallbackReturn, true
+	case returns.ArrayOfCallbackReturn:
+		return capability.ReturnsReturnArrayOfCallbackReturn, true
+	case returns.TypeProjection:
+		return capability.ReturnsReturnTypeProjection, true
+	case returns.DeepElementOf:
+		return capability.ReturnsReturnDeepElementOf, true
+	case returns.StringUnpackValue:
+		return capability.ReturnsReturnStringUnpackValue, true
+	case returns.SelectCaseOfParam:
+		return capability.ReturnsReturnSelectCaseOfParam, true
+	case returns.SelectResultOfCases:
+		return capability.ReturnsReturnSelectResultOfCases, true
+	default:
+		return "", false
+	}
 }

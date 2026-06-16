@@ -52,8 +52,8 @@ func TestDescriptorsClassifyAuditedVocabularyExactlyOnce(t *testing.T) {
 		capability.MutationLengthChange: capability.StatusPartial,
 		capability.MutationTableMutator: capability.StatusPartial,
 
-		capability.ControlThrow: capability.StatusReserved,
-		capability.ControlIO:    capability.StatusReserved,
+		capability.ControlThrow: capability.StatusReservedHighRisk,
+		capability.ControlIO:    capability.StatusReservedHighRisk,
 	}
 
 	all := capability.All()
@@ -235,6 +235,45 @@ func TestInactiveDispatchLabelsArePinnedReservedHighRisk(t *testing.T) {
 			name:      "variadic transform",
 			id:        capability.DispatchVariadicTransform,
 			rationale: "select() lowering ignores this",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			desc, ok := capability.Lookup(tt.id)
+			if !ok {
+				t.Fatalf("missing descriptor %s", tt.id)
+			}
+			if desc.Status != capability.StatusReservedHighRisk {
+				t.Fatalf("%s status = %q, want %q", tt.id, desc.Status, capability.StatusReservedHighRisk)
+			}
+			if !strings.Contains(desc.Rationale, "Reserved metadata") {
+				t.Fatalf("%s rationale = %q, want reserved metadata rationale", tt.id, desc.Rationale)
+			}
+			if !strings.Contains(desc.Rationale, tt.rationale) {
+				t.Fatalf("%s rationale = %q, want %q", tt.id, desc.Rationale, tt.rationale)
+			}
+			if !strings.Contains(desc.Rationale, "stdlib must not declare") {
+				t.Fatalf("%s rationale = %q, want stdlib quarantine rationale", tt.id, desc.Rationale)
+			}
+		})
+	}
+}
+
+func TestInactiveControlLabelsArePinnedReservedHighRisk(t *testing.T) {
+	tests := []struct {
+		name      string
+		id        string
+		rationale string
+	}{
+		{
+			name:      "throw",
+			id:        capability.ControlThrow,
+			rationale: "behavior is represented by Never/postconditions/module-load",
+		},
+		{
+			name:      "io",
+			id:        capability.ControlIO,
+			rationale: "IO policy/enforcement is inactive",
 		},
 	}
 	for _, tt := range tests {

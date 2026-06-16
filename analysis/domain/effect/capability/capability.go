@@ -101,8 +101,8 @@ var descriptors = map[string]Descriptor{
 	MutationLengthChange: descriptor(MutationLengthChange, "mutation", "LengthChange", StatusPartial, "Length mutation vocabulary is present, but semantics are only partially consumed."),
 	MutationTableMutator: descriptor(MutationTableMutator, "mutation", "TableMutator", StatusPartial, "Currently drives invalidation only; payloads are mostly ignored."),
 
-	ControlThrow: descriptor(ControlThrow, "control", "Throw", StatusReserved, "Control vocabulary is codec/row-only and has no active lowering semantics."),
-	ControlIO:    descriptor(ControlIO, "control", "IO", StatusReserved, "Control vocabulary is codec/row-only and has no active lowering semantics."),
+	ControlThrow: descriptor(ControlThrow, "control", "Throw", StatusReservedHighRisk, "Reserved metadata; control throw lowering is inactive, so stdlib must not declare it while behavior is represented by Never/postconditions/module-load."),
+	ControlIO:    descriptor(ControlIO, "control", "IO", StatusReservedHighRisk, "Reserved metadata; IO policy/enforcement is inactive, so stdlib must not declare it while inactive."),
 }
 
 func All() []Descriptor {

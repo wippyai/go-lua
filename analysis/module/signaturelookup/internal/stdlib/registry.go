@@ -4,7 +4,6 @@ package stdlib
 
 import (
 	"github.com/wippyai/go-lua/analysis/domain/effect"
-	"github.com/wippyai/go-lua/analysis/domain/effect/control"
 	"github.com/wippyai/go-lua/analysis/domain/effect/dispatch"
 	"github.com/wippyai/go-lua/analysis/domain/effect/iteration"
 	"github.com/wippyai/go-lua/analysis/domain/effect/mutation"
@@ -37,7 +36,6 @@ var registry = map[string]signature.Function{
 			OptParam("message", typ.Any).
 			Returns(typ.Any).
 			Build(),
-		control.Throw{},
 		postcondition.NormalReturnRefinement{
 			Target:     effect.ParamRef{Index: 0},
 			Refinement: postcondition.Present{},
@@ -49,7 +47,6 @@ var registry = map[string]signature.Function{
 			OptParam("level", typ.Integer).
 			Returns(typ.Never).
 			Build(),
-		control.Throw{},
 	),
 	Require: sig(
 		typ.Func().
@@ -57,7 +54,6 @@ var registry = map[string]signature.Function{
 			Returns(typ.Any).
 			Build(),
 		dispatch.ModuleLoad{},
-		control.Throw{},
 	),
 	ToString: sig(
 		typ.Func().
@@ -125,7 +121,6 @@ var registry = map[string]signature.Function{
 			Variadic(typ.Any).
 			Build(),
 		ownership.BorrowAll{},
-		control.IO{},
 	),
 	"tonumber": sig(
 		typ.Func().
@@ -555,30 +550,25 @@ var registry = map[string]signature.Function{
 		Build()),
 	"os.tmpname": sig(typ.Func().
 		Returns(typ.String).
-		Build(),
-		control.IO{}),
+		Build()),
 	"os.exit": sig(typ.Func().
 		OptParam("code", typ.Any).
 		OptParam("close", typ.Boolean).
 		Returns(typ.Never).
-		Build(),
-		control.IO{}),
+		Build()),
 	"os.remove": sig(typ.Func().
 		Param("filename", typ.String).
 		Returns(normalize.Optional(typ.Boolean), normalize.Optional(typ.String)).
-		Build(),
-		control.IO{}),
+		Build()),
 	"os.rename": sig(typ.Func().
 		Param("oldname", typ.String).
 		Param("newname", typ.String).
 		Returns(normalize.Optional(typ.Boolean), normalize.Optional(typ.String)).
-		Build(),
-		control.IO{}),
+		Build()),
 	"os.execute": sig(typ.Func().
 		OptParam("command", typ.String).
 		Returns(typ.Any).
-		Build(),
-		control.IO{}),
+		Build()),
 }
 
 // Lookup returns a cloned effect signature for a known stdlib function name.
