@@ -408,27 +408,6 @@ func TestSyntheticAxisParticipatesThroughRegistry(t *testing.T) {
 	}
 }
 
-var benchmarkProductSink Value
-
-func BenchmarkProductNoopSetAndIdempotentJoin(b *testing.B) {
-	reg, err := RegistryWithAxes(syntheticSpec().Erase())
-	if err != nil {
-		b.Fatalf("RegistryWithAxes() error = %v", err)
-	}
-	v := Set(reg, Top(), syntheticKey, syntheticLow)
-	d := Domain(reg)
-
-	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
-		next := Set(reg, v, syntheticKey, syntheticLow)
-		next = WithPresence(reg, next, PresenceOf(next))
-		next = WithShape(reg, next, ShapeOf(next))
-		next = d.Join(next, next)
-		next = d.Meet(next, next)
-		benchmarkProductSink = d.Widen(next, next)
-	}
-}
-
 func TestSparseAxisReducerStillRunsWithRegistryScopedValues(t *testing.T) {
 	reg := mustRegistry(t, syntheticMirrorReducerSpec().Erase(), secondSyntheticSpec().Erase())
 

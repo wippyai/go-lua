@@ -3,7 +3,6 @@ package factapply
 import (
 	"sort"
 
-	"github.com/wippyai/go-lua/analysis/type/channelselect"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/typewitness"
@@ -13,6 +12,8 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/engine/visibility"
+	"github.com/wippyai/go-lua/analysis/type/ambient"
+	"github.com/wippyai/go-lua/analysis/type/channelselect"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
@@ -144,7 +145,7 @@ func channelSelectCasePathPayloadType(
 	if !ok {
 		return nil, false
 	}
-	return channelselect.ChannelPayloadType(channelType)
+	return ambient.ChannelPayloadType(channelType)
 }
 
 func valueWitnessType(reg *axis.Registry, value product.Value) (typ.Type, bool) {

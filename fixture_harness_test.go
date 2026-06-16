@@ -236,7 +236,7 @@ func runCheckPhase(t *testing.T, s namedSuite) {
 	}
 }
 
-func verifyInlineExpectations(t *testing.T, expectations []inlineExpectation, diagnostics []diag.Diagnostic, entryFile string) {
+func verifyInlineExpectations(t testing.TB, expectations []inlineExpectation, diagnostics []diag.Diagnostic, entryFile string) {
 	t.Helper()
 	matched := make([]bool, len(diagnostics))
 	failed := false
@@ -298,7 +298,7 @@ func matchesExpectation(exp inlineExpectation, d diag.Diagnostic, entryFile stri
 	return true
 }
 
-func verifyErrorCount(t *testing.T, want int, diagnostics []diag.Diagnostic) {
+func verifyErrorCount(t testing.TB, want int, diagnostics []diag.Diagnostic) {
 	t.Helper()
 	var errors []diag.Diagnostic
 	for _, d := range diagnostics {
@@ -312,7 +312,7 @@ func verifyErrorCount(t *testing.T, want int, diagnostics []diag.Diagnostic) {
 	}
 }
 
-func verifyClean(t *testing.T, diagnostics []diag.Diagnostic) {
+func verifyClean(t testing.TB, diagnostics []diag.Diagnostic) {
 	t.Helper()
 	var errors []diag.Diagnostic
 	for _, d := range diagnostics {
@@ -326,7 +326,7 @@ func verifyClean(t *testing.T, diagnostics []diag.Diagnostic) {
 	}
 }
 
-func dumpDiagnostics(t *testing.T, diagnostics []diag.Diagnostic) {
+func dumpDiagnostics(t testing.TB, diagnostics []diag.Diagnostic) {
 	t.Helper()
 	t.Log("--- all diagnostics ---")
 	for _, d := range diagnostics {

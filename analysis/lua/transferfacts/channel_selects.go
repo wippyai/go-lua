@@ -3,7 +3,6 @@ package transferfacts
 import (
 	"strconv"
 
-	"github.com/wippyai/go-lua/analysis/type/channelselect"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
@@ -13,6 +12,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/pathexpr"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
 	luatypeprojection "github.com/wippyai/go-lua/analysis/lua/typeprojection"
+	"github.com/wippyai/go-lua/analysis/type/ambient"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
@@ -193,5 +193,5 @@ func (l *lowerer) channelSelectPathType(p pathdom.Path) (typ.Type, bool) {
 }
 
 func channelPayloadType(channelType typ.Type) (typ.Type, bool) {
-	return channelselect.ChannelPayloadType(channelType)
+	return ambient.ChannelPayloadType(channelType)
 }

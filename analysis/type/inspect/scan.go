@@ -14,24 +14,6 @@ func Contains(t typ.Type, pred func(typ.Type) bool) bool {
 	return contains(t, pred, scan)
 }
 
-// ContainsAny reports whether t contains an explicit dynamic any type.
-func ContainsAny(t typ.Type) bool {
-	return Contains(t, typ.IsAny)
-}
-
-// ContainsNever reports whether t contains the bottom type as a nested member.
-func ContainsNever(t typ.Type) bool {
-	return Contains(t, typ.IsNever)
-}
-
-// ContainsTypeParam reports whether t contains a type parameter.
-func ContainsTypeParam(t typ.Type) bool {
-	return Contains(t, func(t typ.Type) bool {
-		_, ok := t.(*typ.TypeParam)
-		return ok
-	})
-}
-
 // ContainsInstantiated reports whether t contains a generic instantiation.
 func ContainsInstantiated(t typ.Type) bool {
 	return Contains(t, func(t typ.Type) bool {

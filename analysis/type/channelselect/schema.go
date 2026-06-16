@@ -1,8 +1,7 @@
-// Package channelselect owns pure channel-select result and payload type schema.
+// Package channelselect owns pure channel-select result type schema.
 package channelselect
 
 import (
-	"github.com/wippyai/go-lua/analysis/type/ambient"
 	"github.com/wippyai/go-lua/analysis/type/kind"
 	"github.com/wippyai/go-lua/analysis/type/normalize"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
@@ -38,11 +37,6 @@ func ResultDefaultType(selectID string) typ.Type {
 	return ResultCaseType(selectID, DefaultCaseIndex, typ.Nil)
 }
 
-// ResultValueType builds the internal select result union from case payloads.
-func ResultValueType(selectID string, cases []ResultCase) (typ.Type, bool) {
-	return ResultValueTypeWithDefault(selectID, cases, false)
-}
-
 // ResultValueTypeWithDefault builds the internal select result union from case
 // payloads plus an optional default arm.
 func ResultValueTypeWithDefault(selectID string, cases []ResultCase, hasDefault bool) (typ.Type, bool) {
@@ -57,11 +51,6 @@ func ResultValueTypeWithDefault(selectID string, cases []ResultCase, hasDefault 
 		caseTypes = append(caseTypes, ResultDefaultType(selectID))
 	}
 	return normalize.UnionForEvidence(caseTypes...), true
-}
-
-// ChannelPayloadType returns the payload carried by the ambient Channel<T> type.
-func ChannelPayloadType(t typ.Type) (typ.Type, bool) {
-	return ambient.ChannelPayloadType(t)
 }
 
 // CaseMarkerType builds the opaque channel identity marker stored in a select

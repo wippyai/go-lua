@@ -3,13 +3,13 @@
 package channelruntime
 
 import (
-	"github.com/wippyai/go-lua/analysis/type/channelselect"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/lua/pathexpr"
 	luatypeprojection "github.com/wippyai/go-lua/analysis/lua/typeprojection"
 	"github.com/wippyai/go-lua/analysis/lua/typeresolve"
 	"github.com/wippyai/go-lua/analysis/symbol"
+	"github.com/wippyai/go-lua/analysis/type/ambient"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
@@ -83,7 +83,7 @@ func pathType(bindings *bind.Result, p pathdom.Path) (typ.Type, bool) {
 
 // isChannelType reports whether t is the ambient Channel<T> instantiation.
 func isChannelType(t typ.Type) bool {
-	_, ok := channelselect.ChannelPayloadType(t)
+	_, ok := ambient.ChannelPayloadType(t)
 	return ok
 }
 

@@ -37,54 +37,6 @@ func TestKindStringOutOfRange(t *testing.T) {
 	}
 }
 
-func TestKindIsPrimitive(t *testing.T) {
-	primitives := []Kind{Nil, Boolean, Number, Integer, String}
-	for _, k := range primitives {
-		if !k.IsPrimitive() {
-			t.Errorf("%s should be primitive", k)
-		}
-	}
-
-	nonPrimitives := []Kind{Any, Unknown, Never, Union, Function, Array, Record}
-	for _, k := range nonPrimitives {
-		if k.IsPrimitive() {
-			t.Errorf("%s should not be primitive", k)
-		}
-	}
-}
-
-func TestKindIsComposite(t *testing.T) {
-	composites := []Kind{Union, Intersection, Tuple, Array, Map, ReadonlyMap, Record, Function}
-	for _, k := range composites {
-		if !k.IsComposite() {
-			t.Errorf("%s should be composite", k)
-		}
-	}
-
-	nonComposites := []Kind{Nil, Boolean, Number, Any, Ref, TypeParam}
-	for _, k := range nonComposites {
-		if k.IsComposite() {
-			t.Errorf("%s should not be composite", k)
-		}
-	}
-}
-
-func TestKindIsDeferred(t *testing.T) {
-	deferred := []Kind{Ref, TypeParam}
-	for _, k := range deferred {
-		if !k.IsDeferred() {
-			t.Errorf("%s should be deferred", k)
-		}
-	}
-
-	nonDeferred := []Kind{Nil, Number, Function, Array, Union}
-	for _, k := range nonDeferred {
-		if k.IsDeferred() {
-			t.Errorf("%s should not be deferred", k)
-		}
-	}
-}
-
 func TestKindValuesUnique(t *testing.T) {
 	seen := make(map[Kind]string)
 	kinds := []Kind{
@@ -137,22 +89,6 @@ func TestKindIsPlaceholder(t *testing.T) {
 	}
 }
 
-func TestKindIsConcrete(t *testing.T) {
-	concrete := []Kind{Nil, Boolean, Number, Integer, String, Union, Function, Array, Record}
-	for _, k := range concrete {
-		if !k.IsConcrete() {
-			t.Errorf("%s should be concrete", k)
-		}
-	}
-
-	nonConcrete := []Kind{Any, Unknown, Never}
-	for _, k := range nonConcrete {
-		if k.IsConcrete() {
-			t.Errorf("%s should not be concrete", k)
-		}
-	}
-}
-
 func TestKindIsNever(t *testing.T) {
 	if !Never.IsNever() {
 		t.Error("Never should return true for IsNever()")
@@ -162,22 +98,6 @@ func TestKindIsNever(t *testing.T) {
 	for _, k := range nonNever {
 		if k.IsNever() {
 			t.Errorf("%s should not be Never", k)
-		}
-	}
-}
-
-func TestKindIsTopOrBottom(t *testing.T) {
-	topOrBottom := []Kind{Any, Unknown, Never}
-	for _, k := range topOrBottom {
-		if !k.IsTopOrBottom() {
-			t.Errorf("%s should be top-or-bottom", k)
-		}
-	}
-
-	others := []Kind{Nil, Boolean, Number, Integer, String, Union, Function, Array, Record}
-	for _, k := range others {
-		if k.IsTopOrBottom() {
-			t.Errorf("%s should not be top-or-bottom", k)
 		}
 	}
 }

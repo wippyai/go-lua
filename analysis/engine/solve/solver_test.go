@@ -231,37 +231,6 @@ func TestSolve_DiamondRequeuesDependents(t *testing.T) {
 	assertMapEqual(t, cl.joinOnly(), got, want)
 }
 
-var benchmarkSolveResult map[int]int
-
-func BenchmarkSolveHighFanoutRequeue(b *testing.B) {
-	const fanout = 128
-	cl := capLattice{top: 16}
-	cells := make([]int, fanout+1)
-	for i := range cells {
-		cells[i] = i
-	}
-
-	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
-		sourceVisits := 0
-		benchmarkSolveResult = Solve(EquationSystem[int, int]{
-			Lattice: cl.joinOnly(),
-			Cells:   cells,
-			Transfer: func(cell int, read func(int) int, emit func(int, int)) {
-				if cell == 0 {
-					_ = read(0)
-					sourceVisits++
-					if sourceVisits <= 8 {
-						emit(0, sourceVisits)
-					}
-					return
-				}
-				emit(cell, read(0))
-			},
-		})
-	}
-}
-
 // TestSolve_SelfDependentReconverges checks a cell that reads a cell it also
 // depends on transitively (cycle) reconverges once its input is re-queued.
 //

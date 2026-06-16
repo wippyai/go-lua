@@ -10,10 +10,10 @@ import (
 )
 
 func TestResultValueTypeBuildsSelectUnion(t *testing.T) {
-	got, ok := ResultValueType("select-1", []ResultCase{
+	got, ok := ResultValueTypeWithDefault("select-1", []ResultCase{
 		{Index: 0, Payload: typ.String},
 		{Index: 1, Payload: typ.Number},
-	})
+	}, false)
 	if !ok {
 		t.Fatal("ResultValueType returned no type")
 	}
@@ -82,9 +82,9 @@ func TestResultWithoutCasePreservesDefaultMember(t *testing.T) {
 }
 
 func TestResultWithoutCaseNoDefaultCanBecomeNever(t *testing.T) {
-	result, ok := ResultValueType("select-remove", []ResultCase{
+	result, ok := ResultValueTypeWithDefault("select-remove", []ResultCase{
 		{Index: 0, Payload: typ.String},
-	})
+	}, false)
 	if !ok {
 		t.Fatal("ResultValueType returned no type")
 	}

@@ -9,6 +9,21 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/typeexpr"
 )
 
+func testContainsAny(t typ.Type) bool {
+	return Contains(t, typ.IsAny)
+}
+
+func testContainsNever(t typ.Type) bool {
+	return Contains(t, typ.IsNever)
+}
+
+func testContainsTypeParam(t typ.Type) bool {
+	return Contains(t, func(t typ.Type) bool {
+		_, ok := t.(*typ.TypeParam)
+		return ok
+	})
+}
+
 func TestContainsAny_RecursiveTypeTerminates(t *testing.T) {
 	node := typ.NewRecursive("Node", func(self typ.Type) typ.Type {
 		return typetable.NewRecord().
@@ -17,8 +32,8 @@ func TestContainsAny_RecursiveTypeTerminates(t *testing.T) {
 			Build()
 	})
 
-	if ContainsAny(node) {
-		t.Fatal("ContainsAny() reported any in recursive type with only concrete fields")
+	if testContainsAny(node) {
+		t.Fatal("testContainsAny() reported any in recursive type with only concrete fields")
 	}
 }
 
@@ -58,8 +73,8 @@ func TestContainsAny_RecursiveTypeFindsNestedAny(t *testing.T) {
 			Build()
 	})
 
-	if !ContainsAny(node) {
-		t.Fatal("ContainsAny() missed any inside recursive type")
+	if !testContainsAny(node) {
+		t.Fatal("testContainsAny() missed any inside recursive type")
 	}
 }
 
@@ -71,8 +86,8 @@ func TestContainsAny_NestedFunctionType(t *testing.T) {
 			Build()).
 		Build()
 
-	if !ContainsAny(fn) {
-		t.Fatal("ContainsAny() missed any inside nested function return")
+	if !testContainsAny(fn) {
+		t.Fatal("testContainsAny() missed any inside nested function return")
 	}
 }
 
@@ -144,8 +159,8 @@ func TestContains_FindsTypeParamInsideRepeatedShape(t *testing.T) {
 	}) {
 		t.Fatal("Contains() missed type parameter inside repeated structural shape")
 	}
-	if !ContainsTypeParam(root) {
-		t.Fatal("ContainsTypeParam() missed type parameter inside repeated structural shape")
+	if !testContainsTypeParam(root) {
+		t.Fatal("testContainsTypeParam() missed type parameter inside repeated structural shape")
 	}
 }
 
@@ -195,8 +210,8 @@ func TestContainsAny_SeesAnyThroughLaterAssignedRecursiveBody(t *testing.T) {
 		Field("value", typ.Any).
 		Build())
 
-	if !ContainsAny(a) {
-		t.Fatal("ContainsAny() missed any through recursive body assigned after wrapper construction")
+	if !testContainsAny(a) {
+		t.Fatal("testContainsAny() missed any through recursive body assigned after wrapper construction")
 	}
 }
 
@@ -204,8 +219,8 @@ func TestContainsAny_TypeParamConstraint(t *testing.T) {
 	tp := typ.NewTypeParam("T", typetable.NewRecord().Field("value", typ.Any).Build())
 	fn := typ.Func().TypeParam("T", tp.Constraint).Returns(tp).Build()
 
-	if !ContainsAny(fn) {
-		t.Fatal("ContainsAny() missed any inside type parameter constraint")
+	if !testContainsAny(fn) {
+		t.Fatal("testContainsAny() missed any inside type parameter constraint")
 	}
 }
 
@@ -218,8 +233,8 @@ func TestContainsTypeParam_RecursiveConstraintTerminates(t *testing.T) {
 			Build()
 	})
 
-	if !ContainsTypeParam(rec) {
-		t.Fatal("ContainsTypeParam() missed type parameter inside recursive body")
+	if !testContainsTypeParam(rec) {
+		t.Fatal("testContainsTypeParam() missed type parameter inside recursive body")
 	}
 }
 
@@ -236,11 +251,11 @@ func TestContainsAny_NonRecursiveStructuralFlag(t *testing.T) {
 		Returns(typetable.NewRecord().Field("value", typ.Any).Build()).
 		Build()
 
-	if ContainsAny(withoutAny) {
-		t.Fatal("ContainsAny() reported any in concrete non-recursive product")
+	if testContainsAny(withoutAny) {
+		t.Fatal("testContainsAny() reported any in concrete non-recursive product")
 	}
-	if !ContainsAny(withAny) {
-		t.Fatal("ContainsAny() missed any recorded in non-recursive product flag")
+	if !testContainsAny(withAny) {
+		t.Fatal("testContainsAny() missed any recorded in non-recursive product flag")
 	}
 }
 
@@ -276,11 +291,11 @@ func TestContainsNever_NonRecursiveStructuralFlag(t *testing.T) {
 		Returns(typetable.NewRecord().Field("value", typ.Never).Build()).
 		Build()
 
-	if ContainsNever(withoutNever) {
-		t.Fatal("ContainsNever() reported never in concrete non-recursive product")
+	if testContainsNever(withoutNever) {
+		t.Fatal("testContainsNever() reported never in concrete non-recursive product")
 	}
-	if !ContainsNever(withNever) {
-		t.Fatal("ContainsNever() missed never recorded in non-recursive product flag")
+	if !testContainsNever(withNever) {
+		t.Fatal("testContainsNever() missed never recorded in non-recursive product flag")
 	}
 }
 
@@ -313,17 +328,17 @@ func TestContainsPredicates_ClosedRecursiveProductUsesStableFlags(t *testing.T) 
 			Build()).
 		Build()
 
-	if ContainsAny(fn) {
-		t.Fatal("ContainsAny() reported any in closed concrete recursive product")
+	if testContainsAny(fn) {
+		t.Fatal("testContainsAny() reported any in closed concrete recursive product")
 	}
-	if ContainsTypeParam(fn) {
-		t.Fatal("ContainsTypeParam() reported type parameter in closed concrete recursive product")
+	if testContainsTypeParam(fn) {
+		t.Fatal("testContainsTypeParam() reported type parameter in closed concrete recursive product")
 	}
 	if ContainsInstantiated(fn) {
 		t.Fatal("ContainsInstantiated() reported instantiation in closed concrete recursive product")
 	}
-	if ContainsNever(fn) {
-		t.Fatal("ContainsNever() reported never in closed concrete recursive product")
+	if testContainsNever(fn) {
+		t.Fatal("testContainsNever() reported never in closed concrete recursive product")
 	}
 }
 
@@ -334,14 +349,14 @@ func TestContainsAny_OpenRecursiveProductSeesLaterBodyMutation(t *testing.T) {
 		Field("label", typ.String).
 		Build()
 
-	if ContainsAny(wrapper) {
-		t.Fatal("ContainsAny() reported any before recursive placeholder body existed")
+	if testContainsAny(wrapper) {
+		t.Fatal("testContainsAny() reported any before recursive placeholder body existed")
 	}
 
 	node.SetBody(typetable.NewRecord().Field("value", typ.Any).Build())
 
-	if !ContainsAny(wrapper) {
-		t.Fatal("ContainsAny() missed any introduced by later recursive placeholder body")
+	if !testContainsAny(wrapper) {
+		t.Fatal("testContainsAny() missed any introduced by later recursive placeholder body")
 	}
 }
 
@@ -349,14 +364,14 @@ func TestContainsTypeParam_OpenRecursiveProductSeesLaterBodyMutation(t *testing.
 	node := typ.NewRecursivePlaceholder("Node")
 	wrapper := typ.NewTuple(typ.String, node)
 
-	if ContainsTypeParam(wrapper) {
-		t.Fatal("ContainsTypeParam() reported type parameter before recursive placeholder body existed")
+	if testContainsTypeParam(wrapper) {
+		t.Fatal("testContainsTypeParam() reported type parameter before recursive placeholder body existed")
 	}
 
 	node.SetBody(typetable.NewRecord().Field("value", typ.NewTypeParam("T", nil)).Build())
 
-	if !ContainsTypeParam(wrapper) {
-		t.Fatal("ContainsTypeParam() missed type parameter introduced by later recursive placeholder body")
+	if !testContainsTypeParam(wrapper) {
+		t.Fatal("testContainsTypeParam() missed type parameter introduced by later recursive placeholder body")
 	}
 }
 
@@ -381,14 +396,14 @@ func TestContainsNever_OpenRecursiveProductSeesLaterBodyMutation(t *testing.T) {
 	node := typ.NewRecursivePlaceholder("Node")
 	wrapper := typ.NewTuple(typ.String, node)
 
-	if ContainsNever(wrapper) {
-		t.Fatal("ContainsNever() reported never before recursive placeholder body existed")
+	if testContainsNever(wrapper) {
+		t.Fatal("testContainsNever() reported never before recursive placeholder body existed")
 	}
 
 	node.SetBody(typetable.NewRecord().Field("value", typ.Never).Build())
 
-	if !ContainsNever(wrapper) {
-		t.Fatal("ContainsNever() missed never introduced by later recursive placeholder body")
+	if !testContainsNever(wrapper) {
+		t.Fatal("testContainsNever() missed never introduced by later recursive placeholder body")
 	}
 }
 
@@ -411,9 +426,9 @@ func TestContainsReadonlyMapDynamicPredicatesTraverseKeyAndValue(t *testing.T) {
 		contains func(typ.Type) bool
 		marker   func() typ.Type
 	}{
-		{name: "any", contains: ContainsAny, marker: func() typ.Type { return typ.Any }},
-		{name: "never", contains: ContainsNever, marker: func() typ.Type { return typ.Never }},
-		{name: "type-param", contains: ContainsTypeParam, marker: func() typ.Type {
+		{name: "any", contains: testContainsAny, marker: func() typ.Type { return typ.Any }},
+		{name: "never", contains: testContainsNever, marker: func() typ.Type { return typ.Never }},
+		{name: "type-param", contains: testContainsTypeParam, marker: func() typ.Type {
 			return typ.NewTypeParam("T", nil)
 		}},
 		{name: "instantiated", contains: ContainsInstantiated, marker: traversalInstantiatedMarker},
@@ -468,9 +483,9 @@ func TestContainsStaticMemberDynamicPredicatesTraverseTypes(t *testing.T) {
 		contains func(typ.Type) bool
 		marker   func() typ.Type
 	}{
-		{name: "any", contains: ContainsAny, marker: func() typ.Type { return typ.Any }},
-		{name: "never", contains: ContainsNever, marker: func() typ.Type { return typ.Never }},
-		{name: "type-param", contains: ContainsTypeParam, marker: func() typ.Type {
+		{name: "any", contains: testContainsAny, marker: func() typ.Type { return typ.Any }},
+		{name: "never", contains: testContainsNever, marker: func() typ.Type { return typ.Never }},
+		{name: "type-param", contains: testContainsTypeParam, marker: func() typ.Type {
 			return typ.NewTypeParam("T", nil)
 		}},
 		{name: "instantiated", contains: ContainsInstantiated, marker: traversalInstantiatedMarker},

@@ -106,45 +106,10 @@ func (k Kind) String() string {
 	return "unknown"
 }
 
-// IsPrimitive returns true for primitive types (nil, boolean, number, integer, string).
-func (k Kind) IsPrimitive() bool {
-	return k <= String
-}
-
-// IsComposite returns true for composite types (union, intersection, tuple, etc.).
-func (k Kind) IsComposite() bool {
-	switch k {
-	case Union, Intersection, Tuple, Array, Map, ReadonlyMap, Record, Function:
-		return true
-	}
-
-	return false
-}
-
-// IsDeferred returns true for types that need resolution (ref, typeparam).
-func (k Kind) IsDeferred() bool {
-	switch k {
-	case Ref, TypeParam:
-		return true
-	}
-
-	return false
-}
-
 // IsPlaceholder returns true for Any or Unknown kinds.
 // These represent unresolved or open type positions.
 func (k Kind) IsPlaceholder() bool {
 	return k == Any || k == Unknown
-}
-
-// IsConcrete returns true for types that are fully resolved (not Any, Unknown, or Never).
-func (k Kind) IsConcrete() bool {
-	return k != Any && k != Unknown && k != Never
-}
-
-// IsTopOrBottom returns true for Any (top), Unknown (unresolved), or Never (bottom).
-func (k Kind) IsTopOrBottom() bool {
-	return k == Any || k == Unknown || k == Never
 }
 
 // IsNever returns true for the Never kind (bottom type).
