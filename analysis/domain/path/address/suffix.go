@@ -1,6 +1,9 @@
 package address
 
-import "github.com/wippyai/go-lua/analysis/domain/path/segment"
+import (
+	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/path/segment"
+)
 
 // Suffix is the structured member/index suffix of an address.
 type Suffix struct {
@@ -77,6 +80,16 @@ func (s Suffix) Overlaps(other Suffix) bool {
 // KeySuffix returns the deterministic segment suffix encoding.
 func (s Suffix) KeySuffix() string {
 	return segment.FormatSegments(s.segments)
+}
+
+// RelativeStaticMemberSuffixKey returns the canonical static-member key for a
+// relative suffix. It intentionally encodes only suffix segments so rootless
+// member facts do not collapse to an empty path key.
+func RelativeStaticMemberSuffixKey(segments []segment.Segment) (pathdom.PathKey, bool) {
+	if len(segments) == 0 {
+		return "", false
+	}
+	return pathdom.PathKey(segment.FormatSegments(segments)), true
 }
 
 func cloneSegments(segments []segment.Segment) []segment.Segment {

@@ -428,6 +428,46 @@ func TestRootAndSuffixVocabulary(t *testing.T) {
 	}
 }
 
+func TestRelativeStaticMemberSuffixKeyUsesCanonicalRelativeSegments(t *testing.T) {
+	tests := []struct {
+		name     string
+		segments []segment.Segment
+		want     pathdom.PathKey
+		ok       bool
+	}{
+		{
+			name:     "field",
+			segments: []segment.Segment{{Kind: segment.SegmentField, Name: "id"}},
+			want:     pathdom.PathKey(".id"),
+			ok:       true,
+		},
+		{
+			name:     "string index",
+			segments: []segment.Segment{{Kind: segment.SegmentIndexString, Name: "id"}},
+			want:     pathdom.PathKey("[\"id\"]"),
+			ok:       true,
+		},
+		{
+			name:     "int index",
+			segments: []segment.Segment{{Kind: segment.SegmentIndexInt, Index: 1}},
+			want:     pathdom.PathKey("[1]"),
+			ok:       true,
+		},
+		{
+			name: "empty",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, ok := RelativeStaticMemberSuffixKey(tc.segments)
+			if ok != tc.ok || got != tc.want {
+				t.Fatalf("RelativeStaticMemberSuffixKey(%#v) = %q/%v, want %q/%v", tc.segments, got, ok, tc.want, tc.ok)
+			}
+		})
+	}
+}
+
 func TestStructuralKeyVersionedPrefixRelationsUseSegmentBoundaries(t *testing.T) {
 	prefix := mustStructuralKey(t, pathdom.PathKey("sym40@3.field"))
 
