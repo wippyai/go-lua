@@ -331,6 +331,54 @@ func TestOutcomeProviderCopiesSummaryHeapTableObjects(t *testing.T) {
 	}
 }
 
+func TestOutcomeProviderPreservesReturnedNestedHeapIdentityClosure(t *testing.T) {
+	reg := standard.Registry()
+	callee := symbol.ID(43)
+	key := summary.DefaultSummaryKey(ref.FuncRef{Kind: ref.KindSymbol, ID: 44})
+	rootID := identity.ID{Kind: "table", Site: "provider-closure", Index: 1}
+	childID := identity.ID{Kind: "table", Site: "provider-closure", Index: 2}
+	rootValue := product.Set(reg, product.NewWithPresence(reg, product.ShapeTop, presence.Present()), identity.Key, identity.Singleton(rootID))
+	childValue := product.Set(reg, product.NewWithPresence(reg, product.ShapeTop, presence.Present()), identity.Key, identity.Singleton(childID))
+	provider := OutcomeProvider(ProviderConfig{
+		Summaries: summary.NewSnapshot(reg, summary.EntrySummary{
+			Key: key,
+			Summary: summary.Summary{
+				Returns: []product.Value{rootValue},
+				HeapTableObjects: map[identity.ID]heapidentity.TableObject{
+					rootID: heapidentity.NewTableObject(heapidentity.TableObjectConfig{
+						Root:          rootValue,
+						StaticMembers: map[path.PathKey]product.Value{path.PathKey(".child"): childValue},
+					}),
+					childID: heapidentity.NewTableObject(heapidentity.TableObjectConfig{
+						Root: childValue,
+					}),
+				},
+			},
+		}),
+		KeyFor: ByCalleeIdentity(map[symbol.ID]summary.SummaryKey{callee: key}),
+	})
+
+	got := provider(transfer.NodeContext{Registry: reg}, factflow.NewCallSite(factflow.CallSiteConfig{
+		CalleeSymbol: callee,
+	}).View(), state.State{}, nil)
+
+	assertCallOutcomeResults(t, reg, got.Results, []product.Value{rootValue})
+	rootObject, ok := got.HeapTableObjects[rootID]
+	if !ok {
+		t.Fatalf("HeapTableObjects = %#v, want root object %v", got.HeapTableObjects, rootID)
+	}
+	if member, ok := rootObject.StaticMember(path.PathKey(".child")); !ok || !product.Equal(reg, member, childValue) {
+		t.Fatalf("root child member = %#v/%v, want %#v", member, ok, childValue)
+	}
+	childObject, ok := got.HeapTableObjects[childID]
+	if !ok {
+		t.Fatalf("HeapTableObjects = %#v, want child object %v", got.HeapTableObjects, childID)
+	}
+	if !product.Equal(reg, childObject.Root(), childValue) {
+		t.Fatalf("child object root = %#v, want %#v", childObject.Root(), childValue)
+	}
+}
+
 func TestOutcomeProviderJoinMaterializesRawOptionalFactPayloadRecord(t *testing.T) {
 	reg := standard.Registry()
 	calleePath := path.NewPath(symbol.ID(127), "module").Field("make")

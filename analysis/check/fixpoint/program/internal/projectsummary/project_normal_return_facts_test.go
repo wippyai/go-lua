@@ -321,6 +321,31 @@ func TestFromResultProjectsHeapTableObjectsFromExitSnapshots(t *testing.T) {
 	}
 }
 
+func TestFromResultProjectsFrozenRootAndNestedChildPaths(t *testing.T) {
+	reg := standard.Registry()
+	param := symbol.ID(932)
+	rootID := identity.ID{Kind: "table", Site: "summary-freeze", Index: 1}
+	childID := identity.ID{Kind: "table", Site: "summary-freeze", Index: 2}
+	rootValue := product.Set(reg, presentProduct(reg), identity.Key, identity.Singleton(rootID))
+	childValue := product.Set(reg, presentProduct(reg), identity.Key, identity.Singleton(childID))
+	exit := state.State{}.
+		WriteValue(reg, key.SymbolValue(param), rootValue).
+		WriteHeapTableObject(reg, rootID, heapidentity.NewTableObject(heapidentity.TableObjectConfig{
+			Root:          rootValue,
+			StaticMembers: map[pathdom.PathKey]product.Value{pathdom.PathKey(".child"): childValue},
+		})).
+		WriteHeapTableObject(reg, childID, heapidentity.NewTableObject(heapidentity.TableObjectConfig{
+			Root: childValue,
+		})).
+		FreezeTable(rootID).
+		FreezeTable(childID)
+
+	got := FromResult(normalReturnFactProjectTestResult(reg, exit, param)).NormalReturnFacts
+
+	assertFrozenTable(t, got.FrozenTables, pathdom.NewPlaceholder(0))
+	assertFrozenTable(t, got.FrozenTables, pathdom.NewPlaceholder(0).Field("child"))
+}
+
 type normalReturnFactProjectResultStub struct {
 	reg   *axis.Registry
 	graph cfg.Graph

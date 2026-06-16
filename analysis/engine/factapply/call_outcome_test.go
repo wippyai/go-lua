@@ -11,6 +11,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/engine/callboundary"
+	"github.com/wippyai/go-lua/analysis/engine/dynamicindex"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/sourcevalue"
 	"github.com/wippyai/go-lua/analysis/engine/state"
@@ -324,6 +325,69 @@ func TestFactsNodeTransferCallOutcomeFrozenTableFactFreezesSingletonIdentity(t *
 	}
 }
 
+func TestFactsNodeTransferCallOutcomeFrozenTableFactsFreezeRootAndNestedChild(t *testing.T) {
+	reg := standard.Registry()
+	point := cfg.Point(705)
+	target := symbol.ID(705)
+	argExpr := factflow.ExprRef(705)
+	targetPath := pathdom.NewPath(target, "obj")
+	childPath := targetPath.Field("child")
+	rootID := identity.ID{Kind: "lua.table", Site: "freeze-apply", Index: 2}
+	childID := identity.ID{Kind: "lua.table", Site: "freeze-apply", Index: 3}
+	rootValue := product.Set(reg, presentValue(reg), identity.Key, identity.Singleton(rootID))
+	childValue := product.Set(reg, presentValue(reg), identity.Key, identity.Singleton(childID))
+	facts := factflow.NewFacts(factflow.FactsInput{
+		CallSites: map[cfg.Point]factflow.CallSite{
+			point: factflow.NewCallSite(factflow.CallSiteConfig{
+				Context: factflow.CallSiteContextStatement,
+				ArgumentSources: []factflow.ValueSource{
+					{Kind: factflow.ValueSourceExpression, ExprRef: argExpr, HasExpr: true},
+				},
+			}),
+		},
+		ExpressionPaths: map[factflow.ExprRef]pathdom.Path{
+			argExpr: targetPath,
+		},
+	})
+	builder := visibility.NewBuilder()
+	builder.Define(point, target, "obj")
+	resolver := visibility.NewResolver(builder.Build())
+
+	got := NewFactsNodeTransfer(FactsNodeTransferConfig{
+		Facts: facts,
+		CallOutcome: func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) CallOutcome {
+			return CallOutcome{
+				HeapTableObjects: map[identity.ID]heapidentity.TableObject{
+					rootID: heapidentity.NewTableObject(heapidentity.TableObjectConfig{
+						Root:          rootValue,
+						StaticMembers: map[pathdom.PathKey]product.Value{pathdom.PathKey(".child"): childValue},
+					}),
+					childID: heapidentity.NewTableObject(heapidentity.TableObjectConfig{Root: childValue}),
+				},
+				NormalReturnFacts: callboundary.NormalReturnFacts{
+					FrozenTables: []callboundary.FrozenTableFact{
+						{Target: pathdom.NewPlaceholder(0)},
+						{Target: pathdom.NewPlaceholder(0).Field("child")},
+					},
+				},
+			}
+		},
+		Visibility: resolver,
+	})(transfer.NodeContext{
+		Registry: reg,
+		Point:    point,
+	}, state.State{}.
+		WriteValue(reg, key.SymbolValue(target), rootValue).
+		WritePathKey(reg, resolver.KeyAt(point, childPath), childValue))
+
+	if !got.IsTableFrozen(rootID) {
+		t.Fatalf("root table %v was not frozen", rootID)
+	}
+	if !got.IsTableFrozen(childID) {
+		t.Fatalf("child table %v was not frozen", childID)
+	}
+}
+
 func TestFactsNodeTransferCallOutcomeRecursiveEscapeSendMarksStaticMemberIdentityPlacement(t *testing.T) {
 	reg := standard.Registry()
 	point := cfg.Point(702)
@@ -382,6 +446,141 @@ func TestFactsNodeTransferCallOutcomeRecursiveEscapeSendMarksStaticMemberIdentit
 	}
 	if gotPlacement := got.ReadPlacement(childID); gotPlacement != placement.SharedHeap {
 		t.Fatalf("placement[%v] = %s, want %s", childID, gotPlacement, placement.SharedHeap)
+	}
+}
+
+func TestFactsNodeTransferCallOutcomeRecursiveEscapeStoreMarksStaticMemberIdentityOwnedHeap(t *testing.T) {
+	reg := standard.Registry()
+	point := cfg.Point(706)
+	target := symbol.ID(706)
+	argExpr := factflow.ExprRef(706)
+	targetPath := pathdom.NewPath(target, "obj")
+	rootID := identity.ID{Kind: "lua.table", Site: "escape-placement", Index: 6}
+	childID := identity.ID{Kind: "lua.table", Site: "escape-placement", Index: 7}
+	rootValue := product.Set(reg, presentValue(reg), identity.Key, identity.Singleton(rootID))
+	childValue := product.Set(reg, presentValue(reg), identity.Key, identity.Singleton(childID))
+	facts := factflow.NewFacts(factflow.FactsInput{
+		CallSites: map[cfg.Point]factflow.CallSite{
+			point: factflow.NewCallSite(factflow.CallSiteConfig{
+				Context: factflow.CallSiteContextStatement,
+				ArgumentSources: []factflow.ValueSource{
+					{Kind: factflow.ValueSourceExpression, ExprRef: argExpr, HasExpr: true},
+				},
+			}),
+		},
+		ExpressionPaths: map[factflow.ExprRef]pathdom.Path{
+			argExpr: targetPath,
+		},
+	})
+	builder := visibility.NewBuilder()
+	builder.Define(point, target, "obj")
+	resolver := visibility.NewResolver(builder.Build())
+
+	got := NewFactsNodeTransfer(FactsNodeTransferConfig{
+		Facts: facts,
+		CallOutcome: func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) CallOutcome {
+			return CallOutcome{
+				NormalReturnFacts: callboundary.NormalReturnFacts{
+					EscapeEvents: []callboundary.EscapeEventFact{
+						{Target: pathdom.NewPlaceholder(0), Kind: callboundary.EscapeEventStore, Recursive: true},
+					},
+				},
+			}
+		},
+		Visibility: resolver,
+	})(transfer.NodeContext{
+		Registry: reg,
+		Point:    point,
+	}, state.State{}.
+		WriteValue(reg, key.SymbolValue(target), rootValue).
+		WriteHeapTableObject(reg, rootID, heapidentity.NewTableObject(heapidentity.TableObjectConfig{
+			Root:          rootValue,
+			StaticMembers: map[pathdom.PathKey]product.Value{pathdom.PathKey(".child"): childValue},
+		})).
+		WriteHeapTableObject(reg, childID, heapidentity.NewTableObject(heapidentity.TableObjectConfig{
+			Root: childValue,
+		})))
+
+	if gotPlacement := got.ReadPlacement(rootID); gotPlacement != placement.OwnedHeap {
+		t.Fatalf("placement[%v] = %s, want %s", rootID, gotPlacement, placement.OwnedHeap)
+	}
+	if gotPlacement := got.ReadPlacement(childID); gotPlacement != placement.OwnedHeap {
+		t.Fatalf("placement[%v] = %s, want %s", childID, gotPlacement, placement.OwnedHeap)
+	}
+}
+
+func TestFactsNodeTransferCallOutcomeRecursiveEscapeSendMarksDynamicIndexKeyAndValueIdentities(t *testing.T) {
+	reg := standard.Registry()
+	point := cfg.Point(707)
+	target := symbol.ID(707)
+	argExpr := factflow.ExprRef(707)
+	targetPath := pathdom.NewPath(target, "obj")
+	rootID := identity.ID{Kind: "lua.table", Site: "escape-placement", Index: 8}
+	keyID := identity.ID{Kind: "lua.table", Site: "escape-placement", Index: 9}
+	valueID := identity.ID{Kind: "lua.table", Site: "escape-placement", Index: 10}
+	rootValue := product.Set(reg, presentValue(reg), identity.Key, identity.Singleton(rootID))
+	keyValue := product.Set(reg, presentValue(reg), identity.Key, identity.Singleton(keyID))
+	dynamicValue := product.Set(reg, presentValue(reg), identity.Key, identity.Singleton(valueID))
+	facts := factflow.NewFacts(factflow.FactsInput{
+		CallSites: map[cfg.Point]factflow.CallSite{
+			point: factflow.NewCallSite(factflow.CallSiteConfig{
+				Context: factflow.CallSiteContextStatement,
+				ArgumentSources: []factflow.ValueSource{
+					{Kind: factflow.ValueSourceExpression, ExprRef: argExpr, HasExpr: true},
+				},
+			}),
+		},
+		ExpressionPaths: map[factflow.ExprRef]pathdom.Path{
+			argExpr: targetPath,
+		},
+	})
+	builder := visibility.NewBuilder()
+	builder.Define(point, target, "obj")
+	resolver := visibility.NewResolver(builder.Build())
+
+	got := NewFactsNodeTransfer(FactsNodeTransferConfig{
+		Facts: facts,
+		CallOutcome: func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) CallOutcome {
+			return CallOutcome{
+				NormalReturnFacts: callboundary.NormalReturnFacts{
+					EscapeEvents: []callboundary.EscapeEventFact{
+						{Target: pathdom.NewPlaceholder(0), Kind: callboundary.EscapeEventSend, Recursive: true},
+					},
+				},
+			}
+		},
+		Visibility: resolver,
+	})(transfer.NodeContext{
+		Registry: reg,
+		Point:    point,
+	}, state.State{}.
+		WriteValue(reg, key.SymbolValue(target), rootValue).
+		WriteHeapTableObject(reg, rootID, heapidentity.NewTableObject(heapidentity.TableObjectConfig{
+			Root: rootValue,
+			DynamicIndexFacts: map[dynamicindex.Key]dynamicindex.Fact{
+				{Table: pathdom.PathKey(".dynamic"), Site: "dynamic-identity"}: {
+					KeyPresence: presence.Present(),
+					KeyValue:    keyValue,
+					Value:       dynamicValue,
+					Admission:   dynamicindex.AdmissionAdmitted,
+				},
+			},
+		})).
+		WriteHeapTableObject(reg, keyID, heapidentity.NewTableObject(heapidentity.TableObjectConfig{
+			Root: keyValue,
+		})).
+		WriteHeapTableObject(reg, valueID, heapidentity.NewTableObject(heapidentity.TableObjectConfig{
+			Root: dynamicValue,
+		})))
+
+	if gotPlacement := got.ReadPlacement(rootID); gotPlacement != placement.SharedHeap {
+		t.Fatalf("placement[%v] = %s, want %s", rootID, gotPlacement, placement.SharedHeap)
+	}
+	if gotPlacement := got.ReadPlacement(keyID); gotPlacement != placement.SharedHeap {
+		t.Fatalf("placement[%v] = %s, want %s", keyID, gotPlacement, placement.SharedHeap)
+	}
+	if gotPlacement := got.ReadPlacement(valueID); gotPlacement != placement.SharedHeap {
+		t.Fatalf("placement[%v] = %s, want %s", valueID, gotPlacement, placement.SharedHeap)
 	}
 }
 
