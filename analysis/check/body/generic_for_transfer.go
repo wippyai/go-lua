@@ -3,7 +3,9 @@ package body
 import (
 	"github.com/wippyai/go-lua/analysis/domain/effect"
 	"github.com/wippyai/go-lua/analysis/domain/effect/iteration"
+	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
@@ -102,7 +104,93 @@ func genericForVariableValue(
 	if !ok {
 		return product.Value{}, false
 	}
+	if value, ok := genericForLiteralContainerVariableValue(ctx, iter, generic.VariableIndex, facts, refinedSources, sourceValue, args[sourceIndex], in); ok {
+		return value, true
+	}
 	return luasourcevalue.IteratorVariableValue(ctx.Registry, typeValues, iter, generic.VariableIndex, sourceValue, assertedSourceType, hasAssertedSourceType)
+}
+
+func genericForLiteralContainerVariableValue(
+	ctx transfer.NodeContext,
+	iter iteration.Iterator,
+	variableIndex int,
+	facts factflow.Facts,
+	sources sourcevalue.SourceValues,
+	sourceValue product.Value,
+	source factflow.ValueSource,
+	in state.State,
+) (product.Value, bool) {
+	if variableIndex != 1 || iter.Kind != iteration.IterateIndexed || !source.HasExpr {
+		return product.Value{}, false
+	}
+	if value, ok := genericForHeapContainerVariableValue(ctx, iter, sourceValue, in); ok {
+		return value, true
+	}
+	literal, ok := facts.ObjectLiteral(source.ExprRef)
+	if !ok {
+		return product.Value{}, false
+	}
+	var out product.Value
+	seen := false
+	for _, entry := range literal.Entries() {
+		if !genericForDirectContainerElement(iter, entry) {
+			continue
+		}
+		value, ok := sources.ValueOfSource(ctx.Point, entry.Source(), in, ctx.Read)
+		if !ok {
+			continue
+		}
+		if !seen {
+			out = value
+			seen = true
+			continue
+		}
+		out = product.Join(ctx.Registry, out, value)
+	}
+	return out, seen
+}
+
+func genericForHeapContainerVariableValue(ctx transfer.NodeContext, iter iteration.Iterator, sourceValue product.Value, in state.State) (product.Value, bool) {
+	id, ok := product.Get(ctx.Registry, sourceValue, identity.Key).ID()
+	if !ok {
+		return product.Value{}, false
+	}
+	object := in.ReadHeapTableObject(ctx.Registry, id)
+	if !product.Equal(ctx.Registry, object.Root(), sourceValue) {
+		return product.Value{}, false
+	}
+	var out product.Value
+	seen := false
+	for key, value := range object.StaticMembers() {
+		segs, ok := segment.ParseFormattedSegments(string(key))
+		if !ok || len(segs) != 1 || !genericForDirectContainerSegment(iter, segs[0]) {
+			continue
+		}
+		if !seen {
+			out = value
+			seen = true
+			continue
+		}
+		out = product.Join(ctx.Registry, out, value)
+	}
+	return out, seen
+}
+
+func genericForDirectContainerElement(iter iteration.Iterator, entry factflow.ObjectEntry) bool {
+	segs := entry.Suffix().Segments
+	if len(segs) != 1 {
+		return false
+	}
+	return genericForDirectContainerSegment(iter, segs[0])
+}
+
+func genericForDirectContainerSegment(iter iteration.Iterator, seg segment.Segment) bool {
+	switch iter.Kind {
+	case iteration.IterateIndexed:
+		return seg.Kind == segment.SegmentIndexInt
+	default:
+		return false
+	}
 }
 
 func genericForAssertedIteratorSourceType(generic cfgfacts.GenericForFact, sourceIndex int, resolver *typeresolve.Resolver) (typ.Type, bool) {

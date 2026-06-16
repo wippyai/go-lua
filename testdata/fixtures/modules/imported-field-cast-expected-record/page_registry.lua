@@ -5,7 +5,7 @@ type PageInfo = {
 
 local M = {}
 
-function M.find_all()
+function M.find_all(): {PageInfo}
     return {
         {
             id = "p1",

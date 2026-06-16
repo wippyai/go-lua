@@ -20,6 +20,7 @@ func ObjectLiteralTypeCached(reg *axis.Registry, typeValues *typevalue.Cache, li
 	builder := typetable.NewConstructorBuilder()
 	expected, hasExpected := expectedRecord(reg, lit, resolve)
 	seen := false
+	seenUntrustedTop := false
 	for _, entry := range lit.Entries() {
 		segs := entry.Suffix().Segments
 		path, ok := luatypeprojection.ConstructorPathFromSegments(segs)
@@ -38,6 +39,10 @@ func ObjectLiteralTypeCached(reg *axis.Registry, typeValues *typevalue.Cache, li
 		}
 		t, ok := ObjectLiteralEntryType(reg, typeValues, value)
 		if !ok {
+			if ObjectLiteralEntryHasUntrustedTopOrigin(reg, value) {
+				seenUntrustedTop = true
+				continue
+			}
 			if filled, ok := expectedRecordField(hasExpected, expected, segs); ok {
 				if !builder.Add(path, filled) {
 					return nil, false
@@ -59,6 +64,9 @@ func ObjectLiteralTypeCached(reg *axis.Registry, typeValues *typevalue.Cache, li
 		seen = true
 	}
 	if !seen {
+		if seenUntrustedTop {
+			return typetable.NewRecord().Build(), true
+		}
 		return nil, false
 	}
 	return builder.Build()
@@ -66,6 +74,9 @@ func ObjectLiteralTypeCached(reg *axis.Registry, typeValues *typevalue.Cache, li
 
 func ObjectLiteralEntryType(reg *axis.Registry, typeValues *typevalue.Cache, value product.Value) (typ.Type, bool) {
 	if t, ok := typevalue.TypeOf(reg, value); ok {
+		if ObjectLiteralEntryHasUntrustedTopOrigin(reg, value) && (typ.IsAny(t) || typ.IsUnknown(t)) {
+			return nil, false
+		}
 		origin := product.Get(reg, value, variantoriginpkg.Key)
 		if !origin.IsBottom() && !origin.IsTop() {
 			if narrowed, ok := typeValues.NarrowVariantByOrigin(t, origin.Family(), origin.Cases()); ok {
@@ -74,9 +85,10 @@ func ObjectLiteralEntryType(reg *axis.Registry, typeValues *typevalue.Cache, val
 		}
 		return t, true
 	}
-	ev := product.Get(reg, value, evidence.Key)
-	if ev.IsGradualTop() || ev.IsExplicitTop() {
-		return typ.Any, true
-	}
 	return nil, false
+}
+
+func ObjectLiteralEntryHasUntrustedTopOrigin(reg *axis.Registry, value product.Value) bool {
+	ev := product.Get(reg, value, evidence.Key)
+	return ev.IsGradualTop() || ev.IsExplicitTop()
 }

@@ -119,7 +119,7 @@ func TestObjectLiteralTypePreservesNestedWitnessShape(t *testing.T) {
 	}
 }
 
-func TestObjectLiteralTypeTreatsTopOriginEntryAsAny(t *testing.T) {
+func TestObjectLiteralTypeDoesNotUseTopOriginEntryAsStructuralProof(t *testing.T) {
 	for _, tt := range []struct {
 		name     string
 		evidence evidence.Value
@@ -145,11 +145,32 @@ func TestObjectLiteralTypeTreatsTopOriginEntryAsAny(t *testing.T) {
 				t.Fatal("objectLiteralType returned false")
 			}
 
-			want := typetable.NewRecord().Field("id", typ.Any).Build()
+			want := typetable.NewRecord().Build()
 			if !typ.TypeEquals(got, want) {
 				t.Fatalf("object literal type = %v, want %v", got, want)
 			}
 		})
+	}
+}
+
+func TestObjectLiteralTypeDoesNotAdoptExpectedFieldForTopOriginEntry(t *testing.T) {
+	reg := standard.Registry()
+	idSource := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: factflow.ExprRef(711), HasExpr: true}
+	expected := typetable.NewRecord().Field("id", typ.String).Build()
+	lit := factflow.NewObjectLiteral([]factflow.ObjectEntry{
+		factflow.NewObjectEntry(path.NewPlaceholder(0).Field("id"), idSource),
+	}).WithExpected(typevalue.WithWitness(reg, typevalue.FromType(reg, expected), expected))
+
+	got, ok := ObjectLiteralType(reg, lit, func(source factflow.ValueSource) (product.Value, bool) {
+		return product.Set(reg, product.Top(), evidence.Key, evidence.ExplicitTop()), true
+	})
+	if !ok {
+		t.Fatal("objectLiteralType returned false")
+	}
+
+	want := typetable.NewRecord().Build()
+	if !typ.TypeEquals(got, want) {
+		t.Fatalf("object literal type = %v, want %v", got, want)
 	}
 }
 
@@ -194,6 +215,7 @@ func TestObjectLiteralTypeBuildsNestedSequenceWithTopOriginField(t *testing.T) {
 		factflow.NewObjectEntry(path.NewPlaceholder(0).IndexInt(1).Field("route"), routeSource),
 	})
 	pageType := typetable.NewRecord().Field("id", typ.Any).Field("route", typ.String).Build()
+	pageWitness := typetable.NewRecord().Field("route", typ.String).Build()
 	values := map[factflow.ValueSource]product.Value{
 		pageSource:  typevalue.WithWitness(reg, typevalue.FromType(reg, pageType), pageType),
 		idSource:    product.Set(reg, product.Top(), evidence.Key, evidence.ExplicitTop()),
@@ -208,7 +230,7 @@ func TestObjectLiteralTypeBuildsNestedSequenceWithTopOriginField(t *testing.T) {
 		t.Fatal("objectLiteralType returned false")
 	}
 
-	want := typ.NewTuple(pageType)
+	want := typ.NewTuple(pageWitness)
 	if !typ.TypeEquals(got, want) {
 		t.Fatalf("object literal type = %v, want %v", got, want)
 	}

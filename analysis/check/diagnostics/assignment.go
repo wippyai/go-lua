@@ -58,7 +58,7 @@ func (p annotationAssignability) localAssignment(result *body.Result, point cfg.
 		return diagnostic.Diagnostic{}, false
 	}
 	if directCallResultAssignmentWouldReport(result, p.resolver, fact.Source, want, directDefs) {
-		return p.objectLiteralAssignment(result, fact.Name, want, fact.Expr, fact.Type)
+		return p.objectLiteralAssignment(result, point, fact.Name, want, fact.Expr, fact.Type)
 	}
 	if directCallResultOwner(result, fact.Source) {
 		if got, ok := callResultWitnessProvenMismatchType(result, point, fact.Source, want); ok {
@@ -67,7 +67,7 @@ func (p annotationAssignability) localAssignment(result *body.Result, point cfg.
 	}
 	if directCallResultOwner(result, fact.Source) && !directCallSourceHasSignature(result, fact.Source) {
 		if !callResultWitnessProvenMismatch(result, point, fact.Source, want) {
-			return p.objectLiteralAssignment(result, fact.Name, want, fact.Expr, fact.Type)
+			return p.objectLiteralAssignment(result, point, fact.Name, want, fact.Expr, fact.Type)
 		}
 	}
 	got, ok := valueexpr.LiteralType(fact.Expr)
@@ -115,7 +115,7 @@ func (p annotationAssignability) localAssignment(result *body.Result, point cfg.
 		got, ok = optionalMemberReadType(result, p.resolver, point, env, fact.Expr)
 	}
 	if !ok {
-		return p.objectLiteralAssignment(result, fact.Name, want, fact.Expr, fact.Type)
+		return p.objectLiteralAssignment(result, point, fact.Name, want, fact.Expr, fact.Type)
 	}
 	if !optionalIndexProjection && !presenceAwareSourceProjection && !typ.IsAny(got) && !typ.IsUnknown(got) {
 		got = refineAssignmentSourceType(result, point, fact.Expr, got)
@@ -131,7 +131,7 @@ func (p annotationAssignability) localAssignment(result *body.Result, point cfg.
 	if mismatch {
 		return assignmentDiagnostic(fact.Name, want, got, fact.Expr, fact.Type), true
 	}
-	return p.objectLiteralAssignment(result, fact.Name, want, fact.Expr, fact.Type)
+	return p.objectLiteralAssignment(result, point, fact.Name, want, fact.Expr, fact.Type)
 }
 
 func (p annotationAssignability) pathAssignment(result *body.Result, point cfg.Point, fact semantics.OrdinaryAssignmentFact) (diagnostic.Diagnostic, bool) {
@@ -237,13 +237,13 @@ func directCallSourceHasSignature(result *body.Result, source sourceprovenance.A
 	return ok
 }
 
-func (p annotationAssignability) objectLiteralAssignment(result *body.Result, name string, want typ.Type, expr ast.Expr, annotation ast.TypeExpr) (diagnostic.Diagnostic, bool) {
+func (p annotationAssignability) objectLiteralAssignment(result *body.Result, point cfg.Point, name string, want typ.Type, expr ast.Expr, annotation ast.TypeExpr) (diagnostic.Diagnostic, bool) {
 	fact, ok := result.ObjectLiteral(expr)
 	if !ok {
 		return diagnostic.Diagnostic{}, false
 	}
 	if arms, ok := closedRecordUnionArms(want); ok {
-		if objectLiteralAdmissibleToAnyArm(result, arms, fact) {
+		if objectLiteralAdmissibleToAnyArm(result, point, arms, fact) {
 			return diagnostic.Diagnostic{}, false
 		}
 		return assignmentDiagnostic(name, want, objectLiteralType(want, fact), expr, annotation), true
@@ -253,8 +253,8 @@ func (p annotationAssignability) objectLiteralAssignment(result *body.Result, na
 		if !ok {
 			continue
 		}
-		got, ok := valueexpr.LiteralType(entry.Value)
-		if !ok || !clearMismatch(result, got, expected) {
+		got, ok := objectLiteralEntryMismatchType(result, point, entry, expected)
+		if !ok {
 			continue
 		}
 		return assignmentDiagnostic(name, expected, got, entry.Value, annotation), true
@@ -288,9 +288,9 @@ func closedRecordUnionArms(want typ.Type) ([]*typ.Record, bool) {
 	return arms, true
 }
 
-func objectLiteralAdmissibleToAnyArm(result *body.Result, arms []*typ.Record, fact semantics.ObjectLiteralFact) bool {
+func objectLiteralAdmissibleToAnyArm(result *body.Result, point cfg.Point, arms []*typ.Record, fact semantics.ObjectLiteralFact) bool {
 	for _, arm := range arms {
-		if objectLiteralAdmissibleToRecord(result, arm, fact) {
+		if objectLiteralAdmissibleToRecord(result, point, arm, fact) {
 			return true
 		}
 	}
@@ -301,17 +301,13 @@ func objectLiteralAdmissibleToAnyArm(result *body.Result, arms []*typ.Record, fa
 // closed record arm: every present entry matches the arm's expected type and no
 // required field is missing. It mirrors the per-arm decisions the single-record
 // path makes, so a literal that clears every arm check stays accepted.
-func objectLiteralAdmissibleToRecord(result *body.Result, record *typ.Record, fact semantics.ObjectLiteralFact) bool {
+func objectLiteralAdmissibleToRecord(result *body.Result, point cfg.Point, record *typ.Record, fact semantics.ObjectLiteralFact) bool {
 	for _, entry := range fact.Entries {
 		expected, ok := expectedTypeAtSegments(record, entry.Suffix.Segments)
 		if !ok {
 			return false
 		}
-		got, ok := valueexpr.LiteralType(entry.Value)
-		if !ok {
-			continue
-		}
-		if clearMismatch(result, got, expected) {
+		if _, mismatch := objectLiteralEntryMismatchType(result, point, entry, expected); mismatch {
 			return false
 		}
 	}
@@ -319,6 +315,30 @@ func objectLiteralAdmissibleToRecord(result *body.Result, record *typ.Record, fa
 		return false
 	}
 	return true
+}
+
+func objectLiteralEntryMismatchType(result *body.Result, point cfg.Point, entry semantics.ObjectEntryFact, expected typ.Type) (typ.Type, bool) {
+	if expected == nil || typ.IsAny(expected) || typ.IsUnknown(expected) || refinement.ContainsFreeTypeParam(expected) {
+		return nil, false
+	}
+	if got, ok := valueexpr.LiteralType(entry.Value); ok && clearMismatch(result, got, expected) {
+		return got, true
+	}
+	reader := readmodel.New(result)
+	value, ok := reader.SourceValue(point, entry.Source)
+	if !ok {
+		return nil, false
+	}
+	if reader.ValueHasUntrustedTopOrigin(value) {
+		if reader.ValueProofAdmissible(value, expected) {
+			return nil, false
+		}
+		if got, ok := reader.ValueType(value); ok {
+			return got, true
+		}
+		return typ.Any, true
+	}
+	return nil, false
 }
 
 // objectLiteralType synthesizes the literal's structural type for a whole-literal

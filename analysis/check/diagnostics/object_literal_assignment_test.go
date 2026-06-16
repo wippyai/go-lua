@@ -82,3 +82,33 @@ func TestAnnotationAssignabilityBracketStringDoesNotSatisfyRequiredField(t *test
 		t.Fatalf("diagnostic = %#v, want missing required field x", d)
 	}
 }
+
+func TestAnnotationAssignabilityRejectsObjectLiteralExplicitAnyMember(t *testing.T) {
+	diags := runDiagnostics(t, `
+		type Point = {id: string}
+		local raw: any = nil
+		local p: Point = {id = raw}
+	`)
+	if len(diags) != 1 {
+		t.Fatalf("diagnostics = %d, want 1: %#v", len(diags), diags)
+	}
+	if d := diags[0]; d.Code != CodeAssignmentType || !strings.Contains(d.Message, "any") || !strings.Contains(d.Message, "string") {
+		t.Fatalf("diagnostic = %#v, want any-to-string object member mismatch", d)
+	}
+}
+
+func TestAnnotationAssignabilityRejectsObjectLiteralTopOriginInsideClosedUnion(t *testing.T) {
+	diags := runDiagnostics(t, `
+		type A = {kind: "a", id: string}
+		type B = {kind: "b", id: number}
+		type Item = A | B
+		local raw: any = nil
+		local item: Item = {kind = "a", id = raw}
+	`)
+	if len(diags) != 1 {
+		t.Fatalf("diagnostics = %d, want 1: %#v", len(diags), diags)
+	}
+	if d := diags[0]; d.Code != CodeAssignmentType || !strings.Contains(d.Message, "cannot assign") {
+		t.Fatalf("diagnostic = %#v, want union object member mismatch", d)
+	}
+}
