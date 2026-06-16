@@ -369,7 +369,6 @@ func (s LawSuite[T]) checkWideningChainTerminates(t reporter) {
 }
 
 // Note: a "Meet representational-bound" timing check existed in rev 1 of the
-// lattice harness. The Condition domain DOMAIN_DESIGN.md rev 2 (§13) shows todo: remove commetns like that
-// that bound conflicts with the design premise — widening happens at the
-// worklist iterate (§7), not inside Meet/And. The check was removed as part
-// of the Condition close.
+// lattice harness. That bound conflicts with the design premise: widening
+// happens at the worklist iterate, not inside Meet/And. The check was removed
+// as part of the Condition close.
