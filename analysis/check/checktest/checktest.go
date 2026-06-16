@@ -12,6 +12,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/check/diagnostics"
 	"github.com/wippyai/go-lua/analysis/check/exportmanifest"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/program"
+	"github.com/wippyai/go-lua/analysis/check/placementplan"
 	"github.com/wippyai/go-lua/analysis/diagnostic"
 	"github.com/wippyai/go-lua/analysis/domain/effect"
 	"github.com/wippyai/go-lua/analysis/domain/effect/ownership"
@@ -37,11 +38,13 @@ type config struct {
 type Result struct {
 	Diagnostics []diagnostic.Diagnostic
 	checked     *program.Result
+	placement   placementplan.Plan
 }
 
 type ModuleResult struct {
-	Errors   []diagnostic.Diagnostic
-	Manifest *manifest.Manifest
+	Errors    []diagnostic.Diagnostic
+	Manifest  *manifest.Manifest
+	Placement placementplan.Plan
 }
 
 func WithStdlib() Option {
@@ -93,7 +96,11 @@ func CheckAndExport(src, name string, opts ...Option) *ModuleResult {
 		m = manifest.New(name)
 		m.SetExport(typ.Unknown)
 	}
-	return &ModuleResult{Errors: result.Diagnostics, Manifest: m}
+	return &ModuleResult{Errors: result.Diagnostics, Manifest: m, Placement: result.PlacementPlan()}
+}
+
+func (r Result) PlacementPlan() placementplan.Plan {
+	return r.placement
 }
 
 func ChannelManifest() *manifest.Manifest {
@@ -166,7 +173,7 @@ func checkSource(src, filename string, opts ...Option) Result {
 	}
 	diags := append(structural, diagnostics.Produce(checked.RootResult())...)
 	setDefaultFile(diags, filename)
-	return Result{Diagnostics: diags, checked: &checked}
+	return Result{Diagnostics: diags, checked: &checked, placement: placementplan.FromProgramResult(checked)}
 }
 
 func applyOptions(opts []Option) config {

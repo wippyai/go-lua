@@ -191,7 +191,7 @@ func applyFrozenTableFact(
 	out state.State,
 	targetPath pathdom.Path,
 ) state.State {
-	target, ok := resolvePathValueAt(reg, resolver, point, out, targetPath, projectPath)
+	target, ok := resolvePlacementTargetValueAt(reg, resolver, point, out, targetPath, projectPath)
 	if !ok {
 		return out
 	}
@@ -231,7 +231,7 @@ func applyEscapeEventPlacement(
 	if !ok {
 		return out
 	}
-	target, ok := resolvePathValueAt(reg, resolver, point, out, targetPath, projectPath)
+	target, ok := resolvePlacementTargetValueAt(reg, resolver, point, out, targetPath, projectPath)
 	if !ok {
 		return out
 	}
@@ -243,6 +243,59 @@ func applyEscapeEventPlacement(
 		return writeJoinedPlacement(out, id, value)
 	}
 	return markReachableHeapPlacement(reg, out, id, value, map[identity.ID]struct{}{})
+}
+
+func resolvePlacementTargetValueAt(
+	reg *axis.Registry,
+	resolver *visibility.Resolver,
+	point cfg.Point,
+	out state.State,
+	targetPath pathdom.Path,
+	projectPath PathTypeProjector,
+) (pathValue, bool) {
+	target, ok := resolvePathValueAt(reg, resolver, point, out, targetPath, projectPath)
+	if ok {
+		if _, hasID := product.Get(reg, target.value, identity.Key).ID(); hasID {
+			return target, true
+		}
+	}
+	if len(targetPath.Segments) == 0 {
+		return target, ok
+	}
+	if projected, projectedOK := projectPathDynamicIndexValue(reg, resolver, point, out, targetPath); projectedOK {
+		if recovered, recoveredOK := mergePlacementIdentityProjection(reg, target, ok, projected); recoveredOK {
+			return recovered, true
+		}
+	}
+	if projected, projectedOK := projectPathHeapStaticMemberValue(reg, resolver, point, out, targetPath); projectedOK {
+		if recovered, recoveredOK := mergePlacementIdentityProjection(reg, target, ok, projected); recoveredOK {
+			return recovered, true
+		}
+	}
+	if projected, projectedOK := projectPathOriginValue(reg, out, targetPath); projectedOK {
+		if recovered, recoveredOK := mergePlacementIdentityProjection(reg, target, ok, projected); recoveredOK {
+			return recovered, true
+		}
+	}
+	return target, ok
+}
+
+func mergePlacementIdentityProjection(
+	reg *axis.Registry,
+	target pathValue,
+	hasTarget bool,
+	projected product.Value,
+) (pathValue, bool) {
+	if _, hasID := product.Get(reg, projected, identity.Key).ID(); !hasID {
+		return pathValue{}, false
+	}
+	if hasTarget {
+		if merged := product.Meet(reg, target.value, projected); !product.Equal(reg, merged, product.Bottom(reg)) {
+			target.value = merged
+			return target, true
+		}
+	}
+	return pathValue{value: projected}, true
 }
 
 func escapeEventPlacement(kind callboundary.EscapeEventKind) (placement.Value, bool) {

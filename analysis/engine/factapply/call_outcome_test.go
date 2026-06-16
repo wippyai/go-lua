@@ -707,6 +707,104 @@ func TestFactsNodeTransferCallOutcomeRecursiveEscapeSendMarksDynamicIndexKeyAndV
 	}
 }
 
+func TestFactsNodeTransferCallOutcomeEscapeRecoversDynamicEntryIdentityWhenPathValueIsTypeOnly(t *testing.T) {
+	reg := standard.Registry()
+	point := cfg.Point(708)
+	batch := symbol.ID(708)
+	argExpr := factflow.ExprRef(708)
+	batchPath := pathdom.NewPath(batch, "batch")
+	itemsPath := batchPath.Field("items")
+	itemPath := itemsPath.IndexStr("route-1")
+	batchID := identity.ID{Kind: "lua.table", Site: "escape-placement", Index: 20}
+	itemsID := identity.ID{Kind: "lua.table", Site: "escape-placement", Index: 21}
+	itemID := identity.ID{Kind: "lua.table", Site: "escape-placement", Index: 22}
+	childID := identity.ID{Kind: "lua.table", Site: "escape-placement", Index: 23}
+	batchValue := product.Set(reg, presentValue(reg), identity.Key, identity.Singleton(batchID))
+	itemsValue := product.Set(reg, presentValue(reg), identity.Key, identity.Singleton(itemsID))
+	itemValue := product.Set(reg, presentValue(reg), identity.Key, identity.Singleton(itemID))
+	childValue := product.Set(reg, presentValue(reg), identity.Key, identity.Singleton(childID))
+	itemsKey, ok := heapidentity.StaticMemberSuffixKey(fieldSuffix("items").Segments)
+	if !ok {
+		t.Fatal("missing items suffix key")
+	}
+	childKey, ok := heapidentity.StaticMemberSuffixKey(fieldSuffix("child").Segments)
+	if !ok {
+		t.Fatal("missing child suffix key")
+	}
+	builder := visibility.NewBuilder()
+	builder.Define(point, batch, "batch")
+	resolver := visibility.NewResolver(builder.Build())
+	itemPathKey := resolver.KeyAt(point, itemPath)
+	if itemPathKey == "" {
+		t.Fatal("missing item path key")
+	}
+	in := state.State{}.
+		WriteValue(reg, key.SymbolValue(batch), batchValue).
+		WritePathKey(reg, itemPathKey, presentValue(reg)).
+		WriteHeapTableObject(reg, batchID, heapidentity.NewTableObject(heapidentity.TableObjectConfig{
+			Root:          batchValue,
+			StaticMembers: map[pathdom.PathKey]product.Value{itemsKey: itemsValue},
+		})).
+		WriteHeapTableObject(reg, itemsID, heapidentity.NewTableObject(heapidentity.TableObjectConfig{
+			Root: itemsValue,
+			DynamicIndexFacts: map[dynamicindex.Key]dynamicindex.Fact{
+				{Table: pathdom.PathKey("callee.items"), Site: "callee.write"}: {
+					KeyPresence: presence.Present(),
+					KeyValue:    presentValue(reg),
+					Value:       itemValue,
+					Admission:   dynamicindex.AdmissionAdmitted,
+				},
+			},
+		})).
+		WriteHeapTableObject(reg, itemID, heapidentity.NewTableObject(heapidentity.TableObjectConfig{
+			Root:          itemValue,
+			StaticMembers: map[pathdom.PathKey]product.Value{childKey: childValue},
+		})).
+		WriteHeapTableObject(reg, childID, heapidentity.NewTableObject(heapidentity.TableObjectConfig{
+			Root: childValue,
+		}))
+	projected, ok := projectPathDynamicIndexValue(reg, resolver, point, in, itemPath)
+	if !ok || !product.Equal(reg, projected, itemValue) {
+		t.Fatalf("dynamic item projection = %s/%v, want item identity", formatValue(reg, projected), ok)
+	}
+
+	got := NewFactsNodeTransfer(FactsNodeTransferConfig{
+		Facts: factflow.NewFacts(factflow.FactsInput{
+			CallSites: map[cfg.Point]factflow.CallSite{
+				point: factflow.NewCallSite(factflow.CallSiteConfig{
+					Context: factflow.CallSiteContextStatement,
+					ArgumentSources: []factflow.ValueSource{
+						{Kind: factflow.ValueSourceExpression, ExprRef: argExpr, HasExpr: true},
+					},
+				}),
+			},
+			ExpressionPaths: map[factflow.ExprRef]pathdom.Path{
+				argExpr: itemPath,
+			},
+		}),
+		CallOutcome: func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) CallOutcome {
+			return CallOutcome{
+				NormalReturnFacts: callboundary.NormalReturnFacts{
+					EscapeEvents: []callboundary.EscapeEventFact{
+						{Target: pathdom.NewPlaceholder(0), Kind: callboundary.EscapeEventSend, Recursive: true},
+					},
+				},
+			}
+		},
+		Visibility: resolver,
+	})(transfer.NodeContext{
+		Registry: reg,
+		Point:    point,
+	}, in)
+
+	if gotPlacement := got.ReadPlacement(itemID); gotPlacement != placement.SharedHeap {
+		t.Fatalf("placement[%v] = %s, want %s", itemID, gotPlacement, placement.SharedHeap)
+	}
+	if gotPlacement := got.ReadPlacement(childID); gotPlacement != placement.SharedHeap {
+		t.Fatalf("placement[%v] = %s, want %s", childID, gotPlacement, placement.SharedHeap)
+	}
+}
+
 func TestFactsNodeTransferCallOutcomeRecursiveEscapeTerminatesOnCyclicHeapPlacement(t *testing.T) {
 	tests := []struct {
 		name string

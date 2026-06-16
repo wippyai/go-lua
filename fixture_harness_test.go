@@ -12,8 +12,12 @@ import (
 	"testing"
 
 	testutil "github.com/wippyai/go-lua/analysis/check/checktest"
+	"github.com/wippyai/go-lua/analysis/check/placementplan"
 	diag "github.com/wippyai/go-lua/analysis/diagnostic"
+	"github.com/wippyai/go-lua/analysis/domain/effect"
+	"github.com/wippyai/go-lua/analysis/domain/effect/ownership"
 	typemanifest "github.com/wippyai/go-lua/analysis/module/manifest"
+	"github.com/wippyai/go-lua/analysis/module/signature"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
@@ -31,8 +35,20 @@ type fixtureSuite struct {
 }
 
 type fixtureCheck struct {
-	Errors *int   `json:"errors,omitempty"`
-	Skip   string `json:"skip,omitempty"`
+	Errors    *int              `json:"errors,omitempty"`
+	Placement *fixturePlacement `json:"placement,omitempty"`
+	Skip      string            `json:"skip,omitempty"`
+}
+
+type fixturePlacement struct {
+	RequireComplete    bool `json:"require_complete,omitempty"`
+	MinStack           int  `json:"min_stack,omitempty"`
+	MinOwnedHeap       int  `json:"min_owned_heap,omitempty"`
+	MinSharedHeap      int  `json:"min_shared_heap,omitempty"`
+	MinOwnerIdentity   int  `json:"min_owner_identity,omitempty"`
+	MinSealBeforeShare int  `json:"min_seal_before_share,omitempty"`
+	MaxNoFact          *int `json:"max_no_fact,omitempty"`
+	MaxUnknown         *int `json:"max_unknown,omitempty"`
 }
 
 type fixtureRun struct {
@@ -206,6 +222,7 @@ func runCheckPhase(t *testing.T, s namedSuite) {
 	}
 	var moduleOrder []namedModule
 	var allDiagnostics []diag.Diagnostic
+	var placementPlans []placementplan.Plan
 	for _, f := range files[:len(files)-1] {
 		modOpts := append([]testutil.Option{}, baseOpts...)
 		for _, nm := range moduleOrder {
@@ -215,6 +232,7 @@ func runCheckPhase(t *testing.T, s namedSuite) {
 		mod := testutil.CheckAndExport(sources[f], name, modOpts...)
 		moduleOrder = append(moduleOrder, namedModule{name, mod})
 		allDiagnostics = append(allDiagnostics, mod.Errors...)
+		placementPlans = append(placementPlans, mod.Placement)
 	}
 
 	// Check entry point
@@ -225,6 +243,7 @@ func runCheckPhase(t *testing.T, s namedSuite) {
 	entryFile := files[len(files)-1]
 	result := testutil.Check(sources[entryFile], entryOpts...)
 	allDiagnostics = append(allDiagnostics, result.Diagnostics...)
+	placementPlans = append(placementPlans, result.PlacementPlan())
 
 	// Verify expectations
 	if len(allExpectations) > 0 {
@@ -234,6 +253,81 @@ func runCheckPhase(t *testing.T, s namedSuite) {
 	} else {
 		verifyClean(t, allDiagnostics)
 	}
+	if s.Suite.Check != nil && s.Suite.Check.Placement != nil {
+		verifyPlacementExpectations(t, *s.Suite.Check.Placement, placementplan.Merge(placementPlans...))
+	}
+}
+
+func verifyPlacementExpectations(t testing.TB, expect fixturePlacement, plan placementplan.Plan) {
+	t.Helper()
+	if expect.RequireComplete && plan.Incomplete {
+		t.Fatalf("placement plan incomplete: blockers=%v entries=%s", plan.Blockers, formatPlacementEntries(plan))
+	}
+	counts := placementCounts(plan)
+	assertMinPlacementCount(t, "stack", counts.stack, expect.MinStack, plan)
+	assertMinPlacementCount(t, "owned-heap", counts.ownedHeap, expect.MinOwnedHeap, plan)
+	assertMinPlacementCount(t, "shared-heap", counts.sharedHeap, expect.MinSharedHeap, plan)
+	assertMinPlacementCount(t, "owner-identity obligations", counts.ownerIdentity, expect.MinOwnerIdentity, plan)
+	assertMinPlacementCount(t, "seal-before-share obligations", counts.sealBeforeShare, expect.MinSealBeforeShare, plan)
+	if expect.MaxNoFact != nil && counts.noFact > *expect.MaxNoFact {
+		t.Fatalf("placement no-fact count = %d, want <= %d; entries=%s", counts.noFact, *expect.MaxNoFact, formatPlacementEntries(plan))
+	}
+	if expect.MaxUnknown != nil && counts.unknown > *expect.MaxUnknown {
+		t.Fatalf("placement unknown count = %d, want <= %d; entries=%s", counts.unknown, *expect.MaxUnknown, formatPlacementEntries(plan))
+	}
+}
+
+type fixturePlacementCounts struct {
+	stack           int
+	ownedHeap       int
+	sharedHeap      int
+	noFact          int
+	unknown         int
+	ownerIdentity   int
+	sealBeforeShare int
+}
+
+func placementCounts(plan placementplan.Plan) fixturePlacementCounts {
+	var counts fixturePlacementCounts
+	for _, entry := range plan.Entries {
+		switch entry.Target {
+		case placementplan.TargetStack:
+			counts.stack++
+		case placementplan.TargetOwnedHeap:
+			counts.ownedHeap++
+		case placementplan.TargetSharedHeap:
+			counts.sharedHeap++
+		case placementplan.TargetNoFact:
+			counts.noFact++
+		case placementplan.TargetUnknown:
+			counts.unknown++
+		}
+		for _, obligation := range entry.Obligations {
+			switch obligation {
+			case placementplan.ObligationOwnerIdentity:
+				counts.ownerIdentity++
+			case placementplan.ObligationSealBeforeShare:
+				counts.sealBeforeShare++
+			}
+		}
+	}
+	return counts
+}
+
+func assertMinPlacementCount(t testing.TB, label string, got, want int, plan placementplan.Plan) {
+	t.Helper()
+	if got < want {
+		t.Fatalf("placement %s count = %d, want >= %d; entries=%s", label, got, want, formatPlacementEntries(plan))
+	}
+}
+
+func formatPlacementEntries(plan placementplan.Plan) string {
+	var parts []string
+	for _, entry := range plan.Entries {
+		parts = append(parts, fmt.Sprintf("%s:%s reasons=%v obligations=%v blockers=%v", entry.ID, entry.Target, entry.Reasons, entry.Obligations, entry.Blockers))
+	}
+	sort.Strings(parts)
+	return strings.Join(parts, "; ")
 }
 
 func verifyInlineExpectations(t testing.TB, expectations []inlineExpectation, diagnostics []diag.Diagnostic, entryFile string) {
@@ -398,6 +492,8 @@ func resolvePackageManifest(name string) *typemanifest.Manifest {
 		return testutil.FuncsManifest()
 	case "process":
 		return testutil.ProcessManifest()
+	case "ownership":
+		return fixtureOwnershipManifest()
 	case "time":
 		return fixtureTimeManifest()
 	case "uuid":
@@ -405,6 +501,22 @@ func resolvePackageManifest(name string) *typemanifest.Manifest {
 	default:
 		return nil
 	}
+}
+
+func fixtureOwnershipManifest() *typemanifest.Manifest {
+	m := typemanifest.New("ownership")
+	m.DefineFunctionSignature("ownership.store", signature.Function{
+		Type: typ.Func().
+			Param("value", typ.Any).
+			Param("container", typ.Any).
+			Build(),
+		Effect: effect.Empty.With(ownership.Store{
+			Param: effect.ParamRef{Index: 0},
+			Into:  effect.ParamRef{Index: 1},
+		}),
+	})
+	m.SetExport(typ.Unknown)
+	return m
 }
 
 func fixtureTimeManifest() *typemanifest.Manifest {

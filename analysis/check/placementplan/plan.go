@@ -101,6 +101,38 @@ func FromResult(result *body.Result) Plan {
 	return FromBodyResult(result)
 }
 
+func Merge(plans ...Plan) Plan {
+	aggregate := newAggregate()
+	for _, plan := range plans {
+		if plan.Top {
+			aggregate.top = true
+		}
+		if plan.Incomplete {
+			aggregate.incomplete = true
+		}
+		for _, blocker := range plan.Blockers {
+			aggregate.blockers[blocker] = struct{}{}
+		}
+		for _, entry := range plan.Entries {
+			if entry.HasObject {
+				aggregate.objects[entry.ID] = struct{}{}
+			}
+			if entry.Frozen {
+				aggregate.frozen[entry.ID] = struct{}{}
+			}
+			if entry.Target == TargetNoFact {
+				continue
+			}
+			if prev, ok := aggregate.placements[entry.ID]; ok {
+				aggregate.placements[entry.ID] = placement.Join(prev, entry.Placement)
+				continue
+			}
+			aggregate.placements[entry.ID] = entry.Placement
+		}
+	}
+	return aggregate.plan()
+}
+
 func (p Plan) Placement(id identity.ID) (placement.Value, bool) {
 	for _, entry := range p.Entries {
 		if entry.ID == id && entry.Target != TargetNoFact {
