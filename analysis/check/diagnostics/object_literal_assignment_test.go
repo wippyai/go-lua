@@ -223,6 +223,27 @@ func TestCallParamObligationRejectsObjectLiteralExplicitAnyMember(t *testing.T) 
 	t.Fatalf("diagnostics = %#v, want call-site obligation member mismatch", diags)
 }
 
+func TestCallParamObligationRejectsExplicitAnyStructuralWitness(t *testing.T) {
+	diags := runDiagnostics(t, `
+		type Point = {id: string}
+		type Sink = {send: (p: Point) -> ()}
+		function wrap(sink: Sink, payload)
+			sink.send(payload)
+		end
+		local sink: Sink = {send = function(p: Point) end}
+		local raw = ({id = "ok"} :: any)
+		wrap(sink, raw)
+	`)
+	for _, d := range diags {
+		if d.Code == CodeDirectCallArgType &&
+			strings.Contains(d.Message, "argument 2") &&
+			strings.Contains(d.Message, "id") {
+			return
+		}
+	}
+	t.Fatalf("diagnostics = %#v, want call-site obligation mismatch for explicit-any structural witness", diags)
+}
+
 func TestOrdinaryAssignmentRejectsObjectLiteralExplicitAnyMember(t *testing.T) {
 	diags := runDiagnostics(t, `
 		type Point = {id: string}

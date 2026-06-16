@@ -7,8 +7,8 @@ import (
 	"github.com/wippyai/go-lua/analysis/check/body"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/program"
 	"github.com/wippyai/go-lua/analysis/diagnostic"
-	"github.com/wippyai/go-lua/analysis/test/value/standard"
 	"github.com/wippyai/go-lua/analysis/module/signaturelookup"
+	"github.com/wippyai/go-lua/analysis/test/value/standard"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/typeexpr"
@@ -129,6 +129,34 @@ func TestAnnotationAssignabilityDoesNotTrustCastEscape(t *testing.T) {
 	}
 	if got := diags[0].Explanation.String(); !strings.Contains(got, "source expression") {
 		t.Fatalf("explanation = %q, want source evidence", got)
+	}
+}
+
+func TestAnnotationAssignabilityDoesNotTrustExplicitAnyStructuralWitness(t *testing.T) {
+	diags := runDiagnostics(t, `
+local raw = ({ id = "ok" } :: any)
+local req: { id: string } = raw
+`)
+	if len(diags) != 1 {
+		t.Fatalf("diagnostics = %d, want 1 explicit-any structural witness error: %#v", len(diags), diags)
+	}
+	if d := diags[0]; d.Code != CodeAssignmentType || !strings.Contains(d.Message, "id") {
+		t.Fatalf("diagnostic = %#v, want assignment mismatch for record id contract", d)
+	}
+}
+
+func TestDirectCallDoesNotTrustExplicitAnyStructuralWitness(t *testing.T) {
+	diags := runDiagnostics(t, `
+local function accept(req: { id: string })
+end
+local raw = ({ id = "ok" } :: any)
+accept(raw)
+`)
+	if len(diags) != 1 {
+		t.Fatalf("diagnostics = %d, want 1 explicit-any call error: %#v", len(diags), diags)
+	}
+	if d := diags[0]; d.Code != CodeDirectCallArgType || !strings.Contains(d.Message, "id") {
+		t.Fatalf("diagnostic = %#v, want direct call mismatch for record id contract", d)
 	}
 }
 

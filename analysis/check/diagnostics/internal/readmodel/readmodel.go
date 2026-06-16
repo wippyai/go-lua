@@ -3,6 +3,7 @@ package readmodel
 import (
 	"github.com/wippyai/go-lua/analysis/check/body"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/assertion"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/evidence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
@@ -212,13 +213,19 @@ func (r Reader) ValueAdmissible(value product.Value, want typ.Type) bool {
 	if presence.Equal(product.PresenceOf(value), presence.Maybe()) && !subtype.IsSubtype(typ.Nil, want) {
 		return false
 	}
+	gotEvidence := product.Get(reg, value, evidence.Key)
+	if gotEvidence.IsExplicitTop() && explicitAnyClaim(reg, value) {
+		if projected, ok := scalarRuntimeKindType(reg, value); ok && subtype.IsSubtype(projected, want) {
+			return true
+		}
+		return false
+	}
 	if witness := product.Get(reg, value, typewitness.Key); !witness.IsTop() {
 		if t, ok := witness.Type(); ok && subtype.IsSubtype(t, want) {
 			return true
 		}
 	}
-	gotEvidence := product.Get(reg, value, evidence.Key)
-	if gotEvidence.IsGradualTop() || gotEvidence.IsExplicitTop() {
+	if gotEvidence.IsGradualTop() {
 		return false
 	}
 	if projected, ok := concreteBoundaryType(reg, value); ok && subtype.IsSubtype(projected, want) {
@@ -267,6 +274,12 @@ func (r Reader) ValueProofAdmissible(value product.Value, want typ.Type) bool {
 	if presence.Equal(product.PresenceOf(value), presence.Maybe()) && !subtype.IsSubtype(typ.Nil, want) {
 		return false
 	}
+	if product.Get(reg, value, evidence.Key).IsExplicitTop() && explicitAnyClaim(reg, value) {
+		if t, ok := scalarRuntimeKindType(reg, value); ok && subtype.IsSubtype(t, want) {
+			return true
+		}
+		return false
+	}
 	if witness := product.Get(reg, value, typewitness.Key); !witness.IsTop() {
 		if t, ok := witness.Type(); ok && subtype.IsSubtype(t, want) {
 			return true
@@ -276,6 +289,11 @@ func (r Reader) ValueProofAdmissible(value product.Value, want typ.Type) bool {
 		return true
 	}
 	return false
+}
+
+func explicitAnyClaim(reg *axis.Registry, value product.Value) bool {
+	claim := product.Get(reg, value, assertion.Key)
+	return claim.Has(assertion.AnyClaim)
 }
 
 func valueSourceFromASTSource(source sourceprovenance.ASTSource) (factflow.ValueSource, bool) {

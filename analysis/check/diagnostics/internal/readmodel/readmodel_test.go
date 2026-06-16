@@ -6,16 +6,18 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/check/body"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/assertion"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/evidence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/variantorigin"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
-	"github.com/wippyai/go-lua/analysis/test/value/standard"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/domain/value/variant"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
 	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
+	"github.com/wippyai/go-lua/analysis/test/value/standard"
 	"github.com/wippyai/go-lua/analysis/type/kind"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
@@ -114,6 +116,69 @@ func TestValueTypeMaybeWitnessStaysConcrete(t *testing.T) {
 		t.Fatalf("ValueType returned false")
 	}
 	assertSameType(t, got, typ.String)
+}
+
+func TestExplicitTopWitnessIsNotStructuralAdmissibilityProof(t *testing.T) {
+	reg := standard.Registry()
+	result, err := body.CheckChunk(nil, body.Config{Registry: reg})
+	if err != nil {
+		t.Fatalf("CheckChunk: %v", err)
+	}
+	record := typetable.NewRecord().
+		Field("id", typ.String).
+		Build()
+	value := typevalue.WithWitness(reg, presentValue(reg), record)
+	value = product.Set(reg, value, evidence.Key, evidence.ExplicitTop())
+	value = product.Set(reg, value, assertion.Key, assertion.Any())
+	reader := New(result)
+
+	if reader.ValueAdmissible(value, record) {
+		t.Fatalf("ValueAdmissible accepted explicit-top structural witness")
+	}
+	if reader.ValueProofAdmissible(value, record) {
+		t.Fatalf("ValueProofAdmissible accepted explicit-top structural witness")
+	}
+}
+
+func TestExplicitTopTypeClaimWitnessIsStructuralAdmissibilityProof(t *testing.T) {
+	reg := standard.Registry()
+	result, err := body.CheckChunk(nil, body.Config{Registry: reg})
+	if err != nil {
+		t.Fatalf("CheckChunk: %v", err)
+	}
+	record := typetable.NewRecord().
+		Field("id", typ.String).
+		Build()
+	value := typevalue.WithWitness(reg, presentValue(reg), record)
+	value = product.Set(reg, value, evidence.Key, evidence.ExplicitTop())
+	value = product.Set(reg, value, assertion.Key, assertion.Type())
+	reader := New(result)
+
+	if !reader.ValueAdmissible(value, record) {
+		t.Fatalf("ValueAdmissible rejected explicit-top structural TypeClaim")
+	}
+	if !reader.ValueProofAdmissible(value, record) {
+		t.Fatalf("ValueProofAdmissible rejected explicit-top structural TypeClaim")
+	}
+}
+
+func TestExplicitTopScalarRuntimeKindRemainsAdmissibleProof(t *testing.T) {
+	reg := standard.Registry()
+	result, err := body.CheckChunk(nil, body.Config{Registry: reg})
+	if err != nil {
+		t.Fatalf("CheckChunk: %v", err)
+	}
+	value := product.Set(reg, presentValue(reg), evidence.Key, evidence.ExplicitTop())
+	value = product.Set(reg, value, assertion.Key, assertion.Any())
+	value = product.Set(reg, value, runtimekind.Key, runtimekind.Singleton(runtimekind.String))
+	reader := New(result)
+
+	if !reader.ValueAdmissible(value, typ.String) {
+		t.Fatalf("ValueAdmissible rejected explicit-top scalar runtime-kind proof")
+	}
+	if !reader.ValueProofAdmissible(value, typ.String) {
+		t.Fatalf("ValueProofAdmissible rejected explicit-top scalar runtime-kind proof")
+	}
 }
 
 func TestVariantOriginTypeProjectsStructuralUnion(t *testing.T) {
