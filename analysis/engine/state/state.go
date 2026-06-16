@@ -30,7 +30,7 @@ type State struct {
 	heapTableIdentity map[identity.ID]heapidentity.TableObject
 	effectDeltas      map[effectdelta.Key]effectdelta.Value
 	channelSelect     channelselectfact.Lane
-	placement         map[identity.ID]placement.Value
+	placement         placementLane
 	lenFloors         lift.MustMapLane[pathdom.PathKey, lenbound.Floor]
 	numFloors         lift.MustMapLane[pathdom.PathKey, numbound.Floor]
 
@@ -39,11 +39,11 @@ type State struct {
 	dynamicIndexTop      bool
 	heapTableIdentityTop bool
 	effectDeltasTop      bool
-	placementTop         bool
 }
 
-// TODO(perf): replace raw map fields with immutable lane handles so this
-// persistence contract is enforced by representation, not package convention.
+// TODO(perf): replace the remaining raw map fields with immutable lane handles
+// so this persistence contract is enforced by representation, not package
+// convention.
 // Snapshot returns a point-in-time state value. State lanes are persistent by
 // convention: exported write APIs copy any lane they change, so unchanged lanes
 // can be shared safely across solver snapshots.
@@ -161,7 +161,7 @@ func Domain(reg *axis.Registry) lattice.Lattice[State] {
 				dynamicIndexTop:      true,
 				heapTableIdentityTop: true,
 				effectDeltasTop:      true,
-				placementTop:         true,
+				placement:            placementLane{top: true},
 				lenFloors:            ops.lenFloors.Top(),
 				numFloors:            ops.numFloors.Top(),
 			}
@@ -258,10 +258,7 @@ func (o domainOps) effectDeltaLane(s State) map[effectdelta.Key]effectdelta.Valu
 }
 
 func (o domainOps) placementLane(s State) map[identity.ID]placement.Value {
-	if s.placementTop {
-		return o.placement.Top()
-	}
-	return s.placement
+	return s.placement.asMap(o.placement)
 }
 
 func (o domainOps) fromLanes(
@@ -298,11 +295,7 @@ func (o domainOps) fromLanes(
 		out.effectDeltas = effectDeltas
 	}
 	out.channelSelect = channelSelect
-	if o.placement.Equal(placementLane, o.placement.Top()) {
-		out.placementTop = true
-	} else {
-		out.placement = placementLane
-	}
+	out.placement = placementLaneFromMap(o.placement, placementLane)
 	out.lenFloors = lenFloors
 	out.numFloors = numFloors
 	return out
@@ -344,33 +337,6 @@ func cloneNumFloors(in map[pathdom.PathKey]numbound.Floor) map[pathdom.PathKey]n
 
 func placementMapDomain() lattice.Lattice[map[identity.ID]placement.Value] {
 	return lift.Map[identity.ID, placement.Value](placement.Spec().Lattice())
-}
-
-func clonePlacementMap(in map[identity.ID]placement.Value) map[identity.ID]placement.Value {
-	if len(in) == 0 {
-		return nil
-	}
-	out := make(map[identity.ID]placement.Value, len(in))
-	for k, v := range in {
-		out[k] = v
-	}
-	return out
-}
-
-func deletePlacementEntry(in map[identity.ID]placement.Value, id identity.ID) (map[identity.ID]placement.Value, bool) {
-	if _, ok := in[id]; !ok {
-		return in, false
-	}
-	out := make(map[identity.ID]placement.Value, len(in)-1)
-	for k, v := range in {
-		if k != id {
-			out[k] = v
-		}
-	}
-	if len(out) == 0 {
-		return nil, true
-	}
-	return out, true
 }
 
 func cloneValueMap(in map[key.Value]product.Value) map[key.Value]product.Value {

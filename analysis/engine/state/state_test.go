@@ -404,7 +404,7 @@ func TestStateBottomWritesRemoveExplicitBottomEntries(t *testing.T) {
 	if _, ok := state.effectDeltas[fx.effectKey]; ok {
 		t.Fatalf("effect delta kept explicit bottom entry")
 	}
-	if _, ok := state.placement[fx.escapeID]; ok {
+	if state.placement.hasFinite(fx.escapeID) {
 		t.Fatalf("placement kept explicit bottom entry")
 	}
 }

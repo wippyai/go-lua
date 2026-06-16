@@ -6,27 +6,18 @@ import (
 )
 
 func (s State) ReadPlacement(id identity.ID) placement.Value {
-	if id == (identity.ID{}) {
-		return placement.Bottom
-	}
-	if s.placementTop {
-		return placement.Unknown
-	}
-	if value, ok := s.placement[id]; ok {
-		return value
-	}
-	return placement.Bottom
+	return s.placement.read(id)
 }
 
 func (s State) WritePlacement(id identity.ID, value placement.Value) State {
 	if id == (identity.ID{}) {
 		return s
 	}
-	if s.placementTop {
+	if s.placement.top {
 		panic("state: cannot finite-write placement into top placement lane")
 	}
 	if value == placement.Bottom {
-		placements, changed := deletePlacementEntry(s.placement, id)
+		placements, changed := s.placement.without(id)
 		if !changed {
 			return s
 		}
@@ -34,15 +25,10 @@ func (s State) WritePlacement(id identity.ID, value placement.Value) State {
 		out.placement = placements
 		return out
 	}
-	if existing, ok := s.placement[id]; ok && placement.Equal(existing, value) {
+	if placement.Equal(s.placement.read(id), value) {
 		return s
 	}
-	placements := clonePlacementMap(s.placement)
-	if placements == nil {
-		placements = make(map[identity.ID]placement.Value, 1)
-	}
-	placements[id] = value
 	out := s.reachable()
-	out.placement = placements
+	out.placement = s.placement.with(id, value)
 	return out
 }
