@@ -119,6 +119,132 @@ func TestBottomIsCachedPerRegistry(t *testing.T) {
 	}
 }
 
+func TestProductHashReturnsStoredNodeHash(t *testing.T) {
+	hashCalls := 0
+	spec := syntheticSpec()
+	spec.Hash = func(v synthetic) uint64 {
+		hashCalls++
+		return uint64(v) + 1
+	}
+	reg := mustRegistry(t, spec.Erase())
+
+	v := Set(reg, Top(), syntheticKey, syntheticLow)
+	if v.n == nil {
+		t.Fatalf("non-top sparse value must be interned")
+	}
+	hashCalls = 0
+	if got := Hash(reg, v); got != v.n.hash {
+		t.Fatalf("Hash = %d, want stored node hash %d", got, v.n.hash)
+	}
+	if hashCalls != 0 {
+		t.Fatalf("Hash recomputed sparse axis hash %d times, want stored node hash fast path", hashCalls)
+	}
+}
+
+func TestProductEqualRejectsHashMismatchBeforeAxisEquality(t *testing.T) {
+	equalCalls := 0
+	spec := syntheticSpec()
+	spec.Equal = func(a, b synthetic) bool {
+		equalCalls++
+		return a == b
+	}
+	reg := mustRegistry(t, spec.Erase())
+
+	a := Set(reg, Top(), syntheticKey, syntheticLow)
+	if a.n == nil {
+		t.Fatalf("non-top sparse value must be interned")
+	}
+	copiedSlots := append([]slot(nil), a.n.slots...)
+	mismatchedHash := a.n.hash + 1
+	if mismatchedHash == 0 {
+		mismatchedHash = 1
+	}
+	b := Value{n: &node{
+		reg:      a.n.reg,
+		shape:    a.n.shape,
+		presence: a.n.presence,
+		slots:    copiedSlots,
+		hash:     mismatchedHash,
+	}}
+
+	equalCalls = 0
+	if Equal(reg, a, b) {
+		t.Fatalf("Equal should reject nonzero hash mismatch")
+	}
+	if equalCalls != 0 {
+		t.Fatalf("Equal called sparse axis equality %d times after hash mismatch, want fast false", equalCalls)
+	}
+}
+
+func TestProductTopIdentityFastPathsAvoidAxisOperations(t *testing.T) {
+	var joinCalls, meetCalls, widenCalls int
+	spec := syntheticSpec()
+	spec.Join = func(a, b synthetic) synthetic {
+		joinCalls++
+		return syntheticSpec().Join(a, b)
+	}
+	spec.Meet = func(a, b synthetic) synthetic {
+		meetCalls++
+		return syntheticSpec().Meet(a, b)
+	}
+	spec.Widen = func(prev, next synthetic) synthetic {
+		widenCalls++
+		return syntheticSpec().Widen(prev, next)
+	}
+	reg := mustRegistry(t, spec.Erase())
+
+	v := Set(reg, Top(), syntheticKey, syntheticLow)
+	joinCalls, meetCalls, widenCalls = 0, 0, 0
+
+	if got := Join(reg, Top(), v); got.n != nil {
+		t.Fatalf("Join(top, v) = %s, want top", formatValue(got))
+	}
+	if got := Join(reg, v, Top()); got.n != nil {
+		t.Fatalf("Join(v, top) = %s, want top", formatValue(got))
+	}
+	if got := Widen(reg, Top(), v); got.n != nil {
+		t.Fatalf("Widen(top, v) = %s, want top", formatValue(got))
+	}
+	if got := Widen(reg, v, Top()); got.n != nil {
+		t.Fatalf("Widen(v, top) = %s, want top", formatValue(got))
+	}
+	if got := Meet(reg, Top(), v); got.n != v.n {
+		t.Fatalf("Meet(top, v) = %s, want original operand %s", formatValue(got), formatValue(v))
+	}
+	if got := Meet(reg, v, Top()); got.n != v.n {
+		t.Fatalf("Meet(v, top) = %s, want original operand %s", formatValue(got), formatValue(v))
+	}
+
+	if joinCalls != 0 || meetCalls != 0 || widenCalls != 0 {
+		t.Fatalf("top identity fast paths called axis ops: join=%d meet=%d widen=%d", joinCalls, meetCalls, widenCalls)
+	}
+}
+
+func TestProductTopIdentityFastPathsStillValidateOperands(t *testing.T) {
+	regA := mustRegistry(t, syntheticSpec().Erase())
+	regB := mustRegistry(t, syntheticSpec().Erase())
+	a := Set(regA, Top(), syntheticKey, syntheticLow)
+
+	mustPanic(t, func() {
+		_ = Join(regB, Top(), a)
+	})
+	mustPanic(t, func() {
+		_ = Join(regB, a, Top())
+	})
+	mustPanic(t, func() {
+		_ = Widen(regB, Top(), a)
+	})
+	mustPanic(t, func() {
+		_ = Widen(regB, a, Top())
+	})
+	mustPanic(t, func() {
+		_ = Meet(regB, Top(), a)
+	})
+	mustPanic(t, func() {
+		_ = Meet(regB, a, Top())
+	})
+}
+
 func TestFreshRegistryValuesStayIsolatedByPointerIdentity(t *testing.T) {
 	regA := mustRegistry(t, syntheticSpec().Erase())
 	regB := mustRegistry(t, syntheticSpec().Erase())

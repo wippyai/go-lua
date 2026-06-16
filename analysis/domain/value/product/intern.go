@@ -82,5 +82,5 @@ func Hash(reg *axis.Registry, v Value) uint64 {
 		return rt.stableHash(ShapeTop, presence.Top(), nil)
 	}
 	rt.validateValue(v)
-	return rt.stableHash(v.n.shape, v.n.presence, v.n.slots)
+	return v.n.hash
 }

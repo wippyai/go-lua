@@ -39,6 +39,9 @@ func equalRuntime(rt *registryRuntime, a, b Value) bool {
 	if a.n == b.n {
 		return true
 	}
+	if a.n != nil && b.n != nil && a.n.hash != 0 && b.n.hash != 0 && a.n.hash != b.n.hash {
+		return false
+	}
 	if ShapeOf(a) != ShapeOf(b) {
 		return false
 	}
@@ -90,6 +93,9 @@ func joinRuntime(rt *registryRuntime, a, b Value) Value {
 	if a.n == b.n {
 		return a
 	}
+	if a.n == nil || b.n == nil {
+		return Top()
+	}
 	slots := make([]slot, 0, len(rt.canonicalAxes))
 	for i := range rt.canonicalAxes {
 		spec := rt.canonicalAxes[i]
@@ -113,6 +119,12 @@ func meetRuntime(rt *registryRuntime, a, b Value) Value {
 	rt.validateValue(a)
 	rt.validateValue(b)
 	if a.n == b.n {
+		return a
+	}
+	if a.n == nil {
+		return b
+	}
+	if b.n == nil {
 		return a
 	}
 	slots := make([]slot, 0, len(rt.canonicalAxes))
@@ -139,6 +151,9 @@ func widenRuntime(rt *registryRuntime, prev, next Value) Value {
 	rt.validateValue(next)
 	if prev.n == next.n {
 		return prev
+	}
+	if prev.n == nil || next.n == nil {
+		return Top()
 	}
 	slots := make([]slot, 0, len(rt.canonicalAxes))
 	for i := range rt.canonicalAxes {
