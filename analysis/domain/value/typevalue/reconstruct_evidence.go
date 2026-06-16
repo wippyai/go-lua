@@ -1,0 +1,50 @@
+package typevalue
+
+import (
+	"github.com/wippyai/go-lua/analysis/domain/value/axis"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
+	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	typenormalize "github.com/wippyai/go-lua/analysis/type/normalize"
+	"github.com/wippyai/go-lua/analysis/type/typ"
+)
+
+func runtimeKindType(reg *axis.Registry, value product.Value) (typ.Type, bool) {
+	kinds := product.Get(reg, value, runtimekind.Key)
+	if kinds.IsBottom() || kinds.IsTop() {
+		return nil, false
+	}
+	members := make([]typ.Type, 0, len(kinds.Tags()))
+	for _, tag := range kinds.Tags() {
+		switch tag {
+		case runtimekind.Nil:
+			members = append(members, typ.Nil)
+		case runtimekind.Boolean:
+			members = append(members, typ.Boolean)
+		case runtimekind.Number:
+			members = append(members, typ.Number)
+		case runtimekind.String:
+			members = append(members, typ.String)
+		default:
+			return nil, false
+		}
+	}
+	t, ok := unionType(members)
+	if !ok {
+		return nil, false
+	}
+	return typeWithPresence(t, product.PresenceOf(value)), true
+}
+
+func unionType(types []typ.Type) (typ.Type, bool) {
+	switch len(types) {
+	case 0:
+		return nil, false
+	case 1:
+		if types[0] == nil {
+			return nil, false
+		}
+		return types[0], true
+	default:
+		return typenormalize.UnionForEvidence(types...), true
+	}
+}

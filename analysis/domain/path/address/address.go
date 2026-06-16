@@ -58,15 +58,11 @@ func StableFromKey(key pathdom.PathKey) (Stable, bool) {
 	if root, segments, ok := parseEncodedNamedRootKey(string(key)); ok {
 		return stableOfRootOwnedSegments(root, segments)
 	}
-	root, suffixText, ok := parseRootAndSuffix(key)
+	parsed, ok := parsePlainNamedRootSuffix(key)
 	if !ok {
 		return Stable{}, false
 	}
-	segments, ok := segment.InternFormattedSegments(suffixText)
-	if !ok {
-		return Stable{}, false
-	}
-	return stableOfRootOwnedSegments(root, segments)
+	return stableOfRootOwnedSegments(parsed.root, parsed.segments)
 }
 
 // Key returns the deterministic key for map/set carriers.

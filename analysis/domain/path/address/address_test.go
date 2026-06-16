@@ -142,6 +142,85 @@ func TestParseResolverPathAndLocalKeyForVersionRoundTrip(t *testing.T) {
 	}
 }
 
+func TestRootSuffixParsersPreserveKeyBoundaries(t *testing.T) {
+	stableKey := SymbolPathKey(42, []segment.Segment{
+		{Kind: segment.SegmentField, Name: "field"},
+		{Kind: segment.SegmentIndexString, Name: "k"},
+	})
+	if got, ok := StableFromKey(stableKey); !ok || got.Key() != stableKey {
+		t.Fatalf("StableFromKey(%q) = %q/%v, want round-trip", stableKey, got.Key(), ok)
+	}
+	if sym, suffix, ok := ParseSymbolPathKey(stableKey); !ok || sym != 42 || segment.FormatSegments(suffix) != `.field["k"]` {
+		t.Fatalf("ParseSymbolPathKey(%q) = %d/%q/%v, want 42/.field[\"k\"]/true", stableKey, sym, segment.FormatSegments(suffix), ok)
+	}
+
+	resolverKey := pathdom.PathKey(`sym42@3.field["k"]`)
+	if sym, version, suffix, ok := ParseResolverPath(resolverKey); !ok || sym != 42 || version != 3 || suffix != `.field["k"]` {
+		t.Fatalf("ParseResolverPath(%q) = %d/%d/%q/%v, want 42/3/.field[\"k\"]/true", resolverKey, sym, version, suffix, ok)
+	}
+	if got, ok := StructuralKeyFromPathKey(resolverKey); !ok || got.PathKey() != resolverKey {
+		t.Fatalf("StructuralKeyFromPathKey(%q) = %q/%v, want round-trip", resolverKey, got.PathKey(), ok)
+	}
+	if _, ok := StableFromKey(resolverKey); ok {
+		t.Fatalf("StableFromKey accepted resolver key %q", resolverKey)
+	}
+
+	for _, key := range []pathdom.PathKey{
+		pathdom.PathKey(`$0["arg"]`),
+		pathdom.PathKey(`ret[2].ok`),
+		pathdom.PathKey(`n4:sym7.field`),
+	} {
+		stable, ok := StableFromKey(key)
+		if !ok || stable.Key() != key {
+			t.Fatalf("StableFromKey(%q) = %q/%v, want round-trip", key, stable.Key(), ok)
+		}
+		structural, ok := StructuralKeyFromPathKey(key)
+		if !ok || structural.PathKey() != key {
+			t.Fatalf("StructuralKeyFromPathKey(%q) = %q/%v, want round-trip", key, structural.PathKey(), ok)
+		}
+	}
+}
+
+func TestRootSuffixParsersRejectMalformedRecognizedRootsAndSuffixes(t *testing.T) {
+	for _, key := range []pathdom.PathKey{
+		pathdom.PathKey("s42."),
+		pathdom.PathKey("sym42@3."),
+		pathdom.PathKey("n4:sym7."),
+		pathdom.PathKey("$0."),
+		pathdom.PathKey("ret[2]."),
+		pathdom.PathKey("ret[2"),
+	} {
+		if _, ok := StableFromKey(key); ok {
+			t.Fatalf("StableFromKey(%q) accepted malformed key", key)
+		}
+		if _, ok := StructuralKeyFromPathKey(key); ok {
+			t.Fatalf("StructuralKeyFromPathKey(%q) accepted malformed key", key)
+		}
+	}
+}
+
+func TestRootSuffixParsersPreserveSegmentBoundaryPrefixes(t *testing.T) {
+	parent := mustStructuralKey(t, pathdom.PathKey("sym42@3.field"))
+	child := mustStructuralKey(t, pathdom.PathKey("sym42@3.field.child"))
+	sibling := mustStructuralKey(t, pathdom.PathKey("sym42@3.fieldish"))
+	if !child.HasPrefix(parent) {
+		t.Fatalf("%s should be under %s", child.PathKey(), parent.PathKey())
+	}
+	if sibling.HasPrefix(parent) {
+		t.Fatalf("%s should not be under %s", sibling.PathKey(), parent.PathKey())
+	}
+
+	stableParent := mustStructuralKey(t, pathdom.PathKey("$0.field"))
+	stableChild := mustStructuralKey(t, pathdom.PathKey("$0.field.child"))
+	stableSibling := mustStructuralKey(t, pathdom.PathKey("$0.fieldish"))
+	if !stableChild.HasPrefix(stableParent) {
+		t.Fatalf("%s should be under %s", stableChild.PathKey(), stableParent.PathKey())
+	}
+	if stableSibling.HasPrefix(stableParent) {
+		t.Fatalf("%s should not be under %s", stableSibling.PathKey(), stableParent.PathKey())
+	}
+}
+
 func TestStableSeparatesSymbolAndRootIdentity(t *testing.T) {
 	symbolAddr, ok := StableOfPath(pathdom.NewPath(7, "x"))
 	if !ok {

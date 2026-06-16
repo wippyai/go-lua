@@ -2,7 +2,6 @@ package address
 
 import (
 	"strconv"
-	"strings"
 
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
@@ -43,27 +42,11 @@ func ParseSymbolPathKey(key pathdom.PathKey) (symbol.ID, []segment.Segment, bool
 }
 
 func parseInternedSymbolPathKey(key pathdom.PathKey) (symbol.ID, []segment.Segment, bool) {
-	s := string(key)
-	if len(s) < 2 || s[0] != 's' {
-		return 0, nil, false
-	}
-	i := 1
-	for i < len(s) {
-		ch := s[i]
-		if ch < '0' || ch > '9' {
-			break
-		}
-		i++
-	}
-	n, parsed := keycodec.ParseUnsignedDecimal(s[1:i])
-	if !parsed || n == 0 {
-		return 0, nil, false
-	}
-	segments, ok := segment.InternFormattedSegments(s[i:])
+	n, parsed, ok := parseStableSymbolRootSuffix(key)
 	if !ok {
 		return 0, nil, false
 	}
-	return symbol.ID(n), segments, true
+	return symbol.ID(n), parsed.segments, true
 }
 
 func namedRootKey(root string, segments []segment.Segment) pathdom.PathKey {
@@ -90,71 +73,9 @@ func encodeNamedRoot(root string) string {
 }
 
 func parseEncodedNamedRootKey(key string) (string, []segment.Segment, bool) {
-	if len(key) < 3 || key[0] != 'n' {
-		return "", nil, false
-	}
-	i := 1
-	length := 0
-	for i < len(key) {
-		ch := key[i]
-		if ch < '0' || ch > '9' {
-			break
-		}
-		digit := int(ch - '0')
-		if length > (int(^uint(0)>>1)-digit)/10 {
-			return "", nil, false
-		}
-		length = length*10 + digit
-		i++
-	}
-	if i == 1 || i >= len(key) || key[i] != ':' || length == 0 {
-		return "", nil, false
-	}
-	rootStart := i + 1
-	rootEnd := rootStart + length
-	if rootEnd > len(key) {
-		return "", nil, false
-	}
-	suffix := key[rootEnd:]
-	segments, ok := segment.InternFormattedSegments(suffix)
+	parsed, ok := parseEncodedNamedRootSuffix(key)
 	if !ok {
 		return "", nil, false
 	}
-	return key[rootStart:rootEnd], segments, true
-}
-
-func parseRootAndSuffix(key pathdom.PathKey) (root string, suffix string, ok bool) {
-	s := string(key)
-	if s == "" {
-		return "", "", false
-	}
-	if s[0] == '$' {
-		end := 1
-		for end < len(s) && s[end] >= '0' && s[end] <= '9' {
-			end++
-		}
-		if end == 1 {
-			return "", "", false
-		}
-		return s[:end], s[end:], segment.ValidFormattedSegments(s[end:])
-	}
-	if strings.HasPrefix(s, "ret[") {
-		end := 4
-		for end < len(s) && s[end] >= '0' && s[end] <= '9' {
-			end++
-		}
-		if end == 4 || end >= len(s) || s[end] != ']' {
-			return "", "", false
-		}
-		end++
-		return s[:end], s[end:], segment.ValidFormattedSegments(s[end:])
-	}
-	end := 0
-	for end < len(s) && s[end] != '.' && s[end] != '[' {
-		end++
-	}
-	if end == 0 {
-		return "", "", false
-	}
-	return s[:end], s[end:], segment.ValidFormattedSegments(s[end:])
+	return parsed.root, parsed.segments, true
 }
