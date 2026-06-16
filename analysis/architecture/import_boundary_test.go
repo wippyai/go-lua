@@ -156,11 +156,16 @@ func TestLowerLayerImportBoundaries(t *testing.T) {
 			},
 		},
 		{
-			name:     "engine state stays below check and lua",
-			patterns: []string{modulePath + "/analysis/engine/state"},
+			name:     "engine state tree stays below syntax type check and lua",
+			patterns: []string{modulePath + "/analysis/engine/state/..."},
 			banned: []string{
+				modulePath + "/__old",
 				modulePath + "/analysis/check",
+				modulePath + "/analysis/ir/cfg",
 				modulePath + "/analysis/lua",
+				modulePath + "/analysis/type",
+				modulePath + "/compiler",
+				"go/ast",
 			},
 		},
 	}
@@ -259,6 +264,179 @@ func TestLowLevelLeafImportBoundaries(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestRequiredSemanticSurfacesExist(t *testing.T) {
+	required := []string{
+		modulePath + "/analysis/domain/value/axis/assertion",
+		modulePath + "/analysis/domain/value/axis/escape",
+		modulePath + "/analysis/domain/value/axis/evidence",
+		modulePath + "/analysis/domain/value/axis/identity",
+		modulePath + "/analysis/domain/value/axis/ownership",
+		modulePath + "/analysis/domain/value/axis/placement",
+		modulePath + "/analysis/domain/value/axis/presence",
+		modulePath + "/analysis/domain/value/axis/runtimekind",
+		modulePath + "/analysis/domain/value/axis/typewitness",
+		modulePath + "/analysis/domain/value/axis/variantorigin",
+		modulePath + "/analysis/domain/effect",
+		modulePath + "/analysis/domain/effect/control",
+		modulePath + "/analysis/domain/effect/dispatch",
+		modulePath + "/analysis/domain/effect/iteration",
+		modulePath + "/analysis/domain/effect/mutation",
+		modulePath + "/analysis/domain/effect/ownership",
+		modulePath + "/analysis/domain/effect/postcondition",
+		modulePath + "/analysis/domain/effect/returns",
+	}
+
+	for _, pkg := range required {
+		if got := productionPackages(t, pkg); len(got) != 1 {
+			t.Fatalf("required package %s resolved to %d packages", pkg, len(got))
+		}
+	}
+}
+
+func TestValueAxisLeafDirectImportBoundaries(t *testing.T) {
+	baseAllowed := allowSet(
+		modulePath+"/analysis/domain/value/axis",
+		modulePath+"/analysis/internal/hash",
+	)
+	typeWitnessAllowed := copyAllowSet(baseAllowed,
+		modulePath+"/analysis/type/literal",
+		modulePath+"/analysis/type/refinement",
+		modulePath+"/analysis/type/typ",
+		modulePath+"/analysis/type/unwrap",
+	)
+
+	for _, pkg := range productionPackages(t, modulePath+"/analysis/domain/value/axis/...") {
+		if pkg.ImportPath == modulePath+"/analysis/domain/value/axis" {
+			continue
+		}
+		allowed := baseAllowed
+		if pkg.ImportPath == modulePath+"/analysis/domain/value/axis/typewitness" {
+			allowed = typeWitnessAllowed
+		}
+		assertModuleImportsAllowed(t, pkg.ImportPath, pkg.Imports, allowed)
+	}
+}
+
+func TestDomainValuePackageDirectImportBoundaries(t *testing.T) {
+	t.Run("product imports only the presence axis leaf", func(t *testing.T) {
+		for _, imp := range productionImports(t, modulePath+"/analysis/domain/value/product") {
+			if strings.HasPrefix(imp, modulePath+"/analysis/domain/value/axis/") &&
+				imp != modulePath+"/analysis/domain/value/axis/presence" {
+				t.Fatalf("product imports non-core axis leaf %q", imp)
+			}
+			for _, banned := range []string{
+				modulePath + "/analysis/domain/effect",
+				modulePath + "/analysis/domain/value/refinement",
+				modulePath + "/analysis/domain/value/typevalue",
+				modulePath + "/analysis/domain/value/variant",
+				modulePath + "/analysis/engine",
+				modulePath + "/analysis/type",
+				modulePath + "/compiler",
+			} {
+				if forbiddenImport(imp, banned, false) {
+					t.Fatalf("product imports forbidden dependency %q", imp)
+				}
+			}
+		}
+	})
+
+	t.Run("variant stays independent from value products and axes", func(t *testing.T) {
+		for _, dep := range productionDeps(t, modulePath+"/analysis/domain/value/variant/...") {
+			for _, banned := range []string{
+				modulePath + "/analysis/domain/value/axis",
+				modulePath + "/analysis/domain/value/product",
+			} {
+				if forbiddenImport(dep, banned, false) {
+					t.Fatalf("variant imports forbidden dependency %q", dep)
+				}
+			}
+		}
+	})
+
+	t.Run("typevalue imports only approved axis leaves", func(t *testing.T) {
+		allowedLeaves := allowSet(
+			modulePath+"/analysis/domain/value/axis/evidence",
+			modulePath+"/analysis/domain/value/axis/presence",
+			modulePath+"/analysis/domain/value/axis/runtimekind",
+			modulePath+"/analysis/domain/value/axis/typewitness",
+			modulePath+"/analysis/domain/value/axis/variantorigin",
+		)
+		assertValuePackageAxisImports(t, modulePath+"/analysis/domain/value/typevalue", allowedLeaves)
+	})
+
+	t.Run("refinement imports only proof axis leaves", func(t *testing.T) {
+		allowedLeaves := allowSet(
+			modulePath+"/analysis/domain/value/axis/typewitness",
+			modulePath+"/analysis/domain/value/axis/variantorigin",
+		)
+		assertValuePackageAxisImports(t, modulePath+"/analysis/domain/value/refinement", allowedLeaves)
+	})
+}
+
+func TestEffectPackagesStayValueAndEngineFree(t *testing.T) {
+	for _, dep := range productionDeps(t, modulePath+"/analysis/domain/effect/...") {
+		for _, banned := range []string{
+			modulePath + "/analysis/check",
+			modulePath + "/analysis/domain/value",
+			modulePath + "/analysis/engine",
+			modulePath + "/analysis/lua",
+			modulePath + "/compiler",
+		} {
+			if forbiddenImport(dep, banned, false) {
+				t.Fatalf("effect packages import forbidden dependency %q", dep)
+			}
+		}
+	}
+}
+
+func TestEngineStateCompositionImportBoundaries(t *testing.T) {
+	allowed := allowSet(
+		modulePath+"/analysis/engine/dynamicindex",
+		modulePath+"/analysis/engine/state/channelselectfact",
+		modulePath+"/analysis/engine/state/effectdelta",
+		modulePath+"/analysis/engine/state/heapidentity",
+		modulePath+"/analysis/engine/state/lenbound",
+		modulePath+"/analysis/engine/state/numbound",
+		modulePath+"/analysis/engine/state/pathevidence",
+	)
+	for _, imp := range productionImports(t, modulePath+"/analysis/engine/state") {
+		if strings.HasPrefix(imp, modulePath+"/analysis/engine/") {
+			if _, ok := allowed[imp]; !ok {
+				t.Fatalf("state root imports non-composition engine dependency %q", imp)
+			}
+		}
+	}
+}
+
+func TestEngineStateLeafDirectImportBoundaries(t *testing.T) {
+	leafAllowed := map[string]map[string]struct{}{
+		modulePath + "/analysis/engine/state/channelselectfact": {},
+		modulePath + "/analysis/engine/state/effectdelta":       {},
+		modulePath + "/analysis/engine/state/heapidentity": copyAllowSet(nil,
+			modulePath+"/analysis/engine/dynamicindex",
+		),
+		modulePath + "/analysis/engine/state/internal/floor": {},
+		modulePath + "/analysis/engine/state/lenbound": copyAllowSet(nil,
+			modulePath+"/analysis/engine/state/internal/floor",
+		),
+		modulePath + "/analysis/engine/state/numbound": copyAllowSet(nil,
+			modulePath+"/analysis/engine/state/internal/floor",
+		),
+		modulePath + "/analysis/engine/state/pathevidence": {},
+	}
+
+	for leaf, allowed := range leafAllowed {
+		for _, imp := range productionImports(t, leaf) {
+			if !strings.HasPrefix(imp, modulePath+"/analysis/engine/") {
+				continue
+			}
+			if _, ok := allowed[imp]; !ok {
+				t.Fatalf("%s imports non-leaf engine dependency %q", leaf, imp)
+			}
+		}
 	}
 }
 
@@ -465,6 +643,51 @@ func productionImports(t *testing.T, pattern string) []string {
 		t.Fatalf("decode go list output: %v", err)
 	}
 	return pkg.Imports
+}
+
+func allowSet(imports ...string) map[string]struct{} {
+	allowed := make(map[string]struct{}, len(imports))
+	for _, imp := range imports {
+		allowed[imp] = struct{}{}
+	}
+	return allowed
+}
+
+func copyAllowSet(base map[string]struct{}, imports ...string) map[string]struct{} {
+	allowed := make(map[string]struct{}, len(base)+len(imports))
+	for imp := range base {
+		allowed[imp] = struct{}{}
+	}
+	for _, imp := range imports {
+		allowed[imp] = struct{}{}
+	}
+	return allowed
+}
+
+func assertModuleImportsAllowed(t *testing.T, pkg string, imports []string, allowed map[string]struct{}) {
+	t.Helper()
+
+	for _, imp := range imports {
+		if !strings.HasPrefix(imp, modulePath+"/") {
+			continue
+		}
+		if _, ok := allowed[imp]; !ok {
+			t.Fatalf("%s imports forbidden dependency %q", pkg, imp)
+		}
+	}
+}
+
+func assertValuePackageAxisImports(t *testing.T, pkg string, allowedLeaves map[string]struct{}) {
+	t.Helper()
+
+	for _, imp := range productionImports(t, pkg) {
+		if !strings.HasPrefix(imp, modulePath+"/analysis/domain/value/axis/") {
+			continue
+		}
+		if _, ok := allowedLeaves[imp]; !ok {
+			t.Fatalf("%s imports unapproved axis leaf %q", pkg, imp)
+		}
+	}
 }
 
 func forbiddenImport(dep, banned string, exactly bool) bool {
