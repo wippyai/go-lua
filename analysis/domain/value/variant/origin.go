@@ -1,8 +1,6 @@
 package variant
 
 import (
-	"sort"
-
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/type/normalize"
 	"github.com/wippyai/go-lua/analysis/type/typ"
@@ -15,12 +13,15 @@ func OriginOfType(t typ.Type) (uint64, []int, bool) {
 	if !ok {
 		return 0, nil, false
 	}
+	return family.id, originFamilyCases(family), true
+}
+
+func originFamilyCases(family originFamily) []int {
 	cases := make([]int, 0, len(family.cases))
 	for _, c := range family.cases {
 		cases = append(cases, c.index)
 	}
-	sort.Ints(cases)
-	return family.id, cases, true
+	return compactInts(cases)
 }
 
 // NarrowByOrigin narrows t to the cases represented by origin evidence.
@@ -32,6 +33,10 @@ func NarrowByOrigin(t typ.Type, familyID uint64, cases []int) (typ.Type, bool) {
 	if !ok || family.id != familyID {
 		return t, false
 	}
+	return narrowByOriginFamily(t, family, cases)
+}
+
+func narrowByOriginFamily(t typ.Type, family originFamily, cases []int) (typ.Type, bool) {
 	allowed := intSet(cases)
 	var out []typ.Type
 	changed := false
@@ -93,6 +98,10 @@ func TypeFromOrigin(familyID uint64, cases []int) (typ.Type, bool) {
 	if !ok {
 		return nil, false
 	}
+	return typeFromOriginFamily(family, cases)
+}
+
+func typeFromOriginFamily(family originFamily, cases []int) (typ.Type, bool) {
 	allowed := intSet(cases)
 	out := make([]typ.Type, 0, len(cases))
 	for _, c := range family.cases {

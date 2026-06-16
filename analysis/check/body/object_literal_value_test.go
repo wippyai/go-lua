@@ -7,9 +7,9 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/escape"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/evidence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
-	"github.com/wippyai/go-lua/analysis/test/value/standard"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
+	"github.com/wippyai/go-lua/analysis/test/value/standard"
 	"github.com/wippyai/go-lua/analysis/type/ambient"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
@@ -180,7 +180,7 @@ func TestObjectLiteralEvaluatorMarksConstructedValueFresh(t *testing.T) {
 		factflow.NewObjectEntry(path.NewPlaceholder(0).Field("id"), source),
 	})
 
-	got, ok := objectLiteralEvaluator(reg)(lit, func(source factflow.ValueSource) (product.Value, bool) {
+	got, ok := objectLiteralEvaluator(reg, nil)(lit, func(source factflow.ValueSource) (product.Value, bool) {
 		return typevalue.WithWitness(reg, typevalue.FromType(reg, typ.String), typ.String), true
 	})
 	if !ok {

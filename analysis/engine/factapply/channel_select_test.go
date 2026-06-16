@@ -622,7 +622,7 @@ func testChannelSelectResultValueWithDefault(
 	events []factflow.ChannelSelect,
 	hasDefault bool,
 ) (product.Value, bool) {
-	return channelSelectResultValue(transfer.NodeContext{Registry: reg}, nil, nil, state.State{}, selectID, events, hasDefault)
+	return channelSelectResultValue(transfer.NodeContext{Registry: reg}, nil, nil, nil, state.State{}, selectID, events, hasDefault)
 }
 
 func assertChannelSelectCasePayload(

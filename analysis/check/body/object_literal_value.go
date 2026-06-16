@@ -7,24 +7,27 @@ import (
 	variantoriginpkg "github.com/wippyai/go-lua/analysis/domain/value/axis/variantorigin"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
-	"github.com/wippyai/go-lua/analysis/domain/value/variant"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	sourcevalue "github.com/wippyai/go-lua/analysis/engine/sourcevalue"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
-func objectLiteralEvaluator(reg *axis.Registry) sourcevalue.ObjectLiteralEvaluator {
+func objectLiteralEvaluator(reg *axis.Registry, typeValues *typevalue.Cache) sourcevalue.ObjectLiteralEvaluator {
 	return func(lit factflow.ObjectLiteral, resolve func(factflow.ValueSource) (product.Value, bool)) (product.Value, bool) {
-		t, ok := objectLiteralType(reg, lit, resolve)
+		t, ok := objectLiteralTypeCached(reg, typeValues, lit, resolve)
 		if !ok {
 			return product.Value{}, false
 		}
-		value := typevalue.WithWitness(reg, typevalue.FromType(reg, t), t)
+		value := typevalue.WithWitness(reg, typevalue.FromTypeCached(typeValues, reg, t), t)
 		return product.Set(reg, value, escape.Key, escape.Fresh()), true
 	}
 }
 
 func objectLiteralType(reg *axis.Registry, lit factflow.ObjectLiteral, resolve func(factflow.ValueSource) (product.Value, bool)) (typ.Type, bool) {
+	return objectLiteralTypeCached(reg, nil, lit, resolve)
+}
+
+func objectLiteralTypeCached(reg *axis.Registry, typeValues *typevalue.Cache, lit factflow.ObjectLiteral, resolve func(factflow.ValueSource) (product.Value, bool)) (typ.Type, bool) {
 	root := newObjectLiteralTypeNode()
 	expected, hasExpected := expectedRecord(reg, lit, resolve)
 	seen := false
@@ -40,7 +43,7 @@ func objectLiteralType(reg *axis.Registry, lit factflow.ObjectLiteral, resolve f
 			}
 			continue
 		}
-		t, ok := objectLiteralEntryType(reg, value)
+		t, ok := objectLiteralEntryType(reg, typeValues, value)
 		if !ok {
 			if filled, ok := expectedRecordField(hasExpected, expected, segs); ok {
 				if !root.add(segs, filled) {
@@ -68,11 +71,11 @@ func objectLiteralType(reg *axis.Registry, lit factflow.ObjectLiteral, resolve f
 	return root.build()
 }
 
-func objectLiteralEntryType(reg *axis.Registry, value product.Value) (typ.Type, bool) {
+func objectLiteralEntryType(reg *axis.Registry, typeValues *typevalue.Cache, value product.Value) (typ.Type, bool) {
 	if t, ok := typevalue.TypeOf(reg, value); ok {
 		origin := product.Get(reg, value, variantoriginpkg.Key)
 		if !origin.IsBottom() && !origin.IsTop() {
-			if narrowed, ok := variant.NarrowByOrigin(t, origin.Family(), origin.Cases()); ok {
+			if narrowed, ok := typevalue.NarrowVariantByOriginCached(typeValues, t, origin.Family(), origin.Cases()); ok {
 				return narrowed, true
 			}
 		}

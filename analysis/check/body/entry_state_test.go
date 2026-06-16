@@ -7,9 +7,9 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/evidence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/typewitness"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
-	"github.com/wippyai/go-lua/analysis/test/value/standard"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
+	"github.com/wippyai/go-lua/analysis/test/value/standard"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
 
@@ -18,7 +18,7 @@ func TestCheckFunctionSeedsGradualTopForUnannotatedParameter(t *testing.T) {
 	fn := parseFunction(t, "function f(raw) return raw end")
 	bindings := bind.BindFunction(fn, bind.Options{})
 	slot := mustParamSlot(t, bindings, fn, 0)
-	seeds := functionParamEntrySeeds(reg, bindings, fn, nil)
+	seeds := functionParamEntrySeeds(reg, nil, bindings, fn, nil)
 	if len(seeds) != 1 {
 		t.Fatalf("entry seeds = %d, want 1", len(seeds))
 	}
@@ -34,7 +34,7 @@ func TestCheckFunctionSeedsExplicitTopForExplicitAnyParameter(t *testing.T) {
 	fn := parseFunction(t, "function f(raw: any) return raw end")
 	bindings := bind.BindFunction(fn, bind.Options{})
 	slot := mustParamSlot(t, bindings, fn, 0)
-	seeds := functionParamEntrySeeds(reg, bindings, fn, nil)
+	seeds := functionParamEntrySeeds(reg, nil, bindings, fn, nil)
 	if len(seeds) != 1 {
 		t.Fatalf("entry seeds = %d, want 1", len(seeds))
 	}
@@ -59,7 +59,7 @@ end`)
 	}
 	fn := functions[0]
 	slot := mustParamSlot(t, bindings, fn, 0)
-	seeds := functionParamEntrySeeds(reg, bindings, fn, nil)
+	seeds := functionParamEntrySeeds(reg, nil, bindings, fn, nil)
 	if len(seeds) != 1 {
 		t.Fatalf("entry seeds = %d, want 1", len(seeds))
 	}

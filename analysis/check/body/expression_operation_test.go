@@ -5,9 +5,9 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/evidence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
-	"github.com/wippyai/go-lua/analysis/test/value/standard"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
+	"github.com/wippyai/go-lua/analysis/test/value/standard"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
@@ -21,7 +21,7 @@ func TestExpressionOperationLogicalPreservesTopOriginEvidence(t *testing.T) {
 	left := product.Set(reg, product.Top(), evidence.Key, evidence.GradualTop())
 	right := typevalue.WithWitness(reg, typevalue.FromType(reg, typ.String), typ.String)
 
-	got, ok := expressionOperationEvaluator(reg)(op, left, right)
+	got, ok := expressionOperationEvaluator(reg, nil)(op, left, right)
 	if !ok {
 		t.Fatal("expressionOperationEvaluator returned false")
 	}
@@ -42,7 +42,7 @@ func TestExpressionOperationJoinedIntegerCounterStaysInteger(t *testing.T) {
 	counter := product.Join(reg, first, second)
 	one := typevalue.WithWitness(reg, typevalue.FromType(reg, typ.LiteralInt(1)), typ.LiteralInt(1))
 
-	got, ok := expressionOperationEvaluator(reg)(op, counter, one)
+	got, ok := expressionOperationEvaluator(reg, nil)(op, counter, one)
 	if !ok {
 		t.Fatal("expressionOperationEvaluator returned false")
 	}

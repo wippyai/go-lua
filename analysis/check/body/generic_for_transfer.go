@@ -29,6 +29,7 @@ func genericForNodeTransfer(
 	signatures signaturelookup.Source,
 	signatureID *signatureIdentityResolver,
 	typeResolver *typeresolve.Resolver,
+	typeValues *typevalue.Cache,
 ) transfer.NodeTransfer {
 	expressionRefinements := facts.ExpressionRefinements()
 	return func(ctx transfer.NodeContext, in state.State) state.State {
@@ -44,7 +45,7 @@ func genericForNodeTransfer(
 			fact.VariableIndex < 0 || fact.VariableIndex >= len(fact.Symbols) {
 			return out
 		}
-		value, ok := genericForVariableValue(ctx, fact, facts, expressionRefinements, sources, signatures, signatureID, typeResolver, in)
+		value, ok := genericForVariableValue(ctx, typeValues, fact, facts, expressionRefinements, sources, signatures, signatureID, typeResolver, in)
 		if !ok {
 			return out
 		}
@@ -58,6 +59,7 @@ func genericForNodeTransfer(
 
 func genericForVariableValue(
 	ctx transfer.NodeContext,
+	typeValues *typevalue.Cache,
 	generic cfgfacts.GenericForFact,
 	facts factflow.Facts,
 	expressionRefinements map[factflow.ExprRef]factflow.ExpressionRefinement,
@@ -103,9 +105,9 @@ func genericForVariableValue(
 	}
 	switch generic.VariableIndex {
 	case 0:
-		return iteratorKeyValue(ctx, iter, sourceValue, assertedSourceType, hasAssertedSourceType)
+		return iteratorKeyValue(ctx, typeValues, iter, sourceValue, assertedSourceType, hasAssertedSourceType)
 	case 1:
-		return iteratorElementValue(ctx, sourceValue, assertedSourceType, hasAssertedSourceType)
+		return iteratorElementValue(ctx, typeValues, sourceValue, assertedSourceType, hasAssertedSourceType)
 	default:
 		return product.Value{}, false
 	}
@@ -125,23 +127,23 @@ func activeIterator(labels []effect.Label) (iteration.Iterator, bool) {
 	return iteration.Iterator{}, false
 }
 
-func iteratorKeyValue(ctx transfer.NodeContext, iter iteration.Iterator, sourceValue product.Value, assertedSourceType typ.Type, hasAssertedSourceType bool) (product.Value, bool) {
+func iteratorKeyValue(ctx transfer.NodeContext, typeValues *typevalue.Cache, iter iteration.Iterator, sourceValue product.Value, assertedSourceType typ.Type, hasAssertedSourceType bool) (product.Value, bool) {
 	switch iter.Kind {
 	case iteration.IterateIndexed:
-		return typevalue.WithWitness(ctx.Registry, typevalue.FromType(ctx.Registry, typ.Integer), typ.Integer), true
+		return typevalue.WithWitness(ctx.Registry, typevalue.FromTypeCached(typeValues, ctx.Registry, typ.Integer), typ.Integer), true
 	case iteration.IterateKeyed:
 		if sourceType, ok := iteratorSourceType(ctx.Registry, sourceValue, assertedSourceType, hasAssertedSourceType); ok {
 			if keyType, ok := projection.KeyOf(sourceType); ok {
-				return typevalue.WithWitness(ctx.Registry, typevalue.FromType(ctx.Registry, keyType), keyType), true
+				return typevalue.WithWitness(ctx.Registry, typevalue.FromTypeCached(typeValues, ctx.Registry, keyType), keyType), true
 			}
 		}
-		return typevalue.WithWitness(ctx.Registry, typevalue.FromType(ctx.Registry, typ.Any), typ.Any), true
+		return typevalue.WithWitness(ctx.Registry, typevalue.FromTypeCached(typeValues, ctx.Registry, typ.Any), typ.Any), true
 	default:
 		return product.Value{}, false
 	}
 }
 
-func iteratorElementValue(ctx transfer.NodeContext, sourceValue product.Value, assertedSourceType typ.Type, hasAssertedSourceType bool) (product.Value, bool) {
+func iteratorElementValue(ctx transfer.NodeContext, typeValues *typevalue.Cache, sourceValue product.Value, assertedSourceType typ.Type, hasAssertedSourceType bool) (product.Value, bool) {
 	sourceType, ok := iteratorSourceType(ctx.Registry, sourceValue, assertedSourceType, hasAssertedSourceType)
 	if !ok {
 		return product.Value{}, false
@@ -150,14 +152,14 @@ func iteratorElementValue(ctx transfer.NodeContext, sourceValue product.Value, a
 	if !ok {
 		return product.Value{}, false
 	}
-	return typevalue.WithWitness(ctx.Registry, typevalue.FromType(ctx.Registry, elem), elem), true
+	return typevalue.WithWitness(ctx.Registry, typevalue.FromTypeCached(typeValues, ctx.Registry, elem), elem), true
 }
 
 func iteratorSourceType(reg *axis.Registry, sourceValue product.Value, assertedSourceType typ.Type, hasAssertedSourceType bool) (typ.Type, bool) {
 	if hasAssertedSourceType {
 		return assertedSourceType, true
 	}
-	return objectLiteralEntryType(reg, sourceValue)
+	return objectLiteralEntryType(reg, nil, sourceValue)
 }
 
 func genericForAssertedIteratorSourceType(generic cfgfacts.GenericForFact, sourceIndex int, resolver *typeresolve.Resolver) (typ.Type, bool) {

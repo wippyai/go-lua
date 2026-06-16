@@ -107,6 +107,7 @@ func (r *Result) PathValueAtBoundary(point cfg.Point, p pathdom.Path) (product.V
 		Registry:   r.registry,
 		Facts:      r.facts,
 		Visibility: r.visibility,
+		TypeValues: r.typeValues,
 	}, point, p, in)
 	if !ok || product.Equal(r.registry, value, product.Bottom(r.registry)) {
 		return product.Value{}, false

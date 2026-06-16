@@ -6,6 +6,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
@@ -13,6 +14,7 @@ import (
 )
 
 func branchPresenceRelationRefinement(
+	typeValues *typevalue.Cache,
 	ctx transfer.EdgeContext,
 	resolver *visibility.Resolver,
 	projectPath PathTypeProjector,
@@ -31,13 +33,14 @@ func branchPresenceRelationRefinement(
 		}
 		return presenceRefinement(ctx.Registry, relation.TargetPresence()), true
 	}
-	if branchEdgeImpliesAbsentFromNonFalseFalsy(ctx, resolver, projectPath, out, branchRefinements, relation) {
+	if branchEdgeImpliesAbsentFromNonFalseFalsy(typeValues, ctx, resolver, projectPath, out, branchRefinements, relation) {
 		return presenceRefinement(ctx.Registry, relation.TargetPresence()), true
 	}
 	return factflow.ValueRefinement{}, false
 }
 
 func branchEdgeImpliesAbsentFromNonFalseFalsy(
+	typeValues *typevalue.Cache,
 	ctx transfer.EdgeContext,
 	resolver *visibility.Resolver,
 	projectPath PathTypeProjector,
@@ -60,7 +63,7 @@ func branchEdgeImpliesAbsentFromNonFalseFalsy(
 		if !ok || !refinementHasPresence(opposite, presence.Present()) {
 			continue
 		}
-		if branchTriggerCanBeFalse(ctx, resolver, projectPath, out, triggerPath) {
+		if branchTriggerCanBeFalse(typeValues, ctx, resolver, projectPath, out, triggerPath) {
 			continue
 		}
 		return true
@@ -69,13 +72,14 @@ func branchEdgeImpliesAbsentFromNonFalseFalsy(
 }
 
 func branchTriggerCanBeFalse(
+	typeValues *typevalue.Cache,
 	ctx transfer.EdgeContext,
 	resolver *visibility.Resolver,
 	projectPath PathTypeProjector,
 	out state.State,
 	triggerPath pathdom.Path,
 ) bool {
-	current, ok := resolvePathValueAt(ctx.Registry, resolver, ctx.Edge.From, out, triggerPath, projectPath)
+	current, ok := resolvePathValueAtCached(typeValues, ctx.Registry, resolver, ctx.Edge.From, out, triggerPath, projectPath)
 	if !ok {
 		return true
 	}

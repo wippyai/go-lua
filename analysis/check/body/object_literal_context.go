@@ -96,7 +96,7 @@ func objectLiteralFieldType(reg *axis.Registry, name string, lit factflow.Object
 		if !ok {
 			return nil, false
 		}
-		return objectLiteralEntryType(reg, value)
+		return objectLiteralEntryType(reg, nil, value)
 	}
 	return nil, false
 }

@@ -2,6 +2,7 @@ package factapply
 
 import (
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine/callproducer"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	sourcevalue "github.com/wippyai/go-lua/analysis/engine/sourcevalue"
@@ -17,6 +18,7 @@ func callResultReader(
 	outcomeProvider CallOutcomeProvider,
 	resolver *visibility.Resolver,
 	projectPath PathTypeProjector,
+	typeValues *typevalue.Cache,
 ) (func(cfg.Point) state.State, func(cfg.Point, state.State) state.State) {
 	rawRead := ctx.Read
 	if rawRead == nil {
@@ -36,7 +38,7 @@ func callResultReader(
 		}
 		active[point] = true
 		activeBase[point] = base
-		out := materializeCallOutcome(callContextAt(ctx, point, read), facts, outcomeProvider, resolver, projectPath, read, base, base)
+		out := materializeCallOutcome(callContextAt(ctx, point, read), facts, outcomeProvider, resolver, projectPath, typeValues, read, base, base)
 		delete(active, point)
 		delete(activeBase, point)
 		cache[point] = out
@@ -65,13 +67,14 @@ func materializeCallOutcome(
 	outcomeProvider CallOutcomeProvider,
 	resolver *visibility.Resolver,
 	projectPath PathTypeProjector,
+	typeValues *typevalue.Cache,
 	read func(cfg.Point) state.State,
 	in state.State,
 	out state.State,
 ) state.State {
 	siteView, ok := facts.CallSiteView(ctx.Point)
 	if !ok {
-		return applyChannelSelectResult(ctx, resolver, projectPath, out, facts.ChannelSelects(ctx.Point))
+		return applyChannelSelectResult(ctx, typeValues, resolver, projectPath, out, facts.ChannelSelects(ctx.Point))
 	}
 	hasProducer := callproducer.Has(facts, ctx.Point)
 	if hasProducer {
@@ -90,7 +93,7 @@ func materializeCallOutcome(
 		}
 		out = applyCallOutcomeFacts(ctx, facts, resolver, projectPath, out, site, outcome)
 	}
-	out = applyChannelSelectResult(ctx, resolver, projectPath, out, facts.ChannelSelects(ctx.Point))
+	out = applyChannelSelectResult(ctx, typeValues, resolver, projectPath, out, facts.ChannelSelects(ctx.Point))
 	if hasProducer {
 		for _, result := range facts.CallResultValues(ctx.Point) {
 			out = constrainReturnSlot(ctx, out, result)

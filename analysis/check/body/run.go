@@ -5,6 +5,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/check/body/internal/readexpr"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine/calloutcome"
 	"github.com/wippyai/go-lua/analysis/engine/effectlowering"
 	factapply "github.com/wippyai/go-lua/analysis/engine/factapply"
@@ -98,6 +99,7 @@ func (c *checker) prepare(bindings *bind.Result, built *cfgbuild.Result, sem *se
 			Registry:   config.Registry,
 			Facts:      facts,
 			Visibility: resolver,
+			TypeValues: config.TypeValues,
 		})
 	}
 	expressionValues := config.ExpressionValues
@@ -111,13 +113,13 @@ func (c *checker) prepare(bindings *bind.Result, built *cfgbuild.Result, sem *se
 		ExpressionValues: expressionValues,
 		ExpressionPaths:  expressionPaths,
 		ObjectLiterals:   facts.ObjectLiterals(),
-		ObjectLiteral:    objectLiteralEvaluator(config.Registry),
+		ObjectLiteral:    objectLiteralEvaluator(config.Registry, config.TypeValues),
 		ExpressionOps:    facts.ExpressionOperations(),
-		ExpressionOp:     expressionOperationEvaluator(config.Registry),
+		ExpressionOp:     expressionOperationEvaluator(config.Registry, config.TypeValues),
 		ExpressionValue:  expressionValue,
 		VarargValue:      config.VarargValue,
 	})
-	calleeValue := calleeValueProvider(config.Registry, facts, resolver, sources)
+	calleeValue := calleeValueProvider(config.Registry, facts, resolver, sources, config.TypeValues)
 	signatureID.indexCallSites(facts)
 	callOutcomeSupplement := preparedCallOutcomeSupplement(config.ModuleExports, signatureID, facts, sources, calleeValue)
 	return &Static{
@@ -135,6 +137,7 @@ func (c *checker) prepare(bindings *bind.Result, built *cfgbuild.Result, sem *se
 		sources:               sources,
 		calleeValue:           calleeValue,
 		typeNS:                typeResolver,
+		typeValues:            config.TypeValues,
 		callOutcomeSupplement: callOutcomeSupplement,
 		signatureReturnOps:    signatureReturnTypeOps(),
 	}
@@ -147,9 +150,17 @@ func (s *Static) Solve(config SolveConfig) *Result {
 	if config.Stats != nil {
 		config.Stats.BodySolves++
 	}
+	typeValues := config.TypeValues
+	if typeValues == nil {
+		typeValues = s.typeValues
+	}
+	if typeValues == nil {
+		typeValues = typevalue.NewCache()
+	}
 	callOutcome := s.callOutcomeProvider(config)
 	entryState, initial := parameterEntryState(
 		s.registry,
+		typeValues,
 		s.cfg.Graph,
 		s.bindings,
 		s.semantics.Function(),
@@ -164,8 +175,9 @@ func (s *Static) Solve(config SolveConfig) *Result {
 		CallOutcome: callOutcome,
 		Visibility:  s.visibility,
 		ProjectPath: luaPathTypeProjector,
+		TypeValues:  typeValues,
 	})
-	nodeTransfer = genericForNodeTransfer(nodeTransfer, s.semantics, s.facts, s.sources, s.signatures, s.signatureID, s.typeNS)
+	nodeTransfer = genericForNodeTransfer(nodeTransfer, s.semantics, s.facts, s.sources, s.signatures, s.signatureID, s.typeNS, typeValues)
 	flow := transfer.Run(transfer.Config{
 		Graph:        s.cfg.Graph,
 		Registry:     s.registry,
@@ -177,6 +189,7 @@ func (s *Static) Solve(config SolveConfig) *Result {
 			CallOutcome: callOutcome,
 			Visibility:  s.visibility,
 			ProjectPath: luaPathTypeProjector,
+			TypeValues:  typeValues,
 		}),
 		WidenAt:    config.WidenAt,
 		WidenDelay: config.WidenDelay,
@@ -198,6 +211,7 @@ func (s *Static) Solve(config SolveConfig) *Result {
 		visibility:      s.visibility,
 		sources:         s.sources,
 		callOutcome:     callOutcome,
+		typeValues:      typeValues,
 	}
 }
 

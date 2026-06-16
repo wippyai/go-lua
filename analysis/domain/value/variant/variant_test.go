@@ -122,6 +122,41 @@ func TestOriginCasesTreatDuplicateUnsortedCasesAsSet(t *testing.T) {
 	}
 }
 
+func TestCacheMatchesOriginNarrowAndReconstruct(t *testing.T) {
+	dog := typetable.NewRecord().
+		Field("kind", typ.LiteralString("dog")).
+		Field("bark", typ.Func().Returns().Build()).
+		Build()
+	cat := typetable.NewRecord().
+		Field("kind", typ.LiteralString("cat")).
+		Field("meow", typ.Func().Returns().Build()).
+		Build()
+	union := typeexpr.Union(dog, cat)
+
+	family, cases, ok := OriginOfType(union)
+	if !ok {
+		t.Fatal("expected closed union origin")
+	}
+	cache := NewCache()
+	cachedFamily, cachedCases, ok := cache.OriginOfType(union)
+	if !ok {
+		t.Fatal("cached origin failed")
+	}
+	if cachedFamily != family || !sameIntSet(cachedCases, cases) {
+		t.Fatalf("cached origin = %d/%v, want %d/%v", cachedFamily, cachedCases, family, cases)
+	}
+	duplicateUnsortedCases := []int{cases[1], cases[0], cases[1]}
+	cachedType, ok := cache.TypeFromOrigin(family, duplicateUnsortedCases)
+	if !ok || !typ.TypeEquals(cachedType, union) {
+		t.Fatalf("cached reconstructed type = %v/%v, want %v", cachedType, ok, union)
+	}
+	wantNarrow, wantChanged := NarrowByOrigin(union, family, []int{cases[0]})
+	cachedNarrow, changed := cache.NarrowByOrigin(union, family, []int{cases[0]})
+	if changed != wantChanged || !typ.TypeEquals(cachedNarrow, wantNarrow) {
+		t.Fatalf("cached narrow = %v changed=%v, want %v changed=%v", cachedNarrow, changed, wantNarrow, wantChanged)
+	}
+}
+
 func TestNarrowByPathLiteralReturnsNeverForImpossibleSingleVariant(t *testing.T) {
 	dog := typetable.NewRecord().
 		Field("kind", typ.LiteralString("dog")).

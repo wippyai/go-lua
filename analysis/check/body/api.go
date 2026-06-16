@@ -5,6 +5,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine/effectlowering"
 	factapply "github.com/wippyai/go-lua/analysis/engine/factapply"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
@@ -34,6 +35,7 @@ var (
 type Config struct {
 	Registry *axis.Registry
 	Globals  []string
+	TypeValues *typevalue.Cache
 
 	ExpressionValues             map[factflow.ExprRef]product.Value
 	ExpressionValue              sourcevalue.ExpressionValueProvider
@@ -87,6 +89,7 @@ type Static struct {
 	sources     sourcevalue.SourceValues
 	calleeValue CalleeValueFunc
 	typeNS      *typeresolve.Resolver
+	typeValues  *typevalue.Cache
 
 	callOutcomeSupplement factapply.CallOutcomeProvider
 	signatureReturnOps    effectlowering.ReturnTypeOps
@@ -98,6 +101,7 @@ type Static struct {
 type SolveConfig struct {
 	EntryState state.State
 	Initial    transfer.InitialState
+	TypeValues *typevalue.Cache
 
 	CallOutcome                  factapply.CallOutcomeProvider
 	CallOutcomeFactory           CallOutcomeFactory
@@ -127,6 +131,7 @@ type Result struct {
 	visibility      *visibility.Resolver
 	sources         sourcevalue.SourceValues
 	callOutcome     factapply.CallOutcomeProvider
+	typeValues      *typevalue.Cache
 	functions       []*Result
 	funcTypes       FunctionValueTypes
 	callExprPts     map[*ast.FuncCallExpr]cfg.Point
@@ -149,6 +154,9 @@ type SignatureArgumentTypeFactory func(CallOutcomeContext) SignatureArgumentType
 func newChecker(config Config) (*checker, error) {
 	if config.Registry == nil {
 		return nil, ErrRegistryRequired
+	}
+	if config.TypeValues == nil {
+		config.TypeValues = typevalue.NewCache()
 	}
 	return &checker{config: copyConfig(config)}, nil
 }

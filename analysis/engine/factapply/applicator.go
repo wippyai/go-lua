@@ -2,6 +2,7 @@ package factapply
 
 import (
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	sourcevalue "github.com/wippyai/go-lua/analysis/engine/sourcevalue"
 	"github.com/wippyai/go-lua/analysis/engine/state"
@@ -21,6 +22,7 @@ type FactsNodeTransferConfig struct {
 	CallOutcome CallOutcomeProvider
 	Visibility  *visibility.Resolver
 	ProjectPath PathTypeProjector
+	TypeValues  *typevalue.Cache
 }
 
 // FactsEdgeTransferConfig configures the generic edge fact applicator.
@@ -29,6 +31,7 @@ type FactsEdgeTransferConfig struct {
 	CallOutcome CallOutcomeProvider
 	Visibility  *visibility.Resolver
 	ProjectPath PathTypeProjector
+	TypeValues  *typevalue.Cache
 }
 
 // NewFactsNodeTransfer returns a generic node transfer that applies point-local
@@ -41,7 +44,7 @@ func NewFactsNodeTransfer(config FactsNodeTransferConfig) transfer.NodeTransfer 
 		facts := config.Facts
 		sources := config.Sources
 		callOutcome := config.CallOutcome
-		read, materialize := callResultReader(ctx, facts, callOutcome, config.Visibility, config.ProjectPath)
+		read, materialize := callResultReader(ctx, facts, callOutcome, config.Visibility, config.ProjectPath, config.TypeValues)
 
 		out := materialize(ctx.Point, in)
 		if facts.NoNormalReturn(ctx.Point) {
@@ -51,7 +54,7 @@ func NewFactsNodeTransfer(config FactsNodeTransferConfig) transfer.NodeTransfer 
 			out = applyPathDescendantInvalidation(ctx, config.Visibility, out, fact)
 		}
 		for _, fact := range facts.PostconditionRefinements(ctx.Point) {
-			out = applyValueRefinementAt(ctx.Registry, config.Visibility, config.ProjectPath, ctx.Point, out, fact.TargetPath(), fact.Value())
+			out = applyValueRefinementAtCached(config.TypeValues, ctx.Registry, config.Visibility, config.ProjectPath, ctx.Point, out, fact.TargetPath(), fact.Value())
 		}
 		for _, fact := range facts.PostconditionPathRelations(ctx.Point) {
 			out = applyPostconditionPathRelation(ctx, config.Visibility, config.ProjectPath, out, fact)
@@ -106,7 +109,7 @@ func NewFactsEdgeTransfer(config FactsEdgeTransferConfig) transfer.EdgeTransfer 
 			if !ok {
 				continue
 			}
-			out = applyBranchRefinement(ctx, config.Visibility, config.ProjectPath, out, fact.TargetPath(), refinement)
+			out = applyBranchRefinementCached(config.TypeValues, ctx, config.Visibility, config.ProjectPath, out, fact.TargetPath(), refinement)
 		}
 		if ctx.Edge.Cond {
 			for _, fact := range config.Facts.BranchLenRefinements(ctx.Edge.From) {
@@ -114,21 +117,22 @@ func NewFactsEdgeTransfer(config FactsEdgeTransferConfig) transfer.EdgeTransfer 
 			}
 		}
 		for _, relation := range config.Facts.BranchPresenceRelations(ctx.Edge.From) {
-			refinement, ok := branchPresenceRelationRefinement(ctx, config.Visibility, config.ProjectPath, out, branchRefinements, relation)
+			refinement, ok := branchPresenceRelationRefinement(config.TypeValues, ctx, config.Visibility, config.ProjectPath, out, branchRefinements, relation)
 			if !ok {
 				continue
 			}
-			out = applyBranchRefinement(ctx, config.Visibility, config.ProjectPath, out, relation.TargetPath(), refinement)
+			out = applyBranchRefinementCached(config.TypeValues, ctx, config.Visibility, config.ProjectPath, out, relation.TargetPath(), refinement)
 		}
 		for _, relation := range config.Facts.BranchPathRelations(ctx.Edge.From) {
 			if !relation.ActiveOnEdge(ctx.Edge.Cond) {
 				continue
 			}
-			out = applyBranchPathRelation(ctx, config.Visibility, config.ProjectPath, out, relation)
+			out = applyBranchPathRelation(config.TypeValues, ctx, config.Visibility, config.ProjectPath, out, relation)
 		}
 		for _, proof := range config.Facts.BranchPathEvidence(ctx.Edge.From) {
 			if proof.Kind() == factflow.BranchPathEvidenceTruthy && proof.ActiveOnEdge(!ctx.Edge.Cond) && !proof.ActiveOnEdge(ctx.Edge.Cond) {
 				out = applyDescendantTruthyOppositeRootOriginRefinement(
+					config.TypeValues,
 					ctx.Registry,
 					config.Visibility,
 					ctx.Edge.From,

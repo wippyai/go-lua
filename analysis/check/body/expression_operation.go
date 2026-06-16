@@ -11,13 +11,13 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
-func expressionOperationEvaluator(reg *axis.Registry) sourcevalue.ExpressionOperationEvaluator {
+func expressionOperationEvaluator(reg *axis.Registry, typeValues *typevalue.Cache) sourcevalue.ExpressionOperationEvaluator {
 	return func(op factflow.ExpressionOperation, left product.Value, right product.Value) (product.Value, bool) {
 		t, ok := expressionOperationType(reg, op, left, right)
 		if !ok {
 			return topOriginOperationValue(reg, op, left, right)
 		}
-		value := typevalue.WithWitness(reg, typevalue.FromType(reg, t), t)
+		value := typevalue.WithWitness(reg, typevalue.FromTypeCached(typeValues, reg, t), t)
 		if typ.IsAny(t) || typ.IsUnknown(t) || op.Op() == "and" || op.Op() == "or" {
 			value = inheritOperationTopOrigin(reg, value, left, right)
 		}

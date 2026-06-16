@@ -22,6 +22,7 @@ type paramEntrySeed struct {
 
 func parameterEntryState(
 	reg *axis.Registry,
+	typeValues *typevalue.Cache,
 	graph cfg.Graph,
 	bindings *bind.Result,
 	fn *ast.FunctionExpr,
@@ -30,8 +31,8 @@ func parameterEntryState(
 	entry state.State,
 	initial transfer.InitialState,
 ) (state.State, transfer.InitialState) {
-	seeds := functionParamEntrySeeds(reg, bindings, fn, typeResolver)
-	seeds = append(seeds, ambientModuleGlobalEntrySeeds(reg, bindings, moduleExports)...)
+	seeds := functionParamEntrySeeds(reg, typeValues, bindings, fn, typeResolver)
+	seeds = append(seeds, ambientModuleGlobalEntrySeeds(reg, typeValues, bindings, moduleExports)...)
 	if len(seeds) == 0 {
 		return entry, initial
 	}
@@ -52,7 +53,7 @@ func parameterEntryState(
 	}
 }
 
-func functionParamEntrySeeds(reg *axis.Registry, bindings *bind.Result, fn *ast.FunctionExpr, resolver *typeresolve.Resolver) []paramEntrySeed {
+func functionParamEntrySeeds(reg *axis.Registry, typeValues *typevalue.Cache, bindings *bind.Result, fn *ast.FunctionExpr, resolver *typeresolve.Resolver) []paramEntrySeed {
 	if reg == nil || bindings == nil || fn == nil {
 		return nil
 	}
@@ -75,7 +76,7 @@ func functionParamEntrySeeds(reg *axis.Registry, bindings *bind.Result, fn *ast.
 				if t, ok := methodReceiverType(bindings, resolver, fn); ok {
 					seeds = append(seeds, paramEntrySeed{
 						slot:  valueSlot,
-						value: typevalue.WithWitness(reg, typevalue.FromType(reg, t), t),
+						value: typevalue.WithWitness(reg, typevalue.FromTypeCached(typeValues, reg, t), t),
 					})
 					continue
 				}
@@ -84,7 +85,7 @@ func functionParamEntrySeeds(reg *axis.Registry, bindings *bind.Result, fn *ast.
 				if t, ok := contextualParamType(expectedSig, slot.SourceIndex); ok {
 					seeds = append(seeds, paramEntrySeed{
 						slot:  valueSlot,
-						value: typevalue.WithWitness(reg, typevalue.FromType(reg, t), t),
+						value: typevalue.WithWitness(reg, typevalue.FromTypeCached(typeValues, reg, t), t),
 					})
 					continue
 				}
@@ -101,13 +102,13 @@ func functionParamEntrySeeds(reg *axis.Registry, bindings *bind.Result, fn *ast.
 		}
 		seeds = append(seeds, paramEntrySeed{
 			slot:  valueSlot,
-			value: typevalue.WithWitness(reg, typevalue.FromType(reg, t), t),
+			value: typevalue.WithWitness(reg, typevalue.FromTypeCached(typeValues, reg, t), t),
 		})
 	}
 	return seeds
 }
 
-func ambientModuleGlobalEntrySeeds(reg *axis.Registry, bindings *bind.Result, exports importlookup.Source) []paramEntrySeed {
+func ambientModuleGlobalEntrySeeds(reg *axis.Registry, typeValues *typevalue.Cache, bindings *bind.Result, exports importlookup.Source) []paramEntrySeed {
 	if reg == nil || bindings == nil || len(exports.Manifests) == 0 {
 		return nil
 	}
@@ -124,7 +125,7 @@ func ambientModuleGlobalEntrySeeds(reg *axis.Registry, bindings *bind.Result, ex
 		if valueSlot == "" {
 			continue
 		}
-		exportValue := typevalue.WithWitness(reg, typevalue.FromType(reg, m.Export), m.Export)
+		exportValue := typevalue.WithWitness(reg, typevalue.FromTypeCached(typeValues, reg, m.Export), m.Export)
 		seeds = append(seeds, paramEntrySeed{slot: valueSlot, value: exportValue})
 	}
 	return seeds

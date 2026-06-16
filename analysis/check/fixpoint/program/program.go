@@ -185,6 +185,9 @@ func configWithStats(config Config) Config {
 	if config.Stats != nil {
 		config.Check.Stats = &config.Stats.Body
 	}
+	if config.Check.TypeValues == nil {
+		config.Check.TypeValues = typevalue.NewCache()
+	}
 	return config
 }
 

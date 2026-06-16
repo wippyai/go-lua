@@ -14,7 +14,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/variantorigin"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
-	"github.com/wippyai/go-lua/analysis/domain/value/variant"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	sourcevalue "github.com/wippyai/go-lua/analysis/engine/sourcevalue"
 	"github.com/wippyai/go-lua/analysis/engine/state"
@@ -31,6 +30,7 @@ type Config struct {
 	Registry   *axis.Registry
 	Facts      factflow.Facts
 	Visibility *visibility.Resolver
+	TypeValues *typevalue.Cache
 }
 
 func Provider(config Config) sourcevalue.ExpressionValueProvider {
@@ -43,7 +43,7 @@ func Provider(config Config) sourcevalue.ExpressionValueProvider {
 		if !ok {
 			return product.Value{}, false
 		}
-		return Project(Config{Registry: reg, Facts: config.Facts, Visibility: config.Visibility}, point, p, in)
+		return Project(config, point, p, in)
 	}
 }
 
@@ -101,7 +101,7 @@ func Project(config Config, point cfg.Point, p pathdom.Path, in state.State) (pr
 		return exactPresent, true
 	}
 
-	value, ok := unknownIndexReadValue(reg, p.Segments[len(p.Segments)-1])
+	value, ok := unknownIndexReadValue(config, p.Segments[len(p.Segments)-1])
 	if !ok {
 		return product.Value{}, false
 	}
@@ -111,7 +111,8 @@ func Project(config Config, point cfg.Point, p pathdom.Path, in state.State) (pr
 	return dropInBoundsIndexNil(config, point, p, in, value), true
 }
 
-func unknownIndexReadValue(reg *axis.Registry, seg segment.Segment) (product.Value, bool) {
+func unknownIndexReadValue(config Config, seg segment.Segment) (product.Value, bool) {
+	reg := config.Registry
 	keyType, ok := segmentKeyType(seg)
 	if !ok {
 		return product.Value{}, false
@@ -123,7 +124,7 @@ func unknownIndexReadValue(reg *axis.Registry, seg segment.Segment) (product.Val
 	if typ.IsUnknown(projected) {
 		return product.Top(), true
 	}
-	return typevalue.FromType(reg, projected), true
+	return typevalue.FromTypeCached(config.TypeValues, reg, projected), true
 }
 
 // dropInBoundsIndexNil removes the soundly-optional nil from an array element
@@ -174,7 +175,7 @@ func projectFromStructuralEvidence(config Config, point cfg.Point, p pathdom.Pat
 	rootProjected := product.Value{}
 	hasRootProjected := false
 	if rootValue, ok := readPathValue(reg, config.Visibility, point, root, in); ok {
-		if projected, ok := projectFromValueEvidence(reg, rootValue, p.Segments); ok {
+		if projected, ok := projectFromValueEvidence(config, rootValue, p.Segments); ok {
 			rootProjected = projected
 			hasRootProjected = true
 		}
@@ -185,7 +186,7 @@ func projectFromStructuralEvidence(config Config, point cfg.Point, p pathdom.Pat
 	if !runtimeMayBeTable(reg, parentValue, hasParent) {
 		return product.Value{}, false, true
 	}
-	if projected, ok := projectFromValueEvidence(reg, parentValue, p.Segments[len(p.Segments)-1:]); ok {
+	if projected, ok := projectFromValueEvidence(config, parentValue, p.Segments[len(p.Segments)-1:]); ok {
 		// The parent-relative projection observes per-segment narrowing recorded
 		// on the intermediate path (e.g. a truthy guard that removed nil from an
 		// optional field), so it is at least as precise as a single root-relative
@@ -261,11 +262,12 @@ func readPathValue(
 	return value, true
 }
 
-func projectFromValueEvidence(reg *axis.Registry, value product.Value, suffix []segment.Segment) (product.Value, bool) {
+func projectFromValueEvidence(config Config, value product.Value, suffix []segment.Segment) (product.Value, bool) {
+	reg := config.Registry
 	if len(suffix) == 0 {
 		return product.Value{}, false
 	}
-	parentType, ok := structuralTypeFromValue(reg, value)
+	parentType, ok := structuralTypeFromValue(config, value)
 	if !ok {
 		return product.Value{}, false
 	}
@@ -273,20 +275,21 @@ func projectFromValueEvidence(reg *axis.Registry, value product.Value, suffix []
 	if !ok {
 		return product.Value{}, false
 	}
-	return typevalue.WithWitness(reg, typevalue.FromType(reg, projected), projected), true
+	return typevalue.WithWitness(reg, typevalue.FromTypeCached(config.TypeValues, reg, projected), projected), true
 }
 
-func structuralTypeFromValue(reg *axis.Registry, value product.Value) (typ.Type, bool) {
+func structuralTypeFromValue(config Config, value product.Value) (typ.Type, bool) {
+	reg := config.Registry
 	origin := product.Get(reg, value, variantorigin.Key)
 	valuePresence := product.PresenceOf(value)
 	if witness := product.Get(reg, value, typewitness.Key); !witness.IsTop() {
 		if t, ok := witness.Type(); ok {
 			t = typeForValuePresence(t, valuePresence)
 			if !origin.IsBottom() && !origin.IsTop() {
-				if narrowed, ok := variant.NarrowByOrigin(t, origin.Family(), origin.Cases()); ok {
+				if narrowed, ok := typevalue.NarrowVariantByOriginCached(config.TypeValues, t, origin.Family(), origin.Cases()); ok {
 					return narrowed, true
 				}
-				if narrowed, ok := variant.TypeFromOrigin(origin.Family(), origin.Cases()); ok {
+				if narrowed, ok := typevalue.TypeFromVariantOriginCached(config.TypeValues, origin.Family(), origin.Cases()); ok {
 					return typeForValuePresence(narrowed, valuePresence), true
 				}
 			}
@@ -294,7 +297,7 @@ func structuralTypeFromValue(reg *axis.Registry, value product.Value) (typ.Type,
 		}
 	}
 	if !origin.IsBottom() && !origin.IsTop() {
-		if t, ok := variant.TypeFromOrigin(origin.Family(), origin.Cases()); ok {
+		if t, ok := typevalue.TypeFromVariantOriginCached(config.TypeValues, origin.Family(), origin.Cases()); ok {
 			return typeForValuePresence(t, valuePresence), true
 		}
 	}

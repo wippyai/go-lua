@@ -30,6 +30,7 @@ func solveConfigFromConfig(config Config) SolveConfig {
 	return SolveConfig{
 		EntryState:                   config.EntryState,
 		Initial:                      config.Initial,
+		TypeValues:                   config.TypeValues,
 		CallOutcome:                  config.CallOutcome,
 		CallOutcomeFactory:           config.CallOutcomeFactory,
 		SignatureArgumentType:        config.SignatureArgumentType,

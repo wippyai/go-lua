@@ -22,16 +22,17 @@ func calleeValueProvider(
 	facts factflow.Facts,
 	resolver *visibility.Resolver,
 	sources sourcevalue.SourceValues,
+	typeValues *typevalue.Cache,
 ) CalleeValueFunc {
 	return func(ctx transfer.NodeContext, site factflow.CallSite, in state.State, read func(cfg.Point) state.State) (product.Value, bool) {
 		p := site.CalleePath()
 		if p.IsEmpty() {
-			return methodCalleeValue(reg, sources, ctx, site, in, read)
+			return methodCalleeValue(reg, typeValues, sources, ctx, site, in, read)
 		}
-		if value, ok := pathMethodCalleeValue(reg, facts, resolver, ctx, site, in); ok {
+		if value, ok := pathMethodCalleeValue(reg, typeValues, facts, resolver, ctx, site, in); ok {
 			return value, true
 		}
-		config := readexpr.Config{Registry: reg, Facts: facts, Visibility: resolver}
+		config := readexpr.Config{Registry: reg, Facts: facts, Visibility: resolver, TypeValues: typeValues}
 		if value, ok := readexpr.Project(config, ctx.Point, p, in); ok && hasTypeWitness(reg, value) {
 			return value, true
 		}
@@ -52,12 +53,13 @@ func calleeValueProvider(
 		if !ok || projected == nil {
 			return product.Value{}, false
 		}
-		return typevalue.WithWitness(reg, typevalue.FromType(reg, projected), projected), true
+		return typevalue.WithWitness(reg, typevalue.FromTypeCached(typeValues, reg, projected), projected), true
 	}
 }
 
 func pathMethodCalleeValue(
 	reg *axis.Registry,
+	typeValues *typevalue.Cache,
 	facts factflow.Facts,
 	resolver *visibility.Resolver,
 	ctx transfer.NodeContext,
@@ -72,7 +74,7 @@ func pathMethodCalleeValue(
 	if !ok || receiverPath.IsEmpty() {
 		return product.Value{}, false
 	}
-	config := readexpr.Config{Registry: reg, Facts: facts, Visibility: resolver}
+	config := readexpr.Config{Registry: reg, Facts: facts, Visibility: resolver, TypeValues: typeValues}
 	receiverValue, ok := readexpr.Project(config, ctx.Point, receiverPath, in)
 	if !ok {
 		return product.Value{}, false
@@ -81,7 +83,7 @@ func pathMethodCalleeValue(
 	if !ok || typ.IsAny(receiverType) || typ.IsUnknown(receiverType) || typ.IsNever(receiverType) {
 		return product.Value{}, false
 	}
-	return methodTypeValue(reg, receiverType, method)
+	return methodTypeValue(reg, typeValues, receiverType, method)
 }
 
 // methodCalleeValue resolves the callee of a colon-method call whose receiver
@@ -93,6 +95,7 @@ func pathMethodCalleeValue(
 // is unresolved, no value is produced so the result stays top.
 func methodCalleeValue(
 	reg *axis.Registry,
+	typeValues *typevalue.Cache,
 	sources sourcevalue.SourceValues,
 	ctx transfer.NodeContext,
 	site factflow.CallSite,
@@ -115,10 +118,10 @@ func methodCalleeValue(
 	if !ok || typ.IsAny(receiverType) || typ.IsUnknown(receiverType) || typ.IsNever(receiverType) {
 		return product.Value{}, false
 	}
-	return methodTypeValue(reg, receiverType, method)
+	return methodTypeValue(reg, typeValues, receiverType, method)
 }
 
-func methodTypeValue(reg *axis.Registry, receiverType typ.Type, method string) (product.Value, bool) {
+func methodTypeValue(reg *axis.Registry, typeValues *typevalue.Cache, receiverType typ.Type, method string) (product.Value, bool) {
 	memberType, status := typecall.MemberCall(receiverType, method)
 	if status != typecall.MemberCallOK {
 		return product.Value{}, false
@@ -136,7 +139,7 @@ func methodTypeValue(reg *axis.Registry, receiverType typ.Type, method string) (
 			methodType = substituted
 		}
 	}
-	return typevalue.WithWitness(reg, typevalue.FromType(reg, methodType), methodType), true
+	return typevalue.WithWitness(reg, typevalue.FromTypeCached(typeValues, reg, methodType), methodType), true
 }
 
 func hasTypeWitness(reg *axis.Registry, value product.Value) bool {

@@ -25,6 +25,7 @@ type pathValue struct {
 }
 
 func applyBranchPathRelation(
+	typeValues *typevalue.Cache,
 	ctx transfer.EdgeContext,
 	resolver *visibility.Resolver,
 	projectPath PathTypeProjector,
@@ -33,15 +34,16 @@ func applyBranchPathRelation(
 ) state.State {
 	switch relation.Kind() {
 	case factflow.BranchPathRelationEqual:
-		return applyBranchPathEquality(ctx, resolver, projectPath, out, relation.LeftPath(), relation.RightPath())
+		return applyBranchPathEquality(typeValues, ctx, resolver, projectPath, out, relation.LeftPath(), relation.RightPath())
 	case factflow.BranchPathRelationNotEqual:
-		return applyBranchPathInequality(ctx, resolver, projectPath, out, relation.LeftPath(), relation.RightPath())
+		return applyBranchPathInequality(typeValues, ctx, resolver, projectPath, out, relation.LeftPath(), relation.RightPath())
 	default:
 		return out
 	}
 }
 
 func applyBranchPathEquality(
+	typeValues *typevalue.Cache,
 	ctx transfer.EdgeContext,
 	resolver *visibility.Resolver,
 	projectPath PathTypeProjector,
@@ -49,10 +51,10 @@ func applyBranchPathEquality(
 	leftPath pathdom.Path,
 	rightPath pathdom.Path,
 ) state.State {
-	if selected, ok := applyChannelSelectCaseEquality(ctx.Registry, resolver, projectPath, ctx.Edge.From, out, leftPath, rightPath); ok {
+	if selected, ok := applyChannelSelectCaseEquality(typeValues, ctx.Registry, resolver, projectPath, ctx.Edge.From, out, leftPath, rightPath); ok {
 		return selected
 	}
-	return applyPathEqualityAt(ctx.Registry, resolver, projectPath, ctx.Edge.From, out, leftPath, rightPath)
+	return applyPathEqualityAtCached(typeValues, ctx.Registry, resolver, projectPath, ctx.Edge.From, out, leftPath, rightPath)
 }
 
 func applyPathEqualityAt(
@@ -64,11 +66,24 @@ func applyPathEqualityAt(
 	leftPath pathdom.Path,
 	rightPath pathdom.Path,
 ) state.State {
-	left, ok := resolvePathValueAt(reg, resolver, point, out, leftPath, projectPath)
+	return applyPathEqualityAtCached(nil, reg, resolver, projectPath, point, out, leftPath, rightPath)
+}
+
+func applyPathEqualityAtCached(
+	typeValues *typevalue.Cache,
+	reg *axis.Registry,
+	resolver *visibility.Resolver,
+	projectPath PathTypeProjector,
+	point cfg.Point,
+	out state.State,
+	leftPath pathdom.Path,
+	rightPath pathdom.Path,
+) state.State {
+	left, ok := resolvePathValueAtCached(typeValues, reg, resolver, point, out, leftPath, projectPath)
 	if !ok {
 		return out
 	}
-	right, ok := resolvePathValueAt(reg, resolver, point, out, rightPath, projectPath)
+	right, ok := resolvePathValueAtCached(typeValues, reg, resolver, point, out, rightPath, projectPath)
 	if !ok {
 		return out
 	}
@@ -81,6 +96,7 @@ func applyPathEqualityAt(
 }
 
 func applyBranchPathInequality(
+	typeValues *typevalue.Cache,
 	ctx transfer.EdgeContext,
 	resolver *visibility.Resolver,
 	projectPath PathTypeProjector,
@@ -88,7 +104,7 @@ func applyBranchPathInequality(
 	leftPath pathdom.Path,
 	rightPath pathdom.Path,
 ) state.State {
-	if selected, ok := applyChannelSelectCaseInequality(ctx.Registry, resolver, projectPath, ctx.Edge.From, out, leftPath, rightPath); ok {
+	if selected, ok := applyChannelSelectCaseInequality(typeValues, ctx.Registry, resolver, projectPath, ctx.Edge.From, out, leftPath, rightPath); ok {
 		return selected
 	}
 	out = applyPathOriginRelation(ctx.Registry, resolver, projectPath, ctx.Edge.From, out, leftPath, rightPath, false)
@@ -97,6 +113,18 @@ func applyBranchPathInequality(
 }
 
 func resolvePathValueAt(
+	reg *axis.Registry,
+	resolver *visibility.Resolver,
+	point cfg.Point,
+	out state.State,
+	targetPath pathdom.Path,
+	projectPath PathTypeProjector,
+) (pathValue, bool) {
+	return resolvePathValueAtCached(nil, reg, resolver, point, out, targetPath, projectPath)
+}
+
+func resolvePathValueAtCached(
+	typeValues *typevalue.Cache,
 	reg *axis.Registry,
 	resolver *visibility.Resolver,
 	point cfg.Point,
@@ -128,7 +156,7 @@ func resolvePathValueAt(
 		projected, ok := projectPathOriginValue(reg, out, targetPath)
 		if ok {
 			value = projected
-		} else if projected, ok := projectPathStructuralValue(reg, out, targetPath, projectPath); ok {
+		} else if projected, ok := projectPathStructuralValueCached(typeValues, reg, out, targetPath, projectPath); ok {
 			value = projected
 		} else {
 			return pathValue{}, false
@@ -143,6 +171,10 @@ func resolvePathValueAt(
 }
 
 func projectPathStructuralValue(reg *axis.Registry, out state.State, targetPath pathdom.Path, projectPath PathTypeProjector) (product.Value, bool) {
+	return projectPathStructuralValueCached(nil, reg, out, targetPath, projectPath)
+}
+
+func projectPathStructuralValueCached(typeValues *typevalue.Cache, reg *axis.Registry, out state.State, targetPath pathdom.Path, projectPath PathTypeProjector) (product.Value, bool) {
 	if targetPath.Symbol == 0 || len(targetPath.Segments) == 0 {
 		return product.Value{}, false
 	}
@@ -153,7 +185,7 @@ func projectPathStructuralValue(reg *axis.Registry, out state.State, targetPath 
 	if product.Equal(reg, root, product.Bottom(reg)) {
 		return product.Value{}, false
 	}
-	rootType, ok := structuralTypeFromPathValue(reg, root)
+	rootType, ok := structuralTypeFromPathValueCached(typeValues, reg, root)
 	if !ok {
 		return product.Value{}, false
 	}
@@ -161,20 +193,24 @@ func projectPathStructuralValue(reg *axis.Registry, out state.State, targetPath 
 	if !ok {
 		return product.Value{}, false
 	}
-	return typevalue.WithWitness(reg, typevalue.FromType(reg, projected), projected), true
+	return typevalue.WithWitness(reg, typevalue.FromTypeCached(typeValues, reg, projected), projected), true
 }
 
 func structuralTypeFromPathValue(reg *axis.Registry, value product.Value) (typ.Type, bool) {
+	return structuralTypeFromPathValueCached(nil, reg, value)
+}
+
+func structuralTypeFromPathValueCached(typeValues *typevalue.Cache, reg *axis.Registry, value product.Value) (typ.Type, bool) {
 	origin := product.Get(reg, value, variantorigin.Key)
 	valuePresence := product.PresenceOf(value)
 	if witness := product.Get(reg, value, typewitness.Key); !witness.IsTop() {
 		if t, ok := witness.Type(); ok {
 			t = typeForPathValuePresence(t, valuePresence)
 			if !origin.IsBottom() && !origin.IsTop() {
-				if narrowed, ok := variant.NarrowByOrigin(t, origin.Family(), origin.Cases()); ok {
+				if narrowed, ok := typevalue.NarrowVariantByOriginCached(typeValues, t, origin.Family(), origin.Cases()); ok {
 					return narrowed, true
 				}
-				if narrowed, ok := variant.TypeFromOrigin(origin.Family(), origin.Cases()); ok {
+				if narrowed, ok := typevalue.TypeFromVariantOriginCached(typeValues, origin.Family(), origin.Cases()); ok {
 					return typeForPathValuePresence(narrowed, valuePresence), true
 				}
 			}
@@ -182,7 +218,7 @@ func structuralTypeFromPathValue(reg *axis.Registry, value product.Value) (typ.T
 		}
 	}
 	if !origin.IsBottom() && !origin.IsTop() {
-		if t, ok := variant.TypeFromOrigin(origin.Family(), origin.Cases()); ok {
+		if t, ok := typevalue.TypeFromVariantOriginCached(typeValues, origin.Family(), origin.Cases()); ok {
 			return typeForPathValuePresence(t, valuePresence), true
 		}
 	}

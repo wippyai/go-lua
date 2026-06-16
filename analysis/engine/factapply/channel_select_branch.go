@@ -15,6 +15,7 @@ import (
 )
 
 func applyChannelSelectCaseEquality(
+	typeValues *typevalue.Cache,
 	reg *axis.Registry,
 	resolver *visibility.Resolver,
 	projectPath PathTypeProjector,
@@ -23,16 +24,17 @@ func applyChannelSelectCaseEquality(
 	leftPath pathdom.Path,
 	rightPath pathdom.Path,
 ) (state.State, bool) {
-	if updated, ok := applyChannelSelectCasePathEquality(reg, resolver, projectPath, point, out, leftPath, rightPath); ok {
+	if updated, ok := applyChannelSelectCasePathEquality(typeValues, reg, resolver, projectPath, point, out, leftPath, rightPath); ok {
 		return updated, true
 	}
-	if updated, ok := applyChannelSelectCasePathEquality(reg, resolver, projectPath, point, out, rightPath, leftPath); ok {
+	if updated, ok := applyChannelSelectCasePathEquality(typeValues, reg, resolver, projectPath, point, out, rightPath, leftPath); ok {
 		return updated, true
 	}
 	return out, false
 }
 
 func applyChannelSelectCasePathEquality(
+	typeValues *typevalue.Cache,
 	reg *axis.Registry,
 	resolver *visibility.Resolver,
 	projectPath PathTypeProjector,
@@ -54,7 +56,7 @@ func applyChannelSelectCasePathEquality(
 	if !ok {
 		return out, false
 	}
-	result, ok := resolvePathValueAt(reg, resolver, point, out, resultPath, projectPath)
+	result, ok := resolvePathValueAtCached(typeValues, reg, resolver, point, out, resultPath, projectPath)
 	if !ok {
 		return out, false
 	}
@@ -74,7 +76,7 @@ func applyChannelSelectCasePathEquality(
 			return out, false
 		}
 	}
-	value := typevalue.WithWitness(reg, typevalue.FromType(reg, caseType), caseType)
+	value := typevalue.WithWitness(reg, typevalue.FromTypeCached(typeValues, reg, caseType), caseType)
 	out = invalidateChannelSelectResultDescendants(resolver, point, out, resultPath)
 	return result.write(out, value), true
 }
@@ -125,6 +127,7 @@ func channelSelectRemainingTypeFromFacts(reg *axis.Registry, out state.State, se
 }
 
 func applyChannelSelectCaseInequality(
+	typeValues *typevalue.Cache,
 	reg *axis.Registry,
 	resolver *visibility.Resolver,
 	projectPath PathTypeProjector,
@@ -133,16 +136,17 @@ func applyChannelSelectCaseInequality(
 	leftPath pathdom.Path,
 	rightPath pathdom.Path,
 ) (state.State, bool) {
-	if updated, ok := applyChannelSelectCasePathInequality(reg, resolver, projectPath, point, out, leftPath, rightPath); ok {
+	if updated, ok := applyChannelSelectCasePathInequality(typeValues, reg, resolver, projectPath, point, out, leftPath, rightPath); ok {
 		return updated, true
 	}
-	if updated, ok := applyChannelSelectCasePathInequality(reg, resolver, projectPath, point, out, rightPath, leftPath); ok {
+	if updated, ok := applyChannelSelectCasePathInequality(typeValues, reg, resolver, projectPath, point, out, rightPath, leftPath); ok {
 		return updated, true
 	}
 	return out, false
 }
 
 func applyChannelSelectCasePathInequality(
+	typeValues *typevalue.Cache,
 	reg *axis.Registry,
 	resolver *visibility.Resolver,
 	projectPath PathTypeProjector,
@@ -164,7 +168,7 @@ func applyChannelSelectCasePathInequality(
 	if !ok {
 		return out, false
 	}
-	result, ok := resolvePathValueAt(reg, resolver, point, out, resultPath, projectPath)
+	result, ok := resolvePathValueAtCached(typeValues, reg, resolver, point, out, resultPath, projectPath)
 	if !ok {
 		return out, false
 	}
@@ -181,7 +185,7 @@ func applyChannelSelectCasePathInequality(
 			return out, false
 		}
 	}
-	value := typevalue.WithWitness(reg, typevalue.FromType(reg, narrowed), narrowed)
+	value := typevalue.WithWitness(reg, typevalue.FromTypeCached(typeValues, reg, narrowed), narrowed)
 	out = invalidateChannelSelectResultDescendants(resolver, point, out, resultPath)
 	return result.write(out, value), true
 }

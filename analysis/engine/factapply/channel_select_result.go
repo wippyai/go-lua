@@ -26,6 +26,7 @@ type channelSelectResultGroup struct {
 
 func applyChannelSelectResult(
 	ctx transfer.NodeContext,
+	typeValues *typevalue.Cache,
 	resolver *visibility.Resolver,
 	projectPath PathTypeProjector,
 	out state.State,
@@ -36,7 +37,7 @@ func applyChannelSelectResult(
 		if !group.hasResult || group.resultIndex < 0 || len(group.cases) == 0 && !group.hasDefault {
 			continue
 		}
-		resultValue, ok := channelSelectResultValue(ctx, resolver, projectPath, out, selectID, group.cases, group.hasDefault)
+		resultValue, ok := channelSelectResultValue(ctx, typeValues, resolver, projectPath, out, selectID, group.cases, group.hasDefault)
 		if !ok {
 			continue
 		}
@@ -81,6 +82,7 @@ func channelSelectResultGroups(events []factflow.ChannelSelect) map[factflow.Cha
 
 func channelSelectResultValue(
 	ctx transfer.NodeContext,
+	typeValues *typevalue.Cache,
 	resolver *visibility.Resolver,
 	projectPath PathTypeProjector,
 	out state.State,
@@ -94,7 +96,7 @@ func channelSelectResultValue(
 	}
 	resultCases := make([]channelselect.ResultCase, 0, len(cases))
 	for _, event := range cases {
-		payloadType, ok := channelSelectEventPayloadType(ctx, resolver, projectPath, out, event)
+		payloadType, ok := channelSelectEventPayloadType(ctx, typeValues, resolver, projectPath, out, event)
 		if !ok {
 			continue
 		}
@@ -110,11 +112,12 @@ func channelSelectResultValue(
 	if !ok {
 		return product.Value{}, false
 	}
-	return typevalue.WithWitness(reg, typevalue.FromType(reg, resultType), resultType), true
+	return typevalue.WithWitness(reg, typevalue.FromTypeCached(typeValues, reg, resultType), resultType), true
 }
 
 func channelSelectEventPayloadType(
 	ctx transfer.NodeContext,
+	typeValues *typevalue.Cache,
 	resolver *visibility.Resolver,
 	projectPath PathTypeProjector,
 	out state.State,
@@ -127,17 +130,18 @@ func channelSelectEventPayloadType(
 	if !ok {
 		return nil, false
 	}
-	return channelSelectCasePathPayloadType(ctx, resolver, projectPath, out, casePath)
+	return channelSelectCasePathPayloadType(ctx, typeValues, resolver, projectPath, out, casePath)
 }
 
 func channelSelectCasePathPayloadType(
 	ctx transfer.NodeContext,
+	typeValues *typevalue.Cache,
 	resolver *visibility.Resolver,
 	projectPath PathTypeProjector,
 	out state.State,
 	casePath pathdom.Path,
 ) (typ.Type, bool) {
-	resolved, ok := resolvePathValueAt(ctx.Registry, resolver, ctx.Point, out, casePath, projectPath)
+	resolved, ok := resolvePathValueAtCached(typeValues, ctx.Registry, resolver, ctx.Point, out, casePath, projectPath)
 	if !ok {
 		return nil, false
 	}
