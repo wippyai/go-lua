@@ -23,7 +23,7 @@ import (
 // finite value-like lanes denote bottom for the caller's domain; must-fact
 // lanes record bottom explicitly with their corresponding flags.
 type State struct {
-	values       map[key.Value]product.Value
+	values       valueLane
 	pathEvidence pathevidence.Lane
 
 	dynamicIndex      dynamicIndexLane
@@ -33,13 +33,8 @@ type State struct {
 	placement         placementLane
 	lenFloors         lift.MustMapLane[pathdom.PathKey, lenbound.Floor]
 	numFloors         lift.MustMapLane[pathdom.PathKey, numbound.Floor]
-
-	valuesTop bool
 }
 
-// TODO(perf): replace the remaining raw map fields with immutable lane handles
-// so this persistence contract is enforced by representation, not package
-// convention.
 // Snapshot returns a point-in-time state value. State lanes are persistent by
 // convention: exported write APIs copy any lane they change, so unchanged lanes
 // can be shared safely across solver snapshots.
@@ -49,16 +44,7 @@ func (s State) Snapshot() State {
 
 // ReadValue reads a value slot. Missing slots read as product.Bottom(reg).
 func (s State) ReadValue(reg *axis.Registry, slot key.Value) product.Value {
-	if slot == "" {
-		return product.Bottom(reg)
-	}
-	if s.valuesTop {
-		return product.Top()
-	}
-	if v, ok := s.values[slot]; ok {
-		return v
-	}
-	return product.Bottom(reg)
+	return s.values.read(reg, slot)
 }
 
 // ReadSymbolValue reads the current point-local value for a lexical symbol.
@@ -75,27 +61,13 @@ func (s State) WriteValue(reg *axis.Registry, slot key.Value, value product.Valu
 	if slot == "" {
 		return s
 	}
-	if s.valuesTop {
+	if s.values.top {
 		panic("state: cannot finite-write value slot into top value lane")
 	}
-	valueDomain := product.Domain(reg)
-	if valueDomain.Equal(value, valueDomain.Bottom()) {
-		values, changed := deleteValueEntry(s.values, slot)
-		if !changed {
-			return s
-		}
-		out := s.reachable()
-		out.values = values
-		return out
-	}
-	if existing, ok := s.values[slot]; ok && valueDomain.Equal(existing, value) {
+	values, changed := s.values.write(reg, slot, value)
+	if !changed {
 		return s
 	}
-	values := cloneValueMap(s.values)
-	if values == nil {
-		values = make(map[key.Value]product.Value, 1)
-	}
-	values[slot] = value
 	out := s.reachable()
 	out.values = values
 	return out
@@ -152,7 +124,7 @@ func Domain(reg *axis.Registry) lattice.Lattice[State] {
 		},
 		Top: func() State {
 			return State{
-				valuesTop:         true,
+				values:            valueLane{top: true},
 				pathEvidence:      ops.pathEvidence.Top(),
 				dynamicIndex:      dynamicIndexLane{top: true},
 				heapTableIdentity: heapTableIdentityLane{top: true},
@@ -226,10 +198,7 @@ type domainOps struct {
 }
 
 func (o domainOps) valueLane(s State) map[key.Value]product.Value {
-	if s.valuesTop {
-		return o.values.Top()
-	}
-	return s.values
+	return s.values.asMap(o.values)
 }
 
 func (o domainOps) dynamicIndexLane(s State) map[dynamicindex.Key]dynamicindex.Fact {
@@ -260,11 +229,7 @@ func (o domainOps) fromLanes(
 	numFloors lift.MustMapLane[pathdom.PathKey, numbound.Floor],
 ) State {
 	out := State{}
-	if o.values.Equal(values, o.values.Top()) {
-		out.valuesTop = true
-	} else {
-		out.values = values
-	}
+	out.values = valueLaneFromMap(o.values, values)
 	out.pathEvidence = pathEvidence
 	out.dynamicIndex = dynamicIndexLaneFromMap(o.dynamicIndex, dynamicIndex)
 	out.heapTableIdentity = heapTableIdentityLaneFromMap(o.heapTableIdentity, heapTableIdentity)
@@ -312,34 +277,4 @@ func cloneNumFloors(in map[pathdom.PathKey]numbound.Floor) map[pathdom.PathKey]n
 
 func placementMapDomain() lattice.Lattice[map[identity.ID]placement.Value] {
 	return lift.Map[identity.ID, placement.Value](placement.Spec().Lattice())
-}
-
-func cloneValueMap(in map[key.Value]product.Value) map[key.Value]product.Value {
-	if len(in) == 0 {
-		return nil
-	}
-	out := make(map[key.Value]product.Value, len(in))
-	for k, v := range in {
-		out[k] = v
-	}
-	return out
-}
-
-func deleteValueEntry(
-	in map[key.Value]product.Value,
-	slot key.Value,
-) (map[key.Value]product.Value, bool) {
-	if _, ok := in[slot]; !ok {
-		return in, false
-	}
-	out := make(map[key.Value]product.Value, len(in)-1)
-	for k, v := range in {
-		if k != slot {
-			out[k] = v
-		}
-	}
-	if len(out) == 0 {
-		return nil, true
-	}
-	return out, true
 }

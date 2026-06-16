@@ -141,7 +141,7 @@ func TestUpdateHelpersReadCurrentAndCanonicalizeBottom(t *testing.T) {
 	if got := s2.ReadPathKey(reg, pathKey); !valueDomain.Equal(got, bottom) {
 		t.Fatalf("updated path key = %s, want bottom", formatValue(reg, got))
 	}
-	if _, ok := s2.values[slot]; ok {
+	if s2.values.hasFinite(slot) {
 		t.Fatalf("UpdateValue to bottom kept finite value entry")
 	}
 	if _, ok := s2.PathRefinementsSnapshot().Refinements[pathKey]; ok {
@@ -389,7 +389,7 @@ func TestStateBottomWritesRemoveExplicitBottomEntries(t *testing.T) {
 	state = state.WriteEffectDelta(fx.effectKey, effectdelta.Bottom(reg))
 	state = state.WritePlacement(fx.escapeID, placement.Bottom)
 
-	if _, ok := state.values[fx.valueSlot]; ok {
+	if state.values.hasFinite(fx.valueSlot) {
 		t.Fatalf("value slot kept explicit bottom entry")
 	}
 	if _, ok := state.PathRefinementsSnapshot().Refinements[fx.pathKey]; ok {
@@ -415,9 +415,9 @@ func TestExplicitBottomEntriesCanonicalizeToAbsence(t *testing.T) {
 	stateDomain := Domain(reg)
 	bottom := valueDomain.Bottom()
 	explicit := State{
-		values: map[key.Value]product.Value{
+		values: valueLane{values: map[key.Value]product.Value{
 			key.ReturnSlot(0): bottom,
-		},
+		}},
 	}
 
 	if !stateDomain.Equal(explicit, State{}) {
@@ -427,8 +427,8 @@ func TestExplicitBottomEntriesCanonicalizeToAbsence(t *testing.T) {
 	if !stateDomain.Equal(joined, State{}) {
 		t.Fatalf("Join should canonicalize bottom entries away, got %s", formatState(reg, joined))
 	}
-	if len(joined.values) != 0 {
-		t.Fatalf("Join kept bottom entries: values=%d", len(joined.values))
+	if joined.values.hasFinite(key.ReturnSlot(0)) {
+		t.Fatalf("Join kept bottom entry")
 	}
 
 	withValue := State{}.WriteValue(reg, key.ReturnSlot(0), presentValue(reg))
