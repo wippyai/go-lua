@@ -154,6 +154,49 @@ func TestWithSupplementalAuthorityBlocksSupplementalPostReturnFacts(t *testing.T
 	}
 }
 
+func TestWithSupplementalPreservesPrimaryAuthorityWhenSupplementalIsWeak(t *testing.T) {
+	reg := standard.Registry()
+	primaryValue := typeValue(reg, typ.String)
+	supplementalValue := product.Top()
+	primary := func(transfer.NodeContext, factflow.CallSite, state.State, func(cfg.Point) state.State) factapply.CallOutcome {
+		return factapply.CallOutcome{
+			PostReturnAuthority: true,
+			Results:             []factapply.CallResult{{Index: 0, Value: primaryValue}},
+			ParamObligations: []factapply.CallParamObligation{
+				{ParamIndex: 0, Value: primaryValue},
+			},
+		}
+	}
+	supplemental := func(transfer.NodeContext, factflow.CallSite, state.State, func(cfg.Point) state.State) factapply.CallOutcome {
+		return factapply.CallOutcome{
+			Results: []factapply.CallResult{{Index: 0, Value: supplementalValue}},
+			NormalReturnFacts: callboundary.NormalReturnFacts{
+				PathRefinements: []callboundary.PathValueFact{
+					{Path: pathdom.NewPlaceholder(0), Value: supplementalValue},
+				},
+			},
+			ParamObligations: []factapply.CallParamObligation{
+				{ParamIndex: 1, Value: supplementalValue},
+			},
+		}
+	}
+
+	got := WithSupplemental(primary, supplemental)(transfer.NodeContext{Registry: reg}, factflow.NewCallSite(factflow.CallSiteConfig{}), state.State{}, nil)
+
+	if !got.PostReturnAuthority {
+		t.Fatal("PostReturnAuthority = false, want authoritative primary preserved")
+	}
+	if len(got.Results) != 1 || got.Results[0].Index != 0 || !product.Equal(reg, got.Results[0].Value, primaryValue) {
+		t.Fatalf("results = %#v, want primary result only", got.Results)
+	}
+	if len(got.NormalReturnFacts.PathRefinements) != 0 {
+		t.Fatalf("normal return facts = %#v, want weak supplemental post-return facts blocked", got.NormalReturnFacts)
+	}
+	if len(got.ParamObligations) != 2 {
+		t.Fatalf("param obligations = %#v, want diagnostic obligations from both providers", got.ParamObligations)
+	}
+}
+
 func TestWithSupplementalPreservesPrimaryNonTypeEvidence(t *testing.T) {
 	reg := standard.Registry()
 	primaryValue := product.NewWithPresence(reg, product.ShapeTop, presence.Present())

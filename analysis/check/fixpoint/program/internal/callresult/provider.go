@@ -17,11 +17,11 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/calloutcome"
 	factapply "github.com/wippyai/go-lua/analysis/engine/factapply"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
+	"github.com/wippyai/go-lua/analysis/engine/factquery"
 	sourcevalue "github.com/wippyai/go-lua/analysis/engine/sourcevalue"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
-	"github.com/wippyai/go-lua/analysis/ir/dominance"
 	"github.com/wippyai/go-lua/analysis/lua/typecall"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	typenormalize "github.com/wippyai/go-lua/analysis/type/normalize"
@@ -637,21 +637,21 @@ func valueFromRootDeclarationSource(
 	if !ok || exprPath.Symbol == 0 || len(exprPath.Segments) != 0 {
 		return product.Value{}, false
 	}
-	decl, ok := recoverRootDeclarationSource(point, exprPath.Symbol, facts, graph)
+	decl, ok := factquery.DominatingRootDeclarationSource(point, exprPath.Symbol, facts, graph)
 	if !ok {
 		return product.Value{}, false
 	}
 	declState := in
 	if read != nil {
-		declState = read(decl.point)
+		declState = read(decl.Point)
 	}
-	if decl.symbol != 0 {
-		v := declState.ReadSymbolValue(reg, decl.symbol)
+	if decl.Symbol != 0 {
+		v := declState.ReadSymbolValue(reg, decl.Symbol)
 		if !product.Equal(reg, v, product.Bottom(reg)) {
 			return v, true
 		}
 	}
-	return valueOfSource(decl.point, decl.source, sources, declState, read)
+	return valueOfSource(decl.Point, decl.Source, sources, declState, read)
 }
 
 func valueOfSource(
@@ -669,57 +669,6 @@ func valueOfSource(
 		return product.Value{}, false
 	}
 	return value, true
-}
-
-type recoveredRootDeclarationSource struct {
-	point  cfg.Point
-	source factflow.ValueSource
-	symbol symbol.ID
-}
-
-func recoverRootDeclarationSource(
-	point cfg.Point,
-	target symbol.ID,
-	facts factflow.Facts,
-	graph cfg.Graph,
-) (recoveredRootDeclarationSource, bool) {
-	if point == 0 || target == 0 || graph == nil {
-		return recoveredRootDeclarationSource{}, false
-	}
-	dominators := dominance.ComputeImmediateDominatorInfo(graph)
-	if dominators == nil {
-		return recoveredRootDeclarationSource{}, false
-	}
-	idom := dominators.Map()
-	visited := make(map[cfg.Point]struct{}, graph.Size())
-	var recovered recoveredRootDeclarationSource
-	for cursor := point; ; {
-		if _, ok := visited[cursor]; ok {
-			return recoveredRootDeclarationSource{}, false
-		}
-		visited[cursor] = struct{}{}
-		assignment, ok := facts.RootAssignment(cursor)
-		if ok && assignment.TargetSymbol() == target && len(assignment.TargetPath().Segments) == 0 {
-			switch assignment.Kind() {
-			case factflow.RootAssignmentLocalDeclaration:
-				recovered = recoveredRootDeclarationSource{
-					point:  cursor,
-					source: assignment.Source(),
-					symbol: target,
-				}
-				return recovered, true
-			case factflow.RootAssignmentOrdinaryRootWrite:
-				return recoveredRootDeclarationSource{}, false
-			default:
-				return recoveredRootDeclarationSource{}, false
-			}
-		}
-		parent, ok := idom[cursor]
-		if !ok || parent == cursor {
-			return recoveredRootDeclarationSource{}, false
-		}
-		cursor = parent
-	}
 }
 
 func callArgumentType(

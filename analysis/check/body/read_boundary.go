@@ -10,10 +10,10 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	factapply "github.com/wippyai/go-lua/analysis/engine/factapply"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
+	"github.com/wippyai/go-lua/analysis/engine/factquery"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
-	"github.com/wippyai/go-lua/analysis/ir/dominance"
 	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/type/refinement"
@@ -42,8 +42,8 @@ func (r *Result) SourceValueAtBoundary(point cfg.Point, source factflow.ValueSou
 			return value, true
 		}
 	}
-	if recovered, recoveredOK := r.recoverRootDeclarationSource(point, source.ExprRef); recoveredOK {
-		if recoveredValue, ok := r.recoveredRootDeclarationValue(recovered, in); ok {
+	if declaration, declarationOK := r.rootDeclarationSourceForExpr(point, source.ExprRef); declarationOK {
+		if recoveredValue, ok := r.rootDeclarationValue(declaration, in); ok {
 			return recoveredValue, true
 		}
 	}
@@ -256,22 +256,22 @@ func (r *Result) callExprPoint(call *ast.FuncCallExpr) (cfg.Point, bool) {
 	return point, ok
 }
 
-func (r *Result) recoveredRootDeclarationValue(recovered recoveredRootSource, fallbackState state.State) (product.Value, bool) {
-	if r == nil || r.registry == nil || recovered.symbol == 0 {
+func (r *Result) rootDeclarationValue(declaration factquery.RootDeclarationSource, fallbackState state.State) (product.Value, bool) {
+	if r == nil || r.registry == nil || declaration.Symbol == 0 {
 		return product.Value{}, false
 	}
-	declState, ok := r.boundaryStateAt(recovered.point)
+	declState, ok := r.boundaryStateAt(declaration.Point)
 	if !ok {
 		declState = fallbackState
 	}
-	v := declState.ReadValue(r.registry, key.SymbolValue(recovered.symbol))
+	v := declState.ReadValue(r.registry, key.SymbolValue(declaration.Symbol))
 	if readableConcreteType(r.registry, v) {
 		return v, true
 	}
-	if recovered.source.Kind == 0 {
+	if declaration.Source.Kind == 0 {
 		return product.Value{}, false
 	}
-	if recoveredValue, ok := r.sourceValueAtPoint(recovered.point, recovered.source, declState, r.boundaryRead); ok {
+	if recoveredValue, ok := r.sourceValueAtPoint(declaration.Point, declaration.Source, declState, r.boundaryRead); ok {
 		if readableConcreteType(r.registry, recoveredValue) {
 			return recoveredValue, true
 		}
@@ -279,54 +279,17 @@ func (r *Result) recoveredRootDeclarationValue(recovered recoveredRootSource, fa
 	return product.Value{}, false
 }
 
-type recoveredRootSource struct {
-	point  cfg.Point
-	source factflow.ValueSource
-	symbol symbol.ID
-}
-
-func (r *Result) recoverRootDeclarationSource(point cfg.Point, expr factflow.ExprRef) (recoveredRootSource, bool) {
+func (r *Result) rootDeclarationSourceForExpr(point cfg.Point, expr factflow.ExprRef) (factquery.RootDeclarationSource, bool) {
 	if r == nil || expr == 0 || point == 0 {
-		return recoveredRootSource{}, false
+		return factquery.RootDeclarationSource{}, false
 	}
 	exprPath, ok := r.facts.ExpressionPath(expr)
 	if !ok || exprPath.Symbol == 0 || len(exprPath.Segments) != 0 {
-		return recoveredRootSource{}, false
+		return factquery.RootDeclarationSource{}, false
 	}
 	graph := r.Graph()
 	if graph == nil {
-		return recoveredRootSource{}, false
+		return factquery.RootDeclarationSource{}, false
 	}
-	dom := dominance.ComputeImmediateDominatorInfo(graph)
-	if dom == nil {
-		return recoveredRootSource{}, false
-	}
-	idom := dom.Map()
-	visited := make(map[cfg.Point]struct{}, graph.Size())
-	for cursor := point; ; {
-		if _, ok := visited[cursor]; ok {
-			return recoveredRootSource{}, false
-		}
-		visited[cursor] = struct{}{}
-		if fact, ok := r.facts.RootAssignment(cursor); ok && fact.TargetSymbol() == exprPath.Symbol && len(fact.TargetPath().Segments) == 0 {
-			switch fact.Kind() {
-			case factflow.RootAssignmentLocalDeclaration:
-				return recoveredRootSource{
-					point:  cursor,
-					source: fact.Source(),
-					symbol: exprPath.Symbol,
-				}, true
-			case factflow.RootAssignmentOrdinaryRootWrite:
-				return recoveredRootSource{}, false
-			default:
-				return recoveredRootSource{}, false
-			}
-		}
-		parent, ok := idom[cursor]
-		if !ok || parent == cursor {
-			break
-		}
-		cursor = parent
-	}
-	return recoveredRootSource{}, false
+	return factquery.DominatingRootDeclarationSource(point, exprPath.Symbol, r.facts, graph)
 }
