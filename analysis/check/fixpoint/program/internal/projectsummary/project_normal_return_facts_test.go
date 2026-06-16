@@ -47,10 +47,26 @@ func TestFromResultProjectsNormalReturnFactsFromExitSnapshots(t *testing.T) {
 	escapeKey := normalReturnFactProjectTestKey(param0, ".escape")
 	sendEventKey := normalReturnFactProjectTestKey(param0, ".sent")
 	callKey := normalReturnFactProjectTestKey(param1, ".call")
+	frozenID := identity.ID{Kind: "lua.table", Site: "project-freeze", Index: 1}
+	frozenValue := product.Set(reg, value0, identity.Key, identity.Singleton(frozenID))
+	staticFrozenKey := normalReturnFactProjectTestKey(param0, ".frozenMember")
+	staticFrozenID := identity.ID{Kind: "lua.table", Site: "project-freeze-static", Index: 1}
+	staticFrozenValue := product.Set(reg, value0, identity.Key, identity.Singleton(staticFrozenID))
+	heapFrozenID := identity.ID{Kind: "lua.table", Site: "project-freeze-heap", Index: 1}
+	heapFrozenValue := product.Set(reg, value0, identity.Key, identity.Singleton(heapFrozenID))
 
 	exit := state.State{}.
+		WriteValue(reg, key.SymbolValue(param0), frozenValue).
 		WritePathKey(reg, refineKey, value0).
 		WritePathStaticMember(staticKey, product.Top()).
+		WritePathStaticMember(staticFrozenKey, staticFrozenValue).
+		WriteHeapTableObject(reg, frozenID, heapidentity.NewTableObject(heapidentity.TableObjectConfig{
+			Root: frozenValue,
+			StaticMembers: map[pathdom.PathKey]product.Value{
+				pathdom.PathKey(".heapChild"): heapFrozenValue,
+				pathdom.PathKey(".self"):      frozenValue,
+			},
+		})).
 		WriteDynamicIndexFact(reg, dynamicindex.Key{Table: dynAdmittedKey, Site: "dyn-admitted"}, dynamicindex.Fact{
 			KeyPresence: presence.Present(),
 			KeyValue:    value0,
@@ -135,7 +151,10 @@ func TestFromResultProjectsNormalReturnFactsFromExitSnapshots(t *testing.T) {
 			Before: value1,
 			After:  value0,
 			Change: effectdelta.ChangeUnknown,
-		})
+		}).
+		FreezeTable(frozenID).
+		FreezeTable(staticFrozenID).
+		FreezeTable(heapFrozenID)
 
 	got := FromResult(normalReturnFactProjectTestResult(reg, exit, param0, param1)).NormalReturnFacts
 
@@ -144,11 +163,8 @@ func TestFromResultProjectsNormalReturnFactsFromExitSnapshots(t *testing.T) {
 		!product.Equal(reg, got.PathRefinements[0].Value, value0) {
 		t.Fatalf("PathRefinements = %#v, want $0.refined", got.PathRefinements)
 	}
-	if len(got.PathStaticMembers) != 1 ||
-		!got.PathStaticMembers[0].Path.Equal(pathdom.NewPlaceholder(0).Field("member")) ||
-		!product.Equal(reg, got.PathStaticMembers[0].Value, product.Top()) {
-		t.Fatalf("PathStaticMembers = %#v, want top $0.member fact", got.PathStaticMembers)
-	}
+	assertPathStaticMember(t, reg, got.PathStaticMembers, pathdom.NewPlaceholder(0).Field("member"), product.Top())
+	assertPathStaticMember(t, reg, got.PathStaticMembers, pathdom.NewPlaceholder(0).Field("frozenMember"), staticFrozenValue)
 
 	assertDynamicAdmission(t, got.DynamicIndexFacts, "dyn-admitted", pathdom.NewPlaceholder(0).Field("items").IndexStr("admitted"), dynamicindex.AdmissionAdmitted)
 	assertDynamicAdmission(t, got.DynamicIndexFacts, "dyn-rejected", pathdom.NewPlaceholder(0).Field("items").IndexStr("rejected"), dynamicindex.AdmissionRejected)
@@ -169,6 +185,10 @@ func TestFromResultProjectsNormalReturnFactsFromExitSnapshots(t *testing.T) {
 	assertEffectDelta(t, got.EffectDeltas, "effect-escape", pathdom.NewPlaceholder(0).Field("escape"), effectdelta.Escape, effectdelta.ChangeNone)
 	assertEffectDelta(t, got.EffectDeltas, "effect-call", pathdom.NewPlaceholder(1).Field("call"), effectdelta.Call, effectdelta.ChangeUnknown)
 	assertEscapeEvent(t, got.EscapeEvents, pathdom.NewPlaceholder(0).Field("sent"), callboundary.EscapeEventSend, true)
+	assertFrozenTable(t, got.FrozenTables, pathdom.NewPlaceholder(0))
+	assertFrozenTable(t, got.FrozenTables, pathdom.NewPlaceholder(0).Field("frozenMember"))
+	assertFrozenTable(t, got.FrozenTables, pathdom.NewPlaceholder(0).Field("heapChild"))
+	assertNoFrozenTable(t, got.FrozenTables, pathdom.NewPlaceholder(0).Field("self"))
 }
 
 func TestFromResultDropsNonParameterNormalReturnFactPaths(t *testing.T) {
@@ -439,12 +459,42 @@ func assertEscapeEvent(
 	t.Fatalf("escape events = %#v, want target %s kind %d recursive=%v", events, target, kind, recursive)
 }
 
+func assertFrozenTable(t *testing.T, facts []callboundary.FrozenTableFact, target pathdom.Path) {
+	t.Helper()
+	for _, fact := range facts {
+		if fact.Target.Equal(target) {
+			return
+		}
+	}
+	t.Fatalf("FrozenTables = %#v, want target %s", facts, target)
+}
+
+func assertNoFrozenTable(t *testing.T, facts []callboundary.FrozenTableFact, target pathdom.Path) {
+	t.Helper()
+	for _, fact := range facts {
+		if fact.Target.Equal(target) {
+			t.Fatalf("FrozenTables = %#v, did not want target %s", facts, target)
+		}
+	}
+}
+
+func assertPathStaticMember(t *testing.T, reg *axis.Registry, facts []callboundary.PathStaticMemberFact, target pathdom.Path, want product.Value) {
+	t.Helper()
+	for _, fact := range facts {
+		if fact.Path.Equal(target) && product.Equal(reg, fact.Value, want) {
+			return
+		}
+	}
+	t.Fatalf("PathStaticMembers = %#v, want %s = %#v", facts, target, want)
+}
+
 func normalReturnFactsEmpty(facts callboundary.NormalReturnFacts) bool {
 	return len(facts.PathRefinements) == 0 &&
 		len(facts.PathStaticMembers) == 0 &&
 		len(facts.DynamicIndexFacts) == 0 &&
 		len(facts.BranchProofs) == 0 &&
 		len(facts.ChannelSelects) == 0 &&
+		len(facts.FrozenTables) == 0 &&
 		len(facts.EffectDeltas) == 0 &&
 		len(facts.EscapeEvents) == 0
 }

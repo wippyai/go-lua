@@ -195,6 +195,18 @@ func TestLookupSeededEffects(t *testing.T) {
 				ownership.Store{Param: effect.ParamRef{Index: -1}, Into: effect.ParamRef{Index: 0}},
 			},
 		},
+		{
+			name: "table.freeze",
+			labels: []effect.Label{
+				ownership.Freeze{Param: effect.ParamRef{Index: 0}},
+			},
+		},
+		{
+			name: "table.isfrozen",
+			labels: []effect.Label{
+				ownership.BorrowAll{},
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -254,7 +266,7 @@ func TestSignaturesSeededNames(t *testing.T) {
 		"print", "tonumber", "next", "select", "rawget", "rawset", "rawequal",
 		"rawlen", "setmetatable", "getmetatable", "collectgarbage", "unpack",
 		TableInsert, "table.remove", "table.concat", "table.sort", "table.unpack",
-		"table.pack", "table.move", "table.create", "table.freeze",
+		"table.pack", "table.move", "table.create", "table.freeze", "table.isfrozen",
 		"string.byte", "string.char", "string.dump", "string.find", "string.format",
 		"string.gmatch", "string.gsub", "string.len", "string.lower", "string.match",
 		"string.pack", "string.packsize", "string.rep", "string.reverse", "string.sub",

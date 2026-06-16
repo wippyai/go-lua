@@ -141,6 +141,9 @@ func TestOutcomeProviderMapsSummaryReturnsAndNormalReturnFacts(t *testing.T) {
 							Index:  2,
 						},
 					},
+					FrozenTables: []callboundary.FrozenTableFact{
+						{Target: path.NewPlaceholder(0).Field("frozen")},
+					},
 					EffectDeltas: []callboundary.EffectDelta{
 						{
 							Target: path.NewPlaceholder(0).Field("items"),
@@ -201,6 +204,10 @@ func TestOutcomeProviderMapsSummaryReturnsAndNormalReturnFacts(t *testing.T) {
 		!got.NormalReturnFacts.ChannelSelects[0].Case.Equal(path.NewPlaceholder(1).Field("case")) ||
 		got.NormalReturnFacts.ChannelSelects[0].Index != 2 {
 		t.Fatalf("channel selects = %#v, want mapped summary channel select", got.NormalReturnFacts.ChannelSelects)
+	}
+	if len(got.NormalReturnFacts.FrozenTables) != 1 ||
+		!got.NormalReturnFacts.FrozenTables[0].Target.Equal(path.NewPlaceholder(0).Field("frozen")) {
+		t.Fatalf("frozen tables = %#v, want mapped summary frozen-table fact", got.NormalReturnFacts.FrozenTables)
 	}
 	if len(got.NormalReturnFacts.EffectDeltas) != 1 ||
 		got.NormalReturnFacts.EffectDeltas[0].Kind != effectdelta.Mutation ||
@@ -1162,6 +1169,7 @@ func assertEmptyOutcome(t *testing.T, got factapply.CallOutcome) {
 		len(got.NormalReturnFacts.DynamicIndexFacts) != 0 ||
 		len(got.NormalReturnFacts.BranchProofs) != 0 ||
 		len(got.NormalReturnFacts.ChannelSelects) != 0 ||
+		len(got.NormalReturnFacts.FrozenTables) != 0 ||
 		len(got.NormalReturnFacts.EffectDeltas) != 0 ||
 		len(got.NormalReturnFacts.EscapeEvents) != 0 ||
 		len(got.ReturnConditionRefinements) != 0 ||

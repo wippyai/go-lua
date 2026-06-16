@@ -81,6 +81,7 @@ func HasPostReturnEvidence(reg *axis.Registry, outcome factapply.CallOutcome) bo
 		len(outcome.NormalReturnFacts.DynamicIndexFacts) != 0 ||
 		len(outcome.NormalReturnFacts.BranchProofs) != 0 ||
 		len(outcome.NormalReturnFacts.ChannelSelects) != 0 ||
+		len(outcome.NormalReturnFacts.FrozenTables) != 0 ||
 		len(outcome.NormalReturnFacts.EffectDeltas) != 0 ||
 		len(outcome.NormalReturnFacts.EscapeEvents) != 0 ||
 		len(outcome.HeapTableObjects) != 0 ||
@@ -127,6 +128,7 @@ func withSupplementalFacts(reg *axis.Registry, out, second factapply.CallOutcome
 	out.NormalReturnFacts.DynamicIndexFacts = append(out.NormalReturnFacts.DynamicIndexFacts, second.NormalReturnFacts.DynamicIndexFacts...)
 	out.NormalReturnFacts.BranchProofs = append(out.NormalReturnFacts.BranchProofs, second.NormalReturnFacts.BranchProofs...)
 	out.NormalReturnFacts.ChannelSelects = append(out.NormalReturnFacts.ChannelSelects, second.NormalReturnFacts.ChannelSelects...)
+	out.NormalReturnFacts.FrozenTables = append(out.NormalReturnFacts.FrozenTables, second.NormalReturnFacts.FrozenTables...)
 	out.NormalReturnFacts.EffectDeltas = append(out.NormalReturnFacts.EffectDeltas, second.NormalReturnFacts.EffectDeltas...)
 	out.NormalReturnFacts.EscapeEvents = append(out.NormalReturnFacts.EscapeEvents, second.NormalReturnFacts.EscapeEvents...)
 	out.HeapTableObjects = withSupplementalHeapTableObjects(reg, out.HeapTableObjects, second.HeapTableObjects)

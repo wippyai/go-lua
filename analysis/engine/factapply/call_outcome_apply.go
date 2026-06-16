@@ -92,6 +92,13 @@ func applyCallOutcomeFacts(
 		}
 		out = out.AddChannelSelectFact(fact)
 	}
+	for _, fact := range normalReturnFacts.FrozenTables {
+		targetPath, ok := fact.Target.Substitute(bindings)
+		if !ok {
+			continue
+		}
+		out = applyFrozenTableFact(ctx.Registry, resolver, projectPath, ctx.Point, out, targetPath)
+	}
 	for _, delta := range normalReturnFacts.EffectDeltas {
 		targetKey, ok := callOutcomePathKeyAt(resolver, ctx.Point, bindings, delta.Target)
 		if !ok {
@@ -120,6 +127,25 @@ func applyCallOutcomeFacts(
 		out = applyEscapeEventPlacement(ctx.Registry, resolver, projectPath, ctx.Point, out, targetPath, event)
 	}
 	return out
+}
+
+func applyFrozenTableFact(
+	reg *axis.Registry,
+	resolver *visibility.Resolver,
+	projectPath PathTypeProjector,
+	point cfg.Point,
+	out state.State,
+	targetPath pathdom.Path,
+) state.State {
+	target, ok := resolvePathValueAt(reg, resolver, point, out, targetPath, projectPath)
+	if !ok {
+		return out
+	}
+	id, ok := product.Get(reg, target.value, identity.Key).ID()
+	if !ok {
+		return out
+	}
+	return out.FreezeTable(id)
 }
 
 func applyEscapeEventPlacement(

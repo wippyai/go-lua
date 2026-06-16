@@ -6,7 +6,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/effect/ownership"
 	"github.com/wippyai/go-lua/analysis/domain/effect/postcondition"
 	"github.com/wippyai/go-lua/analysis/domain/effect/returns"
-	"github.com/wippyai/go-lua/analysis/module/signature"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
@@ -14,6 +13,7 @@ import (
 	factapply "github.com/wippyai/go-lua/analysis/engine/factapply"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
+	"github.com/wippyai/go-lua/analysis/module/signature"
 )
 
 func signatureParamPathInvalidations(sig signature.Function, site factflow.CallSite) []factapply.CallParamPathInvalidation {
@@ -118,6 +118,34 @@ func signatureEscapeEvents(sig signature.Function, site factflow.CallSite) []cal
 		case *ownership.Store:
 			if normalized != nil {
 				appendParam(normalized.Param, callboundary.EscapeEventStore)
+			}
+		}
+	}
+	return out
+}
+
+func signatureFrozenTables(sig signature.Function, site factflow.CallSite) []callboundary.FrozenTableFact {
+	if len(sig.Effect.Labels) == 0 {
+		return nil
+	}
+	args := site.ArgumentSources()
+	out := make([]callboundary.FrozenTableFact, 0, len(sig.Effect.Labels))
+	appendParam := func(ref effect.ParamRef) {
+		index, ok := effect.ResolveParamIndex(ref, len(args))
+		if !ok || !callArgumentSourceCanBindPath(args[index]) {
+			return
+		}
+		out = append(out, callboundary.FrozenTableFact{
+			Target: pathdom.NewPlaceholder(index),
+		})
+	}
+	for _, label := range sig.Effect.Labels {
+		switch normalized := effect.NormalizeLabel(label).(type) {
+		case ownership.Freeze:
+			appendParam(normalized.Param)
+		case *ownership.Freeze:
+			if normalized != nil {
+				appendParam(normalized.Param)
 			}
 		}
 	}

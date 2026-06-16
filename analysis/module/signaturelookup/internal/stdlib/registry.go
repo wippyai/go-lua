@@ -325,8 +325,16 @@ var registry = map[string]signature.Function{
 				Param("t", tp).
 				Returns(tp).
 				Build(),
+			ownership.Freeze{Param: effect.ParamRef{Index: 0}},
 		)
 	}(),
+	"table.isfrozen": sig(
+		typ.Func().
+			Param("t", typ.Any).
+			Returns(typ.Boolean).
+			Build(),
+		ownership.BorrowAll{},
+	),
 
 	// string library.
 	"string.byte": sig(

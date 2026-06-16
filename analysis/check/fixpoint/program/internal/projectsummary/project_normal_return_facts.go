@@ -4,8 +4,10 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
+	"github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/evidence"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/engine/callboundary"
 	"github.com/wippyai/go-lua/analysis/engine/dynamicindex"
@@ -142,6 +144,17 @@ func projectNormalReturnFacts(reg *axis.Registry, result ResultReader, exit stat
 		}
 	}
 
+	if snapshot := exit.FrozenTablesSnapshot(); !snapshot.Bottom && !snapshot.Top {
+		frozenPaths := frozenTablePlaceholderPaths(reg, exit, params)
+		for _, id := range snapshot.Tables {
+			for _, target := range frozenPaths[id] {
+				out.FrozenTables = append(out.FrozenTables, callboundary.FrozenTableFact{
+					Target: target,
+				})
+			}
+		}
+	}
+
 	if snapshot := exit.EffectDeltasSnapshot(); !snapshot.Top {
 		for stateKey, stateDelta := range snapshot.Deltas {
 			target, ok := projectPath(stateKey.Target)
@@ -172,6 +185,131 @@ func projectNormalReturnFacts(reg *axis.Registry, result ResultReader, exit stat
 		}
 	}
 
+	return out
+}
+
+func frozenTablePlaceholderPaths(reg *axis.Registry, exit state.State, params []path.Path) map[identity.ID][]path.Path {
+	out := make(map[identity.ID][]path.Path)
+	var queue []frozenTablePathCandidate
+	for i, param := range params {
+		if param.Symbol == 0 {
+			continue
+		}
+		value := exit.ReadValue(reg, key.SymbolValue(param.Symbol))
+		id, ok := productIdentityID(reg, value)
+		if !ok {
+			continue
+		}
+		if addFrozenTablePlaceholderPath(out, id, path.NewPlaceholder(i)) {
+			queue = append(queue, newFrozenTablePathCandidate(id, path.NewPlaceholder(i), nil))
+		}
+	}
+	if snapshot := exit.PathRefinementsSnapshot(); !snapshot.Top {
+		for pathKey, value := range snapshot.Refinements {
+			id, ok := productIdentityID(reg, value)
+			if !ok {
+				continue
+			}
+			target, ok := normalReturnFactPlaceholderPath(pathKey, params)
+			if !ok {
+				continue
+			}
+			if addFrozenTablePlaceholderPath(out, id, target) {
+				queue = append(queue, newFrozenTablePathCandidate(id, target, nil))
+			}
+		}
+	}
+	if snapshot := exit.PathStaticMembersSnapshot(); !snapshot.Bottom && !snapshot.Top {
+		for pathKey, value := range snapshot.Members {
+			id, ok := productIdentityID(reg, value)
+			if !ok {
+				continue
+			}
+			target, ok := normalReturnFactPlaceholderPath(pathKey, params)
+			if !ok {
+				continue
+			}
+			if addFrozenTablePlaceholderPath(out, id, target) {
+				queue = append(queue, newFrozenTablePathCandidate(id, target, nil))
+			}
+		}
+	}
+	heap := exit.HeapTableObjectsSnapshot()
+	if heap.Top || len(heap.Objects) == 0 {
+		return out
+	}
+	for len(queue) != 0 {
+		candidate := queue[0]
+		queue = queue[1:]
+		object, ok := heap.Objects[candidate.id]
+		if !ok {
+			continue
+		}
+		for suffix, value := range object.StaticMembers() {
+			childID, ok := productIdentityID(reg, value)
+			if !ok || candidate.hasSeen(childID) {
+				continue
+			}
+			segments, ok := segment.ParseFormattedSegments(string(suffix))
+			if !ok {
+				continue
+			}
+			childPath := appendPathSegments(candidate.path, segments)
+			if addFrozenTablePlaceholderPath(out, childID, childPath) {
+				queue = append(queue, newFrozenTablePathCandidate(childID, childPath, candidate.seen))
+			}
+		}
+	}
+	return out
+}
+
+type frozenTablePathCandidate struct {
+	id   identity.ID
+	path path.Path
+	seen map[identity.ID]struct{}
+}
+
+func newFrozenTablePathCandidate(id identity.ID, target path.Path, seen map[identity.ID]struct{}) frozenTablePathCandidate {
+	nextSeen := make(map[identity.ID]struct{}, len(seen)+1)
+	for seenID := range seen {
+		nextSeen[seenID] = struct{}{}
+	}
+	nextSeen[id] = struct{}{}
+	return frozenTablePathCandidate{id: id, path: target, seen: nextSeen}
+}
+
+func (c frozenTablePathCandidate) hasSeen(id identity.ID) bool {
+	_, ok := c.seen[id]
+	return ok
+}
+
+func productIdentityID(reg *axis.Registry, value product.Value) (identity.ID, bool) {
+	id, ok := product.Get(reg, value, identity.Key).ID()
+	if !ok || id == (identity.ID{}) {
+		return identity.ID{}, false
+	}
+	return id, true
+}
+
+func addFrozenTablePlaceholderPath(paths map[identity.ID][]path.Path, id identity.ID, target path.Path) bool {
+	if id == (identity.ID{}) || target.IsEmpty() {
+		return false
+	}
+	key := target.Key()
+	for _, existing := range paths[id] {
+		if existing.Key() == key {
+			return false
+		}
+	}
+	paths[id] = append(paths[id], target)
+	return true
+}
+
+func appendPathSegments(base path.Path, segments []segment.Segment) path.Path {
+	out := base
+	for _, seg := range segments {
+		out = out.Append(seg)
+	}
 	return out
 }
 

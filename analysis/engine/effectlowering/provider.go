@@ -70,6 +70,7 @@ func SignatureOutcomeProvider(config SignatureOutcomeProviderConfig) factapply.C
 			ParamPathInvalidations:  signatureParamPathInvalidations(sig, ownedSite),
 		}
 		out.NormalReturnFacts.EscapeEvents = signatureEscapeEvents(sig, ownedSite)
+		out.NormalReturnFacts.FrozenTables = signatureFrozenTables(sig, ownedSite)
 		if sig.Type == nil || len(sig.Type.Returns) == 0 {
 			out.PostReturnAuthority = calloutcome.HasPostReturnEvidence(ctx.Registry, out)
 			return out

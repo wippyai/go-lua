@@ -277,6 +277,53 @@ func TestFactsNodeTransferCallOutcomeEscapeSendMarksIdentityPlacementAndEffectDe
 	assertEscapeEffectDelta(t, reg, got, targetKey, callboundary.EscapeEventSend, false)
 }
 
+func TestFactsNodeTransferCallOutcomeFrozenTableFactFreezesSingletonIdentity(t *testing.T) {
+	reg := standard.Registry()
+	point := cfg.Point(704)
+	target := symbol.ID(704)
+	argExpr := factflow.ExprRef(704)
+	targetPath := pathdom.NewPath(target, "obj")
+	tableID := identity.ID{Kind: "lua.table", Site: "freeze-apply", Index: 1}
+	tableValue := product.Set(reg, presentValue(reg), identity.Key, identity.Singleton(tableID))
+	facts := factflow.NewFacts(factflow.FactsInput{
+		CallSites: map[cfg.Point]factflow.CallSite{
+			point: factflow.NewCallSite(factflow.CallSiteConfig{
+				Context: factflow.CallSiteContextStatement,
+				ArgumentSources: []factflow.ValueSource{
+					{Kind: factflow.ValueSourceExpression, ExprRef: argExpr, HasExpr: true},
+				},
+			}),
+		},
+		ExpressionPaths: map[factflow.ExprRef]pathdom.Path{
+			argExpr: targetPath,
+		},
+	})
+	builder := visibility.NewBuilder()
+	builder.Define(point, target, "obj")
+	resolver := visibility.NewResolver(builder.Build())
+
+	got := NewFactsNodeTransfer(FactsNodeTransferConfig{
+		Facts: facts,
+		CallOutcome: func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) CallOutcome {
+			return CallOutcome{
+				NormalReturnFacts: callboundary.NormalReturnFacts{
+					FrozenTables: []callboundary.FrozenTableFact{
+						{Target: pathdom.NewPlaceholder(0)},
+					},
+				},
+			}
+		},
+		Visibility: resolver,
+	})(transfer.NodeContext{
+		Registry: reg,
+		Point:    point,
+	}, state.State{}.WriteValue(reg, key.SymbolValue(target), tableValue))
+
+	if !got.IsTableFrozen(tableID) {
+		t.Fatalf("table %v was not frozen", tableID)
+	}
+}
+
 func TestFactsNodeTransferCallOutcomeRecursiveEscapeSendMarksStaticMemberIdentityPlacement(t *testing.T) {
 	reg := standard.Registry()
 	point := cfg.Point(702)

@@ -654,6 +654,44 @@ func TestSignatureOutcomeProviderLowersOwnershipSendAndStoreEscapeEvents(t *test
 	assertEscapeEvent(t, got.NormalReturnFacts.EscapeEvents, path.NewPlaceholder(2), callboundary.EscapeEventSend, true)
 }
 
+func TestSignatureOutcomeProviderLowersOwnershipFreezeFrozenTableFact(t *testing.T) {
+	point := cfg.Point(920)
+	arg0 := factflow.ExprRef(920)
+	facts := factflow.NewFacts(factflow.FactsInput{
+		CallSites: map[cfg.Point]factflow.CallSite{
+			point: factflow.NewCallSite(factflow.CallSiteConfig{
+				Context: factflow.CallSiteContextStatement,
+				ArgumentSources: []factflow.ValueSource{
+					{Kind: factflow.ValueSourceExpression, ExprRef: arg0, HasExpr: true},
+				},
+			}),
+		},
+	})
+
+	provider := SignatureOutcomeProvider(SignatureOutcomeProviderConfig{
+		Signatures: signatureMap{
+			"freeze": {
+				Effect: effect.Empty.With(ownership.Freeze{Param: effect.ParamRef{Index: 0}}),
+			},
+		},
+		NameFor: staticName("freeze"),
+		Facts:   facts,
+	})
+	site, ok := facts.CallSite(point)
+	if !ok {
+		t.Fatalf("missing call site")
+	}
+	got := provider(transfer.NodeContext{Point: point}, site.View(), state.State{}, nil)
+
+	if len(got.NormalReturnFacts.FrozenTables) != 1 ||
+		!got.NormalReturnFacts.FrozenTables[0].Target.Equal(path.NewPlaceholder(0)) {
+		t.Fatalf("FrozenTables = %#v, want freeze on $0", got.NormalReturnFacts.FrozenTables)
+	}
+	if len(got.NormalReturnFacts.EscapeEvents) != 0 {
+		t.Fatalf("EscapeEvents = %#v, want freeze not encoded as escape", got.NormalReturnFacts.EscapeEvents)
+	}
+}
+
 func TestSignatureOutcomeProviderParamPathInvalidationDoesNotApplyWithoutExpressionPath(t *testing.T) {
 	reg := standard.Registry()
 	graph := cfg.New()
