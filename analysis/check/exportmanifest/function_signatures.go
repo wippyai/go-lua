@@ -5,15 +5,17 @@ import (
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/program"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/summary"
 	"github.com/wippyai/go-lua/analysis/domain/effect"
+	"github.com/wippyai/go-lua/analysis/domain/effect/ownership"
 	"github.com/wippyai/go-lua/analysis/domain/effect/postcondition"
 	"github.com/wippyai/go-lua/analysis/domain/effect/returns"
-	"github.com/wippyai/go-lua/analysis/module/signature"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/engine/callboundary"
 	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
 	"github.com/wippyai/go-lua/analysis/module/manifest"
+	"github.com/wippyai/go-lua/analysis/module/signature"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
@@ -146,6 +148,7 @@ func functionSummaryEffect(s summary.Summary, fn *typ.Function) effect.Row {
 	}
 	labels := errorReturnLabels(s.ReturnPresenceRelations, len(fn.Returns))
 	labels = append(labels, normalReturnParamRefinementLabels(s.NormalReturnParams, len(fn.Params))...)
+	labels = append(labels, normalReturnOwnershipLabels(s.NormalReturnFacts, len(fn.Params))...)
 	if len(labels) == 0 {
 		return effect.Empty
 	}
@@ -154,6 +157,55 @@ func functionSummaryEffect(s summary.Summary, fn *typ.Function) effect.Row {
 		row = row.With(label)
 	}
 	return row
+}
+
+func normalReturnOwnershipLabels(facts callboundary.NormalReturnFacts, arity int) []effect.Label {
+	if arity <= 0 {
+		return nil
+	}
+	var out []effect.Label
+	for _, event := range facts.EscapeEvents {
+		param, ok := rootPlaceholderParam(event.Target, arity)
+		if !ok || !event.Recursive {
+			continue
+		}
+		switch event.Kind {
+		case callboundary.EscapeEventBorrow:
+			out = append(out, ownership.Borrow{Param: effect.ParamRef{Index: param}})
+		case callboundary.EscapeEventRetain:
+			out = append(out, ownership.Retain{Param: effect.ParamRef{Index: param}})
+		case callboundary.EscapeEventStore:
+			out = append(out, ownership.Store{
+				Param: effect.ParamRef{Index: param},
+				Into:  effect.ParamRef{Index: -1},
+			})
+		case callboundary.EscapeEventSend:
+			out = append(out, ownership.SendParam{Param: effect.ParamRef{Index: param}})
+		case callboundary.EscapeEventExport:
+			out = append(out, ownership.Export{Param: effect.ParamRef{Index: param}})
+		case callboundary.EscapeEventOpaque:
+			out = append(out, ownership.Opaque{Param: effect.ParamRef{Index: param}})
+		}
+	}
+	for _, fact := range facts.FrozenTables {
+		param, ok := rootPlaceholderParam(fact.Target, arity)
+		if !ok {
+			continue
+		}
+		out = append(out, ownership.Freeze{Param: effect.ParamRef{Index: param}})
+	}
+	return out
+}
+
+func rootPlaceholderParam(p pathdom.Path, arity int) (int, bool) {
+	if len(p.Segments) != 0 {
+		return 0, false
+	}
+	idx := p.PlaceholderIndex()
+	if idx < 0 || idx >= arity {
+		return 0, false
+	}
+	return idx, true
 }
 
 func normalReturnParamRefinementLabels(values []product.Value, arity int) []effect.Label {

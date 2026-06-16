@@ -95,6 +95,18 @@ func signatureEscapeEvents(sig signature.Function, site factflow.CallSite) []cal
 	}
 	for _, label := range sig.Effect.Labels {
 		switch normalized := effect.NormalizeLabel(label).(type) {
+		case ownership.Borrow:
+			appendParam(normalized.Param, callboundary.EscapeEventBorrow)
+		case *ownership.Borrow:
+			if normalized != nil {
+				appendParam(normalized.Param, callboundary.EscapeEventBorrow)
+			}
+		case ownership.Retain:
+			appendParam(normalized.Param, callboundary.EscapeEventRetain)
+		case *ownership.Retain:
+			if normalized != nil {
+				appendParam(normalized.Param, callboundary.EscapeEventRetain)
+			}
 		case ownership.Send:
 			start, ok := sendStartIndex(normalized.FromParam, len(args))
 			if !ok {
@@ -103,6 +115,8 @@ func signatureEscapeEvents(sig signature.Function, site factflow.CallSite) []cal
 			for i := start; i < len(args); i++ {
 				appendArg(i, callboundary.EscapeEventSend)
 			}
+		case ownership.SendParam:
+			appendParam(normalized.Param, callboundary.EscapeEventSend)
 		case *ownership.Send:
 			if normalized != nil {
 				start, ok := sendStartIndex(normalized.FromParam, len(args))
@@ -112,6 +126,22 @@ func signatureEscapeEvents(sig signature.Function, site factflow.CallSite) []cal
 				for i := start; i < len(args); i++ {
 					appendArg(i, callboundary.EscapeEventSend)
 				}
+			}
+		case *ownership.SendParam:
+			if normalized != nil {
+				appendParam(normalized.Param, callboundary.EscapeEventSend)
+			}
+		case ownership.Export:
+			appendParam(normalized.Param, callboundary.EscapeEventExport)
+		case *ownership.Export:
+			if normalized != nil {
+				appendParam(normalized.Param, callboundary.EscapeEventExport)
+			}
+		case ownership.Opaque:
+			appendParam(normalized.Param, callboundary.EscapeEventOpaque)
+		case *ownership.Opaque:
+			if normalized != nil {
+				appendParam(normalized.Param, callboundary.EscapeEventOpaque)
 			}
 		case ownership.Store:
 			appendParam(normalized.Param, callboundary.EscapeEventStore)

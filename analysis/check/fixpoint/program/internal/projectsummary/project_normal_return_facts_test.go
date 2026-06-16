@@ -46,6 +46,7 @@ func TestFromResultProjectsNormalReturnFactsFromExitSnapshots(t *testing.T) {
 	mutationKey := normalReturnFactProjectTestKey(param0, ".mutation")
 	escapeKey := normalReturnFactProjectTestKey(param0, ".escape")
 	sendEventKey := normalReturnFactProjectTestKey(param0, ".sent")
+	freezeEventKey := normalReturnFactProjectTestKey(param1, ".pathFrozen")
 	callKey := normalReturnFactProjectTestKey(param1, ".call")
 	frozenID := identity.ID{Kind: "lua.table", Site: "project-freeze", Index: 1}
 	frozenValue := product.Set(reg, value0, identity.Key, identity.Singleton(frozenID))
@@ -144,6 +145,11 @@ func TestFromResultProjectsNormalReturnFactsFromExitSnapshots(t *testing.T) {
 			Kind:   effectdelta.Escape,
 		}, effectdelta.Top()).
 		WriteEffectDelta(effectdelta.Key{
+			Target: freezeEventKey,
+			Site:   callboundary.FrozenTableEffectSite(),
+			Kind:   effectdelta.Freeze,
+		}, effectdelta.Top()).
+		WriteEffectDelta(effectdelta.Key{
 			Target: callKey,
 			Site:   "effect-call",
 			Kind:   effectdelta.Call,
@@ -185,6 +191,7 @@ func TestFromResultProjectsNormalReturnFactsFromExitSnapshots(t *testing.T) {
 	assertEffectDelta(t, got.EffectDeltas, "effect-escape", pathdom.NewPlaceholder(0).Field("escape"), effectdelta.Escape, effectdelta.ChangeNone)
 	assertEffectDelta(t, got.EffectDeltas, "effect-call", pathdom.NewPlaceholder(1).Field("call"), effectdelta.Call, effectdelta.ChangeUnknown)
 	assertEscapeEvent(t, got.EscapeEvents, pathdom.NewPlaceholder(0).Field("sent"), callboundary.EscapeEventSend, true)
+	assertFrozenTable(t, got.FrozenTables, pathdom.NewPlaceholder(1).Field("pathFrozen"))
 	assertFrozenTable(t, got.FrozenTables, pathdom.NewPlaceholder(0))
 	assertFrozenTable(t, got.FrozenTables, pathdom.NewPlaceholder(0).Field("frozenMember"))
 	assertFrozenTable(t, got.FrozenTables, pathdom.NewPlaceholder(0).Field("heapChild"))

@@ -97,6 +97,13 @@ func applyCallOutcomeFacts(
 		if !ok {
 			continue
 		}
+		if targetKey := factPathKeyAt(resolver, ctx.Point, targetPath); targetKey != "" {
+			out = out.WriteEffectDelta(effectdelta.Key{
+				Target: targetKey,
+				Site:   callboundary.FrozenTableEffectSite(),
+				Kind:   effectdelta.Freeze,
+			}, effectdelta.Top())
+		}
 		out = applyFrozenTableFact(ctx.Registry, resolver, projectPath, ctx.Point, out, targetPath)
 	}
 	for _, delta := range normalReturnFacts.EffectDeltas {

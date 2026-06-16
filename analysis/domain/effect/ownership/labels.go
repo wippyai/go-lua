@@ -8,9 +8,13 @@ import (
 
 var (
 	_ effect.Label = Borrow{}
+	_ effect.Label = Retain{}
 	_ effect.Label = Store{}
 	_ effect.Label = BorrowAll{}
 	_ effect.Label = Send{}
+	_ effect.Label = SendParam{}
+	_ effect.Label = Export{}
+	_ effect.Label = Opaque{}
 	_ effect.Label = Freeze{}
 )
 
@@ -25,6 +29,21 @@ func (b Borrow) String() string {
 func (b Borrow) Equals(other effect.Label) bool {
 	if o, ok := effect.NormalizeLabel(other).(Borrow); ok {
 		return b.Param.Index == o.Param.Index
+	}
+	return false
+}
+
+type Retain struct {
+	Param effect.ParamRef
+}
+
+func (Retain) EffectLabel() {}
+func (r Retain) String() string {
+	return fmt.Sprintf("retain(%s)", r.Param)
+}
+func (r Retain) Equals(other effect.Label) bool {
+	if o, ok := effect.NormalizeLabel(other).(Retain); ok {
+		return r.Param.Index == o.Param.Index
 	}
 	return false
 }
@@ -68,6 +87,51 @@ func (s Send) String() string {
 func (s Send) Equals(other effect.Label) bool {
 	if o, ok := effect.NormalizeLabel(other).(Send); ok {
 		return s.FromParam == o.FromParam
+	}
+	return false
+}
+
+type SendParam struct {
+	Param effect.ParamRef
+}
+
+func (SendParam) EffectLabel() {}
+func (s SendParam) String() string {
+	return fmt.Sprintf("send(%s)", s.Param)
+}
+func (s SendParam) Equals(other effect.Label) bool {
+	if o, ok := effect.NormalizeLabel(other).(SendParam); ok {
+		return s.Param.Index == o.Param.Index
+	}
+	return false
+}
+
+type Export struct {
+	Param effect.ParamRef
+}
+
+func (Export) EffectLabel() {}
+func (e Export) String() string {
+	return fmt.Sprintf("export(%s)", e.Param)
+}
+func (e Export) Equals(other effect.Label) bool {
+	if o, ok := effect.NormalizeLabel(other).(Export); ok {
+		return e.Param.Index == o.Param.Index
+	}
+	return false
+}
+
+type Opaque struct {
+	Param effect.ParamRef
+}
+
+func (Opaque) EffectLabel() {}
+func (o Opaque) String() string {
+	return fmt.Sprintf("opaque(%s)", o.Param)
+}
+func (o Opaque) Equals(other effect.Label) bool {
+	if other, ok := effect.NormalizeLabel(other).(Opaque); ok {
+		return o.Param.Index == other.Param.Index
 	}
 	return false
 }

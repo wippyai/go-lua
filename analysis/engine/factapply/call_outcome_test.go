@@ -323,6 +323,9 @@ func TestFactsNodeTransferCallOutcomeFrozenTableFactFreezesSingletonIdentity(t *
 	if !got.IsTableFrozen(tableID) {
 		t.Fatalf("table %v was not frozen", tableID)
 	}
+	if !hasFrozenTableEffectDelta(got.EffectDeltasSnapshot().Deltas) {
+		t.Fatalf("effect deltas = %#v, want frozen-table marker", got.EffectDeltasSnapshot().Deltas)
+	}
 }
 
 func TestFactsNodeTransferCallOutcomeFrozenTableFactIsShallow(t *testing.T) {
@@ -1424,4 +1427,13 @@ func callOutcomeReturnPresenceProvider() CallOutcomeProvider {
 			},
 		}
 	}
+}
+
+func hasFrozenTableEffectDelta(deltas map[effectdelta.Key]effectdelta.Value) bool {
+	for key := range deltas {
+		if key.Kind == effectdelta.Freeze && callboundary.IsFrozenTableEffectSite(key.Site) {
+			return true
+		}
+	}
+	return false
 }

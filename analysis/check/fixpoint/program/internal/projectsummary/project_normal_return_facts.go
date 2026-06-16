@@ -161,6 +161,12 @@ func projectNormalReturnFacts(reg *axis.Registry, result ResultReader, exit stat
 			if !ok {
 				continue
 			}
+			if stateKey.Kind == effectdelta.Freeze && callboundary.IsFrozenTableEffectSite(stateKey.Site) {
+				out.FrozenTables = append(out.FrozenTables, callboundary.FrozenTableFact{
+					Target: target,
+				})
+				continue
+			}
 			if stateKey.Kind == effectdelta.Escape {
 				if kind, recursive, ok := callboundary.EscapeEventFromEffectSite(stateKey.Site); ok {
 					out.EscapeEvents = append(out.EscapeEvents, callboundary.EscapeEventFact{

@@ -15,6 +15,7 @@ type Kind uint8
 const (
 	Mutation Kind = iota + 1
 	Escape
+	Freeze
 	Call
 )
 

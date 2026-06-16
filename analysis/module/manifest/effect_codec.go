@@ -115,12 +115,20 @@ func encodeEffectLabel(label effect.Label) (effectLabelWire, error) {
 		}, nil
 	case ownership.Borrow:
 		return effectLabelWire{Kind: "ownership.borrow", Param: encodeParamRef(l.Param)}, nil
+	case ownership.Retain:
+		return effectLabelWire{Kind: "ownership.retain", Param: encodeParamRef(l.Param)}, nil
 	case ownership.Store:
 		return effectLabelWire{Kind: "ownership.store", Param: encodeParamRef(l.Param), Into: encodeParamRef(l.Into)}, nil
 	case ownership.BorrowAll:
 		return effectLabelWire{Kind: "ownership.borrowAll"}, nil
 	case ownership.Send:
 		return effectLabelWire{Kind: "ownership.send", FromParam: l.FromParam}, nil
+	case ownership.SendParam:
+		return effectLabelWire{Kind: "ownership.sendParam", Param: encodeParamRef(l.Param)}, nil
+	case ownership.Export:
+		return effectLabelWire{Kind: "ownership.export", Param: encodeParamRef(l.Param)}, nil
+	case ownership.Opaque:
+		return effectLabelWire{Kind: "ownership.opaque", Param: encodeParamRef(l.Param)}, nil
 	case ownership.Freeze:
 		return effectLabelWire{Kind: "ownership.freeze", Param: encodeParamRef(l.Param)}, nil
 	case postcondition.NormalReturnRefinement:
@@ -195,12 +203,20 @@ func decodeEffectLabel(w effectLabelWire) (effect.Label, error) {
 		return mutation.TableMutator{Target: decodeParamRef(w.Target), Value: decodeParamRef(w.Value)}, nil
 	case "ownership.borrow":
 		return ownership.Borrow{Param: decodeParamRef(w.Param)}, nil
+	case "ownership.retain":
+		return ownership.Retain{Param: decodeParamRef(w.Param)}, nil
 	case "ownership.store":
 		return ownership.Store{Param: decodeParamRef(w.Param), Into: decodeParamRef(w.Into)}, nil
 	case "ownership.borrowAll":
 		return ownership.BorrowAll{}, nil
 	case "ownership.send":
 		return ownership.Send{FromParam: w.FromParam}, nil
+	case "ownership.sendParam":
+		return ownership.SendParam{Param: decodeParamRef(w.Param)}, nil
+	case "ownership.export":
+		return ownership.Export{Param: decodeParamRef(w.Param)}, nil
+	case "ownership.opaque":
+		return ownership.Opaque{Param: decodeParamRef(w.Param)}, nil
 	case "ownership.freeze":
 		return ownership.Freeze{Param: decodeParamRef(w.Param)}, nil
 	case postcondition.NormalReturnRefinementKind:

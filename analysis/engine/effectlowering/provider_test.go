@@ -656,7 +656,87 @@ func TestSignatureOutcomeProviderLowersOwnershipSendAndStoreEscapeEvents(t *test
 	assertEscapeEvent(t, got.NormalReturnFacts.EscapeEvents, path.NewPlaceholder(2), callboundary.EscapeEventSend, true)
 }
 
-func TestSignatureOutcomeProviderOwnershipBorrowEffectsAreNoOps(t *testing.T) {
+func TestSignatureOutcomeProviderLowersOwnershipSendParamToSingleEscapeEvent(t *testing.T) {
+	point := cfg.Point(915)
+	arg0 := factflow.ExprRef(915)
+	arg1 := factflow.ExprRef(916)
+	arg2 := factflow.ExprRef(917)
+	facts := factflow.NewFacts(factflow.FactsInput{
+		CallSites: map[cfg.Point]factflow.CallSite{
+			point: factflow.NewCallSite(factflow.CallSiteConfig{
+				Context: factflow.CallSiteContextStatement,
+				ArgumentSources: []factflow.ValueSource{
+					{Kind: factflow.ValueSourceExpression, ExprRef: arg0, HasExpr: true},
+					{Kind: factflow.ValueSourceExpression, ExprRef: arg1, HasExpr: true},
+					{Kind: factflow.ValueSourceExpression, ExprRef: arg2, HasExpr: true},
+				},
+			}),
+		},
+	})
+
+	provider := SignatureOutcomeProvider(SignatureOutcomeProviderConfig{
+		Signatures: signatureMap{
+			"sendOne": {
+				Effect: effect.Empty.With(ownership.SendParam{Param: effect.ParamRef{Index: 1}}),
+			},
+		},
+		NameFor: staticName("sendOne"),
+		Facts:   facts,
+	})
+	site, ok := facts.CallSite(point)
+	if !ok {
+		t.Fatalf("missing call site")
+	}
+	got := provider(transfer.NodeContext{Point: point}, site.View(), state.State{}, nil)
+
+	if len(got.NormalReturnFacts.EscapeEvents) != 1 {
+		t.Fatalf("escape events = %#v, want exactly one send event", got.NormalReturnFacts.EscapeEvents)
+	}
+	assertEscapeEvent(t, got.NormalReturnFacts.EscapeEvents, path.NewPlaceholder(1), callboundary.EscapeEventSend, true)
+}
+
+func TestSignatureOutcomeProviderLowersExactOwnershipEscapeLabels(t *testing.T) {
+	point := cfg.Point(918)
+	arg0 := factflow.ExprRef(918)
+	arg1 := factflow.ExprRef(919)
+	arg2 := factflow.ExprRef(920)
+	facts := factflow.NewFacts(factflow.FactsInput{
+		CallSites: map[cfg.Point]factflow.CallSite{
+			point: factflow.NewCallSite(factflow.CallSiteConfig{
+				Context: factflow.CallSiteContextStatement,
+				ArgumentSources: []factflow.ValueSource{
+					{Kind: factflow.ValueSourceExpression, ExprRef: arg0, HasExpr: true},
+					{Kind: factflow.ValueSourceExpression, ExprRef: arg1, HasExpr: true},
+					{Kind: factflow.ValueSourceExpression, ExprRef: arg2, HasExpr: true},
+				},
+			}),
+		},
+	})
+
+	provider := SignatureOutcomeProvider(SignatureOutcomeProviderConfig{
+		Signatures: signatureMap{
+			"escapeKinds": {
+				Effect: effect.Empty.
+					With(ownership.Retain{Param: effect.ParamRef{Index: 0}}).
+					With(ownership.Export{Param: effect.ParamRef{Index: 1}}).
+					With(ownership.Opaque{Param: effect.ParamRef{Index: 2}}),
+			},
+		},
+		NameFor: staticName("escapeKinds"),
+		Facts:   facts,
+	})
+	site, ok := facts.CallSite(point)
+	if !ok {
+		t.Fatalf("missing call site")
+	}
+	got := provider(transfer.NodeContext{Point: point}, site.View(), state.State{}, nil)
+
+	assertEscapeEvent(t, got.NormalReturnFacts.EscapeEvents, path.NewPlaceholder(0), callboundary.EscapeEventRetain, true)
+	assertEscapeEvent(t, got.NormalReturnFacts.EscapeEvents, path.NewPlaceholder(1), callboundary.EscapeEventExport, true)
+	assertEscapeEvent(t, got.NormalReturnFacts.EscapeEvents, path.NewPlaceholder(2), callboundary.EscapeEventOpaque, true)
+}
+
+func TestSignatureOutcomeProviderOwnershipBorrowEffectsRecordBorrowWithoutPlacementOrFreeze(t *testing.T) {
 	reg := standard.Registry()
 	graph := cfg.New()
 	call := graph.AddNode(cfg.NodeCall)
@@ -708,9 +788,7 @@ func TestSignatureOutcomeProviderOwnershipBorrowEffectsAreNoOps(t *testing.T) {
 		t.Fatalf("missing call site")
 	}
 	outcome := provider(transfer.NodeContext{Graph: graph, Point: call, Node: graph.Node(call)}, site.View(), state.State{}, nil)
-	if len(outcome.NormalReturnFacts.EscapeEvents) != 0 {
-		t.Fatalf("EscapeEvents = %#v, want none", outcome.NormalReturnFacts.EscapeEvents)
-	}
+	assertEscapeEvent(t, outcome.NormalReturnFacts.EscapeEvents, path.NewPlaceholder(0), callboundary.EscapeEventBorrow, true)
 	if len(outcome.NormalReturnFacts.FrozenTables) != 0 {
 		t.Fatalf("FrozenTables = %#v, want none", outcome.NormalReturnFacts.FrozenTables)
 	}

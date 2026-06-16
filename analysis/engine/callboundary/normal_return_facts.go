@@ -70,6 +70,16 @@ type FrozenTableFact struct {
 	Target pathdom.Path
 }
 
+const frozenTableEffectSite = effectdelta.Site("frozen-table")
+
+func FrozenTableEffectSite() effectdelta.Site {
+	return frozenTableEffectSite
+}
+
+func IsFrozenTableEffectSite(site effectdelta.Site) bool {
+	return site == frozenTableEffectSite
+}
+
 // EffectDelta records a pointwise effect delta for a placeholder target path.
 type EffectDelta struct {
 	Target pathdom.Path
