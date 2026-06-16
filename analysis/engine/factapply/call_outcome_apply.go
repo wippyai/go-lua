@@ -54,23 +54,15 @@ func applyCallOutcomeFacts(
 		out = applyCallParamPathRelation(ctx, resolver, projectPath, out, paramBindings, relation)
 	}
 	for _, fact := range normalReturnFacts.PathStaticMembers {
-		targetPath, ok := fact.Path.Substitute(bindings)
+		targetKey, ok := callOutcomePathKeyAt(resolver, ctx.Point, bindings, fact.Path)
 		if !ok {
-			continue
-		}
-		targetKey := factPathKeyAt(resolver, ctx.Point, targetPath)
-		if targetKey == "" {
 			continue
 		}
 		out = out.WritePathStaticMember(targetKey, fact.Value)
 	}
 	for _, fact := range normalReturnFacts.DynamicIndexFacts {
-		tablePath, ok := fact.Table.Substitute(bindings)
+		tableKey, ok := callOutcomePathKeyAt(resolver, ctx.Point, bindings, fact.Table)
 		if !ok {
-			continue
-		}
-		tableKey := factPathKeyAt(resolver, ctx.Point, tablePath)
-		if tableKey == "" {
 			continue
 		}
 		out = out.WriteDynamicIndexFact(ctx.Registry, dynamicindex.Key{
@@ -93,12 +85,8 @@ func applyCallOutcomeFacts(
 		out = out.AddChannelSelectFact(fact)
 	}
 	for _, delta := range normalReturnFacts.EffectDeltas {
-		targetPath, ok := delta.Target.Substitute(bindings)
+		targetKey, ok := callOutcomePathKeyAt(resolver, ctx.Point, bindings, delta.Target)
 		if !ok {
-			continue
-		}
-		targetKey := factPathKeyAt(resolver, ctx.Point, targetPath)
-		if targetKey == "" {
 			continue
 		}
 		out = out.WriteEffectDelta(effectdelta.Key{
@@ -108,12 +96,8 @@ func applyCallOutcomeFacts(
 		}, delta.Value)
 	}
 	for _, event := range normalReturnFacts.EscapeEvents {
-		targetPath, ok := event.Target.Substitute(bindings)
+		targetKey, ok := callOutcomePathKeyAt(resolver, ctx.Point, bindings, event.Target)
 		if !ok {
-			continue
-		}
-		targetKey := factPathKeyAt(resolver, ctx.Point, targetPath)
-		if targetKey == "" {
 			continue
 		}
 		out = out.WriteEffectDelta(effectdelta.Key{
@@ -123,6 +107,23 @@ func applyCallOutcomeFacts(
 		}, effectdelta.Top())
 	}
 	return out
+}
+
+func callOutcomePathKeyAt(
+	resolver *visibility.Resolver,
+	point cfg.Point,
+	bindings []pathdom.Path,
+	path pathdom.Path,
+) (pathdom.PathKey, bool) {
+	targetPath, ok := path.Substitute(bindings)
+	if !ok {
+		return "", false
+	}
+	targetKey := factPathKeyAt(resolver, point, targetPath)
+	if targetKey == "" {
+		return "", false
+	}
+	return targetKey, true
 }
 
 func applyCallParamCondition(
@@ -231,12 +232,8 @@ func callBranchProofAt(
 	bindings []pathdom.Path,
 	proof callboundary.BranchProof,
 ) (pathevidence.BranchProof, bool) {
-	targetPath, ok := proof.Path.Substitute(bindings)
+	pathKey, ok := callOutcomePathKeyAt(resolver, point, bindings, proof.Path)
 	if !ok {
-		return pathevidence.BranchProof{}, false
-	}
-	pathKey := factPathKeyAt(resolver, point, targetPath)
-	if pathKey == "" {
 		return pathevidence.BranchProof{}, false
 	}
 	switch proof.Kind {
@@ -247,12 +244,8 @@ func callBranchProofAt(
 			Presence: proof.Presence,
 		}, true
 	case pathevidence.BranchProofPathEqual, pathevidence.BranchProofPathNotEqual:
-		otherPath, ok := proof.Other.Substitute(bindings)
+		otherKey, ok := callOutcomePathKeyAt(resolver, point, bindings, proof.Other)
 		if !ok {
-			return pathevidence.BranchProof{}, false
-		}
-		otherKey := factPathKeyAt(resolver, point, otherPath)
-		if otherKey == "" {
 			return pathevidence.BranchProof{}, false
 		}
 		return pathevidence.BranchProof{
@@ -283,24 +276,18 @@ func callChannelSelectFactAt(
 		HasDefault: event.HasDefault,
 	}
 	if !event.Result.IsEmpty() {
-		resultPath, ok := event.Result.Substitute(bindings)
+		resultKey, ok := callOutcomePathKeyAt(resolver, point, bindings, event.Result)
 		if !ok {
 			return channelselectfact.Fact{}, false
 		}
-		fact.Result = factPathKeyAt(resolver, point, resultPath)
-		if fact.Result == "" {
-			return channelselectfact.Fact{}, false
-		}
+		fact.Result = resultKey
 	}
 	if !event.Case.IsEmpty() {
-		casePath, ok := event.Case.Substitute(bindings)
+		caseKey, ok := callOutcomePathKeyAt(resolver, point, bindings, event.Case)
 		if !ok {
 			return channelselectfact.Fact{}, false
 		}
-		fact.Case = factPathKeyAt(resolver, point, casePath)
-		if fact.Case == "" {
-			return channelselectfact.Fact{}, false
-		}
+		fact.Case = caseKey
 	}
 	return fact, true
 }
