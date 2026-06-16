@@ -21,6 +21,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/typecall"
 	luatypeprojection "github.com/wippyai/go-lua/analysis/lua/typeprojection"
 	"github.com/wippyai/go-lua/analysis/lua/typeresolve"
+	"github.com/wippyai/go-lua/analysis/module/importlookup"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
@@ -118,21 +119,24 @@ func (c *checker) prepare(bindings *bind.Result, built *cfgbuild.Result, sem *se
 	})
 	calleeValue := calleeValueProvider(config.Registry, facts, resolver, sources)
 	signatureID.indexCallSites(facts)
+	callOutcomeSupplement := preparedCallOutcomeSupplement(config.ModuleExports, signatureID, facts, sources, calleeValue)
 	return &Static{
-		registry:    config.Registry,
-		bindings:    bindings,
-		cfg:         built,
-		semantics:   sem,
-		signatures:  config.Signatures,
-		moduleTypes: config.ModuleTypes,
-		moduleLoads: config.ModuleExports,
-		modules:     modules,
-		signatureID: signatureID,
-		facts:       facts,
-		visibility:  resolver,
-		sources:     sources,
-		calleeValue: calleeValue,
-		typeNS:      typeResolver,
+		registry:              config.Registry,
+		bindings:              bindings,
+		cfg:                   built,
+		semantics:             sem,
+		signatures:            config.Signatures,
+		moduleTypes:           config.ModuleTypes,
+		moduleLoads:           config.ModuleExports,
+		modules:               modules,
+		signatureID:           signatureID,
+		facts:                 facts,
+		visibility:            resolver,
+		sources:               sources,
+		calleeValue:           calleeValue,
+		typeNS:                typeResolver,
+		callOutcomeSupplement: callOutcomeSupplement,
+		signatureReturnOps:    signatureReturnTypeOps(),
 	}
 }
 
@@ -227,18 +231,7 @@ func (s *Static) callOutcomeProvider(config SolveConfig) factapply.CallOutcomePr
 			callOutcome,
 		)
 	}
-	if hasModuleExports(s.moduleLoads) {
-		callOutcome = calloutcome.WithSupplemental(callOutcome, effectlowering.ModuleLoadOutcomeProvider(effectlowering.ModuleLoadOutcomeProviderConfig{
-			Exports: s.moduleLoads,
-			NameFor: s.signatureID.nameForCall,
-			Facts:   s.facts,
-			Sources: s.sources,
-		}))
-	}
-	callOutcome = calloutcome.WithSupplemental(callOutcome, effectlowering.CallableValueOutcomeProvider(effectlowering.CallableValueOutcomeProviderConfig{
-		CalleeValue: effectlowering.CalleeValueFunc(s.calleeValue),
-		Callable:    typecall.Callable,
-	}))
+	callOutcome = calloutcome.WithSupplemental(callOutcome, s.callOutcomeSupplement)
 	if hasSignatures(s.signatures) {
 		// A declared signature is the authoritative result for the names it
 		// covers, so it leads the merge: its concrete return slots and
@@ -247,13 +240,35 @@ func (s *Static) callOutcomeProvider(config SolveConfig) factapply.CallOutcomePr
 		callOutcome = calloutcome.WithSupplemental(effectlowering.SignatureOutcomeProvider(effectlowering.SignatureOutcomeProviderConfig{
 			Signatures:    s.signatures,
 			NameFor:       s.signatureID.nameForCall,
-			ReturnTypeOps: signatureReturnTypeOps(),
+			ReturnTypeOps: s.signatureReturnOps,
 			Facts:         s.facts,
 			Sources:       s.sources,
 			ArgumentType:  effectlowering.SignatureArgumentTypeFunc(signatureArgumentType),
 		}), callOutcome)
 	}
 	return callOutcome
+}
+
+func preparedCallOutcomeSupplement(
+	moduleLoads importlookup.Source,
+	signatureID *signatureIdentityResolver,
+	facts factflow.Facts,
+	sources sourcevalue.SourceValues,
+	calleeValue CalleeValueFunc,
+) factapply.CallOutcomeProvider {
+	var out factapply.CallOutcomeProvider
+	if hasModuleExports(moduleLoads) {
+		out = calloutcome.WithSupplemental(out, effectlowering.ModuleLoadOutcomeProvider(effectlowering.ModuleLoadOutcomeProviderConfig{
+			Exports: moduleLoads,
+			NameFor: signatureID.nameForCall,
+			Facts:   facts,
+			Sources: sources,
+		}))
+	}
+	return calloutcome.WithSupplemental(out, effectlowering.CallableValueOutcomeProvider(effectlowering.CallableValueOutcomeProviderConfig{
+		CalleeValue: effectlowering.CalleeValueFunc(calleeValue),
+		Callable:    typecall.Callable,
+	}))
 }
 
 func luaPathTypeProjector(root typ.Type, p pathdom.Path) (typ.Type, bool) {

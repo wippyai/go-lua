@@ -42,6 +42,14 @@ func (r *Result) Graph() cfg.Graph {
 }
 
 func (r *Result) StateAt(point cfg.Point) (state.State, bool) {
+	st, ok := r.solvedStateAt(point)
+	if !ok {
+		return state.State{}, false
+	}
+	return st.Clone(), true
+}
+
+func (r *Result) solvedStateAt(point cfg.Point) (state.State, bool) {
 	if r == nil || r.flow == nil {
 		return state.State{}, false
 	}
@@ -49,7 +57,7 @@ func (r *Result) StateAt(point cfg.Point) (state.State, bool) {
 	if !ok {
 		return state.State{}, false
 	}
-	return st.Clone(), true
+	return st, true
 }
 
 func (r *Result) ExitState() (state.State, bool) {

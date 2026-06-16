@@ -5,6 +5,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/engine/effectlowering"
 	factapply "github.com/wippyai/go-lua/analysis/engine/factapply"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	sourcevalue "github.com/wippyai/go-lua/analysis/engine/sourcevalue"
@@ -86,6 +87,9 @@ type Static struct {
 	sources     sourcevalue.SourceValues
 	calleeValue CalleeValueFunc
 	typeNS      *typeresolve.Resolver
+
+	callOutcomeSupplement factapply.CallOutcomeProvider
+	signatureReturnOps    effectlowering.ReturnTypeOps
 }
 
 // SolveConfig holds per-solve inputs for a prepared body. These fields may

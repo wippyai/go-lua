@@ -19,14 +19,14 @@ func (r *Result) boundaryStateAt(point cfg.Point) (state.State, bool) {
 			return out, true
 		}
 	}
-	return r.StateAt(point)
+	return r.solvedStateAt(point)
 }
 
 func (r *Result) boundaryRead(point cfg.Point) state.State {
 	if out, ok := r.nodeOutputAt(point); ok {
 		return out
 	}
-	if st, ok := r.StateAt(point); ok {
+	if st, ok := r.solvedStateAt(point); ok {
 		return st
 	}
 	return state.State{}
@@ -37,13 +37,13 @@ func (r *Result) nodeOutputAt(point cfg.Point) (state.State, bool) {
 		return state.State{}, false
 	}
 	if out, ok := r.boundary[point]; ok {
-		return out.Clone(), true
+		return out, true
 	}
 	graph := r.Graph()
 	if r.registry == nil || graph == nil || r.boundaryXfer == nil {
 		return state.State{}, false
 	}
-	in, ok := r.StateAt(point)
+	in, ok := r.solvedStateAt(point)
 	if !ok {
 		return state.State{}, false
 	}
@@ -53,16 +53,16 @@ func (r *Result) nodeOutputAt(point cfg.Point) (state.State, bool) {
 		Point:    point,
 		Node:     graph.Node(point),
 		Read:     r.stateRead,
-	}, in).Clone()
+	}, in)
 	if r.boundary == nil {
 		r.boundary = make(map[cfg.Point]state.State)
 	}
 	r.boundary[point] = out
-	return out.Clone(), true
+	return out, true
 }
 
 func (r *Result) stateRead(point cfg.Point) state.State {
-	if st, ok := r.StateAt(point); ok {
+	if st, ok := r.solvedStateAt(point); ok {
 		return st
 	}
 	return state.State{}
