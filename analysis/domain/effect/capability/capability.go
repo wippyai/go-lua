@@ -11,7 +11,7 @@ type Status string
 
 const (
 	StatusOperational      Status = "operational"
-	StatusImportOnly       Status = "import_or_stdlib_operational"
+	StatusImportOrStdlib   Status = "import_or_stdlib_operational"
 	StatusPartial          Status = "partial"
 	StatusReserved         Status = "reserved"
 	StatusReservedHighRisk Status = "reserved_high_risk"
@@ -45,6 +45,7 @@ const (
 	OwnershipBorrow    = "ownership.Borrow"
 	OwnershipRetain    = "ownership.Retain"
 	OwnershipStore     = "ownership.Store"
+	OwnershipSend      = "ownership.Send"
 	OwnershipSendParam = "ownership.SendParam"
 	OwnershipExport    = "ownership.Export"
 	OwnershipOpaque    = "ownership.Opaque"
@@ -85,13 +86,14 @@ var descriptors = map[string]Descriptor{
 	OwnershipBorrow:    descriptor(OwnershipBorrow, "ownership", "Borrow", StatusOperational, "Ownership label is actively consumed end-to-end."),
 	OwnershipRetain:    descriptor(OwnershipRetain, "ownership", "Retain", StatusOperational, "Ownership label is actively consumed end-to-end."),
 	OwnershipStore:     descriptor(OwnershipStore, "ownership", "Store", StatusOperational, "Ownership label is actively consumed end-to-end."),
+	OwnershipSend:      descriptor(OwnershipSend, "ownership", "Send", StatusImportOrStdlib, "Import/stdlib operational suffix-send vocabulary; analyzed exports use per-param SendParam instead."),
 	OwnershipSendParam: descriptor(OwnershipSendParam, "ownership", "SendParam", StatusOperational, "Ownership label is actively consumed end-to-end."),
 	OwnershipExport:    descriptor(OwnershipExport, "ownership", "Export", StatusOperational, "Ownership label is actively consumed end-to-end."),
 	OwnershipOpaque:    descriptor(OwnershipOpaque, "ownership", "Opaque", StatusOperational, "Ownership label is actively consumed end-to-end."),
 	OwnershipFreeze:    descriptor(OwnershipFreeze, "ownership", "Freeze", StatusOperational, "Ownership label is actively consumed end-to-end."),
-	OwnershipBorrowAll: descriptor(OwnershipBorrowAll, "ownership", "BorrowAll", StatusImportOnly, "Import/stdlib operational vocabulary, but not exported as the same ownership label."),
+	OwnershipBorrowAll: descriptor(OwnershipBorrowAll, "ownership", "BorrowAll", StatusImportOrStdlib, "Import/stdlib operational vocabulary, but not exported as the same ownership label."),
 
-	IterationIterator: descriptor(IterationIterator, "iteration", "Iterator", StatusImportOnly, "Import/stdlib operational vocabulary, but not exported as the same label."),
+	IterationIterator: descriptor(IterationIterator, "iteration", "Iterator", StatusImportOrStdlib, "Import/stdlib operational vocabulary, but not exported as the same label."),
 
 	DispatchModuleLoad:        descriptor(DispatchModuleLoad, "dispatch", "ModuleLoad", StatusPartial, "Metadata marker for require-like signatures; operational module rehydration is currently name-bound to require and does not inspect this label."),
 	DispatchTypePredicate:     descriptor(DispatchTypePredicate, "dispatch", "TypePredicate", StatusReservedHighRisk, "Reserved metadata; type() narrowing is syntax/factflow based, so stdlib must not declare this while inactive."),

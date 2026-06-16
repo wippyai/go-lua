@@ -478,6 +478,8 @@ func capabilityIDForStdlibLabel(label effect.Label) (string, bool) {
 		return capability.OwnershipRetain, true
 	case ownership.Store:
 		return capability.OwnershipStore, true
+	case ownership.Send:
+		return capability.OwnershipSend, true
 	case ownership.SendParam:
 		return capability.OwnershipSendParam, true
 	case ownership.Export:
