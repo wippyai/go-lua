@@ -44,7 +44,7 @@ func NewFactsNodeTransfer(config FactsNodeTransferConfig) transfer.NodeTransfer 
 		facts := config.Facts
 		sources := config.Sources
 		callOutcome := config.CallOutcome
-		read, materialize := callResultReader(ctx, facts, callOutcome, config.Visibility, config.ProjectPath, config.TypeValues)
+		read, materialize := callResultReader(ctx, facts, sources, callOutcome, config.Visibility, config.ProjectPath, config.TypeValues)
 
 		out := materialize(ctx.Point, in)
 		if facts.NoNormalReturn(ctx.Point) {
@@ -88,7 +88,7 @@ func NewFactsNodeTransfer(config FactsNodeTransferConfig) transfer.NodeTransfer 
 			}
 		}
 		if fact, ok := facts.Return(ctx.Point); ok {
-			out = applyReturn(ctx, sources, read, in, out, fact)
+			out = applyReturn(ctx, facts, sources, read, in, out, fact)
 		}
 		return out
 	}

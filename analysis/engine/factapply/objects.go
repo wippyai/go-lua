@@ -31,7 +31,7 @@ func applyObjectLiteralEntries(
 	if !ok {
 		return out
 	}
-	out = writeObjectLiteralHeap(ctx, facts, sources, read, in, out, valueSource, literal, nil)
+	out = materializeObjectLiteralHeap(ctx, facts, sources, read, in, out, valueSource)
 	if resolver == nil {
 		return out
 	}
@@ -59,6 +59,28 @@ func applyObjectLiteralEntries(
 		out = written
 	}
 	return out
+}
+
+func materializeObjectLiteralHeap(
+	ctx transfer.NodeContext,
+	facts factflow.Facts,
+	sources sourcevalue.SourceValues,
+	read func(cfg.Point) state.State,
+	in state.State,
+	out state.State,
+	source factflow.ValueSource,
+) state.State {
+	if sources == nil {
+		return out
+	}
+	if !source.HasExpr {
+		return out
+	}
+	literal, ok := facts.ObjectLiteral(source.ExprRef)
+	if !ok {
+		return out
+	}
+	return writeObjectLiteralHeap(ctx, facts, sources, read, in, out, source, literal, nil)
 }
 
 func writeObjectLiteralHeap(

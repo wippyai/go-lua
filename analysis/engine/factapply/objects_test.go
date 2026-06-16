@@ -291,6 +291,78 @@ func TestFactsNodeTransferObjectLiteralWritesNestedHeapObjects(t *testing.T) {
 	assertHeapStaticMember(t, reg, got, nestedSource.ExprRef, ".id", leafValue)
 }
 
+func TestFactsNodeTransferReturnObjectLiteralWritesHeapObject(t *testing.T) {
+	reg := standard.Registry()
+	point := cfg.Point(67)
+	objectSource := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: factflow.ExprRef(74), HasExpr: true}
+	entrySource := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: factflow.ExprRef(75), HasExpr: true}
+	rootValue := product.Set(reg, presentValue(reg), identity.Key, identity.Singleton(testTableLiteralID(objectSource.ExprRef)))
+	entryValue := absentValue(reg)
+	sources := &recordingSourceValues{
+		values: map[factflow.ValueSource]product.Value{
+			objectSource: rootValue,
+			entrySource:  entryValue,
+		},
+	}
+
+	got := NewFactsNodeTransfer(FactsNodeTransferConfig{
+		Facts: factflow.NewFacts(factflow.FactsInput{
+			Returns: map[cfg.Point]factflow.Return{
+				point: factflow.NewReturn([]factflow.ValueSource{objectSource}),
+			},
+			ObjectLiterals: map[factflow.ExprRef]factflow.ObjectLiteral{
+				objectSource.ExprRef: factflow.NewObjectLiteral([]factflow.ObjectEntry{
+					factflow.NewObjectEntry(fieldSuffix("leaf"), entrySource),
+				}),
+			},
+		}),
+		Sources: sources,
+	})(transfer.NodeContext{
+		Registry: reg,
+		Point:    point,
+	}, state.State{})
+
+	assertValue(t, reg, got, key.ReturnSlot(0), rootValue)
+	assertHeapStaticMember(t, reg, got, objectSource.ExprRef, ".leaf", entryValue)
+}
+
+func TestFactsNodeTransferCallArgumentObjectLiteralWritesHeapObject(t *testing.T) {
+	reg := standard.Registry()
+	point := cfg.Point(68)
+	objectSource := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: factflow.ExprRef(76), HasExpr: true}
+	entrySource := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: factflow.ExprRef(77), HasExpr: true}
+	rootValue := product.Set(reg, presentValue(reg), identity.Key, identity.Singleton(testTableLiteralID(objectSource.ExprRef)))
+	entryValue := absentValue(reg)
+	sources := &recordingSourceValues{
+		values: map[factflow.ValueSource]product.Value{
+			objectSource: rootValue,
+			entrySource:  entryValue,
+		},
+	}
+
+	got := NewFactsNodeTransfer(FactsNodeTransferConfig{
+		Facts: factflow.NewFacts(factflow.FactsInput{
+			CallSites: map[cfg.Point]factflow.CallSite{
+				point: factflow.NewCallSite(factflow.CallSiteConfig{
+					Context:         factflow.CallSiteContextStatement,
+					ArgumentSources: []factflow.ValueSource{objectSource},
+				}),
+			},
+			ObjectLiterals: map[factflow.ExprRef]factflow.ObjectLiteral{
+				objectSource.ExprRef: factflow.NewObjectLiteral([]factflow.ObjectEntry{
+					factflow.NewObjectEntry(fieldSuffix("leaf"), entrySource),
+				}),
+			},
+		}),
+		Sources: sources,
+	})(transfer.NodeContext{
+		Registry: reg,
+		Point:    point,
+	}, state.State{})
+
+	assertHeapStaticMember(t, reg, got, objectSource.ExprRef, ".leaf", entryValue)
+}
+
 func TestFactsNodeTransferObjectLiteralEntriesInvalidateSubtreeBeforeWrite(t *testing.T) {
 	reg := standard.Registry()
 	point := cfg.Point(65)

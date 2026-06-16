@@ -15,6 +15,7 @@ import (
 func callResultReader(
 	ctx transfer.NodeContext,
 	facts factflow.Facts,
+	sources sourcevalue.SourceValues,
 	outcomeProvider CallOutcomeProvider,
 	resolver *visibility.Resolver,
 	projectPath PathTypeProjector,
@@ -38,7 +39,7 @@ func callResultReader(
 		}
 		active[point] = true
 		activeBase[point] = base
-		out := materializeCallOutcome(callContextAt(ctx, point, read), facts, outcomeProvider, resolver, projectPath, typeValues, read, base, base)
+		out := materializeCallOutcome(callContextAt(ctx, point, read), facts, sources, outcomeProvider, resolver, projectPath, typeValues, read, base, base)
 		delete(active, point)
 		delete(activeBase, point)
 		cache[point] = out
@@ -64,6 +65,7 @@ func callContextAt(ctx transfer.NodeContext, point cfg.Point, read func(cfg.Poin
 func materializeCallOutcome(
 	ctx transfer.NodeContext,
 	facts factflow.Facts,
+	sources sourcevalue.SourceValues,
 	outcomeProvider CallOutcomeProvider,
 	resolver *visibility.Resolver,
 	projectPath PathTypeProjector,
@@ -75,6 +77,9 @@ func materializeCallOutcome(
 	siteView, ok := facts.CallSiteView(ctx.Point)
 	if !ok {
 		return applyChannelSelectResult(ctx, typeValues, resolver, projectPath, out, facts.ChannelSelects(ctx.Point))
+	}
+	for _, source := range siteView.ArgumentSources() {
+		out = materializeObjectLiteralHeap(ctx, facts, sources, read, in, out, source)
 	}
 	hasProducer := callproducer.Has(facts, ctx.Point)
 	if hasProducer {
@@ -127,6 +132,7 @@ func constrainReturnSlot(ctx transfer.NodeContext, out state.State, fact factflo
 
 func applyReturn(
 	ctx transfer.NodeContext,
+	facts factflow.Facts,
 	sources sourcevalue.SourceValues,
 	read func(cfg.Point) state.State,
 	in state.State,
@@ -139,6 +145,7 @@ func applyReturn(
 			continue
 		}
 		out = out.WriteReturnSlot(ctx.Registry, i, value)
+		out = materializeObjectLiteralHeap(ctx, facts, sources, read, in, out, source)
 	}
 	return out
 }
