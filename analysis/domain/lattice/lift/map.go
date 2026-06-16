@@ -142,6 +142,16 @@ func Map[K comparable, V any](elem lattice.Lattice[V]) lattice.Lattice[map[K]V] 
 			if isTop(prev) || isTop(next) {
 				return topSentinel
 			}
+			if len(prev) == 0 {
+				return canonicalize(next)
+			}
+			if len(next) == 0 {
+				return canonicalize(prev)
+			}
+			bot := elem.Bottom()
+			if pointwiseLessOrEq(next, prev, bot, elem.LessOrEq) {
+				return canonicalize(prev)
+			}
 			return pointwiseMap(prev, next, elem.Bottom(), elem.Widen, elem.Equal)
 		},
 	}

@@ -168,6 +168,42 @@ func TestMap_JoinSubsumedMapWithoutCopy(t *testing.T) {
 	}
 }
 
+func TestMap_WidenBottomNormalizesCanonicalMapWithoutCopy(t *testing.T) {
+	d := Map[string, sign](signLattice())
+	canonical := map[string]sign{"x": sNeg, "y": sPos}
+
+	got := d.Widen(d.Bottom(), canonical)
+	if !d.Equal(got, canonical) {
+		t.Fatalf("Widen(Bottom, canonical) = %s, want %s", formatMap(got), formatMap(canonical))
+	}
+	if reflect.ValueOf(got).Pointer() != reflect.ValueOf(canonical).Pointer() {
+		t.Fatalf("Widen(Bottom, canonical) copied an already canonical finite map")
+	}
+
+	withBottom := map[string]sign{"x": sNeg, "y": sBottom}
+	normalized := d.Widen(d.Bottom(), withBottom)
+	if !d.Equal(normalized, map[string]sign{"x": sNeg}) {
+		t.Fatalf("Widen(Bottom, explicit bottom) = %s, want {x}", formatMap(normalized))
+	}
+	if _, ok := normalized["y"]; ok {
+		t.Fatalf("Widen(Bottom, explicit bottom) kept bottom-valued key: %s", formatMap(normalized))
+	}
+}
+
+func TestMap_WidenSubsumedNextWithoutCopy(t *testing.T) {
+	d := Map[string, sign](signLattice())
+	prev := map[string]sign{"x": sTop, "y": sPos}
+	next := map[string]sign{"x": sNeg}
+
+	got := d.Widen(prev, next)
+	if !d.Equal(got, prev) {
+		t.Fatalf("Widen(prev, next<=prev) = %s, want %s", formatMap(got), formatMap(prev))
+	}
+	if reflect.ValueOf(got).Pointer() != reflect.ValueOf(prev).Pointer() {
+		t.Fatalf("Widen(prev, next<=prev) copied an already-canonical upper bound")
+	}
+}
+
 // TestMap_Order pins the pointwise partial order, especially that a
 // finite map is strictly below the Top sentinel and that Bottom is below all.
 func TestMap_Order(t *testing.T) {
