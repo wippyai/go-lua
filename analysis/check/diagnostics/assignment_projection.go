@@ -677,11 +677,8 @@ func missingRequiredRecordField(want typ.Type, fact semantics.ObjectLiteralFact)
 			continue
 		}
 		seg := entry.Suffix.Segments[0]
-		switch seg.Kind {
-		case segment.SegmentField, segment.SegmentIndexString:
-			if seg.Name != "" {
-				present[seg.Name] = struct{}{}
-			}
+		if seg.Kind == segment.SegmentField && seg.Name != "" {
+			present[seg.Name] = struct{}{}
 		}
 	}
 	for _, field := range record.Fields {

@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/escape"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/evidence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
@@ -14,6 +15,65 @@ import (
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
+
+func TestObjectLiteralTypeSeparatesDotFieldAndBracketStringMember(t *testing.T) {
+	reg := standard.Registry()
+	fieldSource := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: factflow.ExprRef(1101), HasExpr: true}
+	indexSource := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: factflow.ExprRef(1102), HasExpr: true}
+	lit := factflow.NewObjectLiteral([]factflow.ObjectEntry{
+		factflow.NewObjectEntry(path.NewPlaceholder(0).Field("id"), fieldSource),
+		factflow.NewObjectEntry(path.NewPlaceholder(0).IndexStr("id"), indexSource),
+	})
+	values := map[factflow.ValueSource]product.Value{
+		fieldSource: typevalue.WithWitness(reg, typevalue.FromType(reg, typ.String), typ.String),
+		indexSource: typevalue.WithWitness(reg, typevalue.FromType(reg, typ.Boolean), typ.Boolean),
+	}
+
+	got, ok := objectLiteralType(reg, lit, func(source factflow.ValueSource) (product.Value, bool) {
+		value, ok := values[source]
+		return value, ok
+	})
+	if !ok {
+		t.Fatal("objectLiteralType returned false")
+	}
+
+	want := typetable.NewRecord().
+		Field("id", typ.String).
+		StaticStringIndex("id", typ.Boolean).
+		Build()
+	if !typ.TypeEquals(got, want) {
+		t.Fatalf("object literal type = %v, want %v", got, want)
+	}
+}
+
+func TestObjectLiteralTypeAdoptsExpectedRecordFieldAndStaticStringMemberBySegmentKind(t *testing.T) {
+	reg := standard.Registry()
+	fieldSource := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: factflow.ExprRef(1201), HasExpr: true}
+	indexSource := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: factflow.ExprRef(1202), HasExpr: true}
+	expected := typetable.NewRecord().
+		Field("field", typ.String).
+		StaticStringIndex("member", typ.Boolean).
+		Build()
+	lit := factflow.NewObjectLiteral([]factflow.ObjectEntry{
+		factflow.NewObjectEntry(path.NewPlaceholder(0).Field("field"), fieldSource),
+		factflow.NewObjectEntry(path.NewPlaceholder(0).IndexStr("member"), indexSource),
+	}).WithExpected(typevalue.WithWitness(reg, typevalue.FromType(reg, expected), expected))
+
+	got, ok := objectLiteralType(reg, lit, func(factflow.ValueSource) (product.Value, bool) {
+		return product.Value{}, false
+	})
+	if !ok {
+		t.Fatal("objectLiteralType returned false")
+	}
+	if !typ.TypeEquals(got, expected) {
+		t.Fatalf("object literal type = %v, want %v", got, expected)
+	}
+
+	fieldOnly := typetable.NewRecord().Field("member", typ.String).Build()
+	if _, ok := expectedRecordField(true, fieldOnly, []segment.Segment{{Kind: segment.SegmentIndexString, Name: "member"}}); ok {
+		t.Fatal("bracket-string entry unexpectedly adopted dot-field contextual type")
+	}
+}
 
 func TestObjectLiteralTypePreservesNestedWitnessShape(t *testing.T) {
 	reg := standard.Registry()

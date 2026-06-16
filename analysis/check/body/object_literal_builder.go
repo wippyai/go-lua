@@ -22,24 +22,19 @@ func objectLiteralConstructorPath(segs []segment.Segment) ([]typetable.Construct
 
 func objectLiteralConstructorKey(seg segment.Segment) (typetable.ConstructorKey, bool) {
 	switch seg.Kind {
-	case segment.SegmentField, segment.SegmentIndexString:
-		name, ok := staticStringSegment(seg)
-		if !ok {
+	case segment.SegmentField:
+		if seg.Name == "" {
 			return typetable.ConstructorKey{}, false
 		}
-		return typetable.ConstructorKey{Kind: typetable.ConstructorField, Name: name}, true
+		return typetable.ConstructorKey{Kind: typetable.ConstructorField, Name: seg.Name}, true
+	case segment.SegmentIndexString:
+		if seg.Name == "" {
+			return typetable.ConstructorKey{}, false
+		}
+		return typetable.ConstructorKey{Kind: typetable.ConstructorStringIndex, Name: seg.Name}, true
 	case segment.SegmentIndexInt:
 		return typetable.ConstructorKey{Kind: typetable.ConstructorIntIndex, Index: int64(seg.Index)}, true
 	default:
 		return typetable.ConstructorKey{}, false
-	}
-}
-
-func staticStringSegment(seg segment.Segment) (string, bool) {
-	switch seg.Kind {
-	case segment.SegmentField, segment.SegmentIndexString:
-		return seg.Name, seg.Name != ""
-	default:
-		return "", false
 	}
 }

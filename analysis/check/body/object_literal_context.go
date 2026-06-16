@@ -33,9 +33,9 @@ func expectedRecord(reg *axis.Registry, lit factflow.ObjectLiteral, resolve func
 }
 
 // selectUnionArm picks the record arm of a union whose discriminant literal
-// fields are all matched by the object literal's corresponding entries. Selection
-// requires a unique matching arm: an ambiguous match leaves the literal to its
-// inferred type rather than guessing.
+// fields are all matched by the object literal's corresponding dot-field
+// entries. Selection requires a unique matching arm: an ambiguous match leaves
+// the literal to its inferred type rather than guessing.
 func selectUnionArm(reg *axis.Registry, t typ.Type, lit factflow.ObjectLiteral, resolve func(factflow.ValueSource) (product.Value, bool), depth int) (*typ.Record, bool) {
 	if t == nil || depth > typ.DefaultRecursionDepth {
 		return nil, false
@@ -80,16 +80,16 @@ func objectLiteralMatchesDiscriminants(reg *axis.Registry, rec *typ.Record, lit 
 	return discriminants > 0
 }
 
-// objectLiteralFieldType returns the inferred type of a single-segment string
-// field of the object literal, when present and typeable.
+// objectLiteralFieldType returns the inferred type of a single-segment dot field
+// of the object literal, when present and typeable.
 func objectLiteralFieldType(reg *axis.Registry, name string, lit factflow.ObjectLiteral, resolve func(factflow.ValueSource) (product.Value, bool)) (typ.Type, bool) {
 	for _, entry := range lit.Entries() {
 		segs := entry.Suffix().Segments
 		if len(segs) != 1 {
 			continue
 		}
-		fieldName, ok := staticStringSegment(segs[0])
-		if !ok || fieldName != name {
+		seg := segs[0]
+		if seg.Kind != segment.SegmentField || seg.Name != name {
 			continue
 		}
 		value, ok := resolve(entry.Source())
@@ -101,36 +101,43 @@ func objectLiteralFieldType(reg *axis.Registry, name string, lit factflow.Object
 	return nil, false
 }
 
-// expectedRecordField returns the declared type of a single-segment field on the
-// contextual record type, used to fill literal entries whose value is otherwise
-// untypeable. Only single-segment string fields are filled; multi-segment
-// suffixes and integer indexes are left to their inferred type.
+// expectedRecordField returns the declared type of a single-segment member on
+// the contextual record type, used to fill literal entries whose value is
+// otherwise untypeable. Dot fields match record fields; bracket-string entries
+// match exact static string members. Multi-segment suffixes and integer indexes
+// are left to their inferred type.
 func expectedRecordField(hasExpected bool, rec *typ.Record, segs []segment.Segment) (typ.Type, bool) {
 	if !hasExpected || rec == nil || len(segs) != 1 {
 		return nil, false
 	}
-	name, ok := staticStringSegment(segs[0])
-	if !ok {
+	seg := segs[0]
+	switch seg.Kind {
+	case segment.SegmentField:
+		field := rec.GetField(seg.Name)
+		if field == nil || field.Type == nil {
+			return nil, false
+		}
+		return field.Type, true
+	case segment.SegmentIndexString:
+		member := rec.GetStaticStringIndex(seg.Name)
+		if member == nil || member.Type == nil {
+			return nil, false
+		}
+		return member.Type, true
+	default:
 		return nil, false
 	}
-	field := rec.GetField(name)
-	if field == nil {
-		return nil, false
-	}
-	if field.Type == nil {
-		return nil, false
-	}
-	return field.Type, true
 }
 
 // adoptExpectedFieldType widens a literal entry's inferred type to the declared
-// field type of the contextual record when the inferred type is admissible to it.
+// member type of the contextual record when the inferred type is admissible to it.
 // A fresh table literal stored at an annotated location takes that location's
-// declared field types (bidirectional checking), so a literal field like `1` or
+// declared member types (bidirectional checking), so a literal field like `1` or
 // "created" carries the declared `integer` or status-union contract rather than
-// its narrow singleton type. Only single-segment string fields whose inferred
-// value is a subtype of the declared field are adopted; otherwise the inferred
-// type is kept so genuine mismatches still surface at the assignment site.
+// its narrow singleton type. Only single-segment dot fields and static string
+// members whose inferred value is a subtype of the declared member are adopted;
+// otherwise the inferred type is kept so genuine mismatches still surface at the
+// assignment site.
 func adoptExpectedFieldType(hasExpected bool, rec *typ.Record, segs []segment.Segment, inferred typ.Type) (typ.Type, bool) {
 	declared, ok := expectedRecordField(hasExpected, rec, segs)
 	if !ok || declared == nil || inferred == nil {

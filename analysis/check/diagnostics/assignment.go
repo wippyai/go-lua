@@ -332,10 +332,7 @@ func objectLiteralType(want typ.Type, fact semantics.ObjectLiteralFact) typ.Type
 			continue
 		}
 		seg := entry.Suffix.Segments[0]
-		if seg.Kind != segment.SegmentField && seg.Kind != segment.SegmentIndexString {
-			continue
-		}
-		if seg.Name == "" {
+		if (seg.Kind != segment.SegmentField && seg.Kind != segment.SegmentIndexString) || seg.Name == "" {
 			continue
 		}
 		fieldType, ok := valueexpr.LiteralType(entry.Value)
@@ -346,7 +343,12 @@ func objectLiteralType(want typ.Type, fact semantics.ObjectLiteralFact) typ.Type
 				fieldType = typ.Unknown
 			}
 		}
-		builder = builder.Field(seg.Name, fieldType)
+		switch seg.Kind {
+		case segment.SegmentField:
+			builder = builder.Field(seg.Name, fieldType)
+		case segment.SegmentIndexString:
+			builder = builder.StaticStringIndex(seg.Name, fieldType)
+		}
 	}
 	return builder.Build()
 }

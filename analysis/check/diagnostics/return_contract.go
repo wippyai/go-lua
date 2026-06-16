@@ -449,7 +449,7 @@ func directObjectLiteralArgumentType(result *body.Result, resolver typeannotatio
 	builder := typetable.NewRecord()
 	seen := false
 	for _, field := range table.Fields {
-		name, ok := directObjectLiteralFieldName(field)
+		name, syntax, ok := directObjectLiteralFieldKey(field)
 		if !ok || name == "" || field.Value == nil {
 			continue
 		}
@@ -457,7 +457,12 @@ func directObjectLiteralArgumentType(result *body.Result, resolver typeannotatio
 		if !ok || t == nil {
 			continue
 		}
-		builder.Field(name, t)
+		switch syntax {
+		case ast.AttrKeyIndex:
+			builder.StaticStringIndex(name, t)
+		default:
+			builder.Field(name, t)
+		}
 		seen = true
 	}
 	if !seen {
@@ -466,17 +471,17 @@ func directObjectLiteralArgumentType(result *body.Result, resolver typeannotatio
 	return builder.Build(), true
 }
 
-func directObjectLiteralFieldName(field *ast.Field) (string, bool) {
+func directObjectLiteralFieldKey(field *ast.Field) (string, ast.AttrKeySyntax, bool) {
 	if field == nil || field.Key == nil {
-		return "", false
+		return "", ast.AttrKeyUnknown, false
 	}
 	switch key := field.Key.(type) {
 	case *ast.StringExpr:
-		return key.Value, key.Value != ""
+		return key.Value, field.KeySyntax, key.Value != ""
 	case *ast.IdentExpr:
-		return key.Value, key.Value != ""
+		return key.Value, field.KeySyntax, key.Value != ""
 	default:
-		return "", false
+		return "", ast.AttrKeyUnknown, false
 	}
 }
 
