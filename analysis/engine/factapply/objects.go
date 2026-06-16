@@ -3,6 +3,7 @@ package factapply
 import (
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/placement"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	sourcevalue "github.com/wippyai/go-lua/analysis/engine/sourcevalue"
@@ -131,6 +132,7 @@ func writeObjectLiteralHeap(
 		}
 	}
 	delete(active, source.ExprRef)
+	out = out.WritePlacement(id, placement.Join(out.ReadPlacement(id), placement.Stack))
 	return out.WriteHeapTableObject(ctx.Registry, id, heapidentity.NewTableObject(heapidentity.TableObjectConfig{
 		Root:          rootValue,
 		StaticMembers: staticMembers,

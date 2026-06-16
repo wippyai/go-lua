@@ -9,6 +9,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/evidence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/placement"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/sourcevalue"
@@ -90,6 +91,7 @@ func TestFactsNodeTransferObjectLiteralRootAssignmentsWriteStaticEntries(t *test
 			assertValue(t, reg, got, key.SymbolValue(target), rootValue)
 			assertPathValue(t, reg, got, path.PathKey("sym121@1.leaf"), entryValue)
 			assertHeapStaticMember(t, reg, got, objectSource.ExprRef, ".leaf", entryValue)
+			assertPlacement(t, got, testTableLiteralID(objectSource.ExprRef), placement.Stack)
 			if len(sources.calls) != 4 {
 				t.Fatalf("resolver calls = %d, want assignment root plus heap/path entry reads", len(sources.calls))
 			}
@@ -290,6 +292,45 @@ func TestFactsNodeTransferObjectLiteralWritesNestedHeapObjects(t *testing.T) {
 	assertHeapStaticMember(t, reg, got, objectSource.ExprRef, ".child", nestedValue)
 	assertHeapStaticMember(t, reg, got, objectSource.ExprRef, ".child.id", leafValue)
 	assertHeapStaticMember(t, reg, got, nestedSource.ExprRef, ".id", leafValue)
+	assertPlacement(t, got, testTableLiteralID(objectSource.ExprRef), placement.Stack)
+	assertPlacement(t, got, testTableLiteralID(nestedSource.ExprRef), placement.Stack)
+}
+
+func TestFactsNodeTransferObjectLiteralPlacementDoesNotDemotePromotedIdentity(t *testing.T) {
+	reg := standard.Registry()
+	point := cfg.Point(69)
+	target := symbol.ID(127)
+	objectSource := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: factflow.ExprRef(78), HasExpr: true}
+	entrySource := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: factflow.ExprRef(79), HasExpr: true}
+	id := testTableLiteralID(objectSource.ExprRef)
+	rootValue := product.Set(reg, presentValue(reg), identity.Key, identity.Singleton(id))
+	entryValue := absentValue(reg)
+	sources := &recordingSourceValues{
+		values: map[factflow.ValueSource]product.Value{
+			objectSource: rootValue,
+			entrySource:  entryValue,
+		},
+	}
+
+	got := NewFactsNodeTransfer(FactsNodeTransferConfig{
+		Facts: factflow.NewFacts(factflow.FactsInput{
+			RootAssignments: map[cfg.Point]factflow.RootAssignment{
+				point: factflow.NewRootAssignment(factflow.RootAssignmentLocalDeclaration, target, path.NewPath(target, "obj"), objectSource),
+			},
+			ObjectLiterals: map[factflow.ExprRef]factflow.ObjectLiteral{
+				objectSource.ExprRef: factflow.NewObjectLiteral([]factflow.ObjectEntry{
+					factflow.NewObjectEntry(fieldSuffix("leaf"), entrySource),
+				}),
+			},
+		}),
+		Sources: sources,
+	})(transfer.NodeContext{
+		Registry: reg,
+		Point:    point,
+	}, state.State{}.WritePlacement(id, placement.SharedHeap))
+
+	assertHeapStaticMember(t, reg, got, objectSource.ExprRef, ".leaf", entryValue)
+	assertPlacement(t, got, id, placement.SharedHeap)
 }
 
 func TestFactsNodeTransferReturnObjectLiteralWritesHeapObject(t *testing.T) {
@@ -424,5 +465,12 @@ func assertHeapStaticMember(t *testing.T, reg *axis.Registry, gotState state.Sta
 	}
 	if !heapidentity.ObjectDomain(reg).LessOrEq(object, heapidentity.TopObject()) {
 		t.Fatalf("heap object %v not in domain", id)
+	}
+}
+
+func assertPlacement(t *testing.T, gotState state.State, id identity.ID, want placement.Value) {
+	t.Helper()
+	if got := gotState.ReadPlacement(id); got != want {
+		t.Fatalf("placement[%v] = %s, want %s", id, got, want)
 	}
 }
