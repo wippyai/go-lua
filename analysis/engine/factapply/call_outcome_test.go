@@ -126,6 +126,64 @@ func TestFactsNodeTransferCallOutcomeAppliesParamPathRelation(t *testing.T) {
 	assertValue(t, reg, got, key.SymbolValue(right), present)
 }
 
+func TestFactsNodeTransferCallOutcomeAppliesStoreRelationEvidence(t *testing.T) {
+	reg := standard.Registry()
+	point := cfg.Point(614)
+	sourceExpr := factflow.ExprRef(614)
+	intoExpr := factflow.ExprRef(615)
+	source := symbol.ID(614)
+	into := symbol.ID(615)
+	sourcePath := pathdom.NewPath(source, "source").Field("stored")
+	intoPath := pathdom.NewPath(into, "into").Field("container")
+	builder := visibility.NewBuilder()
+	builder.Define(point, source, "source")
+	builder.Define(point, into, "into")
+	resolver := visibility.NewResolver(builder.Build())
+
+	got := NewFactsNodeTransfer(FactsNodeTransferConfig{
+		Facts: factflow.NewFacts(factflow.FactsInput{
+			CallSites: map[cfg.Point]factflow.CallSite{
+				point: factflow.NewCallSite(factflow.CallSiteConfig{
+					Context: factflow.CallSiteContextStatement,
+					ArgumentSources: []factflow.ValueSource{
+						{Kind: factflow.ValueSourceExpression, ExprRef: sourceExpr, HasExpr: true},
+						{Kind: factflow.ValueSourceExpression, ExprRef: intoExpr, HasExpr: true},
+					},
+				}),
+			},
+			ExpressionPaths: map[factflow.ExprRef]pathdom.Path{
+				sourceExpr: pathdom.NewPath(source, "source"),
+				intoExpr:   pathdom.NewPath(into, "into"),
+			},
+		}),
+		CallOutcome: func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) CallOutcome {
+			return CallOutcome{
+				NormalReturnFacts: callboundary.NormalReturnFacts{
+					StoreRelations: []callboundary.StoreRelationFact{{
+						Source: pathdom.NewPlaceholder(0).Field("stored"),
+						Into:   pathdom.NewPlaceholder(1).Field("container"),
+					}},
+				},
+			}
+		},
+		Visibility: resolver,
+	})(transfer.NodeContext{
+		Registry: reg,
+		Point:    point,
+	}, state.State{})
+
+	relation := state.StoreRelation{
+		Source: resolver.KeyAt(point, sourcePath),
+		Into:   resolver.KeyAt(point, intoPath),
+	}
+	if relation.Source == "" || relation.Into == "" {
+		t.Fatalf("visibility failed for store relation paths: %q -> %q", relation.Source, relation.Into)
+	}
+	if !got.HasStoreRelation(relation) {
+		t.Fatalf("store relations = %#v, want rebased source/into relation", got.StoreRelationsSnapshot())
+	}
+}
+
 func TestFactsNodeTransferCallOutcomeParamPathRefinementUsesArgumentNotReceiver(t *testing.T) {
 	reg := standard.Registry()
 	point := cfg.Point(616)

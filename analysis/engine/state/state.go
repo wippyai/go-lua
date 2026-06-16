@@ -28,6 +28,7 @@ type State struct {
 	frozenTables      frozenTableLane
 	effectDeltas      effectDeltaLane
 	channelSelect     channelselectfact.Lane
+	storeRelations    storeRelationLane
 	placement         placementLane
 	lenFloors         lenFloorLane
 	numFloors         numFloorLane
@@ -97,7 +98,8 @@ func (s State) UpdateReturnSlot(reg *axis.Registry, index int, fn func(product.V
 }
 
 // Domain builds the State lattice as a product of value, path, must-fact,
-// identity, frozen-table, effect, channel-select, and placement lanes.
+// identity, frozen-table, effect, channel-select, store-relation, and placement
+// lanes.
 func Domain(reg *axis.Registry) lattice.Lattice[State] {
 	valueDomain := product.Domain(reg)
 	ops := domainOps{
@@ -108,6 +110,7 @@ func Domain(reg *axis.Registry) lattice.Lattice[State] {
 		frozenTables:      frozenTableDomain(),
 		effectDeltas:      effectdelta.MapDomain(reg),
 		channelSelect:     channelselectfact.Domain(),
+		storeRelations:    storeRelationDomain(),
 		placement:         placementMapDomain(),
 		lenFloors:         lenFloorMapDomain(),
 		numFloors:         numFloorMapDomain(),
@@ -115,11 +118,12 @@ func Domain(reg *axis.Registry) lattice.Lattice[State] {
 	return lattice.Lattice[State]{
 		Bottom: func() State {
 			return State{
-				pathEvidence:  ops.pathEvidence.Bottom(),
-				frozenTables:  ops.frozenTables.Bottom(),
-				channelSelect: ops.channelSelect.Bottom(),
-				lenFloors:     ops.lenFloors.Bottom(),
-				numFloors:     ops.numFloors.Bottom(),
+				pathEvidence:   ops.pathEvidence.Bottom(),
+				frozenTables:   ops.frozenTables.Bottom(),
+				channelSelect:  ops.channelSelect.Bottom(),
+				storeRelations: ops.storeRelations.Bottom(),
+				lenFloors:      ops.lenFloors.Bottom(),
+				numFloors:      ops.numFloors.Bottom(),
 			}
 		},
 		Top: func() State {
@@ -131,6 +135,7 @@ func Domain(reg *axis.Registry) lattice.Lattice[State] {
 				frozenTables:      ops.frozenTables.Top(),
 				effectDeltas:      effectDeltaLane{top: true},
 				placement:         placementLane{top: true},
+				storeRelations:    ops.storeRelations.Top(),
 				lenFloors:         ops.lenFloors.Top(),
 				numFloors:         ops.numFloors.Top(),
 			}
@@ -143,6 +148,7 @@ func Domain(reg *axis.Registry) lattice.Lattice[State] {
 				ops.frozenTables.Equal(a.frozenTables, b.frozenTables) &&
 				ops.effectDeltas.Equal(ops.effectDeltaLane(a), ops.effectDeltaLane(b)) &&
 				ops.channelSelect.Equal(a.channelSelect, b.channelSelect) &&
+				ops.storeRelations.Equal(a.storeRelations, b.storeRelations) &&
 				ops.placement.Equal(ops.placementLane(a), ops.placementLane(b)) &&
 				ops.lenFloors.Equal(a.lenFloors, b.lenFloors) &&
 				ops.numFloors.Equal(a.numFloors, b.numFloors)
@@ -155,6 +161,7 @@ func Domain(reg *axis.Registry) lattice.Lattice[State] {
 				ops.frozenTables.LessOrEq(a.frozenTables, b.frozenTables) &&
 				ops.effectDeltas.LessOrEq(ops.effectDeltaLane(a), ops.effectDeltaLane(b)) &&
 				ops.channelSelect.LessOrEq(a.channelSelect, b.channelSelect) &&
+				ops.storeRelations.LessOrEq(a.storeRelations, b.storeRelations) &&
 				ops.placement.LessOrEq(ops.placementLane(a), ops.placementLane(b)) &&
 				ops.lenFloors.LessOrEq(a.lenFloors, b.lenFloors) &&
 				ops.numFloors.LessOrEq(a.numFloors, b.numFloors)
@@ -168,6 +175,7 @@ func Domain(reg *axis.Registry) lattice.Lattice[State] {
 				ops.frozenTables.Join(a.frozenTables, b.frozenTables),
 				ops.effectDeltas.Join(ops.effectDeltaLane(a), ops.effectDeltaLane(b)),
 				ops.channelSelect.Join(a.channelSelect, b.channelSelect),
+				ops.storeRelations.Join(a.storeRelations, b.storeRelations),
 				ops.placement.Join(ops.placementLane(a), ops.placementLane(b)),
 				ops.lenFloors.Join(a.lenFloors, b.lenFloors),
 				ops.numFloors.Join(a.numFloors, b.numFloors),
@@ -182,6 +190,7 @@ func Domain(reg *axis.Registry) lattice.Lattice[State] {
 				ops.frozenTables.Widen(prev.frozenTables, next.frozenTables),
 				ops.effectDeltas.Widen(ops.effectDeltaLane(prev), ops.effectDeltaLane(next)),
 				ops.channelSelect.Widen(prev.channelSelect, next.channelSelect),
+				ops.storeRelations.Widen(prev.storeRelations, next.storeRelations),
 				ops.placement.Widen(ops.placementLane(prev), ops.placementLane(next)),
 				ops.lenFloors.Widen(prev.lenFloors, next.lenFloors),
 				ops.numFloors.Widen(prev.numFloors, next.numFloors),
@@ -198,6 +207,7 @@ type domainOps struct {
 	frozenTables      lattice.Lattice[frozenTableLane]
 	effectDeltas      lattice.Lattice[map[effectdelta.Key]effectdelta.Value]
 	channelSelect     lattice.Lattice[channelselectfact.Lane]
+	storeRelations    lattice.Lattice[storeRelationLane]
 	placement         lattice.Lattice[map[identity.ID]placement.Value]
 	lenFloors         lattice.Lattice[lenFloorLane]
 	numFloors         lattice.Lattice[numFloorLane]
@@ -231,6 +241,7 @@ func (o domainOps) fromLanes(
 	frozenTables frozenTableLane,
 	effectDeltas map[effectdelta.Key]effectdelta.Value,
 	channelSelect channelselectfact.Lane,
+	storeRelations storeRelationLane,
 	placementLane map[identity.ID]placement.Value,
 	lenFloors lenFloorLane,
 	numFloors numFloorLane,
@@ -243,6 +254,7 @@ func (o domainOps) fromLanes(
 	out.frozenTables = frozenTables
 	out.effectDeltas = effectDeltaLaneFromMap(o.effectDeltas, effectDeltas)
 	out.channelSelect = channelSelect
+	out.storeRelations = storeRelations
 	out.placement = placementLaneFromMap(o.placement, placementLane)
 	out.lenFloors = lenFloors
 	out.numFloors = numFloors
@@ -253,6 +265,7 @@ func (s State) reachable() State {
 	s.pathEvidence = s.pathEvidence.Reachable()
 	s.frozenTables = s.frozenTables.reachable()
 	s.channelSelect = s.channelSelect.Reachable()
+	s.storeRelations = s.storeRelations.reachable()
 	s.lenFloors = s.lenFloors.reachable()
 	s.numFloors = s.numFloors.reachable()
 	return s

@@ -41,6 +41,8 @@ func TestSnapshotsCloneFiniteLanes(t *testing.T) {
 	}
 	selectFact := channelselectfact.Fact{Select: "select-snapshot", Kind: channelselectfact.FactSelect, Result: pathKey}
 	otherSelectFact := channelselectfact.Fact{Select: "select-snapshot", Kind: channelselectfact.FactCase, Case: memberKey, Index: 1}
+	storeRelation := StoreRelation{Source: pathdom.PathKey("sym130@1.source"), Into: pathdom.PathKey("sym130@1.into")}
+	otherStoreRelation := StoreRelation{Source: pathdom.PathKey("sym130@1.otherSource"), Into: pathdom.PathKey("sym130@1.into")}
 	dynamicFact := dynamicindex.Fact{
 		KeyPresence: presence.Present(),
 		KeyValue:    present,
@@ -70,6 +72,7 @@ func TestSnapshotsCloneFiniteLanes(t *testing.T) {
 		AddBranchProof(proof).
 		AddPathPresenceImplication(implication).
 		AddChannelSelectFact(selectFact).
+		AddStoreRelation(storeRelation).
 		FreezeTable(frozenID).
 		WriteEffectDelta(effectKey, effectDelta)
 
@@ -163,6 +166,18 @@ func TestSnapshotsCloneFiniteLanes(t *testing.T) {
 		t.Fatalf("fresh channel-select snapshot = %#v, want original fact", got)
 	}
 
+	storeRelationSnapshot := s.StoreRelationsSnapshot()
+	if storeRelationSnapshot.Bottom || storeRelationSnapshot.Top || len(storeRelationSnapshot.Relations) != 1 {
+		t.Fatalf("store-relation snapshot = %#v, want one finite relation", storeRelationSnapshot)
+	}
+	storeRelationSnapshot.Relations[0] = otherStoreRelation
+	if !s.HasStoreRelation(storeRelation) || s.HasStoreRelation(otherStoreRelation) {
+		t.Fatalf("store-relation snapshot mutation changed state")
+	}
+	if got := s.StoreRelationsSnapshot().Relations[0]; got != storeRelation {
+		t.Fatalf("fresh store-relation snapshot = %#v, want original relation", got)
+	}
+
 	frozenSnapshot := s.FrozenTablesSnapshot()
 	if frozenSnapshot.Bottom || frozenSnapshot.Top || len(frozenSnapshot.Tables) != 1 {
 		t.Fatalf("frozen-table snapshot = %#v, want one finite identity", frozenSnapshot)
@@ -226,6 +241,10 @@ func TestSnapshotTopBottomAndEmptyLanes(t *testing.T) {
 	if topChannel.Bottom || !topChannel.Top || len(topChannel.Facts) != 0 {
 		t.Fatalf("top channel-select snapshot = %#v, want top with no finite facts", topChannel)
 	}
+	topStoreRelations := top.StoreRelationsSnapshot()
+	if topStoreRelations.Bottom || !topStoreRelations.Top || len(topStoreRelations.Relations) != 0 {
+		t.Fatalf("top store-relation snapshot = %#v, want top with no finite facts", topStoreRelations)
+	}
 	topFrozen := top.FrozenTablesSnapshot()
 	if topFrozen.Bottom || !topFrozen.Top || len(topFrozen.Tables) != 0 {
 		t.Fatalf("top frozen-table snapshot = %#v, want top with no finite facts", topFrozen)
@@ -263,6 +282,10 @@ func TestSnapshotTopBottomAndEmptyLanes(t *testing.T) {
 	if !bottomChannel.Bottom || bottomChannel.Top || len(bottomChannel.Facts) != 0 {
 		t.Fatalf("bottom channel-select snapshot = %#v, want explicit bottom", bottomChannel)
 	}
+	bottomStoreRelations := bottom.StoreRelationsSnapshot()
+	if !bottomStoreRelations.Bottom || bottomStoreRelations.Top || len(bottomStoreRelations.Relations) != 0 {
+		t.Fatalf("bottom store-relation snapshot = %#v, want explicit bottom", bottomStoreRelations)
+	}
 	bottomFrozen := bottom.FrozenTablesSnapshot()
 	if !bottomFrozen.Bottom || bottomFrozen.Top || len(bottomFrozen.Tables) != 0 {
 		t.Fatalf("bottom frozen-table snapshot = %#v, want explicit bottom", bottomFrozen)
@@ -299,6 +322,10 @@ func TestSnapshotTopBottomAndEmptyLanes(t *testing.T) {
 	emptyChannel := empty.ChannelSelectFactsSnapshot()
 	if emptyChannel.Bottom || !emptyChannel.Top || len(emptyChannel.Facts) != 0 {
 		t.Fatalf("empty channel-select snapshot = %#v, want reachable top/empty", emptyChannel)
+	}
+	emptyStoreRelations := empty.StoreRelationsSnapshot()
+	if emptyStoreRelations.Bottom || !emptyStoreRelations.Top || len(emptyStoreRelations.Relations) != 0 {
+		t.Fatalf("empty store-relation snapshot = %#v, want reachable top/empty", emptyStoreRelations)
 	}
 	emptyFrozen := empty.FrozenTablesSnapshot()
 	if emptyFrozen.Bottom || !emptyFrozen.Top || len(emptyFrozen.Tables) != 0 {

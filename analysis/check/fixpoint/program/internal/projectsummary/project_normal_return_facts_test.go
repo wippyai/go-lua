@@ -360,6 +360,55 @@ func TestFromResultProjectsFrozenRootAndNestedChildPaths(t *testing.T) {
 	assertFrozenTable(t, got.FrozenTables, pathdom.NewPlaceholder(0).Field("child"))
 }
 
+func TestFromResultProjectsExitStoreRelations(t *testing.T) {
+	reg := standard.Registry()
+	param0 := symbol.ID(941)
+	param1 := symbol.ID(942)
+
+	source := pathdom.Path{Symbol: param0, Version: 1}.Field("stored")
+	into := pathdom.Path{Symbol: param1, Version: 1}.Field("container")
+	stub := normalReturnFactProjectResultStub{
+		reg:   reg,
+		graph: cfg.New(),
+		exit: state.State{}.AddStoreRelation(state.StoreRelation{
+			Source: source.Key(),
+			Into:   into.Key(),
+		}),
+		slots: []key.Value{key.SymbolValue(param0), key.SymbolValue(param1)},
+	}
+
+	got := FromResult(stub).NormalReturnFacts
+	if len(got.StoreRelations) != 1 ||
+		!got.StoreRelations[0].Source.Equal(pathdom.NewPlaceholder(0).Field("stored")) ||
+		!got.StoreRelations[0].Into.Equal(pathdom.NewPlaceholder(1).Field("container")) {
+		t.Fatalf("StoreRelations = %#v, want exit store relation projected to placeholder paths", got.StoreRelations)
+	}
+}
+
+func TestFromResultDoesNotProjectBranchLocalStoreRelations(t *testing.T) {
+	reg := standard.Registry()
+	stateDomain := state.Domain(reg)
+	param0 := symbol.ID(943)
+	param1 := symbol.ID(944)
+	source := pathdom.Path{Symbol: param0, Version: 1}.Field("stored")
+	into := pathdom.Path{Symbol: param1, Version: 1}.Field("container")
+	leftBranch := state.State{}.AddStoreRelation(state.StoreRelation{
+		Source: source.Key(),
+		Into:   into.Key(),
+	})
+	exit := stateDomain.Join(leftBranch, state.State{})
+
+	got := FromResult(normalReturnFactProjectResultStub{
+		reg:   reg,
+		graph: cfg.New(),
+		exit:  exit,
+		slots: []key.Value{key.SymbolValue(param0), key.SymbolValue(param1)},
+	}).NormalReturnFacts
+	if len(got.StoreRelations) != 0 {
+		t.Fatalf("StoreRelations = %#v, want branch-local relation removed by exit join", got.StoreRelations)
+	}
+}
+
 type normalReturnFactProjectResultStub struct {
 	reg   *axis.Registry
 	graph cfg.Graph

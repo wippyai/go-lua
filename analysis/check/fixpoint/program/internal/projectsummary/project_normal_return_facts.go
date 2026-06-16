@@ -197,6 +197,23 @@ func projectNormalReturnFacts(reg *axis.Registry, result ResultReader, exit stat
 		}
 	}
 
+	if snapshot := exit.StoreRelationsSnapshot(); !snapshot.Bottom && !snapshot.Top {
+		for _, relation := range snapshot.Relations {
+			source, ok := projectPath(relation.Source)
+			if !ok {
+				continue
+			}
+			into, ok := projectPath(relation.Into)
+			if !ok {
+				continue
+			}
+			out.StoreRelations = append(out.StoreRelations, callboundary.StoreRelationFact{
+				Source: source,
+				Into:   into,
+			})
+		}
+	}
+
 	return out
 }
 

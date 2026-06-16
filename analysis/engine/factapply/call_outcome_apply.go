@@ -126,6 +126,20 @@ func applyCallOutcomeFacts(
 			Kind:   delta.Kind,
 		}, delta.Value)
 	}
+	for _, relation := range normalReturnFacts.StoreRelations {
+		sourceKey, ok := callOutcomePathKeyAt(resolver, ctx.Point, bindings, relation.Source)
+		if !ok {
+			continue
+		}
+		intoKey, ok := callOutcomePathKeyAt(resolver, ctx.Point, bindings, relation.Into)
+		if !ok {
+			continue
+		}
+		out = out.AddStoreRelation(state.StoreRelation{
+			Source: sourceKey,
+			Into:   intoKey,
+		})
+	}
 	for _, event := range normalReturnFacts.EscapeEvents {
 		targetPath, ok := event.Target.Substitute(bindings)
 		if !ok {

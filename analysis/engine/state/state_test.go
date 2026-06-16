@@ -142,6 +142,46 @@ func TestNumFloorStateSemantics(t *testing.T) {
 	}
 }
 
+func TestStoreRelationStateMustSemantics(t *testing.T) {
+	reg := standard.Registry()
+	stateDomain := Domain(reg)
+	common := StoreRelation{
+		Source: pathdom.PathKey("sym20@1.value"),
+		Into:   pathdom.PathKey("sym21@1.container"),
+	}
+	leftOnly := StoreRelation{
+		Source: pathdom.PathKey("sym22@1.value"),
+		Into:   pathdom.PathKey("sym21@1.container"),
+	}
+	rightOnly := StoreRelation{
+		Source: pathdom.PathKey("sym23@1.value"),
+		Into:   pathdom.PathKey("sym21@1.container"),
+	}
+
+	left := State{}.
+		AddStoreRelation(common).
+		AddStoreRelation(leftOnly)
+	right := State{}.
+		AddStoreRelation(common).
+		AddStoreRelation(rightOnly)
+
+	joined := stateDomain.Join(left, right)
+	if !joined.HasStoreRelation(common) {
+		t.Fatalf("joined store relations = %#v, want common relation", joined.StoreRelationsSnapshot())
+	}
+	if joined.HasStoreRelation(leftOnly) || joined.HasStoreRelation(rightOnly) {
+		t.Fatalf("joined store relations = %#v, want branch-local relations removed", joined.StoreRelationsSnapshot())
+	}
+	if snapshot := joined.StoreRelationsSnapshot(); snapshot.Bottom || snapshot.Top || len(snapshot.Relations) != 1 {
+		t.Fatalf("joined snapshot = %#v, want exactly one common relation", snapshot)
+	}
+
+	fromBottom := stateDomain.Bottom().AddStoreRelation(common)
+	if !fromBottom.HasStoreRelation(common) || stateDomain.Equal(fromBottom, stateDomain.Bottom()) {
+		t.Fatalf("bottom store relation write did not make reachable state: %#v", fromBottom.StoreRelationsSnapshot())
+	}
+}
+
 func TestWritesAreImmutable(t *testing.T) {
 	reg := standard.Registry()
 	valueDomain := product.Domain(reg)
