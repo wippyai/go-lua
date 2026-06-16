@@ -304,41 +304,38 @@ func TestParseArrayType(t *testing.T) {
 	}
 }
 
-// Array of optional elements via type alias (workaround for {T?} ambiguity with optional record fields)
+// Array of optional primitive elements.
 func TestParseArrayTypeOptionalElement(t *testing.T) {
-	// Note: Direct {number?} syntax conflicts with optional record field syntax {name?: type}
-	// Use a type alias as workaround: type OptNum = number?; then {OptNum}
-	input := `
-		type OptNum = number?
-		local arr: {OptNum} = {}
-	`
+	input := "local arr: {number?} = {}"
 	stmts, err := Parse(strings.NewReader(input), "test")
 	if err != nil {
 		t.Fatalf("Parse error: %v", err)
 	}
-	if len(stmts) != 2 {
-		t.Fatalf("got %d stmts, want 2", len(stmts))
+	if len(stmts) != 1 {
+		t.Fatalf("got %d stmts, want 1", len(stmts))
 	}
-	local, ok := stmts[1].(*ast.LocalAssignStmt)
+	local, ok := stmts[0].(*ast.LocalAssignStmt)
 	if !ok {
-		t.Fatalf("stmt = %T, want *ast.LocalAssignStmt", stmts[1])
+		t.Fatalf("stmt = %T, want *ast.LocalAssignStmt", stmts[0])
 	}
 	if len(local.Types) != 1 || local.Types[0] == nil {
 		t.Fatalf("types = %v, want single type", local.Types)
 	}
 
-	// Should be ArrayTypeExpr with TypeRefExpr element (resolved to optional later)
 	arr, ok := local.Types[0].(*ast.ArrayTypeExpr)
 	if !ok {
 		t.Fatalf("type = %T, want *ast.ArrayTypeExpr", local.Types[0])
 	}
-	// At parse time, OptNum is a primitive/type ref, not yet resolved
-	ref, ok := arr.Element.(*ast.PrimitiveTypeExpr)
+	opt, ok := arr.Element.(*ast.OptionalTypeExpr)
 	if !ok {
-		t.Fatalf("element = %T, want *ast.PrimitiveTypeExpr", arr.Element)
+		t.Fatalf("element = %T, want *ast.OptionalTypeExpr", arr.Element)
 	}
-	if ref.Name != "OptNum" {
-		t.Errorf("element name = %q, want 'OptNum'", ref.Name)
+	prim, ok := opt.Inner.(*ast.PrimitiveTypeExpr)
+	if !ok {
+		t.Fatalf("inner = %T, want *ast.PrimitiveTypeExpr", opt.Inner)
+	}
+	if prim.Name != testTypeNumber {
+		t.Errorf("inner name = %q, want '%s'", prim.Name, testTypeNumber)
 	}
 }
 
