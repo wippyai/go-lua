@@ -22,15 +22,16 @@ import (
 //
 // The conjunction of difference constraints is
 // satisfiable if and only if the corresponding weighted graph has no
-// negative-weight cycles. This is checked using the Bellman-Ford algorithm.
+// negative-weight cycles. This implementation computes the all-pairs closure
+// with Floyd-Warshall and checks for a negative diagonal.
 //
 // Additionally, shortest paths in the graph give implied bounds:
 // if the shortest path from x to y has weight w, then x - y ≤ w is implied.
 //
 // Time complexity:
 //   - AddConstraint: O(1)
-//   - HasNegativeCycle: O(V * E) where V = variables, E = constraints
-//   - GetBound: O(V * E) on first call, then O(1) with caching
+//   - HasNegativeCycle: O(V^3) on first call, then O(1) with caching
+//   - GetBound: O(V^3) on first call, then O(1) with caching
 //
 // Space complexity: O(V²) for the adjacency matrix representation.
 type DifferenceGraph struct {
@@ -44,7 +45,7 @@ type DifferenceGraph struct {
 	// A value of maxWeight indicates no edge exists.
 	edges [][]int64
 
-	// dist caches shortest path distances after Bellman-Ford.
+	// dist caches shortest path distances after Floyd-Warshall.
 	// dist[i][j] = shortest path from i to j, or maxWeight if unreachable.
 	dist [][]int64
 
@@ -178,7 +179,7 @@ func (g *DifferenceGraph) AddLowerBound(x string, c int64) {
 	g.AddLE("0", x, -c)
 }
 
-// solve runs Bellman-Ford to compute all-pairs shortest paths.
+// solve runs Floyd-Warshall to compute all-pairs shortest paths.
 // Returns true if the graph is consistent (no negative cycles).
 func (g *DifferenceGraph) solve() bool {
 	if !g.dirty {

@@ -20,7 +20,7 @@ func KeyOf(t typ.Type) (typ.Type, bool) {
 	return keyOfDepth(t, 0)
 }
 
-func keyOfDepth(t typ.Type, depth int) (typ.Type, bool) {
+func descendContainerDepth(t typ.Type, depth int, project func(typ.Type, int) (typ.Type, bool)) (typ.Type, bool) {
 	if depth > typ.DefaultRecursionDepth {
 		return nil, false
 	}
@@ -30,22 +30,33 @@ func keyOfDepth(t typ.Type, depth int) (typ.Type, bool) {
 	}
 	switch tt := t.(type) {
 	case *typ.Annotated:
-		return keyOfDepth(tt.Inner, depth+1)
+		return descendContainerDepth(tt.Inner, depth+1, project)
 	case *typ.Alias:
-		return keyOfDepth(tt.UnaliasedTarget(), depth+1)
+		return descendContainerDepth(tt.UnaliasedTarget(), depth+1, project)
 	case *typ.Optional:
-		return keyOfDepth(tt.Inner, depth+1)
+		return descendContainerDepth(tt.Inner, depth+1, project)
 	case *typ.Recursive:
 		if tt.Body == nil || tt.Body == t {
 			return nil, false
 		}
-		return keyOfDepth(tt.Body, depth+1)
+		return descendContainerDepth(tt.Body, depth+1, project)
 	case *typ.Instantiated:
 		expanded := subst.ExpandInstantiated(tt)
 		if expanded == nil || expanded == t {
 			return nil, false
 		}
-		return keyOfDepth(expanded, depth+1)
+		return descendContainerDepth(expanded, depth+1, project)
+	default:
+		return project(t, depth)
+	}
+}
+
+func keyOfDepth(t typ.Type, depth int) (typ.Type, bool) {
+	return descendContainerDepth(t, depth, keyOfDepthProject)
+}
+
+func keyOfDepthProject(t typ.Type, depth int) (typ.Type, bool) {
+	switch tt := t.(type) {
 	case *typ.Array:
 		return typ.Integer, true
 	case *typ.Tuple:
@@ -88,31 +99,11 @@ func keyOfDepth(t typ.Type, depth int) (typ.Type, bool) {
 }
 
 func elementOfDepth(t typ.Type, depth int) (typ.Type, bool) {
-	if depth > typ.DefaultRecursionDepth {
-		return nil, false
-	}
-	t = unwrap.NormalizeNil(t)
-	if t == nil {
-		return nil, false
-	}
+	return descendContainerDepth(t, depth, elementOfDepthProject)
+}
+
+func elementOfDepthProject(t typ.Type, depth int) (typ.Type, bool) {
 	switch tt := t.(type) {
-	case *typ.Annotated:
-		return elementOfDepth(tt.Inner, depth+1)
-	case *typ.Alias:
-		return elementOfDepth(tt.UnaliasedTarget(), depth+1)
-	case *typ.Optional:
-		return elementOfDepth(tt.Inner, depth+1)
-	case *typ.Recursive:
-		if tt.Body == nil || tt.Body == t {
-			return nil, false
-		}
-		return elementOfDepth(tt.Body, depth+1)
-	case *typ.Instantiated:
-		expanded := subst.ExpandInstantiated(tt)
-		if expanded == nil || expanded == t {
-			return nil, false
-		}
-		return elementOfDepth(expanded, depth+1)
 	case *typ.Array:
 		if unwrap.NormalizeNil(tt.Element) == nil {
 			return nil, false
