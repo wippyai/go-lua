@@ -3,6 +3,8 @@ package diagnostics
 import (
 	"github.com/wippyai/go-lua/analysis/check/body"
 	"github.com/wippyai/go-lua/analysis/check/diagnostics/internal/readmodel"
+	"github.com/wippyai/go-lua/analysis/diagnostic"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/assertion"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/escape"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/typewitness"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
@@ -80,6 +82,38 @@ func explicitTopLikeExpressionType(result *body.Result, resolver typeannotation.
 		return nil, false
 	}
 	return t, true
+}
+
+func explicitTopLikeCastType(resolver typeannotation.Resolver, expr ast.Expr) (typ.Type, bool) {
+	cast, ok := expr.(*ast.CastExpr)
+	if !ok || cast == nil || cast.Type == nil {
+		return nil, false
+	}
+	t, ok := lowerType(cast.Type, resolver)
+	if !ok || !topLikeType(t) {
+		return nil, false
+	}
+	return t, true
+}
+
+func explicitTopLikeCastEvidence(span diagnostic.Span, want typ.Type, expr ast.Expr) []diagnostic.Evidence {
+	if _, ok := expr.(*ast.CastExpr); !ok {
+		return nil
+	}
+	out := diagnostic.AssertionEvidence(span, assertion.Any())
+	out = append(out, diagnostic.Evidence{
+		Kind:    diagnostic.EvidencePrecisionBoundary,
+		Trust:   diagnostic.TrustUnknown,
+		Span:    span,
+		Message: "explicit any/unknown boundary has no structural proof for " + formatType(want),
+	})
+	out = append(out, diagnostic.Evidence{
+		Kind:    diagnostic.EvidenceMissingProof,
+		Trust:   diagnostic.TrustUnknown,
+		Span:    span,
+		Message: "no boundary proof establishes " + formatType(want),
+	})
+	return out
 }
 
 func untrustedTopLikeExpressionType(result *body.Result, resolver typeannotation.Resolver, expr ast.Expr) (typ.Type, bool) {

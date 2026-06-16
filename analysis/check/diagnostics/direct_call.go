@@ -293,7 +293,8 @@ func (p directCallContract) directFunctionCall(
 			continue
 		}
 		if mismatch, ok := objectLiteralMemberMismatch(result, point, arg, want, env); ok {
-			return argTypeDiagnostic(call, contract.name, i, mismatch.got, mismatch.want, mismatch.expr, contract.declSpan), true
+			extra := boundaryDiagnosticEvidence(result, point, ast.SpanOf(mismatch.expr), mismatch.want, boundaryValueFromExpr(mismatch.expr))
+			return argTypeDiagnostic(call, contract.name, i, mismatch.got, mismatch.want, mismatch.expr, contract.declSpan, extra...), true
 		}
 		got, ok := untrustedTopLikeExpressionTypeAt(result, p.resolver, point, arg)
 		untrustedTopLike := ok
@@ -318,6 +319,9 @@ func (p directCallContract) directFunctionCall(
 			continue
 		}
 		extra := boundaryDiagnosticEvidence(result, point, ast.SpanOf(arg), want, readBoundary)
+		if len(extra) == 0 {
+			extra = explicitTopLikeCastEvidence(ast.SpanOf(arg), want, arg)
+		}
 		return argTypeDiagnostic(call, contract.name, i, got, want, arg, contract.declSpan, extra...), true
 	}
 	return diagnostic.Diagnostic{}, false

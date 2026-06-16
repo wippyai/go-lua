@@ -60,17 +60,23 @@ func produceReturnContract(result *body.Result, context producerContext, inherit
 				continue
 			}
 			if mismatch, ok := objectLiteralMemberMismatch(result, point, expr, want, envs[point]); ok {
-				out = append(out, returnContractDiagnostic(mismatch.expr, annotation, mismatch.got, mismatch.want, i))
+				extra := boundaryDiagnosticEvidence(result, point, ast.SpanOf(mismatch.expr), mismatch.want, boundaryValueFromExpr(mismatch.expr))
+				out = append(out, returnContractDiagnostic(mismatch.expr, annotation, mismatch.got, mismatch.want, i, extra...))
 				continue
 			}
 			got, ok := returnValueType(result, producer.resolver, point, expr, source, inherited)
 			if !ok {
 				continue
 			}
-			if !boundaryTypeMismatch(result, point, got, want, boundaryValueFromASTSource(source)) {
+			readBoundary := boundaryValueFromASTSource(source)
+			if !boundaryTypeMismatch(result, point, got, want, readBoundary) {
 				continue
 			}
-			out = append(out, returnContractDiagnostic(expr, annotation, got, want, i))
+			extra := boundaryDiagnosticEvidence(result, point, ast.SpanOf(expr), want, readBoundary)
+			if len(extra) == 0 {
+				extra = explicitTopLikeCastEvidence(ast.SpanOf(expr), want, expr)
+			}
+			out = append(out, returnContractDiagnostic(expr, annotation, got, want, i, extra...))
 		}
 	}
 	return out
@@ -78,6 +84,9 @@ func produceReturnContract(result *body.Result, context producerContext, inherit
 
 func returnValueType(result *body.Result, resolver typeannotation.Resolver, point cfg.Point, expr ast.Expr, source sourceprovenance.ASTSource, inherited map[symbol.ID]*ast.FunctionExpr) (typ.Type, bool) {
 	if got, ok := valueexpr.LiteralType(expr); ok {
+		return got, true
+	}
+	if got, ok := explicitTopLikeCastType(resolver, expr); ok {
 		return got, true
 	}
 	if got, ok := directCallReturnSourceType(result, resolver, source, inherited); ok {
@@ -157,13 +166,28 @@ func returnTypeAt(returns []directCallResult, index int) (typ.Type, bool) {
 	return ret.typ, true
 }
 
-func returnContractDiagnostic(expr ast.Expr, annotation ast.TypeExpr, got, want typ.Type, index int) diagnostic.Diagnostic {
+func returnContractDiagnostic(expr ast.Expr, annotation ast.TypeExpr, got, want typ.Type, index int, extraEvidence ...diagnostic.Evidence) diagnostic.Diagnostic {
 	exprSpan := ast.SpanOf(expr)
 	typeSpan := ast.SpanOf(annotation)
 	label := "returned value"
 	if index >= 0 {
 		label = fmt.Sprintf("returned value %d", index+1)
 	}
+	evidence := []diagnostic.Evidence{
+		{
+			Kind:    diagnostic.EvidenceAbstractFact,
+			Trust:   diagnostic.TrustProven,
+			Span:    exprSpan,
+			Message: fmt.Sprintf("%s is %s", label, formatType(got)),
+		},
+		{
+			Kind:    diagnostic.EvidenceUserAssertion,
+			Trust:   diagnostic.TrustClaimed,
+			Span:    typeSpan,
+			Message: fmt.Sprintf("declared return type is %s", formatType(want)),
+		},
+	}
+	evidence = append(evidence, extraEvidence...)
 	return diagnostic.Diagnostic{
 		Position: diagnostic.Position{
 			Line:      exprSpan.StartLine,
@@ -171,24 +195,11 @@ func returnContractDiagnostic(expr ast.Expr, annotation ast.TypeExpr, got, want 
 			EndLine:   exprSpan.EndLine,
 			EndColumn: exprSpan.EndCol,
 		},
-		Span:     exprSpan,
-		Code:     CodeReturnContractType,
-		Severity: diagnostic.SeverityError,
-		Message:  fmt.Sprintf("%s is %s, not %s", label, formatType(got), formatType(want)),
-		Explanation: diagnostic.NewExplanation(
-			diagnostic.Evidence{
-				Kind:    diagnostic.EvidenceAbstractFact,
-				Trust:   diagnostic.TrustProven,
-				Span:    exprSpan,
-				Message: fmt.Sprintf("%s is %s", label, formatType(got)),
-			},
-			diagnostic.Evidence{
-				Kind:    diagnostic.EvidenceUserAssertion,
-				Trust:   diagnostic.TrustClaimed,
-				Span:    typeSpan,
-				Message: fmt.Sprintf("declared return type is %s", formatType(want)),
-			},
-		),
+		Span:        exprSpan,
+		Code:        CodeReturnContractType,
+		Severity:    diagnostic.SeverityError,
+		Message:     fmt.Sprintf("%s is %s, not %s", label, formatType(got), formatType(want)),
+		Explanation: diagnostic.NewExplanation(evidence...),
 		Labels: []diagnostic.Label{
 			{Span: exprSpan, Message: "returned value"},
 			{Span: typeSpan, Message: "declared return type"},

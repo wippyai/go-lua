@@ -95,6 +95,10 @@ func TestAnnotationAssignabilityRejectsObjectLiteralExplicitAnyMember(t *testing
 	if d := diags[0]; d.Code != CodeAssignmentType || !strings.Contains(d.Message, "any") || !strings.Contains(d.Message, "string") {
 		t.Fatalf("diagnostic = %#v, want any-to-string object member mismatch", d)
 	}
+	if got := diags[0].Explanation.String(); !strings.Contains(got, "explicit any/unknown boundary") ||
+		!strings.Contains(got, "no boundary proof") {
+		t.Fatalf("explanation = %q, want explicit-top boundary and missing-proof evidence", got)
+	}
 }
 
 func TestAnnotationAssignabilityRejectsObjectLiteralTopOriginInsideClosedUnion(t *testing.T) {
@@ -127,6 +131,10 @@ func TestDirectCallRejectsObjectLiteralExplicitAnyMember(t *testing.T) {
 	if d := diags[0]; d.Code != CodeDirectCallArgType || !strings.Contains(d.Message, "any") || !strings.Contains(d.Message, "string") {
 		t.Fatalf("diagnostic = %#v, want any-to-string call argument member mismatch", d)
 	}
+	if got := diags[0].Explanation.String(); !strings.Contains(got, "explicit any/unknown boundary") ||
+		!strings.Contains(got, "no boundary proof") {
+		t.Fatalf("explanation = %q, want explicit-top boundary and missing-proof evidence", got)
+	}
 }
 
 func TestReturnContractRejectsObjectLiteralExplicitAnyMember(t *testing.T) {
@@ -141,6 +149,10 @@ func TestReturnContractRejectsObjectLiteralExplicitAnyMember(t *testing.T) {
 	}
 	if d := diags[0]; d.Code != CodeReturnContractType || !strings.Contains(d.Message, "any") || !strings.Contains(d.Message, "string") {
 		t.Fatalf("diagnostic = %#v, want any-to-string return member mismatch", d)
+	}
+	if got := diags[0].Explanation.String(); !strings.Contains(got, "explicit any/unknown boundary") ||
+		!strings.Contains(got, "no boundary proof") {
+		t.Fatalf("explanation = %q, want explicit-top boundary and missing-proof evidence", got)
 	}
 }
 
@@ -217,6 +229,10 @@ func TestCallParamObligationRejectsObjectLiteralExplicitAnyMember(t *testing.T) 
 	for _, d := range diags {
 		if d.Code == CodeDirectCallArgType &&
 			strings.Contains(d.Message, "argument 2 expected string, got any") {
+			if got := d.Explanation.String(); !strings.Contains(got, "explicit any/unknown boundary") ||
+				!strings.Contains(got, "no boundary proof") {
+				t.Fatalf("explanation = %q, want explicit-top boundary and missing-proof evidence", got)
+			}
 			return
 		}
 	}
@@ -238,10 +254,61 @@ func TestCallParamObligationRejectsExplicitAnyStructuralWitness(t *testing.T) {
 		if d.Code == CodeDirectCallArgType &&
 			strings.Contains(d.Message, "argument 2") &&
 			strings.Contains(d.Message, "id") {
+			if got := d.Explanation.String(); !strings.Contains(got, "claimed as any") ||
+				!strings.Contains(got, "no boundary proof") {
+				t.Fatalf("explanation = %q, want explicit-any claim and missing-proof evidence", got)
+			}
 			return
 		}
 	}
 	t.Fatalf("diagnostics = %#v, want call-site obligation mismatch for explicit-any structural witness", diags)
+}
+
+func TestCallParamObligationRejectsAsAnyCastEscape(t *testing.T) {
+	diags := runDiagnostics(t, `
+		type Sink = {send: (n: number) -> ()}
+		function wrap(sink: Sink, payload)
+			sink.send(payload)
+		end
+		local sink: Sink = {send = function(n: number) end}
+		wrap(sink, "no" as any)
+	`)
+	for _, d := range diags {
+		if d.Code != CodeDirectCallArgType || !strings.Contains(d.Message, "number") {
+			continue
+		}
+		got := d.Explanation.String()
+		if !strings.Contains(got, "claimed as any") {
+			continue
+		}
+		if !strings.Contains(got, "explicit any/unknown boundary") ||
+			!strings.Contains(got, "no boundary proof") {
+			t.Fatalf("explanation = %q, want explicit-any claim and missing-proof evidence", got)
+		}
+		return
+	}
+	t.Fatalf("diagnostics = %#v, want summary call-param as-any obligation mismatch", diags)
+}
+
+func TestReturnContractRejectsExplicitAnyStructuralWitness(t *testing.T) {
+	diags := runDiagnostics(t, `
+		type Point = {id: string}
+		local function make(): Point
+			return ({id = "ok"} :: any)
+		end
+	`)
+	if len(diags) != 1 {
+		t.Fatalf("diagnostics = %d, want 1: %#v", len(diags), diags)
+	}
+	if d := diags[0]; d.Code != CodeReturnContractType || !strings.Contains(d.Message, "id") {
+		t.Fatalf("diagnostic = %#v, want return contract structural explicit-any error", d)
+	}
+	got := diags[0].Explanation.String()
+	if !strings.Contains(got, "claimed as any") ||
+		!strings.Contains(got, "explicit any/unknown boundary") ||
+		!strings.Contains(got, "no boundary proof") {
+		t.Fatalf("explanation = %q, want explicit-any claim and missing-proof evidence", got)
+	}
 }
 
 func TestOrdinaryAssignmentRejectsObjectLiteralExplicitAnyMember(t *testing.T) {
@@ -257,6 +324,10 @@ func TestOrdinaryAssignmentRejectsObjectLiteralExplicitAnyMember(t *testing.T) {
 	}
 	if d := diags[0]; d.Code != CodeAssignmentType || !strings.Contains(d.Message, "any") || !strings.Contains(d.Message, "string") {
 		t.Fatalf("diagnostic = %#v, want any-to-string ordinary assignment member mismatch", d)
+	}
+	if got := diags[0].Explanation.String(); !strings.Contains(got, "explicit any/unknown boundary") ||
+		!strings.Contains(got, "no boundary proof") {
+		t.Fatalf("explanation = %q, want explicit-top boundary and missing-proof evidence", got)
 	}
 }
 

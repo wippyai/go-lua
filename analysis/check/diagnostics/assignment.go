@@ -142,7 +142,8 @@ func (p annotationAssignability) pathAssignment(result *body.Result, point cfg.P
 		return diagnostic.Diagnostic{}, false
 	}
 	if mismatch, ok := objectLiteralMemberMismatch(result, point, fact.Value, want, env); ok {
-		return pathAssignmentDiagnostic(fact.Target, mismatch.expr, mismatch.got, mismatch.want), true
+		extra := boundaryDiagnosticEvidence(result, point, ast.SpanOf(mismatch.expr), mismatch.want, boundaryValueFromExpr(mismatch.expr))
+		return pathAssignmentDiagnostic(fact.Target, mismatch.expr, mismatch.got, mismatch.want, extra...), true
 	}
 	got, ok := assignmentValueType(result, p.resolver, point, fact.Value, fact.Source)
 	if !ok {
@@ -261,7 +262,8 @@ func (p annotationAssignability) objectLiteralAssignment(result *body.Result, po
 		if !ok {
 			continue
 		}
-		return assignmentDiagnostic(name, expected, got, entry.Value, annotation), true
+		extra := boundaryDiagnosticEvidence(result, point, ast.SpanOf(entry.Value), expected, boundaryValueFromExpr(entry.Value))
+		return assignmentDiagnostic(name, expected, got, entry.Value, annotation, extra...), true
 	}
 	if field, ok := missingRequiredRecordField(want, fact); ok {
 		return missingFieldAssignmentDiagnostic(name, want, field, expr, annotation), true

@@ -92,7 +92,8 @@ func (p callParamObligations) call(
 			continue
 		}
 		if mismatch, ok := objectLiteralMemberMismatch(result, point, args[argIndex], want, env); ok {
-			return callParamObligationDiagnostic(fact.Call, callObligationName(result, fact), argIndex, mismatch.got, mismatch.want, mismatch.expr), true
+			extra := boundaryDiagnosticEvidence(result, point, ast.SpanOf(mismatch.expr), mismatch.want, boundaryValueFromExpr(mismatch.expr))
+			return callParamObligationDiagnostic(fact.Call, callObligationName(result, fact), argIndex, mismatch.got, mismatch.want, mismatch.expr, extra...), true
 		}
 		got, ok := untrustedTopLikeExpressionTypeAt(result, p.resolver, point, args[argIndex])
 		untrustedTopLike := ok
@@ -119,7 +120,11 @@ func (p callParamObligations) call(
 		} else if !callParamObligationTypeMismatch(result, point, got, want, readBoundary, args[argIndex]) {
 			continue
 		}
-		return callParamObligationDiagnostic(fact.Call, callObligationName(result, fact), argIndex, got, want, args[argIndex]), true
+		extra := boundaryDiagnosticEvidence(result, point, ast.SpanOf(args[argIndex]), want, readBoundary)
+		if len(extra) == 0 {
+			extra = explicitTopLikeCastEvidence(ast.SpanOf(args[argIndex]), want, args[argIndex])
+		}
+		return callParamObligationDiagnostic(fact.Call, callObligationName(result, fact), argIndex, got, want, args[argIndex], extra...), true
 	}
 	return diagnostic.Diagnostic{}, false
 }
@@ -142,8 +147,9 @@ func callParamObligationDiagnostic(
 	got typ.Type,
 	want typ.Type,
 	arg ast.Expr,
+	extraEvidence ...diagnostic.Evidence,
 ) diagnostic.Diagnostic {
-	d := argTypeDiagnostic(call, name, index, got, want, arg, ast.SpanOf(call))
+	d := argTypeDiagnostic(call, name, index, got, want, arg, ast.SpanOf(call), extraEvidence...)
 	d.Message = fmt.Sprintf("argument %d expected %s, got %s", index+1, formatType(want), formatType(got))
 	return d
 }

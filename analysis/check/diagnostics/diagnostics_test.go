@@ -1393,6 +1393,20 @@ func TestReturnContractReportsProjectedIndexOptional(t *testing.T) {
 	}
 }
 
+func TestReturnContractDoesNotTrustCastEscape(t *testing.T) {
+	diags := runDiagnostics(t, `local function f(): number return "no" as any end`)
+	if len(diags) != 1 {
+		t.Fatalf("diagnostics = %d, want 1: %#v", len(diags), diags)
+	}
+	if d := diags[0]; d.Code != CodeReturnContractType {
+		t.Fatalf("diagnostic = %#v, want return contract error", d)
+	}
+	if got := diags[0].Explanation.String(); !strings.Contains(got, "claimed as any") ||
+		!strings.Contains(got, "no boundary proof") {
+		t.Fatalf("explanation = %q, want explicit-any claim and missing-proof evidence", got)
+	}
+}
+
 func TestReturnContractSkipsOptionalUnknownAndGenericReturns(t *testing.T) {
 	cases := []struct {
 		name string
