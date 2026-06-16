@@ -293,6 +293,7 @@ func dropDescendantFactsBelowMaybeAbsentReturns(sum summary.Summary) summary.Sum
 	facts.FrozenTables = filterFrozenTablesBelowReturns(facts.FrozenTables, maybeAbsent)
 	facts.EffectDeltas = filterEffectDeltasBelowReturns(facts.EffectDeltas, maybeAbsent)
 	facts.EscapeEvents = filterEscapeEventsBelowReturns(facts.EscapeEvents, maybeAbsent)
+	facts.StoreRelations = filterStoreRelationsBelowReturns(facts.StoreRelations, maybeAbsent)
 	sum.NormalReturnFacts = facts
 	return sum
 }
@@ -389,6 +390,17 @@ func filterEscapeEventsBelowReturns(in []callboundary.EscapeEventFact, roots map
 	out := in[:0]
 	for _, fact := range in {
 		if strictPlaceholderDescendant(fact.Target, roots) {
+			continue
+		}
+		out = append(out, fact)
+	}
+	return out
+}
+
+func filterStoreRelationsBelowReturns(in []callboundary.StoreRelationFact, roots map[int]struct{}) []callboundary.StoreRelationFact {
+	out := in[:0]
+	for _, fact := range in {
+		if strictPlaceholderDescendant(fact.Source, roots) || strictPlaceholderDescendant(fact.Into, roots) {
 			continue
 		}
 		out = append(out, fact)

@@ -59,20 +59,9 @@ func storeRelationFactsEqual(a, b []callboundary.StoreRelationFact) bool {
 }
 
 func storeRelationFactsLessOrEq(a, b []callboundary.StoreRelationFact) bool {
-	a = normalizeStoreRelationFacts(a)
-	b = normalizeStoreRelationFacts(b)
-	if len(a) == 0 {
-		return true
-	}
-	if len(b) == 0 {
-		return false
-	}
-	right := make(map[storeRelationFactKey]struct{}, len(b))
-	for _, fact := range b {
-		right[storeRelationKeyOf(fact)] = struct{}{}
-	}
-	for _, fact := range a {
-		if _, ok := right[storeRelationKeyOf(fact)]; !ok {
+	left := storeRelationFactsSet(a)
+	for key := range storeRelationFactsSet(b) {
+		if _, ok := left[key]; !ok {
 			return false
 		}
 	}
@@ -80,17 +69,34 @@ func storeRelationFactsLessOrEq(a, b []callboundary.StoreRelationFact) bool {
 }
 
 func joinStoreRelationFacts(a, b []callboundary.StoreRelationFact) []callboundary.StoreRelationFact {
-	if len(a) == 0 && len(b) == 0 {
+	left := storeRelationFactsSet(a)
+	right := storeRelationFactsSet(b)
+	if len(left) == 0 || len(right) == 0 {
 		return nil
 	}
-	out := make([]callboundary.StoreRelationFact, 0, len(a)+len(b))
-	out = append(out, cloneStoreRelationFacts(a)...)
-	out = append(out, cloneStoreRelationFacts(b)...)
-	return normalizeStoreRelationFacts(out)
+	out := make(map[storeRelationFactKey]callboundary.StoreRelationFact)
+	for key, fact := range left {
+		if _, ok := right[key]; ok {
+			out[key] = fact
+		}
+	}
+	return sortedStoreRelationFacts(out)
 }
 
 func widenStoreRelationFacts(prev, next []callboundary.StoreRelationFact) []callboundary.StoreRelationFact {
 	return joinStoreRelationFacts(prev, next)
+}
+
+func storeRelationFactsSet(in []callboundary.StoreRelationFact) map[storeRelationFactKey]callboundary.StoreRelationFact {
+	out := normalizeStoreRelationFacts(in)
+	if len(out) == 0 {
+		return nil
+	}
+	m := make(map[storeRelationFactKey]callboundary.StoreRelationFact, len(out))
+	for _, fact := range out {
+		m[storeRelationKeyOf(fact)] = fact
+	}
+	return m
 }
 
 func storeRelationKeyOf(fact callboundary.StoreRelationFact) storeRelationFactKey {

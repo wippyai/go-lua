@@ -462,6 +462,14 @@ func TestOutcomeProviderJoinDropsDescendantEscapeEventsBelowMaybeAbsentReturn(t 
 		Kind:      callboundary.EscapeEventStore,
 		Recursive: true,
 	}
+	rootRelation := callboundary.StoreRelationFact{
+		Source: path.NewPlaceholder(0),
+		Into:   path.NewPlaceholder(1),
+	}
+	childRelation := callboundary.StoreRelationFact{
+		Source: path.NewPlaceholder(0).Field("child"),
+		Into:   path.NewPlaceholder(1),
+	}
 	provider := OutcomeProvider(ProviderConfig{
 		Summaries: summary.NewSnapshot(reg,
 			summary.EntrySummary{
@@ -469,13 +477,19 @@ func TestOutcomeProviderJoinDropsDescendantEscapeEventsBelowMaybeAbsentReturn(t 
 				Summary: summary.Summary{
 					Returns: []product.Value{returnValue},
 					NormalReturnFacts: callboundary.NormalReturnFacts{
-						EscapeEvents: []callboundary.EscapeEventFact{rootEvent, childEvent},
+						EscapeEvents:   []callboundary.EscapeEventFact{rootEvent, childEvent},
+						StoreRelations: []callboundary.StoreRelationFact{rootRelation, childRelation},
 					},
 				},
 			},
 			summary.EntrySummary{
-				Key:     rightKey,
-				Summary: summary.Summary{Returns: []product.Value{product.Absent(reg)}},
+				Key: rightKey,
+				Summary: summary.Summary{
+					Returns: []product.Value{product.Absent(reg)},
+					NormalReturnFacts: callboundary.NormalReturnFacts{
+						StoreRelations: []callboundary.StoreRelationFact{rootRelation, childRelation},
+					},
+				},
 			},
 		),
 		PathMultiKeys: map[path.PathKey][]summary.SummaryKey{
@@ -497,6 +511,11 @@ func TestOutcomeProviderJoinDropsDescendantEscapeEventsBelowMaybeAbsentReturn(t 
 		got.NormalReturnFacts.EscapeEvents[0].Kind != rootEvent.Kind ||
 		got.NormalReturnFacts.EscapeEvents[0].Recursive != rootEvent.Recursive {
 		t.Fatalf("escape events = %#v, want only root event", got.NormalReturnFacts.EscapeEvents)
+	}
+	if len(got.NormalReturnFacts.StoreRelations) != 1 ||
+		!got.NormalReturnFacts.StoreRelations[0].Source.Equal(rootRelation.Source) ||
+		!got.NormalReturnFacts.StoreRelations[0].Into.Equal(rootRelation.Into) {
+		t.Fatalf("store relations = %#v, want only root relation", got.NormalReturnFacts.StoreRelations)
 	}
 }
 

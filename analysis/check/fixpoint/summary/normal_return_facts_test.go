@@ -161,6 +161,7 @@ func TestNormalReturnFactsJoinUsesStateLaneSemantics(t *testing.T) {
 	p0 := pathdom.NewPlaceholder(0)
 	leftOnly := p0.Field("left")
 	commonPath := p0.Field("common")
+	storeInto := p0.Field("container")
 	leftValue := presentProduct(reg)
 	rightValue := absentProduct(reg)
 
@@ -196,6 +197,10 @@ func TestNormalReturnFactsJoinUsesStateLaneSemantics(t *testing.T) {
 		EscapeEvents: []callboundary.EscapeEventFact{
 			{Target: commonPath, Kind: callboundary.EscapeEventBorrow},
 			{Target: leftOnly, Kind: callboundary.EscapeEventRetain},
+		},
+		StoreRelations: []callboundary.StoreRelationFact{
+			{Source: commonPath, Into: storeInto},
+			{Source: leftOnly, Into: storeInto},
 		},
 	}}
 	right := Summary{NormalReturnFacts: callboundary.NormalReturnFacts{
@@ -233,6 +238,10 @@ func TestNormalReturnFactsJoinUsesStateLaneSemantics(t *testing.T) {
 			Target: commonPath,
 			Kind:   callboundary.EscapeEventSend,
 		}},
+		StoreRelations: []callboundary.StoreRelationFact{
+			{Source: commonPath, Into: storeInto},
+			{Source: p0.Field("right"), Into: storeInto},
+		},
 	}}
 
 	got := Join(reg, left, right).NormalReturnFacts
@@ -291,6 +300,11 @@ func TestNormalReturnFactsJoinUsesStateLaneSemantics(t *testing.T) {
 		leftOnlyEvent.Kind != callboundary.EscapeEventRetain {
 		t.Fatalf("left-only escape event = %#v, want original event", leftOnlyEvent)
 	}
+	if len(got.StoreRelations) != 1 ||
+		!got.StoreRelations[0].Source.Equal(commonPath) ||
+		!got.StoreRelations[0].Into.Equal(storeInto) {
+		t.Fatalf("StoreRelations = %#v, want only common must relation", got.StoreRelations)
+	}
 
 	widened := Widen(reg, left, right).NormalReturnFacts
 	if leftOnlyFact := findDynamicIndexFact(widened.DynamicIndexFacts, "caller.dynamic.left"); leftOnlyFact == nil ||
@@ -308,6 +322,11 @@ func TestNormalReturnFactsJoinUsesStateLaneSemantics(t *testing.T) {
 	if len(widened.FrozenTables) != 1 || !widened.FrozenTables[0].Target.Equal(commonPath) {
 		t.Fatalf("widen FrozenTables = %#v, want only common must fact", widened.FrozenTables)
 	}
+	if len(widened.StoreRelations) != 1 ||
+		!widened.StoreRelations[0].Source.Equal(commonPath) ||
+		!widened.StoreRelations[0].Into.Equal(storeInto) {
+		t.Fatalf("widen StoreRelations = %#v, want only common must relation", widened.StoreRelations)
+	}
 }
 
 func TestNormalReturnFactsEqualAndLessOrEqAccountForLane(t *testing.T) {
@@ -317,6 +336,7 @@ func TestNormalReturnFactsEqualAndLessOrEqAccountForLane(t *testing.T) {
 		PathRefinements: []callboundary.PathValueFact{{Path: p0, Value: presentProduct(reg)}},
 		BranchProofs:    []callboundary.BranchProof{{Kind: pathevidence.BranchProofPathPresence, Path: p0, Presence: presence.Present()}},
 		EscapeEvents:    []callboundary.EscapeEventFact{{Target: p0, Kind: callboundary.EscapeEventBorrow}},
+		StoreRelations:  []callboundary.StoreRelationFact{{Source: p0, Into: pathdom.NewPlaceholder(1)}},
 	}}
 	right := Summary{NormalReturnFacts: callboundary.NormalReturnFacts{
 		PathRefinements: []callboundary.PathValueFact{{Path: p0, Value: product.Top()}},

@@ -1777,6 +1777,16 @@ func TestCheckAndExportReexportsImportedOwnershipEffectsAcrossModules(t *testing
 			Value:  effect.ParamRef{Index: -1},
 		}),
 	})
+	runtime.DefineFunctionSignature("runtime.store_into", signature.Function{
+		Type: typ.Func().
+			Param("value", typ.Any).
+			Param("container", typ.Any).
+			Build(),
+		Effect: effect.Empty.With(ownership.Store{
+			Param: effect.ParamRef{Index: 0},
+			Into:  effect.ParamRef{Index: 1},
+		}),
+	})
 
 	providerMod := CheckAndExport(`
 		local provider = {}
@@ -1789,6 +1799,9 @@ func TestCheckAndExportReexportsImportedOwnershipEffectsAcrossModules(t *testing
 		function provider.mutate(container: any)
 			runtime.mutate_one(container)
 		end
+		function provider.store(value: any, container: any)
+			runtime.store_into(value, container)
+		end
 		return provider
 	`, "provider", WithManifest("runtime", runtime), WithGlobals("runtime"))
 	if len(providerMod.Errors) != 0 {
@@ -1797,6 +1810,8 @@ func TestCheckAndExportReexportsImportedOwnershipEffectsAcrossModules(t *testing
 	assertExportedSendParam(t, providerMod.Manifest, "provider.forward", 0)
 	assertExportedFreeze(t, providerMod.Manifest, "provider.seal", 0)
 	assertExportedTableMutator(t, providerMod.Manifest, "provider.mutate", 0)
+	assertExportedStoreExact(t, providerMod.Manifest, "provider.store", 0, 1)
+	assertNoExportedTableMutator(t, providerMod.Manifest, "provider.store")
 
 	consumerMod := CheckAndExport(`
 		local provider = require("provider")
@@ -1810,6 +1825,9 @@ func TestCheckAndExportReexportsImportedOwnershipEffectsAcrossModules(t *testing
 		function consumer.mutate(container: any)
 			provider.mutate(container)
 		end
+		function consumer.store(value: any, container: any)
+			provider.store(value, container)
+		end
 		return consumer
 	`, "consumer", WithStdlib(), WithModule("provider", providerMod))
 	if len(consumerMod.Errors) != 0 {
@@ -1818,6 +1836,8 @@ func TestCheckAndExportReexportsImportedOwnershipEffectsAcrossModules(t *testing
 	assertExportedSendParam(t, consumerMod.Manifest, "consumer.forward", 0)
 	assertExportedFreeze(t, consumerMod.Manifest, "consumer.seal", 0)
 	assertExportedTableMutator(t, consumerMod.Manifest, "consumer.mutate", 0)
+	assertExportedStoreExact(t, consumerMod.Manifest, "consumer.store", 0, 1)
+	assertNoExportedTableMutator(t, consumerMod.Manifest, "consumer.store")
 }
 
 func providerManifest(path string) *manifest.Manifest {
@@ -1910,5 +1930,39 @@ func assertExportedTableMutator(t *testing.T, m *manifest.Manifest, name string,
 		return ok && mutator.Target.Index == paramIndex && mutator.Value.Index == -1
 	}) {
 		t.Fatalf("%s effect = %v, want TableMutator(%d)", name, sig.Effect, paramIndex)
+	}
+}
+
+func assertNoExportedTableMutator(t *testing.T, m *manifest.Manifest, name string) {
+	t.Helper()
+	sig, ok := m.FunctionSignatures[name]
+	if !ok {
+		t.Fatalf("missing %s function signature: %#v", name, m.FunctionSignatures)
+	}
+	if sig.Effect.Has(func(label effect.Label) bool {
+		_, ok := effect.NormalizeLabel(label).(mutation.TableMutator)
+		return ok
+	}) {
+		t.Fatalf("%s effect = %v, did not expect degraded TableMutator", name, sig.Effect)
+	}
+}
+
+func assertExportedStoreExact(t *testing.T, m *manifest.Manifest, name string, sourceIndex, intoIndex int) {
+	t.Helper()
+	sig, ok := m.FunctionSignatures[name]
+	if !ok {
+		t.Fatalf("missing %s function signature: %#v", name, m.FunctionSignatures)
+	}
+	if !sig.Effect.Has(func(label effect.Label) bool {
+		store, ok := effect.NormalizeLabel(label).(ownership.Store)
+		return ok && store.Param.Index == sourceIndex && store.Into.Index == intoIndex
+	}) {
+		t.Fatalf("%s effect = %v, want Store(%d, %d)", name, sig.Effect, sourceIndex, intoIndex)
+	}
+	if sig.Effect.Has(func(label effect.Label) bool {
+		store, ok := effect.NormalizeLabel(label).(ownership.Store)
+		return ok && store.Param.Index == sourceIndex && store.Into.Index == -1
+	}) {
+		t.Fatalf("%s effect = %v, did not expect degraded Store(%d, unknown)", name, sig.Effect, sourceIndex)
 	}
 }
