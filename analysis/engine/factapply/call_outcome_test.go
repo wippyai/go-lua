@@ -79,7 +79,7 @@ func TestFactsNodeTransferCallOutcomeAppliesParamCondition(t *testing.T) {
 	assertValue(t, reg, got, key.SymbolValue(other), present)
 }
 
-func TestWithSupplementalCallOutcomeKeepsPrimarySlotsFillsMissingSlotsAndMergesSideFacts(t *testing.T) {
+func TestWithSupplementalCallOutcomeKeepsPrimarySlotsFillsMissingSlotsAndMergesSideFactsWithoutAuthority(t *testing.T) {
 	reg := standard.Registry()
 	primaryValue := product.Absent(reg)
 	supplementalValue := product.Top()
@@ -140,6 +140,78 @@ func TestWithSupplementalCallOutcomeKeepsPrimarySlotsFillsMissingSlotsAndMergesS
 		got.ReturnPresenceRelations[0].TargetIndex != 0 ||
 		!presence.Equal(got.ReturnPresenceRelations[0].TargetPresence, presence.Absent()) {
 		t.Fatalf("return presence relations = %#v, want supplemental relation", got.ReturnPresenceRelations)
+	}
+}
+
+func TestWithSupplementalCallOutcomeAuthorityBlocksSupplementalPostReturnFacts(t *testing.T) {
+	reg := standard.Registry()
+	primaryValue := product.Absent(reg)
+	supplementalValue := product.Top()
+	primary := func(transfer.NodeContext, factflow.CallSite, state.State, func(cfg.Point) state.State) CallOutcome {
+		return CallOutcome{
+			PostReturnAuthority: true,
+			Results:             []CallResult{{Index: 0, Value: primaryValue}},
+			NormalReturnFacts: callboundary.NormalReturnFacts{
+				PathRefinements: []callboundary.PathValueFact{
+					{Path: pathdom.NewPlaceholder(0), Value: primaryValue},
+				},
+			},
+			ParamObligations: []CallParamObligation{
+				{ParamIndex: 0, Value: primaryValue},
+			},
+			ParamConditions: []CallParamCondition{
+				{ParamIndex: 0, Value: true},
+			},
+		}
+	}
+	supplemental := func(transfer.NodeContext, factflow.CallSite, state.State, func(cfg.Point) state.State) CallOutcome {
+		return CallOutcome{
+			PostReturnAuthority: true,
+			Results:             []CallResult{{Index: 1, Value: supplementalValue}},
+			NormalReturnFacts: callboundary.NormalReturnFacts{
+				PathRefinements: []callboundary.PathValueFact{
+					{Path: pathdom.NewPlaceholder(1), Value: supplementalValue},
+				},
+			},
+			ParamObligations: []CallParamObligation{
+				{ParamIndex: 1, Value: supplementalValue},
+			},
+			ParamConditions: []CallParamCondition{
+				{ParamIndex: 1, Value: false},
+			},
+			ReturnPresenceRelations: []CallReturnPresenceRelation{
+				{TriggerIndex: 1, TriggerPresence: presence.Present(), TargetIndex: 0, TargetPresence: presence.Absent()},
+			},
+		}
+	}
+
+	got := WithSupplementalCallOutcome(primary, supplemental)(transfer.NodeContext{Registry: reg}, factflow.NewCallSite(factflow.CallSiteConfig{}), state.State{}, nil)
+
+	if !got.PostReturnAuthority {
+		t.Fatalf("PostReturnAuthority = false, want true")
+	}
+	if len(got.Results) != 1 {
+		t.Fatalf("got %d results, want only authoritative primary slot: %#v", len(got.Results), got.Results)
+	}
+	if got.Results[0].Index != 0 || !product.Equal(reg, got.Results[0].Value, primaryValue) {
+		t.Fatalf("primary slot = %#v, want index 0 primary value", got.Results[0])
+	}
+	if len(got.ParamObligations) != 2 ||
+		got.ParamObligations[0].ParamIndex != 0 ||
+		got.ParamObligations[1].ParamIndex != 1 {
+		t.Fatalf("param obligations = %#v, want primary plus supplemental diagnostics", got.ParamObligations)
+	}
+	if len(got.ParamConditions) != 1 ||
+		got.ParamConditions[0].ParamIndex != 0 ||
+		!got.ParamConditions[0].Value {
+		t.Fatalf("param conditions = %#v, want only primary post-return condition", got.ParamConditions)
+	}
+	if len(got.NormalReturnFacts.PathRefinements) != 1 ||
+		!got.NormalReturnFacts.PathRefinements[0].Path.Equal(pathdom.NewPlaceholder(0)) {
+		t.Fatalf("normal return facts = %#v, want only primary path refinement", got.NormalReturnFacts)
+	}
+	if len(got.ReturnPresenceRelations) != 0 {
+		t.Fatalf("return presence relations = %#v, want supplemental post-return relation blocked", got.ReturnPresenceRelations)
 	}
 }
 

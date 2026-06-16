@@ -68,6 +68,7 @@ func SignatureOutcomeProvider(config SignatureOutcomeProviderConfig) factapply.C
 		}
 		out.NormalReturnFacts.EscapeEvents = signatureEscapeEvents(sig, site)
 		if sig.Type == nil || len(sig.Type.Returns) == 0 {
+			out.PostReturnAuthority = factapply.OutcomeHasPostReturnEvidence(ctx.Registry, out)
 			return out
 		}
 		results := make([]factapply.CallResult, 0, len(sig.Type.Returns))
@@ -85,6 +86,7 @@ func SignatureOutcomeProvider(config SignatureOutcomeProviderConfig) factapply.C
 			})
 		}
 		out.Results = results
+		out.PostReturnAuthority = factapply.OutcomeHasPostReturnEvidence(ctx.Registry, out)
 		return out
 	}
 }

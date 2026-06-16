@@ -62,10 +62,14 @@ func ModuleLoadOutcomeProvider(config ModuleLoadOutcomeProviderConfig) factapply
 		if !ok || exportType == nil {
 			return factapply.CallOutcome{}
 		}
-		return factapply.CallOutcome{Results: []factapply.CallResult{{
-			Index: 0,
-			Value: returnValueFromType(ctx.Registry, exportType),
-		}}}
+		out := factapply.CallOutcome{
+			Results: []factapply.CallResult{{
+				Index: 0,
+				Value: returnValueFromType(ctx.Registry, exportType),
+			}},
+		}
+		out.PostReturnAuthority = factapply.OutcomeHasPostReturnEvidence(ctx.Registry, out)
+		return out
 	}
 }
 

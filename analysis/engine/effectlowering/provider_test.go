@@ -203,11 +203,32 @@ func TestSignatureOutcomeProviderLowersErrorReturnToReturnPresenceRelations(t *t
 
 	got := provider(transfer.NodeContext{}, factflow.NewCallSite(factflow.CallSiteConfig{}), state.State{}, nil)
 
+	if !got.PostReturnAuthority {
+		t.Fatalf("PostReturnAuthority = false, want true for matched signature")
+	}
 	if len(got.ReturnPresenceRelations) != 2 {
 		t.Fatalf("return presence relations = %d, want 2: %#v", len(got.ReturnPresenceRelations), got.ReturnPresenceRelations)
 	}
 	assertCallReturnPresenceRelation(t, got.ReturnPresenceRelations, 1, presence.Present(), 0, presence.Absent())
 	assertCallReturnPresenceRelation(t, got.ReturnPresenceRelations, 1, presence.Absent(), 0, presence.Present())
+}
+
+func TestSignatureOutcomeProviderWeakAnyReturnIsNotPostReturnAuthority(t *testing.T) {
+	provider := SignatureOutcomeProvider(SignatureOutcomeProviderConfig{
+		Signatures: signatureMap{
+			"require": {Type: typ.Func().Returns(typ.Any).Build()},
+		},
+		NameFor: staticName("require"),
+	})
+
+	got := provider(transfer.NodeContext{Registry: standard.Registry()}, factflow.NewCallSite(factflow.CallSiteConfig{}), state.State{}, nil)
+
+	if got.PostReturnAuthority {
+		t.Fatalf("PostReturnAuthority = true for weak any return, want false")
+	}
+	if len(got.Results) != 1 {
+		t.Fatalf("results = %#v, want one weak fallback result", got.Results)
+	}
 }
 
 func TestSignatureOutcomeProviderLowersNormalReturnRefinementToParamPathRefinementAndApplies(t *testing.T) {

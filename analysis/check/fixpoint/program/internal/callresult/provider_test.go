@@ -12,6 +12,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/standard"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
@@ -51,6 +52,9 @@ func TestOutcomeProviderReadsSummaryReturnsByCalleeIdentity(t *testing.T) {
 		CalleeSymbol: callee,
 	}), state.State{}, nil)
 
+	if !got.PostReturnAuthority {
+		t.Fatalf("PostReturnAuthority = false, want true for matched summary")
+	}
 	assertCallOutcomeResults(t, reg, got.Results, []product.Value{first, second})
 }
 
@@ -740,6 +744,39 @@ func TestOutcomeProviderMissingAndEmptySummaryYieldsZeroOutcome(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			assertEmptyOutcome(t, tc.provider(ctx, site, state.State{}, nil))
 		})
+	}
+
+	emptySummaryProvider := OutcomeProvider(ProviderConfig{
+		Summaries: summary.NewSnapshot(reg, summary.EntrySummary{Key: key, Summary: summary.Summary{Returns: nil}}),
+		KeyFor:    ByCalleeIdentity(map[symbol.ID]summary.SummaryKey{callee: key}),
+	})
+	if got := emptySummaryProvider(ctx, site, state.State{}, nil); got.PostReturnAuthority {
+		t.Fatalf("empty matched summary PostReturnAuthority = true, want false")
+	}
+}
+
+func TestOutcomeProviderUnresolvedFunctionFallbackIsNotPostReturnAuthority(t *testing.T) {
+	reg := standard.Registry()
+	target := symbol.ID(753)
+	functionValue := product.Set(reg, product.Top(), runtimekind.Key, runtimekind.Singleton(runtimekind.Function))
+	provider := OutcomeProvider(ProviderConfig{
+		Summaries: summary.NewSnapshot(reg),
+		CalleeValue: func(transfer.NodeContext, factflow.CallSite, state.State, func(cfg.Point) state.State) (product.Value, bool) {
+			return functionValue, true
+		},
+	})
+
+	got := provider(transfer.NodeContext{Registry: reg}, factflow.NewCallSite(factflow.CallSiteConfig{
+		ResultTargets: []factflow.CallResultTarget{
+			factflow.NewCallResultTarget(factflow.CallResultTargetLocalAssignment, 0, 0, target, path.NewPath(target, "result")),
+		},
+	}), state.State{}, nil)
+
+	if got.PostReturnAuthority {
+		t.Fatalf("unresolved function fallback PostReturnAuthority = true, want false")
+	}
+	if len(got.Results) != 1 || got.Results[0].Index != 0 {
+		t.Fatalf("fallback results = %#v, want one unknown result slot", got.Results)
 	}
 }
 

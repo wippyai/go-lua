@@ -54,6 +54,8 @@ func CallableValueOutcomeProvider(config CallableValueOutcomeProviderConfig) fac
 				Value: returnValueFromType(ctx.Registry, ret),
 			})
 		}
-		return factapply.CallOutcome{Results: results}
+		out := factapply.CallOutcome{Results: results}
+		out.PostReturnAuthority = factapply.OutcomeHasPostReturnEvidence(ctx.Registry, out)
+		return out
 	}
 }
