@@ -9,6 +9,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/typewitness"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/variantorigin"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	valuerefine "github.com/wippyai/go-lua/analysis/domain/value/refinement"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/domain/value/variant"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
@@ -16,9 +17,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/engine/visibility"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
-	"github.com/wippyai/go-lua/analysis/type/subtype"
 	"github.com/wippyai/go-lua/analysis/type/typ"
-	"github.com/wippyai/go-lua/analysis/type/unwrap"
 )
 
 func applyBranchRefinement(
@@ -91,13 +90,14 @@ func applyValueRefinementAtWithoutImplications(
 			return refineProductValue(reg, value, refinement)
 		})
 	}
-	if lit, ok := descendantLiteralConstraint(reg, refinement); ok {
-		if narrowed, applied := applyDescendantLiteralRootOriginRefinement(reg, resolver, projectPath, point, out, targetPath, lit, refinement.NegatedLiteral()); applied {
-			return narrowed
+	if constraint, ok := refinement.Constraint(); ok {
+		if lit, ok := valuerefine.LiteralType(reg, constraint); ok {
+			if narrowed, applied := applyDescendantLiteralRootOriginRefinement(reg, resolver, projectPath, point, out, targetPath, lit, refinement.NegatedLiteral()); applied {
+				return narrowed
+			}
 		}
-	} else {
-		out = applyDescendantTruthyRootOriginRefinement(reg, resolver, point, out, targetPath, refinement)
 	}
+	out = applyDescendantTruthyRootOriginRefinement(reg, resolver, point, out, targetPath, refinement)
 	if resolver == nil {
 		return out
 	}
@@ -132,62 +132,7 @@ func falsyAbsentRefinementUnproven(
 	if !ok {
 		return true
 	}
-	return valueCanBeFalse(reg, current.value)
-}
-
-func valueCanBeFalse(reg *axis.Registry, value product.Value) bool {
-	witness := product.Get(reg, value, typewitness.Key)
-	t, ok := witness.Type()
-	if !ok || t == nil {
-		return true
-	}
-	return typeAdmitsFalse(t, 0)
-}
-
-// typeAdmitsFalse reports whether t (the subject's declared type, present or not)
-// can hold the boolean false at runtime. Only such a type makes a falsy edge
-// ambiguous between false and nil; a record/map/array/string/number present type
-// cannot be false, so a falsy edge proves it nil. An unknown shape is treated as
-// admitting false so the narrowing stays sound.
-func typeAdmitsFalse(t typ.Type, depth int) bool {
-	if t == nil || depth > typ.DefaultRecursionDepth {
-		return true
-	}
-	switch v := unwrap.Annotated(t).(type) {
-	case *typ.Optional:
-		return typeAdmitsFalse(v.Inner, depth+1)
-	case *typ.Union:
-		for _, member := range v.Members {
-			if typeAdmitsFalse(member, depth+1) {
-				return true
-			}
-		}
-		return false
-	case *typ.Alias:
-		return typeAdmitsFalse(v.UnaliasedTarget(), depth+1)
-	case *typ.Record, *typ.Map, *typ.ReadonlyMap, *typ.Array, *typ.Tuple, *typ.Interface, *typ.Function:
-		return false
-	default:
-		if typ.IsNever(t) {
-			return false
-		}
-		return subtype.IsSubtype(typ.False, t)
-	}
-}
-
-func descendantLiteralConstraint(reg *axis.Registry, refinement factflow.ValueRefinement) (typ.Type, bool) {
-	constraint, ok := refinement.Constraint()
-	if !ok {
-		return nil, false
-	}
-	t, ok := typevalue.TypeOf(reg, constraint)
-	if !ok {
-		return nil, false
-	}
-	if _, ok := t.(*typ.Literal); !ok {
-		return nil, false
-	}
-	return t, true
+	return valuerefine.CanBeFalse(reg, current.value)
 }
 
 func refineProductValue(reg *axis.Registry, value product.Value, refinement factflow.ValueRefinement) product.Value {
@@ -195,86 +140,7 @@ func refineProductValue(reg *axis.Registry, value product.Value, refinement fact
 	if !ok {
 		return value
 	}
-	refined := product.Meet(reg, value, constraint)
-	if !product.Equal(reg, refined, product.Bottom(reg)) {
-		return refined
-	}
-	if recovered, ok := recoverCompatibleVariantOriginMeet(reg, value, constraint); ok {
-		return recovered
-	}
-	if recovered, ok := recoverCompatibleWitnessMeet(reg, value, constraint); ok {
-		return recovered
-	}
-	return refined
-}
-
-// recoverCompatibleWitnessMeet rescues a refinement meet that collapses to
-// bottom only because the type-witness axis meets by node identity, not by
-// subtyping. A `type(x) == "T"` guard contributes a scalar witness T; the
-// subject value may carry a witness that is wider than T (string|number narrowed
-// to string) or narrower than T (a string literal "cfg" narrowed by a string
-// guard). In either compatible direction the sound result keeps the more
-// specific (subtype) witness so the true edge narrows precisely instead of
-// dropping to bottom.
-func recoverCompatibleWitnessMeet(reg *axis.Registry, value, constraint product.Value) (product.Value, bool) {
-	valueWitness := product.Get(reg, value, typewitness.Key)
-	constraintWitness := product.Get(reg, constraint, typewitness.Key)
-	if valueWitness.IsTop() || valueWitness.IsBottom() ||
-		constraintWitness.IsTop() || constraintWitness.IsBottom() {
-		return product.Value{}, false
-	}
-	valueType, ok := valueWitness.Type()
-	if !ok {
-		return product.Value{}, false
-	}
-	constraintType, ok := constraintWitness.Type()
-	if !ok {
-		return product.Value{}, false
-	}
-	narrower := constraintWitness
-	switch {
-	case subtype.IsSubtype(constraintType, valueType):
-		narrower = constraintWitness
-	case subtype.IsSubtype(valueType, constraintType):
-		narrower = valueWitness
-	default:
-		return product.Value{}, false
-	}
-	valueWithoutWitness := product.Set(reg, value, typewitness.Key, typewitness.Top())
-	constraintWithoutWitness := product.Set(reg, constraint, typewitness.Key, typewitness.Top())
-	refined := product.Meet(reg, valueWithoutWitness, constraintWithoutWitness)
-	if product.Equal(reg, refined, product.Bottom(reg)) {
-		return product.Value{}, false
-	}
-	return product.Set(reg, refined, typewitness.Key, narrower), true
-}
-
-func recoverCompatibleVariantOriginMeet(reg *axis.Registry, value, constraint product.Value) (product.Value, bool) {
-	valueOrigin := product.Get(reg, value, variantorigin.Key)
-	constraintOrigin := product.Get(reg, constraint, variantorigin.Key)
-	if valueOrigin.IsTop() || valueOrigin.IsBottom() ||
-		constraintOrigin.IsTop() || constraintOrigin.IsBottom() ||
-		valueOrigin.Family() == constraintOrigin.Family() {
-		return product.Value{}, false
-	}
-	valueType, ok := typevalue.TypeOf(reg, value)
-	if !ok {
-		return product.Value{}, false
-	}
-	constraintType, ok := typevalue.TypeOf(reg, constraint)
-	if !ok {
-		return product.Value{}, false
-	}
-	if !subtype.IsSubtype(valueType, constraintType) && !subtype.IsSubtype(constraintType, valueType) {
-		return product.Value{}, false
-	}
-	valueWithoutOrigin := product.Set(reg, value, variantorigin.Key, variantorigin.Top())
-	constraintWithoutOrigin := product.Set(reg, constraint, variantorigin.Key, variantorigin.Top())
-	refined := product.Meet(reg, valueWithoutOrigin, constraintWithoutOrigin)
-	if product.Equal(reg, refined, product.Bottom(reg)) {
-		return product.Value{}, false
-	}
-	return product.Set(reg, refined, variantorigin.Key, constraintOrigin), true
+	return valuerefine.MeetConstraint(reg, value, constraint)
 }
 
 func applyDescendantTruthyRootOriginRefinement(

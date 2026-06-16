@@ -258,11 +258,21 @@ func TestCheckSplitDirectImportBoundaries(t *testing.T) {
 			},
 		},
 		{
-			name: "factapply does not directly import call outcome policy or type access semantics",
+			name: "factapply does not directly import call outcome policy or type refinement internals",
 			pkg:  modulePath + "/analysis/engine/factapply",
 			banned: []string{
 				modulePath + "/analysis/engine/calloutcome",
+				modulePath + "/analysis/type/subtype",
 				modulePath + "/analysis/type/access",
+				modulePath + "/analysis/type/unwrap",
+			},
+		},
+		{
+			name: "value refinement remains below engine and check layers",
+			pkg:  modulePath + "/analysis/domain/value/refinement",
+			banned: []string{
+				modulePath + "/analysis/check",
+				modulePath + "/analysis/engine",
 			},
 		},
 	}
