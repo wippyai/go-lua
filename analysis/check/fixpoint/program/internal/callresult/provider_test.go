@@ -440,6 +440,59 @@ func TestOutcomeProviderJoinMaterializesRawOptionalFactPayloadRecord(t *testing.
 	}
 }
 
+func TestOutcomeProviderJoinDropsDescendantEscapeEventsBelowMaybeAbsentReturn(t *testing.T) {
+	reg := standard.Registry()
+	calleePath := path.NewPath(symbol.ID(131), "module").Field("maybe")
+	leftKey := summary.DefaultSummaryKey(ref.FuncRef{Kind: ref.KindSymbol, ID: 132})
+	rightKey := summary.DefaultSummaryKey(ref.FuncRef{Kind: ref.KindSymbol, ID: 133})
+	returnValue := providerValueForType(reg, providerNestedTableType())
+	rootEvent := callboundary.EscapeEventFact{
+		Target: path.NewPlaceholder(0),
+		Kind:   callboundary.EscapeEventSend,
+	}
+	childEvent := callboundary.EscapeEventFact{
+		Target:    path.NewPlaceholder(0).Field("child"),
+		Kind:      callboundary.EscapeEventStore,
+		Recursive: true,
+	}
+	provider := OutcomeProvider(ProviderConfig{
+		Summaries: summary.NewSnapshot(reg,
+			summary.EntrySummary{
+				Key: leftKey,
+				Summary: summary.Summary{
+					Returns: []product.Value{returnValue},
+					NormalReturnFacts: callboundary.NormalReturnFacts{
+						EscapeEvents: []callboundary.EscapeEventFact{rootEvent, childEvent},
+					},
+				},
+			},
+			summary.EntrySummary{
+				Key:     rightKey,
+				Summary: summary.Summary{Returns: []product.Value{product.Absent(reg)}},
+			},
+		),
+		PathMultiKeys: map[path.PathKey][]summary.SummaryKey{
+			calleePath.Key(): {leftKey, rightKey},
+		},
+	})
+
+	got := provider(transfer.NodeContext{Registry: reg}, factflow.NewCallSite(factflow.CallSiteConfig{
+		CalleePath: calleePath,
+	}).View(),
+
+		state.State{}, nil)
+
+	if len(got.Results) != 1 || product.DefinitelyPresent(got.Results[0].Value) {
+		t.Fatalf("results = %#v, want maybe-absent joined return", got.Results)
+	}
+	if len(got.NormalReturnFacts.EscapeEvents) != 1 ||
+		!got.NormalReturnFacts.EscapeEvents[0].Target.Equal(rootEvent.Target) ||
+		got.NormalReturnFacts.EscapeEvents[0].Kind != rootEvent.Kind ||
+		got.NormalReturnFacts.EscapeEvents[0].Recursive != rootEvent.Recursive {
+		t.Fatalf("escape events = %#v, want only root event", got.NormalReturnFacts.EscapeEvents)
+	}
+}
+
 func TestOutcomeProviderMapsNormalReturnFacts(t *testing.T) {
 	reg := standard.Registry()
 	callee := symbol.ID(137)
