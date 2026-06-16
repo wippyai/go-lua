@@ -212,6 +212,30 @@ func TestLowLevelLeafImportBoundaries(t *testing.T) {
 				modulePath + "/analysis/check",
 			},
 		},
+		{
+			name: "type aware value bridge packages stay below engine lua check and compiler",
+			patterns: []string{
+				modulePath + "/analysis/domain/value/refinement",
+				modulePath + "/analysis/domain/value/typevalue",
+				modulePath + "/analysis/domain/value/variant",
+			},
+			banned: []string{
+				modulePath + "/analysis/engine",
+				modulePath + "/analysis/lua",
+				modulePath + "/analysis/check",
+				modulePath + "/compiler",
+			},
+		},
+		{
+			name:     "channel select schema stays engine check lua and compiler free",
+			patterns: []string{modulePath + "/analysis/domain/effect/channelselect"},
+			banned: []string{
+				modulePath + "/analysis/engine",
+				modulePath + "/analysis/check",
+				modulePath + "/analysis/lua",
+				modulePath + "/compiler",
+			},
+		},
 	}
 
 	for _, tt := range tests {
