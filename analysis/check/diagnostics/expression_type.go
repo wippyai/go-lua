@@ -24,7 +24,7 @@ type expressionTyper struct {
 	result        *body.Result
 	resolver      typeannotation.Resolver
 	point         cfg.Point
-	env           literalEnv
+	env           guardEnv
 	flow          bool
 	witnessRefine bool
 }
@@ -33,7 +33,7 @@ func newExpressionTyper(result *body.Result, resolver typeannotation.Resolver) e
 	return expressionTyper{result: result, resolver: resolver}
 }
 
-func newFlowExpressionTyper(result *body.Result, resolver typeannotation.Resolver, point cfg.Point, env literalEnv) expressionTyper {
+func newFlowExpressionTyper(result *body.Result, resolver typeannotation.Resolver, point cfg.Point, env guardEnv) expressionTyper {
 	return expressionTyper{result: result, resolver: resolver, point: point, env: env, flow: true, witnessRefine: true}
 }
 
@@ -42,7 +42,7 @@ func newFlowExpressionTyper(result *body.Result, resolver typeannotation.Resolve
 // declared/origin type narrowed only by sound discriminant narrowing. This keeps
 // absence proofs from trusting a partial observed table-literal snapshot that may
 // omit declared fields.
-func newStructuralFlowExpressionTyper(result *body.Result, resolver typeannotation.Resolver, point cfg.Point, env literalEnv) expressionTyper {
+func newStructuralFlowExpressionTyper(result *body.Result, resolver typeannotation.Resolver, point cfg.Point, env guardEnv) expressionTyper {
 	return expressionTyper{result: result, resolver: resolver, point: point, env: env, flow: true, witnessRefine: false}
 }
 
@@ -180,7 +180,7 @@ func (p expressionTyper) flowRootType(t typ.Type, accessPath pathdom.Path) typ.T
 	return t
 }
 
-func applyLiteralPathNarrowing(base typ.Type, receiver pathdom.Path, env literalEnv) (typ.Type, bool) {
+func applyLiteralPathNarrowing(base typ.Type, receiver pathdom.Path, env guardEnv) (typ.Type, bool) {
 	if base == nil || len(env.constraints) == 0 {
 		return base, false
 	}

@@ -38,7 +38,7 @@ func produceCallParamObligations(
 	if graph == nil {
 		return nil
 	}
-	envs := literalEnvironments(result)
+	envs := guardEnvironments(result)
 	producer := callParamObligations(context)
 	var out []diagnostic.Diagnostic
 	for _, point := range graph.RPO() {
@@ -63,7 +63,7 @@ func (p callParamObligations) call(
 	fact semantics.CallFact,
 	obligations []factapply.CallParamObligation,
 	inherited map[symbol.ID]*ast.FunctionExpr,
-	env literalEnv,
+	env guardEnv,
 ) (diagnostic.Diagnostic, bool) {
 	args := fact.Call.Args
 	// Colon method calls pass the receiver as the implicit first parameter, so
@@ -97,7 +97,7 @@ func (p callParamObligations) call(
 		got, ok := untrustedTopLikeExpressionTypeAt(result, p.resolver, point, args[argIndex])
 		untrustedTopLike := ok
 		if !ok {
-			got, ok = projectedFlowSourceType(result, p.resolver, point, literalEnv{}, args[argIndex])
+			got, ok = projectedFlowSourceType(result, p.resolver, point, guardEnv{}, args[argIndex])
 		}
 		if !ok {
 			got, ok = boundaryCallArgumentSourceType(result, point, fact, argIndex)

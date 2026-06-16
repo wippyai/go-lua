@@ -449,7 +449,7 @@ func shouldProjectOptionalIndex(result *body.Result, expr ast.Expr) bool {
 // optional result yields an optional projection that an annotated assignment must
 // not silently accept. It returns the type only when it is provably optional, so
 // a non-optional projection never produces a spurious source type here.
-func optionalMemberReadType(result *body.Result, resolver typeannotation.Resolver, point cfg.Point, env literalEnv, expr ast.Expr) (typ.Type, bool) {
+func optionalMemberReadType(result *body.Result, resolver typeannotation.Resolver, point cfg.Point, env guardEnv, expr ast.Expr) (typ.Type, bool) {
 	attr, ok := expr.(*ast.AttrGetExpr)
 	if !ok || attr.KeySyntax != ast.AttrKeyDot {
 		return nil, false
@@ -470,7 +470,7 @@ func optionalMemberReadType(result *body.Result, resolver typeannotation.Resolve
 	return got, true
 }
 
-func projectedFlowSourceType(result *body.Result, resolver typeannotation.Resolver, point cfg.Point, env literalEnv, expr ast.Expr) (typ.Type, bool) {
+func projectedFlowSourceType(result *body.Result, resolver typeannotation.Resolver, point cfg.Point, env guardEnv, expr ast.Expr) (typ.Type, bool) {
 	switch e := expr.(type) {
 	case *ast.AttrGetExpr:
 		if e.KeySyntax == ast.AttrKeyIndex && !shouldProjectOptionalIndex(result, e) {

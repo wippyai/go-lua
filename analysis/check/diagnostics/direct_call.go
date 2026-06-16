@@ -38,7 +38,7 @@ func produceDirectCallContract(result *body.Result, context producerContext, inh
 		return nil
 	}
 	defs := directCallDefinitions(result, inherited)
-	envs := literalEnvironments(result)
+	envs := guardEnvironments(result)
 	producer := directCallContract(context)
 	var out []diagnostic.Diagnostic
 	for _, point := range graph.RPO() {
@@ -71,7 +71,7 @@ func (p directCallContract) call(
 	site factflow.CallSite,
 	def *ast.FunctionExpr,
 	defs map[symbol.ID]*ast.FunctionExpr,
-	env literalEnv,
+	env guardEnv,
 ) (diagnostic.Diagnostic, bool) {
 	name := result.SymbolName(site.CalleeSymbol())
 	if name == "" {
@@ -153,7 +153,7 @@ func calleeFlowType(result *body.Result, resolver typeannotation.Resolver, point
 			return t, true
 		}
 	}
-	return newFlowExpressionTyper(result, resolver, point, literalEnv{}).typeOf(callee)
+	return newFlowExpressionTyper(result, resolver, point, guardEnv{}).typeOf(callee)
 }
 
 // boundaryMaybeNilCalleeType detects a callee whose flow value is possibly nil
@@ -238,7 +238,7 @@ func (p directCallContract) callFunction(
 	name string,
 	fn *ast.FunctionExpr,
 	defs map[symbol.ID]*ast.FunctionExpr,
-	env literalEnv,
+	env guardEnv,
 ) (diagnostic.Diagnostic, bool) {
 	contract, ok := lowerDirectFunctionContractInScope(fn, p.resolver)
 	if !ok {
@@ -255,7 +255,7 @@ func (p directCallContract) directFunctionCall(
 	fact semantics.CallFact,
 	contract directFunctionContract,
 	defs map[symbol.ID]*ast.FunctionExpr,
-	env literalEnv,
+	env guardEnv,
 ) (diagnostic.Diagnostic, bool) {
 	call := fact.Call
 	if call == nil {
@@ -298,7 +298,7 @@ func (p directCallContract) directFunctionCall(
 		got, ok := untrustedTopLikeExpressionTypeAt(result, p.resolver, point, arg)
 		untrustedTopLike := ok
 		if !ok {
-			got, ok = projectedFlowSourceType(result, p.resolver, point, literalEnv{}, arg)
+			got, ok = projectedFlowSourceType(result, p.resolver, point, guardEnv{}, arg)
 		}
 		if !ok {
 			got, ok = boundaryCallArgumentSourceType(result, point, fact, i)

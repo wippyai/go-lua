@@ -42,7 +42,7 @@ func produceReturnContract(result *body.Result, context producerContext, inherit
 	if !ok || len(returns) == 0 {
 		return nil
 	}
-	envs := literalEnvironments(result)
+	envs := guardEnvironments(result)
 	var out []diagnostic.Diagnostic
 	for _, point := range result.ReturnPoints() {
 		fact, ok := result.ReturnFact(point)
@@ -341,7 +341,7 @@ func directCallArgsCompatible(result *body.Result, point cfg.Point, fact semanti
 	if fact.Call == nil {
 		return false
 	}
-	env := literalEnvironments(result)[point]
+	env := guardEnvironments(result)[point]
 	args := fact.Call.Args
 	required := contract.requiredArity()
 	if len(args) < required {
@@ -416,7 +416,7 @@ func directCallArgumentTypes(result *body.Result, resolver typeannotation.Resolv
 	for i, arg := range fact.Call.Args {
 		got, ok := directObjectLiteralArgumentType(result, resolver, point, arg, defs)
 		if !ok {
-			got, ok = projectedFlowSourceType(result, resolver, point, literalEnv{}, arg)
+			got, ok = projectedFlowSourceType(result, resolver, point, guardEnv{}, arg)
 		}
 		if !ok {
 			got, ok = boundaryCallArgumentSourceType(result, point, fact, i)

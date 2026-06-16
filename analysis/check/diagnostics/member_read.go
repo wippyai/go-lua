@@ -26,13 +26,13 @@ func (p memberRead) Produce(result *body.Result) []diagnostic.Diagnostic {
 	if graph == nil {
 		return nil
 	}
-	envs := literalEnvironments(result)
+	envs := guardEnvironments(result)
 	var out []diagnostic.Diagnostic
 	seen := make(map[*ast.AttrGetExpr]struct{})
 	for _, point := range graph.RPO() {
 		typers := memberReadTypers{
 			narrowed: newStructuralFlowExpressionTyper(result, p.resolver, point, envs[point]),
-			base:     newStructuralFlowExpressionTyper(result, p.resolver, point, literalEnv{}),
+			base:     newStructuralFlowExpressionTyper(result, p.resolver, point, guardEnv{}),
 			result:   result,
 			point:    point,
 		}

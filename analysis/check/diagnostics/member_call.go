@@ -35,7 +35,7 @@ func (p memberCall) Produce(result *body.Result) []diagnostic.Diagnostic {
 	if graph == nil {
 		return nil
 	}
-	envs := literalEnvironments(result)
+	envs := guardEnvironments(result)
 	var out []diagnostic.Diagnostic
 	for _, point := range graph.RPO() {
 		fact, ok := result.Call(point)
@@ -54,7 +54,7 @@ func (p memberCall) Produce(result *body.Result) []diagnostic.Diagnostic {
 	return out
 }
 
-func (p memberCall) call(result *body.Result, point cfg.Point, fact semantics.CallFact, env literalEnv) (diagnostic.Diagnostic, bool) {
+func (p memberCall) call(result *body.Result, point cfg.Point, fact semantics.CallFact, env guardEnv) (diagnostic.Diagnostic, bool) {
 	receiver, member, callExpr, ok := callMemberAccess(fact)
 	if !ok || receiver.Symbol == 0 {
 		return p.expressionReceiverCall(result, point, fact, env)
@@ -103,7 +103,7 @@ func (p memberCall) call(result *body.Result, point cfg.Point, fact semantics.Ca
 // expression with no resolvable symbol path (e.g. make()[1]:topic()). When the
 // receiver type is provably optional, calling a method on it without a nil check
 // is unsound and is reported here.
-func (p memberCall) expressionReceiverCall(result *body.Result, point cfg.Point, fact semantics.CallFact, env literalEnv) (diagnostic.Diagnostic, bool) {
+func (p memberCall) expressionReceiverCall(result *body.Result, point cfg.Point, fact semantics.CallFact, env guardEnv) (diagnostic.Diagnostic, bool) {
 	if fact.Receiver == nil || fact.Method == "" || fact.Call == nil {
 		return diagnostic.Diagnostic{}, false
 	}
@@ -159,7 +159,7 @@ func (p memberCall) callableMemberContract(result *body.Result, point cfg.Point,
 	if fact.Receiver != nil && fact.Method != "" {
 		contract = colonMemberCallContract(receiverType, contract)
 	}
-	return directCallContract(p).directFunctionCall(result, point, fact, contract, nil, literalEnv{})
+	return directCallContract(p).directFunctionCall(result, point, fact, contract, nil, guardEnv{})
 }
 
 func colonMemberCallContract(receiverType typ.Type, contract directFunctionContract) directFunctionContract {
@@ -209,7 +209,7 @@ func memberCallContractName(result *body.Result, fact semantics.CallFact, member
 	return name + "." + member
 }
 
-func (p memberCall) receiverType(result *body.Result, point cfg.Point, fact semantics.CallFact, receiver path.Path, env literalEnv) (typ.Type, bool) {
+func (p memberCall) receiverType(result *body.Result, point cfg.Point, fact semantics.CallFact, receiver path.Path, env guardEnv) (typ.Type, bool) {
 	if fact.Receiver != nil {
 		if t, ok := newFlowExpressionTyper(result, p.resolver, point, env).typeOf(fact.Receiver); ok {
 			return t, true
@@ -252,7 +252,7 @@ func callMemberAccess(fact semantics.CallFact) (path.Path, string, *ast.FuncCall
 	}
 }
 
-func applyLiteralNarrowing(base typ.Type, receiver path.Path, env literalEnv) (typ.Type, bool) {
+func applyLiteralNarrowing(base typ.Type, receiver path.Path, env guardEnv) (typ.Type, bool) {
 	if base == nil || len(env.constraints) == 0 {
 		return base, false
 	}
