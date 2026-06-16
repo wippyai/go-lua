@@ -78,6 +78,11 @@ func (v CallResultTargetView) TargetPathKey() path.PathKey { return v.target.tar
 // TargetPathEmpty reports whether the target path has no identity.
 func (v CallResultTargetView) TargetPathEmpty() bool { return v.target.targetPath.IsEmpty() }
 
+// TargetPathSegmentCount returns the number of path segments below the root.
+func (v CallResultTargetView) TargetPathSegmentCount() int {
+	return len(v.target.targetPath.Segments)
+}
+
 // TargetPathEqual reports whether p matches the target path.
 func (v CallResultTargetView) TargetPathEqual(p path.Path) bool {
 	return v.target.targetPath.Equal(p)

@@ -181,6 +181,15 @@ func (v CallSiteView) Context() CallSiteContext { return v.site.context }
 // CalleeSymbol returns the callee's symbol identity.
 func (v CallSiteView) CalleeSymbol() symbol.ID { return v.site.calleeSymbol }
 
+// CalleePath returns a defensive copy of the callee's path identity.
+func (v CallSiteView) CalleePath() path.Path { return copyPath(v.site.calleePath) }
+
+// CalleePathKey returns the callee path's structural key.
+func (v CallSiteView) CalleePathKey() path.PathKey { return v.site.calleePath.Key() }
+
+// CalleePathEqual reports whether p matches the callee path.
+func (v CallSiteView) CalleePathEqual(p path.Path) bool { return v.site.calleePath.Equal(p) }
+
 // ResultTargetCount returns the number of result targets.
 func (v CallSiteView) ResultTargetCount() int { return len(v.site.resultTargets) }
 

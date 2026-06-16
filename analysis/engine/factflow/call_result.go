@@ -38,6 +38,18 @@ func (s CallResultValueSet) Values() []CallResultValue {
 	return copyCallResultValueSlice(s.values)
 }
 
+// ForEachValue visits fixed call result values without allocating a copy.
+func (s CallResultValueSet) ForEachValue(fn func(CallResultValue) bool) {
+	if fn == nil {
+		return
+	}
+	for _, value := range s.values {
+		if !fn(value) {
+			return
+		}
+	}
+}
+
 func (s CallResultValueSet) copy() CallResultValueSet {
 	return CallResultValueSet{values: copyCallResultValueSlice(s.values)}
 }

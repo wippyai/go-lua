@@ -95,9 +95,10 @@ func materializeCallOutcome(
 	}
 	out = applyChannelSelectResult(ctx, typeValues, resolver, projectPath, out, facts.ChannelSelects(ctx.Point))
 	if hasProducer {
-		for _, result := range facts.CallResultValues(ctx.Point) {
+		facts.ForEachCallResultValue(ctx.Point, func(result factflow.CallResultValue) bool {
 			out = constrainReturnSlot(ctx, out, result)
-		}
+			return true
+		})
 	}
 	return out
 }

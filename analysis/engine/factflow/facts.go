@@ -299,6 +299,14 @@ func (f Facts) CallResultValues(point cfg.Point) []CallResultValue {
 	return nil
 }
 
+// ForEachCallResultValue visits fixed product values for call return slots at
+// point without allocating a slice copy.
+func (f Facts) ForEachCallResultValue(point cfg.Point, fn func(CallResultValue) bool) {
+	if set, ok := f.callResultValues[point]; ok {
+		set.ForEachValue(fn)
+	}
+}
+
 // ReturnPresenceRelations returns return-slot presence relations at point.
 func (f Facts) ReturnPresenceRelations(point cfg.Point) []ReturnPresenceRelation {
 	if set, ok := f.returnPresenceRelations[point]; ok {
