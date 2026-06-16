@@ -77,6 +77,25 @@ func TestEquivalentPathKeysRebaseThroughBranchProofs(t *testing.T) {
 	}
 }
 
+func TestRebaseEquivalentPathKeyStaysUnderTargetPrefix(t *testing.T) {
+	from := pathdom.PathKey("sym10@1.child")
+	to := pathdom.PathKey("sym20@1.leaf")
+
+	got, ok := rebaseEquivalentPathKey(pathdom.PathKey("sym10@1.child.name"), from, to)
+	if !ok || got != pathdom.PathKey("sym20@1.leaf.name") {
+		t.Fatalf("rebaseEquivalentPathKey = %s/%v, want sym20@1.leaf.name/true", got, ok)
+	}
+	if !pathKeyInSubtree(got, to) {
+		t.Fatalf("rebased key %s escaped target prefix %s", got, to)
+	}
+	if got, ok := rebaseEquivalentPathKey(pathdom.PathKey("sym10@1.childish.name"), from, to); ok || got != "" {
+		t.Fatalf("boundary-colliding rebase = %s/%v, want rejected", got, ok)
+	}
+	if got, ok := rebaseEquivalentPathKey(pathdom.PathKey("sym10@1.child.name"), from, pathdom.PathKey("s20.leaf")); ok || got != "" {
+		t.Fatalf("mixed local/stable rebase = %s/%v, want rejected", got, ok)
+	}
+}
+
 func TestRefinementMustJoinDropsOneSidedEntry(t *testing.T) {
 	reg := standard.Registry()
 	domain := Domain(reg)

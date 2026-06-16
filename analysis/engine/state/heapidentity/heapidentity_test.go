@@ -8,8 +8,8 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
-	"github.com/wippyai/go-lua/analysis/test/value/standard"
 	"github.com/wippyai/go-lua/analysis/engine/dynamicindex"
+	"github.com/wippyai/go-lua/analysis/test/value/standard"
 )
 
 func TestObjectDomainBottomTopLaws(t *testing.T) {
@@ -17,7 +17,7 @@ func TestObjectDomainBottomTopLaws(t *testing.T) {
 	domain := ObjectDomain(reg)
 	bottom := BottomObject(reg)
 	top := TopObject()
-	object := TableObject{Root: presentValue(reg)}
+	object := NewTableObject(TableObjectConfig{Root: presentValue(reg)})
 
 	if !domain.Equal(bottom, domain.Bottom()) {
 		t.Fatalf("BottomObject and domain.Bottom differ: %#v vs %#v", bottom, domain.Bottom())
@@ -67,7 +67,7 @@ func TestObjectJoinWidenRootStaticAndDynamic(t *testing.T) {
 		Admission:   dynamicindex.AdmissionRejected,
 	}
 
-	left := TableObject{
+	left := NewTableObject(TableObjectConfig{
 		Root: present,
 		StaticMembers: map[pathdom.PathKey]product.Value{
 			staticCommon: present,
@@ -77,8 +77,8 @@ func TestObjectJoinWidenRootStaticAndDynamic(t *testing.T) {
 			dynCommon: presentFact,
 			dynLeft:   presentFact,
 		},
-	}
-	right := TableObject{
+	})
+	right := NewTableObject(TableObjectConfig{
 		Root: absent,
 		StaticMembers: map[pathdom.PathKey]product.Value{
 			staticCommon: absent,
@@ -87,31 +87,31 @@ func TestObjectJoinWidenRootStaticAndDynamic(t *testing.T) {
 		DynamicIndexFacts: map[dynamicindex.Key]dynamicindex.Fact{
 			dynCommon: absentFact,
 		},
-	}
+	})
 
 	joined := objectDomain.Join(left, right)
-	if !valueDomain.Equal(joined.Root, product.Top()) {
-		t.Fatalf("joined root = %s, want top", formatValue(reg, joined.Root))
+	if !valueDomain.Equal(joined.Root(), product.Top()) {
+		t.Fatalf("joined root = %s, want top", formatValue(reg, joined.Root()))
 	}
-	if got, ok := joined.StaticMembers[staticCommon]; !ok || !valueDomain.Equal(got, product.Top()) {
+	if got, ok := joined.StaticMember(staticCommon); !ok || !valueDomain.Equal(got, product.Top()) {
 		t.Fatalf("joined static common = %s ok=%v, want top", formatValue(reg, got), ok)
 	}
-	if _, ok := joined.StaticMembers[staticLeft]; ok {
+	if _, ok := joined.StaticMember(staticLeft); ok {
 		t.Fatalf("left-only static member survived must-map join")
 	}
-	if _, ok := joined.StaticMembers[staticRight]; ok {
+	if _, ok := joined.StaticMember(staticRight); ok {
 		t.Fatalf("right-only static member survived must-map join")
 	}
 
-	wantDynamic := dynamicDomain.Join(left.DynamicIndexFacts, right.DynamicIndexFacts)
-	if !dynamicDomain.Equal(joined.DynamicIndexFacts, wantDynamic) {
-		t.Fatalf("joined dynamic facts = %#v, want dynamicindex map-domain join %#v", joined.DynamicIndexFacts, wantDynamic)
+	wantDynamic := dynamicDomain.Join(left.DynamicIndexFacts(), right.DynamicIndexFacts())
+	if !dynamicDomain.Equal(joined.DynamicIndexFacts(), wantDynamic) {
+		t.Fatalf("joined dynamic facts = %#v, want dynamicindex map-domain join %#v", joined.DynamicIndexFacts(), wantDynamic)
 	}
-	gotDynamic := joined.DynamicIndexFacts[dynCommon]
+	gotDynamic, _ := joined.DynamicIndexFact(dynCommon)
 	if !presence.Equal(gotDynamic.KeyPresence, presence.Maybe()) || gotDynamic.Admission != dynamicindex.AdmissionUnknown {
 		t.Fatalf("joined dynamic common = %#v, want joined dynamicindex fact", gotDynamic)
 	}
-	if got := joined.DynamicIndexFacts[dynLeft]; !dynamicindex.Domain(reg).Equal(got, presentFact) {
+	if got, _ := joined.DynamicIndexFact(dynLeft); !dynamicindex.Domain(reg).Equal(got, presentFact) {
 		t.Fatalf("left-only dynamic fact = %#v, want preserved fact", got)
 	}
 	if widened := objectDomain.Widen(left, right); !objectDomain.Equal(widened, joined) {
@@ -132,18 +132,18 @@ func TestMapDomainJoinsPointwiseByIdentity(t *testing.T) {
 	absent := absentValue(reg)
 
 	left := map[identity.ID]TableObject{
-		id:      {Root: present},
-		otherID: {Root: present},
+		id:      NewTableObject(TableObjectConfig{Root: present}),
+		otherID: NewTableObject(TableObjectConfig{Root: present}),
 	}
 	right := map[identity.ID]TableObject{
-		id: {Root: absent},
+		id: NewTableObject(TableObjectConfig{Root: absent}),
 	}
 
 	joined := domain.Join(left, right)
-	if got := joined[id].Root; !valueDomain.Equal(got, product.Top()) {
+	if got := joined[id].Root(); !valueDomain.Equal(got, product.Top()) {
 		t.Fatalf("joined shared identity root = %s, want top", formatValue(reg, got))
 	}
-	if got := joined[otherID].Root; !valueDomain.Equal(got, present) {
+	if got := joined[otherID].Root(); !valueDomain.Equal(got, present) {
 		t.Fatalf("joined disjoint identity root = %s, want present", formatValue(reg, got))
 	}
 	if !domain.LessOrEq(left, joined) || !domain.LessOrEq(right, joined) {
@@ -176,32 +176,36 @@ func TestCloneObjectAndMapIndependence(t *testing.T) {
 		Value:       absent,
 		Admission:   dynamicindex.AdmissionRejected,
 	}
-	object := TableObject{
+	object := NewTableObject(TableObjectConfig{
 		Root:          present,
 		StaticMembers: map[pathdom.PathKey]product.Value{staticKey: present},
 		DynamicIndexFacts: map[dynamicindex.Key]dynamicindex.Fact{
 			dynKey: presentFact,
 		},
-	}
+	})
 
 	clone := CloneObject(object)
-	clone.StaticMembers[staticKey] = absent
-	clone.DynamicIndexFacts[dynKey] = absentFact
-	if !product.Domain(reg).Equal(object.StaticMembers[staticKey], present) {
+	cloneStatic := clone.StaticMembers()
+	cloneDynamic := clone.DynamicIndexFacts()
+	cloneStatic[staticKey] = absent
+	cloneDynamic[dynKey] = absentFact
+	if got, _ := object.StaticMember(staticKey); !product.Domain(reg).Equal(got, present) {
 		t.Fatalf("object clone mutation changed static member")
 	}
-	if !dynamicindex.Domain(reg).Equal(object.DynamicIndexFacts[dynKey], presentFact) {
+	if got, _ := object.DynamicIndexFact(dynKey); !dynamicindex.Domain(reg).Equal(got, presentFact) {
 		t.Fatalf("object clone mutation changed dynamic fact")
 	}
 
 	objects := map[identity.ID]TableObject{id: object}
 	mapClone := CloneMap(objects)
-	mapClone[id].StaticMembers[staticKey] = absent
-	mapClone[id].DynamicIndexFacts[dynKey] = absentFact
-	if !product.Domain(reg).Equal(objects[id].StaticMembers[staticKey], present) {
+	mapCloneStatic := mapClone[id].StaticMembers()
+	mapCloneDynamic := mapClone[id].DynamicIndexFacts()
+	mapCloneStatic[staticKey] = absent
+	mapCloneDynamic[dynKey] = absentFact
+	if got, _ := objects[id].StaticMember(staticKey); !product.Domain(reg).Equal(got, present) {
 		t.Fatalf("map clone mutation changed static member")
 	}
-	if !dynamicindex.Domain(reg).Equal(objects[id].DynamicIndexFacts[dynKey], presentFact) {
+	if got, _ := objects[id].DynamicIndexFact(dynKey); !dynamicindex.Domain(reg).Equal(got, presentFact) {
 		t.Fatalf("map clone mutation changed dynamic fact")
 	}
 }
@@ -212,10 +216,10 @@ func TestDeleteEntrySemantics(t *testing.T) {
 	otherID := identity.ID{Kind: "table", Site: "delete", Index: 2}
 	staticKey := pathdom.PathKey("sym92@1.table.name")
 	present := presentValue(reg)
-	object := TableObject{
+	object := NewTableObject(TableObjectConfig{
 		Root:          present,
 		StaticMembers: map[pathdom.PathKey]product.Value{staticKey: present},
-	}
+	})
 
 	out, removed := DeleteEntry(map[identity.ID]TableObject{id: object, otherID: object}, id)
 	if !removed {
@@ -224,8 +228,9 @@ func TestDeleteEntrySemantics(t *testing.T) {
 	if _, ok := out[id]; ok {
 		t.Fatalf("delete retained removed identity")
 	}
-	out[otherID].StaticMembers[staticKey] = absentValue(reg)
-	if !product.Domain(reg).Equal(object.StaticMembers[staticKey], present) {
+	outStatic := out[otherID].StaticMembers()
+	outStatic[staticKey] = absentValue(reg)
+	if got, _ := object.StaticMember(staticKey); !product.Domain(reg).Equal(got, present) {
 		t.Fatalf("delete output shares object maps with input")
 	}
 	if _, removed := DeleteEntry(out, id); removed {

@@ -93,7 +93,7 @@ func equivalentPathKeysForProof(pathKey pathdom.PathKey, proof BranchProof) []pa
 
 func rebaseEquivalentPathKey(pathKey, from, to pathdom.PathKey) (pathdom.PathKey, bool) {
 	rebased, ok := pathaddr.RebasePathKey(pathKey, from, to)
-	if !ok || !pathKeyInSubtree(rebased, rebased) {
+	if !ok || !pathKeyInSubtree(rebased, to) {
 		return "", false
 	}
 	return rebased, true

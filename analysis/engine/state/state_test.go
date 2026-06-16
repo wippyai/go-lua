@@ -269,12 +269,12 @@ func TestStateCloneIndependenceAcrossLanes(t *testing.T) {
 		WritePathKey(reg, fx.pathKey, fx.present).
 		WritePathStaticMember(fx.staticKey, fx.present).
 		WriteDynamicIndexFact(reg, fx.dynamicKey, fx.dynamicFact).
-		WriteHeapTableObject(reg, fx.heapID, heapidentity.TableObject{
+		WriteHeapTableObject(reg, fx.heapID, heapidentity.NewTableObject(heapidentity.TableObjectConfig{
 			Root: fx.present,
 			StaticMembers: map[pathdom.PathKey]product.Value{
 				fx.staticKey: fx.present,
 			},
-		}).
+		})).
 		WriteEffectDelta(fx.effectKey, fx.effectDelta).
 		WritePlacement(fx.escapeID, placement.Stack).
 		AddChannelSelectFact(fx.channelFact).
@@ -313,8 +313,8 @@ func TestStateCloneIndependenceAcrossLanes(t *testing.T) {
 	if got := original.ReadDynamicIndexFact(reg, fx.dynamicKey); !dynamicindex.Domain(reg).Equal(got, fx.dynamicFact) {
 		t.Fatalf("original dynamic index mutated through clone: %#v", got)
 	}
-	if got := original.ReadHeapTableObject(reg, fx.heapID); !product.Equal(reg, got.Root, fx.present) ||
-		!product.Equal(reg, got.StaticMembers[fx.staticKey], fx.present) {
+	if got := original.ReadHeapTableObject(reg, fx.heapID); !product.Equal(reg, got.Root(), fx.present) ||
+		!staticMemberEqual(reg, got, fx.staticKey, fx.present) {
 		t.Fatalf("original heap object mutated through clone: %#v", got)
 	}
 	if got := original.ReadEffectDelta(fx.effectKey); !effectdelta.Domain(reg).Equal(got, fx.effectDelta) {
@@ -342,7 +342,7 @@ func TestStateCloneIndependenceAcrossLanes(t *testing.T) {
 	if got := clone.ReadDynamicIndexFact(reg, fx.dynamicKey); dynamicindex.Domain(reg).Equal(got, fx.dynamicFact) {
 		t.Fatalf("clone dynamic index did not change")
 	}
-	if got := clone.ReadHeapTableObject(reg, fx.heapID); product.Equal(reg, got.Root, fx.present) {
+	if got := clone.ReadHeapTableObject(reg, fx.heapID); product.Equal(reg, got.Root(), fx.present) {
 		t.Fatalf("clone heap object root did not change")
 	}
 	if got := clone.ReadEffectDelta(fx.effectKey); effectdelta.Domain(reg).Equal(got, fx.effectDelta) {
@@ -373,12 +373,12 @@ func TestStateBottomWritesRemoveExplicitBottomEntries(t *testing.T) {
 		WriteValue(reg, fx.valueSlot, fx.present).
 		WritePathKey(reg, fx.pathKey, fx.present).
 		WriteDynamicIndexFact(reg, fx.dynamicKey, fx.dynamicFact).
-		WriteHeapTableObject(reg, fx.heapID, heapidentity.TableObject{
+		WriteHeapTableObject(reg, fx.heapID, heapidentity.NewTableObject(heapidentity.TableObjectConfig{
 			Root: fx.present,
 			StaticMembers: map[pathdom.PathKey]product.Value{
 				fx.staticKey: fx.present,
 			},
-		}).
+		})).
 		WriteEffectDelta(fx.effectKey, fx.effectDelta).
 		WritePlacement(fx.escapeID, placement.Stack)
 
@@ -479,7 +479,7 @@ func TestWritesFromStateBottomProduceReachableState(t *testing.T) {
 		{"path", bottom.WritePathKey(reg, pathKey, present)},
 		{"static-member", bottom.WritePathStaticMember(pathKey, present)},
 		{"dynamic-index", bottom.WriteDynamicIndexFact(reg, dynamicKey, dynamicFact)},
-		{"heap-table", bottom.WriteHeapTableObject(reg, heapID, heapidentity.TableObject{Root: present})},
+		{"heap-table", bottom.WriteHeapTableObject(reg, heapID, heapidentity.NewTableObject(heapidentity.TableObjectConfig{Root: present}))},
 		{"branch-proof", bottom.AddBranchProof(proof)},
 		{"path-presence-implication", bottom.AddPathPresenceImplication(implication)},
 		{"effect-delta", bottom.WriteEffectDelta(effectKey, effectDelta)},
@@ -687,7 +687,7 @@ func TestHeapTableIdentityFacadeReadWriteAndCopy(t *testing.T) {
 	present := presentValue(reg)
 	absent := absentValue(reg)
 
-	object := heapidentity.TableObject{
+	object := heapidentity.NewTableObject(heapidentity.TableObjectConfig{
 		Root: present,
 		StaticMembers: map[pathdom.PathKey]product.Value{
 			staticCommon: present,
@@ -700,7 +700,7 @@ func TestHeapTableIdentityFacadeReadWriteAndCopy(t *testing.T) {
 				Admission:   dynamicindex.AdmissionAdmitted,
 			},
 		},
-	}
+	})
 
 	if got := (State{}).ReadHeapTableObject(reg, id); !heapidentity.ObjectDomain(reg).Equal(got, heapidentity.BottomObject(reg)) {
 		t.Fatalf("empty heap object = %#v, want bottom", got)
@@ -710,17 +710,19 @@ func TestHeapTableIdentityFacadeReadWriteAndCopy(t *testing.T) {
 	if !stateDomain.Equal(stateDomain.Join(stateDomain.Bottom(), written), written) {
 		t.Fatalf("state bottom should be join identity for heap table identity")
 	}
-	if got := written.ReadHeapTableObject(reg, id); !valueDomain.Equal(got.Root, present) {
-		t.Fatalf("heap object root = %s, want present", formatValue(reg, got.Root))
+	if got := written.ReadHeapTableObject(reg, id); !valueDomain.Equal(got.Root(), present) {
+		t.Fatalf("heap object root = %s, want present", formatValue(reg, got.Root()))
 	}
 	read := written.ReadHeapTableObject(reg, id)
-	read.StaticMembers[staticCommon] = absent
-	read.DynamicIndexFacts[dynCommon] = dynamicindex.Fact{Admission: dynamicindex.AdmissionRejected}
+	readStatic := read.StaticMembers()
+	readDynamic := read.DynamicIndexFacts()
+	readStatic[staticCommon] = absent
+	readDynamic[dynCommon] = dynamicindex.Fact{Admission: dynamicindex.AdmissionRejected}
 	again := written.ReadHeapTableObject(reg, id)
-	if !valueDomain.Equal(again.StaticMembers[staticCommon], present) {
+	if got, ok := again.StaticMember(staticCommon); !ok || !valueDomain.Equal(got, present) {
 		t.Fatalf("heap object read exposed mutable static members")
 	}
-	if again.DynamicIndexFacts[dynCommon].Admission != dynamicindex.AdmissionAdmitted {
+	if got, ok := again.DynamicIndexFact(dynCommon); !ok || got.Admission != dynamicindex.AdmissionAdmitted {
 		t.Fatalf("heap object read exposed mutable dynamic facts")
 	}
 }
@@ -1274,7 +1276,7 @@ func TestTopLanesReadTopAndRejectFiniteUpdates(t *testing.T) {
 		top.WriteDynamicIndexFact(reg, dynamicKey, dynamicFact)
 	})
 	requirePanic(t, func() {
-		top.WriteHeapTableObject(reg, heapID, heapidentity.TableObject{Root: present})
+		top.WriteHeapTableObject(reg, heapID, heapidentity.NewTableObject(heapidentity.TableObjectConfig{Root: present}))
 	})
 	requirePanic(t, func() {
 		top.WriteEffectDelta(effectKey, effectDelta)
@@ -1378,12 +1380,12 @@ func stateLawSample(reg *axis.Registry) []State {
 		WritePathStaticMember(fx.staticKey, fx.present).
 		AddBranchProof(fx.proof)
 	dynamicState := State{}.WriteDynamicIndexFact(reg, fx.dynamicKey, fx.dynamicFact)
-	heapState := State{}.WriteHeapTableObject(reg, fx.heapID, heapidentity.TableObject{
+	heapState := State{}.WriteHeapTableObject(reg, fx.heapID, heapidentity.NewTableObject(heapidentity.TableObjectConfig{
 		Root: fx.present,
 		StaticMembers: map[pathdom.PathKey]product.Value{
 			fx.staticKey: fx.present,
 		},
-	})
+	}))
 	effectState := State{}.
 		WriteEffectDelta(fx.effectKey, fx.effectDelta).
 		WritePlacement(fx.escapeID, placement.Stack)
@@ -1392,12 +1394,12 @@ func stateLawSample(reg *axis.Registry) []State {
 		WritePathKey(reg, fx.pathKey, fx.present).
 		WritePathStaticMember(fx.staticKey, fx.present).
 		WriteDynamicIndexFact(reg, fx.dynamicKey, fx.dynamicFact).
-		WriteHeapTableObject(reg, fx.heapID, heapidentity.TableObject{
+		WriteHeapTableObject(reg, fx.heapID, heapidentity.NewTableObject(heapidentity.TableObjectConfig{
 			Root: fx.present,
 			StaticMembers: map[pathdom.PathKey]product.Value{
 				fx.staticKey: fx.present,
 			},
-		}).
+		})).
 		WriteEffectDelta(fx.effectKey, fx.effectDelta).
 		WritePlacement(fx.escapeID, placement.Stack).
 		AddChannelSelectFact(fx.channelFact).
@@ -1420,7 +1422,7 @@ func stateLawFormat(reg *axis.Registry) func(State) string {
 			formatValue(reg, s.ReadPathKey(reg, fx.pathKey)),
 			static,
 			s.ReadDynamicIndexFact(reg, fx.dynamicKey),
-			formatValue(reg, s.ReadHeapTableObject(reg, fx.heapID).Root),
+			formatValue(reg, s.ReadHeapTableObject(reg, fx.heapID).Root()),
 			s.ReadEffectDelta(fx.effectKey),
 			s.ReadPlacement(fx.escapeID),
 			s.HasChannelSelectFact(fx.channelFact),
@@ -1445,6 +1447,11 @@ func presentValue(reg *axis.Registry) product.Value {
 
 func absentValue(reg *axis.Registry) product.Value {
 	return product.NewWithPresence(reg, product.ShapeTop, presence.Absent())
+}
+
+func staticMemberEqual(reg *axis.Registry, object heapidentity.TableObject, key pathdom.PathKey, want product.Value) bool {
+	got, ok := object.StaticMember(key)
+	return ok && product.Equal(reg, got, want)
 }
 
 func formatValue(reg *axis.Registry, v product.Value) string {

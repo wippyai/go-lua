@@ -14,10 +14,52 @@ import (
 type TableObject struct {
 	bottom bool
 
-	Root                 product.Value
-	StaticMembers        map[pathdom.PathKey]product.Value
-	DynamicIndexFacts    map[dynamicindex.Key]dynamicindex.Fact
+	root                 product.Value
+	staticMembers        map[pathdom.PathKey]product.Value
+	dynamicIndexFacts    map[dynamicindex.Key]dynamicindex.Fact
 	dynamicIndexFactsTop bool
+}
+
+// TableObjectConfig carries finite heap table object facts.
+type TableObjectConfig struct {
+	Root              product.Value
+	StaticMembers     map[pathdom.PathKey]product.Value
+	DynamicIndexFacts map[dynamicindex.Key]dynamicindex.Fact
+}
+
+// NewTableObject creates a finite heap table object and takes defensive copies
+// of map-backed lanes.
+func NewTableObject(config TableObjectConfig) TableObject {
+	return TableObject{
+		root:              config.Root,
+		staticMembers:     clonePathMap(config.StaticMembers),
+		dynamicIndexFacts: dynamicindex.CloneMap(config.DynamicIndexFacts),
+	}
+}
+
+// Root returns the object's root product value.
+func (o TableObject) Root() product.Value { return o.root }
+
+// StaticMember reads a proven static member fact.
+func (o TableObject) StaticMember(key pathdom.PathKey) (product.Value, bool) {
+	value, ok := o.staticMembers[key]
+	return value, ok
+}
+
+// StaticMembers returns a defensive copy of finite static member facts.
+func (o TableObject) StaticMembers() map[pathdom.PathKey]product.Value {
+	return clonePathMap(o.staticMembers)
+}
+
+// DynamicIndexFact reads a finite dynamic-index fact.
+func (o TableObject) DynamicIndexFact(key dynamicindex.Key) (dynamicindex.Fact, bool) {
+	value, ok := o.dynamicIndexFacts[key]
+	return value, ok
+}
+
+// DynamicIndexFacts returns a defensive copy of finite dynamic-index facts.
+func (o TableObject) DynamicIndexFacts() map[dynamicindex.Key]dynamicindex.Fact {
+	return dynamicindex.CloneMap(o.dynamicIndexFacts)
 }
 
 func ObjectDomain(reg *axis.Registry) lattice.Lattice[TableObject] {
@@ -31,7 +73,7 @@ func ObjectDomain(reg *axis.Registry) lattice.Lattice[TableObject] {
 			if a.bottom || b.bottom {
 				return a.bottom && b.bottom
 			}
-			return valueDomain.Equal(a.Root, b.Root) &&
+			return valueDomain.Equal(a.root, b.root) &&
 				staticDomain.Equal(staticLane(a), staticLane(b)) &&
 				dynamicDomain.Equal(dynamicLane(a, dynamicDomain), dynamicLane(b, dynamicDomain))
 		},
@@ -42,7 +84,7 @@ func ObjectDomain(reg *axis.Registry) lattice.Lattice[TableObject] {
 			case b.bottom:
 				return false
 			default:
-				return valueDomain.LessOrEq(a.Root, b.Root) &&
+				return valueDomain.LessOrEq(a.root, b.root) &&
 					staticDomain.LessOrEq(staticLane(a), staticLane(b)) &&
 					dynamicDomain.LessOrEq(dynamicLane(a, dynamicDomain), dynamicLane(b, dynamicDomain))
 			}
@@ -57,7 +99,7 @@ func ObjectDomain(reg *axis.Registry) lattice.Lattice[TableObject] {
 			static := staticDomain.Join(staticLane(a), staticLane(b))
 			dynamic := dynamicDomain.Join(dynamicLane(a, dynamicDomain), dynamicLane(b, dynamicDomain))
 			return objectFromLanes(
-				valueDomain.Join(a.Root, b.Root),
+				valueDomain.Join(a.root, b.root),
 				static,
 				dynamic,
 				dynamicDomain,
@@ -73,7 +115,7 @@ func ObjectDomain(reg *axis.Registry) lattice.Lattice[TableObject] {
 			static := staticDomain.Widen(staticLane(prev), staticLane(next))
 			dynamic := dynamicDomain.Widen(dynamicLane(prev, dynamicDomain), dynamicLane(next, dynamicDomain))
 			return objectFromLanes(
-				valueDomain.Widen(prev.Root, next.Root),
+				valueDomain.Widen(prev.root, next.root),
 				static,
 				dynamic,
 				dynamicDomain,
@@ -89,21 +131,21 @@ func MapDomain(reg *axis.Registry) lattice.Lattice[map[identity.ID]TableObject] 
 func BottomObject(reg *axis.Registry) TableObject {
 	return TableObject{
 		bottom: true,
-		Root:   product.Bottom(reg),
+		root:   product.Bottom(reg),
 	}
 }
 
 func TopObject() TableObject {
 	return TableObject{
-		Root:                 product.Top(),
+		root:                 product.Top(),
 		dynamicIndexFactsTop: true,
 	}
 }
 
 func CloneObject(in TableObject) TableObject {
 	out := in
-	out.StaticMembers = clonePathMap(in.StaticMembers)
-	out.DynamicIndexFacts = dynamicindex.CloneMap(in.DynamicIndexFacts)
+	out.staticMembers = clonePathMap(in.staticMembers)
+	out.dynamicIndexFacts = dynamicindex.CloneMap(in.dynamicIndexFacts)
 	return out
 }
 
@@ -138,7 +180,7 @@ func DeleteEntry(
 }
 
 func staticLane(object TableObject) lift.MustMapLane[pathdom.PathKey, product.Value] {
-	return lift.MustMapValues(object.StaticMembers)
+	return lift.MustMapValues(object.staticMembers)
 }
 
 func dynamicLane(
@@ -148,7 +190,7 @@ func dynamicLane(
 	if object.dynamicIndexFactsTop {
 		return domain.Top()
 	}
-	return object.DynamicIndexFacts
+	return object.dynamicIndexFacts
 }
 
 func objectFromLanes(
@@ -158,13 +200,13 @@ func objectFromLanes(
 	dynamicDomain lattice.Lattice[map[dynamicindex.Key]dynamicindex.Fact],
 ) TableObject {
 	object := TableObject{
-		Root:          root,
-		StaticMembers: clonePathMap(static.Values()),
+		root:          root,
+		staticMembers: clonePathMap(static.Values()),
 	}
 	if dynamicDomain.Equal(dynamic, dynamicDomain.Top()) {
 		object.dynamicIndexFactsTop = true
 	} else {
-		object.DynamicIndexFacts = dynamicindex.CloneMap(dynamic)
+		object.dynamicIndexFacts = dynamicindex.CloneMap(dynamic)
 	}
 	return object
 }
