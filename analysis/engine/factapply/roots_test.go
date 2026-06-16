@@ -174,6 +174,38 @@ func TestFactsNodeTransferRootAssignmentPropagatesNumericFloorThroughIncrement(t
 	}
 }
 
+func TestFactsNodeTransferRootAssignmentClearsNumericFloorWhenSourceIsUnresolved(t *testing.T) {
+	reg := standard.Registry()
+	point := cfg.Point(14)
+	target := symbol.ID(114)
+	targetPath := path.NewPath(target, "i")
+	targetKey := targetPath.Key()
+	source := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: factflow.ExprRef(141), HasExpr: true}
+	declared := presentValue(reg)
+	visibilityBuilder := visibility.NewBuilder()
+	visibilityBuilder.Define(point, target, "i")
+	sources := &recordingSourceValues{}
+
+	got := NewFactsNodeTransfer(FactsNodeTransferConfig{
+		Facts: factflow.NewFacts(factflow.FactsInput{
+			RootAssignments: map[cfg.Point]factflow.RootAssignment{
+				point: factflow.NewRootAssignmentWithDeclaredValue(factflow.RootAssignmentLocalDeclaration, target, targetPath, source, declared),
+			},
+		}),
+		Sources:    sources,
+		Visibility: visibility.NewResolver(visibilityBuilder.Build()),
+	})(transfer.NodeContext{
+		Registry: reg,
+		Point:    point,
+	}, state.State{}.WriteNumFloor(targetKey, 9))
+
+	if floor, ok := got.ReadNumFloor(targetKey); ok || floor != 0 {
+		t.Fatalf("numeric floor for i = %d/%v, want 0/false", floor, ok)
+	}
+	assertValue(t, reg, got, key.SymbolValue(target), declared)
+	assertResolverCall(t, sources, point, source)
+}
+
 func TestFactsNodeTransferRootAssignmentUsesDeclaredContractBeforeSource(t *testing.T) {
 	reg := standard.Registry()
 	graph := cfg.New()

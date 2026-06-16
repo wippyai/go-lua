@@ -9,9 +9,9 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
-	"github.com/wippyai/go-lua/analysis/test/value/standard"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
+	"github.com/wippyai/go-lua/analysis/test/value/standard"
 )
 
 func TestRun_LinearGraphPropagatesEntryStateThroughIdentityTransfers(t *testing.T) {
@@ -33,6 +33,41 @@ func TestRun_LinearGraphPropagatesEntryStateThroughIdentityTransfers(t *testing.
 	for _, point := range []cfg.Point{graph.Entry(), mid, graph.Exit()} {
 		assertValue(t, reg, got[point], slot, presentValue(reg))
 	}
+}
+
+func TestRun_CustomEntryStateSeedsReachableCustomEntry(t *testing.T) {
+	reg := standard.Registry()
+	graph := cfg.New()
+	mid := graph.AddNode(cfg.NodeNoop)
+	graph.AddEdge(graph.Entry(), mid, false)
+	graph.AddEdge(mid, graph.Exit(), false)
+
+	slot := key.ReturnSlot(6)
+	entryState := state.State{}.WriteValue(reg, slot, presentValue(reg))
+	got := Run(Config{
+		Graph:      graph,
+		Registry:   reg,
+		Entry:      &mid,
+		EntryState: entryState,
+	})
+
+	assertValue(t, reg, got[graph.Entry()], slot, product.Bottom(reg))
+	assertValue(t, reg, got[mid], slot, presentValue(reg))
+	assertValue(t, reg, got[graph.Exit()], slot, presentValue(reg))
+}
+
+func TestRun_RejectsCustomEntryNotInRPO(t *testing.T) {
+	reg := standard.Registry()
+	graph := cfg.New()
+	dead := graph.AddNode(cfg.NodeNoop)
+
+	mustPanic(t, "transfer: Config.Entry is not in graph.RPO()", func() {
+		Run(Config{
+			Graph:    graph,
+			Registry: reg,
+			Entry:    &dead,
+		})
+	})
 }
 
 func TestRun_NodeTransferWritesAssignmentOutputForSuccessor(t *testing.T) {
@@ -261,6 +296,20 @@ func assertValue(t *testing.T, reg *axis.Registry, gotState state.State, slot ke
 	if got := gotState.ReadValue(reg, slot); !product.Equal(reg, got, want) {
 		t.Fatalf("slot %s = %s, want %s", slot, formatValue(reg, got), formatValue(reg, want))
 	}
+}
+
+func mustPanic(t *testing.T, want any, f func()) {
+	t.Helper()
+	defer func() {
+		got := recover()
+		if got == nil {
+			t.Fatalf("expected panic %v", want)
+		}
+		if got != want {
+			t.Fatalf("panic = %v, want %v", got, want)
+		}
+	}()
+	f()
 }
 
 func presentValue(reg *axis.Registry) product.Value {

@@ -10,8 +10,8 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/typewitness"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/variantorigin"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
-	"github.com/wippyai/go-lua/analysis/test/value/standard"
 	"github.com/wippyai/go-lua/analysis/domain/value/variant"
+	"github.com/wippyai/go-lua/analysis/test/value/standard"
 	"github.com/wippyai/go-lua/analysis/type/ambient"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
@@ -162,6 +162,21 @@ func TestTypeOfPrefersWitnessOverVariantOrigin(t *testing.T) {
 	got, ok := TypeOf(reg, value)
 	if !ok || !typ.TypeEquals(got, left) {
 		t.Fatalf("TypeOf(witnessed value) = %v/%v, want %v", got, ok, left)
+	}
+}
+
+func TestIntegerLiteralValueProjectsExactIntegerWitness(t *testing.T) {
+	reg := standard.Registry()
+	lit := typ.LiteralInt(42)
+	value := WithWitness(reg, FromType(reg, lit), lit)
+
+	got, ok := IntegerLiteralValue(reg, value)
+	if !ok || got != 42 {
+		t.Fatalf("IntegerLiteralValue = %d/%v, want 42/true", got, ok)
+	}
+
+	if _, ok := IntegerLiteralValue(reg, WithWitness(reg, FromType(reg, typ.Number), typ.Number)); ok {
+		t.Fatalf("IntegerLiteralValue(number) returned true")
 	}
 }
 

@@ -467,7 +467,7 @@ func TestFactsNodeTransferCallOutcomeBindsReceiverBeforeExplicitArgs(t *testing.
 	}
 }
 
-func TestFactsNodeTransferCallOutcomeRebasesStateLaneFacts(t *testing.T) {
+func TestFactsNodeTransferCallOutcomeRebasesBoundaryFacts(t *testing.T) {
 	reg := standard.Registry()
 	point := cfg.Point(504)
 	first := symbol.ID(505)

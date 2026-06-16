@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	path "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
@@ -394,6 +395,77 @@ func TestExpressionRefinementSourceValuesMissingInnerSourceReturnsFalse(t *testi
 	if got, ok := resolver.ValueOfSource(cfg.Point(3), ValueSource{Kind: ValueSourceExpression, ExprRef: ExprRef(30), HasExpr: true}, state.State{}, nil); ok {
 		t.Fatalf("missing refinement inner source resolved to %s, want false", formatValue(reg, got))
 	}
+}
+
+func TestNumFloorForSourceDerivesExactIntegerPathAndBinaryFloors(t *testing.T) {
+	reg := standard.Registry()
+	point := cfg.Point(91)
+	exactExpr := ExprRef(910)
+	pathExpr := ExprRef(911)
+	sumExpr := ExprRef(912)
+	missingExpr := ExprRef(913)
+	oneExpr := ExprRef(914)
+	pathSymbol := symbol.ID(991)
+	pathValue := path.NewPath(pathSymbol, "i")
+	pathKey := pathValue.Key()
+	exactSource := ValueSource{Kind: ValueSourceExpression, ExprRef: exactExpr, HasExpr: true}
+	pathSource := ValueSource{Kind: ValueSourceExpression, ExprRef: pathExpr, HasExpr: true}
+	sumSource := ValueSource{Kind: ValueSourceExpression, ExprRef: sumExpr, HasExpr: true}
+	missingSource := ValueSource{Kind: ValueSourceExpression, ExprRef: missingExpr, HasExpr: true}
+	oneType := typ.LiteralInt(1)
+	oneValue := typevalue.WithWitness(reg, typevalue.FromType(reg, oneType), oneType)
+	exactType := typ.LiteralInt(7)
+	exactValue := typevalue.WithWitness(reg, typevalue.FromType(reg, exactType), exactType)
+	resolver := fixedPathKeyResolver{key: pathKey}
+	sumOp, ok := NewBinaryExpressionOperation("+", pathSource, ValueSource{Kind: ValueSourceExpression, ExprRef: oneExpr, HasExpr: true})
+	if !ok {
+		t.Fatal("NewBinaryExpressionOperation returned false")
+	}
+	facts := NewFacts(FactsInput{
+		ExpressionValues: map[ExprRef]product.Value{
+			exactExpr: exactValue,
+			oneExpr:   oneValue,
+		},
+		ExpressionPaths: map[ExprRef]path.Path{
+			pathExpr: pathValue,
+		},
+		ExpressionOperations: map[ExprRef]ExpressionOperation{
+			sumExpr: sumOp,
+		},
+	})
+	in := state.State{}.WriteNumFloor(pathKey, 3)
+
+	tests := []struct {
+		name   string
+		source ValueSource
+		want   int64
+		ok     bool
+	}{
+		{name: "exact integer", source: exactSource, want: 7, ok: true},
+		{name: "path floor", source: pathSource, want: 3, ok: true},
+		{name: "binary plus constant", source: sumSource, want: 4, ok: true},
+		{name: "missing unresolved", source: missingSource, ok: false},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, ok := NumFloorForSource(reg, resolver, point, facts, in, tc.source)
+			if ok != tc.ok {
+				t.Fatalf("ok = %v, want %v", ok, tc.ok)
+			}
+			if ok && got != tc.want {
+				t.Fatalf("floor = %d, want %d", got, tc.want)
+			}
+		})
+	}
+}
+
+type fixedPathKeyResolver struct {
+	key path.PathKey
+}
+
+func (r fixedPathKeyResolver) KeyAt(point cfg.Point, p path.Path) path.PathKey {
+	return r.key
 }
 
 func runtimeKindRefinement(reg *axis.Registry, value runtimekind.Value) product.Value {

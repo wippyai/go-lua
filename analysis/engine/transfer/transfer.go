@@ -158,4 +158,12 @@ func validateConfig(config Config) {
 	if config.Registry == nil {
 		panic("transfer: Config.Registry is nil")
 	}
+	if config.Entry != nil {
+		for _, point := range config.Graph.RPO() {
+			if point == *config.Entry {
+				return
+			}
+		}
+		panic("transfer: Config.Entry is not in graph.RPO()")
+	}
 }
