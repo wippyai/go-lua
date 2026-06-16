@@ -9,6 +9,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
 	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
 	"github.com/wippyai/go-lua/analysis/lua/typeannotation"
+	luatypeprojection "github.com/wippyai/go-lua/analysis/lua/typeprojection"
 	"github.com/wippyai/go-lua/analysis/lua/valueexpr"
 	"github.com/wippyai/go-lua/analysis/type/kind"
 	"github.com/wippyai/go-lua/analysis/type/normalize"
@@ -626,11 +627,11 @@ func expectedSegmentType(t typ.Type, seg segment.Segment) (typ.Type, bool) {
 	case *typ.Record:
 		return expectedRecordSegmentType(tt, seg)
 	case *typ.Map:
-		if key, ok := segmentKeyType(seg); ok && subtype.IsSubtype(key, tt.Key) {
+		if key, ok := luatypeprojection.SegmentKeyType(seg); ok && subtype.IsSubtype(key, tt.Key) {
 			return tt.Value, tt.Value != nil
 		}
 	case *typ.ReadonlyMap:
-		if key, ok := segmentKeyType(seg); ok && subtype.IsSubtype(key, tt.Key) {
+		if key, ok := luatypeprojection.SegmentKeyType(seg); ok && subtype.IsSubtype(key, tt.Key) {
 			return tt.Value, tt.Value != nil
 		}
 	}
@@ -658,7 +659,7 @@ func expectedRecordSegmentType(record *typ.Record, seg segment.Segment) (typ.Typ
 	if !record.HasMapComponent() {
 		return nil, false
 	}
-	key, ok := segmentKeyType(seg)
+	key, ok := luatypeprojection.SegmentKeyType(seg)
 	if !ok || !subtype.IsSubtype(key, record.MapKey) {
 		return nil, false
 	}
@@ -701,17 +702,6 @@ func closedRecord(t typ.Type) (*typ.Record, bool) {
 		return nil, false
 	}
 	return record, true
-}
-
-func segmentKeyType(seg segment.Segment) (typ.Type, bool) {
-	switch seg.Kind {
-	case segment.SegmentField, segment.SegmentIndexString:
-		return typ.LiteralString(seg.Name), true
-	case segment.SegmentIndexInt:
-		return typ.LiteralInt(int64(seg.Index)), true
-	default:
-		return nil, false
-	}
 }
 
 func transparentExpectedType(t typ.Type) typ.Type {

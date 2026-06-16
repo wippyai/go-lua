@@ -110,7 +110,7 @@ func Project(config Config, point cfg.Point, p pathdom.Path, in state.State) (pr
 
 func unknownIndexReadValue(config Config, seg segment.Segment) (product.Value, bool) {
 	reg := config.Registry
-	keyType, ok := segmentKeyType(seg)
+	keyType, ok := luatypeprojection.SegmentKeyType(seg)
 	if !ok {
 		return product.Value{}, false
 	}
@@ -290,17 +290,6 @@ func runtimeMayBeTable(reg *axis.Registry, value product.Value, hasValue bool) b
 		return true
 	}
 	return kinds.Contains(runtimekind.Table)
-}
-
-func segmentKeyType(seg segment.Segment) (typ.Type, bool) {
-	switch seg.Kind {
-	case segment.SegmentField, segment.SegmentIndexString:
-		return typ.LiteralString(seg.Name), true
-	case segment.SegmentIndexInt:
-		return typ.LiteralInt(int64(seg.Index)), true
-	default:
-		return nil, false
-	}
 }
 
 func withoutNilRuntimeKind(reg *axis.Registry, value product.Value) product.Value {

@@ -131,6 +131,43 @@ func TestApplySegmentsRejectsUnsupportedKind(t *testing.T) {
 	}
 }
 
+func TestSegmentKeyType(t *testing.T) {
+	tests := []struct {
+		name string
+		seg  segment.Segment
+		want typ.Type
+	}{
+		{
+			name: "field",
+			seg:  segment.Segment{Kind: segment.SegmentField, Name: "name"},
+			want: typ.LiteralString("name"),
+		},
+		{
+			name: "string index",
+			seg:  segment.Segment{Kind: segment.SegmentIndexString, Name: "raw-key"},
+			want: typ.LiteralString("raw-key"),
+		},
+		{
+			name: "integer index",
+			seg:  segment.Segment{Kind: segment.SegmentIndexInt, Index: 3},
+			want: typ.LiteralInt(3),
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, ok := SegmentKeyType(tt.seg)
+			if !ok {
+				t.Fatal("SegmentKeyType failed")
+			}
+			assertProjectionType(t, got, tt.want)
+		})
+	}
+
+	if got, ok := SegmentKeyType(segment.Segment{Kind: segment.SegmentKind(99)}); ok || got != nil {
+		t.Fatal("SegmentKeyType unsupported segment succeeded")
+	}
+}
+
 func assertProjectionType(t *testing.T, got typ.Type, want typ.Type) {
 	t.Helper()
 	if !typ.TypeEquals(got, want) {

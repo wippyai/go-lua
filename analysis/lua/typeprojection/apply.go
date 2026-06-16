@@ -80,3 +80,15 @@ func ApplySegments(source typ.Type, segments []segment.Segment) (typ.Type, bool)
 	}
 	return current, current != nil
 }
+
+// SegmentKeyType returns the literal Lua key type for a static path segment.
+func SegmentKeyType(seg segment.Segment) (typ.Type, bool) {
+	switch seg.Kind {
+	case segment.SegmentField, segment.SegmentIndexString:
+		return typ.LiteralString(seg.Name), true
+	case segment.SegmentIndexInt:
+		return typ.LiteralInt(int64(seg.Index)), true
+	default:
+		return nil, false
+	}
+}

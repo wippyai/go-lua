@@ -9,6 +9,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/typeannotation"
 	"github.com/wippyai/go-lua/analysis/lua/typeoperator"
+	luatypeprojection "github.com/wippyai/go-lua/analysis/lua/typeprojection"
 	"github.com/wippyai/go-lua/analysis/lua/valueexpr"
 	"github.com/wippyai/go-lua/analysis/type/access"
 	"github.com/wippyai/go-lua/analysis/type/kind"
@@ -222,7 +223,7 @@ func expressionSegmentType(t typ.Type, seg segment.Segment) (typ.Type, bool) {
 		}
 		return nil, false
 	case segment.SegmentIndexString, segment.SegmentIndexInt:
-		key, ok := segmentKeyType(seg)
+		key, ok := luatypeprojection.SegmentKeyType(seg)
 		if !ok {
 			return nil, false
 		}
