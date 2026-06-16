@@ -64,16 +64,19 @@ func SignatureOutcomeProvider(config SignatureOutcomeProviderConfig) factapply.C
 		}
 		ownedSite := site.CallSite()
 		sig = instantiateSignatureForCall(ctx, facts, sources, expressionRefinements, argumentType, sig, ownedSite, in, read, returnTypeOps)
-		invalidations := signatureParamPathInvalidations(sig, ownedSite)
-		out := factapply.CallOutcome{
-			ReturnPresenceRelations: signatureReturnPresenceRelations(sig),
-			ParamPathRefinements:    signatureParamPathRefinements(ctx, sig, ownedSite),
-			ParamPathInvalidations:  invalidations,
+		var out factapply.CallOutcome
+		if sig.OperationalEffects != nil {
+			out = applyOperationalEffects(ctx, out, sig.OperationalEffects)
+		} else {
+			invalidations := signatureParamPathInvalidations(sig, ownedSite)
+			out.ReturnPresenceRelations = signatureReturnPresenceRelations(sig)
+			out.ParamPathRefinements = signatureParamPathRefinements(ctx, sig, ownedSite)
+			out.ParamPathInvalidations = invalidations
+			out.NormalReturnFacts.PathInvalidations = signatureNormalReturnPathInvalidations(invalidations)
+			out.NormalReturnFacts.EscapeEvents = signatureEscapeEvents(sig, ownedSite)
+			out.NormalReturnFacts.FrozenTables = signatureFrozenTables(sig, ownedSite)
+			out.NormalReturnFacts.StoreRelations = signatureStoreRelations(sig, ownedSite)
 		}
-		out.NormalReturnFacts.PathInvalidations = signatureNormalReturnPathInvalidations(invalidations)
-		out.NormalReturnFacts.EscapeEvents = signatureEscapeEvents(sig, ownedSite)
-		out.NormalReturnFacts.FrozenTables = signatureFrozenTables(sig, ownedSite)
-		out.NormalReturnFacts.StoreRelations = signatureStoreRelations(sig, ownedSite)
 		if sig.Type == nil || len(sig.Type.Returns) == 0 {
 			out.PostReturnAuthority = calloutcome.HasPostReturnEvidence(ctx.Registry, out)
 			return out

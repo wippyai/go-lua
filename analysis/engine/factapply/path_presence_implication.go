@@ -208,8 +208,10 @@ func applyPathPresenceImplicationTarget(
 	}
 	constraint := product.NewWithPresence(reg, product.ShapeTop, implication.TargetPresence)
 	if sym, ok := rootSymbolForResolverPathKey(implication.Target); ok {
-		if invalidated, valid := out.InvalidatePathKeyDescendants(implication.Target); valid {
-			out = invalidated
+		if presenceImplicationTargetInvalidatesDescendants(implication.TargetPresence) {
+			if invalidated, valid := out.InvalidatePathKeyDescendants(implication.Target); valid {
+				out = invalidated
+			}
 		}
 		slot := key.SymbolValue(sym)
 		return out.UpdateValue(reg, slot, func(value product.Value) product.Value {
@@ -221,6 +223,10 @@ func applyPathPresenceImplicationTarget(
 		return out.WritePathKey(reg, implication.Target, constraint)
 	}
 	return out.WritePathKey(reg, implication.Target, product.Meet(reg, current, constraint))
+}
+
+func presenceImplicationTargetInvalidatesDescendants(target presence.Value) bool {
+	return presence.Equal(target, presence.Absent())
 }
 
 func readPathKeyPresence(

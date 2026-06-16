@@ -5,6 +5,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/domain/effect"
 	"github.com/wippyai/go-lua/analysis/domain/effect/control"
+	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
@@ -60,6 +61,55 @@ func TestFunctionCloneCopiesEffectRowAndFunctionSlices(t *testing.T) {
 	}
 	if original.Effect.Tail.Name != "rho" {
 		t.Fatalf("clone mutation changed original effect tail")
+	}
+}
+
+func TestFunctionCloneCopiesOperationalEffects(t *testing.T) {
+	original := Function{
+		Type: typ.Func().
+			Param("value", typ.String).
+			Build(),
+		OperationalEffects: &OperationalEffects{
+			EscapeEvents: []EscapeEvent{{
+				Target:    pathdom.NewPlaceholder(0).Field("child"),
+				Kind:      EscapeSend,
+				Recursive: true,
+			}},
+		},
+	}
+
+	clone := original.Clone()
+	if !clone.Equals(original) {
+		t.Fatalf("clone = %#v, want %#v", clone, original)
+	}
+	if clone.OperationalEffects == original.OperationalEffects {
+		t.Fatalf("clone should not share operational effects pointer")
+	}
+
+	clone.OperationalEffects.EscapeEvents[0].Target.Segments[0].Name = "other"
+	clone.OperationalEffects.EscapeEvents[0].Kind = EscapeOpaque
+
+	if got := original.OperationalEffects.EscapeEvents[0].Target.String(); got != "$0.child" {
+		t.Fatalf("clone mutation changed original target: %s", got)
+	}
+	if got := original.OperationalEffects.EscapeEvents[0].Kind; got != EscapeSend {
+		t.Fatalf("clone mutation changed original kind: %v", got)
+	}
+}
+
+func TestFunctionEqualsDistinguishesOperationalEffectsAuthority(t *testing.T) {
+	fn := typ.Func().Param("value", typ.String).Build()
+	nilOperational := Function{Type: fn}
+	emptyOperational := Function{Type: fn, OperationalEffects: &OperationalEffects{}}
+	withOperational := Function{Type: fn, OperationalEffects: &OperationalEffects{
+		FrozenTables: []FrozenTable{{Target: pathdom.NewPlaceholder(0)}},
+	}}
+
+	if nilOperational.Equals(emptyOperational) {
+		t.Fatalf("nil operational effects should differ from authoritative empty effects")
+	}
+	if emptyOperational.Equals(withOperational) {
+		t.Fatalf("different operational effects should not compare equal")
 	}
 }
 

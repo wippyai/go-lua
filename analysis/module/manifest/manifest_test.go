@@ -14,6 +14,8 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/effect/ownership"
 	"github.com/wippyai/go-lua/analysis/domain/effect/postcondition"
 	"github.com/wippyai/go-lua/analysis/domain/effect/returns"
+	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/module/signature"
 	"github.com/wippyai/go-lua/analysis/type/annotation"
 	"github.com/wippyai/go-lua/analysis/type/projection"
@@ -142,16 +144,46 @@ func TestManifestRoundTripNamedFunctionSignatureEffects(t *testing.T) {
 		Param("out", typ.NewArray(typ.String)).
 		Returns(typ.String).
 		Build()
+	operational := &signature.OperationalEffects{
+		ReturnPresenceRelations: []signature.ReturnPresenceRelation{{
+			TriggerIndex:    1,
+			TriggerPresence: presence.Present(),
+			TargetIndex:     0,
+			TargetPresence:  presence.Absent(),
+		}},
+		NormalReturnPresenceRefinements: []signature.PathPresenceRefinement{{
+			Path:     pathdom.NewPlaceholder(0).Field("ready"),
+			Presence: presence.Present(),
+		}},
+		PathInvalidations: []signature.PathInvalidation{{
+			Path: pathdom.NewPlaceholder(1).Field("items"),
+		}},
+		FrozenTables: []signature.FrozenTable{{
+			Target: pathdom.NewPlaceholder(0).Field("sealed"),
+		}},
+		EscapeEvents: []signature.EscapeEvent{{
+			Target:    pathdom.NewPlaceholder(0).Field("payload"),
+			Kind:      signature.EscapeSend,
+			Recursive: true,
+		}},
+		StoreRelations: []signature.StoreRelation{{
+			Source: pathdom.NewPlaceholder(0).Field("payload"),
+			Into:   pathdom.NewPlaceholder(1).Field("items"),
+		}},
+	}
 	m := New("example/effects")
 	m.SetExport(export)
-	m.DefineFunctionSignature("transform", signature.Function{Type: export, Effect: row})
+	m.DefineFunctionSignature("transform", signature.Function{Type: export, Effect: row, OperationalEffects: operational})
 
 	data, err := Encode(m)
 	if err != nil {
 		t.Fatalf("Encode: %v", err)
 	}
-	if !strings.Contains(string(data), `"functionSignatures"`) || !strings.Contains(string(data), `"effect"`) {
-		t.Fatalf("encoded manifest missing function signature effect row:\n%s", data)
+	if !strings.Contains(string(data), `"functionSignatures"`) ||
+		!strings.Contains(string(data), `"effect"`) ||
+		!strings.Contains(string(data), `"operationalEffects"`) ||
+		!strings.Contains(string(data), `"suffix": ".payload"`) {
+		t.Fatalf("encoded manifest missing function signature effect data:\n%s", data)
 	}
 	got, err := Decode(data)
 	if err != nil {
@@ -171,11 +203,14 @@ func TestManifestRoundTripNamedFunctionSignatureEffects(t *testing.T) {
 	if !gotSig.Effect.Equals(row) {
 		t.Fatalf("effect = %v, want %v", gotSig.Effect, row)
 	}
+	if gotSig.OperationalEffects == nil || !gotSig.OperationalEffects.Equals(*operational) {
+		t.Fatalf("operational effects = %#v, want %#v", gotSig.OperationalEffects, operational)
+	}
 	if !typ.TypeEquals(gotSig.Type, gotFn) {
 		t.Fatalf("signature type = %v, want %v", gotSig.Type, gotFn)
 	}
-	if !(signature.Function{Type: export, Effect: row}).Equals(gotSig) {
-		t.Fatalf("signature = %v, want %v", gotSig, signature.Function{Type: export, Effect: row})
+	if !(signature.Function{Type: export, Effect: row, OperationalEffects: operational}).Equals(gotSig) {
+		t.Fatalf("signature = %v, want %v", gotSig, signature.Function{Type: export, Effect: row, OperationalEffects: operational})
 	}
 }
 

@@ -179,9 +179,10 @@ type namedTypeWire struct {
 }
 
 type functionSignatureWire struct {
-	Name   string         `json:"name"`
-	Type   *typeWire      `json:"type,omitempty"`
-	Effect *effectRowWire `json:"effect,omitempty"`
+	Name               string                  `json:"name"`
+	Type               *typeWire               `json:"type,omitempty"`
+	Effect             *effectRowWire          `json:"effect,omitempty"`
+	OperationalEffects *operationalEffectsWire `json:"operationalEffects,omitempty"`
 }
 
 func encodeFunctionSignature(sig signature.Function) (functionSignatureWire, error) {
@@ -196,7 +197,15 @@ func encodeFunctionSignature(sig signature.Function) (functionSignatureWire, err
 	if err != nil {
 		return functionSignatureWire{}, err
 	}
-	return functionSignatureWire{Type: encodedType, Effect: encodedEffect}, nil
+	encodedOperational, err := encodeOperationalEffects(sig.OperationalEffects)
+	if err != nil {
+		return functionSignatureWire{}, err
+	}
+	return functionSignatureWire{
+		Type:               encodedType,
+		Effect:             encodedEffect,
+		OperationalEffects: encodedOperational,
+	}, nil
 }
 
 func decodeFunctionSignature(w functionSignatureWire) (signature.Function, error) {
@@ -212,5 +221,13 @@ func decodeFunctionSignature(w functionSignatureWire) (signature.Function, error
 	if err != nil {
 		return signature.Function{}, err
 	}
-	return signature.Function{Type: fn, Effect: row}, nil
+	operational, err := decodeOperationalEffects(w.OperationalEffects)
+	if err != nil {
+		return signature.Function{}, err
+	}
+	var operationalPtr *signature.OperationalEffects
+	if w.OperationalEffects != nil {
+		operationalPtr = &operational
+	}
+	return signature.Function{Type: fn, Effect: row, OperationalEffects: operationalPtr}, nil
 }

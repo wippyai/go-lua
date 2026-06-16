@@ -900,6 +900,141 @@ func TestSignatureOutcomeProviderLowersExactOwnershipEscapeLabels(t *testing.T) 
 	assertEscapeEvent(t, got.NormalReturnFacts.EscapeEvents, path.NewPlaceholder(2), callboundary.EscapeEventOpaque, true)
 }
 
+func TestSignatureOutcomeProviderLowersOperationalEffectsNormalReturnFacts(t *testing.T) {
+	reg := standard.Registry()
+	operational := &signature.OperationalEffects{
+		ReturnPresenceRelations: []signature.ReturnPresenceRelation{{
+			TriggerIndex:    1,
+			TriggerPresence: presence.Present(),
+			TargetIndex:     0,
+			TargetPresence:  presence.Absent(),
+		}},
+		NormalReturnPresenceRefinements: []signature.PathPresenceRefinement{{
+			Path:     path.NewPlaceholder(0).Field("ready"),
+			Presence: presence.Present(),
+		}},
+		PathInvalidations: []signature.PathInvalidation{{
+			Path: path.NewPlaceholder(1).Field("items"),
+		}},
+		FrozenTables: []signature.FrozenTable{{
+			Target: path.NewPlaceholder(0).Field("sealed"),
+		}},
+		EscapeEvents: []signature.EscapeEvent{{
+			Target:    path.NewPlaceholder(0).Field("payload"),
+			Kind:      signature.EscapeSend,
+			Recursive: true,
+		}},
+		StoreRelations: []signature.StoreRelation{{
+			Source: path.NewPlaceholder(0).Field("payload"),
+			Into:   path.NewPlaceholder(1).Field("items"),
+		}},
+	}
+	provider := SignatureOutcomeProvider(SignatureOutcomeProviderConfig{
+		Signatures: signatureMap{
+			"f": {OperationalEffects: operational},
+		},
+		NameFor: staticName("f"),
+	})
+
+	got := provider(transfer.NodeContext{Registry: reg}, factflow.NewCallSite(factflow.CallSiteConfig{}).View(), state.State{}, nil)
+
+	if !got.PostReturnAuthority {
+		t.Fatalf("PostReturnAuthority = false, want true for operational effects")
+	}
+	assertCallReturnPresenceRelation(t, got.ReturnPresenceRelations, 1, presence.Present(), 0, presence.Absent())
+	if len(got.NormalReturnFacts.PathRefinements) != 1 ||
+		!got.NormalReturnFacts.PathRefinements[0].Path.Equal(path.NewPlaceholder(0).Field("ready")) {
+		t.Fatalf("path refinements = %#v", got.NormalReturnFacts.PathRefinements)
+	}
+	assertPresence(t, reg, got.NormalReturnFacts.PathRefinements[0].Value, presence.Present())
+	if len(got.NormalReturnFacts.PathInvalidations) != 1 ||
+		!got.NormalReturnFacts.PathInvalidations[0].Path.Equal(path.NewPlaceholder(1).Field("items")) {
+		t.Fatalf("path invalidations = %#v", got.NormalReturnFacts.PathInvalidations)
+	}
+	if len(got.NormalReturnFacts.FrozenTables) != 1 ||
+		!got.NormalReturnFacts.FrozenTables[0].Target.Equal(path.NewPlaceholder(0).Field("sealed")) {
+		t.Fatalf("frozen tables = %#v", got.NormalReturnFacts.FrozenTables)
+	}
+	assertEscapeEvent(t, got.NormalReturnFacts.EscapeEvents, path.NewPlaceholder(0).Field("payload"), callboundary.EscapeEventSend, true)
+	if len(got.NormalReturnFacts.StoreRelations) != 1 ||
+		!got.NormalReturnFacts.StoreRelations[0].Source.Equal(path.NewPlaceholder(0).Field("payload")) ||
+		!got.NormalReturnFacts.StoreRelations[0].Into.Equal(path.NewPlaceholder(1).Field("items")) {
+		t.Fatalf("store relations = %#v", got.NormalReturnFacts.StoreRelations)
+	}
+}
+
+func TestSignatureOutcomeProviderOperationalEffectsSuppressRowOperationalFallback(t *testing.T) {
+	point := cfg.Point(9018)
+	facts := factflow.NewFacts(factflow.FactsInput{
+		CallSites: map[cfg.Point]factflow.CallSite{
+			point: factflow.NewCallSite(factflow.CallSiteConfig{
+				Context: factflow.CallSiteContextStatement,
+				ArgumentSources: []factflow.ValueSource{
+					{Kind: factflow.ValueSourceExpression, ExprRef: factflow.ExprRef(9019), HasExpr: true},
+					{Kind: factflow.ValueSourceExpression, ExprRef: factflow.ExprRef(9020), HasExpr: true},
+				},
+			}),
+		},
+	})
+	provider := SignatureOutcomeProvider(SignatureOutcomeProviderConfig{
+		Signatures: signatureMap{
+			"f": {
+				Effect: effect.Empty.
+					With(ownership.Freeze{Param: effect.ParamRef{Index: 0}}).
+					With(ownership.SendParam{Param: effect.ParamRef{Index: 0}}).
+					With(ownership.Store{Param: effect.ParamRef{Index: 0}, Into: effect.ParamRef{Index: 1}}).
+					With(mutation.TableMutator{Target: effect.ParamRef{Index: 1}, Value: effect.ParamRef{Index: -1}}),
+				OperationalEffects: &signature.OperationalEffects{
+					FrozenTables: []signature.FrozenTable{{
+						Target: path.NewPlaceholder(0).Field("child"),
+					}},
+					EscapeEvents: []signature.EscapeEvent{{
+						Target:    path.NewPlaceholder(0).Field("child"),
+						Kind:      signature.EscapeSend,
+						Recursive: true,
+					}},
+					PathInvalidations: []signature.PathInvalidation{{
+						Path: path.NewPlaceholder(1).Field("items"),
+					}},
+					StoreRelations: []signature.StoreRelation{{
+						Source: path.NewPlaceholder(0).Field("child"),
+						Into:   path.NewPlaceholder(1).Field("items"),
+					}},
+				},
+			},
+		},
+		NameFor: staticName("f"),
+		Facts:   facts,
+	})
+	site, ok := facts.CallSite(point)
+	if !ok {
+		t.Fatalf("missing call site")
+	}
+
+	got := provider(transfer.NodeContext{Point: point}, site.View(), state.State{}, nil)
+
+	if len(got.ParamPathInvalidations) != 0 || len(got.ParamPathRefinements) != 0 {
+		t.Fatalf("row-derived param facts leaked: refinements=%#v invalidations=%#v", got.ParamPathRefinements, got.ParamPathInvalidations)
+	}
+	if len(got.NormalReturnFacts.FrozenTables) != 1 ||
+		!got.NormalReturnFacts.FrozenTables[0].Target.Equal(path.NewPlaceholder(0).Field("child")) {
+		t.Fatalf("frozen tables = %#v, want only descendant DTO fact", got.NormalReturnFacts.FrozenTables)
+	}
+	if len(got.NormalReturnFacts.EscapeEvents) != 1 ||
+		!got.NormalReturnFacts.EscapeEvents[0].Target.Equal(path.NewPlaceholder(0).Field("child")) {
+		t.Fatalf("escape events = %#v, want only descendant DTO fact", got.NormalReturnFacts.EscapeEvents)
+	}
+	if len(got.NormalReturnFacts.PathInvalidations) != 1 ||
+		!got.NormalReturnFacts.PathInvalidations[0].Path.Equal(path.NewPlaceholder(1).Field("items")) {
+		t.Fatalf("path invalidations = %#v, want only descendant DTO fact", got.NormalReturnFacts.PathInvalidations)
+	}
+	if len(got.NormalReturnFacts.StoreRelations) != 1 ||
+		!got.NormalReturnFacts.StoreRelations[0].Source.Equal(path.NewPlaceholder(0).Field("child")) ||
+		!got.NormalReturnFacts.StoreRelations[0].Into.Equal(path.NewPlaceholder(1).Field("items")) {
+		t.Fatalf("store relations = %#v, want only descendant DTO fact", got.NormalReturnFacts.StoreRelations)
+	}
+}
+
 func TestSignatureOutcomeProviderOwnershipBorrowEffectsRecordBorrowWithoutPlacementOrFreeze(t *testing.T) {
 	reg := standard.Registry()
 	graph := cfg.New()

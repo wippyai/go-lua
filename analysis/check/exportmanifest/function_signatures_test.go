@@ -13,9 +13,11 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/effect/postcondition"
 	"github.com/wippyai/go-lua/analysis/domain/effect/returns"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine/callboundary"
+	"github.com/wippyai/go-lua/analysis/module/signature"
 	"github.com/wippyai/go-lua/analysis/module/signaturelookup"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
 	"github.com/wippyai/go-lua/analysis/type/typ"
@@ -52,6 +54,11 @@ func TestFromProgramResultExportsReturnedTableMemberErrorReturnEffect(t *testing
 	if !hasErrorReturn(sig.Effect, 0, 1) {
 		t.Fatalf("client.fetch effect = %v, want ErrorReturn(0, 1)", sig.Effect)
 	}
+	if sig.OperationalEffects == nil {
+		t.Fatalf("client.fetch operational effects = nil")
+	}
+	assertSignatureReturnPresenceRelation(t, sig.OperationalEffects.ReturnPresenceRelations, 1, presence.Present(), 0, presence.Absent())
+	assertSignatureReturnPresenceRelation(t, sig.OperationalEffects.ReturnPresenceRelations, 1, presence.Absent(), 0, presence.Present())
 }
 
 func TestFromProgramResultExportsIsNilNormalReturnRefinementEffect(t *testing.T) {
@@ -183,6 +190,81 @@ func TestFunctionSummaryEffectExportsExactStoreRelationWithoutDegradedPair(t *te
 	}
 }
 
+func TestFunctionSummaryOperationalEffectsPreservesDescendantBoundaryFacts(t *testing.T) {
+	reg := standard.Registry()
+	got := functionSummaryOperationalEffects(summary.Summary{
+		ReturnPresenceRelations: []summary.ReturnPresenceRelation{
+			{
+				TriggerIndex:    1,
+				TriggerPresence: presence.Present(),
+				TargetIndex:     0,
+				TargetPresence:  presence.Absent(),
+			},
+		},
+		NormalReturnParams: []product.Value{
+			typevalue.FromType(reg, typ.Number),
+			product.Absent(reg),
+		},
+		NormalReturnFacts: callboundary.NormalReturnFacts{
+			PathInvalidations: []callboundary.PathInvalidationFact{
+				{Path: pathdom.NewPlaceholder(0).Field("items")},
+			},
+			FrozenTables: []callboundary.FrozenTableFact{
+				{Target: pathdom.NewPlaceholder(1).Field("sealed")},
+			},
+			EscapeEvents: []callboundary.EscapeEventFact{
+				{Target: pathdom.NewPlaceholder(0).Field("payload"), Kind: callboundary.EscapeEventSend, Recursive: true},
+				{Target: pathdom.NewPlaceholder(1).Field("borrowed"), Kind: callboundary.EscapeEventBorrow},
+			},
+			StoreRelations: []callboundary.StoreRelationFact{
+				{Source: pathdom.NewPlaceholder(0).Field("payload"), Into: pathdom.NewPlaceholder(1).Field("bucket")},
+			},
+		},
+	}, typ.Func().
+		Param("source", typ.Any).
+		Param("target", typ.Any).
+		Returns(typeexpr.Optional(typ.Number), typeexpr.Optional(typ.String)).
+		Build())
+
+	if got == nil {
+		t.Fatalf("operational effects = nil")
+	}
+	if len(got.ReturnPresenceRelations) != 1 ||
+		got.ReturnPresenceRelations[0].TriggerIndex != 1 ||
+		!presence.Equal(got.ReturnPresenceRelations[0].TriggerPresence, presence.Present()) ||
+		got.ReturnPresenceRelations[0].TargetIndex != 0 ||
+		!presence.Equal(got.ReturnPresenceRelations[0].TargetPresence, presence.Absent()) {
+		t.Fatalf("return presence relations = %#v", got.ReturnPresenceRelations)
+	}
+	if len(got.NormalReturnPresenceRefinements) != 2 ||
+		!got.NormalReturnPresenceRefinements[0].Path.Equal(pathdom.NewPlaceholder(0)) ||
+		!presence.Equal(got.NormalReturnPresenceRefinements[0].Presence, presence.Present()) ||
+		!got.NormalReturnPresenceRefinements[1].Path.Equal(pathdom.NewPlaceholder(1)) ||
+		!presence.Equal(got.NormalReturnPresenceRefinements[1].Presence, presence.Absent()) {
+		t.Fatalf("normal-return presence refinements = %#v", got.NormalReturnPresenceRefinements)
+	}
+	if len(got.PathInvalidations) != 1 || !got.PathInvalidations[0].Path.Equal(pathdom.NewPlaceholder(0).Field("items")) {
+		t.Fatalf("path invalidations = %#v", got.PathInvalidations)
+	}
+	if len(got.FrozenTables) != 1 || !got.FrozenTables[0].Target.Equal(pathdom.NewPlaceholder(1).Field("sealed")) {
+		t.Fatalf("frozen tables = %#v", got.FrozenTables)
+	}
+	if len(got.EscapeEvents) != 2 ||
+		!got.EscapeEvents[0].Target.Equal(pathdom.NewPlaceholder(0).Field("payload")) ||
+		got.EscapeEvents[0].Kind != signature.EscapeSend ||
+		!got.EscapeEvents[0].Recursive ||
+		!got.EscapeEvents[1].Target.Equal(pathdom.NewPlaceholder(1).Field("borrowed")) ||
+		got.EscapeEvents[1].Kind != signature.EscapeBorrow ||
+		got.EscapeEvents[1].Recursive {
+		t.Fatalf("escape events = %#v", got.EscapeEvents)
+	}
+	if len(got.StoreRelations) != 1 ||
+		!got.StoreRelations[0].Source.Equal(pathdom.NewPlaceholder(0).Field("payload")) ||
+		!got.StoreRelations[0].Into.Equal(pathdom.NewPlaceholder(1).Field("bucket")) {
+		t.Fatalf("store relations = %#v", got.StoreRelations)
+	}
+}
+
 func checkProgram(t *testing.T, src string) program.Result {
 	t.Helper()
 	stmts, err := parse.ParseString(src, "exportmanifest_test.lua")
@@ -211,6 +293,26 @@ func hasErrorReturn(row effect.Row, valueIndex, errorIndex int) bool {
 		err, ok := effect.NormalizeLabel(label).(returns.ErrorReturn)
 		return ok && err.ValueIndex == valueIndex && err.ErrorIndex == errorIndex
 	})
+}
+
+func assertSignatureReturnPresenceRelation(
+	t *testing.T,
+	relations []signature.ReturnPresenceRelation,
+	triggerIndex int,
+	triggerPresence presence.Value,
+	targetIndex int,
+	targetPresence presence.Value,
+) {
+	t.Helper()
+	for _, relation := range relations {
+		if relation.TriggerIndex == triggerIndex &&
+			presence.Equal(relation.TriggerPresence, triggerPresence) &&
+			relation.TargetIndex == targetIndex &&
+			presence.Equal(relation.TargetPresence, targetPresence) {
+			return
+		}
+	}
+	t.Fatalf("return presence relations = %#v, missing %d/%s -> %d/%s", relations, triggerIndex, triggerPresence, targetIndex, targetPresence)
 }
 
 func hasNormalReturnAbsentRefinement(row effect.Row, paramIndex int) bool {

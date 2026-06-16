@@ -120,7 +120,7 @@ func applyValueRefinementAtWithoutImplicationsCached(
 		return out
 	}
 	if len(targetPath.Segments) == 0 {
-		if _, ok := refinement.Constraint(); ok {
+		if _, ok := refinement.Constraint(); ok && rootRefinementInvalidatesDescendants(reg, refinement) {
 			out = invalidateRootDescendantsAt(resolver, point, out, targetPath)
 		}
 		return out.UpdateValue(reg, key.SymbolValue(targetPath.Symbol), func(value product.Value) product.Value {
@@ -151,6 +151,17 @@ func applyValueRefinementAtWithoutImplicationsCached(
 		return written
 	}
 	return current.write(out, refineProductValue(reg, current.value, refinement))
+}
+
+func rootRefinementInvalidatesDescendants(reg *axis.Registry, refinement factflow.ValueRefinement) bool {
+	constraint, ok := refinement.Constraint()
+	if !ok {
+		return false
+	}
+	if reg != nil && product.Equal(reg, constraint, product.NewWithPresence(reg, product.ShapeTop, presence.Present())) {
+		return false
+	}
+	return true
 }
 
 // falsyAbsentRefinementUnproven reports whether a falsy-edge Absent refinement

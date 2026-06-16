@@ -10,6 +10,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/effect/ownership"
 	"github.com/wippyai/go-lua/analysis/domain/effect/postcondition"
 	"github.com/wippyai/go-lua/analysis/domain/effect/returns"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/module/manifest"
 	"github.com/wippyai/go-lua/analysis/module/signature"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
@@ -1639,6 +1640,68 @@ func TestRequireManifestExportTypesImportedValueAndMemberCall(t *testing.T) {
 	}
 }
 
+func TestImportedOptionalMethodZeroArgReadUsesExportedOperationalErrorReturn(t *testing.T) {
+	mod := CheckAndExport(`
+type Stream = {
+	read: (self: Stream, n: number?) -> (string?, string?),
+}
+
+type Response = {
+	status_code: number,
+	body: string?,
+	stream: Stream?,
+}
+
+local http_client = {}
+
+function http_client.get(url: string): (Response?, string?)
+	local stream: Stream = {
+		read = function(self: Stream, n: number?)
+			return "chunk", nil
+		end,
+	}
+
+	return {
+		status_code = 500,
+		stream = stream,
+	}, nil
+end
+
+return http_client
+`, "http_client", WithStdlib())
+	if len(mod.Errors) != 0 {
+		t.Fatalf("module diagnostics = %#v, want none", mod.Errors)
+	}
+	sig, ok := mod.Manifest.FunctionSignatures["http_client.get"]
+	if !ok {
+		t.Fatalf("missing http_client.get signature: %#v", mod.Manifest.FunctionSignatures)
+	}
+	if sig.OperationalEffects == nil {
+		t.Fatalf("http_client.get operational effects = nil")
+	}
+	assertSignatureReturnPresenceRelation(t, sig.OperationalEffects.ReturnPresenceRelations, 0, presence.Present(), 1, presence.Absent())
+	assertSignatureReturnPresenceRelation(t, sig.OperationalEffects.ReturnPresenceRelations, 1, presence.Absent(), 0, presence.Present())
+
+	result := Check(`
+local http_client = require("http_client")
+
+local response, err = http_client.get("https://example.test")
+if err or not response then
+	return nil, err
+end
+
+if response.status_code >= 300 and response.stream and not response.body then
+	local body_data = response.stream:read()
+	response.body = body_data
+end
+
+return response
+`, WithStdlib(), WithModule("http_client", mod))
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want none", result.Diagnostics)
+	}
+}
+
 func TestRequireManifestExportFailsClosedForUnknownOrDynamicPath(t *testing.T) {
 	m := providerManifest("provider")
 
@@ -1889,6 +1952,26 @@ func hasNormalReturnAbsentRefinement(row effect.Row, paramIndex int) bool {
 		}
 		return postcondition.Absent{}.Equals(refinement.Refinement)
 	})
+}
+
+func assertSignatureReturnPresenceRelation(
+	t *testing.T,
+	relations []signature.ReturnPresenceRelation,
+	triggerIndex int,
+	triggerPresence presence.Value,
+	targetIndex int,
+	targetPresence presence.Value,
+) {
+	t.Helper()
+	for _, relation := range relations {
+		if relation.TriggerIndex == triggerIndex &&
+			presence.Equal(relation.TriggerPresence, triggerPresence) &&
+			relation.TargetIndex == targetIndex &&
+			presence.Equal(relation.TargetPresence, targetPresence) {
+			return
+		}
+	}
+	t.Fatalf("return presence relations = %#v, missing %d/%s -> %d/%s", relations, triggerIndex, triggerPresence, targetIndex, targetPresence)
 }
 
 func assertExportedSendParam(t *testing.T, m *manifest.Manifest, name string, paramIndex int) {

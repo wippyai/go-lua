@@ -85,6 +85,7 @@ func publishFunctionDefinitionSignatures(
 		sig := signature.Function{Type: fn}
 		if summary, ok := functionSummary(prog, root, fact.Func); ok {
 			sig.Effect = functionSummaryEffect(summary, fn)
+			sig.OperationalEffects = functionSummaryOperationalEffects(summary, fn)
 		}
 		m.DefineFunctionSignature(name, sig)
 	}
@@ -161,6 +162,158 @@ func functionSummaryEffect(s summary.Summary, fn *typ.Function) effect.Row {
 		row = row.With(label)
 	}
 	return row
+}
+
+func functionSummaryOperationalEffects(s summary.Summary, fn *typ.Function) *signature.OperationalEffects {
+	if fn == nil {
+		return nil
+	}
+	arity := len(fn.Params)
+	out := signature.OperationalEffects{
+		ReturnPresenceRelations:         operationalReturnPresenceRelations(s.ReturnPresenceRelations, len(fn.Returns)),
+		NormalReturnPresenceRefinements: operationalNormalReturnPresenceRefinements(s.NormalReturnParams, arity),
+		PathInvalidations:               operationalPathInvalidations(s.NormalReturnFacts, arity),
+		FrozenTables:                    operationalFrozenTables(s.NormalReturnFacts, arity),
+		EscapeEvents:                    operationalEscapeEvents(s.NormalReturnFacts, arity),
+		StoreRelations:                  operationalStoreRelations(s.NormalReturnFacts, arity),
+	}
+	return &out
+}
+
+func operationalReturnPresenceRelations(relations []summary.ReturnPresenceRelation, arity int) []signature.ReturnPresenceRelation {
+	if arity <= 0 || len(relations) == 0 {
+		return nil
+	}
+	out := make([]signature.ReturnPresenceRelation, 0, len(relations))
+	for _, relation := range relations {
+		if relation.TriggerIndex < 0 || relation.TriggerIndex >= arity || relation.TargetIndex < 0 || relation.TargetIndex >= arity {
+			continue
+		}
+		if !operationalPresence(relation.TriggerPresence) || !operationalPresence(relation.TargetPresence) {
+			continue
+		}
+		out = append(out, signature.ReturnPresenceRelation{
+			TriggerIndex:    relation.TriggerIndex,
+			TriggerPresence: relation.TriggerPresence,
+			TargetIndex:     relation.TargetIndex,
+			TargetPresence:  relation.TargetPresence,
+		})
+	}
+	return out
+}
+
+func operationalNormalReturnPresenceRefinements(values []product.Value, arity int) []signature.PathPresenceRefinement {
+	if arity <= 0 || len(values) == 0 {
+		return nil
+	}
+	limit := arity
+	if len(values) < limit {
+		limit = len(values)
+	}
+	var out []signature.PathPresenceRefinement
+	for i := range limit {
+		p := product.PresenceOf(values[i])
+		if !operationalPresence(p) || presence.Equal(p, presence.Maybe()) {
+			continue
+		}
+		out = append(out, signature.PathPresenceRefinement{
+			Path:     pathdom.NewPlaceholder(i),
+			Presence: p,
+		})
+	}
+	return out
+}
+
+func operationalPathInvalidations(facts callboundary.NormalReturnFacts, arity int) []signature.PathInvalidation {
+	if arity <= 0 || len(facts.PathInvalidations) == 0 {
+		return nil
+	}
+	out := make([]signature.PathInvalidation, 0, len(facts.PathInvalidations))
+	for _, fact := range facts.PathInvalidations {
+		if !placeholderPathInArity(fact.Path, arity) {
+			continue
+		}
+		out = append(out, signature.PathInvalidation{Path: fact.Path})
+	}
+	return out
+}
+
+func operationalFrozenTables(facts callboundary.NormalReturnFacts, arity int) []signature.FrozenTable {
+	if arity <= 0 || len(facts.FrozenTables) == 0 {
+		return nil
+	}
+	out := make([]signature.FrozenTable, 0, len(facts.FrozenTables))
+	for _, fact := range facts.FrozenTables {
+		if !placeholderPathInArity(fact.Target, arity) {
+			continue
+		}
+		out = append(out, signature.FrozenTable{Target: fact.Target})
+	}
+	return out
+}
+
+func operationalEscapeEvents(facts callboundary.NormalReturnFacts, arity int) []signature.EscapeEvent {
+	if arity <= 0 || len(facts.EscapeEvents) == 0 {
+		return nil
+	}
+	out := make([]signature.EscapeEvent, 0, len(facts.EscapeEvents))
+	for _, fact := range facts.EscapeEvents {
+		if !placeholderPathInArity(fact.Target, arity) {
+			continue
+		}
+		kind, ok := operationalEscapeKind(fact.Kind)
+		if !ok {
+			continue
+		}
+		out = append(out, signature.EscapeEvent{
+			Target:    fact.Target,
+			Kind:      kind,
+			Recursive: fact.Recursive,
+		})
+	}
+	return out
+}
+
+func operationalStoreRelations(facts callboundary.NormalReturnFacts, arity int) []signature.StoreRelation {
+	if arity <= 0 || len(facts.StoreRelations) == 0 {
+		return nil
+	}
+	out := make([]signature.StoreRelation, 0, len(facts.StoreRelations))
+	for _, relation := range facts.StoreRelations {
+		if !placeholderPathInArity(relation.Source, arity) || !placeholderPathInArity(relation.Into, arity) {
+			continue
+		}
+		out = append(out, signature.StoreRelation{Source: relation.Source, Into: relation.Into})
+	}
+	return out
+}
+
+func placeholderPathInArity(p pathdom.Path, arity int) bool {
+	idx := p.PlaceholderIndex()
+	return idx >= 0 && idx < arity
+}
+
+func operationalPresence(p presence.Value) bool {
+	return presence.Equal(p, presence.Present()) || presence.Equal(p, presence.Absent()) || presence.Equal(p, presence.Maybe())
+}
+
+func operationalEscapeKind(kind callboundary.EscapeEventKind) (signature.EscapeKind, bool) {
+	switch kind {
+	case callboundary.EscapeEventBorrow:
+		return signature.EscapeBorrow, true
+	case callboundary.EscapeEventRetain:
+		return signature.EscapeRetain, true
+	case callboundary.EscapeEventStore:
+		return signature.EscapeStore, true
+	case callboundary.EscapeEventSend:
+		return signature.EscapeSend, true
+	case callboundary.EscapeEventExport:
+		return signature.EscapeExport, true
+	case callboundary.EscapeEventOpaque:
+		return signature.EscapeOpaque, true
+	default:
+		return signature.EscapeNone, false
+	}
 }
 
 func normalReturnOwnershipLabels(facts callboundary.NormalReturnFacts, arity int, exactStoreSources map[int]struct{}) []effect.Label {
