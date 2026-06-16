@@ -1,4 +1,4 @@
-package body
+package sourcevalue
 
 import (
 	"testing"
@@ -21,12 +21,50 @@ func TestExpressionOperationLogicalPreservesTopOriginEvidence(t *testing.T) {
 	left := product.Set(reg, product.Top(), evidence.Key, evidence.GradualTop())
 	right := typevalue.WithWitness(reg, typevalue.FromType(reg, typ.String), typ.String)
 
-	got, ok := expressionOperationEvaluator(reg, nil)(op, left, right)
+	got, ok := ExpressionOperationValue(reg, nil, op, left, right)
 	if !ok {
-		t.Fatal("expressionOperationEvaluator returned false")
+		t.Fatal("ExpressionOperationValue returned false")
 	}
 	if gotEvidence := product.Get(reg, got, evidence.Key); !evidence.Equal(gotEvidence, evidence.GradualTop()) {
 		t.Fatalf("logical operation evidence = %s, want %s", gotEvidence, evidence.GradualTop())
+	}
+}
+
+func TestExpressionOperationLogicalFallbackPreservesTopOriginEvidence(t *testing.T) {
+	reg := standard.Registry()
+	source := factflow.NewNilValueSource(0)
+	op, ok := factflow.NewBinaryExpressionOperation("and", source, source)
+	if !ok {
+		t.Fatal("NewBinaryExpressionOperation returned false")
+	}
+	left := product.Set(reg, product.Top(), evidence.Key, evidence.ExplicitTop())
+	right := product.Top()
+
+	got, ok := ExpressionOperationValue(reg, nil, op, left, right)
+	if !ok {
+		t.Fatal("ExpressionOperationValue returned false")
+	}
+	if gotEvidence := product.Get(reg, got, evidence.Key); !evidence.Equal(gotEvidence, evidence.ExplicitTop()) {
+		t.Fatalf("logical fallback evidence = %s, want %s", gotEvidence, evidence.ExplicitTop())
+	}
+}
+
+func TestExpressionOperationDynamicArithmeticPreservesTopOriginEvidence(t *testing.T) {
+	reg := standard.Registry()
+	source := factflow.NewNilValueSource(0)
+	op, ok := factflow.NewBinaryExpressionOperation("+", source, source)
+	if !ok {
+		t.Fatal("NewBinaryExpressionOperation returned false")
+	}
+	left := product.Set(reg, product.Top(), evidence.Key, evidence.GradualTop())
+	right := typevalue.WithWitness(reg, typevalue.FromType(reg, typ.LiteralInt(1)), typ.LiteralInt(1))
+
+	got, ok := ExpressionOperationValue(reg, nil, op, left, right)
+	if !ok {
+		t.Fatal("ExpressionOperationValue returned false")
+	}
+	if gotEvidence := product.Get(reg, got, evidence.Key); !evidence.Equal(gotEvidence, evidence.GradualTop()) {
+		t.Fatalf("dynamic arithmetic evidence = %s, want %s", gotEvidence, evidence.GradualTop())
 	}
 }
 
@@ -42,9 +80,9 @@ func TestExpressionOperationJoinedIntegerCounterStaysInteger(t *testing.T) {
 	counter := product.Join(reg, first, second)
 	one := typevalue.WithWitness(reg, typevalue.FromType(reg, typ.LiteralInt(1)), typ.LiteralInt(1))
 
-	got, ok := expressionOperationEvaluator(reg, nil)(op, counter, one)
+	got, ok := ExpressionOperationValue(reg, nil, op, counter, one)
 	if !ok {
-		t.Fatal("expressionOperationEvaluator returned false")
+		t.Fatal("ExpressionOperationValue returned false")
 	}
 	gotType, ok := typevalue.TypeOf(reg, got)
 	if !ok || !typ.TypeEquals(gotType, typ.Integer) {
