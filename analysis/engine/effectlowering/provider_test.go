@@ -656,6 +656,91 @@ func TestSignatureOutcomeProviderLowersOwnershipSendAndStoreEscapeEvents(t *test
 	assertEscapeEvent(t, got.NormalReturnFacts.EscapeEvents, path.NewPlaceholder(2), callboundary.EscapeEventSend, true)
 }
 
+func TestSignatureOutcomeProviderOwnershipBorrowEffectsAreNoOps(t *testing.T) {
+	reg := standard.Registry()
+	graph := cfg.New()
+	call := graph.AddNode(cfg.NodeCall)
+	graph.AddEdge(graph.Entry(), call, false)
+	graph.AddEdge(call, graph.Exit(), false)
+
+	callee := symbol.ID(925)
+	target := symbol.ID(926)
+	targetExpr := factflow.ExprRef(926)
+	targetPath := path.NewPath(target, "obj")
+	tableID := identity.ID{Kind: "lua.table", Site: "ownership-borrow-noop", Index: 1}
+	tableValue := product.Set(reg, product.Top(), identity.Key, identity.Singleton(tableID))
+	facts := factflow.NewFacts(factflow.FactsInput{
+		CallSites: map[cfg.Point]factflow.CallSite{
+			call: factflow.NewCallSite(factflow.CallSiteConfig{
+				Context:      factflow.CallSiteContextStatement,
+				CalleeSymbol: callee,
+				ArgumentSources: []factflow.ValueSource{
+					{Kind: factflow.ValueSourceExpression, ExprRef: targetExpr, HasExpr: true},
+				},
+			}),
+		},
+		ExpressionPaths: map[factflow.ExprRef]path.Path{
+			targetExpr: targetPath,
+		},
+	})
+	builder := visibility.NewBuilder()
+	builder.Define(call, target, "obj")
+	resolver := visibility.NewResolver(builder.Build())
+
+	provider := SignatureOutcomeProvider(SignatureOutcomeProviderConfig{
+		Signatures: signatureMap{
+			"borrow": {
+				Effect: effect.Empty.
+					With(ownership.Borrow{Param: effect.ParamRef{Index: 0}}).
+					With(ownership.BorrowAll{}),
+			},
+		},
+		NameFor: func(_ transfer.NodeContext, call factflow.CallProducer) (string, bool) {
+			if call.CalleeSymbol() != callee {
+				return "", false
+			}
+			return "borrow", true
+		},
+		Facts: facts,
+	})
+	site, ok := facts.CallSite(call)
+	if !ok {
+		t.Fatalf("missing call site")
+	}
+	outcome := provider(transfer.NodeContext{Graph: graph, Point: call, Node: graph.Node(call)}, site.View(), state.State{}, nil)
+	if len(outcome.NormalReturnFacts.EscapeEvents) != 0 {
+		t.Fatalf("EscapeEvents = %#v, want none", outcome.NormalReturnFacts.EscapeEvents)
+	}
+	if len(outcome.NormalReturnFacts.FrozenTables) != 0 {
+		t.Fatalf("FrozenTables = %#v, want none", outcome.NormalReturnFacts.FrozenTables)
+	}
+	if len(outcome.ParamPathInvalidations) != 0 {
+		t.Fatalf("ParamPathInvalidations = %#v, want none", outcome.ParamPathInvalidations)
+	}
+	if len(outcome.NormalReturnFacts.EffectDeltas) != 0 {
+		t.Fatalf("EffectDeltas = %#v, want none", outcome.NormalReturnFacts.EffectDeltas)
+	}
+
+	flow := transfer.Run(transfer.Config{
+		Graph:    graph,
+		Registry: reg,
+		EntryState: state.State{}.
+			WriteValue(reg, key.SymbolValue(target), tableValue),
+		NodeTransfer: factapply.NewFactsNodeTransfer(factapply.FactsNodeTransferConfig{
+			Facts:       facts,
+			CallOutcome: provider,
+			Visibility:  resolver,
+		}),
+	})
+	got := flow[graph.Exit()]
+	if gotPlacement := got.ReadPlacement(tableID); gotPlacement != placement.Bottom {
+		t.Fatalf("placement[%v] = %s, want %s", tableID, gotPlacement, placement.Bottom)
+	}
+	if got.IsTableFrozen(tableID) {
+		t.Fatalf("table %v was frozen by borrow-only signature", tableID)
+	}
+}
+
 func TestSignatureOutcomeProviderOwnershipEffectsApplyPlacementAndFreeze(t *testing.T) {
 	reg := standard.Registry()
 	graph := cfg.New()

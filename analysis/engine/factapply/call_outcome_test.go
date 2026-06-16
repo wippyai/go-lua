@@ -325,6 +325,68 @@ func TestFactsNodeTransferCallOutcomeFrozenTableFactFreezesSingletonIdentity(t *
 	}
 }
 
+func TestFactsNodeTransferCallOutcomeFrozenTableFactIsShallow(t *testing.T) {
+	reg := standard.Registry()
+	point := cfg.Point(708)
+	target := symbol.ID(708)
+	argExpr := factflow.ExprRef(708)
+	targetPath := pathdom.NewPath(target, "obj")
+	childPath := targetPath.Field("child")
+	rootID := identity.ID{Kind: "lua.table", Site: "freeze-apply", Index: 4}
+	childID := identity.ID{Kind: "lua.table", Site: "freeze-apply", Index: 5}
+	rootValue := product.Set(reg, presentValue(reg), identity.Key, identity.Singleton(rootID))
+	childValue := product.Set(reg, presentValue(reg), identity.Key, identity.Singleton(childID))
+	facts := factflow.NewFacts(factflow.FactsInput{
+		CallSites: map[cfg.Point]factflow.CallSite{
+			point: factflow.NewCallSite(factflow.CallSiteConfig{
+				Context: factflow.CallSiteContextStatement,
+				ArgumentSources: []factflow.ValueSource{
+					{Kind: factflow.ValueSourceExpression, ExprRef: argExpr, HasExpr: true},
+				},
+			}),
+		},
+		ExpressionPaths: map[factflow.ExprRef]pathdom.Path{
+			argExpr: targetPath,
+		},
+	})
+	builder := visibility.NewBuilder()
+	builder.Define(point, target, "obj")
+	resolver := visibility.NewResolver(builder.Build())
+
+	got := NewFactsNodeTransfer(FactsNodeTransferConfig{
+		Facts: facts,
+		CallOutcome: func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) CallOutcome {
+			return CallOutcome{
+				HeapTableObjects: map[identity.ID]heapidentity.TableObject{
+					rootID: heapidentity.NewTableObject(heapidentity.TableObjectConfig{
+						Root:          rootValue,
+						StaticMembers: map[pathdom.PathKey]product.Value{pathdom.PathKey(".child"): childValue},
+					}),
+					childID: heapidentity.NewTableObject(heapidentity.TableObjectConfig{Root: childValue}),
+				},
+				NormalReturnFacts: callboundary.NormalReturnFacts{
+					FrozenTables: []callboundary.FrozenTableFact{
+						{Target: pathdom.NewPlaceholder(0)},
+					},
+				},
+			}
+		},
+		Visibility: resolver,
+	})(transfer.NodeContext{
+		Registry: reg,
+		Point:    point,
+	}, state.State{}.
+		WriteValue(reg, key.SymbolValue(target), rootValue).
+		WritePathKey(reg, resolver.KeyAt(point, childPath), childValue))
+
+	if !got.IsTableFrozen(rootID) {
+		t.Fatalf("root table %v was not frozen", rootID)
+	}
+	if got.IsTableFrozen(childID) {
+		t.Fatalf("child table %v was frozen by shallow root freeze", childID)
+	}
+}
+
 func TestFactsNodeTransferCallOutcomeFrozenTableFactsFreezeRootAndNestedChild(t *testing.T) {
 	reg := standard.Registry()
 	point := cfg.Point(705)
@@ -581,6 +643,79 @@ func TestFactsNodeTransferCallOutcomeRecursiveEscapeSendMarksDynamicIndexKeyAndV
 	}
 	if gotPlacement := got.ReadPlacement(valueID); gotPlacement != placement.SharedHeap {
 		t.Fatalf("placement[%v] = %s, want %s", valueID, gotPlacement, placement.SharedHeap)
+	}
+}
+
+func TestFactsNodeTransferCallOutcomeRecursiveEscapeTerminatesOnCyclicHeapPlacement(t *testing.T) {
+	tests := []struct {
+		name string
+		kind callboundary.EscapeEventKind
+		want placement.Value
+	}{
+		{name: "send", kind: callboundary.EscapeEventSend, want: placement.SharedHeap},
+		{name: "store", kind: callboundary.EscapeEventStore, want: placement.OwnedHeap},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			reg := standard.Registry()
+			point := cfg.Point(709)
+			target := symbol.ID(709)
+			argExpr := factflow.ExprRef(709)
+			targetPath := pathdom.NewPath(target, "obj")
+			rootID := identity.ID{Kind: "lua.table", Site: "escape-cycle", Index: 1}
+			childID := identity.ID{Kind: "lua.table", Site: "escape-cycle", Index: 2}
+			rootValue := product.Set(reg, presentValue(reg), identity.Key, identity.Singleton(rootID))
+			childValue := product.Set(reg, presentValue(reg), identity.Key, identity.Singleton(childID))
+			facts := factflow.NewFacts(factflow.FactsInput{
+				CallSites: map[cfg.Point]factflow.CallSite{
+					point: factflow.NewCallSite(factflow.CallSiteConfig{
+						Context: factflow.CallSiteContextStatement,
+						ArgumentSources: []factflow.ValueSource{
+							{Kind: factflow.ValueSourceExpression, ExprRef: argExpr, HasExpr: true},
+						},
+					}),
+				},
+				ExpressionPaths: map[factflow.ExprRef]pathdom.Path{
+					argExpr: targetPath,
+				},
+			})
+			builder := visibility.NewBuilder()
+			builder.Define(point, target, "obj")
+			resolver := visibility.NewResolver(builder.Build())
+
+			got := NewFactsNodeTransfer(FactsNodeTransferConfig{
+				Facts: facts,
+				CallOutcome: func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) CallOutcome {
+					return CallOutcome{
+						NormalReturnFacts: callboundary.NormalReturnFacts{
+							EscapeEvents: []callboundary.EscapeEventFact{
+								{Target: pathdom.NewPlaceholder(0), Kind: tc.kind, Recursive: true},
+							},
+						},
+					}
+				},
+				Visibility: resolver,
+			})(transfer.NodeContext{
+				Registry: reg,
+				Point:    point,
+			}, state.State{}.
+				WriteValue(reg, key.SymbolValue(target), rootValue).
+				WriteHeapTableObject(reg, rootID, heapidentity.NewTableObject(heapidentity.TableObjectConfig{
+					Root:          rootValue,
+					StaticMembers: map[pathdom.PathKey]product.Value{pathdom.PathKey(".child"): childValue},
+				})).
+				WriteHeapTableObject(reg, childID, heapidentity.NewTableObject(heapidentity.TableObjectConfig{
+					Root:          childValue,
+					StaticMembers: map[pathdom.PathKey]product.Value{pathdom.PathKey(".parent"): rootValue},
+				})))
+
+			if gotPlacement := got.ReadPlacement(rootID); gotPlacement != tc.want {
+				t.Fatalf("placement[%v] = %s, want %s", rootID, gotPlacement, tc.want)
+			}
+			if gotPlacement := got.ReadPlacement(childID); gotPlacement != tc.want {
+				t.Fatalf("placement[%v] = %s, want %s", childID, gotPlacement, tc.want)
+			}
+		})
 	}
 }
 
