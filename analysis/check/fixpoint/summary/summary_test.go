@@ -5,11 +5,14 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/ref"
+	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
-	"github.com/wippyai/go-lua/analysis/test/value/standard"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
+	"github.com/wippyai/go-lua/analysis/engine/state/heapidentity"
+	"github.com/wippyai/go-lua/analysis/test/value/standard"
 	typenormalize "github.com/wippyai/go-lua/analysis/type/normalize"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
@@ -172,6 +175,37 @@ func TestSummaryCloneIsolatesNormalReturnParams(t *testing.T) {
 	}
 }
 
+func TestSummaryCloneIsolatesHeapTableObjects(t *testing.T) {
+	reg := mustRegistry(t)
+	id := identity.ID{Kind: "table", Site: "summary-clone", Index: 1}
+	member := path.PathKey(".name")
+	original := Summary{
+		HeapTableObjects: map[identity.ID]heapidentity.TableObject{
+			id: heapidentity.NewTableObject(heapidentity.TableObjectConfig{
+				Root:          product.Top(),
+				StaticMembers: map[path.PathKey]product.Value{member: product.Absent(reg)},
+			}),
+		},
+	}
+
+	cloned := original.Clone()
+	object := cloned.HeapTableObjects[id]
+	static := object.StaticMembers()
+	static[member] = product.Top()
+	cloned.HeapTableObjects[id] = heapidentity.NewTableObject(heapidentity.TableObjectConfig{
+		Root:          product.Bottom(reg),
+		StaticMembers: static,
+	})
+
+	got := original.HeapTableObjects[id]
+	if !product.Equal(reg, got.Root(), product.Top()) {
+		t.Fatalf("original heap object root changed unexpectedly")
+	}
+	if memberValue, ok := got.StaticMember(member); !ok || !product.Equal(reg, memberValue, product.Absent(reg)) {
+		t.Fatalf("original heap object static member changed: %v/%v", memberValue, ok)
+	}
+}
+
 func TestSnapshotClonesOnWriteAndRead(t *testing.T) {
 	reg := mustRegistry(t)
 	key := DefaultSummaryKey(ref.FuncRef{Kind: ref.KindSymbol, ID: 9})
@@ -194,6 +228,42 @@ func TestSnapshotClonesOnWriteAndRead(t *testing.T) {
 	}
 	if !product.Equal(reg, second.Returns[0], product.Top()) {
 		t.Fatalf("snapshot changed after read result mutation")
+	}
+}
+
+func TestSummaryHeapTableObjectsNormalizeAndJoinByIdentity(t *testing.T) {
+	reg := mustRegistry(t)
+	id := identity.ID{Kind: "table", Site: "summary-join", Index: 1}
+	left := Summary{
+		HeapTableObjects: map[identity.ID]heapidentity.TableObject{
+			id: heapidentity.NewTableObject(heapidentity.TableObjectConfig{Root: product.Top()}),
+		},
+	}
+	right := Summary{
+		HeapTableObjects: map[identity.ID]heapidentity.TableObject{
+			id: heapidentity.NewTableObject(heapidentity.TableObjectConfig{Root: product.Absent(reg)}),
+		},
+	}
+
+	normalized := Normalize(reg, Summary{
+		HeapTableObjects: map[identity.ID]heapidentity.TableObject{
+			id: heapidentity.BottomObject(reg),
+		},
+	})
+	if len(normalized.HeapTableObjects) != 0 {
+		t.Fatalf("Normalize kept bottom heap table object: %#v", normalized.HeapTableObjects)
+	}
+
+	joined := Join(reg, left, right)
+	object, ok := joined.HeapTableObjects[id]
+	if !ok {
+		t.Fatalf("Join dropped shared heap object identity")
+	}
+	if !product.Equal(reg, object.Root(), product.Top()) {
+		t.Fatalf("joined heap object root = %#v, want top", object.Root())
+	}
+	if !LessOrEq(reg, right, joined) || !Equal(reg, Normalize(reg, Summary{}), Summary{}) {
+		t.Fatalf("heap-object summary lattice relations failed")
 	}
 }
 

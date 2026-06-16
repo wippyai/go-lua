@@ -2,8 +2,10 @@
 package summary
 
 import (
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/engine/callboundary"
+	"github.com/wippyai/go-lua/analysis/engine/state/heapidentity"
 )
 
 // Summary is the fixed-point analysis summary payload for one function entry.
@@ -15,6 +17,7 @@ type Summary struct {
 	NormalReturnParamConditions     []ParamCondition
 	NormalReturnParamEqualities     []ParamEquality
 	NormalReturnFacts               callboundary.NormalReturnFacts
+	HeapTableObjects                map[identity.ID]heapidentity.TableObject
 	ReturnConditionParamRefinements []ReturnConditionParamRefinement
 	ReturnPresenceRelations         []ReturnPresenceRelation
 }
@@ -28,6 +31,7 @@ func (s Summary) Clone() Summary {
 		len(s.NormalReturnParamConditions) == 0 &&
 		len(s.NormalReturnParamEqualities) == 0 &&
 		normalReturnFactsEmpty(s.NormalReturnFacts) &&
+		len(s.HeapTableObjects) == 0 &&
 		len(s.ReturnConditionParamRefinements) == 0 &&
 		len(s.ReturnPresenceRelations) == 0 {
 		return Summary{}
@@ -58,6 +62,7 @@ func (s Summary) Clone() Summary {
 		copy(out.NormalReturnParamEqualities, s.NormalReturnParamEqualities)
 	}
 	out.NormalReturnFacts = cloneNormalReturnFacts(s.NormalReturnFacts)
+	out.HeapTableObjects = cloneHeapTableObjects(s.HeapTableObjects)
 	out.ReturnConditionParamRefinements = cloneReturnConditionParamRefinements(s.ReturnConditionParamRefinements)
 	out.ReturnPresenceRelations = cloneReturnPresenceRelations(s.ReturnPresenceRelations)
 	return out

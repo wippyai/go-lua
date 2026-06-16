@@ -77,6 +77,7 @@ func FromResult(result ResultReader) summary.Summary {
 		NormalReturnParamConditions:     projectNormalReturnParamConditions(reg, result),
 		NormalReturnParamEqualities:     projectNormalReturnParamEqualities(reg, result),
 		NormalReturnFacts:               projectNormalReturnFacts(reg, result, exit),
+		HeapTableObjects:                projectHeapTableObjects(exit),
 		ReturnConditionParamRefinements: projectReturnConditionParamRefinements(reg, result),
 		ReturnPresenceRelations:         projectReturnPresenceRelations(reg, result),
 	}

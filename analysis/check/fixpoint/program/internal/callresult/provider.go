@@ -979,6 +979,7 @@ func outcomeFromSummary(
 		})
 	}
 	out.NormalReturnFacts = cloneNormalReturnFacts(got.NormalReturnFacts)
+	out.HeapTableObjects = summary.CloneHeapTableObjects(got.HeapTableObjects)
 	if len(got.ReturnConditionParamRefinements) != 0 {
 		out.ReturnConditionRefinements = make([]factapply.CallReturnConditionRefinement, len(got.ReturnConditionParamRefinements))
 		for i, refinement := range got.ReturnConditionParamRefinements {

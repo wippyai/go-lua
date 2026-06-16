@@ -1,9 +1,11 @@
 package state
 
 import (
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/engine/dynamicindex"
 	"github.com/wippyai/go-lua/analysis/engine/state/channelselectfact"
 	effectdelta "github.com/wippyai/go-lua/analysis/engine/state/effectdelta"
+	"github.com/wippyai/go-lua/analysis/engine/state/heapidentity"
 )
 
 type DynamicIndexFactsSnapshot struct {
@@ -50,4 +52,18 @@ func (s State) EffectDeltasSnapshot() EffectDeltasSnapshot {
 		return EffectDeltasSnapshot{Top: true}
 	}
 	return EffectDeltasSnapshot{Deltas: s.effectDeltas.cloneValues()}
+}
+
+type HeapTableObjectsSnapshot struct {
+	Top     bool
+	Objects map[identity.ID]heapidentity.TableObject
+}
+
+// HeapTableObjectsSnapshot returns finite identity-keyed heap table objects
+// unless the lane is top. When Top is true, Objects is empty.
+func (s State) HeapTableObjectsSnapshot() HeapTableObjectsSnapshot {
+	if s.heapTableIdentity.top {
+		return HeapTableObjectsSnapshot{Top: true}
+	}
+	return HeapTableObjectsSnapshot{Objects: heapidentity.CloneMap(s.heapTableIdentity.values)}
 }

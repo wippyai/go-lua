@@ -7,17 +7,19 @@ import (
 	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
-	"github.com/wippyai/go-lua/analysis/test/value/standard"
 	"github.com/wippyai/go-lua/analysis/engine/callboundary"
 	"github.com/wippyai/go-lua/analysis/engine/dynamicindex"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/state/channelselectfact"
 	effectdelta "github.com/wippyai/go-lua/analysis/engine/state/effectdelta"
+	"github.com/wippyai/go-lua/analysis/engine/state/heapidentity"
 	"github.com/wippyai/go-lua/analysis/engine/state/pathevidence"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/symbol"
+	"github.com/wippyai/go-lua/analysis/test/value/standard"
 )
 
 func TestFromResultProjectsNormalReturnFactsFromExitSnapshots(t *testing.T) {
@@ -272,6 +274,30 @@ func TestFromResultSkipsTopSnapshotsAndTopNormalReturnFacts(t *testing.T) {
 	got := FromResult(normalReturnFactProjectTestResult(reg, exit, param)).NormalReturnFacts
 	if !normalReturnFactsEmpty(got) {
 		t.Fatalf("NormalReturnFacts = %#v, want top/no-op facts skipped", got)
+	}
+}
+
+func TestFromResultProjectsHeapTableObjectsFromExitSnapshots(t *testing.T) {
+	reg := standard.Registry()
+	param := symbol.ID(931)
+	tableID := identity.ID{Kind: "table", Site: "summary-project", Index: 1}
+	memberKey := pathdom.PathKey(".child")
+	value := presentProduct(reg)
+	exit := state.State{}.WriteHeapTableObject(reg, tableID, heapidentity.NewTableObject(heapidentity.TableObjectConfig{
+		Root:          value,
+		StaticMembers: map[pathdom.PathKey]product.Value{memberKey: value},
+	}))
+
+	got := FromResult(normalReturnFactProjectTestResult(reg, exit, param)).HeapTableObjects
+	object, ok := got[tableID]
+	if !ok {
+		t.Fatalf("HeapTableObjects = %#v, want projected object for %v", got, tableID)
+	}
+	if !product.Equal(reg, object.Root(), value) {
+		t.Fatalf("projected heap object root = %#v, want %#v", object.Root(), value)
+	}
+	if member, ok := object.StaticMember(memberKey); !ok || !product.Equal(reg, member, value) {
+		t.Fatalf("projected heap object member = %#v/%v, want %#v", member, ok, value)
 	}
 }
 

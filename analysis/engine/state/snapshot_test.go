@@ -4,13 +4,15 @@ import (
 	"testing"
 
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
-	"github.com/wippyai/go-lua/analysis/test/value/standard"
 	"github.com/wippyai/go-lua/analysis/engine/dynamicindex"
 	"github.com/wippyai/go-lua/analysis/engine/state/channelselectfact"
 	effectdelta "github.com/wippyai/go-lua/analysis/engine/state/effectdelta"
+	"github.com/wippyai/go-lua/analysis/engine/state/heapidentity"
 	"github.com/wippyai/go-lua/analysis/engine/state/pathevidence"
+	"github.com/wippyai/go-lua/analysis/test/value/standard"
 )
 
 func TestSnapshotsCloneFiniteLanes(t *testing.T) {
@@ -51,6 +53,7 @@ func TestSnapshotsCloneFiniteLanes(t *testing.T) {
 		Value:       absent,
 		Admission:   dynamicindex.AdmissionRejected,
 	}
+	heapID := identity.ID{Kind: "table", Site: "snapshot", Index: 1}
 	effectDelta := effectdelta.Value{Before: present, After: present, Change: effectdelta.ChangeChanged}
 	otherEffectDelta := effectdelta.Value{Before: absent, After: absent, Change: effectdelta.ChangeNone}
 
@@ -58,6 +61,10 @@ func TestSnapshotsCloneFiniteLanes(t *testing.T) {
 		WritePathKey(reg, pathKey, present).
 		WritePathStaticMember(memberKey, present).
 		WriteDynamicIndexFact(reg, dynamicKey, dynamicFact).
+		WriteHeapTableObject(reg, heapID, heapidentity.NewTableObject(heapidentity.TableObjectConfig{
+			Root:          present,
+			StaticMembers: map[pathdom.PathKey]product.Value{memberKey: present},
+		})).
 		AddBranchProof(proof).
 		AddPathPresenceImplication(implication).
 		AddChannelSelectFact(selectFact).
@@ -97,6 +104,24 @@ func TestSnapshotsCloneFiniteLanes(t *testing.T) {
 	}
 	if got := s.DynamicIndexFactsSnapshot().Facts[dynamicKey]; !dynamicindex.Domain(reg).Equal(got, dynamicFact) {
 		t.Fatalf("fresh dynamic-index snapshot = %#v, want original fact", got)
+	}
+
+	heapSnapshot := s.HeapTableObjectsSnapshot()
+	if heapSnapshot.Top || len(heapSnapshot.Objects) != 1 {
+		t.Fatalf("heap snapshot = %#v, want one finite object", heapSnapshot)
+	}
+	heapObject := heapSnapshot.Objects[heapID]
+	heapMembers := heapObject.StaticMembers()
+	heapMembers[memberKey] = absent
+	heapSnapshot.Objects[heapID] = heapidentity.NewTableObject(heapidentity.TableObjectConfig{
+		Root:          absent,
+		StaticMembers: heapMembers,
+	})
+	if got := s.ReadHeapTableObject(reg, heapID); !product.Equal(reg, got.Root(), present) {
+		t.Fatalf("heap snapshot mutation changed state root to %#v", got.Root())
+	}
+	if got := s.HeapTableObjectsSnapshot().Objects[heapID]; !product.Equal(reg, got.Root(), present) {
+		t.Fatalf("fresh heap snapshot root = %#v, want original", got.Root())
 	}
 
 	branchSnapshot := s.BranchProofsSnapshot()
@@ -162,6 +187,10 @@ func TestSnapshotTopBottomAndEmptyLanes(t *testing.T) {
 	if !topDynamic.Top || len(topDynamic.Facts) != 0 {
 		t.Fatalf("top dynamic-index snapshot = %#v, want top with no finite facts", topDynamic)
 	}
+	topHeap := top.HeapTableObjectsSnapshot()
+	if !topHeap.Top || len(topHeap.Objects) != 0 {
+		t.Fatalf("top heap snapshot = %#v, want top with no finite objects", topHeap)
+	}
 	topEffects := top.EffectDeltasSnapshot()
 	if !topEffects.Top || len(topEffects.Deltas) != 0 {
 		t.Fatalf("top effect-delta snapshot = %#v, want top with no finite facts", topEffects)
@@ -191,6 +220,10 @@ func TestSnapshotTopBottomAndEmptyLanes(t *testing.T) {
 	if bottomDynamic.Top || len(bottomDynamic.Facts) != 0 {
 		t.Fatalf("bottom dynamic-index snapshot = %#v, want finite empty pointwise lane", bottomDynamic)
 	}
+	bottomHeap := bottom.HeapTableObjectsSnapshot()
+	if bottomHeap.Top || len(bottomHeap.Objects) != 0 {
+		t.Fatalf("bottom heap snapshot = %#v, want finite empty pointwise lane", bottomHeap)
+	}
 	bottomEffects := bottom.EffectDeltasSnapshot()
 	if bottomEffects.Top || len(bottomEffects.Deltas) != 0 {
 		t.Fatalf("bottom effect-delta snapshot = %#v, want finite empty pointwise lane", bottomEffects)
@@ -219,6 +252,10 @@ func TestSnapshotTopBottomAndEmptyLanes(t *testing.T) {
 	emptyDynamic := empty.DynamicIndexFactsSnapshot()
 	if emptyDynamic.Top || len(emptyDynamic.Facts) != 0 {
 		t.Fatalf("empty dynamic-index snapshot = %#v, want finite empty pointwise lane", emptyDynamic)
+	}
+	emptyHeap := empty.HeapTableObjectsSnapshot()
+	if emptyHeap.Top || len(emptyHeap.Objects) != 0 {
+		t.Fatalf("empty heap snapshot = %#v, want finite empty pointwise lane", emptyHeap)
 	}
 	emptyEffects := empty.EffectDeltasSnapshot()
 	if emptyEffects.Top || len(emptyEffects.Deltas) != 0 {

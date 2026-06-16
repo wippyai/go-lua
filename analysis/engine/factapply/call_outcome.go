@@ -2,11 +2,13 @@ package factapply
 
 import (
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/engine/callboundary"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/state"
+	"github.com/wippyai/go-lua/analysis/engine/state/heapidentity"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 )
@@ -34,6 +36,7 @@ type CallOutcome struct {
 	PostReturnAuthority bool
 
 	NormalReturnFacts          callboundary.NormalReturnFacts
+	HeapTableObjects           map[identity.ID]heapidentity.TableObject
 	ParamObligations           []CallParamObligation
 	ParamPathRefinements       []CallParamPathRefinement
 	ParamPathInvalidations     []CallParamPathInvalidation

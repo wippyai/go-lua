@@ -5,6 +5,7 @@ import (
 
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
@@ -12,6 +13,7 @@ import (
 	factapply "github.com/wippyai/go-lua/analysis/engine/factapply"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/state"
+	"github.com/wippyai/go-lua/analysis/engine/state/heapidentity"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
@@ -224,6 +226,66 @@ func TestWithSupplementalPreservesPrimaryNonTypeEvidence(t *testing.T) {
 	gotType, ok := typevalue.TypeOf(reg, got.Results[0].Value)
 	if !ok || !typ.TypeEquals(gotType, typ.String) {
 		t.Fatalf("type = %v/%v, want string", gotType, ok)
+	}
+}
+
+func TestWithSupplementalMergesHeapTableObjectsWithoutAuthority(t *testing.T) {
+	reg := standard.Registry()
+	tableID := identity.ID{Kind: "table", Site: "compose", Index: 1}
+	primary := func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) factapply.CallOutcome {
+		return factapply.CallOutcome{
+			HeapTableObjects: map[identity.ID]heapidentity.TableObject{
+				tableID: heapidentity.NewTableObject(heapidentity.TableObjectConfig{Root: product.Absent(reg)}),
+			},
+		}
+	}
+	supplemental := func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) factapply.CallOutcome {
+		return factapply.CallOutcome{
+			HeapTableObjects: map[identity.ID]heapidentity.TableObject{
+				tableID: heapidentity.NewTableObject(heapidentity.TableObjectConfig{Root: product.Top()}),
+			},
+		}
+	}
+
+	got := WithSupplemental(primary, supplemental)(transfer.NodeContext{Registry: reg}, factflow.NewCallSite(factflow.CallSiteConfig{}).View(), state.State{}, nil)
+	object, ok := got.HeapTableObjects[tableID]
+	if !ok {
+		t.Fatalf("HeapTableObjects = %#v, want %v", got.HeapTableObjects, tableID)
+	}
+	if !product.Equal(reg, object.Root(), product.Top()) {
+		t.Fatalf("merged heap object root = %#v, want top", object.Root())
+	}
+}
+
+func TestWithSupplementalAuthorityBlocksSupplementalHeapTableObjects(t *testing.T) {
+	reg := standard.Registry()
+	primaryID := identity.ID{Kind: "table", Site: "compose", Index: 2}
+	supplementalID := identity.ID{Kind: "table", Site: "compose", Index: 3}
+	primary := func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) factapply.CallOutcome {
+		return factapply.CallOutcome{
+			PostReturnAuthority: true,
+			HeapTableObjects: map[identity.ID]heapidentity.TableObject{
+				primaryID: heapidentity.NewTableObject(heapidentity.TableObjectConfig{Root: product.Absent(reg)}),
+			},
+		}
+	}
+	supplemental := func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) factapply.CallOutcome {
+		return factapply.CallOutcome{
+			HeapTableObjects: map[identity.ID]heapidentity.TableObject{
+				supplementalID: heapidentity.NewTableObject(heapidentity.TableObjectConfig{Root: product.Top()}),
+			},
+		}
+	}
+
+	got := WithSupplemental(primary, supplemental)(transfer.NodeContext{Registry: reg}, factflow.NewCallSite(factflow.CallSiteConfig{}).View(), state.State{}, nil)
+	if len(got.HeapTableObjects) != 1 {
+		t.Fatalf("HeapTableObjects = %#v, want only authoritative primary object", got.HeapTableObjects)
+	}
+	if _, ok := got.HeapTableObjects[primaryID]; !ok {
+		t.Fatalf("HeapTableObjects = %#v, want primary identity", got.HeapTableObjects)
+	}
+	if _, ok := got.HeapTableObjects[supplementalID]; ok {
+		t.Fatalf("HeapTableObjects = %#v, want supplemental identity blocked", got.HeapTableObjects)
 	}
 }
 

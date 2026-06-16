@@ -23,6 +23,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/state/channelselectfact"
 	effectdelta "github.com/wippyai/go-lua/analysis/engine/state/effectdelta"
+	"github.com/wippyai/go-lua/analysis/engine/state/heapidentity"
 	"github.com/wippyai/go-lua/analysis/engine/state/pathevidence"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
@@ -271,6 +272,55 @@ func TestOutcomeProviderCarriesNestedSummaryEscapeEvents(t *testing.T) {
 		!got.NormalReturnFacts.EscapeEvents[1].Target.Equal(path.NewPlaceholder(0).Field("child")) ||
 		!got.NormalReturnFacts.EscapeEvents[1].Recursive {
 		t.Fatalf("child escape event = %#v, want recursive store on $0.child", got.NormalReturnFacts.EscapeEvents[1])
+	}
+}
+
+func TestOutcomeProviderCopiesSummaryHeapTableObjects(t *testing.T) {
+	reg := standard.Registry()
+	callee := symbol.ID(41)
+	key := summary.DefaultSummaryKey(ref.FuncRef{Kind: ref.KindSymbol, ID: 42})
+	tableID := identity.ID{Kind: "table", Site: "provider", Index: 1}
+	memberKey := path.PathKey(".field")
+	object := heapidentity.NewTableObject(heapidentity.TableObjectConfig{
+		Root:          product.Absent(reg),
+		StaticMembers: map[path.PathKey]product.Value{memberKey: product.Top()},
+	})
+	provider := OutcomeProvider(ProviderConfig{
+		Summaries: summary.NewSnapshot(reg, summary.EntrySummary{
+			Key: key,
+			Summary: summary.Summary{
+				HeapTableObjects: map[identity.ID]heapidentity.TableObject{
+					tableID: object,
+				},
+			},
+		}),
+		KeyFor: ByCalleeIdentity(map[symbol.ID]summary.SummaryKey{callee: key}),
+	})
+
+	first := provider(transfer.NodeContext{Registry: reg}, factflow.NewCallSite(factflow.CallSiteConfig{
+		CalleeSymbol: callee,
+	}).View(), state.State{}, nil)
+	projected, ok := first.HeapTableObjects[tableID]
+	if !ok {
+		t.Fatalf("HeapTableObjects = %#v, want %v", first.HeapTableObjects, tableID)
+	}
+	if !product.Equal(reg, projected.Root(), product.Absent(reg)) {
+		t.Fatalf("projected heap root = %#v, want absent", projected.Root())
+	}
+
+	mutatedMembers := projected.StaticMembers()
+	mutatedMembers[memberKey] = product.Absent(reg)
+	first.HeapTableObjects[tableID] = heapidentity.NewTableObject(heapidentity.TableObjectConfig{
+		Root:          product.Top(),
+		StaticMembers: mutatedMembers,
+	})
+
+	second := provider(transfer.NodeContext{Registry: reg}, factflow.NewCallSite(factflow.CallSiteConfig{
+		CalleeSymbol: callee,
+	}).View(), state.State{}, nil)
+	again, ok := second.HeapTableObjects[tableID]
+	if !ok || !product.Equal(reg, again.Root(), product.Absent(reg)) {
+		t.Fatalf("provider exposed mutable heap object state: %#v/%v", again, ok)
 	}
 }
 
@@ -1103,6 +1153,7 @@ func assertEmptyOutcome(t *testing.T, got factapply.CallOutcome) {
 	t.Helper()
 	if len(got.Results) != 0 ||
 		len(got.NormalReturnFacts.PathRefinements) != 0 ||
+		len(got.HeapTableObjects) != 0 ||
 		len(got.ParamObligations) != 0 ||
 		len(got.ParamPathRefinements) != 0 ||
 		len(got.ParamConditions) != 0 ||

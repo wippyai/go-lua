@@ -26,6 +26,9 @@ func applyCallOutcomeFacts(
 	bindings := callPlaceholderBindings(facts, site)
 	paramBindings := callArgumentPlaceholderBindings(facts, site)
 	normalReturnFacts := outcome.NormalReturnFacts
+	for id, object := range outcome.HeapTableObjects {
+		out = out.WriteHeapTableObject(ctx.Registry, id, object)
+	}
 	for _, fact := range normalReturnFacts.PathRefinements {
 		targetPath, ok := fact.Path.Substitute(bindings)
 		if !ok {

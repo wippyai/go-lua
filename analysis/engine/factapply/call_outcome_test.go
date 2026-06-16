@@ -6,6 +6,7 @@ import (
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/engine/callboundary"
@@ -13,6 +14,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/sourcevalue"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	effectdelta "github.com/wippyai/go-lua/analysis/engine/state/effectdelta"
+	"github.com/wippyai/go-lua/analysis/engine/state/heapidentity"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/engine/visibility"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
@@ -222,6 +224,43 @@ func TestFactsNodeTransferCallOutcomeRebasesNestedEscapeEventToConsumerChildPath
 	})
 	if !effectdelta.Domain(reg).Equal(gotDelta, effectdelta.Top()) {
 		t.Fatalf("escape delta = %#v, want rebased store on %s", gotDelta, childPath)
+	}
+}
+
+func TestFactsNodeTransferCallOutcomeAppliesHeapTableObjects(t *testing.T) {
+	reg := standard.Registry()
+	point := cfg.Point(619)
+	tableID := identity.ID{Kind: "table", Site: "call-outcome", Index: 1}
+	memberKey := pathdom.PathKey(".field")
+	value := presentValue(reg)
+
+	got := NewFactsNodeTransfer(FactsNodeTransferConfig{
+		Facts: factflow.NewFacts(factflow.FactsInput{
+			CallSites: map[cfg.Point]factflow.CallSite{
+				point: factflow.NewCallSite(factflow.CallSiteConfig{Context: factflow.CallSiteContextStatement}),
+			},
+		}),
+		CallOutcome: func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) CallOutcome {
+			return CallOutcome{
+				HeapTableObjects: map[identity.ID]heapidentity.TableObject{
+					tableID: heapidentity.NewTableObject(heapidentity.TableObjectConfig{
+						Root:          value,
+						StaticMembers: map[pathdom.PathKey]product.Value{memberKey: value},
+					}),
+				},
+			}
+		},
+	})(transfer.NodeContext{
+		Registry: reg,
+		Point:    point,
+	}, state.State{})
+
+	object := got.ReadHeapTableObject(reg, tableID)
+	if !product.Equal(reg, object.Root(), value) {
+		t.Fatalf("heap object root = %#v, want %#v", object.Root(), value)
+	}
+	if member, ok := object.StaticMember(memberKey); !ok || !product.Equal(reg, member, value) {
+		t.Fatalf("heap object member = %#v/%v, want %#v", member, ok, value)
 	}
 }
 

@@ -3,11 +3,13 @@ package calloutcome
 import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/evidence"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	factapply "github.com/wippyai/go-lua/analysis/engine/factapply"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/state"
+	"github.com/wippyai/go-lua/analysis/engine/state/heapidentity"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/type/typ"
@@ -28,7 +30,7 @@ func WithSupplemental(primary, supplemental factapply.CallOutcomeProvider) facta
 		out := primary(ctx, site, in, read)
 		second := supplemental(ctx, site, in, read)
 		out = withSupplementalResultSlots(ctx.Registry, out, second.Results)
-		return withSupplementalFacts(out, second)
+		return withSupplementalFacts(ctx.Registry, out, second)
 	}
 }
 
@@ -81,6 +83,7 @@ func HasPostReturnEvidence(reg *axis.Registry, outcome factapply.CallOutcome) bo
 		len(outcome.NormalReturnFacts.ChannelSelects) != 0 ||
 		len(outcome.NormalReturnFacts.EffectDeltas) != 0 ||
 		len(outcome.NormalReturnFacts.EscapeEvents) != 0 ||
+		len(outcome.HeapTableObjects) != 0 ||
 		len(outcome.ParamPathRefinements) != 0 ||
 		len(outcome.ParamPathInvalidations) != 0 ||
 		len(outcome.ParamConditions) != 0 ||
@@ -114,7 +117,7 @@ func resultValueHasAuthority(reg *axis.Registry, value product.Value) bool {
 	return true
 }
 
-func withSupplementalFacts(out, second factapply.CallOutcome) factapply.CallOutcome {
+func withSupplementalFacts(reg *axis.Registry, out, second factapply.CallOutcome) factapply.CallOutcome {
 	out.ParamObligations = append(out.ParamObligations, second.ParamObligations...)
 	if out.PostReturnAuthority {
 		return out
@@ -126,6 +129,7 @@ func withSupplementalFacts(out, second factapply.CallOutcome) factapply.CallOutc
 	out.NormalReturnFacts.ChannelSelects = append(out.NormalReturnFacts.ChannelSelects, second.NormalReturnFacts.ChannelSelects...)
 	out.NormalReturnFacts.EffectDeltas = append(out.NormalReturnFacts.EffectDeltas, second.NormalReturnFacts.EffectDeltas...)
 	out.NormalReturnFacts.EscapeEvents = append(out.NormalReturnFacts.EscapeEvents, second.NormalReturnFacts.EscapeEvents...)
+	out.HeapTableObjects = withSupplementalHeapTableObjects(reg, out.HeapTableObjects, second.HeapTableObjects)
 	out.ParamPathRefinements = append(out.ParamPathRefinements, second.ParamPathRefinements...)
 	out.ParamPathInvalidations = append(out.ParamPathInvalidations, second.ParamPathInvalidations...)
 	out.ParamConditions = append(out.ParamConditions, second.ParamConditions...)
@@ -134,4 +138,30 @@ func withSupplementalFacts(out, second factapply.CallOutcome) factapply.CallOutc
 	out.ReturnPresenceRelations = append(out.ReturnPresenceRelations, second.ReturnPresenceRelations...)
 	out.PostReturnAuthority = second.PostReturnAuthority
 	return out
+}
+
+func withSupplementalHeapTableObjects(
+	reg *axis.Registry,
+	left, right map[identity.ID]heapidentity.TableObject,
+) map[identity.ID]heapidentity.TableObject {
+	if len(right) == 0 {
+		return heapidentity.CloneMap(left)
+	}
+	if len(left) == 0 {
+		return heapidentity.CloneMap(right)
+	}
+	if reg == nil {
+		out := heapidentity.CloneMap(left)
+		if out == nil {
+			out = make(map[identity.ID]heapidentity.TableObject, len(right))
+		}
+		for id, object := range right {
+			if _, ok := out[id]; ok {
+				continue
+			}
+			out[id] = heapidentity.CloneObject(object)
+		}
+		return out
+	}
+	return heapidentity.CloneMap(heapidentity.MapDomain(reg).Join(left, right))
 }
