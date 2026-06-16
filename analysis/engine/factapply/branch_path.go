@@ -255,7 +255,22 @@ func projectPathHeapDynamicIndexValue(
 	}
 	id, ok := product.Get(reg, parentValue.value, identity.Key).ID()
 	if !ok {
-		return product.Value{}, false
+		projected, projectedOK := projectPathHeapStaticMemberValue(reg, resolver, point, out, parent)
+		if !projectedOK {
+			projected, projectedOK = projectPathOriginValue(reg, out, parent)
+		}
+		if !projectedOK {
+			return product.Value{}, false
+		}
+		if merged := product.Meet(reg, parentValue.value, projected); !product.Equal(reg, merged, product.Bottom(reg)) {
+			parentValue.value = merged
+		} else {
+			parentValue.value = projected
+		}
+		id, ok = product.Get(reg, parentValue.value, identity.Key).ID()
+		if !ok {
+			return product.Value{}, false
+		}
 	}
 	object := out.ReadHeapTableObject(reg, id)
 	return joinMatchingHeapDynamicIndexValues(reg, object.DynamicIndexFacts(), last)

@@ -2,6 +2,7 @@ package factapply
 
 import (
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/placement"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
@@ -37,6 +38,7 @@ type CallOutcome struct {
 
 	NormalReturnFacts          callboundary.NormalReturnFacts
 	HeapTableObjects           map[identity.ID]heapidentity.TableObject
+	Placements                 map[identity.ID]placement.Value
 	ParamObligations           []CallParamObligation
 	ParamPathRefinements       []CallParamPathRefinement
 	ParamLengthFloors          []CallParamLengthFloor

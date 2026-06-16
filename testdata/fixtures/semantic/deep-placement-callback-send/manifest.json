@@ -3,6 +3,14 @@
   "files": ["protocol.lua", "builder.lua", "main.lua"],
   "packages": ["process"],
   "check": {
-    "errors": 1
+    "errors": 1,
+    "placement": {
+      "require_complete": true,
+      "min_stack": 1,
+      "min_shared_heap": 3,
+      "min_seal_before_share": 3,
+      "max_no_fact": 0,
+      "max_unknown": 0
+    }
   }
 }

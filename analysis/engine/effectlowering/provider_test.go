@@ -11,6 +11,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/effect/postcondition"
 	"github.com/wippyai/go-lua/analysis/domain/effect/returns"
 	"github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/placement"
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
@@ -26,6 +27,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	sourcevalue "github.com/wippyai/go-lua/analysis/engine/sourcevalue"
 	"github.com/wippyai/go-lua/analysis/engine/state"
+	"github.com/wippyai/go-lua/analysis/engine/state/heapidentity"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/engine/visibility"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
@@ -969,6 +971,100 @@ func TestSignatureOutcomeProviderLowersOperationalEffectsNormalReturnFacts(t *te
 		!got.NormalReturnFacts.StoreRelations[0].Source.Equal(path.NewPlaceholder(0).Field("payload")) ||
 		!got.NormalReturnFacts.StoreRelations[0].Into.Equal(path.NewPlaceholder(1).Field("items")) {
 		t.Fatalf("store relations = %#v", got.NormalReturnFacts.StoreRelations)
+	}
+}
+
+func TestSignatureOutcomeProviderLowersOperationalAllocationTemplates(t *testing.T) {
+	reg := standard.Registry()
+	rootType := typetable.NewRecord().Field("child", typetable.NewRecord().Build()).Build()
+	childType := typetable.NewRecord().Field("name", typ.String).Build()
+	entryType := typetable.NewRecord().Field("route", typ.String).Build()
+	operational := &signature.OperationalEffects{
+		ReturnAllocationTemplates: []signature.ReturnAllocationTemplate{{
+			ReturnIndex: 0,
+			Root:        "builder.build:return:0:root",
+			Objects: []signature.AllocationObjectTemplate{
+				{
+					ID:   "builder.build:return:0:root",
+					Type: rootType,
+					StaticMembers: []signature.AllocationStaticMemberTemplate{{
+						Suffix: []segment.Segment{{Kind: segment.SegmentField, Name: "child"}},
+						Value:  "builder.build:return:0:root.child",
+					}},
+					DynamicEntries: []signature.AllocationDynamicEntryTemplate{{
+						KeyType: typ.String,
+						Value:   "builder.build:return:0:root:dynamic:0:value",
+					}},
+				},
+				{ID: "builder.build:return:0:root.child", Type: childType},
+				{ID: "builder.build:return:0:root:dynamic:0:value", Type: entryType},
+			},
+		}},
+	}
+	provider := SignatureOutcomeProvider(SignatureOutcomeProviderConfig{
+		Signatures: signatureMap{
+			"builder.build": {
+				Type:               typ.Func().Returns(rootType).Build(),
+				OperationalEffects: operational,
+			},
+		},
+		NameFor: staticName("builder.build"),
+	})
+
+	got := provider(transfer.NodeContext{Registry: reg}, factflow.NewCallSite(factflow.CallSiteConfig{}).View(), state.State{}, nil)
+	if len(got.Results) != 1 {
+		t.Fatalf("results = %#v, want one return", got.Results)
+	}
+	rootID := allocationTemplateIdentity("builder.build:return:0:root")
+	childID := allocationTemplateIdentity("builder.build:return:0:root.child")
+	entryID := allocationTemplateIdentity("builder.build:return:0:root:dynamic:0:value")
+	if id, ok := product.Get(reg, got.Results[0].Value, identity.Key).ID(); !ok || id != rootID {
+		t.Fatalf("return identity = %v/%v, want %v", id, ok, rootID)
+	}
+	if gotType, ok := typevalue.TypeOf(reg, got.Results[0].Value); !ok || !typ.TypeEquals(gotType, rootType) {
+		t.Fatalf("return type = %v/%v, want %v", gotType, ok, rootType)
+	}
+	if gotPlacement := got.Placements[rootID]; gotPlacement != placement.Stack {
+		t.Fatalf("root placement = %s, want %s", gotPlacement, placement.Stack)
+	}
+	if gotPlacement := got.Placements[childID]; gotPlacement != placement.Stack {
+		t.Fatalf("child placement = %s, want %s", gotPlacement, placement.Stack)
+	}
+	if gotPlacement := got.Placements[entryID]; gotPlacement != placement.Stack {
+		t.Fatalf("dynamic value placement = %s, want %s", gotPlacement, placement.Stack)
+	}
+	rootObject, ok := got.HeapTableObjects[rootID]
+	if !ok {
+		t.Fatalf("heap objects missing root %v: %#v", rootID, got.HeapTableObjects)
+	}
+	childKey, ok := heapidentity.StaticMemberSuffixKey([]segment.Segment{{Kind: segment.SegmentField, Name: "child"}})
+	if !ok {
+		t.Fatal("child suffix key failed")
+	}
+	childValue, ok := rootObject.StaticMember(childKey)
+	if !ok {
+		t.Fatalf("root static members = %#v", rootObject.StaticMembers())
+	}
+	if id, ok := product.Get(reg, childValue, identity.Key).ID(); !ok || id != childID {
+		t.Fatalf("child identity = %v/%v, want %v", id, ok, childID)
+	}
+	if gotType, ok := typevalue.TypeOf(reg, childValue); !ok || !typ.TypeEquals(gotType, childType) {
+		t.Fatalf("child type = %v/%v, want %v", gotType, ok, childType)
+	}
+	dynamic := rootObject.DynamicIndexFacts()
+	if len(dynamic) != 1 {
+		t.Fatalf("dynamic entries = %#v, want one", dynamic)
+	}
+	for _, fact := range dynamic {
+		if keyType, ok := typevalue.TypeOf(reg, fact.KeyValue); !ok || !typ.TypeEquals(keyType, typ.String) {
+			t.Fatalf("dynamic key type = %v/%v, want string", keyType, ok)
+		}
+		if id, ok := product.Get(reg, fact.Value, identity.Key).ID(); !ok || id != entryID {
+			t.Fatalf("dynamic value identity = %v/%v, want %v", id, ok, entryID)
+		}
+		if gotType, ok := typevalue.TypeOf(reg, fact.Value); !ok || !typ.TypeEquals(gotType, entryType) {
+			t.Fatalf("dynamic value type = %v/%v, want %v", gotType, ok, entryType)
+		}
 	}
 }
 

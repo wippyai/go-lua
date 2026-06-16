@@ -9,16 +9,18 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/module/signature"
+	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
 type operationalEffectsWire struct {
-	ReturnPresenceRelations         []returnPresenceRelationWire `json:"returnPresenceRelations,omitempty"`
-	NormalReturnPresenceRefinements []pathPresenceRefinementWire `json:"normalReturnPresenceRefinements,omitempty"`
-	PathStaticMembers               []pathStaticMemberWire       `json:"pathStaticMembers,omitempty"`
-	PathInvalidations               []pathInvalidationWire       `json:"pathInvalidations,omitempty"`
-	FrozenTables                    []frozenTableWire            `json:"frozenTables,omitempty"`
-	EscapeEvents                    []escapeEventWire            `json:"escapeEvents,omitempty"`
-	StoreRelations                  []storeRelationWire          `json:"storeRelations,omitempty"`
+	ReturnPresenceRelations         []returnPresenceRelationWire   `json:"returnPresenceRelations,omitempty"`
+	NormalReturnPresenceRefinements []pathPresenceRefinementWire   `json:"normalReturnPresenceRefinements,omitempty"`
+	PathStaticMembers               []pathStaticMemberWire         `json:"pathStaticMembers,omitempty"`
+	PathInvalidations               []pathInvalidationWire         `json:"pathInvalidations,omitempty"`
+	FrozenTables                    []frozenTableWire              `json:"frozenTables,omitempty"`
+	EscapeEvents                    []escapeEventWire              `json:"escapeEvents,omitempty"`
+	StoreRelations                  []storeRelationWire            `json:"storeRelations,omitempty"`
+	ReturnAllocationTemplates       []returnAllocationTemplateWire `json:"returnAllocationTemplates,omitempty"`
 }
 
 type returnPresenceRelationWire struct {
@@ -55,6 +57,30 @@ type escapeEventWire struct {
 type storeRelationWire struct {
 	Source *placeholderPathWire `json:"source,omitempty"`
 	Into   *placeholderPathWire `json:"into,omitempty"`
+}
+
+type returnAllocationTemplateWire struct {
+	ReturnIndex int                    `json:"returnIndex"`
+	Root        string                 `json:"root"`
+	Objects     []allocationObjectWire `json:"objects,omitempty"`
+}
+
+type allocationObjectWire struct {
+	ID             string                       `json:"id"`
+	Type           *typeWire                    `json:"type,omitempty"`
+	StaticMembers  []allocationStaticMemberWire `json:"staticMembers,omitempty"`
+	DynamicEntries []allocationDynamicEntryWire `json:"dynamicEntries,omitempty"`
+}
+
+type allocationStaticMemberWire struct {
+	Suffix string `json:"suffix"`
+	Value  string `json:"value"`
+}
+
+type allocationDynamicEntryWire struct {
+	Key     string    `json:"key,omitempty"`
+	KeyType *typeWire `json:"keyType,omitempty"`
+	Value   string    `json:"value,omitempty"`
 }
 
 type placeholderPathWire struct {
@@ -154,6 +180,13 @@ func encodeOperationalEffects(e *signature.OperationalEffects) (*operationalEffe
 		}
 		out.StoreRelations = append(out.StoreRelations, storeRelationWire{Source: source, Into: into})
 	}
+	for _, template := range e.ReturnAllocationTemplates {
+		encoded, err := encodeReturnAllocationTemplate(template)
+		if err != nil {
+			return nil, fmt.Errorf("return allocation template: %w", err)
+		}
+		out.ReturnAllocationTemplates = append(out.ReturnAllocationTemplates, encoded)
+	}
 	canonicalizeOperationalEffectsWire(out)
 	return out, nil
 }
@@ -250,6 +283,13 @@ func decodeOperationalEffects(w *operationalEffectsWire) (signature.OperationalE
 		}
 		out.StoreRelations = append(out.StoreRelations, signature.StoreRelation{Source: source, Into: into})
 	}
+	for _, template := range w.ReturnAllocationTemplates {
+		decoded, err := decodeReturnAllocationTemplate(template)
+		if err != nil {
+			return signature.OperationalEffects{}, fmt.Errorf("return allocation template: %w", err)
+		}
+		out.ReturnAllocationTemplates = append(out.ReturnAllocationTemplates, decoded)
+	}
 	return out, nil
 }
 
@@ -306,6 +346,189 @@ func canonicalizeOperationalEffectsWire(w *operationalEffectsWire) {
 			return c < 0
 		}
 		return comparePlaceholderPathWire(left.Into, right.Into) < 0
+	})
+	for i := range w.ReturnAllocationTemplates {
+		canonicalizeReturnAllocationTemplateWire(&w.ReturnAllocationTemplates[i])
+	}
+	sort.Slice(w.ReturnAllocationTemplates, func(i, j int) bool {
+		left, right := w.ReturnAllocationTemplates[i], w.ReturnAllocationTemplates[j]
+		if left.ReturnIndex != right.ReturnIndex {
+			return left.ReturnIndex < right.ReturnIndex
+		}
+		return left.Root < right.Root
+	})
+}
+
+func encodeReturnAllocationTemplate(template signature.ReturnAllocationTemplate) (returnAllocationTemplateWire, error) {
+	if template.ReturnIndex < 0 {
+		return returnAllocationTemplateWire{}, fmt.Errorf("negative return index %d", template.ReturnIndex)
+	}
+	if template.Root == "" {
+		return returnAllocationTemplateWire{}, fmt.Errorf("missing root")
+	}
+	out := returnAllocationTemplateWire{
+		ReturnIndex: template.ReturnIndex,
+		Root:        string(template.Root),
+	}
+	for _, object := range template.Objects {
+		encoded, err := encodeAllocationObjectTemplate(object)
+		if err != nil {
+			return returnAllocationTemplateWire{}, err
+		}
+		out.Objects = append(out.Objects, encoded)
+	}
+	return out, nil
+}
+
+func encodeAllocationObjectTemplate(object signature.AllocationObjectTemplate) (allocationObjectWire, error) {
+	if object.ID == "" {
+		return allocationObjectWire{}, fmt.Errorf("missing object id")
+	}
+	out := allocationObjectWire{ID: string(object.ID)}
+	if object.Type != nil {
+		encoded, err := encodeType(object.Type)
+		if err != nil {
+			return allocationObjectWire{}, fmt.Errorf("object %s type: %w", object.ID, err)
+		}
+		out.Type = encoded
+	}
+	for _, member := range object.StaticMembers {
+		if member.Value == "" {
+			return allocationObjectWire{}, fmt.Errorf("static member %s missing value", segment.FormatSegments(member.Suffix))
+		}
+		out.StaticMembers = append(out.StaticMembers, allocationStaticMemberWire{
+			Suffix: segment.FormatSegments(member.Suffix),
+			Value:  string(member.Value),
+		})
+	}
+	for _, entry := range object.DynamicEntries {
+		if entry.Key == "" && entry.KeyType == nil && entry.Value == "" {
+			continue
+		}
+		var keyType *typeWire
+		if entry.KeyType != nil {
+			encoded, err := encodeType(entry.KeyType)
+			if err != nil {
+				return allocationObjectWire{}, fmt.Errorf("dynamic entry key type: %w", err)
+			}
+			keyType = encoded
+		}
+		out.DynamicEntries = append(out.DynamicEntries, allocationDynamicEntryWire{
+			Key:     string(entry.Key),
+			KeyType: keyType,
+			Value:   string(entry.Value),
+		})
+	}
+	return out, nil
+}
+
+func decodeReturnAllocationTemplate(w returnAllocationTemplateWire) (signature.ReturnAllocationTemplate, error) {
+	if w.ReturnIndex < 0 {
+		return signature.ReturnAllocationTemplate{}, fmt.Errorf("negative return index %d", w.ReturnIndex)
+	}
+	if w.Root == "" {
+		return signature.ReturnAllocationTemplate{}, fmt.Errorf("missing root")
+	}
+	out := signature.ReturnAllocationTemplate{
+		ReturnIndex: w.ReturnIndex,
+		Root:        signature.AllocationTemplateID(w.Root),
+	}
+	seen := make(map[signature.AllocationTemplateID]struct{}, len(w.Objects))
+	for _, object := range w.Objects {
+		decoded, err := decodeAllocationObjectTemplate(object)
+		if err != nil {
+			return signature.ReturnAllocationTemplate{}, err
+		}
+		if _, ok := seen[decoded.ID]; ok {
+			return signature.ReturnAllocationTemplate{}, fmt.Errorf("duplicate object id %q", decoded.ID)
+		}
+		seen[decoded.ID] = struct{}{}
+		out.Objects = append(out.Objects, decoded)
+	}
+	if _, ok := seen[out.Root]; !ok {
+		return signature.ReturnAllocationTemplate{}, fmt.Errorf("root %q has no object template", out.Root)
+	}
+	return out, nil
+}
+
+func decodeAllocationObjectTemplate(w allocationObjectWire) (signature.AllocationObjectTemplate, error) {
+	if w.ID == "" {
+		return signature.AllocationObjectTemplate{}, fmt.Errorf("missing object id")
+	}
+	out := signature.AllocationObjectTemplate{ID: signature.AllocationTemplateID(w.ID)}
+	if w.Type != nil {
+		t, err := decodeType(w.Type)
+		if err != nil {
+			return signature.AllocationObjectTemplate{}, fmt.Errorf("object %s type: %w", w.ID, err)
+		}
+		out.Type = t
+	}
+	for _, member := range w.StaticMembers {
+		if member.Value == "" {
+			return signature.AllocationObjectTemplate{}, fmt.Errorf("static member %q missing value", member.Suffix)
+		}
+		segs, ok := segment.ParseFormattedSegments(member.Suffix)
+		if !ok {
+			return signature.AllocationObjectTemplate{}, fmt.Errorf("invalid static member suffix %q", member.Suffix)
+		}
+		out.StaticMembers = append(out.StaticMembers, signature.AllocationStaticMemberTemplate{
+			Suffix: segs,
+			Value:  signature.AllocationTemplateID(member.Value),
+		})
+	}
+	for _, entry := range w.DynamicEntries {
+		var keyType typ.Type
+		if entry.KeyType != nil {
+			t, err := decodeType(entry.KeyType)
+			if err != nil {
+				return signature.AllocationObjectTemplate{}, fmt.Errorf("dynamic entry key type: %w", err)
+			}
+			keyType = t
+		}
+		if entry.Key == "" && keyType == nil && entry.Value == "" {
+			continue
+		}
+		out.DynamicEntries = append(out.DynamicEntries, signature.AllocationDynamicEntryTemplate{
+			Key:     signature.AllocationTemplateID(entry.Key),
+			KeyType: keyType,
+			Value:   signature.AllocationTemplateID(entry.Value),
+		})
+	}
+	return out, nil
+}
+
+func canonicalizeReturnAllocationTemplateWire(w *returnAllocationTemplateWire) {
+	if w == nil {
+		return
+	}
+	for i := range w.Objects {
+		canonicalizeAllocationObjectWire(&w.Objects[i])
+	}
+	sort.Slice(w.Objects, func(i, j int) bool {
+		return w.Objects[i].ID < w.Objects[j].ID
+	})
+}
+
+func canonicalizeAllocationObjectWire(w *allocationObjectWire) {
+	if w == nil {
+		return
+	}
+	sort.Slice(w.StaticMembers, func(i, j int) bool {
+		left, right := w.StaticMembers[i], w.StaticMembers[j]
+		if left.Suffix != right.Suffix {
+			return left.Suffix < right.Suffix
+		}
+		return left.Value < right.Value
+	})
+	sort.Slice(w.DynamicEntries, func(i, j int) bool {
+		left, right := w.DynamicEntries[i], w.DynamicEntries[j]
+		if left.Key != right.Key {
+			return left.Key < right.Key
+		}
+		if left.Value != right.Value {
+			return left.Value < right.Value
+		}
+		return typeWireKey(left.KeyType) < typeWireKey(right.KeyType)
 	})
 }
 

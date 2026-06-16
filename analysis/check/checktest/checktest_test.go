@@ -1988,6 +1988,100 @@ end
 	}
 }
 
+func TestCheckProcessSendPromotesCrossModuleAllocationTemplateMapEntryPlacement(t *testing.T) {
+	protocolMod := CheckAndExport(`
+type Meta = {
+    route: string,
+    shard: string,
+}
+type Child = {
+    id: string,
+    meta: Meta,
+}
+type Item = {
+    id: string,
+    tags: {[string]: string},
+    child: Child,
+}
+type Batch = {
+    items: {[string]: Item},
+    count: number,
+}
+
+local M = {}
+M.Meta = Meta
+M.Child = Child
+M.Item = Item
+M.Batch = Batch
+return M
+`, "protocol", WithStdlib())
+	if len(protocolMod.Errors) != 0 {
+		t.Fatalf("protocol diagnostics = %#v, want none", protocolMod.Errors)
+	}
+	builderMod := CheckAndExport(`
+local protocol = require("protocol")
+
+local M = {}
+
+function M.build(ids: {string}, fill: (protocol.Item, string, number) -> ()): protocol.Batch
+    local batch: protocol.Batch = {items = {}, count = 0}
+    for _, id in ipairs(ids) do
+        batch.count = batch.count + 1
+        local item: protocol.Item = {
+            id = id,
+            tags = {},
+            child = {
+                id = id,
+                meta = {route = "", shard = ""},
+            },
+        }
+        item.tags["phase"] = "constructing"
+        fill(item, id, batch.count)
+        item.tags["phase"] = "ready"
+        batch.items[id] = item
+    end
+    return batch
+end
+
+return M
+`, "builder", WithStdlib(), WithModule("protocol", protocolMod))
+	if len(builderMod.Errors) != 0 {
+		t.Fatalf("builder diagnostics = %#v, want none", builderMod.Errors)
+	}
+
+	result := Check(`
+local builder = require("builder")
+
+local batch = builder.build({"route-1", "route-2"}, function(item, id: string, index: number)
+    item.child.meta.route = id
+    if index == 1 then
+        item.child.meta.shard = "primary"
+    else
+        item.child.meta.shard = "backup"
+    end
+    item.tags["callback"] = "filled"
+end)
+
+if batch.items["route-1"] then
+    process.send("worker-1", "route.ready", batch.items["route-1"])
+end
+`, WithStdlib(), WithModule("builder", builderMod), WithManifest("process", ProcessManifest()), WithGlobals("process"))
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want none", result.Diagnostics)
+	}
+	if result.checked == nil || result.checked.RootResult() == nil {
+		t.Fatal("missing checked root result")
+	}
+	root := result.checked.RootResult()
+	exit, ok := root.ExitState()
+	if !ok {
+		t.Fatal("missing exit state")
+	}
+	if depth := maxSharedPlacementDepth(root.Registry(), exit); depth < 3 {
+		t.Fatalf("max shared placement depth = %d, want at least item -> child -> meta: %s\ncalls: %s", depth, placementSummary(root.Registry(), exit), callOutcomeDebug(root))
+	}
+}
+
 func callOutcomeDebug(root *body.Result) string {
 	if root == nil || root.Graph() == nil {
 		return "<no graph>"

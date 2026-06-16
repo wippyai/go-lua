@@ -15,6 +15,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/effect/postcondition"
 	"github.com/wippyai/go-lua/analysis/domain/effect/returns"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/module/signature"
 	"github.com/wippyai/go-lua/analysis/type/annotation"
@@ -172,6 +173,22 @@ func TestManifestRoundTripNamedFunctionSignatureEffects(t *testing.T) {
 			Source: pathdom.NewPlaceholder(0).Field("payload"),
 			Into:   pathdom.NewPlaceholder(1).Field("items"),
 		}},
+		ReturnAllocationTemplates: []signature.ReturnAllocationTemplate{{
+			ReturnIndex: 0,
+			Root:        "example.transform:return:0:root",
+			Objects: []signature.AllocationObjectTemplate{{
+				ID:   "example.transform:return:0:root",
+				Type: typetable.NewRecord().Build(),
+				StaticMembers: []signature.AllocationStaticMemberTemplate{{
+					Suffix: []segment.Segment{{Kind: segment.SegmentField, Name: "child"}},
+					Value:  "example.transform:return:0:root.child",
+				}},
+				DynamicEntries: []signature.AllocationDynamicEntryTemplate{{
+					KeyType: typ.String,
+					Value:   "example.transform:return:0:root.entry",
+				}},
+			}},
+		}},
 	}
 	m := New("example/effects")
 	m.SetExport(export)
@@ -185,6 +202,7 @@ func TestManifestRoundTripNamedFunctionSignatureEffects(t *testing.T) {
 		!strings.Contains(string(data), `"effect"`) ||
 		!strings.Contains(string(data), `"operationalEffects"`) ||
 		!strings.Contains(string(data), `"pathStaticMembers"`) ||
+		!strings.Contains(string(data), `"returnAllocationTemplates"`) ||
 		!strings.Contains(string(data), `"suffix": ".payload"`) {
 		t.Fatalf("encoded manifest missing function signature effect data:\n%s", data)
 	}
@@ -288,6 +306,30 @@ func TestManifestOperationalPathStaticMemberRequiresType(t *testing.T) {
 	})
 	if err == nil || !strings.Contains(err.Error(), "path static member type: missing") {
 		t.Fatalf("decodeFunctionSignature error = %v, want missing static-member type", err)
+	}
+}
+
+func TestManifestOperationalAllocationTemplateRequiresRootObject(t *testing.T) {
+	fn := typ.Func().Returns(typ.Any).Build()
+	encodedType, err := encodeType(fn)
+	if err != nil {
+		t.Fatalf("encodeType: %v", err)
+	}
+	_, err = decodeFunctionSignature(functionSignatureWire{
+		Name: "allocation-template",
+		Type: encodedType,
+		OperationalEffects: &operationalEffectsWire{
+			ReturnAllocationTemplates: []returnAllocationTemplateWire{{
+				ReturnIndex: 0,
+				Root:        "missing",
+				Objects: []allocationObjectWire{{
+					ID: "other",
+				}},
+			}},
+		},
+	})
+	if err == nil || !strings.Contains(err.Error(), `root "missing" has no object template`) {
+		t.Fatalf("decodeFunctionSignature error = %v, want missing allocation root object", err)
 	}
 }
 

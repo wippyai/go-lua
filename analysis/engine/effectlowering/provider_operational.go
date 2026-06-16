@@ -1,13 +1,23 @@
 package effectlowering
 
 import (
+	"fmt"
+
+	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/placement"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine/callboundary"
+	"github.com/wippyai/go-lua/analysis/engine/dynamicindex"
 	factapply "github.com/wippyai/go-lua/analysis/engine/factapply"
+	"github.com/wippyai/go-lua/analysis/engine/state/heapidentity"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/module/signature"
+	"github.com/wippyai/go-lua/analysis/type/inspect"
+	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
 func applyOperationalEffects(ctx transfer.NodeContext, out factapply.CallOutcome, effects *signature.OperationalEffects) factapply.CallOutcome {
@@ -21,6 +31,8 @@ func applyOperationalEffects(ctx transfer.NodeContext, out factapply.CallOutcome
 	out.NormalReturnFacts.FrozenTables = operationalFrozenTables(*effects)
 	out.NormalReturnFacts.EscapeEvents = operationalEscapeEvents(*effects)
 	out.NormalReturnFacts.StoreRelations = operationalStoreRelations(*effects)
+	out.HeapTableObjects = operationalHeapTableObjects(ctx, *effects)
+	out.Placements = operationalAllocationPlacements(*effects)
 	return out
 }
 
@@ -162,4 +174,125 @@ func operationalStoreRelations(e signature.OperationalEffects) []callboundary.St
 		})
 	}
 	return out
+}
+
+func operationalReturnAllocationValue(reg *axis.Registry, effects *signature.OperationalEffects, returnIndex int, value product.Value) product.Value {
+	if reg == nil || effects == nil || len(effects.ReturnAllocationTemplates) == 0 {
+		return value
+	}
+	for _, template := range effects.ReturnAllocationTemplates {
+		if template.ReturnIndex != returnIndex || template.Root == "" {
+			continue
+		}
+		return product.Set(reg, value, identity.Key, identity.Singleton(allocationTemplateIdentity(template.Root)))
+	}
+	return value
+}
+
+func operationalHeapTableObjects(ctx transfer.NodeContext, e signature.OperationalEffects) map[identity.ID]heapidentity.TableObject {
+	if ctx.Registry == nil || len(e.ReturnAllocationTemplates) == 0 {
+		return nil
+	}
+	out := make(map[identity.ID]heapidentity.TableObject)
+	for _, template := range e.ReturnAllocationTemplates {
+		objectTypes := allocationObjectTypes(template.Objects)
+		for _, object := range template.Objects {
+			if object.ID == "" {
+				continue
+			}
+			id := allocationTemplateIdentity(object.ID)
+			root := allocationTemplateValue(ctx.Registry, object.ID, object.Type)
+			staticMembers := make(map[pathdom.PathKey]product.Value, len(object.StaticMembers))
+			for _, member := range object.StaticMembers {
+				if member.Value == "" {
+					continue
+				}
+				key, ok := heapidentity.StaticMemberSuffixKey(member.Suffix)
+				if !ok {
+					continue
+				}
+				staticMembers[key] = allocationTemplateValue(ctx.Registry, member.Value, objectTypes[member.Value])
+			}
+			dynamicEntries := make(map[dynamicindex.Key]dynamicindex.Fact, len(object.DynamicEntries))
+			for i, entry := range object.DynamicEntries {
+				if entry.Key == "" && entry.KeyType == nil && entry.Value == "" {
+					continue
+				}
+				dynamicEntries[dynamicindex.Key{
+					Table: pathdom.PathKey(object.ID),
+					Site:  dynamicindex.Site(fmt.Sprintf("manifest:%d", i)),
+				}] = dynamicindex.Fact{
+					KeyPresence: presence.Present(),
+					KeyValue:    allocationTemplateKeyValue(ctx.Registry, entry),
+					Value:       allocationTemplateValue(ctx.Registry, entry.Value, objectTypes[entry.Value]),
+					Admission:   dynamicindex.AdmissionAdmitted,
+				}
+			}
+			out[id] = heapidentity.NewTableObject(heapidentity.TableObjectConfig{
+				Root:              root,
+				StaticMembers:     staticMembers,
+				DynamicIndexFacts: dynamicEntries,
+			})
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func allocationObjectTypes(objects []signature.AllocationObjectTemplate) map[signature.AllocationTemplateID]typ.Type {
+	if len(objects) == 0 {
+		return nil
+	}
+	out := make(map[signature.AllocationTemplateID]typ.Type, len(objects))
+	for _, object := range objects {
+		if object.ID != "" && object.Type != nil && !inspect.ContainsTypeParam(object.Type) {
+			out[object.ID] = object.Type
+		}
+	}
+	return out
+}
+
+func operationalAllocationPlacements(e signature.OperationalEffects) map[identity.ID]placement.Value {
+	if len(e.ReturnAllocationTemplates) == 0 {
+		return nil
+	}
+	out := make(map[identity.ID]placement.Value)
+	for _, template := range e.ReturnAllocationTemplates {
+		for _, object := range template.Objects {
+			if object.ID == "" {
+				continue
+			}
+			id := allocationTemplateIdentity(object.ID)
+			out[id] = placement.Join(out[id], placement.Stack)
+		}
+	}
+	return out
+}
+
+func allocationTemplateKeyValue(reg *axis.Registry, entry signature.AllocationDynamicEntryTemplate) product.Value {
+	value := product.NewWithPresence(reg, product.ShapeTop, presence.Present())
+	if entry.KeyType != nil {
+		value = typevalue.WithWitness(reg, typevalue.FromType(reg, entry.KeyType), entry.KeyType)
+	}
+	if entry.Key != "" {
+		value = product.Set(reg, value, identity.Key, identity.Singleton(allocationTemplateIdentity(entry.Key)))
+	}
+	return value
+}
+
+func allocationTemplateValue(reg *axis.Registry, id signature.AllocationTemplateID, t typ.Type) product.Value {
+	value := product.NewWithPresence(reg, product.ShapeTop, presence.Present())
+	if t != nil {
+		value = typevalue.WithWitness(reg, typevalue.FromType(reg, t), t)
+	}
+	if id == "" {
+		return value
+	}
+	return product.Set(reg, value, identity.Key, identity.Singleton(allocationTemplateIdentity(id)))
+}
+
+func allocationTemplateIdentity(id signature.AllocationTemplateID) identity.ID {
+	return identity.ID{Kind: "manifest.allocation", Site: string(id)}
 }

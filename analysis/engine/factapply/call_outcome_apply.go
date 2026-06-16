@@ -34,6 +34,9 @@ func applyCallOutcomeFacts(
 	for id, object := range outcome.HeapTableObjects {
 		out = out.WriteHeapTableObject(ctx.Registry, id, object)
 	}
+	for id, value := range outcome.Placements {
+		out = writeJoinedPlacement(out, id, value)
+	}
 	for _, fact := range normalReturnFacts.PathRefinements {
 		targetPath, ok := fact.Path.Substitute(bindings)
 		if !ok {

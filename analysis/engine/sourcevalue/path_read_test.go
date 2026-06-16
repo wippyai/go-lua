@@ -55,6 +55,47 @@ func TestHeapMemberFromValueReadsStaticMemberAndPreservesOwnerPresence(t *testin
 	assertRuntimeKind(t, reg, got, runtimekind.Singleton(runtimekind.String))
 }
 
+func TestHeapMemberFromValueAuthorizesByIdentityWhenRootValueIsRicher(t *testing.T) {
+	reg := standard.Registry()
+	id := identity.LuaTableLiteral(7002, 212)
+	objectRoot := product.Set(reg, product.NewWithPresence(reg, product.ShapeTop, presence.Present()), identity.Key, identity.Singleton(id))
+	readRoot := product.Set(reg, objectRoot, runtimekind.Key, runtimekind.Singleton(runtimekind.Table))
+	memberValue := product.Set(reg, product.NewWithPresence(reg, product.ShapeTop, presence.Present()), runtimekind.Key, runtimekind.Singleton(runtimekind.String))
+	in := state.State{}.WriteHeapTableObject(reg, id, heapidentity.NewTableObject(heapidentity.TableObjectConfig{
+		Root: objectRoot,
+		StaticMembers: map[pathdom.PathKey]product.Value{
+			pathdom.PathKey(".id"): memberValue,
+		},
+	}))
+
+	got, ok := HeapMemberFromValue(reg, in, readRoot, []segment.Segment{{Kind: segment.SegmentField, Name: "id"}})
+	if !ok {
+		t.Fatal("HeapMemberFromValue returned false")
+	}
+	assertPresence(t, reg, got, presence.Present())
+	assertRuntimeKind(t, reg, got, runtimekind.Singleton(runtimekind.String))
+}
+
+func TestHeapMemberFromValueRejectsSameIdentityWithIncompatibleRootValue(t *testing.T) {
+	reg := standard.Registry()
+	id := identity.LuaTableLiteral(7002, 213)
+	objectRoot := product.Set(reg, product.NewWithPresence(reg, product.ShapeTop, presence.Present()), identity.Key, identity.Singleton(id))
+	objectRoot = product.Set(reg, objectRoot, runtimekind.Key, runtimekind.Singleton(runtimekind.Table))
+	readRoot := product.Set(reg, product.NewWithPresence(reg, product.ShapeTop, presence.Present()), identity.Key, identity.Singleton(id))
+	readRoot = product.Set(reg, readRoot, runtimekind.Key, runtimekind.Singleton(runtimekind.String))
+	memberValue := product.Set(reg, product.NewWithPresence(reg, product.ShapeTop, presence.Present()), runtimekind.Key, runtimekind.Singleton(runtimekind.String))
+	in := state.State{}.WriteHeapTableObject(reg, id, heapidentity.NewTableObject(heapidentity.TableObjectConfig{
+		Root: objectRoot,
+		StaticMembers: map[pathdom.PathKey]product.Value{
+			pathdom.PathKey(".id"): memberValue,
+		},
+	}))
+
+	if got, ok := HeapMemberFromValue(reg, in, readRoot, []segment.Segment{{Kind: segment.SegmentField, Name: "id"}}); ok {
+		t.Fatalf("HeapMemberFromValue = %v/true, want false for incompatible root", got)
+	}
+}
+
 func TestInheritTopOriginEvidenceCopiesTopEvidence(t *testing.T) {
 	reg := standard.Registry()
 	child := product.NewWithPresence(reg, product.ShapeTop, presence.Present())

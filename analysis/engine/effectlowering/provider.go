@@ -92,6 +92,7 @@ func SignatureOutcomeProvider(config SignatureOutcomeProviderConfig) factapply.C
 			if !ok {
 				continue
 			}
+			value = operationalReturnAllocationValue(ctx.Registry, sig.OperationalEffects, i, value)
 			results = append(results, factapply.CallResult{
 				Index: i,
 				Value: value,

@@ -14,6 +14,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/effect/postcondition"
 	"github.com/wippyai/go-lua/analysis/domain/effect/returns"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
@@ -28,6 +29,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/module/signature"
 	"github.com/wippyai/go-lua/analysis/module/signaturelookup"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
+	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/typeexpr"
 	"github.com/wippyai/go-lua/compiler/parse"
@@ -237,7 +239,7 @@ func TestFunctionSummaryOperationalEffectsPreservesDescendantBoundaryFacts(t *te
 		Param("source", typ.Any).
 		Param("target", typ.Any).
 		Returns(typeexpr.Optional(typ.Number), typeexpr.Optional(typ.String)).
-		Build())
+		Build(), "test.effect")
 
 	if got == nil {
 		t.Fatalf("operational effects = nil")
@@ -438,7 +440,7 @@ func TestFunctionSummaryOperationalEffectsLaneMatrixManifestRoundTrip(t *testing
 		}},
 	}
 
-	got := functionSummaryOperationalEffects(reg, sum, fn)
+	got := functionSummaryOperationalEffects(reg, sum, fn, "laneMatrix")
 	if got == nil {
 		t.Fatalf("operational effects = nil")
 	}
@@ -525,10 +527,105 @@ func TestFunctionSummaryOperationalEffectsLaneMatrixManifestRoundTrip(t *testing
 	}
 }
 
+func TestFunctionSummaryOperationalEffectsExportsReturnAllocationTemplate(t *testing.T) {
+	reg := standard.Registry()
+	rootID := identity.ID{Kind: "lua.table", Site: "summary-template", Index: 1}
+	childID := identity.ID{Kind: "lua.table", Site: "summary-template", Index: 2}
+	entryID := identity.ID{Kind: "lua.table", Site: "summary-template", Index: 3}
+	unrelatedID := identity.ID{Kind: "lua.table", Site: "summary-template", Index: 4}
+	present := product.NewWithPresence(reg, product.ShapeTop, presence.Present())
+	rootType := typetable.NewRecord().Field("child", typetable.NewRecord().Build()).Build()
+	childType := typetable.NewRecord().Field("name", typ.String).Build()
+	entryType := typetable.NewRecord().Field("route", typ.String).Build()
+	rootValue := product.Set(reg, typevalue.WithWitness(reg, typevalue.FromType(reg, rootType), rootType), identity.Key, identity.Singleton(rootID))
+	childValue := product.Set(reg, typevalue.WithWitness(reg, typevalue.FromType(reg, childType), childType), identity.Key, identity.Singleton(childID))
+	entryValue := product.Set(reg, typevalue.WithWitness(reg, typevalue.FromType(reg, entryType), entryType), identity.Key, identity.Singleton(entryID))
+	unrelatedValue := product.Set(reg, present, identity.Key, identity.Singleton(unrelatedID))
+	childKey, ok := heapidentity.StaticMemberSuffixKey([]segment.Segment{{Kind: segment.SegmentField, Name: "child"}})
+	if !ok {
+		t.Fatal("child suffix key failed")
+	}
+	got := functionSummaryOperationalEffects(reg, summary.Summary{
+		Returns: []product.Value{rootValue},
+		HeapTableObjects: map[identity.ID]heapidentity.TableObject{
+			rootID: heapidentity.NewTableObject(heapidentity.TableObjectConfig{
+				Root: rootValue,
+				StaticMembers: map[pathdom.PathKey]product.Value{
+					childKey: childValue,
+				},
+				DynamicIndexFacts: map[dynamicindex.Key]dynamicindex.Fact{
+					{Table: pathdom.PathKey("root.items"), Site: "write"}: {
+						KeyPresence: presence.Present(),
+						KeyValue:    typevalue.WithWitness(reg, typevalue.FromType(reg, typ.String), typ.String),
+						Value:       entryValue,
+						Admission:   dynamicindex.AdmissionAdmitted,
+					},
+				},
+			}),
+			childID:     heapidentity.NewTableObject(heapidentity.TableObjectConfig{Root: childValue}),
+			entryID:     heapidentity.NewTableObject(heapidentity.TableObjectConfig{Root: entryValue}),
+			unrelatedID: heapidentity.NewTableObject(heapidentity.TableObjectConfig{Root: unrelatedValue}),
+		},
+	}, typ.Func().Returns(typ.Any).Build(), "builder.build")
+	if got == nil || len(got.ReturnAllocationTemplates) != 1 {
+		t.Fatalf("allocation templates = %#v, want one return template", got)
+	}
+	template := got.ReturnAllocationTemplates[0]
+	if template.ReturnIndex != 0 || template.Root != "builder.build:return:0:root" {
+		t.Fatalf("return template = %#v", template)
+	}
+	if len(template.Objects) != 3 {
+		t.Fatalf("template objects = %#v, want reachable root/child/dynamic entry only", template.Objects)
+	}
+	root := allocationTemplateObject(template.Objects, "builder.build:return:0:root")
+	if root == nil {
+		t.Fatalf("missing root object in %#v", template.Objects)
+	}
+	if !typ.TypeEquals(root.Type, rootType) {
+		t.Fatalf("root type = %v, want %v", root.Type, rootType)
+	}
+	if len(root.StaticMembers) != 1 ||
+		segment.FormatSegments(root.StaticMembers[0].Suffix) != ".child" ||
+		root.StaticMembers[0].Value != "builder.build:return:0:root.child" {
+		t.Fatalf("root static members = %#v", root.StaticMembers)
+	}
+	if len(root.DynamicEntries) != 1 ||
+		root.DynamicEntries[0].Value != "builder.build:return:0:root:dynamic:0:value" ||
+		!typ.TypeEquals(root.DynamicEntries[0].KeyType, typ.String) {
+		t.Fatalf("root dynamic entries = %#v", root.DynamicEntries)
+	}
+	entry := allocationTemplateObject(template.Objects, "builder.build:return:0:root:dynamic:0:value")
+	if entry == nil {
+		t.Fatalf("missing dynamic entry object in %#v", template.Objects)
+	}
+	if !typ.TypeEquals(entry.Type, entryType) {
+		t.Fatalf("dynamic entry type = %v, want %v", entry.Type, entryType)
+	}
+	child := allocationTemplateObject(template.Objects, "builder.build:return:0:root.child")
+	if child == nil {
+		t.Fatalf("missing child object in %#v", template.Objects)
+	}
+	if !typ.TypeEquals(child.Type, childType) {
+		t.Fatalf("child type = %v, want %v", child.Type, childType)
+	}
+	if allocationTemplateObject(template.Objects, "builder.build:return:0:unrelated") != nil {
+		t.Fatalf("unrelated object leaked into template: %#v", template.Objects)
+	}
+}
+
+func allocationTemplateObject(objects []signature.AllocationObjectTemplate, id signature.AllocationTemplateID) *signature.AllocationObjectTemplate {
+	for i := range objects {
+		if objects[i].ID == id {
+			return &objects[i]
+		}
+	}
+	return nil
+}
+
 func TestFunctionSummaryOperationalEffectsEmptyIsAbsent(t *testing.T) {
 	got := functionSummaryOperationalEffects(standard.Registry(), summary.Summary{}, typ.Func().
 		Param("value", typ.Any).
-		Build())
+		Build(), "empty")
 	if got != nil {
 		t.Fatalf("operational effects = %#v, want nil for empty summary facts", got)
 	}

@@ -75,7 +75,12 @@ func HeapMemberFromValue(reg *axis.Registry, in state.State, value product.Value
 		return product.Value{}, false
 	}
 	object := in.ReadHeapTableObject(reg, id)
-	if !product.Equal(reg, object.Root(), value) {
+	root := object.Root()
+	rootID, ok := product.Get(reg, root, identity.Key).ID()
+	if !ok || rootID != id {
+		return product.Value{}, false
+	}
+	if product.Equal(reg, product.Meet(reg, root, value), product.Bottom(reg)) {
 		return product.Value{}, false
 	}
 	member, ok := object.StaticMember(key)

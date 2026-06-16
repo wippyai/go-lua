@@ -738,8 +738,13 @@ func TestFactsNodeTransferCallOutcomeEscapeRecoversDynamicEntryIdentityWhenPathV
 	if itemPathKey == "" {
 		t.Fatal("missing item path key")
 	}
+	itemsPathKey := resolver.KeyAt(point, itemsPath)
+	if itemsPathKey == "" {
+		t.Fatal("missing items path key")
+	}
 	in := state.State{}.
 		WriteValue(reg, key.SymbolValue(batch), batchValue).
+		WritePathKey(reg, itemsPathKey, presentValue(reg)).
 		WritePathKey(reg, itemPathKey, presentValue(reg)).
 		WriteHeapTableObject(reg, batchID, heapidentity.NewTableObject(heapidentity.TableObjectConfig{
 			Root:          batchValue,
@@ -1082,6 +1087,34 @@ func TestFactsNodeTransferCallOutcomeAppliesHeapTableObjects(t *testing.T) {
 	}
 	if member, ok := object.StaticMember(memberKey); !ok || !product.Equal(reg, member, value) {
 		t.Fatalf("heap object member = %#v/%v, want %#v", member, ok, value)
+	}
+}
+
+func TestFactsNodeTransferCallOutcomeAppliesPlacementFacts(t *testing.T) {
+	reg := standard.Registry()
+	point := cfg.Point(620)
+	tableID := identity.ID{Kind: "table", Site: "call-placement", Index: 1}
+
+	got := NewFactsNodeTransfer(FactsNodeTransferConfig{
+		Facts: factflow.NewFacts(factflow.FactsInput{
+			CallSites: map[cfg.Point]factflow.CallSite{
+				point: factflow.NewCallSite(factflow.CallSiteConfig{Context: factflow.CallSiteContextStatement}),
+			},
+		}),
+		CallOutcome: func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) CallOutcome {
+			return CallOutcome{
+				Placements: map[identity.ID]placement.Value{
+					tableID: placement.Stack,
+				},
+			}
+		},
+	})(transfer.NodeContext{
+		Registry: reg,
+		Point:    point,
+	}, state.State{})
+
+	if gotPlacement := got.ReadPlacement(tableID); gotPlacement != placement.Stack {
+		t.Fatalf("placement[%v] = %s, want %s", tableID, gotPlacement, placement.Stack)
 	}
 }
 

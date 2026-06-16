@@ -1,6 +1,9 @@
 package exportmanifest
 
 import (
+	"fmt"
+	"sort"
+
 	"github.com/wippyai/go-lua/analysis/check/body"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/program"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/summary"
@@ -12,10 +15,13 @@ import (
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine/callboundary"
+	"github.com/wippyai/go-lua/analysis/engine/dynamicindex"
+	"github.com/wippyai/go-lua/analysis/engine/state/heapidentity"
 	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
 	"github.com/wippyai/go-lua/analysis/module/manifest"
 	"github.com/wippyai/go-lua/analysis/module/signature"
@@ -87,7 +93,7 @@ func publishFunctionDefinitionSignatures(
 		sig := signature.Function{Type: fn}
 		if summary, ok := functionSummary(prog, root, fact.Func); ok {
 			sig.Effect = functionSummaryEffect(summary, fn)
-			sig.OperationalEffects = functionSummaryOperationalEffects(root.Registry(), summary, fn)
+			sig.OperationalEffects = functionSummaryOperationalEffects(root.Registry(), summary, fn, name)
 		}
 		m.DefineFunctionSignature(name, sig)
 	}
@@ -166,7 +172,7 @@ func functionSummaryEffect(s summary.Summary, fn *typ.Function) effect.Row {
 	return row
 }
 
-func functionSummaryOperationalEffects(reg *axis.Registry, s summary.Summary, fn *typ.Function) *signature.OperationalEffects {
+func functionSummaryOperationalEffects(reg *axis.Registry, s summary.Summary, fn *typ.Function, signatureName string) *signature.OperationalEffects {
 	if fn == nil {
 		return nil
 	}
@@ -179,11 +185,195 @@ func functionSummaryOperationalEffects(reg *axis.Registry, s summary.Summary, fn
 		FrozenTables:                    operationalFrozenTables(s.NormalReturnFacts, arity),
 		EscapeEvents:                    operationalEscapeEvents(s.NormalReturnFacts, arity),
 		StoreRelations:                  operationalStoreRelations(s.NormalReturnFacts, arity),
+		ReturnAllocationTemplates:       operationalReturnAllocationTemplates(reg, s, signatureName),
 	}
 	if out.IsEmpty() {
 		return nil
 	}
 	return &out
+}
+
+func operationalReturnAllocationTemplates(reg *axis.Registry, s summary.Summary, signatureName string) []signature.ReturnAllocationTemplate {
+	if reg == nil || signatureName == "" || len(s.Returns) == 0 || len(s.HeapTableObjects) == 0 {
+		return nil
+	}
+	var out []signature.ReturnAllocationTemplate
+	for i, value := range s.Returns {
+		id, ok := product.Get(reg, value, identity.Key).ID()
+		if !ok {
+			continue
+		}
+		template, ok := allocationTemplateForReturn(reg, s.HeapTableObjects, signatureName, i, id)
+		if ok {
+			out = append(out, template)
+		}
+	}
+	return out
+}
+
+func allocationTemplateForReturn(
+	reg *axis.Registry,
+	objects map[identity.ID]heapidentity.TableObject,
+	signatureName string,
+	returnIndex int,
+	rootID identity.ID,
+) (signature.ReturnAllocationTemplate, bool) {
+	if _, ok := objects[rootID]; !ok {
+		return signature.ReturnAllocationTemplate{}, false
+	}
+	projector := allocationTemplateProjector{
+		reg:           reg,
+		objects:       objects,
+		signatureName: signatureName,
+		returnIndex:   returnIndex,
+		rawToTemplate: make(map[identity.ID]signature.AllocationTemplateID),
+		visiting:      make(map[signature.AllocationTemplateID]struct{}),
+		emitted:       make(map[signature.AllocationTemplateID]struct{}),
+	}
+	rootTemplate := projector.templateID(rootID, "root")
+	projector.visit(rootID, rootTemplate, "root")
+	if len(projector.out) == 0 {
+		return signature.ReturnAllocationTemplate{}, false
+	}
+	sort.Slice(projector.out, func(i, j int) bool {
+		return projector.out[i].ID < projector.out[j].ID
+	})
+	return signature.ReturnAllocationTemplate{
+		ReturnIndex: returnIndex,
+		Root:        rootTemplate,
+		Objects:     projector.out,
+	}, true
+}
+
+type allocationTemplateProjector struct {
+	reg           *axis.Registry
+	objects       map[identity.ID]heapidentity.TableObject
+	signatureName string
+	returnIndex   int
+	rawToTemplate map[identity.ID]signature.AllocationTemplateID
+	visiting      map[signature.AllocationTemplateID]struct{}
+	emitted       map[signature.AllocationTemplateID]struct{}
+	out           []signature.AllocationObjectTemplate
+}
+
+func (p *allocationTemplateProjector) templateID(raw identity.ID, path string) signature.AllocationTemplateID {
+	if raw == (identity.ID{}) {
+		return ""
+	}
+	if id, ok := p.rawToTemplate[raw]; ok {
+		return id
+	}
+	id := signature.AllocationTemplateID(fmt.Sprintf("%s:return:%d:%s", p.signatureName, p.returnIndex, path))
+	p.rawToTemplate[raw] = id
+	return id
+}
+
+func (p *allocationTemplateProjector) visit(raw identity.ID, templateID signature.AllocationTemplateID, path string) {
+	if raw == (identity.ID{}) || templateID == "" {
+		return
+	}
+	if _, ok := p.emitted[templateID]; ok {
+		return
+	}
+	if _, ok := p.visiting[templateID]; ok {
+		return
+	}
+	object, ok := p.objects[raw]
+	if !ok || !valueHasIdentity(p.reg, object.Root(), raw) {
+		return
+	}
+	p.visiting[templateID] = struct{}{}
+	projected := signature.AllocationObjectTemplate{ID: templateID}
+	if t, ok := valueType(p.reg, object.Root()); ok {
+		projected.Type = t
+	}
+	for _, member := range sortedHeapStaticMembers(object.StaticMembers()) {
+		memberID, ok := product.Get(p.reg, member.value, identity.Key).ID()
+		if !ok {
+			continue
+		}
+		childPath := path + segment.FormatSegments(member.suffix)
+		childTemplate := p.templateID(memberID, childPath)
+		projected.StaticMembers = append(projected.StaticMembers, signature.AllocationStaticMemberTemplate{
+			Suffix: member.suffix,
+			Value:  childTemplate,
+		})
+		p.visit(memberID, childTemplate, childPath)
+	}
+	for _, entry := range sortedHeapDynamicEntries(object.DynamicIndexFacts()) {
+		var projectedEntry signature.AllocationDynamicEntryTemplate
+		if keyID, ok := product.Get(p.reg, entry.fact.KeyValue, identity.Key).ID(); ok {
+			keyPath := fmt.Sprintf("%s:dynamic:%d:key", path, entry.index)
+			projectedEntry.Key = p.templateID(keyID, keyPath)
+			p.visit(keyID, projectedEntry.Key, keyPath)
+		}
+		if keyType, ok := typevalue.TypeOf(p.reg, entry.fact.KeyValue); ok {
+			projectedEntry.KeyType = keyType
+		}
+		if valueID, ok := product.Get(p.reg, entry.fact.Value, identity.Key).ID(); ok {
+			valuePath := fmt.Sprintf("%s:dynamic:%d:value", path, entry.index)
+			projectedEntry.Value = p.templateID(valueID, valuePath)
+			p.visit(valueID, projectedEntry.Value, valuePath)
+		}
+		if projectedEntry.Key == "" && projectedEntry.KeyType == nil && projectedEntry.Value == "" {
+			continue
+		}
+		projected.DynamicEntries = append(projected.DynamicEntries, projectedEntry)
+	}
+	delete(p.visiting, templateID)
+	p.emitted[templateID] = struct{}{}
+	p.out = append(p.out, projected)
+}
+
+type heapStaticMember struct {
+	suffix []segment.Segment
+	value  product.Value
+}
+
+func sortedHeapStaticMembers(in map[pathdom.PathKey]product.Value) []heapStaticMember {
+	out := make([]heapStaticMember, 0, len(in))
+	for key, value := range in {
+		suffix, ok := segment.ParseFormattedSegments(string(key))
+		if !ok {
+			continue
+		}
+		out = append(out, heapStaticMember{suffix: suffix, value: value})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return segment.FormatSegments(out[i].suffix) < segment.FormatSegments(out[j].suffix)
+	})
+	return out
+}
+
+type heapDynamicEntry struct {
+	index int
+	key   string
+	fact  dynamicindex.Fact
+}
+
+func sortedHeapDynamicEntries(in map[dynamicindex.Key]dynamicindex.Fact) []heapDynamicEntry {
+	out := make([]heapDynamicEntry, 0, len(in))
+	for key, fact := range in {
+		if fact.Admission == dynamicindex.AdmissionRejected {
+			continue
+		}
+		out = append(out, heapDynamicEntry{
+			key:  string(key.Table) + "|" + string(key.Site),
+			fact: fact,
+		})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].key < out[j].key
+	})
+	for i := range out {
+		out[i].index = i
+	}
+	return out
+}
+
+func valueHasIdentity(reg *axis.Registry, value product.Value, want identity.ID) bool {
+	got, ok := product.Get(reg, value, identity.Key).ID()
+	return ok && got == want
 }
 
 func operationalReturnPresenceRelations(relations []summary.ReturnPresenceRelation, arity int) []signature.ReturnPresenceRelation {
