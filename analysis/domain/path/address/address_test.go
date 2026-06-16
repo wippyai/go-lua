@@ -643,6 +643,83 @@ func TestRebasePathKeyPreservesStructuralBoundaries(t *testing.T) {
 	}
 }
 
+func TestLocalPathFromKeyParsesVersionedResolverKey(t *testing.T) {
+	got, ok := LocalPathFromKey(pathdom.PathKey(`sym42@3.field["k"]`))
+	if !ok {
+		t.Fatal("LocalPathFromKey rejected versioned resolver key")
+	}
+	if got.Symbol != 42 || got.Version != 3 || segment.FormatSegments(got.Segments) != `.field["k"]` {
+		t.Fatalf("LocalPathFromKey = %#v, want sym42@3.field[\"k\"]", got)
+	}
+	got.Segments[0].Name = "mutated"
+	again, _ := LocalPathFromKey(pathdom.PathKey(`sym42@3.field["k"]`))
+	if segment.FormatSegments(again.Segments) != `.field["k"]` {
+		t.Fatalf("LocalPathFromKey returned aliased segments: %#v", again.Segments)
+	}
+	for _, key := range []pathdom.PathKey{
+		pathdom.PathKey("sym42.field"),
+		pathdom.PathKey("s42.field"),
+		pathdom.PathKey("$0.field"),
+	} {
+		if got, ok := LocalPathFromKey(key); ok || !got.IsEmpty() {
+			t.Fatalf("LocalPathFromKey(%q) = %#v/%v, want rejected", key, got, ok)
+		}
+	}
+}
+
+func TestRebaseLocalPathKeyToContextUsesContextVersion(t *testing.T) {
+	got, ok := RebaseLocalPathKeyToContext(
+		pathdom.PathKey("sym10@1.result.channel"),
+		pathdom.PathKey("sym10@4.result"),
+	)
+	if !ok || got != pathdom.PathKey("sym10@4.result.channel") {
+		t.Fatalf("RebaseLocalPathKeyToContext = %s/%v, want sym10@4.result.channel/true", got, ok)
+	}
+	got, ok = RebaseLocalPathKeyToContext(
+		pathdom.PathKey("sym10@1.result"),
+		pathdom.PathKey("sym10@1.result"),
+	)
+	if !ok || got != pathdom.PathKey("sym10@1.result") {
+		t.Fatalf("RebaseLocalPathKeyToContext(equal) = %s/%v, want original/true", got, ok)
+	}
+	if got, ok := RebaseLocalPathKeyToContext(
+		pathdom.PathKey("sym10@1.result.channel"),
+		pathdom.PathKey("sym11@4.result"),
+	); ok || got != "" {
+		t.Fatalf("RebaseLocalPathKeyToContext(cross-symbol) = %s/%v, want rejected", got, ok)
+	}
+}
+
+func TestPlaceholderPathFromKeyParsesPlaceholderOnly(t *testing.T) {
+	got, ok := PlaceholderPathFromKey(pathdom.PathKey(`$2.child["name"]`))
+	if !ok {
+		t.Fatal("PlaceholderPathFromKey rejected placeholder key")
+	}
+	if got.Root != "$2" || segment.FormatSegments(got.Segments) != `.child["name"]` {
+		t.Fatalf("PlaceholderPathFromKey = %#v, want $2.child[\"name\"]", got)
+	}
+	if got, ok := PlaceholderPathFromKey(pathdom.PathKey("ret[1].child")); ok || !got.IsEmpty() {
+		t.Fatalf("PlaceholderPathFromKey accepted return-root key: %#v/%v", got, ok)
+	}
+}
+
+func TestRelativeStaticMemberSuffixSegmentsParsesRootlessSuffix(t *testing.T) {
+	got, ok := RelativeStaticMemberSuffixSegments(pathdom.PathKey(`.child["name"]`))
+	if !ok || segment.FormatSegments(got) != `.child["name"]` {
+		t.Fatalf("RelativeStaticMemberSuffixSegments = %#v/%v, want .child[\"name\"]", got, ok)
+	}
+	got[0].Name = "mutated"
+	again, _ := RelativeStaticMemberSuffixSegments(pathdom.PathKey(`.child["name"]`))
+	if segment.FormatSegments(again) != `.child["name"]` {
+		t.Fatalf("RelativeStaticMemberSuffixSegments returned aliased segments: %#v", again)
+	}
+	for _, key := range []pathdom.PathKey{"", "child", "."} {
+		if got, ok := RelativeStaticMemberSuffixSegments(key); ok || got != nil {
+			t.Fatalf("RelativeStaticMemberSuffixSegments(%q) = %#v/%v, want rejected", key, got, ok)
+		}
+	}
+}
+
 func mustStructuralKey(t *testing.T, key pathdom.PathKey) StructuralKey {
 	t.Helper()
 	got, ok := StructuralKeyFromPathKey(key)

@@ -228,26 +228,7 @@ func channelSelectResultPathFromChannel(p pathdom.Path) (pathdom.Path, bool) {
 }
 
 func rebasePathKeyToContext(pathKey pathdom.PathKey, contextKey pathdom.PathKey) (pathdom.PathKey, bool) {
-	if pathKey == "" || contextKey == "" {
-		return "", false
-	}
-	if pathKey == contextKey {
-		return pathKey, true
-	}
-	fromSymbol, fromVersion, _, fromOK := pathaddr.ParseResolverPath(pathKey)
-	toSymbol, toVersion, _, toOK := pathaddr.ParseResolverPath(contextKey)
-	if !fromOK || !toOK || fromSymbol == 0 || toSymbol == 0 || fromSymbol != toSymbol {
-		return "", false
-	}
-	fromRoot, ok := pathaddr.LocalKeyForVersion(fromSymbol, fromVersion, nil)
-	if !ok {
-		return "", false
-	}
-	toRoot, ok := pathaddr.LocalKeyForVersion(toSymbol, toVersion, nil)
-	if !ok {
-		return "", false
-	}
-	return pathaddr.RebasePathKey(pathKey, fromRoot.PathKey(), toRoot.PathKey())
+	return pathaddr.RebaseLocalPathKeyToContext(pathKey, contextKey)
 }
 
 func invalidateChannelSelectResultDescendants(

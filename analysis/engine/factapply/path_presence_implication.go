@@ -3,7 +3,6 @@ package factapply
 import (
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
-	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
@@ -246,7 +245,7 @@ func readPathKeyPresence(
 }
 
 func pathKeyCurrentlyVisible(resolver *visibility.Resolver, point cfg.Point, pathKey pathdom.PathKey) bool {
-	path, ok := resolverPathKeyPath(pathKey)
+	path, ok := pathaddr.LocalPathFromKey(pathKey)
 	if !ok {
 		return true
 	}
@@ -258,27 +257,11 @@ func pathKeyCurrentlyVisible(resolver *visibility.Resolver, point cfg.Point, pat
 }
 
 func rootSymbolForResolverPathKey(pathKey pathdom.PathKey) (symbol.ID, bool) {
-	path, ok := resolverPathKeyPath(pathKey)
+	path, ok := pathaddr.LocalPathFromKey(pathKey)
 	if !ok || len(path.Segments) != 0 {
 		return 0, false
 	}
 	return path.Symbol, path.Symbol != 0
-}
-
-func resolverPathKeyPath(pathKey pathdom.PathKey) (pathdom.Path, bool) {
-	sym, version, suffix, ok := pathaddr.ParseResolverPath(pathKey)
-	if !ok || version <= 0 {
-		return pathdom.Path{}, false
-	}
-	var segments []segment.Segment
-	if suffix != "" {
-		var parsed bool
-		segments, parsed = segment.ParseFormattedSegments(suffix)
-		if !parsed {
-			return pathdom.Path{}, false
-		}
-	}
-	return pathdom.Path{Symbol: sym, Version: version, Segments: segments}, true
 }
 
 func presenceIsConcrete(value presence.Value) bool {

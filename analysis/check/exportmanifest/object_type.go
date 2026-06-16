@@ -225,15 +225,11 @@ func addStateStaticMembers(
 		return
 	}
 	for pathKey, value := range snapshot.Members {
-		sym, _, suffix, ok := pathaddr.ParseResolverPath(pathKey)
-		if !ok || sym != root.Symbol {
+		memberPath, ok := pathaddr.LocalPathFromKey(pathKey)
+		if !ok || memberPath.Symbol != root.Symbol {
 			continue
 		}
-		segments, ok := segment.ParseFormattedSegments(suffix)
-		if !ok {
-			continue
-		}
-		member, ok := directMemberSegment(root.Segments, segments)
+		member, ok := directMemberSegment(root.Segments, memberPath.Segments)
 		if !ok {
 			continue
 		}

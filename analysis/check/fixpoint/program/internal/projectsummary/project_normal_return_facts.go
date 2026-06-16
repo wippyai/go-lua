@@ -279,7 +279,7 @@ func frozenTablePlaceholderPaths(reg *axis.Registry, exit state.State, params []
 			if !ok || candidate.hasSeen(childID) {
 				continue
 			}
-			segments, ok := segment.ParseFormattedSegments(string(suffix))
+			segments, ok := pathaddr.RelativeStaticMemberSuffixSegments(suffix)
 			if !ok {
 				continue
 			}
@@ -350,55 +350,28 @@ func normalReturnFactPlaceholderPath(pathKey path.PathKey, params []path.Path) (
 	if pathKey == "" || len(params) == 0 {
 		return path.Path{}, false
 	}
-	if index, suffix, ok := normalReturnPlaceholderPathKey(pathKey); ok {
-		if index >= len(params) || params[index].IsEmpty() {
+	if placeholder, ok := pathaddr.PlaceholderPathFromKey(pathKey); ok {
+		index := placeholder.PlaceholderIndex()
+		if index < 0 || index >= len(params) || params[index].IsEmpty() {
 			return path.Path{}, false
 		}
-		return normalReturnFactPlaceholderPathWithSuffix(index, suffix)
+		return placeholder, true
 	}
-	sym, version, suffix, ok := pathaddr.ParseResolverPath(pathKey)
-	if !ok || version <= 0 {
-		return path.Path{}, false
-	}
-	for i, param := range params {
-		if param.Symbol == 0 || param.Symbol != sym {
-			continue
-		}
-		return normalReturnFactPlaceholderPathWithSuffix(i, suffix)
-	}
-	return path.Path{}, false
-}
-
-func normalReturnPlaceholderPathKey(pathKey path.PathKey) (index int, suffix string, ok bool) {
-	s := string(pathKey)
-	if len(s) < 2 || s[0] != '$' {
-		return 0, "", false
-	}
-	end := 1
-	for end < len(s) && s[end] >= '0' && s[end] <= '9' {
-		end++
-	}
-	if end == 1 {
-		return 0, "", false
-	}
-	root := s[:end]
-	index = path.PlaceholderIndexFromString(root)
-	if index < 0 || path.NewPlaceholder(index).Root != root {
-		return 0, "", false
-	}
-	return index, s[end:], true
-}
-
-func normalReturnFactPlaceholderPathWithSuffix(index int, suffix string) (path.Path, bool) {
-	segments, ok := segment.ParseFormattedSegments(suffix)
+	localPath, ok := pathaddr.LocalPathFromKey(pathKey)
 	if !ok {
 		return path.Path{}, false
 	}
-	out := path.NewPlaceholder(index)
-	for _, seg := range segments {
-		out = out.Append(seg)
+	for i, param := range params {
+		if param.Symbol == 0 || param.Symbol != localPath.Symbol {
+			continue
+		}
+		out := path.NewPlaceholder(i)
+		for _, seg := range localPath.Segments {
+			out = out.Append(seg)
+		}
+		return out, true
 	}
-	return out, true
+	return path.Path{}, false
 }
 
 func projectBranchProofKind(kind pathevidence.BranchProofKind) (pathevidence.BranchProofKind, bool) {

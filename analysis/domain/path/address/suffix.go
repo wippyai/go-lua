@@ -92,6 +92,14 @@ func RelativeStaticMemberSuffixKey(segments []segment.Segment) (pathdom.PathKey,
 	return pathdom.PathKey(segment.FormatSegments(segments)), true
 }
 
+// RelativeStaticMemberSuffixSegments parses a rootless static-member suffix key.
+func RelativeStaticMemberSuffixSegments(key pathdom.PathKey) ([]segment.Segment, bool) {
+	if key == "" {
+		return nil, false
+	}
+	return segment.ParseFormattedSegments(string(key))
+}
+
 func cloneSegments(segments []segment.Segment) []segment.Segment {
 	if len(segments) == 0 {
 		return nil
