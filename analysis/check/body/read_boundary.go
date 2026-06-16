@@ -43,7 +43,7 @@ func (r *Result) SourceValueAtBoundary(point cfg.Point, source factflow.ValueSou
 		}
 	}
 	if recovered, recoveredOK := r.recoverRootDeclarationSource(point, source.ExprRef); recoveredOK {
-		if recoveredValue, ok := r.recoveredRootDeclarationValue(point, recovered, in); ok {
+		if recoveredValue, ok := r.recoveredRootDeclarationValue(recovered, in); ok {
 			return recoveredValue, true
 		}
 	}
@@ -256,18 +256,7 @@ func (r *Result) callExprPoint(call *ast.FuncCallExpr) (cfg.Point, bool) {
 	return point, ok
 }
 
-func (r *Result) recoveredRootSourceValue(point cfg.Point, source factflow.ValueSource) (product.Value, bool) {
-	if source.Kind != factflow.ValueSourceExpression || !source.HasExpr {
-		return product.Value{}, false
-	}
-	recovered, ok := r.recoverRootDeclarationSource(point, source.ExprRef)
-	if !ok {
-		return product.Value{}, false
-	}
-	return r.recoveredRootDeclarationValue(point, recovered, state.State{})
-}
-
-func (r *Result) recoveredRootDeclarationValue(point cfg.Point, recovered recoveredRootSource, fallbackState state.State) (product.Value, bool) {
+func (r *Result) recoveredRootDeclarationValue(recovered recoveredRootSource, fallbackState state.State) (product.Value, bool) {
 	if r == nil || r.registry == nil || recovered.symbol == 0 {
 		return product.Value{}, false
 	}

@@ -101,7 +101,18 @@ func Project(config Config, point cfg.Point, p pathdom.Path, in state.State) (pr
 		return exactPresent, true
 	}
 
-	keyType, ok := segmentKeyType(p.Segments[len(p.Segments)-1])
+	value, ok := unknownIndexReadValue(reg, p.Segments[len(p.Segments)-1])
+	if !ok {
+		return product.Value{}, false
+	}
+	if parentValue, hasParent := Project(config, point, p.Parent(), in); hasParent {
+		value = inheritTopOriginEvidence(reg, value, parentValue)
+	}
+	return dropInBoundsIndexNil(config, point, p, in, value), true
+}
+
+func unknownIndexReadValue(reg *axis.Registry, seg segment.Segment) (product.Value, bool) {
+	keyType, ok := segmentKeyType(seg)
 	if !ok {
 		return product.Value{}, false
 	}
@@ -109,14 +120,10 @@ func Project(config Config, point cfg.Point, p pathdom.Path, in state.State) (pr
 	if !ok {
 		return product.Value{}, false
 	}
-	value := typevalue.FromType(reg, projected)
 	if typ.IsUnknown(projected) {
-		value = product.Top()
+		return product.Top(), true
 	}
-	if parentValue, hasParent := Project(config, point, p.Parent(), in); hasParent {
-		value = inheritTopOriginEvidence(reg, value, parentValue)
-	}
-	return dropInBoundsIndexNil(config, point, p, in, value), true
+	return typevalue.FromType(reg, projected), true
 }
 
 // dropInBoundsIndexNil removes the soundly-optional nil from an array element

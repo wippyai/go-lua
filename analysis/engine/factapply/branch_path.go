@@ -102,7 +102,7 @@ func resolvePathValueAt(
 	point cfg.Point,
 	out state.State,
 	targetPath pathdom.Path,
-	projectors ...PathTypeProjector,
+	projectPath PathTypeProjector,
 ) (pathValue, bool) {
 	if targetPath.Symbol == 0 {
 		return pathValue{}, false
@@ -128,7 +128,7 @@ func resolvePathValueAt(
 		projected, ok := projectPathOriginValue(reg, out, targetPath)
 		if ok {
 			value = projected
-		} else if projected, ok := projectPathStructuralValue(reg, out, targetPath, firstPathTypeProjector(projectors)); ok {
+		} else if projected, ok := projectPathStructuralValue(reg, out, targetPath, projectPath); ok {
 			value = projected
 		} else {
 			return pathValue{}, false
@@ -140,13 +140,6 @@ func resolvePathValueAt(
 			return s.WritePathKey(reg, pathKey, value)
 		},
 	}, true
-}
-
-func firstPathTypeProjector(projectors []PathTypeProjector) PathTypeProjector {
-	if len(projectors) == 0 {
-		return nil
-	}
-	return projectors[0]
 }
 
 func projectPathStructuralValue(reg *axis.Registry, out state.State, targetPath pathdom.Path, projectPath PathTypeProjector) (product.Value, bool) {

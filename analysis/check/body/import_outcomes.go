@@ -2,7 +2,6 @@ package body
 
 import (
 	"github.com/wippyai/go-lua/analysis/check/body/internal/readexpr"
-	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/typewitness"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
@@ -32,8 +31,8 @@ func calleeValueProvider(
 		if value, ok := pathMethodCalleeValue(reg, facts, resolver, ctx, site, in); ok {
 			return value, true
 		}
-		config := readexprConfig(reg, facts, resolver)
-		if value, ok := readCalleePath(config, ctx.Point, p, in); ok && hasTypeWitness(reg, value) {
+		config := readexpr.Config{Registry: reg, Facts: facts, Visibility: resolver}
+		if value, ok := readexpr.Project(config, ctx.Point, p, in); ok && hasTypeWitness(reg, value) {
 			return value, true
 		}
 		if len(p.Segments) == 0 {
@@ -41,7 +40,7 @@ func calleeValueProvider(
 		}
 		root := p
 		root.Segments = nil
-		rootValue, ok := readCalleePath(config, ctx.Point, root, in)
+		rootValue, ok := readexpr.Project(config, ctx.Point, root, in)
 		if !ok {
 			return product.Value{}, false
 		}
@@ -73,8 +72,8 @@ func pathMethodCalleeValue(
 	if !ok || receiverPath.IsEmpty() {
 		return product.Value{}, false
 	}
-	config := readexprConfig(reg, facts, resolver)
-	receiverValue, ok := readCalleePath(config, ctx.Point, receiverPath, in)
+	config := readexpr.Config{Registry: reg, Facts: facts, Visibility: resolver}
+	receiverValue, ok := readexpr.Project(config, ctx.Point, receiverPath, in)
 	if !ok {
 		return product.Value{}, false
 	}
@@ -138,14 +137,6 @@ func methodTypeValue(reg *axis.Registry, receiverType typ.Type, method string) (
 		}
 	}
 	return typevalue.WithWitness(reg, typevalue.FromType(reg, methodType), methodType), true
-}
-
-func readexprConfig(reg *axis.Registry, facts factflow.Facts, resolver *visibility.Resolver) readexpr.Config {
-	return readexpr.Config{Registry: reg, Facts: facts, Visibility: resolver}
-}
-
-func readCalleePath(config readexpr.Config, point cfg.Point, p pathdom.Path, in state.State) (product.Value, bool) {
-	return readexpr.Project(config, point, p, in)
 }
 
 func hasTypeWitness(reg *axis.Registry, value product.Value) bool {

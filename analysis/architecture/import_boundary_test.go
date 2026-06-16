@@ -257,6 +257,13 @@ func TestCheckSplitDirectImportBoundaries(t *testing.T) {
 				modulePath + "/analysis/type",
 			},
 		},
+		{
+			name: "factapply does not directly import type access semantics",
+			pkg:  modulePath + "/analysis/engine/factapply",
+			banned: []string{
+				modulePath + "/analysis/type/access",
+			},
+		},
 	}
 
 	for _, tt := range tests {
