@@ -26,6 +26,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/symbol"
 	typenormalize "github.com/wippyai/go-lua/analysis/type/normalize"
 	"github.com/wippyai/go-lua/analysis/type/refinement"
+	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
@@ -81,6 +82,7 @@ func OutcomeProvider(config ProviderConfig) factapply.CallOutcomeProvider {
 			fn = functionTypes[key]
 			got = applyDeclaredSummaryReturns(ctx.Registry, got, fn)
 			got = specializeGenericSummary(ctx, ownedSite, got, fn, summaries, facts, functionKeys, functionExpressionKeys, functionTypes, sources, in, read)
+			got = materializeReturnRootTypesFromFacts(ctx.Registry, got)
 		} else if joined, joinedOK := joinedSummaryForDefinitionPath(ctx, ownedSite, in, read, calleeValue, summaries, pathMultiKeys, functionTypes, facts, functionKeys, functionExpressionKeys, sources); joinedOK {
 			got = joined
 		} else {
@@ -238,12 +240,14 @@ func returnRecordTypeFromFacts(reg *axis.Registry, facts callboundary.NormalRetu
 			return
 		}
 		if name, ok := path.DirectFieldName(); ok {
-			parts.Fields = append(parts.Fields, typ.Field{Name: name, Type: t})
+			payload, optional := typetable.EntryValueShape(t)
+			parts.Fields = append(parts.Fields, typ.Field{Name: name, Type: payload, Optional: optional})
 			seen = true
 			return
 		}
 		if index, ok := path.DirectIntIndex(); ok {
-			parts.StaticMembers = append(parts.StaticMembers, typ.StaticMember{Kind: typ.StaticMemberIntIndex, Index: int64(index), Type: t})
+			payload, optional := typetable.EntryValueShape(t)
+			parts.StaticMembers = append(parts.StaticMembers, typ.StaticMember{Kind: typ.StaticMemberIntIndex, Index: int64(index), Type: payload, Optional: optional})
 			seen = true
 		}
 	}
@@ -256,7 +260,7 @@ func returnRecordTypeFromFacts(reg *axis.Registry, facts callboundary.NormalRetu
 	if !seen {
 		return nil, false
 	}
-	return typ.RebuildRecord(parts), true
+	return typetable.RebuildRecord(parts), true
 }
 
 func summaryReturnValueAt(reg *axis.Registry, sum summary.Summary, index int) (product.Value, bool) {

@@ -18,14 +18,21 @@ func splitNilableFieldType(t typ.Type) (inner typ.Type, optional bool) {
 	return nonNil, true
 }
 
+// EntryValueShape returns the present payload and absent-capable bit for a
+// table entry value.
+func EntryValueShape(t typ.Type) (typ.Type, bool) {
+	if t == nil {
+		return nil, false
+	}
+	if inner, optional := splitNilableFieldType(t); optional {
+		return inner, true
+	}
+	return t, false
+}
+
 // PresentReadonlyEntryValue returns the value type for a readonly table entry
 // after the entry is known to be present.
 func PresentReadonlyEntryValue(t typ.Type) typ.Type {
-	if t == nil {
-		return nil
-	}
-	if inner, optional := splitNilableFieldType(t); optional {
-		return inner
-	}
-	return t
+	payload, _ := EntryValueShape(t)
+	return payload
 }

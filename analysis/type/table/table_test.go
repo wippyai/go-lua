@@ -425,6 +425,24 @@ func TestPresentReadonlyEntryValue(t *testing.T) {
 	})
 }
 
+func TestEntryValueShape(t *testing.T) {
+	payload, optional := EntryValueShape(typeexpr.Optional(typ.String))
+	if !optional {
+		t.Fatal("optional string did not produce absent-capable entry shape")
+	}
+	if !typ.TypeEquals(payload, typ.String) {
+		t.Fatalf("entry payload = %v, want string", payload)
+	}
+
+	payload, optional = EntryValueShape(typ.Number)
+	if optional {
+		t.Fatal("number produced absent-capable entry shape")
+	}
+	if payload != typ.Number {
+		t.Fatalf("entry payload = %v, want original number", payload)
+	}
+}
+
 func TestBuiltinTopMarker(t *testing.T) {
 	tableTop := typ.NewInterface("table", nil)
 	nonTableIface := typ.NewInterface("Reader", nil)

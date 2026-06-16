@@ -94,6 +94,61 @@ func TestOutcomeProviderRehydratesDeclaredReturnWhenSummarySlotIsTopLike(t *test
 	}
 }
 
+func TestOutcomeProviderRebuildsReturnRecordThroughTablePolicy(t *testing.T) {
+	reg := standard.Registry()
+	callee := symbol.ID(23)
+	key := summary.DefaultSummaryKey(ref.FuncRef{Kind: ref.KindSymbol, ID: 24})
+	fieldValue := typevalue.FromType(reg, typeexpr.Optional(typ.String))
+	indexValue := typevalue.FromType(reg, typeexpr.Optional(typ.Number))
+	provider := OutcomeProvider(ProviderConfig{
+		Summaries: summary.NewSnapshot(reg, summary.EntrySummary{
+			Key: key,
+			Summary: summary.Summary{
+				Returns: []product.Value{product.Top()},
+				NormalReturnFacts: callboundary.NormalReturnFacts{
+					PathRefinements: []callboundary.PathValueFact{
+						{Path: path.NewPlaceholder(0).Field("name"), Value: fieldValue},
+						{Path: path.NewPlaceholder(0).IndexInt(1), Value: indexValue},
+					},
+				},
+			},
+		}),
+		KeyFor: ByCalleeIdentity(map[symbol.ID]summary.SummaryKey{callee: key}),
+	})
+
+	got := provider(transfer.NodeContext{Registry: reg}, factflow.NewCallSite(factflow.CallSiteConfig{
+		CalleeSymbol: callee,
+	}).View(),
+
+		state.State{}, nil)
+
+	if len(got.Results) != 1 {
+		t.Fatalf("results = %#v, want one reconstructed record return", got.Results)
+	}
+	gotType, ok := typevalue.TypeOf(reg, got.Results[0].Value)
+	if !ok {
+		t.Fatalf("result has no type witness: %#v", got.Results[0].Value)
+	}
+	record, ok := gotType.(*typ.Record)
+	if !ok {
+		t.Fatalf("result type = %T/%v, want record", gotType, gotType)
+	}
+	field := record.GetField("name")
+	if field == nil {
+		t.Fatalf("record fields = %#v, want optional field name", record.Fields)
+	}
+	if !typ.TypeEquals(field.Type, typ.String) || !field.Optional {
+		t.Fatalf("field name = type %v optional=%v, want string optional", field.Type, field.Optional)
+	}
+	member := record.GetStaticIntIndex(1)
+	if member == nil {
+		t.Fatalf("record static members = %#v, want optional integer member 1", record.StaticMembers)
+	}
+	if !typ.TypeEquals(member.Type, typ.Number) || !member.Optional {
+		t.Fatalf("static member 1 = type %v optional=%v, want number optional", member.Type, member.Optional)
+	}
+}
+
 func TestOutcomeProviderMapsSummaryReturnsAndNormalReturnFacts(t *testing.T) {
 	reg := standard.Registry()
 	callee := symbol.ID(37)
@@ -386,7 +441,7 @@ func TestOutcomeProviderPreservesReturnedNestedHeapIdentityClosure(t *testing.T)
 	}
 }
 
-func TestOutcomeProviderJoinMaterializesRawOptionalFactPayloadRecord(t *testing.T) {
+func TestOutcomeProviderJoinMaterializesTableEntryShapeFromNilableFactRecord(t *testing.T) {
 	reg := standard.Registry()
 	calleePath := path.NewPath(symbol.ID(127), "module").Field("make")
 	leftKey := summary.DefaultSummaryKey(ref.FuncRef{Kind: ref.KindSymbol, ID: 128})
@@ -438,12 +493,12 @@ func TestOutcomeProviderJoinMaterializesRawOptionalFactPayloadRecord(t *testing.
 		t.Fatalf("result record map component = [%v]: %v, want none", record.MapKey, record.MapValue)
 	}
 	field := record.GetField("value")
-	if field == nil || field.Optional || !typ.TypeEquals(field.Type, optionalString) {
-		t.Fatalf("field value = %#v, want required %v payload", field, optionalString)
+	if field == nil || !field.Optional || !typ.TypeEquals(field.Type, typ.String) {
+		t.Fatalf("field value = %#v, want optional string payload", field)
 	}
 	member := record.GetStaticIntIndex(1)
-	if member == nil || member.Optional || !typ.TypeEquals(member.Type, optionalInteger) {
-		t.Fatalf("static member [1] = %#v, want required %v payload", member, optionalInteger)
+	if member == nil || !member.Optional || !typ.TypeEquals(member.Type, typ.Integer) {
+		t.Fatalf("static member [1] = %#v, want optional integer payload", member)
 	}
 }
 
@@ -1158,6 +1213,7 @@ func TestProductionImportsAreBounded(t *testing.T) {
 		"github.com/wippyai/go-lua/analysis/symbol":                          true,
 		"github.com/wippyai/go-lua/analysis/type/normalize":                  true,
 		"github.com/wippyai/go-lua/analysis/type/refinement":                 true,
+		"github.com/wippyai/go-lua/analysis/type/table":                      true,
 		"github.com/wippyai/go-lua/analysis/type/typ":                        true,
 	}
 	for _, imp := range strings.Fields(string(out)) {
