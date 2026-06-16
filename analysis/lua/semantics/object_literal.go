@@ -19,23 +19,22 @@ func (r *Result) extractObjectLiteral(expr ast.Expr, resolver sourceprovenance.C
 	table, ok := pathexpr.ObjectLiteralTable(expr)
 	if ok && table != nil {
 		if _, exists := r.objectLiterals[expr]; !exists {
-			if base := pathexpr.ObjectEntries(table); len(base) != 0 {
-				entries := make([]ObjectEntryFact, len(base))
-				for i, entry := range base {
-					entries[i] = ObjectEntryFact{
-						Field:  entry.Field,
-						Index:  entry.Index,
-						Key:    entry.Key,
-						Value:  entry.Value,
-						Suffix: entry.Suffix,
-						Source: objectEntryValueSource(entry.Value, entry.Field != nil && entry.Field.Key == nil && entry.Final, resolver),
-					}
+			base := pathexpr.ObjectEntries(table)
+			entries := make([]ObjectEntryFact, len(base))
+			for i, entry := range base {
+				entries[i] = ObjectEntryFact{
+					Field:  entry.Field,
+					Index:  entry.Index,
+					Key:    entry.Key,
+					Value:  entry.Value,
+					Suffix: entry.Suffix,
+					Source: objectEntryValueSource(entry.Value, entry.Field != nil && entry.Field.Key == nil && entry.Final, resolver),
 				}
-				r.objectLiterals[expr] = ObjectLiteralFact{
-					Expr:    expr,
-					Table:   table,
-					Entries: entries,
-				}
+			}
+			r.objectLiterals[expr] = ObjectLiteralFact{
+				Expr:    expr,
+				Table:   table,
+				Entries: entries,
 			}
 		}
 		for _, field := range table.Fields {

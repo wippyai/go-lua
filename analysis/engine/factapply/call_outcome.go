@@ -39,6 +39,7 @@ type CallOutcome struct {
 	HeapTableObjects           map[identity.ID]heapidentity.TableObject
 	ParamObligations           []CallParamObligation
 	ParamPathRefinements       []CallParamPathRefinement
+	ParamLengthFloors          []CallParamLengthFloor
 	ParamPathInvalidations     []CallParamPathInvalidation
 	ParamConditions            []CallParamCondition
 	ParamPathRelations         []CallParamPathRelation
@@ -60,6 +61,12 @@ type CallParamObligation struct {
 type CallParamPathRefinement struct {
 	Path  pathdom.Path
 	Value product.Value
+}
+
+// CallParamLengthFloor records a normal-return lower bound on len(param path).
+type CallParamLengthFloor struct {
+	Path  pathdom.Path
+	Floor int64
 }
 
 // CallParamPathInvalidation records that descendants below a parameter

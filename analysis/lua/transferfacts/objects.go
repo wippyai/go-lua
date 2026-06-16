@@ -5,6 +5,7 @@ import (
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
 	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
+	luatypeprojection "github.com/wippyai/go-lua/analysis/lua/typeprojection"
 	"github.com/wippyai/go-lua/analysis/type/subst"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/unwrap"
@@ -20,9 +21,6 @@ func (l *lowerer) addObjectLiteral(input *factflow.FactsInput, result *semantics
 		return
 	}
 	lowered := l.objectLiteral(fact).WithIdentity(identity.LuaTableLiteral(l.graphID, uint64(exprRef)))
-	if len(lowered.Entries()) == 0 {
-		return
-	}
 	if input.ObjectLiterals == nil {
 		input.ObjectLiterals = make(map[factflow.ExprRef]factflow.ObjectLiteral)
 	}
@@ -46,7 +44,7 @@ func (l *lowerer) addObjectLiteralExpectedType(input *factflow.FactsInput, fact 
 		return
 	}
 	declared, ok := l.resolveType(fact.Type)
-	if !ok || !reachesRecord(declared) {
+	if !ok || !reachesTableContract(declared) {
 		return
 	}
 	exprRef, hasExpr := l.exprRef(fact.Source.Expr)
@@ -60,8 +58,7 @@ func (l *lowerer) addObjectLiteralExpectedType(input *factflow.FactsInput, fact 
 	if !ok {
 		return
 	}
-	value := l.valueFromTypeWithWitness(declared)
-	input.ObjectLiterals[exprRef] = lit.WithExpected(value)
+	input.ObjectLiterals[exprRef] = l.objectLiteralWithExpectedType(lit, declared)
 }
 
 // addOrdinaryObjectLiteralExpectedType attaches the declared record type of an
@@ -80,7 +77,7 @@ func (l *lowerer) addOrdinaryObjectLiteralExpectedType(input *factflow.FactsInpu
 		return
 	}
 	declared, ok := l.symbolTypes[fact.Symbol]
-	if !ok || declared == nil || !reachesRecord(declared) {
+	if !ok || declared == nil || !reachesTableContract(declared) {
 		return
 	}
 	exprRef, hasExpr := l.exprRef(fact.Source.Expr)
@@ -94,12 +91,75 @@ func (l *lowerer) addOrdinaryObjectLiteralExpectedType(input *factflow.FactsInpu
 	if !ok {
 		return
 	}
-	value := l.valueFromTypeWithWitness(declared)
-	input.ObjectLiterals[exprRef] = lit.WithExpected(value)
+	input.ObjectLiterals[exprRef] = l.objectLiteralWithExpectedType(lit, declared)
+}
+
+func (l *lowerer) addReturnObjectLiteralExpectedTypes(input *factflow.FactsInput, result *semantics.Result, fact semantics.ReturnFact) {
+	if input == nil || result == nil {
+		return
+	}
+	declared := declaredReturnTypes(result)
+	if len(declared) == 0 || len(fact.Sources) == 0 {
+		return
+	}
+	for i, source := range fact.Sources {
+		if i >= len(declared) || source.Kind != sourceprovenance.SourceExpression || !tableConstructorExpr(source.Expr) {
+			continue
+		}
+		declaredType, ok := l.resolveType(declared[i])
+		if !ok || !reachesTableContract(declaredType) {
+			continue
+		}
+		exprRef, hasExpr := l.exprRef(source.Expr)
+		if !hasExpr {
+			continue
+		}
+		lit, ok := input.ObjectLiterals[exprRef]
+		if !ok {
+			continue
+		}
+		input.ObjectLiterals[exprRef] = l.objectLiteralWithExpectedType(lit, declaredType)
+	}
 }
 
 func reachesRecord(t typ.Type) bool {
 	return reachesRecordDepth(t, 0)
+}
+
+func reachesTableContract(t typ.Type) bool {
+	return reachesTableContractDepth(t, 0)
+}
+
+func reachesTableContractDepth(t typ.Type, depth int) bool {
+	if t == nil || depth > typ.DefaultRecursionDepth {
+		return false
+	}
+	switch v := unwrap.Annotated(t).(type) {
+	case *typ.Record, *typ.Map, *typ.ReadonlyMap, *typ.Array, *typ.Tuple:
+		return true
+	case *typ.Alias:
+		return reachesTableContractDepth(v.UnaliasedTarget(), depth+1)
+	case *typ.Recursive:
+		if v.Body == nil || v.Body == t {
+			return false
+		}
+		return reachesTableContractDepth(v.Body, depth+1)
+	case *typ.Instantiated:
+		expanded := subst.ExpandInstantiated(v)
+		if expanded == nil || expanded == t {
+			return false
+		}
+		return reachesTableContractDepth(expanded, depth+1)
+	case *typ.Union:
+		for _, member := range v.Members {
+			if reachesTableContractDepth(member, depth+1) {
+				return true
+			}
+		}
+		return false
+	default:
+		return false
+	}
 }
 
 func reachesRecordDepth(t typ.Type, depth int) bool {
@@ -140,4 +200,21 @@ func (l *lowerer) objectLiteral(fact semantics.ObjectLiteralFact) factflow.Objec
 		entries = append(entries, factflow.NewObjectEntry(entry.Suffix, l.valueSource(entry.Source)))
 	}
 	return factflow.NewObjectLiteral(entries)
+}
+
+func (l *lowerer) objectLiteralWithExpectedType(lit factflow.ObjectLiteral, declared typ.Type) factflow.ObjectLiteral {
+	root := l.valueFromTypeWithWitness(declared)
+	entries := lit.Entries()
+	for i, entry := range entries {
+		projected, ok := luatypeprojection.ApplySegments(declared, entry.Suffix().Segments)
+		if !ok || projected == nil {
+			continue
+		}
+		entries[i] = entry.WithExpected(l.valueFromTypeWithWitness(projected))
+	}
+	out := factflow.NewObjectLiteral(entries).WithExpected(root)
+	if id, ok := lit.Identity(); ok {
+		out = out.WithIdentity(id)
+	}
+	return out
 }

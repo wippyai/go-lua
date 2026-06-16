@@ -8,8 +8,10 @@ import (
 
 // ObjectEntry describes one static value written under an object constructor.
 type ObjectEntry struct {
-	suffix path.Path
-	source ValueSource
+	suffix      path.Path
+	source      ValueSource
+	expected    product.Value
+	hasExpected bool
 }
 
 // NewObjectEntry creates a static object-entry descriptor.
@@ -25,6 +27,19 @@ func (e ObjectEntry) Suffix() path.Path { return copyPath(e.suffix) }
 
 // Source returns the value assigned to the entry.
 func (e ObjectEntry) Source() ValueSource { return e.source }
+
+// Expected returns the contextual value contract for this static entry when the
+// object literal is checked against a declared table shape.
+func (e ObjectEntry) Expected() (product.Value, bool) { return e.expected, e.hasExpected }
+
+// WithExpected returns a copy carrying the contextual value contract for this
+// entry.
+func (e ObjectEntry) WithExpected(value product.Value) ObjectEntry {
+	e = e.copy()
+	e.expected = value
+	e.hasExpected = true
+	return e
+}
 
 func (e ObjectEntry) copy() ObjectEntry {
 	e.suffix = copyPath(e.suffix)

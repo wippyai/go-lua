@@ -2,17 +2,22 @@ package factapply
 
 import (
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/variantorigin"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/domain/value/variant"
+	"github.com/wippyai/go-lua/analysis/engine/dynamicindex"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
+	sourcevalue "github.com/wippyai/go-lua/analysis/engine/sourcevalue"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/engine/visibility"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
+	typetable "github.com/wippyai/go-lua/analysis/type/table"
 )
 
 type pathValue struct {
@@ -149,8 +154,12 @@ func resolvePathValueAtCached(
 	}
 	value := out.ReadPathKey(reg, pathKey)
 	if product.Equal(reg, value, product.Bottom(reg)) {
-		projected, ok := projectPathOriginValue(reg, out, targetPath)
+		projected, ok := projectPathDynamicIndexValue(reg, resolver, point, out, targetPath)
 		if ok {
+			value = projected
+		} else if projected, ok := projectPathHeapStaticMemberValue(reg, resolver, point, out, targetPath); ok {
+			value = projected
+		} else if projected, ok := projectPathOriginValue(reg, out, targetPath); ok {
 			value = projected
 		} else if projected, ok := projectPathStructuralValueCached(typeValues, reg, out, targetPath, projectPath); ok {
 			value = projected
@@ -164,6 +173,170 @@ func resolvePathValueAtCached(
 			return s.WritePathKey(reg, pathKey, value)
 		},
 	}, true
+}
+
+func projectPathHeapStaticMemberValue(
+	reg *axis.Registry,
+	resolver *visibility.Resolver,
+	point cfg.Point,
+	out state.State,
+	targetPath pathdom.Path,
+) (product.Value, bool) {
+	if len(targetPath.Segments) == 0 {
+		return product.Value{}, false
+	}
+	root := targetPath
+	root.Segments = nil
+	rootProjected := product.Value{}
+	hasRootProjected := false
+	if rootValue, ok := resolvePathValueAtCached(nil, reg, resolver, point, out, root, nil); ok {
+		if projected, ok := sourcevalue.HeapMemberFromValue(reg, out, rootValue.value, targetPath.Segments); ok {
+			rootProjected = projected
+			hasRootProjected = true
+		}
+	}
+
+	parent := targetPath.Parent()
+	parentValue, _ := resolvePathValueAtCached(nil, reg, resolver, point, out, parent, nil)
+	if projected, ok := sourcevalue.HeapMemberFromValue(reg, out, parentValue.value, targetPath.Segments[len(targetPath.Segments)-1:]); ok {
+		if hasRootProjected {
+			if merged := product.Meet(reg, rootProjected, projected); !product.Equal(reg, merged, product.Bottom(reg)) {
+				return merged, true
+			}
+		}
+		return projected, true
+	}
+	if hasRootProjected {
+		return rootProjected, true
+	}
+	return product.Value{}, false
+}
+
+func projectPathDynamicIndexValue(
+	reg *axis.Registry,
+	resolver *visibility.Resolver,
+	point cfg.Point,
+	out state.State,
+	targetPath pathdom.Path,
+) (product.Value, bool) {
+	if resolver == nil || len(targetPath.Segments) == 0 {
+		return product.Value{}, false
+	}
+	parent := targetPath.Parent()
+	if parent.IsEmpty() {
+		return product.Value{}, false
+	}
+	tableKey := resolver.KeyAt(point, parent)
+	if tableKey == "" {
+		return product.Value{}, false
+	}
+	last := targetPath.Segments[len(targetPath.Segments)-1]
+	snapshot := out.DynamicIndexFactsSnapshot()
+	if snapshot.Top || len(snapshot.Facts) == 0 {
+		return projectPathHeapDynamicIndexValue(reg, resolver, point, out, parent, last)
+	}
+	if joined, ok := joinMatchingDynamicIndexValues(reg, snapshot.Facts, tableKey, last); ok {
+		return joined, true
+	}
+	return projectPathHeapDynamicIndexValue(reg, resolver, point, out, parent, last)
+}
+
+func projectPathHeapDynamicIndexValue(
+	reg *axis.Registry,
+	resolver *visibility.Resolver,
+	point cfg.Point,
+	out state.State,
+	parent pathdom.Path,
+	last segment.Segment,
+) (product.Value, bool) {
+	parentValue, ok := resolvePathValueAtCached(nil, reg, resolver, point, out, parent, nil)
+	if !ok {
+		return product.Value{}, false
+	}
+	id, ok := product.Get(reg, parentValue.value, identity.Key).ID()
+	if !ok {
+		return product.Value{}, false
+	}
+	object := out.ReadHeapTableObject(reg, id)
+	return joinMatchingHeapDynamicIndexValues(reg, object.DynamicIndexFacts(), last)
+}
+
+func joinMatchingDynamicIndexValues(
+	reg *axis.Registry,
+	facts map[dynamicindex.Key]dynamicindex.Fact,
+	tableKey pathdom.PathKey,
+	last segment.Segment,
+) (product.Value, bool) {
+	valueDomain := product.Domain(reg)
+	joined := product.Bottom(reg)
+	found := false
+	for key, fact := range facts {
+		if key.Table != tableKey || fact.Admission == dynamicindex.AdmissionRejected {
+			continue
+		}
+		if !dynamicIndexFactMayMatchSegment(reg, fact, last) {
+			continue
+		}
+		if valueDomain.Equal(fact.Value, valueDomain.Bottom()) {
+			continue
+		}
+		if !found {
+			joined = fact.Value
+			found = true
+			continue
+		}
+		joined = valueDomain.Join(joined, fact.Value)
+	}
+	if !found {
+		return product.Value{}, false
+	}
+	return joined, true
+}
+
+func joinMatchingHeapDynamicIndexValues(
+	reg *axis.Registry,
+	facts map[dynamicindex.Key]dynamicindex.Fact,
+	last segment.Segment,
+) (product.Value, bool) {
+	valueDomain := product.Domain(reg)
+	joined := product.Bottom(reg)
+	found := false
+	for _, fact := range facts {
+		if fact.Admission == dynamicindex.AdmissionRejected {
+			continue
+		}
+		if !dynamicIndexFactMayMatchSegment(reg, fact, last) {
+			continue
+		}
+		if valueDomain.Equal(fact.Value, valueDomain.Bottom()) {
+			continue
+		}
+		if !found {
+			joined = fact.Value
+			found = true
+			continue
+		}
+		joined = valueDomain.Join(joined, fact.Value)
+	}
+	if !found {
+		return product.Value{}, false
+	}
+	return joined, true
+}
+
+func dynamicIndexFactMayMatchSegment(reg *axis.Registry, fact dynamicindex.Fact, seg segment.Segment) bool {
+	keyType, ok := typevalue.TypeOf(reg, fact.KeyValue)
+	if !ok {
+		return true
+	}
+	switch seg.Kind {
+	case segment.SegmentField, segment.SegmentIndexString:
+		return typetable.MapComponentKeyMayContainString(keyType, seg.Name)
+	case segment.SegmentIndexInt:
+		return typetable.MapComponentKeyMayContainInt(keyType, int64(seg.Index))
+	default:
+		return true
+	}
 }
 
 func projectPathStructuralValue(reg *axis.Registry, out state.State, targetPath pathdom.Path, projectPath PathTypeProjector) (product.Value, bool) {

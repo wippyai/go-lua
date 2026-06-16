@@ -49,6 +49,46 @@ func signatureNormalReturnPathInvalidations(in []factapply.CallParamPathInvalida
 	return out
 }
 
+func signatureParamLengthFloors(sig signature.Function, site factflow.CallSite) []factapply.CallParamLengthFloor {
+	if len(sig.Effect.Labels) == 0 {
+		return nil
+	}
+	args := site.ArgumentSources()
+	var out []factapply.CallParamLengthFloor
+	for _, label := range sig.Effect.Labels {
+		target, delta, ok := positiveLengthChange(label)
+		if !ok {
+			continue
+		}
+		argIndex, ok := effect.ResolveParamIndex(target, len(args))
+		if !ok || !callArgumentSourceCanBindPath(args[argIndex]) {
+			continue
+		}
+		out = append(out, factapply.CallParamLengthFloor{
+			Path:  pathdom.NewPlaceholder(argIndex),
+			Floor: int64(delta),
+		})
+	}
+	return out
+}
+
+func positiveLengthChange(label effect.Label) (effect.ParamRef, int, bool) {
+	switch normalized := effect.NormalizeLabel(label).(type) {
+	case mutation.LengthChange:
+		if normalized.Delta <= 0 {
+			return effect.ParamRef{}, 0, false
+		}
+		return normalized.Target, normalized.Delta, true
+	case *mutation.LengthChange:
+		if normalized == nil || normalized.Delta <= 0 {
+			return effect.ParamRef{}, 0, false
+		}
+		return normalized.Target, normalized.Delta, true
+	default:
+		return effect.ParamRef{}, 0, false
+	}
+}
+
 func activeMutationTargets(sig signature.Function) []effect.ParamRef {
 	if len(sig.Effect.Labels) == 0 {
 		return nil

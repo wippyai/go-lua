@@ -1,0 +1,8 @@
+{
+  "description": "Cross-module callback-built nested table entries preserve deep placement when an exact map entry is sent.",
+  "files": ["protocol.lua", "builder.lua", "main.lua"],
+  "packages": ["process"],
+  "check": {
+    "errors": 1
+  }
+}

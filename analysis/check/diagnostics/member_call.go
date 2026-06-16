@@ -73,6 +73,13 @@ func (p memberCall) call(result *body.Result, point cfg.Point, fact semantics.Ca
 	if typ.IsNever(receiverType) || typ.IsAny(receiverType) || typ.IsUnknown(receiverType) {
 		return diagnostic.Diagnostic{}, false
 	}
+	if env.hasPresent(receiver) {
+		if withoutNil := projectionWithoutNil(receiverType); withoutNil != nil && !typ.IsNever(withoutNil) {
+			receiverType = withoutNil
+		} else {
+			return diagnostic.Diagnostic{}, false
+		}
+	}
 	if projectionHasNil(receiverType) {
 		if fact.Receiver != nil && fact.Method != "" {
 			return optionalMethodCallDiagnostic(callExpr), true

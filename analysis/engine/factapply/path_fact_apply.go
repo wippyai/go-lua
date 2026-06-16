@@ -4,12 +4,14 @@ import (
 	"strconv"
 
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/engine/dynamicindex"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	sourcevalue "github.com/wippyai/go-lua/analysis/engine/sourcevalue"
 	"github.com/wippyai/go-lua/analysis/engine/state"
+	"github.com/wippyai/go-lua/analysis/engine/state/heapidentity"
 	"github.com/wippyai/go-lua/analysis/engine/state/pathevidence"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/engine/visibility"
@@ -50,10 +52,49 @@ func applyDynamicIndexWrite(
 	if tableKey == "" {
 		return out
 	}
-	return out.WriteDynamicIndexFact(ctx.Registry, dynamicindex.Key{
+	key := dynamicindex.Key{
 		Table: tableKey,
 		Site:  dynamicIndexSite(ctx.Point),
-	}, dynamicIndexFact(ctx, sources, read, in, out, fact))
+	}
+	value := dynamicIndexFact(ctx, sources, read, in, out, fact)
+	out = out.WriteDynamicIndexFact(ctx.Registry, key, value)
+	return writeHeapTableDynamicIndexFact(ctx, resolver, out, fact.TablePath(), key, value)
+}
+
+func writeHeapTableDynamicIndexFact(
+	ctx transfer.NodeContext,
+	resolver *visibility.Resolver,
+	out state.State,
+	tablePath pathdom.Path,
+	key dynamicindex.Key,
+	value dynamicindex.Fact,
+) state.State {
+	table, ok := resolvePathValueAt(ctx.Registry, resolver, ctx.Point, out, tablePath, nil)
+	if !ok {
+		return out
+	}
+	id, ok := product.Get(ctx.Registry, table.value, identity.Key).ID()
+	if !ok {
+		return out
+	}
+	object := out.ReadHeapTableObject(ctx.Registry, id)
+	if heapidentity.ObjectDomain(ctx.Registry).Equal(object, heapidentity.BottomObject(ctx.Registry)) {
+		return out
+	}
+	dynamic := object.DynamicIndexFacts()
+	if dynamic == nil {
+		dynamic = make(map[dynamicindex.Key]dynamicindex.Fact, 1)
+	}
+	if existing, ok := dynamic[key]; ok {
+		dynamic[key] = dynamicindex.Domain(ctx.Registry).Join(existing, value)
+	} else {
+		dynamic[key] = value
+	}
+	return out.WriteHeapTableObject(ctx.Registry, id, heapidentity.NewTableObject(heapidentity.TableObjectConfig{
+		Root:              object.Root(),
+		StaticMembers:     object.StaticMembers(),
+		DynamicIndexFacts: dynamic,
+	}))
 }
 
 func dynamicIndexFact(

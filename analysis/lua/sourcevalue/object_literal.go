@@ -18,6 +18,10 @@ func ObjectLiteralType(reg *axis.Registry, lit factflow.ObjectLiteral, resolve f
 
 func ObjectLiteralTypeCached(reg *axis.Registry, typeValues *typevalue.Cache, lit factflow.ObjectLiteral, resolve func(factflow.ValueSource) (product.Value, bool)) (typ.Type, bool) {
 	builder := typetable.NewConstructorBuilder()
+	var expectedType typ.Type
+	if expectedValue, ok := lit.Expected(); ok {
+		expectedType, _ = typevalue.TypeOf(reg, expectedValue)
+	}
 	expected, hasExpected := expectedRecord(reg, lit, resolve)
 	seen := false
 	seenUntrustedTop := false
@@ -67,7 +71,10 @@ func ObjectLiteralTypeCached(reg *axis.Registry, typeValues *typevalue.Cache, li
 		if seenUntrustedTop {
 			return typetable.NewRecord().Build(), true
 		}
-		return nil, false
+		if expectedType != nil {
+			return expectedType, true
+		}
+		return typetable.NewRecord().Build(), true
 	}
 	return builder.Build()
 }

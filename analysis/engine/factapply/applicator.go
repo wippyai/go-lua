@@ -88,7 +88,7 @@ func NewFactsNodeTransfer(config FactsNodeTransferConfig) transfer.NodeTransfer 
 			}
 		}
 		if fact, ok := facts.Return(ctx.Point); ok {
-			out = applyReturn(ctx, facts, sources, read, in, out, fact)
+			out = applyReturn(ctx, facts, sources, read, in, out, fact, config.Visibility, config.ProjectPath, config.TypeValues)
 		}
 		return out
 	}

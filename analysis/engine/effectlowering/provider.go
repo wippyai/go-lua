@@ -69,8 +69,10 @@ func SignatureOutcomeProvider(config SignatureOutcomeProviderConfig) factapply.C
 			out = applyOperationalEffects(ctx, out, sig.OperationalEffects)
 		} else {
 			invalidations := signatureParamPathInvalidations(sig, ownedSite)
+			lengthFloors := signatureParamLengthFloors(sig, ownedSite)
 			out.ReturnPresenceRelations = signatureReturnPresenceRelations(sig)
 			out.ParamPathRefinements = signatureParamPathRefinements(ctx, sig, ownedSite)
+			out.ParamLengthFloors = lengthFloors
 			out.ParamPathInvalidations = invalidations
 			out.NormalReturnFacts.PathInvalidations = signatureNormalReturnPathInvalidations(invalidations)
 			out.NormalReturnFacts.EscapeEvents = signatureEscapeEvents(sig, ownedSite)

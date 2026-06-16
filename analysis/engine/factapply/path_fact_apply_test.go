@@ -4,6 +4,8 @@ import (
 	"testing"
 
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/state/key"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/engine/callboundary"
@@ -12,6 +14,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/state/channelselectfact"
 	effectdelta "github.com/wippyai/go-lua/analysis/engine/state/effectdelta"
+	"github.com/wippyai/go-lua/analysis/engine/state/heapidentity"
 	"github.com/wippyai/go-lua/analysis/engine/state/pathevidence"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/engine/visibility"
@@ -125,6 +128,113 @@ func TestFactsNodeTransferAppliesDynamicIndexWriteKeyValueAdmission(t *testing.T
 	}
 	if len(sources.calls) != 2 || sources.calls[0].source != keySource || sources.calls[1].source != valueSource {
 		t.Fatalf("dynamic-index source calls = %#v, want key then value", sources.calls)
+	}
+}
+
+func TestFactsNodeTransferDynamicIndexWritePublishesFirstHeapDynamicFact(t *testing.T) {
+	reg := standard.Registry()
+	point := cfg.Point(403)
+	table := symbol.ID(403)
+	tablePath := pathdom.NewPath(table, "table")
+	tableKey := pathdom.PathKey("sym403@1")
+	tableID := identity.ID{Kind: "test.table", Site: "dynamic", Index: 1}
+	tableValue := product.Set(reg, presentValue(reg), identity.Key, identity.Singleton(tableID))
+	keySource := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: factflow.ExprRef(405), HasExpr: true}
+	valueSource := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: factflow.ExprRef(406), HasExpr: true}
+	keyValue := presentValue(reg)
+	writeValue := absentValue(reg)
+	sources := &recordingSourceValues{
+		values: map[factflow.ValueSource]product.Value{
+			keySource:   keyValue,
+			valueSource: writeValue,
+		},
+	}
+	visibilityBuilder := visibility.NewBuilder()
+	visibilityBuilder.Define(point, table, "table")
+
+	got := NewFactsNodeTransfer(FactsNodeTransferConfig{
+		Facts: factflow.NewFacts(factflow.FactsInput{
+			DynamicIndexWrites: map[cfg.Point]factflow.DynamicIndexWrite{
+				point: factflow.NewDynamicIndexWrite(
+					tablePath,
+					keySource,
+					valueSource,
+					dynamicindex.AdmissionAdmitted,
+					factflow.DynamicIndexReadbackKeyAndValue,
+				),
+			},
+		}),
+		Sources:    sources,
+		Visibility: visibility.NewResolver(visibilityBuilder.Build()),
+	})(transfer.NodeContext{
+		Registry: reg,
+		Point:    point,
+	}, state.State{}.
+		WriteValue(reg, key.SymbolValue(table), tableValue).
+		WriteHeapTableObject(reg, tableID, heapidentity.NewTableObject(heapidentity.TableObjectConfig{Root: tableValue})))
+
+	dynamicKey := dynamicindex.Key{Table: tableKey, Site: dynamicIndexSite(point)}
+	object := got.ReadHeapTableObject(reg, tableID)
+	heapFact, ok := object.DynamicIndexFact(dynamicKey)
+	if !ok {
+		t.Fatalf("heap dynamic fact missing for %s", dynamicKey)
+	}
+	if !presence.Equal(heapFact.KeyPresence, presence.Present()) ||
+		!product.Equal(reg, heapFact.KeyValue, keyValue) ||
+		!product.Equal(reg, heapFact.Value, writeValue) ||
+		heapFact.Admission != dynamicindex.AdmissionAdmitted {
+		t.Fatalf("heap dynamic-index fact = %#v, want key/value/admitted mapping", heapFact)
+	}
+}
+
+func TestResolvePathValueReadsHeapDynamicFactAcrossPathKeyContexts(t *testing.T) {
+	reg := standard.Registry()
+	point := cfg.Point(404)
+	root := symbol.ID(404)
+	rootPath := pathdom.NewPath(root, "batch")
+	itemsPath := rootPath.Field("items")
+	itemPath := itemsPath.IndexStr("route-1")
+	rootID := identity.ID{Kind: "test.table", Site: "root", Index: 1}
+	itemsID := identity.ID{Kind: "test.table", Site: "items", Index: 1}
+	itemID := identity.ID{Kind: "test.table", Site: "item", Index: 1}
+	rootValue := product.Set(reg, presentValue(reg), identity.Key, identity.Singleton(rootID))
+	itemsValue := product.Set(reg, presentValue(reg), identity.Key, identity.Singleton(itemsID))
+	itemValue := product.Set(reg, presentValue(reg), identity.Key, identity.Singleton(itemID))
+	itemsKey, ok := heapidentity.StaticMemberSuffixKey(fieldSuffix("items").Segments)
+	if !ok {
+		t.Fatal("missing items suffix key")
+	}
+	visibilityBuilder := visibility.NewBuilder()
+	visibilityBuilder.Define(point, root, "batch")
+	resolver := visibility.NewResolver(visibilityBuilder.Build())
+	oldDynamicKey := dynamicindex.Key{
+		Table: pathdom.PathKey("callee.items"),
+		Site:  dynamicindex.Site("callee.write"),
+	}
+	st := state.State{}.
+		WriteValue(reg, key.SymbolValue(root), rootValue).
+		WriteHeapTableObject(reg, rootID, heapidentity.NewTableObject(heapidentity.TableObjectConfig{
+			Root:          rootValue,
+			StaticMembers: map[pathdom.PathKey]product.Value{itemsKey: itemsValue},
+		})).
+		WriteHeapTableObject(reg, itemsID, heapidentity.NewTableObject(heapidentity.TableObjectConfig{
+			Root: itemsValue,
+			DynamicIndexFacts: map[dynamicindex.Key]dynamicindex.Fact{
+				oldDynamicKey: {
+					KeyPresence: presence.Present(),
+					KeyValue:    presentValue(reg),
+					Value:       itemValue,
+					Admission:   dynamicindex.AdmissionAdmitted,
+				},
+			},
+		}))
+
+	got, ok := resolvePathValueAt(reg, resolver, point, st, itemPath, nil)
+	if !ok {
+		t.Fatalf("resolvePathValueAt(%s) returned false", itemPath)
+	}
+	if !product.Equal(reg, got.value, itemValue) {
+		t.Fatalf("resolved value = %s, want item identity", formatValue(reg, got.value))
 	}
 }
 

@@ -3,7 +3,12 @@ package factapply
 import (
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/placement"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/evidence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/typewitness"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/variantorigin"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	sourcevalue "github.com/wippyai/go-lua/analysis/engine/sourcevalue"
@@ -49,6 +54,7 @@ func applyObjectLiteralEntries(
 		if !ok {
 			continue
 		}
+		value = objectEntryValue(ctx.Registry, entry, value)
 		invalidated, ok := invalidatePathSubtreeAt(out, resolver, ctx.Point, entryPath)
 		if !ok {
 			continue
@@ -124,6 +130,7 @@ func writeObjectLiteralHeap(
 		if !ok {
 			continue
 		}
+		value = objectEntryValue(ctx.Registry, entry, value)
 		staticMembers[key] = value
 		if entrySource.HasExpr {
 			if nested, ok := facts.ObjectLiteral(entrySource.ExprRef); ok {
@@ -137,6 +144,34 @@ func writeObjectLiteralHeap(
 		Root:          rootValue,
 		StaticMembers: staticMembers,
 	}))
+}
+
+func objectEntryValue(reg *axis.Registry, entry factflow.ObjectEntry, value product.Value) product.Value {
+	expected, ok := entry.Expected()
+	if !ok || reg == nil {
+		return value
+	}
+	return overlayExpectedObjectEntryValue(reg, value, expected)
+}
+
+func overlayExpectedObjectEntryValue(reg *axis.Registry, value, expected product.Value) product.Value {
+	kind := product.Get(reg, expected, runtimekind.Key)
+	if !kind.IsTop() && !kind.IsBottom() {
+		value = product.Set(reg, value, runtimekind.Key, kind)
+	}
+	witness := product.Get(reg, expected, typewitness.Key)
+	if !witness.IsTop() && !witness.IsBottom() {
+		value = product.Set(reg, value, typewitness.Key, witness)
+	}
+	origin := product.Get(reg, expected, variantorigin.Key)
+	if !origin.IsTop() && !origin.IsBottom() {
+		value = product.Set(reg, value, variantorigin.Key, origin)
+	}
+	proof := product.Get(reg, expected, evidence.Key)
+	if !evidence.Equal(proof, evidence.Top()) && !evidence.Equal(proof, evidence.Bottom()) {
+		value = product.Set(reg, value, evidence.Key, proof)
+	}
+	return value
 }
 
 func objectEntryTargetPath(root pathdom.Path, suffix pathdom.Path) (pathdom.Path, bool) {

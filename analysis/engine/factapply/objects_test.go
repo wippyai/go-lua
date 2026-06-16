@@ -11,6 +11,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/evidence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/sourcevalue"
 	"github.com/wippyai/go-lua/analysis/engine/state"
@@ -20,6 +21,8 @@ import (
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
+	typetable "github.com/wippyai/go-lua/analysis/type/table"
+	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
 const testObjectLiteralGraphID uint64 = 9001
@@ -239,6 +242,64 @@ func TestFactsNodeTransferObjectLiteralPathAssignmentWritesStaticEntries(t *test
 	if sources.calls[0].source != objectSource || sources.calls[1].source != objectSource ||
 		sources.calls[2].source != entrySource || sources.calls[3].source != entrySource {
 		t.Fatalf("resolver calls = %#v, want root, root, entry, entry", sources.calls)
+	}
+}
+
+func TestFactsNodeTransferObjectLiteralEntryExpectedContractPreservesIdentity(t *testing.T) {
+	reg := standard.Registry()
+	point := cfg.Point(70)
+	target := symbol.ID(128)
+	objectSource := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: factflow.ExprRef(80), HasExpr: true}
+	entrySource := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: factflow.ExprRef(81), HasExpr: true}
+	rootID := testTableLiteralID(objectSource.ExprRef)
+	entryID := testTableLiteralID(entrySource.ExprRef)
+	rootValue := product.Set(reg, presentValue(reg), identity.Key, identity.Singleton(rootID))
+	entryValue := product.Set(reg, presentValue(reg), identity.Key, identity.Singleton(entryID))
+	entryType := typetable.NewMap(typ.String, typ.String)
+	entryExpected := typevalue.WithWitness(reg, typevalue.FromType(reg, entryType), entryType)
+	entry := factflow.NewObjectEntry(fieldSuffix("processed"), entrySource).WithExpected(entryExpected)
+	sources := &recordingSourceValues{
+		values: map[factflow.ValueSource]product.Value{
+			objectSource: rootValue,
+			entrySource:  entryValue,
+		},
+	}
+	visibilityBuilder := visibility.NewBuilder()
+	visibilityBuilder.Define(point, target, "actor")
+
+	got := NewFactsNodeTransfer(FactsNodeTransferConfig{
+		Facts: factflow.NewFacts(factflow.FactsInput{
+			RootAssignments: map[cfg.Point]factflow.RootAssignment{
+				point: factflow.NewRootAssignment(factflow.RootAssignmentLocalDeclaration, target, path.NewPath(target, "actor"), objectSource),
+			},
+			ObjectLiterals: map[factflow.ExprRef]factflow.ObjectLiteral{
+				objectSource.ExprRef: factflow.NewObjectLiteral([]factflow.ObjectEntry{entry}),
+			},
+		}),
+		Sources:    sources,
+		Visibility: visibility.NewResolver(visibilityBuilder.Build()),
+	})(transfer.NodeContext{
+		Registry: reg,
+		Point:    point,
+	}, state.State{})
+
+	pathValue := got.ReadPathKey(reg, path.PathKey("sym128@1.processed"))
+	if gotID, ok := product.Get(reg, pathValue, identity.Key).ID(); !ok || gotID != entryID {
+		t.Fatalf("path entry identity = %v/%v, want %v in %s", gotID, ok, entryID, formatValue(reg, pathValue))
+	}
+	if gotType, ok := typevalue.TypeOf(reg, pathValue); !ok || !typ.TypeEquals(gotType, entryType) {
+		t.Fatalf("path entry type = %v/%v, want %v", gotType, ok, entryType)
+	}
+	object := got.ReadHeapTableObject(reg, rootID)
+	heapValue, ok := object.StaticMember(path.PathKey(".processed"))
+	if !ok {
+		t.Fatalf("heap processed member missing")
+	}
+	if gotID, ok := product.Get(reg, heapValue, identity.Key).ID(); !ok || gotID != entryID {
+		t.Fatalf("heap entry identity = %v/%v, want %v in %s", gotID, ok, entryID, formatValue(reg, heapValue))
+	}
+	if gotType, ok := typevalue.TypeOf(reg, heapValue); !ok || !typ.TypeEquals(gotType, entryType) {
+		t.Fatalf("heap entry type = %v/%v, want %v", gotType, ok, entryType)
 	}
 }
 

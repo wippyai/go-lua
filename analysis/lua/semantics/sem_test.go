@@ -316,6 +316,30 @@ func TestExtractChunkObjectLiteralStaticEntriesAndDynamicSkip(t *testing.T) {
 	}
 }
 
+func TestExtractChunkEmptyObjectLiteralPublishesSidecar(t *testing.T) {
+	table := &ast.TableExpr{}
+	local := localAssign([]string{"t"}, table)
+	stmts := []ast.Stmt{local}
+	bindings := bind.BindChunk(stmts, bind.Options{})
+	built := cfgbuild.BuildChunk(stmts, bindings)
+
+	result, err := ExtractChunk(stmts, bindings, built)
+	if err != nil {
+		t.Fatalf("ExtractChunk: %v", err)
+	}
+
+	fact, ok := result.ObjectLiteral(table)
+	if !ok {
+		t.Fatalf("missing empty object literal sidecar")
+	}
+	if fact.Expr != table || fact.Table != table {
+		t.Fatalf("object literal identity = %#v", fact)
+	}
+	if len(fact.Entries) != 0 {
+		t.Fatalf("empty literal entries = %#v, want none", fact.Entries)
+	}
+}
+
 func TestExtractChunkObjectLiteralThroughAssertionWrappers(t *testing.T) {
 	asTable := &ast.TableExpr{Fields: []*ast.Field{
 		{Key: stringLit("a"), KeySyntax: ast.AttrKeyDot, Value: number("1")},

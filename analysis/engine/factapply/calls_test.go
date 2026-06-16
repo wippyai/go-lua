@@ -5,6 +5,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/sourcevalue"
@@ -50,6 +51,41 @@ func TestFactsNodeTransferAppliesReturnSlotsThroughSourceValues(t *testing.T) {
 	assertValue(t, reg, got[ret], key.ReturnSlot(0), product.Bottom(reg))
 	assertValue(t, reg, got[graph.Exit()], key.ReturnSlot(0), exprValue)
 	assertValue(t, reg, got[graph.Exit()], key.ReturnSlot(1), absentValue(reg))
+}
+
+func TestFactsNodeTransferReturnPathSourcePreservesStateIdentity(t *testing.T) {
+	reg := standard.Registry()
+	graph := cfg.New()
+	ret := graph.AddNode(cfg.NodeReturn)
+	graph.AddEdge(graph.Entry(), ret, false)
+	graph.AddEdge(ret, graph.Exit(), false)
+
+	expr := factflow.ExprRef(22)
+	batch := symbol.ID(700)
+	batchID := identity.ID{Kind: "test.table", Site: "return", Index: 1}
+	batchValue := product.Set(reg, presentValue(reg), identity.Key, identity.Singleton(batchID))
+	sources := sourcevalue.NewSourceValues(sourcevalue.SourceValuesConfig{Registry: reg})
+
+	got := transfer.Run(transfer.Config{
+		Graph:      graph,
+		Registry:   reg,
+		EntryState: state.State{}.WriteValue(reg, key.SymbolValue(batch), batchValue),
+		NodeTransfer: NewFactsNodeTransfer(FactsNodeTransferConfig{
+			Facts: factflow.NewFacts(factflow.FactsInput{
+				Returns: map[cfg.Point]factflow.Return{
+					ret: factflow.NewReturn([]factflow.ValueSource{
+						{Kind: factflow.ValueSourceExpression, ExprRef: expr, HasExpr: true},
+					}),
+				},
+				ExpressionPaths: map[factflow.ExprRef]path.Path{
+					expr: {Symbol: batch},
+				},
+			}),
+			Sources: sources,
+		}),
+	})
+
+	assertValue(t, reg, got[graph.Exit()], key.ReturnSlot(0), batchValue)
 }
 
 func TestFactsNodeTransferUnresolvedReturnSourceLeavesSlotUnchanged(t *testing.T) {

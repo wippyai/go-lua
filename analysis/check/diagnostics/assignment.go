@@ -88,6 +88,9 @@ func (p annotationAssignability) localAssignment(result *body.Result, point cfg.
 		got, ok = inferredFunctionValueType(result, point, fact.Expr)
 	}
 	if !ok {
+		got, ok = projectedFlowSourceType(result, p.resolver, point, env, fact.Expr)
+	}
+	if !ok {
 		got, ok = sourceExpressionTypeWithPresence(result, point, fact.Source)
 		presenceAwareSourceProjection = ok
 	}
@@ -96,9 +99,6 @@ func (p annotationAssignability) localAssignment(result *body.Result, point cfg.
 	}
 	if !ok {
 		got, ok = localScalarOperatorSourceType(result, p.resolver, fact.Expr)
-	}
-	if !ok {
-		got, ok = projectedFlowSourceType(result, p.resolver, point, env, fact.Expr)
 	}
 	if !ok {
 		got, ok = annotatedIdentifierType(result, p.resolver, point, fact.Expr)

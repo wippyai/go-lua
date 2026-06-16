@@ -81,6 +81,12 @@ func ordinaryAssignmentMemberType(result *body.Result, point cfg.Point, root pat
 }
 
 func ordinaryAssignmentRHSMemberType(result *body.Result, point cfg.Point, root pathdom.Path, fact semantics.OrdinaryAssignmentFact) (typ.Type, bool, bool) {
+	expr := ordinaryAssignmentRHSExpr(fact)
+	if expr != nil {
+		if t, ok := ordinaryAssignmentRHSPathType(result, point, root, fact, expr); ok {
+			return t, true, true
+		}
+	}
 	resolved := false
 	if value, ok := ordinaryAssignmentRHSValue(result, point, fact); ok {
 		resolved = true
@@ -89,12 +95,8 @@ func ordinaryAssignmentRHSMemberType(result *body.Result, point cfg.Point, root 
 		}
 	}
 
-	expr := ordinaryAssignmentRHSExpr(fact)
 	if expr == nil {
 		return nil, false, resolved
-	}
-	if t, ok := ordinaryAssignmentRHSPathType(result, point, root, fact, expr); ok {
-		return t, true, true
 	}
 	if t, ok := exprType(result, point, expr); ok {
 		return t, true, true

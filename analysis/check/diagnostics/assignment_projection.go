@@ -17,6 +17,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/subtype"
 	"github.com/wippyai/go-lua/analysis/type/transform"
 	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/analysis/type/unwrap"
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/parse/numparse"
 )
@@ -29,6 +30,9 @@ func assignmentValueType(result *body.Result, resolver typeannotation.Resolver, 
 		return got, true
 	}
 	if got, ok := untrustedTopLikeExpressionTypeAt(result, resolver, point, expr); ok {
+		return got, true
+	}
+	if got, ok := projectedFlowSourceType(result, resolver, point, guardEnv{}, expr); ok {
 		return got, true
 	}
 	if got, ok := sourceExpressionTypeWithPresence(result, point, source); ok {
@@ -682,7 +686,7 @@ func missingRequiredRecordField(want typ.Type, fact semantics.ObjectLiteralFact)
 		}
 	}
 	for _, field := range record.Fields {
-		if field.Optional {
+		if field.Optional || unwrap.IsOptionalLike(field.Type) {
 			continue
 		}
 		if _, ok := present[field.Name]; ok {

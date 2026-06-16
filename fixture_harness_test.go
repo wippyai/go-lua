@@ -396,6 +396,8 @@ func resolvePackageManifest(name string) *typemanifest.Manifest {
 		return testutil.ChannelManifest()
 	case "funcs":
 		return testutil.FuncsManifest()
+	case "process":
+		return testutil.ProcessManifest()
 	case "time":
 		return fixtureTimeManifest()
 	case "uuid":

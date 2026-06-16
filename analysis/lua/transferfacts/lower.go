@@ -115,6 +115,7 @@ func Lower(result *semantics.Result, graph cfg.Graph, config Config) factflow.Fa
 				l.addAssertionRefinementsForSource(&input, source)
 				l.addObjectLiteral(&input, result, source)
 			}
+			l.addReturnObjectLiteralExpectedTypes(&input, result, fact)
 		}
 		if fact, ok := result.Call(point); ok {
 			input.CallSites[point] = l.callSite(fact)

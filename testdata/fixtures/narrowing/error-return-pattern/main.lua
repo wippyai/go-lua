@@ -1,8 +1,17 @@
-local function getData(): (string?, string?)
-    return "data", nil
+local function getData(ok: boolean): (string?, string?)
+    if ok then
+        return "data", nil
+    end
+    return nil, "failed"
 end
-local data, err = getData()
-if err then
-    error(err)
+
+local function use(ok: boolean)
+    local data, err = getData(ok)
+    if err then
+        error(err)
+    end
+    local s: string = data
+    return s
 end
-local s: string = data
+
+return use

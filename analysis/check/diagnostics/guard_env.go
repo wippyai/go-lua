@@ -27,6 +27,7 @@ type runtimeTypeConstraint struct {
 type guardEnv struct {
 	constraints []literalConstraint
 	typeChecks  []runtimeTypeConstraint
+	present     []path.Path
 }
 
 func guardEnvironments(result *body.Result) map[cfg.Point]guardEnv {
@@ -92,8 +93,20 @@ func applyGuardEdge(result *body.Result, graph cfg.Graph, from, to cfg.Point, en
 }
 
 func applyBranchGuard(env guardEnv, check branchcond.Check, cond bool) guardEnv {
+	if check.Kind == branchcond.CheckTruthy && cond {
+		return env.withPresent(check.Path)
+	}
+	if check.Kind == branchcond.CheckFalsy && !cond {
+		return env.withPresent(check.Path)
+	}
+	if check.Kind == branchcond.CheckNil && !cond {
+		return env.withPresent(check.Path)
+	}
+	if check.Kind == branchcond.CheckNotNil && cond {
+		return env.withPresent(check.Path)
+	}
 	if check.Kind == branchcond.CheckLiteralEqual && cond {
-		return env.with(literalConstraint{target: check.Path, value: check.LiteralString})
+		return env.with(literalConstraint{target: check.Path, value: check.LiteralString}).withPresent(check.Path)
 	}
 	if check.Kind == branchcond.CheckLiteralEqual && !cond {
 		return env.with(literalConstraint{target: check.Path, value: check.LiteralString, negated: true})
@@ -102,10 +115,10 @@ func applyBranchGuard(env guardEnv, check branchcond.Check, cond bool) guardEnv 
 		return env.with(literalConstraint{target: check.Path, value: check.LiteralString, negated: true})
 	}
 	if check.Kind == branchcond.CheckLiteralNot && !cond {
-		return env.with(literalConstraint{target: check.Path, value: check.LiteralString})
+		return env.with(literalConstraint{target: check.Path, value: check.LiteralString}).withPresent(check.Path)
 	}
 	if check.Kind == branchcond.CheckTypeEqual && cond {
-		return env.withType(runtimeTypeConstraint{target: check.Path, name: check.TypeName})
+		return env.withType(runtimeTypeConstraint{target: check.Path, name: check.TypeName}).withPresent(check.Path)
 	}
 	if check.Kind == branchcond.CheckTypeNot && !cond {
 		return env.withType(runtimeTypeConstraint{target: check.Path, name: check.TypeName})
@@ -117,7 +130,11 @@ func (e guardEnv) with(c literalConstraint) guardEnv {
 	if c.target.IsEmpty() || c.value == "" {
 		return e
 	}
-	out := guardEnv{constraints: append([]literalConstraint(nil), e.constraints...)}
+	out := guardEnv{
+		constraints: append([]literalConstraint(nil), e.constraints...),
+		typeChecks:  append([]runtimeTypeConstraint(nil), e.typeChecks...),
+		present:     copyPaths(e.present),
+	}
 	for i, existing := range out.constraints {
 		if existing.target.Equal(c.target) {
 			out.constraints[i] = c
@@ -137,6 +154,7 @@ func (e guardEnv) withType(c runtimeTypeConstraint) guardEnv {
 	out := guardEnv{
 		constraints: append([]literalConstraint(nil), e.constraints...),
 		typeChecks:  append([]runtimeTypeConstraint(nil), e.typeChecks...),
+		present:     copyPaths(e.present),
 	}
 	for i, existing := range out.typeChecks {
 		if existing.target.Equal(c.target) {
@@ -150,10 +168,38 @@ func (e guardEnv) withType(c runtimeTypeConstraint) guardEnv {
 	return out
 }
 
-func joinGuardEnvs(a, b guardEnv) guardEnv {
-	if (len(a.constraints) == 0 || len(b.constraints) == 0) && (len(a.typeChecks) == 0 || len(b.typeChecks) == 0) {
-		return guardEnv{}
+func (e guardEnv) withPresent(target path.Path) guardEnv {
+	if target.IsEmpty() {
+		return e
 	}
+	out := guardEnv{
+		constraints: append([]literalConstraint(nil), e.constraints...),
+		typeChecks:  append([]runtimeTypeConstraint(nil), e.typeChecks...),
+		present:     copyPaths(e.present),
+	}
+	for _, existing := range out.present {
+		if existing.Equal(target) {
+			return out
+		}
+	}
+	out.present = append(out.present, target)
+	sortGuardEnv(out)
+	return out
+}
+
+func (e guardEnv) hasPresent(target path.Path) bool {
+	if target.IsEmpty() {
+		return false
+	}
+	for _, existing := range e.present {
+		if existing.Equal(target) {
+			return true
+		}
+	}
+	return false
+}
+
+func joinGuardEnvs(a, b guardEnv) guardEnv {
 	var out guardEnv
 	for _, left := range a.constraints {
 		for _, right := range b.constraints {
@@ -171,12 +217,20 @@ func joinGuardEnvs(a, b guardEnv) guardEnv {
 			}
 		}
 	}
+	for _, left := range a.present {
+		for _, right := range b.present {
+			if left.Equal(right) {
+				out.present = append(out.present, left)
+				break
+			}
+		}
+	}
 	sortGuardEnv(out)
 	return out
 }
 
 func guardEnvEqual(a, b guardEnv) bool {
-	if len(a.constraints) != len(b.constraints) || len(a.typeChecks) != len(b.typeChecks) {
+	if len(a.constraints) != len(b.constraints) || len(a.typeChecks) != len(b.typeChecks) || len(a.present) != len(b.present) {
 		return false
 	}
 	sortGuardEnv(a)
@@ -188,6 +242,11 @@ func guardEnvEqual(a, b guardEnv) bool {
 	}
 	for i := range a.typeChecks {
 		if a.typeChecks[i].name != b.typeChecks[i].name || !a.typeChecks[i].target.Equal(b.typeChecks[i].target) {
+			return false
+		}
+	}
+	for i := range a.present {
+		if !a.present[i].Equal(b.present[i]) {
 			return false
 		}
 	}
@@ -230,6 +289,26 @@ func sortGuardEnv(e guardEnv) {
 		}
 		return left.name < right.name
 	})
+	sort.Slice(e.present, func(i, j int) bool {
+		left := e.present[i]
+		right := e.present[j]
+		if left.Root != right.Root {
+			return left.Root < right.Root
+		}
+		if left.Symbol != right.Symbol {
+			return left.Symbol < right.Symbol
+		}
+		return segment.FormatSegments(left.Segments) < segment.FormatSegments(right.Segments)
+	})
+}
+
+func copyPaths(in []path.Path) []path.Path {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]path.Path, len(in))
+	copy(out, in)
+	return out
 }
 
 func (e guardEnv) provesRuntimeType(result *body.Result, point cfg.Point, expr ast.Expr, want typ.Type) bool {

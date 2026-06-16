@@ -83,6 +83,19 @@ func TestAnnotationAssignabilityBracketStringDoesNotSatisfyRequiredField(t *test
 	}
 }
 
+func TestAnnotationAssignabilityAllowsMissingNilableRecordField(t *testing.T) {
+	diags := runDiagnostics(t, `
+		type Registry = {
+			primary: ((string) -> string)?,
+			backup: ((string) -> string)?,
+		}
+		local registry: Registry = {}
+	`)
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v, want none", diags)
+	}
+}
+
 func TestAnnotationAssignabilityRejectsObjectLiteralExplicitAnyMember(t *testing.T) {
 	diags := runDiagnostics(t, `
 		type Point = {id: string}

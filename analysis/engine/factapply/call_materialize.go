@@ -138,9 +138,12 @@ func applyReturn(
 	in state.State,
 	out state.State,
 	fact factflow.Return,
+	resolver *visibility.Resolver,
+	projectPath PathTypeProjector,
+	typeValues *typevalue.Cache,
 ) state.State {
 	for i, source := range fact.Sources() {
-		value, ok := sources.ValueOfSource(ctx.Point, source, in, readWithSamePointCallSource(ctx.Point, source, read, out))
+		value, ok := returnSourceValue(ctx, facts, sources, read, in, out, source, resolver, projectPath, typeValues)
 		if !ok {
 			continue
 		}
@@ -148,6 +151,28 @@ func applyReturn(
 		out = materializeObjectLiteralHeap(ctx, facts, sources, read, in, out, source)
 	}
 	return out
+}
+
+func returnSourceValue(
+	ctx transfer.NodeContext,
+	facts factflow.Facts,
+	sources sourcevalue.SourceValues,
+	read func(cfg.Point) state.State,
+	in state.State,
+	out state.State,
+	source factflow.ValueSource,
+	resolver *visibility.Resolver,
+	projectPath PathTypeProjector,
+	typeValues *typevalue.Cache,
+) (product.Value, bool) {
+	if source.Kind == factflow.ValueSourceExpression && source.HasExpr {
+		if sourcePath, ok := facts.ExpressionPath(source.ExprRef); ok {
+			if pathValue, ok := resolvePathValueAtCached(typeValues, ctx.Registry, resolver, ctx.Point, out, sourcePath, projectPath); ok {
+				return pathValue.value, true
+			}
+		}
+	}
+	return sources.ValueOfSource(ctx.Point, source, in, readWithSamePointCallSource(ctx.Point, source, read, out))
 }
 
 func emptyStateRead(cfg.Point) state.State {

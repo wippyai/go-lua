@@ -282,15 +282,17 @@ func (p expressionTyper) refineFlowExpressionType(expr ast.Expr, t typ.Type) typ
 	if !p.flow || !p.witnessRefine || p.result == nil || expr == nil || t == nil {
 		return t
 	}
-	value, ok := p.result.ExpressionValueAtBoundary(p.point, expr)
-	if !ok {
-		return t
+	if value, ok := p.result.ExpressionValueAtBoundary(p.point, expr); ok {
+		if refined, ok := readmodel.New(p.result).RefineDeclaredType(t, value); ok {
+			t = refined
+		}
 	}
-	refined, ok := readmodel.New(p.result).RefineDeclaredType(t, value)
-	if !ok {
-		return t
+	if accessPath, ok := p.result.ExpressionPath(expr); ok && p.env.hasPresent(accessPath) {
+		if withoutNil := projectionWithoutNil(t); withoutNil != nil && !typ.IsNever(withoutNil) {
+			return withoutNil
+		}
 	}
-	return refined
+	return t
 }
 
 func (p expressionTyper) unaryType(op string, expr ast.Expr, depth int) (typ.Type, bool) {

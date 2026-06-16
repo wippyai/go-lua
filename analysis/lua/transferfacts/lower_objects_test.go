@@ -6,6 +6,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/assertion"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
+	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/lua/cfgbuild"
@@ -62,6 +63,121 @@ func TestLowerObjectLiteralSidecarUsesAssignmentExprRef(t *testing.T) {
 	wantID := identity.LuaTableLiteral(built.Graph.ID(), uint64(source.ExprRef))
 	if gotID, ok := literal.Identity(); !ok || gotID != wantID {
 		t.Fatalf("literal identity = %v/%v, want %v", gotID, ok, wantID)
+	}
+}
+
+func TestLowerEmptyObjectLiteralStillPublishesIdentitySidecar(t *testing.T) {
+	table := &ast.TableExpr{}
+	local := localAssign([]string{"t"}, table)
+	stmts := []ast.Stmt{local}
+	bindings := bind.BindChunk(stmts, bind.Options{})
+	built := cfgbuild.BuildChunk(stmts, bindings)
+	result, err := semantics.ExtractChunk(stmts, bindings, built)
+	if err != nil {
+		t.Fatalf("ExtractChunk: %v", err)
+	}
+
+	facts := lowerFacts(t, result, built.Graph, standard.Registry())
+	point := requireStmtPoints(t, built, local, 1)[0]
+	localFact, ok := facts.LocalAssignment(point)
+	if !ok {
+		t.Fatalf("missing local assignment fact")
+	}
+	source := localFact.Source()
+	literal, ok := facts.ObjectLiteral(source.ExprRef)
+	if !ok {
+		t.Fatalf("missing empty object literal sidecar for ref %d", source.ExprRef)
+	}
+	if got := len(literal.Entries()); got != 0 {
+		t.Fatalf("empty literal entries = %d, want 0", got)
+	}
+	wantID := identity.LuaTableLiteral(built.Graph.ID(), uint64(source.ExprRef))
+	if gotID, ok := literal.Identity(); !ok || gotID != wantID {
+		t.Fatalf("literal identity = %v/%v, want %v", gotID, ok, wantID)
+	}
+}
+
+func TestLowerAnnotatedEmptyMapObjectLiteralCarriesExpectedContract(t *testing.T) {
+	stmts, _, built, result := parseSemanticChunk(t, `local t: {[string]: string} = {}`)
+	reg := standard.Registry()
+	facts := lowerFacts(t, result, built.Graph, reg)
+	point := requireStmtPoints(t, built, stmts[0], 1)[0]
+	localFact, ok := facts.LocalAssignment(point)
+	if !ok {
+		t.Fatalf("missing local assignment fact")
+	}
+	literal, ok := facts.ObjectLiteral(localFact.Source().ExprRef)
+	if !ok {
+		t.Fatalf("missing empty map object literal sidecar")
+	}
+	expected, ok := literal.Expected()
+	if !ok {
+		t.Fatalf("missing expected contract on empty map literal")
+	}
+	got, ok := typevalue.TypeOf(reg, expected)
+	want := typetable.NewMap(typ.String, typ.String)
+	if !ok || !typ.TypeEquals(got, want) {
+		t.Fatalf("expected type = %v/%v, want %v", got, ok, want)
+	}
+}
+
+func TestLowerReturnedObjectLiteralCarriesExpectedEntryContracts(t *testing.T) {
+	fn, bindings, built, result := parseSemanticFunction(t, `
+function new_actor(): { state: { processed: {[string]: string} } }
+	return { state = { processed = {} } }
+end`)
+	reg := standard.Registry()
+	facts := Lower(result, built.Graph, Config{Registry: reg, Bindings: bindings})
+	ret, ok := fn.Stmts[0].(*ast.ReturnStmt)
+	if !ok {
+		t.Fatalf("stmt = %T, want return", fn.Stmts[0])
+	}
+	var returnFact factflow.Return
+	for _, point := range requireStmtPoints(t, built, ret, 1) {
+		if fact, ok := facts.Return(point); ok {
+			returnFact = fact
+			break
+		}
+	}
+	sources := returnFact.Sources()
+	if len(sources) != 1 || !sources[0].HasExpr {
+		t.Fatalf("return sources = %#v, want one expression source", sources)
+	}
+	literal, ok := facts.ObjectLiteral(sources[0].ExprRef)
+	if !ok {
+		t.Fatalf("missing returned object literal sidecar for ref %d", sources[0].ExprRef)
+	}
+	expected, ok := literal.Expected()
+	if !ok {
+		t.Fatalf("missing expected contract on returned object literal")
+	}
+	got, ok := typevalue.TypeOf(reg, expected)
+	wantRoot := typetable.NewRecord().
+		Field("state", typetable.NewRecord().
+			Field("processed", typetable.NewMap(typ.String, typ.String)).
+			Build()).
+		Build()
+	if !ok || !typ.TypeEquals(got, wantRoot) {
+		t.Fatalf("returned literal expected = %v/%v, want %v", got, ok, wantRoot)
+	}
+	var found bool
+	for _, entry := range literal.Entries() {
+		if !reflect.DeepEqual(entry.Suffix(), fieldChainSuffix("state", "processed")) {
+			continue
+		}
+		found = true
+		entryExpected, ok := entry.Expected()
+		if !ok {
+			t.Fatalf("state.processed entry missing expected contract")
+		}
+		got, ok := typevalue.TypeOf(reg, entryExpected)
+		want := typetable.NewMap(typ.String, typ.String)
+		if !ok || !typ.TypeEquals(got, want) {
+			t.Fatalf("state.processed expected = %v/%v, want %v", got, ok, want)
+		}
+	}
+	if !found {
+		t.Fatalf("returned literal entries = %#v, want state.processed entry", literal.Entries())
 	}
 }
 

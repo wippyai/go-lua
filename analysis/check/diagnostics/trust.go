@@ -6,6 +6,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/diagnostic"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/assertion"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/escape"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/typewitness"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
@@ -43,6 +44,9 @@ func freshValueAdmissible(result *body.Result, value product.Value, want typ.Typ
 		return false
 	}
 	reg := result.Registry()
+	if !presence.Equal(product.PresenceOf(value), presence.Present()) {
+		return false
+	}
 	if gotEscape := product.Get(reg, value, escape.Key); !escape.Equal(gotEscape, escape.Fresh()) {
 		return false
 	}

@@ -56,6 +56,13 @@ func applyCallOutcomeFacts(
 		out = writePathInvalidationMarker(resolver, ctx.Point, out, targetPath)
 		out = applyPathDescendantInvalidation(ctx, resolver, out, factflow.NewPathDescendantInvalidation(targetPath))
 	}
+	for _, fact := range outcome.ParamLengthFloors {
+		targetPath, ok := fact.Path.Substitute(paramBindings)
+		if !ok {
+			continue
+		}
+		out = applyCallParamLengthFloor(resolver, ctx.Point, out, targetPath, fact.Floor)
+	}
 	for _, fact := range normalReturnFacts.PathInvalidations {
 		targetPath, ok := fact.Path.Substitute(bindings)
 		if !ok {
@@ -157,6 +164,23 @@ func applyCallOutcomeFacts(
 		out = applyEscapeEventPlacement(ctx.Registry, resolver, projectPath, ctx.Point, out, targetPath, event)
 	}
 	return out
+}
+
+func applyCallParamLengthFloor(
+	resolver *visibility.Resolver,
+	point cfg.Point,
+	out state.State,
+	targetPath pathdom.Path,
+	floor int64,
+) state.State {
+	if resolver == nil || targetPath.Symbol == 0 || floor <= 0 {
+		return out
+	}
+	pathKey := resolver.KeyAt(point, targetPath)
+	if pathKey == "" {
+		return out
+	}
+	return out.WriteLenFloor(pathKey, floor)
 }
 
 func applyFrozenTableFact(

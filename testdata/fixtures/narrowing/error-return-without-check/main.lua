@@ -1,5 +1,13 @@
-local function getData(): (string?, string?)
-    return "data", nil
+local function getData(ok: boolean): (string?, string?)
+    if ok then
+        return "data", nil
+    end
+    return nil, "failed"
 end
-local data, err = getData()
-local s: string = data -- expect-error
+
+local function use(ok: boolean)
+    local data, err = getData(ok)
+    local s: string = data -- expect-error
+end
+
+return use

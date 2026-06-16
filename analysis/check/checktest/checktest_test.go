@@ -4,13 +4,19 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/check/body"
 	"github.com/wippyai/go-lua/analysis/check/diagnostics"
 	"github.com/wippyai/go-lua/analysis/domain/effect"
 	"github.com/wippyai/go-lua/analysis/domain/effect/mutation"
 	"github.com/wippyai/go-lua/analysis/domain/effect/ownership"
 	"github.com/wippyai/go-lua/analysis/domain/effect/postcondition"
 	"github.com/wippyai/go-lua/analysis/domain/effect/returns"
+	"github.com/wippyai/go-lua/analysis/domain/placement"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
+	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/module/manifest"
 	"github.com/wippyai/go-lua/analysis/module/signature"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
@@ -1901,6 +1907,316 @@ func TestCheckAndExportReexportsImportedOwnershipEffectsAcrossModules(t *testing
 	assertExportedTableMutator(t, consumerMod.Manifest, "consumer.mutate", 0)
 	assertExportedStoreExact(t, consumerMod.Manifest, "consumer.store", 0, 1)
 	assertNoExportedTableMutator(t, consumerMod.Manifest, "consumer.store")
+}
+
+func TestCheckProcessSendPromotesDeepCallbackBuiltMapEntryPlacement(t *testing.T) {
+	result := Check(`
+type Meta = {
+    route: string,
+    shard: string,
+}
+type Child = {
+    id: string,
+    meta: Meta,
+}
+type Item = {
+    id: string,
+    tags: {[string]: string},
+    child: Child,
+}
+type Batch = {
+    items: {[string]: Item},
+    count: number,
+}
+
+local function build(ids: {string}, fill: (Item, string, number) -> ()): Batch
+    local batch: Batch = {items = {}, count = 0}
+    for _, id in ipairs(ids) do
+        batch.count = batch.count + 1
+        local item: Item = {
+            id = id,
+            tags = {},
+            child = {
+                id = id,
+                meta = {route = "", shard = ""},
+            },
+        }
+        item.tags["phase"] = "constructing"
+        fill(item, id, batch.count)
+        item.tags["phase"] = "ready"
+        batch.items[id] = item
+    end
+    return batch
+end
+
+local batch = build({"route-1", "route-2"}, function(item: Item, id: string, index: number)
+    item.child.meta.route = id
+    if index == 1 then
+        item.child.meta.shard = "primary"
+    else
+        item.child.meta.shard = "backup"
+    end
+    item.tags["callback"] = "filled"
+end)
+
+if batch.items["route-1"] then
+    process.send("worker-1", "route.ready", batch.items["route-1"])
+end
+`, WithStdlib(), WithManifest("process", ProcessManifest()), WithGlobals("process"))
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want none", result.Diagnostics)
+	}
+	if result.checked == nil || result.checked.RootResult() == nil {
+		t.Fatal("missing checked root result")
+	}
+	root := result.checked.RootResult()
+	exit, ok := root.ExitState()
+	if !ok {
+		t.Fatal("missing exit state")
+	}
+
+	shared, stack := placementCounts(exit)
+	debug := callOutcomeDebug(root)
+	if shared == 0 {
+		t.Fatalf("shared placements = 0, want sent payload placement: %s\ncalls: %s\nreturns: %s", placementSummary(root.Registry(), exit), debug, functionReturnDebug(root))
+	}
+	if stack == 0 {
+		t.Fatalf("stack placements = 0, want non-sent construction scaffolding to remain local: %s\ncalls: %s", placementSummary(root.Registry(), exit), debug)
+	}
+	if depth := maxSharedPlacementDepth(root.Registry(), exit); depth < 3 {
+		t.Fatalf("max shared placement depth = %d, want at least item -> child -> meta: %s\ncalls: %s", depth, placementSummary(root.Registry(), exit), debug)
+	}
+}
+
+func callOutcomeDebug(root *body.Result) string {
+	if root == nil || root.Graph() == nil {
+		return "<no graph>"
+	}
+	out := ""
+	for _, point := range root.Graph().RPO() {
+		site, ok := root.CallSite(point)
+		if !ok {
+			continue
+		}
+		signatureText := "no-signature"
+		if sig, ok := root.CallSignature(site); ok {
+			signatureText = fmt.Sprintf("effect=%v returns=%d", sig.Effect, len(sig.Type.Returns))
+		}
+		outcomeText := "no-outcome"
+		if outcome, ok := root.CallOutcomeAt(point); ok {
+			resultIDs := ""
+			for i, result := range outcome.Results {
+				if id, ok := valueIdentity(root.Registry(), result.Value); ok {
+					if resultIDs != "" {
+						resultIDs += ","
+					}
+					resultIDs += fmt.Sprintf("%d:%s", i, id)
+				}
+			}
+			if resultIDs == "" {
+				resultIDs = "none"
+			}
+			outcomeText = fmt.Sprintf("escapes=%d heap=%d results=[%s]", len(outcome.NormalReturnFacts.EscapeEvents), len(outcome.HeapTableObjects), resultIDs)
+		}
+		paths := ""
+		if fact, ok := root.Call(point); ok {
+			for _, arg := range fact.Args {
+				argPath, ok := root.ExpressionPath(arg)
+				if !ok || argPath.IsEmpty() {
+					continue
+				}
+				if paths != "" {
+					paths += ","
+				}
+				identityText := "no-id"
+				if value, ok := root.PathValueAtBoundary(point, argPath); ok {
+					if id, ok := valueIdentity(root.Registry(), value); ok {
+						identityText = id.String()
+					}
+				}
+				paths += fmt.Sprintf("%s:%s", argPath.String(), identityText)
+				for parent := argPath.Parent(); !parent.IsEmpty(); parent = parent.Parent() {
+					parentIdentity := "no-id"
+					if value, ok := root.PathValueAtBoundary(point, parent); ok {
+						if id, ok := valueIdentity(root.Registry(), value); ok {
+							parentIdentity = id.String()
+						}
+					}
+					paths += fmt.Sprintf("<%s:%s>", parent.String(), parentIdentity)
+					if len(parent.Segments) == 0 {
+						break
+					}
+				}
+			}
+		}
+		if paths == "" {
+			paths = "no-arg-paths"
+		}
+		if out != "" {
+			out += "; "
+		}
+		out += fmt.Sprintf("p%d %s %s args=[%s]", point, signatureText, outcomeText, paths)
+	}
+	if out == "" {
+		return "<no calls>"
+	}
+	return out
+}
+
+func functionReturnDebug(root *body.Result) string {
+	if root == nil {
+		return "<no root>"
+	}
+	out := ""
+	for _, fn := range append([]*body.Result{root}, root.FunctionResults()...) {
+		if fn == nil || fn.Graph() == nil {
+			continue
+		}
+		exit, ok := fn.ExitState()
+		if !ok {
+			continue
+		}
+		ret := exit.ReadReturnSlot(fn.Registry(), 0)
+		retID := "no-id"
+		if id, ok := valueIdentity(fn.Registry(), ret); ok {
+			retID = id.String()
+		}
+		if out != "" {
+			out += "; "
+		}
+		out += fmt.Sprintf("g%d ret0=%s", fn.Graph().ID(), retID)
+	}
+	if out == "" {
+		return "<no functions>"
+	}
+	return out
+}
+
+func placementCounts(st state.State) (shared, stack int) {
+	heap := st.HeapTableObjectsSnapshot()
+	for id := range heap.Objects {
+		switch st.ReadPlacement(id) {
+		case placement.SharedHeap:
+			shared++
+		case placement.Stack:
+			stack++
+		}
+	}
+	return shared, stack
+}
+
+func maxSharedPlacementDepth(reg *axis.Registry, st state.State) int {
+	heap := st.HeapTableObjectsSnapshot()
+	var walk func(identity.ID, map[identity.ID]struct{}) int
+	walk = func(id identity.ID, seen map[identity.ID]struct{}) int {
+		if id == (identity.ID{}) || st.ReadPlacement(id) != placement.SharedHeap {
+			return 0
+		}
+		if _, ok := seen[id]; ok {
+			return 0
+		}
+		object, ok := heap.Objects[id]
+		if !ok {
+			return 1
+		}
+		nextSeen := make(map[identity.ID]struct{}, len(seen)+1)
+		for seenID := range seen {
+			nextSeen[seenID] = struct{}{}
+		}
+		nextSeen[id] = struct{}{}
+		depth := 1
+		for _, value := range object.StaticMembers() {
+			if child, ok := valueIdentity(reg, value); ok {
+				if childDepth := 1 + walk(child, nextSeen); childDepth > depth {
+					depth = childDepth
+				}
+			}
+		}
+		for _, fact := range object.DynamicIndexFacts() {
+			if child, ok := valueIdentity(reg, fact.Value); ok {
+				if childDepth := 1 + walk(child, nextSeen); childDepth > depth {
+					depth = childDepth
+				}
+			}
+		}
+		return depth
+	}
+	depth := 0
+	for id := range heap.Objects {
+		if candidate := walk(id, nil); candidate > depth {
+			depth = candidate
+		}
+	}
+	return depth
+}
+
+func valueIdentity(reg *axis.Registry, value product.Value) (identity.ID, bool) {
+	id, ok := product.Get(reg, value, identity.Key).ID()
+	if !ok || id == (identity.ID{}) {
+		return identity.ID{}, false
+	}
+	return id, true
+}
+
+func placementSummary(reg *axis.Registry, st state.State) string {
+	heap := st.HeapTableObjectsSnapshot()
+	out := ""
+	for id, object := range heap.Objects {
+		if out != "" {
+			out += ", "
+		}
+		out += fmt.Sprintf("%s=%s", id, st.ReadPlacement(id))
+		members := ""
+		for member, value := range object.StaticMembers() {
+			if members != "" {
+				members += ","
+			}
+			members += fmt.Sprintf("%s:", member)
+			if child, ok := valueIdentity(reg, value); ok {
+				members += child.String()
+			} else {
+				members += "no-id"
+			}
+		}
+		for key, fact := range object.DynamicIndexFacts() {
+			if members != "" {
+				members += ","
+			}
+			members += fmt.Sprintf("dyn(%s/%s):", key.Table, key.Site)
+			if child, ok := valueIdentity(reg, fact.Value); ok {
+				members += child.String()
+			} else {
+				members += "no-id"
+			}
+		}
+		if members != "" {
+			out += "[" + members + "]"
+		}
+	}
+	if dynamic := dynamicSummary(reg, st); dynamic != "" {
+		out += " dynamic={" + dynamic + "}"
+	}
+	if out == "" {
+		return "<empty>"
+	}
+	return out
+}
+
+func dynamicSummary(reg *axis.Registry, st state.State) string {
+	snapshot := st.DynamicIndexFactsSnapshot()
+	out := ""
+	for key, fact := range snapshot.Facts {
+		if out != "" {
+			out += ", "
+		}
+		out += fmt.Sprintf("%s/%s:value-id=", key.Table, key.Site)
+		if id, ok := valueIdentity(reg, fact.Value); ok {
+			out += id.String()
+		} else {
+			out += "none"
+		}
+	}
+	return out
 }
 
 func providerManifest(path string) *manifest.Manifest {

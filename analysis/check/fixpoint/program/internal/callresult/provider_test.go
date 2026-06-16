@@ -61,6 +61,21 @@ func TestOutcomeProviderReadsSummaryReturnsByCalleeIdentity(t *testing.T) {
 	assertCallOutcomeResults(t, reg, got.Results, []product.Value{first, second})
 }
 
+func TestJoinInstantiatedReturnValuePreservesComputedIdentity(t *testing.T) {
+	reg := standard.Registry()
+	retID := identity.ID{Kind: "test.return", Site: "provider", Index: 1}
+	value := product.Set(reg, product.Top(), runtimekind.Key, runtimekind.Singleton(runtimekind.Table))
+	value = product.Set(reg, value, identity.Key, identity.Singleton(retID))
+	declared := typevalue.WithWitness(reg, typevalue.FromType(reg, typ.Number), typ.Number)
+
+	got := joinInstantiatedReturnValue(reg, value, declared, typ.Number)
+
+	id, ok := product.Get(reg, got, identity.Key).ID()
+	if !ok || id != retID {
+		t.Fatalf("return identity = %v/%v, want %s", id, ok, retID)
+	}
+}
+
 func TestOutcomeProviderRehydratesDeclaredReturnWhenSummarySlotIsTopLike(t *testing.T) {
 	reg := standard.Registry()
 	callee := symbol.ID(19)
@@ -1191,6 +1206,7 @@ func TestProductionImportsAreBounded(t *testing.T) {
 		"github.com/wippyai/go-lua/analysis/domain/value/axis":               true,
 		"github.com/wippyai/go-lua/analysis/domain/value/axis/evidence":      true,
 		"github.com/wippyai/go-lua/analysis/domain/value/axis/identity":      true,
+		"github.com/wippyai/go-lua/analysis/domain/value/axis/presence":      true,
 		"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind":   true,
 		"github.com/wippyai/go-lua/analysis/domain/value/axis/typewitness":   true,
 		"github.com/wippyai/go-lua/analysis/domain/value/axis/variantorigin": true,

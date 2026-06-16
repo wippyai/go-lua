@@ -8,17 +8,18 @@ import (
 	summaryprojection "github.com/wippyai/go-lua/analysis/check/fixpoint/program/internal/projectsummary"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/summary"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/typewitness"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/variantorigin"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
-	"github.com/wippyai/go-lua/analysis/test/value/standard"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/module/signaturelookup"
+	"github.com/wippyai/go-lua/analysis/test/value/standard"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/typeexpr"
 	"github.com/wippyai/go-lua/compiler/ast"
@@ -133,6 +134,36 @@ end`)
 	want := runtimekind.Join(runtimekind.Singleton(runtimekind.Number), runtimekind.Singleton(runtimekind.String))
 	if kind := product.Get(reg, got.Returns[0], runtimekind.Key); !runtimekind.Equal(kind, want) {
 		t.Fatalf("return runtime kind = %s, want %s", kind, want)
+	}
+}
+
+func TestFromResultDeclaredReturnDoesNotEraseComputedIdentity(t *testing.T) {
+	reg := standard.Registry()
+	retID := identity.ID{Kind: "test.return", Site: "declared", Index: 1}
+	numberValue := product.Set(reg, product.Top(), runtimekind.Key, runtimekind.Singleton(runtimekind.Number))
+	numberValue = product.Set(reg, numberValue, identity.Key, identity.Singleton(retID))
+	fn := projectParseFunction(t, `
+function f(): number
+	return 1
+end`)
+
+	result := projectCheckFunction(t, fn, body.Config{
+		Registry: reg,
+		ExpressionValue: func(_ cfg.Point, _ factflow.ExprRef, source factflow.ValueSource, _ state.State) (product.Value, bool) {
+			if source.TargetIndex != 0 {
+				return product.Value{}, false
+			}
+			return numberValue, true
+		},
+	})
+	got := summaryprojection.FromResult(result)
+
+	if len(got.Returns) != 1 {
+		t.Fatalf("FromResult returned %d slots, want 1", len(got.Returns))
+	}
+	id, ok := product.Get(reg, got.Returns[0], identity.Key).ID()
+	if !ok || id != retID {
+		t.Fatalf("return identity = %v/%v, want %s", id, ok, retID)
 	}
 }
 

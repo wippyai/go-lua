@@ -13,11 +13,14 @@ import (
 	"github.com/wippyai/go-lua/analysis/check/exportmanifest"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/program"
 	"github.com/wippyai/go-lua/analysis/diagnostic"
-	"github.com/wippyai/go-lua/analysis/test/value/standard"
+	"github.com/wippyai/go-lua/analysis/domain/effect"
+	"github.com/wippyai/go-lua/analysis/domain/effect/ownership"
 	"github.com/wippyai/go-lua/analysis/module/importlookup"
 	"github.com/wippyai/go-lua/analysis/module/manifest"
+	"github.com/wippyai/go-lua/analysis/module/signature"
 	"github.com/wippyai/go-lua/analysis/module/signaturelookup"
 	"github.com/wippyai/go-lua/analysis/module/typelookup"
+	"github.com/wippyai/go-lua/analysis/test/value/standard"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/compiler/parse"
 )
@@ -101,6 +104,23 @@ func ChannelManifest() *manifest.Manifest {
 
 func FuncsManifest() *manifest.Manifest {
 	m := manifest.New("funcs")
+	m.SetExport(typ.Unknown)
+	return m
+}
+
+func ProcessManifest() *manifest.Manifest {
+	m := manifest.New("process")
+	m.DefineFunctionSignature("process.send", signature.Function{
+		Type: typ.Func().
+			Param("pid", typ.String).
+			Param("topic", typ.String).
+			Param("payload", typ.Any).
+			Returns(typ.Boolean).
+			Build(),
+		Effect: effect.Empty.With(ownership.SendParam{
+			Param: effect.ParamRef{Index: 2},
+		}),
+	})
 	m.SetExport(typ.Unknown)
 	return m
 }
