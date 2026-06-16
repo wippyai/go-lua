@@ -5,6 +5,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/check/body/internal/readexpr"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/engine/calloutcome"
 	"github.com/wippyai/go-lua/analysis/engine/effectlowering"
 	factapply "github.com/wippyai/go-lua/analysis/engine/factapply"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
@@ -221,20 +222,20 @@ func (s *Static) callOutcomeProvider(config SolveConfig) factapply.CallOutcomePr
 	}
 	callOutcome := config.CallOutcome
 	if config.CallOutcomeFactory != nil {
-		callOutcome = factapply.WithSupplementalCallOutcome(
+		callOutcome = calloutcome.WithSupplemental(
 			config.CallOutcomeFactory(CallOutcomeContext{Facts: s.facts, Sources: s.sources, CalleeValue: s.calleeValue}),
 			callOutcome,
 		)
 	}
 	if hasModuleExports(s.moduleLoads) {
-		callOutcome = factapply.WithSupplementalCallOutcome(callOutcome, effectlowering.ModuleLoadOutcomeProvider(effectlowering.ModuleLoadOutcomeProviderConfig{
+		callOutcome = calloutcome.WithSupplemental(callOutcome, effectlowering.ModuleLoadOutcomeProvider(effectlowering.ModuleLoadOutcomeProviderConfig{
 			Exports: s.moduleLoads,
 			NameFor: s.signatureID.nameForCall,
 			Facts:   s.facts,
 			Sources: s.sources,
 		}))
 	}
-	callOutcome = factapply.WithSupplementalCallOutcome(callOutcome, effectlowering.CallableValueOutcomeProvider(effectlowering.CallableValueOutcomeProviderConfig{
+	callOutcome = calloutcome.WithSupplemental(callOutcome, effectlowering.CallableValueOutcomeProvider(effectlowering.CallableValueOutcomeProviderConfig{
 		CalleeValue: effectlowering.CalleeValueFunc(s.calleeValue),
 		Callable:    typecall.Callable,
 	}))
@@ -243,7 +244,7 @@ func (s *Static) callOutcomeProvider(config SolveConfig) factapply.CallOutcomePr
 		// covers, so it leads the merge: its concrete return slots and
 		// postconditions take precedence over the generic callable-value and
 		// base-outcome fallbacks, which then supplement uncovered slots.
-		callOutcome = factapply.WithSupplementalCallOutcome(effectlowering.SignatureOutcomeProvider(effectlowering.SignatureOutcomeProviderConfig{
+		callOutcome = calloutcome.WithSupplemental(effectlowering.SignatureOutcomeProvider(effectlowering.SignatureOutcomeProviderConfig{
 			Signatures:    s.signatures,
 			NameFor:       s.signatureID.nameForCall,
 			ReturnTypeOps: signatureReturnTypeOps(),

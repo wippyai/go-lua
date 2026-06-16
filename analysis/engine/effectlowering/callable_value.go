@@ -3,6 +3,7 @@ package effectlowering
 import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/typewitness"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/engine/calloutcome"
 	factapply "github.com/wippyai/go-lua/analysis/engine/factapply"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/state"
@@ -55,7 +56,7 @@ func CallableValueOutcomeProvider(config CallableValueOutcomeProviderConfig) fac
 			})
 		}
 		out := factapply.CallOutcome{Results: results}
-		out.PostReturnAuthority = factapply.OutcomeHasPostReturnEvidence(ctx.Registry, out)
+		out.PostReturnAuthority = calloutcome.HasPostReturnEvidence(ctx.Registry, out)
 		return out
 	}
 }

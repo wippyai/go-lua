@@ -258,9 +258,10 @@ func TestCheckSplitDirectImportBoundaries(t *testing.T) {
 			},
 		},
 		{
-			name: "factapply does not directly import type access semantics",
+			name: "factapply does not directly import call outcome policy or type access semantics",
 			pkg:  modulePath + "/analysis/engine/factapply",
 			banned: []string{
+				modulePath + "/analysis/engine/calloutcome",
 				modulePath + "/analysis/type/access",
 			},
 		},

@@ -4,6 +4,7 @@ package effectlowering
 
 import (
 	"github.com/wippyai/go-lua/analysis/domain/effect/signature"
+	"github.com/wippyai/go-lua/analysis/engine/calloutcome"
 	"github.com/wippyai/go-lua/analysis/engine/callproducer"
 	factapply "github.com/wippyai/go-lua/analysis/engine/factapply"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
@@ -68,7 +69,7 @@ func SignatureOutcomeProvider(config SignatureOutcomeProviderConfig) factapply.C
 		}
 		out.NormalReturnFacts.EscapeEvents = signatureEscapeEvents(sig, site)
 		if sig.Type == nil || len(sig.Type.Returns) == 0 {
-			out.PostReturnAuthority = factapply.OutcomeHasPostReturnEvidence(ctx.Registry, out)
+			out.PostReturnAuthority = calloutcome.HasPostReturnEvidence(ctx.Registry, out)
 			return out
 		}
 		results := make([]factapply.CallResult, 0, len(sig.Type.Returns))
@@ -86,7 +87,7 @@ func SignatureOutcomeProvider(config SignatureOutcomeProviderConfig) factapply.C
 			})
 		}
 		out.Results = results
-		out.PostReturnAuthority = factapply.OutcomeHasPostReturnEvidence(ctx.Registry, out)
+		out.PostReturnAuthority = calloutcome.HasPostReturnEvidence(ctx.Registry, out)
 		return out
 	}
 }

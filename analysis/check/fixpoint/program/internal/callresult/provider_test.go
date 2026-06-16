@@ -919,6 +919,7 @@ func TestProductionImportsAreBounded(t *testing.T) {
 		"github.com/wippyai/go-lua/analysis/domain/value/typevalue":          true,
 		"github.com/wippyai/go-lua/analysis/domain/value/variant":            true,
 		"github.com/wippyai/go-lua/analysis/engine/callboundary":             true,
+		"github.com/wippyai/go-lua/analysis/engine/calloutcome":              true,
 		"github.com/wippyai/go-lua/analysis/engine/factapply":                true,
 		"github.com/wippyai/go-lua/analysis/engine/factflow":                 true,
 		"github.com/wippyai/go-lua/analysis/engine/sourcevalue":              true,
