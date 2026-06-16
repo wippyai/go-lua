@@ -71,7 +71,7 @@ func materializeCallOutcome(
 ) state.State {
 	siteView, ok := facts.CallSiteView(ctx.Point)
 	if !ok {
-		return applyChannelSelectResult(ctx, resolver, out, facts.ChannelSelects(ctx.Point))
+		return applyChannelSelectResult(ctx, resolver, projectPath, out, facts.ChannelSelects(ctx.Point))
 	}
 	hasProducer := callproducer.Has(facts, ctx.Point)
 	if hasProducer {
@@ -90,7 +90,7 @@ func materializeCallOutcome(
 		}
 		out = applyCallOutcomeFacts(ctx, facts, resolver, projectPath, out, site, outcome)
 	}
-	out = applyChannelSelectResult(ctx, resolver, out, facts.ChannelSelects(ctx.Point))
+	out = applyChannelSelectResult(ctx, resolver, projectPath, out, facts.ChannelSelects(ctx.Point))
 	if hasProducer {
 		for _, result := range facts.CallResultValues(ctx.Point) {
 			out = constrainReturnSlot(ctx, out, result)

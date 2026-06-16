@@ -16,6 +16,7 @@ import (
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
+	"github.com/wippyai/go-lua/analysis/lua/typeprojection"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
@@ -119,6 +120,10 @@ func assertVariantOriginType(t *testing.T, reg *axis.Registry, gotState state.St
 	if !typ.TypeEquals(got, want) {
 		t.Fatalf("origin narrowed type = %s, want %s", got, want)
 	}
+}
+
+func testLuaPathTypeProjector(root typ.Type, p path.Path) (typ.Type, bool) {
+	return typeprojection.ApplySegments(root, p.Segments)
 }
 
 func presentValue(reg *axis.Registry) product.Value {

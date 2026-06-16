@@ -2,7 +2,6 @@ package factapply
 
 import (
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
-	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
@@ -16,7 +15,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/engine/visibility"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
-	"github.com/wippyai/go-lua/analysis/type/access"
 	"github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
@@ -37,7 +35,7 @@ func applyBranchPathRelation(
 	case factflow.BranchPathRelationEqual:
 		return applyBranchPathEquality(ctx, resolver, projectPath, out, relation.LeftPath(), relation.RightPath())
 	case factflow.BranchPathRelationNotEqual:
-		return applyBranchPathInequality(ctx, resolver, out, relation.LeftPath(), relation.RightPath())
+		return applyBranchPathInequality(ctx, resolver, projectPath, out, relation.LeftPath(), relation.RightPath())
 	default:
 		return out
 	}
@@ -51,7 +49,7 @@ func applyBranchPathEquality(
 	leftPath pathdom.Path,
 	rightPath pathdom.Path,
 ) state.State {
-	if selected, ok := applyChannelSelectCaseEquality(ctx.Registry, resolver, ctx.Edge.From, out, leftPath, rightPath); ok {
+	if selected, ok := applyChannelSelectCaseEquality(ctx.Registry, resolver, projectPath, ctx.Edge.From, out, leftPath, rightPath); ok {
 		return selected
 	}
 	return applyPathEqualityAt(ctx.Registry, resolver, projectPath, ctx.Edge.From, out, leftPath, rightPath)
@@ -77,23 +75,24 @@ func applyPathEqualityAt(
 	meet := product.Meet(reg, left.value, right.value)
 	out = left.write(out, meet)
 	out = right.write(out, meet)
-	out = applyPathOriginRelation(reg, resolver, point, out, leftPath, rightPath, true)
-	out = applyPathOriginRelation(reg, resolver, point, out, rightPath, leftPath, true)
+	out = applyPathOriginRelation(reg, resolver, projectPath, point, out, leftPath, rightPath, true)
+	out = applyPathOriginRelation(reg, resolver, projectPath, point, out, rightPath, leftPath, true)
 	return out
 }
 
 func applyBranchPathInequality(
 	ctx transfer.EdgeContext,
 	resolver *visibility.Resolver,
+	projectPath PathTypeProjector,
 	out state.State,
 	leftPath pathdom.Path,
 	rightPath pathdom.Path,
 ) state.State {
-	if selected, ok := applyChannelSelectCaseInequality(ctx.Registry, resolver, ctx.Edge.From, out, leftPath, rightPath); ok {
+	if selected, ok := applyChannelSelectCaseInequality(ctx.Registry, resolver, projectPath, ctx.Edge.From, out, leftPath, rightPath); ok {
 		return selected
 	}
-	out = applyPathOriginRelation(ctx.Registry, resolver, ctx.Edge.From, out, leftPath, rightPath, false)
-	out = applyPathOriginRelation(ctx.Registry, resolver, ctx.Edge.From, out, rightPath, leftPath, false)
+	out = applyPathOriginRelation(ctx.Registry, resolver, projectPath, ctx.Edge.From, out, leftPath, rightPath, false)
+	out = applyPathOriginRelation(ctx.Registry, resolver, projectPath, ctx.Edge.From, out, rightPath, leftPath, false)
 	return out
 }
 
@@ -155,7 +154,7 @@ func projectPathStructuralValue(reg *axis.Registry, out state.State, targetPath 
 		return product.Value{}, false
 	}
 	if projectPath == nil {
-		projectPath = defaultPathTypeProjector
+		return product.Value{}, false
 	}
 	root := out.ReadValue(reg, key.SymbolValue(targetPath.Symbol))
 	if product.Equal(reg, root, product.Bottom(reg)) {
@@ -170,25 +169,6 @@ func projectPathStructuralValue(reg *axis.Registry, out state.State, targetPath 
 		return product.Value{}, false
 	}
 	return typevalue.WithWitness(reg, typevalue.FromType(reg, projected), projected), true
-}
-
-func defaultPathTypeProjector(root typ.Type, p pathdom.Path) (typ.Type, bool) {
-	current := root
-	for _, seg := range p.Segments {
-		var ok bool
-		switch seg.Kind {
-		case segment.SegmentField, segment.SegmentIndexString:
-			current, ok = access.Field(current, seg.Name)
-		case segment.SegmentIndexInt:
-			current, ok = access.RuntimeIndex(current, typ.LiteralInt(int64(seg.Index)))
-		default:
-			return nil, false
-		}
-		if !ok {
-			return nil, false
-		}
-	}
-	return current, current != nil
 }
 
 func structuralTypeFromPathValue(reg *axis.Registry, value product.Value) (typ.Type, bool) {
@@ -250,6 +230,7 @@ func projectPathOriginValue(reg *axis.Registry, out state.State, targetPath path
 func applyPathOriginRelation(
 	reg *axis.Registry,
 	resolver *visibility.Resolver,
+	projectPath PathTypeProjector,
 	point cfg.Point,
 	out state.State,
 	parentPath pathdom.Path,
@@ -259,7 +240,7 @@ func applyPathOriginRelation(
 	if parentPath.Symbol == 0 || len(parentPath.Segments) == 0 {
 		return out
 	}
-	constraint, ok := resolvePathValueAt(reg, resolver, point, out, constraintPath)
+	constraint, ok := resolvePathValueAt(reg, resolver, point, out, constraintPath, projectPath)
 	if !ok {
 		return out
 	}

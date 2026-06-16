@@ -114,6 +114,7 @@ func applyCallOutcomeEdgeFacts(
 	facts factflow.Facts,
 	outcomeProvider CallOutcomeProvider,
 	resolver *visibility.Resolver,
+	projectPath PathTypeProjector,
 	branchRefinements []factflow.BranchRefinement,
 	out state.State,
 ) state.State {
@@ -136,10 +137,10 @@ func applyCallOutcomeEdgeFacts(
 			Read:     emptyStateRead,
 		}, site, out, emptyStateRead)
 		if len(outcome.ReturnConditionRefinements) != 0 {
-			out = applyCallReturnConditionRefinements(ctx, facts, resolver, callPoint, site, outcome, out)
+			out = applyCallReturnConditionRefinements(ctx, facts, resolver, projectPath, callPoint, site, outcome, out)
 		}
 		if len(outcome.ReturnPresenceRelations) != 0 {
-			out = applyCallReturnPresenceRelations(ctx, facts, cache, resolver, branchRefinements, callPoint, targets, outcome, out)
+			out = applyCallReturnPresenceRelations(ctx, facts, cache, resolver, projectPath, branchRefinements, callPoint, targets, outcome, out)
 		}
 	}
 	return out
@@ -149,6 +150,7 @@ func applyCallReturnConditionRefinements(
 	ctx transfer.EdgeContext,
 	facts factflow.Facts,
 	resolver *visibility.Resolver,
+	projectPath PathTypeProjector,
 	callPoint cfg.Point,
 	site factflow.CallSite,
 	outcome CallOutcome,
@@ -173,6 +175,7 @@ func applyCallReturnConditionRefinements(
 		out = applyValueRefinementAt(
 			ctx.Registry,
 			resolver,
+			projectPath,
 			ctx.Edge.From,
 			out,
 			targetPath,
@@ -187,6 +190,7 @@ func applyCallReturnPresenceRelations(
 	facts factflow.Facts,
 	cache *callOutcomeTraversalCache,
 	resolver *visibility.Resolver,
+	projectPath PathTypeProjector,
 	branchRefinements []factflow.BranchRefinement,
 	callPoint cfg.Point,
 	targets []factflow.CallResultTargetView,
@@ -197,7 +201,7 @@ func applyCallReturnPresenceRelations(
 		return out
 	}
 	for _, relation := range outcome.ReturnPresenceRelations {
-		out = applyCallReturnPresenceRelation(ctx, facts, cache, resolver, branchRefinements, callPoint, targets, relation, out)
+		out = applyCallReturnPresenceRelation(ctx, facts, cache, resolver, projectPath, branchRefinements, callPoint, targets, relation, out)
 	}
 	return out
 }
@@ -207,6 +211,7 @@ func applyCallReturnPresenceRelation(
 	facts factflow.Facts,
 	cache *callOutcomeTraversalCache,
 	resolver *visibility.Resolver,
+	projectPath PathTypeProjector,
 	branchRefinements []factflow.BranchRefinement,
 	callPoint cfg.Point,
 	targets []factflow.CallResultTargetView,
@@ -247,11 +252,11 @@ func applyCallReturnPresenceRelation(
 		target.TargetPath(),
 		relation.TargetPresence,
 	)
-	refinement, ok := branchPresenceRelationRefinement(ctx, resolver, out, branchRefinements, branchRelation)
+	refinement, ok := branchPresenceRelationRefinement(ctx, resolver, projectPath, out, branchRefinements, branchRelation)
 	if !ok {
 		return out
 	}
-	return applyBranchRefinement(ctx, resolver, out, branchRelation.TargetPath(), refinement)
+	return applyBranchRefinement(ctx, resolver, projectPath, out, branchRelation.TargetPath(), refinement)
 }
 
 func callOutcomeConditionBranchPoint(graph cfg.Graph, point cfg.Point) (cfg.Point, bool) {

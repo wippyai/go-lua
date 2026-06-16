@@ -298,8 +298,9 @@ func TestFactsEdgeTransferDescendantTruthyNarrowsRootOriginFromFlowType(t *testi
 				Registry:   reg,
 				EntryState: initial,
 				EdgeTransfer: NewFactsEdgeTransfer(FactsEdgeTransferConfig{
-					Facts:      facts,
-					Visibility: resolver,
+					Facts:       facts,
+					Visibility:  resolver,
+					ProjectPath: testLuaPathTypeProjector,
 				}),
 			})
 
@@ -535,7 +536,7 @@ func TestFactsEdgeTransferPresentAliasLiteralRefinesOptionalUnionDescendant(t *t
 	if gotPresence := product.PresenceOf(root); !presence.Equal(gotPresence, presence.Present()) {
 		t.Fatalf("first presence = %s in %s, want present", gotPresence, formatValue(reg, root))
 	}
-	resolved, ok := resolvePathValueAt(reg, resolver, thenPoint, got[thenPoint], valuePath)
+	resolved, ok := resolvePathValueAt(reg, resolver, thenPoint, got[thenPoint], valuePath, testLuaPathTypeProjector)
 	if !ok {
 		t.Fatal("first.value did not resolve")
 	}

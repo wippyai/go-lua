@@ -50,7 +50,7 @@ func NewFactsNodeTransfer(config FactsNodeTransferConfig) transfer.NodeTransfer 
 			out = applyPathDescendantInvalidation(ctx, config.Visibility, out, fact)
 		}
 		for _, fact := range facts.PostconditionRefinements(ctx.Point) {
-			out = applyValueRefinementAt(ctx.Registry, config.Visibility, ctx.Point, out, fact.TargetPath(), fact.Value())
+			out = applyValueRefinementAt(ctx.Registry, config.Visibility, config.ProjectPath, ctx.Point, out, fact.TargetPath(), fact.Value())
 		}
 		for _, fact := range facts.PostconditionPathRelations(ctx.Point) {
 			out = applyPostconditionPathRelation(ctx, config.Visibility, config.ProjectPath, out, fact)
@@ -105,7 +105,7 @@ func NewFactsEdgeTransfer(config FactsEdgeTransferConfig) transfer.EdgeTransfer 
 			if !ok {
 				continue
 			}
-			out = applyBranchRefinement(ctx, config.Visibility, out, fact.TargetPath(), refinement)
+			out = applyBranchRefinement(ctx, config.Visibility, config.ProjectPath, out, fact.TargetPath(), refinement)
 		}
 		if ctx.Edge.Cond {
 			for _, fact := range config.Facts.BranchLenRefinements(ctx.Edge.From) {
@@ -113,11 +113,11 @@ func NewFactsEdgeTransfer(config FactsEdgeTransferConfig) transfer.EdgeTransfer 
 			}
 		}
 		for _, relation := range config.Facts.BranchPresenceRelations(ctx.Edge.From) {
-			refinement, ok := branchPresenceRelationRefinement(ctx, config.Visibility, out, branchRefinements, relation)
+			refinement, ok := branchPresenceRelationRefinement(ctx, config.Visibility, config.ProjectPath, out, branchRefinements, relation)
 			if !ok {
 				continue
 			}
-			out = applyBranchRefinement(ctx, config.Visibility, out, relation.TargetPath(), refinement)
+			out = applyBranchRefinement(ctx, config.Visibility, config.ProjectPath, out, relation.TargetPath(), refinement)
 		}
 		for _, relation := range config.Facts.BranchPathRelations(ctx.Edge.From) {
 			if !relation.ActiveOnEdge(ctx.Edge.Cond) {
@@ -140,7 +140,7 @@ func NewFactsEdgeTransfer(config FactsEdgeTransferConfig) transfer.EdgeTransfer 
 			}
 			out = applyBranchPathEvidence(ctx, config.Visibility, out, proof)
 		}
-		out = applyCallOutcomeEdgeFacts(ctx, config.Facts, config.CallOutcome, config.Visibility, branchRefinements, out)
+		out = applyCallOutcomeEdgeFacts(ctx, config.Facts, config.CallOutcome, config.Visibility, config.ProjectPath, branchRefinements, out)
 		return out
 	}
 }

@@ -31,14 +31,14 @@ func applyCallOutcomeFacts(
 		if !ok {
 			continue
 		}
-		out = applyValueRefinementAt(ctx.Registry, resolver, ctx.Point, out, targetPath, factflow.NewValueConstraint(fact.Value))
+		out = applyValueRefinementAt(ctx.Registry, resolver, projectPath, ctx.Point, out, targetPath, factflow.NewValueConstraint(fact.Value))
 	}
 	for _, fact := range outcome.ParamPathRefinements {
 		targetPath, ok := fact.Path.Substitute(paramBindings)
 		if !ok {
 			continue
 		}
-		out = applyValueRefinementAt(ctx.Registry, resolver, ctx.Point, out, targetPath, factflow.NewValueConstraint(fact.Value))
+		out = applyValueRefinementAt(ctx.Registry, resolver, projectPath, ctx.Point, out, targetPath, factflow.NewValueConstraint(fact.Value))
 	}
 	for _, fact := range outcome.ParamPathInvalidations {
 		targetPath, ok := fact.Path.Substitute(paramBindings)
@@ -147,7 +147,7 @@ func applyCallParamCondition(
 		return out
 	}
 	for _, refinement := range expressionCondition.RefinementsForValue(condition.Value) {
-		out = applyValueRefinementAt(ctx.Registry, resolver, ctx.Point, out, refinement.TargetPath(), refinement.Value())
+		out = applyValueRefinementAt(ctx.Registry, resolver, projectPath, ctx.Point, out, refinement.TargetPath(), refinement.Value())
 	}
 	for _, relation := range expressionCondition.PathRelationsForValue(condition.Value) {
 		out = applyPostconditionPathRelation(ctx, resolver, projectPath, out, relation)

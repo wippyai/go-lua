@@ -15,6 +15,7 @@ import (
 func branchPresenceRelationRefinement(
 	ctx transfer.EdgeContext,
 	resolver *visibility.Resolver,
+	projectPath PathTypeProjector,
 	out state.State,
 	branchRefinements []factflow.BranchRefinement,
 	relation factflow.BranchPresenceRelation,
@@ -30,7 +31,7 @@ func branchPresenceRelationRefinement(
 		}
 		return presenceRefinement(ctx.Registry, relation.TargetPresence()), true
 	}
-	if branchEdgeImpliesAbsentFromNonFalseFalsy(ctx, resolver, out, branchRefinements, relation) {
+	if branchEdgeImpliesAbsentFromNonFalseFalsy(ctx, resolver, projectPath, out, branchRefinements, relation) {
 		return presenceRefinement(ctx.Registry, relation.TargetPresence()), true
 	}
 	return factflow.ValueRefinement{}, false
@@ -39,6 +40,7 @@ func branchPresenceRelationRefinement(
 func branchEdgeImpliesAbsentFromNonFalseFalsy(
 	ctx transfer.EdgeContext,
 	resolver *visibility.Resolver,
+	projectPath PathTypeProjector,
 	out state.State,
 	branchRefinements []factflow.BranchRefinement,
 	relation factflow.BranchPresenceRelation,
@@ -58,7 +60,7 @@ func branchEdgeImpliesAbsentFromNonFalseFalsy(
 		if !ok || !refinementHasPresence(opposite, presence.Present()) {
 			continue
 		}
-		if branchTriggerCanBeFalse(ctx, resolver, out, triggerPath) {
+		if branchTriggerCanBeFalse(ctx, resolver, projectPath, out, triggerPath) {
 			continue
 		}
 		return true
@@ -69,10 +71,11 @@ func branchEdgeImpliesAbsentFromNonFalseFalsy(
 func branchTriggerCanBeFalse(
 	ctx transfer.EdgeContext,
 	resolver *visibility.Resolver,
+	projectPath PathTypeProjector,
 	out state.State,
 	triggerPath pathdom.Path,
 ) bool {
-	current, ok := resolvePathValueAt(ctx.Registry, resolver, ctx.Edge.From, out, triggerPath)
+	current, ok := resolvePathValueAt(ctx.Registry, resolver, ctx.Edge.From, out, triggerPath, projectPath)
 	if !ok {
 		return true
 	}

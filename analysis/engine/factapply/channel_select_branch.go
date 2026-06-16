@@ -16,15 +16,16 @@ import (
 func applyChannelSelectCaseEquality(
 	reg *axis.Registry,
 	resolver *visibility.Resolver,
+	projectPath PathTypeProjector,
 	point cfg.Point,
 	out state.State,
 	leftPath pathdom.Path,
 	rightPath pathdom.Path,
 ) (state.State, bool) {
-	if updated, ok := applyChannelSelectCasePathEquality(reg, resolver, point, out, leftPath, rightPath); ok {
+	if updated, ok := applyChannelSelectCasePathEquality(reg, resolver, projectPath, point, out, leftPath, rightPath); ok {
 		return updated, true
 	}
-	if updated, ok := applyChannelSelectCasePathEquality(reg, resolver, point, out, rightPath, leftPath); ok {
+	if updated, ok := applyChannelSelectCasePathEquality(reg, resolver, projectPath, point, out, rightPath, leftPath); ok {
 		return updated, true
 	}
 	return out, false
@@ -33,6 +34,7 @@ func applyChannelSelectCaseEquality(
 func applyChannelSelectCasePathEquality(
 	reg *axis.Registry,
 	resolver *visibility.Resolver,
+	projectPath PathTypeProjector,
 	point cfg.Point,
 	out state.State,
 	resultChannelPath pathdom.Path,
@@ -51,7 +53,7 @@ func applyChannelSelectCasePathEquality(
 	if !ok {
 		return out, false
 	}
-	result, ok := resolvePathValueAt(reg, resolver, point, out, resultPath)
+	result, ok := resolvePathValueAt(reg, resolver, point, out, resultPath, projectPath)
 	if !ok {
 		return out, false
 	}
@@ -124,15 +126,16 @@ func channelSelectRemainingTypeFromFacts(reg *axis.Registry, out state.State, se
 func applyChannelSelectCaseInequality(
 	reg *axis.Registry,
 	resolver *visibility.Resolver,
+	projectPath PathTypeProjector,
 	point cfg.Point,
 	out state.State,
 	leftPath pathdom.Path,
 	rightPath pathdom.Path,
 ) (state.State, bool) {
-	if updated, ok := applyChannelSelectCasePathInequality(reg, resolver, point, out, leftPath, rightPath); ok {
+	if updated, ok := applyChannelSelectCasePathInequality(reg, resolver, projectPath, point, out, leftPath, rightPath); ok {
 		return updated, true
 	}
-	if updated, ok := applyChannelSelectCasePathInequality(reg, resolver, point, out, rightPath, leftPath); ok {
+	if updated, ok := applyChannelSelectCasePathInequality(reg, resolver, projectPath, point, out, rightPath, leftPath); ok {
 		return updated, true
 	}
 	return out, false
@@ -141,6 +144,7 @@ func applyChannelSelectCaseInequality(
 func applyChannelSelectCasePathInequality(
 	reg *axis.Registry,
 	resolver *visibility.Resolver,
+	projectPath PathTypeProjector,
 	point cfg.Point,
 	out state.State,
 	resultChannelPath pathdom.Path,
@@ -159,7 +163,7 @@ func applyChannelSelectCasePathInequality(
 	if !ok {
 		return out, false
 	}
-	result, ok := resolvePathValueAt(reg, resolver, point, out, resultPath)
+	result, ok := resolvePathValueAt(reg, resolver, point, out, resultPath, projectPath)
 	if !ok {
 		return out, false
 	}

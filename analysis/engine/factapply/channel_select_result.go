@@ -26,6 +26,7 @@ type channelSelectResultGroup struct {
 func applyChannelSelectResult(
 	ctx transfer.NodeContext,
 	resolver *visibility.Resolver,
+	projectPath PathTypeProjector,
 	out state.State,
 	events []factflow.ChannelSelect,
 ) state.State {
@@ -34,7 +35,7 @@ func applyChannelSelectResult(
 		if !group.hasResult || group.resultIndex < 0 || len(group.cases) == 0 && !group.hasDefault {
 			continue
 		}
-		resultValue, ok := channelSelectResultValue(ctx, resolver, out, selectID, group.cases, group.hasDefault)
+		resultValue, ok := channelSelectResultValue(ctx, resolver, projectPath, out, selectID, group.cases, group.hasDefault)
 		if !ok {
 			continue
 		}
@@ -80,6 +81,7 @@ func channelSelectResultGroups(events []factflow.ChannelSelect) map[factflow.Cha
 func channelSelectResultValue(
 	ctx transfer.NodeContext,
 	resolver *visibility.Resolver,
+	projectPath PathTypeProjector,
 	out state.State,
 	selectID factflow.ChannelSelectID,
 	cases []factflow.ChannelSelect,
@@ -91,7 +93,7 @@ func channelSelectResultValue(
 	}
 	resultCases := make([]channelselect.ResultCase, 0, len(cases))
 	for _, event := range cases {
-		payloadType, ok := channelSelectEventPayloadType(ctx, resolver, out, event)
+		payloadType, ok := channelSelectEventPayloadType(ctx, resolver, projectPath, out, event)
 		if !ok {
 			continue
 		}
@@ -113,6 +115,7 @@ func channelSelectResultValue(
 func channelSelectEventPayloadType(
 	ctx transfer.NodeContext,
 	resolver *visibility.Resolver,
+	projectPath PathTypeProjector,
 	out state.State,
 	event factflow.ChannelSelect,
 ) (typ.Type, bool) {
@@ -123,16 +126,17 @@ func channelSelectEventPayloadType(
 	if !ok {
 		return nil, false
 	}
-	return channelSelectCasePathPayloadType(ctx, resolver, out, casePath)
+	return channelSelectCasePathPayloadType(ctx, resolver, projectPath, out, casePath)
 }
 
 func channelSelectCasePathPayloadType(
 	ctx transfer.NodeContext,
 	resolver *visibility.Resolver,
+	projectPath PathTypeProjector,
 	out state.State,
 	casePath pathdom.Path,
 ) (typ.Type, bool) {
-	resolved, ok := resolvePathValueAt(ctx.Registry, resolver, ctx.Point, out, casePath)
+	resolved, ok := resolvePathValueAt(ctx.Registry, resolver, ctx.Point, out, casePath, projectPath)
 	if !ok {
 		return nil, false
 	}

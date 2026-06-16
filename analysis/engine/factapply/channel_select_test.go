@@ -133,6 +133,61 @@ func TestFactsNodeTransferMaterializesChannelSelectResultFromVisibleCasePath(t *
 	assertChannelSelectCasePayload(t, reg, resultValue, channelselectfact.ID(selectID), 0, eventPayload)
 }
 
+func TestFactsNodeTransferMaterializesChannelSelectResultFromStructuralNestedCasePath(t *testing.T) {
+	reg := standard.Registry()
+	point := cfg.Point(731)
+	result := symbol.ID(733)
+	route := symbol.ID(734)
+	resultPath := pathdom.NewPath(result, "result")
+	routePath := pathdom.NewPath(route, "route")
+	casePath := routePath.Field("ch")
+	selectID := factflow.ChannelSelectID("select-nested-case")
+	eventPayload := typetable.NewRecord().Field("kind", typ.LiteralString("event")).Build()
+	routeType := typetable.NewRecord().
+		Field("kind", typ.LiteralString("route")).
+		Field("ch", typ.Instantiate(ambient.ChannelGeneric(), eventPayload)).
+		Build()
+
+	visibilityBuilder := visibility.NewBuilder()
+	visibilityBuilder.Define(point, result, "result")
+	visibilityBuilder.Define(point, route, "route")
+	resolver := visibility.NewResolver(visibilityBuilder.Build())
+	initial := state.State{}.
+		WriteValue(reg, key.SymbolValue(route), typeValue(reg, routeType))
+
+	got := NewFactsNodeTransfer(FactsNodeTransferConfig{
+		Facts: factflow.NewFacts(factflow.FactsInput{
+			ChannelSelects: map[cfg.Point]factflow.ChannelSelectSet{
+				point: factflow.NewChannelSelectSet(
+					factflow.NewChannelSelect(factflow.ChannelSelectConfig{
+						SelectID:      selectID,
+						Kind:          factflow.ChannelSelectSelect,
+						ResultPath:    resultPath,
+						HasResultPath: true,
+						Index:         0,
+					}),
+					factflow.NewChannelSelect(factflow.ChannelSelectConfig{
+						SelectID:    selectID,
+						Kind:        factflow.ChannelSelectReceive,
+						ResultPath:  resultPath,
+						CasePath:    casePath,
+						HasCasePath: true,
+						Index:       0,
+					}),
+				),
+			},
+		}),
+		Visibility:  resolver,
+		ProjectPath: testLuaPathTypeProjector,
+	})(transfer.NodeContext{
+		Registry: reg,
+		Point:    point,
+	}, initial)
+
+	resultValue := got.ReadReturnSlot(reg, 0)
+	assertChannelSelectCasePayload(t, reg, resultValue, channelselectfact.ID(selectID), 0, eventPayload)
+}
+
 func TestFactsEdgeTransferChannelSelectEqualityNarrowsPayload(t *testing.T) {
 	reg := standard.Registry()
 	graph := cfg.New()
@@ -554,7 +609,7 @@ func testChannelSelectResultValueWithDefault(
 	events []factflow.ChannelSelect,
 	hasDefault bool,
 ) (product.Value, bool) {
-	return channelSelectResultValue(transfer.NodeContext{Registry: reg}, nil, state.State{}, selectID, events, hasDefault)
+	return channelSelectResultValue(transfer.NodeContext{Registry: reg}, nil, nil, state.State{}, selectID, events, hasDefault)
 }
 
 func assertChannelSelectCasePayload(

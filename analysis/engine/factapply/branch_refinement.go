@@ -24,11 +24,12 @@ import (
 func applyBranchRefinement(
 	ctx transfer.EdgeContext,
 	resolver *visibility.Resolver,
+	projectPath PathTypeProjector,
 	out state.State,
 	targetPath pathdom.Path,
 	refinement factflow.ValueRefinement,
 ) state.State {
-	return applyValueRefinementAt(ctx.Registry, resolver, ctx.Edge.From, out, targetPath, refinement)
+	return applyValueRefinementAt(ctx.Registry, resolver, projectPath, ctx.Edge.From, out, targetPath, refinement)
 }
 
 // applyBranchLenRefinement records the proven length floor for an array path on
@@ -57,18 +58,20 @@ func applyBranchLenRefinement(
 func applyValueRefinementAt(
 	reg *axis.Registry,
 	resolver *visibility.Resolver,
+	projectPath PathTypeProjector,
 	point cfg.Point,
 	out state.State,
 	targetPath pathdom.Path,
 	refinement factflow.ValueRefinement,
 ) state.State {
-	out = applyValueRefinementAtWithoutImplications(reg, resolver, point, out, targetPath, refinement)
+	out = applyValueRefinementAtWithoutImplications(reg, resolver, projectPath, point, out, targetPath, refinement)
 	return activatePathPresenceImplicationsForPath(reg, resolver, point, out, targetPath)
 }
 
 func applyValueRefinementAtWithoutImplications(
 	reg *axis.Registry,
 	resolver *visibility.Resolver,
+	projectPath PathTypeProjector,
 	point cfg.Point,
 	out state.State,
 	targetPath pathdom.Path,
@@ -77,7 +80,7 @@ func applyValueRefinementAtWithoutImplications(
 	if targetPath.Symbol == 0 {
 		return out
 	}
-	if refinement.FalsyAbsent() && falsyAbsentRefinementUnproven(reg, resolver, point, out, targetPath) {
+	if refinement.FalsyAbsent() && falsyAbsentRefinementUnproven(reg, resolver, projectPath, point, out, targetPath) {
 		return out
 	}
 	if len(targetPath.Segments) == 0 {
@@ -89,7 +92,7 @@ func applyValueRefinementAtWithoutImplications(
 		})
 	}
 	if lit, ok := descendantLiteralConstraint(reg, refinement); ok {
-		if narrowed, applied := applyDescendantLiteralRootOriginRefinement(reg, resolver, point, out, targetPath, lit, refinement.NegatedLiteral()); applied {
+		if narrowed, applied := applyDescendantLiteralRootOriginRefinement(reg, resolver, projectPath, point, out, targetPath, lit, refinement.NegatedLiteral()); applied {
 			return narrowed
 		}
 	} else {
@@ -98,7 +101,7 @@ func applyValueRefinementAtWithoutImplications(
 	if resolver == nil {
 		return out
 	}
-	current, ok := resolvePathValueAt(reg, resolver, point, out, targetPath)
+	current, ok := resolvePathValueAt(reg, resolver, point, out, targetPath, projectPath)
 	if !ok {
 		constraint, hasConstraint := refinement.Constraint()
 		if !hasConstraint {
@@ -120,11 +123,12 @@ func applyValueRefinementAtWithoutImplications(
 func falsyAbsentRefinementUnproven(
 	reg *axis.Registry,
 	resolver *visibility.Resolver,
+	projectPath PathTypeProjector,
 	point cfg.Point,
 	out state.State,
 	targetPath pathdom.Path,
 ) bool {
-	current, ok := resolvePathValueAt(reg, resolver, point, out, targetPath)
+	current, ok := resolvePathValueAt(reg, resolver, point, out, targetPath, projectPath)
 	if !ok {
 		return true
 	}
@@ -306,6 +310,7 @@ func applyDescendantTruthyRootOriginRefinement(
 func applyDescendantLiteralRootOriginRefinement(
 	reg *axis.Registry,
 	resolver *visibility.Resolver,
+	projectPath PathTypeProjector,
 	point cfg.Point,
 	out state.State,
 	targetPath pathdom.Path,
@@ -331,7 +336,7 @@ func applyDescendantLiteralRootOriginRefinement(
 	} else if narrowed, applied := narrowRootByPathLiteral(reg, resolver, point, out, targetPath, rootValue, rootType, lit); applied {
 		return narrowed, true
 	}
-	return narrowNestedUnionDescendant(reg, resolver, point, out, targetPath, rootType, lit, negated)
+	return narrowNestedUnionDescendant(reg, resolver, projectPath, point, out, targetPath, rootType, lit, negated)
 }
 
 // narrowNestedUnionDescendant narrows a discriminated union held in a nested
@@ -344,6 +349,7 @@ func applyDescendantLiteralRootOriginRefinement(
 func narrowNestedUnionDescendant(
 	reg *axis.Registry,
 	resolver *visibility.Resolver,
+	projectPath PathTypeProjector,
 	point cfg.Point,
 	out state.State,
 	targetPath pathdom.Path,
@@ -380,7 +386,7 @@ func narrowNestedUnionDescendant(
 		anchorPath.Segments = append([]segment.Segment(nil), prefix...)
 		constraint := typevalue.FromType(reg, narrowedType)
 		constraint = product.Set(reg, constraint, variantorigin.Key, variantorigin.Of(family, cases))
-		anchor, ok := resolvePathValueAt(reg, resolver, point, out, anchorPath)
+		anchor, ok := resolvePathValueAt(reg, resolver, point, out, anchorPath, projectPath)
 		if !ok {
 			pathKey := resolver.KeyAt(point, anchorPath)
 			if pathKey == "" {
