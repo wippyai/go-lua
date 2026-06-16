@@ -2,6 +2,7 @@ package manifest
 
 import (
 	"fmt"
+	"sort"
 
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
@@ -55,7 +56,7 @@ type placeholderPathWire struct {
 }
 
 func encodeOperationalEffects(e *signature.OperationalEffects) (*operationalEffectsWire, error) {
-	if e == nil {
+	if e == nil || e.IsEmpty() {
 		return nil, nil
 	}
 	out := &operationalEffectsWire{}
@@ -129,6 +130,7 @@ func encodeOperationalEffects(e *signature.OperationalEffects) (*operationalEffe
 		}
 		out.StoreRelations = append(out.StoreRelations, storeRelationWire{Source: source, Into: into})
 	}
+	canonicalizeOperationalEffectsWire(out)
 	return out, nil
 }
 
@@ -208,6 +210,77 @@ func decodeOperationalEffects(w *operationalEffectsWire) (signature.OperationalE
 		out.StoreRelations = append(out.StoreRelations, signature.StoreRelation{Source: source, Into: into})
 	}
 	return out, nil
+}
+
+func canonicalizeOperationalEffectsWire(w *operationalEffectsWire) {
+	if w == nil {
+		return
+	}
+	sort.Slice(w.ReturnPresenceRelations, func(i, j int) bool {
+		left, right := w.ReturnPresenceRelations[i], w.ReturnPresenceRelations[j]
+		if left.TriggerIndex != right.TriggerIndex {
+			return left.TriggerIndex < right.TriggerIndex
+		}
+		if left.TriggerPresence != right.TriggerPresence {
+			return left.TriggerPresence < right.TriggerPresence
+		}
+		if left.TargetIndex != right.TargetIndex {
+			return left.TargetIndex < right.TargetIndex
+		}
+		return left.TargetPresence < right.TargetPresence
+	})
+	sort.Slice(w.NormalReturnPresenceRefinements, func(i, j int) bool {
+		left, right := w.NormalReturnPresenceRefinements[i], w.NormalReturnPresenceRefinements[j]
+		if c := comparePlaceholderPathWire(left.Path, right.Path); c != 0 {
+			return c < 0
+		}
+		return left.Presence < right.Presence
+	})
+	sort.Slice(w.PathInvalidations, func(i, j int) bool {
+		return comparePlaceholderPathWire(w.PathInvalidations[i].Path, w.PathInvalidations[j].Path) < 0
+	})
+	sort.Slice(w.FrozenTables, func(i, j int) bool {
+		return comparePlaceholderPathWire(w.FrozenTables[i].Target, w.FrozenTables[j].Target) < 0
+	})
+	sort.Slice(w.EscapeEvents, func(i, j int) bool {
+		left, right := w.EscapeEvents[i], w.EscapeEvents[j]
+		if c := comparePlaceholderPathWire(left.Target, right.Target); c != 0 {
+			return c < 0
+		}
+		if left.Kind != right.Kind {
+			return left.Kind < right.Kind
+		}
+		return !left.Recursive && right.Recursive
+	})
+	sort.Slice(w.StoreRelations, func(i, j int) bool {
+		left, right := w.StoreRelations[i], w.StoreRelations[j]
+		if c := comparePlaceholderPathWire(left.Source, right.Source); c != 0 {
+			return c < 0
+		}
+		return comparePlaceholderPathWire(left.Into, right.Into) < 0
+	})
+}
+
+func comparePlaceholderPathWire(a, b *placeholderPathWire) int {
+	switch {
+	case a == nil && b == nil:
+		return 0
+	case a == nil:
+		return -1
+	case b == nil:
+		return 1
+	case a.Param != b.Param:
+		if a.Param < b.Param {
+			return -1
+		}
+		return 1
+	case a.Suffix < b.Suffix:
+		return -1
+	case a.Suffix > b.Suffix:
+		return 1
+	default:
+		return 0
+	}
 }
 
 func encodePlaceholderPath(p pathdom.Path) (*placeholderPathWire, error) {

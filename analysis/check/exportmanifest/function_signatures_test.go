@@ -265,6 +265,15 @@ func TestFunctionSummaryOperationalEffectsPreservesDescendantBoundaryFacts(t *te
 	}
 }
 
+func TestFunctionSummaryOperationalEffectsEmptyIsAbsent(t *testing.T) {
+	got := functionSummaryOperationalEffects(summary.Summary{}, typ.Func().
+		Param("value", typ.Any).
+		Build())
+	if got != nil {
+		t.Fatalf("operational effects = %#v, want nil for empty summary facts", got)
+	}
+}
+
 func checkProgram(t *testing.T, src string) program.Result {
 	t.Helper()
 	stmts, err := parse.ParseString(src, "exportmanifest_test.lua")

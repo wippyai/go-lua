@@ -1035,6 +1035,40 @@ func TestSignatureOutcomeProviderOperationalEffectsSuppressRowOperationalFallbac
 	}
 }
 
+func TestSignatureOutcomeProviderEmptyOperationalEffectsUsesRowFallback(t *testing.T) {
+	point := cfg.Point(9021)
+	facts := factflow.NewFacts(factflow.FactsInput{
+		CallSites: map[cfg.Point]factflow.CallSite{
+			point: factflow.NewCallSite(factflow.CallSiteConfig{
+				Context: factflow.CallSiteContextStatement,
+				ArgumentSources: []factflow.ValueSource{
+					{Kind: factflow.ValueSourceExpression, ExprRef: factflow.ExprRef(9022), HasExpr: true},
+				},
+			}),
+		},
+	})
+	provider := SignatureOutcomeProvider(SignatureOutcomeProviderConfig{
+		Signatures: signatureMap{
+			"f": {
+				Effect: effect.Empty.With(ownership.SendParam{
+					Param: effect.ParamRef{Index: 0},
+				}),
+				OperationalEffects: &signature.OperationalEffects{},
+			},
+		},
+		NameFor: staticName("f"),
+		Facts:   facts,
+	})
+	site, ok := facts.CallSite(point)
+	if !ok {
+		t.Fatalf("missing call site")
+	}
+
+	got := provider(transfer.NodeContext{Point: point}, site.View(), state.State{}, nil)
+
+	assertEscapeEvent(t, got.NormalReturnFacts.EscapeEvents, path.NewPlaceholder(0), callboundary.EscapeEventSend, true)
+}
+
 func TestSignatureOutcomeProviderOwnershipBorrowEffectsRecordBorrowWithoutPlacementOrFreeze(t *testing.T) {
 	reg := standard.Registry()
 	graph := cfg.New()

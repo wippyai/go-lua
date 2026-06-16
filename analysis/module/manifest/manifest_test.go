@@ -214,6 +214,88 @@ func TestManifestRoundTripNamedFunctionSignatureEffects(t *testing.T) {
 	}
 }
 
+func TestManifestEmptyOperationalEffectsAreAbsent(t *testing.T) {
+	fn := typ.Func().
+		Param("payload", typ.Any).
+		Build()
+	m := New("example/empty-operational")
+	m.DefineFunctionSignature("send", signature.Function{
+		Type: fn,
+		Effect: effect.Empty.With(ownership.SendParam{
+			Param: effect.ParamRef{Index: 0},
+		}),
+		OperationalEffects: &signature.OperationalEffects{},
+	})
+
+	data, err := Encode(m)
+	if err != nil {
+		t.Fatalf("Encode: %v", err)
+	}
+	if strings.Contains(string(data), `"operationalEffects"`) {
+		t.Fatalf("empty operational effects were serialized as authority:\n%s", data)
+	}
+	got, err := Decode(data)
+	if err != nil {
+		t.Fatalf("Decode: %v", err)
+	}
+	gotSig, ok := got.FunctionSignatures["send"]
+	if !ok {
+		t.Fatalf("missing send signature")
+	}
+	if gotSig.OperationalEffects != nil {
+		t.Fatalf("decoded operational effects = %#v, want nil for empty DTO", gotSig.OperationalEffects)
+	}
+	if !gotSig.Effect.Equals(m.FunctionSignatures["send"].Effect) {
+		t.Fatalf("effect row = %v, want %v", gotSig.Effect, m.FunctionSignatures["send"].Effect)
+	}
+
+	encodedType, err := encodeType(fn)
+	if err != nil {
+		t.Fatalf("encodeType: %v", err)
+	}
+	decoded, err := decodeFunctionSignature(functionSignatureWire{
+		Name:               "send",
+		Type:               encodedType,
+		OperationalEffects: &operationalEffectsWire{},
+	})
+	if err != nil {
+		t.Fatalf("decodeFunctionSignature: %v", err)
+	}
+	if decoded.OperationalEffects != nil {
+		t.Fatalf("explicit empty operational wire decoded as %#v, want nil", decoded.OperationalEffects)
+	}
+}
+
+func TestManifestOperationalEffectsEncodeDeterministically(t *testing.T) {
+	fn := typ.Func().
+		Param("left", typ.Any).
+		Param("right", typ.Any).
+		Returns(typeexpr.Optional(typ.Number), typeexpr.Optional(typ.String)).
+		Build()
+	left := New("example/deterministic-operational")
+	left.DefineFunctionSignature("f", signature.Function{
+		Type:               fn,
+		OperationalEffects: operationalEffectsOrderA(),
+	})
+	right := New("example/deterministic-operational")
+	right.DefineFunctionSignature("f", signature.Function{
+		Type:               fn,
+		OperationalEffects: operationalEffectsOrderB(),
+	})
+
+	leftData, err := Encode(left)
+	if err != nil {
+		t.Fatalf("Encode(left): %v", err)
+	}
+	rightData, err := Encode(right)
+	if err != nil {
+		t.Fatalf("Encode(right): %v", err)
+	}
+	if !bytes.Equal(leftData, rightData) {
+		t.Fatalf("operational effects encoding is not stable:\nleft:\n%s\nright:\n%s", leftData, rightData)
+	}
+}
+
 func TestManifestEffectLabelRoundTripPreservesRowsAndSelectors(t *testing.T) {
 	p0 := effect.ParamRef{Index: 0}
 	p1 := effect.ParamRef{Index: 1}
@@ -262,6 +344,64 @@ func TestManifestEffectLabelRoundTripPreservesRowsAndSelectors(t *testing.T) {
 				t.Fatalf("roundtrip row missing %T in %v", tt.label, got)
 			}
 		})
+	}
+}
+
+func operationalEffectsOrderA() *signature.OperationalEffects {
+	return &signature.OperationalEffects{
+		ReturnPresenceRelations: []signature.ReturnPresenceRelation{
+			{TriggerIndex: 1, TriggerPresence: presence.Present(), TargetIndex: 0, TargetPresence: presence.Absent()},
+			{TriggerIndex: 0, TriggerPresence: presence.Absent(), TargetIndex: 1, TargetPresence: presence.Present()},
+		},
+		NormalReturnPresenceRefinements: []signature.PathPresenceRefinement{
+			{Path: pathdom.NewPlaceholder(1).Field("ready"), Presence: presence.Present()},
+			{Path: pathdom.NewPlaceholder(0).Field("missing"), Presence: presence.Absent()},
+		},
+		PathInvalidations: []signature.PathInvalidation{
+			{Path: pathdom.NewPlaceholder(1).Field("items")},
+			{Path: pathdom.NewPlaceholder(0).Field("items")},
+		},
+		FrozenTables: []signature.FrozenTable{
+			{Target: pathdom.NewPlaceholder(1).Field("sealed")},
+			{Target: pathdom.NewPlaceholder(0).Field("sealed")},
+		},
+		EscapeEvents: []signature.EscapeEvent{
+			{Target: pathdom.NewPlaceholder(1).Field("payload"), Kind: signature.EscapeSend, Recursive: true},
+			{Target: pathdom.NewPlaceholder(0).Field("payload"), Kind: signature.EscapeBorrow},
+		},
+		StoreRelations: []signature.StoreRelation{
+			{Source: pathdom.NewPlaceholder(1).Field("payload"), Into: pathdom.NewPlaceholder(0).Field("bucket")},
+			{Source: pathdom.NewPlaceholder(0).Field("payload"), Into: pathdom.NewPlaceholder(1).Field("bucket")},
+		},
+	}
+}
+
+func operationalEffectsOrderB() *signature.OperationalEffects {
+	return &signature.OperationalEffects{
+		ReturnPresenceRelations: []signature.ReturnPresenceRelation{
+			{TriggerIndex: 0, TriggerPresence: presence.Absent(), TargetIndex: 1, TargetPresence: presence.Present()},
+			{TriggerIndex: 1, TriggerPresence: presence.Present(), TargetIndex: 0, TargetPresence: presence.Absent()},
+		},
+		NormalReturnPresenceRefinements: []signature.PathPresenceRefinement{
+			{Path: pathdom.NewPlaceholder(0).Field("missing"), Presence: presence.Absent()},
+			{Path: pathdom.NewPlaceholder(1).Field("ready"), Presence: presence.Present()},
+		},
+		PathInvalidations: []signature.PathInvalidation{
+			{Path: pathdom.NewPlaceholder(0).Field("items")},
+			{Path: pathdom.NewPlaceholder(1).Field("items")},
+		},
+		FrozenTables: []signature.FrozenTable{
+			{Target: pathdom.NewPlaceholder(0).Field("sealed")},
+			{Target: pathdom.NewPlaceholder(1).Field("sealed")},
+		},
+		EscapeEvents: []signature.EscapeEvent{
+			{Target: pathdom.NewPlaceholder(0).Field("payload"), Kind: signature.EscapeBorrow},
+			{Target: pathdom.NewPlaceholder(1).Field("payload"), Kind: signature.EscapeSend, Recursive: true},
+		},
+		StoreRelations: []signature.StoreRelation{
+			{Source: pathdom.NewPlaceholder(0).Field("payload"), Into: pathdom.NewPlaceholder(1).Field("bucket")},
+			{Source: pathdom.NewPlaceholder(1).Field("payload"), Into: pathdom.NewPlaceholder(0).Field("bucket")},
+		},
 	}
 }
 

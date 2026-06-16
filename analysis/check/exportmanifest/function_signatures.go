@@ -177,6 +177,9 @@ func functionSummaryOperationalEffects(s summary.Summary, fn *typ.Function) *sig
 		EscapeEvents:                    operationalEscapeEvents(s.NormalReturnFacts, arity),
 		StoreRelations:                  operationalStoreRelations(s.NormalReturnFacts, arity),
 	}
+	if out.IsEmpty() {
+		return nil
+	}
 	return &out
 }
 

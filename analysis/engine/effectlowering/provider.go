@@ -65,7 +65,7 @@ func SignatureOutcomeProvider(config SignatureOutcomeProviderConfig) factapply.C
 		ownedSite := site.CallSite()
 		sig = instantiateSignatureForCall(ctx, facts, sources, expressionRefinements, argumentType, sig, ownedSite, in, read, returnTypeOps)
 		var out factapply.CallOutcome
-		if sig.OperationalEffects != nil {
+		if sig.OperationalEffects != nil && !sig.OperationalEffects.IsEmpty() {
 			out = applyOperationalEffects(ctx, out, sig.OperationalEffects)
 		} else {
 			invalidations := signatureParamPathInvalidations(sig, ownedSite)

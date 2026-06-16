@@ -226,7 +226,7 @@ func decodeFunctionSignature(w functionSignatureWire) (signature.Function, error
 		return signature.Function{}, err
 	}
 	var operationalPtr *signature.OperationalEffects
-	if w.OperationalEffects != nil {
+	if w.OperationalEffects != nil && !operational.IsEmpty() {
 		operationalPtr = &operational
 	}
 	return signature.Function{Type: fn, Effect: row, OperationalEffects: operationalPtr}, nil
