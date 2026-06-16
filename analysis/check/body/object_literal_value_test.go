@@ -61,26 +61,36 @@ func TestObjectLiteralTypePreservesNestedWitnessShape(t *testing.T) {
 }
 
 func TestObjectLiteralTypeTreatsTopOriginEntryAsAny(t *testing.T) {
-	reg := standard.Registry()
-	idSource := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: factflow.ExprRef(701), HasExpr: true}
-	lit := factflow.NewObjectLiteral([]factflow.ObjectEntry{
-		factflow.NewObjectEntry(path.NewPlaceholder(0).Field("id"), idSource),
-	})
-	values := map[factflow.ValueSource]product.Value{
-		idSource: product.Set(reg, product.Top(), evidence.Key, evidence.ExplicitTop()),
-	}
+	for _, tt := range []struct {
+		name     string
+		evidence evidence.Value
+	}{
+		{name: "explicit top", evidence: evidence.ExplicitTop()},
+		{name: "gradual top", evidence: evidence.GradualTop()},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			reg := standard.Registry()
+			idSource := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: factflow.ExprRef(701), HasExpr: true}
+			lit := factflow.NewObjectLiteral([]factflow.ObjectEntry{
+				factflow.NewObjectEntry(path.NewPlaceholder(0).Field("id"), idSource),
+			})
+			values := map[factflow.ValueSource]product.Value{
+				idSource: product.Set(reg, product.Top(), evidence.Key, tt.evidence),
+			}
 
-	got, ok := objectLiteralType(reg, lit, func(source factflow.ValueSource) (product.Value, bool) {
-		value, ok := values[source]
-		return value, ok
-	})
-	if !ok {
-		t.Fatal("objectLiteralType returned false")
-	}
+			got, ok := objectLiteralType(reg, lit, func(source factflow.ValueSource) (product.Value, bool) {
+				value, ok := values[source]
+				return value, ok
+			})
+			if !ok {
+				t.Fatal("objectLiteralType returned false")
+			}
 
-	want := typetable.NewRecord().Field("id", typ.Any).Build()
-	if !typ.TypeEquals(got, want) {
-		t.Fatalf("object literal type = %v, want %v", got, want)
+			want := typetable.NewRecord().Field("id", typ.Any).Build()
+			if !typ.TypeEquals(got, want) {
+				t.Fatalf("object literal type = %v, want %v", got, want)
+			}
+		})
 	}
 }
 

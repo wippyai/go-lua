@@ -9,6 +9,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	sourcevalue "github.com/wippyai/go-lua/analysis/engine/sourcevalue"
+	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
@@ -28,15 +29,19 @@ func objectLiteralType(reg *axis.Registry, lit factflow.ObjectLiteral, resolve f
 }
 
 func objectLiteralTypeCached(reg *axis.Registry, typeValues *typevalue.Cache, lit factflow.ObjectLiteral, resolve func(factflow.ValueSource) (product.Value, bool)) (typ.Type, bool) {
-	root := newObjectLiteralTypeNode()
+	builder := typetable.NewConstructorBuilder()
 	expected, hasExpected := expectedRecord(reg, lit, resolve)
 	seen := false
 	for _, entry := range lit.Entries() {
 		segs := entry.Suffix().Segments
+		path, ok := objectLiteralConstructorPath(segs)
+		if !ok {
+			continue
+		}
 		value, ok := resolve(entry.Source())
 		if !ok {
 			if filled, ok := expectedRecordField(hasExpected, expected, segs); ok {
-				if !root.add(segs, filled) {
+				if !builder.Add(path, filled) {
 					return nil, false
 				}
 				seen = true
@@ -46,7 +51,7 @@ func objectLiteralTypeCached(reg *axis.Registry, typeValues *typevalue.Cache, li
 		t, ok := objectLiteralEntryType(reg, typeValues, value)
 		if !ok {
 			if filled, ok := expectedRecordField(hasExpected, expected, segs); ok {
-				if !root.add(segs, filled) {
+				if !builder.Add(path, filled) {
 					return nil, false
 				}
 				seen = true
@@ -54,13 +59,13 @@ func objectLiteralTypeCached(reg *axis.Registry, typeValues *typevalue.Cache, li
 			continue
 		}
 		if adopted, ok := adoptExpectedFieldType(hasExpected, expected, segs, t); ok {
-			if !root.addSealed(segs, adopted) {
+			if !builder.AddSealed(path, adopted) {
 				return nil, false
 			}
 			seen = true
 			continue
 		}
-		if !root.add(segs, t) {
+		if !builder.Add(path, t) {
 			return nil, false
 		}
 		seen = true
@@ -68,7 +73,7 @@ func objectLiteralTypeCached(reg *axis.Registry, typeValues *typevalue.Cache, li
 	if !seen {
 		return nil, false
 	}
-	return root.build()
+	return builder.Build()
 }
 
 func objectLiteralEntryType(reg *axis.Registry, typeValues *typevalue.Cache, value product.Value) (typ.Type, bool) {
