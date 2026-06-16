@@ -8,6 +8,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/lattice"
 	"github.com/wippyai/go-lua/analysis/domain/lattice/lift"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/engine/state/internal/floor"
 )
 
 // Floor records a proven lower bound on a path's length: len(path) >= Lo.
@@ -35,33 +36,12 @@ func MapDomain() lattice.Lattice[lift.MustMapLane[pathdom.PathKey, Floor]] {
 // (no-floor-or-lower -> a single concrete floor -> collapse), which bounds the
 // fixpoint and protects the per-fixture deadline.
 func elemDomain() lattice.Lattice[Floor] {
-	return lattice.Lattice[Floor]{
-		Bottom: func() Floor { return Floor{Lo: maxFloor} },
-		Top:    func() Floor { return Floor{Lo: 0} },
-		Equal: func(a, b Floor) bool {
-			return a.Lo == b.Lo
-		},
-		LessOrEq: func(a, b Floor) bool {
-			// a <= b when a carries at least as much information (>= floor).
-			return a.Lo >= b.Lo
-		},
-		Join: func(a, b Floor) Floor {
-			return Floor{Lo: minInt64(a.Lo, b.Lo)}
-		},
-		Widen: func(prev, next Floor) Floor {
-			if next.Lo > prev.Lo {
-				return Floor{Lo: 0}
-			}
-			return Floor{Lo: minInt64(prev.Lo, next.Lo)}
-		},
-	}
+	return floor.ElementDomain(floor.ElementOps[Floor]{
+		BottomLo: maxFloor,
+		TopLo:    0,
+		New:      func(lo int64) Floor { return Floor{Lo: lo} },
+		Lo:       func(f Floor) int64 { return f.Lo },
+	})
 }
 
 const maxFloor = int64(^uint64(0) >> 1)
-
-func minInt64(a, b int64) int64 {
-	if a < b {
-		return a
-	}
-	return b
-}
