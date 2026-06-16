@@ -15,7 +15,6 @@ func TestLabels(t *testing.T) {
 		other effect.Label
 	}{
 		{"throw", Throw{}, "throw", Throw{}},
-		{"diverge", Diverge{}, "diverge", Diverge{}},
 		{"io", IO{}, "io", IO{}},
 	}
 
@@ -56,7 +55,7 @@ func TestRowFormatting(t *testing.T) {
 }
 
 func TestRowFiltering(t *testing.T) {
-	r := effect.Row{Labels: []effect.Label{Throw{}, IO{}, Diverge{}}}
+	r := effect.Row{Labels: []effect.Label{Throw{}, IO{}}}
 	filtered := r.Without(func(l effect.Label) bool {
 		_, ok := l.(IO)
 		return ok
@@ -74,12 +73,5 @@ func TestRowFiltering(t *testing.T) {
 		return ok
 	}) {
 		t.Error("Without should keep Throw")
-	}
-
-	if !filtered.Has(func(l effect.Label) bool {
-		_, ok := l.(Diverge)
-		return ok
-	}) {
-		t.Error("Without should keep Diverge")
 	}
 }

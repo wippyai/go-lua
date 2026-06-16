@@ -365,6 +365,59 @@ func TestBuildForwardDoesNotCreateLoopPhiWithoutBackedgeRedefinition(t *testing.
 	}
 }
 
+func TestVersionMergeIgnoresRootTextWhenIdentityMatches(t *testing.T) {
+	sym := symbol.ID(203)
+
+	left := map[symbol.ID]ssa.Version{
+		sym: {Root: "left-root", Symbol: sym, ID: 7},
+	}
+	right := map[symbol.ID]ssa.Version{
+		sym: {Root: "right-root", Symbol: sym, ID: 7},
+	}
+	if !versionMapsEqual(left, right) {
+		t.Fatalf("versionMapsEqual(%+v, %+v) = false, want true", left[sym], right[sym])
+	}
+
+	graph := cfg.New()
+	leftNode := graph.AddNode(cfg.NodeNoop)
+	rightNode := graph.AddNode(cfg.NodeNoop)
+	joinNode := graph.AddNode(cfg.NodeJoin)
+	graph.AddEdge(graph.Entry(), leftNode, false)
+	graph.AddEdge(graph.Entry(), rightNode, false)
+	graph.AddEdge(leftNode, joinNode, false)
+	graph.AddEdge(rightNode, joinNode, false)
+	graph.AddEdge(joinNode, graph.Exit(), false)
+
+	merged := mergePredecessors(
+		graph,
+		joinNode,
+		map[cfg.Point]map[symbol.ID]ssa.Version{
+			leftNode:  left,
+			rightNode: right,
+		},
+		map[cfg.Point]struct{}{
+			leftNode:  {},
+			rightNode: {},
+		},
+		map[lookup]ssa.Version{},
+		map[symbol.ID]int{sym: 7},
+	)
+
+	got, ok := merged[sym]
+	if !ok {
+		t.Fatal("mergePredecessors dropped semantically identical incoming version")
+	}
+	if got.Symbol != sym || got.ID != 7 {
+		t.Fatalf("merged version = %+v, want symbol %d version 7", got, sym)
+	}
+	if got.Root != left[sym].Root && got.Root != right[sym].Root {
+		t.Fatalf("merged root = %q, want one of the incoming display roots", got.Root)
+	}
+	if len(merged) != 1 {
+		t.Fatalf("merged symbol count = %d, want 1", len(merged))
+	}
+}
+
 func TestPackageDoesNotImportLuaPackages(t *testing.T) {
 	pkgs, err := parser.ParseDir(token.NewFileSet(), ".", nil, parser.ImportsOnly)
 	if err != nil {

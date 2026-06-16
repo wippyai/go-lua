@@ -62,8 +62,6 @@ func encodeEffectLabel(label effect.Label) (effectLabelWire, error) {
 	switch l := label.(type) {
 	case control.Throw:
 		return effectLabelWire{Kind: "control.throw"}, nil
-	case control.Diverge:
-		return effectLabelWire{Kind: "control.diverge"}, nil
 	case control.IO:
 		return effectLabelWire{Kind: "control.io"}, nil
 	case dispatch.ModuleLoad:
@@ -72,10 +70,6 @@ func encodeEffectLabel(label effect.Label) (effectLabelWire, error) {
 		return effectLabelWire{Kind: "dispatch.variadicTransform"}, nil
 	case dispatch.TypePredicate:
 		return effectLabelWire{Kind: "dispatch.typePredicate"}, nil
-	case dispatch.TypeValueMethod:
-		return effectLabelWire{Kind: "dispatch.typeValueMethod"}, nil
-	case dispatch.CallableType:
-		return effectLabelWire{Kind: "dispatch.callableType"}, nil
 	case iteration.Iterator:
 		kind, err := encodeIteratorKind(l.Kind)
 		if err != nil {
@@ -167,8 +161,6 @@ func decodeEffectLabel(w effectLabelWire) (effect.Label, error) {
 	switch w.Kind {
 	case "control.throw":
 		return control.Throw{}, nil
-	case "control.diverge":
-		return control.Diverge{}, nil
 	case "control.io":
 		return control.IO{}, nil
 	case "dispatch.moduleLoad":
@@ -177,10 +169,6 @@ func decodeEffectLabel(w effectLabelWire) (effect.Label, error) {
 		return dispatch.VariadicTransform{}, nil
 	case "dispatch.typePredicate":
 		return dispatch.TypePredicate{}, nil
-	case "dispatch.typeValueMethod":
-		return dispatch.TypeValueMethod{}, nil
-	case "dispatch.callableType":
-		return dispatch.CallableType{}, nil
 	case "iteration.iterator":
 		kind, err := decodeIteratorKind(w.IteratorKind)
 		if err != nil {

@@ -162,7 +162,7 @@ func mergePredecessors(
 				first = version
 				continue
 			}
-			if version != first {
+			if !versionSemanticallyEqual(version, first) {
 				same = false
 			}
 		}
@@ -184,6 +184,10 @@ func mergePredecessors(
 	return merged
 }
 
+func versionSemanticallyEqual(left, right ssa.Version) bool {
+	return left.Symbol == right.Symbol && left.ID == right.ID
+}
+
 func cloneVersionMap(in map[symbol.ID]ssa.Version) map[symbol.ID]ssa.Version {
 	if len(in) == 0 {
 		return nil
@@ -200,7 +204,8 @@ func versionMapsEqual(left, right map[symbol.ID]ssa.Version) bool {
 		return false
 	}
 	for sym, leftVersion := range left {
-		if right[sym] != leftVersion {
+		rightVersion, ok := right[sym]
+		if !ok || !versionSemanticallyEqual(leftVersion, rightVersion) {
 			return false
 		}
 	}

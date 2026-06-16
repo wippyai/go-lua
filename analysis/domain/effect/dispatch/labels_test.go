@@ -17,8 +17,6 @@ func TestLabels(t *testing.T) {
 		{"module load", ModuleLoad{}, "module_load", ModuleLoad{}},
 		{"variadic transform", VariadicTransform{}, "variadic_transform", VariadicTransform{}},
 		{"type predicate", TypePredicate{}, "type_predicate", TypePredicate{}},
-		{"type value method", TypeValueMethod{}, "type_value_method", TypeValueMethod{}},
-		{"callable type", CallableType{}, "callable_type", CallableType{}},
 	}
 
 	for _, tt := range tests {

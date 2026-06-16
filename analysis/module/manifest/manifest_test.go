@@ -188,13 +188,10 @@ func TestManifestEffectLabelRoundTripPreservesRowsAndSelectors(t *testing.T) {
 		label effect.Label
 	}{
 		{"control throw", control.Throw{}},
-		{"control diverge", control.Diverge{}},
 		{"control io", control.IO{}},
 		{"dispatch module load", dispatch.ModuleLoad{}},
 		{"dispatch variadic transform", dispatch.VariadicTransform{}},
 		{"dispatch type predicate", dispatch.TypePredicate{}},
-		{"dispatch type value method", dispatch.TypeValueMethod{}},
-		{"dispatch callable type", dispatch.CallableType{}},
 		{"iteration iterator", iteration.Iterator{Source: p0, Kind: iteration.IterateIndexed}},
 		{"mutation mutate", mutation.Mutate{Target: p0, Transform: mutation.ElementUnion{Source: p1}, LengthDelta: expr.Add(expr.PL(0), expr.C(1))}},
 		{"mutation length change", mutation.LengthChange{Target: p1, Delta: -2}},
