@@ -3,7 +3,6 @@ package state
 import (
 	"github.com/wippyai/go-lua/analysis/domain/lattice"
 	"github.com/wippyai/go-lua/analysis/domain/lattice/lift"
-	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
@@ -13,8 +12,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/state/channelselectfact"
 	effectdelta "github.com/wippyai/go-lua/analysis/engine/state/effectdelta"
 	"github.com/wippyai/go-lua/analysis/engine/state/heapidentity"
-	"github.com/wippyai/go-lua/analysis/engine/state/lenbound"
-	"github.com/wippyai/go-lua/analysis/engine/state/numbound"
 	"github.com/wippyai/go-lua/analysis/engine/state/pathevidence"
 	"github.com/wippyai/go-lua/analysis/symbol"
 )
@@ -31,8 +28,8 @@ type State struct {
 	effectDeltas      effectDeltaLane
 	channelSelect     channelselectfact.Lane
 	placement         placementLane
-	lenFloors         lift.MustMapLane[pathdom.PathKey, lenbound.Floor]
-	numFloors         lift.MustMapLane[pathdom.PathKey, numbound.Floor]
+	lenFloors         lenFloorLane
+	numFloors         numFloorLane
 }
 
 // Snapshot returns a point-in-time state value. State lanes are persistent by
@@ -110,8 +107,8 @@ func Domain(reg *axis.Registry) lattice.Lattice[State] {
 		effectDeltas:      effectdelta.MapDomain(reg),
 		channelSelect:     channelselectfact.Domain(),
 		placement:         placementMapDomain(),
-		lenFloors:         lenbound.MapDomain(),
-		numFloors:         numbound.MapDomain(),
+		lenFloors:         lenFloorMapDomain(),
+		numFloors:         numFloorMapDomain(),
 	}
 	return lattice.Lattice[State]{
 		Bottom: func() State {
@@ -193,8 +190,8 @@ type domainOps struct {
 	effectDeltas      lattice.Lattice[map[effectdelta.Key]effectdelta.Value]
 	channelSelect     lattice.Lattice[channelselectfact.Lane]
 	placement         lattice.Lattice[map[identity.ID]placement.Value]
-	lenFloors         lattice.Lattice[lift.MustMapLane[pathdom.PathKey, lenbound.Floor]]
-	numFloors         lattice.Lattice[lift.MustMapLane[pathdom.PathKey, numbound.Floor]]
+	lenFloors         lattice.Lattice[lenFloorLane]
+	numFloors         lattice.Lattice[numFloorLane]
 }
 
 func (o domainOps) valueLane(s State) map[key.Value]product.Value {
@@ -225,8 +222,8 @@ func (o domainOps) fromLanes(
 	effectDeltas map[effectdelta.Key]effectdelta.Value,
 	channelSelect channelselectfact.Lane,
 	placementLane map[identity.ID]placement.Value,
-	lenFloors lift.MustMapLane[pathdom.PathKey, lenbound.Floor],
-	numFloors lift.MustMapLane[pathdom.PathKey, numbound.Floor],
+	lenFloors lenFloorLane,
+	numFloors numFloorLane,
 ) State {
 	out := State{}
 	out.values = valueLaneFromMap(o.values, values)
@@ -244,35 +241,9 @@ func (o domainOps) fromLanes(
 func (s State) reachable() State {
 	s.pathEvidence = s.pathEvidence.Reachable()
 	s.channelSelect = s.channelSelect.Reachable()
-	if s.lenFloors.Bottom() {
-		s.lenFloors = lift.MustMapValues(cloneFloors(s.lenFloors.Values()))
-	}
-	if s.numFloors.Bottom() {
-		s.numFloors = lift.MustMapValues(cloneNumFloors(s.numFloors.Values()))
-	}
+	s.lenFloors = s.lenFloors.reachable()
+	s.numFloors = s.numFloors.reachable()
 	return s
-}
-
-func cloneFloors(in map[pathdom.PathKey]lenbound.Floor) map[pathdom.PathKey]lenbound.Floor {
-	if len(in) == 0 {
-		return nil
-	}
-	out := make(map[pathdom.PathKey]lenbound.Floor, len(in))
-	for k, v := range in {
-		out[k] = v
-	}
-	return out
-}
-
-func cloneNumFloors(in map[pathdom.PathKey]numbound.Floor) map[pathdom.PathKey]numbound.Floor {
-	if len(in) == 0 {
-		return nil
-	}
-	out := make(map[pathdom.PathKey]numbound.Floor, len(in))
-	for k, v := range in {
-		out[k] = v
-	}
-	return out
 }
 
 func placementMapDomain() lattice.Lattice[map[identity.ID]placement.Value] {

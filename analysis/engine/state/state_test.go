@@ -59,6 +59,89 @@ func TestWriteReadValueSlots(t *testing.T) {
 	}
 }
 
+func TestLenFloorStateSemantics(t *testing.T) {
+	reg := standard.Registry()
+	stateDomain := Domain(reg)
+	pathKey := pathdom.PathKey("sym12@1.items")
+
+	if floor, ok := (State{}).ReadLenFloor(pathKey); ok || floor != 0 {
+		t.Fatalf("missing len floor = %d/%v, want absent", floor, ok)
+	}
+	if got := (State{}).WriteLenFloor("", 2); !stateDomain.Equal(got, State{}) {
+		t.Fatalf("empty len-floor path changed state: %s", formatState(reg, got))
+	}
+	if got := (State{}).WriteLenFloor(pathKey, 0); !stateDomain.Equal(got, State{}) {
+		t.Fatalf("non-positive len floor changed state: %s", formatState(reg, got))
+	}
+
+	withFloor := State{}.WriteLenFloor(pathKey, 2)
+	if floor, ok := withFloor.ReadLenFloor(pathKey); !ok || floor != 2 {
+		t.Fatalf("len floor = %d/%v, want 2/present", floor, ok)
+	}
+	weaker := withFloor.WriteLenFloor(pathKey, 1)
+	if !stateDomain.Equal(weaker, withFloor) {
+		t.Fatalf("weaker len floor changed state: %s", formatState(reg, weaker))
+	}
+	stronger := withFloor.WriteLenFloor(pathKey, 4)
+	if floor, ok := stronger.ReadLenFloor(pathKey); !ok || floor != 4 {
+		t.Fatalf("stronger len floor = %d/%v, want 4/present", floor, ok)
+	}
+
+	fromBottom := stateDomain.Bottom().WriteLenFloor(pathKey, 3)
+	if floor, ok := fromBottom.ReadLenFloor(pathKey); !ok || floor != 3 {
+		t.Fatalf("bottom write len floor = %d/%v, want 3/present", floor, ok)
+	}
+	if stateDomain.Equal(fromBottom, stateDomain.Bottom()) {
+		t.Fatalf("writing len floor from bottom kept state at lattice bottom")
+	}
+}
+
+func TestNumFloorStateSemantics(t *testing.T) {
+	reg := standard.Registry()
+	stateDomain := Domain(reg)
+	pathKey := pathdom.PathKey("sym13@1.index")
+
+	if floor, ok := (State{}).ReadNumFloor(pathKey); ok || floor != 0 {
+		t.Fatalf("missing num floor = %d/%v, want absent", floor, ok)
+	}
+	if got := (State{}).WriteNumFloor("", 2); !stateDomain.Equal(got, State{}) {
+		t.Fatalf("empty num-floor path changed state: %s", formatState(reg, got))
+	}
+	if snapshot := stateDomain.Bottom().NumFloorsSnapshot(); !snapshot.Bottom || len(snapshot.Floors) != 0 {
+		t.Fatalf("bottom num-floor snapshot = %#v, want bottom without floors", snapshot)
+	}
+
+	withFloor := State{}.WriteNumFloor(pathKey, -5)
+	if floor, ok := withFloor.ReadNumFloor(pathKey); !ok || floor != -5 {
+		t.Fatalf("num floor = %d/%v, want -5/present", floor, ok)
+	}
+	weaker := withFloor.WriteNumFloor(pathKey, -10)
+	if !stateDomain.Equal(weaker, withFloor) {
+		t.Fatalf("weaker num floor changed state: %s", formatState(reg, weaker))
+	}
+	stronger := withFloor.WriteNumFloor(pathKey, 1)
+	if floor, ok := stronger.ReadNumFloor(pathKey); !ok || floor != 1 {
+		t.Fatalf("stronger num floor = %d/%v, want 1/present", floor, ok)
+	}
+
+	snapshot := stronger.NumFloorsSnapshot()
+	if snapshot.Bottom || snapshot.Floors[pathKey] != 1 {
+		t.Fatalf("num-floor snapshot = %#v, want path floor 1", snapshot)
+	}
+	snapshot.Floors[pathKey] = 99
+	if floor, _ := stronger.ReadNumFloor(pathKey); floor != 1 {
+		t.Fatalf("mutating num-floor snapshot changed state floor to %d", floor)
+	}
+
+	cleared := stronger.ClearNumFloor(pathKey)
+	if floor, ok := cleared.ReadNumFloor(pathKey); ok || floor != 0 {
+		t.Fatalf("cleared num floor = %d/%v, want absent", floor, ok)
+	}
+	if again := cleared.ClearNumFloor(pathKey); !stateDomain.Equal(again, cleared) {
+		t.Fatalf("clearing absent num floor changed state: %s", formatState(reg, again))
+	}
+}
+
 func TestWritesAreImmutable(t *testing.T) {
 	reg := standard.Registry()
 	valueDomain := product.Domain(reg)
