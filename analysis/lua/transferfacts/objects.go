@@ -4,6 +4,7 @@ import (
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
 	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
+	"github.com/wippyai/go-lua/analysis/type/subst"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/unwrap"
 )
@@ -114,6 +115,12 @@ func reachesRecordDepth(t typ.Type, depth int) bool {
 			return false
 		}
 		return reachesRecordDepth(v.Body, depth+1)
+	case *typ.Instantiated:
+		expanded := subst.ExpandInstantiated(v)
+		if expanded == nil || expanded == t {
+			return false
+		}
+		return reachesRecordDepth(expanded, depth+1)
 	case *typ.Union:
 		for _, member := range v.Members {
 			if reachesRecordDepth(member, depth+1) {

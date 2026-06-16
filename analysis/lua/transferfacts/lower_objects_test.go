@@ -10,6 +10,8 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/cfgbuild"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
+	typetable "github.com/wippyai/go-lua/analysis/type/table"
+	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
 
@@ -71,6 +73,16 @@ func TestLowerExplicitAnyObjectLiteralDeclarationUsesDeclaredContract(t *testing
 	}
 	if _, ok := fact.DeclaredValue(); !ok {
 		t.Fatalf("root assignment = %#v, want declared value", fact)
+	}
+}
+
+func TestReachesRecordAcceptsInstantiatedRecord(t *testing.T) {
+	param := typ.NewTypeParam("T", nil)
+	box := typ.NewGeneric("Box", []*typ.TypeParam{param},
+		typetable.NewRecord().Field("value", param).Build())
+
+	if !reachesRecord(typ.Instantiate(box, typ.String)) {
+		t.Fatal("reachesRecord(instantiated record) = false, want true")
 	}
 }
 
