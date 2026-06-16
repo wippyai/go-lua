@@ -225,9 +225,29 @@ func decodeFunctionSignature(w functionSignatureWire) (signature.Function, error
 	if err != nil {
 		return signature.Function{}, err
 	}
+	if err := validateFunctionOperationalEffects(fn, operational); err != nil {
+		return signature.Function{}, err
+	}
 	var operationalPtr *signature.OperationalEffects
 	if w.OperationalEffects != nil && !operational.IsEmpty() {
 		operationalPtr = &operational
 	}
 	return signature.Function{Type: fn, Effect: row, OperationalEffects: operationalPtr}, nil
+}
+
+func validateFunctionOperationalEffects(fn *typ.Function, effects signature.OperationalEffects) error {
+	if fn == nil {
+		return errors.New("missing function type")
+	}
+	seenReturnAllocations := make(map[int]struct{}, len(effects.ReturnAllocationTemplates))
+	for _, template := range effects.ReturnAllocationTemplates {
+		if template.ReturnIndex < 0 || template.ReturnIndex >= len(fn.Returns) {
+			return fmt.Errorf("return allocation template index %d out of bounds for %d returns", template.ReturnIndex, len(fn.Returns))
+		}
+		if _, ok := seenReturnAllocations[template.ReturnIndex]; ok {
+			return fmt.Errorf("duplicate return allocation template for return index %d", template.ReturnIndex)
+		}
+		seenReturnAllocations[template.ReturnIndex] = struct{}{}
+	}
+	return nil
 }

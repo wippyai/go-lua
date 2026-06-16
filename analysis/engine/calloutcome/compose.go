@@ -1,6 +1,7 @@
 package calloutcome
 
 import (
+	"github.com/wippyai/go-lua/analysis/domain/placement"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/evidence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
@@ -87,6 +88,7 @@ func HasPostReturnEvidence(reg *axis.Registry, outcome factapply.CallOutcome) bo
 		len(outcome.NormalReturnFacts.EscapeEvents) != 0 ||
 		len(outcome.NormalReturnFacts.StoreRelations) != 0 ||
 		len(outcome.HeapTableObjects) != 0 ||
+		len(outcome.Placements) != 0 ||
 		len(outcome.ParamPathRefinements) != 0 ||
 		len(outcome.ParamPathInvalidations) != 0 ||
 		len(outcome.ParamConditions) != 0 ||
@@ -136,6 +138,7 @@ func withSupplementalFacts(reg *axis.Registry, out, second factapply.CallOutcome
 	out.NormalReturnFacts.EscapeEvents = append(out.NormalReturnFacts.EscapeEvents, second.NormalReturnFacts.EscapeEvents...)
 	out.NormalReturnFacts.StoreRelations = append(out.NormalReturnFacts.StoreRelations, second.NormalReturnFacts.StoreRelations...)
 	out.HeapTableObjects = withSupplementalHeapTableObjects(reg, out.HeapTableObjects, second.HeapTableObjects)
+	out.Placements = withSupplementalPlacements(out.Placements, second.Placements)
 	out.ParamPathRefinements = append(out.ParamPathRefinements, second.ParamPathRefinements...)
 	out.ParamPathInvalidations = append(out.ParamPathInvalidations, second.ParamPathInvalidations...)
 	out.ParamConditions = append(out.ParamConditions, second.ParamConditions...)
@@ -143,6 +146,37 @@ func withSupplementalFacts(reg *axis.Registry, out, second factapply.CallOutcome
 	out.ReturnConditionRefinements = append(out.ReturnConditionRefinements, second.ReturnConditionRefinements...)
 	out.ReturnPresenceRelations = append(out.ReturnPresenceRelations, second.ReturnPresenceRelations...)
 	out.PostReturnAuthority = second.PostReturnAuthority
+	return out
+}
+
+func withSupplementalPlacements(
+	left, right map[identity.ID]placement.Value,
+) map[identity.ID]placement.Value {
+	if len(right) == 0 {
+		return clonePlacements(left)
+	}
+	if len(left) == 0 {
+		return clonePlacements(right)
+	}
+	out := clonePlacements(left)
+	for id, value := range right {
+		if existing, ok := out[id]; ok {
+			out[id] = placement.Join(existing, value)
+			continue
+		}
+		out[id] = value
+	}
+	return out
+}
+
+func clonePlacements(in map[identity.ID]placement.Value) map[identity.ID]placement.Value {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[identity.ID]placement.Value, len(in))
+	for id, value := range in {
+		out[id] = value
+	}
 	return out
 }
 

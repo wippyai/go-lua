@@ -187,6 +187,12 @@ func TestManifestRoundTripNamedFunctionSignatureEffects(t *testing.T) {
 					KeyType: typ.String,
 					Value:   "example.transform:return:0:root.entry",
 				}},
+			}, {
+				ID:   "example.transform:return:0:root.child",
+				Type: typetable.NewRecord().Build(),
+			}, {
+				ID:   "example.transform:return:0:root.entry",
+				Type: typetable.NewRecord().Build(),
 			}},
 		}},
 	}
@@ -311,13 +317,9 @@ func TestManifestOperationalPathStaticMemberRequiresType(t *testing.T) {
 
 func TestManifestOperationalAllocationTemplateRequiresRootObject(t *testing.T) {
 	fn := typ.Func().Returns(typ.Any).Build()
-	encodedType, err := encodeType(fn)
-	if err != nil {
-		t.Fatalf("encodeType: %v", err)
-	}
-	_, err = decodeFunctionSignature(functionSignatureWire{
+	_, err := decodeFunctionSignature(functionSignatureWire{
 		Name: "allocation-template",
-		Type: encodedType,
+		Type: testEncodedFunctionType(t, fn),
 		OperationalEffects: &operationalEffectsWire{
 			ReturnAllocationTemplates: []returnAllocationTemplateWire{{
 				ReturnIndex: 0,
@@ -331,6 +333,117 @@ func TestManifestOperationalAllocationTemplateRequiresRootObject(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), `root "missing" has no object template`) {
 		t.Fatalf("decodeFunctionSignature error = %v, want missing allocation root object", err)
 	}
+}
+
+func TestManifestOperationalAllocationTemplateRejectsInvalidGraph(t *testing.T) {
+	fn := typ.Func().Returns(typ.Any).Build()
+	tests := []struct {
+		name string
+		wire returnAllocationTemplateWire
+		want string
+	}{
+		{
+			name: "return index out of bounds",
+			wire: returnAllocationTemplateWire{
+				ReturnIndex: 1,
+				Root:        "root",
+				Objects:     []allocationObjectWire{{ID: "root"}},
+			},
+			want: "return allocation template index 1 out of bounds for 1 returns",
+		},
+		{
+			name: "dangling static member value",
+			wire: returnAllocationTemplateWire{
+				ReturnIndex: 0,
+				Root:        "root",
+				Objects: []allocationObjectWire{{
+					ID: "root",
+					StaticMembers: []allocationStaticMemberWire{{
+						Suffix: ".child",
+						Value:  "missing-child",
+					}},
+				}},
+			},
+			want: `static member .child references missing object "missing-child"`,
+		},
+		{
+			name: "dangling dynamic key",
+			wire: returnAllocationTemplateWire{
+				ReturnIndex: 0,
+				Root:        "root",
+				Objects: []allocationObjectWire{{
+					ID: "root",
+					DynamicEntries: []allocationDynamicEntryWire{{
+						Key:   "missing-key",
+						Value: "value",
+					}},
+				}, {
+					ID: "value",
+				}},
+			},
+			want: `dynamic entry references missing key object "missing-key"`,
+		},
+		{
+			name: "dangling dynamic value",
+			wire: returnAllocationTemplateWire{
+				ReturnIndex: 0,
+				Root:        "root",
+				Objects: []allocationObjectWire{{
+					ID: "root",
+					DynamicEntries: []allocationDynamicEntryWire{{
+						Value: "missing-value",
+					}},
+				}},
+			},
+			want: `dynamic entry references missing value object "missing-value"`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := decodeFunctionSignature(functionSignatureWire{
+				Name: "allocation-template",
+				Type: testEncodedFunctionType(t, fn),
+				OperationalEffects: &operationalEffectsWire{
+					ReturnAllocationTemplates: []returnAllocationTemplateWire{tt.wire},
+				},
+			})
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("decodeFunctionSignature error = %v, want %q", err, tt.want)
+			}
+		})
+	}
+}
+
+func TestManifestOperationalAllocationTemplateRejectsDuplicateReturnIndex(t *testing.T) {
+	fn := typ.Func().Returns(typ.Any).Build()
+	_, err := decodeFunctionSignature(functionSignatureWire{
+		Name: "allocation-template",
+		Type: testEncodedFunctionType(t, fn),
+		OperationalEffects: &operationalEffectsWire{
+			ReturnAllocationTemplates: []returnAllocationTemplateWire{{
+				ReturnIndex: 0,
+				Root:        "left",
+				Objects:     []allocationObjectWire{{ID: "left"}},
+			}, {
+				ReturnIndex: 0,
+				Root:        "right",
+				Objects:     []allocationObjectWire{{ID: "right"}},
+			}},
+		},
+	})
+	if err == nil || !strings.Contains(err.Error(), "duplicate return allocation template for return index 0") {
+		t.Fatalf("decodeFunctionSignature error = %v, want duplicate return allocation template", err)
+	}
+}
+
+func testEncodedFunctionType(t *testing.T, fn *typ.Function) *typeWire {
+	t.Helper()
+	encodedType, err := encodeType(fn)
+	if err != nil {
+		t.Fatalf("encodeType: %v", err)
+	}
+	return encodedType
 }
 
 func TestManifestOperationalEffectsEncodeDeterministically(t *testing.T) {

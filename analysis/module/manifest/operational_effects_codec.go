@@ -448,7 +448,37 @@ func decodeReturnAllocationTemplate(w returnAllocationTemplateWire) (signature.R
 	if _, ok := seen[out.Root]; !ok {
 		return signature.ReturnAllocationTemplate{}, fmt.Errorf("root %q has no object template", out.Root)
 	}
+	if err := validateReturnAllocationTemplateRefs(out, seen); err != nil {
+		return signature.ReturnAllocationTemplate{}, err
+	}
 	return out, nil
+}
+
+func validateReturnAllocationTemplateRefs(
+	template signature.ReturnAllocationTemplate,
+	objects map[signature.AllocationTemplateID]struct{},
+) error {
+	for _, object := range template.Objects {
+		for _, member := range object.StaticMembers {
+			if _, ok := objects[member.Value]; !ok {
+				return fmt.Errorf("object %q static member %s references missing object %q",
+					object.ID, segment.FormatSegments(member.Suffix), member.Value)
+			}
+		}
+		for _, entry := range object.DynamicEntries {
+			if entry.Key != "" {
+				if _, ok := objects[entry.Key]; !ok {
+					return fmt.Errorf("object %q dynamic entry references missing key object %q", object.ID, entry.Key)
+				}
+			}
+			if entry.Value != "" {
+				if _, ok := objects[entry.Value]; !ok {
+					return fmt.Errorf("object %q dynamic entry references missing value object %q", object.ID, entry.Value)
+				}
+			}
+		}
+	}
+	return nil
 }
 
 func decodeAllocationObjectTemplate(w allocationObjectWire) (signature.AllocationObjectTemplate, error) {

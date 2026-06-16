@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/placement"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
@@ -257,6 +258,46 @@ func TestWithSupplementalMergesHeapTableObjectsWithoutAuthority(t *testing.T) {
 	}
 }
 
+func TestWithSupplementalMergesPlacementFactsWithoutAuthority(t *testing.T) {
+	tableID := identity.ID{Kind: "table", Site: "compose-placement", Index: 1}
+	otherID := identity.ID{Kind: "table", Site: "compose-placement", Index: 2}
+	primary := func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) factapply.CallOutcome {
+		return factapply.CallOutcome{
+			Placements: map[identity.ID]placement.Value{
+				tableID: placement.Stack,
+			},
+		}
+	}
+	supplemental := func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) factapply.CallOutcome {
+		return factapply.CallOutcome{
+			Placements: map[identity.ID]placement.Value{
+				tableID: placement.SharedHeap,
+				otherID: placement.OwnedHeap,
+			},
+		}
+	}
+
+	got := WithSupplemental(primary, supplemental)(transfer.NodeContext{}, factflow.NewCallSite(factflow.CallSiteConfig{}).View(), state.State{}, nil)
+	if got.Placements[tableID] != placement.SharedHeap {
+		t.Fatalf("placement[%v] = %s, want shared-heap", tableID, got.Placements[tableID])
+	}
+	if got.Placements[otherID] != placement.OwnedHeap {
+		t.Fatalf("placement[%v] = %s, want owned-heap", otherID, got.Placements[otherID])
+	}
+}
+
+func TestHasPostReturnEvidenceCountsPlacementFacts(t *testing.T) {
+	tableID := identity.ID{Kind: "table", Site: "compose-placement", Index: 3}
+	outcome := factapply.CallOutcome{
+		Placements: map[identity.ID]placement.Value{
+			tableID: placement.Stack,
+		},
+	}
+	if !HasPostReturnEvidence(standard.Registry(), outcome) {
+		t.Fatal("HasPostReturnEvidence = false, want true for placement facts")
+	}
+}
+
 func TestWithSupplementalAuthorityBlocksSupplementalHeapTableObjects(t *testing.T) {
 	reg := standard.Registry()
 	primaryID := identity.ID{Kind: "table", Site: "compose", Index: 2}
@@ -286,6 +327,38 @@ func TestWithSupplementalAuthorityBlocksSupplementalHeapTableObjects(t *testing.
 	}
 	if _, ok := got.HeapTableObjects[supplementalID]; ok {
 		t.Fatalf("HeapTableObjects = %#v, want supplemental identity blocked", got.HeapTableObjects)
+	}
+}
+
+func TestWithSupplementalAuthorityBlocksSupplementalPlacementFacts(t *testing.T) {
+	primaryID := identity.ID{Kind: "table", Site: "compose-placement", Index: 4}
+	supplementalID := identity.ID{Kind: "table", Site: "compose-placement", Index: 5}
+	primary := func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) factapply.CallOutcome {
+		return factapply.CallOutcome{
+			PostReturnAuthority: true,
+			Placements: map[identity.ID]placement.Value{
+				primaryID: placement.Stack,
+			},
+		}
+	}
+	supplemental := func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) factapply.CallOutcome {
+		return factapply.CallOutcome{
+			Placements: map[identity.ID]placement.Value{
+				primaryID:      placement.SharedHeap,
+				supplementalID: placement.OwnedHeap,
+			},
+		}
+	}
+
+	got := WithSupplemental(primary, supplemental)(transfer.NodeContext{}, factflow.NewCallSite(factflow.CallSiteConfig{}).View(), state.State{}, nil)
+	if len(got.Placements) != 1 {
+		t.Fatalf("Placements = %#v, want only authoritative primary placement", got.Placements)
+	}
+	if got.Placements[primaryID] != placement.Stack {
+		t.Fatalf("placement[%v] = %s, want primary stack placement", primaryID, got.Placements[primaryID])
+	}
+	if _, ok := got.Placements[supplementalID]; ok {
+		t.Fatalf("Placements = %#v, want supplemental placement blocked", got.Placements)
 	}
 }
 
