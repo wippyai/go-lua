@@ -127,7 +127,8 @@ func (p annotationAssignability) localAssignment(result *body.Result, point cfg.
 		mismatch = boundaryProofTypeMismatch(result, point, got, want, readBoundary)
 	}
 	if mismatch {
-		return assignmentDiagnostic(fact.Name, want, got, fact.Expr, fact.Type), true
+		extra := boundaryDiagnosticEvidence(result, point, ast.SpanOf(fact.Expr), want, readBoundary)
+		return assignmentDiagnostic(fact.Name, want, got, fact.Expr, fact.Type, extra...), true
 	}
 	return p.objectLiteralAssignment(result, point, fact.Name, want, fact.Expr, fact.Type, env)
 }
@@ -155,12 +156,14 @@ func (p annotationAssignability) pathAssignment(result *body.Result, point cfg.P
 		if !boundaryProofTypeMismatch(result, point, got, want, readBoundary) {
 			return diagnostic.Diagnostic{}, false
 		}
-		return pathAssignmentDiagnostic(fact.Target, fact.Value, got, want), true
+		extra := boundaryDiagnosticEvidence(result, point, ast.SpanOf(fact.Value), want, readBoundary)
+		return pathAssignmentDiagnostic(fact.Target, fact.Value, got, want, extra...), true
 	}
 	if !boundaryTypeMismatch(result, point, got, want, readBoundary) {
 		return diagnostic.Diagnostic{}, false
 	}
-	return pathAssignmentDiagnostic(fact.Target, fact.Value, got, want), true
+	extra := boundaryDiagnosticEvidence(result, point, ast.SpanOf(fact.Value), want, readBoundary)
+	return pathAssignmentDiagnostic(fact.Target, fact.Value, got, want, extra...), true
 }
 
 func directCallResultAssignmentWouldReport(result *body.Result, resolver typeannotation.Resolver, source sourceprovenance.ASTSource, want typ.Type, defs map[symbol.ID]*ast.FunctionExpr) bool {

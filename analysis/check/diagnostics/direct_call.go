@@ -317,7 +317,8 @@ func (p directCallContract) directFunctionCall(
 		} else if !directCallArgumentTypeMismatch(result, point, got, want, readBoundary) {
 			continue
 		}
-		return argTypeDiagnostic(call, contract.name, i, got, want, arg, contract.declSpan), true
+		extra := boundaryDiagnosticEvidence(result, point, ast.SpanOf(arg), want, readBoundary)
+		return argTypeDiagnostic(call, contract.name, i, got, want, arg, contract.declSpan, extra...), true
 	}
 	return diagnostic.Diagnostic{}, false
 }
@@ -612,9 +613,24 @@ func tooFewArgsDiagnostic(point cfg.Point, call *ast.FuncCallExpr, name string, 
 	}
 }
 
-func argTypeDiagnostic(call *ast.FuncCallExpr, name string, index int, got, want typ.Type, arg ast.Expr, declSpan ast.Span) diagnostic.Diagnostic {
+func argTypeDiagnostic(call *ast.FuncCallExpr, name string, index int, got, want typ.Type, arg ast.Expr, declSpan ast.Span, extraEvidence ...diagnostic.Evidence) diagnostic.Diagnostic {
 	span := ast.SpanOf(call)
 	argSpan := ast.SpanOf(arg)
+	evidence := []diagnostic.Evidence{
+		{
+			Kind:    diagnostic.EvidenceAbstractFact,
+			Trust:   diagnostic.TrustProven,
+			Span:    argSpan,
+			Message: fmt.Sprintf("argument %d is %s", index+1, formatType(got)),
+		},
+		{
+			Kind:    diagnostic.EvidenceUserAssertion,
+			Trust:   diagnostic.TrustClaimed,
+			Span:    declSpan,
+			Message: fmt.Sprintf("%s parameter %d declares %s", name, index+1, formatType(want)),
+		},
+	}
+	evidence = append(evidence, extraEvidence...)
 	return diagnostic.Diagnostic{
 		Position: diagnostic.Position{
 			Line:      span.StartLine,
@@ -622,25 +638,12 @@ func argTypeDiagnostic(call *ast.FuncCallExpr, name string, index int, got, want
 			EndLine:   span.EndLine,
 			EndColumn: span.EndCol,
 		},
-		Span:     span,
-		Code:     CodeDirectCallArgType,
-		Severity: diagnostic.SeverityError,
-		Message:  fmt.Sprintf("argument %d is %s, not %s", index+1, formatType(got), formatType(want)),
-		Explanation: diagnostic.NewExplanation(
-			diagnostic.Evidence{
-				Kind:    diagnostic.EvidenceAbstractFact,
-				Trust:   diagnostic.TrustProven,
-				Span:    argSpan,
-				Message: fmt.Sprintf("argument %d is %s", index+1, formatType(got)),
-			},
-			diagnostic.Evidence{
-				Kind:    diagnostic.EvidenceUserAssertion,
-				Trust:   diagnostic.TrustClaimed,
-				Span:    declSpan,
-				Message: fmt.Sprintf("%s parameter %d declares %s", name, index+1, formatType(want)),
-			},
-		),
-		Labels: []diagnostic.Label{{Span: argSpan, Message: "argument value"}},
+		Span:        span,
+		Code:        CodeDirectCallArgType,
+		Severity:    diagnostic.SeverityError,
+		Message:     fmt.Sprintf("argument %d is %s, not %s", index+1, formatType(got), formatType(want)),
+		Explanation: diagnostic.NewExplanation(evidence...),
+		Labels:      []diagnostic.Label{{Span: argSpan, Message: "argument value"}},
 	}
 }
 

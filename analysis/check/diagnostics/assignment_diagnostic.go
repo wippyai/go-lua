@@ -8,9 +8,24 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 )
 
-func assignmentDiagnostic(name string, want, got typ.Type, expr ast.Expr, annotation ast.TypeExpr) diagnostic.Diagnostic {
+func assignmentDiagnostic(name string, want, got typ.Type, expr ast.Expr, annotation ast.TypeExpr, extraEvidence ...diagnostic.Evidence) diagnostic.Diagnostic {
 	exprSpan := ast.SpanOf(expr)
 	typeSpan := ast.SpanOf(annotation)
+	evidence := []diagnostic.Evidence{
+		{
+			Kind:    diagnostic.EvidenceAbstractFact,
+			Trust:   diagnostic.TrustProven,
+			Span:    exprSpan,
+			Message: fmt.Sprintf("source expression is %s", formatType(got)),
+		},
+		{
+			Kind:    diagnostic.EvidenceUserAssertion,
+			Trust:   diagnostic.TrustClaimed,
+			Span:    typeSpan,
+			Message: fmt.Sprintf("%s is annotated %s", name, formatType(want)),
+		},
+	}
+	evidence = append(evidence, extraEvidence...)
 	return diagnostic.Diagnostic{
 		Position: diagnostic.Position{
 			Line:      exprSpan.StartLine,
@@ -18,24 +33,11 @@ func assignmentDiagnostic(name string, want, got typ.Type, expr ast.Expr, annota
 			EndLine:   exprSpan.EndLine,
 			EndColumn: exprSpan.EndCol,
 		},
-		Span:     exprSpan,
-		Code:     CodeAssignmentType,
-		Severity: diagnostic.SeverityError,
-		Message:  fmt.Sprintf("cannot assign %s to %s", formatType(got), formatType(want)),
-		Explanation: diagnostic.NewExplanation(
-			diagnostic.Evidence{
-				Kind:    diagnostic.EvidenceAbstractFact,
-				Trust:   diagnostic.TrustProven,
-				Span:    exprSpan,
-				Message: fmt.Sprintf("source expression is %s", formatType(got)),
-			},
-			diagnostic.Evidence{
-				Kind:    diagnostic.EvidenceUserAssertion,
-				Trust:   diagnostic.TrustClaimed,
-				Span:    typeSpan,
-				Message: fmt.Sprintf("%s is annotated %s", name, formatType(want)),
-			},
-		),
+		Span:        exprSpan,
+		Code:        CodeAssignmentType,
+		Severity:    diagnostic.SeverityError,
+		Message:     fmt.Sprintf("cannot assign %s to %s", formatType(got), formatType(want)),
+		Explanation: diagnostic.NewExplanation(evidence...),
 		Labels: []diagnostic.Label{
 			{Span: exprSpan, Message: "assigned value"},
 			{Span: typeSpan, Message: "declared type"},
@@ -43,9 +45,24 @@ func assignmentDiagnostic(name string, want, got typ.Type, expr ast.Expr, annota
 	}
 }
 
-func pathAssignmentDiagnostic(target ast.Expr, value ast.Expr, got, want typ.Type) diagnostic.Diagnostic {
+func pathAssignmentDiagnostic(target ast.Expr, value ast.Expr, got, want typ.Type, extraEvidence ...diagnostic.Evidence) diagnostic.Diagnostic {
 	valueSpan := ast.SpanOf(value)
 	targetSpan := ast.SpanOf(target)
+	evidence := []diagnostic.Evidence{
+		{
+			Kind:    diagnostic.EvidenceAbstractFact,
+			Trust:   diagnostic.TrustProven,
+			Span:    valueSpan,
+			Message: fmt.Sprintf("source expression is %s", formatType(got)),
+		},
+		{
+			Kind:    diagnostic.EvidenceAbstractFact,
+			Trust:   diagnostic.TrustProven,
+			Span:    targetSpan,
+			Message: fmt.Sprintf("assignment target expects %s", formatType(want)),
+		},
+	}
+	evidence = append(evidence, extraEvidence...)
 	return diagnostic.Diagnostic{
 		Position: diagnostic.Position{
 			Line:      valueSpan.StartLine,
@@ -53,24 +70,11 @@ func pathAssignmentDiagnostic(target ast.Expr, value ast.Expr, got, want typ.Typ
 			EndLine:   valueSpan.EndLine,
 			EndColumn: valueSpan.EndCol,
 		},
-		Span:     valueSpan,
-		Code:     CodeAssignmentType,
-		Severity: diagnostic.SeverityError,
-		Message:  fmt.Sprintf("cannot assign %s to %s", formatType(got), formatType(want)),
-		Explanation: diagnostic.NewExplanation(
-			diagnostic.Evidence{
-				Kind:    diagnostic.EvidenceAbstractFact,
-				Trust:   diagnostic.TrustProven,
-				Span:    valueSpan,
-				Message: fmt.Sprintf("source expression is %s", formatType(got)),
-			},
-			diagnostic.Evidence{
-				Kind:    diagnostic.EvidenceAbstractFact,
-				Trust:   diagnostic.TrustProven,
-				Span:    targetSpan,
-				Message: fmt.Sprintf("assignment target expects %s", formatType(want)),
-			},
-		),
+		Span:        valueSpan,
+		Code:        CodeAssignmentType,
+		Severity:    diagnostic.SeverityError,
+		Message:     fmt.Sprintf("cannot assign %s to %s", formatType(got), formatType(want)),
+		Explanation: diagnostic.NewExplanation(evidence...),
 		Labels: []diagnostic.Label{
 			{Span: valueSpan, Message: "assigned value"},
 			{Span: targetSpan, Message: "typed target"},

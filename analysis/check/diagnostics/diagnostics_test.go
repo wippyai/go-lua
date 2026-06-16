@@ -127,8 +127,10 @@ func TestAnnotationAssignabilityDoesNotTrustCastEscape(t *testing.T) {
 	if len(diags) != 1 {
 		t.Fatalf("diagnostics = %d, want 1: %#v", len(diags), diags)
 	}
-	if got := diags[0].Explanation.String(); !strings.Contains(got, "source expression") {
-		t.Fatalf("explanation = %q, want source evidence", got)
+	if got := diags[0].Explanation.String(); !strings.Contains(got, "source expression") ||
+		!strings.Contains(got, "claimed as any") ||
+		!strings.Contains(got, "no boundary proof") {
+		t.Fatalf("explanation = %q, want source, explicit-any claim, and missing-proof evidence", got)
 	}
 }
 
@@ -157,6 +159,10 @@ accept(raw)
 	}
 	if d := diags[0]; d.Code != CodeDirectCallArgType || !strings.Contains(d.Message, "id") {
 		t.Fatalf("diagnostic = %#v, want direct call mismatch for record id contract", d)
+	}
+	if got := diags[0].Explanation.String(); !strings.Contains(got, "claimed as any") ||
+		!strings.Contains(got, "no boundary proof") {
+		t.Fatalf("explanation = %q, want explicit-any claim and missing-proof evidence", got)
 	}
 }
 
