@@ -2,6 +2,7 @@ package format
 
 import (
 	"github.com/wippyai/go-lua/analysis/internal/recursion"
+	"github.com/wippyai/go-lua/analysis/type/inspect"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
@@ -24,8 +25,8 @@ func (f *formatter) formatType(t typ.Type, depth int, guard recursion.Guard) {
 		return
 	}
 
-	visitWithGuard(t, guard, struct{}{}, func(next recursion.Guard) typ.Visitor[struct{}] {
-		return typ.Visitor[struct{}]{
+	visitWithGuard(t, guard, struct{}{}, func(next recursion.Guard) inspect.Visitor[struct{}] {
+		return inspect.Visitor[struct{}]{
 			Union: func(u *typ.Union) struct{} {
 				f.formatUnion(u, depth, next)
 				return struct{}{}
@@ -164,7 +165,7 @@ func visitWithGuard[R any](
 	t typ.Type,
 	guard recursion.Guard,
 	onCycle R,
-	build func(next recursion.Guard) typ.Visitor[R],
+	build func(next recursion.Guard) inspect.Visitor[R],
 ) R {
 	if t == nil {
 		return onCycle
@@ -173,5 +174,5 @@ func visitWithGuard[R any](
 	if !ok {
 		return onCycle
 	}
-	return typ.Visit(t, build(next))
+	return inspect.Visit(t, build(next))
 }

@@ -1,103 +1,105 @@
-package typ
+package inspect
+
+import "github.com/wippyai/go-lua/analysis/type/typ"
 
 // Visitor dispatches on concrete type implementations.
 // Nil handlers fall back to Default when provided; otherwise return zero.
 type Visitor[R any] struct {
-	Optional     func(*Optional) R
-	Union        func(*Union) R
-	Intersection func(*Intersection) R
-	Array        func(*Array) R
-	Map          func(*Map) R
-	ReadonlyMap  func(*ReadonlyMap) R
-	Tuple        func(*Tuple) R
-	Function     func(*Function) R
-	Record       func(*Record) R
-	Alias        func(*Alias) R
-	Ref          func(*Ref) R
-	Meta         func(*Meta) R
-	Generic      func(*Generic) R
-	Instantiated func(*Instantiated) R
-	TypeParam    func(*TypeParam) R
-	Interface    func(*Interface) R
-	Recursive    func(*Recursive) R
-	Literal      func(*Literal) R
-	Default      func(Type) R
+	Optional     func(*typ.Optional) R
+	Union        func(*typ.Union) R
+	Intersection func(*typ.Intersection) R
+	Array        func(*typ.Array) R
+	Map          func(*typ.Map) R
+	ReadonlyMap  func(*typ.ReadonlyMap) R
+	Tuple        func(*typ.Tuple) R
+	Function     func(*typ.Function) R
+	Record       func(*typ.Record) R
+	Alias        func(*typ.Alias) R
+	Ref          func(*typ.Ref) R
+	Meta         func(*typ.Meta) R
+	Generic      func(*typ.Generic) R
+	Instantiated func(*typ.Instantiated) R
+	TypeParam    func(*typ.TypeParam) R
+	Interface    func(*typ.Interface) R
+	Recursive    func(*typ.Recursive) R
+	Literal      func(*typ.Literal) R
+	Default      func(typ.Type) R
 }
 
 // Visit applies the first matching handler in v to t.
-func Visit[R any](t Type, v Visitor[R]) R {
-	t = unwrapTransparentWrappers(t)
+func Visit[R any](t typ.Type, v Visitor[R]) R {
+	t = unwrapTransparent(t)
 
 	switch tt := t.(type) {
-	case *Optional:
+	case *typ.Optional:
 		if v.Optional != nil {
 			return v.Optional(tt)
 		}
-	case *Union:
+	case *typ.Union:
 		if v.Union != nil {
 			return v.Union(tt)
 		}
-	case *Intersection:
+	case *typ.Intersection:
 		if v.Intersection != nil {
 			return v.Intersection(tt)
 		}
-	case *Array:
+	case *typ.Array:
 		if v.Array != nil {
 			return v.Array(tt)
 		}
-	case *Map:
+	case *typ.Map:
 		if v.Map != nil {
 			return v.Map(tt)
 		}
-	case *ReadonlyMap:
+	case *typ.ReadonlyMap:
 		if v.ReadonlyMap != nil {
 			return v.ReadonlyMap(tt)
 		}
-	case *Tuple:
+	case *typ.Tuple:
 		if v.Tuple != nil {
 			return v.Tuple(tt)
 		}
-	case *Function:
+	case *typ.Function:
 		if v.Function != nil {
 			return v.Function(tt)
 		}
-	case *Record:
+	case *typ.Record:
 		if v.Record != nil {
 			return v.Record(tt)
 		}
-	case *Alias:
+	case *typ.Alias:
 		if v.Alias != nil {
 			return v.Alias(tt)
 		}
-	case *Ref:
+	case *typ.Ref:
 		if v.Ref != nil {
 			return v.Ref(tt)
 		}
-	case *Meta:
+	case *typ.Meta:
 		if v.Meta != nil {
 			return v.Meta(tt)
 		}
-	case *Generic:
+	case *typ.Generic:
 		if v.Generic != nil {
 			return v.Generic(tt)
 		}
-	case *Instantiated:
+	case *typ.Instantiated:
 		if v.Instantiated != nil {
 			return v.Instantiated(tt)
 		}
-	case *TypeParam:
+	case *typ.TypeParam:
 		if v.TypeParam != nil {
 			return v.TypeParam(tt)
 		}
-	case *Interface:
+	case *typ.Interface:
 		if v.Interface != nil {
 			return v.Interface(tt)
 		}
-	case *Recursive:
+	case *typ.Recursive:
 		if v.Recursive != nil {
 			return v.Recursive(tt)
 		}
-	case *Literal:
+	case *typ.Literal:
 		if v.Literal != nil {
 			return v.Literal(tt)
 		}
@@ -107,24 +109,4 @@ func Visit[R any](t Type, v Visitor[R]) R {
 	}
 	var zero R
 	return zero
-}
-
-func unwrapTransparentWrappers(t Type) Type {
-	for {
-		ann, ok := t.(*Annotated)
-		if !ok {
-			return t
-		}
-		if ann.Inner == nil || ann.Inner == t {
-			return t
-		}
-		t = ann.Inner
-	}
-}
-
-func unwrapAnnotatedOrNil(t Type) Type {
-	if t == nil {
-		return nil
-	}
-	return unwrapAnnotated(t)
 }

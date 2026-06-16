@@ -7,37 +7,29 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/state/pathevidence"
 )
 
-type PathRefinementsSnapshot = pathevidence.PathRefinementsSnapshot
-
 // PathRefinementsSnapshot returns finite must path refinements. Bottom is
 // explicit; Top means the reachable must lane contains no finite refinements
 // and callers must not manufacture finite facts from it.
-func (s State) PathRefinementsSnapshot() PathRefinementsSnapshot {
+func (s State) PathRefinementsSnapshot() pathevidence.PathRefinementsSnapshot {
 	return s.pathEvidence.PathRefinementsSnapshot()
 }
 
-type PathStaticMembersSnapshot = pathevidence.PathStaticMembersSnapshot
-
 // PathStaticMembersSnapshot returns finite must-static-member facts. Bottom is
 // explicit; Top means the reachable must lane contains no finite facts.
-func (s State) PathStaticMembersSnapshot() PathStaticMembersSnapshot {
+func (s State) PathStaticMembersSnapshot() pathevidence.PathStaticMembersSnapshot {
 	return s.pathEvidence.PathStaticMembersSnapshot()
 }
 
-type BranchProofsSnapshot = pathevidence.BranchProofsSnapshot
-
 // BranchProofsSnapshot returns finite must branch proofs in stable order.
 // Bottom is explicit; Top means the reachable must lane contains no proofs.
-func (s State) BranchProofsSnapshot() BranchProofsSnapshot {
+func (s State) BranchProofsSnapshot() pathevidence.BranchProofsSnapshot {
 	return s.pathEvidence.BranchProofsSnapshot()
 }
-
-type PathPresenceImplicationsSnapshot = pathevidence.PathPresenceImplicationsSnapshot
 
 // PathPresenceImplicationsSnapshot returns finite must path-presence
 // implications in stable order. Bottom is explicit; Top means the reachable
 // must lane contains no implications.
-func (s State) PathPresenceImplicationsSnapshot() PathPresenceImplicationsSnapshot {
+func (s State) PathPresenceImplicationsSnapshot() pathevidence.PathPresenceImplicationsSnapshot {
 	return s.pathEvidence.PathPresenceImplicationsSnapshot()
 }
 

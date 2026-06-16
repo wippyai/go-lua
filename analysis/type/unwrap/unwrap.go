@@ -146,24 +146,20 @@ func IsOptionalLike(t typ.Type) bool {
 	if u == nil {
 		return true
 	}
-	return typ.Visit(u, typ.Visitor[bool]{
-		Optional: func(*typ.Optional) bool {
-			return true
-		},
-		Union: func(u *typ.Union) bool {
-			for _, m := range u.Members {
-				if IsOptionalLike(m) {
-					return true
-				}
+	switch tt := u.(type) {
+	case *typ.Optional:
+		return true
+	case *typ.Union:
+		for _, m := range tt.Members {
+			if IsOptionalLike(m) {
+				return true
 			}
-
-			return false
-		},
-		Default: func(t typ.Type) bool {
-			k := t.Kind()
-			return k == kind.Nil || k.IsPlaceholder()
-		},
-	})
+		}
+		return false
+	default:
+		k := u.Kind()
+		return k == kind.Nil || k.IsPlaceholder()
+	}
 }
 
 func transparent(t typ.Type) typ.Type {

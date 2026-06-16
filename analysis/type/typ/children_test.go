@@ -18,13 +18,13 @@ func TestWalkChildrenCanonicalOrder(t *testing.T) {
 	}
 	collect := func(node Type, children map[Type]string) []string {
 		var got []string
-		if !WalkChildren(node, func(child Type) bool {
+		if !walkChildren(node, func(child Type) bool {
 			got = append(got, label(children, child))
 			return false
 		}) {
 			return got
 		}
-		t.Fatal("WalkChildren should not stop when visit always returns false")
+		t.Fatal("walkChildren should not stop when visit always returns false")
 		return nil
 	}
 
@@ -177,7 +177,7 @@ func TestWalkChildrenCanonicalOrder(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			got := collect(tc.node, tc.children)
 			if !reflect.DeepEqual(got, tc.want) {
-				t.Fatalf("WalkChildren order = %v, want %v", got, tc.want)
+				t.Fatalf("walkChildren order = %v, want %v", got, tc.want)
 			}
 		})
 	}
@@ -192,17 +192,17 @@ func TestWalkChildrenSkipsAbsentChildSlots(t *testing.T) {
 	}
 
 	for _, node := range []Type{recursive, function, record} {
-		if WalkChildren(node, func(child Type) bool {
-			t.Fatalf("WalkChildren visited absent child %T %v in %T", child, child, node)
+		if walkChildren(node, func(child Type) bool {
+			t.Fatalf("walkChildren visited absent child %T %v in %T", child, child, node)
 			return true
 		}) {
-			t.Fatalf("WalkChildren stopped on absent child in %T", node)
+			t.Fatalf("walkChildren stopped on absent child in %T", node)
 		}
 	}
 
 	recursive.SetBody(Number)
 	visited := false
-	WalkChildren(recursive, func(child Type) bool {
+	walkChildren(recursive, func(child Type) bool {
 		visited = true
 		if child != Number {
 			t.Fatalf("recursive body child = %v, want number", child)
@@ -210,7 +210,7 @@ func TestWalkChildrenSkipsAbsentChildSlots(t *testing.T) {
 		return false
 	})
 	if !visited {
-		t.Fatal("WalkChildren missed recursive body after SetBody")
+		t.Fatal("walkChildren missed recursive body after SetBody")
 	}
 }
 
@@ -220,12 +220,12 @@ func TestWalkChildrenUsesTransparentAnnotationPolicy(t *testing.T) {
 	node := NewAnnotated(NewAnnotated(alias, nil), nil)
 
 	var got []Type
-	WalkChildren(node, func(child Type) bool {
+	walkChildren(node, func(child Type) bool {
 		got = append(got, child)
 		return false
 	})
 
 	if len(got) != 1 || got[0] != target {
-		t.Fatalf("WalkChildren annotated alias children = %#v, want alias target", got)
+		t.Fatalf("walkChildren annotated alias children = %#v, want alias target", got)
 	}
 }

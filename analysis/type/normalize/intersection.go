@@ -1,6 +1,7 @@
 package normalize
 
 import (
+	"github.com/wippyai/go-lua/analysis/type/inspect"
 	"github.com/wippyai/go-lua/analysis/type/kind"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/unwrap"
@@ -74,7 +75,7 @@ func intersectionMemberAcceptsNil(t typ.Type) bool {
 		return false
 	}
 
-	return typ.Visit(t, typ.Visitor[bool]{
+	return inspect.Visit(t, inspect.Visitor[bool]{
 		Optional: func(o *typ.Optional) bool {
 			return true
 		},

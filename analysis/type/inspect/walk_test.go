@@ -7,7 +7,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
-func TestWalkChildrenDelegatesToTypCanonicalOrder(t *testing.T) {
+func TestWalkChildrenCanonicalOrder(t *testing.T) {
 	leaf := func(name string) typ.Type {
 		return typ.NewRef("", name)
 	}
@@ -56,21 +56,12 @@ func TestWalkChildrenDelegatesToTypCanonicalOrder(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			gotTyp := make([]string, 0, len(tc.want))
-			typ.WalkChildren(tc.node, func(child typ.Type) bool {
-				gotTyp = append(gotTyp, label(child))
-				return false
-			})
-
 			gotInspect := make([]string, 0, len(tc.want))
 			WalkChildren(tc.node, func(child typ.Type) bool {
 				gotInspect = append(gotInspect, label(child))
 				return false
 			})
 
-			if !reflect.DeepEqual(gotInspect, gotTyp) {
-				t.Fatalf("inspect.WalkChildren = %v, want %v", gotInspect, gotTyp)
-			}
 			if !reflect.DeepEqual(gotInspect, tc.want) {
 				t.Fatalf("inspect.WalkChildren order = %v, want %v", gotInspect, tc.want)
 			}
