@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/placement"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
@@ -56,6 +57,7 @@ func TestSnapshotsCloneFiniteLanes(t *testing.T) {
 		Admission:   dynamicindex.AdmissionRejected,
 	}
 	heapID := identity.ID{Kind: "table", Site: "snapshot", Index: 1}
+	placementID := identity.ID{Kind: "table", Site: "snapshot-placement", Index: 1}
 	frozenID := identity.ID{Kind: "table", Site: "snapshot-freeze", Index: 1}
 	otherFrozenID := identity.ID{Kind: "table", Site: "snapshot-freeze", Index: 2}
 	effectDelta := effectdelta.Value{Before: present, After: present, Change: effectdelta.ChangeChanged}
@@ -69,6 +71,7 @@ func TestSnapshotsCloneFiniteLanes(t *testing.T) {
 			Root:          present,
 			StaticMembers: map[pathdom.PathKey]product.Value{memberKey: present},
 		})).
+		WritePlacement(placementID, placement.Stack).
 		AddBranchProof(proof).
 		AddPathPresenceImplication(implication).
 		AddChannelSelectFact(selectFact).
@@ -128,6 +131,18 @@ func TestSnapshotsCloneFiniteLanes(t *testing.T) {
 	}
 	if got := s.HeapTableObjectsSnapshot().Objects[heapID]; !product.Equal(reg, got.Root(), present) {
 		t.Fatalf("fresh heap snapshot root = %#v, want original", got.Root())
+	}
+
+	placementSnapshot := s.PlacementsSnapshot()
+	if placementSnapshot.Top || len(placementSnapshot.Placements) != 1 {
+		t.Fatalf("placement snapshot = %#v, want one finite placement", placementSnapshot)
+	}
+	placementSnapshot.Placements[placementID] = placement.SharedHeap
+	if got := s.ReadPlacement(placementID); got != placement.Stack {
+		t.Fatalf("placement snapshot mutation changed state to %s", got)
+	}
+	if got := s.PlacementsSnapshot().Placements[placementID]; got != placement.Stack {
+		t.Fatalf("fresh placement snapshot = %s, want stack", got)
 	}
 
 	branchSnapshot := s.BranchProofsSnapshot()
@@ -221,6 +236,10 @@ func TestSnapshotTopBottomAndEmptyLanes(t *testing.T) {
 	if !topHeap.Top || len(topHeap.Objects) != 0 {
 		t.Fatalf("top heap snapshot = %#v, want top with no finite objects", topHeap)
 	}
+	topPlacements := top.PlacementsSnapshot()
+	if !topPlacements.Top || len(topPlacements.Placements) != 0 {
+		t.Fatalf("top placement snapshot = %#v, want top with no finite placements", topPlacements)
+	}
 	topEffects := top.EffectDeltasSnapshot()
 	if !topEffects.Top || len(topEffects.Deltas) != 0 {
 		t.Fatalf("top effect-delta snapshot = %#v, want top with no finite facts", topEffects)
@@ -262,6 +281,10 @@ func TestSnapshotTopBottomAndEmptyLanes(t *testing.T) {
 	if bottomHeap.Top || len(bottomHeap.Objects) != 0 {
 		t.Fatalf("bottom heap snapshot = %#v, want finite empty pointwise lane", bottomHeap)
 	}
+	bottomPlacements := bottom.PlacementsSnapshot()
+	if bottomPlacements.Top || len(bottomPlacements.Placements) != 0 {
+		t.Fatalf("bottom placement snapshot = %#v, want finite empty pointwise lane", bottomPlacements)
+	}
 	bottomEffects := bottom.EffectDeltasSnapshot()
 	if bottomEffects.Top || len(bottomEffects.Deltas) != 0 {
 		t.Fatalf("bottom effect-delta snapshot = %#v, want finite empty pointwise lane", bottomEffects)
@@ -302,6 +325,10 @@ func TestSnapshotTopBottomAndEmptyLanes(t *testing.T) {
 	emptyHeap := empty.HeapTableObjectsSnapshot()
 	if emptyHeap.Top || len(emptyHeap.Objects) != 0 {
 		t.Fatalf("empty heap snapshot = %#v, want finite empty pointwise lane", emptyHeap)
+	}
+	emptyPlacements := empty.PlacementsSnapshot()
+	if emptyPlacements.Top || len(emptyPlacements.Placements) != 0 {
+		t.Fatalf("empty placement snapshot = %#v, want finite empty pointwise lane", emptyPlacements)
 	}
 	emptyEffects := empty.EffectDeltasSnapshot()
 	if emptyEffects.Top || len(emptyEffects.Deltas) != 0 {

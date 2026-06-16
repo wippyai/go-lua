@@ -1,6 +1,7 @@
 package state
 
 import (
+	"github.com/wippyai/go-lua/analysis/domain/placement"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/engine/dynamicindex"
 	"github.com/wippyai/go-lua/analysis/engine/state/channelselectfact"
@@ -66,4 +67,19 @@ func (s State) HeapTableObjectsSnapshot() HeapTableObjectsSnapshot {
 		return HeapTableObjectsSnapshot{Top: true}
 	}
 	return HeapTableObjectsSnapshot{Objects: heapidentity.CloneMap(s.heapTableIdentity.values)}
+}
+
+type PlacementsSnapshot struct {
+	Top        bool
+	Placements map[identity.ID]placement.Value
+}
+
+// PlacementsSnapshot returns finite identity-keyed allocation placements unless
+// the lane is top. Missing entries are not stack-safe proofs; they mean no
+// finite placement fact is available for that identity.
+func (s State) PlacementsSnapshot() PlacementsSnapshot {
+	if s.placement.top {
+		return PlacementsSnapshot{Top: true}
+	}
+	return PlacementsSnapshot{Placements: clonePlacementValues(s.placement.values)}
 }

@@ -495,6 +495,18 @@ func TestCheckSplitDirectImportBoundaries(t *testing.T) {
 			},
 		},
 		{
+			name: "placementplan stays projection-only",
+			pkg:  modulePath + "/analysis/check/placementplan",
+			banned: []string{
+				modulePath + "/analysis/check/checktest",
+				modulePath + "/analysis/check/diagnostics",
+				modulePath + "/analysis/check/exportmanifest",
+				modulePath + "/analysis/lua",
+				modulePath + "/analysis/type",
+				modulePath + "/compiler",
+			},
+		},
+		{
 			name: "value refinement remains below engine and check layers",
 			pkg:  modulePath + "/analysis/domain/value/refinement",
 			banned: []string{
