@@ -27,6 +27,7 @@ type NormalReturnFacts struct {
 	FrozenTables      []FrozenTableFact
 	EffectDeltas      []EffectDelta
 	EscapeEvents      []EscapeEventFact
+	StoreRelations    []StoreRelationFact
 }
 
 // PathValueFact records a pointwise placeholder-path value refinement.
@@ -125,6 +126,14 @@ type EscapeEventFact struct {
 	Target    pathdom.Path
 	Kind      EscapeEventKind
 	Recursive bool
+}
+
+// StoreRelationFact records that Source is stored into Into on a normal return.
+// It preserves manifest-level ownership.Store{Param,Into} relation evidence
+// while behavior remains carried by EscapeEvents and PathInvalidations.
+type StoreRelationFact struct {
+	Source pathdom.Path
+	Into   pathdom.Path
 }
 
 const escapeEventEffectSitePrefix = "escape-event."

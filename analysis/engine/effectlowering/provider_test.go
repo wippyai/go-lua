@@ -525,6 +525,77 @@ func TestSignatureOutcomeProviderLowersTableMutatorToParamPathInvalidationAndApp
 	assertPathValue(t, reg, flow[graph.Exit()], unrelatedKey, present)
 }
 
+func TestSignatureOutcomeProviderLowersMutateToParamPathInvalidationAndApplies(t *testing.T) {
+	reg := standard.Registry()
+	graph := cfg.New()
+	call := graph.AddNode(cfg.NodeCall)
+	graph.AddEdge(graph.Entry(), call, false)
+	graph.AddEdge(call, graph.Exit(), false)
+
+	argExpr := factflow.ExprRef(905)
+	argSymbol := symbol.ID(906)
+	argPath := path.NewPath(argSymbol, "items")
+	containerKey := path.PathKey("sym906@1")
+	childKey := path.PathKey("sym906@1.child")
+	present := product.NewWithPresence(reg, product.ShapeTop, presence.Present())
+	facts := factflow.NewFacts(factflow.FactsInput{
+		CallSites: map[cfg.Point]factflow.CallSite{
+			call: factflow.NewCallSite(factflow.CallSiteConfig{
+				Context: factflow.CallSiteContextStatement,
+				ArgumentSources: []factflow.ValueSource{
+					{Kind: factflow.ValueSourceExpression, ExprRef: argExpr, HasExpr: true},
+				},
+			}),
+		},
+		ExpressionPaths: map[factflow.ExprRef]path.Path{
+			argExpr: argPath,
+		},
+	})
+
+	provider := SignatureOutcomeProvider(SignatureOutcomeProviderConfig{
+		Signatures: signatureMap{
+			"table.sort": {
+				Effect: effect.Empty.With(mutation.Mutate{
+					Target:    effect.ParamRef{Index: 0},
+					Transform: mutation.Unchanged{},
+				}),
+			},
+		},
+		NameFor: staticName("table.sort"),
+		Facts:   facts,
+	})
+	site, ok := facts.CallSite(call)
+	if !ok {
+		t.Fatalf("missing call site")
+	}
+	got := provider(transfer.NodeContext{Graph: graph, Registry: reg, Point: call, Node: graph.Node(call)}, site.View(), state.State{}, nil)
+
+	if len(got.ParamPathInvalidations) != 1 ||
+		!got.ParamPathInvalidations[0].Path.Equal(path.NewPlaceholder(0)) {
+		t.Fatalf("param path invalidations = %#v, want target $0", got.ParamPathInvalidations)
+	}
+	if len(got.NormalReturnFacts.PathInvalidations) != 1 ||
+		!got.NormalReturnFacts.PathInvalidations[0].Path.Equal(path.NewPlaceholder(0)) {
+		t.Fatalf("normal-return invalidations = %#v, want target $0", got.NormalReturnFacts.PathInvalidations)
+	}
+	visibilityBuilder := visibility.NewBuilder()
+	visibilityBuilder.Define(call, argSymbol, "items")
+	flow := transfer.Run(transfer.Config{
+		Graph:    graph,
+		Registry: reg,
+		EntryState: state.State{}.
+			WritePathKey(reg, containerKey, present).
+			WritePathKey(reg, childKey, present),
+		NodeTransfer: factapply.NewFactsNodeTransfer(factapply.FactsNodeTransferConfig{
+			Facts:       facts,
+			CallOutcome: provider,
+			Visibility:  visibility.NewResolver(visibilityBuilder.Build()),
+		}),
+	})
+	assertPathValue(t, reg, flow[graph.Exit()], containerKey, present)
+	assertPathValue(t, reg, flow[graph.Exit()], childKey, product.Bottom(reg))
+}
+
 func TestSignatureOutcomeProviderLowersStoreIntoContainerArgument(t *testing.T) {
 	graph := cfg.New()
 	call := graph.AddNode(cfg.NodeCall)
@@ -574,6 +645,11 @@ func TestSignatureOutcomeProviderLowersStoreIntoContainerArgument(t *testing.T) 
 	if len(got.NormalReturnFacts.PathInvalidations) != 1 ||
 		!got.NormalReturnFacts.PathInvalidations[0].Path.Equal(path.NewPlaceholder(0)) {
 		t.Fatalf("normal-return invalidations = %#v, want container argument $0", got.NormalReturnFacts.PathInvalidations)
+	}
+	if len(got.NormalReturnFacts.StoreRelations) != 1 ||
+		!got.NormalReturnFacts.StoreRelations[0].Source.Equal(path.NewPlaceholder(1)) ||
+		!got.NormalReturnFacts.StoreRelations[0].Into.Equal(path.NewPlaceholder(0)) {
+		t.Fatalf("store relations = %#v, want source $1 into $0", got.NormalReturnFacts.StoreRelations)
 	}
 }
 
@@ -825,6 +901,45 @@ func TestSignatureOutcomeProviderOwnershipBorrowEffectsRecordBorrowWithoutPlacem
 	if got.IsTableFrozen(tableID) {
 		t.Fatalf("table %v was frozen by borrow-only signature", tableID)
 	}
+}
+
+func TestSignatureOutcomeProviderBorrowAllBorrowsEveryBindableArgument(t *testing.T) {
+	point := cfg.Point(927)
+	arg0 := factflow.ExprRef(927)
+	arg1 := factflow.ExprRef(928)
+	facts := factflow.NewFacts(factflow.FactsInput{
+		CallSites: map[cfg.Point]factflow.CallSite{
+			point: factflow.NewCallSite(factflow.CallSiteConfig{
+				Context: factflow.CallSiteContextStatement,
+				ArgumentSources: []factflow.ValueSource{
+					{Kind: factflow.ValueSourceExpression, ExprRef: arg0, HasExpr: true},
+					{Kind: factflow.ValueSourceNil},
+					{Kind: factflow.ValueSourceExpression, ExprRef: arg1, HasExpr: true},
+				},
+			}),
+		},
+	})
+
+	provider := SignatureOutcomeProvider(SignatureOutcomeProviderConfig{
+		Signatures: signatureMap{
+			"borrowAll": {
+				Effect: effect.Empty.With(ownership.BorrowAll{}),
+			},
+		},
+		NameFor: staticName("borrowAll"),
+		Facts:   facts,
+	})
+	site, ok := facts.CallSite(point)
+	if !ok {
+		t.Fatalf("missing call site")
+	}
+	got := provider(transfer.NodeContext{Point: point}, site.View(), state.State{}, nil)
+
+	if len(got.NormalReturnFacts.EscapeEvents) != 2 {
+		t.Fatalf("escape events = %#v, want two bindable-argument borrows", got.NormalReturnFacts.EscapeEvents)
+	}
+	assertEscapeEvent(t, got.NormalReturnFacts.EscapeEvents, path.NewPlaceholder(0), callboundary.EscapeEventBorrow, true)
+	assertEscapeEvent(t, got.NormalReturnFacts.EscapeEvents, path.NewPlaceholder(2), callboundary.EscapeEventBorrow, true)
 }
 
 func TestSignatureOutcomeProviderOwnershipEffectsApplyPlacementAndFreeze(t *testing.T) {

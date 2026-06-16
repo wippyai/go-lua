@@ -149,8 +149,10 @@ func functionSummaryEffect(s summary.Summary, fn *typ.Function) effect.Row {
 	}
 	labels := errorReturnLabels(s.ReturnPresenceRelations, len(fn.Returns))
 	labels = append(labels, normalReturnParamRefinementLabels(s.NormalReturnParams, len(fn.Params))...)
-	labels = append(labels, normalReturnOwnershipLabels(s.NormalReturnFacts, len(fn.Params))...)
-	labels = append(labels, normalReturnMutationLabels(s.NormalReturnFacts, len(fn.Params))...)
+	storeRelations, exactStoreSources, exactStoreTargets := normalReturnStoreRelationLabels(s.NormalReturnFacts, len(fn.Params))
+	labels = append(labels, storeRelations...)
+	labels = append(labels, normalReturnOwnershipLabels(s.NormalReturnFacts, len(fn.Params), exactStoreSources)...)
+	labels = append(labels, normalReturnMutationLabels(s.NormalReturnFacts, len(fn.Params), exactStoreTargets)...)
 	if len(labels) == 0 {
 		return effect.Empty
 	}
@@ -161,7 +163,7 @@ func functionSummaryEffect(s summary.Summary, fn *typ.Function) effect.Row {
 	return row
 }
 
-func normalReturnOwnershipLabels(facts callboundary.NormalReturnFacts, arity int) []effect.Label {
+func normalReturnOwnershipLabels(facts callboundary.NormalReturnFacts, arity int, exactStoreSources map[int]struct{}) []effect.Label {
 	if arity <= 0 {
 		return nil
 	}
@@ -177,6 +179,9 @@ func normalReturnOwnershipLabels(facts callboundary.NormalReturnFacts, arity int
 		case callboundary.EscapeEventRetain:
 			out = append(out, ownership.Retain{Param: effect.ParamRef{Index: param}})
 		case callboundary.EscapeEventStore:
+			if _, exact := exactStoreSources[param]; exact {
+				continue
+			}
 			out = append(out, ownership.Store{
 				Param: effect.ParamRef{Index: param},
 				Into:  effect.ParamRef{Index: -1},
@@ -199,6 +204,35 @@ func normalReturnOwnershipLabels(facts callboundary.NormalReturnFacts, arity int
 	return out
 }
 
+func normalReturnStoreRelationLabels(facts callboundary.NormalReturnFacts, arity int) ([]effect.Label, map[int]struct{}, map[int]struct{}) {
+	if arity <= 0 || len(facts.StoreRelations) == 0 {
+		return nil, nil, nil
+	}
+	var out []effect.Label
+	sources := make(map[int]struct{})
+	targets := make(map[int]struct{})
+	for _, relation := range facts.StoreRelations {
+		source, ok := rootPlaceholderParam(relation.Source, arity)
+		if !ok {
+			continue
+		}
+		into, ok := rootPlaceholderParam(relation.Into, arity)
+		if !ok {
+			continue
+		}
+		out = append(out, ownership.Store{
+			Param: effect.ParamRef{Index: source},
+			Into:  effect.ParamRef{Index: into},
+		})
+		sources[source] = struct{}{}
+		targets[into] = struct{}{}
+	}
+	if len(out) == 0 {
+		return nil, nil, nil
+	}
+	return out, sources, targets
+}
+
 func rootPlaceholderParam(p pathdom.Path, arity int) (int, bool) {
 	if len(p.Segments) != 0 {
 		return 0, false
@@ -210,7 +244,7 @@ func rootPlaceholderParam(p pathdom.Path, arity int) (int, bool) {
 	return idx, true
 }
 
-func normalReturnMutationLabels(facts callboundary.NormalReturnFacts, arity int) []effect.Label {
+func normalReturnMutationLabels(facts callboundary.NormalReturnFacts, arity int, exactStoreTargets map[int]struct{}) []effect.Label {
 	if arity <= 0 {
 		return nil
 	}
@@ -218,6 +252,9 @@ func normalReturnMutationLabels(facts callboundary.NormalReturnFacts, arity int)
 	for _, fact := range facts.PathInvalidations {
 		param, ok := rootPlaceholderParam(fact.Path, arity)
 		if !ok {
+			continue
+		}
+		if _, exact := exactStoreTargets[param]; exact {
 			continue
 		}
 		out = append(out, mutation.TableMutator{

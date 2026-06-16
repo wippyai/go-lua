@@ -101,6 +101,7 @@ func TestFunctionSummaryEffectExportsExactRootOwnershipBoundaryFacts(t *testing.
 				{Target: pathdom.NewPlaceholder(4), Kind: callboundary.EscapeEventOpaque, Recursive: true},
 				{Target: pathdom.NewPlaceholder(5).Field("child"), Kind: callboundary.EscapeEventSend, Recursive: true},
 				{Target: pathdom.NewPlaceholder(5), Kind: callboundary.EscapeEventSend},
+				{Target: pathdom.NewPlaceholder(6), Kind: callboundary.EscapeEventBorrow, Recursive: true},
 			},
 			FrozenTables: []callboundary.FrozenTableFact{
 				{Target: pathdom.NewPlaceholder(5)},
@@ -118,6 +119,7 @@ func TestFunctionSummaryEffectExportsExactRootOwnershipBoundaryFacts(t *testing.
 		Param("exported", typ.Any).
 		Param("opaque", typ.Any).
 		Param("frozen", typ.Any).
+		Param("borrowed", typ.Any).
 		Build())
 
 	if !hasOwnershipSendParam(got, 0) {
@@ -146,6 +148,38 @@ func TestFunctionSummaryEffectExportsExactRootOwnershipBoundaryFacts(t *testing.
 	}
 	if hasOwnershipFreeze(got, 1) {
 		t.Fatalf("effect = %v, did not expect descendant freeze export for param 1", got)
+	}
+	if !hasOwnershipBorrow(got, 6) {
+		t.Fatalf("effect = %v, want root Borrow for param 6", got)
+	}
+}
+
+func TestFunctionSummaryEffectExportsExactStoreRelationWithoutDegradedPair(t *testing.T) {
+	got := functionSummaryEffect(summary.Summary{
+		NormalReturnFacts: callboundary.NormalReturnFacts{
+			EscapeEvents: []callboundary.EscapeEventFact{
+				{Target: pathdom.NewPlaceholder(0), Kind: callboundary.EscapeEventStore, Recursive: true},
+			},
+			PathInvalidations: []callboundary.PathInvalidationFact{
+				{Path: pathdom.NewPlaceholder(1)},
+			},
+			StoreRelations: []callboundary.StoreRelationFact{
+				{Source: pathdom.NewPlaceholder(0), Into: pathdom.NewPlaceholder(1)},
+			},
+		},
+	}, typ.Func().
+		Param("value", typ.Any).
+		Param("container", typ.Any).
+		Build())
+
+	if !hasOwnershipStoreExact(got, 0, 1) {
+		t.Fatalf("effect = %v, want exact Store{Param:0, Into:1}", got)
+	}
+	if hasOwnershipStoreUnknown(got, 0) {
+		t.Fatalf("effect = %v, did not expect degraded Store{Param:0, Into:-1}", got)
+	}
+	if hasMutationTableMutator(got, 1) {
+		t.Fatalf("effect = %v, did not expect redundant TableMutator{Target:1, Value:-1}", got)
 	}
 }
 
@@ -210,10 +244,24 @@ func hasOwnershipStoreUnknown(row effect.Row, paramIndex int) bool {
 	})
 }
 
+func hasOwnershipStoreExact(row effect.Row, paramIndex, intoIndex int) bool {
+	return row.Has(func(label effect.Label) bool {
+		store, ok := effect.NormalizeLabel(label).(ownership.Store)
+		return ok && store.Param.Index == paramIndex && store.Into.Index == intoIndex
+	})
+}
+
 func hasOwnershipRetain(row effect.Row, paramIndex int) bool {
 	return row.Has(func(label effect.Label) bool {
 		retain, ok := effect.NormalizeLabel(label).(ownership.Retain)
 		return ok && retain.Param.Index == paramIndex
+	})
+}
+
+func hasOwnershipBorrow(row effect.Row, paramIndex int) bool {
+	return row.Has(func(label effect.Label) bool {
+		borrow, ok := effect.NormalizeLabel(label).(ownership.Borrow)
+		return ok && borrow.Param.Index == paramIndex
 	})
 }
 

@@ -56,6 +56,11 @@ func TestNormalReturnFactsNormalizeDropsNonPlaceholderPaths(t *testing.T) {
 			{Target: concrete, Kind: callboundary.EscapeEventSend, Recursive: true},
 			{Target: placeholder, Kind: callboundary.EscapeEventSend, Recursive: true},
 		},
+		StoreRelations: []callboundary.StoreRelationFact{
+			{Source: concrete, Into: placeholder},
+			{Source: placeholder, Into: concrete},
+			{Source: placeholder, Into: pathdom.NewPlaceholder(1)},
+		},
 	}})
 
 	facts := got.NormalReturnFacts
@@ -82,6 +87,11 @@ func TestNormalReturnFactsNormalizeDropsNonPlaceholderPaths(t *testing.T) {
 	}
 	if len(facts.EscapeEvents) != 1 || !facts.EscapeEvents[0].Target.Equal(placeholder) {
 		t.Fatalf("EscapeEvents = %#v, want only placeholder fact", facts.EscapeEvents)
+	}
+	if len(facts.StoreRelations) != 1 ||
+		!facts.StoreRelations[0].Source.Equal(placeholder) ||
+		!facts.StoreRelations[0].Into.Equal(pathdom.NewPlaceholder(1)) {
+		t.Fatalf("StoreRelations = %#v, want only placeholder pair", facts.StoreRelations)
 	}
 }
 
@@ -112,12 +122,17 @@ func TestNormalReturnFactsCloneIsolatesPayload(t *testing.T) {
 			Kind:      callboundary.EscapeEventSend,
 			Recursive: true,
 		}},
+		StoreRelations: []callboundary.StoreRelationFact{{
+			Source: pathdom.NewPlaceholder(0).Field("stored"),
+			Into:   pathdom.NewPlaceholder(1),
+		}},
 	}}
 
 	cloned := original.Clone()
 	cloned.NormalReturnFacts.PathRefinements[0].Path = pathdom.NewPlaceholder(1)
 	cloned.NormalReturnFacts.DynamicIndexFacts[0].Site = "caller.dynamic.changed"
 	cloned.NormalReturnFacts.BranchProofs[0].Presence = presence.Absent()
+	cloned.NormalReturnFacts.StoreRelations[0].Source = pathdom.NewPlaceholder(2)
 	cloned.NormalReturnFacts.FrozenTables[0].Target = pathdom.NewPlaceholder(1)
 	cloned.NormalReturnFacts.EscapeEvents[0].Target = pathdom.NewPlaceholder(1)
 
@@ -135,6 +150,9 @@ func TestNormalReturnFactsCloneIsolatesPayload(t *testing.T) {
 	}
 	if !original.NormalReturnFacts.EscapeEvents[0].Target.Equal(pathdom.NewPlaceholder(0).Field("escape")) {
 		t.Fatalf("mutating cloned escape event changed original")
+	}
+	if !original.NormalReturnFacts.StoreRelations[0].Source.Equal(pathdom.NewPlaceholder(0).Field("stored")) {
+		t.Fatalf("mutating cloned store relation changed original")
 	}
 }
 

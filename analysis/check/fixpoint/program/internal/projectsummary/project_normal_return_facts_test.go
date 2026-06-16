@@ -546,7 +546,8 @@ func normalReturnFactsEmpty(facts callboundary.NormalReturnFacts) bool {
 		len(facts.ChannelSelects) == 0 &&
 		len(facts.FrozenTables) == 0 &&
 		len(facts.EffectDeltas) == 0 &&
-		len(facts.EscapeEvents) == 0
+		len(facts.EscapeEvents) == 0 &&
+		len(facts.StoreRelations) == 0
 }
 
 func findPathRefinement(facts []callboundary.PathValueFact, path pathdom.Path) *callboundary.PathValueFact {

@@ -1185,6 +1185,14 @@ func cloneNormalReturnFacts(in callboundary.NormalReturnFacts) callboundary.Norm
 			out.EscapeEvents[i] = event
 		}
 	}
+	if len(in.StoreRelations) != 0 {
+		out.StoreRelations = make([]callboundary.StoreRelationFact, len(in.StoreRelations))
+		for i, relation := range in.StoreRelations {
+			relation.Source = copyPath(relation.Source)
+			relation.Into = copyPath(relation.Into)
+			out.StoreRelations[i] = relation
+		}
+	}
 	return out
 }
 

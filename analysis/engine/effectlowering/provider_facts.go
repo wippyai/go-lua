@@ -56,6 +56,12 @@ func activeMutationTargets(sig signature.Function) []effect.ParamRef {
 	out := make([]effect.ParamRef, 0, len(sig.Effect.Labels))
 	for _, label := range sig.Effect.Labels {
 		switch normalized := effect.NormalizeLabel(label).(type) {
+		case mutation.Mutate:
+			out = append(out, normalized.Target)
+		case *mutation.Mutate:
+			if normalized != nil {
+				out = append(out, normalized.Target)
+			}
 		case mutation.TableMutator:
 			out = append(out, normalized.Target)
 		case *mutation.TableMutator:
@@ -111,6 +117,16 @@ func signatureEscapeEvents(sig signature.Function, site factflow.CallSite) []cal
 		case *ownership.Borrow:
 			if normalized != nil {
 				appendParam(normalized.Param, callboundary.EscapeEventBorrow)
+			}
+		case ownership.BorrowAll:
+			for i := range args {
+				appendArg(i, callboundary.EscapeEventBorrow)
+			}
+		case *ownership.BorrowAll:
+			if normalized != nil {
+				for i := range args {
+					appendArg(i, callboundary.EscapeEventBorrow)
+				}
 			}
 		case ownership.Retain:
 			appendParam(normalized.Param, callboundary.EscapeEventRetain)
@@ -187,6 +203,39 @@ func signatureFrozenTables(sig signature.Function, site factflow.CallSite) []cal
 		case *ownership.Freeze:
 			if normalized != nil {
 				appendParam(normalized.Param)
+			}
+		}
+	}
+	return out
+}
+
+func signatureStoreRelations(sig signature.Function, site factflow.CallSite) []callboundary.StoreRelationFact {
+	if len(sig.Effect.Labels) == 0 {
+		return nil
+	}
+	args := site.ArgumentSources()
+	out := make([]callboundary.StoreRelationFact, 0, len(sig.Effect.Labels))
+	appendStore := func(sourceRef, intoRef effect.ParamRef) {
+		source, ok := effect.ResolveParamIndex(sourceRef, len(args))
+		if !ok || !callArgumentSourceCanBindPath(args[source]) {
+			return
+		}
+		into, ok := effect.ResolveParamIndex(intoRef, len(args))
+		if !ok || !callArgumentSourceCanBindPath(args[into]) {
+			return
+		}
+		out = append(out, callboundary.StoreRelationFact{
+			Source: pathdom.NewPlaceholder(source),
+			Into:   pathdom.NewPlaceholder(into),
+		})
+	}
+	for _, label := range sig.Effect.Labels {
+		switch normalized := effect.NormalizeLabel(label).(type) {
+		case ownership.Store:
+			appendStore(normalized.Param, normalized.Into)
+		case *ownership.Store:
+			if normalized != nil {
+				appendStore(normalized.Param, normalized.Into)
 			}
 		}
 	}
