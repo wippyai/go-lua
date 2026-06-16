@@ -1083,7 +1083,7 @@ func TestOutcomeProviderUsesCurrentCalleeValueIdentityForPathSummary(t *testing.
 	calleeSymbol := symbol.ID(33)
 	calleePath := path.NewPath(symbol.ID(34), "module").Field("call")
 	fnID := identity.LuaFunction(35)
-	calleeSlot := path.PathKey("callee.current")
+	calleeSlot := path.PathKey("sym34@1.call")
 	ret := product.Absent(reg)
 	provider := OutcomeProvider(ProviderConfig{
 		Summaries: summary.NewSnapshot(reg,

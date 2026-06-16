@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
@@ -18,31 +19,44 @@ func TestInvalidateSubtreeOwnsCoupledEvidence(t *testing.T) {
 	other := pathdom.PathKey("sym2@1.value")
 	proof := BranchProof{Kind: BranchProofPathEqual, Path: other, Other: child}
 
-	l, _ := (Lane{}).WritePathKey(reg, root, present)
-	l, _ = l.WritePathKey(reg, child, present)
-	l, _ = l.WritePathKey(reg, other, present)
-	l, _ = l.WritePathStaticMember(child, present)
+	rootKey := mustLocalKey(t, root)
+	childKey := mustLocalKey(t, child)
+	otherKey := mustLocalKey(t, other)
+
+	l, _ := (Lane{}).WritePathKey(reg, rootKey, present)
+	l, _ = l.WritePathKey(reg, childKey, present)
+	l, _ = l.WritePathKey(reg, otherKey, present)
+	l, _ = l.WritePathStaticMember(childKey, present)
 	l, _ = l.AddBranchProof(proof)
 
 	out, ok := l.InvalidatePathKeySubtree(root)
 	if !ok {
 		t.Fatal("InvalidatePathKeySubtree rejected structural path key")
 	}
-	if got := out.ReadPathKey(reg, root); !valueDomain.Equal(got, valueDomain.Bottom()) {
+	if got := out.ReadPathKey(reg, rootKey); !valueDomain.Equal(got, valueDomain.Bottom()) {
 		t.Fatalf("root refinement = %#v, want bottom", got)
 	}
-	if got := out.ReadPathKey(reg, child); !valueDomain.Equal(got, valueDomain.Bottom()) {
+	if got := out.ReadPathKey(reg, childKey); !valueDomain.Equal(got, valueDomain.Bottom()) {
 		t.Fatalf("child refinement = %#v, want bottom", got)
 	}
-	if got := out.ReadPathKey(reg, other); !valueDomain.Equal(got, present) {
+	if got := out.ReadPathKey(reg, otherKey); !valueDomain.Equal(got, present) {
 		t.Fatalf("other refinement = %#v, want present", got)
 	}
-	if got, ok := out.ReadPathStaticMember(child); ok {
+	if got, ok := out.ReadPathStaticMember(childKey); ok {
 		t.Fatalf("static member = %#v, want removed", got)
 	}
 	if out.HasBranchProof(proof) {
 		t.Fatalf("branch proof with invalidated path survived")
 	}
+}
+
+func mustLocalKey(t *testing.T, key pathdom.PathKey) pathaddr.LocalKey {
+	t.Helper()
+	local, ok := pathaddr.LocalKeyFromPathKey(key)
+	if !ok {
+		t.Fatalf("LocalKeyFromPathKey(%q) failed", key)
+	}
+	return local
 }
 
 func TestEquivalentPathKeysRebaseThroughBranchProofs(t *testing.T) {
@@ -101,8 +115,8 @@ func TestRefinementMustJoinDropsOneSidedEntry(t *testing.T) {
 	domain := Domain(reg)
 	present := product.Top()
 	oneSided := Lane{
-		refinements: map[pathdom.PathKey]product.Value{
-			pathdom.PathKey("sym1@1.field"): present,
+		refinements: map[pathaddr.LocalKey]product.Value{
+			mustLocalKey(t, pathdom.PathKey("sym1@1.field")): present,
 		},
 	}
 

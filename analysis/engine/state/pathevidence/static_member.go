@@ -1,12 +1,12 @@
 package pathevidence
 
 import (
-	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 )
 
 // ReadPathStaticMember reads a must static-member fact.
-func (l Lane) ReadPathStaticMember(pathKey pathdom.PathKey) (product.Value, bool) {
+func (l Lane) ReadPathStaticMember(pathKey pathaddr.LocalKey) (product.Value, bool) {
 	if pathKey == "" || l.staticMembersBottom {
 		return product.Value{}, false
 	}
@@ -16,7 +16,7 @@ func (l Lane) ReadPathStaticMember(pathKey pathdom.PathKey) (product.Value, bool
 
 // WritePathStaticMember returns a lane with a must static-member fact recorded
 // and whether this write made the surrounding state reachable.
-func (l Lane) WritePathStaticMember(pathKey pathdom.PathKey, value product.Value) (Lane, bool) {
+func (l Lane) WritePathStaticMember(pathKey pathaddr.LocalKey, value product.Value) (Lane, bool) {
 	if pathKey == "" {
 		return l, false
 	}
@@ -25,9 +25,9 @@ func (l Lane) WritePathStaticMember(pathKey pathdom.PathKey, value product.Value
 			return l, false
 		}
 	}
-	members := clonePathValueMap(l.staticMembers)
+	members := cloneLocalValueMap(l.staticMembers)
 	if members == nil {
-		members = make(map[pathdom.PathKey]product.Value, 1)
+		members = make(map[pathaddr.LocalKey]product.Value, 1)
 	}
 	members[pathKey] = value
 	out := l.Reachable()

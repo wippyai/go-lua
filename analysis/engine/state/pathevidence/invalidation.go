@@ -69,9 +69,9 @@ func pathKeyInDescendants(candidate pathdom.PathKey, prefix pathdom.PathKey) boo
 }
 
 func deletePathKeySubtree(
-	in map[pathdom.PathKey]product.Value,
+	in map[pathaddr.LocalKey]product.Value,
 	prefix pathdom.PathKey,
-) (map[pathdom.PathKey]product.Value, bool, bool) {
+) (map[pathaddr.LocalKey]product.Value, bool, bool) {
 	parsedPrefix, ok := pathaddr.StructuralKeyFromPathKey(prefix)
 	if !ok {
 		return in, false, false
@@ -83,9 +83,9 @@ func deletePathKeySubtree(
 }
 
 func deletePathKeyDescendants(
-	in map[pathdom.PathKey]product.Value,
+	in map[pathaddr.LocalKey]product.Value,
 	prefix pathdom.PathKey,
-) (map[pathdom.PathKey]product.Value, bool, bool) {
+) (map[pathaddr.LocalKey]product.Value, bool, bool) {
 	parsedPrefix, ok := pathaddr.StructuralKeyFromPathKey(prefix)
 	if !ok {
 		return in, false, false
@@ -97,16 +97,16 @@ func deletePathKeyDescendants(
 }
 
 func deleteMatchingPathKeys(
-	in map[pathdom.PathKey]product.Value,
+	in map[pathaddr.LocalKey]product.Value,
 	match func(pathaddr.StructuralKey) bool,
-) (map[pathdom.PathKey]product.Value, bool) {
+) (map[pathaddr.LocalKey]product.Value, bool) {
 	if len(in) == 0 {
 		return in, false
 	}
-	out := make(map[pathdom.PathKey]product.Value, len(in))
+	out := make(map[pathaddr.LocalKey]product.Value, len(in))
 	changed := false
 	for pathKey, value := range in {
-		parsed, ok := pathaddr.StructuralKeyFromPathKey(pathKey)
+		parsed, ok := pathaddr.StructuralKeyFromPathKey(pathKey.PathKey())
 		if ok && match(parsed) {
 			changed = true
 			continue

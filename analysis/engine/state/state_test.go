@@ -1175,9 +1175,14 @@ func TestInvalidatePathKeySubtreeRemovesStructuredDescendants(t *testing.T) {
 			t.Fatalf("%s = %s, want bottom", removed, formatValue(reg, got))
 		}
 	}
-	for _, kept := range []pathdom.PathKey{root, siblingPrefixCollision, localVersionless, otherVersion, otherSymbol, placeholderPrefix, placeholderChild, placeholderSibling} {
+	for _, kept := range []pathdom.PathKey{root, siblingPrefixCollision, otherVersion, otherSymbol} {
 		if got := out.ReadPathKey(reg, kept); !valueDomain.Equal(got, present) {
 			t.Fatalf("%s = %s, want present", kept, formatValue(reg, got))
+		}
+	}
+	for _, notStored := range []pathdom.PathKey{localVersionless, placeholderPrefix, placeholderChild, placeholderSibling} {
+		if got := out.ReadPathKey(reg, notStored); !valueDomain.Equal(got, bottom) {
+			t.Fatalf("%s = %s, want bottom because path evidence stores only point-local keys", notStored, formatValue(reg, got))
 		}
 	}
 	for _, removed := range []pathdom.PathKey{prefix, child} {
@@ -1206,17 +1211,13 @@ func TestInvalidatePathKeySubtreeRemovesStructuredDescendants(t *testing.T) {
 		t.Fatalf("original branch proof changed")
 	}
 
+	beforePlaceholderInvalidation := out
 	out, ok = out.InvalidatePathKeySubtree(placeholderPrefix)
 	if !ok {
 		t.Fatal("InvalidatePathKeySubtree rejected placeholder prefix")
 	}
-	for _, removed := range []pathdom.PathKey{placeholderPrefix, placeholderChild} {
-		if got := out.ReadPathKey(reg, removed); !valueDomain.Equal(got, bottom) {
-			t.Fatalf("%s = %s, want bottom", removed, formatValue(reg, got))
-		}
-	}
-	if got := out.ReadPathKey(reg, placeholderSibling); !valueDomain.Equal(got, present) {
-		t.Fatalf("%s = %s, want present", placeholderSibling, formatValue(reg, got))
+	if !Domain(reg).Equal(out, beforePlaceholderInvalidation) {
+		t.Fatalf("placeholder invalidation changed point-local path evidence")
 	}
 }
 
@@ -1318,9 +1319,14 @@ func TestInvalidatePathKeyDescendantsKeepsContainerAndUnrelatedPaths(t *testing.
 			t.Fatalf("%s = %s, want bottom", removed, formatValue(reg, got))
 		}
 	}
-	for _, kept := range []pathdom.PathKey{container, siblingPrefixCollision, root, otherVersion, otherSymbol, placeholderContainer, placeholderChild} {
+	for _, kept := range []pathdom.PathKey{container, siblingPrefixCollision, root, otherVersion, otherSymbol} {
 		if got := out.ReadPathKey(reg, kept); !valueDomain.Equal(got, present) {
 			t.Fatalf("%s = %s, want present", kept, formatValue(reg, got))
+		}
+	}
+	for _, notStored := range []pathdom.PathKey{placeholderContainer, placeholderChild} {
+		if got := out.ReadPathKey(reg, notStored); !valueDomain.Equal(got, bottom) {
+			t.Fatalf("%s = %s, want bottom because path evidence stores only point-local keys", notStored, formatValue(reg, got))
 		}
 	}
 	for _, removed := range []pathdom.PathKey{child, deepChild} {
@@ -1343,15 +1349,13 @@ func TestInvalidatePathKeyDescendantsKeepsContainerAndUnrelatedPaths(t *testing.
 		t.Fatalf("original child changed to %s", formatValue(reg, got))
 	}
 
+	beforePlaceholderInvalidation := out
 	out, ok = out.InvalidatePathKeyDescendants(placeholderContainer)
 	if !ok {
 		t.Fatal("InvalidatePathKeyDescendants rejected placeholder prefix")
 	}
-	if got := out.ReadPathKey(reg, placeholderContainer); !valueDomain.Equal(got, present) {
-		t.Fatalf("%s = %s, want present", placeholderContainer, formatValue(reg, got))
-	}
-	if got := out.ReadPathKey(reg, placeholderChild); !valueDomain.Equal(got, bottom) {
-		t.Fatalf("%s = %s, want bottom", placeholderChild, formatValue(reg, got))
+	if !Domain(reg).Equal(out, beforePlaceholderInvalidation) {
+		t.Fatalf("placeholder invalidation changed point-local path evidence")
 	}
 }
 

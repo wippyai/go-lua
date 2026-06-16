@@ -210,7 +210,6 @@ func TestFromResultDropsNonParameterNormalReturnFactPaths(t *testing.T) {
 	param := symbol.ID(911)
 	value := presentProduct(reg)
 	validParamKey := normalReturnFactProjectTestKey(param, ".kept")
-	validPlaceholderKey := pathdom.PathKey("$0.already")
 	invalidKeys := []pathdom.PathKey{
 		normalReturnFactProjectTestKey(symbol.ID(912), ".local"),
 		pathdom.PathKey("sym911.versionless"),
@@ -222,8 +221,7 @@ func TestFromResultDropsNonParameterNormalReturnFactPaths(t *testing.T) {
 	}
 
 	exit := state.State{}.
-		WritePathKey(reg, validParamKey, value).
-		WritePathKey(reg, validPlaceholderKey, value)
+		WritePathKey(reg, validParamKey, value)
 	for _, pathKey := range invalidKeys {
 		exit = exit.WritePathKey(reg, pathKey, value)
 	}
@@ -247,11 +245,8 @@ func TestFromResultDropsNonParameterNormalReturnFactPaths(t *testing.T) {
 
 	got := FromResult(normalReturnFactProjectTestResult(reg, exit, param)).NormalReturnFacts
 
-	if len(got.PathRefinements) != 2 {
-		t.Fatalf("PathRefinements = %#v, want only valid parameter and placeholder paths", got.PathRefinements)
-	}
-	if findPathRefinement(got.PathRefinements, pathdom.NewPlaceholder(0).Field("already")) == nil {
-		t.Fatalf("PathRefinements = %#v, want already-placeholder key accepted", got.PathRefinements)
+	if len(got.PathRefinements) != 1 {
+		t.Fatalf("PathRefinements = %#v, want only valid parameter paths", got.PathRefinements)
 	}
 	if findPathRefinement(got.PathRefinements, pathdom.NewPlaceholder(0).Field("kept")) == nil {
 		t.Fatalf("PathRefinements = %#v, want parameter resolver key rebased", got.PathRefinements)

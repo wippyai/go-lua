@@ -2,6 +2,7 @@ package state
 
 import (
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/engine/state/pathevidence"
@@ -36,13 +37,21 @@ func (s State) PathPresenceImplicationsSnapshot() pathevidence.PathPresenceImpli
 // ReadPathKey reads a point-local path refinement key. Missing keys read as
 // product.Bottom(reg).
 func (s State) ReadPathKey(reg *axis.Registry, pathKey pathdom.PathKey) product.Value {
-	return s.pathEvidence.ReadPathKey(reg, pathKey)
+	localKey, ok := pathaddr.LocalKeyFromPathKey(pathKey)
+	if !ok {
+		return product.Bottom(reg)
+	}
+	return s.pathEvidence.ReadPathKey(reg, localKey)
 }
 
 // WritePathKey returns a state with pathKey updated. Writing
 // product.Bottom(reg) removes the finite entry.
 func (s State) WritePathKey(reg *axis.Registry, pathKey pathdom.PathKey, value product.Value) State {
-	pathEvidence, reachable := s.pathEvidence.WritePathKey(reg, pathKey, value)
+	localKey, ok := pathaddr.LocalKeyFromPathKey(pathKey)
+	if !ok {
+		return s
+	}
+	pathEvidence, reachable := s.pathEvidence.WritePathKey(reg, localKey, value)
 	if !reachable {
 		return s
 	}
@@ -54,7 +63,11 @@ func (s State) WritePathKey(reg *axis.Registry, pathKey pathdom.PathKey, value p
 // UpdatePathKey reads pathKey, applies fn, and writes the transformed value.
 // Transforming a finite entry to product.Bottom(reg) removes it.
 func (s State) UpdatePathKey(reg *axis.Registry, pathKey pathdom.PathKey, fn func(product.Value) product.Value) State {
-	pathEvidence, reachable := s.pathEvidence.UpdatePathKey(reg, pathKey, fn)
+	localKey, ok := pathaddr.LocalKeyFromPathKey(pathKey)
+	if !ok {
+		return s
+	}
+	pathEvidence, reachable := s.pathEvidence.UpdatePathKey(reg, localKey, fn)
 	if !reachable {
 		return s
 	}
@@ -90,11 +103,19 @@ func (s State) InvalidatePathKeyDescendants(pathKey pathdom.PathKey) (State, boo
 }
 
 func (s State) ReadPathStaticMember(pathKey pathdom.PathKey) (product.Value, bool) {
-	return s.pathEvidence.ReadPathStaticMember(pathKey)
+	localKey, ok := pathaddr.LocalKeyFromPathKey(pathKey)
+	if !ok {
+		return product.Value{}, false
+	}
+	return s.pathEvidence.ReadPathStaticMember(localKey)
 }
 
 func (s State) WritePathStaticMember(pathKey pathdom.PathKey, value product.Value) State {
-	pathEvidence, reachable := s.pathEvidence.WritePathStaticMember(pathKey, value)
+	localKey, ok := pathaddr.LocalKeyFromPathKey(pathKey)
+	if !ok {
+		return s
+	}
+	pathEvidence, reachable := s.pathEvidence.WritePathStaticMember(localKey, value)
 	if !reachable {
 		return s
 	}

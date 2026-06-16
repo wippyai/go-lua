@@ -3,7 +3,7 @@ package pathevidence
 import (
 	"github.com/wippyai/go-lua/analysis/domain/lattice"
 	"github.com/wippyai/go-lua/analysis/domain/lattice/lift"
-	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 )
@@ -12,8 +12,8 @@ import (
 func Domain(reg *axis.Registry) lattice.Lattice[Lane] {
 	valueDomain := product.Domain(reg)
 	ops := domainOps{
-		refinements:              lift.MustMap[pathdom.PathKey, product.Value](valueDomain),
-		staticMembers:            lift.MustMap[pathdom.PathKey, product.Value](valueDomain),
+		refinements:              lift.MustMap[pathaddr.LocalKey, product.Value](valueDomain),
+		staticMembers:            lift.MustMap[pathaddr.LocalKey, product.Value](valueDomain),
 		proofs:                   lift.MustSet[BranchProof](),
 		pathPresenceImplications: lift.MustSet[PathPresenceImplication](),
 	}
@@ -61,22 +61,22 @@ func Domain(reg *axis.Registry) lattice.Lattice[Lane] {
 }
 
 type domainOps struct {
-	refinements              lattice.Lattice[lift.MustMapLane[pathdom.PathKey, product.Value]]
-	staticMembers            lattice.Lattice[lift.MustMapLane[pathdom.PathKey, product.Value]]
+	refinements              lattice.Lattice[lift.MustMapLane[pathaddr.LocalKey, product.Value]]
+	staticMembers            lattice.Lattice[lift.MustMapLane[pathaddr.LocalKey, product.Value]]
 	proofs                   lattice.Lattice[lift.MustSetLane[BranchProof]]
 	pathPresenceImplications lattice.Lattice[lift.MustSetLane[PathPresenceImplication]]
 }
 
-func (o domainOps) refinementLane(l Lane) lift.MustMapLane[pathdom.PathKey, product.Value] {
+func (o domainOps) refinementLane(l Lane) lift.MustMapLane[pathaddr.LocalKey, product.Value] {
 	if l.refinementsBottom {
-		return lift.MustMapBottom[pathdom.PathKey, product.Value]()
+		return lift.MustMapBottom[pathaddr.LocalKey, product.Value]()
 	}
 	return lift.MustMapValues(l.refinements)
 }
 
-func (o domainOps) staticMemberLane(l Lane) lift.MustMapLane[pathdom.PathKey, product.Value] {
+func (o domainOps) staticMemberLane(l Lane) lift.MustMapLane[pathaddr.LocalKey, product.Value] {
 	if l.staticMembersBottom {
-		return lift.MustMapBottom[pathdom.PathKey, product.Value]()
+		return lift.MustMapBottom[pathaddr.LocalKey, product.Value]()
 	}
 	return lift.MustMapValues(l.staticMembers)
 }
@@ -96,8 +96,8 @@ func (o domainOps) pathPresenceImplicationLane(l Lane) lift.MustSetLane[PathPres
 }
 
 func (o domainOps) fromLanes(
-	refinements lift.MustMapLane[pathdom.PathKey, product.Value],
-	staticMembers lift.MustMapLane[pathdom.PathKey, product.Value],
+	refinements lift.MustMapLane[pathaddr.LocalKey, product.Value],
+	staticMembers lift.MustMapLane[pathaddr.LocalKey, product.Value],
 	proofs lift.MustSetLane[BranchProof],
 	pathPresenceImplications lift.MustSetLane[PathPresenceImplication],
 ) Lane {

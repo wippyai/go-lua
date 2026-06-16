@@ -2,6 +2,7 @@ package pathevidence
 
 import (
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 )
 
@@ -17,7 +18,7 @@ func (l Lane) PathRefinementsSnapshot() PathRefinementsSnapshot {
 	if l.refinementsBottom {
 		return PathRefinementsSnapshot{Bottom: true}
 	}
-	refinements := clonePathValueMap(l.refinements)
+	refinements := snapshotLocalValueMap(l.refinements)
 	return PathRefinementsSnapshot{
 		Top:         len(refinements) == 0,
 		Refinements: refinements,
@@ -35,11 +36,22 @@ func (l Lane) PathStaticMembersSnapshot() PathStaticMembersSnapshot {
 	if l.staticMembersBottom {
 		return PathStaticMembersSnapshot{Bottom: true}
 	}
-	members := clonePathValueMap(l.staticMembers)
+	members := snapshotLocalValueMap(l.staticMembers)
 	return PathStaticMembersSnapshot{
 		Top:     len(members) == 0,
 		Members: members,
 	}
+}
+
+func snapshotLocalValueMap(in map[pathaddr.LocalKey]product.Value) map[pathdom.PathKey]product.Value {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[pathdom.PathKey]product.Value, len(in))
+	for k, v := range in {
+		out[k.PathKey()] = v
+	}
+	return out
 }
 
 type BranchProofsSnapshot struct {

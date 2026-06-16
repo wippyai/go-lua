@@ -1,14 +1,14 @@
 package pathevidence
 
 import (
-	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 )
 
 // ReadPathKey reads a point-local path refinement key. Missing keys read as
 // product.Bottom(reg).
-func (l Lane) ReadPathKey(reg *axis.Registry, pathKey pathdom.PathKey) product.Value {
+func (l Lane) ReadPathKey(reg *axis.Registry, pathKey pathaddr.LocalKey) product.Value {
 	if pathKey == "" || l.refinementsBottom {
 		return product.Bottom(reg)
 	}
@@ -21,7 +21,7 @@ func (l Lane) ReadPathKey(reg *axis.Registry, pathKey pathdom.PathKey) product.V
 // WritePathKey returns a lane with pathKey updated and whether this write made
 // the surrounding state reachable. Writing product.Bottom(reg) removes the
 // finite entry.
-func (l Lane) WritePathKey(reg *axis.Registry, pathKey pathdom.PathKey, value product.Value) (Lane, bool) {
+func (l Lane) WritePathKey(reg *axis.Registry, pathKey pathaddr.LocalKey, value product.Value) (Lane, bool) {
 	if pathKey == "" {
 		return l, false
 	}
@@ -40,9 +40,9 @@ func (l Lane) WritePathKey(reg *axis.Registry, pathKey pathdom.PathKey, value pr
 			return l, false
 		}
 	}
-	refinements := clonePathValueMap(l.refinements)
+	refinements := cloneLocalValueMap(l.refinements)
 	if refinements == nil {
-		refinements = make(map[pathdom.PathKey]product.Value, 1)
+		refinements = make(map[pathaddr.LocalKey]product.Value, 1)
 	}
 	refinements[pathKey] = value
 	out := l.Reachable()
@@ -51,7 +51,7 @@ func (l Lane) WritePathKey(reg *axis.Registry, pathKey pathdom.PathKey, value pr
 }
 
 // UpdatePathKey reads pathKey, applies fn, and writes the transformed value.
-func (l Lane) UpdatePathKey(reg *axis.Registry, pathKey pathdom.PathKey, fn func(product.Value) product.Value) (Lane, bool) {
+func (l Lane) UpdatePathKey(reg *axis.Registry, pathKey pathaddr.LocalKey, fn func(product.Value) product.Value) (Lane, bool) {
 	if pathKey == "" {
 		return l, false
 	}
@@ -59,13 +59,13 @@ func (l Lane) UpdatePathKey(reg *axis.Registry, pathKey pathdom.PathKey, fn func
 }
 
 func deletePathValueEntry(
-	in map[pathdom.PathKey]product.Value,
-	pathKey pathdom.PathKey,
-) (map[pathdom.PathKey]product.Value, bool) {
+	in map[pathaddr.LocalKey]product.Value,
+	pathKey pathaddr.LocalKey,
+) (map[pathaddr.LocalKey]product.Value, bool) {
 	if _, ok := in[pathKey]; !ok {
 		return in, false
 	}
-	out := make(map[pathdom.PathKey]product.Value, len(in)-1)
+	out := make(map[pathaddr.LocalKey]product.Value, len(in)-1)
 	for k, v := range in {
 		if k != pathKey {
 			out[k] = v

@@ -1,15 +1,15 @@
 package pathevidence
 
 import (
-	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 )
 
 // Lane owns point-local path evidence whose invalidation semantics are coupled:
 // path refinements, path static-member must facts, and branch proofs.
 type Lane struct {
-	refinements                    map[pathdom.PathKey]product.Value
-	staticMembers                  map[pathdom.PathKey]product.Value
+	refinements                    map[pathaddr.LocalKey]product.Value
+	staticMembers                  map[pathaddr.LocalKey]product.Value
 	proofs                         map[BranchProof]struct{}
 	pathPresenceImplications       map[PathPresenceImplication]struct{}
 	refinementsBottom              bool
@@ -21,8 +21,8 @@ type Lane struct {
 // Clone returns an independent copy of the lane's finite evidence.
 func (l Lane) Clone() Lane {
 	return Lane{
-		refinements:                    clonePathValueMap(l.refinements),
-		staticMembers:                  clonePathValueMap(l.staticMembers),
+		refinements:                    cloneLocalValueMap(l.refinements),
+		staticMembers:                  cloneLocalValueMap(l.staticMembers),
 		proofs:                         cloneBranchProofSet(l.proofs),
 		pathPresenceImplications:       clonePathPresenceImplicationSet(l.pathPresenceImplications),
 		refinementsBottom:              l.refinementsBottom,
@@ -62,11 +62,11 @@ func (l Lane) PathPresenceImplicationsBottom() bool {
 	return l.pathPresenceImplicationsBottom
 }
 
-func clonePathValueMap(in map[pathdom.PathKey]product.Value) map[pathdom.PathKey]product.Value {
+func cloneLocalValueMap(in map[pathaddr.LocalKey]product.Value) map[pathaddr.LocalKey]product.Value {
 	if len(in) == 0 {
 		return nil
 	}
-	out := make(map[pathdom.PathKey]product.Value, len(in))
+	out := make(map[pathaddr.LocalKey]product.Value, len(in))
 	for k, v := range in {
 		out[k] = v
 	}
