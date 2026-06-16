@@ -21,17 +21,6 @@ func (r *Result) ReturnPoints() []cfg.Point {
 	return out
 }
 
-func (r *Result) ReturnArity(point cfg.Point) (int, bool) {
-	if r == nil {
-		return 0, false
-	}
-	fact, ok := r.facts.Return(point)
-	if !ok {
-		return 0, false
-	}
-	return len(fact.Sources()), true
-}
-
 func (r *Result) ReturnValueSources(point cfg.Point) ([]factflow.ValueSource, bool) {
 	if r == nil {
 		return nil, false

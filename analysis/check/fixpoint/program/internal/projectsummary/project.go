@@ -16,7 +16,6 @@ type ResultReader interface {
 	Graph() cfg.Graph
 	ExitState() (state.State, bool)
 	ReturnPoints() []cfg.Point
-	ReturnArity(cfg.Point) (int, bool)
 }
 
 type entryStateReader interface {
@@ -88,7 +87,7 @@ func FromResult(result ResultReader) summary.Summary {
 	}
 	arity := len(declared)
 	for _, point := range result.ReturnPoints() {
-		pointArity, ok := result.ReturnArity(point)
+		pointArity, ok := resultReturnSourceArity(result, point)
 		if ok && pointArity > arity {
 			arity = pointArity
 		}
@@ -97,4 +96,16 @@ func FromResult(result ResultReader) summary.Summary {
 		out.Returns = projectReturnSlots(reg, result, exit, arity, declared)
 	}
 	return summary.Normalize(reg, out)
+}
+
+func resultReturnSourceArity(result ResultReader, point cfg.Point) (int, bool) {
+	reader, ok := result.(returnValueSourceReader)
+	if !ok {
+		return 0, false
+	}
+	sources, ok := reader.ReturnValueSources(point)
+	if !ok {
+		return 0, false
+	}
+	return len(sources), true
 }

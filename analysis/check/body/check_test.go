@@ -401,7 +401,7 @@ func TestCheckFunctionRunsIntraprocedurally(t *testing.T) {
 	}
 }
 
-func TestCheckFunctionReturnArityUsesLoweredFacts(t *testing.T) {
+func TestCheckFunctionReturnSourcesUseLoweredFacts(t *testing.T) {
 	reg := standard.Registry()
 	fn := parseFunction(t, "function f(a) return a, nil end")
 
@@ -413,12 +413,12 @@ func TestCheckFunctionReturnArityUsesLoweredFacts(t *testing.T) {
 	if len(returnPoints) != 1 {
 		t.Fatalf("return points = %v, want one point", returnPoints)
 	}
-	arity, ok := result.ReturnArity(returnPoints[0])
+	sources, ok := result.ReturnValueSources(returnPoints[0])
 	if !ok {
-		t.Fatalf("missing lowered return arity at %v", returnPoints[0])
+		t.Fatalf("missing lowered return sources at %v", returnPoints[0])
 	}
-	if arity != 2 {
-		t.Fatalf("return arity = %d, want 2", arity)
+	if len(sources) != 2 {
+		t.Fatalf("return source count = %d, want 2", len(sources))
 	}
 }
 

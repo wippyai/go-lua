@@ -307,8 +307,6 @@ func (r normalReturnFactProjectResultStub) ExitState() (state.State, bool) { ret
 
 func (r normalReturnFactProjectResultStub) ReturnPoints() []cfg.Point { return nil }
 
-func (r normalReturnFactProjectResultStub) ReturnArity(cfg.Point) (int, bool) { return 0, false }
-
 func (r normalReturnFactProjectResultStub) ParameterValueSlots() []key.Value {
 	if len(r.slots) == 0 {
 		return nil

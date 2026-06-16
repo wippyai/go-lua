@@ -93,7 +93,7 @@ func projectSolvedReturnPresenceRelations(reg *axis.Registry, result ResultReade
 func projectedReturnPresenceArity(result ResultReader) int {
 	arity := 0
 	for _, point := range result.ReturnPoints() {
-		pointArity, ok := result.ReturnArity(point)
+		pointArity, ok := resultReturnSourceArity(result, point)
 		if ok && pointArity > arity {
 			arity = pointArity
 		}
