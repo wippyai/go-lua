@@ -398,7 +398,7 @@ func TestStateBottomWritesRemoveExplicitBottomEntries(t *testing.T) {
 	if state.dynamicIndex.hasFinite(fx.dynamicKey) {
 		t.Fatalf("dynamic index kept explicit bottom entry")
 	}
-	if _, ok := state.heapTableIdentity[fx.heapID]; ok {
+	if state.heapTableIdentity.hasFinite(fx.heapID) {
 		t.Fatalf("heap identity kept explicit bottom entry")
 	}
 	if state.effectDeltas.hasFinite(fx.effectKey) {

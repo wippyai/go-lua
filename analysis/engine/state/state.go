@@ -27,7 +27,7 @@ type State struct {
 	pathEvidence pathevidence.Lane
 
 	dynamicIndex      dynamicIndexLane
-	heapTableIdentity map[identity.ID]heapidentity.TableObject
+	heapTableIdentity heapTableIdentityLane
 	effectDeltas      effectDeltaLane
 	channelSelect     channelselectfact.Lane
 	placement         placementLane
@@ -35,8 +35,6 @@ type State struct {
 	numFloors         lift.MustMapLane[pathdom.PathKey, numbound.Floor]
 
 	valuesTop bool
-
-	heapTableIdentityTop bool
 }
 
 // TODO(perf): replace the remaining raw map fields with immutable lane handles
@@ -154,14 +152,14 @@ func Domain(reg *axis.Registry) lattice.Lattice[State] {
 		},
 		Top: func() State {
 			return State{
-				valuesTop:            true,
-				pathEvidence:         ops.pathEvidence.Top(),
-				dynamicIndex:         dynamicIndexLane{top: true},
-				heapTableIdentityTop: true,
-				effectDeltas:         effectDeltaLane{top: true},
-				placement:            placementLane{top: true},
-				lenFloors:            ops.lenFloors.Top(),
-				numFloors:            ops.numFloors.Top(),
+				valuesTop:         true,
+				pathEvidence:      ops.pathEvidence.Top(),
+				dynamicIndex:      dynamicIndexLane{top: true},
+				heapTableIdentity: heapTableIdentityLane{top: true},
+				effectDeltas:      effectDeltaLane{top: true},
+				placement:         placementLane{top: true},
+				lenFloors:         ops.lenFloors.Top(),
+				numFloors:         ops.numFloors.Top(),
 			}
 		},
 		Equal: func(a, b State) bool {
@@ -239,10 +237,7 @@ func (o domainOps) dynamicIndexLane(s State) map[dynamicindex.Key]dynamicindex.F
 }
 
 func (o domainOps) heapTableIdentityLane(s State) map[identity.ID]heapidentity.TableObject {
-	if s.heapTableIdentityTop {
-		return o.heapTableIdentity.Top()
-	}
-	return s.heapTableIdentity
+	return s.heapTableIdentity.asMap(o.heapTableIdentity)
 }
 
 func (o domainOps) effectDeltaLane(s State) map[effectdelta.Key]effectdelta.Value {
@@ -272,11 +267,7 @@ func (o domainOps) fromLanes(
 	}
 	out.pathEvidence = pathEvidence
 	out.dynamicIndex = dynamicIndexLaneFromMap(o.dynamicIndex, dynamicIndex)
-	if o.heapTableIdentity.Equal(heapTableIdentity, o.heapTableIdentity.Top()) {
-		out.heapTableIdentityTop = true
-	} else {
-		out.heapTableIdentity = heapTableIdentity
-	}
+	out.heapTableIdentity = heapTableIdentityLaneFromMap(o.heapTableIdentity, heapTableIdentity)
 	out.effectDeltas = effectDeltaLaneFromMap(o.effectDeltas, effectDeltas)
 	out.channelSelect = channelSelect
 	out.placement = placementLaneFromMap(o.placement, placementLane)

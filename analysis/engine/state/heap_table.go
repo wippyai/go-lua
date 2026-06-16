@@ -7,28 +7,19 @@ import (
 )
 
 func (s State) ReadHeapTableObject(reg *axis.Registry, id identity.ID) heapidentity.TableObject {
-	if id == (identity.ID{}) {
-		return heapidentity.BottomObject(reg)
-	}
-	if s.heapTableIdentityTop {
-		return heapidentity.TopObject()
-	}
-	if object, ok := s.heapTableIdentity[id]; ok {
-		return heapidentity.CloneObject(object)
-	}
-	return heapidentity.BottomObject(reg)
+	return s.heapTableIdentity.read(reg, id)
 }
 
 func (s State) WriteHeapTableObject(reg *axis.Registry, id identity.ID, object heapidentity.TableObject) State {
 	if id == (identity.ID{}) {
 		return s
 	}
-	if s.heapTableIdentityTop {
+	if s.heapTableIdentity.top {
 		panic("state: cannot finite-write heap table object into top heap-identity lane")
 	}
 	domain := heapidentity.ObjectDomain(reg)
 	if domain.Equal(object, domain.Bottom()) {
-		objects, changed := heapidentity.DeleteEntry(s.heapTableIdentity, id)
+		objects, changed := s.heapTableIdentity.without(id)
 		if !changed {
 			return s
 		}
@@ -36,15 +27,10 @@ func (s State) WriteHeapTableObject(reg *axis.Registry, id identity.ID, object h
 		out.heapTableIdentity = objects
 		return out
 	}
-	if existing, ok := s.heapTableIdentity[id]; ok && domain.Equal(existing, object) {
+	if domain.Equal(s.heapTableIdentity.read(reg, id), object) {
 		return s
 	}
-	objects := heapidentity.CloneMap(s.heapTableIdentity)
-	if objects == nil {
-		objects = make(map[identity.ID]heapidentity.TableObject, 1)
-	}
-	objects[id] = heapidentity.CloneObject(object)
 	out := s.reachable()
-	out.heapTableIdentity = objects
+	out.heapTableIdentity = s.heapTableIdentity.with(id, object)
 	return out
 }
