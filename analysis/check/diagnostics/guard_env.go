@@ -387,80 +387,67 @@ func (e guardEnv) withType(c runtimeTypeConstraint) guardEnv {
 	return out
 }
 
-func (e guardEnv) withPresent(target path.Path) guardEnv {
-	if target.IsEmpty() {
-		return e
-	}
-	if e.unreachable {
-		return e
-	}
+// withFacts returns a copy of e carrying the supplied present/truthy/falsy/nil
+// path-fact sets, with constraints and type-checks cloned and the result sorted.
+func (e guardEnv) withFacts(present, truthy, falsy, nilPaths []path.Path) guardEnv {
 	out := guardEnv{
 		constraints: append([]literalConstraint(nil), e.constraints...),
 		typeChecks:  append([]runtimeTypeConstraint(nil), e.typeChecks...),
-		present:     appendPathFact(e.present, target),
-		truthy:      copyPaths(e.truthy),
-		falsy:       copyPaths(e.falsy),
-		nilPaths:    removePathFact(e.nilPaths, target),
+		present:     present,
+		truthy:      truthy,
+		falsy:       falsy,
+		nilPaths:    nilPaths,
 	}
 	sortGuardEnv(out)
 	return out
+}
+
+func (e guardEnv) withPresent(target path.Path) guardEnv {
+	if target.IsEmpty() || e.unreachable {
+		return e
+	}
+	return e.withFacts(
+		appendPathFact(e.present, target),
+		copyPaths(e.truthy),
+		copyPaths(e.falsy),
+		removePathFact(e.nilPaths, target),
+	)
 }
 
 func (e guardEnv) withTruthy(target path.Path) guardEnv {
-	if target.IsEmpty() {
+	if target.IsEmpty() || e.unreachable {
 		return e
 	}
-	if e.unreachable {
-		return e
-	}
-	out := guardEnv{
-		constraints: append([]literalConstraint(nil), e.constraints...),
-		typeChecks:  append([]runtimeTypeConstraint(nil), e.typeChecks...),
-		present:     appendPathFact(e.present, target),
-		truthy:      appendPathFact(e.truthy, target),
-		falsy:       removePathFact(e.falsy, target),
-		nilPaths:    removePathFact(e.nilPaths, target),
-	}
-	sortGuardEnv(out)
-	return out
+	return e.withFacts(
+		appendPathFact(e.present, target),
+		appendPathFact(e.truthy, target),
+		removePathFact(e.falsy, target),
+		removePathFact(e.nilPaths, target),
+	)
 }
 
 func (e guardEnv) withFalsy(target path.Path) guardEnv {
-	if target.IsEmpty() {
+	if target.IsEmpty() || e.unreachable {
 		return e
 	}
-	if e.unreachable {
-		return e
-	}
-	out := guardEnv{
-		constraints: append([]literalConstraint(nil), e.constraints...),
-		typeChecks:  append([]runtimeTypeConstraint(nil), e.typeChecks...),
-		present:     copyPaths(e.present),
-		truthy:      removePathFact(e.truthy, target),
-		falsy:       appendPathFact(e.falsy, target),
-		nilPaths:    copyPaths(e.nilPaths),
-	}
-	sortGuardEnv(out)
-	return out
+	return e.withFacts(
+		copyPaths(e.present),
+		removePathFact(e.truthy, target),
+		appendPathFact(e.falsy, target),
+		copyPaths(e.nilPaths),
+	)
 }
 
 func (e guardEnv) withNil(target path.Path) guardEnv {
-	if target.IsEmpty() {
+	if target.IsEmpty() || e.unreachable {
 		return e
 	}
-	if e.unreachable {
-		return e
-	}
-	out := guardEnv{
-		constraints: append([]literalConstraint(nil), e.constraints...),
-		typeChecks:  append([]runtimeTypeConstraint(nil), e.typeChecks...),
-		present:     removePathFact(e.present, target),
-		truthy:      removePathFact(e.truthy, target),
-		falsy:       appendPathFact(e.falsy, target),
-		nilPaths:    appendPathFact(e.nilPaths, target),
-	}
-	sortGuardEnv(out)
-	return out
+	return e.withFacts(
+		removePathFact(e.present, target),
+		removePathFact(e.truthy, target),
+		appendPathFact(e.falsy, target),
+		appendPathFact(e.nilPaths, target),
+	)
 }
 
 func (e guardEnv) withRuntimeTypePresence(target path.Path, typeName string) guardEnv {
