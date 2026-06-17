@@ -1,8 +1,6 @@
 package state
 
 import (
-	"sort"
-
 	"github.com/wippyai/go-lua/analysis/domain/lattice"
 	"github.com/wippyai/go-lua/analysis/domain/lattice/lift"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
@@ -57,14 +55,8 @@ type StoreRelationsSnapshot struct {
 }
 
 func (s State) StoreRelationsSnapshot() StoreRelationsSnapshot {
-	if s.storeRelations.bottom {
-		return StoreRelationsSnapshot{Bottom: true}
-	}
-	relations := storeRelationsFromSet(s.storeRelations.values)
-	return StoreRelationsSnapshot{
-		Top:       len(relations) == 0,
-		Relations: relations,
-	}
+	bottom, top, relations := s.storeRelations.snapshot(storeRelationLess)
+	return StoreRelationsSnapshot{Bottom: bottom, Top: top, Relations: relations}
 }
 
 func (s State) HasStoreRelation(relation StoreRelation) bool {
@@ -81,19 +73,9 @@ func (s State) AddStoreRelation(relation StoreRelation) State {
 	return out
 }
 
-func storeRelationsFromSet(in map[StoreRelation]struct{}) []StoreRelation {
-	if len(in) == 0 {
-		return nil
+func storeRelationLess(a, b StoreRelation) bool {
+	if a.Source != b.Source {
+		return a.Source < b.Source
 	}
-	out := make([]StoreRelation, 0, len(in))
-	for relation := range in {
-		out = append(out, relation)
-	}
-	sort.Slice(out, func(i, j int) bool {
-		if out[i].Source != out[j].Source {
-			return out[i].Source < out[j].Source
-		}
-		return out[i].Into < out[j].Into
-	})
-	return out
+	return a.Into < b.Into
 }

@@ -1,8 +1,6 @@
 package state
 
 import (
-	"sort"
-
 	"github.com/wippyai/go-lua/analysis/domain/lattice"
 	"github.com/wippyai/go-lua/analysis/domain/lattice/lift"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
@@ -49,14 +47,8 @@ type FrozenTablesSnapshot struct {
 // order. Bottom is explicit; Top means the reachable must lane contains no
 // frozen-table proofs.
 func (s State) FrozenTablesSnapshot() FrozenTablesSnapshot {
-	if s.frozenTables.bottom {
-		return FrozenTablesSnapshot{Bottom: true}
-	}
-	tables := frozenTableIDsFromSet(s.frozenTables.values)
-	return FrozenTablesSnapshot{
-		Top:    len(tables) == 0,
-		Tables: tables,
-	}
+	bottom, top, tables := s.frozenTables.snapshot(identityIDLess)
+	return FrozenTablesSnapshot{Bottom: bottom, Top: top, Tables: tables}
 }
 
 // IsTableFrozen reports whether every incoming path proves this table identity
@@ -73,20 +65,6 @@ func (s State) FreezeTable(id identity.ID) State {
 	}
 	out := s.reachable()
 	out.frozenTables = frozenTables
-	return out
-}
-
-func frozenTableIDsFromSet(in map[identity.ID]struct{}) []identity.ID {
-	if len(in) == 0 {
-		return nil
-	}
-	out := make([]identity.ID, 0, len(in))
-	for id := range in {
-		out = append(out, id)
-	}
-	sort.Slice(out, func(i, j int) bool {
-		return identityIDLess(out[i], out[j])
-	})
 	return out
 }
 

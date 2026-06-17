@@ -1,10 +1,25 @@
 package state
 
 import (
+	"sort"
+
 	"github.com/wippyai/go-lua/analysis/domain/lattice"
 	"github.com/wippyai/go-lua/analysis/domain/lattice/lift"
 	"github.com/wippyai/go-lua/analysis/internal/mapedit"
 )
+
+// sortedSetValues returns the keys of a set in stable order under less.
+func sortedSetValues[T comparable](in map[T]struct{}, less func(a, b T) bool) []T {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]T, 0, len(in))
+	for v := range in {
+		out = append(out, v)
+	}
+	sort.Slice(out, func(i, j int) bool { return less(out[i], out[j]) })
+	return out
+}
 
 // mustSetLane is the canonical state-side storage adapter for a finite must-set
 // of T with an explicit-bottom sentinel, bridging to lift.MustSetLane for the
@@ -37,6 +52,16 @@ func (l mustSetLane[T]) contains(v T) bool {
 	}
 	_, ok := l.values[v]
 	return ok
+}
+
+// snapshot returns the lane's bottom/top flags and finite values in stable
+// order under less. Each owning lane wraps this into its typed snapshot.
+func (l mustSetLane[T]) snapshot(less func(a, b T) bool) (bottom bool, top bool, items []T) {
+	if l.bottom {
+		return true, false, nil
+	}
+	items = sortedSetValues(l.values, less)
+	return false, len(items) == 0, items
 }
 
 func (l mustSetLane[T]) insert(v T) (mustSetLane[T], bool) {
