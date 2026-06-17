@@ -1,117 +1,51 @@
 package summary
 
 import (
-	"sort"
-
+	"github.com/wippyai/go-lua/analysis/domain/lattice/factset"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/engine/callboundary"
 )
 
 type pathInvalidationFactKey pathdom.PathKey
 
+// pathInvalidationLane is the canonical keyed-fact-set lattice for path
+// invalidations: one fact per path, with an ancestor path subsuming its
+// descendants.
+var pathInvalidationLane = factset.Set[pathInvalidationFactKey, callboundary.PathInvalidationFact]{
+	Key: func(f callboundary.PathInvalidationFact) pathInvalidationFactKey {
+		return pathInvalidationFactKey(f.Path.Key())
+	},
+	EqualFact: func(a, b callboundary.PathInvalidationFact) bool { return a.Path.Key() == b.Path.Key() },
+	Less:      func(a, b callboundary.PathInvalidationFact) bool { return a.Path.Less(b.Path) },
+	Valid:     func(f callboundary.PathInvalidationFact) bool { return f.Path.IsPlaceholder() },
+	CloneFact: func(f callboundary.PathInvalidationFact) callboundary.PathInvalidationFact {
+		f.Path = f.Path.Clone()
+		return f
+	},
+	Prefer:    func(kept, incoming callboundary.PathInvalidationFact) bool { return true },
+	Dominates: func(super, sub callboundary.PathInvalidationFact) bool { return pathHasPrefix(sub.Path, super.Path) },
+}
+
 func normalizePathInvalidationFacts(in []callboundary.PathInvalidationFact) []callboundary.PathInvalidationFact {
-	if len(in) == 0 {
-		return nil
-	}
-	seen := make(map[pathInvalidationFactKey]callboundary.PathInvalidationFact, len(in))
-	for _, fact := range in {
-		if !fact.Path.IsPlaceholder() {
-			continue
-		}
-		fact.Path = fact.Path.Clone()
-		seen[pathInvalidationFactKey(fact.Path.Key())] = fact
-	}
-	if len(seen) == 0 {
-		return nil
-	}
-	facts := sortedPathInvalidationFacts(seen)
-	out := facts[:0]
-	for _, fact := range facts {
-		if pathInvalidationDominatedByAny(fact, out) {
-			continue
-		}
-		write := 0
-		for _, existing := range out {
-			if pathHasPrefix(existing.Path, fact.Path) {
-				continue
-			}
-			out[write] = existing
-			write++
-		}
-		out = out[:write]
-		out = append(out, fact)
-	}
-	return out
+	return pathInvalidationLane.Normalize(in)
 }
 
 func clonePathInvalidationFacts(in []callboundary.PathInvalidationFact) []callboundary.PathInvalidationFact {
-	if len(in) == 0 {
-		return nil
-	}
-	out := make([]callboundary.PathInvalidationFact, len(in))
-	for i, fact := range in {
-		fact.Path = fact.Path.Clone()
-		out[i] = fact
-	}
-	return out
+	return pathInvalidationLane.Clone(in)
 }
 
 func pathInvalidationFactsEqual(a, b []callboundary.PathInvalidationFact) bool {
-	a = normalizePathInvalidationFacts(a)
-	b = normalizePathInvalidationFacts(b)
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i].Path.Key() != b[i].Path.Key() {
-			return false
-		}
-	}
-	return true
+	return pathInvalidationLane.Equal(a, b)
 }
 
 func pathInvalidationFactsLessOrEq(a, b []callboundary.PathInvalidationFact) bool {
-	a = normalizePathInvalidationFacts(a)
-	b = normalizePathInvalidationFacts(b)
-	for _, left := range a {
-		if !pathInvalidationDominatedByAny(left, b) {
-			return false
-		}
-	}
-	return true
+	return pathInvalidationLane.LessOrEq(a, b)
 }
 
 func joinPathInvalidationFacts(a, b []callboundary.PathInvalidationFact) []callboundary.PathInvalidationFact {
-	if len(a) == 0 && len(b) == 0 {
-		return nil
-	}
-	out := make([]callboundary.PathInvalidationFact, 0, len(a)+len(b))
-	out = append(out, clonePathInvalidationFacts(a)...)
-	out = append(out, clonePathInvalidationFacts(b)...)
-	return normalizePathInvalidationFacts(out)
+	return pathInvalidationLane.Join(a, b)
 }
 
 func widenPathInvalidationFacts(prev, next []callboundary.PathInvalidationFact) []callboundary.PathInvalidationFact {
-	return joinPathInvalidationFacts(prev, next)
-}
-
-func pathInvalidationDominatedByAny(fact callboundary.PathInvalidationFact, facts []callboundary.PathInvalidationFact) bool {
-	for _, existing := range facts {
-		if pathHasPrefix(fact.Path, existing.Path) {
-			return true
-		}
-	}
-	return false
-}
-
-func sortedPathInvalidationFacts(in map[pathInvalidationFactKey]callboundary.PathInvalidationFact) []callboundary.PathInvalidationFact {
-	if len(in) == 0 {
-		return nil
-	}
-	out := make([]callboundary.PathInvalidationFact, 0, len(in))
-	for _, fact := range in {
-		out = append(out, fact)
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Path.Less(out[j].Path) })
-	return out
+	return pathInvalidationLane.Widen(prev, next)
 }
