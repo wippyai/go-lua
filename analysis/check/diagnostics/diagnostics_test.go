@@ -112,6 +112,225 @@ func TestUnusedLocalWarningSeverityCanBeRemapped(t *testing.T) {
 	}
 }
 
+func TestDeadAssignmentWarningIsOptInAndEvidenceBacked(t *testing.T) {
+	result := runDiagnosticsResult(t, `
+local value = 1
+value = 2
+return value
+`)
+	if diags := ProduceWithConfig(result, Config{}); len(diags) != 0 {
+		t.Fatalf("default diagnostics = %#v, want dead-assignment disabled by default", diags)
+	}
+
+	diags := ProduceWithConfig(result, Config{Policy: diagnostic.Policy{Rules: map[diagnostic.Code]diagnostic.Rule{
+		CodeDeadAssignment: diagnostic.Enable(),
+	}}})
+	if len(diags) != 1 {
+		t.Fatalf("diagnostics = %#v, want one dead-assignment warning", diags)
+	}
+	d := diags[0]
+	if d.Code != CodeDeadAssignment || d.Severity != diagnostic.SeverityWarning {
+		t.Fatalf("diagnostic code/severity = %s/%s, want %s/warning", d.Code, d.Severity, CodeDeadAssignment)
+	}
+	if !strings.Contains(d.Message, "overwritten") || len(d.Labels) != 2 {
+		t.Fatalf("diagnostic = %#v, want overwrite message with write labels", d)
+	}
+	evidence := d.Explanation.Evidence()
+	if len(evidence) != 4 {
+		t.Fatalf("evidence = %#v, want original write, overwriting write, CFG proof, and missing-read proof", evidence)
+	}
+	if !strings.Contains(evidence[1].Message, "assigned again") ||
+		!strings.Contains(evidence[2].Message, "CFG proof") ||
+		!strings.Contains(evidence[3].Message, "no bound read") {
+		t.Fatalf("evidence = %#v, want overwrite, CFG proof, and missing-read evidence", evidence)
+	}
+}
+
+func TestDeadAssignmentWarningCanBeSeverityRemapped(t *testing.T) {
+	diags := ProduceWithConfig(runDiagnosticsResult(t, `
+local value = 1
+value = 2
+return value
+`), Config{Policy: diagnostic.Policy{Rules: map[diagnostic.Code]diagnostic.Rule{
+		CodeDeadAssignment: diagnostic.Enable().WithSeverity(diagnostic.SeverityHint),
+	}}})
+	if len(diags) != 1 {
+		t.Fatalf("diagnostics = %#v, want one dead-assignment diagnostic", diags)
+	}
+	if diags[0].Severity != diagnostic.SeverityHint {
+		t.Fatalf("severity = %s, want hint", diags[0].Severity)
+	}
+}
+
+func TestDeadAssignmentWarningRespectsReadsAndConditionalBypass(t *testing.T) {
+	cases := []struct {
+		name string
+		src  string
+	}{
+		{
+			name: "rhs self read",
+			src: `
+local value = 1
+value = value + 1
+return value
+`,
+		},
+		{
+			name: "intervening read",
+			src: `
+local value = 1
+local seen = value
+value = 2
+return seen, value
+`,
+		},
+		{
+			name: "lvalue key read",
+			src: `
+local value = 1
+local t = {}
+t[value] = 2
+value = 3
+return value
+`,
+		},
+		{
+			name: "closure read between writes is conservative",
+			src: `
+local value = 1
+local fn = function()
+	return value
+end
+value = 2
+return fn, value
+`,
+		},
+		{
+			name: "conditional overwrite can be bypassed",
+			src: `
+local value = 1
+if test then
+	value = 2
+end
+return value
+`,
+		},
+		{
+			name: "branch read before later overwrite",
+			src: `
+local value = 1
+if test then
+	local seen = value
+end
+value = 2
+return value
+`,
+		},
+		{
+			name: "while overwrite can be skipped",
+			src: `
+local value = 1
+while test do
+	value = 2
+end
+return value
+`,
+		},
+		{
+			name: "mutually exclusive writes",
+			src: `
+local value
+if test then
+	value = 1
+else
+	value = 2
+end
+return value
+`,
+		},
+		{
+			name: "same statement duplicate write is ambiguous",
+			src: `
+local value = 0
+value, value = 1, 2
+return value
+`,
+		},
+	}
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			diags := ProduceWithConfig(runDiagnosticsResult(t, tt.src), Config{Policy: diagnostic.Policy{Rules: map[diagnostic.Code]diagnostic.Rule{
+				CodeDeadAssignment: diagnostic.Enable(),
+			}}})
+			if len(diags) != 0 {
+				t.Fatalf("diagnostics = %#v, want no dead-assignment warning", diags)
+			}
+		})
+	}
+}
+
+func TestDeadAssignmentWarningUsesCFGReachability(t *testing.T) {
+	diags := ProduceWithConfig(runDiagnosticsResult(t, `
+local value = 1
+goto overwrite
+do
+	local seen = value
+end
+::overwrite::
+value = 2
+return value
+`), Config{Policy: diagnostic.Policy{Rules: map[diagnostic.Code]diagnostic.Rule{
+		CodeDeadAssignment: diagnostic.Enable(),
+	}}})
+	if len(diags) != 1 {
+		t.Fatalf("diagnostics = %#v, want one warning because the source-order read is unreachable", diags)
+	}
+	if diags[0].Code != CodeDeadAssignment {
+		t.Fatalf("diagnostic = %#v, want dead-assignment warning", diags[0])
+	}
+}
+
+func TestDeadAssignmentWarningReportsRepeatOverwrite(t *testing.T) {
+	diags := ProduceWithConfig(runDiagnosticsResult(t, `
+local value = 1
+repeat
+	value = 2
+until test
+return value
+`), Config{Policy: diagnostic.Policy{Rules: map[diagnostic.Code]diagnostic.Rule{
+		CodeDeadAssignment: diagnostic.Enable(),
+	}}})
+	if len(diags) != 1 {
+		t.Fatalf("diagnostics = %#v, want repeat body overwrite to be recognized as must-execute", diags)
+	}
+}
+
+func TestDeadAssignmentWarningReportsParameterSlotWritesButSkipsGlobals(t *testing.T) {
+	diags := ProduceWithConfig(runDiagnosticsResult(t, `
+function update(value)
+	value = 1
+	value = 2
+	return value
+end
+`), Config{Policy: diagnostic.Policy{Rules: map[diagnostic.Code]diagnostic.Rule{
+		CodeDeadAssignment: diagnostic.Enable(),
+	}}})
+	if len(diags) != 1 {
+		t.Fatalf("parameter diagnostics = %#v, want one overwritten parameter-slot write", diags)
+	}
+
+	globalDiags := ProduceWithConfig(runDiagnosticsResult(t, `
+value = 1
+value = 2
+return value
+`), Config{Policy: diagnostic.Policy{Rules: map[diagnostic.Code]diagnostic.Rule{
+		CodeDeadAssignment: diagnostic.Enable(),
+	}}})
+	if len(globalDiags) != 0 {
+		t.Fatalf("global diagnostics = %#v, want globals skipped by the local dead-assignment pass", globalDiags)
+	}
+}
+
 func TestAnnotationAssignabilityAcceptsSubtypeLiteral(t *testing.T) {
 	diags := runDiagnostics(t, `local x: number = 42`)
 	if len(diags) != 0 {

@@ -27,6 +27,7 @@ const (
 	CodeUnresolvedTypeReference    diagnostic.Code = "type.reference.unresolved"
 	CodeUnresolvedValueReference   diagnostic.Code = "value.reference.unresolved"
 	CodeUnusedLocal                diagnostic.Code = "lint.unused.local"
+	CodeDeadAssignment             diagnostic.Code = "lint.dead.assignment"
 )
 
 type producerContext struct {
@@ -64,6 +65,9 @@ func produceWithResolver(result *body.Result, parent typeannotation.Resolver, in
 	out = append(out, channelSelectExhaustiveness(context).Produce(result)...)
 	if config.Policy.Enabled(CodeUnusedLocal, false) {
 		out = append(out, unusedLocals(context).Produce(result)...)
+	}
+	if config.Policy.Enabled(CodeDeadAssignment, false) {
+		out = append(out, deadAssignments(context).Produce(result)...)
 	}
 	for _, fn := range result.FunctionResults() {
 		out = append(out, produceWithResolver(fn, resolver, defs, config)...)

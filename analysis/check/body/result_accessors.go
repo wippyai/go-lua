@@ -178,6 +178,13 @@ func (r *Result) NumericFor(point cfg.Point) (cfgfacts.NumericForFact, bool) {
 	return r.semantics.NumericFor(point)
 }
 
+func (r *Result) GenericFor(point cfg.Point) (cfgfacts.GenericForFact, bool) {
+	if r == nil || r.semantics == nil {
+		return cfgfacts.GenericForFact{}, false
+	}
+	return r.semantics.GenericFor(point)
+}
+
 func (r *Result) Function() *ast.FunctionExpr {
 	if r == nil || r.semantics == nil {
 		return nil
@@ -206,6 +213,13 @@ func (r *Result) FunctionResults() []*Result {
 	return append([]*Result(nil), r.functions...)
 }
 
+func (r *Result) DirectCaptures(fn *ast.FunctionExpr) []bind.Capture {
+	if r == nil || r.bindings == nil || fn == nil {
+		return nil
+	}
+	return r.bindings.DirectCaptures(fn)
+}
+
 // WithFunctionResults returns result after replacing its materialized nested
 // function results. Program-level fixed-point materialization owns population;
 // body analysis itself runs exactly one body.
@@ -222,6 +236,20 @@ func (r *Result) SymbolName(id symbol.ID) string {
 		return ""
 	}
 	return r.bindings.Name(id)
+}
+
+func (r *Result) SymbolKind(id symbol.ID) (symbol.Kind, bool) {
+	if r == nil || r.bindings == nil {
+		return symbol.Unknown, false
+	}
+	return r.bindings.Kind(id)
+}
+
+func (r *Result) SymbolOfIdent(ident *ast.IdentExpr) (symbol.ID, bool) {
+	if r == nil || r.bindings == nil || ident == nil {
+		return 0, false
+	}
+	return r.bindings.SymbolOf(ident)
 }
 
 func (r *Result) SymbolTypeAnnotation(id symbol.ID) (ast.TypeExpr, bool) {

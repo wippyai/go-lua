@@ -73,6 +73,33 @@ func TestCheckCanEnableUnusedLocalWarning(t *testing.T) {
 	requireEvidenceMessage(t, warn.Diagnostics[0], "no identifier read")
 }
 
+func TestCheckCanEnableDeadAssignmentWarning(t *testing.T) {
+	defaultResult := Check(`
+local value = 1
+value = 2
+return value
+`)
+	if len(defaultResult.Diagnostics) != 0 {
+		t.Fatalf("default diagnostics = %#v, want dead-assignment off by default", defaultResult.Diagnostics)
+	}
+
+	warn := Check(`
+local value = 1
+value = 2
+return value
+`, WithDiagnosticRule(
+		diagnostics.CodeDeadAssignment,
+		diagnostic.Enable().WithSeverity(diagnostic.SeverityHint),
+	))
+	if len(warn.Diagnostics) != 1 {
+		t.Fatalf("diagnostics = %#v, want one dead-assignment diagnostic", warn.Diagnostics)
+	}
+	if warn.Diagnostics[0].Code != diagnostics.CodeDeadAssignment || warn.Diagnostics[0].Severity != diagnostic.SeverityHint {
+		t.Fatalf("diagnostic = %#v, want dead-assignment hint", warn.Diagnostics[0])
+	}
+	requireEvidenceMessage(t, warn.Diagnostics[0], "no bound read")
+}
+
 func TestCheckAliasedObjectLiteralMemberReadUsesHeapIdentity(t *testing.T) {
 	result := Check(`
 local user = { id = "u1" }
