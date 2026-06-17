@@ -12,10 +12,6 @@ import (
 // UnionForEvidence applies the shared union normalization policy used when
 // aggregating evidence or projecting values.
 func UnionForEvidence(members ...typ.Type) typ.Type {
-	return unionForEvidence(members)
-}
-
-func unionForEvidence(members []typ.Type) typ.Type {
 	flat, hasNil, hasUnknown := flattenUnionForRelationEvidence(members)
 	if len(flat) > 0 {
 		flat = applyUnionSubsumption(flat)
