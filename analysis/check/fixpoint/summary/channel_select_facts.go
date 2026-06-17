@@ -1,8 +1,7 @@
 package summary
 
 import (
-	"sort"
-
+	"github.com/wippyai/go-lua/analysis/domain/lattice/factset"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/engine/callboundary"
 	"github.com/wippyai/go-lua/analysis/engine/state/channelselectfact"
@@ -17,87 +16,25 @@ type channelSelectFactKey struct {
 	hasDefault bool
 }
 
-func normalizeChannelSelectFacts(in []callboundary.ChannelSelectFact) []callboundary.ChannelSelectFact {
-	if len(in) == 0 {
-		return nil
-	}
-	seen := make(map[channelSelectFactKey]callboundary.ChannelSelectFact, len(in))
-	for _, fact := range in {
-		if fact.Select == "" || fact.Kind == 0 || fact.Index < 0 {
-			continue
-		}
-		if !optionalPlaceholderPath(fact.Result) || !optionalPlaceholderPath(fact.Case) {
-			continue
-		}
-		fact.Result = fact.Result.Clone()
-		fact.Case = fact.Case.Clone()
-		seen[channelSelectFactKeyOf(fact)] = fact
-	}
-	return sortedChannelSelectFacts(seen)
-}
-
-func cloneChannelSelectFacts(in []callboundary.ChannelSelectFact) []callboundary.ChannelSelectFact {
-	if len(in) == 0 {
-		return nil
-	}
-	out := make([]callboundary.ChannelSelectFact, len(in))
-	for i, fact := range in {
-		fact.Result = fact.Result.Clone()
-		fact.Case = fact.Case.Clone()
-		out[i] = fact
-	}
-	return out
-}
-
-func channelSelectFactsEqual(a, b []callboundary.ChannelSelectFact) bool {
-	a = normalizeChannelSelectFacts(a)
-	b = normalizeChannelSelectFacts(b)
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if channelSelectFactKeyOf(a[i]) != channelSelectFactKeyOf(b[i]) {
-			return false
-		}
-	}
-	return true
-}
-
-func channelSelectFactsLessOrEq(a, b []callboundary.ChannelSelectFact) bool {
-	aSet := channelSelectFactsSet(a)
-	for _, fact := range normalizeChannelSelectFacts(b) {
-		if _, ok := aSet[channelSelectFactKeyOf(fact)]; !ok {
-			return false
-		}
-	}
-	return true
-}
-
-func joinChannelSelectFacts(a, b []callboundary.ChannelSelectFact) []callboundary.ChannelSelectFact {
-	aSet := channelSelectFactsSet(a)
-	bSet := channelSelectFactsSet(b)
-	if len(aSet) == 0 || len(bSet) == 0 {
-		return nil
-	}
-	out := make(map[channelSelectFactKey]callboundary.ChannelSelectFact)
-	for key, fact := range aSet {
-		if _, ok := bSet[key]; ok {
-			out[key] = fact
-		}
-	}
-	return sortedChannelSelectFacts(out)
-}
-
-func channelSelectFactsSet(in []callboundary.ChannelSelectFact) map[channelSelectFactKey]callboundary.ChannelSelectFact {
-	out := normalizeChannelSelectFacts(in)
-	if len(out) == 0 {
-		return nil
-	}
-	m := make(map[channelSelectFactKey]callboundary.ChannelSelectFact, len(out))
-	for _, fact := range out {
-		m[channelSelectFactKeyOf(fact)] = fact
-	}
-	return m
+// channelSelectLane is the canonical must (intersection) lattice for channel
+// select facts: a fact survives a join only when present on every path.
+var channelSelectLane = factset.Set[channelSelectFactKey, callboundary.ChannelSelectFact]{
+	Key: channelSelectFactKeyOf,
+	EqualFact: func(a, b callboundary.ChannelSelectFact) bool {
+		return channelSelectFactKeyOf(a) == channelSelectFactKeyOf(b)
+	},
+	Less: channelSelectFactLess,
+	Valid: func(f callboundary.ChannelSelectFact) bool {
+		return f.Select != "" && f.Kind != 0 && f.Index >= 0 &&
+			optionalPlaceholderPath(f.Result) && optionalPlaceholderPath(f.Case)
+	},
+	CloneFact: func(f callboundary.ChannelSelectFact) callboundary.ChannelSelectFact {
+		f.Result = f.Result.Clone()
+		f.Case = f.Case.Clone()
+		return f
+	},
+	Prefer:    func(kept, incoming callboundary.ChannelSelectFact) bool { return true },
+	Intersect: true,
 }
 
 func optionalPlaceholderPath(path pathdom.Path) bool {
@@ -115,33 +52,23 @@ func channelSelectFactKeyOf(fact callboundary.ChannelSelectFact) channelSelectFa
 	}
 }
 
-func sortedChannelSelectFacts(in map[channelSelectFactKey]callboundary.ChannelSelectFact) []callboundary.ChannelSelectFact {
-	if len(in) == 0 {
-		return nil
+func channelSelectFactLess(a, b callboundary.ChannelSelectFact) bool {
+	left := channelSelectFactKeyOf(a)
+	right := channelSelectFactKeyOf(b)
+	if left.selectID != right.selectID {
+		return left.selectID < right.selectID
 	}
-	out := make([]callboundary.ChannelSelectFact, 0, len(in))
-	for _, fact := range in {
-		out = append(out, fact)
+	if left.kind != right.kind {
+		return left.kind < right.kind
 	}
-	sort.Slice(out, func(i, j int) bool {
-		left := channelSelectFactKeyOf(out[i])
-		right := channelSelectFactKeyOf(out[j])
-		if left.selectID != right.selectID {
-			return left.selectID < right.selectID
-		}
-		if left.kind != right.kind {
-			return left.kind < right.kind
-		}
-		if left.result != right.result {
-			return left.result < right.result
-		}
-		if left.casePath != right.casePath {
-			return left.casePath < right.casePath
-		}
-		if left.index != right.index {
-			return left.index < right.index
-		}
-		return !left.hasDefault && right.hasDefault
-	})
-	return out
+	if left.result != right.result {
+		return left.result < right.result
+	}
+	if left.casePath != right.casePath {
+		return left.casePath < right.casePath
+	}
+	if left.index != right.index {
+		return left.index < right.index
+	}
+	return !left.hasDefault && right.hasDefault
 }

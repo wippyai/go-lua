@@ -20,6 +20,9 @@ import "sort"
 //
 // Key, EqualFact, and Less are required. The optional hooks tailor a lane:
 //   - Valid drops facts during normalization (e.g. non-placeholder targets).
+//   - Admit both validates and canonicalizes a fact, returning the canonical
+//     form and whether to keep it. Use it when a lane normalizes fields per
+//     fact kind before keying. When set it supersedes Valid.
 //   - CloneFact deep-copies a fact on ingest so callers cannot mutate stored
 //     state.
 //   - Prefer resolves a same-key collision by reporting whether the incoming
@@ -33,6 +36,7 @@ type Set[K comparable, F any] struct {
 	EqualFact func(a, b F) bool
 	Less      func(a, b F) bool
 	Valid     func(F) bool
+	Admit     func(F) (F, bool)
 	CloneFact func(F) F
 	Prefer    func(kept, incoming F) bool
 	Dominates func(super, sub F) bool
@@ -62,7 +66,13 @@ func (s Set[K, F]) Normalize(in []F) []F {
 	}
 	merged := make(map[K]F, len(in))
 	for _, fact := range in {
-		if s.Valid != nil && !s.Valid(fact) {
+		if s.Admit != nil {
+			canon, ok := s.Admit(fact)
+			if !ok {
+				continue
+			}
+			fact = canon
+		} else if s.Valid != nil && !s.Valid(fact) {
 			continue
 		}
 		fact = s.cloneOne(fact)

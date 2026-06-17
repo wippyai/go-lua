@@ -1,100 +1,24 @@
 package summary
 
 import (
-	"sort"
-
+	"github.com/wippyai/go-lua/analysis/domain/lattice/factset"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/engine/callboundary"
 )
 
 type frozenTableFactKey pathdom.PathKey
 
-func normalizeFrozenTableFacts(in []callboundary.FrozenTableFact) []callboundary.FrozenTableFact {
-	if len(in) == 0 {
-		return nil
-	}
-	seen := make(map[frozenTableFactKey]callboundary.FrozenTableFact, len(in))
-	for _, fact := range in {
-		if !fact.Target.IsPlaceholder() {
-			continue
-		}
-		fact.Target = fact.Target.Clone()
-		seen[frozenTableFactKey(fact.Target.Key())] = fact
-	}
-	return sortedFrozenTableFacts(seen)
-}
-
-func cloneFrozenTableFacts(in []callboundary.FrozenTableFact) []callboundary.FrozenTableFact {
-	if len(in) == 0 {
-		return nil
-	}
-	out := make([]callboundary.FrozenTableFact, len(in))
-	for i, fact := range in {
-		fact.Target = fact.Target.Clone()
-		out[i] = fact
-	}
-	return out
-}
-
-func frozenTableFactsEqual(a, b []callboundary.FrozenTableFact) bool {
-	a = normalizeFrozenTableFacts(a)
-	b = normalizeFrozenTableFacts(b)
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i].Target.Key() != b[i].Target.Key() {
-			return false
-		}
-	}
-	return true
-}
-
-func frozenTableFactsLessOrEq(a, b []callboundary.FrozenTableFact) bool {
-	aSet := frozenTableFactsSet(a)
-	for _, fact := range normalizeFrozenTableFacts(b) {
-		if _, ok := aSet[frozenTableFactKey(fact.Target.Key())]; !ok {
-			return false
-		}
-	}
-	return true
-}
-
-func joinFrozenTableFacts(a, b []callboundary.FrozenTableFact) []callboundary.FrozenTableFact {
-	aSet := frozenTableFactsSet(a)
-	bSet := frozenTableFactsSet(b)
-	if len(aSet) == 0 || len(bSet) == 0 {
-		return nil
-	}
-	out := make(map[frozenTableFactKey]callboundary.FrozenTableFact)
-	for key, fact := range aSet {
-		if _, ok := bSet[key]; ok {
-			out[key] = fact
-		}
-	}
-	return sortedFrozenTableFacts(out)
-}
-
-func frozenTableFactsSet(in []callboundary.FrozenTableFact) map[frozenTableFactKey]callboundary.FrozenTableFact {
-	out := normalizeFrozenTableFacts(in)
-	if len(out) == 0 {
-		return nil
-	}
-	m := make(map[frozenTableFactKey]callboundary.FrozenTableFact, len(out))
-	for _, fact := range out {
-		m[frozenTableFactKey(fact.Target.Key())] = fact
-	}
-	return m
-}
-
-func sortedFrozenTableFacts(in map[frozenTableFactKey]callboundary.FrozenTableFact) []callboundary.FrozenTableFact {
-	if len(in) == 0 {
-		return nil
-	}
-	out := make([]callboundary.FrozenTableFact, 0, len(in))
-	for _, fact := range in {
-		out = append(out, fact)
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Target.Less(out[j].Target) })
-	return out
+// frozenTableLane is the canonical must (intersection) lattice for frozen-table
+// facts: one fact per target, kept only when guaranteed on every joined path.
+var frozenTableLane = factset.Set[frozenTableFactKey, callboundary.FrozenTableFact]{
+	Key:       func(f callboundary.FrozenTableFact) frozenTableFactKey { return frozenTableFactKey(f.Target.Key()) },
+	EqualFact: func(a, b callboundary.FrozenTableFact) bool { return a.Target.Key() == b.Target.Key() },
+	Less:      func(a, b callboundary.FrozenTableFact) bool { return a.Target.Less(b.Target) },
+	Valid:     func(f callboundary.FrozenTableFact) bool { return f.Target.IsPlaceholder() },
+	CloneFact: func(f callboundary.FrozenTableFact) callboundary.FrozenTableFact {
+		f.Target = f.Target.Clone()
+		return f
+	},
+	Prefer:    func(kept, incoming callboundary.FrozenTableFact) bool { return true },
+	Intersect: true,
 }

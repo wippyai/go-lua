@@ -76,6 +76,6 @@ func (s Summary) Clone() Summary {
 	out.NormalReturnFacts = cloneNormalReturnFacts(s.NormalReturnFacts)
 	out.HeapTableObjects = cloneHeapTableObjects(s.HeapTableObjects)
 	out.ReturnConditionParamRefinements = cloneReturnConditionParamRefinements(s.ReturnConditionParamRefinements)
-	out.ReturnPresenceRelations = cloneReturnPresenceRelations(s.ReturnPresenceRelations)
+	out.ReturnPresenceRelations = returnPresenceRelationLane.Clone(s.ReturnPresenceRelations)
 	return out
 }

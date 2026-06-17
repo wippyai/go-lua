@@ -11,9 +11,9 @@ func normalizeNormalReturnFacts(reg *axis.Registry, in callboundary.NormalReturn
 		PathStaticMembers: normalizePathStaticMemberFacts(reg, in.PathStaticMembers),
 		PathInvalidations: pathInvalidationLane.Normalize(in.PathInvalidations),
 		DynamicIndexFacts: normalizeDynamicIndexFacts(reg, in.DynamicIndexFacts),
-		BranchProofs:      normalizeBranchProofs(in.BranchProofs),
-		ChannelSelects:    normalizeChannelSelectFacts(in.ChannelSelects),
-		FrozenTables:      normalizeFrozenTableFacts(in.FrozenTables),
+		BranchProofs:      branchProofLane.Normalize(in.BranchProofs),
+		ChannelSelects:    channelSelectLane.Normalize(in.ChannelSelects),
+		FrozenTables:      frozenTableLane.Normalize(in.FrozenTables),
 		EffectDeltas:      normalizeEffectDeltas(reg, in.EffectDeltas),
 		EscapeEvents:      escapeEventLane.Normalize(in.EscapeEvents),
 		StoreRelations:    storeRelationLane.Normalize(in.StoreRelations),
@@ -33,9 +33,9 @@ func cloneNormalReturnFacts(in callboundary.NormalReturnFacts) callboundary.Norm
 		PathStaticMembers: clonePathStaticMemberFacts(in.PathStaticMembers),
 		PathInvalidations: pathInvalidationLane.Clone(in.PathInvalidations),
 		DynamicIndexFacts: cloneDynamicIndexFacts(in.DynamicIndexFacts),
-		BranchProofs:      cloneBranchProofs(in.BranchProofs),
-		ChannelSelects:    cloneChannelSelectFacts(in.ChannelSelects),
-		FrozenTables:      cloneFrozenTableFacts(in.FrozenTables),
+		BranchProofs:      branchProofLane.Clone(in.BranchProofs),
+		ChannelSelects:    channelSelectLane.Clone(in.ChannelSelects),
+		FrozenTables:      frozenTableLane.Clone(in.FrozenTables),
 		EffectDeltas:      cloneEffectDeltas(in.EffectDeltas),
 		EscapeEvents:      escapeEventLane.Clone(in.EscapeEvents),
 		StoreRelations:    storeRelationLane.Clone(in.StoreRelations),
@@ -49,9 +49,9 @@ func normalReturnFactsEqual(reg *axis.Registry, a, b callboundary.NormalReturnFa
 		pathStaticMemberFactsEqual(reg, a.PathStaticMembers, b.PathStaticMembers) &&
 		pathInvalidationLane.Equal(a.PathInvalidations, b.PathInvalidations) &&
 		dynamicIndexFactsEqual(reg, a.DynamicIndexFacts, b.DynamicIndexFacts) &&
-		branchProofsEqual(a.BranchProofs, b.BranchProofs) &&
-		channelSelectFactsEqual(a.ChannelSelects, b.ChannelSelects) &&
-		frozenTableFactsEqual(a.FrozenTables, b.FrozenTables) &&
+		branchProofLane.Equal(a.BranchProofs, b.BranchProofs) &&
+		channelSelectLane.Equal(a.ChannelSelects, b.ChannelSelects) &&
+		frozenTableLane.Equal(a.FrozenTables, b.FrozenTables) &&
 		effectDeltasEqual(reg, a.EffectDeltas, b.EffectDeltas) &&
 		escapeEventLane.Equal(a.EscapeEvents, b.EscapeEvents) &&
 		storeRelationLane.Equal(a.StoreRelations, b.StoreRelations)
@@ -64,9 +64,9 @@ func normalReturnFactsLessOrEq(reg *axis.Registry, a, b callboundary.NormalRetur
 		pathStaticMemberFactsLessOrEq(reg, a.PathStaticMembers, b.PathStaticMembers) &&
 		pathInvalidationLane.LessOrEq(a.PathInvalidations, b.PathInvalidations) &&
 		dynamicIndexFactsLessOrEq(reg, a.DynamicIndexFacts, b.DynamicIndexFacts) &&
-		branchProofsLessOrEq(a.BranchProofs, b.BranchProofs) &&
-		channelSelectFactsLessOrEq(a.ChannelSelects, b.ChannelSelects) &&
-		frozenTableFactsLessOrEq(a.FrozenTables, b.FrozenTables) &&
+		branchProofLane.LessOrEq(a.BranchProofs, b.BranchProofs) &&
+		channelSelectLane.LessOrEq(a.ChannelSelects, b.ChannelSelects) &&
+		frozenTableLane.LessOrEq(a.FrozenTables, b.FrozenTables) &&
 		effectDeltasLessOrEq(reg, a.EffectDeltas, b.EffectDeltas) &&
 		escapeEventLane.LessOrEq(a.EscapeEvents, b.EscapeEvents) &&
 		storeRelationLane.LessOrEq(a.StoreRelations, b.StoreRelations)
@@ -78,9 +78,9 @@ func joinNormalReturnFacts(reg *axis.Registry, a, b callboundary.NormalReturnFac
 		PathStaticMembers: joinPathStaticMemberFacts(reg, a.PathStaticMembers, b.PathStaticMembers),
 		PathInvalidations: pathInvalidationLane.Join(a.PathInvalidations, b.PathInvalidations),
 		DynamicIndexFacts: joinDynamicIndexFacts(reg, a.DynamicIndexFacts, b.DynamicIndexFacts),
-		BranchProofs:      joinBranchProofs(a.BranchProofs, b.BranchProofs),
-		ChannelSelects:    joinChannelSelectFacts(a.ChannelSelects, b.ChannelSelects),
-		FrozenTables:      joinFrozenTableFacts(a.FrozenTables, b.FrozenTables),
+		BranchProofs:      branchProofLane.Join(a.BranchProofs, b.BranchProofs),
+		ChannelSelects:    channelSelectLane.Join(a.ChannelSelects, b.ChannelSelects),
+		FrozenTables:      frozenTableLane.Join(a.FrozenTables, b.FrozenTables),
 		EffectDeltas:      joinEffectDeltas(reg, a.EffectDeltas, b.EffectDeltas),
 		EscapeEvents:      escapeEventLane.Join(a.EscapeEvents, b.EscapeEvents),
 		StoreRelations:    storeRelationLane.Join(a.StoreRelations, b.StoreRelations),
@@ -93,9 +93,9 @@ func widenNormalReturnFacts(reg *axis.Registry, prev, next callboundary.NormalRe
 		PathStaticMembers: widenPathStaticMemberFacts(reg, prev.PathStaticMembers, next.PathStaticMembers),
 		PathInvalidations: pathInvalidationLane.Widen(prev.PathInvalidations, next.PathInvalidations),
 		DynamicIndexFacts: widenDynamicIndexFacts(reg, prev.DynamicIndexFacts, next.DynamicIndexFacts),
-		BranchProofs:      joinBranchProofs(prev.BranchProofs, next.BranchProofs),
-		ChannelSelects:    joinChannelSelectFacts(prev.ChannelSelects, next.ChannelSelects),
-		FrozenTables:      joinFrozenTableFacts(prev.FrozenTables, next.FrozenTables),
+		BranchProofs:      branchProofLane.Join(prev.BranchProofs, next.BranchProofs),
+		ChannelSelects:    channelSelectLane.Join(prev.ChannelSelects, next.ChannelSelects),
+		FrozenTables:      frozenTableLane.Join(prev.FrozenTables, next.FrozenTables),
 		EffectDeltas:      widenEffectDeltas(reg, prev.EffectDeltas, next.EffectDeltas),
 		EscapeEvents:      escapeEventLane.Widen(prev.EscapeEvents, next.EscapeEvents),
 		StoreRelations:    storeRelationLane.Widen(prev.StoreRelations, next.StoreRelations),

@@ -1,8 +1,7 @@
 package summary
 
 import (
-	"sort"
-
+	"github.com/wippyai/go-lua/analysis/domain/lattice/factset"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 )
 
@@ -21,99 +20,22 @@ type returnPresenceRelationKey struct {
 	targetPresence  presence.Value
 }
 
-func normalizeReturnPresenceRelations(in []ReturnPresenceRelation) []ReturnPresenceRelation {
-	if len(in) == 0 {
-		return nil
-	}
-	seen := make(map[returnPresenceRelationKey]ReturnPresenceRelation, len(in))
-	for _, relation := range in {
-		if relation.TriggerIndex < 0 || relation.TargetIndex < 0 ||
-			relation.TriggerIndex == relation.TargetIndex ||
-			relation.TriggerPresence.IsBottom() || relation.TriggerPresence.IsTop() ||
-			relation.TargetPresence.IsBottom() || relation.TargetPresence.IsTop() {
-			continue
-		}
-		seen[returnPresenceRelationKeyOf(relation)] = relation
-	}
-	if len(seen) == 0 {
-		return nil
-	}
-	out := make([]ReturnPresenceRelation, 0, len(seen))
-	for _, relation := range seen {
-		out = append(out, relation)
-	}
-	sort.Slice(out, func(i, j int) bool {
-		left := returnPresenceRelationKeyOf(out[i])
-		right := returnPresenceRelationKeyOf(out[j])
-		if left.triggerIndex != right.triggerIndex {
-			return left.triggerIndex < right.triggerIndex
-		}
-		if left.triggerPresence != right.triggerPresence {
-			return left.triggerPresence < right.triggerPresence
-		}
-		if left.targetIndex != right.targetIndex {
-			return left.targetIndex < right.targetIndex
-		}
-		return left.targetPresence < right.targetPresence
-	})
-	return out
-}
-
-func cloneReturnPresenceRelations(in []ReturnPresenceRelation) []ReturnPresenceRelation {
-	if len(in) == 0 {
-		return nil
-	}
-	out := make([]ReturnPresenceRelation, len(in))
-	copy(out, in)
-	return out
-}
-
-func returnPresenceRelationsEqual(a, b []ReturnPresenceRelation) bool {
-	a = normalizeReturnPresenceRelations(a)
-	b = normalizeReturnPresenceRelations(b)
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if returnPresenceRelationKeyOf(a[i]) != returnPresenceRelationKeyOf(b[i]) {
-			return false
-		}
-	}
-	return true
-}
-
-func returnPresenceRelationsLessOrEq(a, b []ReturnPresenceRelation) bool {
-	a = normalizeReturnPresenceRelations(a)
-	b = normalizeReturnPresenceRelations(b)
-	aByKey := make(map[returnPresenceRelationKey]struct{}, len(a))
-	for _, relation := range a {
-		aByKey[returnPresenceRelationKeyOf(relation)] = struct{}{}
-	}
-	for _, relation := range b {
-		if _, ok := aByKey[returnPresenceRelationKeyOf(relation)]; !ok {
-			return false
-		}
-	}
-	return true
-}
-
-func joinReturnPresenceRelations(a, b []ReturnPresenceRelation) []ReturnPresenceRelation {
-	a = normalizeReturnPresenceRelations(a)
-	b = normalizeReturnPresenceRelations(b)
-	if len(a) == 0 || len(b) == 0 {
-		return nil
-	}
-	bByKey := make(map[returnPresenceRelationKey]ReturnPresenceRelation, len(b))
-	for _, relation := range b {
-		bByKey[returnPresenceRelationKeyOf(relation)] = relation
-	}
-	out := make([]ReturnPresenceRelation, 0, min(len(a), len(b)))
-	for _, relation := range a {
-		if _, ok := bByKey[returnPresenceRelationKeyOf(relation)]; ok {
-			out = append(out, relation)
-		}
-	}
-	return normalizeReturnPresenceRelations(out)
+// returnPresenceRelationLane is the canonical must (intersection) lattice for
+// return-slot presence implications: a relation holds at a join only when it
+// holds on every path.
+var returnPresenceRelationLane = factset.Set[returnPresenceRelationKey, ReturnPresenceRelation]{
+	Key: returnPresenceRelationKeyOf,
+	EqualFact: func(a, b ReturnPresenceRelation) bool {
+		return returnPresenceRelationKeyOf(a) == returnPresenceRelationKeyOf(b)
+	},
+	Less: returnPresenceRelationLess,
+	Valid: func(r ReturnPresenceRelation) bool {
+		return r.TriggerIndex >= 0 && r.TargetIndex >= 0 && r.TriggerIndex != r.TargetIndex &&
+			!r.TriggerPresence.IsBottom() && !r.TriggerPresence.IsTop() &&
+			!r.TargetPresence.IsBottom() && !r.TargetPresence.IsTop()
+	},
+	Prefer:    func(kept, incoming ReturnPresenceRelation) bool { return true },
+	Intersect: true,
 }
 
 func returnPresenceRelationKeyOf(relation ReturnPresenceRelation) returnPresenceRelationKey {
@@ -123,4 +45,19 @@ func returnPresenceRelationKeyOf(relation ReturnPresenceRelation) returnPresence
 		targetIndex:     relation.TargetIndex,
 		targetPresence:  relation.TargetPresence,
 	}
+}
+
+func returnPresenceRelationLess(a, b ReturnPresenceRelation) bool {
+	left := returnPresenceRelationKeyOf(a)
+	right := returnPresenceRelationKeyOf(b)
+	if left.triggerIndex != right.triggerIndex {
+		return left.triggerIndex < right.triggerIndex
+	}
+	if left.triggerPresence != right.triggerPresence {
+		return left.triggerPresence < right.triggerPresence
+	}
+	if left.targetIndex != right.targetIndex {
+		return left.targetIndex < right.targetIndex
+	}
+	return left.targetPresence < right.targetPresence
 }

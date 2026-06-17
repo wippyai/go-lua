@@ -4,7 +4,10 @@ import (
 	"testing"
 
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/engine/callboundary"
+	"github.com/wippyai/go-lua/analysis/engine/state/pathevidence"
+	"github.com/wippyai/go-lua/analysis/symbol"
 )
 
 // These tests pin the concrete spec wiring of the keyed-fact-set lanes (Key,
@@ -61,6 +64,34 @@ func TestStoreRelationLaneJoinKeepsOnlyShared(t *testing.T) {
 	}
 	if storeRelationLane.LessOrEq(got, a) {
 		t.Fatalf("the intersection must not be below the larger set a")
+	}
+}
+
+func TestBranchProofLaneAdmitCanonicalizesPerKind(t *testing.T) {
+	ph := pathdom.NewPlaceholder(0).Field("x")
+	other := pathdom.NewPlaceholder(1)
+	concrete := pathdom.NewPath(symbol.ID(7), "arg").Field("f")
+
+	in := []callboundary.BranchProof{
+		{Kind: pathevidence.BranchProofPathPresence, Path: ph, Presence: presence.Present(), Other: other}, // Other cleared
+		{Kind: pathevidence.BranchProofPathPresence, Path: concrete, Presence: presence.Present()},         // dropped: non-placeholder
+		{Kind: pathevidence.BranchProofPathEqual, Path: ph, Other: other, Presence: presence.Present()},    // Presence cleared
+	}
+	got := branchProofLane.Normalize(in)
+	if len(got) != 2 {
+		t.Fatalf("expected 2 admitted proofs, got %d: %+v", len(got), got)
+	}
+	for _, p := range got {
+		switch p.Kind {
+		case pathevidence.BranchProofPathPresence:
+			if !p.Other.IsEmpty() {
+				t.Fatalf("presence proof must clear Other, got %+v", p)
+			}
+		case pathevidence.BranchProofPathEqual:
+			if !p.Presence.IsBottom() {
+				t.Fatalf("equality proof must clear Presence, got %+v", p)
+			}
+		}
 	}
 }
 

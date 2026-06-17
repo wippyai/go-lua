@@ -39,7 +39,7 @@ func Normalize(reg *axis.Registry, s Summary) Summary {
 		reg,
 		out.ReturnConditionParamRefinements,
 	)
-	out.ReturnPresenceRelations = normalizeReturnPresenceRelations(out.ReturnPresenceRelations)
+	out.ReturnPresenceRelations = returnPresenceRelationLane.Normalize(out.ReturnPresenceRelations)
 	if len(out.Returns) == 0 &&
 		len(out.ParamObligations) == 0 &&
 		len(out.ParamMemberCallObligations) == 0 &&
@@ -92,7 +92,7 @@ func Equal(reg *axis.Registry, a, b Summary) bool {
 		normalReturnFactsEqual(reg, a.NormalReturnFacts, b.NormalReturnFacts) &&
 		heapTableObjectsEqual(reg, a.HeapTableObjects, b.HeapTableObjects) &&
 		returnConditionParamRefinementsEqual(reg, a.ReturnConditionParamRefinements, b.ReturnConditionParamRefinements) &&
-		returnPresenceRelationsEqual(a.ReturnPresenceRelations, b.ReturnPresenceRelations)
+		returnPresenceRelationLane.Equal(a.ReturnPresenceRelations, b.ReturnPresenceRelations)
 }
 
 // LessOrEq reports whether a is less than or equal to b componentwise. Missing
@@ -136,7 +136,7 @@ func LessOrEq(reg *axis.Registry, a, b Summary) bool {
 		normalReturnFactsLessOrEq(reg, a.NormalReturnFacts, b.NormalReturnFacts) &&
 		heapTableObjectsLessOrEq(reg, a.HeapTableObjects, b.HeapTableObjects) &&
 		returnConditionParamRefinementsLessOrEq(reg, a.ReturnConditionParamRefinements, b.ReturnConditionParamRefinements) &&
-		returnPresenceRelationsLessOrEq(a.ReturnPresenceRelations, b.ReturnPresenceRelations)
+		returnPresenceRelationLane.LessOrEq(a.ReturnPresenceRelations, b.ReturnPresenceRelations)
 }
 
 // Join returns the componentwise join of a and b. Missing return and
@@ -212,7 +212,7 @@ func Join(reg *axis.Registry, a, b Summary) Summary {
 		a.ReturnConditionParamRefinements,
 		b.ReturnConditionParamRefinements,
 	)
-	out.ReturnPresenceRelations = joinReturnPresenceRelations(a.ReturnPresenceRelations, b.ReturnPresenceRelations)
+	out.ReturnPresenceRelations = returnPresenceRelationLane.Join(a.ReturnPresenceRelations, b.ReturnPresenceRelations)
 	return Normalize(reg, out)
 }
 
@@ -330,7 +330,7 @@ func Widen(reg *axis.Registry, prev, next Summary) Summary {
 		prev.ReturnConditionParamRefinements,
 		next.ReturnConditionParamRefinements,
 	)
-	out.ReturnPresenceRelations = joinReturnPresenceRelations(prev.ReturnPresenceRelations, next.ReturnPresenceRelations)
+	out.ReturnPresenceRelations = returnPresenceRelationLane.Join(prev.ReturnPresenceRelations, next.ReturnPresenceRelations)
 	return Normalize(reg, out)
 }
 

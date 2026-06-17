@@ -1,8 +1,7 @@
 package summary
 
 import (
-	"sort"
-
+	"github.com/wippyai/go-lua/analysis/domain/lattice/factset"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/engine/callboundary"
@@ -16,98 +15,42 @@ type branchProofKey struct {
 	other    pathdom.PathKey
 }
 
-func normalizeBranchProofs(in []callboundary.BranchProof) []callboundary.BranchProof {
-	if len(in) == 0 {
-		return nil
-	}
-	seen := make(map[branchProofKey]callboundary.BranchProof, len(in))
-	for _, proof := range in {
-		if !proof.Path.IsPlaceholder() {
-			continue
-		}
-		proof.Path = proof.Path.Clone()
-		switch proof.Kind {
-		case pathevidence.BranchProofPathPresence:
-			if proof.Presence.IsBottom() || proof.Presence.IsTop() {
-				continue
-			}
-			proof.Other = pathdom.Path{}
-		case pathevidence.BranchProofPathEqual, pathevidence.BranchProofPathNotEqual:
-			if !proof.Other.IsPlaceholder() {
-				continue
-			}
-			proof.Other = proof.Other.Clone()
-			proof.Presence = presence.Bottom()
-		default:
-			continue
-		}
-		seen[branchProofKeyOf(proof)] = proof
-	}
-	return sortedBranchProofs(seen)
+// branchProofLane is the canonical must (intersection) lattice for branch
+// proofs: each proof is canonicalized per kind (presence proofs clear Other,
+// equality proofs clear Presence) and kept only when guaranteed on every path.
+var branchProofLane = factset.Set[branchProofKey, callboundary.BranchProof]{
+	Key:       branchProofKeyOf,
+	EqualFact: func(a, b callboundary.BranchProof) bool { return branchProofKeyOf(a) == branchProofKeyOf(b) },
+	Less:      branchProofLess,
+	Admit:     admitBranchProof,
+	CloneFact: func(p callboundary.BranchProof) callboundary.BranchProof {
+		p.Path = p.Path.Clone()
+		p.Other = p.Other.Clone()
+		return p
+	},
+	Prefer:    func(kept, incoming callboundary.BranchProof) bool { return true },
+	Intersect: true,
 }
 
-func cloneBranchProofs(in []callboundary.BranchProof) []callboundary.BranchProof {
-	if len(in) == 0 {
-		return nil
+func admitBranchProof(proof callboundary.BranchProof) (callboundary.BranchProof, bool) {
+	if !proof.Path.IsPlaceholder() {
+		return proof, false
 	}
-	out := make([]callboundary.BranchProof, len(in))
-	for i, proof := range in {
-		proof.Path = proof.Path.Clone()
-		proof.Other = proof.Other.Clone()
-		out[i] = proof
-	}
-	return out
-}
-
-func branchProofsEqual(a, b []callboundary.BranchProof) bool {
-	a = normalizeBranchProofs(a)
-	b = normalizeBranchProofs(b)
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if branchProofKeyOf(a[i]) != branchProofKeyOf(b[i]) {
-			return false
+	switch proof.Kind {
+	case pathevidence.BranchProofPathPresence:
+		if proof.Presence.IsBottom() || proof.Presence.IsTop() {
+			return proof, false
 		}
-	}
-	return true
-}
-
-func branchProofsLessOrEq(a, b []callboundary.BranchProof) bool {
-	aSet := branchProofsSet(a)
-	for _, proof := range normalizeBranchProofs(b) {
-		if _, ok := aSet[branchProofKeyOf(proof)]; !ok {
-			return false
+		proof.Other = pathdom.Path{}
+	case pathevidence.BranchProofPathEqual, pathevidence.BranchProofPathNotEqual:
+		if !proof.Other.IsPlaceholder() {
+			return proof, false
 		}
+		proof.Presence = presence.Bottom()
+	default:
+		return proof, false
 	}
-	return true
-}
-
-func joinBranchProofs(a, b []callboundary.BranchProof) []callboundary.BranchProof {
-	aSet := branchProofsSet(a)
-	bSet := branchProofsSet(b)
-	if len(aSet) == 0 || len(bSet) == 0 {
-		return nil
-	}
-	out := make(map[branchProofKey]callboundary.BranchProof)
-	for key, proof := range aSet {
-		if _, ok := bSet[key]; ok {
-			out[key] = proof
-		}
-	}
-	return sortedBranchProofs(out)
-}
-
-func branchProofsSet(in []callboundary.BranchProof) map[branchProofKey]callboundary.BranchProof {
-	out := normalizeBranchProofs(in)
-	if len(out) == 0 {
-		return nil
-	}
-	m := make(map[branchProofKey]callboundary.BranchProof, len(out))
-	for _, proof := range out {
-		m[branchProofKeyOf(proof)] = proof
-	}
-	return m
+	return proof, true
 }
 
 func branchProofKeyOf(proof callboundary.BranchProof) branchProofKey {
@@ -119,27 +62,17 @@ func branchProofKeyOf(proof callboundary.BranchProof) branchProofKey {
 	}
 }
 
-func sortedBranchProofs(in map[branchProofKey]callboundary.BranchProof) []callboundary.BranchProof {
-	if len(in) == 0 {
-		return nil
+func branchProofLess(a, b callboundary.BranchProof) bool {
+	left := branchProofKeyOf(a)
+	right := branchProofKeyOf(b)
+	if left.kind != right.kind {
+		return left.kind < right.kind
 	}
-	out := make([]callboundary.BranchProof, 0, len(in))
-	for _, proof := range in {
-		out = append(out, proof)
+	if left.path != right.path {
+		return left.path < right.path
 	}
-	sort.Slice(out, func(i, j int) bool {
-		left := branchProofKeyOf(out[i])
-		right := branchProofKeyOf(out[j])
-		if left.kind != right.kind {
-			return left.kind < right.kind
-		}
-		if left.path != right.path {
-			return left.path < right.path
-		}
-		if left.presence != right.presence {
-			return left.presence < right.presence
-		}
-		return left.other < right.other
-	})
-	return out
+	if left.presence != right.presence {
+		return left.presence < right.presence
+	}
+	return left.other < right.other
 }
