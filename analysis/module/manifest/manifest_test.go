@@ -705,7 +705,10 @@ func TestManifestRejectsInactiveDecodedEffectLabels(t *testing.T) {
 		{"dispatch type predicate", effectLabelWire{Kind: "dispatch.typePredicate"}},
 		{"return length", effectLabelWire{Kind: "returns.returnLength", Length: encodeExprForTest(t, expr.C(1))}},
 		{"correlated return", effectLabelWire{Kind: "returns.correlatedReturn", Indices: []int{0, 1}}},
+		{"return deep element", effectLabelWire{Kind: "returns.return", ReturnType: &effectReturnWire{Kind: "returns.deepElementOf"}}},
 		{"return string unpack", effectLabelWire{Kind: "returns.return", ReturnType: &effectReturnWire{Kind: "returns.stringUnpackValue"}}},
+		{"return select case", effectLabelWire{Kind: "returns.return", ReturnType: &effectReturnWire{Kind: "returns.selectCaseOfParam"}}},
+		{"return select result", effectLabelWire{Kind: "returns.return", ReturnType: &effectReturnWire{Kind: "returns.selectResultOfCases"}}},
 	}
 
 	for _, tt := range tests {

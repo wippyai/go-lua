@@ -6,6 +6,8 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/domain/constraint/expr"
 	"github.com/wippyai/go-lua/analysis/domain/effect"
+	"github.com/wippyai/go-lua/analysis/domain/effect/capability"
+	caplabel "github.com/wippyai/go-lua/analysis/domain/effect/capability/label"
 	"github.com/wippyai/go-lua/analysis/domain/effect/mutation"
 	"github.com/wippyai/go-lua/analysis/domain/effect/ownership"
 	"github.com/wippyai/go-lua/analysis/domain/effect/postcondition"
@@ -2068,34 +2070,28 @@ func TestSignatureOutcomeProviderTypeProjectionUsesDeclaredReturnTypeWhenProject
 
 func TestActiveReturnTransformClassificationMatrix(t *testing.T) {
 	tests := []struct {
-		name       string
-		label      effect.Label
-		wantActive bool
+		name  string
+		label effect.Label
 	}{
 		{
-			name:       "same as",
-			label:      returns.Return{ReturnIndex: 0, Transform: returns.SameAs{Source: effect.ParamRef{Index: 0}}},
-			wantActive: true,
+			name:  "same as",
+			label: returns.Return{ReturnIndex: 0, Transform: returns.SameAs{Source: effect.ParamRef{Index: 0}}},
 		},
 		{
-			name:       "element of",
-			label:      returns.Return{ReturnIndex: 0, Transform: returns.ElementOf{Source: effect.ParamRef{Index: 0}}},
-			wantActive: true,
+			name:  "element of",
+			label: returns.Return{ReturnIndex: 0, Transform: returns.ElementOf{Source: effect.ParamRef{Index: 0}}},
 		},
 		{
-			name:       "optional element of",
-			label:      returns.Return{ReturnIndex: 0, Transform: returns.OptionalElementOf{Source: effect.ParamRef{Index: 0}}},
-			wantActive: true,
+			name:  "optional element of",
+			label: returns.Return{ReturnIndex: 0, Transform: returns.OptionalElementOf{Source: effect.ParamRef{Index: 0}}},
 		},
 		{
-			name:       "callback return",
-			label:      returns.Return{ReturnIndex: 0, Transform: returns.CallbackReturn{CallbackParam: effect.ParamRef{Index: 0}}},
-			wantActive: true,
+			name:  "callback return",
+			label: returns.Return{ReturnIndex: 0, Transform: returns.CallbackReturn{CallbackParam: effect.ParamRef{Index: 0}}},
 		},
 		{
-			name:       "array of callback return",
-			label:      returns.Return{ReturnIndex: 0, Transform: returns.ArrayOfCallbackReturn{CallbackParam: effect.ParamRef{Index: 0}}},
-			wantActive: true,
+			name:  "array of callback return",
+			label: returns.Return{ReturnIndex: 0, Transform: returns.ArrayOfCallbackReturn{CallbackParam: effect.ParamRef{Index: 0}}},
 		},
 		{
 			name: "type projection",
@@ -2106,22 +2102,18 @@ func TestActiveReturnTransformClassificationMatrix(t *testing.T) {
 					projection.CallableReturn(),
 				}},
 			}},
-			wantActive: true,
 		},
 		{
-			name:       "deep element",
-			label:      returns.Return{ReturnIndex: 0, Transform: returns.DeepElementOf{Source: effect.ParamRef{Index: 0}}},
-			wantActive: false,
+			name:  "deep element",
+			label: returns.Return{ReturnIndex: 0, Transform: returns.DeepElementOf{Source: effect.ParamRef{Index: 0}}},
 		},
 		{
-			name:       "string unpack",
-			label:      returns.Return{ReturnIndex: 0, Transform: returns.StringUnpackValue{Format: effect.ParamRef{Index: 0}}},
-			wantActive: false,
+			name:  "string unpack",
+			label: returns.Return{ReturnIndex: 0, Transform: returns.StringUnpackValue{Format: effect.ParamRef{Index: 0}}},
 		},
 		{
-			name:       "select case",
-			label:      returns.Return{ReturnIndex: 0, Transform: returns.SelectCaseOfParam{Source: effect.ParamRef{Index: 0}}},
-			wantActive: false,
+			name:  "select case",
+			label: returns.Return{ReturnIndex: 0, Transform: returns.SelectCaseOfParam{Source: effect.ParamRef{Index: 0}}},
 		},
 		{
 			name: "select result",
@@ -2129,29 +2121,44 @@ func TestActiveReturnTransformClassificationMatrix(t *testing.T) {
 				Cases:   effect.ParamRef{Index: 0},
 				Default: effect.ParamRef{Index: 1},
 			}},
-			wantActive: false,
 		},
 		{
-			name:       "return length",
-			label:      returns.ReturnLength{ReturnIndex: 0, Length: expr.PL(0)},
-			wantActive: false,
+			name:  "return length",
+			label: returns.ReturnLength{ReturnIndex: 0, Length: expr.PL(0)},
 		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
+			wantActive := capabilityStatusForEffectLabel(t, tc.label) == capability.StatusOperational
 			transform, ok := activeReturnTransform(signature.Function{Effect: effect.Empty.With(tc.label)}, 0)
-			if ok != tc.wantActive {
-				t.Fatalf("active = %v, want %v", ok, tc.wantActive)
+			if ok != wantActive {
+				t.Fatalf("active = %v, want %v", ok, wantActive)
 			}
-			if tc.wantActive && transform == nil {
+			if wantActive && transform == nil {
 				t.Fatal("active transform = nil, want concrete return transform")
 			}
-			if !tc.wantActive && transform != nil {
+			if !wantActive && transform != nil {
 				t.Fatalf("active transform = %#v, want none", transform)
 			}
 		})
 	}
+}
+
+func capabilityStatusForEffectLabel(t *testing.T, label effect.Label) capability.Status {
+	t.Helper()
+	if ret, ok := label.(returns.Return); ok {
+		desc, ok := caplabel.DescriptorForReturnTransform(ret.Transform)
+		if !ok {
+			t.Fatalf("return transform %T has no capability descriptor", ret.Transform)
+		}
+		return desc.Status
+	}
+	desc, ok := caplabel.DescriptorFor(label)
+	if !ok {
+		t.Fatalf("label %T has no capability descriptor", label)
+	}
+	return desc.Status
 }
 
 func TestSignatureOutcomeProviderReservedReturnTransformsUseOnlyDeclaredReturnType(t *testing.T) {

@@ -72,10 +72,22 @@ func validateManifestEffectLabel(label effect.Label) error {
 	}
 	switch desc.Status {
 	case capability.StatusReserved, capability.StatusReservedHighRisk:
-		return fmt.Errorf("manifest: inactive effect label %s (%s)", desc.ID, desc.Status)
+		return inactiveManifestEffectLabelError(desc)
 	default:
 		return nil
 	}
+}
+
+func inactiveManifestEffectLabel(label effect.Label) error {
+	desc, ok := caplabel.DescriptorFor(label)
+	if !ok {
+		return fmt.Errorf("manifest: unaudited effect label %T", label)
+	}
+	return inactiveManifestEffectLabelError(desc)
+}
+
+func inactiveManifestEffectLabelError(desc capability.Descriptor) error {
+	return fmt.Errorf("manifest: inactive effect label %s (%s)", desc.ID, desc.Status)
 }
 
 func encodeEffectLabel(label effect.Label) (effectLabelWire, error) {
@@ -164,15 +176,6 @@ func encodeEffectLabel(label effect.Label) (effectLabelWire, error) {
 		return effectLabelWire{Kind: "returns.return", ReturnIndex: l.ReturnIndex, ReturnType: transform}, nil
 	case returns.ErrorReturn:
 		return effectLabelWire{Kind: "returns.errorReturn", ValueIndex: l.ValueIndex, ErrorIndex: l.ErrorIndex}, nil
-	case returns.ReturnLength:
-		length, err := encodeExpr(l.Length)
-		if err != nil {
-			return effectLabelWire{}, err
-		}
-		return effectLabelWire{Kind: "returns.returnLength", ReturnIndex: l.ReturnIndex, Length: length}, nil
-	case returns.CorrelatedReturn:
-		indices := append([]int(nil), l.Indices...)
-		return effectLabelWire{Kind: "returns.correlatedReturn", Indices: indices}, nil
 	default:
 		return effectLabelWire{}, fmt.Errorf("manifest: unsupported effect label %T", label)
 	}
@@ -243,14 +246,9 @@ func decodeEffectLabel(w effectLabelWire) (effect.Label, error) {
 	case "returns.errorReturn":
 		return returns.ErrorReturn{ValueIndex: w.ValueIndex, ErrorIndex: w.ErrorIndex}, nil
 	case "returns.returnLength":
-		length, err := decodeExpr(w.Length)
-		if err != nil {
-			return nil, err
-		}
-		return returns.ReturnLength{ReturnIndex: w.ReturnIndex, Length: length}, nil
+		return nil, inactiveManifestEffectLabel(returns.ReturnLength{})
 	case "returns.correlatedReturn":
-		indices := append([]int(nil), w.Indices...)
-		return returns.CorrelatedReturn{Indices: indices}, nil
+		return nil, inactiveManifestEffectLabel(returns.CorrelatedReturn{})
 	default:
 		return nil, fmt.Errorf("manifest: unknown effect label kind %q", w.Kind)
 	}

@@ -2,8 +2,9 @@ package effectlowering
 
 import (
 	"github.com/wippyai/go-lua/analysis/domain/effect"
+	"github.com/wippyai/go-lua/analysis/domain/effect/capability"
+	caplabel "github.com/wippyai/go-lua/analysis/domain/effect/capability/label"
 	"github.com/wippyai/go-lua/analysis/domain/effect/returns"
-	"github.com/wippyai/go-lua/analysis/module/signature"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
@@ -13,6 +14,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
+	"github.com/wippyai/go-lua/analysis/module/signature"
 	"github.com/wippyai/go-lua/analysis/type/projection"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
@@ -301,6 +303,9 @@ func activeReturnTransform(sig signature.Function, index int) (returns.ReturnTyp
 		if !ok || ret.ReturnIndex != index {
 			continue
 		}
+		if !operationalReturnTransform(ret.Transform) {
+			continue
+		}
 		switch transform := ret.Transform.(type) {
 		case returns.SameAs, returns.ElementOf, returns.OptionalElementOf, returns.CallbackReturn, returns.ArrayOfCallbackReturn, returns.TypeProjection:
 			return ret.Transform, true
@@ -331,4 +336,9 @@ func activeReturnTransform(sig signature.Function, index int) (returns.ReturnTyp
 		}
 	}
 	return nil, false
+}
+
+func operationalReturnTransform(transform returns.ReturnType) bool {
+	desc, ok := caplabel.DescriptorForReturnTransform(transform)
+	return ok && desc.Status == capability.StatusOperational
 }

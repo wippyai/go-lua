@@ -3,7 +3,6 @@ package returns
 import (
 	"fmt"
 
-	"github.com/wippyai/go-lua/analysis/domain/constraint/expr"
 	"github.com/wippyai/go-lua/analysis/domain/effect"
 	"github.com/wippyai/go-lua/analysis/type/projection"
 )
@@ -40,22 +39,6 @@ func (e ErrorReturn) Equals(other effect.Label) bool {
 	return false
 }
 
-type ReturnLength struct {
-	ReturnIndex int
-	Length      expr.Expr
-}
-
-func (ReturnLength) EffectLabel() {}
-func (r ReturnLength) String() string {
-	return fmt.Sprintf("ret[%d].len = %s", r.ReturnIndex, r.Length)
-}
-func (r ReturnLength) Equals(other effect.Label) bool {
-	if o, ok := effect.NormalizeLabel(other).(ReturnLength); ok {
-		return r.ReturnIndex == o.ReturnIndex && expr.ExprEquals(r.Length, o.Length)
-	}
-	return false
-}
-
 type ReturnType interface {
 	returnType()
 	String() string
@@ -73,25 +56,6 @@ func (p TypeProjection) String() string {
 		return fmt.Sprintf("project_type(%s)", p.Source)
 	}
 	return fmt.Sprintf("project_type(%s.%s)", p.Source, path)
-}
-
-type SelectCaseOfParam struct {
-	Source effect.ParamRef
-}
-
-func (SelectCaseOfParam) returnType() {}
-func (s SelectCaseOfParam) String() string {
-	return fmt.Sprintf("select_case(%s)", s.Source)
-}
-
-type SelectResultOfCases struct {
-	Cases   effect.ParamRef
-	Default effect.ParamRef
-}
-
-func (SelectResultOfCases) returnType() {}
-func (s SelectResultOfCases) String() string {
-	return fmt.Sprintf("select_result(%s, %s)", s.Cases, s.Default)
 }
 
 type ElementOf struct {
@@ -139,45 +103,6 @@ func (s SameAs) String() string {
 	return fmt.Sprintf("same(%s)", s.Source)
 }
 
-type DeepElementOf struct {
-	Source effect.ParamRef
-}
-
-func (DeepElementOf) returnType() {}
-func (d DeepElementOf) String() string {
-	return fmt.Sprintf("deep_elem(%s)", d.Source)
-}
-
-type StringUnpackValue struct {
-	Format effect.ParamRef
-}
-
-func (StringUnpackValue) returnType() {}
-func (s StringUnpackValue) String() string {
-	return fmt.Sprintf("string_unpack(%s)", s.Format)
-}
-
-type CorrelatedReturn struct {
-	Indices []int
-}
-
-func (CorrelatedReturn) EffectLabel() {}
-func (c CorrelatedReturn) String() string {
-	return fmt.Sprintf("correlated_return(%v)", c.Indices)
-}
-func (c CorrelatedReturn) Equals(other effect.Label) bool {
-	o, ok := effect.NormalizeLabel(other).(CorrelatedReturn)
-	if !ok || len(c.Indices) != len(o.Indices) {
-		return false
-	}
-	for i := range c.Indices {
-		if c.Indices[i] != o.Indices[i] {
-			return false
-		}
-	}
-	return true
-}
-
 func returnTypeEquals(a, b ReturnType) bool {
 	if a == nil && b == nil {
 		return true
@@ -206,28 +131,12 @@ func returnTypeEquals(a, b ReturnType) bool {
 		return sameAsEquals(av, b)
 	case *SameAs:
 		return sameAsEquals(*av, b)
-	case DeepElementOf:
-		return deepElementOfEquals(av, b)
-	case *DeepElementOf:
-		return deepElementOfEquals(*av, b)
-	case StringUnpackValue:
-		return stringUnpackValueEquals(av, b)
-	case *StringUnpackValue:
-		return stringUnpackValueEquals(*av, b)
 	case TypeProjection:
 		return typeProjectionEquals(av, b)
 	case *TypeProjection:
 		return typeProjectionEquals(*av, b)
-	case SelectCaseOfParam:
-		return selectCaseOfParamEquals(av, b)
-	case *SelectCaseOfParam:
-		return selectCaseOfParamEquals(*av, b)
-	case SelectResultOfCases:
-		return selectResultOfCasesEquals(av, b)
-	case *SelectResultOfCases:
-		return selectResultOfCasesEquals(*av, b)
 	default:
-		return false
+		return reservedReturnTypeEquals(a, b)
 	}
 }
 
@@ -256,32 +165,12 @@ func sameAsEquals(a SameAs, b ReturnType) bool {
 	return ok && a.Source.Index == bb.Source.Index
 }
 
-func deepElementOfEquals(a DeepElementOf, b ReturnType) bool {
-	bb, ok := normalizeDeepElementOf(b)
-	return ok && a.Source.Index == bb.Source.Index
-}
-
-func stringUnpackValueEquals(a StringUnpackValue, b ReturnType) bool {
-	bb, ok := normalizeStringUnpackValue(b)
-	return ok && a.Format.Index == bb.Format.Index
-}
-
 func typeProjectionEquals(a TypeProjection, b ReturnType) bool {
 	bb, ok := normalizeTypeProjection(b)
 	if !ok || a.Source.Index != bb.Source.Index {
 		return false
 	}
 	return projection.Equal(a.Projection, bb.Projection)
-}
-
-func selectCaseOfParamEquals(a SelectCaseOfParam, b ReturnType) bool {
-	bb, ok := normalizeSelectCaseOfParam(b)
-	return ok && a.Source.Index == bb.Source.Index
-}
-
-func selectResultOfCasesEquals(a SelectResultOfCases, b ReturnType) bool {
-	bb, ok := normalizeSelectResultOfCases(b)
-	return ok && a.Cases.Index == bb.Cases.Index && a.Default.Index == bb.Default.Index
 }
 
 func normalizeElementOf(r ReturnType) (ElementOf, bool) {
@@ -344,30 +233,6 @@ func normalizeSameAs(r ReturnType) (SameAs, bool) {
 	return SameAs{}, false
 }
 
-func normalizeDeepElementOf(r ReturnType) (DeepElementOf, bool) {
-	switch rr := r.(type) {
-	case DeepElementOf:
-		return rr, true
-	case *DeepElementOf:
-		if rr != nil {
-			return *rr, true
-		}
-	}
-	return DeepElementOf{}, false
-}
-
-func normalizeStringUnpackValue(r ReturnType) (StringUnpackValue, bool) {
-	switch rr := r.(type) {
-	case StringUnpackValue:
-		return rr, true
-	case *StringUnpackValue:
-		if rr != nil {
-			return *rr, true
-		}
-	}
-	return StringUnpackValue{}, false
-}
-
 func normalizeTypeProjection(r ReturnType) (TypeProjection, bool) {
 	switch rr := r.(type) {
 	case TypeProjection:
@@ -378,28 +243,4 @@ func normalizeTypeProjection(r ReturnType) (TypeProjection, bool) {
 		}
 	}
 	return TypeProjection{}, false
-}
-
-func normalizeSelectCaseOfParam(r ReturnType) (SelectCaseOfParam, bool) {
-	switch rr := r.(type) {
-	case SelectCaseOfParam:
-		return rr, true
-	case *SelectCaseOfParam:
-		if rr != nil {
-			return *rr, true
-		}
-	}
-	return SelectCaseOfParam{}, false
-}
-
-func normalizeSelectResultOfCases(r ReturnType) (SelectResultOfCases, bool) {
-	switch rr := r.(type) {
-	case SelectResultOfCases:
-		return rr, true
-	case *SelectResultOfCases:
-		if rr != nil {
-			return *rr, true
-		}
-	}
-	return SelectResultOfCases{}, false
 }

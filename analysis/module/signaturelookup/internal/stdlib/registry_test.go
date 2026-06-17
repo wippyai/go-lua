@@ -319,15 +319,38 @@ func TestStdlibDoesNotDeclareReservedOrHighRiskEffectLabels(t *testing.T) {
 }
 
 func TestStdlibSignatureConstructionRejectsInactiveEffectLabels(t *testing.T) {
-	mustPanicContaining(t, "inactive effect label", func() {
-		sig(typ.Func().Build(), control.IO{})
-	})
-	mustPanicContaining(t, "inactive effect label", func() {
-		sig(typ.Func().Build(), returns.Return{
+	tests := []struct {
+		name  string
+		label effect.Label
+	}{
+		{"control io", control.IO{}},
+		{"return deep element", returns.Return{
+			ReturnIndex: 0,
+			Transform:   returns.DeepElementOf{},
+		}},
+		{"return string unpack", returns.Return{
 			ReturnIndex: 0,
 			Transform:   returns.StringUnpackValue{},
+		}},
+		{"return select case", returns.Return{
+			ReturnIndex: 0,
+			Transform:   returns.SelectCaseOfParam{},
+		}},
+		{"return select result", returns.Return{
+			ReturnIndex: 0,
+			Transform:   returns.SelectResultOfCases{},
+		}},
+		{"return length", returns.ReturnLength{}},
+		{"correlated return", returns.CorrelatedReturn{}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mustPanicContaining(t, "inactive effect label", func() {
+				sig(typ.Func().Build(), tt.label)
+			})
 		})
-	})
+	}
 }
 
 func TestLookupAndSignaturesCloneResults(t *testing.T) {

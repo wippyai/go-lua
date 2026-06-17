@@ -3,6 +3,7 @@ package manifest
 import (
 	"fmt"
 
+	caplabel "github.com/wippyai/go-lua/analysis/domain/effect/capability/label"
 	"github.com/wippyai/go-lua/analysis/domain/effect/returns"
 	"github.com/wippyai/go-lua/analysis/type/projection"
 )
@@ -12,18 +13,6 @@ func encodeEffectReturn(ret returns.ReturnType) (*effectReturnWire, error) {
 		return nil, nil
 	}
 	switch r := ret.(type) {
-	case returns.SelectCaseOfParam:
-		return &effectReturnWire{Kind: "returns.selectCaseOfParam", Source: encodeParamRef(r.Source)}, nil
-	case *returns.SelectCaseOfParam:
-		return encodeEffectReturn(*r)
-	case returns.SelectResultOfCases:
-		return &effectReturnWire{
-			Kind:    "returns.selectResultOfCases",
-			Cases:   encodeParamRef(r.Cases),
-			Default: encodeParamRef(r.Default),
-		}, nil
-	case *returns.SelectResultOfCases:
-		return encodeEffectReturn(*r)
 	case returns.ElementOf:
 		return &effectReturnWire{Kind: "returns.elementOf", Source: encodeParamRef(r.Source)}, nil
 	case *returns.ElementOf:
@@ -44,14 +33,6 @@ func encodeEffectReturn(ret returns.ReturnType) (*effectReturnWire, error) {
 		return &effectReturnWire{Kind: "returns.sameAs", Source: encodeParamRef(r.Source)}, nil
 	case *returns.SameAs:
 		return encodeEffectReturn(*r)
-	case returns.DeepElementOf:
-		return &effectReturnWire{Kind: "returns.deepElementOf", Source: encodeParamRef(r.Source)}, nil
-	case *returns.DeepElementOf:
-		return encodeEffectReturn(*r)
-	case returns.StringUnpackValue:
-		return &effectReturnWire{Kind: "returns.stringUnpackValue", Format: encodeParamRef(r.Format)}, nil
-	case *returns.StringUnpackValue:
-		return encodeEffectReturn(*r)
 	case returns.TypeProjection:
 		steps, err := encodeProjectionSteps(r.Projection.Steps)
 		if err != nil {
@@ -71,9 +52,9 @@ func decodeEffectReturn(w *effectReturnWire) (returns.ReturnType, error) {
 	}
 	switch w.Kind {
 	case "returns.selectCaseOfParam":
-		return returns.SelectCaseOfParam{Source: decodeParamRef(w.Source)}, nil
+		return nil, inactiveReturnTransform(returns.SelectCaseOfParam{})
 	case "returns.selectResultOfCases":
-		return returns.SelectResultOfCases{Cases: decodeParamRef(w.Cases), Default: decodeParamRef(w.Default)}, nil
+		return nil, inactiveReturnTransform(returns.SelectResultOfCases{})
 	case "returns.elementOf":
 		return returns.ElementOf{Source: decodeParamRef(w.Source)}, nil
 	case "returns.optionalElementOf":
@@ -85,9 +66,9 @@ func decodeEffectReturn(w *effectReturnWire) (returns.ReturnType, error) {
 	case "returns.sameAs":
 		return returns.SameAs{Source: decodeParamRef(w.Source)}, nil
 	case "returns.deepElementOf":
-		return returns.DeepElementOf{Source: decodeParamRef(w.Source)}, nil
+		return nil, inactiveReturnTransform(returns.DeepElementOf{})
 	case "returns.stringUnpackValue":
-		return returns.StringUnpackValue{Format: decodeParamRef(w.Format)}, nil
+		return nil, inactiveReturnTransform(returns.StringUnpackValue{})
 	case "returns.typeProjection":
 		steps, err := decodeProjectionSteps(w.Projection)
 		if err != nil {
@@ -97,4 +78,12 @@ func decodeEffectReturn(w *effectReturnWire) (returns.ReturnType, error) {
 	default:
 		return nil, fmt.Errorf("manifest: unknown return effect transform kind %q", w.Kind)
 	}
+}
+
+func inactiveReturnTransform(transform returns.ReturnType) error {
+	desc, ok := caplabel.DescriptorForReturnTransform(transform)
+	if !ok {
+		return fmt.Errorf("manifest: unsupported return effect transform %T", transform)
+	}
+	return inactiveManifestEffectLabelError(desc)
 }
