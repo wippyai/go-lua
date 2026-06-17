@@ -7,22 +7,37 @@
         "line": 5,
         "severity": "error",
         "code": "type.reference.unresolved",
-        "message_contains": ["unknown type", "LocalPoint"],
-        "min_evidence": 1,
-        "evidence_contains": ["type reference LocalPoint is not visible here"],
+        "message_contains": [
+          "unknown type",
+          "LocalPoint"
+        ],
+        "min_evidence": 2,
+        "evidence_contains": [
+          "type reference LocalPoint is not visible here",
+          "is declared in this scope"
+        ],
         "min_labels": 1,
-        "label_contains": ["unresolved type"]
+        "label_contains": [
+          "unresolved type"
+        ]
       },
       {
         "file": "main.lua",
         "line": 6,
         "severity": "error",
         "code": "value.reference.unresolved",
-        "message_contains": ["unknown value", "missing_count"],
+        "message_contains": [
+          "unknown value",
+          "missing_count"
+        ],
         "min_evidence": 1,
-        "evidence_contains": ["value reference missing_count is not declared or predeclared here"],
+        "evidence_contains": [
+          "value reference missing_count is not declared or predeclared here"
+        ],
         "min_labels": 1,
-        "label_contains": ["unresolved value"]
+        "label_contains": [
+          "unresolved value"
+        ]
       }
     ]
   },

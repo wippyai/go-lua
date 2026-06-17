@@ -146,12 +146,20 @@ func unresolvedTypeDiagnostic(node ast.PositionHolder, name string) diagnostic.D
 		Code:     CodeUnresolvedTypeReference,
 		Severity: diagnostic.SeverityError,
 		Message:  fmt.Sprintf("unknown type %s", name),
-		Explanation: diagnostic.NewExplanation(diagnostic.Evidence{
-			Kind:    diagnostic.EvidenceUserAssertion,
-			Trust:   diagnostic.TrustClaimed,
-			Span:    span,
-			Message: fmt.Sprintf("type reference %s is not visible here", name),
-		}),
+		Explanation: diagnostic.NewExplanation(
+			diagnostic.Evidence{
+				Kind:    diagnostic.EvidenceUserAssertion,
+				Trust:   diagnostic.TrustClaimed,
+				Span:    span,
+				Message: fmt.Sprintf("type reference %s is not visible here", name),
+			},
+			diagnostic.Evidence{
+				Kind:    diagnostic.EvidenceMissingProof,
+				Trust:   diagnostic.TrustRefuted,
+				Span:    span,
+				Message: fmt.Sprintf("no type named %s is declared in this scope, a parent scope, or an imported module", name),
+			},
+		),
 		Labels: []diagnostic.Label{{Span: span, Message: "unresolved type"}},
 	}
 }
