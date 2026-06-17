@@ -398,6 +398,61 @@ func TestRequireCheckInjectedConstructorReturnNamesMemberResultEvidence(t *testi
 	requireEvidenceMessage(t, result.Diagnostics[0], "assignment target is annotated number")
 }
 
+func TestRequireCheckInjectedContainerMemberReassignmentDropsStaleImportedResultEvidence(t *testing.T) {
+	mod := CheckAndExport(`
+		local provider = {}
+		function provider.meta(): { name: string }
+			return { name = "model" }
+		end
+		return provider
+	`, "provider")
+	if len(mod.Errors) != 0 {
+		t.Fatalf("module errors = %#v, want none", mod.Errors)
+	}
+
+	result := Check(`
+		local provider = require("provider")
+		local replacement = {}
+		function replacement.meta(): number
+			return 1
+		end
+		local container = { client = provider }
+		container.client = replacement
+		local n: number = container.client.meta()
+	`, WithStdlib(), WithModule("provider", mod))
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("diagnostics = %d, want no stale provider.meta evidence after member reassignment: %#v", len(result.Diagnostics), result.Diagnostics)
+	}
+}
+
+func TestRequireCheckInjectedContainerMemberReassignmentUsesReplacementResultEvidence(t *testing.T) {
+	mod := CheckAndExport(`
+		local provider = {}
+		function provider.meta(): { name: string }
+			return { name = "model" }
+		end
+		return provider
+	`, "provider")
+	if len(mod.Errors) != 0 {
+		t.Fatalf("module errors = %#v, want none", mod.Errors)
+	}
+
+	result := Check(`
+		local provider = require("provider")
+		local replacement = {
+			meta = function(): string
+				return "replacement"
+			end,
+		}
+		local container = { client = provider }
+		container.client = replacement
+		local n: number = container.client.meta()
+	`, WithStdlib(), WithModule("provider", mod))
+	requireDirectCallResultDiagnosticWithEvidence(t, result, "reassigned injected member replacement result")
+	requireEvidenceMessage(t, result.Diagnostics[0], "container.client.meta returns string")
+	requireEvidenceMessage(t, result.Diagnostics[0], "assignment target is annotated number")
+}
+
 func TestRequireCheckInjectedHelperReturnKeepsImportedMemberResultType(t *testing.T) {
 	mod := CheckAndExport(`
 		local provider = {}

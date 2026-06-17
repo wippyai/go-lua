@@ -2,6 +2,7 @@ package body
 
 import (
 	"github.com/wippyai/go-lua/analysis/check/body/internal/readexpr"
+	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/typewitness"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
@@ -13,6 +14,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/visibility"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/typecall"
+	luatypeprojection "github.com/wippyai/go-lua/analysis/lua/typeprojection"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
@@ -35,6 +37,9 @@ func calleeValueProvider(
 		if value, ok := readexpr.Project(config, ctx.Point, p, in); ok && hasTypeWitness(reg, value) {
 			return value, true
 		}
+		if value, ok, authoritative := readablePrefixCalleeValue(reg, typeValues, config, ctx.Point, p, in); authoritative {
+			return value, ok
+		}
 		if len(p.Segments) == 0 {
 			return product.Value{}, false
 		}
@@ -54,6 +59,36 @@ func calleeValueProvider(
 		}
 		return typeValues.FromTypeWithWitness(reg, projected), true
 	}
+}
+
+func readablePrefixCalleeValue(
+	reg *axis.Registry,
+	typeValues *typevalue.Cache,
+	config readexpr.Config,
+	point cfg.Point,
+	p pathdom.Path,
+	in state.State,
+) (product.Value, bool, bool) {
+	if len(p.Segments) < 2 {
+		return product.Value{}, false, false
+	}
+	for prefix := p.Parent(); !prefix.IsEmpty() && len(prefix.Segments) > 0; prefix = prefix.Parent() {
+		value, ok := readexpr.Project(config, point, prefix, in)
+		if !ok {
+			continue
+		}
+		prefixType, ok := witnessedType(reg, value)
+		if !ok || prefixType == nil || typ.IsAny(prefixType) || typ.IsUnknown(prefixType) || typ.IsNever(prefixType) {
+			return product.Value{}, false, true
+		}
+		suffix := p.Segments[len(prefix.Segments):]
+		projected, ok := luatypeprojection.ApplySegments(prefixType, suffix)
+		if !ok || projected == nil {
+			return product.Value{}, false, true
+		}
+		return typeValues.FromTypeWithWitness(reg, projected), true, true
+	}
+	return product.Value{}, false, false
 }
 
 func pathMethodCalleeValue(
