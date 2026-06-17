@@ -11,7 +11,12 @@ package factset
 
 import "sort"
 
-// Set describes one keyed-fact-set semilattice over the carrier []F.
+// Set describes one keyed-fact-set lattice over the carrier []F.
+//
+// The default polarity is a may set: Join is the union and a ⊑ b means every
+// fact in a is subsumed by some fact in b. Setting Intersect makes it a must
+// set: Join is the intersection by key and a ⊑ b means a's keys ⊇ b's keys
+// (a carries at least the facts guaranteed by b).
 //
 // Key, EqualFact, and Less are required. The optional hooks tailor a lane:
 //   - Valid drops facts during normalization (e.g. non-placeholder targets).
@@ -20,8 +25,9 @@ import "sort"
 //   - Prefer resolves a same-key collision by reporting whether the incoming
 //     fact replaces the kept one; when nil the first fact for a key wins.
 //   - Dominates reports cross-fact subsumption (e.g. a recursive prefix target
-//     subsuming a descendant); it drives compression and LessOrEq. When nil,
-//     only an equal fact under the same key subsumes another.
+//     subsuming a descendant); it drives may compression and may LessOrEq. When
+//     nil, only an equal fact under the same key subsumes another. Must sets
+//     deduplicate by key only and ignore Dominates.
 type Set[K comparable, F any] struct {
 	Key       func(F) K
 	EqualFact func(a, b F) bool
@@ -30,6 +36,7 @@ type Set[K comparable, F any] struct {
 	CloneFact func(F) F
 	Prefer    func(kept, incoming F) bool
 	Dominates func(super, sub F) bool
+	Intersect bool
 }
 
 func (s Set[K, F]) cloneOne(f F) F {
@@ -96,10 +103,20 @@ func (s Set[K, F]) Equal(a, b []F) bool {
 	return true
 }
 
-// LessOrEq reports whether a ⊑ b: every fact in a is subsumed by some fact in b.
+// LessOrEq reports whether a ⊑ b. For a may set every fact in a is subsumed by
+// some fact in b; for a must set every key guaranteed by b is also present in a.
 func (s Set[K, F]) LessOrEq(a, b []F) bool {
 	a = s.Normalize(a)
 	b = s.Normalize(b)
+	if s.Intersect {
+		keys := s.keySet(a)
+		for _, right := range b {
+			if _, ok := keys[s.Key(right)]; !ok {
+				return false
+			}
+		}
+		return true
+	}
 	for _, left := range a {
 		if !s.dominatedByAny(left, b) {
 			return false
@@ -108,8 +125,24 @@ func (s Set[K, F]) LessOrEq(a, b []F) bool {
 	return true
 }
 
-// Join returns the least upper bound: the normalized union of a and b.
+// Join returns the least upper bound: the normalized union for a may set, or the
+// normalized intersection by key for a must set.
 func (s Set[K, F]) Join(a, b []F) []F {
+	if s.Intersect {
+		a = s.Normalize(a)
+		b = s.Normalize(b)
+		if len(a) == 0 || len(b) == 0 {
+			return nil
+		}
+		keys := s.keySet(b)
+		out := make([]F, 0, len(a))
+		for _, fact := range a {
+			if _, ok := keys[s.Key(fact)]; ok {
+				out = append(out, s.cloneOne(fact))
+			}
+		}
+		return s.Normalize(out)
+	}
 	if len(a) == 0 && len(b) == 0 {
 		return nil
 	}
@@ -122,6 +155,14 @@ func (s Set[K, F]) Join(a, b []F) []F {
 // Widen equals Join: the carrier is finite-height, so no acceleration is needed.
 func (s Set[K, F]) Widen(prev, next []F) []F {
 	return s.Join(prev, next)
+}
+
+func (s Set[K, F]) keySet(facts []F) map[K]struct{} {
+	keys := make(map[K]struct{}, len(facts))
+	for _, fact := range facts {
+		keys[s.Key(fact)] = struct{}{}
+	}
+	return keys
 }
 
 func (s Set[K, F]) dominatedByAny(fact F, facts []F) bool {

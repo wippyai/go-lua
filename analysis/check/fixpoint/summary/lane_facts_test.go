@@ -45,6 +45,25 @@ func TestEscapeEventLaneRecursiveTargetSubsumesDescendant(t *testing.T) {
 	}
 }
 
+func TestStoreRelationLaneJoinKeepsOnlyShared(t *testing.T) {
+	pa := pathdom.NewPlaceholder(0).Field("a")
+	pb := pathdom.NewPlaceholder(1).Field("b")
+	pc := pathdom.NewPlaceholder(2).Field("c")
+	a := []callboundary.StoreRelationFact{{Source: pa, Into: pb}, {Source: pb, Into: pc}}
+	b := []callboundary.StoreRelationFact{{Source: pa, Into: pb}, {Source: pc, Into: pa}}
+
+	got := storeRelationLane.Join(a, b)
+	if len(got) != 1 || !got[0].Source.Equal(pa) || !got[0].Into.Equal(pb) {
+		t.Fatalf("must join must keep only the shared relation, got %+v", got)
+	}
+	if !storeRelationLane.LessOrEq(a, got) {
+		t.Fatalf("a must be below the intersection (a guarantees at least it)")
+	}
+	if storeRelationLane.LessOrEq(got, a) {
+		t.Fatalf("the intersection must not be below the larger set a")
+	}
+}
+
 func TestPathInvalidationLaneAncestorSubsumesDescendant(t *testing.T) {
 	pa := pathdom.NewPlaceholder(0).Field("a")
 	pab := pa.Field("b")

@@ -16,7 +16,7 @@ func normalizeNormalReturnFacts(reg *axis.Registry, in callboundary.NormalReturn
 		FrozenTables:      normalizeFrozenTableFacts(in.FrozenTables),
 		EffectDeltas:      normalizeEffectDeltas(reg, in.EffectDeltas),
 		EscapeEvents:      escapeEventLane.Normalize(in.EscapeEvents),
-		StoreRelations:    normalizeStoreRelationFacts(in.StoreRelations),
+		StoreRelations:    storeRelationLane.Normalize(in.StoreRelations),
 	}
 	if normalReturnFactsEmpty(out) {
 		return callboundary.NormalReturnFacts{}
@@ -38,7 +38,7 @@ func cloneNormalReturnFacts(in callboundary.NormalReturnFacts) callboundary.Norm
 		FrozenTables:      cloneFrozenTableFacts(in.FrozenTables),
 		EffectDeltas:      cloneEffectDeltas(in.EffectDeltas),
 		EscapeEvents:      escapeEventLane.Clone(in.EscapeEvents),
-		StoreRelations:    cloneStoreRelationFacts(in.StoreRelations),
+		StoreRelations:    storeRelationLane.Clone(in.StoreRelations),
 	}
 }
 
@@ -54,7 +54,7 @@ func normalReturnFactsEqual(reg *axis.Registry, a, b callboundary.NormalReturnFa
 		frozenTableFactsEqual(a.FrozenTables, b.FrozenTables) &&
 		effectDeltasEqual(reg, a.EffectDeltas, b.EffectDeltas) &&
 		escapeEventLane.Equal(a.EscapeEvents, b.EscapeEvents) &&
-		storeRelationFactsEqual(a.StoreRelations, b.StoreRelations)
+		storeRelationLane.Equal(a.StoreRelations, b.StoreRelations)
 }
 
 func normalReturnFactsLessOrEq(reg *axis.Registry, a, b callboundary.NormalReturnFacts) bool {
@@ -69,7 +69,7 @@ func normalReturnFactsLessOrEq(reg *axis.Registry, a, b callboundary.NormalRetur
 		frozenTableFactsLessOrEq(a.FrozenTables, b.FrozenTables) &&
 		effectDeltasLessOrEq(reg, a.EffectDeltas, b.EffectDeltas) &&
 		escapeEventLane.LessOrEq(a.EscapeEvents, b.EscapeEvents) &&
-		storeRelationFactsLessOrEq(a.StoreRelations, b.StoreRelations)
+		storeRelationLane.LessOrEq(a.StoreRelations, b.StoreRelations)
 }
 
 func joinNormalReturnFacts(reg *axis.Registry, a, b callboundary.NormalReturnFacts) callboundary.NormalReturnFacts {
@@ -83,7 +83,7 @@ func joinNormalReturnFacts(reg *axis.Registry, a, b callboundary.NormalReturnFac
 		FrozenTables:      joinFrozenTableFacts(a.FrozenTables, b.FrozenTables),
 		EffectDeltas:      joinEffectDeltas(reg, a.EffectDeltas, b.EffectDeltas),
 		EscapeEvents:      escapeEventLane.Join(a.EscapeEvents, b.EscapeEvents),
-		StoreRelations:    joinStoreRelationFacts(a.StoreRelations, b.StoreRelations),
+		StoreRelations:    storeRelationLane.Join(a.StoreRelations, b.StoreRelations),
 	})
 }
 
@@ -98,7 +98,7 @@ func widenNormalReturnFacts(reg *axis.Registry, prev, next callboundary.NormalRe
 		FrozenTables:      joinFrozenTableFacts(prev.FrozenTables, next.FrozenTables),
 		EffectDeltas:      widenEffectDeltas(reg, prev.EffectDeltas, next.EffectDeltas),
 		EscapeEvents:      escapeEventLane.Widen(prev.EscapeEvents, next.EscapeEvents),
-		StoreRelations:    widenStoreRelationFacts(prev.StoreRelations, next.StoreRelations),
+		StoreRelations:    storeRelationLane.Widen(prev.StoreRelations, next.StoreRelations),
 	})
 }
 

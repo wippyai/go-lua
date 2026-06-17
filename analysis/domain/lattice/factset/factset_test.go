@@ -103,6 +103,55 @@ func TestDominationSubsumes(t *testing.T) {
 	}
 }
 
+func mustSet() Set[int, tf] {
+	return Set[int, tf]{
+		Key:       func(f tf) int { return f.Key },
+		EqualFact: func(a, b tf) bool { return a.Key == b.Key && a.Rank == b.Rank },
+		Less: func(a, b tf) bool {
+			if a.Key != b.Key {
+				return a.Key < b.Key
+			}
+			return a.Rank < b.Rank
+		},
+		Intersect: true,
+	}
+}
+
+func TestMustSetIntersectionLaws(t *testing.T) {
+	s := mustSet()
+	a := facts(1, 1, 2, 1, 3, 1)
+	b := facts(2, 1, 3, 1, 4, 1)
+	c := facts(3, 1, 4, 1, 5, 1)
+
+	// Join is the intersection by key.
+	if !s.Equal(s.Join(a, b), facts(2, 1, 3, 1)) {
+		t.Fatalf("must join = %v, want keys {2,3}", s.Join(a, b))
+	}
+	if !s.Equal(s.Join(a, b), s.Join(b, a)) {
+		t.Fatalf("must join not commutative")
+	}
+	if !s.Equal(s.Join(s.Join(a, b), c), s.Join(a, s.Join(b, c))) {
+		t.Fatalf("must join not associative")
+	}
+	if !s.Equal(s.Join(a, a), s.Normalize(a)) {
+		t.Fatalf("must join not idempotent")
+	}
+	// Join is the least upper bound under reverse inclusion: a ⊑ a∩b, b ⊑ a∩b.
+	if !s.LessOrEq(a, s.Join(a, b)) || !s.LessOrEq(b, s.Join(a, b)) {
+		t.Fatalf("must join is not an upper bound")
+	}
+	// a ⊑ b means a's keys ⊇ b's keys (a guarantees at least what b does).
+	if !s.LessOrEq(facts(1, 1, 2, 1), facts(1, 1)) {
+		t.Fatalf("superset must be below subset for a must set")
+	}
+	if s.LessOrEq(facts(1, 1), facts(1, 1, 2, 1)) {
+		t.Fatalf("subset must not be below superset for a must set")
+	}
+	if !s.Equal(s.Widen(a, b), s.Join(a, b)) {
+		t.Fatalf("widen must equal join")
+	}
+}
+
 func TestCloneIsolatesStoredFacts(t *testing.T) {
 	s := testSet()
 	in := []tf{{Key: 1, Rank: 1, Tag: []int{9}}}
