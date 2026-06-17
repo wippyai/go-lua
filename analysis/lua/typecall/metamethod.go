@@ -2,7 +2,6 @@ package typecall
 
 import (
 	"github.com/wippyai/go-lua/analysis/type/access"
-	"github.com/wippyai/go-lua/analysis/type/normalize"
 	"github.com/wippyai/go-lua/analysis/type/subst"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
@@ -52,41 +51,13 @@ func metamethodInRecord(r *typ.Record, name string, depth int) (typ.Type, bool) 
 }
 
 func metamethodInUnion(u *typ.Union, name string, depth int) (typ.Type, bool) {
-	if u == nil || len(u.Members) == 0 {
-		return nil, false
-	}
-	out := make([]typ.Type, 0, len(u.Members))
-	for _, member := range u.Members {
-		if isNilType(member) {
-			continue
-		}
-		mt, ok := metamethodDepth(member, name, depth+1)
-		if !ok {
-			return nil, false
-		}
-		out = append(out, mt)
-	}
-	if len(out) == 0 {
-		return nil, false
-	}
-	return normalize.UnionForEvidence(out...), true
+	return typeUnion(u, depth, func(member typ.Type, depth int) (typ.Type, bool) {
+		return metamethodDepth(member, name, depth)
+	})
 }
 
 func metamethodInIntersection(in *typ.Intersection, name string, depth int) (typ.Type, bool) {
-	if in == nil {
-		return nil, false
-	}
-	out := make([]typ.Type, 0, len(in.Members))
-	for _, member := range in.Members {
-		if mt, ok := metamethodDepth(member, name, depth+1); ok {
-			out = append(out, mt)
-		}
-	}
-	if len(out) == 0 {
-		return nil, false
-	}
-	if len(out) == 1 {
-		return out[0], true
-	}
-	return normalize.IntersectionForMeet(out...), true
+	return typeIntersection(in, depth, func(member typ.Type, depth int) (typ.Type, bool) {
+		return metamethodDepth(member, name, depth)
+	})
 }

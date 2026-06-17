@@ -30,6 +30,50 @@ func memberCallDistributeUnion(members []typ.Type, depth int, query func(member 
 	return memberCallResult{t: normalize.UnionForEvidence(out...), status: MemberCallOK}
 }
 
+// typeUnion applies query to each non-nil union member; every arm must succeed
+// and the results union together.
+func typeUnion(u *typ.Union, depth int, query func(member typ.Type, depth int) (typ.Type, bool)) (typ.Type, bool) {
+	if u == nil || len(u.Members) == 0 {
+		return nil, false
+	}
+	out := make([]typ.Type, 0, len(u.Members))
+	for _, member := range u.Members {
+		if isNilType(member) {
+			continue
+		}
+		t, ok := query(member, depth+1)
+		if !ok {
+			return nil, false
+		}
+		out = append(out, t)
+	}
+	if len(out) == 0 {
+		return nil, false
+	}
+	return normalize.UnionForEvidence(out...), true
+}
+
+// typeIntersection applies query to each intersection member and meets the
+// successful results.
+func typeIntersection(in *typ.Intersection, depth int, query func(member typ.Type, depth int) (typ.Type, bool)) (typ.Type, bool) {
+	if in == nil {
+		return nil, false
+	}
+	out := make([]typ.Type, 0, len(in.Members))
+	for _, member := range in.Members {
+		if t, ok := query(member, depth+1); ok {
+			out = append(out, t)
+		}
+	}
+	if len(out) == 0 {
+		return nil, false
+	}
+	if len(out) == 1 {
+		return out[0], true
+	}
+	return normalize.IntersectionForMeet(out...), true
+}
+
 // witnessUnion applies query to each non-nil union member and requires every arm
 // to yield the same callable witness; any mismatch or non-callable arm fails.
 func witnessUnion(u *typ.Union, depth int, query func(member typ.Type, depth int) (*typ.Function, bool)) (*typ.Function, bool) {
