@@ -25,10 +25,23 @@ func applyChannelSelectCaseEquality(
 	leftPath pathdom.Path,
 	rightPath pathdom.Path,
 ) (state.State, bool) {
-	if updated, ok := applyChannelSelectCasePathEquality(typeValues, reg, resolver, projectPath, point, out, leftPath, rightPath); ok {
+	return applyChannelSelectCaseSymmetric(out, leftPath, rightPath, func(l, r pathdom.Path) (state.State, bool) {
+		return applyChannelSelectCasePathEquality(typeValues, reg, resolver, projectPath, point, out, l, r)
+	})
+}
+
+// applyChannelSelectCaseSymmetric applies apply to the path pair in both orders,
+// returning the first successful update or (out, false) when neither applies.
+func applyChannelSelectCaseSymmetric(
+	out state.State,
+	leftPath pathdom.Path,
+	rightPath pathdom.Path,
+	apply func(leftPath, rightPath pathdom.Path) (state.State, bool),
+) (state.State, bool) {
+	if updated, ok := apply(leftPath, rightPath); ok {
 		return updated, true
 	}
-	if updated, ok := applyChannelSelectCasePathEquality(typeValues, reg, resolver, projectPath, point, out, rightPath, leftPath); ok {
+	if updated, ok := apply(rightPath, leftPath); ok {
 		return updated, true
 	}
 	return out, false
@@ -152,13 +165,9 @@ func applyChannelSelectCaseInequality(
 	leftPath pathdom.Path,
 	rightPath pathdom.Path,
 ) (state.State, bool) {
-	if updated, ok := applyChannelSelectCasePathInequality(typeValues, reg, resolver, projectPath, point, out, leftPath, rightPath); ok {
-		return updated, true
-	}
-	if updated, ok := applyChannelSelectCasePathInequality(typeValues, reg, resolver, projectPath, point, out, rightPath, leftPath); ok {
-		return updated, true
-	}
-	return out, false
+	return applyChannelSelectCaseSymmetric(out, leftPath, rightPath, func(l, r pathdom.Path) (state.State, bool) {
+		return applyChannelSelectCasePathInequality(typeValues, reg, resolver, projectPath, point, out, l, r)
+	})
 }
 
 func applyChannelSelectCasePathInequality(

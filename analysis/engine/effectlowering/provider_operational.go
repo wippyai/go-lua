@@ -103,23 +103,26 @@ func operationalPresenceValue(ctx transfer.NodeContext, p presence.Value) (produ
 }
 
 func operationalPathInvalidations(e signature.OperationalEffects) []callboundary.PathInvalidationFact {
-	if len(e.PathInvalidations) == 0 {
-		return nil
-	}
-	out := make([]callboundary.PathInvalidationFact, 0, len(e.PathInvalidations))
-	for _, fact := range e.PathInvalidations {
-		out = append(out, callboundary.PathInvalidationFact{Path: fact.Path})
-	}
-	return out
+	return projectOperationalFacts(e.PathInvalidations, func(f signature.PathInvalidation) callboundary.PathInvalidationFact {
+		return callboundary.PathInvalidationFact{Path: f.Path}
+	})
 }
 
 func operationalFrozenTables(e signature.OperationalEffects) []callboundary.FrozenTableFact {
-	if len(e.FrozenTables) == 0 {
+	return projectOperationalFacts(e.FrozenTables, func(f signature.FrozenTable) callboundary.FrozenTableFact {
+		return callboundary.FrozenTableFact{Target: f.Target}
+	})
+}
+
+// projectOperationalFacts maps each operational fact to a call-boundary fact via
+// build, returning nil for an empty input.
+func projectOperationalFacts[F any, T any](facts []F, build func(F) T) []T {
+	if len(facts) == 0 {
 		return nil
 	}
-	out := make([]callboundary.FrozenTableFact, 0, len(e.FrozenTables))
-	for _, fact := range e.FrozenTables {
-		out = append(out, callboundary.FrozenTableFact{Target: fact.Target})
+	out := make([]T, 0, len(facts))
+	for _, fact := range facts {
+		out = append(out, build(fact))
 	}
 	return out
 }
