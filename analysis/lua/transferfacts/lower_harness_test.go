@@ -552,3 +552,52 @@ func TestLowerChannelSelectFacts(t *testing.T) {
 		}
 	}
 }
+
+func TestLowerChannelSelectFactsPreserveDuplicateCasePaths(t *testing.T) {
+	reg := standard.Registry()
+	point := cfg.Point(701)
+	resultPath := path.NewPath(symbol.ID(711), "result")
+	eventsPath := path.NewPath(symbol.ID(712), "events_ch")
+	stopPath := path.NewPath(symbol.ID(713), "stop_ch")
+	eventPayload := typetable.NewRecord().Field("kind", typ.String).Build()
+	stopPayload := typetable.NewRecord().Field("reason", typ.String).Build()
+	channelGeneric := ambient.ChannelGeneric()
+	events := (&lowerer{
+		registry: reg,
+		symbolTypes: map[symbol.ID]typ.Type{
+			eventsPath.Symbol: typ.Instantiate(channelGeneric, eventPayload),
+			stopPath.Symbol:   typ.Instantiate(channelGeneric, stopPayload),
+		},
+	}).channelSelectEvents(point, semantics.ChannelSelectFact{
+		ResultTarget: semantics.CallResultTarget{
+			Kind:        semantics.CallResultTargetLocalAssignment,
+			Path:        resultPath,
+			HasPath:     true,
+			ResultIndex: 0,
+		},
+		Cases: []semantics.ChannelSelectCaseFact{
+			{ChannelPath: eventsPath, HasChannelPath: true},
+			{ChannelPath: eventsPath, HasChannelPath: true},
+			{ChannelPath: stopPath, HasChannelPath: true},
+		},
+	})
+	if len(events) != 7 {
+		t.Fatalf("channel select events = %#v, want select plus three case/receive pairs", events)
+	}
+	for i, wantCase := range []path.Path{eventsPath, eventsPath, stopPath} {
+		caseEvent := events[1+i*2]
+		receiveEvent := events[2+i*2]
+		if caseEvent.Kind() != factflow.ChannelSelectCase || caseEvent.Index() != i {
+			t.Fatalf("case event %d = %#v", i, caseEvent)
+		}
+		if got, ok := caseEvent.CasePath(); !ok || !got.Equal(wantCase) {
+			t.Fatalf("case path %d = %v/%v, want %v", i, got, ok, wantCase)
+		}
+		if receiveEvent.Kind() != factflow.ChannelSelectReceive || receiveEvent.Index() != i {
+			t.Fatalf("receive event %d = %#v", i, receiveEvent)
+		}
+		if got, ok := receiveEvent.CasePath(); !ok || !got.Equal(wantCase) {
+			t.Fatalf("receive case path %d = %v/%v, want %v", i, got, ok, wantCase)
+		}
+	}
+}

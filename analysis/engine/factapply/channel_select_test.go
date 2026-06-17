@@ -273,6 +273,85 @@ func TestFactsEdgeTransferChannelSelectEqualityNarrowsPayload(t *testing.T) {
 	}
 }
 
+func TestFactsEdgeTransferChannelSelectEqualityKeepsDuplicateCasePathIndexes(t *testing.T) {
+	reg := standard.Registry()
+	graph := cfg.New()
+	branch := graph.AddNode(cfg.NodeBranch)
+	thenPoint := graph.AddNode(cfg.NodeNoop)
+	elsePoint := graph.AddNode(cfg.NodeNoop)
+	graph.AddEdge(graph.Entry(), branch, false)
+	graph.AddEdge(branch, thenPoint, true)
+	graph.AddEdge(branch, elsePoint, false)
+	graph.AddEdge(thenPoint, graph.Exit(), false)
+	graph.AddEdge(elsePoint, graph.Exit(), false)
+
+	result := symbol.ID(744)
+	events := symbol.ID(745)
+	stop := symbol.ID(746)
+	resultPath := pathdom.NewPath(result, "result")
+	eventsPath := pathdom.NewPath(events, "events_ch")
+	stopPath := pathdom.NewPath(stop, "stop_ch")
+	selectID := factflow.ChannelSelectID("select-duplicate-equality")
+	eventPayload := typetable.NewRecord().Field("kind", typ.LiteralString("event")).Build()
+	retryPayload := typetable.NewRecord().Field("kind", typ.LiteralString("retry")).Build()
+	stopPayload := typetable.NewRecord().Field("reason", typ.String).Build()
+	eventsSet := channelSelectDuplicateEvents(reg, selectID, resultPath, eventsPath, stopPath, eventPayload, retryPayload, stopPayload)
+	resultValue, ok := testChannelSelectResultValue(reg, selectID, eventsSet.Events())
+	if !ok {
+		t.Fatal("failed to build channel select result value")
+	}
+
+	visibilityBuilder := visibility.NewBuilder()
+	visibilityBuilder.Define(branch, result, "result")
+	visibilityBuilder.Define(branch, events, "events_ch")
+	visibilityBuilder.Define(branch, stop, "stop_ch")
+	resolver := visibility.NewResolver(visibilityBuilder.Build())
+	initial := state.State{}.
+		WriteValue(reg, key.SymbolValue(result), resultValue).
+		AddChannelSelectFact(channelselectfact.Fact{
+			Select: channelselectfact.ID(selectID),
+			Kind:   channelselectfact.FactReceive,
+			Result: pathdom.PathKey("sym744@1"),
+			Case:   pathdom.PathKey("sym745@1"),
+			Index:  0,
+		}).
+		AddChannelSelectFact(channelselectfact.Fact{
+			Select: channelselectfact.ID(selectID),
+			Kind:   channelselectfact.FactReceive,
+			Result: pathdom.PathKey("sym744@1"),
+			Case:   pathdom.PathKey("sym745@1"),
+			Index:  1,
+		}).
+		AddChannelSelectFact(channelselectfact.Fact{
+			Select: channelselectfact.ID(selectID),
+			Kind:   channelselectfact.FactReceive,
+			Result: pathdom.PathKey("sym744@1"),
+			Case:   pathdom.PathKey("sym746@1"),
+			Index:  2,
+		})
+
+	got := transfer.Run(transfer.Config{
+		Graph:      graph,
+		Registry:   reg,
+		EntryState: initial,
+		EdgeTransfer: NewFactsEdgeTransfer(FactsEdgeTransferConfig{
+			Facts: factflow.NewFacts(factflow.FactsInput{
+				BranchPathRelations: map[cfg.Point]factflow.BranchPathRelationSet{
+					branch: factflow.NewBranchPathRelationSet(
+						factflow.NewBranchPathEquality(resultPath.Field("channel"), eventsPath, true, false),
+					),
+				},
+			}),
+			Visibility: resolver,
+		}),
+	})
+
+	thenValue := got[thenPoint].ReadValue(reg, key.SymbolValue(result))
+	assertChannelSelectCasePayload(t, reg, thenValue, channelselectfact.ID(selectID), 0, eventPayload)
+	assertChannelSelectCasePayload(t, reg, thenValue, channelselectfact.ID(selectID), 1, retryPayload)
+	assertNoChannelSelectCasePayload(t, reg, thenValue, channelselectfact.ID(selectID), 2)
+}
+
 func TestFactsEdgeTransferChannelSelectInequalityRemovesCase(t *testing.T) {
 	reg := standard.Registry()
 	graph := cfg.New()
@@ -342,6 +421,89 @@ func TestFactsEdgeTransferChannelSelectInequalityRemovesCase(t *testing.T) {
 	assertNoChannelSelectCasePayload(t, reg, elseValue, channelselectfact.ID(selectID), 0)
 	assertChannelSelectCasePayload(t, reg, elseValue, channelselectfact.ID(selectID), 1, stopPayload)
 	if got := got[elsePoint].ReadPathKey(reg, pathdom.PathKey("sym824@1.value")); !product.Equal(reg, got, product.Bottom(reg)) {
+		t.Fatalf("stale result.value path = %s, want bottom", formatValue(reg, got))
+	}
+}
+
+func TestFactsEdgeTransferChannelSelectInequalityRemovesDuplicateCasePathIndexes(t *testing.T) {
+	reg := standard.Registry()
+	graph := cfg.New()
+	branch := graph.AddNode(cfg.NodeBranch)
+	thenPoint := graph.AddNode(cfg.NodeNoop)
+	elsePoint := graph.AddNode(cfg.NodeNoop)
+	graph.AddEdge(graph.Entry(), branch, false)
+	graph.AddEdge(branch, thenPoint, true)
+	graph.AddEdge(branch, elsePoint, false)
+	graph.AddEdge(thenPoint, graph.Exit(), false)
+	graph.AddEdge(elsePoint, graph.Exit(), false)
+
+	result := symbol.ID(844)
+	events := symbol.ID(845)
+	stop := symbol.ID(846)
+	resultPath := pathdom.NewPath(result, "result")
+	eventsPath := pathdom.NewPath(events, "events_ch")
+	stopPath := pathdom.NewPath(stop, "stop_ch")
+	selectID := factflow.ChannelSelectID("select-duplicate-inequality")
+	eventPayload := typetable.NewRecord().Field("kind", typ.LiteralString("event")).Build()
+	retryPayload := typetable.NewRecord().Field("kind", typ.LiteralString("retry")).Build()
+	stopPayload := typetable.NewRecord().Field("reason", typ.String).Build()
+	eventsSet := channelSelectDuplicateEvents(reg, selectID, resultPath, eventsPath, stopPath, eventPayload, retryPayload, stopPayload)
+	resultValue, ok := testChannelSelectResultValue(reg, selectID, eventsSet.Events())
+	if !ok {
+		t.Fatal("failed to build channel select result value")
+	}
+
+	visibilityBuilder := visibility.NewBuilder()
+	visibilityBuilder.Define(branch, result, "result")
+	visibilityBuilder.Define(branch, events, "events_ch")
+	visibilityBuilder.Define(branch, stop, "stop_ch")
+	resolver := visibility.NewResolver(visibilityBuilder.Build())
+	initial := state.State{}.
+		WriteValue(reg, key.SymbolValue(result), resultValue).
+		WritePathKey(reg, pathdom.PathKey("sym844@1.value"), typeValue(reg, eventPayload)).
+		AddChannelSelectFact(channelselectfact.Fact{
+			Select: channelselectfact.ID(selectID),
+			Kind:   channelselectfact.FactReceive,
+			Result: pathdom.PathKey("sym844@1"),
+			Case:   pathdom.PathKey("sym845@1"),
+			Index:  0,
+		}).
+		AddChannelSelectFact(channelselectfact.Fact{
+			Select: channelselectfact.ID(selectID),
+			Kind:   channelselectfact.FactReceive,
+			Result: pathdom.PathKey("sym844@1"),
+			Case:   pathdom.PathKey("sym845@1"),
+			Index:  1,
+		}).
+		AddChannelSelectFact(channelselectfact.Fact{
+			Select: channelselectfact.ID(selectID),
+			Kind:   channelselectfact.FactReceive,
+			Result: pathdom.PathKey("sym844@1"),
+			Case:   pathdom.PathKey("sym846@1"),
+			Index:  2,
+		})
+
+	got := transfer.Run(transfer.Config{
+		Graph:      graph,
+		Registry:   reg,
+		EntryState: initial,
+		EdgeTransfer: NewFactsEdgeTransfer(FactsEdgeTransferConfig{
+			Facts: factflow.NewFacts(factflow.FactsInput{
+				BranchPathRelations: map[cfg.Point]factflow.BranchPathRelationSet{
+					branch: factflow.NewBranchPathRelationSet(
+						factflow.NewBranchPathInequality(resultPath.Field("channel"), eventsPath, false, true),
+					),
+				},
+			}),
+			Visibility: resolver,
+		}),
+	})
+
+	elseValue := got[elsePoint].ReadValue(reg, key.SymbolValue(result))
+	assertNoChannelSelectCasePayload(t, reg, elseValue, channelselectfact.ID(selectID), 0)
+	assertNoChannelSelectCasePayload(t, reg, elseValue, channelselectfact.ID(selectID), 1)
+	assertChannelSelectCasePayload(t, reg, elseValue, channelselectfact.ID(selectID), 2, stopPayload)
+	if got := got[elsePoint].ReadPathKey(reg, pathdom.PathKey("sym844@1.value")); !product.Equal(reg, got, product.Bottom(reg)) {
 		t.Fatalf("stale result.value path = %s, want bottom", formatValue(reg, got))
 	}
 }
@@ -584,6 +746,30 @@ func channelSelectEvents(
 		}),
 		channelSelectReceive(reg, selectID, resultPath, firstPath, 0, firstPayload),
 		channelSelectReceive(reg, selectID, resultPath, secondPath, 1, secondPayload),
+	)
+}
+
+func channelSelectDuplicateEvents(
+	reg *axis.Registry,
+	selectID factflow.ChannelSelectID,
+	resultPath pathdom.Path,
+	duplicatePath pathdom.Path,
+	otherPath pathdom.Path,
+	firstPayload typ.Type,
+	secondPayload typ.Type,
+	otherPayload typ.Type,
+) factflow.ChannelSelectSet {
+	return factflow.NewChannelSelectSet(
+		factflow.NewChannelSelect(factflow.ChannelSelectConfig{
+			SelectID:      selectID,
+			Kind:          factflow.ChannelSelectSelect,
+			ResultPath:    resultPath,
+			HasResultPath: true,
+			Index:         0,
+		}),
+		channelSelectReceive(reg, selectID, resultPath, duplicatePath, 0, firstPayload),
+		channelSelectReceive(reg, selectID, resultPath, duplicatePath, 1, secondPayload),
+		channelSelectReceive(reg, selectID, resultPath, otherPath, 2, otherPayload),
 	)
 }
 

@@ -1607,6 +1607,58 @@ end
 	}
 }
 
+func TestExtractChunkChannelSelectFactsPreserveDuplicateCasePaths(t *testing.T) {
+	stmts, err := parse.ParseString(`
+type Event = {kind: string}
+type Stop = {reason: string}
+
+function handle(events_ch: Channel<Event>, stop_ch: Channel<Stop>)
+	local result = channel.select { events_ch:case_receive(), events_ch:case_receive(), stop_ch:case_receive() }
+end
+`, "test")
+	if err != nil {
+		t.Fatalf("ParseString: %v", err)
+	}
+	var fn *ast.FunctionExpr
+	for _, stmt := range stmts {
+		if def, ok := stmt.(*ast.FuncDefStmt); ok {
+			fn = def.Func
+			break
+		}
+	}
+	if fn == nil || len(fn.Stmts) != 1 {
+		t.Fatalf("parsed function = %#v", fn)
+	}
+	local, ok := fn.Stmts[0].(*ast.LocalAssignStmt)
+	if !ok {
+		t.Fatalf("stmt = %T, want *ast.LocalAssignStmt", fn.Stmts[0])
+	}
+	bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"channel"}})
+	selectCall, ok := local.Exprs[0].(*ast.FuncCallExpr)
+	if !ok {
+		t.Fatalf("local expr = %T, want *ast.FuncCallExpr", local.Exprs[0])
+	}
+
+	targets := localResultTargets(local, bindings)
+	callFact := buildCallFact(local, nil, CallContextAssignmentSource, local.Exprs, 0, selectCall, bindings, targets, nil)
+	if !callFact.HasChannelSelect {
+		t.Fatalf("call fact missing channel select annotation: %#v", callFact)
+	}
+	selectFact := callFact.ChannelSelect
+	if len(selectFact.Cases) != 3 {
+		t.Fatalf("cases = %#v, want three", selectFact.Cases)
+	}
+	firstPath := selectFact.Cases[0].ChannelPath
+	secondPath := selectFact.Cases[1].ChannelPath
+	thirdPath := selectFact.Cases[2].ChannelPath
+	if !selectFact.Cases[0].HasChannelPath || !selectFact.Cases[1].HasChannelPath || !firstPath.Equal(secondPath) {
+		t.Fatalf("duplicate case paths = %#v / %#v, want equal channel paths", firstPath, secondPath)
+	}
+	if !selectFact.Cases[2].HasChannelPath || thirdPath.Equal(firstPath) {
+		t.Fatalf("third case path = %#v, want distinct stop channel path", thirdPath)
+	}
+}
+
 func TestExtractChunkChannelSelectFactsRejectsUnanchoredCalls(t *testing.T) {
 	tests := []struct {
 		name string

@@ -150,7 +150,7 @@ func channelSelectChainDiagnostic(
 		if !ok || branch.Check.Kind != branchcond.CheckPathEqual {
 			continue
 		}
-		selectIndex, caseIndex, ok := channelSelectCaseForCheck(branch.Check, selects)
+		selectIndex, caseIndexes, ok := channelSelectCasesForCheck(branch.Check, selects)
 		if !ok {
 			continue
 		}
@@ -158,7 +158,9 @@ func channelSelectChainDiagnostic(
 			selected = selectIndex
 		}
 		if selected == selectIndex {
-			handled[caseIndex] = true
+			for _, caseIndex := range caseIndexes {
+				handled[caseIndex] = true
+			}
 		}
 	}
 	if selected == -1 || len(handled) == 0 {
@@ -175,9 +177,9 @@ func channelSelectChainDiagnostic(
 	var missing []string
 	for i, c := range info.cases {
 		if handled[i] {
-			handledNames = append(handledNames, c.name)
+			handledNames = appendUniqueString(handledNames, c.name)
 		} else {
-			missing = append(missing, c.name)
+			missing = appendUniqueString(missing, c.name)
 		}
 	}
 	if len(missing) == 0 {
@@ -207,19 +209,32 @@ func ifElseIfChain(head *ast.IfStmt) []*ast.IfStmt {
 	return chain
 }
 
-func channelSelectCaseForCheck(
+func channelSelectCasesForCheck(
 	check branchcond.Check,
 	selects []channelSelectDiagnosticInfo,
-) (int, int, bool) {
+) (int, []int, bool) {
 	for selectIndex, info := range selects {
 		resultChannel := info.result.Field(channelselect.ResultChannelField)
+		var caseIndexes []int
 		for caseIndex, c := range info.cases {
 			if pathsMatchPair(check.Path, check.OtherPath, resultChannel, c.path) {
-				return selectIndex, caseIndex, true
+				caseIndexes = append(caseIndexes, caseIndex)
 			}
 		}
+		if len(caseIndexes) > 0 {
+			return selectIndex, caseIndexes, true
+		}
 	}
-	return -1, -1, false
+	return -1, nil, false
+}
+
+func appendUniqueString(values []string, value string) []string {
+	for _, existing := range values {
+		if existing == value {
+			return values
+		}
+	}
+	return append(values, value)
 }
 
 func pathsMatchPair(left, right, wantLeft, wantRight pathdom.Path) bool {

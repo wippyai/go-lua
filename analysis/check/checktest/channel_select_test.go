@@ -238,6 +238,30 @@ end
 	}
 }
 
+func TestChannelSelectExhaustivenessAcceptsDuplicateSameChannelReceiveCase(t *testing.T) {
+	result := Check(`
+type Event = { id: string }
+type Timer = { elapsed: number }
+function consume(primary: Channel<Event>, timers: Channel<Timer>)
+	local selected = channel.select {
+		primary:case_receive(),
+		primary:case_receive(),
+		timers:case_receive(),
+	}
+	if selected.channel == primary then
+		return selected.value.id
+	elseif selected.channel == timers then
+		return tostring(selected.value.elapsed)
+	end
+	return ""
+end
+`, WithStdlib(), WithManifest("channel", ChannelManifest()), WithGlobals("channel"))
+
+	if hasChannelSelectExhaustivenessWarning(result.Diagnostics) {
+		t.Fatalf("diagnostics = %#v, want no channel select exhaustiveness warning for duplicate same-channel receive cases", result.Diagnostics)
+	}
+}
+
 func TestChannelSelectExhaustivenessAcceptsDefaultCase(t *testing.T) {
 	result := Check(`
 type Event = { id: string }
