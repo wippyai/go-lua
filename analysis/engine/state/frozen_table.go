@@ -6,6 +6,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/lattice"
 	"github.com/wippyai/go-lua/analysis/domain/lattice/lift"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
+	"github.com/wippyai/go-lua/analysis/internal/mapedit"
 )
 
 type frozenTableLane struct {
@@ -14,27 +15,7 @@ type frozenTableLane struct {
 }
 
 func frozenTableDomain() lattice.Lattice[frozenTableLane] {
-	domain := lift.MustSet[identity.ID]()
-	return lattice.Lattice[frozenTableLane]{
-		Bottom: func() frozenTableLane {
-			return frozenTableLane{bottom: true}
-		},
-		Top: func() frozenTableLane {
-			return frozenTableLane{}
-		},
-		Equal: func(a, b frozenTableLane) bool {
-			return domain.Equal(a.asMustSet(), b.asMustSet())
-		},
-		LessOrEq: func(a, b frozenTableLane) bool {
-			return domain.LessOrEq(a.asMustSet(), b.asMustSet())
-		},
-		Join: func(a, b frozenTableLane) frozenTableLane {
-			return frozenTableLaneFromMustSet(domain.Join(a.asMustSet(), b.asMustSet()))
-		},
-		Widen: func(prev, next frozenTableLane) frozenTableLane {
-			return frozenTableLaneFromMustSet(domain.Widen(prev.asMustSet(), next.asMustSet()))
-		},
-	}
+	return wrapDomain(lift.MustSet[identity.ID](), frozenTableLaneFromMustSet, frozenTableLane.asMustSet)
 }
 
 func (l frozenTableLane) asMustSet() lift.MustSetLane[identity.ID] {
@@ -47,7 +28,7 @@ func (l frozenTableLane) asMustSet() lift.MustSetLane[identity.ID] {
 func frozenTableLaneFromMustSet(l lift.MustSetLane[identity.ID]) frozenTableLane {
 	return frozenTableLane{
 		bottom: l.Bottom(),
-		values: cloneFrozenTableSet(l.Values()),
+		values: mapedit.Clone(l.Values()),
 	}
 }
 
@@ -73,7 +54,7 @@ func (l frozenTableLane) freeze(id identity.ID) (frozenTableLane, bool) {
 			return l, false
 		}
 	}
-	values := cloneFrozenTableSet(l.values)
+	values := mapedit.Clone(l.values)
 	if values == nil {
 		values = make(map[identity.ID]struct{}, 1)
 	}
@@ -142,15 +123,4 @@ func identityIDLess(a, b identity.ID) bool {
 		return a.Site < b.Site
 	}
 	return a.Index < b.Index
-}
-
-func cloneFrozenTableSet(in map[identity.ID]struct{}) map[identity.ID]struct{} {
-	if len(in) == 0 {
-		return nil
-	}
-	out := make(map[identity.ID]struct{}, len(in))
-	for k := range in {
-		out[k] = struct{}{}
-	}
-	return out
 }

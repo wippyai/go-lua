@@ -89,5 +89,5 @@ func (l numFloorLane) clear(pathKey pathdom.PathKey) (numFloorLane, bool) {
 }
 
 func numFloorMapDomain() lattice.Lattice[numFloorLane] {
-	return floorMapDomain(numbound.MapDomain(), numFloorLaneFromLift, numFloorLane.asLift)
+	return wrapDomain(numbound.MapDomain(), numFloorLaneFromLift, numFloorLane.asLift)
 }

@@ -57,5 +57,5 @@ func (l lenFloorLane) write(pathKey pathdom.PathKey, lo int64) (lenFloorLane, bo
 }
 
 func lenFloorMapDomain() lattice.Lattice[lenFloorLane] {
-	return floorMapDomain(lenbound.MapDomain(), lenFloorLaneFromLift, lenFloorLane.asLift)
+	return wrapDomain(lenbound.MapDomain(), lenFloorLaneFromLift, lenFloorLane.asLift)
 }

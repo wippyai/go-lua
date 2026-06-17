@@ -6,6 +6,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/lattice"
 	"github.com/wippyai/go-lua/analysis/domain/lattice/lift"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/internal/mapedit"
 )
 
 // StoreRelation records exact evidence that Source is stored into Into on all
@@ -22,27 +23,7 @@ type storeRelationLane struct {
 }
 
 func storeRelationDomain() lattice.Lattice[storeRelationLane] {
-	domain := lift.MustSet[StoreRelation]()
-	return lattice.Lattice[storeRelationLane]{
-		Bottom: func() storeRelationLane {
-			return storeRelationLane{bottom: true}
-		},
-		Top: func() storeRelationLane {
-			return storeRelationLane{}
-		},
-		Equal: func(a, b storeRelationLane) bool {
-			return domain.Equal(a.asMustSet(), b.asMustSet())
-		},
-		LessOrEq: func(a, b storeRelationLane) bool {
-			return domain.LessOrEq(a.asMustSet(), b.asMustSet())
-		},
-		Join: func(a, b storeRelationLane) storeRelationLane {
-			return storeRelationLaneFromMustSet(domain.Join(a.asMustSet(), b.asMustSet()))
-		},
-		Widen: func(prev, next storeRelationLane) storeRelationLane {
-			return storeRelationLaneFromMustSet(domain.Widen(prev.asMustSet(), next.asMustSet()))
-		},
-	}
+	return wrapDomain(lift.MustSet[StoreRelation](), storeRelationLaneFromMustSet, storeRelationLane.asMustSet)
 }
 
 func (l storeRelationLane) asMustSet() lift.MustSetLane[StoreRelation] {
@@ -55,7 +36,7 @@ func (l storeRelationLane) asMustSet() lift.MustSetLane[StoreRelation] {
 func storeRelationLaneFromMustSet(l lift.MustSetLane[StoreRelation]) storeRelationLane {
 	return storeRelationLane{
 		bottom: l.Bottom(),
-		values: cloneStoreRelationSet(l.Values()),
+		values: mapedit.Clone(l.Values()),
 	}
 }
 
@@ -81,7 +62,7 @@ func (l storeRelationLane) add(relation StoreRelation) (storeRelationLane, bool)
 			return l, false
 		}
 	}
-	values := cloneStoreRelationSet(l.values)
+	values := mapedit.Clone(l.values)
 	if values == nil {
 		values = make(map[StoreRelation]struct{}, 1)
 	}
@@ -139,16 +120,5 @@ func storeRelationsFromSet(in map[StoreRelation]struct{}) []StoreRelation {
 		}
 		return out[i].Into < out[j].Into
 	})
-	return out
-}
-
-func cloneStoreRelationSet(in map[StoreRelation]struct{}) map[StoreRelation]struct{} {
-	if len(in) == 0 {
-		return nil
-	}
-	out := make(map[StoreRelation]struct{}, len(in))
-	for relation := range in {
-		out[relation] = struct{}{}
-	}
 	return out
 }

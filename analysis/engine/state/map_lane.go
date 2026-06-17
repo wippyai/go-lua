@@ -2,18 +2,16 @@ package state
 
 import (
 	"github.com/wippyai/go-lua/analysis/domain/lattice"
-	"github.com/wippyai/go-lua/analysis/domain/lattice/lift"
-	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/internal/mapedit"
 )
 
-// floorMapDomain lifts a MustMapLane value-domain into a lattice over a typed
-// lane wrapper L, given the wrap/unwrap conversions between L and the underlying
-// lift lane. It removes the per-floor-lane domain boilerplate.
-func floorMapDomain[F any, L any](
-	elem lattice.Lattice[lift.MustMapLane[pathdom.PathKey, F]],
-	wrap func(lift.MustMapLane[pathdom.PathKey, F]) L,
-	unwrap func(L) lift.MustMapLane[pathdom.PathKey, F],
+// wrapDomain lifts a lattice over E to a lattice over a newtype wrapper L, given
+// the wrap/unwrap isomorphism between L and E. It removes the per-lane domain
+// boilerplate shared by the floor lanes and the must-set lanes.
+func wrapDomain[E any, L any](
+	elem lattice.Lattice[E],
+	wrap func(E) L,
+	unwrap func(L) E,
 ) lattice.Lattice[L] {
 	return lattice.Lattice[L]{
 		Bottom:   func() L { return wrap(elem.Bottom()) },
