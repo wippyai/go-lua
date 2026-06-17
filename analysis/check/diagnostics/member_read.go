@@ -44,7 +44,7 @@ func (p memberRead) Produce(result *body.Result) []diagnostic.Diagnostic {
 		}
 		if fact, ok := result.OrdinaryAssignment(point); ok {
 			emit(fact.Value)
-			emitMemberReadAssignmentTarget(fact.Target, emit)
+			emitAssignmentTargetReads(fact.Target, emit)
 		}
 		if fact, ok := result.Call(point); ok {
 			emit(fact.Call)
@@ -59,22 +59,6 @@ func (p memberRead) Produce(result *body.Result) []diagnostic.Diagnostic {
 		}
 	}
 	return out
-}
-
-// emitMemberReadAssignmentTarget walks the read positions of an assignment
-// target, which is the object of an index/field write and any index key.
-func emitMemberReadAssignmentTarget(target ast.Expr, emit func(ast.Expr)) {
-	switch t := target.(type) {
-	case *ast.AttrGetExpr:
-		emit(t.Object)
-		if t.KeySyntax == ast.AttrKeyIndex {
-			emit(t.Key)
-		}
-	case *ast.CastExpr:
-		emitMemberReadAssignmentTarget(t.Expr, emit)
-	case *ast.NonNilAssertExpr:
-		emitMemberReadAssignmentTarget(t.Expr, emit)
-	}
 }
 
 func (p memberRead) walk(expr ast.Expr, typers memberReadTypers, seen map[*ast.AttrGetExpr]struct{}, out *[]diagnostic.Diagnostic) {
