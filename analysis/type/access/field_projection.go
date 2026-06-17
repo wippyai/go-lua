@@ -73,50 +73,16 @@ func fieldInUnion(u *typ.Union, name string, depth int) fieldResult {
 	if u == nil || len(u.Members) == 0 {
 		return fieldResult{}
 	}
-	out := make([]typ.Type, 0, len(u.Members))
-	nilable := false
-
-	for _, member := range u.Members {
-		res := fieldDepth(member, name, depth+1)
-		if !res.ok {
-			if missingFieldReadsNilDepth(member, depth+1) {
-				nilable = true
-				continue
-			}
-			return fieldResult{}
-		}
-		if res.nilable {
-			nilable = true
-		}
-		if res.t != nil {
-			out = append(out, res.t)
-		}
-	}
-
-	if len(out) == 0 {
-		if nilable {
-			return fieldResult{t: typ.Nil, ok: true}
-		}
-		return fieldResult{}
-	}
-	return fieldResult{t: normalize.UnionForEvidence(out...), ok: true, nilable: nilable}
+	return distributeUnion(u.Members, depth, func(member typ.Type, depth int) fieldResult {
+		return fieldDepth(member, name, depth)
+	})
 }
 
 func fieldInIntersection(in *typ.Intersection, name string, depth int) fieldResult {
 	if in == nil {
 		return fieldResult{}
 	}
-	out := make([]typ.Type, 0, len(in.Members))
-	for _, member := range in.Members {
-		if ft, ok := fieldAtDepth(member, name, depth+1); ok {
-			out = append(out, ft)
-		}
-	}
-	if len(out) == 0 {
-		return fieldResult{}
-	}
-	if len(out) == 1 {
-		return fieldResult{t: out[0], ok: true}
-	}
-	return fieldResult{t: normalize.IntersectionForMeet(out...), ok: true}
+	return distributeIntersection(in.Members, depth, func(member typ.Type, depth int) (typ.Type, bool) {
+		return fieldAtDepth(member, name, depth)
+	})
 }
