@@ -2,8 +2,7 @@ package expr
 
 import (
 	"fmt"
-
-	"github.com/wippyai/go-lua/analysis/internal/intarith"
+	"math"
 )
 
 // BinOp represents a binary arithmetic operation.
@@ -72,17 +71,17 @@ func (b BinOp) Eval(env map[string]int64) (int64, bool) {
 
 	switch b.Op {
 	case OpAdd:
-		return intarith.SafeAdd(left, right)
+		return safeAdd(left, right)
 	case OpSub:
-		return intarith.SafeSub(left, right)
+		return safeSub(left, right)
 	case OpMul:
-		return intarith.SafeMul(left, right)
+		return safeMul(left, right)
 	case OpDiv:
 		if right == 0 {
 			return 0, false
 		}
 
-		if left == intarith.MinInt64 && right == -1 {
+		if left == math.MinInt64 && right == -1 {
 			return 0, false
 		}
 
@@ -92,7 +91,7 @@ func (b BinOp) Eval(env map[string]int64) (int64, bool) {
 			return 0, false
 		}
 
-		if left == intarith.MinInt64 && right == -1 {
+		if left == math.MinInt64 && right == -1 {
 			return 0, true
 		}
 
@@ -100,4 +99,41 @@ func (b BinOp) Eval(env map[string]int64) (int64, bool) {
 	default:
 		return 0, false
 	}
+}
+
+func safeAdd(a, b int64) (int64, bool) {
+	if b > 0 && a > math.MaxInt64-b {
+		return 0, false
+	}
+	if b < 0 && a < math.MinInt64-b {
+		return 0, false
+	}
+	return a + b, true
+}
+
+func safeSub(a, b int64) (int64, bool) {
+	if b < 0 && a > math.MaxInt64+b {
+		return 0, false
+	}
+	if b > 0 && a < math.MinInt64+b {
+		return 0, false
+	}
+	return a - b, true
+}
+
+func safeMul(a, b int64) (int64, bool) {
+	if a == 0 || b == 0 {
+		return 0, true
+	}
+	if a == -1 && b == math.MinInt64 {
+		return 0, false
+	}
+	if b == -1 && a == math.MinInt64 {
+		return 0, false
+	}
+	result := a * b
+	if result/a != b {
+		return 0, false
+	}
+	return result, true
 }

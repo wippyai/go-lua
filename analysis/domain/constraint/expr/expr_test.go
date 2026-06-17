@@ -1,6 +1,7 @@
 package expr
 
 import (
+	"math"
 	"testing"
 )
 
@@ -52,6 +53,39 @@ func TestBinOp(t *testing.T) {
 		if val != tt.expected {
 			t.Errorf("%s: expected %d, got %d", tt.expr, tt.expected, val)
 		}
+	}
+}
+
+func TestBinOpOverflowBoundaries(t *testing.T) {
+	tests := []struct {
+		name string
+		expr Expr
+		want int64
+		ok   bool
+	}{
+		{"add max plus zero", Add(C(math.MaxInt64), C(0)), math.MaxInt64, true},
+		{"add max overflows", Add(C(math.MaxInt64), C(1)), 0, false},
+		{"add min plus zero", Add(C(math.MinInt64), C(0)), math.MinInt64, true},
+		{"add min underflows", Add(C(math.MinInt64), C(-1)), 0, false},
+		{"sub max minus negative overflows", Sub(C(math.MaxInt64), C(-1)), 0, false},
+		{"sub min minus positive underflows", Sub(C(math.MinInt64), C(1)), 0, false},
+		{"mul max by zero", Mul(C(math.MaxInt64), C(0)), 0, true},
+		{"mul max by two overflows", Mul(C(math.MaxInt64), C(2)), 0, false},
+		{"mul min by negative one overflows", Mul(C(math.MinInt64), C(-1)), 0, false},
+		{"div min by negative one overflows", Div(C(math.MinInt64), C(-1)), 0, false},
+		{"mod min by negative one follows Lua zero remainder", Mod(C(math.MinInt64), C(-1)), 0, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, ok := tt.expr.Eval(nil)
+			if ok != tt.ok {
+				t.Fatalf("%s Eval() ok = %v, want %v", tt.expr, ok, tt.ok)
+			}
+			if ok && got != tt.want {
+				t.Fatalf("%s Eval() = %d, want %d", tt.expr, got, tt.want)
+			}
+		})
 	}
 }
 
