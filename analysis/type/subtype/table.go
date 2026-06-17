@@ -88,6 +88,8 @@ func (c *checker) checkMapToRecord(sub *typ.Map, super *typ.Record, depth int) b
 		if !c.check(sub.Value, expected, depth+1) {
 			return false
 		}
+		// A map value may read as a wider optional field, but mutable record
+		// fields must not admit writes the source map value cannot hold.
 		if !c.check(expected, sub.Value, depth+1) && !c.canWidenTo(sub.Value, expected, depth+1) {
 			return false
 		}

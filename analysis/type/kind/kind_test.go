@@ -31,9 +31,14 @@ func TestKindString(t *testing.T) {
 }
 
 func TestKindStringOutOfRange(t *testing.T) {
-	k := Kind(9999)
-	if got := k.String(); got != "unknown" {
-		t.Errorf("out of range Kind.String() = %q, want %q", got, "unknown")
+	tests := []Kind{
+		Kind(-1),
+		Kind(9999),
+	}
+	for _, k := range tests {
+		if got := k.String(); got != "unknown" {
+			t.Errorf("out of range Kind(%d).String() = %q, want %q", k, got, "unknown")
+		}
 	}
 }
 

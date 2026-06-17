@@ -97,7 +97,7 @@ var kindNames = [...]string{
 }
 
 func (k Kind) String() string {
-	if int(k) < len(kindNames) {
+	if int(k) >= 0 && int(k) < len(kindNames) {
 		if name := kindNames[k]; name != "" {
 			return name
 		}

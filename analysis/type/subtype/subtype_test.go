@@ -201,6 +201,21 @@ func TestMapAdaptersNormalizeNilableKeys(t *testing.T) {
 	}
 }
 
+func TestMapToRecordRejectsMutableLiteralUnionFieldWidening(t *testing.T) {
+	dog := typ.LiteralString("dog")
+	cat := typ.LiteralString("cat")
+	pet := typeexpr.Union(typ.Nil, dog, cat)
+
+	recordView := typetable.NewRecord().
+		Field("pet", pet).
+		MapComponent(typ.String, dog).
+		Build()
+
+	if IsSubtype(typ.NewMap(typ.String, dog), recordView) {
+		t.Fatal("mutable map-to-record check must reject optional literal-union field widening")
+	}
+}
+
 func TestTableShapesAndMapViews(t *testing.T) {
 	if !IsSubtype(typetable.NewRecord().Build(), typ.NewArray(typ.Number)) {
 		t.Fatal("empty record should satisfy array shape")
