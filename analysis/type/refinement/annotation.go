@@ -125,7 +125,7 @@ func isRefinableStructuralAnnotation(t typ.Type, guard recursion.Guard) bool {
 		return false
 	}
 	t = unwrap.Annotated(t)
-	next, ok := guard.Enter(t)
+	next, ok := guard.Enter()
 	if !ok {
 		return false
 	}

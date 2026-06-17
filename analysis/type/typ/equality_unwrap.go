@@ -13,7 +13,7 @@ func unwrapAliasForEquals(t Type, guard recursion.Guard) Type {
 			return nil
 		}
 		t = unwrapTransparentWrappers(t)
-		next, ok := guard.Enter(t)
+		next, ok := guard.Enter()
 		if !ok {
 			return nil
 		}

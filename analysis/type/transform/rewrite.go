@@ -86,7 +86,7 @@ func rewriteDepth(t typ.Type, fn func(typ.Type) (typ.Type, bool), guard recursio
 		return replacement
 	}
 
-	next, ok := guard.Enter(t)
+	next, ok := guard.Enter()
 	if !ok {
 		return t
 	}

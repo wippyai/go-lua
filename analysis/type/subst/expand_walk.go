@@ -19,7 +19,7 @@ func expandInstantiatedGuardMode(t typ.Type, guard recursion.Guard, memo map[exp
 		return cached
 	}
 
-	next, ok := guard.Enter(t)
+	next, ok := guard.Enter()
 	if !ok {
 		return t
 	}

@@ -13,16 +13,6 @@ func Contains(t typ.Type, pred func(typ.Type) bool) bool {
 	return contains(t, pred, scan)
 }
 
-// ContainsAny reports whether t contains the dynamic any type.
-func ContainsAny(t typ.Type) bool {
-	return Contains(t, typ.IsAny)
-}
-
-// ContainsNever reports whether t contains the unreachable never type.
-func ContainsNever(t typ.Type) bool {
-	return Contains(t, typ.IsNever)
-}
-
 // ContainsTypeParam reports whether t contains a type parameter.
 func ContainsTypeParam(t typ.Type) bool {
 	return Contains(t, func(t typ.Type) bool {
@@ -89,7 +79,7 @@ func contains(t typ.Type, pred func(typ.Type) bool, scan *Scanner) bool {
 		return true
 	}
 
-	return scan.WalkChildren(t, func(child typ.Type) bool {
+	return WalkChildren(t, func(child typ.Type) bool {
 		return contains(child, pred, scan)
 	})
 }

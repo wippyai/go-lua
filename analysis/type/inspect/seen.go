@@ -23,16 +23,8 @@ type equalitySeenEntry struct {
 // NewEqualitySeen creates a seen set keyed by typ.EqualityHash and confirmed
 // by typ.TypeEquals.
 func NewEqualitySeen() ScanSeen {
-	return NewEqualitySeenWithKey(nil)
-}
-
-// NewEqualitySeenWithKey creates an equality seen set with a custom hash key.
-func NewEqualitySeenWithKey(key func(typ.Type) uint64) ScanSeen {
-	if key == nil {
-		key = typ.EqualityHash
-	}
 	return &equalitySeen{
-		key: key,
+		key: typ.EqualityHash,
 	}
 }
 
@@ -75,19 +67,6 @@ func (s *equalitySeen) Remember(t typ.Type) {
 		s.smallLen = 0
 	}
 	s.entries[key] = append(s.entries[key], t)
-}
-
-func (s *equalitySeen) clear() {
-	if s == nil {
-		return
-	}
-	for i := 0; i < s.smallLen; i++ {
-		s.small[i] = equalitySeenEntry{}
-	}
-	s.smallLen = 0
-	if s.entries != nil {
-		clear(s.entries)
-	}
 }
 
 type identitySeen struct {
@@ -140,54 +119,4 @@ func (s *identitySeen) Remember(t typ.Type) {
 
 func (s *identitySeen) tracks(t typ.Type) bool {
 	return s.track == nil || s.track(t)
-}
-
-func (s *identitySeen) clear() {
-	if s == nil {
-		return
-	}
-	for i := 0; i < s.smallLen; i++ {
-		s.small[i] = nil
-	}
-	s.smallLen = 0
-	if s.entries != nil {
-		clear(s.entries)
-	}
-}
-
-type pointerSeen struct {
-	entries map[uintptr]struct{}
-	key     func(typ.Type) uintptr
-}
-
-// NewPointerSeen creates a seen set from a caller-provided node pointer key.
-func NewPointerSeen(key func(typ.Type) uintptr) ScanSeen {
-	return &pointerSeen{
-		entries: make(map[uintptr]struct{}),
-		key:     key,
-	}
-}
-
-func (s *pointerSeen) Contains(t typ.Type) bool {
-	key := s.keyFor(t)
-	if key == 0 {
-		return false
-	}
-	_, ok := s.entries[key]
-	return ok
-}
-
-func (s *pointerSeen) Remember(t typ.Type) {
-	key := s.keyFor(t)
-	if key == 0 {
-		return
-	}
-	s.entries[key] = struct{}{}
-}
-
-func (s *pointerSeen) keyFor(t typ.Type) uintptr {
-	if t == nil || s == nil || s.key == nil {
-		return 0
-	}
-	return s.key(t)
 }

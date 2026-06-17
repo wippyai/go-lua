@@ -170,7 +170,7 @@ func visitWithGuard[R any](
 	if t == nil {
 		return onCycle
 	}
-	next, ok := guard.Enter(t)
+	next, ok := guard.Enter()
 	if !ok {
 		return onCycle
 	}
