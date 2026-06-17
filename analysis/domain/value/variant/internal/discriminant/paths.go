@@ -17,12 +17,6 @@ func staticMemberPath(member typ.StaticMember) string {
 	}
 }
 
-func addPrefixedTags(dst map[string]uint64, prefix string, src map[string]uint64) {
-	for path, hash := range src {
-		dst[joinPath(prefix, path)] = hash
-	}
-}
-
 func joinPath(prefix, name string) string {
 	if prefix == "" {
 		return name

@@ -102,15 +102,16 @@ func TypeFromOrigin(familyID uint64, cases []int) (typ.Type, bool) {
 }
 
 func typeFromOriginFamily(family originFamily, cases []int) (typ.Type, bool) {
-	allowed := intSet(cases)
+	remaining := intSet(cases)
 	out := make([]typ.Type, 0, len(cases))
 	for _, c := range family.cases {
-		if allowed[c.index] {
+		if remaining[c.index] {
 			out = append(out, c.typ)
+			delete(remaining, c.index)
 		}
 	}
-	if len(out) == 0 {
-		return typ.Never, true
+	if len(remaining) != 0 || len(out) == 0 {
+		return nil, false
 	}
 	return normalize.UnionForEvidence(out...), true
 }

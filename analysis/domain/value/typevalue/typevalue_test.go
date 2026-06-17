@@ -175,6 +175,28 @@ func TestTypeOfFallsBackWhenVariantOriginCannotReconstruct(t *testing.T) {
 	}
 }
 
+func TestCacheRefreshesStaleConcreteVariantOriginProduct(t *testing.T) {
+	reg := standard.Registry()
+	cache := NewCache()
+	key := typeValueCacheKey{reg: reg, typ: typ.Number}
+	stale := product.Set(reg, FromType(reg, typ.Number), variantorigin.Key, variantorigin.Singleton(0xdeadbeef, 1))
+
+	cache.values = map[typeValueCacheKey]product.Value{key: stale}
+	value := cache.FromType(reg, typ.Number)
+	if origin := product.Get(reg, value, variantorigin.Key); !origin.IsTop() {
+		t.Fatalf("refreshed cached value kept stale origin %v", origin)
+	}
+
+	cache.witnesses = map[typeValueCacheKey]product.Value{key: stale}
+	witnessed := cache.FromTypeWithWitness(reg, typ.Number)
+	if origin := product.Get(reg, witnessed, variantorigin.Key); !origin.IsTop() {
+		t.Fatalf("refreshed cached witness kept stale origin %v", origin)
+	}
+	if got, ok := TypeOf(reg, witnessed); !ok || !typ.TypeEquals(got, typ.Number) {
+		t.Fatalf("refreshed cached witness TypeOf = %v/%v, want number", got, ok)
+	}
+}
+
 func TestIntegerLiteralValueProjectsExactIntegerWitness(t *testing.T) {
 	reg := standard.Registry()
 	lit := typ.LiteralInt(42)

@@ -21,13 +21,14 @@ func ProjectOrigin(familyID uint64, cases []int, suffix []segment.Segment) (uint
 		if !selected[c.index] {
 			continue
 		}
+		delete(selected, c.index)
 		field, ok := fieldAtPath(c.typ, suffix, 0)
 		if !ok {
-			continue
+			return 0, nil, false
 		}
 		childFamily, childCases, ok := OriginOfType(field)
 		if !ok {
-			continue
+			return 0, nil, false
 		}
 		if outFamily == 0 {
 			outFamily = childFamily
@@ -36,6 +37,9 @@ func ProjectOrigin(familyID uint64, cases []int, suffix []segment.Segment) (uint
 			return 0, nil, false
 		}
 		outCases = append(outCases, childCases...)
+	}
+	if len(selected) != 0 {
+		return 0, nil, false
 	}
 	outCases = compactInts(outCases)
 	if outFamily == 0 || len(outCases) == 0 {
@@ -106,9 +110,12 @@ func NarrowOriginByPath(parentFamily uint64, parentCases []int, suffix []segment
 		if !selected[c.index] {
 			continue
 		}
+		delete(selected, c.index)
 		field, ok := fieldAtPath(c.typ, suffix, 0)
 		if !ok {
-			out = append(out, c.index)
+			if !equal {
+				out = append(out, c.index)
+			}
 			continue
 		}
 		childFamily, childCases, ok := OriginOfType(field)
@@ -120,6 +127,9 @@ func NarrowOriginByPath(parentFamily uint64, parentCases []int, suffix []segment
 		if intersects == equal {
 			out = append(out, c.index)
 		}
+	}
+	if len(selected) != 0 {
+		return nil, false
 	}
 	out = compactInts(out)
 	if sameIntSet(parentCases, out) {

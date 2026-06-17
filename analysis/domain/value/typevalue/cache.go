@@ -3,6 +3,7 @@ package typevalue
 import (
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/variantorigin"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/variant"
 	"github.com/wippyai/go-lua/analysis/type/typ"
@@ -35,7 +36,10 @@ func (c *Cache) FromType(reg *axis.Registry, t typ.Type) product.Value {
 	key := typeValueCacheKey{reg: reg, typ: t}
 	if c.values != nil {
 		if cached, ok := c.values[key]; ok {
-			return cached
+			if c.cachedProductActive(reg, cached) {
+				return cached
+			}
+			delete(c.values, key)
 		}
 	}
 	value := fromType(reg, t, c)
@@ -53,7 +57,10 @@ func (c *Cache) FromTypeWithWitness(reg *axis.Registry, t typ.Type) product.Valu
 	key := typeValueCacheKey{reg: reg, typ: t}
 	if c.witnesses != nil {
 		if cached, ok := c.witnesses[key]; ok {
-			return cached
+			if c.cachedProductActive(reg, cached) {
+				return cached
+			}
+			delete(c.witnesses, key)
 		}
 	}
 	value := WithWitness(reg, c.FromType(reg, t), t)
@@ -112,4 +119,19 @@ func (c *Cache) OriginByPathLiteralNot(t typ.Type, suffix []segment.Segment, lit
 		c.variants = variant.NewCache()
 	}
 	return c.variants.OriginByPathLiteralNot(t, suffix, lit)
+}
+
+func (c *Cache) cachedProductActive(reg *axis.Registry, value product.Value) bool {
+	if reg == nil {
+		return true
+	}
+	if _, ok := reg.LookupErased(variantorigin.Key.ID()); !ok {
+		return true
+	}
+	origin := product.Get(reg, value, variantorigin.Key)
+	if origin.IsBottom() || origin.IsTop() {
+		return true
+	}
+	_, ok := c.TypeFromVariantOrigin(origin.Family(), origin.Cases())
+	return ok
 }

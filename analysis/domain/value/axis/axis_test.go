@@ -122,6 +122,18 @@ func TestRegistryFreezeRejectsRegistration(t *testing.T) {
 	axis.Register(reg, escape.Spec())
 }
 
+func TestRegistryRejectsDuplicateErasedIDAcrossSpecTypes(t *testing.T) {
+	reg := axis.NewRegistry()
+	first := registryTestSpec("test.registry.duplicate", nil).Erase()
+	spoofed := registryStringSpec("test.registry.duplicate").Erase()
+	if err := reg.RegisterErased(first); err != nil {
+		t.Fatalf("RegisterErased(first) error = %v", err)
+	}
+	if err := reg.RegisterErased(spoofed); err == nil {
+		t.Fatalf("RegisterErased accepted spoofed duplicate erased ID with different Go value type")
+	}
+}
+
 func TestRegistrySpecsRemainDefensiveCopy(t *testing.T) {
 	reg := axis.NewRegistry()
 	first := registryTestSpec("test.registry.first", nil).Erase()
@@ -250,5 +262,35 @@ func registryTestSpec(id string, reducer axis.Reducer) axis.Spec[int] {
 			return uint64(v) + 1
 		},
 		Reducer: reducer,
+	}
+}
+
+func registryStringSpec(id string) axis.Spec[string] {
+	return axis.Spec[string]{
+		Key:    axis.NewKey[string](id),
+		Bottom: func() string { return "" },
+		Top:    func() string { return "top" },
+		Equal:  func(a, b string) bool { return a == b },
+		LessOrEq: func(a, b string) bool {
+			return a == b || a == ""
+		},
+		Join: func(a, b string) string {
+			if a == "" {
+				return b
+			}
+			if b == "" || a == b {
+				return a
+			}
+			return "top"
+		},
+		Widen: func(prev, next string) string {
+			if prev == next {
+				return prev
+			}
+			return "top"
+		},
+		Hash: func(v string) uint64 {
+			return uint64(len(v)) + 1
+		},
 	}
 }
