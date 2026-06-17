@@ -1,6 +1,7 @@
 package lua
 
 import (
+	"strings"
 	"testing"
 
 	diag "github.com/wippyai/go-lua/analysis/diagnostic"
@@ -71,6 +72,85 @@ func TestDiagnosticExpectationRejectsMalformedAssertions(t *testing.T) {
 	}
 }
 
+func TestDiagnosticExpectationValidationRejectsWeakStructuredSpecs(t *testing.T) {
+	valid := fixtureDiagnosticExpectation{
+		File:             "main.lua",
+		Line:             1,
+		Severity:         "error",
+		Code:             "type.assignment",
+		MessageContains:  []string{"cannot assign"},
+		MinEvidence:      2,
+		EvidenceContains: []string{"source expression", "declared type"},
+		MinLabels:        1,
+		LabelContains:    []string{"assigned value"},
+	}
+	if err := validateDiagnosticExpectation(valid); err != nil {
+		t.Fatalf("valid expectation rejected: %v", err)
+	}
+
+	for _, tc := range []struct {
+		name string
+		edit func(*fixtureDiagnosticExpectation)
+		want string
+	}{
+		{
+			name: "missing code",
+			edit: func(exp *fixtureDiagnosticExpectation) {
+				exp.Code = ""
+			},
+			want: "code is required",
+		},
+		{
+			name: "empty message assertion",
+			edit: func(exp *fixtureDiagnosticExpectation) {
+				exp.MessageContains = []string{"cannot assign", " "}
+			},
+			want: "message_contains contains an empty assertion",
+		},
+		{
+			name: "evidence not asserted",
+			edit: func(exp *fixtureDiagnosticExpectation) {
+				exp.MinEvidence = 0
+				exp.EvidenceContains = nil
+			},
+			want: "evidence_contains must contain at least one assertion",
+		},
+		{
+			name: "labels not asserted",
+			edit: func(exp *fixtureDiagnosticExpectation) {
+				exp.MinLabels = 0
+				exp.LabelContains = nil
+			},
+			want: "label_contains must contain at least one assertion",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			exp := valid
+			tc.edit(&exp)
+			err := validateDiagnosticExpectation(exp)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("validation error = %v, want %q", err, tc.want)
+			}
+		})
+	}
+}
+
+func TestDiagnosticExpectationValidationAllowsExplicitEmptyEvidenceOptOut(t *testing.T) {
+	exp := fixtureDiagnosticExpectation{
+		File:               "main.lua",
+		Line:               1,
+		Severity:           "error",
+		Code:               "parse",
+		MessageContains:    []string{"syntax"},
+		MinLabels:          1,
+		LabelContains:      []string{"parse error"},
+		AllowEmptyEvidence: true,
+	}
+	if err := validateDiagnosticExpectation(exp); err != nil {
+		t.Fatalf("explicit empty-evidence opt-out rejected: %v", err)
+	}
+}
+
 func TestStructuredDiagnosticsCanRequireCompleteList(t *testing.T) {
 	diags := []diag.Diagnostic{
 		{
@@ -79,6 +159,7 @@ func TestStructuredDiagnosticsCanRequireCompleteList(t *testing.T) {
 			Severity:    diag.SeverityError,
 			Message:     "cannot assign number to string",
 			Explanation: diag.NewExplanation(diag.Evidence{Message: "source expression is number"}),
+			Labels:      []diag.Label{{Message: "assigned value"}},
 		},
 		{
 			Position:    diag.Position{File: "test.lua", Line: 2, Column: 1},
@@ -89,12 +170,15 @@ func TestStructuredDiagnosticsCanRequireCompleteList(t *testing.T) {
 		},
 	}
 	expectations := []fixtureDiagnosticExpectation{{
-		File:            "main.lua",
-		Line:            1,
-		Severity:        "error",
-		Code:            "type.assignment",
-		MessageContains: []string{"cannot assign"},
-		MinEvidence:     1,
+		File:             "main.lua",
+		Line:             1,
+		Severity:         "error",
+		Code:             "type.assignment",
+		MessageContains:  []string{"cannot assign"},
+		MinEvidence:      1,
+		EvidenceContains: []string{"source expression"},
+		MinLabels:        1,
+		LabelContains:    []string{"assigned value"},
 	}}
 
 	missing, unexpected := matchDiagnosticExpectations(expectations, diags, "main.lua", true)

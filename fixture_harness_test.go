@@ -472,6 +472,10 @@ func verifyDiagnosticExpectations(t testing.TB, expectations []fixtureDiagnostic
 func matchDiagnosticExpectations(expectations []fixtureDiagnosticExpectation, diagnostics []diag.Diagnostic, entryFile string, requireNoUnexpected bool) (missing, unexpected []string) {
 	matched := make([]bool, len(diagnostics))
 	for _, exp := range expectations {
+		if err := validateDiagnosticExpectation(exp); err != nil {
+			missing = append(missing, fmt.Sprintf("invalid diagnostic expectation: %s (%s)", err, describeDiagnosticExpectation(exp)))
+			continue
+		}
 		found := false
 		for i, d := range diagnostics {
 			if matched[i] {
@@ -497,6 +501,61 @@ func matchDiagnosticExpectations(expectations []fixtureDiagnosticExpectation, di
 		}
 	}
 	return missing, unexpected
+}
+
+func validateDiagnosticExpectation(exp fixtureDiagnosticExpectation) error {
+	if strings.TrimSpace(exp.File) == "" {
+		return fmt.Errorf("file is required")
+	}
+	if exp.Line <= 0 {
+		return fmt.Errorf("line must be positive")
+	}
+	if exp.Column < 0 {
+		return fmt.Errorf("column must be non-negative")
+	}
+	if exp.Severity == "" {
+		return fmt.Errorf("severity is required")
+	}
+	if _, ok := diagnosticSeverity(exp.Severity); !ok {
+		return fmt.Errorf("unknown severity %q", exp.Severity)
+	}
+	if strings.TrimSpace(exp.Code) == "" {
+		return fmt.Errorf("code is required")
+	}
+	if err := validateContainsList("message_contains", exp.MessageContains, true); err != nil {
+		return err
+	}
+	if err := validateContainsList("evidence_contains", exp.EvidenceContains, !exp.AllowEmptyEvidence); err != nil {
+		return err
+	}
+	if err := validateContainsList("help_contains", exp.HelpContains, false); err != nil {
+		return err
+	}
+	if err := validateContainsList("label_contains", exp.LabelContains, true); err != nil {
+		return err
+	}
+	if exp.MinEvidence < 0 {
+		return fmt.Errorf("min_evidence must be non-negative")
+	}
+	if exp.MinLabels <= 0 {
+		return fmt.Errorf("min_labels must be positive")
+	}
+	if !exp.AllowEmptyEvidence && exp.MinEvidence <= 0 {
+		return fmt.Errorf("min_evidence must be positive unless allow_empty_evidence is true")
+	}
+	return nil
+}
+
+func validateContainsList(name string, values []string, required bool) error {
+	if required && len(values) == 0 {
+		return fmt.Errorf("%s must contain at least one assertion", name)
+	}
+	for _, value := range values {
+		if strings.TrimSpace(value) == "" {
+			return fmt.Errorf("%s contains an empty assertion", name)
+		}
+	}
+	return nil
 }
 
 func matchesDiagnosticExpectation(exp fixtureDiagnosticExpectation, d diag.Diagnostic, entryFile string) bool {

@@ -1,0 +1,65 @@
+{
+  "description": "Mixed adversarial fixture covering return contracts, missing member calls, direct-call result assignment, optional receivers, and numeric-for operand evidence chains.",
+  "check": {
+    "diagnostics": [
+      {
+        "file": "main.lua",
+        "line": 6,
+        "severity": "error",
+        "code": "type.return.contract",
+        "message_contains": ["returned value 1", "not number"],
+        "min_evidence": 2,
+        "evidence_contains": ["returned value 1 is", "declared return type is number"],
+        "min_labels": 2,
+        "label_contains": ["returned value", "declared return type"]
+      },
+      {
+        "file": "main.lua",
+        "line": 14,
+        "severity": "error",
+        "code": "type.member.missing",
+        "message_contains": ["has no member \"upper\"", "number | string"],
+        "min_evidence": 2,
+        "evidence_contains": ["reads value.upper", "receiver type at call"],
+        "min_labels": 1,
+        "label_contains": ["missing member call"]
+      },
+      {
+        "file": "main.lua",
+        "line": 17,
+        "severity": "error",
+        "code": "type.call.direct.result_assignment",
+        "message_contains": ["call result 1", "not number"],
+        "min_evidence": 2,
+        "evidence_contains": ["returns string", "load_name is annotated number"],
+        "min_labels": 2,
+        "label_contains": ["call result", "declared type"]
+      },
+      {
+        "file": "main.lua",
+        "line": 20,
+        "severity": "error",
+        "code": "type.call.optional_receiver",
+        "message_contains": ["cannot call method on optional value"],
+        "min_evidence": 1,
+        "evidence_contains": ["receiver type at call is optional"],
+        "min_labels": 1,
+        "label_contains": ["method call on optional receiver"]
+      },
+      {
+        "file": "main.lua",
+        "line": 22,
+        "severity": "error",
+        "code": "type.for.numeric_operand",
+        "message_contains": ["numeric for initial value", "got \"first\""],
+        "min_evidence": 1,
+        "evidence_contains": ["initial value is \"first\""],
+        "min_labels": 1,
+        "label_contains": ["numeric for initial value"]
+      }
+    ]
+  },
+  "run": {
+    "skip": "diagnostic-only fixture"
+  }
+}
