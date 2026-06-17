@@ -51,8 +51,5 @@ func containsDynamicFlag(
 		return containsDynamicFlag(child, seen, depth+1, maxDepth, known)
 	}
 
-	if r, ok := t.(*Recursive); ok {
-		return next(r.Body)
-	}
 	return walkChildren(t, next)
 }
