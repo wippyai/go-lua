@@ -1598,6 +1598,58 @@ func TestRequireCheckAndExportedConditionalFunctionDefinitionIsNotRequired(t *te
 	requireMemberCallDiagnosticWithEvidence(t, result, diagnostics.CodeNotCallable, fmt.Sprintf("export = %v, call = mod.value()", mod.Manifest.Export))
 }
 
+func TestRequireCheckAndExportedMultiSourceRootKeepsReturnedTableSourceMember(t *testing.T) {
+	mod := CheckAndExport(`
+		local provider: { value: number } = { value = 1 }
+		function provider.meta(): { name: string }
+			return { name = "model" }
+		end
+		return provider, "tag"
+	`, "provider")
+	if len(mod.Errors) != 0 {
+		t.Fatalf("module errors = %#v, want none", mod.Errors)
+	}
+
+	result := Check(`
+		local provider = require("provider")
+		local meta = provider.meta()
+		local name: string = meta.name
+	`, WithStdlib(), WithModule("provider", mod))
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, export = %v, want none", result.Diagnostics, mod.Manifest.Export)
+	}
+}
+
+func TestCheckAndExportMultiSourceRootUsesFirstReturnSlot(t *testing.T) {
+	mod := CheckAndExport(`return "primary", { ignored = true }`, "mod")
+	if len(mod.Errors) != 0 {
+		t.Fatalf("module errors = %#v, want none", mod.Errors)
+	}
+	if !typ.TypeEquals(mod.Manifest.Export, typ.LiteralString("primary")) {
+		t.Fatalf("export = %T %[1]v, want first return slot literal", mod.Manifest.Export)
+	}
+}
+
+func TestRequireCheckAndExportedMultiSourceSkippedReturnKeepsAbsentMemberEvidence(t *testing.T) {
+	mod := CheckAndExport(`
+		local M = {}
+		if cond then
+			return M, "tag"
+		end
+		M.value = 42
+		return M
+	`, "mod", WithGlobals("cond"))
+	if len(mod.Errors) != 0 {
+		t.Fatalf("module errors = %#v, want none", mod.Errors)
+	}
+
+	result := Check(`
+		local mod = require("mod")
+		local n: number = mod.value
+	`, WithStdlib(), WithModule("mod", mod))
+	requireAssignmentDiagnosticWithEvidence(t, result, fmt.Sprintf("export = %v, multi-source early return should keep maybe-absent value", mod.Manifest.Export))
+}
+
 func requireAssignmentDiagnosticWithEvidence(t *testing.T, result Result, context string) {
 	t.Helper()
 	if len(result.Diagnostics) != 1 {

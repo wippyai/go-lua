@@ -8,24 +8,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
-func typeList(reg *axis.Registry, values []product.Value) (typ.Type, bool) {
-	if len(values) == 0 {
-		return nil, false
-	}
-	types := make([]typ.Type, 0, len(values))
-	for _, value := range values {
-		t, ok := valueType(reg, value)
-		if !ok {
-			return nil, false
-		}
-		types = append(types, t)
-	}
-	if len(types) == 1 {
-		return types[0], true
-	}
-	return typ.NewTuple(types...), true
-}
-
 func unionType(types []typ.Type) (typ.Type, bool) {
 	switch len(types) {
 	case 0:

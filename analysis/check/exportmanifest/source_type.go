@@ -14,21 +14,6 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 )
 
-func sourceTypes(result *body.Result, point cfg.Point, sources []sourceprovenance.ASTSource) ([]typ.Type, bool) {
-	if len(sources) == 0 {
-		return nil, false
-	}
-	out := make([]typ.Type, 0, len(sources))
-	for _, source := range sources {
-		t, ok := sourceType(result, point, source)
-		if !ok {
-			return nil, false
-		}
-		out = append(out, t)
-	}
-	return out, true
-}
-
 func sourceType(result *body.Result, point cfg.Point, source sourceprovenance.ASTSource) (typ.Type, bool) {
 	if result == nil {
 		return nil, false
@@ -49,6 +34,9 @@ func sourceType(result *body.Result, point cfg.Point, source sourceprovenance.AS
 			if t, ok := pathExportRecordType(result, point, p); ok {
 				return t, true
 			}
+		}
+		if t, ok := exprType(result, point, source.Expr); ok {
+			return t, true
 		}
 		value, ok := result.ExpressionValueAtBoundary(point, source.Expr)
 		if !ok {

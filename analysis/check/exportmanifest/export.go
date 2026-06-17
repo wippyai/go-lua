@@ -55,7 +55,10 @@ func summaryReturnType(result program.Result, root *body.Result) (typ.Type, bool
 	if !ok {
 		return nil, false
 	}
-	t, ok := typeList(root.Registry(), summary.Returns)
+	if len(summary.Returns) == 0 {
+		return nil, false
+	}
+	t, ok := valueType(root.Registry(), summary.Returns[0])
 	if !ok || typ.IsUnknown(t) {
 		return nil, false
 	}
@@ -167,15 +170,14 @@ func rootReturnType(result *body.Result) (typ.Type, bool) {
 		if !ok {
 			continue
 		}
-		types, ok := sourceTypes(result, point, fact.Sources)
+		if len(fact.Sources) == 0 {
+			continue
+		}
+		t, ok := sourceType(result, point, fact.Sources[0])
 		if !ok {
 			continue
 		}
-		if len(types) == 1 {
-			candidates = append(candidates, types[0])
-			continue
-		}
-		candidates = append(candidates, typ.NewTuple(types...))
+		candidates = append(candidates, t)
 	}
 	return unionType(candidates)
 }
