@@ -13,7 +13,7 @@ func (s State) WritePlacement(id identity.ID, value placement.Value) State {
 	if id == (identity.ID{}) {
 		return s
 	}
-	if s.placement.top {
+	if s.placement.isTop() {
 		panic("state: cannot finite-write placement into top placement lane")
 	}
 	if value == placement.Bottom {

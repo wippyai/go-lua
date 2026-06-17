@@ -81,5 +81,5 @@ func (s State) PlacementsSnapshot() PlacementsSnapshot {
 	if s.placement.top {
 		return PlacementsSnapshot{Top: true}
 	}
-	return PlacementsSnapshot{Placements: clonePlacementValues(s.placement.values)}
+	return PlacementsSnapshot{Placements: s.placement.cloneValues()}
 }

@@ -134,7 +134,7 @@ func Domain(reg *axis.Registry) lattice.Lattice[State] {
 				heapTableIdentity: heapTableIdentityLane{top: true},
 				frozenTables:      ops.frozenTables.Top(),
 				effectDeltas:      effectDeltaLane{top: true},
-				placement:         placementLane{top: true},
+				placement:         placementLane{mapLane[identity.ID, placement.Value]{top: true}},
 				storeRelations:    ops.storeRelations.Top(),
 				lenFloors:         ops.lenFloors.Top(),
 				numFloors:         ops.numFloors.Top(),
