@@ -30,6 +30,32 @@ func memberCallDistributeUnion(members []typ.Type, depth int, query func(member 
 	return memberCallResult{t: normalize.UnionForEvidence(out...), status: MemberCallOK}
 }
 
+// witnessUnion applies query to each non-nil union member and requires every arm
+// to yield the same callable witness; any mismatch or non-callable arm fails.
+func witnessUnion(u *typ.Union, depth int, query func(member typ.Type, depth int) (*typ.Function, bool)) (*typ.Function, bool) {
+	if u == nil || len(u.Members) == 0 {
+		return nil, false
+	}
+	var witness *typ.Function
+	for _, member := range u.Members {
+		if isNilType(member) {
+			continue
+		}
+		fn, ok := query(member, depth+1)
+		if !ok {
+			return nil, false
+		}
+		if witness == nil {
+			witness = fn
+			continue
+		}
+		if !typ.TypeEquals(witness, fn) {
+			return nil, false
+		}
+	}
+	return witness, witness != nil
+}
+
 // memberCallDistributeIntersection applies query to each intersection member and
 // meets the callable results. It is the canonical intersection member-call
 // distribution.

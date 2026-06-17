@@ -50,27 +50,7 @@ func callableRecord(r *typ.Record, depth int) (*typ.Function, bool) {
 }
 
 func callableUnion(u *typ.Union, depth int) (*typ.Function, bool) {
-	if u == nil || len(u.Members) == 0 {
-		return nil, false
-	}
-	var witness *typ.Function
-	for _, member := range u.Members {
-		if isNilType(member) {
-			continue
-		}
-		fn, ok := callableDepth(member, depth+1)
-		if !ok {
-			return nil, false
-		}
-		if witness == nil {
-			witness = fn
-			continue
-		}
-		if !typ.TypeEquals(witness, fn) {
-			return nil, false
-		}
-	}
-	return witness, witness != nil
+	return witnessUnion(u, depth, callableDepth)
 }
 
 func callableIntersection(in *typ.Intersection, depth int) (*typ.Function, bool) {
@@ -113,27 +93,7 @@ func functionWitnessDepth(t typ.Type, depth int) (*typ.Function, bool) {
 }
 
 func functionWitnessUnion(u *typ.Union, depth int) (*typ.Function, bool) {
-	if u == nil || len(u.Members) == 0 {
-		return nil, false
-	}
-	var witness *typ.Function
-	for _, member := range u.Members {
-		if isNilType(member) {
-			continue
-		}
-		fn, ok := functionWitnessDepth(member, depth+1)
-		if !ok {
-			return nil, false
-		}
-		if witness == nil {
-			witness = fn
-			continue
-		}
-		if !typ.TypeEquals(witness, fn) {
-			return nil, false
-		}
-	}
-	return witness, witness != nil
+	return witnessUnion(u, depth, functionWitnessDepth)
 }
 
 func functionWitnessIntersection(in *typ.Intersection, depth int) (*typ.Function, bool) {

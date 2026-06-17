@@ -140,20 +140,20 @@ func operatorSurface(t typ.Type, depth int) typ.Type {
 }
 
 func binaryLeftUnion(u *typ.Union, op string, right typ.Type, depth int) (typ.Type, bool) {
-	return binaryOverUnion(u, depth, func(member typ.Type, depth int) (typ.Type, bool) {
+	return operatorOverUnion(u, depth, func(member typ.Type, depth int) (typ.Type, bool) {
 		return binaryOpDepth(member, op, right, depth)
 	})
 }
 
 func binaryRightUnion(left typ.Type, op string, u *typ.Union, depth int) (typ.Type, bool) {
-	return binaryOverUnion(u, depth, func(member typ.Type, depth int) (typ.Type, bool) {
+	return operatorOverUnion(u, depth, func(member typ.Type, depth int) (typ.Type, bool) {
 		return binaryOpDepth(left, op, member, depth)
 	})
 }
 
-// binaryOverUnion applies a binary-operator query to each union member; every
+// operatorOverUnion applies a binary-operator query to each union member; every
 // member must succeed, and the per-member results are normalized into one.
-func binaryOverUnion(u *typ.Union, depth int, query func(member typ.Type, depth int) (typ.Type, bool)) (typ.Type, bool) {
+func operatorOverUnion(u *typ.Union, depth int, query func(member typ.Type, depth int) (typ.Type, bool)) (typ.Type, bool) {
 	if u == nil || len(u.Members) == 0 {
 		return nil, false
 	}
@@ -169,18 +169,9 @@ func binaryOverUnion(u *typ.Union, depth int, query func(member typ.Type, depth 
 }
 
 func unaryUnion(op string, u *typ.Union, depth int) (typ.Type, bool) {
-	if u == nil || len(u.Members) == 0 {
-		return nil, false
-	}
-	out := make([]typ.Type, 0, len(u.Members))
-	for _, member := range u.Members {
-		result, ok := unaryOpDepth(op, member, depth+1)
-		if !ok {
-			return nil, false
-		}
-		out = append(out, result)
-	}
-	return normalizeOperatorResults(out...), true
+	return operatorOverUnion(u, depth, func(member typ.Type, depth int) (typ.Type, bool) {
+		return unaryOpDepth(op, member, depth)
+	})
 }
 
 func normalizeOperatorResults(results ...typ.Type) typ.Type {
