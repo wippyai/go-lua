@@ -21,14 +21,27 @@ func (l Lane) InvalidatePathKeySubtree(pathKey pathdom.PathKey) (Lane, bool) {
 	if !ok {
 		return l, false
 	}
-	refinements, changed := deletePathKeySubtrees(l.refinements, prefixes)
-	staticMembers, staticChanged := deletePathKeySubtrees(l.staticMembers, prefixes)
-	proofs, proofChanged := deleteBranchProofsMatching(l.proofs, func(candidate pathdom.PathKey) bool {
-		return pathKeyInAnySubtree(candidate, prefixes)
-	})
-	implications, implicationChanged := deletePathPresenceImplicationsMatching(l.pathPresenceImplications, func(candidate pathdom.PathKey) bool {
-		return pathKeyInAnySubtree(candidate, prefixes)
-	})
+	return l.invalidatePathKeyEvidence(
+		func(m map[pathaddr.LocalKey]product.Value) (map[pathaddr.LocalKey]product.Value, bool) {
+			return deletePathKeySubtrees(m, prefixes)
+		},
+		func(candidate pathdom.PathKey) bool {
+			return pathKeyInAnySubtree(candidate, prefixes)
+		},
+	)
+}
+
+// invalidatePathKeyEvidence drops refinement and static-member entries via
+// deleteFromMap and branch proofs and presence implications whose path-key
+// matches, returning the updated lane (or the receiver unchanged).
+func (l Lane) invalidatePathKeyEvidence(
+	deleteFromMap func(map[pathaddr.LocalKey]product.Value) (map[pathaddr.LocalKey]product.Value, bool),
+	match func(candidate pathdom.PathKey) bool,
+) (Lane, bool) {
+	refinements, changed := deleteFromMap(l.refinements)
+	staticMembers, staticChanged := deleteFromMap(l.staticMembers)
+	proofs, proofChanged := deleteBranchProofsMatching(l.proofs, match)
+	implications, implicationChanged := deletePathPresenceImplicationsMatching(l.pathPresenceImplications, match)
 	if !changed && !staticChanged && !proofChanged && !implicationChanged {
 		return l, true
 	}
@@ -48,23 +61,14 @@ func (l Lane) InvalidatePathKeyDescendants(pathKey pathdom.PathKey) (Lane, bool)
 	if !ok {
 		return l, false
 	}
-	refinements, changed := deletePathKeyDescendantPrefixes(l.refinements, prefixes)
-	staticMembers, staticChanged := deletePathKeyDescendantPrefixes(l.staticMembers, prefixes)
-	proofs, proofChanged := deleteBranchProofsMatching(l.proofs, func(candidate pathdom.PathKey) bool {
-		return pathKeyInAnyDescendantInvalidation(candidate, prefixes)
-	})
-	implications, implicationChanged := deletePathPresenceImplicationsMatching(l.pathPresenceImplications, func(candidate pathdom.PathKey) bool {
-		return pathKeyInAnyDescendantInvalidation(candidate, prefixes)
-	})
-	if !changed && !staticChanged && !proofChanged && !implicationChanged {
-		return l, true
-	}
-	out := l
-	out.refinements = refinements
-	out.staticMembers = staticMembers
-	out.proofs = proofs
-	out.pathPresenceImplications = implications
-	return out, true
+	return l.invalidatePathKeyEvidence(
+		func(m map[pathaddr.LocalKey]product.Value) (map[pathaddr.LocalKey]product.Value, bool) {
+			return deletePathKeyDescendantPrefixes(m, prefixes)
+		},
+		func(candidate pathdom.PathKey) bool {
+			return pathKeyInAnyDescendantInvalidation(candidate, prefixes)
+		},
+	)
 }
 
 func (l Lane) PathKeySubtreeInvalidationPrefixes(pathKey pathdom.PathKey) ([]pathdom.PathKey, bool) {
