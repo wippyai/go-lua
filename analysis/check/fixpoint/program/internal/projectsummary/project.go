@@ -73,6 +73,7 @@ func FromResult(result ResultReader) summary.Summary {
 	out := summary.Summary{
 		ParamObligations:                projectParamObligations(reg, result),
 		ParamMemberCallObligations:      projectParamMemberCallObligations(reg, result),
+		ParamMemberReturnSlots:          projectParamMemberReturnSlots(reg, result),
 		NormalReturnParams:              projectNormalReturnParams(reg, result, exit),
 		NormalReturnParamConditions:     projectNormalReturnParamConditions(reg, result),
 		NormalReturnParamEqualities:     projectNormalReturnParamEqualities(reg, result),

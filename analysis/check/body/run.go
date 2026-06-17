@@ -226,7 +226,7 @@ func transferStats(stats *Stats) *transfer.Stats {
 func (s *Static) callOutcomeProvider(config SolveConfig) factapply.CallOutcomeProvider {
 	signatureArgumentType := config.SignatureArgumentType
 	if config.SignatureArgumentTypeFactory != nil {
-		factoryArgumentType := config.SignatureArgumentTypeFactory(CallOutcomeContext{Facts: s.facts, Sources: s.sources, CalleeValue: s.calleeValue})
+		factoryArgumentType := config.SignatureArgumentTypeFactory(s.callOutcomeContext())
 		if factoryArgumentType != nil {
 			baseArgumentType := signatureArgumentType
 			signatureArgumentType = func(ctx transfer.NodeContext, source factflow.ValueSource, in state.State, read func(cfg.Point) state.State) (typ.Type, bool) {
@@ -243,7 +243,7 @@ func (s *Static) callOutcomeProvider(config SolveConfig) factapply.CallOutcomePr
 	callOutcome := config.CallOutcome
 	if config.CallOutcomeFactory != nil {
 		callOutcome = calloutcome.WithSupplemental(
-			config.CallOutcomeFactory(CallOutcomeContext{Facts: s.facts, Sources: s.sources, CalleeValue: s.calleeValue}),
+			config.CallOutcomeFactory(s.callOutcomeContext()),
 			callOutcome,
 		)
 	}
@@ -263,6 +263,49 @@ func (s *Static) callOutcomeProvider(config SolveConfig) factapply.CallOutcomePr
 		}), callOutcome)
 	}
 	return callOutcome
+}
+
+func (s *Static) callOutcomeContext() CallOutcomeContext {
+	if s == nil {
+		return CallOutcomeContext{}
+	}
+	return CallOutcomeContext{
+		Facts:                       s.facts,
+		Sources:                     s.sources,
+		CalleeValue:                 s.calleeValue,
+		ReturnPresenceRelationsPath: s.returnPresenceRelationsForPath,
+	}
+}
+
+func (s *Static) returnPresenceRelationsForPath(point cfg.Point, p pathdom.Path) []factapply.CallReturnPresenceRelation {
+	if s == nil {
+		return nil
+	}
+	var name string
+	var ok bool
+	if s.signatureID != nil {
+		name, ok = s.signatureID.stableCalleeName(p.Symbol, p)
+	}
+	if !ok {
+		name, ok = s.modules.SignatureName(point, p)
+	}
+	if !ok {
+		return nil
+	}
+	sig, ok := s.signatures.Lookup(name)
+	if !ok || sig.OperationalEffects == nil || len(sig.OperationalEffects.ReturnPresenceRelations) == 0 {
+		return nil
+	}
+	out := make([]factapply.CallReturnPresenceRelation, 0, len(sig.OperationalEffects.ReturnPresenceRelations))
+	for _, relation := range sig.OperationalEffects.ReturnPresenceRelations {
+		out = append(out, factapply.CallReturnPresenceRelation{
+			TriggerIndex:    relation.TriggerIndex,
+			TriggerPresence: relation.TriggerPresence,
+			TargetIndex:     relation.TargetIndex,
+			TargetPresence:  relation.TargetPresence,
+		})
+	}
+	return out
 }
 
 func preparedCallOutcomeSupplement(

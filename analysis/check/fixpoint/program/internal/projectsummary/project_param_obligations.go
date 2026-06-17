@@ -152,6 +152,100 @@ func projectParamMemberCallObligations(reg *axis.Registry, result ResultReader) 
 	return out
 }
 
+func projectParamMemberReturnSlots(reg *axis.Registry, result ResultReader) []summary.ParamMemberReturnSlot {
+	params := parameterValuePaths(result)
+	if reg == nil || len(params) == 0 {
+		return nil
+	}
+	graph := result.Graph()
+	sourceReader, hasSources := result.(returnValueSourceReader)
+	callResult, hasCalls := result.(callReader)
+	if graph == nil || !hasSources || !hasCalls {
+		return nil
+	}
+	ctx := paramObligationProjector{
+		reg:      reg,
+		result:   result,
+		params:   params,
+		resolver: paramObligationTypeResolver(result),
+	}
+	var out []summary.ParamMemberReturnSlot
+	for _, returnPoint := range result.ReturnPoints() {
+		sources, ok := sourceReader.ReturnValueSources(returnPoint)
+		if !ok {
+			continue
+		}
+		callPoint, slots, ok := delegatedReturnCallSlots(result, sources)
+		if !ok || len(slots) == 0 {
+			continue
+		}
+		fact, ok := callResult.Call(callPoint)
+		if !ok {
+			continue
+		}
+		receiver, member, ok := memberCallReceiver(fact)
+		if !ok {
+			continue
+		}
+		ctx.point = callPoint
+		receiverParam, ok := ctx.unconditionalPathParamIndex(receiver)
+		if !ok {
+			continue
+		}
+		for returnIndex, memberResultIndex := range slots {
+			out = append(out, summary.ParamMemberReturnSlot{
+				ReceiverParam:     receiverParam,
+				Member:            member,
+				ReturnIndex:       returnIndex,
+				MemberResultIndex: memberResultIndex,
+			})
+		}
+	}
+	return out
+}
+
+func delegatedReturnCallSlots(result ResultReader, sources []factflow.ValueSource) (cfg.Point, map[int]int, bool) {
+	if len(sources) == 0 {
+		return 0, nil, false
+	}
+	first := sources[0]
+	if first.Kind != factflow.ValueSourceCall || !first.HasCallPoint {
+		return 0, nil, false
+	}
+	slots := make(map[int]int, len(sources))
+	if len(sources) == 1 {
+		if first.OpenTail {
+			if reader, ok := result.(callOutcomeAtReader); ok {
+				if outcome, ok := reader.CallOutcomeAt(first.CallPoint); ok {
+					for _, ret := range outcome.Results {
+						if ret.Index >= 0 {
+							slots[ret.Index] = ret.Index
+						}
+					}
+				}
+			}
+		}
+		if len(slots) == 0 && first.ResultIndex >= 0 {
+			slots[0] = first.ResultIndex
+		}
+		return first.CallPoint, slots, len(slots) != 0
+	}
+	for returnIndex, source := range sources {
+		if source.Kind != factflow.ValueSourceCall ||
+			!source.HasCallPoint ||
+			source.CallPoint != first.CallPoint ||
+			!source.Expanded ||
+			source.ResultIndex < 0 {
+			return 0, nil, false
+		}
+		if _, exists := slots[returnIndex]; exists {
+			return 0, nil, false
+		}
+		slots[returnIndex] = source.ResultIndex
+	}
+	return first.CallPoint, slots, len(slots) != 0
+}
+
 type paramObligationProjector struct {
 	reg      *axis.Registry
 	result   ResultReader

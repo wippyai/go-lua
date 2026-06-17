@@ -3,6 +3,7 @@ package body
 import (
 	"errors"
 
+	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
@@ -145,14 +146,17 @@ type Result struct {
 }
 
 type CallOutcomeContext struct {
-	Facts       factflow.Facts
-	Sources     sourcevalue.SourceValues
-	CalleeValue CalleeValueFunc
+	Facts                       factflow.Facts
+	Sources                     sourcevalue.SourceValues
+	CalleeValue                 CalleeValueFunc
+	ReturnPresenceRelationsPath ReturnPresenceRelationsForPathFunc
 }
 
 type CallOutcomeFactory func(CallOutcomeContext) factapply.CallOutcomeProvider
 
 type CalleeValueFunc func(ctx transfer.NodeContext, site factflow.CallSite, in state.State, read func(cfg.Point) state.State) (product.Value, bool)
+
+type ReturnPresenceRelationsForPathFunc func(point cfg.Point, p pathdom.Path) []factapply.CallReturnPresenceRelation
 
 type SignatureArgumentTypeFunc func(ctx transfer.NodeContext, source factflow.ValueSource, in state.State, read func(cfg.Point) state.State) (typ.Type, bool)
 

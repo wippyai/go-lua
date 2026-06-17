@@ -373,6 +373,10 @@ func directCallResultContract(result *body.Result, point cfg.Point, fact semanti
 	if sig, ok := result.CallSignature(site); ok && sig.Type != nil {
 		contract := lowerDirectFunctionType(sig.Type)
 		contract.name = name
+		if signatureName, ok := result.CallSignatureName(site); ok && signatureName != "" {
+			name = signatureName
+			contract.name = signatureName
+		}
 		contract.declSpan = ast.SpanOf(fact.Call)
 		var violations []typecall.ArgumentConstraintViolation
 		contract, violations = instantiateDirectFunctionContract(result, point, fact, contract, resolver, defs)
@@ -624,13 +628,13 @@ func directCallResultAssignmentDiagnostic(point cfg.Point, call *ast.FuncCallExp
 				Kind:    diagnostic.EvidenceAbstractFact,
 				Trust:   diagnostic.TrustProven,
 				Span:    callSpan,
-				Message: fmt.Sprintf("call at CFG point %d returns %s", point, formatType(got)),
+				Message: fmt.Sprintf("%s returns %s at CFG point %d", name, formatType(got), point),
 			},
 			diagnostic.Evidence{
 				Kind:    diagnostic.EvidenceUserAssertion,
 				Trust:   diagnostic.TrustClaimed,
 				Span:    typeSpan,
-				Message: fmt.Sprintf("%s is annotated %s", name, formatType(want)),
+				Message: fmt.Sprintf("assignment target is annotated %s", formatType(want)),
 			},
 		),
 		Labels: []diagnostic.Label{

@@ -330,6 +330,200 @@ func TestRequireCheckAndExportedReturnedTableDottedMemberKeepsReturnType(t *test
 	}
 }
 
+func TestRequireCheckAndExportedReturnedTableDottedMemberNamesResultEvidence(t *testing.T) {
+	mod := CheckAndExport(`
+		local provider = {}
+		function provider.meta(): { name: string }
+			return { name = "model" }
+		end
+		return provider
+	`, "provider")
+	if len(mod.Errors) != 0 {
+		t.Fatalf("module errors = %#v, want none", mod.Errors)
+	}
+
+	result := Check(`
+		local provider = require("provider")
+		local n: number = provider.meta()
+	`, WithStdlib(), WithModule("provider", mod))
+	requireDirectCallResultDiagnosticWithEvidence(t, result, "direct imported member result")
+	requireEvidenceMessage(t, result.Diagnostics[0], "provider.meta returns")
+	requireEvidenceMessage(t, result.Diagnostics[0], "assignment target is annotated number")
+}
+
+func TestRequireCheckInjectedContainerMemberKeepsImportedResultEvidence(t *testing.T) {
+	mod := CheckAndExport(`
+		local provider = {}
+		function provider.meta(): { name: string }
+			return { name = "model" }
+		end
+		return provider
+	`, "provider")
+	if len(mod.Errors) != 0 {
+		t.Fatalf("module errors = %#v, want none", mod.Errors)
+	}
+
+	result := Check(`
+		local provider = require("provider")
+		local container = { client = provider }
+		local n: number = container.client.meta()
+	`, WithStdlib(), WithModule("provider", mod))
+	requireDirectCallResultDiagnosticWithEvidence(t, result, "container-injected imported member result")
+	requireEvidenceMessage(t, result.Diagnostics[0], "provider.meta returns")
+	requireEvidenceMessage(t, result.Diagnostics[0], "assignment target is annotated number")
+}
+
+func TestRequireCheckInjectedHelperReturnKeepsImportedMemberResultType(t *testing.T) {
+	mod := CheckAndExport(`
+		local provider = {}
+		function provider.meta(): { name: string }
+			return { name = "model" }
+		end
+		return provider
+	`, "provider")
+	if len(mod.Errors) != 0 {
+		t.Fatalf("module errors = %#v, want none", mod.Errors)
+	}
+
+	result := Check(`
+		local provider = require("provider")
+		local function read_meta(client)
+			return client.meta()
+		end
+		local n: number = read_meta(provider)
+	`, WithStdlib(), WithModule("provider", mod))
+	if len(result.Diagnostics) != 1 {
+		t.Fatalf("diagnostics = %d, want one helper-return assignment diagnostic: %#v", len(result.Diagnostics), result.Diagnostics)
+	}
+	if result.Diagnostics[0].Code != diagnostics.CodeAssignmentType {
+		t.Fatalf("diagnostic code = %s, want %s: %#v", result.Diagnostics[0].Code, diagnostics.CodeAssignmentType, result.Diagnostics[0])
+	}
+}
+
+func TestRequireCheckInjectedHelperReturnKeepsErrorReturnCorrelation(t *testing.T) {
+	mod := CheckAndExport(`
+		local client = {}
+		function client.fetch(id: string): (number?, string?)
+			if id == "" then
+				return nil, "missing"
+			end
+			return 1, nil
+		end
+		return client
+	`, "client")
+	if len(mod.Errors) != 0 {
+		t.Fatalf("module errors = %#v, want none", mod.Errors)
+	}
+
+	result := Check(`
+		local client = require("client")
+		local function load(injected)
+			return injected.fetch("id")
+		end
+		local value, err = load(client)
+		if err == nil then
+			local n: number = value
+		end
+	`, WithStdlib(), WithModule("client", mod))
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("diagnostics = %d, want none for helper-preserved value/error correlation: %#v", len(result.Diagnostics), result.Diagnostics)
+	}
+}
+
+func TestRequireCheckInjectedHelperNonFinalReturnDoesNotExpandImportedMultiReturn(t *testing.T) {
+	mod := CheckAndExport(`
+		local client = {}
+		function client.fetch(id: string): (number?, boolean?)
+			if id == "" then
+				return nil, true
+			end
+			return 1, nil
+		end
+		return client
+	`, "client")
+	if len(mod.Errors) != 0 {
+		t.Fatalf("module errors = %#v, want none", mod.Errors)
+	}
+
+	result := Check(`
+		local client = require("client")
+		local function load(injected)
+			return injected.fetch("id"), "marker"
+		end
+		local value, marker = load(client)
+		local marker_string: string = marker
+	`, WithStdlib(), WithModule("client", mod))
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("diagnostics = %d, want none for adjusted non-final imported multi-return: %#v", len(result.Diagnostics), result.Diagnostics)
+	}
+}
+
+func TestRequireCheckAndExportedStaticStringFunctionMemberNamesResultEvidence(t *testing.T) {
+	mod := CheckAndExport(`
+		local client = {}
+		client["fetch"] = function(): string
+			return "ok"
+		end
+		return client
+	`, "client")
+	if len(mod.Errors) != 0 {
+		t.Fatalf("module errors = %#v, want none", mod.Errors)
+	}
+
+	result := Check(`
+		local client = require("client")
+		local n: number = client["fetch"]()
+	`, WithStdlib(), WithModule("client", mod))
+	requireDirectCallResultDiagnosticWithEvidence(t, result, "static string imported member result")
+	requireEvidenceMessage(t, result.Diagnostics[0], "client.fetch returns")
+	requireEvidenceMessage(t, result.Diagnostics[0], "assignment target is annotated number")
+}
+
+func TestRequireCheckAndExportedStaticIntFunctionMemberNamesResultEvidence(t *testing.T) {
+	mod := CheckAndExport(`
+		local mod = {}
+		mod[1] = function(): string
+			return "ok"
+		end
+		return mod
+	`, "runtime")
+	if len(mod.Errors) != 0 {
+		t.Fatalf("module errors = %#v, want none", mod.Errors)
+	}
+
+	result := Check(`
+		local runtime = require("runtime")
+		local n: number = runtime[1]()
+	`, WithStdlib(), WithModule("runtime", mod))
+	requireDirectCallResultDiagnosticWithEvidence(t, result, "static int imported member result")
+	requireEvidenceMessage(t, result.Diagnostics[0], "runtime[1] returns")
+	requireEvidenceMessage(t, result.Diagnostics[0], "assignment target is annotated number")
+}
+
+func TestRequireCheckAndExportedMultiReturnMemberNamesResultEvidence(t *testing.T) {
+	mod := CheckAndExport(`
+		local client = {}
+		function client.fetch(id: string): (number?, string?)
+			return nil, "missing"
+		end
+		return client
+	`, "client")
+	if len(mod.Errors) != 0 {
+		t.Fatalf("module errors = %#v, want none", mod.Errors)
+	}
+
+	result := Check(`
+		local client = require("client")
+		local value: number?, err: number = client.fetch("id")
+	`, WithStdlib(), WithModule("client", mod))
+	requireDirectCallResultDiagnosticWithEvidence(t, result, "imported member multi-return result")
+	if !strings.Contains(result.Diagnostics[0].Message, "call result 2") {
+		t.Fatalf("diagnostic message = %q, want call result 2", result.Diagnostics[0].Message)
+	}
+	requireEvidenceMessage(t, result.Diagnostics[0], "client.fetch returns")
+	requireEvidenceMessage(t, result.Diagnostics[0], "assignment target is annotated number")
+}
+
 func TestRequireCheckAndExportedReturnedTableDottedMemberKeepsMultiReturns(t *testing.T) {
 	mod := CheckAndExport(`
 		local client = {}
@@ -1932,6 +2126,20 @@ func requireMemberCallDiagnosticWithEvidence(t *testing.T, result Result, want d
 	}
 	if len(diag.Explanation.Evidence()) < 2 {
 		t.Fatalf("diagnostic evidence = %#v, want member-call evidence chain (%s)", diag.Explanation.Evidence(), context)
+	}
+}
+
+func requireDirectCallResultDiagnosticWithEvidence(t *testing.T, result Result, context string) {
+	t.Helper()
+	if len(result.Diagnostics) != 1 {
+		t.Fatalf("diagnostics = %d, want one direct-call result diagnostic (%s): %#v", len(result.Diagnostics), context, result.Diagnostics)
+	}
+	diag := result.Diagnostics[0]
+	if diag.Code != diagnostics.CodeDirectCallResultAssignment {
+		t.Fatalf("diagnostic code = %s, want %s (%s): %#v", diag.Code, diagnostics.CodeDirectCallResultAssignment, context, diag)
+	}
+	if len(diag.Explanation.Evidence()) < 2 {
+		t.Fatalf("diagnostic evidence = %#v, want direct-call result evidence chain (%s)", diag.Explanation.Evidence(), context)
 	}
 }
 

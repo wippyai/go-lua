@@ -52,30 +52,27 @@ func (r *Result) openTailReturnPresenceRelations(point cfg.Point) []factflow.Ret
 		return nil
 	}
 	sources := ret.Sources()
-	if len(sources) != 1 {
-		return nil
-	}
-	source := sources[0]
-	if source.Kind != factflow.ValueSourceCall || !source.HasCallPoint || !source.OpenTail || !source.Expanded {
-		return nil
-	}
-	site, ok := r.facts.CallSite(source.CallPoint)
+	callPoint, resultSlots, ok := openTailReturnCallSources(sources)
 	if !ok {
 		return nil
 	}
-	in, ok := r.StateAt(source.CallPoint)
+	site, ok := r.facts.CallSite(callPoint)
+	if !ok {
+		return nil
+	}
+	in, ok := r.StateAt(callPoint)
 	if !ok {
 		return nil
 	}
 	graph := r.Graph()
 	ctx := transfer.NodeContext{
 		Graph:    graph,
-		Point:    source.CallPoint,
+		Point:    callPoint,
 		Registry: r.registry,
 		Read:     r.boundaryRead,
 	}
 	if graph != nil {
-		ctx.Node = graph.Node(source.CallPoint)
+		ctx.Node = graph.Node(callPoint)
 	}
 	outcome := r.callOutcome(ctx, site.View(), in, r.boundaryRead)
 	if len(outcome.ReturnPresenceRelations) == 0 {
@@ -83,12 +80,56 @@ func (r *Result) openTailReturnPresenceRelations(point cfg.Point) []factflow.Ret
 	}
 	out := make([]factflow.ReturnPresenceRelation, 0, len(outcome.ReturnPresenceRelations))
 	for _, relation := range outcome.ReturnPresenceRelations {
+		triggerIndex := relation.TriggerIndex
+		targetIndex := relation.TargetIndex
+		if resultSlots != nil {
+			var ok bool
+			triggerIndex, ok = resultSlots[relation.TriggerIndex]
+			if !ok {
+				continue
+			}
+			targetIndex, ok = resultSlots[relation.TargetIndex]
+			if !ok {
+				continue
+			}
+		}
 		out = append(out, factflow.NewReturnPresenceRelation(
-			relation.TriggerIndex,
+			triggerIndex,
 			relation.TriggerPresence,
-			relation.TargetIndex,
+			targetIndex,
 			relation.TargetPresence,
 		))
 	}
 	return out
+}
+
+func openTailReturnCallSources(sources []factflow.ValueSource) (cfg.Point, map[int]int, bool) {
+	if len(sources) == 0 {
+		return 0, nil, false
+	}
+	first := sources[0]
+	if first.Kind != factflow.ValueSourceCall || !first.HasCallPoint || !first.Expanded {
+		return 0, nil, false
+	}
+	if len(sources) == 1 {
+		if !first.OpenTail {
+			return 0, nil, false
+		}
+		return first.CallPoint, nil, true
+	}
+	resultSlots := make(map[int]int, len(sources))
+	for slot, source := range sources {
+		if source.Kind != factflow.ValueSourceCall ||
+			!source.HasCallPoint ||
+			source.CallPoint != first.CallPoint ||
+			!source.Expanded ||
+			source.ResultIndex < 0 {
+			return 0, nil, false
+		}
+		if _, exists := resultSlots[source.ResultIndex]; exists {
+			return 0, nil, false
+		}
+		resultSlots[source.ResultIndex] = slot
+	}
+	return first.CallPoint, resultSlots, true
 }

@@ -10,3 +10,14 @@ type ParamMemberCallObligation struct {
 	ArgParam         int
 	MemberParamIndex int
 }
+
+// ParamMemberReturnSlot records that a function return slot delegates to a
+// result slot from a callable member of one parameter. Call-boundary adaptation
+// can then rehydrate effect-bearing return-presence relations from the concrete
+// receiver argument's imported signature.
+type ParamMemberReturnSlot struct {
+	ReceiverParam     int
+	Member            string
+	ReturnIndex       int
+	MemberResultIndex int
+}

@@ -22,6 +22,7 @@ func Normalize(reg *axis.Registry, s Summary) Summary {
 		out.ParamObligations = out.ParamObligations[:len(out.ParamObligations)-1]
 	}
 	out.ParamMemberCallObligations = normalizeParamMemberCallObligations(out.ParamMemberCallObligations)
+	out.ParamMemberReturnSlots = normalizeParamMemberReturnSlots(out.ParamMemberReturnSlots)
 	for len(out.NormalReturnParams) > 0 &&
 		product.Equal(reg, out.NormalReturnParams[len(out.NormalReturnParams)-1], bottom) {
 		out.NormalReturnParams = out.NormalReturnParams[:len(out.NormalReturnParams)-1]
@@ -41,6 +42,7 @@ func Normalize(reg *axis.Registry, s Summary) Summary {
 	if len(out.Returns) == 0 &&
 		len(out.ParamObligations) == 0 &&
 		len(out.ParamMemberCallObligations) == 0 &&
+		len(out.ParamMemberReturnSlots) == 0 &&
 		len(out.NormalReturnParams) == 0 &&
 		len(out.NormalReturnParamConditions) == 0 &&
 		len(out.NormalReturnParamEqualities) == 0 &&
@@ -83,6 +85,7 @@ func Equal(reg *axis.Registry, a, b Summary) bool {
 	}
 	return paramEqualitiesSummaryEqual(reg, a, b) &&
 		paramMemberCallObligationsEqual(a.ParamMemberCallObligations, b.ParamMemberCallObligations) &&
+		paramMemberReturnSlotsEqual(a.ParamMemberReturnSlots, b.ParamMemberReturnSlots) &&
 		normalReturnFactsEqual(reg, a.NormalReturnFacts, b.NormalReturnFacts) &&
 		heapTableObjectsEqual(reg, a.HeapTableObjects, b.HeapTableObjects) &&
 		returnConditionParamRefinementsEqual(reg, a.ReturnConditionParamRefinements, b.ReturnConditionParamRefinements) &&
@@ -125,6 +128,7 @@ func LessOrEq(reg *axis.Registry, a, b Summary) bool {
 	}
 	return paramEqualitiesSummaryLessOrEq(reg, a, b) &&
 		paramMemberCallObligationsLessOrEq(a.ParamMemberCallObligations, b.ParamMemberCallObligations) &&
+		paramMemberReturnSlotsLessOrEq(a.ParamMemberReturnSlots, b.ParamMemberReturnSlots) &&
 		normalReturnFactsLessOrEq(reg, a.NormalReturnFacts, b.NormalReturnFacts) &&
 		heapTableObjectsLessOrEq(reg, a.HeapTableObjects, b.HeapTableObjects) &&
 		returnConditionParamRefinementsLessOrEq(reg, a.ReturnConditionParamRefinements, b.ReturnConditionParamRefinements) &&
@@ -147,6 +151,7 @@ func Join(reg *axis.Registry, a, b Summary) Summary {
 	}
 	if returns == 0 && obligations == 0 && params == 0 && conditions == 0 &&
 		len(a.ParamMemberCallObligations) == 0 && len(b.ParamMemberCallObligations) == 0 &&
+		len(a.ParamMemberReturnSlots) == 0 && len(b.ParamMemberReturnSlots) == 0 &&
 		len(a.NormalReturnParamEqualities) == 0 && len(b.NormalReturnParamEqualities) == 0 &&
 		normalReturnFactsEmpty(a.NormalReturnFacts) && normalReturnFactsEmpty(b.NormalReturnFacts) &&
 		len(a.HeapTableObjects) == 0 && len(b.HeapTableObjects) == 0 &&
@@ -185,6 +190,10 @@ func Join(reg *axis.Registry, a, b Summary) Summary {
 	out.ParamMemberCallObligations = joinParamMemberCallObligations(
 		a.ParamMemberCallObligations,
 		b.ParamMemberCallObligations,
+	)
+	out.ParamMemberReturnSlots = joinParamMemberReturnSlots(
+		a.ParamMemberReturnSlots,
+		b.ParamMemberReturnSlots,
 	)
 	out.NormalReturnParamEqualities = joinParamEqualities(reg, a, b)
 	out.NormalReturnFacts = joinNormalReturnFacts(reg, a.NormalReturnFacts, b.NormalReturnFacts)
@@ -247,6 +256,7 @@ func Widen(reg *axis.Registry, prev, next Summary) Summary {
 	}
 	if returns == 0 && obligations == 0 && params == 0 && conditions == 0 &&
 		len(prev.ParamMemberCallObligations) == 0 && len(next.ParamMemberCallObligations) == 0 &&
+		len(prev.ParamMemberReturnSlots) == 0 && len(next.ParamMemberReturnSlots) == 0 &&
 		len(prev.NormalReturnParamEqualities) == 0 && len(next.NormalReturnParamEqualities) == 0 &&
 		normalReturnFactsEmpty(prev.NormalReturnFacts) && normalReturnFactsEmpty(next.NormalReturnFacts) &&
 		len(prev.HeapTableObjects) == 0 && len(next.HeapTableObjects) == 0 &&
@@ -294,6 +304,10 @@ func Widen(reg *axis.Registry, prev, next Summary) Summary {
 		prev.ParamMemberCallObligations,
 		next.ParamMemberCallObligations,
 	)
+	out.ParamMemberReturnSlots = joinParamMemberReturnSlots(
+		prev.ParamMemberReturnSlots,
+		next.ParamMemberReturnSlots,
+	)
 	out.NormalReturnParamEqualities = joinParamEqualities(reg, prev, next)
 	out.NormalReturnFacts = widenNormalReturnFacts(reg, prev.NormalReturnFacts, next.NormalReturnFacts)
 	out.HeapTableObjects = widenHeapTableObjects(reg, prev.HeapTableObjects, next.HeapTableObjects)
@@ -310,6 +324,7 @@ func summaryBottom(s Summary) bool {
 	return len(s.Returns) == 0 &&
 		len(s.ParamObligations) == 0 &&
 		len(s.ParamMemberCallObligations) == 0 &&
+		len(s.ParamMemberReturnSlots) == 0 &&
 		len(s.NormalReturnParams) == 0 &&
 		len(s.NormalReturnParamConditions) == 0 &&
 		len(s.NormalReturnParamEqualities) == 0 &&

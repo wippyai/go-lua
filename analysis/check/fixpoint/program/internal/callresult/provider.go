@@ -36,19 +36,25 @@ type KeyFunc func(ctx transfer.NodeContext, site factflow.CallSite) (summary.Sum
 // CalleeValueFunc resolves the current callee expression value at a call site.
 type CalleeValueFunc func(ctx transfer.NodeContext, site factflow.CallSite, in state.State, read func(cfg.Point) state.State) (product.Value, bool)
 
+// ReturnPresenceRelationsForPathFunc resolves an in-scope access path to
+// lowered return-presence relations, when the path has a stable imported/global
+// signature identity.
+type ReturnPresenceRelationsForPathFunc func(point cfg.Point, p pathdom.Path) []factapply.CallReturnPresenceRelation
+
 // ProviderConfig configures summary-backed call outcomes.
 type ProviderConfig struct {
-	Summaries              summary.Reader
-	KeyFor                 KeyFunc
-	CalleeValue            CalleeValueFunc
-	Facts                  factflow.Facts
-	FunctionKeys           map[symbol.ID]summary.SummaryKey
-	FunctionExpressionKeys map[factflow.ExprRef]summary.SummaryKey
-	FunctionIDs            map[identity.ID]summary.SummaryKey
-	PathKeys               map[pathdom.PathKey]summary.SummaryKey
-	PathMultiKeys          map[pathdom.PathKey][]summary.SummaryKey
-	FunctionTypes          map[summary.SummaryKey]*typ.Function
-	Sources                sourcevalue.SourceValues
+	Summaries               summary.Reader
+	KeyFor                  KeyFunc
+	CalleeValue             CalleeValueFunc
+	Facts                   factflow.Facts
+	FunctionKeys            map[symbol.ID]summary.SummaryKey
+	FunctionExpressionKeys  map[factflow.ExprRef]summary.SummaryKey
+	FunctionIDs             map[identity.ID]summary.SummaryKey
+	PathKeys                map[pathdom.PathKey]summary.SummaryKey
+	PathMultiKeys           map[pathdom.PathKey][]summary.SummaryKey
+	FunctionTypes           map[summary.SummaryKey]*typ.Function
+	Sources                 sourcevalue.SourceValues
+	ReturnPresenceRelations ReturnPresenceRelationsForPathFunc
 }
 
 // OutcomeProvider returns a generic call-boundary outcome provider backed by
@@ -65,6 +71,7 @@ func OutcomeProvider(config ProviderConfig) factapply.CallOutcomeProvider {
 	pathMultiKeys := clonePathMultiKeys(config.PathMultiKeys)
 	functionTypes := cloneFunctionTypes(config.FunctionTypes)
 	sources := config.Sources
+	returnPresenceRelations := config.ReturnPresenceRelations
 	return func(ctx transfer.NodeContext, site factflow.CallSiteView, in state.State, read func(cfg.Point) state.State) factapply.CallOutcome {
 		if summaries == nil {
 			return factapply.CallOutcome{}
@@ -102,6 +109,10 @@ func OutcomeProvider(config ProviderConfig) factapply.CallOutcomeProvider {
 			}
 			return summary.UsefulNormalReturnParam(ctx.Registry, got.NormalReturnParams[index])
 		})
+		out.ReturnPresenceRelations = append(
+			out.ReturnPresenceRelations,
+			paramMemberReturnPresenceRelations(ctx, ownedSite, got, facts, returnPresenceRelations)...,
+		)
 		out.PostReturnAuthority = calloutcome.HasAuthoritativePostReturnEvidence(ctx.Registry, out)
 		out.ParamObligations = append(out.ParamObligations, functionTypeParamObligations(ctx.Registry, ownedSite, fn)...)
 		out.ParamObligations = append(out.ParamObligations, memberCallParamObligations(ctx, ownedSite, got, sources, in, read)...)
@@ -1052,6 +1063,75 @@ func outcomeFromSummary(
 		}
 	}
 	return out
+}
+
+func paramMemberReturnPresenceRelations(
+	ctx transfer.NodeContext,
+	site factflow.CallSite,
+	got summary.Summary,
+	facts factflow.Facts,
+	returnPresenceRelations ReturnPresenceRelationsForPathFunc,
+) []factapply.CallReturnPresenceRelation {
+	if returnPresenceRelations == nil || len(got.ParamMemberReturnSlots) == 0 {
+		return nil
+	}
+	args := site.ArgumentSources()
+	type memberKey struct {
+		receiver int
+		member   string
+	}
+	slotsByMember := make(map[memberKey]map[int]int)
+	for _, slot := range got.ParamMemberReturnSlots {
+		if slot.ReceiverParam < 0 || slot.ReceiverParam >= len(args) ||
+			slot.Member == "" || slot.ReturnIndex < 0 || slot.MemberResultIndex < 0 {
+			continue
+		}
+		key := memberKey{receiver: slot.ReceiverParam, member: slot.Member}
+		slots := slotsByMember[key]
+		if slots == nil {
+			slots = make(map[int]int)
+			slotsByMember[key] = slots
+		}
+		slots[slot.MemberResultIndex] = slot.ReturnIndex
+	}
+	if len(slotsByMember) == 0 {
+		return nil
+	}
+	var out []factapply.CallReturnPresenceRelation
+	for key, slots := range slotsByMember {
+		memberPath, ok := argumentMemberPath(facts, args[key.receiver], key.member)
+		if !ok {
+			continue
+		}
+		for _, relation := range returnPresenceRelations(ctx.Point, memberPath) {
+			trigger, ok := slots[relation.TriggerIndex]
+			if !ok {
+				continue
+			}
+			target, ok := slots[relation.TargetIndex]
+			if !ok {
+				continue
+			}
+			out = append(out, factapply.CallReturnPresenceRelation{
+				TriggerIndex:    trigger,
+				TriggerPresence: relation.TriggerPresence,
+				TargetIndex:     target,
+				TargetPresence:  relation.TargetPresence,
+			})
+		}
+	}
+	return out
+}
+
+func argumentMemberPath(facts factflow.Facts, source factflow.ValueSource, member string) (pathdom.Path, bool) {
+	if member == "" || source.Kind != factflow.ValueSourceExpression || !source.HasExpr {
+		return pathdom.Path{}, false
+	}
+	p, ok := facts.ExpressionPath(source.ExprRef)
+	if !ok || p.IsEmpty() {
+		return pathdom.Path{}, false
+	}
+	return p.Field(member), true
 }
 
 func memberCallParamObligations(

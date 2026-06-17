@@ -31,7 +31,7 @@
         "code": "type.call.direct.result_assignment",
         "message_contains": ["call result 1", "not number"],
         "min_evidence": 2,
-        "evidence_contains": ["returns string", "load_name is annotated number"],
+        "evidence_contains": ["returns string", "assignment target is annotated number"],
         "min_labels": 2,
         "label_contains": ["call result", "declared type"]
       },
