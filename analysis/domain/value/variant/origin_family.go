@@ -125,6 +125,7 @@ func taggedRecordFamily(r *typ.Record, detector *discriminant.Detector) (originF
 		caseHash = internal.MixHash(caseHash, internal.FnvString(tag.path))
 		caseHash = internal.MixHash(caseHash, tag.hash)
 	}
+	caseHash = internal.MixHash(caseHash, typ.EqualityHash(r))
 	familyID = nonZeroHash(familyID)
 	caseIndex := hashCaseIndex(caseHash)
 	family := originFamily{

@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/variantorigin"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/typeexpr"
@@ -215,6 +216,105 @@ func TestOriginCatalogPoisonsTaggedSignatureCollision(t *testing.T) {
 	}
 	if got, ok := TypeFromOrigin(familyID, []int{caseIndex}); ok {
 		t.Fatalf("signature-poisoned tagged origin reconstructed %s, want fail-closed", got)
+	}
+}
+
+func TestTaggedOriginDistinguishesSameTagDifferentPayload(t *testing.T) {
+	left := typetable.NewRecord().
+		Field("kind", typ.LiteralString("same")).
+		Field("value", typ.Number).
+		Build()
+	right := typetable.NewRecord().
+		Field("kind", typ.LiteralString("same")).
+		Field("value", typ.String).
+		Build()
+
+	leftFamily, leftCases, ok := OriginOfType(left)
+	if !ok || len(leftCases) != 1 {
+		t.Fatalf("left tagged origin = %d/%v/%v, want one case", leftFamily, leftCases, ok)
+	}
+	t.Cleanup(func() { clearOriginFamilyForTest(leftFamily) })
+	rightFamily, rightCases, ok := OriginOfType(right)
+	if !ok || len(rightCases) != 1 {
+		t.Fatalf("right tagged origin = %d/%v/%v, want one case", rightFamily, rightCases, ok)
+	}
+	if rightFamily != leftFamily {
+		t.Fatalf("same tag path used families %d and %d, want shared family", leftFamily, rightFamily)
+	}
+	if rightCases[0] == leftCases[0] {
+		t.Fatalf("same tag with different payload reused case %d", leftCases[0])
+	}
+	if got, ok := TypeFromOrigin(leftFamily, leftCases); !ok || !typ.TypeEquals(got, left) {
+		t.Fatalf("left origin reconstructed %v/%v, want %s", got, ok, left)
+	}
+	if got, ok := TypeFromOrigin(rightFamily, rightCases); !ok || !typ.TypeEquals(got, right) {
+		t.Fatalf("right origin reconstructed %v/%v, want %s", got, ok, right)
+	}
+	wantBoth := typeexpr.Union(left, right)
+	bothCases := append(append([]int(nil), leftCases...), rightCases...)
+	if got, ok := TypeFromOrigin(leftFamily, bothCases); !ok || !typ.TypeEquals(got, wantBoth) {
+		t.Fatalf("combined same-tag origin reconstructed %v/%v, want %s", got, ok, wantBoth)
+	}
+	joined := variantorigin.Join(variantorigin.Of(leftFamily, leftCases), variantorigin.Of(rightFamily, rightCases))
+	if joined.IsTop() || joined.IsBottom() || joined.Family() != leftFamily || !sameIntSet(joined.Cases(), bothCases) {
+		t.Fatalf("joined same-tag origins = %v, want concrete family %d cases %v", joined, leftFamily, bothCases)
+	}
+
+	clearOriginFamilyForTest(leftFamily)
+	reverseRightFamily, reverseRightCases, ok := OriginOfType(right)
+	if !ok || reverseRightFamily != leftFamily || len(reverseRightCases) != 1 {
+		t.Fatalf("reverse right tagged origin = %d/%v/%v, want family %d one case", reverseRightFamily, reverseRightCases, ok, leftFamily)
+	}
+	reverseLeftFamily, reverseLeftCases, ok := OriginOfType(left)
+	if !ok || reverseLeftFamily != leftFamily || len(reverseLeftCases) != 1 {
+		t.Fatalf("reverse left tagged origin = %d/%v/%v, want family %d one case", reverseLeftFamily, reverseLeftCases, ok, leftFamily)
+	}
+	if reverseLeftCases[0] != leftCases[0] || reverseRightCases[0] != rightCases[0] {
+		t.Fatalf("reverse registration cases = left %v right %v, want left %v right %v", reverseLeftCases, reverseRightCases, leftCases, rightCases)
+	}
+	if got, ok := TypeFromOrigin(leftFamily, leftCases); !ok || !typ.TypeEquals(got, left) {
+		t.Fatalf("reverse left origin reconstructed %v/%v, want %s", got, ok, left)
+	}
+	if got, ok := TypeFromOrigin(leftFamily, rightCases); !ok || !typ.TypeEquals(got, right) {
+		t.Fatalf("reverse right origin reconstructed %v/%v, want %s", got, ok, right)
+	}
+}
+
+func TestOriginCatalogPoisonsTaggedSameCaseHashCollision(t *testing.T) {
+	const familyID uint64 = 0x71c6ed5aceca5e
+	const caseIndex = 1701
+	resetOriginFamilyForTest(t, familyID)
+	kindTagged := typetable.NewRecord().
+		Field("kind", typ.LiteralString("same")).
+		Field("value", typ.Number).
+		Build()
+	collidingKindTagged := typetable.NewRecord().
+		Field("kind", typ.LiteralString("same")).
+		Field("value", typ.Boolean).
+		Build()
+
+	if !storeOriginFamily(originFamily{
+		id:        familyID,
+		kind:      originFamilyKindTaggedRecord,
+		signature: "tagged-record:4:kind;",
+		cases:     []originCase{{index: caseIndex, typ: kindTagged}},
+	}) {
+		t.Fatal("initial tagged family store failed")
+	}
+	if got, ok := TypeFromOrigin(familyID, []int{caseIndex}); !ok || !typ.TypeEquals(got, kindTagged) {
+		t.Fatalf("initial tagged origin type = %v/%v, want %s", got, ok, kindTagged)
+	}
+
+	if storeOriginFamily(originFamily{
+		id:        familyID,
+		kind:      originFamilyKindTaggedRecord,
+		signature: "tagged-record:4:kind;",
+		cases:     []originCase{{index: caseIndex, typ: collidingKindTagged}},
+	}) {
+		t.Fatal("same-index tagged family collision should poison")
+	}
+	if got, ok := TypeFromOrigin(familyID, []int{caseIndex}); ok {
+		t.Fatalf("same-index-poisoned tagged origin reconstructed %s, want fail-closed", got)
 	}
 }
 

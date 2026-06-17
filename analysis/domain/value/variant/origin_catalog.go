@@ -89,10 +89,27 @@ func originFamiliesCompatible(existing, next originFamily) bool {
 	case originFamilyKindClosedRecordUnion:
 		return originCasesEqual(existing.cases, next.cases)
 	case originFamilyKindTaggedRecord:
-		return true
+		return originCasesOverlapCompatible(existing.cases, next.cases)
 	default:
 		return false
 	}
+}
+
+func originCasesOverlapCompatible(a, b []originCase) bool {
+	byIndex := make(map[int]typ.Type, len(a))
+	for _, c := range a {
+		if existing, ok := byIndex[c.index]; ok && !typ.TypeEquals(existing, c.typ) {
+			return false
+		}
+		byIndex[c.index] = c.typ
+	}
+	for _, c := range b {
+		if existing, ok := byIndex[c.index]; ok && !typ.TypeEquals(existing, c.typ) {
+			return false
+		}
+		byIndex[c.index] = c.typ
+	}
+	return true
 }
 
 func mergeOriginCases(a, b []originCase) []originCase {
