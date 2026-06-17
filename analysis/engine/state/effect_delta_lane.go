@@ -3,6 +3,7 @@ package state
 import (
 	"github.com/wippyai/go-lua/analysis/domain/lattice"
 	effectdelta "github.com/wippyai/go-lua/analysis/engine/state/effectdelta"
+	"github.com/wippyai/go-lua/analysis/internal/mapedit"
 )
 
 type effectDeltaLane struct {
@@ -49,7 +50,7 @@ func (l effectDeltaLane) hasFinite(key effectdelta.Key) bool {
 }
 
 func (l effectDeltaLane) without(key effectdelta.Key) (effectDeltaLane, bool) {
-	values, changed := effectdelta.DeleteEntry(l.values, key)
+	values, changed := mapedit.Without(l.values, key)
 	if !changed {
 		return l, false
 	}
@@ -58,12 +59,7 @@ func (l effectDeltaLane) without(key effectdelta.Key) (effectDeltaLane, bool) {
 }
 
 func (l effectDeltaLane) with(key effectdelta.Key, delta effectdelta.Value) effectDeltaLane {
-	values := effectdelta.CloneMap(l.values)
-	if values == nil {
-		values = make(map[effectdelta.Key]effectdelta.Value, 1)
-	}
-	values[key] = delta
-	l.values = values
+	l.values = mapedit.With(l.values, key, delta)
 	return l
 }
 
@@ -71,5 +67,5 @@ func (l effectDeltaLane) cloneValues() map[effectdelta.Key]effectdelta.Value {
 	if l.top {
 		return nil
 	}
-	return effectdelta.CloneMap(l.values)
+	return mapedit.Clone(l.values)
 }

@@ -4,6 +4,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/lattice"
 	"github.com/wippyai/go-lua/analysis/domain/placement"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
+	"github.com/wippyai/go-lua/analysis/internal/mapedit"
 )
 
 type placementLane struct {
@@ -50,39 +51,19 @@ func (l placementLane) hasFinite(id identity.ID) bool {
 }
 
 func (l placementLane) without(id identity.ID) (placementLane, bool) {
-	if _, ok := l.values[id]; !ok {
+	values, changed := mapedit.Without(l.values, id)
+	if !changed {
 		return l, false
 	}
-	out := make(map[identity.ID]placement.Value, len(l.values)-1)
-	for k, v := range l.values {
-		if k != id {
-			out[k] = v
-		}
-	}
-	if len(out) == 0 {
-		out = nil
-	}
-	l.values = out
+	l.values = values
 	return l, true
 }
 
 func (l placementLane) with(id identity.ID, value placement.Value) placementLane {
-	values := clonePlacementValues(l.values)
-	if values == nil {
-		values = make(map[identity.ID]placement.Value, 1)
-	}
-	values[id] = value
-	l.values = values
+	l.values = mapedit.With(l.values, id, value)
 	return l
 }
 
 func clonePlacementValues(in map[identity.ID]placement.Value) map[identity.ID]placement.Value {
-	if len(in) == 0 {
-		return nil
-	}
-	out := make(map[identity.ID]placement.Value, len(in))
-	for k, v := range in {
-		out[k] = v
-	}
-	return out
+	return mapedit.Clone(in)
 }

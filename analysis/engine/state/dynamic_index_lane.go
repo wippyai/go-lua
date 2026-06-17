@@ -4,6 +4,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/lattice"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/engine/dynamicindex"
+	"github.com/wippyai/go-lua/analysis/internal/mapedit"
 )
 
 type dynamicIndexLane struct {
@@ -50,7 +51,7 @@ func (l dynamicIndexLane) hasFinite(key dynamicindex.Key) bool {
 }
 
 func (l dynamicIndexLane) without(key dynamicindex.Key) (dynamicIndexLane, bool) {
-	values, changed := dynamicindex.DeleteEntry(l.values, key)
+	values, changed := mapedit.Without(l.values, key)
 	if !changed {
 		return l, false
 	}
@@ -59,12 +60,7 @@ func (l dynamicIndexLane) without(key dynamicindex.Key) (dynamicIndexLane, bool)
 }
 
 func (l dynamicIndexLane) with(key dynamicindex.Key, fact dynamicindex.Fact) dynamicIndexLane {
-	values := dynamicindex.CloneMap(l.values)
-	if values == nil {
-		values = make(map[dynamicindex.Key]dynamicindex.Fact, 1)
-	}
-	values[key] = fact
-	l.values = values
+	l.values = mapedit.With(l.values, key, fact)
 	return l
 }
 
@@ -72,5 +68,5 @@ func (l dynamicIndexLane) cloneValues() map[dynamicindex.Key]dynamicindex.Fact {
 	if l.top {
 		return nil
 	}
-	return dynamicindex.CloneMap(l.values)
+	return mapedit.Clone(l.values)
 }
