@@ -85,6 +85,53 @@ func TestGuardEnvInvalidatesAssignedPathAndDescendants(t *testing.T) {
 	}
 }
 
+func TestGuardEnvPathAssignmentKeepsSameRootSiblingsAndClearsAliasableDescendants(t *testing.T) {
+	root := path.NewPath(1, "box")
+	child := root.Field("value")
+	grandchild := child.Field("name")
+	sibling := root.Field("other")
+	aliasRoot := path.NewPath(2, "alias")
+	aliasChild := aliasRoot.Field("value")
+	env := guardEnv{
+		constraints: []literalConstraint{
+			{target: child, value: "drop"},
+			{target: grandchild, value: "drop-nested"},
+			{target: sibling, value: "keep"},
+			{target: aliasChild, value: "drop-alias"},
+		},
+		typeChecks: []runtimeTypeConstraint{
+			{target: child, name: "string"},
+			{target: grandchild, name: "string"},
+			{target: sibling, name: "string"},
+			{target: aliasChild, name: "string"},
+		},
+		present:  []path.Path{root, child, grandchild, sibling, aliasRoot, aliasChild},
+		truthy:   []path.Path{root, child, grandchild, sibling, aliasRoot, aliasChild},
+		falsy:    []path.Path{child, grandchild, sibling, aliasChild},
+		nilPaths: []path.Path{child, grandchild, sibling, aliasChild},
+	}
+
+	got := env.withoutFactsForPathAssignment(child)
+	if len(got.constraints) != 1 || !got.constraints[0].target.Equal(sibling) {
+		t.Fatalf("constraints = %#v, want only same-root sibling", got.constraints)
+	}
+	if len(got.typeChecks) != 1 || !got.typeChecks[0].target.Equal(sibling) {
+		t.Fatalf("type checks = %#v, want only same-root sibling", got.typeChecks)
+	}
+	if !got.hasTruthy(root) || !got.hasTruthy(sibling) || !got.hasTruthy(aliasRoot) {
+		t.Fatalf("root/sibling truthy facts lost: %#v", got.truthy)
+	}
+	if got.hasTruthy(child) || got.hasTruthy(grandchild) || got.hasTruthy(aliasChild) {
+		t.Fatalf("assigned or aliasable descendant truthy facts leaked: %#v", got.truthy)
+	}
+	if got.hasFalsy(child) || got.hasFalsy(grandchild) || !got.hasFalsy(sibling) || got.hasFalsy(aliasChild) {
+		t.Fatalf("falsy facts = %#v, want only same-root sibling among descendants", got.falsy)
+	}
+	if got.hasNil(child) || got.hasNil(grandchild) || !got.hasNil(sibling) || got.hasNil(aliasChild) {
+		t.Fatalf("nil facts = %#v, want only same-root sibling among descendants", got.nilPaths)
+	}
+}
+
 func TestGuardEnvInvalidatesRootAndKeepsUnrelatedRoots(t *testing.T) {
 	root := path.NewPath(1, "box")
 	child := root.Field("value")

@@ -6,6 +6,10 @@ import (
 	"github.com/wippyai/go-lua/analysis/check/body"
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
+	"github.com/wippyai/go-lua/analysis/engine/callboundary"
+	"github.com/wippyai/go-lua/analysis/engine/factapply"
+	"github.com/wippyai/go-lua/analysis/engine/factflow"
+	effectdelta "github.com/wippyai/go-lua/analysis/engine/state/effectdelta"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/branchcond"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
@@ -105,7 +109,7 @@ func applyGuardNode(result *body.Result, point cfg.Point, env guardEnv) guardEnv
 		return env
 	}
 	if _, ok := result.Call(point); ok {
-		env = guardEnv{}
+		env = applyCallGuardInvalidation(result, point, env)
 	}
 	if fact, ok := result.LocalAssignment(point); ok && fact.HasSymbol {
 		return env.withoutFactsForPath(path.NewPath(fact.Symbol, fact.Name))
@@ -116,7 +120,7 @@ func applyGuardNode(result *body.Result, point cfg.Point, env guardEnv) guardEnv
 	}
 	if fact.HasPath && !fact.Path.IsEmpty() {
 		if len(fact.Path.Segments) > 0 {
-			return env.withoutDescendantFacts()
+			return env.withoutFactsForPathAssignment(fact.Path)
 		}
 		return env.withoutFactsForPath(fact.Path)
 	}
@@ -140,6 +144,132 @@ func directDynamicIndexAssignment(fact semantics.OrdinaryAssignmentFact) bool {
 	default:
 		return true
 	}
+}
+
+func applyCallGuardInvalidation(result *body.Result, point cfg.Point, env guardEnv) guardEnv {
+	if result == nil || env.unreachable {
+		return env
+	}
+	site, hasSite := result.CallSite(point)
+	if !hasSite {
+		return guardEnv{}
+	}
+	outcome, hasOutcome := result.CallOutcomeAt(point)
+	if !hasOutcome {
+		return guardEnv{}
+	}
+	sig, hasSignature := result.CallSignature(site)
+	hasOperationalEffects := hasSignature &&
+		sig.OperationalEffects != nil &&
+		!sig.OperationalEffects.IsEmpty()
+	// A known return value can make PostReturnAuthority true; it is not proof that side effects are complete.
+	hasExactSignatureEffects := hasOperationalEffects || (hasSignature && sig.Effect.IsClosed())
+	if !hasExactSignatureEffects {
+		return guardEnv{}
+	}
+	if callOutcomeHasGlobalGuardInvalidation(outcome) {
+		return guardEnv{}
+	}
+	invalidated, ok := callOutcomeGuardInvalidationPaths(result, site, outcome)
+	if !ok {
+		return guardEnv{}
+	}
+	if len(invalidated) == 0 {
+		return env
+	}
+	for _, target := range invalidated {
+		env = env.withoutDescendantFactsOf(target)
+	}
+	return env
+}
+
+func callOutcomeHasGlobalGuardInvalidation(outcome factapply.CallOutcome) bool {
+	for _, delta := range outcome.NormalReturnFacts.EffectDeltas {
+		if delta.Kind == effectdelta.Mutation && !callboundary.IsPathInvalidationEffectSite(delta.Site) {
+			return true
+		}
+	}
+	return false
+}
+
+func callOutcomeGuardInvalidationPaths(result *body.Result, site factflow.CallSite, outcome factapply.CallOutcome) ([]path.Path, bool) {
+	paramBindings := callGuardArgumentBindings(result, site)
+	callBindings := callGuardCallBindings(result, site)
+	var out []path.Path
+	appendSubstituted := func(bindings []path.Path, target path.Path) bool {
+		substituted, ok := target.Substitute(bindings)
+		if !ok || substituted.IsEmpty() {
+			return false
+		}
+		out = append(out, substituted)
+		return true
+	}
+	for _, invalidation := range outcome.ParamPathInvalidations {
+		if !appendSubstituted(paramBindings, invalidation.Path) {
+			return nil, false
+		}
+	}
+	for _, invalidation := range outcome.NormalReturnFacts.PathInvalidations {
+		if !appendSubstituted(callBindings, invalidation.Path) {
+			return nil, false
+		}
+	}
+	return out, true
+}
+
+func callGuardArgumentBindings(result *body.Result, site factflow.CallSite) []path.Path {
+	if result == nil {
+		return nil
+	}
+	var bindings []path.Path
+	for i, source := range site.ArgumentSources() {
+		if source.Kind != factflow.ValueSourceExpression || !source.HasExpr {
+			continue
+		}
+		sourcePath, ok := result.ExpressionPathRef(source.ExprRef)
+		if !ok || sourcePath.IsEmpty() {
+			continue
+		}
+		for len(bindings) <= i {
+			bindings = append(bindings, path.Path{})
+		}
+		bindings[i] = sourcePath
+	}
+	return bindings
+}
+
+func callGuardCallBindings(result *body.Result, site factflow.CallSite) []path.Path {
+	if result == nil {
+		return nil
+	}
+	var bindings []path.Path
+	offset := 0
+	if receiverPath, ok := site.ReceiverPath(); ok {
+		bindings = appendPathBinding(bindings, 0, receiverPath)
+		offset = 1
+	}
+	for i, source := range site.ArgumentSources() {
+		if source.Kind != factflow.ValueSourceExpression || !source.HasExpr {
+			continue
+		}
+		sourcePath, ok := result.ExpressionPathRef(source.ExprRef)
+		if !ok || sourcePath.IsEmpty() {
+			continue
+		}
+		bindings = appendPathBinding(bindings, i+offset, sourcePath)
+	}
+	return bindings
+}
+
+func appendPathBinding(bindings []path.Path, index int, value path.Path) []path.Path {
+	if index < 0 || value.IsEmpty() {
+		return bindings
+	}
+	for len(bindings) <= index {
+		bindings = append(bindings, path.Path{})
+	}
+	bindings[index] = value
+	return bindings
 }
 
 func applyBranchGuard(env guardEnv, check branchcond.Check, cond bool) guardEnv {
@@ -398,6 +528,40 @@ func (e guardEnv) withoutDescendantFacts() guardEnv {
 	return out
 }
 
+func (e guardEnv) withoutDescendantFactsOf(target path.Path) guardEnv {
+	if target.IsEmpty() {
+		return e.withoutDescendantFacts()
+	}
+	if e.unreachable {
+		return e
+	}
+	return e.filterFacts(func(candidate path.Path) bool {
+		return !pathHasStrictPrefix(candidate, target)
+	})
+}
+
+func (e guardEnv) withoutFactsForPathAssignment(target path.Path) guardEnv {
+	if target.IsEmpty() {
+		return e.withoutDescendantFacts()
+	}
+	if len(target.Segments) == 0 {
+		return e.withoutFactsForPath(target)
+	}
+	if e.unreachable {
+		return e
+	}
+	// Same-root siblings are stable; descendant facts under other roots may alias the mutated table.
+	return e.filterFacts(func(candidate path.Path) bool {
+		if len(candidate.Segments) == 0 {
+			return true
+		}
+		if !samePathRoot(candidate, target) {
+			return false
+		}
+		return !pathHasPrefix(candidate, target)
+	})
+}
+
 func (e guardEnv) withoutFactsForPath(target path.Path) guardEnv {
 	if target.IsEmpty() {
 		return e
@@ -636,6 +800,17 @@ func joinPathFacts(a, b []path.Path) []path.Path {
 		}
 	}
 	return out
+}
+
+func pathHasStrictPrefix(candidate, prefix path.Path) bool {
+	return len(prefix.Segments) < len(candidate.Segments) && pathHasPrefix(candidate, prefix)
+}
+
+func samePathRoot(a, b path.Path) bool {
+	if a.Symbol != 0 || b.Symbol != 0 {
+		return a.Symbol == b.Symbol && a.Version == b.Version
+	}
+	return a.Root == b.Root && a.Version == b.Version
 }
 
 func pathHasPrefix(candidate, prefix path.Path) bool {

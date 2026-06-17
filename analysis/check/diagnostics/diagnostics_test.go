@@ -7,7 +7,12 @@ import (
 	"github.com/wippyai/go-lua/analysis/check/body"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/program"
 	"github.com/wippyai/go-lua/analysis/diagnostic"
+	"github.com/wippyai/go-lua/analysis/domain/effect"
+	"github.com/wippyai/go-lua/analysis/domain/effect/mutation"
+	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
+	"github.com/wippyai/go-lua/analysis/module/manifest"
+	"github.com/wippyai/go-lua/analysis/module/signature"
 	"github.com/wippyai/go-lua/analysis/module/signaturelookup"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
 	"github.com/wippyai/go-lua/analysis/type/access"
@@ -669,6 +674,214 @@ end
 	}
 }
 
+func TestRedundantConditionWarningUsesSignatureCallInvalidation(t *testing.T) {
+	policy := Config{Policy: diagnostic.Policy{Rules: map[diagnostic.Code]diagnostic.Rule{
+		CodeRedundantCondition: diagnostic.Enable(),
+	}}}
+	t.Run("pure signature preserves member guard", func(t *testing.T) {
+		result := runDiagnosticsResultFull(t, `
+local box = { value = test }
+if box.value then
+	pure(box)
+	if box.value then
+		return box
+	end
+end
+`, []string{"test", "pure"}, redundantConditionSignatureSource())
+		diags := ProduceWithConfig(result, policy)
+		if len(diags) != 1 {
+			t.Fatalf("diagnostics = %#v, want one redundant-condition warning", diags)
+		}
+		if d := diags[0]; d.Code != CodeRedundantCondition || !strings.Contains(d.Message, "always true") {
+			t.Fatalf("diagnostic = %#v, want member guard to remain always true across pure call", d)
+		}
+	})
+	t.Run("mutating signature invalidates member guard", func(t *testing.T) {
+		result := runDiagnosticsResultFull(t, `
+local box = { value = test }
+if box.value then
+	mutate(box)
+	if box.value then
+		return box
+	end
+end
+`, []string{"test", "mutate"}, redundantConditionSignatureSource())
+		diags := ProduceWithConfig(result, policy)
+		if len(diags) != 0 {
+			t.Fatalf("diagnostics = %#v, want mutating signature to invalidate member guard", diags)
+		}
+	})
+	t.Run("mutating unrelated argument preserves member guard", func(t *testing.T) {
+		result := runDiagnosticsResultFull(t, `
+local box = { value = test }
+local other = {}
+if box.value then
+	mutate(other)
+	if box.value then
+		return box
+	end
+end
+`, []string{"test", "mutate"}, redundantConditionSignatureSource())
+		diags := ProduceWithConfig(result, policy)
+		if len(diags) != 1 {
+			t.Fatalf("diagnostics = %#v, want unrelated mutation to preserve member guard", diags)
+		}
+		if d := diags[0]; d.Code != CodeRedundantCondition || !strings.Contains(d.Message, "always true") {
+			t.Fatalf("diagnostic = %#v, want member guard to remain always true", d)
+		}
+	})
+	t.Run("mutating signature preserves container root guard", func(t *testing.T) {
+		result := runDiagnosticsResultFull(t, `
+local box = { value = test }
+if box then
+	mutate(box)
+	if box then
+		return box
+	end
+end
+`, []string{"test", "mutate"}, redundantConditionSignatureSource())
+		diags := ProduceWithConfig(result, policy)
+		if len(diags) != 1 {
+			t.Fatalf("diagnostics = %#v, want root guard preserved across descendant invalidation", diags)
+		}
+		if d := diags[0]; d.Code != CodeRedundantCondition || !strings.Contains(d.Message, "always true") {
+			t.Fatalf("diagnostic = %#v, want root guard to remain always true", d)
+		}
+	})
+	t.Run("operational path invalidation preserves container root only", func(t *testing.T) {
+		result := runDiagnosticsResultFull(t, `
+local box = { value = test }
+if box then
+	if box.value then
+		invalidate_children(box)
+		if box then
+			local root = box
+		end
+		if box.value then
+			local stale = box.value
+		end
+	end
+end
+`, []string{"test", "invalidate_children"}, redundantConditionSignatureSource())
+		diags := ProduceWithConfig(result, policy)
+		if len(diags) != 1 {
+			t.Fatalf("diagnostics = %#v, want only container-root redundant-condition warning", diags)
+		}
+		if d := diags[0]; d.Code != CodeRedundantCondition || !strings.Contains(d.Message, "always true") ||
+			!strings.Contains(d.Explanation.String(), "box is already truthy") {
+			t.Fatalf("diagnostic = %#v, want root guard proof after descendant invalidation", d)
+		}
+	})
+	t.Run("open signature is not treated as no-effect proof", func(t *testing.T) {
+		result := runDiagnosticsResultFull(t, `
+local value = test
+if value then
+	unknown(value)
+	if value then
+		return value
+	end
+end
+`, []string{"test", "unknown"}, redundantConditionSignatureSource())
+		diags := ProduceWithConfig(result, policy)
+		if len(diags) != 0 {
+			t.Fatalf("diagnostics = %#v, want open-effect signature to clear guard proof", diags)
+		}
+	})
+	t.Run("stdlib type signature preserves guard", func(t *testing.T) {
+		result := runDiagnosticsResultFull(t, `
+local value = test
+if value then
+	local tag = type(value)
+	if value then
+		return tag
+	end
+end
+`, []string{"test", "type"}, signaturelookup.Source{IncludeStdlib: true})
+		diags := ProduceWithConfig(result, policy)
+		if len(diags) != 1 {
+			t.Fatalf("diagnostics = %#v, want stdlib type call to preserve guard proof", diags)
+		}
+		if d := diags[0]; d.Code != CodeRedundantCondition || !strings.Contains(d.Message, "always true") {
+			t.Fatalf("diagnostic = %#v, want value guard to remain always true", d)
+		}
+	})
+	t.Run("stdlib assert signature preserves guard", func(t *testing.T) {
+		result := runDiagnosticsResultFull(t, `
+local value = test
+if value then
+	assert(value)
+	if value then
+		return value
+	end
+end
+`, []string{"test", "assert"}, signaturelookup.Source{IncludeStdlib: true})
+		diags := ProduceWithConfig(result, policy)
+		if len(diags) != 1 {
+			t.Fatalf("diagnostics = %#v, want stdlib assert call to preserve guard proof", diags)
+		}
+		if d := diags[0]; d.Code != CodeRedundantCondition || !strings.Contains(d.Message, "always true") {
+			t.Fatalf("diagnostic = %#v, want value guard to remain always true", d)
+		}
+	})
+	t.Run("shadowed stdlib name is not trusted by spelling", func(t *testing.T) {
+		result := runDiagnosticsResultFull(t, `
+local value = test
+local function type(x)
+	value = false
+	return "boolean"
+end
+if value then
+	type(value)
+	if value then
+		return value
+	end
+end
+`, []string{"test"}, signaturelookup.Source{IncludeStdlib: true})
+		diags := ProduceWithConfig(result, policy)
+		if len(diags) != 0 {
+			t.Fatalf("diagnostics = %#v, want local shadow to block stdlib purity proof", diags)
+		}
+	})
+}
+
+func redundantConditionSignatureSource() signaturelookup.Source {
+	m := manifest.New("redundant")
+	m.DefineFunctionSignature("pure", signature.Function{
+		Type: typ.Func().
+			Param("box", typ.Any).
+			Build(),
+		Effect: effect.Empty,
+	})
+	m.DefineFunctionSignature("mutate", signature.Function{
+		Type: typ.Func().
+			Param("box", typ.Any).
+			Build(),
+		Effect: effect.Row{Labels: []effect.Label{
+			mutation.Mutate{
+				Target:    effect.ParamRef{Index: 0},
+				Transform: mutation.Unchanged{},
+			},
+		}},
+	})
+	m.DefineFunctionSignature("invalidate_children", signature.Function{
+		Type: typ.Func().
+			Param("box", typ.Any).
+			Build(),
+		OperationalEffects: &signature.OperationalEffects{
+			PathInvalidations: []signature.PathInvalidation{{
+				Path: path.NewPlaceholder(0),
+			}},
+		},
+	})
+	m.DefineFunctionSignature("unknown", signature.Function{
+		Type: typ.Func().
+			Param("value", typ.Any).
+			Build(),
+		Effect: effect.Unknown,
+	})
+	return signaturelookup.Source{Manifests: []*manifest.Manifest{m}}
+}
+
 func TestRedundantConditionWarningRespectsInvalidationAndWeakProofs(t *testing.T) {
 	cases := []struct {
 		name string
@@ -814,11 +1027,12 @@ end
 `,
 		},
 		{
-			name: "static member write invalidates descendant guards conservatively",
+			name: "alias static member write invalidates possibly aliased guard",
 			src: `
-local box = { value = test, other = test }
+local box = { value = test }
+local alias = box
 if box.value then
-	box.other = false
+	alias.value = false
 	if box.value then
 		return box
 	end
@@ -891,6 +1105,31 @@ end
 				t.Fatalf("diagnostics = %#v, want no redundant-condition warning", diags)
 			}
 		})
+	}
+}
+
+func TestRedundantConditionWarningPreservesSiblingGuardAfterStaticWrite(t *testing.T) {
+	result := runDiagnosticsResult(t, `
+local box = { value = test, other = test }
+if box.other then
+	box.value = false
+	if box.other then
+		return box
+	end
+end
+`)
+	diags := ProduceWithConfig(result, Config{Policy: diagnostic.Policy{Rules: map[diagnostic.Code]diagnostic.Rule{
+		CodeRedundantCondition: diagnostic.Enable(),
+	}}})
+	if len(diags) != 1 {
+		t.Fatalf("diagnostics = %#v, want same-root sibling guard to survive static member write", diags)
+	}
+	if d := diags[0]; d.Code != CodeRedundantCondition || !strings.Contains(d.Message, "always true") {
+		t.Fatalf("diagnostic = %#v, want sibling guard to remain always true", d)
+	}
+	if evidence := diags[0].Explanation.Evidence(); len(evidence) != 4 ||
+		!strings.Contains(evidence[3].Message, "no invalidating assignment or call affecting box.other") {
+		t.Fatalf("evidence = %#v, want invalidation evidence for box.other", evidence)
 	}
 }
 
