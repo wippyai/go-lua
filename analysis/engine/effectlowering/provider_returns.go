@@ -1,6 +1,8 @@
 package effectlowering
 
 import (
+	"reflect"
+
 	"github.com/wippyai/go-lua/analysis/domain/effect"
 	"github.com/wippyai/go-lua/analysis/domain/effect/capability"
 	caplabel "github.com/wippyai/go-lua/analysis/domain/effect/capability/label"
@@ -306,34 +308,10 @@ func activeReturnTransform(sig signature.Function, index int) (returns.ReturnTyp
 		if !operationalReturnTransform(ret.Transform) {
 			continue
 		}
-		switch transform := ret.Transform.(type) {
-		case returns.SameAs, returns.ElementOf, returns.OptionalElementOf, returns.CallbackReturn, returns.ArrayOfCallbackReturn, returns.TypeProjection:
-			return ret.Transform, true
-		case *returns.SameAs:
-			if transform != nil {
-				return transform, true
-			}
-		case *returns.ElementOf:
-			if transform != nil {
-				return transform, true
-			}
-		case *returns.OptionalElementOf:
-			if transform != nil {
-				return transform, true
-			}
-		case *returns.CallbackReturn:
-			if transform != nil {
-				return transform, true
-			}
-		case *returns.ArrayOfCallbackReturn:
-			if transform != nil {
-				return transform, true
-			}
-		case *returns.TypeProjection:
-			if transform != nil {
-				return transform, true
-			}
+		if returnTransformNilPointer(ret.Transform) {
+			continue
 		}
+		return ret.Transform, true
 	}
 	return nil, false
 }
@@ -341,4 +319,12 @@ func activeReturnTransform(sig signature.Function, index int) (returns.ReturnTyp
 func operationalReturnTransform(transform returns.ReturnType) bool {
 	desc, ok := caplabel.DescriptorForReturnTransform(transform)
 	return ok && desc.Status == capability.StatusOperational
+}
+
+func returnTransformNilPointer(transform returns.ReturnType) bool {
+	if transform == nil {
+		return true
+	}
+	v := reflect.ValueOf(transform)
+	return v.Kind() == reflect.Pointer && v.IsNil()
 }

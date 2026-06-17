@@ -2176,6 +2176,82 @@ func TestActiveReturnTransformClassificationMatrix(t *testing.T) {
 	}
 }
 
+func TestActiveReturnTransformPointerTransformsFollowCapabilityStatus(t *testing.T) {
+	tests := []struct {
+		name      string
+		transform returns.ReturnType
+	}{
+		{
+			name:      "same as pointer",
+			transform: &returns.SameAs{Source: effect.ParamRef{Index: 0}},
+		},
+		{
+			name:      "element of pointer",
+			transform: &returns.ElementOf{Source: effect.ParamRef{Index: 0}},
+		},
+		{
+			name:      "optional element of pointer",
+			transform: &returns.OptionalElementOf{Source: effect.ParamRef{Index: 0}},
+		},
+		{
+			name:      "callback return pointer",
+			transform: &returns.CallbackReturn{CallbackParam: effect.ParamRef{Index: 0}},
+		},
+		{
+			name:      "array of callback return pointer",
+			transform: &returns.ArrayOfCallbackReturn{CallbackParam: effect.ParamRef{Index: 0}},
+		},
+		{
+			name: "type projection pointer",
+			transform: &returns.TypeProjection{
+				Source:     effect.ParamRef{Index: 0},
+				Projection: projection.Projection{Steps: []projection.Step{projection.CallableReturn()}},
+			},
+		},
+		{
+			name:      "reserved deep element pointer",
+			transform: &returns.DeepElementOf{Source: effect.ParamRef{Index: 0}},
+		},
+		{
+			name:      "reserved string unpack pointer",
+			transform: &returns.StringUnpackValue{Format: effect.ParamRef{Index: 0}},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			desc, ok := caplabel.DescriptorForReturnTransform(tc.transform)
+			if !ok {
+				t.Fatalf("return transform %T has no capability descriptor", tc.transform)
+			}
+			wantActive := desc.Status == capability.StatusOperational
+			transform, ok := activeReturnTransform(signature.Function{
+				Effect: effect.Empty.With(returns.Return{ReturnIndex: 0, Transform: tc.transform}),
+			}, 0)
+			if ok != wantActive {
+				t.Fatalf("active = %v, want %v for capability status %q", ok, wantActive, desc.Status)
+			}
+			if wantActive && transform != tc.transform {
+				t.Fatalf("active transform = %#v, want original pointer %#v", transform, tc.transform)
+			}
+		})
+	}
+}
+
+func TestActiveReturnTransformRejectsTypedNilOperationalPointer(t *testing.T) {
+	var sameAs *returns.SameAs
+	desc, ok := caplabel.DescriptorForReturnTransform(sameAs)
+	if !ok || desc.Status != capability.StatusOperational {
+		t.Fatalf("typed nil SameAs descriptor = %v/%v, want operational", desc.Status, ok)
+	}
+	transform, ok := activeReturnTransform(signature.Function{
+		Effect: effect.Empty.With(returns.Return{ReturnIndex: 0, Transform: sameAs}),
+	}, 0)
+	if ok || transform != nil {
+		t.Fatalf("active transform = %#v/%v, want none for typed nil pointer", transform, ok)
+	}
+}
+
 func capabilityStatusForEffectLabel(t *testing.T, label effect.Label) capability.Status {
 	t.Helper()
 	if ret, ok := label.(returns.Return); ok {
