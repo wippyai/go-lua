@@ -9,6 +9,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/lua/branchcond"
+	"github.com/wippyai/go-lua/analysis/lua/callorder"
 	"github.com/wippyai/go-lua/analysis/lua/cfgbuild"
 	"github.com/wippyai/go-lua/analysis/lua/cfgfacts"
 	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
@@ -1321,6 +1322,71 @@ func TestExtractChunkConditionAndIteratorCallFactsUseDeferredContexts(t *testing
 	genericAgain, _ := result.GenericFor(loopPoints[2])
 	if genericAgain.Sources[0].Kind != sourceprovenance.SourceCall {
 		t.Fatalf("GenericFor exposed mutable sources slice")
+	}
+}
+
+func TestExtractChunkConditionPredicateCallPreservesNestedCallEvidence(t *testing.T) {
+	tokenCall := call("token")
+	authorizeCall := &ast.FuncCallExpr{
+		Func: ident("authorize"),
+		Args: []ast.Expr{tokenCall},
+	}
+	ifStmt := &ast.IfStmt{Condition: authorizeCall}
+	stmts := []ast.Stmt{ifStmt}
+	bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"authorize", "token"}})
+	built := cfgbuild.BuildChunk(stmts, bindings)
+
+	result, err := ExtractChunk(stmts, bindings, built)
+	if err != nil {
+		t.Fatalf("ExtractChunk: %v", err)
+	}
+
+	points := requireStmtPoints(t, built, ifStmt, 3)
+	tokenFact, ok := result.Call(points[0])
+	if !ok {
+		t.Fatalf("missing nested argument call fact")
+	}
+	if tokenFact.Call != tokenCall || tokenFact.Context != CallContextExpressionProducer || tokenFact.ExprIndex != callorder.NoExprIndex {
+		t.Fatalf("nested argument call fact = %#v", tokenFact)
+	}
+	if len(tokenFact.ResultTargets) != 1 ||
+		tokenFact.ResultTargets[0].Kind != CallResultTargetExpression ||
+		tokenFact.ResultTargets[0].Index != callorder.NoExprIndex {
+		t.Fatalf("nested argument targets = %#v", tokenFact.ResultTargets)
+	}
+
+	conditionFact, ok := result.Call(points[1])
+	if !ok {
+		t.Fatalf("missing condition predicate call fact")
+	}
+	if conditionFact.Call != authorizeCall || conditionFact.Context != CallContextCondition || conditionFact.ExprIndex != 0 {
+		t.Fatalf("condition predicate call fact = %#v", conditionFact)
+	}
+	if len(conditionFact.ArgumentSources) != 1 {
+		t.Fatalf("condition argument sources = %#v, want nested call source", conditionFact.ArgumentSources)
+	}
+	argSource := conditionFact.ArgumentSources[0]
+	if argSource.Kind != sourceprovenance.SourceCall ||
+		argSource.Expr != tokenCall ||
+		argSource.CallPoint != points[0] ||
+		!argSource.HasCallPoint ||
+		argSource.ExprIndex != 0 ||
+		argSource.TargetIndex != 0 ||
+		argSource.ResultIndex != 0 {
+		t.Fatalf("condition nested argument source = %#v", argSource)
+	}
+
+	branchFact, ok := result.BranchCondition(points[2])
+	if !ok {
+		t.Fatalf("missing branch condition fact")
+	}
+	if branchFact.Source.Kind != sourceprovenance.SourceCall ||
+		branchFact.Source.Expr != authorizeCall ||
+		branchFact.Source.CallPoint != points[1] ||
+		!branchFact.Source.HasCallPoint ||
+		branchFact.Source.TargetIndex != sourceprovenance.NoSourceIndex ||
+		!branchFact.Source.Adjusted {
+		t.Fatalf("branch predicate source = %#v", branchFact.Source)
 	}
 }
 

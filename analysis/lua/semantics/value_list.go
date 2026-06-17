@@ -32,11 +32,7 @@ func valueListCalls(exprs []ast.Expr, bindings *bind.Result) ([]indexedCall, boo
 	if !ok {
 		return nil, false
 	}
-	calls := make([]indexedCall, len(ordered))
-	for i, call := range ordered {
-		calls[i] = indexedCall{index: call.ExprIndex, call: call.Call}
-	}
-	return calls, true
+	return indexedCallsFromOccurrences(ordered), true
 }
 
 func exprCalls(expr ast.Expr, bindings *bind.Result) ([]indexedCall, bool) {
@@ -44,23 +40,15 @@ func exprCalls(expr ast.Expr, bindings *bind.Result) ([]indexedCall, bool) {
 	if !ok {
 		return nil, false
 	}
-	calls := make([]indexedCall, len(ordered))
-	for i, call := range ordered {
-		calls[i] = indexedCall{index: call.ExprIndex, call: call.Call}
-	}
-	return calls, true
+	return indexedCallsFromOccurrences(ordered), true
 }
 
-func conditionExprCalls(expr ast.Expr, bindings *bind.Result) ([]indexedCall, bool) {
-	ordered, ok := callorder.Expr(expr, valueCallOrderOptions(bindings))
-	if !ok {
-		return nil, false
-	}
+func indexedCallsFromOccurrences(ordered []callorder.Occurrence) []indexedCall {
 	calls := make([]indexedCall, len(ordered))
 	for i, call := range ordered {
 		calls[i] = indexedCall{index: call.ExprIndex, call: call.Call}
 	}
-	return calls, true
+	return calls
 }
 
 func valueCallOrderOptions(bindings *bind.Result) callorder.Options {
