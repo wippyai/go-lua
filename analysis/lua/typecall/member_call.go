@@ -3,7 +3,6 @@ package typecall
 import (
 	"github.com/wippyai/go-lua/analysis/type/access"
 	"github.com/wippyai/go-lua/analysis/type/ambient"
-	"github.com/wippyai/go-lua/analysis/type/normalize"
 	"github.com/wippyai/go-lua/analysis/type/subst"
 	"github.com/wippyai/go-lua/analysis/type/subtype"
 	"github.com/wippyai/go-lua/analysis/type/typ"
@@ -111,45 +110,18 @@ func memberCallUnion(u *typ.Union, name string, depth int) memberCallResult {
 	if u == nil || len(u.Members) == 0 {
 		return memberCallResult{status: MemberCallMissing}
 	}
-	out := make([]typ.Type, 0, len(u.Members))
-	checked := false
-	for _, member := range u.Members {
-		if isNilType(member) || typ.IsNever(member) {
-			continue
-		}
-		res := memberCallDepth(member, name, depth+1)
-		if res.status != MemberCallOK {
-			return res
-		}
-		checked = true
-		if res.t != nil {
-			out = append(out, res.t)
-		}
-	}
-	if !checked {
-		return memberCallResult{status: MemberCallMissing}
-	}
-	return memberCallResult{t: normalize.UnionForEvidence(out...), status: MemberCallOK}
+	return memberCallDistributeUnion(u.Members, depth, func(member typ.Type, depth int) memberCallResult {
+		return memberCallDepth(member, name, depth)
+	})
 }
 
 func memberCallIntersection(in *typ.Intersection, name string, depth int) memberCallResult {
 	if in == nil {
 		return memberCallResult{status: MemberCallMissing}
 	}
-	out := make([]typ.Type, 0, len(in.Members))
-	for _, member := range in.Members {
-		res := memberCallDepth(member, name, depth+1)
-		if res.status == MemberCallOK && res.t != nil {
-			out = append(out, res.t)
-		}
-	}
-	if len(out) == 0 {
-		return memberCallResult{status: MemberCallMissing}
-	}
-	if len(out) == 1 {
-		return memberCallResult{t: out[0], status: MemberCallOK}
-	}
-	return memberCallResult{t: normalize.IntersectionForMeet(out...), status: MemberCallOK}
+	return memberCallDistributeIntersection(in.Members, depth, func(member typ.Type, depth int) memberCallResult {
+		return memberCallDepth(member, name, depth)
+	})
 }
 
 func memberCallSingle(t typ.Type, name string, depth int) memberCallResult {
@@ -188,45 +160,18 @@ func indexedMemberCallUnion(u *typ.Union, key typ.Type, depth int) memberCallRes
 	if u == nil || len(u.Members) == 0 {
 		return memberCallResult{status: MemberCallMissing}
 	}
-	out := make([]typ.Type, 0, len(u.Members))
-	checked := false
-	for _, member := range u.Members {
-		if isNilType(member) || typ.IsNever(member) {
-			continue
-		}
-		res := indexedMemberCallDepth(member, key, depth+1)
-		if res.status != MemberCallOK {
-			return res
-		}
-		checked = true
-		if res.t != nil {
-			out = append(out, res.t)
-		}
-	}
-	if !checked {
-		return memberCallResult{status: MemberCallMissing}
-	}
-	return memberCallResult{t: normalize.UnionForEvidence(out...), status: MemberCallOK}
+	return memberCallDistributeUnion(u.Members, depth, func(member typ.Type, depth int) memberCallResult {
+		return indexedMemberCallDepth(member, key, depth)
+	})
 }
 
 func indexedMemberCallIntersection(in *typ.Intersection, key typ.Type, depth int) memberCallResult {
 	if in == nil {
 		return memberCallResult{status: MemberCallMissing}
 	}
-	out := make([]typ.Type, 0, len(in.Members))
-	for _, member := range in.Members {
-		res := indexedMemberCallDepth(member, key, depth+1)
-		if res.status == MemberCallOK && res.t != nil {
-			out = append(out, res.t)
-		}
-	}
-	if len(out) == 0 {
-		return memberCallResult{status: MemberCallMissing}
-	}
-	if len(out) == 1 {
-		return memberCallResult{t: out[0], status: MemberCallOK}
-	}
-	return memberCallResult{t: normalize.IntersectionForMeet(out...), status: MemberCallOK}
+	return memberCallDistributeIntersection(in.Members, depth, func(member typ.Type, depth int) memberCallResult {
+		return indexedMemberCallDepth(member, key, depth)
+	})
 }
 
 func indexedMemberCallSingle(t typ.Type, key typ.Type, depth int) memberCallResult {
