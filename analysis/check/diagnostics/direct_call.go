@@ -188,6 +188,23 @@ func boundaryMaybeNilCalleeType(result *body.Result, point cfg.Point, callee ast
 
 func directPossiblyNilCalleeDiagnostic(point cfg.Point, call *ast.FuncCallExpr, name string, calleeType typ.Type) diagnostic.Diagnostic {
 	span := ast.SpanOf(call)
+	return directCalleeDiagnostic(point, call, name, CodeNotCallable,
+		fmt.Sprintf("%s is %s, possibly nil and not callable", name, formatType(calleeType)),
+		diagnostic.Evidence{
+			Kind:    diagnostic.EvidenceAbstractFact,
+			Trust:   diagnostic.TrustProven,
+			Span:    span,
+			Message: fmt.Sprintf("%s is %s at the call", name, formatType(calleeType)),
+		},
+		"possibly-nil call target")
+}
+
+// directCalleeDiagnostic builds the shared callee-not-callable diagnostic shell:
+// the call span/position, the "call at point N resolves to <name>" abstract
+// fact, the caller's message and label, and a second evidence item describing
+// why the callee is not callable.
+func directCalleeDiagnostic(point cfg.Point, call *ast.FuncCallExpr, name string, code diagnostic.Code, message string, why diagnostic.Evidence, label string) diagnostic.Diagnostic {
+	span := ast.SpanOf(call)
 	return diagnostic.Diagnostic{
 		Position: diagnostic.Position{
 			Line:      span.StartLine,
@@ -196,9 +213,9 @@ func directPossiblyNilCalleeDiagnostic(point cfg.Point, call *ast.FuncCallExpr, 
 			EndColumn: span.EndCol,
 		},
 		Span:     span,
-		Code:     CodeNotCallable,
+		Code:     code,
 		Severity: diagnostic.SeverityError,
-		Message:  fmt.Sprintf("%s is %s, possibly nil and not callable", name, formatType(calleeType)),
+		Message:  message,
 		Explanation: diagnostic.NewExplanation(
 			diagnostic.Evidence{
 				Kind:    diagnostic.EvidenceAbstractFact,
@@ -206,14 +223,9 @@ func directPossiblyNilCalleeDiagnostic(point cfg.Point, call *ast.FuncCallExpr, 
 				Span:    span,
 				Message: fmt.Sprintf("call at CFG point %d resolves to %s", point, name),
 			},
-			diagnostic.Evidence{
-				Kind:    diagnostic.EvidenceAbstractFact,
-				Trust:   diagnostic.TrustProven,
-				Span:    span,
-				Message: fmt.Sprintf("%s is %s at the call", name, formatType(calleeType)),
-			},
+			why,
 		),
-		Labels: []diagnostic.Label{{Span: span, Message: "possibly-nil call target"}},
+		Labels: []diagnostic.Label{{Span: span, Message: label}},
 	}
 }
 
@@ -567,33 +579,15 @@ func isOptionalType(t typ.Type) bool {
 
 func directNotCallableDiagnostic(point cfg.Point, call *ast.FuncCallExpr, name string, calleeType typ.Type) diagnostic.Diagnostic {
 	span := ast.SpanOf(call)
-	return diagnostic.Diagnostic{
-		Position: diagnostic.Position{
-			Line:      span.StartLine,
-			Column:    span.StartCol,
-			EndLine:   span.EndLine,
-			EndColumn: span.EndCol,
+	return directCalleeDiagnostic(point, call, name, CodeDirectCallNotCallable,
+		fmt.Sprintf("%s is %s, not callable", name, formatType(calleeType)),
+		diagnostic.Evidence{
+			Kind:    diagnostic.EvidenceUserAssertion,
+			Trust:   diagnostic.TrustClaimed,
+			Span:    span,
+			Message: fmt.Sprintf("%s is annotated %s", name, formatType(calleeType)),
 		},
-		Span:     span,
-		Code:     CodeDirectCallNotCallable,
-		Severity: diagnostic.SeverityError,
-		Message:  fmt.Sprintf("%s is %s, not callable", name, formatType(calleeType)),
-		Explanation: diagnostic.NewExplanation(
-			diagnostic.Evidence{
-				Kind:    diagnostic.EvidenceAbstractFact,
-				Trust:   diagnostic.TrustProven,
-				Span:    span,
-				Message: fmt.Sprintf("call at CFG point %d resolves to %s", point, name),
-			},
-			diagnostic.Evidence{
-				Kind:    diagnostic.EvidenceUserAssertion,
-				Trust:   diagnostic.TrustClaimed,
-				Span:    span,
-				Message: fmt.Sprintf("%s is annotated %s", name, formatType(calleeType)),
-			},
-		),
-		Labels: []diagnostic.Label{{Span: span, Message: "non-callable call target"}},
-	}
+		"non-callable call target")
 }
 
 func tooFewArgsDiagnostic(point cfg.Point, call *ast.FuncCallExpr, name string, want, got int, declSpan ast.Span) diagnostic.Diagnostic {
