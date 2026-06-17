@@ -1,8 +1,8 @@
 package subtype
 
 import (
-	"github.com/wippyai/go-lua/analysis/type/kind"
 	"github.com/wippyai/go-lua/analysis/type/internal/nodeid"
+	"github.com/wippyai/go-lua/analysis/type/kind"
 	"github.com/wippyai/go-lua/analysis/type/subst"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
@@ -87,6 +87,15 @@ func (c *checker) checkCore(sub, super typ.Type, depth int) bool {
 	}
 	if a, ok := super.(*typ.Annotated); ok {
 		return c.check(sub, a.Inner, depth+1)
+	}
+	// Both sides recursive (distinct identities for the same nominal type, e.g.
+	// resolved in two contexts): unwrap both bodies. The inProgress coinductive
+	// guard in check() terminates the cycle, so structurally corresponding
+	// recursive types are subtypes regardless of placeholder identity.
+	if rs, ok := sub.(*typ.Recursive); ok && rs.Body != nil && rs.Body != rs {
+		if rp, ok := super.(*typ.Recursive); ok && rp.Body != nil && rp.Body != rp {
+			return c.check(rs.Body, rp.Body, depth+1)
+		}
 	}
 	if r, ok := sub.(*typ.Recursive); ok && super.Kind() != kind.Recursive && r.Body != nil && r.Body != r {
 		return c.check(r.Body, super, depth+1)
