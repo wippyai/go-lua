@@ -7,7 +7,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/effect"
 	"github.com/wippyai/go-lua/analysis/domain/effect/capability"
 	caplabel "github.com/wippyai/go-lua/analysis/domain/effect/capability/label"
-	"github.com/wippyai/go-lua/analysis/domain/effect/control"
 	"github.com/wippyai/go-lua/analysis/domain/effect/dispatch"
 	"github.com/wippyai/go-lua/analysis/domain/effect/iteration"
 	"github.com/wippyai/go-lua/analysis/domain/effect/mutation"
@@ -86,6 +85,14 @@ func inactiveManifestEffectLabel(label effect.Label) error {
 	return inactiveManifestEffectLabelError(desc)
 }
 
+func inactiveManifestEffectID(id string) error {
+	desc, ok := capability.Lookup(id)
+	if !ok {
+		return fmt.Errorf("manifest: unaudited effect label %s", id)
+	}
+	return inactiveManifestEffectLabelError(desc)
+}
+
 func inactiveManifestEffectLabelError(desc capability.Descriptor) error {
 	return fmt.Errorf("manifest: inactive effect label %s (%s)", desc.ID, desc.Status)
 }
@@ -93,16 +100,8 @@ func inactiveManifestEffectLabelError(desc capability.Descriptor) error {
 func encodeEffectLabel(label effect.Label) (effectLabelWire, error) {
 	label = effect.NormalizeLabel(label)
 	switch l := label.(type) {
-	case control.Throw:
-		return effectLabelWire{Kind: "control.throw"}, nil
-	case control.IO:
-		return effectLabelWire{Kind: "control.io"}, nil
 	case dispatch.ModuleLoad:
 		return effectLabelWire{Kind: "dispatch.moduleLoad"}, nil
-	case dispatch.VariadicTransform:
-		return effectLabelWire{Kind: "dispatch.variadicTransform"}, nil
-	case dispatch.TypePredicate:
-		return effectLabelWire{Kind: "dispatch.typePredicate"}, nil
 	case iteration.Iterator:
 		kind, err := encodeIteratorKind(l.Kind)
 		if err != nil {
@@ -184,15 +183,15 @@ func encodeEffectLabel(label effect.Label) (effectLabelWire, error) {
 func decodeEffectLabel(w effectLabelWire) (effect.Label, error) {
 	switch w.Kind {
 	case "control.throw":
-		return control.Throw{}, nil
+		return nil, inactiveManifestEffectID(capability.ControlThrow)
 	case "control.io":
-		return control.IO{}, nil
+		return nil, inactiveManifestEffectID(capability.ControlIO)
 	case "dispatch.moduleLoad":
 		return dispatch.ModuleLoad{}, nil
 	case "dispatch.variadicTransform":
-		return dispatch.VariadicTransform{}, nil
+		return nil, inactiveManifestEffectID(capability.DispatchVariadicTransform)
 	case "dispatch.typePredicate":
-		return dispatch.TypePredicate{}, nil
+		return nil, inactiveManifestEffectID(capability.DispatchTypePredicate)
 	case "iteration.iterator":
 		kind, err := decodeIteratorKind(w.IteratorKind)
 		if err != nil {

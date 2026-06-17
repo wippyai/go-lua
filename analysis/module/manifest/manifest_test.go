@@ -701,8 +701,10 @@ func TestManifestRejectsInactiveDecodedEffectLabels(t *testing.T) {
 		name string
 		wire effectLabelWire
 	}{
+		{"control throw", effectLabelWire{Kind: "control.throw"}},
 		{"control io", effectLabelWire{Kind: "control.io"}},
 		{"dispatch type predicate", effectLabelWire{Kind: "dispatch.typePredicate"}},
+		{"dispatch variadic transform", effectLabelWire{Kind: "dispatch.variadicTransform"}},
 		{"return length", effectLabelWire{Kind: "returns.returnLength", Length: encodeExprForTest(t, expr.C(1))}},
 		{"correlated return", effectLabelWire{Kind: "returns.correlatedReturn", Indices: []int{0, 1}}},
 		{"return deep element", effectLabelWire{Kind: "returns.return", ReturnType: &effectReturnWire{Kind: "returns.deepElementOf"}}},

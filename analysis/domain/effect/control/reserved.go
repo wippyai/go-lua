@@ -8,10 +8,13 @@ var (
 )
 
 type (
-	// Throw indicates that a function may raise an error.
+	// Throw is reserved high-risk control metadata. Error behavior is currently
+	// represented by Never, postconditions, and module-load behavior rather than
+	// active control-effect lowering.
 	Throw struct{}
 
-	// IO indicates that a function performs I/O.
+	// IO is reserved high-risk control metadata. IO policy and enforcement are
+	// not active, so stdlib signatures must not declare this label.
 	IO struct{}
 )
 

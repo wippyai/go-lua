@@ -323,7 +323,10 @@ func TestStdlibSignatureConstructionRejectsInactiveEffectLabels(t *testing.T) {
 		name  string
 		label effect.Label
 	}{
+		{"control throw", control.Throw{}},
 		{"control io", control.IO{}},
+		{"dispatch type predicate", dispatch.TypePredicate{}},
+		{"dispatch variadic transform", dispatch.VariadicTransform{}},
 		{"return deep element", returns.Return{
 			ReturnIndex: 0,
 			Transform:   returns.DeepElementOf{},
