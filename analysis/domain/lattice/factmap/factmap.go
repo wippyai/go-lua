@@ -21,17 +21,25 @@ import (
 // Map describes one pointwise map lattice over the carrier []F, where each fact
 // carries a key (Key) and a value (Value) from the value lattice Domain.
 //
+// The default polarity is a may map: Join is the pointwise union and a ⊑ b
+// compares values pointwise with the value bottom as the default for missing
+// keys. Setting Intersect makes it a must map: Join keeps only shared keys and
+// a ⊑ b requires a to carry every key b does with a's value below b's.
+//
 // Key, Value, WithValue, Less, and Domain are required. The optional hooks
-// tailor a lane: Valid drops facts during normalization, and CloneFact
-// deep-copies a fact's key side on ingest.
+// tailor a lane: Valid drops facts during normalization, CloneFact deep-copies a
+// fact's key side on ingest, and KeepBottom retains value-bottom facts instead
+// of dropping them.
 type Map[K comparable, F any, V any] struct {
-	Key       func(F) K
-	Value     func(F) V
-	WithValue func(F, V) F
-	Less      func(a, b F) bool
-	Valid     func(F) bool
-	CloneFact func(F) F
-	Domain    lattice.Lattice[V]
+	Key        func(F) K
+	Value      func(F) V
+	WithValue  func(F, V) F
+	Less       func(a, b F) bool
+	Valid      func(F) bool
+	CloneFact  func(F) F
+	Domain     lattice.Lattice[V]
+	Intersect  bool
+	KeepBottom bool
 }
 
 func (m Map[K, F, V]) cloneOne(f F) F {
@@ -55,7 +63,7 @@ func (m Map[K, F, V]) Normalize(in []F) []F {
 			continue
 		}
 		fact = m.cloneOne(fact)
-		if m.Domain.Equal(m.Value(fact), bottom) {
+		if !m.KeepBottom && m.Domain.Equal(m.Value(fact), bottom) {
 			continue
 		}
 		key := m.Key(fact)
@@ -96,11 +104,21 @@ func (m Map[K, F, V]) Equal(a, b []F) bool {
 	return true
 }
 
-// LessOrEq reports whether a ⊑ b pointwise, treating a missing key as the value
-// bottom.
+// LessOrEq reports whether a ⊑ b. A may map compares values pointwise with the
+// value bottom as the default for a missing key; a must map requires a to carry
+// every key b does with a's value below b's.
 func (m Map[K, F, V]) LessOrEq(a, b []F) bool {
 	av := m.valueMap(a)
 	bv := m.valueMap(b)
+	if m.Intersect {
+		for key, right := range bv {
+			left, ok := av[key]
+			if !ok || !m.Domain.LessOrEq(left, right) {
+				return false
+			}
+		}
+		return true
+	}
 	bottom := m.Domain.Bottom()
 	for key, left := range av {
 		right, ok := bv[key]
@@ -137,6 +155,15 @@ func (m Map[K, F, V]) Widen(prev, next []F) []F {
 func (m Map[K, F, V]) combine(a, b []F, merge func(V, V) V) []F {
 	am := m.factMap(a)
 	bm := m.factMap(b)
+	if m.Intersect {
+		out := make(map[K]F, len(am))
+		for key, left := range am {
+			if right, ok := bm[key]; ok {
+				out[key] = m.WithValue(left, merge(m.Value(left), m.Value(right)))
+			}
+		}
+		return m.sorted(out)
+	}
 	if len(am) == 0 && len(bm) == 0 {
 		return nil
 	}

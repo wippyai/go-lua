@@ -81,6 +81,26 @@ func TestPointwiseJoinLaws(t *testing.T) {
 	}
 }
 
+func TestMustMapIntersectsKeysAndKeepsBottom(t *testing.T) {
+	m := testMap()
+	m.Intersect = true
+	m.KeepBottom = true
+
+	a := mapFacts(1, 2, 2, 4, 3, 0)
+	b := mapFacts(2, 1, 3, 5)
+	// Join keeps only shared keys (2,3); values merged by max; bottom retained.
+	if !m.Equal(m.Join(a, b), mapFacts(2, 4, 3, 5)) {
+		t.Fatalf("must join = %v, want {2:4,3:5}", m.Join(a, b))
+	}
+	// a ⊑ b iff a carries every key of b with a's value below b's.
+	if !m.LessOrEq(mapFacts(1, 1, 2, 1), mapFacts(2, 5)) {
+		t.Fatalf("superset-of-keys with smaller values must be below")
+	}
+	if m.LessOrEq(mapFacts(2, 5), mapFacts(1, 1, 2, 5)) {
+		t.Fatalf("missing key 1 must fail must-lessOrEq")
+	}
+}
+
 func TestPointwiseLessOrEqUsesValueBottomDefault(t *testing.T) {
 	m := testMap()
 	// {1:2} ⊑ {1:2, 2:5} because the missing key 2 defaults to bottom (0 ⊑ 5).
