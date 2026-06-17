@@ -16,40 +16,20 @@ func expandOptional(v *typ.Optional, orig typ.Type, guard recursion.Guard, memo 
 }
 
 func expandUnion(v *typ.Union, orig typ.Type, guard recursion.Guard, memo map[expandMemoKey]typ.Type, mode expandMode) typ.Type {
-	var members []typ.Type
-	for i, m := range v.Members {
-		newMember := expandInstantiatedGuardMode(m, guard, memo, mode)
-		if newMember != m {
-			if members == nil {
-				members = make([]typ.Type, len(v.Members))
-				copy(members, v.Members)
-			}
-			members[i] = newMember
-		} else if members != nil {
-			members[i] = m
-		}
-	}
-	if members == nil {
+	members, changed := typ.MapMembers(v.Members, func(m typ.Type) typ.Type {
+		return expandInstantiatedGuardMode(m, guard, memo, mode)
+	})
+	if !changed {
 		return orig
 	}
 	return typeexpr.Union(members...)
 }
 
 func expandIntersection(v *typ.Intersection, orig typ.Type, guard recursion.Guard, memo map[expandMemoKey]typ.Type, mode expandMode) typ.Type {
-	var members []typ.Type
-	for i, m := range v.Members {
-		newMember := expandInstantiatedGuardMode(m, guard, memo, mode)
-		if newMember != m {
-			if members == nil {
-				members = make([]typ.Type, len(v.Members))
-				copy(members, v.Members)
-			}
-			members[i] = newMember
-		} else if members != nil {
-			members[i] = m
-		}
-	}
-	if members == nil {
+	members, changed := typ.MapMembers(v.Members, func(m typ.Type) typ.Type {
+		return expandInstantiatedGuardMode(m, guard, memo, mode)
+	})
+	if !changed {
 		return orig
 	}
 	return typeexpr.Intersection(members...)
@@ -88,20 +68,10 @@ func expandReadonlyMap(v *typ.ReadonlyMap, orig typ.Type, guard recursion.Guard,
 }
 
 func expandTuple(v *typ.Tuple, orig typ.Type, guard recursion.Guard, memo map[expandMemoKey]typ.Type, mode expandMode) typ.Type {
-	var elems []typ.Type
-	for i, e := range v.Elements {
-		newElem := expandInstantiatedGuardMode(e, guard, memo, mode)
-		if newElem != e {
-			if elems == nil {
-				elems = make([]typ.Type, len(v.Elements))
-				copy(elems, v.Elements)
-			}
-			elems[i] = newElem
-		} else if elems != nil {
-			elems[i] = e
-		}
-	}
-	if elems == nil {
+	elems, changed := typ.MapMembers(v.Elements, func(e typ.Type) typ.Type {
+		return expandInstantiatedGuardMode(e, guard, memo, mode)
+	})
+	if !changed {
 		return orig
 	}
 	return typ.NewTuple(elems...)
