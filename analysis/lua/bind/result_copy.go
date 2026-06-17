@@ -33,6 +33,13 @@ func cloneCaptures(captures []Capture) []Capture {
 	return append([]Capture(nil), captures...)
 }
 
+func cloneIdentExprs(exprs []*ast.IdentExpr) []*ast.IdentExpr {
+	if len(exprs) == 0 {
+		return nil
+	}
+	return append([]*ast.IdentExpr(nil), exprs...)
+}
+
 func cloneTypeDecls(decls []TypeDecl) []TypeDecl {
 	if len(decls) == 0 {
 		return nil

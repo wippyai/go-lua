@@ -244,6 +244,34 @@ func TestImplicitGlobals(t *testing.T) {
 	}
 }
 
+func TestReadIdentsExcludeWrites(t *testing.T) {
+	write := ident("x")
+	read := ident("x")
+	rewrite := ident("x")
+	stmts := []ast.Stmt{
+		localAssign([]string{"x"}, number("1")),
+		&ast.AssignStmt{Lhs: []ast.Expr{write}, Rhs: []ast.Expr{number("2")}},
+		ret(read),
+		&ast.AssignStmt{Lhs: []ast.Expr{rewrite}, Rhs: []ast.Expr{number("3")}},
+	}
+
+	r := BindChunk(stmts, Options{})
+	id := mustSymbol(t, r, read)
+	got := r.ReadIdents(id)
+	if len(got) != 1 || got[0] != read {
+		t.Fatalf("ReadIdents(%d) = %#v, want only read occurrence %p", id, got, read)
+	}
+	if !r.HasRead(id) {
+		t.Fatalf("HasRead(%d) = false, want true", id)
+	}
+	if got := mustSymbol(t, r, write); got != id {
+		t.Fatalf("write symbol = %d, want %d", got, id)
+	}
+	if got := mustSymbol(t, r, rewrite); got != id {
+		t.Fatalf("rewrite symbol = %d, want %d", got, id)
+	}
+}
+
 func TestFuncDefTargetSymbol(t *testing.T) {
 	globalTarget := ident("f")
 	globalStmt := &ast.FuncDefStmt{Name: &ast.FuncName{Func: globalTarget}, Func: function(nil)}

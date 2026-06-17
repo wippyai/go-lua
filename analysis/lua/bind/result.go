@@ -13,6 +13,7 @@ type Options struct {
 // Result records lexical declaration identities for identifier occurrences.
 type Result struct {
 	identSymbols          map[*ast.IdentExpr]symbol.ID
+	readIdents            map[symbol.ID][]*ast.IdentExpr
 	implicitGlobalUses    map[*ast.IdentExpr]struct{}
 	implicitGlobalSymbols map[symbol.ID]struct{}
 	typeValueRefs         map[*ast.IdentExpr]TypeDecl
@@ -38,11 +39,11 @@ type Result struct {
 	numForSymbols     map[*ast.NumberForStmt]symbol.ID
 	genericForSymbols map[*ast.GenericForStmt][]symbol.ID
 
-	nextTypeDeclID     TypeDeclID
-	typeRefs           map[*ast.TypeRefExpr]TypeDecl
-	primitiveTypeRefs  map[*ast.PrimitiveTypeExpr]TypeDecl
-	typeDefDecls       map[*ast.TypeDefStmt]TypeDecl
-	interfaceDecls     map[*ast.InterfaceDefStmt]TypeDecl
+	nextTypeDeclID      TypeDeclID
+	typeRefs            map[*ast.TypeRefExpr]TypeDecl
+	primitiveTypeRefs   map[*ast.PrimitiveTypeExpr]TypeDecl
+	typeDefDecls        map[*ast.TypeDefStmt]TypeDecl
+	interfaceDecls      map[*ast.InterfaceDefStmt]TypeDecl
 	typeDefParams       map[*ast.TypeDefStmt][]TypeDecl
 	functionTypeParams  map[*ast.FunctionExpr][]TypeDecl
 	methodReceiverTypes map[*ast.FunctionExpr]TypeDecl
@@ -51,6 +52,7 @@ type Result struct {
 func newResult(opts Options) *Result {
 	r := &Result{
 		identSymbols:          make(map[*ast.IdentExpr]symbol.ID),
+		readIdents:            make(map[symbol.ID][]*ast.IdentExpr),
 		implicitGlobalUses:    make(map[*ast.IdentExpr]struct{}),
 		implicitGlobalSymbols: make(map[symbol.ID]struct{}),
 		typeValueRefs:         make(map[*ast.IdentExpr]TypeDecl),

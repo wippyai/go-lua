@@ -35,6 +35,83 @@ func TestAnnotationAssignabilityReportsLiteralMismatch(t *testing.T) {
 	}
 }
 
+func TestProduceWithConfigAppliesDiagnosticPolicy(t *testing.T) {
+	result := runDiagnosticsResult(t, `local x: number = "no"`)
+	disabled := ProduceWithConfig(result, Config{Policy: diagnostic.Policy{Rules: map[diagnostic.Code]diagnostic.Rule{
+		CodeAssignmentType: diagnostic.Disable(),
+	}}})
+	if len(disabled) != 0 {
+		t.Fatalf("disabled diagnostics = %#v, want none", disabled)
+	}
+
+	remapped := ProduceWithConfig(result, Config{Policy: diagnostic.Policy{Rules: map[diagnostic.Code]diagnostic.Rule{
+		CodeAssignmentType: diagnostic.OverrideSeverity(diagnostic.SeverityHint),
+	}}})
+	if len(remapped) != 1 {
+		t.Fatalf("remapped diagnostics = %#v, want one diagnostic", remapped)
+	}
+	if remapped[0].Code != CodeAssignmentType || remapped[0].Severity != diagnostic.SeverityHint {
+		t.Fatalf("remapped diagnostic = %#v, want assignment diagnostic with hint severity", remapped[0])
+	}
+}
+
+func TestUnusedLocalWarningIsOptInAndEvidenceBacked(t *testing.T) {
+	result := runDiagnosticsResult(t, `local unused = 1`)
+	if diags := ProduceWithConfig(result, Config{}); len(diags) != 0 {
+		t.Fatalf("default diagnostics = %#v, want unused-local disabled by default", diags)
+	}
+
+	diags := ProduceWithConfig(result, Config{Policy: diagnostic.Policy{Rules: map[diagnostic.Code]diagnostic.Rule{
+		CodeUnusedLocal: diagnostic.Enable(),
+	}}})
+	if len(diags) != 1 {
+		t.Fatalf("diagnostics = %#v, want one unused-local warning", diags)
+	}
+	d := diags[0]
+	if d.Code != CodeUnusedLocal || d.Severity != diagnostic.SeverityWarning {
+		t.Fatalf("diagnostic code/severity = %s/%s, want %s/warning", d.Code, d.Severity, CodeUnusedLocal)
+	}
+	if !strings.Contains(d.Message, "unused") {
+		t.Fatalf("message = %q, want local name", d.Message)
+	}
+	evidence := d.Explanation.Evidence()
+	if len(evidence) < 2 {
+		t.Fatalf("evidence = %#v, want declaration and missing-read proof", evidence)
+	}
+	if !strings.Contains(evidence[1].Message, "no identifier read") {
+		t.Fatalf("evidence = %#v, want missing read proof", evidence)
+	}
+}
+
+func TestUnusedLocalWarningIgnoresIntentionalAndReadLocals(t *testing.T) {
+	diags := ProduceWithConfig(runDiagnosticsResult(t, `
+local _ignored = 1
+local used = 2
+local captured = 3
+local fn = function()
+    return captured
+end
+return used, fn
+`), Config{Policy: diagnostic.Policy{Rules: map[diagnostic.Code]diagnostic.Rule{
+		CodeUnusedLocal: diagnostic.Enable(),
+	}}})
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v, want no unused-local warnings", diags)
+	}
+}
+
+func TestUnusedLocalWarningSeverityCanBeRemapped(t *testing.T) {
+	diags := ProduceWithConfig(runDiagnosticsResult(t, `local unused = 1`), Config{Policy: diagnostic.Policy{Rules: map[diagnostic.Code]diagnostic.Rule{
+		CodeUnusedLocal: diagnostic.Enable().WithSeverity(diagnostic.SeverityHint),
+	}}})
+	if len(diags) != 1 {
+		t.Fatalf("diagnostics = %#v, want one unused-local diagnostic", diags)
+	}
+	if diags[0].Severity != diagnostic.SeverityHint {
+		t.Fatalf("severity = %s, want hint", diags[0].Severity)
+	}
+}
+
 func TestAnnotationAssignabilityAcceptsSubtypeLiteral(t *testing.T) {
 	diags := runDiagnostics(t, `local x: number = 42`)
 	if len(diags) != 0 {

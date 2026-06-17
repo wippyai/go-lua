@@ -36,6 +36,43 @@ func TestCheckRunsActiveDiagnostics(t *testing.T) {
 	}
 }
 
+func TestCheckDiagnosticPolicyControlsCode(t *testing.T) {
+	disabled := Check(`local x: number = "no"`, WithDiagnosticRule(diagnostics.CodeAssignmentType, diagnostic.Disable()))
+	if len(disabled.Diagnostics) != 0 {
+		t.Fatalf("disabled diagnostics = %#v, want none", disabled.Diagnostics)
+	}
+
+	remapped := Check(`local x: number = "no"`, WithDiagnosticRule(
+		diagnostics.CodeAssignmentType,
+		diagnostic.OverrideSeverity(diagnostic.SeverityHint),
+	))
+	if len(remapped.Diagnostics) != 1 {
+		t.Fatalf("remapped diagnostics = %#v, want one diagnostic", remapped.Diagnostics)
+	}
+	if remapped.Diagnostics[0].Severity != diagnostic.SeverityHint {
+		t.Fatalf("severity = %s, want hint", remapped.Diagnostics[0].Severity)
+	}
+}
+
+func TestCheckCanEnableUnusedLocalWarning(t *testing.T) {
+	defaultResult := Check(`local unused = 1`)
+	if len(defaultResult.Diagnostics) != 0 {
+		t.Fatalf("default diagnostics = %#v, want unused-local off by default", defaultResult.Diagnostics)
+	}
+
+	warn := Check(`local unused = 1`, WithDiagnosticRule(
+		diagnostics.CodeUnusedLocal,
+		diagnostic.Enable().WithSeverity(diagnostic.SeverityHint),
+	))
+	if len(warn.Diagnostics) != 1 {
+		t.Fatalf("diagnostics = %#v, want one unused-local diagnostic", warn.Diagnostics)
+	}
+	if warn.Diagnostics[0].Code != diagnostics.CodeUnusedLocal || warn.Diagnostics[0].Severity != diagnostic.SeverityHint {
+		t.Fatalf("diagnostic = %#v, want unused-local hint", warn.Diagnostics[0])
+	}
+	requireEvidenceMessage(t, warn.Diagnostics[0], "no identifier read")
+}
+
 func TestCheckAliasedObjectLiteralMemberReadUsesHeapIdentity(t *testing.T) {
 	result := Check(`
 local user = { id = "u1" }

@@ -25,6 +25,22 @@ func (r *Result) SymbolOf(ident *ast.IdentExpr) (symbol.ID, bool) {
 	return id, ok
 }
 
+// ReadIdents returns identifier read occurrences bound to id.
+func (r *Result) ReadIdents(id symbol.ID) []*ast.IdentExpr {
+	if r == nil || id == 0 {
+		return nil
+	}
+	return cloneIdentExprs(r.readIdents[id])
+}
+
+// HasRead reports whether id has at least one identifier read occurrence.
+func (r *Result) HasRead(id symbol.ID) bool {
+	if r == nil || id == 0 {
+		return false
+	}
+	return len(r.readIdents[id]) > 0
+}
+
 // FuncDefTargetSymbol returns the simple assignment target for a function
 // definition of the form "function f(...) ... end".
 func (r *Result) FuncDefTargetSymbol(stmt *ast.FuncDefStmt) (symbol.ID, bool) {
@@ -301,6 +317,7 @@ func (b *binder) bindReadIdent(ident *ast.IdentExpr) {
 		}
 	}
 	b.result.identSymbols[ident] = id
+	b.result.readIdents[id] = append(b.result.readIdents[id], ident)
 	b.recordDirectCapture(id)
 }
 

@@ -26,17 +26,27 @@ const (
 	CodeChannelSelectExhaustive    diagnostic.Code = "channel.select.exhaustiveness"
 	CodeUnresolvedTypeReference    diagnostic.Code = "type.reference.unresolved"
 	CodeUnresolvedValueReference   diagnostic.Code = "value.reference.unresolved"
+	CodeUnusedLocal                diagnostic.Code = "lint.unused.local"
 )
 
 type producerContext struct {
 	resolver typeannotation.Resolver
 }
 
-func Produce(result *body.Result) []diagnostic.Diagnostic {
-	return produceWithResolver(result, nil, nil)
+// Config controls post-solve diagnostic production.
+type Config struct {
+	Policy diagnostic.Policy
 }
 
-func produceWithResolver(result *body.Result, parent typeannotation.Resolver, inheritedDefs map[symbol.ID]*ast.FunctionExpr) []diagnostic.Diagnostic {
+func Produce(result *body.Result) []diagnostic.Diagnostic {
+	return ProduceWithConfig(result, Config{})
+}
+
+func ProduceWithConfig(result *body.Result, config Config) []diagnostic.Diagnostic {
+	return config.Policy.Apply(produceWithResolver(result, nil, nil, config))
+}
+
+func produceWithResolver(result *body.Result, parent typeannotation.Resolver, inheritedDefs map[symbol.ID]*ast.FunctionExpr, config Config) []diagnostic.Diagnostic {
 	resolver := newResultResolver(result, parent)
 	context := producerContext{resolver: resolver}
 	defs := directCallDefinitions(result, inheritedDefs)
@@ -52,8 +62,11 @@ func produceWithResolver(result *body.Result, parent typeannotation.Resolver, in
 	out = append(out, memberCall(context).Produce(result)...)
 	out = append(out, memberRead(context).Produce(result)...)
 	out = append(out, channelSelectExhaustiveness(context).Produce(result)...)
+	if config.Policy.Enabled(CodeUnusedLocal, false) {
+		out = append(out, unusedLocals(context).Produce(result)...)
+	}
 	for _, fn := range result.FunctionResults() {
-		out = append(out, produceWithResolver(fn, resolver, defs)...)
+		out = append(out, produceWithResolver(fn, resolver, defs, config)...)
 	}
 	return out
 }

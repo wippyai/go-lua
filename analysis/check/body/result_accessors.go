@@ -298,6 +298,20 @@ func (r *Result) LocalSymbols(stmt *ast.LocalAssignStmt) []symbol.ID {
 	return r.bindings.LocalSymbols(stmt)
 }
 
+func (r *Result) SymbolHasRead(id symbol.ID) bool {
+	if r == nil || r.bindings == nil {
+		return false
+	}
+	return r.bindings.HasRead(id)
+}
+
+func (r *Result) SymbolReadIdents(id symbol.ID) []*ast.IdentExpr {
+	if r == nil || r.bindings == nil {
+		return nil
+	}
+	return r.bindings.ReadIdents(id)
+}
+
 func (r *Result) IsImplicitGlobalUse(ident *ast.IdentExpr) bool {
 	if r == nil || r.bindings == nil {
 		return false

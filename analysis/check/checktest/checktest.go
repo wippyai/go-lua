@@ -29,10 +29,11 @@ import (
 type Option func(*config)
 
 type config struct {
-	stdlib    bool
-	globals   []string
-	manifests map[string]*manifest.Manifest
-	modules   map[string]*ModuleResult
+	stdlib           bool
+	globals          []string
+	manifests        map[string]*manifest.Manifest
+	modules          map[string]*ModuleResult
+	diagnosticPolicy diagnostic.Policy
 }
 
 type Result struct {
@@ -80,6 +81,21 @@ func WithModule(name string, mod *ModuleResult) Option {
 			c.modules = make(map[string]*ModuleResult)
 		}
 		c.modules[name] = mod
+	}
+}
+
+func WithDiagnosticPolicy(policy diagnostic.Policy) Option {
+	return func(c *config) {
+		c.diagnosticPolicy = cloneDiagnosticPolicy(policy)
+	}
+}
+
+func WithDiagnosticRule(code diagnostic.Code, rule diagnostic.Rule) Option {
+	return func(c *config) {
+		if c.diagnosticPolicy.Rules == nil {
+			c.diagnosticPolicy.Rules = make(map[diagnostic.Code]diagnostic.Rule, 1)
+		}
+		c.diagnosticPolicy.Rules[code] = rule
 	}
 }
 
@@ -136,12 +152,13 @@ func checkSource(src, filename string, opts ...Option) Result {
 	cfg := applyOptions(opts)
 	stmts, err := parse.ParseString(src, filename)
 	if err != nil {
-		return Result{Diagnostics: []diagnostic.Diagnostic{{
+		diags := cfg.diagnosticPolicy.Apply([]diagnostic.Diagnostic{{
 			Position: diagnostic.Position{File: filename},
 			Code:     diagnostic.Code("parse"),
 			Message:  err.Error(),
 			Severity: diagnostic.SeverityError,
-		}}}
+		}})
+		return Result{Diagnostics: diags}
 	}
 	reg := standard.Registry()
 	signatures := cfg.signatureSource()
@@ -159,6 +176,7 @@ func checkSource(src, filename string, opts ...Option) Result {
 	})
 	if err != nil {
 		if errors.Is(err, body.ErrUnsupportedCFG) {
+			structural = cfg.diagnosticPolicy.Apply(structural)
 			setDefaultFile(structural, filename)
 			return Result{Diagnostics: structural}
 		}
@@ -168,10 +186,14 @@ func checkSource(src, filename string, opts ...Option) Result {
 			Message:  err.Error(),
 			Severity: diagnostic.SeverityError,
 		}}, structural...)
+		diags = cfg.diagnosticPolicy.Apply(diags)
 		setDefaultFile(diags, filename)
 		return Result{Diagnostics: diags}
 	}
-	diags := append(structural, diagnostics.Produce(checked.RootResult())...)
+	structural = cfg.diagnosticPolicy.Apply(structural)
+	diags := append(structural, diagnostics.ProduceWithConfig(checked.RootResult(), diagnostics.Config{
+		Policy: cfg.diagnosticPolicy,
+	})...)
 	setDefaultFile(diags, filename)
 	return Result{Diagnostics: diags, checked: &checked, placement: placementplan.FromProgramResult(checked)}
 }
@@ -184,6 +206,17 @@ func applyOptions(opts []Option) config {
 		}
 	}
 	return cfg
+}
+
+func cloneDiagnosticPolicy(policy diagnostic.Policy) diagnostic.Policy {
+	if len(policy.Rules) == 0 {
+		return diagnostic.Policy{}
+	}
+	out := diagnostic.Policy{Rules: make(map[diagnostic.Code]diagnostic.Rule, len(policy.Rules))}
+	for code, rule := range policy.Rules {
+		out.Rules[code] = rule
+	}
+	return out
 }
 
 func (c config) signatureSource() signaturelookup.Source {
