@@ -310,8 +310,8 @@ func (p *allocationTemplateProjector) visit(raw identity.ID, templateID signatur
 	if _, ok := p.visiting[templateID]; ok {
 		return
 	}
-	object, ok := p.objects[raw]
-	if !ok || !valueHasIdentity(p.reg, object.Root(), raw) {
+	object, ok := p.exportableObject(raw)
+	if !ok {
 		return
 	}
 	p.visiting[templateID] = struct{}{}
@@ -325,27 +325,31 @@ func (p *allocationTemplateProjector) visit(raw identity.ID, templateID signatur
 			continue
 		}
 		childPath := path + segment.FormatSegments(member.suffix)
-		childTemplate := p.templateID(memberID, childPath)
+		childTemplate, ok := p.templateRef(memberID, childPath)
+		if !ok {
+			continue
+		}
 		projected.StaticMembers = append(projected.StaticMembers, signature.AllocationStaticMemberTemplate{
 			Suffix: member.suffix,
 			Value:  childTemplate,
 		})
-		p.visit(memberID, childTemplate, childPath)
 	}
 	for _, entry := range sortedHeapDynamicEntries(object.DynamicIndexFacts()) {
 		var projectedEntry signature.AllocationDynamicEntryTemplate
 		if keyID, ok := product.Get(p.reg, entry.fact.KeyValue, identity.Key).ID(); ok {
 			keyPath := fmt.Sprintf("%s:dynamic:%d:key", path, entry.index)
-			projectedEntry.Key = p.templateID(keyID, keyPath)
-			p.visit(keyID, projectedEntry.Key, keyPath)
+			if keyTemplate, ok := p.templateRef(keyID, keyPath); ok {
+				projectedEntry.Key = keyTemplate
+			}
 		}
 		if keyType, ok := typevalue.TypeOf(p.reg, entry.fact.KeyValue); ok {
 			projectedEntry.KeyType = keyType
 		}
 		if valueID, ok := product.Get(p.reg, entry.fact.Value, identity.Key).ID(); ok {
 			valuePath := fmt.Sprintf("%s:dynamic:%d:value", path, entry.index)
-			projectedEntry.Value = p.templateID(valueID, valuePath)
-			p.visit(valueID, projectedEntry.Value, valuePath)
+			if valueTemplate, ok := p.templateRef(valueID, valuePath); ok {
+				projectedEntry.Value = valueTemplate
+			}
 		}
 		if projectedEntry.Key == "" && projectedEntry.KeyType == nil && projectedEntry.Value == "" {
 			continue
@@ -355,6 +359,26 @@ func (p *allocationTemplateProjector) visit(raw identity.ID, templateID signatur
 	delete(p.visiting, templateID)
 	p.emitted[templateID] = struct{}{}
 	p.out = append(p.out, projected)
+}
+
+func (p *allocationTemplateProjector) templateRef(raw identity.ID, path string) (signature.AllocationTemplateID, bool) {
+	if _, ok := p.exportableObject(raw); !ok {
+		return "", false
+	}
+	id := p.templateID(raw, path)
+	p.visit(raw, id, path)
+	return id, true
+}
+
+func (p *allocationTemplateProjector) exportableObject(raw identity.ID) (heapidentity.TableObject, bool) {
+	if raw == (identity.ID{}) {
+		return heapidentity.TableObject{}, false
+	}
+	object, ok := p.objects[raw]
+	if !ok || !valueHasIdentity(p.reg, object.Root(), raw) {
+		return heapidentity.TableObject{}, false
+	}
+	return object, true
 }
 
 type heapStaticMember struct {

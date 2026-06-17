@@ -643,6 +643,73 @@ func TestFunctionSummaryOperationalEffectsExportsReturnAllocationTemplate(t *tes
 	}
 }
 
+func TestFunctionSummaryOperationalEffectsSkipsDanglingReturnAllocationRefs(t *testing.T) {
+	reg := standard.Registry()
+	rootID := identity.ID{Kind: "lua.table", Site: "dangling-template", Index: 1}
+	missingChildID := identity.ID{Kind: "lua.table", Site: "dangling-template", Index: 2}
+	missingKeyID := identity.ID{Kind: "lua.table", Site: "dangling-template", Index: 3}
+	missingValueID := identity.ID{Kind: "lua.table", Site: "dangling-template", Index: 4}
+	present := product.NewWithPresence(reg, product.ShapeTop, presence.Present())
+	rootValue := product.Set(reg, present, identity.Key, identity.Singleton(rootID))
+	missingChildValue := product.Set(reg, present, identity.Key, identity.Singleton(missingChildID))
+	missingKeyValue := product.Set(reg, typevalue.WithWitness(reg, typevalue.FromType(reg, typ.String), typ.String), identity.Key, identity.Singleton(missingKeyID))
+	missingValue := product.Set(reg, present, identity.Key, identity.Singleton(missingValueID))
+	childKey, ok := heapidentity.StaticMemberSuffixKey([]segment.Segment{{Kind: segment.SegmentField, Name: "child"}})
+	if !ok {
+		t.Fatal("child suffix key failed")
+	}
+	fn := typ.Func().Returns(typ.Any).Build()
+	got := functionSummaryOperationalEffects(reg, summary.Summary{
+		Returns: []product.Value{rootValue},
+		HeapTableObjects: map[identity.ID]heapidentity.TableObject{
+			rootID: heapidentity.NewTableObject(heapidentity.TableObjectConfig{
+				Root: rootValue,
+				StaticMembers: map[pathdom.PathKey]product.Value{
+					childKey: missingChildValue,
+				},
+				DynamicIndexFacts: map[dynamicindex.Key]dynamicindex.Fact{
+					{Table: pathdom.PathKey("root.items"), Site: "write"}: {
+						KeyPresence: presence.Present(),
+						KeyValue:    missingKeyValue,
+						Value:       missingValue,
+						Admission:   dynamicindex.AdmissionAdmitted,
+					},
+				},
+			}),
+		},
+	}, fn, "builder.dangling")
+	if got == nil || len(got.ReturnAllocationTemplates) != 1 {
+		t.Fatalf("allocation templates = %#v, want one return template", got)
+	}
+	template := got.ReturnAllocationTemplates[0]
+	assertAllocationTemplateRefsPresent(t, template)
+	if len(template.Objects) != 1 {
+		t.Fatalf("template objects = %#v, want only reachable exported root", template.Objects)
+	}
+	root := allocationTemplateObject(template.Objects, "builder.dangling:return:0:root")
+	if root == nil {
+		t.Fatalf("missing root object in %#v", template.Objects)
+	}
+	if len(root.StaticMembers) != 0 {
+		t.Fatalf("root static members = %#v, want missing child reference skipped", root.StaticMembers)
+	}
+	if len(root.DynamicEntries) != 1 ||
+		root.DynamicEntries[0].Key != "" ||
+		root.DynamicEntries[0].Value != "" ||
+		!typ.TypeEquals(root.DynamicEntries[0].KeyType, typ.String) {
+		t.Fatalf("root dynamic entries = %#v, want only safe key type evidence", root.DynamicEntries)
+	}
+	m := manifest.New("example/dangling-template")
+	m.DefineFunctionSignature("builder.dangling", signature.Function{Type: fn, OperationalEffects: got})
+	data, err := manifest.Encode(m)
+	if err != nil {
+		t.Fatalf("Encode: %v", err)
+	}
+	if _, err := manifest.Decode(data); err != nil {
+		t.Fatalf("Decode: %v\n%s", err, data)
+	}
+}
+
 func allocationTemplateObject(objects []signature.AllocationObjectTemplate, id signature.AllocationTemplateID) *signature.AllocationObjectTemplate {
 	for i := range objects {
 		if objects[i].ID == id {
@@ -650,6 +717,33 @@ func allocationTemplateObject(objects []signature.AllocationObjectTemplate, id s
 		}
 	}
 	return nil
+}
+
+func assertAllocationTemplateRefsPresent(t *testing.T, template signature.ReturnAllocationTemplate) {
+	t.Helper()
+	objects := make(map[signature.AllocationTemplateID]struct{}, len(template.Objects))
+	for _, object := range template.Objects {
+		objects[object.ID] = struct{}{}
+	}
+	for _, object := range template.Objects {
+		for _, member := range object.StaticMembers {
+			if _, ok := objects[member.Value]; !ok {
+				t.Fatalf("object %q static member %s references missing object %q", object.ID, segment.FormatSegments(member.Suffix), member.Value)
+			}
+		}
+		for _, entry := range object.DynamicEntries {
+			if entry.Key != "" {
+				if _, ok := objects[entry.Key]; !ok {
+					t.Fatalf("object %q dynamic entry references missing key object %q", object.ID, entry.Key)
+				}
+			}
+			if entry.Value != "" {
+				if _, ok := objects[entry.Value]; !ok {
+					t.Fatalf("object %q dynamic entry references missing value object %q", object.ID, entry.Value)
+				}
+			}
+		}
+	}
 }
 
 func TestFunctionSummaryOperationalEffectsEmptyIsAbsent(t *testing.T) {
