@@ -102,15 +102,21 @@ func RebuildMap(key, value Type) *Map {
 
 func (m *Map) Kind() kind.Kind { return kind.Map }
 func (m *Map) String() string {
-	return m.strCache.get(func() string {
+	return mapString(&m.strCache, m.Key, m.Value, "")
+}
+
+// mapString renders a map/readonly-map type and caches the result; prefix
+// carries the readonly spelling.
+func mapString(cache *stringCache, key, value Type, prefix string) string {
+	return cache.get(func() string {
 		ks, vs := "unknown", "unknown"
-		if m.Key != nil {
-			ks = m.Key.String()
+		if key != nil {
+			ks = key.String()
 		}
-		if m.Value != nil {
-			vs = m.Value.String()
+		if value != nil {
+			vs = value.String()
 		}
-		return "{[" + ks + "]: " + vs + "}"
+		return prefix + "{[" + ks + "]: " + vs + "}"
 	})
 }
 func (m *Map) Hash() uint64 { return m.hash }
@@ -168,16 +174,7 @@ func RebuildReadonlyMap(key, value Type) *ReadonlyMap {
 
 func (m *ReadonlyMap) Kind() kind.Kind { return kind.ReadonlyMap }
 func (m *ReadonlyMap) String() string {
-	return m.strCache.get(func() string {
-		ks, vs := "unknown", "unknown"
-		if m.Key != nil {
-			ks = m.Key.String()
-		}
-		if m.Value != nil {
-			vs = m.Value.String()
-		}
-		return "readonly {[" + ks + "]: " + vs + "}"
-	})
+	return mapString(&m.strCache, m.Key, m.Value, "readonly ")
 }
 func (m *ReadonlyMap) Hash() uint64 { return m.hash }
 func (m *ReadonlyMap) Equals(o Type) bool {
