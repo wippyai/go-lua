@@ -496,6 +496,21 @@ func TestAnnotationAssignabilityUsesSolvedTypeTestState(t *testing.T) {
 	}
 }
 
+func TestMemberCallPreservesRootPresenceGuardAcrossUnrelatedDynamicIndexWrite(t *testing.T) {
+	diags := runDiagnostics(t, `
+		type Obj = {m: () -> ()}
+		function f(x: Obj?, t: {[string]: number}, key: string)
+			if x then
+				t[key] = 1
+				x.m()
+			end
+		end
+	`)
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v, want unrelated dynamic index write to preserve root presence guard", diags)
+	}
+}
+
 func TestAnnotationAssignabilityUsesTypeIsWrapperErrorBranchState(t *testing.T) {
 	diags := runDiagnostics(t, `
 		type Point = {x: number, y: number}

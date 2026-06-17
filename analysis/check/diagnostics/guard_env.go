@@ -102,7 +102,7 @@ func applyGuardNode(result *body.Result, point cfg.Point, env guardEnv) guardEnv
 		return env
 	}
 	if directDynamicIndexAssignment(fact) {
-		return guardEnv{}
+		return env.withoutDescendantFacts()
 	}
 	return env
 }
@@ -228,6 +228,31 @@ func (e guardEnv) hasPresent(target path.Path) bool {
 		}
 	}
 	return false
+}
+
+func (e guardEnv) withoutDescendantFacts() guardEnv {
+	var out guardEnv
+	for _, c := range e.constraints {
+		if rootOnlyPath(c.target) {
+			out.constraints = append(out.constraints, c)
+		}
+	}
+	for _, c := range e.typeChecks {
+		if rootOnlyPath(c.target) {
+			out.typeChecks = append(out.typeChecks, c)
+		}
+	}
+	for _, p := range e.present {
+		if rootOnlyPath(p) {
+			out.present = append(out.present, p.Clone())
+		}
+	}
+	sortGuardEnv(out)
+	return out
+}
+
+func rootOnlyPath(p path.Path) bool {
+	return !p.IsEmpty() && len(p.Segments) == 0
 }
 
 func joinGuardEnvs(a, b guardEnv) guardEnv {
