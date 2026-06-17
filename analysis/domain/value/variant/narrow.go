@@ -12,24 +12,29 @@ import (
 // NarrowByPathLiteral keeps the variants of t whose static member path admits
 // lit. The returned bool reports whether a strict narrowing was possible.
 func NarrowByPathLiteral(t typ.Type, suffix []segment.Segment, lit typ.Type) (typ.Type, bool) {
-	if t == nil || len(suffix) == 0 || lit == nil {
-		return nil, false
-	}
-	narrowed, ok := narrowByPathLiteral(t, suffix, lit, 0)
-	if !ok || narrowed == nil || typ.SameNodeOrAcyclicEqual(narrowed, t) {
-		return narrowed, false
-	}
-	return narrowed, true
+	return narrowByPathLiteralEntry(t, suffix, lit, narrowByPathLiteral)
 }
 
 // NarrowByPathLiteralNot keeps the variants of t whose static member path does
 // not admit lit. The returned bool reports whether a strict narrowing was
 // possible.
 func NarrowByPathLiteralNot(t typ.Type, suffix []segment.Segment, lit typ.Type) (typ.Type, bool) {
+	return narrowByPathLiteralEntry(t, suffix, lit, narrowByPathLiteralNot)
+}
+
+// narrowByPathLiteralEntry guards the public path-literal narrowers: it rejects
+// empty inputs, seeds the recursion at depth 0 via narrow, and reports no change
+// when the result is acyclically equal to t.
+func narrowByPathLiteralEntry(
+	t typ.Type,
+	suffix []segment.Segment,
+	lit typ.Type,
+	narrow func(typ.Type, []segment.Segment, typ.Type, int) (typ.Type, bool),
+) (typ.Type, bool) {
 	if t == nil || len(suffix) == 0 || lit == nil {
 		return nil, false
 	}
-	narrowed, ok := narrowByPathLiteralNot(t, suffix, lit, 0)
+	narrowed, ok := narrow(t, suffix, lit, 0)
 	if !ok || narrowed == nil || typ.SameNodeOrAcyclicEqual(narrowed, t) {
 		return narrowed, false
 	}
