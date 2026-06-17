@@ -1,8 +1,7 @@
 package summary
 
 import (
-	"sort"
-
+	"github.com/wippyai/go-lua/analysis/domain/lattice/factset"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 )
 
@@ -13,71 +12,39 @@ type ParamEquality struct {
 	Right int
 }
 
-func normalizeParamEqualities(in []ParamEquality) []ParamEquality {
-	if len(in) == 0 {
-		return nil
-	}
-	seen := make(map[ParamEquality]struct{}, len(in))
-	out := make([]ParamEquality, 0, len(in))
-	for _, eq := range in {
+// paramEqualityLane is the canonical must (intersection) lattice for parameter
+// equalities: each relation is canonicalized to Left<Right and kept only when
+// guaranteed on every joined path.
+var paramEqualityLane = factset.Set[ParamEquality, ParamEquality]{
+	Key:       func(eq ParamEquality) ParamEquality { return eq },
+	EqualFact: func(a, b ParamEquality) bool { return a == b },
+	Less: func(a, b ParamEquality) bool {
+		if a.Left != b.Left {
+			return a.Left < b.Left
+		}
+		return a.Right < b.Right
+	},
+	Admit: func(eq ParamEquality) (ParamEquality, bool) {
 		if eq.Left == eq.Right || eq.Left < 0 || eq.Right < 0 {
-			continue
+			return eq, false
 		}
 		if eq.Right < eq.Left {
 			eq.Left, eq.Right = eq.Right, eq.Left
 		}
-		if _, ok := seen[eq]; ok {
-			continue
-		}
-		seen[eq] = struct{}{}
-		out = append(out, eq)
-	}
-	sort.Slice(out, func(i, j int) bool {
-		if out[i].Left != out[j].Left {
-			return out[i].Left < out[j].Left
-		}
-		return out[i].Right < out[j].Right
-	})
-	return out
+		return eq, true
+	},
+	Intersect: true,
 }
 
-func paramEqualitiesEqual(a, b []ParamEquality) bool {
-	a = normalizeParamEqualities(a)
-	b = normalizeParamEqualities(b)
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
-}
-
-func paramEqualitiesLessOrEq(a, b []ParamEquality) bool {
-	a = normalizeParamEqualities(a)
-	b = normalizeParamEqualities(b)
-	if len(b) == 0 {
-		return true
-	}
-	seen := make(map[ParamEquality]struct{}, len(a))
-	for _, eq := range a {
-		seen[eq] = struct{}{}
-	}
-	for _, eq := range b {
-		if _, ok := seen[eq]; !ok {
-			return false
-		}
-	}
-	return true
+func normalizeParamEqualities(in []ParamEquality) []ParamEquality {
+	return paramEqualityLane.Normalize(in)
 }
 
 func paramEqualitiesSummaryEqual(reg *axis.Registry, a, b Summary) bool {
 	if paramEqualitiesBottom(reg, a) || paramEqualitiesBottom(reg, b) {
 		return paramEqualitiesBottom(reg, a) && paramEqualitiesBottom(reg, b)
 	}
-	return paramEqualitiesEqual(a.NormalReturnParamEqualities, b.NormalReturnParamEqualities)
+	return paramEqualityLane.Equal(a.NormalReturnParamEqualities, b.NormalReturnParamEqualities)
 }
 
 func paramEqualitiesSummaryLessOrEq(reg *axis.Registry, a, b Summary) bool {
@@ -87,32 +54,17 @@ func paramEqualitiesSummaryLessOrEq(reg *axis.Registry, a, b Summary) bool {
 	if paramEqualitiesBottom(reg, b) {
 		return false
 	}
-	return paramEqualitiesLessOrEq(a.NormalReturnParamEqualities, b.NormalReturnParamEqualities)
+	return paramEqualityLane.LessOrEq(a.NormalReturnParamEqualities, b.NormalReturnParamEqualities)
 }
 
 func joinParamEqualities(reg *axis.Registry, a, b Summary) []ParamEquality {
 	switch {
 	case paramEqualitiesBottom(reg, a):
-		return normalizeParamEqualities(b.NormalReturnParamEqualities)
+		return paramEqualityLane.Normalize(b.NormalReturnParamEqualities)
 	case paramEqualitiesBottom(reg, b):
-		return normalizeParamEqualities(a.NormalReturnParamEqualities)
+		return paramEqualityLane.Normalize(a.NormalReturnParamEqualities)
 	}
-	aEqualities := normalizeParamEqualities(a.NormalReturnParamEqualities)
-	bEqualities := normalizeParamEqualities(b.NormalReturnParamEqualities)
-	if len(aEqualities) == 0 || len(bEqualities) == 0 {
-		return nil
-	}
-	seen := make(map[ParamEquality]struct{}, len(bEqualities))
-	for _, eq := range bEqualities {
-		seen[eq] = struct{}{}
-	}
-	out := make([]ParamEquality, 0, min(len(aEqualities), len(bEqualities)))
-	for _, eq := range aEqualities {
-		if _, ok := seen[eq]; ok {
-			out = append(out, eq)
-		}
-	}
-	return normalizeParamEqualities(out)
+	return paramEqualityLane.Join(a.NormalReturnParamEqualities, b.NormalReturnParamEqualities)
 }
 
 func paramEqualitiesBottom(reg *axis.Registry, s Summary) bool {
