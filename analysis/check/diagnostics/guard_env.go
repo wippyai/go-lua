@@ -470,42 +470,7 @@ func (e guardEnv) hasNil(target path.Path) bool {
 }
 
 func (e guardEnv) withoutDescendantFacts() guardEnv {
-	if e.unreachable {
-		return e
-	}
-	var out guardEnv
-	for _, c := range e.constraints {
-		if rootOnlyPath(c.target) {
-			out.constraints = append(out.constraints, c)
-		}
-	}
-	for _, c := range e.typeChecks {
-		if rootOnlyPath(c.target) {
-			out.typeChecks = append(out.typeChecks, c)
-		}
-	}
-	for _, p := range e.present {
-		if rootOnlyPath(p) {
-			out.present = append(out.present, p.Clone())
-		}
-	}
-	for _, p := range e.truthy {
-		if rootOnlyPath(p) {
-			out.truthy = append(out.truthy, p.Clone())
-		}
-	}
-	for _, p := range e.falsy {
-		if rootOnlyPath(p) {
-			out.falsy = append(out.falsy, p.Clone())
-		}
-	}
-	for _, p := range e.nilPaths {
-		if rootOnlyPath(p) {
-			out.nilPaths = append(out.nilPaths, p.Clone())
-		}
-	}
-	sortGuardEnv(out)
-	return out
+	return e.filterFacts(rootOnlyPath)
 }
 
 func (e guardEnv) withoutDescendantFactsOf(target path.Path) guardEnv {
