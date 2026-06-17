@@ -1,8 +1,7 @@
 package summary
 
 import (
-	"sort"
-
+	"github.com/wippyai/go-lua/analysis/domain/lattice/factset"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/engine/callboundary"
 )
@@ -12,107 +11,41 @@ type escapeEventFactKey struct {
 	recursive bool
 }
 
+// escapeEventLane is the canonical keyed-fact-set lattice for escape events: one
+// fact per (target, recursive) keeping the strongest kind, with recursive
+// targets subsuming descendants under the same root.
+var escapeEventLane = factset.Set[escapeEventFactKey, callboundary.EscapeEventFact]{
+	Key:       escapeEventKeyOf,
+	EqualFact: func(a, b callboundary.EscapeEventFact) bool { return escapeEventKeyOf(a) == escapeEventKeyOf(b) && a.Kind == b.Kind },
+	Less:      escapeEventFactLess,
+	Valid:     func(f callboundary.EscapeEventFact) bool { return f.Target.IsPlaceholder() && f.Kind != callboundary.EscapeEventNone },
+	CloneFact: func(f callboundary.EscapeEventFact) callboundary.EscapeEventFact { f.Target = f.Target.Clone(); return f },
+	Prefer:    func(kept, incoming callboundary.EscapeEventFact) bool { return incoming.Kind > kept.Kind },
+	Dominates: escapeEventDominates,
+}
+
 func normalizeEscapeEventFacts(in []callboundary.EscapeEventFact) []callboundary.EscapeEventFact {
-	if len(in) == 0 {
-		return nil
-	}
-	merged := make(map[escapeEventFactKey]callboundary.EscapeEventFact, len(in))
-	for _, fact := range in {
-		if !fact.Target.IsPlaceholder() || fact.Kind == callboundary.EscapeEventNone {
-			continue
-		}
-		fact.Target = fact.Target.Clone()
-		key := escapeEventKeyOf(fact)
-		if existing, ok := merged[key]; ok && existing.Kind >= fact.Kind {
-			continue
-		}
-		merged[key] = fact
-	}
-	return compressEscapeEventFacts(merged)
+	return escapeEventLane.Normalize(in)
 }
 
 func cloneEscapeEventFacts(in []callboundary.EscapeEventFact) []callboundary.EscapeEventFact {
-	if len(in) == 0 {
-		return nil
-	}
-	out := make([]callboundary.EscapeEventFact, len(in))
-	for i, fact := range in {
-		fact.Target = fact.Target.Clone()
-		out[i] = fact
-	}
-	return out
+	return escapeEventLane.Clone(in)
 }
 
 func escapeEventFactsEqual(a, b []callboundary.EscapeEventFact) bool {
-	a = normalizeEscapeEventFacts(a)
-	b = normalizeEscapeEventFacts(b)
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if escapeEventKeyOf(a[i]) != escapeEventKeyOf(b[i]) || a[i].Kind != b[i].Kind {
-			return false
-		}
-	}
-	return true
+	return escapeEventLane.Equal(a, b)
 }
 
 func escapeEventFactsLessOrEq(a, b []callboundary.EscapeEventFact) bool {
-	a = normalizeEscapeEventFacts(a)
-	b = normalizeEscapeEventFacts(b)
-	for _, left := range a {
-		if !escapeEventDominatedByAny(left, b) {
-			return false
-		}
-	}
-	return true
+	return escapeEventLane.LessOrEq(a, b)
 }
 
 func joinEscapeEventFacts(a, b []callboundary.EscapeEventFact) []callboundary.EscapeEventFact {
-	if len(a) == 0 && len(b) == 0 {
-		return nil
-	}
-	out := make([]callboundary.EscapeEventFact, 0, len(a)+len(b))
-	out = append(out, cloneEscapeEventFacts(a)...)
-	out = append(out, cloneEscapeEventFacts(b)...)
-	return normalizeEscapeEventFacts(out)
+	return escapeEventLane.Join(a, b)
 }
 
 func widenEscapeEventFacts(prev, next []callboundary.EscapeEventFact) []callboundary.EscapeEventFact {
-	return joinEscapeEventFacts(prev, next)
-}
-
-func compressEscapeEventFacts(in map[escapeEventFactKey]callboundary.EscapeEventFact) []callboundary.EscapeEventFact {
-	if len(in) == 0 {
-		return nil
-	}
-	facts := sortedEscapeEventFacts(in)
-	out := facts[:0]
-	for _, fact := range facts {
-		if escapeEventDominatedByAny(fact, out) {
-			continue
-		}
-		write := 0
-		for _, existing := range out {
-			if escapeEventDominates(fact, existing) {
-				continue
-			}
-			out[write] = existing
-			write++
-		}
-		out = out[:write]
-		out = append(out, fact)
-	}
-	return out
-}
-
-func escapeEventDominatedByAny(fact callboundary.EscapeEventFact, facts []callboundary.EscapeEventFact) bool {
-	for _, existing := range facts {
-		if escapeEventDominates(existing, fact) {
-			return true
-		}
-	}
-	return false
+	return escapeEventLane.Widen(prev, next)
 }
 
 func escapeEventDominates(parent, child callboundary.EscapeEventFact) bool {
@@ -145,22 +78,12 @@ func escapeEventKeyOf(fact callboundary.EscapeEventFact) escapeEventFactKey {
 	return escapeEventFactKey{target: fact.Target.Key(), recursive: fact.Recursive}
 }
 
-func sortedEscapeEventFacts(in map[escapeEventFactKey]callboundary.EscapeEventFact) []callboundary.EscapeEventFact {
-	if len(in) == 0 {
-		return nil
+func escapeEventFactLess(a, b callboundary.EscapeEventFact) bool {
+	if !a.Target.Equal(b.Target) {
+		return a.Target.Less(b.Target)
 	}
-	out := make([]callboundary.EscapeEventFact, 0, len(in))
-	for _, fact := range in {
-		out = append(out, fact)
+	if a.Recursive != b.Recursive {
+		return !a.Recursive
 	}
-	sort.Slice(out, func(i, j int) bool {
-		if !out[i].Target.Equal(out[j].Target) {
-			return out[i].Target.Less(out[j].Target)
-		}
-		if out[i].Recursive != out[j].Recursive {
-			return !out[i].Recursive
-		}
-		return out[i].Kind < out[j].Kind
-	})
-	return out
+	return a.Kind < b.Kind
 }
