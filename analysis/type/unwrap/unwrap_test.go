@@ -69,6 +69,15 @@ func TestAnnotatedAndAnnotations(t *testing.T) {
 	})
 }
 
+func TestAnnotationsStopsOnAnnotationCycle(t *testing.T) {
+	a, b := annotationCycle()
+
+	got := unwrap.Annotations(a)
+	if got != a && got != b {
+		t.Fatalf("Annotations(annotation cycle) = %T, want one cycle member", got)
+	}
+}
+
 func TestOptional(t *testing.T) {
 	optional := typeexpr.Optional(typ.String)
 	aliasToOptional := typ.NewAlias("OptString", optional)
@@ -106,6 +115,24 @@ func TestOptional(t *testing.T) {
 			t.Fatalf("Optional(alias to nil) = %T, want Nil", got)
 		}
 	})
+}
+
+func TestAliasStopsOnAnnotationCycle(t *testing.T) {
+	a, b := annotationCycle()
+
+	got := unwrap.Alias(a)
+	if got != a && got != b {
+		t.Fatalf("Alias(annotation cycle) = %T, want one cycle member", got)
+	}
+}
+
+func TestOptionalStopsOnAnnotationCycle(t *testing.T) {
+	a, b := annotationCycle()
+
+	got := unwrap.Optional(a)
+	if got != a && got != b {
+		t.Fatalf("Optional(annotation cycle) = %T, want one cycle member", got)
+	}
 }
 
 func TestRecordWithAliasPolicyTarget(t *testing.T) {
@@ -178,6 +205,19 @@ func TestRecordAliasPoliciesDifferAfterTargetMutation(t *testing.T) {
 	}
 }
 
+func TestRecordWithAliasPolicyRejectsTargetCycle(t *testing.T) {
+	original := typetable.NewRecord().Field("original", typ.String).Build()
+	alias := typ.NewAlias("Alias", original)
+	alias.Target = alias
+
+	if got := unwrap.RecordWithAliasPolicy(alias, unwrap.RecordAliasTarget); got != nil {
+		t.Fatalf("RecordWithAliasPolicy(RecordAliasTarget cycle) = %p, want nil", got)
+	}
+	if got := unwrap.RecordWithAliasPolicy(alias, unwrap.RecordAliasUnaliasedTarget); got != original {
+		t.Fatalf("RecordWithAliasPolicy(RecordAliasUnaliasedTarget cycle) = %p, want original %p", got, original)
+	}
+}
+
 func TestIsOptionalLike(t *testing.T) {
 	tests := []struct {
 		name string
@@ -198,4 +238,38 @@ func TestIsOptionalLike(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestIsOptionalLikeHandlesUnionCycle(t *testing.T) {
+	u := &typ.Union{}
+	u.Members = []typ.Type{u}
+
+	if unwrap.IsOptionalLike(u) {
+		t.Fatal("self-recursive union without nil should not be optional-like")
+	}
+}
+
+func TestIsOptionalLikeFindsNilAfterUnionCycle(t *testing.T) {
+	u := &typ.Union{}
+	u.Members = []typ.Type{u, typ.Nil}
+
+	if !unwrap.IsOptionalLike(u) {
+		t.Fatal("self-recursive union with nil should be optional-like")
+	}
+}
+
+func TestIsOptionalLikeRejectsAnnotationCycle(t *testing.T) {
+	a, _ := annotationCycle()
+
+	if unwrap.IsOptionalLike(a) {
+		t.Fatal("annotation cycle without nil should not be optional-like")
+	}
+}
+
+func annotationCycle() (*typ.Annotated, *typ.Annotated) {
+	a := &typ.Annotated{}
+	b := &typ.Annotated{}
+	a.Inner = b
+	b.Inner = a
+	return a, b
 }

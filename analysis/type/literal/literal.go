@@ -5,7 +5,6 @@ package literal
 import (
 	"github.com/wippyai/go-lua/analysis/type/kind"
 	"github.com/wippyai/go-lua/analysis/type/typ"
-	"github.com/wippyai/go-lua/analysis/type/unwrap"
 )
 
 // ExtractAliasOnly returns a literal after following Alias targets only.
@@ -13,12 +12,19 @@ import (
 // This intentionally does not unwrap annotations or any other wrappers. Callers
 // that need annotation-aware behavior should unwrap before calling this helper.
 func ExtractAliasOnly(t typ.Type) (*typ.Literal, bool) {
-	for {
+	for depth := 0; depth <= typ.DefaultRecursionDepth; depth++ {
 		a, ok := t.(*typ.Alias)
 		if !ok {
 			break
 		}
-		t = a.Target
+		next := a.Target
+		if next == nil || next == t {
+			return nil, false
+		}
+		t = next
+	}
+	if _, ok := t.(*typ.Alias); ok {
+		return nil, false
 	}
 	lit, ok := t.(*typ.Literal)
 	return lit, ok
@@ -51,20 +57,40 @@ func PrimitiveBase(lit *typ.Literal) typ.Type {
 // unions whose members all belong to a mergeable literal family. Annotated
 // wrappers and aliases are unwrapped for this family-level policy.
 func FamilyBase(t typ.Type) (typ.Type, bool) {
-	t = unwrap.Annotated(t)
+	return familyBase(t, 0)
+}
+
+func familyBase(t typ.Type, depth int) (typ.Type, bool) {
+	for ; depth <= typ.DefaultRecursionDepth; depth++ {
+		ann, ok := t.(*typ.Annotated)
+		if !ok {
+			break
+		}
+		if ann.Inner == nil || ann.Inner == t {
+			return nil, false
+		}
+		t = ann.Inner
+	}
+	if depth > typ.DefaultRecursionDepth {
+		return nil, false
+	}
 	if t == nil {
 		return nil, false
 	}
 	switch v := t.(type) {
 	case *typ.Alias:
-		return FamilyBase(v.Target)
+		next := v.Target
+		if next == nil || next == t {
+			return nil, false
+		}
+		return familyBase(next, depth+1)
 	case *typ.Literal:
 		base := PrimitiveBase(v)
 		return base, base != nil
 	case *typ.Union:
 		var base typ.Type
 		for _, member := range v.Members {
-			memberBase, ok := FamilyBase(member)
+			memberBase, ok := familyBase(member, depth+1)
 			if !ok {
 				return nil, false
 			}

@@ -3,6 +3,7 @@ package literal
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/type/annotation"
 	"github.com/wippyai/go-lua/analysis/type/kind"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/typeexpr"
@@ -27,6 +28,15 @@ func TestExtractAliasOnlyDoesNotUnwrapAnnotations(t *testing.T) {
 
 	if got, ok := ExtractAliasOnly(annotated); ok {
 		t.Fatalf("ExtractAliasOnly(annotated literal) = %v, want !ok", got)
+	}
+}
+
+func TestExtractAliasOnlyRejectsAliasCycle(t *testing.T) {
+	alias := typ.NewAlias("Tag", typ.LiteralString("tag"))
+	alias.Target = alias
+
+	if got, ok := ExtractAliasOnly(alias); ok || got != nil {
+		t.Fatalf("ExtractAliasOnly(alias cycle) = %v, %v; want nil, false", got, ok)
 	}
 }
 
@@ -74,6 +84,28 @@ func TestFamilyBaseUnwrapsAnnotatedAlias(t *testing.T) {
 	}
 	if got != typ.String {
 		t.Fatalf("FamilyBase(annotated alias literal) = %v, want string", got)
+	}
+}
+
+func TestFamilyBaseUnwrapsNestedAnnotations(t *testing.T) {
+	inner := typ.NewAnnotated(typ.LiteralInt(1), []annotation.Annotation{{Name: "min"}})
+	outer := typ.NewAnnotated(inner, []annotation.Annotation{{Name: "max"}})
+
+	got, ok := FamilyBase(outer)
+	if !ok {
+		t.Fatal("FamilyBase(nested annotated literal) returned !ok")
+	}
+	if got != typ.Integer {
+		t.Fatalf("FamilyBase(nested annotated literal) = %v, want integer", got)
+	}
+}
+
+func TestFamilyBaseRejectsAliasCycle(t *testing.T) {
+	alias := typ.NewAlias("Tag", typ.LiteralString("tag"))
+	alias.Target = alias
+
+	if got, ok := FamilyBase(alias); ok || got != nil {
+		t.Fatalf("FamilyBase(alias cycle) = %v, %v; want nil, false", got, ok)
 	}
 }
 

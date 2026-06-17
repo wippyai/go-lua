@@ -44,7 +44,7 @@ func Annotated(t typ.Type) typ.Type {
 
 // Annotations strips every Annotated wrapper and returns the first non-annotated type.
 func Annotations(t typ.Type) typ.Type {
-	for {
+	for depth := 0; depth <= typ.DefaultRecursionDepth; depth++ {
 		ann, ok := t.(*typ.Annotated)
 		if !ok {
 			return t
@@ -54,6 +54,7 @@ func Annotations(t typ.Type) typ.Type {
 		}
 		t = ann.Inner
 	}
+	return t
 }
 
 // Alias unwraps Alias wrappers, first through transparent annotations, and
@@ -119,17 +120,25 @@ const (
 // RecordWithAliasPolicy follows Alias nodes according to policy and returns
 // the final record. It intentionally does not unwrap annotations.
 func RecordWithAliasPolicy(t typ.Type, policy RecordAliasPolicy) *typ.Record {
-	for {
+	for depth := 0; depth <= typ.DefaultRecursionDepth; depth++ {
 		a, ok := t.(*typ.Alias)
 		if !ok {
 			break
 		}
+		var next typ.Type
 		switch policy {
 		case RecordAliasUnaliasedTarget:
-			t = a.UnaliasedTarget()
+			next = a.UnaliasedTarget()
 		default:
-			t = a.Target
+			next = a.Target
 		}
+		if next == nil || next == t {
+			return nil
+		}
+		t = next
+	}
+	if _, ok := t.(*typ.Alias); ok {
+		return nil
 	}
 	rec, _ := t.(*typ.Record)
 	return rec
@@ -138,39 +147,58 @@ func RecordWithAliasPolicy(t typ.Type, policy RecordAliasPolicy) *typ.Record {
 // IsOptionalLike returns true when t is nil-like, optional, or a union that
 // contains a nil-like member. Aliases are resolved before the check.
 func IsOptionalLike(t typ.Type) bool {
+	return isOptionalLike(t, 0, nil)
+}
+
+func isOptionalLike(t typ.Type, depth int, active map[*typ.Union]bool) bool {
+	if depth > typ.DefaultRecursionDepth {
+		return false
+	}
 	if t == nil {
 		return true
 	}
 
-	u := Alias(t)
-	if u == nil {
-		return true
-	}
-	switch tt := u.(type) {
+	switch tt := t.(type) {
+	case *typ.Annotated:
+		if tt.Inner == nil {
+			return true
+		}
+		if tt.Inner == t {
+			return false
+		}
+		return isOptionalLike(tt.Inner, depth+1, active)
+	case *typ.Alias:
+		next := tt.UnaliasedTarget()
+		if next == nil {
+			return true
+		}
+		if next == t {
+			return false
+		}
+		return isOptionalLike(next, depth+1, active)
 	case *typ.Optional:
 		return true
 	case *typ.Union:
+		if active == nil {
+			active = make(map[*typ.Union]bool)
+		}
+		if active[tt] {
+			return false
+		}
+		active[tt] = true
+		defer delete(active, tt)
 		for _, m := range tt.Members {
-			if IsOptionalLike(m) {
+			if isOptionalLike(m, depth+1, active) {
 				return true
 			}
 		}
 		return false
 	default:
-		k := u.Kind()
+		k := t.Kind()
 		return k == kind.Nil || k.IsPlaceholder()
 	}
 }
 
 func transparent(t typ.Type) typ.Type {
-	for {
-		annotated, ok := t.(*typ.Annotated)
-		if !ok {
-			return t
-		}
-		if annotated.Inner == nil || annotated.Inner == t {
-			return t
-		}
-		t = annotated.Inner
-	}
+	return Annotations(t)
 }
