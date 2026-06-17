@@ -14,8 +14,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
 	"github.com/wippyai/go-lua/analysis/lua/typecall"
 	"github.com/wippyai/go-lua/analysis/symbol"
-	"github.com/wippyai/go-lua/analysis/type/access"
-	"github.com/wippyai/go-lua/analysis/type/normalize"
 	"github.com/wippyai/go-lua/analysis/type/subst"
 	"github.com/wippyai/go-lua/analysis/type/subtype"
 	"github.com/wippyai/go-lua/analysis/type/typ"
@@ -368,7 +366,7 @@ func applyLiteralNarrowing(base typ.Type, receiver path.Path, env guardEnv) (typ
 		}
 		lit := typ.LiteralString(c.value)
 		if c.negated {
-			if narrowed, ok := narrowByPathLiteralNot(out, suffix, lit); ok {
+			if narrowed, ok := variant.NarrowByPathLiteralNot(out, suffix, lit); ok {
 				out = narrowed
 				changed = true
 			}
@@ -380,77 +378,6 @@ func applyLiteralNarrowing(base typ.Type, receiver path.Path, env guardEnv) (typ
 		}
 	}
 	return out, changed
-}
-
-func narrowByPathLiteralNot(t typ.Type, suffix []segment.Segment, lit typ.Type) (typ.Type, bool) {
-	if t == nil || len(suffix) == 0 || lit == nil {
-		return nil, false
-	}
-	narrowed, ok := narrowByPathLiteralNotDepth(t, suffix, lit, 0)
-	if !ok || narrowed == nil || typ.SameNodeOrAcyclicEqual(narrowed, t) {
-		return narrowed, false
-	}
-	return narrowed, true
-}
-
-func narrowByPathLiteralNotDepth(t typ.Type, suffix []segment.Segment, lit typ.Type, depth int) (typ.Type, bool) {
-	if t == nil || depth > typ.DefaultRecursionDepth {
-		return nil, false
-	}
-	switch v := unwrap.Annotated(t).(type) {
-	case *typ.Alias:
-		return narrowByPathLiteralNotDepth(v.UnaliasedTarget(), suffix, lit, depth+1)
-	case *typ.Optional:
-		return narrowByPathLiteralNotDepth(v.Inner, suffix, lit, depth+1)
-	case *typ.Union:
-		out := make([]typ.Type, 0, len(v.Members))
-		for _, member := range v.Members {
-			if !pathAdmitsLiteral(member, suffix, lit, depth+1) {
-				out = append(out, member)
-			}
-		}
-		if len(out) == len(v.Members) {
-			return t, false
-		}
-		if len(out) == 0 {
-			return typ.Never, true
-		}
-		return normalize.UnionForEvidence(out...), true
-	default:
-		if pathAdmitsLiteral(t, suffix, lit, depth+1) {
-			return typ.Never, true
-		}
-		return t, false
-	}
-}
-
-func pathAdmitsLiteral(t typ.Type, suffix []segment.Segment, lit typ.Type, depth int) bool {
-	field, ok := typeAtPath(t, suffix, depth+1)
-	return ok && subtype.IsSubtype(lit, field)
-}
-
-func typeAtPath(t typ.Type, suffix []segment.Segment, depth int) (typ.Type, bool) {
-	if t == nil || len(suffix) == 0 || depth > typ.DefaultRecursionDepth {
-		return nil, false
-	}
-	seg := suffix[0]
-	var current typ.Type
-	var ok bool
-	switch seg.Kind {
-	case segment.SegmentField, segment.SegmentIndexString:
-		current, ok = access.Field(t, seg.Name)
-	case segment.SegmentIndexInt:
-		current, ok = access.Index(t, typ.LiteralInt(int64(seg.Index)))
-	default:
-		ok = false
-	}
-	if !ok {
-		return nil, false
-	}
-	if len(suffix) == 1 {
-		return current, true
-	}
-	return typeAtPath(current, suffix[1:], depth+1)
 }
 
 func unionReceiver(t typ.Type) bool {
