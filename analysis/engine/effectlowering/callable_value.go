@@ -56,7 +56,7 @@ func CallableValueOutcomeProvider(config CallableValueOutcomeProviderConfig) fac
 			})
 		}
 		out := factapply.CallOutcome{Results: results}
-		out.PostReturnAuthority = calloutcome.HasPostReturnEvidence(ctx.Registry, out)
+		out.PostReturnAuthority = calloutcome.HasAuthoritativePostReturnEvidence(ctx.Registry, out)
 		return out
 	}
 }

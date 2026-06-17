@@ -286,15 +286,29 @@ func TestWithSupplementalMergesPlacementFactsWithoutAuthority(t *testing.T) {
 	}
 }
 
-func TestHasPostReturnEvidenceCountsPlacementFacts(t *testing.T) {
-	tableID := identity.ID{Kind: "table", Site: "compose-placement", Index: 3}
-	outcome := factapply.CallOutcome{
-		Placements: map[identity.ID]placement.Value{
-			tableID: placement.Stack,
-		},
+func TestWithSupplementalMergesParamLengthFloorsWithoutAuthority(t *testing.T) {
+	primary := func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) factapply.CallOutcome {
+		return factapply.CallOutcome{
+			ParamLengthFloors: []factapply.CallParamLengthFloor{
+				{Path: pathdom.NewPlaceholder(0), Floor: 2},
+			},
+		}
 	}
-	if !HasPostReturnEvidence(standard.Registry(), outcome) {
-		t.Fatal("HasPostReturnEvidence = false, want true for placement facts")
+	supplemental := func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) factapply.CallOutcome {
+		return factapply.CallOutcome{
+			ParamLengthFloors: []factapply.CallParamLengthFloor{
+				{Path: pathdom.NewPlaceholder(1), Floor: 3},
+			},
+		}
+	}
+
+	got := WithSupplemental(primary, supplemental)(transfer.NodeContext{}, factflow.NewCallSite(factflow.CallSiteConfig{}).View(), state.State{}, nil)
+	if len(got.ParamLengthFloors) != 2 {
+		t.Fatalf("ParamLengthFloors = %#v, want primary and supplemental floors", got.ParamLengthFloors)
+	}
+	if !got.ParamLengthFloors[0].Path.Equal(pathdom.NewPlaceholder(0)) || got.ParamLengthFloors[0].Floor != 2 ||
+		!got.ParamLengthFloors[1].Path.Equal(pathdom.NewPlaceholder(1)) || got.ParamLengthFloors[1].Floor != 3 {
+		t.Fatalf("ParamLengthFloors = %#v, want ordered primary then supplemental floors", got.ParamLengthFloors)
 	}
 }
 
@@ -359,6 +373,32 @@ func TestWithSupplementalAuthorityBlocksSupplementalPlacementFacts(t *testing.T)
 	}
 	if _, ok := got.Placements[supplementalID]; ok {
 		t.Fatalf("Placements = %#v, want supplemental placement blocked", got.Placements)
+	}
+}
+
+func TestWithSupplementalAuthorityBlocksSupplementalParamLengthFloors(t *testing.T) {
+	primary := func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) factapply.CallOutcome {
+		return factapply.CallOutcome{
+			PostReturnAuthority: true,
+			ParamLengthFloors: []factapply.CallParamLengthFloor{
+				{Path: pathdom.NewPlaceholder(0), Floor: 2},
+			},
+		}
+	}
+	supplemental := func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) factapply.CallOutcome {
+		return factapply.CallOutcome{
+			ParamLengthFloors: []factapply.CallParamLengthFloor{
+				{Path: pathdom.NewPlaceholder(1), Floor: 3},
+			},
+		}
+	}
+
+	got := WithSupplemental(primary, supplemental)(transfer.NodeContext{}, factflow.NewCallSite(factflow.CallSiteConfig{}).View(), state.State{}, nil)
+	if len(got.ParamLengthFloors) != 1 {
+		t.Fatalf("ParamLengthFloors = %#v, want only authoritative primary floor", got.ParamLengthFloors)
+	}
+	if !got.ParamLengthFloors[0].Path.Equal(pathdom.NewPlaceholder(0)) || got.ParamLengthFloors[0].Floor != 2 {
+		t.Fatalf("ParamLengthFloors = %#v, want primary floor", got.ParamLengthFloors)
 	}
 }
 

@@ -102,7 +102,7 @@ func OutcomeProvider(config ProviderConfig) factapply.CallOutcomeProvider {
 			}
 			return summary.UsefulNormalReturnParam(ctx.Registry, got.NormalReturnParams[index])
 		})
-		out.PostReturnAuthority = calloutcome.HasPostReturnEvidence(ctx.Registry, out)
+		out.PostReturnAuthority = calloutcome.HasAuthoritativePostReturnEvidence(ctx.Registry, out)
 		out.ParamObligations = append(out.ParamObligations, functionTypeParamObligations(ctx.Registry, ownedSite, fn)...)
 		out.ParamObligations = append(out.ParamObligations, memberCallParamObligations(ctx, ownedSite, got, sources, in, read)...)
 		return out

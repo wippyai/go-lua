@@ -69,7 +69,7 @@ func ModuleLoadOutcomeProvider(config ModuleLoadOutcomeProviderConfig) factapply
 				Value: returnValueFromType(ctx.Registry, exportType),
 			}},
 		}
-		out.PostReturnAuthority = calloutcome.HasPostReturnEvidence(ctx.Registry, out)
+		out.PostReturnAuthority = calloutcome.HasAuthoritativePostReturnEvidence(ctx.Registry, out)
 		return out
 	}
 }
