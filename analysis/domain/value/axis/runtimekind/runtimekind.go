@@ -1,6 +1,7 @@
 package runtimekind
 
 import (
+	"strconv"
 	"strings"
 
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
@@ -80,12 +81,18 @@ func Top() Value {
 }
 
 func Singleton(tag Tag) Value {
+	if !validTag(tag) {
+		return Bottom()
+	}
 	return Value{mask: tagMask(tag)}
 }
 
 func (v Value) Without(tags ...Tag) Value {
 	mask := v.mask & allKnownMask
 	for _, tag := range tags {
+		if !validTag(tag) {
+			continue
+		}
 		mask &^= tagMask(tag)
 	}
 	return Value{mask: mask}
@@ -150,7 +157,7 @@ func (v Value) Hash() uint64 {
 
 func (t Tag) String() string {
 	if !validTag(t) {
-		return "runtimekind-tag(invalid)"
+		return "runtimekind-tag(invalid:" + strconv.Itoa(int(t)) + ")"
 	}
 	return tagNames[t]
 }

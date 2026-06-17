@@ -37,6 +37,29 @@ func TestTopWithoutTableExcludesTable(t *testing.T) {
 	}
 }
 
+func TestInvalidTagsFailClosedWithEvidence(t *testing.T) {
+	for _, invalid := range []Tag{tagCount, Tag(255)} {
+		t.Run(invalid.String(), func(t *testing.T) {
+			if got := Singleton(invalid); !got.IsBottom() {
+				t.Fatalf("Singleton(%s) = %s, want bottom", invalid, got)
+			}
+			if Top().Without(invalid) != Top() {
+				t.Fatalf("Top().Without(%s) changed valid evidence", invalid)
+			}
+			if Singleton(Number).Without(invalid) != Singleton(Number) {
+				t.Fatalf("number.Without(%s) changed valid evidence", invalid)
+			}
+			if Singleton(Number).Contains(invalid) {
+				t.Fatalf("number unexpectedly contains invalid tag %s", invalid)
+			}
+			want := "runtimekind-tag(invalid:"
+			if got := invalid.String(); len(got) <= len(want) || got[:len(want)] != want {
+				t.Fatalf("invalid tag string = %q, want numeric evidence prefix %q", got, want)
+			}
+		})
+	}
+}
+
 func TestTagsAccessorIsStableAndSafe(t *testing.T) {
 	value := Join(Singleton(Nil), Singleton(Userdata))
 	tags := value.Tags()
