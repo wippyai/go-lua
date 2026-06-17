@@ -201,21 +201,36 @@ func (s LawSuite[T]) checkJoinAssociative(t reporter) {
 }
 
 func (s LawSuite[T]) checkJoinUpperBound(t reporter) {
-	s.checkUpperBound(t, s.Domain.Join, "Join", "Join upper-bound", "Join upper-bound")
+	s.checkUpperBound(t, upperBoundLaw[T]{
+		op:       s.Domain.Join,
+		name:     "Join",
+		failPrev: "Join upper-bound",
+		failNext: "Join upper-bound",
+	})
 }
 
-// checkUpperBound verifies that op(a,b) is an upper bound of both operands,
-// reporting failures of a under labelA and of b under labelB.
-func (s LawSuite[T]) checkUpperBound(t reporter, op func(T, T) T, opName, labelA, labelB string) {
+// upperBoundLaw configures checkUpperBound for a join- or widen-style operator:
+// op is the binary operator, name labels it in failure messages, and failPrev /
+// failNext are the report categories when the first / second operand is not
+// bounded by the result.
+type upperBoundLaw[T any] struct {
+	op       func(T, T) T
+	name     string
+	failPrev string
+	failNext string
+}
+
+// checkUpperBound verifies that law.op(a,b) is an upper bound of both operands.
+func (s LawSuite[T]) checkUpperBound(t reporter, law upperBoundLaw[T]) {
 	t.Helper()
 	for _, a := range s.Sample {
 		for _, b := range s.Sample {
-			r := op(a, b)
+			r := law.op(a, b)
 			if !s.Domain.LessOrEq(a, r) {
-				s.report(t, labelA, "%s ⊑ "+opName+"(%s,%s)=%s fails", s.fmt(a), s.fmt(a), s.fmt(b), s.fmt(r))
+				s.report(t, law.failPrev, "%s ⊑ "+law.name+"(%s,%s)=%s fails", s.fmt(a), s.fmt(a), s.fmt(b), s.fmt(r))
 			}
 			if !s.Domain.LessOrEq(b, r) {
-				s.report(t, labelB, "%s ⊑ "+opName+"(%s,%s)=%s fails", s.fmt(b), s.fmt(a), s.fmt(b), s.fmt(r))
+				s.report(t, law.failNext, "%s ⊑ "+law.name+"(%s,%s)=%s fails", s.fmt(b), s.fmt(a), s.fmt(b), s.fmt(r))
 			}
 		}
 	}
@@ -328,7 +343,12 @@ func (s LawSuite[T]) checkAbsorption(t reporter) {
 }
 
 func (s LawSuite[T]) checkWideningOverApproximates(t reporter) {
-	s.checkUpperBound(t, s.Domain.Widen, "Widen", "Widen over-approximates prev", "Widen over-approximates next")
+	s.checkUpperBound(t, upperBoundLaw[T]{
+		op:       s.Domain.Widen,
+		name:     "Widen",
+		failPrev: "Widen over-approximates prev",
+		failNext: "Widen over-approximates next",
+	})
 }
 
 // chainTerminationBound caps how many widening iterations we permit before
