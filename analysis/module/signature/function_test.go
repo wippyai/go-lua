@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/domain/effect"
-	"github.com/wippyai/go-lua/analysis/domain/effect/control"
+	"github.com/wippyai/go-lua/analysis/domain/effect/returns"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
@@ -16,24 +16,24 @@ func TestFunctionEqualsComparesTypeAndEffectSeparately(t *testing.T) {
 		Param("value", typ.String).
 		Returns(typ.Boolean).
 		Build()
-	io := Function{Type: fn, Effect: effect.Empty.With(control.IO{})}
-	same := Function{Type: fn, Effect: effect.Empty.With(control.IO{})}
+	nonPure := Function{Type: fn, Effect: effect.Empty.With(returns.ErrorReturn{ValueIndex: 0, ErrorIndex: 1})}
+	same := Function{Type: fn, Effect: effect.Empty.With(returns.ErrorReturn{ValueIndex: 0, ErrorIndex: 1})}
 	pure := Function{Type: fn, Effect: effect.Empty}
 	differentType := Function{
 		Type: typ.Func().
 			Param("value", typ.Number).
 			Returns(typ.Boolean).
 			Build(),
-		Effect: effect.Empty.With(control.IO{}),
+		Effect: effect.Empty.With(returns.ErrorReturn{ValueIndex: 0, ErrorIndex: 1}),
 	}
 
-	if !io.Equals(same) {
+	if !nonPure.Equals(same) {
 		t.Fatalf("equal signatures were not equal")
 	}
-	if io.Equals(pure) {
+	if nonPure.Equals(pure) {
 		t.Fatalf("effect rows should be part of signature equality")
 	}
-	if io.Equals(differentType) {
+	if nonPure.Equals(differentType) {
 		t.Fatalf("function type should be part of signature equality")
 	}
 }
@@ -44,7 +44,7 @@ func TestFunctionCloneCopiesEffectRowAndFunctionSlices(t *testing.T) {
 			Param("value", typ.String).
 			Returns(typ.Boolean).
 			Build(),
-		Effect: effect.Open("rho", control.IO{}),
+		Effect: effect.Open("rho", returns.ErrorReturn{ValueIndex: 0, ErrorIndex: 1}),
 	}
 
 	clone := original.Clone()
@@ -168,10 +168,10 @@ func TestFunctionStringIncludesNonPureEffect(t *testing.T) {
 			Param("value", typ.String).
 			Returns(typ.Boolean).
 			Build(),
-		Effect: effect.Empty.With(control.IO{}),
+		Effect: effect.Empty.With(returns.ErrorReturn{ValueIndex: 0, ErrorIndex: 1}),
 	}
 
-	if got, want := sig.String(), "fun(value: string) -> boolean ! {io}"; got != want {
+	if got, want := sig.String(), "fun(value: string) -> boolean ! {errret(val[0], err[1])}"; got != want {
 		t.Fatalf("String() = %q, want %q", got, want)
 	}
 }

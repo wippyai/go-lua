@@ -48,7 +48,8 @@ func (s SelectResultOfCases) String() string {
 	return fmt.Sprintf("select_result(%s, %s)", s.Cases, s.Default)
 }
 
-// DeepElementOf is reserved return-transform vocabulary.
+// DeepElementOf is reserved return-transform vocabulary. While inactive,
+// lowering falls back to the declared return type.
 type DeepElementOf struct {
 	Source effect.ParamRef
 }

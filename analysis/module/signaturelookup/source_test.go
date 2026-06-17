@@ -9,10 +9,10 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/domain/effect"
-	"github.com/wippyai/go-lua/analysis/domain/effect/control"
 	"github.com/wippyai/go-lua/analysis/domain/effect/dispatch"
-	"github.com/wippyai/go-lua/analysis/module/signature"
+	"github.com/wippyai/go-lua/analysis/domain/effect/returns"
 	"github.com/wippyai/go-lua/analysis/module/manifest"
+	"github.com/wippyai/go-lua/analysis/module/signature"
 	"github.com/wippyai/go-lua/analysis/module/signaturelookup/internal/stdlib"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
@@ -30,7 +30,7 @@ func TestLookupStdlib(t *testing.T) {
 }
 
 func TestLookupManifest(t *testing.T) {
-	want := testSignature("custom", control.IO{})
+	want := testSignature("custom", returns.ErrorReturn{ValueIndex: 0, ErrorIndex: 1})
 	m := manifest.New("example/module")
 	m.DefineFunctionSignature("custom", want)
 	src := Source{Manifests: []*manifest.Manifest{m}}
@@ -45,7 +45,7 @@ func TestLookupManifest(t *testing.T) {
 }
 
 func TestLookupManifestOverridesStdlib(t *testing.T) {
-	want := testSignature("override", control.IO{})
+	want := testSignature("override", returns.ErrorReturn{ValueIndex: 0, ErrorIndex: 1})
 	m := manifest.New("example/module")
 	m.DefineFunctionSignature(stdlib.Require, want)
 	src := Source{Manifests: []*manifest.Manifest{m}, IncludeStdlib: true}
@@ -68,7 +68,7 @@ func TestLookupMissing(t *testing.T) {
 }
 
 func TestLookupReturnsClones(t *testing.T) {
-	want := testSignature("custom", control.IO{})
+	want := testSignature("custom", returns.ErrorReturn{ValueIndex: 0, ErrorIndex: 1})
 	m := manifest.New("example/module")
 	m.DefineFunctionSignature("custom", want)
 	src := Source{Manifests: []*manifest.Manifest{m}, IncludeStdlib: true}
@@ -112,10 +112,10 @@ func TestLookupReturnsClones(t *testing.T) {
 
 func TestSignaturesReturnsClonesAndRespectsPrecedence(t *testing.T) {
 	first := manifest.New("example/first")
-	first.DefineFunctionSignature("shared", testSignature("first", control.IO{}))
+	first.DefineFunctionSignature("shared", testSignature("first", returns.ErrorReturn{ValueIndex: 0, ErrorIndex: 1}))
 	second := manifest.New("example/second")
-	wantShared := testSignature("second", dispatch.TypePredicate{})
-	wantRequire := testSignature("require_override", control.IO{})
+	wantShared := testSignature("second", returns.Return{ReturnIndex: 0, Transform: returns.SameAs{Source: effect.ParamRef{Index: 0}}})
+	wantRequire := testSignature("require_override", returns.ErrorReturn{ValueIndex: 0, ErrorIndex: 1})
 	second.DefineFunctionSignature("shared", wantShared)
 	second.DefineFunctionSignature(stdlib.Require, wantRequire)
 	src := Source{Manifests: []*manifest.Manifest{first, second}, IncludeStdlib: true}
