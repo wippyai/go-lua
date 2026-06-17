@@ -97,7 +97,10 @@ func mayContainNumber(t typ.Type, depth int) bool {
 	if t == nil || depth > typ.DefaultRecursionDepth {
 		return true
 	}
-	if typ.IsAny(t) || typ.IsUnknown(t) || typ.IsNever(t) {
+	if typ.IsNever(t) {
+		return false
+	}
+	if typ.IsAny(t) || typ.IsUnknown(t) {
 		return true
 	}
 	if subtype.IsSubtype(t, typ.Number) {

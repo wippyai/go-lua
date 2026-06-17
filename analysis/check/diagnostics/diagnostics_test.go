@@ -2548,6 +2548,35 @@ func TestNumericForSkipsUnknownAndPartlyNumericUnion(t *testing.T) {
 	}
 }
 
+func TestNumericForReportsNonNumericUnionWithNeverArm(t *testing.T) {
+	diags := runDiagnostics(t, `
+		function f(value: string | never)
+			for i = value, 10 do
+			end
+		end
+	`)
+	if len(diags) != 1 {
+		t.Fatalf("diagnostics = %d, want non-numeric reachable union arm error: %#v", len(diags), diags)
+	}
+	d := diags[0]
+	if d.Code != CodeNumericForOperand || !strings.Contains(d.Message, "initial value") ||
+		!strings.Contains(d.Message, "string") {
+		t.Fatalf("diagnostic = %#v, want initial-value numeric-for operand error for string | never", d)
+	}
+}
+
+func TestNumericForSkipsPureNeverOperandAsUnreachable(t *testing.T) {
+	diags := runDiagnostics(t, `
+		function f(value: never)
+			for i = value, 10 do
+			end
+		end
+	`)
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v, want no numeric-for operand error for unreachable never operand", diags)
+	}
+}
+
 func TestDirectCallReportsNonCallableTarget(t *testing.T) {
 	diags := runDiagnostics(t, `
 		local x: number = 42
