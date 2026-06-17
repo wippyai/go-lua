@@ -1,0 +1,20 @@
+{
+  "description": "A wrong field type inside a recursive structure must still be reported with a full evidence chain (recursion subtyping must not mask real mismatches).",
+  "files": ["main.lua"],
+  "check": {
+    "diagnostics": [
+      {
+        "file": "main.lua",
+        "line": 6,
+        "severity": "error",
+        "code": "type.assignment",
+        "message_contains": ["123", "string"],
+        "min_evidence": 2,
+        "evidence_contains": ["123", "string"],
+        "min_labels": 1,
+        "label_contains": ["assigned value"]
+      }
+    ]
+  },
+  "run": { "skip": "diagnostic-only fixture" }
+}
