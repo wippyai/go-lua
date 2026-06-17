@@ -30,9 +30,10 @@
           "unknown value",
           "missing_count"
         ],
-        "min_evidence": 1,
+        "min_evidence": 2,
         "evidence_contains": [
-          "value reference missing_count is not declared or predeclared here"
+          "value reference missing_count is used here",
+          "is not declared, predeclared, or imported in scope"
         ],
         "min_labels": 1,
         "label_contains": [

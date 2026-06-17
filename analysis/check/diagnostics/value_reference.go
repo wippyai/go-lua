@@ -215,12 +215,20 @@ func unresolvedValueDiagnostic(ident *ast.IdentExpr) diagnostic.Diagnostic {
 		Code:     CodeUnresolvedValueReference,
 		Severity: diagnostic.SeverityError,
 		Message:  fmt.Sprintf("unknown value %s", name),
-		Explanation: diagnostic.NewExplanation(diagnostic.Evidence{
-			Kind:    diagnostic.EvidenceMissingProof,
-			Trust:   diagnostic.TrustProven,
-			Span:    span,
-			Message: fmt.Sprintf("value reference %s is not declared or predeclared here", name),
-		}),
+		Explanation: diagnostic.NewExplanation(
+			diagnostic.Evidence{
+				Kind:    diagnostic.EvidenceUserAssertion,
+				Trust:   diagnostic.TrustClaimed,
+				Span:    span,
+				Message: fmt.Sprintf("value reference %s is used here", name),
+			},
+			diagnostic.Evidence{
+				Kind:    diagnostic.EvidenceMissingProof,
+				Trust:   diagnostic.TrustProven,
+				Span:    span,
+				Message: fmt.Sprintf("value reference %s is not declared, predeclared, or imported in scope", name),
+			},
+		),
 		Labels: []diagnostic.Label{{Span: span, Message: "unresolved value"}},
 	}
 }
