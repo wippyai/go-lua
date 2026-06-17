@@ -348,7 +348,7 @@ func typeWithBoundaryPresence(t typ.Type, value product.Value) typ.Type {
 	case presence.Equal(p, presence.Absent()):
 		return typ.Nil
 	case presence.Equal(p, presence.Maybe()):
-		if !projectionHasNil(t) {
+		if !ProjectionHasNil(t) {
 			return normalize.Optional(t)
 		}
 	case presence.Equal(p, presence.Present()):
@@ -431,7 +431,7 @@ func refineTypeByRuntimeKindSet(t typ.Type, kinds runtimekind.Value, p presence.
 	if kinds.IsBottom() || kinds.IsTop() {
 		return nil, false
 	}
-	keepNil := presence.Equal(p, presence.Maybe()) && projectionHasNil(t)
+	keepNil := presence.Equal(p, presence.Maybe()) && ProjectionHasNil(t)
 	return refineTypeByRuntimeKindSetDepth(t, kinds, keepNil, 0)
 }
 
@@ -517,10 +517,10 @@ func typeIncludesNil(t typ.Type) bool {
 		return false
 	}
 	normalized := unwrap.NormalizeNil(t)
-	return (normalized != nil && normalized.Kind() == kind.Nil) || projectionHasNil(t)
+	return (normalized != nil && normalized.Kind() == kind.Nil) || ProjectionHasNil(t)
 }
 
-func projectionHasNil(t typ.Type) bool {
+func ProjectionHasNil(t typ.Type) bool {
 	return projectionHasNilDepth(t, 0)
 }
 

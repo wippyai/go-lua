@@ -12,11 +12,8 @@ import (
 	luatypeprojection "github.com/wippyai/go-lua/analysis/lua/typeprojection"
 	"github.com/wippyai/go-lua/analysis/lua/valueexpr"
 	"github.com/wippyai/go-lua/analysis/type/access"
-	"github.com/wippyai/go-lua/analysis/type/kind"
-	"github.com/wippyai/go-lua/analysis/type/subst"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
-	"github.com/wippyai/go-lua/analysis/type/unwrap"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
 
@@ -335,38 +332,7 @@ func (p expressionTyper) binaryType(lhs ast.Expr, op string, rhs ast.Expr, depth
 }
 
 func projectionHasNil(t typ.Type) bool {
-	return projectionHasNilDepth(t, 0)
-}
-
-func projectionHasNilDepth(t typ.Type, depth int) bool {
-	if t == nil || depth > typ.DefaultRecursionDepth || typ.IsAny(t) || typ.IsUnknown(t) || typ.IsNever(t) {
-		return false
-	}
-	t = unwrap.NormalizeNil(unwrap.Annotated(t))
-	if t == nil {
-		return false
-	}
-	if t.Kind() == kind.Nil {
-		return true
-	}
-	switch v := t.(type) {
-	case *typ.Optional:
-		return true
-	case *typ.Union:
-		for _, member := range v.Members {
-			if projectionHasNilDepth(member, depth+1) {
-				return true
-			}
-		}
-		return false
-	case *typ.Alias:
-		return projectionHasNilDepth(v.UnaliasedTarget(), depth+1)
-	case *typ.Instantiated:
-		expanded := subst.ExpandInstantiated(v)
-		return expanded != nil && expanded != t && projectionHasNilDepth(expanded, depth+1)
-	default:
-		return false
-	}
+	return readmodel.ProjectionHasNil(t)
 }
 
 func projectionWithoutNil(t typ.Type) typ.Type {
