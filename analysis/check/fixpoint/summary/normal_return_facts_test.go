@@ -30,6 +30,10 @@ func TestNormalReturnFactsNormalizeDropsNonPlaceholderPaths(t *testing.T) {
 			{Path: concrete, Value: value},
 			{Path: placeholder, Value: value},
 		},
+		PathInvalidations: []callboundary.PathInvalidationFact{
+			{Path: concrete},
+			{Path: placeholder},
+		},
 		DynamicIndexFacts: []callboundary.DynamicIndexFact{
 			{Table: concrete, Site: "caller.dynamic.ignored", Value: dynamicindex.Fact{KeyPresence: presence.Present()}},
 			{Table: placeholder, Site: "caller.dynamic.1", Value: dynamicindex.Fact{KeyPresence: presence.Present()}},
@@ -69,6 +73,9 @@ func TestNormalReturnFactsNormalizeDropsNonPlaceholderPaths(t *testing.T) {
 	}
 	if len(facts.PathStaticMembers) != 1 || !facts.PathStaticMembers[0].Path.Equal(placeholder) {
 		t.Fatalf("PathStaticMembers = %#v, want only placeholder fact", facts.PathStaticMembers)
+	}
+	if len(facts.PathInvalidations) != 1 || !facts.PathInvalidations[0].Path.Equal(placeholder) {
+		t.Fatalf("PathInvalidations = %#v, want only placeholder fact", facts.PathInvalidations)
 	}
 	if len(facts.DynamicIndexFacts) != 1 || facts.DynamicIndexFacts[0].Site != "caller.dynamic.1" {
 		t.Fatalf("DynamicIndexFacts = %#v, want stable caller site placeholder fact", facts.DynamicIndexFacts)
@@ -144,6 +151,9 @@ func TestNormalReturnFactsCloneIsolatesPayload(t *testing.T) {
 	reg := mustRegistry(t)
 	original := Summary{NormalReturnFacts: callboundary.NormalReturnFacts{
 		PathRefinements: []callboundary.PathValueFact{{Path: pathdom.NewPlaceholder(0).Field("value"), Value: presentProduct(reg)}},
+		PathInvalidations: []callboundary.PathInvalidationFact{{
+			Path: pathdom.NewPlaceholder(0).Field("invalidate"),
+		}},
 		DynamicIndexFacts: []callboundary.DynamicIndexFact{{
 			Table: pathdom.NewPlaceholder(0),
 			Site:  "caller.dynamic.clone",
@@ -175,6 +185,7 @@ func TestNormalReturnFactsCloneIsolatesPayload(t *testing.T) {
 
 	cloned := original.Clone()
 	cloned.NormalReturnFacts.PathRefinements[0].Path = pathdom.NewPlaceholder(1)
+	cloned.NormalReturnFacts.PathInvalidations[0].Path = pathdom.NewPlaceholder(1)
 	cloned.NormalReturnFacts.DynamicIndexFacts[0].Site = "caller.dynamic.changed"
 	cloned.NormalReturnFacts.BranchProofs[0].Presence = presence.Absent()
 	cloned.NormalReturnFacts.StoreRelations[0].Source = pathdom.NewPlaceholder(2)
@@ -183,6 +194,9 @@ func TestNormalReturnFactsCloneIsolatesPayload(t *testing.T) {
 
 	if !original.NormalReturnFacts.PathRefinements[0].Path.Equal(pathdom.NewPlaceholder(0).Field("value")) {
 		t.Fatalf("mutating cloned path refinement changed original")
+	}
+	if !original.NormalReturnFacts.PathInvalidations[0].Path.Equal(pathdom.NewPlaceholder(0).Field("invalidate")) {
+		t.Fatalf("mutating cloned path invalidation changed original")
 	}
 	if original.NormalReturnFacts.DynamicIndexFacts[0].Site != "caller.dynamic.clone" {
 		t.Fatalf("mutating cloned dynamic index changed original")
@@ -507,7 +521,88 @@ func TestNormalReturnFactsEscapeEventsKeepNonRecursiveChildrenDistinct(t *testin
 	}
 }
 
+func TestNormalReturnFactsPathInvalidationsCompressParentEvidence(t *testing.T) {
+	reg := mustRegistry(t)
+	p0 := pathdom.NewPlaceholder(0)
+	parent := p0.Field("cache")
+	child := parent.Field("entry")
+	grandchild := child.Field("value")
+	sibling := p0.Field("cache2")
+	concrete := pathdom.NewPath(symbol.ID(99), "arg").Field("cache")
+
+	got := Normalize(reg, Summary{NormalReturnFacts: callboundary.NormalReturnFacts{
+		PathInvalidations: []callboundary.PathInvalidationFact{
+			{Path: child},
+			{Path: concrete},
+			{Path: grandchild},
+			{Path: sibling},
+			{Path: parent},
+			{Path: child},
+		},
+	}}).NormalReturnFacts.PathInvalidations
+
+	if len(got) != 2 {
+		t.Fatalf("PathInvalidations = %#v, want parent and sibling only", got)
+	}
+	if findPathInvalidation(got, parent) == nil {
+		t.Fatalf("PathInvalidations = %#v, want parent invalidation", got)
+	}
+	if findPathInvalidation(got, child) != nil || findPathInvalidation(got, grandchild) != nil {
+		t.Fatalf("child invalidations should be compressed by parent: %#v", got)
+	}
+	if findPathInvalidation(got, sibling) == nil {
+		t.Fatalf("PathInvalidations = %#v, want distinct sibling invalidation", got)
+	}
+	if findPathInvalidation(got, concrete) != nil {
+		t.Fatalf("concrete invalidation should not cross call boundary: %#v", got)
+	}
+
+	parentOnly := Summary{NormalReturnFacts: callboundary.NormalReturnFacts{
+		PathInvalidations: []callboundary.PathInvalidationFact{{Path: parent}},
+	}}
+	childOnly := Summary{NormalReturnFacts: callboundary.NormalReturnFacts{
+		PathInvalidations: []callboundary.PathInvalidationFact{{Path: child}},
+	}}
+	siblingOnly := Summary{NormalReturnFacts: callboundary.NormalReturnFacts{
+		PathInvalidations: []callboundary.PathInvalidationFact{{Path: sibling}},
+	}}
+
+	joined := Join(reg, childOnly, parentOnly).NormalReturnFacts.PathInvalidations
+	if len(joined) != 1 || !joined[0].Path.Equal(parent) {
+		t.Fatalf("Join(child,parent) = %#v, want parent only", joined)
+	}
+	widened := Widen(reg, childOnly, Summary{NormalReturnFacts: callboundary.NormalReturnFacts{
+		PathInvalidations: []callboundary.PathInvalidationFact{{Path: parent}, {Path: sibling}},
+	}}).NormalReturnFacts.PathInvalidations
+	if len(widened) != 2 || findPathInvalidation(widened, parent) == nil || findPathInvalidation(widened, sibling) == nil {
+		t.Fatalf("Widen(child,parent+sibling) = %#v, want parent and sibling", widened)
+	}
+	if !Equal(reg, parentOnly, Summary{NormalReturnFacts: callboundary.NormalReturnFacts{
+		PathInvalidations: []callboundary.PathInvalidationFact{{Path: parent}, {Path: child}},
+	}}) {
+		t.Fatalf("Equal should compare normalized parent-dominated invalidations")
+	}
+	if !LessOrEq(reg, childOnly, parentOnly) {
+		t.Fatalf("child invalidation should be <= parent invalidation")
+	}
+	if LessOrEq(reg, parentOnly, childOnly) {
+		t.Fatalf("parent invalidation should not be <= child invalidation")
+	}
+	if LessOrEq(reg, siblingOnly, parentOnly) {
+		t.Fatalf("sibling invalidation should not be <= parent invalidation")
+	}
+}
+
 func findPathRefinement(facts []callboundary.PathValueFact, path pathdom.Path) *callboundary.PathValueFact {
+	for i := range facts {
+		if facts[i].Path.Equal(path) {
+			return &facts[i]
+		}
+	}
+	return nil
+}
+
+func findPathInvalidation(facts []callboundary.PathInvalidationFact, path pathdom.Path) *callboundary.PathInvalidationFact {
 	for i := range facts {
 		if facts[i].Path.Equal(path) {
 			return &facts[i]
