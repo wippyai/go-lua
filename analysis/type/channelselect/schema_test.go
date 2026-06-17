@@ -51,6 +51,33 @@ func TestResultValueTypeWithDefaultIncludesDefaultMember(t *testing.T) {
 	}
 }
 
+func TestResultValueTypeIgnoresExplicitDefaultSentinelCase(t *testing.T) {
+	if got, ok := ResultValueTypeWithDefault("select-sentinel", []ResultCase{
+		{Index: DefaultCaseIndex, Payload: typ.String},
+	}, false); ok || got != nil {
+		t.Fatalf("ResultValueTypeWithDefault(explicit sentinel only) = %v, %v; want nil, false", got, ok)
+	}
+
+	got, ok := ResultValueTypeWithDefault("select-sentinel", []ResultCase{
+		{Index: DefaultCaseIndex, Payload: typ.String},
+	}, true)
+	if !ok {
+		t.Fatal("ResultValueTypeWithDefault(default plus sentinel) returned no type")
+	}
+	caseType, ok := ResultCaseTypeFromValue(got, "select-sentinel", DefaultCaseIndex)
+	if !ok {
+		t.Fatalf("result type missing default member after explicit sentinel skip: %v", got)
+	}
+	record, ok := unwrap.Alias(unwrap.Annotations(caseType)).(*typ.Record)
+	if !ok {
+		t.Fatalf("default case = %T, want record", caseType)
+	}
+	value := record.GetField(ResultValueField)
+	if value == nil || value.Type != typ.Nil {
+		t.Fatalf("default case value = %v, want nil payload", value)
+	}
+}
+
 func TestResultCaseTypeFromValueMatchesUnionMembers(t *testing.T) {
 	caseType := ResultCaseType("select-2", 7, typetable.NewRecord().Field("ok", typ.Boolean).Build())
 	union := typeexpr.Union(caseType, typ.String)
@@ -81,6 +108,22 @@ func TestResultWithoutCasePreservesDefaultMember(t *testing.T) {
 	}
 }
 
+func TestResultWithoutCaseRefusesDefaultSentinel(t *testing.T) {
+	result, ok := ResultValueTypeWithDefault("select-remove-default", []ResultCase{
+		{Index: 0, Payload: typ.String},
+	}, true)
+	if !ok {
+		t.Fatal("ResultValueTypeWithDefault returned no type")
+	}
+
+	if got, ok := ResultWithoutCase(result, "select-remove-default", DefaultCaseIndex); ok || got != nil {
+		t.Fatalf("ResultWithoutCase(default sentinel) = %v, %v; want nil, false", got, ok)
+	}
+	if _, ok := ResultCaseTypeFromValue(result, "select-remove-default", DefaultCaseIndex); !ok {
+		t.Fatalf("default member was not present before removal attempt: %v", result)
+	}
+}
+
 func TestResultWithoutCaseNoDefaultCanBecomeNever(t *testing.T) {
 	result, ok := ResultValueTypeWithDefault("select-remove", []ResultCase{
 		{Index: 0, Payload: typ.String},
@@ -95,5 +138,19 @@ func TestResultWithoutCaseNoDefaultCanBecomeNever(t *testing.T) {
 	}
 	if !typ.IsNever(got) {
 		t.Fatalf("ResultWithoutCase = %v, want never", got)
+	}
+}
+
+func TestCaseTypeMatchesRejectsMalformedMarker(t *testing.T) {
+	malformed := typetable.NewRecord().
+		Field(ResultChannelField, typetable.NewRecord().
+			Field(selectIDField, typ.LiteralString("select-bad")).
+			Field(caseIndexField, typ.LiteralString("not-an-index")).
+			Build()).
+		Field(ResultValueField, typ.String).
+		Build()
+
+	if CaseTypeMatches(malformed, "select-bad", 0) {
+		t.Fatal("CaseTypeMatches accepted marker with non-integer case index")
 	}
 }

@@ -27,13 +27,12 @@ type ResultCase struct {
 // { channel = marker, value = payload }.
 func ResultCaseType(selectID string, index int, payload typ.Type) typ.Type {
 	return typetable.NewRecord().
-		Field(ResultChannelField, CaseMarkerType(selectID, index)).
+		Field(ResultChannelField, caseMarkerType(selectID, index)).
 		Field(ResultValueField, payload).
 		Build()
 }
 
-// ResultDefaultType builds the residual result member for a select default arm.
-func ResultDefaultType(selectID string) typ.Type {
+func resultDefaultType(selectID string) typ.Type {
 	return ResultCaseType(selectID, DefaultCaseIndex, typ.Nil)
 }
 
@@ -45,17 +44,21 @@ func ResultValueTypeWithDefault(selectID string, cases []ResultCase, hasDefault 
 	}
 	caseTypes := make([]typ.Type, 0, len(cases)+1)
 	for _, c := range cases {
+		if c.Index == DefaultCaseIndex {
+			continue
+		}
 		caseTypes = append(caseTypes, ResultCaseType(selectID, c.Index, c.Payload))
 	}
 	if hasDefault {
-		caseTypes = append(caseTypes, ResultDefaultType(selectID))
+		caseTypes = append(caseTypes, resultDefaultType(selectID))
+	}
+	if len(caseTypes) == 0 {
+		return nil, false
 	}
 	return normalize.UnionForEvidence(caseTypes...), true
 }
 
-// CaseMarkerType builds the opaque channel identity marker stored in a select
-// result case's channel field.
-func CaseMarkerType(selectID string, index int) typ.Type {
+func caseMarkerType(selectID string, index int) typ.Type {
 	return typetable.NewRecord().
 		Field(selectIDField, typ.LiteralString(selectID)).
 		Field(caseIndexField, typ.LiteralInt(int64(index))).
@@ -64,11 +67,11 @@ func CaseMarkerType(selectID string, index int) typ.Type {
 
 // CaseTypeMatches reports whether caseType carries the marker for selectID/index.
 func CaseTypeMatches(caseType typ.Type, selectID string, index int) bool {
-	channelType, ok := ResultChannelFieldType(caseType)
+	channelType, ok := resultChannelFieldType(caseType)
 	if !ok {
 		return false
 	}
-	gotSelectID, gotIndex, ok := CaseMarker(channelType)
+	gotSelectID, gotIndex, ok := caseMarker(channelType)
 	return ok && gotSelectID == selectID && gotIndex == index
 }
 
@@ -87,11 +90,11 @@ func ResultHasSelectID(resultType typ.Type, selectID string) bool {
 }
 
 func resultCaseHasSelectID(caseType typ.Type, selectID string) bool {
-	channelType, ok := ResultChannelFieldType(caseType)
+	channelType, ok := resultChannelFieldType(caseType)
 	if !ok {
 		return false
 	}
-	got, _, ok := CaseMarker(channelType)
+	got, _, ok := caseMarker(channelType)
 	return ok && got == selectID
 }
 
@@ -99,6 +102,9 @@ func resultCaseHasSelectID(caseType typ.Type, selectID string) bool {
 // members are preserved, so a default-capable select does not collapse to never
 // just because all explicit receive cases were excluded.
 func ResultWithoutCase(resultType typ.Type, selectID string, index int) (typ.Type, bool) {
+	if index == DefaultCaseIndex {
+		return nil, false
+	}
 	resultType = unwrap.Annotations(resultType)
 	if union, ok := resultType.(*typ.Union); ok {
 		kept := make([]typ.Type, 0, len(union.Members))
@@ -124,8 +130,7 @@ func ResultWithoutCase(resultType typ.Type, selectID string, index int) (typ.Typ
 	return nil, false
 }
 
-// ResultChannelFieldType returns the internal result case channel field type.
-func ResultChannelFieldType(caseType typ.Type) (typ.Type, bool) {
+func resultChannelFieldType(caseType typ.Type) (typ.Type, bool) {
 	record, ok := unwrap.Alias(unwrap.Annotations(caseType)).(*typ.Record)
 	if !ok {
 		return nil, false
@@ -154,8 +159,7 @@ func ResultCaseTypeFromValue(resultType typ.Type, selectID string, index int) (t
 	return nil, false
 }
 
-// CaseMarker decodes a select result channel marker.
-func CaseMarker(t typ.Type) (string, int, bool) {
+func caseMarker(t typ.Type) (string, int, bool) {
 	marker, ok := unwrap.Alias(unwrap.Annotations(t)).(*typ.Record)
 	if !ok {
 		return "", 0, false
