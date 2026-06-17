@@ -65,3 +65,48 @@ func TestProofInnerStopsAtAnyCast(t *testing.T) {
 		t.Fatalf("ProofInner(number cast) = %T/%v, want ident/true", got, ok)
 	}
 }
+
+func TestTypedNilProducersAreAbsent(t *testing.T) {
+	var call *ast.FuncCallExpr
+	var callExpr ast.Expr = call
+	if got := TopLevelProducer(callExpr); got.Kind != ProducerNone || got.Expr != nil || got.Call != nil {
+		t.Fatalf("typed nil call producer = %#v, want none", got)
+	}
+	if CanProduceMultipleValues(callExpr) {
+		t.Fatal("typed nil call should not produce multiple values")
+	}
+	if AdjustRet(callExpr) {
+		t.Fatal("typed nil call should not report adjusted returns")
+	}
+
+	var cast *ast.CastExpr
+	var castExpr ast.Expr = cast
+	if got := AssertionInner(castExpr); got != nil {
+		t.Fatalf("AssertionInner(typed nil cast) = %#v, want nil", got)
+	}
+	if got, ok := ProofInner(castExpr); !ok || got != nil {
+		t.Fatalf("ProofInner(typed nil cast) = %#v/%v, want nil/true", got, ok)
+	}
+}
+
+func TestBrokenAssertionWrappersHaveNoProducer(t *testing.T) {
+	wrapped := &ast.CastExpr{
+		Expr: &ast.NonNilAssertExpr{},
+		Type: &ast.PrimitiveTypeExpr{Name: "number"},
+	}
+	if got := AssertionInner(wrapped); got != nil {
+		t.Fatalf("AssertionInner(broken wrapper) = %#v, want nil", got)
+	}
+	if !missingAssertionInner(wrapped) {
+		t.Fatal("broken wrapper did not report missing assertion inner")
+	}
+	if got := TopLevelProducer(wrapped); got.Kind != ProducerNone || got.Expr != nil {
+		t.Fatalf("broken wrapper producer = %#v, want none", got)
+	}
+	if CanProduceMultipleValues(wrapped) {
+		t.Fatal("broken wrapper should not produce multiple values")
+	}
+	if AdjustRet(wrapped) {
+		t.Fatal("broken wrapper should not report adjusted returns")
+	}
+}

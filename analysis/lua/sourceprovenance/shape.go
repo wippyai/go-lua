@@ -52,7 +52,7 @@ func SourceForExpr(expr ast.Expr, exprIndex, targetIndex, resultIndex int, final
 
 func assignmentSource(exprs []ast.Expr, targetIndex int, resolver CallPointResolver) ASTSource {
 	if len(exprs) == 0 {
-		return nilFillSource(targetIndex)
+		return NewNilSource(targetIndex)
 	}
 
 	finalExprIndex := len(exprs) - 1
@@ -68,14 +68,13 @@ func assignmentSource(exprs []ast.Expr, targetIndex int, resolver CallPointResol
 	if finalExpands {
 		return SourceForExpr(finalExpr, finalExprIndex, targetIndex, targetIndex-finalExprIndex, true, false, resolver)
 	}
-	return nilFillSource(targetIndex)
-}
-
-func nilFillSource(targetIndex int) ASTSource {
 	return NewNilSource(targetIndex)
 }
 
 func sourceForExprShape(expr ast.Expr, exprIndex, targetIndex, resultIndex int, shape SourceShape, resolver CallPointResolver) ASTSource {
+	if missingAssertionInner(expr) {
+		return NewUnknownSource(targetIndex)
+	}
 	switch valueSourceKind(expr) {
 	case SourceCall:
 		point, ok := resolveCallPoint(resolver, exprIndex, expr)

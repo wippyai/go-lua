@@ -158,11 +158,11 @@ func (s ASTSource) Valid() bool {
 			!s.Adjusted &&
 			!s.OpenTail
 	case SourceExpression:
-		return s.Expr != nil && !s.HasCallPoint && s.CallPoint == 0
+		return !exprNil(s.Expr) && !s.HasCallPoint && s.CallPoint == 0
 	case SourceCall:
-		return s.HasCallPoint && s.CallPoint != 0 && s.ResultIndex >= 0
+		return !exprNil(s.Expr) && s.HasCallPoint && s.CallPoint != 0 && s.ResultIndex >= 0
 	case SourceVararg:
-		return s.Expr != nil && !s.HasCallPoint && s.CallPoint == 0
+		return !exprNil(s.Expr) && !s.HasCallPoint && s.CallPoint == 0
 	case SourceNil:
 		return s.Expr == nil &&
 			s.ExprIndex == NoSourceIndex &&

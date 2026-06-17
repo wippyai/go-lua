@@ -128,6 +128,67 @@ func TestUnresolvedCallPointSourcesAreExplicitUnknown(t *testing.T) {
 	}
 }
 
+func TestNilExprPublicSourcesAreExplicitUnknown(t *testing.T) {
+	source := SourceForExpr(nil, 0, 0, 0, true, false, nil)
+	if source.Kind != SourceUnknown || source.TargetIndex != 0 || !source.Valid() {
+		t.Fatalf("nil expr source = %#v, want valid unknown for target 0", source)
+	}
+
+	condition := ConditionSource(nil, nil)
+	if condition.Kind != SourceUnknown || condition.TargetIndex != NoSourceIndex || !condition.Valid() {
+		t.Fatalf("nil condition source = %#v, want valid condition unknown", condition)
+	}
+
+	values := ValueListSources([]ast.Expr{nil}, false, nil)
+	if len(values) != 1 || values[0].Kind != SourceUnknown || values[0].TargetIndex != 0 || !values[0].Valid() {
+		t.Fatalf("nil value-list source = %#v, want one valid unknown", values)
+	}
+
+	assignments := AssignmentSources([]ast.Expr{nil}, 2, nil)
+	if len(assignments) != 2 {
+		t.Fatalf("assignment sources len = %d, want 2", len(assignments))
+	}
+	if assignments[0].Kind != SourceUnknown || assignments[0].TargetIndex != 0 || !assignments[0].Valid() {
+		t.Fatalf("nil assignment expr source = %#v, want valid unknown", assignments[0])
+	}
+	if assignments[1].Kind != SourceNil || assignments[1].TargetIndex != 1 || !assignments[1].Valid() {
+		t.Fatalf("nil-filled assignment source = %#v, want valid nil fill", assignments[1])
+	}
+}
+
+func TestTypedNilExprPublicSourcesAreExplicitUnknown(t *testing.T) {
+	var callExpr *ast.FuncCallExpr
+	source := SourceForExpr(callExpr, 0, 0, 0, true, false, func(int, *ast.FuncCallExpr) (cfg.Point, bool) {
+		t.Fatal("typed nil call should not reach resolver")
+		return 0, false
+	})
+	if source.Kind != SourceUnknown || source.TargetIndex != 0 || !source.Valid() {
+		t.Fatalf("typed nil call source = %#v, want valid unknown", source)
+	}
+
+	var castExpr *ast.CastExpr
+	condition := ConditionSource(castExpr, nil)
+	if condition.Kind != SourceUnknown || condition.TargetIndex != NoSourceIndex || !condition.Valid() {
+		t.Fatalf("typed nil condition source = %#v, want valid unknown", condition)
+	}
+}
+
+func TestBrokenAssertionWrapperSourcesAreExplicitUnknown(t *testing.T) {
+	broken := &ast.CastExpr{
+		Expr: &ast.NonNilAssertExpr{},
+		Type: &ast.PrimitiveTypeExpr{Name: "number"},
+	}
+	source := SourceForExpr(broken, 0, 0, 0, true, false, nil)
+	if source.Kind != SourceUnknown || source.TargetIndex != 0 || !source.Valid() {
+		t.Fatalf("broken wrapper source = %#v, want valid unknown", source)
+	}
+
+	condition := ConditionSource(broken, nil)
+	if condition.Kind != SourceUnknown || condition.TargetIndex != NoSourceIndex || !condition.Valid() {
+		t.Fatalf("broken wrapper condition source = %#v, want valid unknown", condition)
+	}
+}
+
 func TestASTSourceConstructorsRejectInvalidCombinations(t *testing.T) {
 	invalidShape := SourceShape{Final: true, Expanded: true, Adjusted: true}
 	if _, ok := NewExpressionSource(ident("x"), 0, 0, 0, invalidShape); ok {
@@ -155,6 +216,19 @@ func TestASTSourceConstructorsRejectInvalidCombinations(t *testing.T) {
 	}
 	if _, ok := NewCallSource(call("missing"), 0, 0, NoSourceIndex, cfg.Point(1), plainShape); ok {
 		t.Fatalf("call source accepted missing result index")
+	}
+
+	var typedNilIdent *ast.IdentExpr
+	if _, ok := NewExpressionSource(typedNilIdent, 0, 0, 0, plainShape); ok {
+		t.Fatalf("expression source accepted typed nil expr")
+	}
+	var typedNilCall *ast.FuncCallExpr
+	if _, ok := NewCallSource(typedNilCall, 0, 0, 0, cfg.Point(1), plainShape); ok {
+		t.Fatalf("call source accepted typed nil expr")
+	}
+	var typedNilVararg *ast.Comma3Expr
+	if _, ok := NewVarargSource(typedNilVararg, 0, 0, 0, plainShape); ok {
+		t.Fatalf("vararg source accepted typed nil expr")
 	}
 }
 
