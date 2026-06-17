@@ -2,6 +2,7 @@ package typeresolve
 
 import (
 	"github.com/wippyai/go-lua/analysis/lua/bind"
+	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
 
@@ -23,7 +24,7 @@ func BindingInExpr(bindings Bindings, expr ast.TypeExpr, name string) (bind.Type
 		found, ok = decl, true
 		return false
 	}, func(prim *ast.PrimitiveTypeExpr) bool {
-		if prim == nil || prim.Name != name || BuiltinPrimitiveName(prim.Name) {
+		if prim == nil || prim.Name != name || typ.BuiltinPrimitiveName(prim.Name) {
 			return true
 		}
 		decl, hasDecl := bindings.PrimitiveTypeRef(prim)

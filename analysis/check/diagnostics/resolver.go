@@ -153,7 +153,7 @@ func (r *resultResolver) PrimitiveTypeResolved(expr *ast.PrimitiveTypeExpr) bool
 	if r == nil || expr == nil {
 		return false
 	}
-	if typeresolve.BuiltinPrimitiveName(expr.Name) {
+	if typ.BuiltinPrimitiveName(expr.Name) {
 		return true
 	}
 	if r.result != nil {

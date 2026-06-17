@@ -6,7 +6,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/check/body"
 	"github.com/wippyai/go-lua/analysis/diagnostic"
 	"github.com/wippyai/go-lua/analysis/lua/typeannotation"
-	"github.com/wippyai/go-lua/analysis/lua/typeresolve"
+	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
 
@@ -167,7 +167,7 @@ func resolvesTypeName(name string, resolver typeannotation.Resolver) bool {
 	if name == "" {
 		return false
 	}
-	if typeresolve.BuiltinPrimitiveName(name) {
+	if typ.BuiltinPrimitiveName(name) {
 		return true
 	}
 	switch name {
