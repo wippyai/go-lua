@@ -1,0 +1,46 @@
+{
+  "description": "Direct-call diagnostics preserve code, evidence, and labels for argument, arity, and callable-target failures.",
+  "check": {
+    "diagnostics": [
+      {
+        "file": "main.lua",
+        "line": 5,
+        "column": 1,
+        "severity": "error",
+        "code": "type.call.direct.argument_type",
+        "message_contains": ["argument 1", "not string"],
+        "min_evidence": 2,
+        "evidence_contains": ["argument 1 is", "parameter 1 declares string"],
+        "min_labels": 1,
+        "label_contains": ["argument value"]
+      },
+      {
+        "file": "main.lua",
+        "line": 6,
+        "column": 1,
+        "severity": "error",
+        "code": "type.call.direct.too_few_args",
+        "message_contains": ["expects 2 arguments", "got 1"],
+        "min_evidence": 2,
+        "evidence_contains": ["passes 1 arguments", "declares 2 parameters"],
+        "min_labels": 1,
+        "label_contains": ["too few arguments"]
+      },
+      {
+        "file": "main.lua",
+        "line": 9,
+        "column": 1,
+        "severity": "error",
+        "code": "type.call.direct.not_callable",
+        "message_contains": ["target", "not callable"],
+        "min_evidence": 2,
+        "evidence_contains": ["resolves to target", "target is annotated"],
+        "min_labels": 1,
+        "label_contains": ["non-callable call target"]
+      }
+    ]
+  },
+  "run": {
+    "skip": "diagnostic-only fixture"
+  }
+}

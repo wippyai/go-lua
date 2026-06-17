@@ -114,6 +114,25 @@ func judgeAgainstCuratedExpectations(s namedSuite, diagnostics []diag.Diagnostic
 			v.passed = false
 			v.unexpected = append(v.unexpected, diagSummary(d))
 		}
+		if s.Suite.Check != nil && len(s.Suite.Check.Diagnostics) > 0 {
+			missing, _ := matchDiagnosticExpectations(s.Suite.Check.Diagnostics, diagnostics, entryFile, false)
+			for _, msg := range missing {
+				v.passed = false
+				v.missing = append(v.missing, "structured diagnostic not emitted: "+msg)
+			}
+		}
+		return v
+	}
+
+	if s.Suite.Check != nil && len(s.Suite.Check.Diagnostics) > 0 {
+		missing, unexpected := matchDiagnosticExpectations(s.Suite.Check.Diagnostics, diagnostics, entryFile, true)
+		if len(missing) > 0 || len(unexpected) > 0 {
+			v.passed = false
+			for _, msg := range missing {
+				v.missing = append(v.missing, "structured diagnostic not emitted: "+msg)
+			}
+			v.unexpected = append(v.unexpected, unexpected...)
+		}
 		return v
 	}
 

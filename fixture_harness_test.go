@@ -35,9 +35,25 @@ type fixtureSuite struct {
 }
 
 type fixtureCheck struct {
-	Errors    *int              `json:"errors,omitempty"`
-	Placement *fixturePlacement `json:"placement,omitempty"`
-	Skip      string            `json:"skip,omitempty"`
+	Errors      *int                           `json:"errors,omitempty"`
+	Diagnostics []fixtureDiagnosticExpectation `json:"diagnostics,omitempty"`
+	Placement   *fixturePlacement              `json:"placement,omitempty"`
+	Skip        string                         `json:"skip,omitempty"`
+}
+
+type fixtureDiagnosticExpectation struct {
+	File               string   `json:"file,omitempty"`
+	Line               int      `json:"line,omitempty"`
+	Column             int      `json:"column,omitempty"`
+	Severity           string   `json:"severity,omitempty"`
+	Code               string   `json:"code,omitempty"`
+	MessageContains    []string `json:"message_contains,omitempty"`
+	EvidenceContains   []string `json:"evidence_contains,omitempty"`
+	HelpContains       []string `json:"help_contains,omitempty"`
+	LabelContains      []string `json:"label_contains,omitempty"`
+	MinEvidence        int      `json:"min_evidence,omitempty"`
+	MinLabels          int      `json:"min_labels,omitempty"`
+	AllowEmptyEvidence bool     `json:"allow_empty_evidence,omitempty"`
 }
 
 type fixturePlacement struct {
@@ -255,6 +271,11 @@ func runCheckPhase(t *testing.T, s namedSuite) {
 	// Verify expectations
 	if len(allExpectations) > 0 {
 		verifyInlineExpectations(t, allExpectations, allDiagnostics, entryFile)
+		if s.Suite.Check != nil && len(s.Suite.Check.Diagnostics) > 0 {
+			verifyDiagnosticExpectations(t, s.Suite.Check.Diagnostics, allDiagnostics, entryFile, false)
+		}
+	} else if s.Suite.Check != nil && len(s.Suite.Check.Diagnostics) > 0 {
+		verifyDiagnosticExpectations(t, s.Suite.Check.Diagnostics, allDiagnostics, entryFile, true)
 	} else if s.Suite.Check != nil && s.Suite.Check.Errors != nil {
 		verifyErrorCount(t, *s.Suite.Check.Errors, allDiagnostics)
 	} else {
@@ -404,8 +425,7 @@ func verifyInlineExpectations(t testing.TB, expectations []inlineExpectation, di
 func matchesExpectation(exp inlineExpectation, d diag.Diagnostic, entryFile string) bool {
 	expFile := exp.File
 	// Match diagnostic file: d.Position.File is set by the checker (e.g. "test.lua" or module name)
-	if !strings.HasSuffix(d.Position.File, strings.TrimSuffix(expFile, ".lua")) &&
-		(expFile != entryFile || d.Position.File != "test.lua") {
+	if !matchesDiagnosticFile(expFile, d, entryFile) {
 		return false
 	}
 	if d.Position.Line != exp.Line {
@@ -422,6 +442,176 @@ func matchesExpectation(exp inlineExpectation, d diag.Diagnostic, entryFile stri
 		return false
 	}
 	return true
+}
+
+func matchesDiagnosticFile(expFile string, d diag.Diagnostic, entryFile string) bool {
+	if expFile == "" {
+		return true
+	}
+	if !strings.HasSuffix(d.Position.File, strings.TrimSuffix(expFile, ".lua")) &&
+		(expFile != entryFile || d.Position.File != "test.lua") {
+		return false
+	}
+	return true
+}
+
+func verifyDiagnosticExpectations(t testing.TB, expectations []fixtureDiagnosticExpectation, diagnostics []diag.Diagnostic, entryFile string, requireNoUnexpected bool) {
+	t.Helper()
+	missing, unexpected := matchDiagnosticExpectations(expectations, diagnostics, entryFile, requireNoUnexpected)
+	for _, msg := range missing {
+		t.Errorf("missing diagnostic expectation: %s", msg)
+	}
+	for _, msg := range unexpected {
+		t.Errorf("unexpected diagnostic: %s", msg)
+	}
+	if len(missing) > 0 || len(unexpected) > 0 {
+		dumpDiagnostics(t, diagnostics)
+	}
+}
+
+func matchDiagnosticExpectations(expectations []fixtureDiagnosticExpectation, diagnostics []diag.Diagnostic, entryFile string, requireNoUnexpected bool) (missing, unexpected []string) {
+	matched := make([]bool, len(diagnostics))
+	for _, exp := range expectations {
+		found := false
+		for i, d := range diagnostics {
+			if matched[i] {
+				continue
+			}
+			if !matchesDiagnosticExpectation(exp, d, entryFile) {
+				continue
+			}
+			found = true
+			matched[i] = true
+			break
+		}
+		if !found {
+			missing = append(missing, describeDiagnosticExpectation(exp))
+		}
+	}
+	if requireNoUnexpected {
+		for i, d := range diagnostics {
+			if matched[i] || d.Severity == diag.SeverityHint {
+				continue
+			}
+			unexpected = append(unexpected, diagSummary(d))
+		}
+	}
+	return missing, unexpected
+}
+
+func matchesDiagnosticExpectation(exp fixtureDiagnosticExpectation, d diag.Diagnostic, entryFile string) bool {
+	if !matchesDiagnosticFile(exp.File, d, entryFile) {
+		return false
+	}
+	if exp.Line != 0 && d.Position.Line != exp.Line {
+		return false
+	}
+	if exp.Column != 0 && d.Position.Column != exp.Column {
+		return false
+	}
+	if exp.Severity != "" {
+		severity, ok := diagnosticSeverity(exp.Severity)
+		if !ok || d.Severity != severity {
+			return false
+		}
+	}
+	if exp.Code != "" && d.Code.String() != exp.Code {
+		return false
+	}
+	if !containsAll(d.Message, exp.MessageContains) {
+		return false
+	}
+	evidence := d.Explanation.Evidence()
+	if exp.MinEvidence > 0 && len(evidence) < exp.MinEvidence {
+		return false
+	}
+	if !exp.AllowEmptyEvidence && (exp.MinEvidence > 0 || len(exp.EvidenceContains) > 0) && len(evidence) == 0 {
+		return false
+	}
+	if !containsAll(d.Explanation.String(), exp.EvidenceContains) {
+		return false
+	}
+	if !containsAll(d.Help, exp.HelpContains) {
+		return false
+	}
+	if exp.MinLabels > 0 && len(d.Labels) < exp.MinLabels {
+		return false
+	}
+	if !containsAll(formatDiagnosticLabels(d.Labels), exp.LabelContains) {
+		return false
+	}
+	return true
+}
+
+func diagnosticSeverity(s string) (diag.Severity, bool) {
+	switch s {
+	case "error":
+		return diag.SeverityError, true
+	case "warning":
+		return diag.SeverityWarning, true
+	case "hint":
+		return diag.SeverityHint, true
+	default:
+		return diag.SeverityError, false
+	}
+}
+
+func containsAll(haystack string, needles []string) bool {
+	for _, needle := range needles {
+		if needle == "" || !strings.Contains(haystack, needle) {
+			return false
+		}
+	}
+	return true
+}
+
+func formatDiagnosticLabels(labels []diag.Label) string {
+	var parts []string
+	for _, label := range labels {
+		parts = append(parts, label.Message)
+	}
+	return strings.Join(parts, "\n")
+}
+
+func describeDiagnosticExpectation(exp fixtureDiagnosticExpectation) string {
+	var parts []string
+	if exp.File != "" {
+		parts = append(parts, "file="+exp.File)
+	}
+	if exp.Line != 0 {
+		parts = append(parts, fmt.Sprintf("line=%d", exp.Line))
+	}
+	if exp.Column != 0 {
+		parts = append(parts, fmt.Sprintf("column=%d", exp.Column))
+	}
+	if exp.Severity != "" {
+		parts = append(parts, "severity="+exp.Severity)
+	}
+	if exp.Code != "" {
+		parts = append(parts, "code="+exp.Code)
+	}
+	for _, text := range exp.MessageContains {
+		parts = append(parts, fmt.Sprintf("message~%q", text))
+	}
+	for _, text := range exp.EvidenceContains {
+		parts = append(parts, fmt.Sprintf("evidence~%q", text))
+	}
+	for _, text := range exp.HelpContains {
+		parts = append(parts, fmt.Sprintf("help~%q", text))
+	}
+	for _, text := range exp.LabelContains {
+		parts = append(parts, fmt.Sprintf("label~%q", text))
+	}
+	if exp.MinEvidence != 0 {
+		parts = append(parts, fmt.Sprintf("min_evidence=%d", exp.MinEvidence))
+	}
+	if exp.MinLabels != 0 {
+		parts = append(parts, fmt.Sprintf("min_labels=%d", exp.MinLabels))
+	}
+	if len(parts) == 0 {
+		return "<empty>"
+	}
+	return strings.Join(parts, ", ")
 }
 
 func verifyErrorCount(t testing.TB, want int, diagnostics []diag.Diagnostic) {
@@ -459,6 +649,15 @@ func dumpDiagnostics(t testing.TB, diagnostics []diag.Diagnostic) {
 		t.Logf("  %s:%d:%d [%s] %s: %s",
 			d.Position.File, d.Position.Line, d.Position.Column,
 			d.Severity, d.Code.String(), d.Message)
+		if explanation := d.Explanation.String(); explanation != "" {
+			t.Logf("    evidence: %s", strings.ReplaceAll(explanation, "\n", " | "))
+		}
+		if d.Help != "" {
+			t.Logf("    help: %s", d.Help)
+		}
+		if len(d.Labels) > 0 {
+			t.Logf("    labels: %s", formatDiagnosticLabels(d.Labels))
+		}
 	}
 }
 

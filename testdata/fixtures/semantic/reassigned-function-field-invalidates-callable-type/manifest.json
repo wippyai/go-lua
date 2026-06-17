@@ -1,3 +1,18 @@
 {
-  "description": "A function field reassigned to a non-function value does not retain its stale path-based callable type."
+  "description": "A function field reassigned to a non-function value does not retain its stale path-based callable type.",
+  "check": {
+    "diagnostics": [
+      {
+        "file": "main.lua",
+        "line": 8,
+        "severity": "error",
+        "code": "type.assignment",
+        "message_contains": ["cannot assign", "fun() -> string"],
+        "min_evidence": 2,
+        "evidence_contains": ["source expression", "annotated"],
+        "min_labels": 2,
+        "label_contains": ["assigned value", "declared type"]
+      }
+    ]
+  }
 }

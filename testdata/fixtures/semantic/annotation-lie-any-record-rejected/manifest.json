@@ -1,3 +1,29 @@
 {
-  "description": "Untrusted any cannot be assigned to a precise record or expose fields merely because the source table has similarly named fields."
+  "description": "Untrusted any cannot be assigned to a precise record or expose fields merely because the source table has similarly named fields.",
+  "check": {
+    "diagnostics": [
+      {
+        "file": "main.lua",
+        "line": 11,
+        "severity": "error",
+        "code": "type.assignment",
+        "message_contains": ["cannot assign", "id: string", "retries: number"],
+        "min_evidence": 4,
+        "evidence_contains": ["source expression", "user is annotated", "explicit any/unknown boundary", "no boundary proof"],
+        "min_labels": 2,
+        "label_contains": ["assigned value", "declared type"]
+      },
+      {
+        "file": "main.lua",
+        "line": 14,
+        "severity": "error",
+        "code": "type.assignment",
+        "message_contains": ["cannot assign", "string"],
+        "min_evidence": 4,
+        "evidence_contains": ["source expression", "id is annotated", "explicit any/unknown boundary", "no boundary proof"],
+        "min_labels": 2,
+        "label_contains": ["assigned value", "declared type"]
+      }
+    ]
+  }
 }
