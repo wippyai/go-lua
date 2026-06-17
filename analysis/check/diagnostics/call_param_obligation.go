@@ -153,37 +153,15 @@ func callParamObligationDiagnostic(
 	arg ast.Expr,
 	extraEvidence ...diagnostic.Evidence,
 ) diagnostic.Diagnostic {
-	span := ast.SpanOf(call)
-	argSpan := ast.SpanOf(arg)
-	evidence := []diagnostic.Evidence{
-		{
+	return argTypeDiagnosticEnvelope(call, arg, index, got,
+		fmt.Sprintf("argument %d expected %s, got %s", index+1, formatType(want), formatType(got)),
+		diagnostic.Evidence{
 			Kind:    diagnostic.EvidenceAbstractFact,
 			Trust:   diagnostic.TrustProven,
-			Span:    argSpan,
-			Message: fmt.Sprintf("argument %d is %s", index+1, formatType(got)),
-		},
-		{
-			Kind:    diagnostic.EvidenceAbstractFact,
-			Trust:   diagnostic.TrustProven,
-			Span:    span,
+			Span:    ast.SpanOf(call),
 			Message: fmt.Sprintf("%s summary obligation requires argument %d to be %s", name, index+1, formatType(want)),
 		},
-	}
-	evidence = append(evidence, extraEvidence...)
-	return diagnostic.Diagnostic{
-		Position: diagnostic.Position{
-			Line:      span.StartLine,
-			Column:    span.StartCol,
-			EndLine:   span.EndLine,
-			EndColumn: span.EndCol,
-		},
-		Span:        span,
-		Code:        CodeDirectCallArgType,
-		Severity:    diagnostic.SeverityError,
-		Message:     fmt.Sprintf("argument %d expected %s, got %s", index+1, formatType(want), formatType(got)),
-		Explanation: diagnostic.NewExplanation(evidence...),
-		Labels:      []diagnostic.Label{{Span: argSpan, Message: "argument value"}},
-	}
+		extraEvidence...)
 }
 
 func callParamObligationMissingProofEvidence(span diagnostic.Span, want typ.Type) []diagnostic.Evidence {

@@ -660,6 +660,21 @@ func tooManyArgsDiagnostic(point cfg.Point, call *ast.FuncCallExpr, name string,
 }
 
 func argTypeDiagnostic(call *ast.FuncCallExpr, name string, index int, got, want typ.Type, arg ast.Expr, declSpan ast.Span, extraEvidence ...diagnostic.Evidence) diagnostic.Diagnostic {
+	return argTypeDiagnosticEnvelope(call, arg, index, got,
+		fmt.Sprintf("argument %d is %s, not %s", index+1, formatType(got), formatType(want)),
+		diagnostic.Evidence{
+			Kind:    diagnostic.EvidenceUserAssertion,
+			Trust:   diagnostic.TrustClaimed,
+			Span:    declSpan,
+			Message: fmt.Sprintf("%s parameter %d declares %s", name, index+1, formatType(want)),
+		},
+		extraEvidence...)
+}
+
+// argTypeDiagnosticEnvelope builds the shared argument-type diagnostic shell: the
+// call/argument spans and labels, the "argument N is <got>" abstract fact, the
+// caller's message, and a second evidence item describing what was expected.
+func argTypeDiagnosticEnvelope(call *ast.FuncCallExpr, arg ast.Expr, index int, got typ.Type, message string, expected diagnostic.Evidence, extraEvidence ...diagnostic.Evidence) diagnostic.Diagnostic {
 	span := ast.SpanOf(call)
 	argSpan := ast.SpanOf(arg)
 	evidence := []diagnostic.Evidence{
@@ -669,12 +684,7 @@ func argTypeDiagnostic(call *ast.FuncCallExpr, name string, index int, got, want
 			Span:    argSpan,
 			Message: fmt.Sprintf("argument %d is %s", index+1, formatType(got)),
 		},
-		{
-			Kind:    diagnostic.EvidenceUserAssertion,
-			Trust:   diagnostic.TrustClaimed,
-			Span:    declSpan,
-			Message: fmt.Sprintf("%s parameter %d declares %s", name, index+1, formatType(want)),
-		},
+		expected,
 	}
 	evidence = append(evidence, extraEvidence...)
 	return diagnostic.Diagnostic{
@@ -687,7 +697,7 @@ func argTypeDiagnostic(call *ast.FuncCallExpr, name string, index int, got, want
 		Span:        span,
 		Code:        CodeDirectCallArgType,
 		Severity:    diagnostic.SeverityError,
-		Message:     fmt.Sprintf("argument %d is %s, not %s", index+1, formatType(got), formatType(want)),
+		Message:     message,
 		Explanation: diagnostic.NewExplanation(evidence...),
 		Labels:      []diagnostic.Label{{Span: argSpan, Message: "argument value"}},
 	}
