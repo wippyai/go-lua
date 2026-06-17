@@ -105,39 +105,19 @@ func rewriteDepth(t typ.Type, fn func(typ.Type) (typ.Type, bool), guard recursio
 		}
 		out = typeexpr.Optional(inner)
 	case *typ.Union:
-		var members []typ.Type
-		for i, m := range tt.Members {
-			newMember := rewriteDepth(m, fn, next, childDepth, memo)
-			if newMember != m {
-				if members == nil {
-					members = make([]typ.Type, len(tt.Members))
-					copy(members, tt.Members)
-				}
-				members[i] = newMember
-			} else if members != nil {
-				members[i] = m
-			}
-		}
-		if members == nil {
+		members, changed := typ.MapMembers(tt.Members, func(m typ.Type) typ.Type {
+			return rewriteDepth(m, fn, next, childDepth, memo)
+		})
+		if !changed {
 			out = t
 			break
 		}
 		out = typeexpr.Union(members...)
 	case *typ.Intersection:
-		var members []typ.Type
-		for i, m := range tt.Members {
-			newMember := rewriteDepth(m, fn, next, childDepth, memo)
-			if newMember != m {
-				if members == nil {
-					members = make([]typ.Type, len(tt.Members))
-					copy(members, tt.Members)
-				}
-				members[i] = newMember
-			} else if members != nil {
-				members[i] = m
-			}
-		}
-		if members == nil {
+		members, changed := typ.MapMembers(tt.Members, func(m typ.Type) typ.Type {
+			return rewriteDepth(m, fn, next, childDepth, memo)
+		})
+		if !changed {
 			out = t
 			break
 		}
@@ -166,20 +146,10 @@ func rewriteDepth(t typ.Type, fn func(typ.Type) (typ.Type, bool), guard recursio
 		}
 		out = typetable.NewReadonlyMap(keyType, valueType)
 	case *typ.Tuple:
-		var elems []typ.Type
-		for i, e := range tt.Elements {
-			newElem := rewriteDepth(e, fn, next, childDepth, memo)
-			if newElem != e {
-				if elems == nil {
-					elems = make([]typ.Type, len(tt.Elements))
-					copy(elems, tt.Elements)
-				}
-				elems[i] = newElem
-			} else if elems != nil {
-				elems[i] = e
-			}
-		}
-		if elems == nil {
+		elems, changed := typ.MapMembers(tt.Elements, func(e typ.Type) typ.Type {
+			return rewriteDepth(e, fn, next, childDepth, memo)
+		})
+		if !changed {
 			out = t
 			break
 		}
