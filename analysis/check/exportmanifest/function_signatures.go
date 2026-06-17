@@ -169,7 +169,7 @@ func functionSummaryEffect(s summary.Summary, fn *typ.Function) effect.Row {
 	for _, label := range labels {
 		row = row.With(label)
 	}
-	return row
+	return analyzedExportEffectRow(row)
 }
 
 func functionSummaryOperationalEffects(reg *axis.Registry, s summary.Summary, fn *typ.Function, signatureName string) *signature.OperationalEffects {

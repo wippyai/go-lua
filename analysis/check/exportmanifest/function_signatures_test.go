@@ -9,6 +9,9 @@ import (
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/program"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/summary"
 	"github.com/wippyai/go-lua/analysis/domain/effect"
+	"github.com/wippyai/go-lua/analysis/domain/effect/capability"
+	caplabel "github.com/wippyai/go-lua/analysis/domain/effect/capability/label"
+	"github.com/wippyai/go-lua/analysis/domain/effect/iteration"
 	"github.com/wippyai/go-lua/analysis/domain/effect/mutation"
 	"github.com/wippyai/go-lua/analysis/domain/effect/ownership"
 	"github.com/wippyai/go-lua/analysis/domain/effect/postcondition"
@@ -48,6 +51,7 @@ func TestFromProgramResultExportsReturnedTableMemberErrorReturnEffect(t *testing
 	`)
 
 	m := FromProgramResult("client", result)
+	assertManifestHasNoImportOrStdlibFunctionEffectLabels(t, m)
 	sig, ok := m.FunctionSignatures["client.fetch"]
 	if !ok {
 		t.Fatalf("missing client.fetch function signature: %#v", m.FunctionSignatures)
@@ -83,6 +87,7 @@ func TestFromProgramResultExportsIsNilNormalReturnRefinementEffect(t *testing.T)
 	`)
 
 	m := FromProgramResult("test", result)
+	assertManifestHasNoImportOrStdlibFunctionEffectLabels(t, m)
 	sig, ok := m.FunctionSignatures["test.is_nil"]
 	if !ok {
 		t.Fatalf("missing test.is_nil function signature: %#v", m.FunctionSignatures)
@@ -104,6 +109,30 @@ func TestFunctionSummaryEffectDoesNotSerializeParamObligationsToManifestEffects(
 	}, typ.Func().Param("tokens", typ.Any).Returns(typ.Number).Build())
 	if !got.Pure() {
 		t.Fatalf("effect = %v, want no manifest effect labels for pre-call ParamObligations", got)
+	}
+}
+
+func TestAnalyzedExportEffectRowDropsImportOrStdlibVocabulary(t *testing.T) {
+	row := effect.Empty.With(
+		ownership.Send{FromParam: 0},
+		ownership.BorrowAll{},
+		iteration.Iterator{Source: effect.ParamRef{Index: 0}, Kind: iteration.IterateIndexed},
+		ownership.SendParam{Param: effect.ParamRef{Index: 0}},
+		ownership.Borrow{Param: effect.ParamRef{Index: 1}},
+		returns.ErrorReturn{ValueIndex: 0, ErrorIndex: 1},
+	)
+
+	got := analyzedExportEffectRow(row)
+
+	assertNoImportOrStdlibEffectLabels(t, got)
+	if !hasOwnershipSendParam(got, 0) {
+		t.Fatalf("effect = %v, want SendParam retained", got)
+	}
+	if !hasOwnershipBorrow(got, 1) {
+		t.Fatalf("effect = %v, want Borrow retained", got)
+	}
+	if !hasErrorReturn(got, 0, 1) {
+		t.Fatalf("effect = %v, want ErrorReturn retained", got)
 	}
 }
 
@@ -139,6 +168,7 @@ func TestFunctionSummaryEffectExportsExactRootOwnershipBoundaryFacts(t *testing.
 		Param("borrowed", typ.Any).
 		Build())
 
+	assertNoImportOrStdlibEffectLabels(t, got)
 	if !hasOwnershipSendParam(got, 0) {
 		t.Fatalf("effect = %v, want exact SendParam for param 0", got)
 	}
@@ -659,6 +689,31 @@ func hasErrorReturn(row effect.Row, valueIndex, errorIndex int) bool {
 		err, ok := effect.NormalizeLabel(label).(returns.ErrorReturn)
 		return ok && err.ValueIndex == valueIndex && err.ErrorIndex == errorIndex
 	})
+}
+
+func assertManifestHasNoImportOrStdlibFunctionEffectLabels(t *testing.T, m *manifest.Manifest) {
+	t.Helper()
+	if m == nil {
+		t.Fatal("manifest = nil")
+	}
+	for name, sig := range m.FunctionSignatures {
+		t.Run(name, func(t *testing.T) {
+			assertNoImportOrStdlibEffectLabels(t, sig.Effect)
+		})
+	}
+}
+
+func assertNoImportOrStdlibEffectLabels(t *testing.T, row effect.Row) {
+	t.Helper()
+	for _, label := range row.Labels {
+		desc, ok := caplabel.DescriptorFor(label)
+		if !ok {
+			t.Fatalf("effect row %v contains unaudited label %T", row, label)
+		}
+		if desc.Status == capability.StatusImportOrStdlib {
+			t.Fatalf("effect row %v contains import/stdlib-only label %T (%s)", row, label, desc.ID)
+		}
+	}
 }
 
 func assertSignatureReturnPresenceRelation(
