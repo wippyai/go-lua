@@ -753,6 +753,98 @@ func TestManifestEffectPointerLabelsNormalizeToValues(t *testing.T) {
 	}
 }
 
+func TestManifestExprPointerRoundTrip(t *testing.T) {
+	original := &expr.BinOp{
+		Op:    expr.OpAdd,
+		Left:  &expr.ParamLen{Index: 0},
+		Right: &expr.Const{Value: 2},
+	}
+
+	wire, err := encodeExpr(original)
+	if err != nil {
+		t.Fatalf("encodeExpr(pointer): %v", err)
+	}
+	got, err := decodeExpr(wire)
+	if err != nil {
+		t.Fatalf("decodeExpr(pointer roundtrip): %v", err)
+	}
+	if got.String() != original.String() {
+		t.Fatalf("roundtrip expr = %s, want %s", got, original)
+	}
+}
+
+func TestManifestExprRejectsTypedNilPointer(t *testing.T) {
+	var typedNil *expr.Const
+	if _, err := encodeExpr(typedNil); err == nil {
+		t.Fatal("encodeExpr(typed nil) succeeded, want error")
+	} else if !strings.Contains(err.Error(), "nil constraint expr") {
+		t.Fatalf("encodeExpr(typed nil) error = %v", err)
+	}
+}
+
+func TestManifestExprRejectsMissingCompoundOperands(t *testing.T) {
+	one := encodeExprForTest(t, expr.C(1))
+	tests := []struct {
+		name string
+		wire *exprWire
+		want string
+	}{
+		{
+			name: "binop missing left",
+			wire: &exprWire{Kind: "binop", Op: "+", Right: one},
+			want: "binop left",
+		},
+		{
+			name: "binop missing right",
+			wire: &exprWire{Kind: "binop", Op: "+", Left: one},
+			want: "binop right",
+		},
+		{
+			name: "min missing left",
+			wire: &exprWire{Kind: "min", Right: one},
+			want: "min left",
+		},
+		{
+			name: "min missing right",
+			wire: &exprWire{Kind: "min", Left: one},
+			want: "min right",
+		},
+		{
+			name: "max missing left",
+			wire: &exprWire{Kind: "max", Right: one},
+			want: "max left",
+		},
+		{
+			name: "max missing right",
+			wire: &exprWire{Kind: "max", Left: one},
+			want: "max right",
+		},
+	}
+
+	if got, err := decodeExpr(nil); err != nil || got != nil {
+		t.Fatalf("decodeExpr(nil) = %#v/%v, want nil/nil for optional top-level field", got, err)
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if _, err := decodeExpr(tt.wire); err == nil {
+				t.Fatal("decodeExpr succeeded, want missing operand error")
+			} else if !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("decodeExpr error = %v, want substring %q", err, tt.want)
+			}
+		})
+	}
+}
+
+func TestManifestExprRejectsInvalidEncodeOp(t *testing.T) {
+	_, err := encodeExpr(expr.BinOp{Op: expr.Op(99), Left: expr.C(1), Right: expr.C(2)})
+	if err == nil {
+		t.Fatal("encodeExpr(invalid op) succeeded, want error")
+	}
+	if !strings.Contains(err.Error(), "unsupported expr op") {
+		t.Fatalf("encodeExpr(invalid op) error = %v", err)
+	}
+}
+
 func encodeExprForTest(t *testing.T, e expr.Expr) *exprWire {
 	t.Helper()
 	wire, err := encodeExpr(e)
