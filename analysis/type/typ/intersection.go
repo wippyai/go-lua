@@ -1,8 +1,6 @@
 package typ
 
 import (
-	"strings"
-
 	"github.com/wippyai/go-lua/analysis/internal/hash"
 	"github.com/wippyai/go-lua/analysis/type/kind"
 )
@@ -107,17 +105,7 @@ func newCanonicalIntersection(members []Type, memberHashes []uint64) Type {
 func (i *Intersection) Kind() kind.Kind { return kind.Intersection }
 
 func (i *Intersection) String() string {
-	return i.strCache.get(func() string {
-		parts := make([]string, len(i.Members))
-		for j, m := range i.Members {
-			if m == nil {
-				parts[j] = "unknown"
-			} else {
-				parts[j] = m.String()
-			}
-		}
-		return strings.Join(parts, " & ")
-	})
+	return i.strCache.get(func() string { return joinMemberStrings(i.Members, " & ", "unknown") })
 }
 
 func (i *Intersection) Hash() uint64 { return i.hash }

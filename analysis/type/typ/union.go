@@ -30,17 +30,21 @@ type Union struct {
 func (u *Union) Kind() kind.Kind { return kind.Union }
 
 func (u *Union) String() string {
-	return u.strCache.get(func() string {
-		parts := make([]string, len(u.Members))
-		for i, m := range u.Members {
-			if m == nil {
-				parts[i] = "nil"
-			} else {
-				parts[i] = m.String()
-			}
+	return u.strCache.get(func() string { return joinMemberStrings(u.Members, " | ", "nil") })
+}
+
+// joinMemberStrings renders members joined by sep, substituting nilLabel for nil
+// members. Shared by the Union and Intersection string forms.
+func joinMemberStrings(members []Type, sep, nilLabel string) string {
+	parts := make([]string, len(members))
+	for i, m := range members {
+		if m == nil {
+			parts[i] = nilLabel
+		} else {
+			parts[i] = m.String()
 		}
-		return strings.Join(parts, " | ")
-	})
+	}
+	return strings.Join(parts, sep)
 }
 
 func (u *Union) Hash() uint64 { return u.hash }
