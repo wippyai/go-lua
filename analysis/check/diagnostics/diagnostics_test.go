@@ -1062,6 +1062,31 @@ func TestAssignmentReportsDynamicIndexWriteInvalidatedGuardWithEvidence(t *testi
 	}
 }
 
+func TestAssignmentRejectsReassignedFunctionFieldStalePathType(t *testing.T) {
+	diags := runDiagnostics(t, `
+		local M = {}
+		function M.f(): string
+			return "ok"
+		end
+
+		M.f = 42
+		local g: () -> string = M.f
+	`)
+	if len(diags) != 1 {
+		t.Fatalf("diagnostics = %d, want stale function-field assignment error: %#v", len(diags), diags)
+	}
+	d := diags[0]
+	if d.Code != CodeAssignmentType || d.Severity != diagnostic.SeverityError {
+		t.Fatalf("diagnostic = %#v, want assignment error", d)
+	}
+	if !strings.Contains(d.Message, "cannot assign") || !strings.Contains(d.Message, "fun() -> string") {
+		t.Fatalf("message = %q, want function assignment mismatch", d.Message)
+	}
+	if got := d.Explanation.Evidence(); len(got) < 2 {
+		t.Fatalf("explanation evidence = %#v, want source and annotation evidence", got)
+	}
+}
+
 func assertStalePathMissingMemberEvidence(t *testing.T, result *body.Result) {
 	t.Helper()
 	point, expr := requireLocalAssignmentExprByName(t, result, "stale_path")

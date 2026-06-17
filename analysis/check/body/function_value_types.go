@@ -52,9 +52,7 @@ func (r *Result) FunctionValueTypeAtBoundary(point cfg.Point, expr ast.Expr) (*t
 		if fn, ok := r.functionTypeForValue(current, hasCurrent, value); ok {
 			return fn, true
 		}
-		if _, hasID := product.Get(r.registry, value, identity.Key).ID(); hasID {
-			return nil, false
-		}
+		return nil, false
 	}
 	if fn, ok := r.funcTypes.ByPath[p.Key()]; ok && fn != nil {
 		return fn, true

@@ -1,0 +1,3 @@
+{
+  "description": "A function field reassigned to a non-function value does not retain its stale path-based callable type."
+}
