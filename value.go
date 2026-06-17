@@ -22,7 +22,7 @@ const (
 	LTType
 )
 
-var lValueNames = [11]string{"nil", "boolean", "number", "number", "string", "function", "userdata", "thread", "table", "channel", "type"}
+var lValueNames = [...]string{"nil", "boolean", "number", "number", "string", "function", "userdata", "thread", "table", "channel", "type"}
 
 func (vt LValueType) String() string {
 	return lValueNames[vt]
@@ -188,14 +188,6 @@ func (fn *LFunction) Type() LValueType { return LTFunction }
 // Performance: LGoFunc avoids the LFunction allocation overhead and pointer
 // indirection through Fn.GFunction. For modules that don't need upvalues or
 // environments, using LGoFunc provides better performance.
-//
-// TODO: Refactor all go-lua internal code to use LGoFunc natively:
-// - Migrate internal libs (baselib, stringlib, mathlib, tablelib, etc.) to use LGoFunc
-// - Simplify callFrame to primarily use GoFunc, remove Fn.IsG complexity
-// - Update pushCallFrame, initCallFrame to assume GoFunc is the default
-// - Remove legacy LFunction wrapping code and pinning state hacks
-// - Update public API (SetGlobal, PreloadModule, etc.) to prefer LGoFunc
-// This would eliminate the dual code paths in VM and simplify maintenance.
 type LGoFunc LGFunction
 
 func (gf LGoFunc) String() string   { return fmt.Sprintf("gofunc: %p", gf) }

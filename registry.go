@@ -32,7 +32,7 @@ func (rg *registry) resize(requiredSize int) bool { // +inline-start
 
 func (rg *registry) forceResize(newSize int) {
 	newSlice := make([]LValue, newSize)
-	copy(newSlice, rg.array[:rg.top]) // should we copy the area beyond top? there shouldn't be any valid values there so it shouldn't be necessary.
+	copy(newSlice, rg.array[:rg.top])
 	rg.array = newSlice
 }
 
@@ -107,7 +107,6 @@ func (rg *registry) Get(reg int) LValue {
 // If start+n is beyond the limit, then nil values will be copied to the destination slots.
 // After the copy, the registry is truncated to be at the end of the copied range, ie the original of the copied values
 // are nilled out. (So top will be regv+n)
-// CopyRange should ideally be renamed to MoveRange.
 func (rg *registry) CopyRange(regv, start, limit, n int) { // +inline-start
 	newSize := regv + n
 	// this section is inlined by go-inline
