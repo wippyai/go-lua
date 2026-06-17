@@ -547,9 +547,9 @@ func TestExplicitBottomEntriesCanonicalizeToAbsence(t *testing.T) {
 	stateDomain := Domain(reg)
 	bottom := valueDomain.Bottom()
 	explicit := State{
-		values: valueLane{values: map[key.Value]product.Value{
+		values: valueLane{mapLane[key.Value, product.Value]{values: map[key.Value]product.Value{
 			key.ReturnSlot(0): bottom,
-		}},
+		}}},
 	}
 
 	if !stateDomain.Equal(explicit, State{}) {

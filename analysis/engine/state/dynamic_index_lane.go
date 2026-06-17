@@ -4,72 +4,43 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/lattice"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/engine/dynamicindex"
-	"github.com/wippyai/go-lua/analysis/internal/mapedit"
 )
 
 type dynamicIndexLane struct {
-	values map[dynamicindex.Key]dynamicindex.Fact
-	top    bool
+	mapLane[dynamicindex.Key, dynamicindex.Fact]
 }
 
 func dynamicIndexLaneFromMap(
 	domain lattice.Lattice[map[dynamicindex.Key]dynamicindex.Fact],
 	values map[dynamicindex.Key]dynamicindex.Fact,
 ) dynamicIndexLane {
-	if domain.Equal(values, domain.Top()) {
-		return dynamicIndexLane{top: true}
-	}
-	return dynamicIndexLane{values: values}
-}
-
-func (l dynamicIndexLane) asMap(domain lattice.Lattice[map[dynamicindex.Key]dynamicindex.Fact]) map[dynamicindex.Key]dynamicindex.Fact {
-	if l.top {
-		return domain.Top()
-	}
-	return l.values
+	return dynamicIndexLane{mapLaneFromMap(domain, values)}
 }
 
 func (l dynamicIndexLane) read(reg *axis.Registry, key dynamicindex.Key) dynamicindex.Fact {
 	if key.Table == "" {
 		return dynamicindex.Bottom(reg)
 	}
-	if l.top {
+	if l.isTop() {
 		return dynamicindex.Top()
 	}
-	if fact, ok := l.values[key]; ok {
+	if fact, ok := l.get(key); ok {
 		return fact
 	}
 	return dynamicindex.Bottom(reg)
 }
 
-func (l dynamicIndexLane) hasFinite(key dynamicindex.Key) bool {
-	if l.top {
-		return false
-	}
-	_, ok := l.values[key]
-	return ok
-}
-
 func (l dynamicIndexLane) without(key dynamicindex.Key) (dynamicIndexLane, bool) {
-	values, changed := mapedit.Without(l.values, key)
+	values, changed := l.mapLane.without(key)
 	if !changed {
 		return l, false
 	}
-	l.values = values
-	return l, true
+	return dynamicIndexLane{values}, true
 }
 
 func (l dynamicIndexLane) with(key dynamicindex.Key, fact dynamicindex.Fact) dynamicIndexLane {
 	if fact.Admission == dynamicindex.AdmissionBottom {
 		panic("state: dynamic index lane with requires non-bottom fact")
 	}
-	l.values = mapedit.With(l.values, key, fact)
-	return l
-}
-
-func (l dynamicIndexLane) cloneValues() map[dynamicindex.Key]dynamicindex.Fact {
-	if l.top {
-		return nil
-	}
-	return mapedit.Clone(l.values)
+	return dynamicIndexLane{l.mapLane.with(key, fact)}
 }

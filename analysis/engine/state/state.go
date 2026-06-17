@@ -128,12 +128,12 @@ func Domain(reg *axis.Registry) lattice.Lattice[State] {
 		},
 		Top: func() State {
 			return State{
-				values:            valueLane{top: true},
+				values:            valueLane{mapLane[key.Value, product.Value]{top: true}},
 				pathEvidence:      ops.pathEvidence.Top(),
-				dynamicIndex:      dynamicIndexLane{top: true},
+				dynamicIndex:      dynamicIndexLane{mapLane[dynamicindex.Key, dynamicindex.Fact]{top: true}},
 				heapTableIdentity: heapTableIdentityLane{top: true},
 				frozenTables:      ops.frozenTables.Top(),
-				effectDeltas:      effectDeltaLane{top: true},
+				effectDeltas:      effectDeltaLane{mapLane[effectdelta.Key, effectdelta.Value]{top: true}},
 				placement:         placementLane{mapLane[identity.ID, placement.Value]{top: true}},
 				storeRelations:    ops.storeRelations.Top(),
 				lenFloors:         ops.lenFloors.Top(),
