@@ -1,6 +1,9 @@
 package bind
 
-import "github.com/wippyai/go-lua/compiler/ast"
+import (
+	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/compiler/ast"
+)
 
 // TypeDeclID identifies a lexical type declaration independently of value
 // symbols.
@@ -329,7 +332,7 @@ func (b *binder) bindTypeRef(ref *ast.TypeRefExpr) {
 }
 
 func (b *binder) bindPrimitiveTypeRef(expr *ast.PrimitiveTypeExpr) {
-	if expr == nil || isBuiltinPrimitiveTypeName(expr.Name) {
+	if expr == nil || typ.BuiltinPrimitiveName(expr.Name) {
 		return
 	}
 	decl, ok := b.lookupType(expr.Name)
@@ -337,13 +340,4 @@ func (b *binder) bindPrimitiveTypeRef(expr *ast.PrimitiveTypeExpr) {
 		return
 	}
 	b.result.primitiveTypeRefs[expr] = decl
-}
-
-func isBuiltinPrimitiveTypeName(name string) bool {
-	switch name {
-	case "nil", "boolean", "number", "integer", "string", "any", "unknown", "never", "self":
-		return true
-	default:
-		return false
-	}
 }

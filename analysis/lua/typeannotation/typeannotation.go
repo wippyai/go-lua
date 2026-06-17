@@ -73,26 +73,9 @@ func Type(expr ast.TypeExpr, resolver Resolver) (typ.Type, bool) {
 
 func primitive(expr *ast.PrimitiveTypeExpr, resolver Resolver) (typ.Type, bool) {
 	var t typ.Type
-	switch expr.Name {
-	case "nil":
-		t = typ.Nil
-	case "boolean":
-		t = typ.Boolean
-	case "number":
-		t = typ.Number
-	case "integer":
-		t = typ.Integer
-	case "string":
-		t = typ.String
-	case "any":
-		t = typ.Any
-	case "unknown":
-		t = typ.Unknown
-	case "never":
-		t = typ.Never
-	case "self":
-		t = typ.Self
-	default:
+	if builtin, ok := typ.BuiltinPrimitiveType(expr.Name); ok {
+		t = builtin
+	} else {
 		t = ref([]string{expr.Name}, resolver)
 	}
 	anns, ok := Annotations(expr.Annotations)

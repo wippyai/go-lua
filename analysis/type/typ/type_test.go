@@ -40,6 +40,51 @@ func TestPrimitives(t *testing.T) {
 	}
 }
 
+func TestBuiltinPrimitiveVocabulary(t *testing.T) {
+	tests := []struct {
+		name string
+		want Type
+	}{
+		{name: "nil", want: Nil},
+		{name: "boolean", want: Boolean},
+		{name: "number", want: Number},
+		{name: "integer", want: Integer},
+		{name: "string", want: String},
+		{name: "any", want: Any},
+		{name: "unknown", want: Unknown},
+		{name: "never", want: Never},
+		{name: "self", want: Self},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if !BuiltinPrimitiveName(tc.name) {
+				t.Fatalf("BuiltinPrimitiveName(%q) = false, want true", tc.name)
+			}
+			got, ok := BuiltinPrimitiveType(tc.name)
+			if !ok {
+				t.Fatalf("BuiltinPrimitiveType(%q) returned ok=false", tc.name)
+			}
+			if got != tc.want {
+				t.Fatalf("BuiltinPrimitiveType(%q) = %#v, want %#v", tc.name, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestBuiltinPrimitiveRejectsNonBuiltinNames(t *testing.T) {
+	for _, name := range []string{"", "User", "booleanish", "Number", "nil?", "selfish"} {
+		t.Run(name, func(t *testing.T) {
+			if BuiltinPrimitiveName(name) {
+				t.Fatalf("BuiltinPrimitiveName(%q) = true, want false", name)
+			}
+			if got, ok := BuiltinPrimitiveType(name); ok || got != nil {
+				t.Fatalf("BuiltinPrimitiveType(%q) = %#v/%v, want nil/false", name, got, ok)
+			}
+		})
+	}
+}
+
 func TestPrimitiveEquality(t *testing.T) {
 	if !Nil.Equals(Nil) {
 		t.Error("Nil should equal Nil")
