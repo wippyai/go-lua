@@ -299,6 +299,38 @@ end
 	}
 }
 
+func TestDynamicIndexWriteInvalidatesGuardedFieldProjection(t *testing.T) {
+	reg := standard.Registry()
+	stmts := parseChunk(t, `
+type Box = {
+	value: string?,
+}
+
+local box: Box = {value = "ready"}
+local alias = box
+local key = "value"
+
+if box.value then
+	alias[key] = nil
+	local after: string = box.value
+end
+`)
+	result, err := CheckChunk(stmts, Config{Registry: reg})
+	if err != nil {
+		t.Fatalf("CheckChunk: %v", err)
+	}
+
+	point, expr := requireLocalAssignmentExprByName(t, result, "after")
+	if value, ok := result.ExpressionValueAtBoundary(point, expr); ok {
+		got, typeOK := typevalue.StructuralTypeOf(reg, result.typeValues, value, typevalue.StructuralTypeOptions{
+			ApplyPresence: true,
+		})
+		if typeOK && subtype.IsSubtype(got, typ.String) {
+			t.Fatalf("guarded dynamic-index read type = %s, want not assignable to string after alias dynamic write", got)
+		}
+	}
+}
+
 func requireLocalAssignmentExprByName(t *testing.T, result *Result, name string) (cfg.Point, ast.Expr) {
 	t.Helper()
 	for _, point := range result.Graph().RPO() {

@@ -1029,6 +1029,39 @@ func TestAssignmentReportsNestedDynamicVariantWriteInvalidatedAliasWithEvidence(
 	}
 }
 
+func TestAssignmentReportsDynamicIndexWriteInvalidatedGuardWithEvidence(t *testing.T) {
+	diags := runDiagnostics(t, `
+		type Box = {
+			value: string?,
+		}
+
+		local box: Box = {value = "ready"}
+		local alias = box
+		local key = "value"
+
+		if box.value then
+			alias[key] = nil
+			local after: string = box.value
+		end
+	`)
+	if len(diags) != 1 {
+		t.Fatalf("diagnostics = %d, want dynamic-index invalidated guard assignment error: %#v", len(diags), diags)
+	}
+	d := diags[0]
+	if d.Code != CodeAssignmentType || d.Severity != diagnostic.SeverityError {
+		t.Fatalf("diagnostic = %#v, want assignment error", d)
+	}
+	if !strings.Contains(d.Message, "cannot assign") || !strings.Contains(d.Message, "string") {
+		t.Fatalf("message = %q, want string assignment mismatch", d.Message)
+	}
+	if got := d.Explanation.Evidence(); len(got) < 2 {
+		t.Fatalf("explanation evidence = %#v, want source and annotation evidence", got)
+	}
+	if len(d.Labels) < 2 || d.Labels[0].Message != "assigned value" || d.Labels[1].Message != "declared type" {
+		t.Fatalf("labels = %#v, want assigned value and declared type", d.Labels)
+	}
+}
+
 func assertStalePathMissingMemberEvidence(t *testing.T, result *body.Result) {
 	t.Helper()
 	point, expr := requireLocalAssignmentExprByName(t, result, "stale_path")

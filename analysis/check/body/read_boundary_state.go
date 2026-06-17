@@ -78,6 +78,9 @@ func (r *Result) hasNodeLocalBoundaryEffects(point cfg.Point) bool {
 	if _, ok := r.facts.PathDescendantInvalidation(point); ok {
 		return true
 	}
+	if _, ok := r.facts.DynamicIndexWrite(point); ok {
+		return true
+	}
 	if callproducer.Has(r.facts, point) {
 		return true
 	}

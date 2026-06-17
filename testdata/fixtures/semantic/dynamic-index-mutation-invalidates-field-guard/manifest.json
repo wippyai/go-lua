@@ -1,0 +1,3 @@
+{
+  "description": "A direct dynamic-index write through an alias invalidates a prior presence guard on the matching static field."
+}

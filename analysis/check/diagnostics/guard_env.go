@@ -8,6 +8,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/branchcond"
+	"github.com/wippyai/go-lua/analysis/lua/semantics"
 	"github.com/wippyai/go-lua/analysis/type/subtype"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/compiler/ast"
@@ -46,7 +47,7 @@ func guardEnvironments(result *body.Result) map[cfg.Point]guardEnv {
 		changed = false
 		for _, point := range graph.RPO() {
 			nextIn := joinPredecessorGuardEnvs(result, graph, point, out)
-			nextOut := nextIn
+			nextOut := applyGuardNode(result, point, nextIn)
 			if !guardEnvEqual(in[point], nextIn) {
 				in[point] = nextIn
 				changed = true
@@ -90,6 +91,36 @@ func applyGuardEdge(result *body.Result, graph cfg.Graph, from, to cfg.Point, en
 		return env
 	}
 	return applyBranchGuard(env, fact.Check, cond)
+}
+
+func applyGuardNode(result *body.Result, point cfg.Point, env guardEnv) guardEnv {
+	if result == nil {
+		return env
+	}
+	fact, ok := result.OrdinaryAssignment(point)
+	if !ok {
+		return env
+	}
+	if directDynamicIndexAssignment(fact) {
+		return guardEnv{}
+	}
+	return env
+}
+
+func directDynamicIndexAssignment(fact semantics.OrdinaryAssignmentFact) bool {
+	if fact.HasPath || !fact.HasContainerPath {
+		return false
+	}
+	attr, ok := fact.Target.(*ast.AttrGetExpr)
+	if !ok || attr.KeySyntax != ast.AttrKeyIndex {
+		return false
+	}
+	switch attr.Key.(type) {
+	case *ast.StringExpr, *ast.NumberExpr:
+		return false
+	default:
+		return true
+	}
 }
 
 func applyBranchGuard(env guardEnv, check branchcond.Check, cond bool) guardEnv {
