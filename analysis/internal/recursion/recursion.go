@@ -25,8 +25,3 @@ func (g Guard) Enter() (Guard, bool) {
 	next.depth++
 	return next, true
 }
-
-// Depth returns the current recursion depth of the guard.
-func (g Guard) Depth() int {
-	return g.depth
-}

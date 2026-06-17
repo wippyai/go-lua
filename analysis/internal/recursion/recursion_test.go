@@ -2,7 +2,7 @@ package recursion
 
 import "testing"
 
-func TestRecursionGuardDepth(t *testing.T) {
+func TestRecursionGuardEnterLimit(t *testing.T) {
 	t.Parallel()
 
 	guard := NewGuard(1)

@@ -26,11 +26,11 @@ func Rewrite(t typ.Type, fn func(typ.Type) (typ.Type, bool)) typ.Type {
 func rewriteWithDepth(t typ.Type, fn func(typ.Type) (typ.Type, bool), maxDepth int) typ.Type {
 	guard := typ.GuardForDepth(maxDepth)
 	if !rewriteCanDescend(t) {
-		return rewriteDepth(t, fn, guard, nil)
+		return rewriteDepth(t, fn, guard, 0, nil)
 	}
 	memo := getRewriteMemo()
 	defer putRewriteMemo(memo)
-	return rewriteDepth(t, fn, guard, memo)
+	return rewriteDepth(t, fn, guard, 0, memo)
 }
 
 const rewriteMemoMaxEntries = 4096
@@ -59,7 +59,7 @@ type rewriteKey struct {
 	depth int
 }
 
-func rewriteDepth(t typ.Type, fn func(typ.Type) (typ.Type, bool), guard recursion.Guard, memo map[rewriteKey]typ.Type) typ.Type {
+func rewriteDepth(t typ.Type, fn func(typ.Type) (typ.Type, bool), guard recursion.Guard, depth int, memo map[rewriteKey]typ.Type) typ.Type {
 	if t == nil {
 		return t
 	}
@@ -70,7 +70,6 @@ func rewriteDepth(t typ.Type, fn func(typ.Type) (typ.Type, bool), guard recursio
 		return t
 	}
 
-	depth := guard.Depth()
 	var key rewriteKey
 	if memo != nil {
 		key = rewriteKey{t: t, depth: depth}
@@ -90,6 +89,7 @@ func rewriteDepth(t typ.Type, fn func(typ.Type) (typ.Type, bool), guard recursio
 	if !ok {
 		return t
 	}
+	childDepth := depth + 1
 
 	var out typ.Type
 	switch tt := unwrapTransparentWrappers(t).(type) {
@@ -98,7 +98,7 @@ func rewriteDepth(t typ.Type, fn func(typ.Type) (typ.Type, bool), guard recursio
 			out = t
 			break
 		}
-		inner := rewriteDepth(tt.Inner, fn, next, memo)
+		inner := rewriteDepth(tt.Inner, fn, next, childDepth, memo)
 		if inner == tt.Inner {
 			out = t
 			break
@@ -107,7 +107,7 @@ func rewriteDepth(t typ.Type, fn func(typ.Type) (typ.Type, bool), guard recursio
 	case *typ.Union:
 		var members []typ.Type
 		for i, m := range tt.Members {
-			newMember := rewriteDepth(m, fn, next, memo)
+			newMember := rewriteDepth(m, fn, next, childDepth, memo)
 			if newMember != m {
 				if members == nil {
 					members = make([]typ.Type, len(tt.Members))
@@ -126,7 +126,7 @@ func rewriteDepth(t typ.Type, fn func(typ.Type) (typ.Type, bool), guard recursio
 	case *typ.Intersection:
 		var members []typ.Type
 		for i, m := range tt.Members {
-			newMember := rewriteDepth(m, fn, next, memo)
+			newMember := rewriteDepth(m, fn, next, childDepth, memo)
 			if newMember != m {
 				if members == nil {
 					members = make([]typ.Type, len(tt.Members))
@@ -143,23 +143,23 @@ func rewriteDepth(t typ.Type, fn func(typ.Type) (typ.Type, bool), guard recursio
 		}
 		out = typeexpr.Intersection(members...)
 	case *typ.Array:
-		elem := rewriteDepth(tt.Element, fn, next, memo)
+		elem := rewriteDepth(tt.Element, fn, next, childDepth, memo)
 		if elem == tt.Element {
 			out = t
 			break
 		}
 		out = typ.NewArray(elem)
 	case *typ.Map:
-		keyType := rewriteDepth(tt.Key, fn, next, memo)
-		valueType := rewriteDepth(tt.Value, fn, next, memo)
+		keyType := rewriteDepth(tt.Key, fn, next, childDepth, memo)
+		valueType := rewriteDepth(tt.Value, fn, next, childDepth, memo)
 		if keyType == tt.Key && valueType == tt.Value {
 			out = t
 			break
 		}
 		out = typetable.NewMap(keyType, valueType)
 	case *typ.ReadonlyMap:
-		keyType := rewriteDepth(tt.Key, fn, next, memo)
-		valueType := rewriteDepth(tt.Value, fn, next, memo)
+		keyType := rewriteDepth(tt.Key, fn, next, childDepth, memo)
+		valueType := rewriteDepth(tt.Value, fn, next, childDepth, memo)
 		if keyType == tt.Key && valueType == tt.Value {
 			out = t
 			break
@@ -168,7 +168,7 @@ func rewriteDepth(t typ.Type, fn func(typ.Type) (typ.Type, bool), guard recursio
 	case *typ.Tuple:
 		var elems []typ.Type
 		for i, e := range tt.Elements {
-			newElem := rewriteDepth(e, fn, next, memo)
+			newElem := rewriteDepth(e, fn, next, childDepth, memo)
 			if newElem != e {
 				if elems == nil {
 					elems = make([]typ.Type, len(tt.Elements))
@@ -185,19 +185,19 @@ func rewriteDepth(t typ.Type, fn func(typ.Type) (typ.Type, bool), guard recursio
 		}
 		out = typ.NewTuple(elems...)
 	case *typ.Function:
-		out = rewriteFunction(tt, t, fn, next, memo)
+		out = rewriteFunction(tt, t, fn, next, childDepth, memo)
 	case *typ.Record:
-		out = rewriteRecord(tt, t, fn, next, memo)
+		out = rewriteRecord(tt, t, fn, next, childDepth, memo)
 	case *typ.Meta:
-		out = rewriteMeta(tt, t, fn, next, memo)
+		out = rewriteMeta(tt, t, fn, next, childDepth, memo)
 	case *typ.TypeParam:
-		out = rewriteTypeParam(tt, t, fn, next, memo)
+		out = rewriteTypeParam(tt, t, fn, next, childDepth, memo)
 	case *typ.Generic:
-		out = rewriteGeneric(tt, t, fn, next, memo)
+		out = rewriteGeneric(tt, t, fn, next, childDepth, memo)
 	case *typ.Recursive:
-		out = rewriteRecursive(tt, t, fn, next, memo)
+		out = rewriteRecursive(tt, t, fn, next, childDepth, memo)
 	case *typ.Alias:
-		target := rewriteDepth(tt.Target, fn, next, memo)
+		target := rewriteDepth(tt.Target, fn, next, childDepth, memo)
 		if target == tt.Target {
 			out = t
 			break
@@ -206,7 +206,7 @@ func rewriteDepth(t typ.Type, fn func(typ.Type) (typ.Type, bool), guard recursio
 	case *typ.Instantiated:
 		var args []typ.Type
 		for idx, a := range tt.TypeArgs {
-			newArg := rewriteDepth(a, fn, next, memo)
+			newArg := rewriteDepth(a, fn, next, childDepth, memo)
 			if newArg != a {
 				if args == nil {
 					args = make([]typ.Type, len(tt.TypeArgs))
@@ -225,7 +225,7 @@ func rewriteDepth(t typ.Type, fn func(typ.Type) (typ.Type, bool), guard recursio
 	case *typ.Interface:
 		var methods []typ.Method
 		for idx, m := range tt.Methods {
-			newType := rewriteDepth(m.Type, fn, next, memo)
+			newType := rewriteDepth(m.Type, fn, next, childDepth, memo)
 			if newType != m.Type {
 				if methods == nil {
 					methods = make([]typ.Method, len(tt.Methods))

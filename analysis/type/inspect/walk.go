@@ -15,7 +15,6 @@ type Scanner struct {
 	seen      ScanSeen
 	maxEnters int
 	enters    int
-	exceeded  bool
 }
 
 // NewScanner creates a traversal scanner.
@@ -37,7 +36,6 @@ func (s *Scanner) Enter(t typ.Type) bool {
 		}
 	}
 	if s.maxEnters > 0 && s.enters >= s.maxEnters {
-		s.exceeded = true
 		return false
 	}
 	if s.seen != nil {

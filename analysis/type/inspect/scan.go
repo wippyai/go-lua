@@ -4,18 +4,17 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
-// Contains reports whether t or any nested type satisfies pred.
-func Contains(t typ.Type, pred func(typ.Type) bool) bool {
+func containsMatching(t typ.Type, pred func(typ.Type) bool) bool {
 	if pred == nil {
 		return false
 	}
-	scan := NewScanner(ScanOptions{Seen: NewEqualitySeen()})
+	scan := NewScanner(ScanOptions{Seen: newEqualitySeen()})
 	return contains(t, pred, scan)
 }
 
 // ContainsTypeParam reports whether t contains a type parameter.
 func ContainsTypeParam(t typ.Type) bool {
-	return Contains(t, func(t typ.Type) bool {
+	return containsMatching(t, func(t typ.Type) bool {
 		_, ok := t.(*typ.TypeParam)
 		return ok
 	})
@@ -23,7 +22,7 @@ func ContainsTypeParam(t typ.Type) bool {
 
 // ContainsInstantiated reports whether t contains a generic instantiation.
 func ContainsInstantiated(t typ.Type) bool {
-	return Contains(t, func(t typ.Type) bool {
+	return containsMatching(t, func(t typ.Type) bool {
 		_, ok := t.(*typ.Instantiated)
 		return ok
 	})

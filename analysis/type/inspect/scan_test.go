@@ -10,15 +10,15 @@ import (
 )
 
 func testContainsAny(t typ.Type) bool {
-	return Contains(t, typ.IsAny)
+	return containsMatching(t, typ.IsAny)
 }
 
 func testContainsNever(t typ.Type) bool {
-	return Contains(t, typ.IsNever)
+	return containsMatching(t, typ.IsNever)
 }
 
 func testContainsTypeParam(t typ.Type) bool {
-	return Contains(t, func(t typ.Type) bool {
+	return containsMatching(t, func(t typ.Type) bool {
 		_, ok := t.(*typ.TypeParam)
 		return ok
 	})
@@ -101,7 +101,7 @@ func TestContains_PrunesEquivalentRebuiltStructuralNodes(t *testing.T) {
 		Build()
 
 	leafVisits := 0
-	Contains(root, func(node typ.Type) bool {
+	containsMatching(root, func(node typ.Type) bool {
 		rec, ok := node.(*typ.Record)
 		if !ok || len(rec.Fields) != 1 {
 			return false
@@ -131,7 +131,7 @@ func TestContains_PrunesEquivalentFunctionReturnShapes(t *testing.T) {
 	root := typ.NewTuple(resultShape(), resultShape(), resultShape())
 
 	functionVisits := 0
-	Contains(root, func(node typ.Type) bool {
+	containsMatching(root, func(node typ.Type) bool {
 		if _, ok := node.(*typ.Function); ok {
 			functionVisits++
 		}
@@ -153,7 +153,7 @@ func TestContains_FindsTypeParamInsideRepeatedShape(t *testing.T) {
 	}
 	root := typ.NewTuple(repeated(), repeated())
 
-	if !Contains(root, func(node typ.Type) bool {
+	if !containsMatching(root, func(node typ.Type) bool {
 		_, ok := node.(*typ.TypeParam)
 		return ok
 	}) {
@@ -170,7 +170,7 @@ func TestContains_NoDepthCapFindsDeepNestedPredicate(t *testing.T) {
 		tpe = typetable.NewRecord().Field("next", tpe).Build()
 	}
 
-	if !Contains(tpe, typ.IsNever) {
+	if !containsMatching(tpe, typ.IsNever) {
 		t.Fatal("Contains() missed predicate beyond the old recursion-depth budget")
 	}
 }
@@ -187,7 +187,7 @@ func TestContains_PrunesEquivalentRecursiveBranches(t *testing.T) {
 	root := typ.NewTuple(nodeShape(), nodeShape())
 
 	recursiveVisits := 0
-	Contains(root, func(node typ.Type) bool {
+	containsMatching(root, func(node typ.Type) bool {
 		if _, ok := node.(*typ.Recursive); ok {
 			recursiveVisits++
 		}
@@ -412,10 +412,10 @@ func TestContainsReadonlyMapTraversesKeyAndValue(t *testing.T) {
 	value := typ.NewTypeParam("V", nil)
 	wrapper := typ.NewReadonlyMap(key, value)
 
-	if !Contains(wrapper, func(node typ.Type) bool { return node == key }) {
+	if !containsMatching(wrapper, func(node typ.Type) bool { return node == key }) {
 		t.Fatal("Contains() missed ReadonlyMap key")
 	}
-	if !Contains(wrapper, func(node typ.Type) bool { return node == value }) {
+	if !containsMatching(wrapper, func(node typ.Type) bool { return node == value }) {
 		t.Fatal("Contains() missed ReadonlyMap value")
 	}
 }
@@ -469,10 +469,10 @@ func TestContainsStaticMemberTraversesTypes(t *testing.T) {
 		StaticIntIndex(1, intMember).
 		Build()
 
-	if !Contains(wrapper, func(node typ.Type) bool { return node == stringMember }) {
+	if !containsMatching(wrapper, func(node typ.Type) bool { return node == stringMember }) {
 		t.Fatal("Contains() missed string static member type")
 	}
-	if !Contains(wrapper, func(node typ.Type) bool { return node == intMember }) {
+	if !containsMatching(wrapper, func(node typ.Type) bool { return node == intMember }) {
 		t.Fatal("Contains() missed integer static member type")
 	}
 }

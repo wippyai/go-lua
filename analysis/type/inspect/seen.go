@@ -20,9 +20,9 @@ type equalitySeenEntry struct {
 	t   typ.Type
 }
 
-// NewEqualitySeen creates a seen set keyed by typ.EqualityHash and confirmed
+// newEqualitySeen creates a seen set keyed by typ.EqualityHash and confirmed
 // by typ.TypeEquals.
-func NewEqualitySeen() ScanSeen {
+func newEqualitySeen() ScanSeen {
 	return &equalitySeen{
 		key: typ.EqualityHash,
 	}
