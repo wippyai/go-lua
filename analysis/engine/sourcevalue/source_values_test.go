@@ -63,7 +63,7 @@ func TestSourceValuesNilReturnsAbsentPresence(t *testing.T) {
 	reg := standard.Registry()
 	resolver := NewSourceValues(SourceValuesConfig{Registry: reg})
 
-	got, ok := resolver.ValueOfSource(cfg.Point(2), ValueSource{Kind: ValueSourceNil}, state.State{}, nil)
+	got, ok := resolver.ValueOfSource(cfg.Point(2), NewNilValueSource(0), state.State{}, nil)
 	if !ok {
 		t.Fatal("nil source did not resolve")
 	}
@@ -140,6 +140,16 @@ func TestSourceValuesMissingMetadataAndUnknownSourcesReturnFalse(t *testing.T) {
 			name:   "vararg without provider",
 			source: ValueSource{Kind: ValueSourceVararg},
 		},
+		{
+			name: "malformed nil with expression evidence",
+			source: ValueSource{
+				Kind:        ValueSourceNil,
+				ExprRef:     ExprRef(1),
+				HasExpr:     true,
+				ResultIndex: 0,
+				Final:       true,
+			},
+		},
 	}
 
 	for _, tc := range cases {
@@ -148,6 +158,60 @@ func TestSourceValuesMissingMetadataAndUnknownSourcesReturnFalse(t *testing.T) {
 				t.Fatalf("source resolved to %s, want false", formatValue(reg, got))
 			}
 		})
+	}
+}
+
+func TestSourceValuesPathBackedOperationOperandUsesFlowValue(t *testing.T) {
+	reg := standard.Registry()
+	point := cfg.Point(6)
+	pathExpr := ExprRef(601)
+	oneExpr := ExprRef(602)
+	sumExpr := ExprRef(603)
+	pathSource := ValueSource{Kind: ValueSourceExpression, ExprRef: pathExpr, HasExpr: true}
+	oneSource := ValueSource{Kind: ValueSourceExpression, ExprRef: oneExpr, HasExpr: true}
+	sumSource := ValueSource{Kind: ValueSourceExpression, ExprRef: sumExpr, HasExpr: true}
+	op, ok := NewBinaryExpressionOperation("+", pathSource, oneSource)
+	if !ok {
+		t.Fatal("NewBinaryExpressionOperation returned false")
+	}
+	cached := typevalue.WithWitness(reg, typevalue.FromType(reg, typ.Number), typ.Number)
+	flowType := typ.LiteralInt(3)
+	flowValue := typevalue.WithWitness(reg, typevalue.FromType(reg, flowType), flowType)
+	oneType := typ.LiteralInt(1)
+	oneValue := typevalue.WithWitness(reg, typevalue.FromType(reg, oneType), oneType)
+	want := presentValue(reg)
+	resolver := NewSourceValues(SourceValuesConfig{
+		Registry: reg,
+		ExpressionValues: map[ExprRef]product.Value{
+			pathExpr: cached,
+			oneExpr:  oneValue,
+		},
+		ExpressionPaths: map[ExprRef]struct{}{
+			pathExpr: {},
+		},
+		ExpressionOps: map[ExprRef]ExpressionOperation{
+			sumExpr: op,
+		},
+		ExpressionValue: func(gotPoint cfg.Point, expr ExprRef, source ValueSource, in state.State) (product.Value, bool) {
+			if gotPoint != point || expr != pathExpr || source.ExprRef != pathExpr {
+				return product.Value{}, false
+			}
+			return flowValue, true
+		},
+		ExpressionOp: func(got ExpressionOperation, left product.Value, right product.Value) (product.Value, bool) {
+			if floor, ok := typevalue.IntegerLiteralValue(reg, left); !ok || floor != 3 {
+				t.Fatalf("left operand = %s/%v, want literal 3 flow value", formatValue(reg, left), ok)
+			}
+			if floor, ok := typevalue.IntegerLiteralValue(reg, right); !ok || floor != 1 {
+				t.Fatalf("right operand = %s/%v, want literal 1", formatValue(reg, right), ok)
+			}
+			return want, true
+		},
+	})
+
+	got, ok := resolver.ValueOfSource(point, sumSource, state.State{}, nil)
+	if !ok || !product.Equal(reg, got, want) {
+		t.Fatalf("path-backed operation source = %s/%v, want %s/true", formatValue(reg, got), ok, formatValue(reg, want))
 	}
 }
 

@@ -30,6 +30,30 @@ func TestExpressionOperationLogicalPreservesTopOriginEvidence(t *testing.T) {
 	}
 }
 
+func TestExpressionOperationLogicalSkipDoesNotInheritSkippedTopOriginEvidence(t *testing.T) {
+	reg := standard.Registry()
+	source := factflow.NewNilValueSource(0)
+	op, ok := factflow.NewBinaryExpressionOperation("or", source, source)
+	if !ok {
+		t.Fatal("NewBinaryExpressionOperation returned false")
+	}
+	leftType := typ.LiteralBool(true)
+	left := typevalue.WithWitness(reg, typevalue.FromType(reg, leftType), leftType)
+	right := product.Set(reg, product.Top(), evidence.Key, evidence.ExplicitTop())
+
+	got, ok := ExpressionOperationValue(reg, nil, op, left, right)
+	if !ok {
+		t.Fatal("ExpressionOperationValue returned false")
+	}
+	gotType, ok := typevalue.TypeOf(reg, got)
+	if !ok || !typ.TypeEquals(gotType, leftType) {
+		t.Fatalf("logical skip type = %v/%v, want %v", gotType, ok, leftType)
+	}
+	if gotEvidence := product.Get(reg, got, evidence.Key); gotEvidence.IsExplicitTop() || gotEvidence.IsGradualTop() {
+		t.Fatalf("logical skip evidence = %s, want no skipped top-origin evidence", gotEvidence)
+	}
+}
+
 func TestExpressionOperationLogicalFallbackPreservesTopOriginEvidence(t *testing.T) {
 	reg := standard.Registry()
 	source := factflow.NewNilValueSource(0)

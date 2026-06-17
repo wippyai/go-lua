@@ -77,6 +77,14 @@ func TestValueSourceConstructors(t *testing.T) {
 		t.Fatalf("vararg source fields = %#v", vararg)
 	}
 
+	varargWithoutExpr, ok := NewVarargValueSource(0, NoValueSourceIndex, NoValueSourceIndex, 0, ValueSourceShape{})
+	if !ok || !varargWithoutExpr.Valid() {
+		t.Fatalf("vararg source without expr = %#v/%v, want valid", varargWithoutExpr, ok)
+	}
+	if varargWithoutExpr.HasExpr || varargWithoutExpr.ExprRef != 0 || varargWithoutExpr.TargetIndex != NoValueSourceIndex {
+		t.Fatalf("vararg source without expr fields = %#v", varargWithoutExpr)
+	}
+
 	nilSource := NewNilValueSource(4)
 	if !nilSource.Valid() {
 		t.Fatalf("nil source = %#v, want valid", nilSource)
@@ -101,9 +109,6 @@ func TestValueSourceConstructorsRejectInvalidSources(t *testing.T) {
 	}
 	if _, ok := NewExpressionValueSource(0, 0, 0, 0, validShape); ok {
 		t.Fatalf("expression source without expr ref accepted")
-	}
-	if _, ok := NewVarargValueSource(0, 0, 0, 0, validShape); ok {
-		t.Fatalf("vararg source without expr ref accepted")
 	}
 	if _, ok := NewCallValueSource(0, 0, 0, 0, 0, validShape); ok {
 		t.Fatalf("call source without call point accepted")
@@ -165,6 +170,14 @@ func TestValueSourceValidRejectsInvalidCombinations(t *testing.T) {
 				Kind:         ValueSourceCall,
 				ExprRef:      ExprRef(1),
 				ResultIndex:  0,
+				CallPoint:    cfg.Point(1),
+				HasCallPoint: true,
+			},
+		},
+		{
+			name: "vararg with call point",
+			source: ValueSource{
+				Kind:         ValueSourceVararg,
 				CallPoint:    cfg.Point(1),
 				HasCallPoint: true,
 			},

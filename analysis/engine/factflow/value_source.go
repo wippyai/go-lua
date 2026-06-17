@@ -99,6 +99,7 @@ func NewCallValueSource(expr ExprRef, exprIndex, targetIndex, resultIndex int, c
 }
 
 // NewVarargValueSource creates a value source backed by a vararg expression.
+// Boundary projections may omit expr when the AST source has no factflow ref.
 func NewVarargValueSource(expr ExprRef, exprIndex, targetIndex, resultIndex int, shape ValueSourceShape) (ValueSource, bool) {
 	source := valueSourceWithShape(ValueSource{
 		Kind:        ValueSourceVararg,
@@ -147,7 +148,7 @@ func (s ValueSource) Valid() bool {
 	case ValueSourceCall:
 		return s.HasCallPoint && s.CallPoint != 0 && s.ResultIndex >= 0
 	case ValueSourceVararg:
-		return s.HasExpr && s.ExprRef != 0 && !s.HasCallPoint && s.CallPoint == 0
+		return !s.HasCallPoint && s.CallPoint == 0
 	case ValueSourceNil:
 		return s.ExprIndex == NoValueSourceIndex &&
 			s.ResultIndex == NoValueSourceIndex &&

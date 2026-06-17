@@ -297,6 +297,9 @@ func explicitAnyClaim(reg *axis.Registry, value product.Value) bool {
 }
 
 func valueSourceFromASTSource(source sourceprovenance.ASTSource) (factflow.ValueSource, bool) {
+	if !source.Valid() {
+		return factflow.ValueSource{}, false
+	}
 	shape, ok := factflow.NewValueSourceShape(source.Final, source.Expanded, source.Adjusted, source.OpenTail)
 	if !ok {
 		return factflow.ValueSource{}, false

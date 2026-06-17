@@ -1390,9 +1390,7 @@ func TestFactsNodeTransferCallOutcomeReturnPresenceInvalidatesOnResultPathWrite(
 			CallPoint:    call,
 			HasCallPoint: true,
 		}),
-		reassignErr: factflow.NewRootAssignment(factflow.RootAssignmentOrdinaryRootWrite, err, errPath, factflow.ValueSource{
-			Kind: factflow.ValueSourceNil,
-		}),
+		reassignErr: factflow.NewRootAssignment(factflow.RootAssignmentOrdinaryRootWrite, err, errPath, factflow.NewNilValueSource(0)),
 	}
 	facts = factflow.NewFacts(factflow.FactsInput{
 		CallSites:                callOutcomePersistentPresenceCallSites(call, value, err, valuePath, errPath),
@@ -1537,7 +1535,7 @@ func callOutcomeReturnPresenceGraph(
 			factflow.RootAssignmentOrdinaryRootWrite,
 			err,
 			errPath,
-			factflow.ValueSource{Kind: factflow.ValueSourceNil},
+			factflow.NewNilValueSource(0),
 		)
 	}
 	facts := factflow.NewFacts(factflow.FactsInput{

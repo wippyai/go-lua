@@ -89,6 +89,9 @@ func (r sourceValueResolver) ValueOfSource(
 	in state.State,
 	read func(cfg.Point) state.State,
 ) (product.Value, bool) {
+	if !source.Valid() {
+		return product.Value{}, false
+	}
 	switch source.Kind {
 	case factflow.ValueSourceNil:
 		return product.Absent(r.registry), true
@@ -243,7 +246,13 @@ func (r sourceValueResolver) valueOfOperationSource(
 	read func(cfg.Point) state.State,
 	active map[factflow.ExprRef]bool,
 ) (product.Value, bool) {
+	if !source.Valid() {
+		return product.Value{}, false
+	}
 	if source.Kind == factflow.ValueSourceExpression && source.HasExpr {
+		if _, pathBacked := r.pathBacked[source.ExprRef]; pathBacked {
+			return r.ValueOfSource(point, source, in, read)
+		}
 		if value, ok := r.expressionValues[source.ExprRef]; ok {
 			return value, true
 		}

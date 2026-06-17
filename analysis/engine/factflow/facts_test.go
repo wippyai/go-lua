@@ -523,7 +523,7 @@ func TestFactsCarrierCopiesAndReturnsFalseForMissingFacts(t *testing.T) {
 			valueRefinementWithPresence(presence.Absent()),
 		),
 	)
-	input.Returns[point] = NewReturn([]ValueSource{{Kind: ValueSourceNil}})
+	input.Returns[point] = NewReturn([]ValueSource{NewNilValueSource(0)})
 	input.CallSites[point] = NewCallSite(CallSiteConfig{Context: CallSiteContextStatement})
 	input.ObjectLiterals[ExprRef(1)] = NewObjectLiteral([]ObjectEntry{
 		NewObjectEntry(path.Path{Segments: []segment.Segment{{Kind: segment.SegmentField, Name: "changed"}}}, callSource),

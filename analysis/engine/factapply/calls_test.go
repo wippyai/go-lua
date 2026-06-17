@@ -40,7 +40,7 @@ func TestFactsNodeTransferAppliesReturnSlotsThroughSourceValues(t *testing.T) {
 				Returns: map[cfg.Point]factflow.Return{
 					ret: factflow.NewReturn([]factflow.ValueSource{
 						{Kind: factflow.ValueSourceExpression, ExprRef: expr, HasExpr: true},
-						{Kind: factflow.ValueSourceNil},
+						factflow.NewNilValueSource(1),
 					}),
 				},
 			}),
