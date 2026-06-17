@@ -176,18 +176,33 @@ func normalizePathComparison(expr *ast.RelationalOpExpr, bindings *bind.Result) 
 }
 
 func normalizeStringLiteralComparison(expr *ast.RelationalOpExpr, bindings *bind.Result) (Check, bool) {
-	p, value, ok := stringLiteralComparisonOperands(expr.Lhs, expr.Rhs, bindings)
-	if !ok {
-		p, value, ok = stringLiteralComparisonOperands(expr.Rhs, expr.Lhs, bindings)
-	}
+	p, value, kind, ok := resolveEqualityComparison(expr, bindings, stringLiteralComparisonOperands, CheckLiteralEqual, CheckLiteralNot)
 	if !ok {
 		return Check{}, false
 	}
-	kind := CheckLiteralEqual
-	if expr.Operator == "~=" {
-		kind = CheckLiteralNot
-	}
 	return Check{Kind: kind, Path: p, LiteralString: value}, true
+}
+
+// resolveEqualityComparison resolves operands in either order and selects eq for
+// `==` or ne for `~=`, returning the path, the operand string, and the kind.
+func resolveEqualityComparison(
+	expr *ast.RelationalOpExpr,
+	bindings *bind.Result,
+	operands func(ast.Expr, ast.Expr, *bind.Result) (path.Path, string, bool),
+	eq, ne CheckKind,
+) (path.Path, string, CheckKind, bool) {
+	p, value, ok := operands(expr.Lhs, expr.Rhs, bindings)
+	if !ok {
+		p, value, ok = operands(expr.Rhs, expr.Lhs, bindings)
+	}
+	if !ok {
+		return path.Path{}, "", 0, false
+	}
+	kind := eq
+	if expr.Operator == "~=" {
+		kind = ne
+	}
+	return p, value, kind, true
 }
 
 func stringLiteralComparisonOperands(pathExpr, literalExpr ast.Expr, bindings *bind.Result) (path.Path, string, bool) {
@@ -212,16 +227,9 @@ func SupportsTypeComparison(expr ast.Expr, bindings *bind.Result) bool {
 }
 
 func normalizeTypeComparison(expr *ast.RelationalOpExpr, bindings *bind.Result) (Check, bool) {
-	p, typeName, ok := typeComparisonOperands(expr.Lhs, expr.Rhs, bindings)
-	if !ok {
-		p, typeName, ok = typeComparisonOperands(expr.Rhs, expr.Lhs, bindings)
-	}
+	p, typeName, kind, ok := resolveEqualityComparison(expr, bindings, typeComparisonOperands, CheckTypeEqual, CheckTypeNot)
 	if !ok {
 		return Check{}, false
-	}
-	kind := CheckTypeEqual
-	if expr.Operator == "~=" {
-		kind = CheckTypeNot
 	}
 	return Check{Kind: kind, Path: p, TypeName: typeName}, true
 }
@@ -294,11 +302,25 @@ func isEqualityRelop(op string) bool {
 // an array length, such as #xs > 0, #xs >= 1, or #xs ~= 0, and lowers it to a
 // canonical CheckLenGe{Path: xs, LenFloor: k} that holds on the true edge.
 func normalizeLengthFloorComparison(expr *ast.RelationalOpExpr, bindings *bind.Result) (Check, bool) {
-	if arrayPath, floor, ok := lengthFloorOperands(expr.Lhs, expr.Operator, expr.Rhs, bindings); ok {
-		return Check{Kind: CheckLenGe, Path: arrayPath, LenFloor: floor}, true
+	return normalizeFlippedComparison(expr, bindings, lengthFloorOperands,
+		func(arrayPath path.Path, floor int64) Check {
+			return Check{Kind: CheckLenGe, Path: arrayPath, LenFloor: floor}
+		})
+}
+
+// normalizeFlippedComparison tries operands in both operand orders (flipping the
+// relational operator for the second), building the check from the first match.
+func normalizeFlippedComparison[A, B any](
+	expr *ast.RelationalOpExpr,
+	bindings *bind.Result,
+	operands func(ast.Expr, string, ast.Expr, *bind.Result) (A, B, bool),
+	build func(A, B) Check,
+) (Check, bool) {
+	if a, b, ok := operands(expr.Lhs, expr.Operator, expr.Rhs, bindings); ok {
+		return build(a, b), true
 	}
-	if arrayPath, floor, ok := lengthFloorOperands(expr.Rhs, flipRelop(expr.Operator), expr.Lhs, bindings); ok {
-		return Check{Kind: CheckLenGe, Path: arrayPath, LenFloor: floor}, true
+	if a, b, ok := operands(expr.Rhs, flipRelop(expr.Operator), expr.Lhs, bindings); ok {
+		return build(a, b), true
 	}
 	return Check{}, false
 }
@@ -307,13 +329,10 @@ func normalizeLengthFloorComparison(expr *ast.RelationalOpExpr, bindings *bind.R
 // `i <= #xs` or `#xs >= i`. On the true edge it proves reads `xs[i]` are
 // in-range when paired with a positive index fact.
 func normalizeIndexInRangeComparison(expr *ast.RelationalOpExpr, bindings *bind.Result) (Check, bool) {
-	if indexPath, arrayPath, ok := indexLenBoundOperands(expr.Lhs, expr.Operator, expr.Rhs, bindings); ok {
-		return Check{Kind: CheckIndexInRange, Path: indexPath, OtherPath: arrayPath}, true
-	}
-	if indexPath, arrayPath, ok := indexLenBoundOperands(expr.Rhs, flipRelop(expr.Operator), expr.Lhs, bindings); ok {
-		return Check{Kind: CheckIndexInRange, Path: indexPath, OtherPath: arrayPath}, true
-	}
-	return Check{}, false
+	return normalizeFlippedComparison(expr, bindings, indexLenBoundOperands,
+		func(indexPath, arrayPath path.Path) Check {
+			return Check{Kind: CheckIndexInRange, Path: indexPath, OtherPath: arrayPath}
+		})
 }
 
 func indexLenBoundOperands(indexExpr ast.Expr, op string, lenExpr ast.Expr, bindings *bind.Result) (path.Path, path.Path, bool) {

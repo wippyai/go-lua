@@ -541,29 +541,30 @@ func operationalPathStaticMembers(facts callboundary.NormalReturnFacts, arity in
 }
 
 func operationalPathInvalidations(facts callboundary.NormalReturnFacts, arity int) []signature.PathInvalidation {
-	if arity <= 0 || len(facts.PathInvalidations) == 0 {
-		return nil
-	}
-	out := make([]signature.PathInvalidation, 0, len(facts.PathInvalidations))
-	for _, fact := range facts.PathInvalidations {
-		if !placeholderPathInArity(fact.Path, arity) {
-			continue
-		}
-		out = append(out, signature.PathInvalidation{Path: fact.Path})
-	}
-	return out
+	return operationalArityFacts(facts.PathInvalidations, arity,
+		func(f callboundary.PathInvalidationFact) pathdom.Path { return f.Path },
+		func(p pathdom.Path) signature.PathInvalidation { return signature.PathInvalidation{Path: p} })
 }
 
 func operationalFrozenTables(facts callboundary.NormalReturnFacts, arity int) []signature.FrozenTable {
-	if arity <= 0 || len(facts.FrozenTables) == 0 {
+	return operationalArityFacts(facts.FrozenTables, arity,
+		func(f callboundary.FrozenTableFact) pathdom.Path { return f.Target },
+		func(p pathdom.Path) signature.FrozenTable { return signature.FrozenTable{Target: p} })
+}
+
+// operationalArityFacts projects facts whose path lies within arity into output
+// signature entries built by build.
+func operationalArityFacts[F any, T any](facts []F, arity int, pathOf func(F) pathdom.Path, build func(pathdom.Path) T) []T {
+	if arity <= 0 || len(facts) == 0 {
 		return nil
 	}
-	out := make([]signature.FrozenTable, 0, len(facts.FrozenTables))
-	for _, fact := range facts.FrozenTables {
-		if !placeholderPathInArity(fact.Target, arity) {
+	out := make([]T, 0, len(facts))
+	for _, fact := range facts {
+		p := pathOf(fact)
+		if !placeholderPathInArity(p, arity) {
 			continue
 		}
-		out = append(out, signature.FrozenTable{Target: fact.Target})
+		out = append(out, build(p))
 	}
 	return out
 }
