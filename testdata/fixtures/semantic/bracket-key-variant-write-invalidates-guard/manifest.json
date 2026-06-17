@@ -1,0 +1,3 @@
+{
+  "description": "A variant guard on a map entry is historical after writing another variant through an equivalent bracket-literal key; diagnostics should report the stale payload read instead of resurrecting the root map projection."
+}

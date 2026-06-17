@@ -129,22 +129,41 @@ func (p expressionTyper) annotatedPathType(expr ast.Expr) (typ.Type, bool) {
 }
 
 // broadType returns the un-narrowed declared shape of a path expression: the
-// lowered annotation when present, otherwise the full variant-origin family. It
-// reflects what the receiver could be before any flow narrowing, so callers can
-// tell discriminant collapse apart from a single-shape observed snapshot.
+// lowered root annotation when present, otherwise the full variant-origin
+// family, projected through the path suffix. It reflects what the receiver
+// could be before any flow narrowing, so callers can tell discriminant collapse
+// apart from a single-shape observed snapshot.
 func (p expressionTyper) broadType(expr ast.Expr) (typ.Type, bool) {
 	accessPath, ok := p.result.ExpressionPath(expr)
-	if !ok || accessPath.Symbol == 0 || len(accessPath.Segments) != 0 {
+	if !ok || accessPath.Symbol == 0 {
 		return nil, false
 	}
+	var t typ.Type
 	if annotation, ok := p.result.SymbolTypeAnnotation(accessPath.Symbol); ok {
-		return lowerType(annotation, p.resolver)
+		lowered, loweredOK := lowerType(annotation, p.resolver)
+		if !loweredOK {
+			return nil, false
+		}
+		t = transparentComparableType(p.result, lowered)
+	} else {
+		value, ok := p.result.SymbolValueAtBoundary(p.point, accessPath.Symbol)
+		if !ok {
+			return nil, false
+		}
+		full, ok := readmodel.New(p.result).FullVariantOriginType(value)
+		if !ok {
+			return nil, false
+		}
+		t = full
 	}
-	value, ok := p.result.SymbolValueAtBoundary(p.point, accessPath.Symbol)
-	if !ok {
-		return nil, false
+	for _, seg := range accessPath.Segments {
+		next, ok := expressionSegmentType(t, seg)
+		if !ok {
+			return nil, false
+		}
+		t = next
 	}
-	return readmodel.New(p.result).FullVariantOriginType(value)
+	return t, t != nil
 }
 
 func (p expressionTyper) flowOriginType(accessPath pathdom.Path) (typ.Type, bool) {

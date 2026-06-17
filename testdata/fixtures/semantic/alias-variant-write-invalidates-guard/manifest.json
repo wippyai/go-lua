@@ -1,0 +1,3 @@
+{
+  "description": "A variant guard through a map-entry alias is historical after writing a different variant through the alias; stale file payload facts must not survive."
+}

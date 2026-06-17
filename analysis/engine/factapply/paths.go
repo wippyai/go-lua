@@ -31,7 +31,14 @@ func applyPathAssignment(
 	if !ok {
 		return out, false
 	}
-	invalidated, ok := invalidatePathSubtreeAt(out, resolver, ctx.Point, targetPath)
+	invalidated := out
+	if withOrigins, ok := invalidateRootOriginsForPathMutationAt(ctx.Registry, invalidated, resolver, ctx.Point, targetPath); ok {
+		invalidated = withOrigins
+	}
+	if withHeap, ok := invalidateHeapStaticMemberSubtreeAt(ctx.Registry, invalidated, resolver, ctx.Point, targetPath); ok {
+		invalidated = withHeap
+	}
+	invalidated, ok = invalidatePathSubtreeAt(invalidated, resolver, ctx.Point, targetPath)
 	if !ok {
 		return out, false
 	}
@@ -55,7 +62,14 @@ func applyPathDescendantInvalidation(
 	if containerPath.IsEmpty() {
 		return out
 	}
-	invalidated, ok := invalidatePathDescendantsAt(out, resolver, ctx.Point, containerPath)
+	invalidated := out
+	if withOrigins, ok := invalidateRootOriginsForPathMutationAt(ctx.Registry, invalidated, resolver, ctx.Point, containerPath); ok {
+		invalidated = withOrigins
+	}
+	if withHeap, ok := invalidateHeapStaticMemberDescendantsAt(ctx.Registry, invalidated, resolver, ctx.Point, containerPath); ok {
+		invalidated = withHeap
+	}
+	invalidated, ok := invalidatePathDescendantsAt(invalidated, resolver, ctx.Point, containerPath)
 	if !ok {
 		return out
 	}

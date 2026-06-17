@@ -2,6 +2,7 @@ package factapply
 
 import (
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
 	"github.com/wippyai/go-lua/analysis/domain/placement"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/evidence"
@@ -132,6 +133,9 @@ func writeObjectLiteralHeap(
 		}
 		value = objectEntryValue(ctx.Registry, entry, value)
 		staticMembers[key] = value
+		if canonical, ok := pathaddr.FieldCanonicalRelativeStaticMemberSuffixKey(entry.Suffix().Segments); ok {
+			staticMembers[canonical] = value
+		}
 		if entrySource.HasExpr {
 			if nested, ok := facts.ObjectLiteral(entrySource.ExprRef); ok {
 				out = writeObjectLiteralHeap(ctx, facts, sources, read, in, out, entrySource, nested, active)

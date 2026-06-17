@@ -111,6 +111,54 @@ func (k StructuralKey) SameKind(other StructuralKey) bool {
 	return k.local == other.local
 }
 
+// FieldCanonicalPathKey returns the equivalent key whose static string-index
+// segments use field spelling. It is an auxiliary analysis key: callers should
+// keep the original syntax key too, then use this key to make a.b and a["b"]
+// share facts.
+func FieldCanonicalPathKey(pathKey pathdom.PathKey) (pathdom.PathKey, bool) {
+	parsed, ok := StructuralKeyFromPathKey(pathKey)
+	if !ok {
+		return "", false
+	}
+	if !parsed.local {
+		segments, changed := FieldCanonicalSegments(parsed.stable.suffix.segments)
+		if !changed {
+			return "", false
+		}
+		parsed.stable.suffix = suffixOfOwnedSegments(segments)
+		key := parsed.PathKey()
+		return key, key != "" && key != pathKey
+	}
+	segments, changed := FieldCanonicalSegments(parsed.segments)
+	if !changed {
+		return "", false
+	}
+	parsed.segments = segments
+	key := parsed.PathKey()
+	return key, key != "" && key != pathKey
+}
+
+// FieldCanonicalSegments rewrites static string-index segments to field
+// segments. The returned slice is a defensive copy when a rewrite happens.
+func FieldCanonicalSegments(segments []segment.Segment) ([]segment.Segment, bool) {
+	var out []segment.Segment
+	changed := false
+	for i, seg := range segments {
+		if seg.Kind != segment.SegmentIndexString {
+			continue
+		}
+		if !changed {
+			out = cloneSegments(segments)
+			changed = true
+		}
+		out[i] = segment.Segment{Kind: segment.SegmentField, Name: seg.Name}
+	}
+	if !changed {
+		return segments, false
+	}
+	return out, true
+}
+
 // RebasePathKey rewrites pathKey from one structural prefix to another in the
 // same address space, preserving segment boundaries.
 func RebasePathKey(pathKey, from, to pathdom.PathKey) (pathdom.PathKey, bool) {

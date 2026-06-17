@@ -31,7 +31,9 @@ import (
 	"github.com/wippyai/go-lua/analysis/module/typelookup"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
+	"github.com/wippyai/go-lua/analysis/type/access"
 	"github.com/wippyai/go-lua/analysis/type/ambient"
+	"github.com/wippyai/go-lua/analysis/type/subtype"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/typeexpr"
@@ -102,6 +104,73 @@ local missing_counter: number = actor.state.counters["missing"]
 			t.Fatalf("%s ExpressionValueAtBoundary returned false", name)
 		}
 		assertPresence(t, reg, got, presence.Maybe())
+	}
+}
+
+func TestAliasVariantWriteInvalidatesEquivalentGuardedProjection(t *testing.T) {
+	reg := standard.Registry()
+	stmts := parseChunk(t, `
+type FileSlot = {
+	kind: "file",
+	path: string,
+}
+type TimerSlot = {
+	kind: "timer",
+	seconds: number,
+}
+type Slot = {
+	value: FileSlot | TimerSlot,
+}
+type Slots = {[string]: Slot}
+
+local slots: Slots = {
+	active = {
+		value = {kind = "file", path = "/tmp/active"},
+	},
+}
+
+local alias = slots.active
+
+if alias.value.kind == "file" then
+	local before: string = alias.value.path
+	alias.value = {kind = "timer", seconds = 5}
+	local stale_path: string = slots.active.value.path
+	local stale_seconds: number = before
+end
+`)
+	result, err := CheckChunk(stmts, Config{Registry: reg})
+	if err != nil {
+		t.Fatalf("CheckChunk: %v", err)
+	}
+
+	point, expr := requireLocalAssignmentExprByName(t, result, "stale_path")
+	read, ok := expr.(*ast.AttrGetExpr)
+	if !ok {
+		t.Fatalf("stale_path expr = %T, want AttrGetExpr", expr)
+	}
+	receiver, ok := result.ExpressionValueAtBoundary(point, read.Object)
+	if !ok {
+		t.Fatal("receiver ExpressionValueAtBoundary returned false")
+	}
+	receiverType, ok := typevalue.StructuralTypeOf(reg, result.typeValues, receiver, typevalue.StructuralTypeOptions{
+		ApplyPresence: true,
+	})
+	if !ok {
+		t.Fatalf("receiver type unavailable from value %v", receiver)
+	}
+	if _, ok := access.Field(receiverType, "seconds"); !ok {
+		t.Fatalf("receiver type = %s, want timer field seconds", receiverType)
+	}
+	if _, ok := access.Field(receiverType, "path"); ok {
+		t.Fatalf("receiver type = %s, still admits stale file field path", receiverType)
+	}
+	if stale, ok := result.ExpressionValueAtBoundary(point, expr); ok {
+		staleType, typeOK := typevalue.StructuralTypeOf(reg, result.typeValues, stale, typevalue.StructuralTypeOptions{
+			ApplyPresence: true,
+		})
+		if typeOK && subtype.IsSubtype(staleType, typ.String) {
+			t.Fatalf("stale path read type = %s, want not assignable to string after alias variant write", staleType)
+		}
 	}
 }
 

@@ -2,6 +2,7 @@ package sourcevalue
 
 import (
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
@@ -57,7 +58,12 @@ func ExactPathValue(
 	}
 	value := in.ReadPathKey(reg, pathKey)
 	if product.Equal(reg, value, product.Bottom(reg)) {
-		return product.Value{}, false
+		if canonical, ok := pathaddr.FieldCanonicalPathKey(pathKey); ok {
+			value = in.ReadPathKey(reg, canonical)
+		}
+		if product.Equal(reg, value, product.Bottom(reg)) {
+			return product.Value{}, false
+		}
 	}
 	return value, true
 }
@@ -84,6 +90,11 @@ func HeapMemberFromValue(reg *axis.Registry, in state.State, value product.Value
 		return product.Value{}, false
 	}
 	member, ok := object.StaticMember(key)
+	if !ok {
+		if canonical, canonicalOK := pathaddr.FieldCanonicalRelativeStaticMemberSuffixKey(suffix); canonicalOK {
+			member, ok = object.StaticMember(canonical)
+		}
+	}
 	if !ok || product.Equal(reg, member, product.Bottom(reg)) {
 		return product.Value{}, false
 	}

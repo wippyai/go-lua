@@ -53,6 +53,18 @@ func (o TableObject) StaticMembers() map[pathdom.PathKey]product.Value {
 	return clonePathMap(o.staticMembers)
 }
 
+// WithoutStaticMemberSubtree returns an object with any static-member fact at
+// prefix or below removed.
+func (o TableObject) WithoutStaticMemberSubtree(prefix []segment.Segment) (TableObject, bool) {
+	return o.withoutStaticMembersMatching(prefix, false)
+}
+
+// WithoutStaticMemberDescendants returns an object with static-member facts
+// strictly below prefix removed while preserving a fact exactly at prefix.
+func (o TableObject) WithoutStaticMemberDescendants(prefix []segment.Segment) (TableObject, bool) {
+	return o.withoutStaticMembersMatching(prefix, true)
+}
+
 // DynamicIndexFact reads a finite dynamic-index fact.
 func (o TableObject) DynamicIndexFact(key dynamicindex.Key) (dynamicindex.Fact, bool) {
 	value, ok := o.dynamicIndexFacts[key]
@@ -69,6 +81,35 @@ func (o TableObject) DynamicIndexFacts() map[dynamicindex.Key]dynamicindex.Fact 
 // rootless member facts do not collapse to an empty path key.
 func StaticMemberSuffixKey(segments []segment.Segment) (pathdom.PathKey, bool) {
 	return address.RelativeStaticMemberSuffixKey(segments)
+}
+
+func (o TableObject) withoutStaticMembersMatching(prefix []segment.Segment, descendantsOnly bool) (TableObject, bool) {
+	if o.bottom || len(o.staticMembers) == 0 {
+		return o, false
+	}
+	out := CloneObject(o)
+	changed := false
+	for key := range out.staticMembers {
+		segments, ok := address.RelativeStaticMemberSuffixSegments(key)
+		if !ok {
+			continue
+		}
+		matches := address.SegmentsHasPrefix(segments, prefix)
+		if descendantsOnly {
+			matches = address.SegmentsHasStrictPrefix(segments, prefix)
+		}
+		if matches {
+			delete(out.staticMembers, key)
+			changed = true
+		}
+	}
+	if !changed {
+		return o, false
+	}
+	if len(out.staticMembers) == 0 {
+		out.staticMembers = nil
+	}
+	return out, true
 }
 
 func ObjectDomain(reg *axis.Registry) lattice.Lattice[TableObject] {

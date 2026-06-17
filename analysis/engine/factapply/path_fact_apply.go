@@ -4,6 +4,7 @@ import (
 	"strconv"
 
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
@@ -36,7 +37,11 @@ func applyPathStaticMemberWrite(
 	if !ok {
 		return out
 	}
-	return out.WritePathStaticMember(targetKey, value)
+	out = out.WritePathStaticMember(targetKey, value)
+	if canonical, ok := pathaddr.FieldCanonicalPathKey(targetKey); ok {
+		out = out.WritePathStaticMember(canonical, value)
+	}
+	return out
 }
 
 func applyDynamicIndexWrite(

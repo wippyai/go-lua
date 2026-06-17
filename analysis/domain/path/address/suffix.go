@@ -92,6 +92,16 @@ func RelativeStaticMemberSuffixKey(segments []segment.Segment) (pathdom.PathKey,
 	return pathdom.PathKey(segment.FormatSegments(segments)), true
 }
 
+// FieldCanonicalRelativeStaticMemberSuffixKey returns the equivalent rootless
+// suffix key with static string indexes rewritten to field spelling.
+func FieldCanonicalRelativeStaticMemberSuffixKey(segments []segment.Segment) (pathdom.PathKey, bool) {
+	canonical, changed := FieldCanonicalSegments(segments)
+	if !changed {
+		return "", false
+	}
+	return RelativeStaticMemberSuffixKey(canonical)
+}
+
 // RelativeStaticMemberSuffixSegments parses a rootless static-member suffix key.
 func RelativeStaticMemberSuffixSegments(key pathdom.PathKey) ([]segment.Segment, bool) {
 	if key == "" {

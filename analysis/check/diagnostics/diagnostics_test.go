@@ -7,8 +7,10 @@ import (
 	"github.com/wippyai/go-lua/analysis/check/body"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/program"
 	"github.com/wippyai/go-lua/analysis/diagnostic"
+	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/module/signaturelookup"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
+	"github.com/wippyai/go-lua/analysis/type/access"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/typeexpr"
@@ -861,6 +863,134 @@ func TestMemberCallAcceptsMatchingDiscriminantMethod(t *testing.T) {
 	}
 }
 
+func TestMemberReadReportsAliasVariantWriteInvalidatedGuardWithEvidence(t *testing.T) {
+	result := runDiagnosticsResult(t, `
+		type FileSlot = {
+			kind: "file",
+			path: string,
+		}
+		type TimerSlot = {
+			kind: "timer",
+			seconds: number,
+		}
+		type Slot = {
+			value: FileSlot | TimerSlot,
+		}
+		type Slots = {[string]: Slot}
+
+		local slots: Slots = {
+			active = {
+				value = {kind = "file", path = "/tmp/active"},
+			},
+		}
+
+		local alias = slots.active
+
+		if alias.value.kind == "file" then
+			local before: string = alias.value.path
+			alias.value = {kind = "timer", seconds = 5}
+			local stale_path: string = slots.active.value.path
+			local stale_seconds: number = before
+		end
+	`)
+	assertStalePathMissingMemberEvidence(t, result)
+}
+
+func TestMemberReadReportsBracketVariantWriteInvalidatedGuardWithEvidence(t *testing.T) {
+	result := runDiagnosticsResult(t, `
+		type FileSlot = {
+			kind: "file",
+			path: string,
+		}
+		type TimerSlot = {
+			kind: "timer",
+			seconds: number,
+		}
+		type Slot = {
+			value: FileSlot | TimerSlot,
+		}
+		type Slots = {[string]: Slot}
+
+		local slots: Slots = {
+			active = {
+				value = {kind = "file", path = "/tmp/active"},
+			},
+		}
+
+		if slots.active.value.kind == "file" then
+			local before: string = slots["active"].value.path
+			slots["active"].value = {kind = "timer", seconds = 10}
+			local stale_path: string = slots.active.value.path
+			local stale_seconds: number = before
+		end
+	`)
+	assertStalePathMissingMemberEvidence(t, result)
+}
+
+func assertStalePathMissingMemberEvidence(t *testing.T, result *body.Result) {
+	t.Helper()
+	point, expr := requireLocalAssignmentExprByName(t, result, "stale_path")
+	read, ok := expr.(*ast.AttrGetExpr)
+	if !ok {
+		t.Fatalf("stale_path expr = %T, want AttrGetExpr", expr)
+	}
+	envs := guardEnvironments(result)
+	context := producerContext{resolver: newResultResolver(result, nil)}
+	typers := memberReadTypers{
+		narrowed: newStructuralFlowExpressionTyper(result, context.resolver, point, envs[point]),
+		base:     newStructuralFlowExpressionTyper(result, context.resolver, point, guardEnv{}),
+		result:   result,
+		point:    point,
+	}
+	receiver, ok := typers.receiverType(read.Object)
+	if !ok {
+		t.Fatal("member-read receiver type unavailable")
+	}
+	if !fieldProvablyAbsent(receiver, "path") {
+		t.Fatalf("receiver type = %s, want path provably absent", formatType(receiver))
+	}
+	broad, broadOK := typers.base.broadType(read.Object)
+	if !broadOK || !isMultiArmUnion(broad) {
+		t.Fatalf("broad receiver type = %s/%v, want original union", formatType(broad), ok)
+	}
+	fieldBroad := broad
+	if withoutNil := projectionWithoutNil(broad); withoutNil != nil && !typ.IsNever(withoutNil) {
+		fieldBroad = withoutNil
+	}
+	if field, ok := access.Field(fieldBroad, "path"); !ok {
+		t.Fatalf("broad receiver type = %s, does not admit path after nil stripping; field=%s/%v", formatType(broad), formatType(field), ok)
+	}
+	produced, ok := memberRead(context).read(read, typers)
+	if !ok || produced.Code != CodeMissingMember {
+		t.Fatalf("memberRead.read = %#v/%v, want missing-member diagnostic", produced, ok)
+	}
+
+	diags := Produce(result)
+	if len(diags) != 2 {
+		t.Fatalf("diagnostics = %d %#v, want stale member read and stale literal assignment", len(diags), diags)
+	}
+	var missing diagnostic.Diagnostic
+	for _, d := range diags {
+		if d.Code == CodeMissingMember {
+			missing = d
+			break
+		}
+	}
+	if missing.Code != CodeMissingMember || missing.Severity != diagnostic.SeverityError {
+		t.Fatalf("missing-member diagnostic = %#v, want error; all diagnostics = %#v", missing, diags)
+	}
+	if !strings.Contains(missing.Message, `"path"`) || !strings.Contains(missing.Message, "timer") {
+		t.Fatalf("message = %q, want missing path on timer variant", missing.Message)
+	}
+	evidence := missing.Explanation.Evidence()
+	if len(evidence) < 2 || missing.Explanation.String() == "" {
+		t.Fatalf("explanation evidence = %#v, want read and receiver evidence", evidence)
+	}
+	if len(missing.Labels) == 0 || missing.Labels[0].Message != "missing member read" {
+		t.Fatalf("labels = %#v, want missing member read label", missing.Labels)
+	}
+}
+
 func TestMemberCallReportsUnionReceiverMissingMethod(t *testing.T) {
 	diags := runDiagnostics(t, `
 		function f(x: string | number)
@@ -1526,6 +1656,16 @@ func runDiagnosticsWithSignatures(t *testing.T, src string, signatures signature
 
 func runDiagnosticsFull(t *testing.T, src string, globals []string, signatures signaturelookup.Source) []diagnostic.Diagnostic {
 	t.Helper()
+	return Produce(runDiagnosticsResultFull(t, src, globals, signatures))
+}
+
+func runDiagnosticsResult(t *testing.T, src string) *body.Result {
+	t.Helper()
+	return runDiagnosticsResultFull(t, src, []string{"test", "type", "value"}, signaturelookup.Source{})
+}
+
+func runDiagnosticsResultFull(t *testing.T, src string, globals []string, signatures signaturelookup.Source) *body.Result {
+	t.Helper()
 	stmts, err := parse.ParseString(src, "diagnostics_test.lua")
 	if err != nil {
 		t.Fatalf("parse: %v", err)
@@ -1541,7 +1681,20 @@ func runDiagnosticsFull(t *testing.T, src string, globals []string, signatures s
 	if err != nil {
 		t.Fatalf("check: %v", err)
 	}
-	return Produce(result.RootResult())
+	return result.RootResult()
+}
+
+func requireLocalAssignmentExprByName(t *testing.T, result *body.Result, name string) (cfg.Point, ast.Expr) {
+	t.Helper()
+	for _, point := range result.Graph().RPO() {
+		fact, ok := result.LocalAssignment(point)
+		if !ok || fact.Name != name || fact.Expr == nil {
+			continue
+		}
+		return point, fact.Expr
+	}
+	t.Fatalf("local assignment %q not found", name)
+	return 0, nil
 }
 
 func diagnosticMessages(diags []diagnostic.Diagnostic) []string {

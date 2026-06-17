@@ -122,6 +122,14 @@ func assertVariantOriginType(t *testing.T, reg *axis.Registry, gotState state.St
 	}
 }
 
+func assertRootVariantOriginTop(t *testing.T, reg *axis.Registry, gotState state.State, slot symbol.ID) {
+	t.Helper()
+	value := gotState.ReadValue(reg, key.SymbolValue(slot))
+	if origin := product.Get(reg, value, variantorigin.Key); !origin.IsTop() {
+		t.Fatalf("slot %d variant origin = %v in %s, want top", slot, origin, formatValue(reg, value))
+	}
+}
+
 func testLuaPathTypeProjector(root typ.Type, p path.Path) (typ.Type, bool) {
 	return typeprojection.ApplySegments(root, p.Segments)
 }

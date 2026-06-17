@@ -297,6 +297,33 @@ func TestSegmentBoundaryHelpersRespectWholeSegments(t *testing.T) {
 	}
 }
 
+func TestSegmentBoundaryHelpersTreatStaticStringSyntaxAsEquivalent(t *testing.T) {
+	dot := []segment.Segment{
+		{Kind: segment.SegmentField, Name: "active"},
+		{Kind: segment.SegmentField, Name: "value"},
+	}
+	bracket := []segment.Segment{
+		{Kind: segment.SegmentIndexString, Name: "active"},
+	}
+
+	if !SegmentsHasPrefix(dot, bracket) {
+		t.Fatalf("dot path should be under equivalent bracket string prefix: %#v / %#v", dot, bracket)
+	}
+	if !SegmentsHasStrictPrefix(dot, bracket) {
+		t.Fatalf("dot path should be strict descendant of equivalent bracket string prefix: %#v / %#v", dot, bracket)
+	}
+}
+
+func TestFieldCanonicalPathKeyRewritesStaticStringSegments(t *testing.T) {
+	got, ok := FieldCanonicalPathKey(pathdom.PathKey(`sym42@3["active"].value`))
+	if !ok || got != pathdom.PathKey(`sym42@3.active.value`) {
+		t.Fatalf("FieldCanonicalPathKey = %s/%v, want sym42@3.active.value/true", got, ok)
+	}
+	if got, ok := FieldCanonicalPathKey(pathdom.PathKey(`sym42@3.active.value`)); ok || got != "" {
+		t.Fatalf("FieldCanonicalPathKey(dot) = %s/%v, want empty/false", got, ok)
+	}
+}
+
 func TestStableFromKeyUsesSegmentBoundaries(t *testing.T) {
 	root, _ := StableOfPath(pathdom.NewPath(7, "root"))
 	field, _ := StableOfPath(pathdom.NewPath(7, "root").Field("foo"))

@@ -4,9 +4,13 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/state/key"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/variantorigin"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/state"
+	"github.com/wippyai/go-lua/analysis/engine/state/heapidentity"
 	"github.com/wippyai/go-lua/analysis/engine/state/pathevidence"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/engine/visibility"
@@ -137,6 +141,119 @@ func TestFactsNodeTransferPathAssignmentInvalidatesEquivalentPathProofs(t *testi
 	assertPathValue(t, reg, got, originalKey, assigned)
 	assertPathValue(t, reg, got, originalChildKey, product.Bottom(reg))
 	assertPathValue(t, reg, got, siblingKey, present)
+}
+
+func TestFactsNodeTransferPathAssignmentSharesDotAndBracketStringKeys(t *testing.T) {
+	reg := standard.Registry()
+	point := cfg.Point(19)
+	source := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: factflow.ExprRef(19), HasExpr: true}
+	slots := symbol.ID(110)
+	targetPath := path.NewPath(slots, "slots").IndexStr("active").Field("value")
+	bracketKey := path.PathKey(`sym110@1["active"].value`)
+	dotKey := path.PathKey("sym110@1.active.value")
+	dotChildKey := path.PathKey("sym110@1.active.value.path")
+	assigned := absentValue(reg)
+	present := presentValue(reg)
+	in := state.State{}.
+		WritePathKey(reg, dotKey, present).
+		WritePathKey(reg, dotChildKey, present)
+	sources := &recordingSourceValues{
+		values: map[factflow.ValueSource]product.Value{source: assigned},
+	}
+	visibilityBuilder := visibility.NewBuilder()
+	visibilityBuilder.Define(point, slots, "slots")
+
+	got := NewFactsNodeTransfer(FactsNodeTransferConfig{
+		Facts: factflow.NewFacts(factflow.FactsInput{
+			PathAssignments: map[cfg.Point]factflow.PathAssignment{
+				point: factflow.NewPathAssignment(targetPath, source),
+			},
+		}),
+		Sources:    sources,
+		Visibility: visibility.NewResolver(visibilityBuilder.Build()),
+	})(transfer.NodeContext{
+		Registry: reg,
+		Point:    point,
+	}, in)
+
+	assertPathValue(t, reg, got, bracketKey, assigned)
+	assertPathValue(t, reg, got, dotKey, assigned)
+	assertPathValue(t, reg, got, dotChildKey, product.Bottom(reg))
+}
+
+func TestFactsNodeTransferPathAssignmentInvalidatesEquivalentOriginsAndHeapMembers(t *testing.T) {
+	reg := standard.Registry()
+	point := cfg.Point(21)
+	source := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: factflow.ExprRef(21), HasExpr: true}
+	alias := symbol.ID(113)
+	slots := symbol.ID(114)
+	aliasPath := path.NewPath(alias, "alias").Field("value")
+	aliasKey := path.PathKey("sym113@1.value")
+	slotsKey := path.PathKey("sym114@1.active.value")
+	staleAliasMember := path.PathKey(".value.path")
+	staleSlotsMember := path.PathKey(".active.value.path")
+	siblingSlotsMember := path.PathKey(".active.other")
+	aliasID := identity.ID{Kind: "test.table", Site: "alias", Index: 1}
+	slotsID := identity.ID{Kind: "test.table", Site: "slots", Index: 2}
+	assigned := absentValue(reg)
+	present := presentValue(reg)
+	aliasRoot := product.Set(reg, present, identity.Key, identity.Singleton(aliasID))
+	aliasRoot = product.Set(reg, aliasRoot, variantorigin.Key, variantorigin.Singleton(7, 0))
+	slotsRoot := product.Set(reg, present, identity.Key, identity.Singleton(slotsID))
+	slotsRoot = product.Set(reg, slotsRoot, variantorigin.Key, variantorigin.Singleton(8, 1))
+	in := state.State{}.
+		WriteValue(reg, key.SymbolValue(alias), aliasRoot).
+		WriteValue(reg, key.SymbolValue(slots), slotsRoot).
+		WriteHeapTableObject(reg, aliasID, heapidentity.NewTableObject(heapidentity.TableObjectConfig{
+			Root:          aliasRoot,
+			StaticMembers: map[path.PathKey]product.Value{staleAliasMember: present},
+		})).
+		WriteHeapTableObject(reg, slotsID, heapidentity.NewTableObject(heapidentity.TableObjectConfig{
+			Root: slotsRoot,
+			StaticMembers: map[path.PathKey]product.Value{
+				staleSlotsMember:   present,
+				siblingSlotsMember: present,
+			},
+		})).
+		AddBranchProof(pathevidence.BranchProof{
+			Kind:  pathevidence.BranchProofPathEqual,
+			Path:  path.PathKey("sym113@1"),
+			Other: path.PathKey("sym114@1.active"),
+		})
+	sources := &recordingSourceValues{
+		values: map[factflow.ValueSource]product.Value{source: assigned},
+	}
+	visibilityBuilder := visibility.NewBuilder()
+	visibilityBuilder.Define(point, alias, "alias")
+	visibilityBuilder.Define(point, slots, "slots")
+
+	got := NewFactsNodeTransfer(FactsNodeTransferConfig{
+		Facts: factflow.NewFacts(factflow.FactsInput{
+			PathAssignments: map[cfg.Point]factflow.PathAssignment{
+				point: factflow.NewPathAssignment(aliasPath, source),
+			},
+		}),
+		Sources:    sources,
+		Visibility: visibility.NewResolver(visibilityBuilder.Build()),
+	})(transfer.NodeContext{
+		Registry: reg,
+		Point:    point,
+	}, in)
+
+	assertPathValue(t, reg, got, aliasKey, assigned)
+	assertPathValue(t, reg, got, slotsKey, assigned)
+	assertRootVariantOriginTop(t, reg, got, alias)
+	assertRootVariantOriginTop(t, reg, got, slots)
+	if _, ok := got.ReadHeapTableObject(reg, aliasID).StaticMember(staleAliasMember); ok {
+		t.Fatalf("alias heap static member %s survived path assignment", staleAliasMember)
+	}
+	slotsObject := got.ReadHeapTableObject(reg, slotsID)
+	if _, ok := slotsObject.StaticMember(staleSlotsMember); ok {
+		t.Fatalf("slots heap static member %s survived alias path assignment", staleSlotsMember)
+	}
+	if gotMember, ok := slotsObject.StaticMember(siblingSlotsMember); !ok || !product.Equal(reg, gotMember, present) {
+		t.Fatalf("slots sibling heap member = %s/%v, want present/true", formatValue(reg, gotMember), ok)
+	}
 }
 
 func TestFactsNodeTransferPathDescendantInvalidationKeepsContainer(t *testing.T) {

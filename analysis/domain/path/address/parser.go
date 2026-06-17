@@ -60,7 +60,7 @@ func SegmentsHasPrefix(segments, prefix []segment.Segment) bool {
 		return false
 	}
 	for i := range prefix {
-		if segments[i] != prefix[i] {
+		if !segmentsEquivalent(segments[i], prefix[i]) {
 			return false
 		}
 	}
@@ -70,6 +70,17 @@ func SegmentsHasPrefix(segments, prefix []segment.Segment) bool {
 // SegmentsHasStrictPrefix reports whether prefix is a strict ancestor.
 func SegmentsHasStrictPrefix(segments, prefix []segment.Segment) bool {
 	return len(prefix) < len(segments) && SegmentsHasPrefix(segments, prefix)
+}
+
+func segmentsEquivalent(a, b segment.Segment) bool {
+	if a == b {
+		return true
+	}
+	if (a.Kind == segment.SegmentField || a.Kind == segment.SegmentIndexString) &&
+		(b.Kind == segment.SegmentField || b.Kind == segment.SegmentIndexString) {
+		return a.Name == b.Name
+	}
+	return false
 }
 
 // VersionedRootString returns the canonical verbose resolver root.

@@ -127,6 +127,9 @@ func (p annotationAssignability) localAssignment(result *body.Result, point cfg.
 		mismatch = boundaryProofTypeMismatch(result, point, got, want, readBoundary)
 	}
 	if mismatch {
+		if expressionHasMissingMemberRead(result, p.resolver, point, env, fact.Expr) {
+			return diagnostic.Diagnostic{}, false
+		}
 		extra := boundaryDiagnosticEvidence(result, point, ast.SpanOf(fact.Expr), want, readBoundary)
 		return assignmentDiagnostic(fact.Name, want, got, fact.Expr, fact.Type, extra...), true
 	}
@@ -163,8 +166,32 @@ func (p annotationAssignability) pathAssignment(result *body.Result, point cfg.P
 	if !boundaryTypeMismatch(result, point, got, want, readBoundary) {
 		return diagnostic.Diagnostic{}, false
 	}
+	if expressionHasMissingMemberRead(result, p.resolver, point, env, fact.Value) {
+		return diagnostic.Diagnostic{}, false
+	}
 	extra := boundaryDiagnosticEvidence(result, point, ast.SpanOf(fact.Value), want, readBoundary)
 	return pathAssignmentDiagnostic(fact.Target, fact.Value, got, want, extra...), true
+}
+
+func expressionHasMissingMemberRead(
+	result *body.Result,
+	resolver typeannotation.Resolver,
+	point cfg.Point,
+	env guardEnv,
+	expr ast.Expr,
+) bool {
+	if result == nil || expr == nil {
+		return false
+	}
+	typers := memberReadTypers{
+		narrowed: newStructuralFlowExpressionTyper(result, resolver, point, env),
+		base:     newStructuralFlowExpressionTyper(result, resolver, point, guardEnv{}),
+		result:   result,
+		point:    point,
+	}
+	var out []diagnostic.Diagnostic
+	memberRead(producerContext{resolver: resolver}).walk(expr, typers, make(map[*ast.AttrGetExpr]struct{}), &out)
+	return len(out) != 0
 }
 
 func directCallResultAssignmentWouldReport(result *body.Result, resolver typeannotation.Resolver, source sourceprovenance.ASTSource, want typ.Type, defs map[symbol.ID]*ast.FunctionExpr) bool {

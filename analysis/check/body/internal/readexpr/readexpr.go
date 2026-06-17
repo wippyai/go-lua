@@ -214,6 +214,9 @@ func projectFromStructuralEvidence(config Config, point cfg.Point, p pathdom.Pat
 		}
 		return projected, true, false
 	}
+	if parentProjectionRejectsFinalSegment(config, parentValue, p.Segments[len(p.Segments)-1:]) {
+		return product.Value{}, false, true
+	}
 
 	if hasRootProjected {
 		return rootProjected, true, false
@@ -239,4 +242,19 @@ func projectFromValueEvidence(config Config, value product.Value, suffix []segme
 		return product.Value{}, false
 	}
 	return config.TypeValues.FromTypeWithWitness(reg, projected), true
+}
+
+func parentProjectionRejectsFinalSegment(config Config, value product.Value, suffix []segment.Segment) bool {
+	if len(suffix) != 1 {
+		return false
+	}
+	parentType, ok := typevalue.StructuralTypeOf(config.Registry, config.TypeValues, value, typevalue.StructuralTypeOptions{
+		ApplyPresence:     true,
+		OptionalWhenMaybe: true,
+	})
+	if !ok || parentType == nil || typ.IsAny(parentType) || typ.IsUnknown(parentType) || typ.IsNever(parentType) {
+		return false
+	}
+	_, ok = luatypeprojection.ApplySegments(parentType, suffix)
+	return !ok
 }

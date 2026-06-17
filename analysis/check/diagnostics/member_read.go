@@ -167,9 +167,16 @@ type memberReadTypers struct {
 // flow typer can lower, but its converged boundary value carries the declared
 // union, so the union-arm field-read check still applies.
 func (t memberReadTypers) receiverType(obj ast.Expr) (typ.Type, bool) {
+	if rt, ok := t.boundaryType(obj); ok {
+		return rt, true
+	}
 	if rt, ok := t.narrowed.typeOf(obj); ok && rt != nil {
 		return rt, true
 	}
+	return nil, false
+}
+
+func (t memberReadTypers) boundaryType(obj ast.Expr) (typ.Type, bool) {
 	if t.result == nil {
 		return nil, false
 	}
@@ -191,6 +198,9 @@ func (t memberReadTypers) fullyNarrowedType(obj ast.Expr) (typ.Type, bool) {
 	witnessTyper := t.narrowed
 	witnessTyper.witnessRefine = true
 	if rt, ok := witnessTyper.typeOf(obj); ok && rt != nil {
+		return rt, true
+	}
+	if rt, ok := t.boundaryType(obj); ok {
 		return rt, true
 	}
 	if t.result == nil {
@@ -232,7 +242,11 @@ func (p memberRead) read(expr *ast.AttrGetExpr, typers memberReadTypers) (diagno
 	if !isMultiArmUnion(broad) {
 		return diagnostic.Diagnostic{}, false
 	}
-	if _, ok := access.Field(broad, name); !ok {
+	fieldBroad := broad
+	if withoutNil := projectionWithoutNil(broad); withoutNil != nil && !typ.IsNever(withoutNil) {
+		fieldBroad = withoutNil
+	}
+	if _, ok := access.Field(fieldBroad, name); !ok {
 		return diagnostic.Diagnostic{}, false
 	}
 	if !fieldProvablyAbsent(receiver, name) {
