@@ -15,37 +15,20 @@ type escapeEventFactKey struct {
 // fact per (target, recursive) keeping the strongest kind, with recursive
 // targets subsuming descendants under the same root.
 var escapeEventLane = factset.Set[escapeEventFactKey, callboundary.EscapeEventFact]{
-	Key:       escapeEventKeyOf,
-	EqualFact: func(a, b callboundary.EscapeEventFact) bool { return escapeEventKeyOf(a) == escapeEventKeyOf(b) && a.Kind == b.Kind },
-	Less:      escapeEventFactLess,
-	Valid:     func(f callboundary.EscapeEventFact) bool { return f.Target.IsPlaceholder() && f.Kind != callboundary.EscapeEventNone },
-	CloneFact: func(f callboundary.EscapeEventFact) callboundary.EscapeEventFact { f.Target = f.Target.Clone(); return f },
+	Key: escapeEventKeyOf,
+	EqualFact: func(a, b callboundary.EscapeEventFact) bool {
+		return escapeEventKeyOf(a) == escapeEventKeyOf(b) && a.Kind == b.Kind
+	},
+	Less: escapeEventFactLess,
+	Valid: func(f callboundary.EscapeEventFact) bool {
+		return f.Target.IsPlaceholder() && f.Kind != callboundary.EscapeEventNone
+	},
+	CloneFact: func(f callboundary.EscapeEventFact) callboundary.EscapeEventFact {
+		f.Target = f.Target.Clone()
+		return f
+	},
 	Prefer:    func(kept, incoming callboundary.EscapeEventFact) bool { return incoming.Kind > kept.Kind },
 	Dominates: escapeEventDominates,
-}
-
-func normalizeEscapeEventFacts(in []callboundary.EscapeEventFact) []callboundary.EscapeEventFact {
-	return escapeEventLane.Normalize(in)
-}
-
-func cloneEscapeEventFacts(in []callboundary.EscapeEventFact) []callboundary.EscapeEventFact {
-	return escapeEventLane.Clone(in)
-}
-
-func escapeEventFactsEqual(a, b []callboundary.EscapeEventFact) bool {
-	return escapeEventLane.Equal(a, b)
-}
-
-func escapeEventFactsLessOrEq(a, b []callboundary.EscapeEventFact) bool {
-	return escapeEventLane.LessOrEq(a, b)
-}
-
-func joinEscapeEventFacts(a, b []callboundary.EscapeEventFact) []callboundary.EscapeEventFact {
-	return escapeEventLane.Join(a, b)
-}
-
-func widenEscapeEventFacts(prev, next []callboundary.EscapeEventFact) []callboundary.EscapeEventFact {
-	return escapeEventLane.Widen(prev, next)
 }
 
 func escapeEventDominates(parent, child callboundary.EscapeEventFact) bool {

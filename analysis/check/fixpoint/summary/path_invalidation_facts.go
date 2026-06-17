@@ -25,27 +25,3 @@ var pathInvalidationLane = factset.Set[pathInvalidationFactKey, callboundary.Pat
 	Prefer:    func(kept, incoming callboundary.PathInvalidationFact) bool { return true },
 	Dominates: func(super, sub callboundary.PathInvalidationFact) bool { return pathHasPrefix(sub.Path, super.Path) },
 }
-
-func normalizePathInvalidationFacts(in []callboundary.PathInvalidationFact) []callboundary.PathInvalidationFact {
-	return pathInvalidationLane.Normalize(in)
-}
-
-func clonePathInvalidationFacts(in []callboundary.PathInvalidationFact) []callboundary.PathInvalidationFact {
-	return pathInvalidationLane.Clone(in)
-}
-
-func pathInvalidationFactsEqual(a, b []callboundary.PathInvalidationFact) bool {
-	return pathInvalidationLane.Equal(a, b)
-}
-
-func pathInvalidationFactsLessOrEq(a, b []callboundary.PathInvalidationFact) bool {
-	return pathInvalidationLane.LessOrEq(a, b)
-}
-
-func joinPathInvalidationFacts(a, b []callboundary.PathInvalidationFact) []callboundary.PathInvalidationFact {
-	return pathInvalidationLane.Join(a, b)
-}
-
-func widenPathInvalidationFacts(prev, next []callboundary.PathInvalidationFact) []callboundary.PathInvalidationFact {
-	return pathInvalidationLane.Widen(prev, next)
-}
