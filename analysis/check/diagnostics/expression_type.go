@@ -5,7 +5,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/check/diagnostics/internal/readmodel"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
-	"github.com/wippyai/go-lua/analysis/domain/value/variant"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/typeannotation"
 	"github.com/wippyai/go-lua/analysis/lua/typeoperator"
@@ -190,37 +189,10 @@ func (p expressionTyper) flowRootType(t typ.Type, accessPath pathdom.Path) typ.T
 			t = refined
 		}
 	}
-	if narrowed, ok := applyLiteralPathNarrowing(t, root, p.env); ok {
+	if narrowed, ok := applyLiteralNarrowing(t, root, p.env); ok {
 		t = narrowed
 	}
 	return t
-}
-
-func applyLiteralPathNarrowing(base typ.Type, receiver pathdom.Path, env guardEnv) (typ.Type, bool) {
-	if base == nil || len(env.constraints) == 0 {
-		return base, false
-	}
-	out := base
-	changed := false
-	for _, c := range env.constraints {
-		suffix, ok := suffixFromReceiver(receiver, c.target)
-		if !ok {
-			continue
-		}
-		lit := typ.LiteralString(c.value)
-		if c.negated {
-			if narrowed, ok := variant.NarrowByPathLiteralNot(out, suffix, lit); ok {
-				out = narrowed
-				changed = true
-			}
-		} else {
-			if narrowed, ok := variant.NarrowByPathLiteral(out, suffix, lit); ok {
-				out = narrowed
-				changed = true
-			}
-		}
-	}
-	return out, changed
 }
 
 func rootPath(p pathdom.Path) pathdom.Path {
