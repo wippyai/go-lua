@@ -254,3 +254,112 @@ func TestTableMutatorEffects(t *testing.T) {
 		t.Error("Empty row should not have table mutator")
 	}
 }
+
+func TestPathInvalidationTargetProjectsOnlyActiveMutationAuthority(t *testing.T) {
+	tests := []struct {
+		name  string
+		label effect.Label
+		want  int
+	}{
+		{
+			name: "mutate ignores transform payload",
+			label: Mutate{
+				Target: effect.ParamRef{Index: 0},
+				Transform: ContainerElementUnion{
+					Container: effect.ParamRef{Index: 1},
+					Value:     effect.ParamRef{Index: 2},
+				},
+				LengthDelta: expr.C(3),
+			},
+			want: 0,
+		},
+		{
+			name:  "table mutator ignores value payload",
+			label: TableMutator{Target: effect.ParamRef{Index: 1}, Value: effect.ParamRef{Index: 2}},
+			want:  1,
+		},
+		{
+			name:  "length change target invalidates regardless of delta sign",
+			label: LengthChange{Target: effect.ParamRef{Index: 2}, Delta: -1},
+			want:  2,
+		},
+		{
+			name:  "pointer label normalizes",
+			label: &TableMutator{Target: effect.ParamRef{Index: 3}, Value: effect.ParamRef{Index: 4}},
+			want:  3,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, ok := PathInvalidationTarget(tt.label)
+			if !ok {
+				t.Fatalf("PathInvalidationTarget(%T) ok = false, want true", tt.label)
+			}
+			if got.Index != tt.want {
+				t.Fatalf("PathInvalidationTarget(%T) = %v, want param[%d]", tt.label, got, tt.want)
+			}
+		})
+	}
+
+	if got, ok := PathInvalidationTarget(returns.Return{}); ok || got.Index != 0 {
+		t.Fatalf("PathInvalidationTarget(non-mutation) = %v/%v, want zero false", got, ok)
+	}
+}
+
+func TestPositiveLengthFloorProjectsOnlyPositiveLengthChange(t *testing.T) {
+	p0 := effect.ParamRef{Index: 0}
+	tests := []struct {
+		name      string
+		label     effect.Label
+		wantFloor int
+		wantOK    bool
+	}{
+		{
+			name:      "positive length change",
+			label:     LengthChange{Target: p0, Delta: 2},
+			wantFloor: 2,
+			wantOK:    true,
+		},
+		{
+			name:      "pointer length change",
+			label:     &LengthChange{Target: p0, Delta: 3},
+			wantFloor: 3,
+			wantOK:    true,
+		},
+		{
+			name:   "zero length change is metadata",
+			label:  LengthChange{Target: p0, Delta: 0},
+			wantOK: false,
+		},
+		{
+			name:   "negative length change is metadata",
+			label:  LengthChange{Target: p0, Delta: -1},
+			wantOK: false,
+		},
+		{
+			name: "mutate length delta is metadata",
+			label: Mutate{
+				Target:      p0,
+				Transform:   Unchanged{},
+				LengthDelta: expr.C(4),
+			},
+			wantOK: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			target, floor, ok := PositiveLengthFloor(tt.label)
+			if ok != tt.wantOK {
+				t.Fatalf("PositiveLengthFloor(%T) ok = %v, want %v", tt.label, ok, tt.wantOK)
+			}
+			if !ok {
+				return
+			}
+			if target.Index != p0.Index || floor != tt.wantFloor {
+				t.Fatalf("PositiveLengthFloor(%T) = %v/%d, want %v/%d", tt.label, target, floor, p0, tt.wantFloor)
+			}
+		})
+	}
+}

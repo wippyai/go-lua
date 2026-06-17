@@ -17,7 +17,7 @@ import (
 )
 
 func signatureParamPathInvalidations(sig signature.Function, site factflow.CallSite) []factapply.CallParamPathInvalidation {
-	targets := activeMutationTargets(sig)
+	targets := activePathInvalidationTargets(sig)
 	if len(targets) == 0 {
 		return nil
 	}
@@ -56,7 +56,7 @@ func signatureParamLengthFloors(sig signature.Function, site factflow.CallSite) 
 	args := site.ArgumentSources()
 	var out []factapply.CallParamLengthFloor
 	for _, label := range sig.Effect.Labels {
-		target, delta, ok := positiveLengthChange(label)
+		target, delta, ok := mutation.PositiveLengthFloor(label)
 		if !ok {
 			continue
 		}
@@ -72,48 +72,17 @@ func signatureParamLengthFloors(sig signature.Function, site factflow.CallSite) 
 	return out
 }
 
-func positiveLengthChange(label effect.Label) (effect.ParamRef, int, bool) {
-	switch normalized := effect.NormalizeLabel(label).(type) {
-	case mutation.LengthChange:
-		if normalized.Delta <= 0 {
-			return effect.ParamRef{}, 0, false
-		}
-		return normalized.Target, normalized.Delta, true
-	case *mutation.LengthChange:
-		if normalized == nil || normalized.Delta <= 0 {
-			return effect.ParamRef{}, 0, false
-		}
-		return normalized.Target, normalized.Delta, true
-	default:
-		return effect.ParamRef{}, 0, false
-	}
-}
-
-func activeMutationTargets(sig signature.Function) []effect.ParamRef {
+func activePathInvalidationTargets(sig signature.Function) []effect.ParamRef {
 	if len(sig.Effect.Labels) == 0 {
 		return nil
 	}
 	out := make([]effect.ParamRef, 0, len(sig.Effect.Labels))
 	for _, label := range sig.Effect.Labels {
+		if target, ok := mutation.PathInvalidationTarget(label); ok {
+			out = append(out, target)
+			continue
+		}
 		switch normalized := effect.NormalizeLabel(label).(type) {
-		case mutation.Mutate:
-			out = append(out, normalized.Target)
-		case *mutation.Mutate:
-			if normalized != nil {
-				out = append(out, normalized.Target)
-			}
-		case mutation.TableMutator:
-			out = append(out, normalized.Target)
-		case *mutation.TableMutator:
-			if normalized != nil {
-				out = append(out, normalized.Target)
-			}
-		case mutation.LengthChange:
-			out = append(out, normalized.Target)
-		case *mutation.LengthChange:
-			if normalized != nil {
-				out = append(out, normalized.Target)
-			}
 		case ownership.Store:
 			if normalized.Into.Index >= 0 {
 				out = append(out, normalized.Into)

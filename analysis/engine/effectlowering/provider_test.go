@@ -680,6 +680,37 @@ func TestSignatureParamPathInvalidationTreatsMutationPayloadsAsMetadata(t *testi
 	}
 }
 
+func TestSignatureParamLengthFloorsProjectOnlyPositiveLengthChange(t *testing.T) {
+	site := factflow.NewCallSite(factflow.CallSiteConfig{
+		ArgumentSources: []factflow.ValueSource{
+			{Kind: factflow.ValueSourceExpression, ExprRef: factflow.ExprRef(940), HasExpr: true},
+			{Kind: factflow.ValueSourceExpression, ExprRef: factflow.ExprRef(941), HasExpr: true},
+			{Kind: factflow.ValueSourceExpression, ExprRef: factflow.ExprRef(942), HasExpr: true},
+		},
+	})
+	sig := signature.Function{
+		Effect: effect.Empty.With(
+			mutation.LengthChange{Target: effect.ParamRef{Index: 0}, Delta: 2},
+			mutation.LengthChange{Target: effect.ParamRef{Index: 1}, Delta: 0},
+			mutation.LengthChange{Target: effect.ParamRef{Index: 2}, Delta: -1},
+			mutation.Mutate{
+				Target:      effect.ParamRef{Index: 1},
+				Transform:   mutation.Unchanged{},
+				LengthDelta: expr.C(99),
+			},
+		),
+	}
+
+	got := signatureParamLengthFloors(sig, site)
+
+	if len(got) != 1 {
+		t.Fatalf("param length floors = %#v, want one positive LengthChange floor", got)
+	}
+	if !got[0].Path.Equal(path.NewPlaceholder(0)) || got[0].Floor != 2 {
+		t.Fatalf("param length floor = %#v, want $0 >= 2", got[0])
+	}
+}
+
 func TestSignatureOutcomeProviderLowersStoreIntoContainerArgument(t *testing.T) {
 	graph := cfg.New()
 	call := graph.AddNode(cfg.NodeCall)
