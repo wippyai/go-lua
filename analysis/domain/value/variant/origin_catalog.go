@@ -37,6 +37,7 @@ func storeOriginFamily(f originFamily) bool {
 	if f.id == 0 || f.kind == 0 || len(f.cases) == 0 {
 		return false
 	}
+	f = cloneOriginFamily(f)
 	originCatalogMu.Lock()
 	defer originCatalogMu.Unlock()
 	if _, poisoned := originCatalogPoisoned[f.id]; poisoned {
@@ -66,7 +67,24 @@ func loadOriginFamily(id uint64) (originFamily, bool) {
 		return originFamily{}, false
 	}
 	family, ok := originCatalog[id]
+	if ok {
+		family = cloneOriginFamily(family)
+	}
 	return family, ok
+}
+
+func cloneOriginFamily(f originFamily) originFamily {
+	f.cases = cloneOriginCases(f.cases)
+	return f
+}
+
+func cloneOriginCases(cases []originCase) []originCase {
+	if len(cases) == 0 {
+		return nil
+	}
+	out := make([]originCase, len(cases))
+	copy(out, cases)
+	return out
 }
 
 func originFamilyRevision(id uint64) (uint64, bool) {

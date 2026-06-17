@@ -318,6 +318,53 @@ func TestOriginCatalogPoisonsTaggedSameCaseHashCollision(t *testing.T) {
 	}
 }
 
+func TestOriginCatalogCopiesCasesOnStoreAndLoad(t *testing.T) {
+	const familyID uint64 = 0x5afe1ceca5ec0de
+	resetOriginFamilyForTest(t, familyID)
+	left := typetable.NewRecord().
+		Field("kind", typ.LiteralString("left")).
+		Field("value", typ.Number).
+		Build()
+	right := typetable.NewRecord().
+		Field("kind", typ.LiteralString("right")).
+		Field("value", typ.String).
+		Build()
+	collidingLeft := typetable.NewRecord().
+		Field("kind", typ.LiteralString("left")).
+		Field("value", typ.Boolean).
+		Build()
+
+	cases := []originCase{
+		{index: 0, typ: left},
+		{index: 1, typ: right},
+	}
+	if !storeOriginFamily(originFamily{
+		id:        familyID,
+		kind:      originFamilyKindClosedRecordUnion,
+		signature: "closed-record-union",
+		cases:     cases,
+	}) {
+		t.Fatal("initial synthetic family store failed")
+	}
+	cases[0].typ = collidingLeft
+	if got, ok := TypeFromOrigin(familyID, []int{0}); !ok || !typ.TypeEquals(got, left) {
+		t.Fatalf("stored family reflected caller case mutation: %v/%v, want %s", got, ok, left)
+	}
+
+	loaded, ok := loadOriginFamily(familyID)
+	if !ok || len(loaded.cases) != 2 {
+		t.Fatalf("loadOriginFamily = %v/%v, want two cases", loaded, ok)
+	}
+	loaded.cases[0].typ = collidingLeft
+	loaded.cases = append(loaded.cases[:1], loaded.cases[2:]...)
+	if got, ok := TypeFromOrigin(familyID, []int{0}); !ok || !typ.TypeEquals(got, left) {
+		t.Fatalf("stored family reflected loaded case mutation: %v/%v, want %s", got, ok, left)
+	}
+	if got, ok := FullFamilyType(familyID); !ok || !typ.TypeEquals(got, typeexpr.Union(left, right)) {
+		t.Fatalf("full family after loaded mutation = %v/%v, want original union", got, ok)
+	}
+}
+
 func TestCacheRejectsPoisonedOriginFamily(t *testing.T) {
 	const familyID uint64 = 0x5ca1ecac4e5afe11
 	resetOriginFamilyForTest(t, familyID)
