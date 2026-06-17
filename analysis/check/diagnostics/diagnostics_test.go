@@ -478,6 +478,422 @@ return value
 	}
 }
 
+func TestRedundantConditionWarningIsOptInAndEvidenceBacked(t *testing.T) {
+	result := runDiagnosticsResult(t, `
+local value = test
+if value then
+	if value then
+		return value
+	end
+end
+`)
+	if diags := ProduceWithConfig(result, Config{}); len(diags) != 0 {
+		t.Fatalf("default diagnostics = %#v, want redundant-condition disabled by default", diags)
+	}
+
+	diags := ProduceWithConfig(result, Config{Policy: diagnostic.Policy{Rules: map[diagnostic.Code]diagnostic.Rule{
+		CodeRedundantCondition: diagnostic.Enable(),
+	}}})
+	if len(diags) != 1 {
+		t.Fatalf("diagnostics = %#v, want one redundant-condition warning", diags)
+	}
+	d := diags[0]
+	if d.Code != CodeRedundantCondition || d.Severity != diagnostic.SeverityWarning {
+		t.Fatalf("diagnostic code/severity = %s/%s, want %s/warning", d.Code, d.Severity, CodeRedundantCondition)
+	}
+	if !strings.Contains(d.Message, "always true") || len(d.Labels) != 1 {
+		t.Fatalf("diagnostic = %#v, want always-true redundant condition label", d)
+	}
+	evidence := d.Explanation.Evidence()
+	if len(evidence) != 4 {
+		t.Fatalf("evidence = %#v, want condition, incoming proof, CFG edge, and invalidation proof", evidence)
+	}
+	if !strings.Contains(evidence[1].Message, "already truthy") ||
+		!strings.Contains(evidence[2].Message, "false edge") ||
+		!strings.Contains(evidence[3].Message, "no invalidating assignment or call affecting") {
+		t.Fatalf("evidence = %#v, want guard proof, unreachable edge, and invalidation evidence", evidence)
+	}
+}
+
+func TestRedundantConditionWarningReportsRepeatedGuardShapes(t *testing.T) {
+	cases := []struct {
+		name string
+		src  string
+		want string
+	}{
+		{
+			name: "truthy guard makes later truthy check false in else arm",
+			src: `
+local value = test
+if value then
+else
+	if value then
+		return value
+	end
+end
+`,
+			want: "always false",
+		},
+		{
+			name: "nil guard makes not-nil check impossible",
+			src: `
+local value = nil
+if value == nil then
+	if value ~= nil then
+		return value
+	end
+end
+`,
+			want: "always false",
+		},
+		{
+			name: "not-nil guard makes nil check impossible",
+			src: `
+local value = test
+if value ~= nil then
+	if value == nil then
+		return value
+	end
+end
+`,
+			want: "always false",
+		},
+		{
+			name: "runtime type guard makes different type-not check redundant",
+			src: `
+local value = "x"
+if type(value) == "string" then
+	if type(value) ~= "number" then
+		return value
+	end
+end
+`,
+			want: "always true",
+		},
+		{
+			name: "runtime non-boolean type guard proves truthiness",
+			src: `
+local value = test
+if type(value) == "string" then
+	if value then
+		return value
+	end
+end
+`,
+			want: "always true",
+		},
+		{
+			name: "runtime type-not-nil guard makes nil check impossible",
+			src: `
+local value = test
+if type(value) ~= "nil" then
+	if value == nil then
+		return value
+	end
+end
+`,
+			want: "always false",
+		},
+		{
+			name: "runtime nil type guard proves falsiness",
+			src: `
+local value = test
+if type(value) == "nil" then
+	if value then
+		return value
+	end
+end
+`,
+			want: "always false",
+		},
+		{
+			name: "literal guard makes opposite literal check impossible",
+			src: `
+local item = { kind = "ready" }
+if item.kind == "ready" then
+	if item.kind ~= "ready" then
+		return item
+	end
+end
+`,
+			want: "always false",
+		},
+		{
+			name: "repeat body preserves incoming truthy guard",
+			src: `
+local value = test
+if value then
+	repeat
+		if value then
+			return value
+		end
+	until test
+end
+`,
+			want: "always true",
+		},
+	}
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			diags := ProduceWithConfig(runDiagnosticsResult(t, tt.src), Config{Policy: diagnostic.Policy{Rules: map[diagnostic.Code]diagnostic.Rule{
+				CodeRedundantCondition: diagnostic.Enable(),
+			}}})
+			if len(diags) != 1 {
+				t.Fatalf("diagnostics = %#v, want one redundant-condition warning", diags)
+			}
+			if d := diags[0]; d.Code != CodeRedundantCondition || !strings.Contains(d.Message, tt.want) {
+				t.Fatalf("diagnostic = %#v, want %s redundant-condition warning", d, tt.want)
+			}
+		})
+	}
+}
+
+func TestRedundantConditionWarningSkipsNestedImpossibleEdges(t *testing.T) {
+	diags := ProduceWithConfig(runDiagnosticsResult(t, `
+local item = { kind = "ready" }
+if item.kind == "ready" then
+	if item.kind == "other" then
+		if item.kind == "other" then
+			return item
+		end
+	end
+end
+`), Config{Policy: diagnostic.Policy{Rules: map[diagnostic.Code]diagnostic.Rule{
+		CodeRedundantCondition: diagnostic.Enable(),
+	}}})
+	if len(diags) != 1 {
+		t.Fatalf("diagnostics = %#v, want only the first impossible branch warning", diags)
+	}
+	if d := diags[0]; d.Code != CodeRedundantCondition || !strings.Contains(d.Message, "always false") {
+		t.Fatalf("diagnostic = %#v, want first impossible branch to be reported as always false", d)
+	}
+}
+
+func TestRedundantConditionWarningRespectsInvalidationAndWeakProofs(t *testing.T) {
+	cases := []struct {
+		name string
+		src  string
+	}{
+		{
+			name: "root assignment invalidates truthy guard",
+			src: `
+local value = test
+if value then
+	value = false
+	if value then
+		return value
+	end
+end
+`,
+		},
+		{
+			name: "unknown call invalidates captured local guard",
+			src: `
+local value = test
+local function mutate()
+	value = false
+end
+if value then
+	mutate()
+	if value then
+		return value
+	end
+end
+`,
+		},
+		{
+			name: "unknown call invalidates table member guard",
+			src: `
+local function mutate(box)
+	box.value = false
+end
+local box = { value = test }
+if box.value then
+	mutate(box)
+	if box.value then
+		return box
+	end
+end
+`,
+		},
+		{
+			name: "method call invalidates receiver member guard",
+			src: `
+local box = { value = test }
+function box:mutate()
+	self.value = false
+end
+if box.value then
+	box:mutate()
+	if box.value then
+		return box
+	end
+end
+`,
+		},
+		{
+			name: "call return assignment invalidates root guard",
+			src: `
+local value = test
+local function make()
+	return false
+end
+if value then
+	value = make()
+	if value then
+		return value
+	end
+end
+`,
+		},
+		{
+			name: "call on one join path prevents all-path guard proof",
+			src: `
+local value = test
+local function mutate()
+	value = false
+end
+if test then
+	mutate()
+end
+if value then
+	return value
+end
+`,
+		},
+		{
+			name: "loop call prevents stale entry guard proof",
+			src: `
+local value = test
+local function mutate()
+	value = false
+end
+if value then
+	while test do
+		mutate()
+	end
+	if value then
+		return value
+	end
+end
+`,
+		},
+		{
+			name: "not-nil guard is not a truthy proof",
+			src: `
+local value = test
+if value ~= nil then
+	if value then
+		return value
+	end
+end
+`,
+		},
+		{
+			name: "negative literal proof does not imply a different literal",
+			src: `
+local item = { kind = test }
+if item.kind ~= "ready" then
+	if item.kind == "other" then
+		return item
+	end
+end
+`,
+		},
+		{
+			name: "dynamic index write invalidates descendant guard",
+			src: `
+local box = { value = test }
+local key = test
+if box.value then
+	box[key] = false
+	if box.value then
+		return box
+	end
+end
+`,
+		},
+		{
+			name: "static member write invalidates descendant guards conservatively",
+			src: `
+local box = { value = test, other = test }
+if box.value then
+	box.other = false
+	if box.value then
+		return box
+	end
+end
+`,
+		},
+		{
+			name: "post-branch join drops guard known on only one edge",
+			src: `
+local value = test
+if value then
+end
+if value then
+return value
+end
+`,
+		},
+		{
+			name: "diamond join drops nested guard known on only some paths",
+			src: `
+local value = test
+local gate = test
+local other = test
+if gate then
+	if value then
+	end
+else
+	if other then
+		if value then
+		end
+	end
+end
+if value then
+	return value
+end
+`,
+		},
+		{
+			name: "loop backedge assignment prevents all-path guard proof",
+			src: `
+local value = test
+if value then
+	while test do
+		value = false
+	end
+	if value then
+		return value
+	end
+end
+`,
+		},
+		{
+			name: "boolean runtime type guard is not a truthy proof",
+			src: `
+local value = test
+if type(value) == "boolean" then
+	if value then
+		return value
+	end
+end
+`,
+		},
+	}
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			diags := ProduceWithConfig(runDiagnosticsResult(t, tt.src), Config{Policy: diagnostic.Policy{Rules: map[diagnostic.Code]diagnostic.Rule{
+				CodeRedundantCondition: diagnostic.Enable(),
+			}}})
+			if len(diags) != 0 {
+				t.Fatalf("diagnostics = %#v, want no redundant-condition warning", diags)
+			}
+		})
+	}
+}
+
 func TestAnnotationAssignabilityAcceptsSubtypeLiteral(t *testing.T) {
 	diags := runDiagnostics(t, `local x: number = 42`)
 	if len(diags) != 0 {

@@ -100,6 +100,33 @@ return value
 	requireEvidenceMessage(t, warn.Diagnostics[0], "no bound read")
 }
 
+func TestCheckCanEnableRedundantConditionWarning(t *testing.T) {
+	src := `
+local value = true
+if value then
+	if value then
+		return value
+	end
+end
+`
+	defaultResult := Check(src)
+	if len(defaultResult.Diagnostics) != 0 {
+		t.Fatalf("default diagnostics = %#v, want redundant-condition off by default", defaultResult.Diagnostics)
+	}
+
+	warn := Check(src, WithDiagnosticRule(
+		diagnostics.CodeRedundantCondition,
+		diagnostic.Enable().WithSeverity(diagnostic.SeverityHint),
+	))
+	if len(warn.Diagnostics) != 1 {
+		t.Fatalf("diagnostics = %#v, want one redundant-condition diagnostic", warn.Diagnostics)
+	}
+	if warn.Diagnostics[0].Code != diagnostics.CodeRedundantCondition || warn.Diagnostics[0].Severity != diagnostic.SeverityHint {
+		t.Fatalf("diagnostic = %#v, want redundant-condition hint", warn.Diagnostics[0])
+	}
+	requireEvidenceMessage(t, warn.Diagnostics[0], "no invalidating assignment")
+}
+
 func TestCheckAliasedObjectLiteralMemberReadUsesHeapIdentity(t *testing.T) {
 	result := Check(`
 local user = { id = "u1" }
