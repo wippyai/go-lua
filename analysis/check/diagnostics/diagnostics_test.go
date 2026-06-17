@@ -1375,6 +1375,28 @@ func TestNumericForReportsStringInit(t *testing.T) {
 	}
 }
 
+func TestNumericForDoesNotTrustExplicitAnyCastInit(t *testing.T) {
+	diags := runDiagnostics(t, `
+		for i = ("one" :: any), 10 do
+		end
+	`)
+	if len(diags) != 1 {
+		t.Fatalf("diagnostics = %d, want explicit-any numeric-for operand error: %#v", len(diags), diags)
+	}
+	d := diags[0]
+	if d.Code != CodeNumericForOperand || d.Severity != diagnostic.SeverityError {
+		t.Fatalf("diagnostic code/severity = %s/%s", d.Code, d.Severity)
+	}
+	if !strings.Contains(d.Message, "initial value") || !strings.Contains(d.Message, `"one"`) {
+		t.Fatalf("message = %q", d.Message)
+	}
+	if got := d.Explanation.String(); !strings.Contains(got, "claimed as any") ||
+		!strings.Contains(got, "explicit any/unknown boundary has no structural proof for number") ||
+		!strings.Contains(got, "no boundary proof establishes number") {
+		t.Fatalf("explanation = %q, want explicit-any boundary and missing-proof evidence", got)
+	}
+}
+
 func TestNumericForReportsStringLimitAndStep(t *testing.T) {
 	diags := runDiagnostics(t, `
 		for i = 1, "ten", "one" do

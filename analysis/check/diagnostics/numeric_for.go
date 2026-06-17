@@ -54,6 +54,17 @@ func numericForOperandDiagnostic(typer expressionTyper, expr ast.Expr, role stri
 		return diagnostic.Diagnostic{}, false
 	}
 	span := ast.SpanOf(expr)
+	evidence := []diagnostic.Evidence{
+		{
+			Kind:    diagnostic.EvidenceAbstractFact,
+			Trust:   diagnostic.TrustProven,
+			Span:    span,
+			Message: fmt.Sprintf("%s is %s", role, formatType(got)),
+		},
+	}
+	if _, ok := explicitTopLikeCastType(typer.resolver, expr); ok {
+		evidence = append(evidence, explicitTopLikeCastEvidence(span, typ.Number, expr)...)
+	}
 	return diagnostic.Diagnostic{
 		Position: diagnostic.Position{
 			Line:      span.StartLine,
@@ -61,18 +72,11 @@ func numericForOperandDiagnostic(typer expressionTyper, expr ast.Expr, role stri
 			EndLine:   span.EndLine,
 			EndColumn: span.EndCol,
 		},
-		Span:     span,
-		Code:     CodeNumericForOperand,
-		Severity: diagnostic.SeverityError,
-		Message:  fmt.Sprintf("numeric for %s must be number, got %s", role, formatType(got)),
-		Explanation: diagnostic.NewExplanation(
-			diagnostic.Evidence{
-				Kind:    diagnostic.EvidenceAbstractFact,
-				Trust:   diagnostic.TrustProven,
-				Span:    span,
-				Message: fmt.Sprintf("%s is %s", role, formatType(got)),
-			},
-		),
+		Span:        span,
+		Code:        CodeNumericForOperand,
+		Severity:    diagnostic.SeverityError,
+		Message:     fmt.Sprintf("numeric for %s must be number, got %s", role, formatType(got)),
+		Explanation: diagnostic.NewExplanation(evidence...),
 		Labels: []diagnostic.Label{
 			{Span: span, Message: "numeric for " + role},
 		},
