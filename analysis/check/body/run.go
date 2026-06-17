@@ -33,16 +33,35 @@ func (c *checker) prepareChunk(stmts []ast.Stmt) (*Static, error) {
 }
 
 func (c *checker) prepareBoundChunk(stmts []ast.Stmt, bindings *bind.Result) (*Static, error) {
+	return c.prepareBound(bindings, "chunk",
+		func() { c.config.Stats.StaticChunkPrepares++ },
+		func() *cfgbuild.Result { return cfgbuild.BuildChunk(stmts, bindings) },
+		func(built *cfgbuild.Result) (*semantics.Result, error) {
+			return semantics.ExtractChunk(stmts, bindings, built)
+		},
+	)
+}
+
+// prepareBound builds the CFG, extracts semantics, and prepares static state for
+// a chunk or function. incStat bumps the matching prepare counter, build builds
+// the CFG, and extract derives semantics; what labels the kind in errors.
+func (c *checker) prepareBound(
+	bindings *bind.Result,
+	what string,
+	incStat func(),
+	build func() *cfgbuild.Result,
+	extract func(*cfgbuild.Result) (*semantics.Result, error),
+) (*Static, error) {
 	if c.config.Stats != nil {
-		c.config.Stats.StaticChunkPrepares++
+		incStat()
 	}
-	built := cfgbuild.BuildChunk(stmts, bindings)
+	built := build()
 	if built == nil || built.Graph == nil {
 		return nil, ErrUnsupportedCFG
 	}
-	sem, err := semantics.ExtractChunk(stmts, bindings, built)
+	sem, err := extract(built)
 	if err != nil {
-		return nil, fmt.Errorf("check: extract chunk semantics: %w", err)
+		return nil, fmt.Errorf("check: extract %s semantics: %w", what, err)
 	}
 	return c.prepare(bindings, built, sem), nil
 }
@@ -53,18 +72,13 @@ func (c *checker) prepareFunction(fn *ast.FunctionExpr) (*Static, error) {
 }
 
 func (c *checker) prepareBoundFunction(fn *ast.FunctionExpr, bindings *bind.Result) (*Static, error) {
-	if c.config.Stats != nil {
-		c.config.Stats.StaticFunctionPrepares++
-	}
-	built := cfgbuild.BuildFunction(fn, bindings)
-	if built == nil || built.Graph == nil {
-		return nil, ErrUnsupportedCFG
-	}
-	sem, err := semantics.ExtractFunction(fn, bindings, built)
-	if err != nil {
-		return nil, fmt.Errorf("check: extract function semantics: %w", err)
-	}
-	return c.prepare(bindings, built, sem), nil
+	return c.prepareBound(bindings, "function",
+		func() { c.config.Stats.StaticFunctionPrepares++ },
+		func() *cfgbuild.Result { return cfgbuild.BuildFunction(fn, bindings) },
+		func(built *cfgbuild.Result) (*semantics.Result, error) {
+			return semantics.ExtractFunction(fn, bindings, built)
+		},
+	)
 }
 
 func (c *checker) prepare(bindings *bind.Result, built *cfgbuild.Result, sem *semantics.Result) *Static {
