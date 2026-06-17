@@ -5,6 +5,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/domain/value/returnpresence"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
@@ -12,11 +13,6 @@ import (
 
 type returnSourceValueReader interface {
 	SourceValueAtBoundary(cfg.Point, factflow.ValueSource) (product.Value, bool)
-}
-
-type projectedReturnPresencePoint struct {
-	presence []presence.Value
-	known    []bool
 }
 
 func projectReturnPresenceRelations(reg *axis.Registry, result ResultReader) []summary.ReturnPresenceRelation {
@@ -53,7 +49,7 @@ func projectSolvedReturnPresenceRelations(reg *axis.Registry, result ResultReade
 	if arity < 2 {
 		return nil
 	}
-	points := make([]projectedReturnPresencePoint, 0, len(result.ReturnPoints()))
+	points := make([]returnpresence.Point, 0, len(result.ReturnPoints()))
 	for _, point := range result.ReturnPoints() {
 		if projectedReturnPointUnreachable(reg, result, point) {
 			continue
@@ -74,7 +70,7 @@ func projectSolvedReturnPresenceRelations(reg *axis.Registry, result ResultReade
 				continue
 			}
 			for _, triggerPresence := range []presence.Value{presence.Present(), presence.Absent()} {
-				targetPresence, ok := projectedReturnTargetPresence(points, trigger, triggerPresence, target)
+				targetPresence, ok := returnpresence.TargetPresence(points, trigger, triggerPresence, target)
 				if !ok {
 					continue
 				}
@@ -112,30 +108,30 @@ func projectedReturnPresencePointFor(
 	point cfg.Point,
 	sources []factflow.ValueSource,
 	arity int,
-) projectedReturnPresencePoint {
-	out := projectedReturnPresencePoint{
-		presence: make([]presence.Value, arity),
-		known:    make([]bool, arity),
+) returnpresence.Point {
+	out := returnpresence.Point{
+		Presence: make([]presence.Value, arity),
+		Known:    make([]bool, arity),
 	}
 	for i := 0; i < arity; i++ {
-		out.presence[i] = presence.Absent()
-		out.known[i] = true
+		out.Presence[i] = presence.Absent()
+		out.Known[i] = true
 	}
 	for i := 0; i < len(sources) && i < arity; i++ {
 		value, ok := reader.SourceValueAtBoundary(point, sources[i])
 		if !ok || product.Equal(reg, value, product.Bottom(reg)) {
-			out.presence[i] = presence.Bottom()
-			out.known[i] = false
+			out.Presence[i] = presence.Bottom()
+			out.Known[i] = false
 			continue
 		}
-		got, ok := projectedKnownReturnPresence(product.PresenceOf(value))
+		got, ok := returnpresence.KnownPresence(product.PresenceOf(value))
 		if !ok {
-			out.presence[i] = presence.Bottom()
-			out.known[i] = false
+			out.Presence[i] = presence.Bottom()
+			out.Known[i] = false
 			continue
 		}
-		out.presence[i] = got
-		out.known[i] = true
+		out.Presence[i] = got
+		out.Known[i] = true
 	}
 	return out
 }
@@ -151,51 +147,4 @@ func projectedReturnPointUnreachable(reg *axis.Registry, result ResultReader, po
 	}
 	domain := state.Domain(reg)
 	return domain.Equal(st, domain.Bottom())
-}
-
-func projectedKnownReturnPresence(value presence.Value) (presence.Value, bool) {
-	if value.IsBottom() || value.IsTop() {
-		return presence.Bottom(), false
-	}
-	return value, true
-}
-
-func projectedReturnTargetPresence(
-	points []projectedReturnPresencePoint,
-	trigger int,
-	triggerPresence presence.Value,
-	target int,
-) (presence.Value, bool) {
-	var out presence.Value
-	var saw bool
-	for _, point := range points {
-		if trigger >= len(point.presence) || target >= len(point.presence) ||
-			!point.known[trigger] || !point.known[target] {
-			return presence.Bottom(), false
-		}
-		if !projectedReturnPresenceCanBe(point.presence[trigger], triggerPresence) {
-			continue
-		}
-		targetPresence := point.presence[target]
-		if !projectedDefiniteReturnPresence(targetPresence) {
-			return presence.Bottom(), false
-		}
-		if !saw {
-			out = targetPresence
-			saw = true
-			continue
-		}
-		if !presence.Equal(out, targetPresence) {
-			return presence.Bottom(), false
-		}
-	}
-	return out, saw
-}
-
-func projectedReturnPresenceCanBe(value, want presence.Value) bool {
-	return presence.Equal(value, want) || presence.Equal(value, presence.Maybe())
-}
-
-func projectedDefiniteReturnPresence(value presence.Value) bool {
-	return presence.Equal(value, presence.Present()) || presence.Equal(value, presence.Absent())
 }

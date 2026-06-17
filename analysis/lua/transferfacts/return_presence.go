@@ -3,16 +3,12 @@ package transferfacts
 import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/domain/value/returnpresence"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
-
-type returnPresencePoint struct {
-	presence []presence.Value
-	known    []bool
-}
 
 func (l *lowerer) addReturnPresenceRelations(input *factflow.FactsInput, graph cfg.Graph, result *semantics.Result) {
 	if input == nil || graph == nil || result == nil {
@@ -79,7 +75,7 @@ func (l *lowerer) inferReturnSourcePresenceRelations(
 	if len(points) == 0 {
 		return nil
 	}
-	presencePoints := make([]returnPresencePoint, 0, len(points))
+	presencePoints := make([]returnpresence.Point, 0, len(points))
 	for _, point := range points {
 		fact, ok := input.Returns[point]
 		if !ok {
@@ -97,7 +93,7 @@ func (l *lowerer) inferReturnSourcePresenceRelations(
 				continue
 			}
 			for _, triggerPresence := range []presence.Value{presence.Present(), presence.Absent()} {
-				targetPresence, ok := inferredReturnTargetPresence(presencePoints, trigger, triggerPresence, target)
+				targetPresence, ok := returnpresence.TargetPresence(presencePoints, trigger, triggerPresence, target)
 				if !ok {
 					continue
 				}
@@ -117,24 +113,24 @@ func (l *lowerer) returnPresencePoint(
 	input *factflow.FactsInput,
 	sources []factflow.ValueSource,
 	arity int,
-) returnPresencePoint {
-	point := returnPresencePoint{
-		presence: make([]presence.Value, arity),
-		known:    make([]bool, arity),
+) returnpresence.Point {
+	point := returnpresence.Point{
+		Presence: make([]presence.Value, arity),
+		Known:    make([]bool, arity),
 	}
 	for i := 0; i < arity; i++ {
-		point.presence[i] = presence.Absent()
-		point.known[i] = true
+		point.Presence[i] = presence.Absent()
+		point.Known[i] = true
 	}
 	for i := 0; i < len(sources) && i < arity; i++ {
 		sourcePresence, ok := l.returnSourcePresence(input, sources[i])
 		if !ok {
-			point.presence[i] = presence.Maybe()
-			point.known[i] = false
+			point.Presence[i] = presence.Maybe()
+			point.Known[i] = false
 			continue
 		}
-		point.presence[i] = sourcePresence
-		point.known[i] = true
+		point.Presence[i] = sourcePresence
+		point.Known[i] = true
 	}
 	return point
 }
@@ -151,7 +147,7 @@ func (l *lowerer) returnSourcePresence(input *factflow.FactsInput, source factfl
 		if !ok {
 			return presence.Bottom(), false
 		}
-		return knownReturnPresence(product.PresenceOf(value))
+		return returnpresence.KnownPresence(product.PresenceOf(value))
 	case factflow.ValueSourceCall:
 		if !source.HasCallPoint || source.ResultIndex < 0 {
 			return presence.Bottom(), false
@@ -160,59 +156,12 @@ func (l *lowerer) returnSourcePresence(input *factflow.FactsInput, source factfl
 			if result.Index() != source.ResultIndex {
 				continue
 			}
-			return knownReturnPresence(product.PresenceOf(result.Value()))
+			return returnpresence.KnownPresence(product.PresenceOf(result.Value()))
 		}
 		return presence.Bottom(), false
 	default:
 		return presence.Bottom(), false
 	}
-}
-
-func knownReturnPresence(value presence.Value) (presence.Value, bool) {
-	if value.IsBottom() || value.IsTop() {
-		return presence.Bottom(), false
-	}
-	return value, true
-}
-
-func inferredReturnTargetPresence(
-	points []returnPresencePoint,
-	trigger int,
-	triggerPresence presence.Value,
-	target int,
-) (presence.Value, bool) {
-	var out presence.Value
-	var saw bool
-	for _, point := range points {
-		if trigger >= len(point.presence) || target >= len(point.presence) ||
-			!point.known[trigger] || !point.known[target] {
-			return presence.Bottom(), false
-		}
-		if !returnPresenceCanBe(point.presence[trigger], triggerPresence) {
-			continue
-		}
-		targetPresence := point.presence[target]
-		if !definiteReturnPresence(targetPresence) {
-			return presence.Bottom(), false
-		}
-		if !saw {
-			out = targetPresence
-			saw = true
-			continue
-		}
-		if !presence.Equal(out, targetPresence) {
-			return presence.Bottom(), false
-		}
-	}
-	return out, saw
-}
-
-func returnPresenceCanBe(value, want presence.Value) bool {
-	return presence.Equal(value, want) || presence.Equal(value, presence.Maybe())
-}
-
-func definiteReturnPresence(value presence.Value) bool {
-	return presence.Equal(value, presence.Present()) || presence.Equal(value, presence.Absent())
 }
 
 func appendReturnPresenceRelations(
