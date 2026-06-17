@@ -6,6 +6,9 @@ func TestCloneNilInputReturnsNil(t *testing.T) {
 	if got := Clone(map[string]int(nil)); got != nil {
 		t.Fatalf("Clone(nil) = %#v, want nil", got)
 	}
+	if got := Clone(map[string]int{}); got != nil {
+		t.Fatalf("Clone(empty) = %#v, want nil", got)
+	}
 }
 
 func TestWithCreatesIndependentCopyFromNilAndExistingMap(t *testing.T) {
@@ -42,6 +45,20 @@ func TestWithoutAbsentKeyReturnsOriginalUnchanged(t *testing.T) {
 	next["a"] = 2
 	if got := original["a"]; got != 2 {
 		t.Fatalf("Without absent key should leave map unchanged and shared, got original[a]=%d", got)
+	}
+
+	empty := map[string]int{}
+	next, removed = Without(empty, "missing")
+	if removed {
+		t.Fatalf("Without should report no removal for absent key in empty map")
+	}
+	if next != nil {
+		t.Fatalf("Without absent key in empty map = %#v, want normalized nil", next)
+	}
+
+	next, removed = Without(map[string]int(nil), "missing")
+	if removed || next != nil {
+		t.Fatalf("Without nil missing = %#v/%v, want nil/false", next, removed)
 	}
 }
 

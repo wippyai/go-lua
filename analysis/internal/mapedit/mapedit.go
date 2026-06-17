@@ -24,6 +24,9 @@ func With[K comparable, V any](in map[K]V, key K, value V) map[K]V {
 
 // Without returns a copy of in without key. Missing keys are a no-op.
 func Without[K comparable, V any](in map[K]V, key K) (map[K]V, bool) {
+	if len(in) == 0 {
+		return nil, false
+	}
 	if _, ok := in[key]; !ok {
 		return in, false
 	}

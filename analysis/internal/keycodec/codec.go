@@ -24,9 +24,12 @@ func PrefixedDecimalKey(prefix byte, value uint64, suffix string) string {
 	return string(out)
 }
 
-// ParseUnsignedDecimal parses an unsigned base-10 string with overflow checks.
+// ParseUnsignedDecimal parses canonical unsigned base-10 with overflow checks.
 func ParseUnsignedDecimal(s string) (uint64, bool) {
 	if s == "" {
+		return 0, false
+	}
+	if len(s) > 1 && s[0] == '0' {
 		return 0, false
 	}
 	var n uint64
@@ -46,7 +49,7 @@ func ParseUnsignedDecimal(s string) (uint64, bool) {
 
 // ParsePositiveIntAfterAt parses a positive int that starts at i in s.
 func ParsePositiveIntAfterAt(s string, i int) (int, int, bool) {
-	if i >= len(s) {
+	if i < 0 || i >= len(s) {
 		return 0, 0, false
 	}
 	start := i

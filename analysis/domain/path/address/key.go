@@ -2,6 +2,7 @@ package address
 
 import (
 	"strconv"
+	"strings"
 
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
@@ -51,21 +52,25 @@ func parseInternedSymbolPathKey(key pathdom.PathKey) (symbol.ID, []segment.Segme
 
 func namedRootKey(root string, segments []segment.Segment) pathdom.PathKey {
 	raw := pathdom.Path{Root: root, Segments: segments}.Key()
-	if namedRootNeedsEncoding(raw) {
+	if namedRootNeedsEncoding(root, segments, raw) {
 		return pathdom.PathKey(encodeNamedRoot(root) + segment.FormatSegments(segments))
 	}
 	return raw
 }
 
-func namedRootNeedsEncoding(key pathdom.PathKey) bool {
+func namedRootNeedsEncoding(root string, segments []segment.Segment, key pathdom.PathKey) bool {
+	s := string(key)
+	if looksEncodedNamedRootKey(s) || looksStableSymbolRootSuffix(s) || looksResolverRootSuffix(s) {
+		return true
+	}
 	if _, _, ok := ParseSymbolPathKey(key); ok {
 		return true
 	}
 	if _, _, _, ok := ParseResolverPath(key); ok {
 		return true
 	}
-	_, _, ok := parseEncodedNamedRootKey(string(key))
-	return ok
+	parsed, ok := parsePlainNamedRootSuffix(key)
+	return !ok || parsed.root != root || !sameSegments(parsed.segments, segments)
 }
 
 func encodeNamedRoot(root string) string {
@@ -78,4 +83,53 @@ func parseEncodedNamedRootKey(key string) (string, []segment.Segment, bool) {
 		return "", nil, false
 	}
 	return parsed.root, parsed.segments, true
+}
+
+func looksEncodedNamedRootKey(s string) bool {
+	if len(s) < 3 || s[0] != 'n' || !isDecimalDigit(s[1]) {
+		return false
+	}
+	i := 2
+	for i < len(s) && isDecimalDigit(s[i]) {
+		i++
+	}
+	return i < len(s) && s[i] == ':'
+}
+
+func looksStableSymbolRootSuffix(s string) bool {
+	if len(s) < 2 || s[0] != 's' || !isDecimalDigit(s[1]) {
+		return false
+	}
+	i := 2
+	for i < len(s) && isDecimalDigit(s[i]) {
+		i++
+	}
+	return i == len(s) || s[i] == '.' || s[i] == '['
+}
+
+func looksResolverRootSuffix(s string) bool {
+	if !strings.HasPrefix(s, "sym") || len(s) < 4 || !isDecimalDigit(s[3]) {
+		return false
+	}
+	i := 4
+	for i < len(s) && isDecimalDigit(s[i]) {
+		i++
+	}
+	return i == len(s) || s[i] == '@' || s[i] == '.' || s[i] == '['
+}
+
+func isDecimalDigit(ch byte) bool {
+	return ch >= '0' && ch <= '9'
+}
+
+func sameSegments(a, b []segment.Segment) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }

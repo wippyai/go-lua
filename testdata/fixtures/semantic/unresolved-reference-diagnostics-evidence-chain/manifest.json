@@ -1,0 +1,32 @@
+{
+  "description": "Unresolved type and value references preserve precise evidence and labels for rendered diagnostics.",
+  "check": {
+    "diagnostics": [
+      {
+        "file": "main.lua",
+        "line": 5,
+        "severity": "error",
+        "code": "type.reference.unresolved",
+        "message_contains": ["unknown type", "LocalPoint"],
+        "min_evidence": 1,
+        "evidence_contains": ["type reference LocalPoint is not visible here"],
+        "min_labels": 1,
+        "label_contains": ["unresolved type"]
+      },
+      {
+        "file": "main.lua",
+        "line": 6,
+        "severity": "error",
+        "code": "value.reference.unresolved",
+        "message_contains": ["unknown value", "missing_count"],
+        "min_evidence": 1,
+        "evidence_contains": ["value reference missing_count is not declared or predeclared here"],
+        "min_labels": 1,
+        "label_contains": ["unresolved value"]
+      }
+    ]
+  },
+  "run": {
+    "skip": "diagnostic-only fixture"
+  }
+}

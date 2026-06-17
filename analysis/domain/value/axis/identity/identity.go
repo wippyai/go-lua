@@ -40,7 +40,10 @@ func LuaTableLiteral(graphID, exprRef uint64) ID {
 	if graphID == 0 || exprRef == 0 {
 		return ID{}
 	}
-	return ID{Kind: "lua.table", Site: "graph-expr", Index: internal.MixHash(graphID, exprRef)}
+	h := internal.FnvString("identity.lua.table.literal")
+	h = internal.MixHash(h, graphID)
+	h = internal.MixHash(h, exprRef)
+	return ID{Kind: "lua.table", Site: "graph-expr", Index: h}
 }
 
 func (id ID) String() string {

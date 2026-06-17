@@ -1,12 +1,15 @@
 package hash
 
-import "testing"
+import (
+	"hash/fnv"
+	"testing"
+)
 
 func TestFnvString(t *testing.T) {
 	t.Parallel()
 
-	if FnvString("") != FnvOffset64 {
-		t.Error("empty string should return FnvOffset64")
+	if got := FnvString(""); got != 14695981039346656037 {
+		t.Fatalf("empty string hash = %d, want FNV offset", got)
 	}
 
 	hash1 := FnvString("hello")
@@ -19,6 +22,27 @@ func TestFnvString(t *testing.T) {
 	hash3 := FnvString("world")
 	if hash1 == hash3 {
 		t.Error("different strings should produce different hashes")
+	}
+}
+
+func TestFnvStringMatchesStandardLibraryFNV1a64(t *testing.T) {
+	t.Parallel()
+
+	for _, input := range []string{
+		"",
+		"a",
+		"hello",
+		"number:string:boolean",
+		"nul\x00byte",
+		"unicode:\xe2\x98\x83",
+	} {
+		hasher := fnv.New64a()
+		if _, err := hasher.Write([]byte(input)); err != nil {
+			t.Fatalf("fnv.Write(%q) failed: %v", input, err)
+		}
+		if got, want := FnvString(input), hasher.Sum64(); got != want {
+			t.Fatalf("FnvString(%q) = %d, want standard FNV-1a %d", input, got, want)
+		}
 	}
 }
 
@@ -60,5 +84,28 @@ func TestMixHash(t *testing.T) {
 
 	if MixHash(1, 2) == MixHash(1, 3) {
 		t.Error("different inputs should produce different outputs")
+	}
+}
+
+func TestMixHashMatchesOneFNV1aUint64Step(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name  string
+		seed  uint64
+		value uint64
+	}{
+		{name: "zero", seed: 0, value: 0},
+		{name: "offset", seed: fnvOffset64, value: 1},
+		{name: "max", seed: ^uint64(0), value: ^uint64(0)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			want := (tc.seed ^ tc.value) * fnvPrime64
+			if got := MixHash(tc.seed, tc.value); got != want {
+				t.Fatalf("MixHash(%d, %d) = %d, want %d", tc.seed, tc.value, got, want)
+			}
+		})
 	}
 }

@@ -58,6 +58,10 @@ func StableFromKey(key pathdom.PathKey) (Stable, bool) {
 	if root, segments, ok := parseEncodedNamedRootKey(string(key)); ok {
 		return stableOfRootOwnedSegments(root, segments)
 	}
+	s := string(key)
+	if looksEncodedNamedRootKey(s) || looksStableSymbolRootSuffix(s) || looksResolverRootSuffix(s) {
+		return Stable{}, false
+	}
 	parsed, ok := parsePlainNamedRootSuffix(key)
 	if !ok {
 		return Stable{}, false

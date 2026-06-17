@@ -461,6 +461,85 @@ func TestStableKeySeparatesAmbiguousRootsAndVersionedLocalKeys(t *testing.T) {
 	}
 }
 
+func TestStableKeyEncodesNamedRootsThatLookLikePathSyntax(t *testing.T) {
+	tests := []struct {
+		name  string
+		left  pathdom.Path
+		right pathdom.Path
+	}{
+		{
+			name:  "dot in root",
+			left:  pathdom.Path{Root: "a.b"},
+			right: pathdom.Path{Root: "a", Segments: []segment.Segment{{Kind: segment.SegmentField, Name: "b"}}},
+		},
+		{
+			name:  "index in root",
+			left:  pathdom.Path{Root: "a[0]"},
+			right: pathdom.Path{Root: "a", Segments: []segment.Segment{{Kind: segment.SegmentIndexInt, Index: 0}}},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			leftKey := stableOfPathKey(t, tc.left)
+			rightKey := stableOfPathKey(t, tc.right)
+			if leftKey == rightKey {
+				t.Fatalf("stable keys collided: %q", leftKey)
+			}
+			for _, path := range []pathdom.Path{tc.left, tc.right} {
+				stable := mustStableOfPath(t, path)
+				parsed, ok := StableFromKey(stable.Key())
+				if !ok || !parsed.Equal(stable) {
+					t.Fatalf("StableFromKey(%q) = %s/%v, want round-trip", stable.Key(), parsed.Key(), ok)
+				}
+			}
+		})
+	}
+}
+
+func TestStableKeyEncodesMalformedReservedNamedRoots(t *testing.T) {
+	for _, root := range []string{"$x", "$0x", "ret[]", "ret[x]", "ret[1", "s00042", "sym00042", "sym42@003", "n04:sym7"} {
+		path := pathdom.Path{Root: root}
+		stable := mustStableOfPath(t, path)
+		if stable.Key() == path.Key() {
+			t.Fatalf("stable key for reserved-looking root %q was not encoded: %q", root, stable.Key())
+		}
+		parsed, ok := StableFromKey(stable.Key())
+		if !ok || !parsed.Equal(stable) {
+			t.Fatalf("StableFromKey(%q) = %s/%v, want round-trip for root %q", stable.Key(), parsed.Key(), ok, root)
+		}
+		if gotRoot, ok := parsed.Root(); !ok || gotRoot != root {
+			t.Fatalf("parsed root = %q/%v, want %q/true", gotRoot, ok, root)
+		}
+	}
+}
+
+func TestPathKeyParsersRejectNonCanonicalDecimalSpellings(t *testing.T) {
+	for _, key := range []pathdom.PathKey{"s00", "s00042", "s00042.field"} {
+		if _, _, ok := ParseSymbolPathKey(key); ok {
+			t.Fatalf("ParseSymbolPathKey(%q) accepted non-canonical decimal", key)
+		}
+		if _, ok := StableFromKey(key); ok {
+			t.Fatalf("StableFromKey(%q) accepted non-canonical stable symbol key", key)
+		}
+	}
+	for _, key := range []pathdom.PathKey{"sym00042", "sym42@003", "sym00042@003.field"} {
+		if _, _, _, ok := ParseResolverPath(key); ok {
+			t.Fatalf("ParseResolverPath(%q) accepted non-canonical decimal", key)
+		}
+		if _, ok := StructuralKeyFromPathKey(key); ok {
+			t.Fatalf("StructuralKeyFromPathKey(%q) accepted non-canonical resolver key", key)
+		}
+	}
+	for _, key := range []pathdom.PathKey{"n04:sym7", "n0004:sym7"} {
+		if _, ok := StableFromKey(key); ok {
+			t.Fatalf("StableFromKey(%q) accepted non-canonical encoded named root", key)
+		}
+		if _, ok := StructuralKeyFromPathKey(key); ok {
+			t.Fatalf("StructuralKeyFromPathKey(%q) accepted non-canonical encoded named root", key)
+		}
+	}
+}
+
 func mustStableOfPath(t *testing.T, path pathdom.Path) Stable {
 	t.Helper()
 	got, ok := StableOfPath(path)

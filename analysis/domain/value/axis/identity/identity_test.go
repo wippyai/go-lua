@@ -42,6 +42,47 @@ func TestSingletonReadback(t *testing.T) {
 	}
 }
 
+func TestLuaTableLiteralIdentityDoesNotAliasEqualGraphAndExprPairs(t *testing.T) {
+	first := LuaTableLiteral(31, 31)
+	second := LuaTableLiteral(42, 42)
+	if first == (ID{}) || second == (ID{}) {
+		t.Fatalf("LuaTableLiteral returned empty identities: %#v %#v", first, second)
+	}
+	if first == second {
+		t.Fatalf("LuaTableLiteral equal graph/expr pairs aliased: %#v", first)
+	}
+	if first.Index == 0 || second.Index == 0 {
+		t.Fatalf("LuaTableLiteral produced zero index: %#v %#v", first, second)
+	}
+
+	ordered := LuaTableLiteral(31, 42)
+	swapped := LuaTableLiteral(42, 31)
+	if ordered == swapped {
+		t.Fatalf("LuaTableLiteral lost field order: %#v", ordered)
+	}
+	if got := LuaTableLiteral(31, 31); got != first {
+		t.Fatalf("LuaTableLiteral is not stable: %#v then %#v", first, got)
+	}
+}
+
+func TestLuaTableLiteralRejectsEmptyInputs(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		graphID uint64
+		exprRef uint64
+	}{
+		{name: "zero graph", graphID: 0, exprRef: 1},
+		{name: "zero expression", graphID: 1, exprRef: 0},
+		{name: "zero both", graphID: 0, exprRef: 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := LuaTableLiteral(tc.graphID, tc.exprRef); got != (ID{}) {
+				t.Fatalf("LuaTableLiteral(%d, %d) = %#v, want empty ID", tc.graphID, tc.exprRef, got)
+			}
+		})
+	}
+}
+
 func TestIdentityJoin(t *testing.T) {
 	a := Singleton(allocA)
 	same := Singleton(allocA)

@@ -25,11 +25,17 @@ func TestParseValueKeysRejectInvalidShapes(t *testing.T) {
 	if sym, ok := ParseSymbolValue(ReturnSlot(0)); ok || sym != 0 {
 		t.Fatalf("ParseSymbolValue(return) = %d/%v, want false", sym, ok)
 	}
+	if sym, ok := ParseSymbolValue(Value("s00042")); ok || sym != 0 {
+		t.Fatalf("ParseSymbolValue(leading zeros) = %d/%v, want false", sym, ok)
+	}
 	if sym, ok := ParseSymbolValue(Value("s42.field")); ok || sym != 0 {
 		t.Fatalf("ParseSymbolValue(s42.field) = %d/%v, want false", sym, ok)
 	}
 	if idx, ok := ParseReturnSlot(SymbolValue(1)); ok || idx != 0 {
 		t.Fatalf("ParseReturnSlot(symbol) = %d/%v, want false", idx, ok)
+	}
+	if idx, ok := ParseReturnSlot(Value("r00")); ok || idx != 0 {
+		t.Fatalf("ParseReturnSlot(leading zeros) = %d/%v, want false", idx, ok)
 	}
 	if idx, ok := ParseReturnSlot(Value("r1.field")); ok || idx != 0 {
 		t.Fatalf("ParseReturnSlot(bad) = %d/%v, want false", idx, ok)

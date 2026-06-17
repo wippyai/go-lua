@@ -73,6 +73,9 @@ func parseEncodedNamedRootSuffix(key string) (parsedRootSuffix, bool) {
 		return parsedRootSuffix{}, false
 	}
 	i := 1
+	if key[i] == '0' {
+		return parsedRootSuffix{}, false
+	}
 	length := 0
 	for i < len(key) {
 		ch := key[i]
