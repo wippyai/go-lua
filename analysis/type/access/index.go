@@ -28,7 +28,7 @@ func indexDepth(container typ.Type, key typ.Type, depth int, mode indexMode) fie
 	if stopDepth(container, depth) {
 		return fieldResult{}
 	}
-	if top, ok := specialAccessType(container); ok {
+	if top, ok := SpecialAccessType(container); ok {
 		return fieldResult{t: top, ok: true}
 	}
 
@@ -44,7 +44,7 @@ func indexDepth(container typ.Type, key typ.Type, depth int, mode indexMode) fie
 
 func indexDepthCore(container typ.Type, key typ.Type, depth int, mode indexMode) fieldResult {
 	return descendAccessWrappers(container, depth, func(t typ.Type, depth int) fieldResult {
-		if top, ok := specialAccessType(t); ok {
+		if top, ok := SpecialAccessType(t); ok {
 			return fieldResult{t: top, ok: true}
 		}
 		switch v := unwrap.Annotated(t).(type) {

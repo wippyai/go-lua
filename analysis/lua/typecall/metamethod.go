@@ -18,7 +18,7 @@ func metamethodDepth(t typ.Type, name string, depth int) (typ.Type, bool) {
 	if stopDepth(t, depth) {
 		return nil, false
 	}
-	if top, ok := specialAccessType(t); ok {
+	if top, ok := access.SpecialAccessType(t); ok {
 		return top, true
 	}
 

@@ -10,12 +10,12 @@ func fieldDepth(t typ.Type, name string, depth int) fieldResult {
 	if stopDepth(t, depth) {
 		return fieldResult{}
 	}
-	if top, ok := specialAccessType(t); ok {
+	if top, ok := SpecialAccessType(t); ok {
 		return fieldResult{t: top, ok: true}
 	}
 
 	return descendAccessWrappers(t, depth, func(t typ.Type, depth int) fieldResult {
-		if top, ok := specialAccessType(t); ok {
+		if top, ok := SpecialAccessType(t); ok {
 			return fieldResult{t: top, ok: true}
 		}
 		switch v := unwrap.Annotated(t).(type) {
@@ -46,7 +46,7 @@ func fieldAtDepth(t typ.Type, name string, depth int) (typ.Type, bool) {
 	return fieldDepth(t, name, depth).materialize()
 }
 
-func specialAccessType(t typ.Type) (typ.Type, bool) {
+func SpecialAccessType(t typ.Type) (typ.Type, bool) {
 	if t == nil {
 		return nil, false
 	}
