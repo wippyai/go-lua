@@ -4,8 +4,8 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/diagnostic"
-	"github.com/wippyai/go-lua/analysis/module/signature"
 	"github.com/wippyai/go-lua/analysis/module/manifest"
+	"github.com/wippyai/go-lua/analysis/module/signature"
 	"github.com/wippyai/go-lua/analysis/module/signaturelookup"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
@@ -18,6 +18,17 @@ func TestDirectCallReportsManifestSignatureWrongArgumentType(t *testing.T) {
 func TestDirectCallReportsManifestSignatureTooFewArgs(t *testing.T) {
 	diags := runDiagnosticsWithImportedSignature(t, `imported("ok")`)
 	requireDirectCallDiagnostic(t, diags, CodeDirectCallTooFewArgs)
+}
+
+func TestDirectCallReportsManifestSignatureTooManyArgs(t *testing.T) {
+	diags := runDiagnosticsWithImportedSignature(t, `imported("ok", 42, true)`)
+	requireDirectCallDiagnostic(t, diags, CodeDirectCallTooManyArgs)
+	if len(diags[0].Labels) != 1 || diags[0].Labels[0].Message != "extra argument" {
+		t.Fatalf("labels = %#v, want extra argument label", diags[0].Labels)
+	}
+	if len(diags[0].Explanation.Evidence()) < 2 {
+		t.Fatalf("explanation evidence = %#v, want call and declaration evidence", diags[0].Explanation.Evidence())
+	}
 }
 
 func TestDirectCallAcceptsManifestSignatureArguments(t *testing.T) {

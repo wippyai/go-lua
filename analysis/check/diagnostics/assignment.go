@@ -58,12 +58,15 @@ func (p annotationAssignability) localAssignment(result *body.Result, point cfg.
 	if directCallResultAssignmentWouldReport(result, p.resolver, fact.Source, want, directDefs) {
 		return p.objectLiteralAssignment(result, point, fact.Name, want, fact.Expr, fact.Type, env)
 	}
+	if directCallContractWouldReport(result, p.resolver, fact.Source, directDefs, env) {
+		return diagnostic.Diagnostic{}, false
+	}
 	if directCallResultOwner(result, fact.Source) {
 		if got, ok := callResultWitnessProvenMismatchType(result, point, fact.Source, want); ok {
 			return assignmentDiagnostic(fact.Name, want, got, fact.Expr, fact.Type), true
 		}
 	}
-	if directCallResultOwner(result, fact.Source) && !directCallSourceHasSignature(result, fact.Source) {
+	if directCallResultOwner(result, fact.Source) && !directCallSourceHasTypedSignature(result, fact.Source) {
 		if !callResultWitnessProvenMismatch(result, point, fact.Source, want) {
 			return p.objectLiteralAssignment(result, point, fact.Name, want, fact.Expr, fact.Type, env)
 		}
@@ -213,7 +216,7 @@ func directCallResultAssignmentWouldReport(result *body.Result, resolver typeann
 		return false
 	}
 	if _, _, _, member := callMemberAccess(fact); member {
-		if _, hasSignature := result.CallSignature(site); !hasSignature {
+		if !hasTypedCallSignature(result, site) {
 			return false
 		}
 	}
@@ -233,6 +236,31 @@ func directCallResultAssignmentWouldReport(result *body.Result, resolver typeann
 		return false
 	}
 	return boundaryTypeMismatch(result, source.CallPoint, got, want, boundaryCallResultReader(source.CallPoint, source.ResultIndex))
+}
+
+func directCallContractWouldReport(result *body.Result, resolver typeannotation.Resolver, source sourceprovenance.ASTSource, defs map[symbol.ID]*ast.FunctionExpr, env guardEnv) bool {
+	if result == nil || source.Kind != sourceprovenance.SourceCall || !source.HasCallPoint {
+		return false
+	}
+	fact, ok := result.Call(source.CallPoint)
+	if !ok || fact.Call == nil {
+		return false
+	}
+	site, ok := result.CallSite(source.CallPoint)
+	if !ok || site.CalleeSymbol() == 0 {
+		return false
+	}
+	context := producerContext{resolver: resolver}
+	if _, _, _, member := callMemberAccess(fact); member {
+		if !hasTypedCallSignature(result, site) {
+			return false
+		}
+		if _, ok := memberCall(context).receiverPresenceDiagnostic(result, source.CallPoint, fact, env); ok {
+			return true
+		}
+	}
+	_, ok = directCallContract(context).call(result, source.CallPoint, fact, site, defs[site.CalleeSymbol()], defs, env)
+	return ok
 }
 
 // callResultWitnessProvenMismatch reports whether the converged result value of
@@ -262,7 +290,7 @@ func callResultWitnessProvenMismatchType(result *body.Result, point cfg.Point, s
 	return got, ok
 }
 
-func directCallSourceHasSignature(result *body.Result, source sourceprovenance.ASTSource) bool {
+func directCallSourceHasTypedSignature(result *body.Result, source sourceprovenance.ASTSource) bool {
 	if result == nil || source.Kind != sourceprovenance.SourceCall || !source.HasCallPoint {
 		return false
 	}
@@ -270,8 +298,7 @@ func directCallSourceHasSignature(result *body.Result, source sourceprovenance.A
 	if !ok {
 		return false
 	}
-	_, ok = result.CallSignature(site)
-	return ok
+	return hasTypedCallSignature(result, site)
 }
 
 func (p annotationAssignability) objectLiteralAssignment(result *body.Result, point cfg.Point, name string, want typ.Type, expr ast.Expr, annotation ast.TypeExpr, env guardEnv) (diagnostic.Diagnostic, bool) {

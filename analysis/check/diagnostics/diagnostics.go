@@ -18,6 +18,7 @@ const (
 	CodeNotCallable                diagnostic.Code = "type.call.not_callable"
 	CodeDirectCallNotCallable      diagnostic.Code = "type.call.direct.not_callable"
 	CodeDirectCallTooFewArgs       diagnostic.Code = "type.call.direct.too_few_args"
+	CodeDirectCallTooManyArgs      diagnostic.Code = "type.call.direct.too_many_args"
 	CodeDirectCallArgType          diagnostic.Code = "type.call.direct.argument_type"
 	CodeReturnContractType         diagnostic.Code = "type.return.contract"
 	CodeDirectCallResultAssignment diagnostic.Code = "type.call.direct.result_assignment"

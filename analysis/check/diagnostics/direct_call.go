@@ -51,7 +51,11 @@ func produceDirectCallContract(result *body.Result, context producerContext, inh
 			continue
 		}
 		if _, _, _, member := callMemberAccess(fact); member {
-			if _, hasSignature := result.CallSignature(site); !hasSignature {
+			if !hasTypedCallSignature(result, site) {
+				continue
+			}
+			if d, ok := memberCall(context).receiverPresenceDiagnostic(result, point, fact, envs[point]); ok {
+				out = append(out, d)
 				continue
 			}
 		}
@@ -265,6 +269,9 @@ func (p directCallContract) directFunctionCall(
 	required := contract.requiredArity()
 	if len(args) < required {
 		return tooFewArgsDiagnostic(point, call, contract.name, required, len(args), contract.declSpan), true
+	}
+	if !contract.hasVararg && len(args) > len(contract.params) {
+		return tooManyArgsDiagnostic(point, call, contract.name, len(contract.params), len(args), contract.declSpan, args[len(contract.params)]), true
 	}
 	contract, violations := instantiateDirectFunctionContract(result, point, fact, contract, p.resolver, defs)
 	if len(violations) > 0 {
@@ -614,6 +621,38 @@ func tooFewArgsDiagnostic(point cfg.Point, call *ast.FuncCallExpr, name string, 
 			},
 		),
 		Labels: []diagnostic.Label{{Span: span, Message: "too few arguments"}},
+	}
+}
+
+func tooManyArgsDiagnostic(point cfg.Point, call *ast.FuncCallExpr, name string, want, got int, declSpan ast.Span, extra ast.Expr) diagnostic.Diagnostic {
+	span := ast.SpanOf(call)
+	extraSpan := ast.SpanOf(extra)
+	return diagnostic.Diagnostic{
+		Position: diagnostic.Position{
+			Line:      span.StartLine,
+			Column:    span.StartCol,
+			EndLine:   span.EndLine,
+			EndColumn: span.EndCol,
+		},
+		Span:     span,
+		Code:     CodeDirectCallTooManyArgs,
+		Severity: diagnostic.SeverityError,
+		Message:  fmt.Sprintf("%s expects %d arguments, got %d", name, want, got),
+		Explanation: diagnostic.NewExplanation(
+			diagnostic.Evidence{
+				Kind:    diagnostic.EvidenceAbstractFact,
+				Trust:   diagnostic.TrustProven,
+				Span:    span,
+				Message: fmt.Sprintf("call at CFG point %d passes %d arguments", point, got),
+			},
+			diagnostic.Evidence{
+				Kind:    diagnostic.EvidenceUserAssertion,
+				Trust:   diagnostic.TrustClaimed,
+				Span:    declSpan,
+				Message: fmt.Sprintf("%s declares %d parameters", name, want),
+			},
+		),
+		Labels: []diagnostic.Label{{Span: extraSpan, Message: "extra argument"}},
 	}
 }
 

@@ -1622,6 +1622,86 @@ func TestWithManifestResolvesExplicitDottedGlobalStaticCalleePathOnly(t *testing
 	}
 }
 
+func TestWithManifestReportsExplicitDottedGlobalTooFewArgs(t *testing.T) {
+	m := manifest.New("test")
+	m.DefineFunctionSignature("pkg.make", signature.Function{
+		Type: typ.Func().
+			Param("name", typ.String).
+			Param("count", typ.Number).
+			Build(),
+	})
+
+	result := Check(`pkg.make("only-one")`, WithManifest("test", m), WithGlobals("pkg"))
+	if len(result.Diagnostics) != 1 {
+		t.Fatalf("diagnostics = %d, want 1: %#v", len(result.Diagnostics), result.Diagnostics)
+	}
+	if result.Diagnostics[0].Code != diagnostics.CodeDirectCallTooFewArgs {
+		t.Fatalf("diagnostic code = %s, want %s", result.Diagnostics[0].Code, diagnostics.CodeDirectCallTooFewArgs)
+	}
+}
+
+func TestWithManifestReportsExplicitDottedGlobalTooManyArgs(t *testing.T) {
+	m := manifest.New("test")
+	m.DefineFunctionSignature("pkg.make", signature.Function{
+		Type: typ.Func().
+			Param("name", typ.String).
+			Param("count", typ.Number).
+			Build(),
+	})
+
+	result := Check(`pkg.make("name", 1, true)`, WithManifest("test", m), WithGlobals("pkg"))
+	if len(result.Diagnostics) != 1 {
+		t.Fatalf("diagnostics = %d, want 1: %#v", len(result.Diagnostics), result.Diagnostics)
+	}
+	if result.Diagnostics[0].Code != diagnostics.CodeDirectCallTooManyArgs {
+		t.Fatalf("diagnostic code = %s, want %s", result.Diagnostics[0].Code, diagnostics.CodeDirectCallTooManyArgs)
+	}
+	if len(result.Diagnostics[0].Labels) != 1 || result.Diagnostics[0].Labels[0].Message != "extra argument" {
+		t.Fatalf("labels = %#v, want extra argument label", result.Diagnostics[0].Labels)
+	}
+}
+
+func TestEffectOnlyImportedMemberSignatureDoesNotSuppressStructuralCallDiagnostic(t *testing.T) {
+	m := manifest.New("pkg")
+	m.SetExport(typetable.NewRecord().Field("run", typ.Number).Build())
+	m.DefineFunctionSignature("pkg.run", signature.Function{})
+
+	result := Check(`
+		local pkg: {run: number}? = require("pkg")
+		pkg.run()
+	`, WithStdlib(), WithManifest("pkg", m))
+	if len(result.Diagnostics) != 1 {
+		t.Fatalf("diagnostics = %d, want 1: %#v", len(result.Diagnostics), result.Diagnostics)
+	}
+	if result.Diagnostics[0].Code != diagnostics.CodeMissingMember {
+		t.Fatalf("diagnostic code = %s, want %s", result.Diagnostics[0].Code, diagnostics.CodeMissingMember)
+	}
+	if len(result.Diagnostics[0].Explanation.Evidence()) < 2 {
+		t.Fatalf("explanation evidence = %#v, want member call evidence", result.Diagnostics[0].Explanation.Evidence())
+	}
+}
+
+func TestTypedImportedMemberSignatureDoesNotSuppressOptionalReceiverDiagnostic(t *testing.T) {
+	m := manifest.New("pkg")
+	runType := typ.Func().Build()
+	m.SetExport(typetable.NewRecord().Field("run", runType).Build())
+	m.DefineFunctionSignature("pkg.run", signature.Function{Type: runType})
+
+	result := Check(`
+		local pkg: {run: () -> ()}? = require("pkg")
+		pkg.run()
+	`, WithStdlib(), WithManifest("pkg", m))
+	if len(result.Diagnostics) != 1 {
+		t.Fatalf("diagnostics = %d, want 1: %#v", len(result.Diagnostics), result.Diagnostics)
+	}
+	if result.Diagnostics[0].Code != diagnostics.CodeMissingMember {
+		t.Fatalf("diagnostic code = %s, want %s", result.Diagnostics[0].Code, diagnostics.CodeMissingMember)
+	}
+	if len(result.Diagnostics[0].Explanation.Evidence()) < 2 {
+		t.Fatalf("explanation evidence = %#v, want optional receiver evidence", result.Diagnostics[0].Explanation.Evidence())
+	}
+}
+
 func TestRequireManifestExportTypesImportedValueAndMemberCall(t *testing.T) {
 	m := providerManifest("provider")
 

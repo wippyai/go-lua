@@ -1277,6 +1277,31 @@ func TestMemberCallReportsTooFewArgs(t *testing.T) {
 	}
 }
 
+func TestMemberCallReportsTooManyArgs(t *testing.T) {
+	diags := runDiagnostics(t, `
+		type Client = {invoke: (model_id: string, payload: number) -> ()}
+		function f(c: Client)
+			c.invoke("model", 1, true)
+		end
+	`)
+	if len(diags) != 1 {
+		t.Fatalf("diagnostics = %d, want 1: %#v", len(diags), diags)
+	}
+	d := diags[0]
+	if d.Code != CodeDirectCallTooManyArgs || d.Severity != diagnostic.SeverityError {
+		t.Fatalf("diagnostic code/severity = %s/%s", d.Code, d.Severity)
+	}
+	if !strings.Contains(d.Message, "expects 2 arguments") || !strings.Contains(d.Message, "got 3") {
+		t.Fatalf("message = %q", d.Message)
+	}
+	if len(d.Labels) != 1 || d.Labels[0].Message != "extra argument" {
+		t.Fatalf("labels = %#v, want extra argument label", d.Labels)
+	}
+	if len(d.Explanation.Evidence()) < 2 {
+		t.Fatalf("explanation evidence = %#v, want call and declaration evidence", d.Explanation.Evidence())
+	}
+}
+
 func TestColonMemberCallConsumesReceiverParameter(t *testing.T) {
 	diags := runDiagnostics(t, `
 		type ClientSelf = {id: string}
@@ -1427,6 +1452,46 @@ func TestDirectCallReportsTooFewArgs(t *testing.T) {
 	}
 	if len(d.Explanation.Evidence()) < 2 {
 		t.Fatalf("explanation evidence = %#v, want call and declaration evidence", d.Explanation.Evidence())
+	}
+}
+
+func TestDirectCallReportsTooManyArgs(t *testing.T) {
+	diags := runDiagnostics(t, `
+		local function add(a: number, b: number): number
+			return a
+		end
+		add(1, 2, 3)
+	`)
+	if len(diags) != 1 {
+		t.Fatalf("diagnostics = %d, want 1: %#v", len(diags), diags)
+	}
+	d := diags[0]
+	if d.Code != CodeDirectCallTooManyArgs || d.Severity != diagnostic.SeverityError {
+		t.Fatalf("diagnostic code/severity = %s/%s", d.Code, d.Severity)
+	}
+	if !strings.Contains(d.Message, "expects 2 arguments") || !strings.Contains(d.Message, "got 3") {
+		t.Fatalf("message = %q", d.Message)
+	}
+	if len(d.Labels) != 1 || d.Labels[0].Message != "extra argument" {
+		t.Fatalf("labels = %#v, want extra argument label", d.Labels)
+	}
+	if len(d.Explanation.Evidence()) < 2 {
+		t.Fatalf("explanation evidence = %#v, want call and declaration evidence", d.Explanation.Evidence())
+	}
+}
+
+func TestDirectCallTooManyArgsSuppressesResultAssignmentDiagnostic(t *testing.T) {
+	diags := runDiagnostics(t, `
+		local function add(a: number, b: number): number
+			return a
+		end
+		local x: string = add(1, 2, 3)
+	`)
+	if len(diags) != 1 {
+		t.Fatalf("diagnostics = %d, want only too-many-args: %#v", len(diags), diags)
+	}
+	if d := diags[0]; d.Code != CodeDirectCallTooManyArgs || d.Severity != diagnostic.SeverityError {
+		t.Fatalf("diagnostic code/severity = %s/%s", d.Code, d.Severity)
 	}
 }
 
@@ -1632,6 +1697,17 @@ func TestDirectCallAcceptsExplicitNilCheckOptional(t *testing.T) {
 	`)
 	if len(diags) != 0 {
 		t.Fatalf("diagnostics = %#v, want none for optional nil-checked param", diags)
+	}
+}
+
+func TestDirectCallAcceptsVariadicExtraArgs(t *testing.T) {
+	diags := runDiagnostics(t, `
+		local function log(prefix: string, ...: number)
+		end
+		log("n", 1, 2, 3)
+	`)
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v, want none for typed variadic extra args", diags)
 	}
 }
 

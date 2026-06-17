@@ -298,7 +298,7 @@ func produceDirectCallResultAssignment(result *body.Result, context producerCont
 			continue
 		}
 		if _, _, _, ok := callMemberAccess(fact); ok {
-			if _, hasSignature := result.CallSignature(site); !hasSignature {
+			if !hasTypedCallSignature(result, site) {
 				continue
 			}
 		}
@@ -418,6 +418,9 @@ func directCallArgsCompatible(result *body.Result, point cfg.Point, fact semanti
 	args := fact.Call.Args
 	required := contract.requiredArity()
 	if len(args) < required {
+		return false
+	}
+	if !contract.hasVararg && len(args) > len(contract.params) {
 		return false
 	}
 	contract, violations := instantiateDirectFunctionContract(result, point, fact, contract, resolver, defs)

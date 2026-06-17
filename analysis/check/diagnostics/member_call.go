@@ -43,7 +43,7 @@ func (p memberCall) Produce(result *body.Result) []diagnostic.Diagnostic {
 			continue
 		}
 		if site, ok := result.CallSite(point); ok {
-			if _, hasSignature := result.CallSignature(site); hasSignature {
+			if hasTypedCallSignature(result, site) {
 				continue
 			}
 		}
@@ -104,6 +104,39 @@ func (p memberCall) call(result *body.Result, point cfg.Point, fact semantics.Ca
 	default:
 		return diagnostic.Diagnostic{}, false
 	}
+}
+
+func (p memberCall) receiverPresenceDiagnostic(result *body.Result, point cfg.Point, fact semantics.CallFact, env guardEnv) (diagnostic.Diagnostic, bool) {
+	receiver, member, callExpr, ok := callMemberAccess(fact)
+	if !ok || receiver.Symbol == 0 {
+		return p.expressionReceiverCall(result, point, fact, env)
+	}
+	baseType, ok := p.receiverType(result, point, fact, receiver, env)
+	if !ok {
+		return diagnostic.Diagnostic{}, false
+	}
+	narrowed, narrowedByDiscriminant := applyLiteralNarrowing(baseType, receiver, env)
+	receiverType := narrowed
+	if !narrowedByDiscriminant {
+		receiverType = baseType
+	}
+	if typ.IsNever(receiverType) || typ.IsAny(receiverType) || typ.IsUnknown(receiverType) {
+		return diagnostic.Diagnostic{}, false
+	}
+	if env.hasPresent(receiver) {
+		if withoutNil := projectionWithoutNil(receiverType); withoutNil != nil && !typ.IsNever(withoutNil) {
+			receiverType = withoutNil
+		} else {
+			return diagnostic.Diagnostic{}, false
+		}
+	}
+	if !projectionHasNil(receiverType) {
+		return diagnostic.Diagnostic{}, false
+	}
+	if fact.Receiver != nil && fact.Method != "" {
+		return optionalMethodCallDiagnostic(fact.Call), true
+	}
+	return memberDiagnostic(result, fact, callExpr, receiverType, member, point), true
 }
 
 // expressionReceiverCall handles a colon-method call whose receiver is an
