@@ -21,7 +21,7 @@ func normalizePathValueFacts(reg *axis.Registry, in []callboundary.PathValueFact
 		if !fact.Path.IsPlaceholder() || product.Equal(reg, fact.Value, bottom) {
 			continue
 		}
-		fact.Path = cloneSummaryPath(fact.Path)
+		fact.Path = fact.Path.Clone()
 		key := pathValueFactKey(fact.Path.Key())
 		if existing, ok := merged[key]; ok {
 			existing.Value = product.Join(reg, existing.Value, fact.Value)
@@ -42,7 +42,7 @@ func normalizePathStaticMemberFacts(reg *axis.Registry, in []callboundary.PathSt
 		if !fact.Path.IsPlaceholder() {
 			continue
 		}
-		fact.Path = cloneSummaryPath(fact.Path)
+		fact.Path = fact.Path.Clone()
 		key := pathValueFactKey(fact.Path.Key())
 		if existing, ok := merged[key]; ok {
 			existing.Value = product.Join(reg, existing.Value, fact.Value)
@@ -60,7 +60,7 @@ func clonePathValueFacts(in []callboundary.PathValueFact) []callboundary.PathVal
 	}
 	out := make([]callboundary.PathValueFact, len(in))
 	for i, fact := range in {
-		fact.Path = cloneSummaryPath(fact.Path)
+		fact.Path = fact.Path.Clone()
 		out[i] = fact
 	}
 	return out
@@ -72,7 +72,7 @@ func clonePathStaticMemberFacts(in []callboundary.PathStaticMemberFact) []callbo
 	}
 	out := make([]callboundary.PathStaticMemberFact, len(in))
 	for i, fact := range in {
-		fact.Path = cloneSummaryPath(fact.Path)
+		fact.Path = fact.Path.Clone()
 		out[i] = fact
 	}
 	return out

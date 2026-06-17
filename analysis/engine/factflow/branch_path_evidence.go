@@ -59,7 +59,7 @@ func NewBranchPathPresenceEvidenceForEdges(
 ) BranchPathEvidence {
 	return BranchPathEvidence{
 		kind:          BranchPathEvidencePresence,
-		path:          copyPath(targetPath),
+		path:          targetPath.Clone(),
 		presence:      value,
 		hasPresence:   true,
 		activeOnTrue:  activeOnTrue,
@@ -79,7 +79,7 @@ func NewBranchPathPresenceEvidenceOnEdge(targetPath path.Path, value presence.Va
 func NewBranchPathTruthyEvidenceOnEdge(targetPath path.Path, cond bool) BranchPathEvidence {
 	return BranchPathEvidence{
 		kind:          BranchPathEvidenceTruthy,
-		path:          copyPath(targetPath),
+		path:          targetPath.Clone(),
 		activeOnTrue:  cond,
 		activeOnFalse: !cond,
 	}
@@ -100,8 +100,8 @@ func NewBranchPathEqualityEvidenceForEdges(
 ) BranchPathEvidence {
 	return BranchPathEvidence{
 		kind:          BranchPathEvidenceEqual,
-		path:          copyPath(leftPath),
-		otherPath:     copyPath(rightPath),
+		path:          leftPath.Clone(),
+		otherPath:     rightPath.Clone(),
 		hasOtherPath:  true,
 		activeOnTrue:  activeOnTrue,
 		activeOnFalse: activeOnFalse,
@@ -129,8 +129,8 @@ func NewBranchPathInequalityEvidenceForEdges(
 ) BranchPathEvidence {
 	return BranchPathEvidence{
 		kind:          BranchPathEvidenceNotEqual,
-		path:          copyPath(leftPath),
-		otherPath:     copyPath(rightPath),
+		path:          leftPath.Clone(),
+		otherPath:     rightPath.Clone(),
 		hasOtherPath:  true,
 		activeOnTrue:  activeOnTrue,
 		activeOnFalse: activeOnFalse,
@@ -148,8 +148,8 @@ func NewBranchPathInequalityEvidenceOnEdge(leftPath path.Path, rightPath path.Pa
 func NewBranchIndexInRangeEvidenceOnEdge(indexPath path.Path, arrayPath path.Path, cond bool) BranchPathEvidence {
 	return BranchPathEvidence{
 		kind:          BranchPathEvidenceIndexInRange,
-		path:          copyPath(indexPath),
-		otherPath:     copyPath(arrayPath),
+		path:          indexPath.Clone(),
+		otherPath:     arrayPath.Clone(),
 		hasOtherPath:  true,
 		activeOnTrue:  cond,
 		activeOnFalse: !cond,
@@ -161,7 +161,7 @@ func NewBranchIndexInRangeEvidenceOnEdge(indexPath path.Path, arrayPath path.Pat
 func NewBranchFrozenTableEvidenceOnEdge(targetPath path.Path, cond bool) BranchPathEvidence {
 	return BranchPathEvidence{
 		kind:          BranchPathEvidenceFrozenTable,
-		path:          copyPath(targetPath),
+		path:          targetPath.Clone(),
 		activeOnTrue:  cond,
 		activeOnFalse: !cond,
 	}
@@ -176,7 +176,7 @@ func NewBranchPathEvidenceSet(evidence ...BranchPathEvidence) BranchPathEvidence
 func (p BranchPathEvidence) Kind() BranchPathEvidenceKind { return p.kind }
 
 // Path returns the evidence primary path.
-func (p BranchPathEvidence) Path() path.Path { return copyPath(p.path) }
+func (p BranchPathEvidence) Path() path.Path { return p.path.Clone() }
 
 // ActiveOnEdge reports whether this evidence is established on a branch edge.
 func (p BranchPathEvidence) ActiveOnEdge(cond bool) bool {
@@ -196,12 +196,12 @@ func (p BranchPathEvidence) OtherPath() (path.Path, bool) {
 	if !p.hasOtherPath {
 		return path.Path{}, false
 	}
-	return copyPath(p.otherPath), true
+	return p.otherPath.Clone(), true
 }
 
 func (p BranchPathEvidence) copy() BranchPathEvidence {
-	p.path = copyPath(p.path)
-	p.otherPath = copyPath(p.otherPath)
+	p.path = p.path.Clone()
+	p.otherPath = p.otherPath.Clone()
 	return p
 }
 

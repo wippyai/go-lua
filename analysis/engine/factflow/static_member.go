@@ -16,19 +16,19 @@ type PathStaticMemberWrite struct {
 // NewPathStaticMemberWrite creates a static-member proof write event.
 func NewPathStaticMemberWrite(targetPath path.Path, source ValueSource) PathStaticMemberWrite {
 	return PathStaticMemberWrite{
-		targetPath: copyPath(targetPath),
+		targetPath: targetPath.Clone(),
 		source:     source,
 	}
 }
 
 // TargetPath returns the static member path written by this event.
-func (w PathStaticMemberWrite) TargetPath() path.Path { return copyPath(w.targetPath) }
+func (w PathStaticMemberWrite) TargetPath() path.Path { return w.targetPath.Clone() }
 
 // Source returns the value evidence to write for TargetPath.
 func (w PathStaticMemberWrite) Source() ValueSource { return w.source }
 
 func (w PathStaticMemberWrite) copy() PathStaticMemberWrite {
-	w.targetPath = copyPath(w.targetPath)
+	w.targetPath = w.targetPath.Clone()
 	return w
 }
 

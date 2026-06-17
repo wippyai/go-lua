@@ -33,7 +33,7 @@ func NewRootAssignment(kind RootAssignmentKind, targetSymbol symbol.ID, targetPa
 	return RootAssignment{
 		kind:         kind,
 		targetSymbol: targetSymbol,
-		targetPath:   copyPath(targetPath),
+		targetPath:   targetPath.Clone(),
 		source:       source,
 	}
 }
@@ -62,7 +62,7 @@ func (a RootAssignment) Kind() RootAssignmentKind { return a.kind }
 func (a RootAssignment) TargetSymbol() symbol.ID { return a.targetSymbol }
 
 // TargetPath returns the assignment target's path identity.
-func (a RootAssignment) TargetPath() path.Path { return copyPath(a.targetPath) }
+func (a RootAssignment) TargetPath() path.Path { return a.targetPath.Clone() }
 
 // Source returns the value assigned to the target.
 func (a RootAssignment) Source() ValueSource { return a.source }
@@ -80,7 +80,7 @@ func (a RootAssignment) DeclaredValueContracts() bool {
 }
 
 func (a RootAssignment) copy() RootAssignment {
-	a.targetPath = copyPath(a.targetPath)
+	a.targetPath = a.targetPath.Clone()
 	return a
 }
 
@@ -93,19 +93,19 @@ type PathAssignment struct {
 // NewPathAssignment creates a member/path assignment fact.
 func NewPathAssignment(targetPath path.Path, source ValueSource) PathAssignment {
 	return PathAssignment{
-		targetPath: copyPath(targetPath),
+		targetPath: targetPath.Clone(),
 		source:     source,
 	}
 }
 
 // TargetPath returns the assignment target's path identity.
-func (a PathAssignment) TargetPath() path.Path { return copyPath(a.targetPath) }
+func (a PathAssignment) TargetPath() path.Path { return a.targetPath.Clone() }
 
 // Source returns the value assigned to the target path.
 func (a PathAssignment) Source() ValueSource { return a.source }
 
 func (a PathAssignment) copy() PathAssignment {
-	a.targetPath = copyPath(a.targetPath)
+	a.targetPath = a.targetPath.Clone()
 	return a
 }
 
@@ -118,16 +118,16 @@ type PathDescendantInvalidation struct {
 // NewPathDescendantInvalidation creates a descendant-only invalidation fact for
 // a statically known container path.
 func NewPathDescendantInvalidation(containerPath path.Path) PathDescendantInvalidation {
-	return PathDescendantInvalidation{containerPath: copyPath(containerPath)}
+	return PathDescendantInvalidation{containerPath: containerPath.Clone()}
 }
 
 // ContainerPath returns the invalidated container's path identity.
 func (i PathDescendantInvalidation) ContainerPath() path.Path {
-	return copyPath(i.containerPath)
+	return i.containerPath.Clone()
 }
 
 func (i PathDescendantInvalidation) copy() PathDescendantInvalidation {
-	i.containerPath = copyPath(i.containerPath)
+	i.containerPath = i.containerPath.Clone()
 	return i
 }
 

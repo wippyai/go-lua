@@ -78,9 +78,9 @@ func New(bindings *bind.Result, graph cfg.Graph, sem *semantics.Result) Projecti
 					out.reassigned[fact.Symbol] = append(out.reassigned[fact.Symbol], point)
 				}
 				if fact.HasPath && len(fact.Path.Segments) != 0 {
-					out.pathWrites = append(out.pathWrites, pathWrite{target: clonePath(fact.Path), point: point})
+					out.pathWrites = append(out.pathWrites, pathWrite{target: fact.Path.Clone(), point: point})
 				} else if fact.HasContainerPath && len(fact.ContainerPath.Segments) != 0 {
-					out.pathWrites = append(out.pathWrites, pathWrite{target: clonePath(fact.ContainerPath), point: point, dynamic: true})
+					out.pathWrites = append(out.pathWrites, pathWrite{target: fact.ContainerPath.Clone(), point: point, dynamic: true})
 				}
 			}
 		}
@@ -482,7 +482,7 @@ func (p *Projection) addSignatureAlias(target path.Path, expr ast.Expr, point cf
 		return
 	}
 	p.signatures = append(p.signatures, signatureAlias{
-		target:    clonePath(target),
+		target:    target.Clone(),
 		name:      name,
 		point:     point,
 		inherited: inherited,
@@ -494,7 +494,7 @@ func (p *Projection) addAlias(target path.Path, modulePath string, point cfg.Poi
 		return
 	}
 	p.aliases = append(p.aliases, moduleAlias{
-		target:     clonePath(target),
+		target:     target.Clone(),
 		modulePath: modulePath,
 		point:      point,
 		inherited:  inherited,
@@ -604,16 +604,7 @@ func pathHasPrefix(candidate path.Path, prefix path.Path) bool {
 }
 
 func appendPathSegments(base path.Path, suffix []segment.Segment) path.Path {
-	out := clonePath(base)
+	out := base.Clone()
 	out.Segments = append(out.Segments, suffix...)
-	return out
-}
-
-func clonePath(in path.Path) path.Path {
-	if len(in.Segments) == 0 {
-		return in
-	}
-	out := in
-	out.Segments = append([]segment.Segment(nil), in.Segments...)
 	return out
 }

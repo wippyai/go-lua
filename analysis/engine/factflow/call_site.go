@@ -98,10 +98,10 @@ func NewCallSite(config CallSiteConfig) CallSite {
 	return CallSite{
 		context:           config.Context,
 		calleeSymbol:      config.CalleeSymbol,
-		calleePath:        copyPath(config.CalleePath),
-		receiverPath:      copyPath(config.ReceiverPath),
+		calleePath:        config.CalleePath.Clone(),
+		receiverPath:      config.ReceiverPath.Clone(),
 		hasReceiverPath:   config.HasReceiverPath,
-		methodPath:        copyPath(config.MethodPath),
+		methodPath:        config.MethodPath.Clone(),
 		hasMethodPath:     config.HasMethodPath,
 		methodName:        config.MethodName,
 		receiverSource:    config.ReceiverSource,
@@ -126,16 +126,16 @@ func (c CallSite) Context() CallSiteContext { return c.context }
 func (c CallSite) CalleeSymbol() symbol.ID { return c.calleeSymbol }
 
 // CalleePath returns the callee's path identity.
-func (c CallSite) CalleePath() path.Path { return copyPath(c.calleePath) }
+func (c CallSite) CalleePath() path.Path { return c.calleePath.Clone() }
 
 // ReceiverPath returns the receiver path identity, if one was resolved.
 func (c CallSite) ReceiverPath() (path.Path, bool) {
-	return copyPath(c.receiverPath), c.hasReceiverPath
+	return c.receiverPath.Clone(), c.hasReceiverPath
 }
 
 // MethodPath returns the receiver-method path identity, if one was resolved.
 func (c CallSite) MethodPath() (path.Path, bool) {
-	return copyPath(c.methodPath), c.hasMethodPath
+	return c.methodPath.Clone(), c.hasMethodPath
 }
 
 // MethodName returns the method name carried by receiver-call syntax.
@@ -188,7 +188,7 @@ func (v CallSiteView) Context() CallSiteContext { return v.site.context }
 func (v CallSiteView) CalleeSymbol() symbol.ID { return v.site.calleeSymbol }
 
 // CalleePath returns a defensive copy of the callee's path identity.
-func (v CallSiteView) CalleePath() path.Path { return copyPath(v.site.calleePath) }
+func (v CallSiteView) CalleePath() path.Path { return v.site.calleePath.Clone() }
 
 // CalleePathKey returns the callee path's structural key.
 func (v CallSiteView) CalleePathKey() path.PathKey { return v.site.calleePath.Key() }
@@ -198,12 +198,12 @@ func (v CallSiteView) CalleePathEqual(p path.Path) bool { return v.site.calleePa
 
 // ReceiverPath returns the receiver path identity, if one was resolved.
 func (v CallSiteView) ReceiverPath() (path.Path, bool) {
-	return copyPath(v.site.receiverPath), v.site.hasReceiverPath
+	return v.site.receiverPath.Clone(), v.site.hasReceiverPath
 }
 
 // MethodPath returns the receiver-method path identity, if one was resolved.
 func (v CallSiteView) MethodPath() (path.Path, bool) {
-	return copyPath(v.site.methodPath), v.site.hasMethodPath
+	return v.site.methodPath.Clone(), v.site.hasMethodPath
 }
 
 // MethodName returns the method name carried by receiver-call syntax.
@@ -252,9 +252,9 @@ func (v CallSiteView) ForEachResultTarget(fn func(CallResultTargetView) bool) {
 }
 
 func (c CallSite) copy() CallSite {
-	c.calleePath = copyPath(c.calleePath)
-	c.receiverPath = copyPath(c.receiverPath)
-	c.methodPath = copyPath(c.methodPath)
+	c.calleePath = c.calleePath.Clone()
+	c.receiverPath = c.receiverPath.Clone()
+	c.methodPath = c.methodPath.Clone()
 	c.argumentSources = copyValueSources(c.argumentSources)
 	c.typeArgs = copyTypeRefs(c.typeArgs)
 	c.resultTargets = copyCallResultTargets(c.resultTargets)

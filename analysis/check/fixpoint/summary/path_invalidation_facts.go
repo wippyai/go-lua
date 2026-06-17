@@ -18,7 +18,7 @@ func normalizePathInvalidationFacts(in []callboundary.PathInvalidationFact) []ca
 		if !fact.Path.IsPlaceholder() {
 			continue
 		}
-		fact.Path = cloneSummaryPath(fact.Path)
+		fact.Path = fact.Path.Clone()
 		seen[pathInvalidationFactKey(fact.Path.Key())] = fact
 	}
 	if len(seen) == 0 {
@@ -50,7 +50,7 @@ func clonePathInvalidationFacts(in []callboundary.PathInvalidationFact) []callbo
 	}
 	out := make([]callboundary.PathInvalidationFact, len(in))
 	for i, fact := range in {
-		fact.Path = cloneSummaryPath(fact.Path)
+		fact.Path = fact.Path.Clone()
 		out[i] = fact
 	}
 	return out

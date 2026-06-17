@@ -108,17 +108,17 @@ type BranchLenRefinement struct {
 
 // NewBranchLenRefinement creates a true-edge length-floor fact for arrayPath.
 func NewBranchLenRefinement(arrayPath path.Path, lo int64) BranchLenRefinement {
-	return BranchLenRefinement{arrayPath: copyPath(arrayPath), lo: lo}
+	return BranchLenRefinement{arrayPath: arrayPath.Clone(), lo: lo}
 }
 
 // ArrayPath returns the array path whose length floor this fact raises.
-func (r BranchLenRefinement) ArrayPath() path.Path { return copyPath(r.arrayPath) }
+func (r BranchLenRefinement) ArrayPath() path.Path { return r.arrayPath.Clone() }
 
 // Floor returns the proven lower bound on the array length.
 func (r BranchLenRefinement) Floor() int64 { return r.lo }
 
 func (r BranchLenRefinement) copy() BranchLenRefinement {
-	r.arrayPath = copyPath(r.arrayPath)
+	r.arrayPath = r.arrayPath.Clone()
 	return r
 }
 
@@ -138,7 +138,7 @@ func NewBranchRefinement(
 	hasFalseValue bool,
 ) BranchRefinement {
 	return BranchRefinement{
-		targetPath:    copyPath(targetPath),
+		targetPath:    targetPath.Clone(),
 		trueValue:     trueValue,
 		hasTrueValue:  hasTrueValue,
 		falseValue:    falseValue,
@@ -165,7 +165,7 @@ func (s BranchRefinementSet) LenRefinements() []BranchLenRefinement {
 }
 
 // TargetPath returns the refined path.
-func (r BranchRefinement) TargetPath() path.Path { return copyPath(r.targetPath) }
+func (r BranchRefinement) TargetPath() path.Path { return r.targetPath.Clone() }
 
 // TrueValue returns the true-edge value refinement, if present.
 func (r BranchRefinement) TrueValue() (ValueRefinement, bool) {
@@ -186,7 +186,7 @@ func (r BranchRefinement) ValueForEdge(cond bool) (ValueRefinement, bool) {
 }
 
 func (r BranchRefinement) copy() BranchRefinement {
-	r.targetPath = copyPath(r.targetPath)
+	r.targetPath = r.targetPath.Clone()
 	return r
 }
 

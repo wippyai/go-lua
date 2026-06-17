@@ -26,7 +26,7 @@ func normalizeEffectDeltas(reg *axis.Registry, in []callboundary.EffectDelta) []
 		if !delta.Target.IsPlaceholder() || delta.Site == "" || delta.Kind == 0 {
 			continue
 		}
-		delta.Target = cloneSummaryPath(delta.Target)
+		delta.Target = delta.Target.Clone()
 		if domain.Equal(delta.Value, bottom) {
 			continue
 		}
@@ -46,7 +46,7 @@ func cloneEffectDeltas(in []callboundary.EffectDelta) []callboundary.EffectDelta
 	}
 	out := make([]callboundary.EffectDelta, len(in))
 	for i, delta := range in {
-		delta.Target = cloneSummaryPath(delta.Target)
+		delta.Target = delta.Target.Clone()
 		out[i] = delta
 	}
 	return out

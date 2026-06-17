@@ -21,7 +21,7 @@ func normalizeEscapeEventFacts(in []callboundary.EscapeEventFact) []callboundary
 		if !fact.Target.IsPlaceholder() || fact.Kind == callboundary.EscapeEventNone {
 			continue
 		}
-		fact.Target = cloneSummaryPath(fact.Target)
+		fact.Target = fact.Target.Clone()
 		key := escapeEventKeyOf(fact)
 		if existing, ok := merged[key]; ok && existing.Kind >= fact.Kind {
 			continue
@@ -37,7 +37,7 @@ func cloneEscapeEventFacts(in []callboundary.EscapeEventFact) []callboundary.Esc
 	}
 	out := make([]callboundary.EscapeEventFact, len(in))
 	for i, fact := range in {
-		fact.Target = cloneSummaryPath(fact.Target)
+		fact.Target = fact.Target.Clone()
 		out[i] = fact
 	}
 	return out

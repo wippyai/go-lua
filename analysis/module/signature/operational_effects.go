@@ -143,7 +143,7 @@ func clonePathPresenceRefinements(in []PathPresenceRefinement) []PathPresenceRef
 	}
 	out := make([]PathPresenceRefinement, len(in))
 	for i, fact := range in {
-		out[i] = PathPresenceRefinement{Path: clonePath(fact.Path), Presence: fact.Presence}
+		out[i] = PathPresenceRefinement{Path: fact.Path.Clone(), Presence: fact.Presence}
 	}
 	return out
 }
@@ -154,7 +154,7 @@ func clonePathStaticMemberFacts(in []PathStaticMemberFact) []PathStaticMemberFac
 	}
 	out := make([]PathStaticMemberFact, len(in))
 	for i, fact := range in {
-		out[i] = PathStaticMemberFact{Path: clonePath(fact.Path), Type: fact.Type}
+		out[i] = PathStaticMemberFact{Path: fact.Path.Clone(), Type: fact.Type}
 	}
 	return out
 }
@@ -165,7 +165,7 @@ func clonePathInvalidations(in []PathInvalidation) []PathInvalidation {
 	}
 	out := make([]PathInvalidation, len(in))
 	for i, fact := range in {
-		out[i] = PathInvalidation{Path: clonePath(fact.Path)}
+		out[i] = PathInvalidation{Path: fact.Path.Clone()}
 	}
 	return out
 }
@@ -176,7 +176,7 @@ func cloneFrozenTables(in []FrozenTable) []FrozenTable {
 	}
 	out := make([]FrozenTable, len(in))
 	for i, fact := range in {
-		out[i] = FrozenTable{Target: clonePath(fact.Target)}
+		out[i] = FrozenTable{Target: fact.Target.Clone()}
 	}
 	return out
 }
@@ -187,7 +187,7 @@ func cloneEscapeEvents(in []EscapeEvent) []EscapeEvent {
 	}
 	out := make([]EscapeEvent, len(in))
 	for i, fact := range in {
-		out[i] = EscapeEvent{Target: clonePath(fact.Target), Kind: fact.Kind, Recursive: fact.Recursive}
+		out[i] = EscapeEvent{Target: fact.Target.Clone(), Kind: fact.Kind, Recursive: fact.Recursive}
 	}
 	return out
 }
@@ -198,7 +198,7 @@ func cloneStoreRelations(in []StoreRelation) []StoreRelation {
 	}
 	out := make([]StoreRelation, len(in))
 	for i, fact := range in {
-		out[i] = StoreRelation{Source: clonePath(fact.Source), Into: clonePath(fact.Into)}
+		out[i] = StoreRelation{Source: fact.Source.Clone(), Into: fact.Into.Clone()}
 	}
 	return out
 }
@@ -255,14 +255,6 @@ func cloneAllocationDynamicEntryTemplates(in []AllocationDynamicEntryTemplate) [
 	out := make([]AllocationDynamicEntryTemplate, len(in))
 	copy(out, in)
 	return out
-}
-
-func clonePath(p pathdom.Path) pathdom.Path {
-	if len(p.Segments) == 0 {
-		return p
-	}
-	p.Segments = append([]segment.Segment(nil), p.Segments...)
-	return p
 }
 
 func equalReturnPresenceRelations(a, b []ReturnPresenceRelation) bool {

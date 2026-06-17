@@ -182,7 +182,7 @@ func objectEntryTargetPath(root pathdom.Path, suffix pathdom.Path) (pathdom.Path
 	if root.IsEmpty() || len(suffix.Segments) == 0 {
 		return pathdom.Path{}, false
 	}
-	out := copyPath(root)
+	out := root.Clone()
 	out.Segments = append(out.Segments, suffix.Segments...)
 	return out, true
 }

@@ -1599,7 +1599,7 @@ end
 		}
 	}
 
-	originalCasePath := copyPath(selectFact.Cases[0].ChannelPath)
+	originalCasePath := selectFact.Cases[0].ChannelPath.Clone()
 	selects[0].Cases[0].ChannelPath.Segments = append(selects[0].Cases[0].ChannelPath.Segments, segment.Segment{Kind: segment.SegmentField, Name: "mutated"})
 	again := result.ChannelSelects()
 	if !again[0].Cases[0].ChannelPath.Equal(originalCasePath) {
@@ -1822,7 +1822,7 @@ func TestBranchConditionCheckOtherPathIsCopied(t *testing.T) {
 	if len(fact.Check.OtherPath.Segments) != 1 {
 		t.Fatalf("other path segments = %#v, want one segment", fact.Check.OtherPath.Segments)
 	}
-	original := copyPath(fact.Check.OtherPath)
+	original := fact.Check.OtherPath.Clone()
 	fact.Check.OtherPath.Segments[0].Name = "mutated"
 
 	again, _ := result.BranchCondition(point)

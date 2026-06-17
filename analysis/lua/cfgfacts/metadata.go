@@ -3,7 +3,6 @@ package cfgfacts
 import (
 	"sort"
 
-	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 )
 
@@ -83,16 +82,8 @@ func (m *Metadata) SetFunctionDefinition(point cfg.Point, fact FunctionDefinitio
 }
 
 func copyFunctionDefinitionFact(fact FunctionDefinitionFact) FunctionDefinitionFact {
-	fact.TargetPath = copyPath(fact.TargetPath)
+	fact.TargetPath = fact.TargetPath.Clone()
 	return fact
-}
-
-func copyPath(p path.Path) path.Path {
-	if len(p.Segments) == 0 {
-		return p
-	}
-	p.Segments = append(p.Segments[:0:0], p.Segments...)
-	return p
 }
 
 // NumericFor returns the numeric-for fact for point.

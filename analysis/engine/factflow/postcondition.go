@@ -44,7 +44,7 @@ type PostconditionPathRelationSet struct {
 // NewPostconditionRefinement creates a node-local postcondition refinement.
 func NewPostconditionRefinement(targetPath path.Path, value ValueRefinement) PostconditionRefinement {
 	return PostconditionRefinement{
-		targetPath: copyPath(targetPath),
+		targetPath: targetPath.Clone(),
 		value:      value,
 	}
 }
@@ -58,8 +58,8 @@ func NewPostconditionRefinementSet(refinements ...PostconditionRefinement) Postc
 func NewPostconditionPathEquality(leftPath path.Path, rightPath path.Path) PostconditionPathRelation {
 	return PostconditionPathRelation{
 		kind:      PostconditionPathRelationEqual,
-		leftPath:  copyPath(leftPath),
-		rightPath: copyPath(rightPath),
+		leftPath:  leftPath.Clone(),
+		rightPath: rightPath.Clone(),
 	}
 }
 
@@ -69,13 +69,13 @@ func NewPostconditionPathRelationSet(relations ...PostconditionPathRelation) Pos
 }
 
 // TargetPath returns the refined path.
-func (r PostconditionRefinement) TargetPath() path.Path { return copyPath(r.targetPath) }
+func (r PostconditionRefinement) TargetPath() path.Path { return r.targetPath.Clone() }
 
 // Value returns the postcondition value refinement.
 func (r PostconditionRefinement) Value() ValueRefinement { return r.value }
 
 func (r PostconditionRefinement) copy() PostconditionRefinement {
-	r.targetPath = copyPath(r.targetPath)
+	r.targetPath = r.targetPath.Clone()
 	return r
 }
 
@@ -92,14 +92,14 @@ func (s PostconditionRefinementSet) copy() PostconditionRefinementSet {
 func (r PostconditionPathRelation) Kind() PostconditionPathRelationKind { return r.kind }
 
 // LeftPath returns the left relation path.
-func (r PostconditionPathRelation) LeftPath() path.Path { return copyPath(r.leftPath) }
+func (r PostconditionPathRelation) LeftPath() path.Path { return r.leftPath.Clone() }
 
 // RightPath returns the right relation path.
-func (r PostconditionPathRelation) RightPath() path.Path { return copyPath(r.rightPath) }
+func (r PostconditionPathRelation) RightPath() path.Path { return r.rightPath.Clone() }
 
 func (r PostconditionPathRelation) copy() PostconditionPathRelation {
-	r.leftPath = copyPath(r.leftPath)
-	r.rightPath = copyPath(r.rightPath)
+	r.leftPath = r.leftPath.Clone()
+	r.rightPath = r.rightPath.Clone()
 	return r
 }
 

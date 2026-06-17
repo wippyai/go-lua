@@ -21,8 +21,8 @@ func normalizeStoreRelationFacts(in []callboundary.StoreRelationFact) []callboun
 		if !fact.Source.IsPlaceholder() || !fact.Into.IsPlaceholder() {
 			continue
 		}
-		fact.Source = cloneSummaryPath(fact.Source)
-		fact.Into = cloneSummaryPath(fact.Into)
+		fact.Source = fact.Source.Clone()
+		fact.Into = fact.Into.Clone()
 		seen[storeRelationKeyOf(fact)] = fact
 	}
 	if len(seen) == 0 {
@@ -37,8 +37,8 @@ func cloneStoreRelationFacts(in []callboundary.StoreRelationFact) []callboundary
 	}
 	out := make([]callboundary.StoreRelationFact, len(in))
 	for i, fact := range in {
-		fact.Source = cloneSummaryPath(fact.Source)
-		fact.Into = cloneSummaryPath(fact.Into)
+		fact.Source = fact.Source.Clone()
+		fact.Into = fact.Into.Clone()
 		out[i] = fact
 	}
 	return out

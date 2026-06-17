@@ -1,7 +1,6 @@
 package factapply
 
 import (
-	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	sourcevalue "github.com/wippyai/go-lua/analysis/engine/sourcevalue"
 	"github.com/wippyai/go-lua/analysis/engine/state"
@@ -80,13 +79,4 @@ func applyPathDescendantInvalidation(
 		return out
 	}
 	return invalidated
-}
-
-func copyPath(p pathdom.Path) pathdom.Path {
-	if len(p.Segments) == 0 {
-		return p
-	}
-	out := p
-	out.Segments = append(p.Segments[:0:0], p.Segments...)
-	return out
 }

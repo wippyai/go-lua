@@ -29,8 +29,8 @@ func normalizeChannelSelectFacts(in []callboundary.ChannelSelectFact) []callboun
 		if !optionalPlaceholderPath(fact.Result) || !optionalPlaceholderPath(fact.Case) {
 			continue
 		}
-		fact.Result = cloneSummaryPath(fact.Result)
-		fact.Case = cloneSummaryPath(fact.Case)
+		fact.Result = fact.Result.Clone()
+		fact.Case = fact.Case.Clone()
 		seen[channelSelectFactKeyOf(fact)] = fact
 	}
 	return sortedChannelSelectFacts(seen)
@@ -42,8 +42,8 @@ func cloneChannelSelectFacts(in []callboundary.ChannelSelectFact) []callboundary
 	}
 	out := make([]callboundary.ChannelSelectFact, len(in))
 	for i, fact := range in {
-		fact.Result = cloneSummaryPath(fact.Result)
-		fact.Case = cloneSummaryPath(fact.Case)
+		fact.Result = fact.Result.Clone()
+		fact.Case = fact.Case.Clone()
 		out[i] = fact
 	}
 	return out

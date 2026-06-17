@@ -81,7 +81,7 @@ func rootAssignmentTarget(target symbol.ID, targetPath pathdom.Path) (symbol.ID,
 }
 
 func rootAssignmentPath(target symbol.ID, targetPath pathdom.Path) pathdom.Path {
-	out := copyPath(targetPath)
+	out := targetPath.Clone()
 	if out.Symbol == 0 {
 		out.Symbol = target
 	}

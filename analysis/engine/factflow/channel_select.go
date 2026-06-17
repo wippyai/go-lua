@@ -65,9 +65,9 @@ func NewChannelSelect(config ChannelSelectConfig) ChannelSelect {
 	return ChannelSelect{
 		selectID:        config.SelectID,
 		kind:            config.Kind,
-		resultPath:      copyPath(config.ResultPath),
+		resultPath:      config.ResultPath.Clone(),
 		hasResultPath:   config.HasResultPath,
-		casePath:        copyPath(config.CasePath),
+		casePath:        config.CasePath.Clone(),
 		hasCasePath:     config.HasCasePath,
 		payloadValue:    config.PayloadValue,
 		hasPayloadValue: config.HasPayloadValue,
@@ -92,7 +92,7 @@ func (s ChannelSelect) ResultPath() (path.Path, bool) {
 	if !s.hasResultPath {
 		return path.Path{}, false
 	}
-	return copyPath(s.resultPath), true
+	return s.resultPath.Clone(), true
 }
 
 // CasePath returns case path evidence, if present.
@@ -100,7 +100,7 @@ func (s ChannelSelect) CasePath() (path.Path, bool) {
 	if !s.hasCasePath {
 		return path.Path{}, false
 	}
-	return copyPath(s.casePath), true
+	return s.casePath.Clone(), true
 }
 
 // PayloadValue returns payload value evidence for receive cases, if present.
@@ -118,8 +118,8 @@ func (s ChannelSelect) Index() int { return s.index }
 func (s ChannelSelect) HasDefault() bool { return s.hasDefault }
 
 func (s ChannelSelect) copy() ChannelSelect {
-	s.resultPath = copyPath(s.resultPath)
-	s.casePath = copyPath(s.casePath)
+	s.resultPath = s.resultPath.Clone()
+	s.casePath = s.casePath.Clone()
 	return s
 }
 

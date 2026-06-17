@@ -38,7 +38,7 @@ func NewDynamicIndexWrite(
 	readbackIntent DynamicIndexReadbackIntent,
 ) DynamicIndexWrite {
 	return DynamicIndexWrite{
-		tablePath:      copyPath(tablePath),
+		tablePath:      tablePath.Clone(),
 		keySource:      keySource,
 		source:         source,
 		admission:      admission,
@@ -47,7 +47,7 @@ func NewDynamicIndexWrite(
 }
 
 // TablePath returns the table path receiving the dynamic index write.
-func (w DynamicIndexWrite) TablePath() path.Path { return copyPath(w.tablePath) }
+func (w DynamicIndexWrite) TablePath() path.Path { return w.tablePath.Clone() }
 
 // KeySource returns the source evidence for the dynamic key.
 func (w DynamicIndexWrite) KeySource() ValueSource { return w.keySource }
@@ -64,7 +64,7 @@ func (w DynamicIndexWrite) ReadbackIntent() DynamicIndexReadbackIntent {
 }
 
 func (w DynamicIndexWrite) copy() DynamicIndexWrite {
-	w.tablePath = copyPath(w.tablePath)
+	w.tablePath = w.tablePath.Clone()
 	return w
 }
 

@@ -2,7 +2,6 @@ package pathexpr
 
 import (
 	"github.com/wippyai/go-lua/analysis/domain/path"
-	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
@@ -91,15 +90,7 @@ func lastTableFieldIndex(fields []*ast.Field) int {
 }
 
 func appendSuffix(prefix path.Path, suffix path.Path) path.Path {
-	out := clonePath(prefix)
+	out := prefix.Clone()
 	out.Segments = append(out.Segments, suffix.Segments...)
 	return out
-}
-
-func clonePath(p path.Path) path.Path {
-	if len(p.Segments) == 0 {
-		return p
-	}
-	p.Segments = append([]segment.Segment(nil), p.Segments...)
-	return p
 }

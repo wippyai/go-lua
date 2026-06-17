@@ -30,9 +30,9 @@ func NewBranchPresenceRelation(
 	targetPresence presence.Value,
 ) BranchPresenceRelation {
 	return BranchPresenceRelation{
-		triggerPath:     copyPath(triggerPath),
+		triggerPath:     triggerPath.Clone(),
 		triggerPresence: triggerPresence,
-		targetPath:      copyPath(targetPath),
+		targetPath:      targetPath.Clone(),
 		targetPresence:  targetPresence,
 	}
 }
@@ -43,20 +43,20 @@ func NewBranchPresenceRelationSet(relations ...BranchPresenceRelation) BranchPre
 }
 
 // TriggerPath returns the branch-refined path that activates the implication.
-func (r BranchPresenceRelation) TriggerPath() path.Path { return copyPath(r.triggerPath) }
+func (r BranchPresenceRelation) TriggerPath() path.Path { return r.triggerPath.Clone() }
 
 // TriggerPresence returns the triggering presence state.
 func (r BranchPresenceRelation) TriggerPresence() presence.Value { return r.triggerPresence }
 
 // TargetPath returns the path refined when the implication activates.
-func (r BranchPresenceRelation) TargetPath() path.Path { return copyPath(r.targetPath) }
+func (r BranchPresenceRelation) TargetPath() path.Path { return r.targetPath.Clone() }
 
 // TargetPresence returns the target presence state.
 func (r BranchPresenceRelation) TargetPresence() presence.Value { return r.targetPresence }
 
 func (r BranchPresenceRelation) copy() BranchPresenceRelation {
-	r.triggerPath = copyPath(r.triggerPath)
-	r.targetPath = copyPath(r.targetPath)
+	r.triggerPath = r.triggerPath.Clone()
+	r.targetPath = r.targetPath.Clone()
 	return r
 }
 

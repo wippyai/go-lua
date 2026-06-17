@@ -38,7 +38,7 @@ func NewCallResultTarget(kind CallResultTargetKind, index, resultIndex int, targ
 		index:        index,
 		resultIndex:  resultIndex,
 		targetSymbol: targetSymbol,
-		targetPath:   copyPath(targetPath),
+		targetPath:   targetPath.Clone(),
 	}
 }
 
@@ -55,7 +55,7 @@ func (t CallResultTarget) ResultIndex() int { return t.resultIndex }
 func (t CallResultTarget) TargetSymbol() symbol.ID { return t.targetSymbol }
 
 // TargetPath returns the target's path identity.
-func (t CallResultTarget) TargetPath() path.Path { return copyPath(t.targetPath) }
+func (t CallResultTarget) TargetPath() path.Path { return t.targetPath.Clone() }
 
 // Kind returns the target category.
 func (v CallResultTargetView) Kind() CallResultTargetKind { return v.target.kind }
@@ -70,7 +70,7 @@ func (v CallResultTargetView) ResultIndex() int { return v.target.resultIndex }
 func (v CallResultTargetView) TargetSymbol() symbol.ID { return v.target.targetSymbol }
 
 // TargetPath returns a defensive copy of the target's path identity.
-func (v CallResultTargetView) TargetPath() path.Path { return copyPath(v.target.targetPath) }
+func (v CallResultTargetView) TargetPath() path.Path { return v.target.targetPath.Clone() }
 
 // TargetPathKey returns the target path's structural key.
 func (v CallResultTargetView) TargetPathKey() path.PathKey { return v.target.targetPath.Key() }
@@ -94,7 +94,7 @@ func (v CallResultTargetView) CallResultTarget() CallResultTarget {
 }
 
 func (t CallResultTarget) copy() CallResultTarget {
-	t.targetPath = copyPath(t.targetPath)
+	t.targetPath = t.targetPath.Clone()
 	return t
 }
 

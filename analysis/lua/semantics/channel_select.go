@@ -103,7 +103,7 @@ func channelSelectCase(expr ast.Expr, bindings *bind.Result) (ChannelSelectCaseF
 	}
 	return ChannelSelectCaseFact{
 		CaseCall:       call,
-		ChannelPath:    copyPath(channelPath),
+		ChannelPath:    channelPath.Clone(),
 		HasChannelPath: true,
 	}, true
 }

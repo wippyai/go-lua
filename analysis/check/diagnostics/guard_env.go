@@ -338,7 +338,9 @@ func copyPaths(in []path.Path) []path.Path {
 		return nil
 	}
 	out := make([]path.Path, len(in))
-	copy(out, in)
+	for i, p := range in {
+		out[i] = p.Clone()
+	}
 	return out
 }
 

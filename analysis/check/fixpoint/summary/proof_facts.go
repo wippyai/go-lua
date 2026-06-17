@@ -25,7 +25,7 @@ func normalizeBranchProofs(in []callboundary.BranchProof) []callboundary.BranchP
 		if !proof.Path.IsPlaceholder() {
 			continue
 		}
-		proof.Path = cloneSummaryPath(proof.Path)
+		proof.Path = proof.Path.Clone()
 		switch proof.Kind {
 		case pathevidence.BranchProofPathPresence:
 			if proof.Presence.IsBottom() || proof.Presence.IsTop() {
@@ -36,7 +36,7 @@ func normalizeBranchProofs(in []callboundary.BranchProof) []callboundary.BranchP
 			if !proof.Other.IsPlaceholder() {
 				continue
 			}
-			proof.Other = cloneSummaryPath(proof.Other)
+			proof.Other = proof.Other.Clone()
 			proof.Presence = presence.Bottom()
 		default:
 			continue
@@ -52,8 +52,8 @@ func cloneBranchProofs(in []callboundary.BranchProof) []callboundary.BranchProof
 	}
 	out := make([]callboundary.BranchProof, len(in))
 	for i, proof := range in {
-		proof.Path = cloneSummaryPath(proof.Path)
-		proof.Other = cloneSummaryPath(proof.Other)
+		proof.Path = proof.Path.Clone()
+		proof.Other = proof.Other.Clone()
 		out[i] = proof
 	}
 	return out

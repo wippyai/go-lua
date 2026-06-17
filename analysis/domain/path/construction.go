@@ -45,6 +45,16 @@ func (p Path) IndexInt(index int) Path {
 	return p.Append(segment.Segment{Kind: segment.SegmentIndexInt, Index: index})
 }
 
+// Clone returns a copy of p with independent segment storage.
+func (p Path) Clone() Path {
+	if len(p.Segments) == 0 {
+		return p
+	}
+	out := p
+	out.Segments = append(p.Segments[:0:0], p.Segments...)
+	return out
+}
+
 // Parent returns the path without its last segment.
 // Returns an empty path if there are no segments.
 //

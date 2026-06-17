@@ -41,8 +41,8 @@ func NewBranchPathEquality(
 ) BranchPathRelation {
 	return BranchPathRelation{
 		kind:          BranchPathRelationEqual,
-		leftPath:      copyPath(leftPath),
-		rightPath:     copyPath(rightPath),
+		leftPath:      leftPath.Clone(),
+		rightPath:     rightPath.Clone(),
 		activeOnTrue:  activeOnTrue,
 		activeOnFalse: activeOnFalse,
 	}
@@ -57,8 +57,8 @@ func NewBranchPathInequality(
 ) BranchPathRelation {
 	return BranchPathRelation{
 		kind:          BranchPathRelationNotEqual,
-		leftPath:      copyPath(leftPath),
-		rightPath:     copyPath(rightPath),
+		leftPath:      leftPath.Clone(),
+		rightPath:     rightPath.Clone(),
 		activeOnTrue:  activeOnTrue,
 		activeOnFalse: activeOnFalse,
 	}
@@ -73,10 +73,10 @@ func NewBranchPathRelationSet(relations ...BranchPathRelation) BranchPathRelatio
 func (r BranchPathRelation) Kind() BranchPathRelationKind { return r.kind }
 
 // LeftPath returns the left relation path.
-func (r BranchPathRelation) LeftPath() path.Path { return copyPath(r.leftPath) }
+func (r BranchPathRelation) LeftPath() path.Path { return r.leftPath.Clone() }
 
 // RightPath returns the right relation path.
-func (r BranchPathRelation) RightPath() path.Path { return copyPath(r.rightPath) }
+func (r BranchPathRelation) RightPath() path.Path { return r.rightPath.Clone() }
 
 // ActiveOnEdge reports whether this relation is active on a branch edge.
 func (r BranchPathRelation) ActiveOnEdge(cond bool) bool {
@@ -87,8 +87,8 @@ func (r BranchPathRelation) ActiveOnEdge(cond bool) bool {
 }
 
 func (r BranchPathRelation) copy() BranchPathRelation {
-	r.leftPath = copyPath(r.leftPath)
-	r.rightPath = copyPath(r.rightPath)
+	r.leftPath = r.leftPath.Clone()
+	r.rightPath = r.rightPath.Clone()
 	return r
 }
 

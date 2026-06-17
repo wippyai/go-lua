@@ -17,13 +17,13 @@ type ObjectEntry struct {
 // NewObjectEntry creates a static object-entry descriptor.
 func NewObjectEntry(suffix path.Path, source ValueSource) ObjectEntry {
 	return ObjectEntry{
-		suffix: copyPath(suffix),
+		suffix: suffix.Clone(),
 		source: source,
 	}
 }
 
 // Suffix returns the relative static suffix under the constructed object.
-func (e ObjectEntry) Suffix() path.Path { return copyPath(e.suffix) }
+func (e ObjectEntry) Suffix() path.Path { return e.suffix.Clone() }
 
 // Source returns the value assigned to the entry.
 func (e ObjectEntry) Source() ValueSource { return e.source }
@@ -42,7 +42,7 @@ func (e ObjectEntry) WithExpected(value product.Value) ObjectEntry {
 }
 
 func (e ObjectEntry) copy() ObjectEntry {
-	e.suffix = copyPath(e.suffix)
+	e.suffix = e.suffix.Clone()
 	return e
 }
 

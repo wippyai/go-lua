@@ -18,7 +18,7 @@ func normalizeFrozenTableFacts(in []callboundary.FrozenTableFact) []callboundary
 		if !fact.Target.IsPlaceholder() {
 			continue
 		}
-		fact.Target = cloneSummaryPath(fact.Target)
+		fact.Target = fact.Target.Clone()
 		seen[frozenTableFactKey(fact.Target.Key())] = fact
 	}
 	return sortedFrozenTableFacts(seen)
@@ -30,7 +30,7 @@ func cloneFrozenTableFacts(in []callboundary.FrozenTableFact) []callboundary.Fro
 	}
 	out := make([]callboundary.FrozenTableFact, len(in))
 	for i, fact := range in {
-		fact.Target = cloneSummaryPath(fact.Target)
+		fact.Target = fact.Target.Clone()
 		out[i] = fact
 	}
 	return out

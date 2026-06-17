@@ -415,7 +415,7 @@ func (f Facts) ExpressionPath(expr ExprRef) (pathdom.Path, bool) {
 	if !ok {
 		return pathdom.Path{}, false
 	}
-	return copyPath(p), true
+	return p.Clone(), true
 }
 
 // ExpressionPaths returns the static expression access paths keyed by expression.

@@ -4,7 +4,6 @@ import (
 	"sort"
 
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
-	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 )
@@ -37,7 +36,7 @@ func normalizeReturnConditionParamRefinements(
 			!usefulReturnConditionValue(reg, refinement.Value) {
 			continue
 		}
-		refinement.Target = cloneSummaryPath(refinement.Target)
+		refinement.Target = refinement.Target.Clone()
 		key := returnConditionKey(refinement)
 		if existing, ok := merged[key]; ok {
 			existing.Value = product.Meet(reg, existing.Value, refinement.Value)
@@ -75,7 +74,7 @@ func cloneReturnConditionParamRefinements(in []ReturnConditionParamRefinement) [
 	}
 	out := make([]ReturnConditionParamRefinement, len(in))
 	for i, refinement := range in {
-		refinement.Target = cloneSummaryPath(refinement.Target)
+		refinement.Target = refinement.Target.Clone()
 		out[i] = refinement
 	}
 	return out
@@ -168,11 +167,4 @@ func returnConditionKey(refinement ReturnConditionParamRefinement) returnConditi
 
 func usefulReturnConditionValue(reg *axis.Registry, value product.Value) bool {
 	return !product.Equal(reg, value, product.Bottom(reg)) && !product.Equal(reg, value, product.Top())
-}
-
-func cloneSummaryPath(path pathdom.Path) pathdom.Path {
-	if len(path.Segments) > 0 {
-		path.Segments = append([]segment.Segment(nil), path.Segments...)
-	}
-	return path
 }

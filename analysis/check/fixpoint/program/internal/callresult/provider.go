@@ -1035,7 +1035,7 @@ func outcomeFromSummary(
 			out.ReturnConditionRefinements[i] = factapply.CallReturnConditionRefinement{
 				ReturnIndex: refinement.ReturnIndex,
 				ReturnValue: refinement.ReturnValue,
-				Target:      copyPath(refinement.Target),
+				Target:      refinement.Target.Clone(),
 				Value:       refinement.Value,
 			}
 		}
@@ -1136,73 +1136,73 @@ func cloneNormalReturnFacts(in callboundary.NormalReturnFacts) callboundary.Norm
 	if len(in.PathRefinements) != 0 {
 		out.PathRefinements = make([]callboundary.PathValueFact, len(in.PathRefinements))
 		for i, fact := range in.PathRefinements {
-			fact.Path = copyPath(fact.Path)
+			fact.Path = fact.Path.Clone()
 			out.PathRefinements[i] = fact
 		}
 	}
 	if len(in.PathStaticMembers) != 0 {
 		out.PathStaticMembers = make([]callboundary.PathStaticMemberFact, len(in.PathStaticMembers))
 		for i, fact := range in.PathStaticMembers {
-			fact.Path = copyPath(fact.Path)
+			fact.Path = fact.Path.Clone()
 			out.PathStaticMembers[i] = fact
 		}
 	}
 	if len(in.PathInvalidations) != 0 {
 		out.PathInvalidations = make([]callboundary.PathInvalidationFact, len(in.PathInvalidations))
 		for i, fact := range in.PathInvalidations {
-			fact.Path = copyPath(fact.Path)
+			fact.Path = fact.Path.Clone()
 			out.PathInvalidations[i] = fact
 		}
 	}
 	if len(in.DynamicIndexFacts) != 0 {
 		out.DynamicIndexFacts = make([]callboundary.DynamicIndexFact, len(in.DynamicIndexFacts))
 		for i, fact := range in.DynamicIndexFacts {
-			fact.Table = copyPath(fact.Table)
+			fact.Table = fact.Table.Clone()
 			out.DynamicIndexFacts[i] = fact
 		}
 	}
 	if len(in.BranchProofs) != 0 {
 		out.BranchProofs = make([]callboundary.BranchProof, len(in.BranchProofs))
 		for i, proof := range in.BranchProofs {
-			proof.Path = copyPath(proof.Path)
-			proof.Other = copyPath(proof.Other)
+			proof.Path = proof.Path.Clone()
+			proof.Other = proof.Other.Clone()
 			out.BranchProofs[i] = proof
 		}
 	}
 	if len(in.ChannelSelects) != 0 {
 		out.ChannelSelects = make([]callboundary.ChannelSelectFact, len(in.ChannelSelects))
 		for i, fact := range in.ChannelSelects {
-			fact.Result = copyPath(fact.Result)
-			fact.Case = copyPath(fact.Case)
+			fact.Result = fact.Result.Clone()
+			fact.Case = fact.Case.Clone()
 			out.ChannelSelects[i] = fact
 		}
 	}
 	if len(in.FrozenTables) != 0 {
 		out.FrozenTables = make([]callboundary.FrozenTableFact, len(in.FrozenTables))
 		for i, fact := range in.FrozenTables {
-			fact.Target = copyPath(fact.Target)
+			fact.Target = fact.Target.Clone()
 			out.FrozenTables[i] = fact
 		}
 	}
 	if len(in.EffectDeltas) != 0 {
 		out.EffectDeltas = make([]callboundary.EffectDelta, len(in.EffectDeltas))
 		for i, delta := range in.EffectDeltas {
-			delta.Target = copyPath(delta.Target)
+			delta.Target = delta.Target.Clone()
 			out.EffectDeltas[i] = delta
 		}
 	}
 	if len(in.EscapeEvents) != 0 {
 		out.EscapeEvents = make([]callboundary.EscapeEventFact, len(in.EscapeEvents))
 		for i, event := range in.EscapeEvents {
-			event.Target = copyPath(event.Target)
+			event.Target = event.Target.Clone()
 			out.EscapeEvents[i] = event
 		}
 	}
 	if len(in.StoreRelations) != 0 {
 		out.StoreRelations = make([]callboundary.StoreRelationFact, len(in.StoreRelations))
 		for i, relation := range in.StoreRelations {
-			relation.Source = copyPath(relation.Source)
-			relation.Into = copyPath(relation.Into)
+			relation.Source = relation.Source.Clone()
+			relation.Into = relation.Into.Clone()
 			out.StoreRelations[i] = relation
 		}
 	}
@@ -1218,15 +1218,6 @@ func paramConditionValue(condition summary.ParamCondition) (bool, bool) {
 	default:
 		return false, false
 	}
-}
-
-func copyPath(p pathdom.Path) pathdom.Path {
-	if len(p.Segments) == 0 {
-		return p
-	}
-	out := p
-	out.Segments = append(p.Segments[:0:0], p.Segments...)
-	return out
 }
 
 // ByCalleeIdentity maps direct callee symbols to summary keys. Mutable callee

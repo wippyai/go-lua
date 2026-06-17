@@ -61,8 +61,8 @@ func copyLocalAssignmentFact(fact LocalAssignmentFact) LocalAssignmentFact {
 }
 
 func copyOrdinaryAssignmentFact(fact OrdinaryAssignmentFact) OrdinaryAssignmentFact {
-	fact.Path = copyPath(fact.Path)
-	fact.ContainerPath = copyPath(fact.ContainerPath)
+	fact.Path = fact.Path.Clone()
+	fact.ContainerPath = fact.ContainerPath.Clone()
 	fact.Lhs = copyExprs(fact.Lhs)
 	fact.Rhs = copyExprs(fact.Rhs)
 	return fact
@@ -72,9 +72,9 @@ func copyCallFact(fact CallFact) CallFact {
 	fact.Args = copyExprs(fact.Args)
 	fact.TypeArgs = copyTypeExprs(fact.TypeArgs)
 	fact.ArgumentSources = copyValueSources(fact.ArgumentSources)
-	fact.CalleePath = copyPath(fact.CalleePath)
-	fact.ReceiverPath = copyPath(fact.ReceiverPath)
-	fact.MethodPath = copyPath(fact.MethodPath)
+	fact.CalleePath = fact.CalleePath.Clone()
+	fact.ReceiverPath = fact.ReceiverPath.Clone()
+	fact.MethodPath = fact.MethodPath.Clone()
 	fact.ResultTargets = copyResultTargets(fact.ResultTargets)
 	fact.ChannelSelect = copyChannelSelectFact(fact.ChannelSelect)
 	return fact
@@ -98,7 +98,7 @@ func copyObjectEntries(in []ObjectEntryFact) []ObjectEntryFact {
 	out := make([]ObjectEntryFact, len(in))
 	for i := range in {
 		out[i] = in[i]
-		out[i].Suffix = copyPath(in[i].Suffix)
+		out[i].Suffix = in[i].Suffix.Clone()
 	}
 	return out
 }
@@ -116,7 +116,7 @@ func copyChannelSelectCases(in []ChannelSelectCaseFact) []ChannelSelectCaseFact 
 	out := make([]ChannelSelectCaseFact, len(in))
 	for i := range in {
 		out[i] = in[i]
-		out[i].ChannelPath = copyPath(in[i].ChannelPath)
+		out[i].ChannelPath = in[i].ChannelPath.Clone()
 	}
 	return out
 }
@@ -142,6 +142,6 @@ func copyResultTargets(in []CallResultTarget) []CallResultTarget {
 }
 
 func copyResultTarget(target CallResultTarget) CallResultTarget {
-	target.Path = copyPath(target.Path)
+	target.Path = target.Path.Clone()
 	return target
 }

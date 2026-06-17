@@ -158,6 +158,31 @@ func TestPathDirectIntIndex(t *testing.T) {
 	}
 }
 
+func TestPathCloneCopiesSegments(t *testing.T) {
+	p := NewPath(1, "x").Field("a").IndexStr("b")
+	clone := p.Clone()
+
+	if !clone.Equal(p) {
+		t.Fatalf("Clone() = %v, want equal to %v", clone, p)
+	}
+	clone.Segments[0].Name = "mutated"
+	if got := p.Segments[0].Name; got != "a" {
+		t.Fatalf("Clone() shares segment storage: original first segment = %q", got)
+	}
+}
+
+func TestPathClonePreservesRootOnlyPath(t *testing.T) {
+	p := NewPath(1, "x")
+	clone := p.Clone()
+
+	if !clone.Equal(p) {
+		t.Fatalf("Clone() = %v, want equal to %v", clone, p)
+	}
+	if clone.Segments != nil {
+		t.Fatalf("Clone() root-only Segments = %#v, want nil", clone.Segments)
+	}
+}
+
 func TestPathSubstitute(t *testing.T) {
 	placeholder := Path{Root: "$0"}
 	arg := Path{Root: "vol"}

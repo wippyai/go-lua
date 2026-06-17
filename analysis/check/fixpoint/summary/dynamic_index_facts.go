@@ -24,7 +24,7 @@ func normalizeDynamicIndexFacts(reg *axis.Registry, in []callboundary.DynamicInd
 		if !fact.Table.IsPlaceholder() || fact.Site == "" {
 			continue
 		}
-		fact.Table = cloneSummaryPath(fact.Table)
+		fact.Table = fact.Table.Clone()
 		if dynamicIndexFactEqual(reg, fact, bottom) {
 			continue
 		}
@@ -44,7 +44,7 @@ func cloneDynamicIndexFacts(in []callboundary.DynamicIndexFact) []callboundary.D
 	}
 	out := make([]callboundary.DynamicIndexFact, len(in))
 	for i, fact := range in {
-		fact.Table = cloneSummaryPath(fact.Table)
+		fact.Table = fact.Table.Clone()
 		out[i] = fact
 	}
 	return out
