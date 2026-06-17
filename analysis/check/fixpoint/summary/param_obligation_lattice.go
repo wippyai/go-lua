@@ -1,260 +1,68 @@
 package summary
 
-import "sort"
+import "github.com/wippyai/go-lua/analysis/domain/lattice/factset"
 
-func normalizeParamMemberCallObligations(in []ParamMemberCallObligation) []ParamMemberCallObligation {
-	if len(in) == 0 {
-		return nil
-	}
-	seen := make(map[ParamMemberCallObligation]struct{}, len(in))
-	out := make([]ParamMemberCallObligation, 0, len(in))
-	for _, obligation := range in {
-		if obligation.ReceiverParam < 0 || obligation.ArgParam < 0 ||
-			obligation.MemberParamIndex < 0 || obligation.Member == "" {
-			continue
+// paramMemberCallObligationLane is the canonical may (union) membership lattice
+// for parameter member-call obligations.
+var paramMemberCallObligationLane = factset.Set[ParamMemberCallObligation, ParamMemberCallObligation]{
+	Key:       func(o ParamMemberCallObligation) ParamMemberCallObligation { return o },
+	EqualFact: func(a, b ParamMemberCallObligation) bool { return a == b },
+	Less: func(a, b ParamMemberCallObligation) bool {
+		if a.ReceiverParam != b.ReceiverParam {
+			return a.ReceiverParam < b.ReceiverParam
 		}
-		if _, ok := seen[obligation]; ok {
-			continue
+		if a.ArgParam != b.ArgParam {
+			return a.ArgParam < b.ArgParam
 		}
-		seen[obligation] = struct{}{}
-		out = append(out, obligation)
-	}
-	sort.Slice(out, func(i, j int) bool {
-		if out[i].ReceiverParam != out[j].ReceiverParam {
-			return out[i].ReceiverParam < out[j].ReceiverParam
+		if a.Member != b.Member {
+			return a.Member < b.Member
 		}
-		if out[i].ArgParam != out[j].ArgParam {
-			return out[i].ArgParam < out[j].ArgParam
-		}
-		if out[i].Member != out[j].Member {
-			return out[i].Member < out[j].Member
-		}
-		return out[i].MemberParamIndex < out[j].MemberParamIndex
-	})
-	if len(out) == 0 {
-		return nil
-	}
-	return out
+		return a.MemberParamIndex < b.MemberParamIndex
+	},
+	Valid: func(o ParamMemberCallObligation) bool {
+		return o.ReceiverParam >= 0 && o.ArgParam >= 0 && o.MemberParamIndex >= 0 && o.Member != ""
+	},
 }
 
-func normalizeParamMemberReturnSlots(in []ParamMemberReturnSlot) []ParamMemberReturnSlot {
-	if len(in) == 0 {
-		return nil
-	}
-	seen := make(map[ParamMemberReturnSlot]struct{}, len(in))
-	out := make([]ParamMemberReturnSlot, 0, len(in))
-	for _, slot := range in {
-		if slot.ReceiverParam < 0 || slot.ReturnIndex < 0 ||
-			slot.MemberResultIndex < 0 || slot.Member == "" {
-			continue
+// paramMemberReturnSlotLane is the canonical must (intersection) membership
+// lattice for parameter member return slots.
+var paramMemberReturnSlotLane = factset.Set[ParamMemberReturnSlot, ParamMemberReturnSlot]{
+	Key:       func(s ParamMemberReturnSlot) ParamMemberReturnSlot { return s },
+	EqualFact: func(a, b ParamMemberReturnSlot) bool { return a == b },
+	Less: func(a, b ParamMemberReturnSlot) bool {
+		if a.ReceiverParam != b.ReceiverParam {
+			return a.ReceiverParam < b.ReceiverParam
 		}
-		if _, ok := seen[slot]; ok {
-			continue
+		if a.ReturnIndex != b.ReturnIndex {
+			return a.ReturnIndex < b.ReturnIndex
 		}
-		seen[slot] = struct{}{}
-		out = append(out, slot)
-	}
-	sort.Slice(out, func(i, j int) bool {
-		if out[i].ReceiverParam != out[j].ReceiverParam {
-			return out[i].ReceiverParam < out[j].ReceiverParam
+		if a.MemberResultIndex != b.MemberResultIndex {
+			return a.MemberResultIndex < b.MemberResultIndex
 		}
-		if out[i].ReturnIndex != out[j].ReturnIndex {
-			return out[i].ReturnIndex < out[j].ReturnIndex
-		}
-		if out[i].MemberResultIndex != out[j].MemberResultIndex {
-			return out[i].MemberResultIndex < out[j].MemberResultIndex
-		}
-		return out[i].Member < out[j].Member
-	})
-	if len(out) == 0 {
-		return nil
-	}
-	return out
+		return a.Member < b.Member
+	},
+	Valid: func(s ParamMemberReturnSlot) bool {
+		return s.ReceiverParam >= 0 && s.ReturnIndex >= 0 && s.MemberResultIndex >= 0 && s.Member != ""
+	},
+	Intersect: true,
 }
 
-func normalizeReturnParamPathAliases(in []ReturnParamPathAlias) []ReturnParamPathAlias {
-	if len(in) == 0 {
-		return nil
-	}
-	seen := make(map[ReturnParamPathAlias]struct{}, len(in))
-	out := make([]ReturnParamPathAlias, 0, len(in))
-	for _, alias := range in {
-		if alias.ReturnIndex < 0 || alias.Member == "" || alias.Source == "" {
-			continue
+// returnParamPathAliasLane is the canonical must (intersection) membership
+// lattice for return-parameter path aliases.
+var returnParamPathAliasLane = factset.Set[ReturnParamPathAlias, ReturnParamPathAlias]{
+	Key:       func(a ReturnParamPathAlias) ReturnParamPathAlias { return a },
+	EqualFact: func(a, b ReturnParamPathAlias) bool { return a == b },
+	Less: func(a, b ReturnParamPathAlias) bool {
+		if a.ReturnIndex != b.ReturnIndex {
+			return a.ReturnIndex < b.ReturnIndex
 		}
-		if _, ok := seen[alias]; ok {
-			continue
+		if a.Member != b.Member {
+			return a.Member < b.Member
 		}
-		seen[alias] = struct{}{}
-		out = append(out, alias)
-	}
-	sort.Slice(out, func(i, j int) bool {
-		if out[i].ReturnIndex != out[j].ReturnIndex {
-			return out[i].ReturnIndex < out[j].ReturnIndex
-		}
-		if out[i].Member != out[j].Member {
-			return out[i].Member < out[j].Member
-		}
-		return out[i].Source < out[j].Source
-	})
-	if len(out) == 0 {
-		return nil
-	}
-	return out
-}
-
-func paramMemberCallObligationsEqual(a, b []ParamMemberCallObligation) bool {
-	a = normalizeParamMemberCallObligations(a)
-	b = normalizeParamMemberCallObligations(b)
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
-}
-
-func paramMemberCallObligationsLessOrEq(a, b []ParamMemberCallObligation) bool {
-	a = normalizeParamMemberCallObligations(a)
-	b = normalizeParamMemberCallObligations(b)
-	if len(a) == 0 {
-		return true
-	}
-	if len(b) == 0 {
-		return false
-	}
-	have := make(map[ParamMemberCallObligation]struct{}, len(b))
-	for _, obligation := range b {
-		have[obligation] = struct{}{}
-	}
-	for _, obligation := range a {
-		if _, ok := have[obligation]; !ok {
-			return false
-		}
-	}
-	return true
-}
-
-func joinParamMemberCallObligations(a, b []ParamMemberCallObligation) []ParamMemberCallObligation {
-	if len(a) == 0 {
-		return normalizeParamMemberCallObligations(b)
-	}
-	if len(b) == 0 {
-		return normalizeParamMemberCallObligations(a)
-	}
-	out := make([]ParamMemberCallObligation, 0, len(a)+len(b))
-	out = append(out, a...)
-	out = append(out, b...)
-	return normalizeParamMemberCallObligations(out)
-}
-
-func paramMemberReturnSlotsEqual(a, b []ParamMemberReturnSlot) bool {
-	a = normalizeParamMemberReturnSlots(a)
-	b = normalizeParamMemberReturnSlots(b)
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
-}
-
-func paramMemberReturnSlotsLessOrEq(a, b []ParamMemberReturnSlot) bool {
-	a = normalizeParamMemberReturnSlots(a)
-	b = normalizeParamMemberReturnSlots(b)
-	if len(b) == 0 {
-		return true
-	}
-	if len(a) == 0 {
-		return false
-	}
-	have := make(map[ParamMemberReturnSlot]struct{}, len(a))
-	for _, slot := range a {
-		have[slot] = struct{}{}
-	}
-	for _, slot := range b {
-		if _, ok := have[slot]; !ok {
-			return false
-		}
-	}
-	return true
-}
-
-func joinParamMemberReturnSlots(a, b []ParamMemberReturnSlot) []ParamMemberReturnSlot {
-	a = normalizeParamMemberReturnSlots(a)
-	b = normalizeParamMemberReturnSlots(b)
-	if len(a) == 0 || len(b) == 0 {
-		return nil
-	}
-	bSlots := make(map[ParamMemberReturnSlot]struct{}, len(b))
-	for _, slot := range b {
-		bSlots[slot] = struct{}{}
-	}
-	out := make([]ParamMemberReturnSlot, 0, min(len(a), len(b)))
-	for _, slot := range a {
-		if _, ok := bSlots[slot]; ok {
-			out = append(out, slot)
-		}
-	}
-	return normalizeParamMemberReturnSlots(out)
-}
-
-func returnParamPathAliasesEqual(a, b []ReturnParamPathAlias) bool {
-	a = normalizeReturnParamPathAliases(a)
-	b = normalizeReturnParamPathAliases(b)
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
-}
-
-func returnParamPathAliasesLessOrEq(a, b []ReturnParamPathAlias) bool {
-	a = normalizeReturnParamPathAliases(a)
-	b = normalizeReturnParamPathAliases(b)
-	if len(b) == 0 {
-		return true
-	}
-	if len(a) == 0 {
-		return false
-	}
-	have := make(map[ReturnParamPathAlias]struct{}, len(a))
-	for _, alias := range a {
-		have[alias] = struct{}{}
-	}
-	for _, alias := range b {
-		if _, ok := have[alias]; !ok {
-			return false
-		}
-	}
-	return true
-}
-
-func joinReturnParamPathAliases(a, b []ReturnParamPathAlias) []ReturnParamPathAlias {
-	a = normalizeReturnParamPathAliases(a)
-	b = normalizeReturnParamPathAliases(b)
-	if len(a) == 0 || len(b) == 0 {
-		return nil
-	}
-	bAliases := make(map[ReturnParamPathAlias]struct{}, len(b))
-	for _, alias := range b {
-		bAliases[alias] = struct{}{}
-	}
-	out := make([]ReturnParamPathAlias, 0, min(len(a), len(b)))
-	for _, alias := range a {
-		if _, ok := bAliases[alias]; ok {
-			out = append(out, alias)
-		}
-	}
-	return normalizeReturnParamPathAliases(out)
+		return a.Source < b.Source
+	},
+	Valid: func(a ReturnParamPathAlias) bool {
+		return a.ReturnIndex >= 0 && a.Member != "" && a.Source != ""
+	},
+	Intersect: true,
 }

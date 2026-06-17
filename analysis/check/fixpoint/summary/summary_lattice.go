@@ -21,9 +21,9 @@ func Normalize(reg *axis.Registry, s Summary) Summary {
 		product.Equal(reg, out.ParamObligations[len(out.ParamObligations)-1], top) {
 		out.ParamObligations = out.ParamObligations[:len(out.ParamObligations)-1]
 	}
-	out.ParamMemberCallObligations = normalizeParamMemberCallObligations(out.ParamMemberCallObligations)
-	out.ParamMemberReturnSlots = normalizeParamMemberReturnSlots(out.ParamMemberReturnSlots)
-	out.ReturnParamPathAliases = normalizeReturnParamPathAliases(out.ReturnParamPathAliases)
+	out.ParamMemberCallObligations = paramMemberCallObligationLane.Normalize(out.ParamMemberCallObligations)
+	out.ParamMemberReturnSlots = paramMemberReturnSlotLane.Normalize(out.ParamMemberReturnSlots)
+	out.ReturnParamPathAliases = returnParamPathAliasLane.Normalize(out.ReturnParamPathAliases)
 	for len(out.NormalReturnParams) > 0 &&
 		product.Equal(reg, out.NormalReturnParams[len(out.NormalReturnParams)-1], bottom) {
 		out.NormalReturnParams = out.NormalReturnParams[:len(out.NormalReturnParams)-1]
@@ -86,9 +86,9 @@ func Equal(reg *axis.Registry, a, b Summary) bool {
 		}
 	}
 	return paramEqualitiesSummaryEqual(reg, a, b) &&
-		paramMemberCallObligationsEqual(a.ParamMemberCallObligations, b.ParamMemberCallObligations) &&
-		paramMemberReturnSlotsEqual(a.ParamMemberReturnSlots, b.ParamMemberReturnSlots) &&
-		returnParamPathAliasesEqual(a.ReturnParamPathAliases, b.ReturnParamPathAliases) &&
+		paramMemberCallObligationLane.Equal(a.ParamMemberCallObligations, b.ParamMemberCallObligations) &&
+		paramMemberReturnSlotLane.Equal(a.ParamMemberReturnSlots, b.ParamMemberReturnSlots) &&
+		returnParamPathAliasLane.Equal(a.ReturnParamPathAliases, b.ReturnParamPathAliases) &&
 		normalReturnFactsEqual(reg, a.NormalReturnFacts, b.NormalReturnFacts) &&
 		heapTableObjectsEqual(reg, a.HeapTableObjects, b.HeapTableObjects) &&
 		returnConditionParamRefinementsEqual(reg, a.ReturnConditionParamRefinements, b.ReturnConditionParamRefinements) &&
@@ -130,9 +130,9 @@ func LessOrEq(reg *axis.Registry, a, b Summary) bool {
 		}
 	}
 	return paramEqualitiesSummaryLessOrEq(reg, a, b) &&
-		paramMemberCallObligationsLessOrEq(a.ParamMemberCallObligations, b.ParamMemberCallObligations) &&
-		paramMemberReturnSlotsLessOrEq(a.ParamMemberReturnSlots, b.ParamMemberReturnSlots) &&
-		returnParamPathAliasesLessOrEq(a.ReturnParamPathAliases, b.ReturnParamPathAliases) &&
+		paramMemberCallObligationLane.LessOrEq(a.ParamMemberCallObligations, b.ParamMemberCallObligations) &&
+		paramMemberReturnSlotLane.LessOrEq(a.ParamMemberReturnSlots, b.ParamMemberReturnSlots) &&
+		returnParamPathAliasLane.LessOrEq(a.ReturnParamPathAliases, b.ReturnParamPathAliases) &&
 		normalReturnFactsLessOrEq(reg, a.NormalReturnFacts, b.NormalReturnFacts) &&
 		heapTableObjectsLessOrEq(reg, a.HeapTableObjects, b.HeapTableObjects) &&
 		returnConditionParamRefinementsLessOrEq(reg, a.ReturnConditionParamRefinements, b.ReturnConditionParamRefinements) &&
@@ -192,15 +192,15 @@ func Join(reg *axis.Registry, a, b Summary) Summary {
 			normalReturnParamConditionAt(reg, b, i),
 		)
 	}
-	out.ParamMemberCallObligations = joinParamMemberCallObligations(
+	out.ParamMemberCallObligations = paramMemberCallObligationLane.Join(
 		a.ParamMemberCallObligations,
 		b.ParamMemberCallObligations,
 	)
-	out.ParamMemberReturnSlots = joinParamMemberReturnSlots(
+	out.ParamMemberReturnSlots = paramMemberReturnSlotLane.Join(
 		a.ParamMemberReturnSlots,
 		b.ParamMemberReturnSlots,
 	)
-	out.ReturnParamPathAliases = joinReturnParamPathAliases(
+	out.ReturnParamPathAliases = returnParamPathAliasLane.Join(
 		a.ReturnParamPathAliases,
 		b.ReturnParamPathAliases,
 	)
@@ -310,15 +310,15 @@ func Widen(reg *axis.Registry, prev, next Summary) Summary {
 			normalReturnParamConditionAt(reg, next, i),
 		)
 	}
-	out.ParamMemberCallObligations = joinParamMemberCallObligations(
+	out.ParamMemberCallObligations = paramMemberCallObligationLane.Join(
 		prev.ParamMemberCallObligations,
 		next.ParamMemberCallObligations,
 	)
-	out.ParamMemberReturnSlots = joinParamMemberReturnSlots(
+	out.ParamMemberReturnSlots = paramMemberReturnSlotLane.Join(
 		prev.ParamMemberReturnSlots,
 		next.ParamMemberReturnSlots,
 	)
-	out.ReturnParamPathAliases = joinReturnParamPathAliases(
+	out.ReturnParamPathAliases = returnParamPathAliasLane.Join(
 		prev.ReturnParamPathAliases,
 		next.ReturnParamPathAliases,
 	)
