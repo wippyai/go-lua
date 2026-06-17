@@ -1,6 +1,7 @@
 package sourcevalue
 
 import (
+	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/evidence"
 	variantoriginpkg "github.com/wippyai/go-lua/analysis/domain/value/axis/variantorigin"
@@ -22,7 +23,9 @@ func ObjectLiteralTypeCached(reg *axis.Registry, typeValues *typevalue.Cache, li
 	if expectedValue, ok := lit.Expected(); ok {
 		expectedType, _ = typevalue.TypeOf(reg, expectedValue)
 	}
-	expected, hasExpected := expectedRecord(reg, lit, resolve)
+	expected, hasExpected := luatypeprojection.ExpectedObjectLiteralRecord(expectedType, func(name string) (typ.Type, bool) {
+		return objectLiteralDotFieldType(reg, typeValues, lit, resolve, name)
+	})
 	seen := false
 	seenUntrustedTop := false
 	for _, entry := range lit.Entries() {
@@ -33,11 +36,13 @@ func ObjectLiteralTypeCached(reg *axis.Registry, typeValues *typevalue.Cache, li
 		}
 		value, ok := resolve(entry.Source())
 		if !ok {
-			if filled, ok := expectedRecordField(hasExpected, expected, segs); ok {
-				if !builder.Add(path, filled) {
-					return nil, false
+			if hasExpected {
+				if filled, ok := luatypeprojection.ExpectedRecordField(expected, segs); ok {
+					if !builder.Add(path, filled) {
+						return nil, false
+					}
+					seen = true
 				}
-				seen = true
 			}
 			continue
 		}
@@ -47,20 +52,24 @@ func ObjectLiteralTypeCached(reg *axis.Registry, typeValues *typevalue.Cache, li
 				seenUntrustedTop = true
 				continue
 			}
-			if filled, ok := expectedRecordField(hasExpected, expected, segs); ok {
-				if !builder.Add(path, filled) {
-					return nil, false
+			if hasExpected {
+				if filled, ok := luatypeprojection.ExpectedRecordField(expected, segs); ok {
+					if !builder.Add(path, filled) {
+						return nil, false
+					}
+					seen = true
 				}
-				seen = true
 			}
 			continue
 		}
-		if adopted, ok := adoptExpectedFieldType(hasExpected, expected, segs, t); ok {
-			if !builder.AddSealed(path, adopted) {
-				return nil, false
+		if hasExpected {
+			if adopted, ok := luatypeprojection.AdoptExpectedFieldType(expected, segs, t); ok {
+				if !builder.AddSealed(path, adopted) {
+					return nil, false
+				}
+				seen = true
+				continue
 			}
-			seen = true
-			continue
 		}
 		if !builder.Add(path, t) {
 			return nil, false
@@ -77,6 +86,31 @@ func ObjectLiteralTypeCached(reg *axis.Registry, typeValues *typevalue.Cache, li
 		return typetable.NewRecord().Build(), true
 	}
 	return builder.Build()
+}
+
+func objectLiteralDotFieldType(
+	reg *axis.Registry,
+	typeValues *typevalue.Cache,
+	lit factflow.ObjectLiteral,
+	resolve func(factflow.ValueSource) (product.Value, bool),
+	name string,
+) (typ.Type, bool) {
+	for _, entry := range lit.Entries() {
+		segs := entry.Suffix().Segments
+		if len(segs) != 1 {
+			continue
+		}
+		seg := segs[0]
+		if seg.Kind != segment.SegmentField || seg.Name != name {
+			continue
+		}
+		value, ok := resolve(entry.Source())
+		if !ok {
+			return nil, false
+		}
+		return ObjectLiteralEntryType(reg, typeValues, value)
+	}
+	return nil, false
 }
 
 func ObjectLiteralEntryType(reg *axis.Registry, typeValues *typevalue.Cache, value product.Value) (typ.Type, bool) {

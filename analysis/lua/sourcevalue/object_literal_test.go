@@ -4,7 +4,6 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/domain/path"
-	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/evidence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
@@ -66,11 +65,6 @@ func TestObjectLiteralTypeAdoptsExpectedRecordFieldAndStaticStringMemberBySegmen
 	}
 	if !typ.TypeEquals(got, expected) {
 		t.Fatalf("object literal type = %v, want %v", got, expected)
-	}
-
-	fieldOnly := typetable.NewRecord().Field("member", typ.String).Build()
-	if _, ok := expectedRecordField(true, fieldOnly, []segment.Segment{{Kind: segment.SegmentIndexString, Name: "member"}}); ok {
-		t.Fatal("bracket-string entry unexpectedly adopted dot-field contextual type")
 	}
 }
 
