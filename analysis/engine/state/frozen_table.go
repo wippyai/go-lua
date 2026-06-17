@@ -6,62 +6,37 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/lattice"
 	"github.com/wippyai/go-lua/analysis/domain/lattice/lift"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
-	"github.com/wippyai/go-lua/analysis/internal/mapedit"
 )
 
 type frozenTableLane struct {
-	bottom bool
-	values map[identity.ID]struct{}
+	mustSetLane[identity.ID]
 }
 
 func frozenTableDomain() lattice.Lattice[frozenTableLane] {
 	return wrapDomain(lift.MustSet[identity.ID](), frozenTableLaneFromMustSet, frozenTableLane.asMustSet)
 }
 
-func (l frozenTableLane) asMustSet() lift.MustSetLane[identity.ID] {
-	if l.bottom {
-		return lift.MustSetBottom[identity.ID]()
-	}
-	return lift.MustSetValues(l.values)
-}
-
 func frozenTableLaneFromMustSet(l lift.MustSetLane[identity.ID]) frozenTableLane {
-	return frozenTableLane{
-		bottom: l.Bottom(),
-		values: mapedit.Clone(l.Values()),
-	}
+	return frozenTableLane{mustSetLaneFromLift(l)}
 }
 
 func (l frozenTableLane) reachable() frozenTableLane {
-	l.bottom = false
-	return l
+	return frozenTableLane{l.mustSetLane.reachable()}
 }
 
 func (l frozenTableLane) isFrozen(id identity.ID) bool {
-	if id == (identity.ID{}) || l.bottom {
+	if id == (identity.ID{}) {
 		return false
 	}
-	_, ok := l.values[id]
-	return ok
+	return l.contains(id)
 }
 
 func (l frozenTableLane) freeze(id identity.ID) (frozenTableLane, bool) {
 	if id == (identity.ID{}) {
 		return l, false
 	}
-	if !l.bottom {
-		if _, ok := l.values[id]; ok {
-			return l, false
-		}
-	}
-	values := mapedit.Clone(l.values)
-	if values == nil {
-		values = make(map[identity.ID]struct{}, 1)
-	}
-	values[id] = struct{}{}
-	l = l.reachable()
-	l.values = values
-	return l, true
+	lane, changed := l.mustSetLane.insert(id)
+	return frozenTableLane{lane}, changed
 }
 
 type FrozenTablesSnapshot struct {

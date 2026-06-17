@@ -6,7 +6,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/lattice"
 	"github.com/wippyai/go-lua/analysis/domain/lattice/lift"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
-	"github.com/wippyai/go-lua/analysis/internal/mapedit"
 )
 
 // StoreRelation records exact evidence that Source is stored into Into on all
@@ -18,58 +17,34 @@ type StoreRelation struct {
 }
 
 type storeRelationLane struct {
-	bottom bool
-	values map[StoreRelation]struct{}
+	mustSetLane[StoreRelation]
 }
 
 func storeRelationDomain() lattice.Lattice[storeRelationLane] {
 	return wrapDomain(lift.MustSet[StoreRelation](), storeRelationLaneFromMustSet, storeRelationLane.asMustSet)
 }
 
-func (l storeRelationLane) asMustSet() lift.MustSetLane[StoreRelation] {
-	if l.bottom {
-		return lift.MustSetBottom[StoreRelation]()
-	}
-	return lift.MustSetValues(l.values)
-}
-
 func storeRelationLaneFromMustSet(l lift.MustSetLane[StoreRelation]) storeRelationLane {
-	return storeRelationLane{
-		bottom: l.Bottom(),
-		values: mapedit.Clone(l.Values()),
-	}
+	return storeRelationLane{mustSetLaneFromLift(l)}
 }
 
 func (l storeRelationLane) reachable() storeRelationLane {
-	l.bottom = false
-	return l
+	return storeRelationLane{l.mustSetLane.reachable()}
 }
 
 func (l storeRelationLane) has(relation StoreRelation) bool {
-	if l.bottom || relation.Source == "" || relation.Into == "" {
+	if relation.Source == "" || relation.Into == "" {
 		return false
 	}
-	_, ok := l.values[relation]
-	return ok
+	return l.contains(relation)
 }
 
 func (l storeRelationLane) add(relation StoreRelation) (storeRelationLane, bool) {
 	if relation.Source == "" || relation.Into == "" {
 		return l, false
 	}
-	if !l.bottom {
-		if _, ok := l.values[relation]; ok {
-			return l, false
-		}
-	}
-	values := mapedit.Clone(l.values)
-	if values == nil {
-		values = make(map[StoreRelation]struct{}, 1)
-	}
-	values[relation] = struct{}{}
-	l = l.reachable()
-	l.values = values
-	return l, true
+	lane, changed := l.mustSetLane.insert(relation)
+	return storeRelationLane{lane}, changed
 }
 
 // StoreRelationsSnapshot is a stable snapshot of the finite must-store-relation
