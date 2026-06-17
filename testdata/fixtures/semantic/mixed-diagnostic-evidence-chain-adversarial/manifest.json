@@ -7,55 +7,95 @@
         "line": 6,
         "severity": "error",
         "code": "type.return.contract",
-        "message_contains": ["returned value 1", "not number"],
+        "message_contains": [
+          "returned value 1",
+          "not number"
+        ],
         "min_evidence": 2,
-        "evidence_contains": ["returned value 1 is", "declared return type is number"],
+        "evidence_contains": [
+          "returned value 1 is",
+          "declared return type is number"
+        ],
         "min_labels": 2,
-        "label_contains": ["returned value", "declared return type"]
+        "label_contains": [
+          "returned value",
+          "declared return type"
+        ]
       },
       {
         "file": "main.lua",
         "line": 14,
         "severity": "error",
         "code": "type.member.missing",
-        "message_contains": ["has no member \"upper\"", "number | string"],
+        "message_contains": [
+          "has no member \"upper\"",
+          "number | string"
+        ],
         "min_evidence": 2,
-        "evidence_contains": ["reads value.upper", "receiver type at call"],
+        "evidence_contains": [
+          "reads value.upper",
+          "receiver type at call"
+        ],
         "min_labels": 1,
-        "label_contains": ["missing member call"]
+        "label_contains": [
+          "missing member call"
+        ]
       },
       {
         "file": "main.lua",
         "line": 17,
         "severity": "error",
         "code": "type.call.direct.result_assignment",
-        "message_contains": ["call result 1", "not number"],
+        "message_contains": [
+          "call result 1",
+          "not number"
+        ],
         "min_evidence": 2,
-        "evidence_contains": ["returns string", "assignment target is annotated number"],
+        "evidence_contains": [
+          "returns string",
+          "assignment target is annotated number"
+        ],
         "min_labels": 2,
-        "label_contains": ["call result", "declared type"]
+        "label_contains": [
+          "call result",
+          "declared type"
+        ]
       },
       {
         "file": "main.lua",
         "line": 20,
         "severity": "error",
         "code": "type.call.optional_receiver",
-        "message_contains": ["cannot call method on optional value"],
+        "message_contains": [
+          "cannot call method on optional value"
+        ],
         "min_evidence": 1,
-        "evidence_contains": ["receiver type at call is optional"],
+        "evidence_contains": [
+          "receiver type at call is optional"
+        ],
         "min_labels": 1,
-        "label_contains": ["method call on optional receiver"]
+        "label_contains": [
+          "method call on optional receiver"
+        ]
       },
       {
         "file": "main.lua",
         "line": 22,
         "severity": "error",
         "code": "type.for.numeric_operand",
-        "message_contains": ["numeric for initial value", "got \"first\""],
-        "min_evidence": 1,
-        "evidence_contains": ["initial value is \"first\""],
+        "message_contains": [
+          "numeric for initial value",
+          "got \"first\""
+        ],
+        "min_evidence": 2,
+        "evidence_contains": [
+          "initial value is \"first\"",
+          "must be a number"
+        ],
         "min_labels": 1,
-        "label_contains": ["numeric for initial value"]
+        "label_contains": [
+          "numeric for initial value"
+        ]
       }
     ]
   },

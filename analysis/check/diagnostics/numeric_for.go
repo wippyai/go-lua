@@ -61,6 +61,12 @@ func numericForOperandDiagnostic(typer expressionTyper, expr ast.Expr, role stri
 			Span:    span,
 			Message: fmt.Sprintf("%s is %s", role, formatType(got)),
 		},
+		{
+			Kind:    diagnostic.EvidenceMissingProof,
+			Trust:   diagnostic.TrustRefuted,
+			Span:    span,
+			Message: fmt.Sprintf("the %s of a numeric for loop must be a number", role),
+		},
 	}
 	if _, ok := explicitTopLikeCastType(typer.resolver, expr); ok {
 		evidence = append(evidence, explicitTopLikeCastEvidence(span, typ.Number, expr)...)
