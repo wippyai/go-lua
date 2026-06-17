@@ -172,6 +172,35 @@ func TestCallSignatureUsesSameBodyStaticMemberImportAliasAssignment(t *testing.T
 	}
 }
 
+func TestCallSignatureUsesLocalImportedFunctionAlias(t *testing.T) {
+	wantType := typ.Func().Param("payload", typ.Any).Build()
+	m := manifest.New("runtime")
+	m.DefineFunctionSignature("runtime.send", signature.Function{Type: wantType})
+
+	result, err := CheckChunk(parseChunk(t, `
+		local runtime = require("runtime")
+		local send = runtime.send
+		send({})
+	`), Config{
+		Registry: standard.Registry(),
+		Globals:  []string{"require"},
+		Signatures: signaturelookup.Source{
+			Manifests: []*manifest.Manifest{m},
+		},
+	})
+	if err != nil {
+		t.Fatalf("CheckChunk: %v", err)
+	}
+
+	sig, ok := onlyCallSignature(t, result)
+	if !ok {
+		t.Fatalf("missing local send alias signature")
+	}
+	if !typ.TypeEquals(sig.Type, wantType) {
+		t.Fatalf("signature type = %v, want %v", sig.Type, wantType)
+	}
+}
+
 func onlyCallSignature(t *testing.T, result *Result) (signature.Function, bool) {
 	t.Helper()
 	graph := result.Graph()

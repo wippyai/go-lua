@@ -224,6 +224,37 @@ func (r *Result) ExpressionPath(expr ast.Expr) (path.Path, bool) {
 	return pathexpr.Resolve(expr, r.bindings)
 }
 
+// ExpressionSignatureAt resolves an expression to a known imported or explicit
+// global function signature at point.
+func (r *Result) ExpressionSignatureAt(point cfg.Point, expr ast.Expr) (signature.Function, bool) {
+	if r == nil || expr == nil {
+		return signature.Function{}, false
+	}
+	p, ok := r.ExpressionPath(expr)
+	if !ok {
+		return signature.Function{}, false
+	}
+	return r.PathSignatureAt(point, p)
+}
+
+// PathSignatureAt resolves a path to a known imported or explicit global
+// function signature at point.
+func (r *Result) PathSignatureAt(point cfg.Point, p path.Path) (signature.Function, bool) {
+	if r == nil {
+		return signature.Function{}, false
+	}
+	if r.signatureID != nil {
+		if name, ok := r.signatureID.stableCalleeName(p.Symbol, p); ok {
+			return r.signatures.Lookup(name)
+		}
+	}
+	name, ok := r.modules.SignatureName(point, p)
+	if !ok {
+		return signature.Function{}, false
+	}
+	return r.signatures.Lookup(name)
+}
+
 func (r *Result) CallSignature(site factflow.CallSite) (signature.Function, bool) {
 	if r == nil || r.signatureID == nil {
 		return signature.Function{}, false

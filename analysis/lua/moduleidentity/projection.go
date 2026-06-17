@@ -26,6 +26,13 @@ type moduleAlias struct {
 	inherited  bool
 }
 
+type signatureAlias struct {
+	target    path.Path
+	name      string
+	point     cfg.Point
+	inherited bool
+}
+
 type pathWrite struct {
 	target  path.Path
 	point   cfg.Point
@@ -37,6 +44,7 @@ type Projection struct {
 	bindings    *bind.Result
 	roots       map[symbol.ID]moduleRoot
 	aliases     []moduleAlias
+	signatures  []signatureAlias
 	aliasNames  map[string]string
 	reassigned  map[symbol.ID][]cfg.Point
 	pathWrites  []pathWrite
@@ -79,9 +87,11 @@ func New(bindings *bind.Result, graph cfg.Graph, sem *semantics.Result) Projecti
 		out.addCapturedImportRoots(sem.Function())
 		for _, point := range points {
 			if fact, ok := sem.LocalAssignment(point); ok && fact.HasSymbol && fact.Symbol != 0 {
+				out.addSignatureAlias(path.NewPath(fact.Symbol, fact.Name), fact.Expr, point, false)
 				out.addObjectLiteralAliases(path.NewPath(fact.Symbol, fact.Name), fact.Expr, point, false)
 			}
 			if fact, ok := sem.OrdinaryAssignment(point); ok && fact.HasPath && len(fact.Path.Segments) != 0 {
+				out.addSignatureAlias(fact.Path, fact.Value, point, false)
 				out.addAssignmentAlias(fact.Path, fact.Value, point, false)
 			}
 		}
@@ -146,15 +156,32 @@ func (p Projection) ModuleAliases() map[string]string {
 
 // SignatureName resolves an imported-module call path to a manifest signature name.
 func (p Projection) SignatureName(point cfg.Point, calleePath path.Path) (string, bool) {
-	if len(calleePath.Segments) == 0 || calleePath.Symbol == 0 {
+	return p.signatureNameForPath(point, calleePath, false)
+}
+
+func (p Projection) signatureNameForPath(point cfg.Point, calleePath path.Path, includeStableGlobals bool) (string, bool) {
+	if calleePath.Symbol == 0 {
 		return "", false
 	}
-	if root, ok := p.rootIdentity(calleePath.Symbol); ok && p.rootActiveAt(root, calleePath, point) {
-		suffix, ok := staticSignatureSuffix(calleePath.Segments)
-		if !ok {
-			return "", false
+	if includeStableGlobals {
+		if name, ok := p.stableGlobalSignatureName(calleePath); ok {
+			return name, true
 		}
-		return root.modulePath + suffix, true
+	}
+	if len(calleePath.Segments) != 0 {
+		if root, ok := p.rootIdentity(calleePath.Symbol); ok && p.rootActiveAt(root, calleePath, point) {
+			suffix, ok := staticSignatureSuffix(calleePath.Segments)
+			if !ok {
+				return "", false
+			}
+			return root.modulePath + suffix, true
+		}
+	}
+	if alias, ok := p.activeSignatureAliasFor(point, calleePath); ok {
+		return alias.name, true
+	}
+	if len(calleePath.Segments) == 0 {
+		return "", false
 	}
 	alias, remaining, ok := p.activeAliasFor(point, calleePath)
 	if !ok {
@@ -165,6 +192,31 @@ func (p Projection) SignatureName(point cfg.Point, calleePath path.Path) (string
 		return "", false
 	}
 	return alias.modulePath + suffix, true
+}
+
+func (p Projection) stableGlobalSignatureName(calleePath path.Path) (string, bool) {
+	if p.bindings == nil || calleePath.Symbol == 0 {
+		return "", false
+	}
+	kind, ok := p.bindings.Kind(calleePath.Symbol)
+	if !ok || kind != symbol.Global {
+		return "", false
+	}
+	if p.bindings.IsImplicitGlobalSymbol(calleePath.Symbol) {
+		return "", false
+	}
+	name := p.bindings.Name(calleePath.Symbol)
+	if name == "" {
+		return "", false
+	}
+	if len(calleePath.Segments) == 0 {
+		return name, true
+	}
+	suffix, ok := staticSignatureSuffix(calleePath.Segments)
+	if !ok {
+		return "", false
+	}
+	return name + suffix, true
 }
 
 func (p *Projection) addRoot(id symbol.ID, root moduleRoot) {
@@ -246,7 +298,51 @@ func (p Projection) activeAliasFor(point cfg.Point, calleePath path.Path) (modul
 	return best, bestRemaining, true
 }
 
+func (p Projection) activeSignatureAliasFor(point cfg.Point, calleePath path.Path) (signatureAlias, bool) {
+	var best signatureAlias
+	bestPrefixLen := -1
+	bestOrder := -1
+	for _, alias := range p.signatures {
+		remaining, ok := pathRemainder(calleePath, alias.target)
+		if !ok || len(remaining) != 0 {
+			continue
+		}
+		startOrder, _, ok := p.activeWindow(alias.point, alias.inherited, point)
+		if !ok {
+			continue
+		}
+		if !p.signatureAliasActiveAt(alias, calleePath, point) {
+			continue
+		}
+		prefixLen := len(alias.target.Segments)
+		if prefixLen < bestPrefixLen || (prefixLen == bestPrefixLen && startOrder <= bestOrder) {
+			continue
+		}
+		best = alias
+		bestPrefixLen = prefixLen
+		bestOrder = startOrder
+	}
+	if bestPrefixLen < 0 {
+		return signatureAlias{}, false
+	}
+	return best, true
+}
+
 func (p Projection) aliasActiveAt(alias moduleAlias, calleePath path.Path, point cfg.Point) bool {
+	startOrder, callOrder, ok := p.activeWindow(alias.point, alias.inherited, point)
+	if !ok {
+		return false
+	}
+	for _, reassigned := range p.reassigned[alias.target.Symbol] {
+		reassignedOrder, ok := p.pointOrders[reassigned]
+		if ok && reassignedOrder > startOrder && reassignedOrder < callOrder {
+			return false
+		}
+	}
+	return !p.hasInvalidatingPathWrite(startOrder, callOrder, alias.target, calleePath)
+}
+
+func (p Projection) signatureAliasActiveAt(alias signatureAlias, calleePath path.Path, point cfg.Point) bool {
 	startOrder, callOrder, ok := p.activeWindow(alias.point, alias.inherited, point)
 	if !ok {
 		return false
@@ -371,6 +467,26 @@ func (p *Projection) addAssignmentAlias(target path.Path, expr ast.Expr, point c
 		return
 	}
 	p.addAlias(target, modulePath, point, inherited)
+}
+
+func (p *Projection) addSignatureAlias(target path.Path, expr ast.Expr, point cfg.Point, inherited bool) {
+	if p == nil || target.Symbol == 0 || !staticPathSegments(target.Segments) {
+		return
+	}
+	resolved, ok := pathexpr.Resolve(expr, p.bindings)
+	if !ok {
+		return
+	}
+	name, ok := p.signatureNameForPath(point, resolved, true)
+	if !ok {
+		return
+	}
+	p.signatures = append(p.signatures, signatureAlias{
+		target:    clonePath(target),
+		name:      name,
+		point:     point,
+		inherited: inherited,
+	})
 }
 
 func (p *Projection) addAlias(target path.Path, modulePath string, point cfg.Point, inherited bool) {

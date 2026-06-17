@@ -59,6 +59,69 @@ func TestProjectionSharesAliasAndSignatureIdentity(t *testing.T) {
 	}
 }
 
+func TestProjectionResolvesLocalSignatureAlias(t *testing.T) {
+	projection, graph, sem := buildProjection(t, `
+		local runtime = require("runtime")
+		local store = runtime.store
+		store({})
+	`)
+
+	got := onlySignatureName(t, projection, graph, sem)
+	if got != "runtime.store" {
+		t.Fatalf("SignatureName(local alias) = %q, want runtime.store", got)
+	}
+}
+
+func TestProjectionResolvesAssignedMemberSignatureAlias(t *testing.T) {
+	projection, graph, sem := buildProjection(t, `
+		local runtime = require("runtime")
+		local provider = {}
+		provider.store = runtime.store
+		provider.store({})
+	`)
+
+	got := onlySignatureName(t, projection, graph, sem)
+	if got != "runtime.store" {
+		t.Fatalf("SignatureName(member alias) = %q, want runtime.store", got)
+	}
+}
+
+func TestProjectionInvalidatesReassignedSignatureAlias(t *testing.T) {
+	projection, graph, sem := buildProjection(t, `
+		local runtime = require("runtime")
+		local store = runtime.store
+		store = function() end
+		store({})
+	`)
+
+	if got := onlySignatureName(t, projection, graph, sem); got != "" {
+		t.Fatalf("SignatureName(reassigned local alias) = %q, want none", got)
+	}
+}
+
+func TestProjectionResolvesExplicitGlobalSignatureAlias(t *testing.T) {
+	projection, graph, sem := buildProjectionWithGlobals(t, `
+		local store = ownership.store
+		store({}, {})
+	`, []string{"require", "ownership"})
+
+	got := onlySignatureName(t, projection, graph, sem)
+	if got != "ownership.store" {
+		t.Fatalf("SignatureName(explicit global alias) = %q, want ownership.store", got)
+	}
+}
+
+func TestProjectionDoesNotResolveImplicitGlobalSignatureAlias(t *testing.T) {
+	projection, graph, sem := buildProjection(t, `
+		local store = ownership.store
+		store({}, {})
+	`)
+
+	if got := onlySignatureName(t, projection, graph, sem); got != "" {
+		t.Fatalf("SignatureName(implicit global alias) = %q, want none", got)
+	}
+}
+
 func TestProjectionInvalidatesReassignedRequireRoot(t *testing.T) {
 	projection, graph, sem := buildProjection(t, `
 		local json = require("json")
@@ -77,10 +140,31 @@ func TestProjectionInvalidatesReassignedRequireRoot(t *testing.T) {
 	}
 }
 
+func onlySignatureName(t *testing.T, projection Projection, graph cfg.Graph, sem *semantics.Result) string {
+	t.Helper()
+	var got string
+	for _, point := range graph.RPO() {
+		call, ok := sem.Call(point)
+		if !ok || !call.HasCalleePath {
+			continue
+		}
+		name, ok := projection.SignatureName(point, call.CalleePath)
+		if ok {
+			got = name
+		}
+	}
+	return got
+}
+
 func buildProjection(t *testing.T, src string) (Projection, cfg.Graph, *semantics.Result) {
 	t.Helper()
+	return buildProjectionWithGlobals(t, src, []string{"require"})
+}
+
+func buildProjectionWithGlobals(t *testing.T, src string, globals []string) (Projection, cfg.Graph, *semantics.Result) {
+	t.Helper()
 	stmts := parseChunk(t, src)
-	bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"require"}})
+	bindings := bind.BindChunk(stmts, bind.Options{Globals: globals})
 	built := cfgbuild.BuildChunk(stmts, bindings)
 	if built == nil || built.Graph == nil {
 		t.Fatalf("BuildChunk returned nil")

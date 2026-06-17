@@ -1909,6 +1909,65 @@ func TestCheckAndExportReexportsImportedOwnershipEffectsAcrossModules(t *testing
 	assertNoExportedTableMutator(t, consumerMod.Manifest, "consumer.store")
 }
 
+func TestCheckAndExportPublishesAssignedImportedFunctionEffect(t *testing.T) {
+	storeType := typ.Func().
+		Param("value", typ.Any).
+		Param("container", typ.Any).
+		Build()
+	runtime := manifest.New("runtime")
+	runtime.SetExport(typetable.NewRecord().Field("store", storeType).Build())
+	runtime.DefineFunctionSignature("runtime.store", signature.Function{
+		Type: storeType,
+		Effect: effect.Empty.With(ownership.Store{
+			Param: effect.ParamRef{Index: 0},
+			Into:  effect.ParamRef{Index: 1},
+		}),
+	})
+
+	providerMod := CheckAndExport(`
+		local runtime = require("runtime")
+		local provider = {}
+		provider.store = runtime.store
+		return provider
+	`, "provider", WithStdlib(), WithManifest("runtime", runtime))
+	if len(providerMod.Errors) != 0 {
+		t.Fatalf("provider module errors = %#v, want none", providerMod.Errors)
+	}
+
+	requireFunctionField(t, requireExportRecord(t, providerMod), "store")
+	assertExportedStoreExact(t, providerMod.Manifest, "provider.store", 0, 1)
+}
+
+func TestCheckAndExportPublishesLocalAliasOfImportedFunctionEffect(t *testing.T) {
+	storeType := typ.Func().
+		Param("value", typ.Any).
+		Param("container", typ.Any).
+		Build()
+	runtime := manifest.New("runtime")
+	runtime.SetExport(typetable.NewRecord().Field("store", storeType).Build())
+	runtime.DefineFunctionSignature("runtime.store", signature.Function{
+		Type: storeType,
+		Effect: effect.Empty.With(ownership.Store{
+			Param: effect.ParamRef{Index: 0},
+			Into:  effect.ParamRef{Index: 1},
+		}),
+	})
+
+	providerMod := CheckAndExport(`
+		local runtime = require("runtime")
+		local store = runtime.store
+		local provider = {}
+		provider.store = store
+		return provider
+	`, "provider", WithStdlib(), WithManifest("runtime", runtime))
+	if len(providerMod.Errors) != 0 {
+		t.Fatalf("provider module errors = %#v, want none", providerMod.Errors)
+	}
+
+	requireFunctionField(t, requireExportRecord(t, providerMod), "store")
+	assertExportedStoreExact(t, providerMod.Manifest, "provider.store", 0, 1)
+}
+
 func TestCheckProcessSendPromotesDeepCallbackBuiltMapEntryPlacement(t *testing.T) {
 	result := Check(`
 type Meta = {

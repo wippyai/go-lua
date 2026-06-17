@@ -36,6 +36,7 @@ func publishFunctionSignatures(m *manifest.Manifest, modulePath string, result p
 	}
 	for _, exportRoot := range returnedSourcePaths(root) {
 		publishFunctionDefinitionSignatures(m, modulePath, result, root, exportRoot)
+		publishOrdinaryAssignmentFunctionSignatures(m, modulePath, root, exportRoot)
 	}
 }
 
@@ -96,6 +97,37 @@ func publishFunctionDefinitionSignatures(
 			sig.OperationalEffects = functionSummaryOperationalEffects(root.Registry(), summary, fn, name)
 		}
 		m.DefineFunctionSignature(name, sig)
+	}
+}
+
+func publishOrdinaryAssignmentFunctionSignatures(
+	m *manifest.Manifest,
+	modulePath string,
+	root *body.Result,
+	exportRoot pathdom.Path,
+) {
+	if m == nil || root == nil || root.Graph() == nil || exportRoot.Symbol == 0 {
+		return
+	}
+	for _, point := range root.Graph().RPO() {
+		fact, ok := root.OrdinaryAssignment(point)
+		if !ok || !fact.HasPath || fact.Path.Symbol != exportRoot.Symbol {
+			continue
+		}
+		member, ok := directMemberSegment(exportRoot.Segments, fact.Path.Segments)
+		if !ok {
+			continue
+		}
+		name, ok := functionSignatureName(modulePath, member)
+		if !ok {
+			continue
+		}
+		expr := ordinaryAssignmentRHSExpr(fact)
+		sig, ok := root.ExpressionSignatureAt(point, expr)
+		if !ok {
+			continue
+		}
+		m.DefineFunctionSignature(name, sig.Clone())
 	}
 }
 
