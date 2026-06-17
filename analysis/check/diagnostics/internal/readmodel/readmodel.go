@@ -2,6 +2,7 @@ package readmodel
 
 import (
 	"github.com/wippyai/go-lua/analysis/check/body"
+	"github.com/wippyai/go-lua/analysis/check/internal/sourcebridge"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/assertion"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/evidence"
@@ -12,7 +13,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/domain/value/variant"
-	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
 	"github.com/wippyai/go-lua/analysis/type/kind"
@@ -52,7 +52,7 @@ func (r Reader) SourceValue(point cfg.Point, source sourceprovenance.ASTSource) 
 		}
 		return r.result.LocalAssignmentSourceValueWithRootDeclarationRecoveryAtBoundary(point, source)
 	case sourceprovenance.SourceCall, sourceprovenance.SourceVararg, sourceprovenance.SourceNil, sourceprovenance.SourceUnknown:
-		valueSource, ok := valueSourceFromASTSource(source)
+		valueSource, ok := sourcebridge.ValueSourceFromASTSource(source)
 		if !ok {
 			return product.Value{}, false
 		}
@@ -294,28 +294,6 @@ func (r Reader) ValueProofAdmissible(value product.Value, want typ.Type) bool {
 func explicitAnyClaim(reg *axis.Registry, value product.Value) bool {
 	claim := product.Get(reg, value, assertion.Key)
 	return claim.Has(assertion.AnyClaim)
-}
-
-func valueSourceFromASTSource(source sourceprovenance.ASTSource) (factflow.ValueSource, bool) {
-	if !source.Valid() {
-		return factflow.ValueSource{}, false
-	}
-	shape, ok := factflow.NewValueSourceShape(source.Final, source.Expanded, source.Adjusted, source.OpenTail)
-	if !ok {
-		return factflow.ValueSource{}, false
-	}
-	switch source.Kind {
-	case sourceprovenance.SourceCall:
-		return factflow.NewCallValueSource(0, source.ExprIndex, source.TargetIndex, source.ResultIndex, source.CallPoint, shape)
-	case sourceprovenance.SourceVararg:
-		return factflow.NewVarargValueSource(0, source.ExprIndex, source.TargetIndex, source.ResultIndex, shape)
-	case sourceprovenance.SourceNil:
-		return factflow.NewNilValueSource(source.TargetIndex), true
-	case sourceprovenance.SourceUnknown:
-		return factflow.NewUnknownValueSource(source.TargetIndex), true
-	default:
-		return factflow.ValueSource{}, false
-	}
 }
 
 func concreteBoundaryType(reg *axis.Registry, value product.Value) (typ.Type, bool) {

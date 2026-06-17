@@ -2,10 +2,10 @@ package exportmanifest
 
 import (
 	"github.com/wippyai/go-lua/analysis/check/body"
+	"github.com/wippyai/go-lua/analysis/check/internal/sourcebridge"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
-	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
 	"github.com/wippyai/go-lua/analysis/lua/typeresolve"
@@ -56,7 +56,7 @@ func sourceType(result *body.Result, point cfg.Point, source sourceprovenance.AS
 		}
 		return valueType(result.Registry(), value)
 	}
-	valueSource, ok := valueSourceFromASTSource(source)
+	valueSource, ok := sourcebridge.ValueSourceFromASTSource(source)
 	if !ok {
 		return nil, false
 	}
@@ -127,26 +127,4 @@ func typeExprAt(types []ast.TypeExpr, index int) ast.TypeExpr {
 		return nil
 	}
 	return types[index]
-}
-
-func valueSourceFromASTSource(source sourceprovenance.ASTSource) (factflow.ValueSource, bool) {
-	if !source.Valid() {
-		return factflow.ValueSource{}, false
-	}
-	shape, ok := factflow.NewValueSourceShape(source.Final, source.Expanded, source.Adjusted, source.OpenTail)
-	if !ok {
-		return factflow.ValueSource{}, false
-	}
-	switch source.Kind {
-	case sourceprovenance.SourceCall:
-		return factflow.NewCallValueSource(0, source.ExprIndex, source.TargetIndex, source.ResultIndex, source.CallPoint, shape)
-	case sourceprovenance.SourceVararg:
-		return factflow.NewVarargValueSource(0, source.ExprIndex, source.TargetIndex, source.ResultIndex, shape)
-	case sourceprovenance.SourceNil:
-		return factflow.NewNilValueSource(source.TargetIndex), true
-	case sourceprovenance.SourceUnknown:
-		return factflow.NewUnknownValueSource(source.TargetIndex), true
-	default:
-		return factflow.ValueSource{}, false
-	}
 }

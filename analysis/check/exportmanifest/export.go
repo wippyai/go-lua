@@ -12,9 +12,8 @@ import (
 
 // FromProgramResult publishes the manifest evidence currently represented by
 // the solved program result. It intentionally publishes only stable manifest
-// sections with public read models: module export type and module-local type
-// definitions. Direct function signatures are left untouched until body/program
-// results expose signature.Function facts explicitly.
+// sections with public read models: module export type, module-local type
+// definitions, and directly recovered function signatures.
 func FromProgramResult(path string, result program.Result) *manifest.Manifest {
 	m := manifest.New(path)
 	if export, ok := exportType(result); ok {

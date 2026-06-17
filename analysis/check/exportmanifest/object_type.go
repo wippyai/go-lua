@@ -4,6 +4,7 @@ import (
 	"sort"
 
 	"github.com/wippyai/go-lua/analysis/check/body"
+	"github.com/wippyai/go-lua/analysis/check/internal/sourcebridge"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
@@ -112,7 +113,7 @@ func ordinaryAssignmentRHSValue(result *body.Result, point cfg.Point, fact seman
 		}
 		return result.ExpressionValueAtBoundary(point, expr)
 	}
-	valueSource, ok := valueSourceFromASTSource(fact.Source)
+	valueSource, ok := sourcebridge.ValueSourceFromASTSource(fact.Source)
 	if !ok {
 		return product.Value{}, false
 	}

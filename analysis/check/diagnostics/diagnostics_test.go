@@ -1683,6 +1683,62 @@ func TestReturnContractReportsProjectedIndexOptional(t *testing.T) {
 	}
 }
 
+func TestReturnContractReportsFlowBackedReturnMismatches(t *testing.T) {
+	cases := []struct {
+		name string
+		src  string
+		got  string
+	}{
+		{
+			name: "annotated parameter",
+			src: `
+				local function f(x: string): number
+					return x
+				end
+			`,
+			got: "string",
+		},
+		{
+			name: "parameter field",
+			src: `
+				type User = {id: string}
+				local function f(u: User): number
+					return u.id
+				end
+			`,
+			got: "string",
+		},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			diags := runDiagnostics(t, tc.src)
+			if len(diags) != 1 {
+				t.Fatalf("diagnostics = %d, want 1: %#v", len(diags), diags)
+			}
+			if d := diags[0]; d.Code != CodeReturnContractType ||
+				!strings.Contains(d.Message, tc.got) ||
+				!strings.Contains(d.Message, "number") {
+				t.Fatalf("diagnostic = %#v, want return contract %s-to-number mismatch", d, tc.got)
+			}
+		})
+	}
+}
+
+func TestReturnContractAcceptsGuardedOptionalIdentifierReturn(t *testing.T) {
+	diags := runDiagnostics(t, `
+		local function f(x: string?): string
+			if x == nil then
+				return ""
+			end
+			return x
+		end
+	`)
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v, want none after nil guard", diags)
+	}
+}
+
 func TestReturnContractDoesNotTrustCastEscape(t *testing.T) {
 	diags := runDiagnostics(t, `local function f(): number return "no" as any end`)
 	if len(diags) != 1 {

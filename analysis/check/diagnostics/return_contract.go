@@ -15,6 +15,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/typecall"
 	"github.com/wippyai/go-lua/analysis/lua/valueexpr"
 	"github.com/wippyai/go-lua/analysis/symbol"
+	"github.com/wippyai/go-lua/analysis/type/kind"
 	"github.com/wippyai/go-lua/analysis/type/refinement"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
@@ -101,7 +102,68 @@ func returnValueType(result *body.Result, resolver typeannotation.Resolver, poin
 	if got, ok := explicitTopLikeCallFactSourceType(result, resolver, source); ok {
 		return got, true
 	}
+	if got, ok := declaredReturnExprType(result, resolver, expr); ok {
+		return got, true
+	}
 	return nil, false
+}
+
+func declaredReturnExprType(result *body.Result, resolver typeannotation.Resolver, expr ast.Expr) (typ.Type, bool) {
+	if result == nil || !staticDotOrIdentExpr(expr) {
+		return nil, false
+	}
+	p, ok := result.ExpressionPath(expr)
+	if !ok || p.Symbol == 0 {
+		return nil, false
+	}
+	annotation, ok := result.SymbolTypeAnnotation(p.Symbol)
+	if !ok {
+		return nil, false
+	}
+	root, ok := lowerType(annotation, resolver)
+	if !ok || root == nil {
+		return nil, false
+	}
+	root = transparentComparableType(result, root)
+	if len(p.Segments) == 0 {
+		if !returnContractScalarDeclaredType(root) {
+			return nil, false
+		}
+		return root, true
+	}
+	got, ok := expectedTypeAtSegments(root, p.Segments)
+	if !ok || !returnContractScalarDeclaredType(got) {
+		return nil, false
+	}
+	return got, true
+}
+
+func returnContractScalarDeclaredType(t typ.Type) bool {
+	if t == nil ||
+		typ.IsAny(t) ||
+		typ.IsUnknown(t) ||
+		typ.IsNever(t) ||
+		projectionHasNil(t) ||
+		refinement.ContainsFreeTypeParam(t) {
+		return false
+	}
+	switch t.Kind() {
+	case kind.Boolean, kind.Number, kind.Integer, kind.String, kind.Literal:
+		return true
+	default:
+		return false
+	}
+}
+
+func staticDotOrIdentExpr(expr ast.Expr) bool {
+	switch e := expr.(type) {
+	case *ast.IdentExpr:
+		return e != nil
+	case *ast.AttrGetExpr:
+		return e != nil && e.KeySyntax == ast.AttrKeyDot && staticDotOrIdentExpr(e.Object)
+	default:
+		return false
+	}
 }
 
 func directCallReturnSourceType(result *body.Result, resolver typeannotation.Resolver, source sourceprovenance.ASTSource, inherited map[symbol.ID]*ast.FunctionExpr) (typ.Type, bool) {
