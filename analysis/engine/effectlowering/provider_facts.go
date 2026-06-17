@@ -298,18 +298,22 @@ func callArgumentSourceCanBindPath(source factflow.ValueSource) bool {
 }
 
 func activeNormalReturnRefinementLabels(sig signature.Function) []postcondition.NormalReturnRefinement {
+	return activeReturnLabels[postcondition.NormalReturnRefinement](sig)
+}
+
+// activeReturnLabels collects every effect label of sig that normalizes to a T
+// (or a non-nil *T), dereferencing pointers.
+func activeReturnLabels[T any](sig signature.Function) []T {
 	if len(sig.Effect.Labels) == 0 {
 		return nil
 	}
-	out := make([]postcondition.NormalReturnRefinement, 0, len(sig.Effect.Labels))
+	out := make([]T, 0, len(sig.Effect.Labels))
 	for _, label := range sig.Effect.Labels {
-		switch normalized := effect.NormalizeLabel(label).(type) {
-		case postcondition.NormalReturnRefinement:
-			out = append(out, normalized)
-		case *postcondition.NormalReturnRefinement:
-			if normalized != nil {
-				out = append(out, *normalized)
-			}
+		normalized := any(effect.NormalizeLabel(label))
+		if v, ok := normalized.(T); ok {
+			out = append(out, v)
+		} else if p, ok := normalized.(*T); ok && p != nil {
+			out = append(out, *p)
 		}
 	}
 	return out
@@ -365,19 +369,5 @@ func signatureReturnPresenceRelations(sig signature.Function) []factapply.CallRe
 }
 
 func activeErrorReturnLabels(sig signature.Function) []returns.ErrorReturn {
-	if len(sig.Effect.Labels) == 0 {
-		return nil
-	}
-	out := make([]returns.ErrorReturn, 0, len(sig.Effect.Labels))
-	for _, label := range sig.Effect.Labels {
-		switch normalized := effect.NormalizeLabel(label).(type) {
-		case returns.ErrorReturn:
-			out = append(out, normalized)
-		case *returns.ErrorReturn:
-			if normalized != nil {
-				out = append(out, *normalized)
-			}
-		}
-	}
-	return out
+	return activeReturnLabels[returns.ErrorReturn](sig)
 }

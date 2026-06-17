@@ -5,20 +5,27 @@ import "github.com/wippyai/go-lua/analysis/type/typ"
 // fieldsWithOptionalPayloadsSplit returns fields with nilable optional payloads
 // split into absent-vs-present table shape.
 func fieldsWithOptionalPayloadsSplit(fields []typ.Field) []typ.Field {
-	var out []typ.Field
-	for i, field := range fields {
-		normalized := fieldWithOptionalPayloadSplit(field)
+	return withOptionalPayloadsSplit(fields, fieldWithOptionalPayloadSplit, sameFieldShape)
+}
+
+// withOptionalPayloadsSplit returns items with split applied to each element,
+// preserving the original slice (copy-on-change) when every element keeps the
+// same shape per sameShape.
+func withOptionalPayloadsSplit[T any](items []T, split func(T) T, sameShape func(a, b T) bool) []T {
+	var out []T
+	for i, item := range items {
+		normalized := split(item)
 		if out == nil {
-			if sameFieldShape(normalized, field) {
+			if sameShape(normalized, item) {
 				continue
 			}
-			out = make([]typ.Field, 0, len(fields))
-			out = append(out, fields[:i]...)
+			out = make([]T, 0, len(items))
+			out = append(out, items[:i]...)
 		}
 		out = append(out, normalized)
 	}
 	if out == nil {
-		return fields
+		return items
 	}
 	return out
 }
@@ -39,22 +46,7 @@ func fieldWithOptionalPayloadSplit(field typ.Field) typ.Field {
 // staticMembersWithOptionalPayloadsSplit returns static members with nilable
 // optional payloads split into absent-vs-present table shape.
 func staticMembersWithOptionalPayloadsSplit(members []typ.StaticMember) []typ.StaticMember {
-	var out []typ.StaticMember
-	for i, member := range members {
-		normalized := staticMemberWithOptionalPayloadSplit(member)
-		if out == nil {
-			if sameStaticMemberShape(normalized, member) {
-				continue
-			}
-			out = make([]typ.StaticMember, 0, len(members))
-			out = append(out, members[:i]...)
-		}
-		out = append(out, normalized)
-	}
-	if out == nil {
-		return members
-	}
-	return out
+	return withOptionalPayloadsSplit(members, staticMemberWithOptionalPayloadSplit, sameStaticMemberShape)
 }
 
 // staticMemberWithOptionalPayloadSplit returns member with nilable optional
