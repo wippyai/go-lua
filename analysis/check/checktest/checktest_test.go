@@ -196,6 +196,66 @@ func TestCheckAndExportPublishesReturnedTableDottedFunctionMemberMultiReturns(t 
 	}
 }
 
+func TestRequireCheckAndExportedAssignedFunctionLiteralUsesErrorReturnSignature(t *testing.T) {
+	mod := CheckAndExport(`
+		local client = {}
+		client.fetch = function(id: string): (number?, string?)
+			if id == "" then
+				return nil, "missing"
+			end
+			return 1, nil
+		end
+		return client
+	`, "client")
+	if len(mod.Errors) != 0 {
+		t.Fatalf("module errors = %#v, want none", mod.Errors)
+	}
+	if _, ok := mod.Manifest.FunctionSignatures["client.fetch"]; !ok {
+		t.Fatalf("missing client.fetch function signature: %#v", mod.Manifest.FunctionSignatures)
+	}
+
+	result := Check(`
+		local client = require("client")
+		local value, err = client.fetch("id")
+		if err == nil then
+			local n: number = value
+		end
+	`, WithStdlib(), WithModule("client", mod))
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want imported error-return correlation", result.Diagnostics)
+	}
+}
+
+func TestRequireCheckAndExportedAssignedImportedFunctionAliasPublishesCallableShape(t *testing.T) {
+	runtime := manifest.New("runtime")
+	storeType := typ.Func().
+		Param("item", typ.String).
+		Returns(typ.Number).
+		Build()
+	runtime.SetExport(typ.Unknown)
+	runtime.DefineFunctionSignature("runtime.store", signature.Function{Type: storeType})
+
+	mod := CheckAndExport(`
+		local runtime = require("runtime")
+		local M = {}
+		local store = runtime.store
+		M.store = store
+		return M
+	`, "storage", WithStdlib(), WithManifest("runtime", runtime))
+	if len(mod.Errors) != 0 {
+		t.Fatalf("module errors = %#v, want none", mod.Errors)
+	}
+	requireFunctionField(t, requireExportRecord(t, mod), "store")
+
+	result := Check(`
+		local storage = require("storage")
+		local n: number = storage.store("item")
+	`, WithStdlib(), WithModule("storage", mod))
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want assigned imported function alias callable", result.Diagnostics)
+	}
+}
+
 func TestCheckAndExportPublishesNormalReturnAbsentParamRefinement(t *testing.T) {
 	mod := CheckAndExport(`
 		local test = {}
@@ -1630,6 +1690,22 @@ func TestCheckAndExportMultiSourceRootUsesFirstReturnSlot(t *testing.T) {
 	}
 }
 
+func TestCheckAndExportDoesNotPublishIgnoredReturnSlotFunctionSignatures(t *testing.T) {
+	mod := CheckAndExport(`
+		local primary = { value = 1 }
+		local ignored = {}
+		function ignored.bad(x: string)
+		end
+		return primary, ignored
+	`, "mod")
+	if len(mod.Errors) != 0 {
+		t.Fatalf("module errors = %#v, want none", mod.Errors)
+	}
+	if _, ok := mod.Manifest.FunctionSignatures["mod.bad"]; ok {
+		t.Fatalf("leaked ignored second-return signature: %#v", mod.Manifest.FunctionSignatures)
+	}
+}
+
 func TestRequireCheckAndExportedMultiSourceSkippedReturnKeepsAbsentMemberEvidence(t *testing.T) {
 	mod := CheckAndExport(`
 		local M = {}
@@ -1902,6 +1978,31 @@ func TestTypedImportedMemberSignatureDoesNotSuppressOptionalReceiverDiagnostic(t
 	if len(result.Diagnostics[0].Explanation.Evidence()) < 2 {
 		t.Fatalf("explanation evidence = %#v, want optional receiver evidence", result.Diagnostics[0].Explanation.Evidence())
 	}
+}
+
+func TestTypedImportedMemberSignatureDoesNotSuppressOptionalMemberDiagnostic(t *testing.T) {
+	m := manifest.New("pkg")
+	runType := typ.Func().Build()
+	m.SetExport(typetable.NewRecord().OptField("run", runType).Build())
+	m.DefineFunctionSignature("pkg.run", signature.Function{Type: runType})
+
+	result := Check(`
+		local pkg = require("pkg")
+		pkg.run()
+	`, WithStdlib(), WithManifest("pkg", m))
+	requireMemberCallDiagnosticWithEvidence(t, result, diagnostics.CodeNotCallable, "optional imported member with typed signature")
+}
+
+func TestTypedImportedMemberSignatureDoesNotSuppressNonCallableMemberDiagnostic(t *testing.T) {
+	m := manifest.New("pkg")
+	m.SetExport(typetable.NewRecord().Field("run", typ.Number).Build())
+	m.DefineFunctionSignature("pkg.run", signature.Function{Type: typ.Func().Build()})
+
+	result := Check(`
+		local pkg = require("pkg")
+		pkg.run()
+	`, WithStdlib(), WithManifest("pkg", m))
+	requireMemberCallDiagnosticWithEvidence(t, result, diagnostics.CodeNotCallable, "non-callable imported member with typed signature")
 }
 
 func TestRequireManifestExportTypesImportedValueAndMemberCall(t *testing.T) {

@@ -37,9 +37,9 @@ func publishFunctionSignatures(m *manifest.Manifest, modulePath string, result p
 		return
 	}
 	dom := dominance.ComputeImmediateDominatorInfo(root.Graph())
-	for _, exportRoot := range returnedSourcePaths(root) {
+	for _, exportRoot := range returnedExportSourcePaths(root) {
 		publishFunctionDefinitionSignatures(m, modulePath, result, root, dom, exportRoot)
-		publishOrdinaryAssignmentFunctionSignatures(m, modulePath, root, dom, exportRoot)
+		publishOrdinaryAssignmentFunctionSignatures(m, modulePath, result, root, dom, exportRoot)
 	}
 }
 
@@ -48,32 +48,31 @@ type returnedSourcePath struct {
 	points []cfg.Point
 }
 
-func returnedSourcePaths(result *body.Result) []returnedSourcePath {
+func returnedExportSourcePaths(result *body.Result) []returnedSourcePath {
 	var out []returnedSourcePath
 	seen := make(map[pathdom.PathKey]struct{})
 	for _, point := range result.ReturnPoints() {
 		fact, ok := result.ReturnFact(point)
-		if !ok {
+		if !ok || len(fact.Sources) == 0 {
 			continue
 		}
-		for _, source := range fact.Sources {
-			if source.Kind != sourceprovenance.SourceExpression || source.Expr == nil {
-				continue
-			}
-			p, ok := result.ExpressionPath(source.Expr)
-			if !ok || p.IsEmpty() {
-				continue
-			}
-			key := p.Key()
-			if _, ok := seen[key]; !ok {
-				seen[key] = struct{}{}
-				out = append(out, returnedSourcePath{path: p})
-			}
-			for i := range out {
-				if out[i].path.Key() == key {
-					out[i].points = append(out[i].points, point)
-					break
-				}
+		source := fact.Sources[0]
+		if source.Kind != sourceprovenance.SourceExpression || source.Expr == nil {
+			continue
+		}
+		p, ok := result.ExpressionPath(source.Expr)
+		if !ok || p.IsEmpty() {
+			continue
+		}
+		key := p.Key()
+		if _, ok := seen[key]; !ok {
+			seen[key] = struct{}{}
+			out = append(out, returnedSourcePath{path: p})
+		}
+		for i := range out {
+			if out[i].path.Key() == key {
+				out[i].points = append(out[i].points, point)
+				break
 			}
 		}
 	}
@@ -113,22 +112,16 @@ func publishFunctionDefinitionSignatures(
 		if !ok {
 			continue
 		}
-		fn, ok := functionSignatureType(root, fact.Func)
-		if !ok {
-			continue
+		if sig, ok := functionExpressionSignature(prog, root, fact.Func, name); ok {
+			m.DefineFunctionSignature(name, sig)
 		}
-		sig := signature.Function{Type: fn}
-		if summary, ok := functionSummary(prog, root, fact.Func); ok {
-			sig.Effect = functionSummaryEffect(summary, fn)
-			sig.OperationalEffects = functionSummaryOperationalEffects(root.Registry(), summary, fn, name)
-		}
-		m.DefineFunctionSignature(name, sig)
 	}
 }
 
 func publishOrdinaryAssignmentFunctionSignatures(
 	m *manifest.Manifest,
 	modulePath string,
+	prog program.Result,
 	root *body.Result,
 	dom *dominance.ImmediateDominators,
 	exportRoot returnedSourcePath,
@@ -150,11 +143,18 @@ func publishOrdinaryAssignmentFunctionSignatures(
 			continue
 		}
 		expr := ordinaryAssignmentRHSExpr(fact)
-		sig, ok := root.ExpressionSignatureAt(point, expr)
+		if sig, ok := root.ExpressionSignatureAt(point, expr); ok {
+			m.DefineFunctionSignature(name, sig.Clone())
+			continue
+		}
+		fn, ok := expr.(*ast.FunctionExpr)
 		if !ok {
 			continue
 		}
-		m.DefineFunctionSignature(name, sig.Clone())
+		sig, ok := functionExpressionSignature(prog, root, fn, name)
+		if ok {
+			m.DefineFunctionSignature(name, sig)
+		}
 	}
 }
 
@@ -188,6 +188,19 @@ func functionSignatureName(modulePath string, member segment.Segment) (string, b
 		return "", false
 	}
 	return modulePath + "." + memberName, true
+}
+
+func functionExpressionSignature(prog program.Result, result *body.Result, fn *ast.FunctionExpr, name string) (signature.Function, bool) {
+	fnType, ok := functionSignatureType(result, fn)
+	if !ok {
+		return signature.Function{}, false
+	}
+	sig := signature.Function{Type: fnType}
+	if summary, ok := functionSummary(prog, result, fn); ok {
+		sig.Effect = functionSummaryEffect(summary, fnType)
+		sig.OperationalEffects = functionSummaryOperationalEffects(result.Registry(), summary, fnType, name)
+	}
+	return sig, true
 }
 
 func functionSignatureType(result *body.Result, fn *ast.FunctionExpr) (*typ.Function, bool) {

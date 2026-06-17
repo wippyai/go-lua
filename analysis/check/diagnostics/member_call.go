@@ -106,7 +106,7 @@ func (p memberCall) call(result *body.Result, point cfg.Point, fact semantics.Ca
 	}
 }
 
-func (p memberCall) receiverPresenceDiagnostic(result *body.Result, point cfg.Point, fact semantics.CallFact, env guardEnv) (diagnostic.Diagnostic, bool) {
+func (p memberCall) typedSignatureStructuralDiagnostic(result *body.Result, point cfg.Point, fact semantics.CallFact, env guardEnv) (diagnostic.Diagnostic, bool) {
 	receiver, member, callExpr, ok := callMemberAccess(fact)
 	if !ok || receiver.Symbol == 0 {
 		return p.expressionReceiverCall(result, point, fact, env)
@@ -130,13 +130,23 @@ func (p memberCall) receiverPresenceDiagnostic(result *body.Result, point cfg.Po
 			return diagnostic.Diagnostic{}, false
 		}
 	}
-	if !projectionHasNil(receiverType) {
-		return diagnostic.Diagnostic{}, false
+	if projectionHasNil(receiverType) {
+		if fact.Receiver != nil && fact.Method != "" {
+			return optionalMethodCallDiagnostic(fact.Call), true
+		}
+		return memberDiagnostic(result, fact, callExpr, receiverType, member, point), true
 	}
-	if fact.Receiver != nil && fact.Method != "" {
-		return optionalMethodCallDiagnostic(fact.Call), true
+	memberType, status := typecall.MemberCall(receiverType, member)
+	switch status {
+	case typecall.MemberCallMissing:
+		return memberDiagnostic(result, fact, callExpr, receiverType, member, point), true
+	case typecall.MemberCallNotCallable:
+		if memberType == nil {
+			memberType = typ.Unknown
+		}
+		return notCallableDiagnostic(result, fact, callExpr, receiverType, memberType, member, point), true
 	}
-	return memberDiagnostic(result, fact, callExpr, receiverType, member, point), true
+	return diagnostic.Diagnostic{}, false
 }
 
 // expressionReceiverCall handles a colon-method call whose receiver is an

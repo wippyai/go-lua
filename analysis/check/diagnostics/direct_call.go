@@ -54,7 +54,7 @@ func produceDirectCallContract(result *body.Result, context producerContext, inh
 			if !hasTypedCallSignature(result, site) {
 				continue
 			}
-			if d, ok := memberCall(context).receiverPresenceDiagnostic(result, point, fact, envs[point]); ok {
+			if d, ok := memberCall(context).typedSignatureStructuralDiagnostic(result, point, fact, envs[point]); ok {
 				out = append(out, d)
 				continue
 			}

@@ -93,6 +93,9 @@ func ordinaryAssignmentRHSMemberType(result *body.Result, point cfg.Point, root 
 		if t, ok := ordinaryAssignmentRHSPathType(result, point, root, fact, expr); ok {
 			return t, true, true
 		}
+		if sig, ok := result.ExpressionSignatureAt(point, expr); ok && sig.Type != nil {
+			return sig.Type, true, true
+		}
 	}
 	resolved := false
 	if value, ok := ordinaryAssignmentRHSValue(result, point, fact); ok {

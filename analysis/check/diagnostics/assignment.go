@@ -255,7 +255,7 @@ func directCallContractWouldReport(result *body.Result, resolver typeannotation.
 		if !hasTypedCallSignature(result, site) {
 			return false
 		}
-		if _, ok := memberCall(context).receiverPresenceDiagnostic(result, source.CallPoint, fact, env); ok {
+		if _, ok := memberCall(context).typedSignatureStructuralDiagnostic(result, source.CallPoint, fact, env); ok {
 			return true
 		}
 	}
