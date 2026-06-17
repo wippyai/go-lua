@@ -49,10 +49,7 @@ func (r *Resolver) Type(expr ast.TypeExpr) (typ.Type, bool) {
 	if r == nil {
 		return typeannotation.Type(expr, nil)
 	}
-	r.current = append(r.current, expr)
-	t, ok := typeannotation.Type(expr, r)
-	r.current = r.current[:len(r.current)-1]
-	return t, ok
+	return typeannotation.TypeWithGuard(expr, r, &r.current)
 }
 
 // Decl resolves a bound type declaration.

@@ -15,6 +15,16 @@ type Resolver interface {
 	ResolveTypeRef(path []string) (typ.Type, bool)
 }
 
+// TypeWithGuard lowers expr while tracking it on the resolver's in-progress
+// stack, so recursive type references can detect cycles. It is the shared body
+// of the resolver Type methods.
+func TypeWithGuard(expr ast.TypeExpr, resolver Resolver, current *[]ast.TypeExpr) (typ.Type, bool) {
+	*current = append(*current, expr)
+	t, ok := Type(expr, resolver)
+	*current = (*current)[:len(*current)-1]
+	return t, ok
+}
+
 // Type lowers an AST type expression into the active analysis type model.
 func Type(expr ast.TypeExpr, resolver Resolver) (typ.Type, bool) {
 	switch e := expr.(type) {
