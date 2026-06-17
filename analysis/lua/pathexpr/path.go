@@ -33,6 +33,32 @@ func ResolveContainer(expr ast.Expr, bindings *bind.Result) (path.Path, bool) {
 	return Resolve(attr.Object, bindings)
 }
 
+// ResolveMutationContainer extracts the nearest statically known table
+// ancestor for an assignment target. Static member writes resolve exactly
+// through Resolve; this helper is for unresolved targets such as t[k].x where
+// the mutation must still invalidate descendants of t.
+func ResolveMutationContainer(expr ast.Expr, bindings *bind.Result) (path.Path, bool) {
+	attr, ok := expr.(*ast.AttrGetExpr)
+	if !ok {
+		return path.Path{}, false
+	}
+	return resolveMutationContainer(attr, bindings)
+}
+
+func resolveMutationContainer(expr *ast.AttrGetExpr, bindings *bind.Result) (path.Path, bool) {
+	if expr == nil {
+		return path.Path{}, false
+	}
+	if p, ok := Resolve(expr.Object, bindings); ok {
+		return p, true
+	}
+	parent, ok := expr.Object.(*ast.AttrGetExpr)
+	if !ok {
+		return path.Path{}, false
+	}
+	return resolveMutationContainer(parent, bindings)
+}
+
 // ResolveFuncName extracts the static assignment target for a function
 // definition name. Method definitions target receiver.method; self parameter
 // semantics are handled by binding, not by path resolution.

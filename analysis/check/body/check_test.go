@@ -11,6 +11,7 @@ import (
 	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/typewitness"
@@ -170,6 +171,130 @@ end
 		})
 		if typeOK && subtype.IsSubtype(staleType, typ.String) {
 			t.Fatalf("stale path read type = %s, want not assignable to string after alias variant write", staleType)
+		}
+	}
+}
+
+func TestNestedDynamicVariantWriteInvalidatesGuardedProjection(t *testing.T) {
+	reg := standard.Registry()
+	stmts := parseChunk(t, `
+type FileSlot = {
+	kind: "file",
+	path: string,
+}
+type TimerSlot = {
+	kind: "timer",
+	seconds: number,
+}
+type Slot = {
+	value: FileSlot | TimerSlot,
+}
+type Slots = {[string]: Slot}
+
+local slots: Slots = {
+	active = {
+		value = {kind = "file", path = "/tmp/active"},
+	},
+}
+local key = "active"
+
+if slots.active.value.kind == "file" then
+	slots[key].value = {kind = "timer", seconds = 20}
+	local stale_path: string = slots.active.value.path
+end
+`)
+	result, err := CheckChunk(stmts, Config{Registry: reg})
+	if err != nil {
+		t.Fatalf("CheckChunk: %v", err)
+	}
+
+	point, expr := requireLocalAssignmentExprByName(t, result, "stale_path")
+	stalePath, ok := result.ExpressionPath(expr)
+	if !ok {
+		t.Fatalf("stale_path expression path unavailable")
+	}
+	foundInvalidation := false
+	for _, candidate := range result.Graph().RPO() {
+		invalidation, ok := result.facts.PathDescendantInvalidation(candidate)
+		if !ok {
+			continue
+		}
+		if invalidation.ContainerPath().Root == "slots" {
+			foundInvalidation = true
+			break
+		}
+	}
+	if !foundInvalidation {
+		t.Fatalf("nested dynamic write did not publish descendant invalidation for slots")
+	}
+	if boundary, ok := result.boundaryStateAt(point); ok {
+		for _, p := range []path.Path{stalePath.Parent().Parent(), stalePath.Parent(), stalePath} {
+			if key := result.visibility.KeyAt(point, p); key != "" {
+				if exact := boundary.ReadPathKey(reg, key); !product.Equal(reg, exact, product.Bottom(reg)) {
+					t.Fatalf("stale dynamic path ancestor key %s survived invalidation as %v", key, exact)
+				}
+			}
+		}
+		root := stalePath
+		root.Segments = nil
+		rootValue := boundary.ReadValue(reg, key.SymbolValue(root.Symbol))
+		if id, ok := product.Get(reg, rootValue, identity.Key).ID(); ok {
+			if members := boundary.ReadHeapTableObject(reg, id).StaticMembers(); len(members) != 0 {
+				t.Fatalf("stale dynamic root heap members survived invalidation: %#v", members)
+			}
+		}
+	}
+	if stale, ok := result.ExpressionValueAtBoundary(point, expr); ok {
+		staleType, typeOK := typevalue.StructuralTypeOf(reg, result.typeValues, stale, typevalue.StructuralTypeOptions{
+			ApplyPresence: true,
+		})
+		if typeOK && subtype.IsSubtype(staleType, typ.String) {
+			t.Fatalf("stale dynamic path read type = %s, want not assignable to string after nested dynamic variant write", staleType)
+		}
+	}
+}
+
+func TestNestedDynamicVariantWriteInvalidatesAliasedProjection(t *testing.T) {
+	reg := standard.Registry()
+	stmts := parseChunk(t, `
+type FileSlot = {
+	kind: "file",
+	path: string,
+}
+type TimerSlot = {
+	kind: "timer",
+	seconds: number,
+}
+type Slot = {
+	value: FileSlot | TimerSlot,
+}
+type Slots = {[string]: Slot}
+
+local slots: Slots = {
+	active = {
+		value = {kind = "file", path = "/tmp/active"},
+	},
+}
+local active = slots.active
+local key = "active"
+
+if active.value.kind == "file" then
+	slots[key].value = {kind = "timer", seconds = 20}
+	local stale_path: string = active.value.path
+end
+`)
+	result, err := CheckChunk(stmts, Config{Registry: reg})
+	if err != nil {
+		t.Fatalf("CheckChunk: %v", err)
+	}
+
+	point, expr := requireLocalAssignmentExprByName(t, result, "stale_path")
+	if stale, ok := result.ExpressionValueAtBoundary(point, expr); ok {
+		staleType, typeOK := typevalue.StructuralTypeOf(reg, result.typeValues, stale, typevalue.StructuralTypeOptions{
+			ApplyPresence: true,
+		})
+		if typeOK && subtype.IsSubtype(staleType, typ.String) {
+			t.Fatalf("aliased stale dynamic path read type = %s, want not assignable to string after nested dynamic variant write", staleType)
 		}
 	}
 }

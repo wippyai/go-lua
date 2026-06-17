@@ -1175,10 +1175,13 @@ func TestInvalidatePathKeySubtreeRemovesStructuredDescendants(t *testing.T) {
 			t.Fatalf("%s = %s, want bottom", removed, formatValue(reg, got))
 		}
 	}
-	for _, kept := range []pathdom.PathKey{root, siblingPrefixCollision, otherVersion, otherSymbol} {
+	for _, kept := range []pathdom.PathKey{root, siblingPrefixCollision, otherVersion} {
 		if got := out.ReadPathKey(reg, kept); !valueDomain.Equal(got, present) {
 			t.Fatalf("%s = %s, want present", kept, formatValue(reg, got))
 		}
+	}
+	if got := out.ReadPathKey(reg, otherSymbol); !valueDomain.Equal(got, bottom) {
+		t.Fatalf("%s = %s, want bottom through alias proof", otherSymbol, formatValue(reg, got))
 	}
 	for _, notStored := range []pathdom.PathKey{localVersionless, placeholderPrefix, placeholderChild, placeholderSibling} {
 		if got := out.ReadPathKey(reg, notStored); !valueDomain.Equal(got, bottom) {
@@ -1198,8 +1201,8 @@ func TestInvalidatePathKeySubtreeRemovesStructuredDescendants(t *testing.T) {
 	if out.HasBranchProof(prefixProof) || out.HasBranchProof(childProof) {
 		t.Fatalf("subtree branch proof survived path invalidation")
 	}
-	if !out.HasBranchProof(otherProof) {
-		t.Fatalf("unrelated branch proof was removed")
+	if out.HasBranchProof(otherProof) {
+		t.Fatalf("branch proof attached to invalidated alias survived")
 	}
 	if got := s.ReadPathKey(reg, child); !valueDomain.Equal(got, present) {
 		t.Fatalf("original child changed to %s", formatValue(reg, got))
@@ -1257,8 +1260,8 @@ func TestInvalidatePathKeySubtreeRemovesBranchProofsWithOtherUnderSubtree(t *tes
 	if got := out.ReadPathKey(reg, otherInside); !valueDomain.Equal(got, bottom) {
 		t.Fatalf("%s = %s, want bottom", otherInside, formatValue(reg, got))
 	}
-	if got := out.ReadPathKey(reg, outside); !valueDomain.Equal(got, present) {
-		t.Fatalf("%s = %s, want present", outside, formatValue(reg, got))
+	if got := out.ReadPathKey(reg, outside); !valueDomain.Equal(got, bottom) {
+		t.Fatalf("%s = %s, want bottom through alias proof", outside, formatValue(reg, got))
 	}
 	if got, ok := out.ReadPathStaticMember(otherInside); ok {
 		t.Fatalf("static member %s = %s, want removed", otherInside, formatValue(reg, got))
@@ -1319,10 +1322,13 @@ func TestInvalidatePathKeyDescendantsKeepsContainerAndUnrelatedPaths(t *testing.
 			t.Fatalf("%s = %s, want bottom", removed, formatValue(reg, got))
 		}
 	}
-	for _, kept := range []pathdom.PathKey{container, siblingPrefixCollision, root, otherVersion, otherSymbol} {
+	for _, kept := range []pathdom.PathKey{container, siblingPrefixCollision, root, otherVersion} {
 		if got := out.ReadPathKey(reg, kept); !valueDomain.Equal(got, present) {
 			t.Fatalf("%s = %s, want present", kept, formatValue(reg, got))
 		}
+	}
+	if got := out.ReadPathKey(reg, otherSymbol); !valueDomain.Equal(got, bottom) {
+		t.Fatalf("%s = %s, want bottom through descendant alias proof", otherSymbol, formatValue(reg, got))
 	}
 	for _, notStored := range []pathdom.PathKey{placeholderContainer, placeholderChild} {
 		if got := out.ReadPathKey(reg, notStored); !valueDomain.Equal(got, bottom) {

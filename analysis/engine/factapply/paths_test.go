@@ -6,8 +6,10 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/typewitness"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/variantorigin"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/engine/dynamicindex"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/state/heapidentity"
@@ -17,6 +19,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
+	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
 func TestFactsNodeTransferAppliesPathAssignmentThroughVisibility(t *testing.T) {
@@ -290,6 +293,87 @@ func TestFactsNodeTransferPathDescendantInvalidationKeepsContainer(t *testing.T)
 	assertPathValue(t, reg, got, countKey, product.Bottom(reg))
 	assertPathValue(t, reg, got, nameKey, product.Bottom(reg))
 	assertPathValue(t, reg, got, unrelatedKey, present)
+}
+
+func TestFactsNodeTransferPathDescendantInvalidationClearsRootStructuralWitness(t *testing.T) {
+	reg := standard.Registry()
+	point := cfg.Point(22)
+	target := symbol.ID(115)
+	containerPath := path.NewPath(target, "slots").Field("active")
+	targetID := identity.ID{Kind: "test.table", Site: "slots", Index: 1}
+	rootValue := product.Set(reg, presentValue(reg), identity.Key, identity.Singleton(targetID))
+	rootValue = product.Set(reg, rootValue, typewitness.Key, typewitness.Of(typ.String))
+	in := state.State{}.WriteValue(reg, key.SymbolValue(target), rootValue)
+	visibilityBuilder := visibility.NewBuilder()
+	visibilityBuilder.Define(point, target, "slots")
+
+	got := NewFactsNodeTransfer(FactsNodeTransferConfig{
+		Facts: factflow.NewFacts(factflow.FactsInput{
+			PathDescendantInvalidations: map[cfg.Point]factflow.PathDescendantInvalidation{
+				point: factflow.NewPathDescendantInvalidation(containerPath),
+			},
+		}),
+		Visibility: visibility.NewResolver(visibilityBuilder.Build()),
+	})(transfer.NodeContext{
+		Registry: reg,
+		Point:    point,
+	}, in)
+
+	gotRoot := got.ReadValue(reg, key.SymbolValue(target))
+	if gotID, ok := product.Get(reg, gotRoot, identity.Key).ID(); !ok || gotID != targetID {
+		t.Fatalf("root identity = %v/%v, want preserved %v", gotID, ok, targetID)
+	}
+	if witness := product.Get(reg, gotRoot, typewitness.Key); !witness.IsTop() {
+		t.Fatalf("root type witness = %v, want top after unresolved descendant write", witness)
+	}
+}
+
+func TestFactsNodeTransferDirectDynamicIndexWriteKeepsRootStructuralWitness(t *testing.T) {
+	reg := standard.Registry()
+	point := cfg.Point(23)
+	target := symbol.ID(116)
+	tablePath := path.NewPath(target, "item")
+	targetID := identity.ID{Kind: "test.table", Site: "item", Index: 1}
+	keySource := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: factflow.ExprRef(23), HasExpr: true}
+	valueSource := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: factflow.ExprRef(24), HasExpr: true}
+	rootValue := product.Set(reg, presentValue(reg), identity.Key, identity.Singleton(targetID))
+	rootValue = product.Set(reg, rootValue, typewitness.Key, typewitness.Of(typ.String))
+	sources := &recordingSourceValues{
+		values: map[factflow.ValueSource]product.Value{
+			keySource:   presentValue(reg),
+			valueSource: presentValue(reg),
+		},
+	}
+	in := state.State{}.WriteValue(reg, key.SymbolValue(target), rootValue)
+	visibilityBuilder := visibility.NewBuilder()
+	visibilityBuilder.Define(point, target, "item")
+
+	got := NewFactsNodeTransfer(FactsNodeTransferConfig{
+		Facts: factflow.NewFacts(factflow.FactsInput{
+			PathDescendantInvalidations: map[cfg.Point]factflow.PathDescendantInvalidation{
+				point: factflow.NewPathDescendantInvalidation(tablePath),
+			},
+			DynamicIndexWrites: map[cfg.Point]factflow.DynamicIndexWrite{
+				point: factflow.NewDynamicIndexWrite(
+					tablePath,
+					keySource,
+					valueSource,
+					dynamicindex.AdmissionUnknown,
+					factflow.DynamicIndexReadbackKeyAndValue,
+				),
+			},
+		}),
+		Sources:    sources,
+		Visibility: visibility.NewResolver(visibilityBuilder.Build()),
+	})(transfer.NodeContext{
+		Registry: reg,
+		Point:    point,
+	}, in)
+
+	gotRoot := got.ReadValue(reg, key.SymbolValue(target))
+	if witness := product.Get(reg, gotRoot, typewitness.Key); witness.IsTop() {
+		t.Fatalf("root type witness was cleared for direct dynamic-index write")
+	}
 }
 
 func TestFactsNodeTransferPathAssignmentRequiresVisibility(t *testing.T) {

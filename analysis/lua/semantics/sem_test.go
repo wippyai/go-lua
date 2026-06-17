@@ -217,7 +217,12 @@ func TestExtractChunkOrdinaryAssignmentsResolveStaticMemberPaths(t *testing.T) {
 		Key:       ident("k"),
 		KeySyntax: ast.AttrKeyIndex,
 	}}, number("3"))
-	stmts := []ast.Stmt{local, dotWrite, indexWrite, dynamicWrite}
+	nestedDynamicWrite := assign([]ast.Expr{dot(&ast.AttrGetExpr{
+		Object:    ident("t"),
+		Key:       ident("k"),
+		KeySyntax: ast.AttrKeyIndex,
+	}, "value")}, number("4"))
+	stmts := []ast.Stmt{local, dotWrite, indexWrite, dynamicWrite, nestedDynamicWrite}
 	bindings := bind.BindChunk(stmts, bind.Options{})
 	built := cfgbuild.BuildChunk(stmts, bindings)
 
@@ -260,6 +265,16 @@ func TestExtractChunkOrdinaryAssignmentsResolveStaticMemberPaths(t *testing.T) {
 	dynamicAgain, _ := result.OrdinaryAssignment(requireStmtPoints(t, built, dynamicWrite, 1)[0])
 	if !dynamicAgain.ContainerPath.Equal(path.NewPath(tSym, "t")) {
 		t.Fatalf("ordinary assignment exposed mutable container path: %v", dynamicAgain.ContainerPath)
+	}
+	nestedDynamicFact, ok := result.OrdinaryAssignment(requireStmtPoints(t, built, nestedDynamicWrite, 1)[0])
+	if !ok {
+		t.Fatalf("missing nested dynamic index assignment")
+	}
+	if nestedDynamicFact.HasPath {
+		t.Fatalf("nested dynamic index path resolved unexpectedly: %v", nestedDynamicFact.Path)
+	}
+	if !nestedDynamicFact.HasContainerPath || !nestedDynamicFact.ContainerPath.Equal(path.NewPath(tSym, "t")) {
+		t.Fatalf("nested dynamic index container path = %v/%v, want t", nestedDynamicFact.ContainerPath, nestedDynamicFact.HasContainerPath)
 	}
 }
 

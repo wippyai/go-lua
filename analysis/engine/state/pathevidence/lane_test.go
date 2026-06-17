@@ -39,8 +39,8 @@ func TestInvalidateSubtreeOwnsCoupledEvidence(t *testing.T) {
 	if got := out.ReadPathKey(reg, childKey); !valueDomain.Equal(got, valueDomain.Bottom()) {
 		t.Fatalf("child refinement = %#v, want bottom", got)
 	}
-	if got := out.ReadPathKey(reg, otherKey); !valueDomain.Equal(got, present) {
-		t.Fatalf("other refinement = %#v, want present", got)
+	if got := out.ReadPathKey(reg, otherKey); !valueDomain.Equal(got, valueDomain.Bottom()) {
+		t.Fatalf("other refinement = %#v, want bottom through alias proof", got)
 	}
 	if got, ok := out.ReadPathStaticMember(childKey); ok {
 		t.Fatalf("static member = %#v, want removed", got)

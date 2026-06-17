@@ -51,7 +51,8 @@ func NewFactsNodeTransfer(config FactsNodeTransferConfig) transfer.NodeTransfer 
 			return state.State{}
 		}
 		if fact, ok := facts.PathDescendantInvalidation(ctx.Point); ok {
-			out = applyPathDescendantInvalidation(ctx, config.Visibility, out, fact)
+			_, directDynamicWrite := facts.DynamicIndexWrite(ctx.Point)
+			out = applyPathDescendantInvalidation(ctx, config.Visibility, out, fact, !directDynamicWrite)
 		}
 		for _, fact := range facts.PostconditionRefinements(ctx.Point) {
 			out = applyValueRefinementAtCached(config.TypeValues, ctx.Registry, config.Visibility, config.ProjectPath, ctx.Point, out, fact.TargetPath(), fact.Value())

@@ -32,7 +32,7 @@ func applyPathAssignment(
 		return out, false
 	}
 	invalidated := out
-	if withOrigins, ok := invalidateRootOriginsForPathMutationAt(ctx.Registry, invalidated, resolver, ctx.Point, targetPath); ok {
+	if withOrigins, ok := invalidateRootOriginsForPathMutationAt(ctx.Registry, invalidated, resolver, ctx.Point, targetPath, false); ok {
 		invalidated = withOrigins
 	}
 	if withHeap, ok := invalidateHeapStaticMemberSubtreeAt(ctx.Registry, invalidated, resolver, ctx.Point, targetPath); ok {
@@ -54,6 +54,7 @@ func applyPathDescendantInvalidation(
 	resolver *visibility.Resolver,
 	out state.State,
 	fact factflow.PathDescendantInvalidation,
+	clearStructuralWitness bool,
 ) state.State {
 	if resolver == nil {
 		return out
@@ -63,8 +64,13 @@ func applyPathDescendantInvalidation(
 		return out
 	}
 	invalidated := out
-	if withOrigins, ok := invalidateRootOriginsForPathMutationAt(ctx.Registry, invalidated, resolver, ctx.Point, containerPath); ok {
+	if withOrigins, ok := invalidateRootOriginsForPathMutationAt(ctx.Registry, invalidated, resolver, ctx.Point, containerPath, true); ok {
 		invalidated = withOrigins
+	}
+	if clearStructuralWitness {
+		if withWitness, ok := invalidateRootStructuralWitnessForPathMutationAt(ctx.Registry, invalidated, resolver, ctx.Point, containerPath); ok {
+			invalidated = withWitness
+		}
 	}
 	if withHeap, ok := invalidateHeapStaticMemberDescendantsAt(ctx.Registry, invalidated, resolver, ctx.Point, containerPath); ok {
 		invalidated = withHeap

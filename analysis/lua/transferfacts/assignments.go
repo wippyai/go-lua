@@ -5,6 +5,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/engine/dynamicindex"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
+	"github.com/wippyai/go-lua/analysis/lua/pathexpr"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
 	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
 	"github.com/wippyai/go-lua/analysis/lua/typecall"
@@ -161,19 +162,35 @@ func (l *lowerer) pathStaticMemberWrite(fact semantics.OrdinaryAssignmentFact) (
 }
 
 func (l *lowerer) dynamicIndexWrite(fact semantics.OrdinaryAssignmentFact) (factflow.DynamicIndexWrite, bool) {
-	if fact.HasPath || !fact.HasContainerPath || fact.ContainerPath.Symbol == 0 {
+	if fact.HasPath {
+		return factflow.DynamicIndexWrite{}, false
+	}
+	tablePath, ok := l.directDynamicIndexWriteTablePath(fact.Target)
+	if !ok || tablePath.Symbol == 0 {
 		return factflow.DynamicIndexWrite{}, false
 	}
 	keySource, readKey := l.dynamicIndexKeySource(fact.Target)
 	source := l.valueSource(fact.Source)
 	readValue := fact.Source.Kind != sourceprovenance.SourceUnknown
 	return factflow.NewDynamicIndexWrite(
-		fact.ContainerPath,
+		tablePath,
 		keySource,
 		source,
 		dynamicindex.AdmissionUnknown,
 		dynamicIndexReadbackIntent(readKey, readValue),
 	), true
+}
+
+func (l *lowerer) directDynamicIndexWriteTablePath(target ast.Expr) (path.Path, bool) {
+	attr, ok := target.(*ast.AttrGetExpr)
+	if !ok || attr.KeySyntax != ast.AttrKeyIndex {
+		return path.Path{}, false
+	}
+	switch attr.Key.(type) {
+	case *ast.StringExpr, *ast.NumberExpr:
+		return path.Path{}, false
+	}
+	return pathexpr.Resolve(attr.Object, l.bindings)
 }
 
 func (l *lowerer) pathDescendantInvalidation(fact semantics.OrdinaryAssignmentFact) (factflow.PathDescendantInvalidation, bool) {

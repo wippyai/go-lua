@@ -102,6 +102,10 @@ func (s State) InvalidatePathKeyDescendants(pathKey pathdom.PathKey) (State, boo
 	return out, true
 }
 
+func (s State) PathKeyDescendantInvalidationPrefixes(pathKey pathdom.PathKey) (pathevidence.PathKeyDescendantInvalidationPrefixes, bool) {
+	return s.pathEvidence.PathKeyDescendantInvalidationPrefixes(pathKey)
+}
+
 func (s State) ReadPathStaticMember(pathKey pathdom.PathKey) (product.Value, bool) {
 	localKey, ok := pathaddr.LocalKeyFromPathKey(pathKey)
 	if !ok {

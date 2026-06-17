@@ -1,0 +1,3 @@
+{
+  "description": "A nested dynamic map-entry write invalidates guard-derived payload facts read through a local alias of the mutated entry."
+}

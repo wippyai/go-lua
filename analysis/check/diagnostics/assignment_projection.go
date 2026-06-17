@@ -5,12 +5,15 @@ import (
 	"github.com/wippyai/go-lua/analysis/check/diagnostics/internal/readmodel"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
+	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
+	"github.com/wippyai/go-lua/analysis/ir/dominance"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
 	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
 	"github.com/wippyai/go-lua/analysis/lua/typeannotation"
 	luatypeprojection "github.com/wippyai/go-lua/analysis/lua/typeprojection"
 	"github.com/wippyai/go-lua/analysis/lua/valueexpr"
+	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/type/kind"
 	"github.com/wippyai/go-lua/analysis/type/normalize"
 	"github.com/wippyai/go-lua/analysis/type/subst"
@@ -502,6 +505,79 @@ func projectedFlowSourceType(result *body.Result, resolver typeannotation.Resolv
 	default:
 		return nil, false
 	}
+}
+
+func dominatingDeclarationProjectionType(result *body.Result, resolver typeannotation.Resolver, point cfg.Point, expr ast.Expr) (typ.Type, bool) {
+	if result == nil || expr == nil {
+		return nil, false
+	}
+	accessPath, ok := result.ExpressionPath(expr)
+	if !ok || accessPath.Symbol == 0 || len(accessPath.Segments) == 0 {
+		return nil, false
+	}
+	if _, annotated := result.SymbolTypeAnnotation(accessPath.Symbol); annotated {
+		return nil, false
+	}
+	root, ok := dominatingRootDeclarationType(result, resolver, point, accessPath.Symbol)
+	if !ok {
+		return nil, false
+	}
+	got, ok := expectedTypeAtSegments(root, accessPath.Segments)
+	if !ok {
+		return nil, false
+	}
+	if value, ok := result.ExpressionValueAtBoundary(point, expr); !ok || !boundaryValueHasReadableType(result, value) {
+		got = normalize.Optional(got)
+	}
+	return got, true
+}
+
+func boundaryValueHasReadableType(result *body.Result, value product.Value) bool {
+	_, ok := readmodel.New(result).ValueType(value)
+	return ok
+}
+
+func dominatingRootDeclarationType(result *body.Result, resolver typeannotation.Resolver, point cfg.Point, target symbol.ID) (typ.Type, bool) {
+	graph := result.Graph()
+	if graph == nil || target == 0 {
+		return nil, false
+	}
+	idom := dominance.ComputeImmediateDominatorInfo(graph).Map()
+	visited := make(map[cfg.Point]struct{}, graph.Size())
+	for cursor := point; ; {
+		if _, ok := visited[cursor]; ok {
+			return nil, false
+		}
+		visited[cursor] = struct{}{}
+		if fact, ok := result.OrdinaryAssignment(cursor); ok && fact.HasSymbol && fact.Symbol == target && (!fact.HasPath || len(fact.Path.Segments) == 0) {
+			return nil, false
+		}
+		if fact, ok := result.LocalAssignment(cursor); ok && fact.HasSymbol && fact.Symbol == target {
+			return localDeclarationType(result, resolver, cursor, fact)
+		}
+		parent, ok := idom[cursor]
+		if !ok || parent == cursor {
+			return nil, false
+		}
+		cursor = parent
+	}
+}
+
+func localDeclarationType(result *body.Result, resolver typeannotation.Resolver, point cfg.Point, fact semantics.LocalAssignmentFact) (typ.Type, bool) {
+	if fact.Type != nil {
+		if lowered, ok := lowerType(fact.Type, resolver); ok {
+			return transparentComparableType(result, lowered), true
+		}
+	}
+	if fact.Expr != nil {
+		if got, ok := newExpressionTyper(result, resolver).typeOf(fact.Expr); ok {
+			return got, true
+		}
+		if got, ok := newFlowExpressionTyper(result, resolver, point, guardEnv{}).typeOf(fact.Expr); ok {
+			return got, true
+		}
+	}
+	return readmodel.New(result).SourceType(point, fact.Source)
 }
 
 func annotatedIdentifierType(result *body.Result, resolver typeannotation.Resolver, point cfg.Point, expr ast.Expr) (typ.Type, bool) {

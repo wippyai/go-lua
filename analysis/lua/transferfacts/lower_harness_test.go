@@ -131,7 +131,7 @@ func TestLowerDoesNotLowerDeclarationOrControlSidecars(t *testing.T) {
 		t.Fatalf("ExtractChunk: %v", err)
 	}
 
-	facts := lowerFacts(t, result, built.Graph, standard.Registry())
+	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings})
 	assertNoCompilerASTTypes(t, reflect.TypeOf(facts))
 
 	for _, point := range requireStmtPoints(t, built, typeDef, 1) {
@@ -203,7 +203,7 @@ func TestLowerAssignmentsReturnsAndCallsPreserveValueListMetadata(t *testing.T) 
 		t.Fatalf("ExtractChunk: %v", err)
 	}
 
-	facts := lowerFacts(t, result, built.Graph, standard.Registry())
+	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings})
 	assertNoCompilerASTTypes(t, reflect.TypeOf(facts))
 
 	localPoints := requireStmtPoints(t, built, local, 5)
@@ -346,8 +346,9 @@ func TestLowerOrdinaryAssignmentsSplitsRootAndStaticPathWrites(t *testing.T) {
 	dotWrite := assign([]ast.Expr{dot(ident("t"), "x")}, number("1"))
 	indexWrite := assign([]ast.Expr{stringIndex(ident("t"), "x")}, number("2"))
 	dynamicWrite := assign([]ast.Expr{dynamicIndex(ident("t"), ident("k"))}, number("3"))
+	nestedDynamicWrite := assign([]ast.Expr{dot(dynamicIndex(ident("t"), ident("k")), "value")}, number("4"))
 	rootWrite := assign([]ast.Expr{ident("x")}, number("4"))
-	stmts := []ast.Stmt{local, dotWrite, indexWrite, dynamicWrite, rootWrite}
+	stmts := []ast.Stmt{local, dotWrite, indexWrite, dynamicWrite, nestedDynamicWrite, rootWrite}
 	bindings := bind.BindChunk(stmts, bind.Options{})
 	built := cfgbuild.BuildChunk(stmts, bindings)
 	result, err := semantics.ExtractChunk(stmts, bindings, built)
@@ -355,7 +356,7 @@ func TestLowerOrdinaryAssignmentsSplitsRootAndStaticPathWrites(t *testing.T) {
 		t.Fatalf("ExtractChunk: %v", err)
 	}
 
-	facts := lowerFacts(t, result, built.Graph, standard.Registry())
+	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings})
 	tSym := mustLocalAt(t, bindings, local, 0)
 
 	dotPoint := requireStmtPoints(t, built, dotWrite, 1)[0]
@@ -440,6 +441,27 @@ func TestLowerOrdinaryAssignmentsSplitsRootAndStaticPathWrites(t *testing.T) {
 	}
 	if _, ok := facts.PathStaticMemberWrite(dynamicPoint); ok {
 		t.Fatalf("dynamic index lowered as static member write")
+	}
+
+	nestedDynamicPoint := requireStmtPoints(t, built, nestedDynamicWrite, 1)[0]
+	if _, ok := facts.PathAssignment(nestedDynamicPoint); ok {
+		t.Fatalf("nested dynamic index lowered as path assignment")
+	}
+	if _, ok := facts.OrdinaryAssignment(nestedDynamicPoint); ok {
+		t.Fatalf("nested dynamic index lowered as ordinary root assignment")
+	}
+	nestedInvalidation, ok := facts.PathDescendantInvalidation(nestedDynamicPoint)
+	if !ok {
+		t.Fatalf("nested dynamic index did not lower as descendant invalidation")
+	}
+	if !nestedInvalidation.ContainerPath().Equal(path.NewPath(tSym, "t")) {
+		t.Fatalf("nested dynamic index invalidation container = %v", nestedInvalidation.ContainerPath())
+	}
+	if _, ok := facts.DynamicIndexWrite(nestedDynamicPoint); ok {
+		t.Fatalf("nested dynamic index published direct dynamic-index write")
+	}
+	if _, ok := facts.PathStaticMemberWrite(nestedDynamicPoint); ok {
+		t.Fatalf("nested dynamic index lowered as static member write")
 	}
 
 	rootPoint := requireStmtPoints(t, built, rootWrite, 1)[0]

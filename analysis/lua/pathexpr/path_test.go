@@ -78,6 +78,17 @@ func assertRejected(t *testing.T, expr ast.Expr, bindings *bind.Result) {
 	}
 }
 
+func assertMutationContainer(t *testing.T, expr ast.Expr, bindings *bind.Result, want path.Path) {
+	t.Helper()
+	got, ok := ResolveMutationContainer(expr, bindings)
+	if !ok {
+		t.Fatalf("ResolveMutationContainer(%T) rejected target", expr)
+	}
+	if got.Root != want.Root || got.Symbol != want.Symbol || !reflect.DeepEqual(got.Segments, want.Segments) {
+		t.Fatalf("ResolveMutationContainer() = %#v, want %#v", got, want)
+	}
+}
+
 func TestResolveIdent(t *testing.T) {
 	root := ident("value")
 	bindings := bindReturn(root)
@@ -141,6 +152,20 @@ func TestResolveRejectsDynamicIndex(t *testing.T) {
 	}
 
 	assertRejected(t, expr, bindings)
+}
+
+func TestResolveMutationContainerUsesNearestStaticAncestor(t *testing.T) {
+	root := ident("obj")
+	key := ident("key")
+	directDynamic := dynamicIndex(dot(root, "items"), key)
+	nestedDynamic := dot(dynamicIndex(dot(root, "items"), key), "value")
+	deepNestedDynamic := dot(dynamicIndex(nestedDynamic, ident("child_key")), "name")
+	bindings := bindReturn(deepNestedDynamic)
+	sym := mustResolvedRoot(t, bindings, root)
+
+	assertMutationContainer(t, directDynamic, bindings, path.NewPath(sym, "obj").Field("items"))
+	assertMutationContainer(t, nestedDynamic, bindings, path.NewPath(sym, "obj").Field("items"))
+	assertMutationContainer(t, deepNestedDynamic, bindings, path.NewPath(sym, "obj").Field("items"))
 }
 
 func TestResolveNilBinding(t *testing.T) {

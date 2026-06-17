@@ -927,6 +927,108 @@ func TestMemberReadReportsBracketVariantWriteInvalidatedGuardWithEvidence(t *tes
 	assertStalePathMissingMemberEvidence(t, result)
 }
 
+func TestAssignmentReportsNestedDynamicVariantWriteInvalidatedGuardWithEvidence(t *testing.T) {
+	diags := runDiagnostics(t, `
+		type FileSlot = {
+			kind: "file",
+			path: string,
+		}
+		type TimerSlot = {
+			kind: "timer",
+			seconds: number,
+		}
+		type Slot = {
+			value: FileSlot | TimerSlot,
+		}
+		type Slots = {[string]: Slot}
+
+		local slots: Slots = {
+			active = {
+				value = {kind = "file", path = "/tmp/active"},
+			},
+		}
+		local key = "active"
+
+		if slots.active.value.kind == "file" then
+			slots[key].value = {kind = "timer", seconds = 20}
+			local stale_path: string = slots.active.value.path
+		end
+	`)
+	if len(diags) != 1 {
+		t.Fatalf("diagnostics = %d, want stale dynamic path assignment error: %#v", len(diags), diags)
+	}
+	d := diags[0]
+	if d.Code != CodeAssignmentType || d.Severity != diagnostic.SeverityError {
+		t.Fatalf("diagnostic = %#v, want assignment error", d)
+	}
+	if !strings.Contains(d.Message, "cannot assign") || !strings.Contains(d.Message, "string") {
+		t.Fatalf("message = %q, want string assignment mismatch", d.Message)
+	}
+	if got := d.Explanation.Evidence(); len(got) < 2 {
+		t.Fatalf("explanation evidence = %#v, want source and annotation evidence", got)
+	}
+	if len(d.Labels) < 2 || d.Labels[0].Message != "assigned value" || d.Labels[1].Message != "declared type" {
+		t.Fatalf("labels = %#v, want assigned value and declared type", d.Labels)
+	}
+}
+
+func TestAssignmentReportsNestedDynamicVariantWriteInvalidatedAliasWithEvidence(t *testing.T) {
+	result := runDiagnosticsResult(t, `
+		type FileSlot = {
+			kind: "file",
+			path: string,
+		}
+		type TimerSlot = {
+			kind: "timer",
+			seconds: number,
+		}
+		type Slot = {
+			value: FileSlot | TimerSlot,
+		}
+		type Slots = {[string]: Slot}
+
+		local slots: Slots = {
+			active = {
+				value = {kind = "file", path = "/tmp/active"},
+			},
+		}
+		local active = slots.active
+		local key = "active"
+
+		if active.value.kind == "file" then
+			slots[key].value = {kind = "timer", seconds = 20}
+			local stale_path: string = active.value.path
+		end
+	`)
+	diags := Produce(result)
+	if len(diags) != 1 {
+		point, expr := requireLocalAssignmentExprByName(t, result, "stale_path")
+		rootType := "<unavailable>"
+		if path, ok := result.ExpressionPath(expr); ok {
+			if root, ok := dominatingRootDeclarationType(result, newResultResolver(result, nil), point, path.Symbol); ok {
+				rootType = formatType(root)
+			}
+		}
+		if got, ok := dominatingDeclarationProjectionType(result, newResultResolver(result, nil), point, expr); ok {
+			t.Fatalf("diagnostics = %d, want stale aliased dynamic path assignment error; declaration root = %s; declaration projection = %s; diags = %#v", len(diags), rootType, formatType(got), diags)
+		}
+		t.Fatalf("diagnostics = %d, want stale aliased dynamic path assignment error; declaration root = %s; declaration projection unavailable; diags = %#v", len(diags), rootType, diags)
+	}
+	d := diags[0]
+	if d.Code != CodeAssignmentType || d.Severity != diagnostic.SeverityError {
+		t.Fatalf("diagnostic = %#v, want assignment error", d)
+	}
+	if !strings.Contains(d.Message, "cannot assign") || !strings.Contains(d.Message, "string") {
+		t.Fatalf("message = %q, want string assignment mismatch", d.Message)
+	}
+	if got := d.Explanation.Evidence(); len(got) < 2 {
+		t.Fatalf("explanation evidence = %#v, want source and annotation evidence", got)
+	}
+	if len(d.Labels) < 2 || d.Labels[0].Message != "assigned value" || d.Labels[1].Message != "declared type" {
+		t.Fatalf("labels = %#v, want assigned value and declared type", d.Labels)
+	}
+}
+
 func assertStalePathMissingMemberEvidence(t *testing.T, result *body.Result) {
 	t.Helper()
 	point, expr := requireLocalAssignmentExprByName(t, result, "stale_path")

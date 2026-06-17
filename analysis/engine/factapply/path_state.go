@@ -6,6 +6,7 @@ import (
 	statekey "github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/typewitness"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/variantorigin"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/engine/state"
@@ -102,12 +103,13 @@ func invalidateRootOriginsForPathMutationAt(
 	resolver *visibility.Resolver,
 	point cfg.Point,
 	path pathdom.Path,
+	includeDescendantAliases bool,
 ) (state.State, bool) {
 	pathKey := resolver.KeyAt(point, path)
 	if pathKey == "" {
 		return s, false
 	}
-	keys := append([]pathdom.PathKey{pathKey}, s.EquivalentPathKeys(pathKey)...)
+	keys := pathMutationRootKeys(s, pathKey, includeDescendantAliases)
 	out := s
 	for _, key := range keys {
 		localPath, ok := pathaddr.LocalPathFromKey(key)
@@ -119,6 +121,34 @@ func invalidateRootOriginsForPathMutationAt(
 				return value
 			}
 			return product.Set(reg, value, variantorigin.Key, variantorigin.Top())
+		})
+	}
+	return out, true
+}
+
+func invalidateRootStructuralWitnessForPathMutationAt(
+	reg *axis.Registry,
+	s state.State,
+	resolver *visibility.Resolver,
+	point cfg.Point,
+	path pathdom.Path,
+) (state.State, bool) {
+	pathKey := resolver.KeyAt(point, path)
+	if pathKey == "" {
+		return s, false
+	}
+	keys := pathMutationRootKeys(s, pathKey, true)
+	out := s
+	for _, key := range keys {
+		localPath, ok := pathaddr.LocalPathFromKey(key)
+		if !ok || localPath.Symbol == 0 {
+			continue
+		}
+		out = out.UpdateValue(reg, statekey.SymbolValue(localPath.Symbol), func(value product.Value) product.Value {
+			if product.Equal(reg, value, product.Bottom(reg)) {
+				return value
+			}
+			return product.Set(reg, value, typewitness.Key, typewitness.Top())
 		})
 	}
 	return out, true
@@ -156,10 +186,10 @@ func invalidateHeapStaticMembersAt(
 	if pathKey == "" {
 		return s, false
 	}
-	keys := append([]pathdom.PathKey{pathKey}, s.EquivalentPathKeys(pathKey)...)
+	targets := pathStaticMemberInvalidationTargets(s, pathKey, descendantsOnly)
 	out := s
-	for _, key := range keys {
-		localPath, ok := pathaddr.LocalPathFromKey(key)
+	for _, target := range targets {
+		localPath, ok := pathaddr.LocalPathFromKey(target.key)
 		if !ok || localPath.Symbol == 0 {
 			continue
 		}
@@ -170,7 +200,7 @@ func invalidateHeapStaticMembersAt(
 		}
 		object := out.ReadHeapTableObject(reg, id)
 		var changed bool
-		if descendantsOnly {
+		if target.descendantsOnly {
 			object, changed = object.WithoutStaticMemberDescendants(localPath.Segments)
 		} else {
 			object, changed = object.WithoutStaticMemberSubtree(localPath.Segments)
@@ -180,4 +210,91 @@ func invalidateHeapStaticMembersAt(
 		}
 	}
 	return out, true
+}
+
+func pathMutationRootKeys(s state.State, pathKey pathdom.PathKey, includeDescendantAliases bool) []pathdom.PathKey {
+	keys := append([]pathdom.PathKey{pathKey}, s.EquivalentPathKeys(pathKey)...)
+	if !includeDescendantAliases {
+		return dedupePathKeys(keys)
+	}
+	prefixes, ok := s.PathKeyDescendantInvalidationPrefixes(pathKey)
+	if !ok {
+		return dedupePathKeys(keys)
+	}
+	keys = append(keys, prefixes.Descendants...)
+	keys = append(keys, prefixes.Subtrees...)
+	return dedupePathKeys(keys)
+}
+
+type pathStaticMemberInvalidationTarget struct {
+	key             pathdom.PathKey
+	descendantsOnly bool
+}
+
+func pathStaticMemberInvalidationTargets(s state.State, pathKey pathdom.PathKey, descendantsOnly bool) []pathStaticMemberInvalidationTarget {
+	targets := []pathStaticMemberInvalidationTarget{{key: pathKey, descendantsOnly: descendantsOnly}}
+	for _, equivalent := range s.EquivalentPathKeys(pathKey) {
+		targets = append(targets, pathStaticMemberInvalidationTarget{
+			key:             equivalent,
+			descendantsOnly: descendantsOnly,
+		})
+	}
+	if !descendantsOnly {
+		return dedupePathStaticMemberInvalidationTargets(targets)
+	}
+	prefixes, ok := s.PathKeyDescendantInvalidationPrefixes(pathKey)
+	if !ok {
+		return dedupePathStaticMemberInvalidationTargets(targets)
+	}
+	for _, prefix := range prefixes.Descendants {
+		targets = append(targets, pathStaticMemberInvalidationTarget{
+			key:             prefix,
+			descendantsOnly: true,
+		})
+	}
+	for _, prefix := range prefixes.Subtrees {
+		targets = append(targets, pathStaticMemberInvalidationTarget{
+			key:             prefix,
+			descendantsOnly: false,
+		})
+	}
+	return dedupePathStaticMemberInvalidationTargets(targets)
+}
+
+func dedupePathKeys(in []pathdom.PathKey) []pathdom.PathKey {
+	if len(in) < 2 {
+		return in
+	}
+	seen := make(map[pathdom.PathKey]struct{}, len(in))
+	out := in[:0]
+	for _, key := range in {
+		if key == "" {
+			continue
+		}
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, key)
+	}
+	return out
+}
+
+func dedupePathStaticMemberInvalidationTargets(in []pathStaticMemberInvalidationTarget) []pathStaticMemberInvalidationTarget {
+	if len(in) < 2 {
+		return in
+	}
+	seen := make(map[pathStaticMemberInvalidationTarget]struct{}, len(in))
+	out := in[:0]
+	for _, target := range in {
+		if target.key == "" {
+			continue
+		}
+		if _, ok := seen[target]; ok {
+			continue
+		}
+		seen[target] = struct{}{}
+		out = append(out, target)
+	}
+	return out
 }

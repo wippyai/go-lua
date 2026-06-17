@@ -57,7 +57,7 @@ func applyCallOutcomeFacts(
 			continue
 		}
 		out = writePathInvalidationMarker(resolver, ctx.Point, out, targetPath)
-		out = applyPathDescendantInvalidation(ctx, resolver, out, factflow.NewPathDescendantInvalidation(targetPath))
+		out = applyPathDescendantInvalidation(ctx, resolver, out, factflow.NewPathDescendantInvalidation(targetPath), true)
 	}
 	for _, fact := range outcome.ParamLengthFloors {
 		targetPath, ok := fact.Path.Substitute(paramBindings)
@@ -72,7 +72,7 @@ func applyCallOutcomeFacts(
 			continue
 		}
 		out = writePathInvalidationMarker(resolver, ctx.Point, out, targetPath)
-		out = applyPathDescendantInvalidation(ctx, resolver, out, factflow.NewPathDescendantInvalidation(targetPath))
+		out = applyPathDescendantInvalidation(ctx, resolver, out, factflow.NewPathDescendantInvalidation(targetPath), true)
 	}
 	for _, condition := range outcome.ParamConditions {
 		out = applyCallParamCondition(ctx, facts, resolver, projectPath, out, site, condition)

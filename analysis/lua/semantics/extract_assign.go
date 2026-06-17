@@ -85,7 +85,7 @@ func (r *Result) extractAssign(stmt *ast.AssignStmt, bindings *bind.Result, poin
 			id, hasSymbol = bindings.SymbolOf(ident)
 		}
 		targetPath, hasPath := pathexpr.Resolve(target, bindings)
-		containerPath, hasContainerPath := pathexpr.ResolveContainer(target, bindings)
+		containerPath, hasContainerPath := pathexpr.ResolveMutationContainer(target, bindings)
 		r.assignmentFacts[assignPoints[i]] = OrdinaryAssignmentFact{
 			Stmt:             stmt,
 			Index:            i,

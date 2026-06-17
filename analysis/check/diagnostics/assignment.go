@@ -76,6 +76,7 @@ func (p annotationAssignability) localAssignment(result *body.Result, point cfg.
 	}
 	presenceAwareSourceProjection := false
 	untrustedTopLike := false
+	declarationProjection := false
 	if !ok {
 		got, ok = untrustedTopLikeExpressionTypeAt(result, p.resolver, point, fact.Expr)
 		untrustedTopLike = ok
@@ -96,6 +97,10 @@ func (p annotationAssignability) localAssignment(result *body.Result, point cfg.
 	}
 	if !ok {
 		got, ok = readmodel.New(result).SourceType(point, fact.Source)
+	}
+	if !ok {
+		got, ok = dominatingDeclarationProjectionType(result, p.resolver, point, fact.Expr)
+		declarationProjection = ok
 	}
 	if !ok {
 		got, ok = localScalarOperatorSourceType(result, p.resolver, fact.Expr)
@@ -119,7 +124,7 @@ func (p annotationAssignability) localAssignment(result *body.Result, point cfg.
 		got = refineAssignmentSourceType(result, point, fact.Expr, got)
 	}
 	readBoundary := boundaryValueFromASTSource(fact.Source)
-	if optionalIndexProjection {
+	if optionalIndexProjection || declarationProjection {
 		readBoundary = nil
 	}
 	mismatch := boundaryTypeMismatch(result, point, got, want, readBoundary)
