@@ -702,6 +702,9 @@ func pathLess(left, right path.Path) bool {
 	return left.Less(right)
 }
 
+// Paths stored in a guardEnv are immutable values (derivations always allocate
+// fresh segment arrays), so these helpers share the path values and only
+// duplicate the slice, which sortGuardEnv then reorders in place.
 func appendPathFact(in []path.Path, target path.Path) []path.Path {
 	out := copyPaths(in)
 	for _, existing := range out {
@@ -709,14 +712,14 @@ func appendPathFact(in []path.Path, target path.Path) []path.Path {
 			return out
 		}
 	}
-	return append(out, target.Clone())
+	return append(out, target)
 }
 
 func removePathFact(in []path.Path, target path.Path) []path.Path {
 	var out []path.Path
 	for _, existing := range in {
 		if !existing.Equal(target) {
-			out = append(out, existing.Clone())
+			out = append(out, existing)
 		}
 	}
 	return out
@@ -782,9 +785,7 @@ func copyPaths(in []path.Path) []path.Path {
 		return nil
 	}
 	out := make([]path.Path, len(in))
-	for i, p := range in {
-		out[i] = p.Clone()
-	}
+	copy(out, in)
 	return out
 }
 
