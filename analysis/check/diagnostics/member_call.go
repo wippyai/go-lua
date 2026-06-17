@@ -97,7 +97,7 @@ func (p memberCall) call(result *body.Result, point cfg.Point, fact semantics.Ca
 		}
 		return memberDiagnostic(result, fact, callExpr, receiverType, member, point), true
 	case typecall.MemberCallNotCallable:
-		if !reportMemberShape {
+		if !reportMemberShape && !projectionHasNil(memberType) {
 			return diagnostic.Diagnostic{}, false
 		}
 		return notCallableDiagnostic(result, fact, callExpr, receiverType, memberType, member, point), true

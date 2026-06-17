@@ -6,6 +6,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/check/body"
 	"github.com/wippyai/go-lua/analysis/check/diagnostics"
+	"github.com/wippyai/go-lua/analysis/diagnostic"
 	"github.com/wippyai/go-lua/analysis/domain/effect"
 	"github.com/wippyai/go-lua/analysis/domain/effect/mutation"
 	"github.com/wippyai/go-lua/analysis/domain/effect/ownership"
@@ -1473,6 +1474,155 @@ func TestCheckAndExportPublishesDirectAssignedRHSObjectShape(t *testing.T) {
 	}
 	if result.Diagnostics[0].Code != diagnostics.CodeAssignmentType {
 		t.Fatalf("diagnostic code = %s, want %s", result.Diagnostics[0].Code, diagnostics.CodeAssignmentType)
+	}
+}
+
+func TestRequireCheckAndExportedBranchMemberAssignmentIsNotRequired(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		assign string
+		read   string
+	}{
+		{
+			name:   "dot",
+			assign: "M.value = 42",
+			read:   "mod.value",
+		},
+		{
+			name:   "static string",
+			assign: `M["value"] = 42`,
+			read:   `mod["value"]`,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			src := `
+				local M = {}
+				if cond then
+					return M
+				end
+				` + tc.assign + `
+				return M
+			`
+			mod := CheckAndExport(src, "mod", WithGlobals("cond"))
+			if len(mod.Errors) != 0 {
+				t.Fatalf("module errors = %#v, want none", mod.Errors)
+			}
+
+			result := Check(`
+				local mod = require("mod")
+				local n: number = `+tc.read+`
+			`, WithStdlib(), WithModule("mod", mod))
+			requireAssignmentDiagnosticWithEvidence(t, result, fmt.Sprintf("export = %v, read = %s", mod.Manifest.Export, tc.read))
+		})
+	}
+}
+
+func TestRequireCheckAndExportedBranchFunctionDefinitionIsNotRequired(t *testing.T) {
+	mod := CheckAndExport(`
+		local M = {}
+		if cond then
+			return M
+		end
+		function M.value(): number
+			return 42
+		end
+		return M
+	`, "mod", WithGlobals("cond"))
+	if len(mod.Errors) != 0 {
+		t.Fatalf("module errors = %#v, want none", mod.Errors)
+	}
+
+	result := Check(`
+		local mod = require("mod")
+		local n: number = mod.value()
+	`, WithStdlib(), WithModule("mod", mod))
+	requireMemberCallDiagnosticWithEvidence(t, result, diagnostics.CodeMissingMember, fmt.Sprintf("export = %v, call = mod.value()", mod.Manifest.Export))
+}
+
+func TestRequireCheckAndExportedConditionalMemberAssignmentIsNotRequired(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		assign string
+		read   string
+	}{
+		{
+			name:   "dot",
+			assign: "M.value = 42",
+			read:   "mod.value",
+		},
+		{
+			name:   "static string",
+			assign: `M["value"] = 42`,
+			read:   `mod["value"]`,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			mod := CheckAndExport(`
+				local M = {}
+				if cond then
+					`+tc.assign+`
+				end
+				return M
+			`, "mod", WithGlobals("cond"))
+			if len(mod.Errors) != 0 {
+				t.Fatalf("module errors = %#v, want none", mod.Errors)
+			}
+
+			result := Check(`
+				local mod = require("mod")
+				local n: number = `+tc.read+`
+			`, WithStdlib(), WithModule("mod", mod))
+			requireAssignmentDiagnosticWithEvidence(t, result, fmt.Sprintf("export = %v, read = %s", mod.Manifest.Export, tc.read))
+		})
+	}
+}
+
+func TestRequireCheckAndExportedConditionalFunctionDefinitionIsNotRequired(t *testing.T) {
+	mod := CheckAndExport(`
+		local M = {}
+		if cond then
+			function M.value(): number
+				return 42
+			end
+		end
+		return M
+	`, "mod", WithGlobals("cond"))
+	if len(mod.Errors) != 0 {
+		t.Fatalf("module errors = %#v, want none", mod.Errors)
+	}
+
+	result := Check(`
+		local mod = require("mod")
+		local n: number = mod.value()
+	`, WithStdlib(), WithModule("mod", mod))
+	requireMemberCallDiagnosticWithEvidence(t, result, diagnostics.CodeNotCallable, fmt.Sprintf("export = %v, call = mod.value()", mod.Manifest.Export))
+}
+
+func requireAssignmentDiagnosticWithEvidence(t *testing.T, result Result, context string) {
+	t.Helper()
+	if len(result.Diagnostics) != 1 {
+		t.Fatalf("diagnostics = %d, want one possibly-absent assignment diagnostic (%s): %#v", len(result.Diagnostics), context, result.Diagnostics)
+	}
+	diag := result.Diagnostics[0]
+	if diag.Code != diagnostics.CodeAssignmentType {
+		t.Fatalf("diagnostic code = %s, want %s (%s): %#v", diag.Code, diagnostics.CodeAssignmentType, context, diag)
+	}
+	if len(diag.Explanation.Evidence()) == 0 {
+		t.Fatalf("diagnostic evidence = %#v, want assignment evidence chain (%s)", diag.Explanation.Evidence(), context)
+	}
+}
+
+func requireMemberCallDiagnosticWithEvidence(t *testing.T, result Result, want diagnostic.Code, context string) {
+	t.Helper()
+	if len(result.Diagnostics) != 1 {
+		t.Fatalf("diagnostics = %d, want one %s diagnostic (%s): %#v", len(result.Diagnostics), want, context, result.Diagnostics)
+	}
+	diag := result.Diagnostics[0]
+	if diag.Code != want {
+		t.Fatalf("diagnostic code = %s, want %s (%s): %#v", diag.Code, want, context, diag)
+	}
+	if len(diag.Explanation.Evidence()) < 2 {
+		t.Fatalf("diagnostic evidence = %#v, want member-call evidence chain (%s)", diag.Explanation.Evidence(), context)
 	}
 }
 

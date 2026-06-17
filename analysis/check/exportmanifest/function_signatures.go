@@ -22,6 +22,8 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/callboundary"
 	"github.com/wippyai/go-lua/analysis/engine/dynamicindex"
 	"github.com/wippyai/go-lua/analysis/engine/state/heapidentity"
+	"github.com/wippyai/go-lua/analysis/ir/cfg"
+	"github.com/wippyai/go-lua/analysis/ir/dominance"
 	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
 	"github.com/wippyai/go-lua/analysis/module/manifest"
 	"github.com/wippyai/go-lua/analysis/module/signature"
@@ -34,14 +36,20 @@ func publishFunctionSignatures(m *manifest.Manifest, modulePath string, result p
 	if m == nil || modulePath == "" || root == nil || root.Graph() == nil {
 		return
 	}
+	dom := dominance.ComputeImmediateDominatorInfo(root.Graph())
 	for _, exportRoot := range returnedSourcePaths(root) {
-		publishFunctionDefinitionSignatures(m, modulePath, result, root, exportRoot)
-		publishOrdinaryAssignmentFunctionSignatures(m, modulePath, root, exportRoot)
+		publishFunctionDefinitionSignatures(m, modulePath, result, root, dom, exportRoot)
+		publishOrdinaryAssignmentFunctionSignatures(m, modulePath, root, dom, exportRoot)
 	}
 }
 
-func returnedSourcePaths(result *body.Result) []pathdom.Path {
-	var out []pathdom.Path
+type returnedSourcePath struct {
+	path   pathdom.Path
+	points []cfg.Point
+}
+
+func returnedSourcePaths(result *body.Result) []returnedSourcePath {
+	var out []returnedSourcePath
 	seen := make(map[pathdom.PathKey]struct{})
 	for _, point := range result.ReturnPoints() {
 		fact, ok := result.ReturnFact(point)
@@ -57,14 +65,31 @@ func returnedSourcePaths(result *body.Result) []pathdom.Path {
 				continue
 			}
 			key := p.Key()
-			if _, ok := seen[key]; ok {
-				continue
+			if _, ok := seen[key]; !ok {
+				seen[key] = struct{}{}
+				out = append(out, returnedSourcePath{path: p})
 			}
-			seen[key] = struct{}{}
-			out = append(out, p)
+			for i := range out {
+				if out[i].path.Key() == key {
+					out[i].points = append(out[i].points, point)
+					break
+				}
+			}
 		}
 	}
 	return out
+}
+
+func dominatesAllReturnPoints(dom *dominance.ImmediateDominators, point cfg.Point, returns []cfg.Point) bool {
+	if dom == nil || len(returns) == 0 {
+		return false
+	}
+	for _, ret := range returns {
+		if !dom.Dominates(point, ret) {
+			return false
+		}
+	}
+	return true
 }
 
 func publishFunctionDefinitionSignatures(
@@ -72,14 +97,15 @@ func publishFunctionDefinitionSignatures(
 	modulePath string,
 	prog program.Result,
 	root *body.Result,
-	exportRoot pathdom.Path,
+	dom *dominance.ImmediateDominators,
+	exportRoot returnedSourcePath,
 ) {
 	for _, point := range root.Graph().RPO() {
 		fact, ok := root.FunctionDefinition(point)
-		if !ok || fact.Func == nil || fact.Name == nil {
+		if !ok || !dominatesAllReturnPoints(dom, point, exportRoot.points) || fact.Func == nil || fact.Name == nil {
 			continue
 		}
-		member, ok := functionDefinitionExportMember(root, exportRoot, fact.Name)
+		member, ok := functionDefinitionExportMember(root, exportRoot.path, fact.Name)
 		if !ok {
 			continue
 		}
@@ -104,17 +130,18 @@ func publishOrdinaryAssignmentFunctionSignatures(
 	m *manifest.Manifest,
 	modulePath string,
 	root *body.Result,
-	exportRoot pathdom.Path,
+	dom *dominance.ImmediateDominators,
+	exportRoot returnedSourcePath,
 ) {
-	if m == nil || root == nil || root.Graph() == nil || exportRoot.Symbol == 0 {
+	if m == nil || root == nil || root.Graph() == nil || exportRoot.path.Symbol == 0 {
 		return
 	}
 	for _, point := range root.Graph().RPO() {
 		fact, ok := root.OrdinaryAssignment(point)
-		if !ok || !fact.HasPath || fact.Path.Symbol != exportRoot.Symbol {
+		if !ok || !dominatesAllReturnPoints(dom, point, exportRoot.points) || !fact.HasPath || fact.Path.Symbol != exportRoot.path.Symbol {
 			continue
 		}
-		member, ok := directMemberSegment(exportRoot.Segments, fact.Path.Segments)
+		member, ok := directMemberSegment(exportRoot.path.Segments, fact.Path.Segments)
 		if !ok {
 			continue
 		}

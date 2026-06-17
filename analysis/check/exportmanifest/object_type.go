@@ -10,6 +10,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
+	"github.com/wippyai/go-lua/analysis/ir/dominance"
 	"github.com/wippyai/go-lua/analysis/lua/pathexpr"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
 	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
@@ -27,17 +28,16 @@ func objectLiteralExprType(result *body.Result, point cfg.Point, expr ast.Expr) 
 }
 
 func pathExportRecordType(result *body.Result, point cfg.Point, root pathdom.Path) (typ.Type, bool) {
-	if result == nil || root.IsEmpty() {
+	if result == nil || result.Graph() == nil || root.IsEmpty() {
 		return nil, false
 	}
-	fields := make(map[string]typ.Type)
-	staticStrings := make(map[string]typ.Type)
-	staticInts := make(map[int]typ.Type)
-	addLocalObjectLiteralMembers(result, point, root, fields, staticStrings, staticInts)
-	addStateStaticMembers(result, point, root, fields, staticStrings, staticInts)
-	addOrdinaryAssignmentMembers(result, point, root, fields, staticStrings, staticInts)
-	addFunctionDefinitionMembers(result, root, fields, staticStrings, staticInts)
-	return recordFromMemberMaps(fields, staticStrings, staticInts)
+	dom := dominance.ComputeImmediateDominatorInfo(result.Graph())
+	members := newObjectMemberMaps()
+	addLocalObjectLiteralMembers(result, point, root, members)
+	addStateStaticMembers(result, point, root, members)
+	addOrdinaryAssignmentMembers(result, point, dom, root, members)
+	addFunctionDefinitionMembers(result, point, dom, root, members)
+	return recordFromMemberMaps(members)
 }
 
 // addOrdinaryAssignmentMembers publishes members written through direct
@@ -49,10 +49,9 @@ func pathExportRecordType(result *body.Result, point cfg.Point, root pathdom.Pat
 func addOrdinaryAssignmentMembers(
 	result *body.Result,
 	point cfg.Point,
+	dom *dominance.ImmediateDominators,
 	root pathdom.Path,
-	fields map[string]typ.Type,
-	staticStrings map[string]typ.Type,
-	staticInts map[int]typ.Type,
+	members *objectMemberMaps,
 ) {
 	if root.Symbol == 0 || result.Graph() == nil {
 		return
@@ -62,6 +61,13 @@ func addOrdinaryAssignmentMembers(
 		if !ok || !fact.HasPath || fact.Path.Symbol != root.Symbol {
 			continue
 		}
+		optional := false
+		if !dom.Dominates(candidate, point) {
+			if !reachesPoint(result.Graph(), candidate, point) {
+				continue
+			}
+			optional = true
+		}
 		member, ok := directMemberSegment(root.Segments, fact.Path.Segments)
 		if !ok {
 			continue
@@ -70,7 +76,7 @@ func addOrdinaryAssignmentMembers(
 		if !ok {
 			continue
 		}
-		addObjectEntryType(fields, staticStrings, staticInts, member, t)
+		members.add(member, t, optional)
 	}
 }
 
@@ -154,9 +160,7 @@ func addLocalObjectLiteralMembers(
 	result *body.Result,
 	point cfg.Point,
 	root pathdom.Path,
-	fields map[string]typ.Type,
-	staticStrings map[string]typ.Type,
-	staticInts map[int]typ.Type,
+	members *objectMemberMaps,
 ) {
 	if root.Symbol == 0 || result.Graph() == nil || rootReassignedBefore(result, point, root) {
 		return
@@ -170,7 +174,7 @@ func addLocalObjectLiteralMembers(
 		if !ok {
 			return
 		}
-		addObjectLiteralEntries(result, point, root, literal.Entries, fields, staticStrings, staticInts)
+		addObjectLiteralEntries(result, point, root, literal.Entries, members)
 		return
 	}
 }
@@ -193,16 +197,14 @@ func addObjectLiteralEntries(
 	point cfg.Point,
 	root pathdom.Path,
 	entries []semantics.ObjectEntryFact,
-	fields map[string]typ.Type,
-	staticStrings map[string]typ.Type,
-	staticInts map[int]typ.Type,
+	members *objectMemberMaps,
 ) {
 	for _, entry := range entries {
 		member, ok := directMemberSegment(root.Segments, entry.Suffix.Segments)
 		if !ok {
 			continue
 		}
-		addObjectEntryType(fields, staticStrings, staticInts, member, objectEntryFactType(result, point, entry))
+		members.add(member, objectEntryFactType(result, point, entry), false)
 	}
 }
 
@@ -210,9 +212,7 @@ func addStateStaticMembers(
 	result *body.Result,
 	point cfg.Point,
 	root pathdom.Path,
-	fields map[string]typ.Type,
-	staticStrings map[string]typ.Type,
-	staticInts map[int]typ.Type,
+	members *objectMemberMaps,
 ) {
 	if root.Symbol == 0 {
 		return
@@ -238,24 +238,31 @@ func addStateStaticMembers(
 		if !ok {
 			t = typ.Unknown
 		}
-		addObjectEntryType(fields, staticStrings, staticInts, member, t)
+		members.add(member, t, false)
 	}
 }
 
 func addFunctionDefinitionMembers(
 	result *body.Result,
+	point cfg.Point,
+	dom *dominance.ImmediateDominators,
 	root pathdom.Path,
-	fields map[string]typ.Type,
-	staticStrings map[string]typ.Type,
-	staticInts map[int]typ.Type,
+	members *objectMemberMaps,
 ) {
 	if result.Graph() == nil {
 		return
 	}
-	for _, point := range result.Graph().RPO() {
-		fact, ok := result.FunctionDefinition(point)
+	for _, candidate := range result.Graph().RPO() {
+		fact, ok := result.FunctionDefinition(candidate)
 		if !ok || fact.Name == nil || fact.Func == nil {
 			continue
+		}
+		optional := false
+		if !dom.Dominates(candidate, point) {
+			if !reachesPoint(result.Graph(), candidate, point) {
+				continue
+			}
+			optional = true
 		}
 		if fact.Name.Method != "" {
 			receiver, ok := result.ExpressionPath(fact.Name.Receiver)
@@ -263,10 +270,10 @@ func addFunctionDefinitionMembers(
 				continue
 			}
 			if t, ok := functionDefinitionMemberType(result, fact.Func); ok {
-				addObjectEntryType(fields, staticStrings, staticInts, segment.Segment{
+				members.add(segment.Segment{
 					Kind: segment.SegmentField,
 					Name: fact.Name.Method,
-				}, t)
+				}, t, optional)
 			}
 			continue
 		}
@@ -279,7 +286,7 @@ func addFunctionDefinitionMembers(
 			continue
 		}
 		if t, ok := functionDefinitionMemberType(result, fact.Func); ok {
-			addObjectEntryType(fields, staticStrings, staticInts, member, t)
+			members.add(member, t, optional)
 		}
 	}
 }
@@ -334,9 +341,7 @@ func objectEntriesType(result *body.Result, point cfg.Point, astEntries []pathex
 	if len(astEntries) == 0 && len(typedEntries) == 0 {
 		return nil, false
 	}
-	fields := make(map[string]typ.Type)
-	staticStrings := make(map[string]typ.Type)
-	staticInts := make(map[int]typ.Type)
+	members := newObjectMemberMaps()
 	for _, entry := range astEntries {
 		if len(entry.Suffix.Segments) != 1 {
 			continue
@@ -345,51 +350,112 @@ func objectEntriesType(result *body.Result, point cfg.Point, astEntries []pathex
 		if !ok {
 			t = typ.Unknown
 		}
-		addObjectEntryType(fields, staticStrings, staticInts, entry.Suffix.Segments[0], t)
+		members.add(entry.Suffix.Segments[0], t, false)
 	}
 	for _, entry := range typedEntries {
 		if len(entry.suffix) != 1 {
 			continue
 		}
-		addObjectEntryType(fields, staticStrings, staticInts, entry.suffix[0], entry.t)
+		members.add(entry.suffix[0], entry.t, false)
 	}
-	if len(fields) == 0 && len(staticStrings) == 0 && len(staticInts) == 0 {
+	if members.empty() {
 		return nil, false
 	}
-	return recordFromMemberMaps(fields, staticStrings, staticInts)
+	return recordFromMemberMaps(members)
 }
 
-func recordFromMemberMaps(fields map[string]typ.Type, staticStrings map[string]typ.Type, staticInts map[int]typ.Type) (typ.Type, bool) {
-	if len(fields) == 0 && len(staticStrings) == 0 && len(staticInts) == 0 {
+func recordFromMemberMaps(members *objectMemberMaps) (typ.Type, bool) {
+	if members == nil || members.empty() {
 		return nil, false
 	}
 	parts := typ.RecordParts{
-		Fields:        sortedFields(fields),
-		StaticMembers: sortedStaticMembers(staticStrings, staticInts),
+		Fields:        sortedFields(members.fields),
+		StaticMembers: sortedStaticMembers(members.staticStrings, members.staticInts),
 	}
 	return typetable.RebuildRecord(parts), true
 }
 
-func addObjectEntryType(
-	fields map[string]typ.Type,
-	staticStrings map[string]typ.Type,
-	staticInts map[int]typ.Type,
-	seg segment.Segment,
-	t typ.Type,
-) {
-	switch seg.Kind {
-	case segment.SegmentField:
-		if seg.Name != "" {
-			fields[seg.Name] = t
-		}
-	case segment.SegmentIndexString:
-		staticStrings[seg.Name] = t
-	case segment.SegmentIndexInt:
-		staticInts[seg.Index] = t
+type objectMember struct {
+	t        typ.Type
+	optional bool
+}
+
+type objectMemberMaps struct {
+	fields        map[string]objectMember
+	staticStrings map[string]objectMember
+	staticInts    map[int]objectMember
+}
+
+func newObjectMemberMaps() *objectMemberMaps {
+	return &objectMemberMaps{
+		fields:        make(map[string]objectMember),
+		staticStrings: make(map[string]objectMember),
+		staticInts:    make(map[int]objectMember),
 	}
 }
 
-func sortedFields(fields map[string]typ.Type) []typ.Field {
+func (m *objectMemberMaps) empty() bool {
+	return m == nil || (len(m.fields) == 0 && len(m.staticStrings) == 0 && len(m.staticInts) == 0)
+}
+
+func (m *objectMemberMaps) add(seg segment.Segment, t typ.Type, optional bool) {
+	if m == nil {
+		return
+	}
+	switch seg.Kind {
+	case segment.SegmentField:
+		if seg.Name != "" {
+			m.fields[seg.Name] = mergeObjectMember(m.fields[seg.Name], t, optional)
+		}
+	case segment.SegmentIndexString:
+		m.staticStrings[seg.Name] = mergeObjectMember(m.staticStrings[seg.Name], t, optional)
+	case segment.SegmentIndexInt:
+		m.staticInts[seg.Index] = mergeObjectMember(m.staticInts[seg.Index], t, optional)
+	}
+}
+
+func mergeObjectMember(existing objectMember, t typ.Type, optional bool) objectMember {
+	if t == nil {
+		t = typ.Unknown
+	}
+	if existing.t == nil {
+		return objectMember{t: t, optional: optional}
+	}
+	if !typ.TypeEquals(existing.t, t) {
+		if union, ok := unionType([]typ.Type{existing.t, t}); ok {
+			t = union
+		}
+	}
+	return objectMember{t: t, optional: existing.optional && optional}
+}
+
+func reachesPoint(graph cfg.Graph, from, to cfg.Point) bool {
+	if graph == nil {
+		return false
+	}
+	if from == to {
+		return true
+	}
+	seen := make(map[cfg.Point]struct{})
+	stack := []cfg.Point{from}
+	for len(stack) > 0 {
+		point := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+		if _, ok := seen[point]; ok {
+			continue
+		}
+		seen[point] = struct{}{}
+		for _, succ := range graph.Successors(point) {
+			if succ == to {
+				return true
+			}
+			stack = append(stack, succ)
+		}
+	}
+	return false
+}
+
+func sortedFields(fields map[string]objectMember) []typ.Field {
 	if len(fields) == 0 {
 		return nil
 	}
@@ -400,12 +466,13 @@ func sortedFields(fields map[string]typ.Type) []typ.Field {
 	sort.Strings(names)
 	out := make([]typ.Field, 0, len(names))
 	for _, name := range names {
-		out = append(out, typ.Field{Name: name, Type: fields[name]})
+		member := fields[name]
+		out = append(out, typ.Field{Name: name, Type: member.t, Optional: member.optional})
 	}
 	return out
 }
 
-func sortedStaticMembers(strings map[string]typ.Type, ints map[int]typ.Type) []typ.StaticMember {
+func sortedStaticMembers(strings map[string]objectMember, ints map[int]objectMember) []typ.StaticMember {
 	if len(strings) == 0 && len(ints) == 0 {
 		return nil
 	}
@@ -416,10 +483,12 @@ func sortedStaticMembers(strings map[string]typ.Type, ints map[int]typ.Type) []t
 	}
 	sort.Strings(names)
 	for _, name := range names {
+		member := strings[name]
 		out = append(out, typ.StaticMember{
-			Kind: typ.StaticMemberStringIndex,
-			Name: name,
-			Type: strings[name],
+			Kind:     typ.StaticMemberStringIndex,
+			Name:     name,
+			Type:     member.t,
+			Optional: member.optional,
 		})
 	}
 	indexes := make([]int, 0, len(ints))
@@ -428,10 +497,12 @@ func sortedStaticMembers(strings map[string]typ.Type, ints map[int]typ.Type) []t
 	}
 	sort.Ints(indexes)
 	for _, index := range indexes {
+		member := ints[index]
 		out = append(out, typ.StaticMember{
-			Kind:  typ.StaticMemberIntIndex,
-			Index: int64(index),
-			Type:  ints[index],
+			Kind:     typ.StaticMemberIntIndex,
+			Index:    int64(index),
+			Type:     member.t,
+			Optional: member.optional,
 		})
 	}
 	return out

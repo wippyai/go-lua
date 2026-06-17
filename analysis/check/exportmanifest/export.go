@@ -63,8 +63,19 @@ func summaryReturnType(result program.Result, root *body.Result) (typ.Type, bool
 }
 
 func hasRecordMembers(t typ.Type) bool {
-	rec, ok := unwrap.Annotated(t).(*typ.Record)
-	return ok && (len(rec.Fields) > 0 || len(rec.StaticMembers) > 0)
+	switch t := unwrap.Annotated(t).(type) {
+	case *typ.Record:
+		return len(t.Fields) > 0 || len(t.StaticMembers) > 0
+	case *typ.Union:
+		for _, member := range t.Members {
+			if hasRecordMembers(member) {
+				return true
+			}
+		}
+		return false
+	default:
+		return false
+	}
 }
 
 func mergeRecordMembers(summary, source typ.Type) (typ.Type, bool) {
