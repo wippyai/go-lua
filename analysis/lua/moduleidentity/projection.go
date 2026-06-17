@@ -342,31 +342,28 @@ func (p Projection) activeSignatureAliasFor(point cfg.Point, calleePath path.Pat
 }
 
 func (p Projection) aliasActiveAt(alias moduleAlias, calleePath path.Path, point cfg.Point) bool {
-	startOrder, callOrder, ok := p.activeWindow(alias.point, alias.inherited, point)
-	if !ok {
-		return false
-	}
-	for _, reassigned := range p.reassigned[alias.target.Symbol] {
-		reassignedOrder, ok := p.pointOrders[reassigned]
-		if ok && reassignedOrder > startOrder && reassignedOrder < callOrder {
-			return false
-		}
-	}
-	return !p.hasInvalidatingPathWrite(startOrder, callOrder, alias.target, calleePath)
+	return p.aliasTargetActiveAt(alias.point, alias.inherited, alias.target, calleePath, point)
 }
 
 func (p Projection) signatureAliasActiveAt(alias signatureAlias, calleePath path.Path, point cfg.Point) bool {
-	startOrder, callOrder, ok := p.activeWindow(alias.point, alias.inherited, point)
+	return p.aliasTargetActiveAt(alias.point, alias.inherited, alias.target, calleePath, point)
+}
+
+// aliasTargetActiveAt reports whether an alias bound at origin (inherited or
+// not) still holds at point: its active window must exist, its target must not
+// be reassigned within the window, and no invalidating path write may occur.
+func (p Projection) aliasTargetActiveAt(origin cfg.Point, inherited bool, target, calleePath path.Path, point cfg.Point) bool {
+	startOrder, callOrder, ok := p.activeWindow(origin, inherited, point)
 	if !ok {
 		return false
 	}
-	for _, reassigned := range p.reassigned[alias.target.Symbol] {
+	for _, reassigned := range p.reassigned[target.Symbol] {
 		reassignedOrder, ok := p.pointOrders[reassigned]
 		if ok && reassignedOrder > startOrder && reassignedOrder < callOrder {
 			return false
 		}
 	}
-	return !p.hasInvalidatingPathWrite(startOrder, callOrder, alias.target, calleePath)
+	return !p.hasInvalidatingPathWrite(startOrder, callOrder, target, calleePath)
 }
 
 func (p Projection) activeWindow(origin cfg.Point, inherited bool, point cfg.Point) (int, int, bool) {
