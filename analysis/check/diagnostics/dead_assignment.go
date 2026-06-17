@@ -311,19 +311,13 @@ func (c deadAssignmentReadCollector) expr(expr ast.Expr) {
 
 func (v deadAssignmentView) diagnosticsForSymbol(writes []deadAssignmentWrite) []diagnostic.Diagnostic {
 	var out []diagnostic.Diagnostic
-	for i, previous := range writes {
+	for _, previous := range writes {
 		if ambiguousSameStatementWrite(previous, writes) {
 			continue
 		}
-		for j := i + 1; j < len(writes); j++ {
-			next := writes[j]
-			if previous.stmt == next.stmt || ambiguousSameStatementWrite(next, writes) {
-				continue
-			}
-			if v.mustReachOverwriteBeforeRead(previous, next) {
-				out = append(out, deadAssignmentDiagnostic(previous, next))
-				break
-			}
+		overwrites, ok := v.firstOverwritesBeforeRead(previous, writes)
+		if ok {
+			out = append(out, deadAssignmentDiagnostic(previous, overwrites))
 		}
 	}
 	return out
@@ -341,56 +335,94 @@ func ambiguousSameStatementWrite(write deadAssignmentWrite, writes []deadAssignm
 	return false
 }
 
-func (v deadAssignmentView) mustReachOverwriteBeforeRead(previous, next deadAssignmentWrite) bool {
-	if v.graph == nil || previous.point == next.point {
-		return false
+type deadAssignmentOverwriteProof struct {
+	ok       bool
+	frontier map[cfg.Point]deadAssignmentWrite
+}
+
+func (v deadAssignmentView) firstOverwritesBeforeRead(previous deadAssignmentWrite, writes []deadAssignmentWrite) ([]deadAssignmentWrite, bool) {
+	if v.graph == nil {
+		return nil, false
 	}
-	memo := make(map[cfg.Point]bool)
+	successors := v.graph.Successors(previous.point)
+	if len(successors) == 0 {
+		return nil, false
+	}
+	memo := make(map[cfg.Point]deadAssignmentOverwriteProof)
 	visiting := make(map[cfg.Point]bool)
-	var walk func(cfg.Point) bool
-	walk = func(point cfg.Point) bool {
+	var walk func(cfg.Point) deadAssignmentOverwriteProof
+	walk = func(point cfg.Point) deadAssignmentOverwriteProof {
 		if v.pointReadsSymbol(point, previous.symbol) {
-			return false
+			return deadAssignmentOverwriteProof{}
 		}
-		if point == next.point {
-			return true
+		if overwrite, ok := v.pointOverwrite(point, previous.symbol, writes); ok {
+			return deadAssignmentOverwriteProof{
+				ok:       true,
+				frontier: map[cfg.Point]deadAssignmentWrite{overwrite.point: overwrite},
+			}
 		}
 		if v.pointWritesSymbol(point, previous.symbol) {
-			return false
+			return deadAssignmentOverwriteProof{}
 		}
 		if point == v.graph.Exit() {
-			return false
+			return deadAssignmentOverwriteProof{}
 		}
 		if cached, ok := memo[point]; ok {
 			return cached
 		}
 		if visiting[point] {
-			memo[point] = false
-			return false
+			return deadAssignmentOverwriteProof{}
 		}
 		visiting[point] = true
 		successors := v.graph.Successors(point)
-		ok := len(successors) > 0
+		proof := deadAssignmentOverwriteProof{ok: len(successors) > 0, frontier: make(map[cfg.Point]deadAssignmentWrite)}
 		for _, succ := range successors {
-			if !walk(succ) {
-				ok = false
+			child := walk(succ)
+			if !child.ok {
+				proof = deadAssignmentOverwriteProof{}
 				break
+			}
+			for point, overwrite := range child.frontier {
+				proof.frontier[point] = overwrite
 			}
 		}
 		delete(visiting, point)
-		memo[point] = ok
-		return ok
+		if proof.ok && len(proof.frontier) == 0 {
+			proof = deadAssignmentOverwriteProof{}
+		}
+		memo[point] = proof
+		return proof
 	}
-	successors := v.graph.Successors(previous.point)
-	if len(successors) == 0 {
-		return false
-	}
+
+	frontier := make(map[cfg.Point]deadAssignmentWrite)
 	for _, succ := range successors {
-		if !walk(succ) {
-			return false
+		child := walk(succ)
+		if !child.ok {
+			return nil, false
+		}
+		for point, overwrite := range child.frontier {
+			frontier[point] = overwrite
 		}
 	}
-	return true
+	overwrites := sortedDeadAssignmentWrites(frontier)
+	return overwrites, len(overwrites) > 0
+}
+
+func sortedDeadAssignmentWrites(frontier map[cfg.Point]deadAssignmentWrite) []deadAssignmentWrite {
+	out := make([]deadAssignmentWrite, 0, len(frontier))
+	for _, write := range frontier {
+		out = append(out, write)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].write.StartLine != out[j].write.StartLine {
+			return out[i].write.StartLine < out[j].write.StartLine
+		}
+		if out[i].write.StartCol != out[j].write.StartCol {
+			return out[i].write.StartCol < out[j].write.StartCol
+		}
+		return out[i].point < out[j].point
+	})
+	return out
 }
 
 func (v deadAssignmentView) pointReadsSymbol(point cfg.Point, id symbol.ID) bool {
@@ -409,6 +441,15 @@ func (v deadAssignmentView) pointWritesSymbol(point cfg.Point, id symbol.ID) boo
 		}
 	}
 	return false
+}
+
+func (v deadAssignmentView) pointOverwrite(point cfg.Point, id symbol.ID, writes []deadAssignmentWrite) (deadAssignmentWrite, bool) {
+	for _, write := range v.writesByPoint[point] {
+		if write.symbol == id && !ambiguousSameStatementWrite(write, writes) {
+			return write, true
+		}
+	}
+	return deadAssignmentWrite{}, false
 }
 
 func localNameSpan(stmt *ast.LocalAssignStmt, index int, name string) diagnostic.Span {
@@ -433,8 +474,48 @@ func localNameSpan(stmt *ast.LocalAssignStmt, index int, name string) diagnostic
 	return ast.SpanOf(stmt)
 }
 
-func deadAssignmentDiagnostic(previous, next deadAssignmentWrite) diagnostic.Diagnostic {
+func deadAssignmentDiagnostic(previous deadAssignmentWrite, overwrites []deadAssignmentWrite) diagnostic.Diagnostic {
 	message := fmt.Sprintf("assigned value for %q is overwritten before it is read", previous.name)
+	evidence := []diagnostic.Evidence{
+		{
+			Kind:    diagnostic.EvidenceAbstractFact,
+			Trust:   diagnostic.TrustProven,
+			Span:    previous.write,
+			Message: fmt.Sprintf("%q receives a value here", previous.name),
+		},
+	}
+	labels := []diagnostic.Label{{Span: previous.write, Message: "overwritten value"}}
+	for _, overwrite := range overwrites {
+		evidence = append(evidence, diagnostic.Evidence{
+			Kind:    diagnostic.EvidenceAbstractFact,
+			Trust:   diagnostic.TrustProven,
+			Span:    overwrite.write,
+			Message: fmt.Sprintf("%q is assigned again on this path before any read", previous.name),
+		})
+		labels = append(labels, diagnostic.Label{Span: overwrite.write, Message: "overwriting assignment"})
+	}
+	proofSpan := previous.write
+	if len(overwrites) > 0 {
+		proofSpan = overwrites[0].write
+	}
+	proofMessage := "CFG proof reaches the overwriting assignment on every path before any bound read"
+	if len(overwrites) > 1 {
+		proofMessage = fmt.Sprintf("CFG proof reaches one of %d overwriting assignments on every path before any bound read", len(overwrites))
+	}
+	evidence = append(evidence,
+		diagnostic.Evidence{
+			Kind:    diagnostic.EvidenceAbstractFact,
+			Trust:   diagnostic.TrustProven,
+			Span:    proofSpan,
+			Message: proofMessage,
+		},
+		diagnostic.Evidence{
+			Kind:    diagnostic.EvidenceMissingProof,
+			Trust:   diagnostic.TrustProven,
+			Span:    previous.write,
+			Message: fmt.Sprintf("no bound read of %q exists before the first overwrite frontier", previous.name),
+		},
+	)
 	return diagnostic.Diagnostic{
 		Position: diagnostic.Position{
 			Line:      previous.write.StartLine,
@@ -442,40 +523,12 @@ func deadAssignmentDiagnostic(previous, next deadAssignmentWrite) diagnostic.Dia
 			EndLine:   previous.write.EndLine,
 			EndColumn: previous.write.EndCol,
 		},
-		Span:     previous.write,
-		Code:     CodeDeadAssignment,
-		Severity: diagnostic.SeverityWarning,
-		Message:  message,
-		Explanation: diagnostic.NewExplanation(
-			diagnostic.Evidence{
-				Kind:    diagnostic.EvidenceAbstractFact,
-				Trust:   diagnostic.TrustProven,
-				Span:    previous.write,
-				Message: fmt.Sprintf("%q receives a value here", previous.name),
-			},
-			diagnostic.Evidence{
-				Kind:    diagnostic.EvidenceAbstractFact,
-				Trust:   diagnostic.TrustProven,
-				Span:    next.write,
-				Message: fmt.Sprintf("%q is assigned again on every path before a read", previous.name),
-			},
-			diagnostic.Evidence{
-				Kind:    diagnostic.EvidenceAbstractFact,
-				Trust:   diagnostic.TrustProven,
-				Span:    next.write,
-				Message: "CFG proof requires this overwriting assignment before any bound read",
-			},
-			diagnostic.Evidence{
-				Kind:    diagnostic.EvidenceMissingProof,
-				Trust:   diagnostic.TrustProven,
-				Span:    previous.write,
-				Message: fmt.Sprintf("no bound read of %q exists between these writes", previous.name),
-			},
-		),
-		Labels: []diagnostic.Label{
-			{Span: previous.write, Message: "overwritten value"},
-			{Span: next.write, Message: "overwriting assignment"},
-		},
-		Help: "Remove the first value assignment, or keep only its side effects before the overwriting write.",
+		Span:        previous.write,
+		Code:        CodeDeadAssignment,
+		Severity:    diagnostic.SeverityWarning,
+		Message:     message,
+		Explanation: diagnostic.NewExplanation(evidence...),
+		Labels:      labels,
+		Help:        "Remove the first value assignment, or keep only its side effects before the overwriting assignment.",
 	}
 }

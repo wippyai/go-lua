@@ -162,6 +162,87 @@ return value
 	}
 }
 
+func TestDeadAssignmentWarningReportsAllArmOverwriteFrontier(t *testing.T) {
+	diags := ProduceWithConfig(runDiagnosticsResult(t, `
+local value = 1
+if test then
+	value = 2
+else
+	value = 3
+end
+return value
+`), Config{Policy: diagnostic.Policy{Rules: map[diagnostic.Code]diagnostic.Rule{
+		CodeDeadAssignment: diagnostic.Enable(),
+	}}})
+	if len(diags) != 1 {
+		t.Fatalf("diagnostics = %#v, want one all-arm dead-assignment warning", diags)
+	}
+	d := diags[0]
+	if d.Code != CodeDeadAssignment || len(d.Labels) != 3 {
+		t.Fatalf("diagnostic = %#v, want original write and both overwrite labels", d)
+	}
+	evidence := d.Explanation.Evidence()
+	if len(evidence) != 5 {
+		t.Fatalf("evidence = %#v, want original, two overwrites, CFG proof, and missing-read proof", evidence)
+	}
+	if !strings.Contains(evidence[3].Message, "one of 2 overwriting assignments") ||
+		!strings.Contains(evidence[4].Message, "first overwrite frontier") {
+		t.Fatalf("evidence = %#v, want aggregate frontier proof", evidence)
+	}
+}
+
+func TestDeadAssignmentWarningReportsNestedAllArmOverwriteFrontier(t *testing.T) {
+	diags := ProduceWithConfig(runDiagnosticsResult(t, `
+local value = 1
+if test then
+	if test then
+		value = 2
+	else
+		value = 3
+	end
+else
+	value = 4
+end
+return value
+`), Config{Policy: diagnostic.Policy{Rules: map[diagnostic.Code]diagnostic.Rule{
+		CodeDeadAssignment: diagnostic.Enable(),
+	}}})
+	if len(diags) != 1 {
+		t.Fatalf("diagnostics = %#v, want one nested all-arm dead-assignment warning", diags)
+	}
+	if len(diags[0].Labels) != 4 {
+		t.Fatalf("labels = %#v, want original write plus three overwrite frontier labels", diags[0].Labels)
+	}
+	evidence := diags[0].Explanation.Evidence()
+	if len(evidence) != 6 || !strings.Contains(evidence[4].Message, "one of 3 overwriting assignments") {
+		t.Fatalf("evidence = %#v, want three overwrite evidence items and aggregate CFG proof", evidence)
+	}
+}
+
+func TestDeadAssignmentWarningReportsMixedBranchAndCommonOverwriteFrontier(t *testing.T) {
+	diags := ProduceWithConfig(runDiagnosticsResult(t, `
+local value = 1
+if test then
+	value = 2
+end
+value = 3
+return value
+`), Config{Policy: diagnostic.Policy{Rules: map[diagnostic.Code]diagnostic.Rule{
+		CodeDeadAssignment: diagnostic.Enable(),
+	}}})
+	if len(diags) != 2 {
+		t.Fatalf("diagnostics = %#v, want initial and branch overwrite warnings", diags)
+	}
+	d := diags[0]
+	if len(d.Labels) != 3 {
+		t.Fatalf("first diagnostic labels = %#v, want initial write plus branch/common frontier labels", d.Labels)
+	}
+	evidence := d.Explanation.Evidence()
+	if len(evidence) != 5 || !strings.Contains(evidence[3].Message, "one of 2 overwriting assignments") {
+		t.Fatalf("first diagnostic evidence = %#v, want aggregate two-write frontier proof", evidence)
+	}
+}
+
 func TestDeadAssignmentWarningRespectsReadsAndConditionalBypass(t *testing.T) {
 	cases := []struct {
 		name string
@@ -227,12 +308,78 @@ return value
 `,
 		},
 		{
+			name: "branch read before same-arm overwrite",
+			src: `
+local value = 1
+local seen = nil
+if test then
+	seen = value
+	value = 2
+else
+	value = 3
+end
+return seen, value
+`,
+		},
+		{
+			name: "nested branch read before same-leaf overwrite",
+			src: `
+local value = 1
+local seen = nil
+if test then
+	if test then
+		seen = value
+		value = 2
+	else
+		value = 3
+	end
+else
+	value = 4
+end
+return seen, value
+`,
+		},
+		{
 			name: "while overwrite can be skipped",
 			src: `
 local value = 1
 while test do
 	value = 2
 end
+return value
+`,
+		},
+		{
+			name: "repeat read before overwrite",
+			src: `
+local value = 1
+repeat
+	local seen = value
+	value = 2
+until test
+return value
+`,
+		},
+		{
+			name: "repeat break before overwrite",
+			src: `
+local value = 1
+repeat
+	if test then
+		break
+	end
+	value = 2
+until test
+return value
+`,
+		},
+		{
+			name: "goto bypasses overwrite candidate",
+			src: `
+local value = 1
+goto done
+value = 2
+::done::
 return value
 `,
 		},
