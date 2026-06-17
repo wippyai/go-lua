@@ -53,23 +53,7 @@ func invalidatePathSubtreeAt(
 	point cfg.Point,
 	path pathdom.Path,
 ) (state.State, bool) {
-	pathKey := resolver.KeyAt(point, path)
-	if pathKey == "" {
-		return s, false
-	}
-	equivalent := s.EquivalentPathKeys(pathKey)
-	out, ok := s.InvalidatePathKeySubtree(pathKey)
-	if !ok {
-		return s, false
-	}
-	for _, alias := range equivalent {
-		var aliasOK bool
-		out, aliasOK = out.InvalidatePathKeySubtree(alias)
-		if !aliasOK {
-			return s, false
-		}
-	}
-	return out, true
+	return invalidatePathAt(s, resolver, point, path, state.State.InvalidatePathKeySubtree)
 }
 
 func invalidatePathDescendantsAt(
@@ -78,18 +62,31 @@ func invalidatePathDescendantsAt(
 	point cfg.Point,
 	path pathdom.Path,
 ) (state.State, bool) {
+	return invalidatePathAt(s, resolver, point, path, state.State.InvalidatePathKeyDescendants)
+}
+
+// invalidatePathAt resolves path to a key at point and applies invalidate to
+// the key and each equivalent alias, failing if the key is unresolved or any
+// invalidation reports no change.
+func invalidatePathAt(
+	s state.State,
+	resolver *visibility.Resolver,
+	point cfg.Point,
+	path pathdom.Path,
+	invalidate func(state.State, pathdom.PathKey) (state.State, bool),
+) (state.State, bool) {
 	pathKey := resolver.KeyAt(point, path)
 	if pathKey == "" {
 		return s, false
 	}
 	equivalent := s.EquivalentPathKeys(pathKey)
-	out, ok := s.InvalidatePathKeyDescendants(pathKey)
+	out, ok := invalidate(s, pathKey)
 	if !ok {
 		return s, false
 	}
 	for _, alias := range equivalent {
 		var aliasOK bool
-		out, aliasOK = out.InvalidatePathKeyDescendants(alias)
+		out, aliasOK = invalidate(out, alias)
 		if !aliasOK {
 			return s, false
 		}
