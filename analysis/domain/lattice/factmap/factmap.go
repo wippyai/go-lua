@@ -38,8 +38,16 @@ type Map[K comparable, F any, V any] struct {
 	Valid      func(F) bool
 	CloneFact  func(F) F
 	Domain     lattice.Lattice[V]
+	Collide    func(a, b V) V
 	Intersect  bool
 	KeepBottom bool
+}
+
+func (m Map[K, F, V]) collide(a, b V) V {
+	if m.Collide != nil {
+		return m.Collide(a, b)
+	}
+	return m.Domain.Join(a, b)
 }
 
 func (m Map[K, F, V]) cloneOne(f F) F {
@@ -68,10 +76,17 @@ func (m Map[K, F, V]) Normalize(in []F) []F {
 		}
 		key := m.Key(fact)
 		if existing, ok := merged[key]; ok {
-			merged[key] = m.WithValue(existing, m.Domain.Join(m.Value(existing), m.Value(fact)))
+			merged[key] = m.WithValue(existing, m.collide(m.Value(existing), m.Value(fact)))
 			continue
 		}
 		merged[key] = fact
+	}
+	if !m.KeepBottom {
+		for key, fact := range merged {
+			if m.Domain.Equal(m.Value(fact), bottom) {
+				delete(merged, key)
+			}
+		}
 	}
 	return m.sorted(merged)
 }
