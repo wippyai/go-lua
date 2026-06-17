@@ -93,6 +93,9 @@ func (p directCallContract) call(
 	if sig, ok := result.CallSignature(site); ok && sig.Type != nil {
 		contract := lowerDirectFunctionType(sig.Type)
 		contract.name = name
+		if signatureName, ok := result.CallSignatureName(site); ok && signatureName != "" {
+			contract.name = signatureName
+		}
 		contract.declSpan = ast.SpanOf(fact.Call)
 		return p.directFunctionCall(result, point, fact, contract, defs, env)
 	}

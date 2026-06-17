@@ -59,6 +59,31 @@ func TestProjectionSharesAliasAndSignatureIdentity(t *testing.T) {
 	}
 }
 
+func TestProjectionUsesStaticIntMemberSignatureIdentity(t *testing.T) {
+	projection, graph, sem := buildProjection(t, `
+		local runtime = require("runtime")
+		local value = runtime[1]("payload")
+	`)
+
+	got := onlySignatureName(t, projection, graph, sem)
+	if got != "runtime[1]" {
+		t.Fatalf("SignatureName(static int member) = %q, want runtime[1]", got)
+	}
+}
+
+func TestProjectionResolvesLocalModuleRootAliasStaticIntMember(t *testing.T) {
+	projection, graph, sem := buildProjection(t, `
+		local runtime = require("runtime")
+		local alias = runtime
+		local value = alias[1]("payload")
+	`)
+
+	got := onlySignatureName(t, projection, graph, sem)
+	if got != "runtime[1]" {
+		t.Fatalf("SignatureName(alias static int member) = %q, want runtime[1]", got)
+	}
+}
+
 func TestProjectionResolvesLocalSignatureAlias(t *testing.T) {
 	projection, graph, sem := buildProjection(t, `
 		local runtime = require("runtime")

@@ -177,17 +177,20 @@ func functionDefinitionExportMember(result *body.Result, root pathdom.Path, name
 }
 
 func functionSignatureName(modulePath string, member segment.Segment) (string, bool) {
-	var memberName string
+	if modulePath == "" {
+		return "", false
+	}
 	switch member.Kind {
 	case segment.SegmentField, segment.SegmentIndexString:
-		memberName = member.Name
+		if member.Name == "" {
+			return "", false
+		}
+		return modulePath + "." + member.Name, true
+	case segment.SegmentIndexInt:
+		return modulePath + segment.FormatSegments([]segment.Segment{member}), true
 	default:
 		return "", false
 	}
-	if modulePath == "" || memberName == "" {
-		return "", false
-	}
-	return modulePath + "." + memberName, true
 }
 
 func functionExpressionSignature(prog program.Result, result *body.Result, fn *ast.FunctionExpr, name string) (signature.Function, bool) {

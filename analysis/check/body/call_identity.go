@@ -121,6 +121,8 @@ func (r *signatureIdentityResolver) stableCalleeName(callee symbol.ID, calleePat
 			}
 			b.WriteByte('.')
 			b.WriteString(seg.Name)
+		case segment.SegmentIndexInt:
+			b.WriteString(segment.FormatSegments([]segment.Segment{seg}))
 		default:
 			return "", false
 		}

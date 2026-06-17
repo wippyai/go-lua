@@ -268,6 +268,30 @@ func TestMemberCallRejectsOptionalUnionMember(t *testing.T) {
 	assertType(t, member, typeexpr.Optional(callable))
 }
 
+func TestIndexedMemberCallUsesExactStaticIntMembers(t *testing.T) {
+	callable := typ.Func().Returns(typ.String).Build()
+	receiver := typetable.NewRecord().
+		StaticIntIndex(1, callable).
+		StaticIntIndex(2, typ.Number).
+		Build()
+
+	member, status := IndexedMemberCall(receiver, typ.LiteralInt(1))
+	if status != MemberCallOK {
+		t.Fatalf("IndexedMemberCall([1]) status = %v, want ok", status)
+	}
+	assertType(t, member, callable)
+
+	member, status = IndexedMemberCall(receiver, typ.LiteralInt(2))
+	if status != MemberCallNotCallable {
+		t.Fatalf("IndexedMemberCall([2]) status = %v, want not-callable", status)
+	}
+	assertType(t, member, typ.Number)
+
+	if _, status := IndexedMemberCall(receiver, typ.LiteralInt(3)); status != MemberCallMissing {
+		t.Fatalf("IndexedMemberCall([3]) status = %v, want missing", status)
+	}
+}
+
 func TestMemberCallAmbientChannelReceive(t *testing.T) {
 	channel := typ.Instantiate(ambient.ChannelGeneric(), typ.String)
 	member, status := MemberCall(channel, "receive")

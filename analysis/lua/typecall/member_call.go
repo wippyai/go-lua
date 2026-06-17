@@ -33,6 +33,20 @@ func MemberCall(t typ.Type, name string) (typ.Type, MemberCallStatus) {
 	return res.t, res.status
 }
 
+// IndexedMemberCall resolves a receiver member reached through exact bracket
+// syntax for call validation. The key is a static literal type such as
+// LiteralInt(1) or LiteralString("run").
+func IndexedMemberCall(t typ.Type, key typ.Type) (typ.Type, MemberCallStatus) {
+	if key == nil {
+		return nil, MemberCallMissing
+	}
+	res := indexedMemberCallDepth(t, key, 0)
+	if res.status == MemberCallOK && res.t == nil {
+		res.t = typ.Unknown
+	}
+	return res.t, res.status
+}
+
 // MemberCallable resolves a receiver member for call syntax, extracts a
 // concrete callable witness, and binds receiver-relative Self/SelfRef
 // references to the concrete receiver type.
@@ -143,13 +157,91 @@ func memberCallSingle(t typ.Type, name string, depth int) memberCallResult {
 		return memberCallResult{t: method, status: MemberCallOK}
 	}
 	memberType, ok := access.Field(t, name)
+	return memberCallableResult(memberType, ok, depth+1)
+}
+
+func indexedMemberCallDepth(t typ.Type, key typ.Type, depth int) memberCallResult {
+	if stopDepth(t, depth) {
+		return memberCallResult{status: MemberCallMissing}
+	}
+	switch v := unwrap.Annotated(t).(type) {
+	case *typ.Union:
+		return indexedMemberCallUnion(v, key, depth+1)
+	case *typ.Intersection:
+		return indexedMemberCallIntersection(v, key, depth+1)
+	case *typ.Optional:
+		return indexedMemberCallDepth(v.Inner, key, depth+1)
+	case *typ.Alias:
+		return indexedMemberCallDepth(v.UnaliasedTarget(), key, depth+1)
+	case *typ.Instantiated:
+		expanded := subst.ExpandInstantiated(v)
+		if expanded == nil || expanded == t {
+			return memberCallResult{status: MemberCallMissing}
+		}
+		return indexedMemberCallDepth(expanded, key, depth+1)
+	default:
+		return indexedMemberCallSingle(t, key, depth+1)
+	}
+}
+
+func indexedMemberCallUnion(u *typ.Union, key typ.Type, depth int) memberCallResult {
+	if u == nil || len(u.Members) == 0 {
+		return memberCallResult{status: MemberCallMissing}
+	}
+	out := make([]typ.Type, 0, len(u.Members))
+	checked := false
+	for _, member := range u.Members {
+		if isNilType(member) || typ.IsNever(member) {
+			continue
+		}
+		res := indexedMemberCallDepth(member, key, depth+1)
+		if res.status != MemberCallOK {
+			return res
+		}
+		checked = true
+		if res.t != nil {
+			out = append(out, res.t)
+		}
+	}
+	if !checked {
+		return memberCallResult{status: MemberCallMissing}
+	}
+	return memberCallResult{t: normalize.UnionForEvidence(out...), status: MemberCallOK}
+}
+
+func indexedMemberCallIntersection(in *typ.Intersection, key typ.Type, depth int) memberCallResult {
+	if in == nil {
+		return memberCallResult{status: MemberCallMissing}
+	}
+	out := make([]typ.Type, 0, len(in.Members))
+	for _, member := range in.Members {
+		res := indexedMemberCallDepth(member, key, depth+1)
+		if res.status == MemberCallOK && res.t != nil {
+			out = append(out, res.t)
+		}
+	}
+	if len(out) == 0 {
+		return memberCallResult{status: MemberCallMissing}
+	}
+	if len(out) == 1 {
+		return memberCallResult{t: out[0], status: MemberCallOK}
+	}
+	return memberCallResult{t: normalize.IntersectionForMeet(out...), status: MemberCallOK}
+}
+
+func indexedMemberCallSingle(t typ.Type, key typ.Type, depth int) memberCallResult {
+	memberType, ok := access.Index(t, key)
+	return memberCallableResult(memberType, ok, depth+1)
+}
+
+func memberCallableResult(memberType typ.Type, ok bool, depth int) memberCallResult {
 	if !ok {
 		return memberCallResult{status: MemberCallMissing}
 	}
-	if containsNil(memberType, depth+1) {
+	if containsNil(memberType, depth) {
 		return memberCallResult{t: memberType, status: MemberCallNotCallable}
 	}
-	if !callableValue(memberType, depth+1) {
+	if !callableValue(memberType, depth) {
 		return memberCallResult{t: memberType, status: MemberCallNotCallable}
 	}
 	return memberCallResult{t: memberType, status: MemberCallOK}

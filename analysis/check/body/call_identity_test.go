@@ -39,6 +39,142 @@ func TestCallSignatureUsesImportedModuleRootIdentity(t *testing.T) {
 	}
 }
 
+func TestCallSignatureUsesImportedStaticIntMemberIdentity(t *testing.T) {
+	wantType := typ.Func().Param("src", typ.String).Returns(typ.Number).Build()
+	m := manifest.New("pkg")
+	m.DefineFunctionSignature("pkg[1]", signature.Function{Type: wantType})
+
+	result, err := CheckChunk(parseChunk(t, `
+		local pkg = require("pkg")
+		local value = pkg[1]("payload")
+	`), Config{
+		Registry: standard.Registry(),
+		Globals:  []string{"require"},
+		Signatures: signaturelookup.Source{
+			Manifests: []*manifest.Manifest{m},
+		},
+	})
+	if err != nil {
+		t.Fatalf("CheckChunk: %v", err)
+	}
+
+	sig, ok := onlyCallSignature(t, result)
+	if !ok {
+		t.Fatalf("missing imported pkg[1] signature")
+	}
+	if !typ.TypeEquals(sig.Type, wantType) {
+		t.Fatalf("signature type = %v, want %v", sig.Type, wantType)
+	}
+}
+
+func TestCallSignatureUsesImportedStaticIntMemberAlias(t *testing.T) {
+	wantType := typ.Func().Param("src", typ.String).Returns(typ.Number).Build()
+	m := manifest.New("pkg")
+	m.DefineFunctionSignature("pkg[1]", signature.Function{Type: wantType})
+
+	result, err := CheckChunk(parseChunk(t, `
+		local pkg = require("pkg")
+		local alias = pkg
+		local value = alias[1]("payload")
+	`), Config{
+		Registry: standard.Registry(),
+		Globals:  []string{"require"},
+		Signatures: signaturelookup.Source{
+			Manifests: []*manifest.Manifest{m},
+		},
+	})
+	if err != nil {
+		t.Fatalf("CheckChunk: %v", err)
+	}
+
+	sig, ok := onlyCallSignature(t, result)
+	if !ok {
+		t.Fatalf("missing imported alias[1] signature")
+	}
+	if !typ.TypeEquals(sig.Type, wantType) {
+		t.Fatalf("signature type = %v, want %v", sig.Type, wantType)
+	}
+}
+
+func TestCallSignatureUsesNestedImportedStaticIntMemberIdentity(t *testing.T) {
+	wantType := typ.Func().Param("src", typ.String).Returns(typ.Number).Build()
+	m := manifest.New("pkg")
+	m.DefineFunctionSignature("pkg.sub[1]", signature.Function{Type: wantType})
+
+	result, err := CheckChunk(parseChunk(t, `
+		local pkg = require("pkg")
+		local value = pkg.sub[1]("payload")
+	`), Config{
+		Registry: standard.Registry(),
+		Globals:  []string{"require"},
+		Signatures: signaturelookup.Source{
+			Manifests: []*manifest.Manifest{m},
+		},
+	})
+	if err != nil {
+		t.Fatalf("CheckChunk: %v", err)
+	}
+
+	sig, ok := onlyCallSignature(t, result)
+	if !ok {
+		t.Fatalf("missing imported pkg.sub[1] signature")
+	}
+	if !typ.TypeEquals(sig.Type, wantType) {
+		t.Fatalf("signature type = %v, want %v", sig.Type, wantType)
+	}
+}
+
+func TestCallSignatureDoesNotCollapseDynamicIndexToStaticIntMember(t *testing.T) {
+	m := manifest.New("pkg")
+	m.DefineFunctionSignature("pkg[1]", signature.Function{
+		Type: typ.Func().Param("src", typ.String).Returns(typ.Number).Build(),
+	})
+
+	result, err := CheckChunk(parseChunk(t, `
+		local pkg = require("pkg")
+		local index = 1
+		local value = pkg[index]("payload")
+	`), Config{
+		Registry: standard.Registry(),
+		Globals:  []string{"require"},
+		Signatures: signaturelookup.Source{
+			Manifests: []*manifest.Manifest{m},
+		},
+	})
+	if err != nil {
+		t.Fatalf("CheckChunk: %v", err)
+	}
+
+	if sig, ok := onlyCallSignature(t, result); ok {
+		t.Fatalf("signature = %v, want none for dynamic index", sig)
+	}
+}
+
+func TestCallSignatureDoesNotCollapseStringIndexToStaticIntMember(t *testing.T) {
+	m := manifest.New("pkg")
+	m.DefineFunctionSignature("pkg[1]", signature.Function{
+		Type: typ.Func().Param("src", typ.String).Returns(typ.Number).Build(),
+	})
+
+	result, err := CheckChunk(parseChunk(t, `
+		local pkg = require("pkg")
+		local value = pkg["1"]("payload")
+	`), Config{
+		Registry: standard.Registry(),
+		Globals:  []string{"require"},
+		Signatures: signaturelookup.Source{
+			Manifests: []*manifest.Manifest{m},
+		},
+	})
+	if err != nil {
+		t.Fatalf("CheckChunk: %v", err)
+	}
+
+	if sig, ok := onlyCallSignature(t, result); ok {
+		t.Fatalf("signature = %v, want none for string index when only pkg[1] exists", sig)
+	}
+}
+
 func TestCallSignatureDoesNotUseReassignedImportedModuleRoot(t *testing.T) {
 	m := manifest.New("json")
 	m.DefineFunctionSignature("json.decode", signature.Function{

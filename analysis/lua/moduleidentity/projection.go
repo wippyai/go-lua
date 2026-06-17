@@ -87,6 +87,7 @@ func New(bindings *bind.Result, graph cfg.Graph, sem *semantics.Result) Projecti
 		out.addCapturedImportRoots(sem.Function())
 		for _, point := range points {
 			if fact, ok := sem.LocalAssignment(point); ok && fact.HasSymbol && fact.Symbol != 0 {
+				out.addRootAlias(fact.Symbol, fact.Name, fact.Expr, point, false)
 				out.addSignatureAlias(path.NewPath(fact.Symbol, fact.Name), fact.Expr, point, false)
 				out.addObjectLiteralAliases(path.NewPath(fact.Symbol, fact.Name), fact.Expr, point, false)
 			}
@@ -237,6 +238,18 @@ func (p *Projection) addAliasName(name, modulePath string) {
 		p.aliasNames = make(map[string]string)
 	}
 	p.aliasNames[name] = modulePath
+}
+
+func (p *Projection) addRootAlias(id symbol.ID, name string, expr ast.Expr, point cfg.Point, inherited bool) {
+	if p == nil || id == 0 {
+		return
+	}
+	modulePath, ok := p.moduleIdentityForExpr(expr)
+	if !ok {
+		return
+	}
+	p.addAliasName(name, modulePath)
+	p.addRoot(id, moduleRoot{modulePath: modulePath, point: point, inherited: inherited})
 }
 
 func (p Projection) rootIdentity(id symbol.ID) (moduleRoot, bool) {
@@ -549,6 +562,8 @@ func staticSignatureSuffix(segments []segment.Segment) (string, bool) {
 			}
 			b.WriteByte('.')
 			b.WriteString(seg.Name)
+		case segment.SegmentIndexInt:
+			b.WriteString(segment.FormatSegments([]segment.Segment{seg}))
 		default:
 			return "", false
 		}
@@ -563,6 +578,7 @@ func staticPathSegments(segments []segment.Segment) bool {
 			if seg.Name == "" {
 				return false
 			}
+		case segment.SegmentIndexInt:
 		default:
 			return false
 		}

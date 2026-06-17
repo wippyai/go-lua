@@ -254,7 +254,7 @@ func callObligationName(result *body.Result, fact semantics.CallFact) string {
 		if name == "" {
 			name = "receiver"
 		}
-		return name + "." + member
+		return memberPathName(name, member)
 	}
 	return "call target"
 }

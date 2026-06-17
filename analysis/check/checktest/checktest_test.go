@@ -2,6 +2,7 @@ package checktest
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/check/body"
@@ -1658,6 +1659,52 @@ func TestRequireCheckAndExportedConditionalFunctionDefinitionIsNotRequired(t *te
 	requireMemberCallDiagnosticWithEvidence(t, result, diagnostics.CodeNotCallable, fmt.Sprintf("export = %v, call = mod.value()", mod.Manifest.Export))
 }
 
+func TestRequireCheckAndExportedStaticIntMemberCallReportsNonCallable(t *testing.T) {
+	mod := CheckAndExport(`
+		local M = {}
+		M[1] = 42
+		return M
+	`, "mod")
+	if len(mod.Errors) != 0 {
+		t.Fatalf("module errors = %#v, want none", mod.Errors)
+	}
+
+	result := Check(`
+		local mod = require("mod")
+		mod[1]()
+	`, WithStdlib(), WithModule("mod", mod))
+	requireMemberCallDiagnosticWithEvidence(t, result, diagnostics.CodeNotCallable, fmt.Sprintf("export = %v, call = mod[1]()", mod.Manifest.Export))
+}
+
+func TestRequireCheckAndExportedStaticIntFunctionMemberChecksArgs(t *testing.T) {
+	mod := CheckAndExport(`
+		local M = {}
+		M[1] = function(value: string): number
+			return 1
+		end
+		return M
+	`, "mod")
+	if len(mod.Errors) != 0 {
+		t.Fatalf("module errors = %#v, want none", mod.Errors)
+	}
+	if _, ok := mod.Manifest.FunctionSignatures["mod[1]"]; !ok {
+		t.Fatalf("function signatures = %#v, want mod[1]", mod.Manifest.FunctionSignatures)
+	}
+
+	result := Check(`
+		local mod = require("mod")
+		local n: number = mod[1](42)
+	`, WithStdlib(), WithModule("mod", mod))
+	if len(result.Diagnostics) != 1 {
+		t.Fatalf("diagnostics = %d, want one argument diagnostic: %#v", len(result.Diagnostics), result.Diagnostics)
+	}
+	diag := result.Diagnostics[0]
+	if diag.Code != diagnostics.CodeDirectCallArgType {
+		t.Fatalf("diagnostic code = %s, want %s: %#v", diag.Code, diagnostics.CodeDirectCallArgType, diag)
+	}
+	requireEvidenceMessage(t, diag, "mod[1] parameter 1 declares string")
+}
+
 func TestRequireCheckAndExportedMultiSourceRootKeepsReturnedTableSourceMember(t *testing.T) {
 	mod := CheckAndExport(`
 		local provider: { value: number } = { value = 1 }
@@ -1752,6 +1799,16 @@ func requireMemberCallDiagnosticWithEvidence(t *testing.T, result Result, want d
 	if len(diag.Explanation.Evidence()) < 2 {
 		t.Fatalf("diagnostic evidence = %#v, want member-call evidence chain (%s)", diag.Explanation.Evidence(), context)
 	}
+}
+
+func requireEvidenceMessage(t *testing.T, diag diagnostic.Diagnostic, want string) {
+	t.Helper()
+	for _, evidence := range diag.Explanation.Evidence() {
+		if strings.Contains(evidence.Message, want) {
+			return
+		}
+	}
+	t.Fatalf("diagnostic evidence = %#v, want message containing %q", diag.Explanation.Evidence(), want)
 }
 
 func TestCheckAndExportPublishesAssignedMetatableClassTableShape(t *testing.T) {
@@ -2003,6 +2060,17 @@ func TestTypedImportedMemberSignatureDoesNotSuppressNonCallableMemberDiagnostic(
 		pkg.run()
 	`, WithStdlib(), WithManifest("pkg", m))
 	requireMemberCallDiagnosticWithEvidence(t, result, diagnostics.CodeNotCallable, "non-callable imported member with typed signature")
+}
+
+func TestImportedStaticIntMemberCallReportsNonCallableWithEvidence(t *testing.T) {
+	m := manifest.New("pkg")
+	m.SetExport(typetable.NewRecord().StaticIntIndex(1, typ.Number).Build())
+
+	result := Check(`
+		local pkg = require("pkg")
+		pkg[1]()
+	`, WithStdlib(), WithManifest("pkg", m))
+	requireMemberCallDiagnosticWithEvidence(t, result, diagnostics.CodeNotCallable, "non-callable imported static int member")
 }
 
 func TestRequireManifestExportTypesImportedValueAndMemberCall(t *testing.T) {

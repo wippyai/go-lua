@@ -256,14 +256,18 @@ func (r *Result) PathSignatureAt(point cfg.Point, p path.Path) (signature.Functi
 }
 
 func (r *Result) CallSignature(site factflow.CallSite) (signature.Function, bool) {
-	if r == nil || r.signatureID == nil {
-		return signature.Function{}, false
-	}
-	name, ok := r.signatureID.nameForSite(site)
+	name, ok := r.CallSignatureName(site)
 	if !ok {
 		return signature.Function{}, false
 	}
 	return r.signatures.Lookup(name)
+}
+
+func (r *Result) CallSignatureName(site factflow.CallSite) (string, bool) {
+	if r == nil || r.signatureID == nil {
+		return "", false
+	}
+	return r.signatureID.nameForSite(site)
 }
 
 func (r *Result) ExpressionCondition(ref factflow.ExprRef) (factflow.ExpressionCondition, bool) {
