@@ -95,6 +95,51 @@ func TestNormalReturnFactsNormalizeDropsNonPlaceholderPaths(t *testing.T) {
 	}
 }
 
+func TestNormalReturnFactsNormalizeDropsBottomDynamicAndEffectFacts(t *testing.T) {
+	reg := mustRegistry(t)
+	placeholder := pathdom.NewPlaceholder(0).Field("items")
+	value := presentProduct(reg)
+	keptDynamic := callboundary.DynamicIndexFact{
+		Table: placeholder,
+		Site:  "caller.dynamic.kept",
+		Value: dynamicindex.Fact{
+			KeyPresence: presence.Present(),
+			KeyValue:    value,
+			Value:       value,
+			Admission:   dynamicindex.AdmissionAdmitted,
+		},
+	}
+	keptEffect := callboundary.EffectDelta{
+		Target: placeholder,
+		Site:   "caller.effect.kept",
+		Kind:   effectdelta.Mutation,
+		Value: effectdelta.Value{
+			Before: value,
+			After:  value,
+			Change: effectdelta.ChangeChanged,
+		},
+	}
+
+	got := Normalize(reg, Summary{NormalReturnFacts: callboundary.NormalReturnFacts{
+		DynamicIndexFacts: []callboundary.DynamicIndexFact{
+			{Table: placeholder, Site: "caller.dynamic.bottom", Value: dynamicindex.Bottom(reg)},
+			keptDynamic,
+		},
+		EffectDeltas: []callboundary.EffectDelta{
+			{Target: placeholder, Site: "caller.effect.bottom", Kind: effectdelta.Mutation, Value: effectdelta.Bottom(reg)},
+			keptEffect,
+		},
+	}})
+
+	facts := got.NormalReturnFacts
+	if len(facts.DynamicIndexFacts) != 1 || !dynamicIndexFactEqual(reg, facts.DynamicIndexFacts[0], keptDynamic) {
+		t.Fatalf("DynamicIndexFacts = %#v, want exactly %#v after bottom pruning", facts.DynamicIndexFacts, keptDynamic)
+	}
+	if len(facts.EffectDeltas) != 1 || !effectDeltaEqual(reg, facts.EffectDeltas[0], keptEffect) {
+		t.Fatalf("EffectDeltas = %#v, want exactly %#v after bottom pruning", facts.EffectDeltas, keptEffect)
+	}
+}
+
 func TestNormalReturnFactsCloneIsolatesPayload(t *testing.T) {
 	reg := mustRegistry(t)
 	original := Summary{NormalReturnFacts: callboundary.NormalReturnFacts{

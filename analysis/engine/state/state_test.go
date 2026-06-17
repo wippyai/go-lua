@@ -1642,6 +1642,23 @@ func stateLawFormat(reg *axis.Registry) func(State) string {
 	}
 }
 
+func TestFiniteLaneSettersRejectBottomValues(t *testing.T) {
+	reg := standard.Registry()
+	dynamicKey := dynamicindex.Key{Table: pathdom.PathKey("sym1@1.table"), Site: "site"}
+	effectKey := effectdelta.Key{Target: pathdom.PathKey("sym1@1.table"), Site: "site", Kind: effectdelta.Mutation}
+	id := identity.ID{Kind: "table", Site: "lane-bottom", Index: 1}
+
+	requirePanic(t, func() {
+		dynamicIndexLane{}.with(dynamicKey, dynamicindex.Bottom(reg))
+	})
+	requirePanic(t, func() {
+		effectDeltaLane{}.with(effectKey, effectdelta.Bottom(reg))
+	})
+	requirePanic(t, func() {
+		placementLane{}.with(id, placement.Bottom)
+	})
+}
+
 func requirePanic(t *testing.T, fn func()) {
 	t.Helper()
 	defer func() {

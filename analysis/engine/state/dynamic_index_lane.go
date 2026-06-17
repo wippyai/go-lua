@@ -60,6 +60,9 @@ func (l dynamicIndexLane) without(key dynamicindex.Key) (dynamicIndexLane, bool)
 }
 
 func (l dynamicIndexLane) with(key dynamicindex.Key, fact dynamicindex.Fact) dynamicIndexLane {
+	if fact.Admission == dynamicindex.AdmissionBottom {
+		panic("state: dynamic index lane with requires non-bottom fact")
+	}
 	l.values = mapedit.With(l.values, key, fact)
 	return l
 }

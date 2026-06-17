@@ -116,33 +116,6 @@ func Top() Value {
 	}
 }
 
-func CloneMap(in map[Key]Value) map[Key]Value {
-	if len(in) == 0 {
-		return nil
-	}
-	out := make(map[Key]Value, len(in))
-	for k, v := range in {
-		out[k] = v
-	}
-	return out
-}
-
-func DeleteEntry(in map[Key]Value, key Key) (map[Key]Value, bool) {
-	if _, ok := in[key]; !ok {
-		return in, false
-	}
-	out := make(map[Key]Value, len(in)-1)
-	for k, v := range in {
-		if k != key {
-			out[k] = v
-		}
-	}
-	if len(out) == 0 {
-		return nil, true
-	}
-	return out, true
-}
-
 func changeLessOrEq(a, b Change) bool {
 	return a == b || a == ChangeBottom || b == ChangeUnknown
 }

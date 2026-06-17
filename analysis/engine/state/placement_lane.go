@@ -60,6 +60,9 @@ func (l placementLane) without(id identity.ID) (placementLane, bool) {
 }
 
 func (l placementLane) with(id identity.ID, value placement.Value) placementLane {
+	if value == placement.Bottom {
+		panic("state: placement lane with requires non-bottom placement")
+	}
 	l.values = mapedit.With(l.values, id, value)
 	return l
 }

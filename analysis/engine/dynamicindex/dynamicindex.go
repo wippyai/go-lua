@@ -102,22 +102,6 @@ func CloneMap(in map[Key]Fact) map[Key]Fact {
 	return out
 }
 
-func DeleteEntry(in map[Key]Fact, key Key) (map[Key]Fact, bool) {
-	if _, ok := in[key]; !ok {
-		return in, false
-	}
-	out := make(map[Key]Fact, len(in)-1)
-	for k, v := range in {
-		if k != key {
-			out[k] = v
-		}
-	}
-	if len(out) == 0 {
-		return nil, true
-	}
-	return out, true
-}
-
 func presenceLessOrEq(a, b presence.Value) bool {
 	return presence.Join(a, b) == b
 }

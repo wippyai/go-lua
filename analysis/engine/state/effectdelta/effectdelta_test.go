@@ -52,7 +52,7 @@ func TestDomainBottomTopAndOrder(t *testing.T) {
 	}
 }
 
-func TestMapDomainCloneDeleteAndCanonicalization(t *testing.T) {
+func TestMapDomainCanonicalization(t *testing.T) {
 	reg := standard.Registry()
 	domain := MapDomain(reg)
 	key := Key{Target: pathdom.PathKey("sym1@1.field"), Site: "effect", Kind: Mutation}
@@ -61,16 +61,6 @@ func TestMapDomainCloneDeleteAndCanonicalization(t *testing.T) {
 	absent := absentValue(reg)
 	delta := Value{Before: present, After: absent, Change: ChangeChanged}
 	bottom := Bottom(reg)
-
-	original := map[Key]Value{key: delta}
-	clone := CloneMap(original)
-	clone[key] = bottom
-	if got := original[key]; got != delta {
-		t.Fatalf("clone mutation changed original: %#v", got)
-	}
-	if got := domain.Equal(clone, map[Key]Value{key: bottom}); !got {
-		t.Fatalf("clone should be independent and canonicalize bottom-like values")
-	}
 
 	left := map[Key]Value{key: delta}
 	right := map[Key]Value{otherKey: Value{Before: absent, After: present, Change: ChangeNone}}
@@ -88,18 +78,11 @@ func TestMapDomainCloneDeleteAndCanonicalization(t *testing.T) {
 		t.Fatalf("top should absorb join")
 	}
 
-	next, removed := DeleteEntry(joined, key)
-	if !removed {
-		t.Fatalf("delete should report removal")
+	if got := domain.Join(joined, map[Key]Value{key: bottom}); !domain.Equal(got, joined) {
+		t.Fatalf("joining bottom entry changed joined map: %#v", got)
 	}
-	if _, ok := next[key]; ok {
-		t.Fatalf("delete retained removed key: %#v", next)
-	}
-	if _, removed := DeleteEntry(next, key); removed {
-		t.Fatalf("deleting a missing key should report false")
-	}
-	if out, removed := DeleteEntry(map[Key]Value{key: delta}, key); !removed || out != nil {
-		t.Fatalf("deleting last entry should return nil/true, got %#v/%v", out, removed)
+	if got := domain.Join(map[Key]Value{key: bottom}, nil); got != nil {
+		t.Fatalf("map domain should canonicalize bottom-only maps to nil, got %#v", got)
 	}
 }
 

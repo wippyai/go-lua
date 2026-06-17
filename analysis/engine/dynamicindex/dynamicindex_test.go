@@ -96,7 +96,7 @@ func TestAdmissionOrderAndJoin(t *testing.T) {
 	}
 }
 
-func TestMapDomainCloneAndDelete(t *testing.T) {
+func TestMapDomainCloneAndCanonicalization(t *testing.T) {
 	reg := standard.Registry()
 	domain := MapDomain(reg)
 	key := Key{Table: pathdom.PathKey("sym1@1.table"), Site: "site"}
@@ -126,11 +126,7 @@ func TestMapDomainCloneAndDelete(t *testing.T) {
 		t.Fatalf("original map changed after clone mutation: %#v", got)
 	}
 
-	deleted, changed := DeleteEntry(canonical, key)
-	if !changed || len(deleted) != 0 {
-		t.Fatalf("DeleteEntry = %#v/%v, want empty changed map", deleted, changed)
-	}
-	if got, changed := DeleteEntry(canonical, other); changed || got == nil {
-		t.Fatalf("DeleteEntry missing key = %#v/%v, want original unchanged", got, changed)
+	if got := domain.Join(canonical, map[Key]Fact{key: Bottom(reg)}); !domain.Equal(got, canonical) {
+		t.Fatalf("joining bottom entry changed canonical map: %#v", got)
 	}
 }
