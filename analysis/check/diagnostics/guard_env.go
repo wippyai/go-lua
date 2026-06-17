@@ -334,40 +334,30 @@ func applyBranchGuard(env guardEnv, check branchcond.Check, cond bool) guardEnv 
 }
 
 func (e guardEnv) with(c literalConstraint) guardEnv {
-	if c.target.IsEmpty() || c.value == "" {
+	if c.target.IsEmpty() || c.value == "" || e.unreachable {
 		return e
 	}
-	if e.unreachable {
-		return e
-	}
-	out := guardEnv{
-		constraints: append([]literalConstraint(nil), e.constraints...),
-		typeChecks:  append([]runtimeTypeConstraint(nil), e.typeChecks...),
-		present:     copyPaths(e.present),
-		truthy:      copyPaths(e.truthy),
-		falsy:       copyPaths(e.falsy),
-		nilPaths:    copyPaths(e.nilPaths),
-	}
-	for i, existing := range out.constraints {
-		if existing.target.Equal(c.target) {
-			out.constraints[i] = c
-			sortGuardEnv(out)
-			return out
-		}
-	}
-	out.constraints = append(out.constraints, c)
+	out := e.cloneGuard()
+	out.constraints = upsertByTarget(out.constraints, c, func(x literalConstraint) path.Path { return x.target })
 	sortGuardEnv(out)
 	return out
 }
 
 func (e guardEnv) withType(c runtimeTypeConstraint) guardEnv {
-	if c.target.IsEmpty() || c.name == "" {
+	if c.target.IsEmpty() || c.name == "" || e.unreachable {
 		return e
 	}
-	if e.unreachable {
-		return e
-	}
-	out := guardEnv{
+	out := e.cloneGuard()
+	out.typeChecks = upsertByTarget(out.typeChecks, c, func(x runtimeTypeConstraint) path.Path { return x.target })
+	sortGuardEnv(out)
+	return out
+}
+
+// cloneGuard returns a deep copy of e with every slice field duplicated and
+// nothing else changed.
+func (e guardEnv) cloneGuard() guardEnv {
+	return guardEnv{
+		unreachable: e.unreachable,
 		constraints: append([]literalConstraint(nil), e.constraints...),
 		typeChecks:  append([]runtimeTypeConstraint(nil), e.typeChecks...),
 		present:     copyPaths(e.present),
@@ -375,16 +365,19 @@ func (e guardEnv) withType(c runtimeTypeConstraint) guardEnv {
 		falsy:       copyPaths(e.falsy),
 		nilPaths:    copyPaths(e.nilPaths),
 	}
-	for i, existing := range out.typeChecks {
-		if existing.target.Equal(c.target) {
-			out.typeChecks[i] = c
-			sortGuardEnv(out)
-			return out
+}
+
+// upsertByTarget replaces the entry whose target equals c's target, or appends c
+// when none matches.
+func upsertByTarget[T any](in []T, c T, targetOf func(T) path.Path) []T {
+	want := targetOf(c)
+	for i, existing := range in {
+		if targetOf(existing).Equal(want) {
+			in[i] = c
+			return in
 		}
 	}
-	out.typeChecks = append(out.typeChecks, c)
-	sortGuardEnv(out)
-	return out
+	return append(in, c)
 }
 
 // withFacts returns a copy of e carrying the supplied present/truthy/falsy/nil
