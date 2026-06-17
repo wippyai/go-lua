@@ -1638,6 +1638,140 @@ func TestRequireCheckAndExportedConditionalMemberAssignmentIsNotRequired(t *test
 	}
 }
 
+func TestRequireCheckAndExportedStaticStringOptionalMemberHasBoundaryEvidence(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		src  string
+	}{
+		{
+			name: "conditional assignment",
+			src: `
+				local M = {}
+				if cond then
+					M["value"] = 42
+				end
+				return M
+			`,
+		},
+		{
+			name: "early return before assignment",
+			src: `
+				local M = {}
+				if cond then
+					return M
+				end
+				M["value"] = 42
+				return M
+			`,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			mod := CheckAndExport(tc.src, "mod", WithGlobals("cond"))
+			if len(mod.Errors) != 0 {
+				t.Fatalf("module errors = %#v, want none", mod.Errors)
+			}
+
+			result := Check(`
+				local mod = require("mod")
+				local n: number = mod["value"]
+			`, WithStdlib(), WithModule("mod", mod))
+			requireAssignmentDiagnosticWithEvidence(t, result, fmt.Sprintf("export = %v, read = mod[\"value\"]", mod.Manifest.Export))
+			requireEvidenceMessage(t, result.Diagnostics[0], "no boundary proof establishes number")
+		})
+	}
+}
+
+func TestRequireCheckAndExportedStaticStringOptionalMemberNilGuardNarrowsAssignment(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		src  string
+	}{
+		{
+			name: "conditional assignment",
+			src: `
+				local M = {}
+				if cond then
+					M["value"] = 42
+				end
+				return M
+			`,
+		},
+		{
+			name: "early return before assignment",
+			src: `
+				local M = {}
+				if cond then
+					return M
+				end
+				M["value"] = 42
+				return M
+			`,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			mod := CheckAndExport(tc.src, "mod", WithGlobals("cond"))
+			if len(mod.Errors) != 0 {
+				t.Fatalf("module errors = %#v, want none", mod.Errors)
+			}
+
+			result := Check(`
+				local mod = require("mod")
+				if mod["value"] ~= nil then
+					local n: number = mod["value"]
+				end
+			`, WithStdlib(), WithModule("mod", mod))
+			if len(result.Diagnostics) != 0 {
+				t.Fatalf("diagnostics = %#v, want none after mod[\"value\"] nil guard", result.Diagnostics)
+			}
+		})
+	}
+}
+
+func TestRequireCheckAndExportedStaticStringOptionalMemberGuardVariants(t *testing.T) {
+	mod := CheckAndExport(`
+		local M = {}
+		if cond then
+			M["value"] = 42
+		end
+		return M
+	`, "mod", WithGlobals("cond"))
+	if len(mod.Errors) != 0 {
+		t.Fatalf("module errors = %#v, want none", mod.Errors)
+	}
+
+	for _, tc := range []struct {
+		name string
+		src  string
+	}{
+		{
+			name: "local alias nil guard",
+			src: `
+				local mod = require("mod")
+				local value = mod["value"]
+				if value ~= nil then
+					local n: number = value
+				end
+			`,
+		},
+		{
+			name: "direct truthy guard",
+			src: `
+				local mod = require("mod")
+				if mod["value"] then
+					local n: number = mod["value"]
+				end
+			`,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			result := Check(tc.src, WithStdlib(), WithModule("mod", mod))
+			if len(result.Diagnostics) != 0 {
+				t.Fatalf("diagnostics = %#v, want none after %s", result.Diagnostics, tc.name)
+			}
+		})
+	}
+}
+
 func TestRequireCheckAndExportedConditionalFunctionDefinitionIsNotRequired(t *testing.T) {
 	mod := CheckAndExport(`
 		local M = {}
