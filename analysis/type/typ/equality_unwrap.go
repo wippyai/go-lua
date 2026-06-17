@@ -8,7 +8,7 @@ import (
 
 func unwrapAliasForEquals(t Type, guard recursion.Guard) Type {
 	for {
-		t = normalizeNilType(t)
+		t = NormalizeNil(t)
 		if t == nil {
 			return nil
 		}
@@ -27,7 +27,7 @@ func unwrapAliasForEquals(t Type, guard recursion.Guard) Type {
 	}
 }
 
-func normalizeNilType(t Type) Type {
+func NormalizeNil(t Type) Type {
 	if t == nil {
 		return nil
 	}

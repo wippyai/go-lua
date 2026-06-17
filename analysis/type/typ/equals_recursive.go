@@ -3,8 +3,8 @@ package typ
 import "github.com/wippyai/go-lua/analysis/internal/recursion"
 
 func typeEqualsGuard(a, b Type, guard recursion.Guard, seen map[typePair]bool) bool {
-	a = normalizeNilType(a)
-	b = normalizeNilType(b)
+	a = NormalizeNil(a)
+	b = NormalizeNil(b)
 	a = unwrapAliasForEquals(a, guard)
 	b = unwrapAliasForEquals(b, guard)
 

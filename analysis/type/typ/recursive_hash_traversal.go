@@ -42,7 +42,7 @@ func hashWithVisitedMemo(t Type, scratch *recursiveHashScratch) uint64 {
 }
 
 func hashBodyWithVisitedMemo(t Type, scratch *recursiveHashScratch) uint64 {
-	t = normalizeNilType(t)
+	t = NormalizeNil(t)
 	if t == nil {
 		return 0
 	}

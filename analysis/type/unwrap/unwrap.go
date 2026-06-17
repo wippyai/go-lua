@@ -10,25 +10,13 @@
 package unwrap
 
 import (
-	"reflect"
-
 	"github.com/wippyai/go-lua/analysis/type/kind"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
 // NormalizeNil converts typed-nil Type implementations to nil.
 func NormalizeNil(t typ.Type) typ.Type {
-	if t == nil {
-		return nil
-	}
-	v := reflect.ValueOf(t)
-	switch v.Kind() {
-	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
-		if v.IsNil() {
-			return nil
-		}
-	}
-	return t
+	return typ.NormalizeNil(t)
 }
 
 // Annotated unwraps a single Annotated layer and returns the inner type.
