@@ -14,6 +14,7 @@ type Summary struct {
 	ParamObligations                []product.Value
 	ParamMemberCallObligations      []ParamMemberCallObligation
 	ParamMemberReturnSlots          []ParamMemberReturnSlot
+	ReturnParamPathAliases          []ReturnParamPathAlias
 	NormalReturnParams              []product.Value
 	NormalReturnParamConditions     []ParamCondition
 	NormalReturnParamEqualities     []ParamEquality
@@ -29,6 +30,7 @@ func (s Summary) Clone() Summary {
 		len(s.ParamObligations) == 0 &&
 		len(s.ParamMemberCallObligations) == 0 &&
 		len(s.ParamMemberReturnSlots) == 0 &&
+		len(s.ReturnParamPathAliases) == 0 &&
 		len(s.NormalReturnParams) == 0 &&
 		len(s.NormalReturnParamConditions) == 0 &&
 		len(s.NormalReturnParamEqualities) == 0 &&
@@ -54,6 +56,10 @@ func (s Summary) Clone() Summary {
 	if len(s.ParamMemberReturnSlots) > 0 {
 		out.ParamMemberReturnSlots = make([]ParamMemberReturnSlot, len(s.ParamMemberReturnSlots))
 		copy(out.ParamMemberReturnSlots, s.ParamMemberReturnSlots)
+	}
+	if len(s.ReturnParamPathAliases) > 0 {
+		out.ReturnParamPathAliases = make([]ReturnParamPathAlias, len(s.ReturnParamPathAliases))
+		copy(out.ReturnParamPathAliases, s.ReturnParamPathAliases)
 	}
 	if len(s.NormalReturnParams) > 0 {
 		out.NormalReturnParams = make([]product.Value, len(s.NormalReturnParams))

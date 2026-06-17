@@ -495,6 +495,24 @@ func TestCheckSplitDirectImportBoundaries(t *testing.T) {
 			},
 		},
 		{
+			name: "calloutcome does not directly import factapply after payload extraction",
+			pkg:  modulePath + "/analysis/engine/calloutcome",
+			banned: []string{
+				modulePath + "/analysis/engine/factapply",
+			},
+		},
+		{
+			name: "callpayload remains a neutral outcome payload package",
+			pkg:  modulePath + "/analysis/engine/callpayload",
+			banned: []string{
+				modulePath + "/analysis/engine/factapply",
+				modulePath + "/analysis/engine/calloutcome",
+				modulePath + "/analysis/check",
+				modulePath + "/analysis/lua",
+				modulePath + "/compiler",
+			},
+		},
+		{
 			name: "placementplan stays projection-only",
 			pkg:  modulePath + "/analysis/check/placementplan",
 			banned: []string{

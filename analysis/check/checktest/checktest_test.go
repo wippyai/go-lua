@@ -453,6 +453,54 @@ func TestRequireCheckInjectedContainerMemberReassignmentUsesReplacementResultEvi
 	requireEvidenceMessage(t, result.Diagnostics[0], "assignment target is annotated number")
 }
 
+func TestRequireCheckNestedFactoryDIDropsStaleBranchButKeepsSiblingEvidence(t *testing.T) {
+	mod := CheckAndExport(`
+		local provider = {}
+		function provider.meta(): { name: string }
+			return { name = "model" }
+		end
+		return provider
+	`, "provider")
+	if len(mod.Errors) != 0 {
+		t.Fatalf("module errors = %#v, want none", mod.Errors)
+	}
+
+	result := Check(`
+		local provider = require("provider")
+		local replacement = {}
+		function replacement.meta(): number
+			return 1
+		end
+		local function new_layer(client)
+			return {
+				registry = {
+					primary = client,
+					backup = client,
+				},
+			}
+		end
+		local function expose(layer)
+			return {
+				api = layer.registry,
+			}
+		end
+		local root = expose(new_layer(provider))
+		root.api.primary = replacement
+		local ok: number = root.api.primary.meta()
+		local bad: number = root.api.backup.meta()
+	`, WithStdlib(), WithModule("provider", mod))
+	if len(result.Diagnostics) != 1 {
+		debug := "<no checked result>"
+		if result.checked != nil && result.checked.RootResult() != nil {
+			debug = callOutcomeDebug(result.checked.RootResult())
+		}
+		t.Fatalf("diagnostics = %d, want one nested factory DI diagnostic: %#v\ncalls: %s", len(result.Diagnostics), result.Diagnostics, debug)
+	}
+	requireDirectCallResultDiagnosticWithEvidence(t, result, "nested factory DI keeps sibling imported member evidence")
+	requireEvidenceMessage(t, result.Diagnostics[0], "root.api.backup.meta returns")
+	requireEvidenceMessage(t, result.Diagnostics[0], "assignment target is annotated number")
+}
+
 func TestRequireCheckInjectedHelperReturnKeepsImportedMemberResultType(t *testing.T) {
 	mod := CheckAndExport(`
 		local provider = {}

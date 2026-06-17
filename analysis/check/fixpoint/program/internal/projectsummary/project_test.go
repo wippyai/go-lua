@@ -7,6 +7,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/check/body"
 	summaryprojection "github.com/wippyai/go-lua/analysis/check/fixpoint/program/internal/projectsummary"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/summary"
+	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
@@ -341,6 +342,38 @@ end`), body.Config{Registry: reg})
 	if len(got.NormalReturnParams) > 1 && !product.Equal(reg, got.NormalReturnParams[1], product.Top()) {
 		t.Fatalf("normal return param 1 = %#v, want no post-return refinement", got.NormalReturnParams[1])
 	}
+}
+
+func TestFromResultProjectsNestedReturnParamPathAliases(t *testing.T) {
+	reg := standard.Registry()
+	result := projectCheckFunction(t, projectParseFunction(t, `
+function f(client)
+	return {
+		registry = {
+			primary = client,
+			backup = client,
+		},
+	}
+end`), body.Config{Registry: reg})
+
+	got := summaryprojection.FromResult(result)
+
+	projectAssertReturnParamPathAlias(t, got, 0, pathdom.PathKey(".registry.primary"), pathdom.PathKey("$0"))
+	projectAssertReturnParamPathAlias(t, got, 0, pathdom.PathKey(".registry.backup"), pathdom.PathKey("$0"))
+}
+
+func TestFromResultProjectsReturnedMemberParamPathAlias(t *testing.T) {
+	reg := standard.Registry()
+	result := projectCheckFunction(t, projectParseFunction(t, `
+function f(layer)
+	return {
+		api = layer.registry,
+	}
+end`), body.Config{Registry: reg})
+
+	got := summaryprojection.FromResult(result)
+
+	projectAssertReturnParamPathAlias(t, got, 0, pathdom.PathKey(".api"), pathdom.PathKey("$0.registry"))
 }
 
 func TestFromResultProjectsParamObligationFromArithmeticOperand(t *testing.T) {
@@ -703,5 +736,27 @@ func projectAssertReturnPresenceRelation(
 		triggerPresence,
 		target,
 		targetPresence,
+	)
+}
+
+func projectAssertReturnParamPathAlias(
+	t *testing.T,
+	got summary.Summary,
+	returnIndex int,
+	member pathdom.PathKey,
+	source pathdom.PathKey,
+) {
+	t.Helper()
+	for _, alias := range got.ReturnParamPathAliases {
+		if alias.ReturnIndex == returnIndex && alias.Member == member && alias.Source == source {
+			return
+		}
+	}
+	t.Fatalf(
+		"return param path aliases = %#v, want return %d %s -> %s",
+		got.ReturnParamPathAliases,
+		returnIndex,
+		member,
+		source,
 	)
 }

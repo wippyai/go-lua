@@ -11,7 +11,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine/callboundary"
-	factapply "github.com/wippyai/go-lua/analysis/engine/factapply"
+	callpayload "github.com/wippyai/go-lua/analysis/engine/callpayload"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/state/heapidentity"
@@ -25,31 +25,31 @@ func TestWithSupplementalKeepsPrimarySlotsFillsMissingSlotsAndMergesSideFactsWit
 	reg := standard.Registry()
 	primaryValue := product.Absent(reg)
 	supplementalValue := product.Top()
-	primary := func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) factapply.CallOutcome {
-		return factapply.CallOutcome{
-			Results: []factapply.CallResult{{Index: 0, Value: primaryValue}},
+	primary := func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) callpayload.CallOutcome {
+		return callpayload.CallOutcome{
+			Results: []callpayload.CallResult{{Index: 0, Value: primaryValue}},
 			NormalReturnFacts: callboundary.NormalReturnFacts{
 				PathRefinements: []callboundary.PathValueFact{
 					{Path: pathdom.NewPlaceholder(0), Value: primaryValue},
 				},
 			},
-			ParamConditions: []factapply.CallParamCondition{
+			ParamConditions: []callpayload.CallParamCondition{
 				{ParamIndex: 0, Value: true},
 			},
 		}
 	}
-	supplemental := func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) factapply.CallOutcome {
-		return factapply.CallOutcome{
-			Results: []factapply.CallResult{{Index: 0, Value: product.Top()}, {Index: 1, Value: supplementalValue}},
+	supplemental := func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) callpayload.CallOutcome {
+		return callpayload.CallOutcome{
+			Results: []callpayload.CallResult{{Index: 0, Value: product.Top()}, {Index: 1, Value: supplementalValue}},
 			NormalReturnFacts: callboundary.NormalReturnFacts{
 				PathRefinements: []callboundary.PathValueFact{
 					{Path: pathdom.NewPlaceholder(1), Value: supplementalValue},
 				},
 			},
-			ParamConditions: []factapply.CallParamCondition{
+			ParamConditions: []callpayload.CallParamCondition{
 				{ParamIndex: 1, Value: false},
 			},
-			ReturnPresenceRelations: []factapply.CallReturnPresenceRelation{
+			ReturnPresenceRelations: []callpayload.CallReturnPresenceRelation{
 				{TriggerIndex: 1, TriggerPresence: presence.Present(), TargetIndex: 0, TargetPresence: presence.Absent()},
 			},
 		}
@@ -89,39 +89,39 @@ func TestWithSupplementalAuthorityBlocksSupplementalPostReturnFacts(t *testing.T
 	reg := standard.Registry()
 	primaryValue := product.Absent(reg)
 	supplementalValue := product.Top()
-	primary := func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) factapply.CallOutcome {
-		return factapply.CallOutcome{
+	primary := func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) callpayload.CallOutcome {
+		return callpayload.CallOutcome{
 			PostReturnAuthority: true,
-			Results:             []factapply.CallResult{{Index: 0, Value: primaryValue}},
+			Results:             []callpayload.CallResult{{Index: 0, Value: primaryValue}},
 			NormalReturnFacts: callboundary.NormalReturnFacts{
 				PathRefinements: []callboundary.PathValueFact{
 					{Path: pathdom.NewPlaceholder(0), Value: primaryValue},
 				},
 			},
-			ParamObligations: []factapply.CallParamObligation{
+			ParamObligations: []callpayload.CallParamObligation{
 				{ParamIndex: 0, Value: primaryValue},
 			},
-			ParamConditions: []factapply.CallParamCondition{
+			ParamConditions: []callpayload.CallParamCondition{
 				{ParamIndex: 0, Value: true},
 			},
 		}
 	}
-	supplemental := func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) factapply.CallOutcome {
-		return factapply.CallOutcome{
+	supplemental := func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) callpayload.CallOutcome {
+		return callpayload.CallOutcome{
 			PostReturnAuthority: true,
-			Results:             []factapply.CallResult{{Index: 1, Value: supplementalValue}},
+			Results:             []callpayload.CallResult{{Index: 1, Value: supplementalValue}},
 			NormalReturnFacts: callboundary.NormalReturnFacts{
 				PathRefinements: []callboundary.PathValueFact{
 					{Path: pathdom.NewPlaceholder(1), Value: supplementalValue},
 				},
 			},
-			ParamObligations: []factapply.CallParamObligation{
+			ParamObligations: []callpayload.CallParamObligation{
 				{ParamIndex: 1, Value: supplementalValue},
 			},
-			ParamConditions: []factapply.CallParamCondition{
+			ParamConditions: []callpayload.CallParamCondition{
 				{ParamIndex: 1, Value: false},
 			},
-			ReturnPresenceRelations: []factapply.CallReturnPresenceRelation{
+			ReturnPresenceRelations: []callpayload.CallReturnPresenceRelation{
 				{TriggerIndex: 1, TriggerPresence: presence.Present(), TargetIndex: 0, TargetPresence: presence.Absent()},
 			},
 		}
@@ -161,24 +161,24 @@ func TestWithSupplementalPreservesPrimaryAuthorityWhenSupplementalIsWeak(t *test
 	reg := standard.Registry()
 	primaryValue := typeValue(reg, typ.String)
 	supplementalValue := product.Top()
-	primary := func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) factapply.CallOutcome {
-		return factapply.CallOutcome{
+	primary := func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) callpayload.CallOutcome {
+		return callpayload.CallOutcome{
 			PostReturnAuthority: true,
-			Results:             []factapply.CallResult{{Index: 0, Value: primaryValue}},
-			ParamObligations: []factapply.CallParamObligation{
+			Results:             []callpayload.CallResult{{Index: 0, Value: primaryValue}},
+			ParamObligations: []callpayload.CallParamObligation{
 				{ParamIndex: 0, Value: primaryValue},
 			},
 		}
 	}
-	supplemental := func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) factapply.CallOutcome {
-		return factapply.CallOutcome{
-			Results: []factapply.CallResult{{Index: 0, Value: supplementalValue}},
+	supplemental := func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) callpayload.CallOutcome {
+		return callpayload.CallOutcome{
+			Results: []callpayload.CallResult{{Index: 0, Value: supplementalValue}},
 			NormalReturnFacts: callboundary.NormalReturnFacts{
 				PathRefinements: []callboundary.PathValueFact{
 					{Path: pathdom.NewPlaceholder(0), Value: supplementalValue},
 				},
 			},
-			ParamObligations: []factapply.CallParamObligation{
+			ParamObligations: []callpayload.CallParamObligation{
 				{ParamIndex: 1, Value: supplementalValue},
 			},
 		}
@@ -204,11 +204,11 @@ func TestWithSupplementalPreservesPrimaryNonTypeEvidence(t *testing.T) {
 	reg := standard.Registry()
 	primaryValue := product.NewWithPresence(reg, product.ShapeTop, presence.Present())
 	supplementalValue := typeValue(reg, typ.String)
-	primary := func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) factapply.CallOutcome {
-		return factapply.CallOutcome{Results: []factapply.CallResult{{Index: 0, Value: primaryValue}}}
+	primary := func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) callpayload.CallOutcome {
+		return callpayload.CallOutcome{Results: []callpayload.CallResult{{Index: 0, Value: primaryValue}}}
 	}
-	supplemental := func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) factapply.CallOutcome {
-		return factapply.CallOutcome{Results: []factapply.CallResult{{Index: 0, Value: supplementalValue}}}
+	supplemental := func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) callpayload.CallOutcome {
+		return callpayload.CallOutcome{Results: []callpayload.CallResult{{Index: 0, Value: supplementalValue}}}
 	}
 
 	got := WithSupplemental(primary, supplemental)(
@@ -233,15 +233,15 @@ func TestWithSupplementalPreservesPrimaryNonTypeEvidence(t *testing.T) {
 func TestWithSupplementalMergesHeapTableObjectsWithoutAuthority(t *testing.T) {
 	reg := standard.Registry()
 	tableID := identity.ID{Kind: "table", Site: "compose", Index: 1}
-	primary := func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) factapply.CallOutcome {
-		return factapply.CallOutcome{
+	primary := func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) callpayload.CallOutcome {
+		return callpayload.CallOutcome{
 			HeapTableObjects: map[identity.ID]heapidentity.TableObject{
 				tableID: heapidentity.NewTableObject(heapidentity.TableObjectConfig{Root: product.Absent(reg)}),
 			},
 		}
 	}
-	supplemental := func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) factapply.CallOutcome {
-		return factapply.CallOutcome{
+	supplemental := func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) callpayload.CallOutcome {
+		return callpayload.CallOutcome{
 			HeapTableObjects: map[identity.ID]heapidentity.TableObject{
 				tableID: heapidentity.NewTableObject(heapidentity.TableObjectConfig{Root: product.Top()}),
 			},
@@ -261,15 +261,15 @@ func TestWithSupplementalMergesHeapTableObjectsWithoutAuthority(t *testing.T) {
 func TestWithSupplementalMergesPlacementFactsWithoutAuthority(t *testing.T) {
 	tableID := identity.ID{Kind: "table", Site: "compose-placement", Index: 1}
 	otherID := identity.ID{Kind: "table", Site: "compose-placement", Index: 2}
-	primary := func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) factapply.CallOutcome {
-		return factapply.CallOutcome{
+	primary := func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) callpayload.CallOutcome {
+		return callpayload.CallOutcome{
 			Placements: map[identity.ID]placement.Value{
 				tableID: placement.Stack,
 			},
 		}
 	}
-	supplemental := func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) factapply.CallOutcome {
-		return factapply.CallOutcome{
+	supplemental := func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) callpayload.CallOutcome {
+		return callpayload.CallOutcome{
 			Placements: map[identity.ID]placement.Value{
 				tableID: placement.SharedHeap,
 				otherID: placement.OwnedHeap,
@@ -287,16 +287,16 @@ func TestWithSupplementalMergesPlacementFactsWithoutAuthority(t *testing.T) {
 }
 
 func TestWithSupplementalMergesParamLengthFloorsWithoutAuthority(t *testing.T) {
-	primary := func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) factapply.CallOutcome {
-		return factapply.CallOutcome{
-			ParamLengthFloors: []factapply.CallParamLengthFloor{
+	primary := func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) callpayload.CallOutcome {
+		return callpayload.CallOutcome{
+			ParamLengthFloors: []callpayload.CallParamLengthFloor{
 				{Path: pathdom.NewPlaceholder(0), Floor: 2},
 			},
 		}
 	}
-	supplemental := func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) factapply.CallOutcome {
-		return factapply.CallOutcome{
-			ParamLengthFloors: []factapply.CallParamLengthFloor{
+	supplemental := func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) callpayload.CallOutcome {
+		return callpayload.CallOutcome{
+			ParamLengthFloors: []callpayload.CallParamLengthFloor{
 				{Path: pathdom.NewPlaceholder(1), Floor: 3},
 			},
 		}
@@ -316,16 +316,16 @@ func TestWithSupplementalAuthorityBlocksSupplementalHeapTableObjects(t *testing.
 	reg := standard.Registry()
 	primaryID := identity.ID{Kind: "table", Site: "compose", Index: 2}
 	supplementalID := identity.ID{Kind: "table", Site: "compose", Index: 3}
-	primary := func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) factapply.CallOutcome {
-		return factapply.CallOutcome{
+	primary := func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) callpayload.CallOutcome {
+		return callpayload.CallOutcome{
 			PostReturnAuthority: true,
 			HeapTableObjects: map[identity.ID]heapidentity.TableObject{
 				primaryID: heapidentity.NewTableObject(heapidentity.TableObjectConfig{Root: product.Absent(reg)}),
 			},
 		}
 	}
-	supplemental := func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) factapply.CallOutcome {
-		return factapply.CallOutcome{
+	supplemental := func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) callpayload.CallOutcome {
+		return callpayload.CallOutcome{
 			HeapTableObjects: map[identity.ID]heapidentity.TableObject{
 				supplementalID: heapidentity.NewTableObject(heapidentity.TableObjectConfig{Root: product.Top()}),
 			},
@@ -347,16 +347,16 @@ func TestWithSupplementalAuthorityBlocksSupplementalHeapTableObjects(t *testing.
 func TestWithSupplementalAuthorityBlocksSupplementalPlacementFacts(t *testing.T) {
 	primaryID := identity.ID{Kind: "table", Site: "compose-placement", Index: 4}
 	supplementalID := identity.ID{Kind: "table", Site: "compose-placement", Index: 5}
-	primary := func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) factapply.CallOutcome {
-		return factapply.CallOutcome{
+	primary := func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) callpayload.CallOutcome {
+		return callpayload.CallOutcome{
 			PostReturnAuthority: true,
 			Placements: map[identity.ID]placement.Value{
 				primaryID: placement.Stack,
 			},
 		}
 	}
-	supplemental := func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) factapply.CallOutcome {
-		return factapply.CallOutcome{
+	supplemental := func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) callpayload.CallOutcome {
+		return callpayload.CallOutcome{
 			Placements: map[identity.ID]placement.Value{
 				primaryID:      placement.SharedHeap,
 				supplementalID: placement.OwnedHeap,
@@ -377,17 +377,17 @@ func TestWithSupplementalAuthorityBlocksSupplementalPlacementFacts(t *testing.T)
 }
 
 func TestWithSupplementalAuthorityBlocksSupplementalParamLengthFloors(t *testing.T) {
-	primary := func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) factapply.CallOutcome {
-		return factapply.CallOutcome{
+	primary := func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) callpayload.CallOutcome {
+		return callpayload.CallOutcome{
 			PostReturnAuthority: true,
-			ParamLengthFloors: []factapply.CallParamLengthFloor{
+			ParamLengthFloors: []callpayload.CallParamLengthFloor{
 				{Path: pathdom.NewPlaceholder(0), Floor: 2},
 			},
 		}
 	}
-	supplemental := func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) factapply.CallOutcome {
-		return factapply.CallOutcome{
-			ParamLengthFloors: []factapply.CallParamLengthFloor{
+	supplemental := func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) callpayload.CallOutcome {
+		return callpayload.CallOutcome{
+			ParamLengthFloors: []callpayload.CallParamLengthFloor{
 				{Path: pathdom.NewPlaceholder(1), Floor: 3},
 			},
 		}

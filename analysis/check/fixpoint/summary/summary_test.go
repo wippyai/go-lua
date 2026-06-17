@@ -335,6 +335,66 @@ func TestParamMemberReturnSlotsAreMustFacts(t *testing.T) {
 	}
 }
 
+func TestReturnParamPathAliasesAreMustFacts(t *testing.T) {
+	reg := standard.Registry()
+	apiAlias := ReturnParamPathAlias{
+		ReturnIndex: 0,
+		Member:      path.PathKey(".api"),
+		Source:      path.PathKey("$0.registry"),
+	}
+	backupAlias := ReturnParamPathAlias{
+		ReturnIndex: 0,
+		Member:      path.PathKey(".api.backup"),
+		Source:      path.PathKey("$0.registry.backup"),
+	}
+	left := Summary{
+		Returns:                []product.Value{product.Top()},
+		ReturnParamPathAliases: []ReturnParamPathAlias{backupAlias, apiAlias},
+	}
+	right := Summary{
+		Returns:                []product.Value{product.Top()},
+		ReturnParamPathAliases: []ReturnParamPathAlias{apiAlias},
+	}
+	withoutAliases := Summary{Returns: []product.Value{product.Top()}}
+
+	normalized := Normalize(reg, Summary{
+		Returns: []product.Value{product.Top()},
+		ReturnParamPathAliases: []ReturnParamPathAlias{
+			{ReturnIndex: -1, Member: path.PathKey(".ignored"), Source: path.PathKey("$0")},
+			apiAlias,
+			apiAlias,
+			backupAlias,
+		},
+	})
+	if len(normalized.ReturnParamPathAliases) != 2 ||
+		normalized.ReturnParamPathAliases[0] != apiAlias ||
+		normalized.ReturnParamPathAliases[1] != backupAlias {
+		t.Fatalf("Normalize ReturnParamPathAliases = %#v, want sorted unique aliases", normalized.ReturnParamPathAliases)
+	}
+
+	joined := Join(reg, left, right)
+	if len(joined.ReturnParamPathAliases) != 1 || joined.ReturnParamPathAliases[0] != apiAlias {
+		t.Fatalf("Join ReturnParamPathAliases = %#v, want only common must alias %#v", joined.ReturnParamPathAliases, apiAlias)
+	}
+	widened := Widen(reg, left, right)
+	if len(widened.ReturnParamPathAliases) != 1 || widened.ReturnParamPathAliases[0] != apiAlias {
+		t.Fatalf("Widen ReturnParamPathAliases = %#v, want only common must alias %#v", widened.ReturnParamPathAliases, apiAlias)
+	}
+	dropped := Join(reg, left, withoutAliases)
+	if len(dropped.ReturnParamPathAliases) != 0 {
+		t.Fatalf("Join kept branch-local ReturnParamPathAliases = %#v", dropped.ReturnParamPathAliases)
+	}
+	if !LessOrEq(reg, left, right) {
+		t.Fatalf("summary with more must ReturnParamPathAliases should be <= summary with fewer")
+	}
+	if LessOrEq(reg, right, left) {
+		t.Fatalf("summary with fewer must ReturnParamPathAliases should not be <= summary with more")
+	}
+	if !LessOrEq(reg, left, withoutAliases) || LessOrEq(reg, withoutAliases, left) {
+		t.Fatalf("ReturnParamPathAliases must use reverse-inclusion order")
+	}
+}
+
 type summaryTestAxis uint8
 
 const (

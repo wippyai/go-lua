@@ -129,6 +129,20 @@ func (r *Result) CallSite(point cfg.Point) (factflow.CallSite, bool) {
 	return r.facts.CallSite(point)
 }
 
+func (r *Result) ObjectLiteralExpr(expr factflow.ExprRef) (factflow.ObjectLiteral, bool) {
+	if r == nil {
+		return factflow.ObjectLiteral{}, false
+	}
+	return r.facts.ObjectLiteral(expr)
+}
+
+func (r *Result) ExpressionPathRef(expr factflow.ExprRef) (path.Path, bool) {
+	if r == nil {
+		return path.Path{}, false
+	}
+	return r.facts.ExpressionPath(expr)
+}
+
 func (r *Result) NoNormalReturn(point cfg.Point) bool {
 	if r == nil {
 		return false

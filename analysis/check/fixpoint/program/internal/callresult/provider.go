@@ -4,6 +4,8 @@ package callresult
 import (
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/summary"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
+	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/evidence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
@@ -20,6 +22,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/factquery"
 	sourcevalue "github.com/wippyai/go-lua/analysis/engine/sourcevalue"
 	"github.com/wippyai/go-lua/analysis/engine/state"
+	"github.com/wippyai/go-lua/analysis/engine/state/heapidentity"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/typecall"
@@ -98,6 +101,7 @@ func OutcomeProvider(config ProviderConfig) factapply.CallOutcomeProvider {
 			}
 			return factapply.CallOutcome{}
 		}
+		got = materializeReturnParamPathAliases(ctx, ownedSite, got, sources, in, read)
 		out := outcomeFromSummary(got, func(index int) bool {
 			if index < 0 || index >= len(got.ParamObligations) {
 				return false
@@ -272,6 +276,173 @@ func returnRecordTypeFromFacts(reg *axis.Registry, facts callboundary.NormalRetu
 		return nil, false
 	}
 	return typetable.RebuildRecord(parts), true
+}
+
+func materializeReturnParamPathAliases(
+	ctx transfer.NodeContext,
+	site factflow.CallSite,
+	got summary.Summary,
+	sources sourcevalue.SourceValues,
+	in state.State,
+	read func(cfg.Point) state.State,
+) summary.Summary {
+	if ctx.Registry == nil || sources == nil || len(got.ReturnParamPathAliases) == 0 {
+		return got
+	}
+	objects := summary.CloneHeapTableObjects(got.HeapTableObjects)
+	if len(objects) == 0 {
+		return got
+	}
+	changed := false
+	for _, alias := range got.ReturnParamPathAliases {
+		value, ok := returnParamAliasSourceValue(ctx, site, alias.Source, sources, in, read)
+		if !ok {
+			continue
+		}
+		if writeReturnParamAliasMember(ctx.Registry, objects, got.Returns, alias.ReturnIndex, alias.Member, value) {
+			changed = true
+		}
+	}
+	if !changed {
+		return got
+	}
+	out := got.Clone()
+	out.HeapTableObjects = objects
+	return summary.Normalize(ctx.Registry, out)
+}
+
+func returnParamAliasSourceValue(
+	ctx transfer.NodeContext,
+	site factflow.CallSite,
+	sourceKey pathdom.PathKey,
+	sources sourcevalue.SourceValues,
+	in state.State,
+	read func(cfg.Point) state.State,
+) (product.Value, bool) {
+	sourcePath, ok := pathaddr.PlaceholderPathFromKey(sourceKey)
+	if !ok {
+		return product.Value{}, false
+	}
+	index := sourcePath.PlaceholderIndex()
+	args := site.ArgumentSources()
+	if index < 0 || index >= len(args) {
+		return product.Value{}, false
+	}
+	value, ok := sources.ValueOfSource(ctx.Point, args[index], in, read)
+	if !ok {
+		return product.Value{}, false
+	}
+	if len(sourcePath.Segments) == 0 {
+		return value, true
+	}
+	return sourcevalue.HeapMemberFromValue(ctx.Registry, in, value, sourcePath.Segments)
+}
+
+func writeReturnParamAliasMember(
+	reg *axis.Registry,
+	objects map[identity.ID]heapidentity.TableObject,
+	returns []product.Value,
+	returnIndex int,
+	memberKey pathdom.PathKey,
+	value product.Value,
+) bool {
+	rootID := returnIdentityAt(reg, returns, returnIndex)
+	if rootID == (identity.ID{}) {
+		return false
+	}
+	segments, ok := pathaddr.RelativeStaticMemberSuffixSegments(memberKey)
+	if !ok || len(segments) == 0 {
+		return false
+	}
+	changed := writeHeapObjectStaticMember(reg, objects, rootID, returns[returnIndex], memberKey, value)
+	if writeNestedHeapObjectStaticMember(reg, objects, rootID, returns[returnIndex], segments, value) {
+		changed = true
+	}
+	return changed
+}
+
+func writeNestedHeapObjectStaticMember(
+	reg *axis.Registry,
+	objects map[identity.ID]heapidentity.TableObject,
+	rootID identity.ID,
+	rootValue product.Value,
+	segments []segment.Segment,
+	value product.Value,
+) bool {
+	if len(segments) < 2 {
+		return false
+	}
+	currentID := rootID
+	currentValue := rootValue
+	for len(segments) > 1 {
+		key, ok := heapidentity.StaticMemberSuffixKey(segments[:1])
+		if !ok {
+			return false
+		}
+		object, ok := objects[currentID]
+		if !ok {
+			return false
+		}
+		nextValue, ok := object.StaticMember(key)
+		if !ok {
+			return false
+		}
+		nextID, ok := product.Get(reg, nextValue, identity.Key).ID()
+		if !ok {
+			return false
+		}
+		currentID = nextID
+		currentValue = nextValue
+		segments = segments[1:]
+	}
+	key, ok := heapidentity.StaticMemberSuffixKey(segments)
+	if !ok {
+		return false
+	}
+	return writeHeapObjectStaticMember(reg, objects, currentID, currentValue, key, value)
+}
+
+func writeHeapObjectStaticMember(
+	reg *axis.Registry,
+	objects map[identity.ID]heapidentity.TableObject,
+	id identity.ID,
+	root product.Value,
+	key pathdom.PathKey,
+	value product.Value,
+) bool {
+	if id == (identity.ID{}) || key == "" {
+		return false
+	}
+	object := objects[id]
+	staticMembers := object.StaticMembers()
+	if staticMembers == nil {
+		staticMembers = make(map[pathdom.PathKey]product.Value, 1)
+	}
+	if existing, ok := staticMembers[key]; ok && product.Equal(reg, existing, value) {
+		return false
+	}
+	staticMembers[key] = value
+	objectRoot := object.Root()
+	if product.Equal(reg, objectRoot, product.Bottom(reg)) && !product.Equal(reg, root, product.Bottom(reg)) {
+		objectRoot = root
+	}
+	objects[id] = heapidentity.NewTableObject(heapidentity.TableObjectConfig{
+		Root:              objectRoot,
+		StaticMembers:     staticMembers,
+		DynamicIndexFacts: object.DynamicIndexFacts(),
+	})
+	return true
+}
+
+func returnIdentityAt(reg *axis.Registry, returns []product.Value, index int) identity.ID {
+	if index < 0 || index >= len(returns) {
+		return identity.ID{}
+	}
+	id, ok := product.Get(reg, returns[index], identity.Key).ID()
+	if !ok {
+		return identity.ID{}
+	}
+	return id
 }
 
 func summaryReturnValueAt(reg *axis.Registry, sum summary.Summary, index int) (product.Value, bool) {

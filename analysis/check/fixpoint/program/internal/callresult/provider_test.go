@@ -456,6 +456,70 @@ func TestOutcomeProviderPreservesReturnedNestedHeapIdentityClosure(t *testing.T)
 	}
 }
 
+func TestOutcomeProviderMaterializesReturnParamPathAliases(t *testing.T) {
+	reg := standard.Registry()
+	callee := symbol.ID(45)
+	key := summary.DefaultSummaryKey(ref.FuncRef{Kind: ref.KindSymbol, ID: 46})
+	rootID := identity.ID{Kind: "table", Site: "provider-alias", Index: 1}
+	registryID := identity.ID{Kind: "table", Site: "provider-alias", Index: 2}
+	clientID := identity.ID{Kind: "table", Site: "provider-alias", Index: 3}
+	rootValue := product.Set(reg, product.NewWithPresence(reg, product.ShapeTop, presence.Present()), identity.Key, identity.Singleton(rootID))
+	registryValue := product.Set(reg, product.NewWithPresence(reg, product.ShapeTop, presence.Present()), identity.Key, identity.Singleton(registryID))
+	clientValue := product.Set(reg, product.NewWithPresence(reg, product.ShapeTop, presence.Present()), identity.Key, identity.Singleton(clientID))
+	source := providerExpressionSource(t, factflow.ExprRef(45), 0)
+	provider := OutcomeProvider(ProviderConfig{
+		Summaries: summary.NewSnapshot(reg, summary.EntrySummary{
+			Key: key,
+			Summary: summary.Summary{
+				Returns: []product.Value{rootValue},
+				HeapTableObjects: map[identity.ID]heapidentity.TableObject{
+					rootID: heapidentity.NewTableObject(heapidentity.TableObjectConfig{
+						Root:          rootValue,
+						StaticMembers: map[path.PathKey]product.Value{path.PathKey(".api"): registryValue},
+					}),
+					registryID: heapidentity.NewTableObject(heapidentity.TableObjectConfig{
+						Root: registryValue,
+					}),
+				},
+				ReturnParamPathAliases: []summary.ReturnParamPathAlias{
+					{ReturnIndex: 0, Member: path.PathKey(".api.backup"), Source: path.PathKey("$0.backup")},
+				},
+			},
+		}),
+		KeyFor: ByCalleeIdentity(map[symbol.ID]summary.SummaryKey{callee: key}),
+		Sources: sourcevalue.NewSourceValues(sourcevalue.SourceValuesConfig{
+			Registry: reg,
+			ExpressionValues: map[factflow.ExprRef]product.Value{
+				source.ExprRef: registryValue,
+			},
+		}),
+	})
+	in := state.State{}.WriteHeapTableObject(reg, registryID, heapidentity.NewTableObject(heapidentity.TableObjectConfig{
+		Root:          registryValue,
+		StaticMembers: map[path.PathKey]product.Value{path.PathKey(".backup"): clientValue},
+	}))
+
+	got := provider(transfer.NodeContext{Registry: reg}, factflow.NewCallSite(factflow.CallSiteConfig{
+		CalleeSymbol:    callee,
+		ArgumentSources: []factflow.ValueSource{source},
+	}).View(), in, nil)
+
+	rootObject, ok := got.HeapTableObjects[rootID]
+	if !ok {
+		t.Fatalf("HeapTableObjects = %#v, want root object %v", got.HeapTableObjects, rootID)
+	}
+	if member, ok := rootObject.StaticMember(path.PathKey(".api.backup")); !ok || !product.Equal(reg, member, clientValue) {
+		t.Fatalf("root api.backup member = %#v/%v, want %#v", member, ok, clientValue)
+	}
+	registryObject, ok := got.HeapTableObjects[registryID]
+	if !ok {
+		t.Fatalf("HeapTableObjects = %#v, want registry object %v", got.HeapTableObjects, registryID)
+	}
+	if member, ok := registryObject.StaticMember(path.PathKey(".backup")); !ok || !product.Equal(reg, member, clientValue) {
+		t.Fatalf("registry backup member = %#v/%v, want %#v", member, ok, clientValue)
+	}
+}
+
 func TestOutcomeProviderJoinMaterializesTableEntryShapeFromNilableFactRecord(t *testing.T) {
 	reg := standard.Registry()
 	calleePath := path.NewPath(symbol.ID(127), "module").Field("make")
@@ -1203,6 +1267,8 @@ func TestProductionImportsAreBounded(t *testing.T) {
 	allowed := map[string]bool{
 		"github.com/wippyai/go-lua/analysis/check/fixpoint/summary":          true,
 		"github.com/wippyai/go-lua/analysis/domain/path":                     true,
+		"github.com/wippyai/go-lua/analysis/domain/path/address":             true,
+		"github.com/wippyai/go-lua/analysis/domain/path/segment":             true,
 		"github.com/wippyai/go-lua/analysis/domain/value/axis":               true,
 		"github.com/wippyai/go-lua/analysis/domain/value/axis/evidence":      true,
 		"github.com/wippyai/go-lua/analysis/domain/value/axis/identity":      true,
@@ -1220,6 +1286,7 @@ func TestProductionImportsAreBounded(t *testing.T) {
 		"github.com/wippyai/go-lua/analysis/engine/factquery":                true,
 		"github.com/wippyai/go-lua/analysis/engine/sourcevalue":              true,
 		"github.com/wippyai/go-lua/analysis/engine/state/channelselectfact":  true,
+		"github.com/wippyai/go-lua/analysis/engine/state/heapidentity":       true,
 		"github.com/wippyai/go-lua/analysis/engine/state/pathevidence":       true,
 		"github.com/wippyai/go-lua/analysis/engine/state":                    true,
 		"github.com/wippyai/go-lua/analysis/engine/transfer":                 true,

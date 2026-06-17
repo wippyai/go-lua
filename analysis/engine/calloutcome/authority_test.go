@@ -8,14 +8,14 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
-	factapply "github.com/wippyai/go-lua/analysis/engine/factapply"
+	callpayload "github.com/wippyai/go-lua/analysis/engine/callpayload"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
 func TestHasAuthoritativePostReturnEvidenceCountsPlacementFacts(t *testing.T) {
 	tableID := identity.ID{Kind: "table", Site: "compose-placement", Index: 3}
-	outcome := factapply.CallOutcome{
+	outcome := callpayload.CallOutcome{
 		Placements: map[identity.ID]placement.Value{
 			tableID: placement.Stack,
 		},
@@ -26,8 +26,8 @@ func TestHasAuthoritativePostReturnEvidenceCountsPlacementFacts(t *testing.T) {
 }
 
 func TestHasAuthoritativePostReturnEvidenceCountsParamLengthFloors(t *testing.T) {
-	outcome := factapply.CallOutcome{
-		ParamLengthFloors: []factapply.CallParamLengthFloor{
+	outcome := callpayload.CallOutcome{
+		ParamLengthFloors: []callpayload.CallParamLengthFloor{
 			{Path: pathdom.NewPlaceholder(0), Floor: 2},
 		},
 	}
@@ -44,7 +44,7 @@ func TestHasAuthoritativePostReturnEvidenceRejectsWeakResultSlots(t *testing.T) 
 		"any":     typevalue.FromType(reg, typ.Any),
 		"unknown": typevalue.FromType(reg, typ.Unknown),
 	} {
-		outcome := factapply.CallOutcome{Results: []factapply.CallResult{{Index: 0, Value: value}}}
+		outcome := callpayload.CallOutcome{Results: []callpayload.CallResult{{Index: 0, Value: value}}}
 		if HasAuthoritativePostReturnEvidence(reg, outcome) {
 			t.Fatalf("%s result slot was authoritative; weak result evidence must remain supplemental", name)
 		}
@@ -53,8 +53,8 @@ func TestHasAuthoritativePostReturnEvidenceRejectsWeakResultSlots(t *testing.T) 
 
 func TestHasAuthoritativePostReturnEvidenceAcceptsSpecificResultSlot(t *testing.T) {
 	reg := standard.Registry()
-	outcome := factapply.CallOutcome{
-		Results: []factapply.CallResult{{Index: 0, Value: typevalue.WithWitness(reg, typevalue.FromType(reg, typ.String), typ.String)}},
+	outcome := callpayload.CallOutcome{
+		Results: []callpayload.CallResult{{Index: 0, Value: typevalue.WithWitness(reg, typevalue.FromType(reg, typ.String), typ.String)}},
 	}
 	if !HasAuthoritativePostReturnEvidence(reg, outcome) {
 		t.Fatal("specific string result slot was not authoritative")

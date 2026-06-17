@@ -72,6 +72,37 @@ func normalizeParamMemberReturnSlots(in []ParamMemberReturnSlot) []ParamMemberRe
 	return out
 }
 
+func normalizeReturnParamPathAliases(in []ReturnParamPathAlias) []ReturnParamPathAlias {
+	if len(in) == 0 {
+		return nil
+	}
+	seen := make(map[ReturnParamPathAlias]struct{}, len(in))
+	out := make([]ReturnParamPathAlias, 0, len(in))
+	for _, alias := range in {
+		if alias.ReturnIndex < 0 || alias.Member == "" || alias.Source == "" {
+			continue
+		}
+		if _, ok := seen[alias]; ok {
+			continue
+		}
+		seen[alias] = struct{}{}
+		out = append(out, alias)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].ReturnIndex != out[j].ReturnIndex {
+			return out[i].ReturnIndex < out[j].ReturnIndex
+		}
+		if out[i].Member != out[j].Member {
+			return out[i].Member < out[j].Member
+		}
+		return out[i].Source < out[j].Source
+	})
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
 func paramMemberCallObligationsEqual(a, b []ParamMemberCallObligation) bool {
 	a = normalizeParamMemberCallObligations(a)
 	b = normalizeParamMemberCallObligations(b)
@@ -172,4 +203,58 @@ func joinParamMemberReturnSlots(a, b []ParamMemberReturnSlot) []ParamMemberRetur
 		}
 	}
 	return normalizeParamMemberReturnSlots(out)
+}
+
+func returnParamPathAliasesEqual(a, b []ReturnParamPathAlias) bool {
+	a = normalizeReturnParamPathAliases(a)
+	b = normalizeReturnParamPathAliases(b)
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func returnParamPathAliasesLessOrEq(a, b []ReturnParamPathAlias) bool {
+	a = normalizeReturnParamPathAliases(a)
+	b = normalizeReturnParamPathAliases(b)
+	if len(b) == 0 {
+		return true
+	}
+	if len(a) == 0 {
+		return false
+	}
+	have := make(map[ReturnParamPathAlias]struct{}, len(a))
+	for _, alias := range a {
+		have[alias] = struct{}{}
+	}
+	for _, alias := range b {
+		if _, ok := have[alias]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
+func joinReturnParamPathAliases(a, b []ReturnParamPathAlias) []ReturnParamPathAlias {
+	a = normalizeReturnParamPathAliases(a)
+	b = normalizeReturnParamPathAliases(b)
+	if len(a) == 0 || len(b) == 0 {
+		return nil
+	}
+	bAliases := make(map[ReturnParamPathAlias]struct{}, len(b))
+	for _, alias := range b {
+		bAliases[alias] = struct{}{}
+	}
+	out := make([]ReturnParamPathAlias, 0, min(len(a), len(b)))
+	for _, alias := range a {
+		if _, ok := bAliases[alias]; ok {
+			out = append(out, alias)
+		}
+	}
+	return normalizeReturnParamPathAliases(out)
 }

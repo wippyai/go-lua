@@ -5,7 +5,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/evidence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
-	factapply "github.com/wippyai/go-lua/analysis/engine/factapply"
+	"github.com/wippyai/go-lua/analysis/engine/callpayload"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
@@ -13,7 +13,7 @@ import (
 // post-return state evidence strong enough to block supplemental fallback facts.
 // Weak top/any/unknown result slots are not authority; they remain fallback
 // evidence that stronger providers may refine.
-func HasAuthoritativePostReturnEvidence(reg *axis.Registry, outcome factapply.CallOutcome) bool {
+func HasAuthoritativePostReturnEvidence(reg *axis.Registry, outcome callpayload.CallOutcome) bool {
 	return outcomeHasAuthoritativeResult(reg, outcome.Results) ||
 		len(outcome.NormalReturnFacts.PathRefinements) != 0 ||
 		len(outcome.NormalReturnFacts.PathStaticMembers) != 0 ||
@@ -36,7 +36,7 @@ func HasAuthoritativePostReturnEvidence(reg *axis.Registry, outcome factapply.Ca
 		len(outcome.ReturnPresenceRelations) != 0
 }
 
-func outcomeHasAuthoritativeResult(reg *axis.Registry, results []factapply.CallResult) bool {
+func outcomeHasAuthoritativeResult(reg *axis.Registry, results []callpayload.CallResult) bool {
 	for _, result := range results {
 		if resultValueHasAuthority(reg, result.Value) {
 			return true

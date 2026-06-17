@@ -6,7 +6,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
-	factapply "github.com/wippyai/go-lua/analysis/engine/factapply"
+	"github.com/wippyai/go-lua/analysis/engine/callpayload"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/state/heapidentity"
@@ -19,14 +19,14 @@ import (
 // post-return state facts are accumulated only until a provider declares
 // post-return authority for the call. Pre-call diagnostic obligations are
 // accumulated.
-func WithSupplemental(primary, supplemental factapply.CallOutcomeProvider) factapply.CallOutcomeProvider {
+func WithSupplemental(primary, supplemental callpayload.CallOutcomeProvider) callpayload.CallOutcomeProvider {
 	if primary == nil {
 		return supplemental
 	}
 	if supplemental == nil {
 		return primary
 	}
-	return func(ctx transfer.NodeContext, site factflow.CallSiteView, in state.State, read func(cfg.Point) state.State) factapply.CallOutcome {
+	return func(ctx transfer.NodeContext, site factflow.CallSiteView, in state.State, read func(cfg.Point) state.State) callpayload.CallOutcome {
 		out := primary(ctx, site, in, read)
 		second := supplemental(ctx, site, in, read)
 		out = withSupplementalResultSlots(ctx.Registry, out, second.Results)
@@ -34,7 +34,7 @@ func WithSupplemental(primary, supplemental factapply.CallOutcomeProvider) facta
 	}
 }
 
-func withSupplementalResultSlots(reg *axis.Registry, out factapply.CallOutcome, results []factapply.CallResult) factapply.CallOutcome {
+func withSupplementalResultSlots(reg *axis.Registry, out callpayload.CallOutcome, results []callpayload.CallResult) callpayload.CallOutcome {
 	if len(results) == 0 {
 		return out
 	}
@@ -63,7 +63,7 @@ func withSupplementalResultSlots(reg *axis.Registry, out factapply.CallOutcome, 
 	return out
 }
 
-func withSupplementalFacts(reg *axis.Registry, out, second factapply.CallOutcome) factapply.CallOutcome {
+func withSupplementalFacts(reg *axis.Registry, out, second callpayload.CallOutcome) callpayload.CallOutcome {
 	out.ParamObligations = append(out.ParamObligations, second.ParamObligations...)
 	if out.PostReturnAuthority {
 		return out
