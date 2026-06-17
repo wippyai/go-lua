@@ -2,8 +2,28 @@ package state
 
 import (
 	"github.com/wippyai/go-lua/analysis/domain/lattice"
+	"github.com/wippyai/go-lua/analysis/domain/lattice/lift"
+	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/internal/mapedit"
 )
+
+// floorMapDomain lifts a MustMapLane value-domain into a lattice over a typed
+// lane wrapper L, given the wrap/unwrap conversions between L and the underlying
+// lift lane. It removes the per-floor-lane domain boilerplate.
+func floorMapDomain[F any, L any](
+	elem lattice.Lattice[lift.MustMapLane[pathdom.PathKey, F]],
+	wrap func(lift.MustMapLane[pathdom.PathKey, F]) L,
+	unwrap func(L) lift.MustMapLane[pathdom.PathKey, F],
+) lattice.Lattice[L] {
+	return lattice.Lattice[L]{
+		Bottom:   func() L { return wrap(elem.Bottom()) },
+		Top:      func() L { return wrap(elem.Top()) },
+		Equal:    func(a, b L) bool { return elem.Equal(unwrap(a), unwrap(b)) },
+		LessOrEq: func(a, b L) bool { return elem.LessOrEq(unwrap(a), unwrap(b)) },
+		Join:     func(a, b L) L { return wrap(elem.Join(unwrap(a), unwrap(b))) },
+		Widen:    func(prev, next L) L { return wrap(elem.Widen(unwrap(prev), unwrap(next))) },
+	}
+}
 
 // mapLane is the canonical state-side storage adapter for a finite map of facts
 // keyed by K, with a top sentinel that avoids materializing the (large) top map

@@ -5,6 +5,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/lattice/lift"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/engine/state/lenbound"
+	"github.com/wippyai/go-lua/analysis/internal/mapedit"
 )
 
 type lenFloorLane struct {
@@ -23,7 +24,7 @@ func (l lenFloorLane) reachable() lenFloorLane {
 	if !l.lane.Bottom() {
 		return l
 	}
-	return lenFloorLane{lane: lift.MustMapValues(cloneLenFloors(l.lane.Values()))}
+	return lenFloorLane{lane: lift.MustMapValues(mapedit.Clone(l.lane.Values()))}
 }
 
 func (l lenFloorLane) read(pathKey pathdom.PathKey) (int64, bool) {
@@ -46,7 +47,7 @@ func (l lenFloorLane) write(pathKey pathdom.PathKey, lo int64) (lenFloorLane, bo
 			return l, false
 		}
 	}
-	floors := cloneLenFloors(l.lane.Values())
+	floors := mapedit.Clone(l.lane.Values())
 	if floors == nil {
 		floors = make(map[pathdom.PathKey]lenbound.Floor, 1)
 	}
@@ -56,32 +57,5 @@ func (l lenFloorLane) write(pathKey pathdom.PathKey, lo int64) (lenFloorLane, bo
 }
 
 func lenFloorMapDomain() lattice.Lattice[lenFloorLane] {
-	domain := lenbound.MapDomain()
-	return lattice.Lattice[lenFloorLane]{
-		Bottom: func() lenFloorLane { return lenFloorLaneFromLift(domain.Bottom()) },
-		Top:    func() lenFloorLane { return lenFloorLaneFromLift(domain.Top()) },
-		Equal: func(a, b lenFloorLane) bool {
-			return domain.Equal(a.asLift(), b.asLift())
-		},
-		LessOrEq: func(a, b lenFloorLane) bool {
-			return domain.LessOrEq(a.asLift(), b.asLift())
-		},
-		Join: func(a, b lenFloorLane) lenFloorLane {
-			return lenFloorLaneFromLift(domain.Join(a.asLift(), b.asLift()))
-		},
-		Widen: func(prev, next lenFloorLane) lenFloorLane {
-			return lenFloorLaneFromLift(domain.Widen(prev.asLift(), next.asLift()))
-		},
-	}
-}
-
-func cloneLenFloors(in map[pathdom.PathKey]lenbound.Floor) map[pathdom.PathKey]lenbound.Floor {
-	if len(in) == 0 {
-		return nil
-	}
-	out := make(map[pathdom.PathKey]lenbound.Floor, len(in))
-	for k, v := range in {
-		out[k] = v
-	}
-	return out
+	return floorMapDomain(lenbound.MapDomain(), lenFloorLaneFromLift, lenFloorLane.asLift)
 }

@@ -5,6 +5,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/lattice/lift"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/engine/state/numbound"
+	"github.com/wippyai/go-lua/analysis/internal/mapedit"
 )
 
 type numFloorLane struct {
@@ -23,7 +24,7 @@ func (l numFloorLane) reachable() numFloorLane {
 	if !l.lane.Bottom() {
 		return l
 	}
-	return numFloorLane{lane: lift.MustMapValues(cloneNumFloors(l.lane.Values()))}
+	return numFloorLane{lane: lift.MustMapValues(mapedit.Clone(l.lane.Values()))}
 }
 
 func (l numFloorLane) snapshot() NumFloorsSnapshot {
@@ -62,7 +63,7 @@ func (l numFloorLane) write(pathKey pathdom.PathKey, lo int64) (numFloorLane, bo
 			return l, false
 		}
 	}
-	floors := cloneNumFloors(l.lane.Values())
+	floors := mapedit.Clone(l.lane.Values())
 	if floors == nil {
 		floors = make(map[pathdom.PathKey]numbound.Floor, 1)
 	}
@@ -75,7 +76,7 @@ func (l numFloorLane) clear(pathKey pathdom.PathKey) (numFloorLane, bool) {
 	if pathKey == "" || l.lane.Bottom() {
 		return l, false
 	}
-	floors := cloneNumFloors(l.lane.Values())
+	floors := mapedit.Clone(l.lane.Values())
 	if _, ok := floors[pathKey]; !ok {
 		return l, false
 	}
@@ -88,32 +89,5 @@ func (l numFloorLane) clear(pathKey pathdom.PathKey) (numFloorLane, bool) {
 }
 
 func numFloorMapDomain() lattice.Lattice[numFloorLane] {
-	domain := numbound.MapDomain()
-	return lattice.Lattice[numFloorLane]{
-		Bottom: func() numFloorLane { return numFloorLaneFromLift(domain.Bottom()) },
-		Top:    func() numFloorLane { return numFloorLaneFromLift(domain.Top()) },
-		Equal: func(a, b numFloorLane) bool {
-			return domain.Equal(a.asLift(), b.asLift())
-		},
-		LessOrEq: func(a, b numFloorLane) bool {
-			return domain.LessOrEq(a.asLift(), b.asLift())
-		},
-		Join: func(a, b numFloorLane) numFloorLane {
-			return numFloorLaneFromLift(domain.Join(a.asLift(), b.asLift()))
-		},
-		Widen: func(prev, next numFloorLane) numFloorLane {
-			return numFloorLaneFromLift(domain.Widen(prev.asLift(), next.asLift()))
-		},
-	}
-}
-
-func cloneNumFloors(in map[pathdom.PathKey]numbound.Floor) map[pathdom.PathKey]numbound.Floor {
-	if len(in) == 0 {
-		return nil
-	}
-	out := make(map[pathdom.PathKey]numbound.Floor, len(in))
-	for k, v := range in {
-		out[k] = v
-	}
-	return out
+	return floorMapDomain(numbound.MapDomain(), numFloorLaneFromLift, numFloorLane.asLift)
 }
