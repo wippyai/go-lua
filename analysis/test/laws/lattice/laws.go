@@ -201,15 +201,21 @@ func (s LawSuite[T]) checkJoinAssociative(t reporter) {
 }
 
 func (s LawSuite[T]) checkJoinUpperBound(t reporter) {
+	s.checkUpperBound(t, s.Domain.Join, "Join", "Join upper-bound", "Join upper-bound")
+}
+
+// checkUpperBound verifies that op(a,b) is an upper bound of both operands,
+// reporting failures of a under labelA and of b under labelB.
+func (s LawSuite[T]) checkUpperBound(t reporter, op func(T, T) T, opName, labelA, labelB string) {
 	t.Helper()
 	for _, a := range s.Sample {
 		for _, b := range s.Sample {
-			j := s.Domain.Join(a, b)
-			if !s.Domain.LessOrEq(a, j) {
-				s.report(t, "Join upper-bound", "%s ⊑ Join(%s,%s)=%s fails", s.fmt(a), s.fmt(a), s.fmt(b), s.fmt(j))
+			r := op(a, b)
+			if !s.Domain.LessOrEq(a, r) {
+				s.report(t, labelA, "%s ⊑ "+opName+"(%s,%s)=%s fails", s.fmt(a), s.fmt(a), s.fmt(b), s.fmt(r))
 			}
-			if !s.Domain.LessOrEq(b, j) {
-				s.report(t, "Join upper-bound", "%s ⊑ Join(%s,%s)=%s fails", s.fmt(b), s.fmt(a), s.fmt(b), s.fmt(j))
+			if !s.Domain.LessOrEq(b, r) {
+				s.report(t, labelB, "%s ⊑ "+opName+"(%s,%s)=%s fails", s.fmt(b), s.fmt(a), s.fmt(b), s.fmt(r))
 			}
 		}
 	}
@@ -322,18 +328,7 @@ func (s LawSuite[T]) checkAbsorption(t reporter) {
 }
 
 func (s LawSuite[T]) checkWideningOverApproximates(t reporter) {
-	t.Helper()
-	for _, a := range s.Sample {
-		for _, b := range s.Sample {
-			w := s.Domain.Widen(a, b)
-			if !s.Domain.LessOrEq(a, w) {
-				s.report(t, "Widen over-approximates prev", "%s ⊑ Widen(%s,%s)=%s fails", s.fmt(a), s.fmt(a), s.fmt(b), s.fmt(w))
-			}
-			if !s.Domain.LessOrEq(b, w) {
-				s.report(t, "Widen over-approximates next", "%s ⊑ Widen(%s,%s)=%s fails", s.fmt(b), s.fmt(a), s.fmt(b), s.fmt(w))
-			}
-		}
-	}
+	s.checkUpperBound(t, s.Domain.Widen, "Widen", "Widen over-approximates prev", "Widen over-approximates next")
 }
 
 // chainTerminationBound caps how many widening iterations we permit before
