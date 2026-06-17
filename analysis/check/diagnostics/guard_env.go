@@ -2,6 +2,7 @@ package diagnostics
 
 import (
 	"sort"
+	"sync"
 
 	"github.com/wippyai/go-lua/analysis/check/body"
 	"github.com/wippyai/go-lua/analysis/domain/path"
@@ -37,6 +38,35 @@ type guardEnv struct {
 	truthy      []path.Path
 	falsy       []path.Path
 	nilPaths    []path.Path
+}
+
+// guardEnvironments is a fixpoint over result, so the ~10 diagnostic producers
+// that need it share one computation per result instead of each re-deriving it.
+// The entry is held only for the duration of one produceWithResolver call, which
+// releases it on return.
+var (
+	guardEnvCacheMu sync.Mutex
+	guardEnvCache   = map[*body.Result]map[cfg.Point]guardEnv{}
+)
+
+func cachedGuardEnvironments(result *body.Result) map[cfg.Point]guardEnv {
+	guardEnvCacheMu.Lock()
+	envs, ok := guardEnvCache[result]
+	guardEnvCacheMu.Unlock()
+	if ok {
+		return envs
+	}
+	envs = guardEnvironments(result)
+	guardEnvCacheMu.Lock()
+	guardEnvCache[result] = envs
+	guardEnvCacheMu.Unlock()
+	return envs
+}
+
+func releaseGuardEnvironments(result *body.Result) {
+	guardEnvCacheMu.Lock()
+	delete(guardEnvCache, result)
+	guardEnvCacheMu.Unlock()
 }
 
 func guardEnvironments(result *body.Result) map[cfg.Point]guardEnv {

@@ -50,6 +50,7 @@ func ProduceWithConfig(result *body.Result, config Config) []diagnostic.Diagnost
 
 func produceWithResolver(result *body.Result, parent typeannotation.Resolver, inheritedDefs map[symbol.ID]*ast.FunctionExpr, config Config) []diagnostic.Diagnostic {
 	resolver := newResultResolver(result, parent)
+	defer releaseGuardEnvironments(result)
 	context := producerContext{resolver: resolver}
 	defs := directCallDefinitions(result, inheritedDefs)
 	var out []diagnostic.Diagnostic
