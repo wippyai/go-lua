@@ -14,6 +14,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/typecall"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/type/refinement"
+	"github.com/wippyai/go-lua/analysis/type/subtype"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
@@ -83,14 +84,14 @@ func (p callParamObligations) call(
 		if _, ok := seen[argIndex]; ok {
 			continue
 		}
-		seen[argIndex] = struct{}{}
-		if explicitContractParam(result, point, fact, i, p.resolver, inherited) {
-			continue
-		}
 		want, ok := readmodelType(result, obligation.Value)
 		if !ok || want == nil || typ.IsAny(want) || typ.IsUnknown(want) || refinement.ContainsFreeTypeParam(want) {
 			continue
 		}
+		if explicitContractParamCoversObligation(result, point, fact, i, want, p.resolver, inherited) {
+			continue
+		}
+		seen[argIndex] = struct{}{}
 		if mismatch, ok := objectLiteralMemberMismatch(result, point, args[argIndex], want, env); ok {
 			extra := boundaryDiagnosticEvidence(result, point, ast.SpanOf(mismatch.expr), mismatch.want, boundaryValueFromExpr(mismatch.expr))
 			return callParamObligationDiagnostic(fact.Call, callObligationName(result, fact), argIndex, mismatch.got, mismatch.want, mismatch.expr, extra...), true
@@ -124,6 +125,9 @@ func (p callParamObligations) call(
 		if len(extra) == 0 {
 			extra = explicitTopLikeCastEvidence(ast.SpanOf(args[argIndex]), want, args[argIndex])
 		}
+		if len(extra) == 0 && topLikeType(got) {
+			extra = callParamObligationMissingProofEvidence(ast.SpanOf(args[argIndex]), want)
+		}
 		return callParamObligationDiagnostic(fact.Call, callObligationName(result, fact), argIndex, got, want, args[argIndex], extra...), true
 	}
 	return diagnostic.Diagnostic{}, false
@@ -149,9 +153,48 @@ func callParamObligationDiagnostic(
 	arg ast.Expr,
 	extraEvidence ...diagnostic.Evidence,
 ) diagnostic.Diagnostic {
-	d := argTypeDiagnostic(call, name, index, got, want, arg, ast.SpanOf(call), extraEvidence...)
-	d.Message = fmt.Sprintf("argument %d expected %s, got %s", index+1, formatType(want), formatType(got))
-	return d
+	span := ast.SpanOf(call)
+	argSpan := ast.SpanOf(arg)
+	evidence := []diagnostic.Evidence{
+		{
+			Kind:    diagnostic.EvidenceAbstractFact,
+			Trust:   diagnostic.TrustProven,
+			Span:    argSpan,
+			Message: fmt.Sprintf("argument %d is %s", index+1, formatType(got)),
+		},
+		{
+			Kind:    diagnostic.EvidenceAbstractFact,
+			Trust:   diagnostic.TrustProven,
+			Span:    span,
+			Message: fmt.Sprintf("%s summary obligation requires argument %d to be %s", name, index+1, formatType(want)),
+		},
+	}
+	evidence = append(evidence, extraEvidence...)
+	return diagnostic.Diagnostic{
+		Position: diagnostic.Position{
+			Line:      span.StartLine,
+			Column:    span.StartCol,
+			EndLine:   span.EndLine,
+			EndColumn: span.EndCol,
+		},
+		Span:        span,
+		Code:        CodeDirectCallArgType,
+		Severity:    diagnostic.SeverityError,
+		Message:     fmt.Sprintf("argument %d expected %s, got %s", index+1, formatType(want), formatType(got)),
+		Explanation: diagnostic.NewExplanation(evidence...),
+		Labels:      []diagnostic.Label{{Span: argSpan, Message: "argument value"}},
+	}
+}
+
+func callParamObligationMissingProofEvidence(span diagnostic.Span, want typ.Type) []diagnostic.Evidence {
+	return []diagnostic.Evidence{
+		{
+			Kind:    diagnostic.EvidenceMissingProof,
+			Trust:   diagnostic.TrustUnknown,
+			Span:    span,
+			Message: "no boundary proof establishes " + formatType(want),
+		},
+	}
 }
 
 func callParamObligationTypeMismatch(result *body.Result, point cfg.Point, got, want typ.Type, read boundaryValueReader, arg ast.Expr) bool {
@@ -168,10 +211,10 @@ func callParamObligationTypeMismatch(result *body.Result, point cfg.Point, got, 
 			}
 		}
 	}
-	// A top-like got is an unresolved argument type. An inline table literal or a
-	// member-function reference is typed and validated by its own structural
-	// producer, so reporting it here as an unknown mismatch is a duplicate false
-	// positive; every other argument form remains reportable against the concrete
+	// A top-like got is an unresolved argument type. Inline table literals and
+	// member-function references are typed and validated by structural producers,
+	// so reporting them here as unknown mismatches is a duplicate false positive;
+	// every other argument form remains reportable against the concrete
 	// obligation.
 	return obligationReportableArgument(arg)
 }
@@ -216,15 +259,16 @@ func callObligationName(result *body.Result, fact semantics.CallFact) string {
 	return "call target"
 }
 
-func explicitContractParam(
+func explicitContractParamCoversObligation(
 	result *body.Result,
 	point cfg.Point,
 	fact semantics.CallFact,
 	index int,
+	want typ.Type,
 	resolver typeannotation.Resolver,
 	inherited map[symbol.ID]*ast.FunctionExpr,
 ) bool {
-	if result == nil || fact.Call == nil || index < 0 {
+	if result == nil || fact.Call == nil || index < 0 || want == nil {
 		return false
 	}
 	if _, _, _, member := callMemberAccess(fact); member {
@@ -236,10 +280,10 @@ func explicitContractParam(
 	}
 	if def := inherited[site.CalleeSymbol()]; def != nil {
 		contract, ok := lowerDirectFunctionContractInScope(def, resolver)
-		return ok && directContractParamExplicit(contract, index)
+		return ok && directContractParamCoversObligation(contract, index, want)
 	}
 	if sig, ok := result.CallSignature(site); ok && sig.Type != nil {
-		return directContractParamExplicit(lowerDirectFunctionType(sig.Type), index)
+		return directContractParamCoversObligation(lowerDirectFunctionType(sig.Type), index, want)
 	}
 	baseExpr, ok := result.SymbolTypeAnnotation(site.CalleeSymbol())
 	if !ok {
@@ -250,17 +294,25 @@ func explicitContractParam(
 		return false
 	}
 	callable, ok := typecall.Callable(baseType)
-	return ok && directContractParamExplicit(lowerDirectFunctionType(callable), index)
+	return ok && directContractParamCoversObligation(lowerDirectFunctionType(callable), index, want)
 }
 
-func directContractParamExplicit(contract directFunctionContract, index int) bool {
+func directContractParamCoversObligation(contract directFunctionContract, index int, want typ.Type) bool {
 	if index < len(contract.params) {
 		param := contract.params[index]
-		return param.explicit && param.typ != nil && !typ.IsAny(param.typ) && !typ.IsUnknown(param.typ)
+		return directParamCoversObligation(param, want)
 	}
 	if contract.hasVararg {
-		param := contract.variadic
-		return param.explicit && param.typ != nil && !typ.IsAny(param.typ) && !typ.IsUnknown(param.typ)
+		return directParamCoversObligation(contract.variadic, want)
 	}
 	return false
+}
+
+func directParamCoversObligation(param directCallParam, want typ.Type) bool {
+	return param.explicit &&
+		param.typ != nil &&
+		!typ.IsAny(param.typ) &&
+		!typ.IsUnknown(param.typ) &&
+		!refinement.ContainsFreeTypeParam(param.typ) &&
+		subtype.IsSubtype(param.typ, want)
 }

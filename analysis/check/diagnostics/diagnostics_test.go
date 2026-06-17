@@ -1517,6 +1517,28 @@ func TestDirectCallReportsWrongArgumentType(t *testing.T) {
 	}
 }
 
+func TestCallParamObligationReportsStricterThanDirectUnionContract(t *testing.T) {
+	diags := runDiagnostics(t, `
+		local function scale(x: number | string): number
+			return x * 2
+		end
+		scale("not-number")
+	`)
+	if len(diags) != 1 {
+		t.Fatalf("diagnostics = %d, want stricter summary obligation only: %#v", len(diags), diags)
+	}
+	d := diags[0]
+	if d.Code != CodeDirectCallArgType || d.Severity != diagnostic.SeverityError {
+		t.Fatalf("diagnostic code/severity = %s/%s", d.Code, d.Severity)
+	}
+	if !strings.Contains(d.Message, "argument 1 expected number") || !strings.Contains(d.Message, `"not-number"`) {
+		t.Fatalf("message = %q", d.Message)
+	}
+	if got := d.Explanation.String(); !strings.Contains(got, "summary obligation requires argument 1") {
+		t.Fatalf("explanation = %q, want summary obligation evidence", got)
+	}
+}
+
 func TestDirectCallUsesGenericResultFalseEdgeBoundaryProof(t *testing.T) {
 	diags := runDiagnostics(t, `
 		type Result<T> = { ok: true, value: T } | { ok: false, error: string }
