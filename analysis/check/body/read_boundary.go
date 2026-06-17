@@ -61,6 +61,16 @@ func readableConcreteType(reg *axis.Registry, value product.Value) bool {
 // LocalAssignmentSourceValueAtBoundary reads the lowered value source for the
 // semantic local assignment at point when it corresponds to source.
 func (r *Result) LocalAssignmentSourceValueAtBoundary(point cfg.Point, source sourceprovenance.ASTSource) (product.Value, bool) {
+	return r.localAssignmentBoundaryValue(point, source, r.SourceValueAtBoundary)
+}
+
+// localAssignmentBoundaryValue resolves the lowered value source of the local
+// assignment at point (when its AST source matches) through resolve.
+func (r *Result) localAssignmentBoundaryValue(
+	point cfg.Point,
+	source sourceprovenance.ASTSource,
+	resolve func(cfg.Point, factflow.ValueSource) (product.Value, bool),
+) (product.Value, bool) {
 	if r == nil {
 		return product.Value{}, false
 	}
@@ -72,7 +82,7 @@ func (r *Result) LocalAssignmentSourceValueAtBoundary(point cfg.Point, source so
 	if !ok {
 		return product.Value{}, false
 	}
-	return r.SourceValueAtBoundary(point, lowered.Source())
+	return resolve(point, lowered.Source())
 }
 
 // SourceValueWithRootDeclarationRecoveryAtBoundary resolves a lowered value
@@ -106,18 +116,7 @@ func (r *Result) SourceValueWithRootDeclarationRecoveryAtBoundary(point cfg.Poin
 // LocalAssignmentSourceValueWithRootDeclarationRecoveryAtBoundary is the
 // declaration-recovering counterpart to LocalAssignmentSourceValueAtBoundary.
 func (r *Result) LocalAssignmentSourceValueWithRootDeclarationRecoveryAtBoundary(point cfg.Point, source sourceprovenance.ASTSource) (product.Value, bool) {
-	if r == nil {
-		return product.Value{}, false
-	}
-	fact, ok := r.LocalAssignment(point)
-	if !ok || fact.Source != source {
-		return product.Value{}, false
-	}
-	lowered, ok := r.facts.LocalAssignment(point)
-	if !ok {
-		return product.Value{}, false
-	}
-	return r.SourceValueWithRootDeclarationRecoveryAtBoundary(point, lowered.Source())
+	return r.localAssignmentBoundaryValue(point, source, r.SourceValueWithRootDeclarationRecoveryAtBoundary)
 }
 
 // ExpressionValueAtBoundary projects a Lua expression's product value at the
