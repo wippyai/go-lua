@@ -34,8 +34,9 @@ type originEvidenceCacheEntry struct {
 }
 
 type typeCacheEntry struct {
-	t  typ.Type
-	ok bool
+	t        typ.Type
+	revision uint64
+	ok       bool
 }
 
 type pathLiteralCacheKey struct {
@@ -89,6 +90,9 @@ func (c *Cache) originFamilyOf(t typ.Type) (originFamily, bool) {
 	}
 	if c.origins != nil {
 		if cached, ok := c.origins[t]; ok {
+			if cached.ok && !originFamilyActive(cached.family.id) {
+				return originFamily{}, false
+			}
 			return cached.family, cached.ok
 		}
 	}
@@ -130,6 +134,9 @@ func (c *Cache) originByPathLiteral(t typ.Type, suffix []segment.Segment, lit ty
 	}
 	if c.pathLiterals != nil {
 		if cached, ok := c.pathLiterals[key]; ok {
+			if cached.ok && !originFamilyActive(cached.family) {
+				return 0, nil, false
+			}
 			return cached.family, append([]int(nil), cached.cases...), cached.ok
 		}
 	}
@@ -167,7 +174,13 @@ func (c *Cache) NarrowByOrigin(t typ.Type, familyID uint64, cases []int) (typ.Ty
 	key := narrowCacheKey{t: t, family: familyID, cases: originCaseKey(cases)}
 	if c.narrows != nil {
 		if cached, ok := c.narrows[key]; ok {
-			return cached.t, cached.ok
+			revision, active := originFamilyRevision(familyID)
+			if !active {
+				return t, false
+			}
+			if cached.revision == revision {
+				return cached.t, cached.ok
+			}
 		}
 	}
 	family, ok := c.originFamilyOf(t)
@@ -175,14 +188,19 @@ func (c *Cache) NarrowByOrigin(t typ.Type, familyID uint64, cases []int) (typ.Ty
 		if c.narrows == nil {
 			c.narrows = make(map[narrowCacheKey]typeCacheEntry)
 		}
-		c.narrows[key] = typeCacheEntry{t: t, ok: false}
+		revision, _ := originFamilyRevision(familyID)
+		c.narrows[key] = typeCacheEntry{t: t, revision: revision, ok: false}
+		return t, false
+	}
+	revision, active := originFamilyRevision(familyID)
+	if !active {
 		return t, false
 	}
 	narrowed, changed := narrowByOriginFamily(t, family, cases)
 	if c.narrows == nil {
 		c.narrows = make(map[narrowCacheKey]typeCacheEntry)
 	}
-	c.narrows[key] = typeCacheEntry{t: narrowed, ok: changed}
+	c.narrows[key] = typeCacheEntry{t: narrowed, revision: revision, ok: changed}
 	return narrowed, changed
 }
 
@@ -196,7 +214,13 @@ func (c *Cache) TypeFromOrigin(familyID uint64, cases []int) (typ.Type, bool) {
 	key := originTypeCacheKey{family: familyID, cases: originCaseKey(cases)}
 	if c.types != nil {
 		if cached, ok := c.types[key]; ok {
-			return cached.t, cached.ok
+			revision, active := originFamilyRevision(familyID)
+			if !active {
+				return nil, false
+			}
+			if cached.revision == revision {
+				return cached.t, cached.ok
+			}
 		}
 	}
 	family, ok := loadOriginFamily(familyID)
@@ -207,12 +231,21 @@ func (c *Cache) TypeFromOrigin(familyID uint64, cases []int) (typ.Type, bool) {
 		c.types[key] = typeCacheEntry{ok: false}
 		return nil, false
 	}
+	revision, active := originFamilyRevision(familyID)
+	if !active {
+		return nil, false
+	}
 	t, ok := typeFromOriginFamily(family, cases)
 	if c.types == nil {
 		c.types = make(map[originTypeCacheKey]typeCacheEntry)
 	}
-	c.types[key] = typeCacheEntry{t: t, ok: ok}
+	c.types[key] = typeCacheEntry{t: t, revision: revision, ok: ok}
 	return t, ok
+}
+
+func originFamilyActive(id uint64) bool {
+	_, ok := originFamilyRevision(id)
+	return ok
 }
 
 func originCaseKey(cases []int) originCasesKey {

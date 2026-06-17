@@ -165,6 +165,16 @@ func TestTypeOfPrefersWitnessOverVariantOrigin(t *testing.T) {
 	}
 }
 
+func TestTypeOfFallsBackWhenVariantOriginCannotReconstruct(t *testing.T) {
+	reg := standard.Registry()
+	value := product.Set(reg, FromType(reg, typ.Number), variantorigin.Key, variantorigin.Singleton(0x5afe0c1d, 1))
+
+	got, ok := TypeOf(reg, value)
+	if !ok || !typ.TypeEquals(got, typ.Number) {
+		t.Fatalf("TypeOf(unresolvable variant origin) = %v/%v, want number runtime-kind fallback", got, ok)
+	}
+}
+
 func TestIntegerLiteralValueProjectsExactIntegerWitness(t *testing.T) {
 	reg := standard.Registry()
 	lit := typ.LiteralInt(42)

@@ -122,6 +122,144 @@ func TestOriginCasesTreatDuplicateUnsortedCasesAsSet(t *testing.T) {
 	}
 }
 
+func TestOriginCatalogPoisonsIncompatibleClosedFamilyCollision(t *testing.T) {
+	const familyID uint64 = 0x1c0111510c011151
+	left := typetable.NewRecord().
+		Field("kind", typ.LiteralString("left")).
+		Field("value", typ.Number).
+		Build()
+	right := typetable.NewRecord().
+		Field("kind", typ.LiteralString("right")).
+		Field("value", typ.String).
+		Build()
+	collidingLeft := typetable.NewRecord().
+		Field("kind", typ.LiteralString("left")).
+		Field("value", typ.Boolean).
+		Build()
+
+	if !storeOriginFamily(originFamily{
+		id:        familyID,
+		kind:      originFamilyKindClosedRecordUnion,
+		signature: "closed-record-union",
+		cases: []originCase{
+			{index: 0, typ: left},
+			{index: 1, typ: right},
+		},
+	}) {
+		t.Fatal("initial synthetic family store failed")
+	}
+	if got, ok := TypeFromOrigin(familyID, []int{0}); !ok || !typ.TypeEquals(got, left) {
+		t.Fatalf("initial synthetic origin type = %v/%v, want %s", got, ok, left)
+	}
+
+	if storeOriginFamily(originFamily{
+		id:        familyID,
+		kind:      originFamilyKindClosedRecordUnion,
+		signature: "closed-record-union",
+		cases: []originCase{
+			{index: 0, typ: collidingLeft},
+			{index: 1, typ: right},
+		},
+	}) {
+		t.Fatal("incompatible same-id closed family should poison, not merge")
+	}
+	if got, ok := TypeFromOrigin(familyID, []int{0}); ok {
+		t.Fatalf("poisoned origin reconstructed %s, want fail-closed", got)
+	}
+	if got, ok := FullFamilyType(familyID); ok {
+		t.Fatalf("poisoned full family reconstructed %s, want fail-closed", got)
+	}
+	if projectedFamily, projectedCases, ok := ProjectOrigin(familyID, []int{0}, []segment.Segment{
+		{Kind: segment.SegmentField, Name: "kind"},
+	}); ok {
+		t.Fatalf("poisoned origin projected to %d/%v, want fail-closed", projectedFamily, projectedCases)
+	}
+}
+
+func TestOriginCatalogPoisonsTaggedSignatureCollision(t *testing.T) {
+	const familyID uint64 = 0x51c6a7551deca11
+	const caseIndex = 1201
+	kindTagged := typetable.NewRecord().
+		Field("kind", typ.LiteralString("same")).
+		Field("value", typ.Number).
+		Build()
+	statusTagged := typetable.NewRecord().
+		Field("status", typ.LiteralString("same")).
+		Field("value", typ.Number).
+		Build()
+
+	if !storeOriginFamily(originFamily{
+		id:        familyID,
+		kind:      originFamilyKindTaggedRecord,
+		signature: "tagged-record:4:kind;",
+		cases:     []originCase{{index: caseIndex, typ: kindTagged}},
+	}) {
+		t.Fatal("initial tagged family store failed")
+	}
+	if got, ok := TypeFromOrigin(familyID, []int{caseIndex}); !ok || !typ.TypeEquals(got, kindTagged) {
+		t.Fatalf("initial tagged origin type = %v/%v, want %s", got, ok, kindTagged)
+	}
+
+	if storeOriginFamily(originFamily{
+		id:        familyID,
+		kind:      originFamilyKindTaggedRecord,
+		signature: "tagged-record:6:status;",
+		cases:     []originCase{{index: caseIndex, typ: statusTagged}},
+	}) {
+		t.Fatal("same-id tagged family with different tag-path signature should poison")
+	}
+	if got, ok := TypeFromOrigin(familyID, []int{caseIndex}); ok {
+		t.Fatalf("signature-poisoned tagged origin reconstructed %s, want fail-closed", got)
+	}
+}
+
+func TestCacheRejectsPoisonedOriginFamily(t *testing.T) {
+	const familyID uint64 = 0x5ca1ecac4e5afe11
+	left := typetable.NewRecord().
+		Field("kind", typ.LiteralString("left")).
+		Field("value", typ.Number).
+		Build()
+	right := typetable.NewRecord().
+		Field("kind", typ.LiteralString("right")).
+		Field("value", typ.String).
+		Build()
+	collidingLeft := typetable.NewRecord().
+		Field("kind", typ.LiteralString("left")).
+		Field("value", typ.Boolean).
+		Build()
+
+	if !storeOriginFamily(originFamily{
+		id:        familyID,
+		kind:      originFamilyKindClosedRecordUnion,
+		signature: "closed-record-union",
+		cases: []originCase{
+			{index: 0, typ: left},
+			{index: 1, typ: right},
+		},
+	}) {
+		t.Fatal("initial synthetic family store failed")
+	}
+	cache := NewCache()
+	if got, ok := cache.TypeFromOrigin(familyID, []int{0}); !ok || !typ.TypeEquals(got, left) {
+		t.Fatalf("cached origin before poison = %v/%v, want %s", got, ok, left)
+	}
+
+	if storeOriginFamily(originFamily{
+		id:        familyID,
+		kind:      originFamilyKindClosedRecordUnion,
+		signature: "closed-record-union",
+		cases: []originCase{
+			{index: 0, typ: collidingLeft},
+			{index: 1, typ: right},
+		},
+	}) {
+		t.Fatal("incompatible same-id closed family should poison, not merge")
+	}
+	if got, ok := cache.TypeFromOrigin(familyID, []int{0}); ok {
+		t.Fatalf("cached poisoned origin reconstructed %s, want fail-closed", got)
+	}
+}
+
 func TestCacheMatchesOriginNarrowAndReconstruct(t *testing.T) {
 	dog := typetable.NewRecord().
 		Field("kind", typ.LiteralString("dog")).

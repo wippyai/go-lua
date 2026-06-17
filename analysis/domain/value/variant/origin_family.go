@@ -2,6 +2,8 @@ package variant
 
 import (
 	"sort"
+	"strconv"
+	"strings"
 
 	"github.com/wippyai/go-lua/analysis/domain/value/variant/internal/discriminant"
 	internal "github.com/wippyai/go-lua/analysis/internal/hash"
@@ -84,24 +86,30 @@ func closedRecordUnionFamily(u *typ.Union, detector *discriminant.Detector) (ori
 	for i, member := range members {
 		cases = append(cases, originCase{index: i, typ: member})
 	}
-	family := originFamily{id: id, cases: cases}
-	storeOriginFamily(family)
+	family := originFamily{
+		id:        id,
+		kind:      originFamilyKindClosedRecordUnion,
+		signature: "closed-record-union",
+		cases:     cases,
+	}
+	if !storeOriginFamily(family) {
+		return originFamily{}, false
+	}
 	return family, true
+}
+
+type originTag struct {
+	path string
+	hash uint64
 }
 
 func taggedRecordFamily(r *typ.Record, detector *discriminant.Detector) (originFamily, bool) {
 	if r == nil {
 		return originFamily{}, false
 	}
-	var tags []struct {
-		path string
-		hash uint64
-	}
+	var tags []originTag
 	detector.ForEachRequiredTag(r, func(path string, hash uint64) bool {
-		tags = append(tags, struct {
-			path string
-			hash uint64
-		}{path: path, hash: hash})
+		tags = append(tags, originTag{path: path, hash: hash})
 		return true
 	})
 	if len(tags) == 0 {
@@ -120,14 +128,30 @@ func taggedRecordFamily(r *typ.Record, detector *discriminant.Detector) (originF
 	familyID = nonZeroHash(familyID)
 	caseIndex := hashCaseIndex(caseHash)
 	family := originFamily{
-		id: familyID,
+		id:        familyID,
+		kind:      originFamilyKindTaggedRecord,
+		signature: taggedRecordFamilySignature(tags),
 		cases: []originCase{{
 			index: caseIndex,
 			typ:   r,
 		}},
 	}
-	storeOriginFamily(family)
+	if !storeOriginFamily(family) {
+		return originFamily{}, false
+	}
 	return family, true
+}
+
+func taggedRecordFamilySignature(tags []originTag) string {
+	var b strings.Builder
+	b.WriteString("tagged-record:")
+	for _, tag := range tags {
+		b.WriteString(strconv.Itoa(len(tag.path)))
+		b.WriteByte(':')
+		b.WriteString(tag.path)
+		b.WriteByte(';')
+	}
+	return b.String()
 }
 
 func recordOf(t typ.Type) (*typ.Record, bool) {
