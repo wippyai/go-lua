@@ -237,54 +237,48 @@ func (c *CFG) NodeSnapshot() []Node {
 
 // Predecessors returns all predecessors of p.
 func (c *CFG) Predecessors(p Point) []Point {
-	idx := int(p)
-	if idx < 0 || idx >= len(c.preds) {
-		return nil
-	}
-	preds := c.preds[idx]
-	if len(preds) == 0 {
-		return nil
-	}
-	result := make([]Point, len(preds))
-	copy(result, preds)
-	return result
+	return copyEdges(c.preds, p)
 }
 
 // PredecessorsReadOnly returns the internal predecessor slice for p.
 //
 // The returned slice must be treated as read-only by callers.
 func (c *CFG) PredecessorsReadOnly(p Point) []Point {
-	idx := int(p)
-	if idx < 0 || idx >= len(c.preds) {
-		return nil
-	}
-	return c.preds[idx]
+	return edgesReadOnly(c.preds, p)
 }
 
 // Successors returns all successors of p.
 func (c *CFG) Successors(p Point) []Point {
-	idx := int(p)
-	if idx < 0 || idx >= len(c.succs) {
+	return copyEdges(c.succs, p)
+}
+
+// copyEdges returns a fresh copy of table[p], or nil when p is out of range or
+// has no edges.
+func copyEdges(table [][]Point, p Point) []Point {
+	edges := edgesReadOnly(table, p)
+	if len(edges) == 0 {
 		return nil
 	}
-	succs := c.succs[idx]
-	if len(succs) == 0 {
-		return nil
-	}
-	result := make([]Point, len(succs))
-	copy(result, succs)
+	result := make([]Point, len(edges))
+	copy(result, edges)
 	return result
+}
+
+// edgesReadOnly returns the internal slice table[p] without copying, or nil when
+// p is out of range. Callers must treat the result as read-only.
+func edgesReadOnly(table [][]Point, p Point) []Point {
+	idx := int(p)
+	if idx < 0 || idx >= len(table) {
+		return nil
+	}
+	return table[idx]
 }
 
 // SuccessorsReadOnly returns the internal successor slice for p.
 //
 // The returned slice must be treated as read-only by callers.
 func (c *CFG) SuccessorsReadOnly(p Point) []Point {
-	idx := int(p)
-	if idx < 0 || idx >= len(c.succs) {
-		return nil
-	}
-	return c.succs[idx]
+	return edgesReadOnly(c.succs, p)
 }
 
 // IsJoin returns true if p has multiple predecessors.

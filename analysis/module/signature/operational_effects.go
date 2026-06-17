@@ -258,135 +258,79 @@ func cloneAllocationDynamicEntryTemplates(in []AllocationDynamicEntryTemplate) [
 }
 
 func equalReturnPresenceRelations(a, b []ReturnPresenceRelation) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
+	return equalFactSlices(a, b, func(x, y ReturnPresenceRelation) bool {
+		return x == y
+	})
 }
 
 func equalPathPresenceRefinements(a, b []PathPresenceRefinement) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if !a[i].Path.Equal(b[i].Path) || !presence.Equal(a[i].Presence, b[i].Presence) {
-			return false
-		}
-	}
-	return true
+	return equalFactSlices(a, b, func(x, y PathPresenceRefinement) bool {
+		return x.Path.Equal(y.Path) && presence.Equal(x.Presence, y.Presence)
+	})
 }
 
 func equalPathStaticMemberFacts(a, b []PathStaticMemberFact) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if !a[i].Path.Equal(b[i].Path) || !typ.TypeEquals(a[i].Type, b[i].Type) {
-			return false
-		}
-	}
-	return true
+	return equalFactSlices(a, b, func(x, y PathStaticMemberFact) bool {
+		return x.Path.Equal(y.Path) && typ.TypeEquals(x.Type, y.Type)
+	})
 }
 
 func equalPathInvalidations(a, b []PathInvalidation) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if !a[i].Path.Equal(b[i].Path) {
-			return false
-		}
-	}
-	return true
+	return equalFactSlices(a, b, func(x, y PathInvalidation) bool {
+		return x.Path.Equal(y.Path)
+	})
 }
 
 func equalFrozenTables(a, b []FrozenTable) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if !a[i].Target.Equal(b[i].Target) {
-			return false
-		}
-	}
-	return true
+	return equalFactSlices(a, b, func(x, y FrozenTable) bool {
+		return x.Target.Equal(y.Target)
+	})
 }
 
 func equalEscapeEvents(a, b []EscapeEvent) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i].Kind != b[i].Kind || a[i].Recursive != b[i].Recursive || !a[i].Target.Equal(b[i].Target) {
-			return false
-		}
-	}
-	return true
+	return equalFactSlices(a, b, func(x, y EscapeEvent) bool {
+		return x.Kind == y.Kind && x.Recursive == y.Recursive && x.Target.Equal(y.Target)
+	})
 }
 
 func equalStoreRelations(a, b []StoreRelation) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if !a[i].Source.Equal(b[i].Source) || !a[i].Into.Equal(b[i].Into) {
-			return false
-		}
-	}
-	return true
+	return equalFactSlices(a, b, func(x, y StoreRelation) bool {
+		return x.Source.Equal(y.Source) && x.Into.Equal(y.Into)
+	})
 }
 
 func equalReturnAllocationTemplates(a, b []ReturnAllocationTemplate) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i].ReturnIndex != b[i].ReturnIndex || a[i].Root != b[i].Root ||
-			!equalAllocationObjectTemplates(a[i].Objects, b[i].Objects) {
-			return false
-		}
-	}
-	return true
+	return equalFactSlices(a, b, func(x, y ReturnAllocationTemplate) bool {
+		return x.ReturnIndex == y.ReturnIndex && x.Root == y.Root && equalAllocationObjectTemplates(x.Objects, y.Objects)
+	})
 }
 
 func equalAllocationObjectTemplates(a, b []AllocationObjectTemplate) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i].ID != b[i].ID ||
-			!typ.TypeEquals(a[i].Type, b[i].Type) ||
-			!equalAllocationStaticMemberTemplates(a[i].StaticMembers, b[i].StaticMembers) ||
-			!equalAllocationDynamicEntryTemplates(a[i].DynamicEntries, b[i].DynamicEntries) {
-			return false
-		}
-	}
-	return true
+	return equalFactSlices(a, b, func(x, y AllocationObjectTemplate) bool {
+		return x.ID == y.ID && typ.TypeEquals(x.Type, y.Type) && equalAllocationStaticMemberTemplates(x.StaticMembers, y.StaticMembers) && equalAllocationDynamicEntryTemplates(x.DynamicEntries, y.DynamicEntries)
+	})
 }
 
 func equalAllocationStaticMemberTemplates(a, b []AllocationStaticMemberTemplate) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i].Value != b[i].Value || segment.FormatSegments(a[i].Suffix) != segment.FormatSegments(b[i].Suffix) {
-			return false
-		}
-	}
-	return true
+	return equalFactSlices(a, b, func(x, y AllocationStaticMemberTemplate) bool {
+		return x.Value == y.Value && segment.FormatSegments(x.Suffix) == segment.FormatSegments(y.Suffix)
+	})
 }
 
 func equalAllocationDynamicEntryTemplates(a, b []AllocationDynamicEntryTemplate) bool {
+	return equalFactSlices(a, b, func(x, y AllocationDynamicEntryTemplate) bool {
+		return x.Key == y.Key && x.Value == y.Value && typ.TypeEquals(x.KeyType, y.KeyType)
+	})
+}
+
+// equalFactSlices reports whether a and b have equal length and every aligned
+// pair is equal under equal.
+func equalFactSlices[T any](a, b []T, equal func(a, b T) bool) bool {
 	if len(a) != len(b) {
 		return false
 	}
 	for i := range a {
-		if a[i].Key != b[i].Key || a[i].Value != b[i].Value || !typ.TypeEquals(a[i].KeyType, b[i].KeyType) {
+		if !equal(a[i], b[i]) {
 			return false
 		}
 	}
