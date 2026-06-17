@@ -50,13 +50,13 @@ func (r Reader) SourceValue(point cfg.Point, source sourceprovenance.ASTSource) 
 		if _, ok := source.Expr.(*ast.FunctionExpr); !ok && proofTransparent {
 			return product.Value{}, false
 		}
-		return r.result.LocalAssignmentSourceValueAtBoundary(point, source)
+		return r.result.LocalAssignmentSourceValueWithRootDeclarationRecoveryAtBoundary(point, source)
 	case sourceprovenance.SourceCall, sourceprovenance.SourceVararg, sourceprovenance.SourceNil, sourceprovenance.SourceUnknown:
 		valueSource, ok := valueSourceFromASTSource(source)
 		if !ok {
 			return product.Value{}, false
 		}
-		return r.result.SourceValueAtBoundary(point, valueSource)
+		return r.result.SourceValueWithRootDeclarationRecoveryAtBoundary(point, valueSource)
 	default:
 		return product.Value{}, false
 	}

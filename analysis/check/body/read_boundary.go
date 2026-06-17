@@ -22,9 +22,11 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 )
 
-// SourceValueAtBoundary resolves a lowered value source at the diagnostic read
-// boundary for point. Node-local solved effects, such as call-result facts,
-// postconditions, and assignments, are visible at that boundary.
+// SourceValueAtBoundary resolves a lowered value source at the solved boundary
+// for point. Node-local solved effects, such as call-result facts,
+// postconditions, and assignments, are visible at that boundary. This is a
+// projection of solved state only; read models that need declaration recovery
+// must opt into SourceValueWithRootDeclarationRecoveryAtBoundary.
 func (r *Result) SourceValueAtBoundary(point cfg.Point, source factflow.ValueSource) (product.Value, bool) {
 	if r == nil || r.registry == nil {
 		return product.Value{}, false
@@ -38,17 +40,6 @@ func (r *Result) SourceValueAtBoundary(point cfg.Point, source factflow.ValueSou
 		return product.Value{}, false
 	}
 	value, ok := sources.ValueOfSource(point, source, in, r.boundaryRead)
-	if ok {
-		if readableConcreteType(r.registry, value) {
-			return value, true
-		}
-	}
-	if declaration, declarationOK := r.rootDeclarationSourceForExpr(point, source.ExprRef); declarationOK {
-		if recoveredValue, ok := r.rootDeclarationValue(declaration, in); ok {
-			return recoveredValue, true
-		}
-	}
-	value, ok = sources.ValueOfSource(point, source, in, r.boundaryRead)
 	if !ok || product.Equal(r.registry, value, product.Bottom(r.registry)) {
 		return product.Value{}, false
 	}
@@ -82,6 +73,51 @@ func (r *Result) LocalAssignmentSourceValueAtBoundary(point cfg.Point, source so
 		return product.Value{}, false
 	}
 	return r.SourceValueAtBoundary(point, lowered.Source())
+}
+
+// SourceValueWithRootDeclarationRecoveryAtBoundary resolves a lowered value
+// source for read models that explain or contextualize code at a point. It
+// first reads the solved boundary source. If that source is only weak
+// top/unknown evidence, it may recover a stronger value from a dominating root
+// declaration. Final solved-state projections should call SourceValueAtBoundary
+// instead.
+func (r *Result) SourceValueWithRootDeclarationRecoveryAtBoundary(point cfg.Point, source factflow.ValueSource) (product.Value, bool) {
+	if r == nil || r.registry == nil {
+		return product.Value{}, false
+	}
+	in, hasState := r.boundaryStateAt(point)
+	value, ok := r.SourceValueAtBoundary(point, source)
+	if ok && readableConcreteType(r.registry, value) {
+		return value, true
+	}
+	if hasState {
+		if declaration, declarationOK := r.rootDeclarationSourceForExpr(point, source.ExprRef); declarationOK {
+			if recoveredValue, ok := r.rootDeclarationValue(declaration, in); ok {
+				return recoveredValue, true
+			}
+		}
+	}
+	if ok {
+		return value, true
+	}
+	return product.Value{}, false
+}
+
+// LocalAssignmentSourceValueWithRootDeclarationRecoveryAtBoundary is the
+// declaration-recovering counterpart to LocalAssignmentSourceValueAtBoundary.
+func (r *Result) LocalAssignmentSourceValueWithRootDeclarationRecoveryAtBoundary(point cfg.Point, source sourceprovenance.ASTSource) (product.Value, bool) {
+	if r == nil {
+		return product.Value{}, false
+	}
+	fact, ok := r.LocalAssignment(point)
+	if !ok || fact.Source != source {
+		return product.Value{}, false
+	}
+	lowered, ok := r.facts.LocalAssignment(point)
+	if !ok {
+		return product.Value{}, false
+	}
+	return r.SourceValueWithRootDeclarationRecoveryAtBoundary(point, lowered.Source())
 }
 
 // ExpressionValueAtBoundary projects a Lua expression's product value at the

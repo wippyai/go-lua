@@ -399,7 +399,7 @@ func observeCallArguments(
 	args := make([]product.Value, len(argSources))
 	present := make([]bool, len(argSources))
 	for i, source := range argSources {
-		value, ok := prepass.SourceValueAtBoundary(point, source)
+		value, ok := prepass.SourceValueWithRootDeclarationRecoveryAtBoundary(point, source)
 		if !ok {
 			continue
 		}
@@ -824,7 +824,7 @@ func contextualCallArgumentTypes(reg *axis.Registry, prepass *body.Result, point
 				continue
 			}
 		}
-		value, ok := prepass.SourceValueAtBoundary(point, source)
+		value, ok := prepass.SourceValueWithRootDeclarationRecoveryAtBoundary(point, source)
 		if !ok {
 			continue
 		}
