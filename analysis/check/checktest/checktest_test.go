@@ -373,6 +373,31 @@ func TestRequireCheckInjectedContainerMemberKeepsImportedResultEvidence(t *testi
 	requireEvidenceMessage(t, result.Diagnostics[0], "assignment target is annotated number")
 }
 
+func TestRequireCheckInjectedConstructorReturnNamesMemberResultEvidence(t *testing.T) {
+	mod := CheckAndExport(`
+		local provider = {}
+		function provider.meta(): { name: string }
+			return { name = "model" }
+		end
+		return provider
+	`, "provider")
+	if len(mod.Errors) != 0 {
+		t.Fatalf("module errors = %#v, want none", mod.Errors)
+	}
+
+	result := Check(`
+		local provider = require("provider")
+		local function new_container(client)
+			return { client = client }
+		end
+		local container = new_container(provider)
+		local n: number = container.client.meta()
+	`, WithStdlib(), WithModule("provider", mod))
+	requireDirectCallResultDiagnosticWithEvidence(t, result, "constructor-returned injected imported member result")
+	requireEvidenceMessage(t, result.Diagnostics[0], "container.client.meta returns")
+	requireEvidenceMessage(t, result.Diagnostics[0], "assignment target is annotated number")
+}
+
 func TestRequireCheckInjectedHelperReturnKeepsImportedMemberResultType(t *testing.T) {
 	mod := CheckAndExport(`
 		local provider = {}
@@ -2431,12 +2456,9 @@ func TestRequireManifestExportTypesImportedValueAndMemberCall(t *testing.T) {
 		local provider = require("provider")
 		local n: number = provider.meta()
 	`, WithStdlib(), WithManifest("provider", m))
-	if len(mismatch.Diagnostics) != 1 {
-		t.Fatalf("mismatch diagnostics = %d, want 1: %#v", len(mismatch.Diagnostics), mismatch.Diagnostics)
-	}
-	if mismatch.Diagnostics[0].Code != diagnostics.CodeAssignmentType {
-		t.Fatalf("diagnostic code = %s, want %s", mismatch.Diagnostics[0].Code, diagnostics.CodeAssignmentType)
-	}
+	requireDirectCallResultDiagnosticWithEvidence(t, mismatch, "typed imported provider member result")
+	requireEvidenceMessage(t, mismatch.Diagnostics[0], "provider.meta returns")
+	requireEvidenceMessage(t, mismatch.Diagnostics[0], "assignment target is annotated number")
 }
 
 func TestImportedOptionalMethodZeroArgReadUsesExportedOperationalErrorReturn(t *testing.T) {

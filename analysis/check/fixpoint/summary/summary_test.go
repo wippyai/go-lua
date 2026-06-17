@@ -267,6 +267,74 @@ func TestSummaryHeapTableObjectsNormalizeAndJoinByIdentity(t *testing.T) {
 	}
 }
 
+func TestParamMemberReturnSlotsAreMustFacts(t *testing.T) {
+	reg := standard.Registry()
+	fetchValue := ParamMemberReturnSlot{
+		ReceiverParam:     0,
+		Member:            "fetch",
+		ReturnIndex:       0,
+		MemberResultIndex: 0,
+	}
+	fetchError := ParamMemberReturnSlot{
+		ReceiverParam:     0,
+		Member:            "fetch",
+		ReturnIndex:       1,
+		MemberResultIndex: 1,
+	}
+	metaValue := ParamMemberReturnSlot{
+		ReceiverParam:     1,
+		Member:            "meta",
+		ReturnIndex:       0,
+		MemberResultIndex: 0,
+	}
+	left := Summary{
+		Returns:                []product.Value{product.Top()},
+		ParamMemberReturnSlots: []ParamMemberReturnSlot{fetchError, fetchValue, metaValue},
+	}
+	right := Summary{
+		Returns:                []product.Value{product.Top()},
+		ParamMemberReturnSlots: []ParamMemberReturnSlot{fetchValue},
+	}
+	withoutSlots := Summary{Returns: []product.Value{product.Top()}}
+
+	normalized := Normalize(reg, Summary{
+		Returns: []product.Value{product.Top()},
+		ParamMemberReturnSlots: []ParamMemberReturnSlot{
+			{ReceiverParam: -1, Member: "ignored", ReturnIndex: 0, MemberResultIndex: 0},
+			fetchError,
+			fetchValue,
+			fetchValue,
+		},
+	})
+	if len(normalized.ParamMemberReturnSlots) != 2 ||
+		normalized.ParamMemberReturnSlots[0] != fetchValue ||
+		normalized.ParamMemberReturnSlots[1] != fetchError {
+		t.Fatalf("Normalize ParamMemberReturnSlots = %#v, want sorted unique valid fetch slots", normalized.ParamMemberReturnSlots)
+	}
+
+	joined := Join(reg, left, right)
+	if len(joined.ParamMemberReturnSlots) != 1 || joined.ParamMemberReturnSlots[0] != fetchValue {
+		t.Fatalf("Join ParamMemberReturnSlots = %#v, want only common must slot %#v", joined.ParamMemberReturnSlots, fetchValue)
+	}
+	widened := Widen(reg, left, right)
+	if len(widened.ParamMemberReturnSlots) != 1 || widened.ParamMemberReturnSlots[0] != fetchValue {
+		t.Fatalf("Widen ParamMemberReturnSlots = %#v, want only common must slot %#v", widened.ParamMemberReturnSlots, fetchValue)
+	}
+	dropped := Join(reg, left, withoutSlots)
+	if len(dropped.ParamMemberReturnSlots) != 0 {
+		t.Fatalf("Join kept branch-local ParamMemberReturnSlots = %#v", dropped.ParamMemberReturnSlots)
+	}
+	if !LessOrEq(reg, left, right) {
+		t.Fatalf("summary with more must ParamMemberReturnSlots should be <= summary with fewer")
+	}
+	if LessOrEq(reg, right, left) {
+		t.Fatalf("summary with fewer must ParamMemberReturnSlots should not be <= summary with more")
+	}
+	if !LessOrEq(reg, left, withoutSlots) || LessOrEq(reg, withoutSlots, left) {
+		t.Fatalf("ParamMemberReturnSlots must use reverse-inclusion order")
+	}
+}
+
 type summaryTestAxis uint8
 
 const (

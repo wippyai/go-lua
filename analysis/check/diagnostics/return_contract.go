@@ -7,6 +7,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/check/diagnostics/internal/readmodel"
 	"github.com/wippyai/go-lua/analysis/diagnostic"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
@@ -294,13 +295,8 @@ func produceDirectCallResultAssignment(result *body.Result, context producerCont
 			continue
 		}
 		site, ok := result.CallSite(point)
-		if !ok || site.CalleeSymbol() == 0 {
+		if !ok {
 			continue
-		}
-		if _, _, _, ok := callMemberAccess(fact); ok {
-			if !hasTypedCallSignature(result, site) {
-				continue
-			}
 		}
 		contract, name, ok := directCallResultContract(result, point, fact, site, defs[site.CalleeSymbol()], defs, producer.resolver)
 		if !ok {
@@ -388,6 +384,27 @@ func directCallResultContract(result *body.Result, point cfg.Point, fact semanti
 		}
 		return contract, name, true
 	}
+	if fact.Call != nil && fact.Call.Func != nil {
+		if calleeType, ok := directCallCalleeType(result, resolver, point, fact.Call.Func); ok {
+			if callable, ok := typecall.Callable(calleeType); ok && callable != nil {
+				contract := lowerDirectFunctionType(callable)
+				if callPath := site.CalleePath(); !callPath.IsEmpty() {
+					name = callPath.String()
+				}
+				contract.name = name
+				contract.declSpan = ast.SpanOf(fact.Call.Func)
+				var violations []typecall.ArgumentConstraintViolation
+				contract, violations = instantiateDirectFunctionContract(result, point, fact, contract, resolver, defs)
+				if len(violations) > 0 {
+					return directFunctionContract{}, "", false
+				}
+				if !directCallArgsCompatible(result, point, fact, contract, resolver, defs) {
+					return directFunctionContract{}, "", false
+				}
+				return contract, name, true
+			}
+		}
+	}
 	baseExpr, ok := result.SymbolTypeAnnotation(site.CalleeSymbol())
 	if !ok {
 		return directFunctionContract{}, "", false
@@ -412,6 +429,19 @@ func directCallResultContract(result *body.Result, point cfg.Point, fact semanti
 		return directFunctionContract{}, "", false
 	}
 	return contract, name, true
+}
+
+func directCallCalleeType(result *body.Result, resolver typeannotation.Resolver, point cfg.Point, expr ast.Expr) (typ.Type, bool) {
+	if got, ok := boundaryExprType(result, resolver, expr); ok {
+		return got, true
+	}
+	if value, ok := result.ExpressionValueAtBoundary(point, expr); ok {
+		if got, ok := typevalue.TypeOf(result.Registry(), value); ok {
+			return got, true
+		}
+	}
+	env := guardEnvironments(result)[point]
+	return newFlowExpressionTyper(result, resolver, point, env).typeOf(expr)
 }
 
 func directCallArgsCompatible(result *body.Result, point cfg.Point, fact semantics.CallFact, contract directFunctionContract, resolver typeannotation.Resolver, defs map[symbol.ID]*ast.FunctionExpr) bool {

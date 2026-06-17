@@ -215,11 +215,6 @@ func directCallResultAssignmentWouldReport(result *body.Result, resolver typeann
 	if !ok {
 		return false
 	}
-	if _, _, _, member := callMemberAccess(fact); member {
-		if !hasTypedCallSignature(result, site) {
-			return false
-		}
-	}
 	var def *ast.FunctionExpr
 	if site.CalleeSymbol() != 0 {
 		def = defs[site.CalleeSymbol()]

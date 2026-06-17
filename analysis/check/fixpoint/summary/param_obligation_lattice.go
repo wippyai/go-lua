@@ -137,17 +137,17 @@ func paramMemberReturnSlotsEqual(a, b []ParamMemberReturnSlot) bool {
 func paramMemberReturnSlotsLessOrEq(a, b []ParamMemberReturnSlot) bool {
 	a = normalizeParamMemberReturnSlots(a)
 	b = normalizeParamMemberReturnSlots(b)
-	if len(a) == 0 {
+	if len(b) == 0 {
 		return true
 	}
-	if len(b) == 0 {
+	if len(a) == 0 {
 		return false
 	}
-	have := make(map[ParamMemberReturnSlot]struct{}, len(b))
-	for _, slot := range b {
+	have := make(map[ParamMemberReturnSlot]struct{}, len(a))
+	for _, slot := range a {
 		have[slot] = struct{}{}
 	}
-	for _, slot := range a {
+	for _, slot := range b {
 		if _, ok := have[slot]; !ok {
 			return false
 		}
@@ -156,14 +156,20 @@ func paramMemberReturnSlotsLessOrEq(a, b []ParamMemberReturnSlot) bool {
 }
 
 func joinParamMemberReturnSlots(a, b []ParamMemberReturnSlot) []ParamMemberReturnSlot {
-	if len(a) == 0 {
-		return normalizeParamMemberReturnSlots(b)
+	a = normalizeParamMemberReturnSlots(a)
+	b = normalizeParamMemberReturnSlots(b)
+	if len(a) == 0 || len(b) == 0 {
+		return nil
 	}
-	if len(b) == 0 {
-		return normalizeParamMemberReturnSlots(a)
+	bSlots := make(map[ParamMemberReturnSlot]struct{}, len(b))
+	for _, slot := range b {
+		bSlots[slot] = struct{}{}
 	}
-	out := make([]ParamMemberReturnSlot, 0, len(a)+len(b))
-	out = append(out, a...)
-	out = append(out, b...)
+	out := make([]ParamMemberReturnSlot, 0, min(len(a), len(b)))
+	for _, slot := range a {
+		if _, ok := bSlots[slot]; ok {
+			out = append(out, slot)
+		}
+	}
 	return normalizeParamMemberReturnSlots(out)
 }
