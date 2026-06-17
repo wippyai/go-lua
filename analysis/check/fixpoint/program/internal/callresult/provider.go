@@ -843,7 +843,7 @@ func sourceValueAtArgument(
 	read func(cfg.Point) state.State,
 ) (product.Value, bool) {
 	value, ok := valueOfSource(point, source, sources, in, read)
-	if t, okType := typeFromValue(reg, value); okType && usableRecoveredType(reg, value, t) {
+	if t, okType := typeFromValue(reg, value); okType && UsableType(reg, value, t) {
 		return value, true
 	}
 	if source.Kind != factflow.ValueSourceExpression || !source.HasExpr {
@@ -929,13 +929,13 @@ func callArgumentType(
 		return nil, false
 	}
 	t, ok := typeFromValue(ctx.Registry, value)
-	if !ok || !usableRecoveredType(ctx.Registry, value, t) {
+	if !ok || !UsableType(ctx.Registry, value, t) {
 		return nil, false
 	}
 	return t, true
 }
 
-func usableRecoveredType(reg *axis.Registry, value product.Value, t typ.Type) bool {
+func UsableType(reg *axis.Registry, value product.Value, t typ.Type) bool {
 	if reg == nil || t == nil || typ.IsAny(t) || typ.IsUnknown(t) || typ.IsNever(t) || refinement.ContainsFreeTypeParam(t) {
 		return false
 	}

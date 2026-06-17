@@ -14,7 +14,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	statekey "github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
-	"github.com/wippyai/go-lua/analysis/domain/value/axis/evidence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
@@ -829,7 +828,7 @@ func contextualCallArgumentTypes(reg *axis.Registry, prepass *body.Result, point
 			continue
 		}
 		t, ok := typevalue.TypeOf(reg, value)
-		if !ok || !usableContextualType(reg, value, t) {
+		if !ok || !callresult.UsableType(reg, value, t) {
 			continue
 		}
 		args[i] = t
@@ -862,18 +861,6 @@ func contextualCallbackParamSeeds(reg *axis.Registry, bindings *bind.Result, fn 
 		})
 	}
 	return out
-}
-
-func usableContextualType(reg *axis.Registry, value product.Value, t typ.Type) bool {
-	if reg == nil || t == nil ||
-		typ.IsAny(t) ||
-		typ.IsUnknown(t) ||
-		typ.IsNever(t) ||
-		refinement.ContainsFreeTypeParam(t) {
-		return false
-	}
-	ev := product.Get(reg, value, evidence.Key)
-	return !ev.IsExplicitTop() && !ev.IsGradualTop()
 }
 
 func usableContextualTypeOnly(t typ.Type) bool {
