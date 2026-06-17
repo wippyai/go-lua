@@ -88,6 +88,23 @@ func Join(reg *axis.Registry, a, b Value) Value {
 }
 
 func joinRuntime(rt *registryRuntime, a, b Value) Value {
+	return mergeRuntime(rt, a, b, axisRuntimeAxis.joinAxis, shapeJoin, presence.Join)
+}
+
+func (spec axisRuntimeAxis) joinAxis(va, vb any) any  { return spec.spec.JoinAny(va, vb) }
+func (spec axisRuntimeAxis) widenAxis(va, vb any) any { return spec.spec.WidenAny(va, vb) }
+
+// mergeRuntime is the shared product join/widen: it merges every canonical axis
+// with axisMerge, the shape with shapeMerge, and presence with presenceMerge,
+// dropping axes that merge to top. Missing operands (nil carrier) make the
+// result top.
+func mergeRuntime(
+	rt *registryRuntime,
+	a, b Value,
+	axisMerge func(axisRuntimeAxis, any, any) any,
+	shapeMerge func(Shape, Shape) Shape,
+	presenceMerge func(presence.Value, presence.Value) presence.Value,
+) Value {
 	rt.validateValue(a)
 	rt.validateValue(b)
 	if a.n == b.n {
@@ -99,14 +116,14 @@ func joinRuntime(rt *registryRuntime, a, b Value) Value {
 	slots := make([]slot, 0, len(rt.canonicalAxes))
 	for i := range rt.canonicalAxes {
 		spec := rt.canonicalAxes[i]
-		value := spec.spec.JoinAny(rt.axisValue(spec, a), rt.axisValue(spec, b))
+		value := axisMerge(spec, rt.axisValue(spec, a), rt.axisValue(spec, b))
 		if !spec.spec.IsTopAny(value) {
 			slots = append(slots, slot{key: spec.id, value: value})
 		}
 	}
 	return internRuntime(rt,
-		shapeJoin(ShapeOf(a), ShapeOf(b)),
-		presence.Join(PresenceOf(a), PresenceOf(b)),
+		shapeMerge(ShapeOf(a), ShapeOf(b)),
+		presenceMerge(PresenceOf(a), PresenceOf(b)),
 		slots,
 	)
 }
@@ -147,25 +164,5 @@ func Widen(reg *axis.Registry, prev, next Value) Value {
 }
 
 func widenRuntime(rt *registryRuntime, prev, next Value) Value {
-	rt.validateValue(prev)
-	rt.validateValue(next)
-	if prev.n == next.n {
-		return prev
-	}
-	if prev.n == nil || next.n == nil {
-		return Top()
-	}
-	slots := make([]slot, 0, len(rt.canonicalAxes))
-	for i := range rt.canonicalAxes {
-		spec := rt.canonicalAxes[i]
-		value := spec.spec.WidenAny(rt.axisValue(spec, prev), rt.axisValue(spec, next))
-		if !spec.spec.IsTopAny(value) {
-			slots = append(slots, slot{key: spec.id, value: value})
-		}
-	}
-	return internRuntime(rt,
-		shapeWiden(ShapeOf(prev), ShapeOf(next)),
-		presence.Widen(PresenceOf(prev), PresenceOf(next)),
-		slots,
-	)
+	return mergeRuntime(rt, prev, next, axisRuntimeAxis.widenAxis, shapeWiden, presence.Widen)
 }
