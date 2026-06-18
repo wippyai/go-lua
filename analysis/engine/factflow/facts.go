@@ -241,6 +241,14 @@ func (f Facts) BranchLenRefinements(point cfg.Point) []BranchLenRefinement {
 	return nil
 }
 
+// BranchNumFloorRefinements returns the true-edge numeric-floor facts at point.
+func (f Facts) BranchNumFloorRefinements(point cfg.Point) []BranchNumFloorRefinement {
+	if set, ok := f.branchRefinements[point]; ok {
+		return set.NumFloorRefinements()
+	}
+	return nil
+}
+
 // BranchPresenceRelations returns branch-triggered presence relations at point.
 func (f Facts) BranchPresenceRelations(point cfg.Point) []BranchPresenceRelation {
 	if set, ok := f.branchPresenceRelations[point]; ok {

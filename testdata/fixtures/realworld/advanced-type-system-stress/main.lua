@@ -35,7 +35,7 @@ if first then
     end
 end
 
-local summary: string = rendered[1] .. ":" .. session_text .. ":" .. request.headers.Accept .. ":" .. flow.env.REGION
+local summary: string = rendered[1] .. ":" .. session_text .. ":" .. request.headers.Accept .. ":" .. flow.env.REGION -- expect-warning: may be nil
 
 local options: {timeout: string?} = {timeout = "30s"}
 local timeout = options.timeout or 30

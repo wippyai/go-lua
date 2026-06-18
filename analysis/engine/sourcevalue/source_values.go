@@ -6,6 +6,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/typewitness"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/variantorigin"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
@@ -94,7 +95,11 @@ func (r sourceValueResolver) ValueOfSource(
 	}
 	switch source.Kind {
 	case factflow.ValueSourceNil:
-		return product.Absent(r.registry), true
+		// A nil source (uninitialized local, over-arity fill) carries the typ.Nil
+		// witness so it joins identically to an explicit `= nil`. Without the
+		// witness the value reads as nil in isolation but is absorbed as join
+		// identity at a merge, dropping nil from the not-taken path.
+		return typevalue.Nil(r.registry), true
 	case factflow.ValueSourceExpression:
 		return r.valueOfExpression(point, source, in, read)
 	case factflow.ValueSourceCall:

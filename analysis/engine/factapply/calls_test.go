@@ -50,7 +50,7 @@ func TestFactsNodeTransferAppliesReturnSlotsThroughSourceValues(t *testing.T) {
 
 	assertValue(t, reg, got[ret], key.ReturnSlot(0), product.Bottom(reg))
 	assertValue(t, reg, got[graph.Exit()], key.ReturnSlot(0), exprValue)
-	assertValue(t, reg, got[graph.Exit()], key.ReturnSlot(1), absentValue(reg))
+	assertValue(t, reg, got[graph.Exit()], key.ReturnSlot(1), nilSourceValue(reg))
 }
 
 func TestFactsNodeTransferReturnPathSourcePreservesStateIdentity(t *testing.T) {

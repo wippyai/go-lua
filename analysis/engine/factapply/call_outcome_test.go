@@ -1411,7 +1411,7 @@ func TestFactsNodeTransferCallOutcomeReturnPresenceInvalidatesOnResultPathWrite(
 	})
 
 	assertValue(t, reg, flow[graph.Exit()], key.SymbolValue(value), product.Top())
-	assertValue(t, reg, flow[graph.Exit()], key.SymbolValue(err), absentValue(reg))
+	assertValue(t, reg, flow[graph.Exit()], key.SymbolValue(err), nilSourceValue(reg))
 }
 
 func TestFactsNodeTransferCallOutcomeReturnPresenceSkipsIrrelevantAssignment(t *testing.T) {

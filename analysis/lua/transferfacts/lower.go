@@ -154,6 +154,14 @@ func Lower(result *semantics.Result, graph cfg.Graph, config Config) factflow.Fa
 			}
 			l.addAssertionRefinementsForSource(&input, fact.Source)
 		}
+		if fact, ok := result.NumericFor(point); ok {
+			if lowered, ok := l.numericForBranchNumFloorRefinement(fact); ok {
+				appendBranchNumFloorRefinement(input.BranchRefinements, point, lowered)
+			}
+			if lowered := l.numericForBranchPathEvidence(fact); len(lowered) != 0 {
+				appendBranchPathEvidence(input.BranchPathEvidence, point, lowered...)
+			}
+		}
 	}
 	l.addTypeIsBranchRefinements(&input, graph, result)
 	l.addReturnPresenceRelations(&input, graph, result)

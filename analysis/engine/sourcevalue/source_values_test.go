@@ -70,6 +70,10 @@ func TestSourceValuesNilReturnsAbsentPresence(t *testing.T) {
 	if !presence.Equal(product.PresenceOf(got), presence.Absent()) {
 		t.Fatalf("nil source presence = %s, want absent", product.PresenceOf(got))
 	}
+	gotType, ok := typevalue.TypeOf(reg, got)
+	if !ok || !typ.TypeEquals(gotType, typ.Nil) {
+		t.Fatalf("nil source type = %v/%v, want nil witness", gotType, ok)
+	}
 }
 
 func TestSourceValuesCallReadsReturnSlot(t *testing.T) {

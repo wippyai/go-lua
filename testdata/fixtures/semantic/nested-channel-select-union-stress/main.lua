@@ -340,7 +340,7 @@ local function analyze(
                 return "box-recursive"
             end
 
-            return "box-tombstone:" .. next_payload.tombstone.reason
+            return "box-tombstone:" .. next_payload.tombstone.reason -- expect-warning: may be nil
         end
 
         local reason: string = payload.tombstone.reason

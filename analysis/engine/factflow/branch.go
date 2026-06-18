@@ -106,9 +106,24 @@ type BranchLenRefinement struct {
 	lo        int64
 }
 
+// BranchNumFloorRefinement records a proven numeric floor for a path that holds
+// on a branch's true edge. It is separate from length floors because callers
+// often need both facts in an evidence chain, for example i <= #xs and i >= 1
+// before treating xs[i] as definitely present.
+type BranchNumFloorRefinement struct {
+	targetPath path.Path
+	lo         int64
+}
+
 // NewBranchLenRefinement creates a true-edge length-floor fact for arrayPath.
 func NewBranchLenRefinement(arrayPath path.Path, lo int64) BranchLenRefinement {
 	return BranchLenRefinement{arrayPath: arrayPath.Clone(), lo: lo}
+}
+
+// NewBranchNumFloorRefinement creates a true-edge numeric floor fact for
+// targetPath.
+func NewBranchNumFloorRefinement(targetPath path.Path, lo int64) BranchNumFloorRefinement {
+	return BranchNumFloorRefinement{targetPath: targetPath.Clone(), lo: lo}
 }
 
 // ArrayPath returns the array path whose length floor this fact raises.
@@ -122,11 +137,23 @@ func (r BranchLenRefinement) copy() BranchLenRefinement {
 	return r
 }
 
+// TargetPath returns the numeric path whose floor this fact raises.
+func (r BranchNumFloorRefinement) TargetPath() path.Path { return r.targetPath.Clone() }
+
+// Floor returns the proven lower bound on the numeric path.
+func (r BranchNumFloorRefinement) Floor() int64 { return r.lo }
+
+func (r BranchNumFloorRefinement) copy() BranchNumFloorRefinement {
+	r.targetPath = r.targetPath.Clone()
+	return r
+}
+
 // BranchRefinementSet groups branch-edge refinements emitted at the same CFG
 // branch point.
 type BranchRefinementSet struct {
 	refinements []BranchRefinement
 	lenFloors   []BranchLenRefinement
+	numFloors   []BranchNumFloorRefinement
 }
 
 // NewBranchRefinement creates a branch refinement fact.
@@ -158,10 +185,23 @@ func (s BranchRefinementSet) WithLenRefinements(lenFloors ...BranchLenRefinement
 	return out
 }
 
+// WithNumFloorRefinements returns s extended with true-edge numeric-floor facts.
+func (s BranchRefinementSet) WithNumFloorRefinements(numFloors ...BranchNumFloorRefinement) BranchRefinementSet {
+	out := s.copy()
+	out.numFloors = append(out.numFloors, copyBranchNumFloorRefinementSlice(numFloors)...)
+	return out
+}
+
 // LenRefinements returns the true-edge length-floor facts in deterministic
 // order.
 func (s BranchRefinementSet) LenRefinements() []BranchLenRefinement {
 	return copyBranchLenRefinementSlice(s.lenFloors)
+}
+
+// NumFloorRefinements returns the true-edge numeric-floor facts in deterministic
+// order.
+func (s BranchRefinementSet) NumFloorRefinements() []BranchNumFloorRefinement {
+	return copyBranchNumFloorRefinementSlice(s.numFloors)
 }
 
 // TargetPath returns the refined path.
@@ -199,6 +239,7 @@ func (s BranchRefinementSet) copy() BranchRefinementSet {
 	return BranchRefinementSet{
 		refinements: copyBranchRefinementSlice(s.refinements),
 		lenFloors:   copyBranchLenRefinementSlice(s.lenFloors),
+		numFloors:   copyBranchNumFloorRefinementSlice(s.numFloors),
 	}
 }
 
@@ -207,6 +248,17 @@ func copyBranchLenRefinementSlice(in []BranchLenRefinement) []BranchLenRefinemen
 		return nil
 	}
 	out := make([]BranchLenRefinement, len(in))
+	for i, fact := range in {
+		out[i] = fact.copy()
+	}
+	return out
+}
+
+func copyBranchNumFloorRefinementSlice(in []BranchNumFloorRefinement) []BranchNumFloorRefinement {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]BranchNumFloorRefinement, len(in))
 	for i, fact := range in {
 		out[i] = fact.copy()
 	}
@@ -241,7 +293,8 @@ func mergeBranchRefinementSetMap(
 		refinements = append(refinements, set.Refinements()...)
 		merged := NewBranchRefinementSet(refinements...)
 		lenFloors := append(existing.LenRefinements(), set.LenRefinements()...)
-		out[point] = merged.WithLenRefinements(lenFloors...)
+		numFloors := append(existing.NumFloorRefinements(), set.NumFloorRefinements()...)
+		out[point] = merged.WithLenRefinements(lenFloors...).WithNumFloorRefinements(numFloors...)
 	}
 	return out
 }

@@ -14,6 +14,7 @@ import (
 	luatypeprojection "github.com/wippyai/go-lua/analysis/lua/typeprojection"
 	"github.com/wippyai/go-lua/analysis/lua/valueexpr"
 	"github.com/wippyai/go-lua/analysis/symbol"
+	"github.com/wippyai/go-lua/analysis/type/access"
 	"github.com/wippyai/go-lua/analysis/type/kind"
 	"github.com/wippyai/go-lua/analysis/type/normalize"
 	"github.com/wippyai/go-lua/analysis/type/subst"
@@ -381,7 +382,7 @@ func projectedOptionalIndexType(result *body.Result, resolver typeannotation.Res
 	if !shouldProjectOptionalIndex(result, expr) {
 		return nil, false
 	}
-	got, ok := newExpressionTyper(result, resolver).typeOf(expr)
+	got, ok := staticIndexProjectionType(result, resolver, point, expr)
 	if !ok || !projectionHasNil(got) {
 		return nil, false
 	}
@@ -392,6 +393,59 @@ func projectedOptionalIndexType(result *body.Result, resolver typeannotation.Res
 		}
 	}
 	return got, true
+}
+
+func staticIndexProjectionType(result *body.Result, resolver typeannotation.Resolver, point cfg.Point, expr ast.Expr) (typ.Type, bool) {
+	if got, ok := newExpressionTyper(result, resolver).typeOf(expr); ok {
+		return got, true
+	}
+	attr, ok := expr.(*ast.AttrGetExpr)
+	if !ok || attr.KeySyntax != ast.AttrKeyIndex {
+		return nil, false
+	}
+	container, ok := newExpressionTyper(result, resolver).typeOf(attr.Object)
+	if !ok {
+		return nil, false
+	}
+	key, ok := newExpressionTyper(result, resolver).typeOf(attr.Key)
+	if !ok {
+		key, ok = numericForIndexExpressionType(result, attr.Key)
+	}
+	if !ok {
+		key, ok = boundaryNumericIndexExpressionType(result, point, attr.Key)
+	}
+	if !ok {
+		return nil, false
+	}
+	return access.RuntimeIndex(container, key)
+}
+
+func numericForIndexExpressionType(result *body.Result, expr ast.Expr) (typ.Type, bool) {
+	if result == nil || expr == nil || result.Graph() == nil {
+		return nil, false
+	}
+	indexPath, ok := result.ExpressionPath(expr)
+	if !ok || indexPath.Symbol == 0 {
+		return nil, false
+	}
+	for _, point := range result.Graph().RPO() {
+		fact, ok := result.NumericFor(point)
+		if ok && fact.HasSymbol && fact.Symbol == indexPath.Symbol {
+			return typ.Number, true
+		}
+	}
+	return nil, false
+}
+
+func boundaryNumericIndexExpressionType(result *body.Result, point cfg.Point, expr ast.Expr) (typ.Type, bool) {
+	indexPath, ok := result.ExpressionPath(expr)
+	if !ok || indexPath.Symbol == 0 {
+		return nil, false
+	}
+	if _, ok := result.NumericFloorAtBoundary(point, indexPath); ok {
+		return typ.Number, true
+	}
+	return nil, false
 }
 
 // indexReadProvenInRange reports whether an array element read attr is provably

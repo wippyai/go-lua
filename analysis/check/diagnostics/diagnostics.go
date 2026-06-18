@@ -22,6 +22,7 @@ const (
 	CodeDirectCallArgType          diagnostic.Code = "type.call.direct.argument_type"
 	CodeReturnContractType         diagnostic.Code = "type.return.contract"
 	CodeDirectCallResultAssignment diagnostic.Code = "type.call.direct.result_assignment"
+	CodeConcatOperand              diagnostic.Code = "type.operator.concat_operand"
 	CodeNumericForOperand          diagnostic.Code = "type.for.numeric_operand"
 	CodeChannelSelectExhaustive    diagnostic.Code = "channel.select.exhaustiveness"
 	CodeUnresolvedTypeReference    diagnostic.Code = "type.reference.unresolved"
@@ -61,6 +62,7 @@ func produceWithResolver(result *body.Result, parent typeannotation.Resolver, in
 	out = append(out, produceDirectCallContract(result, context, defs)...)
 	out = append(out, produceCallParamObligations(result, context, defs)...)
 	out = append(out, produceDirectCallResultAssignment(result, context, defs)...)
+	out = append(out, concatOperands(context).Produce(result)...)
 	out = append(out, numericForOperands(context).Produce(result)...)
 	out = append(out, memberCall(context).Produce(result)...)
 	out = append(out, memberRead(context).Produce(result)...)

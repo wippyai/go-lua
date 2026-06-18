@@ -98,6 +98,9 @@ func TestOperatorOptionalAndNilRejection(t *testing.T) {
 	if _, ok := BinaryOp(typeexpr.Optional(typ.Integer), "+", typ.Integer); ok {
 		t.Fatal("BinaryOp(optional integer, +, integer) succeeded")
 	}
+	if _, ok := BinaryOp(typ.Number, "+", typeexpr.Optional(typ.Number)); ok {
+		t.Fatal("BinaryOp(number, +, optional number) succeeded")
+	}
 	if _, ok := BinaryOp(typ.Nil, "..", typ.String); ok {
 		t.Fatal("BinaryOp(nil, .., string) succeeded")
 	}
@@ -119,6 +122,35 @@ func TestOperatorOptionalAndNilRejection(t *testing.T) {
 		t.Fatal("UnaryOp(not, nil) failed")
 	}
 	assertType(t, got, typ.Boolean)
+}
+
+func TestConcatOptionalOperandProjectsPresentResult(t *testing.T) {
+	tests := []struct {
+		name  string
+		left  typ.Type
+		right typ.Type
+	}{
+		{name: "optional string right", left: typ.String, right: typeexpr.Optional(typ.String)},
+		{name: "optional string left", left: typeexpr.Optional(typ.String), right: typ.String},
+		{name: "optional number right", left: typ.String, right: typeexpr.Optional(typ.Number)},
+		{name: "nil union string right", left: typ.String, right: typeexpr.Union(typ.Nil, typ.String)},
+		{name: "nil union number right", left: typ.String, right: typeexpr.Union(typ.Nil, typ.Number)},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, ok := BinaryOp(tt.left, "..", tt.right)
+			if !ok {
+				t.Fatalf("BinaryOp(%v, .., %v) failed", tt.left, tt.right)
+			}
+			assertType(t, got, typ.String)
+		})
+	}
+}
+
+func TestConcatOptionalNonConcatenableOperandStillRejected(t *testing.T) {
+	if _, ok := BinaryOp(typ.String, "..", typeexpr.Optional(typ.NewArray(typ.String))); ok {
+		t.Fatal("BinaryOp(string, .., optional array) succeeded")
+	}
 }
 
 func TestOperatorUnionDistributionRequiresEveryVariant(t *testing.T) {

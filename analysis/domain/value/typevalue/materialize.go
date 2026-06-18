@@ -33,6 +33,13 @@ func fromType(reg *axis.Registry, t typ.Type, cache *Cache) product.Value {
 	return value
 }
 
+// Nil materializes the canonical nil value: presence-absent carrying the
+// typ.Nil witness, so a nil source (uninitialized local, over-arity fill) joins
+// identically to an explicit `= nil` instead of being absorbed as join identity.
+func Nil(reg *axis.Registry) product.Value {
+	return WithWitness(reg, FromType(reg, typ.Nil), typ.Nil)
+}
+
 // WithWitness records exact runtime type-witness evidence on value.
 func WithWitness(reg *axis.Registry, value product.Value, t typ.Type) product.Value {
 	if witness := typewitness.Of(t); !witness.IsTop() {

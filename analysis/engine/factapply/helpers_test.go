@@ -11,6 +11,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/variantorigin"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/domain/value/variant"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/state"
@@ -140,6 +141,12 @@ func presentValue(reg *axis.Registry) product.Value {
 
 func absentValue(reg *axis.Registry) product.Value {
 	return product.NewWithPresence(reg, product.ShapeTop, presence.Absent())
+}
+
+// nilSourceValue is the value a nil ValueSource resolves to: presence-absent
+// carrying the typ.Nil witness, so it joins identically to an explicit `= nil`.
+func nilSourceValue(reg *axis.Registry) product.Value {
+	return typevalue.Nil(reg)
 }
 
 func runtimeKindConstraint(value runtimekind.Value) product.Value {

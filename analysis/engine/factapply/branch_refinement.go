@@ -65,6 +65,28 @@ func applyBranchLenRefinement(
 	return out.WriteLenFloor(pathKey, fact.Floor())
 }
 
+// applyBranchNumFloorRefinement records a true-edge lower bound for a numeric
+// path. Root paths use their structural key, matching NumericFloorAtBoundary.
+func applyBranchNumFloorRefinement(
+	ctx transfer.EdgeContext,
+	resolver *visibility.Resolver,
+	out state.State,
+	fact factflow.BranchNumFloorRefinement,
+) state.State {
+	if resolver == nil {
+		return out
+	}
+	targetPath := fact.TargetPath()
+	if targetPath.Symbol == 0 {
+		return out
+	}
+	pathKey := visibility.RootOrVisibleKeyAt(resolver, ctx.Edge.From, targetPath)
+	if pathKey == "" {
+		return out
+	}
+	return out.WriteNumFloor(pathKey, fact.Floor())
+}
+
 func applyValueRefinementAt(
 	reg *axis.Registry,
 	resolver *visibility.Resolver,

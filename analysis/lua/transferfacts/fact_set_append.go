@@ -21,7 +21,9 @@ func appendBranchRefinement(out map[cfg.Point]factflow.BranchRefinementSet, poin
 	prior := out[point]
 	existing := prior.Refinements()
 	existing = append(existing, refinements...)
-	out[point] = factflow.NewBranchRefinementSet(existing...).WithLenRefinements(prior.LenRefinements()...)
+	out[point] = factflow.NewBranchRefinementSet(existing...).
+		WithLenRefinements(prior.LenRefinements()...).
+		WithNumFloorRefinements(prior.NumFloorRefinements()...)
 }
 
 func appendBranchLenRefinement(out map[cfg.Point]factflow.BranchRefinementSet, point cfg.Point, lenFloors ...factflow.BranchLenRefinement) {
@@ -29,6 +31,13 @@ func appendBranchLenRefinement(out map[cfg.Point]factflow.BranchRefinementSet, p
 		return
 	}
 	out[point] = out[point].WithLenRefinements(lenFloors...)
+}
+
+func appendBranchNumFloorRefinement(out map[cfg.Point]factflow.BranchRefinementSet, point cfg.Point, numFloors ...factflow.BranchNumFloorRefinement) {
+	if len(numFloors) == 0 {
+		return
+	}
+	out[point] = out[point].WithNumFloorRefinements(numFloors...)
 }
 
 func appendBranchPathEvidence(out map[cfg.Point]factflow.BranchPathEvidenceSet, point cfg.Point, proofs ...factflow.BranchPathEvidence) {

@@ -538,6 +538,110 @@ end`)
 	}
 }
 
+func TestCheckFunctionNumericForLengthLimitCarriesRangeAndPositiveProofs(t *testing.T) {
+	reg := standard.Registry()
+	fn := parseFunction(t, `
+function labels(xs: {string})
+	for i = 1, #xs do
+		local v: string = xs[i]
+	end
+end`)
+
+	result, err := CheckFunction(fn, Config{Registry: reg})
+	if err != nil {
+		t.Fatalf("CheckFunction: %v", err)
+	}
+	var point cfg.Point
+	var attr *ast.AttrGetExpr
+	for _, candidate := range result.Graph().RPO() {
+		fact, ok := result.LocalAssignment(candidate)
+		if !ok || fact.Name != "v" {
+			continue
+		}
+		got, ok := fact.Expr.(*ast.AttrGetExpr)
+		if !ok {
+			t.Fatalf("v source = %T, want indexed attr", fact.Expr)
+		}
+		point = candidate
+		attr = got
+		break
+	}
+	if attr == nil {
+		t.Fatal("local v assignment not found")
+	}
+	arrayPath, ok := result.ExpressionPath(attr.Object)
+	if !ok {
+		t.Fatal("array expression path not found")
+	}
+	indexPath, ok := result.ExpressionPath(attr.Key)
+	if !ok {
+		t.Fatal("index expression path not found")
+	}
+	if !result.IndexInRangeAtBoundary(point, indexPath, arrayPath) {
+		st, _ := result.StateAt(point)
+		t.Fatalf("missing %s <= len(%s) proof at point %d; proofs=%#v",
+			indexPath, arrayPath, point, st.BranchProofsSnapshot().Proofs)
+	}
+	floor, ok := result.NumericFloorAtBoundary(point, indexPath)
+	if !ok || floor < 1 {
+		st, _ := result.StateAt(point)
+		t.Fatalf("index numeric floor = %d/%v, want >=1 at point %d; floors=%#v",
+			floor, ok, point, st.NumFloorsSnapshot().Floors)
+	}
+}
+
+func TestCheckFunctionReverseNumericForLengthInitCarriesRangeAndPositiveProofs(t *testing.T) {
+	reg := standard.Registry()
+	fn := parseFunction(t, `
+function labels(xs: {string})
+	for i = #xs, 1, -1 do
+		local v: string = xs[i]
+	end
+end`)
+
+	result, err := CheckFunction(fn, Config{Registry: reg})
+	if err != nil {
+		t.Fatalf("CheckFunction: %v", err)
+	}
+	var point cfg.Point
+	var attr *ast.AttrGetExpr
+	for _, candidate := range result.Graph().RPO() {
+		fact, ok := result.LocalAssignment(candidate)
+		if !ok || fact.Name != "v" {
+			continue
+		}
+		got, ok := fact.Expr.(*ast.AttrGetExpr)
+		if !ok {
+			t.Fatalf("v source = %T, want indexed attr", fact.Expr)
+		}
+		point = candidate
+		attr = got
+		break
+	}
+	if attr == nil {
+		t.Fatal("local v assignment not found")
+	}
+	arrayPath, ok := result.ExpressionPath(attr.Object)
+	if !ok {
+		t.Fatal("array expression path not found")
+	}
+	indexPath, ok := result.ExpressionPath(attr.Key)
+	if !ok {
+		t.Fatal("index expression path not found")
+	}
+	if !result.IndexInRangeAtBoundary(point, indexPath, arrayPath) {
+		st, _ := result.StateAt(point)
+		t.Fatalf("missing %s <= len(%s) proof at point %d; proofs=%#v",
+			indexPath, arrayPath, point, st.BranchProofsSnapshot().Proofs)
+	}
+	floor, ok := result.NumericFloorAtBoundary(point, indexPath)
+	if !ok || floor < 1 {
+		st, _ := result.StateAt(point)
+		t.Fatalf("index numeric floor = %d/%v, want >=1 at point %d; floors=%#v",
+			floor, ok, point, st.NumFloorsSnapshot().Floors)
+	}
+}
+
 func TestCheckFunctionReturnSlotEvaluatesExpressionWithNestedCall(t *testing.T) {
 	reg := standard.Registry()
 	fn := parseFunction(t, `

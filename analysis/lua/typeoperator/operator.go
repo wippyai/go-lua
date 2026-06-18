@@ -1,6 +1,7 @@
 package typeoperator
 
 import (
+	"github.com/wippyai/go-lua/analysis/type/kind"
 	"github.com/wippyai/go-lua/analysis/type/normalize"
 	"github.com/wippyai/go-lua/analysis/type/subst"
 	"github.com/wippyai/go-lua/analysis/type/typ"
@@ -34,13 +35,26 @@ func binaryOpDepth(left typ.Type, op string, right typ.Type, depth int) (typ.Typ
 	if isLogicalOp(op) {
 		return logicalBinaryOp(left, op, right, depth+1)
 	}
+
+	// Concatenation result type does not depend on operand presence: `a .. b`
+	// always yields string when both operands are string- or number-like. A
+	// possibly-nil operand (a runtime-error risk reported separately) must not
+	// make the result type unresolvable, which would silently drop the enclosing
+	// assignment and leave the target reading as its pre-assignment value. Drop
+	// operand optionality so concat resolves; the inner-type concat-operand check
+	// still rejects non-concatenable operands such as optional tables.
+	if op == ".." {
+		left = dropNilForConcat(left)
+		right = dropNilForConcat(right)
+	}
+
 	if u, ok := left.(*typ.Union); ok {
 		return binaryLeftUnion(u, op, right, depth+1)
 	}
 	if u, ok := right.(*typ.Union); ok {
 		return binaryRightUnion(left, op, u, depth+1)
 	}
-	if isNilOrOptional(left) || isNilOrOptional(right) {
+	if op != ".." && (isNilOrOptional(left) || isNilOrOptional(right)) {
 		return nil, false
 	}
 	if result, ok := dynamicBinaryResult(left, right); ok {
@@ -113,6 +127,34 @@ func unaryOpDepth(op string, operand typ.Type, depth int) (typ.Type, bool) {
 		}
 	}
 	return nil, false
+}
+
+// dropNilForConcat removes the nil arm of a possibly-nil operand so concat is
+// judged by its present-value type. It handles both the *typ.Optional shape
+// (array element reads) and a union carrying a nil member. A bare nil is left
+// unchanged so concat of a definitely-nil operand still fails as a genuine
+// error.
+func dropNilForConcat(t typ.Type) typ.Type {
+	surface := operatorSurface(t, 0)
+	switch v := surface.(type) {
+	case *typ.Optional:
+		return v.Inner
+	case *typ.Union:
+		members := make([]typ.Type, 0, len(v.Members))
+		for _, member := range v.Members {
+			surfaceMember := operatorSurface(member, 0)
+			if surfaceMember == nil || surfaceMember.Kind() == kind.Nil {
+				continue
+			}
+			members = append(members, member)
+		}
+		if len(members) == 0 || len(members) == len(v.Members) {
+			return t
+		}
+		return normalize.UnionForEvidence(members...)
+	default:
+		return t
+	}
 }
 
 func operatorSurface(t typ.Type, depth int) typ.Type {
