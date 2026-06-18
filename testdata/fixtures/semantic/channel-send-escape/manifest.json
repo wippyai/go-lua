@@ -1,0 +1,1 @@
+{ "description": "A locally-built record sent over a channel escapes; placement must remain complete.", "packages": ["channel"], "check": { "placement": { "require_complete": true, "max_unknown": 0 } }, "run": { "skip": "placement-only" } }
