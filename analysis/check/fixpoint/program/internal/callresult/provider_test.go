@@ -1290,6 +1290,7 @@ func TestProductionImportsAreBounded(t *testing.T) {
 		"github.com/wippyai/go-lua/analysis/engine/state/pathevidence":       true,
 		"github.com/wippyai/go-lua/analysis/engine/state":                    true,
 		"github.com/wippyai/go-lua/analysis/engine/transfer":                 true,
+		"github.com/wippyai/go-lua/analysis/internal/mapedit":                true,
 		"github.com/wippyai/go-lua/analysis/ir/dominance":                    true,
 		"github.com/wippyai/go-lua/analysis/ir/cfg":                          true,
 		"github.com/wippyai/go-lua/analysis/lua/typecall":                    true,

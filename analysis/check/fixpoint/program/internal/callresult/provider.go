@@ -24,6 +24,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/state/heapidentity"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
+	"github.com/wippyai/go-lua/analysis/internal/mapedit"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/typecall"
 	"github.com/wippyai/go-lua/analysis/symbol"
@@ -1091,58 +1092,23 @@ func valueContainsFreeTypeParam(reg *axis.Registry, value product.Value) bool {
 }
 
 func cloneFunctionTypes(in map[summary.SummaryKey]*typ.Function) map[summary.SummaryKey]*typ.Function {
-	if len(in) == 0 {
-		return nil
-	}
-	out := make(map[summary.SummaryKey]*typ.Function, len(in))
-	for key, fn := range in {
-		out[key] = fn
-	}
-	return out
+	return mapedit.Clone(in)
 }
 
 func cloneFunctionKeys(in map[symbol.ID]summary.SummaryKey) map[symbol.ID]summary.SummaryKey {
-	if len(in) == 0 {
-		return nil
-	}
-	out := make(map[symbol.ID]summary.SummaryKey, len(in))
-	for id, key := range in {
-		out[id] = key
-	}
-	return out
+	return mapedit.Clone(in)
 }
 
 func cloneFunctionExpressionKeys(in map[factflow.ExprRef]summary.SummaryKey) map[factflow.ExprRef]summary.SummaryKey {
-	if len(in) == 0 {
-		return nil
-	}
-	out := make(map[factflow.ExprRef]summary.SummaryKey, len(in))
-	for expr, key := range in {
-		out[expr] = key
-	}
-	return out
+	return mapedit.Clone(in)
 }
 
 func cloneFunctionIdentityKeys(in map[identity.ID]summary.SummaryKey) map[identity.ID]summary.SummaryKey {
-	if len(in) == 0 {
-		return nil
-	}
-	out := make(map[identity.ID]summary.SummaryKey, len(in))
-	for id, key := range in {
-		out[id] = key
-	}
-	return out
+	return mapedit.Clone(in)
 }
 
 func clonePathKeys(in map[pathdom.PathKey]summary.SummaryKey) map[pathdom.PathKey]summary.SummaryKey {
-	if len(in) == 0 {
-		return nil
-	}
-	out := make(map[pathdom.PathKey]summary.SummaryKey, len(in))
-	for pathKey, key := range in {
-		out[pathKey] = key
-	}
-	return out
+	return mapedit.Clone(in)
 }
 
 func clonePathMultiKeys(in map[pathdom.PathKey][]summary.SummaryKey) map[pathdom.PathKey][]summary.SummaryKey {
