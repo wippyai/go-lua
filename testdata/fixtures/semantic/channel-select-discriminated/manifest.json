@@ -1,0 +1,6 @@
+{
+  "description": "Channel select with discriminated-union narrowing on the selected channel.",
+  "packages": [
+    "channel"
+  ]
+}
