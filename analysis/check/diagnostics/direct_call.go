@@ -38,7 +38,7 @@ func produceDirectCallContract(result *body.Result, context producerContext, inh
 		return nil
 	}
 	defs := directCallDefinitions(result, inherited)
-	envs := guardEnvironments(result)
+	envs := cachedGuardEnvironments(result)
 	producer := directCallContract(context)
 	var out []diagnostic.Diagnostic
 	for _, point := range graph.RPO() {

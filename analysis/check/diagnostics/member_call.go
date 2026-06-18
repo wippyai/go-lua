@@ -33,7 +33,7 @@ func (p memberCall) Produce(result *body.Result) []diagnostic.Diagnostic {
 	if graph == nil {
 		return nil
 	}
-	envs := guardEnvironments(result)
+	envs := cachedGuardEnvironments(result)
 	var out []diagnostic.Diagnostic
 	for _, point := range graph.RPO() {
 		fact, ok := result.Call(point)

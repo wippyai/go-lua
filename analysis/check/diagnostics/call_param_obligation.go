@@ -39,7 +39,7 @@ func produceCallParamObligations(
 	if graph == nil {
 		return nil
 	}
-	envs := guardEnvironments(result)
+	envs := cachedGuardEnvironments(result)
 	producer := callParamObligations(context)
 	var out []diagnostic.Diagnostic
 	for _, point := range graph.RPO() {

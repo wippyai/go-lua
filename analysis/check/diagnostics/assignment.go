@@ -29,7 +29,7 @@ func (p annotationAssignability) Produce(result *body.Result) []diagnostic.Diagn
 	if graph == nil {
 		return nil
 	}
-	envs := guardEnvironments(result)
+	envs := cachedGuardEnvironments(result)
 	defs := directCallDefinitions(result, nil)
 	var out []diagnostic.Diagnostic
 	for _, point := range graph.RPO() {

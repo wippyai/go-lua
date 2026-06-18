@@ -26,7 +26,7 @@ func (p memberRead) Produce(result *body.Result) []diagnostic.Diagnostic {
 	if graph == nil {
 		return nil
 	}
-	envs := guardEnvironments(result)
+	envs := cachedGuardEnvironments(result)
 	var out []diagnostic.Diagnostic
 	seen := make(map[*ast.AttrGetExpr]struct{})
 	for _, point := range graph.RPO() {

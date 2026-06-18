@@ -44,7 +44,7 @@ func produceReturnContract(result *body.Result, context producerContext, inherit
 	if !ok || len(returns) == 0 {
 		return nil
 	}
-	envs := guardEnvironments(result)
+	envs := cachedGuardEnvironments(result)
 	var out []diagnostic.Diagnostic
 	for _, point := range result.ReturnPoints() {
 		fact, ok := result.ReturnFact(point)
@@ -440,7 +440,7 @@ func directCallCalleeType(result *body.Result, resolver typeannotation.Resolver,
 			return got, true
 		}
 	}
-	env := guardEnvironments(result)[point]
+	env := cachedGuardEnvironments(result)[point]
 	return newFlowExpressionTyper(result, resolver, point, env).typeOf(expr)
 }
 
@@ -448,7 +448,7 @@ func directCallArgsCompatible(result *body.Result, point cfg.Point, fact semanti
 	if fact.Call == nil {
 		return false
 	}
-	env := guardEnvironments(result)[point]
+	env := cachedGuardEnvironments(result)[point]
 	args := fact.Call.Args
 	required := contract.requiredArity()
 	if len(args) < required {
