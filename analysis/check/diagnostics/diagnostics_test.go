@@ -2488,6 +2488,19 @@ func TestNumericForReportsStringInit(t *testing.T) {
 	}
 }
 
+func TestInlineConcreteCastMemberAccessIsTyped(t *testing.T) {
+	// A cast to a CONCRETE type is trusted by the linter for inference, so
+	// `(result :: { id: string }).id` types as string -- no spurious "any" error.
+	diags := runDiagnostics(t, `
+		local function g(result: any): string
+			return (result :: { id: string }).id
+		end
+	`)
+	if len(diags) != 0 {
+		t.Fatalf("inline concrete cast member access should type-check cleanly, got %d: %#v", len(diags), diags)
+	}
+}
+
 func TestNumericForDoesNotTrustExplicitAnyCastInit(t *testing.T) {
 	diags := runDiagnostics(t, `
 		for i = ("one" :: any), 10 do

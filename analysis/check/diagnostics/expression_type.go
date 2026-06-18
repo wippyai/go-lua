@@ -55,6 +55,17 @@ func (p expressionTyper) typeOfDepth(expr ast.Expr, depth int) (typ.Type, bool) 
 	}
 	switch e := expr.(type) {
 	case *ast.CastExpr:
+		// `expr :: T` is a runtime value cast (like Type(x)): it does not prove the
+		// type and may fail at runtime, but the linter adopts the asserted concrete
+		// type T for inference, so `(x :: {id: string}).id` types as string. A cast
+		// to a top-like type (any/unknown) carries no usable type, so it falls
+		// through to the underlying expression -- the explicit-any boundary checks
+		// (e.g. numeric-for operand) must still see through it as unproven.
+		if e.Type != nil {
+			if lowered, ok := lowerType(e.Type, p.resolver); ok && !topLikeType(lowered) {
+				return lowered, true
+			}
+		}
 		return p.typeOfDepth(e.Expr, depth+1)
 	case *ast.NonNilAssertExpr:
 		t, ok := p.typeOfDepth(e.Expr, depth+1)
