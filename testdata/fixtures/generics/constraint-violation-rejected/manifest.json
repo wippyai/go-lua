@@ -1,0 +1,1 @@
+{ "description": "Calling a T: HasId generic with a value lacking id must be rejected (constraint soundness).", "files": ["main.lua"], "check": { "errors": 1 } }
