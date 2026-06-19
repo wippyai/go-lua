@@ -254,6 +254,49 @@ func TestSourceValuesExpressionAndVarargProvidersAreGenericHooks(t *testing.T) {
 	}
 }
 
+func TestSourceValuesObjectLiteralViewResolver(t *testing.T) {
+	reg := standard.Registry()
+	expr := ExprRef(61)
+	source := ValueSource{Kind: ValueSourceExpression, ExprRef: expr, HasExpr: true}
+	want := presentValue(reg)
+	nilSource := NewNilValueSource(0)
+	lit := NewObjectLiteral([]ObjectEntry{
+		NewObjectEntry(path.Path{Segments: []segment.Segment{{Kind: segment.SegmentField, Name: "value"}}}, nilSource),
+	})
+	viewCalls := 0
+	resolver := NewSourceValues(SourceValuesConfig{
+		Registry: reg,
+		ObjectLiteralView: func(got ExprRef) (ObjectLiteralView, bool) {
+			if got != expr {
+				return ObjectLiteralView{}, false
+			}
+			return lit.View(), true
+		},
+		ObjectLiteralFromView: func(got ObjectLiteralView, resolve func(ValueSource) (product.Value, bool)) (product.Value, bool) {
+			viewCalls++
+			if got.EntryCount() != 1 {
+				t.Fatalf("view entry count = %d, want 1", got.EntryCount())
+			}
+			value, ok := resolve(nilSource)
+			if !ok {
+				t.Fatal("view evaluator did not resolve entry source")
+			}
+			if gotPresence := product.PresenceOf(value); !presence.Equal(gotPresence, presence.Absent()) {
+				t.Fatalf("resolved nil presence = %s, want absent", gotPresence)
+			}
+			return want, true
+		},
+	})
+
+	got, ok := resolver.ValueOfSource(cfg.Point(1), source, state.State{}, nil)
+	if !ok || !product.Equal(reg, got, want) {
+		t.Fatalf("object literal view value = %s/%v, want %s/true", formatValue(reg, got), ok, formatValue(reg, want))
+	}
+	if viewCalls != 1 {
+		t.Fatalf("view calls = %d, want one view resolution", viewCalls)
+	}
+}
+
 func TestSourceValuesPathBackedExpressionPrefersVariantOriginFlow(t *testing.T) {
 	reg := standard.Registry()
 	expr := ExprRef(77)

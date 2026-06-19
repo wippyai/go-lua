@@ -1,8 +1,6 @@
 package effectlowering
 
 import (
-	"reflect"
-
 	"github.com/wippyai/go-lua/analysis/domain/effect"
 	"github.com/wippyai/go-lua/analysis/domain/effect/capability"
 	caplabel "github.com/wippyai/go-lua/analysis/domain/effect/capability/label"
@@ -32,11 +30,11 @@ type ReturnTypeOps struct {
 
 func signatureReturnValue(
 	ctx transfer.NodeContext,
-	facts factflow.Facts,
 	sources sourcevalue.SourceValues,
 	expressionRefinements map[factflow.ExprRef]factflow.ExpressionRefinement,
 	sig signature.Function,
 	index int,
+	argSources signatureArgumentReader,
 	in state.State,
 	read func(cfg.Point) state.State,
 	returnTypeOps ReturnTypeOps,
@@ -47,47 +45,47 @@ func signatureReturnValue(
 	}
 	switch transform := transform.(type) {
 	case returns.SameAs:
-		return sameAsReturnValue(ctx, facts, sources, expressionRefinements, transform.Source, in, read)
+		return sameAsReturnValue(ctx, sources, expressionRefinements, transform.Source, argSources, in, read)
 	case *returns.SameAs:
 		if transform == nil {
 			return product.Value{}, false
 		}
-		return sameAsReturnValue(ctx, facts, sources, expressionRefinements, transform.Source, in, read)
+		return sameAsReturnValue(ctx, sources, expressionRefinements, transform.Source, argSources, in, read)
 	case returns.ElementOf:
-		return elementOfReturnValue(ctx, facts, sig, transform.Source, returnTypeOps)
+		return elementOfReturnValue(ctx, sig, transform.Source, argSources, returnTypeOps)
 	case *returns.ElementOf:
 		if transform == nil {
 			return product.Value{}, false
 		}
-		return elementOfReturnValue(ctx, facts, sig, transform.Source, returnTypeOps)
+		return elementOfReturnValue(ctx, sig, transform.Source, argSources, returnTypeOps)
 	case returns.OptionalElementOf:
-		return optionalElementOfReturnValue(ctx, facts, sig, transform.Source, returnTypeOps)
+		return optionalElementOfReturnValue(ctx, sig, transform.Source, argSources, returnTypeOps)
 	case *returns.OptionalElementOf:
 		if transform == nil {
 			return product.Value{}, false
 		}
-		return optionalElementOfReturnValue(ctx, facts, sig, transform.Source, returnTypeOps)
+		return optionalElementOfReturnValue(ctx, sig, transform.Source, argSources, returnTypeOps)
 	case returns.CallbackReturn:
-		return callbackReturnValue(ctx, facts, sig, transform.CallbackParam, false, returnTypeOps)
+		return callbackReturnValue(ctx, sig, transform.CallbackParam, argSources, false, returnTypeOps)
 	case *returns.CallbackReturn:
 		if transform == nil {
 			return product.Value{}, false
 		}
-		return callbackReturnValue(ctx, facts, sig, transform.CallbackParam, false, returnTypeOps)
+		return callbackReturnValue(ctx, sig, transform.CallbackParam, argSources, false, returnTypeOps)
 	case returns.ArrayOfCallbackReturn:
-		return callbackReturnValue(ctx, facts, sig, transform.CallbackParam, true, returnTypeOps)
+		return callbackReturnValue(ctx, sig, transform.CallbackParam, argSources, true, returnTypeOps)
 	case *returns.ArrayOfCallbackReturn:
 		if transform == nil {
 			return product.Value{}, false
 		}
-		return callbackReturnValue(ctx, facts, sig, transform.CallbackParam, true, returnTypeOps)
+		return callbackReturnValue(ctx, sig, transform.CallbackParam, argSources, true, returnTypeOps)
 	case returns.TypeProjection:
-		return typeProjectionReturnValue(ctx, facts, sig, transform, returnTypeOps)
+		return typeProjectionReturnValue(ctx, sig, transform, argSources, returnTypeOps)
 	case *returns.TypeProjection:
 		if transform == nil {
 			return product.Value{}, false
 		}
-		return typeProjectionReturnValue(ctx, facts, sig, *transform, returnTypeOps)
+		return typeProjectionReturnValue(ctx, sig, *transform, argSources, returnTypeOps)
 	default:
 		return product.Value{}, false
 	}
@@ -95,44 +93,38 @@ func signatureReturnValue(
 
 func sameAsReturnValue(
 	ctx transfer.NodeContext,
-	facts factflow.Facts,
 	sources sourcevalue.SourceValues,
 	expressionRefinements map[factflow.ExprRef]factflow.ExpressionRefinement,
 	ref effect.ParamRef,
+	argSources signatureArgumentReader,
 	in state.State,
 	read func(cfg.Point) state.State,
 ) (product.Value, bool) {
 	if sources == nil {
 		return product.Value{}, false
 	}
-	site, ok := facts.CallSite(ctx.Point)
+	argIndex, ok := effect.ResolveParamIndex(ref, argSources.ArgumentSourceCount())
 	if !ok {
 		return product.Value{}, false
 	}
-	args := site.ArgumentSources()
-	argIndex, ok := effect.ResolveParamIndex(ref, len(args))
+	source, ok := argSources.ArgumentSourceAt(argIndex)
 	if !ok {
 		return product.Value{}, false
 	}
-	return sourcevalue.WithExpressionRefinements(ctx.Registry, sources, expressionRefinements).ValueOfSource(ctx.Point, args[argIndex], in, read)
+	return sourcevalue.WithExpressionRefinements(ctx.Registry, sources, expressionRefinements).ValueOfSource(ctx.Point, source, in, read)
 }
 
 func elementOfReturnValue(
 	ctx transfer.NodeContext,
-	facts factflow.Facts,
 	sig signature.Function,
 	ref effect.ParamRef,
+	argSources signatureArgumentReader,
 	returnTypeOps ReturnTypeOps,
 ) (product.Value, bool) {
 	if returnTypeOps.ElementOf == nil {
 		return product.Value{}, false
 	}
-	site, ok := facts.CallSite(ctx.Point)
-	if !ok {
-		return product.Value{}, false
-	}
-	args := site.ArgumentSources()
-	argIndex, ok := effect.ResolveParamIndex(ref, len(args))
+	argIndex, ok := effect.ResolveParamIndex(ref, argSources.ArgumentSourceCount())
 	if !ok || sig.Type == nil || argIndex < 0 || argIndex >= len(sig.Type.Params) {
 		return product.Value{}, false
 	}
@@ -145,12 +137,12 @@ func elementOfReturnValue(
 
 func optionalElementOfReturnValue(
 	ctx transfer.NodeContext,
-	facts factflow.Facts,
 	sig signature.Function,
 	ref effect.ParamRef,
+	argSources signatureArgumentReader,
 	returnTypeOps ReturnTypeOps,
 ) (product.Value, bool) {
-	value, ok := elementOfReturnValue(ctx, facts, sig, ref, returnTypeOps)
+	value, ok := elementOfReturnValue(ctx, sig, ref, argSources, returnTypeOps)
 	if !ok {
 		return product.Value{}, false
 	}
@@ -159,21 +151,16 @@ func optionalElementOfReturnValue(
 
 func callbackReturnValue(
 	ctx transfer.NodeContext,
-	facts factflow.Facts,
 	sig signature.Function,
 	ref effect.ParamRef,
+	argSources signatureArgumentReader,
 	array bool,
 	returnTypeOps ReturnTypeOps,
 ) (product.Value, bool) {
 	if returnTypeOps.CallableReturn == nil {
 		return product.Value{}, false
 	}
-	site, ok := facts.CallSite(ctx.Point)
-	if !ok {
-		return product.Value{}, false
-	}
-	args := site.ArgumentSources()
-	argIndex, ok := effect.ResolveParamIndex(ref, len(args))
+	argIndex, ok := effect.ResolveParamIndex(ref, argSources.ArgumentSourceCount())
 	if !ok || sig.Type == nil || argIndex < 0 || argIndex >= len(sig.Type.Params) {
 		return product.Value{}, false
 	}
@@ -189,20 +176,15 @@ func callbackReturnValue(
 
 func typeProjectionReturnValue(
 	ctx transfer.NodeContext,
-	facts factflow.Facts,
 	sig signature.Function,
 	transform returns.TypeProjection,
+	argSources signatureArgumentReader,
 	returnTypeOps ReturnTypeOps,
 ) (product.Value, bool) {
 	if returnTypeOps.TypeProjection == nil {
 		return product.Value{}, false
 	}
-	site, ok := facts.CallSite(ctx.Point)
-	if !ok {
-		return product.Value{}, false
-	}
-	args := site.ArgumentSources()
-	argIndex, ok := effect.ResolveParamIndex(transform.Source, len(args))
+	argIndex, ok := effect.ResolveParamIndex(transform.Source, argSources.ArgumentSourceCount())
 	if !ok || sig.Type == nil || argIndex < 0 || argIndex >= len(sig.Type.Params) {
 		return product.Value{}, false
 	}
@@ -219,12 +201,11 @@ func returnValueFromType(reg *axis.Registry, t typ.Type) product.Value {
 
 func instantiateSignatureForCall(
 	ctx transfer.NodeContext,
-	facts factflow.Facts,
 	sources sourcevalue.SourceValues,
 	expressionRefinements map[factflow.ExprRef]factflow.ExpressionRefinement,
 	argumentType SignatureArgumentTypeFunc,
 	sig signature.Function,
-	site factflow.CallSite,
+	argSources signatureArgumentReader,
 	in state.State,
 	read func(cfg.Point) state.State,
 	returnTypeOps ReturnTypeOps,
@@ -233,7 +214,7 @@ func instantiateSignatureForCall(
 		(sources == nil && argumentType == nil) {
 		return sig
 	}
-	args, ok := signatureCallArgumentTypes(ctx, facts, sources, expressionRefinements, argumentType, site, in, read)
+	args, ok := signatureCallArgumentTypes(ctx, sources, expressionRefinements, argumentType, argSources, in, read)
 	if !ok {
 		return sig
 	}
@@ -247,32 +228,29 @@ func instantiateSignatureForCall(
 
 func signatureCallArgumentTypes(
 	ctx transfer.NodeContext,
-	facts factflow.Facts,
 	sources sourcevalue.SourceValues,
 	expressionRefinements map[factflow.ExprRef]factflow.ExpressionRefinement,
 	argumentType SignatureArgumentTypeFunc,
-	site factflow.CallSite,
+	argSources signatureArgumentReader,
 	in state.State,
 	read func(cfg.Point) state.State,
 ) ([]typ.Type, bool) {
-	if factSite, ok := facts.CallSite(ctx.Point); ok {
-		site = factSite
-	}
-	argSources := site.ArgumentSources()
-	if len(argSources) == 0 {
+	count := argSources.ArgumentSourceCount()
+	if count == 0 {
 		return nil, false
 	}
 	resolver := sourcevalue.WithExpressionRefinements(ctx.Registry, sources, expressionRefinements)
-	args := make([]typ.Type, len(argSources))
+	args := make([]typ.Type, count)
 	seen := false
-	for i, source := range argSources {
+	argSources.ForEachArgumentSource(func(i int, source factflow.ValueSource) bool {
 		t, ok := signatureCallArgumentType(ctx, source, in, read, argumentType, resolver)
 		if !ok {
-			continue
+			return true
 		}
 		args[i] = t
 		seen = true
-	}
+		return true
+	})
 	return args, seen
 }
 
@@ -305,13 +283,12 @@ func activeReturnTransform(sig signature.Function, index int) (returns.ReturnTyp
 		if !ok || ret.ReturnIndex != index {
 			continue
 		}
-		if !operationalReturnTransform(ret.Transform) {
+		if returns.IsNilReturnType(ret.Transform) {
 			continue
 		}
-		if returnTransformNilPointer(ret.Transform) {
-			continue
+		if operationalReturnTransform(ret.Transform) {
+			return ret.Transform, true
 		}
-		return ret.Transform, true
 	}
 	return nil, false
 }
@@ -319,12 +296,4 @@ func activeReturnTransform(sig signature.Function, index int) (returns.ReturnTyp
 func operationalReturnTransform(transform returns.ReturnType) bool {
 	desc, ok := caplabel.DescriptorForReturnTransform(transform)
 	return ok && desc.Status == capability.StatusOperational
-}
-
-func returnTransformNilPointer(transform returns.ReturnType) bool {
-	if transform == nil {
-		return true
-	}
-	v := reflect.ValueOf(transform)
-	return v.Kind() == reflect.Pointer && v.IsNil()
 }

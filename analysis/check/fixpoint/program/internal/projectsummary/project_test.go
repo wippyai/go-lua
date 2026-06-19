@@ -482,6 +482,39 @@ end`), body.Config{Registry: reg})
 	}
 }
 
+func TestFromResultDoesNotInferReturnPresenceRelationThroughUnknownSlot(t *testing.T) {
+	reg := standard.Registry()
+	result := projectCheckFunction(t, projectParseFunction(t, `
+function fetch(): (number?, string?)
+	return value, "failed"
+end`), body.Config{
+		Registry: reg,
+		Globals:  []string{"value"},
+		ExpressionValue: func(_ cfg.Point, _ factflow.ExprRef, source factflow.ValueSource, _ state.State) (product.Value, bool) {
+			switch source.TargetIndex {
+			case 0:
+				return product.Top(), true
+			case 1:
+				return product.NewWithPresence(reg, product.ShapeTop, presence.Present()), true
+			default:
+				return product.Value{}, false
+			}
+		},
+	})
+
+	got := summaryprojection.FromResult(result)
+
+	if len(got.ReturnPresenceRelations) != 0 {
+		t.Fatalf("return presence relations = %#v, want none when a slot has top presence", got.ReturnPresenceRelations)
+	}
+	if len(got.Returns) != 2 {
+		t.Fatalf("returns = %d, want declared arity 2", len(got.Returns))
+	}
+	if gotPresence := product.PresenceOf(got.Returns[0]); !presence.Equal(gotPresence, presence.Maybe()) {
+		t.Fatalf("return 0 presence = %s, want maybe from top source evidence", gotPresence)
+	}
+}
+
 func TestFromResultTreatsOmittedEstablishedReturnSlotsAsAbsent(t *testing.T) {
 	reg := standard.Registry()
 	result := projectCheckFunction(t, projectParseFunction(t, `

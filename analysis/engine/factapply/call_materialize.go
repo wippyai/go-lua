@@ -3,6 +3,7 @@ package factapply
 import (
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
+	"github.com/wippyai/go-lua/analysis/engine/callpayload"
 	"github.com/wippyai/go-lua/analysis/engine/callproducer"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	sourcevalue "github.com/wippyai/go-lua/analysis/engine/sourcevalue"
@@ -16,7 +17,7 @@ func callResultReader(
 	ctx transfer.NodeContext,
 	facts factflow.Facts,
 	sources sourcevalue.SourceValues,
-	outcomeProvider CallOutcomeProvider,
+	outcomeProvider callpayload.CallOutcomeProvider,
 	resolver *visibility.Resolver,
 	projectPath PathTypeProjector,
 	typeValues *typevalue.Cache,
@@ -26,29 +27,75 @@ func callResultReader(
 		rawRead = emptyStateRead
 	}
 
-	cache := make(map[cfg.Point]state.State)
-	active := make(map[cfg.Point]bool)
-	activeBase := make(map[cfg.Point]state.State)
+	var cache callResultPointStateCache
+	var active callResultPointStateCache
 	var read func(cfg.Point) state.State
 	materialize := func(point cfg.Point, base state.State) state.State {
-		if out, ok := cache[point]; ok {
+		if out, ok := cache.lookup(point); ok {
 			return out
 		}
-		if active[point] {
-			return activeBase[point]
+		if activeBase, ok := active.lookup(point); ok {
+			return activeBase
 		}
-		active[point] = true
-		activeBase[point] = base
+		active.store(point, base)
 		out := materializeCallOutcome(callContextAt(ctx, point, read), facts, sources, outcomeProvider, resolver, projectPath, typeValues, read, base, base)
-		delete(active, point)
-		delete(activeBase, point)
-		cache[point] = out
+		active.remove(point)
+		cache.store(point, out)
 		return out
 	}
 	read = func(point cfg.Point) state.State {
 		return materialize(point, rawRead(point))
 	}
 	return read, materialize
+}
+
+type callResultPointStateCache struct {
+	point    cfg.Point
+	state    state.State
+	valid    bool
+	overflow map[cfg.Point]state.State
+}
+
+func (c *callResultPointStateCache) lookup(point cfg.Point) (state.State, bool) {
+	if c.overflow != nil {
+		out, ok := c.overflow[point]
+		return out, ok
+	}
+	if c.valid && c.point == point {
+		return c.state, true
+	}
+	return state.State{}, false
+}
+
+func (c *callResultPointStateCache) store(point cfg.Point, out state.State) {
+	if c.overflow != nil {
+		c.overflow[point] = out
+		return
+	}
+	if !c.valid || c.point == point {
+		c.point = point
+		c.state = out
+		c.valid = true
+		return
+	}
+	c.overflow = make(map[cfg.Point]state.State, 2)
+	c.overflow[c.point] = c.state
+	c.point = 0
+	c.state = state.State{}
+	c.valid = false
+	c.overflow[point] = out
+}
+
+func (c *callResultPointStateCache) remove(point cfg.Point) {
+	if c.overflow != nil {
+		delete(c.overflow, point)
+		return
+	}
+	if c.valid && c.point == point {
+		c.point = 0
+		c.state = state.State{}
+		c.valid = false
+	}
 }
 
 func callContextAt(ctx transfer.NodeContext, point cfg.Point, read func(cfg.Point) state.State) transfer.NodeContext {
@@ -66,7 +113,7 @@ func materializeCallOutcome(
 	ctx transfer.NodeContext,
 	facts factflow.Facts,
 	sources sourcevalue.SourceValues,
-	outcomeProvider CallOutcomeProvider,
+	outcomeProvider callpayload.CallOutcomeProvider,
 	resolver *visibility.Resolver,
 	projectPath PathTypeProjector,
 	typeValues *typevalue.Cache,
@@ -78,9 +125,10 @@ func materializeCallOutcome(
 	if !ok {
 		return applyChannelSelectResult(ctx, typeValues, resolver, projectPath, out, facts.ChannelSelects(ctx.Point))
 	}
-	for _, source := range siteView.ArgumentSources() {
+	siteView.ForEachArgumentSource(func(_ int, source factflow.ValueSource) bool {
 		out = materializeObjectLiteralHeap(ctx, facts, sources, read, in, out, source)
-	}
+		return true
+	})
 	hasProducer := callproducer.Has(facts, ctx.Point)
 	if hasProducer {
 		out = clearCallProducerReturnSlots(ctx, siteView, out)

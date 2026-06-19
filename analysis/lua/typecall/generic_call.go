@@ -120,6 +120,13 @@ func validateInstantiatedArguments(fn *typ.Function, args []typ.Type) []Argument
 	return violations
 }
 
+// InstantiatedArgumentAssignable reports whether an actual argument type
+// satisfies an already-instantiated formal parameter type using the same
+// precision rules as generic-call validation.
+func InstantiatedArgumentAssignable(actual typ.Type, formal typ.Type) bool {
+	return instantiatedArgumentAssignable(actual, formal, 0)
+}
+
 func instantiatedArgumentAssignable(actual typ.Type, formal typ.Type, depth int) bool {
 	if actual == nil || formal == nil || depth > typ.DefaultRecursionDepth {
 		return true

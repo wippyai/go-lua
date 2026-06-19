@@ -2,6 +2,7 @@ package returns
 
 import (
 	"fmt"
+	"reflect"
 
 	"github.com/wippyai/go-lua/analysis/domain/effect"
 	"github.com/wippyai/go-lua/analysis/type/projection"
@@ -42,6 +43,16 @@ func (e ErrorReturn) Equals(other effect.Label) bool {
 type ReturnType interface {
 	returnType()
 	String() string
+}
+
+// IsNilReturnType reports whether transform is absent, including typed nil
+// pointer values stored behind the ReturnType interface.
+func IsNilReturnType(transform ReturnType) bool {
+	if transform == nil {
+		return true
+	}
+	v := reflect.ValueOf(transform)
+	return v.Kind() == reflect.Pointer && v.IsNil()
 }
 
 type TypeProjection struct {
@@ -104,11 +115,10 @@ func (s SameAs) String() string {
 }
 
 func returnTypeEquals(a, b ReturnType) bool {
-	if a == nil && b == nil {
-		return true
-	}
-	if a == nil || b == nil {
-		return false
+	aNil := IsNilReturnType(a)
+	bNil := IsNilReturnType(b)
+	if aNil || bNil {
+		return aNil && bNil
 	}
 	switch av := a.(type) {
 	case ElementOf:

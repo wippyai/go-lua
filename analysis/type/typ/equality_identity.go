@@ -19,6 +19,8 @@ func typePointer(t Type) uintptr {
 		return uintptr(unsafe.Pointer(tt))
 	case *Instantiated:
 		return uintptr(unsafe.Pointer(tt))
+	case *TypeParam:
+		return uintptr(unsafe.Pointer(tt))
 	case *Interface:
 		return uintptr(unsafe.Pointer(tt))
 	case *Recursive:

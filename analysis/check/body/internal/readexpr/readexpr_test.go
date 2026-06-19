@@ -19,8 +19,10 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/state/heapidentity"
 	"github.com/wippyai/go-lua/analysis/engine/visibility"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
+	"github.com/wippyai/go-lua/analysis/lua/typecall"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
+	"github.com/wippyai/go-lua/analysis/type/access"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/typeexpr"
@@ -208,6 +210,69 @@ func TestProjectInRangeStructuralArrayIndexDropsNil(t *testing.T) {
 		t.Fatalf("Project returned false")
 	}
 	assertPresence(t, reg, got, presence.Present())
+	assertRuntimeKind(t, reg, got, runtimekind.Singleton(runtimekind.String))
+}
+
+func TestProjectLenFloorDoesNotDropNilForIntegerMapIndex(t *testing.T) {
+	reg := standard.Registry()
+	point := cfg.Point(18)
+	sym := symbol.ID(28)
+	resolver := testResolver(point, sym, "lookup")
+	parentPath := path.NewPath(sym, "lookup")
+	readPath := parentPath.IndexInt(2)
+	rootValue := typevalue.WithWitness(reg, product.Top(), typetable.NewMap(typ.Integer, typ.String))
+	parentKey := resolver.KeyAt(point, parentPath)
+	in := state.State{}.
+		WriteValue(reg, key.SymbolValue(sym), rootValue).
+		WriteLenFloor(parentKey, 2)
+
+	got, ok := Project(Config{Registry: reg, Visibility: resolver}, point, readPath, in)
+	if !ok {
+		t.Fatalf("Project returned false")
+	}
+	assertPresence(t, reg, got, presence.Maybe())
+	assertRuntimeKind(t, reg, got, runtimekind.Singleton(runtimekind.String))
+}
+
+func TestProjectLenFloorKeepsNilForOutOfRangeArrayIndex(t *testing.T) {
+	reg := standard.Registry()
+	point := cfg.Point(19)
+	sym := symbol.ID(29)
+	resolver := testResolver(point, sym, "arr")
+	parentPath := path.NewPath(sym, "arr")
+	readPath := parentPath.IndexInt(3)
+	rootValue := typevalue.WithWitness(reg, product.Top(), typ.NewArray(typ.String))
+	parentKey := resolver.KeyAt(point, parentPath)
+	in := state.State{}.
+		WriteValue(reg, key.SymbolValue(sym), rootValue).
+		WriteLenFloor(parentKey, 2)
+
+	got, ok := Project(Config{Registry: reg, Visibility: resolver}, point, readPath, in)
+	if !ok {
+		t.Fatalf("Project returned false")
+	}
+	assertPresence(t, reg, got, presence.Maybe())
+	assertRuntimeKind(t, reg, got, runtimekind.Singleton(runtimekind.String))
+}
+
+func TestProjectLenFloorKeepsNilForZeroArrayIndex(t *testing.T) {
+	reg := standard.Registry()
+	point := cfg.Point(20)
+	sym := symbol.ID(30)
+	resolver := testResolver(point, sym, "arr")
+	parentPath := path.NewPath(sym, "arr")
+	readPath := parentPath.IndexInt(0)
+	rootValue := typevalue.WithWitness(reg, product.Top(), typ.NewArray(typ.String))
+	parentKey := resolver.KeyAt(point, parentPath)
+	in := state.State{}.
+		WriteValue(reg, key.SymbolValue(sym), rootValue).
+		WriteLenFloor(parentKey, 2)
+
+	got, ok := Project(Config{Registry: reg, Visibility: resolver}, point, readPath, in)
+	if !ok {
+		t.Fatalf("Project returned false")
+	}
+	assertPresence(t, reg, got, presence.Maybe())
 	assertRuntimeKind(t, reg, got, runtimekind.Singleton(runtimekind.String))
 }
 
@@ -443,6 +508,154 @@ func TestProjectChildProofDoesNotProveParentAggregate(t *testing.T) {
 		t.Fatalf("root aggregate read returned false")
 	}
 	assertRuntimeKind(t, reg, root, runtimekind.Singleton(runtimekind.String))
+}
+
+func TestProjectRootOverlaysCurrentStaticMemberWitness(t *testing.T) {
+	reg := standard.Registry()
+	point := cfg.Point(14)
+	provider := symbol.ID(24)
+	resolver := testResolver(point, provider, "provider")
+	rootPath := path.NewPath(provider, "provider")
+	memberPath := rootPath.IndexInt(1)
+	memberKey := resolver.KeyAt(point, memberPath)
+	memberType := typ.Func().Param("payload", typ.Number).Build()
+	memberValue := typevalue.WithWitness(reg, typevalue.FromType(reg, memberType), memberType)
+	rootValue := typevalue.WithWitness(reg, typevalue.FromType(reg, typetable.NewRecord().Build()), typetable.NewRecord().Build())
+	in := state.State{}.
+		WriteValue(reg, key.SymbolValue(provider), rootValue).
+		WritePathStaticMember(memberKey, memberValue)
+
+	got, ok := Project(Config{Registry: reg, Visibility: resolver}, point, rootPath, in)
+	if !ok {
+		t.Fatal("Project root returned false")
+	}
+	gotType, ok := typevalue.TypeOf(reg, got)
+	if !ok {
+		t.Fatal("Project root did not carry a type witness")
+	}
+	callable, _, ok := typecall.IndexedMemberCallable(gotType, typ.LiteralInt(1))
+	if !ok || callable == nil || len(callable.Params) != 1 || !typ.TypeEquals(callable.Params[0].Type, typ.Number) {
+		t.Fatalf("root static member callable = %#v/%v, want one number parameter", callable, ok)
+	}
+}
+
+func TestProjectRootStaticMemberWitnessRecursivelyOverlaysDeclaredRecord(t *testing.T) {
+	reg := standard.Registry()
+	point := cfg.Point(17)
+	actor := symbol.ID(27)
+	resolver := testResolver(point, actor, "actor")
+	rootPath := path.NewPath(actor, "actor")
+	lastIDPath := rootPath.Field("state").Field("last_id")
+	lastIDKey := resolver.KeyAt(point, lastIDPath)
+	stateType := typetable.NewRecord().
+		Field("processed", typetable.NewMap(typ.String, typ.String)).
+		Field("counters", typetable.NewMap(typ.String, typ.Number)).
+		OptField("last_id", typ.String).
+		Build()
+	actorType := typetable.NewRecord().
+		Field("state", stateType).
+		Field("id", typ.String).
+		Build()
+	rootValue := typevalue.WithWitness(reg, typevalue.FromType(reg, actorType), actorType)
+	memberValue := typevalue.WithWitness(reg, typevalue.FromType(reg, typ.String), typ.String)
+	in := state.State{}.
+		WriteValue(reg, key.SymbolValue(actor), rootValue).
+		WritePathStaticMember(lastIDKey, memberValue)
+
+	got, ok := Project(Config{Registry: reg, Visibility: resolver}, point, rootPath, in)
+	if !ok {
+		t.Fatal("Project root returned false")
+	}
+	gotType, ok := typevalue.TypeOf(reg, got)
+	if !ok {
+		t.Fatal("Project root did not carry a type witness")
+	}
+	projectedState, ok := access.Field(gotType, "state")
+	if !ok {
+		t.Fatalf("projected actor has no state field: %v", gotType)
+	}
+	if _, ok := access.Field(projectedState, "processed"); !ok {
+		t.Fatalf("projected state lost processed sibling: %v", projectedState)
+	}
+	if _, ok := access.Field(projectedState, "counters"); !ok {
+		t.Fatalf("projected state lost counters sibling: %v", projectedState)
+	}
+	lastID, ok := access.Field(projectedState, "last_id")
+	if !ok || !typ.TypeEquals(lastID, typ.String) {
+		t.Fatalf("projected state last_id = %v/%v, want string", lastID, ok)
+	}
+}
+
+func TestProjectRootStaticMemberWitnessRequiresCurrentVisibleVersion(t *testing.T) {
+	reg := standard.Registry()
+	oldPoint := cfg.Point(15)
+	currentPoint := cfg.Point(16)
+	provider := symbol.ID(25)
+	builder := visibility.NewBuilder()
+	builder.Define(oldPoint, provider, "provider")
+	builder.Define(currentPoint, provider, "provider")
+	resolver := visibility.NewResolver(builder.Build())
+	rootPath := path.NewPath(provider, "provider")
+	staleMemberKey := resolver.KeyAt(oldPoint, rootPath.IndexInt(1))
+	memberType := typ.Func().Param("payload", typ.Number).Build()
+	memberValue := typevalue.WithWitness(reg, typevalue.FromType(reg, memberType), memberType)
+	rootValue := typevalue.WithWitness(reg, typevalue.FromType(reg, typetable.NewRecord().Build()), typetable.NewRecord().Build())
+	in := state.State{}.
+		WriteValue(reg, key.SymbolValue(provider), rootValue).
+		WritePathStaticMember(staleMemberKey, memberValue)
+
+	got, ok := Project(Config{Registry: reg, Visibility: resolver}, currentPoint, rootPath, in)
+	if !ok {
+		t.Fatal("Project root returned false")
+	}
+	gotType, ok := typevalue.TypeOf(reg, got)
+	if !ok {
+		t.Fatal("Project root did not carry its original type witness")
+	}
+	if callable, _, ok := typecall.IndexedMemberCallable(gotType, typ.LiteralInt(1)); ok || callable != nil {
+		t.Fatalf("stale version static member leaked into current root: %#v", callable)
+	}
+}
+
+func TestMergeStaticMemberWitnessRecordHonorsRecursionDepthBoundary(t *testing.T) {
+	existingChild := typetable.NewRecord().
+		Field("preserved_when_depth_allows", typ.Number).
+		Build()
+	staticChild := typetable.NewRecord().
+		Field("replacement", typ.String).
+		Build()
+	existing := typetable.NewRecord().
+		Field("id", typ.String).
+		Field("state", existingChild).
+		Build()
+	static := typetable.NewRecord().
+		Field("state", staticChild).
+		Field("extra", typ.Boolean).
+		Build()
+
+	merged, ok := mergeStaticMemberWitnessRecord(existing, static, typ.DefaultRecursionDepth)
+	if !ok {
+		t.Fatal("merge at recursion depth boundary returned false")
+	}
+	if _, ok := access.Field(merged, "id"); !ok {
+		t.Fatalf("merge at boundary lost current-level existing sibling: %v", merged)
+	}
+	if _, ok := access.Field(merged, "extra"); !ok {
+		t.Fatalf("merge at boundary lost current-level static sibling: %v", merged)
+	}
+	stateType, ok := access.Field(merged, "state")
+	if !ok {
+		t.Fatalf("merge at boundary lost overlapping state field: %v", merged)
+	}
+	if _, ok := access.Field(stateType, "replacement"); !ok {
+		t.Fatalf("merge at boundary did not keep replacement child: %v", stateType)
+	}
+	if _, ok := access.Field(stateType, "preserved_when_depth_allows"); ok {
+		t.Fatalf("merge at boundary recursed past depth guard and kept child sibling: %v", stateType)
+	}
+	if _, ok := mergeStaticMemberWitnessRecord(existing, static, typ.DefaultRecursionDepth+1); ok {
+		t.Fatal("merge past recursion depth boundary returned true")
+	}
 }
 
 func testResolver(point cfg.Point, sym symbol.ID, root string) *visibility.Resolver {

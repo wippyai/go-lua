@@ -5,13 +5,103 @@
       {
         "file": "main.lua",
         "line": 6,
+        "column": 23,
         "severity": "error",
         "code": "type.assignment",
-        "message_contains": ["cannot assign", "number?", "number"],
+        "message_contains": [
+          "cannot assign h",
+          "may be nil"
+        ],
         "min_evidence": 2,
-        "evidence_contains": ["source expression", "annotated number", "no boundary proof establishes number"],
+        "evidence_contains": [
+          "h can be number or nil here",
+          "x is declared as number",
+          "no guard on this path proves h is non-nil"
+        ],
+        "evidence": [
+          {
+            "file": "main.lua",
+            "line": 6,
+            "column": 23,
+            "kind": "abstract fact",
+            "trust": "proven",
+            "contains": [
+              "h can be number or nil here"
+            ]
+          },
+          {
+            "file": "main.lua",
+            "line": 6,
+            "column": 14,
+            "kind": "user assertion",
+            "trust": "claimed",
+            "contains": [
+              "x is declared as number"
+            ]
+          },
+          {
+            "file": "main.lua",
+            "line": 6,
+            "column": 23,
+            "kind": "missing proof",
+            "trust": "unknown",
+            "contains": [
+              "no guard on this path proves h is non-nil"
+            ]
+          }
+        ],
+        "render_contains": [
+          "error[type.assignment]: cannot assign h because it may be nil",
+          "--> main.lua:6:23",
+          "local x: number = h",
+          "proven: h can be number or nil here",
+          "claimed: x is declared as number",
+          "missing proof: no guard on this path proves h is non-nil"
+        ],
+        "render_ordered_contains": [
+          "error[type.assignment]: cannot assign h because it may be nil",
+          "--> main.lua:6:23",
+          "local x: number = h",
+          "because:",
+          "proven: h can be number or nil here",
+          "claimed: x is declared as number",
+          "missing proof: no guard on this path proves h is non-nil",
+          "help: Guard `h` with a nil check"
+        ],
+        "render_not_contains": [
+          "type mismatch",
+          "want number",
+          "^~",
+          "h is nil"
+        ],
+        "help_contains": [
+          "Guard `h` with a nil check",
+          "provide a default value",
+          "accept nil"
+        ],
         "min_labels": 2,
-        "label_contains": ["assigned value", "declared type"]
+        "label_contains": [
+          "assigned value",
+          "declared type"
+        ],
+        "labels": [
+          {
+            "file": "main.lua",
+            "line": 6,
+            "column": 23,
+            "contains": [
+              "assigned value"
+            ]
+          },
+          {
+            "file": "main.lua",
+            "line": 6,
+            "column": 14,
+            "contains": [
+              "declared type"
+            ]
+          }
+        ]
       }
     ]
   }

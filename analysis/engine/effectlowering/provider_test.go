@@ -8,6 +8,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/effect"
 	"github.com/wippyai/go-lua/analysis/domain/effect/capability"
 	caplabel "github.com/wippyai/go-lua/analysis/domain/effect/capability/label"
+	"github.com/wippyai/go-lua/analysis/domain/effect/lifecycle"
 	"github.com/wippyai/go-lua/analysis/domain/effect/mutation"
 	"github.com/wippyai/go-lua/analysis/domain/effect/ownership"
 	"github.com/wippyai/go-lua/analysis/domain/effect/postcondition"
@@ -16,6 +17,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/placement"
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
+	"github.com/wippyai/go-lua/analysis/domain/typestate"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
@@ -25,6 +27,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine/callboundary"
 	"github.com/wippyai/go-lua/analysis/engine/calloutcome"
+	"github.com/wippyai/go-lua/analysis/engine/callpayload"
 	factapply "github.com/wippyai/go-lua/analysis/engine/factapply"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	sourcevalue "github.com/wippyai/go-lua/analysis/engine/sourcevalue"
@@ -37,6 +40,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/module/signature"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
+	"github.com/wippyai/go-lua/analysis/type/ambient"
 	"github.com/wippyai/go-lua/analysis/type/projection"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
@@ -62,6 +66,168 @@ func staticName(name string) SignatureNameFunc {
 	name = strings.TrimSpace(name)
 	return func(transfer.NodeContext, factflow.CallProducer) (string, bool) {
 		return name, name != ""
+	}
+}
+
+func TestSignatureOutcomeProviderPrefersCallSiteNameResolver(t *testing.T) {
+	reg := standard.Registry()
+	callee := symbol.ID(701)
+	site := factflow.NewCallSite(factflow.CallSiteConfig{
+		Context:      factflow.CallSiteContextAssignmentSource,
+		CalleeSymbol: callee,
+		CalleePath:   path.NewPath(callee, "f").Field("member"),
+		ResultTargets: []factflow.CallResultTarget{
+			factflow.NewCallResultTarget(factflow.CallResultTargetLocalAssignment, 0, 0, symbol.ID(702), path.NewPath(symbol.ID(702), "out")),
+		},
+	})
+	provider := SignatureOutcomeProvider(SignatureOutcomeProviderConfig{
+		Signatures: signatureMap{
+			"f.member": {Type: typ.Func().Returns(typ.String).Build()},
+		},
+		NameFor: func(transfer.NodeContext, factflow.CallProducer) (string, bool) {
+			t.Fatal("producer fallback should not be used when NameForSite is present")
+			return "", false
+		},
+		NameForSite: func(_ transfer.NodeContext, got factflow.CallSiteView) (string, bool) {
+			if got.CalleeSymbol() != callee {
+				t.Fatalf("callee symbol = %v, want %v", got.CalleeSymbol(), callee)
+			}
+			if !got.CalleePathEqual(site.CalleePath()) {
+				t.Fatalf("callee path = %s, want %s", got.CalleePath().String(), site.CalleePath().String())
+			}
+			return "f.member", true
+		},
+	})
+
+	got := provider(transfer.NodeContext{Registry: reg}, site.View(), state.State{}, nil)
+	if len(got.Results) != 1 || got.Results[0].Index != 0 {
+		t.Fatalf("results = %#v, want one slot-zero result", got.Results)
+	}
+}
+
+func TestAmbientChannelSendOutcomeProviderEscapesPayloadNotReceiver(t *testing.T) {
+	channelType := typ.Instantiate(ambient.ChannelGeneric(), typ.String)
+	provider := AmbientChannelSendOutcomeProvider(AmbientChannelSendOutcomeProviderConfig{
+		ReceiverType: func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) (typ.Type, bool) {
+			return channelType, true
+		},
+	})
+	site := factflow.NewCallSite(factflow.CallSiteConfig{
+		MethodName:        "send",
+		ReceiverPath:      path.NewPath(symbol.ID(920), "out"),
+		HasReceiverPath:   true,
+		ArgumentSources:   []factflow.ValueSource{{Kind: factflow.ValueSourceExpression, ExprRef: factflow.ExprRef(921), HasExpr: true}},
+		ResultTargets:     nil,
+		HasReceiverSource: false,
+	})
+	got := provider(transfer.NodeContext{}, site.View(), state.State{}, nil)
+
+	if len(got.NormalReturnFacts.EscapeEvents) != 1 {
+		t.Fatalf("escape events = %#v, want one channel payload send", got.NormalReturnFacts.EscapeEvents)
+	}
+	event := got.NormalReturnFacts.EscapeEvents[0]
+	if event.Kind != callboundary.EscapeEventSend || !event.Recursive || !event.Target.Equal(path.NewPlaceholder(1)) {
+		t.Fatalf("escape event = %#v, want recursive send escape on payload placeholder $1", event)
+	}
+}
+
+func TestAmbientChannelSendOutcomeProviderIgnoresNonChannelReceiver(t *testing.T) {
+	provider := AmbientChannelSendOutcomeProvider(AmbientChannelSendOutcomeProviderConfig{
+		ReceiverType: func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) (typ.Type, bool) {
+			return typetable.NewRecord().Build(), true
+		},
+	})
+	site := factflow.NewCallSite(factflow.CallSiteConfig{
+		MethodName:      "send",
+		ArgumentSources: []factflow.ValueSource{{Kind: factflow.ValueSourceExpression, ExprRef: factflow.ExprRef(922), HasExpr: true}},
+	})
+	got := provider(transfer.NodeContext{}, site.View(), state.State{}, nil)
+	if len(got.NormalReturnFacts.EscapeEvents) != 0 {
+		t.Fatalf("escape events = %#v, want none for non-channel receiver", got.NormalReturnFacts.EscapeEvents)
+	}
+}
+
+func TestSignatureOutcomeProviderLowersLifecycleLabels(t *testing.T) {
+	provider := SignatureOutcomeProvider(SignatureOutcomeProviderConfig{
+		Signatures: signatureMap{
+			"open": {
+				Effect: effect.Empty.With(lifecycle.Acquire{
+					Target:   effect.ParamRef{Index: 0},
+					Protocol: typestate.Protocol("transaction"),
+					State:    typestate.State("open"),
+					Obligation: typestate.Obligation{
+						Final: typestate.State("closed"),
+					},
+				}).With(lifecycle.Transition{
+					Target:   effect.ParamRef{Index: 0},
+					Protocol: typestate.Protocol("transaction"),
+					From:     typestate.State("open"),
+					To:       typestate.State("closed"),
+				}),
+			},
+		},
+		NameFor: staticName("open"),
+	})
+
+	got := provider(transfer.NodeContext{}, factflow.NewCallSite(factflow.CallSiteConfig{
+		Context: factflow.CallSiteContextStatement,
+		ArgumentSources: []factflow.ValueSource{
+			{Kind: factflow.ValueSourceExpression, ExprRef: factflow.ExprRef(930), HasExpr: true},
+		},
+	}).View(), state.State{}, nil)
+
+	facts := got.NormalReturnFacts.LifecycleFacts
+	if len(facts) != 2 {
+		t.Fatalf("LifecycleFacts = %#v, want acquire and transition", facts)
+	}
+	if facts[0].Kind != callboundary.LifecycleAcquire ||
+		!facts[0].Target.Equal(path.NewPlaceholder(0)) ||
+		facts[0].Protocol != typestate.Protocol("transaction") ||
+		facts[0].To != typestate.State("open") ||
+		facts[0].Obligation.Final != typestate.State("closed") {
+		t.Fatalf("acquire fact = %#v, want transaction open with close obligation", facts[0])
+	}
+	if facts[1].Kind != callboundary.LifecycleTransition ||
+		!facts[1].Target.Equal(path.NewPlaceholder(0)) ||
+		facts[1].From != typestate.State("open") ||
+		facts[1].To != typestate.State("closed") {
+		t.Fatalf("transition fact = %#v, want open -> closed", facts[1])
+	}
+}
+
+func TestSignatureOutcomeProviderLowersOperationalLifecycleEffects(t *testing.T) {
+	provider := SignatureOutcomeProvider(SignatureOutcomeProviderConfig{
+		Signatures: signatureMap{
+			"close": {
+				OperationalEffects: &signature.OperationalEffects{
+					LifecycleEffects: []signature.LifecycleEffect{{
+						Target:   path.NewPlaceholder(0),
+						Kind:     signature.LifecycleTransition,
+						Protocol: typestate.Protocol("transaction"),
+						From:     typestate.State("open"),
+						To:       typestate.State("closed"),
+					}},
+				},
+			},
+		},
+		NameFor: staticName("close"),
+	})
+
+	got := provider(transfer.NodeContext{}, factflow.NewCallSite(factflow.CallSiteConfig{
+		Context: factflow.CallSiteContextStatement,
+		ArgumentSources: []factflow.ValueSource{
+			{Kind: factflow.ValueSourceExpression, ExprRef: factflow.ExprRef(931), HasExpr: true},
+		},
+	}).View(), state.State{}, nil)
+
+	facts := got.NormalReturnFacts.LifecycleFacts
+	if len(facts) != 1 ||
+		facts[0].Kind != callboundary.LifecycleTransition ||
+		!facts[0].Target.Equal(path.NewPlaceholder(0)) ||
+		facts[0].Protocol != typestate.Protocol("transaction") ||
+		facts[0].From != typestate.State("open") ||
+		facts[0].To != typestate.State("closed") {
+		t.Fatalf("LifecycleFacts = %#v, want operational close transition", facts)
 	}
 }
 
@@ -236,6 +402,20 @@ func TestSignatureOutcomeProviderLowersErrorReturnToReturnPresenceRelations(t *t
 	assertCallReturnPresenceRelation(t, got.ReturnPresenceRelations, 1, presence.Absent(), 0, presence.Present())
 }
 
+func TestActiveReturnLabelsUsesCentralLabelNormalization(t *testing.T) {
+	label := returns.ErrorReturn{ValueIndex: 0, ErrorIndex: 1}
+	var nilLabel *returns.ErrorReturn
+	got := activeErrorReturnLabels(signature.Function{
+		Effect: effect.Row{Labels: []effect.Label{&label, nilLabel}},
+	})
+	if len(got) != 1 {
+		t.Fatalf("activeErrorReturnLabels = %#v, want one normalized label", got)
+	}
+	if got[0] != label {
+		t.Fatalf("activeErrorReturnLabels[0] = %#v, want %#v", got[0], label)
+	}
+}
+
 func TestSignatureOutcomeProviderWeakAnyReturnIsNotPostReturnAuthority(t *testing.T) {
 	provider := SignatureOutcomeProvider(SignatureOutcomeProviderConfig{
 		Signatures: signatureMap{
@@ -268,7 +448,7 @@ func TestModuleLoadOutcomeProviderIsRequireNameBound(t *testing.T) {
 		}},
 	}).View()
 
-	providerFor := func(name string) factapply.CallOutcomeProvider {
+	providerFor := func(name string) callpayload.CallOutcomeProvider {
 		return ModuleLoadOutcomeProvider(ModuleLoadOutcomeProviderConfig{
 			Exports: moduleExportMap{
 				"pkg.mod": typ.Number,
@@ -673,10 +853,35 @@ func TestSignatureParamPathInvalidationTreatsMutationPayloadsAsMetadata(t *testi
 		),
 	}
 
-	got := signatureParamPathInvalidations(sig, site)
+	got := signatureParamPathInvalidationsForReader(sig, signatureArgumentsFromView(site.View()))
 
 	if len(got) != 1 || !got[0].Path.Equal(path.NewPlaceholder(0)) {
 		t.Fatalf("param path invalidations = %#v, want only target $0", got)
+	}
+}
+
+func TestSignatureParamPathInvalidationProjectsEachDistinctMutatedArgument(t *testing.T) {
+	site := factflow.NewCallSite(factflow.CallSiteConfig{
+		ArgumentSources: []factflow.ValueSource{
+			{Kind: factflow.ValueSourceExpression, ExprRef: factflow.ExprRef(936), HasExpr: true},
+			{Kind: factflow.ValueSourceExpression, ExprRef: factflow.ExprRef(937), HasExpr: true},
+		},
+	})
+	sig := signature.Function{
+		Effect: effect.Empty.With(
+			mutation.TableMutator{Target: effect.ParamRef{Index: 0}, Value: effect.ParamRef{Index: -1}},
+			mutation.TableMutator{Target: effect.ParamRef{Index: 1}, Value: effect.ParamRef{Index: -1}},
+			mutation.Mutate{Target: effect.ParamRef{Index: 1}, Transform: mutation.Unchanged{}},
+		),
+	}
+
+	got := signatureParamPathInvalidationsForReader(sig, signatureArgumentsFromView(site.View()))
+
+	if len(got) != 2 {
+		t.Fatalf("param path invalidations = %#v, want targets $0 and $1", got)
+	}
+	if !got[0].Path.Equal(path.NewPlaceholder(0)) || !got[1].Path.Equal(path.NewPlaceholder(1)) {
+		t.Fatalf("param path invalidations = %#v, want targets $0 and $1 in signature order", got)
 	}
 }
 
@@ -701,7 +906,7 @@ func TestSignatureParamLengthFloorsProjectOnlyPositiveLengthChange(t *testing.T)
 		),
 	}
 
-	got := signatureParamLengthFloors(sig, site)
+	got := signatureParamLengthFloorsForReader(sig, signatureArgumentsFromView(site.View()))
 
 	if len(got) != 1 {
 		t.Fatalf("param length floors = %#v, want one positive LengthChange floor", got)
@@ -768,7 +973,7 @@ func TestSignatureOutcomeProviderLowersStoreIntoContainerArgument(t *testing.T) 
 	}
 }
 
-func TestSignatureOutcomeProviderSkipsStoreWithoutKnownDestination(t *testing.T) {
+func TestSignatureOutcomeProviderSkipsExactStoreRelationWithoutKnownDestination(t *testing.T) {
 	graph := cfg.New()
 	call := graph.AddNode(cfg.NodeCall)
 	graph.AddEdge(graph.Entry(), call, false)
@@ -813,6 +1018,13 @@ func TestSignatureOutcomeProviderSkipsStoreWithoutKnownDestination(t *testing.T)
 	if len(got.ParamPathInvalidations) != 0 {
 		t.Fatalf("param path invalidations = %#v, want none", got.ParamPathInvalidations)
 	}
+	if len(got.NormalReturnFacts.PathInvalidations) != 0 {
+		t.Fatalf("normal-return path invalidations = %#v, want none", got.NormalReturnFacts.PathInvalidations)
+	}
+	if len(got.NormalReturnFacts.StoreRelations) != 0 {
+		t.Fatalf("store relations = %#v, want none for unknown store destination", got.NormalReturnFacts.StoreRelations)
+	}
+	assertEscapeEvent(t, got.NormalReturnFacts.EscapeEvents, path.NewPlaceholder(0), callboundary.EscapeEventStore, true)
 }
 
 func TestSignatureOutcomeProviderLowersOwnershipSendAndStoreEscapeEvents(t *testing.T) {
@@ -1121,7 +1333,13 @@ func TestSignatureOutcomeProviderOperationalEffectsSuppressRowOperationalFallbac
 					With(ownership.Freeze{Param: effect.ParamRef{Index: 0}}).
 					With(ownership.SendParam{Param: effect.ParamRef{Index: 0}}).
 					With(ownership.Store{Param: effect.ParamRef{Index: 0}, Into: effect.ParamRef{Index: 1}}).
-					With(mutation.TableMutator{Target: effect.ParamRef{Index: 1}, Value: effect.ParamRef{Index: -1}}),
+					With(mutation.TableMutator{Target: effect.ParamRef{Index: 1}, Value: effect.ParamRef{Index: -1}}).
+					With(lifecycle.Transition{
+						Target:   effect.ParamRef{Index: 0},
+						Protocol: typestate.Protocol("transaction"),
+						From:     typestate.State("open"),
+						To:       typestate.State("closed"),
+					}),
 				OperationalEffects: &signature.OperationalEffects{
 					FrozenTables: []signature.FrozenTable{{
 						Target: path.NewPlaceholder(0).Field("child"),
@@ -1137,6 +1355,13 @@ func TestSignatureOutcomeProviderOperationalEffectsSuppressRowOperationalFallbac
 					StoreRelations: []signature.StoreRelation{{
 						Source: path.NewPlaceholder(0).Field("child"),
 						Into:   path.NewPlaceholder(1).Field("items"),
+					}},
+					LifecycleEffects: []signature.LifecycleEffect{{
+						Target:   path.NewPlaceholder(0).Field("child"),
+						Kind:     signature.LifecycleTransition,
+						Protocol: typestate.Protocol("transaction"),
+						From:     typestate.State("open"),
+						To:       typestate.State("closed"),
 					}},
 				},
 			},
@@ -1170,6 +1395,88 @@ func TestSignatureOutcomeProviderOperationalEffectsSuppressRowOperationalFallbac
 		!got.NormalReturnFacts.StoreRelations[0].Source.Equal(path.NewPlaceholder(0).Field("child")) ||
 		!got.NormalReturnFacts.StoreRelations[0].Into.Equal(path.NewPlaceholder(1).Field("items")) {
 		t.Fatalf("store relations = %#v, want only descendant DTO fact", got.NormalReturnFacts.StoreRelations)
+	}
+	if len(got.NormalReturnFacts.LifecycleFacts) != 1 ||
+		!got.NormalReturnFacts.LifecycleFacts[0].Target.Equal(path.NewPlaceholder(0).Field("child")) ||
+		got.NormalReturnFacts.LifecycleFacts[0].Kind != callboundary.LifecycleTransition ||
+		got.NormalReturnFacts.LifecycleFacts[0].Protocol != typestate.Protocol("transaction") {
+		t.Fatalf("lifecycle facts = %#v, want only descendant DTO fact", got.NormalReturnFacts.LifecycleFacts)
+	}
+}
+
+func TestSignatureOutcomeProviderOperationalDynamicIndexFactUsesPlaceholderOperands(t *testing.T) {
+	reg := standard.Registry()
+	point := cfg.Point(9024)
+	providerSym := symbol.ID(9025)
+	providerExpr := factflow.ExprRef(9026)
+	keyExpr := factflow.ExprRef(9027)
+	keyType := typ.LiteralString("send")
+	valueType := typ.Func().Param("v", typ.String).Build()
+	keyValue := typevalue.WithWitness(reg, typevalue.FromType(reg, keyType), keyType)
+	facts := factflow.NewFacts(factflow.FactsInput{
+		CallSites: map[cfg.Point]factflow.CallSite{
+			point: factflow.NewCallSite(factflow.CallSiteConfig{
+				Context: factflow.CallSiteContextStatement,
+				ArgumentSources: []factflow.ValueSource{
+					{Kind: factflow.ValueSourceExpression, ExprRef: providerExpr, HasExpr: true},
+					{Kind: factflow.ValueSourceExpression, ExprRef: keyExpr, HasExpr: true},
+				},
+			}),
+		},
+		ExpressionPaths: map[factflow.ExprRef]path.Path{
+			providerExpr: path.NewPath(providerSym, "p"),
+		},
+		ExpressionValues: map[factflow.ExprRef]product.Value{
+			keyExpr: keyValue,
+		},
+	})
+	provider := SignatureOutcomeProvider(SignatureOutcomeProviderConfig{
+		Signatures: signatureMap{
+			"install": {
+				OperationalEffects: &signature.OperationalEffects{
+					DynamicIndexFacts: []signature.DynamicIndexFact{{
+						Table:       path.NewPlaceholder(0),
+						Site:        "ops.install.dynamic",
+						KeyPresence: presence.Maybe(),
+						Key: signature.DynamicIndexOperand{
+							Path: path.NewPlaceholder(1),
+						},
+						Value: signature.DynamicIndexOperand{
+							Type: valueType,
+						},
+						Admission: signature.DynamicIndexAdmissionUnknown,
+					}},
+				},
+			},
+		},
+		NameFor: staticName("install"),
+		Facts:   facts,
+		Sources: sourcevalue.NewSourceValues(sourcevalue.SourceValuesConfig{
+			Registry: reg,
+			ExpressionValues: map[factflow.ExprRef]product.Value{
+				keyExpr: keyValue,
+			},
+		}),
+	})
+	site, ok := facts.CallSite(point)
+	if !ok {
+		t.Fatalf("missing call site")
+	}
+
+	got := provider(transfer.NodeContext{Registry: reg, Point: point}, site.View(), state.State{}, nil)
+
+	if len(got.NormalReturnFacts.DynamicIndexFacts) != 1 {
+		t.Fatalf("dynamic-index facts = %#v, want one", got.NormalReturnFacts.DynamicIndexFacts)
+	}
+	fact := got.NormalReturnFacts.DynamicIndexFacts[0]
+	if !fact.Table.Equal(path.NewPlaceholder(0)) {
+		t.Fatalf("dynamic table = %s, want $0", fact.Table)
+	}
+	if keyGot, ok := typevalue.TypeOf(reg, fact.Value.KeyValue); !ok || !typ.TypeEquals(keyGot, keyType) {
+		t.Fatalf("dynamic key type = %v/%v, want %v", keyGot, ok, keyType)
+	}
+	if valueGot, ok := typevalue.TypeOf(reg, fact.Value.Value); !ok || !typ.TypeEquals(valueGot, valueType) {
+		t.Fatalf("dynamic value type = %v/%v, want %v", valueGot, ok, valueType)
 	}
 }
 
@@ -2396,8 +2703,8 @@ func TestActiveReturnTransformIgnoresReservedReturnTransforms(t *testing.T) {
 func TestSupplementalResultsKeepsPrimarySlotsAndFillsMissingSignatureSlots(t *testing.T) {
 	reg := standard.Registry()
 	primaryValue := product.Set(reg, product.Top(), runtimekind.Key, runtimekind.Singleton(runtimekind.Boolean))
-	primary := func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) factapply.CallOutcome {
-		return factapply.CallOutcome{Results: []factapply.CallResult{{Index: 0, Value: primaryValue}}}
+	primary := func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) callpayload.CallOutcome {
+		return callpayload.CallOutcome{Results: []callpayload.CallResult{{Index: 0, Value: primaryValue}}}
 	}
 	signatures := SignatureOutcomeProvider(SignatureOutcomeProviderConfig{
 		Signatures: signatureMap{
@@ -2426,8 +2733,8 @@ func TestSupplementalResultsKeepsPrimarySlotOverSignatureSameAs(t *testing.T) {
 	argRef := factflow.ExprRef(11)
 	primaryValue := product.Set(reg, product.Top(), runtimekind.Key, runtimekind.Singleton(runtimekind.Boolean))
 	argValue := product.Set(reg, product.Top(), runtimekind.Key, runtimekind.Singleton(runtimekind.String))
-	primary := func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) factapply.CallOutcome {
-		return factapply.CallOutcome{Results: []factapply.CallResult{{Index: 0, Value: primaryValue}}}
+	primary := func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) callpayload.CallOutcome {
+		return callpayload.CallOutcome{Results: []callpayload.CallResult{{Index: 0, Value: primaryValue}}}
 	}
 	signatures := SignatureOutcomeProvider(SignatureOutcomeProviderConfig{
 		Signatures: signatureMap{
@@ -2455,7 +2762,7 @@ func TestSupplementalResultsKeepsPrimarySlotOverSignatureSameAs(t *testing.T) {
 	assertCallOutcomeResults(t, reg, got, []product.Value{primaryValue})
 }
 
-func assertCallOutcomeResults(t *testing.T, reg *axis.Registry, got []factapply.CallResult, want []product.Value) {
+func assertCallOutcomeResults(t *testing.T, reg *axis.Registry, got []callpayload.CallResult, want []product.Value) {
 	t.Helper()
 	if len(got) != len(want) {
 		t.Fatalf("got %d results, want %d", len(got), len(want))
@@ -2540,7 +2847,7 @@ func assertTypeWitness(t *testing.T, reg *axis.Registry, got product.Value, want
 
 func assertCallReturnPresenceRelation(
 	t *testing.T,
-	relations []factapply.CallReturnPresenceRelation,
+	relations []callpayload.CallReturnPresenceRelation,
 	triggerIndex int,
 	triggerPresence presence.Value,
 	targetIndex int,

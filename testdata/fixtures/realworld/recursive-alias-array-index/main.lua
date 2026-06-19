@@ -15,4 +15,4 @@ end
 -- make() returns the typed sequence {Message}: a typed sequence has unknown
 -- runtime length, so make()[1] is Message? and calling :topic() on it without a
 -- nil check is soundly rejected.
-local topic: string = make()[1]:topic() -- expect-error: cannot call method on optional value without nil check
+local topic: string = make()[1]:topic() -- expect-error: cannot call method on an optional value without a nil check

@@ -25,7 +25,15 @@ func ExpectedRecordField(rec *typ.Record, segs []segment.Segment) (typ.Type, boo
 	if rec == nil || len(segs) != 1 {
 		return nil, false
 	}
-	seg := segs[0]
+	return ExpectedRecordSegment(rec, segs[0])
+}
+
+// ExpectedRecordSegment returns the declared type of a direct member segment on
+// a contextual record type. Dot fields and bracket-string members stay distinct.
+func ExpectedRecordSegment(rec *typ.Record, seg segment.Segment) (typ.Type, bool) {
+	if rec == nil {
+		return nil, false
+	}
 	switch seg.Kind {
 	case segment.SegmentField:
 		field := rec.GetField(seg.Name)
@@ -47,7 +55,16 @@ func ExpectedRecordField(rec *typ.Record, segs []segment.Segment) (typ.Type, boo
 // AdoptExpectedFieldType widens an inferred literal-entry type to the declared
 // contextual member type when the inferred value is admissible to it.
 func AdoptExpectedFieldType(rec *typ.Record, segs []segment.Segment, inferred typ.Type) (typ.Type, bool) {
-	declared, ok := ExpectedRecordField(rec, segs)
+	if len(segs) != 1 {
+		return nil, false
+	}
+	return AdoptExpectedSegmentType(rec, segs[0], inferred)
+}
+
+// AdoptExpectedSegmentType widens an inferred direct member type to the
+// declared contextual member type when the inferred value is admissible to it.
+func AdoptExpectedSegmentType(rec *typ.Record, seg segment.Segment, inferred typ.Type) (typ.Type, bool) {
+	declared, ok := ExpectedRecordSegment(rec, seg)
 	if !ok || declared == nil || inferred == nil {
 		return nil, false
 	}

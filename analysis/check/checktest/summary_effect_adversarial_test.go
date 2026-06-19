@@ -1,0 +1,149 @@
+package checktest
+
+import (
+	"strings"
+	"testing"
+
+	"github.com/wippyai/go-lua/analysis/check/diagnostics"
+	"github.com/wippyai/go-lua/analysis/diagnostic"
+)
+
+func TestSummaryDynamicIndexWriteInvalidatesCallerGuard(t *testing.T) {
+	src := strings.TrimLeft(`
+type Box = { value: string? }
+
+local function clear(box: Box, key: string): ()
+    box[key] = nil
+end
+
+local box: Box = { value = "ready" }
+if box.value then
+    clear(box, "value")
+    local after: string = box.value
+end
+`, "\n")
+	result := Check(src)
+	requireDiagnostic(t, result, diagnosticExpectation{
+		Code:            diagnostics.CodeAssignmentType,
+		DiagnosticCount: 1,
+		Line:            10,
+		Column:          27,
+		Span: diagnostic.Span{
+			StartLine: 10,
+			StartCol:  27,
+			EndLine:   10,
+			EndCol:    35,
+		},
+		MessageContains: []string{"cannot assign box.value", "may be nil"},
+		EvidenceMin:     4,
+		EvidenceContains: []string{
+			"box.value can be string or nil here",
+			"after is declared as string",
+			"clear(...) may change box, so the read of box.value needs a fresh check",
+			"no guard on this path proves box.value is non-nil",
+		},
+		EvidenceOrdered: []string{
+			"box.value can be string or nil here",
+			"after is declared as string",
+			"clear(...) may change box, so the read of box.value needs a fresh check",
+			"no guard on this path proves box.value is non-nil",
+		},
+		LabelMin: 2,
+		LabelContains: []string{
+			"assigned value",
+			"declared type",
+		},
+		Sources: diagnostic.SourceMap{"test.lua": src},
+		RenderOrderedContains: []string{
+			"error[type.assignment]: cannot assign box.value because it may be nil",
+			"test.lua:10:27",
+			"declared type",
+			"10 |     local after: string = box.value",
+			"assigned value",
+			"because:",
+			"proven: box.value can be string or nil here",
+			"claimed: after is declared as string",
+			"proven: clear(...) may change box, so the read of box.value needs a fresh check",
+			"missing proof: no guard on this path proves box.value is non-nil",
+		},
+		RenderNotContains: []string{
+			"want string",
+			"^~",
+		},
+	})
+}
+
+func TestExportedDynamicIndexWriteInvalidatesCallerGuard(t *testing.T) {
+	mod := CheckAndExport(`
+local M = {}
+
+function M.clear(box: { value: string? }, key: string): ()
+    box[key] = nil
+end
+
+return M
+`, "mutator")
+	if len(mod.Errors) != 0 {
+		t.Fatalf("module errors = %#v, want none", mod.Errors)
+	}
+
+	src := strings.TrimLeft(`
+local mutator = require("mutator")
+type Box = { value: string? }
+
+local box: Box = { value = "ready" }
+if box.value then
+    mutator.clear(box, "value")
+    local after: string = box.value
+end
+`, "\n")
+	result := Check(src, WithStdlib(), WithModule("mutator", mod))
+	requireDiagnostic(t, result, diagnosticExpectation{
+		Code:            diagnostics.CodeAssignmentType,
+		DiagnosticCount: 1,
+		Line:            7,
+		Column:          27,
+		Span: diagnostic.Span{
+			StartLine: 7,
+			StartCol:  27,
+			EndLine:   7,
+			EndCol:    35,
+		},
+		MessageContains: []string{"cannot assign box.value", "nil", "not string"},
+		EvidenceMin:     4,
+		EvidenceContains: []string{
+			"box.value has type nil",
+			"after is declared as string",
+			"mutator.clear(...) may change box, so the read of box.value needs a fresh check",
+			"no proof on this path shows box.value satisfies the declared type",
+		},
+		EvidenceOrdered: []string{
+			"box.value has type nil",
+			"after is declared as string",
+			"mutator.clear(...) may change box, so the read of box.value needs a fresh check",
+			"no proof on this path shows box.value satisfies the declared type",
+		},
+		LabelMin: 2,
+		LabelContains: []string{
+			"assigned value",
+			"declared type",
+		},
+		Sources: diagnostic.SourceMap{"test.lua": src},
+		RenderOrderedContains: []string{
+			"error[type.assignment]: cannot assign box.value because it is nil, not string",
+			"test.lua:7:27",
+			"declared type",
+			"7 |     local after: string = box.value",
+			"assigned value",
+			"because:",
+			"proven: box.value has type nil",
+			"claimed: after is declared as string",
+			"proven: mutator.clear(...) may change box, so the read of box.value needs a fresh check",
+			"missing proof: no proof on this path shows box.value satisfies the declared type",
+		},
+		RenderNotContains: []string{
+			"want string",
+			"^~",
+		},
+	})
+}

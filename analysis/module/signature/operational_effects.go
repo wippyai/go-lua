@@ -3,6 +3,7 @@ package signature
 import (
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
+	"github.com/wippyai/go-lua/analysis/domain/typestate"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
@@ -15,9 +16,11 @@ type OperationalEffects struct {
 	NormalReturnPresenceRefinements []PathPresenceRefinement
 	PathStaticMembers               []PathStaticMemberFact
 	PathInvalidations               []PathInvalidation
+	DynamicIndexFacts               []DynamicIndexFact
 	FrozenTables                    []FrozenTable
 	EscapeEvents                    []EscapeEvent
 	StoreRelations                  []StoreRelation
+	LifecycleEffects                []LifecycleEffect
 	ReturnAllocationTemplates       []ReturnAllocationTemplate
 }
 
@@ -40,6 +43,28 @@ type PathStaticMemberFact struct {
 
 type PathInvalidation struct {
 	Path pathdom.Path
+}
+
+type DynamicIndexAdmission string
+
+const (
+	DynamicIndexAdmissionAdmitted DynamicIndexAdmission = "admitted"
+	DynamicIndexAdmissionRejected DynamicIndexAdmission = "rejected"
+	DynamicIndexAdmissionUnknown  DynamicIndexAdmission = "unknown"
+)
+
+type DynamicIndexOperand struct {
+	Path pathdom.Path
+	Type typ.Type
+}
+
+type DynamicIndexFact struct {
+	Table       pathdom.Path
+	Site        string
+	KeyPresence presence.Value
+	Key         DynamicIndexOperand
+	Value       DynamicIndexOperand
+	Admission   DynamicIndexAdmission
 }
 
 type FrozenTable struct {
@@ -67,6 +92,24 @@ type EscapeEvent struct {
 type StoreRelation struct {
 	Source pathdom.Path
 	Into   pathdom.Path
+}
+
+type LifecycleKind uint8
+
+const (
+	LifecycleNone LifecycleKind = iota
+	LifecycleAcquire
+	LifecycleTransition
+	LifecycleEscape
+)
+
+type LifecycleEffect struct {
+	Target     pathdom.Path
+	Kind       LifecycleKind
+	Protocol   typestate.Protocol
+	From       typestate.State
+	To         typestate.State
+	Obligation typestate.Obligation
 }
 
 type AllocationTemplateID string
@@ -100,9 +143,11 @@ func (e OperationalEffects) IsEmpty() bool {
 		len(e.NormalReturnPresenceRefinements) == 0 &&
 		len(e.PathStaticMembers) == 0 &&
 		len(e.PathInvalidations) == 0 &&
+		len(e.DynamicIndexFacts) == 0 &&
 		len(e.FrozenTables) == 0 &&
 		len(e.EscapeEvents) == 0 &&
 		len(e.StoreRelations) == 0 &&
+		len(e.LifecycleEffects) == 0 &&
 		len(e.ReturnAllocationTemplates) == 0
 }
 
@@ -112,9 +157,11 @@ func (e OperationalEffects) Clone() OperationalEffects {
 		NormalReturnPresenceRefinements: clonePathPresenceRefinements(e.NormalReturnPresenceRefinements),
 		PathStaticMembers:               clonePathStaticMemberFacts(e.PathStaticMembers),
 		PathInvalidations:               clonePathInvalidations(e.PathInvalidations),
+		DynamicIndexFacts:               cloneDynamicIndexFacts(e.DynamicIndexFacts),
 		FrozenTables:                    cloneFrozenTables(e.FrozenTables),
 		EscapeEvents:                    cloneEscapeEvents(e.EscapeEvents),
 		StoreRelations:                  cloneStoreRelations(e.StoreRelations),
+		LifecycleEffects:                cloneLifecycleEffects(e.LifecycleEffects),
 		ReturnAllocationTemplates:       cloneReturnAllocationTemplates(e.ReturnAllocationTemplates),
 	}
 }
@@ -124,9 +171,11 @@ func (e OperationalEffects) Equals(other OperationalEffects) bool {
 		equalPathPresenceRefinements(e.NormalReturnPresenceRefinements, other.NormalReturnPresenceRefinements) &&
 		equalPathStaticMemberFacts(e.PathStaticMembers, other.PathStaticMembers) &&
 		equalPathInvalidations(e.PathInvalidations, other.PathInvalidations) &&
+		equalDynamicIndexFacts(e.DynamicIndexFacts, other.DynamicIndexFacts) &&
 		equalFrozenTables(e.FrozenTables, other.FrozenTables) &&
 		equalEscapeEvents(e.EscapeEvents, other.EscapeEvents) &&
 		equalStoreRelations(e.StoreRelations, other.StoreRelations) &&
+		equalLifecycleEffects(e.LifecycleEffects, other.LifecycleEffects) &&
 		equalReturnAllocationTemplates(e.ReturnAllocationTemplates, other.ReturnAllocationTemplates)
 }
 
@@ -170,6 +219,28 @@ func clonePathInvalidations(in []PathInvalidation) []PathInvalidation {
 	return out
 }
 
+func cloneDynamicIndexFacts(in []DynamicIndexFact) []DynamicIndexFact {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]DynamicIndexFact, len(in))
+	for i, fact := range in {
+		out[i] = DynamicIndexFact{
+			Table:       fact.Table.Clone(),
+			Site:        fact.Site,
+			KeyPresence: fact.KeyPresence,
+			Key:         cloneDynamicIndexOperand(fact.Key),
+			Value:       cloneDynamicIndexOperand(fact.Value),
+			Admission:   fact.Admission,
+		}
+	}
+	return out
+}
+
+func cloneDynamicIndexOperand(in DynamicIndexOperand) DynamicIndexOperand {
+	return DynamicIndexOperand{Path: in.Path.Clone(), Type: in.Type}
+}
+
 func cloneFrozenTables(in []FrozenTable) []FrozenTable {
 	if len(in) == 0 {
 		return nil
@@ -199,6 +270,18 @@ func cloneStoreRelations(in []StoreRelation) []StoreRelation {
 	out := make([]StoreRelation, len(in))
 	for i, fact := range in {
 		out[i] = StoreRelation{Source: fact.Source.Clone(), Into: fact.Into.Clone()}
+	}
+	return out
+}
+
+func cloneLifecycleEffects(in []LifecycleEffect) []LifecycleEffect {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]LifecycleEffect, len(in))
+	for i, fact := range in {
+		out[i] = fact
+		out[i].Target = fact.Target.Clone()
 	}
 	return out
 }
@@ -281,6 +364,21 @@ func equalPathInvalidations(a, b []PathInvalidation) bool {
 	})
 }
 
+func equalDynamicIndexFacts(a, b []DynamicIndexFact) bool {
+	return equalFactSlices(a, b, func(x, y DynamicIndexFact) bool {
+		return x.Table.Equal(y.Table) &&
+			x.Site == y.Site &&
+			presence.Equal(x.KeyPresence, y.KeyPresence) &&
+			equalDynamicIndexOperand(x.Key, y.Key) &&
+			equalDynamicIndexOperand(x.Value, y.Value) &&
+			x.Admission == y.Admission
+	})
+}
+
+func equalDynamicIndexOperand(a, b DynamicIndexOperand) bool {
+	return a.Path.Equal(b.Path) && typ.TypeEquals(a.Type, b.Type)
+}
+
 func equalFrozenTables(a, b []FrozenTable) bool {
 	return equalFactSlices(a, b, func(x, y FrozenTable) bool {
 		return x.Target.Equal(y.Target)
@@ -296,6 +394,17 @@ func equalEscapeEvents(a, b []EscapeEvent) bool {
 func equalStoreRelations(a, b []StoreRelation) bool {
 	return equalFactSlices(a, b, func(x, y StoreRelation) bool {
 		return x.Source.Equal(y.Source) && x.Into.Equal(y.Into)
+	})
+}
+
+func equalLifecycleEffects(a, b []LifecycleEffect) bool {
+	return equalFactSlices(a, b, func(x, y LifecycleEffect) bool {
+		return x.Kind == y.Kind &&
+			x.Protocol == y.Protocol &&
+			x.From == y.From &&
+			x.To == y.To &&
+			x.Obligation == y.Obligation &&
+			x.Target.Equal(y.Target)
 	})
 }
 

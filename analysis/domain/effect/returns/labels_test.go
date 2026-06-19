@@ -60,6 +60,27 @@ func TestReturnTypeEqualsNormalizesPointers(t *testing.T) {
 	}
 }
 
+func TestReturnTypeEqualsHandlesTypedNilPointers(t *testing.T) {
+	var nilElement *ElementOf
+	var nilStringUnpack *StringUnpackValue
+
+	if !IsNilReturnType(nilElement) {
+		t.Fatal("typed nil ElementOf should be nil-like")
+	}
+	if !IsNilReturnType(nilStringUnpack) {
+		t.Fatal("typed nil StringUnpackValue should be nil-like")
+	}
+	if !returnTypeEquals(nilElement, nilStringUnpack) {
+		t.Fatal("nil-like return transforms should compare equal")
+	}
+	if returnTypeEquals(nilElement, ElementOf{}) {
+		t.Fatal("typed nil ElementOf should not equal a concrete ElementOf")
+	}
+	if returnTypeEquals(StringUnpackValue{}, nilStringUnpack) {
+		t.Fatal("concrete StringUnpackValue should not equal a typed nil StringUnpackValue")
+	}
+}
+
 func TestErrorReturn_String(t *testing.T) {
 	er := ErrorReturn{ValueIndex: 0, ErrorIndex: 1}
 	if got := er.String(); got != "errret(val[0], err[1])" {

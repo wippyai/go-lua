@@ -1,0 +1,107 @@
+{
+  "description": "Boolean and numeric literal discriminants should narrow unions, nested unions, impossible branches, and redundant literal conditions.",
+  "check": {
+    "diagnostic_rules": [
+      {
+        "code": "lint.condition.redundant",
+        "enabled": true,
+        "severity": "hint"
+      }
+    ],
+    "diagnostics": [
+      {
+        "file": "main.lua",
+        "line": 56,
+        "column": 8,
+        "severity": "hint",
+        "code": "lint.condition.redundant",
+        "message_contains": [
+          "condition is always false here"
+        ],
+        "min_evidence": 3,
+        "evidence": [
+          {
+            "kind": "abstract fact",
+            "trust": "proven",
+            "line": 56,
+            "column": 8,
+            "contains": [
+              "current check: only.ok does not equal true"
+            ]
+          },
+          {
+            "kind": "abstract fact",
+            "trust": "proven",
+            "line": 55,
+            "column": 4,
+            "contains": [
+              "prior guard established only.ok is true"
+            ]
+          },
+          {
+            "kind": "abstract fact",
+            "trust": "proven",
+            "contains": [
+              "only.ok is unchanged between the prior guard and this check"
+            ]
+          }
+        ],
+        "evidence_contains": [
+          "only.ok does not equal true",
+          "prior guard established only.ok is true",
+          "only.ok is unchanged between the prior guard and this check"
+        ],
+        "render_contains": [
+          "hint[lint.condition.redundant]: condition is always false here",
+          "if only.ok == true then",
+          "if only.ok ~= true then",
+          "current check: only.ok does not equal true",
+          "prior guard established only.ok is true",
+          "only.ok is unchanged between the prior guard and this check"
+        ],
+        "render_ordered_contains": [
+          "hint[lint.condition.redundant]: condition is always false here",
+          "--> main.lua:56:8",
+          "if only.ok ~= true then",
+          "because:",
+          "1. proven: current check: only.ok does not equal true",
+          "2. proven: prior guard established only.ok is true",
+          "--> main.lua:55:4",
+          "if only.ok == true then",
+          "3. proven: only.ok is unchanged between the prior guard and this check",
+          "help: Remove this unreachable branch, or change the prior guard if this path should still run."
+        ],
+        "render_not_contains": [
+          "^~",
+          "where:"
+        ],
+        "help_contains": [
+          "Remove this unreachable branch"
+        ],
+        "labels": [
+          {
+            "line": 56,
+            "column": 8,
+            "contains": [
+              "current check"
+            ]
+          },
+          {
+            "line": 55,
+            "column": 4,
+            "contains": [
+              "prior guard"
+            ]
+          }
+        ],
+        "label_contains": [
+          "current check",
+          "prior guard"
+        ]
+      }
+    ]
+  },
+  "run": {
+    "skip": "diagnostic-only fixture"
+  }
+}

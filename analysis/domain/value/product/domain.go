@@ -4,29 +4,34 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/lattice"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
+	"github.com/wippyai/go-lua/analysis/internal/registrycache"
 )
+
+var domainCache registrycache.Cache[lattice.Lattice[Value]]
 
 func Domain(reg *axis.Registry) lattice.Lattice[Value] {
 	rt := mustRuntime(reg)
-	return lattice.Lattice[Value]{
-		Bottom: rt.bottomValue,
-		Top:    Top,
-		Equal: func(a, b Value) bool {
-			return equalRuntime(rt, a, b)
-		},
-		LessOrEq: func(a, b Value) bool {
-			return lessOrEqRuntime(rt, a, b)
-		},
-		Join: func(a, b Value) Value {
-			return joinRuntime(rt, a, b)
-		},
-		Meet: func(a, b Value) Value {
-			return meetRuntime(rt, a, b)
-		},
-		Widen: func(prev, next Value) Value {
-			return widenRuntime(rt, prev, next)
-		},
-	}
+	return domainCache.Get(rt.reg, func() lattice.Lattice[Value] {
+		return lattice.Lattice[Value]{
+			Bottom: rt.bottomValue,
+			Top:    Top,
+			Equal: func(a, b Value) bool {
+				return equalRuntime(rt, a, b)
+			},
+			LessOrEq: func(a, b Value) bool {
+				return lessOrEqRuntime(rt, a, b)
+			},
+			Join: func(a, b Value) Value {
+				return joinRuntime(rt, a, b)
+			},
+			Meet: func(a, b Value) Value {
+				return meetRuntime(rt, a, b)
+			},
+			Widen: func(prev, next Value) Value {
+				return widenRuntime(rt, prev, next)
+			},
+		}
+	})
 }
 
 func Equal(reg *axis.Registry, a, b Value) bool {

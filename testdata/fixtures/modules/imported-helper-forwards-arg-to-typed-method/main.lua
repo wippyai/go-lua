@@ -9,4 +9,4 @@ end
 
 local contract_args = nil :: any
 local model_id = contract_args.model
-helper(bedrock_client, model_id) -- expect-error: expected string
+helper(bedrock_client, model_id) -- expect-error: not string

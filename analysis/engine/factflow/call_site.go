@@ -110,7 +110,7 @@ func NewCallSite(config CallSiteConfig) CallSite {
 		hasExpr:           config.HasExpr,
 		exprIndex:         config.ExprIndex,
 		argumentSources:   copyValueSources(config.ArgumentSources),
-		typeArgs:          copyTypeRefs(config.TypeArgs),
+		typeArgs:          append([]TypeRef(nil), config.TypeArgs...),
 		resultTargets:     copyCallResultTargets(config.ResultTargets),
 		final:             config.Final,
 		expanded:          config.Expanded,
@@ -158,8 +158,32 @@ func (c CallSite) ArgumentSources() []ValueSource {
 	return copyValueSources(c.argumentSources)
 }
 
+// ArgumentSourceCount returns the number of ordered argument value sources.
+func (c CallSite) ArgumentSourceCount() int { return len(c.argumentSources) }
+
+// ArgumentSourceAt returns one argument value source by value.
+func (c CallSite) ArgumentSourceAt(index int) (ValueSource, bool) {
+	if index < 0 || index >= len(c.argumentSources) {
+		return ValueSource{}, false
+	}
+	return c.argumentSources[index], true
+}
+
+// ForEachArgumentSource visits argument value sources without allocating a
+// defensive slice. Returning false stops iteration.
+func (c CallSite) ForEachArgumentSource(fn func(index int, source ValueSource) bool) {
+	if fn == nil {
+		return
+	}
+	for i := range c.argumentSources {
+		if !fn(i, c.argumentSources[i]) {
+			return
+		}
+	}
+}
+
 // TypeArgs returns the ordered explicit type argument identities.
-func (c CallSite) TypeArgs() []TypeRef { return copyTypeRefs(c.typeArgs) }
+func (c CallSite) TypeArgs() []TypeRef { return append([]TypeRef(nil), c.typeArgs...) }
 
 // ResultTargets returns the targets that consume this call's results.
 func (c CallSite) ResultTargets() []CallResultTarget {
@@ -209,6 +233,12 @@ func (v CallSiteView) MethodPath() (path.Path, bool) {
 // MethodName returns the method name carried by receiver-call syntax.
 func (v CallSiteView) MethodName() string { return v.site.methodName }
 
+// ReceiverSource returns the value source for a colon-method call's receiver
+// expression, if the receiver was not a resolvable symbol path.
+func (v CallSiteView) ReceiverSource() (ValueSource, bool) {
+	return v.site.receiverSource, v.site.hasReceiverSource
+}
+
 // Expr returns the call expression reference, if present.
 func (v CallSiteView) Expr() (ExprRef, bool) { return v.site.exprRef, v.site.hasExpr }
 
@@ -220,8 +250,32 @@ func (v CallSiteView) ArgumentSources() []ValueSource {
 	return copyValueSources(v.site.argumentSources)
 }
 
+// ArgumentSourceCount returns the number of ordered argument value sources.
+func (v CallSiteView) ArgumentSourceCount() int { return len(v.site.argumentSources) }
+
+// ArgumentSourceAt returns one argument value source by value.
+func (v CallSiteView) ArgumentSourceAt(index int) (ValueSource, bool) {
+	if index < 0 || index >= len(v.site.argumentSources) {
+		return ValueSource{}, false
+	}
+	return v.site.argumentSources[index], true
+}
+
+// ForEachArgumentSource visits argument value sources without allocating a
+// defensive slice. Returning false stops iteration.
+func (v CallSiteView) ForEachArgumentSource(fn func(index int, source ValueSource) bool) {
+	if fn == nil {
+		return
+	}
+	for i := range v.site.argumentSources {
+		if !fn(i, v.site.argumentSources[i]) {
+			return
+		}
+	}
+}
+
 // TypeArgs returns the ordered explicit type argument identities.
-func (v CallSiteView) TypeArgs() []TypeRef { return copyTypeRefs(v.site.typeArgs) }
+func (v CallSiteView) TypeArgs() []TypeRef { return append([]TypeRef(nil), v.site.typeArgs...) }
 
 // Final reports whether this call is the final value-list expression.
 func (v CallSiteView) Final() bool { return v.site.final }
@@ -256,7 +310,7 @@ func (c CallSite) copy() CallSite {
 	c.receiverPath = c.receiverPath.Clone()
 	c.methodPath = c.methodPath.Clone()
 	c.argumentSources = copyValueSources(c.argumentSources)
-	c.typeArgs = copyTypeRefs(c.typeArgs)
+	c.typeArgs = append([]TypeRef(nil), c.typeArgs...)
 	c.resultTargets = copyCallResultTargets(c.resultTargets)
 	return c
 }

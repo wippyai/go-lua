@@ -167,6 +167,29 @@ func TestRequiredTagsReturnsDefensiveCopy(t *testing.T) {
 	}
 }
 
+func TestRequiredTagsDoesNotCacheEmptySummaries(t *testing.T) {
+	plain := typetable.NewRecord().
+		Field("value", typ.String).
+		Build()
+	tagged := typetable.NewRecord().
+		Field("kind", typ.LiteralString("event")).
+		Build()
+
+	d := NewDetector()
+	if tags := d.RequiredTags(plain); tags != nil {
+		t.Fatalf("plain record tags = %v, want nil", tags)
+	}
+	if _, ok := d.tags[plain]; ok {
+		t.Fatal("empty required-tag summary was retained in detector cache")
+	}
+	if tags := d.RequiredTags(tagged); tags["kind"] != typ.EqualityHash(typ.LiteralString("event")) {
+		t.Fatalf("tagged record tags = %v, want kind tag", tags)
+	}
+	if _, ok := d.tags[tagged]; !ok {
+		t.Fatal("non-empty required-tag summary was not cached")
+	}
+}
+
 func TestStaticMemberTagPathAndConflict(t *testing.T) {
 	a := typetable.NewRecord().
 		StaticStringIndex("kind", typ.LiteralString("a")).

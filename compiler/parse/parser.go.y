@@ -376,6 +376,8 @@ var:
         prefixexp '[' expr ']' {
             $$ = &ast.AttrGetExpr{Object: $1, Key: $3, KeySyntax: ast.AttrKeyIndex}
             $$.CopyPos($1)
+            $$.SetLastLine($4.Pos.Line)
+            $$.SetLastColumn($4.Pos.Column + 1)
         } | 
         prefixexp '.' TIdent {
             key := &ast.StringExpr{Value:$3.Str}

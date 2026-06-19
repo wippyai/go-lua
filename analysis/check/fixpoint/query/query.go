@@ -10,7 +10,8 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/solve"
 )
 
-// Body computes one function summary from the active fixed-point context.
+// Body computes one function summary from the active fixed-point context. The
+// driver consumes the returned summary and may canonicalize its mutable lanes.
 type Body func(Context) (summary.Summary, error)
 
 // Context is passed to a Body during fixed-point evaluation.
@@ -135,7 +136,7 @@ func (d *Driver) Run() (summary.Snapshot, error) {
 				firstErr = err
 				return
 			}
-			emit(key, summary.Normalize(d.reg, got))
+			emit(key, summary.NormalizeOwned(d.reg, got))
 		},
 		WidenAt:    d.widenAt,
 		WidenDelay: d.widenDelay,

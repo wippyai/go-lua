@@ -39,7 +39,7 @@ func LocalPathFromKey(key pathdom.PathKey) (pathdom.Path, bool) {
 // LocalKeyFromPathKey validates and narrows a PathKey to the point-local
 // resolver key space used by flow-state facts.
 func LocalKeyFromPathKey(key pathdom.PathKey) (LocalKey, bool) {
-	if _, ok := LocalPathFromKey(key); !ok {
+	if _, version, _, ok := parseResolverRootSuffix(key); !ok || version <= 0 {
 		return "", false
 	}
 	return LocalKey(key), true
@@ -50,7 +50,7 @@ func LocalKeyForVersion(sym symbol.ID, version int, segments []segment.Segment) 
 	if sym == 0 || version <= 0 {
 		return "", false
 	}
-	path := pathdom.Path{Symbol: sym, Version: version, Segments: cloneSegments(segments)}
+	path := pathdom.Path{Symbol: sym, Version: version, Segments: segments}
 	return LocalKey(path.Key()), true
 }
 

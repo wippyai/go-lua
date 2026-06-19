@@ -1,3 +1,110 @@
 {
-  "packages": ["channel"]
+  "packages": [
+    "channel"
+  ],
+  "check": {
+    "diagnostics": [
+      {
+        "file": "main.lua",
+        "line": 12,
+        "column": 8,
+        "severity": "warning",
+        "code": "channel.select.exhaustiveness",
+        "message_contains": [
+          "channel select is not exhaustive",
+          "missing case: `timeout_ch`"
+        ],
+        "min_evidence": 4,
+        "evidence_contains": [
+          "branch chain checks channel `result.channel`",
+          "handled cases: `events_ch`, `stop_ch`",
+          "missing cases: `timeout_ch`",
+          "no default case handles the remaining channel cases"
+        ],
+        "evidence": [
+          {
+            "file": "main.lua",
+            "line": 12,
+            "column": 8,
+            "kind": "abstract fact",
+            "trust": "proven",
+            "contains": [
+              "branch chain checks channel `result.channel`"
+            ]
+          },
+          {
+            "file": "main.lua",
+            "line": 12,
+            "column": 8,
+            "kind": "abstract fact",
+            "trust": "proven",
+            "contains": [
+              "handled cases: `events_ch`, `stop_ch`"
+            ]
+          },
+          {
+            "file": "main.lua",
+            "line": 12,
+            "column": 8,
+            "kind": "missing proof",
+            "trust": "unknown",
+            "contains": [
+              "missing cases: `timeout_ch`"
+            ]
+          },
+          {
+            "file": "main.lua",
+            "line": 12,
+            "column": 8,
+            "kind": "missing proof",
+            "trust": "unknown",
+            "contains": [
+              "no default case handles the remaining channel cases"
+            ]
+          }
+        ],
+        "help_contains": [
+          "Add an elseif branch for each missing case"
+        ],
+        "label_contains": [
+          "channel case check"
+        ],
+        "labels": [
+          {
+            "file": "main.lua",
+            "line": 12,
+            "column": 8,
+            "contains": [
+              "channel case check"
+            ]
+          }
+        ],
+        "render_contains": [
+          "warning[channel.select.exhaustiveness]: channel select is not exhaustive; missing case: `timeout_ch`",
+          "if result.channel == events_ch then",
+          "because:",
+          "branch chain checks channel `result.channel`",
+          "missing cases: `timeout_ch`",
+          "help: Add an elseif branch for each missing case"
+        ],
+        "render_ordered_contains": [
+          "warning[channel.select.exhaustiveness]: channel select is not exhaustive; missing case: `timeout_ch`",
+          "--> main.lua:12",
+          "if result.channel == events_ch then",
+          "because:",
+          "proven: branch chain checks channel `result.channel`",
+          "proven: handled cases: `events_ch`, `stop_ch`",
+          "missing proof: missing cases: `timeout_ch`",
+          "missing proof: no default case handles the remaining channel cases",
+          "help: Add an elseif branch for each missing case"
+        ],
+        "render_not_contains": [
+          "because:\n  1. proven: channel select is not exhaustive",
+          "channel.select.exhaustiveness error",
+          "^~",
+          "want"
+        ]
+      }
+    ]
+  }
 }

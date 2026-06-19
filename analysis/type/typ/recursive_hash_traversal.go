@@ -59,6 +59,11 @@ func hashBodyWithVisitedMemo(t Type, scratch *recursiveHashScratch) uint64 {
 	if h, ok := scratch.memoGet(t); ok {
 		return h
 	}
+	if scratch.activeContains(t) {
+		return hash.MixHash(uint64(t.Kind()), hash.FnvString("$cycle"))
+	}
+	scratch.activePush(t)
+	defer scratch.activePop(t)
 
 	h := hashBodyNodeWithVisitedMemo(t, scratch)
 	scratch.memoSet(t, h)

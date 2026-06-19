@@ -61,6 +61,21 @@ func MemberCallable(receiver typ.Type, name string) (*typ.Function, MemberCallSt
 	return bindMemberCallableReceiver(callable, receiver), status, true
 }
 
+// IndexedMemberCallable resolves an exact bracket member for call syntax,
+// extracts a concrete callable witness, and binds receiver-relative Self/SelfRef
+// references to the concrete receiver type.
+func IndexedMemberCallable(receiver typ.Type, key typ.Type) (*typ.Function, MemberCallStatus, bool) {
+	memberType, status := IndexedMemberCall(receiver, key)
+	if status != MemberCallOK {
+		return nil, status, false
+	}
+	callable, ok := Callable(memberType)
+	if !ok || callable == nil {
+		return nil, status, false
+	}
+	return bindMemberCallableReceiver(callable, receiver), status, true
+}
+
 func bindMemberCallableReceiver(callable *typ.Function, receiver typ.Type) *typ.Function {
 	if callable == nil {
 		return nil
@@ -225,6 +240,12 @@ func ambientChannelMethod(receiver typ.Type, name string, depth int) (typ.Type, 
 		return typ.Func().
 			Param("self", channel).
 			Returns(typ.Unknown).
+			Build(), true
+	case "send":
+		return typ.Func().
+			Param("self", channel).
+			Param("payload", payload).
+			Returns(typ.Boolean).
 			Build(), true
 	default:
 		return nil, false

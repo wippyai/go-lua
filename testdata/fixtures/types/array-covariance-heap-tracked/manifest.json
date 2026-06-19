@@ -1,1 +1,95 @@
-{ "description": "Array covariance is sound via heap-identity flow tracking: writing an Animal through a {Animal} alias of a {Dog} array makes the original dog's breed nil, caught at the read (more precise than blanket invariance).", "files": ["main.lua"], "check": { "diagnostics": [ { "file": "main.lua", "line": 6, "severity": "error", "code": "type.assignment", "message_contains": ["nil", "string"], "min_evidence": 1, "evidence_contains": ["nil"], "min_labels": 1, "label_contains": ["assigned value"] } ] }, "run": { "skip": "diagnostic-only" } }
+{
+  "description": "Array covariance is sound via heap-identity flow tracking: writing an Animal through a {Animal} alias of a {Dog} array makes the original dog's breed nil, caught at the read (more precise than blanket invariance).",
+  "files": [
+    "main.lua"
+  ],
+  "check": {
+    "diagnostics": [
+      {
+        "file": "main.lua",
+        "line": 6,
+        "column": 19,
+        "severity": "error",
+        "code": "type.assignment",
+        "message_contains": [
+          "nil",
+          "string"
+        ],
+        "min_evidence": 2,
+        "evidence_contains": [
+          "dogs[1].breed has type nil",
+          "b is declared as string"
+        ],
+        "evidence": [
+          {
+            "file": "main.lua",
+            "line": 6,
+            "column": 19,
+            "kind": "abstract fact",
+            "trust": "proven",
+            "contains": [
+              "dogs[1].breed has type nil"
+            ]
+          },
+          {
+            "file": "main.lua",
+            "line": 6,
+            "column": 10,
+            "kind": "user assertion",
+            "trust": "claimed",
+            "contains": [
+              "b is declared as string"
+            ]
+          }
+        ],
+        "render_contains": [
+          "error[type.assignment]: cannot assign dogs[1].breed because it is nil, not string",
+          "local b: string = dogs[1].breed",
+          "because:"
+        ],
+        "render_ordered_contains": [
+          "error[type.assignment]: cannot assign dogs[1].breed because it is nil, not string",
+          "--> main.lua:6:19",
+          "local b: string = dogs[1].breed",
+          "because:",
+          "1. proven: dogs[1].breed has type nil",
+          "2. claimed: b is declared as string",
+          "help: Use a value compatible with the expected type, or change the target type if `dogs[1].breed` is valid."
+        ],
+        "render_not_contains": [
+          "^~",
+          "where:"
+        ],
+        "min_labels": 2,
+        "label_contains": [
+          "assigned value",
+          "declared type"
+        ],
+        "labels": [
+          {
+            "file": "main.lua",
+            "line": 6,
+            "column": 19,
+            "contains": [
+              "assigned value"
+            ]
+          },
+          {
+            "file": "main.lua",
+            "line": 6,
+            "column": 10,
+            "contains": [
+              "declared type"
+            ]
+          }
+        ],
+        "help_contains": [
+          "change the target type"
+        ]
+      }
+    ]
+  },
+  "run": {
+    "skip": "diagnostic-only"
+  }
+}

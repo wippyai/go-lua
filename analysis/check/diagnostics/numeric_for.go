@@ -1,8 +1,6 @@
 package diagnostics
 
 import (
-	"fmt"
-
 	"github.com/wippyai/go-lua/analysis/check/body"
 	"github.com/wippyai/go-lua/analysis/diagnostic"
 	"github.com/wippyai/go-lua/analysis/lua/cfgfacts"
@@ -26,9 +24,13 @@ func (p numericForOperands) Produce(result *body.Result) []diagnostic.Diagnostic
 	if graph == nil {
 		return nil
 	}
+	envs := cachedGuardEnvironments(result)
 	typer := newExpressionTyper(result, p.resolver)
 	var out []diagnostic.Diagnostic
 	for _, point := range graph.RPO() {
+		if !guardEnvReachableAt(envs, point) {
+			continue
+		}
 		fact, ok := result.NumericFor(point)
 		if !ok || fact.Role != cfgfacts.NumericForRoleInit {
 			continue
@@ -59,34 +61,21 @@ func numericForOperandDiagnostic(typer expressionTyper, expr ast.Expr, role stri
 			Kind:    diagnostic.EvidenceAbstractFact,
 			Trust:   diagnostic.TrustProven,
 			Span:    span,
-			Message: fmt.Sprintf("%s is %s", role, formatType(got)),
-		},
-		{
-			Kind:    diagnostic.EvidenceMissingProof,
-			Trust:   diagnostic.TrustRefuted,
-			Span:    span,
-			Message: fmt.Sprintf("the %s of a numeric for loop must be a number", role),
+			Message: numericForOperandTypeEvidence(role, got),
 		},
 	}
 	if _, ok := explicitTopLikeCastType(typer.resolver, expr); ok {
 		evidence = append(evidence, explicitTopLikeCastEvidence(span, typ.Number, expr)...)
 	}
-	return diagnostic.Diagnostic{
-		Position: diagnostic.Position{
-			Line:      span.StartLine,
-			Column:    span.StartCol,
-			EndLine:   span.EndLine,
-			EndColumn: span.EndCol,
-		},
+	return diagnostic.New(diagnostic.DiagnosticSpec{
 		Span:        span,
 		Code:        CodeNumericForOperand,
 		Severity:    diagnostic.SeverityError,
-		Message:     fmt.Sprintf("numeric for %s must be number, got %s", role, formatType(got)),
+		Message:     numericForOperandMessage(role, got),
 		Explanation: diagnostic.NewExplanation(evidence...),
-		Labels: []diagnostic.Label{
-			{Span: span, Message: "numeric for " + role},
-		},
-	}, true
+		Help:        numericForOperandHelp(role),
+		Labels:      []diagnostic.Label{sourceLabel(span, role)},
+	}), true
 }
 
 func definitelyNotNumber(t typ.Type) bool {

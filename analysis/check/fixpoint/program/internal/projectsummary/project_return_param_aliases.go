@@ -118,11 +118,7 @@ func returnAliasPlaceholderPath(
 	if returnAliasParamReassigned(index, params, result) {
 		return pathdom.Path{}, false
 	}
-	out := pathdom.NewPlaceholder(index)
-	for _, seg := range sourcePath.Segments {
-		out = out.Append(seg)
-	}
-	return out, true
+	return pathdom.NewPlaceholder(index).AppendSegments(sourcePath.Segments), true
 }
 
 func returnAliasParamIndex(sourcePath pathdom.Path, params []pathdom.Path) (int, bool) {

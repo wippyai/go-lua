@@ -6,18 +6,22 @@ import (
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
+	"github.com/wippyai/go-lua/analysis/domain/typestate"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/engine/callboundary"
+	"github.com/wippyai/go-lua/analysis/engine/callpayload"
 	"github.com/wippyai/go-lua/analysis/engine/dynamicindex"
+	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/state/channelselectfact"
 	effectdelta "github.com/wippyai/go-lua/analysis/engine/state/effectdelta"
 	"github.com/wippyai/go-lua/analysis/engine/state/heapidentity"
 	"github.com/wippyai/go-lua/analysis/engine/state/pathevidence"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
+	"github.com/wippyai/go-lua/analysis/lua/semantics"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
 )
@@ -301,9 +305,37 @@ func TestFromResultSkipsTopSnapshotsAndTopNormalReturnFacts(t *testing.T) {
 		}, topEffect)
 
 	got := FromResult(normalReturnFactProjectTestResult(reg, exit, param)).NormalReturnFacts
+	assertPathInvalidation(t, got.PathInvalidations, pathdom.NewPlaceholder(0).Field("table"))
+	got.PathInvalidations = nil
 	if !normalReturnFactsEmpty(got) {
-		t.Fatalf("NormalReturnFacts = %#v, want top/no-op facts skipped", got)
+		t.Fatalf("NormalReturnFacts = %#v, want only dynamic top path invalidation and other top/no-op facts skipped", got)
 	}
+}
+
+func TestFromResultProjectsAssignmentBasedParameterInvalidationWithoutExitState(t *testing.T) {
+	reg := standard.Registry()
+	param := symbol.ID(925)
+	graph := cfg.New()
+	assign := graph.AddNode(cfg.NodeAssign)
+	graph.AddEdge(graph.Entry(), assign, false)
+	graph.AddEdge(assign, graph.Exit(), false)
+	stub := normalReturnFactProjectAssignmentStub{
+		normalReturnFactProjectResultStub: normalReturnFactProjectResultStub{
+			reg:   reg,
+			graph: graph,
+			exit:  state.State{},
+			slots: []key.Value{key.SymbolValue(param)},
+		},
+		assignments: map[cfg.Point]semantics.OrdinaryAssignmentFact{
+			assign: {
+				ContainerPath:    pathdom.Path{Symbol: param, Version: 1},
+				HasContainerPath: true,
+			},
+		},
+	}
+
+	got := FromResult(stub).NormalReturnFacts
+	assertPathInvalidation(t, got.PathInvalidations, pathdom.NewPlaceholder(0))
 }
 
 func TestFromResultProjectsHeapTableObjectsFromExitSnapshots(t *testing.T) {
@@ -404,11 +436,187 @@ func TestFromResultDoesNotProjectBranchLocalStoreRelations(t *testing.T) {
 	}
 }
 
+func TestFromResultProjectsMandatoryCallOutcomeLifecycleFacts(t *testing.T) {
+	reg := standard.Registry()
+	param := symbol.ID(945)
+	graph := cfg.New()
+	call := graph.AddNode(cfg.NodeCall)
+	graph.AddEdge(graph.Entry(), call, false)
+	graph.AddEdge(call, graph.Exit(), false)
+
+	stub := normalReturnFactProjectCallStub{
+		normalReturnFactProjectResultStub: normalReturnFactProjectResultStub{
+			reg:   reg,
+			graph: graph,
+			exit:  state.State{},
+			slots: []key.Value{key.SymbolValue(param)},
+		},
+		calls: map[cfg.Point]factflow.CallSite{
+			call: lifecycleCallSite(1),
+		},
+		paths: map[factflow.ExprRef]pathdom.Path{
+			1: {Symbol: param, Version: 1},
+		},
+		outcomes: map[cfg.Point]callpayload.CallOutcome{
+			call: {
+				NormalReturnFacts: callboundary.NormalReturnFacts{
+					LifecycleFacts: []callboundary.LifecycleFact{
+						{
+							Target:   pathdom.NewPlaceholder(0),
+							Kind:     callboundary.LifecycleTransition,
+							Protocol: typestate.Protocol("transaction"),
+							From:     typestate.State("active"),
+							To:       typestate.State("finished"),
+						},
+					},
+				},
+			},
+		},
+	}
+
+	got := FromResult(stub).NormalReturnFacts
+	assertLifecycleFact(t, got.LifecycleFacts, pathdom.NewPlaceholder(0), callboundary.LifecycleTransition)
+}
+
+func TestFromResultDoesNotProjectBranchLocalCallOutcomeLifecycleFacts(t *testing.T) {
+	reg := standard.Registry()
+	param := symbol.ID(946)
+	graph := cfg.New()
+	branch := graph.AddNode(cfg.NodeBranch)
+	call := graph.AddNode(cfg.NodeCall)
+	graph.AddEdge(graph.Entry(), branch, false)
+	graph.AddEdge(branch, call, true)
+	graph.AddEdge(branch, graph.Exit(), false)
+	graph.AddEdge(call, graph.Exit(), false)
+
+	stub := normalReturnFactProjectCallStub{
+		normalReturnFactProjectResultStub: normalReturnFactProjectResultStub{
+			reg:   reg,
+			graph: graph,
+			exit:  state.State{},
+			slots: []key.Value{key.SymbolValue(param)},
+		},
+		calls: map[cfg.Point]factflow.CallSite{
+			call: lifecycleCallSite(1),
+		},
+		paths: map[factflow.ExprRef]pathdom.Path{
+			1: {Symbol: param, Version: 1},
+		},
+		outcomes: map[cfg.Point]callpayload.CallOutcome{
+			call: {
+				NormalReturnFacts: callboundary.NormalReturnFacts{
+					LifecycleFacts: []callboundary.LifecycleFact{
+						{
+							Target:   pathdom.NewPlaceholder(0),
+							Kind:     callboundary.LifecycleTransition,
+							Protocol: typestate.Protocol("transaction"),
+							From:     typestate.State("active"),
+							To:       typestate.State("finished"),
+						},
+					},
+				},
+			},
+		},
+	}
+
+	got := FromResult(stub).NormalReturnFacts
+	if len(got.LifecycleFacts) != 0 {
+		t.Fatalf("LifecycleFacts = %#v, want none for branch-local lifecycle call", got.LifecycleFacts)
+	}
+}
+
+func TestFromResultProjectsMandatoryCallOutcomeLifecycleFactsForCapturedPath(t *testing.T) {
+	reg := standard.Registry()
+	captured := symbol.ID(947)
+	graph := cfg.New()
+	call := graph.AddNode(cfg.NodeCall)
+	graph.AddEdge(graph.Entry(), call, false)
+	graph.AddEdge(call, graph.Exit(), false)
+	capturedPath := pathdom.Path{Symbol: captured, Version: 1}
+
+	stub := normalReturnFactProjectCallStub{
+		normalReturnFactProjectResultStub: normalReturnFactProjectResultStub{
+			reg:   reg,
+			graph: graph,
+			exit:  state.State{},
+		},
+		calls: map[cfg.Point]factflow.CallSite{
+			call: lifecycleCallSite(1),
+		},
+		paths: map[factflow.ExprRef]pathdom.Path{
+			1: capturedPath,
+		},
+		outcomes: map[cfg.Point]callpayload.CallOutcome{
+			call: {
+				NormalReturnFacts: callboundary.NormalReturnFacts{
+					LifecycleFacts: []callboundary.LifecycleFact{
+						{
+							Target:   pathdom.NewPlaceholder(0),
+							Kind:     callboundary.LifecycleTransition,
+							Protocol: typestate.Protocol("transaction"),
+							From:     typestate.State("active"),
+							To:       typestate.State("finished"),
+						},
+					},
+				},
+			},
+		},
+	}
+
+	got := FromResult(stub).NormalReturnFacts
+	assertLifecycleFact(t, got.LifecycleFacts, capturedPath, callboundary.LifecycleTransition)
+}
+
 type normalReturnFactProjectResultStub struct {
 	reg   *axis.Registry
 	graph cfg.Graph
 	exit  state.State
 	slots []key.Value
+}
+
+type normalReturnFactProjectAssignmentStub struct {
+	normalReturnFactProjectResultStub
+	assignments map[cfg.Point]semantics.OrdinaryAssignmentFact
+}
+
+type normalReturnFactProjectCallStub struct {
+	normalReturnFactProjectResultStub
+	calls    map[cfg.Point]factflow.CallSite
+	paths    map[factflow.ExprRef]pathdom.Path
+	outcomes map[cfg.Point]callpayload.CallOutcome
+}
+
+func (r normalReturnFactProjectCallStub) Call(point cfg.Point) (semantics.CallFact, bool) {
+	_, ok := r.calls[point]
+	return semantics.CallFact{}, ok
+}
+
+func (r normalReturnFactProjectCallStub) CallSite(point cfg.Point) (factflow.CallSite, bool) {
+	site, ok := r.calls[point]
+	return site, ok
+}
+
+func (r normalReturnFactProjectCallStub) ExpressionPathRef(ref factflow.ExprRef) (pathdom.Path, bool) {
+	p, ok := r.paths[ref]
+	return p, ok
+}
+
+func (r normalReturnFactProjectCallStub) CallOutcomeAt(point cfg.Point) (callpayload.CallOutcome, bool) {
+	outcome, ok := r.outcomes[point]
+	return outcome, ok
+}
+
+func lifecycleCallSite(ref factflow.ExprRef) factflow.CallSite {
+	shape, _ := factflow.NewValueSourceShape(true, false, false, false)
+	source, _ := factflow.NewExpressionValueSource(ref, 0, factflow.NoValueSourceIndex, 0, shape)
+	return factflow.NewCallSite(factflow.CallSiteConfig{
+		ArgumentSources: []factflow.ValueSource{source},
+	})
+}
+
+func (r normalReturnFactProjectAssignmentStub) OrdinaryAssignment(point cfg.Point) (semantics.OrdinaryAssignmentFact, bool) {
+	fact, ok := r.assignments[point]
+	return fact, ok
 }
 
 func normalReturnFactProjectTestResult(
@@ -542,6 +750,16 @@ func assertEscapeEvent(
 	t.Fatalf("escape events = %#v, want target %s kind %d recursive=%v", events, target, kind, recursive)
 }
 
+func assertLifecycleFact(t *testing.T, facts []callboundary.LifecycleFact, target pathdom.Path, kind callboundary.LifecycleKind) {
+	t.Helper()
+	for _, fact := range facts {
+		if fact.Target.Equal(target) && fact.Kind == kind {
+			return
+		}
+	}
+	t.Fatalf("LifecycleFacts = %#v, want target %s kind %d", facts, target, kind)
+}
+
 func assertFrozenTable(t *testing.T, facts []callboundary.FrozenTableFact, target pathdom.Path) {
 	t.Helper()
 	for _, fact := range facts {
@@ -591,7 +809,8 @@ func normalReturnFactsEmpty(facts callboundary.NormalReturnFacts) bool {
 		len(facts.FrozenTables) == 0 &&
 		len(facts.EffectDeltas) == 0 &&
 		len(facts.EscapeEvents) == 0 &&
-		len(facts.StoreRelations) == 0
+		len(facts.StoreRelations) == 0 &&
+		len(facts.LifecycleFacts) == 0
 }
 
 func findPathRefinement(facts []callboundary.PathValueFact, path pathdom.Path) *callboundary.PathValueFact {

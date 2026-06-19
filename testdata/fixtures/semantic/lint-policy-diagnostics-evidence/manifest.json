@@ -1,0 +1,330 @@
+{
+  "description": "Fixture-level diagnostic policy should enable opt-in lint warnings with strong evidence, help, and labels.",
+  "check": {
+    "diagnostic_rules": [
+      {
+        "code": "lint.unused.local",
+        "enabled": true,
+        "severity": "hint"
+      },
+      {
+        "code": "lint.dead.assignment",
+        "enabled": true,
+        "severity": "hint"
+      },
+      {
+        "code": "lint.condition.redundant",
+        "enabled": true,
+        "severity": "hint"
+      }
+    ],
+    "diagnostics": [
+      {
+        "file": "main.lua",
+        "line": 1,
+        "column": 7,
+        "severity": "hint",
+        "code": "lint.unused.local",
+        "message_contains": [
+          "local \"unused_local\" is never read"
+        ],
+        "min_evidence": 1,
+        "evidence": [
+          {
+            "kind": "abstract fact",
+            "trust": "proven",
+            "contains": [
+              "no read of local \"unused_local\" was found in this scope"
+            ]
+          }
+        ],
+        "evidence_contains": [
+          "no read of local \"unused_local\" was found in this scope"
+        ],
+        "render_contains": [
+          "hint[lint.unused.local]: local \"unused_local\" is never read",
+          "local unused_local = 1",
+          "proven: no read of local \"unused_local\" was found in this scope"
+        ],
+        "render_ordered_contains": [
+          "hint[lint.unused.local]: local \"unused_local\" is never read",
+          "--> main.lua:1:7",
+          "local unused_local = 1",
+          "because:",
+          "1. proven: no read of local \"unused_local\" was found in this scope",
+          "help: Remove it, use it, or rename it with a leading _ when intentionally unused."
+        ],
+        "render_not_contains": [
+          "^~",
+          "where:"
+        ],
+        "help_contains": [
+          "Remove it, use it, or rename it with a leading _ when intentionally unused."
+        ],
+        "labels": [
+          {
+            "line": 1,
+            "column": 7,
+            "contains": [
+              "unused local"
+            ]
+          }
+        ],
+        "label_contains": [
+          "unused local"
+        ]
+      },
+      {
+        "file": "main.lua",
+        "line": 3,
+        "column": 7,
+        "severity": "hint",
+        "code": "lint.dead.assignment",
+        "message_contains": [
+          "assignment to \"value\" is overwritten before it is read"
+        ],
+        "min_evidence": 1,
+        "evidence": [
+          {
+            "kind": "abstract fact",
+            "trust": "proven",
+            "line": 4,
+            "column": 1,
+            "contains": [
+              "later assignment replaces \"value\" before the earlier value is read"
+            ]
+          }
+        ],
+        "evidence_contains": [
+          "later assignment replaces \"value\" before the earlier value is read"
+        ],
+        "render_contains": [
+          "hint[lint.dead.assignment]: assignment to \"value\" is overwritten before it is read",
+          "local value = 1",
+          "value = 2",
+          "proven: later assignment replaces \"value\" before the earlier value is read"
+        ],
+        "render_ordered_contains": [
+          "hint[lint.dead.assignment]: assignment to \"value\" is overwritten before it is read",
+          "--> main.lua:3:7",
+          "local value = 1",
+          "because:",
+          "1. proven: later assignment replaces \"value\" before the earlier value is read",
+          "--> main.lua:4:1",
+          "value = 2",
+          "help: Remove this assignment, or read `value` before the later overwrite."
+        ],
+        "render_not_contains": [
+          "^~",
+          "where:"
+        ],
+        "help_contains": [
+          "Remove this assignment, or read `value` before the later overwrite."
+        ],
+        "labels": [
+          {
+            "line": 3,
+            "column": 7,
+            "contains": [
+              "dead assignment"
+            ]
+          },
+          {
+            "line": 4,
+            "column": 1,
+            "contains": [
+              "overwriting assignment"
+            ]
+          }
+        ],
+        "label_contains": [
+          "dead assignment",
+          "overwriting assignment"
+        ]
+      },
+      {
+        "file": "main.lua",
+        "line": 8,
+        "column": 8,
+        "severity": "hint",
+        "code": "lint.condition.redundant",
+        "message_contains": [
+          "condition is always true here"
+        ],
+        "min_evidence": 3,
+        "evidence": [
+          {
+            "kind": "abstract fact",
+            "trust": "proven",
+            "line": 8,
+            "column": 8,
+            "contains": [
+              "current check: flag is checked as truthy"
+            ]
+          },
+          {
+            "kind": "abstract fact",
+            "trust": "proven",
+            "line": 7,
+            "column": 4,
+            "contains": [
+              "prior guard established flag is truthy"
+            ]
+          },
+          {
+            "kind": "abstract fact",
+            "trust": "proven",
+            "contains": [
+              "flag is unchanged between the prior guard and this check"
+            ]
+          }
+        ],
+        "evidence_contains": [
+          "current check",
+          "prior guard established",
+          "flag is unchanged between the prior guard and this check"
+        ],
+        "render_contains": [
+          "hint[lint.condition.redundant]: condition is always true here",
+          "if flag then",
+          "current check: flag is checked as truthy",
+          "prior guard established flag is truthy",
+          "flag is unchanged between the prior guard and this check"
+        ],
+        "render_ordered_contains": [
+          "hint[lint.condition.redundant]: condition is always true here",
+          "--> main.lua:8:8",
+          "if flag then",
+          "because:",
+          "1. proven: current check: flag is checked as truthy",
+          "2. proven: prior guard established flag is truthy",
+          "--> main.lua:7:4",
+          "if flag then",
+          "3. proven: flag is unchanged between the prior guard and this check",
+          "help: Remove this repeated check, or move any needed work into the branch already guarded above."
+        ],
+        "render_not_contains": [
+          "^~",
+          "where:"
+        ],
+        "help_contains": [
+          "Remove this repeated check"
+        ],
+        "labels": [
+          {
+            "line": 8,
+            "column": 8,
+            "contains": [
+              "current check"
+            ]
+          },
+          {
+            "line": 7,
+            "column": 4,
+            "contains": [
+              "prior guard"
+            ]
+          }
+        ],
+        "label_contains": [
+          "current check",
+          "prior guard"
+        ]
+      },
+      {
+        "file": "main.lua",
+        "line": 14,
+        "column": 11,
+        "severity": "hint",
+        "code": "lint.dead.assignment",
+        "message_contains": [
+          "assignment to \"exit_value\" is discarded before it is read"
+        ],
+        "min_evidence": 2,
+        "evidence": [
+          {
+            "kind": "abstract fact",
+            "trust": "proven",
+            "line": 16,
+            "column": 9,
+            "contains": [
+              "control can leave before \"exit_value\" is read"
+            ]
+          },
+          {
+            "kind": "abstract fact",
+            "trust": "proven",
+            "line": 18,
+            "column": 5,
+            "contains": [
+              "later assignment replaces \"exit_value\" before the earlier value is read"
+            ]
+          }
+        ],
+        "evidence_contains": [
+          "control can leave before \"exit_value\" is read",
+          "later assignment replaces \"exit_value\" before the earlier value is read"
+        ],
+        "render_contains": [
+          "hint[lint.dead.assignment]: assignment to \"exit_value\" is discarded before it is read",
+          "local exit_value = 1",
+          "return 0",
+          "exit_value = 2",
+          "control can leave before \"exit_value\" is read",
+          "later assignment replaces \"exit_value\" before the earlier value is read"
+        ],
+        "render_ordered_contains": [
+          "hint[lint.dead.assignment]: assignment to \"exit_value\" is discarded before it is read",
+          "--> main.lua:14:11",
+          "local exit_value = 1",
+          "because:",
+          "1. proven: control can leave before \"exit_value\" is read",
+          "--> main.lua:16:9",
+          "return 0",
+          "2. proven: later assignment replaces \"exit_value\" before the earlier value is read",
+          "--> main.lua:18:5",
+          "exit_value = 2",
+          "help: Remove this assignment, or read `exit_value` before every later overwrite or exit."
+        ],
+        "render_not_contains": [
+          "^~",
+          "where:"
+        ],
+        "help_contains": [
+          "Remove this assignment, or read `exit_value` before every later overwrite or exit."
+        ],
+        "labels": [
+          {
+            "line": 14,
+            "column": 11,
+            "contains": [
+              "dead assignment"
+            ]
+          },
+          {
+            "line": 18,
+            "column": 5,
+            "contains": [
+              "overwriting assignment"
+            ]
+          },
+          {
+            "line": 16,
+            "column": 9,
+            "contains": [
+              "exit before read"
+            ]
+          }
+        ],
+        "label_contains": [
+          "dead assignment",
+          "overwriting assignment",
+          "exit before read"
+        ]
+      }
+    ]
+  },
+  "run": {
+    "skip": "diagnostic-only fixture"
+  }
+}

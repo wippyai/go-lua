@@ -49,6 +49,21 @@ func TestLabelInterface(t *testing.T) {
 	}
 }
 
+func TestNormalizeLabelHandlesPointersAndTypedNil(t *testing.T) {
+	label := testLabel{name: "ptr", id: 7}
+	if got := NormalizeLabel(&label); got != label {
+		t.Fatalf("NormalizeLabel(pointer) = %#v, want value %#v", got, label)
+	}
+
+	var nilLabel *testLabel
+	if got := NormalizeLabel(nilLabel); got != nil {
+		t.Fatalf("NormalizeLabel(typed nil) = %#v, want nil", got)
+	}
+	if got := NormalizeLabel(nil); got != nil {
+		t.Fatalf("NormalizeLabel(nil) = %#v, want nil", got)
+	}
+}
+
 func TestMarkerMethods(t *testing.T) {
 	testLabel{}.EffectLabel()
 }

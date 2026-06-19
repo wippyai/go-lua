@@ -18,63 +18,75 @@ func ObjectLiteralType(reg *axis.Registry, lit factflow.ObjectLiteral, resolve f
 }
 
 func ObjectLiteralTypeCached(reg *axis.Registry, typeValues *typevalue.Cache, lit factflow.ObjectLiteral, resolve func(factflow.ValueSource) (product.Value, bool)) (typ.Type, bool) {
+	return ObjectLiteralTypeViewCached(reg, typeValues, lit.View(), resolve)
+}
+
+func ObjectLiteralTypeViewCached(reg *axis.Registry, typeValues *typevalue.Cache, lit factflow.ObjectLiteralView, resolve func(factflow.ValueSource) (product.Value, bool)) (typ.Type, bool) {
 	builder := typetable.NewConstructorBuilder()
 	var expectedType typ.Type
 	if expectedValue, ok := lit.Expected(); ok {
 		expectedType, _ = typevalue.TypeOf(reg, expectedValue)
 	}
 	expected, hasExpected := luatypeprojection.ExpectedObjectLiteralRecord(expectedType, func(name string) (typ.Type, bool) {
-		return objectLiteralDotFieldType(reg, typeValues, lit, resolve, name)
+		return objectLiteralDotFieldTypeView(reg, typeValues, lit, resolve, name)
 	})
 	seen := false
 	seenUntrustedTop := false
-	for _, entry := range lit.Entries() {
-		segs := entry.Suffix().Segments
-		path, ok := luatypeprojection.ConstructorPathFromSegments(segs)
+	valid := true
+	lit.ForEachEntry(func(entry factflow.ObjectEntryView) bool {
+		path, ok := constructorPathFromEntry(entry)
 		if !ok {
-			continue
+			return true
 		}
 		value, ok := resolve(entry.Source())
 		if !ok {
 			if hasExpected {
-				if filled, ok := luatypeprojection.ExpectedRecordField(expected, segs); ok {
+				if filled, ok := expectedRecordEntryField(expected, entry); ok {
 					if !builder.Add(path, filled) {
-						return nil, false
+						valid = false
+						return false
 					}
 					seen = true
 				}
 			}
-			continue
+			return true
 		}
 		t, ok := ObjectLiteralEntryType(reg, typeValues, value)
 		if !ok {
 			if ObjectLiteralEntryHasUntrustedTopOrigin(reg, value) {
 				seenUntrustedTop = true
-				continue
+				return true
 			}
 			if hasExpected {
-				if filled, ok := luatypeprojection.ExpectedRecordField(expected, segs); ok {
+				if filled, ok := expectedRecordEntryField(expected, entry); ok {
 					if !builder.Add(path, filled) {
-						return nil, false
+						valid = false
+						return false
 					}
 					seen = true
 				}
 			}
-			continue
+			return true
 		}
 		if hasExpected {
-			if adopted, ok := luatypeprojection.AdoptExpectedFieldType(expected, segs, t); ok {
+			if adopted, ok := adoptExpectedEntryFieldType(expected, entry, t); ok {
 				if !builder.AddSealed(path, adopted) {
-					return nil, false
+					valid = false
+					return false
 				}
 				seen = true
-				continue
+				return true
 			}
 		}
 		if !builder.Add(path, t) {
-			return nil, false
+			valid = false
+			return false
 		}
 		seen = true
+		return true
+	})
+	if !valid {
+		return nil, false
 	}
 	if !seen {
 		if seenUntrustedTop {
@@ -88,6 +100,32 @@ func ObjectLiteralTypeCached(reg *axis.Registry, typeValues *typevalue.Cache, li
 	return builder.Build()
 }
 
+func constructorPathFromEntry(entry factflow.ObjectEntryView) ([]typetable.ConstructorKey, bool) {
+	return luatypeprojection.ConstructorPathFromSegmentReader(entry.SuffixSegmentCount(), entry.SuffixSegmentAt)
+}
+
+func expectedRecordEntryField(rec *typ.Record, entry factflow.ObjectEntryView) (typ.Type, bool) {
+	if entry.SuffixSegmentCount() != 1 {
+		return nil, false
+	}
+	seg, ok := entry.SuffixSegmentAt(0)
+	if !ok {
+		return nil, false
+	}
+	return luatypeprojection.ExpectedRecordSegment(rec, seg)
+}
+
+func adoptExpectedEntryFieldType(rec *typ.Record, entry factflow.ObjectEntryView, inferred typ.Type) (typ.Type, bool) {
+	if entry.SuffixSegmentCount() != 1 {
+		return nil, false
+	}
+	seg, ok := entry.SuffixSegmentAt(0)
+	if !ok {
+		return nil, false
+	}
+	return luatypeprojection.AdoptExpectedSegmentType(rec, seg, inferred)
+}
+
 func objectLiteralDotFieldType(
 	reg *axis.Registry,
 	typeValues *typevalue.Cache,
@@ -95,22 +133,37 @@ func objectLiteralDotFieldType(
 	resolve func(factflow.ValueSource) (product.Value, bool),
 	name string,
 ) (typ.Type, bool) {
-	for _, entry := range lit.Entries() {
-		segs := entry.Suffix().Segments
-		if len(segs) != 1 {
-			continue
+	return objectLiteralDotFieldTypeView(reg, typeValues, lit.View(), resolve, name)
+}
+
+func objectLiteralDotFieldTypeView(
+	reg *axis.Registry,
+	typeValues *typevalue.Cache,
+	lit factflow.ObjectLiteralView,
+	resolve func(factflow.ValueSource) (product.Value, bool),
+	name string,
+) (typ.Type, bool) {
+	var out typ.Type
+	found := false
+	lit.ForEachEntry(func(entry factflow.ObjectEntryView) bool {
+		if entry.SuffixSegmentCount() != 1 {
+			return true
 		}
-		seg := segs[0]
+		seg, ok := entry.SuffixSegmentAt(0)
+		if !ok {
+			return true
+		}
 		if seg.Kind != segment.SegmentField || seg.Name != name {
-			continue
+			return true
 		}
 		value, ok := resolve(entry.Source())
 		if !ok {
-			return nil, false
+			return false
 		}
-		return ObjectLiteralEntryType(reg, typeValues, value)
-	}
-	return nil, false
+		out, found = ObjectLiteralEntryType(reg, typeValues, value)
+		return false
+	})
+	return out, found
 }
 
 func ObjectLiteralEntryType(reg *axis.Registry, typeValues *typevalue.Cache, value product.Value) (typ.Type, bool) {

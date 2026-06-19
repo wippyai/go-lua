@@ -5,13 +5,98 @@
       {
         "file": "main.lua",
         "line": 11,
+        "column": 27,
         "severity": "error",
         "code": "type.assignment",
-        "message_contains": ["cannot assign", "string"],
+        "message_contains": [
+          "cannot assign box.value",
+          "may be nil"
+        ],
         "min_evidence": 2,
-        "evidence_contains": ["source expression", "after is annotated"],
+        "evidence_contains": [
+          "box.value can be string or nil here",
+          "after is declared as string",
+          "no guard on this path proves box.value is non-nil"
+        ],
+        "evidence": [
+          {
+            "file": "main.lua",
+            "line": 11,
+            "column": 27,
+            "kind": "abstract fact",
+            "trust": "proven",
+            "contains": [
+              "box.value can be string or nil here"
+            ]
+          },
+          {
+            "file": "main.lua",
+            "line": 11,
+            "column": 18,
+            "kind": "user assertion",
+            "trust": "claimed",
+            "contains": [
+              "after is declared as string"
+            ]
+          },
+          {
+            "file": "main.lua",
+            "line": 11,
+            "column": 27,
+            "kind": "missing proof",
+            "trust": "unknown",
+            "contains": [
+              "no guard on this path proves box.value is non-nil"
+            ]
+          }
+        ],
+        "render_contains": [
+          "error[type.assignment]: cannot assign box.value because it may be nil",
+          "local after: string = box.value -- expect-error",
+          "missing proof: no guard on this path proves box.value is non-nil"
+        ],
+        "render_ordered_contains": [
+          "error[type.assignment]: cannot assign box.value because it may be nil",
+          "--> main.lua:11:27",
+          "local after: string = box.value -- expect-error",
+          "because:",
+          "1. proven: box.value can be string or nil here",
+          "2. claimed: after is declared as string",
+          "3. missing proof: no guard on this path proves box.value is non-nil",
+          "help:"
+        ],
+        "render_not_contains": [
+          "^~",
+          "want string"
+        ],
+        "help_contains": [
+          "Guard `box.value` with a nil check",
+          "provide a default value",
+          "accept nil"
+        ],
         "min_labels": 2,
-        "label_contains": ["assigned value", "declared type"]
+        "label_contains": [
+          "assigned value",
+          "declared type"
+        ],
+        "labels": [
+          {
+            "file": "main.lua",
+            "line": 11,
+            "column": 27,
+            "contains": [
+              "assigned value"
+            ]
+          },
+          {
+            "file": "main.lua",
+            "line": 11,
+            "column": 18,
+            "contains": [
+              "declared type"
+            ]
+          }
+        ]
       }
     ]
   }

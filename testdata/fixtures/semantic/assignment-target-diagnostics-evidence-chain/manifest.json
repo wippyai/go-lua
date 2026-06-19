@@ -1,0 +1,187 @@
+{
+  "description": "Assignment target diagnostics explain optional-write and missing-required-field failures with concise evidence and help.",
+  "check": {
+    "diagnostics": [
+      {
+        "file": "main.lua",
+        "line": 4,
+        "severity": "error",
+        "code": "type.assignment.optional_target",
+        "message_contains": [
+          "cannot assign through optional bag without nil check"
+        ],
+        "min_evidence": 2,
+        "evidence_contains": [
+          "bag can be",
+          "writing bag.name requires its container to be non-nil"
+        ],
+        "evidence": [
+          {
+            "file": "main.lua",
+            "line": 4,
+            "column": 5,
+            "kind": "abstract fact",
+            "trust": "proven",
+            "contains": [
+              "bag can be"
+            ]
+          },
+          {
+            "file": "main.lua",
+            "line": 4,
+            "column": 5,
+            "kind": "abstract fact",
+            "trust": "proven",
+            "contains": [
+              "writing bag.name requires its container to be non-nil"
+            ]
+          }
+        ],
+        "render_contains": [
+          "error[type.assignment.optional_target]: cannot assign through optional bag without nil check",
+          "bag.name = \"ok\"",
+          "because:",
+          "Guard `bag` with a nil check"
+        ],
+        "render_ordered_contains": [
+          "error[type.assignment.optional_target]: cannot assign through optional bag without nil check",
+          "--> main.lua:4:5",
+          "bag.name = \"ok\"",
+          "because:",
+          "proven: bag can be",
+          "proven: writing bag.name requires its container to be non-nil",
+          "help: Guard `bag` with a nil check"
+        ],
+        "render_not_contains": [
+          "^~"        ],
+        "help_contains": [
+          "Guard `bag` with a nil check",
+          "non-optional container"
+        ],
+        "min_labels": 2,
+        "label_contains": [
+          "possibly nil container",
+          "assignment target"
+        ],
+        "labels": [
+          {
+            "file": "main.lua",
+            "line": 4,
+            "column": 5,
+            "contains": [
+              "possibly nil container"
+            ]
+          },
+          {
+            "file": "main.lua",
+            "line": 4,
+            "column": 5,
+            "contains": [
+              "assignment target"
+            ]
+          }
+        ]
+      },
+      {
+        "file": "main.lua",
+        "line": 8,
+        "severity": "error",
+        "code": "type.assignment",
+        "message_contains": [
+          "object literal is missing required field",
+          "y"
+        ],
+        "min_evidence": 3,
+        "evidence_contains": [
+          "object literal has type {x: 10}",
+          "required field p.y has type number, but the object literal does not provide it",
+          "p is declared as Point"
+        ],
+        "evidence": [
+          {
+            "file": "main.lua",
+            "line": 8,
+            "column": 18,
+            "kind": "abstract fact",
+            "trust": "proven",
+            "contains": [
+              "object literal has type {x: 10}"
+            ]
+          },
+          {
+            "file": "main.lua",
+            "line": 8,
+            "column": 10,
+            "kind": "user assertion",
+            "trust": "claimed",
+            "contains": [
+              "p is declared as Point"
+            ]
+          },
+          {
+            "file": "main.lua",
+            "line": 8,
+            "column": 18,
+            "kind": "abstract fact",
+            "trust": "proven",
+            "contains": [
+              "required field p.y has type number, but the object literal does not provide it"
+            ]
+          }
+        ],
+        "render_contains": [
+          "error[type.assignment]: object literal is missing required field \"y\"",
+          "local p: Point = {x = 10}",
+          "because:",
+          "object literal has type {x: 10}",
+          "required field p.y has type number, but the object literal does not provide it",
+          "Add field `y`"
+        ],
+        "render_ordered_contains": [
+          "error[type.assignment]: object literal is missing required field \"y\"",
+          "--> main.lua:8:18",
+          "local p: Point = {x = 10}",
+          "because:",
+          "proven: object literal has type {x: 10}",
+          "claimed: p is declared as Point",
+          "proven: required field p.y has type number, but the object literal does not provide it",
+          "help: Add field `y`"
+        ],
+        "render_not_contains": [
+          "^~",
+          "object literal does not provide field \"y\""
+        ],
+        "help_contains": [
+          "Add field `y`",
+          "make it optional"
+        ],
+        "min_labels": 2,
+        "label_contains": [
+          "object literal",
+          "declared type"
+        ],
+        "labels": [
+          {
+            "file": "main.lua",
+            "line": 8,
+            "column": 18,
+            "contains": [
+              "object literal"
+            ]
+          },
+          {
+            "file": "main.lua",
+            "line": 8,
+            "column": 10,
+            "contains": [
+              "declared type"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "run": {
+    "skip": "diagnostic-only fixture"
+  }
+}

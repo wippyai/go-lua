@@ -1,10 +1,8 @@
 package diagnostics
 
 import (
-	"fmt"
-
 	"github.com/wippyai/go-lua/analysis/check/body"
-	"github.com/wippyai/go-lua/analysis/check/diagnostics/internal/readmodel"
+	"github.com/wippyai/go-lua/analysis/check/internal/readmodel"
 	"github.com/wippyai/go-lua/analysis/diagnostic"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/type/access"
@@ -13,7 +11,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 )
 
-// memberRead reports dot-field reads of a field that is provably absent on a
+// memberRead reports static field reads of a field that is provably absent on a
 // closed record receiver (or a union all of whose members are closed records).
 // It mirrors memberCall's missing-member diagnostic for plain reads.
 type memberRead producerContext
@@ -30,6 +28,9 @@ func (p memberRead) Produce(result *body.Result) []diagnostic.Diagnostic {
 	var out []diagnostic.Diagnostic
 	seen := make(map[*ast.AttrGetExpr]struct{})
 	for _, point := range graph.RPO() {
+		if !guardEnvReachableAt(envs, point) {
+			continue
+		}
 		typers := memberReadTypers{
 			narrowed: newStructuralFlowExpressionTyper(result, p.resolver, point, envs[point]),
 			base:     newStructuralFlowExpressionTyper(result, p.resolver, point, guardEnv{}),
@@ -74,7 +75,6 @@ func (p memberRead) walkDepth(expr ast.Expr, typers memberReadTypers, seen map[*
 		p.walkDepth(e.Object, typers, seen, out, depth+1)
 		if e.KeySyntax == ast.AttrKeyIndex {
 			p.walkDepth(e.Key, typers, seen, out, depth+1)
-			return
 		}
 		if _, done := seen[e]; done {
 			return
@@ -205,11 +205,8 @@ func (t memberReadTypers) fullyNarrowedType(obj ast.Expr) (typ.Type, bool) {
 }
 
 func (p memberRead) read(expr *ast.AttrGetExpr, typers memberReadTypers) (diagnostic.Diagnostic, bool) {
-	if expr == nil || expr.KeySyntax != ast.AttrKeyDot {
-		return diagnostic.Diagnostic{}, false
-	}
-	name := ast.KeyName(expr.Key)
-	if name == "" {
+	name, ok := staticMemberReadName(expr)
+	if !ok {
 		return diagnostic.Diagnostic{}, false
 	}
 	if fully, ok := typers.fullyNarrowedType(expr.Object); ok && unionArmRejectsFieldRead(fully, name) {
@@ -239,7 +236,26 @@ func (p memberRead) read(expr *ast.AttrGetExpr, typers memberReadTypers) (diagno
 	return missingMemberReadDiagnostic(expr, receiver, name), true
 }
 
-// unionArmRejectsFieldRead reports whether a dot-field read of name on t is a
+func staticMemberReadName(expr *ast.AttrGetExpr) (string, bool) {
+	if expr == nil {
+		return "", false
+	}
+	switch expr.KeySyntax {
+	case ast.AttrKeyDot:
+		name := ast.KeyName(expr.Key)
+		return name, name != ""
+	case ast.AttrKeyIndex:
+		key, ok := expr.Key.(*ast.StringExpr)
+		if !ok || key.Value == "" {
+			return "", false
+		}
+		return key.Value, true
+	default:
+		return "", false
+	}
+}
+
+// unionArmRejectsFieldRead reports whether a static field read of name on t is a
 // sound type error because t is a multi-arm union where at least one arm carries
 // the field while another arm is a non-table value (string, number, boolean) that
 // neither carries it nor yields nil on a missing read. Indexing that scalar arm is
@@ -364,31 +380,21 @@ func closedRecordWithoutField(r *typ.Record, name string) bool {
 
 func missingMemberReadDiagnostic(expr *ast.AttrGetExpr, receiver typ.Type, name string) diagnostic.Diagnostic {
 	span := ast.SpanOf(expr)
-	return diagnostic.Diagnostic{
-		Position: diagnostic.Position{
-			Line:      span.StartLine,
-			Column:    span.StartCol,
-			EndLine:   span.EndLine,
-			EndColumn: span.EndCol,
-		},
+	readPath := exprEvidenceNameOK(expr)
+	return diagnostic.New(diagnostic.DiagnosticSpec{
 		Span:     span,
 		Code:     CodeMissingMember,
 		Severity: diagnostic.SeverityError,
-		Message:  fmt.Sprintf("%s has no member %q", formatType(receiver), name),
+		Message:  missingMemberMessage(receiver, name),
+		Labels:   []diagnostic.Label{sourceLabel(span, labelMemberRead)},
 		Explanation: diagnostic.NewExplanation(
 			diagnostic.Evidence{
 				Kind:    diagnostic.EvidenceAbstractFact,
 				Trust:   diagnostic.TrustProven,
 				Span:    span,
-				Message: fmt.Sprintf("read accesses field %q", name),
-			},
-			diagnostic.Evidence{
-				Kind:    diagnostic.EvidenceAbstractFact,
-				Trust:   diagnostic.TrustProven,
-				Span:    span,
-				Message: fmt.Sprintf("receiver type at read is %s", formatType(receiver)),
+				Message: memberReadReceiverEvidence(readPath, name, receiver),
 			},
 		),
-		Labels: []diagnostic.Label{{Span: span, Message: "missing member read"}},
-	}
+		Help: missingMemberHelp(name),
+	})
 }

@@ -178,6 +178,7 @@ func checkSource(src, filename string, opts ...Option) Result {
 		if errors.Is(err, body.ErrUnsupportedCFG) {
 			structural = cfg.diagnosticPolicy.Apply(structural)
 			setDefaultFile(structural, filename)
+			diagnostic.Sort(structural)
 			return Result{Diagnostics: structural}
 		}
 		diags := append([]diagnostic.Diagnostic{{
@@ -188,6 +189,7 @@ func checkSource(src, filename string, opts ...Option) Result {
 		}}, structural...)
 		diags = cfg.diagnosticPolicy.Apply(diags)
 		setDefaultFile(diags, filename)
+		diagnostic.Sort(diags)
 		return Result{Diagnostics: diags}
 	}
 	structural = cfg.diagnosticPolicy.Apply(structural)
@@ -195,6 +197,7 @@ func checkSource(src, filename string, opts ...Option) Result {
 		Policy: cfg.diagnosticPolicy,
 	})...)
 	setDefaultFile(diags, filename)
+	diagnostic.Sort(diags)
 	return Result{Diagnostics: diags, checked: &checked, placement: placementplan.FromProgramResult(checked)}
 }
 
@@ -251,7 +254,7 @@ func (c config) orderedManifests() []*manifest.Manifest {
 	}
 	sort.Strings(names)
 	for _, name := range names {
-		if mod := c.modules[name]; mod != nil {
+		if mod := c.modules[name]; mod != nil && mod.Manifest != nil {
 			manifests = append(manifests, mod.Manifest)
 		}
 	}

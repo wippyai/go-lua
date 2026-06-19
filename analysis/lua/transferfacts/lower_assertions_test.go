@@ -10,6 +10,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/engine/callpayload"
 	factapply "github.com/wippyai/go-lua/analysis/engine/factapply"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/sourcevalue"
@@ -699,12 +700,12 @@ func TestLowerExpandedClaimWrappedCallKeepsPerResultSlotRefinements(t *testing.T
 				Sources: sourcevalue.NewSourceValues(sourcevalue.SourceValuesConfig{
 					Registry: reg,
 				}),
-				CallOutcome: func(ctx transfer.NodeContext, site factflow.CallSiteView, in state.State, read func(cfg.Point) state.State) factapply.CallOutcome {
+				CallOutcome: func(ctx transfer.NodeContext, site factflow.CallSiteView, in state.State, read func(cfg.Point) state.State) callpayload.CallOutcome {
 					if ctx.Point != points[0] {
 						t.Fatalf("call result requested at point %d, want %d", ctx.Point, points[0])
 					}
-					return factapply.CallOutcome{
-						Results: []factapply.CallResult{
+					return callpayload.CallOutcome{
+						Results: []callpayload.CallResult{
 							{Index: 0, Value: firstValue},
 							{Index: 1, Value: secondValue},
 						},

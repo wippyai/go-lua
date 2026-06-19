@@ -5,24 +5,222 @@
       {
         "file": "main.lua",
         "line": 11,
+        "column": 20,
         "severity": "error",
         "code": "type.assignment",
-        "message_contains": ["cannot assign", "id: string", "retries: number"],
+        "message_contains": [
+          "cannot assign raw",
+          "any",
+          "id: string",
+          "retries: number"
+        ],
         "min_evidence": 4,
-        "evidence_contains": ["source expression", "user is annotated", "explicit any/unknown boundary", "no boundary proof"],
+        "evidence_contains": [
+          "raw has type any",
+          "user is declared as",
+          "raw comes from any/unknown",
+          "no proof on this path shows raw satisfies the declared type"
+        ],
+        "render_contains": [
+          "error[type.assignment]: cannot assign raw because it is any, not {id: string, retries: number}",
+          "local user: User = raw -- expect-error",
+          "because:"
+        ],
+        "evidence": [
+          {
+            "file": "main.lua",
+            "line": 11,
+            "column": 20,
+            "kind": "abstract fact",
+            "trust": "proven",
+            "contains": [
+              "raw has type any"
+            ]
+          },
+          {
+            "file": "main.lua",
+            "line": 11,
+            "column": 13,
+            "kind": "user assertion",
+            "trust": "claimed",
+            "contains": [
+              "user is declared as"
+            ]
+          },
+          {
+            "file": "main.lua",
+            "line": 11,
+            "column": 20,
+            "kind": "unvalidated value",
+            "trust": "unknown",
+            "reason": "explicit boundary validation",
+            "contains": [
+              "raw comes from any/unknown"
+            ]
+          },
+          {
+            "file": "main.lua",
+            "line": 11,
+            "column": 20,
+            "kind": "missing proof",
+            "trust": "unknown",
+            "reason": "boundary validation missing",
+            "contains": [
+              "no proof on this path shows raw satisfies the declared type"
+            ]
+          }
+        ],
+        "render_ordered_contains": [
+          "error[type.assignment]: cannot assign raw because it is any, not {id: string, retries: number}",
+          "--> main.lua:11:20",
+          "local user: User = raw -- expect-error",
+          "because:",
+          "1. proven: raw has type any",
+          "2. claimed: user is declared as",
+          "unvalidated value: raw comes from any/unknown",
+          "missing proof: no proof on this path shows raw satisfies the declared type",
+          "help:"
+        ],
+        "render_not_contains": [
+          "^~",
+          "want {id: string",
+          "want string"
+        ],
+        "labels": [
+          {
+            "file": "main.lua",
+            "line": 11,
+            "column": 20,
+            "contains": [
+              "assigned value"
+            ]
+          },
+          {
+            "file": "main.lua",
+            "line": 11,
+            "column": 13,
+            "contains": [
+              "declared type"
+            ]
+          }
+        ],
         "min_labels": 2,
-        "label_contains": ["assigned value", "declared type"]
+        "label_contains": [
+          "assigned value",
+          "declared type"
+        ],
+        "help_contains": [
+          "change the target type"
+        ]
       },
       {
         "file": "main.lua",
         "line": 14,
+        "column": 24,
         "severity": "error",
         "code": "type.assignment",
-        "message_contains": ["cannot assign", "string"],
+        "message_contains": [
+          "cannot assign raw.id",
+          "any",
+          "not string"
+        ],
         "min_evidence": 4,
-        "evidence_contains": ["source expression", "id is annotated", "explicit any/unknown boundary", "no boundary proof"],
+        "evidence_contains": [
+          "raw.id has type any",
+          "id is declared as string",
+          "raw.id comes from any/unknown",
+          "no proof on this path shows raw.id satisfies the declared type"
+        ],
+        "render_contains": [
+          "error[type.assignment]: cannot assign raw.id because it is any, not string",
+          "local id: string = raw.id -- expect-error",
+          "because:"
+        ],
+        "evidence": [
+          {
+            "file": "main.lua",
+            "line": 14,
+            "column": 24,
+            "kind": "abstract fact",
+            "trust": "proven",
+            "contains": [
+              "raw.id has type any"
+            ]
+          },
+          {
+            "file": "main.lua",
+            "line": 14,
+            "column": 15,
+            "kind": "user assertion",
+            "trust": "claimed",
+            "contains": [
+              "id is declared as string"
+            ]
+          },
+          {
+            "file": "main.lua",
+            "line": 14,
+            "column": 24,
+            "kind": "unvalidated value",
+            "trust": "unknown",
+            "reason": "explicit boundary validation",
+            "contains": [
+              "raw.id comes from any/unknown"
+            ]
+          },
+          {
+            "file": "main.lua",
+            "line": 14,
+            "column": 24,
+            "kind": "missing proof",
+            "trust": "unknown",
+            "reason": "boundary validation missing",
+            "contains": [
+              "no proof on this path shows raw.id satisfies the declared type"
+            ]
+          }
+        ],
+        "render_ordered_contains": [
+          "error[type.assignment]: cannot assign raw.id because it is any, not string",
+          "--> main.lua:14:24",
+          "local id: string = raw.id -- expect-error",
+          "because:",
+          "1. proven: raw.id has type any",
+          "2. claimed: id is declared as string",
+          "unvalidated value: raw.id comes from any/unknown",
+          "missing proof: no proof on this path shows raw.id satisfies the declared type",
+          "help:"
+        ],
+        "render_not_contains": [
+          "^~",
+          "want string"
+        ],
+        "labels": [
+          {
+            "file": "main.lua",
+            "line": 14,
+            "column": 24,
+            "contains": [
+              "assigned value"
+            ]
+          },
+          {
+            "file": "main.lua",
+            "line": 14,
+            "column": 15,
+            "contains": [
+              "declared type"
+            ]
+          }
+        ],
         "min_labels": 2,
-        "label_contains": ["assigned value", "declared type"]
+        "label_contains": [
+          "assigned value",
+          "declared type"
+        ],
+        "help_contains": [
+          "change the target type"
+        ]
       }
     ]
   }

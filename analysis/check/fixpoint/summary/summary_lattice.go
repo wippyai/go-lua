@@ -9,9 +9,16 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
-// Normalize returns s with trailing bottom slots removed.
+// Normalize returns s with trailing bottom slots removed. It defensively copies
+// mutable lanes before canonicalizing, so callers can continue using s.
 func Normalize(reg *axis.Registry, s Summary) Summary {
-	out := s.Clone()
+	return NormalizeOwned(reg, s.Clone())
+}
+
+// NormalizeOwned returns s with trailing bottom slots removed and may reuse or
+// mutate mutable lanes in s. Callers must only use this when they own s and all
+// of its map/slice lanes.
+func NormalizeOwned(reg *axis.Registry, out Summary) Summary {
 	bottom := product.Bottom(reg)
 	for len(out.Returns) > 0 && product.Equal(reg, out.Returns[len(out.Returns)-1], bottom) {
 		out.Returns = out.Returns[:len(out.Returns)-1]
@@ -34,7 +41,7 @@ func Normalize(reg *axis.Registry, s Summary) Summary {
 	}
 	out.NormalReturnParamEqualities = normalizeParamEqualities(out.NormalReturnParamEqualities)
 	out.NormalReturnFacts = normalizeNormalReturnFacts(reg, out.NormalReturnFacts)
-	out.HeapTableObjects = normalizeHeapTableObjects(reg, out.HeapTableObjects)
+	out.HeapTableObjects = normalizeOwnedHeapTableObjects(reg, out.HeapTableObjects)
 	out.ReturnConditionParamRefinements = normalizeReturnConditionParamRefinements(
 		reg,
 		out.ReturnConditionParamRefinements,
@@ -213,7 +220,7 @@ func Join(reg *axis.Registry, a, b Summary) Summary {
 		b.ReturnConditionParamRefinements,
 	)
 	out.ReturnPresenceRelations = returnPresenceRelationLane.Join(a.ReturnPresenceRelations, b.ReturnPresenceRelations)
-	return Normalize(reg, out)
+	return NormalizeOwned(reg, out)
 }
 
 func joinReturnValue(reg *axis.Registry, left, right product.Value) product.Value {
@@ -331,7 +338,7 @@ func Widen(reg *axis.Registry, prev, next Summary) Summary {
 		next.ReturnConditionParamRefinements,
 	)
 	out.ReturnPresenceRelations = returnPresenceRelationLane.Join(prev.ReturnPresenceRelations, next.ReturnPresenceRelations)
-	return Normalize(reg, out)
+	return NormalizeOwned(reg, out)
 }
 
 func summaryBottom(s Summary) bool {

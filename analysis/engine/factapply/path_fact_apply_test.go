@@ -8,7 +8,9 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine/callboundary"
+	"github.com/wippyai/go-lua/analysis/engine/callpayload"
 	"github.com/wippyai/go-lua/analysis/engine/dynamicindex"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/state"
@@ -21,6 +23,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
+	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
 func TestFactsNodeTransferKeepsStaticMemberWritesDistinctFromPathAssignments(t *testing.T) {
@@ -81,6 +84,44 @@ func TestFactsNodeTransferKeepsStaticMemberWritesDistinctFromPathAssignments(t *
 	}
 }
 
+func TestFactsNodeTransferKeepsSamePointStaticMemberWriteWithPathAssignment(t *testing.T) {
+	reg := standard.Registry()
+	point := cfg.Point(4011)
+	target := symbol.ID(4011)
+	targetPath := pathdom.NewPath(target, "provider").IndexInt(1)
+	targetKey := pathdom.PathKey("sym4011@1[1]")
+	source := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: factflow.ExprRef(4011), HasExpr: true}
+	value := presentValue(reg)
+	sources := &recordingSourceValues{
+		values: map[factflow.ValueSource]product.Value{source: value},
+	}
+	visibilityBuilder := visibility.NewBuilder()
+	visibilityBuilder.Define(point, target, "provider")
+	resolver := visibility.NewResolver(visibilityBuilder.Build())
+
+	got := NewFactsNodeTransfer(FactsNodeTransferConfig{
+		Facts: factflow.NewFacts(factflow.FactsInput{
+			PathAssignments: map[cfg.Point]factflow.PathAssignment{
+				point: factflow.NewPathAssignment(targetPath, source),
+			},
+			PathStaticMemberWrites: map[cfg.Point]factflow.PathStaticMemberWrite{
+				point: factflow.NewPathStaticMemberWrite(targetPath, source),
+			},
+		}),
+		Sources:    sources,
+		Visibility: resolver,
+	})(transfer.NodeContext{
+		Registry: reg,
+		Point:    point,
+	}, state.State{})
+
+	assertPathValue(t, reg, got, targetKey, value)
+	gotProof, ok := got.ReadPathStaticMember(targetKey)
+	if !ok || !product.Equal(reg, gotProof, value) {
+		t.Fatalf("same-point static-member proof = %s/%v, want %s/true", formatValue(reg, gotProof), ok, formatValue(reg, value))
+	}
+}
+
 func TestFactsNodeTransferAppliesDynamicIndexWriteKeyValueAdmission(t *testing.T) {
 	reg := standard.Registry()
 	point := cfg.Point(402)
@@ -119,7 +160,7 @@ func TestFactsNodeTransferAppliesDynamicIndexWriteKeyValueAdmission(t *testing.T
 		Point:    point,
 	}, state.State{})
 
-	gotFact := got.ReadDynamicIndexFact(reg, dynamicindex.Key{Table: tableKey, Site: dynamicIndexSite(point)})
+	gotFact := got.ReadDynamicIndexFact(reg, dynamicindex.Key{Table: tableKey, Site: dynamicindex.SiteForPoint(int(point))})
 	if !presence.Equal(gotFact.KeyPresence, presence.Present()) ||
 		!product.Equal(reg, gotFact.KeyValue, keyValue) ||
 		!product.Equal(reg, gotFact.Value, writeValue) ||
@@ -173,7 +214,7 @@ func TestFactsNodeTransferDynamicIndexWritePublishesFirstHeapDynamicFact(t *test
 		WriteValue(reg, key.SymbolValue(table), tableValue).
 		WriteHeapTableObject(reg, tableID, heapidentity.NewTableObject(heapidentity.TableObjectConfig{Root: tableValue})))
 
-	dynamicKey := dynamicindex.Key{Table: tableKey, Site: dynamicIndexSite(point)}
+	dynamicKey := dynamicindex.Key{Table: tableKey, Site: dynamicindex.SiteForPoint(int(point))}
 	object := got.ReadHeapTableObject(reg, tableID)
 	heapFact, ok := object.DynamicIndexFact(dynamicKey)
 	if !ok {
@@ -200,6 +241,8 @@ func TestResolvePathValueReadsHeapDynamicFactAcrossPathKeyContexts(t *testing.T)
 	rootValue := product.Set(reg, presentValue(reg), identity.Key, identity.Singleton(rootID))
 	itemsValue := product.Set(reg, presentValue(reg), identity.Key, identity.Singleton(itemsID))
 	itemValue := product.Set(reg, presentValue(reg), identity.Key, identity.Singleton(itemID))
+	routeKeyType := typ.LiteralString("route-1")
+	routeKeyValue := typevalue.WithWitness(reg, typevalue.FromType(reg, routeKeyType), routeKeyType)
 	itemsKey, ok := heapidentity.StaticMemberSuffixKey(fieldSuffix("items").Segments)
 	if !ok {
 		t.Fatal("missing items suffix key")
@@ -222,7 +265,7 @@ func TestResolvePathValueReadsHeapDynamicFactAcrossPathKeyContexts(t *testing.T)
 			DynamicIndexFacts: map[dynamicindex.Key]dynamicindex.Fact{
 				oldDynamicKey: {
 					KeyPresence: presence.Present(),
-					KeyValue:    presentValue(reg),
+					KeyValue:    routeKeyValue,
 					Value:       itemValue,
 					Admission:   dynamicindex.AdmissionAdmitted,
 				},
@@ -235,6 +278,33 @@ func TestResolvePathValueReadsHeapDynamicFactAcrossPathKeyContexts(t *testing.T)
 	}
 	if !product.Equal(reg, got.value, itemValue) {
 		t.Fatalf("resolved value = %s, want item identity", formatValue(reg, got.value))
+	}
+}
+
+func TestDynamicIndexStaticProjectionRequiresExactKey(t *testing.T) {
+	reg := standard.Registry()
+	exactType := typ.LiteralString("value")
+	exact := dynamicindex.Fact{
+		KeyPresence: presence.Present(),
+		KeyValue:    typevalue.WithWitness(reg, typevalue.FromType(reg, exactType), exactType),
+		Value:       presentValue(reg),
+		Admission:   dynamicindex.AdmissionAdmitted,
+	}
+	broad := exact
+	broad.KeyValue = typevalue.WithWitness(reg, typevalue.FromType(reg, typ.String), typ.String)
+	wrongType := typ.LiteralString("other")
+	wrong := exact
+	wrong.KeyValue = typevalue.WithWitness(reg, typevalue.FromType(reg, wrongType), wrongType)
+
+	seg := fieldSuffix("value").Segments[0]
+	if !dynamicIndexFactDefinitelyMatchesSegment(reg, exact, seg) {
+		t.Fatalf("exact literal key did not prove static segment")
+	}
+	if dynamicIndexFactDefinitelyMatchesSegment(reg, broad, seg) {
+		t.Fatalf("broad string key proved static segment")
+	}
+	if dynamicIndexFactDefinitelyMatchesSegment(reg, wrong, seg) {
+		t.Fatalf("wrong literal key proved static segment")
 	}
 }
 
@@ -452,8 +522,8 @@ func TestFactsNodeTransferCallOutcomeRebasesPathRefinement(t *testing.T) {
 				argExpr: argPath,
 			},
 		}),
-		CallOutcome: func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) CallOutcome {
-			return CallOutcome{
+		CallOutcome: func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) callpayload.CallOutcome {
+			return callpayload.CallOutcome{
 				NormalReturnFacts: callboundary.NormalReturnFacts{
 					PathRefinements: []callboundary.PathValueFact{
 						{Path: pathdom.NewPlaceholder(0).Field("field"), Value: refinement},
@@ -497,9 +567,9 @@ func TestFactsNodeTransferStatementCallOutcomeDoesNotWriteReturnSlots(t *testing
 				argExpr: argPath,
 			},
 		}),
-		CallOutcome: func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) CallOutcome {
-			return CallOutcome{
-				Results: []CallResult{{Index: 0, Value: returnValue}},
+		CallOutcome: func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) callpayload.CallOutcome {
+			return callpayload.CallOutcome{
+				Results: []callpayload.CallResult{{Index: 0, Value: returnValue}},
 				NormalReturnFacts: callboundary.NormalReturnFacts{
 					PathStaticMembers: []callboundary.PathStaticMemberFact{
 						{Path: pathdom.NewPlaceholder(0).Field("side"), Value: sideValue},
@@ -553,8 +623,8 @@ func TestFactsNodeTransferCallOutcomeBindsReceiverBeforeExplicitArgs(t *testing.
 				argExpr: argPath,
 			},
 		}),
-		CallOutcome: func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) CallOutcome {
-			return CallOutcome{
+		CallOutcome: func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) callpayload.CallOutcome {
+			return callpayload.CallOutcome{
 				NormalReturnFacts: callboundary.NormalReturnFacts{
 					PathStaticMembers: []callboundary.PathStaticMemberFact{
 						{Path: pathdom.NewPlaceholder(0).Field("self"), Value: receiverValue},
@@ -608,8 +678,8 @@ func TestFactsNodeTransferCallOutcomeRebasesBoundaryFacts(t *testing.T) {
 				secondExpr: secondPath,
 			},
 		}),
-		CallOutcome: func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) CallOutcome {
-			return CallOutcome{
+		CallOutcome: func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) callpayload.CallOutcome {
+			return callpayload.CallOutcome{
 				NormalReturnFacts: callboundary.NormalReturnFacts{
 					DynamicIndexFacts: []callboundary.DynamicIndexFact{
 						{

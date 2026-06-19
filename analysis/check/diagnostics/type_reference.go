@@ -1,7 +1,6 @@
 package diagnostics
 
 import (
-	"fmt"
 	"strings"
 
 	"github.com/wippyai/go-lua/analysis/check/body"
@@ -135,33 +134,22 @@ func unresolvedTypeRefs(
 
 func unresolvedTypeDiagnostic(node ast.PositionHolder, name string) diagnostic.Diagnostic {
 	span := ast.SpanOf(node)
-	return diagnostic.Diagnostic{
-		Position: diagnostic.Position{
-			Line:      span.StartLine,
-			Column:    span.StartCol,
-			EndLine:   span.EndLine,
-			EndColumn: span.EndCol,
-		},
+	return diagnostic.New(diagnostic.DiagnosticSpec{
 		Span:     span,
 		Code:     CodeUnresolvedTypeReference,
 		Severity: diagnostic.SeverityError,
-		Message:  fmt.Sprintf("unknown type %s", name),
+		Message:  unresolvedTypeMessage(name),
+		Labels:   []diagnostic.Label{sourceLabel(span, labelUnknownType)},
 		Explanation: diagnostic.NewExplanation(
 			diagnostic.Evidence{
-				Kind:    diagnostic.EvidenceUserAssertion,
-				Trust:   diagnostic.TrustClaimed,
+				Kind:    diagnostic.EvidenceAbstractFact,
+				Trust:   diagnostic.TrustProven,
 				Span:    span,
-				Message: fmt.Sprintf("type reference %s is not visible here", name),
-			},
-			diagnostic.Evidence{
-				Kind:    diagnostic.EvidenceMissingProof,
-				Trust:   diagnostic.TrustRefuted,
-				Span:    span,
-				Message: fmt.Sprintf("no type named %s is declared in this scope, a parent scope, or an imported module", name),
+				Message: unresolvedTypeEvidence(name),
 			},
 		),
-		Labels: []diagnostic.Label{{Span: span, Message: "unresolved type"}},
-	}
+		Help: unresolvedTypeHelp(),
+	})
 }
 
 func typeRefName(ref *ast.TypeRefExpr) string {

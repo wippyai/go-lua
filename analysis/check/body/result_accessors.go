@@ -129,6 +129,13 @@ func (r *Result) CallSite(point cfg.Point) (factflow.CallSite, bool) {
 	return r.facts.CallSite(point)
 }
 
+func (r *Result) DynamicIndexWrite(point cfg.Point) (factflow.DynamicIndexWrite, bool) {
+	if r == nil {
+		return factflow.DynamicIndexWrite{}, false
+	}
+	return r.facts.DynamicIndexWrite(point)
+}
+
 func (r *Result) ObjectLiteralExpr(expr factflow.ExprRef) (factflow.ObjectLiteral, bool) {
 	if r == nil {
 		return factflow.ObjectLiteral{}, false
@@ -197,6 +204,27 @@ func (r *Result) FunctionSymbol(fn *ast.FunctionExpr) (symbol.ID, bool) {
 		return 0, false
 	}
 	return r.bindings.FunctionSymbol(fn)
+}
+
+func (r *Result) FunctionBySymbol(id symbol.ID) (*ast.FunctionExpr, bool) {
+	if r == nil || r.bindings == nil || id == 0 {
+		return nil, false
+	}
+	return r.bindings.FunctionBySymbol(id)
+}
+
+func (r *Result) FunctionOrigin(fn *ast.FunctionExpr) (bind.FunctionOrigin, bool) {
+	if r == nil || r.bindings == nil || fn == nil {
+		return bind.FunctionOrigin{}, false
+	}
+	return r.bindings.FunctionOrigin(fn)
+}
+
+func (r *Result) FunctionParamSlots(fn *ast.FunctionExpr) []bind.ParamSlot {
+	if r == nil || r.bindings == nil || fn == nil {
+		return nil
+	}
+	return r.bindings.ParamSlots(fn)
 }
 
 func (r *Result) ExpressionFunction(expr factflow.ExprRef) (symbol.ID, bool) {

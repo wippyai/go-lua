@@ -3,12 +3,10 @@ package projectsummary
 import (
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/summary"
 	"github.com/wippyai/go-lua/analysis/domain/path"
-	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 )
 
 func projectReturnConditionParamRefinements(
-	reg *axis.Registry,
 	result ResultReader,
 ) []summary.ReturnConditionParamRefinement {
 	sourceReader, ok := result.(returnValueSourceReader)
@@ -37,8 +35,8 @@ func projectReturnConditionParamRefinements(
 			if !ok {
 				continue
 			}
-			out = appendReturnConditionParamRefinements(reg, out, returnIndex, true, condition.RefinementsForValue(true), params)
-			out = appendReturnConditionParamRefinements(reg, out, returnIndex, false, condition.RefinementsForValue(false), params)
+			out = appendReturnConditionParamRefinements(out, returnIndex, true, condition.RefinementsForValue(true), params)
+			out = appendReturnConditionParamRefinements(out, returnIndex, false, condition.RefinementsForValue(false), params)
 		}
 	}
 	return out
@@ -52,14 +50,12 @@ func returnConditionSource(source factflow.ValueSource) bool {
 }
 
 func appendReturnConditionParamRefinements(
-	reg *axis.Registry,
 	out []summary.ReturnConditionParamRefinement,
 	returnIndex int,
 	returnValue bool,
 	refinements []factflow.PostconditionRefinement,
 	params []path.Path,
 ) []summary.ReturnConditionParamRefinement {
-	_ = reg
 	for _, refinement := range refinements {
 		target, ok := paramPlaceholderPath(refinement.TargetPath(), params)
 		if !ok {
@@ -87,11 +83,7 @@ func paramPlaceholderPath(target path.Path, params []path.Path) (path.Path, bool
 		if param.Symbol == 0 || target.Symbol != param.Symbol {
 			continue
 		}
-		out := path.NewPlaceholder(i)
-		for _, seg := range target.Segments {
-			out = out.Append(seg)
-		}
-		return out, true
+		return path.NewPlaceholder(i).AppendSegments(target.Segments), true
 	}
 	return path.Path{}, false
 }

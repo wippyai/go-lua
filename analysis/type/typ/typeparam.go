@@ -54,22 +54,5 @@ func (t *TypeParam) String() string {
 }
 func (t *TypeParam) Hash() uint64 { return t.hash }
 func (t *TypeParam) Equals(other Type) bool {
-	if other.Kind() != kind.TypeParam {
-		return false
-	}
-
-	ot := other.(*TypeParam)
-	if t.Name != ot.Name {
-		return false
-	}
-
-	if (t.Constraint == nil) != (ot.Constraint == nil) {
-		return false
-	}
-
-	if t.Constraint != nil && !t.Constraint.Equals(ot.Constraint) {
-		return false
-	}
-
-	return true
+	return typeEquals(t, other)
 }

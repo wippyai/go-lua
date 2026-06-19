@@ -7,7 +7,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
-	factapply "github.com/wippyai/go-lua/analysis/engine/factapply"
+	"github.com/wippyai/go-lua/analysis/engine/callpayload"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
@@ -144,9 +144,9 @@ func markedValue(reg *axis.Registry, markKey axis.Key[markValue], mark markValue
 	return product.Set(reg, product.NewWithPresence(reg, product.ShapeTop, presence.Present()), markKey, mark)
 }
 
-func staticCallOutcome(value product.Value) factapply.CallOutcomeProvider {
-	return func(_ transfer.NodeContext, _ factflow.CallSiteView, _ state.State, _ func(cfg.Point) state.State) factapply.CallOutcome {
-		return factapply.CallOutcome{Results: []factapply.CallResult{{
+func staticCallOutcome(value product.Value) callpayload.CallOutcomeProvider {
+	return func(_ transfer.NodeContext, _ factflow.CallSiteView, _ state.State, _ func(cfg.Point) state.State) callpayload.CallOutcome {
+		return callpayload.CallOutcome{Results: []callpayload.CallResult{{
 			Index: 0,
 			Value: value,
 		}}}

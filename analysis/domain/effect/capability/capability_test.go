@@ -9,6 +9,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/effect/control"
 	"github.com/wippyai/go-lua/analysis/domain/effect/dispatch"
 	"github.com/wippyai/go-lua/analysis/domain/effect/iteration"
+	"github.com/wippyai/go-lua/analysis/domain/effect/lifecycle"
 	"github.com/wippyai/go-lua/analysis/domain/effect/mutation"
 	"github.com/wippyai/go-lua/analysis/domain/effect/ownership"
 	"github.com/wippyai/go-lua/analysis/domain/effect/postcondition"
@@ -52,6 +53,10 @@ func TestDescriptorsClassifyAuditedVocabularyExactlyOnce(t *testing.T) {
 		capability.MutationMutate:       capability.StatusPartial,
 		capability.MutationLengthChange: capability.StatusPartial,
 		capability.MutationTableMutator: capability.StatusPartial,
+
+		capability.LifecycleAcquire:    capability.StatusOperational,
+		capability.LifecycleTransition: capability.StatusOperational,
+		capability.LifecycleEscape:     capability.StatusOperational,
 
 		capability.ControlThrow: capability.StatusReservedHighRisk,
 		capability.ControlIO:    capability.StatusReservedHighRisk,
@@ -157,6 +162,10 @@ func TestAuditedConcreteSymbolsHaveOneDescriptor(t *testing.T) {
 		{mutation.Mutate{}, capability.MutationMutate},
 		{mutation.LengthChange{}, capability.MutationLengthChange},
 		{mutation.TableMutator{}, capability.MutationTableMutator},
+
+		{lifecycle.Acquire{}, capability.LifecycleAcquire},
+		{lifecycle.Transition{}, capability.LifecycleTransition},
+		{lifecycle.Escape{}, capability.LifecycleEscape},
 
 		{control.Throw{}, capability.ControlThrow},
 		{control.IO{}, capability.ControlIO},

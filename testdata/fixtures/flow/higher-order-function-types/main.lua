@@ -12,4 +12,4 @@ end)
 -- The mapper result is typed {U}: a typed sequence has unknown runtime length,
 -- so an arbitrary index read nums[1] is U? and assigning it to a non-optional
 -- number is soundly rejected (no length proof eliminates nil).
-local n: number = nums[1] -- expect-error: cannot assign number? to number
+local n: number = nums[1] -- expect-error: cannot assign nums[1] because it may be nil

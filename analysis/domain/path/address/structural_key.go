@@ -18,17 +18,13 @@ type StructuralKey struct {
 
 // StructuralKeyFromPathKey parses recognized structural path-key spellings.
 func StructuralKeyFromPathKey(pathKey pathdom.PathKey) (StructuralKey, bool) {
-	sym, version, suffix, ok := ParseResolverPath(pathKey)
+	n, version, parsed, ok := parseResolverRootSuffix(pathKey)
 	if ok && version > 0 {
-		segments, ok := segment.InternFormattedSegments(suffix)
-		if !ok {
-			return StructuralKey{}, false
-		}
 		return StructuralKey{
 			local:    true,
-			sym:      sym,
+			sym:      symbol.ID(n),
 			version:  version,
-			segments: cloneSegments(segments),
+			segments: parsed.segments,
 		}, true
 	}
 	stable, ok := StableFromKey(pathKey)
@@ -66,6 +62,28 @@ func (k StructuralKey) HasPrefix(prefix StructuralKey) bool {
 func (k StructuralKey) HasStrictPrefix(prefix StructuralKey) bool {
 	remainder, ok := k.RemainderAfterPrefix(prefix)
 	return ok && len(remainder) > 0
+}
+
+// PathKeyHasPrefix reports whether prefix is candidate or one of its structural
+// ancestors. Invalid or non-structural path-key spellings are not comparable.
+func PathKeyHasPrefix(candidate pathdom.PathKey, prefix pathdom.PathKey) bool {
+	parsed, ok := StructuralKeyFromPathKey(candidate)
+	if !ok {
+		return false
+	}
+	parsedPrefix, ok := StructuralKeyFromPathKey(prefix)
+	return ok && parsed.HasPrefix(parsedPrefix)
+}
+
+// PathKeyHasStrictPrefix reports whether prefix is a strict structural ancestor
+// of candidate. Exact matches return false.
+func PathKeyHasStrictPrefix(candidate pathdom.PathKey, prefix pathdom.PathKey) bool {
+	parsed, ok := StructuralKeyFromPathKey(candidate)
+	if !ok {
+		return false
+	}
+	parsedPrefix, ok := StructuralKeyFromPathKey(prefix)
+	return ok && parsed.HasStrictPrefix(parsedPrefix)
 }
 
 // RemainderAfterPrefix returns the member/index suffix below prefix.

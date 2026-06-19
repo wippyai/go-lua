@@ -698,6 +698,68 @@ func TestStructuralKeyStablePrefixRelationsUseSegmentBoundaries(t *testing.T) {
 	}
 }
 
+func TestPathKeyPrefixHelpersUseStructuralBoundaries(t *testing.T) {
+	tests := []struct {
+		name       string
+		candidate  pathdom.PathKey
+		prefix     pathdom.PathKey
+		wantPrefix bool
+		wantStrict bool
+	}{
+		{
+			name:       "versioned exact",
+			candidate:  pathdom.PathKey("sym40@3.field"),
+			prefix:     pathdom.PathKey("sym40@3.field"),
+			wantPrefix: true,
+		},
+		{
+			name:       "versioned descendant",
+			candidate:  pathdom.PathKey("sym40@3.field.deep"),
+			prefix:     pathdom.PathKey("sym40@3.field"),
+			wantPrefix: true,
+			wantStrict: true,
+		},
+		{
+			name:      "versioned segment boundary",
+			candidate: pathdom.PathKey("sym40@3.fieldish"),
+			prefix:    pathdom.PathKey("sym40@3.field"),
+		},
+		{
+			name:       "stable descendant",
+			candidate:  pathdom.PathKey("$0.field.deep"),
+			prefix:     pathdom.PathKey("$0.field"),
+			wantPrefix: true,
+			wantStrict: true,
+		},
+		{
+			name:      "stable root family mismatch",
+			candidate: pathdom.PathKey("ret[1].field.deep"),
+			prefix:    pathdom.PathKey("$0.field"),
+		},
+		{
+			name:      "invalid candidate",
+			candidate: pathdom.PathKey("sym40.field.deep"),
+			prefix:    pathdom.PathKey("sym40@3.field"),
+		},
+		{
+			name:      "invalid prefix",
+			candidate: pathdom.PathKey("sym40@3.field.deep"),
+			prefix:    pathdom.PathKey("sym40.field"),
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := PathKeyHasPrefix(tc.candidate, tc.prefix); got != tc.wantPrefix {
+				t.Fatalf("PathKeyHasPrefix(%q, %q) = %v, want %v", tc.candidate, tc.prefix, got, tc.wantPrefix)
+			}
+			if got := PathKeyHasStrictPrefix(tc.candidate, tc.prefix); got != tc.wantStrict {
+				t.Fatalf("PathKeyHasStrictPrefix(%q, %q) = %v, want %v", tc.candidate, tc.prefix, got, tc.wantStrict)
+			}
+		})
+	}
+}
+
 func TestStructuralKeyRejectsInvalidSpellings(t *testing.T) {
 	for _, key := range []pathdom.PathKey{
 		pathdom.PathKey(""),

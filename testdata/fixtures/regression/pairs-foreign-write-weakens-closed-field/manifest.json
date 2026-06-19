@@ -1,5 +1,97 @@
 {
   "check": {
-    "errors": 1
+    "diagnostics": [
+      {
+        "file": "main.lua",
+        "line": 13,
+        "column": 14,
+        "severity": "error",
+        "code": "type.assignment",
+        "message_contains": [
+          "cannot assign tostring(...)",
+          "string",
+          "not 1 & \"ready\""
+        ],
+        "min_evidence": 3,
+        "evidence": [
+          {
+            "kind": "abstract fact",
+            "trust": "proven",
+            "line": 13,
+            "column": 14,
+            "contains": [
+              "tostring(...) has type string"
+            ]
+          },
+          {
+            "kind": "abstract fact",
+            "trust": "proven",
+            "line": 13,
+            "column": 2,
+            "contains": [
+              "assignment target item[key] requires 1 & \"ready\""
+            ]
+          },
+          {
+            "kind": "missing proof",
+            "trust": "unknown",
+            "reason": "boundary validation missing",
+            "line": 13,
+            "column": 14,
+            "contains": [
+              "no proof on this path shows tostring(...) satisfies the declared type"
+            ]
+          }
+        ],
+        "evidence_contains": [
+          "tostring(...) has type string",
+          "assignment target item[key] requires 1 & \"ready\"",
+          "no proof on this path shows tostring(...) satisfies the declared type"
+        ],
+        "render_contains": [
+          "item[key] = tostring(value)",
+          "because:",
+          "assignment target item[key] requires 1 & \"ready\""
+        ],
+        "render_ordered_contains": [
+          "error[type.assignment]: cannot assign tostring(...) because it is string, not 1 & \"ready\"",
+          "--> main.lua:13:14",
+          "item[key] = tostring(value)",
+          "because:",
+          "1. proven: tostring(...) has type string",
+          "2. proven: assignment target item[key] requires 1 & \"ready\"",
+          "3. missing proof: no proof on this path shows tostring(...) satisfies the declared type",
+          "help: Use a value compatible with the expected type, or change the target type if `tostring(...)` is valid."
+        ],
+        "render_not_contains": [
+          "^~",
+          "where:"
+        ],
+        "min_labels": 1,
+        "labels": [
+          {
+            "line": 13,
+            "column": 14,
+            "contains": [
+              "assigned value"
+            ]
+          },
+          {
+            "line": 13,
+            "column": 2,
+            "contains": [
+              "assignment target"
+            ]
+          }
+        ],
+        "label_contains": [
+          "assigned value",
+          "assignment target"
+        ],
+        "help_contains": [
+          "change the target type"
+        ]
+      }
+    ]
   }
 }

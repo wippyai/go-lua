@@ -27,6 +27,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
 	"github.com/wippyai/go-lua/analysis/module/manifest"
 	"github.com/wippyai/go-lua/analysis/module/signature"
+	"github.com/wippyai/go-lua/analysis/type/kind"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
@@ -194,14 +195,26 @@ func functionSignatureName(modulePath string, member segment.Segment) (string, b
 }
 
 func functionExpressionSignature(prog program.Result, result *body.Result, fn *ast.FunctionExpr, name string) (signature.Function, bool) {
-	fnType, ok := functionSignatureType(result, fn)
-	if !ok {
-		return signature.Function{}, false
+	fnType, typed := functionSignatureType(result, fn)
+	sum, summarized := functionSummary(prog, result, fn)
+	if !typed {
+		if !summarized {
+			return signature.Function{}, false
+		}
+		arity := untypedFunctionParamArity(result, fn)
+		sig := signature.Function{
+			Effect:             functionSummaryEffectForArity(sum, arity, 0),
+			OperationalEffects: functionSummaryOperationalEffectsForArity(result.Registry(), sum, arity, 0, ""),
+		}
+		if sig.Effect.Pure() && (sig.OperationalEffects == nil || sig.OperationalEffects.IsEmpty()) {
+			return signature.Function{}, false
+		}
+		return sig, true
 	}
 	sig := signature.Function{Type: fnType}
-	if summary, ok := functionSummary(prog, result, fn); ok {
-		sig.Effect = functionSummaryEffect(summary, fnType)
-		sig.OperationalEffects = functionSummaryOperationalEffects(result.Registry(), summary, fnType, name)
+	if summarized {
+		sig.Effect = functionSummaryEffect(sum, fnType)
+		sig.OperationalEffects = functionSummaryOperationalEffects(result.Registry(), sum, fnType, name)
 	}
 	return sig, true
 }
@@ -227,16 +240,38 @@ func functionSummary(prog program.Result, result *body.Result, fn *ast.FunctionE
 	return prog.Snapshot().Read(key)
 }
 
+func untypedFunctionParamArity(result *body.Result, fn *ast.FunctionExpr) int {
+	if result == nil || fn == nil {
+		return 0
+	}
+	slots := result.FunctionParamSlots(fn)
+	if len(slots) == 0 {
+		return 0
+	}
+	arity := 0
+	for _, slot := range slots {
+		if slot.Vararg {
+			continue
+		}
+		arity++
+	}
+	return arity
+}
+
 func functionSummaryEffect(s summary.Summary, fn *typ.Function) effect.Row {
 	if fn == nil {
 		return effect.Empty
 	}
-	labels := errorReturnLabels(s.ReturnPresenceRelations, len(fn.Returns))
-	labels = append(labels, normalReturnParamRefinementLabels(s.NormalReturnParams, len(fn.Params))...)
-	storeRelations, exactStoreSources, exactStoreTargets := normalReturnStoreRelationLabels(s.NormalReturnFacts, len(fn.Params))
+	return functionSummaryEffectForArity(s, len(fn.Params), len(fn.Returns))
+}
+
+func functionSummaryEffectForArity(s summary.Summary, paramArity, returnArity int) effect.Row {
+	labels := errorReturnLabels(s.ReturnPresenceRelations, returnArity)
+	labels = append(labels, normalReturnParamRefinementLabels(s.NormalReturnParams, paramArity)...)
+	storeRelations, exactStoreSources, exactStoreTargets := normalReturnStoreRelationLabels(s.NormalReturnFacts, paramArity)
 	labels = append(labels, storeRelations...)
-	labels = append(labels, normalReturnOwnershipLabels(s.NormalReturnFacts, len(fn.Params), exactStoreSources)...)
-	labels = append(labels, normalReturnMutationLabels(s.NormalReturnFacts, len(fn.Params), exactStoreTargets)...)
+	labels = append(labels, normalReturnOwnershipLabels(s.NormalReturnFacts, paramArity, exactStoreSources)...)
+	labels = append(labels, normalReturnMutationLabels(s.NormalReturnFacts, paramArity, exactStoreTargets)...)
 	if len(labels) == 0 {
 		return effect.Empty
 	}
@@ -251,15 +286,19 @@ func functionSummaryOperationalEffects(reg *axis.Registry, s summary.Summary, fn
 	if fn == nil {
 		return nil
 	}
-	arity := len(fn.Params)
+	return functionSummaryOperationalEffectsForArity(reg, s, len(fn.Params), len(fn.Returns), signatureName)
+}
+
+func functionSummaryOperationalEffectsForArity(reg *axis.Registry, s summary.Summary, paramArity, returnArity int, signatureName string) *signature.OperationalEffects {
 	out := signature.OperationalEffects{
-		ReturnPresenceRelations:         operationalReturnPresenceRelations(s.ReturnPresenceRelations, len(fn.Returns)),
-		NormalReturnPresenceRefinements: operationalNormalReturnPresenceRefinements(s.NormalReturnParams, arity),
-		PathStaticMembers:               operationalPathStaticMembers(s.NormalReturnFacts, arity, reg),
-		PathInvalidations:               operationalPathInvalidations(s.NormalReturnFacts, arity),
-		FrozenTables:                    operationalFrozenTables(s.NormalReturnFacts, arity),
-		EscapeEvents:                    operationalEscapeEvents(s.NormalReturnFacts, arity),
-		StoreRelations:                  operationalStoreRelations(s.NormalReturnFacts, arity),
+		ReturnPresenceRelations:         operationalReturnPresenceRelations(s.ReturnPresenceRelations, returnArity),
+		NormalReturnPresenceRefinements: operationalNormalReturnPresenceRefinements(s.NormalReturnParams, paramArity),
+		PathStaticMembers:               operationalPathStaticMembers(s.NormalReturnFacts, paramArity, reg),
+		PathInvalidations:               operationalPathInvalidations(s.NormalReturnFacts, paramArity),
+		DynamicIndexFacts:               operationalDynamicIndexFacts(s.NormalReturnFacts, paramArity, reg),
+		FrozenTables:                    operationalFrozenTables(s.NormalReturnFacts, paramArity),
+		EscapeEvents:                    operationalEscapeEvents(s.NormalReturnFacts, paramArity),
+		StoreRelations:                  operationalStoreRelations(s.NormalReturnFacts, paramArity),
 		ReturnAllocationTemplates:       operationalReturnAllocationTemplates(reg, s, signatureName),
 	}
 	if out.IsEmpty() {
@@ -544,6 +583,72 @@ func operationalPathInvalidations(facts callboundary.NormalReturnFacts, arity in
 	return operationalArityFacts(facts.PathInvalidations, arity,
 		func(f callboundary.PathInvalidationFact) pathdom.Path { return f.Path },
 		func(p pathdom.Path) signature.PathInvalidation { return signature.PathInvalidation{Path: p} })
+}
+
+func operationalDynamicIndexFacts(facts callboundary.NormalReturnFacts, arity int, reg *axis.Registry) []signature.DynamicIndexFact {
+	if arity <= 0 || reg == nil || len(facts.DynamicIndexFacts) == 0 {
+		return nil
+	}
+	domain := dynamicindex.Domain(reg)
+	out := make([]signature.DynamicIndexFact, 0, len(facts.DynamicIndexFacts))
+	for _, fact := range facts.DynamicIndexFacts {
+		if fact.Site == "" || !placeholderPathInArity(fact.Table, arity) {
+			continue
+		}
+		if domain.Equal(fact.Value, dynamicindex.Bottom(reg)) ||
+			domain.Equal(fact.Value, dynamicindex.Top()) ||
+			fact.Value.Admission == dynamicindex.AdmissionRejected ||
+			!operationalPresence(fact.Value.KeyPresence) {
+			continue
+		}
+		key, ok := operationalDynamicIndexOperand(reg, fact.KeyPath, fact.Value.KeyValue, arity)
+		if !ok {
+			continue
+		}
+		value, ok := operationalDynamicIndexOperand(reg, fact.ValuePath, fact.Value.Value, arity)
+		if !ok {
+			continue
+		}
+		admission, ok := operationalDynamicIndexAdmission(fact.Value.Admission)
+		if !ok {
+			continue
+		}
+		out = append(out, signature.DynamicIndexFact{
+			Table:       fact.Table,
+			Site:        string(fact.Site),
+			KeyPresence: fact.Value.KeyPresence,
+			Key:         key,
+			Value:       value,
+			Admission:   admission,
+		})
+	}
+	return out
+}
+
+func operationalDynamicIndexOperand(reg *axis.Registry, p pathdom.Path, value product.Value, arity int) (signature.DynamicIndexOperand, bool) {
+	var out signature.DynamicIndexOperand
+	if !p.IsEmpty() && placeholderPathInArity(p, arity) {
+		out.Path = p
+	}
+	if t, ok := valueType(reg, value); ok && portableDynamicIndexType(t) {
+		out.Type = t
+	}
+	return out, !out.Path.IsEmpty() || out.Type != nil
+}
+
+func portableDynamicIndexType(t typ.Type) bool {
+	return t != nil && t.Kind() != kind.TypeParam && t.Kind() != kind.Ref && !typ.IsAny(t) && !typ.IsUnknown(t) && !typ.IsNever(t)
+}
+
+func operationalDynamicIndexAdmission(admission dynamicindex.Admission) (signature.DynamicIndexAdmission, bool) {
+	switch admission {
+	case dynamicindex.AdmissionAdmitted:
+		return signature.DynamicIndexAdmissionAdmitted, true
+	case dynamicindex.AdmissionUnknown:
+		return signature.DynamicIndexAdmissionUnknown, true
+	default:
+		return "", false
+	}
 }
 
 func operationalFrozenTables(facts callboundary.NormalReturnFacts, arity int) []signature.FrozenTable {

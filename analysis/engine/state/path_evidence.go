@@ -84,8 +84,13 @@ func (s State) InvalidatePathKeySubtree(pathKey pathdom.PathKey) (State, bool) {
 	if !ok {
 		return s, false
 	}
+	prefixes, _ := s.pathEvidence.PathKeySubtreeInvalidationPrefixes(pathKey)
+	lenFloors, lenFloorChanged := s.lenFloors.clearPathKeySubtrees(prefixes)
 	out := s
 	out.pathEvidence = pathEvidence
+	if lenFloorChanged {
+		out.lenFloors = lenFloors
+	}
 	return out, true
 }
 
@@ -97,8 +102,13 @@ func (s State) InvalidatePathKeyDescendants(pathKey pathdom.PathKey) (State, boo
 	if !ok {
 		return s, false
 	}
+	prefixes, _ := s.pathEvidence.PathKeyDescendantInvalidationPrefixes(pathKey)
+	lenFloors, lenFloorChanged := s.lenFloors.clearPathKeyDescendantMutation(prefixes)
 	out := s
 	out.pathEvidence = pathEvidence
+	if lenFloorChanged {
+		out.lenFloors = lenFloors
+	}
 	return out, true
 }
 

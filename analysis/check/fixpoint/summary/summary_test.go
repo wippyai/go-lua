@@ -6,6 +6,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/ref"
 	"github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
@@ -267,23 +268,62 @@ func TestSummaryHeapTableObjectsNormalizeAndJoinByIdentity(t *testing.T) {
 	}
 }
 
+func TestNormalizeDefensivelyCopiesHeapTableObjects(t *testing.T) {
+	reg := mustRegistry(t)
+	id := identity.ID{Kind: "table", Site: "summary-normalize-copy", Index: 1}
+	input := Summary{
+		HeapTableObjects: map[identity.ID]heapidentity.TableObject{
+			id: heapidentity.NewTableObject(heapidentity.TableObjectConfig{Root: product.Top()}),
+		},
+	}
+
+	normalized := Normalize(reg, input)
+	delete(normalized.HeapTableObjects, id)
+
+	if _, ok := input.HeapTableObjects[id]; !ok {
+		t.Fatalf("Normalize returned heap map aliasing input")
+	}
+}
+
+func TestNormalizeOwnedConsumesHeapTableObjectMap(t *testing.T) {
+	reg := mustRegistry(t)
+	id := identity.ID{Kind: "table", Site: "summary-normalize-owned", Index: 1}
+	input := Summary{
+		HeapTableObjects: map[identity.ID]heapidentity.TableObject{
+			id: heapidentity.BottomObject(reg),
+		},
+	}
+
+	normalized := NormalizeOwned(reg, input)
+
+	if len(normalized.HeapTableObjects) != 0 {
+		t.Fatalf("NormalizeOwned kept bottom heap table object: %#v", normalized.HeapTableObjects)
+	}
+	if len(input.HeapTableObjects) != 0 {
+		t.Fatalf("NormalizeOwned did not consume caller-owned heap map: %#v", input.HeapTableObjects)
+	}
+}
+
 func TestParamMemberReturnSlotsAreMustFacts(t *testing.T) {
 	reg := standard.Registry()
+	field := func(name string) segment.Segment {
+		return segment.Segment{Kind: segment.SegmentField, Name: name}
+	}
 	fetchValue := ParamMemberReturnSlot{
 		ReceiverParam:     0,
-		Member:            "fetch",
+		Member:            field("fetch"),
 		ReturnIndex:       0,
 		MemberResultIndex: 0,
 	}
 	fetchError := ParamMemberReturnSlot{
 		ReceiverParam:     0,
-		Member:            "fetch",
+		Member:            field("fetch"),
 		ReturnIndex:       1,
 		MemberResultIndex: 1,
 	}
 	metaValue := ParamMemberReturnSlot{
 		ReceiverParam:     1,
-		Member:            "meta",
+		Member:            field("meta"),
 		ReturnIndex:       0,
 		MemberResultIndex: 0,
 	}
@@ -300,7 +340,7 @@ func TestParamMemberReturnSlotsAreMustFacts(t *testing.T) {
 	normalized := Normalize(reg, Summary{
 		Returns: []product.Value{product.Top()},
 		ParamMemberReturnSlots: []ParamMemberReturnSlot{
-			{ReceiverParam: -1, Member: "ignored", ReturnIndex: 0, MemberResultIndex: 0},
+			{ReceiverParam: -1, Member: field("ignored"), ReturnIndex: 0, MemberResultIndex: 0},
 			fetchError,
 			fetchValue,
 			fetchValue,
@@ -332,6 +372,79 @@ func TestParamMemberReturnSlotsAreMustFacts(t *testing.T) {
 	}
 	if !LessOrEq(reg, left, withoutSlots) || LessOrEq(reg, withoutSlots, left) {
 		t.Fatalf("ParamMemberReturnSlots must use reverse-inclusion order")
+	}
+}
+
+func TestParamMemberSummaryFactsAcceptExactBracketMembers(t *testing.T) {
+	reg := standard.Registry()
+	field := segment.Segment{Kind: segment.SegmentField, Name: "send"}
+	stringIndex := segment.Segment{Kind: segment.SegmentIndexString, Name: "send"}
+	intIndex := segment.Segment{Kind: segment.SegmentIndexInt, Index: 1}
+	invalidEmptyStringIndex := segment.Segment{Kind: segment.SegmentIndexString}
+	invalidReceiverPath := path.PathKey("client")
+
+	callField := ParamMemberCallObligation{ReceiverParam: 0, Member: field, ArgParam: 1, MemberParamIndex: 2}
+	callString := ParamMemberCallObligation{ReceiverParam: 0, Member: stringIndex, ArgParam: 1, MemberParamIndex: 2}
+	callInt := ParamMemberCallObligation{ReceiverParam: 0, Member: intIndex, ArgParam: 1, MemberParamIndex: 2}
+	callNested := ParamMemberCallObligation{ReceiverParam: 0, ReceiverPath: path.PathKey(".client"), Member: field, ArgParam: 1, MemberParamIndex: 2}
+	normalizedCalls := Normalize(reg, Summary{
+		ParamMemberCallObligations: []ParamMemberCallObligation{
+			{ReceiverParam: -1, Member: field, ArgParam: 1, MemberParamIndex: 2},
+			{ReceiverParam: 0, Member: invalidEmptyStringIndex, ArgParam: 1, MemberParamIndex: 2},
+			{ReceiverParam: 0, ReceiverPath: invalidReceiverPath, Member: field, ArgParam: 1, MemberParamIndex: 2},
+			callInt,
+			callString,
+			callField,
+			callNested,
+			callString,
+		},
+	})
+	if got := normalizedCalls.ParamMemberCallObligations; len(got) != 4 ||
+		got[0] != callField ||
+		got[1] != callString ||
+		got[2] != callInt ||
+		got[3] != callNested {
+		t.Fatalf("Normalize ParamMemberCallObligations = %#v, want field, string-index, int-index, nested field", got)
+	}
+	joinedCalls := Join(reg,
+		Summary{ParamMemberCallObligations: []ParamMemberCallObligation{callField}},
+		Summary{ParamMemberCallObligations: []ParamMemberCallObligation{callInt}},
+	)
+	if got := joinedCalls.ParamMemberCallObligations; len(got) != 2 || got[0] != callField || got[1] != callInt {
+		t.Fatalf("Join ParamMemberCallObligations = %#v, want may-union of field and int-index", got)
+	}
+
+	slotField := ParamMemberReturnSlot{ReceiverParam: 0, Member: field, ReturnIndex: 0, MemberResultIndex: 0}
+	slotString := ParamMemberReturnSlot{ReceiverParam: 0, Member: stringIndex, ReturnIndex: 0, MemberResultIndex: 0}
+	slotInt := ParamMemberReturnSlot{ReceiverParam: 0, Member: intIndex, ReturnIndex: 0, MemberResultIndex: 0}
+	normalizedSlots := Normalize(reg, Summary{
+		Returns: []product.Value{product.Top()},
+		ParamMemberReturnSlots: []ParamMemberReturnSlot{
+			{ReceiverParam: 0, Member: invalidEmptyStringIndex, ReturnIndex: 0, MemberResultIndex: 0},
+			slotInt,
+			slotString,
+			slotField,
+			slotString,
+		},
+	})
+	if got := normalizedSlots.ParamMemberReturnSlots; len(got) != 3 ||
+		got[0] != slotField ||
+		got[1] != slotString ||
+		got[2] != slotInt {
+		t.Fatalf("Normalize ParamMemberReturnSlots = %#v, want field, string-index, int-index", got)
+	}
+	joinedSlots := Join(reg,
+		Summary{
+			Returns:                []product.Value{product.Top()},
+			ParamMemberReturnSlots: []ParamMemberReturnSlot{slotField, slotInt},
+		},
+		Summary{
+			Returns:                []product.Value{product.Top()},
+			ParamMemberReturnSlots: []ParamMemberReturnSlot{slotInt},
+		},
+	)
+	if got := joinedSlots.ParamMemberReturnSlots; len(got) != 1 || got[0] != slotInt {
+		t.Fatalf("Join ParamMemberReturnSlots = %#v, want must-intersection of int-index slot", got)
 	}
 }
 

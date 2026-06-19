@@ -6,6 +6,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/variantorigin"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
@@ -17,7 +18,9 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/engine/visibility"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
+	"github.com/wippyai/go-lua/analysis/type/kind"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
+	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
 type pathValue struct {
@@ -230,15 +233,17 @@ func projectPathDynamicIndexValue(
 	if tableKey == "" {
 		return product.Value{}, false
 	}
+	targetKey := resolver.KeyAt(point, targetPath)
+	mayMatchAllowed := pathKeyHasPresentProof(reg, out, targetKey)
 	last := targetPath.Segments[len(targetPath.Segments)-1]
 	snapshot := out.DynamicIndexFactsSnapshot()
 	if snapshot.Top || len(snapshot.Facts) == 0 {
-		return projectPathHeapDynamicIndexValue(reg, resolver, point, out, parent, last)
+		return projectPathHeapDynamicIndexValue(reg, resolver, point, out, parent, last, mayMatchAllowed)
 	}
-	if joined, ok := joinMatchingDynamicIndexValues(reg, snapshot.Facts, tableKey, last); ok {
+	if joined, ok := joinMatchingDynamicIndexValues(reg, snapshot.Facts, tableKey, last, mayMatchAllowed); ok {
 		return joined, true
 	}
-	return projectPathHeapDynamicIndexValue(reg, resolver, point, out, parent, last)
+	return projectPathHeapDynamicIndexValue(reg, resolver, point, out, parent, last, mayMatchAllowed)
 }
 
 func projectPathHeapDynamicIndexValue(
@@ -248,6 +253,7 @@ func projectPathHeapDynamicIndexValue(
 	out state.State,
 	parent pathdom.Path,
 	last segment.Segment,
+	mayMatchAllowed bool,
 ) (product.Value, bool) {
 	parentValue, ok := resolvePathValueAtCached(nil, reg, resolver, point, out, parent, nil)
 	if !ok {
@@ -273,7 +279,7 @@ func projectPathHeapDynamicIndexValue(
 		}
 	}
 	object := out.ReadHeapTableObject(reg, id)
-	return joinMatchingHeapDynamicIndexValues(reg, object.DynamicIndexFacts(), last)
+	return joinMatchingHeapDynamicIndexValues(reg, object.DynamicIndexFacts(), last, mayMatchAllowed)
 }
 
 func joinMatchingDynamicIndexValues(
@@ -281,6 +287,7 @@ func joinMatchingDynamicIndexValues(
 	facts map[dynamicindex.Key]dynamicindex.Fact,
 	tableKey pathdom.PathKey,
 	last segment.Segment,
+	mayMatchAllowed bool,
 ) (product.Value, bool) {
 	valueDomain := product.Domain(reg)
 	joined := product.Bottom(reg)
@@ -289,7 +296,7 @@ func joinMatchingDynamicIndexValues(
 		if key.Table != tableKey || fact.Admission == dynamicindex.AdmissionRejected {
 			continue
 		}
-		if !dynamicIndexFactMayMatchSegment(reg, fact, last) {
+		if !dynamicIndexFactCanProjectToStaticSegment(reg, fact, last, mayMatchAllowed) {
 			continue
 		}
 		if valueDomain.Equal(fact.Value, valueDomain.Bottom()) {
@@ -312,6 +319,7 @@ func joinMatchingHeapDynamicIndexValues(
 	reg *axis.Registry,
 	facts map[dynamicindex.Key]dynamicindex.Fact,
 	last segment.Segment,
+	mayMatchAllowed bool,
 ) (product.Value, bool) {
 	valueDomain := product.Domain(reg)
 	joined := product.Bottom(reg)
@@ -320,7 +328,7 @@ func joinMatchingHeapDynamicIndexValues(
 		if fact.Admission == dynamicindex.AdmissionRejected {
 			continue
 		}
-		if !dynamicIndexFactMayMatchSegment(reg, fact, last) {
+		if !dynamicIndexFactCanProjectToStaticSegment(reg, fact, last, mayMatchAllowed) {
 			continue
 		}
 		if valueDomain.Equal(fact.Value, valueDomain.Bottom()) {
@@ -339,6 +347,17 @@ func joinMatchingHeapDynamicIndexValues(
 	return joined, true
 }
 
+func pathKeyHasPresentProof(reg *axis.Registry, out state.State, pathKey pathdom.PathKey) bool {
+	if pathKey == "" {
+		return false
+	}
+	value := out.ReadPathKey(reg, pathKey)
+	if product.Equal(reg, value, product.Bottom(reg)) {
+		return false
+	}
+	return presence.Equal(product.PresenceOf(value), presence.Present())
+}
+
 func dynamicIndexFactMayMatchSegment(reg *axis.Registry, fact dynamicindex.Fact, seg segment.Segment) bool {
 	keyType, ok := typevalue.TypeOf(reg, fact.KeyValue)
 	if !ok {
@@ -354,8 +373,118 @@ func dynamicIndexFactMayMatchSegment(reg *axis.Registry, fact dynamicindex.Fact,
 	}
 }
 
-func projectPathStructuralValue(reg *axis.Registry, out state.State, targetPath pathdom.Path, projectPath PathTypeProjector) (product.Value, bool) {
-	return projectPathStructuralValueCached(nil, reg, out, targetPath, projectPath)
+func dynamicIndexFactCanProjectToStaticSegment(reg *axis.Registry, fact dynamicindex.Fact, seg segment.Segment, mayMatchAllowed bool) bool {
+	if dynamicIndexFactDefinitelyMatchesSegment(reg, fact, seg) {
+		return true
+	}
+	return mayMatchAllowed && dynamicIndexFactMayMatchSegment(reg, fact, seg)
+}
+
+func dynamicIndexFactDefinitelyMatchesSegment(reg *axis.Registry, fact dynamicindex.Fact, seg segment.Segment) bool {
+	keyType, ok := typevalue.TypeOf(reg, fact.KeyValue)
+	if !ok {
+		return false
+	}
+	exact, _ := keyTypeDefinitelyMatchesSegment(keyType, seg, 0)
+	return exact
+}
+
+func keyTypeDefinitelyMatchesSegment(t typ.Type, seg segment.Segment, depth int) (exact bool, definitelyNot bool) {
+	if t == nil || depth > typ.DefaultRecursionDepth {
+		return false, false
+	}
+	t = keyProofTransparentType(t, depth)
+	switch tt := t.(type) {
+	case nil:
+		return false, false
+	case *typ.Literal:
+		return literalKeyDefinitelyMatchesSegment(tt, seg)
+	case *typ.Optional:
+		// Optional keys include nil, so the key cannot definitely address a
+		// concrete string/int slot even if the payload is exact.
+		return false, false
+	case *typ.Union:
+		if len(tt.Members) == 0 {
+			return false, false
+		}
+		allExact := true
+		allNot := true
+		for _, member := range tt.Members {
+			memberExact, memberNot := keyTypeDefinitelyMatchesSegment(member, seg, depth+1)
+			allExact = allExact && memberExact
+			allNot = allNot && memberNot
+		}
+		return allExact, allNot
+	case *typ.Intersection:
+		foundExact := false
+		for _, member := range tt.Members {
+			memberExact, memberNot := keyTypeDefinitelyMatchesSegment(member, seg, depth+1)
+			if memberNot {
+				return false, true
+			}
+			foundExact = foundExact || memberExact
+		}
+		return foundExact, false
+	default:
+		switch tt.Kind() {
+		case kind.String:
+			return false, seg.Kind == segment.SegmentIndexInt
+		case kind.Integer, kind.Number:
+			return false, seg.Kind == segment.SegmentField || seg.Kind == segment.SegmentIndexString
+		case kind.Any, kind.Unknown, kind.Never:
+			return false, false
+		default:
+			return false, true
+		}
+	}
+}
+
+func keyProofTransparentType(t typ.Type, depth int) typ.Type {
+	for i := depth; i <= typ.DefaultRecursionDepth; i++ {
+		switch tt := t.(type) {
+		case *typ.Annotated:
+			if tt.Inner == nil || tt.Inner == t {
+				return t
+			}
+			t = tt.Inner
+		case *typ.Alias:
+			next := tt.UnaliasedTarget()
+			if next == nil || next == t {
+				return next
+			}
+			t = next
+		default:
+			return t
+		}
+	}
+	return nil
+}
+
+func literalKeyDefinitelyMatchesSegment(lit *typ.Literal, seg segment.Segment) (exact bool, definitelyNot bool) {
+	if lit == nil {
+		return false, false
+	}
+	switch seg.Kind {
+	case segment.SegmentField, segment.SegmentIndexString:
+		if lit.Base != kind.String {
+			return false, true
+		}
+		name, ok := lit.Value.(string)
+		return ok && name == seg.Name, !ok || name != seg.Name
+	case segment.SegmentIndexInt:
+		switch lit.Base {
+		case kind.Integer:
+			index, ok := lit.Value.(int64)
+			return ok && index == int64(seg.Index), !ok || index != int64(seg.Index)
+		case kind.Number:
+			number, ok := lit.Value.(float64)
+			return ok && number == float64(seg.Index), !ok || number != float64(seg.Index)
+		default:
+			return false, true
+		}
+	default:
+		return false, false
+	}
 }
 
 func projectPathStructuralValueCached(typeValues *typevalue.Cache, reg *axis.Registry, out state.State, targetPath pathdom.Path, projectPath PathTypeProjector) (product.Value, bool) {

@@ -324,6 +324,13 @@ func TestFunctionSummaryOperationalEffectsLaneMatrixManifestRoundTrip(t *testing
 		typevalue.FromType(reg, typ.LiteralString("raw-product-sentinel")),
 		typ.LiteralString("raw-product-sentinel"),
 	)
+	dynamicKey := typevalue.WithWitness(
+		reg,
+		typevalue.FromType(reg, typ.LiteralString("send")),
+		typ.LiteralString("send"),
+	)
+	dynamicValueType := typ.Func().Param("v", typ.String).Build()
+	dynamicValue := typevalue.WithWitness(reg, typevalue.FromType(reg, dynamicValueType), dynamicValueType)
 	heapID := identity.ID{Kind: "test", Site: "lane-matrix", Index: 1}
 	fn := typ.Func().
 		Param("source", typ.Any).
@@ -337,7 +344,7 @@ func TestFunctionSummaryOperationalEffectsLaneMatrixManifestRoundTrip(t *testing
 		},
 		ParamMemberCallObligations: []summary.ParamMemberCallObligation{{
 			ReceiverParam:    0,
-			Member:           "precallSentinel",
+			Member:           segment.Segment{Kind: segment.SegmentField, Name: "precallSentinel"},
 			ArgParam:         1,
 			MemberParamIndex: 0,
 		}},
@@ -392,12 +399,13 @@ func TestFunctionSummaryOperationalEffectsLaneMatrixManifestRoundTrip(t *testing
 				Path: pathdom.NewPlaceholder(1).Field("items"),
 			}},
 			DynamicIndexFacts: []callboundary.DynamicIndexFact{{
-				Table: pathdom.NewPlaceholder(0).Field("dynamicOnly"),
-				Site:  "callee.dynamic",
+				Table:   pathdom.NewPlaceholder(0).Field("dynamicOnly"),
+				Site:    "callee.dynamic",
+				KeyPath: pathdom.NewPlaceholder(1),
 				Value: dynamicindex.Fact{
 					KeyPresence: presence.Present(),
-					KeyValue:    present,
-					Value:       absent,
+					KeyValue:    dynamicKey,
+					Value:       dynamicValue,
 					Admission:   dynamicindex.AdmissionAdmitted,
 				},
 			}},
@@ -456,6 +464,19 @@ func TestFunctionSummaryOperationalEffectsLaneMatrixManifestRoundTrip(t *testing
 		PathInvalidations: []signature.PathInvalidation{{
 			Path: pathdom.NewPlaceholder(1).Field("items"),
 		}},
+		DynamicIndexFacts: []signature.DynamicIndexFact{{
+			Table:       pathdom.NewPlaceholder(0).Field("dynamicOnly"),
+			Site:        "callee.dynamic",
+			KeyPresence: presence.Present(),
+			Key: signature.DynamicIndexOperand{
+				Path: pathdom.NewPlaceholder(1),
+				Type: typ.LiteralString("send"),
+			},
+			Value: signature.DynamicIndexOperand{
+				Type: dynamicValueType,
+			},
+			Admission: signature.DynamicIndexAdmissionAdmitted,
+		}},
 		FrozenTables: []signature.FrozenTable{{
 			Target: pathdom.NewPlaceholder(0).Field("sealed"),
 		}},
@@ -491,6 +512,7 @@ func TestFunctionSummaryOperationalEffectsLaneMatrixManifestRoundTrip(t *testing
 		`"normalReturnPresenceRefinements"`,
 		`"pathStaticMembers"`,
 		`"pathInvalidations"`,
+		`"dynamicIndexFacts"`,
 		`"frozenTables"`,
 		`"escapeEvents"`,
 		`"storeRelations"`,
@@ -502,7 +524,6 @@ func TestFunctionSummaryOperationalEffectsLaneMatrixManifestRoundTrip(t *testing
 	for _, forbidden := range []string{
 		`"pathRefinements"`,
 		`"PathRefinements"`,
-		`"dynamicIndexFacts"`,
 		`"DynamicIndexFacts"`,
 		`"branchProofs"`,
 		`"BranchProofs"`,
@@ -529,8 +550,6 @@ func TestFunctionSummaryOperationalEffectsLaneMatrixManifestRoundTrip(t *testing
 		"heap-only",
 		"heap.dynamic",
 		"staticRaw",
-		"dynamicOnly",
-		"callee.dynamic",
 		"branchOnly",
 		"branchOther",
 		"callee.select",
@@ -752,6 +771,86 @@ func TestFunctionSummaryOperationalEffectsEmptyIsAbsent(t *testing.T) {
 		Build(), "empty")
 	if got != nil {
 		t.Fatalf("operational effects = %#v, want nil for empty summary facts", got)
+	}
+}
+
+func TestFromProgramResultExportsUntypedDynamicIndexOperationOnlySignature(t *testing.T) {
+	result := checkProgram(t, `
+		local ops = {}
+		function ops.install(provider, key)
+			provider[key] = function(v: string): () end
+		end
+		return ops
+	`)
+	var raw summary.Summary
+	var hasRaw bool
+	var exitDynamic any
+	root := result.RootResult()
+	for _, point := range root.Graph().RPO() {
+		fact, ok := root.FunctionDefinition(point)
+		if !ok || fact.Func == nil {
+			continue
+		}
+		if got, ok := functionSummary(result, root, fact.Func); ok {
+			raw, hasRaw = got, true
+			break
+		}
+	}
+	for _, fnResult := range root.FunctionResults() {
+		if exit, ok := fnResult.ExitState(); ok {
+			exitDynamic = exit.DynamicIndexFactsSnapshot()
+			break
+		}
+	}
+	if !hasRaw {
+		t.Fatalf("missing raw summary for ops.install")
+	}
+
+	m := FromProgramResult("ops", result)
+	sig, ok := m.FunctionSignatures["ops.install"]
+	if !ok {
+		t.Fatalf("missing ops.install function signature: %#v", m.FunctionSignatures)
+	}
+	if sig.Type != nil {
+		t.Fatalf("ops.install type = %v, want nil operation-only signature", sig.Type)
+	}
+	if sig.OperationalEffects == nil {
+		t.Fatalf("ops.install operational effects = nil")
+	}
+	found := false
+	for _, invalidation := range sig.OperationalEffects.PathInvalidations {
+		if invalidation.Path.Equal(pathdom.NewPlaceholder(0)) {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("ops.install path invalidations = %#v, want $0 invalidation", sig.OperationalEffects.PathInvalidations)
+	}
+	foundDynamic := false
+	for _, fact := range sig.OperationalEffects.DynamicIndexFacts {
+		if fact.Table.Equal(pathdom.NewPlaceholder(0)) && fact.Key.Path.Equal(pathdom.NewPlaceholder(1)) {
+			foundDynamic = true
+			break
+		}
+	}
+	if !foundDynamic {
+		t.Fatalf("ops.install dynamic-index facts = %#v, want $0[$1] write evidence; raw summary dynamic = %#v; exit dynamic = %#v", sig.OperationalEffects.DynamicIndexFacts, raw.NormalReturnFacts.DynamicIndexFacts, exitDynamic)
+	}
+}
+
+func TestFromProgramResultSkipsPureUntypedExportedFunctionSignature(t *testing.T) {
+	result := checkProgram(t, `
+		local ops = {}
+		function ops.noop(value)
+			local copy = value
+		end
+		return ops
+	`)
+
+	m := FromProgramResult("ops", result)
+	if _, ok := m.FunctionSignatures["ops.noop"]; ok {
+		t.Fatalf("unexpected pure untyped signature: %#v", m.FunctionSignatures)
 	}
 }
 

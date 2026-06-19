@@ -7,6 +7,7 @@ import (
 
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
+	"github.com/wippyai/go-lua/analysis/domain/typestate"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/module/signature"
 	"github.com/wippyai/go-lua/analysis/type/typ"
@@ -17,9 +18,11 @@ type operationalEffectsWire struct {
 	NormalReturnPresenceRefinements []pathPresenceRefinementWire   `json:"normalReturnPresenceRefinements,omitempty"`
 	PathStaticMembers               []pathStaticMemberWire         `json:"pathStaticMembers,omitempty"`
 	PathInvalidations               []pathInvalidationWire         `json:"pathInvalidations,omitempty"`
+	DynamicIndexFacts               []dynamicIndexFactWire         `json:"dynamicIndexFacts,omitempty"`
 	FrozenTables                    []frozenTableWire              `json:"frozenTables,omitempty"`
 	EscapeEvents                    []escapeEventWire              `json:"escapeEvents,omitempty"`
 	StoreRelations                  []storeRelationWire            `json:"storeRelations,omitempty"`
+	LifecycleEffects                []lifecycleEffectWire          `json:"lifecycleEffects,omitempty"`
 	ReturnAllocationTemplates       []returnAllocationTemplateWire `json:"returnAllocationTemplates,omitempty"`
 }
 
@@ -44,6 +47,20 @@ type pathInvalidationWire struct {
 	Path *placeholderPathWire `json:"path,omitempty"`
 }
 
+type dynamicIndexFactWire struct {
+	Table       *placeholderPathWire    `json:"table,omitempty"`
+	Site        string                  `json:"site"`
+	KeyPresence string                  `json:"keyPresence"`
+	Key         dynamicIndexOperandWire `json:"key"`
+	Value       dynamicIndexOperandWire `json:"value"`
+	Admission   string                  `json:"admission"`
+}
+
+type dynamicIndexOperandWire struct {
+	Path *placeholderPathWire `json:"path,omitempty"`
+	Type *typeWire            `json:"type,omitempty"`
+}
+
 type frozenTableWire struct {
 	Target *placeholderPathWire `json:"target,omitempty"`
 }
@@ -57,6 +74,15 @@ type escapeEventWire struct {
 type storeRelationWire struct {
 	Source *placeholderPathWire `json:"source,omitempty"`
 	Into   *placeholderPathWire `json:"into,omitempty"`
+}
+
+type lifecycleEffectWire struct {
+	Target   *placeholderPathWire `json:"target,omitempty"`
+	Kind     string               `json:"kind"`
+	Protocol string               `json:"protocol"`
+	From     string               `json:"from,omitempty"`
+	To       string               `json:"to,omitempty"`
+	Final    string               `json:"final,omitempty"`
 }
 
 type returnAllocationTemplateWire struct {
@@ -147,6 +173,13 @@ func encodeOperationalEffects(e *signature.OperationalEffects) (*operationalEffe
 		}
 		out.PathInvalidations = append(out.PathInvalidations, pathInvalidationWire{Path: p})
 	}
+	for _, fact := range e.DynamicIndexFacts {
+		encoded, err := encodeDynamicIndexFact(fact)
+		if err != nil {
+			return nil, fmt.Errorf("dynamic index fact: %w", err)
+		}
+		out.DynamicIndexFacts = append(out.DynamicIndexFacts, encoded)
+	}
 	for _, frozen := range e.FrozenTables {
 		p, err := encodePlaceholderPath(frozen.Target)
 		if err != nil {
@@ -179,6 +212,13 @@ func encodeOperationalEffects(e *signature.OperationalEffects) (*operationalEffe
 			return nil, fmt.Errorf("store relation target: %w", err)
 		}
 		out.StoreRelations = append(out.StoreRelations, storeRelationWire{Source: source, Into: into})
+	}
+	for _, effect := range e.LifecycleEffects {
+		encoded, err := encodeLifecycleEffect(effect)
+		if err != nil {
+			return nil, fmt.Errorf("lifecycle effect: %w", err)
+		}
+		out.LifecycleEffects = append(out.LifecycleEffects, encoded)
 	}
 	for _, template := range e.ReturnAllocationTemplates {
 		encoded, err := encodeReturnAllocationTemplate(template)
@@ -250,6 +290,13 @@ func decodeOperationalEffects(w *operationalEffectsWire) (signature.OperationalE
 		}
 		out.PathInvalidations = append(out.PathInvalidations, signature.PathInvalidation{Path: p})
 	}
+	for _, fact := range w.DynamicIndexFacts {
+		decoded, err := decodeDynamicIndexFact(fact)
+		if err != nil {
+			return signature.OperationalEffects{}, fmt.Errorf("dynamic index fact: %w", err)
+		}
+		out.DynamicIndexFacts = append(out.DynamicIndexFacts, decoded)
+	}
 	for _, frozen := range w.FrozenTables {
 		p, err := decodePlaceholderPath(frozen.Target)
 		if err != nil {
@@ -282,6 +329,13 @@ func decodeOperationalEffects(w *operationalEffectsWire) (signature.OperationalE
 			return signature.OperationalEffects{}, fmt.Errorf("store relation target: %w", err)
 		}
 		out.StoreRelations = append(out.StoreRelations, signature.StoreRelation{Source: source, Into: into})
+	}
+	for _, effect := range w.LifecycleEffects {
+		decoded, err := decodeLifecycleEffect(effect)
+		if err != nil {
+			return signature.OperationalEffects{}, fmt.Errorf("lifecycle effect: %w", err)
+		}
+		out.LifecycleEffects = append(out.LifecycleEffects, decoded)
 	}
 	for _, template := range w.ReturnAllocationTemplates {
 		decoded, err := decodeReturnAllocationTemplate(template)
@@ -327,6 +381,25 @@ func canonicalizeOperationalEffectsWire(w *operationalEffectsWire) {
 	sort.Slice(w.PathInvalidations, func(i, j int) bool {
 		return comparePlaceholderPathWire(w.PathInvalidations[i].Path, w.PathInvalidations[j].Path) < 0
 	})
+	sort.Slice(w.DynamicIndexFacts, func(i, j int) bool {
+		left, right := w.DynamicIndexFacts[i], w.DynamicIndexFacts[j]
+		if c := comparePlaceholderPathWire(left.Table, right.Table); c != 0 {
+			return c < 0
+		}
+		if left.Site != right.Site {
+			return left.Site < right.Site
+		}
+		if left.KeyPresence != right.KeyPresence {
+			return left.KeyPresence < right.KeyPresence
+		}
+		if c := compareDynamicIndexOperandWire(left.Key, right.Key); c != 0 {
+			return c < 0
+		}
+		if c := compareDynamicIndexOperandWire(left.Value, right.Value); c != 0 {
+			return c < 0
+		}
+		return left.Admission < right.Admission
+	})
 	sort.Slice(w.FrozenTables, func(i, j int) bool {
 		return comparePlaceholderPathWire(w.FrozenTables[i].Target, w.FrozenTables[j].Target) < 0
 	})
@@ -347,6 +420,9 @@ func canonicalizeOperationalEffectsWire(w *operationalEffectsWire) {
 		}
 		return comparePlaceholderPathWire(left.Into, right.Into) < 0
 	})
+	sort.Slice(w.LifecycleEffects, func(i, j int) bool {
+		return compareLifecycleEffectWire(w.LifecycleEffects[i], w.LifecycleEffects[j]) < 0
+	})
 	for i := range w.ReturnAllocationTemplates {
 		canonicalizeReturnAllocationTemplateWire(&w.ReturnAllocationTemplates[i])
 	}
@@ -357,6 +433,213 @@ func canonicalizeOperationalEffectsWire(w *operationalEffectsWire) {
 		}
 		return left.Root < right.Root
 	})
+}
+
+func encodeDynamicIndexFact(fact signature.DynamicIndexFact) (dynamicIndexFactWire, error) {
+	if fact.Site == "" {
+		return dynamicIndexFactWire{}, fmt.Errorf("missing site")
+	}
+	table, err := encodePlaceholderPath(fact.Table)
+	if err != nil {
+		return dynamicIndexFactWire{}, fmt.Errorf("table: %w", err)
+	}
+	keyPresence, err := encodePresence(fact.KeyPresence)
+	if err != nil {
+		return dynamicIndexFactWire{}, fmt.Errorf("key presence: %w", err)
+	}
+	key, err := encodeDynamicIndexOperand(fact.Key)
+	if err != nil {
+		return dynamicIndexFactWire{}, fmt.Errorf("key: %w", err)
+	}
+	value, err := encodeDynamicIndexOperand(fact.Value)
+	if err != nil {
+		return dynamicIndexFactWire{}, fmt.Errorf("value: %w", err)
+	}
+	admission, err := encodeDynamicIndexAdmission(fact.Admission)
+	if err != nil {
+		return dynamicIndexFactWire{}, fmt.Errorf("admission: %w", err)
+	}
+	return dynamicIndexFactWire{
+		Table:       table,
+		Site:        fact.Site,
+		KeyPresence: keyPresence,
+		Key:         key,
+		Value:       value,
+		Admission:   admission,
+	}, nil
+}
+
+func encodeDynamicIndexOperand(operand signature.DynamicIndexOperand) (dynamicIndexOperandWire, error) {
+	var out dynamicIndexOperandWire
+	if !operand.Path.IsEmpty() {
+		path, err := encodePlaceholderPath(operand.Path)
+		if err != nil {
+			return dynamicIndexOperandWire{}, fmt.Errorf("path: %w", err)
+		}
+		out.Path = path
+	}
+	if operand.Type != nil {
+		typ, err := encodeType(operand.Type)
+		if err != nil {
+			return dynamicIndexOperandWire{}, fmt.Errorf("type: %w", err)
+		}
+		out.Type = typ
+	}
+	if out.Path == nil && out.Type == nil {
+		return dynamicIndexOperandWire{}, fmt.Errorf("missing path or type")
+	}
+	return out, nil
+}
+
+func decodeDynamicIndexFact(w dynamicIndexFactWire) (signature.DynamicIndexFact, error) {
+	if w.Site == "" {
+		return signature.DynamicIndexFact{}, fmt.Errorf("missing site")
+	}
+	table, err := decodePlaceholderPath(w.Table)
+	if err != nil {
+		return signature.DynamicIndexFact{}, fmt.Errorf("table: %w", err)
+	}
+	keyPresence, err := decodePresence(w.KeyPresence)
+	if err != nil {
+		return signature.DynamicIndexFact{}, fmt.Errorf("key presence: %w", err)
+	}
+	key, err := decodeDynamicIndexOperand(w.Key)
+	if err != nil {
+		return signature.DynamicIndexFact{}, fmt.Errorf("key: %w", err)
+	}
+	value, err := decodeDynamicIndexOperand(w.Value)
+	if err != nil {
+		return signature.DynamicIndexFact{}, fmt.Errorf("value: %w", err)
+	}
+	admission, err := decodeDynamicIndexAdmission(w.Admission)
+	if err != nil {
+		return signature.DynamicIndexFact{}, fmt.Errorf("admission: %w", err)
+	}
+	return signature.DynamicIndexFact{
+		Table:       table,
+		Site:        w.Site,
+		KeyPresence: keyPresence,
+		Key:         key,
+		Value:       value,
+		Admission:   admission,
+	}, nil
+}
+
+func decodeDynamicIndexOperand(w dynamicIndexOperandWire) (signature.DynamicIndexOperand, error) {
+	var out signature.DynamicIndexOperand
+	if w.Path != nil {
+		path, err := decodePlaceholderPath(w.Path)
+		if err != nil {
+			return signature.DynamicIndexOperand{}, fmt.Errorf("path: %w", err)
+		}
+		out.Path = path
+	}
+	if w.Type != nil {
+		typ, err := decodeType(w.Type)
+		if err != nil {
+			return signature.DynamicIndexOperand{}, fmt.Errorf("type: %w", err)
+		}
+		out.Type = typ
+	}
+	if out.Path.IsEmpty() && out.Type == nil {
+		return signature.DynamicIndexOperand{}, fmt.Errorf("missing path or type")
+	}
+	return out, nil
+}
+
+func compareDynamicIndexOperandWire(a, b dynamicIndexOperandWire) int {
+	if c := comparePlaceholderPathWire(a.Path, b.Path); c != 0 {
+		return c
+	}
+	left, right := typeWireKey(a.Type), typeWireKey(b.Type)
+	switch {
+	case left < right:
+		return -1
+	case left > right:
+		return 1
+	default:
+		return 0
+	}
+}
+
+func encodeLifecycleEffect(effect signature.LifecycleEffect) (lifecycleEffectWire, error) {
+	target, err := encodePlaceholderPath(effect.Target)
+	if err != nil {
+		return lifecycleEffectWire{}, fmt.Errorf("target: %w", err)
+	}
+	kind, err := encodeLifecycleKind(effect.Kind)
+	if err != nil {
+		return lifecycleEffectWire{}, err
+	}
+	if effect.Protocol == "" {
+		return lifecycleEffectWire{}, fmt.Errorf("missing protocol")
+	}
+	if effect.Kind == signature.LifecycleAcquire && effect.To == "" {
+		return lifecycleEffectWire{}, fmt.Errorf("acquire missing state")
+	}
+	if effect.Kind == signature.LifecycleTransition && effect.To == "" {
+		return lifecycleEffectWire{}, fmt.Errorf("transition missing target state")
+	}
+	return lifecycleEffectWire{
+		Target:   target,
+		Kind:     kind,
+		Protocol: string(effect.Protocol),
+		From:     string(effect.From),
+		To:       string(effect.To),
+		Final:    string(effect.Obligation.Final),
+	}, nil
+}
+
+func decodeLifecycleEffect(w lifecycleEffectWire) (signature.LifecycleEffect, error) {
+	target, err := decodePlaceholderPath(w.Target)
+	if err != nil {
+		return signature.LifecycleEffect{}, fmt.Errorf("target: %w", err)
+	}
+	kind, err := decodeLifecycleKind(w.Kind)
+	if err != nil {
+		return signature.LifecycleEffect{}, err
+	}
+	if w.Protocol == "" {
+		return signature.LifecycleEffect{}, fmt.Errorf("missing protocol")
+	}
+	if kind == signature.LifecycleAcquire && w.To == "" {
+		return signature.LifecycleEffect{}, fmt.Errorf("acquire missing state")
+	}
+	if kind == signature.LifecycleTransition && w.To == "" {
+		return signature.LifecycleEffect{}, fmt.Errorf("transition missing target state")
+	}
+	return signature.LifecycleEffect{
+		Target:   target,
+		Kind:     kind,
+		Protocol: typestate.Protocol(w.Protocol),
+		From:     typestate.State(w.From),
+		To:       typestate.State(w.To),
+		Obligation: typestate.Obligation{
+			Final: typestate.State(w.Final),
+		},
+	}, nil
+}
+
+func compareLifecycleEffectWire(a, b lifecycleEffectWire) int {
+	if c := comparePlaceholderPathWire(a.Target, b.Target); c != 0 {
+		return c
+	}
+	pairs := [][2]string{
+		{a.Protocol, b.Protocol},
+		{a.Kind, b.Kind},
+		{a.From, b.From},
+		{a.To, b.To},
+		{a.Final, b.Final},
+	}
+	for _, pair := range pairs {
+		switch {
+		case pair[0] < pair[1]:
+			return -1
+		case pair[0] > pair[1]:
+			return 1
+		}
+	}
+	return 0
 }
 
 func encodeReturnAllocationTemplate(template signature.ReturnAllocationTemplate) (returnAllocationTemplateWire, error) {
@@ -644,6 +927,58 @@ func decodePresence(s string) (presence.Value, error) {
 		return presence.Maybe(), nil
 	default:
 		return presence.Bottom(), fmt.Errorf("unknown presence %q", s)
+	}
+}
+
+func encodeDynamicIndexAdmission(admission signature.DynamicIndexAdmission) (string, error) {
+	switch admission {
+	case signature.DynamicIndexAdmissionAdmitted:
+		return "admitted", nil
+	case signature.DynamicIndexAdmissionRejected:
+		return "rejected", nil
+	case signature.DynamicIndexAdmissionUnknown:
+		return "unknown", nil
+	default:
+		return "", fmt.Errorf("unknown dynamic-index admission %q", admission)
+	}
+}
+
+func decodeDynamicIndexAdmission(s string) (signature.DynamicIndexAdmission, error) {
+	switch s {
+	case "admitted":
+		return signature.DynamicIndexAdmissionAdmitted, nil
+	case "rejected":
+		return signature.DynamicIndexAdmissionRejected, nil
+	case "unknown":
+		return signature.DynamicIndexAdmissionUnknown, nil
+	default:
+		return "", fmt.Errorf("unknown dynamic-index admission %q", s)
+	}
+}
+
+func encodeLifecycleKind(kind signature.LifecycleKind) (string, error) {
+	switch kind {
+	case signature.LifecycleAcquire:
+		return "acquire", nil
+	case signature.LifecycleTransition:
+		return "transition", nil
+	case signature.LifecycleEscape:
+		return "escape", nil
+	default:
+		return "", fmt.Errorf("unsupported lifecycle kind %d", kind)
+	}
+}
+
+func decodeLifecycleKind(s string) (signature.LifecycleKind, error) {
+	switch s {
+	case "acquire":
+		return signature.LifecycleAcquire, nil
+	case "transition":
+		return signature.LifecycleTransition, nil
+	case "escape":
+		return signature.LifecycleEscape, nil
+	default:
+		return signature.LifecycleNone, fmt.Errorf("unknown lifecycle kind %q", s)
 	}
 }
 

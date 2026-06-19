@@ -1,6 +1,9 @@
 package summary
 
-import pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+import (
+	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/path/segment"
+)
 
 // ParamMemberCallObligation records a pre-call obligation that depends on a
 // callable member of another parameter. Call-boundary adaptation resolves the
@@ -8,7 +11,8 @@ import pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 // ArgParam.
 type ParamMemberCallObligation struct {
 	ReceiverParam    int
-	Member           string
+	ReceiverPath     pathdom.PathKey
+	Member           segment.Segment
 	ArgParam         int
 	MemberParamIndex int
 }
@@ -19,7 +23,7 @@ type ParamMemberCallObligation struct {
 // receiver argument's imported signature.
 type ParamMemberReturnSlot struct {
 	ReceiverParam     int
-	Member            string
+	Member            segment.Segment
 	ReturnIndex       int
 	MemberResultIndex int
 }

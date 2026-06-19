@@ -92,11 +92,18 @@ func equivalentPathKeysForProof(pathKey pathdom.PathKey, proof BranchProof) []pa
 }
 
 func rebaseEquivalentPathKey(pathKey, from, to pathdom.PathKey) (pathdom.PathKey, bool) {
+	if cyclicDescendantExpansion(pathKey, from, to) {
+		return "", false
+	}
 	rebased, ok := pathaddr.RebasePathKey(pathKey, from, to)
-	if !ok || !pathKeyInSubtree(rebased, to) {
+	if !ok || !pathaddr.PathKeyHasPrefix(rebased, to) {
 		return "", false
 	}
 	return rebased, true
+}
+
+func cyclicDescendantExpansion(pathKey, from, to pathdom.PathKey) bool {
+	return pathaddr.PathKeyHasStrictPrefix(to, from) && pathaddr.PathKeyHasPrefix(pathKey, to)
 }
 
 func cloneBranchProofSet(in map[BranchProof]struct{}) map[BranchProof]struct{} {

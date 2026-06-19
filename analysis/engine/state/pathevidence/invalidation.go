@@ -176,10 +176,10 @@ func addSubtreeAliases(
 	seen map[pathdom.PathKey]struct{},
 	queue *[]pathdom.PathKey,
 ) {
-	if rebased, ok := pathaddr.RebasePathKey(prefix, from, to); ok {
+	if rebased, ok := rebaseAcyclicAliasPathKey(prefix, from, to); ok {
 		addPathKeyToQueue(rebased, seen, queue)
 	}
-	if pathKeyInSubtree(from, prefix) {
+	if pathaddr.PathKeyHasPrefix(from, prefix) {
 		addPathKeyToQueue(to, seen, queue)
 	}
 }
@@ -191,12 +191,19 @@ func addDescendantAliases(
 	addDesc func(pathdom.PathKey),
 	addSubtree func(pathdom.PathKey),
 ) {
-	if rebased, ok := pathaddr.RebasePathKey(prefix, from, to); ok {
+	if rebased, ok := rebaseAcyclicAliasPathKey(prefix, from, to); ok {
 		addDesc(rebased)
 	}
-	if pathKeyInDescendants(from, prefix) {
+	if pathaddr.PathKeyHasStrictPrefix(from, prefix) {
 		addSubtree(to)
 	}
+}
+
+func rebaseAcyclicAliasPathKey(pathKey, from, to pathdom.PathKey) (pathdom.PathKey, bool) {
+	if cyclicDescendantExpansion(pathKey, from, to) {
+		return "", false
+	}
+	return pathaddr.RebasePathKey(pathKey, from, to)
 }
 
 func addPathKeyToQueue(pathKey pathdom.PathKey, seen map[pathdom.PathKey]struct{}, queue *[]pathdom.PathKey) {
@@ -222,19 +229,9 @@ func sortedPathKeySet(in map[pathdom.PathKey]struct{}) []pathdom.PathKey {
 	return out
 }
 
-func pathKeyInSubtree(candidate pathdom.PathKey, prefix pathdom.PathKey) bool {
-	parsed, parsedPrefix, ok := parsePathKeyPair(candidate, prefix)
-	return ok && parsed.HasPrefix(parsedPrefix)
-}
-
-func pathKeyInDescendants(candidate pathdom.PathKey, prefix pathdom.PathKey) bool {
-	parsed, parsedPrefix, ok := parsePathKeyPair(candidate, prefix)
-	return ok && parsed.HasStrictPrefix(parsedPrefix)
-}
-
 func pathKeyInAnySubtree(candidate pathdom.PathKey, prefixes []pathdom.PathKey) bool {
 	for _, prefix := range prefixes {
-		if pathKeyInSubtree(candidate, prefix) {
+		if pathaddr.PathKeyHasPrefix(candidate, prefix) {
 			return true
 		}
 	}
@@ -243,12 +240,12 @@ func pathKeyInAnySubtree(candidate pathdom.PathKey, prefixes []pathdom.PathKey) 
 
 func pathKeyInAnyDescendantInvalidation(candidate pathdom.PathKey, prefixes PathKeyDescendantInvalidationPrefixes) bool {
 	for _, prefix := range prefixes.Descendants {
-		if pathKeyInDescendants(candidate, prefix) {
+		if pathaddr.PathKeyHasStrictPrefix(candidate, prefix) {
 			return true
 		}
 	}
 	for _, prefix := range prefixes.Subtrees {
-		if pathKeyInSubtree(candidate, prefix) {
+		if pathaddr.PathKeyHasPrefix(candidate, prefix) {
 			return true
 		}
 	}
@@ -317,19 +314,4 @@ func deleteMatchingPathKeys(
 		return nil, true
 	}
 	return out, true
-}
-
-func parsePathKeyPair(candidate pathdom.PathKey, prefix pathdom.PathKey) (pathaddr.StructuralKey, pathaddr.StructuralKey, bool) {
-	if candidate == "" {
-		return pathaddr.StructuralKey{}, pathaddr.StructuralKey{}, false
-	}
-	parsed, ok := pathaddr.StructuralKeyFromPathKey(candidate)
-	if !ok {
-		return pathaddr.StructuralKey{}, pathaddr.StructuralKey{}, false
-	}
-	parsedPrefix, ok := pathaddr.StructuralKeyFromPathKey(prefix)
-	if !ok {
-		return pathaddr.StructuralKey{}, pathaddr.StructuralKey{}, false
-	}
-	return parsed, parsedPrefix, true
 }

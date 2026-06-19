@@ -44,7 +44,11 @@ func (l *lowerer) branchRefinement(fact semantics.BranchConditionFact) (factflow
 			l.typedPresenceRefinement(target, presence.Present()), true,
 		), true
 	case branchcond.CheckLiteralEqual, branchcond.CheckLiteralNot:
-		return l.literalBranchRefinement(target, fact.Check.Kind, fact.Check.LiteralString)
+		lit, ok := fact.Check.LiteralValue()
+		if !ok {
+			return factflow.BranchRefinement{}, false
+		}
+		return l.literalBranchRefinement(target, fact.Check.Kind, lit)
 	case branchcond.CheckTypeEqual, branchcond.CheckTypeNot:
 		return l.typeBranchRefinement(target, fact.Check.Kind, fact.Check.TypeName)
 	default:

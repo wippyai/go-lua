@@ -47,6 +47,9 @@ func (d *Detector) requiredTags(t typ.Type) requiredTagSet {
 	defer delete(d.active, t)
 
 	tags := d.collectRequiredTags(t)
+	if tags.len() == 0 {
+		return tags
+	}
 	if d.tags == nil {
 		d.tags = make(map[typ.Type]requiredTagSet)
 	}

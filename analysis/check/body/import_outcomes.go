@@ -7,6 +7,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/typewitness"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
+	"github.com/wippyai/go-lua/analysis/engine/effectlowering"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	sourcevalue "github.com/wippyai/go-lua/analysis/engine/sourcevalue"
 	"github.com/wippyai/go-lua/analysis/engine/state"
@@ -25,7 +26,7 @@ func calleeValueProvider(
 	sources sourcevalue.SourceValues,
 	typeValues *typevalue.Cache,
 ) CalleeValueFunc {
-	return func(ctx transfer.NodeContext, site factflow.CallSite, in state.State, read func(cfg.Point) state.State) (product.Value, bool) {
+	return func(ctx transfer.NodeContext, site factflow.CallSiteView, in state.State, read func(cfg.Point) state.State) (product.Value, bool) {
 		p := site.CalleePath()
 		if p.IsEmpty() {
 			return methodCalleeValue(reg, typeValues, sources, ctx, site, in, read)
@@ -97,7 +98,7 @@ func pathMethodCalleeValue(
 	facts factflow.Facts,
 	resolver *visibility.Resolver,
 	ctx transfer.NodeContext,
-	site factflow.CallSite,
+	site factflow.CallSiteView,
 	in state.State,
 ) (product.Value, bool) {
 	method := site.MethodName()
@@ -132,7 +133,7 @@ func methodCalleeValue(
 	typeValues *typevalue.Cache,
 	sources sourcevalue.SourceValues,
 	ctx transfer.NodeContext,
-	site factflow.CallSite,
+	site factflow.CallSiteView,
 	in state.State,
 	read func(cfg.Point) state.State,
 ) (product.Value, bool) {
@@ -161,6 +162,37 @@ func methodTypeValue(reg *axis.Registry, typeValues *typevalue.Cache, receiverTy
 		return product.Value{}, false
 	}
 	return typeValues.FromTypeWithWitness(reg, methodType), true
+}
+
+func channelMethodReceiverTypeProvider(
+	reg *axis.Registry,
+	facts factflow.Facts,
+	resolver *visibility.Resolver,
+	sources sourcevalue.SourceValues,
+	typeValues *typevalue.Cache,
+) effectlowering.ReceiverTypeFunc {
+	return func(ctx transfer.NodeContext, site factflow.CallSiteView, in state.State, read func(cfg.Point) state.State) (typ.Type, bool) {
+		if receiverPath, ok := site.ReceiverPath(); ok && !receiverPath.IsEmpty() {
+			config := readexpr.Config{Registry: reg, Facts: facts, Visibility: resolver, TypeValues: typeValues}
+			value, ok := readexpr.Project(config, ctx.Point, receiverPath, in)
+			if !ok {
+				return nil, false
+			}
+			return witnessedType(reg, value)
+		}
+		if sources == nil {
+			return nil, false
+		}
+		source, ok := site.ReceiverSource()
+		if !ok {
+			return nil, false
+		}
+		value, ok := sources.ValueOfSource(ctx.Point, source, in, read)
+		if !ok {
+			return nil, false
+		}
+		return witnessedType(reg, value)
+	}
 }
 
 func hasTypeWitness(reg *axis.Registry, value product.Value) bool {

@@ -3,6 +3,7 @@ package typ
 const (
 	recursiveHashSmallVisitedCap = 8
 	recursiveHashSmallMemoCap    = 16
+	recursiveHashSmallActiveCap  = 16
 )
 
 type recursiveHashMemoEntry struct {
@@ -14,6 +15,10 @@ type recursiveHashScratch struct {
 	visited    [recursiveHashSmallVisitedCap]*Recursive
 	visitedLen int
 	visitedMap map[*Recursive]bool
+
+	active    [recursiveHashSmallActiveCap]Type
+	activeLen int
+	activeMap map[Type]bool
 
 	memo    [recursiveHashSmallMemoCap]recursiveHashMemoEntry
 	memoLen int
@@ -59,6 +64,47 @@ func (s *recursiveHashScratch) visitedPop(r *Recursive) {
 	}
 	s.visitedLen--
 	s.visited[s.visitedLen] = nil
+}
+
+func (s *recursiveHashScratch) activeContains(t Type) bool {
+	if s.activeMap != nil {
+		return s.activeMap[t]
+	}
+	for i := 0; i < s.activeLen; i++ {
+		if s.active[i] == t {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *recursiveHashScratch) activePush(t Type) {
+	if s.activeMap != nil {
+		s.activeMap[t] = true
+		return
+	}
+	if s.activeLen < len(s.active) {
+		s.active[s.activeLen] = t
+		s.activeLen++
+		return
+	}
+	s.activeMap = make(map[Type]bool, len(s.active)+1)
+	for i := 0; i < s.activeLen; i++ {
+		s.activeMap[s.active[i]] = true
+	}
+	s.activeMap[t] = true
+}
+
+func (s *recursiveHashScratch) activePop(t Type) {
+	if s.activeMap != nil {
+		delete(s.activeMap, t)
+		return
+	}
+	if s.activeLen == 0 {
+		return
+	}
+	s.activeLen--
+	s.active[s.activeLen] = nil
 }
 
 func (s *recursiveHashScratch) memoGet(t Type) (uint64, bool) {

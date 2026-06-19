@@ -130,3 +130,12 @@ func TestMapDomainCloneAndCanonicalization(t *testing.T) {
 		t.Fatalf("joining bottom entry changed canonical map: %#v", got)
 	}
 }
+
+func TestMapDomainTopStableAcrossRepeatedConstruction(t *testing.T) {
+	reg := standard.Registry()
+	top := MapDomain(reg).Top()
+	domain := MapDomain(reg)
+	if !domain.Equal(top, domain.Top()) {
+		t.Fatalf("reconstructed map domain did not recognize prior top sentinel")
+	}
+}

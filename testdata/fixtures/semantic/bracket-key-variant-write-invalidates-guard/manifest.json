@@ -5,24 +5,152 @@
       {
         "file": "main.lua",
         "line": 26,
+        "column": 32,
         "severity": "error",
         "code": "type.member.missing",
-        "message_contains": ["has no member \"path\"", "timer"],
-        "min_evidence": 2,
-        "evidence_contains": ["read accesses field \"path\"", "receiver type at read"],
-        "min_labels": 1,
-        "label_contains": ["missing member read"]
+        "message_contains": [
+          "has no member \"path\"",
+          "timer"
+        ],
+        "min_evidence": 1,
+        "evidence": [
+          {
+            "kind": "abstract fact",
+            "trust": "proven",
+            "line": 26,
+            "column": 32,
+            "contains": [
+              "slots.active.value.path reads member \"path\" from receiver type {kind: \"timer\", seconds: 10}"
+            ]
+          }
+        ],
+        "evidence_contains": [
+          "slots.active.value.path reads member \"path\" from receiver type {kind: \"timer\", seconds: 10}"
+        ],
+        "render_contains": [
+          "error[type.member.missing]: {kind: \"timer\", seconds: 10} has no member \"path\"",
+          "slots.active.value.path -- expect-error",
+          "because:",
+          "Narrow the receiver before reading `path`"
+        ],
+        "render_ordered_contains": [
+          "error[type.member.missing]: {kind: \"timer\", seconds: 10} has no member \"path\"",
+          "--> main.lua:26:32",
+          "local stale_path: string = slots.active.value.path -- expect-error",
+          "because:",
+          "1. proven: slots.active.value.path reads member \"path\" from receiver type {kind: \"timer\", seconds: 10}",
+          "help: Narrow the receiver before reading `path`, or add `path` to every reachable receiver shape."
+        ],
+        "render_not_contains": [
+          "^~",
+          "where:"
+        ],
+        "help_contains": [
+          "Narrow the receiver before reading `path`"
+        ],
+        "labels": [
+          {
+            "line": 26,
+            "column": 32,
+            "contains": [
+              "member read"
+            ]
+          }
+        ],
+        "label_contains": [
+          "member read"
+        ]
       },
       {
         "file": "main.lua",
         "line": 27,
+        "column": 35,
         "severity": "error",
         "code": "type.assignment",
-        "message_contains": ["cannot assign", "number"],
+        "message_contains": [
+          "cannot assign before",
+          "\"/tmp/active\"",
+          "not number",
+          "number"
+        ],
         "min_evidence": 2,
-        "evidence_contains": ["source expression", "stale_seconds is annotated"],
+        "evidence": [
+          {
+            "kind": "abstract fact",
+            "trust": "proven",
+            "line": 27,
+            "column": 35,
+            "contains": [
+              "before has literal value \"/tmp/active\""
+            ]
+          },
+          {
+            "kind": "user assertion",
+            "trust": "claimed",
+            "line": 27,
+            "column": 26,
+            "contains": [
+              "stale_seconds is declared as number"
+            ]
+          },
+          {
+            "kind": "missing proof",
+            "trust": "unknown",
+            "reason": "boundary validation missing",
+            "line": 27,
+            "column": 35,
+            "contains": [
+              "no proof on this path shows before satisfies the declared type"
+            ]
+          }
+        ],
+        "evidence_contains": [
+          "before has literal value \"/tmp/active\"",
+          "stale_seconds is declared as number"
+        ],
+        "render_contains": [
+          "error[type.assignment]: cannot assign before because it is \"/tmp/active\", not number",
+          "local stale_seconds: number = before -- expect-error",
+          "because:"
+        ],
+        "render_ordered_contains": [
+          "error[type.assignment]: cannot assign before because it is \"/tmp/active\", not number",
+          "--> main.lua:27:35",
+          "local stale_seconds: number = before -- expect-error",
+          "because:",
+          "1. proven: before has literal value \"/tmp/active\"",
+          "2. claimed: stale_seconds is declared as number",
+          "3. missing proof: no proof on this path shows before satisfies the declared type",
+          "help: Use a value compatible with the expected type, or change the target type if `before` is valid."
+        ],
+        "render_not_contains": [
+          "^~",
+          "where:"
+        ],
         "min_labels": 2,
-        "label_contains": ["assigned value", "declared type"]
+        "labels": [
+          {
+            "line": 27,
+            "column": 35,
+            "contains": [
+              "assigned value"
+            ]
+          },
+          {
+            "line": 27,
+            "column": 26,
+            "contains": [
+              "declared type"
+            ]
+          }
+        ],
+        "label_contains": [
+          "assigned value",
+          "declared type"
+        ],
+        "help_contains": [
+          "change the target type"
+        ]
       }
     ]
   }

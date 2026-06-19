@@ -10,12 +10,14 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/effect/control"
 	"github.com/wippyai/go-lua/analysis/domain/effect/dispatch"
 	"github.com/wippyai/go-lua/analysis/domain/effect/iteration"
+	"github.com/wippyai/go-lua/analysis/domain/effect/lifecycle"
 	"github.com/wippyai/go-lua/analysis/domain/effect/mutation"
 	"github.com/wippyai/go-lua/analysis/domain/effect/ownership"
 	"github.com/wippyai/go-lua/analysis/domain/effect/postcondition"
 	"github.com/wippyai/go-lua/analysis/domain/effect/returns"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
+	"github.com/wippyai/go-lua/analysis/domain/typestate"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/module/signature"
 	"github.com/wippyai/go-lua/analysis/type/annotation"
@@ -173,6 +175,21 @@ func TestManifestRoundTripNamedFunctionSignatureEffects(t *testing.T) {
 			Source: pathdom.NewPlaceholder(0).Field("payload"),
 			Into:   pathdom.NewPlaceholder(1).Field("items"),
 		}},
+		LifecycleEffects: []signature.LifecycleEffect{{
+			Target:   pathdom.NewPlaceholder(0).Field("tx"),
+			Kind:     signature.LifecycleAcquire,
+			Protocol: typestate.Protocol("transaction"),
+			To:       typestate.State("active"),
+			Obligation: typestate.Obligation{
+				Final: typestate.State("finished"),
+			},
+		}, {
+			Target:   pathdom.NewPlaceholder(0).Field("tx"),
+			Kind:     signature.LifecycleTransition,
+			Protocol: typestate.Protocol("transaction"),
+			From:     typestate.State("active"),
+			To:       typestate.State("finished"),
+		}},
 		ReturnAllocationTemplates: []signature.ReturnAllocationTemplate{{
 			ReturnIndex: 0,
 			Root:        "example.transform:return:0:root",
@@ -208,6 +225,7 @@ func TestManifestRoundTripNamedFunctionSignatureEffects(t *testing.T) {
 		!strings.Contains(string(data), `"effect"`) ||
 		!strings.Contains(string(data), `"operationalEffects"`) ||
 		!strings.Contains(string(data), `"pathStaticMembers"`) ||
+		!strings.Contains(string(data), `"lifecycleEffects"`) ||
 		!strings.Contains(string(data), `"returnAllocationTemplates"`) ||
 		!strings.Contains(string(data), `"suffix": ".payload"`) {
 		t.Fatalf("encoded manifest missing function signature effect data:\n%s", data)
@@ -238,6 +256,92 @@ func TestManifestRoundTripNamedFunctionSignatureEffects(t *testing.T) {
 	}
 	if !(signature.Function{Type: export, Effect: row, OperationalEffects: operational}).Equals(gotSig) {
 		t.Fatalf("signature = %v, want %v", gotSig, signature.Function{Type: export, Effect: row, OperationalEffects: operational})
+	}
+}
+
+func TestManifestRoundTripOperationOnlyFunctionSignature(t *testing.T) {
+	operational := &signature.OperationalEffects{
+		PathInvalidations: []signature.PathInvalidation{{
+			Path: pathdom.NewPlaceholder(0),
+		}},
+	}
+	m := New("example/operation-only")
+	m.DefineFunctionSignature("install", signature.Function{
+		OperationalEffects: operational,
+	})
+
+	data, err := Encode(m)
+	if err != nil {
+		t.Fatalf("Encode: %v", err)
+	}
+	if strings.Contains(string(data), `"type"`) {
+		t.Fatalf("operation-only signature serialized a fake type:\n%s", data)
+	}
+	if !strings.Contains(string(data), `"operationalEffects"`) ||
+		!strings.Contains(string(data), `"pathInvalidations"`) {
+		t.Fatalf("encoded operation-only signature missing operational effects:\n%s", data)
+	}
+	got, err := Decode(data)
+	if err != nil {
+		t.Fatalf("Decode: %v", err)
+	}
+	gotSig, ok := got.FunctionSignatures["install"]
+	if !ok {
+		t.Fatalf("missing install signature")
+	}
+	if gotSig.Type != nil {
+		t.Fatalf("signature type = %v, want nil", gotSig.Type)
+	}
+	if gotSig.OperationalEffects == nil || !gotSig.OperationalEffects.Equals(*operational) {
+		t.Fatalf("operational effects = %#v, want %#v", gotSig.OperationalEffects, operational)
+	}
+}
+
+func TestManifestRejectsInvalidLifecycleOperationalEffects(t *testing.T) {
+	tests := []struct {
+		name    string
+		effects signature.OperationalEffects
+		wantErr string
+	}{
+		{
+			name: "missing protocol",
+			effects: signature.OperationalEffects{LifecycleEffects: []signature.LifecycleEffect{{
+				Target: pathdom.NewPlaceholder(0),
+				Kind:   signature.LifecycleEscape,
+			}}},
+			wantErr: "missing protocol",
+		},
+		{
+			name: "unsupported kind",
+			effects: signature.OperationalEffects{LifecycleEffects: []signature.LifecycleEffect{{
+				Target:   pathdom.NewPlaceholder(0),
+				Kind:     signature.LifecycleNone,
+				Protocol: typestate.Protocol("resource"),
+			}}},
+			wantErr: "unsupported lifecycle kind",
+		},
+		{
+			name: "transition missing target state",
+			effects: signature.OperationalEffects{LifecycleEffects: []signature.LifecycleEffect{{
+				Target:   pathdom.NewPlaceholder(0),
+				Kind:     signature.LifecycleTransition,
+				Protocol: typestate.Protocol("resource"),
+				From:     typestate.State("open"),
+			}}},
+			wantErr: "transition missing target state",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := encodeOperationalEffects(&tt.effects)
+			if err == nil {
+				t.Fatal("encodeOperationalEffects succeeded, want lifecycle validation error")
+			}
+			if !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("error = %v, want %q", err, tt.wantErr)
+			}
+		})
 	}
 }
 
@@ -551,6 +655,24 @@ func operationalEffectsOrderA() *signature.OperationalEffects {
 			{Source: pathdom.NewPlaceholder(1).Field("payload"), Into: pathdom.NewPlaceholder(0).Field("bucket")},
 			{Source: pathdom.NewPlaceholder(0).Field("payload"), Into: pathdom.NewPlaceholder(1).Field("bucket")},
 		},
+		LifecycleEffects: []signature.LifecycleEffect{
+			{
+				Target:   pathdom.NewPlaceholder(1).Field("resource"),
+				Kind:     signature.LifecycleTransition,
+				Protocol: typestate.Protocol("socket"),
+				From:     typestate.State("open"),
+				To:       typestate.State("closed"),
+			},
+			{
+				Target:   pathdom.NewPlaceholder(0).Field("tx"),
+				Kind:     signature.LifecycleAcquire,
+				Protocol: typestate.Protocol("transaction"),
+				To:       typestate.State("active"),
+				Obligation: typestate.Obligation{
+					Final: typestate.State("finished"),
+				},
+			},
+		},
 	}
 }
 
@@ -583,6 +705,24 @@ func operationalEffectsOrderB() *signature.OperationalEffects {
 		StoreRelations: []signature.StoreRelation{
 			{Source: pathdom.NewPlaceholder(0).Field("payload"), Into: pathdom.NewPlaceholder(1).Field("bucket")},
 			{Source: pathdom.NewPlaceholder(1).Field("payload"), Into: pathdom.NewPlaceholder(0).Field("bucket")},
+		},
+		LifecycleEffects: []signature.LifecycleEffect{
+			{
+				Target:   pathdom.NewPlaceholder(0).Field("tx"),
+				Kind:     signature.LifecycleAcquire,
+				Protocol: typestate.Protocol("transaction"),
+				To:       typestate.State("active"),
+				Obligation: typestate.Obligation{
+					Final: typestate.State("finished"),
+				},
+			},
+			{
+				Target:   pathdom.NewPlaceholder(1).Field("resource"),
+				Kind:     signature.LifecycleTransition,
+				Protocol: typestate.Protocol("socket"),
+				From:     typestate.State("open"),
+				To:       typestate.State("closed"),
+			},
 		},
 	}
 }
@@ -648,6 +788,24 @@ func TestManifestEffectLabelRoundTripCoversActiveReturnMatrix(t *testing.T) {
 			}},
 		}}},
 		{"error return", "actively lowered by effectlowering", returns.ErrorReturn{ValueIndex: 0, ErrorIndex: 1}},
+		{"lifecycle acquire", "actively lowered by effectlowering", lifecycle.Acquire{
+			Target:   p0,
+			Protocol: typestate.Protocol("transaction"),
+			State:    typestate.State("active"),
+			Obligation: typestate.Obligation{
+				Final: typestate.State("finished"),
+			},
+		}},
+		{"lifecycle transition", "actively lowered by effectlowering", lifecycle.Transition{
+			Target:   p0,
+			Protocol: typestate.Protocol("transaction"),
+			From:     typestate.State("active"),
+			To:       typestate.State("finished"),
+		}},
+		{"lifecycle escape", "actively lowered by effectlowering", lifecycle.Escape{
+			Target:   p0,
+			Protocol: typestate.Protocol("transaction"),
+		}},
 	}
 
 	for _, tt := range tests {
@@ -721,6 +879,49 @@ func TestManifestRejectsInactiveDecodedEffectLabels(t *testing.T) {
 			}
 			if !strings.Contains(err.Error(), "inactive effect label") {
 				t.Fatalf("decodeEffectRow error = %v, want inactive-label rejection", err)
+			}
+		})
+	}
+}
+
+func TestManifestRejectsMalformedLifecycleEffectLabels(t *testing.T) {
+	p0 := effect.ParamRef{Index: 0}
+	encodeTests := []struct {
+		name  string
+		label effect.Label
+		want  string
+	}{
+		{"acquire missing protocol", lifecycle.Acquire{Target: p0, State: typestate.State("active")}, "missing protocol"},
+		{"acquire missing state", lifecycle.Acquire{Target: p0, Protocol: typestate.Protocol("transaction")}, "missing state"},
+		{"transition missing protocol", lifecycle.Transition{Target: p0, To: typestate.State("finished")}, "missing protocol"},
+		{"transition missing target", lifecycle.Transition{Target: p0, Protocol: typestate.Protocol("transaction")}, "missing target state"},
+		{"escape missing protocol", lifecycle.Escape{Target: p0}, "missing protocol"},
+	}
+	for _, tt := range encodeTests {
+		t.Run("encode "+tt.name, func(t *testing.T) {
+			_, err := encodeEffectRow(effect.Empty.With(tt.label))
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("encodeEffectRow error = %v, want %q", err, tt.want)
+			}
+		})
+	}
+
+	decodeTests := []struct {
+		name string
+		wire effectLabelWire
+		want string
+	}{
+		{"acquire missing protocol", effectLabelWire{Kind: "lifecycle.acquire", Target: encodeParamRef(p0), To: "active"}, "missing protocol"},
+		{"acquire missing state", effectLabelWire{Kind: "lifecycle.acquire", Target: encodeParamRef(p0), Protocol: "transaction"}, "missing state"},
+		{"transition missing protocol", effectLabelWire{Kind: "lifecycle.transition", Target: encodeParamRef(p0), To: "finished"}, "missing protocol"},
+		{"transition missing target", effectLabelWire{Kind: "lifecycle.transition", Target: encodeParamRef(p0), Protocol: "transaction"}, "missing target state"},
+		{"escape missing protocol", effectLabelWire{Kind: "lifecycle.escape", Target: encodeParamRef(p0)}, "missing protocol"},
+	}
+	for _, tt := range decodeTests {
+		t.Run("decode "+tt.name, func(t *testing.T) {
+			_, err := decodeEffectRow(&effectRowWire{Labels: []effectLabelWire{tt.wire}})
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("decodeEffectRow error = %v, want %q", err, tt.want)
 			}
 		})
 	}

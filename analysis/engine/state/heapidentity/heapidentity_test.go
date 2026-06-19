@@ -158,10 +158,73 @@ func TestMapDomainJoinsPointwiseByIdentity(t *testing.T) {
 	}
 }
 
+func TestMapDomainTopStableAcrossRepeatedConstruction(t *testing.T) {
+	reg := standard.Registry()
+	top := MapDomain(reg).Top()
+	domain := MapDomain(reg)
+	if !domain.Equal(top, domain.Top()) {
+		t.Fatalf("reconstructed map domain did not recognize prior top sentinel")
+	}
+}
+
+func TestNewTableObjectDefensivelyCopiesInputMaps(t *testing.T) {
+	reg := standard.Registry()
+	staticKey := pathdom.PathKey(".name")
+	dynKey := dynamicindex.Key{Table: pathdom.PathKey("sym91@1.table"), Site: "dyn"}
+	present := presentValue(reg)
+	absent := absentValue(reg)
+	presentFact := dynamicindex.Fact{
+		KeyPresence: presence.Present(),
+		KeyValue:    present,
+		Value:       present,
+		Admission:   dynamicindex.AdmissionAdmitted,
+	}
+	absentFact := dynamicindex.Fact{
+		KeyPresence: presence.Absent(),
+		KeyValue:    absent,
+		Value:       absent,
+		Admission:   dynamicindex.AdmissionRejected,
+	}
+	staticMembers := map[pathdom.PathKey]product.Value{staticKey: present}
+	dynamicFacts := map[dynamicindex.Key]dynamicindex.Fact{dynKey: presentFact}
+
+	object := NewTableObject(TableObjectConfig{
+		Root:              present,
+		StaticMembers:     staticMembers,
+		DynamicIndexFacts: dynamicFacts,
+	})
+	staticMembers[staticKey] = absent
+	dynamicFacts[dynKey] = absentFact
+
+	if got, _ := object.StaticMember(staticKey); !product.Domain(reg).Equal(got, present) {
+		t.Fatalf("NewTableObject shared input static map")
+	}
+	if got, _ := object.DynamicIndexFact(dynKey); !dynamicindex.Domain(reg).Equal(got, presentFact) {
+		t.Fatalf("NewTableObject shared input dynamic map")
+	}
+}
+
+func TestNewOwnedStaticTableObjectKeepsAccessorsDefensive(t *testing.T) {
+	reg := standard.Registry()
+	staticKey := pathdom.PathKey(".name")
+	present := presentValue(reg)
+	absent := absentValue(reg)
+	object := NewOwnedStaticTableObject(present, map[pathdom.PathKey]product.Value{staticKey: present})
+
+	members := object.StaticMembers()
+	members[staticKey] = absent
+	if got, _ := object.StaticMember(staticKey); !product.Domain(reg).Equal(got, present) {
+		t.Fatalf("owned static table object exposed mutable static members")
+	}
+	if len(NewOwnedStaticTableObject(present, map[pathdom.PathKey]product.Value{}).staticMembers) != 0 {
+		t.Fatalf("owned static table object should normalize empty static maps")
+	}
+}
+
 func TestCloneObjectAndMapIndependence(t *testing.T) {
 	reg := standard.Registry()
 	id := identity.ID{Kind: "table", Site: "clone", Index: 1}
-	staticKey := pathdom.PathKey("sym91@1.table.name")
+	staticKey := pathdom.PathKey(".name")
 	dynKey := dynamicindex.Key{Table: pathdom.PathKey("sym91@1.table"), Site: "dyn"}
 	present := presentValue(reg)
 	absent := absentValue(reg)
@@ -208,6 +271,17 @@ func TestCloneObjectAndMapIndependence(t *testing.T) {
 	}
 	if got, _ := objects[id].DynamicIndexFact(dynKey); !dynamicindex.Domain(reg).Equal(got, presentFact) {
 		t.Fatalf("map clone mutation changed dynamic fact")
+	}
+
+	withoutStatic, changed := mapClone[id].WithoutStaticMemberSubtree([]segment.Segment{
+		{Kind: segment.SegmentField, Name: "name"},
+	})
+	if !changed {
+		t.Fatalf("WithoutStaticMemberSubtree on cloned map object reported no change")
+	}
+	mapClone[id] = withoutStatic
+	if got, ok := objects[id].StaticMember(staticKey); !ok || !product.Domain(reg).Equal(got, present) {
+		t.Fatalf("copy-on-write object update through cloned map changed original static member: %v/%v", got, ok)
 	}
 }
 

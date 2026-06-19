@@ -1,1 +1,96 @@
-{ "description": "Calling a T: HasId generic with a value lacking id must be rejected (constraint soundness).", "files": ["main.lua"], "check": { "errors": 1 } }
+{
+  "description": "Calling a T: HasId generic with a value lacking id must be rejected (constraint soundness).",
+  "files": [
+    "main.lua"
+  ],
+  "check": {
+    "diagnostics": [
+      {
+        "file": "main.lua",
+        "line": 3,
+        "column": 16,
+        "severity": "error",
+        "code": "type.call.direct.argument_type",
+        "message_contains": [
+          "argument 1",
+          "{name: \"no-id-here\"}",
+          "not {id: string}"
+        ],
+        "min_evidence": 3,
+        "evidence_contains": [
+          "argument 1 has type {name: \"no-id-here\"}",
+          "need_id parameter 1 expects {id: string}",
+          "object literal does not provide field \"id\""
+        ],
+        "evidence": [
+          {
+            "file": "main.lua",
+            "line": 3,
+            "column": 16,
+            "kind": "abstract fact",
+            "trust": "proven",
+            "contains": [
+              "argument 1 has type {name: \"no-id-here\"}"
+            ]
+          },
+          {
+            "kind": "user assertion",
+            "trust": "claimed",
+            "contains": [
+              "need_id parameter 1 expects {id: string}"
+            ]
+          },
+          {
+            "file": "main.lua",
+            "line": 3,
+            "column": 16,
+            "kind": "missing proof",
+            "trust": "unknown",
+            "contains": [
+              "object literal does not provide field \"id\""
+            ]
+          }
+        ],
+        "render_contains": [
+          "error[type.call.direct.argument_type]:",
+          "need_id({ name = \"no-id-here\" })",
+          "because:",
+          "object literal does not provide field \"id\""
+        ],
+        "render_ordered_contains": [
+          "error[type.call.direct.argument_type]: argument 1 is {name: \"no-id-here\"}, not {id: string}",
+          "--> main.lua:3:16",
+          "return need_id({ name = \"no-id-here\" })",
+          "because:",
+          "proven: argument 1 has type {name: \"no-id-here\"}",
+          "claimed: need_id parameter 1 expects {id: string}",
+          "missing proof: object literal does not provide field \"id\"",
+          "help: Pass a value for argument 1 that satisfies the parameter type"
+        ],
+        "render_not_contains": [
+          "type mismatch",
+          "invalid argument",
+          "^~",
+          "want"
+        ],
+        "min_labels": 1,
+        "label_contains": [
+          "argument value"
+        ],
+        "labels": [
+          {
+            "file": "main.lua",
+            "line": 3,
+            "column": 16,
+            "contains": [
+              "argument value"
+            ]
+          }
+        ],
+        "help_contains": [
+          "parameter type"
+        ]
+      }
+    ]
+  }
+}

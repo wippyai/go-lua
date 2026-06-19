@@ -3,6 +3,7 @@ package callpayload
 
 import (
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/placement"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
@@ -56,6 +57,20 @@ type CallOutcome struct {
 type CallParamObligation struct {
 	ParamIndex int
 	Value      product.Value
+	Origin     CallParamObligationOrigin
+}
+
+// CallParamObligationOrigin records why a diagnostic-only parameter
+// obligation exists. Plain function-signature obligations leave HasOrigin
+// false; member-call obligations use this to render the provider/member path
+// that imposed the requirement.
+type CallParamObligationOrigin struct {
+	HasOrigin        bool
+	ReceiverParam    int
+	ReceiverPath     pathdom.PathKey
+	Member           segment.Segment
+	ArgParam         int
+	MemberParamIndex int
 }
 
 // CallParamPathRefinement records a normal-return value constraint for a

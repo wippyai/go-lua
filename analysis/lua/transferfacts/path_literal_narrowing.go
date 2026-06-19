@@ -32,11 +32,10 @@ func (l *lowerer) rootLiteralRefinement(target path.Path, lit typ.Type, cond boo
 	return factflow.NewBranchRefinement(root, factflow.ValueRefinement{}, false, value, true), true
 }
 
-func (l *lowerer) literalBranchRefinement(target path.Path, kind branchcond.CheckKind, literal string) (factflow.BranchRefinement, bool) {
+func (l *lowerer) literalBranchRefinement(target path.Path, kind branchcond.CheckKind, lit typ.Type) (factflow.BranchRefinement, bool) {
 	if target.Symbol == 0 || len(target.Segments) == 0 {
 		return factflow.BranchRefinement{}, false
 	}
-	lit := typ.LiteralString(literal)
 	rootType, ok := l.symbolTypes[target.Symbol]
 	if !ok {
 		return l.descendantLiteralRefinement(target, kind, lit)

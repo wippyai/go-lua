@@ -97,6 +97,9 @@ func (c *Cache) originFamilyOf(t typ.Type) (originFamily, bool) {
 		}
 	}
 	family, ok := originFamilyOfWithDetector(t, c.discriminantDetector())
+	if !ok {
+		return originFamily{}, false
+	}
 	if c.origins == nil {
 		c.origins = make(map[typ.Type]originCacheEntry)
 	}

@@ -2,6 +2,8 @@ package factflow
 
 import (
 	"github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/path/address"
+	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 )
@@ -12,6 +14,12 @@ type ObjectEntry struct {
 	source      ValueSource
 	expected    product.Value
 	hasExpected bool
+}
+
+// ObjectEntryView provides read-only access to an object entry without
+// exposing mutable internal path segment storage.
+type ObjectEntryView struct {
+	entry ObjectEntry
 }
 
 // NewObjectEntry creates a static object-entry descriptor.
@@ -31,6 +39,48 @@ func (e ObjectEntry) Source() ValueSource { return e.source }
 // Expected returns the contextual value contract for this static entry when the
 // object literal is checked against a declared table shape.
 func (e ObjectEntry) Expected() (product.Value, bool) { return e.expected, e.hasExpected }
+
+func (v ObjectEntryView) Source() ValueSource { return v.entry.source }
+
+func (v ObjectEntryView) Expected() (product.Value, bool) {
+	return v.entry.expected, v.entry.hasExpected
+}
+
+// Suffix returns a defensive copy of the relative static suffix.
+func (v ObjectEntryView) Suffix() path.Path { return v.entry.suffix.Clone() }
+
+// SuffixSegmentCount returns the number of static suffix segments.
+func (v ObjectEntryView) SuffixSegmentCount() int { return len(v.entry.suffix.Segments) }
+
+// SuffixSegmentAt returns one static suffix segment by value.
+func (v ObjectEntryView) SuffixSegmentAt(i int) (segment.Segment, bool) {
+	if i < 0 || i >= len(v.entry.suffix.Segments) {
+		return segment.Segment{}, false
+	}
+	return v.entry.suffix.Segments[i], true
+}
+
+// AppendSuffixTo appends the relative static suffix to root, copying the path
+// once without exposing the stored suffix segments.
+func (v ObjectEntryView) AppendSuffixTo(root path.Path) (path.Path, bool) {
+	if root.IsEmpty() || len(v.entry.suffix.Segments) == 0 {
+		return path.Path{}, false
+	}
+	return root.AppendSegments(v.entry.suffix.Segments), true
+}
+
+// StaticMemberSuffixKey returns the canonical static-member key for this
+// relative suffix.
+func (v ObjectEntryView) StaticMemberSuffixKey() (path.PathKey, bool) {
+	return address.RelativeStaticMemberSuffixKey(v.entry.suffix.Segments)
+}
+
+// FieldCanonicalStaticMemberSuffixKey returns an equivalent suffix key with
+// static string indexes rewritten to field spelling, if that rewrite changes
+// the suffix.
+func (v ObjectEntryView) FieldCanonicalStaticMemberSuffixKey() (path.PathKey, bool) {
+	return address.FieldCanonicalRelativeStaticMemberSuffixKey(v.entry.suffix.Segments)
+}
 
 // WithExpected returns a copy carrying the contextual value contract for this
 // entry.
@@ -54,21 +104,59 @@ type ObjectLiteral struct {
 	identity    identity.ID
 }
 
+// ObjectLiteralView provides read-only access to object literal entries without
+// exposing mutable internal slices or path segment storage.
+type ObjectLiteralView struct {
+	literal ObjectLiteral
+}
+
 // NewObjectLiteral creates an object literal sidecar from static entries.
 func NewObjectLiteral(entries []ObjectEntry) ObjectLiteral {
 	return ObjectLiteral{entries: copyObjectEntries(entries)}
 }
 
+// View returns a read-only view of the owned object literal.
+func (l ObjectLiteral) View() ObjectLiteralView { return ObjectLiteralView{literal: l} }
+
 // Entries returns the static entries for this object literal.
 func (l ObjectLiteral) Entries() []ObjectEntry { return copyObjectEntries(l.entries) }
+
+// EntryCount returns the number of static entries.
+func (v ObjectLiteralView) EntryCount() int { return len(v.literal.entries) }
+
+// ForEachEntry visits static entries without allocating a defensive slice.
+// Returning false stops iteration.
+func (v ObjectLiteralView) ForEachEntry(fn func(ObjectEntryView) bool) {
+	if fn == nil {
+		return
+	}
+	for i := range v.literal.entries {
+		if !fn(ObjectEntryView{entry: v.literal.entries[i]}) {
+			return
+		}
+	}
+}
+
+// Expected returns the declared contextual type value carried by this literal,
+// if one was provided by lowering.
+func (v ObjectLiteralView) Expected() (product.Value, bool) {
+	return v.literal.expected, v.literal.hasExpected
+}
+
+// Identity returns the stable literal identity attached during lowering, if
+// this literal has one.
+func (v ObjectLiteralView) Identity() (identity.ID, bool) {
+	if v.literal.identity == (identity.ID{}) {
+		return identity.ID{}, false
+	}
+	return v.literal.identity, true
+}
 
 // Expected returns the declared contextual type value the literal is assigned to,
 // carried as a type-witness value so the factflow layer stays type-agnostic. The
 // boolean reports whether a contextual record target is known for this literal.
 func (l ObjectLiteral) Expected() (product.Value, bool) { return l.expected, l.hasExpected }
 
-// Identity returns the stable literal identity when one was attached during
-// lowering.
 func (l ObjectLiteral) Identity() (identity.ID, bool) {
 	if l.identity == (identity.ID{}) {
 		return identity.ID{}, false

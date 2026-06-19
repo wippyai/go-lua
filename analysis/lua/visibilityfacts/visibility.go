@@ -121,14 +121,15 @@ func pathSymbols(graph cfg.Graph, facts factflow.Facts) map[symbol.ID]struct{} {
 			if method, ok := site.MethodPath(); ok {
 				addPath(method)
 			}
-			for _, source := range site.ArgumentSources() {
+			site.ForEachArgumentSource(func(_ int, source factflow.ValueSource) bool {
 				if source.Kind != factflow.ValueSourceExpression || !source.HasExpr {
-					continue
+					return true
 				}
 				if p, ok := facts.ExpressionPath(source.ExprRef); ok {
 					addProofPath(p)
 				}
-			}
+				return true
+			})
 		}
 		for _, fact := range facts.BranchRefinements(point) {
 			addPath(fact.TargetPath())

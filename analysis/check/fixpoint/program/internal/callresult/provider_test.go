@@ -9,6 +9,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/summary"
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
+	"github.com/wippyai/go-lua/analysis/domain/typestate"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
@@ -16,6 +17,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine/callboundary"
+	"github.com/wippyai/go-lua/analysis/engine/callpayload"
 	"github.com/wippyai/go-lua/analysis/engine/dynamicindex"
 	factapply "github.com/wippyai/go-lua/analysis/engine/factapply"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
@@ -232,6 +234,15 @@ func TestOutcomeProviderMapsSummaryReturnsAndNormalReturnFacts(t *testing.T) {
 							Recursive: true,
 						},
 					},
+					LifecycleFacts: []callboundary.LifecycleFact{
+						{
+							Target:   path.NewPlaceholder(0).Field("tx"),
+							Kind:     callboundary.LifecycleTransition,
+							Protocol: typestate.Protocol("transaction"),
+							From:     typestate.State("active"),
+							To:       typestate.State("finished"),
+						},
+					},
 				},
 			},
 		}),
@@ -300,6 +311,12 @@ func TestOutcomeProviderMapsSummaryReturnsAndNormalReturnFacts(t *testing.T) {
 		got.NormalReturnFacts.EscapeEvents[0].Kind != callboundary.EscapeEventSend ||
 		!got.NormalReturnFacts.EscapeEvents[0].Recursive {
 		t.Fatalf("escape events = %#v, want mapped summary escape event", got.NormalReturnFacts.EscapeEvents)
+	}
+	if len(got.NormalReturnFacts.LifecycleFacts) != 1 ||
+		!got.NormalReturnFacts.LifecycleFacts[0].Target.Equal(path.NewPlaceholder(0).Field("tx")) ||
+		got.NormalReturnFacts.LifecycleFacts[0].Kind != callboundary.LifecycleTransition ||
+		got.NormalReturnFacts.LifecycleFacts[0].Protocol != typestate.Protocol("transaction") {
+		t.Fatalf("lifecycle facts = %#v, want mapped summary lifecycle fact", got.NormalReturnFacts.LifecycleFacts)
 	}
 }
 
@@ -518,6 +535,18 @@ func TestOutcomeProviderMaterializesReturnParamPathAliases(t *testing.T) {
 	if member, ok := registryObject.StaticMember(path.PathKey(".backup")); !ok || !product.Equal(reg, member, clientValue) {
 		t.Fatalf("registry backup member = %#v/%v, want %#v", member, ok, clientValue)
 	}
+
+	again := provider(transfer.NodeContext{Registry: reg}, factflow.NewCallSite(factflow.CallSiteConfig{
+		CalleeSymbol:    callee,
+		ArgumentSources: []factflow.ValueSource{source},
+	}).View(), state.State{}, nil)
+	againRoot, ok := again.HeapTableObjects[rootID]
+	if !ok {
+		t.Fatalf("second HeapTableObjects = %#v, want root object %v", again.HeapTableObjects, rootID)
+	}
+	if member, ok := againRoot.StaticMember(path.PathKey(".api.backup")); ok {
+		t.Fatalf("provider materialization mutated summary snapshot: api.backup = %#v", member)
+	}
 }
 
 func TestOutcomeProviderJoinMaterializesTableEntryShapeFromNilableFactRecord(t *testing.T) {
@@ -708,12 +737,12 @@ func TestOutcomeProviderMapsNormalReturnFacts(t *testing.T) {
 		t.Fatalf("param path refinements = %#v, want only useful normal-return param", got.ParamPathRefinements)
 	}
 	if len(got.ParamConditions) != 2 ||
-		got.ParamConditions[0] != (factapply.CallParamCondition{ParamIndex: 0, Value: true}) ||
-		got.ParamConditions[1] != (factapply.CallParamCondition{ParamIndex: 1, Value: false}) {
+		got.ParamConditions[0] != (callpayload.CallParamCondition{ParamIndex: 0, Value: true}) ||
+		got.ParamConditions[1] != (callpayload.CallParamCondition{ParamIndex: 1, Value: false}) {
 		t.Fatalf("param conditions = %#v, want truthy/falsy conditions only", got.ParamConditions)
 	}
 	if len(got.ParamPathRelations) != 1 ||
-		got.ParamPathRelations[0].Kind != factapply.CallPathRelationEqual ||
+		got.ParamPathRelations[0].Kind != callpayload.CallPathRelationEqual ||
 		!got.ParamPathRelations[0].Left.Equal(path.NewPlaceholder(0)) ||
 		!got.ParamPathRelations[0].Right.Equal(path.NewPlaceholder(1)) {
 		t.Fatalf("param path relations = %#v, want mapped equality", got.ParamPathRelations)
@@ -1057,7 +1086,7 @@ func TestOutcomeProviderMissingAndEmptySummaryYieldsZeroOutcome(t *testing.T) {
 
 	tests := []struct {
 		name     string
-		provider factapply.CallOutcomeProvider
+		provider callpayload.CallOutcomeProvider
 	}{
 		{
 			name:     "nil reader",
@@ -1105,7 +1134,7 @@ func TestOutcomeProviderUnresolvedFunctionFallbackIsNotPostReturnAuthority(t *te
 	functionValue := product.Set(reg, product.Top(), runtimekind.Key, runtimekind.Singleton(runtimekind.Function))
 	provider := OutcomeProvider(ProviderConfig{
 		Summaries: summary.NewSnapshot(reg),
-		CalleeValue: func(transfer.NodeContext, factflow.CallSite, state.State, func(cfg.Point) state.State) (product.Value, bool) {
+		CalleeValue: func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) (product.Value, bool) {
 			return functionValue, true
 		},
 	})
@@ -1134,7 +1163,7 @@ func TestByCalleeIdentitySymbolKeyMapsAreCloned(t *testing.T) {
 	keyFor := ByCalleeIdentity(symbolMap)
 	symbolMap[callee] = summary.DefaultSummaryKey(ref.FuncRef{Kind: ref.KindSymbol, ID: 25})
 
-	got, ok := keyFor(transfer.NodeContext{}, factflow.NewCallSite(factflow.CallSiteConfig{CalleeSymbol: callee}))
+	got, ok := keyFor(transfer.NodeContext{}, factflow.NewCallSite(factflow.CallSiteConfig{CalleeSymbol: callee}).View())
 	if !ok || got != symbolKey {
 		t.Fatalf("symbol key = %v, %v; want %v, true", got, ok, symbolKey)
 	}
@@ -1156,7 +1185,7 @@ func TestOutcomeProviderUsesCurrentCalleeValueIdentityForPathSummary(t *testing.
 		),
 		KeyFor:      ByCalleeIdentity(map[symbol.ID]summary.SummaryKey{calleeSymbol: symbolKey}),
 		FunctionIDs: map[identity.ID]summary.SummaryKey{fnID: identityKey},
-		CalleeValue: func(ctx transfer.NodeContext, site factflow.CallSite, in state.State, read func(cfg.Point) state.State) (product.Value, bool) {
+		CalleeValue: func(ctx transfer.NodeContext, site factflow.CallSiteView, in state.State, read func(cfg.Point) state.State) (product.Value, bool) {
 			if site.CalleePath().IsEmpty() {
 				return product.Value{}, false
 			}
@@ -1203,6 +1232,43 @@ func TestOutcomeProviderUsesCurrentCalleeValueIdentityForPathSummary(t *testing.
 
 	if len(got.Results) != 0 {
 		t.Fatalf("missing path identity results = %#v, want none", got.Results)
+	}
+}
+
+func TestOutcomeProviderRejectsStalePathSummaryForCurrentNonFunctionCallee(t *testing.T) {
+	reg := standard.Registry()
+	staleKey := summary.DefaultSummaryKey(ref.FuncRef{Kind: ref.KindSymbol, ID: 39})
+	calleePath := path.NewPath(symbol.ID(40), "module").Field("call")
+	staleRet := product.Absent(reg)
+	currentNumber := product.NewWithPresence(reg, product.ShapeTop, presence.Present())
+	currentNumber = product.Set(reg, currentNumber, runtimekind.Key, runtimekind.Singleton(runtimekind.Number))
+	provider := OutcomeProvider(ProviderConfig{
+		Summaries: summary.NewSnapshot(reg, summary.EntrySummary{
+			Key:     staleKey,
+			Summary: summary.Summary{Returns: []product.Value{staleRet}},
+		}),
+		PathKeys: map[path.PathKey]summary.SummaryKey{
+			calleePath.Key(): staleKey,
+		},
+		CalleeValue: func(ctx transfer.NodeContext, site factflow.CallSiteView, in state.State, read func(cfg.Point) state.State) (product.Value, bool) {
+			if site.CalleePath().IsEmpty() {
+				return product.Value{}, false
+			}
+			return currentNumber, true
+		},
+	})
+
+	got := provider(transfer.NodeContext{Registry: reg}, factflow.NewCallSite(factflow.CallSiteConfig{
+		CalleePath: calleePath,
+	}).View(),
+
+		state.State{}, nil)
+
+	if got.PostReturnAuthority {
+		t.Fatalf("PostReturnAuthority = true, want false for stale non-function callee path")
+	}
+	if len(got.Results) != 0 {
+		t.Fatalf("stale non-function callee results = %#v, want none", got.Results)
 	}
 }
 
@@ -1265,40 +1331,42 @@ func TestProductionImportsAreBounded(t *testing.T) {
 		t.Fatalf("go list imports . error = %v", err)
 	}
 	allowed := map[string]bool{
-		"github.com/wippyai/go-lua/analysis/check/fixpoint/summary":          true,
-		"github.com/wippyai/go-lua/analysis/domain/path":                     true,
-		"github.com/wippyai/go-lua/analysis/domain/path/address":             true,
-		"github.com/wippyai/go-lua/analysis/domain/path/segment":             true,
-		"github.com/wippyai/go-lua/analysis/domain/value/axis":               true,
-		"github.com/wippyai/go-lua/analysis/domain/value/axis/evidence":      true,
-		"github.com/wippyai/go-lua/analysis/domain/value/axis/identity":      true,
-		"github.com/wippyai/go-lua/analysis/domain/value/axis/presence":      true,
-		"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind":   true,
-		"github.com/wippyai/go-lua/analysis/domain/value/axis/typewitness":   true,
-		"github.com/wippyai/go-lua/analysis/domain/value/axis/variantorigin": true,
-		"github.com/wippyai/go-lua/analysis/domain/value/product":            true,
-		"github.com/wippyai/go-lua/analysis/domain/value/typevalue":          true,
-		"github.com/wippyai/go-lua/analysis/domain/value/variant":            true,
-		"github.com/wippyai/go-lua/analysis/engine/callboundary":             true,
-		"github.com/wippyai/go-lua/analysis/engine/calloutcome":              true,
-		"github.com/wippyai/go-lua/analysis/engine/factapply":                true,
-		"github.com/wippyai/go-lua/analysis/engine/factflow":                 true,
-		"github.com/wippyai/go-lua/analysis/engine/factquery":                true,
-		"github.com/wippyai/go-lua/analysis/engine/sourcevalue":              true,
-		"github.com/wippyai/go-lua/analysis/engine/state/channelselectfact":  true,
-		"github.com/wippyai/go-lua/analysis/engine/state/heapidentity":       true,
-		"github.com/wippyai/go-lua/analysis/engine/state/pathevidence":       true,
-		"github.com/wippyai/go-lua/analysis/engine/state":                    true,
-		"github.com/wippyai/go-lua/analysis/engine/transfer":                 true,
-		"github.com/wippyai/go-lua/analysis/internal/mapedit":                true,
-		"github.com/wippyai/go-lua/analysis/ir/dominance":                    true,
-		"github.com/wippyai/go-lua/analysis/ir/cfg":                          true,
-		"github.com/wippyai/go-lua/analysis/lua/typecall":                    true,
-		"github.com/wippyai/go-lua/analysis/symbol":                          true,
-		"github.com/wippyai/go-lua/analysis/type/normalize":                  true,
-		"github.com/wippyai/go-lua/analysis/type/refinement":                 true,
-		"github.com/wippyai/go-lua/analysis/type/table":                      true,
-		"github.com/wippyai/go-lua/analysis/type/typ":                        true,
+		"github.com/wippyai/go-lua/analysis/check/fixpoint/program/internal/memberaccess": true,
+		"github.com/wippyai/go-lua/analysis/check/fixpoint/summary":                       true,
+		"github.com/wippyai/go-lua/analysis/domain/path":                                  true,
+		"github.com/wippyai/go-lua/analysis/domain/path/address":                          true,
+		"github.com/wippyai/go-lua/analysis/domain/path/segment":                          true,
+		"github.com/wippyai/go-lua/analysis/domain/value/axis":                            true,
+		"github.com/wippyai/go-lua/analysis/domain/value/axis/evidence":                   true,
+		"github.com/wippyai/go-lua/analysis/domain/value/axis/identity":                   true,
+		"github.com/wippyai/go-lua/analysis/domain/value/axis/presence":                   true,
+		"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind":                true,
+		"github.com/wippyai/go-lua/analysis/domain/value/axis/typewitness":                true,
+		"github.com/wippyai/go-lua/analysis/domain/value/axis/variantorigin":              true,
+		"github.com/wippyai/go-lua/analysis/domain/value/product":                         true,
+		"github.com/wippyai/go-lua/analysis/domain/value/typevalue":                       true,
+		"github.com/wippyai/go-lua/analysis/domain/value/variant":                         true,
+		"github.com/wippyai/go-lua/analysis/engine/callboundary":                          true,
+		"github.com/wippyai/go-lua/analysis/engine/calloutcome":                           true,
+		"github.com/wippyai/go-lua/analysis/engine/callpayload":                           true,
+		"github.com/wippyai/go-lua/analysis/engine/factflow":                              true,
+		"github.com/wippyai/go-lua/analysis/engine/factquery":                             true,
+		"github.com/wippyai/go-lua/analysis/engine/sourcevalue":                           true,
+		"github.com/wippyai/go-lua/analysis/engine/state/channelselectfact":               true,
+		"github.com/wippyai/go-lua/analysis/engine/state/heapidentity":                    true,
+		"github.com/wippyai/go-lua/analysis/engine/state/pathevidence":                    true,
+		"github.com/wippyai/go-lua/analysis/engine/state":                                 true,
+		"github.com/wippyai/go-lua/analysis/engine/transfer":                              true,
+		"github.com/wippyai/go-lua/analysis/internal/mapedit":                             true,
+		"github.com/wippyai/go-lua/analysis/ir/dominance":                                 true,
+		"github.com/wippyai/go-lua/analysis/ir/cfg":                                       true,
+		"github.com/wippyai/go-lua/analysis/lua/typecall":                                 true,
+		"github.com/wippyai/go-lua/analysis/lua/typeprojection":                           true,
+		"github.com/wippyai/go-lua/analysis/symbol":                                       true,
+		"github.com/wippyai/go-lua/analysis/type/normalize":                               true,
+		"github.com/wippyai/go-lua/analysis/type/refinement":                              true,
+		"github.com/wippyai/go-lua/analysis/type/table":                                   true,
+		"github.com/wippyai/go-lua/analysis/type/typ":                                     true,
 	}
 	for _, imp := range strings.Fields(string(out)) {
 		if !allowed[imp] {
@@ -1371,7 +1439,7 @@ func providerExpressionSource(t *testing.T, ref factflow.ExprRef, index int) fac
 	return source
 }
 
-func assertCallOutcomeResultType(t *testing.T, reg *axis.Registry, got []factapply.CallResult, want typ.Type) {
+func assertCallOutcomeResultType(t *testing.T, reg *axis.Registry, got []callpayload.CallResult, want typ.Type) {
 	t.Helper()
 	if len(got) != 1 || got[0].Index != 0 {
 		t.Fatalf("results = %#v, want one result at index 0", got)
@@ -1387,7 +1455,7 @@ func assertCallOutcomeResultType(t *testing.T, reg *axis.Registry, got []factapp
 	}
 }
 
-func assertCallOutcomeResultsTypes(t *testing.T, reg *axis.Registry, got []factapply.CallResult, want []typ.Type) {
+func assertCallOutcomeResultsTypes(t *testing.T, reg *axis.Registry, got []callpayload.CallResult, want []typ.Type) {
 	t.Helper()
 	if len(got) != len(want) {
 		t.Fatalf("got %d results, want %d: %#v", len(got), len(want), got)
@@ -1408,7 +1476,7 @@ func assertCallOutcomeResultsTypes(t *testing.T, reg *axis.Registry, got []facta
 	}
 }
 
-func assertCallOutcomeResults(t *testing.T, reg *axis.Registry, got []factapply.CallResult, want []product.Value) {
+func assertCallOutcomeResults(t *testing.T, reg *axis.Registry, got []callpayload.CallResult, want []product.Value) {
 	t.Helper()
 	if len(got) != len(want) {
 		t.Fatalf("got %d results, want %d: %#v", len(got), len(want), got)
@@ -1423,23 +1491,15 @@ func assertCallOutcomeResults(t *testing.T, reg *axis.Registry, got []factapply.
 	}
 }
 
-func assertEmptyOutcome(t *testing.T, got factapply.CallOutcome) {
+func assertEmptyOutcome(t *testing.T, got callpayload.CallOutcome) {
 	t.Helper()
 	if len(got.Results) != 0 ||
-		len(got.NormalReturnFacts.PathRefinements) != 0 ||
+		!got.NormalReturnFacts.Empty() ||
 		len(got.HeapTableObjects) != 0 ||
 		len(got.ParamObligations) != 0 ||
 		len(got.ParamPathRefinements) != 0 ||
 		len(got.ParamConditions) != 0 ||
 		len(got.ParamPathRelations) != 0 ||
-		len(got.NormalReturnFacts.PathStaticMembers) != 0 ||
-		len(got.NormalReturnFacts.PathInvalidations) != 0 ||
-		len(got.NormalReturnFacts.DynamicIndexFacts) != 0 ||
-		len(got.NormalReturnFacts.BranchProofs) != 0 ||
-		len(got.NormalReturnFacts.ChannelSelects) != 0 ||
-		len(got.NormalReturnFacts.FrozenTables) != 0 ||
-		len(got.NormalReturnFacts.EffectDeltas) != 0 ||
-		len(got.NormalReturnFacts.EscapeEvents) != 0 ||
 		len(got.ReturnConditionRefinements) != 0 ||
 		len(got.ReturnPresenceRelations) != 0 {
 		t.Fatalf("provider returned non-empty outcome: %#v", got)

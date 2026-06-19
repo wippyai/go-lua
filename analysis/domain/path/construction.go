@@ -129,3 +129,20 @@ func (p Path) Append(seg segment.Segment) Path {
 
 	return next
 }
+
+// AppendSegments returns a new path with all suffix segments appended.
+// The returned path owns independent segment storage.
+func (p Path) AppendSegments(suffix []segment.Segment) Path {
+	if p.IsEmpty() {
+		return Path{}
+	}
+	if len(suffix) == 0 {
+		return p.Clone()
+	}
+
+	next := Path{Root: p.Root, Symbol: p.Symbol, Version: p.Version}
+	next.Segments = make([]segment.Segment, 0, len(p.Segments)+len(suffix))
+	next.Segments = append(next.Segments, p.Segments...)
+	next.Segments = append(next.Segments, suffix...)
+	return next
+}

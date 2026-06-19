@@ -11,6 +11,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/engine/dynamicindex"
+	"github.com/wippyai/go-lua/analysis/internal/registrycache"
 )
 
 type TableObject struct {
@@ -29,6 +30,9 @@ type TableObjectConfig struct {
 	DynamicIndexFacts map[dynamicindex.Key]dynamicindex.Fact
 }
 
+var objectDomainCache registrycache.Cache[lattice.Lattice[TableObject]]
+var mapDomainCache registrycache.Cache[lattice.Lattice[map[identity.ID]TableObject]]
+
 // NewTableObject creates a finite heap table object and takes defensive copies
 // of map-backed lanes.
 func NewTableObject(config TableObjectConfig) TableObject {
@@ -36,6 +40,19 @@ func NewTableObject(config TableObjectConfig) TableObject {
 		root:              config.Root,
 		staticMembers:     clonePathMap(config.StaticMembers),
 		dynamicIndexFacts: dynamicindex.CloneMap(config.DynamicIndexFacts),
+	}
+}
+
+// NewOwnedStaticTableObject creates a finite heap table object and takes
+// ownership of staticMembers. Callers must not mutate staticMembers after this
+// call. Use NewTableObject unless the map was freshly built for this object.
+func NewOwnedStaticTableObject(root product.Value, staticMembers map[pathdom.PathKey]product.Value) TableObject {
+	if len(staticMembers) == 0 {
+		staticMembers = nil
+	}
+	return TableObject{
+		root:          root,
+		staticMembers: staticMembers,
 	}
 }
 
@@ -113,69 +130,73 @@ func (o TableObject) withoutStaticMembersMatching(prefix []segment.Segment, desc
 }
 
 func ObjectDomain(reg *axis.Registry) lattice.Lattice[TableObject] {
-	valueDomain := product.Domain(reg)
-	staticDomain := lift.MustMap[pathdom.PathKey, product.Value](valueDomain)
-	dynamicDomain := dynamicindex.MapDomain(reg)
-	return lattice.Lattice[TableObject]{
-		Bottom: func() TableObject { return BottomObject(reg) },
-		Top:    TopObject,
-		Equal: func(a, b TableObject) bool {
-			if a.bottom || b.bottom {
-				return a.bottom && b.bottom
-			}
-			return valueDomain.Equal(a.root, b.root) &&
-				staticDomain.Equal(staticLane(a), staticLane(b)) &&
-				dynamicDomain.Equal(dynamicLane(a, dynamicDomain), dynamicLane(b, dynamicDomain))
-		},
-		LessOrEq: func(a, b TableObject) bool {
-			switch {
-			case a.bottom:
-				return true
-			case b.bottom:
-				return false
-			default:
-				return valueDomain.LessOrEq(a.root, b.root) &&
-					staticDomain.LessOrEq(staticLane(a), staticLane(b)) &&
-					dynamicDomain.LessOrEq(dynamicLane(a, dynamicDomain), dynamicLane(b, dynamicDomain))
-			}
-		},
-		Join: func(a, b TableObject) TableObject {
-			if a.bottom {
-				return CloneObject(b)
-			}
-			if b.bottom {
-				return CloneObject(a)
-			}
-			static := staticDomain.Join(staticLane(a), staticLane(b))
-			dynamic := dynamicDomain.Join(dynamicLane(a, dynamicDomain), dynamicLane(b, dynamicDomain))
-			return objectFromLanes(
-				valueDomain.Join(a.root, b.root),
-				static,
-				dynamic,
-				dynamicDomain,
-			)
-		},
-		Widen: func(prev, next TableObject) TableObject {
-			if prev.bottom {
-				return CloneObject(next)
-			}
-			if next.bottom {
-				return CloneObject(prev)
-			}
-			static := staticDomain.Widen(staticLane(prev), staticLane(next))
-			dynamic := dynamicDomain.Widen(dynamicLane(prev, dynamicDomain), dynamicLane(next, dynamicDomain))
-			return objectFromLanes(
-				valueDomain.Widen(prev.root, next.root),
-				static,
-				dynamic,
-				dynamicDomain,
-			)
-		},
-	}
+	return objectDomainCache.Get(reg, func() lattice.Lattice[TableObject] {
+		valueDomain := product.Domain(reg)
+		staticDomain := lift.MustMap[pathdom.PathKey, product.Value](valueDomain)
+		dynamicDomain := dynamicindex.MapDomain(reg)
+		return lattice.Lattice[TableObject]{
+			Bottom: func() TableObject { return BottomObject(reg) },
+			Top:    TopObject,
+			Equal: func(a, b TableObject) bool {
+				if a.bottom || b.bottom {
+					return a.bottom && b.bottom
+				}
+				return valueDomain.Equal(a.root, b.root) &&
+					staticDomain.Equal(staticLane(a), staticLane(b)) &&
+					dynamicDomain.Equal(dynamicLane(a, dynamicDomain), dynamicLane(b, dynamicDomain))
+			},
+			LessOrEq: func(a, b TableObject) bool {
+				switch {
+				case a.bottom:
+					return true
+				case b.bottom:
+					return false
+				default:
+					return valueDomain.LessOrEq(a.root, b.root) &&
+						staticDomain.LessOrEq(staticLane(a), staticLane(b)) &&
+						dynamicDomain.LessOrEq(dynamicLane(a, dynamicDomain), dynamicLane(b, dynamicDomain))
+				}
+			},
+			Join: func(a, b TableObject) TableObject {
+				if a.bottom {
+					return CloneObject(b)
+				}
+				if b.bottom {
+					return CloneObject(a)
+				}
+				static := staticDomain.Join(staticLane(a), staticLane(b))
+				dynamic := dynamicDomain.Join(dynamicLane(a, dynamicDomain), dynamicLane(b, dynamicDomain))
+				return objectFromLanes(
+					valueDomain.Join(a.root, b.root),
+					static,
+					dynamic,
+					dynamicDomain,
+				)
+			},
+			Widen: func(prev, next TableObject) TableObject {
+				if prev.bottom {
+					return CloneObject(next)
+				}
+				if next.bottom {
+					return CloneObject(prev)
+				}
+				static := staticDomain.Widen(staticLane(prev), staticLane(next))
+				dynamic := dynamicDomain.Widen(dynamicLane(prev, dynamicDomain), dynamicLane(next, dynamicDomain))
+				return objectFromLanes(
+					valueDomain.Widen(prev.root, next.root),
+					static,
+					dynamic,
+					dynamicDomain,
+				)
+			},
+		}
+	})
 }
 
 func MapDomain(reg *axis.Registry) lattice.Lattice[map[identity.ID]TableObject] {
-	return lift.Map[identity.ID, TableObject](ObjectDomain(reg))
+	return mapDomainCache.Get(reg, func() lattice.Lattice[map[identity.ID]TableObject] {
+		return lift.Map[identity.ID, TableObject](ObjectDomain(reg))
+	})
 }
 
 func BottomObject(reg *axis.Registry) TableObject {
@@ -205,7 +226,7 @@ func CloneMap(in map[identity.ID]TableObject) map[identity.ID]TableObject {
 	}
 	out := make(map[identity.ID]TableObject, len(in))
 	for k, v := range in {
-		out[k] = CloneObject(v)
+		out[k] = v
 	}
 	return out
 }
@@ -220,7 +241,7 @@ func DeleteEntry(
 	out := make(map[identity.ID]TableObject, len(in)-1)
 	for k, v := range in {
 		if k != id {
-			out[k] = CloneObject(v)
+			out[k] = v
 		}
 	}
 	if len(out) == 0 {

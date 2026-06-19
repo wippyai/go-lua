@@ -86,6 +86,15 @@ func TestMapDomainCanonicalization(t *testing.T) {
 	}
 }
 
+func TestMapDomainTopStableAcrossRepeatedConstruction(t *testing.T) {
+	reg := standard.Registry()
+	top := MapDomain(reg).Top()
+	domain := MapDomain(reg)
+	if !domain.Equal(top, domain.Top()) {
+		t.Fatalf("reconstructed map domain did not recognize prior top sentinel")
+	}
+}
+
 func presentValue(reg *axis.Registry) product.Value {
 	return product.NewWithPresence(reg, product.ShapeTop, presence.Present())
 }

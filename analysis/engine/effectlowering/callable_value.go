@@ -4,7 +4,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/typewitness"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/engine/calloutcome"
-	factapply "github.com/wippyai/go-lua/analysis/engine/factapply"
+	"github.com/wippyai/go-lua/analysis/engine/callpayload"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
@@ -13,7 +13,7 @@ import (
 )
 
 // CalleeValueFunc resolves a call site's callee expression to product evidence.
-type CalleeValueFunc func(ctx transfer.NodeContext, site factflow.CallSite, in state.State, read func(cfg.Point) state.State) (product.Value, bool)
+type CalleeValueFunc func(ctx transfer.NodeContext, site factflow.CallSiteView, in state.State, read func(cfg.Point) state.State) (product.Value, bool)
 
 // CallableValueOutcomeProviderConfig carries the callee-value read model for
 // materializing direct returns from callable type witnesses.
@@ -25,37 +25,37 @@ type CallableValueOutcomeProviderConfig struct {
 // CallableValueOutcomeProvider materializes declared function returns from a
 // call target's concrete type witness. It is intentionally generic and does not
 // infer call targets by name.
-func CallableValueOutcomeProvider(config CallableValueOutcomeProviderConfig) factapply.CallOutcomeProvider {
+func CallableValueOutcomeProvider(config CallableValueOutcomeProviderConfig) callpayload.CallOutcomeProvider {
 	calleeValue := config.CalleeValue
 	callable := config.Callable
-	return func(ctx transfer.NodeContext, site factflow.CallSiteView, in state.State, read func(cfg.Point) state.State) factapply.CallOutcome {
+	return func(ctx transfer.NodeContext, site factflow.CallSiteView, in state.State, read func(cfg.Point) state.State) callpayload.CallOutcome {
 		if calleeValue == nil || callable == nil {
-			return factapply.CallOutcome{}
+			return callpayload.CallOutcome{}
 		}
-		value, ok := calleeValue(ctx, site.CallSite(), in, read)
+		value, ok := calleeValue(ctx, site, in, read)
 		if !ok {
-			return factapply.CallOutcome{}
+			return callpayload.CallOutcome{}
 		}
 		witness := product.Get(ctx.Registry, value, typewitness.Key)
 		t, ok := witness.Type()
 		if !ok {
-			return factapply.CallOutcome{}
+			return callpayload.CallOutcome{}
 		}
 		fn, ok := callable(t)
 		if !ok || fn == nil || len(fn.TypeParams) != 0 || len(fn.Returns) == 0 {
-			return factapply.CallOutcome{}
+			return callpayload.CallOutcome{}
 		}
-		results := make([]factapply.CallResult, 0, len(fn.Returns))
+		results := make([]callpayload.CallResult, 0, len(fn.Returns))
 		for i, ret := range fn.Returns {
 			if ret == nil || typewitness.Of(ret).IsTop() {
 				continue
 			}
-			results = append(results, factapply.CallResult{
+			results = append(results, callpayload.CallResult{
 				Index: i,
 				Value: returnValueFromType(ctx.Registry, ret),
 			})
 		}
-		out := factapply.CallOutcome{Results: results}
+		out := callpayload.CallOutcome{Results: results}
 		out.PostReturnAuthority = calloutcome.HasAuthoritativePostReturnEvidence(ctx.Registry, out)
 		return out
 	}

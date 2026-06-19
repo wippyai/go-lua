@@ -11,6 +11,18 @@ func TestCloneNilInputReturnsNil(t *testing.T) {
 	}
 }
 
+func TestCloneCreatesIndependentCopy(t *testing.T) {
+	original := map[string]int{"a": 1}
+	clone := Clone(original)
+	if len(clone) != 1 || clone["a"] != 1 {
+		t.Fatalf("Clone(%#v) = %#v, want copied entry", original, clone)
+	}
+	clone["a"] = 99
+	if got := original["a"]; got != 1 {
+		t.Fatalf("Clone should not mutate original map, got original[a]=%d", got)
+	}
+}
+
 func TestWithCreatesIndependentCopyFromNilAndExistingMap(t *testing.T) {
 	if got := With(map[string]int(nil), "a", 1); len(got) != 1 || got["a"] != 1 {
 		t.Fatalf("With(nil, ...) = %#v, want one entry", got)

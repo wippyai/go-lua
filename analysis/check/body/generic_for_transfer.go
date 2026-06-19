@@ -89,18 +89,21 @@ func genericForVariableValue(
 	if !ok {
 		return product.Value{}, false
 	}
-	args := site.ArgumentSources()
-	sourceIndex, ok := effect.ResolveParamIndex(iter.Source, len(args))
-	if !ok || sourceIndex < 0 || sourceIndex >= len(args) {
+	sourceIndex, ok := effect.ResolveParamIndex(iter.Source, site.ArgumentSourceCount())
+	if !ok {
+		return product.Value{}, false
+	}
+	argSource, ok := site.ArgumentSourceAt(sourceIndex)
+	if !ok {
 		return product.Value{}, false
 	}
 	assertedSourceType, hasAssertedSourceType := genericForAssertedIteratorSourceType(generic, sourceIndex, typeResolver)
 	refinedSources := sourcevalue.WithExpressionRefinements(ctx.Registry, sources, expressionRefinements)
-	sourceValue, ok := refinedSources.ValueOfSource(ctx.Point, args[sourceIndex], in, ctx.Read)
+	sourceValue, ok := refinedSources.ValueOfSource(ctx.Point, argSource, in, ctx.Read)
 	if !ok {
 		return product.Value{}, false
 	}
-	if value, ok := genericForLiteralContainerVariableValue(ctx, iter, generic.VariableIndex, facts, refinedSources, sourceValue, args[sourceIndex], in); ok {
+	if value, ok := genericForLiteralContainerVariableValue(ctx, iter, generic.VariableIndex, facts, refinedSources, sourceValue, argSource, in); ok {
 		return value, true
 	}
 	return luasourcevalue.IteratorVariableValue(ctx.Registry, typeValues, iter, generic.VariableIndex, sourceValue, assertedSourceType, hasAssertedSourceType)

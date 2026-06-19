@@ -3,6 +3,7 @@ package factapply
 import (
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
+	"github.com/wippyai/go-lua/analysis/engine/callpayload"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	sourcevalue "github.com/wippyai/go-lua/analysis/engine/sourcevalue"
 	"github.com/wippyai/go-lua/analysis/engine/state"
@@ -19,7 +20,7 @@ type PathTypeProjector func(root typ.Type, path pathdom.Path) (typ.Type, bool)
 type FactsNodeTransferConfig struct {
 	Facts       factflow.Facts
 	Sources     sourcevalue.SourceValues
-	CallOutcome CallOutcomeProvider
+	CallOutcome callpayload.CallOutcomeProvider
 	Visibility  *visibility.Resolver
 	ProjectPath PathTypeProjector
 	TypeValues  *typevalue.Cache
@@ -28,7 +29,7 @@ type FactsNodeTransferConfig struct {
 // FactsEdgeTransferConfig configures the generic edge fact applicator.
 type FactsEdgeTransferConfig struct {
 	Facts       factflow.Facts
-	CallOutcome CallOutcomeProvider
+	CallOutcome callpayload.CallOutcomeProvider
 	Visibility  *visibility.Resolver
 	ProjectPath PathTypeProjector
 	TypeValues  *typevalue.Cache
@@ -40,6 +41,7 @@ type FactsEdgeTransferConfig struct {
 // return-slot facts; branch-edge refinements are handled by NewFactsEdgeTransfer.
 func NewFactsNodeTransfer(config FactsNodeTransferConfig) transfer.NodeTransfer {
 	expressionRefinements := config.Facts.ExpressionRefinements()
+	callOutcomeCache := &callOutcomeTraversalCache{}
 	return func(ctx transfer.NodeContext, in state.State) state.State {
 		facts := config.Facts
 		sources := config.Sources
@@ -67,9 +69,6 @@ func NewFactsNodeTransfer(config FactsNodeTransferConfig) transfer.NodeTransfer 
 			return out
 		}
 		sources = sourcevalue.WithExpressionRefinements(ctx.Registry, sources, expressionRefinements)
-		if fact, ok := facts.PathStaticMemberWrite(ctx.Point); ok {
-			out = applyPathStaticMemberWrite(ctx, config.Visibility, sources, read, in, out, fact)
-		}
 		if fact, ok := facts.DynamicIndexWrite(ctx.Point); ok {
 			out = applyDynamicIndexWrite(ctx, config.Visibility, sources, read, in, out, fact)
 		}
@@ -77,7 +76,7 @@ func NewFactsNodeTransfer(config FactsNodeTransferConfig) transfer.NodeTransfer 
 			var applied bool
 			out, applied = applyRootAssignmentFact(ctx, config.Visibility, facts, sources, read, in, out, fact)
 			if applied {
-				out = applyCallOutcomePresenceRelationPublishes(ctx, facts, callOutcome, config.Visibility, read, out)
+				out = applyCallOutcomePresenceRelationPublishes(ctx, facts, callOutcomeCache, callOutcome, config.Visibility, read, out)
 			}
 		}
 		if fact, ok := facts.PathAssignment(ctx.Point); ok {
@@ -85,8 +84,11 @@ func NewFactsNodeTransfer(config FactsNodeTransferConfig) transfer.NodeTransfer 
 			out, applied = applyPathAssignment(ctx, config.Visibility, sources, read, in, out, fact)
 			if applied {
 				out = applyObjectLiteralEntries(ctx, config.Visibility, facts, sources, read, in, out, fact.TargetPath(), fact.Source())
-				out = applyCallOutcomePresenceRelationPublishes(ctx, facts, callOutcome, config.Visibility, read, out)
+				out = applyCallOutcomePresenceRelationPublishes(ctx, facts, callOutcomeCache, callOutcome, config.Visibility, read, out)
 			}
+		}
+		if fact, ok := facts.PathStaticMemberWrite(ctx.Point); ok {
+			out = applyPathStaticMemberWrite(ctx, config.Visibility, facts, sources, read, in, out, fact)
 		}
 		if fact, ok := facts.Return(ctx.Point); ok {
 			out = applyReturn(ctx, facts, sources, read, in, out, fact, config.Visibility, config.ProjectPath, config.TypeValues)
@@ -100,6 +102,7 @@ func NewFactsNodeTransfer(config FactsNodeTransferConfig) transfer.NodeTransfer 
 // narrowing recovered from descendant path refinements when flow state carries
 // the structural root type.
 func NewFactsEdgeTransfer(config FactsEdgeTransferConfig) transfer.EdgeTransfer {
+	callOutcomeCache := &callOutcomeTraversalCache{}
 	return func(ctx transfer.EdgeContext, out state.State) state.State {
 		if !ctx.HasCond {
 			return out
@@ -149,7 +152,7 @@ func NewFactsEdgeTransfer(config FactsEdgeTransferConfig) transfer.EdgeTransfer 
 			}
 			out = applyBranchPathEvidence(ctx, config.Visibility, config.ProjectPath, out, proof)
 		}
-		out = applyCallOutcomeEdgeFacts(ctx, config.Facts, config.CallOutcome, config.Visibility, config.ProjectPath, branchRefinements, out)
+		out = applyCallOutcomeEdgeFacts(ctx, config.Facts, callOutcomeCache, config.CallOutcome, config.Visibility, config.ProjectPath, branchRefinements, out)
 		return out
 	}
 }

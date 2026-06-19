@@ -24,7 +24,7 @@ func directCallPointResultOwner(result *body.Result, point cfg.Point, fact seman
 	if !ok || site.CalleeSymbol() == 0 {
 		return false
 	}
-	if _, _, _, member := callMemberAccess(fact); member {
+	if directCallSiteUsesMemberAccess(result, site, fact) {
 		if !hasTypedCallSignature(result, site) {
 			return false
 		}

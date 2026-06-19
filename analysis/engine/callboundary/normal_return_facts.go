@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/typestate"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/engine/dynamicindex"
@@ -28,6 +29,38 @@ type NormalReturnFacts struct {
 	EffectDeltas      []EffectDelta
 	EscapeEvents      []EscapeEventFact
 	StoreRelations    []StoreRelationFact
+	LifecycleFacts    []LifecycleFact
+}
+
+// Empty reports whether no normal-return fact lane carries evidence.
+func (f NormalReturnFacts) Empty() bool {
+	return len(f.PathRefinements) == 0 &&
+		len(f.PathStaticMembers) == 0 &&
+		len(f.PathInvalidations) == 0 &&
+		len(f.DynamicIndexFacts) == 0 &&
+		len(f.BranchProofs) == 0 &&
+		len(f.ChannelSelects) == 0 &&
+		len(f.FrozenTables) == 0 &&
+		len(f.EffectDeltas) == 0 &&
+		len(f.EscapeEvents) == 0 &&
+		len(f.StoreRelations) == 0 &&
+		len(f.LifecycleFacts) == 0
+}
+
+// Append returns f with every normal-return fact lane from other appended.
+func (f NormalReturnFacts) Append(other NormalReturnFacts) NormalReturnFacts {
+	f.PathRefinements = append(f.PathRefinements, other.PathRefinements...)
+	f.PathStaticMembers = append(f.PathStaticMembers, other.PathStaticMembers...)
+	f.PathInvalidations = append(f.PathInvalidations, other.PathInvalidations...)
+	f.DynamicIndexFacts = append(f.DynamicIndexFacts, other.DynamicIndexFacts...)
+	f.BranchProofs = append(f.BranchProofs, other.BranchProofs...)
+	f.ChannelSelects = append(f.ChannelSelects, other.ChannelSelects...)
+	f.FrozenTables = append(f.FrozenTables, other.FrozenTables...)
+	f.EffectDeltas = append(f.EffectDeltas, other.EffectDeltas...)
+	f.EscapeEvents = append(f.EscapeEvents, other.EscapeEvents...)
+	f.StoreRelations = append(f.StoreRelations, other.StoreRelations...)
+	f.LifecycleFacts = append(f.LifecycleFacts, other.LifecycleFacts...)
+	return f
 }
 
 // PathValueFact records a pointwise placeholder-path value refinement.
@@ -42,8 +75,9 @@ type PathStaticMemberFact struct {
 	Value product.Value
 }
 
-// PathInvalidationFact records that descendants below a placeholder path were
-// invalidated by a normal-returning call.
+// PathInvalidationFact records that descendants below a placeholder argument
+// path, or an internal concrete captured path, were invalidated by a
+// normal-returning call.
 type PathInvalidationFact struct {
 	Path pathdom.Path
 }
@@ -60,9 +94,11 @@ func IsPathInvalidationEffectSite(site effectdelta.Site) bool {
 
 // DynamicIndexFact records a pointwise dynamic index fact for a placeholder table.
 type DynamicIndexFact struct {
-	Table pathdom.Path
-	Site  dynamicindex.Site
-	Value dynamicindex.Fact
+	Table     pathdom.Path
+	Site      dynamicindex.Site
+	KeyPath   pathdom.Path
+	ValuePath pathdom.Path
+	Value     dynamicindex.Fact
 }
 
 // BranchProof records a must branch proof over placeholder paths.
@@ -134,6 +170,28 @@ type EscapeEventFact struct {
 type StoreRelationFact struct {
 	Source pathdom.Path
 	Into   pathdom.Path
+}
+
+// LifecycleKind classifies a typestate update crossing a call boundary.
+type LifecycleKind uint8
+
+const (
+	LifecycleNone LifecycleKind = iota
+	LifecycleAcquire
+	LifecycleTransition
+	LifecycleEscape
+)
+
+// LifecycleFact records a protocol state-machine update for a placeholder
+// target path. The resource identity is resolved from canonical caller path
+// evidence when the fact is applied.
+type LifecycleFact struct {
+	Target     pathdom.Path
+	Kind       LifecycleKind
+	Protocol   typestate.Protocol
+	From       typestate.State
+	To         typestate.State
+	Obligation typestate.Obligation
 }
 
 const escapeEventEffectSitePrefix = "escape-event."

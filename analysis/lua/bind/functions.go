@@ -330,6 +330,21 @@ func (b *binder) bindFunction(fn *ast.FunctionExpr, method bool, origin function
 	b.functionStack = b.functionStack[:len(b.functionStack)-1]
 }
 
+func (b *binder) bindFunctionTypeSignature(fn *ast.FunctionExpr) {
+	if fn == nil {
+		return
+	}
+	b.bindTypeParamConstraints(fn.TypeParams)
+	b.pushTypeScope()
+	b.defineTypeParams(fn.TypeParams)
+	if fn.ParList != nil {
+		b.bindTypeExprs(fn.ParList.Types)
+		b.bindTypeExpr(fn.ParList.VarargType)
+	}
+	b.bindTypeExprs(fn.ReturnTypes)
+	b.popTypeScope()
+}
+
 func typeAt(types []ast.TypeExpr, index int) ast.TypeExpr {
 	if index < 0 || index >= len(types) {
 		return nil

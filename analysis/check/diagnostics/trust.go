@@ -2,10 +2,11 @@ package diagnostics
 
 import (
 	"github.com/wippyai/go-lua/analysis/check/body"
-	"github.com/wippyai/go-lua/analysis/check/diagnostics/internal/readmodel"
+	"github.com/wippyai/go-lua/analysis/check/internal/readmodel"
 	"github.com/wippyai/go-lua/analysis/diagnostic"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/assertion"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/escape"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/evidence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/typewitness"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
@@ -104,20 +105,49 @@ func explicitTopLikeCastEvidence(span diagnostic.Span, want typ.Type, expr ast.E
 	if _, ok := expr.(*ast.CastExpr); !ok {
 		return nil
 	}
+	subject := exprEvidenceName(expr)
 	out := diagnostic.AssertionEvidence(span, assertion.Any())
 	out = append(out, diagnostic.Evidence{
 		Kind:    diagnostic.EvidencePrecisionBoundary,
 		Trust:   diagnostic.TrustUnknown,
+		Reason:  diagnostic.EvidenceReasonExplicitBoundaryValidation,
 		Span:    span,
-		Message: "explicit any/unknown boundary has no structural proof for " + formatType(want),
+		Message: explicitBoundaryProofMessageForSubject(subject, want),
 	})
 	out = append(out, diagnostic.Evidence{
 		Kind:    diagnostic.EvidenceMissingProof,
 		Trust:   diagnostic.TrustUnknown,
+		Reason:  diagnostic.EvidenceReasonBoundaryValidationMissing,
 		Span:    span,
-		Message: "no boundary proof establishes " + formatType(want),
+		Message: missingBoundaryProofMessageForSubject(subject, want),
 	})
 	return out
+}
+
+func untrustedAnyBoundaryReader(read boundaryValueReader) boundaryValueReader {
+	if read == nil {
+		return nil
+	}
+	return func(result *body.Result, point cfg.Point) (product.Value, bool) {
+		value, ok := read(result, point)
+		if !ok || result == nil || result.Registry() == nil {
+			return value, ok
+		}
+		reg := result.Registry()
+		claims := product.Get(reg, value, assertion.Key)
+		if claims.Has(assertion.TypeClaim) {
+			return value, true
+		}
+		value = product.Set(reg, value, evidence.Key, evidence.ExplicitTop())
+		value = product.Set(reg, value, assertion.Key, assertionWithAnyClaim(claims))
+		return value, true
+	}
+}
+
+func assertionWithAnyClaim(claims assertion.Value) assertion.Value {
+	flags := claims.Flags()
+	flags = append(flags, assertion.AnyClaim)
+	return assertion.Of(flags...)
 }
 
 func untrustedTopLikeExpressionType(result *body.Result, resolver typeannotation.Resolver, expr ast.Expr) (typ.Type, bool) {

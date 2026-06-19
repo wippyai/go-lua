@@ -5,9 +5,11 @@ import (
 
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/placement"
+	"github.com/wippyai/go-lua/analysis/domain/typestate"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
+	"github.com/wippyai/go-lua/analysis/engine/callboundary"
 	callpayload "github.com/wippyai/go-lua/analysis/engine/callpayload"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
 	"github.com/wippyai/go-lua/analysis/type/typ"
@@ -33,6 +35,25 @@ func TestHasAuthoritativePostReturnEvidenceCountsParamLengthFloors(t *testing.T)
 	}
 	if !HasAuthoritativePostReturnEvidence(standard.Registry(), outcome) {
 		t.Fatal("HasAuthoritativePostReturnEvidence = false, want true for param length floors")
+	}
+}
+
+func TestHasAuthoritativePostReturnEvidenceCountsLifecycleFacts(t *testing.T) {
+	outcome := callpayload.CallOutcome{
+		NormalReturnFacts: callboundary.NormalReturnFacts{
+			LifecycleFacts: []callboundary.LifecycleFact{
+				{
+					Target:   pathdom.NewPlaceholder(0),
+					Kind:     callboundary.LifecycleTransition,
+					Protocol: typestate.Protocol("transaction"),
+					From:     typestate.State("active"),
+					To:       typestate.State("finished"),
+				},
+			},
+		},
+	}
+	if !HasAuthoritativePostReturnEvidence(standard.Registry(), outcome) {
+		t.Fatal("HasAuthoritativePostReturnEvidence = false, want true for lifecycle facts")
 	}
 }
 

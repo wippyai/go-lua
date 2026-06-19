@@ -53,6 +53,97 @@ func TestTypeParamEquality(t *testing.T) {
 	}
 }
 
+func TestTypeParamEqualityTreatsTypedNilAsNil(t *testing.T) {
+	tp := NewTypeParam("T", nil)
+	var nilParam *TypeParam
+
+	if tp.Equals(nilParam) {
+		t.Fatal("type parameter should not equal a typed nil parameter")
+	}
+}
+
+func TestTypeParamEqualityUsesRecursiveGuardForConstraintCycles(t *testing.T) {
+	leftRec := NewRecursivePlaceholder("Constraint")
+	rightRec := NewRecursivePlaceholder("Constraint")
+	leftParam := NewTypeParam("T", leftRec)
+	rightParam := NewTypeParam("T", rightRec)
+	leftRec.SetBody(newRecord().Field("value", leftParam).Build())
+	rightRec.SetBody(newRecord().Field("value", rightParam).Build())
+
+	if !leftParam.Equals(rightParam) {
+		t.Fatal("equivalent recursive type-parameter constraints should compare through the shared equality guard")
+	}
+
+	changedRec := NewRecursivePlaceholder("Constraint")
+	changedParam := NewTypeParam("T", changedRec)
+	changedRec.SetBody(newRecord().Field("value", String).Field("next", changedParam).Build())
+	if leftParam.Equals(changedParam) {
+		t.Fatal("different recursive type-parameter constraints should not compare equal")
+	}
+}
+
+func TestTypeParamEqualityTerminatesDirectConstraintCycle(t *testing.T) {
+	leftParam := NewTypeParam("T", nil)
+	rightParam := NewTypeParam("T", nil)
+	leftParam.Constraint = leftParam
+	rightParam.Constraint = rightParam
+
+	if !leftParam.Equals(rightParam) {
+		t.Fatal("direct recursive type-parameter constraints should terminate and compare equal")
+	}
+}
+
+func TestGenericEqualityUsesRecursiveGuardForTypeParamConstraints(t *testing.T) {
+	leftRec := NewRecursivePlaceholder("Constraint")
+	rightRec := NewRecursivePlaceholder("Constraint")
+	leftParam := NewTypeParam("T", leftRec)
+	rightParam := NewTypeParam("T", rightRec)
+	leftGeneric := NewGeneric("Box", []*TypeParam{leftParam}, newRecord().Field("value", leftParam).Build())
+	rightGeneric := NewGeneric("Box", []*TypeParam{rightParam}, newRecord().Field("value", rightParam).Build())
+	leftRec.SetBody(newRecord().Field("value", leftParam).Build())
+	rightRec.SetBody(newRecord().Field("value", rightParam).Build())
+
+	if !leftGeneric.Equals(rightGeneric) {
+		t.Fatal("generic type parameters with equivalent recursive constraints should share the outer equality guard")
+	}
+}
+
+func TestInstantiatedBeforeGenericSetBodyEqualsFreshInstantiation(t *testing.T) {
+	tp := NewTypeParam("T", nil)
+	g := NewGeneric("Box", []*TypeParam{tp}, nil)
+	stale := Instantiate(g, Number)
+
+	g.SetBody(newRecord().Field("value", tp).Build())
+	fresh := Instantiate(g, Number)
+
+	if !typeEquals(stale, fresh) {
+		t.Fatal("instantiation built before Generic.SetBody should compare equal to a fresh instantiation")
+	}
+	if EqualityHash(stale) != EqualityHash(fresh) {
+		t.Fatalf("stale/fresh instantiations should share refreshed equality hash: %d vs %d", EqualityHash(stale), EqualityHash(fresh))
+	}
+	if got := MaterializeUnion([]Type{stale, fresh}); got != stale {
+		t.Fatalf("stale/fresh instantiations should deduplicate in unions, got %T %[1]v", got)
+	}
+}
+
+func TestEqualityHashSelfInstantiatingGenericTerminates(t *testing.T) {
+	tp := NewTypeParam("T", nil)
+	g := NewGeneric("Loop", []*TypeParam{tp}, nil)
+	g.SetBody(MaterializeUnion([]Type{
+		newRecord().Field("value", tp).Build(),
+		Instantiate(g, tp),
+	}))
+	inst := Instantiate(g, String)
+
+	if EqualityHash(inst) == 0 {
+		t.Fatal("self-instantiating generic should produce a non-zero equality hash")
+	}
+	if got := EqualityHash(inst); got != EqualityHash(inst) {
+		t.Fatalf("self-instantiating generic equality hash should be stable: %d vs %d", got, EqualityHash(inst))
+	}
+}
+
 func TestGeneric(t *testing.T) {
 	tp := NewTypeParam("T", nil)
 	g := NewGeneric("List", []*TypeParam{tp}, NewArray(tp))

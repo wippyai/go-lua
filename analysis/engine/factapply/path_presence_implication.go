@@ -7,6 +7,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/engine/callpayload"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/state/pathevidence"
@@ -19,7 +20,8 @@ import (
 func applyCallOutcomePresenceRelationPublishes(
 	ctx transfer.NodeContext,
 	facts factflow.Facts,
-	outcomeProvider CallOutcomeProvider,
+	cache *callOutcomeTraversalCache,
+	outcomeProvider callpayload.CallOutcomeProvider,
 	resolver *visibility.Resolver,
 	read func(cfg.Point) state.State,
 	out state.State,
@@ -30,7 +32,9 @@ func applyCallOutcomePresenceRelationPublishes(
 	if read == nil {
 		read = emptyStateRead
 	}
-	cache := &callOutcomeTraversalCache{}
+	if cache == nil {
+		cache = &callOutcomeTraversalCache{}
+	}
 	for _, callPoint := range cache.graphRPO(ctx.Graph) {
 		siteView, ok := facts.CallSiteView(callPoint)
 		if !ok {
@@ -105,7 +109,7 @@ func publishCallReturnPresenceImplication(
 	resolver *visibility.Resolver,
 	callPoint cfg.Point,
 	site factflow.CallSiteView,
-	relation CallReturnPresenceRelation,
+	relation callpayload.CallReturnPresenceRelation,
 	out state.State,
 ) state.State {
 	triggerTarget, ok := callOutcomeTargetForResult(site, relation.TriggerIndex)

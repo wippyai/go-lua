@@ -35,7 +35,7 @@ func (s Suffix) Parent() (Suffix, bool) {
 	if len(s.segments) == 0 {
 		return Suffix{}, false
 	}
-	return suffixOfOwnedSegments(cloneSegments(s.segments[:len(s.segments)-1])), true
+	return suffixOfOwnedSegments(s.segments[:len(s.segments)-1]), true
 }
 
 // Equal reports structural suffix equality.

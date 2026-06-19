@@ -50,7 +50,10 @@ func sortHashedTypes(types []Type, hashes []uint64) {
 		if slots[i].hash != slots[j].hash {
 			return slots[i].hash < slots[j].hash
 		}
-		return slots[i].typ.String() < slots[j].typ.String()
+		if slots[i].typ.String() != slots[j].typ.String() {
+			return slots[i].typ.String() < slots[j].typ.String()
+		}
+		return typePointer(slots[i].typ) < typePointer(slots[j].typ)
 	})
 	for i, slot := range slots {
 		types[i] = slot.typ
@@ -62,7 +65,7 @@ func unionMemberHash(t Type) uint64 {
 	if t == nil {
 		return 0
 	}
-	return typeEqualityHash(t)
+	return EqualityHash(t)
 }
 
 func sameUnionMember(a, b Type) bool {
@@ -70,7 +73,49 @@ func sameUnionMember(a, b Type) bool {
 		return true
 	}
 	if knownContainsRecursive(a) || knownContainsRecursive(b) {
-		return false
+		if !sameRecursiveIdentityGraph(a, b) {
+			return false
+		}
 	}
 	return typeEquals(a, b)
+}
+
+func sameRecursiveIdentityGraph(a, b Type) bool {
+	left := make(map[uint64]bool)
+	right := make(map[uint64]bool)
+	collectRecursiveIdentities(a, left, nil)
+	collectRecursiveIdentities(b, right, nil)
+	if len(left) != len(right) {
+		return false
+	}
+	for id := range left {
+		if !right[id] {
+			return false
+		}
+	}
+	return true
+}
+
+func collectRecursiveIdentities(t Type, ids map[uint64]bool, seen map[uintptr]bool) {
+	t = unwrapAnnotatedOrNil(t)
+	if t == nil {
+		return
+	}
+	ptr := typePointer(t)
+	if ptr != 0 {
+		if seen == nil {
+			seen = make(map[uintptr]bool)
+		}
+		if seen[ptr] {
+			return
+		}
+		seen[ptr] = true
+	}
+	if rec, ok := t.(*Recursive); ok {
+		ids[rec.ID] = true
+	}
+	walkChildren(t, func(child Type) bool {
+		collectRecursiveIdentities(child, ids, seen)
+		return false
+	})
 }

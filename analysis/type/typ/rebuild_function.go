@@ -23,7 +23,8 @@ func RebuildFunction(parts FunctionParts) *Function {
 	)
 }
 
-// typ owns hash-stable node materialization; higher-level builders decide function semantics.
+// typ owns hash-stable node materialization; higher-level builders decide
+// function semantics.
 func newCanonicalFunction(
 	typeParams []*TypeParam,
 	params []Param,
@@ -31,34 +32,37 @@ func newCanonicalFunction(
 	returns []Type,
 ) *Function {
 	h := uint64(kind.Function)
-	for _, tp := range typeParams {
+	typeParamsCopy := make([]*TypeParam, len(typeParams))
+	for i, tp := range typeParams {
+		if tp == nil {
+			panic("typ.RebuildFunction: nil entry in type params; normalize before building")
+		}
+		typeParamsCopy[i] = tp
 		h = hash.MixHash(h, tp.Hash())
 	}
 
-	for _, p := range params {
+	paramsCopy := make([]Param, len(params))
+	for i, p := range params {
+		p.Type = requiredFunctionSlotType("params", p.Type)
+		paramsCopy[i] = p
 		h = hash.MixHash(h, p.Type.Hash())
 		if p.Optional {
 			h = hash.MixHash(h, 1)
 		}
 	}
 
+	variadic = NormalizeNil(variadic)
 	if variadic != nil {
 		h = hash.MixHash(h, variadic.Hash())
 	}
 
-	for _, r := range returns {
-		if r == nil {
-			panic("FunctionBuilder.Build: nil entry in returns; normalize before building")
-		}
+	returnsCopy := make([]Type, len(returns))
+	for i, r := range returns {
+		r = requiredFunctionSlotType("returns", r)
+		returnsCopy[i] = r
 		h = hash.MixHash(h, r.Hash())
 	}
 
-	typeParamsCopy := make([]*TypeParam, len(typeParams))
-	copy(typeParamsCopy, typeParams)
-	paramsCopy := make([]Param, len(params))
-	copy(paramsCopy, params)
-	returnsCopy := make([]Type, len(returns))
-	copy(returnsCopy, returns)
 	containsAny := knownAnyTypeParams(typeParamsCopy) ||
 		knownAnyParams(paramsCopy) ||
 		knownContainsAny(variadic) ||
@@ -97,4 +101,12 @@ func newCanonicalFunction(
 		containsRecursive:     containsRecursive,
 		containsOpenRecursive: containsOpenRecursive,
 	}
+}
+
+func requiredFunctionSlotType(slot string, t Type) Type {
+	t = NormalizeNil(t)
+	if t == nil {
+		panic("typ.RebuildFunction: nil entry in " + slot + "; normalize before building")
+	}
+	return t
 }

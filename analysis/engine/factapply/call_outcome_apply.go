@@ -7,6 +7,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/engine/callboundary"
+	"github.com/wippyai/go-lua/analysis/engine/callpayload"
 	"github.com/wippyai/go-lua/analysis/engine/dynamicindex"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/state"
@@ -26,11 +27,12 @@ func applyCallOutcomeFacts(
 	projectPath PathTypeProjector,
 	out state.State,
 	site factflow.CallSiteView,
-	outcome CallOutcome,
+	outcome callpayload.CallOutcome,
 ) state.State {
 	bindings := callPlaceholderBindings(facts, site)
 	paramBindings := callArgumentPlaceholderBindings(facts, site)
 	normalReturnFacts := outcome.NormalReturnFacts
+	lengthFloors := resolveCallParamLengthFloors(resolver, ctx.Point, out, paramBindings, outcome.ParamLengthFloors)
 	for id, object := range outcome.HeapTableObjects {
 		out = out.WriteHeapTableObject(ctx.Registry, id, object)
 	}
@@ -59,13 +61,6 @@ func applyCallOutcomeFacts(
 		out = writePathInvalidationMarker(resolver, ctx.Point, out, targetPath)
 		out = applyPathDescendantInvalidation(ctx, resolver, out, factflow.NewPathDescendantInvalidation(targetPath), true)
 	}
-	for _, fact := range outcome.ParamLengthFloors {
-		targetPath, ok := fact.Path.Substitute(paramBindings)
-		if !ok {
-			continue
-		}
-		out = applyCallParamLengthFloor(resolver, ctx.Point, out, targetPath, fact.Floor)
-	}
 	for _, fact := range normalReturnFacts.PathInvalidations {
 		targetPath, ok := fact.Path.Substitute(bindings)
 		if !ok {
@@ -73,6 +68,9 @@ func applyCallOutcomeFacts(
 		}
 		out = writePathInvalidationMarker(resolver, ctx.Point, out, targetPath)
 		out = applyPathDescendantInvalidation(ctx, resolver, out, factflow.NewPathDescendantInvalidation(targetPath), true)
+	}
+	for _, fact := range lengthFloors {
+		out = applyCallParamLengthFloor(resolver, ctx.Point, out, fact.Path, fact.Floor)
 	}
 	for _, condition := range outcome.ParamConditions {
 		out = applyCallParamCondition(ctx, facts, resolver, projectPath, out, site, condition)
@@ -92,10 +90,16 @@ func applyCallOutcomeFacts(
 		if !ok {
 			continue
 		}
-		out = out.WriteDynamicIndexFact(ctx.Registry, dynamicindex.Key{
+		tablePath, ok := fact.Table.Substitute(bindings)
+		if !ok {
+			continue
+		}
+		key := dynamicindex.Key{
 			Table: tableKey,
 			Site:  fact.Site,
-		}, fact.Value)
+		}
+		out = out.WriteDynamicIndexFact(ctx.Registry, key, fact.Value)
+		out = writeHeapTableDynamicIndexFact(ctx, resolver, out, tablePath, key, fact.Value)
 	}
 	for _, proof := range normalReturnFacts.BranchProofs {
 		stateProof, ok := callBranchProofAt(resolver, ctx.Point, bindings, proof)
@@ -150,6 +154,21 @@ func applyCallOutcomeFacts(
 			Into:   intoKey,
 		})
 	}
+	for _, fact := range normalReturnFacts.LifecycleFacts {
+		targetKey, ok := callOutcomePathKeyAt(resolver, ctx.Point, bindings, fact.Target)
+		if !ok || fact.Protocol == "" {
+			continue
+		}
+		resource := out.CanonicalTypestateResource(targetKey, fact.Protocol)
+		switch fact.Kind {
+		case callboundary.LifecycleAcquire:
+			out = out.AcquireTypestate(resource, fact.To, fact.Obligation)
+		case callboundary.LifecycleTransition:
+			out = out.TransitionTypestate(resource, fact.From, fact.To)
+		case callboundary.LifecycleEscape:
+			out = out.EscapeTypestate(resource)
+		}
+	}
 	for _, event := range normalReturnFacts.EscapeEvents {
 		targetPath, ok := event.Target.Substitute(bindings)
 		if !ok {
@@ -167,6 +186,56 @@ func applyCallOutcomeFacts(
 		out = applyEscapeEventPlacement(ctx.Registry, resolver, projectPath, ctx.Point, out, targetPath, event)
 	}
 	return out
+}
+
+type resolvedCallParamLengthFloor struct {
+	Path  pathdom.Path
+	Floor int64
+}
+
+func resolveCallParamLengthFloors(
+	resolver *visibility.Resolver,
+	point cfg.Point,
+	in state.State,
+	paramBindings []pathdom.Path,
+	facts []callpayload.CallParamLengthFloor,
+) []resolvedCallParamLengthFloor {
+	if len(facts) == 0 {
+		return nil
+	}
+	out := make([]resolvedCallParamLengthFloor, 0, len(facts))
+	for _, fact := range facts {
+		targetPath, ok := fact.Path.Substitute(paramBindings)
+		if !ok {
+			continue
+		}
+		floor := fact.Floor
+		// Current param length floors are lowered from positive LengthChange
+		// effects, so Floor is the minimum delta contributed by the call.
+		// Resolve it against the incoming floor before mutation invalidations
+		// clear stale descendants, then publish the post-call lower bound.
+		if existing, ok := readCallParamLengthFloor(resolver, point, in, targetPath); ok {
+			floor += existing
+		}
+		out = append(out, resolvedCallParamLengthFloor{Path: targetPath, Floor: floor})
+	}
+	return out
+}
+
+func readCallParamLengthFloor(
+	resolver *visibility.Resolver,
+	point cfg.Point,
+	in state.State,
+	targetPath pathdom.Path,
+) (int64, bool) {
+	if resolver == nil || targetPath.Symbol == 0 {
+		return 0, false
+	}
+	pathKey := resolver.KeyAt(point, targetPath)
+	if pathKey == "" {
+		return 0, false
+	}
+	return in.ReadLenFloor(pathKey)
 }
 
 func applyCallParamLengthFloor(
@@ -388,13 +457,12 @@ func applyCallParamCondition(
 	projectPath PathTypeProjector,
 	out state.State,
 	site factflow.CallSiteView,
-	condition CallParamCondition,
+	condition callpayload.CallParamCondition,
 ) state.State {
-	args := site.ArgumentSources()
-	if condition.ParamIndex < 0 || condition.ParamIndex >= len(args) {
+	arg, ok := site.ArgumentSourceAt(condition.ParamIndex)
+	if !ok {
 		return out
 	}
-	arg := args[condition.ParamIndex]
 	if arg.Kind != factflow.ValueSourceExpression || !arg.HasExpr {
 		return out
 	}
@@ -417,10 +485,10 @@ func applyCallParamPathRelation(
 	projectPath PathTypeProjector,
 	out state.State,
 	bindings []pathdom.Path,
-	relation CallParamPathRelation,
+	relation callpayload.CallParamPathRelation,
 ) state.State {
 	switch relation.Kind {
-	case CallPathRelationEqual:
+	case callpayload.CallPathRelationEqual:
 		left, ok := relation.Left.Substitute(bindings)
 		if !ok {
 			return out
@@ -442,31 +510,33 @@ func callPlaceholderBindings(facts factflow.Facts, site factflow.CallSiteView) [
 		bindings = bindPlaceholderPath(bindings, 0, receiverPath)
 		offset = 1
 	}
-	for i, source := range site.ArgumentSources() {
+	site.ForEachArgumentSource(func(i int, source factflow.ValueSource) bool {
 		if source.Kind != factflow.ValueSourceExpression || !source.HasExpr {
-			continue
+			return true
 		}
 		sourcePath, ok := facts.ExpressionPath(source.ExprRef)
 		if !ok || sourcePath.IsEmpty() {
-			continue
+			return true
 		}
 		bindings = bindPlaceholderPath(bindings, i+offset, sourcePath)
-	}
+		return true
+	})
 	return bindings
 }
 
 func callArgumentPlaceholderBindings(facts factflow.Facts, site factflow.CallSiteView) []pathdom.Path {
 	var bindings []pathdom.Path
-	for i, source := range site.ArgumentSources() {
+	site.ForEachArgumentSource(func(i int, source factflow.ValueSource) bool {
 		if source.Kind != factflow.ValueSourceExpression || !source.HasExpr {
-			continue
+			return true
 		}
 		sourcePath, ok := facts.ExpressionPath(source.ExprRef)
 		if !ok || sourcePath.IsEmpty() {
-			continue
+			return true
 		}
 		bindings = bindPlaceholderPath(bindings, i, sourcePath)
-	}
+		return true
+	})
 	return bindings
 }
 

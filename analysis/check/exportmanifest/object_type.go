@@ -34,9 +34,9 @@ func pathExportRecordType(result *body.Result, point cfg.Point, root pathdom.Pat
 	dom := dominance.ComputeImmediateDominatorInfo(result.Graph())
 	members := newObjectMemberMaps()
 	addLocalObjectLiteralMembers(result, point, root, members)
-	addStateStaticMembers(result, point, root, members)
 	addOrdinaryAssignmentMembers(result, point, dom, root, members)
 	addFunctionDefinitionMembers(result, point, dom, root, members)
+	addStateStaticMembers(result, point, root, members)
 	return recordFromMemberMaps(members)
 }
 
@@ -237,6 +237,9 @@ func addStateStaticMembers(
 		if !ok {
 			continue
 		}
+		if members.has(member) {
+			continue
+		}
 		t, ok := valueType(result.Registry(), value)
 		if !ok {
 			t = typ.Unknown
@@ -399,6 +402,25 @@ func newObjectMemberMaps() *objectMemberMaps {
 
 func (m *objectMemberMaps) empty() bool {
 	return m == nil || (len(m.fields) == 0 && len(m.staticStrings) == 0 && len(m.staticInts) == 0)
+}
+
+func (m *objectMemberMaps) has(seg segment.Segment) bool {
+	if m == nil {
+		return false
+	}
+	switch seg.Kind {
+	case segment.SegmentField:
+		_, ok := m.fields[seg.Name]
+		return ok
+	case segment.SegmentIndexString:
+		_, ok := m.staticStrings[seg.Name]
+		return ok
+	case segment.SegmentIndexInt:
+		_, ok := m.staticInts[seg.Index]
+		return ok
+	default:
+		return false
+	}
 }
 
 func (m *objectMemberMaps) add(seg segment.Segment, t typ.Type, optional bool) {

@@ -1,20 +1,95 @@
 {
   "description": "A wrong field type inside a recursive structure must still be reported with a full evidence chain (recursion subtyping must not mask real mismatches).",
-  "files": ["main.lua"],
+  "files": [
+    "main.lua"
+  ],
   "check": {
     "diagnostics": [
       {
         "file": "main.lua",
         "line": 6,
+        "column": 33,
         "severity": "error",
         "code": "type.assignment",
-        "message_contains": ["123", "string"],
+        "message_contains": [
+          "123",
+          "string"
+        ],
         "min_evidence": 2,
-        "evidence_contains": ["123", "string"],
-        "min_labels": 1,
-        "label_contains": ["assigned value"]
+        "evidence_contains": [
+          "assigned value has literal value 123",
+          "node.label is declared as string"
+        ],
+        "evidence": [
+          {
+            "file": "main.lua",
+            "line": 6,
+            "column": 33,
+            "kind": "abstract fact",
+            "trust": "proven",
+            "contains": [
+              "assigned value has literal value 123"
+            ]
+          },
+          {
+            "file": "main.lua",
+            "line": 6,
+            "column": 13,
+            "kind": "user assertion",
+            "trust": "claimed",
+            "contains": [
+              "node.label is declared as string"
+            ]
+          }
+        ],
+        "render_contains": [
+          "error[type.assignment]: cannot assign 123 to string",
+          "local node: TreeNode = {label = 123, owner = tree, children = {}, parent = nil}",
+          "because:"
+        ],
+        "render_ordered_contains": [
+          "error[type.assignment]: cannot assign 123 to string",
+          "--> main.lua:6:33",
+          "local node: TreeNode = {label = 123, owner = tree, children = {}, parent = nil}",
+          "because:",
+          "1. proven: assigned value has literal value 123",
+          "2. claimed: node.label is declared as string",
+          "help: Use a value compatible with the expected type, or change the target type if the assigned value is valid."
+        ],
+        "render_not_contains": [
+          "^~",
+          "where:"
+        ],
+        "min_labels": 2,
+        "label_contains": [
+          "assigned value",
+          "declared type"
+        ],
+        "labels": [
+          {
+            "file": "main.lua",
+            "line": 6,
+            "column": 33,
+            "contains": [
+              "assigned value"
+            ]
+          },
+          {
+            "file": "main.lua",
+            "line": 6,
+            "column": 13,
+            "contains": [
+              "declared type"
+            ]
+          }
+        ],
+        "help_contains": [
+          "change the target type"
+        ]
       }
     ]
   },
-  "run": { "skip": "diagnostic-only fixture" }
+  "run": {
+    "skip": "diagnostic-only fixture"
+  }
 }

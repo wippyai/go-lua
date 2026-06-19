@@ -17,7 +17,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/typewitness"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
-	factapply "github.com/wippyai/go-lua/analysis/engine/factapply"
+	"github.com/wippyai/go-lua/analysis/engine/callpayload"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
@@ -352,9 +352,9 @@ func TestBoundaryReadsUseMaterializedNodeOutputs(t *testing.T) {
 	result, err := CheckChunk(stmts, Config{
 		Registry: reg,
 		Globals:  []string{"f"},
-		CallOutcome: func(ctx transfer.NodeContext, site factflow.CallSiteView, in state.State, read func(cfg.Point) state.State) factapply.CallOutcome {
+		CallOutcome: func(ctx transfer.NodeContext, site factflow.CallSiteView, in state.State, read func(cfg.Point) state.State) callpayload.CallOutcome {
 			callOutcomeCalls++
-			return factapply.CallOutcome{Results: []factapply.CallResult{{
+			return callpayload.CallOutcome{Results: []callpayload.CallResult{{
 				Index: 0,
 				Value: typevalue.FromType(ctx.Registry, typ.String),
 			}}}

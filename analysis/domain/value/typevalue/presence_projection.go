@@ -4,6 +4,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/type/kind"
 	typenormalize "github.com/wippyai/go-lua/analysis/type/normalize"
+	"github.com/wippyai/go-lua/analysis/type/subst"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/unwrap"
@@ -30,10 +31,15 @@ func typeIncludesNil(t typ.Type) bool {
 		return false
 	}
 	normalized := unwrap.NormalizeNil(t)
-	return (normalized != nil && normalized.Kind() == kind.Nil) || projectionHasNil(t, 0)
+	return (normalized != nil && normalized.Kind() == kind.Nil) || ProjectionHasNil(t)
 }
 
-func projectionHasNil(t typ.Type, depth int) bool {
+// ProjectionHasNil reports whether a projected type can include nil.
+func ProjectionHasNil(t typ.Type) bool {
+	return projectionHasNilDepth(t, 0)
+}
+
+func projectionHasNilDepth(t typ.Type, depth int) bool {
 	if t == nil || depth > typ.DefaultRecursionDepth || typ.IsAny(t) || typ.IsUnknown(t) || typ.IsNever(t) {
 		return false
 	}
@@ -49,10 +55,17 @@ func projectionHasNil(t typ.Type, depth int) bool {
 		return true
 	case *typ.Union:
 		for _, member := range tt.Members {
-			if projectionHasNil(member, depth+1) {
+			if projectionHasNilDepth(member, depth+1) {
 				return true
 			}
 		}
+	case *typ.Alias:
+		return projectionHasNilDepth(tt.UnaliasedTarget(), depth+1)
+	case *typ.Instantiated:
+		expanded := subst.ExpandInstantiated(tt)
+		return expanded != nil && expanded != t && projectionHasNilDepth(expanded, depth+1)
+	case *typ.Recursive:
+		return tt.Body != nil && tt.Body != t && projectionHasNilDepth(tt.Body, depth+1)
 	}
 	return false
 }

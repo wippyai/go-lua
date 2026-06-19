@@ -49,8 +49,8 @@ end
 	for _, diagnostic := range result.Diagnostics {
 		messages = append(messages, diagnostic.Message)
 	}
-	if !hasDiagnosticMessage(messages, "cannot assign string to number") ||
-		!hasDiagnosticMessage(messages, "cannot assign number to string") {
+	if !hasDiagnosticMessage(messages, "cannot assign event.id because it is string, not number") ||
+		!hasDiagnosticMessage(messages, "cannot assign timer.elapsed because it is number, not string") {
 		t.Fatalf("diagnostics = %#v, want imported channel-select payload mismatches", messages)
 	}
 }
@@ -69,7 +69,7 @@ return M
 		t.Fatalf("protocol diagnostics = %#v, want none", protocol.Errors)
 	}
 
-	result := Check(`
+	src := strings.TrimLeft(`
 local protocol = require("protocol")
 
 type ListenOptions<T> = {
@@ -92,15 +92,27 @@ function consume(source: protocol.Source)
 	decode = decode_timer,
 	})
 end
-`, WithStdlib(), WithManifest("channel", ChannelManifest()), WithGlobals("channel"), WithModule("protocol", protocol))
+`, "\n")
+	result := Check(src, WithStdlib(), WithManifest("channel", ChannelManifest()), WithGlobals("channel"), WithModule("protocol", protocol))
 
-	messages := make([]string, 0, len(result.Diagnostics))
-	for _, diagnostic := range result.Diagnostics {
-		messages = append(messages, diagnostic.Message)
-	}
-	if !hasDiagnosticMessage(messages, "argument 2 is") {
-		t.Fatalf("diagnostics = %#v, want generic object evidence conflict", messages)
-	}
+	diag := requireDiagnosticCode(t, result, diagnostics.CodeDirectCallArgType)
+	rendered := diagnostic.Render(diag, diagnostic.RenderOptions{
+		Sources:             diagnostic.SourceMap{"test.lua": src},
+		ShowSourceLabelRows: true,
+	})
+	want := `error[type.call.direct.argument_type]: argument 2.channel is Channel<{id: string, kind: "event"}>, not Channel<{id: string, kind: "event"} | {elapsed: number, kind: "timer"}>
+ --> test.lua:19:12
+   |
+19 |     channel = source.primary,
+   |               ↑ argument value
+
+because:
+  1. proven: argument 2.channel (source.primary) has type Channel<{id: string, kind: "event"}>
+  2. claimed: listen parameter 2.channel expects Channel<{id: string, kind: "event"} | {elapsed: number, kind: "timer"}>
+  3. missing proof: no proof on this path shows source.primary satisfies the parameter type
+
+help: Pass ` + "`source.primary`" + ` as a value compatible with the parameter type, or change the callee signature if that argument is valid.`
+	assertRenderedEqual(t, rendered, want)
 }
 
 func TestChannelSelectDiscriminantUnlocksReceiverMethods(t *testing.T) {
@@ -150,7 +162,7 @@ end
 }
 
 func TestChannelSelectExhaustivenessReportsMissingReceiveCase(t *testing.T) {
-	result := Check(`
+	src := strings.TrimLeft(`
 type Event = { id: string }
 type Timer = { elapsed: number }
 type Stop = { reason: string }
@@ -167,7 +179,8 @@ function consume(primary: Channel<Event>, timers: Channel<Timer>, stops: Channel
 	end
 	return ""
 end
-`, WithStdlib(), WithManifest("channel", ChannelManifest()), WithGlobals("channel"))
+`, "\n")
+	result := Check(src, WithStdlib(), WithManifest("channel", ChannelManifest()), WithGlobals("channel"))
 
 	var warnings []diagnostic.Diagnostic
 	for _, d := range result.Diagnostics {
@@ -182,33 +195,60 @@ end
 	if warning.Code != diagnostics.CodeChannelSelectExhaustive {
 		t.Fatalf("warning code = %s, want %s", warning.Code, diagnostics.CodeChannelSelectExhaustive)
 	}
-	if !strings.Contains(warning.Message, "stops") {
+	if warning.Message != "channel select is not exhaustive; missing case: `stops`" {
 		t.Fatalf("warning message = %q, want missing channel display name", warning.Message)
 	}
 	if warning.Severity != diagnostic.SeverityWarning {
 		t.Fatalf("warning severity = %s, want %s", warning.Severity, diagnostic.SeverityWarning)
 	}
-	if len(warning.Labels) != 1 || warning.Labels[0].Message != "channel select case chain" {
-		t.Fatalf("warning labels = %#v, want channel select case chain label", warning.Labels)
-	}
-	if warning.Help != "Handle each channel select case explicitly in the if/elseif chain." {
+	requireLabelMessage(t, warning, "channel case check")
+	if warning.Help != "Add an elseif branch for each missing case, or add a default branch when a fallback is valid." {
 		t.Fatalf("warning help = %q", warning.Help)
 	}
 	evidence := warning.Explanation.Evidence()
 	if len(evidence) != 4 {
 		t.Fatalf("warning explanation evidence = %#v, want 4 precise items", evidence)
 	}
+	for i, item := range evidence {
+		if i < 2 {
+			if item.Kind != diagnostic.EvidenceAbstractFact || item.Trust != diagnostic.TrustProven {
+				t.Fatalf("warning explanation evidence[%d] = %#v, want proven abstract fact", i, item)
+			}
+			continue
+		}
+		if item.Kind != diagnostic.EvidenceMissingProof || item.Trust != diagnostic.TrustUnknown {
+			t.Fatalf("warning explanation evidence[%d] = %#v, want missing-proof evidence", i, item)
+		}
+	}
 	explanation := warning.Explanation.String()
 	for _, want := range []string{
-		"selected.channel",
-		"handled channel select cases: primary, timers",
-		"missing channel select cases: stops",
-		"no default case",
+		"branch chain checks channel `selected.channel`",
+		"handled cases: `primary`, `timers`",
+		"missing cases: `stops`",
+		"no default case handles the remaining channel cases",
 	} {
 		if !strings.Contains(explanation, want) {
 			t.Fatalf("warning explanation = %q, want substring %q", explanation, want)
 		}
 	}
+	rendered := diagnostic.Render(warning, diagnostic.RenderOptions{
+		Sources:             diagnostic.SourceMap{"test.lua": src},
+		ShowSourceLabelRows: true,
+	})
+	want := `warning[channel.select.exhaustiveness]: channel select is not exhaustive; missing case: ` + "`stops`" + `
+ --> test.lua:10:5
+   |
+10 |     if selected.channel == primary then
+   |        ↑ channel case check
+
+because:
+  1. proven: branch chain checks channel ` + "`selected.channel`" + `
+  2. proven: handled cases: ` + "`primary`, `timers`" + `
+  3. missing proof: missing cases: ` + "`stops`" + `
+  4. missing proof: no default case handles the remaining channel cases
+
+help: Add an elseif branch for each missing case, or add a default branch when a fallback is valid.`
+	assertRenderedEqual(t, rendered, want)
 }
 
 func TestChannelSelectExhaustivenessAcceptsExhaustiveChain(t *testing.T) {

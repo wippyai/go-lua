@@ -91,6 +91,48 @@ func TestEquivalentPathKeysRebaseThroughBranchProofs(t *testing.T) {
 	}
 }
 
+func TestEquivalentPathKeysStopsCyclicDescendantAliasExpansion(t *testing.T) {
+	l, _ := (Lane{}).AddBranchProof(BranchProof{
+		Kind:  BranchProofPathEqual,
+		Path:  pathdom.PathKey("sym10@1.__index"),
+		Other: pathdom.PathKey("sym10@1"),
+	})
+
+	got := l.EquivalentPathKeys(pathdom.PathKey("sym10@1.label"))
+	want := []pathdom.PathKey{
+		pathdom.PathKey("sym10@1.__index.label"),
+	}
+	if len(got) != len(want) {
+		t.Fatalf("EquivalentPathKeys len = %d (%#v), want %d (%#v)", len(got), got, len(want), want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("EquivalentPathKeys[%d] = %s, want %s", i, got[i], want[i])
+		}
+	}
+}
+
+func TestInvalidationPrefixesStopCyclicDescendantAliasExpansion(t *testing.T) {
+	l, _ := (Lane{}).AddBranchProof(BranchProof{
+		Kind:  BranchProofPathEqual,
+		Path:  pathdom.PathKey("sym10@1.__index"),
+		Other: pathdom.PathKey("sym10@1"),
+	})
+
+	prefixes, ok := l.PathKeyDescendantInvalidationPrefixes(pathdom.PathKey("sym10@1"))
+	if !ok {
+		t.Fatal("PathKeyDescendantInvalidationPrefixes failed")
+	}
+	for _, key := range append(append([]pathdom.PathKey{}, prefixes.Descendants...), prefixes.Subtrees...) {
+		if key == pathdom.PathKey("sym10@1.__index.__index") {
+			t.Fatalf("cyclic alias expansion leaked into prefixes: %#v", prefixes)
+		}
+	}
+	if len(prefixes.Descendants) > 2 || len(prefixes.Subtrees) > 2 {
+		t.Fatalf("prefixes = %#v, want finite direct aliases only", prefixes)
+	}
+}
+
 func TestRebaseEquivalentPathKeyStaysUnderTargetPrefix(t *testing.T) {
 	from := pathdom.PathKey("sym10@1.child")
 	to := pathdom.PathKey("sym20@1.leaf")
@@ -99,7 +141,7 @@ func TestRebaseEquivalentPathKeyStaysUnderTargetPrefix(t *testing.T) {
 	if !ok || got != pathdom.PathKey("sym20@1.leaf.name") {
 		t.Fatalf("rebaseEquivalentPathKey = %s/%v, want sym20@1.leaf.name/true", got, ok)
 	}
-	if !pathKeyInSubtree(got, to) {
+	if !pathaddr.PathKeyHasPrefix(got, to) {
 		t.Fatalf("rebased key %s escaped target prefix %s", got, to)
 	}
 	if got, ok := rebaseEquivalentPathKey(pathdom.PathKey("sym10@1.childish.name"), from, to); ok || got != "" {
@@ -126,5 +168,22 @@ func TestRefinementMustJoinDropsOneSidedEntry(t *testing.T) {
 	}
 	if len(joined.refinements) != 0 {
 		t.Fatalf("must join kept one-sided refinement: %d", len(joined.refinements))
+	}
+}
+
+func TestDomainStableAcrossRepeatedConstruction(t *testing.T) {
+	reg := standard.Registry()
+	top := Domain(reg).Top()
+	bottom := Domain(reg).Bottom()
+	domain := Domain(reg)
+
+	if !domain.Equal(top, domain.Top()) {
+		t.Fatalf("reconstructed path-evidence domain did not recognize prior top")
+	}
+	if !domain.Equal(bottom, domain.Bottom()) {
+		t.Fatalf("reconstructed path-evidence domain did not recognize prior bottom")
+	}
+	if !domain.Equal(domain.Join(bottom, top), top) {
+		t.Fatalf("reconstructed path-evidence domain join(bottom, top) did not produce top")
 	}
 }

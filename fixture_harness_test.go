@@ -24,36 +24,66 @@ import (
 
 // Suite describes a fixture suite loaded from manifest.json.
 type fixtureSuite struct {
-	Description string        `json:"description,omitempty"`
-	Files       []string      `json:"files,omitempty"`
-	Stdlib      *bool         `json:"stdlib,omitempty"`
-	Packages    []string      `json:"packages,omitempty"` // predefined system packages: "channel", "process", "time", "funcs", "uuid"
-	Check       *fixtureCheck `json:"check,omitempty"`
-	Run         *fixtureRun   `json:"run,omitempty"`
-	Bench       *fixtureBench `json:"bench,omitempty"`
-	Skip        string        `json:"skip,omitempty"`
+	Description     string        `json:"description,omitempty"`
+	Files           []string      `json:"files,omitempty"`
+	Stdlib          *bool         `json:"stdlib,omitempty"`
+	Packages        []string      `json:"packages,omitempty"` // predefined system packages: "channel", "process", "time", "funcs", "uuid"
+	DeadlineSeconds int           `json:"deadline_seconds,omitempty"`
+	Check           *fixtureCheck `json:"check,omitempty"`
+	Run             *fixtureRun   `json:"run,omitempty"`
+	Bench           *fixtureBench `json:"bench,omitempty"`
+	Skip            string        `json:"skip,omitempty"`
 }
 
 type fixtureCheck struct {
-	Errors      *int                           `json:"errors,omitempty"`
-	Diagnostics []fixtureDiagnosticExpectation `json:"diagnostics,omitempty"`
-	Placement   *fixturePlacement              `json:"placement,omitempty"`
-	Skip        string                         `json:"skip,omitempty"`
+	Errors          *int                           `json:"errors,omitempty"`
+	Diagnostics     []fixtureDiagnosticExpectation `json:"diagnostics,omitempty"`
+	DiagnosticRules []fixtureDiagnosticRule        `json:"diagnostic_rules,omitempty"`
+	Placement       *fixturePlacement              `json:"placement,omitempty"`
+	Skip            string                         `json:"skip,omitempty"`
+}
+
+type fixtureDiagnosticRule struct {
+	Code     string `json:"code,omitempty"`
+	Enabled  *bool  `json:"enabled,omitempty"`
+	Severity string `json:"severity,omitempty"`
 }
 
 type fixtureDiagnosticExpectation struct {
-	File               string   `json:"file,omitempty"`
-	Line               int      `json:"line,omitempty"`
-	Column             int      `json:"column,omitempty"`
-	Severity           string   `json:"severity,omitempty"`
-	Code               string   `json:"code,omitempty"`
-	MessageContains    []string `json:"message_contains,omitempty"`
-	EvidenceContains   []string `json:"evidence_contains,omitempty"`
-	HelpContains       []string `json:"help_contains,omitempty"`
-	LabelContains      []string `json:"label_contains,omitempty"`
-	MinEvidence        int      `json:"min_evidence,omitempty"`
-	MinLabels          int      `json:"min_labels,omitempty"`
-	AllowEmptyEvidence bool     `json:"allow_empty_evidence,omitempty"`
+	File                  string                                 `json:"file,omitempty"`
+	Line                  int                                    `json:"line,omitempty"`
+	Column                int                                    `json:"column,omitempty"`
+	Severity              string                                 `json:"severity,omitempty"`
+	Code                  string                                 `json:"code,omitempty"`
+	MessageContains       []string                               `json:"message_contains,omitempty"`
+	EvidenceContains      []string                               `json:"evidence_contains,omitempty"`
+	Evidence              []fixtureDiagnosticEvidenceExpectation `json:"evidence,omitempty"`
+	RenderContains        []string                               `json:"render_contains,omitempty"`
+	RenderOrderedContains []string                               `json:"render_ordered_contains,omitempty"`
+	RenderNotContains     []string                               `json:"render_not_contains,omitempty"`
+	HelpContains          []string                               `json:"help_contains,omitempty"`
+	LabelContains         []string                               `json:"label_contains,omitempty"`
+	Labels                []fixtureDiagnosticLabelExpectation    `json:"labels,omitempty"`
+	MinEvidence           int                                    `json:"min_evidence,omitempty"`
+	MinLabels             int                                    `json:"min_labels,omitempty"`
+	AllowEmptyEvidence    bool                                   `json:"allow_empty_evidence,omitempty"`
+}
+
+type fixtureDiagnosticEvidenceExpectation struct {
+	File     string   `json:"file,omitempty"`
+	Line     int      `json:"line,omitempty"`
+	Column   int      `json:"column,omitempty"`
+	Kind     string   `json:"kind,omitempty"`
+	Trust    string   `json:"trust,omitempty"`
+	Reason   string   `json:"reason,omitempty"`
+	Contains []string `json:"contains,omitempty"`
+}
+
+type fixtureDiagnosticLabelExpectation struct {
+	File     string   `json:"file,omitempty"`
+	Line     int      `json:"line,omitempty"`
+	Column   int      `json:"column,omitempty"`
+	Contains []string `json:"contains,omitempty"`
 }
 
 type fixturePlacement struct {
@@ -188,6 +218,15 @@ func readFixtureFile(dir, name string) string {
 	return string(data)
 }
 
+func readFixtureSources(s namedSuite) map[string]string {
+	files := resolveFiles(s)
+	sources := make(map[string]string, len(files))
+	for _, file := range files {
+		sources[file] = readFixtureFile(s.Dir, file)
+	}
+	return sources
+}
+
 // parseExpectations scans source lines for expect-error/expect-warning comments.
 func parseExpectations(filename, source string) []inlineExpectation {
 	var expectations []inlineExpectation
@@ -228,6 +267,11 @@ func runCheckPhase(t *testing.T, s namedSuite) {
 			t.Fatalf("unknown system package: %s", pkg)
 		}
 	}
+	ruleOpts, err := fixtureDiagnosticRuleOptions(s.Suite.Check)
+	if err != nil {
+		t.Fatalf("diagnostic_rules: %v", err)
+	}
+	baseOpts = append(baseOpts, ruleOpts...)
 
 	// Collect all sources and their expectations
 	sources := make(map[string]string)
@@ -267,19 +311,23 @@ func runCheckPhase(t *testing.T, s namedSuite) {
 	result := testutil.Check(sources[entryFile], entryOpts...)
 	allDiagnostics = append(allDiagnostics, result.Diagnostics...)
 	placementPlans = append(placementPlans, result.PlacementPlan())
+	renderOptions := fixtureDiagnosticRenderOptions(sources, entryFile)
+	verifyDiagnosticRenderPolicy(t, allDiagnostics, renderOptions)
 
 	// Verify expectations
 	if len(allExpectations) > 0 {
-		verifyInlineExpectations(t, allExpectations, allDiagnostics, entryFile)
+		verifyInlineExpectations(t, allExpectations, allDiagnostics, entryFile, renderOptions)
 		if s.Suite.Check != nil && len(s.Suite.Check.Diagnostics) > 0 {
-			verifyDiagnosticExpectations(t, s.Suite.Check.Diagnostics, allDiagnostics, entryFile, false)
+			verifyDiagnosticExpectations(t, s.Suite.Check.Diagnostics, allDiagnostics, entryFile, true, renderOptions)
+		} else if s.Suite.Check != nil && s.Suite.Check.Errors != nil {
+			verifyErrorCount(t, *s.Suite.Check.Errors, allDiagnostics, renderOptions)
 		}
 	} else if s.Suite.Check != nil && len(s.Suite.Check.Diagnostics) > 0 {
-		verifyDiagnosticExpectations(t, s.Suite.Check.Diagnostics, allDiagnostics, entryFile, true)
+		verifyDiagnosticExpectations(t, s.Suite.Check.Diagnostics, allDiagnostics, entryFile, true, renderOptions)
 	} else if s.Suite.Check != nil && s.Suite.Check.Errors != nil {
-		verifyErrorCount(t, *s.Suite.Check.Errors, allDiagnostics)
+		verifyErrorCount(t, *s.Suite.Check.Errors, allDiagnostics, renderOptions)
 	} else {
-		verifyClean(t, allDiagnostics)
+		verifyClean(t, allDiagnostics, renderOptions)
 	}
 	if s.Suite.Check != nil && s.Suite.Check.Placement != nil {
 		verifyPlacementExpectations(t, *s.Suite.Check.Placement, placementplan.Merge(placementPlans...))
@@ -383,7 +431,27 @@ func formatPlacementEntries(plan placementplan.Plan) string {
 	return strings.Join(parts, "; ")
 }
 
-func verifyInlineExpectations(t testing.TB, expectations []inlineExpectation, diagnostics []diag.Diagnostic, entryFile string) {
+func fixtureDiagnosticRenderOptions(sources map[string]string, entryFile string) diag.RenderOptions {
+	if len(sources) == 0 {
+		return diag.RenderOptions{}
+	}
+	renderSources := make(diag.SourceMap, len(sources)*2+1)
+	displayFiles := make(map[string]string, len(sources)+1)
+	for file, source := range sources {
+		renderSources[file] = source
+		if moduleName := strings.TrimSuffix(file, ".lua"); moduleName != file {
+			renderSources[moduleName] = source
+			displayFiles[moduleName] = file
+		}
+	}
+	if source, ok := sources[entryFile]; ok {
+		renderSources["test.lua"] = source
+		displayFiles["test.lua"] = entryFile
+	}
+	return diag.RenderOptions{Sources: renderSources, DisplayFiles: displayFiles, ShowSourceLabelRows: true}
+}
+
+func verifyInlineExpectations(t testing.TB, expectations []inlineExpectation, diagnostics []diag.Diagnostic, entryFile string, renderOptions diag.RenderOptions) {
 	t.Helper()
 	matched := make([]bool, len(diagnostics))
 	failed := false
@@ -418,7 +486,7 @@ func verifyInlineExpectations(t testing.TB, expectations []inlineExpectation, di
 	}
 
 	if failed {
-		dumpDiagnostics(t, diagnostics)
+		dumpDiagnostics(t, diagnostics, renderOptions)
 	}
 }
 
@@ -448,16 +516,23 @@ func matchesDiagnosticFile(expFile string, d diag.Diagnostic, entryFile string) 
 	if expFile == "" {
 		return true
 	}
-	if !strings.HasSuffix(d.Position.File, strings.TrimSuffix(expFile, ".lua")) &&
-		(expFile != entryFile || d.Position.File != "test.lua") {
-		return false
+	actual := d.Position.File
+	if actual == expFile {
+		return true
 	}
-	return true
+	expModule := strings.TrimSuffix(expFile, ".lua")
+	if actual == expModule {
+		return true
+	}
+	if actual == "test.lua" && (expFile == entryFile || expModule == strings.TrimSuffix(entryFile, ".lua")) {
+		return true
+	}
+	return false
 }
 
-func verifyDiagnosticExpectations(t testing.TB, expectations []fixtureDiagnosticExpectation, diagnostics []diag.Diagnostic, entryFile string, requireNoUnexpected bool) {
+func verifyDiagnosticExpectations(t testing.TB, expectations []fixtureDiagnosticExpectation, diagnostics []diag.Diagnostic, entryFile string, requireNoUnexpected bool, renderOptions diag.RenderOptions) {
 	t.Helper()
-	missing, unexpected := matchDiagnosticExpectations(expectations, diagnostics, entryFile, requireNoUnexpected)
+	missing, unexpected := matchDiagnosticExpectations(expectations, diagnostics, entryFile, requireNoUnexpected, renderOptions)
 	for _, msg := range missing {
 		t.Errorf("missing diagnostic expectation: %s", msg)
 	}
@@ -465,12 +540,13 @@ func verifyDiagnosticExpectations(t testing.TB, expectations []fixtureDiagnostic
 		t.Errorf("unexpected diagnostic: %s", msg)
 	}
 	if len(missing) > 0 || len(unexpected) > 0 {
-		dumpDiagnostics(t, diagnostics)
+		dumpDiagnostics(t, diagnostics, renderOptions)
 	}
 }
 
-func matchDiagnosticExpectations(expectations []fixtureDiagnosticExpectation, diagnostics []diag.Diagnostic, entryFile string, requireNoUnexpected bool) (missing, unexpected []string) {
+func matchDiagnosticExpectations(expectations []fixtureDiagnosticExpectation, diagnostics []diag.Diagnostic, entryFile string, requireNoUnexpected bool, renderOptions diag.RenderOptions) (missing, unexpected []string) {
 	matched := make([]bool, len(diagnostics))
+	requireUnexpectedHints := diagnosticExpectationsIncludeSeverity(expectations, diag.SeverityHint)
 	for _, exp := range expectations {
 		if err := validateDiagnosticExpectation(exp); err != nil {
 			missing = append(missing, fmt.Sprintf("invalid diagnostic expectation: %s (%s)", err, describeDiagnosticExpectation(exp)))
@@ -481,7 +557,7 @@ func matchDiagnosticExpectations(expectations []fixtureDiagnosticExpectation, di
 			if matched[i] {
 				continue
 			}
-			if !matchesDiagnosticExpectation(exp, d, entryFile) {
+			if !matchesDiagnosticExpectation(exp, d, entryFile, renderOptions) {
 				continue
 			}
 			found = true
@@ -494,13 +570,56 @@ func matchDiagnosticExpectations(expectations []fixtureDiagnosticExpectation, di
 	}
 	if requireNoUnexpected {
 		for i, d := range diagnostics {
-			if matched[i] || d.Severity == diag.SeverityHint {
+			if matched[i] || (d.Severity == diag.SeverityHint && !requireUnexpectedHints) {
 				continue
 			}
 			unexpected = append(unexpected, diagSummary(d))
 		}
 	}
 	return missing, unexpected
+}
+
+func diagnosticExpectationsIncludeSeverity(expectations []fixtureDiagnosticExpectation, severity diag.Severity) bool {
+	for _, exp := range expectations {
+		got, ok := diagnosticSeverity(exp.Severity)
+		if ok && got == severity {
+			return true
+		}
+	}
+	return false
+}
+
+func fixtureDiagnosticRuleOptions(check *fixtureCheck) ([]testutil.Option, error) {
+	if check == nil || len(check.DiagnosticRules) == 0 {
+		return nil, nil
+	}
+	opts := make([]testutil.Option, 0, len(check.DiagnosticRules))
+	for i, ruleSpec := range check.DiagnosticRules {
+		code := strings.TrimSpace(ruleSpec.Code)
+		if code == "" {
+			return nil, fmt.Errorf("rule %d code is required", i+1)
+		}
+		if ruleSpec.Enabled == nil && strings.TrimSpace(ruleSpec.Severity) == "" {
+			return nil, fmt.Errorf("rule %d must set enabled or severity", i+1)
+		}
+		var rule diag.Rule
+		if ruleSpec.Enabled != nil {
+			if *ruleSpec.Enabled {
+				rule = diag.Enable()
+			} else {
+				rule = diag.Disable()
+			}
+		}
+		if ruleSpec.Severity != "" {
+			severity, ok := diagnosticSeverity(ruleSpec.Severity)
+			if !ok {
+				return nil, fmt.Errorf("rule %d has unknown severity %q", i+1, ruleSpec.Severity)
+			}
+			rule = rule.WithSeverity(severity)
+		}
+		opts = append(opts, testutil.WithDiagnosticRule(diag.Code(code), rule))
+	}
+	return opts, nil
 }
 
 func validateDiagnosticExpectation(exp fixtureDiagnosticExpectation) error {
@@ -525,23 +644,77 @@ func validateDiagnosticExpectation(exp fixtureDiagnosticExpectation) error {
 	if err := validateContainsList("message_contains", exp.MessageContains, true); err != nil {
 		return err
 	}
-	if err := validateContainsList("evidence_contains", exp.EvidenceContains, !exp.AllowEmptyEvidence); err != nil {
+	if err := validateContainsList("evidence_contains", exp.EvidenceContains, !exp.AllowEmptyEvidence && len(exp.Evidence) == 0); err != nil {
 		return err
 	}
-	if err := validateContainsList("help_contains", exp.HelpContains, false); err != nil {
+	for i, evidence := range exp.Evidence {
+		if err := validateDiagnosticEvidenceExpectation(evidence); err != nil {
+			return fmt.Errorf("evidence[%d]: %w", i, err)
+		}
+	}
+	if err := validateContainsList("render_contains", exp.RenderContains, true); err != nil {
 		return err
 	}
-	if err := validateContainsList("label_contains", exp.LabelContains, true); err != nil {
+	if err := validateContainsList("render_ordered_contains", exp.RenderOrderedContains, false); err != nil {
 		return err
+	}
+	if err := validateContainsList("render_not_contains", exp.RenderNotContains, false); err != nil {
+		return err
+	}
+	if err := validateContainsList("help_contains", exp.HelpContains, true); err != nil {
+		return err
+	}
+	if err := validateContainsList("label_contains", exp.LabelContains, len(exp.Labels) == 0); err != nil {
+		return err
+	}
+	for i, label := range exp.Labels {
+		if err := validateDiagnosticLabelExpectation(label); err != nil {
+			return fmt.Errorf("labels[%d]: %w", i, err)
+		}
 	}
 	if exp.MinEvidence < 0 {
 		return fmt.Errorf("min_evidence must be non-negative")
 	}
-	if exp.MinLabels <= 0 {
-		return fmt.Errorf("min_labels must be positive")
+	if exp.MinLabels < 0 {
+		return fmt.Errorf("min_labels must be non-negative")
 	}
-	if !exp.AllowEmptyEvidence && exp.MinEvidence <= 0 {
+	if !exp.AllowEmptyEvidence && exp.MinEvidence <= 0 && len(exp.Evidence) == 0 {
 		return fmt.Errorf("min_evidence must be positive unless allow_empty_evidence is true")
+	}
+	return nil
+}
+
+func validateDiagnosticEvidenceExpectation(exp fixtureDiagnosticEvidenceExpectation) error {
+	if err := validateContainsList("contains", exp.Contains, true); err != nil {
+		return err
+	}
+	if exp.Line < 0 {
+		return fmt.Errorf("line must be non-negative")
+	}
+	if exp.Column < 0 {
+		return fmt.Errorf("column must be non-negative")
+	}
+	if exp.Kind != "" && !validDiagnosticEvidenceKind(exp.Kind) {
+		return fmt.Errorf("unknown kind %q", exp.Kind)
+	}
+	if exp.Trust != "" && !validDiagnosticEvidenceTrust(exp.Trust) {
+		return fmt.Errorf("unknown trust %q", exp.Trust)
+	}
+	if exp.Reason != "" && !validDiagnosticEvidenceReason(exp.Reason) {
+		return fmt.Errorf("unknown reason %q", exp.Reason)
+	}
+	return nil
+}
+
+func validateDiagnosticLabelExpectation(exp fixtureDiagnosticLabelExpectation) error {
+	if err := validateContainsList("contains", exp.Contains, true); err != nil {
+		return err
+	}
+	if exp.Line < 0 {
+		return fmt.Errorf("line must be non-negative")
+	}
+	if exp.Column < 0 {
+		return fmt.Errorf("column must be non-negative")
 	}
 	return nil
 }
@@ -558,7 +731,7 @@ func validateContainsList(name string, values []string, required bool) error {
 	return nil
 }
 
-func matchesDiagnosticExpectation(exp fixtureDiagnosticExpectation, d diag.Diagnostic, entryFile string) bool {
+func matchesDiagnosticExpectation(exp fixtureDiagnosticExpectation, d diag.Diagnostic, entryFile string, renderOptions diag.RenderOptions) bool {
 	if !matchesDiagnosticFile(exp.File, d, entryFile) {
 		return false
 	}
@@ -590,6 +763,21 @@ func matchesDiagnosticExpectation(exp fixtureDiagnosticExpectation, d diag.Diagn
 	if !containsAll(d.Explanation.String(), exp.EvidenceContains) {
 		return false
 	}
+	if !matchesDiagnosticEvidenceExpectations(exp.Evidence, d, entryFile) {
+		return false
+	}
+	if len(exp.RenderContains) > 0 || len(exp.RenderOrderedContains) > 0 || len(exp.RenderNotContains) > 0 {
+		rendered := diag.Render(d, renderOptions)
+		if !containsAll(rendered, exp.RenderContains) {
+			return false
+		}
+		if !containsInOrder(rendered, exp.RenderOrderedContains) {
+			return false
+		}
+		if containsAny(rendered, exp.RenderNotContains) {
+			return false
+		}
+	}
 	if !containsAll(d.Help, exp.HelpContains) {
 		return false
 	}
@@ -599,7 +787,107 @@ func matchesDiagnosticExpectation(exp fixtureDiagnosticExpectation, d diag.Diagn
 	if !containsAll(formatDiagnosticLabels(d.Labels), exp.LabelContains) {
 		return false
 	}
+	if !matchesDiagnosticLabelExpectations(exp.Labels, d, entryFile) {
+		return false
+	}
 	return true
+}
+
+func matchesDiagnosticEvidenceExpectations(expectations []fixtureDiagnosticEvidenceExpectation, d diag.Diagnostic, entryFile string) bool {
+	evidence := d.Explanation.Evidence()
+	offset := 0
+	for _, exp := range expectations {
+		matched := false
+		for offset < len(evidence) {
+			item := evidence[offset]
+			offset++
+			if matchesDiagnosticEvidenceExpectation(exp, d, entryFile, item) {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			return false
+		}
+	}
+	return true
+}
+
+func matchesDiagnosticEvidenceExpectation(exp fixtureDiagnosticEvidenceExpectation, d diag.Diagnostic, entryFile string, item diag.Evidence) bool {
+	if !matchesDiagnosticEvidenceFile(exp.File, d, entryFile, item) {
+		return false
+	}
+	if exp.Line != 0 && item.Span.StartLine != exp.Line {
+		return false
+	}
+	if exp.Column != 0 && item.Span.StartCol != exp.Column {
+		return false
+	}
+	if exp.Kind != "" && item.Kind.String() != exp.Kind {
+		return false
+	}
+	if exp.Trust != "" && item.Trust.String() != exp.Trust {
+		return false
+	}
+	if exp.Reason != "" && item.Reason.String() != exp.Reason {
+		return false
+	}
+	return containsAll(formatDiagnosticEvidenceItem(item), exp.Contains)
+}
+
+func matchesDiagnosticEvidenceFile(expFile string, d diag.Diagnostic, entryFile string, item diag.Evidence) bool {
+	if expFile == "" {
+		return true
+	}
+	actual := item.File
+	if actual == "" {
+		actual = d.Position.File
+	}
+	copy := d
+	copy.Position.File = actual
+	return matchesDiagnosticFile(expFile, copy, entryFile)
+}
+
+func matchesDiagnosticLabelExpectations(expectations []fixtureDiagnosticLabelExpectation, d diag.Diagnostic, entryFile string) bool {
+	for _, exp := range expectations {
+		matched := false
+		for _, label := range d.Labels {
+			if matchesDiagnosticLabelExpectation(exp, d, entryFile, label) {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			return false
+		}
+	}
+	return true
+}
+
+func matchesDiagnosticLabelExpectation(exp fixtureDiagnosticLabelExpectation, d diag.Diagnostic, entryFile string, label diag.Label) bool {
+	if !matchesDiagnosticLabelFile(exp.File, d, entryFile, label) {
+		return false
+	}
+	if exp.Line != 0 && label.Span.StartLine != exp.Line {
+		return false
+	}
+	if exp.Column != 0 && label.Span.StartCol != exp.Column {
+		return false
+	}
+	return containsAll(label.Message, exp.Contains)
+}
+
+func matchesDiagnosticLabelFile(expFile string, d diag.Diagnostic, entryFile string, label diag.Label) bool {
+	if expFile == "" {
+		return true
+	}
+	actual := label.File
+	if actual == "" {
+		actual = d.Position.File
+	}
+	copy := d
+	copy.Position.File = actual
+	return matchesDiagnosticFile(expFile, copy, entryFile)
 }
 
 func diagnosticSeverity(s string) (diag.Severity, bool) {
@@ -624,12 +912,76 @@ func containsAll(haystack string, needles []string) bool {
 	return true
 }
 
+func containsInOrder(haystack string, needles []string) bool {
+	offset := 0
+	for _, needle := range needles {
+		if needle == "" {
+			return false
+		}
+		index := strings.Index(haystack[offset:], needle)
+		if index < 0 {
+			return false
+		}
+		offset += index + len(needle)
+	}
+	return true
+}
+
+func containsAny(haystack string, needles []string) bool {
+	for _, needle := range needles {
+		if needle != "" && strings.Contains(haystack, needle) {
+			return true
+		}
+	}
+	return false
+}
+
 func formatDiagnosticLabels(labels []diag.Label) string {
 	var parts []string
 	for _, label := range labels {
 		parts = append(parts, label.Message)
 	}
 	return strings.Join(parts, "\n")
+}
+
+func formatDiagnosticEvidenceItem(item diag.Evidence) string {
+	return diag.NewExplanation(item).String()
+}
+
+func validDiagnosticEvidenceKind(kind string) bool {
+	switch kind {
+	case diag.EvidenceAbstractFact.String(),
+		diag.EvidenceUserAssertion.String(),
+		diag.EvidenceMissingProof.String(),
+		diag.EvidencePrecisionBoundary.String():
+		return true
+	default:
+		return false
+	}
+}
+
+func validDiagnosticEvidenceTrust(trust string) bool {
+	switch trust {
+	case diag.TrustProven.String(),
+		diag.TrustClaimed.String(),
+		diag.TrustRefuted.String(),
+		diag.TrustUnknown.String():
+		return true
+	default:
+		return false
+	}
+}
+
+func validDiagnosticEvidenceReason(reason string) bool {
+	switch reason {
+	case diag.EvidenceReasonUnspecified.String(),
+		diag.EvidenceReasonBoundaryValidationMissing.String(),
+		diag.EvidenceReasonIndexReadValidationMissing.String(),
+		diag.EvidenceReasonExplicitBoundaryValidation.String():
+		return true
+	default:
+		return false
+	}
 }
 
 func describeDiagnosticExpectation(exp fixtureDiagnosticExpectation) string {
@@ -655,11 +1007,26 @@ func describeDiagnosticExpectation(exp fixtureDiagnosticExpectation) string {
 	for _, text := range exp.EvidenceContains {
 		parts = append(parts, fmt.Sprintf("evidence~%q", text))
 	}
+	for _, evidence := range exp.Evidence {
+		parts = append(parts, describeDiagnosticEvidenceExpectation(evidence))
+	}
+	for _, text := range exp.RenderContains {
+		parts = append(parts, fmt.Sprintf("render~%q", text))
+	}
+	for _, text := range exp.RenderOrderedContains {
+		parts = append(parts, fmt.Sprintf("render_ordered~%q", text))
+	}
+	for _, text := range exp.RenderNotContains {
+		parts = append(parts, fmt.Sprintf("render!~%q", text))
+	}
 	for _, text := range exp.HelpContains {
 		parts = append(parts, fmt.Sprintf("help~%q", text))
 	}
 	for _, text := range exp.LabelContains {
 		parts = append(parts, fmt.Sprintf("label~%q", text))
+	}
+	for _, label := range exp.Labels {
+		parts = append(parts, describeDiagnosticLabelExpectation(label))
 	}
 	if exp.MinEvidence != 0 {
 		parts = append(parts, fmt.Sprintf("min_evidence=%d", exp.MinEvidence))
@@ -673,7 +1040,50 @@ func describeDiagnosticExpectation(exp fixtureDiagnosticExpectation) string {
 	return strings.Join(parts, ", ")
 }
 
-func verifyErrorCount(t testing.TB, want int, diagnostics []diag.Diagnostic) {
+func describeDiagnosticEvidenceExpectation(exp fixtureDiagnosticEvidenceExpectation) string {
+	var parts []string
+	if exp.File != "" {
+		parts = append(parts, "file="+exp.File)
+	}
+	if exp.Line != 0 {
+		parts = append(parts, fmt.Sprintf("line=%d", exp.Line))
+	}
+	if exp.Column != 0 {
+		parts = append(parts, fmt.Sprintf("column=%d", exp.Column))
+	}
+	if exp.Kind != "" {
+		parts = append(parts, "kind="+exp.Kind)
+	}
+	if exp.Trust != "" {
+		parts = append(parts, "trust="+exp.Trust)
+	}
+	if exp.Reason != "" {
+		parts = append(parts, "reason="+exp.Reason)
+	}
+	for _, text := range exp.Contains {
+		parts = append(parts, fmt.Sprintf("contains~%q", text))
+	}
+	return "evidence{" + strings.Join(parts, ", ") + "}"
+}
+
+func describeDiagnosticLabelExpectation(exp fixtureDiagnosticLabelExpectation) string {
+	var parts []string
+	if exp.File != "" {
+		parts = append(parts, "file="+exp.File)
+	}
+	if exp.Line != 0 {
+		parts = append(parts, fmt.Sprintf("line=%d", exp.Line))
+	}
+	if exp.Column != 0 {
+		parts = append(parts, fmt.Sprintf("column=%d", exp.Column))
+	}
+	for _, text := range exp.Contains {
+		parts = append(parts, fmt.Sprintf("contains~%q", text))
+	}
+	return "label{" + strings.Join(parts, ", ") + "}"
+}
+
+func verifyErrorCount(t testing.TB, want int, diagnostics []diag.Diagnostic, renderOptions diag.RenderOptions) {
 	t.Helper()
 	var errors []diag.Diagnostic
 	for _, d := range diagnostics {
@@ -683,11 +1093,11 @@ func verifyErrorCount(t testing.TB, want int, diagnostics []diag.Diagnostic) {
 	}
 	if len(errors) != want {
 		t.Errorf("expected %d errors, got %d", want, len(errors))
-		dumpDiagnostics(t, diagnostics)
+		dumpDiagnostics(t, diagnostics, renderOptions)
 	}
 }
 
-func verifyClean(t testing.TB, diagnostics []diag.Diagnostic) {
+func verifyClean(t testing.TB, diagnostics []diag.Diagnostic, renderOptions diag.RenderOptions) {
 	t.Helper()
 	var errors []diag.Diagnostic
 	for _, d := range diagnostics {
@@ -697,27 +1107,115 @@ func verifyClean(t testing.TB, diagnostics []diag.Diagnostic) {
 	}
 	if len(errors) > 0 {
 		t.Errorf("expected clean check, got %d errors", len(errors))
-		dumpDiagnostics(t, diagnostics)
+		dumpDiagnostics(t, diagnostics, renderOptions)
 	}
 }
 
-func dumpDiagnostics(t testing.TB, diagnostics []diag.Diagnostic) {
+func dumpDiagnostics(t testing.TB, diagnostics []diag.Diagnostic, renderOptions diag.RenderOptions) {
 	t.Helper()
 	t.Log("--- all diagnostics ---")
 	for _, d := range diagnostics {
-		t.Logf("  %s:%d:%d [%s] %s: %s",
-			d.Position.File, d.Position.Line, d.Position.Column,
-			d.Severity, d.Code.String(), d.Message)
-		if explanation := d.Explanation.String(); explanation != "" {
-			t.Logf("    evidence: %s", strings.ReplaceAll(explanation, "\n", " | "))
-		}
-		if d.Help != "" {
-			t.Logf("    help: %s", d.Help)
-		}
-		if len(d.Labels) > 0 {
-			t.Logf("    labels: %s", formatDiagnosticLabels(d.Labels))
+		t.Log("\n" + diag.Render(d, renderOptions))
+	}
+}
+
+func verifyDiagnosticRenderPolicy(t testing.TB, diagnostics []diag.Diagnostic, renderOptions diag.RenderOptions) {
+	t.Helper()
+	for _, d := range diagnostics {
+		rendered := diag.Render(d, renderOptions)
+		if violations := renderedDiagnosticFramePolicyViolations(rendered); len(violations) > 0 {
+			t.Errorf("diagnostic render policy violation for %s at %s:%d: %s\n%s", d.Code, d.Position.File, d.Position.Line, strings.Join(violations, "; "), rendered)
 		}
 	}
+}
+
+func renderedDiagnosticFramePolicyViolations(rendered string) []string {
+	var violations []string
+	if strings.Contains(rendered, "^~") {
+		violations = append(violations, "source frames must use exact carets, not span underlines")
+	}
+
+	var frame framePolicyState
+	flush := func() {
+		if frame.labeledCaretRows > 0 {
+			violations = append(violations, "source-frame labels must use directional arrows, not caret-label rows")
+		}
+		if frame.plainLabelRows > 0 {
+			violations = append(violations, "source-frame labels must include a directional arrow")
+		}
+		if frame.labeledCaretRows > 0 && frame.unlabeledCaret {
+			violations = append(violations, "a source frame must not mix unlabeled carets with labeled rows")
+		}
+		if frame.labelRowsBeforeSource+frame.labelRowsAfterSource > 0 && frame.unlabeledCaret {
+			violations = append(violations, "source-frame labels must not render a second caret layer")
+		}
+		frame = framePolicyState{}
+	}
+
+	for _, line := range strings.Split(rendered, "\n") {
+		if !strings.Contains(line, "|") {
+			flush()
+			continue
+		}
+		pipe := strings.Index(line, "|")
+		if pipe < 0 {
+			continue
+		}
+		if sourceFrameLine(line[:pipe]) {
+			frame.sourceSeen = true
+			continue
+		}
+		after := strings.TrimSpace(line[pipe+1:])
+		if after == "" {
+			continue
+		}
+		if directionalLabelRowHasMessage(after) {
+			if frame.sourceSeen {
+				frame.labelRowsAfterSource++
+			} else {
+				frame.labelRowsBeforeSource++
+			}
+			continue
+		}
+		if strings.Contains(after, "^") {
+			if caretRowHasMessage(after) {
+				frame.labeledCaretRows++
+			} else {
+				frame.unlabeledCaret = true
+			}
+			continue
+		}
+		if frame.sourceSeen {
+			frame.plainLabelRows++
+		} else {
+			frame.plainLabelRows++
+		}
+	}
+	flush()
+	return violations
+}
+
+type framePolicyState struct {
+	sourceSeen            bool
+	labelRowsBeforeSource int
+	labelRowsAfterSource  int
+	labeledCaretRows      int
+	unlabeledCaret        bool
+	plainLabelRows        int
+}
+
+func caretRowHasMessage(afterPipe string) bool {
+	withoutCarets := strings.ReplaceAll(afterPipe, "^", "")
+	return strings.TrimSpace(withoutCarets) != ""
+}
+
+func directionalLabelRowHasMessage(afterPipe string) bool {
+	withoutArrows := strings.NewReplacer("↑", "", "↓", "").Replace(afterPipe)
+	return withoutArrows != afterPipe && strings.TrimSpace(withoutArrows) != ""
+}
+
+func sourceFrameLine(prefix string) bool {
+	return strings.TrimSpace(prefix) != ""
 }
 
 // runExecPhase executes the fixture and verifies output.

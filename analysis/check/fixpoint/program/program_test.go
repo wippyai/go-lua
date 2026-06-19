@@ -729,6 +729,107 @@ methods.touch(instance)
 	}
 }
 
+func TestRunChunkDotCalledMethodStillRequiresExplicitSelf(t *testing.T) {
+	reg := standard.Registry()
+	stmts := parseChunk(t, `
+local methods = {}
+local mt = { __index = methods }
+local node = {}
+
+type NodeInstance = {
+	id: string,
+}
+
+function node.new()
+	local instance: NodeInstance = { id = "root" }
+	return setmetatable(instance, mt)
+end
+
+function methods:touch()
+	return self.id
+end
+
+methods.touch()
+`)
+	result, err := RunChunk(stmts, Config{
+		Check: body.Config{
+			Registry: reg,
+			Globals:  []string{"setmetatable"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("RunChunk: %v", err)
+	}
+	root := result.RootResult()
+	if root == nil {
+		t.Fatal("RootResult missing")
+	}
+	diags := diagnostics.Produce(root)
+	if len(diags) != 1 {
+		t.Fatalf("diagnostics = %#v, want exactly missing self diagnostic", diags)
+	}
+	if diags[0].Code != diagnostics.CodeDirectCallTooFewArgs {
+		t.Fatalf("diagnostic code = %s, want %s: %#v", diags[0].Code, diagnostics.CodeDirectCallTooFewArgs, diags[0])
+	}
+	if !strings.Contains(diags[0].Message, "methods.touch expects 1 argument, got 0") {
+		t.Fatalf("diagnostic message = %q, want explicit self arity evidence", diags[0].Message)
+	}
+}
+
+func TestRunChunkDotCalledMethodChecksExplicitSelfType(t *testing.T) {
+	reg := standard.Registry()
+	stmts := parseChunk(t, `
+local methods = {}
+local mt = { __index = methods }
+local node = {}
+
+type NodeInstance = {
+	id: string,
+}
+
+local function sink(value: NodeInstance)
+end
+
+function node.new()
+	local instance: NodeInstance = { id = "root" }
+	return setmetatable(instance, mt)
+end
+
+function methods:touch()
+	sink(self)
+end
+
+methods.touch({ id = 42 })
+`)
+	result, err := RunChunk(stmts, Config{
+		Check: body.Config{
+			Registry: reg,
+			Globals:  []string{"setmetatable"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("RunChunk: %v", err)
+	}
+	root := result.RootResult()
+	if root == nil {
+		t.Fatal("RootResult missing")
+	}
+	diags := diagnostics.Produce(root)
+	if len(diags) != 1 {
+		t.Fatalf("diagnostics = %#v, want exactly explicit self type diagnostic", diags)
+	}
+	if diags[0].Code != diagnostics.CodeDirectCallArgType {
+		t.Fatalf("diagnostic code = %s, want %s: %#v", diags[0].Code, diagnostics.CodeDirectCallArgType, diags[0])
+	}
+	if !strings.Contains(diags[0].Message, "argument 1.id is") || !strings.Contains(diags[0].Message, "not string") {
+		t.Fatalf("diagnostic message = %q, want explicit self type mismatch", diags[0].Message)
+	}
+	evidence := diags[0].Explanation.Evidence()
+	if len(evidence) < 2 || !strings.Contains(evidence[1].Message, "methods.touch parameter 1.id expects string") {
+		t.Fatalf("diagnostic evidence = %#v, want declared explicit self parameter evidence", evidence)
+	}
+}
+
 func TestRunChunkCallContextKeysAreScopedToOwningBody(t *testing.T) {
 	reg := standard.Registry()
 	stmts := parseChunk(t, `

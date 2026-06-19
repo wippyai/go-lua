@@ -9,10 +9,12 @@ import (
 	caplabel "github.com/wippyai/go-lua/analysis/domain/effect/capability/label"
 	"github.com/wippyai/go-lua/analysis/domain/effect/dispatch"
 	"github.com/wippyai/go-lua/analysis/domain/effect/iteration"
+	"github.com/wippyai/go-lua/analysis/domain/effect/lifecycle"
 	"github.com/wippyai/go-lua/analysis/domain/effect/mutation"
 	"github.com/wippyai/go-lua/analysis/domain/effect/ownership"
 	"github.com/wippyai/go-lua/analysis/domain/effect/postcondition"
 	"github.com/wippyai/go-lua/analysis/domain/effect/returns"
+	"github.com/wippyai/go-lua/analysis/domain/typestate"
 )
 
 func encodeEffectRow(row effect.Row) (*effectRowWire, error) {
@@ -139,6 +141,43 @@ func encodeEffectLabel(label effect.Label) (effectLabelWire, error) {
 			Target: encodeParamRef(l.Target),
 			Value:  encodeParamRef(l.Value),
 		}, nil
+	case lifecycle.Acquire:
+		if l.Protocol == "" {
+			return effectLabelWire{}, fmt.Errorf("manifest: lifecycle acquire missing protocol")
+		}
+		if l.State == "" {
+			return effectLabelWire{}, fmt.Errorf("manifest: lifecycle acquire missing state")
+		}
+		return effectLabelWire{
+			Kind:     "lifecycle.acquire",
+			Target:   encodeParamRef(l.Target),
+			Protocol: string(l.Protocol),
+			To:       string(l.State),
+			Final:    string(l.Obligation.Final),
+		}, nil
+	case lifecycle.Transition:
+		if l.Protocol == "" {
+			return effectLabelWire{}, fmt.Errorf("manifest: lifecycle transition missing protocol")
+		}
+		if l.To == "" {
+			return effectLabelWire{}, fmt.Errorf("manifest: lifecycle transition missing target state")
+		}
+		return effectLabelWire{
+			Kind:     "lifecycle.transition",
+			Target:   encodeParamRef(l.Target),
+			Protocol: string(l.Protocol),
+			From:     string(l.From),
+			To:       string(l.To),
+		}, nil
+	case lifecycle.Escape:
+		if l.Protocol == "" {
+			return effectLabelWire{}, fmt.Errorf("manifest: lifecycle escape missing protocol")
+		}
+		return effectLabelWire{
+			Kind:     "lifecycle.escape",
+			Target:   encodeParamRef(l.Target),
+			Protocol: string(l.Protocol),
+		}, nil
 	case ownership.Borrow:
 		return effectLabelWire{Kind: "ownership.borrow", Param: encodeParamRef(l.Param)}, nil
 	case ownership.Retain:
@@ -212,6 +251,42 @@ func decodeEffectLabel(w effectLabelWire) (effect.Label, error) {
 		return mutation.LengthChange{Target: decodeParamRef(w.Target), Delta: w.Delta}, nil
 	case "mutation.tableMutator":
 		return mutation.TableMutator{Target: decodeParamRef(w.Target), Value: decodeParamRef(w.Value)}, nil
+	case "lifecycle.acquire":
+		if w.Protocol == "" {
+			return nil, fmt.Errorf("manifest: lifecycle acquire missing protocol")
+		}
+		if w.To == "" {
+			return nil, fmt.Errorf("manifest: lifecycle acquire missing state")
+		}
+		return lifecycle.Acquire{
+			Target:   decodeParamRef(w.Target),
+			Protocol: typestate.Protocol(w.Protocol),
+			State:    typestate.State(w.To),
+			Obligation: typestate.Obligation{
+				Final: typestate.State(w.Final),
+			},
+		}, nil
+	case "lifecycle.transition":
+		if w.Protocol == "" {
+			return nil, fmt.Errorf("manifest: lifecycle transition missing protocol")
+		}
+		if w.To == "" {
+			return nil, fmt.Errorf("manifest: lifecycle transition missing target state")
+		}
+		return lifecycle.Transition{
+			Target:   decodeParamRef(w.Target),
+			Protocol: typestate.Protocol(w.Protocol),
+			From:     typestate.State(w.From),
+			To:       typestate.State(w.To),
+		}, nil
+	case "lifecycle.escape":
+		if w.Protocol == "" {
+			return nil, fmt.Errorf("manifest: lifecycle escape missing protocol")
+		}
+		return lifecycle.Escape{
+			Target:   decodeParamRef(w.Target),
+			Protocol: typestate.Protocol(w.Protocol),
+		}, nil
 	case "ownership.borrow":
 		return ownership.Borrow{Param: decodeParamRef(w.Param)}, nil
 	case "ownership.retain":

@@ -2,6 +2,7 @@ package mutation
 
 import (
 	"fmt"
+	"reflect"
 
 	"github.com/wippyai/go-lua/analysis/domain/effect"
 )
@@ -46,11 +47,10 @@ func (Unchanged) transform()     {}
 func (Unchanged) String() string { return "unchanged" }
 
 func transformEquals(a, b TypeTransform) bool {
-	if a == nil && b == nil {
-		return true
-	}
-	if a == nil || b == nil {
-		return false
+	aNil := isNilTypeTransform(a)
+	bNil := isNilTypeTransform(b)
+	if aNil || bNil {
+		return aNil && bNil
 	}
 	switch av := a.(type) {
 	case Unchanged:
@@ -72,6 +72,14 @@ func transformEquals(a, b TypeTransform) bool {
 	default:
 		return false
 	}
+}
+
+func isNilTypeTransform(transform TypeTransform) bool {
+	if transform == nil {
+		return true
+	}
+	v := reflect.ValueOf(transform)
+	return v.Kind() == reflect.Pointer && v.IsNil()
 }
 
 func unchangedEquals(_ Unchanged, b TypeTransform) bool {

@@ -295,6 +295,40 @@ func TestBuildForwardPropagatesDefinitionToSuccessorPoints(t *testing.T) {
 	}
 }
 
+func TestBuildForwardRedefinitionDoesNotMutatePredecessorSnapshot(t *testing.T) {
+	graph := cfg.New()
+	firstAssign := graph.AddNode(cfg.NodeAssign)
+	secondAssign := graph.AddNode(cfg.NodeAssign)
+	after := graph.AddNode(cfg.NodeNoop)
+	graph.AddEdge(graph.Entry(), firstAssign, false)
+	graph.AddEdge(firstAssign, secondAssign, false)
+	graph.AddEdge(secondAssign, after, false)
+	graph.AddEdge(after, graph.Exit(), false)
+
+	sym := symbol.ID(204)
+	table := BuildForward(BuildConfig{
+		Graph: graph,
+		Definitions: []Definition{
+			{Point: firstAssign, Symbol: sym, Root: "value"},
+			{Point: secondAssign, Symbol: sym, Root: "value"},
+		},
+	})
+
+	first := table.VisibleVersion(firstAssign, sym)
+	second := table.VisibleVersion(secondAssign, sym)
+	afterVersion := table.VisibleVersion(after, sym)
+
+	if first != (ssa.Version{Root: "value", Symbol: sym, ID: 1}) {
+		t.Fatalf("first assignment version = %+v, want id 1", first)
+	}
+	if second != (ssa.Version{Root: "value", Symbol: sym, ID: 2}) {
+		t.Fatalf("second assignment version = %+v, want id 2", second)
+	}
+	if afterVersion != second {
+		t.Fatalf("after version = %+v, want propagated second version %+v", afterVersion, second)
+	}
+}
+
 func TestBuildForwardCreatesStableJoinVersionForDifferentIncomingDefinitions(t *testing.T) {
 	graph := cfg.New()
 	branch := graph.AddBranch()

@@ -17,7 +17,7 @@ var pathInvalidationLane = factset.Set[pathInvalidationFactKey, callboundary.Pat
 	},
 	EqualFact: func(a, b callboundary.PathInvalidationFact) bool { return a.Path.Key() == b.Path.Key() },
 	Less:      func(a, b callboundary.PathInvalidationFact) bool { return a.Path.Less(b.Path) },
-	Valid:     func(f callboundary.PathInvalidationFact) bool { return f.Path.IsPlaceholder() },
+	Valid:     func(f callboundary.PathInvalidationFact) bool { return !f.Path.IsEmpty() },
 	CloneFact: func(f callboundary.PathInvalidationFact) callboundary.PathInvalidationFact {
 		f.Path = f.Path.Clone()
 		return f

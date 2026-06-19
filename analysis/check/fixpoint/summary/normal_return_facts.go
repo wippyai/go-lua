@@ -17,6 +17,7 @@ func normalizeNormalReturnFacts(reg *axis.Registry, in callboundary.NormalReturn
 		EffectDeltas:      normalizeEffectDeltas(reg, in.EffectDeltas),
 		EscapeEvents:      escapeEventLane.Normalize(in.EscapeEvents),
 		StoreRelations:    storeRelationLane.Normalize(in.StoreRelations),
+		LifecycleFacts:    lifecycleLane.Normalize(in.LifecycleFacts),
 	}
 	if normalReturnFactsEmpty(out) {
 		return callboundary.NormalReturnFacts{}
@@ -39,7 +40,13 @@ func cloneNormalReturnFacts(in callboundary.NormalReturnFacts) callboundary.Norm
 		EffectDeltas:      cloneEffectDeltas(in.EffectDeltas),
 		EscapeEvents:      escapeEventLane.Clone(in.EscapeEvents),
 		StoreRelations:    storeRelationLane.Clone(in.StoreRelations),
+		LifecycleFacts:    lifecycleLane.Clone(in.LifecycleFacts),
 	}
+}
+
+// CloneNormalReturnFacts returns a defensive copy of normal-return fact lanes.
+func CloneNormalReturnFacts(in callboundary.NormalReturnFacts) callboundary.NormalReturnFacts {
+	return cloneNormalReturnFacts(in)
 }
 
 func normalReturnFactsEqual(reg *axis.Registry, a, b callboundary.NormalReturnFacts) bool {
@@ -54,7 +61,8 @@ func normalReturnFactsEqual(reg *axis.Registry, a, b callboundary.NormalReturnFa
 		frozenTableLane.Equal(a.FrozenTables, b.FrozenTables) &&
 		effectDeltasEqual(reg, a.EffectDeltas, b.EffectDeltas) &&
 		escapeEventLane.Equal(a.EscapeEvents, b.EscapeEvents) &&
-		storeRelationLane.Equal(a.StoreRelations, b.StoreRelations)
+		storeRelationLane.Equal(a.StoreRelations, b.StoreRelations) &&
+		lifecycleLane.Equal(a.LifecycleFacts, b.LifecycleFacts)
 }
 
 func normalReturnFactsLessOrEq(reg *axis.Registry, a, b callboundary.NormalReturnFacts) bool {
@@ -69,7 +77,8 @@ func normalReturnFactsLessOrEq(reg *axis.Registry, a, b callboundary.NormalRetur
 		frozenTableLane.LessOrEq(a.FrozenTables, b.FrozenTables) &&
 		effectDeltasLessOrEq(reg, a.EffectDeltas, b.EffectDeltas) &&
 		escapeEventLane.LessOrEq(a.EscapeEvents, b.EscapeEvents) &&
-		storeRelationLane.LessOrEq(a.StoreRelations, b.StoreRelations)
+		storeRelationLane.LessOrEq(a.StoreRelations, b.StoreRelations) &&
+		lifecycleLane.LessOrEq(a.LifecycleFacts, b.LifecycleFacts)
 }
 
 func joinNormalReturnFacts(reg *axis.Registry, a, b callboundary.NormalReturnFacts) callboundary.NormalReturnFacts {
@@ -84,6 +93,7 @@ func joinNormalReturnFacts(reg *axis.Registry, a, b callboundary.NormalReturnFac
 		EffectDeltas:      joinEffectDeltas(reg, a.EffectDeltas, b.EffectDeltas),
 		EscapeEvents:      escapeEventLane.Join(a.EscapeEvents, b.EscapeEvents),
 		StoreRelations:    storeRelationLane.Join(a.StoreRelations, b.StoreRelations),
+		LifecycleFacts:    lifecycleLane.Join(a.LifecycleFacts, b.LifecycleFacts),
 	})
 }
 
@@ -99,18 +109,10 @@ func widenNormalReturnFacts(reg *axis.Registry, prev, next callboundary.NormalRe
 		EffectDeltas:      widenEffectDeltas(reg, prev.EffectDeltas, next.EffectDeltas),
 		EscapeEvents:      escapeEventLane.Widen(prev.EscapeEvents, next.EscapeEvents),
 		StoreRelations:    storeRelationLane.Widen(prev.StoreRelations, next.StoreRelations),
+		LifecycleFacts:    lifecycleLane.Widen(prev.LifecycleFacts, next.LifecycleFacts),
 	})
 }
 
 func normalReturnFactsEmpty(facts callboundary.NormalReturnFacts) bool {
-	return len(facts.PathRefinements) == 0 &&
-		len(facts.PathStaticMembers) == 0 &&
-		len(facts.PathInvalidations) == 0 &&
-		len(facts.DynamicIndexFacts) == 0 &&
-		len(facts.BranchProofs) == 0 &&
-		len(facts.ChannelSelects) == 0 &&
-		len(facts.FrozenTables) == 0 &&
-		len(facts.EffectDeltas) == 0 &&
-		len(facts.EscapeEvents) == 0 &&
-		len(facts.StoreRelations) == 0
+	return facts.Empty()
 }

@@ -80,6 +80,38 @@ func TestTransformEqualsNormalizesPointers(t *testing.T) {
 	}
 }
 
+func TestTransformEqualsHandlesTypedNilPointers(t *testing.T) {
+	var nilElement *ElementUnion
+	var nilContainer *ContainerElementUnion
+	var nilArray *ToArray
+	var nilUnchanged *Unchanged
+
+	if !isNilTypeTransform(nilElement) {
+		t.Fatal("typed nil ElementUnion should be nil-like")
+	}
+	if !isNilTypeTransform(nilContainer) {
+		t.Fatal("typed nil ContainerElementUnion should be nil-like")
+	}
+	if !isNilTypeTransform(nilArray) {
+		t.Fatal("typed nil ToArray should be nil-like")
+	}
+	if !isNilTypeTransform(nilUnchanged) {
+		t.Fatal("typed nil Unchanged should be nil-like")
+	}
+	if !transformEquals(nilElement, nilContainer) {
+		t.Fatal("nil-like transforms should compare equal")
+	}
+	if transformEquals(nilElement, ElementUnion{}) {
+		t.Fatal("typed nil ElementUnion should not equal concrete ElementUnion")
+	}
+	if transformEquals(Unchanged{}, nilUnchanged) {
+		t.Fatal("concrete Unchanged should not equal typed nil Unchanged")
+	}
+	if transformEquals(ToArray{}, nilArray) {
+		t.Fatal("concrete ToArray should not equal typed nil ToArray")
+	}
+}
+
 func TestElementUnion_String(t *testing.T) {
 	e := ElementUnion{Source: effect.ParamRef{Index: 1}}
 	if got := e.String(); got != "union_elem(param[1])" {

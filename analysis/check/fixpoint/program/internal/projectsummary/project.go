@@ -58,6 +58,10 @@ type expressionConditionReader interface {
 	ExpressionCondition(factflow.ExprRef) (factflow.ExpressionCondition, bool)
 }
 
+type dynamicIndexWriteReader interface {
+	DynamicIndexWrite(cfg.Point) (factflow.DynamicIndexWrite, bool)
+}
+
 // FromResult projects one completed check result into a fixed-point summary.
 func FromResult(result ResultReader) summary.Summary {
 	if result == nil {
@@ -69,6 +73,11 @@ func FromResult(result ResultReader) summary.Summary {
 	if reg == nil || graph == nil || !ok {
 		return summary.Summary{}
 	}
+	heapTables := exit.HeapTableObjectsSnapshot()
+	heapTableObjects := heapTables.Objects
+	if heapTables.Top {
+		heapTableObjects = nil
+	}
 
 	out := summary.Summary{
 		ParamObligations:                projectParamObligations(reg, result),
@@ -79,8 +88,8 @@ func FromResult(result ResultReader) summary.Summary {
 		NormalReturnParamConditions:     projectNormalReturnParamConditions(reg, result),
 		NormalReturnParamEqualities:     projectNormalReturnParamEqualities(reg, result),
 		NormalReturnFacts:               projectNormalReturnFacts(reg, result, exit),
-		HeapTableObjects:                projectHeapTableObjects(exit),
-		ReturnConditionParamRefinements: projectReturnConditionParamRefinements(reg, result),
+		HeapTableObjects:                heapTableObjects,
+		ReturnConditionParamRefinements: projectReturnConditionParamRefinements(result),
 		ReturnPresenceRelations:         projectReturnPresenceRelations(reg, result),
 	}
 
@@ -98,7 +107,7 @@ func FromResult(result ResultReader) summary.Summary {
 	if arity > 0 {
 		out.Returns = projectReturnSlots(reg, result, exit, arity, declared)
 	}
-	return summary.Normalize(reg, out)
+	return summary.NormalizeOwned(reg, out)
 }
 
 func resultReturnSourceArity(result ResultReader, point cfg.Point) (int, bool) {

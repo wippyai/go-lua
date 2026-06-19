@@ -366,6 +366,16 @@ func (f Facts) ObjectLiteral(expr ExprRef) (ObjectLiteral, bool) {
 	return fact.copy(), true
 }
 
+// ObjectLiteralView returns a read-only object literal view for expr. The view
+// never exposes mutable internal entry slices or path segment storage.
+func (f Facts) ObjectLiteralView(expr ExprRef) (ObjectLiteralView, bool) {
+	fact, ok := f.objectLiterals[expr]
+	if !ok {
+		return ObjectLiteralView{}, false
+	}
+	return ObjectLiteralView{literal: fact}, true
+}
+
 // ObjectLiterals returns static-entry sidecars keyed by expression.
 func (f Facts) ObjectLiterals() map[ExprRef]ObjectLiteral {
 	return copyObjectLiteralMap(f.objectLiterals)

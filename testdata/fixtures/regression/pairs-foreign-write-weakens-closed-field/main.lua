@@ -2,9 +2,8 @@
 -- declared fields the key could match: `pairs(item)` ranges its key over every
 -- field name, so `item[key] = tostring(value)` can store a string into `count`.
 -- The field's domain becomes `number | string`, so the closed-field contract is
--- broken and the write/read is rejected (one error). The checker flags the
--- write site, the normal flow the read site, so the curated truth is an error
--- COUNT (manifest check.errors=1) rather than a line-pinned inline annotation.
+-- broken and the diagnostic is pinned at the write site where the dynamic key
+-- can target either closed field.
 local item = {
 	count = 1,
 	name = "ready",

@@ -7,6 +7,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/effect/returns"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
+	"github.com/wippyai/go-lua/analysis/domain/typestate"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
@@ -81,6 +82,13 @@ func TestFunctionCloneCopiesOperationalEffects(t *testing.T) {
 				Path: pathdom.NewPlaceholder(0).Field("member"),
 				Type: typ.String,
 			}},
+			LifecycleEffects: []LifecycleEffect{{
+				Target:   pathdom.NewPlaceholder(0).Field("tx"),
+				Kind:     LifecycleTransition,
+				Protocol: typestate.Protocol("transaction"),
+				From:     typestate.State("active"),
+				To:       typestate.State("committed"),
+			}},
 			ReturnAllocationTemplates: []ReturnAllocationTemplate{{
 				ReturnIndex: 0,
 				Root:        "ret0",
@@ -111,6 +119,8 @@ func TestFunctionCloneCopiesOperationalEffects(t *testing.T) {
 	clone.OperationalEffects.EscapeEvents[0].Target.Segments[0].Name = "other"
 	clone.OperationalEffects.EscapeEvents[0].Kind = EscapeOpaque
 	clone.OperationalEffects.PathStaticMembers[0].Path.Segments[0].Name = "changed"
+	clone.OperationalEffects.LifecycleEffects[0].Target.Segments[0].Name = "changed"
+	clone.OperationalEffects.LifecycleEffects[0].To = typestate.State("rolled_back")
 	clone.OperationalEffects.ReturnAllocationTemplates[0].Objects[0].StaticMembers[0].Suffix[0].Name = "mutated"
 	clone.OperationalEffects.ReturnAllocationTemplates[0].Objects[0].DynamicEntries[0].KeyType = typ.Number
 
@@ -122,6 +132,12 @@ func TestFunctionCloneCopiesOperationalEffects(t *testing.T) {
 	}
 	if got := original.OperationalEffects.PathStaticMembers[0].Path.String(); got != "$0.member" {
 		t.Fatalf("clone mutation changed original static member path: %s", got)
+	}
+	if got := original.OperationalEffects.LifecycleEffects[0].Target.String(); got != "$0.tx" {
+		t.Fatalf("clone mutation changed original lifecycle target: %s", got)
+	}
+	if got := original.OperationalEffects.LifecycleEffects[0].To; got != typestate.State("committed") {
+		t.Fatalf("clone mutation changed original lifecycle state: %s", got)
 	}
 	if got := segment.FormatSegments(original.OperationalEffects.ReturnAllocationTemplates[0].Objects[0].StaticMembers[0].Suffix); got != ".child" {
 		t.Fatalf("clone mutation changed original allocation suffix: %s", got)
@@ -147,6 +163,13 @@ func TestFunctionEqualsDistinguishesOperationalEffectsAuthority(t *testing.T) {
 			Type: typetable.NewRecord().Build(),
 		}}}},
 	}}
+	withLifecycle := Function{Type: fn, OperationalEffects: &OperationalEffects{
+		LifecycleEffects: []LifecycleEffect{{
+			Target:   pathdom.NewPlaceholder(0),
+			Kind:     LifecycleEscape,
+			Protocol: typestate.Protocol("resource"),
+		}},
+	}}
 
 	if nilOperational.Equals(emptyOperational) {
 		t.Fatalf("nil operational effects should differ from authoritative empty effects")
@@ -159,6 +182,9 @@ func TestFunctionEqualsDistinguishesOperationalEffectsAuthority(t *testing.T) {
 	}
 	if withOperational.Equals(withAllocationTemplate) {
 		t.Fatalf("allocation templates should be part of operational effect equality")
+	}
+	if withOperational.Equals(withLifecycle) {
+		t.Fatalf("lifecycle facts should be part of operational effect equality")
 	}
 }
 

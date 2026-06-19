@@ -337,6 +337,44 @@ func TestCallSignatureUsesLocalImportedFunctionAlias(t *testing.T) {
 	}
 }
 
+func TestCallSignatureUsesCapturedLocalImportedFunctionAlias(t *testing.T) {
+	wantType := typ.Func().Param("payload", typ.Any).Build()
+	m := manifest.New("runtime")
+	m.DefineFunctionSignature("runtime.send", signature.Function{Type: wantType})
+
+	stmts := parseChunk(t, `
+		local runtime = require("runtime")
+		local send = runtime.send
+		local function invoke()
+			send({})
+		end
+	`)
+	bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"require"}})
+	functions := bindings.NestedFunctions(nil)
+	if len(functions) != 1 {
+		t.Fatalf("nested functions = %d, want 1", len(functions))
+	}
+
+	result, err := CheckBoundFunction(functions[0], bindings, Config{
+		Registry: standard.Registry(),
+		Globals:  []string{"require"},
+		Signatures: signaturelookup.Source{
+			Manifests: []*manifest.Manifest{m},
+		},
+	})
+	if err != nil {
+		t.Fatalf("CheckBoundFunction: %v", err)
+	}
+
+	sig, ok := onlyCallSignature(t, result)
+	if !ok {
+		t.Fatalf("missing captured local send alias signature")
+	}
+	if !typ.TypeEquals(sig.Type, wantType) {
+		t.Fatalf("signature type = %v, want %v", sig.Type, wantType)
+	}
+}
+
 func onlyCallSignature(t *testing.T, result *Result) (signature.Function, bool) {
 	t.Helper()
 	graph := result.Graph()

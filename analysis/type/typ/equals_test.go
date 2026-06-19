@@ -465,8 +465,11 @@ func TestTypeEqualsOpenRecursiveWrapperUsesCoinductiveWalk(t *testing.T) {
 	left.SetBody(newRecord().OptField("next", left).Build())
 	right.SetBody(newRecord().OptField("next", right).Build())
 
-	if !knownContainsOpenRecursive(leftWrapper) || !knownContainsOpenRecursive(rightWrapper) {
-		t.Fatal("test requires wrappers constructed before recursive bodies close")
+	if !knownContainsRecursive(leftWrapper) || !knownContainsRecursive(rightWrapper) {
+		t.Fatal("test requires recursive-containing wrappers")
+	}
+	if knownContainsOpenRecursive(leftWrapper) || knownContainsOpenRecursive(rightWrapper) {
+		t.Fatal("closed recursive wrappers should not retain stale open-recursive state")
 	}
 	if !typeEquals(leftWrapper, rightWrapper) {
 		t.Fatal("equivalent open-recursive wrappers should compare through coinductive equality")

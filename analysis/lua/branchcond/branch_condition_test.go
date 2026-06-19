@@ -6,6 +6,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/symbol"
+	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
 
@@ -82,8 +83,20 @@ func assertCheck(t *testing.T, got Check, wantKind CheckKind, wantPath path.Path
 func assertLiteralCheck(t *testing.T, got Check, wantKind CheckKind, wantPath path.Path, wantLiteral string) {
 	t.Helper()
 	assertCheck(t, got, wantKind, wantPath, "")
+	assertLiteralTypeCheck(t, got, typ.LiteralString(wantLiteral))
 	if got.LiteralString != wantLiteral {
 		t.Fatalf("literal = %q, want %q", got.LiteralString, wantLiteral)
+	}
+}
+
+func assertLiteralTypeCheck(t *testing.T, got Check, wantLiteral typ.Type) {
+	t.Helper()
+	lit, ok := got.LiteralValue()
+	if !ok {
+		t.Fatalf("literal = <none>, want %s", wantLiteral.String())
+	}
+	if !typ.TypeEquals(lit, wantLiteral) {
+		t.Fatalf("literal = %s, want %s", lit.String(), wantLiteral.String())
 	}
 }
 
@@ -326,12 +339,13 @@ func TestFalsyChecksExtractSupportedDisjuncts(t *testing.T) {
 	assertLiteralCheck(t, got[2], CheckLiteralEqual, fieldPath, "")
 }
 
-func TestNormalizeStringLiteralComparisons(t *testing.T) {
+func TestNormalizeLiteralComparisons(t *testing.T) {
 	tests := []struct {
 		name     string
 		expr     func(*ast.IdentExpr) ast.Expr
 		wantKind CheckKind
-		literal  string
+		literal  typ.Type
+		field    string
 	}{
 		{
 			name: "field equal literal",
@@ -339,7 +353,8 @@ func TestNormalizeStringLiteralComparisons(t *testing.T) {
 				return &ast.RelationalOpExpr{Operator: "==", Lhs: dot(root, "kind"), Rhs: stringLit("dog")}
 			},
 			wantKind: CheckLiteralEqual,
-			literal:  "dog",
+			literal:  typ.LiteralString("dog"),
+			field:    "kind",
 		},
 		{
 			name: "literal not equal field",
@@ -347,7 +362,35 @@ func TestNormalizeStringLiteralComparisons(t *testing.T) {
 				return &ast.RelationalOpExpr{Operator: "~=", Lhs: stringLit("cat"), Rhs: dot(root, "kind")}
 			},
 			wantKind: CheckLiteralNot,
-			literal:  "cat",
+			literal:  typ.LiteralString("cat"),
+			field:    "kind",
+		},
+		{
+			name: "field equal true",
+			expr: func(root *ast.IdentExpr) ast.Expr {
+				return &ast.RelationalOpExpr{Operator: "==", Lhs: dot(root, "ok"), Rhs: &ast.TrueExpr{}}
+			},
+			wantKind: CheckLiteralEqual,
+			literal:  typ.LiteralBool(true),
+			field:    "ok",
+		},
+		{
+			name: "field not equal false",
+			expr: func(root *ast.IdentExpr) ast.Expr {
+				return &ast.RelationalOpExpr{Operator: "~=", Lhs: dot(root, "ok"), Rhs: &ast.FalseExpr{}}
+			},
+			wantKind: CheckLiteralNot,
+			literal:  typ.LiteralBool(false),
+			field:    "ok",
+		},
+		{
+			name: "field equal integer",
+			expr: func(root *ast.IdentExpr) ast.Expr {
+				return &ast.RelationalOpExpr{Operator: "==", Lhs: dot(root, "code"), Rhs: number("1")}
+			},
+			wantKind: CheckLiteralEqual,
+			literal:  typ.LiteralInt(1),
+			field:    "code",
 		},
 	}
 
@@ -356,8 +399,10 @@ func TestNormalizeStringLiteralComparisons(t *testing.T) {
 			root := ident("obj")
 			expr := tt.expr(root)
 			bindings := bindReturn(expr)
-			wantPath := path.NewPath(mustIdentSymbol(t, bindings, root), "obj").Field("kind")
-			assertLiteralCheck(t, Normalize(expr, bindings), tt.wantKind, wantPath, tt.literal)
+			got := Normalize(expr, bindings)
+			wantPath := path.NewPath(mustIdentSymbol(t, bindings, root), "obj").Field(tt.field)
+			assertCheck(t, got, tt.wantKind, wantPath, "")
+			assertLiteralTypeCheck(t, got, tt.literal)
 		})
 	}
 }
@@ -483,28 +528,38 @@ func TestNormalizeLengthFloorGuards(t *testing.T) {
 		wantFloor int64
 	}{
 		{
-			name:      "greater than zero",
-			build:     func(arr *ast.IdentExpr) ast.Expr { return &ast.RelationalOpExpr{Operator: ">", Lhs: lenOf(arr), Rhs: number("0")} },
+			name: "greater than zero",
+			build: func(arr *ast.IdentExpr) ast.Expr {
+				return &ast.RelationalOpExpr{Operator: ">", Lhs: lenOf(arr), Rhs: number("0")}
+			},
 			wantFloor: 1,
 		},
 		{
-			name:      "greater equal one",
-			build:     func(arr *ast.IdentExpr) ast.Expr { return &ast.RelationalOpExpr{Operator: ">=", Lhs: lenOf(arr), Rhs: number("1")} },
+			name: "greater equal one",
+			build: func(arr *ast.IdentExpr) ast.Expr {
+				return &ast.RelationalOpExpr{Operator: ">=", Lhs: lenOf(arr), Rhs: number("1")}
+			},
 			wantFloor: 1,
 		},
 		{
-			name:      "not equal zero",
-			build:     func(arr *ast.IdentExpr) ast.Expr { return &ast.RelationalOpExpr{Operator: "~=", Lhs: lenOf(arr), Rhs: number("0")} },
+			name: "not equal zero",
+			build: func(arr *ast.IdentExpr) ast.Expr {
+				return &ast.RelationalOpExpr{Operator: "~=", Lhs: lenOf(arr), Rhs: number("0")}
+			},
 			wantFloor: 1,
 		},
 		{
-			name:      "reversed zero less than len",
-			build:     func(arr *ast.IdentExpr) ast.Expr { return &ast.RelationalOpExpr{Operator: "<", Lhs: number("0"), Rhs: lenOf(arr)} },
+			name: "reversed zero less than len",
+			build: func(arr *ast.IdentExpr) ast.Expr {
+				return &ast.RelationalOpExpr{Operator: "<", Lhs: number("0"), Rhs: lenOf(arr)}
+			},
 			wantFloor: 1,
 		},
 		{
-			name:      "greater than two",
-			build:     func(arr *ast.IdentExpr) ast.Expr { return &ast.RelationalOpExpr{Operator: ">", Lhs: lenOf(arr), Rhs: number("2")} },
+			name: "greater than two",
+			build: func(arr *ast.IdentExpr) ast.Expr {
+				return &ast.RelationalOpExpr{Operator: ">", Lhs: lenOf(arr), Rhs: number("2")}
+			},
 			wantFloor: 3,
 		},
 	}

@@ -3,5 +3,95 @@
   "files": [
     "bedrock_client.lua",
     "main.lua"
-  ]
+  ],
+  "check": {
+    "diagnostics": [
+      {
+        "file": "main.lua",
+        "line": 12,
+        "column": 24,
+        "code": "type.call.direct.argument_type",
+        "severity": "error",
+        "message_contains": [
+          "argument 2 (model_id) is unknown, not string"
+        ],
+        "min_evidence": 3,
+        "evidence_contains": [
+          "argument 2 (model_id) has type unknown",
+          "inside helper, argument 2 (model_id) is passed to argument 1.invoke parameter 1, which requires string",
+          "no proof on this path shows model_id satisfies the parameter type"
+        ],
+        "evidence": [
+          {
+            "file": "main.lua",
+            "line": 12,
+            "column": 24,
+            "kind": "abstract fact",
+            "trust": "proven",
+            "contains": [
+              "argument 2 (model_id) has type unknown"
+            ]
+          },
+          {
+            "file": "main.lua",
+            "line": 12,
+            "column": 24,
+            "kind": "abstract fact",
+            "trust": "proven",
+            "contains": [
+              "inside helper, argument 2 (model_id) is passed to argument 1.invoke parameter 1, which requires string"
+            ]
+          },
+          {
+            "file": "main.lua",
+            "line": 12,
+            "column": 24,
+            "kind": "missing proof",
+            "trust": "unknown",
+            "contains": [
+              "no proof on this path shows model_id satisfies the parameter type"
+            ]
+          }
+        ],
+        "render_contains": [
+          "error[type.call.direct.argument_type]: argument 2 (model_id) is unknown, not string",
+          "helper(bedrock_client, model_id) -- expect-error: not string",
+          "because:",
+          "Validate or narrow `model_id` before passing it"
+        ],
+        "render_ordered_contains": [
+          "error[type.call.direct.argument_type]: argument 2 (model_id) is unknown, not string",
+          "--> main.lua:12:24",
+          "helper(bedrock_client, model_id) -- expect-error: not string",
+          "because:",
+          "1. proven: argument 2 (model_id) has type unknown",
+          "2. proven: inside helper, argument 2 (model_id) is passed to argument 1.invoke parameter 1, which requires string",
+          "3. missing proof: no proof on this path shows model_id satisfies the parameter type",
+          "help: Validate or narrow `model_id` before passing it"
+        ],
+        "render_not_contains": [
+          "^~",
+          "want string"
+        ],
+        "help_contains": [
+          "Validate or narrow `model_id` before passing it",
+          "any/unknown values do not prove parameter contracts"
+        ],
+        "min_labels": 1,
+        "label_contains": [
+          "argument value"
+        ],
+        "labels": [
+          {
+            "file": "main.lua",
+            "line": 12,
+            "column": 24,
+            "contains": [
+              "argument value"
+            ]
+          }
+        ]
+      }
+    ]
+  }
 }

@@ -1,0 +1,68 @@
+{
+  "description": "Static bracket string member reads should produce the same precise missing-member diagnostic as dot reads, while dynamic bracket keys stay non-static.",
+  "check": {
+    "diagnostics": [
+      {
+        "file": "main.lua",
+        "line": 7,
+        "column": 21,
+        "severity": "error",
+        "code": "type.member.missing",
+        "message_contains": [
+          "has no member \"meow\"",
+          "dog"
+        ],
+        "min_evidence": 1,
+        "evidence": [
+          {
+            "kind": "abstract fact",
+            "trust": "proven",
+            "line": 7,
+            "column": 21,
+            "contains": [
+              "a[\"meow\"] reads member \"meow\" from receiver type {bark: string, kind: \"dog\"}"
+            ]
+          }
+        ],
+        "evidence_contains": [
+          "a[\"meow\"] reads member \"meow\" from receiver type"
+        ],
+        "render_contains": [
+          "error[type.member.missing]:",
+          "a[\"meow\"]",
+          "because:"
+        ],
+        "render_ordered_contains": [
+          "error[type.member.missing]: {bark: string, kind: \"dog\"} has no member \"meow\"",
+          "--> main.lua:7:21",
+          "local bad = a[\"meow\"]",
+          "because:",
+          "1. proven: a[\"meow\"] reads member \"meow\" from receiver type {bark: string, kind: \"dog\"}",
+          "help: Narrow the receiver before reading `meow`, or add `meow` to every reachable receiver shape."
+        ],
+        "render_not_contains": [
+          "^~",
+          "where:"
+        ],
+        "help_contains": [
+          "Narrow the receiver before reading `meow`"
+        ],
+        "labels": [
+          {
+            "line": 7,
+            "column": 21,
+            "contains": [
+              "member read"
+            ]
+          }
+        ],
+        "label_contains": [
+          "member read"
+        ]
+      }
+    ]
+  },
+  "run": {
+    "skip": "diagnostic-only fixture"
+  }
+}

@@ -7,6 +7,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/engine/callpayload"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/sourcevalue"
 	"github.com/wippyai/go-lua/analysis/engine/state"
@@ -171,7 +172,7 @@ func TestFactsNodeTransferCallOutcomeProviderWritesReturnSlots(t *testing.T) {
 				}),
 			},
 		}),
-		CallOutcome: func(ctx transfer.NodeContext, site factflow.CallSiteView, gotIn state.State, read func(cfg.Point) state.State) CallOutcome {
+		CallOutcome: func(ctx transfer.NodeContext, site factflow.CallSiteView, gotIn state.State, read func(cfg.Point) state.State) callpayload.CallOutcome {
 			providerCalled = true
 			if ctx.Point != point {
 				t.Fatalf("provider point = %d, want %d", ctx.Point, point)
@@ -181,8 +182,8 @@ func TestFactsNodeTransferCallOutcomeProviderWritesReturnSlots(t *testing.T) {
 			}
 			assertStateEqual(t, reg, gotIn, in)
 			assertValue(t, reg, read(point), key.SymbolValue(target), presentValue(reg))
-			return CallOutcome{
-				Results: []CallResult{
+			return callpayload.CallOutcome{
+				Results: []callpayload.CallResult{
 					{Index: 0, Value: first},
 					{Index: 2, Value: third},
 					{Index: -1, Value: product.Top()},
@@ -201,6 +202,119 @@ func TestFactsNodeTransferCallOutcomeProviderWritesReturnSlots(t *testing.T) {
 	assertValue(t, reg, got, key.ReturnSlot(1), product.Bottom(reg))
 	assertValue(t, reg, got, key.ReturnSlot(2), third)
 	assertValue(t, reg, got, key.SymbolValue(target), presentValue(reg))
+}
+
+func TestFactsNodeTransferReadMemoizesDistinctCallResultsWithinInvocation(t *testing.T) {
+	reg := standard.Registry()
+	graph := cfg.New()
+	firstCall := graph.AddNode(cfg.NodeCall)
+	secondCall := graph.AddNode(cfg.NodeCall)
+	consumer := graph.AddNode(cfg.NodeCall)
+	firstValue := presentValue(reg)
+	secondValue := absentValue(reg)
+	facts := factflow.NewFacts(factflow.FactsInput{
+		CallSites: map[cfg.Point]factflow.CallSite{
+			firstCall:  factflow.NewCallSite(factflow.CallSiteConfig{Context: factflow.CallSiteContextAssignmentSource}),
+			secondCall: factflow.NewCallSite(factflow.CallSiteConfig{Context: factflow.CallSiteContextAssignmentSource}),
+			consumer:   factflow.NewCallSite(factflow.CallSiteConfig{Context: factflow.CallSiteContextAssignmentSource}),
+		},
+	})
+	callCounts := map[cfg.Point]int{}
+
+	nodeTransfer := NewFactsNodeTransfer(FactsNodeTransferConfig{
+		Facts: facts,
+		CallOutcome: func(ctx transfer.NodeContext, site factflow.CallSiteView, in state.State, read func(cfg.Point) state.State) callpayload.CallOutcome {
+			callCounts[ctx.Point]++
+			switch ctx.Point {
+			case firstCall:
+				return callpayload.CallOutcome{Results: []callpayload.CallResult{{Index: 0, Value: firstValue}}}
+			case secondCall:
+				return callpayload.CallOutcome{Results: []callpayload.CallResult{{Index: 0, Value: secondValue}}}
+			case consumer:
+				assertValue(t, reg, read(firstCall), key.ReturnSlot(0), firstValue)
+				assertValue(t, reg, read(secondCall), key.ReturnSlot(0), secondValue)
+				assertValue(t, reg, read(firstCall), key.ReturnSlot(0), firstValue)
+			}
+			return callpayload.CallOutcome{}
+		},
+	})
+	nodeTransfer(transfer.NodeContext{Graph: graph, Registry: reg, Point: consumer, Node: graph.Node(consumer)}, state.State{})
+
+	if callCounts[firstCall] != 1 || callCounts[secondCall] != 1 {
+		t.Fatalf("provider calls = first:%d second:%d, want one materialization each", callCounts[firstCall], callCounts[secondCall])
+	}
+}
+
+func TestFactsNodeTransferReadCycleReturnsActiveBaseState(t *testing.T) {
+	reg := standard.Registry()
+	graph := cfg.New()
+	firstCall := graph.AddNode(cfg.NodeCall)
+	secondCall := graph.AddNode(cfg.NodeCall)
+	baseValue := product.Top()
+	firstValue := presentValue(reg)
+	secondValue := absentValue(reg)
+	facts := factflow.NewFacts(factflow.FactsInput{
+		CallSites: map[cfg.Point]factflow.CallSite{
+			firstCall:  factflow.NewCallSite(factflow.CallSiteConfig{Context: factflow.CallSiteContextAssignmentSource}),
+			secondCall: factflow.NewCallSite(factflow.CallSiteConfig{Context: factflow.CallSiteContextAssignmentSource}),
+		},
+	})
+	callCounts := map[cfg.Point]int{}
+
+	nodeTransfer := NewFactsNodeTransfer(FactsNodeTransferConfig{
+		Facts: facts,
+		CallOutcome: func(ctx transfer.NodeContext, site factflow.CallSiteView, in state.State, read func(cfg.Point) state.State) callpayload.CallOutcome {
+			callCounts[ctx.Point]++
+			switch ctx.Point {
+			case firstCall:
+				assertValue(t, reg, read(secondCall), key.ReturnSlot(0), secondValue)
+				return callpayload.CallOutcome{Results: []callpayload.CallResult{{Index: 0, Value: firstValue}}}
+			case secondCall:
+				assertValue(t, reg, read(firstCall), key.ReturnSlot(0), baseValue)
+				return callpayload.CallOutcome{Results: []callpayload.CallResult{{Index: 0, Value: secondValue}}}
+			default:
+				return callpayload.CallOutcome{}
+			}
+		},
+	})
+	in := state.State{}.WriteReturnSlot(reg, 0, baseValue)
+	got := nodeTransfer(transfer.NodeContext{Graph: graph, Registry: reg, Point: firstCall, Node: graph.Node(firstCall)}, in)
+
+	assertValue(t, reg, got, key.ReturnSlot(0), firstValue)
+	if callCounts[firstCall] != 1 || callCounts[secondCall] != 1 {
+		t.Fatalf("provider calls = first:%d second:%d, want one materialization each", callCounts[firstCall], callCounts[secondCall])
+	}
+}
+
+func TestFactsNodeTransferSamePointCallSourceReadsMaterializedOut(t *testing.T) {
+	reg := standard.Registry()
+	graph := cfg.New()
+	point := graph.AddNode(cfg.NodeCall)
+	target := symbol.ID(1120)
+	callValue := presentValue(reg)
+	facts := factflow.NewFacts(factflow.FactsInput{
+		CallSites: map[cfg.Point]factflow.CallSite{
+			point: factflow.NewCallSite(factflow.CallSiteConfig{Context: factflow.CallSiteContextAssignmentSource}),
+		},
+		RootAssignments: map[cfg.Point]factflow.RootAssignment{
+			point: factflow.NewRootAssignment(factflow.RootAssignmentLocalDeclaration, target, path.NewPath(target, "samePoint"), factflow.ValueSource{
+				Kind:         factflow.ValueSourceCall,
+				CallPoint:    point,
+				HasCallPoint: true,
+				ResultIndex:  0,
+			}),
+		},
+	})
+
+	got := NewFactsNodeTransfer(FactsNodeTransferConfig{
+		Facts:   facts,
+		Sources: sourcevalue.NewSourceValues(sourcevalue.SourceValuesConfig{Registry: reg}),
+		CallOutcome: func(ctx transfer.NodeContext, site factflow.CallSiteView, in state.State, read func(cfg.Point) state.State) callpayload.CallOutcome {
+			return callpayload.CallOutcome{Results: []callpayload.CallResult{{Index: 0, Value: callValue}}}
+		},
+	})(transfer.NodeContext{Graph: graph, Registry: reg, Point: point, Node: graph.Node(point)}, state.State{})
+
+	assertValue(t, reg, got, key.SymbolValue(target), callValue)
 }
 
 func TestFactsNodeTransferAssignmentCallSourceConsumesProviderReturnSlotThroughRead(t *testing.T) {
@@ -236,8 +350,8 @@ func TestFactsNodeTransferAssignmentCallSourceConsumesProviderReturnSlotThroughR
 				},
 			}),
 			Sources: sources,
-			CallOutcome: func(ctx transfer.NodeContext, site factflow.CallSiteView, in state.State, read func(cfg.Point) state.State) CallOutcome {
-				return CallOutcome{Results: []CallResult{{Index: 0, Value: callValue}}}
+			CallOutcome: func(ctx transfer.NodeContext, site factflow.CallSiteView, in state.State, read func(cfg.Point) state.State) callpayload.CallOutcome {
+				return callpayload.CallOutcome{Results: []callpayload.CallResult{{Index: 0, Value: callValue}}}
 			},
 		}),
 		EdgeTransfer: func(ctx transfer.EdgeContext, out state.State) state.State {
@@ -277,8 +391,8 @@ func TestFactsNodeTransferCallResultTargetsDoNotDirectlyWriteTargets(t *testing.
 				}),
 			},
 		}),
-		CallOutcome: func(ctx transfer.NodeContext, site factflow.CallSiteView, in state.State, read func(cfg.Point) state.State) CallOutcome {
-			return CallOutcome{Results: []CallResult{{Index: 0, Value: resultValue}}}
+		CallOutcome: func(ctx transfer.NodeContext, site factflow.CallSiteView, in state.State, read func(cfg.Point) state.State) callpayload.CallOutcome {
+			return callpayload.CallOutcome{Results: []callpayload.CallResult{{Index: 0, Value: resultValue}}}
 		},
 	})(transfer.NodeContext{
 		Registry: reg,
@@ -373,19 +487,19 @@ func TestFactsNodeTransferMissingCallOutcomeProviderOrNoResultsLeavesStateUnchan
 	})
 	tests := []struct {
 		name     string
-		provider CallOutcomeProvider
+		provider callpayload.CallOutcomeProvider
 	}{
 		{name: "nil provider"},
 		{
 			name: "nil results",
-			provider: func(ctx transfer.NodeContext, site factflow.CallSiteView, in state.State, read func(cfg.Point) state.State) CallOutcome {
-				return CallOutcome{}
+			provider: func(ctx transfer.NodeContext, site factflow.CallSiteView, in state.State, read func(cfg.Point) state.State) callpayload.CallOutcome {
+				return callpayload.CallOutcome{}
 			},
 		},
 		{
 			name: "empty results",
-			provider: func(ctx transfer.NodeContext, site factflow.CallSiteView, in state.State, read func(cfg.Point) state.State) CallOutcome {
-				return CallOutcome{Results: []CallResult{}}
+			provider: func(ctx transfer.NodeContext, site factflow.CallSiteView, in state.State, read func(cfg.Point) state.State) callpayload.CallOutcome {
+				return callpayload.CallOutcome{Results: []callpayload.CallResult{}}
 			},
 		},
 	}

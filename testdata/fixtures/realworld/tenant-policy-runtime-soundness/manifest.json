@@ -10,8 +10,804 @@
     "runtime.lua",
     "main.lua"
   ],
-  "packages": ["time"],
+  "packages": [
+    "time"
+  ],
   "check": {
-    "errors": 8
+    "diagnostics": [
+      {
+        "file": "main.lua",
+        "line": 51,
+        "column": 31,
+        "severity": "error",
+        "code": "type.assignment",
+        "message_contains": [
+          "cannot assign run_result.value.last_kind",
+          "may be nil"
+        ],
+        "min_evidence": 3,
+        "evidence_contains": [
+          "run_result.value.last_kind can be string or nil here",
+          "last_kind is declared as string",
+          "no guard on this path proves run_result.value.last_kind is non-nil"
+        ],
+        "evidence": [
+          {
+            "file": "main.lua",
+            "line": 51,
+            "column": 31,
+            "kind": "abstract fact",
+            "trust": "proven",
+            "contains": [
+              "run_result.value.last_kind can be string or nil here"
+            ]
+          },
+          {
+            "file": "main.lua",
+            "line": 51,
+            "column": 22,
+            "kind": "user assertion",
+            "trust": "claimed",
+            "contains": [
+              "last_kind is declared as string"
+            ]
+          },
+          {
+            "file": "main.lua",
+            "line": 51,
+            "column": 31,
+            "kind": "missing proof",
+            "trust": "unknown",
+            "reason": "boundary validation missing",
+            "contains": [
+              "no guard on this path proves run_result.value.last_kind is non-nil"
+            ]
+          }
+        ],
+        "render_contains": [
+          "local last_kind: string = run_result.value.last_kind",
+          "because:",
+          "run_result.value.last_kind"
+        ],
+        "render_ordered_contains": [
+          "error[type.assignment]: cannot assign run_result.value.last_kind because it may be nil",
+          "--> main.lua:51:31",
+          "local last_kind: string = run_result.value.last_kind",
+          "because:",
+          "proven: run_result.value.last_kind can be string or nil here",
+          "claimed: last_kind is declared as string",
+          "missing proof: no guard on this path proves run_result.value.last_kind is non-nil",
+          "help: Guard `run_result.value.last_kind` with a nil check"
+        ],
+        "render_not_contains": [
+          "type mismatch",
+          "^~",
+          "want string"
+        ],
+        "min_labels": 2,
+        "label_contains": [
+          "assigned value",
+          "declared type"
+        ],
+        "labels": [
+          {
+            "file": "main.lua",
+            "line": 51,
+            "column": 22,
+            "contains": [
+              "declared type"
+            ]
+          },
+          {
+            "file": "main.lua",
+            "line": 51,
+            "column": 31,
+            "contains": [
+              "assigned value"
+            ]
+          }
+        ],
+        "help_contains": [
+          "change the target type"
+        ]
+      },
+      {
+        "file": "main.lua",
+        "line": 54,
+        "column": 47,
+        "severity": "error",
+        "code": "type.assignment",
+        "message_contains": [
+          "cannot assign store:lookup_policy(...)",
+          "may be nil"
+        ],
+        "min_evidence": 3,
+        "evidence_contains": [
+          "store:lookup_policy(...) can be nil here",
+          "missing_policy is declared as protocol.TenantPolicy",
+          "no guard on this path proves store:lookup_policy(...) is non-nil"
+        ],
+        "evidence": [
+          {
+            "file": "main.lua",
+            "line": 54,
+            "column": 47,
+            "kind": "abstract fact",
+            "trust": "proven",
+            "contains": [
+              "store:lookup_policy(...) can be nil here"
+            ]
+          },
+          {
+            "file": "main.lua",
+            "line": 54,
+            "column": 23,
+            "kind": "user assertion",
+            "trust": "claimed",
+            "contains": [
+              "missing_policy is declared as protocol.TenantPolicy"
+            ]
+          },
+          {
+            "file": "main.lua",
+            "line": 54,
+            "column": 47,
+            "kind": "missing proof",
+            "trust": "unknown",
+            "reason": "boundary validation missing",
+            "contains": [
+              "no guard on this path proves store:lookup_policy(...) is non-nil"
+            ]
+          }
+        ],
+        "render_contains": [
+          "local missing_policy: protocol.TenantPolicy = store:lookup_policy(\"missing\")",
+          "because:",
+          "store:lookup_policy(...)"
+        ],
+        "render_ordered_contains": [
+          "error[type.assignment]: cannot assign store:lookup_policy(...) because it may be nil",
+          "--> main.lua:54:47",
+          "local missing_policy: protocol.TenantPolicy = store:lookup_policy(\"missing\")",
+          "because:",
+          "proven: store:lookup_policy(...) can be nil here",
+          "claimed: missing_policy is declared as protocol.TenantPolicy",
+          "missing proof: no guard on this path proves store:lookup_policy(...) is non-nil",
+          "help: Guard `store:lookup_policy(...)` with a nil check"
+        ],
+        "render_not_contains": [
+          "type mismatch",
+          "^~",
+          "want protocol.TenantPolicy"
+        ],
+        "min_labels": 2,
+        "label_contains": [
+          "assigned value",
+          "declared type"
+        ],
+        "labels": [
+          {
+            "file": "main.lua",
+            "line": 54,
+            "column": 23,
+            "contains": [
+              "declared type"
+            ]
+          },
+          {
+            "file": "main.lua",
+            "line": 54,
+            "column": 47,
+            "contains": [
+              "assigned value"
+            ]
+          }
+        ],
+        "help_contains": [
+          "change the target type"
+        ]
+      },
+      {
+        "file": "main.lua",
+        "line": 55,
+        "column": 45,
+        "severity": "error",
+        "code": "type.assignment",
+        "message_contains": [
+          "cannot assign store.state.cached_decisions[\"missing\"]",
+          "may be nil"
+        ],
+        "min_evidence": 3,
+        "evidence_contains": [
+          "store.state.cached_decisions[\"missing\"] can be nil here",
+          "missing_decision is declared as protocol.Decision",
+          "no proof on this path shows store.state.cached_decisions[\"missing\"] satisfies the declared type"
+        ],
+        "evidence": [
+          {
+            "file": "main.lua",
+            "line": 55,
+            "column": 45,
+            "kind": "abstract fact",
+            "trust": "proven",
+            "contains": [
+              "store.state.cached_decisions[\"missing\"] can be nil here"
+            ]
+          },
+          {
+            "file": "main.lua",
+            "line": 55,
+            "column": 25,
+            "kind": "user assertion",
+            "trust": "claimed",
+            "contains": [
+              "missing_decision is declared as protocol.Decision"
+            ]
+          },
+          {
+            "file": "main.lua",
+            "line": 55,
+            "column": 45,
+            "kind": "missing proof",
+            "trust": "unknown",
+            "reason": "boundary validation missing",
+            "contains": [
+              "no proof on this path shows store.state.cached_decisions[\"missing\"] satisfies the declared type"
+            ]
+          }
+        ],
+        "render_contains": [
+          "local missing_decision: protocol.Decision = store.state.cached_decisions[\"missing\"]",
+          "because:",
+          "store.state.cached_decisions[\"missing\"]"
+        ],
+        "render_ordered_contains": [
+          "error[type.assignment]: cannot assign store.state.cached_decisions[\"missing\"] because it may be nil",
+          "--> main.lua:55:45",
+          "local missing_decision: protocol.Decision = store.state.cached_decisions[\"missing\"]",
+          "because:",
+          "proven: store.state.cached_decisions[\"missing\"] can be nil here",
+          "claimed: missing_decision is declared as protocol.Decision",
+          "missing proof: no proof on this path shows store.state.cached_decisions[\"missing\"] satisfies the declared type",
+          "help: Guard `store.state.cached_decisions[\"missing\"]` with a nil check"
+        ],
+        "render_not_contains": [
+          "type mismatch",
+          "^~",
+          "want protocol.Decision"
+        ],
+        "min_labels": 2,
+        "label_contains": [
+          "assigned value",
+          "declared type"
+        ],
+        "labels": [
+          {
+            "file": "main.lua",
+            "line": 55,
+            "column": 25,
+            "contains": [
+              "declared type"
+            ]
+          },
+          {
+            "file": "main.lua",
+            "line": 55,
+            "column": 45,
+            "contains": [
+              "assigned value"
+            ]
+          }
+        ],
+        "help_contains": [
+          "change the target type"
+        ]
+      },
+      {
+        "file": "main.lua",
+        "line": 56,
+        "column": 45,
+        "severity": "error",
+        "code": "type.assignment",
+        "message_contains": [
+          "cannot assign app.evaluators[\"auth\"]",
+          "may be nil"
+        ],
+        "min_evidence": 3,
+        "evidence_contains": [
+          "app.evaluators[\"auth\"] can be nil here",
+          "evaluator is declared as protocol.PolicyEvaluator",
+          "no guard on this path proves app.evaluators[\"auth\"] is non-nil"
+        ],
+        "evidence": [
+          {
+            "file": "main.lua",
+            "line": 56,
+            "column": 45,
+            "kind": "abstract fact",
+            "trust": "proven",
+            "contains": [
+              "app.evaluators[\"auth\"] can be nil here"
+            ]
+          },
+          {
+            "file": "main.lua",
+            "line": 56,
+            "column": 18,
+            "kind": "user assertion",
+            "trust": "claimed",
+            "contains": [
+              "evaluator is declared as protocol.PolicyEvaluator"
+            ]
+          },
+          {
+            "file": "main.lua",
+            "line": 56,
+            "column": 45,
+            "kind": "missing proof",
+            "trust": "unknown",
+            "reason": "boundary validation missing",
+            "contains": [
+              "no guard on this path proves app.evaluators[\"auth\"] is non-nil"
+            ]
+          }
+        ],
+        "render_contains": [
+          "local evaluator: protocol.PolicyEvaluator = app.evaluators[\"auth\"]",
+          "because:",
+          "app.evaluators[\"auth\"]"
+        ],
+        "render_ordered_contains": [
+          "error[type.assignment]: cannot assign app.evaluators[\"auth\"] because it may be nil",
+          "--> main.lua:56:45",
+          "local evaluator: protocol.PolicyEvaluator = app.evaluators[\"auth\"]",
+          "because:",
+          "proven: app.evaluators[\"auth\"] can be nil here",
+          "claimed: evaluator is declared as protocol.PolicyEvaluator",
+          "missing proof: no guard on this path proves app.evaluators[\"auth\"] is non-nil",
+          "help: Guard `app.evaluators[\"auth\"]` with a nil check"
+        ],
+        "render_not_contains": [
+          "type mismatch",
+          "^~",
+          "want protocol.PolicyEvaluator"
+        ],
+        "min_labels": 2,
+        "label_contains": [
+          "assigned value",
+          "declared type"
+        ],
+        "labels": [
+          {
+            "file": "main.lua",
+            "line": 56,
+            "column": 18,
+            "contains": [
+              "declared type"
+            ]
+          },
+          {
+            "file": "main.lua",
+            "line": 56,
+            "column": 45,
+            "contains": [
+              "assigned value"
+            ]
+          }
+        ],
+        "help_contains": [
+          "change the target type"
+        ]
+      },
+      {
+        "file": "main.lua",
+        "line": 58,
+        "column": 25,
+        "severity": "error",
+        "code": "type.call.direct.argument_type",
+        "message_contains": [
+          "cannot pass store.state.last_eval_at",
+          "argument 1",
+          "may be nil"
+        ],
+        "min_evidence": 3,
+        "evidence_contains": [
+          "argument 1 (store.state.last_eval_at) can be time.Time or nil here",
+          "now.sub parameter 1 expects time.Time",
+          "no guard on this path proves store.state.last_eval_at is non-nil"
+        ],
+        "evidence": [
+          {
+            "file": "main.lua",
+            "line": 58,
+            "column": 25,
+            "kind": "abstract fact",
+            "trust": "proven",
+            "contains": [
+              "argument 1 (store.state.last_eval_at) can be time.Time or nil here"
+            ]
+          },
+          {
+            "kind": "user assertion",
+            "trust": "claimed",
+            "contains": [
+              "now.sub parameter 1 expects time.Time"
+            ]
+          },
+          {
+            "file": "main.lua",
+            "line": 58,
+            "column": 25,
+            "kind": "missing proof",
+            "trust": "unknown",
+            "reason": "boundary validation missing",
+            "contains": [
+              "no guard on this path proves store.state.last_eval_at is non-nil"
+            ]
+          }
+        ],
+        "render_contains": [
+          "now:sub(store.state.last_eval_at)",
+          "because:",
+          "store.state.last_eval_at"
+        ],
+        "render_ordered_contains": [
+          "error[type.call.direct.argument_type]: cannot pass store.state.last_eval_at as argument 1 because it may be nil",
+          "--> main.lua:58:25",
+          "now:sub(store.state.last_eval_at)",
+          "because:",
+          "proven: argument 1 (store.state.last_eval_at) can be time.Time or nil here",
+          "claimed: now.sub parameter 1 expects time.Time",
+          "missing proof: no guard on this path proves store.state.last_eval_at is non-nil",
+          "help: Guard `store.state.last_eval_at` with a nil check"
+        ],
+        "render_not_contains": [
+          "type mismatch",
+          "invalid argument",
+          "^~",
+          "want time.Time"
+        ],
+        "min_labels": 1,
+        "label_contains": [
+          "argument value"
+        ],
+        "labels": [
+          {
+            "file": "main.lua",
+            "line": 58,
+            "column": 25,
+            "contains": [
+              "argument value"
+            ]
+          }
+        ],
+        "help_contains": [
+          "parameter type"
+        ]
+      },
+      {
+        "file": "main.lua",
+        "line": 59,
+        "column": 24,
+        "severity": "error",
+        "code": "type.assignment",
+        "message_contains": [
+          "cannot assign protocol.meta(...).tags[\"source\"]",
+          "may be nil"
+        ],
+        "min_evidence": 3,
+        "evidence_contains": [
+          "protocol.meta(...).tags[\"source\"] can be string or nil here",
+          "source is declared as string",
+          "protocol.meta(...).tags[\"source\"] is an indexed read that can miss or read nil"
+        ],
+        "evidence": [
+          {
+            "file": "main.lua",
+            "line": 59,
+            "column": 24,
+            "kind": "abstract fact",
+            "trust": "proven",
+            "contains": [
+              "protocol.meta(...).tags[\"source\"] can be string or nil here"
+            ]
+          },
+          {
+            "file": "main.lua",
+            "line": 59,
+            "column": 15,
+            "kind": "user assertion",
+            "trust": "claimed",
+            "contains": [
+              "source is declared as string"
+            ]
+          },
+          {
+            "file": "main.lua",
+            "line": 59,
+            "column": 24,
+            "kind": "abstract fact",
+            "trust": "proven",
+            "contains": [
+              "protocol.meta(...).tags may be nil before indexing [\"source\"]"
+            ]
+          },
+          {
+            "file": "main.lua",
+            "line": 59,
+            "column": 24,
+            "kind": "missing proof",
+            "trust": "unknown",
+            "reason": "index read validation missing",
+            "contains": [
+              "protocol.meta(...).tags[\"source\"] is an indexed read that can miss or read nil"
+            ]
+          }
+        ],
+        "render_contains": [
+          "local source: string = protocol.meta(\"trace-2\", nil).tags[\"source\"]",
+          "because:",
+          "protocol.meta(...).tags[\"source\"]"
+        ],
+        "render_ordered_contains": [
+          "error[type.assignment]: cannot assign protocol.meta(...).tags[\"source\"] because it may be nil",
+          "--> main.lua:59:24",
+          "local source: string = protocol.meta(\"trace-2\", nil).tags[\"source\"]",
+          "because:",
+          "proven: protocol.meta(...).tags[\"source\"] can be string or nil here",
+          "claimed: source is declared as string",
+          "proven: protocol.meta(...).tags may be nil before indexing [\"source\"]",
+          "missing proof: protocol.meta(...).tags[\"source\"] is an indexed read that can miss or read nil",
+          "help: Guard `protocol.meta(...).tags[\"source\"]` with a nil check"
+        ],
+        "render_not_contains": [
+          "type mismatch",
+          "^~",
+          "want string"
+        ],
+        "min_labels": 2,
+        "label_contains": [
+          "assigned value",
+          "declared type"
+        ],
+        "labels": [
+          {
+            "file": "main.lua",
+            "line": 59,
+            "column": 15,
+            "contains": [
+              "declared type"
+            ]
+          },
+          {
+            "file": "main.lua",
+            "line": 59,
+            "column": 24,
+            "contains": [
+              "assigned value"
+            ]
+          }
+        ],
+        "help_contains": [
+          "change the target type"
+        ]
+      },
+      {
+        "file": "main.lua",
+        "line": 63,
+        "column": 27,
+        "severity": "error",
+        "code": "type.assignment",
+        "message_contains": [
+          "cannot assign cached.queue",
+          "may be nil"
+        ],
+        "min_evidence": 3,
+        "evidence_contains": [
+          "cached.queue can be string or nil here",
+          "queue is declared as string",
+          "no guard on this path proves cached.queue is non-nil"
+        ],
+        "evidence": [
+          {
+            "file": "main.lua",
+            "line": 63,
+            "column": 27,
+            "kind": "abstract fact",
+            "trust": "proven",
+            "contains": [
+              "cached.queue can be string or nil here"
+            ]
+          },
+          {
+            "file": "main.lua",
+            "line": 63,
+            "column": 18,
+            "kind": "user assertion",
+            "trust": "claimed",
+            "contains": [
+              "queue is declared as string"
+            ]
+          },
+          {
+            "file": "main.lua",
+            "line": 63,
+            "column": 27,
+            "kind": "missing proof",
+            "trust": "unknown",
+            "reason": "boundary validation missing",
+            "contains": [
+              "no guard on this path proves cached.queue is non-nil"
+            ]
+          }
+        ],
+        "render_contains": [
+          "local queue: string = cached.queue",
+          "because:",
+          "cached.queue"
+        ],
+        "render_ordered_contains": [
+          "error[type.assignment]: cannot assign cached.queue because it may be nil",
+          "--> main.lua:63:27",
+          "local queue: string = cached.queue",
+          "because:",
+          "proven: cached.queue can be string or nil here",
+          "claimed: queue is declared as string",
+          "missing proof: no guard on this path proves cached.queue is non-nil",
+          "help: Guard `cached.queue` with a nil check"
+        ],
+        "render_not_contains": [
+          "type mismatch",
+          "^~",
+          "want string"
+        ],
+        "min_labels": 2,
+        "label_contains": [
+          "assigned value",
+          "declared type"
+        ],
+        "labels": [
+          {
+            "file": "main.lua",
+            "line": 63,
+            "column": 18,
+            "contains": [
+              "declared type"
+            ]
+          },
+          {
+            "file": "main.lua",
+            "line": 63,
+            "column": 27,
+            "contains": [
+              "assigned value"
+            ]
+          }
+        ],
+        "help_contains": [
+          "change the target type"
+        ]
+      },
+      {
+        "file": "main.lua",
+        "line": 66,
+        "column": 32,
+        "severity": "error",
+        "code": "type.assignment",
+        "message_contains": [
+          "cannot assign store:lookup_policy(...).tags[\"source\"]",
+          "may be nil"
+        ],
+        "min_evidence": 5,
+        "evidence_contains": [
+          "store:lookup_policy(...).tags[\"source\"] can be string or nil here",
+          "missing_status is declared as string",
+          "store:lookup_policy(...) may be nil before reading .tags",
+          "store:lookup_policy(...).tags may be nil before indexing [\"source\"]",
+          "store:lookup_policy(...).tags[\"source\"] is an indexed read that can miss or read nil"
+        ],
+        "evidence": [
+          {
+            "file": "main.lua",
+            "line": 66,
+            "column": 32,
+            "kind": "abstract fact",
+            "trust": "proven",
+            "contains": [
+              "store:lookup_policy(...).tags[\"source\"] can be string or nil here"
+            ]
+          },
+          {
+            "file": "main.lua",
+            "line": 66,
+            "column": 23,
+            "kind": "user assertion",
+            "trust": "claimed",
+            "contains": [
+              "missing_status is declared as string"
+            ]
+          },
+          {
+            "file": "main.lua",
+            "line": 66,
+            "column": 32,
+            "kind": "abstract fact",
+            "trust": "proven",
+            "contains": [
+              "store:lookup_policy(...) may be nil before reading .tags"
+            ]
+          },
+          {
+            "file": "main.lua",
+            "line": 66,
+            "column": 32,
+            "kind": "abstract fact",
+            "trust": "proven",
+            "contains": [
+              "store:lookup_policy(...).tags may be nil before indexing [\"source\"]"
+            ]
+          },
+          {
+            "file": "main.lua",
+            "line": 66,
+            "column": 32,
+            "kind": "missing proof",
+            "trust": "unknown",
+            "reason": "index read validation missing",
+            "contains": [
+              "store:lookup_policy(...).tags[\"source\"] is an indexed read that can miss or read nil"
+            ]
+          }
+        ],
+        "render_contains": [
+          "store:lookup_policy(\"tenant-a\").tags[\"source\"]",
+          "because:",
+          "store:lookup_policy(...).tags[\"source\"]"
+        ],
+        "render_ordered_contains": [
+          "error[type.assignment]: cannot assign store:lookup_policy(...).tags[\"source\"] because it may be nil",
+          "--> main.lua:66:32",
+          "store:lookup_policy(\"tenant-a\").tags[\"source\"]",
+          "because:",
+          "proven: store:lookup_policy(...).tags[\"source\"] can be string or nil here",
+          "claimed: missing_status is declared as string",
+          "proven: store:lookup_policy(...) may be nil before reading .tags",
+          "proven: store:lookup_policy(...).tags may be nil before indexing [\"source\"]",
+          "missing proof: store:lookup_policy(...).tags[\"source\"] is an indexed read that can miss or read nil",
+          "help: Guard `store:lookup_policy(...).tags[\"source\"]` with a nil check"
+        ],
+        "render_not_contains": [
+          "type mismatch",
+          "^~",
+          "want string"
+        ],
+        "min_labels": 2,
+        "label_contains": [
+          "assigned value",
+          "declared type"
+        ],
+        "labels": [
+          {
+            "file": "main.lua",
+            "line": 66,
+            "column": 23,
+            "contains": [
+              "declared type"
+            ]
+          },
+          {
+            "file": "main.lua",
+            "line": 66,
+            "column": 32,
+            "contains": [
+              "assigned value"
+            ]
+          }
+        ],
+        "help_contains": [
+          "change the target type"
+        ]
+      }
+    ]
   }
 }

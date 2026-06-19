@@ -9,6 +9,7 @@ import (
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/placement"
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
+	"github.com/wippyai/go-lua/analysis/domain/typestate"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
@@ -33,6 +34,23 @@ func TestBottomReadsProductBottom(t *testing.T) {
 	}
 	if got := s.ReadPathKey(reg, pathdom.PathKey("sym1@1.field")); !valueDomain.Equal(got, valueDomain.Bottom()) {
 		t.Fatalf("absent path key = %s, want product bottom", formatValue(reg, got))
+	}
+}
+
+func TestDomainStableAcrossRepeatedConstruction(t *testing.T) {
+	reg := standard.Registry()
+	top := Domain(reg).Top()
+	bottom := Domain(reg).Bottom()
+	domain := Domain(reg)
+
+	if !domain.Equal(top, domain.Top()) {
+		t.Fatalf("reconstructed state domain did not recognize prior top")
+	}
+	if !domain.Equal(bottom, domain.Bottom()) {
+		t.Fatalf("reconstructed state domain did not recognize prior bottom")
+	}
+	if !domain.Equal(domain.Join(bottom, top), top) {
+		t.Fatalf("reconstructed state domain join(bottom, top) did not produce top")
 	}
 }
 
@@ -93,6 +111,104 @@ func TestLenFloorStateSemantics(t *testing.T) {
 	}
 	if stateDomain.Equal(fromBottom, stateDomain.Bottom()) {
 		t.Fatalf("writing len floor from bottom kept state at lattice bottom")
+	}
+}
+
+func TestLenFloorInvalidationFollowsPathMutationPrefixes(t *testing.T) {
+	root := pathdom.PathKey("sym12@1.items")
+	child := pathdom.PathKey("sym12@1.items.child")
+	sibling := pathdom.PathKey("sym12@1.itemized")
+	aliasRoot := pathdom.PathKey("sym13@1.alias")
+	aliasChild := pathdom.PathKey("sym13@1.alias.child")
+	proof := pathevidence.BranchProof{Kind: pathevidence.BranchProofPathEqual, Path: root, Other: aliasRoot}
+
+	s := State{}.
+		WriteLenFloor(root, 2).
+		WriteLenFloor(child, 5).
+		WriteLenFloor(sibling, 7).
+		WriteLenFloor(aliasRoot, 3).
+		WriteLenFloor(aliasChild, 4).
+		AddBranchProof(proof)
+
+	out, ok := s.InvalidatePathKeyDescendants(root)
+	if !ok {
+		t.Fatal("InvalidatePathKeyDescendants rejected root")
+	}
+	for _, removed := range []pathdom.PathKey{root, child, aliasRoot, aliasChild} {
+		if floor, ok := out.ReadLenFloor(removed); ok || floor != 0 {
+			t.Fatalf("%s length floor = %d/%v, want cleared", removed, floor, ok)
+		}
+	}
+	if floor, ok := out.ReadLenFloor(sibling); !ok || floor != 7 {
+		t.Fatalf("%s length floor = %d/%v, want 7/present", sibling, floor, ok)
+	}
+	if floor, ok := s.ReadLenFloor(root); !ok || floor != 2 {
+		t.Fatalf("original root length floor = %d/%v, want unchanged 2/present", floor, ok)
+	}
+
+	out, ok = s.InvalidatePathKeySubtree(root)
+	if !ok {
+		t.Fatal("InvalidatePathKeySubtree rejected root")
+	}
+	for _, removed := range []pathdom.PathKey{root, child, aliasRoot, aliasChild} {
+		if floor, ok := out.ReadLenFloor(removed); ok || floor != 0 {
+			t.Fatalf("%s subtree length floor = %d/%v, want cleared", removed, floor, ok)
+		}
+	}
+	if floor, ok := out.ReadLenFloor(sibling); !ok || floor != 7 {
+		t.Fatalf("%s subtree length floor = %d/%v, want 7/present", sibling, floor, ok)
+	}
+}
+
+func TestTypestateStateLaneTracksOpenClosedAndEscapedResources(t *testing.T) {
+	reg := standard.Registry()
+	domain := Domain(reg)
+	resource := TypestateResource(pathdom.PathKey("tx@1"), typestate.Protocol("transaction"))
+	obligation := typestate.Obligation{Final: typestate.State("closed")}
+
+	open := State{}.AcquireTypestate(resource, typestate.State("open"), obligation)
+	if obligations := open.OpenTypestateObligations(); len(obligations) != 1 ||
+		obligations[0].Resource != resource ||
+		obligations[0].Current != typestate.State("open") ||
+		obligations[0].Obligation != obligation {
+		t.Fatalf("open obligations = %#v, want one open transaction", obligations)
+	}
+
+	closed := open.TransitionTypestate(resource, typestate.State("open"), typestate.State("closed"))
+	if obligations := closed.OpenTypestateObligations(); len(obligations) != 0 {
+		t.Fatalf("closed obligations = %#v, want none", obligations)
+	}
+
+	escaped := open.EscapeTypestate(resource)
+	if obligations := escaped.OpenTypestateObligations(); len(obligations) != 0 {
+		t.Fatalf("escaped obligations = %#v, want none", obligations)
+	}
+
+	joined := domain.Join(open, closed)
+	if obligations := joined.OpenTypestateObligations(); len(obligations) != 1 ||
+		obligations[0].Resource != resource ||
+		obligations[0].Obligation != obligation {
+		t.Fatalf("joined obligations = %#v, want maybe-open transaction obligation", obligations)
+	}
+}
+
+func TestTypestateResourceKeyFollowsProvenPathEquality(t *testing.T) {
+	tx := pathdom.PathKey("sym10@1.tx")
+	alias := pathdom.PathKey("sym11@1.alias")
+	proof := pathevidence.BranchProof{
+		Kind:  pathevidence.BranchProofPathEqual,
+		Path:  tx,
+		Other: alias,
+	}
+	state := State{}.AddBranchProof(proof)
+
+	gotFromTX := state.CanonicalTypestateResourceKey(tx)
+	gotFromAlias := state.CanonicalTypestateResourceKey(alias)
+	if gotFromTX == "" || gotFromTX != gotFromAlias {
+		t.Fatalf("canonical typestate keys = %q/%q, want same non-empty key", gotFromTX, gotFromAlias)
+	}
+	if gotFromTX != tx {
+		t.Fatalf("canonical typestate key = %q, want stable lowest equivalent key %q", gotFromTX, tx)
 	}
 }
 

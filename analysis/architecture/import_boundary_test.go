@@ -554,6 +554,15 @@ func TestCheckCorePackagesDoNotImportDiagnosticsOrFixpoint(t *testing.T) {
 		banned  []string
 	}{
 		{
+			name:    "readmodel stays below diagnostics fixpoint and checktest",
+			pattern: modulePath + "/analysis/check/internal/readmodel",
+			banned: []string{
+				modulePath + "/analysis/check/diagnostics",
+				modulePath + "/analysis/check/fixpoint",
+				modulePath + "/analysis/check/checktest",
+			},
+		},
+		{
 			name:    "body stays below fixpoint and diagnostics",
 			pattern: modulePath + "/analysis/check/body",
 			banned: []string{
@@ -587,6 +596,23 @@ func TestCheckCorePackagesDoNotImportDiagnosticsOrFixpoint(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestReadExprLeafDoesNotImportHigherCheckLayers(t *testing.T) {
+	pkg := modulePath + "/analysis/check/body/internal/readexpr"
+	banned := []string{
+		modulePath + "/analysis/check/body",
+		modulePath + "/analysis/check/diagnostics",
+		modulePath + "/analysis/check/fixpoint",
+		modulePath + "/analysis/check/checktest",
+	}
+	for _, imp := range productionImports(t, pkg) {
+		for _, bannedImport := range banned {
+			if forbiddenImport(imp, bannedImport, false) {
+				t.Fatalf("%s imports forbidden dependency %q", pkg, imp)
+			}
+		}
 	}
 }
 

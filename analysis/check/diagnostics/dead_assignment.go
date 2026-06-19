@@ -1,19 +1,17 @@
 package diagnostics
 
 import (
-	"fmt"
 	"sort"
 
 	"github.com/wippyai/go-lua/analysis/check/body"
 	"github.com/wippyai/go-lua/analysis/diagnostic"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
-	"github.com/wippyai/go-lua/analysis/lua/cfgfacts"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
 
-type deadAssignments producerContext
+type deadAssignments struct{}
 
 type deadAssignmentWrite struct {
 	point  cfg.Point
@@ -23,15 +21,21 @@ type deadAssignmentWrite struct {
 	write  diagnostic.Span
 }
 
+type deadAssignmentExit struct {
+	point cfg.Point
+	span  diagnostic.Span
+}
+
 type deadAssignmentView struct {
 	graph         cfg.Graph
+	reachable     map[cfg.Point]bool
 	writes        []deadAssignmentWrite
 	writesByPoint map[cfg.Point][]deadAssignmentWrite
 	readsByPoint  map[cfg.Point]map[symbol.ID]struct{}
+	exitsByPoint  map[cfg.Point]deadAssignmentExit
 }
 
-func (p deadAssignments) Produce(result *body.Result) []diagnostic.Diagnostic {
-	_ = p
+func (deadAssignments) Produce(result *body.Result) []diagnostic.Diagnostic {
 	graph := result.Graph()
 	if graph == nil {
 		return nil
@@ -61,13 +65,15 @@ func (p deadAssignments) Produce(result *body.Result) []diagnostic.Diagnostic {
 }
 
 func newDeadAssignmentView(result *body.Result, graph cfg.Graph) deadAssignmentView {
-	captured := collectDeadAssignmentCapturedSymbols(result)
-	writes := collectDeadAssignmentWrites(result, graph, captured)
+	reachable := collectDiagnosticReachability(result, graph)
+	writes := collectDeadAssignmentWrites(result, graph, reachable)
 	view := deadAssignmentView{
 		graph:         graph,
+		reachable:     reachable,
 		writes:        writes,
 		writesByPoint: make(map[cfg.Point][]deadAssignmentWrite),
-		readsByPoint:  collectDeadAssignmentReads(result, graph),
+		readsByPoint:  collectReachableSymbolReads(result, graph, reachable),
+		exitsByPoint:  collectDeadAssignmentExits(result, graph, reachable),
 	}
 	for _, write := range writes {
 		view.writesByPoint[write.point] = append(view.writesByPoint[write.point], write)
@@ -75,37 +81,21 @@ func newDeadAssignmentView(result *body.Result, graph cfg.Graph) deadAssignmentV
 	return view
 }
 
-func collectDeadAssignmentCapturedSymbols(result *body.Result) map[symbol.ID]struct{} {
-	out := make(map[symbol.ID]struct{})
-	var walk func(*body.Result)
-	walk = func(parent *body.Result) {
-		for _, child := range parent.FunctionResults() {
-			for _, capture := range parent.DirectCaptures(child.Function()) {
-				if capture.Captured != 0 {
-					out[capture.Captured] = struct{}{}
-				}
-			}
-			walk(child)
-		}
-	}
-	if result != nil {
-		walk(result)
-	}
-	return out
-}
-
-func collectDeadAssignmentWrites(result *body.Result, graph cfg.Graph, captured map[symbol.ID]struct{}) []deadAssignmentWrite {
+func collectDeadAssignmentWrites(result *body.Result, graph cfg.Graph, reachable map[cfg.Point]bool) []deadAssignmentWrite {
 	var writes []deadAssignmentWrite
 	for _, point := range graph.RPO() {
+		if !diagnosticPointReachable(reachable, point) {
+			continue
+		}
 		if fact, ok := result.LocalAssignment(point); ok {
-			write, ok := localDeadAssignmentWrite(result, point, fact, captured)
+			write, ok := localDeadAssignmentWrite(result, point, fact)
 			if ok {
 				writes = append(writes, write)
 			}
 			continue
 		}
 		if fact, ok := result.OrdinaryAssignment(point); ok {
-			write, ok := ordinaryDeadAssignmentWrite(result, point, fact, captured)
+			write, ok := ordinaryDeadAssignmentWrite(result, point, fact)
 			if ok {
 				writes = append(writes, write)
 			}
@@ -114,11 +104,8 @@ func collectDeadAssignmentWrites(result *body.Result, graph cfg.Graph, captured 
 	return writes
 }
 
-func localDeadAssignmentWrite(result *body.Result, point cfg.Point, fact semantics.LocalAssignmentFact, captured map[symbol.ID]struct{}) (deadAssignmentWrite, bool) {
+func localDeadAssignmentWrite(result *body.Result, point cfg.Point, fact semantics.LocalAssignmentFact) (deadAssignmentWrite, bool) {
 	if !fact.HasSymbol || fact.Expr == nil || ignoredUnusedLocalName(fact.Name) {
-		return deadAssignmentWrite{}, false
-	}
-	if _, ok := captured[fact.Symbol]; ok {
 		return deadAssignmentWrite{}, false
 	}
 	if !deadAssignmentSymbolKind(result, fact.Symbol) {
@@ -137,11 +124,8 @@ func localDeadAssignmentWrite(result *body.Result, point cfg.Point, fact semanti
 	}, true
 }
 
-func ordinaryDeadAssignmentWrite(result *body.Result, point cfg.Point, fact semantics.OrdinaryAssignmentFact, captured map[symbol.ID]struct{}) (deadAssignmentWrite, bool) {
+func ordinaryDeadAssignmentWrite(result *body.Result, point cfg.Point, fact semantics.OrdinaryAssignmentFact) (deadAssignmentWrite, bool) {
 	if !fact.HasSymbol || fact.Value == nil {
-		return deadAssignmentWrite{}, false
-	}
-	if _, ok := captured[fact.Symbol]; ok {
 		return deadAssignmentWrite{}, false
 	}
 	ident, ok := fact.Target.(*ast.IdentExpr)
@@ -172,141 +156,40 @@ func deadAssignmentSymbolKind(result *body.Result, id symbol.ID) bool {
 	return ok && (kind == symbol.Local || kind == symbol.Param)
 }
 
-func collectDeadAssignmentReads(result *body.Result, graph cfg.Graph) map[cfg.Point]map[symbol.ID]struct{} {
-	reads := make(map[cfg.Point]map[symbol.ID]struct{})
-	add := func(point cfg.Point, id symbol.ID) {
-		if id == 0 {
-			return
-		}
-		if reads[point] == nil {
-			reads[point] = make(map[symbol.ID]struct{})
-		}
-		reads[point][id] = struct{}{}
+func collectDeadAssignmentExits(result *body.Result, graph cfg.Graph, reachable map[cfg.Point]bool) map[cfg.Point]deadAssignmentExit {
+	out := make(map[cfg.Point]deadAssignmentExit)
+	if graph == nil {
+		return out
 	}
+	exit := graph.Exit()
 	for _, point := range graph.RPO() {
-		collector := deadAssignmentReadCollector{result: result, add: func(id symbol.ID) { add(point, id) }}
-		if fact, ok := result.LocalAssignment(point); ok {
-			collector.exprs(fact.Exprs)
+		if !diagnosticPointReachable(reachable, point) {
+			continue
 		}
-		if fact, ok := result.OrdinaryAssignment(point); ok {
-			collector.exprs(fact.Rhs)
-			collector.lvalues(fact.Lhs)
+		if point == exit {
+			continue
 		}
-		if fact, ok := result.Call(point); ok {
-			collector.expr(fact.Func)
-			collector.expr(fact.Receiver)
-			collector.exprs(fact.Args)
+		successors := graph.Successors(point)
+		if len(successors) == 0 {
+			continue
 		}
-		if fact, ok := result.ReturnFact(point); ok {
-			collector.exprs(fact.Exprs)
-		}
-		if fact, ok := result.BranchCondition(point); ok {
-			collector.expr(fact.Condition)
-		}
-		if fact, ok := result.NumericFor(point); ok {
-			collector.expr(fact.Init)
-			collector.expr(fact.Limit)
-			collector.expr(fact.Step)
-		}
-		if fact, ok := result.GenericFor(point); ok && fact.Role == cfgfacts.GenericForRoleCheck {
-			collector.exprs(fact.Exprs)
-		}
-		if fact, ok := result.FunctionDefinition(point); ok {
-			collector.functionNameReads(fact.Name)
-		}
-	}
-	return reads
-}
-
-type deadAssignmentReadCollector struct {
-	result *body.Result
-	add    func(symbol.ID)
-}
-
-func (c deadAssignmentReadCollector) exprs(exprs []ast.Expr) {
-	for _, expr := range exprs {
-		c.expr(expr)
-	}
-}
-
-func (c deadAssignmentReadCollector) lvalues(exprs []ast.Expr) {
-	for _, expr := range exprs {
-		c.lvalue(expr)
-	}
-}
-
-func (c deadAssignmentReadCollector) lvalue(expr ast.Expr) {
-	switch e := expr.(type) {
-	case nil:
-		return
-	case *ast.IdentExpr:
-		return
-	case *ast.AttrGetExpr:
-		c.expr(e.Object)
-		c.expr(e.Key)
-	default:
-		c.expr(expr)
-	}
-}
-
-func (c deadAssignmentReadCollector) functionNameReads(name *ast.FuncName) {
-	if name == nil {
-		return
-	}
-	c.lvalue(name.Func)
-	c.expr(name.Receiver)
-}
-
-func (c deadAssignmentReadCollector) expr(expr ast.Expr) {
-	switch e := expr.(type) {
-	case nil:
-		return
-	case *ast.IdentExpr:
-		if id, ok := c.result.SymbolOfIdent(e); ok {
-			c.add(id)
-		}
-	case *ast.AttrGetExpr:
-		c.expr(e.Object)
-		c.expr(e.Key)
-	case *ast.TableExpr:
-		for _, field := range e.Fields {
-			if field == nil {
-				continue
+		allExit := true
+		for _, succ := range successors {
+			if succ != exit {
+				allExit = false
+				break
 			}
-			c.expr(field.Key)
-			c.expr(field.Value)
 		}
-	case *ast.FuncCallExpr:
-		c.expr(e.Func)
-		c.expr(e.Receiver)
-		c.exprs(e.Args)
-	case *ast.LogicalOpExpr:
-		c.expr(e.Lhs)
-		c.expr(e.Rhs)
-	case *ast.RelationalOpExpr:
-		c.expr(e.Lhs)
-		c.expr(e.Rhs)
-	case *ast.StringConcatOpExpr:
-		c.expr(e.Lhs)
-		c.expr(e.Rhs)
-	case *ast.ArithmeticOpExpr:
-		c.expr(e.Lhs)
-		c.expr(e.Rhs)
-	case *ast.UnaryMinusOpExpr:
-		c.expr(e.Expr)
-	case *ast.UnaryNotOpExpr:
-		c.expr(e.Expr)
-	case *ast.UnaryLenOpExpr:
-		c.expr(e.Expr)
-	case *ast.UnaryBNotOpExpr:
-		c.expr(e.Expr)
-	case *ast.CastExpr:
-		c.expr(e.Expr)
-	case *ast.NonNilAssertExpr:
-		c.expr(e.Expr)
-	case *ast.FunctionExpr:
-		return
+		if !allExit {
+			continue
+		}
+		var span diagnostic.Span
+		if fact, ok := result.ReturnFact(point); ok {
+			span = ast.SpanOf(fact.Stmt)
+		}
+		out[point] = deadAssignmentExit{point: point, span: span}
 	}
+	return out
 }
 
 func (v deadAssignmentView) diagnosticsForSymbol(writes []deadAssignmentWrite) []diagnostic.Diagnostic {
@@ -315,9 +198,9 @@ func (v deadAssignmentView) diagnosticsForSymbol(writes []deadAssignmentWrite) [
 		if ambiguousSameStatementWrite(previous, writes) {
 			continue
 		}
-		overwrites, ok := v.firstOverwritesBeforeRead(previous, writes)
+		overwrites, exits, ok := v.firstOverwritesBeforeRead(previous, writes)
 		if ok {
-			out = append(out, deadAssignmentDiagnostic(previous, overwrites))
+			out = append(out, deadAssignmentDiagnostic(previous, overwrites, exits))
 		}
 	}
 	return out
@@ -335,77 +218,108 @@ func ambiguousSameStatementWrite(write deadAssignmentWrite, writes []deadAssignm
 	return false
 }
 
-type deadAssignmentOverwriteProof struct {
-	ok       bool
-	frontier map[cfg.Point]deadAssignmentWrite
+type deadAssignmentProof struct {
+	ok         bool
+	frontier   map[cfg.Point]deadAssignmentWrite
+	exitPoints map[cfg.Point]deadAssignmentExit
 }
 
-func (v deadAssignmentView) firstOverwritesBeforeRead(previous deadAssignmentWrite, writes []deadAssignmentWrite) ([]deadAssignmentWrite, bool) {
+func (v deadAssignmentView) firstOverwritesBeforeRead(previous deadAssignmentWrite, writes []deadAssignmentWrite) ([]deadAssignmentWrite, []deadAssignmentExit, bool) {
 	if v.graph == nil {
-		return nil, false
+		return nil, nil, false
 	}
 	successors := v.graph.Successors(previous.point)
 	if len(successors) == 0 {
-		return nil, false
+		return nil, nil, false
 	}
-	memo := make(map[cfg.Point]deadAssignmentOverwriteProof)
+	memo := make(map[cfg.Point]deadAssignmentProof)
 	visiting := make(map[cfg.Point]bool)
-	var walk func(cfg.Point) deadAssignmentOverwriteProof
-	walk = func(point cfg.Point) deadAssignmentOverwriteProof {
-		if v.pointReadsSymbol(point, previous.symbol) {
-			return deadAssignmentOverwriteProof{}
+	var walk func(cfg.Point) deadAssignmentProof
+	walk = func(point cfg.Point) deadAssignmentProof {
+		if !v.pointReachable(point) {
+			return deadAssignmentProof{ok: true}
 		}
-		if overwrite, ok := v.pointOverwrite(point, previous.symbol, writes); ok {
-			return deadAssignmentOverwriteProof{
+		if v.pointReadsSymbol(point, previous.symbol) {
+			return deadAssignmentProof{}
+		}
+		if overwrite, ok := v.pointOverwrite(point, previous.symbol, previous.point, writes); ok {
+			return deadAssignmentProof{
 				ok:       true,
 				frontier: map[cfg.Point]deadAssignmentWrite{overwrite.point: overwrite},
 			}
 		}
 		if v.pointWritesSymbol(point, previous.symbol) {
-			return deadAssignmentOverwriteProof{}
+			return deadAssignmentProof{}
+		}
+		if exit, ok := v.pointExit(point); ok {
+			return deadAssignmentProof{
+				ok:         true,
+				exitPoints: map[cfg.Point]deadAssignmentExit{exit.point: exit},
+			}
 		}
 		if point == v.graph.Exit() {
-			return deadAssignmentOverwriteProof{}
+			return deadAssignmentProof{
+				ok:         true,
+				exitPoints: map[cfg.Point]deadAssignmentExit{point: {point: point}},
+			}
 		}
 		if cached, ok := memo[point]; ok {
 			return cached
 		}
 		if visiting[point] {
-			return deadAssignmentOverwriteProof{}
+			return deadAssignmentProof{}
 		}
 		visiting[point] = true
 		successors := v.graph.Successors(point)
-		proof := deadAssignmentOverwriteProof{ok: len(successors) > 0, frontier: make(map[cfg.Point]deadAssignmentWrite)}
+		proof := deadAssignmentProof{
+			ok:         len(successors) > 0,
+			frontier:   make(map[cfg.Point]deadAssignmentWrite),
+			exitPoints: make(map[cfg.Point]deadAssignmentExit),
+		}
 		for _, succ := range successors {
 			child := walk(succ)
 			if !child.ok {
-				proof = deadAssignmentOverwriteProof{}
+				proof = deadAssignmentProof{}
 				break
 			}
 			for point, overwrite := range child.frontier {
 				proof.frontier[point] = overwrite
 			}
+			for point, exit := range child.exitPoints {
+				proof.exitPoints[point] = exit
+			}
 		}
 		delete(visiting, point)
-		if proof.ok && len(proof.frontier) == 0 {
-			proof = deadAssignmentOverwriteProof{}
+		if proof.ok && len(proof.frontier) == 0 && len(proof.exitPoints) == 0 {
+			proof = deadAssignmentProof{}
 		}
 		memo[point] = proof
 		return proof
 	}
 
 	frontier := make(map[cfg.Point]deadAssignmentWrite)
+	exitPoints := make(map[cfg.Point]deadAssignmentExit)
 	for _, succ := range successors {
 		child := walk(succ)
 		if !child.ok {
-			return nil, false
+			return nil, nil, false
 		}
 		for point, overwrite := range child.frontier {
 			frontier[point] = overwrite
 		}
+		for point, exit := range child.exitPoints {
+			exitPoints[point] = exit
+		}
 	}
 	overwrites := sortedDeadAssignmentWrites(frontier)
-	return overwrites, len(overwrites) > 0
+	if len(overwrites) == 0 {
+		return nil, nil, false
+	}
+	return overwrites, sortedDeadAssignmentExits(exitPoints), true
+}
+
+func (v deadAssignmentView) pointReachable(point cfg.Point) bool {
+	return diagnosticPointReachable(v.reachable, point)
 }
 
 func sortedDeadAssignmentWrites(frontier map[cfg.Point]deadAssignmentWrite) []deadAssignmentWrite {
@@ -425,6 +339,29 @@ func sortedDeadAssignmentWrites(frontier map[cfg.Point]deadAssignmentWrite) []de
 	return out
 }
 
+func sortedDeadAssignmentExits(exits map[cfg.Point]deadAssignmentExit) []deadAssignmentExit {
+	out := make([]deadAssignmentExit, 0, len(exits))
+	for _, exit := range exits {
+		out = append(out, exit)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		left, right := out[i].span, out[j].span
+		if left.Valid() != right.Valid() {
+			return left.Valid()
+		}
+		if left.Valid() {
+			if left.StartLine != right.StartLine {
+				return left.StartLine < right.StartLine
+			}
+			if left.StartCol != right.StartCol {
+				return left.StartCol < right.StartCol
+			}
+		}
+		return out[i].point < out[j].point
+	})
+	return out
+}
+
 func (v deadAssignmentView) pointReadsSymbol(point cfg.Point, id symbol.ID) bool {
 	reads := v.readsByPoint[point]
 	if len(reads) == 0 {
@@ -432,6 +369,11 @@ func (v deadAssignmentView) pointReadsSymbol(point cfg.Point, id symbol.ID) bool
 	}
 	_, ok := reads[id]
 	return ok
+}
+
+func (v deadAssignmentView) pointExit(point cfg.Point) (deadAssignmentExit, bool) {
+	exit, ok := v.exitsByPoint[point]
+	return exit, ok
 }
 
 func (v deadAssignmentView) pointWritesSymbol(point cfg.Point, id symbol.ID) bool {
@@ -443,8 +385,11 @@ func (v deadAssignmentView) pointWritesSymbol(point cfg.Point, id symbol.ID) boo
 	return false
 }
 
-func (v deadAssignmentView) pointOverwrite(point cfg.Point, id symbol.ID, writes []deadAssignmentWrite) (deadAssignmentWrite, bool) {
+func (v deadAssignmentView) pointOverwrite(point cfg.Point, id symbol.ID, ignoredPoint cfg.Point, writes []deadAssignmentWrite) (deadAssignmentWrite, bool) {
 	for _, write := range v.writesByPoint[point] {
+		if write.point == ignoredPoint {
+			continue
+		}
 		if write.symbol == id && !ambiguousSameStatementWrite(write, writes) {
 			return write, true
 		}
@@ -474,61 +419,59 @@ func localNameSpan(stmt *ast.LocalAssignStmt, index int, name string) diagnostic
 	return ast.SpanOf(stmt)
 }
 
-func deadAssignmentDiagnostic(previous deadAssignmentWrite, overwrites []deadAssignmentWrite) diagnostic.Diagnostic {
-	message := fmt.Sprintf("assigned value for %q is overwritten before it is read", previous.name)
-	evidence := []diagnostic.Evidence{
-		{
-			Kind:    diagnostic.EvidenceAbstractFact,
-			Trust:   diagnostic.TrustProven,
-			Span:    previous.write,
-			Message: fmt.Sprintf("%q receives a value here", previous.name),
-		},
-	}
-	labels := []diagnostic.Label{{Span: previous.write, Message: "overwritten value"}}
+func deadAssignmentDiagnostic(previous deadAssignmentWrite, overwrites []deadAssignmentWrite, exits []deadAssignmentExit) diagnostic.Diagnostic {
+	hasExit := len(exits) > 0
+	message := deadAssignmentMessage(previous.name, hasExit)
+	help := deadAssignmentHelp(previous.name, hasExit)
+	var evidence []diagnostic.Evidence
+	labels := []diagnostic.Label{sourceLabel(previous.write, labelDeadAssignment)}
 	for _, overwrite := range overwrites {
 		evidence = append(evidence, diagnostic.Evidence{
 			Kind:    diagnostic.EvidenceAbstractFact,
 			Trust:   diagnostic.TrustProven,
 			Span:    overwrite.write,
-			Message: fmt.Sprintf("%q is assigned again on this path before any read", previous.name),
+			Message: deadAssignmentOverwriteEvidence(previous.name),
 		})
-		labels = append(labels, diagnostic.Label{Span: overwrite.write, Message: "overwriting assignment"})
+		labels = append(labels, sourceLabel(overwrite.write, labelOverwrite))
 	}
-	proofSpan := previous.write
-	if len(overwrites) > 0 {
-		proofSpan = overwrites[0].write
-	}
-	proofMessage := "CFG proof reaches the overwriting assignment on every path before any bound read"
-	if len(overwrites) > 1 {
-		proofMessage = fmt.Sprintf("CFG proof reaches one of %d overwriting assignments on every path before any bound read", len(overwrites))
-	}
-	evidence = append(evidence,
-		diagnostic.Evidence{
+	for _, exit := range exits {
+		evidence = append(evidence, diagnostic.Evidence{
 			Kind:    diagnostic.EvidenceAbstractFact,
 			Trust:   diagnostic.TrustProven,
-			Span:    proofSpan,
-			Message: proofMessage,
-		},
-		diagnostic.Evidence{
-			Kind:    diagnostic.EvidenceMissingProof,
-			Trust:   diagnostic.TrustProven,
-			Span:    previous.write,
-			Message: fmt.Sprintf("no bound read of %q exists before the first overwrite frontier", previous.name),
-		},
-	)
-	return diagnostic.Diagnostic{
-		Position: diagnostic.Position{
-			Line:      previous.write.StartLine,
-			Column:    previous.write.StartCol,
-			EndLine:   previous.write.EndLine,
-			EndColumn: previous.write.EndCol,
-		},
+			Span:    exit.span,
+			Message: deadAssignmentExitEvidence(previous.name),
+		})
+		labels = append(labels, sourceLabel(exit.span, labelExitBeforeRead))
+	}
+	sort.SliceStable(evidence, func(i, j int) bool {
+		return diagnosticEvidenceSpanLess(evidence[i].Span, evidence[j].Span)
+	})
+	return diagnostic.New(diagnostic.DiagnosticSpec{
 		Span:        previous.write,
 		Code:        CodeDeadAssignment,
 		Severity:    diagnostic.SeverityWarning,
 		Message:     message,
 		Explanation: diagnostic.NewExplanation(evidence...),
+		Help:        help,
 		Labels:      labels,
-		Help:        "Remove the first value assignment, or keep only its side effects before the overwriting assignment.",
+	})
+}
+
+func diagnosticEvidenceSpanLess(left, right diagnostic.Span) bool {
+	if left.Valid() != right.Valid() {
+		return left.Valid()
 	}
+	if !left.Valid() {
+		return false
+	}
+	if left.StartLine != right.StartLine {
+		return left.StartLine < right.StartLine
+	}
+	if left.StartCol != right.StartCol {
+		return left.StartCol < right.StartCol
+	}
+	if left.EndLine != right.EndLine {
+		return left.EndLine < right.EndLine
+	}
+	return left.EndCol < right.EndCol
 }

@@ -62,6 +62,10 @@ const (
 	MutationLengthChange = "mutation.LengthChange"
 	MutationTableMutator = "mutation.TableMutator"
 
+	LifecycleAcquire    = "lifecycle.Acquire"
+	LifecycleTransition = "lifecycle.Transition"
+	LifecycleEscape     = "lifecycle.Escape"
+
 	ControlThrow = "control.Throw"
 	ControlIO    = "control.IO"
 )
@@ -102,6 +106,10 @@ var descriptors = map[string]Descriptor{
 	MutationMutate:       descriptor(MutationMutate, "mutation", "Mutate", StatusPartial, "Operational lowering consumes only Target as a path-invalidation authority; Transform and LengthDelta are metadata until shape/length mutation semantics are implemented."),
 	MutationLengthChange: descriptor(MutationLengthChange, "mutation", "LengthChange", StatusPartial, "Operational lowering consumes Target as a path-invalidation authority and positive Delta as a length-floor proof; negative Delta remains metadata until precise shrink semantics are implemented."),
 	MutationTableMutator: descriptor(MutationTableMutator, "mutation", "TableMutator", StatusPartial, "Operational lowering consumes only Target as a path-invalidation authority; Value is metadata until element write semantics are implemented."),
+
+	LifecycleAcquire:    descriptor(LifecycleAcquire, "lifecycle", "Acquire", StatusOperational, "Lifecycle acquire is lowered into canonical typestate facts."),
+	LifecycleTransition: descriptor(LifecycleTransition, "lifecycle", "Transition", StatusOperational, "Lifecycle transition is lowered into canonical typestate facts."),
+	LifecycleEscape:     descriptor(LifecycleEscape, "lifecycle", "Escape", StatusOperational, "Lifecycle escape is lowered into canonical typestate facts."),
 
 	ControlThrow: descriptor(ControlThrow, "control", "Throw", StatusReservedHighRisk, "Reserved metadata; control throw lowering is inactive, so stdlib must not declare it while behavior is represented by Never/postconditions/module-load."),
 	ControlIO:    descriptor(ControlIO, "control", "IO", StatusReservedHighRisk, "Reserved metadata; IO policy/enforcement is inactive, so stdlib must not declare it while inactive."),

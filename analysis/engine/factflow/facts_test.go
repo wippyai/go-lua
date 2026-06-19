@@ -264,22 +264,24 @@ func TestDTOConstructorsAndAccessorsCopySlices(t *testing.T) {
 		NewCallResultTarget(CallResultTargetOrdinaryAssignment, 0, 0, symbol.ID(17), siteTargetPath),
 	}
 	site := NewCallSite(CallSiteConfig{
-		Context:         CallSiteContextCondition,
-		CalleeSymbol:    symbol.ID(16),
-		CalleePath:      siteCalleePath,
-		ReceiverPath:    siteReceiverPath,
-		HasReceiverPath: true,
-		MethodPath:      siteMethodPath,
-		HasMethodPath:   true,
-		MethodName:      "run",
-		ExprRef:         ExprRef(4),
-		HasExpr:         true,
-		ExprIndex:       0,
-		ArgumentSources: siteArgs,
-		TypeArgs:        siteTypeArgs,
-		ResultTargets:   siteTargets,
-		Final:           true,
-		Adjusted:        true,
+		Context:           CallSiteContextCondition,
+		CalleeSymbol:      symbol.ID(16),
+		CalleePath:        siteCalleePath,
+		ReceiverPath:      siteReceiverPath,
+		HasReceiverPath:   true,
+		ReceiverSource:    source,
+		HasReceiverSource: true,
+		MethodPath:        siteMethodPath,
+		HasMethodPath:     true,
+		MethodName:        "run",
+		ExprRef:           ExprRef(4),
+		HasExpr:           true,
+		ExprIndex:         0,
+		ArgumentSources:   siteArgs,
+		TypeArgs:          siteTypeArgs,
+		ResultTargets:     siteTargets,
+		Final:             true,
+		Adjusted:          true,
 	})
 	siteCalleePath.Segments[0].Name = "changed"
 	siteReceiverPath.Root = "changed"
@@ -293,6 +295,9 @@ func TestDTOConstructorsAndAccessorsCopySlices(t *testing.T) {
 	assertDirectField(t, site.CalleePath(), "run")
 	if receiverPath, ok := site.ReceiverPath(); !ok || !receiverPath.Equal(path.NewPath(symbol.ID(16), "svc")) {
 		t.Fatalf("call site receiver path = %#v/%v", receiverPath, ok)
+	}
+	if receiverSource, ok := site.ReceiverSource(); !ok || receiverSource.Kind != ValueSourceExpression {
+		t.Fatalf("call site receiver source = %#v/%v, want expression source", receiverSource, ok)
 	}
 	gotReceiverPath, _ := site.ReceiverPath()
 	gotReceiverPath.Root = "changed-again"
@@ -321,6 +326,29 @@ func TestDTOConstructorsAndAccessorsCopySlices(t *testing.T) {
 	gotSiteArgs := site.ArgumentSources()
 	if len(gotSiteArgs) != 2 || gotSiteArgs[0].Kind != ValueSourceExpression || gotSiteArgs[1].Kind != ValueSourceCall {
 		t.Fatalf("call site args = %#v, want copied argument sources", gotSiteArgs)
+	}
+	if site.ArgumentSourceCount() != 2 {
+		t.Fatalf("call site argument source count = %d, want 2", site.ArgumentSourceCount())
+	}
+	if got, ok := site.ArgumentSourceAt(1); !ok || got.Kind != ValueSourceCall {
+		t.Fatalf("call site argument source at 1 = %#v/%v, want call source", got, ok)
+	}
+	if got, ok := site.ArgumentSourceAt(2); ok || got != (ValueSource{}) {
+		t.Fatalf("call site out-of-range argument source = %#v/%v, want zero/false", got, ok)
+	}
+	visitedSiteArgs := 0
+	site.ForEachArgumentSource(func(index int, source ValueSource) bool {
+		visitedSiteArgs++
+		if index == 0 {
+			source.Kind = ValueSourceNil
+		}
+		return true
+	})
+	if visitedSiteArgs != 2 {
+		t.Fatalf("call site visited %d argument sources, want 2", visitedSiteArgs)
+	}
+	if got, _ := site.ArgumentSourceAt(0); got.Kind != ValueSourceExpression {
+		t.Fatalf("call site argument source iterator exposed mutable storage, got %v", got.Kind)
 	}
 	gotSiteArgs[0].Kind = ValueSourceNil
 	if got := site.ArgumentSources(); got[0].Kind != ValueSourceExpression {
@@ -448,19 +476,21 @@ func TestFactsCarrierCopiesAndReturnsFalseForMissingFacts(t *testing.T) {
 		},
 		CallSites: map[cfg.Point]CallSite{
 			point: NewCallSite(CallSiteConfig{
-				Context:         CallSiteContextAssignmentSource,
-				CalleeSymbol:    symbol.ID(35),
-				CalleePath:      path.NewPath(symbol.ID(35), "callee").Field("site"),
-				ReceiverPath:    path.NewPath(symbol.ID(35), "callee"),
-				HasReceiverPath: true,
-				MethodPath:      path.NewPath(symbol.ID(35), "callee").Field("site"),
-				HasMethodPath:   true,
-				MethodName:      "site",
-				ExprRef:         ExprRef(5),
-				HasExpr:         true,
-				ExprIndex:       1,
-				ArgumentSources: []ValueSource{source, callSource},
-				TypeArgs:        []TypeRef{TypeRef(7), TypeRef(8)},
+				Context:           CallSiteContextAssignmentSource,
+				CalleeSymbol:      symbol.ID(35),
+				CalleePath:        path.NewPath(symbol.ID(35), "callee").Field("site"),
+				ReceiverPath:      path.NewPath(symbol.ID(35), "callee"),
+				HasReceiverPath:   true,
+				ReceiverSource:    source,
+				HasReceiverSource: true,
+				MethodPath:        path.NewPath(symbol.ID(35), "callee").Field("site"),
+				HasMethodPath:     true,
+				MethodName:        "site",
+				ExprRef:           ExprRef(5),
+				HasExpr:           true,
+				ExprIndex:         1,
+				ArgumentSources:   []ValueSource{source, callSource},
+				TypeArgs:          []TypeRef{TypeRef(7), TypeRef(8)},
 				ResultTargets: []CallResultTarget{
 					NewCallResultTarget(CallResultTargetLocalAssignment, 0, 0, symbol.ID(33), path.NewPath(symbol.ID(33), "table")),
 				},
@@ -776,6 +806,9 @@ func TestFactsCarrierCopiesAndReturnsFalseForMissingFacts(t *testing.T) {
 	if receiverPath, ok := callSiteView.ReceiverPath(); !ok || !receiverPath.Equal(path.NewPath(symbol.ID(35), "callee")) {
 		t.Fatalf("call site view receiver path = %#v/%v", receiverPath, ok)
 	}
+	if receiverSource, ok := callSiteView.ReceiverSource(); !ok || receiverSource.Kind != ValueSourceExpression {
+		t.Fatalf("call site view receiver source = %#v/%v, want expression source", receiverSource, ok)
+	}
 	if methodPath, ok := callSiteView.MethodPath(); !ok || !methodPath.Equal(path.NewPath(symbol.ID(35), "callee").Field("site")) {
 		t.Fatalf("call site view method path = %#v/%v", methodPath, ok)
 	}
@@ -790,6 +823,29 @@ func TestFactsCarrierCopiesAndReturnsFalseForMissingFacts(t *testing.T) {
 	}
 	if args := callSiteView.ArgumentSources(); len(args) != 2 || args[0].Kind != ValueSourceExpression || args[1].Kind != ValueSourceCall {
 		t.Fatalf("call site view args = %#v", args)
+	}
+	if callSiteView.ArgumentSourceCount() != 2 {
+		t.Fatalf("call site view argument source count = %d, want 2", callSiteView.ArgumentSourceCount())
+	}
+	if got, ok := callSiteView.ArgumentSourceAt(1); !ok || got.Kind != ValueSourceCall {
+		t.Fatalf("call site view argument source at 1 = %#v/%v, want call source", got, ok)
+	}
+	if got, ok := callSiteView.ArgumentSourceAt(-1); ok || got != (ValueSource{}) {
+		t.Fatalf("call site view out-of-range argument source = %#v/%v, want zero/false", got, ok)
+	}
+	visitedViewArgs := 0
+	callSiteView.ForEachArgumentSource(func(index int, source ValueSource) bool {
+		visitedViewArgs++
+		if index == 0 {
+			source.Kind = ValueSourceNil
+		}
+		return true
+	})
+	if visitedViewArgs != 2 {
+		t.Fatalf("call site view visited %d argument sources, want 2", visitedViewArgs)
+	}
+	if got, _ := callSiteView.ArgumentSourceAt(0); got.Kind != ValueSourceExpression {
+		t.Fatalf("call site view argument source iterator exposed mutable storage, got %v", got.Kind)
 	}
 	if typeArgs := callSiteView.TypeArgs(); len(typeArgs) != 2 || typeArgs[0] != TypeRef(7) || typeArgs[1] != TypeRef(8) {
 		t.Fatalf("call site view type args = %#v", typeArgs)
@@ -828,6 +884,56 @@ func TestFactsCarrierCopiesAndReturnsFalseForMissingFacts(t *testing.T) {
 	if got := literalAgain.Entries()[0].Suffix(); got.Segments[0].Name != "field" {
 		t.Fatalf("facts object literal exposed mutable suffix: %#v", got)
 	}
+	literalView, ok := facts.ObjectLiteralView(ExprRef(1))
+	if !ok {
+		t.Fatal("object literal view missing")
+	}
+	if literalView.EntryCount() != 1 {
+		t.Fatalf("object literal view entry count = %d, want 1", literalView.EntryCount())
+	}
+	visitedEntries := 0
+	literalView.ForEachEntry(func(entry ObjectEntryView) bool {
+		visitedEntries++
+		if entry.Source() != source {
+			t.Fatalf("object literal view source = %#v, want %#v", entry.Source(), source)
+		}
+		if key, ok := entry.StaticMemberSuffixKey(); !ok || key != ".field" {
+			t.Fatalf("object literal view suffix key = %q/%v, want .field/true", key, ok)
+		}
+		if got := entry.SuffixSegmentCount(); got != 1 {
+			t.Fatalf("object literal view suffix segment count = %d, want 1", got)
+		}
+		seg, ok := entry.SuffixSegmentAt(0)
+		if !ok || seg.Kind != segment.SegmentField || seg.Name != "field" {
+			t.Fatalf("object literal view suffix segment = %#v/%v, want field", seg, ok)
+		}
+		seg.Name = "mutated-through-view-segment-copy"
+		if got, ok := entry.SuffixSegmentAt(99); ok || got != (segment.Segment{}) {
+			t.Fatalf("object literal view out-of-range suffix segment = %#v/%v, want empty/false", got, ok)
+		}
+		root := path.NewPath(symbol.ID(50), "obj")
+		target, ok := entry.AppendSuffixTo(root)
+		if !ok || !target.Equal(root.Field("field")) {
+			t.Fatalf("object literal view appended suffix = %#v/%v", target, ok)
+		}
+		target.Segments[0].Name = "mutated-through-view-target"
+		suffix := entry.Suffix()
+		suffix.Segments[0].Name = "mutated-through-view-suffix"
+		return true
+	})
+	if visitedEntries != 1 {
+		t.Fatalf("object literal view visited %d entries, want 1", visitedEntries)
+	}
+	literalViewAgain, _ := facts.ObjectLiteralView(ExprRef(1))
+	literalViewAgain.ForEachEntry(func(entry ObjectEntryView) bool {
+		if suffix := entry.Suffix(); suffix.Segments[0].Name != "field" {
+			t.Fatalf("object literal view exposed mutable suffix: %#v", suffix)
+		}
+		if seg, ok := entry.SuffixSegmentAt(0); !ok || seg.Name != "field" {
+			t.Fatalf("object literal view exposed mutable segment: %#v/%v", seg, ok)
+		}
+		return true
+	})
 
 	exprValue, ok := facts.ExpressionValue(ExprRef(3))
 	if !ok {

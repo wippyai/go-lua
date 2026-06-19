@@ -65,6 +65,55 @@ func TestFromTypeMaterializesOptionalAndUnionPresence(t *testing.T) {
 	assertRuntimeKind(t, reg, gotNil, runtimekind.Singleton(runtimekind.Nil))
 }
 
+func TestFromTypeMaterializesAliasAndRecursivePresence(t *testing.T) {
+	reg := standard.Registry()
+
+	tests := []struct {
+		name string
+		typ  typ.Type
+		want presence.Value
+	}{
+		{
+			name: "alias to optional",
+			typ:  typ.NewAlias("MaybeName", typeexpr.Optional(typ.String)),
+			want: presence.Maybe(),
+		},
+		{
+			name: "alias to nil",
+			typ:  typ.NewAlias("NilAlias", typ.Nil),
+			want: presence.Absent(),
+		},
+		{
+			name: "recursive optional body",
+			typ: typ.NewRecursive("MaybeName", func(typ.Type) typ.Type {
+				return typeexpr.Optional(typ.String)
+			}),
+			want: presence.Maybe(),
+		},
+		{
+			name: "recursive nil body",
+			typ: typ.NewRecursive("NilBox", func(typ.Type) typ.Type {
+				return typ.Nil
+			}),
+			want: presence.Absent(),
+		},
+		{
+			name: "direct recursive self body terminates imprecisely",
+			typ: typ.NewRecursive("Loop", func(self typ.Type) typ.Type {
+				return self
+			}),
+			want: presence.Top(),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := FromType(reg, tt.typ)
+			assertPresence(t, got, tt.want)
+		})
+	}
+}
+
 func TestFromTypeMaterializesInterfacePresence(t *testing.T) {
 	reg := standard.Registry()
 	iface := typ.NewInterface("Resource", []typ.Method{
@@ -244,6 +293,94 @@ func TestStructuralTypeOfAppliesPresenceOptions(t *testing.T) {
 	gotAbsent, ok := StructuralTypeOf(reg, nil, absentString, StructuralTypeOptions{ApplyPresence: true})
 	if !ok || !typ.TypeEquals(gotAbsent, typ.Nil) {
 		t.Fatalf("StructuralTypeOf(absent) = %v/%v, want nil/true", gotAbsent, ok)
+	}
+}
+
+func TestProjectionHasNilHandlesAliasesAndInstantiations(t *testing.T) {
+	param := typ.NewTypeParam("T", nil)
+	maybeBox := typ.NewGeneric("MaybeBox", []*typ.TypeParam{param}, typeexpr.Optional(param))
+	instantiatedMaybe := typ.Instantiate(maybeBox, typ.String)
+
+	tests := []struct {
+		name string
+		typ  typ.Type
+		want bool
+	}{
+		{name: "nil input is not projected nil", typ: nil, want: false},
+		{name: "plain nil", typ: typ.Nil, want: true},
+		{name: "optional", typ: typeexpr.Optional(typ.String), want: true},
+		{name: "union with nil", typ: typeexpr.Union(typ.String, typ.Nil), want: true},
+		{name: "alias to optional", typ: typ.NewAlias("MaybeName", typeexpr.Optional(typ.String)), want: true},
+		{name: "alias to nil", typ: typ.NewAlias("NilAlias", typ.Nil), want: true},
+		{name: "alias to non nil", typ: typ.NewAlias("Name", typ.String), want: false},
+		{name: "instantiated optional body", typ: instantiatedMaybe, want: true},
+		{name: "alias to instantiated optional body", typ: typ.NewAlias("MaybeStringBox", instantiatedMaybe), want: true},
+		{name: "any is not concrete nil evidence", typ: typ.Any, want: false},
+		{name: "unknown is not concrete nil evidence", typ: typ.Unknown, want: false},
+		{name: "never is not nil evidence", typ: typ.Never, want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := ProjectionHasNil(tt.typ); got != tt.want {
+				t.Fatalf("ProjectionHasNil(%v) = %v, want %v", tt.typ, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestProjectionHasNilTerminatesOnRecursiveInstantiation(t *testing.T) {
+	param := typ.NewTypeParam("T", nil)
+	loop := typ.NewGeneric("Loop", []*typ.TypeParam{param}, nil)
+	loop.SetBody(typ.Instantiate(loop, param))
+
+	if ProjectionHasNil(typ.Instantiate(loop, typ.String)) {
+		t.Fatal("ProjectionHasNil(self-instantiating generic) reported nil")
+	}
+}
+
+func TestProjectionHasNilHandlesRecursiveBodies(t *testing.T) {
+	tests := []struct {
+		name string
+		typ  typ.Type
+		want bool
+	}{
+		{
+			name: "recursive optional body",
+			typ: typ.NewRecursive("MaybeNode", func(self typ.Type) typ.Type {
+				return typeexpr.Optional(self)
+			}),
+			want: true,
+		},
+		{
+			name: "recursive nil body",
+			typ: typ.NewRecursive("NilNode", func(typ.Type) typ.Type {
+				return typ.Nil
+			}),
+			want: true,
+		},
+		{
+			name: "recursive table body",
+			typ: typ.NewRecursive("Node", func(self typ.Type) typ.Type {
+				return typetable.NewRecord().Field("next", typeexpr.Optional(self)).Build()
+			}),
+			want: false,
+		},
+		{
+			name: "direct recursive self body terminates",
+			typ: typ.NewRecursive("Loop", func(self typ.Type) typ.Type {
+				return self
+			}),
+			want: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := ProjectionHasNil(tt.typ); got != tt.want {
+				t.Fatalf("ProjectionHasNil(%v) = %v, want %v", tt.typ, got, tt.want)
+			}
+		})
 	}
 }
 

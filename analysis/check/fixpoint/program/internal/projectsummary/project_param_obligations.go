@@ -1,17 +1,19 @@
 package projectsummary
 
 import (
+	"github.com/wippyai/go-lua/analysis/check/fixpoint/program/internal/memberaccess"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/summary"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/typewitness"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/variantorigin"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/domain/value/variant"
-	factapply "github.com/wippyai/go-lua/analysis/engine/factapply"
+	"github.com/wippyai/go-lua/analysis/engine/callpayload"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
@@ -34,7 +36,7 @@ type callReader interface {
 }
 
 type callOutcomeAtReader interface {
-	CallOutcomeAt(cfg.Point) (factapply.CallOutcome, bool)
+	CallOutcomeAt(cfg.Point) (callpayload.CallOutcome, bool)
 }
 
 type returnFactReader interface {
@@ -65,10 +67,21 @@ type pathValueAtBoundaryReader interface {
 	PathValueAtBoundary(cfg.Point, pathdom.Path) (product.Value, bool)
 }
 
+type pathEquivalentAtBoundaryReader interface {
+	PathsEquivalentAtBoundary(cfg.Point, pathdom.Path, pathdom.Path) bool
+}
+
 type typeBindingReader interface {
 	TypeRef(*ast.TypeRefExpr) (bind.TypeDecl, bool)
 	PrimitiveTypeRef(*ast.PrimitiveTypeExpr) (bind.TypeDecl, bool)
 	TypeDefParams(*ast.TypeDefStmt) []bind.TypeDecl
+}
+
+type functionIdentityReader interface {
+	Function() *ast.FunctionExpr
+	FunctionSymbol(*ast.FunctionExpr) (symbol.ID, bool)
+	FunctionBySymbol(symbol.ID) (*ast.FunctionExpr, bool)
+	FunctionOrigin(*ast.FunctionExpr) (bind.FunctionOrigin, bool)
 }
 
 func projectParamObligations(reg *axis.Registry, result ResultReader) []product.Value {
@@ -85,6 +98,7 @@ func projectParamObligations(reg *axis.Registry, result ResultReader) []product.
 		result:   result,
 		params:   params,
 		resolver: paramObligationTypeResolver(result),
+		reach:    newCFGReachabilityCache(graph),
 	}
 	out := make([]product.Value, len(params))
 	for i := range out {
@@ -95,7 +109,7 @@ func projectParamObligations(reg *axis.Registry, result ResultReader) []product.
 		if callResult, ok := result.(callReader); ok {
 			if fact, ok := callResult.Call(point); ok {
 				if site, siteOK := callResult.CallSite(point); siteOK {
-					ctx.addCallOutcomeObligations(out, fact)
+					ctx.addCallOutcomeObligations(out, fact, site)
 					ctx.addTypedCallObligations(out, fact, site)
 				}
 				for _, arg := range fact.Args {
@@ -139,6 +153,7 @@ func projectParamMemberCallObligations(reg *axis.Registry, result ResultReader) 
 		result:   result,
 		params:   params,
 		resolver: paramObligationTypeResolver(result),
+		reach:    newCFGReachabilityCache(graph),
 	}
 	var out []summary.ParamMemberCallObligation
 	for _, point := range graph.RPO() {
@@ -147,7 +162,8 @@ func projectParamMemberCallObligations(reg *axis.Registry, result ResultReader) 
 		if !ok {
 			continue
 		}
-		out = append(out, ctx.memberCallObligations(fact)...)
+		site, _ := callResult.CallSite(point)
+		out = append(out, ctx.memberCallObligations(fact, site)...)
 	}
 	return out
 }
@@ -168,6 +184,7 @@ func projectParamMemberReturnSlots(reg *axis.Registry, result ResultReader) []su
 		result:   result,
 		params:   params,
 		resolver: paramObligationTypeResolver(result),
+		reach:    newCFGReachabilityCache(graph),
 	}
 	var out []summary.ParamMemberReturnSlot
 	for _, returnPoint := range result.ReturnPoints() {
@@ -251,10 +268,17 @@ type paramObligationProjector struct {
 	result   ResultReader
 	params   []pathdom.Path
 	resolver typeannotation.Resolver
+	reach    *cfgReachabilityCache
 	point    cfg.Point
 }
 
-func (p paramObligationProjector) addCallOutcomeObligations(out []product.Value, fact semantics.CallFact) {
+func (p paramObligationProjector) addCallOutcomeObligations(out []product.Value, fact semantics.CallFact, site factflow.CallSite) {
+	if p.selfCall(fact) {
+		return
+	}
+	if receiver, member, ok := memberCallReceiverForSite(fact, site); ok && !p.memberCallReceiverStable(receiver, member) {
+		return
+	}
 	reader, ok := p.result.(callOutcomeAtReader)
 	if !ok {
 		return
@@ -273,6 +297,30 @@ func (p paramObligationProjector) addCallOutcomeObligations(out []product.Value,
 		}
 		p.add(out, param, obligation.Value)
 	}
+}
+
+func (p paramObligationProjector) selfCall(fact semantics.CallFact) bool {
+	if !fact.HasCalleeSymbol || fact.CalleeSymbol == 0 {
+		return false
+	}
+	reader, ok := p.result.(functionIdentityReader)
+	if !ok {
+		return false
+	}
+	fn := reader.Function()
+	if fn == nil {
+		return false
+	}
+	if origin, ok := reader.FunctionOrigin(fn); ok && origin.HasTargetSymbol && origin.TargetSymbol == fact.CalleeSymbol {
+		return true
+	}
+	if calleeFn, ok := reader.FunctionBySymbol(fact.CalleeSymbol); ok {
+		if calleeFn == fn {
+			return true
+		}
+	}
+	current, ok := reader.FunctionSymbol(fn)
+	return ok && current != 0 && current == fact.CalleeSymbol
 }
 
 func (p paramObligationProjector) addTypedCallObligations(out []product.Value, fact semantics.CallFact, site factflow.CallSite) {
@@ -297,28 +345,29 @@ func (p paramObligationProjector) addTypedCallObligations(out []product.Value, f
 }
 
 func (p paramObligationProjector) callParamTypes(fact semantics.CallFact, site factflow.CallSite) []typ.Type {
+	receiver, member, hasMemberCall := memberCallReceiverForSite(fact, site)
+	if hasMemberCall && !p.memberCallReceiverStable(receiver, member) {
+		return nil
+	}
 	if sigReader, ok := p.result.(callSignatureReader); ok {
 		if sig, ok := sigReader.CallSignature(site); ok && sig.Type != nil {
 			return functionParamTypes(sig.Type, false)
 		}
 	}
+	if hasMemberCall {
+		receiverType, ok := p.receiverType(receiver)
+		if ok {
+			fn, status, ok := memberaccess.Callable(receiverType, member)
+			if status == typecall.MemberCallOK && ok {
+				consumeReceiver := fact.Receiver != nil && fact.Method != "" && memberCallConsumesReceiver(fn, receiverType)
+				return functionParamTypes(fn, consumeReceiver)
+			}
+		}
+	}
 	if fn, ok := p.directCallable(site); ok {
 		return functionParamTypes(fn, false)
 	}
-	receiver, member, ok := memberCallReceiver(fact)
-	if !ok {
-		return nil
-	}
-	receiverType, ok := p.receiverType(receiver)
-	if !ok {
-		return nil
-	}
-	fn, status, ok := typecall.MemberCallable(receiverType, member)
-	if status != typecall.MemberCallOK || !ok {
-		return nil
-	}
-	consumeReceiver := fact.Receiver != nil && fact.Method != "" && memberCallConsumesReceiver(fn, receiverType)
-	return functionParamTypes(fn, consumeReceiver)
+	return nil
 }
 
 func (p paramObligationProjector) directCallable(site factflow.CallSite) (*typ.Function, bool) {
@@ -366,15 +415,19 @@ func (p paramObligationProjector) receiverType(receiver pathdom.Path) (typ.Type,
 	return paramObligationTypeFromValue(p.reg, value)
 }
 
-func (p paramObligationProjector) memberCallObligations(fact semantics.CallFact) []summary.ParamMemberCallObligation {
-	receiver, member, ok := memberCallReceiver(fact)
+func (p paramObligationProjector) memberCallObligations(fact semantics.CallFact, site factflow.CallSite) []summary.ParamMemberCallObligation {
+	receiver, member, ok := memberCallReceiverForSite(fact, site)
 	if !ok {
 		return nil
 	}
-	receiverParam, ok := p.unconditionalPathParamIndex(receiver)
+	if !p.memberCallReceiverStable(receiver, member) {
+		return nil
+	}
+	receiverParam, receiverSuffix, ok := p.unconditionalReceiverParamPath(receiver)
 	if !ok {
 		return nil
 	}
+	receiverPath := pathdom.PathKey(segment.FormatSegments(receiverSuffix))
 	memberOffset := 0
 	if fact.Receiver != nil && fact.Method != "" {
 		memberOffset = 1
@@ -387,12 +440,324 @@ func (p paramObligationProjector) memberCallObligations(fact semantics.CallFact)
 		}
 		out = append(out, summary.ParamMemberCallObligation{
 			ReceiverParam:    receiverParam,
+			ReceiverPath:     receiverPath,
 			Member:           member,
 			ArgParam:         argParam,
 			MemberParamIndex: i + memberOffset,
 		})
 	}
 	return out
+}
+
+func (p paramObligationProjector) memberCallReceiverStable(receiver pathdom.Path, member segment.Segment) bool {
+	if receiver.IsEmpty() || !memberaccess.Valid(member) {
+		return false
+	}
+	graph := p.result.Graph()
+	ordinaryResult, ok := p.result.(ordinaryAssignmentReader)
+	callResult, hasCalls := p.result.(callReader)
+	callOutcomeResult, hasCallOutcomes := p.result.(callOutcomeAtReader)
+	if graph == nil {
+		return true
+	}
+	for _, point := range graph.RPO() {
+		if point == p.point {
+			return true
+		}
+		if hasCalls && hasCallOutcomes && p.canReach(graph, point, p.point) {
+			if site, siteOK := callResult.CallSite(point); siteOK {
+				if outcome, outcomeOK := callOutcomeResult.CallOutcomeAt(point); outcomeOK &&
+					p.callOutcomeInvalidatesMemberReceiver(site, outcome, receiver, member) {
+					return false
+				}
+			}
+		}
+		if ok {
+			fact, ok := ordinaryResult.OrdinaryAssignment(point)
+			if ok && p.assignmentInvalidatesMemberCallReceiver(fact, receiver, member) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func (p paramObligationProjector) callOutcomeInvalidatesMemberReceiver(site factflow.CallSite, outcome callpayload.CallOutcome, receiver pathdom.Path, member segment.Segment) bool {
+	appendSubstituted := func(targets *[]pathdom.Path, bindings []pathdom.Path, target pathdom.Path) {
+		substituted, ok := target.Substitute(bindings)
+		if !ok || substituted.IsEmpty() {
+			return
+		}
+		*targets = append(*targets, substituted)
+	}
+	var targets []pathdom.Path
+	argBindings := p.callArgumentBindings(site)
+	callBindings := p.callBindings(site)
+	for _, invalidation := range outcome.ParamPathInvalidations {
+		appendSubstituted(&targets, argBindings, invalidation.Path)
+	}
+	for _, invalidation := range outcome.NormalReturnFacts.PathInvalidations {
+		appendSubstituted(&targets, callBindings, invalidation.Path)
+	}
+	for _, target := range targets {
+		for _, memberPath := range memberaccess.Paths(receiver, member) {
+			if p.invalidationPathReachesMemberPath(target, memberPath) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func (p paramObligationProjector) callArgumentBindings(site factflow.CallSite) []pathdom.Path {
+	pathReader, ok := p.result.(expressionPathRefReader)
+	if !ok {
+		return nil
+	}
+	var bindings []pathdom.Path
+	site.ForEachArgumentSource(func(i int, source factflow.ValueSource) bool {
+		if source.Kind != factflow.ValueSourceExpression || !source.HasExpr {
+			return true
+		}
+		sourcePath, ok := pathReader.ExpressionPathRef(source.ExprRef)
+		if !ok || sourcePath.IsEmpty() {
+			return true
+		}
+		bindings = appendPathBinding(bindings, i, sourcePath)
+		return true
+	})
+	return bindings
+}
+
+func (p paramObligationProjector) callBindings(site factflow.CallSite) []pathdom.Path {
+	return callSiteBindings(p.result, site)
+}
+
+func callSiteBindings(result ResultReader, site factflow.CallSite) []pathdom.Path {
+	pathReader, ok := result.(expressionPathRefReader)
+	if !ok {
+		return nil
+	}
+	var bindings []pathdom.Path
+	offset := 0
+	if receiverPath, ok := site.ReceiverPath(); ok {
+		bindings = appendPathBinding(bindings, 0, receiverPath)
+		offset = 1
+	}
+	site.ForEachArgumentSource(func(i int, source factflow.ValueSource) bool {
+		if source.Kind != factflow.ValueSourceExpression || !source.HasExpr {
+			return true
+		}
+		sourcePath, ok := pathReader.ExpressionPathRef(source.ExprRef)
+		if !ok || sourcePath.IsEmpty() {
+			return true
+		}
+		bindings = appendPathBinding(bindings, i+offset, sourcePath)
+		return true
+	})
+	return bindings
+}
+
+func appendPathBinding(bindings []pathdom.Path, index int, value pathdom.Path) []pathdom.Path {
+	if index < 0 || value.IsEmpty() {
+		return bindings
+	}
+	for len(bindings) <= index {
+		bindings = append(bindings, pathdom.Path{})
+	}
+	bindings[index] = value
+	return bindings
+}
+
+func (p paramObligationProjector) canReach(graph cfg.Graph, from, to cfg.Point) bool {
+	if p.reach != nil {
+		return p.reach.canReach(from, to)
+	}
+	return cfgPointCanReach(graph, from, to)
+}
+
+type cfgReachabilityCache struct {
+	graph         cfg.Graph
+	reachableFrom map[cfg.Point]map[cfg.Point]struct{}
+}
+
+func newCFGReachabilityCache(graph cfg.Graph) *cfgReachabilityCache {
+	if graph == nil {
+		return nil
+	}
+	return &cfgReachabilityCache{
+		graph:         graph,
+		reachableFrom: make(map[cfg.Point]map[cfg.Point]struct{}),
+	}
+}
+
+func (c *cfgReachabilityCache) canReach(from, to cfg.Point) bool {
+	if c == nil || c.graph == nil || from == 0 || to == 0 {
+		return false
+	}
+	if from == to {
+		return true
+	}
+	reachable := c.reachableSet(from)
+	_, ok := reachable[to]
+	return ok
+}
+
+func (c *cfgReachabilityCache) reachableSet(from cfg.Point) map[cfg.Point]struct{} {
+	if reachable, ok := c.reachableFrom[from]; ok {
+		return reachable
+	}
+	reachable := map[cfg.Point]struct{}{from: {}}
+	stack := append([]cfg.Point(nil), c.graph.Successors(from)...)
+	for len(stack) != 0 {
+		point := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+		if _, ok := reachable[point]; ok {
+			continue
+		}
+		reachable[point] = struct{}{}
+		stack = append(stack, c.graph.Successors(point)...)
+	}
+	c.reachableFrom[from] = reachable
+	return reachable
+}
+
+func cfgPointCanReach(graph cfg.Graph, from, to cfg.Point) bool {
+	if graph == nil || from == 0 || to == 0 {
+		return false
+	}
+	if from == to {
+		return true
+	}
+	seen := map[cfg.Point]struct{}{from: {}}
+	stack := append([]cfg.Point(nil), graph.Successors(from)...)
+	for len(stack) != 0 {
+		point := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+		if point == to {
+			return true
+		}
+		if _, ok := seen[point]; ok {
+			continue
+		}
+		seen[point] = struct{}{}
+		stack = append(stack, graph.Successors(point)...)
+	}
+	return false
+}
+
+func projectPathHasPrefix(candidate, prefix pathdom.Path) bool {
+	if candidate.Symbol != 0 || prefix.Symbol != 0 {
+		if candidate.Symbol != prefix.Symbol || candidate.Version != prefix.Version {
+			return false
+		}
+	} else if candidate.Root != prefix.Root || candidate.Version != prefix.Version {
+		return false
+	}
+	if len(prefix.Segments) > len(candidate.Segments) {
+		return false
+	}
+	for i := range prefix.Segments {
+		if candidate.Segments[i] != prefix.Segments[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func (p paramObligationProjector) assignmentInvalidatesMemberCallReceiver(fact semantics.OrdinaryAssignmentFact, receiver pathdom.Path, member segment.Segment) bool {
+	if receiver.IsEmpty() || !memberaccess.Valid(member) {
+		return false
+	}
+	memberPaths := memberaccess.Paths(receiver, member)
+	if fact.HasPath {
+		if fact.Path.Equal(receiver) {
+			return true
+		}
+		for _, memberPath := range memberPaths {
+			if p.invalidationPathReachesMemberPath(fact.Path, memberPath) {
+				return true
+			}
+		}
+		return false
+	}
+	if fact.HasContainerPath {
+		return fact.ContainerPath.Equal(receiver)
+	}
+	return false
+}
+
+func (p paramObligationProjector) invalidationPathReachesMemberPath(invalidated, memberPath pathdom.Path) bool {
+	if invalidated.IsEmpty() || memberPath.IsEmpty() {
+		return false
+	}
+	if projectPathHasPrefix(memberPath, invalidated) {
+		return true
+	}
+	if len(invalidated.Segments) > len(memberPath.Segments) {
+		return false
+	}
+	invalidatedRoot := invalidated.Clone()
+	invalidatedRoot.Segments = nil
+	if !p.pathRootReadable(invalidatedRoot) && segmentsHavePrefix(memberPath.Segments, invalidated.Segments) {
+		return true
+	}
+	for prefixLen := 0; prefixLen <= len(memberPath.Segments); prefixLen++ {
+		if len(invalidated.Segments) > len(memberPath.Segments)-prefixLen {
+			break
+		}
+		if !segmentsHavePrefix(memberPath.Segments[prefixLen:], invalidated.Segments) {
+			continue
+		}
+		memberPrefix := memberPath.Clone()
+		memberPrefix.Segments = append(memberPrefix.Segments[:0:0], memberPath.Segments[:prefixLen]...)
+		if p.pathsShareExactIdentity(invalidatedRoot, memberPrefix) {
+			return true
+		}
+	}
+	return false
+}
+
+func (p paramObligationProjector) pathRootReadable(root pathdom.Path) bool {
+	valueReader, ok := p.result.(pathValueAtBoundaryReader)
+	if !ok || root.IsEmpty() {
+		return false
+	}
+	_, ok = valueReader.PathValueAtBoundary(p.point, root)
+	return ok
+}
+
+func segmentsHavePrefix(candidate, prefix []segment.Segment) bool {
+	if len(prefix) > len(candidate) {
+		return false
+	}
+	for i := range prefix {
+		if candidate[i] != prefix[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func (p paramObligationProjector) pathsShareExactIdentity(left, right pathdom.Path) bool {
+	if left.IsEmpty() || right.IsEmpty() || left.Equal(right) {
+		return false
+	}
+	if equivalent, ok := p.result.(pathEquivalentAtBoundaryReader); ok && equivalent.PathsEquivalentAtBoundary(p.point, left, right) {
+		return true
+	}
+	valueReader, ok := p.result.(pathValueAtBoundaryReader)
+	if !ok || p.reg == nil {
+		return false
+	}
+	leftValue, leftOK := valueReader.PathValueAtBoundary(p.point, left)
+	rightValue, rightOK := valueReader.PathValueAtBoundary(p.point, right)
+	if !leftOK || !rightOK {
+		return false
+	}
+	leftID, leftOK := product.Get(p.reg, leftValue, identity.Key).ID()
+	rightID, rightOK := product.Get(p.reg, rightValue, identity.Key).ID()
+	return leftOK && rightOK && leftID != (identity.ID{}) && leftID == rightID
 }
 
 func (p paramObligationProjector) addArithmeticObligations(out []product.Value, expr ast.Expr) {
@@ -498,6 +863,55 @@ func (p paramObligationProjector) unconditionalPathParamIndex(exprPath pathdom.P
 	return index, true
 }
 
+func (p paramObligationProjector) unconditionalReceiverParamPath(receiver pathdom.Path) (int, []segment.Segment, bool) {
+	index, suffix, ok := paramIndexAndSuffixForPath(receiver, p.params)
+	if ok && p.paramUseUnconditional(index) {
+		return index, suffix, true
+	}
+	source, ok := p.localAliasSourcePath(receiver)
+	if !ok {
+		return 0, nil, false
+	}
+	index, suffix, ok = paramIndexAndSuffixForPath(source, p.params)
+	if !ok || !p.paramUseUnconditional(index) {
+		return 0, nil, false
+	}
+	if len(receiver.Segments) != 0 {
+		suffix = append(suffix[:len(suffix):len(suffix)], receiver.Segments...)
+	}
+	return index, suffix, true
+}
+
+func (p paramObligationProjector) localAliasSourcePath(receiver pathdom.Path) (pathdom.Path, bool) {
+	if receiver.IsEmpty() || receiver.Symbol == 0 {
+		return pathdom.Path{}, false
+	}
+	pathReader, ok := p.result.(expressionPathReader)
+	if !ok {
+		return pathdom.Path{}, false
+	}
+	graph := p.result.Graph()
+	localResult, ok := p.result.(localAssignmentReader)
+	if graph == nil || !ok {
+		return pathdom.Path{}, false
+	}
+	for _, point := range graph.RPO() {
+		if point == p.point {
+			return pathdom.Path{}, false
+		}
+		fact, ok := localResult.LocalAssignment(point)
+		if !ok || !fact.HasSymbol || fact.Symbol != receiver.Symbol || fact.Expr == nil {
+			continue
+		}
+		source, ok := pathReader.ExpressionPath(fact.Expr)
+		if !ok || source.IsEmpty() {
+			continue
+		}
+		return source, true
+	}
+	return pathdom.Path{}, false
+}
+
 func (p paramObligationProjector) paramUseUnconditional(index int) bool {
 	if index < 0 || index >= len(p.params) {
 		return false
@@ -531,32 +945,70 @@ func (p paramObligationProjector) paramUseUnconditional(index int) bool {
 }
 
 func paramIndexForPath(p pathdom.Path, params []pathdom.Path) (int, bool) {
-	if p.IsEmpty() || len(p.Segments) != 0 {
-		return 0, false
-	}
-	for i, param := range params {
-		if p.Equal(param) {
-			return i, true
-		}
-	}
-	return 0, false
+	index, suffix, ok := paramIndexAndSuffixForPath(p, params)
+	return index, ok && len(suffix) == 0
 }
 
-func memberCallReceiver(fact semantics.CallFact) (pathdom.Path, string, bool) {
+func paramIndexAndSuffixForPath(p pathdom.Path, params []pathdom.Path) (int, []segment.Segment, bool) {
+	if p.IsEmpty() {
+		return 0, nil, false
+	}
+	for i, param := range params {
+		if !pathRootEqual(p, param) || len(p.Segments) < len(param.Segments) {
+			continue
+		}
+		matched := true
+		for j := range param.Segments {
+			if p.Segments[j] != param.Segments[j] {
+				matched = false
+				break
+			}
+		}
+		if matched {
+			return i, append([]segment.Segment(nil), p.Segments[len(param.Segments):]...), true
+		}
+	}
+	return 0, nil, false
+}
+
+func pathRootEqual(a, b pathdom.Path) bool {
+	if a.Symbol != 0 || b.Symbol != 0 {
+		return a.Symbol == b.Symbol && a.Version == b.Version
+	}
+	return a.Root == b.Root
+}
+
+func memberCallReceiver(fact semantics.CallFact) (pathdom.Path, segment.Segment, bool) {
 	if fact.HasReceiverPath && fact.Method != "" {
-		return fact.ReceiverPath, fact.Method, true
+		return fact.ReceiverPath, segment.Segment{Kind: segment.SegmentField, Name: fact.Method}, true
 	}
 	if !fact.HasCalleePath || len(fact.CalleePath.Segments) == 0 {
-		return pathdom.Path{}, "", false
+		return pathdom.Path{}, segment.Segment{}, false
 	}
 	last := fact.CalleePath.Segments[len(fact.CalleePath.Segments)-1]
 	switch last.Kind {
-	case segment.SegmentField, segment.SegmentIndexString:
+	case segment.SegmentField, segment.SegmentIndexString, segment.SegmentIndexInt:
 		receiver := fact.CalleePath.Parent()
-		return receiver, last.Name, !receiver.IsEmpty() && last.Name != ""
+		return receiver, last, !receiver.IsEmpty() && memberaccess.Valid(last)
 	default:
-		return pathdom.Path{}, "", false
+		return pathdom.Path{}, segment.Segment{}, false
 	}
+}
+
+func memberCallReceiverForSite(fact semantics.CallFact, site factflow.CallSite) (pathdom.Path, segment.Segment, bool) {
+	if receiver, member, ok := memberCallReceiver(fact); ok {
+		return receiver, member, true
+	}
+	callee := site.CalleePath()
+	if callee.IsEmpty() || len(callee.Segments) == 0 {
+		return pathdom.Path{}, segment.Segment{}, false
+	}
+	last := callee.Segments[len(callee.Segments)-1]
+	if !memberaccess.Valid(last) {
+		return pathdom.Path{}, segment.Segment{}, false
+	}
+	receiver := callee.Parent()
+	return receiver, last, !receiver.IsEmpty()
 }
 
 func functionParamTypes(fn *typ.Function, skipFirst bool) []typ.Type {

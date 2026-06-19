@@ -2,7 +2,6 @@ package factapply
 
 import (
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
-	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
 	"github.com/wippyai/go-lua/analysis/domain/placement"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/evidence"
@@ -34,7 +33,7 @@ func applyObjectLiteralEntries(
 	if !valueSource.HasExpr {
 		return out
 	}
-	literal, ok := facts.ObjectLiteral(valueSource.ExprRef)
+	literal, ok := facts.ObjectLiteralView(valueSource.ExprRef)
 	if !ok {
 		return out
 	}
@@ -42,30 +41,31 @@ func applyObjectLiteralEntries(
 	if resolver == nil {
 		return out
 	}
-	for _, entry := range literal.Entries() {
-		entryPath, ok := objectEntryTargetPath(targetPath, entry.Suffix())
+	literal.ForEachEntry(func(entry factflow.ObjectEntryView) bool {
+		entryPath, ok := entry.AppendSuffixTo(targetPath)
 		if !ok {
-			continue
+			return true
 		}
 		if resolver.KeyAt(ctx.Point, entryPath) == "" {
-			continue
+			return true
 		}
 		source := entry.Source()
 		value, ok := sources.ValueOfSource(ctx.Point, source, in, readWithSamePointCallSource(ctx.Point, source, read, out))
 		if !ok {
-			continue
+			return true
 		}
 		value = objectEntryValue(ctx.Registry, entry, value)
 		invalidated, ok := invalidatePathSubtreeAt(out, resolver, ctx.Point, entryPath)
 		if !ok {
-			continue
+			return true
 		}
 		written, ok := writePathAt(ctx.Registry, invalidated, resolver, ctx.Point, entryPath, value)
 		if !ok {
-			continue
+			return true
 		}
-		out = written
-	}
+		out = addPathEqualityProofFromSource(resolver, facts, ctx.Point, written, entryPath, source)
+		return true
+	})
 	return out
 }
 
@@ -84,7 +84,7 @@ func materializeObjectLiteralHeap(
 	if !source.HasExpr {
 		return out
 	}
-	literal, ok := facts.ObjectLiteral(source.ExprRef)
+	literal, ok := facts.ObjectLiteralView(source.ExprRef)
 	if !ok {
 		return out
 	}
@@ -99,7 +99,7 @@ func writeObjectLiteralHeap(
 	in state.State,
 	out state.State,
 	source factflow.ValueSource,
-	literal factflow.ObjectLiteral,
+	literal factflow.ObjectLiteralView,
 	active map[factflow.ExprRef]bool,
 ) state.State {
 	if !source.HasExpr {
@@ -120,37 +120,35 @@ func writeObjectLiteralHeap(
 		active = make(map[factflow.ExprRef]bool, 1)
 	}
 	active[source.ExprRef] = true
-	staticMembers := make(map[pathdom.PathKey]product.Value, len(literal.Entries()))
-	for _, entry := range literal.Entries() {
-		key, ok := heapidentity.StaticMemberSuffixKey(entry.Suffix().Segments)
+	staticMembers := make(map[pathdom.PathKey]product.Value, literal.EntryCount())
+	literal.ForEachEntry(func(entry factflow.ObjectEntryView) bool {
+		key, ok := entry.StaticMemberSuffixKey()
 		if !ok {
-			continue
+			return true
 		}
 		entrySource := entry.Source()
 		value, ok := sources.ValueOfSource(ctx.Point, entrySource, in, readWithSamePointCallSource(ctx.Point, entrySource, read, out))
 		if !ok {
-			continue
+			return true
 		}
 		value = objectEntryValue(ctx.Registry, entry, value)
 		staticMembers[key] = value
-		if canonical, ok := pathaddr.FieldCanonicalRelativeStaticMemberSuffixKey(entry.Suffix().Segments); ok {
+		if canonical, ok := entry.FieldCanonicalStaticMemberSuffixKey(); ok {
 			staticMembers[canonical] = value
 		}
 		if entrySource.HasExpr {
-			if nested, ok := facts.ObjectLiteral(entrySource.ExprRef); ok {
+			if nested, ok := facts.ObjectLiteralView(entrySource.ExprRef); ok {
 				out = writeObjectLiteralHeap(ctx, facts, sources, read, in, out, entrySource, nested, active)
 			}
 		}
-	}
+		return true
+	})
 	delete(active, source.ExprRef)
 	out = out.WritePlacement(id, placement.Join(out.ReadPlacement(id), placement.Stack))
-	return out.WriteHeapTableObject(ctx.Registry, id, heapidentity.NewTableObject(heapidentity.TableObjectConfig{
-		Root:          rootValue,
-		StaticMembers: staticMembers,
-	}))
+	return out.WriteHeapTableObject(ctx.Registry, id, heapidentity.NewOwnedStaticTableObject(rootValue, staticMembers))
 }
 
-func objectEntryValue(reg *axis.Registry, entry factflow.ObjectEntry, value product.Value) product.Value {
+func objectEntryValue(reg *axis.Registry, entry factflow.ObjectEntryView, value product.Value) product.Value {
 	expected, ok := entry.Expected()
 	if !ok || reg == nil {
 		return value
@@ -176,13 +174,4 @@ func overlayExpectedObjectEntryValue(reg *axis.Registry, value, expected product
 		value = product.Set(reg, value, evidence.Key, proof)
 	}
 	return value
-}
-
-func objectEntryTargetPath(root pathdom.Path, suffix pathdom.Path) (pathdom.Path, bool) {
-	if root.IsEmpty() || len(suffix.Segments) == 0 {
-		return pathdom.Path{}, false
-	}
-	out := root.Clone()
-	out.Segments = append(out.Segments, suffix.Segments...)
-	return out, true
 }

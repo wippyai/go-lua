@@ -3,7 +3,6 @@ package projectsummary
 import (
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
-	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/evidence"
@@ -11,21 +10,24 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/engine/callboundary"
 	"github.com/wippyai/go-lua/analysis/engine/dynamicindex"
+	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/state/channelselectfact"
 	effectdelta "github.com/wippyai/go-lua/analysis/engine/state/effectdelta"
 	"github.com/wippyai/go-lua/analysis/engine/state/pathevidence"
+	"github.com/wippyai/go-lua/analysis/ir/cfg"
+	"github.com/wippyai/go-lua/analysis/lua/semantics"
 )
 
 func projectNormalReturnFacts(reg *axis.Registry, result ResultReader, exit state.State) callboundary.NormalReturnFacts {
 	params := parameterValuePaths(result)
-	if len(params) == 0 {
-		return callboundary.NormalReturnFacts{}
-	}
 	projectPath := func(pathKey path.PathKey) (path.Path, bool) {
 		return normalReturnFactPlaceholderPath(pathKey, params)
 	}
 	out := callboundary.NormalReturnFacts{}
+	out.PathInvalidations = append(out.PathInvalidations, projectAssignmentPathInvalidations(result, params)...)
+	out.DynamicIndexFacts = append(out.DynamicIndexFacts, projectAssignmentDynamicIndexFacts(reg, result, params)...)
+	out.LifecycleFacts = append(out.LifecycleFacts, projectCallOutcomeLifecycleFacts(result, params)...)
 
 	if snapshot := exit.PathRefinementsSnapshot(); !snapshot.Top {
 		bottom := product.Bottom(reg)
@@ -68,14 +70,30 @@ func projectNormalReturnFacts(reg *axis.Registry, result ResultReader, exit stat
 			if !ok {
 				continue
 			}
+			domain := dynamicindex.Domain(reg)
+			if domain.Equal(stateFact, dynamicindex.Bottom(reg)) {
+				continue
+			}
+			out.PathInvalidations = append(out.PathInvalidations, callboundary.PathInvalidationFact{
+				Path: table,
+			})
+			if domain.Equal(stateFact, dynamicindex.Top()) {
+				continue
+			}
 			fact := callboundary.DynamicIndexFact{
 				Table: table,
 				Site:  stateKey.Site,
 				Value: stateFact,
 			}
-			domain := dynamicindex.Domain(reg)
-			if domain.Equal(fact.Value, dynamicindex.Bottom(reg)) || domain.Equal(fact.Value, dynamicindex.Top()) {
-				continue
+			if keyPath, ok := dynamicIndexSourcePlaceholderPath(result, params, stateKey.Site, func(write factflow.DynamicIndexWrite) factflow.ValueSource {
+				return write.KeySource()
+			}); ok {
+				fact.KeyPath = keyPath
+			}
+			if valuePath, ok := dynamicIndexSourcePlaceholderPath(result, params, stateKey.Site, func(write factflow.DynamicIndexWrite) factflow.ValueSource {
+				return write.Source()
+			}); ok {
+				fact.ValuePath = valuePath
 			}
 			out.DynamicIndexFacts = append(out.DynamicIndexFacts, fact)
 		}
@@ -217,6 +235,285 @@ func projectNormalReturnFacts(reg *axis.Registry, result ResultReader, exit stat
 	return out
 }
 
+func dynamicIndexSourcePlaceholderPath(
+	result ResultReader,
+	params []path.Path,
+	site dynamicindex.Site,
+	sourceOf func(factflow.DynamicIndexWrite) factflow.ValueSource,
+) (path.Path, bool) {
+	writeReader, ok := result.(dynamicIndexWriteReader)
+	if !ok {
+		return path.Path{}, false
+	}
+	rawPoint, ok := dynamicindex.PointFromSite(site)
+	if !ok {
+		return path.Path{}, false
+	}
+	write, ok := writeReader.DynamicIndexWrite(cfg.Point(rawPoint))
+	if !ok {
+		return path.Path{}, false
+	}
+	return dynamicIndexValueSourcePlaceholderPath(result, params, sourceOf(write))
+}
+
+func dynamicIndexKeyPlaceholderPath(result ResultReader, params []path.Path, write factflow.DynamicIndexWrite) (path.Path, bool) {
+	if keyPath, ok := write.KeyPath(); ok {
+		return parameterPlaceholderPath(keyPath, params)
+	}
+	return dynamicIndexValueSourcePlaceholderPath(result, params, write.KeySource())
+}
+
+func dynamicIndexValueSourcePlaceholderPath(
+	result ResultReader,
+	params []path.Path,
+	source factflow.ValueSource,
+) (path.Path, bool) {
+	exprPathReader, ok := result.(expressionPathRefReader)
+	if !ok {
+		return path.Path{}, false
+	}
+	if source.Kind != factflow.ValueSourceExpression || !source.HasExpr {
+		return path.Path{}, false
+	}
+	sourcePath, ok := exprPathReader.ExpressionPathRef(source.ExprRef)
+	if !ok {
+		return path.Path{}, false
+	}
+	return normalReturnFactPlaceholderPath(sourcePath.Key(), params)
+}
+
+func projectAssignmentDynamicIndexFacts(reg *axis.Registry, result ResultReader, params []path.Path) []callboundary.DynamicIndexFact {
+	if reg == nil || len(params) == 0 {
+		return nil
+	}
+	writeReader, ok := result.(dynamicIndexWriteReader)
+	if !ok {
+		return nil
+	}
+	valueReader, ok := result.(returnSourceValueReader)
+	if !ok {
+		return nil
+	}
+	graph := result.Graph()
+	if graph == nil {
+		return nil
+	}
+	noNormal, _ := result.(noNormalReturnReader)
+	domain := dynamicindex.Domain(reg)
+	var out []callboundary.DynamicIndexFact
+	for _, point := range graph.RPO() {
+		if noNormal != nil && noNormal.NoNormalReturn(point) {
+			continue
+		}
+		write, ok := writeReader.DynamicIndexWrite(point)
+		if !ok {
+			continue
+		}
+		table, ok := parameterPlaceholderPath(write.TablePath(), params)
+		if !ok {
+			continue
+		}
+		keyValue, ok := valueReader.SourceValueAtBoundary(point, write.KeySource())
+		if !ok {
+			continue
+		}
+		value, ok := valueReader.SourceValueAtBoundary(point, write.Source())
+		if !ok {
+			continue
+		}
+		factValue := dynamicindex.Fact{
+			KeyPresence: product.PresenceOf(keyValue),
+			KeyValue:    portableBoundaryValue(reg, keyValue),
+			Value:       portableBoundaryValue(reg, value),
+			Admission:   write.Admission(),
+		}
+		if domain.Equal(factValue, dynamicindex.Bottom(reg)) || domain.Equal(factValue, dynamicindex.Top()) {
+			continue
+		}
+		fact := callboundary.DynamicIndexFact{
+			Table: table,
+			Site:  dynamicindex.SiteForPoint(int(point)),
+			Value: factValue,
+		}
+		if keyPath, ok := dynamicIndexKeyPlaceholderPath(result, params, write); ok {
+			fact.KeyPath = keyPath
+		}
+		if valuePath, ok := dynamicIndexValueSourcePlaceholderPath(result, params, write.Source()); ok {
+			fact.ValuePath = valuePath
+		}
+		out = append(out, fact)
+	}
+	return out
+}
+
+func projectAssignmentPathInvalidations(result ResultReader, params []path.Path) []callboundary.PathInvalidationFact {
+	reader, ok := result.(ordinaryAssignmentReader)
+	if !ok {
+		return nil
+	}
+	graph := result.Graph()
+	if graph == nil {
+		return nil
+	}
+	noNormal, _ := result.(noNormalReturnReader)
+	var out []callboundary.PathInvalidationFact
+	for _, point := range graph.RPO() {
+		if noNormal != nil && noNormal.NoNormalReturn(point) {
+			continue
+		}
+		fact, ok := reader.OrdinaryAssignment(point)
+		if !ok {
+			continue
+		}
+		target, ok := assignmentInvalidationPath(fact)
+		if !ok {
+			continue
+		}
+		projected, ok := normalReturnFactInvalidationPath(target, params)
+		if !ok {
+			continue
+		}
+		out = append(out, callboundary.PathInvalidationFact{Path: projected})
+	}
+	return out
+}
+
+func projectCallOutcomeLifecycleFacts(result ResultReader, params []path.Path) []callboundary.LifecycleFact {
+	callResult, ok := result.(callReader)
+	if !ok {
+		return nil
+	}
+	outcomeReader, ok := result.(callOutcomeAtReader)
+	if !ok {
+		return nil
+	}
+	graph := result.Graph()
+	if graph == nil {
+		return nil
+	}
+	noNormal, _ := result.(noNormalReturnReader)
+	var out []callboundary.LifecycleFact
+	for _, point := range graph.RPO() {
+		if noNormal != nil && noNormal.NoNormalReturn(point) {
+			continue
+		}
+		site, ok := callResult.CallSite(point)
+		if !ok {
+			continue
+		}
+		outcome, ok := outcomeReader.CallOutcomeAt(point)
+		if !ok || len(outcome.NormalReturnFacts.LifecycleFacts) == 0 {
+			continue
+		}
+		if !pointOnEveryNormalReturnPath(graph, point, noNormal) {
+			continue
+		}
+		bindings := callSiteBindings(result, site)
+		for _, fact := range outcome.NormalReturnFacts.LifecycleFacts {
+			target, ok := fact.Target.Substitute(bindings)
+			if !ok {
+				continue
+			}
+			projected, ok := normalReturnLifecycleFactPath(target, params)
+			if !ok {
+				continue
+			}
+			fact.Target = projected
+			out = append(out, fact)
+		}
+	}
+	return out
+}
+
+func pointOnEveryNormalReturnPath(graph cfg.Graph, point cfg.Point, noNormal noNormalReturnReader) bool {
+	if graph == nil || point == 0 {
+		return false
+	}
+	if point == graph.Entry() {
+		return true
+	}
+	exit := graph.Exit()
+	seen := map[cfg.Point]struct{}{graph.Entry(): {}}
+	stack := []cfg.Point{graph.Entry()}
+	for len(stack) != 0 {
+		current := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+		if current == point {
+			continue
+		}
+		if current == exit {
+			return false
+		}
+		if noNormal != nil && noNormal.NoNormalReturn(current) {
+			continue
+		}
+		for _, succ := range graph.Successors(current) {
+			if _, ok := seen[succ]; ok {
+				continue
+			}
+			seen[succ] = struct{}{}
+			stack = append(stack, succ)
+		}
+	}
+	return true
+}
+
+func normalReturnLifecycleFactPath(target path.Path, params []path.Path) (path.Path, bool) {
+	if target.IsEmpty() {
+		return path.Path{}, false
+	}
+	if projected, ok := parameterPlaceholderPath(target, params); ok {
+		return projected, true
+	}
+	if target.Symbol != 0 {
+		return target, true
+	}
+	return path.Path{}, false
+}
+
+func assignmentInvalidationPath(fact semantics.OrdinaryAssignmentFact) (path.Path, bool) {
+	if fact.HasPath && len(fact.Path.Segments) > 0 {
+		return fact.Path, true
+	}
+	if fact.HasContainerPath && !fact.ContainerPath.IsEmpty() {
+		return fact.ContainerPath, true
+	}
+	return path.Path{}, false
+}
+
+func normalReturnFactInvalidationPath(target path.Path, params []path.Path) (path.Path, bool) {
+	if target.IsEmpty() {
+		return path.Path{}, false
+	}
+	if placeholder, ok := parameterPlaceholderPath(target, params); ok {
+		return placeholder, true
+	}
+	if target.Symbol != 0 {
+		return target, true
+	}
+	return path.Path{}, false
+}
+
+func parameterPlaceholderPath(target path.Path, params []path.Path) (path.Path, bool) {
+	if target.IsPlaceholder() {
+		index := target.PlaceholderIndex()
+		if index < 0 || index >= len(params) || params[index].IsEmpty() {
+			return path.Path{}, false
+		}
+		return target, true
+	}
+	if target.Symbol == 0 {
+		return path.Path{}, false
+	}
+	for i, param := range params {
+		if param.Symbol == 0 || target.Symbol != param.Symbol {
+			continue
+		}
+		return path.NewPlaceholder(i).AppendSegments(target.Segments), true
+	}
+	return path.Path{}, false
+}
+
 func frozenTablePlaceholderPaths(reg *axis.Registry, exit state.State, params []path.Path) map[identity.ID][]path.Path {
 	out := make(map[identity.ID][]path.Path)
 	var queue []frozenTablePathCandidate
@@ -283,7 +580,7 @@ func frozenTablePlaceholderPaths(reg *axis.Registry, exit state.State, params []
 			if !ok {
 				continue
 			}
-			childPath := appendPathSegments(candidate.path, segments)
+			childPath := candidate.path.AppendSegments(segments)
 			if addFrozenTablePlaceholderPath(out, childID, childPath) {
 				queue = append(queue, newFrozenTablePathCandidate(childID, childPath, candidate.seen))
 			}
@@ -334,14 +631,6 @@ func addFrozenTablePlaceholderPath(paths map[identity.ID][]path.Path, id identit
 	return true
 }
 
-func appendPathSegments(base path.Path, segments []segment.Segment) path.Path {
-	out := base
-	for _, seg := range segments {
-		out = out.Append(seg)
-	}
-	return out
-}
-
 func portableBoundaryValue(reg *axis.Registry, value product.Value) product.Value {
 	return product.Set(reg, value, evidence.Key, evidence.Top())
 }
@@ -365,11 +654,7 @@ func normalReturnFactPlaceholderPath(pathKey path.PathKey, params []path.Path) (
 		if param.Symbol == 0 || param.Symbol != localPath.Symbol {
 			continue
 		}
-		out := path.NewPlaceholder(i)
-		for _, seg := range localPath.Segments {
-			out = out.Append(seg)
-		}
-		return out, true
+		return path.NewPlaceholder(i).AppendSegments(localPath.Segments), true
 	}
 	return path.Path{}, false
 }

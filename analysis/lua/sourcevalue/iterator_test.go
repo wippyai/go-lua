@@ -6,11 +6,13 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/effect"
 	"github.com/wippyai/go-lua/analysis/domain/effect/iteration"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/analysis/type/typeexpr"
 )
 
 func TestIteratorVariableValueProjectsIndexedKeysAndElements(t *testing.T) {
@@ -61,6 +63,42 @@ func TestIteratorVariableValueUsesAssertedSourceType(t *testing.T) {
 		t.Fatal("IteratorVariableValue element returned false")
 	}
 	assertIteratorValueType(t, reg, elemValue, typ.Boolean)
+}
+
+func TestIteratorVariableValueNarrowsUnionSourceByRuntimeKind(t *testing.T) {
+	reg := standard.Registry()
+	iter := iteration.Iterator{Source: effect.ParamRef{Index: 0}, Kind: iteration.IterateKeyed}
+	mapType := typetable.NewMap(typ.String, typ.Number)
+	sourceType := typeexpr.Union(typ.Nil, typ.String, mapType)
+	source := typevalue.WithWitness(reg, typevalue.FromType(reg, sourceType), sourceType)
+	source = product.Set(reg, source, runtimekind.Key, runtimekind.Singleton(runtimekind.Table))
+
+	keyValue, ok := IteratorVariableValue(reg, nil, iter, 0, source, nil, false)
+	if !ok {
+		t.Fatal("IteratorVariableValue key returned false")
+	}
+	assertIteratorValueType(t, reg, keyValue, typ.String)
+
+	elemValue, ok := IteratorVariableValue(reg, nil, iter, 1, source, nil, false)
+	if !ok {
+		t.Fatal("IteratorVariableValue element returned false")
+	}
+	assertIteratorValueType(t, reg, elemValue, typ.Number)
+}
+
+func TestIteratorVariableValueRejectsUnionSourceWithNonTableRuntimeKind(t *testing.T) {
+	reg := standard.Registry()
+	iter := iteration.Iterator{Source: effect.ParamRef{Index: 0}, Kind: iteration.IterateKeyed}
+	sourceType := typeexpr.Union(typ.String, typetable.NewMap(typ.String, typ.Number))
+	source := typevalue.WithWitness(reg, typevalue.FromType(reg, sourceType), sourceType)
+	source = product.Set(reg, source, runtimekind.Key, runtimekind.Singleton(runtimekind.String))
+
+	if got, ok := IteratorVariableValue(reg, nil, iter, 0, source, nil, false); ok {
+		t.Fatalf("IteratorVariableValue key = %v, want false", got)
+	}
+	if got, ok := IteratorVariableValue(reg, nil, iter, 1, source, nil, false); ok {
+		t.Fatalf("IteratorVariableValue element = %v, want false", got)
+	}
 }
 
 func TestIteratorVariableValueRejectsInvalidVariableIndex(t *testing.T) {

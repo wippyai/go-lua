@@ -1,0 +1,422 @@
+{
+  "description": "Mutation-after-freeze diagnostics are opt-in, evidence-backed, identity-based, shallow, and must-path precise.",
+  "check": {
+    "diagnostic_rules": [
+      {
+        "code": "effect.freeze.mutation",
+        "enabled": true,
+        "severity": "warning"
+      }
+    ],
+    "diagnostics": [
+      {
+        "file": "main.lua",
+        "line": 5,
+        "column": 1,
+        "severity": "warning",
+        "code": "effect.freeze.mutation",
+        "message_contains": [
+          "cannot mutate frozen table",
+          "root"
+        ],
+        "min_evidence": 2,
+        "evidence_contains": [
+          "this assignment mutates table \"root\"",
+          "table \"root\" was frozen by this call"
+        ],
+        "evidence": [
+          {
+            "file": "main.lua",
+            "line": 5,
+            "column": 1,
+            "kind": "abstract fact",
+            "trust": "proven",
+            "contains": [
+              "this assignment mutates table \"root\""
+            ]
+          },
+          {
+            "file": "main.lua",
+            "line": 4,
+            "column": 1,
+            "kind": "abstract fact",
+            "trust": "proven",
+            "contains": [
+              "table \"root\" was frozen by this call"
+            ]
+          }
+        ],
+        "render_contains": [
+          "warning[effect.freeze.mutation]: cannot mutate frozen table \"root\"",
+          "root.name = \"staging\"",
+          "table.freeze(root)"
+        ],
+        "render_ordered_contains": [
+          "warning[effect.freeze.mutation]: cannot mutate frozen table \"root\"",
+          "--> main.lua:5:1",
+          "root.name = \"staging\"",
+          "because:",
+          "1. proven: this assignment mutates table \"root\"",
+          "2. proven: table \"root\" was frozen by this call before the assignment",
+          "--> main.lua:4:1",
+          "table.freeze(root)",
+          "help:"
+        ],
+        "render_not_contains": [
+          "^~",
+          "missing proof"
+        ],
+        "help_contains": [
+          "mutable copy"
+        ],
+        "min_labels": 2,
+        "label_contains": [
+          "mutation of frozen table",
+          "freeze proof"
+        ],
+        "labels": [
+          {
+            "file": "main.lua",
+            "line": 5,
+            "column": 1,
+            "contains": [
+              "mutation of frozen table"
+            ]
+          },
+          {
+            "file": "main.lua",
+            "line": 4,
+            "column": 1,
+            "contains": [
+              "freeze proof"
+            ]
+          }
+        ]
+      },
+      {
+        "file": "main.lua",
+        "line": 7,
+        "column": 1,
+        "severity": "warning",
+        "code": "effect.freeze.mutation",
+        "message_contains": [
+          "cannot mutate frozen table",
+          "root"
+        ],
+        "min_evidence": 2,
+        "evidence_contains": [
+          "this assignment mutates table \"root\"",
+          "table \"root\" was frozen by this call"
+        ],
+        "evidence": [
+          {
+            "file": "main.lua",
+            "line": 7,
+            "column": 1,
+            "kind": "abstract fact",
+            "trust": "proven",
+            "contains": [
+              "this assignment mutates table \"root\""
+            ]
+          },
+          {
+            "file": "main.lua",
+            "line": 4,
+            "column": 1,
+            "kind": "abstract fact",
+            "trust": "proven",
+            "contains": [
+              "table \"root\" was frozen by this call"
+            ]
+          }
+        ],
+        "render_contains": [
+          "warning[effect.freeze.mutation]: cannot mutate frozen table \"root\"",
+          "root.child = { tag = \"replacement\" }",
+          "table \"root\" was frozen by this call before the assignment"
+        ],
+        "render_ordered_contains": [
+          "warning[effect.freeze.mutation]: cannot mutate frozen table \"root\"",
+          "--> main.lua:7:1",
+          "root.child = { tag = \"replacement\" }",
+          "because:",
+          "1. proven: this assignment mutates table \"root\"",
+          "2. proven: table \"root\" was frozen by this call before the assignment",
+          "--> main.lua:4:1",
+          "table.freeze(root)",
+          "help:"
+        ],
+        "render_not_contains": [
+          "^~",
+          "missing proof"
+        ],
+        "help_contains": [
+          "move this assignment before the table is frozen"
+        ],
+        "min_labels": 2,
+        "label_contains": [
+          "mutation of frozen table",
+          "freeze proof"
+        ],
+        "labels": [
+          {
+            "file": "main.lua",
+            "line": 7,
+            "column": 1,
+            "contains": [
+              "mutation of frozen table"
+            ]
+          },
+          {
+            "file": "main.lua",
+            "line": 4,
+            "column": 1,
+            "contains": [
+              "freeze proof"
+            ]
+          }
+        ]
+      },
+      {
+        "file": "main.lua",
+        "line": 12,
+        "column": 5,
+        "severity": "warning",
+        "code": "effect.freeze.mutation",
+        "message_contains": [
+          "cannot mutate frozen table",
+          "dyn"
+        ],
+        "min_evidence": 2,
+        "evidence_contains": [
+          "this assignment mutates table \"dyn\"",
+          "table \"dyn\" is already frozen here"
+        ],
+        "evidence": [
+          {
+            "file": "main.lua",
+            "line": 12,
+            "column": 5,
+            "kind": "abstract fact",
+            "trust": "proven",
+            "contains": [
+              "this assignment mutates table \"dyn\""
+            ]
+          },
+          {
+            "kind": "abstract fact",
+            "trust": "proven",
+            "contains": [
+              "table \"dyn\" is already frozen here"
+            ]
+          }
+        ],
+        "render_contains": [
+          "warning[effect.freeze.mutation]: cannot mutate frozen table \"dyn\"",
+          "dyn[key] = 1",
+          "proven: table \"dyn\" is already frozen here"
+        ],
+        "render_ordered_contains": [
+          "warning[effect.freeze.mutation]: cannot mutate frozen table \"dyn\"",
+          "--> main.lua:12:5",
+          "dyn[key] = 1",
+          "because:",
+          "1. proven: this assignment mutates table \"dyn\"",
+          "2. proven: table \"dyn\" is already frozen here",
+          "help:"
+        ],
+        "render_not_contains": [
+          "^~",
+          "missing proof"
+        ],
+        "help_contains": [
+          "mutable copy"
+        ],
+        "min_labels": 1,
+        "label_contains": [
+          "mutation of frozen table"
+        ],
+        "labels": [
+          {
+            "file": "main.lua",
+            "line": 12,
+            "column": 5,
+            "contains": [
+              "mutation of frozen table"
+            ]
+          }
+        ]
+      },
+      {
+        "file": "main.lua",
+        "line": 22,
+        "column": 1,
+        "severity": "warning",
+        "code": "effect.freeze.mutation",
+        "message_contains": [
+          "cannot mutate frozen table",
+          "both"
+        ],
+        "min_evidence": 2,
+        "evidence_contains": [
+          "this assignment mutates table \"both\"",
+          "frozen"
+        ],
+        "evidence": [
+          {
+            "file": "main.lua",
+            "line": 22,
+            "column": 1,
+            "kind": "abstract fact",
+            "trust": "proven",
+            "contains": [
+              "this assignment mutates table \"both\""
+            ]
+          },
+          {
+            "file": "main.lua",
+            "line": 21,
+            "column": 38,
+            "kind": "abstract fact",
+            "trust": "proven",
+            "contains": [
+              "table \"both\" was frozen by this call"
+            ]
+          }
+        ],
+        "render_contains": [
+          "warning[effect.freeze.mutation]: cannot mutate frozen table \"both\"",
+          "both.x = 1",
+          "if flag then table.freeze(both) else table.freeze(both) end"
+        ],
+        "render_ordered_contains": [
+          "warning[effect.freeze.mutation]: cannot mutate frozen table \"both\"",
+          "--> main.lua:22:1",
+          "both.x = 1",
+          "because:",
+          "1. proven: this assignment mutates table \"both\"",
+          "2. proven: table \"both\" was frozen by this call before the assignment",
+          "--> main.lua:21:38",
+          "if flag then table.freeze(both) else table.freeze(both) end",
+          "help:"
+        ],
+        "render_not_contains": [
+          "^~",
+          "missing proof"
+        ],
+        "help_contains": [
+          "mutable copy"
+        ],
+        "min_labels": 1,
+        "label_contains": [
+          "mutation of frozen table"
+        ],
+        "labels": [
+          {
+            "file": "main.lua",
+            "line": 22,
+            "column": 1,
+            "contains": [
+              "mutation of frozen table"
+            ]
+          },
+          {
+            "file": "main.lua",
+            "line": 21,
+            "column": 38,
+            "contains": [
+              "freeze proof"
+            ]
+          }
+        ]
+      },
+      {
+        "file": "main.lua",
+        "line": 26,
+        "column": 1,
+        "severity": "warning",
+        "code": "effect.freeze.mutation",
+        "message_contains": [
+          "cannot call mutator on frozen table",
+          "items"
+        ],
+        "min_evidence": 2,
+        "evidence_contains": [
+          "this call mutates table \"items\"",
+          "table \"items\" was frozen by this call before the mutating call"
+        ],
+        "evidence": [
+          {
+            "file": "main.lua",
+            "line": 26,
+            "column": 1,
+            "kind": "abstract fact",
+            "trust": "proven",
+            "contains": [
+              "this call mutates table \"items\""
+            ]
+          },
+          {
+            "file": "main.lua",
+            "line": 25,
+            "column": 1,
+            "kind": "abstract fact",
+            "trust": "proven",
+            "contains": [
+              "table \"items\" was frozen by this call before the mutating call"
+            ]
+          }
+        ],
+        "render_contains": [
+          "warning[effect.freeze.mutation]: cannot call mutator on frozen table \"items\"",
+          "table.insert(items, \"b\")",
+          "table.freeze(items)"
+        ],
+        "render_ordered_contains": [
+          "warning[effect.freeze.mutation]: cannot call mutator on frozen table \"items\"",
+          "--> main.lua:26:1",
+          "table.insert(items, \"b\")",
+          "because:",
+          "1. proven: this call mutates table \"items\"",
+          "2. proven: table \"items\" was frozen by this call before the mutating call",
+          "--> main.lua:25:1",
+          "table.freeze(items)",
+          "help:"
+        ],
+        "render_not_contains": [
+          "^~",
+          "missing proof"
+        ],
+        "help_contains": [
+          "mutable copy"
+        ],
+        "min_labels": 2,
+        "label_contains": [
+          "mutating call on frozen table",
+          "freeze proof"
+        ],
+        "labels": [
+          {
+            "file": "main.lua",
+            "line": 26,
+            "column": 1,
+            "contains": [
+              "mutating call on frozen table"
+            ]
+          },
+          {
+            "file": "main.lua",
+            "line": 25,
+            "column": 1,
+            "contains": [
+              "freeze proof"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "run": {
+    "skip": "diagnostic-only fixture"
+  }
+}

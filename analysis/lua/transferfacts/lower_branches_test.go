@@ -384,6 +384,7 @@ func TestLowerLiteralDiscriminantBranchRefinesRootOnBothEdges(t *testing.T) {
 	refinements := l.branchRefinementsForCheck(branchcond.Check{
 		Kind:          branchcond.CheckLiteralEqual,
 		Path:          rootPath.Field("tag"),
+		Literal:       typ.LiteralString("a"),
 		LiteralString: "a",
 	})
 	refinement, ok := branchRefinementAt(refinements, rootPath)

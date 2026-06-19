@@ -45,6 +45,11 @@ func fixtureDiagnostics(s namedSuite) (diags []diag.Diagnostic, entryFile string
 			return nil, ""
 		}
 	}
+	ruleOpts, err := fixtureDiagnosticRuleOptions(s.Suite.Check)
+	if err != nil {
+		panic(fmt.Sprintf("diagnostic_rules: %v", err))
+	}
+	baseOpts = append(baseOpts, ruleOpts...)
 
 	sources := make(map[string]string)
 	for _, f := range files {
@@ -80,8 +85,9 @@ func fixtureDiagnostics(s namedSuite) (diags []diag.Diagnostic, entryFile string
 }
 
 // judgeAgainstCuratedExpectations applies the same curated-truth verification as
-// runCheckPhase: inline expect-error/expect-warning annotations win; otherwise
-// manifest check.errors count wins; otherwise the fixture is expected clean.
+// runCheckPhase: inline expect-error/expect-warning annotations verify local
+// markers, manifest check.diagnostics is a structured complete-list oracle when
+// present, then check.errors count wins; otherwise the fixture is expected clean.
 func judgeAgainstCuratedExpectations(s namedSuite, diagnostics []diag.Diagnostic, entryFile string) oracleVerdict {
 	v := oracleVerdict{name: s.Name, passed: true}
 
@@ -115,17 +121,24 @@ func judgeAgainstCuratedExpectations(s namedSuite, diagnostics []diag.Diagnostic
 			v.unexpected = append(v.unexpected, diagSummary(d))
 		}
 		if s.Suite.Check != nil && len(s.Suite.Check.Diagnostics) > 0 {
-			missing, _ := matchDiagnosticExpectations(s.Suite.Check.Diagnostics, diagnostics, entryFile, false)
+			missing, _ := matchDiagnosticExpectations(s.Suite.Check.Diagnostics, diagnostics, entryFile, false, fixtureDiagnosticRenderOptions(readFixtureSources(s), entryFile))
 			for _, msg := range missing {
 				v.passed = false
 				v.missing = append(v.missing, "structured diagnostic not emitted: "+msg)
+			}
+		} else if s.Suite.Check != nil && s.Suite.Check.Errors != nil {
+			want := *s.Suite.Check.Errors
+			got := countDiagnosticsBySeverity(diagnostics, diag.SeverityError)
+			if got != want {
+				v.passed = false
+				v.missing = append(v.missing, fmt.Sprintf("expected %d errors, got %d", want, got))
 			}
 		}
 		return v
 	}
 
 	if s.Suite.Check != nil && len(s.Suite.Check.Diagnostics) > 0 {
-		missing, unexpected := matchDiagnosticExpectations(s.Suite.Check.Diagnostics, diagnostics, entryFile, true)
+		missing, unexpected := matchDiagnosticExpectations(s.Suite.Check.Diagnostics, diagnostics, entryFile, true, fixtureDiagnosticRenderOptions(readFixtureSources(s), entryFile))
 		if len(missing) > 0 || len(unexpected) > 0 {
 			v.passed = false
 			for _, msg := range missing {
@@ -138,18 +151,16 @@ func judgeAgainstCuratedExpectations(s namedSuite, diagnostics []diag.Diagnostic
 
 	if s.Suite.Check != nil && s.Suite.Check.Errors != nil {
 		want := *s.Suite.Check.Errors
-		var errs []diag.Diagnostic
-		for _, d := range diagnostics {
-			if d.Severity == diag.SeverityError {
-				errs = append(errs, d)
-			}
-		}
-		if len(errs) != want {
+		got := countDiagnosticsBySeverity(diagnostics, diag.SeverityError)
+		if got != want {
 			v.passed = false
-			if len(errs) < want {
-				v.missing = append(v.missing, fmt.Sprintf("expected %d errors, got %d", want, len(errs)))
+			if got < want {
+				v.missing = append(v.missing, fmt.Sprintf("expected %d errors, got %d", want, got))
 			}
-			for _, d := range errs {
+			for _, d := range diagnostics {
+				if d.Severity != diag.SeverityError {
+					continue
+				}
 				v.unexpected = append(v.unexpected, diagSummary(d))
 			}
 		}
@@ -164,6 +175,16 @@ func judgeAgainstCuratedExpectations(s namedSuite, diagnostics []diag.Diagnostic
 		}
 	}
 	return v
+}
+
+func countDiagnosticsBySeverity(diagnostics []diag.Diagnostic, severity diag.Severity) int {
+	count := 0
+	for _, d := range diagnostics {
+		if d.Severity == severity {
+			count++
+		}
+	}
+	return count
 }
 
 func diagSummary(d diag.Diagnostic) string {

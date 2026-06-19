@@ -6,11 +6,14 @@ import (
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/placement"
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
+	"github.com/wippyai/go-lua/analysis/domain/typestate"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine/callboundary"
+	"github.com/wippyai/go-lua/analysis/engine/callpayload"
 	"github.com/wippyai/go-lua/analysis/engine/dynamicindex"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/sourcevalue"
@@ -22,6 +25,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
+	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
 func TestFactsNodeTransferCallOutcomeAppliesParamCondition(t *testing.T) {
@@ -63,9 +67,9 @@ func TestFactsNodeTransferCallOutcomeAppliesParamCondition(t *testing.T) {
 
 	got := NewFactsNodeTransfer(FactsNodeTransferConfig{
 		Facts: facts,
-		CallOutcome: func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) CallOutcome {
-			return CallOutcome{
-				ParamConditions: []CallParamCondition{
+		CallOutcome: func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) callpayload.CallOutcome {
+			return callpayload.CallOutcome{
+				ParamConditions: []callpayload.CallParamCondition{
 					{ParamIndex: 0, Value: true},
 				},
 			}
@@ -108,10 +112,10 @@ func TestFactsNodeTransferCallOutcomeAppliesParamPathRelation(t *testing.T) {
 				rightExpr: rightPath,
 			},
 		}),
-		CallOutcome: func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) CallOutcome {
-			return CallOutcome{
-				ParamPathRelations: []CallParamPathRelation{
-					{Kind: CallPathRelationEqual, Left: pathdom.NewPlaceholder(0), Right: pathdom.NewPlaceholder(1)},
+		CallOutcome: func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) callpayload.CallOutcome {
+			return callpayload.CallOutcome{
+				ParamPathRelations: []callpayload.CallParamPathRelation{
+					{Kind: callpayload.CallPathRelationEqual, Left: pathdom.NewPlaceholder(0), Right: pathdom.NewPlaceholder(1)},
 				},
 			}
 		},
@@ -156,8 +160,8 @@ func TestFactsNodeTransferCallOutcomeAppliesStoreRelationEvidence(t *testing.T) 
 				intoExpr:   pathdom.NewPath(into, "into"),
 			},
 		}),
-		CallOutcome: func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) CallOutcome {
-			return CallOutcome{
+		CallOutcome: func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) callpayload.CallOutcome {
+			return callpayload.CallOutcome{
 				NormalReturnFacts: callboundary.NormalReturnFacts{
 					StoreRelations: []callboundary.StoreRelationFact{{
 						Source: pathdom.NewPlaceholder(0).Field("stored"),
@@ -181,6 +185,127 @@ func TestFactsNodeTransferCallOutcomeAppliesStoreRelationEvidence(t *testing.T) 
 	}
 	if !got.HasStoreRelation(relation) {
 		t.Fatalf("store relations = %#v, want rebased source/into relation", got.StoreRelationsSnapshot())
+	}
+}
+
+func TestFactsNodeTransferCallOutcomeAppliesLifecycleFacts(t *testing.T) {
+	reg := standard.Registry()
+	point := cfg.Point(616)
+	txExpr := factflow.ExprRef(616)
+	tx := symbol.ID(616)
+	txPath := pathdom.NewPath(tx, "tx")
+	builder := visibility.NewBuilder()
+	builder.Define(point, tx, "tx")
+	resolver := visibility.NewResolver(builder.Build())
+
+	got := NewFactsNodeTransfer(FactsNodeTransferConfig{
+		Facts: factflow.NewFacts(factflow.FactsInput{
+			CallSites: map[cfg.Point]factflow.CallSite{
+				point: factflow.NewCallSite(factflow.CallSiteConfig{
+					Context: factflow.CallSiteContextStatement,
+					ArgumentSources: []factflow.ValueSource{
+						{Kind: factflow.ValueSourceExpression, ExprRef: txExpr, HasExpr: true},
+					},
+				}),
+			},
+			ExpressionPaths: map[factflow.ExprRef]pathdom.Path{
+				txExpr: txPath,
+			},
+		}),
+		CallOutcome: func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) callpayload.CallOutcome {
+			return callpayload.CallOutcome{
+				NormalReturnFacts: callboundary.NormalReturnFacts{
+					LifecycleFacts: []callboundary.LifecycleFact{
+						{
+							Target:   pathdom.NewPlaceholder(0),
+							Kind:     callboundary.LifecycleAcquire,
+							Protocol: typestate.Protocol("transaction"),
+							To:       typestate.State("open"),
+							Obligation: typestate.Obligation{
+								Final: typestate.State("closed"),
+							},
+						},
+						{
+							Target:   pathdom.NewPlaceholder(0),
+							Kind:     callboundary.LifecycleTransition,
+							Protocol: typestate.Protocol("transaction"),
+							From:     typestate.State("open"),
+							To:       typestate.State("closed"),
+						},
+					},
+				},
+			}
+		},
+		Visibility: resolver,
+	})(transfer.NodeContext{
+		Registry: reg,
+		Point:    point,
+	}, state.State{})
+
+	targetKey := resolver.KeyAt(point, txPath)
+	if targetKey == "" {
+		t.Fatal("visibility failed for typestate target")
+	}
+	if open := got.OpenTypestateObligations(); len(open) != 0 {
+		t.Fatalf("open typestate obligations = %#v, want closed transaction after rebased transition", open)
+	}
+}
+
+func TestFactsNodeTransferCallOutcomeLengthFloorSurvivesInvalidations(t *testing.T) {
+	reg := standard.Registry()
+	point := cfg.Point(631)
+	items := symbol.ID(631)
+	itemsExpr := factflow.ExprRef(631)
+	itemsPath := pathdom.NewPath(items, "items")
+	placeholder := pathdom.NewPlaceholder(0)
+	visibilityBuilder := visibility.NewBuilder()
+	visibilityBuilder.Define(point, items, "items")
+	resolver := visibility.NewResolver(visibilityBuilder.Build())
+	itemsKey := resolver.KeyAt(point, itemsPath)
+	childKey := resolver.KeyAt(point, itemsPath.IndexInt(1))
+
+	got := NewFactsNodeTransfer(FactsNodeTransferConfig{
+		Facts: factflow.NewFacts(factflow.FactsInput{
+			CallSites: map[cfg.Point]factflow.CallSite{
+				point: factflow.NewCallSite(factflow.CallSiteConfig{
+					Context: factflow.CallSiteContextStatement,
+					ArgumentSources: []factflow.ValueSource{
+						{Kind: factflow.ValueSourceExpression, ExprRef: itemsExpr, HasExpr: true},
+					},
+				}),
+			},
+			ExpressionPaths: map[factflow.ExprRef]pathdom.Path{
+				itemsExpr: itemsPath,
+			},
+		}),
+		CallOutcome: func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) callpayload.CallOutcome {
+			return callpayload.CallOutcome{
+				ParamPathInvalidations: []callpayload.CallParamPathInvalidation{
+					{Path: placeholder},
+				},
+				ParamLengthFloors: []callpayload.CallParamLengthFloor{
+					{Path: placeholder, Floor: 1},
+				},
+				NormalReturnFacts: callboundary.NormalReturnFacts{
+					PathInvalidations: []callboundary.PathInvalidationFact{
+						{Path: placeholder},
+					},
+				},
+			}
+		},
+		Visibility: resolver,
+	})(transfer.NodeContext{
+		Registry: reg,
+		Point:    point,
+	}, state.State{}.
+		WriteLenFloor(itemsKey, 9).
+		WritePathKey(reg, childKey, presentValue(reg)))
+
+	if floor, ok := got.ReadLenFloor(itemsKey); !ok || floor != 10 {
+		t.Fatalf("post-call length floor = %d/%v, want prior floor plus delta after invalidations", floor, ok)
+	}
+	if child := got.ReadPathKey(reg, childKey); !product.Equal(reg, child, product.Bottom(reg)) {
+		t.Fatalf("child path after invalidation = %s, want bottom", formatValue(reg, child))
 	}
 }
 
@@ -210,9 +335,9 @@ func TestFactsNodeTransferCallOutcomeParamPathRefinementUsesArgumentNotReceiver(
 				argExpr: argPath,
 			},
 		}),
-		CallOutcome: func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) CallOutcome {
-			return CallOutcome{
-				ParamPathRefinements: []CallParamPathRefinement{
+		CallOutcome: func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) callpayload.CallOutcome {
+			return callpayload.CallOutcome{
+				ParamPathRefinements: []callpayload.CallParamPathRefinement{
 					{Path: pathdom.NewPlaceholder(0), Value: present},
 				},
 			}
@@ -254,8 +379,8 @@ func TestFactsNodeTransferCallOutcomeRebasesNestedEscapeEventToConsumerChildPath
 
 	got := NewFactsNodeTransfer(FactsNodeTransferConfig{
 		Facts: facts,
-		CallOutcome: func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) CallOutcome {
-			return CallOutcome{
+		CallOutcome: func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) callpayload.CallOutcome {
+			return callpayload.CallOutcome{
 				NormalReturnFacts: callboundary.NormalReturnFacts{
 					EscapeEvents: []callboundary.EscapeEventFact{
 						{
@@ -314,8 +439,8 @@ func TestFactsNodeTransferCallOutcomeEscapeSendMarksIdentityPlacementAndEffectDe
 
 	got := NewFactsNodeTransfer(FactsNodeTransferConfig{
 		Facts: facts,
-		CallOutcome: func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) CallOutcome {
-			return CallOutcome{
+		CallOutcome: func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) callpayload.CallOutcome {
+			return callpayload.CallOutcome{
 				NormalReturnFacts: callboundary.NormalReturnFacts{
 					EscapeEvents: []callboundary.EscapeEventFact{
 						{Target: pathdom.NewPlaceholder(0), Kind: callboundary.EscapeEventSend},
@@ -363,8 +488,8 @@ func TestFactsNodeTransferCallOutcomeFrozenTableFactFreezesSingletonIdentity(t *
 
 	got := NewFactsNodeTransfer(FactsNodeTransferConfig{
 		Facts: facts,
-		CallOutcome: func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) CallOutcome {
-			return CallOutcome{
+		CallOutcome: func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) callpayload.CallOutcome {
+			return callpayload.CallOutcome{
 				NormalReturnFacts: callboundary.NormalReturnFacts{
 					FrozenTables: []callboundary.FrozenTableFact{
 						{Target: pathdom.NewPlaceholder(0)},
@@ -416,8 +541,8 @@ func TestFactsNodeTransferCallOutcomeFrozenTableFactIsShallow(t *testing.T) {
 
 	got := NewFactsNodeTransfer(FactsNodeTransferConfig{
 		Facts: facts,
-		CallOutcome: func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) CallOutcome {
-			return CallOutcome{
+		CallOutcome: func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) callpayload.CallOutcome {
+			return callpayload.CallOutcome{
 				HeapTableObjects: map[identity.ID]heapidentity.TableObject{
 					rootID: heapidentity.NewTableObject(heapidentity.TableObjectConfig{
 						Root:          rootValue,
@@ -478,8 +603,8 @@ func TestFactsNodeTransferCallOutcomeFrozenTableFactsFreezeRootAndNestedChild(t 
 
 	got := NewFactsNodeTransfer(FactsNodeTransferConfig{
 		Facts: facts,
-		CallOutcome: func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) CallOutcome {
-			return CallOutcome{
+		CallOutcome: func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) callpayload.CallOutcome {
+			return callpayload.CallOutcome{
 				HeapTableObjects: map[identity.ID]heapidentity.TableObject{
 					rootID: heapidentity.NewTableObject(heapidentity.TableObjectConfig{
 						Root:          rootValue,
@@ -541,8 +666,8 @@ func TestFactsNodeTransferCallOutcomeRecursiveEscapeSendMarksStaticMemberIdentit
 
 	got := NewFactsNodeTransfer(FactsNodeTransferConfig{
 		Facts: facts,
-		CallOutcome: func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) CallOutcome {
-			return CallOutcome{
+		CallOutcome: func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) callpayload.CallOutcome {
+			return callpayload.CallOutcome{
 				NormalReturnFacts: callboundary.NormalReturnFacts{
 					EscapeEvents: []callboundary.EscapeEventFact{
 						{Target: pathdom.NewPlaceholder(0), Kind: callboundary.EscapeEventSend, Recursive: true},
@@ -601,8 +726,8 @@ func TestFactsNodeTransferCallOutcomeRecursiveEscapeStoreMarksStaticMemberIdenti
 
 	got := NewFactsNodeTransfer(FactsNodeTransferConfig{
 		Facts: facts,
-		CallOutcome: func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) CallOutcome {
-			return CallOutcome{
+		CallOutcome: func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) callpayload.CallOutcome {
+			return callpayload.CallOutcome{
 				NormalReturnFacts: callboundary.NormalReturnFacts{
 					EscapeEvents: []callboundary.EscapeEventFact{
 						{Target: pathdom.NewPlaceholder(0), Kind: callboundary.EscapeEventStore, Recursive: true},
@@ -663,8 +788,8 @@ func TestFactsNodeTransferCallOutcomeRecursiveEscapeSendMarksDynamicIndexKeyAndV
 
 	got := NewFactsNodeTransfer(FactsNodeTransferConfig{
 		Facts: facts,
-		CallOutcome: func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) CallOutcome {
-			return CallOutcome{
+		CallOutcome: func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) callpayload.CallOutcome {
+			return callpayload.CallOutcome{
 				NormalReturnFacts: callboundary.NormalReturnFacts{
 					EscapeEvents: []callboundary.EscapeEventFact{
 						{Target: pathdom.NewPlaceholder(0), Kind: callboundary.EscapeEventSend, Recursive: true},
@@ -723,6 +848,8 @@ func TestFactsNodeTransferCallOutcomeEscapeRecoversDynamicEntryIdentityWhenPathV
 	itemsValue := product.Set(reg, presentValue(reg), identity.Key, identity.Singleton(itemsID))
 	itemValue := product.Set(reg, presentValue(reg), identity.Key, identity.Singleton(itemID))
 	childValue := product.Set(reg, presentValue(reg), identity.Key, identity.Singleton(childID))
+	routeKeyType := typ.LiteralString("route-1")
+	routeKeyValue := typevalue.WithWitness(reg, typevalue.FromType(reg, routeKeyType), routeKeyType)
 	itemsKey, ok := heapidentity.StaticMemberSuffixKey(fieldSuffix("items").Segments)
 	if !ok {
 		t.Fatal("missing items suffix key")
@@ -755,7 +882,7 @@ func TestFactsNodeTransferCallOutcomeEscapeRecoversDynamicEntryIdentityWhenPathV
 			DynamicIndexFacts: map[dynamicindex.Key]dynamicindex.Fact{
 				{Table: pathdom.PathKey("callee.items"), Site: "callee.write"}: {
 					KeyPresence: presence.Present(),
-					KeyValue:    presentValue(reg),
+					KeyValue:    routeKeyValue,
 					Value:       itemValue,
 					Admission:   dynamicindex.AdmissionAdmitted,
 				},
@@ -787,8 +914,8 @@ func TestFactsNodeTransferCallOutcomeEscapeRecoversDynamicEntryIdentityWhenPathV
 				argExpr: itemPath,
 			},
 		}),
-		CallOutcome: func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) CallOutcome {
-			return CallOutcome{
+		CallOutcome: func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) callpayload.CallOutcome {
+			return callpayload.CallOutcome{
 				NormalReturnFacts: callboundary.NormalReturnFacts{
 					EscapeEvents: []callboundary.EscapeEventFact{
 						{Target: pathdom.NewPlaceholder(0), Kind: callboundary.EscapeEventSend, Recursive: true},
@@ -849,8 +976,8 @@ func TestFactsNodeTransferCallOutcomeRecursiveEscapeTerminatesOnCyclicHeapPlacem
 
 			got := NewFactsNodeTransfer(FactsNodeTransferConfig{
 				Facts: facts,
-				CallOutcome: func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) CallOutcome {
-					return CallOutcome{
+				CallOutcome: func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) callpayload.CallOutcome {
+					return callpayload.CallOutcome{
 						NormalReturnFacts: callboundary.NormalReturnFacts{
 							EscapeEvents: []callboundary.EscapeEventFact{
 								{Target: pathdom.NewPlaceholder(0), Kind: tc.kind, Recursive: true},
@@ -924,8 +1051,8 @@ func TestFactsNodeTransferCallOutcomeEscapeEventPlacementFromBottom(t *testing.T
 
 			got := NewFactsNodeTransfer(FactsNodeTransferConfig{
 				Facts: facts,
-				CallOutcome: func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) CallOutcome {
-					return CallOutcome{
+				CallOutcome: func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) callpayload.CallOutcome {
+					return callpayload.CallOutcome{
 						NormalReturnFacts: callboundary.NormalReturnFacts{
 							EscapeEvents: []callboundary.EscapeEventFact{
 								{Target: pathdom.NewPlaceholder(0), Kind: tc.kind},
@@ -973,8 +1100,8 @@ func TestFactsNodeTransferCallOutcomeEscapeBorrowDoesNotForcePlacement(t *testin
 
 	got := NewFactsNodeTransfer(FactsNodeTransferConfig{
 		Facts: facts,
-		CallOutcome: func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) CallOutcome {
-			return CallOutcome{
+		CallOutcome: func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) callpayload.CallOutcome {
+			return callpayload.CallOutcome{
 				NormalReturnFacts: callboundary.NormalReturnFacts{
 					EscapeEvents: []callboundary.EscapeEventFact{
 						{Target: pathdom.NewPlaceholder(0), Kind: callboundary.EscapeEventBorrow},
@@ -1029,8 +1156,8 @@ func TestFactsNodeTransferCallOutcomeEscapeStoreRetainDoesNotWeakenSharedHeap(t 
 
 			got := NewFactsNodeTransfer(FactsNodeTransferConfig{
 				Facts: facts,
-				CallOutcome: func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) CallOutcome {
-					return CallOutcome{
+				CallOutcome: func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) callpayload.CallOutcome {
+					return callpayload.CallOutcome{
 						NormalReturnFacts: callboundary.NormalReturnFacts{
 							EscapeEvents: []callboundary.EscapeEventFact{
 								{Target: pathdom.NewPlaceholder(0), Kind: tc.kind},
@@ -1066,8 +1193,8 @@ func TestFactsNodeTransferCallOutcomeAppliesHeapTableObjects(t *testing.T) {
 				point: factflow.NewCallSite(factflow.CallSiteConfig{Context: factflow.CallSiteContextStatement}),
 			},
 		}),
-		CallOutcome: func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) CallOutcome {
-			return CallOutcome{
+		CallOutcome: func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) callpayload.CallOutcome {
+			return callpayload.CallOutcome{
 				HeapTableObjects: map[identity.ID]heapidentity.TableObject{
 					tableID: heapidentity.NewTableObject(heapidentity.TableObjectConfig{
 						Root:          value,
@@ -1101,8 +1228,8 @@ func TestFactsNodeTransferCallOutcomeAppliesPlacementFacts(t *testing.T) {
 				point: factflow.NewCallSite(factflow.CallSiteConfig{Context: factflow.CallSiteContextStatement}),
 			},
 		}),
-		CallOutcome: func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) CallOutcome {
-			return CallOutcome{
+		CallOutcome: func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) callpayload.CallOutcome {
+			return callpayload.CallOutcome{
 				Placements: map[identity.ID]placement.Value{
 					tableID: placement.Stack,
 				},
@@ -1176,9 +1303,9 @@ func TestFactsEdgeTransferCallOutcomeAppliesReturnConditionRefinement(t *testing
 		EntryState: state.State{}.WriteValue(reg, key.SymbolValue(arg), product.Top()),
 		EdgeTransfer: NewFactsEdgeTransfer(FactsEdgeTransferConfig{
 			Facts: facts,
-			CallOutcome: func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) CallOutcome {
-				return CallOutcome{
-					ReturnConditionRefinements: []CallReturnConditionRefinement{
+			CallOutcome: func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) callpayload.CallOutcome {
+				return callpayload.CallOutcome{
+					ReturnConditionRefinements: []callpayload.CallReturnConditionRefinement{
 						{ReturnIndex: 0, ReturnValue: true, Target: pathdom.NewPlaceholder(0), Value: present},
 						{ReturnIndex: 1, ReturnValue: true, Target: pathdom.NewPlaceholder(0), Value: absent},
 					},
@@ -1235,9 +1362,9 @@ func TestFactsEdgeTransferCallOutcomeReturnConditionUsesArgumentNotReceiver(t *t
 			WriteValue(reg, key.SymbolValue(arg), product.Top()),
 		EdgeTransfer: NewFactsEdgeTransfer(FactsEdgeTransferConfig{
 			Facts: facts,
-			CallOutcome: func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) CallOutcome {
-				return CallOutcome{
-					ReturnConditionRefinements: []CallReturnConditionRefinement{
+			CallOutcome: func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) callpayload.CallOutcome {
+				return callpayload.CallOutcome{
+					ReturnConditionRefinements: []callpayload.CallReturnConditionRefinement{
 						{ReturnIndex: 0, ReturnValue: true, Target: pathdom.NewPlaceholder(0), Value: present},
 					},
 				}
@@ -1318,6 +1445,33 @@ func TestFactsEdgeTransferCallOutcomeReturnPresenceStopsAtReassignment(t *testin
 	}, in)
 
 	assertValue(t, reg, got, key.SymbolValue(value), product.Top())
+}
+
+func TestFactsEdgeTransferCallOutcomeTraversalCacheResetsForDifferentGraphs(t *testing.T) {
+	reg := standard.Registry()
+	killGraph, facts, branch, thenPoint, _, _, value := callOutcomeReturnPresenceGraph(reg, true)
+	noKillGraph := callOutcomeReturnPresenceSamePointsGraph(false)
+	edgeTransfer := NewFactsEdgeTransfer(FactsEdgeTransferConfig{
+		Facts:       facts,
+		CallOutcome: callOutcomeReturnPresenceProvider(),
+	})
+	in := state.State{}.WriteValue(reg, key.SymbolValue(value), product.Top())
+
+	killOut := edgeTransfer(transfer.EdgeContext{
+		Graph:    killGraph,
+		Registry: reg,
+		Edge:     cfg.Edge{From: branch, To: thenPoint, Cond: true},
+		HasCond:  true,
+	}, in)
+	noKillOut := edgeTransfer(transfer.EdgeContext{
+		Graph:    noKillGraph,
+		Registry: reg,
+		Edge:     cfg.Edge{From: branch, To: thenPoint, Cond: true},
+		HasCond:  true,
+	}, in)
+
+	assertValue(t, reg, killOut, key.SymbolValue(value), product.Top())
+	assertValue(t, reg, noKillOut, key.SymbolValue(value), absentValue(reg))
 }
 
 func TestFactsNodeTransferCallOutcomeReturnPresencePersistsForLaterPathRefinement(t *testing.T) {
@@ -1460,7 +1614,7 @@ func TestFactsNodeTransferCallOutcomeReturnPresenceSkipsIrrelevantAssignment(t *
 	transferFn := NewFactsNodeTransfer(FactsNodeTransferConfig{
 		Facts:   facts,
 		Sources: sourcevalue.NewSourceValues(sourcevalue.SourceValuesConfig{Registry: reg}),
-		CallOutcome: func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) CallOutcome {
+		CallOutcome: func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) callpayload.CallOutcome {
 			providerCalls++
 			return callOutcomeReturnPresenceProvider()(transfer.NodeContext{}, factflow.CallSiteView{}, state.State{}, nil)
 		},
@@ -1562,6 +1716,31 @@ func callOutcomeReturnPresenceGraph(
 	return graph, facts, branch, thenPoint, elsePoint, valuePath, value
 }
 
+func callOutcomeReturnPresenceSamePointsGraph(kill bool) cfg.Graph {
+	graph := cfg.New()
+	call := graph.AddNode(cfg.NodeCall)
+	assignValue := graph.AddNode(cfg.NodeAssign)
+	assignErr := graph.AddNode(cfg.NodeAssign)
+	killPoint := graph.AddNode(cfg.NodeAssign)
+	branch := graph.AddNode(cfg.NodeBranch)
+	thenPoint := graph.AddNode(cfg.NodeNoop)
+	elsePoint := graph.AddNode(cfg.NodeNoop)
+	graph.AddEdge(graph.Entry(), call, false)
+	graph.AddEdge(call, assignValue, false)
+	graph.AddEdge(assignValue, assignErr, false)
+	if kill {
+		graph.AddEdge(assignErr, killPoint, false)
+		graph.AddEdge(killPoint, branch, false)
+	} else {
+		graph.AddEdge(assignErr, branch, false)
+	}
+	graph.AddEdge(branch, thenPoint, true)
+	graph.AddEdge(branch, elsePoint, false)
+	graph.AddEdge(thenPoint, graph.Exit(), false)
+	graph.AddEdge(elsePoint, graph.Exit(), false)
+	return graph
+}
+
 func callOutcomePersistentPresenceFacts(
 	reg *axis.Registry,
 	call cfg.Point,
@@ -1654,14 +1833,14 @@ func callOutcomePersistentPresenceResolver(
 	return visibility.NewResolver(builder.Build())
 }
 
-func callOutcomeReturnPresenceProvider() CallOutcomeProvider {
-	return func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) CallOutcome {
-		return CallOutcome{
-			Results: []CallResult{
+func callOutcomeReturnPresenceProvider() callpayload.CallOutcomeProvider {
+	return func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) callpayload.CallOutcome {
+		return callpayload.CallOutcome{
+			Results: []callpayload.CallResult{
 				{Index: 0, Value: product.Top()},
 				{Index: 1, Value: product.Top()},
 			},
-			ReturnPresenceRelations: []CallReturnPresenceRelation{
+			ReturnPresenceRelations: []callpayload.CallReturnPresenceRelation{
 				{
 					TriggerIndex:    1,
 					TriggerPresence: presence.Present(),

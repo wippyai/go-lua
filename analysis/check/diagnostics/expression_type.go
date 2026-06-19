@@ -2,9 +2,10 @@ package diagnostics
 
 import (
 	"github.com/wippyai/go-lua/analysis/check/body"
-	"github.com/wippyai/go-lua/analysis/check/diagnostics/internal/readmodel"
+	"github.com/wippyai/go-lua/analysis/check/internal/readmodel"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
+	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/typeannotation"
 	"github.com/wippyai/go-lua/analysis/lua/typeoperator"
@@ -315,7 +316,7 @@ func (p expressionTyper) binaryType(lhs ast.Expr, op string, rhs ast.Expr, depth
 }
 
 func projectionHasNil(t typ.Type) bool {
-	return readmodel.ProjectionHasNil(t)
+	return typevalue.ProjectionHasNil(t)
 }
 
 func projectionWithoutNil(t typ.Type) typ.Type {

@@ -162,6 +162,28 @@ func TestExplicitTopTypeClaimWitnessIsStructuralAdmissibilityProof(t *testing.T)
 	}
 }
 
+func TestExplicitTopTypeClaimWithAnyOriginIsStructuralAdmissibilityProof(t *testing.T) {
+	reg := standard.Registry()
+	result, err := body.CheckChunk(nil, body.Config{Registry: reg})
+	if err != nil {
+		t.Fatalf("CheckChunk: %v", err)
+	}
+	record := typetable.NewRecord().
+		Field("id", typ.String).
+		Build()
+	value := typevalue.WithWitness(reg, presentValue(reg), record)
+	value = product.Set(reg, value, evidence.Key, evidence.ExplicitTop())
+	value = product.Set(reg, value, assertion.Key, assertion.Of(assertion.TypeClaim, assertion.AnyClaim))
+	reader := New(result)
+
+	if !reader.ValueAdmissible(value, record) {
+		t.Fatalf("ValueAdmissible rejected explicit-top structural TypeClaim with any origin")
+	}
+	if !reader.ValueProofAdmissible(value, record) {
+		t.Fatalf("ValueProofAdmissible rejected explicit-top structural TypeClaim with any origin")
+	}
+}
+
 func TestExplicitTopScalarRuntimeKindRemainsAdmissibleProof(t *testing.T) {
 	reg := standard.Registry()
 	result, err := body.CheckChunk(nil, body.Config{Registry: reg})

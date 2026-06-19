@@ -5,6 +5,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/lattice/lift"
 	"github.com/wippyai/go-lua/analysis/domain/placement"
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
+	"github.com/wippyai/go-lua/analysis/domain/typestate"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
@@ -13,6 +14,7 @@ import (
 	effectdelta "github.com/wippyai/go-lua/analysis/engine/state/effectdelta"
 	"github.com/wippyai/go-lua/analysis/engine/state/heapidentity"
 	"github.com/wippyai/go-lua/analysis/engine/state/pathevidence"
+	"github.com/wippyai/go-lua/analysis/internal/registrycache"
 	"github.com/wippyai/go-lua/analysis/symbol"
 )
 
@@ -29,10 +31,13 @@ type State struct {
 	effectDeltas      effectDeltaLane
 	channelSelect     channelselectfact.Lane
 	storeRelations    storeRelationLane
+	typestates        typestate.Store
 	placement         placementLane
 	lenFloors         lenFloorLane
 	numFloors         numFloorLane
 }
+
+var domainCache registrycache.Cache[lattice.Lattice[State]]
 
 // Snapshot returns a point-in-time state value. State lanes are persistent by
 // convention: exported write APIs copy any lane they change, so unchanged lanes
@@ -101,102 +106,111 @@ func (s State) UpdateReturnSlot(reg *axis.Registry, index int, fn func(product.V
 // identity, frozen-table, effect, channel-select, store-relation, and placement
 // lanes.
 func Domain(reg *axis.Registry) lattice.Lattice[State] {
-	valueDomain := product.Domain(reg)
-	ops := domainOps{
-		values:            lift.Map[key.Value, product.Value](valueDomain),
-		pathEvidence:      pathevidence.Domain(reg),
-		dynamicIndex:      dynamicindex.MapDomain(reg),
-		heapTableIdentity: heapidentity.MapDomain(reg),
-		frozenTables:      frozenTableDomain(),
-		effectDeltas:      effectdelta.MapDomain(reg),
-		channelSelect:     channelselectfact.Domain(),
-		storeRelations:    storeRelationDomain(),
-		placement:         placementMapDomain(),
-		lenFloors:         lenFloorMapDomain(),
-		numFloors:         numFloorMapDomain(),
-	}
-	return lattice.Lattice[State]{
-		Bottom: func() State {
-			return State{
-				pathEvidence:   ops.pathEvidence.Bottom(),
-				frozenTables:   ops.frozenTables.Bottom(),
-				channelSelect:  ops.channelSelect.Bottom(),
-				storeRelations: ops.storeRelations.Bottom(),
-				lenFloors:      ops.lenFloors.Bottom(),
-				numFloors:      ops.numFloors.Bottom(),
-			}
-		},
-		Top: func() State {
-			return State{
-				values:            valueLane{mapLane[key.Value, product.Value]{top: true}},
-				pathEvidence:      ops.pathEvidence.Top(),
-				dynamicIndex:      dynamicIndexLane{mapLane[dynamicindex.Key, dynamicindex.Fact]{top: true}},
-				heapTableIdentity: heapTableIdentityLane{top: true},
-				frozenTables:      ops.frozenTables.Top(),
-				effectDeltas:      effectDeltaLane{mapLane[effectdelta.Key, effectdelta.Value]{top: true}},
-				placement:         placementLane{mapLane[identity.ID, placement.Value]{top: true}},
-				storeRelations:    ops.storeRelations.Top(),
-				lenFloors:         ops.lenFloors.Top(),
-				numFloors:         ops.numFloors.Top(),
-			}
-		},
-		Equal: func(a, b State) bool {
-			return ops.values.Equal(ops.valueLane(a), ops.valueLane(b)) &&
-				ops.pathEvidence.Equal(a.pathEvidence, b.pathEvidence) &&
-				ops.dynamicIndex.Equal(ops.dynamicIndexLane(a), ops.dynamicIndexLane(b)) &&
-				ops.heapTableIdentity.Equal(ops.heapTableIdentityLane(a), ops.heapTableIdentityLane(b)) &&
-				ops.frozenTables.Equal(a.frozenTables, b.frozenTables) &&
-				ops.effectDeltas.Equal(ops.effectDeltaLane(a), ops.effectDeltaLane(b)) &&
-				ops.channelSelect.Equal(a.channelSelect, b.channelSelect) &&
-				ops.storeRelations.Equal(a.storeRelations, b.storeRelations) &&
-				ops.placement.Equal(ops.placementLane(a), ops.placementLane(b)) &&
-				ops.lenFloors.Equal(a.lenFloors, b.lenFloors) &&
-				ops.numFloors.Equal(a.numFloors, b.numFloors)
-		},
-		LessOrEq: func(a, b State) bool {
-			return ops.values.LessOrEq(ops.valueLane(a), ops.valueLane(b)) &&
-				ops.pathEvidence.LessOrEq(a.pathEvidence, b.pathEvidence) &&
-				ops.dynamicIndex.LessOrEq(ops.dynamicIndexLane(a), ops.dynamicIndexLane(b)) &&
-				ops.heapTableIdentity.LessOrEq(ops.heapTableIdentityLane(a), ops.heapTableIdentityLane(b)) &&
-				ops.frozenTables.LessOrEq(a.frozenTables, b.frozenTables) &&
-				ops.effectDeltas.LessOrEq(ops.effectDeltaLane(a), ops.effectDeltaLane(b)) &&
-				ops.channelSelect.LessOrEq(a.channelSelect, b.channelSelect) &&
-				ops.storeRelations.LessOrEq(a.storeRelations, b.storeRelations) &&
-				ops.placement.LessOrEq(ops.placementLane(a), ops.placementLane(b)) &&
-				ops.lenFloors.LessOrEq(a.lenFloors, b.lenFloors) &&
-				ops.numFloors.LessOrEq(a.numFloors, b.numFloors)
-		},
-		Join: func(a, b State) State {
-			return ops.fromLanes(
-				ops.values.Join(ops.valueLane(a), ops.valueLane(b)),
-				ops.pathEvidence.Join(a.pathEvidence, b.pathEvidence),
-				ops.dynamicIndex.Join(ops.dynamicIndexLane(a), ops.dynamicIndexLane(b)),
-				ops.heapTableIdentity.Join(ops.heapTableIdentityLane(a), ops.heapTableIdentityLane(b)),
-				ops.frozenTables.Join(a.frozenTables, b.frozenTables),
-				ops.effectDeltas.Join(ops.effectDeltaLane(a), ops.effectDeltaLane(b)),
-				ops.channelSelect.Join(a.channelSelect, b.channelSelect),
-				ops.storeRelations.Join(a.storeRelations, b.storeRelations),
-				ops.placement.Join(ops.placementLane(a), ops.placementLane(b)),
-				ops.lenFloors.Join(a.lenFloors, b.lenFloors),
-				ops.numFloors.Join(a.numFloors, b.numFloors),
-			)
-		},
-		Widen: func(prev, next State) State {
-			return ops.fromLanes(
-				ops.values.Widen(ops.valueLane(prev), ops.valueLane(next)),
-				ops.pathEvidence.Widen(prev.pathEvidence, next.pathEvidence),
-				ops.dynamicIndex.Widen(ops.dynamicIndexLane(prev), ops.dynamicIndexLane(next)),
-				ops.heapTableIdentity.Widen(ops.heapTableIdentityLane(prev), ops.heapTableIdentityLane(next)),
-				ops.frozenTables.Widen(prev.frozenTables, next.frozenTables),
-				ops.effectDeltas.Widen(ops.effectDeltaLane(prev), ops.effectDeltaLane(next)),
-				ops.channelSelect.Widen(prev.channelSelect, next.channelSelect),
-				ops.storeRelations.Widen(prev.storeRelations, next.storeRelations),
-				ops.placement.Widen(ops.placementLane(prev), ops.placementLane(next)),
-				ops.lenFloors.Widen(prev.lenFloors, next.lenFloors),
-				ops.numFloors.Widen(prev.numFloors, next.numFloors),
-			)
-		},
-	}
+	return domainCache.Get(reg, func() lattice.Lattice[State] {
+		valueDomain := product.Domain(reg)
+		ops := domainOps{
+			values:            lift.Map[key.Value, product.Value](valueDomain),
+			pathEvidence:      pathevidence.Domain(reg),
+			dynamicIndex:      dynamicindex.MapDomain(reg),
+			heapTableIdentity: heapidentity.MapDomain(reg),
+			frozenTables:      frozenTableDomain(),
+			effectDeltas:      effectdelta.MapDomain(reg),
+			channelSelect:     channelselectfact.Domain(),
+			storeRelations:    storeRelationDomain(),
+			typestates:        typestate.Domain,
+			placement:         placementMapDomain(),
+			lenFloors:         lenFloorMapDomain(),
+			numFloors:         numFloorMapDomain(),
+		}
+		return lattice.Lattice[State]{
+			Bottom: func() State {
+				return State{
+					pathEvidence:   ops.pathEvidence.Bottom(),
+					frozenTables:   ops.frozenTables.Bottom(),
+					channelSelect:  ops.channelSelect.Bottom(),
+					storeRelations: ops.storeRelations.Bottom(),
+					typestates:     ops.typestates.Bottom(),
+					lenFloors:      ops.lenFloors.Bottom(),
+					numFloors:      ops.numFloors.Bottom(),
+				}
+			},
+			Top: func() State {
+				return State{
+					values:            valueLane{mapLane[key.Value, product.Value]{top: true}},
+					pathEvidence:      ops.pathEvidence.Top(),
+					dynamicIndex:      dynamicIndexLane{mapLane[dynamicindex.Key, dynamicindex.Fact]{top: true}},
+					heapTableIdentity: heapTableIdentityLane{top: true},
+					frozenTables:      ops.frozenTables.Top(),
+					effectDeltas:      effectDeltaLane{mapLane[effectdelta.Key, effectdelta.Value]{top: true}},
+					placement:         placementLane{mapLane[identity.ID, placement.Value]{top: true}},
+					storeRelations:    ops.storeRelations.Top(),
+					typestates:        ops.typestates.Top(),
+					lenFloors:         ops.lenFloors.Top(),
+					numFloors:         ops.numFloors.Top(),
+				}
+			},
+			Equal: func(a, b State) bool {
+				return ops.values.Equal(ops.valueLane(a), ops.valueLane(b)) &&
+					ops.pathEvidence.Equal(a.pathEvidence, b.pathEvidence) &&
+					ops.dynamicIndex.Equal(ops.dynamicIndexLane(a), ops.dynamicIndexLane(b)) &&
+					ops.heapTableIdentity.Equal(ops.heapTableIdentityLane(a), ops.heapTableIdentityLane(b)) &&
+					ops.frozenTables.Equal(a.frozenTables, b.frozenTables) &&
+					ops.effectDeltas.Equal(ops.effectDeltaLane(a), ops.effectDeltaLane(b)) &&
+					ops.channelSelect.Equal(a.channelSelect, b.channelSelect) &&
+					ops.storeRelations.Equal(a.storeRelations, b.storeRelations) &&
+					ops.typestates.Equal(a.typestates, b.typestates) &&
+					ops.placement.Equal(ops.placementLane(a), ops.placementLane(b)) &&
+					ops.lenFloors.Equal(a.lenFloors, b.lenFloors) &&
+					ops.numFloors.Equal(a.numFloors, b.numFloors)
+			},
+			LessOrEq: func(a, b State) bool {
+				return ops.values.LessOrEq(ops.valueLane(a), ops.valueLane(b)) &&
+					ops.pathEvidence.LessOrEq(a.pathEvidence, b.pathEvidence) &&
+					ops.dynamicIndex.LessOrEq(ops.dynamicIndexLane(a), ops.dynamicIndexLane(b)) &&
+					ops.heapTableIdentity.LessOrEq(ops.heapTableIdentityLane(a), ops.heapTableIdentityLane(b)) &&
+					ops.frozenTables.LessOrEq(a.frozenTables, b.frozenTables) &&
+					ops.effectDeltas.LessOrEq(ops.effectDeltaLane(a), ops.effectDeltaLane(b)) &&
+					ops.channelSelect.LessOrEq(a.channelSelect, b.channelSelect) &&
+					ops.storeRelations.LessOrEq(a.storeRelations, b.storeRelations) &&
+					ops.typestates.LessOrEq(a.typestates, b.typestates) &&
+					ops.placement.LessOrEq(ops.placementLane(a), ops.placementLane(b)) &&
+					ops.lenFloors.LessOrEq(a.lenFloors, b.lenFloors) &&
+					ops.numFloors.LessOrEq(a.numFloors, b.numFloors)
+			},
+			Join: func(a, b State) State {
+				return ops.fromLanes(
+					ops.values.Join(ops.valueLane(a), ops.valueLane(b)),
+					ops.pathEvidence.Join(a.pathEvidence, b.pathEvidence),
+					ops.dynamicIndex.Join(ops.dynamicIndexLane(a), ops.dynamicIndexLane(b)),
+					ops.heapTableIdentity.Join(ops.heapTableIdentityLane(a), ops.heapTableIdentityLane(b)),
+					ops.frozenTables.Join(a.frozenTables, b.frozenTables),
+					ops.effectDeltas.Join(ops.effectDeltaLane(a), ops.effectDeltaLane(b)),
+					ops.channelSelect.Join(a.channelSelect, b.channelSelect),
+					ops.storeRelations.Join(a.storeRelations, b.storeRelations),
+					ops.typestates.Join(a.typestates, b.typestates),
+					ops.placement.Join(ops.placementLane(a), ops.placementLane(b)),
+					ops.lenFloors.Join(a.lenFloors, b.lenFloors),
+					ops.numFloors.Join(a.numFloors, b.numFloors),
+				)
+			},
+			Widen: func(prev, next State) State {
+				return ops.fromLanes(
+					ops.values.Widen(ops.valueLane(prev), ops.valueLane(next)),
+					ops.pathEvidence.Widen(prev.pathEvidence, next.pathEvidence),
+					ops.dynamicIndex.Widen(ops.dynamicIndexLane(prev), ops.dynamicIndexLane(next)),
+					ops.heapTableIdentity.Widen(ops.heapTableIdentityLane(prev), ops.heapTableIdentityLane(next)),
+					ops.frozenTables.Widen(prev.frozenTables, next.frozenTables),
+					ops.effectDeltas.Widen(ops.effectDeltaLane(prev), ops.effectDeltaLane(next)),
+					ops.channelSelect.Widen(prev.channelSelect, next.channelSelect),
+					ops.storeRelations.Widen(prev.storeRelations, next.storeRelations),
+					ops.typestates.Widen(prev.typestates, next.typestates),
+					ops.placement.Widen(ops.placementLane(prev), ops.placementLane(next)),
+					ops.lenFloors.Widen(prev.lenFloors, next.lenFloors),
+					ops.numFloors.Widen(prev.numFloors, next.numFloors),
+				)
+			},
+		}
+	})
 }
 
 type domainOps struct {
@@ -208,6 +222,7 @@ type domainOps struct {
 	effectDeltas      lattice.Lattice[map[effectdelta.Key]effectdelta.Value]
 	channelSelect     lattice.Lattice[channelselectfact.Lane]
 	storeRelations    lattice.Lattice[storeRelationLane]
+	typestates        lattice.Lattice[typestate.Store]
 	placement         lattice.Lattice[map[identity.ID]placement.Value]
 	lenFloors         lattice.Lattice[lenFloorLane]
 	numFloors         lattice.Lattice[numFloorLane]
@@ -242,6 +257,7 @@ func (o domainOps) fromLanes(
 	effectDeltas map[effectdelta.Key]effectdelta.Value,
 	channelSelect channelselectfact.Lane,
 	storeRelations storeRelationLane,
+	typestates typestate.Store,
 	placementLane map[identity.ID]placement.Value,
 	lenFloors lenFloorLane,
 	numFloors numFloorLane,
@@ -255,6 +271,7 @@ func (o domainOps) fromLanes(
 	out.effectDeltas = effectDeltaLaneFromMap(o.effectDeltas, effectDeltas)
 	out.channelSelect = channelSelect
 	out.storeRelations = storeRelations
+	out.typestates = typestates
 	out.placement = placementLaneFromMap(o.placement, placementLane)
 	out.lenFloors = lenFloors
 	out.numFloors = numFloors

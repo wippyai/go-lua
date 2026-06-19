@@ -307,6 +307,7 @@ func (b *binder) bindTypeExpr(expr ast.TypeExpr) {
 	case *ast.TupleTypeExpr:
 		b.bindTypeExprs(expr.Elements)
 	case *ast.TypeOfExpr:
+		b.bindTypeQueryExpr(expr.Expr)
 	case *ast.KeyOfExpr:
 		b.bindTypeExpr(expr.Inner)
 	case *ast.IndexAccessExpr:

@@ -1,8 +1,6 @@
 package diagnostics
 
 import (
-	"fmt"
-
 	"github.com/wippyai/go-lua/analysis/check/body"
 	"github.com/wippyai/go-lua/analysis/diagnostic"
 	"github.com/wippyai/go-lua/analysis/lua/typeannotation"
@@ -53,7 +51,11 @@ func (p unresolvedValueReferences) Produce(result *body.Result) []diagnostic.Dia
 		}
 	}
 
+	envs := cachedGuardEnvironments(result)
 	for _, point := range graph.RPO() {
+		if !guardEnvReachableAt(envs, point) {
+			continue
+		}
 		if fact, ok := result.LocalAssignment(point); ok {
 			emitExpr(fact.Expr)
 		}
@@ -204,31 +206,20 @@ func unresolvedValueDiagnostic(ident *ast.IdentExpr) diagnostic.Diagnostic {
 	if ident != nil && ident.Value != "" {
 		name = ident.Value
 	}
-	return diagnostic.Diagnostic{
-		Position: diagnostic.Position{
-			Line:      span.StartLine,
-			Column:    span.StartCol,
-			EndLine:   span.EndLine,
-			EndColumn: span.EndCol,
-		},
+	return diagnostic.New(diagnostic.DiagnosticSpec{
 		Span:     span,
 		Code:     CodeUnresolvedValueReference,
 		Severity: diagnostic.SeverityError,
-		Message:  fmt.Sprintf("unknown value %s", name),
+		Message:  unresolvedValueMessage(name),
+		Labels:   []diagnostic.Label{sourceLabel(span, labelUnknownValue)},
 		Explanation: diagnostic.NewExplanation(
 			diagnostic.Evidence{
-				Kind:    diagnostic.EvidenceUserAssertion,
-				Trust:   diagnostic.TrustClaimed,
-				Span:    span,
-				Message: fmt.Sprintf("value reference %s is used here", name),
-			},
-			diagnostic.Evidence{
-				Kind:    diagnostic.EvidenceMissingProof,
+				Kind:    diagnostic.EvidenceAbstractFact,
 				Trust:   diagnostic.TrustProven,
 				Span:    span,
-				Message: fmt.Sprintf("value reference %s is not declared, predeclared, or imported in scope", name),
+				Message: unresolvedValueEvidence(name),
 			},
 		),
-		Labels: []diagnostic.Label{{Span: span, Message: "unresolved value"}},
-	}
+		Help: unresolvedValueHelp(),
+	})
 }

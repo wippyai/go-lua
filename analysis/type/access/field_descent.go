@@ -42,10 +42,6 @@ func fieldDepth(t typ.Type, name string, depth int) fieldResult {
 	})
 }
 
-func fieldAtDepth(t typ.Type, name string, depth int) (typ.Type, bool) {
-	return fieldDepth(t, name, depth).materialize()
-}
-
 func SpecialAccessType(t typ.Type) (typ.Type, bool) {
 	if t == nil {
 		return nil, false

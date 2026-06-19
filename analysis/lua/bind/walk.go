@@ -209,18 +209,39 @@ func (b *binder) bindExprs(exprs []ast.Expr) {
 	}
 }
 
+type exprBindMode uint8
+
+const (
+	exprBindRuntime exprBindMode = iota
+	exprBindTypeQuery
+)
+
 func (b *binder) bindExpr(expr ast.Expr) {
+	b.bindExprMode(expr, exprBindRuntime)
+}
+
+func (b *binder) bindTypeQueryExpr(expr ast.Expr) {
+	b.bindExprMode(expr, exprBindTypeQuery)
+}
+
+func (b *binder) bindExprMode(expr ast.Expr, mode exprBindMode) {
 	switch expr := expr.(type) {
 	case nil:
 	case *ast.TrueExpr, *ast.FalseExpr, *ast.NilExpr, *ast.NumberExpr, *ast.StringExpr:
 	case *ast.Comma3Expr:
-		b.bindVararg()
+		if mode == exprBindRuntime {
+			b.bindVararg()
+		}
 	case *ast.IdentExpr:
-		b.bindReadIdent(expr)
+		if mode == exprBindTypeQuery {
+			b.bindTypeQueryIdent(expr)
+		} else {
+			b.bindReadIdent(expr)
+		}
 	case *ast.AttrGetExpr:
-		b.bindExpr(expr.Object)
+		b.bindExprMode(expr.Object, mode)
 		if expr.KeySyntax != ast.AttrKeyDot {
-			b.bindExpr(expr.Key)
+			b.bindExprMode(expr.Key, mode)
 		}
 	case *ast.TableExpr:
 		for _, field := range expr.Fields {
@@ -228,44 +249,50 @@ func (b *binder) bindExpr(expr ast.Expr) {
 				continue
 			}
 			if field.KeySyntax != ast.AttrKeyDot {
-				b.bindExpr(field.Key)
+				b.bindExprMode(field.Key, mode)
 			}
-			b.bindExpr(field.Value)
+			b.bindExprMode(field.Value, mode)
 		}
 	case *ast.FuncCallExpr:
-		b.bindExpr(expr.Func)
-		b.bindExpr(expr.Receiver)
-		b.bindExprs(expr.Args)
+		b.bindExprMode(expr.Func, mode)
+		b.bindExprMode(expr.Receiver, mode)
+		for _, arg := range expr.Args {
+			b.bindExprMode(arg, mode)
+		}
 		b.bindTypeExprs(expr.TypeArgs)
 	case *ast.LogicalOpExpr:
-		b.bindExpr(expr.Lhs)
-		b.bindExpr(expr.Rhs)
+		b.bindExprMode(expr.Lhs, mode)
+		b.bindExprMode(expr.Rhs, mode)
 	case *ast.RelationalOpExpr:
-		b.bindExpr(expr.Lhs)
-		b.bindExpr(expr.Rhs)
+		b.bindExprMode(expr.Lhs, mode)
+		b.bindExprMode(expr.Rhs, mode)
 	case *ast.StringConcatOpExpr:
-		b.bindExpr(expr.Lhs)
-		b.bindExpr(expr.Rhs)
+		b.bindExprMode(expr.Lhs, mode)
+		b.bindExprMode(expr.Rhs, mode)
 	case *ast.ArithmeticOpExpr:
-		b.bindExpr(expr.Lhs)
-		b.bindExpr(expr.Rhs)
+		b.bindExprMode(expr.Lhs, mode)
+		b.bindExprMode(expr.Rhs, mode)
 	case *ast.UnaryMinusOpExpr:
-		b.bindExpr(expr.Expr)
+		b.bindExprMode(expr.Expr, mode)
 	case *ast.UnaryNotOpExpr:
-		b.bindExpr(expr.Expr)
+		b.bindExprMode(expr.Expr, mode)
 	case *ast.UnaryLenOpExpr:
-		b.bindExpr(expr.Expr)
+		b.bindExprMode(expr.Expr, mode)
 	case *ast.UnaryBNotOpExpr:
-		b.bindExpr(expr.Expr)
+		b.bindExprMode(expr.Expr, mode)
 	case *ast.FunctionExpr:
-		b.bindFunction(expr, false, functionOriginDetails{
-			kind:       FunctionOriginLiteral,
-			localIndex: -1,
-		})
+		if mode == exprBindRuntime {
+			b.bindFunction(expr, false, functionOriginDetails{
+				kind:       FunctionOriginLiteral,
+				localIndex: -1,
+			})
+		} else {
+			b.bindFunctionTypeSignature(expr)
+		}
 	case *ast.CastExpr:
-		b.bindExpr(expr.Expr)
+		b.bindExprMode(expr.Expr, mode)
 		b.bindTypeExpr(expr.Type)
 	case *ast.NonNilAssertExpr:
-		b.bindExpr(expr.Expr)
+		b.bindExprMode(expr.Expr, mode)
 	}
 }

@@ -1,1 +1,98 @@
-{ "description": "Passing a number where a string parameter is declared must be rejected.", "files": ["main.lua"], "check": { "diagnostics": [ { "file": "main.lua", "line": 3, "severity": "error", "code": "type.call.direct.argument_type", "message_contains": ["argument 1", "number", "string"], "min_evidence": 1, "evidence_contains": ["argument 1 is"], "min_labels": 1, "label_contains": ["argument value"] } ] }, "run": { "skip": "diagnostic-only" } }
+{
+  "description": "Passing a number where a string parameter is declared must be rejected.",
+  "files": [
+    "main.lua"
+  ],
+  "check": {
+    "diagnostics": [
+      {
+        "file": "main.lua",
+        "line": 3,
+        "column": 21,
+        "severity": "error",
+        "code": "type.call.direct.argument_type",
+        "message_contains": [
+          "argument 1 (x)",
+          "number",
+          "string"
+        ],
+        "min_evidence": 3,
+        "evidence_contains": [
+          "argument 1 (x) has type number",
+          "takes_string parameter 1 expects string"
+        ],
+        "evidence": [
+          {
+            "file": "main.lua",
+            "line": 3,
+            "column": 21,
+            "kind": "abstract fact",
+            "trust": "proven",
+            "contains": [
+              "argument 1 (x) has type number"
+            ]
+          },
+          {
+            "kind": "user assertion",
+            "trust": "claimed",
+            "contains": [
+              "takes_string parameter 1 expects string"
+            ]
+          },
+          {
+            "file": "main.lua",
+            "line": 3,
+            "column": 21,
+            "kind": "missing proof",
+            "trust": "unknown",
+            "reason": "boundary validation missing",
+            "contains": [
+              "no proof on this path shows x satisfies the parameter type"
+            ]
+          }
+        ],
+        "render_contains": [
+          "error[type.call.direct.argument_type]: argument 1 (x) is number, not string",
+          "return takes_string(x)",
+          "because:",
+          "Pass `x` as a value compatible with the parameter type"
+        ],
+        "render_ordered_contains": [
+          "error[type.call.direct.argument_type]: argument 1 (x) is number, not string",
+          "--> main.lua:3:21",
+          "return takes_string(x)",
+          "because:",
+          "1. proven: argument 1 (x) has type number",
+          "2. claimed: takes_string parameter 1 expects string",
+          "3. missing proof: no proof on this path shows x satisfies the parameter type",
+          "help: Pass `x` as a value compatible with the parameter type, or change the callee signature if that argument is valid."
+        ],
+        "render_not_contains": [
+          "^~",
+          "where:"
+        ],
+        "help_contains": [
+          "Pass `x` as a value compatible with the parameter type",
+          "change the callee signature"
+        ],
+        "min_labels": 1,
+        "label_contains": [
+          "argument value"
+        ],
+        "labels": [
+          {
+            "file": "main.lua",
+            "line": 3,
+            "column": 21,
+            "contains": [
+              "argument value"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "run": {
+    "skip": "diagnostic-only"
+  }
+}

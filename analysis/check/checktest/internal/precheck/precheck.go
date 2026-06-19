@@ -15,15 +15,6 @@ const (
 
 // Precheck produces bounded structural diagnostics directly from AST.
 func Precheck(stmts []ast.Stmt) []diagnostic.Diagnostic {
-	return Structural{}.Produce(stmts)
-}
-
-// Structural reports AST-local control-flow diagnostics that CFG construction
-// cannot emit when a chunk is unsupported.
-type Structural struct{}
-
-// Produce walks the AST and reports structural control-flow diagnostics.
-func (Structural) Produce(stmts []ast.Stmt) []diagnostic.Diagnostic {
 	var s structuralScanner
 	s.scanChunk(stmts)
 	return s.out
@@ -235,15 +226,17 @@ func breakDiagnostic(stmt *ast.BreakStmt) diagnostic.Diagnostic {
 		Span:     span,
 		Code:     CodeBreakOutsideLoop,
 		Severity: diagnostic.SeverityError,
-		Message:  "break is outside the current loop",
+		Message:  "break cannot be used outside a loop",
 		Explanation: diagnostic.NewExplanation(
 			diagnostic.Evidence{
 				Kind:    diagnostic.EvidenceAbstractFact,
 				Trust:   diagnostic.TrustProven,
 				Span:    span,
-				Message: "no enclosing loop is visible in this function",
+				Message: "this break is not inside a while, repeat, or for loop",
 			},
 		),
+		Labels: []diagnostic.Label{{Span: span, Message: "break statement"}},
+		Help:   "Move this break inside a loop, or replace it with return if the function should stop here.",
 	}
 }
 
@@ -261,19 +254,20 @@ func duplicateLabelDiagnostic(stmt, prev *ast.LabelStmt) diagnostic.Diagnostic {
 				Kind:    diagnostic.EvidenceAbstractFact,
 				Trust:   diagnostic.TrustProven,
 				Span:    prevSpan,
-				Message: fmt.Sprintf("label %q was already defined here", stmt.Name),
+				Message: fmt.Sprintf("label %q is first defined here", stmt.Name),
 			},
 			diagnostic.Evidence{
 				Kind:    diagnostic.EvidenceAbstractFact,
 				Trust:   diagnostic.TrustProven,
 				Span:    span,
-				Message: fmt.Sprintf("this second %q label is a duplicate", stmt.Name),
+				Message: fmt.Sprintf("this label reuses %q in the same scope", stmt.Name),
 			},
 		),
 		Labels: []diagnostic.Label{
-			{Span: prevSpan, Message: "first label"},
-			{Span: span, Message: "duplicate label"},
+			{Span: prevSpan, Message: "first label", Placement: diagnostic.LabelPlacementAbove},
+			{Span: span, Message: "duplicate label", Placement: diagnostic.LabelPlacementBelow},
 		},
+		Help: fmt.Sprintf("Rename one label, or remove the second ::%s:: label.", stmt.Name),
 	}
 }
 
@@ -290,10 +284,11 @@ func missingLabelDiagnostic(stmt *ast.GotoStmt, label string) diagnostic.Diagnos
 				Kind:    diagnostic.EvidenceAbstractFact,
 				Trust:   diagnostic.TrustProven,
 				Span:    span,
-				Message: fmt.Sprintf("no label named %q exists in this function or chunk", label),
+				Message: fmt.Sprintf("no label named %q is declared in this scope", label),
 			},
 		),
 		Labels: []diagnostic.Label{{Span: span, Message: "unresolved goto"}},
+		Help:   fmt.Sprintf("Add ::%s:: in this scope, or change the goto target to an existing label.", label),
 	}
 }
 

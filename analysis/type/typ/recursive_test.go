@@ -643,6 +643,28 @@ func TestOpenRecursiveWrapperHashRefreshesForEquality(t *testing.T) {
 	}
 }
 
+func TestClosedRecursiveWrapperHashRefreshesAfterBodyRewrite(t *testing.T) {
+	rec := NewRecursivePlaceholder("Node")
+	rec.SetBody(newRecord().Field("value", String).Build())
+	staleWrapper := newRecord().Field("next", rec).Build()
+
+	rec.SetBody(newRecord().Field("value", Number).Build())
+	freshWrapper := newRecord().Field("next", rec).Build()
+
+	if !typeEquals(staleWrapper, freshWrapper) {
+		t.Fatal("wrappers around the same rewritten recursive node should remain equal")
+	}
+	if EqualityHash(staleWrapper) != EqualityHash(freshWrapper) {
+		t.Fatalf("closed recursive wrapper equality hash should refresh after SetBody: %d vs %d", EqualityHash(staleWrapper), EqualityHash(freshWrapper))
+	}
+	if got := MaterializeUnion([]Type{staleWrapper, freshWrapper}); got != staleWrapper {
+		t.Fatalf("stale/fresh recursive wrappers should deduplicate in unions, got %T %[1]v", got)
+	}
+	if got := MaterializeIntersection([]Type{staleWrapper, freshWrapper}); got != staleWrapper {
+		t.Fatalf("stale/fresh recursive wrappers should deduplicate in intersections, got %T %[1]v", got)
+	}
+}
+
 func TestEqualityHashNamedGenericIncludesBodyInOpenRecursivePath(t *testing.T) {
 	rec := NewRecursivePlaceholder("Node")
 	left := NewGeneric("Box", []*TypeParam{NewTypeParam("T", nil)},
@@ -652,8 +674,11 @@ func TestEqualityHashNamedGenericIncludesBodyInOpenRecursivePath(t *testing.T) {
 
 	rec.SetBody(newRecord().OptField("next", rec).Build())
 
-	if !knownContainsOpenRecursive(left) || !knownContainsOpenRecursive(right) {
-		t.Fatal("test requires generics built through the open-recursive equality hash path")
+	if !knownContainsRecursive(left) || !knownContainsRecursive(right) {
+		t.Fatal("test requires recursive-containing generics")
+	}
+	if knownContainsOpenRecursive(left) || knownContainsOpenRecursive(right) {
+		t.Fatal("closed recursive generics should not retain stale open-recursive state")
 	}
 	if typeEquals(left, right) {
 		t.Fatal("same-named generics with different bodies should not be equal")
@@ -830,6 +855,38 @@ func TestRecursiveContainsGraphClosedHandlesDeepAcyclicProducts(t *testing.T) {
 
 	if !recursiveContainsGraphClosed(body, nil) {
 		t.Fatal("deep acyclic products should be recognized as closed without a depth cap")
+	}
+}
+
+func TestRecursiveContainsGraphClosedAcceptsNilSeenForRecursiveNodes(t *testing.T) {
+	closed := NewRecursivePlaceholder("Closed")
+	closed.SetBody(newRecord().OptField("next", closed).Build())
+	if !recursiveContainsGraphClosed(closed, nil) {
+		t.Fatal("closed recursive node should be graph-closed when caller provides nil seen map")
+	}
+
+	dangling := NewRecursivePlaceholder("Dangling")
+	if recursiveContainsGraphClosed(dangling, nil) {
+		t.Fatal("dangling recursive node should not be graph-closed")
+	}
+}
+
+func TestKnownContainsOpenRecursiveReflectsCurrentChildGraphState(t *testing.T) {
+	child := NewRecursivePlaceholder("Child")
+	child.SetBody(newRecord().Field("value", String).Build())
+	wrapper := NewArray(child)
+	if knownContainsOpenRecursive(wrapper) {
+		t.Fatal("closed child should not make wrapper open-recursive")
+	}
+
+	child.SetBody(nil)
+	if !knownContainsOpenRecursive(wrapper) {
+		t.Fatal("wrapper should reflect child becoming open after construction")
+	}
+
+	child.SetBody(newRecord().Field("value", Number).Build())
+	if knownContainsOpenRecursive(wrapper) {
+		t.Fatal("wrapper should reflect child becoming closed again after construction")
 	}
 }
 

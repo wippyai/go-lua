@@ -8,20 +8,67 @@ import (
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/program"
 	"github.com/wippyai/go-lua/analysis/diagnostic"
 	"github.com/wippyai/go-lua/analysis/domain/effect"
+	lifecyclefx "github.com/wippyai/go-lua/analysis/domain/effect/lifecycle"
 	"github.com/wippyai/go-lua/analysis/domain/effect/mutation"
 	"github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/typestate"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/module/manifest"
 	"github.com/wippyai/go-lua/analysis/module/signature"
 	"github.com/wippyai/go-lua/analysis/module/signaturelookup"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
 	"github.com/wippyai/go-lua/analysis/type/access"
+	typeformat "github.com/wippyai/go-lua/analysis/type/format"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/typeexpr"
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/parse"
 )
+
+func TestFormatTypeUsesBoundedDiagnosticFormatter(t *testing.T) {
+	fields := make([]typ.Field, 0, typeformat.DefaultOptions.MaxRecordFields+16)
+	for i := 0; i < cap(fields); i++ {
+		fields = append(fields, typ.Field{
+			Name: strings.Repeat("deep_field_", 8) + string(rune('a'+i)),
+			Type: typ.NewMap(typ.String, &typ.Record{Fields: []typ.Field{
+				{Name: "nested", Type: typ.String},
+			}}),
+		})
+	}
+
+	unionMembers := make([]typ.Type, 0, typeformat.DefaultOptions.MaxUnionMembers+8)
+	for i := 0; i < cap(unionMembers); i++ {
+		unionMembers = append(unionMembers, &typ.Record{Fields: []typ.Field{
+			{Name: "kind", Type: typ.LiteralString("case_" + string(rune('a'+i)))},
+			{Name: "payload", Type: &typ.Record{Fields: fields[:2]}},
+		}})
+	}
+
+	fn := typ.Func()
+	for i := 0; i < typeformat.DefaultOptions.MaxParams+8; i++ {
+		fn.Param("param_"+string(rune('a'+i)), &typ.Record{Fields: fields[:2]})
+	}
+	returns := make([]typ.Type, 0, typeformat.DefaultOptions.MaxReturns+8)
+	for i := 0; i < cap(returns); i++ {
+		returns = append(returns, &typ.Record{Fields: fields[:2]})
+	}
+	fn.Returns(returns...)
+
+	for name, tp := range map[string]typ.Type{
+		"record":   &typ.Record{Fields: fields},
+		"union":    typ.MaterializeUnion(unionMembers),
+		"function": fn.Build(),
+	} {
+		got := formatType(tp)
+		if len(got) > typeformat.DefaultOptions.MaxBytes {
+			t.Fatalf("%s formatted diagnostic type length = %d, want <= %d: %q", name, len(got), typeformat.DefaultOptions.MaxBytes, got)
+		}
+		if !strings.Contains(got, "...") {
+			t.Fatalf("%s formatted diagnostic type = %q, want truncation marker", name, got)
+		}
+	}
+}
 
 func TestAnnotationAssignabilityReportsLiteralMismatch(t *testing.T) {
 	diags := runDiagnostics(t, `local x: number = "no"`)
@@ -60,32 +107,314 @@ func TestProduceWithConfigAppliesDiagnosticPolicy(t *testing.T) {
 	}
 }
 
+func TestDiagnosticProducerRegistryDeclaresPolicyDefaults(t *testing.T) {
+	optInCodes := map[diagnostic.Code]struct{}{
+		CodeUnusedLocal:         {},
+		CodeDeadAssignment:      {},
+		CodeRedundantCondition:  {},
+		CodeFrozenTableMutation: {},
+		CodeResourceUnreleased:  {},
+	}
+	allCodes := []diagnostic.Code{
+		CodeAssignmentType,
+		CodeMissingMember,
+		CodeOptionalMethodCall,
+		CodeNotCallable,
+		CodeDirectCallNotCallable,
+		CodeDirectCallTooFewArgs,
+		CodeDirectCallTooManyArgs,
+		CodeDirectCallArgType,
+		CodeReturnContractType,
+		CodeDirectCallResultAssignment,
+		CodeOptionalAssignmentTarget,
+		CodeConcatOperand,
+		CodeNumericForOperand,
+		CodeChannelSelectExhaustive,
+		CodeUnresolvedTypeReference,
+		CodeUnresolvedValueReference,
+		CodeUnusedLocal,
+		CodeDeadAssignment,
+		CodeRedundantCondition,
+		CodeFrozenTableMutation,
+		CodeResourceUnreleased,
+	}
+
+	declared := make(map[diagnostic.Code]struct{})
+	for i, producer := range diagnosticProducers(producerContext{}) {
+		if producer.produce == nil {
+			t.Fatalf("producer %d has nil produce function", i)
+		}
+		if len(producer.codes) == 0 {
+			t.Fatalf("producer %d must declare emitted diagnostic codes", i)
+		}
+		for _, code := range producer.codes {
+			declared[code] = struct{}{}
+			_, isOptIn := optInCodes[code]
+			if !producer.defaultEnabled && !isOptIn {
+				t.Fatalf("producer %d marks default-enabled code %s as opt-in", i, code)
+			}
+		}
+	}
+	for _, code := range allCodes {
+		if _, ok := declared[code]; !ok {
+			t.Fatalf("diagnostic code %s is not declared by any producer", code)
+		}
+	}
+
+	required := diagnosticProducer{codes: []diagnostic.Code{CodeAssignmentType}, defaultEnabled: true}
+	if !required.shouldRun(diagnostic.Policy{}) {
+		t.Fatalf("default-enabled producer should run without an explicit policy")
+	}
+	if required.shouldRun(diagnostic.Policy{Rules: map[diagnostic.Code]diagnostic.Rule{CodeAssignmentType: diagnostic.Disable()}}) {
+		t.Fatalf("default-enabled producer should stop when all emitted codes are disabled")
+	}
+	optIn := diagnosticProducer{codes: []diagnostic.Code{CodeUnusedLocal}, defaultEnabled: false}
+	if optIn.shouldRun(diagnostic.Policy{}) {
+		t.Fatalf("opt-in producer should not run without explicit enablement")
+	}
+	if optIn.shouldRun(diagnostic.Policy{Rules: map[diagnostic.Code]diagnostic.Rule{CodeUnusedLocal: diagnostic.OverrideSeverity(diagnostic.SeverityHint)}}) {
+		t.Fatalf("severity override alone should not enable an opt-in producer")
+	}
+	if !optIn.shouldRun(diagnostic.Policy{Rules: map[diagnostic.Code]diagnostic.Rule{CodeUnusedLocal: diagnostic.Enable()}}) {
+		t.Fatalf("opt-in producer should run when explicitly enabled")
+	}
+}
+
+func TestLifecycleResourceUnreleasedWarningIsOptInAndEvidenceBacked(t *testing.T) {
+	src := "local tx = {}\nbegin(tx)\n"
+	result := runDiagnosticsResultFull(t, src, []string{"begin"}, lifecycleSignatureSource())
+	if diags := ProduceWithConfig(result, Config{}); len(diags) != 0 {
+		t.Fatalf("default diagnostics = %#v, want lifecycle warning disabled by default", diagnosticMessages(diags))
+	}
+
+	diags := ProduceWithConfig(result, lifecycleDiagnosticsConfig())
+	if len(diags) != 1 {
+		t.Fatalf("diagnostics = %#v, want one lifecycle warning", diagnosticMessages(diags))
+	}
+	d := diags[0]
+	if d.Code != CodeResourceUnreleased || d.Severity != diagnostic.SeverityWarning {
+		t.Fatalf("diagnostic = %#v, want lifecycle unreleased warning", d)
+	}
+	for _, want := range []string{
+		"resource `tx` remains in transaction state `active` at function exit; expected `finished`",
+	} {
+		if !strings.Contains(d.Message, want) {
+			t.Fatalf("message = %q, want %q", d.Message, want)
+		}
+	}
+	requireEvidenceContains(t, d, "this call acquires `tx` as transaction:`active` and requires `finished` before local ownership ends")
+	requireEvidenceContains(t, d, "exit state still has `tx` in protocol transaction at `active`; no proof reaches `finished` or escapes ownership on every path")
+	requireLabelContains(t, d, labelLifecycleAcquire)
+	rendered := diagnostic.Render(d, diagnostic.RenderOptions{
+		Sources:             diagnostic.SourceMap{"main.lua": src},
+		ShowSourceLabelRows: true,
+	})
+	for _, want := range []string{
+		"warning[effect.lifecycle.unreleased]",
+		"begin(tx)",
+		"resource acquired",
+		"missing proof",
+		"help: Transition `tx` to `finished` or escape ownership on every return path.",
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("rendered diagnostic missing %q:\n%s", want, rendered)
+		}
+	}
+}
+
+func TestLifecycleResourceUnreleasedWarningIncludesPartialCloseEvidence(t *testing.T) {
+	src := "local tx = {}\nbegin(tx)\nif flag then\n    finish(tx)\nend\n"
+	result := runDiagnosticsResultFull(t, src, []string{"begin", "finish", "flag"}, lifecycleSignatureSource())
+
+	diags := ProduceWithConfig(result, lifecycleDiagnosticsConfig())
+	if len(diags) != 1 {
+		t.Fatalf("diagnostics = %#v, want one lifecycle warning", diagnosticMessages(diags))
+	}
+	d := diags[0]
+	requireEvidenceContains(t, d, "this call transitions `tx` in protocol transaction from `active` to `finished` on a reachable path")
+	requireEvidenceContains(t, d, "no proof reaches `finished` or escapes ownership on every path")
+	requireLabelContains(t, d, labelLifecycleAcquire)
+	requireLabelContains(t, d, labelLifecycleTransition)
+}
+
+func TestLifecycleResourceUnreleasedWarningIncludesPartialEscapeEvidence(t *testing.T) {
+	src := "local tx = {}\nbegin(tx)\nif flag then\n    transfer(tx)\nend\n"
+	result := runDiagnosticsResultFull(t, src, []string{"begin", "transfer", "flag"}, lifecycleSignatureSource())
+
+	diags := ProduceWithConfig(result, lifecycleDiagnosticsConfig())
+	if len(diags) != 1 {
+		t.Fatalf("diagnostics = %#v, want one lifecycle warning", diagnosticMessages(diags))
+	}
+	d := diags[0]
+	requireEvidenceContains(t, d, "this call escapes local ownership of `tx` in protocol transaction on a reachable path")
+	requireEvidenceContains(t, d, "no proof reaches `finished` or escapes ownership on every path")
+	requireLabelContains(t, d, labelLifecycleAcquire)
+	requireLabelContains(t, d, labelLifecycleEscape)
+}
+
+func TestLifecycleResourceClosedOrEscapedOnEveryPathDoesNotWarn(t *testing.T) {
+	cases := []struct {
+		name string
+		src  string
+	}{
+		{
+			name: "closed",
+			src:  "local tx = {}\nbegin(tx)\nfinish(tx)\n",
+		},
+		{
+			name: "escaped",
+			src:  "local tx = {}\nbegin(tx)\ntransfer(tx)\n",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			result := runDiagnosticsResultFull(t, tc.src, []string{"begin", "finish", "transfer"}, lifecycleSignatureSource())
+			if diags := ProduceWithConfig(result, lifecycleDiagnosticsConfig()); len(diags) != 0 {
+				t.Fatalf("diagnostics = %#v, want no lifecycle warning", diagnosticMessages(diags))
+			}
+		})
+	}
+}
+
+func TestLifecycleResourceWarningsDoNotUseOpenCloseNameHeuristics(t *testing.T) {
+	t.Run("unannotated names do nothing", func(t *testing.T) {
+		src := "local tx = {}\nopen(tx)\nclose(tx)\n"
+		result := runDiagnosticsResultFull(t, src, []string{"open", "close"}, signaturelookup.Source{})
+		if diags := ProduceWithConfig(result, lifecycleDiagnosticsConfig()); len(diags) != 0 {
+			t.Fatalf("diagnostics = %#v, want no lifecycle warning from names alone", diagnosticMessages(diags))
+		}
+	})
+
+	t.Run("non-resource-looking name with lifecycle fact warns", func(t *testing.T) {
+		src := "local tx = {}\nweird(tx)\n"
+		result := runDiagnosticsResultFull(t, src, []string{"weird"}, lifecycleSignatureSource())
+		diags := ProduceWithConfig(result, lifecycleDiagnosticsConfig())
+		if len(diags) != 1 || diags[0].Code != CodeResourceUnreleased {
+			t.Fatalf("diagnostics = %#v, want lifecycle warning from fact-backed weird()", diagnosticMessages(diags))
+		}
+	})
+}
+
+func lifecycleDiagnosticsConfig() Config {
+	return Config{Policy: diagnostic.Policy{Rules: map[diagnostic.Code]diagnostic.Rule{
+		CodeResourceUnreleased: diagnostic.Enable(),
+	}}}
+}
+
+func lifecycleSignatureSource() signaturelookup.Source {
+	m := manifest.New("lifecycle")
+	acquire := lifecyclefx.Acquire{
+		Target:   effect.ParamRef{Index: 0},
+		Protocol: typestate.Protocol("transaction"),
+		State:    typestate.State("active"),
+		Obligation: typestate.Obligation{
+			Final: typestate.State("finished"),
+		},
+	}
+	transition := lifecyclefx.Transition{
+		Target:   effect.ParamRef{Index: 0},
+		Protocol: typestate.Protocol("transaction"),
+		From:     typestate.State("active"),
+		To:       typestate.State("finished"),
+	}
+	escape := lifecyclefx.Escape{
+		Target:   effect.ParamRef{Index: 0},
+		Protocol: typestate.Protocol("transaction"),
+	}
+	for _, name := range []string{"begin", "weird"} {
+		m.DefineFunctionSignature(name, signature.Function{
+			Type: typ.Func().
+				Param("tx", typ.Any).
+				Build(),
+			Effect: effect.Row{Labels: []effect.Label{acquire}},
+		})
+	}
+	m.DefineFunctionSignature("finish", signature.Function{
+		Type: typ.Func().
+			Param("tx", typ.Any).
+			Build(),
+		Effect: effect.Row{Labels: []effect.Label{transition}},
+	})
+	m.DefineFunctionSignature("transfer", signature.Function{
+		Type: typ.Func().
+			Param("tx", typ.Any).
+			Build(),
+		Effect: effect.Row{Labels: []effect.Label{escape}},
+	})
+	return signaturelookup.Source{Manifests: []*manifest.Manifest{m}}
+}
+
+func requireEvidenceContains(t *testing.T, d diagnostic.Diagnostic, want string) {
+	t.Helper()
+	for _, evidence := range d.Explanation.Evidence() {
+		if strings.Contains(evidence.Message, want) {
+			return
+		}
+	}
+	t.Fatalf("evidence = %#v, want message containing %q", d.Explanation.Evidence(), want)
+}
+
+func requireLabelContains(t *testing.T, d diagnostic.Diagnostic, want string) {
+	t.Helper()
+	for _, label := range d.Labels {
+		if strings.Contains(label.Message, want) {
+			return
+		}
+	}
+	t.Fatalf("labels = %#v, want label containing %q", d.Labels, want)
+}
+
+func TestProduceOrdersDiagnosticsBySourcePositionAcrossProducers(t *testing.T) {
+	diags := runDiagnostics(t, `
+		local maybe: (() -> string)? = nil
+		local from_call = maybe()
+		local later: number = "wrong"
+	`)
+	if len(diags) != 2 {
+		t.Fatalf("diagnostics = %#v, want direct-call and assignment diagnostics", diags)
+	}
+	if diags[0].Code != CodeDirectCallNotCallable || diags[0].Position.Line >= diags[1].Position.Line {
+		t.Fatalf("diagnostic order = %#v, want earlier direct-call diagnostic before later assignment", diagnosticMessages(diags))
+	}
+	if diags[1].Code != CodeAssignmentType {
+		t.Fatalf("second diagnostic = %#v, want assignment diagnostic", diags[1])
+	}
+}
+
 func TestUnusedLocalWarningIsOptInAndEvidenceBacked(t *testing.T) {
-	result := runDiagnosticsResult(t, `local unused = 1`)
+	src := `local unused = 1`
+	result := runDiagnosticsResult(t, src)
 	if diags := ProduceWithConfig(result, Config{}); len(diags) != 0 {
 		t.Fatalf("default diagnostics = %#v, want unused-local disabled by default", diags)
 	}
 
-	diags := ProduceWithConfig(result, Config{Policy: diagnostic.Policy{Rules: map[diagnostic.Code]diagnostic.Rule{
+	requireDiagnosticShape(t, src, ProduceWithConfig(result, Config{Policy: diagnostic.Policy{Rules: map[diagnostic.Code]diagnostic.Rule{
 		CodeUnusedLocal: diagnostic.Enable(),
-	}}})
-	if len(diags) != 1 {
-		t.Fatalf("diagnostics = %#v, want one unused-local warning", diags)
-	}
-	d := diags[0]
-	if d.Code != CodeUnusedLocal || d.Severity != diagnostic.SeverityWarning {
-		t.Fatalf("diagnostic code/severity = %s/%s, want %s/warning", d.Code, d.Severity, CodeUnusedLocal)
-	}
-	if !strings.Contains(d.Message, "unused") {
-		t.Fatalf("message = %q, want local name", d.Message)
-	}
-	evidence := d.Explanation.Evidence()
-	if len(evidence) < 2 {
-		t.Fatalf("evidence = %#v, want declaration and missing-read proof", evidence)
-	}
-	if !strings.Contains(evidence[1].Message, "no identifier read") {
-		t.Fatalf("evidence = %#v, want missing read proof", evidence)
-	}
+	}}}), diagnosticShapeWant{
+		code:     CodeUnusedLocal,
+		severity: diagnostic.SeverityWarning,
+		message:  `local "unused" is never read`,
+		span:     diagnostic.Span{StartLine: 1, StartCol: 7, EndLine: 1, EndCol: 12},
+		labels: []diagnosticLabelWant{
+			{message: labelUnusedLocal, span: diagnostic.Span{StartLine: 1, StartCol: 7, EndLine: 1, EndCol: 12}},
+		},
+		evidence: []diagnosticEvidenceWant{
+			{
+				kind:    diagnostic.EvidenceAbstractFact,
+				trust:   diagnostic.TrustProven,
+				reason:  diagnostic.EvidenceReasonUnspecified,
+				message: `no read of local "unused" was found in this scope`,
+			},
+		},
+		help: `Remove it, use it, or rename it with a leading _ when intentionally unused.`,
+		renderContains: []string{
+			`warning[lint.unused.local]: local "unused" is never read`,
+			`1 | local unused = 1`,
+			`  |       ↑ unused local`,
+			`1. proven: no read of local "unused" was found in this scope`,
+			`help: Remove it, use it, or rename it with a leading _ when intentionally unused.`,
+		},
+	})
 }
 
 func TestUnusedLocalWarningIgnoresIntentionalAndReadLocals(t *testing.T) {
@@ -105,6 +434,33 @@ return used, fn
 	}
 }
 
+func TestUnusedLocalWarningHighlightsOnlyUnusedBindingInMultiLocal(t *testing.T) {
+	diags := ProduceWithConfig(runDiagnosticsResult(t, `local used, unused = 1, 2
+return used`), Config{Policy: diagnostic.Policy{Rules: map[diagnostic.Code]diagnostic.Rule{
+		CodeUnusedLocal: diagnostic.Enable(),
+	}}})
+	if len(diags) != 1 {
+		t.Fatalf("diagnostics = %#v, want exactly the unused binding warning", diags)
+	}
+	d := diags[0]
+	if d.Code != CodeUnusedLocal || !strings.Contains(d.Message, `"unused"`) {
+		t.Fatalf("diagnostic = %#v, want unused-local diagnostic for unused binding", d)
+	}
+	if d.Span.StartLine != 1 || d.Span.StartCol != 13 || d.Span.EndCol != 18 {
+		t.Fatalf("span = %#v, want exact span for only the unused binding", d.Span)
+	}
+	if !diagnosticHasLabel(d, labelUnusedLocal) {
+		t.Fatalf("labels = %#v, want unused-local focus label", d.Labels)
+	}
+	evidence := d.Explanation.Evidence()
+	if len(evidence) != 1 {
+		t.Fatalf("evidence = %#v, want one no-read fact", evidence)
+	}
+	if evidence[0].Span.Valid() || !strings.Contains(evidence[0].Message, `no read of local "unused" was found in this scope`) {
+		t.Fatalf("evidence = %#v, want unspanned no-read fact", evidence)
+	}
+}
+
 func TestUnusedLocalWarningSeverityCanBeRemapped(t *testing.T) {
 	diags := ProduceWithConfig(runDiagnosticsResult(t, `local unused = 1`), Config{Policy: diagnostic.Policy{Rules: map[diagnostic.Code]diagnostic.Rule{
 		CodeUnusedLocal: diagnostic.Enable().WithSeverity(diagnostic.SeverityHint),
@@ -115,6 +471,142 @@ func TestUnusedLocalWarningSeverityCanBeRemapped(t *testing.T) {
 	if diags[0].Severity != diagnostic.SeverityHint {
 		t.Fatalf("severity = %s, want hint", diags[0].Severity)
 	}
+}
+
+func TestFrozenTableMutationWarningIsOptInAndEvidenceBacked(t *testing.T) {
+	result := runDiagnosticsResultFull(t, `
+type Config = { name: string, child: { tag: string } }
+local cfg: Config = { name = "prod", child = { tag = "old" } }
+table.freeze(cfg)
+cfg.name = "staging"
+`, []string{"table"}, signaturelookup.Source{IncludeStdlib: true})
+	if diags := ProduceWithConfig(result, Config{}); len(diags) != 0 {
+		t.Fatalf("default diagnostics = %#v, want frozen-table mutation disabled by default", diags)
+	}
+
+	diags := ProduceWithConfig(result, Config{Policy: diagnostic.Policy{Rules: map[diagnostic.Code]diagnostic.Rule{
+		CodeFrozenTableMutation: diagnostic.Enable(),
+	}}})
+	if len(diags) != 1 {
+		t.Fatalf("diagnostics = %#v, want one frozen-table mutation warning", diags)
+	}
+	d := diags[0]
+	if d.Code != CodeFrozenTableMutation || d.Severity != diagnostic.SeverityWarning {
+		t.Fatalf("diagnostic code/severity = %s/%s, want %s/warning", d.Code, d.Severity, CodeFrozenTableMutation)
+	}
+	if !strings.Contains(d.Message, "cannot mutate frozen table") || !strings.Contains(d.Message, "cfg") {
+		t.Fatalf("message = %q", d.Message)
+	}
+	evidence := d.Explanation.Evidence()
+	if len(evidence) < 2 {
+		t.Fatalf("evidence = %#v, want mutation and freeze proof", evidence)
+	}
+	if !diagnosticEvidenceContains(evidence, "this assignment mutates table") ||
+		!diagnosticEvidenceContains(evidence, "table \"cfg\" was frozen by this call before the assignment") {
+		t.Fatalf("evidence = %#v, want mutation and freeze proof chain", evidence)
+	}
+	if len(d.Labels) < 2 {
+		t.Fatalf("labels = %#v, want mutation and freeze labels", d.Labels)
+	}
+	if !strings.Contains(d.Help, "mutable copy") {
+		t.Fatalf("help = %q", d.Help)
+	}
+}
+
+func TestFrozenTableMutationAcceptsReplacingFrozenChildThroughMutableParent(t *testing.T) {
+	result := runDiagnosticsResultFull(t, `
+type Child = { tag: string }
+type Config = { child: Child }
+local child: Child = { tag = "old" }
+local cfg: Config = { child = child }
+table.freeze(child)
+cfg.child = { tag = "new" }
+`, []string{"table"}, signaturelookup.Source{IncludeStdlib: true})
+	diags := ProduceWithConfig(result, Config{Policy: diagnostic.Policy{Rules: map[diagnostic.Code]diagnostic.Rule{
+		CodeFrozenTableMutation: diagnostic.Enable(),
+	}}})
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v, want no warning for replacing a frozen child reference through a mutable parent", diags)
+	}
+}
+
+func TestFrozenTableMutationUsesIsFrozenBranchProof(t *testing.T) {
+	result := runDiagnosticsResultFull(t, `
+type Config = { name: string }
+local cfg: Config = { name = "prod" }
+if table.isfrozen(cfg) then
+    cfg.name = "staging"
+end
+`, []string{"table"}, signaturelookup.Source{IncludeStdlib: true})
+	diags := ProduceWithConfig(result, Config{Policy: diagnostic.Policy{Rules: map[diagnostic.Code]diagnostic.Rule{
+		CodeFrozenTableMutation: diagnostic.Enable(),
+	}}})
+	if len(diags) != 1 {
+		t.Fatalf("diagnostics = %#v, want one branch-proof frozen-table mutation warning", diags)
+	}
+	if d := diags[0]; d.Code != CodeFrozenTableMutation ||
+		!diagnosticEvidenceContains(d.Explanation.Evidence(), "table \"cfg\" is already frozen here") {
+		t.Fatalf("diagnostic = %#v, want incoming-state freeze evidence", d)
+	}
+}
+
+func TestFrozenTableMutationReportsMutatingCall(t *testing.T) {
+	result := runDiagnosticsResultFull(t, `
+local items = { "a" }
+table.freeze(items)
+table.insert(items, "b")
+`, []string{"table"}, signaturelookup.Source{IncludeStdlib: true})
+	diags := ProduceWithConfig(result, Config{Policy: diagnostic.Policy{Rules: map[diagnostic.Code]diagnostic.Rule{
+		CodeFrozenTableMutation: diagnostic.Enable(),
+	}}})
+	if len(diags) != 1 {
+		t.Fatalf("diagnostics = %#v, want one mutating-call frozen-table warning", diags)
+	}
+	d := diags[0]
+	if d.Code != CodeFrozenTableMutation ||
+		!strings.Contains(d.Message, "cannot call mutator on frozen table") ||
+		!strings.Contains(d.Message, "items") {
+		t.Fatalf("diagnostic = %#v, want mutating-call frozen-table warning", d)
+	}
+	evidence := d.Explanation.Evidence()
+	if !diagnosticEvidenceContains(evidence, "this call mutates table \"items\"") ||
+		!diagnosticEvidenceContains(evidence, "table \"items\" was frozen by this call before the mutating call") {
+		t.Fatalf("evidence = %#v, want call mutation and freeze proof chain", evidence)
+	}
+	if len(d.Labels) < 2 {
+		t.Fatalf("labels = %#v, want call mutation and freeze labels", d.Labels)
+	}
+	if !strings.Contains(d.Help, "mutable copy") {
+		t.Fatalf("help = %q", d.Help)
+	}
+}
+
+func diagnosticEvidenceContains(evidence []diagnostic.Evidence, want string) bool {
+	for _, item := range evidence {
+		if strings.Contains(item.Message, want) {
+			return true
+		}
+	}
+	return false
+}
+
+func diagnosticHasLabel(d diagnostic.Diagnostic, want string) bool {
+	for _, label := range d.Labels {
+		if strings.Contains(label.Message, want) {
+			return true
+		}
+	}
+	return false
+}
+
+func diagnosticLabelCount(d diagnostic.Diagnostic, want string) int {
+	count := 0
+	for _, label := range d.Labels {
+		if strings.Contains(label.Message, want) {
+			count++
+		}
+	}
+	return count
 }
 
 func TestDeadAssignmentWarningIsOptInAndEvidenceBacked(t *testing.T) {
@@ -137,17 +629,20 @@ return value
 	if d.Code != CodeDeadAssignment || d.Severity != diagnostic.SeverityWarning {
 		t.Fatalf("diagnostic code/severity = %s/%s, want %s/warning", d.Code, d.Severity, CodeDeadAssignment)
 	}
-	if !strings.Contains(d.Message, "overwritten") || len(d.Labels) != 2 {
-		t.Fatalf("diagnostic = %#v, want overwrite message with write labels", d)
+	if !strings.Contains(d.Message, "overwritten") ||
+		!diagnosticHasLabel(d, labelDeadAssignment) ||
+		!diagnosticHasLabel(d, labelOverwrite) {
+		t.Fatalf("diagnostic = %#v, want overwrite message with dead-write and overwrite labels", d)
 	}
 	evidence := d.Explanation.Evidence()
-	if len(evidence) != 4 {
-		t.Fatalf("evidence = %#v, want original write, overwriting write, CFG proof, and missing-read proof", evidence)
+	if len(evidence) != 1 {
+		t.Fatalf("evidence = %#v, want one overwrite evidence frame", evidence)
 	}
-	if !strings.Contains(evidence[1].Message, "assigned again") ||
-		!strings.Contains(evidence[2].Message, "CFG proof") ||
-		!strings.Contains(evidence[3].Message, "no bound read") {
-		t.Fatalf("evidence = %#v, want overwrite, CFG proof, and missing-read evidence", evidence)
+	if evidence[0].Message != `later assignment replaces "value" before the earlier value is read` {
+		t.Fatalf("evidence = %#v, want overwrite evidence", evidence)
+	}
+	if d.Help != "Remove this assignment, or read `value` before the later overwrite." {
+		t.Fatalf("help = %q, want direct remediation", d.Help)
 	}
 }
 
@@ -183,16 +678,14 @@ return value
 		t.Fatalf("diagnostics = %#v, want one all-arm dead-assignment warning", diags)
 	}
 	d := diags[0]
-	if d.Code != CodeDeadAssignment || len(d.Labels) != 3 {
-		t.Fatalf("diagnostic = %#v, want original write and both overwrite labels", d)
+	if d.Code != CodeDeadAssignment ||
+		!diagnosticHasLabel(d, labelDeadAssignment) ||
+		diagnosticLabelCount(d, labelOverwrite) != 2 {
+		t.Fatalf("diagnostic = %#v, want dead-write label and two overwrite labels", d)
 	}
 	evidence := d.Explanation.Evidence()
-	if len(evidence) != 5 {
-		t.Fatalf("evidence = %#v, want original, two overwrites, CFG proof, and missing-read proof", evidence)
-	}
-	if !strings.Contains(evidence[3].Message, "one of 2 overwriting assignments") ||
-		!strings.Contains(evidence[4].Message, "first overwrite frontier") {
-		t.Fatalf("evidence = %#v, want aggregate frontier proof", evidence)
+	if len(evidence) != 2 {
+		t.Fatalf("evidence = %#v, want two replacement writes", evidence)
 	}
 }
 
@@ -200,7 +693,8 @@ func TestDeadAssignmentWarningReportsNestedAllArmOverwriteFrontier(t *testing.T)
 	diags := ProduceWithConfig(runDiagnosticsResult(t, `
 local value = 1
 if test then
-	if test then
+	local other = test
+	if other then
 		value = 2
 	else
 		value = 3
@@ -215,12 +709,13 @@ return value
 	if len(diags) != 1 {
 		t.Fatalf("diagnostics = %#v, want one nested all-arm dead-assignment warning", diags)
 	}
-	if len(diags[0].Labels) != 4 {
-		t.Fatalf("labels = %#v, want original write plus three overwrite frontier labels", diags[0].Labels)
+	if !diagnosticHasLabel(diags[0], labelDeadAssignment) ||
+		diagnosticLabelCount(diags[0], labelOverwrite) != 3 {
+		t.Fatalf("labels = %#v, want dead-write label and three overwrite labels", diags[0].Labels)
 	}
 	evidence := diags[0].Explanation.Evidence()
-	if len(evidence) != 6 || !strings.Contains(evidence[4].Message, "one of 3 overwriting assignments") {
-		t.Fatalf("evidence = %#v, want three overwrite evidence items and aggregate CFG proof", evidence)
+	if len(evidence) != 3 {
+		t.Fatalf("evidence = %#v, want three replacement writes", evidence)
 	}
 }
 
@@ -239,12 +734,107 @@ return value
 		t.Fatalf("diagnostics = %#v, want initial and branch overwrite warnings", diags)
 	}
 	d := diags[0]
-	if len(d.Labels) != 3 {
-		t.Fatalf("first diagnostic labels = %#v, want initial write plus branch/common frontier labels", d.Labels)
+	if !diagnosticHasLabel(d, labelDeadAssignment) ||
+		diagnosticLabelCount(d, labelOverwrite) != 2 {
+		t.Fatalf("first diagnostic labels = %#v, want dead-write label and two overwrite labels", d.Labels)
 	}
 	evidence := d.Explanation.Evidence()
-	if len(evidence) != 5 || !strings.Contains(evidence[3].Message, "one of 2 overwriting assignments") {
-		t.Fatalf("first diagnostic evidence = %#v, want aggregate two-write frontier proof", evidence)
+	if len(evidence) != 2 {
+		t.Fatalf("first diagnostic evidence = %#v, want two replacement writes", evidence)
+	}
+}
+
+func TestDeadAssignmentWarningReportsOverwriteOrExitBeforeRead(t *testing.T) {
+	diags := ProduceWithConfig(runDiagnosticsResult(t, `
+local value = 1
+if test then
+	return
+end
+value = 2
+return value
+`), Config{Policy: diagnostic.Policy{Rules: map[diagnostic.Code]diagnostic.Rule{
+		CodeDeadAssignment: diagnostic.Enable(),
+	}}})
+	if len(diags) != 1 {
+		t.Fatalf("diagnostics = %#v, want one mixed exit/overwrite dead-assignment warning", diags)
+	}
+	d := diags[0]
+	if d.Code != CodeDeadAssignment || d.Message != `assignment to "value" is discarded before it is read` {
+		t.Fatalf("diagnostic = %#v, want mixed overwrite/exit message", d)
+	}
+	evidence := d.Explanation.Evidence()
+	if len(evidence) != 2 {
+		t.Fatalf("evidence = %#v, want return exit and later assignment evidence", evidence)
+	}
+	if !diagnosticEvidenceContains(evidence, `later assignment replaces "value" before the earlier value is read`) ||
+		!diagnosticEvidenceContains(evidence, `control can leave before "value" is read`) {
+		t.Fatalf("evidence = %#v, want replacement and exit evidence", evidence)
+	}
+	if !diagnosticHasLabel(d, labelDeadAssignment) ||
+		!diagnosticHasLabel(d, labelOverwrite) ||
+		!diagnosticHasLabel(d, labelExitBeforeRead) {
+		t.Fatalf("labels = %#v, want dead-write, overwrite, and exit labels", d.Labels)
+	}
+	if d.Help != "Remove this assignment, or read `value` before every later overwrite or exit." {
+		t.Fatalf("help = %q, want mixed replacement/exit remediation", d.Help)
+	}
+}
+
+func TestDeadAssignmentWarningRendersMixedOverwriteExitTrace(t *testing.T) {
+	src := strings.TrimLeft(`
+local value = 1
+if test then
+    return
+end
+value = 2
+return value
+`, "\n")
+	diags := ProduceWithConfig(runDiagnosticsResult(t, src), Config{Policy: diagnostic.Policy{Rules: map[diagnostic.Code]diagnostic.Rule{
+		CodeDeadAssignment: diagnostic.Enable(),
+	}}})
+	if len(diags) != 1 {
+		t.Fatalf("diagnostics = %#v, want one mixed exit/overwrite dead-assignment warning", diags)
+	}
+	rendered := diagnostic.Render(diags[0], diagnostic.RenderOptions{
+		Sources:             diagnostic.SourceMap{"diagnostics_test.lua": src},
+		ShowSourceLabelRows: true,
+	})
+	want := `warning[lint.dead.assignment]: assignment to "value" is discarded before it is read
+ --> diagnostics_test.lua:1:7
+  |
+1 | local value = 1
+  |       ↑ dead assignment
+
+because:
+  1. proven: control can leave before "value" is read
+ --> diagnostics_test.lua:3:5
+  |
+  |     ↓ exit before read
+3 |     return
+  2. proven: later assignment replaces "value" before the earlier value is read
+ --> diagnostics_test.lua:5:1
+  |
+  | ↓ overwriting assignment
+5 | value = 2
+
+help: Remove this assignment, or read ` + "`value`" + ` before every later overwrite or exit.`
+	if rendered != want {
+		t.Fatalf("rendered diagnostic mismatch (-want +got):\n%s", renderLineDiff(want, rendered))
+	}
+}
+
+func TestDeadAssignmentWarningDoesNotDuplicatePureExitWithoutReplacement(t *testing.T) {
+	diags := ProduceWithConfig(runDiagnosticsResult(t, `
+local value = 1
+if test then
+	return
+end
+return
+`), Config{Policy: diagnostic.Policy{Rules: map[diagnostic.Code]diagnostic.Rule{
+		CodeDeadAssignment: diagnostic.Enable(),
+	}}})
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v, want pure never-read exit case left to unused-local/unused-write diagnostics", diags)
 	}
 }
 
@@ -506,17 +1096,302 @@ end
 	if d.Code != CodeRedundantCondition || d.Severity != diagnostic.SeverityWarning {
 		t.Fatalf("diagnostic code/severity = %s/%s, want %s/warning", d.Code, d.Severity, CodeRedundantCondition)
 	}
-	if !strings.Contains(d.Message, "always true") || len(d.Labels) != 1 {
-		t.Fatalf("diagnostic = %#v, want always-true redundant condition label", d)
+	if !strings.Contains(d.Message, "always true") {
+		t.Fatalf("diagnostic = %#v, want always-true redundant condition", d)
+	}
+	if !diagnosticHasLabel(d, labelConditionCheck) {
+		t.Fatalf("labels = %#v, want condition-check focus label", d.Labels)
+	}
+	if !diagnosticHasLabel(d, labelProvingGuard) {
+		t.Fatalf("labels = %#v, want proving-guard cause label", d.Labels)
 	}
 	evidence := d.Explanation.Evidence()
-	if len(evidence) != 4 {
-		t.Fatalf("evidence = %#v, want condition, incoming proof, CFG edge, and invalidation proof", evidence)
+	if len(evidence) != 3 {
+		t.Fatalf("evidence = %#v, want condition, incoming proof, and stability proof", evidence)
 	}
-	if !strings.Contains(evidence[1].Message, "already truthy") ||
-		!strings.Contains(evidence[2].Message, "false edge") ||
-		!strings.Contains(evidence[3].Message, "no invalidating assignment or call affecting") {
-		t.Fatalf("evidence = %#v, want guard proof, unreachable edge, and invalidation evidence", evidence)
+	if !strings.Contains(evidence[1].Message, "truthy") ||
+		!strings.Contains(evidence[2].Message, "value is unchanged between the prior guard and this check") {
+		t.Fatalf("evidence = %#v, want guard proof and stability evidence", evidence)
+	}
+	if !evidence[1].Span.Valid() || evidence[1].Span.StartLine >= d.Span.StartLine {
+		t.Fatalf("proof evidence span = %#v, want earlier prior guard before condition span %#v", evidence[1].Span, d.Span)
+	}
+}
+
+func TestRedundantConditionWarningRendersTruthyGuardTrace(t *testing.T) {
+	src := strings.TrimLeft(`
+local value = test
+if value then
+    if value then
+        return value
+    end
+end
+`, "\n")
+	diags := ProduceWithConfig(runDiagnosticsResult(t, src), Config{Policy: diagnostic.Policy{Rules: map[diagnostic.Code]diagnostic.Rule{
+		CodeRedundantCondition: diagnostic.Enable(),
+	}}})
+	if len(diags) != 1 {
+		t.Fatalf("diagnostics = %#v, want one redundant-condition warning", diags)
+	}
+	rendered := diagnostic.Render(diags[0], diagnostic.RenderOptions{
+		Sources:             diagnostic.SourceMap{"diagnostics_test.lua": src},
+		ShowSourceLabelRows: true,
+	})
+	want := `warning[lint.condition.redundant]: condition is always true here
+ --> diagnostics_test.lua:3:8
+  |
+3 |     if value then
+  |        ↑ current check
+
+because:
+  1. proven: current check: value is checked as truthy
+  2. proven: prior guard established value is truthy
+ --> diagnostics_test.lua:2:4
+  |
+  |    ↓ prior guard
+2 | if value then
+  3. proven: value is unchanged between the prior guard and this check
+
+help: Remove this repeated check, or move any needed work into the branch already guarded above.`
+	if rendered != want {
+		t.Fatalf("rendered diagnostic mismatch (-want +got):\n%s", renderLineDiff(want, rendered))
+	}
+}
+
+func TestRedundantConditionWarningRendersUnreachableGuardTrace(t *testing.T) {
+	src := strings.TrimLeft(`
+local value = nil
+if value == nil then
+    if value ~= nil then
+        return value
+    end
+end
+`, "\n")
+	diags := ProduceWithConfig(runDiagnosticsResult(t, src), Config{Policy: diagnostic.Policy{Rules: map[diagnostic.Code]diagnostic.Rule{
+		CodeRedundantCondition: diagnostic.Enable(),
+	}}})
+	if len(diags) != 1 {
+		t.Fatalf("diagnostics = %#v, want one redundant-condition warning", diags)
+	}
+	rendered := diagnostic.Render(diags[0], diagnostic.RenderOptions{
+		Sources:             diagnostic.SourceMap{"diagnostics_test.lua": src},
+		ShowSourceLabelRows: true,
+	})
+	want := `warning[lint.condition.redundant]: condition is always false here
+ --> diagnostics_test.lua:3:8
+  |
+3 |     if value ~= nil then
+  |        ↑ current check
+
+because:
+  1. proven: current check: value ~= nil
+  2. proven: prior guard established value is nil
+ --> diagnostics_test.lua:2:4
+  |
+  |    ↓ prior guard
+2 | if value == nil then
+  3. proven: value is unchanged between the prior guard and this check
+
+help: Remove this unreachable branch, or change the prior guard if this path should still run.`
+	if rendered != want {
+		t.Fatalf("rendered diagnostic mismatch (-want +got):\n%s", renderLineDiff(want, rendered))
+	}
+}
+
+func TestRedundantConditionWarningDistinguishesNilCheckEvidence(t *testing.T) {
+	cases := []struct {
+		name         string
+		src          string
+		wantMessage  string
+		wantCheck    string
+		wantProof    string
+		wantBranch   string
+		rejectCheck  string
+		rejectBranch string
+	}{
+		{
+			name: "known nil makes nil check true",
+			src: `
+local value = nil
+if value == nil then
+	if value == nil then
+		return value
+	end
+end
+`,
+			wantMessage:  "always true",
+			wantCheck:    "current check: value == nil",
+			wantProof:    "prior guard established value is nil",
+			wantBranch:   "value is unchanged between the prior guard and this check",
+			rejectCheck:  "current check: value ~= nil",
+			rejectBranch: "branch is unreachable",
+		},
+		{
+			name: "known nil makes non-nil check false",
+			src: `
+local value = nil
+if value == nil then
+	if value ~= nil then
+		return value
+	end
+end
+`,
+			wantMessage:  "always false",
+			wantCheck:    "current check: value ~= nil",
+			wantProof:    "prior guard established value is nil",
+			wantBranch:   "value is unchanged between the prior guard and this check",
+			rejectCheck:  "current check: value == nil",
+			rejectBranch: "branch is unreachable",
+		},
+		{
+			name: "known non-nil makes nil check false",
+			src: `
+local value = test
+if value ~= nil then
+	if value == nil then
+		return value
+	end
+end
+`,
+			wantMessage:  "always false",
+			wantCheck:    "current check: value == nil",
+			wantProof:    "prior guard established value is not nil",
+			wantBranch:   "value is unchanged between the prior guard and this check",
+			rejectCheck:  "current check: value ~= nil",
+			rejectBranch: "branch is unreachable",
+		},
+		{
+			name: "known non-nil makes non-nil check true",
+			src: `
+local value = test
+if value ~= nil then
+	if value ~= nil then
+		return value
+	end
+end
+`,
+			wantMessage:  "always true",
+			wantCheck:    "current check: value ~= nil",
+			wantProof:    "prior guard established value is not nil",
+			wantBranch:   "value is unchanged between the prior guard and this check",
+			rejectCheck:  "current check: value == nil",
+			rejectBranch: "branch is unreachable",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			diags := ProduceWithConfig(runDiagnosticsResult(t, tc.src), Config{Policy: diagnostic.Policy{Rules: map[diagnostic.Code]diagnostic.Rule{
+				CodeRedundantCondition: diagnostic.Enable(),
+			}}})
+			if len(diags) != 1 {
+				t.Fatalf("diagnostics = %#v, want one redundant-condition warning", diags)
+			}
+			d := diags[0]
+			if d.Code != CodeRedundantCondition || !strings.Contains(d.Message, tc.wantMessage) {
+				t.Fatalf("diagnostic = %#v, want %s redundant-condition warning", d, tc.wantMessage)
+			}
+			explanation := d.Explanation.String()
+			for _, want := range []string{tc.wantCheck, tc.wantProof, tc.wantBranch} {
+				if !strings.Contains(explanation, want) {
+					t.Fatalf("explanation = %q, want %q", explanation, want)
+				}
+			}
+			for _, reject := range []string{tc.rejectCheck, tc.rejectBranch, "checked for nil", "checked for non-nil", "CFG"} {
+				if strings.Contains(explanation, reject) {
+					t.Fatalf("explanation = %q, should not contain %q", explanation, reject)
+				}
+			}
+		})
+	}
+}
+
+func TestRedundantConditionWarningDistinguishesRuntimeNilTypeEvidence(t *testing.T) {
+	cases := []struct {
+		name         string
+		src          string
+		wantMessage  string
+		wantCheck    string
+		wantProof    string
+		wantBranch   string
+		rejectCheck  string
+		rejectBranch string
+	}{
+		{
+			name: "known nil makes runtime type-not-nil check false",
+			src: `
+local value = nil
+if value == nil then
+	if type(value) ~= "nil" then
+		return value
+	end
+end
+`,
+			wantMessage:  "always false",
+			wantCheck:    `current check: type(value) is not "nil"`,
+			wantProof:    "prior guard established value is nil",
+			wantBranch:   "value is unchanged between the prior guard and this check",
+			rejectCheck:  `current check: type(value) is "nil"`,
+			rejectBranch: "branch is unreachable",
+		},
+		{
+			name: "known non-nil makes runtime type-nil check false",
+			src: `
+local value = test
+if value ~= nil then
+	if type(value) == "nil" then
+		return value
+	end
+end
+`,
+			wantMessage:  "always false",
+			wantCheck:    `current check: type(value) is "nil"`,
+			wantProof:    "prior guard established value is not nil",
+			wantBranch:   "value is unchanged between the prior guard and this check",
+			rejectCheck:  `current check: type(value) is not "nil"`,
+			rejectBranch: "branch is unreachable",
+		},
+		{
+			name: "runtime type-not-nil guard makes repeated type-not-nil check true",
+			src: `
+local value = test
+if type(value) ~= "nil" then
+	if type(value) ~= "nil" then
+		return value
+	end
+end
+`,
+			wantMessage:  "always true",
+			wantCheck:    `current check: type(value) is not "nil"`,
+			wantProof:    "prior guard established value is not nil",
+			wantBranch:   "value is unchanged between the prior guard and this check",
+			rejectCheck:  `current check: type(value) is "nil"`,
+			rejectBranch: "branch is unreachable",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			diags := ProduceWithConfig(runDiagnosticsResult(t, tc.src), Config{Policy: diagnostic.Policy{Rules: map[diagnostic.Code]diagnostic.Rule{
+				CodeRedundantCondition: diagnostic.Enable(),
+			}}})
+			if len(diags) != 1 {
+				t.Fatalf("diagnostics = %#v, want one redundant-condition warning", diags)
+			}
+			d := diags[0]
+			if d.Code != CodeRedundantCondition || !strings.Contains(d.Message, tc.wantMessage) {
+				t.Fatalf("diagnostic = %#v, want %s redundant-condition warning", d, tc.wantMessage)
+			}
+			explanation := d.Explanation.String()
+			for _, want := range []string{tc.wantCheck, tc.wantProof, tc.wantBranch} {
+				if !strings.Contains(explanation, want) {
+					t.Fatalf("explanation = %q, want %q", explanation, want)
+				}
+			}
+			for _, reject := range []string{tc.rejectCheck, tc.rejectBranch, "CFG"} {
+				if strings.Contains(explanation, reject) {
+					t.Fatalf("explanation = %q, should not contain %q", explanation, reject)
+				}
+			}
+		})
 	}
 }
 
@@ -674,6 +1549,98 @@ end
 	}
 }
 
+func TestUnreachableBranchBodySuppressesOtherDiagnostics(t *testing.T) {
+	diags := ProduceWithConfig(runDiagnosticsResult(t, `
+type Ready = { kind: "ready", ok: string }
+local item: Ready = { kind = "ready", ok = "yes" }
+if item.kind == "ready" then
+	if item.kind == "other" then
+		local wrong: number = "bad"
+		local maybe: string? = nil
+		local joined = "prefix" .. maybe
+		local call_target: number = 1
+		call_target()
+		local missing = item.nope
+	end
+end
+`), Config{Policy: diagnostic.Policy{Rules: map[diagnostic.Code]diagnostic.Rule{
+		CodeRedundantCondition: diagnostic.Enable(),
+	}}})
+	if len(diags) != 1 {
+		t.Fatalf("diagnostics = %#v, want only the impossible-branch warning", diags)
+	}
+	if d := diags[0]; d.Code != CodeRedundantCondition || !strings.Contains(d.Message, "always false") {
+		t.Fatalf("diagnostic = %#v, want redundant-condition warning only", d)
+	}
+}
+
+func TestUnreachableBranchBodySuppressesUnusedLocalLint(t *testing.T) {
+	diags := ProduceWithConfig(runDiagnosticsResult(t, `
+local item = { kind = "ready" }
+if item.kind == "ready" then
+	if item.kind == "other" then
+		local unreachable_unused = 1
+	end
+end
+`), Config{Policy: diagnostic.Policy{Rules: map[diagnostic.Code]diagnostic.Rule{
+		CodeRedundantCondition: diagnostic.Enable(),
+		CodeUnusedLocal:        diagnostic.Enable(),
+	}}})
+	if len(diags) != 1 {
+		t.Fatalf("diagnostics = %#v, want only the impossible-branch warning", diags)
+	}
+	if d := diags[0]; d.Code != CodeRedundantCondition || !strings.Contains(d.Message, "always false") {
+		t.Fatalf("diagnostic = %#v, want redundant-condition warning only", d)
+	}
+}
+
+func TestUnreachableFunctionDefinitionDoesNotSatisfyLaterDirectCall(t *testing.T) {
+	diags := ProduceWithConfig(runDiagnosticsResult(t, `
+local f: number = 1
+local item = { kind = "ready" }
+if item.kind == "ready" then
+	if item.kind == "other" then
+		f = function(value: string): () end
+	end
+end
+f("ok")
+`), Config{Policy: diagnostic.Policy{Rules: map[diagnostic.Code]diagnostic.Rule{
+		CodeRedundantCondition: diagnostic.Enable(),
+	}}})
+	if len(diags) != 2 {
+		t.Fatalf("diagnostics = %#v, want impossible-branch and not-callable diagnostics", diags)
+	}
+	if d := diags[0]; d.Code != CodeRedundantCondition || !strings.Contains(d.Message, "always false") {
+		t.Fatalf("first diagnostic = %#v, want redundant-condition warning", d)
+	}
+	if d := diags[1]; d.Code != CodeDirectCallNotCallable || !strings.Contains(d.Message, "not callable") {
+		t.Fatalf("second diagnostic = %#v, want direct not-callable diagnostic", d)
+	}
+}
+
+func TestUnreachableFreezeCallDoesNotSupportLaterMutationWarning(t *testing.T) {
+	result := runDiagnosticsResultFull(t, `
+local cfg = { name = "prod" }
+local item = { kind = "ready" }
+if item.kind == "ready" then
+	if item.kind == "other" then
+		table.freeze(cfg)
+	end
+end
+cfg.name = "staging"
+`, []string{"table"}, signaturelookup.Source{IncludeStdlib: true})
+	diags := ProduceWithConfig(result, Config{Policy: diagnostic.Policy{Rules: map[diagnostic.Code]diagnostic.Rule{
+		CodeFrozenTableMutation: diagnostic.Enable(),
+		CodeRedundantCondition:  diagnostic.Enable(),
+	}}})
+	if len(diags) != 1 {
+		t.Fatalf("diagnostics = %#v, want only the impossible-branch warning", diags)
+	}
+	if d := diags[0]; d.Code != CodeRedundantCondition || !strings.Contains(d.Message, "always false") {
+		t.Fatalf("diagnostic = %#v, want redundant-condition warning only", d)
+	}
+}
+
 func TestRedundantConditionWarningUsesSignatureCallInvalidation(t *testing.T) {
 	policy := Config{Policy: diagnostic.Policy{Rules: map[diagnostic.Code]diagnostic.Rule{
 		CodeRedundantCondition: diagnostic.Enable(),
@@ -768,7 +1735,7 @@ end
 			t.Fatalf("diagnostics = %#v, want only container-root redundant-condition warning", diags)
 		}
 		if d := diags[0]; d.Code != CodeRedundantCondition || !strings.Contains(d.Message, "always true") ||
-			!strings.Contains(d.Explanation.String(), "box is already truthy") {
+			!strings.Contains(d.Explanation.String(), "box is truthy") {
 			t.Fatalf("diagnostic = %#v, want root guard proof after descendant invalidation", d)
 		}
 	})
@@ -1127,8 +2094,8 @@ end
 	if d := diags[0]; d.Code != CodeRedundantCondition || !strings.Contains(d.Message, "always true") {
 		t.Fatalf("diagnostic = %#v, want sibling guard to remain always true", d)
 	}
-	if evidence := diags[0].Explanation.Evidence(); len(evidence) != 4 ||
-		!strings.Contains(evidence[3].Message, "no invalidating assignment or call affecting box.other") {
+	if evidence := diags[0].Explanation.Evidence(); len(evidence) != 3 ||
+		!strings.Contains(evidence[2].Message, "box.other is unchanged between the prior guard and this check") {
 		t.Fatalf("evidence = %#v, want invalidation evidence for box.other", evidence)
 	}
 }
@@ -1195,7 +2162,7 @@ end
 	for _, diag := range diags {
 		messages = append(messages, diag.Message)
 	}
-	if !containsDiagnosticMessage(messages, "cannot assign string to number") ||
+	if !containsDiagnosticMessage(messages, "cannot assign first.value because it is string, not number") ||
 		!containsDiagnosticMessage(messages, `has no member "children"`) {
 		t.Fatalf("diagnostics = %#v, want first.value mismatch and text.children missing-member", messages)
 	}
@@ -1222,15 +2189,268 @@ func TestAnnotationAssignabilityAcceptsHomogeneousArrayLiteral(t *testing.T) {
 	}
 }
 
+func TestAnnotationAssignabilityAcceptsTableInsertLengthFloorArrayIndex(t *testing.T) {
+	diags := runDiagnosticsWithSignatures(t, `
+local arr: {number} = {}
+table.insert(arr, 1)
+table.insert(arr, 2)
+local n: number = arr[1]
+`, signaturelookup.Source{IncludeStdlib: true})
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v, want none", diags)
+	}
+}
+
+func TestAnnotationAssignabilityAdvancesLengthFloorAcrossTableInserts(t *testing.T) {
+	diags := runDiagnosticsWithSignatures(t, `
+local arr: {number} = {}
+table.insert(arr, 1)
+table.insert(arr, 2)
+table.insert(arr, 3)
+local n: number = arr[3]
+`, signaturelookup.Source{IncludeStdlib: true})
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v, want none after three positive length deltas", diags)
+	}
+}
+
+func TestAnnotationAssignabilityKeepsOptionalityPastTableInsertLengthFloor(t *testing.T) {
+	diags := runDiagnosticsWithSignatures(t, `
+local arr: {number} = {}
+table.insert(arr, 1)
+table.insert(arr, 2)
+local n: number = arr[3]
+`, signaturelookup.Source{IncludeStdlib: true})
+	if len(diags) != 1 {
+		t.Fatalf("diagnostics = %d, want out-of-floor array index error: %#v", len(diags), diags)
+	}
+	d := diags[0]
+	if d.Code != CodeAssignmentType || d.Severity != diagnostic.SeverityError {
+		t.Fatalf("diagnostic code/severity = %s/%s", d.Code, d.Severity)
+	}
+	if !strings.Contains(d.Message, "cannot assign arr[3]") || !strings.Contains(d.Message, "may be nil") || !strings.Contains(d.Explanation.String(), "no guard on this path proves arr[3] is non-nil") {
+		t.Fatalf("diagnostic = %#v, want optional array index with missing-proof evidence", d)
+	}
+}
+
+func TestAnnotationAssignabilityKeepsOptionalityForZeroArrayIndex(t *testing.T) {
+	diags := runDiagnosticsWithSignatures(t, `
+local arr: {number} = {}
+table.insert(arr, 1)
+table.insert(arr, 2)
+local n: number = arr[0]
+`, signaturelookup.Source{IncludeStdlib: true})
+	if len(diags) != 1 {
+		t.Fatalf("diagnostics = %d, want zero-index array error: %#v", len(diags), diags)
+	}
+	d := diags[0]
+	if d.Code != CodeAssignmentType || d.Severity != diagnostic.SeverityError {
+		t.Fatalf("diagnostic code/severity = %s/%s", d.Code, d.Severity)
+	}
+	if !strings.Contains(d.Message, "cannot assign arr[0]") || !strings.Contains(d.Message, "may be nil") || !strings.Contains(d.Explanation.String(), "no guard on this path proves arr[0] is non-nil") {
+		t.Fatalf("diagnostic = %#v, want optional zero-index read with missing-proof evidence", d)
+	}
+}
+
+func TestAnnotationAssignabilityReportsRootLiteralArrayReadWithoutLengthProof(t *testing.T) {
+	diags := runDiagnostics(t, `
+local function bad(): number
+	local xs: {number} = {}
+	return xs[1]
+end
+`)
+	if len(diags) != 1 {
+		t.Fatalf("diagnostics = %d, want root literal array read error: %#v", len(diags), diags)
+	}
+	d := diags[0]
+	if d.Code != CodeReturnContractType && d.Code != CodeAssignmentType {
+		t.Fatalf("diagnostic code = %s, want return or assignment type diagnostic: %#v", d.Code, d)
+	}
+	if !strings.Contains(d.Message, "cannot return xs[1] as returned value 1") ||
+		!strings.Contains(d.Message, "may be nil") ||
+		!strings.Contains(d.Explanation.String(), "no proof on this path shows returned value 1 (xs[1]) satisfies the declared return type") {
+		t.Fatalf("diagnostic = %#v, want optional root array read with missing-proof evidence", d)
+	}
+}
+
+func TestAnnotationAssignabilityInvalidatesLengthFloorAfterTableRemove(t *testing.T) {
+	diags := runDiagnosticsWithSignatures(t, `
+local arr: {number} = {}
+table.insert(arr, 1)
+table.insert(arr, 2)
+table.remove(arr)
+local n: number = arr[2]
+`, signaturelookup.Source{IncludeStdlib: true})
+	if len(diags) != 1 {
+		t.Fatalf("diagnostics = %d, want post-remove stale length-floor error: %#v", len(diags), diags)
+	}
+	d := diags[0]
+	if d.Code != CodeAssignmentType || d.Severity != diagnostic.SeverityError {
+		t.Fatalf("diagnostic code/severity = %s/%s", d.Code, d.Severity)
+	}
+	if !strings.Contains(d.Message, "cannot assign arr[2]") || !strings.Contains(d.Message, "may be nil") || !strings.Contains(d.Explanation.String(), "no guard on this path proves arr[2] is non-nil") {
+		t.Fatalf("diagnostic = %#v, want optional post-remove read with missing-proof evidence", d)
+	}
+}
+
+func TestAnnotationAssignabilityDoesNotUseLengthFloorForIntegerMapIndex(t *testing.T) {
+	diags := runDiagnostics(t, `
+local lookup: {[integer]: string} = {}
+if #lookup >= 2 then
+    local s: string = lookup[2]
+end
+`)
+	if len(diags) != 1 {
+		t.Fatalf("diagnostics = %d, want integer-map optional index error: %#v", len(diags), diags)
+	}
+	d := diags[0]
+	if d.Code != CodeAssignmentType || d.Severity != diagnostic.SeverityError {
+		t.Fatalf("diagnostic code/severity = %s/%s", d.Code, d.Severity)
+	}
+	if !strings.Contains(d.Message, "cannot assign lookup[2]") || !strings.Contains(d.Message, "may be nil") || !strings.Contains(d.Explanation.String(), "no guard on this path proves lookup[2] is non-nil") {
+		t.Fatalf("diagnostic = %#v, want optional map index with missing-proof evidence", d)
+	}
+}
+
+func TestAnnotationAssignabilityRejectsStaleIndexRangeProofs(t *testing.T) {
+	cases := []struct {
+		name string
+		src  string
+	}{
+		{
+			name: "index reassigned after guard",
+			src: `
+local function bad(xs: {number}): ()
+	local i: number = 1
+	if i <= #xs then
+		i = i + 1
+		local n: number = xs[i]
+	end
+end
+`,
+		},
+		{
+			name: "computed sibling index not guarded",
+			src: `
+local function bad(xs: {number}): ()
+	local i: number = 1
+	if i <= #xs then
+		local j = i + 1
+		local n: number = xs[j]
+	end
+end
+`,
+		},
+		{
+			name: "array reassigned after guard",
+			src: `
+local function bad(xs: {number}, ys: {number}): ()
+	local i: number = 1
+	if i <= #xs then
+		xs = ys
+		local n: number = xs[i]
+	end
+end
+`,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			diags := runDiagnostics(t, tc.src)
+			if len(diags) != 1 {
+				t.Fatalf("diagnostics = %d, want stale range-proof assignment error: %#v", len(diags), diags)
+			}
+			d := diags[0]
+			if d.Code != CodeAssignmentType || d.Severity != diagnostic.SeverityError {
+				t.Fatalf("diagnostic = %#v, want assignment error", d)
+			}
+			if !strings.Contains(d.Message, "cannot assign xs[") ||
+				!strings.Contains(d.Message, "may be nil") ||
+				!strings.Contains(d.Explanation.String(), "is an indexed read that can miss or read nil") ||
+				!strings.Contains(d.Explanation.String(), "no proof shows the selected slot satisfies the declared type here") {
+				t.Fatalf("diagnostic = %#v, want optional array read with missing-proof evidence", d)
+			}
+		})
+	}
+}
+
 func TestAnnotationAssignabilityDoesNotTrustCastEscape(t *testing.T) {
 	diags := runDiagnostics(t, `local x: number = "no" as any`)
 	if len(diags) != 1 {
 		t.Fatalf("diagnostics = %d, want 1: %#v", len(diags), diags)
 	}
-	if got := diags[0].Explanation.String(); !strings.Contains(got, "source expression") ||
-		!strings.Contains(got, "claimed as any") ||
-		!strings.Contains(got, "no boundary proof") {
+	if got := diags[0].Explanation.String(); !strings.Contains(got, "assigned value") ||
+		!strings.Contains(got, "user asserted any") ||
+		!strings.Contains(got, "assigned value comes from any/unknown") ||
+		!strings.Contains(got, "no proof on this path shows assigned value is number") {
 		t.Fatalf("explanation = %q, want source, explicit-any claim, and missing-proof evidence", got)
+	}
+}
+
+func TestAnnotationAssignabilityExplainsOptionalReceiverInNestedIndexedRead(t *testing.T) {
+	diags := runDiagnostics(t, `
+type Tags = {[string]: string}
+type Policy = { tags: Tags }
+local maybe: Policy? = nil
+local source: string = maybe.tags["source"]
+`)
+	if len(diags) != 1 {
+		t.Fatalf("diagnostics = %d, want one assignment error: %#v", len(diags), diags)
+	}
+	d := diags[0]
+	if d.Code != CodeAssignmentType {
+		t.Fatalf("diagnostic code = %s, want %s: %#v", d.Code, CodeAssignmentType, d)
+	}
+	evidence := d.Explanation.Evidence()
+	wantEvidence := []string{
+		`maybe.tags["source"] can be string or nil here`,
+		"source is declared as string",
+		"maybe may be nil before reading .tags",
+		`maybe.tags may be nil before indexing ["source"]`,
+		`no guard on this path proves maybe.tags["source"] is non-nil`,
+	}
+	if len(evidence) != len(wantEvidence) {
+		t.Fatalf("evidence = %#v, want %d ordered items", evidence, len(wantEvidence))
+	}
+	for i, want := range wantEvidence {
+		if evidence[i].Message != want {
+			t.Fatalf("evidence[%d] = %q, want %q; full evidence = %#v", i, evidence[i].Message, want, evidence)
+		}
+	}
+}
+
+func TestAnnotationAssignabilityRendersNestedOptionalIndexedReadTrace(t *testing.T) {
+	src := strings.TrimLeft(`
+type Tags = {[string]: string}
+type Policy = { tags: Tags }
+local maybe: Policy? = nil
+local source: string = maybe.tags["source"]
+`, "\n")
+	diags := runDiagnostics(t, src)
+	if len(diags) != 1 {
+		t.Fatalf("diagnostics = %d, want one assignment error: %#v", len(diags), diags)
+	}
+	rendered := diagnostic.Render(diags[0], diagnostic.RenderOptions{
+		Sources:             diagnostic.SourceMap{"diagnostics_test.lua": src},
+		ShowSourceLabelRows: true,
+	})
+	want := `error[type.assignment]: cannot assign maybe.tags["source"] because it may be nil
+ --> diagnostics_test.lua:4:24
+  |
+  |               ↓ declared type
+4 | local source: string = maybe.tags["source"]
+  |                        ↑ assigned value
+
+because:
+  1. proven: maybe.tags["source"] can be string or nil here
+  2. claimed: source is declared as string
+  3. proven: maybe may be nil before reading .tags
+  4. proven: maybe.tags may be nil before indexing ["source"]
+  5. missing proof: no guard on this path proves maybe.tags["source"] is non-nil
+
+help: Guard ` + "`maybe.tags[\"source\"]`" + ` with a nil check, provide a default value, or change the target type to accept nil.`
+	if rendered != want {
+		t.Fatalf("rendered diagnostic mismatch (-want +got):\n%s", renderLineDiff(want, rendered))
 	}
 }
 
@@ -1260,9 +2480,35 @@ accept(raw)
 	if d := diags[0]; d.Code != CodeDirectCallArgType || !strings.Contains(d.Message, "id") {
 		t.Fatalf("diagnostic = %#v, want direct call mismatch for record id contract", d)
 	}
-	if got := diags[0].Explanation.String(); !strings.Contains(got, "claimed as any") ||
-		!strings.Contains(got, "no boundary proof") {
+	if got := diags[0].Explanation.String(); !strings.Contains(got, "argument 1 (raw) has type any") ||
+		!strings.Contains(got, "user asserted any") ||
+		!strings.Contains(got, "no proof on this path shows raw satisfies the parameter type") {
 		t.Fatalf("explanation = %q, want explicit-any claim and missing-proof evidence", got)
+	}
+}
+
+func TestDirectCallGenericConstraintReportsMissingObjectFieldEvidence(t *testing.T) {
+	diags := runDiagnostics(t, `
+type HasId = { id: string }
+local function need_id<T: HasId>(x: T): string return x.id end
+return need_id({ name = "no-id-here" })
+`)
+	if len(diags) != 1 {
+		t.Fatalf("diagnostics = %d, want 1 generic constraint argument error: %#v", len(diags), diags)
+	}
+	d := diags[0]
+	if d.Code != CodeDirectCallArgType || !strings.Contains(d.Message, "not {id: string}") {
+		t.Fatalf("diagnostic = %#v, want direct call generic constraint mismatch", d)
+	}
+	evidence := d.Explanation.Evidence()
+	if !diagnosticEvidenceContains(evidence, `argument 1 has type {name: "no-id-here"}`) ||
+		!diagnosticEvidenceContains(evidence, "need_id parameter 1 expects {id: string}") ||
+		!diagnosticEvidenceContains(evidence, `object literal does not provide field "id"`) {
+		t.Fatalf("evidence = %#v, want actual type, constraint, and missing-field missing proof", evidence)
+	}
+	missing := evidence[len(evidence)-1]
+	if missing.Kind != diagnostic.EvidenceMissingProof || missing.Trust != diagnostic.TrustUnknown {
+		t.Fatalf("missing-field evidence = %#v, want missing-proof evidence", missing)
 	}
 }
 
@@ -1326,8 +2572,8 @@ end
 		t.Fatalf("diagnostics = %d, want 2: %#v", len(diags), diags)
 	}
 	messages := diagnosticMessages(diags)
-	if !containsDiagnosticMessage(messages, "cannot assign string to number") ||
-		!containsDiagnosticMessage(messages, "cannot assign number to string") {
+	if !containsDiagnosticMessage(messages, "cannot assign event.id because it is string, not number") ||
+		!containsDiagnosticMessage(messages, "cannot assign timer.elapsed because it is number, not string") {
 		t.Fatalf("diagnostics = %#v, want string->number and number->string channel payload mismatches", messages)
 	}
 }
@@ -1360,8 +2606,8 @@ end
 		t.Fatalf("diagnostics = %d, want 2: %#v", len(diags), diags)
 	}
 	messages := diagnosticMessages(diags)
-	if !containsDiagnosticMessage(messages, "cannot assign string to number") ||
-		!containsDiagnosticMessage(messages, "cannot assign number to string") {
+	if !containsDiagnosticMessage(messages, "cannot assign event.id because it is string, not number") ||
+		!containsDiagnosticMessage(messages, "cannot assign timer.elapsed because it is number, not string") {
 		t.Fatalf("diagnostics = %#v, want direct-param channel payload mismatches only", messages)
 	}
 }
@@ -1378,6 +2624,106 @@ func TestAnnotationAssignabilityRejectsGradualUntypedDynamicMapWriteWithoutProof
 	}
 	if d := diags[0]; d.Code != CodeAssignmentType || !strings.Contains(d.Message, "string") {
 		t.Fatalf("diagnostic = %#v, want typed map assignment error", d)
+	}
+}
+
+func TestAnnotationAssignabilityChecksClosedRecordDynamicWriteAgainstEveryPossibleField(t *testing.T) {
+	diags := runDiagnostics(t, `
+		type Row = {
+			id: string,
+			meta: any,
+		}
+
+		function f(key: string, value: number): ()
+			local row: Row = {id = "ok", meta = {}}
+			row[key] = value
+		end
+	`)
+	if len(diags) != 1 {
+		t.Fatalf("diagnostics = %d, want closed-record dynamic write mismatch: %#v", len(diags), diags)
+	}
+	d := diags[0]
+	if d.Code != CodeAssignmentType || d.Severity != diagnostic.SeverityError {
+		t.Fatalf("diagnostic = %#v, want assignment error", d)
+	}
+	if !strings.Contains(d.Message, "number") || !strings.Contains(d.Message, "string") {
+		t.Fatalf("message = %q, want number-to-string dynamic write mismatch", d.Message)
+	}
+	if evidence := d.Explanation.Evidence(); !diagnosticEvidenceContains(evidence, "value has type number") ||
+		!diagnosticEvidenceContains(evidence, "assignment target row[key] requires") {
+		t.Fatalf("evidence = %#v, want value and target path evidence", evidence)
+	}
+}
+
+func TestAnnotationAssignabilityRejectsClosedRecordDynamicWriteUnionValueForMixedFields(t *testing.T) {
+	diags := runDiagnostics(t, `
+		type Row = {
+			id: string,
+			count: number,
+		}
+
+		function f(key: string, value: string | number): ()
+			local row: Row = {id = "ok", count = 0}
+			row[key] = value
+		end
+	`)
+	if len(diags) != 1 {
+		t.Fatalf("diagnostics = %d, want mixed-field dynamic write mismatch: %#v", len(diags), diags)
+	}
+	d := diags[0]
+	if d.Code != CodeAssignmentType || d.Severity != diagnostic.SeverityError {
+		t.Fatalf("diagnostic = %#v, want assignment error", d)
+	}
+	if !strings.Contains(d.Message, "string") || !strings.Contains(d.Message, "number") {
+		t.Fatalf("message = %q, want union value and mixed-field target mismatch", d.Message)
+	}
+	if evidence := d.Explanation.Evidence(); !diagnosticEvidenceContains(evidence, "value has type number | string") ||
+		!diagnosticEvidenceContains(evidence, "assignment target row[key] requires") {
+		t.Fatalf("evidence = %#v, want value and target path evidence", evidence)
+	}
+}
+
+func TestAnnotationAssignabilityRejectsExplicitAnyForClosedRecordDynamicWrite(t *testing.T) {
+	diags := runDiagnostics(t, `
+		type Row = {
+			id: string,
+			meta: any,
+		}
+
+		function f(key: string): ()
+			local row: Row = {id = "ok", meta = {}}
+			local raw = (1 :: any)
+			row[key] = raw
+		end
+	`)
+	if len(diags) != 1 {
+		t.Fatalf("diagnostics = %d, want explicit-any closed-record dynamic write mismatch: %#v", len(diags), diags)
+	}
+	d := diags[0]
+	if d.Code != CodeAssignmentType || d.Severity != diagnostic.SeverityError {
+		t.Fatalf("diagnostic = %#v, want assignment error", d)
+	}
+	explanation := d.Explanation.String()
+	if !strings.Contains(explanation, "user asserted any") ||
+		!strings.Contains(explanation, "no proof on this path shows raw satisfies the declared type") {
+		t.Fatalf("explanation = %q, want explicit-any missing-proof evidence for string field", explanation)
+	}
+}
+
+func TestAnnotationAssignabilityAcceptsClosedRecordDynamicWriteWhenValueFitsEveryField(t *testing.T) {
+	diags := runDiagnostics(t, `
+		type Row = {
+			id: string,
+			label: string,
+		}
+
+		function f(key: string, value: string): ()
+			local row: Row = {id = "ok", label = "ready"}
+			row[key] = value
+		end
+	`)
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v, want string value accepted for all closed-record dynamic fields", diags)
 	}
 }
 
@@ -1400,9 +2746,9 @@ func TestAnnotationAssignabilityRejectsExplicitAnyAsProof(t *testing.T) {
 	var assignment, field, call bool
 	for _, d := range diags {
 		msg := d.Message
-		assignment = assignment || strings.Contains(msg, "cannot assign any to") && strings.Contains(msg, "id: string")
-		field = field || strings.Contains(msg, "cannot assign any to string")
-		call = call || strings.Contains(msg, "argument 1 is any") && strings.Contains(msg, "id: string")
+		assignment = assignment || strings.Contains(msg, "cannot assign raw because it is any, not") && strings.Contains(msg, "id: string")
+		field = field || strings.Contains(msg, "cannot assign raw.id because it is any, not string")
+		call = call || strings.Contains(msg, "argument 1 (raw) is any") && strings.Contains(msg, "not Payload")
 	}
 	if !assignment || !field || !call {
 		t.Fatalf("diagnostics = %#v, want explicit-any assignment, field, and call errors", diags)
@@ -1527,7 +2873,7 @@ func TestAnnotationAssignabilityReportsMaybeParameterWithoutNarrowing(t *testing
 	if len(diags) != 1 {
 		t.Fatalf("diagnostics = %d, want 1: %#v", len(diags), diags)
 	}
-	if d := diags[0]; d.Code != CodeAssignmentType || !strings.Contains(d.Message, "string?") {
+	if d := diags[0]; d.Code != CodeAssignmentType || !strings.Contains(d.Message, "cannot assign x") || !strings.Contains(d.Message, "may be nil") {
 		t.Fatalf("diagnostic = %#v, want optional parameter assignment error", d)
 	}
 }
@@ -1543,7 +2889,7 @@ func TestAnnotationAssignabilityReportsMissingUnionMapEntry(t *testing.T) {
 	if len(diags) != 1 {
 		t.Fatalf("diagnostics = %d, want missing-key optionality error: %#v", len(diags), diags)
 	}
-	if d := diags[0]; d.Code != CodeAssignmentType || !strings.Contains(d.Message, "nil |") {
+	if d := diags[0]; d.Code != CodeAssignmentType || !strings.Contains(d.Message, "cannot assign cache[\"missing\"]") || !strings.Contains(d.Message, "may be nil") {
 		t.Fatalf("diagnostic = %#v, want nilable union assignment error", d)
 	}
 }
@@ -1568,8 +2914,8 @@ func TestAnnotationAssignabilityReportsMissingUnionMapEntryUnderInferredReturn(t
 		t.Fatalf("diagnostics = %d, want processed and counter missing-key errors: %#v", len(diags), diags)
 	}
 	messages := diagnosticMessages(diags)
-	if !containsDiagnosticMessage(messages, "nil |") ||
-		!containsDiagnosticMessage(messages, "number?") {
+	if !containsDiagnosticMessage(messages, "cannot assign actor.state.processed[\"missing\"]") ||
+		!containsDiagnosticMessage(messages, "cannot assign actor.state.counters[\"missing\"]") {
 		t.Fatalf("diagnostics = %#v, want both missing-key assignment errors", messages)
 	}
 }
@@ -1687,6 +3033,16 @@ func TestAnnotationAssignabilitySkipsRootLiteralIndexProjection(t *testing.T) {
 	}
 }
 
+func TestAnnotationAssignabilityAcceptsRootOptionalLiteralIndexWithPresentElementProof(t *testing.T) {
+	diags := runDiagnostics(t, `
+		local xs: {number}? = {1, 2}
+		local x: number = xs[1]
+	`)
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v, want none for exact root-local element proof", diags)
+	}
+}
+
 func TestAnnotationAssignabilityAcceptsWhileIndexReadProvenInRange(t *testing.T) {
 	diags := runDiagnostics(t, `
 		function first(xs: {number}): number
@@ -1730,6 +3086,178 @@ func TestAnnotationAssignabilityAcceptsInferredFunctionFieldAliasReturn(t *testi
 	`)
 	if len(diags) != 0 {
 		t.Fatalf("diagnostics = %#v, want none for current function-field alias return", diags)
+	}
+}
+
+func TestAnnotationAssignabilityAcceptsDominatingFieldDefinedWrapperReturn(t *testing.T) {
+	diags := runDiagnostics(t, `
+		local M = {
+			dep = {
+				get = function()
+					return nil
+				end,
+			},
+		}
+		function M.run()
+			return M.dep.get()
+		end
+		M.dep = {
+			get = function()
+				return { answer = "ok" }
+			end,
+		}
+		local res = M.run()
+		local answer: string = res.answer
+	`)
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v, want none when provider replacement dominates wrapper call", diags)
+	}
+}
+
+func TestAnnotationAssignabilityRejectsNonDominatingFieldDefinedWrapperReturn(t *testing.T) {
+	diags := runDiagnostics(t, `
+		local function run(flag: boolean)
+			local M = {
+				dep = {
+					get = function()
+						return nil
+					end,
+				},
+			}
+			function M.run()
+				return M.dep.get()
+			end
+			if flag then
+				M.dep = {
+					get = function()
+						return { answer = "ok" }
+					end,
+				}
+			end
+			local res = M.run()
+			local answer: string = res.answer
+		end
+	`)
+	if len(diags) != 1 {
+		t.Fatalf("diagnostics = %d, want one non-dominating wrapper return error: %#v", len(diags), diags)
+	}
+	if d := diags[0]; d.Code != CodeAssignmentType || !strings.Contains(d.Message, "cannot assign res.answer") || !strings.Contains(d.Message, "may be nil") {
+		t.Fatalf("diagnostic = %#v, want optional wrapper return assignment error", d)
+	}
+}
+
+func TestAnnotationAssignabilityRejectsBranchReassignedCallResultField(t *testing.T) {
+	diags := runDiagnostics(t, `
+		local function make(): { answer: string }
+			return { answer = "ok" }
+		end
+
+		local function run(flag: boolean)
+			local res = make()
+			if flag then
+				res = { answer = 1 }
+			end
+			local answer: string? = res.answer
+		end
+	`)
+	if len(diags) != 1 {
+		t.Fatalf("diagnostics = %d, want one branch reassigned call-result field error: %#v", len(diags), diags)
+	}
+	d := diags[0]
+	if d.Code != CodeAssignmentType || !strings.Contains(d.Message, "string | 1") || !strings.Contains(d.Message, "string?") {
+		t.Fatalf("diagnostic = %#v, want string-or-1-to-string? assignment error", d)
+	}
+	if evidence := d.Explanation.Evidence(); !diagnosticEvidenceContains(evidence, "res is reassigned before the read; after that assignment, res.answer has literal value 1") {
+		t.Fatalf("evidence = %#v, want reassignment invalidation evidence", evidence)
+	}
+}
+
+func TestAnnotationAssignabilityRendersBranchReassignedCallResultFieldTrace(t *testing.T) {
+	src := strings.TrimLeft(`
+local function make(): { answer: string }
+    return { answer = "ok" }
+end
+
+local function run(flag: boolean)
+    local res = make()
+    if flag then
+        res = { answer = 1 }
+    end
+    local answer: string? = res.answer
+end
+`, "\n")
+	diags := runDiagnostics(t, src)
+	if len(diags) != 1 {
+		t.Fatalf("diagnostics = %d, want one branch reassigned call-result field error: %#v", len(diags), diags)
+	}
+	rendered := diagnostic.Render(diags[0], diagnostic.RenderOptions{
+		Sources:             diagnostic.SourceMap{"diagnostics_test.lua": src},
+		ShowSourceLabelRows: true,
+	})
+	want := `error[type.assignment]: cannot assign res.answer because it is string | 1, not string?
+ --> diagnostics_test.lua:10:29
+   |
+10 |     local answer: string? = res.answer
+   |                             ↑ assigned value
+
+because:
+  1. proven: res.answer has type string | 1
+  2. claimed: answer is declared as string?
+  3. proven: res is reassigned before the read; after that assignment, res.answer has literal value 1
+ --> diagnostics_test.lua:8:15
+  |
+8 |         res = { answer = 1 }
+  |               ^
+  4. missing proof: no proof on this path shows res.answer satisfies the declared type
+
+help: Use a value compatible with the expected type, or change the target type if ` + "`res.answer`" + ` is valid.`
+	if rendered != want {
+		t.Fatalf("rendered diagnostic mismatch (-want +got):\n%s", renderLineDiff(want, rendered))
+	}
+}
+
+func TestAnnotationAssignabilityKeepsOriginalCallArmAfterBranchReassignedCallResultField(t *testing.T) {
+	diags := runDiagnostics(t, `
+		local function make(): { answer: string }
+			return { answer = "ok" }
+		end
+
+		local function run(flag: boolean)
+			local res = make()
+			if flag then
+				res = { answer = 1 }
+			end
+			local answer: number = res.answer
+		end
+	`)
+	if len(diags) != 1 {
+		t.Fatalf("diagnostics = %d, want one original call arm assignment error: %#v", len(diags), diags)
+	}
+	d := diags[0]
+	if d.Code != CodeAssignmentType || !strings.Contains(d.Message, "string | 1") || !strings.Contains(d.Message, "number") {
+		t.Fatalf("diagnostic = %#v, want string-or-1-to-number assignment error", d)
+	}
+	if evidence := d.Explanation.Evidence(); !diagnosticEvidenceContains(evidence, "res is reassigned before the read; after that assignment, res.answer has literal value 1") {
+		t.Fatalf("evidence = %#v, want reassignment invalidation evidence", evidence)
+	}
+}
+
+func TestAnnotationAssignabilityAcceptsBranchReassignedCallResultFieldUnion(t *testing.T) {
+	diags := runDiagnostics(t, `
+		local function make(): { answer: string }
+			return { answer = "ok" }
+		end
+
+		local function run(flag: boolean)
+			local res = make()
+			if flag then
+				res = { answer = 1 }
+			end
+			local answer: string | number = res.answer
+		end
+	`)
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v, want union annotation accepted", diags)
 	}
 }
 
@@ -1780,7 +3308,7 @@ func TestAnnotationAssignabilityReportsNestedOptionalIndexProjection(t *testing.
 	if len(diags) != 1 {
 		t.Fatalf("diagnostics = %d, want 1: %#v", len(diags), diags)
 	}
-	if d := diags[0]; d.Code != CodeAssignmentType || !strings.Contains(d.Message, "string?") {
+	if d := diags[0]; d.Code != CodeAssignmentType || !strings.Contains(d.Message, "cannot assign response.result.data.departments[1]") || !strings.Contains(d.Message, "may be nil") {
 		t.Fatalf("diagnostic = %#v, want optional nested index assignment error", d)
 	}
 }
@@ -1809,7 +3337,7 @@ func TestAnnotationAssignabilityReportsNestedOptionalIndexAfterGuardCalls(t *tes
 	if len(diags) != 1 {
 		t.Fatalf("diagnostics = %d, want 1: %#v", len(diags), diags)
 	}
-	if d := diags[0]; d.Code != CodeAssignmentType || !strings.Contains(d.Message, "string?") {
+	if d := diags[0]; d.Code != CodeAssignmentType || !strings.Contains(d.Message, "cannot assign response.result.data.departments[1]") || !strings.Contains(d.Message, "may be nil") {
 		t.Fatalf("diagnostic = %#v, want optional nested index assignment error", d)
 	}
 }
@@ -1824,6 +3352,14 @@ func TestAnnotationAssignabilityReportsMissingRequiredField(t *testing.T) {
 	}
 	if d := diags[0]; d.Code != CodeAssignmentType || !strings.Contains(d.Message, "y") {
 		t.Fatalf("diagnostic = %#v, want missing required field y", d)
+	}
+	if d := diags[0]; !diagnosticEvidenceContains(d.Explanation.Evidence(), "object literal has type {x: 10}") ||
+		!diagnosticEvidenceContains(d.Explanation.Evidence(), "p is declared as Point") ||
+		!diagnosticEvidenceContains(d.Explanation.Evidence(), "required field p.y has type number, but the object literal does not provide it") {
+		t.Fatalf("evidence = %#v, want provided shape, declared type, and missing required path", d.Explanation.Evidence())
+	}
+	if d := diags[0]; !strings.Contains(d.Help, "Add field `y`") {
+		t.Fatalf("help = %q, want missing-field repair", d.Help)
 	}
 }
 
@@ -1847,16 +3383,20 @@ func TestUnresolvedLexicalTypeReferences(t *testing.T) {
 		name string
 		src  string
 		line int
+		col  int
+		end  int
 	}{
 		{
 			name: "not visible outside block",
-			src: `
+			src: strings.TrimLeft(`
 if true then
 	type LocalPoint = {x: number, y: number}
 end
 local p: LocalPoint = {x = 1, y = 2}
-`,
-			line: 5,
+`, "\n"),
+			line: 4,
+			col:  10,
+			end:  19,
 		},
 	}
 	for _, tc := range cases {
@@ -1870,11 +3410,44 @@ local p: LocalPoint = {x = 1, y = 2}
 			if d.Code != CodeUnresolvedTypeReference || d.Severity != diagnostic.SeverityError {
 				t.Fatalf("diagnostic code/severity = %s/%s", d.Code, d.Severity)
 			}
-			if d.Position.Line != tc.line {
-				t.Fatalf("diagnostic line = %d, want %d", d.Position.Line, tc.line)
+			if d.Message != "unknown type LocalPoint" {
+				t.Fatalf("message = %q, want exact unresolved type message", d.Message)
 			}
-			if !strings.Contains(d.Message, "unknown type") {
-				t.Fatalf("message = %q", d.Message)
+			if d.Position.Line != tc.line || d.Position.Column != tc.col || d.Position.EndColumn != tc.end {
+				t.Fatalf("position = %#v, want exact span of LocalPoint", d.Position)
+			}
+			if d.Span.StartLine != tc.line || d.Span.StartCol != tc.col || d.Span.EndCol != tc.end {
+				t.Fatalf("span = %#v, want exact span for only the unresolved type", d.Span)
+			}
+			evidence := d.Explanation.Evidence()
+			if len(evidence) != 1 || evidence[0].Message != "no type named LocalPoint is declared in this scope, a parent scope, or an imported module" {
+				t.Fatalf("evidence = %#v, want one missing-declaration proof", evidence)
+			}
+			if evidence[0].Kind != diagnostic.EvidenceAbstractFact || evidence[0].Trust != diagnostic.TrustProven {
+				t.Fatalf("evidence kind/trust = %s/%s, want proven lookup fact", evidence[0].Kind, evidence[0].Trust)
+			}
+			if !diagnosticHasLabel(d, labelUnknownType) {
+				t.Fatalf("labels = %#v, want unknown-type focus label", d.Labels)
+			}
+			if !strings.Contains(d.Help, "Declare the type") || !strings.Contains(d.Help, "fully qualified") {
+				t.Fatalf("help = %q, want actionable type-resolution help", d.Help)
+			}
+			rendered := diagnostic.Render(d, diagnostic.RenderOptions{
+				Sources:             diagnostic.SourceMap{"diagnostics_test.lua": tc.src},
+				ShowSourceLabelRows: true,
+			})
+			want := `error[type.reference.unresolved]: unknown type LocalPoint
+ --> diagnostics_test.lua:4:10
+  |
+4 | local p: LocalPoint = {x = 1, y = 2}
+  |          ↑ unknown type
+
+because:
+  1. proven: no type named LocalPoint is declared in this scope, a parent scope, or an imported module
+
+help: Declare the type in scope, import the module that exports it, or use the fully qualified exported type name.`
+			if rendered != want {
+				t.Fatalf("rendered diagnostic mismatch (-want +got):\n%s", renderLineDiff(want, rendered))
 			}
 		})
 	}
@@ -1898,11 +3471,12 @@ local p: Node = {kind = "leaf"}
 }
 
 func TestUnresolvedValueReferencesReportsImplicitGlobalReads(t *testing.T) {
-	diags := runDiagnosticsWithGlobals(t, `
-		local x = missing + known
-		missing = 42
-		print(known)
-	`, []string{"known", "print"})
+	src := strings.TrimLeft(`
+local x = missing + known
+missing = 42
+print(known)
+`, "\n")
+	diags := runDiagnosticsWithGlobals(t, src, []string{"known", "print"})
 	if len(diags) != 1 {
 		t.Fatalf("diagnostics = %d, want 1: %#v", len(diags), diags)
 	}
@@ -1910,8 +3484,44 @@ func TestUnresolvedValueReferencesReportsImplicitGlobalReads(t *testing.T) {
 	if d.Code != CodeUnresolvedValueReference || d.Severity != diagnostic.SeverityError {
 		t.Fatalf("diagnostic code/severity = %s/%s", d.Code, d.Severity)
 	}
-	if d.Position.Line != 2 || !strings.Contains(d.Message, "missing") {
-		t.Fatalf("diagnostic = %#v, want unresolved read of missing on line 2", d)
+	if d.Message != "unknown value missing" {
+		t.Fatalf("message = %q, want exact unresolved value message", d.Message)
+	}
+	if d.Position.Line != 1 || d.Position.Column != 11 || d.Position.EndColumn != 17 {
+		t.Fatalf("position = %#v, want exact span of missing read", d.Position)
+	}
+	if d.Span.StartLine != 1 || d.Span.StartCol != 11 || d.Span.EndCol != 17 {
+		t.Fatalf("span = %#v, want exact span for only the missing identifier", d.Span)
+	}
+	evidence := d.Explanation.Evidence()
+	if len(evidence) != 1 || evidence[0].Message != "no value named missing is declared, predeclared, imported, or configured global in this scope" {
+		t.Fatalf("evidence = %#v, want one missing-declaration proof", evidence)
+	}
+	if evidence[0].Kind != diagnostic.EvidenceAbstractFact || evidence[0].Trust != diagnostic.TrustProven {
+		t.Fatalf("evidence kind/trust = %s/%s, want proven lookup fact", evidence[0].Kind, evidence[0].Trust)
+	}
+	if !diagnosticHasLabel(d, labelUnknownValue) {
+		t.Fatalf("labels = %#v, want unknown-value focus label", d.Labels)
+	}
+	if !strings.Contains(d.Help, "Declare the value") || !strings.Contains(d.Help, "configured globals") {
+		t.Fatalf("help = %q, want actionable value-resolution help", d.Help)
+	}
+	rendered := diagnostic.Render(d, diagnostic.RenderOptions{
+		Sources:             diagnostic.SourceMap{"diagnostics_test.lua": src},
+		ShowSourceLabelRows: true,
+	})
+	want := `error[value.reference.unresolved]: unknown value missing
+ --> diagnostics_test.lua:1:11
+  |
+1 | local x = missing + known
+  |           ↑ unknown value
+
+because:
+  1. proven: no value named missing is declared, predeclared, imported, or configured global in this scope
+
+help: Declare the value, import it through require, or add it to the configured globals when it is intentionally ambient.`
+	if rendered != want {
+		t.Fatalf("rendered diagnostic mismatch (-want +got):\n%s", renderLineDiff(want, rendered))
 	}
 }
 
@@ -1973,6 +3583,59 @@ func TestMemberCallAcceptsMatchingDiscriminantMethod(t *testing.T) {
 	`)
 	if len(diags) != 0 {
 		t.Fatalf("diagnostics = %#v, want none", diags)
+	}
+}
+
+func TestMemberReadReportsStaticBracketMissingFieldAfterDiscriminantNarrowing(t *testing.T) {
+	diags := runDiagnostics(t, `
+		type Dog = {kind: "dog", bark: string}
+		type Cat = {kind: "cat", meow: string}
+		type Animal = Dog | Cat
+
+		local function speak(a: Animal)
+			if a.kind == "dog" then
+				local bad = a["meow"]
+			end
+		end
+	`)
+	if len(diags) != 1 {
+		t.Fatalf("diagnostics = %d, want static bracket missing-member read: %#v", len(diags), diags)
+	}
+	d := diags[0]
+	if d.Code != CodeMissingMember || d.Severity != diagnostic.SeverityError {
+		t.Fatalf("diagnostic code/severity = %s/%s", d.Code, d.Severity)
+	}
+	if !strings.Contains(d.Message, `"meow"`) || !strings.Contains(d.Message, "dog") {
+		t.Fatalf("message = %q, want missing meow on narrowed dog variant", d.Message)
+	}
+	evidence := d.Explanation.Evidence()
+	if len(evidence) != 1 ||
+		!diagnosticEvidenceContains(evidence, `a["meow"] reads member "meow" from receiver type`) ||
+		d.Explanation.String() == "" {
+		t.Fatalf("explanation evidence = %#v, want path-specific member-read receiver evidence", evidence)
+	}
+	if !diagnosticHasLabel(d, labelMemberRead) {
+		t.Fatalf("labels = %#v, want member-read focus label", d.Labels)
+	}
+	if !strings.Contains(d.Help, "Narrow the receiver before reading `meow`") {
+		t.Fatalf("help = %q, want actionable missing-member help", d.Help)
+	}
+}
+
+func TestMemberReadSkipsDynamicBracketKeyAfterDiscriminantNarrowing(t *testing.T) {
+	diags := runDiagnostics(t, `
+		type Dog = {kind: "dog", bark: string}
+		type Cat = {kind: "cat", meow: string}
+		type Animal = Dog | Cat
+
+		local function speak(a: Animal, key: string)
+			if a.kind == "dog" then
+				local unknown = a[key]
+			end
+		end
+	`)
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v, want no static member-read diagnostic for dynamic key", diags)
 	}
 }
 
@@ -2074,7 +3737,7 @@ func TestAssignmentReportsNestedDynamicVariantWriteInvalidatedGuardWithEvidence(
 	if d.Code != CodeAssignmentType || d.Severity != diagnostic.SeverityError {
 		t.Fatalf("diagnostic = %#v, want assignment error", d)
 	}
-	if !strings.Contains(d.Message, "cannot assign") || !strings.Contains(d.Message, "string") {
+	if !strings.Contains(d.Message, "cannot assign slots.active.value.path") || !strings.Contains(d.Message, "may be nil") {
 		t.Fatalf("message = %q, want string assignment mismatch", d.Message)
 	}
 	if got := d.Explanation.Evidence(); len(got) < 2 {
@@ -2131,7 +3794,7 @@ func TestAssignmentReportsNestedDynamicVariantWriteInvalidatedAliasWithEvidence(
 	if d.Code != CodeAssignmentType || d.Severity != diagnostic.SeverityError {
 		t.Fatalf("diagnostic = %#v, want assignment error", d)
 	}
-	if !strings.Contains(d.Message, "cannot assign") || !strings.Contains(d.Message, "string") {
+	if !strings.Contains(d.Message, "cannot assign active.value.path") || !strings.Contains(d.Message, "may be nil") {
 		t.Fatalf("message = %q, want string assignment mismatch", d.Message)
 	}
 	if got := d.Explanation.Evidence(); len(got) < 2 {
@@ -2164,11 +3827,123 @@ func TestAssignmentReportsDynamicIndexWriteInvalidatedGuardWithEvidence(t *testi
 	if d.Code != CodeAssignmentType || d.Severity != diagnostic.SeverityError {
 		t.Fatalf("diagnostic = %#v, want assignment error", d)
 	}
-	if !strings.Contains(d.Message, "cannot assign") || !strings.Contains(d.Message, "string") {
+	if !strings.Contains(d.Message, "cannot assign box.value") || !strings.Contains(d.Message, "may be nil") {
 		t.Fatalf("message = %q, want string assignment mismatch", d.Message)
 	}
 	if got := d.Explanation.Evidence(); len(got) < 2 {
 		t.Fatalf("explanation evidence = %#v, want source and annotation evidence", got)
+	}
+	if len(d.Labels) < 2 || d.Labels[0].Message != "assigned value" || d.Labels[1].Message != "declared type" {
+		t.Fatalf("labels = %#v, want assigned value and declared type", d.Labels)
+	}
+}
+
+func TestAssignmentDoesNotUseBroadDynamicKeyAsStaticMemberProof(t *testing.T) {
+	diags := runDiagnostics(t, `
+		type Box = {
+			value: string?,
+		}
+
+		local function f(k: string): ()
+			local box: Box = {}
+			box[k] = "ready"
+			local after: string = box.value
+		end
+	`)
+	found := false
+	for _, d := range diags {
+		if d.Code == CodeAssignmentType &&
+			strings.Contains(d.Message, "cannot assign box.value") &&
+			strings.Contains(d.Message, "may be nil") &&
+			strings.Contains(d.Explanation.String(), "no guard on this path proves box.value is non-nil") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("diagnostics = %#v, want broad dynamic key to leave box.value optional with missing-proof evidence", diags)
+	}
+}
+
+func TestAssignmentDoesNotUseAliasBroadDynamicKeyAsStaticMemberProof(t *testing.T) {
+	diags := runDiagnostics(t, `
+		type Box = {
+			value: string?,
+		}
+
+		local function f(k: string): ()
+			local box: Box = {}
+			local alias = box
+			alias[k] = "ready"
+			local after: string = box.value
+		end
+	`)
+	found := false
+	for _, d := range diags {
+		if d.Code == CodeAssignmentType &&
+			strings.Contains(d.Message, "cannot assign box.value") &&
+			strings.Contains(d.Message, "may be nil") &&
+			strings.Contains(d.Explanation.String(), "no guard on this path proves box.value is non-nil") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("diagnostics = %#v, want alias broad dynamic key to leave box.value optional with missing-proof evidence", diags)
+	}
+}
+
+func TestAssignmentUsesStaticBracketStringKeyAsStaticMemberProof(t *testing.T) {
+	diags := runDiagnostics(t, `
+		type Box = {
+			value: string?,
+		}
+
+		local function f(): ()
+			local box: Box = {}
+			box["value"] = "ready"
+			local after: string = box.value
+		end
+	`)
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v, want static bracket string write to prove the static member", diags)
+	}
+}
+
+func TestAssignmentReportsSummaryPathInvalidatedGuardWithEvidence(t *testing.T) {
+	diags := runDiagnostics(t, `
+		type Box = {
+			value: string?,
+		}
+
+		local function clear(box: Box, key: string): ()
+			box[key] = nil
+		end
+
+		local box: Box = {value = "ready"}
+		if box.value then
+			clear(box, "value")
+			local after: string = box.value
+		end
+	`)
+	if len(diags) != 1 {
+		t.Fatalf("diagnostics = %d, want summary invalidated guard assignment error: %#v", len(diags), diags)
+	}
+	d := diags[0]
+	if d.Code != CodeAssignmentType || d.Severity != diagnostic.SeverityError {
+		t.Fatalf("diagnostic = %#v, want assignment error", d)
+	}
+	if !strings.Contains(d.Message, "cannot assign box.value") || !strings.Contains(d.Message, "may be nil") {
+		t.Fatalf("message = %q, want path-specific optional assignment mismatch", d.Message)
+	}
+	evidence := d.Explanation.Evidence()
+	if len(evidence) < 2 {
+		t.Fatalf("explanation evidence = %#v, want source and annotation evidence", evidence)
+	}
+	if !strings.Contains(evidence[0].Message, "box.value can be string or nil here") ||
+		!strings.Contains(evidence[1].Message, "after is declared as string") ||
+		!strings.Contains(d.Explanation.String(), "no guard on this path proves box.value is non-nil") {
+		t.Fatalf("evidence = %#v, want path-specific source, declaration, and guard evidence", evidence)
 	}
 	if len(d.Labels) < 2 || d.Labels[0].Message != "assigned value" || d.Labels[1].Message != "declared type" {
 		t.Fatalf("labels = %#v, want assigned value and declared type", d.Labels)
@@ -2256,11 +4031,13 @@ func assertStalePathMissingMemberEvidence(t *testing.T, result *body.Result) {
 		t.Fatalf("message = %q, want missing path on timer variant", missing.Message)
 	}
 	evidence := missing.Explanation.Evidence()
-	if len(evidence) < 2 || missing.Explanation.String() == "" {
-		t.Fatalf("explanation evidence = %#v, want read and receiver evidence", evidence)
+	if len(evidence) != 1 ||
+		!diagnosticEvidenceContains(evidence, `slots.active.value.path reads member "path" from receiver type`) ||
+		missing.Explanation.String() == "" {
+		t.Fatalf("explanation evidence = %#v, want path-specific stale member-read evidence", evidence)
 	}
-	if len(missing.Labels) == 0 || missing.Labels[0].Message != "missing member read" {
-		t.Fatalf("labels = %#v, want missing member read label", missing.Labels)
+	if !diagnosticHasLabel(missing, labelMemberRead) {
+		t.Fatalf("labels = %#v, want member-read focus label", missing.Labels)
 	}
 }
 
@@ -2280,8 +4057,83 @@ func TestMemberCallReportsUnionReceiverMissingMethod(t *testing.T) {
 	if !strings.Contains(d.Message, "upper") || !strings.Contains(d.Message, "number") {
 		t.Fatalf("message = %q, want missing upper on string|number receiver", d.Message)
 	}
-	if len(d.Explanation.Evidence()) == 0 {
-		t.Fatalf("explanation evidence = %#v, want non-empty", d.Explanation.Evidence())
+	if !diagnosticEvidenceContains(d.Explanation.Evidence(), "x.upper has receiver type") {
+		t.Fatalf("explanation evidence = %#v, want member receiver evidence", d.Explanation.Evidence())
+	}
+	if !diagnosticHasLabel(d, labelMemberCall) {
+		t.Fatalf("labels = %#v, want member-call focus label", d.Labels)
+	}
+	if !strings.Contains(d.Help, "Narrow the receiver before reading `upper`") {
+		t.Fatalf("help = %q, want actionable missing-member help", d.Help)
+	}
+}
+
+func TestMemberCallEvidenceKeepsNestedCalleePath(t *testing.T) {
+	cases := []struct {
+		name         string
+		src          string
+		code         diagnostic.Code
+		wantEvidence string
+	}{
+		{
+			name: "missing nested member",
+			src: `
+type ReadyClient = {kind: "ready", ready: () -> ()}
+type IdleClient = {kind: "idle", wait: () -> ()}
+type Client = ReadyClient | IdleClient
+type Box = {client: Client}
+function f(box: Box)
+    if box.client.kind == "ready" then
+        box.client:run()
+    end
+end
+`,
+			code:         CodeMissingMember,
+			wantEvidence: "box.client.run has receiver type",
+		},
+		{
+			name: "non-callable nested member",
+			src: `
+type BadClient = {kind: "bad", run: number}
+type GoodClient = {kind: "good", run: () -> ()}
+type Client = BadClient | GoodClient
+type Box = {client: Client}
+function f(box: Box)
+    if box.client.kind == "bad" then
+        box.client:run()
+    end
+end
+`,
+			code:         CodeNotCallable,
+			wantEvidence: "box.client.run has type number at call",
+		},
+		{
+			name: "nested member call contract",
+			src: `
+type Client = {invoke: (id: string) -> ()}
+type Box = {client: Client}
+function f(box: Box)
+    box.client.invoke(42)
+end
+`,
+			code:         CodeDirectCallArgType,
+			wantEvidence: "box.client.invoke parameter 1 expects string",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			diags := runDiagnostics(t, tc.src)
+			if len(diags) != 1 {
+				t.Fatalf("diagnostics = %d, want one nested member-call diagnostic: %#v", len(diags), diags)
+			}
+			d := diags[0]
+			if d.Code != tc.code || d.Severity != diagnostic.SeverityError {
+				t.Fatalf("diagnostic = %#v, want %s error", d, tc.code)
+			}
+			if !diagnosticEvidenceContains(d.Explanation.Evidence(), tc.wantEvidence) {
+				t.Fatalf("evidence = %#v, want %q", d.Explanation.Evidence(), tc.wantEvidence)
+			}
+		})
 	}
 }
 
@@ -2313,8 +4165,11 @@ func TestMemberCallReportsOptionalSymbolReceiver(t *testing.T) {
 	if d.Code != CodeOptionalMethodCall || d.Severity != diagnostic.SeverityError {
 		t.Fatalf("diagnostic code/severity = %s/%s", d.Code, d.Severity)
 	}
-	if !strings.Contains(d.Message, "cannot call method on optional value without nil check") {
+	if !strings.Contains(d.Message, "cannot call method on an optional value without a nil check") {
 		t.Fatalf("message = %q", d.Message)
+	}
+	if !diagnosticEvidenceContains(d.Explanation.Evidence(), "receiver m is optional at call to m.topic") {
+		t.Fatalf("evidence = %#v, want path-specific optional receiver evidence", d.Explanation.Evidence())
 	}
 }
 
@@ -2333,7 +4188,7 @@ func TestMemberCallReportsOptionalExpressionReceiver(t *testing.T) {
 	if d.Code != CodeOptionalMethodCall || d.Severity != diagnostic.SeverityError {
 		t.Fatalf("diagnostic code/severity = %s/%s", d.Code, d.Severity)
 	}
-	if !strings.Contains(d.Message, "cannot call method on optional value without nil check") {
+	if !strings.Contains(d.Message, "cannot call method on an optional value without a nil check") {
 		t.Fatalf("message = %q", d.Message)
 	}
 }
@@ -2344,6 +4199,71 @@ func TestMemberCallAcceptsNarrowedOptionalReceiver(t *testing.T) {
 		function f(m: Message?)
 			if m then
 				m:topic()
+			end
+		end
+	`)
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v, want none after nil check", diags)
+	}
+}
+
+func TestAssignmentReportsOptionalDynamicIndexTarget(t *testing.T) {
+	diags := runDiagnostics(t, `
+		type Bag = {name: string}
+		function f(bag: Bag?)
+			bag["name"] = "ok"
+		end
+	`)
+	if len(diags) != 1 {
+		t.Fatalf("diagnostics = %d, want 1: %#v", len(diags), diags)
+	}
+	d := diags[0]
+	if d.Code != CodeOptionalAssignmentTarget || d.Severity != diagnostic.SeverityError {
+		t.Fatalf("diagnostic code/severity = %s/%s", d.Code, d.Severity)
+	}
+	if !strings.Contains(d.Message, "cannot assign through optional bag without nil check") {
+		t.Fatalf("message = %q", d.Message)
+	}
+	if len(d.Explanation.Evidence()) < 2 {
+		t.Fatalf("evidence = %#v, want container and write-requirement proof", d.Explanation.Evidence())
+	}
+	if !strings.Contains(d.Help, "Guard `bag` with a nil check") {
+		t.Fatalf("help = %q, want nil-check repair", d.Help)
+	}
+	if !diagnosticEvidenceContains(d.Explanation.Evidence(), "bag can be") ||
+		!diagnosticEvidenceContains(d.Explanation.Evidence(), "writing bag[\"name\"] requires its container to be non-nil") {
+		t.Fatalf("evidence = %#v, want container type and write requirement", d.Explanation.Evidence())
+	}
+}
+
+func TestAssignmentReportsOptionalStaticMemberTarget(t *testing.T) {
+	diags := runDiagnostics(t, `
+		type Bag = {name: string}
+		function f(bag: Bag?)
+			bag.name = "ok"
+		end
+	`)
+	if len(diags) != 1 {
+		t.Fatalf("diagnostics = %d, want 1: %#v", len(diags), diags)
+	}
+	d := diags[0]
+	if d.Code != CodeOptionalAssignmentTarget || d.Severity != diagnostic.SeverityError {
+		t.Fatalf("diagnostic code/severity = %s/%s", d.Code, d.Severity)
+	}
+	if !strings.Contains(d.Message, "cannot assign through optional bag without nil check") {
+		t.Fatalf("message = %q", d.Message)
+	}
+	if !strings.Contains(d.Help, "Guard `bag` with a nil check") {
+		t.Fatalf("help = %q, want nil-check repair", d.Help)
+	}
+}
+
+func TestAssignmentAcceptsGuardedOptionalDynamicIndexTarget(t *testing.T) {
+	diags := runDiagnostics(t, `
+		type Bag = {name: string}
+		function f(bag: Bag?)
+			if bag ~= nil then
+				bag["name"] = "ok"
 			end
 		end
 	`)
@@ -2486,6 +4406,16 @@ func TestNumericForReportsStringInit(t *testing.T) {
 	if !strings.Contains(d.Message, "initial value") || !strings.Contains(d.Message, `"one"`) {
 		t.Fatalf("message = %q", d.Message)
 	}
+	if !diagnosticHasLabel(d, "initial value") {
+		t.Fatalf("labels = %#v, want initial-value focus label", d.Labels)
+	}
+	evidence := d.Explanation.Evidence()
+	if len(evidence) != 1 || evidence[0].Message != `initial value has literal value "one"` {
+		t.Fatalf("evidence = %#v, want one concrete operand-type fact", evidence)
+	}
+	if d.Help != "Use a number for the numeric for initial value, or convert it before the loop." {
+		t.Fatalf("help = %q", d.Help)
+	}
 }
 
 func TestInlineConcreteCastMemberAccessIsTyped(t *testing.T) {
@@ -2516,9 +4446,12 @@ func TestNumericForDoesNotTrustExplicitAnyCastInit(t *testing.T) {
 	if !strings.Contains(d.Message, "initial value") || !strings.Contains(d.Message, `"one"`) {
 		t.Fatalf("message = %q", d.Message)
 	}
-	if got := d.Explanation.String(); !strings.Contains(got, "claimed as any") ||
-		!strings.Contains(got, "explicit any/unknown boundary has no structural proof for number") ||
-		!strings.Contains(got, "no boundary proof establishes number") {
+	if !diagnosticHasLabel(d, "initial value") {
+		t.Fatalf("labels = %#v, want initial-value focus label", d.Labels)
+	}
+	if got := d.Explanation.String(); !strings.Contains(got, "user asserted any") ||
+		!strings.Contains(got, "assigned value comes from any/unknown") ||
+		!strings.Contains(got, "no proof on this path shows assigned value is number") {
 		t.Fatalf("explanation = %q, want explicit-any boundary and missing-proof evidence", got)
 	}
 }
@@ -2578,6 +4511,41 @@ func TestNumericForReportsNonNumericUnionWithNeverArm(t *testing.T) {
 	}
 }
 
+func TestNumericForReportsNonNumericAliasOperands(t *testing.T) {
+	diags := runDiagnostics(t, `
+		type Label = string
+		type MaybeLabel = Label?
+
+		function f(init: Label, limit: MaybeLabel)
+			for i = init, limit do
+			end
+		end
+	`)
+	if len(diags) != 2 {
+		t.Fatalf("diagnostics = %d, want aliased init and optional aliased limit errors: %#v", len(diags), diags)
+	}
+	if diags[0].Code != CodeNumericForOperand || !strings.Contains(diags[0].Message, "initial value") {
+		t.Fatalf("first diagnostic = %#v, want aliased initial-value numeric-for operand error", diags[0])
+	}
+	if diags[1].Code != CodeNumericForOperand || !strings.Contains(diags[1].Message, "limit") {
+		t.Fatalf("second diagnostic = %#v, want optional aliased limit numeric-for operand error", diags[1])
+	}
+}
+
+func TestNumericForSkipsPartlyNumericAliasUnion(t *testing.T) {
+	diags := runDiagnostics(t, `
+		type Counterish = number | string
+
+		function f(value: Counterish)
+			for i = value, 10 do
+			end
+		end
+	`)
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v, want partly numeric alias union left to runtime", diags)
+	}
+}
+
 func TestNumericForSkipsPureNeverOperandAsUnreachable(t *testing.T) {
 	diags := runDiagnostics(t, `
 		function f(value: never)
@@ -2605,8 +4573,70 @@ func TestDirectCallReportsNonCallableTarget(t *testing.T) {
 	if !strings.Contains(d.Message, "not callable") || !strings.Contains(d.Message, "number") {
 		t.Fatalf("message = %q", d.Message)
 	}
-	if len(d.Explanation.Evidence()) == 0 {
-		t.Fatalf("explanation evidence = %#v, want non-empty", d.Explanation.Evidence())
+	if !diagnosticEvidenceContains(d.Explanation.Evidence(), "x has type number") {
+		t.Fatalf("explanation evidence = %#v, want callee type evidence", d.Explanation.Evidence())
+	}
+	if !diagnosticHasLabel(d, labelCallTarget) {
+		t.Fatalf("labels = %#v, want call-target focus label", d.Labels)
+	}
+	if !strings.Contains(d.Help, "replace `x` with a callable expression") {
+		t.Fatalf("help = %q, want actionable non-callable target help", d.Help)
+	}
+}
+
+func TestDirectCallReportsPossiblyNilTargetWithDirectCallCode(t *testing.T) {
+	diags := runDiagnostics(t, `
+		local maybe: (() -> string)? = nil
+		maybe()
+	`)
+	if len(diags) != 1 {
+		t.Fatalf("diagnostics = %d, want 1: %#v", len(diags), diags)
+	}
+	d := diags[0]
+	if d.Code != CodeDirectCallNotCallable || d.Severity != diagnostic.SeverityError {
+		t.Fatalf("diagnostic code/severity = %s/%s", d.Code, d.Severity)
+	}
+	if !strings.Contains(d.Message, "cannot call maybe") || !strings.Contains(d.Message, "may be nil") {
+		t.Fatalf("message = %q", d.Message)
+	}
+	if !diagnosticEvidenceContains(d.Explanation.Evidence(), "maybe has a callable type, but may also be nil") ||
+		!diagnosticEvidenceContains(d.Explanation.Evidence(), "no guard on this path proves maybe is non-nil before this call") {
+		t.Fatalf("explanation evidence = %#v, want optional callable and missing guard proof", d.Explanation.Evidence())
+	}
+	if !diagnosticHasLabel(d, labelCallTarget) {
+		t.Fatalf("labels = %#v, want call-target focus label", d.Labels)
+	}
+	if !strings.Contains(d.Help, "Guard `maybe` with a nil check") {
+		t.Fatalf("help = %q, want actionable possibly-nil target help", d.Help)
+	}
+}
+
+func TestDirectCallRendersPossiblyNilTargetTrace(t *testing.T) {
+	src := strings.TrimLeft(`
+local maybe: (() -> string)? = nil
+maybe()
+`, "\n")
+	diags := runDiagnostics(t, src)
+	if len(diags) != 1 {
+		t.Fatalf("diagnostics = %d, want 1: %#v", len(diags), diags)
+	}
+	rendered := diagnostic.Render(diags[0], diagnostic.RenderOptions{
+		Sources:             diagnostic.SourceMap{"diagnostics_test.lua": src},
+		ShowSourceLabelRows: true,
+	})
+	want := `error[type.call.direct.not_callable]: cannot call maybe because it may be nil
+ --> diagnostics_test.lua:2:1
+  |
+2 | maybe()
+  | ↑ call target
+
+because:
+  1. proven: maybe has a callable type, but may also be nil
+  2. missing proof: no guard on this path proves maybe is non-nil before this call
+
+help: Guard ` + "`maybe`" + ` with a nil check before calling it.`
+	if rendered != want {
+		t.Fatalf("rendered diagnostic mismatch (-want +got):\n%s", renderLineDiff(want, rendered))
 	}
 }
 
@@ -2629,6 +4659,9 @@ func TestDirectCallReportsTooFewArgs(t *testing.T) {
 	}
 	if len(d.Explanation.Evidence()) < 2 {
 		t.Fatalf("explanation evidence = %#v, want call and declaration evidence", d.Explanation.Evidence())
+	}
+	if !diagnosticHasLabel(d, labelCallExpression) {
+		t.Fatalf("labels = %#v, want call-expression focus label", d.Labels)
 	}
 }
 
@@ -2702,17 +4735,21 @@ func TestCallParamObligationReportsStricterThanDirectUnionContract(t *testing.T)
 		scale("not-number")
 	`)
 	if len(diags) != 1 {
-		t.Fatalf("diagnostics = %d, want stricter summary obligation only: %#v", len(diags), diags)
+		t.Fatalf("diagnostics = %d, want stricter callee obligation only: %#v", len(diags), diags)
 	}
 	d := diags[0]
 	if d.Code != CodeDirectCallArgType || d.Severity != diagnostic.SeverityError {
 		t.Fatalf("diagnostic code/severity = %s/%s", d.Code, d.Severity)
 	}
-	if !strings.Contains(d.Message, "argument 1 expected number") || !strings.Contains(d.Message, `"not-number"`) {
+	if !strings.Contains(d.Message, "argument 1") || !strings.Contains(d.Message, `"not-number"`) || !strings.Contains(d.Message, "not number") {
 		t.Fatalf("message = %q", d.Message)
 	}
-	if got := d.Explanation.String(); !strings.Contains(got, "summary obligation requires argument 1") {
-		t.Fatalf("explanation = %q, want summary obligation evidence", got)
+	evidence := d.Explanation.Evidence()
+	if !diagnosticEvidenceContains(evidence, "inside scale, argument 1 must satisfy number") {
+		t.Fatalf("explanation = %q, want callee-use obligation evidence", d.Explanation.String())
+	}
+	if len(evidence) < 2 || !spanEqual(evidence[1].Span, d.Labels[0].Span) {
+		t.Fatalf("obligation evidence span = %#v, label span = %#v; want argument-focused evidence", evidence, d.Labels)
 	}
 }
 
@@ -2941,20 +4978,53 @@ func TestReturnContractReportsLiteralMismatch(t *testing.T) {
 		if got[1].Span != ast.SpanOf(fn.ReturnTypes[0]) {
 			t.Fatalf("declared return evidence span = %#v, want %#v", got[1].Span, ast.SpanOf(fn.ReturnTypes[0]))
 		}
+		if !strings.Contains(got[1].Message, "returned value 1 must satisfy declared return type number") {
+			t.Fatalf("declared return evidence = %q, want return-slot contract wording", got[1].Message)
+		}
 	}
 }
 
 func TestReturnContractReportsProjectedIndexOptional(t *testing.T) {
-	diags := runDiagnostics(t, `
-		local function pick(xs: {number}, i: integer): number
-			return xs[i]
-		end
-	`)
+	src := strings.TrimLeft(`
+local function pick(xs: {number}, i: integer): number
+    return xs[i]
+end
+`, "\n")
+	diags := runDiagnostics(t, src)
 	if len(diags) != 1 {
 		t.Fatalf("diagnostics = %d, want 1: %#v", len(diags), diags)
 	}
-	if d := diags[0]; d.Code != CodeReturnContractType || !strings.Contains(d.Message, "number?") {
+	if d := diags[0]; d.Code != CodeReturnContractType ||
+		!strings.Contains(d.Message, "cannot return xs[i] as returned value 1") ||
+		!strings.Contains(d.Message, "may be nil") {
 		t.Fatalf("diagnostic = %#v, want return contract optional index error", d)
+	}
+	if got := diags[0].Explanation.String(); !strings.Contains(got, "returned value 1 (xs[i]) can be number or nil here") ||
+		!strings.Contains(got, "returned value 1 (xs[i]) is an indexed read that can miss or read nil") {
+		t.Fatalf("explanation = %q, want path-specific optional-index return evidence", got)
+	}
+	rendered := diagnostic.Render(diags[0], diagnostic.RenderOptions{
+		Sources:             diagnostic.SourceMap{"diagnostics_test.lua": src},
+		ShowSourceLabelRows: true,
+	})
+	want := `error[type.return.contract]: cannot return xs[i] as returned value 1 because it may be nil
+ --> diagnostics_test.lua:2:12
+  |
+2 |     return xs[i]
+  |            ↑ returned value
+
+because:
+  1. proven: returned value 1 (xs[i]) can be number or nil here
+  2. claimed: returned value 1 must satisfy declared return type number
+ --> diagnostics_test.lua:1:48
+  |
+  |                                                ↓ declared return type
+1 | local function pick(xs: {number}, i: integer): number
+  3. missing proof: returned value 1 (xs[i]) is an indexed read that can miss or read nil; no proof shows the selected slot satisfies the declared return type here
+
+help: Guard ` + "`xs[i]`" + ` with a nil check, return a default value, or change the return type to accept nil.`
+	if rendered != want {
+		t.Fatalf("rendered diagnostic mismatch (-want +got):\n%s", renderLineDiff(want, rendered))
 	}
 }
 
@@ -2982,6 +5052,16 @@ func TestReturnContractReportsFlowBackedReturnMismatches(t *testing.T) {
 				end
 			`,
 			got: "string",
+		},
+		{
+			name: "inferred local",
+			src: `
+				local function f(): number
+					local x = "bad"
+					return x
+				end
+			`,
+			got: "\"bad\"",
 		},
 	}
 	for _, tc := range cases {
@@ -3022,8 +5102,9 @@ func TestReturnContractDoesNotTrustCastEscape(t *testing.T) {
 	if d := diags[0]; d.Code != CodeReturnContractType {
 		t.Fatalf("diagnostic = %#v, want return contract error", d)
 	}
-	if got := diags[0].Explanation.String(); !strings.Contains(got, "claimed as any") ||
-		!strings.Contains(got, "no boundary proof") {
+	if got := diags[0].Explanation.String(); !strings.Contains(got, "user asserted any") ||
+		!strings.Contains(got, "returned value 1 comes from any/unknown") ||
+		!strings.Contains(got, "no proof on this path shows returned value 1 satisfies the declared return type") {
 		t.Fatalf("explanation = %q, want explicit-any claim and missing-proof evidence", got)
 	}
 }
@@ -3068,16 +5149,175 @@ local x: string = add(1, 2)
 		t.Fatalf("message = %q", d.Message)
 	}
 	stmts := mustStmts(t, src)
+	fn := stmts[0].(*ast.LocalAssignStmt).Exprs[0].(*ast.FunctionExpr)
 	assign := stmts[1].(*ast.LocalAssignStmt)
-	call := assign.Exprs[0].(*ast.FuncCallExpr)
 	if got := d.Explanation.Evidence(); len(got) != 2 {
 		t.Fatalf("explanation evidence = %#v, want 2 items", got)
 	} else {
-		if got[0].Span != ast.SpanOf(call) {
-			t.Fatalf("call evidence span = %#v, want %#v", got[0].Span, ast.SpanOf(call))
+		if !strings.Contains(got[0].Message, "add declares call result 1 as number") {
+			t.Fatalf("return evidence message = %q", got[0].Message)
+		}
+		if got[0].Span != ast.SpanOf(fn.ReturnTypes[0]) {
+			t.Fatalf("return evidence span = %#v, want %#v", got[0].Span, ast.SpanOf(fn.ReturnTypes[0]))
 		}
 		if got[1].Span != ast.SpanOf(assign.Types[0]) {
 			t.Fatalf("declared type evidence span = %#v, want %#v", got[1].Span, ast.SpanOf(assign.Types[0]))
+		}
+	}
+}
+
+func TestDirectCallResultAssignmentReportsTypedMemberCalleeWithoutManifestSignature(t *testing.T) {
+	src := strings.TrimLeft(`
+type API = { make: () -> number }
+local api: API = {
+    make = function(): number
+        return 1
+    end,
+}
+local x: string = api.make()
+`, "\n")
+	diags := runDiagnostics(t, src)
+	if len(diags) != 1 {
+		t.Fatalf("diagnostics = %d, want one direct-call result assignment diagnostic: %#v", len(diags), diags)
+	}
+	d := diags[0]
+	if d.Code != CodeDirectCallResultAssignment || d.Severity != diagnostic.SeverityError {
+		t.Fatalf("diagnostic = %#v, want direct-call result assignment", d)
+	}
+	if !strings.Contains(d.Message, "call result") || !strings.Contains(d.Message, "number") ||
+		!strings.Contains(d.Message, "string") {
+		t.Fatalf("message = %q, want number result to string target mismatch", d.Message)
+	}
+	if !diagnosticEvidenceContains(d.Explanation.Evidence(), "returns number") ||
+		!diagnosticEvidenceContains(d.Explanation.Evidence(), "assignment target x requires string") {
+		t.Fatalf("evidence = %#v, want member-call result and target annotation evidence", d.Explanation.Evidence())
+	}
+	if len(d.Labels) < 2 || d.Labels[0].Message != "call result" || d.Labels[1].Message != "declared type" ||
+		d.Labels[0].Span != d.Span {
+		t.Fatalf("labels/span = %#v/%#v, want call-result span and declared type labels", d.Labels, d.Span)
+	}
+	rendered := diagnostic.Render(d, diagnostic.RenderOptions{
+		Sources:             diagnostic.SourceMap{"diagnostics_test.lua": src},
+		ShowSourceLabelRows: true,
+	})
+	want := `error[type.call.direct.result_assignment]: call result 1 is number, not string
+ --> diagnostics_test.lua:7:19
+  |
+  |          ↓ declared type
+7 | local x: string = api.make()
+  |                   ↑ call result
+
+because:
+  1. proven: api.make returns number
+  2. claimed: assignment target x requires string
+
+help: Assign the call result to a compatible target type, or change the callee return type if this result is valid.`
+	if rendered != want {
+		t.Fatalf("rendered diagnostic mismatch (-want +got):\n%s", renderLineDiff(want, rendered))
+	}
+}
+
+func TestReturnContractReportsCastArrayIndexWithoutLengthProof(t *testing.T) {
+	src := strings.TrimLeft(`
+local function f(v: any): number
+    return (v :: {number})[1]
+end
+`, "\n")
+	diags := runDiagnostics(t, src)
+	if len(diags) != 1 {
+		t.Fatalf("diagnostics = %d, want cast-index return contract error: %#v", len(diags), diags)
+	}
+	d := diags[0]
+	if d.Code != CodeReturnContractType || d.Severity != diagnostic.SeverityError {
+		t.Fatalf("diagnostic code/severity = %s/%s, want return contract error", d.Code, d.Severity)
+	}
+	if !strings.Contains(d.Message, "cannot return v[1] as returned value 1") ||
+		!strings.Contains(d.Message, "may be nil") {
+		t.Fatalf("message = %q, want optional array index return mismatch", d.Message)
+	}
+	explanation := d.Explanation.String()
+	if !strings.Contains(explanation, "returned value 1 (v[1]) is an indexed read that can miss or read nil") ||
+		!strings.Contains(explanation, "no proof shows the selected slot satisfies the declared return type here") {
+		t.Fatalf("explanation = %q, want indexed-read missing-proof evidence", explanation)
+	}
+	rendered := diagnostic.Render(d, diagnostic.RenderOptions{
+		Sources:             diagnostic.SourceMap{"diagnostics_test.lua": src},
+		ShowSourceLabelRows: true,
+	})
+	want := `error[type.return.contract]: cannot return v[1] as returned value 1 because it may be nil
+ --> diagnostics_test.lua:2:12
+  |
+2 |     return (v :: {number})[1]
+  |            ↑ returned value
+
+because:
+  1. proven: returned value 1 (v[1]) can be number or nil here
+  2. claimed: returned value 1 must satisfy declared return type number
+ --> diagnostics_test.lua:1:27
+  |
+  |                           ↓ declared return type
+1 | local function f(v: any): number
+  3. missing proof: returned value 1 (v[1]) is an indexed read that can miss or read nil; no proof shows the selected slot satisfies the declared return type here
+
+help: Guard ` + "`v[1]`" + ` with a nil check, return a default value, or change the return type to accept nil.`
+	if rendered != want {
+		t.Fatalf("rendered diagnostic mismatch (-want +got):\n%s", renderLineDiff(want, rendered))
+	}
+}
+
+func TestDirectCallMemberArgumentProofFailureTakesPrecedenceOverResultAssignment(t *testing.T) {
+	diags := runDiagnostics(t, `
+type API = { make: (name: string) -> number }
+local api: API = {
+	make = function(name: string): number
+		return 1
+	end,
+}
+local x: string = api.make(42)
+`)
+	if len(diags) != 1 {
+		t.Fatalf("diagnostics = %d, want one direct-call argument diagnostic: %#v", len(diags), diags)
+	}
+	d := diags[0]
+	if d.Code != CodeDirectCallArgType {
+		t.Fatalf("diagnostic = %#v, want direct-call argument diagnostic", d)
+	}
+	if !diagnosticHasLabel(d, "argument value") ||
+		!diagnosticEvidenceContains(d.Explanation.Evidence(), "argument 1 has literal value 42") ||
+		!diagnosticEvidenceContains(d.Explanation.Evidence(), "parameter 1 expects string") {
+		t.Fatalf("diagnostic = %#v, want member-call argument value and parameter evidence", d)
+	}
+	for _, diag := range diags {
+		if diag.Code == CodeDirectCallResultAssignment {
+			t.Fatalf("diagnostics include result-assignment diagnostic despite member-call argument proof failure: %#v", diags)
+		}
+	}
+}
+
+func TestDirectCallArgumentProofFailureTakesPrecedenceOverResultAssignment(t *testing.T) {
+	diags := runDiagnostics(t, `
+local function f(x: { id: string }): number
+	return 1
+end
+
+local raw = ({ id = "ok" } :: any)
+local y: string = f(raw)
+`)
+	if len(diags) != 1 {
+		t.Fatalf("diagnostics = %d, want one direct-call argument diagnostic: %#v", len(diags), diags)
+	}
+	d := diags[0]
+	if d.Code != CodeDirectCallArgType {
+		t.Fatalf("diagnostic = %#v, want direct-call argument diagnostic", d)
+	}
+	if got := d.Explanation.String(); !strings.Contains(got, "f parameter 1 expects") ||
+		!strings.Contains(got, "user asserted any") ||
+		!strings.Contains(got, "no proof on this path shows raw satisfies the parameter type") {
+		t.Fatalf("explanation = %q, want parameter declaration and explicit-any missing-proof evidence", got)
+	}
+	for _, diag := range diags {
+		if diag.Code == CodeDirectCallResultAssignment {
+			t.Fatalf("diagnostics include result-assignment diagnostic despite argument proof failure: %#v", diags)
 		}
 	}
 }
@@ -3133,6 +5373,35 @@ func TestReturnContractSkipsUninferredGenericDirectCallReturn(t *testing.T) {
 func runDiagnostics(t *testing.T, src string) []diagnostic.Diagnostic {
 	t.Helper()
 	return runDiagnosticsWithGlobals(t, src, []string{"test", "type", "value"})
+}
+
+func renderLineDiff(want, got string) string {
+	wantLines := strings.Split(want, "\n")
+	gotLines := strings.Split(got, "\n")
+	n := len(wantLines)
+	if len(gotLines) > n {
+		n = len(gotLines)
+	}
+	var b strings.Builder
+	for i := 0; i < n; i++ {
+		var wantLine, gotLine string
+		if i < len(wantLines) {
+			wantLine = wantLines[i]
+		}
+		if i < len(gotLines) {
+			gotLine = gotLines[i]
+		}
+		if wantLine == gotLine {
+			continue
+		}
+		b.WriteString("- ")
+		b.WriteString(wantLine)
+		b.WriteByte('\n')
+		b.WriteString("+ ")
+		b.WriteString(gotLine)
+		b.WriteByte('\n')
+	}
+	return b.String()
 }
 
 func runDiagnosticsWithGlobals(t *testing.T, src string, globals []string) []diagnostic.Diagnostic {

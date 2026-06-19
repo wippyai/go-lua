@@ -175,6 +175,15 @@ func (r *Record) GetStaticMember(kind StaticMemberKind, name string, index int64
 	if r == nil || len(r.StaticMembers) == 0 {
 		return nil
 	}
+	if !r.sorted {
+		for i := range r.StaticMembers {
+			member := &r.StaticMembers[i]
+			if member.Kind == kind && member.Name == name && member.Index == index {
+				return member
+			}
+		}
+		return nil
+	}
 	i := sort.Search(len(r.StaticMembers), func(i int) bool {
 		return compareStaticMemberKey(r.StaticMembers[i], kind, name, index) >= 0
 	})

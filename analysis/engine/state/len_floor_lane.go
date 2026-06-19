@@ -4,7 +4,9 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/lattice"
 	"github.com/wippyai/go-lua/analysis/domain/lattice/lift"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
 	"github.com/wippyai/go-lua/analysis/engine/state/lenbound"
+	"github.com/wippyai/go-lua/analysis/engine/state/pathevidence"
 	"github.com/wippyai/go-lua/analysis/internal/mapedit"
 )
 
@@ -52,6 +54,55 @@ func (l lenFloorLane) write(pathKey pathdom.PathKey, lo int64) (lenFloorLane, bo
 		floors = make(map[pathdom.PathKey]lenbound.Floor, 1)
 	}
 	floors[pathKey] = lenbound.Floor{Lo: lo}
+	l.lane = lift.MustMapValues(floors)
+	return l, true
+}
+
+func (l lenFloorLane) clearPathKeySubtrees(prefixes []pathdom.PathKey) (lenFloorLane, bool) {
+	return l.clearMatching(func(candidate pathdom.PathKey) bool {
+		for _, prefix := range prefixes {
+			if pathaddr.PathKeyHasPrefix(candidate, prefix) {
+				return true
+			}
+		}
+		return false
+	})
+}
+
+func (l lenFloorLane) clearPathKeyDescendantMutation(prefixes pathevidence.PathKeyDescendantInvalidationPrefixes) (lenFloorLane, bool) {
+	return l.clearMatching(func(candidate pathdom.PathKey) bool {
+		for _, prefix := range prefixes.Descendants {
+			if pathaddr.PathKeyHasPrefix(candidate, prefix) {
+				return true
+			}
+		}
+		for _, prefix := range prefixes.Subtrees {
+			if pathaddr.PathKeyHasPrefix(candidate, prefix) {
+				return true
+			}
+		}
+		return false
+	})
+}
+
+func (l lenFloorLane) clearMatching(match func(pathdom.PathKey) bool) (lenFloorLane, bool) {
+	if l.lane.Bottom() || len(l.lane.Values()) == 0 {
+		return l, false
+	}
+	floors := mapedit.Clone(l.lane.Values())
+	changed := false
+	for pathKey := range floors {
+		if match(pathKey) {
+			delete(floors, pathKey)
+			changed = true
+		}
+	}
+	if !changed {
+		return l, false
+	}
+	if len(floors) == 0 {
+		floors = nil
+	}
 	l.lane = lift.MustMapValues(floors)
 	return l, true
 }

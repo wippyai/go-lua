@@ -50,13 +50,21 @@ func (r *signatureIdentityResolver) indexCallSites(facts factflow.Facts) {
 }
 
 func (r *signatureIdentityResolver) nameForCall(ctx transfer.NodeContext, call factflow.CallProducer) (string, bool) {
+	return r.nameForCallee(ctx, call.CalleeSymbol(), call.CalleePath())
+}
+
+func (r *signatureIdentityResolver) nameForCallSiteView(ctx transfer.NodeContext, site factflow.CallSiteView) (string, bool) {
+	return r.nameForCallee(ctx, site.CalleeSymbol(), site.CalleePath())
+}
+
+func (r *signatureIdentityResolver) nameForCallee(ctx transfer.NodeContext, callee symbol.ID, calleePath path.Path) (string, bool) {
 	if r == nil {
 		return "", false
 	}
-	if name, ok := r.stableCalleeName(call.CalleeSymbol(), call.CalleePath()); ok {
+	if name, ok := r.stableCalleeName(callee, calleePath); ok {
 		return name, true
 	}
-	return r.imports.SignatureName(ctx.Point, call.CalleePath())
+	return r.imports.SignatureName(ctx.Point, calleePath)
 }
 
 func (r *signatureIdentityResolver) nameForSite(site factflow.CallSite) (string, bool) {

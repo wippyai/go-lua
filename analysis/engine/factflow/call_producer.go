@@ -31,6 +31,22 @@ func NewCallProducer(config CallProducerConfig) CallProducer {
 	}
 }
 
+// NewCallProducerFromView creates a call producer from read-only call-site
+// evidence without round-tripping result targets through two defensive copies.
+func NewCallProducerFromView(site CallSiteView) CallProducer {
+	out := CallProducer{
+		calleeSymbol: site.site.calleeSymbol,
+		calleePath:   site.site.calleePath.Clone(),
+	}
+	if len(site.site.resultTargets) != 0 {
+		out.resultTargets = make([]CallResultTarget, len(site.site.resultTargets))
+		for i := range site.site.resultTargets {
+			out.resultTargets[i] = site.site.resultTargets[i].copy()
+		}
+	}
+	return out
+}
+
 // CalleeSymbol returns the callee's symbol identity.
 func (c CallProducer) CalleeSymbol() symbol.ID { return c.calleeSymbol }
 
@@ -40,10 +56,4 @@ func (c CallProducer) CalleePath() path.Path { return c.calleePath.Clone() }
 // ResultTargets returns the targets that consume this call's results.
 func (c CallProducer) ResultTargets() []CallResultTarget {
 	return copyCallResultTargets(c.resultTargets)
-}
-
-func (c CallProducer) copy() CallProducer {
-	c.calleePath = c.calleePath.Clone()
-	c.resultTargets = copyCallResultTargets(c.resultTargets)
-	return c
 }

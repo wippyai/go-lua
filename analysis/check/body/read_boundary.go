@@ -8,7 +8,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/evidence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
-	factapply "github.com/wippyai/go-lua/analysis/engine/factapply"
+	"github.com/wippyai/go-lua/analysis/engine/callpayload"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/factquery"
 	"github.com/wippyai/go-lua/analysis/engine/state"
@@ -151,6 +151,66 @@ func (r *Result) PathValueAtBoundary(point cfg.Point, p pathdom.Path) (product.V
 	return value, true
 }
 
+// PathKeyAtBoundary returns the canonical path key used by fact application at
+// point. It is exposed for diagnostics that need to match solved state lanes
+// back to call-boundary facts without re-deriving visibility policy.
+func (r *Result) PathKeyAtBoundary(point cfg.Point, p pathdom.Path) (pathdom.PathKey, bool) {
+	if r == nil || r.visibility == nil || p.IsEmpty() {
+		return "", false
+	}
+	key := r.visibility.KeyAt(point, p)
+	if key == "" {
+		return "", false
+	}
+	return key, true
+}
+
+// TypestateResourceKeyAtBoundary returns the canonical resource key used by the
+// typestate lane at point. It folds proven path equality, matching the
+// call-boundary application semantics.
+func (r *Result) TypestateResourceKeyAtBoundary(point cfg.Point, p pathdom.Path) (pathdom.PathKey, bool) {
+	key, ok := r.PathKeyAtBoundary(point, p)
+	if !ok {
+		return "", false
+	}
+	in, ok := r.boundaryStateAt(point)
+	if !ok {
+		return key, true
+	}
+	return in.CanonicalTypestateResourceKey(key), true
+}
+
+// PathsEquivalentAtBoundary reports whether the solved boundary state proves
+// left and right are equivalent access paths at point.
+func (r *Result) PathsEquivalentAtBoundary(point cfg.Point, left, right pathdom.Path) bool {
+	if r == nil || r.visibility == nil || left.IsEmpty() || right.IsEmpty() {
+		return false
+	}
+	leftKey := r.visibility.KeyAt(point, left)
+	rightKey := r.visibility.KeyAt(point, right)
+	if leftKey == "" || rightKey == "" {
+		return false
+	}
+	if leftKey == rightKey {
+		return true
+	}
+	in, ok := r.boundaryStateAt(point)
+	if !ok {
+		return false
+	}
+	for _, equivalent := range in.EquivalentPathKeys(leftKey) {
+		if equivalent == rightKey {
+			return true
+		}
+	}
+	for _, equivalent := range in.EquivalentPathKeys(rightKey) {
+		if equivalent == leftKey {
+			return true
+		}
+	}
+	return false
+}
+
 // LengthFloorAtBoundary returns the proven length floor for array path p at the
 // diagnostic read boundary for point: a returned (lo, true) asserts len(p) >= lo.
 func (r *Result) LengthFloorAtBoundary(point cfg.Point, p pathdom.Path) (int64, bool) {
@@ -214,17 +274,17 @@ func (r *Result) SymbolValueAtBoundary(point cfg.Point, id symbol.ID) (product.V
 }
 
 // CallOutcomeAt resolves the configured call-boundary evidence for point.
-func (r *Result) CallOutcomeAt(point cfg.Point) (factapply.CallOutcome, bool) {
+func (r *Result) CallOutcomeAt(point cfg.Point) (callpayload.CallOutcome, bool) {
 	if r == nil || r.registry == nil || r.callOutcome == nil {
-		return factapply.CallOutcome{}, false
+		return callpayload.CallOutcome{}, false
 	}
 	site, ok := r.facts.CallSite(point)
 	if !ok {
-		return factapply.CallOutcome{}, false
+		return callpayload.CallOutcome{}, false
 	}
 	in, ok := r.StateAt(point)
 	if !ok {
-		return factapply.CallOutcome{}, false
+		return callpayload.CallOutcome{}, false
 	}
 	graph := r.Graph()
 	ctx := transfer.NodeContext{

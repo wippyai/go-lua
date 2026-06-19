@@ -2,6 +2,7 @@ package factapply
 
 import (
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/engine/callpayload"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
@@ -36,16 +37,31 @@ type callOutcomeActiveInKey struct {
 }
 
 type callOutcomeTraversalCache struct {
+	graphID          uint64
+	hasGraph         bool
 	rpo              []cfg.Point
 	pointOrder       map[cfg.Point]int
+	predecessors     map[cfg.Point][]cfg.Point
 	assignmentPoints map[callOutcomeAssignmentKey]cfg.Point
 	activeIn         map[callOutcomeActiveInKey]map[cfg.Point]bool
+}
+
+func (c *callOutcomeTraversalCache) resetForGraph(graph cfg.Graph) {
+	if c == nil || graph == nil {
+		return
+	}
+	id := graph.ID()
+	if c.hasGraph && c.graphID == id {
+		return
+	}
+	*c = callOutcomeTraversalCache{graphID: id, hasGraph: true}
 }
 
 func (c *callOutcomeTraversalCache) graphRPO(graph cfg.Graph) []cfg.Point {
 	if graph == nil {
 		return nil
 	}
+	c.resetForGraph(graph)
 	if c.rpo == nil {
 		c.rpo = graph.RPO()
 	}
@@ -56,6 +72,7 @@ func (c *callOutcomeTraversalCache) graphPointOrder(graph cfg.Graph) map[cfg.Poi
 	if graph == nil {
 		return nil
 	}
+	c.resetForGraph(graph)
 	if c.pointOrder == nil {
 		rpo := c.graphRPO(graph)
 		c.pointOrder = make(map[cfg.Point]int, len(rpo))
@@ -64,6 +81,23 @@ func (c *callOutcomeTraversalCache) graphPointOrder(graph cfg.Graph) map[cfg.Poi
 		}
 	}
 	return c.pointOrder
+}
+
+func (c *callOutcomeTraversalCache) graphPredecessors(graph cfg.Graph, point cfg.Point) []cfg.Point {
+	if graph == nil {
+		return nil
+	}
+	c.resetForGraph(graph)
+	if c.predecessors != nil {
+		if preds, ok := c.predecessors[point]; ok {
+			return preds
+		}
+	} else {
+		c.predecessors = make(map[cfg.Point][]cfg.Point)
+	}
+	preds := graph.Predecessors(point)
+	c.predecessors[point] = preds
+	return preds
 }
 
 func callOutcomeTargetForResult(site factflow.CallSiteView, resultIndex int) (factflow.CallResultTargetView, bool) {
@@ -95,7 +129,8 @@ func callOutcomeRelatableTarget(target factflow.CallResultTargetView) bool {
 func applyCallOutcomeEdgeFacts(
 	ctx transfer.EdgeContext,
 	facts factflow.Facts,
-	outcomeProvider CallOutcomeProvider,
+	cache *callOutcomeTraversalCache,
+	outcomeProvider callpayload.CallOutcomeProvider,
 	resolver *visibility.Resolver,
 	projectPath PathTypeProjector,
 	branchRefinements []factflow.BranchRefinement,
@@ -104,7 +139,9 @@ func applyCallOutcomeEdgeFacts(
 	if outcomeProvider == nil || ctx.Graph == nil || !ctx.HasCond {
 		return out
 	}
-	cache := &callOutcomeTraversalCache{}
+	if cache == nil {
+		cache = &callOutcomeTraversalCache{}
+	}
 	for _, callPoint := range cache.graphRPO(ctx.Graph) {
 		siteView, ok := facts.CallSiteView(callPoint)
 		if !ok {
@@ -134,7 +171,7 @@ func applyCallReturnConditionRefinements(
 	projectPath PathTypeProjector,
 	callPoint cfg.Point,
 	site factflow.CallSiteView,
-	outcome CallOutcome,
+	outcome callpayload.CallOutcome,
 	out state.State,
 ) state.State {
 	if site.Context() != factflow.CallSiteContextCondition {
@@ -175,7 +212,7 @@ func applyCallReturnPresenceRelations(
 	branchRefinements []factflow.BranchRefinement,
 	callPoint cfg.Point,
 	site factflow.CallSiteView,
-	outcome CallOutcome,
+	outcome callpayload.CallOutcome,
 	out state.State,
 ) state.State {
 	if !ctx.Graph.IsBranch(ctx.Edge.From) {
@@ -196,7 +233,7 @@ func applyCallReturnPresenceRelation(
 	branchRefinements []factflow.BranchRefinement,
 	callPoint cfg.Point,
 	site factflow.CallSiteView,
-	relation CallReturnPresenceRelation,
+	relation callpayload.CallReturnPresenceRelation,
 	out state.State,
 ) state.State {
 	triggerTarget, ok := callOutcomeTargetForResult(site, relation.TriggerIndex)
@@ -351,7 +388,7 @@ func callOutcomeRelationActiveIn(
 	for changed := true; changed; {
 		changed = false
 		for _, point := range rpo {
-			in := callOutcomeAllPredecessorsActive(graph, point, activeOut)
+			in := callOutcomeAllPredecessorsActive(cache, graph, point, activeOut)
 			out := in
 			switch {
 			case point == targets.establish:
@@ -373,8 +410,13 @@ func callOutcomeRelationActiveIn(
 	return activeIn
 }
 
-func callOutcomeAllPredecessorsActive(graph cfg.Graph, point cfg.Point, activeOut map[cfg.Point]bool) bool {
-	preds := graph.Predecessors(point)
+func callOutcomeAllPredecessorsActive(cache *callOutcomeTraversalCache, graph cfg.Graph, point cfg.Point, activeOut map[cfg.Point]bool) bool {
+	var preds []cfg.Point
+	if cache != nil {
+		preds = cache.graphPredecessors(graph, point)
+	} else if graph != nil {
+		preds = graph.Predecessors(point)
+	}
 	if len(preds) == 0 {
 		return false
 	}

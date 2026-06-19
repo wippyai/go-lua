@@ -1,5 +1,11 @@
 package typ
 
+// ContainsRecursive reports whether t is, or transitively contains, a
+// recursive product type.
+func ContainsRecursive(t Type) bool {
+	return knownContainsRecursive(t)
+}
+
 func knownContainsRecursive(t Type) bool {
 	t = unwrapAnnotatedOrNil(t)
 	if t == nil {

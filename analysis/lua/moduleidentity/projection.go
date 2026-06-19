@@ -98,6 +98,7 @@ func New(bindings *bind.Result, graph cfg.Graph, sem *semantics.Result) Projecti
 		}
 	}
 	out.addCapturedAliasNames(sem.Function())
+	out.addCapturedSignatureAliases(sem.Function())
 	out.addCapturedObjectAliases(sem.Function())
 	return out
 }
@@ -440,6 +441,28 @@ func (p *Projection) addCapturedObjectAliases(fn *ast.FunctionExpr) {
 			name = origin.Stmt.Names[origin.Index]
 		}
 		p.addObjectLiteralAliases(
+			path.NewPath(capture.Captured, name),
+			exprAt(origin.Stmt.Exprs, origin.Index),
+			0,
+			true,
+		)
+	}
+}
+
+func (p *Projection) addCapturedSignatureAliases(fn *ast.FunctionExpr) {
+	if p == nil || p.bindings == nil || fn == nil {
+		return
+	}
+	for _, capture := range p.bindings.DirectCaptures(fn) {
+		origin, ok := p.bindings.LocalOrigin(capture.Captured)
+		if !ok || origin.Stmt == nil {
+			continue
+		}
+		name := capture.CapturedName
+		if name == "" && origin.Index >= 0 && origin.Index < len(origin.Stmt.Names) {
+			name = origin.Stmt.Names[origin.Index]
+		}
+		p.addSignatureAlias(
 			path.NewPath(capture.Captured, name),
 			exprAt(origin.Stmt.Exprs, origin.Index),
 			0,

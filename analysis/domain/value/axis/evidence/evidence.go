@@ -55,7 +55,7 @@ func GradualTop() Value {
 }
 
 // ExplicitTop proves that a dynamic top came from an explicit `any` or
-// `unknown` annotation, so it is not admissible as structural proof.
+// `unknown` annotation, so it is not admissible as structural validation.
 func ExplicitTop() Value {
 	return explicitTop
 }

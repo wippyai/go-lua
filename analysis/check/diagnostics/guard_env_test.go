@@ -3,16 +3,22 @@ package diagnostics
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/diagnostic"
 	"github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/type/typ"
 )
+
+func guardLiteral(value string) typ.Type {
+	return typ.LiteralString(value)
+}
 
 func TestGuardEnvWithoutDescendantFactsPreservesRootOnlyFacts(t *testing.T) {
 	root := path.NewPath(1, "x")
 	descendant := path.NewPath(2, "box").Field("value")
 	env := guardEnv{
 		constraints: []literalConstraint{
-			{target: descendant, value: "ready"},
-			{target: root, value: "string"},
+			{target: descendant, value: guardLiteral("ready")},
+			{target: root, value: guardLiteral("string")},
 		},
 		typeChecks: []runtimeTypeConstraint{
 			{target: descendant, name: "string"},
@@ -25,7 +31,7 @@ func TestGuardEnvWithoutDescendantFactsPreservesRootOnlyFacts(t *testing.T) {
 	}
 
 	got := env.withoutDescendantFacts()
-	if len(got.constraints) != 1 || !got.constraints[0].target.Equal(root) || got.constraints[0].value != "string" {
+	if len(got.constraints) != 1 || !got.constraints[0].target.Equal(root) || !typ.TypeEquals(got.constraints[0].value, guardLiteral("string")) {
 		t.Fatalf("constraints = %#v, want only root literal constraint", got.constraints)
 	}
 	if len(got.typeChecks) != 1 || !got.typeChecks[0].target.Equal(root) || got.typeChecks[0].name != "string" {
@@ -52,9 +58,9 @@ func TestGuardEnvInvalidatesAssignedPathAndDescendants(t *testing.T) {
 	sibling := root.Field("other")
 	env := guardEnv{
 		constraints: []literalConstraint{
-			{target: child, value: "ready"},
-			{target: grandchild, value: "nested"},
-			{target: sibling, value: "kept"},
+			{target: child, value: guardLiteral("ready")},
+			{target: grandchild, value: guardLiteral("nested")},
+			{target: sibling, value: guardLiteral("kept")},
 		},
 		typeChecks: []runtimeTypeConstraint{
 			{target: child, name: "string"},
@@ -94,10 +100,10 @@ func TestGuardEnvPathAssignmentKeepsSameRootSiblingsAndClearsAliasableDescendant
 	aliasChild := aliasRoot.Field("value")
 	env := guardEnv{
 		constraints: []literalConstraint{
-			{target: child, value: "drop"},
-			{target: grandchild, value: "drop-nested"},
-			{target: sibling, value: "keep"},
-			{target: aliasChild, value: "drop-alias"},
+			{target: child, value: guardLiteral("drop")},
+			{target: grandchild, value: guardLiteral("drop-nested")},
+			{target: sibling, value: guardLiteral("keep")},
+			{target: aliasChild, value: guardLiteral("drop-alias")},
 		},
 		typeChecks: []runtimeTypeConstraint{
 			{target: child, name: "string"},
@@ -139,8 +145,8 @@ func TestGuardEnvInvalidatesRootAndKeepsUnrelatedRoots(t *testing.T) {
 	otherChild := other.Field("value")
 	env := guardEnv{
 		constraints: []literalConstraint{
-			{target: child, value: "drop"},
-			{target: otherChild, value: "keep"},
+			{target: child, value: guardLiteral("drop")},
+			{target: otherChild, value: guardLiteral("keep")},
 		},
 		typeChecks: []runtimeTypeConstraint{
 			{target: child, name: "string"},
@@ -172,7 +178,7 @@ func TestGuardEnvInvalidatingMissingPathIsNoop(t *testing.T) {
 	root := path.NewPath(1, "box")
 	child := root.Field("value")
 	env := guardEnv{
-		constraints: []literalConstraint{{target: child, value: "ready"}},
+		constraints: []literalConstraint{{target: child, value: guardLiteral("ready")}},
 		typeChecks:  []runtimeTypeConstraint{{target: child, name: "string"}},
 		present:     []path.Path{root, child},
 		truthy:      []path.Path{root, child},
@@ -190,8 +196,8 @@ func TestGuardEnvDynamicIndexInvalidatesAllDescendantsConservatively(t *testing.
 	otherRoot := path.NewPath(2, "other").Field("value")
 	env := guardEnv{
 		constraints: []literalConstraint{
-			{target: child, value: "ready"},
-			{target: otherRoot, value: "ready"},
+			{target: child, value: guardLiteral("ready")},
+			{target: otherRoot, value: guardLiteral("ready")},
 		},
 		typeChecks: []runtimeTypeConstraint{
 			{target: child, name: "string"},
@@ -210,5 +216,90 @@ func TestGuardEnvDynamicIndexInvalidatesAllDescendantsConservatively(t *testing.
 	}
 	if !got.hasTruthy(box) || got.hasTruthy(otherRoot) || got.hasTruthy(child) {
 		t.Fatalf("truthy facts = %#v, want only root-only container fact kept", got.truthy)
+	}
+}
+
+func TestGuardEnvCallOutcomePathInvalidationClearsDescendantGuard(t *testing.T) {
+	result := runDiagnosticsResult(t, `
+		type Box = { value: string? }
+
+		local function clear(box: Box, key: string): ()
+			box[key] = nil
+		end
+
+		local box: Box = { value = "ready" }
+		if box.value then
+			clear(box, "value")
+			local after: string = box.value
+		end
+	`)
+	point, expr := requireLocalAssignmentExprByName(t, result, "after")
+	readPath, ok := result.ExpressionPath(expr)
+	if !ok {
+		t.Fatalf("after source path unavailable")
+	}
+	env := guardEnvironments(result)[point]
+	if env.hasTruthy(readPath) || env.hasPresent(readPath) {
+		t.Fatalf("guard env at after kept invalidated facts for %s: present=%#v truthy=%#v", readPath, env.present, env.truthy)
+	}
+}
+
+func TestGuardEnvCallOutcomeSkipsUnboundPathInvalidation(t *testing.T) {
+	result := runDiagnosticsResult(t, `
+		type Box = { value: string? }
+
+		local function clear(x): ()
+			x.value = nil
+		end
+
+		local box: Box = { value = "ready" }
+		if box.value then
+			clear("not-a-path")
+			local after: string = box.value
+		end
+	`)
+	point, expr := requireLocalAssignmentExprByName(t, result, "after")
+	readPath, ok := result.ExpressionPath(expr)
+	if !ok {
+		t.Fatalf("after source path unavailable")
+	}
+	env := guardEnvironments(result)[point]
+	if !env.hasTruthy(readPath) || !env.hasPresent(readPath) {
+		t.Fatalf("guard env at after dropped unrelated facts for %s: present=%#v truthy=%#v", readPath, env.present, env.truthy)
+	}
+}
+
+func TestGuardEnvJoinPreservesOriginWhenAllPathsAgree(t *testing.T) {
+	value := path.NewPath(1, "value")
+	origin := diagnostic.Span{StartLine: 3, StartCol: 4, EndLine: 3, EndCol: 9}
+	left := guardEnv{}.withTruthyAt(value, origin)
+	right := guardEnv{}.withTruthyAt(value, origin)
+
+	got := joinGuardEnvs(left, right)
+	if !got.hasTruthy(value) {
+		t.Fatalf("truthy facts = %#v, want joined truthy fact", got.truthy)
+	}
+	if !spanEqual(got.truthyOrigin(value), origin) {
+		t.Fatalf("truthy origin = %#v, want %#v", got.truthyOrigin(value), origin)
+	}
+	if !spanEqual(got.presentOrigin(value), origin) {
+		t.Fatalf("present origin = %#v, want %#v", got.presentOrigin(value), origin)
+	}
+}
+
+func TestGuardEnvJoinDropsAmbiguousOriginButKeepsFact(t *testing.T) {
+	value := path.NewPath(1, "value")
+	left := guardEnv{}.withTruthyAt(value, diagnostic.Span{StartLine: 3, StartCol: 4, EndLine: 3, EndCol: 9})
+	right := guardEnv{}.withTruthyAt(value, diagnostic.Span{StartLine: 5, StartCol: 4, EndLine: 5, EndCol: 9})
+
+	got := joinGuardEnvs(left, right)
+	if !got.hasTruthy(value) {
+		t.Fatalf("truthy facts = %#v, want joined truthy fact", got.truthy)
+	}
+	if got.truthyOrigin(value).Valid() {
+		t.Fatalf("truthy origin = %#v, want ambiguous origin dropped", got.truthyOrigin(value))
+	}
+	if got.presentOrigin(value).Valid() {
+		t.Fatalf("present origin = %#v, want ambiguous origin dropped", got.presentOrigin(value))
 	}
 }

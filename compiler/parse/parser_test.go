@@ -54,12 +54,18 @@ func TestParseAttrGetKeySyntax(t *testing.T) {
 	if bracketString.KeySyntax != ast.AttrKeyIndex {
 		t.Fatalf("string index KeySyntax = %v, want AttrKeyIndex", bracketString.KeySyntax)
 	}
+	if bracketString.Column() != 26 || bracketString.LastColumn() != 36 {
+		t.Fatalf("string index span = %d:%d, want 26:36", bracketString.Column(), bracketString.LastColumn())
+	}
 	bracketNumber, ok := local.Exprs[2].(*ast.AttrGetExpr)
 	if !ok {
 		t.Fatalf("expr 2 = %T, want *ast.AttrGetExpr", local.Exprs[2])
 	}
 	if bracketNumber.KeySyntax != ast.AttrKeyIndex {
 		t.Fatalf("number index KeySyntax = %v, want AttrKeyIndex", bracketNumber.KeySyntax)
+	}
+	if bracketNumber.Column() != 38 || bracketNumber.LastColumn() != 44 {
+		t.Fatalf("number index span = %d:%d, want 38:44", bracketNumber.Column(), bracketNumber.LastColumn())
 	}
 }
 

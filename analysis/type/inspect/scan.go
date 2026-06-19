@@ -30,37 +30,7 @@ func ContainsInstantiated(t typ.Type) bool {
 
 // ContainsRecursive reports whether t contains a recursive product.
 func ContainsRecursive(t typ.Type) bool {
-	scan := NewScanner(ScanOptions{Seen: NewIdentitySeen(trackConcreteNodeIdentity)})
-	return contains(t, func(t typ.Type) bool {
-		_, ok := t.(*typ.Recursive)
-		return ok
-	}, scan)
-}
-
-func trackConcreteNodeIdentity(t typ.Type) bool {
-	switch t.(type) {
-	case *typ.Optional,
-		*typ.Union,
-		*typ.Intersection,
-		*typ.Array,
-		*typ.Map,
-		*typ.ReadonlyMap,
-		*typ.Tuple,
-		*typ.Function,
-		*typ.Record,
-		*typ.Alias,
-		*typ.Ref,
-		*typ.Meta,
-		*typ.Generic,
-		*typ.Instantiated,
-		*typ.TypeParam,
-		*typ.Interface,
-		*typ.Recursive,
-		*typ.Literal:
-		return true
-	default:
-		return false
-	}
+	return typ.ContainsRecursive(t)
 }
 
 func contains(t typ.Type, pred func(typ.Type) bool, scan *Scanner) bool {

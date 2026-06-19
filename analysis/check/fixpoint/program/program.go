@@ -18,7 +18,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine/calloutcome"
-	factapply "github.com/wippyai/go-lua/analysis/engine/factapply"
+	"github.com/wippyai/go-lua/analysis/engine/callpayload"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
@@ -394,17 +394,18 @@ func observeCallArguments(
 	if !ok || !inferred.markObserved(expr) {
 		return
 	}
-	argSources := site.ArgumentSources()
-	args := make([]product.Value, len(argSources))
-	present := make([]bool, len(argSources))
-	for i, source := range argSources {
+	argCount := site.ArgumentSourceCount()
+	args := make([]product.Value, argCount)
+	present := make([]bool, argCount)
+	site.ForEachArgumentSource(func(i int, source factflow.ValueSource) bool {
 		value, ok := prepass.SourceValueWithRootDeclarationRecoveryAtBoundary(point, source)
 		if !ok {
-			continue
+			return true
 		}
 		args[i] = value
 		present[i] = true
-	}
+		return true
+	})
 	inferred.observe(callee, args, present, caller)
 }
 
@@ -728,33 +729,32 @@ func collectSignatureCallbackContextKeys(
 	if fnType == nil {
 		return
 	}
-	argSources := site.ArgumentSources()
-	for i, source := range argSources {
+	site.ForEachArgumentSource(func(i int, source factflow.ValueSource) bool {
 		if !source.HasExpr || source.ExprRef == 0 {
-			continue
+			return true
 		}
 		if _, seen := keys.functionExpressionKeys[source.ExprRef]; seen {
-			continue
+			return true
 		}
 		formal, ok := callParamType(fnType, i)
 		if !ok {
-			continue
+			return true
 		}
 		callbackType, ok := typecall.Callable(formal)
 		if !ok || callbackType == nil {
-			continue
+			return true
 		}
 		callbackSymbol, ok := prepass.ExpressionFunction(source.ExprRef)
 		if !ok || callbackSymbol == 0 {
-			continue
+			return true
 		}
 		callbackFn, ok := keys.bindings.FunctionBySymbol(callbackSymbol)
 		if !ok || callbackFn == nil {
-			continue
+			return true
 		}
 		seeds := contextualCallbackParamSeeds(config.Registry, keys.bindings, callbackFn, callbackType)
 		if len(seeds) == 0 {
-			continue
+			return true
 		}
 		entry := state.State{}
 		callerEntry, hasCallerEntry := prepass.StateAt(point)
@@ -766,7 +766,7 @@ func collectSignatureCallbackContextKeys(
 		entry = applyParamSeeds(config.Registry, entry, callerEntry, seeds)
 		baseKey, ok := keys.functionKeys[callbackSymbol]
 		if !ok {
-			continue
+			return true
 		}
 		contextKey := baseKey
 		contextKey.Entry.Facts = keys.nextContextID
@@ -783,7 +783,8 @@ func collectSignatureCallbackContextKeys(
 		keys.functionExpressionKeys[source.ExprRef] = contextKey
 		keys.functionByKey[contextKey] = callbackFn
 		keys.functionTypes[contextKey] = callbackType
-	}
+		return true
+	})
 }
 
 func instantiateSignatureTypeForContext(
@@ -811,29 +812,30 @@ func contextualCallArgumentTypes(reg *axis.Registry, prepass *body.Result, point
 	if reg == nil || prepass == nil {
 		return nil, false
 	}
-	argSources := site.ArgumentSources()
-	if len(argSources) == 0 {
+	argCount := site.ArgumentSourceCount()
+	if argCount == 0 {
 		return nil, false
 	}
-	args := make([]typ.Type, len(argSources))
+	args := make([]typ.Type, argCount)
 	seen := false
-	for i, source := range argSources {
+	site.ForEachArgumentSource(func(i int, source factflow.ValueSource) bool {
 		if source.HasExpr {
 			if _, ok := prepass.ExpressionFunction(source.ExprRef); ok {
-				continue
+				return true
 			}
 		}
 		value, ok := prepass.SourceValueWithRootDeclarationRecoveryAtBoundary(point, source)
 		if !ok {
-			continue
+			return true
 		}
 		t, ok := typevalue.TypeOf(reg, value)
 		if !ok || !callresult.UsableType(reg, value, t) {
-			continue
+			return true
 		}
 		args[i] = t
 		seen = true
-	}
+		return true
+	})
 	return args, seen
 }
 
@@ -986,11 +988,7 @@ func unwrapFunctionValueTarget(expr ast.Expr) ast.Expr {
 }
 
 func appendPath(root path.Path, suffix path.Path) path.Path {
-	out := root
-	for _, seg := range suffix.Segments {
-		out = out.Append(seg)
-	}
-	return out
+	return root.AppendSegments(suffix.Segments)
 }
 
 func rootKey(configured summary.SummaryKey) summary.SummaryKey {
@@ -1059,7 +1057,7 @@ func boundFunction(
 
 func keyFunc(keys programKeys, owner *ast.FunctionExpr) callresult.KeyFunc {
 	direct := callresult.ByCalleeIdentity(keys.targetKeys)
-	return func(ctx transfer.NodeContext, site factflow.CallSite) (summary.SummaryKey, bool) {
+	return func(ctx transfer.NodeContext, site factflow.CallSiteView) (summary.SummaryKey, bool) {
 		if expr, ok := site.Expr(); ok && expr != 0 {
 			if key, ok := keys.callContextKeys[callContextRef{owner: owner, expr: expr}]; ok {
 				return key, true
@@ -1087,7 +1085,7 @@ func checkConfigWithSummaries(
 	baseFactory := out.CallOutcomeFactory
 	baseSignatureArgumentType := out.SignatureArgumentType
 	baseSignatureArgumentTypeFactory := out.SignatureArgumentTypeFactory
-	out.CallOutcomeFactory = func(ctx body.CallOutcomeContext) factapply.CallOutcomeProvider {
+	out.CallOutcomeFactory = func(ctx body.CallOutcomeContext) callpayload.CallOutcomeProvider {
 		providerConfig := callresult.ProviderConfig{
 			Summaries:               summaries,
 			KeyFor:                  keyFor,

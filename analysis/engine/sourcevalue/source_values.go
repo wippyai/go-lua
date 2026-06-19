@@ -24,9 +24,9 @@ type ExpressionValueProvider func(point cfg.Point, expr factflow.ExprRef, source
 // already-resolved operand values.
 type ExpressionOperationEvaluator func(op factflow.ExpressionOperation, left product.Value, right product.Value) (product.Value, bool)
 
-// ObjectLiteralEvaluator materializes an object literal from lowered entry
-// sources.
-type ObjectLiteralEvaluator func(lit factflow.ObjectLiteral, resolve func(factflow.ValueSource) (product.Value, bool)) (product.Value, bool)
+// ObjectLiteralViewEvaluator materializes an object literal from read-only
+// lowered entry sources.
+type ObjectLiteralViewEvaluator func(lit factflow.ObjectLiteralView, resolve func(factflow.ValueSource) (product.Value, bool)) (product.Value, bool)
 
 // VarargValueProvider resolves a vararg value source. It is intentionally
 // optional because the generic transfer engine cannot infer vararg shape.
@@ -42,13 +42,13 @@ type SourceValuesConfig struct {
 	// state. Their entries in ExpressionValues hold only the static declared
 	// type, so the flow-aware ExpressionValue provider must resolve them instead
 	// to observe branch narrowing recorded along CFG edges.
-	ExpressionPaths map[factflow.ExprRef]struct{}
-	ObjectLiterals  map[factflow.ExprRef]factflow.ObjectLiteral
-	ObjectLiteral   ObjectLiteralEvaluator
-	ExpressionOps   map[factflow.ExprRef]factflow.ExpressionOperation
-	ExpressionOp    ExpressionOperationEvaluator
-	ExpressionValue ExpressionValueProvider
-	VarargValue     VarargValueProvider
+	ExpressionPaths       map[factflow.ExprRef]struct{}
+	ObjectLiteralView     func(factflow.ExprRef) (factflow.ObjectLiteralView, bool)
+	ObjectLiteralFromView ObjectLiteralViewEvaluator
+	ExpressionOps         map[factflow.ExprRef]factflow.ExpressionOperation
+	ExpressionOp          ExpressionOperationEvaluator
+	ExpressionValue       ExpressionValueProvider
+	VarargValue           VarargValueProvider
 }
 
 // NewSourceValues creates a generic ValueSource resolver. It stays independent
@@ -59,29 +59,29 @@ func NewSourceValues(config SourceValuesConfig) SourceValues {
 		panic("factflow: SourceValuesConfig.Registry is required")
 	}
 	return sourceValueResolver{
-		registry:         registry,
-		expressionValues: copyExpressionValues(config.ExpressionValues),
-		pathBacked:       copyExprRefSet(config.ExpressionPaths),
-		objectLiterals:   copyObjectLiterals(config.ObjectLiterals),
-		objectLiteral:    config.ObjectLiteral,
-		expressionOps:    copyExpressionOps(config.ExpressionOps),
-		expressionOp:     config.ExpressionOp,
-		expressionValue:  config.ExpressionValue,
-		varargValue:      config.VarargValue,
+		registry:              registry,
+		expressionValues:      copyExpressionValues(config.ExpressionValues),
+		pathBacked:            copyExprRefSet(config.ExpressionPaths),
+		objectLiteralView:     config.ObjectLiteralView,
+		objectLiteralFromView: config.ObjectLiteralFromView,
+		expressionOps:         copyExpressionOps(config.ExpressionOps),
+		expressionOp:          config.ExpressionOp,
+		expressionValue:       config.ExpressionValue,
+		varargValue:           config.VarargValue,
 	}
 }
 
 type sourceValueResolver struct {
 	registry *axis.Registry
 
-	expressionValues map[factflow.ExprRef]product.Value
-	pathBacked       map[factflow.ExprRef]struct{}
-	objectLiterals   map[factflow.ExprRef]factflow.ObjectLiteral
-	objectLiteral    ObjectLiteralEvaluator
-	expressionOps    map[factflow.ExprRef]factflow.ExpressionOperation
-	expressionOp     ExpressionOperationEvaluator
-	expressionValue  ExpressionValueProvider
-	varargValue      VarargValueProvider
+	expressionValues      map[factflow.ExprRef]product.Value
+	pathBacked            map[factflow.ExprRef]struct{}
+	objectLiteralView     func(factflow.ExprRef) (factflow.ObjectLiteralView, bool)
+	objectLiteralFromView ObjectLiteralViewEvaluator
+	expressionOps         map[factflow.ExprRef]factflow.ExpressionOperation
+	expressionOp          ExpressionOperationEvaluator
+	expressionValue       ExpressionValueProvider
+	varargValue           VarargValueProvider
 }
 
 func (r sourceValueResolver) ValueOfSource(
@@ -194,16 +194,16 @@ func (r sourceValueResolver) valueOfObjectLiteral(
 	in state.State,
 	read func(cfg.Point) state.State,
 ) (product.Value, bool) {
-	if r.objectLiteral == nil {
-		return product.Value{}, false
+	if r.objectLiteralFromView != nil && r.objectLiteralView != nil {
+		lit, ok := r.objectLiteralView(expr)
+		if !ok {
+			return product.Value{}, false
+		}
+		return r.objectLiteralFromView(lit, func(source factflow.ValueSource) (product.Value, bool) {
+			return r.ValueOfSource(point, source, in, read)
+		})
 	}
-	lit, ok := r.objectLiterals[expr]
-	if !ok {
-		return product.Value{}, false
-	}
-	return r.objectLiteral(lit, func(source factflow.ValueSource) (product.Value, bool) {
-		return r.ValueOfSource(point, source, in, read)
-	})
+	return product.Value{}, false
 }
 
 func (r sourceValueResolver) valueOfExpressionOperation(
@@ -296,17 +296,6 @@ func copyExprRefSet(in map[factflow.ExprRef]struct{}) map[factflow.ExprRef]struc
 	out := make(map[factflow.ExprRef]struct{}, len(in))
 	for ref := range in {
 		out[ref] = struct{}{}
-	}
-	return out
-}
-
-func copyObjectLiterals(in map[factflow.ExprRef]factflow.ObjectLiteral) map[factflow.ExprRef]factflow.ObjectLiteral {
-	if len(in) == 0 {
-		return nil
-	}
-	out := make(map[factflow.ExprRef]factflow.ObjectLiteral, len(in))
-	for ref, lit := range in {
-		out[ref] = lit
 	}
 	return out
 }

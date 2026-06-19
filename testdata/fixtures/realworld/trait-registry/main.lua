@@ -23,7 +23,7 @@ if err == nil and spec then
     -- spec.tools is the typed sequence {TraitToolEntry}: it has unknown runtime
     -- length, so spec.tools[1] is TraitToolEntry? and its .id field is string?;
     -- assigning that to a non-optional string is soundly rejected.
-    local first_tool_id: string = spec.tools[1].id -- expect-error: cannot assign string? to string
+    local first_tool_id: string = spec.tools[1].id -- expect-error: cannot assign spec.tools[1].id because it may be nil
 end
 
 local normalized = processor.normalize_tool("tool:simple")

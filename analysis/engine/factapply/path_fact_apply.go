@@ -1,8 +1,6 @@
 package factapply
 
 import (
-	"strconv"
-
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
@@ -22,6 +20,7 @@ import (
 func applyPathStaticMemberWrite(
 	ctx transfer.NodeContext,
 	resolver *visibility.Resolver,
+	facts factflow.Facts,
 	sources sourcevalue.SourceValues,
 	read func(cfg.Point) state.State,
 	in state.State,
@@ -41,7 +40,7 @@ func applyPathStaticMemberWrite(
 	if canonical, ok := pathaddr.FieldCanonicalPathKey(targetKey); ok {
 		out = out.WritePathStaticMember(canonical, value)
 	}
-	return out
+	return addPathEqualityProofFromSource(resolver, facts, ctx.Point, out, fact.TargetPath(), source)
 }
 
 func applyDynamicIndexWrite(
@@ -59,7 +58,7 @@ func applyDynamicIndexWrite(
 	}
 	key := dynamicindex.Key{
 		Table: tableKey,
-		Site:  dynamicIndexSite(ctx.Point),
+		Site:  dynamicindex.SiteForPoint(int(ctx.Point)),
 	}
 	value := dynamicIndexFact(ctx, sources, read, in, out, fact)
 	out = out.WriteDynamicIndexFact(ctx.Registry, key, value)
@@ -131,10 +130,6 @@ func dynamicIndexFact(
 		}
 	}
 	return out
-}
-
-func dynamicIndexSite(point cfg.Point) dynamicindex.Site {
-	return dynamicindex.Site("factflow.dynamic_index_write@" + strconv.Itoa(int(point)))
 }
 
 func dynamicIndexReadback(intent factflow.DynamicIndexReadbackIntent) (readKey bool, readValue bool) {
@@ -243,4 +238,31 @@ func factPathKeyAt(resolver *visibility.Resolver, point cfg.Point, path pathdom.
 		return ""
 	}
 	return resolver.KeyAt(point, path)
+}
+
+func addPathEqualityProofFromSource(
+	resolver *visibility.Resolver,
+	facts factflow.Facts,
+	point cfg.Point,
+	out state.State,
+	targetPath pathdom.Path,
+	source factflow.ValueSource,
+) state.State {
+	if resolver == nil || targetPath.Symbol == 0 || source.Kind != factflow.ValueSourceExpression || !source.HasExpr {
+		return out
+	}
+	sourcePath, ok := facts.ExpressionPath(source.ExprRef)
+	if !ok || sourcePath.IsEmpty() || sourcePath.Symbol == 0 {
+		return out
+	}
+	targetKey := factPathKeyAt(resolver, point, targetPath)
+	sourceKey := factPathKeyAt(resolver, point, sourcePath)
+	if targetKey == "" || sourceKey == "" || targetKey == sourceKey {
+		return out
+	}
+	return out.AddBranchProof(pathevidence.BranchProof{
+		Kind:  pathevidence.BranchProofPathEqual,
+		Path:  targetKey,
+		Other: sourceKey,
+	})
 }

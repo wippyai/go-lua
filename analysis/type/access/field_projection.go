@@ -83,6 +83,6 @@ func fieldInIntersection(in *typ.Intersection, name string, depth int) fieldResu
 		return fieldResult{}
 	}
 	return distributeIntersection(in.Members, depth, func(member typ.Type, depth int) (typ.Type, bool) {
-		return fieldAtDepth(member, name, depth)
+		return fieldDepth(member, name, depth).materialize()
 	})
 }

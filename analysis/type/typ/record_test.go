@@ -186,6 +186,24 @@ func TestRecordOptionalMembersPreserveNilablePayloads(t *testing.T) {
 	}
 }
 
+func TestRecordGetStaticMemberScansUnsortedDirectRecord(t *testing.T) {
+	r := &Record{StaticMembers: []StaticMember{
+		{Kind: StaticMemberIntIndex, Index: 2, Type: Number},
+		{Kind: StaticMemberStringIndex, Name: "target", Type: String},
+	}}
+
+	member := r.GetStaticStringIndex("target")
+	if member == nil {
+		t.Fatal("unsorted direct record should still find static string member")
+	}
+	if member.Type != String {
+		t.Fatalf("member type = %v, want string", member.Type)
+	}
+	if r.GetStaticIntIndex(2) == nil {
+		t.Fatal("unsorted direct record should still find static integer member")
+	}
+}
+
 func TestRecordOptionalField(t *testing.T) {
 	r := newRecord().
 		Field("x", Number).

@@ -358,6 +358,7 @@ func TestLowerOrdinaryAssignmentsSplitsRootAndStaticPathWrites(t *testing.T) {
 
 	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings})
 	tSym := mustLocalAt(t, bindings, local, 0)
+	kSym := mustLocalAt(t, bindings, local, 1)
 
 	dotPoint := requireStmtPoints(t, built, dotWrite, 1)[0]
 	dotFact, ok := facts.PathAssignment(dotPoint)
@@ -435,6 +436,9 @@ func TestLowerOrdinaryAssignmentsSplitsRootAndStaticPathWrites(t *testing.T) {
 	}
 	if dynamicFact.KeySource().Kind != factflow.ValueSourceExpression || !dynamicFact.KeySource().HasExpr {
 		t.Fatalf("dynamic index key source = %#v, want expression source", dynamicFact.KeySource())
+	}
+	if got, ok := dynamicFact.KeyPath(); !ok || !got.Equal(path.NewPath(kSym, "k")) {
+		t.Fatalf("dynamic index key path = %v/%v, want k", got, ok)
 	}
 	if dynamicFact.Source().Kind != factflow.ValueSourceExpression || !dynamicFact.Source().HasExpr {
 		t.Fatalf("dynamic index value source = %#v, want expression source", dynamicFact.Source())

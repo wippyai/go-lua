@@ -119,6 +119,23 @@ func TestBottomIsCachedPerRegistry(t *testing.T) {
 	}
 }
 
+func TestDomainStableAcrossRepeatedConstruction(t *testing.T) {
+	reg := mustRegistry(t, syntheticSpec().Erase())
+	top := Domain(reg).Top()
+	bottom := Domain(reg).Bottom()
+	domain := Domain(reg)
+
+	if !domain.Equal(top, domain.Top()) {
+		t.Fatalf("reconstructed product domain did not recognize prior top")
+	}
+	if !domain.Equal(bottom, domain.Bottom()) {
+		t.Fatalf("reconstructed product domain did not recognize prior bottom")
+	}
+	if !domain.Equal(domain.Join(bottom, top), top) {
+		t.Fatalf("reconstructed product domain join(bottom, top) did not produce top")
+	}
+}
+
 func TestProductHashReturnsStoredNodeHash(t *testing.T) {
 	hashCalls := 0
 	spec := syntheticSpec()

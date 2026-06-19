@@ -143,6 +143,33 @@ end`)
 	assertExpressionTypeAtBoundary(t, reg, result, exprLocal, typ.String)
 }
 
+func TestGenericForPairsUsesFlowRefinedIteratorSourceTypeForLoopVariables(t *testing.T) {
+	reg := standard.Registry()
+	stmts := parseChunk(t, `
+local transform_config: nil | string | {[string]: string} = {}
+if type(transform_config) == "table" then
+	for field_name, expression in pairs(transform_config) do
+		local field_copy = field_name
+		local expression_copy = expression
+	end
+end`)
+
+	result, err := CheckChunk(stmts, Config{
+		Registry:   reg,
+		Signatures: signaturelookup.Source{IncludeStdlib: true},
+	})
+	if err != nil {
+		t.Fatalf("CheckChunk: %v", err)
+	}
+
+	ifStmt := stmts[1].(*ast.IfStmt)
+	loop := ifStmt.Then[0].(*ast.GenericForStmt)
+	fieldLocal := loop.Stmts[0].(*ast.LocalAssignStmt)
+	exprLocal := loop.Stmts[1].(*ast.LocalAssignStmt)
+	assertExpressionTypeAtBoundary(t, reg, result, fieldLocal, typ.String)
+	assertExpressionTypeAtBoundary(t, reg, result, exprLocal, typ.String)
+}
+
 func TestGenericForIPairsUsesConfiguredBuiltinWithoutSignatureLookup(t *testing.T) {
 	reg := standard.Registry()
 	stmts := parseChunk(t, `

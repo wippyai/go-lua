@@ -9,10 +9,12 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/effect/control"
 	"github.com/wippyai/go-lua/analysis/domain/effect/dispatch"
 	"github.com/wippyai/go-lua/analysis/domain/effect/iteration"
+	"github.com/wippyai/go-lua/analysis/domain/effect/lifecycle"
 	"github.com/wippyai/go-lua/analysis/domain/effect/mutation"
 	"github.com/wippyai/go-lua/analysis/domain/effect/ownership"
 	"github.com/wippyai/go-lua/analysis/domain/effect/postcondition"
 	"github.com/wippyai/go-lua/analysis/domain/effect/returns"
+	"github.com/wippyai/go-lua/analysis/domain/typestate"
 )
 
 func TestIDForClassifiesAuditedLabels(t *testing.T) {
@@ -51,6 +53,9 @@ func TestIDForClassifiesAuditedLabels(t *testing.T) {
 		{"mutate", mutation.Mutate{}, capability.MutationMutate},
 		{"length change", mutation.LengthChange{}, capability.MutationLengthChange},
 		{"table mutator", mutation.TableMutator{}, capability.MutationTableMutator},
+		{"lifecycle acquire", lifecycle.Acquire{Protocol: typestate.Protocol("transaction")}, capability.LifecycleAcquire},
+		{"lifecycle transition", lifecycle.Transition{Protocol: typestate.Protocol("transaction")}, capability.LifecycleTransition},
+		{"lifecycle escape", lifecycle.Escape{Protocol: typestate.Protocol("transaction")}, capability.LifecycleEscape},
 		{"throw", control.Throw{}, capability.ControlThrow},
 		{"io", control.IO{}, capability.ControlIO},
 	}

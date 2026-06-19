@@ -1,6 +1,9 @@
 package summary
 
-import "github.com/wippyai/go-lua/analysis/domain/lattice/factset"
+import (
+	"github.com/wippyai/go-lua/analysis/domain/lattice/factset"
+	"github.com/wippyai/go-lua/analysis/domain/path/segment"
+)
 
 // paramMemberCallObligationLane is the canonical may (union) membership lattice
 // for parameter member-call obligations.
@@ -11,16 +14,22 @@ var paramMemberCallObligationLane = factset.Set[ParamMemberCallObligation, Param
 		if a.ReceiverParam != b.ReceiverParam {
 			return a.ReceiverParam < b.ReceiverParam
 		}
+		if a.ReceiverPath != b.ReceiverPath {
+			return a.ReceiverPath < b.ReceiverPath
+		}
 		if a.ArgParam != b.ArgParam {
 			return a.ArgParam < b.ArgParam
 		}
 		if a.Member != b.Member {
-			return a.Member < b.Member
+			return memberSegmentLess(a.Member, b.Member)
 		}
 		return a.MemberParamIndex < b.MemberParamIndex
 	},
 	Valid: func(o ParamMemberCallObligation) bool {
-		return o.ReceiverParam >= 0 && o.ArgParam >= 0 && o.MemberParamIndex >= 0 && o.Member != ""
+		if o.ReceiverParam < 0 || o.ArgParam < 0 || o.MemberParamIndex < 0 || !memberSegmentValid(o.Member) {
+			return false
+		}
+		return segment.ValidFormattedSegments(string(o.ReceiverPath))
 	},
 }
 
@@ -39,12 +48,33 @@ var paramMemberReturnSlotLane = factset.Set[ParamMemberReturnSlot, ParamMemberRe
 		if a.MemberResultIndex != b.MemberResultIndex {
 			return a.MemberResultIndex < b.MemberResultIndex
 		}
-		return a.Member < b.Member
+		return memberSegmentLess(a.Member, b.Member)
 	},
 	Valid: func(s ParamMemberReturnSlot) bool {
-		return s.ReceiverParam >= 0 && s.ReturnIndex >= 0 && s.MemberResultIndex >= 0 && s.Member != ""
+		return s.ReceiverParam >= 0 && s.ReturnIndex >= 0 && s.MemberResultIndex >= 0 && memberSegmentValid(s.Member)
 	},
 	Intersect: true,
+}
+
+func memberSegmentValid(seg segment.Segment) bool {
+	switch seg.Kind {
+	case segment.SegmentField, segment.SegmentIndexString:
+		return seg.Name != ""
+	case segment.SegmentIndexInt:
+		return true
+	default:
+		return false
+	}
+}
+
+func memberSegmentLess(a, b segment.Segment) bool {
+	if a.Kind != b.Kind {
+		return a.Kind < b.Kind
+	}
+	if a.Name != b.Name {
+		return a.Name < b.Name
+	}
+	return a.Index < b.Index
 }
 
 // returnParamPathAliasLane is the canonical must (intersection) membership

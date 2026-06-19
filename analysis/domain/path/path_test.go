@@ -183,6 +183,38 @@ func TestPathClonePreservesRootOnlyPath(t *testing.T) {
 	}
 }
 
+func TestPathAppendSegmentsCopiesOnceAndDoesNotAliasInputs(t *testing.T) {
+	base := NewPath(1, "x").Field("a")
+	suffix := []segment.Segment{
+		{Kind: segment.SegmentField, Name: "b"},
+		{Kind: segment.SegmentIndexString, Name: "c"},
+	}
+
+	got := base.AppendSegments(suffix)
+	if got.Key() != `sym1.a.b["c"]` {
+		t.Fatalf("AppendSegments() key = %q, want sym1.a.b[\"c\"]", got.Key())
+	}
+
+	base.Segments[0].Name = "mutated-base"
+	suffix[0].Name = "mutated-suffix"
+	if got.Key() != `sym1.a.b["c"]` {
+		t.Fatalf("AppendSegments() returned aliased storage: key now %q", got.Key())
+	}
+}
+
+func TestPathAppendSegmentsPreservesRootOnlyCloneSemantics(t *testing.T) {
+	base := NewPath(1, "x").Field("a")
+	got := base.AppendSegments(nil)
+
+	if !got.Equal(base) {
+		t.Fatalf("AppendSegments(nil) = %#v, want %#v", got, base)
+	}
+	got.Segments[0].Name = "mutated"
+	if base.Segments[0].Name != "a" {
+		t.Fatalf("AppendSegments(nil) shares storage with base: %#v", base.Segments)
+	}
+}
+
 func TestPathSubstitute(t *testing.T) {
 	placeholder := Path{Root: "$0"}
 	arg := Path{Root: "vol"}

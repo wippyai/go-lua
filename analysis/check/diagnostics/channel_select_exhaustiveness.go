@@ -1,7 +1,6 @@
 package diagnostics
 
 import (
-	"fmt"
 	"strings"
 
 	"github.com/wippyai/go-lua/analysis/check/body"
@@ -16,18 +15,18 @@ import (
 
 type channelSelectExhaustiveness producerContext
 
-type channelSelectDiagnosticInfo struct {
+type selectInfo struct {
 	result     pathdom.Path
-	cases      []channelSelectDiagnosticCase
+	cases      []selectCase
 	hasDefault bool
 }
 
-type channelSelectDiagnosticCase struct {
+type selectCase struct {
 	path pathdom.Path
 	name string
 }
 
-type channelSelectExhaustivenessEvidence struct {
+type exhaustivenessEvidence struct {
 	resultChannel pathdom.Path
 	handled       []string
 	missing       []string
@@ -35,12 +34,11 @@ type channelSelectExhaustivenessEvidence struct {
 }
 
 func (p channelSelectExhaustiveness) Produce(result *body.Result) []diagnostic.Diagnostic {
-	_ = p
 	graph := result.Graph()
 	if graph == nil {
 		return nil
 	}
-	selects := channelSelectDiagnosticInfos(result)
+	selects := collectSelectInfos(result)
 	if len(selects) == 0 {
 		return nil
 	}
@@ -67,13 +65,17 @@ func (p channelSelectExhaustiveness) Produce(result *body.Result) []diagnostic.D
 	return out
 }
 
-func channelSelectDiagnosticInfos(result *body.Result) []channelSelectDiagnosticInfo {
+func collectSelectInfos(result *body.Result) []selectInfo {
 	graph := result.Graph()
 	if graph == nil {
 		return nil
 	}
-	var out []channelSelectDiagnosticInfo
+	envs := cachedGuardEnvironments(result)
+	var out []selectInfo
 	for _, point := range graph.RPO() {
+		if !guardEnvReachableAt(envs, point) {
+			continue
+		}
 		call, ok := result.Call(point)
 		if !ok || !call.HasChannelSelect || !call.ChannelSelect.ResultTarget.HasPath {
 			continue
@@ -82,7 +84,7 @@ func channelSelectDiagnosticInfos(result *body.Result) []channelSelectDiagnostic
 		if selectFact.ResultTarget.Path.IsEmpty() || len(selectFact.Cases) == 0 {
 			continue
 		}
-		info := channelSelectDiagnosticInfo{result: selectFact.ResultTarget.Path, hasDefault: selectFact.HasDefault}
+		info := selectInfo{result: selectFact.ResultTarget.Path, hasDefault: selectFact.HasDefault}
 		for _, c := range selectFact.Cases {
 			if !c.HasChannelPath || c.ChannelPath.IsEmpty() {
 				continue
@@ -91,7 +93,7 @@ func channelSelectDiagnosticInfos(result *body.Result) []channelSelectDiagnostic
 			if name == "" {
 				name = c.ChannelPath.String()
 			}
-			info.cases = append(info.cases, channelSelectDiagnosticCase{
+			info.cases = append(info.cases, selectCase{
 				path: c.ChannelPath,
 				name: name,
 			})
@@ -104,8 +106,12 @@ func channelSelectDiagnosticInfos(result *body.Result) []channelSelectDiagnostic
 }
 
 func channelSelectBranchConditions(result *body.Result, graph cfg.Graph) []semantics.BranchConditionFact {
+	envs := cachedGuardEnvironments(result)
 	var out []semantics.BranchConditionFact
 	for _, point := range graph.RPO() {
+		if !guardEnvReachableAt(envs, point) {
+			continue
+		}
 		branch, ok := result.BranchCondition(point)
 		if !ok || branch.If == nil {
 			continue
@@ -140,7 +146,7 @@ func channelSelectChainDiagnostic(
 	result *body.Result,
 	head *ast.IfStmt,
 	byIf map[*ast.IfStmt]semantics.BranchConditionFact,
-	selects []channelSelectDiagnosticInfo,
+	selects []selectInfo,
 ) (diagnostic.Diagnostic, bool) {
 	chain := ifElseIfChain(head)
 	selected := -1
@@ -185,7 +191,7 @@ func channelSelectChainDiagnostic(
 	if len(missing) == 0 {
 		return diagnostic.Diagnostic{}, false
 	}
-	return channelSelectExhaustivenessDiagnostic(head, channelSelectExhaustivenessEvidence{
+	return newExhaustivenessDiagnostic(head, exhaustivenessEvidence{
 		resultChannel: info.result.Field(channelselect.ResultChannelField),
 		handled:       handledNames,
 		missing:       missing,
@@ -211,7 +217,7 @@ func ifElseIfChain(head *ast.IfStmt) []*ast.IfStmt {
 
 func channelSelectCasesForCheck(
 	check branchcond.Check,
-	selects []channelSelectDiagnosticInfo,
+	selects []selectInfo,
 ) (int, []int, bool) {
 	for selectIndex, info := range selects {
 		resultChannel := info.result.Field(channelselect.ResultChannelField)
@@ -242,37 +248,28 @@ func pathsMatchPair(left, right, wantLeft, wantRight pathdom.Path) bool {
 		(left.Equal(wantRight) && right.Equal(wantLeft))
 }
 
-func channelSelectExhaustivenessDiagnostic(head *ast.IfStmt, evidence channelSelectExhaustivenessEvidence) diagnostic.Diagnostic {
+func newExhaustivenessDiagnostic(head *ast.IfStmt, evidence exhaustivenessEvidence) diagnostic.Diagnostic {
 	span := ast.SpanOf(head.Condition)
-	caseWord := "case"
-	if len(evidence.missing) > 1 {
-		caseWord = "cases"
-	}
-	message := fmt.Sprintf("channel select is not exhaustive; missing %s: %s", caseWord, strings.Join(evidence.missing, ", "))
-	return diagnostic.Diagnostic{
-		Position: diagnostic.Position{
-			Line:      span.StartLine,
-			Column:    span.StartCol,
-			EndLine:   span.EndLine,
-			EndColumn: span.EndCol,
-		},
+	caseWord := pluralize(len(evidence.missing), "case", "cases")
+	message := channelSelectExhaustivenessMessage(caseWord, channelCaseList(evidence.missing))
+	return diagnostic.New(diagnostic.DiagnosticSpec{
 		Span:        span,
 		Code:        CodeChannelSelectExhaustive,
 		Severity:    diagnostic.SeverityWarning,
 		Message:     message,
-		Explanation: channelSelectExhaustivenessExplanation(span, evidence),
-		Labels:      []diagnostic.Label{{Span: span, Message: "channel select case chain"}},
-		Help:        "Handle each channel select case explicitly in the if/elseif chain.",
-	}
+		Explanation: exhaustivenessExplanation(span, evidence),
+		Help:        channelSelectExhaustivenessHelp(),
+		Labels:      []diagnostic.Label{sourceLabel(span, labelChannelCaseTest)},
+	})
 }
 
-func channelSelectExhaustivenessExplanation(span diagnostic.Span, evidence channelSelectExhaustivenessEvidence) diagnostic.Explanation {
+func exhaustivenessExplanation(span diagnostic.Span, evidence exhaustivenessEvidence) diagnostic.Explanation {
 	items := []diagnostic.Evidence{
 		{
 			Kind:    diagnostic.EvidenceAbstractFact,
 			Trust:   diagnostic.TrustProven,
 			Span:    span,
-			Message: "channel select result channel path: " + evidence.resultChannel.String(),
+			Message: selectedChannelPathEvidence(evidence.resultChannel.String()),
 		},
 	}
 	if len(evidence.handled) > 0 {
@@ -280,22 +277,34 @@ func channelSelectExhaustivenessExplanation(span diagnostic.Span, evidence chann
 			Kind:    diagnostic.EvidenceAbstractFact,
 			Trust:   diagnostic.TrustProven,
 			Span:    span,
-			Message: "handled channel select cases: " + strings.Join(evidence.handled, ", "),
+			Message: handledChannelCasesEvidence(channelCaseList(evidence.handled)),
 		})
 	}
 	items = append(items, diagnostic.Evidence{
 		Kind:    diagnostic.EvidenceMissingProof,
-		Trust:   diagnostic.TrustProven,
+		Trust:   diagnostic.TrustUnknown,
 		Span:    span,
-		Message: "missing channel select cases: " + strings.Join(evidence.missing, ", "),
+		Message: missingChannelCasesEvidence(channelCaseList(evidence.missing)),
 	})
 	if !evidence.hasDefault {
 		items = append(items, diagnostic.Evidence{
 			Kind:    diagnostic.EvidenceMissingProof,
-			Trust:   diagnostic.TrustProven,
+			Trust:   diagnostic.TrustUnknown,
 			Span:    span,
-			Message: "no default case; every channel select case must be handled explicitly",
+			Message: missingChannelDefaultEvidence(),
 		})
 	}
 	return diagnostic.NewExplanation(items...)
+}
+
+func channelCaseList(cases []string) string {
+	return strings.Join(codeNames(cases), ", ")
+}
+
+func codeNames(names []string) []string {
+	out := make([]string, 0, len(names))
+	for _, name := range names {
+		out = append(out, codeName(name))
+	}
+	return out
 }

@@ -21,8 +21,58 @@ return label
 	if !strings.Contains(diag.Message, "may be nil") {
 		t.Fatalf("message = %q, want nil-risk concat diagnostic", diag.Message)
 	}
-	requireEvidenceMessage(t, diag, "concat right operand is")
-	requireEvidenceMessage(t, diag, "`..` requires each operand to be present string or number")
+	requireLabelMessage(t, diag, "value may be nil")
+	evidence := diag.Explanation.Evidence()
+	if len(evidence) != 1 {
+		t.Fatalf("evidence = %#v, want one operand-type fact", evidence)
+	}
+	requireEvidenceMessage(t, diag, "right operand `maybe` can be string or nil here")
+	if diag.Help != "Guard `maybe` or provide a default string before using `..`." {
+		t.Fatalf("help = %q, want actionable concat remediation", diag.Help)
+	}
+}
+
+func TestCheckReportsLeftOptionalConcatOperand(t *testing.T) {
+	result := Check(`
+local maybe: string? = nil
+local label: string = maybe .. ":suffix"
+return label
+`)
+	diag := requireDiagnosticCodeWithEvidence(t, result, diagnostics.CodeConcatOperand, "left operand `maybe` can be string or nil here")
+	if diag.Severity != diagnostic.SeverityWarning {
+		t.Fatalf("severity = %s, want warning by default", diag.Severity)
+	}
+	if !strings.Contains(diag.Message, "left operand") || !strings.Contains(diag.Message, "may be nil") {
+		t.Fatalf("message = %q, want left-operand nil-risk concat diagnostic", diag.Message)
+	}
+	requireLabelMessage(t, diag, "value may be nil")
+	if diag.Help != "Guard `maybe` or provide a default string before using `..`." {
+		t.Fatalf("help = %q, want actionable concat remediation", diag.Help)
+	}
+}
+
+func TestCheckOptionalConcatOperandRendersPathEvidence(t *testing.T) {
+	src := strings.TrimLeft(`
+local maybe: string? = nil
+return "prefix:" .. maybe
+`, "\n")
+	result := Check(src)
+	diag := requireDiagnosticCode(t, result, diagnostics.CodeConcatOperand)
+	rendered := diagnostic.Render(diag, diagnostic.RenderOptions{
+		Sources:             diagnostic.SourceMap{"test.lua": src},
+		ShowSourceLabelRows: true,
+	})
+	want := "warning[type.operator.concat_operand]: right operand of `..` may be nil\n" +
+		" --> test.lua:2:21\n" +
+		"  |\n" +
+		"2 | return \"prefix:\" .. maybe\n" +
+		"  |                     ↑ value may be nil\n" +
+		"\n" +
+		"because:\n" +
+		"  1. proven: right operand `maybe` can be string or nil here\n" +
+		"\n" +
+		"help: Guard `maybe` or provide a default string before using `..`."
+	assertRenderedEqual(t, rendered, want)
 }
 
 func TestCheckConcatOperandPolicyControlsSeverity(t *testing.T) {
@@ -52,8 +102,7 @@ local function label(arr: {string}, i: number): string
 end
 `)
 	diag := requireDiagnosticCode(t, result, diagnostics.CodeConcatOperand)
-	requireEvidenceMessage(t, diag, "concat right operand is string?")
-	requireEvidenceMessage(t, diag, "`..` requires each operand to be present string or number")
+	requireEvidenceMessage(t, diag, "right operand `arr[i]` can be string or nil here")
 }
 
 func TestCheckAcceptsNumericForArrayIndexConcatWithRangeProof(t *testing.T) {
@@ -94,8 +143,7 @@ local function labels(arr: {string})
 end
 `)
 	diag := requireDiagnosticCode(t, result, diagnostics.CodeConcatOperand)
-	requireEvidenceMessage(t, diag, "concat right operand is string?")
-	requireEvidenceMessage(t, diag, "`..` requires each operand to be present string or number")
+	requireEvidenceMessage(t, diag, "right operand `arr[i]` can be string or nil here")
 }
 
 func TestCheckReportsReverseNumericForZeroLimitArrayIndexConcat(t *testing.T) {
@@ -108,8 +156,7 @@ local function labels(arr: {string})
 end
 `)
 	diag := requireDiagnosticCode(t, result, diagnostics.CodeConcatOperand)
-	requireEvidenceMessage(t, diag, "concat right operand is string?")
-	requireEvidenceMessage(t, diag, "`..` requires each operand to be present string or number")
+	requireEvidenceMessage(t, diag, "right operand `arr[i]` can be string or nil here")
 }
 
 func TestCheckReportsNumericForDifferentLengthArrayIndexConcat(t *testing.T) {
@@ -122,8 +169,7 @@ local function labels(arr: {string}, bounds: {string})
 end
 `)
 	diag := requireDiagnosticCode(t, result, diagnostics.CodeConcatOperand)
-	requireEvidenceMessage(t, diag, "concat right operand is string?")
-	requireEvidenceMessage(t, diag, "`..` requires each operand to be present string or number")
+	requireEvidenceMessage(t, diag, "right operand `arr[i]` can be string or nil here")
 }
 
 func TestCheckReportsReverseNumericForDifferentLengthArrayIndexConcat(t *testing.T) {
@@ -136,8 +182,7 @@ local function labels(arr: {string}, bounds: {string})
 end
 `)
 	diag := requireDiagnosticCode(t, result, diagnostics.CodeConcatOperand)
-	requireEvidenceMessage(t, diag, "concat right operand is string?")
-	requireEvidenceMessage(t, diag, "`..` requires each operand to be present string or number")
+	requireEvidenceMessage(t, diag, "right operand `arr[i]` can be string or nil here")
 }
 
 func TestCheckLoopConcatAssignmentWideningReportsNumberString(t *testing.T) {
@@ -155,8 +200,8 @@ end
 	if !strings.Contains(diag.Message, "number | string") || !strings.Contains(diag.Message, "number") {
 		t.Fatalf("message = %q, want number|string to number assignment", diag.Message)
 	}
-	requireEvidenceMessage(t, diag, "source expression")
-	requireEvidenceMessage(t, diag, "annotated number")
+	requireEvidenceMessage(t, diag, "acc has type number | string")
+	requireEvidenceMessage(t, diag, "n is declared as number")
 }
 
 func TestCheckLoopLocalConcatMissingBranchReportsOptionalAssignment(t *testing.T) {
@@ -173,11 +218,11 @@ local function labels(arr: {string})
 end
 `)
 	diag := requireDiagnosticCode(t, result, diagnostics.CodeAssignmentType)
-	if !strings.Contains(diag.Message, "string?") || !strings.Contains(diag.Message, "string") {
+	if !strings.Contains(diag.Message, "cannot assign note") || !strings.Contains(diag.Message, "may be nil") {
 		t.Fatalf("message = %q, want optional string assignment", diag.Message)
 	}
-	requireEvidenceMessage(t, diag, "source expression")
-	requireEvidenceMessage(t, diag, "annotated string")
+	requireEvidenceMessage(t, diag, "note can be string or nil here")
+	requireEvidenceMessage(t, diag, "label is declared as string")
 }
 
 func TestCheckLoopLocalConcatAssignedInBothBranchesFlowsIntoObject(t *testing.T) {
@@ -460,6 +505,46 @@ end
 	}
 }
 
+func TestCheckConcatAcceptsLogicalAndGuardedOperands(t *testing.T) {
+	result := Check(`
+local function label(left: string?, right: string?): string
+    if left and right then
+        return left .. ":" .. right
+    end
+    return ""
+end
+`)
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want none for logical-and guarded concat operands", result.Diagnostics)
+	}
+}
+
+func TestCheckConcatAcceptsPostReturnNotNilGuardedOperand(t *testing.T) {
+	result := Check(`
+local function label(value: string?): string
+    if not value then
+        return ""
+    end
+    return "value:" .. value
+end
+`)
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want none after post-return not-nil guard", result.Diagnostics)
+	}
+}
+
+func TestCheckReportsOptionalIndexVariableConcatOperand(t *testing.T) {
+	result := Check(`
+local function label(items: {string}, i: number?): string
+    return "item:" .. items[i]
+end
+`)
+	diag := requireDiagnosticCodeWithEvidence(t, result, diagnostics.CodeConcatOperand, "right operand `items[i]` can be string or nil here")
+	if diag.Severity != diagnostic.SeverityWarning {
+		t.Fatalf("severity = %s, want warning by default", diag.Severity)
+	}
+}
+
 func TestCheckConcatReportsNonExhaustiveDiscriminantFallthrough(t *testing.T) {
 	result := Check(`
 type RouteA = { kind: "route_a" }
@@ -485,12 +570,11 @@ local function label(payload: Payload): string
     return "tombstone:" .. payload.tombstone.reason
 end
 `)
-	diag := requireDiagnosticCode(t, result, diagnostics.CodeConcatOperand)
+	diag := requireDiagnosticCodeWithEvidence(t, result, diagnostics.CodeConcatOperand, "right operand `payload.tombstone.reason` can be string or nil here")
 	if diag.Severity != diagnostic.SeverityWarning {
 		t.Fatalf("severity = %s, want warning by default", diag.Severity)
 	}
-	requireEvidenceMessage(t, diag, "concat right operand is string?")
-	requireEvidenceMessage(t, diag, "`..` requires each operand to be present string or number")
+	requireEvidenceMessage(t, diag, "right operand `payload.tombstone.reason` can be string or nil here")
 }
 
 func TestCheckConcatAcceptsLogicalOrFallbackLocalOperand(t *testing.T) {
@@ -535,5 +619,21 @@ func requireDiagnosticCode(t *testing.T, result Result, code diagnostic.Code) di
 		}
 	}
 	t.Fatalf("diagnostics = %#v, want code %s", result.Diagnostics, code)
+	return diagnostic.Diagnostic{}
+}
+
+func requireDiagnosticCodeWithEvidence(t *testing.T, result Result, code diagnostic.Code, evidenceContains string) diagnostic.Diagnostic {
+	t.Helper()
+	for _, diag := range result.Diagnostics {
+		if diag.Code != code {
+			continue
+		}
+		for _, evidence := range diag.Explanation.Evidence() {
+			if strings.Contains(evidence.Message, evidenceContains) {
+				return diag
+			}
+		}
+	}
+	t.Fatalf("diagnostics = %#v, want code %s with evidence containing %q", result.Diagnostics, code, evidenceContains)
 	return diagnostic.Diagnostic{}
 }

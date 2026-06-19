@@ -5,10 +5,11 @@ import (
 	"sync"
 
 	"github.com/wippyai/go-lua/analysis/check/body"
+	"github.com/wippyai/go-lua/analysis/diagnostic"
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/engine/callboundary"
-	"github.com/wippyai/go-lua/analysis/engine/factapply"
+	"github.com/wippyai/go-lua/analysis/engine/callpayload"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	effectdelta "github.com/wippyai/go-lua/analysis/engine/state/effectdelta"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
@@ -21,23 +22,34 @@ import (
 
 type literalConstraint struct {
 	target  path.Path
-	value   string
+	value   typ.Type
 	negated bool
+	span    diagnostic.Span
 }
 
 type runtimeTypeConstraint struct {
 	target path.Path
 	name   string
+	span   diagnostic.Span
+}
+
+type guardFactOrigin struct {
+	target path.Path
+	span   diagnostic.Span
 }
 
 type guardEnv struct {
-	unreachable bool
-	constraints []literalConstraint
-	typeChecks  []runtimeTypeConstraint
-	present     []path.Path
-	truthy      []path.Path
-	falsy       []path.Path
-	nilPaths    []path.Path
+	unreachable    bool
+	constraints    []literalConstraint
+	typeChecks     []runtimeTypeConstraint
+	present        []path.Path
+	presentOrigins []guardFactOrigin
+	truthy         []path.Path
+	truthyOrigins  []guardFactOrigin
+	falsy          []path.Path
+	falsyOrigins   []guardFactOrigin
+	nilPaths       []path.Path
+	nilOrigins     []guardFactOrigin
 }
 
 // guardEnvironments is a fixpoint over result, so the ~10 diagnostic producers
@@ -67,6 +79,11 @@ func releaseGuardEnvironments(result *body.Result) {
 	guardEnvCacheMu.Lock()
 	delete(guardEnvCache, result)
 	guardEnvCacheMu.Unlock()
+}
+
+func guardEnvReachableAt(envs map[cfg.Point]guardEnv, point cfg.Point) bool {
+	env, ok := envs[point]
+	return !ok || !env.unreachable
 }
 
 func guardEnvironments(result *body.Result) map[cfg.Point]guardEnv {
@@ -128,7 +145,11 @@ func applyGuardEdge(result *body.Result, graph cfg.Graph, from, to cfg.Point, en
 	if !ok {
 		return env
 	}
-	return applyBranchGuard(env, fact.Check, cond)
+	span := ast.SpanOf(fact.Condition)
+	if !span.Valid() {
+		span = ast.SpanOf(fact.Stmt)
+	}
+	return applyBranchGuard(env, fact.Check, cond, span)
 }
 
 func applyGuardNode(result *body.Result, point cfg.Point, env guardEnv) guardEnv {
@@ -193,7 +214,7 @@ func applyCallGuardInvalidation(result *body.Result, point cfg.Point, env guardE
 		sig.OperationalEffects != nil &&
 		!sig.OperationalEffects.IsEmpty()
 	// A known return value can make PostReturnAuthority true; it is not proof that side effects are complete.
-	hasExactSignatureEffects := hasOperationalEffects || (hasSignature && sig.Effect.IsClosed())
+	hasExactSignatureEffects := callOutcomeHasExplicitGuardInvalidation(outcome) || hasOperationalEffects || (hasSignature && sig.Effect.IsClosed())
 	if !hasExactSignatureEffects {
 		return guardEnv{}
 	}
@@ -208,12 +229,18 @@ func applyCallGuardInvalidation(result *body.Result, point cfg.Point, env guardE
 		return env
 	}
 	for _, target := range invalidated {
-		env = env.withoutDescendantFactsOf(target)
+		env = env.withoutFactsForCallInvalidation(target)
 	}
 	return env
 }
 
-func callOutcomeHasGlobalGuardInvalidation(outcome factapply.CallOutcome) bool {
+func callOutcomeHasExplicitGuardInvalidation(outcome callpayload.CallOutcome) bool {
+	return len(outcome.ParamPathInvalidations) != 0 ||
+		len(outcome.NormalReturnFacts.PathInvalidations) != 0 ||
+		callOutcomeHasGlobalGuardInvalidation(outcome)
+}
+
+func callOutcomeHasGlobalGuardInvalidation(outcome callpayload.CallOutcome) bool {
 	for _, delta := range outcome.NormalReturnFacts.EffectDeltas {
 		if delta.Kind == effectdelta.Mutation && !callboundary.IsPathInvalidationEffectSite(delta.Site) {
 			return true
@@ -222,27 +249,22 @@ func callOutcomeHasGlobalGuardInvalidation(outcome factapply.CallOutcome) bool {
 	return false
 }
 
-func callOutcomeGuardInvalidationPaths(result *body.Result, site factflow.CallSite, outcome factapply.CallOutcome) ([]path.Path, bool) {
+func callOutcomeGuardInvalidationPaths(result *body.Result, site factflow.CallSite, outcome callpayload.CallOutcome) ([]path.Path, bool) {
 	paramBindings := callGuardArgumentBindings(result, site)
 	callBindings := callGuardCallBindings(result, site)
 	var out []path.Path
-	appendSubstituted := func(bindings []path.Path, target path.Path) bool {
+	appendSubstituted := func(bindings []path.Path, target path.Path) {
 		substituted, ok := target.Substitute(bindings)
 		if !ok || substituted.IsEmpty() {
-			return false
+			return
 		}
 		out = append(out, substituted)
-		return true
 	}
 	for _, invalidation := range outcome.ParamPathInvalidations {
-		if !appendSubstituted(paramBindings, invalidation.Path) {
-			return nil, false
-		}
+		appendSubstituted(paramBindings, invalidation.Path)
 	}
 	for _, invalidation := range outcome.NormalReturnFacts.PathInvalidations {
-		if !appendSubstituted(callBindings, invalidation.Path) {
-			return nil, false
-		}
+		appendSubstituted(callBindings, invalidation.Path)
 	}
 	return out, true
 }
@@ -252,19 +274,20 @@ func callGuardArgumentBindings(result *body.Result, site factflow.CallSite) []pa
 		return nil
 	}
 	var bindings []path.Path
-	for i, source := range site.ArgumentSources() {
+	site.ForEachArgumentSource(func(i int, source factflow.ValueSource) bool {
 		if source.Kind != factflow.ValueSourceExpression || !source.HasExpr {
-			continue
+			return true
 		}
 		sourcePath, ok := result.ExpressionPathRef(source.ExprRef)
 		if !ok || sourcePath.IsEmpty() {
-			continue
+			return true
 		}
 		for len(bindings) <= i {
 			bindings = append(bindings, path.Path{})
 		}
 		bindings[i] = sourcePath
-	}
+		return true
+	})
 	return bindings
 }
 
@@ -278,16 +301,17 @@ func callGuardCallBindings(result *body.Result, site factflow.CallSite) []path.P
 		bindings = appendPathBinding(bindings, 0, receiverPath)
 		offset = 1
 	}
-	for i, source := range site.ArgumentSources() {
+	site.ForEachArgumentSource(func(i int, source factflow.ValueSource) bool {
 		if source.Kind != factflow.ValueSourceExpression || !source.HasExpr {
-			continue
+			return true
 		}
 		sourcePath, ok := result.ExpressionPathRef(source.ExprRef)
 		if !ok || sourcePath.IsEmpty() {
-			continue
+			return true
 		}
 		bindings = appendPathBinding(bindings, i+offset, sourcePath)
-	}
+		return true
+	})
 	return bindings
 }
 
@@ -302,7 +326,7 @@ func appendPathBinding(bindings []path.Path, index int, value path.Path) []path.
 	return bindings
 }
 
-func applyBranchGuard(env guardEnv, check branchcond.Check, cond bool) guardEnv {
+func applyBranchGuard(env guardEnv, check branchcond.Check, cond bool, span diagnostic.Span) guardEnv {
 	if env.unreachable {
 		return env
 	}
@@ -313,58 +337,66 @@ func applyBranchGuard(env guardEnv, check branchcond.Check, cond bool) guardEnv 
 		return env
 	}
 	if check.Kind == branchcond.CheckTruthy && cond {
-		return env.withTruthy(check.Path)
+		return env.withTruthyAt(check.Path, span)
 	}
 	if check.Kind == branchcond.CheckFalsy && !cond {
-		return env.withTruthy(check.Path)
+		return env.withTruthyAt(check.Path, span)
 	}
 	if check.Kind == branchcond.CheckTruthy && !cond {
-		return env.withFalsy(check.Path)
+		return env.withFalsyAt(check.Path, span)
 	}
 	if check.Kind == branchcond.CheckFalsy && cond {
-		return env.withFalsy(check.Path)
+		return env.withFalsyAt(check.Path, span)
 	}
 	if check.Kind == branchcond.CheckNil && cond {
-		return env.withNil(check.Path)
+		return env.withNilAt(check.Path, span)
 	}
 	if check.Kind == branchcond.CheckNil && !cond {
-		return env.withPresent(check.Path)
+		return env.withPresentAt(check.Path, span)
 	}
 	if check.Kind == branchcond.CheckNotNil && cond {
-		return env.withPresent(check.Path)
+		return env.withPresentAt(check.Path, span)
 	}
 	if check.Kind == branchcond.CheckNotNil && !cond {
-		return env.withNil(check.Path)
+		return env.withNilAt(check.Path, span)
 	}
 	if check.Kind == branchcond.CheckLiteralEqual && cond {
-		return env.with(literalConstraint{target: check.Path, value: check.LiteralString}).withTruthy(check.Path)
+		return env.withLiteralCheck(check, false, span).withTruthyAt(check.Path, span)
 	}
 	if check.Kind == branchcond.CheckLiteralEqual && !cond {
-		return env.with(literalConstraint{target: check.Path, value: check.LiteralString, negated: true})
+		return env.withLiteralCheck(check, true, span)
 	}
 	if check.Kind == branchcond.CheckLiteralNot && cond {
-		return env.with(literalConstraint{target: check.Path, value: check.LiteralString, negated: true})
+		return env.withLiteralCheck(check, true, span)
 	}
 	if check.Kind == branchcond.CheckLiteralNot && !cond {
-		return env.with(literalConstraint{target: check.Path, value: check.LiteralString}).withTruthy(check.Path)
+		return env.withLiteralCheck(check, false, span).withTruthyAt(check.Path, span)
 	}
 	if check.Kind == branchcond.CheckTypeEqual && cond {
-		return env.withType(runtimeTypeConstraint{target: check.Path, name: check.TypeName}).withRuntimeTypePresence(check.Path, check.TypeName)
+		return env.withType(runtimeTypeConstraint{target: check.Path, name: check.TypeName, span: span}).withRuntimeTypePresenceAt(check.Path, check.TypeName, span)
 	}
 	if check.Kind == branchcond.CheckTypeEqual && !cond && check.TypeName == "nil" {
-		return env.withPresent(check.Path)
+		return env.withPresentAt(check.Path, span)
 	}
 	if check.Kind == branchcond.CheckTypeNot && cond && check.TypeName == "nil" {
-		return env.withPresent(check.Path)
+		return env.withPresentAt(check.Path, span)
 	}
 	if check.Kind == branchcond.CheckTypeNot && !cond {
-		return env.withType(runtimeTypeConstraint{target: check.Path, name: check.TypeName}).withRuntimeTypePresence(check.Path, check.TypeName)
+		return env.withType(runtimeTypeConstraint{target: check.Path, name: check.TypeName, span: span}).withRuntimeTypePresenceAt(check.Path, check.TypeName, span)
 	}
 	return env
 }
 
+func (e guardEnv) withLiteralCheck(check branchcond.Check, negated bool, span diagnostic.Span) guardEnv {
+	lit, ok := check.LiteralValue()
+	if !ok {
+		return e
+	}
+	return e.with(literalConstraint{target: check.Path, value: lit, negated: negated, span: span})
+}
+
 func (e guardEnv) with(c literalConstraint) guardEnv {
-	if c.target.IsEmpty() || c.value == "" || e.unreachable {
+	if c.target.IsEmpty() || c.value == nil || e.unreachable {
 		return e
 	}
 	out := e.cloneGuard()
@@ -387,13 +419,17 @@ func (e guardEnv) withType(c runtimeTypeConstraint) guardEnv {
 // nothing else changed.
 func (e guardEnv) cloneGuard() guardEnv {
 	return guardEnv{
-		unreachable: e.unreachable,
-		constraints: append([]literalConstraint(nil), e.constraints...),
-		typeChecks:  append([]runtimeTypeConstraint(nil), e.typeChecks...),
-		present:     copyPaths(e.present),
-		truthy:      copyPaths(e.truthy),
-		falsy:       copyPaths(e.falsy),
-		nilPaths:    copyPaths(e.nilPaths),
+		unreachable:    e.unreachable,
+		constraints:    append([]literalConstraint(nil), e.constraints...),
+		typeChecks:     append([]runtimeTypeConstraint(nil), e.typeChecks...),
+		present:        copyPaths(e.present),
+		presentOrigins: copyGuardFactOrigins(e.presentOrigins),
+		truthy:         copyPaths(e.truthy),
+		truthyOrigins:  copyGuardFactOrigins(e.truthyOrigins),
+		falsy:          copyPaths(e.falsy),
+		falsyOrigins:   copyGuardFactOrigins(e.falsyOrigins),
+		nilPaths:       copyPaths(e.nilPaths),
+		nilOrigins:     copyGuardFactOrigins(e.nilOrigins),
 	}
 }
 
@@ -410,77 +446,82 @@ func upsertByTarget[T any](in []T, c T, targetOf func(T) path.Path) []T {
 	return append(in, c)
 }
 
-// withFacts returns a copy of e carrying the supplied present/truthy/falsy/nil
-// path-fact sets, with constraints and type-checks cloned and the result sorted.
-func (e guardEnv) withFacts(present, truthy, falsy, nilPaths []path.Path) guardEnv {
-	out := guardEnv{
-		constraints: append([]literalConstraint(nil), e.constraints...),
-		typeChecks:  append([]runtimeTypeConstraint(nil), e.typeChecks...),
-		present:     present,
-		truthy:      truthy,
-		falsy:       falsy,
-		nilPaths:    nilPaths,
+func (e guardEnv) withPresent(target path.Path) guardEnv {
+	return e.withPresentAt(target, diagnostic.Span{})
+}
+
+func (e guardEnv) withPresentAt(target path.Path, span diagnostic.Span) guardEnv {
+	if target.IsEmpty() || e.unreachable {
+		return e
 	}
+	out := e.cloneGuard()
+	out.present, out.presentOrigins = appendPathFact(out.present, out.presentOrigins, target, span)
+	out.nilPaths, out.nilOrigins = removePathFact(out.nilPaths, out.nilOrigins, target)
 	sortGuardEnv(out)
 	return out
 }
 
-func (e guardEnv) withPresent(target path.Path) guardEnv {
-	if target.IsEmpty() || e.unreachable {
-		return e
-	}
-	return e.withFacts(
-		appendPathFact(e.present, target),
-		copyPaths(e.truthy),
-		copyPaths(e.falsy),
-		removePathFact(e.nilPaths, target),
-	)
+func (e guardEnv) withTruthy(target path.Path) guardEnv {
+	return e.withTruthyAt(target, diagnostic.Span{})
 }
 
-func (e guardEnv) withTruthy(target path.Path) guardEnv {
+func (e guardEnv) withTruthyAt(target path.Path, span diagnostic.Span) guardEnv {
 	if target.IsEmpty() || e.unreachable {
 		return e
 	}
-	return e.withFacts(
-		appendPathFact(e.present, target),
-		appendPathFact(e.truthy, target),
-		removePathFact(e.falsy, target),
-		removePathFact(e.nilPaths, target),
-	)
+	out := e.cloneGuard()
+	out.present, out.presentOrigins = appendPathFact(out.present, out.presentOrigins, target, span)
+	out.truthy, out.truthyOrigins = appendPathFact(out.truthy, out.truthyOrigins, target, span)
+	out.falsy, out.falsyOrigins = removePathFact(out.falsy, out.falsyOrigins, target)
+	out.nilPaths, out.nilOrigins = removePathFact(out.nilPaths, out.nilOrigins, target)
+	sortGuardEnv(out)
+	return out
 }
 
 func (e guardEnv) withFalsy(target path.Path) guardEnv {
+	return e.withFalsyAt(target, diagnostic.Span{})
+}
+
+func (e guardEnv) withFalsyAt(target path.Path, span diagnostic.Span) guardEnv {
 	if target.IsEmpty() || e.unreachable {
 		return e
 	}
-	return e.withFacts(
-		copyPaths(e.present),
-		removePathFact(e.truthy, target),
-		appendPathFact(e.falsy, target),
-		copyPaths(e.nilPaths),
-	)
+	out := e.cloneGuard()
+	out.truthy, out.truthyOrigins = removePathFact(out.truthy, out.truthyOrigins, target)
+	out.falsy, out.falsyOrigins = appendPathFact(out.falsy, out.falsyOrigins, target, span)
+	sortGuardEnv(out)
+	return out
 }
 
 func (e guardEnv) withNil(target path.Path) guardEnv {
+	return e.withNilAt(target, diagnostic.Span{})
+}
+
+func (e guardEnv) withNilAt(target path.Path, span diagnostic.Span) guardEnv {
 	if target.IsEmpty() || e.unreachable {
 		return e
 	}
-	return e.withFacts(
-		removePathFact(e.present, target),
-		removePathFact(e.truthy, target),
-		appendPathFact(e.falsy, target),
-		appendPathFact(e.nilPaths, target),
-	)
+	out := e.cloneGuard()
+	out.present, out.presentOrigins = removePathFact(out.present, out.presentOrigins, target)
+	out.truthy, out.truthyOrigins = removePathFact(out.truthy, out.truthyOrigins, target)
+	out.falsy, out.falsyOrigins = appendPathFact(out.falsy, out.falsyOrigins, target, span)
+	out.nilPaths, out.nilOrigins = appendPathFact(out.nilPaths, out.nilOrigins, target, span)
+	sortGuardEnv(out)
+	return out
 }
 
 func (e guardEnv) withRuntimeTypePresence(target path.Path, typeName string) guardEnv {
+	return e.withRuntimeTypePresenceAt(target, typeName, diagnostic.Span{})
+}
+
+func (e guardEnv) withRuntimeTypePresenceAt(target path.Path, typeName string, span diagnostic.Span) guardEnv {
 	if typeName == "nil" {
-		return e.withNil(target)
+		return e.withNilAt(target, span)
 	}
 	if typeName != "boolean" {
-		return e.withTruthy(target)
+		return e.withTruthyAt(target, span)
 	}
-	return e.withPresent(target)
+	return e.withPresentAt(target, span)
 }
 
 func (e guardEnv) hasPresent(target path.Path) bool {
@@ -499,6 +540,29 @@ func (e guardEnv) hasNil(target path.Path) bool {
 	return hasPathFact(e.nilPaths, target)
 }
 
+func (e guardEnv) presentOrigin(target path.Path) diagnostic.Span {
+	return guardFactOriginSpan(e.presentOrigins, target)
+}
+
+func (e guardEnv) truthyOrigin(target path.Path) diagnostic.Span {
+	return guardFactOriginSpan(e.truthyOrigins, target)
+}
+
+func (e guardEnv) falsyOrigin(target path.Path) diagnostic.Span {
+	return guardFactOriginSpan(e.falsyOrigins, target)
+}
+
+func (e guardEnv) nilOrigin(target path.Path) diagnostic.Span {
+	return guardFactOriginSpan(e.nilOrigins, target)
+}
+
+func (e guardEnv) presentOrTruthyOrigin(target path.Path) diagnostic.Span {
+	if span := e.presentOrigin(target); span.Valid() {
+		return span
+	}
+	return e.truthyOrigin(target)
+}
+
 func (e guardEnv) withoutDescendantFacts() guardEnv {
 	return e.filterFacts(rootOnlyPath)
 }
@@ -513,6 +577,13 @@ func (e guardEnv) withoutDescendantFactsOf(target path.Path) guardEnv {
 	return e.filterFacts(func(candidate path.Path) bool {
 		return !pathHasStrictPrefix(candidate, target)
 	})
+}
+
+func (e guardEnv) withoutFactsForCallInvalidation(target path.Path) guardEnv {
+	if len(target.Segments) == 0 {
+		return e.withoutDescendantFactsOf(target)
+	}
+	return e.withoutFactsForPath(target)
 }
 
 func (e guardEnv) withoutFactsForPathAssignment(target path.Path) guardEnv {
@@ -569,21 +640,25 @@ func (e guardEnv) filterFacts(keep func(path.Path) bool) guardEnv {
 			out.present = append(out.present, p.Clone())
 		}
 	}
+	out.presentOrigins = filterGuardFactOrigins(e.presentOrigins, keep)
 	for _, p := range e.truthy {
 		if keep(p) {
 			out.truthy = append(out.truthy, p.Clone())
 		}
 	}
+	out.truthyOrigins = filterGuardFactOrigins(e.truthyOrigins, keep)
 	for _, p := range e.falsy {
 		if keep(p) {
 			out.falsy = append(out.falsy, p.Clone())
 		}
 	}
+	out.falsyOrigins = filterGuardFactOrigins(e.falsyOrigins, keep)
 	for _, p := range e.nilPaths {
 		if keep(p) {
 			out.nilPaths = append(out.nilPaths, p.Clone())
 		}
 	}
+	out.nilOrigins = filterGuardFactOrigins(e.nilOrigins, keep)
 	sortGuardEnv(out)
 	return out
 }
@@ -602,8 +677,12 @@ func joinGuardEnvs(a, b guardEnv) guardEnv {
 	var out guardEnv
 	for _, left := range a.constraints {
 		for _, right := range b.constraints {
-			if left.value == right.value && left.negated == right.negated && left.target.Equal(right.target) {
-				out.constraints = append(out.constraints, left)
+			if typ.TypeEquals(left.value, right.value) && left.negated == right.negated && left.target.Equal(right.target) {
+				joined := left
+				if !spanEqual(left.span, right.span) {
+					joined.span = diagnostic.Span{}
+				}
+				out.constraints = append(out.constraints, joined)
 				break
 			}
 		}
@@ -611,22 +690,19 @@ func joinGuardEnvs(a, b guardEnv) guardEnv {
 	for _, left := range a.typeChecks {
 		for _, right := range b.typeChecks {
 			if left.name == right.name && left.target.Equal(right.target) {
-				out.typeChecks = append(out.typeChecks, left)
+				joined := left
+				if !spanEqual(left.span, right.span) {
+					joined.span = diagnostic.Span{}
+				}
+				out.typeChecks = append(out.typeChecks, joined)
 				break
 			}
 		}
 	}
-	for _, left := range a.present {
-		for _, right := range b.present {
-			if left.Equal(right) {
-				out.present = append(out.present, left)
-				break
-			}
-		}
-	}
-	out.truthy = joinPathFacts(a.truthy, b.truthy)
-	out.falsy = joinPathFacts(a.falsy, b.falsy)
-	out.nilPaths = joinPathFacts(a.nilPaths, b.nilPaths)
+	out.present, out.presentOrigins = joinPathFacts(a.present, b.present, a.presentOrigins, b.presentOrigins)
+	out.truthy, out.truthyOrigins = joinPathFacts(a.truthy, b.truthy, a.truthyOrigins, b.truthyOrigins)
+	out.falsy, out.falsyOrigins = joinPathFacts(a.falsy, b.falsy, a.falsyOrigins, b.falsyOrigins)
+	out.nilPaths, out.nilOrigins = joinPathFacts(a.nilPaths, b.nilPaths, a.nilOrigins, b.nilOrigins)
 	sortGuardEnv(out)
 	return out
 }
@@ -640,18 +716,22 @@ func guardEnvEqual(a, b guardEnv) bool {
 	}
 	if len(a.constraints) != len(b.constraints) || len(a.typeChecks) != len(b.typeChecks) ||
 		len(a.present) != len(b.present) || len(a.truthy) != len(b.truthy) ||
-		len(a.falsy) != len(b.falsy) || len(a.nilPaths) != len(b.nilPaths) {
+		len(a.falsy) != len(b.falsy) || len(a.nilPaths) != len(b.nilPaths) ||
+		len(a.presentOrigins) != len(b.presentOrigins) || len(a.truthyOrigins) != len(b.truthyOrigins) ||
+		len(a.falsyOrigins) != len(b.falsyOrigins) || len(a.nilOrigins) != len(b.nilOrigins) {
 		return false
 	}
 	sortGuardEnv(a)
 	sortGuardEnv(b)
 	for i := range a.constraints {
-		if a.constraints[i].value != b.constraints[i].value || a.constraints[i].negated != b.constraints[i].negated || !a.constraints[i].target.Equal(b.constraints[i].target) {
+		if !typ.TypeEquals(a.constraints[i].value, b.constraints[i].value) || a.constraints[i].negated != b.constraints[i].negated ||
+			!a.constraints[i].target.Equal(b.constraints[i].target) || !spanEqual(a.constraints[i].span, b.constraints[i].span) {
 			return false
 		}
 	}
 	for i := range a.typeChecks {
-		if a.typeChecks[i].name != b.typeChecks[i].name || !a.typeChecks[i].target.Equal(b.typeChecks[i].target) {
+		if a.typeChecks[i].name != b.typeChecks[i].name || !a.typeChecks[i].target.Equal(b.typeChecks[i].target) ||
+			!spanEqual(a.typeChecks[i].span, b.typeChecks[i].span) {
 			return false
 		}
 	}
@@ -675,7 +755,10 @@ func guardEnvEqual(a, b guardEnv) bool {
 			return false
 		}
 	}
-	return true
+	return guardFactOriginsEqual(a.presentOrigins, b.presentOrigins) &&
+		guardFactOriginsEqual(a.truthyOrigins, b.truthyOrigins) &&
+		guardFactOriginsEqual(a.falsyOrigins, b.falsyOrigins) &&
+		guardFactOriginsEqual(a.nilOrigins, b.nilOrigins)
 }
 
 func sortGuardEnv(e guardEnv) {
@@ -693,8 +776,11 @@ func sortGuardEnv(e guardEnv) {
 		if leftSuffix != rightSuffix {
 			return leftSuffix < rightSuffix
 		}
-		if left.value != right.value {
-			return left.value < right.value
+		if left.value.Hash() != right.value.Hash() {
+			return left.value.Hash() < right.value.Hash()
+		}
+		if left.value.String() != right.value.String() {
+			return left.value.String() < right.value.String()
 		}
 		return !left.negated && right.negated
 	})
@@ -717,15 +803,19 @@ func sortGuardEnv(e guardEnv) {
 	sort.Slice(e.present, func(i, j int) bool {
 		return pathLess(e.present[i], e.present[j])
 	})
+	sortGuardFactOrigins(e.presentOrigins)
 	sort.Slice(e.truthy, func(i, j int) bool {
 		return pathLess(e.truthy[i], e.truthy[j])
 	})
+	sortGuardFactOrigins(e.truthyOrigins)
 	sort.Slice(e.falsy, func(i, j int) bool {
 		return pathLess(e.falsy[i], e.falsy[j])
 	})
+	sortGuardFactOrigins(e.falsyOrigins)
 	sort.Slice(e.nilPaths, func(i, j int) bool {
 		return pathLess(e.nilPaths[i], e.nilPaths[j])
 	})
+	sortGuardFactOrigins(e.nilOrigins)
 }
 
 func pathLess(left, right path.Path) bool {
@@ -735,24 +825,24 @@ func pathLess(left, right path.Path) bool {
 // Paths stored in a guardEnv are immutable values (derivations always allocate
 // fresh segment arrays), so these helpers share the path values and only
 // duplicate the slice, which sortGuardEnv then reorders in place.
-func appendPathFact(in []path.Path, target path.Path) []path.Path {
+func appendPathFact(in []path.Path, origins []guardFactOrigin, target path.Path, span diagnostic.Span) ([]path.Path, []guardFactOrigin) {
 	out := copyPaths(in)
 	for _, existing := range out {
 		if existing.Equal(target) {
-			return out
+			return out, upsertGuardFactOrigin(origins, target, span)
 		}
 	}
-	return append(out, target)
+	return append(out, target), upsertGuardFactOrigin(origins, target, span)
 }
 
-func removePathFact(in []path.Path, target path.Path) []path.Path {
+func removePathFact(in []path.Path, origins []guardFactOrigin, target path.Path) ([]path.Path, []guardFactOrigin) {
 	var out []path.Path
 	for _, existing := range in {
 		if !existing.Equal(target) {
 			out = append(out, existing)
 		}
 	}
-	return out
+	return out, removeGuardFactOrigin(origins, target)
 }
 
 func hasPathFact(in []path.Path, target path.Path) bool {
@@ -767,7 +857,7 @@ func hasPathFact(in []path.Path, target path.Path) bool {
 	return false
 }
 
-func joinPathFacts(a, b []path.Path) []path.Path {
+func joinPathFacts(a, b []path.Path, aOrigins, bOrigins []guardFactOrigin) ([]path.Path, []guardFactOrigin) {
 	var out []path.Path
 	for _, left := range a {
 		for _, right := range b {
@@ -777,7 +867,112 @@ func joinPathFacts(a, b []path.Path) []path.Path {
 			}
 		}
 	}
+	return out, joinGuardFactOrigins(aOrigins, bOrigins)
+}
+
+func copyGuardFactOrigins(in []guardFactOrigin) []guardFactOrigin {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]guardFactOrigin, len(in))
+	copy(out, in)
 	return out
+}
+
+func upsertGuardFactOrigin(in []guardFactOrigin, target path.Path, span diagnostic.Span) []guardFactOrigin {
+	out := copyGuardFactOrigins(in)
+	if !span.Valid() {
+		return removeGuardFactOrigin(out, target)
+	}
+	for i, origin := range out {
+		if origin.target.Equal(target) {
+			out[i] = guardFactOrigin{target: target.Clone(), span: span}
+			return out
+		}
+	}
+	return append(out, guardFactOrigin{target: target.Clone(), span: span})
+}
+
+func removeGuardFactOrigin(in []guardFactOrigin, target path.Path) []guardFactOrigin {
+	var out []guardFactOrigin
+	for _, origin := range in {
+		if !origin.target.Equal(target) {
+			out = append(out, origin)
+		}
+	}
+	return out
+}
+
+func filterGuardFactOrigins(in []guardFactOrigin, keep func(path.Path) bool) []guardFactOrigin {
+	var out []guardFactOrigin
+	for _, origin := range in {
+		if keep(origin.target) {
+			out = append(out, origin)
+		}
+	}
+	return out
+}
+
+func joinGuardFactOrigins(a, b []guardFactOrigin) []guardFactOrigin {
+	var out []guardFactOrigin
+	for _, left := range a {
+		if !left.span.Valid() {
+			continue
+		}
+		for _, right := range b {
+			if left.target.Equal(right.target) && spanEqual(left.span, right.span) {
+				out = append(out, left)
+				break
+			}
+		}
+	}
+	return out
+}
+
+func guardFactOriginSpan(in []guardFactOrigin, target path.Path) diagnostic.Span {
+	for _, origin := range in {
+		if origin.target.Equal(target) {
+			return origin.span
+		}
+	}
+	return diagnostic.Span{}
+}
+
+func guardFactOriginsEqual(a, b []guardFactOrigin) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if !a[i].target.Equal(b[i].target) || !spanEqual(a[i].span, b[i].span) {
+			return false
+		}
+	}
+	return true
+}
+
+func sortGuardFactOrigins(in []guardFactOrigin) {
+	sort.Slice(in, func(i, j int) bool {
+		if !in[i].target.Equal(in[j].target) {
+			return pathLess(in[i].target, in[j].target)
+		}
+		if in[i].span.StartLine != in[j].span.StartLine {
+			return in[i].span.StartLine < in[j].span.StartLine
+		}
+		if in[i].span.StartCol != in[j].span.StartCol {
+			return in[i].span.StartCol < in[j].span.StartCol
+		}
+		if in[i].span.EndLine != in[j].span.EndLine {
+			return in[i].span.EndLine < in[j].span.EndLine
+		}
+		return in[i].span.EndCol < in[j].span.EndCol
+	})
+}
+
+func spanEqual(left, right diagnostic.Span) bool {
+	return left.StartLine == right.StartLine &&
+		left.StartCol == right.StartCol &&
+		left.EndLine == right.EndLine &&
+		left.EndCol == right.EndCol
 }
 
 func pathHasStrictPrefix(candidate, prefix path.Path) bool {

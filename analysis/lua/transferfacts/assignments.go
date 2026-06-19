@@ -172,13 +172,17 @@ func (l *lowerer) dynamicIndexWrite(fact semantics.OrdinaryAssignmentFact) (fact
 	keySource, readKey := l.dynamicIndexKeySource(fact.Target)
 	source := l.valueSource(fact.Source)
 	readValue := fact.Source.Kind != sourceprovenance.SourceUnknown
-	return factflow.NewDynamicIndexWrite(
+	write := factflow.NewDynamicIndexWrite(
 		tablePath,
 		keySource,
 		source,
 		dynamicindex.AdmissionUnknown,
 		dynamicIndexReadbackIntent(readKey, readValue),
-	), true
+	)
+	if keyPath, ok := l.dynamicIndexKeyPath(fact.Target); ok {
+		write = write.WithKeyPath(keyPath)
+	}
+	return write, true
 }
 
 func (l *lowerer) directDynamicIndexWriteTablePath(target ast.Expr) (path.Path, bool) {
@@ -220,6 +224,18 @@ func (l *lowerer) dynamicIndexKeySource(target ast.Expr) (factflow.ValueSource, 
 		return factflow.NewUnknownValueSource(factflow.NoValueSourceIndex), false
 	}
 	return l.valueSource(source), true
+}
+
+func (l *lowerer) dynamicIndexKeyPath(target ast.Expr) (path.Path, bool) {
+	attr, ok := target.(*ast.AttrGetExpr)
+	if !ok || attr.Key == nil {
+		return path.Path{}, false
+	}
+	key := attr.Key
+	if inner, ok := sourceprovenance.ProofInner(key); ok {
+		key = inner
+	}
+	return pathexpr.Resolve(key, l.bindings)
 }
 
 func dynamicIndexReadbackIntent(readKey bool, readValue bool) factflow.DynamicIndexReadbackIntent {

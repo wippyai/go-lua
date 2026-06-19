@@ -292,6 +292,34 @@ func TestIndexedMemberCallUsesExactStaticIntMembers(t *testing.T) {
 	}
 }
 
+func TestIndexedMemberCallableBindsReceiverSelf(t *testing.T) {
+	method := typ.Func().
+		Param("receiver", typ.Self).
+		Param("payload", typ.String).
+		Returns(typ.Self).
+		Build()
+	receiver := typetable.NewRecord().
+		StaticIntIndex(1, method).
+		Build()
+
+	got, status, ok := IndexedMemberCallable(receiver, typ.LiteralInt(1))
+	if status != MemberCallOK || !ok {
+		t.Fatalf("IndexedMemberCallable(receiver, [1]) = status %v ok %v, want ok", status, ok)
+	}
+	if len(got.Params) != 2 {
+		t.Fatalf("params = %#v, want receiver and payload", got.Params)
+	}
+	if got.Params[0].Type != receiver {
+		t.Fatalf("receiver param = %v, want concrete receiver", got.Params[0].Type)
+	}
+	if !typ.TypeEquals(got.Params[1].Type, typ.String) {
+		t.Fatalf("payload param = %v, want string", got.Params[1].Type)
+	}
+	if len(got.Returns) != 1 || got.Returns[0] != receiver {
+		t.Fatalf("returns = %#v, want concrete receiver", got.Returns)
+	}
+}
+
 func TestMemberCallAmbientChannelReceive(t *testing.T) {
 	channel := typ.Instantiate(ambient.ChannelGeneric(), typ.String)
 	member, status := MemberCall(channel, "receive")
@@ -322,6 +350,26 @@ func TestMemberCallAmbientChannelCaseReceive(t *testing.T) {
 	}
 	if len(fn.Params) != 1 || !typ.TypeEquals(fn.Params[0].Type, typ.Instantiate(ambient.ChannelGeneric(), typ.Number)) {
 		t.Fatalf("case_receive params = %#v, want self Channel<number>", fn.Params)
+	}
+}
+
+func TestMemberCallAmbientChannelSend(t *testing.T) {
+	channel := typ.Instantiate(ambient.ChannelGeneric(), typ.String)
+	member, status := MemberCall(channel, "send")
+	if status != MemberCallOK {
+		t.Fatalf("MemberCall(Channel<string>, send) status = %v, want ok", status)
+	}
+	fn, ok := member.(*typ.Function)
+	if !ok {
+		t.Fatalf("send member = %T %[1]v, want function", member)
+	}
+	if len(fn.Params) != 2 ||
+		!typ.TypeEquals(fn.Params[0].Type, channel) ||
+		!typ.TypeEquals(fn.Params[1].Type, typ.String) {
+		t.Fatalf("send params = %#v, want self Channel<string>, string payload", fn.Params)
+	}
+	if len(fn.Returns) != 1 || !typ.TypeEquals(fn.Returns[0], typ.Boolean) {
+		t.Fatalf("send returns = %#v, want boolean", fn.Returns)
 	}
 }
 

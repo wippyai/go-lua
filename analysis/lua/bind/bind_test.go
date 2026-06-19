@@ -1260,3 +1260,54 @@ func TestExpressionTraversal(t *testing.T) {
 		}
 	}
 }
+
+func TestTypeOfTypeExprBindsEmbeddedExpressionWithoutRuntimeRead(t *testing.T) {
+	valueDecl := localAssign([]string{"value"}, &ast.TableExpr{})
+	valueUse := ident("value")
+	alias := &ast.TypeDefStmt{
+		Name: "Snapshot",
+		Type: &ast.TypeOfExpr{Expr: &ast.AttrGetExpr{
+			Object:    valueUse,
+			Key:       &ast.StringExpr{Value: "id"},
+			KeySyntax: ast.AttrKeyIndex,
+		}},
+	}
+
+	r := BindChunk([]ast.Stmt{valueDecl, alias}, Options{})
+	valueID := mustLocalAt(t, r, valueDecl, 0)
+	if got := mustSymbol(t, r, valueUse); got != valueID {
+		t.Fatalf("typeof(value.id) resolved value to %d, want local %d", got, valueID)
+	}
+	if r.HasRead(valueID) {
+		t.Fatalf("typeof(value.id) recorded a runtime read for value symbol %d", valueID)
+	}
+}
+
+func TestTypeOfInFunctionSignatureDoesNotCreateRuntimeCapture(t *testing.T) {
+	valueDecl := localAssign([]string{"value"}, &ast.TableExpr{})
+	valueUse := ident("value")
+	inner := &ast.FunctionExpr{
+		ParList: &ast.ParList{
+			Names: []string{"input"},
+			Types: []ast.TypeExpr{&ast.TypeOfExpr{Expr: valueUse}},
+		},
+	}
+	innerDecl := localAssign([]string{"inner"}, inner)
+	outer := function(nil,
+		valueDecl,
+		innerDecl,
+		ret(ident("inner")),
+	)
+
+	r := BindFunction(outer, Options{})
+	valueID := mustLocalAt(t, r, valueDecl, 0)
+	if got := mustSymbol(t, r, valueUse); got != valueID {
+		t.Fatalf("typeof(value) in function signature resolved to %d, want outer local %d", got, valueID)
+	}
+	if r.HasRead(valueID) {
+		t.Fatalf("typeof(value) in function signature recorded a runtime read for value symbol %d", valueID)
+	}
+	if captures := r.DirectCaptures(inner); len(captures) != 0 {
+		t.Fatalf("DirectCaptures(inner) = %#v, want no runtime capture from type query", captures)
+	}
+}

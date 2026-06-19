@@ -2,6 +2,7 @@ package effectlowering
 
 import (
 	"github.com/wippyai/go-lua/analysis/domain/effect"
+	"github.com/wippyai/go-lua/analysis/domain/effect/lifecycle"
 	"github.com/wippyai/go-lua/analysis/domain/effect/mutation"
 	"github.com/wippyai/go-lua/analysis/domain/effect/ownership"
 	"github.com/wippyai/go-lua/analysis/domain/effect/postcondition"
@@ -10,35 +11,57 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/engine/callboundary"
-	factapply "github.com/wippyai/go-lua/analysis/engine/factapply"
+	"github.com/wippyai/go-lua/analysis/engine/callpayload"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/module/signature"
 )
 
-func signatureParamPathInvalidations(sig signature.Function, site factflow.CallSite) []factapply.CallParamPathInvalidation {
+type signatureArgumentReader struct {
+	site factflow.CallSiteView
+}
+
+func signatureArgumentsFromView(site factflow.CallSiteView) signatureArgumentReader {
+	return signatureArgumentReader{site: site}
+}
+
+func (r signatureArgumentReader) ArgumentSourceCount() int {
+	return r.site.ArgumentSourceCount()
+}
+
+func (r signatureArgumentReader) ArgumentSourceAt(index int) (factflow.ValueSource, bool) {
+	return r.site.ArgumentSourceAt(index)
+}
+
+func (r signatureArgumentReader) ForEachArgumentSource(fn func(index int, source factflow.ValueSource) bool) {
+	r.site.ForEachArgumentSource(fn)
+}
+
+func signatureParamPathInvalidationsForReader(sig signature.Function, args signatureArgumentReader) []callpayload.CallParamPathInvalidation {
 	targets := activePathInvalidationTargets(sig)
 	if len(targets) == 0 {
 		return nil
 	}
-	args := site.ArgumentSources()
-	var out []factapply.CallParamPathInvalidation
+	var out []callpayload.CallParamPathInvalidation
+	seen := make(map[int]struct{}, len(targets))
 	for _, target := range targets {
-		argIndex, ok := effect.ResolveParamIndex(target, len(args))
-		if !ok || !callArgumentSourceCanBindPath(args[argIndex]) {
+		argIndex, ok := effect.ResolveParamIndex(target, args.ArgumentSourceCount())
+		source, sourceOK := args.ArgumentSourceAt(argIndex)
+		if !ok || !sourceOK || !callArgumentSourceCanBindPath(source) {
 			continue
 		}
-		if len(out) != 0 {
+		if _, ok := seen[argIndex]; ok {
 			continue
 		}
-		out = append(out, factapply.CallParamPathInvalidation{
+		seen[argIndex] = struct{}{}
+		out = append(out, callpayload.CallParamPathInvalidation{
 			Path: pathdom.NewPlaceholder(argIndex),
 		})
 	}
 	return out
 }
 
-func signatureNormalReturnPathInvalidations(in []factapply.CallParamPathInvalidation) []callboundary.PathInvalidationFact {
+func signatureNormalReturnPathInvalidations(in []callpayload.CallParamPathInvalidation) []callboundary.PathInvalidationFact {
 	if len(in) == 0 {
 		return nil
 	}
@@ -49,22 +72,22 @@ func signatureNormalReturnPathInvalidations(in []factapply.CallParamPathInvalida
 	return out
 }
 
-func signatureParamLengthFloors(sig signature.Function, site factflow.CallSite) []factapply.CallParamLengthFloor {
+func signatureParamLengthFloorsForReader(sig signature.Function, args signatureArgumentReader) []callpayload.CallParamLengthFloor {
 	if len(sig.Effect.Labels) == 0 {
 		return nil
 	}
-	args := site.ArgumentSources()
-	var out []factapply.CallParamLengthFloor
+	var out []callpayload.CallParamLengthFloor
 	for _, label := range sig.Effect.Labels {
 		target, delta, ok := mutation.PositiveLengthFloor(label)
 		if !ok {
 			continue
 		}
-		argIndex, ok := effect.ResolveParamIndex(target, len(args))
-		if !ok || !callArgumentSourceCanBindPath(args[argIndex]) {
+		argIndex, ok := effect.ResolveParamIndex(target, args.ArgumentSourceCount())
+		source, sourceOK := args.ArgumentSourceAt(argIndex)
+		if !ok || !sourceOK || !callArgumentSourceCanBindPath(source) {
 			continue
 		}
-		out = append(out, factapply.CallParamLengthFloor{
+		out = append(out, callpayload.CallParamLengthFloor{
 			Path:  pathdom.NewPlaceholder(argIndex),
 			Floor: int64(delta),
 		})
@@ -87,23 +110,19 @@ func activePathInvalidationTargets(sig signature.Function) []effect.ParamRef {
 			if normalized.Into.Index >= 0 {
 				out = append(out, normalized.Into)
 			}
-		case *ownership.Store:
-			if normalized != nil && normalized.Into.Index >= 0 {
-				out = append(out, normalized.Into)
-			}
 		}
 	}
 	return out
 }
 
-func signatureEscapeEvents(sig signature.Function, site factflow.CallSite) []callboundary.EscapeEventFact {
+func signatureEscapeEventsForReader(sig signature.Function, args signatureArgumentReader) []callboundary.EscapeEventFact {
 	if len(sig.Effect.Labels) == 0 {
 		return nil
 	}
-	args := site.ArgumentSources()
 	out := make([]callboundary.EscapeEventFact, 0, len(sig.Effect.Labels))
 	appendArg := func(index int, kind callboundary.EscapeEventKind) {
-		if index < 0 || index >= len(args) || !callArgumentSourceCanBindPath(args[index]) {
+		source, ok := args.ArgumentSourceAt(index)
+		if !ok || !callArgumentSourceCanBindPath(source) {
 			return
 		}
 		out = append(out, callboundary.EscapeEventFact{
@@ -113,7 +132,7 @@ func signatureEscapeEvents(sig signature.Function, site factflow.CallSite) []cal
 		})
 	}
 	appendParam := func(ref effect.ParamRef, kind callboundary.EscapeEventKind) {
-		index, ok := effect.ResolveParamIndex(ref, len(args))
+		index, ok := effect.ResolveParamIndex(ref, args.ArgumentSourceCount())
 		if !ok {
 			return
 		}
@@ -123,82 +142,42 @@ func signatureEscapeEvents(sig signature.Function, site factflow.CallSite) []cal
 		switch normalized := effect.NormalizeLabel(label).(type) {
 		case ownership.Borrow:
 			appendParam(normalized.Param, callboundary.EscapeEventBorrow)
-		case *ownership.Borrow:
-			if normalized != nil {
-				appendParam(normalized.Param, callboundary.EscapeEventBorrow)
-			}
 		case ownership.BorrowAll:
-			for i := range args {
+			for i := 0; i < args.ArgumentSourceCount(); i++ {
 				appendArg(i, callboundary.EscapeEventBorrow)
-			}
-		case *ownership.BorrowAll:
-			if normalized != nil {
-				for i := range args {
-					appendArg(i, callboundary.EscapeEventBorrow)
-				}
 			}
 		case ownership.Retain:
 			appendParam(normalized.Param, callboundary.EscapeEventRetain)
-		case *ownership.Retain:
-			if normalized != nil {
-				appendParam(normalized.Param, callboundary.EscapeEventRetain)
-			}
 		case ownership.Send:
-			start, ok := sendStartIndex(normalized.FromParam, len(args))
+			start, ok := effect.ResolveParamIndex(effect.ParamRef{Index: normalized.FromParam}, args.ArgumentSourceCount())
 			if !ok {
 				continue
 			}
-			for i := start; i < len(args); i++ {
+			for i := start; i < args.ArgumentSourceCount(); i++ {
 				appendArg(i, callboundary.EscapeEventSend)
 			}
 		case ownership.SendParam:
 			appendParam(normalized.Param, callboundary.EscapeEventSend)
-		case *ownership.Send:
-			if normalized != nil {
-				start, ok := sendStartIndex(normalized.FromParam, len(args))
-				if !ok {
-					continue
-				}
-				for i := start; i < len(args); i++ {
-					appendArg(i, callboundary.EscapeEventSend)
-				}
-			}
-		case *ownership.SendParam:
-			if normalized != nil {
-				appendParam(normalized.Param, callboundary.EscapeEventSend)
-			}
 		case ownership.Export:
 			appendParam(normalized.Param, callboundary.EscapeEventExport)
-		case *ownership.Export:
-			if normalized != nil {
-				appendParam(normalized.Param, callboundary.EscapeEventExport)
-			}
 		case ownership.Opaque:
 			appendParam(normalized.Param, callboundary.EscapeEventOpaque)
-		case *ownership.Opaque:
-			if normalized != nil {
-				appendParam(normalized.Param, callboundary.EscapeEventOpaque)
-			}
 		case ownership.Store:
 			appendParam(normalized.Param, callboundary.EscapeEventStore)
-		case *ownership.Store:
-			if normalized != nil {
-				appendParam(normalized.Param, callboundary.EscapeEventStore)
-			}
 		}
 	}
 	return out
 }
 
-func signatureFrozenTables(sig signature.Function, site factflow.CallSite) []callboundary.FrozenTableFact {
+func signatureFrozenTablesForReader(sig signature.Function, args signatureArgumentReader) []callboundary.FrozenTableFact {
 	if len(sig.Effect.Labels) == 0 {
 		return nil
 	}
-	args := site.ArgumentSources()
 	out := make([]callboundary.FrozenTableFact, 0, len(sig.Effect.Labels))
 	appendParam := func(ref effect.ParamRef) {
-		index, ok := effect.ResolveParamIndex(ref, len(args))
-		if !ok || !callArgumentSourceCanBindPath(args[index]) {
+		index, ok := effect.ResolveParamIndex(ref, args.ArgumentSourceCount())
+		source, sourceOK := args.ArgumentSourceAt(index)
+		if !ok || !sourceOK || !callArgumentSourceCanBindPath(source) {
 			return
 		}
 		out = append(out, callboundary.FrozenTableFact{
@@ -209,28 +188,28 @@ func signatureFrozenTables(sig signature.Function, site factflow.CallSite) []cal
 		switch normalized := effect.NormalizeLabel(label).(type) {
 		case ownership.Freeze:
 			appendParam(normalized.Param)
-		case *ownership.Freeze:
-			if normalized != nil {
-				appendParam(normalized.Param)
-			}
 		}
 	}
 	return out
 }
 
-func signatureStoreRelations(sig signature.Function, site factflow.CallSite) []callboundary.StoreRelationFact {
+func signatureStoreRelationsForReader(sig signature.Function, args signatureArgumentReader) []callboundary.StoreRelationFact {
 	if len(sig.Effect.Labels) == 0 {
 		return nil
 	}
-	args := site.ArgumentSources()
 	out := make([]callboundary.StoreRelationFact, 0, len(sig.Effect.Labels))
 	appendStore := func(sourceRef, intoRef effect.ParamRef) {
-		source, ok := effect.ResolveParamIndex(sourceRef, len(args))
-		if !ok || !callArgumentSourceCanBindPath(args[source]) {
+		if intoRef.Index < 0 {
 			return
 		}
-		into, ok := effect.ResolveParamIndex(intoRef, len(args))
-		if !ok || !callArgumentSourceCanBindPath(args[into]) {
+		source, ok := effect.ResolveParamIndex(sourceRef, args.ArgumentSourceCount())
+		sourceValue, sourceOK := args.ArgumentSourceAt(source)
+		if !ok || !sourceOK || !callArgumentSourceCanBindPath(sourceValue) {
+			return
+		}
+		into, ok := effect.ResolveParamIndex(intoRef, args.ArgumentSourceCount())
+		intoValue, intoOK := args.ArgumentSourceAt(into)
+		if !ok || !intoOK || !callArgumentSourceCanBindPath(intoValue) {
 			return
 		}
 		out = append(out, callboundary.StoreRelationFact{
@@ -242,50 +221,72 @@ func signatureStoreRelations(sig signature.Function, site factflow.CallSite) []c
 		switch normalized := effect.NormalizeLabel(label).(type) {
 		case ownership.Store:
 			appendStore(normalized.Param, normalized.Into)
-		case *ownership.Store:
-			if normalized != nil {
-				appendStore(normalized.Param, normalized.Into)
-			}
 		}
 	}
 	return out
 }
 
-func sendStartIndex(fromParam, argCount int) (int, bool) {
-	if argCount <= 0 {
-		return 0, false
+func signatureLifecycleFactsForReader(sig signature.Function, args signatureArgumentReader) []callboundary.LifecycleFact {
+	if len(sig.Effect.Labels) == 0 {
+		return nil
 	}
-	start := fromParam
-	if start < 0 {
-		start = argCount + start
+	out := make([]callboundary.LifecycleFact, 0, len(sig.Effect.Labels))
+	appendFact := func(ref effect.ParamRef, fact callboundary.LifecycleFact) {
+		index, ok := effect.ResolveParamIndex(ref, args.ArgumentSourceCount())
+		source, sourceOK := args.ArgumentSourceAt(index)
+		if !ok || !sourceOK || !callArgumentSourceCanBindPath(source) {
+			return
+		}
+		fact.Target = pathdom.NewPlaceholder(index)
+		out = append(out, fact)
 	}
-	if start < 0 || start >= argCount {
-		return 0, false
+	for _, label := range sig.Effect.Labels {
+		switch normalized := effect.NormalizeLabel(label).(type) {
+		case lifecycle.Acquire:
+			appendFact(normalized.Target, callboundary.LifecycleFact{
+				Kind:       callboundary.LifecycleAcquire,
+				Protocol:   normalized.Protocol,
+				To:         normalized.State,
+				Obligation: normalized.Obligation,
+			})
+		case lifecycle.Transition:
+			appendFact(normalized.Target, callboundary.LifecycleFact{
+				Kind:     callboundary.LifecycleTransition,
+				Protocol: normalized.Protocol,
+				From:     normalized.From,
+				To:       normalized.To,
+			})
+		case lifecycle.Escape:
+			appendFact(normalized.Target, callboundary.LifecycleFact{
+				Kind:     callboundary.LifecycleEscape,
+				Protocol: normalized.Protocol,
+			})
+		}
 	}
-	return start, true
+	return out
 }
 
-func signatureParamPathRefinements(
+func signatureParamPathRefinementsForReader(
 	ctx transfer.NodeContext,
 	sig signature.Function,
-	site factflow.CallSite,
-) []factapply.CallParamPathRefinement {
+	args signatureArgumentReader,
+) []callpayload.CallParamPathRefinement {
 	labels := activeNormalReturnRefinementLabels(sig)
 	if len(labels) == 0 {
 		return nil
 	}
-	args := site.ArgumentSources()
-	out := make([]factapply.CallParamPathRefinement, 0, len(labels))
+	out := make([]callpayload.CallParamPathRefinement, 0, len(labels))
 	for _, label := range labels {
-		argIndex, ok := effect.ResolveParamIndex(label.Target, len(args))
-		if !ok || !callArgumentSourceCanBindPath(args[argIndex]) {
+		argIndex, ok := effect.ResolveParamIndex(label.Target, args.ArgumentSourceCount())
+		source, sourceOK := args.ArgumentSourceAt(argIndex)
+		if !ok || !sourceOK || !callArgumentSourceCanBindPath(source) {
 			continue
 		}
 		value, ok := signaturePostconditionValue(ctx, label.Refinement)
 		if !ok {
 			continue
 		}
-		out = append(out, factapply.CallParamPathRefinement{
+		out = append(out, callpayload.CallParamPathRefinement{
 			Path:  pathdom.NewPlaceholder(argIndex),
 			Value: value,
 		})
@@ -301,19 +302,15 @@ func activeNormalReturnRefinementLabels(sig signature.Function) []postcondition.
 	return activeReturnLabels[postcondition.NormalReturnRefinement](sig)
 }
 
-// activeReturnLabels collects every effect label of sig that normalizes to a T
-// (or a non-nil *T), dereferencing pointers.
+// activeReturnLabels collects every effect label of sig that normalizes to T.
 func activeReturnLabels[T any](sig signature.Function) []T {
 	if len(sig.Effect.Labels) == 0 {
 		return nil
 	}
 	out := make([]T, 0, len(sig.Effect.Labels))
 	for _, label := range sig.Effect.Labels {
-		normalized := any(effect.NormalizeLabel(label))
-		if v, ok := normalized.(T); ok {
+		if v, ok := any(effect.NormalizeLabel(label)).(T); ok {
 			out = append(out, v)
-		} else if p, ok := normalized.(*T); ok && p != nil {
-			out = append(out, *p)
 		}
 	}
 	return out
@@ -340,24 +337,24 @@ func signaturePostconditionValue(ctx transfer.NodeContext, refinement postcondit
 	return product.Value{}, false
 }
 
-func signatureReturnPresenceRelations(sig signature.Function) []factapply.CallReturnPresenceRelation {
+func signatureReturnPresenceRelations(sig signature.Function) []callpayload.CallReturnPresenceRelation {
 	labels := activeErrorReturnLabels(sig)
 	if len(labels) == 0 {
 		return nil
 	}
-	out := make([]factapply.CallReturnPresenceRelation, 0, len(labels)*2)
+	out := make([]callpayload.CallReturnPresenceRelation, 0, len(labels)*2)
 	for _, label := range labels {
 		if label.ValueIndex < 0 || label.ErrorIndex < 0 {
 			continue
 		}
 		out = append(out,
-			factapply.CallReturnPresenceRelation{
+			callpayload.CallReturnPresenceRelation{
 				TriggerIndex:    label.ErrorIndex,
 				TriggerPresence: presence.Present(),
 				TargetIndex:     label.ValueIndex,
 				TargetPresence:  presence.Absent(),
 			},
-			factapply.CallReturnPresenceRelation{
+			callpayload.CallReturnPresenceRelation{
 				TriggerIndex:    label.ErrorIndex,
 				TriggerPresence: presence.Absent(),
 				TargetIndex:     label.ValueIndex,

@@ -1,1 +1,16 @@
-{ "description": "A locally-built record sent over a channel escapes; placement must remain complete.", "packages": ["channel"], "check": { "placement": { "require_complete": true, "max_unknown": 0 } }, "run": { "skip": "placement-only" } }
+{
+  "description": "A locally-built record sent over a channel escapes; placement must mark the payload graph shared.",
+  "packages": ["channel"],
+  "check": {
+    "placement": {
+      "require_complete": true,
+      "min_shared_heap": 1,
+      "min_shared_depth": 2,
+      "min_seal_before_share": 1,
+      "max_unknown": 0
+    }
+  },
+  "run": {
+    "skip": "placement-only"
+  }
+}

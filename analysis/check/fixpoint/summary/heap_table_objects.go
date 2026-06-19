@@ -16,7 +16,7 @@ func normalizeHeapTableObjects(reg *axis.Registry, in map[identity.ID]heapidenti
 		if id == (identity.ID{}) || objectDomain.Equal(object, objectDomain.Bottom()) {
 			continue
 		}
-		out[id] = heapidentity.CloneObject(object)
+		out[id] = object
 	}
 	if len(out) == 0 {
 		return nil
@@ -24,13 +24,24 @@ func normalizeHeapTableObjects(reg *axis.Registry, in map[identity.ID]heapidenti
 	return out
 }
 
-func cloneHeapTableObjects(in map[identity.ID]heapidentity.TableObject) map[identity.ID]heapidentity.TableObject {
-	return heapidentity.CloneMap(in)
+func normalizeOwnedHeapTableObjects(reg *axis.Registry, in map[identity.ID]heapidentity.TableObject) map[identity.ID]heapidentity.TableObject {
+	if len(in) == 0 {
+		return nil
+	}
+	objectDomain := heapidentity.ObjectDomain(reg)
+	for id, object := range in {
+		if id == (identity.ID{}) || objectDomain.Equal(object, objectDomain.Bottom()) {
+			delete(in, id)
+		}
+	}
+	if len(in) == 0 {
+		return nil
+	}
+	return in
 }
 
-// CloneHeapTableObjects returns a defensive copy of summary heap table objects.
-func CloneHeapTableObjects(in map[identity.ID]heapidentity.TableObject) map[identity.ID]heapidentity.TableObject {
-	return cloneHeapTableObjects(in)
+func cloneHeapTableObjects(in map[identity.ID]heapidentity.TableObject) map[identity.ID]heapidentity.TableObject {
+	return heapidentity.CloneMap(in)
 }
 
 func heapTableObjectsEqual(reg *axis.Registry, a, b map[identity.ID]heapidentity.TableObject) bool {

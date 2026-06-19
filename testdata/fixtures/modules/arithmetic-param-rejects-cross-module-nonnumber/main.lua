@@ -11,7 +11,7 @@ end
 
 local function run()
     local m = provider.meta()
-    return scale(m) -- expect-error: expected number
+    return scale(m) -- expect-error: not number
 end
 
 return run

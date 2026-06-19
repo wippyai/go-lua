@@ -58,9 +58,11 @@ type formatter struct {
 func (f *formatter) string() string {
 	s := f.sb.String()
 	if f.truncated && !strings.HasSuffix(s, "...") {
-		if f.bytes+3 <= f.opts.MaxBytes {
+		if f.opts.MaxBytes <= 0 || f.bytes+3 <= f.opts.MaxBytes {
 			f.sb.WriteString("...")
 			s = f.sb.String()
+		} else if f.opts.MaxBytes > 0 && len(s) >= 3 {
+			s = s[:len(s)-3] + "..."
 		}
 	}
 	return s

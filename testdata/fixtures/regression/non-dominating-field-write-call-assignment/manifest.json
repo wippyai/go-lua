@@ -4,6 +4,96 @@
     "main.lua"
   ],
   "check": {
-    "errors": 1
+    "diagnostics": [
+      {
+        "file": "main.lua",
+        "line": 19,
+        "column": 25,
+        "severity": "error",
+        "code": "type.assignment",
+        "message_contains": [
+          "cannot assign res.answer",
+          "may be nil"
+        ],
+        "min_evidence": 3,
+        "evidence": [
+          {
+            "kind": "abstract fact",
+            "trust": "proven",
+            "line": 19,
+            "column": 25,
+            "contains": [
+              "res.answer can be \"ok\" or nil here"
+            ]
+          },
+          {
+            "kind": "user assertion",
+            "trust": "claimed",
+            "line": 19,
+            "column": 16,
+            "contains": [
+              "answer is declared as string"
+            ]
+          },
+          {
+            "kind": "missing proof",
+            "trust": "unknown",
+            "reason": "boundary validation missing",
+            "line": 19,
+            "column": 25,
+            "contains": [
+              "no guard on this path proves res.answer is non-nil"
+            ]
+          }
+        ],
+        "evidence_contains": [
+          "res.answer can be \"ok\" or nil here",
+          "answer is declared as string",
+          "no guard on this path proves res.answer is non-nil"
+        ],
+        "render_contains": [
+          "local answer: string = res.answer",
+          "because:"
+        ],
+        "render_ordered_contains": [
+          "error[type.assignment]: cannot assign res.answer because it may be nil",
+          "--> main.lua:19:25",
+          "local answer: string = res.answer",
+          "because:",
+          "1. proven: res.answer can be \"ok\" or nil here",
+          "2. claimed: answer is declared as string",
+          "3. missing proof: no guard on this path proves res.answer is non-nil",
+          "help: Guard `res.answer` with a nil check, provide a default value, or change the target type to accept nil."
+        ],
+        "render_not_contains": [
+          "^~",
+          "where:"
+        ],
+        "min_labels": 1,
+        "labels": [
+          {
+            "line": 19,
+            "column": 25,
+            "contains": [
+              "assigned value"
+            ]
+          },
+          {
+            "line": 19,
+            "column": 16,
+            "contains": [
+              "declared type"
+            ]
+          }
+        ],
+        "label_contains": [
+          "assigned value",
+          "declared type"
+        ],
+        "help_contains": [
+          "change the target type"
+        ]
+      }
+    ]
   }
 }

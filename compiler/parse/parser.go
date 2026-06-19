@@ -1420,6 +1420,8 @@ yydefault:
 		{
 			yyVAL.expr = &ast.AttrGetExpr{Object: yyDollar[1].expr, Key: yyDollar[3].expr, KeySyntax: ast.AttrKeyIndex}
 			yyVAL.expr.CopyPos(yyDollar[1].expr)
+			yyVAL.expr.SetLastLine(yyDollar[4].token.Pos.Line)
+			yyVAL.expr.SetLastColumn(yyDollar[4].token.Pos.Column + 1)
 		}
 	case 46:
 		yyDollar = yyS[yypt-3 : yypt+1]

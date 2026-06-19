@@ -147,6 +147,35 @@ func TestSimplify(t *testing.T) {
 	}
 }
 
+func TestSimplifyCanonicalizesPointerLeavesBeforeFolding(t *testing.T) {
+	x := &Var{Name: "x"}
+	two := &Const{Value: 2}
+	three := &Const{Value: 3}
+	zero := &Const{Value: 0}
+
+	tests := []struct {
+		name     string
+		expr     Expr
+		expected string
+	}{
+		{"const pointer add", Add(two, three), "5"},
+		{"var pointer add zero", Add(x, zero), "x"},
+		{"zero add var pointer", Add(zero, x), "x"},
+		{"nested pointer constants", Add(Mul(two, three), Sub(&Const{Value: 10}, two)), "14"},
+		{"pointer min", MinExpr(&Const{Value: 9}, three), "3"},
+		{"pointer max", MaxExpr(two, &Const{Value: 7}), "7"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := Simplify(tt.expr)
+			if got := result.String(); got != tt.expected {
+				t.Fatalf("Simplify(%s) = %s, want %s", tt.expr, got, tt.expected)
+			}
+		})
+	}
+}
+
 func TestVariables(t *testing.T) {
 	expr := Add(Mul(V("x"), V("y")), Sub(V("z"), V("x")))
 	vars := expr.Variables()

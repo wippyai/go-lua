@@ -12,6 +12,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/ambient"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/analysis/type/typeexpr"
 )
 
 func TestObjectLiteralTypeSeparatesDotFieldAndBracketStringMember(t *testing.T) {
@@ -41,6 +42,44 @@ func TestObjectLiteralTypeSeparatesDotFieldAndBracketStringMember(t *testing.T) 
 		Build()
 	if !typ.TypeEquals(got, want) {
 		t.Fatalf("object literal type = %v, want %v", got, want)
+	}
+}
+
+func TestObjectLiteralTypeBracketStringDiscriminantDoesNotSelectDotFieldUnionArm(t *testing.T) {
+	reg := standard.Registry()
+	kindSource := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: factflow.ExprRef(1301), HasExpr: true}
+	start := typetable.NewRecord().
+		Field("kind", typ.LiteralString("start")).
+		Field("payload", typ.String).
+		Build()
+	stop := typetable.NewRecord().
+		Field("kind", typ.LiteralString("stop")).
+		Field("code", typ.Integer).
+		Build()
+	expected := typeexpr.Union(start, stop)
+	lit := factflow.NewObjectLiteral([]factflow.ObjectEntry{
+		factflow.NewObjectEntry(path.NewPlaceholder(0).IndexStr("kind"), kindSource),
+	}).WithExpected(typevalue.WithWitness(reg, typevalue.FromType(reg, expected), expected))
+
+	got, ok := ObjectLiteralType(reg, lit, func(source factflow.ValueSource) (product.Value, bool) {
+		if source != kindSource {
+			return product.Value{}, false
+		}
+		valueType := typ.LiteralString("stop")
+		return typevalue.WithWitness(reg, typevalue.FromType(reg, valueType), valueType), true
+	})
+	if !ok {
+		t.Fatal("objectLiteralType returned false")
+	}
+
+	want := typetable.NewRecord().
+		StaticStringIndex("kind", typ.LiteralString("stop")).
+		Build()
+	if !typ.TypeEquals(got, want) {
+		t.Fatalf("object literal type = %v, want static string member record %v", got, want)
+	}
+	if typ.TypeEquals(got, stop) {
+		t.Fatalf("bracket-string kind selected dot-field stop union arm: %v", got)
 	}
 }
 

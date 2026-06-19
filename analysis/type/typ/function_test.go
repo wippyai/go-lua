@@ -174,18 +174,69 @@ func TestFunctionNotEqualToPrimitive(t *testing.T) {
 }
 
 func TestFunctionBuild_PanicsOnNilReturn(t *testing.T) {
+	expectFunctionBuildPanic(t, "typ.RebuildFunction: nil entry in returns; normalize before building", func() {
+		Func().Returns(Number, nil, String).Build()
+	})
+}
+
+func TestFunctionBuild_PanicsOnTypedNilReturn(t *testing.T) {
+	var nilRecord *Record
+	expectFunctionBuildPanic(t, "typ.RebuildFunction: nil entry in returns; normalize before building", func() {
+		Func().Returns(Number, nilRecord, String).Build()
+	})
+}
+
+func TestFunctionBuild_PanicsOnNilParamType(t *testing.T) {
+	expectFunctionBuildPanic(t, "typ.RebuildFunction: nil entry in params; normalize before building", func() {
+		Func().Param("x", nil).Build()
+	})
+}
+
+func TestFunctionBuild_PanicsOnTypedNilParamType(t *testing.T) {
+	var nilRecord *Record
+	expectFunctionBuildPanic(t, "typ.RebuildFunction: nil entry in params; normalize before building", func() {
+		Func().Param("x", nilRecord).Build()
+	})
+}
+
+func TestFunctionBuild_TreatsTypedNilVariadicAsAbsent(t *testing.T) {
+	var nilRecord *Record
+	f := Func().Variadic(nilRecord).Build()
+
+	if f.Variadic != nil {
+		t.Fatalf("typed nil variadic should normalize to absent, got %v", f.Variadic)
+	}
+	if f.String() != "fun()" {
+		t.Fatalf("typed nil variadic should not render a variadic slot: %q", f.String())
+	}
+}
+
+func TestRebuildFunction_PanicsOnNilTypeParam(t *testing.T) {
+	expectFunctionBuildPanic(t, "typ.RebuildFunction: nil entry in type params; normalize before building", func() {
+		RebuildFunction(FunctionParts{TypeParams: []*TypeParam{nil}})
+	})
+}
+
+func TestRebuildFunction_PanicsOnNilReturn(t *testing.T) {
+	expectFunctionBuildPanic(t, "typ.RebuildFunction: nil entry in returns; normalize before building", func() {
+		RebuildFunction(FunctionParts{Returns: []Type{Number, nil, String}})
+	})
+}
+
+func expectFunctionBuildPanic(t *testing.T, want string, fn func()) {
+	t.Helper()
 	defer func() {
 		r := recover()
 		if r == nil {
-			t.Fatal("expected panic for nil return entry, got none")
+			t.Fatal("expected panic, got none")
 		}
 		msg, ok := r.(string)
-		if !ok || msg != "FunctionBuilder.Build: nil entry in returns; normalize before building" {
+		if !ok || msg != want {
 			t.Fatalf("unexpected panic message: %v", r)
 		}
 	}()
 
-	Func().Returns(Number, nil, String).Build()
+	fn()
 }
 
 func TestFunctionBuild_ValidReturns(t *testing.T) {

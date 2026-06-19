@@ -72,7 +72,7 @@ type Alias struct {
 
 // NewAlias creates a type alias.
 func NewAlias(name string, target Type) *Alias {
-	h := typeEqualityHash(target)
+	h := EqualityHash(target)
 
 	return &Alias{
 		Name:                  name,
@@ -94,7 +94,7 @@ func (a *Alias) Hash() uint64 {
 	if a == nil {
 		return 0
 	}
-	return typeEqualityHash(a.UnaliasedTarget())
+	return EqualityHash(a.UnaliasedTarget())
 }
 
 func (a *Alias) UnaliasedTarget() Type {

@@ -3,26 +3,26 @@ package expr
 // Simplify attempts to simplify an expression by constant folding.
 func Simplify(e Expr) Expr {
 	return VisitExpr(e, ExprVisitor[Expr]{
-		Var: func(Var) Expr {
-			return e
+		Var: func(x Var) Expr {
+			return x
 		},
-		Const: func(Const) Expr {
-			return e
+		Const: func(x Const) Expr {
+			return x
 		},
-		Len: func(Len) Expr {
-			return e
+		Len: func(x Len) Expr {
+			return x
 		},
-		Param: func(Param) Expr {
-			return e
+		Param: func(x Param) Expr {
+			return x
 		},
-		Ret: func(Ret) Expr {
-			return e
+		Ret: func(x Ret) Expr {
+			return x
 		},
-		ParamLen: func(ParamLen) Expr {
-			return e
+		ParamLen: func(x ParamLen) Expr {
+			return x
 		},
-		RetLen: func(RetLen) Expr {
-			return e
+		RetLen: func(x RetLen) Expr {
+			return x
 		},
 		Min: func(x Min) Expr {
 			left := Simplify(x.Left)

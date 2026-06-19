@@ -175,28 +175,6 @@ func (r *resultResolver) hasKnownTypeName(name string) bool {
 	return false
 }
 
-func (r *resultResolver) declVisible(decl bind.TypeDecl) bool {
-	if decl.ID == 0 {
-		return false
-	}
-	switch decl.Kind {
-	case bind.TypeDeclParam:
-		return true
-	case bind.TypeDeclAlias:
-		if r.aliases[decl.ID] != nil {
-			return true
-		}
-	case bind.TypeDeclInterface:
-		if r.interfaces[decl.ID] != nil {
-			return true
-		}
-	}
-	if parent, ok := r.parent.(*resultResolver); ok {
-		return parent.declVisible(decl)
-	}
-	return false
-}
-
 func (r *resultResolver) currentBinding(name string) (bind.TypeDecl, bool) {
 	if r == nil || r.result == nil || name == "" || len(r.current) == 0 {
 		return bind.TypeDecl{}, false

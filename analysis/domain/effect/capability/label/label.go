@@ -6,6 +6,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/effect/control"
 	"github.com/wippyai/go-lua/analysis/domain/effect/dispatch"
 	"github.com/wippyai/go-lua/analysis/domain/effect/iteration"
+	"github.com/wippyai/go-lua/analysis/domain/effect/lifecycle"
 	"github.com/wippyai/go-lua/analysis/domain/effect/mutation"
 	"github.com/wippyai/go-lua/analysis/domain/effect/ownership"
 	"github.com/wippyai/go-lua/analysis/domain/effect/postcondition"
@@ -57,6 +58,12 @@ func IDFor(label effect.Label) (string, bool) {
 		return capability.MutationLengthChange, true
 	case mutation.TableMutator:
 		return capability.MutationTableMutator, true
+	case lifecycle.Acquire:
+		return capability.LifecycleAcquire, true
+	case lifecycle.Transition:
+		return capability.LifecycleTransition, true
+	case lifecycle.Escape:
+		return capability.LifecycleEscape, true
 	case control.Throw:
 		return capability.ControlThrow, true
 	case control.IO:

@@ -9,7 +9,7 @@ local function handle(events_ch: Channel<Event>, stop_ch: Channel<Stop>, timeout
         timeout_ch:case_receive(),
     }
 
-    if result.channel == events_ch then -- expect-warning: missing case: timeout_ch
+    if result.channel == events_ch then -- expect-warning: missing case: `timeout_ch`
         return result.value.kind
     elseif result.channel == stop_ch then
         return result.value.reason

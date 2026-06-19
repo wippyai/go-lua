@@ -49,16 +49,56 @@ func (k EvidenceKind) String() string {
 	case EvidenceMissingProof:
 		return "missing proof"
 	case EvidencePrecisionBoundary:
-		return "precision boundary"
+		return "unvalidated value"
 	default:
 		return "evidence(unknown)"
 	}
 }
 
+// EvidenceReason captures the producer-side reason for an evidence item.
+// It is intentionally separate from Message so diagnostic assembly can stay
+// structured even when user-facing wording changes.
+type EvidenceReason int
+
+const (
+	EvidenceReasonUnspecified EvidenceReason = iota
+	EvidenceReasonBoundaryValidationMissing
+	EvidenceReasonIndexReadValidationMissing
+	EvidenceReasonExplicitBoundaryValidation
+	EvidenceReasonUserTypeAssertion
+	EvidenceReasonUserAssertedAny
+	EvidenceReasonUserAssertedNonNil
+)
+
+func (r EvidenceReason) String() string {
+	switch r {
+	case EvidenceReasonUnspecified:
+		return "unspecified"
+	case EvidenceReasonBoundaryValidationMissing:
+		return "boundary validation missing"
+	case EvidenceReasonIndexReadValidationMissing:
+		return "index read validation missing"
+	case EvidenceReasonExplicitBoundaryValidation:
+		return "explicit boundary validation"
+	case EvidenceReasonUserTypeAssertion:
+		return "user type assertion"
+	case EvidenceReasonUserAssertedAny:
+		return "user asserted any"
+	case EvidenceReasonUserAssertedNonNil:
+		return "user asserted non-nil"
+	default:
+		return "reason(unknown)"
+	}
+}
+
 // Evidence is one fact used to explain why a diagnostic was produced.
 type Evidence struct {
-	Kind    EvidenceKind
-	Trust   TrustKind
+	Kind   EvidenceKind
+	Trust  TrustKind
+	Reason EvidenceReason
+	// File overrides the diagnostic's primary file for this evidence item.
+	// Leave empty only for evidence whose span is in the primary diagnostic file.
+	File    string
 	Span    Span
 	Message string
 }
@@ -93,10 +133,38 @@ func (e Explanation) String() string {
 func formatEvidence(item Evidence) string {
 	message := item.Message
 	if message == "" {
-		message = fmt.Sprintf("%s evidence is %s", item.Kind, item.Trust)
+		message = fallbackEvidenceMessage(item)
 	}
 	if !item.Span.Valid() {
+		if item.File != "" {
+			return fmt.Sprintf("%s: %s", item.File, message)
+		}
 		return message
 	}
+	if item.File != "" {
+		return fmt.Sprintf("%s:%d:%d: %s", item.File, item.Span.StartLine, item.Span.StartCol, message)
+	}
 	return fmt.Sprintf("%d:%d: %s", item.Span.StartLine, item.Span.StartCol, message)
+}
+
+func fallbackEvidenceMessage(item Evidence) string {
+	switch item.Kind {
+	case EvidenceAbstractFact:
+		switch item.Trust {
+		case TrustProven:
+			return "analysis proved this fact"
+		case TrustRefuted:
+			return "analysis refuted this fact"
+		default:
+			return "analysis recorded this fact"
+		}
+	case EvidenceUserAssertion:
+		return "user-provided assertion needs proof"
+	case EvidenceMissingProof:
+		return "required proof was not found"
+	case EvidencePrecisionBoundary:
+		return "value needs validation before use"
+	default:
+		return "diagnostic evidence is unavailable"
+	}
 }

@@ -28,6 +28,8 @@ func dynamicIndexMap(reg *axis.Registry) factmap.Map[dynamicIndexFactKey, callbo
 		Valid: func(f callboundary.DynamicIndexFact) bool { return f.Table.IsPlaceholder() && f.Site != "" },
 		CloneFact: func(f callboundary.DynamicIndexFact) callboundary.DynamicIndexFact {
 			f.Table = f.Table.Clone()
+			f.KeyPath = f.KeyPath.Clone()
+			f.ValuePath = f.ValuePath.Clone()
 			return f
 		},
 		Domain: dynamicindex.Domain(reg),
@@ -45,6 +47,8 @@ func cloneDynamicIndexFacts(in []callboundary.DynamicIndexFact) []callboundary.D
 	out := make([]callboundary.DynamicIndexFact, len(in))
 	for i, fact := range in {
 		fact.Table = fact.Table.Clone()
+		fact.KeyPath = fact.KeyPath.Clone()
+		fact.ValuePath = fact.ValuePath.Clone()
 		out[i] = fact
 	}
 	return out

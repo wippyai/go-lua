@@ -7,8 +7,8 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
+	"github.com/wippyai/go-lua/analysis/engine/callpayload"
 	"github.com/wippyai/go-lua/analysis/engine/effectlowering"
-	factapply "github.com/wippyai/go-lua/analysis/engine/factapply"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	sourcevalue "github.com/wippyai/go-lua/analysis/engine/sourcevalue"
 	"github.com/wippyai/go-lua/analysis/engine/state"
@@ -41,7 +41,7 @@ type Config struct {
 	ExpressionValues             map[factflow.ExprRef]product.Value
 	ExpressionValue              sourcevalue.ExpressionValueProvider
 	VarargValue                  sourcevalue.VarargValueProvider
-	CallOutcome                  factapply.CallOutcomeProvider
+	CallOutcome                  callpayload.CallOutcomeProvider
 	CallOutcomeFactory           CallOutcomeFactory
 	SignatureArgumentType        SignatureArgumentTypeFunc
 	SignatureArgumentTypeFactory SignatureArgumentTypeFactory
@@ -92,7 +92,7 @@ type Static struct {
 	typeNS      *typeresolve.Resolver
 	typeValues  *typevalue.Cache
 
-	callOutcomeSupplement factapply.CallOutcomeProvider
+	callOutcomeSupplement callpayload.CallOutcomeProvider
 	signatureReturnOps    effectlowering.ReturnTypeOps
 }
 
@@ -111,7 +111,7 @@ type SolveConfig struct {
 	Initial    transfer.InitialState
 	TypeValues *typevalue.Cache
 
-	CallOutcome                  factapply.CallOutcomeProvider
+	CallOutcome                  callpayload.CallOutcomeProvider
 	CallOutcomeFactory           CallOutcomeFactory
 	SignatureArgumentType        SignatureArgumentTypeFunc
 	SignatureArgumentTypeFactory SignatureArgumentTypeFactory
@@ -138,7 +138,7 @@ type Result struct {
 	boundaryXfer    transfer.NodeTransfer
 	visibility      *visibility.Resolver
 	sources         sourcevalue.SourceValues
-	callOutcome     factapply.CallOutcomeProvider
+	callOutcome     callpayload.CallOutcomeProvider
 	typeValues      *typevalue.Cache
 	functions       []*Result
 	funcTypes       FunctionValueTypes
@@ -152,11 +152,11 @@ type CallOutcomeContext struct {
 	ReturnPresenceRelationsPath ReturnPresenceRelationsForPathFunc
 }
 
-type CallOutcomeFactory func(CallOutcomeContext) factapply.CallOutcomeProvider
+type CallOutcomeFactory func(CallOutcomeContext) callpayload.CallOutcomeProvider
 
-type CalleeValueFunc func(ctx transfer.NodeContext, site factflow.CallSite, in state.State, read func(cfg.Point) state.State) (product.Value, bool)
+type CalleeValueFunc func(ctx transfer.NodeContext, site factflow.CallSiteView, in state.State, read func(cfg.Point) state.State) (product.Value, bool)
 
-type ReturnPresenceRelationsForPathFunc func(point cfg.Point, p pathdom.Path) []factapply.CallReturnPresenceRelation
+type ReturnPresenceRelationsForPathFunc func(point cfg.Point, p pathdom.Path) []callpayload.CallReturnPresenceRelation
 
 type SignatureArgumentTypeFunc func(ctx transfer.NodeContext, source factflow.ValueSource, in state.State, read func(cfg.Point) state.State) (typ.Type, bool)
 

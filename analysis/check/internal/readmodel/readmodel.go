@@ -214,11 +214,20 @@ func (r Reader) ValueAdmissible(value product.Value, want typ.Type) bool {
 		return false
 	}
 	gotEvidence := product.Get(reg, value, evidence.Key)
-	if gotEvidence.IsExplicitTop() && explicitAnyClaim(reg, value) {
-		if projected, ok := scalarRuntimeKindType(reg, value); ok && subtype.IsSubtype(projected, want) {
-			return true
+	if gotEvidence.IsExplicitTop() {
+		if explicitTypeClaim(reg, value) {
+			if witness := product.Get(reg, value, typewitness.Key); !witness.IsTop() {
+				if t, ok := witness.Type(); ok && subtype.IsSubtype(t, want) {
+					return true
+				}
+			}
 		}
-		return false
+		if explicitAnyClaim(reg, value) {
+			if projected, ok := scalarRuntimeKindType(reg, value); ok && subtype.IsSubtype(projected, want) {
+				return true
+			}
+			return false
+		}
 	}
 	if witness := product.Get(reg, value, typewitness.Key); !witness.IsTop() {
 		if t, ok := witness.Type(); ok && subtype.IsSubtype(t, want) {
@@ -274,11 +283,20 @@ func (r Reader) ValueProofAdmissible(value product.Value, want typ.Type) bool {
 	if presence.Equal(product.PresenceOf(value), presence.Maybe()) && !subtype.IsSubtype(typ.Nil, want) {
 		return false
 	}
-	if product.Get(reg, value, evidence.Key).IsExplicitTop() && explicitAnyClaim(reg, value) {
-		if t, ok := scalarRuntimeKindType(reg, value); ok && subtype.IsSubtype(t, want) {
-			return true
+	if product.Get(reg, value, evidence.Key).IsExplicitTop() {
+		if explicitTypeClaim(reg, value) {
+			if witness := product.Get(reg, value, typewitness.Key); !witness.IsTop() {
+				if t, ok := witness.Type(); ok && subtype.IsSubtype(t, want) {
+					return true
+				}
+			}
 		}
-		return false
+		if explicitAnyClaim(reg, value) {
+			if t, ok := scalarRuntimeKindType(reg, value); ok && subtype.IsSubtype(t, want) {
+				return true
+			}
+			return false
+		}
 	}
 	if witness := product.Get(reg, value, typewitness.Key); !witness.IsTop() {
 		if t, ok := witness.Type(); ok && subtype.IsSubtype(t, want) {
@@ -294,6 +312,11 @@ func (r Reader) ValueProofAdmissible(value product.Value, want typ.Type) bool {
 func explicitAnyClaim(reg *axis.Registry, value product.Value) bool {
 	claim := product.Get(reg, value, assertion.Key)
 	return claim.Has(assertion.AnyClaim)
+}
+
+func explicitTypeClaim(reg *axis.Registry, value product.Value) bool {
+	claim := product.Get(reg, value, assertion.Key)
+	return claim.Has(assertion.TypeClaim)
 }
 
 func concreteBoundaryType(reg *axis.Registry, value product.Value) (typ.Type, bool) {
@@ -348,7 +371,7 @@ func typeWithBoundaryPresence(t typ.Type, value product.Value) typ.Type {
 	case presence.Equal(p, presence.Absent()):
 		return typ.Nil
 	case presence.Equal(p, presence.Maybe()):
-		if !ProjectionHasNil(t) {
+		if !typevalue.ProjectionHasNil(t) {
 			return normalize.Optional(t)
 		}
 	case presence.Equal(p, presence.Present()):
@@ -431,7 +454,7 @@ func refineTypeByRuntimeKindSet(t typ.Type, kinds runtimekind.Value, p presence.
 	if kinds.IsBottom() || kinds.IsTop() {
 		return nil, false
 	}
-	keepNil := presence.Equal(p, presence.Maybe()) && ProjectionHasNil(t)
+	keepNil := presence.Equal(p, presence.Maybe()) && typevalue.ProjectionHasNil(t)
 	return refineTypeByRuntimeKindSetDepth(t, kinds, keepNil, 0)
 }
 
@@ -517,42 +540,7 @@ func typeIncludesNil(t typ.Type) bool {
 		return false
 	}
 	normalized := unwrap.NormalizeNil(t)
-	return (normalized != nil && normalized.Kind() == kind.Nil) || ProjectionHasNil(t)
-}
-
-func ProjectionHasNil(t typ.Type) bool {
-	return projectionHasNilDepth(t, 0)
-}
-
-func projectionHasNilDepth(t typ.Type, depth int) bool {
-	if t == nil || depth > typ.DefaultRecursionDepth || typ.IsAny(t) || typ.IsUnknown(t) || typ.IsNever(t) {
-		return false
-	}
-	t = unwrap.NormalizeNil(unwrap.Annotated(t))
-	if t == nil {
-		return false
-	}
-	if t.Kind() == kind.Nil {
-		return true
-	}
-	switch v := t.(type) {
-	case *typ.Optional:
-		return true
-	case *typ.Union:
-		for _, member := range v.Members {
-			if projectionHasNilDepth(member, depth+1) {
-				return true
-			}
-		}
-		return false
-	case *typ.Alias:
-		return projectionHasNilDepth(v.UnaliasedTarget(), depth+1)
-	case *typ.Instantiated:
-		expanded := subst.ExpandInstantiated(v)
-		return expanded != nil && expanded != t && projectionHasNilDepth(expanded, depth+1)
-	default:
-		return false
-	}
+	return (normalized != nil && normalized.Kind() == kind.Nil) || typevalue.ProjectionHasNil(t)
 }
 
 func projectionWithoutNil(t typ.Type) typ.Type {

@@ -4,8 +4,7 @@ package effectlowering
 
 import (
 	"github.com/wippyai/go-lua/analysis/engine/calloutcome"
-	"github.com/wippyai/go-lua/analysis/engine/callproducer"
-	factapply "github.com/wippyai/go-lua/analysis/engine/factapply"
+	"github.com/wippyai/go-lua/analysis/engine/callpayload"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	sourcevalue "github.com/wippyai/go-lua/analysis/engine/sourcevalue"
 	"github.com/wippyai/go-lua/analysis/engine/state"
@@ -17,6 +16,10 @@ import (
 
 // SignatureNameFunc maps one call producer in context to a stable signature name.
 type SignatureNameFunc func(ctx transfer.NodeContext, call factflow.CallProducer) (string, bool)
+
+// SignatureSiteNameFunc maps read-only call-site evidence in context to a
+// stable signature name without materializing a producer DTO.
+type SignatureSiteNameFunc func(ctx transfer.NodeContext, site factflow.CallSiteView) (string, bool)
 
 // SignatureArgumentTypeFunc resolves a call argument source to a type when the
 // caller owns stronger evidence than the generic source-value projection.
@@ -33,6 +36,7 @@ type SignatureLookup interface {
 type SignatureOutcomeProviderConfig struct {
 	Signatures    SignatureLookup
 	NameFor       SignatureNameFunc
+	NameForSite   SignatureSiteNameFunc
 	ReturnTypeOps ReturnTypeOps
 	Facts         factflow.Facts
 	Sources       sourcevalue.SourceValues
@@ -41,51 +45,59 @@ type SignatureOutcomeProviderConfig struct {
 
 // SignatureOutcomeProvider materializes declared signature return types into
 // call outcome return slots.
-func SignatureOutcomeProvider(config SignatureOutcomeProviderConfig) factapply.CallOutcomeProvider {
+func SignatureOutcomeProvider(config SignatureOutcomeProviderConfig) callpayload.CallOutcomeProvider {
 	signatures := config.Signatures
 	nameFor := config.NameFor
+	nameForSite := config.NameForSite
 	returnTypeOps := config.ReturnTypeOps
 	facts := config.Facts
 	sources := config.Sources
 	argumentType := config.ArgumentType
 	expressionRefinements := facts.ExpressionRefinements()
-	return func(ctx transfer.NodeContext, site factflow.CallSiteView, in state.State, read func(cfg.Point) state.State) factapply.CallOutcome {
-		if signatures == nil || nameFor == nil {
-			return factapply.CallOutcome{}
+	return func(ctx transfer.NodeContext, site factflow.CallSiteView, in state.State, read func(cfg.Point) state.State) callpayload.CallOutcome {
+		if signatures == nil || (nameFor == nil && nameForSite == nil) {
+			return callpayload.CallOutcome{}
 		}
-		call := callproducer.FromView(site)
-		name, ok := nameFor(ctx, call)
+		name, ok := signatureNameForSite(ctx, site, nameForSite, nameFor)
 		if !ok {
-			return factapply.CallOutcome{}
+			return callpayload.CallOutcome{}
 		}
 		sig, ok := signatures.Lookup(name)
 		if !ok {
-			return factapply.CallOutcome{}
+			return callpayload.CallOutcome{}
 		}
-		ownedSite := site.CallSite()
-		sig = instantiateSignatureForCall(ctx, facts, sources, expressionRefinements, argumentType, sig, ownedSite, in, read, returnTypeOps)
-		var out factapply.CallOutcome
+		argSources := signatureArgumentSources(ctx, facts, site)
+		sig = instantiateSignatureForCall(ctx, sources, expressionRefinements, argumentType, sig, argSources, in, read, returnTypeOps)
+		var out callpayload.CallOutcome
 		if sig.OperationalEffects != nil && !sig.OperationalEffects.IsEmpty() {
-			out = applyOperationalEffects(ctx, out, sig.OperationalEffects)
+			out = applyOperationalEffects(ctx, out, operationalEffectContext{
+				effects:               sig.OperationalEffects,
+				argSources:            argSources,
+				sources:               sources,
+				expressionRefinements: expressionRefinements,
+				in:                    in,
+				read:                  read,
+			})
 		} else {
-			invalidations := signatureParamPathInvalidations(sig, ownedSite)
-			lengthFloors := signatureParamLengthFloors(sig, ownedSite)
+			invalidations := signatureParamPathInvalidationsForReader(sig, argSources)
+			lengthFloors := signatureParamLengthFloorsForReader(sig, argSources)
 			out.ReturnPresenceRelations = signatureReturnPresenceRelations(sig)
-			out.ParamPathRefinements = signatureParamPathRefinements(ctx, sig, ownedSite)
+			out.ParamPathRefinements = signatureParamPathRefinementsForReader(ctx, sig, argSources)
 			out.ParamLengthFloors = lengthFloors
 			out.ParamPathInvalidations = invalidations
 			out.NormalReturnFacts.PathInvalidations = signatureNormalReturnPathInvalidations(invalidations)
-			out.NormalReturnFacts.EscapeEvents = signatureEscapeEvents(sig, ownedSite)
-			out.NormalReturnFacts.FrozenTables = signatureFrozenTables(sig, ownedSite)
-			out.NormalReturnFacts.StoreRelations = signatureStoreRelations(sig, ownedSite)
+			out.NormalReturnFacts.EscapeEvents = signatureEscapeEventsForReader(sig, argSources)
+			out.NormalReturnFacts.FrozenTables = signatureFrozenTablesForReader(sig, argSources)
+			out.NormalReturnFacts.StoreRelations = signatureStoreRelationsForReader(sig, argSources)
+			out.NormalReturnFacts.LifecycleFacts = signatureLifecycleFactsForReader(sig, argSources)
 		}
 		if sig.Type == nil || len(sig.Type.Returns) == 0 {
 			out.PostReturnAuthority = calloutcome.HasAuthoritativePostReturnEvidence(ctx.Registry, out)
 			return out
 		}
-		results := make([]factapply.CallResult, 0, len(sig.Type.Returns))
+		results := make([]callpayload.CallResult, 0, len(sig.Type.Returns))
 		for i, ret := range sig.Type.Returns {
-			value, ok := signatureReturnValue(ctx, facts, sources, expressionRefinements, sig, i, in, read, returnTypeOps)
+			value, ok := signatureReturnValue(ctx, sources, expressionRefinements, sig, i, argSources, in, read, returnTypeOps)
 			if !ok && ret != nil {
 				value, ok = returnValueFromType(ctx.Registry, ret), true
 			}
@@ -93,7 +105,7 @@ func SignatureOutcomeProvider(config SignatureOutcomeProviderConfig) factapply.C
 				continue
 			}
 			value = operationalReturnAllocationValue(ctx.Registry, sig.OperationalEffects, i, value)
-			results = append(results, factapply.CallResult{
+			results = append(results, callpayload.CallResult{
 				Index: i,
 				Value: value,
 			})
@@ -102,4 +114,29 @@ func SignatureOutcomeProvider(config SignatureOutcomeProviderConfig) factapply.C
 		out.PostReturnAuthority = calloutcome.HasAuthoritativePostReturnEvidence(ctx.Registry, out)
 		return out
 	}
+}
+
+func signatureNameForSite(
+	ctx transfer.NodeContext,
+	site factflow.CallSiteView,
+	nameForSite SignatureSiteNameFunc,
+	nameFor SignatureNameFunc,
+) (string, bool) {
+	if nameForSite != nil {
+		return nameForSite(ctx, site)
+	}
+	if nameFor == nil {
+		return "", false
+	}
+	return nameFor(ctx, factflow.NewCallProducerFromView(site))
+}
+
+func signatureArgumentSources(ctx transfer.NodeContext, facts factflow.Facts, site factflow.CallSiteView) signatureArgumentReader {
+	if site.ArgumentSourceCount() != 0 {
+		return signatureArgumentsFromView(site)
+	}
+	if factSite, ok := facts.CallSiteView(ctx.Point); ok {
+		return signatureArgumentsFromView(factSite)
+	}
+	return signatureArgumentReader{}
 }

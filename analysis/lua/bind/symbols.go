@@ -300,8 +300,21 @@ func (b *binder) bindLValue(expr ast.Expr) {
 }
 
 func (b *binder) bindReadIdent(ident *ast.IdentExpr) {
-	if ident == nil {
+	id := b.bindReadIdentSymbol(ident)
+	if id == 0 {
 		return
+	}
+	b.result.readIdents[id] = append(b.result.readIdents[id], ident)
+	b.recordDirectCapture(id)
+}
+
+func (b *binder) bindTypeQueryIdent(ident *ast.IdentExpr) {
+	b.bindReadIdentSymbol(ident)
+}
+
+func (b *binder) bindReadIdentSymbol(ident *ast.IdentExpr) symbol.ID {
+	if ident == nil {
+		return 0
 	}
 	id, _, ok := b.lookup(ident.Value)
 	if !ok {
@@ -317,8 +330,7 @@ func (b *binder) bindReadIdent(ident *ast.IdentExpr) {
 		}
 	}
 	b.result.identSymbols[ident] = id
-	b.result.readIdents[id] = append(b.result.readIdents[id], ident)
-	b.recordDirectCapture(id)
+	return id
 }
 
 func (b *binder) bindWriteIdent(ident *ast.IdentExpr) {

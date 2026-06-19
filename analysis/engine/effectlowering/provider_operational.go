@@ -11,16 +11,30 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine/callboundary"
+	"github.com/wippyai/go-lua/analysis/engine/callpayload"
 	"github.com/wippyai/go-lua/analysis/engine/dynamicindex"
-	factapply "github.com/wippyai/go-lua/analysis/engine/factapply"
+	"github.com/wippyai/go-lua/analysis/engine/factflow"
+	sourcevalue "github.com/wippyai/go-lua/analysis/engine/sourcevalue"
+	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/state/heapidentity"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
+	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/module/signature"
 	"github.com/wippyai/go-lua/analysis/type/inspect"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
-func applyOperationalEffects(ctx transfer.NodeContext, out factapply.CallOutcome, effects *signature.OperationalEffects) factapply.CallOutcome {
+type operationalEffectContext struct {
+	effects               *signature.OperationalEffects
+	argSources            signatureArgumentReader
+	sources               sourcevalue.SourceValues
+	expressionRefinements map[factflow.ExprRef]factflow.ExpressionRefinement
+	in                    state.State
+	read                  func(cfg.Point) state.State
+}
+
+func applyOperationalEffects(ctx transfer.NodeContext, out callpayload.CallOutcome, op operationalEffectContext) callpayload.CallOutcome {
+	effects := op.effects
 	if effects == nil {
 		return out
 	}
@@ -28,21 +42,23 @@ func applyOperationalEffects(ctx transfer.NodeContext, out factapply.CallOutcome
 	out.NormalReturnFacts.PathRefinements = operationalPathPresenceRefinements(ctx, *effects)
 	out.NormalReturnFacts.PathStaticMembers = operationalPathStaticMembers(ctx, *effects)
 	out.NormalReturnFacts.PathInvalidations = operationalPathInvalidations(*effects)
+	out.NormalReturnFacts.DynamicIndexFacts = operationalDynamicIndexFacts(ctx, op)
 	out.NormalReturnFacts.FrozenTables = operationalFrozenTables(*effects)
 	out.NormalReturnFacts.EscapeEvents = operationalEscapeEvents(*effects)
 	out.NormalReturnFacts.StoreRelations = operationalStoreRelations(*effects)
+	out.NormalReturnFacts.LifecycleFacts = operationalLifecycleFacts(*effects)
 	out.HeapTableObjects = operationalHeapTableObjects(ctx, *effects)
 	out.Placements = operationalAllocationPlacements(*effects)
 	return out
 }
 
-func operationalReturnPresenceRelations(e signature.OperationalEffects) []factapply.CallReturnPresenceRelation {
+func operationalReturnPresenceRelations(e signature.OperationalEffects) []callpayload.CallReturnPresenceRelation {
 	if len(e.ReturnPresenceRelations) == 0 {
 		return nil
 	}
-	out := make([]factapply.CallReturnPresenceRelation, 0, len(e.ReturnPresenceRelations))
+	out := make([]callpayload.CallReturnPresenceRelation, 0, len(e.ReturnPresenceRelations))
 	for _, relation := range e.ReturnPresenceRelations {
-		out = append(out, factapply.CallReturnPresenceRelation{
+		out = append(out, callpayload.CallReturnPresenceRelation{
 			TriggerIndex:    relation.TriggerIndex,
 			TriggerPresence: relation.TriggerPresence,
 			TargetIndex:     relation.TargetIndex,
@@ -106,6 +122,89 @@ func operationalPathInvalidations(e signature.OperationalEffects) []callboundary
 	return projectOperationalFacts(e.PathInvalidations, func(f signature.PathInvalidation) callboundary.PathInvalidationFact {
 		return callboundary.PathInvalidationFact{Path: f.Path}
 	})
+}
+
+func operationalDynamicIndexFacts(ctx transfer.NodeContext, op operationalEffectContext) []callboundary.DynamicIndexFact {
+	if ctx.Registry == nil || op.effects == nil || len(op.effects.DynamicIndexFacts) == 0 {
+		return nil
+	}
+	out := make([]callboundary.DynamicIndexFact, 0, len(op.effects.DynamicIndexFacts))
+	for _, fact := range op.effects.DynamicIndexFacts {
+		if fact.Site == "" || fact.Table.IsEmpty() {
+			continue
+		}
+		key, ok := operationalDynamicIndexOperandValue(ctx, op, fact.Key)
+		if !ok {
+			continue
+		}
+		value, ok := operationalDynamicIndexOperandValue(ctx, op, fact.Value)
+		if !ok {
+			continue
+		}
+		admission, ok := operationalDynamicIndexAdmission(fact.Admission)
+		if !ok {
+			continue
+		}
+		keyPresence := fact.KeyPresence
+		if keyPresence.IsBottom() || keyPresence.IsTop() {
+			keyPresence = product.PresenceOf(key)
+		}
+		out = append(out, callboundary.DynamicIndexFact{
+			Table: fact.Table,
+			Site:  dynamicindex.Site(fact.Site),
+			Value: dynamicindex.Fact{
+				KeyPresence: keyPresence,
+				KeyValue:    key,
+				Value:       value,
+				Admission:   admission,
+			},
+		})
+	}
+	return out
+}
+
+func operationalDynamicIndexOperandValue(
+	ctx transfer.NodeContext,
+	op operationalEffectContext,
+	operand signature.DynamicIndexOperand,
+) (product.Value, bool) {
+	if !operand.Path.IsEmpty() {
+		if value, ok := operationalPlaceholderOperandValue(ctx, op, operand.Path); ok {
+			return value, true
+		}
+	}
+	if operand.Type != nil {
+		return typevalue.WithWitness(ctx.Registry, typevalue.FromType(ctx.Registry, operand.Type), operand.Type), true
+	}
+	return product.Value{}, false
+}
+
+func operationalPlaceholderOperandValue(
+	ctx transfer.NodeContext,
+	op operationalEffectContext,
+	operandPath pathdom.Path,
+) (product.Value, bool) {
+	if !operandPath.IsPlaceholder() || len(operandPath.Segments) != 0 || op.sources == nil {
+		return product.Value{}, false
+	}
+	index := operandPath.PlaceholderIndex()
+	source, ok := op.argSources.ArgumentSourceAt(index)
+	if !ok {
+		return product.Value{}, false
+	}
+	resolver := sourcevalue.WithExpressionRefinements(ctx.Registry, op.sources, op.expressionRefinements)
+	return resolver.ValueOfSource(ctx.Point, source, op.in, op.read)
+}
+
+func operationalDynamicIndexAdmission(admission signature.DynamicIndexAdmission) (dynamicindex.Admission, bool) {
+	switch admission {
+	case signature.DynamicIndexAdmissionAdmitted:
+		return dynamicindex.AdmissionAdmitted, true
+	case signature.DynamicIndexAdmissionUnknown:
+		return dynamicindex.AdmissionUnknown, true
+	default:
+		return dynamicindex.AdmissionBottom, false
+	}
 }
 
 func operationalFrozenTables(e signature.OperationalEffects) []callboundary.FrozenTableFact {
@@ -177,6 +276,41 @@ func operationalStoreRelations(e signature.OperationalEffects) []callboundary.St
 		})
 	}
 	return out
+}
+
+func operationalLifecycleFacts(e signature.OperationalEffects) []callboundary.LifecycleFact {
+	if len(e.LifecycleEffects) == 0 {
+		return nil
+	}
+	out := make([]callboundary.LifecycleFact, 0, len(e.LifecycleEffects))
+	for _, fact := range e.LifecycleEffects {
+		kind, ok := operationalLifecycleKind(fact.Kind)
+		if !ok {
+			continue
+		}
+		out = append(out, callboundary.LifecycleFact{
+			Target:     fact.Target,
+			Kind:       kind,
+			Protocol:   fact.Protocol,
+			From:       fact.From,
+			To:         fact.To,
+			Obligation: fact.Obligation,
+		})
+	}
+	return out
+}
+
+func operationalLifecycleKind(kind signature.LifecycleKind) (callboundary.LifecycleKind, bool) {
+	switch kind {
+	case signature.LifecycleAcquire:
+		return callboundary.LifecycleAcquire, true
+	case signature.LifecycleTransition:
+		return callboundary.LifecycleTransition, true
+	case signature.LifecycleEscape:
+		return callboundary.LifecycleEscape, true
+	default:
+		return callboundary.LifecycleNone, false
+	}
 }
 
 func operationalReturnAllocationValue(reg *axis.Registry, effects *signature.OperationalEffects, returnIndex int, value product.Value) product.Value {

@@ -10,36 +10,43 @@ func knownContainsOpenRecursive(t Type) bool {
 		n.ensureContainsClosedFlag()
 		return !n.containsFlagsClosed
 	case *Optional:
-		return n.containsOpenRecursive
+		return currentContainsOpenRecursive(n, n.containsOpenRecursive)
 	case *Union:
-		return n.containsOpenRecursive
+		return currentContainsOpenRecursive(n, n.containsOpenRecursive)
 	case *Intersection:
-		return n.containsOpenRecursive
+		return currentContainsOpenRecursive(n, n.containsOpenRecursive)
 	case *Array:
-		return n.containsOpenRecursive
+		return currentContainsOpenRecursive(n, n.containsOpenRecursive)
 	case *Map:
-		return n.containsOpenRecursive
+		return currentContainsOpenRecursive(n, n.containsOpenRecursive)
 	case *ReadonlyMap:
-		return n.containsOpenRecursive
+		return currentContainsOpenRecursive(n, n.containsOpenRecursive)
 	case *Tuple:
-		return n.containsOpenRecursive
+		return currentContainsOpenRecursive(n, n.containsOpenRecursive)
 	case *Function:
-		return n.containsOpenRecursive
+		return currentContainsOpenRecursive(n, n.containsOpenRecursive)
 	case *Record:
-		return n.containsOpenRecursive
+		return currentContainsOpenRecursive(n, n.containsOpenRecursive)
 	case *Alias:
-		return n.containsOpenRecursive
+		return currentContainsOpenRecursive(n, n.containsOpenRecursive)
 	case *Meta:
-		return n.containsOpenRecursive
+		return currentContainsOpenRecursive(n, n.containsOpenRecursive)
 	case *Generic:
-		return n.containsOpenRecursive
+		return currentContainsOpenRecursive(n, n.containsOpenRecursive)
 	case *Instantiated:
-		return n.containsOpenRecursive
+		return currentContainsOpenRecursive(n, n.containsOpenRecursive)
 	case *TypeParam:
-		return n.containsOpenRecursive
+		return currentContainsOpenRecursive(n, n.containsOpenRecursive)
 	case *Interface:
-		return n.containsOpenRecursive
+		return currentContainsOpenRecursive(n, n.containsOpenRecursive)
 	default:
 		return false
 	}
+}
+
+func currentContainsOpenRecursive(t Type, cached bool) bool {
+	if !cached && !knownContainsRecursive(t) {
+		return false
+	}
+	return !recursiveContainsGraphClosed(t, nil)
 }

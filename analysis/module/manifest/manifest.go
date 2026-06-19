@@ -186,12 +186,13 @@ type functionSignatureWire struct {
 }
 
 func encodeFunctionSignature(sig signature.Function) (functionSignatureWire, error) {
-	if sig.Type == nil {
-		return functionSignatureWire{}, errors.New("missing function type")
-	}
-	encodedType, err := encodeType(sig.Type)
-	if err != nil {
-		return functionSignatureWire{}, err
+	var encodedType *typeWire
+	if sig.Type != nil {
+		var err error
+		encodedType, err = encodeType(sig.Type)
+		if err != nil {
+			return functionSignatureWire{}, err
+		}
 	}
 	encodedEffect, err := encodeEffectRow(sig.Effect)
 	if err != nil {
@@ -201,6 +202,9 @@ func encodeFunctionSignature(sig signature.Function) (functionSignatureWire, err
 	if err != nil {
 		return functionSignatureWire{}, err
 	}
+	if encodedType == nil && encodedEffect == nil && encodedOperational == nil {
+		return functionSignatureWire{}, errors.New("missing function type or effects")
+	}
 	return functionSignatureWire{
 		Type:               encodedType,
 		Effect:             encodedEffect,
@@ -209,13 +213,17 @@ func encodeFunctionSignature(sig signature.Function) (functionSignatureWire, err
 }
 
 func decodeFunctionSignature(w functionSignatureWire) (signature.Function, error) {
-	decodedType, err := decodeType(w.Type)
-	if err != nil {
-		return signature.Function{}, err
-	}
-	fn, ok := decodedType.(*typ.Function)
-	if !ok {
-		return signature.Function{}, fmt.Errorf("type is %T, want *typ.Function", decodedType)
+	var fn *typ.Function
+	if w.Type != nil {
+		decodedType, err := decodeType(w.Type)
+		if err != nil {
+			return signature.Function{}, err
+		}
+		var ok bool
+		fn, ok = decodedType.(*typ.Function)
+		if !ok {
+			return signature.Function{}, fmt.Errorf("type is %T, want *typ.Function", decodedType)
+		}
 	}
 	row, err := decodeEffectRow(w.Effect)
 	if err != nil {
@@ -232,12 +240,21 @@ func decodeFunctionSignature(w functionSignatureWire) (signature.Function, error
 	if w.OperationalEffects != nil && !operational.IsEmpty() {
 		operationalPtr = &operational
 	}
+	if fn == nil && row.Pure() && operationalPtr == nil {
+		return signature.Function{}, errors.New("missing function type or effects")
+	}
 	return signature.Function{Type: fn, Effect: row, OperationalEffects: operationalPtr}, nil
 }
 
 func validateFunctionOperationalEffects(fn *typ.Function, effects signature.OperationalEffects) error {
 	if fn == nil {
-		return errors.New("missing function type")
+		if len(effects.ReturnPresenceRelations) != 0 {
+			return errors.New("return presence relations require function type")
+		}
+		if len(effects.ReturnAllocationTemplates) != 0 {
+			return errors.New("return allocation templates require function type")
+		}
+		return nil
 	}
 	seenReturnAllocations := make(map[int]struct{}, len(effects.ReturnAllocationTemplates))
 	for _, template := range effects.ReturnAllocationTemplates {

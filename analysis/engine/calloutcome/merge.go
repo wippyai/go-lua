@@ -68,16 +68,7 @@ func withSupplementalFacts(reg *axis.Registry, out, second callpayload.CallOutco
 	if out.PostReturnAuthority {
 		return out
 	}
-	out.NormalReturnFacts.PathRefinements = append(out.NormalReturnFacts.PathRefinements, second.NormalReturnFacts.PathRefinements...)
-	out.NormalReturnFacts.PathStaticMembers = append(out.NormalReturnFacts.PathStaticMembers, second.NormalReturnFacts.PathStaticMembers...)
-	out.NormalReturnFacts.PathInvalidations = append(out.NormalReturnFacts.PathInvalidations, second.NormalReturnFacts.PathInvalidations...)
-	out.NormalReturnFacts.DynamicIndexFacts = append(out.NormalReturnFacts.DynamicIndexFacts, second.NormalReturnFacts.DynamicIndexFacts...)
-	out.NormalReturnFacts.BranchProofs = append(out.NormalReturnFacts.BranchProofs, second.NormalReturnFacts.BranchProofs...)
-	out.NormalReturnFacts.ChannelSelects = append(out.NormalReturnFacts.ChannelSelects, second.NormalReturnFacts.ChannelSelects...)
-	out.NormalReturnFacts.FrozenTables = append(out.NormalReturnFacts.FrozenTables, second.NormalReturnFacts.FrozenTables...)
-	out.NormalReturnFacts.EffectDeltas = append(out.NormalReturnFacts.EffectDeltas, second.NormalReturnFacts.EffectDeltas...)
-	out.NormalReturnFacts.EscapeEvents = append(out.NormalReturnFacts.EscapeEvents, second.NormalReturnFacts.EscapeEvents...)
-	out.NormalReturnFacts.StoreRelations = append(out.NormalReturnFacts.StoreRelations, second.NormalReturnFacts.StoreRelations...)
+	out.NormalReturnFacts = out.NormalReturnFacts.Append(second.NormalReturnFacts)
 	out.HeapTableObjects = withSupplementalHeapTableObjects(reg, out.HeapTableObjects, second.HeapTableObjects)
 	out.Placements = withSupplementalPlacements(out.Placements, second.Placements)
 	out.ParamPathRefinements = append(out.ParamPathRefinements, second.ParamPathRefinements...)
@@ -141,7 +132,7 @@ func withSupplementalHeapTableObjects(
 			if _, ok := out[id]; ok {
 				continue
 			}
-			out[id] = heapidentity.CloneObject(object)
+			out[id] = object
 		}
 		return out
 	}

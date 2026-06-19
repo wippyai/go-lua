@@ -1,30 +1,32 @@
 package diagnostics
 
 import (
-	"fmt"
 	"strings"
 
 	"github.com/wippyai/go-lua/analysis/check/body"
 	"github.com/wippyai/go-lua/analysis/diagnostic"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
-	"github.com/wippyai/go-lua/compiler/ast"
 )
 
-type unusedLocals producerContext
+type unusedLocals struct{}
 
-func (p unusedLocals) Produce(result *body.Result) []diagnostic.Diagnostic {
-	_ = p
+func (unusedLocals) Produce(result *body.Result) []diagnostic.Diagnostic {
 	graph := result.Graph()
 	if graph == nil {
 		return nil
 	}
+	reachable := collectDiagnosticReachability(result, graph)
+	readsByPoint := collectReachableSymbolReads(result, graph, reachable)
 	var out []diagnostic.Diagnostic
 	for _, point := range graph.RPO() {
+		if !diagnosticPointReachable(reachable, point) {
+			continue
+		}
 		fact, ok := result.LocalAssignment(point)
 		if !ok || !fact.HasSymbol || ignoredUnusedLocalName(fact.Name) {
 			continue
 		}
-		if result.SymbolHasRead(fact.Symbol) {
+		if symbolHasReachableRead(readsByPoint, fact.Symbol) {
 			continue
 		}
 		out = append(out, unusedLocalDiagnostic(fact))
@@ -37,23 +39,16 @@ func ignoredUnusedLocalName(name string) bool {
 }
 
 func unusedLocalDiagnostic(fact semantics.LocalAssignmentFact) diagnostic.Diagnostic {
-	span := ast.SpanOf(fact.Stmt)
-	message := fmt.Sprintf("local %q is never read", fact.Name)
-	return diagnostic.Diagnostic{
-		Position: diagnostic.Position{
-			Line:      span.StartLine,
-			Column:    span.StartCol,
-			EndLine:   span.EndLine,
-			EndColumn: span.EndCol,
-		},
+	span := localNameSpan(fact.Stmt, fact.Index, fact.Name)
+	return diagnostic.New(diagnostic.DiagnosticSpec{
 		Span:        span,
 		Code:        CodeUnusedLocal,
 		Severity:    diagnostic.SeverityWarning,
-		Message:     message,
+		Message:     unusedLocalMessage(fact.Name),
 		Explanation: unusedLocalExplanation(span, fact.Name),
-		Labels:      []diagnostic.Label{{Span: span, Message: "unused local declaration"}},
-		Help:        "Remove the local, use it, or prefix its name with _ to mark it intentionally unused.",
-	}
+		Help:        unusedLocalHelp(),
+		Labels:      []diagnostic.Label{sourceLabel(span, labelUnusedLocal)},
+	})
 }
 
 func unusedLocalExplanation(span diagnostic.Span, name string) diagnostic.Explanation {
@@ -61,14 +56,7 @@ func unusedLocalExplanation(span diagnostic.Span, name string) diagnostic.Explan
 		diagnostic.Evidence{
 			Kind:    diagnostic.EvidenceAbstractFact,
 			Trust:   diagnostic.TrustProven,
-			Span:    span,
-			Message: fmt.Sprintf("local %q is declared here", name),
-		},
-		diagnostic.Evidence{
-			Kind:    diagnostic.EvidenceMissingProof,
-			Trust:   diagnostic.TrustProven,
-			Span:    span,
-			Message: fmt.Sprintf("no identifier read is bound to local %q", name),
+			Message: unusedLocalEvidence(name),
 		},
 	)
 }

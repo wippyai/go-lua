@@ -2,7 +2,7 @@ package diagnostics
 
 import (
 	"github.com/wippyai/go-lua/analysis/check/body"
-	"github.com/wippyai/go-lua/analysis/check/diagnostics/internal/readmodel"
+	"github.com/wippyai/go-lua/analysis/check/internal/readmodel"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
@@ -10,6 +10,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/refinement"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/analysis/type/unwrap"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
 
@@ -65,10 +66,46 @@ func objectLiteralAdmissibleToRecord(result *body.Result, point cfg.Point, recor
 	return true
 }
 
+func missingRequiredRecordField(want typ.Type, fact semantics.ObjectLiteralFact) (typ.Field, bool) {
+	record, ok := closedRecord(want)
+	if !ok {
+		return typ.Field{}, false
+	}
+	present := make(map[string]struct{}, len(fact.Entries))
+	for _, entry := range fact.Entries {
+		if len(entry.Suffix.Segments) != 1 {
+			continue
+		}
+		seg := entry.Suffix.Segments[0]
+		if seg.Kind == segment.SegmentField && seg.Name != "" {
+			present[seg.Name] = struct{}{}
+		}
+	}
+	for _, field := range record.Fields {
+		if field.Optional || unwrap.IsOptionalLike(field.Type) {
+			continue
+		}
+		if _, ok := present[field.Name]; ok {
+			continue
+		}
+		return field, true
+	}
+	return typ.Field{}, false
+}
+
+func closedRecord(t typ.Type) (*typ.Record, bool) {
+	record, ok := transparentExpectedType(t).(*typ.Record)
+	if !ok || record == nil || record.Open {
+		return nil, false
+	}
+	return record, true
+}
+
 type objectLiteralTypeMismatch struct {
-	expr ast.Expr
-	got  typ.Type
-	want typ.Type
+	expr   ast.Expr
+	got    typ.Type
+	want   typ.Type
+	suffix string
 }
 
 func objectLiteralMemberMismatch(result *body.Result, point cfg.Point, expr ast.Expr, want typ.Type, env guardEnv) (objectLiteralTypeMismatch, bool) {
@@ -103,7 +140,7 @@ func objectLiteralMemberMismatchInFact(result *body.Result, point cfg.Point, fac
 		if !ok {
 			continue
 		}
-		return objectLiteralTypeMismatch{expr: entry.Value, got: got, want: expected}, true
+		return objectLiteralTypeMismatch{expr: entry.Value, got: got, want: expected, suffix: segment.FormatSegments(entry.Suffix.Segments)}, true
 	}
 	return objectLiteralTypeMismatch{}, false
 }

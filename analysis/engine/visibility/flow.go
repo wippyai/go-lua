@@ -64,14 +64,7 @@ func BuildForward(config BuildConfig) *Table {
 				changed = true
 			}
 
-			nextOut := cloneVersionMap(nextIn)
-			defs := defsAt[point]
-			if len(defs) != 0 && nextOut == nil {
-				nextOut = make(map[symbol.ID]ssa.Version, len(defs))
-			}
-			for _, version := range defs {
-				nextOut[version.Symbol] = version
-			}
+			nextOut := versionMapWithDefinitions(nextIn, defsAt[point])
 			if !versionMapsEqual(out[point], nextOut) {
 				out[point] = nextOut
 				changed = true
@@ -135,7 +128,7 @@ func mergePredecessors(
 		return nil
 	}
 	if len(knownPreds) == 1 {
-		return cloneVersionMap(out[knownPreds[0]])
+		return out[knownPreds[0]]
 	}
 
 	symbols := make(map[symbol.ID]struct{})
@@ -182,6 +175,23 @@ func mergePredecessors(
 		merged[sym] = phi
 	}
 	return merged
+}
+
+func versionMapWithDefinitions(
+	base map[symbol.ID]ssa.Version,
+	defs []ssa.Version,
+) map[symbol.ID]ssa.Version {
+	if len(defs) == 0 {
+		return base
+	}
+	next := cloneVersionMap(base)
+	if next == nil {
+		next = make(map[symbol.ID]ssa.Version, len(defs))
+	}
+	for _, version := range defs {
+		next[version.Symbol] = version
+	}
+	return next
 }
 
 func versionSemanticallyEqual(left, right ssa.Version) bool {

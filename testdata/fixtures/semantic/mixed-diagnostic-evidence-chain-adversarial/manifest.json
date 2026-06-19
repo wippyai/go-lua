@@ -5,6 +5,7 @@
       {
         "file": "main.lua",
         "line": 6,
+        "column": 12,
         "severity": "error",
         "code": "type.return.contract",
         "message_contains": [
@@ -13,32 +14,141 @@
         ],
         "min_evidence": 2,
         "evidence_contains": [
-          "returned value 1 is",
-          "declared return type is number"
+          "returned value 1 has literal value \"bad\"",
+          "returned value 1 must satisfy declared return type number"
+        ],
+        "evidence": [
+          {
+            "file": "main.lua",
+            "line": 6,
+            "column": 12,
+            "kind": "abstract fact",
+            "trust": "proven",
+            "contains": [
+              "returned value 1 has literal value \"bad\""
+            ]
+          },
+          {
+            "file": "main.lua",
+            "line": 5,
+            "column": 42,
+            "kind": "user assertion",
+            "trust": "claimed",
+            "contains": [
+              "returned value 1 must satisfy declared return type number"
+            ]
+          }
+        ],
+        "render_contains": [
+          "error[type.return.contract]:",
+          "return \"bad\"",
+          "because:",
+          "Return a value compatible with the declared return type"
+        ],
+        "render_ordered_contains": [
+          "error[type.return.contract]: returned value 1 is \"bad\", not number",
+          "--> main.lua:6:12",
+          "return \"bad\"",
+          "because:",
+          "1. proven: returned value 1 has literal value \"bad\"",
+          "2. claimed: returned value 1 must satisfy declared return type number",
+          "--> main.lua:5:42",
+          "help: Return a value compatible with the declared return type"
+        ],
+        "render_not_contains": [
+          "^~",
+          "where:",
+          "want number"
+        ],
+        "help_contains": [
+          "Return a value compatible with the declared return type",
+          "change the return annotation"
         ],
         "min_labels": 2,
         "label_contains": [
           "returned value",
           "declared return type"
+        ],
+        "labels": [
+          {
+            "file": "main.lua",
+            "line": 6,
+            "column": 12,
+            "contains": [
+              "returned value"
+            ]
+          },
+          {
+            "file": "main.lua",
+            "line": 5,
+            "column": 42,
+            "contains": [
+              "declared return type"
+            ]
+          }
         ]
       },
       {
         "file": "main.lua",
         "line": 14,
+        "column": 5,
         "severity": "error",
         "code": "type.member.missing",
         "message_contains": [
           "has no member \"upper\"",
           "number | string"
         ],
-        "min_evidence": 2,
+        "min_evidence": 1,
         "evidence_contains": [
-          "reads value.upper",
-          "receiver type at call"
+          "value.upper has receiver type"
+        ],
+        "evidence": [
+          {
+            "file": "main.lua",
+            "line": 14,
+            "column": 5,
+            "kind": "abstract fact",
+            "trust": "proven",
+            "contains": [
+              "value.upper has receiver type number | string"
+            ]
+          }
+        ],
+        "render_contains": [
+          "error[type.member.missing]:",
+          "value:upper()",
+          "because:",
+          "Narrow the receiver before reading `upper`"
+        ],
+        "render_ordered_contains": [
+          "error[type.member.missing]: number | string has no member \"upper\"",
+          "--> main.lua:14:5",
+          "value:upper()",
+          "because:",
+          "1. proven: value.upper has receiver type number | string",
+          "help: Narrow the receiver before reading `upper`"
+        ],
+        "render_not_contains": [
+          "^~",
+          "where:",
+          "invalid call"
+        ],
+        "help_contains": [
+          "Narrow the receiver before reading `upper`"
         ],
         "min_labels": 1,
         "label_contains": [
-          "missing member call"
+          "member call"
+        ],
+        "labels": [
+          {
+            "file": "main.lua",
+            "line": 14,
+            "column": 5,
+            "contains": [
+              "member call"
+            ]
+          }
         ]
       },
       {
@@ -52,13 +162,89 @@
         ],
         "min_evidence": 2,
         "evidence_contains": [
-          "returns string",
-          "assignment target is annotated number"
+          "declares call result 1 as string",
+          "assignment target got_count requires number"
         ],
-        "min_labels": 2,
+        "evidence": [
+          {
+            "file": "main.lua",
+            "line": 9,
+            "column": 29,
+            "kind": "user assertion",
+            "trust": "claimed",
+            "contains": [
+              "load_name declares call result 1 as string"
+            ]
+          },
+          {
+            "file": "main.lua",
+            "line": 17,
+            "column": 18,
+            "kind": "user assertion",
+            "trust": "claimed",
+            "contains": [
+              "assignment target got_count requires number"
+            ]
+          }
+        ],
+        "render_contains": [
+          "error[type.call.direct.result_assignment]:",
+          "local got_count: number = load_name()",
+          "because:",
+          "assignment target got_count requires number",
+          "Assign the call result to a compatible target type"
+        ],
+        "render_ordered_contains": [
+          "error[type.call.direct.result_assignment]: call result 1 is string, not number",
+          "--> main.lua:17:27",
+          "17 | local got_count: number = load_name()",
+          "because:",
+          "1. claimed: load_name declares call result 1 as string",
+          "--> main.lua:9:29",
+          "9 | local function load_name(): string",
+          "2. claimed: assignment target got_count requires number",
+          "help: Assign the call result to a compatible target type"
+        ],
+        "render_not_contains": [
+          "^~",
+          "want string",
+          "want number"
+        ],
+        "help_contains": [
+          "Assign the call result to a compatible target type",
+          "change the callee return type"
+        ],
+        "min_labels": 3,
         "label_contains": [
           "call result",
-          "declared type"
+          "declared type",
+          "declared return type"
+        ],
+        "labels": [
+          {
+            "file": "main.lua",
+            "line": 17,
+            "column": 27,
+            "contains": [
+              "call result"
+            ]
+          },
+          {
+            "file": "main.lua",
+            "line": 17,
+            "column": 18,
+            "contains": [
+              "declared type"
+            ]
+          },
+          {
+            "file": "main.lua",
+            "line": 9,
+            "column": 29,
+            "contains": [
+              "declared return type"
+            ]
+          }
         ]
       },
       {
@@ -67,34 +253,130 @@
         "severity": "error",
         "code": "type.call.optional_receiver",
         "message_contains": [
-          "cannot call method on optional value"
+          "cannot call method on an optional value"
         ],
-        "min_evidence": 1,
+        "min_evidence": 2,
         "evidence_contains": [
-          "receiver type at call is optional"
+          "receiver maybe_handler is optional at call to maybe_handler.run",
+          "no nil check proves receiver maybe_handler is present before calling maybe_handler.run"
         ],
-        "min_labels": 1,
+        "evidence": [
+          {
+            "file": "main.lua",
+            "line": 20,
+            "column": 1,
+            "kind": "abstract fact",
+            "trust": "proven",
+            "contains": [
+              "receiver maybe_handler is optional at call to maybe_handler.run"
+            ]
+          },
+          {
+            "file": "main.lua",
+            "line": 20,
+            "column": 1,
+            "kind": "missing proof",
+            "trust": "unknown",
+            "contains": [
+              "no nil check proves receiver maybe_handler is present before calling maybe_handler.run"
+            ]
+          }
+        ],
+        "render_contains": [
+          "error[type.call.optional_receiver]: cannot call method on an optional value without a nil check",
+          "maybe_handler:run(\"job-1\")",
+          "missing proof"
+        ],
+        "render_ordered_contains": [
+          "error[type.call.optional_receiver]: cannot call method on an optional value without a nil check",
+          "--> main.lua:20:1",
+          "20 | maybe_handler:run(\"job-1\")",
+          "because:",
+          "1. proven: receiver maybe_handler is optional at call to maybe_handler.run",
+          "2. missing proof: no nil check proves receiver maybe_handler is present before calling maybe_handler.run",
+          "help: check maybe_handler ~= nil before calling maybe_handler.run."
+        ],
+        "render_not_contains": [
+          "^~",
+          "want string"
+        ],
+        "help_contains": [
+          "check maybe_handler ~= nil before calling maybe_handler.run."
+        ],
         "label_contains": [
-          "method call on optional receiver"
+          "method call"
+        ],
+        "labels": [
+          {
+            "file": "main.lua",
+            "line": 20,
+            "column": 1,
+            "contains": [
+              "method call"
+            ]
+          }
         ]
       },
       {
         "file": "main.lua",
         "line": 22,
+        "column": 9,
         "severity": "error",
         "code": "type.for.numeric_operand",
         "message_contains": [
           "numeric for initial value",
           "got \"first\""
         ],
-        "min_evidence": 2,
+        "min_evidence": 1,
         "evidence_contains": [
-          "initial value is \"first\"",
-          "must be a number"
+          "initial value has literal value \"first\""
+        ],
+        "evidence": [
+          {
+            "file": "main.lua",
+            "line": 22,
+            "column": 9,
+            "kind": "abstract fact",
+            "trust": "proven",
+            "contains": [
+              "initial value has literal value \"first\""
+            ]
+          }
+        ],
+        "render_contains": [
+          "error[type.for.numeric_operand]:",
+          "for i = \"first\", 3 do",
+          "because:"
+        ],
+        "render_ordered_contains": [
+          "error[type.for.numeric_operand]: numeric for initial value must be number, got \"first\"",
+          "--> main.lua:22:9",
+          "for i = \"first\", 3 do",
+          "because:",
+          "1. proven: initial value has literal value \"first\"",
+          "help: Use a number for the numeric for initial value, or convert it before the loop."
+        ],
+        "render_not_contains": [
+          "^~",
+          "where:",
+          "want number"
+        ],
+        "help_contains": [
+          "Use a number for the numeric for initial value"
         ],
         "min_labels": 1,
         "label_contains": [
-          "numeric for initial value"
+          "initial value"
+        ],
+        "labels": [
+          {
+            "file": "main.lua",
+            "line": 22,
+            "column": 9,
+            "contains": [
+              "initial value"
+            ]
+          }
         ]
       }
     ]

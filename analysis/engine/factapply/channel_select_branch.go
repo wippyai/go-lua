@@ -242,11 +242,11 @@ func channelSelectReceiveFacts(
 		if fact.Kind != channelselectfact.FactReceive || fact.Result == "" || fact.Case == "" {
 			continue
 		}
-		rebasedResult, ok := rebasePathKeyToContext(fact.Result, resultKey)
+		rebasedResult, ok := pathaddr.RebaseLocalPathKeyToContext(fact.Result, resultKey)
 		if !ok || rebasedResult != resultKey {
 			continue
 		}
-		rebasedCase, ok := rebasePathKeyToContext(fact.Case, caseKey)
+		rebasedCase, ok := pathaddr.RebaseLocalPathKeyToContext(fact.Case, caseKey)
 		if !ok || rebasedCase != caseKey {
 			continue
 		}
@@ -269,10 +269,6 @@ func channelSelectResultPathFromChannel(p pathdom.Path) (pathdom.Path, bool) {
 		return pathdom.Path{}, false
 	}
 	return p.Parent(), true
-}
-
-func rebasePathKeyToContext(pathKey pathdom.PathKey, contextKey pathdom.PathKey) (pathdom.PathKey, bool) {
-	return pathaddr.RebaseLocalPathKeyToContext(pathKey, contextKey)
 }
 
 func invalidateChannelSelectResultDescendants(

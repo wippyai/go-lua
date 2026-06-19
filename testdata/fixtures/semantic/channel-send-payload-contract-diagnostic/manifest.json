@@ -1,0 +1,82 @@
+{
+  "description": "Channel<T>:send enforces the payload contract and renders nested object-literal member evidence precisely.",
+  "packages": [
+    "channel"
+  ],
+  "check": {
+    "diagnostics": [
+      {
+        "file": "main.lua",
+        "line": 4,
+        "column": 21,
+        "severity": "error",
+        "code": "type.call.direct.argument_type",
+        "message_contains": [
+          "argument 1.id",
+          "not string"
+        ],
+        "min_evidence": 2,
+        "evidence_contains": [
+          "argument 1.id has literal value 1",
+          "out.send parameter 1.id expects string"
+        ],
+        "evidence": [
+          {
+            "file": "main.lua",
+            "line": 4,
+            "column": 21,
+            "kind": "abstract fact",
+            "trust": "proven",
+            "contains": [
+              "argument 1.id has literal value 1"
+            ]
+          },
+          {
+            "kind": "user assertion",
+            "trust": "claimed",
+            "contains": [
+              "out.send parameter 1.id expects string"
+            ]
+          }
+        ],
+        "render_contains": [
+          "error[type.call.direct.argument_type]: argument 1.id is 1, not string",
+          "out:send({ id = 1, meta = { attempt = 1 } })",
+          "because:"
+        ],
+        "render_ordered_contains": [
+          "error[type.call.direct.argument_type]: argument 1.id is 1, not string",
+          "--> main.lua:4:21",
+          "out:send({ id = 1, meta = { attempt = 1 } })",
+          "because:",
+          "1. proven: argument 1.id has literal value 1",
+          "2. claimed: out.send parameter 1.id expects string",
+          "help:"
+        ],
+        "render_not_contains": [
+          "^~",
+          "want string"        ],
+        "min_labels": 1,
+        "label_contains": [
+          "argument value"
+        ],
+        "labels": [
+          {
+            "file": "main.lua",
+            "line": 4,
+            "column": 21,
+            "contains": [
+              "argument value"
+            ]
+          }
+        ],
+        "help_contains": [
+          "parameter type"
+        ]
+      }
+    ]
+  },
+  "run": {
+    "skip": "diagnostic-only fixture"
+  }
+}

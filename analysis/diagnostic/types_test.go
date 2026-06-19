@@ -102,6 +102,48 @@ func TestSpan_SingleLine(t *testing.T) {
 	}
 }
 
+func TestPositionFromSpan(t *testing.T) {
+	span := Span{StartLine: 3, StartCol: 9, EndLine: 3, EndCol: 14}
+	got := PositionFromSpan(span)
+	want := Position{Line: 3, Column: 9, EndLine: 3, EndColumn: 14}
+	if got != want {
+		t.Fatalf("PositionFromSpan = %#v, want %#v", got, want)
+	}
+}
+
+func TestPositionFromSpanInFile(t *testing.T) {
+	span := Span{StartLine: 3, StartCol: 9, EndLine: 3, EndCol: 14}
+	got := PositionFromSpanInFile("main.lua", span)
+	want := Position{File: "main.lua", Line: 3, Column: 9, EndLine: 3, EndColumn: 14}
+	if got != want {
+		t.Fatalf("PositionFromSpanInFile = %#v, want %#v", got, want)
+	}
+}
+
+func TestNewDiagnosticDerivesPositionFromSpan(t *testing.T) {
+	span := Span{StartLine: 4, StartCol: 12, EndLine: 4, EndCol: 18}
+	labels := []Label{{Span: span, Message: "primary"}}
+	got := New(DiagnosticSpec{
+		File:     "main.lua",
+		Span:     span,
+		Code:     Code("type.example"),
+		Message:  "example mismatch",
+		Severity: SeverityWarning,
+		Help:     "fix it",
+		Labels:   labels,
+	})
+	if got.Position != (Position{File: "main.lua", Line: 4, Column: 12, EndLine: 4, EndColumn: 18}) {
+		t.Fatalf("position = %#v, want position derived from span", got.Position)
+	}
+	if got.Span != span || got.Code != Code("type.example") || got.Message != "example mismatch" || got.Severity != SeverityWarning || got.Help != "fix it" {
+		t.Fatalf("diagnostic = %#v, want spec fields preserved", got)
+	}
+	labels[0].Message = "mutated"
+	if got.Labels[0].Message != "primary" {
+		t.Fatalf("labels alias caller slice: %#v", got.Labels)
+	}
+}
+
 func TestCodeString(t *testing.T) {
 	tests := []struct {
 		code Code
@@ -165,8 +207,12 @@ func TestDiagnostic_ErrorMethod(t *testing.T) {
 
 func TestLabel(t *testing.T) {
 	label := Label{
+		File:    "main.lua",
 		Span:    Span{StartLine: 1, StartCol: 0, EndLine: 1, EndCol: 10},
 		Message: "here",
+	}
+	if label.File != "main.lua" {
+		t.Errorf("Label.File = %q, want %q", label.File, "main.lua")
 	}
 	if label.Message != "here" {
 		t.Errorf("Label.Message = %q, want %q", label.Message, "here")

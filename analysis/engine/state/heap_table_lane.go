@@ -64,7 +64,7 @@ func (l heapTableIdentityLane) with(id identity.ID, object heapidentity.TableObj
 	if values == nil {
 		values = make(map[identity.ID]heapidentity.TableObject, 1)
 	}
-	values[id] = heapidentity.CloneObject(object)
+	values[id] = object
 	l.values = values
 	return l
 }

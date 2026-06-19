@@ -1,0 +1,67 @@
+{
+  "description": "Concat operand diagnostics explain the concrete optional operand without repeating the source-frame role.",
+  "check": {
+    "diagnostics": [
+      {
+        "file": "main.lua",
+        "line": 2,
+        "column": 25,
+        "severity": "warning",
+        "code": "type.operator.concat_operand",
+        "message_contains": [
+          "right operand of `..` may be nil"
+        ],
+        "min_evidence": 1,
+        "evidence_contains": [
+          "right operand `maybe` can be string or nil here"
+        ],
+        "evidence": [
+          {
+            "file": "main.lua",
+            "line": 2,
+            "column": 25,
+            "kind": "abstract fact",
+            "trust": "proven",
+            "contains": [
+              "right operand `maybe` can be string or nil here"
+            ]
+          }
+        ],
+        "render_contains": [
+          "warning[type.operator.concat_operand]: right operand of `..` may be nil",
+          "return \"prefix:\" .. maybe",
+          "because:"
+        ],
+        "render_ordered_contains": [
+          "warning[type.operator.concat_operand]: right operand of `..` may be nil",
+          "--> main.lua:2:25",
+          "return \"prefix:\" .. maybe",
+          "because:",
+          "proven: right operand `maybe` can be string or nil here",
+          "help: Guard `maybe` or provide a default string before using `..`."
+        ],
+        "render_not_contains": [
+          "^~"        ],
+        "help_contains": [
+          "Guard `maybe` or provide a default string before using `..`."
+        ],
+        "label_contains": [
+          "value may be nil"
+        ],
+        "labels": [
+          {
+            "file": "main.lua",
+            "line": 2,
+            "column": 25,
+            "contains": [
+              "value may be nil"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "run": {
+    "skip": "diagnostic-only fixture"
+  }
+}

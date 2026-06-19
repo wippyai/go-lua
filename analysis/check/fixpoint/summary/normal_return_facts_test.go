@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/typestate"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
@@ -15,7 +16,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/symbol"
 )
 
-func TestNormalReturnFactsNormalizeDropsNonPlaceholderPaths(t *testing.T) {
+func TestNormalReturnFactsNormalizeKeepsConcreteCapturedPathBoundaryFacts(t *testing.T) {
 	reg := mustRegistry(t)
 	placeholder := pathdom.NewPlaceholder(0).Field("field")
 	concrete := pathdom.NewPath(symbol.ID(10), "arg").Field("field")
@@ -65,6 +66,10 @@ func TestNormalReturnFactsNormalizeDropsNonPlaceholderPaths(t *testing.T) {
 			{Source: placeholder, Into: concrete},
 			{Source: placeholder, Into: pathdom.NewPlaceholder(1)},
 		},
+		LifecycleFacts: []callboundary.LifecycleFact{
+			{Target: concrete, Kind: callboundary.LifecycleAcquire, Protocol: typestate.Protocol("transaction"), To: typestate.State("open")},
+			{Target: placeholder, Kind: callboundary.LifecycleAcquire, Protocol: typestate.Protocol("transaction"), To: typestate.State("open")},
+		},
 	}})
 
 	facts := got.NormalReturnFacts
@@ -74,8 +79,10 @@ func TestNormalReturnFactsNormalizeDropsNonPlaceholderPaths(t *testing.T) {
 	if len(facts.PathStaticMembers) != 1 || !facts.PathStaticMembers[0].Path.Equal(placeholder) {
 		t.Fatalf("PathStaticMembers = %#v, want only placeholder fact", facts.PathStaticMembers)
 	}
-	if len(facts.PathInvalidations) != 1 || !facts.PathInvalidations[0].Path.Equal(placeholder) {
-		t.Fatalf("PathInvalidations = %#v, want only placeholder fact", facts.PathInvalidations)
+	if len(facts.PathInvalidations) != 2 ||
+		findPathInvalidation(facts.PathInvalidations, concrete) == nil ||
+		findPathInvalidation(facts.PathInvalidations, placeholder) == nil {
+		t.Fatalf("PathInvalidations = %#v, want placeholder and concrete captured-path facts", facts.PathInvalidations)
 	}
 	if len(facts.DynamicIndexFacts) != 1 || facts.DynamicIndexFacts[0].Site != "caller.dynamic.1" {
 		t.Fatalf("DynamicIndexFacts = %#v, want stable caller site placeholder fact", facts.DynamicIndexFacts)
@@ -99,6 +106,11 @@ func TestNormalReturnFactsNormalizeDropsNonPlaceholderPaths(t *testing.T) {
 		!facts.StoreRelations[0].Source.Equal(placeholder) ||
 		!facts.StoreRelations[0].Into.Equal(pathdom.NewPlaceholder(1)) {
 		t.Fatalf("StoreRelations = %#v, want only placeholder pair", facts.StoreRelations)
+	}
+	if len(facts.LifecycleFacts) != 2 ||
+		findLifecycleFact(facts.LifecycleFacts, concrete) == nil ||
+		findLifecycleFact(facts.LifecycleFacts, placeholder) == nil {
+		t.Fatalf("LifecycleFacts = %#v, want placeholder and concrete captured-path facts", facts.LifecycleFacts)
 	}
 }
 
@@ -181,6 +193,13 @@ func TestNormalReturnFactsCloneIsolatesPayload(t *testing.T) {
 			Source: pathdom.NewPlaceholder(0).Field("stored"),
 			Into:   pathdom.NewPlaceholder(1),
 		}},
+		LifecycleFacts: []callboundary.LifecycleFact{{
+			Target:   pathdom.NewPlaceholder(0).Field("resource"),
+			Kind:     callboundary.LifecycleTransition,
+			Protocol: typestate.Protocol("transaction"),
+			From:     typestate.State("open"),
+			To:       typestate.State("closed"),
+		}},
 	}}
 
 	cloned := original.Clone()
@@ -191,6 +210,7 @@ func TestNormalReturnFactsCloneIsolatesPayload(t *testing.T) {
 	cloned.NormalReturnFacts.StoreRelations[0].Source = pathdom.NewPlaceholder(2)
 	cloned.NormalReturnFacts.FrozenTables[0].Target = pathdom.NewPlaceholder(1)
 	cloned.NormalReturnFacts.EscapeEvents[0].Target = pathdom.NewPlaceholder(1)
+	cloned.NormalReturnFacts.LifecycleFacts[0].Target = pathdom.NewPlaceholder(1)
 
 	if !original.NormalReturnFacts.PathRefinements[0].Path.Equal(pathdom.NewPlaceholder(0).Field("value")) {
 		t.Fatalf("mutating cloned path refinement changed original")
@@ -212,6 +232,9 @@ func TestNormalReturnFactsCloneIsolatesPayload(t *testing.T) {
 	}
 	if !original.NormalReturnFacts.StoreRelations[0].Source.Equal(pathdom.NewPlaceholder(0).Field("stored")) {
 		t.Fatalf("mutating cloned store relation changed original")
+	}
+	if !original.NormalReturnFacts.LifecycleFacts[0].Target.Equal(pathdom.NewPlaceholder(0).Field("resource")) {
+		t.Fatalf("mutating cloned lifecycle fact changed original")
 	}
 }
 
@@ -261,6 +284,10 @@ func TestNormalReturnFactsJoinUsesStateLaneSemantics(t *testing.T) {
 			{Source: commonPath, Into: storeInto},
 			{Source: leftOnly, Into: storeInto},
 		},
+		LifecycleFacts: []callboundary.LifecycleFact{
+			{Target: commonPath, Kind: callboundary.LifecycleTransition, Protocol: typestate.Protocol("transaction"), From: typestate.State("open"), To: typestate.State("closed")},
+			{Target: leftOnly, Kind: callboundary.LifecycleAcquire, Protocol: typestate.Protocol("transaction"), To: typestate.State("open")},
+		},
 	}}
 	right := Summary{NormalReturnFacts: callboundary.NormalReturnFacts{
 		PathRefinements:   []callboundary.PathValueFact{{Path: commonPath, Value: rightValue}},
@@ -300,6 +327,10 @@ func TestNormalReturnFactsJoinUsesStateLaneSemantics(t *testing.T) {
 		StoreRelations: []callboundary.StoreRelationFact{
 			{Source: commonPath, Into: storeInto},
 			{Source: p0.Field("right"), Into: storeInto},
+		},
+		LifecycleFacts: []callboundary.LifecycleFact{
+			{Target: commonPath, Kind: callboundary.LifecycleTransition, Protocol: typestate.Protocol("transaction"), From: typestate.State("open"), To: typestate.State("closed")},
+			{Target: p0.Field("right"), Kind: callboundary.LifecycleAcquire, Protocol: typestate.Protocol("transaction"), To: typestate.State("open")},
 		},
 	}}
 
@@ -363,6 +394,11 @@ func TestNormalReturnFactsJoinUsesStateLaneSemantics(t *testing.T) {
 		!got.StoreRelations[0].Source.Equal(commonPath) ||
 		!got.StoreRelations[0].Into.Equal(storeInto) {
 		t.Fatalf("StoreRelations = %#v, want only common must relation", got.StoreRelations)
+	}
+	if len(got.LifecycleFacts) != 1 ||
+		!got.LifecycleFacts[0].Target.Equal(commonPath) ||
+		got.LifecycleFacts[0].Kind != callboundary.LifecycleTransition {
+		t.Fatalf("LifecycleFacts = %#v, want only common must lifecycle transition", got.LifecycleFacts)
 	}
 
 	widened := Widen(reg, left, right).NormalReturnFacts
@@ -541,8 +577,8 @@ func TestNormalReturnFactsPathInvalidationsCompressParentEvidence(t *testing.T) 
 		},
 	}}).NormalReturnFacts.PathInvalidations
 
-	if len(got) != 2 {
-		t.Fatalf("PathInvalidations = %#v, want parent and sibling only", got)
+	if len(got) != 3 {
+		t.Fatalf("PathInvalidations = %#v, want parent, sibling, and concrete captured path", got)
 	}
 	if findPathInvalidation(got, parent) == nil {
 		t.Fatalf("PathInvalidations = %#v, want parent invalidation", got)
@@ -553,8 +589,8 @@ func TestNormalReturnFactsPathInvalidationsCompressParentEvidence(t *testing.T) 
 	if findPathInvalidation(got, sibling) == nil {
 		t.Fatalf("PathInvalidations = %#v, want distinct sibling invalidation", got)
 	}
-	if findPathInvalidation(got, concrete) != nil {
-		t.Fatalf("concrete invalidation should not cross call boundary: %#v", got)
+	if findPathInvalidation(got, concrete) == nil {
+		t.Fatalf("PathInvalidations = %#v, want concrete captured-path invalidation", got)
 	}
 
 	parentOnly := Summary{NormalReturnFacts: callboundary.NormalReturnFacts{
@@ -605,6 +641,15 @@ func findPathRefinement(facts []callboundary.PathValueFact, path pathdom.Path) *
 func findPathInvalidation(facts []callboundary.PathInvalidationFact, path pathdom.Path) *callboundary.PathInvalidationFact {
 	for i := range facts {
 		if facts[i].Path.Equal(path) {
+			return &facts[i]
+		}
+	}
+	return nil
+}
+
+func findLifecycleFact(facts []callboundary.LifecycleFact, path pathdom.Path) *callboundary.LifecycleFact {
+	for i := range facts {
+		if facts[i].Target.Equal(path) {
 			return &facts[i]
 		}
 	}

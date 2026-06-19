@@ -22,11 +22,13 @@ const (
 // point. Key/value products remain unresolved ValueSource evidence here.
 type DynamicIndexWrite struct {
 	tablePath path.Path
+	keyPath   path.Path
 	keySource ValueSource
 	source    ValueSource
 
 	admission      dynamicindex.Admission
 	readbackIntent DynamicIndexReadbackIntent
+	hasKeyPath     bool
 }
 
 // NewDynamicIndexWrite creates a dynamic-index write event.
@@ -49,6 +51,27 @@ func NewDynamicIndexWrite(
 // TablePath returns the table path receiving the dynamic index write.
 func (w DynamicIndexWrite) TablePath() path.Path { return w.tablePath.Clone() }
 
+// WithKeyPath returns a copy carrying the statically resolved path for the
+// dynamic key operand, when the key expression itself has stable identity.
+func (w DynamicIndexWrite) WithKeyPath(keyPath path.Path) DynamicIndexWrite {
+	if keyPath.IsEmpty() {
+		w.keyPath = path.Path{}
+		w.hasKeyPath = false
+		return w
+	}
+	w.keyPath = keyPath.Clone()
+	w.hasKeyPath = true
+	return w
+}
+
+// KeyPath returns the statically resolved path for the dynamic key operand.
+func (w DynamicIndexWrite) KeyPath() (path.Path, bool) {
+	if !w.hasKeyPath {
+		return path.Path{}, false
+	}
+	return w.keyPath.Clone(), true
+}
+
 // KeySource returns the source evidence for the dynamic key.
 func (w DynamicIndexWrite) KeySource() ValueSource { return w.keySource }
 
@@ -65,6 +88,7 @@ func (w DynamicIndexWrite) ReadbackIntent() DynamicIndexReadbackIntent {
 
 func (w DynamicIndexWrite) copy() DynamicIndexWrite {
 	w.tablePath = w.tablePath.Clone()
+	w.keyPath = w.keyPath.Clone()
 	return w
 }
 

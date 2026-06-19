@@ -22,10 +22,11 @@ func AssertionEvidence(span Span, v assertion.Value) []Evidence {
 	flags := v.Flags()
 	out := make([]Evidence, 0, len(flags))
 	for _, flag := range flags {
-		if message := assertionFlagMessage(flag); message != "" {
+		if reason, message := assertionFlagEvidence(flag); message != "" {
 			out = append(out, Evidence{
 				Kind:    EvidenceUserAssertion,
 				Trust:   TrustClaimed,
+				Reason:  reason,
 				Span:    span,
 				Message: message,
 			})
@@ -48,14 +49,19 @@ func FormatAssertionClaims(v assertion.Value) string {
 }
 
 func assertionFlagMessage(flag assertion.Flag) string {
+	_, message := assertionFlagEvidence(flag)
+	return message
+}
+
+func assertionFlagEvidence(flag assertion.Flag) (EvidenceReason, string) {
 	switch flag {
 	case assertion.TypeClaim:
-		return "claimed by user type assertion; not proven by analysis"
+		return EvidenceReasonUserTypeAssertion, "user type assertion; not proven by analysis"
 	case assertion.AnyClaim:
-		return "claimed as any; not abstract-interpreter proof"
+		return EvidenceReasonUserAssertedAny, "user asserted any; not abstract-interpreter proof"
 	case assertion.NonNilClaim:
-		return "claimed non-nil; nil absence not proven"
+		return EvidenceReasonUserAssertedNonNil, "user asserted non-nil; nil absence not proven"
 	default:
-		return ""
+		return EvidenceReasonUnspecified, ""
 	}
 }

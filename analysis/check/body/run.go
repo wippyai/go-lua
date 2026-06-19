@@ -5,14 +5,17 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/check/body/internal/readexpr"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine/calloutcome"
+	"github.com/wippyai/go-lua/analysis/engine/callpayload"
 	"github.com/wippyai/go-lua/analysis/engine/effectlowering"
 	factapply "github.com/wippyai/go-lua/analysis/engine/factapply"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	sourcevalue "github.com/wippyai/go-lua/analysis/engine/sourcevalue"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
+	"github.com/wippyai/go-lua/analysis/engine/visibility"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/lua/cfgbuild"
@@ -124,19 +127,19 @@ func (c *checker) prepare(bindings *bind.Result, built *cfgbuild.Result, sem *se
 		expressionPaths = exprRefSet(facts.ExpressionPaths())
 	}
 	sources := sourcevalue.NewSourceValues(sourcevalue.SourceValuesConfig{
-		Registry:         config.Registry,
-		ExpressionValues: expressionValues,
-		ExpressionPaths:  expressionPaths,
-		ObjectLiterals:   facts.ObjectLiterals(),
-		ObjectLiteral:    objectLiteralEvaluator(config.Registry, config.TypeValues),
-		ExpressionOps:    facts.ExpressionOperations(),
-		ExpressionOp:     expressionOperationEvaluator(config.Registry, config.TypeValues),
-		ExpressionValue:  expressionValue,
-		VarargValue:      config.VarargValue,
+		Registry:              config.Registry,
+		ExpressionValues:      expressionValues,
+		ExpressionPaths:       expressionPaths,
+		ObjectLiteralView:     facts.ObjectLiteralView,
+		ObjectLiteralFromView: objectLiteralViewEvaluator(config.Registry, config.TypeValues),
+		ExpressionOps:         facts.ExpressionOperations(),
+		ExpressionOp:          expressionOperationEvaluator(config.Registry, config.TypeValues),
+		ExpressionValue:       expressionValue,
+		VarargValue:           config.VarargValue,
 	})
 	calleeValue := calleeValueProvider(config.Registry, facts, resolver, sources, config.TypeValues)
 	signatureID.indexCallSites(facts)
-	callOutcomeSupplement := preparedCallOutcomeSupplement(config.ModuleExports, signatureID, facts, sources, calleeValue)
+	callOutcomeSupplement := preparedCallOutcomeSupplement(config.Registry, config.ModuleExports, signatureID, facts, resolver, sources, config.TypeValues, calleeValue)
 	return &Static{
 		registry:              config.Registry,
 		bindings:              bindings,
@@ -237,7 +240,7 @@ func transferStats(stats *Stats) *transfer.Stats {
 	return &stats.Transfer
 }
 
-func (s *Static) callOutcomeProvider(config SolveConfig) factapply.CallOutcomeProvider {
+func (s *Static) callOutcomeProvider(config SolveConfig) callpayload.CallOutcomeProvider {
 	signatureArgumentType := config.SignatureArgumentType
 	if config.SignatureArgumentTypeFactory != nil {
 		factoryArgumentType := config.SignatureArgumentTypeFactory(s.callOutcomeContext())
@@ -270,6 +273,7 @@ func (s *Static) callOutcomeProvider(config SolveConfig) factapply.CallOutcomePr
 		callOutcome = calloutcome.WithSupplemental(effectlowering.SignatureOutcomeProvider(effectlowering.SignatureOutcomeProviderConfig{
 			Signatures:    s.signatures,
 			NameFor:       s.signatureID.nameForCall,
+			NameForSite:   s.signatureID.nameForCallSiteView,
 			ReturnTypeOps: s.signatureReturnOps,
 			Facts:         s.facts,
 			Sources:       s.sources,
@@ -291,7 +295,7 @@ func (s *Static) callOutcomeContext() CallOutcomeContext {
 	}
 }
 
-func (s *Static) returnPresenceRelationsForPath(point cfg.Point, p pathdom.Path) []factapply.CallReturnPresenceRelation {
+func (s *Static) returnPresenceRelationsForPath(point cfg.Point, p pathdom.Path) []callpayload.CallReturnPresenceRelation {
 	if s == nil {
 		return nil
 	}
@@ -310,9 +314,9 @@ func (s *Static) returnPresenceRelationsForPath(point cfg.Point, p pathdom.Path)
 	if !ok || sig.OperationalEffects == nil || len(sig.OperationalEffects.ReturnPresenceRelations) == 0 {
 		return nil
 	}
-	out := make([]factapply.CallReturnPresenceRelation, 0, len(sig.OperationalEffects.ReturnPresenceRelations))
+	out := make([]callpayload.CallReturnPresenceRelation, 0, len(sig.OperationalEffects.ReturnPresenceRelations))
 	for _, relation := range sig.OperationalEffects.ReturnPresenceRelations {
-		out = append(out, factapply.CallReturnPresenceRelation{
+		out = append(out, callpayload.CallReturnPresenceRelation{
 			TriggerIndex:    relation.TriggerIndex,
 			TriggerPresence: relation.TriggerPresence,
 			TargetIndex:     relation.TargetIndex,
@@ -323,22 +327,29 @@ func (s *Static) returnPresenceRelationsForPath(point cfg.Point, p pathdom.Path)
 }
 
 func preparedCallOutcomeSupplement(
+	reg *axis.Registry,
 	moduleLoads importlookup.Source,
 	signatureID *signatureIdentityResolver,
 	facts factflow.Facts,
+	resolver *visibility.Resolver,
 	sources sourcevalue.SourceValues,
+	typeValues *typevalue.Cache,
 	calleeValue CalleeValueFunc,
-) factapply.CallOutcomeProvider {
-	var out factapply.CallOutcomeProvider
+) callpayload.CallOutcomeProvider {
+	var out callpayload.CallOutcomeProvider
 	expressionRefinements := facts.ExpressionRefinements()
 	if hasModuleExports(moduleLoads) {
 		out = calloutcome.WithSupplemental(out, effectlowering.ModuleLoadOutcomeProvider(effectlowering.ModuleLoadOutcomeProviderConfig{
 			Exports:               moduleLoads,
 			NameFor:               signatureID.nameForCall,
+			NameForSite:           signatureID.nameForCallSiteView,
 			Sources:               sources,
 			ExpressionRefinements: expressionRefinements,
 		}))
 	}
+	out = calloutcome.WithSupplemental(out, effectlowering.AmbientChannelSendOutcomeProvider(effectlowering.AmbientChannelSendOutcomeProviderConfig{
+		ReceiverType: channelMethodReceiverTypeProvider(reg, facts, resolver, sources, typeValues),
+	}))
 	return calloutcome.WithSupplemental(out, effectlowering.CallableValueOutcomeProvider(effectlowering.CallableValueOutcomeProviderConfig{
 		CalleeValue: effectlowering.CalleeValueFunc(calleeValue),
 		Callable:    typecall.Callable,

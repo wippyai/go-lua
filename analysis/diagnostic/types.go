@@ -56,11 +56,72 @@ type Diagnostic struct {
 	Labels      []Label
 }
 
+// DiagnosticSpec is the canonical constructor input for analysis diagnostics.
+// Producers should provide the semantic fields and the primary span; New keeps
+// Position in sync with Span for terminal, LSP, and test consumers.
+type DiagnosticSpec struct {
+	File        string
+	Span        Span
+	Code        Code
+	Message     string
+	Severity    Severity
+	Explanation Explanation
+	Help        string
+	Labels      []Label
+}
+
+// New builds a Diagnostic with Position derived from the primary span.
+func New(spec DiagnosticSpec) Diagnostic {
+	position := PositionFromSpan(spec.Span)
+	position.File = spec.File
+	return Diagnostic{
+		Position:    position,
+		Span:        spec.Span,
+		Code:        spec.Code,
+		Message:     spec.Message,
+		Severity:    spec.Severity,
+		Explanation: spec.Explanation,
+		Help:        spec.Help,
+		Labels:      append([]Label(nil), spec.Labels...),
+	}
+}
+
+// PositionFromSpan returns the primary cursor position for a source span.
+func PositionFromSpan(span Span) Position {
+	return Position{
+		Line:      span.StartLine,
+		Column:    span.StartCol,
+		EndLine:   span.EndLine,
+		EndColumn: span.EndCol,
+	}
+}
+
+// PositionFromSpanInFile returns the primary cursor position for a source span
+// in file.
+func PositionFromSpanInFile(file string, span Span) Position {
+	pos := PositionFromSpan(span)
+	pos.File = file
+	return pos
+}
+
 // Label marks a secondary source location with an annotation message.
 type Label struct {
-	Span    Span
-	Message string
+	File      string
+	Span      Span
+	Message   string
+	Placement LabelPlacement
 }
+
+// LabelPlacement controls where rich source-frame labels render relative to
+// the source line. Auto keeps the structural fallback: primary annotations below
+// the line, secondary annotations above it.
+type LabelPlacement uint8
+
+const (
+	LabelPlacementAuto LabelPlacement = iota
+	LabelPlacementAbove
+	LabelPlacementBelow
+)
 
 func (d Diagnostic) String() string {
 	if d.Position.Valid() {

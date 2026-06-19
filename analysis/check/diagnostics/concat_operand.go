@@ -1,10 +1,8 @@
 package diagnostics
 
 import (
-	"fmt"
-
 	"github.com/wippyai/go-lua/analysis/check/body"
-	"github.com/wippyai/go-lua/analysis/check/diagnostics/internal/readmodel"
+	"github.com/wippyai/go-lua/analysis/check/internal/readmodel"
 	"github.com/wippyai/go-lua/analysis/diagnostic"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/ir/dominance"
@@ -33,6 +31,9 @@ func (p concatOperands) Produce(result *body.Result) []diagnostic.Diagnostic {
 	var out []diagnostic.Diagnostic
 	seen := make(map[concatSeenKey]struct{})
 	for _, point := range graph.RPO() {
+		if !guardEnvReachableAt(envs, point) {
+			continue
+		}
 		check := concatOperandCheck{
 			result: result,
 			typer:  newStructuralFlowExpressionTyper(result, p.resolver, point, envs[point]),
@@ -149,12 +150,12 @@ func (c concatOperandCheck) diagnostic(expr *ast.StringConcatOpExpr, operand ast
 	if !projectionHasNil(t) {
 		return diagnostic.Diagnostic{}, false
 	}
-	if attr, ok := operand.(*ast.AttrGetExpr); ok && indexReadProvenInRange(c.result, c.point, attr) {
+	if attr, ok := operand.(*ast.AttrGetExpr); ok && indexReadProvenInRange(c.result, c.typer.resolver, c.point, attr) {
 		if withoutNil := projectionWithoutNil(t); withoutNil != nil && !typ.IsNever(withoutNil) {
 			return diagnostic.Diagnostic{}, false
 		}
 	}
-	return concatOperandDiagnostic(expr, operand, side, t), true
+	return concatOperandDiagnostic(operand, side, t), true
 }
 
 func (c concatOperandCheck) operandType(operand ast.Expr) (typ.Type, bool) {
@@ -347,37 +348,23 @@ func (c concatOperandCheck) logicalOrPresentFallbackType(expr ast.Expr) (typ.Typ
 	return got, true
 }
 
-func concatOperandDiagnostic(expr *ast.StringConcatOpExpr, operand ast.Expr, side string, got typ.Type) diagnostic.Diagnostic {
-	exprSpan := ast.SpanOf(expr)
+func concatOperandDiagnostic(operand ast.Expr, side string, got typ.Type) diagnostic.Diagnostic {
 	operandSpan := ast.SpanOf(operand)
-	return diagnostic.Diagnostic{
-		Position: diagnostic.Position{
-			Line:      operandSpan.StartLine,
-			Column:    operandSpan.StartCol,
-			EndLine:   operandSpan.EndLine,
-			EndColumn: operandSpan.EndCol,
-		},
+	operandName := exprEvidenceNameOK(operand)
+	return diagnostic.New(diagnostic.DiagnosticSpec{
 		Span:     operandSpan,
 		Code:     CodeConcatOperand,
 		Severity: diagnostic.SeverityWarning,
-		Message:  fmt.Sprintf("concat %s operand may be nil; '..' requires a present string or number", side),
+		Message:  concatOperandMessage(side),
+		Labels:   []diagnostic.Label{sourceLabel(operandSpan, labelValueMayBeNil)},
 		Explanation: diagnostic.NewExplanation(
 			diagnostic.Evidence{
 				Kind:    diagnostic.EvidenceAbstractFact,
 				Trust:   diagnostic.TrustProven,
 				Span:    operandSpan,
-				Message: fmt.Sprintf("concat %s operand is %s", side, formatType(got)),
-			},
-			diagnostic.Evidence{
-				Kind:    diagnostic.EvidenceAbstractFact,
-				Trust:   diagnostic.TrustProven,
-				Span:    exprSpan,
-				Message: "`..` requires each operand to be present string or number",
+				Message: concatOperandTypeEvidence(side, operandName, got),
 			},
 		),
-		Labels: []diagnostic.Label{
-			{Span: operandSpan, Message: "possibly nil concat operand"},
-			{Span: exprSpan, Message: "concat expression"},
-		},
-	}
+		Help: concatOperandHelp(operandName),
+	})
 }

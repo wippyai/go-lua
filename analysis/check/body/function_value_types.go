@@ -5,6 +5,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/engine/dynamicindex"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/state/heapidentity"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
@@ -89,10 +90,7 @@ func functionContextEntryHolds(reg *axis.Registry, entry, current state.State, s
 	}
 	for pathKey, want := range refs.Refinements {
 		got := current.ReadPathKey(reg, pathKey)
-		if !product.LessOrEq(reg, want, got) {
-			if valueHasIdentity(reg, want, sourceID) && product.Equal(reg, got, product.Bottom(reg)) {
-				continue
-			}
+		if !contextPathValueSatisfies(reg, got, want, sourceID) {
 			return false
 		}
 	}
@@ -102,17 +100,63 @@ func functionContextEntryHolds(reg *axis.Registry, entry, current state.State, s
 	}
 	for pathKey, want := range members.Members {
 		got, ok := current.ReadPathStaticMember(pathKey)
-		if !ok || !product.LessOrEq(reg, want, got) {
+		if !ok || !contextValueSatisfies(reg, got, want) {
 			return false
 		}
 	}
 	requiredHeap := entry.HeapTableObjectsSnapshot()
+	return heapTableContextHolds(reg, requiredHeap, current.HeapTableObjectsSnapshot())
+}
+
+func contextPathValueSatisfies(reg *axis.Registry, got, want product.Value, sourceID identity.ID) bool {
+	if product.Equal(reg, got, product.Bottom(reg)) {
+		return valueHasIdentity(reg, want, sourceID)
+	}
+	return product.LessOrEq(reg, got, want)
+}
+
+func contextValueSatisfies(reg *axis.Registry, got, want product.Value) bool {
+	if product.Equal(reg, got, product.Bottom(reg)) {
+		return false
+	}
+	return product.LessOrEq(reg, got, want)
+}
+
+func heapTableContextHolds(reg *axis.Registry, requiredHeap, currentHeap state.HeapTableObjectsSnapshot) bool {
 	if requiredHeap.Top {
 		return false
 	}
-	currentHeap := current.HeapTableObjectsSnapshot()
-	if !currentHeap.Top && !heapidentity.MapDomain(reg).LessOrEq(requiredHeap.Objects, currentHeap.Objects) {
+	if len(requiredHeap.Objects) == 0 {
+		return true
+	}
+	if currentHeap.Top {
 		return false
+	}
+	for id, want := range requiredHeap.Objects {
+		got, ok := currentHeap.Objects[id]
+		if !ok || !heapTableObjectContextHolds(reg, got, want) {
+			return false
+		}
+	}
+	return true
+}
+
+func heapTableObjectContextHolds(reg *axis.Registry, got, want heapidentity.TableObject) bool {
+	if !contextValueSatisfies(reg, got.Root(), want.Root()) {
+		return false
+	}
+	for key, wantMember := range want.StaticMembers() {
+		gotMember, ok := got.StaticMember(key)
+		if !ok || !contextValueSatisfies(reg, gotMember, wantMember) {
+			return false
+		}
+	}
+	dynamicDomain := dynamicindex.Domain(reg)
+	for key, wantFact := range want.DynamicIndexFacts() {
+		gotFact, ok := got.DynamicIndexFact(key)
+		if !ok || !dynamicDomain.LessOrEq(gotFact, wantFact) {
+			return false
+		}
 	}
 	return true
 }

@@ -49,7 +49,7 @@ func StableFromKey(key pathdom.PathKey) (Stable, bool) {
 	if key == "" {
 		return Stable{}, false
 	}
-	if sym, segments, ok := ParseSymbolPathKey(key); ok {
+	if sym, segments, ok := parseInternedSymbolPathKey(key); ok {
 		return stableOfSymbolOwnedSegments(sym, segments)
 	}
 	if _, _, _, ok := ParseResolverPath(key); ok {
@@ -121,7 +121,7 @@ func (a Stable) Segments() []segment.Segment {
 
 // Suffix returns the structured path suffix.
 func (a Stable) Suffix() Suffix {
-	return SuffixOfSegments(a.suffix.segments)
+	return a.suffix
 }
 
 // Append returns the descendant address reached by appending segments.
@@ -143,7 +143,7 @@ func (a Stable) Parent() (Stable, bool) {
 	if !a.root.isValid() || len(a.suffix.segments) == 0 {
 		return Stable{}, false
 	}
-	return stableOfRootAndSuffix(a.root, suffixOfOwnedSegments(cloneSegments(a.suffix.segments[:len(a.suffix.segments)-1])))
+	return stableOfRootAndSuffix(a.root, suffixOfOwnedSegments(a.suffix.segments[:len(a.suffix.segments)-1]))
 }
 
 // Equal reports stable identity equality.

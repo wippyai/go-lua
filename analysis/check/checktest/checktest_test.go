@@ -18,6 +18,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/engine/callboundary"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/module/manifest"
 	"github.com/wippyai/go-lua/analysis/module/signature"
@@ -54,6 +55,15 @@ func TestCheckDiagnosticPolicyControlsCode(t *testing.T) {
 	}
 }
 
+func TestOrderedManifestsSkipsNilModuleManifest(t *testing.T) {
+	cfg := config{modules: map[string]*ModuleResult{
+		"broken": {},
+	}}
+	if got := cfg.orderedManifests(); len(got) != 0 {
+		t.Fatalf("ordered manifests = %#v, want nil module manifest skipped", got)
+	}
+}
+
 func TestCheckCanEnableUnusedLocalWarning(t *testing.T) {
 	defaultResult := Check(`local unused = 1`)
 	if len(defaultResult.Diagnostics) != 0 {
@@ -70,7 +80,7 @@ func TestCheckCanEnableUnusedLocalWarning(t *testing.T) {
 	if warn.Diagnostics[0].Code != diagnostics.CodeUnusedLocal || warn.Diagnostics[0].Severity != diagnostic.SeverityHint {
 		t.Fatalf("diagnostic = %#v, want unused-local hint", warn.Diagnostics[0])
 	}
-	requireEvidenceMessage(t, warn.Diagnostics[0], "no identifier read")
+	requireEvidenceMessage(t, warn.Diagnostics[0], `no read of local "unused" was found in this scope`)
 }
 
 func TestCheckCanEnableDeadAssignmentWarning(t *testing.T) {
@@ -97,7 +107,7 @@ return value
 	if warn.Diagnostics[0].Code != diagnostics.CodeDeadAssignment || warn.Diagnostics[0].Severity != diagnostic.SeverityHint {
 		t.Fatalf("diagnostic = %#v, want dead-assignment hint", warn.Diagnostics[0])
 	}
-	requireEvidenceMessage(t, warn.Diagnostics[0], "no bound read")
+	requireEvidenceMessage(t, warn.Diagnostics[0], `later assignment replaces "value" before the earlier value is read`)
 }
 
 func TestCheckCanEnableRedundantConditionWarning(t *testing.T) {
@@ -124,7 +134,7 @@ end
 	if warn.Diagnostics[0].Code != diagnostics.CodeRedundantCondition || warn.Diagnostics[0].Severity != diagnostic.SeverityHint {
 		t.Fatalf("diagnostic = %#v, want redundant-condition hint", warn.Diagnostics[0])
 	}
-	requireEvidenceMessage(t, warn.Diagnostics[0], "no invalidating assignment")
+	requireEvidenceMessage(t, warn.Diagnostics[0], "value is unchanged between the prior guard and this check")
 }
 
 func TestCheckAliasedObjectLiteralMemberReadUsesHeapIdentity(t *testing.T) {
@@ -439,7 +449,7 @@ func TestRequireCheckAndExportedReturnedTableDottedMemberNamesResultEvidence(t *
 	`, WithStdlib(), WithModule("provider", mod))
 	requireDirectCallResultDiagnosticWithEvidence(t, result, "direct imported member result")
 	requireEvidenceMessage(t, result.Diagnostics[0], "provider.meta returns")
-	requireEvidenceMessage(t, result.Diagnostics[0], "assignment target is annotated number")
+	requireEvidenceMessage(t, result.Diagnostics[0], "assignment target n requires number")
 }
 
 func TestRequireCheckInjectedContainerMemberKeepsImportedResultEvidence(t *testing.T) {
@@ -461,7 +471,7 @@ func TestRequireCheckInjectedContainerMemberKeepsImportedResultEvidence(t *testi
 	`, WithStdlib(), WithModule("provider", mod))
 	requireDirectCallResultDiagnosticWithEvidence(t, result, "container-injected imported member result")
 	requireEvidenceMessage(t, result.Diagnostics[0], "provider.meta returns")
-	requireEvidenceMessage(t, result.Diagnostics[0], "assignment target is annotated number")
+	requireEvidenceMessage(t, result.Diagnostics[0], "assignment target n requires number")
 }
 
 func TestRequireCheckInjectedConstructorReturnNamesMemberResultEvidence(t *testing.T) {
@@ -486,7 +496,7 @@ func TestRequireCheckInjectedConstructorReturnNamesMemberResultEvidence(t *testi
 	`, WithStdlib(), WithModule("provider", mod))
 	requireDirectCallResultDiagnosticWithEvidence(t, result, "constructor-returned injected imported member result")
 	requireEvidenceMessage(t, result.Diagnostics[0], "container.client.meta returns")
-	requireEvidenceMessage(t, result.Diagnostics[0], "assignment target is annotated number")
+	requireEvidenceMessage(t, result.Diagnostics[0], "assignment target n requires number")
 }
 
 func TestRequireCheckInjectedContainerMemberReassignmentDropsStaleImportedResultEvidence(t *testing.T) {
@@ -541,7 +551,7 @@ func TestRequireCheckInjectedContainerMemberReassignmentUsesReplacementResultEvi
 	`, WithStdlib(), WithModule("provider", mod))
 	requireDirectCallResultDiagnosticWithEvidence(t, result, "reassigned injected member replacement result")
 	requireEvidenceMessage(t, result.Diagnostics[0], "container.client.meta returns string")
-	requireEvidenceMessage(t, result.Diagnostics[0], "assignment target is annotated number")
+	requireEvidenceMessage(t, result.Diagnostics[0], "assignment target n requires number")
 }
 
 func TestRequireCheckNestedFactoryDIDropsStaleBranchButKeepsSiblingEvidence(t *testing.T) {
@@ -589,7 +599,7 @@ func TestRequireCheckNestedFactoryDIDropsStaleBranchButKeepsSiblingEvidence(t *t
 	}
 	requireDirectCallResultDiagnosticWithEvidence(t, result, "nested factory DI keeps sibling imported member evidence")
 	requireEvidenceMessage(t, result.Diagnostics[0], "root.api.backup.meta returns")
-	requireEvidenceMessage(t, result.Diagnostics[0], "assignment target is annotated number")
+	requireEvidenceMessage(t, result.Diagnostics[0], "assignment target bad requires number")
 }
 
 func TestRequireCheckInjectedHelperReturnKeepsImportedMemberResultType(t *testing.T) {
@@ -695,7 +705,7 @@ func TestRequireCheckAndExportedStaticStringFunctionMemberNamesResultEvidence(t 
 	`, WithStdlib(), WithModule("client", mod))
 	requireDirectCallResultDiagnosticWithEvidence(t, result, "static string imported member result")
 	requireEvidenceMessage(t, result.Diagnostics[0], "client.fetch returns")
-	requireEvidenceMessage(t, result.Diagnostics[0], "assignment target is annotated number")
+	requireEvidenceMessage(t, result.Diagnostics[0], "assignment target n requires number")
 }
 
 func TestRequireCheckAndExportedStaticIntFunctionMemberNamesResultEvidence(t *testing.T) {
@@ -716,7 +726,7 @@ func TestRequireCheckAndExportedStaticIntFunctionMemberNamesResultEvidence(t *te
 	`, WithStdlib(), WithModule("runtime", mod))
 	requireDirectCallResultDiagnosticWithEvidence(t, result, "static int imported member result")
 	requireEvidenceMessage(t, result.Diagnostics[0], "runtime[1] returns")
-	requireEvidenceMessage(t, result.Diagnostics[0], "assignment target is annotated number")
+	requireEvidenceMessage(t, result.Diagnostics[0], "assignment target n requires number")
 }
 
 func TestRequireCheckAndExportedMultiReturnMemberNamesResultEvidence(t *testing.T) {
@@ -740,7 +750,7 @@ func TestRequireCheckAndExportedMultiReturnMemberNamesResultEvidence(t *testing.
 		t.Fatalf("diagnostic message = %q, want call result 2", result.Diagnostics[0].Message)
 	}
 	requireEvidenceMessage(t, result.Diagnostics[0], "client.fetch returns")
-	requireEvidenceMessage(t, result.Diagnostics[0], "assignment target is annotated number")
+	requireEvidenceMessage(t, result.Diagnostics[0], "assignment target err requires number")
 }
 
 func TestRequireCheckAndExportedReturnedTableDottedMemberKeepsMultiReturns(t *testing.T) {
@@ -1638,7 +1648,7 @@ func TestRequireCheckAndExportedGenericSignatureInstantiatesRecursiveUnionWitnes
 			t.Fatalf("diagnostic code = %s, want assignment or member-read diagnostic", diag.Code)
 		}
 	}
-	if !hasDiagnosticMessage(messages, "cannot assign string to number") ||
+	if !hasDiagnosticMessage(messages, "cannot assign first.value because it is string, not number") ||
 		!hasDiagnosticMessage(messages, `has no member "children"`) {
 		t.Fatalf("diagnostics = %#v, want first.value mismatch and text.children missing-member", messages)
 	}
@@ -2089,7 +2099,7 @@ func TestRequireCheckAndExportedStaticStringOptionalMemberHasBoundaryEvidence(t 
 				local n: number = mod["value"]
 			`, WithStdlib(), WithModule("mod", mod))
 			requireAssignmentDiagnosticWithEvidence(t, result, fmt.Sprintf("export = %v, read = mod[\"value\"]", mod.Manifest.Export))
-			requireEvidenceMessage(t, result.Diagnostics[0], "no boundary proof establishes number")
+			requireEvidenceMessage(t, result.Diagnostics[0], "no guard on this path proves mod[\"value\"] is non-nil")
 		})
 	}
 }
@@ -2249,7 +2259,7 @@ func TestRequireCheckAndExportedStaticIntFunctionMemberChecksArgs(t *testing.T) 
 	if diag.Code != diagnostics.CodeDirectCallArgType {
 		t.Fatalf("diagnostic code = %s, want %s: %#v", diag.Code, diagnostics.CodeDirectCallArgType, diag)
 	}
-	requireEvidenceMessage(t, diag, "mod[1] parameter 1 declares string")
+	requireEvidenceMessage(t, diag, "mod[1] parameter 1 expects string")
 }
 
 func TestRequireCheckAndExportedMultiSourceRootKeepsReturnedTableSourceMember(t *testing.T) {
@@ -2343,9 +2353,17 @@ func requireMemberCallDiagnosticWithEvidence(t *testing.T, result Result, want d
 	if diag.Code != want {
 		t.Fatalf("diagnostic code = %s, want %s (%s): %#v", diag.Code, want, context, diag)
 	}
-	if len(diag.Explanation.Evidence()) < 2 {
-		t.Fatalf("diagnostic evidence = %#v, want member-call evidence chain (%s)", diag.Explanation.Evidence(), context)
+	if len(diag.Explanation.Evidence()) == 0 {
+		t.Fatalf("diagnostic evidence = %#v, want member-call evidence (%s)", diag.Explanation.Evidence(), context)
 	}
+	for _, evidence := range diag.Explanation.Evidence() {
+		if strings.Contains(evidence.Message, "has receiver type") ||
+			strings.Contains(evidence.Message, "has type") ||
+			strings.Contains(evidence.Message, "has literal value") {
+			return
+		}
+	}
+	t.Fatalf("diagnostic evidence = %#v, want path/type member-call evidence (%s)", diag.Explanation.Evidence(), context)
 }
 
 func requireDirectCallResultDiagnosticWithEvidence(t *testing.T, result Result, context string) {
@@ -2370,6 +2388,16 @@ func requireEvidenceMessage(t *testing.T, diag diagnostic.Diagnostic, want strin
 		}
 	}
 	t.Fatalf("diagnostic evidence = %#v, want message containing %q", diag.Explanation.Evidence(), want)
+}
+
+func requireLabelMessage(t *testing.T, diag diagnostic.Diagnostic, want string) {
+	t.Helper()
+	for _, label := range diag.Labels {
+		if label.Message == want {
+			return
+		}
+	}
+	t.Fatalf("diagnostic labels = %#v, want label %q", diag.Labels, want)
 }
 
 func TestCheckAndExportPublishesAssignedMetatableClassTableShape(t *testing.T) {
@@ -2572,9 +2600,7 @@ func TestEffectOnlyImportedMemberSignatureDoesNotSuppressStructuralCallDiagnosti
 	if result.Diagnostics[0].Code != diagnostics.CodeMissingMember {
 		t.Fatalf("diagnostic code = %s, want %s", result.Diagnostics[0].Code, diagnostics.CodeMissingMember)
 	}
-	if len(result.Diagnostics[0].Explanation.Evidence()) < 2 {
-		t.Fatalf("explanation evidence = %#v, want member call evidence", result.Diagnostics[0].Explanation.Evidence())
-	}
+	requireEvidenceMessage(t, result.Diagnostics[0], "pkg.run has receiver type")
 }
 
 func TestTypedImportedMemberSignatureDoesNotSuppressOptionalReceiverDiagnostic(t *testing.T) {
@@ -2593,9 +2619,7 @@ func TestTypedImportedMemberSignatureDoesNotSuppressOptionalReceiverDiagnostic(t
 	if result.Diagnostics[0].Code != diagnostics.CodeMissingMember {
 		t.Fatalf("diagnostic code = %s, want %s", result.Diagnostics[0].Code, diagnostics.CodeMissingMember)
 	}
-	if len(result.Diagnostics[0].Explanation.Evidence()) < 2 {
-		t.Fatalf("explanation evidence = %#v, want optional receiver evidence", result.Diagnostics[0].Explanation.Evidence())
-	}
+	requireEvidenceMessage(t, result.Diagnostics[0], "pkg.run has receiver type")
 }
 
 func TestTypedImportedMemberSignatureDoesNotSuppressOptionalMemberDiagnostic(t *testing.T) {
@@ -2652,7 +2676,7 @@ func TestRequireManifestExportTypesImportedValueAndMemberCall(t *testing.T) {
 	`, WithStdlib(), WithManifest("provider", m))
 	requireDirectCallResultDiagnosticWithEvidence(t, mismatch, "typed imported provider member result")
 	requireEvidenceMessage(t, mismatch.Diagnostics[0], "provider.meta returns")
-	requireEvidenceMessage(t, mismatch.Diagnostics[0], "assignment target is annotated number")
+	requireEvidenceMessage(t, mismatch.Diagnostics[0], "assignment target n requires number")
 }
 
 func TestImportedOptionalMethodZeroArgReadUsesExportedOperationalErrorReturn(t *testing.T) {
@@ -3148,6 +3172,102 @@ end
 	if depth := maxSharedPlacementDepth(root.Registry(), exit); depth < 3 {
 		t.Fatalf("max shared placement depth = %d, want at least item -> child -> meta: %s\ncalls: %s", depth, placementSummary(root.Registry(), exit), callOutcomeDebug(root))
 	}
+}
+
+func TestCheckChannelSendPromotesPayloadPlacement(t *testing.T) {
+	result := Check(`
+type Job = { id: string, meta: { attempt: number } }
+
+local function dispatch(out: Channel<Job>, id: string)
+    local job: Job = { id = id, meta = { attempt = 1 } }
+    local scratch = { local_only = true }
+    scratch.local_only = false
+    out:send(job)
+end
+`)
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want none", result.Diagnostics)
+	}
+	if result.checked == nil || result.checked.RootResult() == nil {
+		t.Fatal("missing checked root result")
+	}
+	root := result.checked.RootResult()
+	if len(root.FunctionResults()) != 1 {
+		t.Fatalf("function results = %d, want dispatch body", len(root.FunctionResults()))
+	}
+	fn := root.FunctionResults()[0]
+	exit, ok := fn.ExitState()
+	if !ok {
+		t.Fatal("missing dispatch exit state")
+	}
+	shared, stack := placementCounts(exit)
+	if shared == 0 {
+		t.Fatalf("shared placements = 0, want channel-sent job placement: %s\ncalls: %s", placementSummary(fn.Registry(), exit), callOutcomeDebug(fn))
+	}
+	if stack == 0 {
+		t.Fatalf("stack placements = 0, want channel receiver/local scaffolding not all promoted: %s\ncalls: %s", placementSummary(fn.Registry(), exit), callOutcomeDebug(fn))
+	}
+	if depth := maxSharedPlacementDepth(fn.Registry(), exit); depth < 2 {
+		t.Fatalf("max shared placement depth = %d, want job -> meta: %s\ncalls: %s", depth, placementSummary(fn.Registry(), exit), callOutcomeDebug(fn))
+	}
+	foundSendEscape := false
+	for _, point := range fn.Graph().RPO() {
+		outcome, ok := fn.CallOutcomeAt(point)
+		if !ok {
+			continue
+		}
+		for _, event := range outcome.NormalReturnFacts.EscapeEvents {
+			if event.Kind == callboundary.EscapeEventSend && event.Recursive {
+				foundSendEscape = true
+			}
+		}
+	}
+	if !foundSendEscape {
+		t.Fatalf("call outcomes did not contain recursive send escape: %s", callOutcomeDebug(fn))
+	}
+}
+
+func TestCheckChannelSendRejectsWrongPayloadType(t *testing.T) {
+	src := `
+type Job = { id: string, meta: { attempt: number } }
+
+local function dispatch(out: Channel<Job>)
+    out:send({ id = 1, meta = { attempt = 1 } })
+end
+`
+	result := Check(src)
+	requireDiagnostic(t, result, diagnosticExpectation{
+		DiagnosticCount: 1,
+		Code:            diagnostics.CodeDirectCallArgType,
+		Severity:        diagnostic.SeverityError,
+		Line:            5,
+		Column:          21,
+		Span:            diagnostic.Span{StartLine: 5, StartCol: 21, EndLine: 5, EndCol: 21},
+		MessageContains: []string{"argument 1.id", "not string"},
+		EvidenceMin:     2,
+		EvidenceOrdered: []string{
+			"argument 1.id has literal value 1",
+			"out.send parameter 1.id expects string",
+		},
+		LabelMin:      1,
+		LabelContains: []string{"argument value"},
+		HelpContains:  []string{"parameter type"},
+		Sources:       diagnostic.SourceMap{"test.lua": src},
+		RenderOrderedContains: []string{
+			"error[type.call.direct.argument_type]: argument 1.id is 1, not string",
+			"--> test.lua:5:21",
+			"out:send({ id = 1, meta = { attempt = 1 } })",
+			"argument value",
+			"because:",
+			"1. proven: argument 1.id has literal value 1",
+			"2. claimed: out.send parameter 1.id expects string",
+			"help:",
+		},
+		RenderNotContains: []string{
+			"^~",
+			"want string",
+		},
+	})
 }
 
 func callOutcomeDebug(root *body.Result) string {

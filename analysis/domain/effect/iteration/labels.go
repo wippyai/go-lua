@@ -25,10 +25,6 @@ func ActiveIterator(labels []effect.Label) (Iterator, bool) {
 		switch normalized := effect.NormalizeLabel(label).(type) {
 		case Iterator:
 			return normalized, true
-		case *Iterator:
-			if normalized != nil {
-				return *normalized, true
-			}
 		}
 	}
 	return Iterator{}, false

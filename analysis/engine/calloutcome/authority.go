@@ -15,16 +15,7 @@ import (
 // evidence that stronger providers may refine.
 func HasAuthoritativePostReturnEvidence(reg *axis.Registry, outcome callpayload.CallOutcome) bool {
 	return outcomeHasAuthoritativeResult(reg, outcome.Results) ||
-		len(outcome.NormalReturnFacts.PathRefinements) != 0 ||
-		len(outcome.NormalReturnFacts.PathStaticMembers) != 0 ||
-		len(outcome.NormalReturnFacts.PathInvalidations) != 0 ||
-		len(outcome.NormalReturnFacts.DynamicIndexFacts) != 0 ||
-		len(outcome.NormalReturnFacts.BranchProofs) != 0 ||
-		len(outcome.NormalReturnFacts.ChannelSelects) != 0 ||
-		len(outcome.NormalReturnFacts.FrozenTables) != 0 ||
-		len(outcome.NormalReturnFacts.EffectDeltas) != 0 ||
-		len(outcome.NormalReturnFacts.EscapeEvents) != 0 ||
-		len(outcome.NormalReturnFacts.StoreRelations) != 0 ||
+		!outcome.NormalReturnFacts.Empty() ||
 		len(outcome.HeapTableObjects) != 0 ||
 		len(outcome.Placements) != 0 ||
 		len(outcome.ParamPathRefinements) != 0 ||

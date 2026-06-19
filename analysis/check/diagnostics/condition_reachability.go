@@ -8,16 +8,18 @@ import (
 	"github.com/wippyai/go-lua/analysis/diagnostic"
 	"github.com/wippyai/go-lua/analysis/lua/branchcond"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
+	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
 
 type redundantConditions producerContext
 
 type redundantConditionProof struct {
-	always  bool
-	check   string
-	proven  string
-	missing string
+	always    bool
+	check     string
+	proven    string
+	stable    string
+	proofSpan diagnostic.Span
 }
 
 func (redundantConditions) Produce(result *body.Result) []diagnostic.Diagnostic {
@@ -63,65 +65,73 @@ func redundantConditionProofFor(env guardEnv, check branchcond.Check) (redundant
 	case branchcond.CheckTruthy:
 		if env.hasTruthy(check.Path) {
 			return redundantConditionProof{
-				always:  true,
-				check:   fmt.Sprintf("%s is tested for truthiness", check.Path.String()),
-				proven:  fmt.Sprintf("incoming guard state proves %s is already truthy", check.Path.String()),
-				missing: fmt.Sprintf("no invalidating assignment or call affecting %s reaches this condition", check.Path.String()),
+				always:    true,
+				check:     truthyConditionCheck(check.Path.String()),
+				proven:    conditionPathProofEvidence(check.Path.String(), "truthy"),
+				stable:    stableConditionEvidence(check.Path.String()),
+				proofSpan: env.truthyOrigin(check.Path),
 			}, true
 		}
 		if env.hasFalsy(check.Path) {
 			return redundantConditionProof{
-				check:   fmt.Sprintf("%s is tested for truthiness", check.Path.String()),
-				proven:  fmt.Sprintf("incoming guard state proves %s is already falsy", check.Path.String()),
-				missing: fmt.Sprintf("no invalidating assignment or call affecting %s reaches this condition", check.Path.String()),
+				check:     truthyConditionCheck(check.Path.String()),
+				proven:    conditionPathProofEvidence(check.Path.String(), "falsy"),
+				stable:    stableConditionEvidence(check.Path.String()),
+				proofSpan: env.falsyOrigin(check.Path),
 			}, true
 		}
 	case branchcond.CheckFalsy:
 		if env.hasFalsy(check.Path) {
 			return redundantConditionProof{
-				always:  true,
-				check:   fmt.Sprintf("%s is tested for falsiness", check.Path.String()),
-				proven:  fmt.Sprintf("incoming guard state proves %s is already falsy", check.Path.String()),
-				missing: fmt.Sprintf("no invalidating assignment or call affecting %s reaches this condition", check.Path.String()),
+				always:    true,
+				check:     falsyConditionCheck(check.Path.String()),
+				proven:    conditionPathProofEvidence(check.Path.String(), "falsy"),
+				stable:    stableConditionEvidence(check.Path.String()),
+				proofSpan: env.falsyOrigin(check.Path),
 			}, true
 		}
 		if env.hasTruthy(check.Path) {
 			return redundantConditionProof{
-				check:   fmt.Sprintf("%s is tested for falsiness", check.Path.String()),
-				proven:  fmt.Sprintf("incoming guard state proves %s is already truthy", check.Path.String()),
-				missing: fmt.Sprintf("no invalidating assignment or call affecting %s reaches this condition", check.Path.String()),
+				check:     falsyConditionCheck(check.Path.String()),
+				proven:    conditionPathProofEvidence(check.Path.String(), "truthy"),
+				stable:    stableConditionEvidence(check.Path.String()),
+				proofSpan: env.truthyOrigin(check.Path),
 			}, true
 		}
 	case branchcond.CheckNil:
 		if env.hasNil(check.Path) {
 			return redundantConditionProof{
-				always:  true,
-				check:   fmt.Sprintf("%s is compared with nil", check.Path.String()),
-				proven:  fmt.Sprintf("incoming guard state proves %s is nil", check.Path.String()),
-				missing: fmt.Sprintf("no invalidating assignment or call affecting %s reaches this condition", check.Path.String()),
+				always:    true,
+				check:     nilConditionCheck(check.Path.String()),
+				proven:    conditionPathProofEvidence(check.Path.String(), "nil"),
+				stable:    stableConditionEvidence(check.Path.String()),
+				proofSpan: env.nilOrigin(check.Path),
 			}, true
 		}
 		if env.hasPresent(check.Path) || env.hasTruthy(check.Path) {
 			return redundantConditionProof{
-				check:   fmt.Sprintf("%s is compared with nil", check.Path.String()),
-				proven:  fmt.Sprintf("incoming guard state proves %s is not nil", check.Path.String()),
-				missing: fmt.Sprintf("no invalidating assignment or call affecting %s reaches this condition", check.Path.String()),
+				check:     nilConditionCheck(check.Path.String()),
+				proven:    conditionPathProofEvidence(check.Path.String(), "not nil"),
+				stable:    stableConditionEvidence(check.Path.String()),
+				proofSpan: env.presentOrTruthyOrigin(check.Path),
 			}, true
 		}
 	case branchcond.CheckNotNil:
 		if env.hasPresent(check.Path) || env.hasTruthy(check.Path) {
 			return redundantConditionProof{
-				always:  true,
-				check:   fmt.Sprintf("%s is compared with nil", check.Path.String()),
-				proven:  fmt.Sprintf("incoming guard state proves %s is not nil", check.Path.String()),
-				missing: fmt.Sprintf("no invalidating assignment or call affecting %s reaches this condition", check.Path.String()),
+				always:    true,
+				check:     nonNilConditionCheck(check.Path.String()),
+				proven:    conditionPathProofEvidence(check.Path.String(), "not nil"),
+				stable:    stableConditionEvidence(check.Path.String()),
+				proofSpan: env.presentOrTruthyOrigin(check.Path),
 			}, true
 		}
 		if env.hasNil(check.Path) {
 			return redundantConditionProof{
-				check:   fmt.Sprintf("%s is compared with nil", check.Path.String()),
-				proven:  fmt.Sprintf("incoming guard state proves %s is nil", check.Path.String()),
-				missing: fmt.Sprintf("no invalidating assignment or call affecting %s reaches this condition", check.Path.String()),
+				check:     nonNilConditionCheck(check.Path.String()),
+				proven:    conditionPathProofEvidence(check.Path.String(), "nil"),
+				stable:    stableConditionEvidence(check.Path.String()),
+				proofSpan: env.nilOrigin(check.Path),
 			}, true
 		}
 	case branchcond.CheckLiteralEqual:
@@ -137,51 +147,70 @@ func redundantConditionProofFor(env guardEnv, check branchcond.Check) (redundant
 }
 
 func literalConditionProof(env guardEnv, check branchcond.Check, negated bool) (redundantConditionProof, bool) {
+	lit, ok := check.LiteralValue()
+	if !ok {
+		return redundantConditionProof{}, false
+	}
 	operator := "equals"
 	if negated {
 		operator = "does not equal"
 	}
+	var out redundantConditionProof
+	found := false
 	for _, c := range env.constraints {
 		if !c.target.Equal(check.Path) {
 			continue
 		}
-		if c.negated {
-			if c.value != check.LiteralString {
-				return redundantConditionProof{}, false
-			}
-			return redundantConditionProof{
-				always:  negated,
-				check:   fmt.Sprintf("%s %s %q", check.Path.String(), operator, check.LiteralString),
-				proven:  literalProofMessage(c),
-				missing: fmt.Sprintf("no invalidating assignment or call affecting %s reaches this condition", check.Path.String()),
-			}, true
+		proof, ok := literalConditionProofFromConstraint(c, check, lit, operator, negated)
+		if !ok {
+			continue
 		}
-		match := c.value == check.LiteralString
-		always := match != negated
+		if found && out.always != proof.always {
+			return redundantConditionProof{}, false
+		}
+		out = proof
+		found = true
+	}
+	return out, found
+}
+
+func literalConditionProofFromConstraint(c literalConstraint, check branchcond.Check, lit typ.Type, operator string, negated bool) (redundantConditionProof, bool) {
+	match := typ.TypeEquals(c.value, lit)
+	if c.negated {
+		if !match {
+			return redundantConditionProof{}, false
+		}
 		return redundantConditionProof{
-			always:  always,
-			check:   fmt.Sprintf("%s %s %q", check.Path.String(), operator, check.LiteralString),
-			proven:  literalProofMessage(c),
-			missing: fmt.Sprintf("no invalidating assignment or call affecting %s reaches this condition", check.Path.String()),
+			always:    negated,
+			check:     fmt.Sprintf("%s %s %s", check.Path.String(), operator, lit.String()),
+			proven:    literalProofMessage(c),
+			stable:    stableConditionEvidence(check.Path.String()),
+			proofSpan: c.span,
 		}, true
 	}
-	return redundantConditionProof{}, false
+	return redundantConditionProof{
+		always:    match != negated,
+		check:     fmt.Sprintf("%s %s %s", check.Path.String(), operator, lit.String()),
+		proven:    literalProofMessage(c),
+		stable:    stableConditionEvidence(check.Path.String()),
+		proofSpan: c.span,
+	}, true
 }
 
 func literalProofMessage(c literalConstraint) string {
 	if c.negated {
-		return fmt.Sprintf("incoming guard state proves %s is not %q", c.target.String(), c.value)
+		return conditionPathProofEvidence(c.target.String(), "not "+c.value.String())
 	}
-	return fmt.Sprintf("incoming guard state proves %s is %q", c.target.String(), c.value)
+	return conditionPathProofEvidence(c.target.String(), c.value.String())
 }
 
 func typeConditionProof(env guardEnv, check branchcond.Check, negated bool) (redundantConditionProof, bool) {
 	if check.TypeName == "nil" {
 		if env.hasNil(check.Path) {
-			return runtimeTypeConditionProof(check, "nil", !negated), true
+			return runtimeTypeConditionProof(check, negated, "nil", !negated, env.nilOrigin(check.Path)), true
 		}
 		if env.hasPresent(check.Path) || env.hasTruthy(check.Path) {
-			return runtimeTypeConditionProof(check, "not nil", negated), true
+			return runtimeTypeConditionProof(check, negated, "not nil", negated, env.presentOrTruthyOrigin(check.Path)), true
 		}
 	}
 	for _, c := range env.typeChecks {
@@ -190,22 +219,35 @@ func typeConditionProof(env guardEnv, check branchcond.Check, negated bool) (red
 		}
 		always := (c.name == check.TypeName) != negated
 		return redundantConditionProof{
-			always:  always,
-			check:   fmt.Sprintf("type(%s) is compared with %q", check.Path.String(), check.TypeName),
-			proven:  fmt.Sprintf("incoming guard state proves type(%s) is %q", check.Path.String(), c.name),
-			missing: fmt.Sprintf("no invalidating assignment or call affecting %s reaches this condition", check.Path.String()),
+			always:    always,
+			check:     fmt.Sprintf("type(%s) %s %q", check.Path.String(), typeCheckOperator(negated), check.TypeName),
+			proven:    conditionTypeProofEvidence(check.Path.String(), c.name),
+			stable:    stableConditionEvidence(check.Path.String()),
+			proofSpan: c.span,
 		}, true
 	}
 	return redundantConditionProof{}, false
 }
 
-func runtimeTypeConditionProof(check branchcond.Check, proven string, always bool) redundantConditionProof {
+func runtimeTypeConditionProof(check branchcond.Check, negated bool, proven string, always bool, proofSpan diagnostic.Span) redundantConditionProof {
 	return redundantConditionProof{
-		always:  always,
-		check:   fmt.Sprintf("type(%s) is compared with %q", check.Path.String(), check.TypeName),
-		proven:  fmt.Sprintf("incoming guard state proves %s is %s", check.Path.String(), proven),
-		missing: fmt.Sprintf("no invalidating assignment or call affecting %s reaches this condition", check.Path.String()),
+		always:    always,
+		check:     fmt.Sprintf("type(%s) %s %q", check.Path.String(), typeCheckOperator(negated), check.TypeName),
+		proven:    conditionPathProofEvidence(check.Path.String(), proven),
+		stable:    stableConditionEvidence(check.Path.String()),
+		proofSpan: proofSpan,
 	}
+}
+
+func stableConditionEvidence(path string) string {
+	return conditionStabilityEvidence(path)
+}
+
+func typeCheckOperator(negated bool) string {
+	if negated {
+		return "is not"
+	}
+	return "is"
 }
 
 func redundantConditionDiagnostic(fact semantics.BranchConditionFact, proof redundantConditionProof) diagnostic.Diagnostic {
@@ -213,51 +255,38 @@ func redundantConditionDiagnostic(fact semantics.BranchConditionFact, proof redu
 	if !span.Valid() {
 		span = ast.SpanOf(fact.Stmt)
 	}
-	value := "false"
-	unreachableEdge := "true"
-	if proof.always {
-		value = "true"
-		unreachableEdge = "false"
+	message := redundantConditionMessage(proof.always)
+	labels := []diagnostic.Label{sourceLabel(span, labelConditionCheck)}
+	proofSpan := proof.proofSpan
+	if proofSpan.Valid() && !spanEqual(proofSpan, span) {
+		labels = append(labels, sourceLabel(proofSpan, labelProvingGuard))
 	}
-	message := fmt.Sprintf("condition is always %s here", value)
-	return diagnostic.Diagnostic{
-		Position: diagnostic.Position{
-			Line:      span.StartLine,
-			Column:    span.StartCol,
-			EndLine:   span.EndLine,
-			EndColumn: span.EndCol,
-		},
+	proofEvidence := diagnostic.Evidence{
+		Kind:    diagnostic.EvidenceAbstractFact,
+		Trust:   diagnostic.TrustProven,
+		Span:    proofSpan,
+		Message: proof.proven,
+	}
+	return diagnostic.New(diagnostic.DiagnosticSpec{
 		Span:     span,
 		Code:     CodeRedundantCondition,
 		Severity: diagnostic.SeverityWarning,
 		Message:  message,
+		Labels:   labels,
 		Explanation: diagnostic.NewExplanation(
 			diagnostic.Evidence{
 				Kind:    diagnostic.EvidenceAbstractFact,
 				Trust:   diagnostic.TrustProven,
 				Span:    span,
-				Message: "condition check: " + proof.check,
+				Message: conditionCheckEvidence(proof.check),
 			},
+			proofEvidence,
 			diagnostic.Evidence{
 				Kind:    diagnostic.EvidenceAbstractFact,
 				Trust:   diagnostic.TrustProven,
-				Span:    span,
-				Message: proof.proven,
-			},
-			diagnostic.Evidence{
-				Kind:    diagnostic.EvidenceAbstractFact,
-				Trust:   diagnostic.TrustProven,
-				Span:    span,
-				Message: fmt.Sprintf("CFG %s edge is unreachable after guard propagation", unreachableEdge),
-			},
-			diagnostic.Evidence{
-				Kind:    diagnostic.EvidenceMissingProof,
-				Trust:   diagnostic.TrustProven,
-				Span:    span,
-				Message: proof.missing,
+				Message: proof.stable,
 			},
 		),
-		Labels: []diagnostic.Label{{Span: span, Message: "redundant condition"}},
-		Help:   "Remove the redundant condition, or preserve any needed side effects before simplifying the branch.",
-	}
+		Help: redundantConditionHelp(proof.always),
+	})
 }

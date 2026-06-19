@@ -31,6 +31,30 @@ func TestNarrowByPathLiteralKeepsMatchingVariant(t *testing.T) {
 	}
 }
 
+func TestCacheDoesNotRetainNegativeOriginFamilyEntries(t *testing.T) {
+	c := NewCache()
+	if _, _, ok := c.OriginOfType(typ.String); ok {
+		t.Fatal("primitive type unexpectedly produced a variant origin family")
+	}
+	if _, ok := c.origins[typ.String]; ok {
+		t.Fatal("negative origin-family lookup was retained in cache")
+	}
+
+	left := typetable.NewRecord().
+		Field("kind", typ.LiteralString("left")).
+		Build()
+	right := typetable.NewRecord().
+		Field("kind", typ.LiteralString("right")).
+		Build()
+	union := typeexpr.Union(left, right)
+	if _, _, ok := c.OriginOfType(union); !ok {
+		t.Fatal("discriminated union did not produce a variant origin family")
+	}
+	if _, ok := c.origins[union]; !ok {
+		t.Fatal("positive origin-family lookup was not retained in cache")
+	}
+}
+
 func TestNarrowByPathLiteralNarrowsNilBearingUnion(t *testing.T) {
 	// A flattened optional discriminated union (nil | A | B) — as produced when a
 	// guarded optional surfaces with nil as a union member rather than an

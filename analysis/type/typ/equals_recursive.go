@@ -32,7 +32,7 @@ func typeEqualsGuard(a, b Type, guard recursion.Guard, seen map[typePair]bool) b
 	if a.Kind() != b.Kind() {
 		return false
 	}
-	if typeEqualsCanUseHashPrefilter(a, b) && typeEqualityHash(a) != typeEqualityHash(b) {
+	if typeEqualsCanUseHashPrefilter(a, b) && EqualityHash(a) != EqualityHash(b) {
 		return false
 	}
 
@@ -195,7 +195,7 @@ func typeEqualsGuard(a, b Type, guard recursion.Guard, seen map[typePair]bool) b
 			return false
 		}
 		for i, tp := range va.TypeParams {
-			if !tp.Equals(vb.TypeParams[i]) {
+			if !typeEqualsGuard(tp, vb.TypeParams[i], next, seen) {
 				return false
 			}
 		}
@@ -221,6 +221,15 @@ func typeEqualsGuard(a, b Type, guard recursion.Guard, seen map[typePair]bool) b
 			}
 		}
 		return true
+	case *TypeParam:
+		vb, ok := b.(*TypeParam)
+		if !ok || va.Name != vb.Name {
+			return false
+		}
+		if (va.Constraint == nil) != (vb.Constraint == nil) {
+			return false
+		}
+		return va.Constraint == nil || typeEqualsGuard(va.Constraint, vb.Constraint, next, seen)
 	case *Recursive:
 		vb, ok := b.(*Recursive)
 		if !ok {

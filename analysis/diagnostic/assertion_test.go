@@ -16,7 +16,10 @@ func TestAssertionEvidenceTypeClaim(t *testing.T) {
 	if item.Kind != EvidenceUserAssertion || item.Trust != TrustClaimed {
 		t.Fatalf("type claim evidence = %#v, want claimed user evidence", item)
 	}
-	if !strings.Contains(item.Message, "claimed by user type assertion") {
+	if item.Reason != EvidenceReasonUserTypeAssertion {
+		t.Fatalf("type claim reason = %s, want %s", item.Reason, EvidenceReasonUserTypeAssertion)
+	}
+	if !strings.Contains(item.Message, "user type assertion") {
 		t.Fatalf("type claim message missing claim: %q", item.Message)
 	}
 	if !strings.Contains(item.Message, "not proven by analysis") {
@@ -29,8 +32,12 @@ func TestAssertionEvidenceAnyClaimIsNotProofOrEscapeHatch(t *testing.T) {
 	if len(items) != 1 {
 		t.Fatalf("AssertionEvidence(any) = %d items, want 1", len(items))
 	}
-	message := items[0].Message
-	if !strings.Contains(message, "claimed as any") {
+	item := items[0]
+	if item.Reason != EvidenceReasonUserAssertedAny {
+		t.Fatalf("any claim reason = %s, want %s", item.Reason, EvidenceReasonUserAssertedAny)
+	}
+	message := item.Message
+	if !strings.Contains(message, "user asserted any") {
 		t.Fatalf("any claim message missing claim: %q", message)
 	}
 	if !strings.Contains(message, "not abstract-interpreter proof") {
@@ -49,8 +56,12 @@ func TestAssertionEvidenceNonNilClaimIsNotNilProof(t *testing.T) {
 	if len(items) != 1 {
 		t.Fatalf("AssertionEvidence(non-nil) = %d items, want 1", len(items))
 	}
-	message := items[0].Message
-	if !strings.Contains(message, "claimed non-nil") {
+	item := items[0]
+	if item.Reason != EvidenceReasonUserAssertedNonNil {
+		t.Fatalf("non-nil claim reason = %s, want %s", item.Reason, EvidenceReasonUserAssertedNonNil)
+	}
+	message := item.Message
+	if !strings.Contains(message, "user asserted non-nil") {
 		t.Fatalf("non-nil claim message missing claim: %q", message)
 	}
 	if !strings.Contains(message, "nil absence not proven") {
@@ -61,9 +72,9 @@ func TestAssertionEvidenceNonNilClaimIsNotNilProof(t *testing.T) {
 func TestAssertionEvidenceCombinedStableOrder(t *testing.T) {
 	value := assertion.Of(assertion.NonNilClaim, assertion.AnyClaim, assertion.TypeClaim)
 	got := FormatAssertionClaims(value)
-	want := "claimed by user type assertion; not proven by analysis; " +
-		"claimed as any; not abstract-interpreter proof; " +
-		"claimed non-nil; nil absence not proven"
+	want := "user type assertion; not proven by analysis; " +
+		"user asserted any; not abstract-interpreter proof; " +
+		"user asserted non-nil; nil absence not proven"
 	if got != want {
 		t.Fatalf("FormatAssertionClaims(combined) = %q, want %q", got, want)
 	}
@@ -76,6 +87,9 @@ func TestAssertionEvidenceCombinedStableOrder(t *testing.T) {
 		if item.Kind != EvidenceUserAssertion || item.Trust != TrustClaimed {
 			t.Fatalf("combined item %d = %#v, want claimed user assertion", i, item)
 		}
+	}
+	if reasons := []EvidenceReason{items[0].Reason, items[1].Reason, items[2].Reason}; reasons[0] != EvidenceReasonUserTypeAssertion || reasons[1] != EvidenceReasonUserAssertedAny || reasons[2] != EvidenceReasonUserAssertedNonNil {
+		t.Fatalf("combined reasons = %#v", reasons)
 	}
 }
 

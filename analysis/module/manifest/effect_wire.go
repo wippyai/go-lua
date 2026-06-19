@@ -26,6 +26,11 @@ type effectLabelWire struct {
 	ReturnType   *effectReturnWire     `json:"returnType,omitempty"`
 	Length       *exprWire             `json:"length,omitempty"`
 	Refinement   *effectRefinementWire `json:"refinement,omitempty"`
+
+	Protocol string `json:"protocol,omitempty"`
+	From     string `json:"from,omitempty"`
+	To       string `json:"to,omitempty"`
+	Final    string `json:"final,omitempty"`
 }
 
 type effectTransformWire struct {

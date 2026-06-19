@@ -89,6 +89,22 @@ func TestExpectedRecordFieldDistinguishesDotFieldAndStaticStringMember(t *testin
 	}
 }
 
+func TestExpectedRecordSegmentDistinguishesDotFieldAndStaticStringMember(t *testing.T) {
+	rec := typetable.NewRecord().
+		Field("kind", typ.LiteralString("dot")).
+		StaticStringIndex("kind", typ.LiteralString("index")).
+		Build()
+
+	got, ok := ExpectedRecordSegment(rec, segment.Segment{Kind: segment.SegmentField, Name: "kind"})
+	if !ok || !typ.TypeEquals(got, typ.LiteralString("dot")) {
+		t.Fatalf("dot segment = %v/%v, want dot literal", got, ok)
+	}
+	got, ok = ExpectedRecordSegment(rec, segment.Segment{Kind: segment.SegmentIndexString, Name: "kind"})
+	if !ok || !typ.TypeEquals(got, typ.LiteralString("index")) {
+		t.Fatalf("string-index segment = %v/%v, want index literal", got, ok)
+	}
+}
+
 func TestAdoptExpectedFieldTypeUsesOnlyAdmissiblePreciseFacts(t *testing.T) {
 	rec := typetable.NewRecord().Field("count", typ.Integer).Build()
 	path := []segment.Segment{{Kind: segment.SegmentField, Name: "count"}}
@@ -102,5 +118,20 @@ func TestAdoptExpectedFieldTypeUsesOnlyAdmissiblePreciseFacts(t *testing.T) {
 	}
 	if got, ok := AdoptExpectedFieldType(rec, path, typ.Any); ok || got != nil {
 		t.Fatalf("any adopted type = %v/%v, want rejection", got, ok)
+	}
+}
+
+func TestAdoptExpectedSegmentTypePreservesStaticMemberKind(t *testing.T) {
+	rec := typetable.NewRecord().
+		Field("kind", typ.LiteralString("dot")).
+		StaticStringIndex("kind", typ.LiteralString("index")).
+		Build()
+
+	got, ok := AdoptExpectedSegmentType(rec, segment.Segment{Kind: segment.SegmentIndexString, Name: "kind"}, typ.LiteralString("index"))
+	if !ok || !typ.TypeEquals(got, typ.LiteralString("index")) {
+		t.Fatalf("string-index adoption = %v/%v, want index literal", got, ok)
+	}
+	if got, ok := AdoptExpectedSegmentType(rec, segment.Segment{Kind: segment.SegmentIndexString, Name: "kind"}, typ.LiteralString("dot")); ok || got != nil {
+		t.Fatalf("string-index adopted dot field = %v/%v, want rejection", got, ok)
 	}
 }

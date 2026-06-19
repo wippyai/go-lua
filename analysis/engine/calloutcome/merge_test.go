@@ -5,6 +5,7 @@ import (
 
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/placement"
+	"github.com/wippyai/go-lua/analysis/domain/typestate"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
@@ -45,6 +46,15 @@ func TestWithSupplementalKeepsPrimarySlotsFillsMissingSlotsAndMergesSideFactsWit
 				PathRefinements: []callboundary.PathValueFact{
 					{Path: pathdom.NewPlaceholder(1), Value: supplementalValue},
 				},
+				LifecycleFacts: []callboundary.LifecycleFact{
+					{
+						Target:   pathdom.NewPlaceholder(0),
+						Kind:     callboundary.LifecycleTransition,
+						Protocol: typestate.Protocol("transaction"),
+						From:     typestate.State("active"),
+						To:       typestate.State("finished"),
+					},
+				},
 			},
 			ParamConditions: []callpayload.CallParamCondition{
 				{ParamIndex: 1, Value: false},
@@ -75,6 +85,11 @@ func TestWithSupplementalKeepsPrimarySlotsFillsMissingSlotsAndMergesSideFactsWit
 		!got.NormalReturnFacts.PathRefinements[0].Path.Equal(pathdom.NewPlaceholder(0)) ||
 		!got.NormalReturnFacts.PathRefinements[1].Path.Equal(pathdom.NewPlaceholder(1)) {
 		t.Fatalf("normal return facts = %#v, want primary and supplemental path refinements", got.NormalReturnFacts)
+	}
+	if len(got.NormalReturnFacts.LifecycleFacts) != 1 ||
+		!got.NormalReturnFacts.LifecycleFacts[0].Target.Equal(pathdom.NewPlaceholder(0)) ||
+		got.NormalReturnFacts.LifecycleFacts[0].Kind != callboundary.LifecycleTransition {
+		t.Fatalf("lifecycle facts = %#v, want supplemental lifecycle fact", got.NormalReturnFacts.LifecycleFacts)
 	}
 	if len(got.ReturnPresenceRelations) != 1 ||
 		got.ReturnPresenceRelations[0].TriggerIndex != 1 ||

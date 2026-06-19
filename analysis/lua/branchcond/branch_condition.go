@@ -6,6 +6,8 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/lua/pathexpr"
 	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
+	"github.com/wippyai/go-lua/analysis/lua/valueexpr"
+	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/parse/numparse"
 )
@@ -33,8 +35,19 @@ type Check struct {
 	Path          path.Path
 	OtherPath     path.Path
 	TypeName      string
+	Literal       typ.Type
 	LiteralString string
 	LenFloor      int64
+}
+
+func (c Check) LiteralValue() (typ.Type, bool) {
+	if c.Literal != nil {
+		return c.Literal, true
+	}
+	if c.Kind == CheckLiteralEqual || c.Kind == CheckLiteralNot {
+		return typ.LiteralString(c.LiteralString), true
+	}
+	return nil, false
 }
 
 // PredicateCall returns the direct call whose boolean result selects a branch.
@@ -91,7 +104,7 @@ func Normalize(expr ast.Expr, bindings *bind.Result) Check {
 		if check, ok := normalizeTypeComparison(expr, bindings); ok {
 			return check
 		}
-		if check, ok := normalizeStringLiteralComparison(expr, bindings); ok {
+		if check, ok := normalizeLiteralComparison(expr, bindings); ok {
 			return check
 		}
 		if p, ok := nilComparisonPath(expr.Lhs, expr.Rhs, bindings); ok {
@@ -175,34 +188,53 @@ func normalizePathComparison(expr *ast.RelationalOpExpr, bindings *bind.Result) 
 	return Check{Kind: kind, Path: lhs, OtherPath: rhs}, true
 }
 
-func normalizeStringLiteralComparison(expr *ast.RelationalOpExpr, bindings *bind.Result) (Check, bool) {
-	p, value, kind, ok := resolveEqualityComparison(expr, bindings, stringLiteralComparisonOperands, CheckLiteralEqual, CheckLiteralNot)
+func normalizeLiteralComparison(expr *ast.RelationalOpExpr, bindings *bind.Result) (Check, bool) {
+	p, lit, kind, ok := resolveEqualityComparison(expr, bindings, literalComparisonOperands, CheckLiteralEqual, CheckLiteralNot)
 	if !ok {
 		return Check{}, false
 	}
-	return Check{Kind: kind, Path: p, LiteralString: value}, true
+	check := Check{Kind: kind, Path: p, Literal: lit}
+	if literal, ok := lit.(*typ.Literal); ok {
+		if value, ok := literal.Value.(string); ok {
+			check.LiteralString = value
+		}
+	}
+	return check, true
 }
 
 // resolveEqualityComparison resolves operands in either order and selects eq for
-// `==` or ne for `~=`, returning the path, the operand string, and the kind.
-func resolveEqualityComparison(
+// `==` or ne for `~=`, returning the path, the operand, and the kind.
+func resolveEqualityComparison[T any](
 	expr *ast.RelationalOpExpr,
 	bindings *bind.Result,
-	operands func(ast.Expr, ast.Expr, *bind.Result) (path.Path, string, bool),
+	operands func(ast.Expr, ast.Expr, *bind.Result) (path.Path, T, bool),
 	eq, ne CheckKind,
-) (path.Path, string, CheckKind, bool) {
+) (path.Path, T, CheckKind, bool) {
 	p, value, ok := operands(expr.Lhs, expr.Rhs, bindings)
 	if !ok {
 		p, value, ok = operands(expr.Rhs, expr.Lhs, bindings)
 	}
 	if !ok {
-		return path.Path{}, "", 0, false
+		var zero T
+		return path.Path{}, zero, 0, false
 	}
 	kind := eq
 	if expr.Operator == "~=" {
 		kind = ne
 	}
 	return p, value, kind, true
+}
+
+func literalComparisonOperands(pathExpr, literalExpr ast.Expr, bindings *bind.Result) (path.Path, typ.Type, bool) {
+	lit, ok := valueexpr.LiteralType(literalExpr)
+	if !ok || typ.TypeEquals(lit, typ.Nil) {
+		return path.Path{}, nil, false
+	}
+	p, ok := pathexpr.Resolve(pathExpr, bindings)
+	if !ok || p.IsEmpty() {
+		return path.Path{}, nil, false
+	}
+	return p, lit, true
 }
 
 func stringLiteralComparisonOperands(pathExpr, literalExpr ast.Expr, bindings *bind.Result) (path.Path, string, bool) {

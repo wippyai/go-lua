@@ -113,18 +113,6 @@ func applyValueRefinementAtCached(
 	return activatePathPresenceImplicationsForPath(reg, resolver, point, out, targetPath)
 }
 
-func applyValueRefinementAtWithoutImplications(
-	reg *axis.Registry,
-	resolver *visibility.Resolver,
-	projectPath PathTypeProjector,
-	point cfg.Point,
-	out state.State,
-	targetPath pathdom.Path,
-	refinement factflow.ValueRefinement,
-) state.State {
-	return applyValueRefinementAtWithoutImplicationsCached(nil, reg, resolver, projectPath, point, out, targetPath, refinement)
-}
-
 func applyValueRefinementAtWithoutImplicationsCached(
 	typeValues *typevalue.Cache,
 	reg *axis.Registry,

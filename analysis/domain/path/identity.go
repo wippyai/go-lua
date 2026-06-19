@@ -6,23 +6,19 @@ func (p Path) IsEmpty() bool { return p.Root == "" && p.Symbol == 0 }
 // HasSymbol returns true if this path has a resolved symbol identity.
 func (p Path) HasSymbol() bool { return p.Symbol != 0 }
 
-// Equal returns true if two paths have the same identity.
-// Symbol-based identity takes precedence when available.
+// Equal compares path identity before comparing the static suffix. Symbol
+// identity is authoritative: if either path has a symbol, both Symbol and
+// Version must match. Placeholder paths without symbols fall back to Root.
 func (p Path) Equal(other Path) bool {
-	// Symbol-based identity is primary when available
 	if p.Symbol != 0 || other.Symbol != 0 {
-		// If either has a symbol, both must have the same symbol
 		if p.Symbol != other.Symbol {
 			return false
 		}
 		if p.Version != other.Version {
 			return false
 		}
-	} else {
-		// Neither has symbol (placeholder paths) - use Root for identity
-		if p.Root != other.Root {
-			return false
-		}
+	} else if p.Root != other.Root {
+		return false
 	}
 
 	if len(p.Segments) != len(other.Segments) {
@@ -41,10 +37,10 @@ func (p Path) Equal(other Path) bool {
 	return true
 }
 
-// Less provides a stable ordering for canonicalization.
-// Compares by Symbol first when both are set, otherwise by Root.
+// Less provides stable canonical ordering. Two symbol-backed paths sort by
+// Symbol and Version; all other comparisons fall back to Root before suffix
+// segments break ties.
 func (p Path) Less(other Path) bool {
-	// Compare by Symbol when both have it
 	if p.Symbol != 0 && other.Symbol != 0 {
 		if p.Symbol != other.Symbol {
 			return p.Symbol < other.Symbol
