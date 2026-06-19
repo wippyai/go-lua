@@ -197,10 +197,10 @@ local function concat(parts: {string})
 end
 `)
 	diag := requireDiagnosticCode(t, result, diagnostics.CodeAssignmentType)
-	if !strings.Contains(diag.Message, "number | string") || !strings.Contains(diag.Message, "number") {
+	if !strings.Contains(diag.Message, "string | 0") || !strings.Contains(diag.Message, "number") {
 		t.Fatalf("message = %q, want number|string to number assignment", diag.Message)
 	}
-	requireEvidenceMessage(t, diag, "acc has type number | string")
+	requireEvidenceMessage(t, diag, "acc has type string | 0")
 	requireEvidenceMessage(t, diag, "n is declared as number")
 }
 

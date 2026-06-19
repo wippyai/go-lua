@@ -101,18 +101,21 @@ func TestOfPreservesFunctionShapeWithNestedUncertainty(t *testing.T) {
 	}
 }
 
-func TestJoinLiteralFamiliesPreservesPrimitiveWitness(t *testing.T) {
+func TestJoinPreservesDistinctLiteralAlternatives(t *testing.T) {
 	tests := []struct {
 		name  string
 		left  typ.Type
 		right typ.Type
 		want  typ.Type
 	}{
-		{name: "integer literals", left: typ.LiteralInt(0), right: typ.LiteralInt(1), want: typ.Integer},
-		{name: "integer literal and integer", left: typ.LiteralInt(7), right: typ.Integer, want: typ.Integer},
-		{name: "string literals", left: typ.LiteralString("ack"), right: typ.LiteralString("nak"), want: typ.String},
-		{name: "boolean literals", left: typ.LiteralBool(true), right: typ.LiteralBool(false), want: typ.Boolean},
-		{name: "integer and number", left: typ.LiteralInt(1), right: typ.LiteralNumber(1.5), want: typ.Number},
+		// Distinct literals are preserved as a canonical union; collapsing them to
+		// the family base would make Join non-associative once a literal union is
+		// itself a reachable witness (e.g. a discriminant tag such as "a" | "b").
+		{name: "integer literals", left: typ.LiteralInt(0), right: typ.LiteralInt(1), want: typ.MaterializeUnion([]typ.Type{typ.LiteralInt(0), typ.LiteralInt(1)})},
+		{name: "string literals", left: typ.LiteralString("ack"), right: typ.LiteralString("nak"), want: typ.MaterializeUnion([]typ.Type{typ.LiteralString("ack"), typ.LiteralString("nak")})},
+		{name: "integer and number literal", left: typ.LiteralInt(1), right: typ.LiteralNumber(1.5), want: typ.MaterializeUnion([]typ.Type{typ.LiteralInt(1), typ.LiteralNumber(1.5)})},
+		// A literal is absorbed by its own family base.
+		{name: "integer literal absorbed by integer", left: typ.LiteralInt(7), right: typ.Integer, want: typ.Integer},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

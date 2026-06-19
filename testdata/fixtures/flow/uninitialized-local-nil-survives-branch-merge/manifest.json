@@ -14,7 +14,7 @@
         ],
         "min_evidence": 2,
         "evidence_contains": [
-          "h can be number or nil here",
+          "h can be 5 or nil here",
           "x is declared as number",
           "no guard on this path proves h is non-nil"
         ],
@@ -26,7 +26,7 @@
             "kind": "abstract fact",
             "trust": "proven",
             "contains": [
-              "h can be number or nil here"
+              "h can be 5 or nil here"
             ]
           },
           {
@@ -54,7 +54,7 @@
           "error[type.assignment]: cannot assign h because it may be nil",
           "--> main.lua:6:23",
           "local x: number = h",
-          "proven: h can be number or nil here",
+          "proven: h can be 5 or nil here",
           "claimed: x is declared as number",
           "missing proof: no guard on this path proves h is non-nil"
         ],
@@ -63,7 +63,7 @@
           "--> main.lua:6:23",
           "local x: number = h",
           "because:",
-          "proven: h can be number or nil here",
+          "proven: h can be 5 or nil here",
           "claimed: x is declared as number",
           "missing proof: no guard on this path proves h is non-nil",
           "help: Guard `h` with a nil check"

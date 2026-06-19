@@ -59,6 +59,14 @@ func TestFiniteAxisSpecsLaws(t *testing.T) {
 			typewitness.Bottom(),
 			typewitness.Of(typ.Number),
 			typewitness.Of(typ.String),
+			typewitness.Of(typ.Boolean),
+			typewitness.Of(typ.LiteralString("a")),
+			typewitness.Of(typ.LiteralString("b")),
+			typewitness.Of(typ.MaterializeUnion([]typ.Type{typ.LiteralString("a"), typ.LiteralString("b")})),
+			typewitness.Of(typ.MaterializeUnion([]typ.Type{typ.LiteralString("a"), typ.Number})),
+			typewitness.Of(typ.MaterializeUnion([]typ.Type{typ.Number, typ.String})),
+			typewitness.Of(typ.MaterializeUnion([]typ.Type{typ.String, typ.Boolean})),
+			typewitness.Of(typ.MaterializeUnion([]typ.Type{typ.Number, typ.String, typ.Boolean})),
 			typewitness.Top(),
 		})
 	})

@@ -1,0 +1,1 @@
+{ "description": "Negative type narrowing through a value path: the else edge of type(v) == kind (kind resolves to \"number\") narrows v to string. Clean only if the witness is reduced by the runtime-kind exclusion.", "files": ["main.lua"] }
