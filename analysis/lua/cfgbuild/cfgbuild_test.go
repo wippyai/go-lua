@@ -2025,7 +2025,7 @@ func TestBuildChunkMemberFunctionDefinitionCreatesAssignment(t *testing.T) {
 	}
 }
 
-func TestBuildChunkUnsupportedFunctionDefinitionTargetsReturnNil(t *testing.T) {
+func TestBuildChunkDynamicFunctionDefinitionTargetAnalyzed(t *testing.T) {
 	stmt := &ast.FuncDefStmt{
 		Name: &ast.FuncName{Func: &ast.AttrGetExpr{
 			Object:    ident("module"),
@@ -2039,12 +2039,13 @@ func TestBuildChunkUnsupportedFunctionDefinitionTargetsReturnNil(t *testing.T) {
 		stmt,
 	}
 	bindings := bind.BindChunk(stmts, bind.Options{})
-	if result := BuildChunk(stmts, bindings); result != nil {
-		t.Fatalf("BuildChunk returned graph for unsupported dynamic function definition target")
+	result := BuildChunk(stmts, bindings)
+	if result == nil || result.Graph == nil {
+		t.Fatalf("BuildChunk returned nil for dynamic function definition target; it must still be analyzed")
 	}
 }
 
-func TestBuildChunkUnsupportedExpressionCoverageReturnsNil(t *testing.T) {
+func TestBuildChunkComputedAssignmentTargetAnalyzed(t *testing.T) {
 	tests := []struct {
 		name string
 		stmt ast.Stmt
@@ -2063,8 +2064,9 @@ func TestBuildChunkUnsupportedExpressionCoverageReturnsNil(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			stmts := []ast.Stmt{tt.stmt}
 			bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"make", "print", "ready", "value"}})
-			if result := BuildChunk(stmts, bindings); result != nil {
-				t.Fatalf("BuildChunk returned graph for unsupported expression coverage in %s", tt.name)
+			result := BuildChunk(stmts, bindings)
+			if result == nil || result.Graph == nil {
+				t.Fatalf("BuildChunk returned nil for computed assignment target %s; it must still be analyzed", tt.name)
 			}
 		})
 	}

@@ -85,11 +85,11 @@ func (b *builder) buildAssign(state flowState, stmt *ast.AssignStmt) flowState {
 	}
 	state = b.appendValueListCalls(state, stmt, stmt.Rhs)
 	for _, lhs := range stmt.Lhs {
-		id, ok := b.assignmentRootSymbol(lhs)
-		if !ok {
-			b.unsupported = true
-			return flowState{current: state.current}
-		}
+		// A target whose root is not a tracked symbol (computed prefix such as
+		// make().field or ({}).x) carries no local version; it is still a
+		// statement point so the assignment and the rest of the function are
+		// analyzed. id == 0 marks the absent symbol.
+		id, _ := b.assignmentRootSymbol(lhs)
 		state = b.appendAssign(state, id, stmt)
 	}
 	return state
@@ -108,11 +108,10 @@ func (b *builder) buildLocalAssign(state flowState, stmt *ast.LocalAssignStmt) f
 }
 
 func (b *builder) buildFuncDef(state flowState, stmt *ast.FuncDefStmt) flowState {
-	target, ok := pathexpr.ResolveFuncName(stmt.Name, b.bindings)
-	if !ok || target.Symbol == 0 {
-		b.unsupported = true
-		return flowState{current: state.current}
-	}
+	// A dynamic definition target (function obj[expr]() ... end) resolves to no
+	// tracked symbol; it still defines a value at this point, so emit the
+	// assignment with id == 0 rather than abandoning the function.
+	target, _ := pathexpr.ResolveFuncName(stmt.Name, b.bindings)
 	return b.appendAssign(state, target.Symbol, stmt)
 }
 
