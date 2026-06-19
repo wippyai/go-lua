@@ -3,10 +3,47 @@ package product
 import (
 	"sort"
 
+	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 )
 
 const maxReducerPasses = 32
+
+// reducerEntry pairs a reducer with the axis ids it depends on, so reduction can
+// gate on slot presence before allocating a reduce editor.
+type reducerEntry struct {
+	apply axis.Reducer
+	reads []string
+}
+
+// applicable reports whether the reducer can possibly fire on these slots: every
+// axis it reads must be present (a top axis is never stored as a slot, so an
+// absent read axis means the reducer would observe top and no-op). An empty
+// reads list means the reducer is always applicable.
+func (e reducerEntry) applicable(slots []slot) bool {
+	for _, read := range e.reads {
+		found := false
+		for i := range slots {
+			if slots[i].key == read {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+	return true
+}
+
+func anyReducerApplicable(reducers []reducerEntry, slots []slot) bool {
+	for i := range reducers {
+		if reducers[i].applicable(slots) {
+			return true
+		}
+	}
+	return false
+}
 
 func reduce(rt *registryRuntime, shape Shape, p presence.Value, slots []slot) (Shape, presence.Value, []slot) {
 	shape, p, _ = reducePresenceShape(shape, p)
@@ -14,7 +51,7 @@ func reduce(rt *registryRuntime, shape Shape, p presence.Value, slots []slot) (S
 		return ShapeBottom, presence.Bottom(), rt.bottomSlots
 	}
 
-	if len(rt.reducers) == 0 {
+	if len(rt.reducers) == 0 || !anyReducerApplicable(rt.reducers, slots) {
 		return shape, p, slots
 	}
 
@@ -22,7 +59,7 @@ func reduce(rt *registryRuntime, shape Shape, p presence.Value, slots []slot) (S
 	for pass := 0; pass < maxReducerPasses; pass++ {
 		changed := false
 		for _, reducer := range rt.reducers {
-			reducerChanged := reducer(editor)
+			reducerChanged := reducer.apply(editor)
 			editorChanged := editor.consumeChanged()
 			if reducerChanged || editorChanged {
 				changed = true

@@ -18,6 +18,11 @@ type Spec[T any] struct {
 	Widen    func(prev, next T) T
 	Hash     func(T) uint64
 	Reducer  Reducer
+	// ReducerReads lists the axis ids the Reducer depends on. Product reduction
+	// uses it as a cheap gate: when a value's slots do not carry every listed
+	// axis, the reducer cannot fire, so the whole reduce pass is skipped without
+	// allocating a reduce editor. Empty means the reducer is always considered.
+	ReducerReads []string
 }
 
 // Lattice adapts this axis spec to the generic lattice contract.
@@ -106,6 +111,7 @@ type ErasedSpec interface {
 	WidenAny(prev, next any) any
 	HashAny(any) uint64
 	ReducerHook() Reducer
+	ReducerReadsHook() []string
 }
 
 type erasedSpec[T any] struct {
@@ -161,6 +167,10 @@ func (e erasedSpec[T]) HashAny(v any) uint64 {
 
 func (e erasedSpec[T]) ReducerHook() Reducer {
 	return e.spec.Reducer
+}
+
+func (e erasedSpec[T]) ReducerReadsHook() []string {
+	return e.spec.ReducerReads
 }
 
 func (e erasedSpec[T]) cast(v any) T {

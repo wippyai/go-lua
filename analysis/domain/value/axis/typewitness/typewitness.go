@@ -16,16 +16,17 @@ var Key = axis.NewKey[Value]("typewitness")
 
 func Spec() axis.Spec[Value] {
 	return axis.Spec[Value]{
-		Key:      Key,
-		Bottom:   Bottom,
-		Top:      Top,
-		Equal:    Equal,
-		LessOrEq: LessOrEq,
-		Join:     Join,
-		Meet:     Meet,
-		Widen:    Widen,
-		Hash:     Value.Hash,
-		Reducer:  reduceByRuntimeKind,
+		Key:          Key,
+		Bottom:       Bottom,
+		Top:          Top,
+		Equal:        Equal,
+		LessOrEq:     LessOrEq,
+		Join:         Join,
+		Meet:         Meet,
+		Widen:        Widen,
+		Hash:         Value.Hash,
+		Reducer:      reduceByRuntimeKind,
+		ReducerReads: []string{Key.ID(), runtimekind.Key.ID()},
 	}
 }
 

@@ -4,10 +4,11 @@ import "fmt"
 
 // Registry owns the ordered set of axes in one value product.
 type Registry struct {
-	specs    map[string]ErasedSpec
-	order    []ErasedSpec
-	reducers []Reducer
-	frozen   bool
+	specs        map[string]ErasedSpec
+	order        []ErasedSpec
+	reducers     []Reducer
+	reducerReads [][]string
+	frozen       bool
 }
 
 // SpecsView is a read-only, allocation-free view of a registry's ordered specs.
@@ -26,6 +27,7 @@ func (v SpecsView) At(i int) ErasedSpec {
 // ReducersView is a read-only, allocation-free view of a registry's reducers.
 type ReducersView struct {
 	reducers []Reducer
+	reads    [][]string
 }
 
 func (v ReducersView) Len() int {
@@ -34,6 +36,11 @@ func (v ReducersView) Len() int {
 
 func (v ReducersView) At(i int) Reducer {
 	return v.reducers[i]
+}
+
+// ReadsAt returns the axis ids the i-th reducer depends on.
+func (v ReducersView) ReadsAt(i int) []string {
+	return v.reads[i]
 }
 
 func NewRegistry() *Registry {
@@ -81,6 +88,7 @@ func (r *Registry) RegisterErased(spec ErasedSpec) error {
 	r.order = append(r.order, spec)
 	if reducer := spec.ReducerHook(); reducer != nil {
 		r.reducers = append(r.reducers, reducer)
+		r.reducerReads = append(r.reducerReads, spec.ReducerReadsHook())
 	}
 	return nil
 }
@@ -122,5 +130,5 @@ func (r *Registry) ReducersView() ReducersView {
 	if r == nil {
 		return ReducersView{}
 	}
-	return ReducersView{reducers: r.reducers}
+	return ReducersView{reducers: r.reducers, reads: r.reducerReads}
 }

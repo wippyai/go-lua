@@ -20,7 +20,7 @@ type registryRuntime struct {
 	axes          []axisRuntimeAxis
 	canonicalAxes []axisRuntimeAxis
 	byID          map[string]axisRuntimeAxis
-	reducers      []axis.Reducer
+	reducers      []reducerEntry
 
 	bottomSlots []slot
 
@@ -142,9 +142,9 @@ func buildRegistryRuntime(reg *axis.Registry) *registryRuntime {
 
 	reducers := reg.ReducersView()
 	if reducers.Len() > 0 {
-		rt.reducers = make([]axis.Reducer, 0, reducers.Len())
+		rt.reducers = make([]reducerEntry, 0, reducers.Len())
 		for i := 0; i < reducers.Len(); i++ {
-			rt.reducers = append(rt.reducers, reducers.At(i))
+			rt.reducers = append(rt.reducers, reducerEntry{apply: reducers.At(i), reads: reducers.ReadsAt(i)})
 		}
 	}
 	return rt
