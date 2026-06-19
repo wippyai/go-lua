@@ -92,8 +92,16 @@ func (r *Result) extractNumberFor(stmt *ast.NumberForStmt, bindings *bind.Result
 	if len(points) == 0 {
 		return nil
 	}
-	if len(points) != 2 {
+	calls, ok := valueListCalls(numericForBounds(stmt), bindings)
+	if !ok {
 		return ErrPointMismatch
+	}
+	if len(points) != len(calls)+2 {
+		return ErrPointMismatch
+	}
+	resolver := callPointResolver(calls, points)
+	for i, call := range calls {
+		r.calls[points[i]] = buildCallFact(stmt, nil, CallContextExpressionProducer, nil, call.index, call.call, bindings, nil, resolver)
 	}
 	id, hasSymbol := symbol.ID(0), false
 	if bindings != nil {
@@ -112,9 +120,21 @@ func (r *Result) extractNumberFor(stmt *ast.NumberForStmt, bindings *bind.Result
 	initFact.Role = cfgfacts.NumericForRoleInit
 	checkFact := fact
 	checkFact.Role = cfgfacts.NumericForRoleCheck
-	r.meta.SetNumericFor(points[0], initFact)
-	r.meta.SetNumericFor(points[1], checkFact)
+	r.meta.SetNumericFor(points[len(calls)], initFact)
+	r.meta.SetNumericFor(points[len(calls)+1], checkFact)
 	return nil
+}
+
+// numericForBounds returns the numeric-for control expressions in Lua
+// evaluation order: init, limit, then the optional step. Must match
+// cfgbuild.numericForBounds so bound-call points stay positionally aligned
+// with the numeric-for points.
+func numericForBounds(stmt *ast.NumberForStmt) []ast.Expr {
+	bounds := []ast.Expr{stmt.Init, stmt.Limit}
+	if stmt.Step != nil {
+		bounds = append(bounds, stmt.Step)
+	}
+	return bounds
 }
 
 func (r *Result) extractGenericFor(stmt *ast.GenericForStmt, bindings *bind.Result, points []cfg.Point) error {

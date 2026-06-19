@@ -2057,14 +2057,6 @@ func TestBuildChunkUnsupportedExpressionCoverageReturnsNil(t *testing.T) {
 				KeySyntax: ast.AttrKeyDot,
 			}}, number("1")),
 		},
-		{
-			name: "number for init call",
-			stmt: &ast.NumberForStmt{
-				Name:  "i",
-				Init:  &ast.FuncCallExpr{Func: ident("make")},
-				Limit: number("3"),
-			},
-		},
 	}
 
 	for _, tt := range tests {
@@ -2073,6 +2065,44 @@ func TestBuildChunkUnsupportedExpressionCoverageReturnsNil(t *testing.T) {
 			bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"make", "print", "ready", "value"}})
 			if result := BuildChunk(stmts, bindings); result != nil {
 				t.Fatalf("BuildChunk returned graph for unsupported expression coverage in %s", tt.name)
+			}
+		})
+	}
+}
+
+func TestBuildChunkNumericForBoundCallsAnalyzed(t *testing.T) {
+	tests := []struct {
+		name  string
+		stmt  *ast.NumberForStmt
+		calls int
+	}{
+		{
+			name:  "init call",
+			stmt:  &ast.NumberForStmt{Name: "i", Init: &ast.FuncCallExpr{Func: ident("make")}, Limit: number("3")},
+			calls: 1,
+		},
+		{
+			name:  "limit call",
+			stmt:  &ast.NumberForStmt{Name: "i", Init: number("1"), Limit: &ast.FuncCallExpr{Func: ident("count")}},
+			calls: 1,
+		},
+		{
+			name:  "init and step calls",
+			stmt:  &ast.NumberForStmt{Name: "i", Init: &ast.FuncCallExpr{Func: ident("lo")}, Limit: number("9"), Step: &ast.FuncCallExpr{Func: ident("by")}},
+			calls: 2,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			stmts := []ast.Stmt{tt.stmt}
+			bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"make", "count", "lo", "by"}})
+			result := BuildChunk(stmts, bindings)
+			if result == nil || result.Graph == nil {
+				t.Fatalf("BuildChunk returned nil for numeric-for with bound calls: %s", tt.name)
+			}
+			points := result.StmtPoints.PointsFor(tt.stmt)
+			if len(points) != tt.calls+2 {
+				t.Fatalf("%s: got %d stmt points, want %d (calls=%d + init + check)", tt.name, len(points), tt.calls+2, tt.calls)
 			}
 		})
 	}

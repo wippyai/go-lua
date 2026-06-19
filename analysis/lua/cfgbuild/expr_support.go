@@ -10,15 +10,6 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 )
 
-func (b *builder) hasUnsupportedExprs(exprs ...ast.Expr) bool {
-	for _, expr := range exprs {
-		if !b.exprCovered(expr) {
-			return true
-		}
-	}
-	return false
-}
-
 func (b *builder) hasUnsupportedValueListExprs(exprs ...ast.Expr) bool {
 	_, ok := b.valueListCalls(exprs)
 	return !ok

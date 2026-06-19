@@ -237,15 +237,8 @@ func (b *builder) buildRepeat(state flowState, stmt *ast.RepeatStmt) flowState {
 }
 
 func (b *builder) buildNumberFor(state flowState, stmt *ast.NumberForStmt) flowState {
-	if b.hasUnsupportedExprs(stmt.Init, stmt.Limit, stmt.Step) {
-		b.unsupported = true
-		return flowState{current: state.current}
-	}
-	id, ok := b.bindings.NumForSymbol(stmt)
-	if !ok || id == 0 {
-		b.unsupported = true
-		return flowState{current: state.current}
-	}
+	state = b.appendValueListCalls(state, stmt, numericForBounds(stmt))
+	id, _ := b.bindings.NumForSymbol(stmt)
 
 	state = b.appendAssign(state, id, stmt)
 	preheader := state.current
@@ -315,6 +308,18 @@ func (b *builder) buildGenericFor(state flowState, stmt *ast.GenericForStmt) flo
 		b.connect(body, branch.current)
 	}
 	return flowState{current: join, live: true}
+}
+
+// numericForBounds returns the numeric-for control expressions in Lua
+// evaluation order: init, limit, then the optional step. cfgbuild and
+// semantics must build this list identically so call occurrences and the
+// numeric-for points stay positionally aligned.
+func numericForBounds(stmt *ast.NumberForStmt) []ast.Expr {
+	bounds := []ast.Expr{stmt.Init, stmt.Limit}
+	if stmt.Step != nil {
+		bounds = append(bounds, stmt.Step)
+	}
+	return bounds
 }
 
 func (b *builder) buildBreak(state flowState) flowState {
