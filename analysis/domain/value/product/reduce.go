@@ -102,17 +102,19 @@ func reducePresenceShape(shape Shape, p presence.Value) (Shape, presence.Value, 
 }
 
 type reduceEditor struct {
-	rt       *registryRuntime
-	presence presence.Value
-	values   map[string]any
-	changed  bool
+	rt        *registryRuntime
+	presence  presence.Value
+	values    []slot
+	needsSort bool
+	changed   bool
 }
 
 func newReduceEditor(rt *registryRuntime, p presence.Value, slots []slot) *reduceEditor {
-	values := make(map[string]any, len(slots))
-	for _, slot := range slots {
-		values[slot.key] = slot.value
-	}
+	// Slots are few (one per non-top axis) and arrive canonically ordered, so a
+	// linear-scanned slice avoids the per-reduction map allocation. In-place
+	// updates keep the order; only adding a new axis needs a re-sort.
+	values := make([]slot, len(slots))
+	copy(values, slots)
 	return &reduceEditor{rt: rt, presence: p, values: values}
 }
 
@@ -124,8 +126,10 @@ func (e *reduceEditor) GetAny(key string) (any, bool) {
 	if !ok {
 		return nil, false
 	}
-	if v, ok := e.values[key]; ok {
-		return v, true
+	for i := range e.values {
+		if e.values[i].key == key {
+			return e.values[i].value, true
+		}
 	}
 	return info.topAny, true
 }
@@ -139,16 +143,26 @@ func (e *reduceEditor) SetAny(key string, value any) {
 		panic("product: reducer wrote unregistered axis " + key)
 	}
 	if info.spec.IsTopAny(value) {
-		if _, exists := e.values[key]; exists {
-			delete(e.values, key)
-			e.changed = true
+		for i := range e.values {
+			if e.values[i].key == key {
+				e.values = append(e.values[:i], e.values[i+1:]...)
+				e.changed = true
+				return
+			}
 		}
 		return
 	}
-	if cur, exists := e.values[key]; exists && info.spec.EqualAny(cur, value) {
-		return
+	for i := range e.values {
+		if e.values[i].key == key {
+			if !info.spec.EqualAny(e.values[i].value, value) {
+				e.values[i].value = value
+				e.changed = true
+			}
+			return
+		}
 	}
-	e.values[key] = value
+	e.values = append(e.values, slot{key: key, value: value})
+	e.needsSort = true
 	e.changed = true
 }
 
@@ -174,12 +188,12 @@ func (e *reduceEditor) isProductBottom() bool {
 	if presence.Equal(e.presence, presence.Bottom()) {
 		return true
 	}
-	for key, value := range e.values {
-		info, ok := e.rt.axis(key)
+	for i := range e.values {
+		info, ok := e.rt.axis(e.values[i].key)
 		if !ok {
-			panic("product: unregistered axis slot " + key)
+			panic("product: unregistered axis slot " + e.values[i].key)
 		}
-		if info.spec.EqualAny(value, info.bottomAny) {
+		if info.spec.EqualAny(e.values[i].value, info.bottomAny) {
 			return true
 		}
 	}
@@ -190,14 +204,9 @@ func (e *reduceEditor) slots() []slot {
 	if len(e.values) == 0 {
 		return nil
 	}
-	keys := make([]string, 0, len(e.values))
-	for key := range e.values {
-		keys = append(keys, key)
+	if e.needsSort {
+		sort.Slice(e.values, func(i, j int) bool { return e.values[i].key < e.values[j].key })
+		e.needsSort = false
 	}
-	sort.Strings(keys)
-	out := make([]slot, 0, len(keys))
-	for _, key := range keys {
-		out = append(out, slot{key: key, value: e.values[key]})
-	}
-	return out
+	return e.values
 }
