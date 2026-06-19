@@ -1188,7 +1188,7 @@ func TestBuildChunkEmptyIfMaterializesDistinctBranchArms(t *testing.T) {
 	requireEdge(t, graph, succs[1], join, false)
 }
 
-func TestBuildChunkTypeCompareConditionRejectsUnsupportedCalls(t *testing.T) {
+func TestBuildChunkTypeCompareConditionsAnalyzedNotRejected(t *testing.T) {
 	tests := []struct {
 		name    string
 		stmts   []ast.Stmt
@@ -1248,8 +1248,9 @@ func TestBuildChunkTypeCompareConditionRejectsUnsupportedCalls(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			bindings := bind.BindChunk(tt.stmts, bind.Options{Globals: tt.globals})
-			if result := BuildChunk(tt.stmts, bindings); result != nil {
-				t.Fatalf("BuildChunk returned graph for unsupported type compare condition %s", tt.name)
+			result := BuildChunk(tt.stmts, bindings)
+			if result == nil || result.Graph == nil {
+				t.Fatalf("BuildChunk returned nil for type compare condition %s; non-narrowable predicates must still be analyzed as ordinary conditions", tt.name)
 			}
 		})
 	}

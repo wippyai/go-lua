@@ -66,9 +66,6 @@ func (b *builder) hasUnsupportedConditionExpr(expr ast.Expr) bool {
 	if branchcond.SupportsTypeComparison(expr, b.bindings) {
 		return false
 	}
-	if unsupportedTypePredicateComparison(expr) {
-		return true
-	}
 	_, ok := b.conditionExprCalls(expr)
 	return !ok
 }
@@ -336,25 +333,3 @@ func (b *builder) pureTypeCallCovered(call *ast.FuncCallExpr) bool {
 	return ok
 }
 
-func unsupportedTypePredicateComparison(expr ast.Expr) bool {
-	rel, ok := expr.(*ast.RelationalOpExpr)
-	if !ok {
-		return false
-	}
-	if rel.Operator != "==" && rel.Operator != "~=" {
-		return false
-	}
-	return typePredicateLikeCall(rel.Lhs) || typePredicateLikeCall(rel.Rhs)
-}
-
-func typePredicateLikeCall(expr ast.Expr) bool {
-	call, ok := sourceprovenance.Call(expr)
-	if !ok || call == nil {
-		return false
-	}
-	if call.Method == "type" {
-		return true
-	}
-	fn, ok := call.Func.(*ast.IdentExpr)
-	return ok && fn.Value == "type"
-}
