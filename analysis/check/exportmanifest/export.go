@@ -5,6 +5,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/check/body"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/program"
 	"github.com/wippyai/go-lua/analysis/module/manifest"
+	"github.com/wippyai/go-lua/analysis/type/normalize"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/unwrap"
@@ -179,5 +180,5 @@ func rootReturnType(result *body.Result) (typ.Type, bool) {
 		}
 		candidates = append(candidates, t)
 	}
-	return unionType(candidates)
+	return normalize.UnionType(candidates)
 }

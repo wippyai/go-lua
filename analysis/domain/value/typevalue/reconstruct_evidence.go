@@ -28,23 +28,9 @@ func runtimeKindType(reg *axis.Registry, value product.Value) (typ.Type, bool) {
 			return nil, false
 		}
 	}
-	t, ok := unionType(members)
+	t, ok := typenormalize.UnionType(members)
 	if !ok {
 		return nil, false
 	}
 	return typeWithPresence(t, product.PresenceOf(value)), true
-}
-
-func unionType(types []typ.Type) (typ.Type, bool) {
-	switch len(types) {
-	case 0:
-		return nil, false
-	case 1:
-		if types[0] == nil {
-			return nil, false
-		}
-		return types[0], true
-	default:
-		return typenormalize.UnionForEvidence(types...), true
-	}
 }

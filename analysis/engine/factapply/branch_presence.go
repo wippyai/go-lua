@@ -28,7 +28,7 @@ func branchPresenceRelationRefinement(
 			continue
 		}
 		refinement, ok := branchRefinement.ValueForEdge(ctx.Edge.Cond)
-		if !ok || !refinementHasPresence(refinement, relation.TriggerPresence()) {
+		if !ok || !refinement.HasPresence(relation.TriggerPresence()) {
 			continue
 		}
 		return presenceRefinement(ctx.Registry, relation.TargetPresence()), true
@@ -60,7 +60,7 @@ func branchEdgeImpliesAbsentFromNonFalseFalsy(
 			continue
 		}
 		opposite, ok := branchRefinement.ValueForEdge(!ctx.Edge.Cond)
-		if !ok || !refinementHasPresence(opposite, presence.Present()) {
+		if !ok || !opposite.HasPresence(presence.Present()) {
 			continue
 		}
 		if branchTriggerCanBeFalse(typeValues, ctx, resolver, projectPath, out, triggerPath) {
@@ -88,14 +88,6 @@ func branchTriggerCanBeFalse(
 		return true
 	}
 	return kinds.Contains(runtimekind.Boolean)
-}
-
-func refinementHasPresence(refinement factflow.ValueRefinement, want presence.Value) bool {
-	constraint, ok := refinement.Constraint()
-	if !ok {
-		return false
-	}
-	return presence.Equal(product.PresenceOf(constraint), want)
 }
 
 func presenceRefinement(reg *axis.Registry, value presence.Value) factflow.ValueRefinement {

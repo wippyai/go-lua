@@ -11,14 +11,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
-func refinementHasPresence(refinement factflow.ValueRefinement, want presence.Value) bool {
-	constraint, ok := refinement.Constraint()
-	if !ok {
-		return false
-	}
-	return presence.Equal(product.PresenceOf(constraint), want)
-}
-
 func (l *lowerer) typeBranchRefinement(target path.Path, kind branchcond.CheckKind, typeName string) (factflow.BranchRefinement, bool) {
 	tag, ok := runtimekind.ParseTag(typeName)
 	if !ok {

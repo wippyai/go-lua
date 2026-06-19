@@ -28,12 +28,12 @@ func orderRootRefinementsBeforeDescendants(refinements []factflow.BranchRefineme
 func (l *lowerer) rootRefinementsForBranchRefinement(refinement factflow.BranchRefinement) []factflow.BranchRefinement {
 	target := refinement.TargetPath()
 	var out []factflow.BranchRefinement
-	if value, ok := refinement.TrueValue(); ok && refinementHasPresence(value, presence.Present()) {
+	if value, ok := refinement.TrueValue(); ok && value.HasPresence(presence.Present()) {
 		if root, ok := l.rootPresenceRefinement(target, true); ok {
 			out = append(out, root)
 		}
 	}
-	if value, ok := refinement.FalseValue(); ok && refinementHasPresence(value, presence.Present()) {
+	if value, ok := refinement.FalseValue(); ok && value.HasPresence(presence.Present()) {
 		if root, ok := l.rootPresenceRefinement(target, false); ok {
 			out = append(out, root)
 		}

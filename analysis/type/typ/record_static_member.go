@@ -65,7 +65,8 @@ func staticMembersSorted(members []StaticMember) bool {
 	return true
 }
 
-func writeStaticMemberKey(sb *strings.Builder, member StaticMember) {
+// WriteStaticMemberKey renders a static member's bracketed key into sb.
+func WriteStaticMemberKey(sb *strings.Builder, member StaticMember) {
 	switch member.Kind {
 	case StaticMemberStringIndex:
 		sb.WriteString("[\"")

@@ -88,7 +88,7 @@ func (r *Record) String() string {
 			if member.Readonly {
 				sb.WriteString("readonly ")
 			}
-			writeStaticMemberKey(&sb, member)
+			WriteStaticMemberKey(&sb, member)
 			if member.Optional {
 				sb.WriteString("?")
 			}

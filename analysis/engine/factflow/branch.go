@@ -3,6 +3,7 @@ package factflow
 import (
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 )
@@ -82,6 +83,15 @@ func (r ValueRefinement) Constraint() (product.Value, bool) {
 // IsEmpty reports whether r carries no axis refinements.
 func (r ValueRefinement) IsEmpty() bool {
 	return !r.hasConstraint
+}
+
+// HasPresence reports whether r's constraint pins presence to want.
+func (r ValueRefinement) HasPresence(want presence.Value) bool {
+	constraint, ok := r.Constraint()
+	if !ok {
+		return false
+	}
+	return presence.Equal(product.PresenceOf(constraint), want)
 }
 
 // BranchRefinement describes branch-edge value refinements for one access path.

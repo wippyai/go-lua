@@ -301,8 +301,25 @@ func TestValueAxisLeafDirectImportBoundaries(t *testing.T) {
 		modulePath+"/analysis/domain/value/axis",
 		modulePath+"/analysis/internal/hash",
 	)
+	// runtimekindof is the bridge leaf between the runtimekind axis and the type
+	// lattice; it converts kinds to and from types, so it imports runtimekind and
+	// the type packages it materializes.
+	runtimeKindOfAllowed := copyAllowSet(baseAllowed,
+		modulePath+"/analysis/domain/value/axis/runtimekind",
+		modulePath+"/analysis/type/kind",
+		modulePath+"/analysis/type/normalize",
+		modulePath+"/analysis/type/subst",
+		modulePath+"/analysis/type/typ",
+		modulePath+"/analysis/type/unwrap",
+	)
+	// typewitness carries type evidence and reduces against the runtimekind axis,
+	// so beyond the type packages it imports runtimekind and the runtimekindof
+	// bridge for its reduced-product rule.
 	typeWitnessAllowed := copyAllowSet(baseAllowed,
+		modulePath+"/analysis/domain/value/axis/runtimekind",
+		modulePath+"/analysis/domain/value/axis/runtimekindof",
 		modulePath+"/analysis/type/literal",
+		modulePath+"/analysis/type/normalize",
 		modulePath+"/analysis/type/refinement",
 		modulePath+"/analysis/type/typ",
 		modulePath+"/analysis/type/unwrap",
@@ -316,6 +333,8 @@ func TestValueAxisLeafDirectImportBoundaries(t *testing.T) {
 		switch pkg.ImportPath {
 		case modulePath + "/analysis/domain/value/axis/typewitness":
 			allowed = typeWitnessAllowed
+		case modulePath + "/analysis/domain/value/axis/runtimekindof":
+			allowed = runtimeKindOfAllowed
 		}
 		assertModuleImportsAllowed(t, pkg.ImportPath, pkg.Imports, allowed)
 	}
@@ -375,6 +394,7 @@ func TestDomainValuePackageDirectImportBoundaries(t *testing.T) {
 			modulePath+"/analysis/domain/value/axis/evidence",
 			modulePath+"/analysis/domain/value/axis/presence",
 			modulePath+"/analysis/domain/value/axis/runtimekind",
+			modulePath+"/analysis/domain/value/axis/runtimekindof",
 			modulePath+"/analysis/domain/value/axis/typewitness",
 			modulePath+"/analysis/domain/value/axis/variantorigin",
 		)

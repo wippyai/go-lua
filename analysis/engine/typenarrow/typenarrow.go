@@ -13,7 +13,23 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/analysis/type/unwrap"
 )
+
+// RuntimeKindTagForType resolves a type that denotes a type-name string literal
+// (the "number" in type(v) == "number") to its runtime kind tag. It reports
+// false for any type that is not a string literal naming a known runtime kind.
+func RuntimeKindTagForType(t typ.Type) (runtimekind.Tag, bool) {
+	lit, ok := unwrap.Annotated(unwrap.Alias(t)).(*typ.Literal)
+	if !ok {
+		return 0, false
+	}
+	name, ok := lit.Value.(string)
+	if !ok {
+		return 0, false
+	}
+	return runtimekind.ParseTag(name)
+}
 
 // MatchRefinement narrows a value to the runtime kind named by tag, the matched
 // edge of a type() comparison (for example the true edge of type(x) == "number").

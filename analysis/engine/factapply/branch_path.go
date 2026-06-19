@@ -7,7 +7,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
-	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/variantorigin"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
@@ -23,7 +22,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/kind"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
-	"github.com/wippyai/go-lua/analysis/type/unwrap"
 )
 
 type pathValue struct {
@@ -76,15 +74,7 @@ func applyBranchTypeComparison(
 	if !ok {
 		return out
 	}
-	lit, ok := unwrap.Annotated(unwrap.Alias(nameType)).(*typ.Literal)
-	if !ok {
-		return out
-	}
-	name, ok := lit.Value.(string)
-	if !ok {
-		return out
-	}
-	tag, ok := runtimekind.ParseTag(name)
+	tag, ok := typenarrow.RuntimeKindTagForType(nameType)
 	if !ok {
 		return out
 	}

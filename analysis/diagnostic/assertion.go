@@ -48,11 +48,6 @@ func FormatAssertionClaims(v assertion.Value) string {
 	return strings.Join(parts, "; ")
 }
 
-func assertionFlagMessage(flag assertion.Flag) string {
-	_, message := assertionFlagEvidence(flag)
-	return message
-}
-
 func assertionFlagEvidence(flag assertion.Flag) (EvidenceReason, string) {
 	switch flag {
 	case assertion.TypeClaim:

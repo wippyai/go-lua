@@ -9,6 +9,23 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/unwrap"
 )
 
+// UnionType collapses a list of evidence types to a single type: (nil, false)
+// for an empty list or a sole nil member, the member itself for a singleton, and
+// the canonical UnionForEvidence union otherwise.
+func UnionType(types []typ.Type) (typ.Type, bool) {
+	switch len(types) {
+	case 0:
+		return nil, false
+	case 1:
+		if types[0] == nil {
+			return nil, false
+		}
+		return types[0], true
+	default:
+		return UnionForEvidence(types...), true
+	}
+}
+
 // UnionForEvidence applies the shared union normalization policy used when
 // aggregating evidence or projecting values.
 func UnionForEvidence(members ...typ.Type) typ.Type {

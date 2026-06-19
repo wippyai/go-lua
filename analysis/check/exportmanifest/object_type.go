@@ -14,6 +14,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/pathexpr"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
 	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
+	"github.com/wippyai/go-lua/analysis/type/normalize"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/compiler/ast"
@@ -447,7 +448,7 @@ func mergeObjectMember(existing objectMember, t typ.Type, optional bool) objectM
 		return objectMember{t: t, optional: optional}
 	}
 	if !typ.TypeEquals(existing.t, t) {
-		if union, ok := unionType([]typ.Type{existing.t, t}); ok {
+		if union, ok := normalize.UnionType([]typ.Type{existing.t, t}); ok {
 			t = union
 		}
 	}
