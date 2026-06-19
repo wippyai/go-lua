@@ -33,21 +33,27 @@ func (l *lowerer) rootLiteralRefinement(target path.Path, lit typ.Type, cond boo
 	return factflow.NewBranchRefinement(root, factflow.ValueRefinement{}, false, value, true), true
 }
 
-// rootScalarLiteralRefinement narrows a plain local to a literal on the edge an
-// equality guard proves it: on the true edge of x == lit (or the false edge of
-// x ~= lit) x holds exactly lit when lit inhabits x's type. The opposite edge
-// keeps x's declared type, since a single literal cannot be soundly subtracted
-// from an open scalar type.
+// rootScalarLiteralRefinement narrows a plain local at an equality guard: on the
+// edge that proves x == lit, x holds exactly lit (when lit inhabits x's type);
+// on the opposite edge, lit is removed from x's type. For a union root that
+// drops the matched member; for an open scalar a single literal cannot be
+// subtracted, so the opposite edge keeps the declared type.
 func (l *lowerer) rootScalarLiteralRefinement(target path.Path, kind branchcond.CheckKind, lit typ.Type) (factflow.BranchRefinement, bool) {
 	rootType, ok := l.symbolTypes[target.Symbol]
 	if !ok || lit == nil || !subtype.IsSubtype(lit, rootType) {
 		return factflow.BranchRefinement{}, false
 	}
 	matched := factflow.NewValueConstraint(l.valueFromTypeWithWitness(lit))
-	if kind == branchcond.CheckLiteralNot {
-		return factflow.NewBranchRefinement(target, factflow.ValueRefinement{}, false, matched, true), true
+	var unmatched factflow.ValueRefinement
+	hasUnmatched := false
+	if excluded, ok := variant.NarrowByLiteralNot(rootType, lit); ok {
+		unmatched = factflow.NewValueConstraint(l.valueFromTypeWithWitness(excluded))
+		hasUnmatched = true
 	}
-	return factflow.NewBranchRefinement(target, matched, true, factflow.ValueRefinement{}, false), true
+	if kind == branchcond.CheckLiteralNot {
+		return factflow.NewBranchRefinement(target, unmatched, hasUnmatched, matched, true), true
+	}
+	return factflow.NewBranchRefinement(target, matched, true, unmatched, hasUnmatched), true
 }
 
 func (l *lowerer) literalBranchRefinement(target path.Path, kind branchcond.CheckKind, lit typ.Type) (factflow.BranchRefinement, bool) {

@@ -1,0 +1,1 @@
+{ "description": "Root-local literal equality narrows both edges: k == \"a\" narrows k to \"a\" on the true edge and removes \"a\" from the union on the else edge, leaving \"b\". Clean only if the else edge narrows k to \"b\".", "files": ["main.lua"] }

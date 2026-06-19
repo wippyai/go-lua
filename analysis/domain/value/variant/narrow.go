@@ -126,3 +126,44 @@ func pathAdmitsLiteral(t typ.Type, suffix []segment.Segment, lit typ.Type, depth
 	field, ok := fieldAtPath(t, suffix, depth+1)
 	return ok && subtype.IsSubtype(lit, field)
 }
+
+// NarrowByLiteralNot keeps the members of a union t that lit does not inhabit:
+// the complement of an `x == lit` guard's true edge for a root value. A
+// non-union type (an open scalar) cannot have a single literal subtracted, so it
+// reports no narrowing. The returned bool reports whether a strict narrowing was
+// possible.
+func NarrowByLiteralNot(t typ.Type, lit typ.Type) (typ.Type, bool) {
+	if t == nil || lit == nil {
+		return nil, false
+	}
+	union, ok := rootUnion(t, 0)
+	if !ok {
+		return t, false
+	}
+	out := make([]typ.Type, 0, len(union.Members))
+	for _, member := range union.Members {
+		if !subtype.IsSubtype(lit, member) {
+			out = append(out, member)
+		}
+	}
+	if len(out) == 0 || len(out) == len(union.Members) {
+		return t, false
+	}
+	return normalize.UnionForEvidence(out...), true
+}
+
+func rootUnion(t typ.Type, depth int) (*typ.Union, bool) {
+	if t == nil || depth > typ.DefaultRecursionDepth {
+		return nil, false
+	}
+	switch v := unwrap.Annotated(t).(type) {
+	case *typ.Union:
+		return v, true
+	case *typ.Alias:
+		return rootUnion(v.UnaliasedTarget(), depth+1)
+	case *typ.Optional:
+		return rootUnion(v.Inner, depth+1)
+	default:
+		return nil, false
+	}
+}
