@@ -50,7 +50,7 @@ func (l *lowerer) branchRefinement(fact semantics.BranchConditionFact) (factflow
 		}
 		return l.literalBranchRefinement(target, fact.Check.Kind, lit)
 	case branchcond.CheckTypeEqual, branchcond.CheckTypeNot:
-		return l.typeBranchRefinement(target, fact.Check.Kind, fact.Check.TypeName)
+		return l.typeBranchRefinement(target, fact.Check.Kind, l.typeComparisonTypeName(fact.Check))
 	default:
 		return factflow.BranchRefinement{}, false
 	}

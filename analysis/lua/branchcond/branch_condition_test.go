@@ -249,6 +249,40 @@ func TestNormalizeTypeComparisons(t *testing.T) {
 	}
 }
 
+func TestNormalizeTypeComparisonWithPathRhs(t *testing.T) {
+	tests := []struct {
+		name     string
+		operator string
+		reversed bool
+		wantKind CheckKind
+	}{
+		{name: "type equal variable rhs", operator: "==", wantKind: CheckTypeEqual},
+		{name: "type equal variable lhs", operator: "==", reversed: true, wantKind: CheckTypeEqual},
+		{name: "type not equal variable rhs", operator: "~=", wantKind: CheckTypeNot},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			subject := ident("v")
+			tag := ident("tag")
+			var expr *ast.RelationalOpExpr
+			if tt.reversed {
+				expr = &ast.RelationalOpExpr{Operator: tt.operator, Lhs: tag, Rhs: typeCall(subject)}
+			} else {
+				expr = &ast.RelationalOpExpr{Operator: tt.operator, Lhs: typeCall(subject), Rhs: tag}
+			}
+			bindings := bindReturn(expr, "type")
+			subjectPath := path.NewPath(mustIdentSymbol(t, bindings, subject), "v")
+			tagPath := path.NewPath(mustIdentSymbol(t, bindings, tag), "tag")
+			check := Normalize(expr, bindings)
+			assertPathCheck(t, check, tt.wantKind, subjectPath, tagPath)
+			if check.TypeName != "" {
+				t.Fatalf("variable-rhs type comparison must carry no static type name, got %q", check.TypeName)
+			}
+		})
+	}
+}
+
 func TestTypeCallShapeRecognition(t *testing.T) {
 	root := ident("obj")
 	plain := typeCall(dot(root, "kind"))

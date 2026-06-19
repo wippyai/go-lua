@@ -372,6 +372,11 @@ func applyBranchGuard(env guardEnv, check branchcond.Check, cond bool, span diag
 	if check.Kind == branchcond.CheckLiteralNot && !cond {
 		return env.withLiteralCheck(check, false, span).withTruthyAt(check.Path, span)
 	}
+	if (check.Kind == branchcond.CheckTypeEqual || check.Kind == branchcond.CheckTypeNot) && check.TypeName == "" {
+		// type(path) == otherPath with no statically-known type name: the value
+		// fixpoint applies any narrowing; the diagnostic guard adds no constraint.
+		return env
+	}
 	if check.Kind == branchcond.CheckTypeEqual && cond {
 		return env.withType(runtimeTypeConstraint{target: check.Path, name: check.TypeName, span: span}).withRuntimeTypePresenceAt(check.Path, check.TypeName, span)
 	}

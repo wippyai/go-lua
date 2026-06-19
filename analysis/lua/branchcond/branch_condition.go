@@ -237,18 +237,6 @@ func literalComparisonOperands(pathExpr, literalExpr ast.Expr, bindings *bind.Re
 	return p, lit, true
 }
 
-func stringLiteralComparisonOperands(pathExpr, literalExpr ast.Expr, bindings *bind.Result) (path.Path, string, bool) {
-	lit, ok := literalExpr.(*ast.StringExpr)
-	if !ok {
-		return path.Path{}, "", false
-	}
-	p, ok := pathexpr.Resolve(pathExpr, bindings)
-	if !ok || p.IsEmpty() {
-		return path.Path{}, "", false
-	}
-	return p, lit.Value, true
-}
-
 func SupportsTypeComparison(expr ast.Expr, bindings *bind.Result) bool {
 	rel, ok := expr.(*ast.RelationalOpExpr)
 	if !ok || !isEqualityRelop(rel.Operator) {
@@ -259,11 +247,18 @@ func SupportsTypeComparison(expr ast.Expr, bindings *bind.Result) bool {
 }
 
 func normalizeTypeComparison(expr *ast.RelationalOpExpr, bindings *bind.Result) (Check, bool) {
-	p, typeName, kind, ok := resolveEqualityComparison(expr, bindings, typeComparisonOperands, CheckTypeEqual, CheckTypeNot)
-	if !ok {
-		return Check{}, false
+	// type(path) == "literal": the type name is known syntactically.
+	if p, typeName, kind, ok := resolveEqualityComparison(expr, bindings, typeComparisonOperands, CheckTypeEqual, CheckTypeNot); ok {
+		return Check{Kind: kind, Path: p, TypeName: typeName}, true
 	}
-	return Check{Kind: kind, Path: p, TypeName: typeName}, true
+	// type(path) == otherPath: the right side is a value path whose type may be a
+	// single string literal (e.g. a kind: "number" field or local). The literal
+	// type name is resolved where type facts are available; consumers that have
+	// no type name leave this comparison un-narrowing.
+	if subject, other, kind, ok := resolveEqualityComparison(expr, bindings, typeComparisonPathOperands, CheckTypeEqual, CheckTypeNot); ok {
+		return Check{Kind: kind, Path: subject, OtherPath: other}, true
+	}
+	return Check{}, false
 }
 
 func typeComparisonOperands(callExpr, literalExpr ast.Expr, bindings *bind.Result) (path.Path, string, bool) {
@@ -280,6 +275,25 @@ func typeComparisonOperands(callExpr, literalExpr ast.Expr, bindings *bind.Resul
 		return path.Path{}, "", false
 	}
 	return p, lit.Value, true
+}
+
+func typeComparisonPathOperands(callExpr, otherExpr ast.Expr, bindings *bind.Result) (path.Path, path.Path, bool) {
+	if _, ok := otherExpr.(*ast.StringExpr); ok {
+		return path.Path{}, path.Path{}, false
+	}
+	call, ok := TypeCall(callExpr)
+	if !ok {
+		return path.Path{}, path.Path{}, false
+	}
+	subject, ok := typeCallSubjectPath(call, bindings)
+	if !ok {
+		return path.Path{}, path.Path{}, false
+	}
+	other, ok := pathexpr.Resolve(otherExpr, bindings)
+	if !ok {
+		return path.Path{}, path.Path{}, false
+	}
+	return subject, other, true
 }
 
 func typeCallSubjectPath(call *ast.FuncCallExpr, bindings *bind.Result) (path.Path, bool) {
