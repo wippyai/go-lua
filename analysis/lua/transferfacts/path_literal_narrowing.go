@@ -8,6 +8,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/variant"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/lua/branchcond"
+	"github.com/wippyai/go-lua/analysis/type/subtype"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
@@ -32,9 +33,29 @@ func (l *lowerer) rootLiteralRefinement(target path.Path, lit typ.Type, cond boo
 	return factflow.NewBranchRefinement(root, factflow.ValueRefinement{}, false, value, true), true
 }
 
-func (l *lowerer) literalBranchRefinement(target path.Path, kind branchcond.CheckKind, lit typ.Type) (factflow.BranchRefinement, bool) {
-	if target.Symbol == 0 || len(target.Segments) == 0 {
+// rootScalarLiteralRefinement narrows a plain local to a literal on the edge an
+// equality guard proves it: on the true edge of x == lit (or the false edge of
+// x ~= lit) x holds exactly lit when lit inhabits x's type. The opposite edge
+// keeps x's declared type, since a single literal cannot be soundly subtracted
+// from an open scalar type.
+func (l *lowerer) rootScalarLiteralRefinement(target path.Path, kind branchcond.CheckKind, lit typ.Type) (factflow.BranchRefinement, bool) {
+	rootType, ok := l.symbolTypes[target.Symbol]
+	if !ok || lit == nil || !subtype.IsSubtype(lit, rootType) {
 		return factflow.BranchRefinement{}, false
+	}
+	matched := factflow.NewValueConstraint(l.valueFromTypeWithWitness(lit))
+	if kind == branchcond.CheckLiteralNot {
+		return factflow.NewBranchRefinement(target, factflow.ValueRefinement{}, false, matched, true), true
+	}
+	return factflow.NewBranchRefinement(target, matched, true, factflow.ValueRefinement{}, false), true
+}
+
+func (l *lowerer) literalBranchRefinement(target path.Path, kind branchcond.CheckKind, lit typ.Type) (factflow.BranchRefinement, bool) {
+	if target.Symbol == 0 {
+		return factflow.BranchRefinement{}, false
+	}
+	if len(target.Segments) == 0 {
+		return l.rootScalarLiteralRefinement(target, kind, lit)
 	}
 	rootType, ok := l.symbolTypes[target.Symbol]
 	if !ok {

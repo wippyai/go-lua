@@ -1,0 +1,1 @@
+{ "description": "A plain local flow-narrowed to a string literal by an equality guard drives type(v) == k narrowing. Clean only if k is narrowed to \"number\" and type(v) == k then narrows v to number.", "files": ["main.lua"] }
