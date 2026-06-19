@@ -7,12 +7,14 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/variantorigin"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/domain/value/variant"
 	"github.com/wippyai/go-lua/analysis/engine/dynamicindex"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
+	"github.com/wippyai/go-lua/analysis/engine/typenarrow"
 	sourcevalue "github.com/wippyai/go-lua/analysis/engine/sourcevalue"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
@@ -21,6 +23,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/kind"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/analysis/type/unwrap"
 )
 
 type pathValue struct {
@@ -41,9 +44,55 @@ func applyBranchPathRelation(
 		return applyBranchPathEquality(typeValues, ctx, resolver, projectPath, out, relation.LeftPath(), relation.RightPath())
 	case factflow.BranchPathRelationNotEqual:
 		return applyBranchPathInequality(typeValues, ctx, resolver, projectPath, out, relation.LeftPath(), relation.RightPath())
+	case factflow.BranchPathRelationTypeMatch:
+		return applyBranchTypeComparison(typeValues, ctx, resolver, projectPath, out, relation.LeftPath(), relation.RightPath(), true)
+	case factflow.BranchPathRelationTypeUnmatch:
+		return applyBranchTypeComparison(typeValues, ctx, resolver, projectPath, out, relation.LeftPath(), relation.RightPath(), false)
 	default:
 		return out
 	}
+}
+
+// applyBranchTypeComparison narrows subjectPath by the runtime type named by
+// namePath's value, resolved at the branch point. When namePath resolves to a
+// single string-literal type its value names the runtime kind to match (or
+// exclude). A non-literal type name (general string, a union of names, or an
+// unresolved value) leaves the subject unchanged, preserving soundness.
+func applyBranchTypeComparison(
+	typeValues *typevalue.Cache,
+	ctx transfer.EdgeContext,
+	resolver *visibility.Resolver,
+	projectPath PathTypeProjector,
+	out state.State,
+	subjectPath pathdom.Path,
+	namePath pathdom.Path,
+	match bool,
+) state.State {
+	resolved, ok := resolvePathValueAtCached(typeValues, ctx.Registry, resolver, ctx.Edge.From, out, namePath, projectPath)
+	if !ok {
+		return out
+	}
+	nameType, ok := typevalue.TypeOf(ctx.Registry, resolved.value)
+	if !ok {
+		return out
+	}
+	lit, ok := unwrap.Annotated(unwrap.Alias(nameType)).(*typ.Literal)
+	if !ok {
+		return out
+	}
+	name, ok := lit.Value.(string)
+	if !ok {
+		return out
+	}
+	tag, ok := runtimekind.ParseTag(name)
+	if !ok {
+		return out
+	}
+	refinement := typenarrow.UnmatchRefinement(ctx.Registry, tag)
+	if match {
+		refinement = typenarrow.MatchRefinement(ctx.Registry, tag)
+	}
+	return applyBranchRefinementCached(typeValues, ctx, resolver, projectPath, out, subjectPath, refinement)
 }
 
 func applyBranchPathEquality(

@@ -1,0 +1,4 @@
+{
+  "description": "type(v) == E resolves E flow-sensitively. box.kind is flow-narrowed to the literal \"number\" by the discriminated-union guard, so type(box.value) == box.kind narrows box.value to number at that point. Clean only if the comparison reads box.kind's narrowed type at the branch, not its declared union.",
+  "files": ["main.lua"]
+}

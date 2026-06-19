@@ -13,6 +13,14 @@ const (
 	BranchPathRelationUnknown BranchPathRelationKind = iota
 	BranchPathRelationEqual
 	BranchPathRelationNotEqual
+	// BranchPathRelationTypeMatch narrows the left path (the subject of a
+	// type() call) to the runtime kind named by the right path's value when
+	// that value's type is a single string literal. BranchPathRelationTypeUnmatch
+	// excludes that runtime kind. Both resolve the right path's type at the
+	// branch point, so a right operand flow-narrowed to a literal type takes
+	// effect.
+	BranchPathRelationTypeMatch
+	BranchPathRelationTypeUnmatch
 )
 
 // BranchPathRelation describes a path-to-path relation that is active only on
@@ -59,6 +67,40 @@ func NewBranchPathInequality(
 		kind:          BranchPathRelationNotEqual,
 		leftPath:      leftPath.Clone(),
 		rightPath:     rightPath.Clone(),
+		activeOnTrue:  activeOnTrue,
+		activeOnFalse: activeOnFalse,
+	}
+}
+
+// NewBranchPathTypeMatch creates a relation narrowing the subject path to the
+// runtime kind named by namePath's value on the selected edges.
+func NewBranchPathTypeMatch(
+	subjectPath path.Path,
+	namePath path.Path,
+	activeOnTrue bool,
+	activeOnFalse bool,
+) BranchPathRelation {
+	return BranchPathRelation{
+		kind:          BranchPathRelationTypeMatch,
+		leftPath:      subjectPath.Clone(),
+		rightPath:     namePath.Clone(),
+		activeOnTrue:  activeOnTrue,
+		activeOnFalse: activeOnFalse,
+	}
+}
+
+// NewBranchPathTypeUnmatch creates a relation excluding the runtime kind named
+// by namePath's value from the subject path on the selected edges.
+func NewBranchPathTypeUnmatch(
+	subjectPath path.Path,
+	namePath path.Path,
+	activeOnTrue bool,
+	activeOnFalse bool,
+) BranchPathRelation {
+	return BranchPathRelation{
+		kind:          BranchPathRelationTypeUnmatch,
+		leftPath:      subjectPath.Clone(),
+		rightPath:     namePath.Clone(),
 		activeOnTrue:  activeOnTrue,
 		activeOnFalse: activeOnFalse,
 	}

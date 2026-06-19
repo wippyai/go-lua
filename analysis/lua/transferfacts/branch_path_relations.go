@@ -23,6 +23,16 @@ func (l *lowerer) branchPathRelations(fact semantics.BranchConditionFact) (factf
 			factflow.NewBranchPathInequality(left, right, true, false),
 			factflow.NewBranchPathEquality(left, right, false, true),
 		), true
+	case branchcond.CheckTypeEqual:
+		return factflow.NewBranchPathRelationSet(
+			factflow.NewBranchPathTypeMatch(left, right, true, false),
+			factflow.NewBranchPathTypeUnmatch(left, right, false, true),
+		), true
+	case branchcond.CheckTypeNot:
+		return factflow.NewBranchPathRelationSet(
+			factflow.NewBranchPathTypeUnmatch(left, right, true, false),
+			factflow.NewBranchPathTypeMatch(left, right, false, true),
+		), true
 	default:
 		return factflow.BranchPathRelationSet{}, false
 	}
