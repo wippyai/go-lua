@@ -389,3 +389,33 @@ func parseChunk(t *testing.T, src string) []ast.Stmt {
 func presentValue(reg *axis.Registry) product.Value {
 	return product.NewWithPresence(reg, product.ShapeTop, presence.Present())
 }
+
+func TestRuntimeKindReducedTypeNarrowsByRuntimeKindExclusion(t *testing.T) {
+	reg := standard.Registry()
+	result, err := body.CheckChunk(nil, body.Config{Registry: reg})
+	if err != nil {
+		t.Fatalf("CheckChunk: %v", err)
+	}
+	reader := New(result)
+	declared := typ.MaterializeUnion([]typ.Type{typ.Number, typ.String})
+
+	// A runtime kind that excludes Number narrows number | string to string.
+	excluded := product.NewWithPresence(reg, product.ShapeTop, presence.Present())
+	excluded = product.Set(reg, excluded, runtimekind.Key, runtimekind.Top().Without(runtimekind.Number))
+	got, ok := reader.RuntimeKindReducedType(excluded, declared)
+	if !ok {
+		t.Fatalf("RuntimeKindReducedType returned false, want string")
+	}
+	assertSameType(t, got, typ.String)
+
+	// A top runtime kind imposes no constraint, so nothing is narrowed.
+	top := product.NewWithPresence(reg, product.ShapeTop, presence.Present())
+	if narrowed, ok := reader.RuntimeKindReducedType(top, declared); ok {
+		t.Fatalf("RuntimeKindReducedType narrowed under top runtime kind: got %v", narrowed)
+	}
+
+	// A non-union declared type cannot have a single kind subtracted.
+	if narrowed, ok := reader.RuntimeKindReducedType(excluded, typ.String); ok {
+		t.Fatalf("RuntimeKindReducedType narrowed a non-union type: got %v", narrowed)
+	}
+}

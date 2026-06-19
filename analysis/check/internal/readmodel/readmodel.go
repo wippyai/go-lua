@@ -8,6 +8,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/evidence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekindof"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/typewitness"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/variantorigin"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
@@ -75,6 +76,26 @@ func (r Reader) ValueType(value product.Value) (typ.Type, bool) {
 		return nil, false
 	}
 	return concreteBoundaryType(r.result.Registry(), value)
+}
+
+// RuntimeKindReducedType narrows declared by value's runtime-kind axis: the
+// alternatives whose runtime kind the axis excludes are dropped. This reports
+// the type a value actually holds on a path that a type() guard has narrowed
+// (e.g. the else edge of type(v) == "number" makes a number | string value a
+// string), which the declared witness alone does not reflect.
+func (r Reader) RuntimeKindReducedType(value product.Value, declared typ.Type) (typ.Type, bool) {
+	if r.result == nil || r.result.Registry() == nil || declared == nil {
+		return nil, false
+	}
+	kinds := product.Get(r.result.Registry(), value, runtimekind.Key)
+	if kinds.IsTop() || kinds.IsBottom() {
+		return nil, false
+	}
+	narrowed, changed := runtimekindof.RestrictTypeToRuntimeKind(declared, kinds)
+	if !changed || narrowed == typ.Never {
+		return nil, false
+	}
+	return narrowed, true
 }
 
 func (r Reader) ValueHasUntrustedTopOrigin(value product.Value) bool {

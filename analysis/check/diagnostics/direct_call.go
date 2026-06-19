@@ -22,6 +22,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/type/normalize"
 	"github.com/wippyai/go-lua/analysis/type/refinement"
+	"github.com/wippyai/go-lua/analysis/type/subtype"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/unwrap"
 	"github.com/wippyai/go-lua/compiler/ast"
@@ -569,6 +570,18 @@ func (p directCallContract) directFunctionCall(
 			}
 		} else if !directCallArgumentTypeMismatch(result, point, got, want, readBoundary) {
 			continue
+		}
+		// Report the argument's narrowed flow type, not its declared type, so the
+		// message reflects the value at the call site. The boundary value carries
+		// the point-state narrowing (e.g. on the else edge of type(v) == "number"
+		// v is string, not number | string), which the declared type does not.
+		if readBoundary != nil {
+			if value, vok := readBoundary(result, point); vok {
+				if narrowed, nok := readmodel.New(result).RuntimeKindReducedType(value, got); nok && subtype.IsSubtype(narrowed, got) {
+					got = narrowed
+					gotDisplay = ""
+				}
+			}
 		}
 		extra := boundaryDiagnosticEvidenceForSubject(result, point, ast.SpanOf(arg), callArgumentSubject(i, exprEvidenceNameOK(arg)), want, readBoundary)
 		if len(extra) == 0 {
