@@ -1,0 +1,61 @@
+{
+  "description": "Flow-sensitive type() dispatch across a 3-variant discriminated union. In each render arm the discriminant cell.kind is flow-narrowed to a single string literal by the compound guard, and type(cell.raw) == cell.kind then narrows the shared raw field to that variant's scalar (number, string, boolean) -- all three arms type-check cleanly. The total loop uses a plain local want flow-narrowed to the literal \"number\". The only diagnostic is the deliberate misuse: in the number arm cell.raw is narrowed to exactly number, so passing it to a string parameter is rejected with a proven/claimed evidence chain -- proving the narrowing is precise (number, not the declared union).",
+  "check": {
+    "diagnostics": [
+      {
+        "file": "main.lua",
+        "line": 36,
+        "column": 22,
+        "severity": "error",
+        "code": "type.call.direct.argument_type",
+        "message_contains": ["argument 1 (cell.raw)", "is number", "not string"],
+        "min_evidence": 2,
+        "evidence_contains": [
+          "argument 1 (cell.raw) has type number",
+          "upper parameter 1 expects string"
+        ],
+        "evidence": [
+          {
+            "file": "main.lua",
+            "line": 36,
+            "column": 22,
+            "kind": "abstract fact",
+            "trust": "proven",
+            "contains": ["argument 1 (cell.raw) has type number"]
+          },
+          {
+            "kind": "user assertion",
+            "trust": "claimed",
+            "contains": ["upper parameter 1 expects string"]
+          }
+        ],
+        "render_contains": [
+          "error[type.call.direct.argument_type]: argument 1 (cell.raw) is number, not string",
+          "return upper(cell.raw)",
+          "because:",
+          "compatible with the parameter type"
+        ],
+        "render_ordered_contains": [
+          "error[type.call.direct.argument_type]: argument 1 (cell.raw) is number, not string",
+          "--> main.lua:36:22",
+          "return upper(cell.raw)",
+          "because:",
+          "proven: argument 1 (cell.raw) has type number",
+          "claimed: upper parameter 1 expects string"
+        ],
+        "render_not_contains": ["^~", "where:"],
+        "help_contains": ["compatible with the parameter type", "change the callee signature"],
+        "min_labels": 1,
+        "label_contains": ["argument value"],
+        "labels": [
+          {
+            "file": "main.lua",
+            "line": 36,
+            "column": 22,
+            "contains": ["argument value"]
+          }
+        ]
+      }
+    ]
+  }
+}
