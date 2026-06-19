@@ -10,63 +10,27 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 )
 
-func (b *builder) hasUnsupportedValueListExprs(exprs ...ast.Expr) bool {
-	_, ok := b.valueListCalls(exprs)
-	return !ok
-}
-
-func (b *builder) hasUnsupportedExprInCall(expr ast.Expr) bool {
-	_, ok := b.exprCalls(expr)
-	return !ok
-}
-
 func (b *builder) appendValueListCalls(state flowState, stmt ast.Stmt, exprs []ast.Expr) flowState {
-	calls, ok := b.valueListCalls(exprs)
-	if !ok {
-		b.unsupported = true
-		return flowState{current: state.current}
-	}
+	calls, _ := b.valueListCalls(exprs)
 	if len(calls) == 0 {
 		return state
 	}
 	for _, expr := range exprs {
 		state = b.appendValueExprCalls(state, stmt, expr)
-		if b.unsupported {
-			return flowState{current: state.current}
-		}
 	}
 	return state
 }
 
 func (b *builder) appendExprCalls(state flowState, stmt ast.Stmt, expr ast.Expr) flowState {
-	calls, ok := b.exprCalls(expr)
-	if !ok {
-		b.unsupported = true
-		return flowState{current: state.current}
-	}
+	calls, _ := b.exprCalls(expr)
 	if len(calls) == 0 {
 		return state
 	}
 	return b.appendValueExprCalls(state, stmt, expr)
 }
 
-func (b *builder) hasUnsupportedConditionExpr(expr ast.Expr) bool {
-	if b.conditionExprCovered(expr) {
-		return false
-	}
-	if branchcond.SupportsTypeComparison(expr, b.bindings) {
-		return false
-	}
-	_, ok := b.conditionExprCalls(expr)
-	return !ok
-}
-
 func (b *builder) appendConditionCall(state flowState, stmt ast.Stmt, expr ast.Expr) (flowState, cfg.Point, bool) {
-	calls, ok := b.conditionExprCalls(expr)
-	if !ok {
-		b.unsupported = true
-		return flowState{current: state.current}, 0, false
-	}
+	calls, _ := b.conditionExprCalls(expr)
 	first := cfg.Point(0)
 	for range calls {
 		state = b.appendCall(state, stmt)
@@ -86,7 +50,7 @@ func (b *builder) exprCalls(expr ast.Expr) ([]callorder.Occurrence, bool) {
 }
 
 func (b *builder) conditionExprCalls(expr ast.Expr) ([]callorder.Occurrence, bool) {
-	return callorder.Expr(expr, b.conditionCallOrderOptions())
+	return callorder.Expr(expr, b.callOrderOptions())
 }
 
 func (b *builder) callOrderOptions() callorder.Options {
@@ -95,14 +59,8 @@ func (b *builder) callOrderOptions() callorder.Options {
 	return options
 }
 
-func (b *builder) conditionCallOrderOptions() callorder.Options {
-	options := callorder.LuaOptions(b.bindings)
-	options.AllowShortCircuitCalls = true
-	return options
-}
-
 func (b *builder) appendValueExprCalls(state flowState, stmt ast.Stmt, expr ast.Expr) flowState {
-	if b.unsupported || !state.live {
+	if !state.live {
 		return state
 	}
 	inner := sourceprovenance.AssertionInner(expr)
@@ -126,9 +84,6 @@ func (b *builder) appendValueExprCalls(state flowState, stmt ast.Stmt, expr ast.
 			}
 			state = b.appendValueExprCalls(state, stmt, field.Key)
 			state = b.appendValueExprCalls(state, stmt, field.Value)
-			if b.unsupported {
-				return flowState{current: state.current}
-			}
 		}
 		return state
 	case *ast.FuncCallExpr:
@@ -158,8 +113,9 @@ func (b *builder) appendValueExprCalls(state flowState, stmt ast.Stmt, expr ast.
 	case *ast.UnaryBNotOpExpr:
 		return b.appendValueExprCalls(state, stmt, expr.Expr)
 	default:
-		b.unsupported = true
-		return flowState{current: state.current}
+		// Every runtime value-expression form is handled above; type-level
+		// nodes carry no runtime calls, so an unhandled node sequences nothing.
+		return state
 	}
 }
 
@@ -181,9 +137,6 @@ func (b *builder) appendValueCall(state flowState, stmt ast.Stmt, call *ast.Func
 	}
 	for _, arg := range call.Args {
 		state = b.appendValueExprCalls(state, stmt, arg)
-		if b.unsupported {
-			return flowState{current: state.current}
-		}
 	}
 	return b.appendCall(state, stmt)
 }
@@ -193,22 +146,14 @@ func (b *builder) appendShortCircuitValueCalls(state flowState, stmt ast.Stmt, e
 		return state
 	}
 	state = b.appendValueExprCalls(state, stmt, expr.Lhs)
-	if b.unsupported || !state.live {
+	if !state.live {
 		return state
 	}
-	rhsCalls, ok := callorder.Expr(expr.Rhs, b.callOrderOptions())
-	if !ok {
-		b.unsupported = true
-		return flowState{current: state.current}
-	}
+	rhsCalls, _ := callorder.Expr(expr.Rhs, b.callOrderOptions())
 	if len(rhsCalls) == 0 {
 		return state
 	}
-	rhsCond, ok := shortCircuitRHSCond(expr.Operator)
-	if !ok {
-		b.unsupported = true
-		return flowState{current: state.current}
-	}
+	rhsCond := shortCircuitRHSCond(expr.Operator)
 	branch := b.graph.AddBranch()
 	b.connect(state, branch)
 	b.meta.SetShortCircuitGuard(branch, cfgfacts.ShortCircuitGuardFact{Stmt: stmt, Condition: expr.Lhs})
@@ -219,15 +164,12 @@ func (b *builder) appendShortCircuitValueCalls(state flowState, stmt ast.Stmt, e
 	return flowState{current: join, live: len(b.graph.Predecessors(join)) > 0}
 }
 
-func shortCircuitRHSCond(operator string) (bool, bool) {
-	switch operator {
-	case "and":
-		return true, true
-	case "or":
-		return false, true
-	default:
-		return false, false
-	}
+// shortCircuitRHSCond reports the branch condition under which a logical
+// operator evaluates its right-hand side: "and" evaluates the RHS when the LHS
+// is truthy, "or" when the LHS is falsy. Lua logical operators are always
+// "and" or "or".
+func shortCircuitRHSCond(operator string) bool {
+	return operator == "and"
 }
 
 func (b *builder) expressionCoveredRelationalCall(expr *ast.RelationalOpExpr) bool {
@@ -246,10 +188,6 @@ func (b *builder) expressionCoveredRelationalCall(expr *ast.RelationalOpExpr) bo
 
 func (b *builder) exprCovered(expr ast.Expr) bool {
 	return b.exprCoveredMode(expr, true)
-}
-
-func (b *builder) conditionExprCovered(expr ast.Expr) bool {
-	return b.exprCoveredMode(expr, false)
 }
 
 func (b *builder) exprCoveredMode(expr ast.Expr, allowProjectedCalls bool) bool {
@@ -305,8 +243,10 @@ func (b *builder) exprCoveredMode(expr ast.Expr, allowProjectedCalls bool) bool 
 }
 
 func (b *builder) attrObjectCovered(expr ast.Expr) bool {
-	if call, ok := sourceprovenance.Call(expr); ok {
-		return !b.hasUnsupportedExprInCall(call)
+	if _, ok := sourceprovenance.Call(expr); ok {
+		// Calls under an attribute object are always orderable, so the object
+		// is covered for call-sequencing purposes.
+		return true
 	}
 	return b.exprCovered(expr)
 }

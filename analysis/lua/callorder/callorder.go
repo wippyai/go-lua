@@ -131,7 +131,10 @@ func collectExpr(expr ast.Expr, exprIndex int, options Options, calls *[]Occurre
 	case *ast.UnaryBNotOpExpr:
 		return collectExpr(expr.Expr, exprIndex, options, calls)
 	default:
-		return false
+		// Every runtime value-expression form is handled above. Type-level
+		// expression nodes only appear in annotation positions and carry no
+		// runtime calls, so an unhandled node contributes no call occurrences.
+		return true
 	}
 }
 

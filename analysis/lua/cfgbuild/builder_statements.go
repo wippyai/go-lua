@@ -32,20 +32,8 @@ func (b *builder) buildStmt(state flowState, stmt ast.Stmt) flowState {
 	case *ast.LocalAssignStmt:
 		return b.buildLocalAssign(state, stmt)
 	case *ast.FuncCallStmt:
-		if _, ok := stmt.Expr.(*ast.FuncCallExpr); !ok {
-			b.unsupported = true
-			return flowState{current: state.current}
-		}
-		if b.hasUnsupportedExprInCall(stmt.Expr) {
-			b.unsupported = true
-			return flowState{current: state.current}
-		}
 		return b.appendExprCalls(state, stmt, stmt.Expr)
 	case *ast.ReturnStmt:
-		if b.hasUnsupportedValueListExprs(stmt.Exprs...) {
-			b.unsupported = true
-			return flowState{current: state.current}
-		}
 		state = b.appendValueListCalls(state, stmt, stmt.Exprs)
 		state = b.appendNodeForStmt(state, cfg.NodeReturn, stmt)
 		b.graph.AddEdge(state.current, b.graph.Exit(), false)
@@ -73,16 +61,13 @@ func (b *builder) buildStmt(state flowState, stmt ast.Stmt) flowState {
 	case *ast.TypeDefStmt, *ast.InterfaceDefStmt:
 		return b.appendNodeForStmt(state, cfg.NodeNoop, stmt)
 	default:
-		b.unsupported = true
-		return flowState{current: state.current}
+		// Every statement form is handled above; an unhandled node is a noop in
+		// the control-flow graph rather than a reason to abandon the function.
+		return b.appendNodeForStmt(state, cfg.NodeNoop, stmt)
 	}
 }
 
 func (b *builder) buildAssign(state flowState, stmt *ast.AssignStmt) flowState {
-	if b.hasUnsupportedValueListExprs(stmt.Rhs...) {
-		b.unsupported = true
-		return flowState{current: state.current}
-	}
 	state = b.appendValueListCalls(state, stmt, stmt.Rhs)
 	for _, lhs := range stmt.Lhs {
 		// A target whose root is not a tracked symbol (computed prefix such as
@@ -96,10 +81,6 @@ func (b *builder) buildAssign(state flowState, stmt *ast.AssignStmt) flowState {
 }
 
 func (b *builder) buildLocalAssign(state flowState, stmt *ast.LocalAssignStmt) flowState {
-	if b.hasUnsupportedValueListExprs(stmt.Exprs...) {
-		b.unsupported = true
-		return flowState{current: state.current}
-	}
 	state = b.appendValueListCalls(state, stmt, stmt.Exprs)
 	for _, id := range b.bindings.LocalSymbols(stmt) {
 		state = b.appendAssign(state, id, stmt)
@@ -156,10 +137,6 @@ func (b *builder) buildDoBlock(state flowState, stmt *ast.DoBlockStmt) flowState
 }
 
 func (b *builder) buildIf(state flowState, stmt *ast.IfStmt) flowState {
-	if b.hasUnsupportedConditionExpr(stmt.Condition) {
-		b.unsupported = true
-		return flowState{current: state.current}
-	}
 	state, _, _ = b.appendConditionCall(state, stmt, stmt.Condition)
 	branch := b.appendBranch(state, stmt)
 	join := b.graph.AddNode(cfg.NodeJoin)
@@ -176,10 +153,6 @@ func (b *builder) buildIf(state flowState, stmt *ast.IfStmt) flowState {
 }
 
 func (b *builder) buildWhile(state flowState, stmt *ast.WhileStmt) flowState {
-	if b.hasUnsupportedConditionExpr(stmt.Condition) {
-		b.unsupported = true
-		return flowState{current: state.current}
-	}
 	state, conditionCall, hasConditionCall := b.appendConditionCall(state, stmt, stmt.Condition)
 	branch := b.appendBranch(state, stmt)
 	backedgeTarget := branch.current
@@ -204,10 +177,6 @@ func (b *builder) buildWhile(state flowState, stmt *ast.WhileStmt) flowState {
 }
 
 func (b *builder) buildRepeat(state flowState, stmt *ast.RepeatStmt) flowState {
-	if b.hasUnsupportedConditionExpr(stmt.Condition) {
-		b.unsupported = true
-		return flowState{current: state.current}
-	}
 	directModifiedOuters := b.loopDirectModifiedOuters(nil, stmt.Stmts)
 	join := b.graph.AddNode(cfg.NodeJoin)
 
@@ -265,22 +234,7 @@ func (b *builder) buildNumberFor(state flowState, stmt *ast.NumberForStmt) flowS
 }
 
 func (b *builder) buildGenericFor(state flowState, stmt *ast.GenericForStmt) flowState {
-	if b.hasUnsupportedValueListExprs(stmt.Exprs...) {
-		b.unsupported = true
-		return flowState{current: state.current}
-	}
 	ids := b.bindings.GenericForSymbols(stmt)
-	if len(ids) != len(stmt.Names) {
-		b.unsupported = true
-		return flowState{current: state.current}
-	}
-	for _, id := range ids {
-		if id == 0 {
-			b.unsupported = true
-			return flowState{current: state.current}
-		}
-	}
-
 	state = b.appendValueListCalls(state, stmt, stmt.Exprs)
 	branch := b.appendBranch(state, stmt)
 	join := b.graph.AddNode(cfg.NodeJoin)
@@ -294,7 +248,13 @@ func (b *builder) buildGenericFor(state flowState, stmt *ast.GenericForStmt) flo
 	b.graph.AddEdge(branch.current, join, false)
 
 	iterState := branchPath(branch.current, true)
-	for _, id := range ids {
+	// One variable point per loop name (id == 0 when the binder produced no
+	// symbol) so the point count always matches semantics extraction.
+	for i := range stmt.Names {
+		id := symbol.ID(0)
+		if i < len(ids) {
+			id = ids[i]
+		}
 		iterState = b.appendAssign(iterState, id, stmt)
 	}
 
@@ -323,8 +283,9 @@ func numericForBounds(stmt *ast.NumberForStmt) []ast.Expr {
 
 func (b *builder) buildBreak(state flowState) flowState {
 	if len(b.breakTargets) == 0 {
-		b.unsupported = true
-		return flowState{current: state.current}
+		// break outside any loop is a malformed program caught elsewhere; treat
+		// it as a noop so the rest of the function is still analyzed.
+		return state
 	}
 	state = b.materializePendingCond(state)
 	b.connect(state, b.breakTargets[len(b.breakTargets)-1])

@@ -2201,11 +2201,12 @@ func TestBuildChunkAllowsMethodCallOnIndexedCallReceiver(t *testing.T) {
 	requireEdge(t, result.Graph, points[0], points[1], false)
 }
 
-func TestBuildChunkBreakOutsideLoopReturnsNil(t *testing.T) {
+func TestBuildChunkBreakOutsideLoopAnalyzedAsNoop(t *testing.T) {
 	stmts := []ast.Stmt{&ast.BreakStmt{}}
 	bindings := bind.BindChunk(stmts, bind.Options{})
-	if result := BuildChunk(stmts, bindings); result != nil {
-		t.Fatalf("BuildChunk returned graph for break outside loop")
+	result := BuildChunk(stmts, bindings)
+	if result == nil || result.Graph == nil {
+		t.Fatalf("BuildChunk returned nil for break outside loop; a malformed break must not abandon analysis")
 	}
 }
 

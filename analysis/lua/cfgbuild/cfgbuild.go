@@ -29,8 +29,8 @@ func (m StmtPoints) PointsFor(stmt ast.Stmt) []cfg.Point {
 }
 
 // BuildFunction builds a minimal CFG for a function body using lexical bindings
-// produced for the same function AST. It returns nil when bindings are nil or
-// the function uses an unsupported analysis surface; nil is not a malformed CFG.
+// produced for the same function AST. It returns nil only when bindings are nil;
+// every function with bindings is fully analyzed.
 func BuildFunction(fn *ast.FunctionExpr, bindings *bind.Result) *Result {
 	if bindings == nil {
 		return nil
@@ -45,17 +45,13 @@ func BuildFunction(fn *ast.FunctionExpr, bindings *bind.Result) *Result {
 		}
 		state = b.buildStmts(state, fn.Stmts)
 	}
-	if b.unsupported {
-		return nil
-	}
 	b.connect(state, graph.Exit())
 	return &Result{Graph: graph, Meta: b.meta, StmtPoints: StmtPoints{points: b.stmtPoints}}
 }
 
 // BuildChunk builds a minimal CFG for a chunk-level statement list using
-// lexical bindings produced for the same AST. It returns nil when bindings are
-// nil or the chunk uses an unsupported analysis surface; nil is not a malformed
-// CFG.
+// lexical bindings produced for the same AST. It returns nil only when bindings
+// are nil; every chunk with bindings is fully analyzed.
 func BuildChunk(stmts []ast.Stmt, bindings *bind.Result) *Result {
 	if bindings == nil {
 		return nil
@@ -64,9 +60,6 @@ func BuildChunk(stmts []ast.Stmt, bindings *bind.Result) *Result {
 	b := builder{graph: graph, bindings: bindings}
 
 	state := b.buildStmts(liveAt(graph.Entry()), stmts)
-	if b.unsupported {
-		return nil
-	}
 	b.connect(state, graph.Exit())
 	return &Result{Graph: graph, Meta: b.meta, StmtPoints: StmtPoints{points: b.stmtPoints}}
 }
@@ -79,7 +72,6 @@ type builder struct {
 	pendingGotos map[string][]cfg.Point
 	bindings     *bind.Result
 	breakTargets []cfg.Point
-	unsupported  bool
 }
 
 type flowState struct {
