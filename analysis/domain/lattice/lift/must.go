@@ -1,6 +1,9 @@
 package lift
 
-import "github.com/wippyai/go-lua/analysis/domain/lattice"
+import (
+	"github.com/wippyai/go-lua/analysis/domain/lattice"
+	"github.com/wippyai/go-lua/analysis/internal/mapedit"
+)
 
 // MustMapLane is a finite must-fact map carrier.
 //
@@ -172,14 +175,7 @@ func MustSet[T comparable]() lattice.Lattice[MustSetLane[T]] {
 }
 
 func cloneMap[K comparable, V any](in map[K]V) map[K]V {
-	if len(in) == 0 {
-		return nil
-	}
-	out := make(map[K]V, len(in))
-	for k, v := range in {
-		out[k] = v
-	}
-	return out
+	return mapedit.Clone(in)
 }
 
 func finiteMapEqual[K comparable, V any](

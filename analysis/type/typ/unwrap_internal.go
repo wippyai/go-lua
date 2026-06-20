@@ -1,6 +1,9 @@
 package typ
 
-func unwrapTransparentWrappers(t Type) Type {
+// UnwrapTransparentWrappers peels every transparent Annotated wrapper and
+// returns the first non-annotated type. It is the canonical transparent-wrapper
+// unwrap shared by traversal helpers across the type packages.
+func UnwrapTransparentWrappers(t Type) Type {
 	for {
 		ann, ok := t.(*Annotated)
 		if !ok {
@@ -11,6 +14,10 @@ func unwrapTransparentWrappers(t Type) Type {
 		}
 		t = ann.Inner
 	}
+}
+
+func unwrapTransparentWrappers(t Type) Type {
+	return UnwrapTransparentWrappers(t)
 }
 
 func unwrapAnnotatedOrNil(t Type) Type {

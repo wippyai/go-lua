@@ -11,6 +11,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/internal/mapedit"
 	"github.com/wippyai/go-lua/analysis/internal/registrycache"
 )
 
@@ -121,14 +122,7 @@ func Top() Fact {
 }
 
 func CloneMap(in map[Key]Fact) map[Key]Fact {
-	if len(in) == 0 {
-		return nil
-	}
-	out := make(map[Key]Fact, len(in))
-	for k, v := range in {
-		out[k] = v
-	}
-	return out
+	return mapedit.Clone(in)
 }
 
 func presenceLessOrEq(a, b presence.Value) bool {

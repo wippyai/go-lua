@@ -92,7 +92,7 @@ func rewriteDepth(t typ.Type, fn func(typ.Type) (typ.Type, bool), guard recursio
 	childDepth := depth + 1
 
 	var out typ.Type
-	switch tt := unwrapTransparentWrappers(t).(type) {
+	switch tt := typ.UnwrapTransparentWrappers(t).(type) {
 	case *typ.Optional:
 		if tt.Inner == nil {
 			out = t
@@ -252,15 +252,3 @@ func rewriteCanDescend(t typ.Type) bool {
 	}
 }
 
-func unwrapTransparentWrappers(t typ.Type) typ.Type {
-	for {
-		ann, ok := t.(*typ.Annotated)
-		if !ok {
-			return t
-		}
-		if ann.Inner == nil || ann.Inner == t {
-			return t
-		}
-		t = ann.Inner
-	}
-}

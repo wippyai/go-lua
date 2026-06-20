@@ -26,18 +26,7 @@ type Summary struct {
 
 // Clone returns an independent copy of s.
 func (s Summary) Clone() Summary {
-	if len(s.Returns) == 0 &&
-		len(s.ParamObligations) == 0 &&
-		len(s.ParamMemberCallObligations) == 0 &&
-		len(s.ParamMemberReturnSlots) == 0 &&
-		len(s.ReturnParamPathAliases) == 0 &&
-		len(s.NormalReturnParams) == 0 &&
-		len(s.NormalReturnParamConditions) == 0 &&
-		len(s.NormalReturnParamEqualities) == 0 &&
-		normalReturnFactsEmpty(s.NormalReturnFacts) &&
-		len(s.HeapTableObjects) == 0 &&
-		len(s.ReturnConditionParamRefinements) == 0 &&
-		len(s.ReturnPresenceRelations) == 0 {
+	if summaryBottom(s) {
 		return Summary{}
 	}
 	out := Summary{}

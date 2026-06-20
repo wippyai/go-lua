@@ -30,6 +30,14 @@ func Annotated(t typ.Type) typ.Type {
 	return t
 }
 
+// AnnotatedOrNil unwraps a single Annotated layer but returns nil for nil input.
+func AnnotatedOrNil(t typ.Type) typ.Type {
+	if t == nil {
+		return nil
+	}
+	return Annotated(t)
+}
+
 // Annotations strips every Annotated wrapper and returns the first non-annotated type.
 func Annotations(t typ.Type) typ.Type {
 	for depth := 0; depth <= typ.DefaultRecursionDepth; depth++ {

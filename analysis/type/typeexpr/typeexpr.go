@@ -4,6 +4,7 @@ package typeexpr
 import (
 	"github.com/wippyai/go-lua/analysis/type/kind"
 	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/analysis/type/unwrap"
 )
 
 // Optional constructs the semantic optional expression for inner.
@@ -21,7 +22,7 @@ func Optional(inner typ.Type) typ.Type {
 	}
 
 	if inner.Kind() == kind.Union {
-		u, ok := unwrapAnnotated(inner).(*typ.Union)
+		u, ok := unwrap.Annotated(inner).(*typ.Union)
 		if !ok {
 			return typ.MaterializeOptional(inner)
 		}
@@ -45,7 +46,7 @@ func Union(members ...typ.Type) typ.Type {
 
 	var addMember func(typ.Type)
 	addMember = func(member typ.Type) {
-		unwrapped := unwrapAnnotatedOrNil(member)
+		unwrapped := unwrap.AnnotatedOrNil(member)
 		if unwrapped == nil {
 			return
 		}
@@ -108,7 +109,7 @@ func Intersection(members ...typ.Type) typ.Type {
 
 	var addMember func(typ.Type)
 	addMember = func(member typ.Type) {
-		unwrapped := unwrapAnnotatedOrNil(member)
+		unwrapped := unwrap.AnnotatedOrNil(member)
 		if unwrapped == nil {
 			return
 		}
@@ -145,19 +146,3 @@ func materializedMembers(raw []typ.Type, materialized typ.Type) []typ.Type {
 	return []typ.Type{materialized}
 }
 
-func unwrapAnnotatedOrNil(t typ.Type) typ.Type {
-	if t == nil {
-		return nil
-	}
-	return unwrapAnnotated(t)
-}
-
-func unwrapAnnotated(t typ.Type) typ.Type {
-	if annotated, ok := t.(*typ.Annotated); ok {
-		if annotated.Inner == nil {
-			return typ.Unknown
-		}
-		return annotated.Inner
-	}
-	return t
-}

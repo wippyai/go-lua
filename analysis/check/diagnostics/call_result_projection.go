@@ -340,30 +340,6 @@ func ordinaryAssignmentInvalidatesRootCallResult(fact semantics.OrdinaryAssignme
 	return !fact.HasPath || fact.Path.Symbol == fact.Symbol
 }
 
-func cfgPointCanReach(graph cfg.Graph, from, to cfg.Point) bool {
-	if graph == nil || from == 0 || to == 0 {
-		return false
-	}
-	if from == to {
-		return true
-	}
-	seen := map[cfg.Point]struct{}{from: {}}
-	stack := append([]cfg.Point(nil), graph.Successors(from)...)
-	for len(stack) != 0 {
-		point := stack[len(stack)-1]
-		stack = stack[:len(stack)-1]
-		if point == to {
-			return true
-		}
-		if _, ok := seen[point]; ok {
-			continue
-		}
-		seen[point] = struct{}{}
-		stack = append(stack, graph.Successors(point)...)
-	}
-	return false
-}
-
 func wrapperProviderReplacementDominatesCall(result *body.Result, source sourceprovenance.ASTSource) bool {
 	if result == nil || source.Kind != sourceprovenance.SourceCall || !source.HasCallPoint {
 		return false

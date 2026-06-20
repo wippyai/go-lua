@@ -15,7 +15,7 @@ func typeWithPresence(t typ.Type, p presence.Value) typ.Type {
 	case presence.Equal(p, presence.Absent()):
 		return typ.Nil
 	case presence.Equal(p, presence.Maybe()):
-		if !typeIncludesNil(t) {
+		if !TypeIncludesNil(t) {
 			return typenormalize.Optional(t)
 		}
 	case presence.Equal(p, presence.Present()):
@@ -26,7 +26,9 @@ func typeWithPresence(t typ.Type, p presence.Value) typ.Type {
 	return t
 }
 
-func typeIncludesNil(t typ.Type) bool {
+// TypeIncludesNil reports whether t admits nil, by direct nil evidence or a
+// nil-bearing projection.
+func TypeIncludesNil(t typ.Type) bool {
 	if t == nil {
 		return false
 	}

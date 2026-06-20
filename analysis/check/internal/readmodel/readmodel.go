@@ -465,7 +465,7 @@ func runtimeKindEvidenceUnion(p presence.Value, members []typ.Type) (typ.Type, b
 		return nil, false
 	}
 	t := normalize.UnionForEvidence(members...)
-	if presence.Equal(p, presence.Maybe()) && !typeIncludesNil(t) {
+	if presence.Equal(p, presence.Maybe()) && !typevalue.TypeIncludesNil(t) {
 		t = normalize.Optional(t)
 	}
 	return t, true
@@ -556,13 +556,6 @@ func refineTypeByRuntimeKindSetDepth(t typ.Type, kinds runtimekind.Value, keepNi
 	}
 }
 
-func typeIncludesNil(t typ.Type) bool {
-	if t == nil {
-		return false
-	}
-	normalized := unwrap.NormalizeNil(t)
-	return (normalized != nil && normalized.Kind() == kind.Nil) || typevalue.ProjectionHasNil(t)
-}
 
 func projectionWithoutNil(t typ.Type) typ.Type {
 	return typetable.PresentReadonlyEntryValue(t)

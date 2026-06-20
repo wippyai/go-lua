@@ -573,7 +573,7 @@ func (p paramObligationProjector) canReach(graph cfg.Graph, from, to cfg.Point) 
 	if p.reach != nil {
 		return p.reach.canReach(from, to)
 	}
-	return cfgPointCanReach(graph, from, to)
+	return cfg.PointCanReach(graph, from, to)
 }
 
 type cfgReachabilityCache struct {
@@ -620,30 +620,6 @@ func (c *cfgReachabilityCache) reachableSet(from cfg.Point) map[cfg.Point]struct
 	}
 	c.reachableFrom[from] = reachable
 	return reachable
-}
-
-func cfgPointCanReach(graph cfg.Graph, from, to cfg.Point) bool {
-	if graph == nil || from == 0 || to == 0 {
-		return false
-	}
-	if from == to {
-		return true
-	}
-	seen := map[cfg.Point]struct{}{from: {}}
-	stack := append([]cfg.Point(nil), graph.Successors(from)...)
-	for len(stack) != 0 {
-		point := stack[len(stack)-1]
-		stack = stack[:len(stack)-1]
-		if point == to {
-			return true
-		}
-		if _, ok := seen[point]; ok {
-			continue
-		}
-		seen[point] = struct{}{}
-		stack = append(stack, graph.Successors(point)...)
-	}
-	return false
 }
 
 func projectPathHasPrefix(candidate, prefix pathdom.Path) bool {

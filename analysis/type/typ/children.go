@@ -3,6 +3,12 @@ package typ
 // walkChildren visits the direct child type slots of t in stable canonical order.
 // It returns true when visit reports a match and traversal should stop.
 func walkChildren(t Type, visit func(Type) bool) bool {
+	return WalkChildren(t, visit)
+}
+
+// WalkChildren visits the canonical child type slots of t in stable order.
+// It returns true when visit reports a match and traversal should stop.
+func WalkChildren(t Type, visit func(Type) bool) bool {
 	if visit == nil || t == nil {
 		return false
 	}

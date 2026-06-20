@@ -281,6 +281,33 @@ func (c *CFG) SuccessorsReadOnly(p Point) []Point {
 	return edgesReadOnly(c.succs, p)
 }
 
+// PointCanReach reports whether control can flow from point from to point to by
+// following successor edges of graph. A point reaches itself. Zero points and a
+// nil graph never reach.
+func PointCanReach(graph Graph, from, to Point) bool {
+	if graph == nil || from == 0 || to == 0 {
+		return false
+	}
+	if from == to {
+		return true
+	}
+	seen := map[Point]struct{}{from: {}}
+	stack := append([]Point(nil), graph.Successors(from)...)
+	for len(stack) != 0 {
+		point := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+		if point == to {
+			return true
+		}
+		if _, ok := seen[point]; ok {
+			continue
+		}
+		seen[point] = struct{}{}
+		stack = append(stack, graph.Successors(point)...)
+	}
+	return false
+}
+
 // IsJoin returns true if p has multiple predecessors.
 func (c *CFG) IsJoin(p Point) bool {
 	idx := int(p)

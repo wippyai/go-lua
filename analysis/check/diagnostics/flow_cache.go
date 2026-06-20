@@ -73,7 +73,7 @@ func diagnosticCanReach(flow *diagnosticFlowCache, graph cfg.Graph, from, to cfg
 	if flow != nil {
 		return flow.canReach(from, to)
 	}
-	return cfgPointCanReach(graph, from, to)
+	return cfg.PointCanReach(graph, from, to)
 }
 
 func (c *diagnosticFlowCache) directFunctionReassignedAfterDefinition(point cfg.Point, id symbol.ID) bool {
