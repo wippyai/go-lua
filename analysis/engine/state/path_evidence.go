@@ -156,17 +156,6 @@ func (s State) HasBranchProof(proof pathevidence.BranchProof) bool {
 	return s.pathEvidence.HasBranchProof(proof)
 }
 
-func (s State) AddIndexInRangeProof(indexKey, arrayKey pathdom.PathKey) State {
-	if indexKey == "" || arrayKey == "" {
-		return s
-	}
-	return s.AddBranchProof(pathevidence.BranchProof{
-		Kind:  pathevidence.BranchProofIndexInRange,
-		Path:  indexKey,
-		Other: arrayKey,
-	})
-}
-
 func (s State) HasIndexInRangeProof(indexKey, arrayKey pathdom.PathKey) bool {
 	if indexKey == "" || arrayKey == "" {
 		return false
