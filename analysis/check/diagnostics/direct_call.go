@@ -1106,15 +1106,17 @@ func objectLiteralArgTypeDiagnostic(call *ast.FuncCallExpr, name string, index i
 		frameExpr = arg
 	}
 	declEvidenceSpan := directCallDeclarationEvidenceSpan(call, declSpan)
+	evidence := []diagnostic.Evidence{{
+		Kind:    diagnostic.EvidenceUserAssertion,
+		Trust:   diagnostic.TrustClaimed,
+		Span:    declEvidenceSpan,
+		Message: callParameterTypeEvidence(name, index+1, mismatch.suffix, mismatch.want),
+	}}
+	evidence = append(evidence, extraEvidence...)
+	evidence = append(evidence, mismatch.missingFieldEvidence()...)
 	return argTypeDiagnosticEnvelopeWithSubject(call, frameExpr, index, mismatch.got, "", subject,
 		fmt.Sprintf("%s is %s, not %s", subject, formatType(mismatch.got), formatType(mismatch.want)),
-		diagnostic.Evidence{
-			Kind:    diagnostic.EvidenceUserAssertion,
-			Trust:   diagnostic.TrustClaimed,
-			Span:    declEvidenceSpan,
-			Message: callParameterTypeEvidence(name, index+1, mismatch.suffix, mismatch.want),
-		},
-		extraEvidence...)
+		evidence[0], evidence[1:]...)
 }
 
 func genericObjectLiteralArgTypeMismatch(result *body.Result, arg ast.Expr, actual typ.Type, formal typ.Type) (objectLiteralTypeMismatch, bool) {

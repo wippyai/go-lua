@@ -3,6 +3,7 @@ package diagnostics
 import (
 	"github.com/wippyai/go-lua/analysis/check/body"
 	"github.com/wippyai/go-lua/analysis/check/internal/readmodel"
+	"github.com/wippyai/go-lua/analysis/diagnostic"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
@@ -102,10 +103,26 @@ func closedRecord(t typ.Type) (*typ.Record, bool) {
 }
 
 type objectLiteralTypeMismatch struct {
-	expr   ast.Expr
-	got    typ.Type
-	want   typ.Type
-	suffix string
+	expr         ast.Expr
+	got          typ.Type
+	want         typ.Type
+	suffix       string
+	missingField string
+}
+
+// missingFieldEvidence returns the missing-required-field evidence for a
+// mismatch that was raised because the literal omits a required field, or nil
+// when the mismatch is an ordinary member type mismatch.
+func (m objectLiteralTypeMismatch) missingFieldEvidence() []diagnostic.Evidence {
+	if m.missingField == "" {
+		return nil
+	}
+	return []diagnostic.Evidence{{
+		Kind:    diagnostic.EvidenceMissingProof,
+		Trust:   diagnostic.TrustUnknown,
+		Span:    ast.SpanOf(m.expr),
+		Message: missingRequiredFieldEvidence(m.missingField),
+	}}
 }
 
 func objectLiteralMemberMismatch(result *body.Result, point cfg.Point, expr ast.Expr, want typ.Type, env guardEnv) (objectLiteralTypeMismatch, bool) {
@@ -141,6 +158,9 @@ func objectLiteralMemberMismatchInFact(result *body.Result, point cfg.Point, fac
 			continue
 		}
 		return objectLiteralTypeMismatch{expr: entry.Value, got: got, want: expected, suffix: segment.FormatSegments(entry.Suffix.Segments)}, true
+	}
+	if field, ok := missingRequiredRecordField(want, fact); ok {
+		return objectLiteralTypeMismatch{expr: fact.Expr, got: objectLiteralType(want, fact), want: want, missingField: field.Name}, true
 	}
 	return objectLiteralTypeMismatch{}, false
 }

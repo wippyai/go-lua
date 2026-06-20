@@ -105,6 +105,7 @@ func (p callParamObligations) call(
 		seen[argIndex] = struct{}{}
 		if mismatch, ok := objectLiteralMemberMismatch(result, point, args[argIndex], want, env); ok {
 			extra := boundaryDiagnosticEvidenceForSubject(result, point, ast.SpanOf(mismatch.expr), exprEvidenceName(mismatch.expr), mismatch.want, boundaryValueFromExpr(mismatch.expr))
+			extra = append(extra, mismatch.missingFieldEvidence()...)
 			return callParamObligationDiagnostic(fact.Call, callObligationName(result, fact), argIndex, obligation, mismatch.got, mismatch.want, mismatch.expr, extra...), true
 		}
 		got, ok := untrustedTopLikeExpressionTypeAt(result, p.resolver, point, args[argIndex])

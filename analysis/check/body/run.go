@@ -195,7 +195,7 @@ func (s *Static) Solve(config SolveConfig) *Result {
 		ProjectPath: luaPathTypeProjector,
 		TypeValues:  typeValues,
 	})
-	nodeTransfer = genericForNodeTransfer(nodeTransfer, s.semantics, s.facts, s.sources, s.signatures, s.signatureID, s.typeNS, typeValues)
+	nodeTransfer = genericForNodeTransfer(nodeTransfer, s.semantics, s.facts, s.sources, s.signatures, s.signatureID, s.typeNS, typeValues, callOutcome)
 	flow := transfer.Run(transfer.Config{
 		Graph:        s.cfg.Graph,
 		Registry:     s.registry,

@@ -198,6 +198,7 @@ func (p annotationAssignability) pathAssignment(result *body.Result, point cfg.P
 	}
 	if mismatch, ok := objectLiteralMemberMismatch(result, point, fact.Value, want, env); ok {
 		extra := boundaryDiagnosticEvidenceForSubject(result, point, ast.SpanOf(mismatch.expr), exprEvidenceName(mismatch.expr), mismatch.want, boundaryValueFromExpr(mismatch.expr))
+		extra = append(extra, mismatch.missingFieldEvidence()...)
 		return pathAssignmentDiagnostic(fact.Target, mismatch.expr, mismatch.got, mismatch.want, extra...), true
 	}
 	got, ok := assignmentValueType(result, p.resolver, point, fact.Value, fact.Source)

@@ -16,7 +16,10 @@ func (c *checker) checkMap(sub, super *typ.Map, depth int) bool {
 	if !c.check(sub.Value, super.Value, depth+1) {
 		return false
 	}
-	return c.check(super.Value, sub.Value, depth+1) || typ.IsAny(super.Value)
+	// A map is mutable, so its value is invariant: widening the value type (for
+	// example to any) would let a write through the alias store a value the
+	// original map's type forbids. Covariant read-only access uses ReadonlyMap.
+	return c.check(super.Value, sub.Value, depth+1)
 }
 
 func (c *checker) checkReadonlyMap(sub, super *typ.ReadonlyMap, depth int) bool {

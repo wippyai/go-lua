@@ -241,6 +241,33 @@ end`)
 	}
 }
 
+// TestGenericForStatelessFunctionIteratorNarrowsFirstVariable proves the loop
+// variable of a stateless function iterator (for w in f do, where f returns the
+// iterator fun(): string?) is typed from the iterator function's result, narrowed
+// to its non-nil form for the first variable. gmatch returns fun(): string?, so w
+// is string inside the body. This is the type that makes `local ok: string = w`
+// check clean and `local n: number = w` report a type error.
+func TestGenericForStatelessFunctionIteratorNarrowsFirstVariable(t *testing.T) {
+	reg := standard.Registry()
+	stmts := parseChunk(t, `
+local s: string = "hello world"
+for w in s:gmatch("%a+") do
+	local copy = w
+end`)
+
+	result, err := CheckChunk(stmts, Config{
+		Registry:   reg,
+		Signatures: signaturelookup.Source{IncludeStdlib: true},
+	})
+	if err != nil {
+		t.Fatalf("CheckChunk: %v", err)
+	}
+
+	loop := stmts[1].(*ast.GenericForStmt)
+	local := loop.Stmts[0].(*ast.LocalAssignStmt)
+	assertExpressionTypeAtBoundary(t, reg, result, local, typ.String)
+}
+
 func assertExpressionTypeAtBoundary(t *testing.T, reg *axis.Registry, result *Result, local *ast.LocalAssignStmt, want typ.Type) {
 	t.Helper()
 	point := requireLocalAssignmentPoint(t, result, local, 0)

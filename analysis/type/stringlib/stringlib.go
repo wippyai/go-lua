@@ -45,7 +45,7 @@ var methods = map[string]*typ.Function{
 	"gmatch": typ.Func().
 		Param("s", typ.String).
 		Param("pattern", typ.String).
-		Returns(typ.Any).
+		Returns(typ.Func().Returns(normalize.Optional(typ.String)).Build()).
 		Build(),
 	"gsub": typ.Func().
 		Param("s", typ.String).

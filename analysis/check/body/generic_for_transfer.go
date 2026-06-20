@@ -8,6 +8,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
+	"github.com/wippyai/go-lua/analysis/engine/callpayload"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	sourcevalue "github.com/wippyai/go-lua/analysis/engine/sourcevalue"
 	"github.com/wippyai/go-lua/analysis/engine/state"
@@ -31,6 +32,7 @@ func genericForNodeTransfer(
 	signatureID *signatureIdentityResolver,
 	typeResolver *typeresolve.Resolver,
 	typeValues *typevalue.Cache,
+	callOutcome callpayload.CallOutcomeProvider,
 ) transfer.NodeTransfer {
 	expressionRefinements := facts.ExpressionRefinements()
 	return func(ctx transfer.NodeContext, in state.State) state.State {
@@ -46,7 +48,7 @@ func genericForNodeTransfer(
 			fact.VariableIndex < 0 || fact.VariableIndex >= len(fact.Symbols) {
 			return out
 		}
-		value, ok := genericForVariableValue(ctx, typeValues, fact, facts, expressionRefinements, sources, signatures, signatureID, typeResolver, in)
+		value, ok := genericForVariableValue(ctx, typeValues, fact, facts, expressionRefinements, sources, signatures, signatureID, typeResolver, callOutcome, in)
 		if !ok {
 			return out
 		}
@@ -68,6 +70,7 @@ func genericForVariableValue(
 	signatures signaturelookup.Source,
 	signatureID *signatureIdentityResolver,
 	typeResolver *typeresolve.Resolver,
+	callOutcome callpayload.CallOutcomeProvider,
 	in state.State,
 ) (product.Value, bool) {
 	if len(generic.Sources) == 0 {
@@ -83,11 +86,11 @@ func genericForVariableValue(
 	}
 	name, ok := signatureID.nameForSite(site)
 	if !ok {
-		return product.Value{}, false
+		return genericForFunctionIteratorVariableValue(ctx, typeValues, generic, source, site, callOutcome, in)
 	}
 	iter, ok := genericForIterator(name, signatures)
 	if !ok {
-		return product.Value{}, false
+		return genericForFunctionIteratorVariableValue(ctx, typeValues, generic, source, site, callOutcome, in)
 	}
 	sourceIndex, ok := effect.ResolveParamIndex(iter.Source, site.ArgumentSourceCount())
 	if !ok {
@@ -107,6 +110,69 @@ func genericForVariableValue(
 		return value, true
 	}
 	return luasourcevalue.IteratorVariableValue(ctx.Registry, typeValues, iter, generic.VariableIndex, sourceValue, assertedSourceType, hasAssertedSourceType)
+}
+
+// genericForFunctionIteratorVariableValue types a generic-for loop variable when
+// the iterator source is a call returning a stateless iterator function. The Lua
+// protocol calls that function each iteration and binds the loop variables to its
+// results; the loop continues while the first result is non-nil. The variable at
+// generic.VariableIndex therefore takes the iterator function's matching result
+// type, with the first result narrowed to its non-nil form for the in-body value.
+func genericForFunctionIteratorVariableValue(
+	ctx transfer.NodeContext,
+	typeValues *typevalue.Cache,
+	generic cfgfacts.GenericForFact,
+	source sourceprovenance.ASTSource,
+	site factflow.CallSite,
+	callOutcome callpayload.CallOutcomeProvider,
+	in state.State,
+) (product.Value, bool) {
+	if !source.HasCallPoint || source.CallPoint == 0 || callOutcome == nil || ctx.Read == nil {
+		return product.Value{}, false
+	}
+	callCtx := transfer.NodeContext{
+		Graph:    ctx.Graph,
+		Registry: ctx.Registry,
+		Point:    source.CallPoint,
+		Read:     ctx.Read,
+	}
+	if ctx.Graph != nil {
+		callCtx.Node = ctx.Graph.Node(source.CallPoint)
+	}
+	outcome := callOutcome(callCtx, site.View(), ctx.Read(source.CallPoint), ctx.Read)
+	var callResult product.Value
+	found := false
+	for _, result := range outcome.Results {
+		if result.Index == 0 {
+			callResult = result.Value
+			found = true
+			break
+		}
+	}
+	if !found {
+		return product.Value{}, false
+	}
+	iterType, ok := typevalue.TypeOf(ctx.Registry, callResult)
+	if !ok {
+		return product.Value{}, false
+	}
+	iterFunc, ok := iterType.(*typ.Function)
+	if !ok || typ.IsAny(iterType) || typ.IsUnknown(iterType) {
+		return product.Value{}, false
+	}
+	if generic.VariableIndex < 0 || generic.VariableIndex >= len(iterFunc.Returns) {
+		return product.Value{}, false
+	}
+	resultType := iterFunc.Returns[generic.VariableIndex]
+	if resultType == nil || typ.IsAny(resultType) || typ.IsUnknown(resultType) {
+		return product.Value{}, false
+	}
+	if generic.VariableIndex == 0 {
+		if optional, ok := resultType.(*typ.Optional); ok && optional.Inner != nil {
+			resultType = optional.Inner
+		}
+	}
+	return typeValues.FromTypeWithWitness(ctx.Registry, resultType), true
 }
 
 func genericForIterator(name string, signatures signaturelookup.Source) (iteration.Iterator, bool) {
