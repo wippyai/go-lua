@@ -91,6 +91,16 @@ func (p annotationAssignability) localAssignment(result *body.Result, point cfg.
 	untrustedTopLike := false
 	declarationProjection := false
 	reassignedCallResultProjection := false
+	var castInnerExpr ast.Expr
+	if !ok {
+		if castGot, castOK := concreteCastObligationType(result, p.resolver, point, env, fact.Expr); castOK {
+			got, ok = castGot, true
+			untrustedTopLike = true
+			if inner, innerOK := concreteCastInner(fact.Expr); innerOK {
+				castInnerExpr = inner
+			}
+		}
+	}
 	if !ok {
 		got, ok = untrustedTopLikeExpressionTypeAt(result, p.resolver, point, fact.Expr)
 		untrustedTopLike = ok
@@ -148,10 +158,17 @@ func (p annotationAssignability) localAssignment(result *body.Result, point cfg.
 	if !ok {
 		return p.objectLiteralAssignment(result, point, fact.Name, want, fact.Expr, fact.Type, env)
 	}
+	refineExpr := fact.Expr
+	if castInnerExpr != nil {
+		refineExpr = castInnerExpr
+	}
 	if !optionalIndexProjection && !presenceAwareSourceProjection && !typ.IsAny(got) && !typ.IsUnknown(got) {
-		got = refineAssignmentSourceType(result, point, fact.Expr, got)
+		got = refineAssignmentSourceType(result, point, refineExpr, got)
 	}
 	readBoundary := boundaryValueFromASTSource(fact.Source)
+	if castInnerExpr != nil {
+		readBoundary = boundaryValueFromExpr(castInnerExpr)
+	}
 	mismatchBoundary := readBoundary
 	if declarationProjection {
 		mismatchBoundary = nil
@@ -200,6 +217,17 @@ func (p annotationAssignability) pathAssignment(result *body.Result, point cfg.P
 		extra := boundaryDiagnosticEvidenceForSubject(result, point, ast.SpanOf(mismatch.expr), exprEvidenceName(mismatch.expr), mismatch.want, boundaryValueFromExpr(mismatch.expr))
 		extra = append(extra, mismatch.missingFieldEvidence()...)
 		return pathAssignmentDiagnostic(fact.Target, mismatch.expr, mismatch.got, mismatch.want, extra...), true
+	}
+	if castGot, castOK := concreteCastObligationType(result, p.resolver, point, env, fact.Value); castOK {
+		readBoundary := boundaryValueFromASTSource(fact.Source)
+		if inner, innerOK := concreteCastInner(fact.Value); innerOK {
+			readBoundary = boundaryValueFromExpr(inner)
+		}
+		if !boundaryProofTypeMismatch(result, point, castGot, want, readBoundary) {
+			return diagnostic.Diagnostic{}, false
+		}
+		extra := boundaryDiagnosticEvidenceForSubject(result, point, ast.SpanOf(fact.Value), exprEvidenceName(fact.Value), want, readBoundary)
+		return pathAssignmentDiagnostic(fact.Target, fact.Value, castGot, want, extra...), true
 	}
 	got, ok := assignmentValueType(result, p.resolver, point, fact.Value, fact.Source)
 	if !ok {

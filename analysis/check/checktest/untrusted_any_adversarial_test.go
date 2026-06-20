@@ -111,7 +111,10 @@ local raw = ({ id = "ok" } :: any)
 	}
 }
 
-func TestTypeClaimedValueCanFlowThroughGenericCall(t *testing.T) {
+func TestCastClaimedValueDoesNotLaunderThroughGenericCall(t *testing.T) {
+	// A cast adopts its target type for local inference, but the underlying any
+	// value does not gain proof: flowing the cast result through a generic call
+	// into a record parameter still leaves the contract unproven.
 	result := Check(`
 local function id<T>(x: T): T
     return x
@@ -121,11 +124,12 @@ local function accept(req: { id: string }): ()
 end
 
 local raw = ({ id = "ok" } :: any)
-local trusted: { id: string } = raw :: { id: string }
+local trusted = raw :: { id: string }
 accept(id(trusted))
 `)
-	if len(result.Diagnostics) != 0 {
-		t.Fatalf("diagnostics = %#v, want none for type-claimed generic argument", result.Diagnostics)
+	diag := requireDiagnosticCode(t, result, diagnostics.CodeDirectCallArgType)
+	if got := diag.Explanation.String(); !strings.Contains(got, "no proof on this path shows id(...) satisfies the parameter type") {
+		t.Fatalf("explanation = %q, want missing-proof evidence for laundered cast", got)
 	}
 }
 

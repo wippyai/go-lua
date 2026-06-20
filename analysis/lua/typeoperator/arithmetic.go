@@ -26,8 +26,11 @@ func arithmeticPrimitiveResult(left typ.Type, op string, right typ.Type) (typ.Ty
 			return typ.Number, true
 		}
 	case "//":
-		if isArithmeticNumeric(left) && isArithmeticNumeric(right) {
+		if isIntegerish(left) && isIntegerish(right) {
 			return typ.Integer, true
+		}
+		if isArithmeticNumeric(left) && isArithmeticNumeric(right) {
+			return typ.Number, true
 		}
 	case "&", "|", "~", "<<", ">>":
 		if isIntegerConvertible(left) && isIntegerConvertible(right) {

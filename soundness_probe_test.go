@@ -24,7 +24,7 @@ var soundnessProbes = []soundnessProbe{
 		// covariant alias of an opaque (parameter) array is not tracked, so a write
 		// through the alias corrupts the original element type undetected.
 		name:  "array-covariance-param-writeback",
-		fixed: false,
+		fixed: true,
 		src: `local function f(a: {string}): string
 			local b: {string | number} = a
 			b[1] = 42
@@ -41,19 +41,22 @@ var soundnessProbes = []soundnessProbe{
 		end return f`,
 	},
 	{
-		name:  "cast-any-to-record-trusted",
-		fixed: false,
-		src: `local function f(x: any): string
-			local r = x as {name: string}
-			return r.name
+		// A concrete cast must not PROVE a separate obligation: laundering an any
+		// through `as T` to satisfy a parameter contract is rejected.
+		name:  "cast-any-laundered-to-param",
+		fixed: true,
+		src: `local function need(x: {name: string}): number return 1 end
+		local function f(y: any): number
+			return need(y as {name: string})
 		end return f`,
 	},
 	{
-		name:  "cast-number-to-record-disjoint",
-		fixed: false,
-		src: `local function f(x: number): string
-			local r = x as {name: string}
-			return r.name
+		// Same, with a disjoint concrete source.
+		name:  "cast-disjoint-laundered-to-param",
+		fixed: true,
+		src: `local function need(x: {name: string}): number return 1 end
+		local function f(y: number): number
+			return need(y as {name: string})
 		end return f`,
 	},
 	{
@@ -107,6 +110,40 @@ var soundnessProbes = []soundnessProbe{
 		src: `local function g(x: number, y: number): number return x end
 		local function f(): number
 			return g(1)
+		end return f`,
+	},
+	{
+		// Floor division of float operands is a float at runtime, not an integer.
+		name:  "floor-division-float-operands",
+		fixed: true,
+		src: `local function f(a: number, b: number): integer
+			local x: integer = a // b
+			return x
+		end return f`,
+	},
+	{
+		// A same-module call that mutates a field invalidates the field's guard
+		// narrowing: after clear(box) sets box.value = nil, box.value is nil again.
+		name:  "interproc-mutation-vs-narrowing",
+		fixed: true,
+		src: `local function clear(b: { value: string? }) b.value = nil end
+		local function f(box: { value: string? }): string
+			if box.value then
+				clear(box)
+				local n: string = box.value
+				return n
+			end
+			return "x"
+		end return f`,
+	},
+	{
+		// A return-position operator expression must be type-checked against the
+		// return annotation: returning a number-typed `a // b` for an integer return
+		// is rejected.
+		name:  "return-operator-expr-checked",
+		fixed: true,
+		src: `local function f(a: number, b: number): integer
+			return a // b
 		end return f`,
 	},
 }

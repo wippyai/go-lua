@@ -70,6 +70,18 @@ func produceReturnContract(result *body.Result, context producerContext, inherit
 				out = append(out, returnContractDiagnostic(mismatch.expr, annotation, mismatch.got, mismatch.want, i, extra...))
 				continue
 			}
+			if castGot, castOK := concreteCastObligationType(result, producer.resolver, point, envs[point], expr); castOK {
+				readBoundary := boundaryValueFromASTSource(source)
+				if inner, innerOK := concreteCastInner(expr); innerOK {
+					readBoundary = boundaryValueFromExpr(inner)
+				}
+				if !boundaryProofTypeMismatch(result, point, castGot, want, readBoundary) {
+					continue
+				}
+				extra := boundaryDiagnosticEvidenceForSubject(result, point, ast.SpanOf(expr), returnContractSubject(i, expr), want, readBoundary)
+				out = append(out, returnContractDiagnostic(expr, annotation, castGot, want, i, extra...))
+				continue
+			}
 			got, ok := returnValueType(result, producer.resolver, point, expr, source, inherited)
 			if !ok {
 				continue
@@ -93,6 +105,9 @@ func produceReturnContract(result *body.Result, context producerContext, inherit
 
 func returnValueType(result *body.Result, resolver typeannotation.Resolver, point cfg.Point, expr ast.Expr, source sourceprovenance.ASTSource, inherited map[symbol.ID]*ast.FunctionExpr) (typ.Type, bool) {
 	if got, ok := valueexpr.LiteralType(expr); ok {
+		return got, true
+	}
+	if got, ok := localScalarOperatorSourceType(result, resolver, expr); ok {
 		return got, true
 	}
 	if got, ok := explicitTopLikeCastType(resolver, expr); ok {

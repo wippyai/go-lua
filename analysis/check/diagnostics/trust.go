@@ -81,6 +81,85 @@ func boundaryExprType(result *body.Result, resolver typeannotation.Resolver, exp
 	return newExpressionTyper(result, resolver).typeOf(expr)
 }
 
+// concreteCastObligationType reports the flow-narrowed type to check against an
+// imposed obligation when the operand is a direct cast to a concrete type. A cast
+// adopts its target type for inference and direct dereference, but it does not
+// prove a separate obligation: the wrapped value must satisfy the contract on its
+// own. So the obligation sees the underlying expression's flow-narrowed type, not
+// the asserted target, and the caller routes the comparison through the proof
+// boundary. A cast that wraps a value already proven to satisfy the contract (for
+// example a guarded `string?` narrowed to `string`) therefore still passes.
+func concreteCastObligationType(result *body.Result, resolver typeannotation.Resolver, point cfg.Point, env guardEnv, expr ast.Expr) (typ.Type, bool) {
+	inner, ok := concreteCastInner(expr)
+	if !ok {
+		return nil, false
+	}
+	if t, ok := projectedStructuralFlowSourceType(result, resolver, point, env, inner); ok {
+		return t, true
+	}
+	if t, ok := newStructuralFlowExpressionTyper(result, resolver, point, env).typeOf(inner); ok {
+		return t, true
+	}
+	if t, ok := boundaryExprType(result, resolver, inner); ok {
+		return t, true
+	}
+	return typ.Any, true
+}
+
+// concreteCastInner peels leading cast and non-nil-assert wrappers when the
+// outer wrapper is a cast to a concrete (non-top-like) type and the wrapped
+// expression reads an existing value (an identifier, member/index access, or
+// call result). It returns that expression so its underlying value must
+// independently satisfy the obligation. A cast over a fresh literal (table,
+// function, or scalar) is left alone: the literal is structurally checkable on
+// its own, so casting it is a sound annotation, not a launder.
+func concreteCastInner(expr ast.Expr) (ast.Expr, bool) {
+	cast, ok := expr.(*ast.CastExpr)
+	if !ok || cast == nil || cast.Type == nil || cast.Expr == nil {
+		return nil, false
+	}
+	if topLikeCastTargetExpr(cast) {
+		return nil, false
+	}
+	inner := cast.Expr
+	for {
+		switch e := inner.(type) {
+		case *ast.CastExpr:
+			if e == nil || e.Expr == nil {
+				return nil, false
+			}
+			inner = e.Expr
+		case *ast.NonNilAssertExpr:
+			if e == nil || e.Expr == nil {
+				return nil, false
+			}
+			inner = e.Expr
+		default:
+			if launderedValueExpr(inner) {
+				return inner, true
+			}
+			return nil, false
+		}
+	}
+}
+
+// launderedValueExpr reports whether expr reads an existing runtime value whose
+// type a cast must not be allowed to overstate. Literals are excluded because
+// they are checked structurally.
+func launderedValueExpr(expr ast.Expr) bool {
+	switch expr.(type) {
+	case *ast.IdentExpr, *ast.AttrGetExpr, *ast.FuncCallExpr:
+		return true
+	default:
+		return false
+	}
+}
+
+func topLikeCastTargetExpr(cast *ast.CastExpr) bool {
+	primitive, ok := cast.Type.(*ast.PrimitiveTypeExpr)
+	return ok && primitive != nil && (primitive.Name == "any" || primitive.Name == "unknown")
+}
+
 func explicitTopLikeExpressionType(result *body.Result, resolver typeannotation.Resolver, expr ast.Expr) (typ.Type, bool) {
 	t, ok := newExpressionTyper(result, resolver).typeOf(expr)
 	if !ok || !topLikeType(t) {

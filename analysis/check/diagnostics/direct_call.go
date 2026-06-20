@@ -530,11 +530,20 @@ func (p directCallContract) directFunctionCall(
 		}
 		gotDisplay, _ := directCallArgumentDisplayType(result, p.resolver, point, arg)
 		readBoundary := boundaryCallArgumentReader(fact, i, arg)
-		got, ok := declaredArgumentExprType(result, p.resolver, arg)
-		if ok && topLikeType(got) {
-			ok = false
-		}
 		untrustedTopLike := false
+		got, ok := concreteCastObligationType(result, p.resolver, point, env, arg)
+		if ok {
+			untrustedTopLike = true
+			if inner, innerOK := concreteCastInner(arg); innerOK {
+				readBoundary = boundaryValueFromExpr(inner)
+			}
+		}
+		if !ok {
+			got, ok = declaredArgumentExprType(result, p.resolver, arg)
+			if ok && topLikeType(got) {
+				ok = false
+			}
+		}
 		if !ok {
 			got, ok = untrustedTopLikeExpressionTypeAt(result, p.resolver, point, arg)
 			untrustedTopLike = ok
