@@ -85,6 +85,35 @@ func (l *lowerer) branchLenRefinement(check branchcond.Check) (factflow.BranchLe
 	return factflow.NewBranchLenRefinement(check.Path, check.LenFloor), true
 }
 
+// branchNumFloorRefinements lowers a true-edge numeric lower-bound guard such as
+// `i >= 1` into a numeric-floor fact, the positive-index half of an array-read
+// in-range proof. As with the length floor, it holds on the true edge only.
+func (l *lowerer) branchNumFloorRefinements(fact semantics.BranchConditionFact) []factflow.BranchNumFloorRefinement {
+	if fact.Check.Kind == branchcond.CheckNumGe {
+		if lowered, ok := l.branchNumFloorRefinement(fact.Check); ok {
+			return []factflow.BranchNumFloorRefinement{lowered}
+		}
+		return nil
+	}
+	if fact.Check.Kind != branchcond.CheckNone {
+		return nil
+	}
+	var out []factflow.BranchNumFloorRefinement
+	for _, check := range branchcond.TruthyChecks(fact.Condition, l.bindings) {
+		if lowered, ok := l.branchNumFloorRefinement(check); ok {
+			out = append(out, lowered)
+		}
+	}
+	return out
+}
+
+func (l *lowerer) branchNumFloorRefinement(check branchcond.Check) (factflow.BranchNumFloorRefinement, bool) {
+	if check.Kind != branchcond.CheckNumGe || check.Path.IsEmpty() || check.NumFloor < 1 {
+		return factflow.BranchNumFloorRefinement{}, false
+	}
+	return factflow.NewBranchNumFloorRefinement(check.Path, check.NumFloor), true
+}
+
 func (l *lowerer) branchRefinements(fact semantics.BranchConditionFact) []factflow.BranchRefinement {
 	if fact.Check.Kind != branchcond.CheckNone {
 		if lowered := l.branchRefinementsForCheck(fact.Check); len(lowered) != 0 {

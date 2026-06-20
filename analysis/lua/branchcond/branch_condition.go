@@ -28,6 +28,7 @@ const (
 	CheckPathNot
 	CheckLenGe
 	CheckIndexInRange
+	CheckNumGe
 )
 
 type Check struct {
@@ -38,6 +39,7 @@ type Check struct {
 	Literal       typ.Type
 	LiteralString string
 	LenFloor      int64
+	NumFloor      int64
 }
 
 func (c Check) LiteralValue() (typ.Type, bool) {
@@ -96,6 +98,9 @@ func Normalize(expr ast.Expr, bindings *bind.Result) Check {
 			return check
 		}
 		if check, ok := normalizeIndexInRangeComparison(expr, bindings); ok {
+			return check
+		}
+		if check, ok := normalizeNumericFloorComparison(expr, bindings); ok {
 			return check
 		}
 		if !isEqualityRelop(expr.Operator) {
@@ -381,8 +386,55 @@ func normalizeIndexInRangeComparison(expr *ast.RelationalOpExpr, bindings *bind.
 		})
 }
 
+// normalizeNumericFloorComparison recognizes a numeric lower-bound guard such as
+// `i >= 1`, `i > 0`, or the flipped `1 <= i`, producing CheckNumGe{Path: i,
+// NumFloor: k}. It supplies the positive-index proof that pairs with an
+// index-in-range guard to remove the optional nil from an array read.
+func normalizeNumericFloorComparison(expr *ast.RelationalOpExpr, bindings *bind.Result) (Check, bool) {
+	return normalizeFlippedComparison(expr, bindings, numericFloorOperands,
+		func(numPath path.Path, floor int64) Check {
+			return Check{Kind: CheckNumGe, Path: numPath, NumFloor: floor}
+		})
+}
+
+// numericFloorOperands matches `path <op> const` and returns the numeric path and
+// the proven lower bound on its value when op establishes a floor of at least 1.
+func numericFloorOperands(numExpr ast.Expr, op string, constExpr ast.Expr, bindings *bind.Result) (path.Path, int64, bool) {
+	numPath, ok := pathexpr.Resolve(numExpr, bindings)
+	if !ok || numPath.IsEmpty() {
+		return path.Path{}, 0, false
+	}
+	c, ok := constExpr.(*ast.NumberExpr)
+	if !ok {
+		return path.Path{}, 0, false
+	}
+	value, ok := numparse.ParseIntegerLiteral(c.Value)
+	if !ok {
+		return path.Path{}, 0, false
+	}
+	floor, ok := numericFloorForRelop(op, value)
+	if !ok || floor < 1 {
+		return path.Path{}, 0, false
+	}
+	return numPath, floor, true
+}
+
+// numericFloorForRelop computes the proven value lower bound from `path <op> c`.
+func numericFloorForRelop(op string, c int64) (int64, bool) {
+	switch op {
+	case ">":
+		return c + 1, true
+	case ">=":
+		return c, true
+	default:
+		return 0, false
+	}
+}
+
 func indexLenBoundOperands(indexExpr ast.Expr, op string, lenExpr ast.Expr, bindings *bind.Result) (path.Path, path.Path, bool) {
-	if op != "<=" {
+	// `i <= #xs` proves i <= len; the strict `i < #xs` proves i <= len-1, which is
+	// also in range. Both establish the index-in-range upper bound.
+	if op != "<=" && op != "<" {
 		return path.Path{}, path.Path{}, false
 	}
 	indexPath, ok := pathexpr.Resolve(indexExpr, bindings)

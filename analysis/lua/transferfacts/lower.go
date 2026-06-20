@@ -146,6 +146,9 @@ func Lower(result *semantics.Result, graph cfg.Graph, config Config) factflow.Fa
 			if lowered := l.branchLenRefinements(fact); len(lowered) != 0 {
 				appendBranchLenRefinement(input.BranchRefinements, point, lowered...)
 			}
+			if lowered := l.branchNumFloorRefinements(fact); len(lowered) != 0 {
+				appendBranchNumFloorRefinement(input.BranchRefinements, point, lowered...)
+			}
 			if lowered, ok := l.branchPathRelations(fact); ok {
 				input.BranchPathRelations[point] = lowered
 			}

@@ -117,9 +117,9 @@ func cloneBranchProofSet(in map[BranchProof]struct{}) map[BranchProof]struct{} {
 	return out
 }
 
-func deleteBranchProofsMatching(
+func deleteBranchProofsWhere(
 	in map[BranchProof]struct{},
-	matches func(pathdom.PathKey) bool,
+	matches func(BranchProof) bool,
 ) (map[BranchProof]struct{}, bool) {
 	if len(in) == 0 {
 		return in, false
@@ -127,7 +127,7 @@ func deleteBranchProofsMatching(
 	out := make(map[BranchProof]struct{}, len(in))
 	changed := false
 	for proof := range in {
-		if branchProofMatchesPath(proof, matches) {
+		if matches(proof) {
 			changed = true
 			continue
 		}

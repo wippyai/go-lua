@@ -21,26 +21,31 @@ func (l Lane) InvalidatePathKeySubtree(pathKey pathdom.PathKey) (Lane, bool) {
 	if !ok {
 		return l, false
 	}
+	match := func(candidate pathdom.PathKey) bool {
+		return pathKeyInAnySubtree(candidate, prefixes)
+	}
 	return l.invalidatePathKeyEvidence(
 		func(m map[pathaddr.LocalKey]product.Value) (map[pathaddr.LocalKey]product.Value, bool) {
 			return deletePathKeySubtrees(m, prefixes)
 		},
-		func(candidate pathdom.PathKey) bool {
-			return pathKeyInAnySubtree(candidate, prefixes)
-		},
+		match,
+		func(proof BranchProof) bool { return branchProofMatchesPath(proof, match) },
 	)
 }
 
 // invalidatePathKeyEvidence drops refinement and static-member entries via
 // deleteFromMap and branch proofs and presence implications whose path-key
-// matches, returning the updated lane (or the receiver unchanged).
+// matches, returning the updated lane (or the receiver unchanged). proofMatch
+// decides branch-proof removal separately so a length fact such as an
+// index-in-range proof can clear with different scope than value-identity proofs.
 func (l Lane) invalidatePathKeyEvidence(
 	deleteFromMap func(map[pathaddr.LocalKey]product.Value) (map[pathaddr.LocalKey]product.Value, bool),
 	match func(candidate pathdom.PathKey) bool,
+	proofMatch func(proof BranchProof) bool,
 ) (Lane, bool) {
 	refinements, changed := deleteFromMap(l.refinements)
 	staticMembers, staticChanged := deleteFromMap(l.staticMembers)
-	proofs, proofChanged := deleteBranchProofsMatching(l.proofs, match)
+	proofs, proofChanged := deleteBranchProofsWhere(l.proofs, proofMatch)
 	implications, implicationChanged := deletePathPresenceImplicationsMatching(l.pathPresenceImplications, match)
 	if !changed && !staticChanged && !proofChanged && !implicationChanged {
 		return l, true
@@ -61,14 +66,47 @@ func (l Lane) InvalidatePathKeyDescendants(pathKey pathdom.PathKey) (Lane, bool)
 	if !ok {
 		return l, false
 	}
+	match := func(candidate pathdom.PathKey) bool {
+		return pathKeyInAnyDescendantInvalidation(candidate, prefixes)
+	}
 	return l.invalidatePathKeyEvidence(
 		func(m map[pathaddr.LocalKey]product.Value) (map[pathaddr.LocalKey]product.Value, bool) {
 			return deletePathKeyDescendantPrefixes(m, prefixes)
 		},
-		func(candidate pathdom.PathKey) bool {
-			return pathKeyInAnyDescendantInvalidation(candidate, prefixes)
+		match,
+		func(proof BranchProof) bool {
+			if branchProofMatchesPath(proof, match) {
+				return true
+			}
+			// An index-in-range proof asserts index <= len(array); a write into the
+			// array, including the container itself being invalidated, can change its
+			// length. Unlike value-identity proofs, it must clear when the array (or
+			// index) is the invalidation root, not only a strict descendant, matching
+			// the non-strict length-floor invalidation.
+			if proof.Kind == BranchProofIndexInRange {
+				return pathKeyInDescendantInvalidationOrRoot(proof.Path, prefixes) ||
+					pathKeyInDescendantInvalidationOrRoot(proof.Other, prefixes)
+			}
+			return false
 		},
 	)
+}
+
+// pathKeyInDescendantInvalidationOrRoot reports whether candidate is the
+// invalidation root or any descendant of it, the non-strict scope a
+// length-dependent fact must clear under.
+func pathKeyInDescendantInvalidationOrRoot(candidate pathdom.PathKey, prefixes PathKeyDescendantInvalidationPrefixes) bool {
+	for _, prefix := range prefixes.Descendants {
+		if pathaddr.PathKeyHasPrefix(candidate, prefix) {
+			return true
+		}
+	}
+	for _, prefix := range prefixes.Subtrees {
+		if pathaddr.PathKeyHasPrefix(candidate, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 func (l Lane) PathKeySubtreeInvalidationPrefixes(pathKey pathdom.PathKey) ([]pathdom.PathKey, bool) {

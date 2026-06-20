@@ -1,0 +1,4 @@
+{
+  "description": "A manual comparison guard proves a variable array index in-range: a positive-index floor (i >= 1, i > 0) paired with an upper-bound guard (i <= #xs or strict i < #xs, in either operand order) drops the soundly-optional nil from xs[i], matching the numeric-for and while-guard proofs. Without both halves, with the wrong array's length, or after a mutation that can change the array length, the read stays optional.",
+  "files": ["main.lua"]
+}

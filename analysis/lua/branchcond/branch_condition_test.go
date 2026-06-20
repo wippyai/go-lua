@@ -333,10 +333,14 @@ func TestTruthyChecksExtractSupportedConjuncts(t *testing.T) {
 
 	got := TruthyChecks(expr, bindings)
 
-	if len(got) != 1 {
-		t.Fatalf("TruthyChecks returned %d checks, want 1: %#v", len(got), got)
+	if len(got) != 2 {
+		t.Fatalf("TruthyChecks returned %d checks, want 2: %#v", len(got), got)
 	}
-	assertCheck(t, got[0], CheckTypeEqual, path.NewPath(mustIdentSymbol(t, bindings, value), "value"), "number")
+	valuePath := path.NewPath(mustIdentSymbol(t, bindings, value), "value")
+	assertCheck(t, got[0], CheckTypeEqual, valuePath, "number")
+	if got[1].Kind != CheckNumGe || got[1].NumFloor != 1 {
+		t.Fatalf("second conjunct = %#v, want CheckNumGe floor 1 for value > 0", got[1])
+	}
 }
 
 func TestFalsyChecksExtractSupportedDisjuncts(t *testing.T) {
