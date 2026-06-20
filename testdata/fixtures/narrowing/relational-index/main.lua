@@ -83,4 +83,45 @@ local function sum_no_floor(xs: {number}, i: number, j: number): number
     return 0
 end
 
-return arith, transitive, cross, no_lower, reassigned, mutated, sum, sum_other, sum_no_floor
+-- Soundness: the index is reassigned past the bound after the sum guard.
+local function sum_reassigned(xs: {number}, i: number, j: number): number
+    if i >= 1 and j >= 0 and i + j <= #xs then
+        i = i + 100
+        local v: number = xs[i] -- expect-error
+        return v
+    end
+    return 0
+end
+
+-- Soundness: the array is mutated after the sum guard, so its length may change.
+local function sum_mutated(xs: {number}, i: number, j: number): number
+    if i >= 1 and j >= 0 and i + j <= #xs then
+        xs[#xs] = nil
+        local v: number = xs[i] -- expect-error
+        return v
+    end
+    return 0
+end
+
+-- Soundness: the sum is on the lower side, so #xs <= i + j gives no upper bound
+-- on i.
+local function sum_wrong_side(xs: {number}, i: number, j: number): number
+    if i >= 1 and j >= 0 and #xs <= i + j then
+        local v: number = xs[i] -- expect-error
+        return v
+    end
+    return 0
+end
+
+-- Soundness: reading the other operand needs i >= 0; without it j may exceed #xs
+-- when i is negative.
+local function sum_other_no_floor(xs: {number}, i: number, j: number): number
+    if j >= 1 and i + j <= #xs then
+        local v: number = xs[j] -- expect-error
+        return v
+    end
+    return 0
+end
+
+return arith, transitive, cross, no_lower, reassigned, mutated, sum, sum_other,
+    sum_no_floor, sum_reassigned, sum_mutated, sum_wrong_side, sum_other_no_floor

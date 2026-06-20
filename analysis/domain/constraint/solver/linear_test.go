@@ -1,6 +1,7 @@
 package solver
 
 import (
+	"strconv"
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/domain/constraint/decision"
@@ -109,6 +110,44 @@ func TestLinearBackendNeverInvalid(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestLinearBackendOverflowStaysSound(t *testing.T) {
+	// Bounds near the int64 extremes force the Fourier-Motzkin combination to
+	// overflow; the backend must abandon the proof and return Unknown rather than
+	// panic or report a spurious contradiction.
+	const big = int64(1) << 62
+	b := NewLinearBackend()
+	assertAll(b,
+		numeric.NewSumLe(key("i"), key("j"), key("n"), big),
+		numeric.GeConst{X: key("j"), C: -big},
+	)
+
+	got := b.Entails(numeric.Le{X: key("i"), Y: key("n"), C: big})
+	if got == decision.Invalid {
+		t.Fatalf("overflow path must never return Invalid, got %s", got)
+	}
+}
+
+func TestLinearBackendDeepTransitiveChain(t *testing.T) {
+	// A long difference chain x0 < x1 < ... < xk <= n proves x0 <= n - k.
+	b := NewLinearBackend()
+	const k = 12
+	for d := range k {
+		b.Assert(numeric.Le{X: key(chainVar(d)), Y: key(chainVar(d + 1)), C: -1})
+	}
+	b.Assert(numeric.Le{X: key(chainVar(k)), Y: key("n"), C: 0})
+
+	if got := b.Entails(numeric.Le{X: key(chainVar(0)), Y: key("n"), C: -k}); got != decision.Valid {
+		t.Fatalf("expected Valid for x0 <= n - %d, got %s", k, got)
+	}
+	if got := b.Entails(numeric.Le{X: key(chainVar(0)), Y: key("n"), C: -(k + 1)}); got != decision.Unknown {
+		t.Fatalf("expected Unknown for the unproven tighter bound, got %s", got)
+	}
+}
+
+func chainVar(i int) string {
+	return "x" + strconv.Itoa(i)
 }
 
 func TestPortfolioSumEntailment(t *testing.T) {
