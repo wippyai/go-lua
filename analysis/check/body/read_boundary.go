@@ -2,7 +2,9 @@ package body
 
 import (
 	"github.com/wippyai/go-lua/analysis/check/body/internal/readexpr"
-	"github.com/wippyai/go-lua/analysis/domain/constraint/numeric/diff"
+	"github.com/wippyai/go-lua/analysis/domain/constraint/decision"
+	"github.com/wippyai/go-lua/analysis/domain/constraint/numeric"
+	"github.com/wippyai/go-lua/analysis/domain/constraint/solver"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
@@ -271,14 +273,14 @@ func (r *Result) DiffProvesIndexLELength(point cfg.Point, indexPath pathdom.Path
 	if snap.Bottom || len(snap.Constraints) == 0 {
 		return false
 	}
-	g := diff.NewDifferenceGraph()
+	asserted := make([]numeric.NumericConstraint, 0, len(snap.Constraints))
 	for _, c := range snap.Constraints {
-		g.AddLE(string(c.Hi), string(c.Lo), c.C)
+		asserted = append(asserted, numeric.Le{X: c.Hi, Y: c.Lo, C: c.C})
 	}
-	// indexKey - lenKey <= bound is proven; index + offset <= len needs
-	// index - len <= -offset.
-	bound, ok := g.GetBound(string(indexKey), string(state.LengthRelKey(arrayKey)))
-	return ok && bound <= -indexOffset
+	// index + offset <= len is proven when index - len <= -offset, i.e. the
+	// goal Le{index, len(array), -offset} is entailed by the lane constraints.
+	goal := numeric.Le{X: indexKey, Y: state.LengthRelKey(arrayKey), C: -indexOffset}
+	return solver.DefaultPortfolio().Entails(asserted, goal) == decision.Valid
 }
 
 // NumericFloorAtBoundary returns the proven numeric lower bound for p at point:
