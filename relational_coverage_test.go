@@ -51,8 +51,8 @@ var relationalCorpus = []relationalCase{
 		// stays optional. Closing it is a pathevidence/read-model refinement, NOT
 		// the standalone equality E-graph (which would duplicate congruence).
 		name:    "congruence-over-field-access",
-		solver:  "pathevidence congruence (read-model equivalence; not yet)",
-		narrows: false,
+		solver:  "pathevidence congruence (write-time closure)",
+		narrows: true,
 		src: `local function f(p: { f: number? }, q: { f: number? }): number
 			if p == q and p.f ~= nil then local v: number = q.f return v end
 			return 0

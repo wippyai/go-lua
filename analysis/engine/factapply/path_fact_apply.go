@@ -3,6 +3,7 @@ package factapply
 import (
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
@@ -159,7 +160,65 @@ func applyBranchPathEvidence(
 	if !ok {
 		return out
 	}
-	return out.AddBranchProof(stateProof)
+	out = out.AddBranchProof(stateProof)
+	if stateProof.Kind == pathevidence.BranchProofPathEqual {
+		out = closeCongruenceAcrossEquality(ctx.Registry, out, stateProof.Path, stateProof.Other)
+	}
+	return out
+}
+
+// closeCongruenceAcrossEquality propagates existing path refinements across a
+// newly proven equality aKey == bKey, so a fact recorded on one alias (or its
+// member, under reference equality) refines the other regardless of the order
+// the equality and the refinement were applied. It runs once per proven
+// equality, off the hot read path, and is idempotent (it meets into existing
+// facts).
+func closeCongruenceAcrossEquality(reg *axis.Registry, out state.State, aKey, bKey pathdom.PathKey) state.State {
+	if aKey == "" || bKey == "" || aKey == bKey {
+		return out
+	}
+	snap := out.PathRefinementsSnapshot()
+	if snap.Bottom || len(snap.Refinements) == 0 {
+		return out
+	}
+	// Member (field/index) congruence is sound only under reference equality. Lua
+	// == is reference equality for tables that declare no __eq metamethod; the
+	// engine does not model __eq, so a proven table equality is reference-safe, and
+	// non-table values have no members to make congruent. If __eq is ever modeled,
+	// exclude types that declare it here.
+	memberSafe := pathValueMayBeTable(reg, out, aKey) && pathValueMayBeTable(reg, out, bKey)
+	for key, value := range snap.Refinements {
+		out = propagateRefinementAcrossEquality(reg, out, key, value, aKey, bKey, memberSafe)
+		out = propagateRefinementAcrossEquality(reg, out, key, value, bKey, aKey, memberSafe)
+	}
+	return out
+}
+
+func propagateRefinementAcrossEquality(reg *axis.Registry, out state.State, key pathdom.PathKey, value product.Value, fromKey, toKey pathdom.PathKey, memberSafe bool) state.State {
+	rebased, ok := pathaddr.RebasePathKey(key, fromKey, toKey)
+	if !ok || rebased == "" || rebased == key {
+		return out
+	}
+	// key == fromKey is the equal root itself (presence transfer, sound even under
+	// __eq); a deeper key is a member, gated on reference equality.
+	if key != fromKey && !memberSafe {
+		return out
+	}
+	current := out.ReadPathKey(reg, rebased)
+	merged := value
+	if !product.Equal(reg, current, product.Bottom(reg)) {
+		merged = product.Meet(reg, current, value)
+		if product.Equal(reg, merged, product.Bottom(reg)) {
+			return out
+		}
+	}
+	return out.WritePathKey(reg, rebased, merged)
+}
+
+func pathValueMayBeTable(reg *axis.Registry, in state.State, key pathdom.PathKey) bool {
+	value := in.ReadPathKey(reg, key)
+	hasValue := !product.Equal(reg, value, product.Bottom(reg))
+	return sourcevalue.RuntimeMayBeTable(reg, value, hasValue)
 }
 
 func branchPathEvidenceAt(

@@ -68,6 +68,7 @@ func ExactPathValue(
 	return value, true
 }
 
+
 // HeapMemberFromValue reads a static heap-table member from a table identity
 // value.
 func HeapMemberFromValue(reg *axis.Registry, in state.State, value product.Value, suffix []segment.Segment) (product.Value, bool) {
