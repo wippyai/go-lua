@@ -159,14 +159,17 @@ func (r BranchNumFloorRefinement) copy() BranchNumFloorRefinement {
 }
 
 // BranchDiffConstraint records a relational fact proven on a branch's true edge:
-// term(Hi) - term(Lo) <= C, where each term is a value path or, when the IsLength
-// flag is set, the length of that array path. When HasHi2 is set it carries a
-// second positive term and reads term(Hi) + term(Hi2) - term(Lo) <= C, capturing
-// bounded three-term guards such as i + j <= #xs. It captures relational guards
-// like i < j, i + 1 <= #xs, #a == #b, and i + j <= #xs for transitive entailment.
+// CoHi*term(Hi) - term(Lo) <= C, where each term is a value path or, when the
+// IsLength flag is set, the length of that array path. When HasHi2 is set it
+// carries a second positive term and reads CoHi*term(Hi) + CoHi2*term(Hi2) -
+// term(Lo) <= C, capturing bounded affine guards such as i + j <= #xs and
+// 2*i <= #xs. It captures relational guards like i < j, i + 1 <= #xs, #a == #b,
+// i + j <= #xs, and 2*i <= #xs for transitive entailment.
 type BranchDiffConstraint struct {
+	coHi        int64
 	hiPath      path.Path
 	hiIsLength  bool
+	coHi2       int64
 	hi2Path     path.Path
 	hi2IsLength bool
 	hasHi2      bool
@@ -177,26 +180,37 @@ type BranchDiffConstraint struct {
 
 // NewBranchDiffConstraint creates a true-edge two-term difference-logic fact.
 func NewBranchDiffConstraint(hiPath path.Path, hiIsLength bool, loPath path.Path, loIsLength bool, c int64) BranchDiffConstraint {
-	return BranchDiffConstraint{hiPath: hiPath.Clone(), hiIsLength: hiIsLength, loPath: loPath.Clone(), loIsLength: loIsLength, c: c}
+	return BranchDiffConstraint{coHi: 1, hiPath: hiPath.Clone(), hiIsLength: hiIsLength, loPath: loPath.Clone(), loIsLength: loIsLength, c: c}
 }
 
 // NewBranchSumConstraint creates a true-edge bounded three-term fact:
 // term(hi) + term(hi2) - term(lo) <= c.
 func NewBranchSumConstraint(hiPath path.Path, hiIsLength bool, hi2Path path.Path, hi2IsLength bool, loPath path.Path, loIsLength bool, c int64) BranchDiffConstraint {
+	return NewBranchScaledConstraint(1, hiPath, hiIsLength, 1, hi2Path, hi2IsLength, loPath, loIsLength, c)
+}
+
+// NewBranchScaledConstraint creates a true-edge bounded affine fact:
+// coHi*term(hi) + coHi2*term(hi2) - term(lo) <= c. An empty hi2Path drops the
+// second positive term, giving coHi*term(hi) - term(lo) <= c.
+func NewBranchScaledConstraint(coHi int64, hiPath path.Path, hiIsLength bool, coHi2 int64, hi2Path path.Path, hi2IsLength bool, loPath path.Path, loIsLength bool, c int64) BranchDiffConstraint {
 	return BranchDiffConstraint{
+		coHi:        coHi,
 		hiPath:      hiPath.Clone(),
 		hiIsLength:  hiIsLength,
+		coHi2:       coHi2,
 		hi2Path:     hi2Path.Clone(),
 		hi2IsLength: hi2IsLength,
-		hasHi2:      true,
+		hasHi2:      !hi2Path.IsEmpty(),
 		loPath:      loPath.Clone(),
 		loIsLength:  loIsLength,
 		c:           c,
 	}
 }
 
+func (r BranchDiffConstraint) CoHi() int64        { return r.coHi }
 func (r BranchDiffConstraint) HiPath() path.Path  { return r.hiPath.Clone() }
 func (r BranchDiffConstraint) HiIsLength() bool   { return r.hiIsLength }
+func (r BranchDiffConstraint) CoHi2() int64       { return r.coHi2 }
 func (r BranchDiffConstraint) Hi2Path() path.Path { return r.hi2Path.Clone() }
 func (r BranchDiffConstraint) Hi2IsLength() bool  { return r.hi2IsLength }
 func (r BranchDiffConstraint) HasHi2() bool       { return r.hasHi2 }

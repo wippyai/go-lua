@@ -251,12 +251,12 @@ func (r *Result) IndexInRangeAtBoundary(point cfg.Point, indexPath, arrayPath pa
 }
 
 // DiffProvesIndexLELength reports whether the difference-logic constraints proven
-// at point entail value(indexPath) + indexOffset <= len(arrayPath), the upper
-// half of an in-range proof for a possibly-arithmetic index. It runs the
-// difference-logic solver over the constraint set, deriving transitive and
-// cross-variable bounds (i < j <= #xs, #a == #b, i + 1 <= #xs) the simple
-// index-in-range proof cannot. Callers pair it with a positive-index proof.
-func (r *Result) DiffProvesIndexLELength(point cfg.Point, indexPath pathdom.Path, indexOffset int64, arrayPath pathdom.Path) bool {
+// at point entail indexCoeff*value(indexPath) + indexOffset <= len(arrayPath), the
+// upper half of an in-range proof for a possibly-scaled arithmetic index. It runs
+// the difference-logic solver over the constraint set, deriving transitive and
+// cross-variable bounds (i < j <= #xs, #a == #b, i + 1 <= #xs, 2*i <= #xs) the
+// simple index-in-range proof cannot. Callers pair it with a positive-index proof.
+func (r *Result) DiffProvesIndexLELength(point cfg.Point, indexPath pathdom.Path, indexCoeff int64, indexOffset int64, arrayPath pathdom.Path) bool {
 	if r == nil || r.visibility == nil || indexPath.IsEmpty() || arrayPath.IsEmpty() {
 		return false
 	}
@@ -285,11 +285,7 @@ func (r *Result) DiffProvesIndexLELength(point cfg.Point, indexPath pathdom.Path
 		floorKeys[k] = struct{}{}
 	}
 	for _, c := range snap.Constraints {
-		if c.B == "" {
-			asserted = append(asserted, numeric.Le{X: c.A, Y: c.C, C: c.K})
-		} else {
-			asserted = append(asserted, numeric.NewSumLe(c.A, c.B, c.C, c.K))
-		}
+		asserted = append(asserted, numeric.NewScaledLe(c.CoA, c.A, c.CoB, c.B, c.C, c.K))
 		noteKey(c.A)
 		noteKey(c.B)
 		noteKey(c.C)
@@ -301,9 +297,9 @@ func (r *Result) DiffProvesIndexLELength(point cfg.Point, indexPath pathdom.Path
 			asserted = append(asserted, numeric.GeConst{X: k, C: lo})
 		}
 	}
-	// index + offset <= len is proven when index - len <= -offset, i.e. the
-	// goal Le{index, len(array), -offset} is entailed by the lane constraints.
-	goal := numeric.Le{X: indexKey, Y: state.LengthRelKey(arrayKey), C: -indexOffset}
+	// indexCoeff*index + offset <= len is proven when indexCoeff*index - len <=
+	// -offset, the scaled goal entailed by the lane constraints.
+	goal := numeric.NewScaledLe(indexCoeff, indexKey, 0, "", state.LengthRelKey(arrayKey), -indexOffset)
 	return solver.DefaultPortfolio().Entails(asserted, goal) == decision.Valid
 }
 

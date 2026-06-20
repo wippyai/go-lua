@@ -43,7 +43,7 @@ func (b *linearBackend) Assert(c numeric.NumericConstraint) {
 	case numeric.Le:
 		b.addRow(map[pathdom.PathKey]int64{v.X: 1, v.Y: -1}, v.C)
 	case numeric.SumLe:
-		b.addRow(sumCoeffs(v.X, v.Y, v.Z), v.C)
+		b.addRow(sumCoeffs(v), v.C)
 	case numeric.GeConst:
 		b.addRow(map[pathdom.PathKey]int64{v.X: -1}, -v.C)
 	case numeric.LeConst:
@@ -51,13 +51,15 @@ func (b *linearBackend) Assert(c numeric.NumericConstraint) {
 	}
 }
 
-// sumCoeffs builds the coefficient map for x + y - z, merging coefficients when
-// operands coincide.
-func sumCoeffs(x, y, z pathdom.PathKey) map[pathdom.PathKey]int64 {
+// sumCoeffs builds the coefficient map for coX*x + coY*y - z, merging
+// coefficients when operands coincide. An empty Y drops the second positive term.
+func sumCoeffs(v numeric.SumLe) map[pathdom.PathKey]int64 {
 	coeffs := make(map[pathdom.PathKey]int64, 3)
-	coeffs[x] += 1
-	coeffs[y] += 1
-	coeffs[z] += -1
+	coeffs[v.X] += v.CoX
+	if v.Y != "" {
+		coeffs[v.Y] += v.CoY
+	}
+	coeffs[v.Z] += -1
 	return coeffs
 }
 
@@ -71,7 +73,7 @@ func (b *linearBackend) addRow(coeffs map[pathdom.PathKey]int64, bound int64) {
 }
 
 func (b *linearBackend) Entails(goal numeric.NumericConstraint) decision.Result {
-	le, ok := goal.(numeric.Le)
+	coeffs, bound, ok := goalAffine(goal)
 	if !ok {
 		return decision.Unknown
 	}
@@ -79,26 +81,54 @@ func (b *linearBackend) Entails(goal numeric.NumericConstraint) decision.Result 
 	for _, r := range b.rows {
 		rows = append(rows, r.clone())
 	}
-	// Negate the goal gX - gY <= gC as the integer-strict row gY - gX <= -(gC+1),
-	// i.e. {gX:-1, gY:+1} <= -(gC+1). A contradiction with the asserted rows
-	// proves the goal.
-	negBound, ok := negStrictBound(le.C)
+	// The goal is the affine inequality sum(coeffs[v]*v) <= bound. Negate it as the
+	// integer-strict row -(sum(coeffs[v]*v)) <= -(bound+1): a contradiction with the
+	// asserted rows proves the goal.
+	negBound, ok := negStrictBound(bound)
 	if !ok {
 		return decision.Unknown
 	}
-	rows = append(rows, linearRow{
-		coeffs: map[pathdom.PathKey]int64{le.X: -1, le.Y: 1},
-		bound:  negBound,
-	})
-	for v, c := range rows[len(rows)-1].coeffs {
-		if c == 0 {
-			delete(rows[len(rows)-1].coeffs, v)
+	neg := make(map[pathdom.PathKey]int64, len(coeffs))
+	for v, c := range coeffs {
+		n, ok := negInt64(c)
+		if !ok {
+			return decision.Unknown
+		}
+		if n != 0 {
+			neg[v] = n
 		}
 	}
+	rows = append(rows, linearRow{coeffs: neg, bound: negBound})
 	if refutable(rows) {
 		return decision.Valid
 	}
 	return decision.Unknown
+}
+
+// goalAffine reduces an entailment goal to its affine form sum(coeffs[v]*v) <= bound.
+// It accepts a two-term Le goal and a scaled SumLe goal; other shapes are not
+// understood by this backend.
+func goalAffine(goal numeric.NumericConstraint) (map[pathdom.PathKey]int64, int64, bool) {
+	switch g := goal.(type) {
+	case numeric.Le:
+		coeffs := map[pathdom.PathKey]int64{g.X: 1}
+		coeffs[g.Y] += -1
+		for v, c := range coeffs {
+			if c == 0 {
+				delete(coeffs, v)
+			}
+		}
+		return coeffs, g.C, true
+	case numeric.SumLe:
+		coeffs := sumCoeffs(g)
+		for v, c := range coeffs {
+			if c == 0 {
+				delete(coeffs, v)
+			}
+		}
+		return coeffs, g.C, true
+	}
+	return nil, 0, false
 }
 
 // negStrictBound returns -(c+1) with overflow check.

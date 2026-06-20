@@ -150,6 +150,82 @@ func chainVar(i int) string {
 	return "x" + strconv.Itoa(i)
 }
 
+func TestLinearBackendScaledGoalProvesScaledBound(t *testing.T) {
+	// 2i <= n and i >= 0 prove the scaled goal 2i <= n.
+	b := NewLinearBackend()
+	assertAll(b,
+		numeric.NewScaledLe(2, key("i"), 0, "", key("n"), 0),
+		numeric.GeConst{X: key("i"), C: 0},
+	)
+	goal := numeric.NewScaledLe(2, key("i"), 0, "", key("n"), 0)
+	if got := b.Entails(goal); got != decision.Valid {
+		t.Fatalf("expected Valid for 2i <= n, got %s", got)
+	}
+}
+
+func TestLinearBackendScaledBoundProvesUnitBound(t *testing.T) {
+	// 2i <= n and i >= 0 prove i <= n, since i <= 2i <= n.
+	b := NewLinearBackend()
+	assertAll(b,
+		numeric.NewScaledLe(2, key("i"), 0, "", key("n"), 0),
+		numeric.GeConst{X: key("i"), C: 0},
+	)
+	if got := b.Entails(numeric.Le{X: key("i"), Y: key("n"), C: 0}); got != decision.Valid {
+		t.Fatalf("expected Valid for i <= n, got %s", got)
+	}
+}
+
+func TestLinearBackendScaledBoundUnknownWithoutFloor(t *testing.T) {
+	// 2i <= n alone does not bound i without i >= 0.
+	b := NewLinearBackend()
+	b.Assert(numeric.NewScaledLe(2, key("i"), 0, "", key("n"), 0))
+	if got := b.Entails(numeric.Le{X: key("i"), Y: key("n"), C: 0}); got != decision.Unknown {
+		t.Fatalf("expected Unknown without a floor on i, got %s", got)
+	}
+}
+
+func TestLinearBackendScaledNeverInvalid(t *testing.T) {
+	const big = int64(1) << 62
+	cases := []struct {
+		name     string
+		asserted []numeric.NumericConstraint
+		goal     numeric.NumericConstraint
+	}{
+		{
+			name: "scaled-with-floor",
+			asserted: []numeric.NumericConstraint{
+				numeric.NewScaledLe(2, key("i"), 0, "", key("n"), 0),
+				numeric.GeConst{X: key("i"), C: 0},
+			},
+			goal: numeric.NewScaledLe(2, key("i"), 0, "", key("n"), 0),
+		},
+		{
+			name: "scaled-without-floor",
+			asserted: []numeric.NumericConstraint{
+				numeric.NewScaledLe(2, key("i"), 0, "", key("n"), 0),
+			},
+			goal: numeric.Le{X: key("i"), Y: key("n"), C: 0},
+		},
+		{
+			name: "huge-coefficient-overflow",
+			asserted: []numeric.NumericConstraint{
+				numeric.NewScaledLe(big, key("i"), 0, "", key("n"), 0),
+				numeric.GeConst{X: key("i"), C: -big},
+			},
+			goal: numeric.NewScaledLe(big, key("i"), 0, "", key("n"), big),
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			b := NewLinearBackend()
+			assertAll(b, tc.asserted...)
+			if got := b.Entails(tc.goal); got == decision.Invalid {
+				t.Fatalf("scaled backend must never return Invalid, got %s", got)
+			}
+		})
+	}
+}
+
 func TestPortfolioSumEntailment(t *testing.T) {
 	asserted := []numeric.NumericConstraint{
 		numeric.NewSumLe(key("i"), key("j"), key("n"), 0),

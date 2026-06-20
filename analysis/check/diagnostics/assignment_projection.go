@@ -456,51 +456,80 @@ func definitelyDenseArrayDiagnosticType(t typ.Type, depth int) bool {
 }
 
 func symbolicIndexReadProvenInRange(result *body.Result, point cfg.Point, index ast.Expr, containerPath pathdom.Path) bool {
-	basePath, offset, ok := indexLinearTerm(result, index)
+	basePath, coeff, offset, ok := indexLinearTerm(result, index)
 	if !ok || basePath.IsEmpty() {
 		return false
 	}
-	// Upper bound: base + offset <= len(container). The difference-logic solver
-	// proves transitive and cross-variable bounds; the simple index-in-range
-	// proof is the fast path for a bare index.
-	inRange := result.DiffProvesIndexLELength(point, basePath, offset, containerPath)
-	if !inRange && offset == 0 {
+	// Upper bound: coeff*base + offset <= len(container). The difference-logic
+	// solver proves transitive, cross-variable, and scaled bounds; the simple
+	// index-in-range proof is the fast path for a bare index.
+	inRange := result.DiffProvesIndexLELength(point, basePath, coeff, offset, containerPath)
+	if !inRange && coeff == 1 && offset == 0 {
 		inRange = result.IndexInRangeAtBoundary(point, basePath, containerPath)
 	}
 	if !inRange {
 		return false
 	}
-	// Positivity: base + offset >= 1.
+	// Positivity: coeff*base + offset >= 1.
 	floor, ok := result.NumericFloorAtBoundary(point, basePath)
-	return ok && floor+offset >= 1
+	return ok && coeff > 0 && coeff*floor+offset >= 1
 }
 
-// indexLinearTerm parses an index expression into a base path plus a constant
-// offset: i is (i, 0), i + 1 is (i, 1), i - 1 is (i, -1).
-func indexLinearTerm(result *body.Result, index ast.Expr) (pathdom.Path, int64, bool) {
+// indexLinearTerm parses an index expression into a base path with a positive
+// coefficient and a constant offset: i is (i, 1, 0), i + 1 is (i, 1, 1), 2*i is
+// (i, 2, 0), 2*i + 1 is (i, 2, 1).
+func indexLinearTerm(result *body.Result, index ast.Expr) (pathdom.Path, int64, int64, bool) {
 	if e, ok := index.(*ast.ArithmeticOpExpr); ok {
-		if e.Operator != "+" && e.Operator != "-" {
-			return pathdom.Path{}, 0, false
-		}
-		if p, ok := result.ExpressionPath(e.Lhs); ok && !p.IsEmpty() {
-			if c, ok := indexConstOperand(e.Rhs); ok {
-				if e.Operator == "-" {
-					c = -c
+		switch e.Operator {
+		case "+", "-":
+			if base, coeff, ok := indexScaledPath(result, e.Lhs); ok {
+				if c, ok := indexConstOperand(e.Rhs); ok {
+					if e.Operator == "-" {
+						c = -c
+					}
+					return base, coeff, c, true
 				}
+			}
+			if e.Operator == "+" {
+				if base, coeff, ok := indexScaledPath(result, e.Rhs); ok {
+					if c, ok := indexConstOperand(e.Lhs); ok {
+						return base, coeff, c, true
+					}
+				}
+			}
+			return pathdom.Path{}, 0, 0, false
+		case "*":
+			if base, coeff, ok := indexScaledPath(result, e); ok {
+				return base, coeff, 0, true
+			}
+			return pathdom.Path{}, 0, 0, false
+		}
+		return pathdom.Path{}, 0, 0, false
+	}
+	if p, ok := result.ExpressionPath(index); ok && !p.IsEmpty() {
+		return p, 1, 0, true
+	}
+	return pathdom.Path{}, 0, 0, false
+}
+
+// indexScaledPath parses a bare path i or a positive scaled path c*i / i*c into
+// its base path and coefficient. A non-product path has coefficient 1.
+func indexScaledPath(result *body.Result, expr ast.Expr) (pathdom.Path, int64, bool) {
+	if e, ok := expr.(*ast.ArithmeticOpExpr); ok && e.Operator == "*" {
+		if c, ok := indexConstOperand(e.Lhs); ok && c > 0 {
+			if p, ok := result.ExpressionPath(e.Rhs); ok && !p.IsEmpty() {
 				return p, c, true
 			}
 		}
-		if e.Operator == "+" {
-			if p, ok := result.ExpressionPath(e.Rhs); ok && !p.IsEmpty() {
-				if c, ok := indexConstOperand(e.Lhs); ok {
-					return p, c, true
-				}
+		if c, ok := indexConstOperand(e.Rhs); ok && c > 0 {
+			if p, ok := result.ExpressionPath(e.Lhs); ok && !p.IsEmpty() {
+				return p, c, true
 			}
 		}
 		return pathdom.Path{}, 0, false
 	}
-	if p, ok := result.ExpressionPath(index); ok && !p.IsEmpty() {
-		return p, 0, true
+	if p, ok := result.ExpressionPath(expr); ok && !p.IsEmpty() {
+		return p, 1, true
 	}
 	return pathdom.Path{}, 0, false
 }

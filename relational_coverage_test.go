@@ -99,6 +99,18 @@ var relationalCorpus = []relationalCase{
 			return 0
 		end return f`,
 	},
+	{
+		// Scaled coefficient: 2*i <= #xs with i >= 1 proves xs[2*i] in range. The
+		// linear certificate backend normalizes the scaled term; the parser carries
+		// the coefficient through to the lane and the read goal.
+		name:    "scaled-index-upper-bound",
+		solver:  "linear certificate (scaled coefficient)",
+		narrows: true,
+		src: `local function f(xs: {number}, i: number): number
+			if i >= 1 and 2 * i <= #xs then local v: number = xs[2 * i] return v end
+			return 0
+		end return f`,
+	},
 }
 
 // relationalReadNarrows reports whether src checks clean: a clean check means the

@@ -107,14 +107,17 @@ func applyBranchDiffConstraint(
 	if !ok {
 		return out
 	}
+	var hi2Key pathdom.PathKey
+	coHi2 := fact.CoHi2()
 	if fact.HasHi2() {
-		hi2Key, ok := diffOperandKey(resolver, ctx.Edge.From, fact.Hi2Path(), fact.Hi2IsLength())
+		hi2Key, ok = diffOperandKey(resolver, ctx.Edge.From, fact.Hi2Path(), fact.Hi2IsLength())
 		if !ok {
 			return out
 		}
-		return out.WriteSumConstraint(hiKey, hi2Key, loKey, fact.C())
+	} else {
+		coHi2 = 0
 	}
-	return out.WriteDiffConstraint(hiKey, loKey, fact.C())
+	return out.WriteScaledConstraint(fact.CoHi(), hiKey, coHi2, hi2Key, loKey, fact.C())
 }
 
 func diffOperandKey(resolver *visibility.Resolver, point cfg.Point, p pathdom.Path, isLength bool) (pathdom.PathKey, bool) {

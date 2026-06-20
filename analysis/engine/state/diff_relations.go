@@ -8,13 +8,21 @@ import (
 // on this path. A length operand is spelled with LengthRelKey(arrayKey). It is a
 // thin wrapper over the generalized relation lane with an empty B operand.
 func (s State) WriteDiffConstraint(hi, lo pathdom.PathKey, c int64) State {
-	return s.writeRelConstraint(RelConstraint{A: hi, C: lo, K: c})
+	return s.writeRelConstraint(RelConstraint{CoA: 1, A: hi, C: lo, K: c})
 }
 
 // WriteSumConstraint records value(a) + value(b) - value(c) <= k as a must-fact
 // proven on this path. A length operand is spelled with LengthRelKey(arrayKey).
 func (s State) WriteSumConstraint(a, b, c pathdom.PathKey, k int64) State {
-	return s.writeRelConstraint(RelConstraint{A: a, B: b, C: c, K: k})
+	return s.writeRelConstraint(RelConstraint{CoA: 1, A: a, CoB: 1, B: b, C: c, K: k})
+}
+
+// WriteScaledConstraint records coA*value(a) + coB*value(b) - value(c) <= k as a
+// must-fact proven on this path, the scaled form of WriteSumConstraint. An empty
+// b drops the second positive term, giving coA*value(a) - value(c) <= k. A length
+// operand is spelled with LengthRelKey(arrayKey).
+func (s State) WriteScaledConstraint(coA int64, a pathdom.PathKey, coB int64, b pathdom.PathKey, c pathdom.PathKey, k int64) State {
+	return s.writeRelConstraint(RelConstraint{CoA: coA, A: a, CoB: coB, B: b, C: c, K: k})
 }
 
 func (s State) writeRelConstraint(c RelConstraint) State {
@@ -67,6 +75,12 @@ func relConstraintLess(a, b RelConstraint) bool {
 	}
 	if a.C != b.C {
 		return a.C < b.C
+	}
+	if a.CoA != b.CoA {
+		return a.CoA < b.CoA
+	}
+	if a.CoB != b.CoB {
+		return a.CoB < b.CoB
 	}
 	return a.K < b.K
 }

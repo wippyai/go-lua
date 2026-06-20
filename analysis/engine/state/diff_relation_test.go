@@ -38,6 +38,26 @@ func TestSumConstraintWriteAndSnapshot(t *testing.T) {
 	}
 }
 
+func TestScaledConstraintWriteAndSnapshot(t *testing.T) {
+	s := State{}.reachable()
+	// 2*i <= len(xs), captured as 2*i - len(xs) <= 0.
+	s = s.WriteScaledConstraint(2, diffKey("i"), 0, "", LengthRelKey("xs"), 0)
+	snap := s.RelConstraints()
+	if len(snap.Constraints) != 1 {
+		t.Fatalf("want 1 constraint, got %d: %+v", len(snap.Constraints), snap.Constraints)
+	}
+	c := snap.Constraints[0]
+	if c.CoA != 2 || c.A != diffKey("i") || c.B != "" || c.C != LengthRelKey("xs") || c.K != 0 {
+		t.Fatalf("unexpected scaled constraint: %+v", c)
+	}
+	// WriteSumConstraint defaults coefficients to 1.
+	u := State{}.reachable().WriteSumConstraint(diffKey("i"), diffKey("j"), LengthRelKey("xs"), 0)
+	uc := u.RelConstraints().Constraints[0]
+	if uc.CoA != 1 || uc.CoB != 1 {
+		t.Fatalf("sum constraint should default coefficients to 1, got %+v", uc)
+	}
+}
+
 func TestDiffConstraintJoinIsIntersection(t *testing.T) {
 	dom := Domain(standard.Registry())
 	a := State{}.reachable().WriteDiffConstraint(diffKey("i"), diffKey("j"), -1).

@@ -20,8 +20,9 @@ import (
 // # Supported Constraints
 //
 //   - Comparisons: [Le] (x-y≤c), [Lt] (x<y), [Ge] (x≥y), [Gt] (x>y), [Eq] (x==y)
-//   - Bounded affine: [SumLe] (x+y-z≤c), a 3-term relation between two positive
-//     operands and one negative operand
+//   - Bounded affine: [SumLe] (coX·x+coY·y-z≤c), a relation between two
+//     positive operands (with positive coefficients) and one negative
+//     unit-coefficient operand; a unit [NewSumLe] or scaled [NewScaledLe]
 //   - Constants: [EqConst] (x==c), [LeConst] (x≤c), [GeConst] (x≥c)
 //   - Modular: [ModEq] (x%m==r)
 //   - Symbolic: [LeLenOf] (x≤len(arr)+c)
@@ -78,34 +79,61 @@ func (c Le) Equals(o NumericConstraint) bool {
 	return ok && c.X == other.X && c.Y == other.Y && c.C == other.C
 }
 
-// SumLe represents value(X) + value(Y) - value(Z) <= C, a bounded 3-term affine
-// relation between two positive operands and one negative operand. X and Y are
-// canonicalized into a deterministic order by NewSumLe so commutative sums dedup.
+// SumLe represents CoX*value(X) + CoY*value(Y) - value(Z) <= C, a bounded affine
+// relation between two positive operands (with positive coefficients CoX, CoY)
+// and one negative unit-coefficient operand. The two (Co,Key) positive pairs are
+// canonicalized into a deterministic order by the constructors so commutative
+// sums dedup. An empty Y means the second positive term is absent (CoY ignored).
 type SumLe struct {
-	X pathdom.PathKey
-	Y pathdom.PathKey
-	Z pathdom.PathKey
-	C int64
+	CoX int64
+	X   pathdom.PathKey
+	CoY int64
+	Y   pathdom.PathKey
+	Z   pathdom.PathKey
+	C   int64
 }
 
-// NewSumLe builds value(x) + value(y) - value(z) <= c, canonicalizing the two
-// positive operands x and y into a deterministic order so x+y and y+x dedup.
+// NewSumLe builds value(x) + value(y) - value(z) <= c with unit coefficients,
+// canonicalizing the two positive operands x and y into a deterministic order so
+// x+y and y+x dedup.
 func NewSumLe(x, y, z pathdom.PathKey, c int64) SumLe {
-	if y < x {
-		x, y = y, x
-	}
-	return SumLe{X: x, Y: y, Z: z, C: c}
+	return NewScaledLe(1, x, 1, y, z, c)
 }
 
-func (c SumLe) NumKind() NumKind        { return NumSumLe }
-func (c SumLe) Keys() []pathdom.PathKey { return []pathdom.PathKey{c.X, c.Y, c.Z} }
+// NewScaledLe builds coX*value(x) + coY*value(y) - value(z) <= c, canonicalizing
+// the two positive (coefficient, key) pairs into a deterministic order so
+// commutative sums dedup. An empty y drops the second positive term.
+func NewScaledLe(coX int64, x pathdom.PathKey, coY int64, y pathdom.PathKey, z pathdom.PathKey, c int64) SumLe {
+	if y != "" && positiveTermLess(coY, y, coX, x) {
+		coX, x, coY, y = coY, y, coX, x
+	}
+	return SumLe{CoX: coX, X: x, CoY: coY, Y: y, Z: z, C: c}
+}
+
+// positiveTermLess orders (co1,k1) before (co2,k2) by key first, then coefficient,
+// so the two positive operands canonicalize deterministically.
+func positiveTermLess(co1 int64, k1 pathdom.PathKey, co2 int64, k2 pathdom.PathKey) bool {
+	if k1 != k2 {
+		return k1 < k2
+	}
+	return co1 < co2
+}
+
+func (c SumLe) NumKind() NumKind { return NumSumLe }
+func (c SumLe) Keys() []pathdom.PathKey {
+	if c.Y == "" {
+		return []pathdom.PathKey{c.X, c.Z}
+	}
+	return []pathdom.PathKey{c.X, c.Y, c.Z}
+}
 func (c SumLe) Hash() uint64 {
-	h := hashNumConstraint(c.NumKind(), c.X, c.Y, c.C)
+	h := hashNumConstraint(c.NumKind(), c.X, c.Y, c.C, c.CoX, c.CoY)
 	return internal.MixHash(h, internal.FnvString(string(c.Z)))
 }
 func (c SumLe) Equals(o NumericConstraint) bool {
 	other, ok := o.(SumLe)
-	return ok && c.X == other.X && c.Y == other.Y && c.Z == other.Z && c.C == other.C
+	return ok && c.CoX == other.CoX && c.X == other.X && c.CoY == other.CoY &&
+		c.Y == other.Y && c.Z == other.Z && c.C == other.C
 }
 
 // Lt represents x < y.

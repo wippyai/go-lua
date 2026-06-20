@@ -3,6 +3,7 @@ package transferfacts
 import (
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
+	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/lua/pathexpr"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
 	"github.com/wippyai/go-lua/compiler/ast"
@@ -36,9 +37,11 @@ func conjunctComparisons(expr ast.Expr) []*ast.RelationalOpExpr {
 	return nil
 }
 
-// linearTerm is value(path) + offset, or len(path) + offset when isLength, or a
-// bare constant when !hasPath.
+// linearTerm is coeff*value(path) + offset, or coeff*len(path) + offset when
+// isLength, or a bare constant when !hasPath. coeff is 1 unless a constant
+// multiplies a value path; a coefficient on a length term is out of scope.
 type linearTerm struct {
+	coeff    int64
 	path     path.Path
 	isLength bool
 	offset   int64
@@ -64,17 +67,52 @@ func (l *lowerer) parseLinearTerm(expr ast.Expr) (linearTerm, bool) {
 		if !ok || p.IsEmpty() {
 			return linearTerm{}, false
 		}
-		return linearTerm{path: p, isLength: true, hasPath: true}, true
+		return linearTerm{coeff: 1, path: p, isLength: true, hasPath: true}, true
 	case *ast.ArithmeticOpExpr:
-		if e.Operator != "+" && e.Operator != "-" {
-			break
+		switch e.Operator {
+		case "+", "-":
+			return l.parseArithmeticTerm(e)
+		case "*":
+			return l.parseProductTerm(e)
 		}
-		return l.parseArithmeticTerm(e)
+		return linearTerm{}, false
 	}
 	if p, ok := pathexpr.Resolve(expr, l.bindings); ok && !p.IsEmpty() {
-		return linearTerm{path: p, hasPath: true}, true
+		return linearTerm{coeff: 1, path: p, hasPath: true}, true
 	}
 	return linearTerm{}, false
+}
+
+// parseProductTerm handles a positive integer constant times a pure value path,
+// const * path or path * const, yielding coeff*value(path). It rejects products
+// of two paths, a coefficient on a length term, and a non-positive constant.
+func (l *lowerer) parseProductTerm(e *ast.ArithmeticOpExpr) (linearTerm, bool) {
+	if c, ok := integerConstExpr(e.Lhs); ok {
+		return scaledPathTerm(c, e.Rhs, l.bindings)
+	}
+	if c, ok := integerConstExpr(e.Rhs); ok {
+		return scaledPathTerm(c, e.Lhs, l.bindings)
+	}
+	return linearTerm{}, false
+}
+
+func integerConstExpr(expr ast.Expr) (int64, bool) {
+	num, ok := expr.(*ast.NumberExpr)
+	if !ok {
+		return 0, false
+	}
+	return numparse.ParseIntegerLiteral(num.Value)
+}
+
+func scaledPathTerm(coeff int64, pathExpr ast.Expr, bindings *bind.Result) (linearTerm, bool) {
+	if coeff <= 0 {
+		return linearTerm{}, false
+	}
+	p, ok := pathexpr.Resolve(pathExpr, bindings)
+	if !ok || p.IsEmpty() {
+		return linearTerm{}, false
+	}
+	return linearTerm{coeff: coeff, path: p, hasPath: true}, true
 }
 
 // parseArithmeticTerm handles base +/- const and const + base (a single path
@@ -111,8 +149,9 @@ type sumTerm struct {
 }
 
 // parseSumTerm parses expr as a two-path sum t1 + t2 (each a pure value or
-// length path term with at most a constant offset). It rejects sums of three or
-// more paths, products, and any side that is not a pure path term.
+// length path term, optionally scaled by a positive constant, with at most a
+// constant offset). It rejects sums of three or more paths and any side that is
+// not a pure path term, so 2*i + 3*j is accepted while a bare product is not.
 func (l *lowerer) parseSumTerm(expr ast.Expr) (sumTerm, bool) {
 	e, ok := expr.(*ast.ArithmeticOpExpr)
 	if !ok || e.Operator != "+" {
@@ -142,24 +181,43 @@ func (l *lowerer) diffConstraintsFromComparison(cmp *ast.RelationalOpExpr) []fac
 	if !aOK || !bOK || !a.hasPath || !b.hasPath {
 		return nil
 	}
-	le := func(hi, lo linearTerm, strict bool) factflow.BranchDiffConstraint {
+	// The lower/bound side stays unit-coefficient; a scaled bound term is out of
+	// scope. The upper side may carry a positive coefficient on a value path.
+	le := func(hi, lo linearTerm, strict bool) (factflow.BranchDiffConstraint, bool) {
+		if lo.coeff != 1 || (hi.isLength && hi.coeff != 1) {
+			return factflow.BranchDiffConstraint{}, false
+		}
 		c := lo.offset - hi.offset
 		if strict {
 			c--
 		}
-		return factflow.NewBranchDiffConstraint(hi.path, hi.isLength, lo.path, lo.isLength, c)
+		return factflow.NewBranchScaledConstraint(hi.coeff, hi.path, hi.isLength, 0, path.Path{}, false, lo.path, lo.isLength, c), true
+	}
+	emit := func(hi, lo linearTerm, strict bool) []factflow.BranchDiffConstraint {
+		fact, ok := le(hi, lo, strict)
+		if !ok {
+			return nil
+		}
+		return []factflow.BranchDiffConstraint{fact}
 	}
 	switch cmp.Operator {
 	case "<=":
-		return []factflow.BranchDiffConstraint{le(a, b, false)}
+		return emit(a, b, false)
 	case "<":
-		return []factflow.BranchDiffConstraint{le(a, b, true)}
+		return emit(a, b, true)
 	case ">=":
-		return []factflow.BranchDiffConstraint{le(b, a, false)}
+		return emit(b, a, false)
 	case ">":
-		return []factflow.BranchDiffConstraint{le(b, a, true)}
+		return emit(b, a, true)
 	case "==":
-		return []factflow.BranchDiffConstraint{le(a, b, false), le(b, a, false)}
+		var out []factflow.BranchDiffConstraint
+		if fact, ok := le(a, b, false); ok {
+			out = append(out, fact)
+		}
+		if fact, ok := le(b, a, false); ok {
+			out = append(out, fact)
+		}
+		return out
 	}
 	return nil
 }
@@ -184,13 +242,19 @@ func (l *lowerer) sumConstraintsFromComparison(cmp *ast.RelationalOpExpr) ([]fac
 	if !otherOK || !other.hasPath {
 		return nil, false
 	}
-	// sumLe builds sum - other <= k for value(t1)+value(t2)+sum.offset (op) value(other)+other.offset.
+	// The bound side stays unit-coefficient; a scaled length term on either
+	// positive operand is out of scope.
+	if other.coeff != 1 || (sum.t1.isLength && sum.t1.coeff != 1) || (sum.t2.isLength && sum.t2.coeff != 1) {
+		return nil, false
+	}
+	// sumLe builds coHi*sum.t1 + coHi2*sum.t2 - other <= k for the two positive
+	// operands against value(other)+other.offset.
 	sumLe := func(strict bool) factflow.BranchDiffConstraint {
 		k := other.offset - sum.offset
 		if strict {
 			k--
 		}
-		return factflow.NewBranchSumConstraint(sum.t1.path, sum.t1.isLength, sum.t2.path, sum.t2.isLength, other.path, other.isLength, k)
+		return factflow.NewBranchScaledConstraint(sum.t1.coeff, sum.t1.path, sum.t1.isLength, sum.t2.coeff, sum.t2.path, sum.t2.isLength, other.path, other.isLength, k)
 	}
 	upper := func(op string) bool {
 		switch op {

@@ -7,19 +7,21 @@ import (
 )
 
 // RelConstraint records relational evidence proven on all paths reaching this
-// state: value(A) + value(B) - value(C) <= K. When B is empty it is an ordinary
-// two-term difference value(A) - value(C) <= K; when B is set it is a bounded
-// three-term affine relation between two positive operands and one negative
-// operand. An array length operand uses LengthRelKey(arrayKey), so guards like
-// i < j, i + 1 <= #xs, #a == #b, and i + j <= #xs are all captured as relations
-// between value and length nodes. The lane is a must-set: join is intersection,
-// so it carries only facts proven on every incoming edge and converges without
-// weight widening.
+// state: CoA*value(A) + CoB*value(B) - value(C) <= K. When B is empty it is an
+// ordinary difference CoA*value(A) - value(C) <= K; when B is set it is a bounded
+// affine relation between two positive operands (with positive coefficients) and
+// one negative unit-coefficient operand. An array length operand uses
+// LengthRelKey(arrayKey), so guards like i < j, i + 1 <= #xs, #a == #b,
+// i + j <= #xs, and 2*i <= #xs are all captured as relations between value and
+// length nodes. The lane is a must-set: join is intersection, so it carries only
+// facts proven on every incoming edge and converges without weight widening.
 type RelConstraint struct {
-	A pathdom.PathKey
-	B pathdom.PathKey
-	C pathdom.PathKey
-	K int64
+	CoA int64
+	A   pathdom.PathKey
+	CoB int64
+	B   pathdom.PathKey
+	C   pathdom.PathKey
+	K   int64
 }
 
 // lengthRelPrefix marks a length node in the difference graph. It is not a valid
@@ -61,8 +63,9 @@ func (l diffRelationLane) add(c RelConstraint) (diffRelationLane, bool) {
 		return l, false
 	}
 	if c.B != "" {
-		if c.A > c.B {
+		if c.A > c.B || (c.A == c.B && c.CoA > c.CoB) {
 			c.A, c.B = c.B, c.A
+			c.CoA, c.CoB = c.CoB, c.CoA
 		}
 	}
 	lane, changed := l.mustSetLane.insert(c)

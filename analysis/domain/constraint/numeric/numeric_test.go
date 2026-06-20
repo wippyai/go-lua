@@ -225,6 +225,66 @@ func TestSumLe(t *testing.T) {
 	}
 }
 
+func TestScaledLe(t *testing.T) {
+	i := pathdom.PathKey("i")
+	j := pathdom.PathKey("j")
+	n := pathdom.PathKey("n")
+
+	c := NewScaledLe(2, i, 3, j, n, 0)
+
+	if c.NumKind() != NumSumLe {
+		t.Errorf("expected NumSumLe, got %v", c.NumKind())
+	}
+
+	keys := c.Keys()
+	if len(keys) != 3 {
+		t.Fatalf("expected 3 keys, got %d", len(keys))
+	}
+	if keys[2] != n {
+		t.Errorf("third key should be the negative operand z, got %v", keys[2])
+	}
+
+	if c.Hash() == 0 {
+		t.Error("hash should be non-zero")
+	}
+
+	// Commutative scaled operands canonicalize: 2i+3j equals 3j+2i.
+	if !c.Equals(NewScaledLe(3, j, 2, i, n, 0)) {
+		t.Error("ScaledLe(2,i,3,j,n) should equal canonicalized ScaledLe(3,j,2,i,n)")
+	}
+	if c.Hash() != NewScaledLe(3, j, 2, i, n, 0).Hash() {
+		t.Error("canonicalized commutative scaled sums should hash equally")
+	}
+
+	// Coefficients are part of identity.
+	if c.Equals(NewScaledLe(2, i, 2, j, n, 0)) {
+		t.Error("different CoY should not be equal")
+	}
+	if c.Equals(NewScaledLe(1, i, 3, j, n, 0)) {
+		t.Error("different CoX should not be equal")
+	}
+
+	// A unit NewSumLe is the CoX=CoY=1 special case.
+	unit := NewSumLe(i, j, n, 0)
+	if unit.CoX != 1 || unit.CoY != 1 {
+		t.Errorf("NewSumLe should default coefficients to 1, got CoX=%d CoY=%d", unit.CoX, unit.CoY)
+	}
+}
+
+func TestScaledLeAbsentSecondOperand(t *testing.T) {
+	i := pathdom.PathKey("i")
+	n := pathdom.PathKey("n")
+
+	c := NewScaledLe(2, i, 0, "", n, 0)
+	keys := c.Keys()
+	if len(keys) != 2 || keys[0] != i || keys[1] != n {
+		t.Fatalf("absent second operand should yield 2 keys, got %#v", keys)
+	}
+	if !c.Equals(NewScaledLe(2, i, 0, "", n, 0)) {
+		t.Error("equal scaled constraints should be equal")
+	}
+}
+
 func TestNumericConstraintHashUniqueness(t *testing.T) {
 	x := pathdom.PathKey("x")
 	y := pathdom.PathKey("y")
