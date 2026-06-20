@@ -4,6 +4,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/access"
 	"github.com/wippyai/go-lua/analysis/type/ambient"
 	"github.com/wippyai/go-lua/analysis/type/subst"
+	"github.com/wippyai/go-lua/analysis/type/stringlib"
 	"github.com/wippyai/go-lua/analysis/type/subtype"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/unwrap"
@@ -211,18 +212,11 @@ func stringMethod(name string, receiver typ.Type) (typ.Type, bool) {
 	if receiver == nil || !subtype.IsSubtype(receiver, typ.String) {
 		return nil, false
 	}
-	switch name {
-	case "byte", "char", "dump", "find", "format", "gmatch", "gsub", "len",
-		"lower", "match", "pack", "packsize", "rep", "reverse", "sub", "unpack",
-		"upper":
-		return typ.Func().
-			Param("self", typ.String).
-			Variadic(typ.Any).
-			Returns(typ.Any).
-			Build(), true
-	default:
+	fn, ok := stringlib.Method(name)
+	if !ok {
 		return nil, false
 	}
+	return fn, true
 }
 
 func ambientChannelMethod(receiver typ.Type, name string, depth int) (typ.Type, bool) {

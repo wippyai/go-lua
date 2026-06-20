@@ -41,19 +41,21 @@ var inferableCorpus = []inferenceCase{
 	{"boolean-not", `local function neg(b: boolean) return not b end return neg`},
 	{"annotated-param", `local function add(a: number, b: number) return a + b end return add`},
 	{"guard-index-narrow", `local function at(xs: {number}, i: number) if i >= 1 and i <= #xs then return xs[i] end return 0 end return at`},
+	{"string-method", `local s = ("hello"):upper() return s`},
+	{"string-method-chain", `local s = ("hi"):upper():lower() return s`},
+	{"string-method-len", `local n = ("hello"):len() return n`},
+	{"string-method-on-var", `local function up(x: string) return x:upper() end return up`},
 }
 
 // frontierCorpus holds programs at the current inference frontier: a bare
 // parameter used only in its body (no call-site, no annotation) is left unknown,
-// which is the SOUND choice (x in `x + 1` could carry an __add metatable), and a
-// string-library method whose return type is not yet modeled. These are measured
-// and reported but not asserted, documenting the honest frontier rather than
-// demanding unsound over-narrowing.
+// which is the SOUND choice (x in `x + 1` could carry an __add metatable). These
+// are measured and reported but not asserted, documenting the honest frontier
+// rather than demanding unsound over-narrowing.
 var frontierCorpus = []inferenceCase{
 	{"bare-param-arith", `local function f(x) return x + 1 end return f`},
 	{"bare-param-concat", `local function f(s) return s .. "!" end return f`},
 	{"closure-capture", `local base = 10 local function add(x) return x + base end return add`},
-	{"string-method-return", `local s = ("hello"):upper() return s`},
 }
 
 // countTypeNodes recursively counts type nodes and the subset that are unknown or

@@ -17,6 +17,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/module/signature"
 	"github.com/wippyai/go-lua/analysis/type/normalize"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
+	"github.com/wippyai/go-lua/analysis/type/stringlib"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
@@ -333,129 +334,7 @@ var registry = map[string]signature.Function{
 		ownership.BorrowAll{},
 	),
 
-	// string library.
-	"string.byte": sig(
-		typ.Func().
-			Param("s", typ.String).
-			OptParam("i", typ.Integer).
-			OptParam("j", typ.Integer).
-			Returns(typ.Integer).
-			Build(),
-	),
-	"string.char": sig(
-		typ.Func().
-			Variadic(typ.Integer).
-			Returns(typ.String).
-			Build(),
-	),
-	"string.dump": sig(
-		typ.Func().
-			Param("function", typ.Any).
-			OptParam("strip", typ.Boolean).
-			Returns(typ.String).
-			Build(),
-	),
-	"string.find": sig(
-		typ.Func().
-			Param("s", typ.String).
-			Param("pattern", typ.String).
-			OptParam("init", typ.Integer).
-			OptParam("plain", typ.Boolean).
-			Returns(normalize.Optional(typ.Integer), normalize.Optional(typ.Integer)).
-			Build(),
-	),
-	"string.format": sig(
-		typ.Func().
-			Param("formatstring", typ.String).
-			Variadic(typ.Any).
-			Returns(typ.String).
-			Build(),
-	),
-	"string.gmatch": sig(
-		typ.Func().
-			Param("s", typ.String).
-			Param("pattern", typ.String).
-			Returns(typ.Any).
-			Build(),
-	),
-	"string.gsub": sig(
-		typ.Func().
-			Param("s", typ.String).
-			Param("pattern", typ.String).
-			Param("repl", typ.Any).
-			OptParam("n", typ.Integer).
-			Returns(typ.String, typ.Integer).
-			Build(),
-	),
-	"string.len": sig(
-		typ.Func().
-			Param("s", typ.String).
-			Returns(typ.Integer).
-			Build(),
-	),
-	"string.lower": sig(
-		typ.Func().
-			Param("s", typ.String).
-			Returns(typ.String).
-			Build(),
-	),
-	"string.match": sig(
-		typ.Func().
-			Param("s", typ.String).
-			Param("pattern", typ.String).
-			OptParam("init", typ.Integer).
-			Returns(normalize.Optional(typ.String)).
-			Build(),
-	),
-	"string.pack": sig(
-		typ.Func().
-			Param("fmt", typ.String).
-			Variadic(typ.Any).
-			Returns(typ.String).
-			Build(),
-	),
-	"string.packsize": sig(
-		typ.Func().
-			Param("fmt", typ.String).
-			Returns(typ.Integer).
-			Build(),
-	),
-	"string.rep": sig(
-		typ.Func().
-			Param("s", typ.String).
-			Param("n", typ.Integer).
-			OptParam("sep", typ.String).
-			Returns(typ.String).
-			Build(),
-	),
-	"string.reverse": sig(
-		typ.Func().
-			Param("s", typ.String).
-			Returns(typ.String).
-			Build(),
-	),
-	"string.sub": sig(
-		typ.Func().
-			Param("s", typ.String).
-			Param("i", typ.Integer).
-			OptParam("j", typ.Integer).
-			Returns(typ.String).
-			Build(),
-	),
-	"string.unpack": sig(
-		typ.Func().
-			Param("fmt", typ.String).
-			Param("s", typ.String).
-			OptParam("pos", typ.Integer).
-			Returns(typ.Any).
-			Build(),
-	),
-	"string.upper": sig(
-		typ.Func().
-			Param("s", typ.String).
-			Returns(typ.String).
-			Build(),
-	),
+		// string library: see init() below, populated from type/stringlib (single source).
 
 	// math library.
 	"math.abs":   sig(typ.Func().Param("x", typ.Number).Returns(typ.Number).Build()),
@@ -576,6 +455,16 @@ var registry = map[string]signature.Function{
 }
 
 // Lookup returns a cloned effect signature for a known stdlib function name.
+// init registers the string-library methods from the canonical type/stringlib
+// table as string.<name> global signatures, so the global call and the colon
+// method resolve from one source.
+func init() {
+	for _, name := range stringlib.Names() {
+		fn, _ := stringlib.Method(name)
+		registry["string."+name] = sig(fn)
+	}
+}
+
 func Lookup(name string) (signature.Function, bool) {
 	sig, ok := registry[name]
 	if !ok {
