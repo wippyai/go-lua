@@ -20,6 +20,8 @@ import (
 // # Supported Constraints
 //
 //   - Comparisons: [Le] (x-y≤c), [Lt] (x<y), [Ge] (x≥y), [Gt] (x>y), [Eq] (x==y)
+//   - Bounded affine: [SumLe] (x+y-z≤c), a 3-term relation between two positive
+//     operands and one negative operand
 //   - Constants: [EqConst] (x==c), [LeConst] (x≤c), [GeConst] (x≥c)
 //   - Modular: [ModEq] (x%m==r)
 //   - Symbolic: [LeLenOf] (x≤len(arr)+c)
@@ -50,6 +52,7 @@ const (
 	NumLeLenOf            // x <= len(arr) + offset
 	NumLenLeConst         // len(arr) <= c
 	NumLenGeConst         // len(arr) >= c
+	NumSumLe              // x + y - z <= c
 )
 
 // NumericConstraint is a marker interface for numeric constraints.
@@ -67,12 +70,42 @@ type Le struct {
 	C int64
 }
 
-func (c Le) NumKind() NumKind          { return NumLe }
-func (c Le) Keys() []pathdom.PathKey   { return []pathdom.PathKey{c.X, c.Y} }
-func (c Le) Hash() uint64              { return hashNumConstraint(c.NumKind(), c.X, c.Y, c.C) }
+func (c Le) NumKind() NumKind        { return NumLe }
+func (c Le) Keys() []pathdom.PathKey { return []pathdom.PathKey{c.X, c.Y} }
+func (c Le) Hash() uint64            { return hashNumConstraint(c.NumKind(), c.X, c.Y, c.C) }
 func (c Le) Equals(o NumericConstraint) bool {
 	other, ok := o.(Le)
 	return ok && c.X == other.X && c.Y == other.Y && c.C == other.C
+}
+
+// SumLe represents value(X) + value(Y) - value(Z) <= C, a bounded 3-term affine
+// relation between two positive operands and one negative operand. X and Y are
+// canonicalized into a deterministic order by NewSumLe so commutative sums dedup.
+type SumLe struct {
+	X pathdom.PathKey
+	Y pathdom.PathKey
+	Z pathdom.PathKey
+	C int64
+}
+
+// NewSumLe builds value(x) + value(y) - value(z) <= c, canonicalizing the two
+// positive operands x and y into a deterministic order so x+y and y+x dedup.
+func NewSumLe(x, y, z pathdom.PathKey, c int64) SumLe {
+	if y < x {
+		x, y = y, x
+	}
+	return SumLe{X: x, Y: y, Z: z, C: c}
+}
+
+func (c SumLe) NumKind() NumKind        { return NumSumLe }
+func (c SumLe) Keys() []pathdom.PathKey { return []pathdom.PathKey{c.X, c.Y, c.Z} }
+func (c SumLe) Hash() uint64 {
+	h := hashNumConstraint(c.NumKind(), c.X, c.Y, c.C)
+	return internal.MixHash(h, internal.FnvString(string(c.Z)))
+}
+func (c SumLe) Equals(o NumericConstraint) bool {
+	other, ok := o.(SumLe)
+	return ok && c.X == other.X && c.Y == other.Y && c.Z == other.Z && c.C == other.C
 }
 
 // Lt represents x < y.

@@ -183,6 +183,48 @@ func TestModEq(t *testing.T) {
 	}
 }
 
+func TestSumLe(t *testing.T) {
+	i := pathdom.PathKey("i")
+	j := pathdom.PathKey("j")
+	n := pathdom.PathKey("n")
+
+	c := NewSumLe(i, j, n, 0)
+
+	if c.NumKind() != NumSumLe {
+		t.Errorf("expected NumSumLe, got %v", c.NumKind())
+	}
+
+	keys := c.Keys()
+	if len(keys) != 3 {
+		t.Fatalf("expected 3 keys, got %d", len(keys))
+	}
+	if keys[2] != n {
+		t.Errorf("third key should be the negative operand z, got %v", keys[2])
+	}
+
+	if c.Hash() == 0 {
+		t.Error("hash should be non-zero")
+	}
+
+	// Commutative positive operands canonicalize: i+j and j+i are equal.
+	if !c.Equals(NewSumLe(j, i, n, 0)) {
+		t.Error("SumLe(i,j,n) should equal canonicalized SumLe(j,i,n)")
+	}
+	if c.Hash() != NewSumLe(j, i, n, 0).Hash() {
+		t.Error("canonicalized commutative sums should hash equally")
+	}
+
+	if c.Equals(NewSumLe(i, j, n, 1)) {
+		t.Error("different C should not be equal")
+	}
+	if c.Equals(NewSumLe(i, j, pathdom.PathKey("other"), 0)) {
+		t.Error("different Z should not be equal")
+	}
+	if c.Equals(Le{X: i, Y: j, C: 0}) {
+		t.Error("SumLe should not equal Le")
+	}
+}
+
 func TestNumericConstraintHashUniqueness(t *testing.T) {
 	x := pathdom.PathKey("x")
 	y := pathdom.PathKey("y")
@@ -232,7 +274,7 @@ func TestNumKindValues(t *testing.T) {
 		t.Error("NumInvalid should be 0")
 	}
 
-	kinds := []NumKind{NumLe, NumLt, NumGe, NumGt, NumEq, NumEqConst, NumLeConst, NumGeConst, NumModEq, NumLeLenOf, NumLenLeConst, NumLenGeConst}
+	kinds := []NumKind{NumLe, NumLt, NumGe, NumGt, NumEq, NumEqConst, NumLeConst, NumGeConst, NumModEq, NumLeLenOf, NumLenLeConst, NumLenGeConst, NumSumLe}
 	seen := make(map[NumKind]bool)
 
 	for _, k := range kinds {

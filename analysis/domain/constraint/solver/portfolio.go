@@ -16,9 +16,10 @@ func NewPortfolio(backends ...func() Solver) Portfolio {
 	return Portfolio{backends: backends}
 }
 
-// DefaultPortfolio is the standard portfolio: difference logic only.
+// DefaultPortfolio is the standard portfolio: difference logic first, then the
+// linear-arithmetic backend for goals the cheaper diff theory cannot prove.
 func DefaultPortfolio() Portfolio {
-	return NewPortfolio(NewDiffBackend)
+	return NewPortfolio(NewDiffBackend, NewLinearBackend)
 }
 
 // Entails reports whether asserted entails goal.

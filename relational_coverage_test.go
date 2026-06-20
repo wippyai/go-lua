@@ -85,6 +85,20 @@ var relationalCorpus = []relationalCase{
 			return 0
 		end return f`,
 	},
+	{
+		// Sum bounded by a variable length: i + j <= #xs with j >= 0 proves
+		// i <= #xs. The bound side is the array length, a variable, so the
+		// constraint i + j - #xs <= 0 has three variables and is beyond difference
+		// logic and octagon. The linear certificate backend discharges it by the
+		// non-negative combination (i + j - #xs) + (-j) = i - #xs <= 0.
+		name:    "sum-index-upper-bound",
+		solver:  "linear certificate (Farkas / bounded Fourier-Motzkin)",
+		narrows: true,
+		src: `local function f(xs: {number}, i: number, j: number): number
+			if i >= 1 and j >= 0 and i + j <= #xs then local v: number = xs[i] return v end
+			return 0
+		end return f`,
+	},
 }
 
 // relationalReadNarrows reports whether src checks clean: a clean check means the

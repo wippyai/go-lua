@@ -5,9 +5,20 @@ import (
 )
 
 // WriteDiffConstraint records value(hi) - value(lo) <= c as a must-fact proven
-// on this path. A length operand is spelled with LengthRelKey(arrayKey).
+// on this path. A length operand is spelled with LengthRelKey(arrayKey). It is a
+// thin wrapper over the generalized relation lane with an empty B operand.
 func (s State) WriteDiffConstraint(hi, lo pathdom.PathKey, c int64) State {
-	lane, changed := s.diffRelations.add(DiffConstraint{Hi: hi, Lo: lo, C: c})
+	return s.writeRelConstraint(RelConstraint{A: hi, C: lo, K: c})
+}
+
+// WriteSumConstraint records value(a) + value(b) - value(c) <= k as a must-fact
+// proven on this path. A length operand is spelled with LengthRelKey(arrayKey).
+func (s State) WriteSumConstraint(a, b, c pathdom.PathKey, k int64) State {
+	return s.writeRelConstraint(RelConstraint{A: a, B: b, C: c, K: k})
+}
+
+func (s State) writeRelConstraint(c RelConstraint) State {
+	lane, changed := s.diffRelations.add(c)
 	if !changed {
 		return s
 	}
@@ -16,17 +27,17 @@ func (s State) WriteDiffConstraint(hi, lo pathdom.PathKey, c int64) State {
 	return out
 }
 
-// DiffConstraintsSnapshot is a stable snapshot of the difference-constraint lane.
-type DiffConstraintsSnapshot struct {
+// RelConstraintsSnapshot is a stable snapshot of the relational-constraint lane.
+type RelConstraintsSnapshot struct {
 	Bottom      bool
 	Top         bool
-	Constraints []DiffConstraint
+	Constraints []RelConstraint
 }
 
-// DiffConstraints returns the difference constraints proven at this state.
-func (s State) DiffConstraints() DiffConstraintsSnapshot {
-	bottom, top, items := s.diffRelations.snapshot(diffConstraintLess)
-	return DiffConstraintsSnapshot{Bottom: bottom, Top: top, Constraints: items}
+// RelConstraints returns the relational constraints proven at this state.
+func (s State) RelConstraints() RelConstraintsSnapshot {
+	bottom, top, items := s.diffRelations.snapshot(relConstraintLess)
+	return RelConstraintsSnapshot{Bottom: bottom, Top: top, Constraints: items}
 }
 
 // ClearDiffConstraintsFor drops every constraint mentioning key, whether as a
@@ -47,12 +58,15 @@ func (s State) ClearDiffConstraintsFor(key pathdom.PathKey) State {
 	return out
 }
 
-func diffConstraintLess(a, b DiffConstraint) bool {
-	if a.Hi != b.Hi {
-		return a.Hi < b.Hi
+func relConstraintLess(a, b RelConstraint) bool {
+	if a.A != b.A {
+		return a.A < b.A
 	}
-	if a.Lo != b.Lo {
-		return a.Lo < b.Lo
+	if a.B != b.B {
+		return a.B < b.B
 	}
-	return a.C < b.C
+	if a.C != b.C {
+		return a.C < b.C
+	}
+	return a.K < b.K
 }

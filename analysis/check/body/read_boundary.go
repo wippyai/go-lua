@@ -269,13 +269,37 @@ func (r *Result) DiffProvesIndexLELength(point cfg.Point, indexPath pathdom.Path
 	if indexKey == "" || arrayKey == "" {
 		return false
 	}
-	snap := in.DiffConstraints()
+	snap := in.RelConstraints()
 	if snap.Bottom || len(snap.Constraints) == 0 {
 		return false
 	}
 	asserted := make([]numeric.NumericConstraint, 0, len(snap.Constraints))
+	floorKeys := make(map[pathdom.PathKey]struct{})
+	noteKey := func(k pathdom.PathKey) {
+		if k == "" {
+			return
+		}
+		if _, isLength := state.ArrayKeyOfLengthRel(k); isLength {
+			return
+		}
+		floorKeys[k] = struct{}{}
+	}
 	for _, c := range snap.Constraints {
-		asserted = append(asserted, numeric.Le{X: c.Hi, Y: c.Lo, C: c.C})
+		if c.B == "" {
+			asserted = append(asserted, numeric.Le{X: c.A, Y: c.C, C: c.K})
+		} else {
+			asserted = append(asserted, numeric.NewSumLe(c.A, c.B, c.C, c.K))
+		}
+		noteKey(c.A)
+		noteKey(c.B)
+		noteKey(c.C)
+	}
+	// A value operand's proven numeric floor strengthens the system: a sum bound
+	// i + j <= #xs only proves i <= #xs once j >= 0 is known.
+	for k := range floorKeys {
+		if lo, ok := in.ReadNumFloor(k); ok {
+			asserted = append(asserted, numeric.GeConst{X: k, C: lo})
+		}
 	}
 	// index + offset <= len is proven when index - len <= -offset, i.e. the
 	// goal Le{index, len(array), -offset} is entailed by the lane constraints.

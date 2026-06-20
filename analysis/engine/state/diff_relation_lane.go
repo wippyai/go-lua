@@ -6,16 +6,20 @@ import (
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 )
 
-// DiffConstraint records difference-logic evidence proven on all paths reaching
-// this state: value(Hi) - value(Lo) <= C. An array length operand uses
-// LengthRelKey(arrayKey) so guards like i < j, i + 1 <= #xs, and #a == #b are
-// all captured as constraints between value and length nodes. The lane is a
-// must-set: join is intersection, so it carries only facts proven on every
-// incoming edge and converges without weight widening.
-type DiffConstraint struct {
-	Hi pathdom.PathKey
-	Lo pathdom.PathKey
-	C  int64
+// RelConstraint records relational evidence proven on all paths reaching this
+// state: value(A) + value(B) - value(C) <= K. When B is empty it is an ordinary
+// two-term difference value(A) - value(C) <= K; when B is set it is a bounded
+// three-term affine relation between two positive operands and one negative
+// operand. An array length operand uses LengthRelKey(arrayKey), so guards like
+// i < j, i + 1 <= #xs, #a == #b, and i + j <= #xs are all captured as relations
+// between value and length nodes. The lane is a must-set: join is intersection,
+// so it carries only facts proven on every incoming edge and converges without
+// weight widening.
+type RelConstraint struct {
+	A pathdom.PathKey
+	B pathdom.PathKey
+	C pathdom.PathKey
+	K int64
 }
 
 // lengthRelPrefix marks a length node in the difference graph. It is not a valid
@@ -41,35 +45,42 @@ func ArrayKeyOfLengthRel(key pathdom.PathKey) (pathdom.PathKey, bool) {
 }
 
 type diffRelationLane struct {
-	mustSetLane[DiffConstraint]
+	mustSetLane[RelConstraint]
 }
 
 func diffRelationDomain() lattice.Lattice[diffRelationLane] {
-	return wrapDomain(lift.MustSet[DiffConstraint](), diffRelationLaneFromMustSet, diffRelationLane.asMustSet)
+	return wrapDomain(lift.MustSet[RelConstraint](), diffRelationLaneFromMustSet, diffRelationLane.asMustSet)
 }
 
-func diffRelationLaneFromMustSet(l lift.MustSetLane[DiffConstraint]) diffRelationLane {
+func diffRelationLaneFromMustSet(l lift.MustSetLane[RelConstraint]) diffRelationLane {
 	return diffRelationLane{mustSetLaneFromLift(l)}
 }
 
-func (l diffRelationLane) add(c DiffConstraint) (diffRelationLane, bool) {
-	if c.Hi == "" || c.Lo == "" || c.Hi == c.Lo {
+func (l diffRelationLane) add(c RelConstraint) (diffRelationLane, bool) {
+	if c.A == "" || c.C == "" || c.A == c.C {
 		return l, false
+	}
+	if c.B != "" {
+		if c.A > c.B {
+			c.A, c.B = c.B, c.A
+		}
 	}
 	lane, changed := l.mustSetLane.insert(c)
 	return diffRelationLane{lane}, changed
 }
 
-// clearMatching drops every constraint whose Hi or Lo operand (or the array
+// clearMatching drops every constraint whose A, B, or C operand (or the array
 // behind a length node) matches, used when a path is mutated.
 func (l diffRelationLane) clearMatching(match func(pathdom.PathKey) bool) (diffRelationLane, bool) {
 	if l.bottom || len(l.values) == 0 {
 		return l, false
 	}
-	kept := make(map[DiffConstraint]struct{}, len(l.values))
+	kept := make(map[RelConstraint]struct{}, len(l.values))
 	changed := false
 	for c := range l.values {
-		if diffOperandMatches(c.Hi, match) || diffOperandMatches(c.Lo, match) {
+		if relOperandMatches(c.A, match) ||
+			(c.B != "" && relOperandMatches(c.B, match)) ||
+			relOperandMatches(c.C, match) {
 			changed = true
 			continue
 		}
@@ -81,7 +92,7 @@ func (l diffRelationLane) clearMatching(match func(pathdom.PathKey) bool) (diffR
 	return diffRelationLane{mustSetLaneFromLift(lift.MustSetValues(kept))}, true
 }
 
-func diffOperandMatches(operand pathdom.PathKey, match func(pathdom.PathKey) bool) bool {
+func relOperandMatches(operand pathdom.PathKey, match func(pathdom.PathKey) bool) bool {
 	if match(operand) {
 		return true
 	}

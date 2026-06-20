@@ -108,7 +108,7 @@ func (l *lowerer) branchNumFloorRefinements(fact semantics.BranchConditionFact) 
 }
 
 func (l *lowerer) branchNumFloorRefinement(check branchcond.Check) (factflow.BranchNumFloorRefinement, bool) {
-	if check.Kind != branchcond.CheckNumGe || check.Path.IsEmpty() || check.NumFloor < 1 {
+	if check.Kind != branchcond.CheckNumGe || check.Path.IsEmpty() || check.NumFloor < 0 {
 		return factflow.BranchNumFloorRefinement{}, false
 	}
 	return factflow.NewBranchNumFloorRefinement(check.Path, check.NumFloor), true

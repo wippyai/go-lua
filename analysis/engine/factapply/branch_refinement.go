@@ -107,6 +107,13 @@ func applyBranchDiffConstraint(
 	if !ok {
 		return out
 	}
+	if fact.HasHi2() {
+		hi2Key, ok := diffOperandKey(resolver, ctx.Edge.From, fact.Hi2Path(), fact.Hi2IsLength())
+		if !ok {
+			return out
+		}
+		return out.WriteSumConstraint(hiKey, hi2Key, loKey, fact.C())
+	}
 	return out.WriteDiffConstraint(hiKey, loKey, fact.C())
 }
 

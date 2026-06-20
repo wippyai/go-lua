@@ -398,7 +398,8 @@ func normalizeNumericFloorComparison(expr *ast.RelationalOpExpr, bindings *bind.
 }
 
 // numericFloorOperands matches `path <op> const` and returns the numeric path and
-// the proven lower bound on its value when op establishes a floor of at least 1.
+// the proven lower bound on its value when op establishes a non-negative floor. A
+// floor of 0 (`j >= 0`) feeds relational sum proofs such as i + j <= #xs.
 func numericFloorOperands(numExpr ast.Expr, op string, constExpr ast.Expr, bindings *bind.Result) (path.Path, int64, bool) {
 	numPath, ok := pathexpr.Resolve(numExpr, bindings)
 	if !ok || numPath.IsEmpty() {
@@ -413,7 +414,7 @@ func numericFloorOperands(numExpr ast.Expr, op string, constExpr ast.Expr, bindi
 		return path.Path{}, 0, false
 	}
 	floor, ok := numericFloorForRelop(op, value)
-	if !ok || floor < 1 {
+	if !ok || floor < 0 {
 		return path.Path{}, 0, false
 	}
 	return numPath, floor, true

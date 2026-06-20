@@ -158,31 +158,55 @@ func (r BranchNumFloorRefinement) copy() BranchNumFloorRefinement {
 	return r
 }
 
-// BranchDiffConstraint records a difference-logic fact proven on a branch's true
-// edge: term(Hi) - term(Lo) <= C, where each term is a value path or, when the
-// IsLength flag is set, the length of that array path. It captures relational
-// guards such as i < j, i + 1 <= #xs, and #a == #b for transitive entailment.
+// BranchDiffConstraint records a relational fact proven on a branch's true edge:
+// term(Hi) - term(Lo) <= C, where each term is a value path or, when the IsLength
+// flag is set, the length of that array path. When HasHi2 is set it carries a
+// second positive term and reads term(Hi) + term(Hi2) - term(Lo) <= C, capturing
+// bounded three-term guards such as i + j <= #xs. It captures relational guards
+// like i < j, i + 1 <= #xs, #a == #b, and i + j <= #xs for transitive entailment.
 type BranchDiffConstraint struct {
-	hiPath     path.Path
-	hiIsLength bool
-	loPath     path.Path
-	loIsLength bool
-	c          int64
+	hiPath      path.Path
+	hiIsLength  bool
+	hi2Path     path.Path
+	hi2IsLength bool
+	hasHi2      bool
+	loPath      path.Path
+	loIsLength  bool
+	c           int64
 }
 
-// NewBranchDiffConstraint creates a true-edge difference-logic fact.
+// NewBranchDiffConstraint creates a true-edge two-term difference-logic fact.
 func NewBranchDiffConstraint(hiPath path.Path, hiIsLength bool, loPath path.Path, loIsLength bool, c int64) BranchDiffConstraint {
 	return BranchDiffConstraint{hiPath: hiPath.Clone(), hiIsLength: hiIsLength, loPath: loPath.Clone(), loIsLength: loIsLength, c: c}
 }
 
-func (r BranchDiffConstraint) HiPath() path.Path { return r.hiPath.Clone() }
-func (r BranchDiffConstraint) HiIsLength() bool  { return r.hiIsLength }
-func (r BranchDiffConstraint) LoPath() path.Path { return r.loPath.Clone() }
-func (r BranchDiffConstraint) LoIsLength() bool  { return r.loIsLength }
-func (r BranchDiffConstraint) C() int64          { return r.c }
+// NewBranchSumConstraint creates a true-edge bounded three-term fact:
+// term(hi) + term(hi2) - term(lo) <= c.
+func NewBranchSumConstraint(hiPath path.Path, hiIsLength bool, hi2Path path.Path, hi2IsLength bool, loPath path.Path, loIsLength bool, c int64) BranchDiffConstraint {
+	return BranchDiffConstraint{
+		hiPath:      hiPath.Clone(),
+		hiIsLength:  hiIsLength,
+		hi2Path:     hi2Path.Clone(),
+		hi2IsLength: hi2IsLength,
+		hasHi2:      true,
+		loPath:      loPath.Clone(),
+		loIsLength:  loIsLength,
+		c:           c,
+	}
+}
+
+func (r BranchDiffConstraint) HiPath() path.Path  { return r.hiPath.Clone() }
+func (r BranchDiffConstraint) HiIsLength() bool   { return r.hiIsLength }
+func (r BranchDiffConstraint) Hi2Path() path.Path { return r.hi2Path.Clone() }
+func (r BranchDiffConstraint) Hi2IsLength() bool  { return r.hi2IsLength }
+func (r BranchDiffConstraint) HasHi2() bool       { return r.hasHi2 }
+func (r BranchDiffConstraint) LoPath() path.Path  { return r.loPath.Clone() }
+func (r BranchDiffConstraint) LoIsLength() bool   { return r.loIsLength }
+func (r BranchDiffConstraint) C() int64           { return r.c }
 
 func (r BranchDiffConstraint) copy() BranchDiffConstraint {
 	r.hiPath = r.hiPath.Clone()
+	r.hi2Path = r.hi2Path.Clone()
 	r.loPath = r.loPath.Clone()
 	return r
 }

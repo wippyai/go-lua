@@ -54,4 +54,33 @@ local function mutated(a: {number}, b: {number}, i: number): number
     return 0
 end
 
-return arith, transitive, cross, no_lower, reassigned, mutated
+-- Sum bounded by a variable length: i + j <= #xs with j >= 0 proves i <= #xs.
+-- Beyond difference logic; the linear certificate backend discharges it.
+local function sum(xs: {number}, i: number, j: number): number
+    if i >= 1 and j >= 0 and i + j <= #xs then
+        local v: number = xs[i]
+        return v
+    end
+    return 0
+end
+
+-- Sum proves the other positive operand too: j <= i + j <= #xs with i >= 0.
+local function sum_other(xs: {number}, i: number, j: number): number
+    if i >= 0 and j >= 1 and i + j <= #xs then
+        local v: number = xs[j]
+        return v
+    end
+    return 0
+end
+
+-- Soundness: without j >= 0, i + j <= #xs does not bound i, since j may be
+-- negative. The read must stay optional.
+local function sum_no_floor(xs: {number}, i: number, j: number): number
+    if i >= 1 and i + j <= #xs then
+        local v: number = xs[i] -- expect-error
+        return v
+    end
+    return 0
+end
+
+return arith, transitive, cross, no_lower, reassigned, mutated, sum, sum_other, sum_no_floor
