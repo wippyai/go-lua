@@ -451,10 +451,6 @@ func upsertByTarget[T any](in []T, c T, targetOf func(T) path.Path) []T {
 	return append(in, c)
 }
 
-func (e guardEnv) withPresent(target path.Path) guardEnv {
-	return e.withPresentAt(target, diagnostic.Span{})
-}
-
 func (e guardEnv) withPresentAt(target path.Path, span diagnostic.Span) guardEnv {
 	if target.IsEmpty() || e.unreachable {
 		return e
@@ -464,10 +460,6 @@ func (e guardEnv) withPresentAt(target path.Path, span diagnostic.Span) guardEnv
 	out.nilPaths, out.nilOrigins = removePathFact(out.nilPaths, out.nilOrigins, target)
 	sortGuardEnv(out)
 	return out
-}
-
-func (e guardEnv) withTruthy(target path.Path) guardEnv {
-	return e.withTruthyAt(target, diagnostic.Span{})
 }
 
 func (e guardEnv) withTruthyAt(target path.Path, span diagnostic.Span) guardEnv {
@@ -483,10 +475,6 @@ func (e guardEnv) withTruthyAt(target path.Path, span diagnostic.Span) guardEnv 
 	return out
 }
 
-func (e guardEnv) withFalsy(target path.Path) guardEnv {
-	return e.withFalsyAt(target, diagnostic.Span{})
-}
-
 func (e guardEnv) withFalsyAt(target path.Path, span diagnostic.Span) guardEnv {
 	if target.IsEmpty() || e.unreachable {
 		return e
@@ -496,10 +484,6 @@ func (e guardEnv) withFalsyAt(target path.Path, span diagnostic.Span) guardEnv {
 	out.falsy, out.falsyOrigins = appendPathFact(out.falsy, out.falsyOrigins, target, span)
 	sortGuardEnv(out)
 	return out
-}
-
-func (e guardEnv) withNil(target path.Path) guardEnv {
-	return e.withNilAt(target, diagnostic.Span{})
 }
 
 func (e guardEnv) withNilAt(target path.Path, span diagnostic.Span) guardEnv {
@@ -513,10 +497,6 @@ func (e guardEnv) withNilAt(target path.Path, span diagnostic.Span) guardEnv {
 	out.nilPaths, out.nilOrigins = appendPathFact(out.nilPaths, out.nilOrigins, target, span)
 	sortGuardEnv(out)
 	return out
-}
-
-func (e guardEnv) withRuntimeTypePresence(target path.Path, typeName string) guardEnv {
-	return e.withRuntimeTypePresenceAt(target, typeName, diagnostic.Span{})
 }
 
 func (e guardEnv) withRuntimeTypePresenceAt(target path.Path, typeName string, span diagnostic.Span) guardEnv {

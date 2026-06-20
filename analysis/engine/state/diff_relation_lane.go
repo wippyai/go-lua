@@ -52,10 +52,6 @@ func diffRelationLaneFromMustSet(l lift.MustSetLane[DiffConstraint]) diffRelatio
 	return diffRelationLane{mustSetLaneFromLift(l)}
 }
 
-func (l diffRelationLane) reachable() diffRelationLane {
-	return diffRelationLane{l.mustSetLane.reachable()}
-}
-
 func (l diffRelationLane) add(c DiffConstraint) (diffRelationLane, bool) {
 	if c.Hi == "" || c.Lo == "" || c.Hi == c.Lo {
 		return l, false

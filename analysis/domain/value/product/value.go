@@ -68,10 +68,6 @@ func Bottom(reg *axis.Registry) Value {
 	return mustRuntime(reg).bottomValue()
 }
 
-func New(reg *axis.Registry, shape Shape) Value {
-	return intern(reg, shape, presence.Top(), nil)
-}
-
 func NewWithPresence(reg *axis.Registry, shape Shape, p presence.Value) Value {
 	return intern(reg, shape, p, nil)
 }
@@ -87,14 +83,6 @@ func ShapeOf(v Value) Shape {
 	return v.n.shape
 }
 
-func WithShape(reg *axis.Registry, v Value, shape Shape) Value {
-	rt := mustRuntime(reg)
-	rt.validateValue(v)
-	if ShapeOf(v) == shape {
-		return v
-	}
-	return internRuntime(rt, shape, PresenceOf(v), copySlots(v))
-}
 
 func PresenceOf(v Value) presence.Value {
 	if v.n == nil {
