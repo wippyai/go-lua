@@ -125,6 +125,9 @@ func OutcomeProvider(config ProviderConfig) callpayload.CallOutcomeProvider {
 				paramMemberReturnPresenceRelations(ctx, site, got, facts, returnPresenceRelations)...,
 			)
 		}
+		if fn != nil {
+			out.Results = padMissingResultsToNil(ctx.Registry, site, out.Results, len(fn.Returns))
+		}
 		out.PostReturnAuthority = calloutcome.HasAuthoritativePostReturnEvidence(ctx.Registry, out)
 		if fn != nil && len(fn.Params) != 0 {
 			out.ParamObligations = append(out.ParamObligations, functionTypeParamObligations(ctx.Registry, site.ArgumentSourceCount(), fn)...)
@@ -1144,6 +1147,36 @@ func clonePathMultiKeys(in map[pathdom.PathKey][]summary.SummaryKey) map[pathdom
 		out[pathKey] = append([]summary.SummaryKey(nil), keys...)
 	}
 	return out
+}
+
+// padMissingResultsToNil fills nil for result slots a call site consumes beyond
+// the callee's declared return arity. A callee declared to return declaredCount
+// values yields nil for any further destructuring target, matching Lua runtime
+// semantics. It applies only when the callee's declared return arity is known
+// and finite (declaredCount comes from the resolved function type); an
+// unresolved or unknown-arity callee never reaches here.
+func padMissingResultsToNil(reg *axis.Registry, site factflow.CallSiteView, results []callpayload.CallResult, declaredCount int) []callpayload.CallResult {
+	if reg == nil || declaredCount < 0 {
+		return results
+	}
+	present := make(map[int]struct{}, len(results))
+	for _, result := range results {
+		present[result.Index] = struct{}{}
+	}
+	nilValue := typevalue.Nil(reg)
+	site.ForEachResultTarget(func(target factflow.CallResultTargetView) bool {
+		index := target.ResultIndex()
+		if index < declaredCount {
+			return true
+		}
+		if _, ok := present[index]; ok {
+			return true
+		}
+		present[index] = struct{}{}
+		results = append(results, callpayload.CallResult{Index: index, Value: nilValue})
+		return true
+	})
+	return results
 }
 
 func outcomeFromSummary(

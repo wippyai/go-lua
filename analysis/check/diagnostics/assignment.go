@@ -52,9 +52,45 @@ func (p annotationAssignability) Produce(result *body.Result, defs map[symbol.ID
 	return out
 }
 
-func (p annotationAssignability) localAssignment(result *body.Result, point cfg.Point, fact semantics.LocalAssignmentFact, env guardEnv, directDefs map[symbol.ID]*ast.FunctionExpr) (diagnostic.Diagnostic, bool) {
-	if fact.Type == nil || fact.Expr == nil {
+// underSuppliedTargetAssignment reports a destructuring target of an INITIALIZED
+// multi-assignment whose value list supplies fewer values than there are targets,
+// so the target is nil-filled. Such a target has no source expression of its own;
+// its bound value is read directly. A nil-filled target against a non-optional
+// annotation is an error at the declaration, independent of how many targets or
+// values the assignment has. A declaration with no initializer (len(Exprs) == 0)
+// is left to flow-sensitive use analysis, not reported here.
+func (p annotationAssignability) underSuppliedTargetAssignment(result *body.Result, point cfg.Point, fact semantics.LocalAssignmentFact) (diagnostic.Diagnostic, bool) {
+	if len(fact.Exprs) == 0 || !fact.HasSymbol {
 		return diagnostic.Diagnostic{}, false
+	}
+	want, ok := lowerType(fact.Type, p.resolver)
+	if !ok || want == nil || typ.IsAny(want) || typ.IsUnknown(want) || projectionHasNil(want) {
+		return diagnostic.Diagnostic{}, false
+	}
+	value, ok := result.SymbolValueAtBoundary(point, fact.Symbol)
+	if !ok {
+		return diagnostic.Diagnostic{}, false
+	}
+	got, ok := readmodel.New(result).ValueTypeWithPresence(value)
+	if !ok || got == nil {
+		return diagnostic.Diagnostic{}, false
+	}
+	// Fire only for a pure nil-fill: a target supplied no value at all. A target
+	// that received a real value of an optional or mismatched type (an in-range
+	// result slot) is not under-supplied; its mismatch is reported by the
+	// call-result/value paths, not here.
+	if !typ.Nil.Equals(got) {
+		return diagnostic.Diagnostic{}, false
+	}
+	return underSuppliedTargetDiagnostic(fact.Name, want, got, fact.Type), true
+}
+
+func (p annotationAssignability) localAssignment(result *body.Result, point cfg.Point, fact semantics.LocalAssignmentFact, env guardEnv, directDefs map[symbol.ID]*ast.FunctionExpr) (diagnostic.Diagnostic, bool) {
+	if fact.Type == nil {
+		return diagnostic.Diagnostic{}, false
+	}
+	if fact.Expr == nil {
+		return p.underSuppliedTargetAssignment(result, point, fact)
 	}
 	want, ok := lowerType(fact.Type, p.resolver)
 	if !ok {
@@ -114,6 +150,9 @@ func (p annotationAssignability) localAssignment(result *body.Result, point cfg.
 	}
 	if !ok {
 		got, ok = projectedFlowSourceType(result, p.resolver, point, env, fact.Expr)
+	}
+	if !ok {
+		got, ok = freshRecordAbsentFieldSourceType(result, p.resolver, point, env, fact.Expr)
 	}
 	if !ok {
 		got, ok = dominatingCallResultPathType(result, p.resolver, p.flow, point, fact.Expr, directDefs)

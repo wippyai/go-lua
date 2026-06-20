@@ -14,6 +14,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/access"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/analysis/type/unwrap"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
 
@@ -183,6 +184,68 @@ func (p expressionTyper) flowOriginType(accessPath pathdom.Path) (typ.Type, bool
 		return nil, false
 	}
 	return readmodel.New(p.result).VariantOriginType(value)
+}
+
+// freshRecordAbsentFieldType types a dot-field read whose name is provably
+// absent from a freshly constructed table value. A non-discriminated table
+// local (e.g. an empty literal) carries no variant origin, so the usual flow
+// projection cannot reach it; its concrete witness type is complete because the
+// value has an exact local identity, so a never-written field reads as nil under
+// Lua table semantics. Imported or opaque values lack this identity and are left
+// to the other producers, where the modeled type may omit reachable members.
+func (p expressionTyper) freshRecordAbsentFieldType(expr ast.Expr) (typ.Type, bool) {
+	if p.result == nil {
+		return nil, false
+	}
+	accessPath, ok := p.result.ExpressionPath(expr)
+	if !ok || accessPath.Symbol == 0 || len(accessPath.Segments) == 0 {
+		return nil, false
+	}
+	last := accessPath.Segments[len(accessPath.Segments)-1]
+	if last.Kind != segment.SegmentField {
+		return nil, false
+	}
+	value, ok := p.result.SymbolValueAtBoundary(p.point, accessPath.Symbol)
+	if !ok {
+		return nil, false
+	}
+	reader := readmodel.New(p.result)
+	if !reader.ValueHasExactIdentity(value) {
+		return nil, false
+	}
+	t, ok := reader.ValueType(value)
+	if !ok || t == nil {
+		return nil, false
+	}
+	for _, seg := range accessPath.Segments[:len(accessPath.Segments)-1] {
+		t, ok = expressionSegmentType(t, seg)
+		if !ok {
+			return nil, false
+		}
+	}
+	if _, ok := access.Field(t, last.Name); ok {
+		return nil, false
+	}
+	if !recordProvablyMissesField(t, last.Name) {
+		return nil, false
+	}
+	return typ.Nil, true
+}
+
+// recordProvablyMissesField reports whether t is a plain Lua table record that
+// provably lacks the named field. The record carries no metatable (which could
+// resolve the name through __index, unmodeled by a structural field
+// projection), no open tail, and no map component admitting the name, so the
+// read is definitively nil.
+func recordProvablyMissesField(t typ.Type, name string) bool {
+	rec, ok := unwrap.Alias(t).(*typ.Record)
+	if !ok || rec == nil {
+		return false
+	}
+	if rec.Open || rec.Metatable != nil || rec.HasMapComponent() {
+		return false
+	}
+	return rec.GetField(name) == nil && rec.GetStaticStringIndex(name) == nil
 }
 
 func (p expressionTyper) flowRootType(t typ.Type, accessPath pathdom.Path) typ.Type {

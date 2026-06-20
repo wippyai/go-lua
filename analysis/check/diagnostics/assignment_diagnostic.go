@@ -43,6 +43,38 @@ func assignmentDiagnostic(name string, want, got typ.Type, expr ast.Expr, annota
 	})
 }
 
+// underSuppliedTargetDiagnostic reports a destructuring target that an
+// initialized multi-assignment leaves nil because fewer values are supplied than
+// there are targets. The target has no source expression, so the report is
+// anchored at its declared-type annotation.
+func underSuppliedTargetDiagnostic(name string, want, got typ.Type, annotation ast.TypeExpr) diagnostic.Diagnostic {
+	typeSpan := ast.SpanOf(annotation)
+	return diagnostic.New(diagnostic.DiagnosticSpec{
+		Span:     typeSpan,
+		Code:     CodeAssignmentType,
+		Severity: diagnostic.SeverityError,
+		Message:  assignmentMessage(name, got, want),
+		Help:     assignmentHelp(name, got),
+		Explanation: diagnostic.NewExplanation(
+			diagnostic.Evidence{
+				Kind:    diagnostic.EvidenceAbstractFact,
+				Trust:   diagnostic.TrustProven,
+				Span:    typeSpan,
+				Message: assignmentSourceTypeEvidence(name, got),
+			},
+			diagnostic.Evidence{
+				Kind:    diagnostic.EvidenceUserAssertion,
+				Trust:   diagnostic.TrustClaimed,
+				Span:    typeSpan,
+				Message: declaredTypeEvidence(name, annotation, want),
+			},
+		),
+		Labels: []diagnostic.Label{
+			sourceLabel(typeSpan, labelDeclaredType),
+		},
+	})
+}
+
 func pathAssignmentDiagnostic(target ast.Expr, value ast.Expr, got, want typ.Type, extraEvidence ...diagnostic.Evidence) diagnostic.Diagnostic {
 	valueName := exprEvidenceName(value)
 	targetName := exprEvidenceName(target)

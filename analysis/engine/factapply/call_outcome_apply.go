@@ -68,6 +68,7 @@ func applyCallOutcomeFacts(
 		}
 		out = writePathInvalidationMarker(resolver, ctx.Point, out, targetPath)
 		out = applyPathDescendantInvalidation(ctx, resolver, out, factflow.NewPathDescendantInvalidation(targetPath), true)
+		out = invalidateMutatedFieldSlot(ctx, resolver, out, targetPath)
 	}
 	for _, fact := range lengthFloors {
 		out = applyCallParamLengthFloor(resolver, ctx.Point, out, fact.Path, fact.Floor)
@@ -272,6 +273,34 @@ func applyFrozenTableFact(
 		return out
 	}
 	return out.FreezeTable(id)
+}
+
+// invalidateMutatedFieldSlot drops the caller's stored value for a field slot a
+// callee wrote through. A field-level path invalidation (segments > 0) records
+// that the callee assigned the slot to a value of its own, wider parameter field
+// type, so the slot's confined caller value (a fresh literal's heap static member
+// or path-key refinement) is no longer trustworthy. Descendant invalidation alone
+// preserves the slot's own value, which would launder the covariant write-through;
+// clearing the slot itself makes the later read fall back to structural
+// projection, matching how an opaque parameter argument already reflects the
+// mutation. Root-targeted invalidations (segments == 0) keep their container value
+// and are handled by the descendant pass above.
+func invalidateMutatedFieldSlot(
+	ctx transfer.NodeContext,
+	resolver *visibility.Resolver,
+	out state.State,
+	targetPath pathdom.Path,
+) state.State {
+	if len(targetPath.Segments) == 0 {
+		return out
+	}
+	if withHeap, ok := invalidateHeapStaticMemberSubtreeAt(ctx.Registry, out, resolver, ctx.Point, targetPath); ok {
+		out = withHeap
+	}
+	if cleared, ok := invalidatePathSubtreeAt(out, resolver, ctx.Point, targetPath); ok {
+		out = cleared
+	}
+	return out
 }
 
 func writePathInvalidationMarker(

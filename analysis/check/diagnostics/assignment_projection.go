@@ -623,6 +623,13 @@ func projectedFlowSourceType(result *body.Result, resolver typeannotation.Resolv
 	return projectedSourceTypeWith(result, resolver, point, env, expr, newFlowExpressionTyper)
 }
 
+// freshRecordAbsentFieldSourceType types a dot-field source whose name is
+// provably absent from a freshly constructed table value as nil, so assigning
+// it to a non-optional target reports a mismatch.
+func freshRecordAbsentFieldSourceType(result *body.Result, resolver typeannotation.Resolver, point cfg.Point, env guardEnv, expr ast.Expr) (typ.Type, bool) {
+	return newFlowExpressionTyper(result, resolver, point, env).freshRecordAbsentFieldType(expr)
+}
+
 func projectedStructuralFlowSourceType(result *body.Result, resolver typeannotation.Resolver, point cfg.Point, env guardEnv, expr ast.Expr) (typ.Type, bool) {
 	return projectedSourceTypeWith(result, resolver, point, env, expr, newStructuralFlowExpressionTyper)
 }

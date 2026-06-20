@@ -6,6 +6,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/assertion"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/evidence"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekindof"
@@ -115,6 +116,18 @@ func (r Reader) ValueTypeWithPresence(value product.Value) (typ.Type, bool) {
 		return nil, false
 	}
 	return typeWithBoundaryPresence(t, value), true
+}
+
+// ValueHasExactIdentity reports whether value carries an exact identity lane,
+// which a freshly constructed table literal holds and an imported or opaque
+// value does not. It distinguishes a locally-built table whose witness type is
+// complete from a value whose modeled type may omit reachable members.
+func (r Reader) ValueHasExactIdentity(value product.Value) bool {
+	if r.result == nil || r.result.Registry() == nil {
+		return false
+	}
+	_, ok := product.Get(r.result.Registry(), value, identity.Key).ID()
+	return ok
 }
 
 func (r Reader) VariantOriginType(value product.Value) (typ.Type, bool) {
@@ -555,7 +568,6 @@ func refineTypeByRuntimeKindSetDepth(t typ.Type, kinds runtimekind.Value, keepNi
 		return t, true
 	}
 }
-
 
 func projectionWithoutNil(t typ.Type) typ.Type {
 	return typetable.PresentReadonlyEntryValue(t)

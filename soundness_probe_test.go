@@ -146,6 +146,41 @@ var soundnessProbes = []soundnessProbe{
 			return a // b
 		end return f`,
 	},
+	{
+		// An absent field of an empty table literal is nil, not an arbitrary top type;
+		// it must not satisfy a declared (here function) type.
+		name:  "empty-literal-absent-field",
+		fixed: true,
+		src: `local function f(): number
+			local t = {}
+			local g: fun(): number = t.run
+			return g()
+		end return f`,
+	},
+	{
+		// A multi-assignment from a call that supplies fewer values leaves the
+		// surplus targets nil, not their declared type.
+		name:  "multi-return-undersupply",
+		fixed: true,
+		src: `local function one(): number return 1 end
+		local function f(): number
+			local a: number, b: number = one()
+			return b
+		end return f`,
+	},
+	{
+		// A fresh literal passed to a callee that mutates it covariantly must not
+		// launder the write-through: narrow.x becomes a string at runtime.
+		name:  "fresh-literal-interproc-covariance",
+		fixed: true,
+		src: `local function corrupt(w: { x: number | string }) w.x = "boom" end
+		local function f(): number
+			local narrow: { x: number } = { x = 1 }
+			corrupt(narrow)
+			local n: number = narrow.x
+			return n
+		end return f`,
+	},
 }
 
 func TestSoundnessProbes(t *testing.T) {
