@@ -270,7 +270,7 @@ func declaredIndexProjectionType(result *body.Result, resolver typeannotation.Re
 	if attr == nil || attr.KeySyntax != ast.AttrKeyIndex {
 		return nil, false
 	}
-	container, ok := declaredPathType(result, resolver, attr.Object)
+	container, ok := indexContainerType(result, resolver, point, attr.Object)
 	if !ok {
 		return nil, false
 	}
@@ -279,6 +279,51 @@ func declaredIndexProjectionType(result *body.Result, resolver typeannotation.Re
 		return nil, false
 	}
 	return access.RuntimeIndex(container, key)
+}
+
+// indexContainerType resolves the element-read container type for an index
+// projection. It uses the declared annotation unless the flow-sensitive
+// boundary value widened the array element type through a covariant alias: an
+// array container whose element type widened carries the wider element on its
+// boundary value, and reading elements at the narrower declared element would
+// miss the widening. The substitution applies only to arrays whose element type
+// strictly widened, so map/record member nil narrowing is untouched.
+func indexContainerType(result *body.Result, resolver typeannotation.Resolver, point cfg.Point, object ast.Expr) (typ.Type, bool) {
+	declared, hasDeclared := declaredPathType(result, resolver, object)
+	if !hasDeclared {
+		return declared, false
+	}
+	declaredElement, ok := arrayElementType(declared)
+	if !ok {
+		return declared, true
+	}
+	value, ok := result.ExpressionValueAtBoundary(point, object)
+	if !ok {
+		return declared, true
+	}
+	flow, ok := readmodel.New(result).ValueType(value)
+	if !ok || flow == nil || topLikeType(flow) {
+		return declared, true
+	}
+	flowElement, ok := arrayElementType(flow)
+	if !ok {
+		return declared, true
+	}
+	if subtype.IsSubtype(declaredElement, flowElement) && !subtype.IsSubtype(flowElement, declaredElement) {
+		return flow, true
+	}
+	return declared, true
+}
+
+func arrayElementType(t typ.Type) (typ.Type, bool) {
+	if t == nil {
+		return nil, false
+	}
+	array, ok := unwrap.Alias(t).(*typ.Array)
+	if !ok || array == nil || array.Element == nil {
+		return nil, false
+	}
+	return array.Element, true
 }
 
 func declaredPathType(result *body.Result, resolver typeannotation.Resolver, expr ast.Expr) (typ.Type, bool) {

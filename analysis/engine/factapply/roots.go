@@ -30,6 +30,7 @@ func applyRootAssignmentFact(
 		out = applyRootAssignmentPathProof(ctx, resolver, facts, out, targetPath, fact.Source())
 		out = applyRootAssignmentNumFloor(ctx, resolver, facts, in, out, targetPath, fact.Source())
 		out = applyObjectLiteralEntries(ctx, resolver, facts, sources, read, in, out, targetPath, fact.Source())
+		out = applyCovariantArrayAliasWiden(ctx, facts, out, fact)
 	}
 	return out, applied
 }

@@ -10,6 +10,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
 	"github.com/wippyai/go-lua/analysis/lua/typecall"
 	"github.com/wippyai/go-lua/analysis/lua/valueexpr"
+	"github.com/wippyai/go-lua/analysis/type/subtype"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/unwrap"
 	"github.com/wippyai/go-lua/compiler/ast"
@@ -26,7 +27,72 @@ func (l *lowerer) localAssignment(fact semantics.LocalAssignmentFact) (factflow.
 			return factflow.NewRootAssignmentWithDeclaredContractValue(factflow.RootAssignmentLocalDeclaration, fact.Symbol, target, source, declared), true
 		}
 	}
-	return factflow.NewRootAssignment(factflow.RootAssignmentLocalDeclaration, fact.Symbol, target, source), true
+	assignment := factflow.NewRootAssignment(factflow.RootAssignmentLocalDeclaration, fact.Symbol, target, source)
+	if widen, ok := l.covariantArrayAliasWidenValue(fact); ok {
+		assignment = assignment.WithAliasWidenValue(widen)
+	}
+	return assignment, true
+}
+
+// covariantArrayAliasWidenValue returns the declared array contract value for a
+// local declaration that aliases an existing array variable with a strictly
+// wider element type. The target and source name the same runtime container, so
+// a mutable alias declared with a wider element type lets writes through the
+// alias store wider values; the source's element type widens to this contract to
+// keep covariant aliasing sound. The engine gates the actual write-back on the
+// source being heap-untracked, leaving heap-tracked covariance precise.
+func (l *lowerer) covariantArrayAliasWidenValue(fact semantics.LocalAssignmentFact) (product.Value, bool) {
+	if fact.Type == nil || fact.Source.Kind != sourceprovenance.SourceExpression {
+		return product.Value{}, false
+	}
+	sourceElement, ok := l.aliasSourceArrayElement(fact.Expr)
+	if !ok {
+		return product.Value{}, false
+	}
+	targetType, ok := l.resolveType(fact.Type)
+	if !ok || typ.IsAny(targetType) || typ.IsUnknown(targetType) {
+		return product.Value{}, false
+	}
+	targetElement, ok := arrayElementType(targetType)
+	if !ok {
+		return product.Value{}, false
+	}
+	if !subtype.IsSubtype(sourceElement, targetElement) || subtype.IsSubtype(targetElement, sourceElement) {
+		return product.Value{}, false
+	}
+	return l.declaredValue(fact.Type)
+}
+
+// aliasSourceArrayElement resolves the declared array element type of a bare
+// identifier alias source.
+func (l *lowerer) aliasSourceArrayElement(expr ast.Expr) (typ.Type, bool) {
+	inner, ok := sourceprovenance.ProofInner(expr)
+	if !ok {
+		return nil, false
+	}
+	if _, ok := inner.(*ast.IdentExpr); !ok {
+		return nil, false
+	}
+	sourcePath, ok := pathexpr.Resolve(inner, l.bindings)
+	if !ok || sourcePath.Symbol == 0 || len(sourcePath.Segments) != 0 {
+		return nil, false
+	}
+	sourceType, ok := l.symbolTypes[sourcePath.Symbol]
+	if !ok {
+		return nil, false
+	}
+	return arrayElementType(sourceType)
+}
+
+func arrayElementType(t typ.Type) (typ.Type, bool) {
+	if t == nil {
+		return nil, false
+	}
+	array, ok := unwrap.Alias(t).(*typ.Array)
+	if !ok || array == nil || array.Element == nil {
+		return nil, false
+	}
+	return array.Element, true
 }
 
 func (l *lowerer) declaredValueApplies(fact semantics.LocalAssignmentFact) bool {

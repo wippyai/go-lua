@@ -26,6 +26,9 @@ type RootAssignment struct {
 	declaredValue          product.Value
 	hasDeclaredValue       bool
 	declaredValueContracts bool
+
+	aliasWidenValue    product.Value
+	hasAliasWidenValue bool
 }
 
 // NewRootAssignment creates a root-symbol assignment fact.
@@ -77,6 +80,23 @@ func (a RootAssignment) DeclaredValue() (product.Value, bool) {
 // explicit contract that should take precedence over source precision.
 func (a RootAssignment) DeclaredValueContracts() bool {
 	return a.hasDeclaredValue && a.declaredValueContracts
+}
+
+// WithAliasWidenValue records the declared array contract value of a covariant
+// container alias whose source is an existing root symbol. The source symbol is
+// the same runtime container as the target, so a mutable alias declared with a
+// wider element type lets writes through the alias store wider values; the
+// source's element type widens to this value to keep covariant aliasing sound.
+func (a RootAssignment) WithAliasWidenValue(value product.Value) RootAssignment {
+	a.aliasWidenValue = value
+	a.hasAliasWidenValue = true
+	return a
+}
+
+// AliasWidenValue returns the declared array contract value to widen the source
+// symbol of a covariant container alias toward.
+func (a RootAssignment) AliasWidenValue() (product.Value, bool) {
+	return a.aliasWidenValue, a.hasAliasWidenValue
 }
 
 func (a RootAssignment) copy() RootAssignment {
