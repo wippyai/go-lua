@@ -251,10 +251,6 @@ func formatType(t typ.Type) string {
 	return display.Type(t)
 }
 
-func formatAssignmentType(t typ.Type) string {
-	return display.AssignmentType(t)
-}
-
 func valueMayBeNil(t typ.Type) bool {
 	return t != nil && !typ.Nil.Equals(t) && projectionHasNil(t)
 }

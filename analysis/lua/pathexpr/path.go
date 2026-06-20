@@ -25,14 +25,6 @@ func Resolve(expr ast.Expr, bindings *bind.Result) (path.Path, bool) {
 // ResolveContainer extracts the receiver/container path for an attribute/index
 // expression. The full expression may still be unresolvable when its key is
 // dynamic.
-func ResolveContainer(expr ast.Expr, bindings *bind.Result) (path.Path, bool) {
-	attr, ok := expr.(*ast.AttrGetExpr)
-	if !ok {
-		return path.Path{}, false
-	}
-	return Resolve(attr.Object, bindings)
-}
-
 // ResolveMutationContainer extracts the nearest statically known table
 // ancestor for an assignment target. Static member writes resolve exactly
 // through Resolve; this helper is for unresolved targets such as t[k].x where

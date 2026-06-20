@@ -11,10 +11,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
-func boundaryDiagnosticEvidence(result *body.Result, point cfg.Point, span diagnostic.Span, want typ.Type, read boundaryValueReader) []diagnostic.Evidence {
-	return boundaryDiagnosticEvidenceForSubject(result, point, span, "", want, read)
-}
-
 func boundaryDiagnosticEvidenceForSubject(result *body.Result, point cfg.Point, span diagnostic.Span, subject string, want typ.Type, read boundaryValueReader) []diagnostic.Evidence {
 	if result == nil || result.Registry() == nil || read == nil {
 		return nil
@@ -39,10 +35,6 @@ func boundaryDiagnosticEvidenceForSubject(result *body.Result, point cfg.Point, 
 		out = append(out, missingBoundaryProofEvidenceForSubject(span, subject, want))
 	}
 	return out
-}
-
-func missingBoundaryProofEvidence(span diagnostic.Span, want typ.Type) diagnostic.Evidence {
-	return missingBoundaryProofEvidenceForSubject(span, "", want)
 }
 
 func missingBoundaryProofEvidenceForSubject(span diagnostic.Span, subject string, want typ.Type) diagnostic.Evidence {

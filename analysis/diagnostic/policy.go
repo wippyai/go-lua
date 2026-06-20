@@ -38,13 +38,6 @@ func (r Rule) WithSeverity(severity Severity) Rule {
 }
 
 // WithEnabled returns a copy of the rule with explicit enablement applied.
-func (r Rule) WithEnabled(enabled bool) Rule {
-	r.Enabled = enabled
-	r.HasEnabled = true
-	r.Disabled = !enabled
-	return r
-}
-
 // Apply filters and remaps diagnostics according to the policy.
 func (p Policy) Apply(diags []Diagnostic) []Diagnostic {
 	if len(diags) == 0 {
