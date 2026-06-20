@@ -43,8 +43,11 @@ func (c *checker) checkInterface(sub, super *typ.Interface, depth int) bool {
 	if sub == nil || super == nil {
 		return false
 	}
-	if len(super.Methods) == 0 && len(sub.Methods) == 0 {
-		return sub.Name == super.Name
+	// A method-less interface imposes no requirements, so any interface
+	// structurally satisfies it: an empty interface is the structural top, not a
+	// nominal marker keyed by name.
+	if len(super.Methods) == 0 {
+		return true
 	}
 	for _, superMethod := range super.Methods {
 		found := false
