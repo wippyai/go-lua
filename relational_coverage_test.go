@@ -36,6 +36,29 @@ var relationalCorpus = []relationalCase{
 		end return f`,
 	},
 	{
+		name:    "transitive-path-equality",
+		solver:  "equality (transitive, wired via pathevidence)",
+		narrows: true,
+		src: `local function f(x: number?, y: number?, z: number?): number
+			if x == y and y == z and x ~= nil then local v: number = z return v end
+			return 0
+		end return f`,
+	},
+	{
+		// Congruence over access: p == q should carry p.f ~= nil to q.f. The
+		// existing pathevidence congruence handles roots and transitivity but the
+		// value read does not yet consult equivalent paths for a field, so this
+		// stays optional. Closing it is a pathevidence/read-model refinement, NOT
+		// the standalone equality E-graph (which would duplicate congruence).
+		name:    "congruence-over-field-access",
+		solver:  "pathevidence congruence (read-model equivalence; not yet)",
+		narrows: false,
+		src: `local function f(p: { f: number? }, q: { f: number? }): number
+			if p == q and p.f ~= nil then local v: number = q.f return v end
+			return 0
+		end return f`,
+	},
+	{
 		name:    "cross-variable-length-equality",
 		solver:  "numeric/diff + equality",
 		narrows: true,
