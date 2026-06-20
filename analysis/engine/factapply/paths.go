@@ -74,9 +74,14 @@ func applyPathDescendantInvalidation(
 	if withHeap, ok := invalidateHeapStaticMemberDescendantsAt(ctx.Registry, invalidated, resolver, ctx.Point, containerPath); ok {
 		invalidated = withHeap
 	}
-	invalidated, ok := invalidatePathDescendantsAt(invalidated, resolver, ctx.Point, containerPath)
-	if !ok {
-		return out
+	if withDescendants, ok := invalidatePathDescendantsAt(invalidated, resolver, ctx.Point, containerPath); ok {
+		invalidated = withDescendants
+	}
+	// A write into the container can change its length, so drop difference
+	// relations over that length (and the container value) regardless of whether
+	// the container carried any tracked descendant refinements.
+	if containerKey := visibility.RootOrVisibleKeyAt(resolver, ctx.Point, containerPath); containerKey != "" {
+		invalidated = invalidated.ClearDiffConstraintsFor(containerKey)
 	}
 	return invalidated
 }

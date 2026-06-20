@@ -87,6 +87,43 @@ func applyBranchNumFloorRefinement(
 	return out.WriteNumFloor(pathKey, fact.Floor())
 }
 
+// applyBranchDiffConstraint records a true-edge difference-logic fact between two
+// linear path terms. A length operand keys through state.LengthRelKey so it
+// stays distinct from the array's value path in the constraint graph.
+func applyBranchDiffConstraint(
+	ctx transfer.EdgeContext,
+	resolver *visibility.Resolver,
+	out state.State,
+	fact factflow.BranchDiffConstraint,
+) state.State {
+	if resolver == nil {
+		return out
+	}
+	hiKey, ok := diffOperandKey(resolver, ctx.Edge.From, fact.HiPath(), fact.HiIsLength())
+	if !ok {
+		return out
+	}
+	loKey, ok := diffOperandKey(resolver, ctx.Edge.From, fact.LoPath(), fact.LoIsLength())
+	if !ok {
+		return out
+	}
+	return out.WriteDiffConstraint(hiKey, loKey, fact.C())
+}
+
+func diffOperandKey(resolver *visibility.Resolver, point cfg.Point, p pathdom.Path, isLength bool) (pathdom.PathKey, bool) {
+	if p.Symbol == 0 {
+		return "", false
+	}
+	pathKey := visibility.RootOrVisibleKeyAt(resolver, point, p)
+	if pathKey == "" {
+		return "", false
+	}
+	if isLength {
+		return state.LengthRelKey(pathKey), true
+	}
+	return pathKey, true
+}
+
 func applyValueRefinementAt(
 	reg *axis.Registry,
 	resolver *visibility.Resolver,

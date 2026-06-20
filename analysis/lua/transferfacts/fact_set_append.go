@@ -40,6 +40,13 @@ func appendBranchNumFloorRefinement(out map[cfg.Point]factflow.BranchRefinementS
 	out[point] = out[point].WithNumFloorRefinements(numFloors...)
 }
 
+func appendBranchDiffConstraint(out map[cfg.Point]factflow.BranchRefinementSet, point cfg.Point, diffs ...factflow.BranchDiffConstraint) {
+	if len(diffs) == 0 {
+		return
+	}
+	out[point] = out[point].WithDiffConstraints(diffs...)
+}
+
 func appendBranchPathEvidence(out map[cfg.Point]factflow.BranchPathEvidenceSet, point cfg.Point, proofs ...factflow.BranchPathEvidence) {
 	if len(proofs) == 0 {
 		return

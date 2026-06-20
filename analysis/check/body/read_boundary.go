@@ -2,6 +2,7 @@ package body
 
 import (
 	"github.com/wippyai/go-lua/analysis/check/body/internal/readexpr"
+	"github.com/wippyai/go-lua/analysis/domain/constraint/numeric/diff"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
@@ -245,6 +246,39 @@ func (r *Result) IndexInRangeAtBoundary(point cfg.Point, indexPath, arrayPath pa
 		return false
 	}
 	return in.HasIndexInRangeProof(indexKey, arrayKey)
+}
+
+// DiffProvesIndexLELength reports whether the difference-logic constraints proven
+// at point entail value(indexPath) + indexOffset <= len(arrayPath), the upper
+// half of an in-range proof for a possibly-arithmetic index. It runs the
+// difference-logic solver over the constraint set, deriving transitive and
+// cross-variable bounds (i < j <= #xs, #a == #b, i + 1 <= #xs) the simple
+// index-in-range proof cannot. Callers pair it with a positive-index proof.
+func (r *Result) DiffProvesIndexLELength(point cfg.Point, indexPath pathdom.Path, indexOffset int64, arrayPath pathdom.Path) bool {
+	if r == nil || r.visibility == nil || indexPath.IsEmpty() || arrayPath.IsEmpty() {
+		return false
+	}
+	in, ok := r.boundaryStateAt(point)
+	if !ok {
+		return false
+	}
+	indexKey := visibility.RootOrVisibleKeyAt(r.visibility, point, indexPath)
+	arrayKey := visibility.RootOrVisibleKeyAt(r.visibility, point, arrayPath)
+	if indexKey == "" || arrayKey == "" {
+		return false
+	}
+	snap := in.DiffConstraints()
+	if snap.Bottom || len(snap.Constraints) == 0 {
+		return false
+	}
+	g := diff.NewDifferenceGraph()
+	for _, c := range snap.Constraints {
+		g.AddLE(string(c.Hi), string(c.Lo), c.C)
+	}
+	// indexKey - lenKey <= bound is proven; index + offset <= len needs
+	// index - len <= -offset.
+	bound, ok := g.GetBound(string(indexKey), string(state.LengthRelKey(arrayKey)))
+	return ok && bound <= -indexOffset
 }
 
 // NumericFloorAtBoundary returns the proven numeric lower bound for p at point:

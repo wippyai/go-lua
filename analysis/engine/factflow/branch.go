@@ -158,12 +158,65 @@ func (r BranchNumFloorRefinement) copy() BranchNumFloorRefinement {
 	return r
 }
 
+// BranchDiffConstraint records a difference-logic fact proven on a branch's true
+// edge: term(Hi) - term(Lo) <= C, where each term is a value path or, when the
+// IsLength flag is set, the length of that array path. It captures relational
+// guards such as i < j, i + 1 <= #xs, and #a == #b for transitive entailment.
+type BranchDiffConstraint struct {
+	hiPath     path.Path
+	hiIsLength bool
+	loPath     path.Path
+	loIsLength bool
+	c          int64
+}
+
+// NewBranchDiffConstraint creates a true-edge difference-logic fact.
+func NewBranchDiffConstraint(hiPath path.Path, hiIsLength bool, loPath path.Path, loIsLength bool, c int64) BranchDiffConstraint {
+	return BranchDiffConstraint{hiPath: hiPath.Clone(), hiIsLength: hiIsLength, loPath: loPath.Clone(), loIsLength: loIsLength, c: c}
+}
+
+func (r BranchDiffConstraint) HiPath() path.Path { return r.hiPath.Clone() }
+func (r BranchDiffConstraint) HiIsLength() bool  { return r.hiIsLength }
+func (r BranchDiffConstraint) LoPath() path.Path { return r.loPath.Clone() }
+func (r BranchDiffConstraint) LoIsLength() bool  { return r.loIsLength }
+func (r BranchDiffConstraint) C() int64          { return r.c }
+
+func (r BranchDiffConstraint) copy() BranchDiffConstraint {
+	r.hiPath = r.hiPath.Clone()
+	r.loPath = r.loPath.Clone()
+	return r
+}
+
+func copyBranchDiffConstraintSlice(in []BranchDiffConstraint) []BranchDiffConstraint {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]BranchDiffConstraint, len(in))
+	for i, fact := range in {
+		out[i] = fact.copy()
+	}
+	return out
+}
+
 // BranchRefinementSet groups branch-edge refinements emitted at the same CFG
 // branch point.
 type BranchRefinementSet struct {
-	refinements []BranchRefinement
-	lenFloors   []BranchLenRefinement
-	numFloors   []BranchNumFloorRefinement
+	refinements     []BranchRefinement
+	lenFloors       []BranchLenRefinement
+	numFloors       []BranchNumFloorRefinement
+	diffConstraints []BranchDiffConstraint
+}
+
+// WithDiffConstraints returns s extended with true-edge difference-logic facts.
+func (s BranchRefinementSet) WithDiffConstraints(diffs ...BranchDiffConstraint) BranchRefinementSet {
+	out := s.copy()
+	out.diffConstraints = append(out.diffConstraints, copyBranchDiffConstraintSlice(diffs)...)
+	return out
+}
+
+// DiffConstraints returns the true-edge difference-logic facts.
+func (s BranchRefinementSet) DiffConstraints() []BranchDiffConstraint {
+	return copyBranchDiffConstraintSlice(s.diffConstraints)
 }
 
 // NewBranchRefinement creates a branch refinement fact.
@@ -247,9 +300,10 @@ func (s BranchRefinementSet) Refinements() []BranchRefinement {
 
 func (s BranchRefinementSet) copy() BranchRefinementSet {
 	return BranchRefinementSet{
-		refinements: copyBranchRefinementSlice(s.refinements),
-		lenFloors:   copyBranchLenRefinementSlice(s.lenFloors),
-		numFloors:   copyBranchNumFloorRefinementSlice(s.numFloors),
+		refinements:     copyBranchRefinementSlice(s.refinements),
+		lenFloors:       copyBranchLenRefinementSlice(s.lenFloors),
+		numFloors:       copyBranchNumFloorRefinementSlice(s.numFloors),
+		diffConstraints: copyBranchDiffConstraintSlice(s.diffConstraints),
 	}
 }
 

@@ -38,7 +38,7 @@ var relationalCorpus = []relationalCase{
 	{
 		name:    "cross-variable-length-equality",
 		solver:  "numeric/diff + equality",
-		narrows: false,
+		narrows: true,
 		src: `local function f(a: {number}, b: {number}, i: number): number
 			if #a == #b and i >= 1 and i <= #a then local v: number = b[i] return v end
 			return 0
@@ -47,7 +47,7 @@ var relationalCorpus = []relationalCase{
 	{
 		name:    "index-arithmetic-upper-bound",
 		solver:  "numeric/diff (difference logic)",
-		narrows: false,
+		narrows: true,
 		src: `local function f(xs: {number}, i: number): number
 			if i >= 1 and i + 1 <= #xs then local v: number = xs[i + 1] return v end
 			return 0
@@ -56,7 +56,7 @@ var relationalCorpus = []relationalCase{
 	{
 		name:    "transitive-numeric-ordering",
 		solver:  "numeric/diff (difference logic)",
-		narrows: false,
+		narrows: true,
 		src: `local function f(xs: {number}, i: number, j: number): number
 			if i >= 1 and i < j and j <= #xs then local v: number = xs[i] return v end
 			return 0

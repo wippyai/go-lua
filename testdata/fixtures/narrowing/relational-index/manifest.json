@@ -1,0 +1,4 @@
+{
+  "description": "The difference-logic solver narrows array reads whose in-range proof needs a relation between paths: index arithmetic (xs[i+1] under i+1<=#xs), transitive ordering (i<j<=#xs proves i<#xs), and cross-variable length equality (#a==#b carries i<=#a to b[i]). Soundness holds: without a positive-index proof, after the index is reassigned, or after the array is mutated, the read stays optional.",
+  "files": ["main.lua"]
+}

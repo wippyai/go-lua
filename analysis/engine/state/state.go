@@ -35,6 +35,7 @@ type State struct {
 	placement         placementLane
 	lenFloors         lenFloorLane
 	numFloors         numFloorLane
+	diffRelations     diffRelationLane
 }
 
 var domainCache registrycache.Cache[lattice.Lattice[State]]
@@ -121,6 +122,7 @@ func Domain(reg *axis.Registry) lattice.Lattice[State] {
 			placement:         placementMapDomain(),
 			lenFloors:         lenFloorMapDomain(),
 			numFloors:         numFloorMapDomain(),
+			diffRelations:     diffRelationDomain(),
 		}
 		return lattice.Lattice[State]{
 			Bottom: func() State {
@@ -132,6 +134,7 @@ func Domain(reg *axis.Registry) lattice.Lattice[State] {
 					typestates:     ops.typestates.Bottom(),
 					lenFloors:      ops.lenFloors.Bottom(),
 					numFloors:      ops.numFloors.Bottom(),
+					diffRelations:  ops.diffRelations.Bottom(),
 				}
 			},
 			Top: func() State {
@@ -147,6 +150,7 @@ func Domain(reg *axis.Registry) lattice.Lattice[State] {
 					typestates:        ops.typestates.Top(),
 					lenFloors:         ops.lenFloors.Top(),
 					numFloors:         ops.numFloors.Top(),
+					diffRelations:     ops.diffRelations.Top(),
 				}
 			},
 			Equal: func(a, b State) bool {
@@ -161,7 +165,8 @@ func Domain(reg *axis.Registry) lattice.Lattice[State] {
 					ops.typestates.Equal(a.typestates, b.typestates) &&
 					ops.placement.Equal(ops.placementLane(a), ops.placementLane(b)) &&
 					ops.lenFloors.Equal(a.lenFloors, b.lenFloors) &&
-					ops.numFloors.Equal(a.numFloors, b.numFloors)
+					ops.numFloors.Equal(a.numFloors, b.numFloors) &&
+					ops.diffRelations.Equal(a.diffRelations, b.diffRelations)
 			},
 			LessOrEq: func(a, b State) bool {
 				return ops.values.LessOrEq(ops.valueLane(a), ops.valueLane(b)) &&
@@ -175,7 +180,8 @@ func Domain(reg *axis.Registry) lattice.Lattice[State] {
 					ops.typestates.LessOrEq(a.typestates, b.typestates) &&
 					ops.placement.LessOrEq(ops.placementLane(a), ops.placementLane(b)) &&
 					ops.lenFloors.LessOrEq(a.lenFloors, b.lenFloors) &&
-					ops.numFloors.LessOrEq(a.numFloors, b.numFloors)
+					ops.numFloors.LessOrEq(a.numFloors, b.numFloors) &&
+					ops.diffRelations.LessOrEq(a.diffRelations, b.diffRelations)
 			},
 			Join: func(a, b State) State {
 				return ops.fromLanes(
@@ -191,6 +197,7 @@ func Domain(reg *axis.Registry) lattice.Lattice[State] {
 					ops.placement.Join(ops.placementLane(a), ops.placementLane(b)),
 					ops.lenFloors.Join(a.lenFloors, b.lenFloors),
 					ops.numFloors.Join(a.numFloors, b.numFloors),
+					ops.diffRelations.Join(a.diffRelations, b.diffRelations),
 				)
 			},
 			Widen: func(prev, next State) State {
@@ -207,6 +214,7 @@ func Domain(reg *axis.Registry) lattice.Lattice[State] {
 					ops.placement.Widen(ops.placementLane(prev), ops.placementLane(next)),
 					ops.lenFloors.Widen(prev.lenFloors, next.lenFloors),
 					ops.numFloors.Widen(prev.numFloors, next.numFloors),
+					ops.diffRelations.Widen(prev.diffRelations, next.diffRelations),
 				)
 			},
 		}
@@ -226,6 +234,7 @@ type domainOps struct {
 	placement         lattice.Lattice[map[identity.ID]placement.Value]
 	lenFloors         lattice.Lattice[lenFloorLane]
 	numFloors         lattice.Lattice[numFloorLane]
+	diffRelations     lattice.Lattice[diffRelationLane]
 }
 
 func (o domainOps) valueLane(s State) map[key.Value]product.Value {
@@ -261,6 +270,7 @@ func (o domainOps) fromLanes(
 	placementLane map[identity.ID]placement.Value,
 	lenFloors lenFloorLane,
 	numFloors numFloorLane,
+	diffRelations diffRelationLane,
 ) State {
 	out := State{}
 	out.values = valueLaneFromMap(o.values, values)
@@ -275,6 +285,7 @@ func (o domainOps) fromLanes(
 	out.placement = placementLaneFromMap(o.placement, placementLane)
 	out.lenFloors = lenFloors
 	out.numFloors = numFloors
+	out.diffRelations = diffRelations
 	return out
 }
 

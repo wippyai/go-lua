@@ -456,24 +456,61 @@ func definitelyDenseArrayDiagnosticType(t typ.Type, depth int) bool {
 }
 
 func symbolicIndexReadProvenInRange(result *body.Result, point cfg.Point, index ast.Expr, containerPath pathdom.Path) bool {
-	indexPath, ok := result.ExpressionPath(index)
-	if !ok || indexPath.IsEmpty() {
+	basePath, offset, ok := indexLinearTerm(result, index)
+	if !ok || basePath.IsEmpty() {
 		return false
 	}
-	if !result.IndexInRangeAtBoundary(point, indexPath, containerPath) {
+	// Upper bound: base + offset <= len(container). The difference-logic solver
+	// proves transitive and cross-variable bounds; the simple index-in-range
+	// proof is the fast path for a bare index.
+	inRange := result.DiffProvesIndexLELength(point, basePath, offset, containerPath)
+	if !inRange && offset == 0 {
+		inRange = result.IndexInRangeAtBoundary(point, basePath, containerPath)
+	}
+	if !inRange {
 		return false
 	}
-	return indexValueKnownPositive(result, point, index, indexPath)
+	// Positivity: base + offset >= 1.
+	floor, ok := result.NumericFloorAtBoundary(point, basePath)
+	return ok && floor+offset >= 1
 }
 
-func indexValueKnownPositive(result *body.Result, point cfg.Point, index ast.Expr, indexPath pathdom.Path) bool {
-	num, ok := index.(*ast.NumberExpr)
-	if ok {
-		value, ok := numparse.ParseIntegerLiteral(num.Value)
-		return ok && value >= 1
+// indexLinearTerm parses an index expression into a base path plus a constant
+// offset: i is (i, 0), i + 1 is (i, 1), i - 1 is (i, -1).
+func indexLinearTerm(result *body.Result, index ast.Expr) (pathdom.Path, int64, bool) {
+	if e, ok := index.(*ast.ArithmeticOpExpr); ok {
+		if e.Operator != "+" && e.Operator != "-" {
+			return pathdom.Path{}, 0, false
+		}
+		if p, ok := result.ExpressionPath(e.Lhs); ok && !p.IsEmpty() {
+			if c, ok := indexConstOperand(e.Rhs); ok {
+				if e.Operator == "-" {
+					c = -c
+				}
+				return p, c, true
+			}
+		}
+		if e.Operator == "+" {
+			if p, ok := result.ExpressionPath(e.Rhs); ok && !p.IsEmpty() {
+				if c, ok := indexConstOperand(e.Lhs); ok {
+					return p, c, true
+				}
+			}
+		}
+		return pathdom.Path{}, 0, false
 	}
-	floor, ok := result.NumericFloorAtBoundary(point, indexPath)
-	return ok && floor >= 1
+	if p, ok := result.ExpressionPath(index); ok && !p.IsEmpty() {
+		return p, 0, true
+	}
+	return pathdom.Path{}, 0, false
+}
+
+func indexConstOperand(expr ast.Expr) (int64, bool) {
+	num, ok := expr.(*ast.NumberExpr)
+	if !ok {
+		return 0, false
+	}
+	return numparse.ParseIntegerLiteral(num.Value)
 }
 
 func shouldProjectOptionalIndex(result *body.Result, expr ast.Expr) bool {

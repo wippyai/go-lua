@@ -249,6 +249,14 @@ func (f Facts) BranchNumFloorRefinements(point cfg.Point) []BranchNumFloorRefine
 	return nil
 }
 
+// BranchDiffConstraints returns the true-edge difference-logic facts at point.
+func (f Facts) BranchDiffConstraints(point cfg.Point) []BranchDiffConstraint {
+	if set, ok := f.branchRefinements[point]; ok {
+		return set.DiffConstraints()
+	}
+	return nil
+}
+
 // BranchPresenceRelations returns branch-triggered presence relations at point.
 func (f Facts) BranchPresenceRelations(point cfg.Point) []BranchPresenceRelation {
 	if set, ok := f.branchPresenceRelations[point]; ok {
