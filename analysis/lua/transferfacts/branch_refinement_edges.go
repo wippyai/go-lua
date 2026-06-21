@@ -30,6 +30,19 @@ func (l *lowerer) branchEdgeRefinements(check branchcond.Check, cond bool) []fac
 	return out
 }
 
+func (l *lowerer) branchImplicationRefinements(implied branchcond.ImpliedCheck) []factflow.BranchRefinement {
+	refinement, ok := l.branchImplicationRefinement(implied)
+	if !ok {
+		return nil
+	}
+	out := l.rootRefinementsForBranchRefinement(refinement)
+	if implied.Check.Kind == branchcond.CheckTruthy || implied.Check.Kind == branchcond.CheckFalsy {
+		out = append(out, l.truthyBooleanRootRefinementForImplication(implied.Check, implied.Polarity, implied.Edge)...)
+	}
+	out = append(out, refinement)
+	return out
+}
+
 func (l *lowerer) branchEdgeRefinement(check branchcond.Check, cond bool) (factflow.BranchRefinement, bool) {
 	refinement, ok := l.branchRefinement(semantics.BranchConditionFact{Check: check})
 	if !ok {
@@ -40,6 +53,21 @@ func (l *lowerer) branchEdgeRefinement(check branchcond.Check, cond bool) (factf
 		return factflow.BranchRefinement{}, false
 	}
 	if cond {
+		return factflow.NewBranchRefinement(refinement.TargetPath(), value, true, factflow.ValueRefinement{}, false), true
+	}
+	return factflow.NewBranchRefinement(refinement.TargetPath(), factflow.ValueRefinement{}, false, value, true), true
+}
+
+func (l *lowerer) branchImplicationRefinement(implied branchcond.ImpliedCheck) (factflow.BranchRefinement, bool) {
+	refinement, ok := l.branchRefinement(semantics.BranchConditionFact{Check: implied.Check})
+	if !ok {
+		return factflow.BranchRefinement{}, false
+	}
+	value, ok := refinement.ValueForEdge(implied.Polarity)
+	if !ok {
+		return factflow.BranchRefinement{}, false
+	}
+	if implied.Edge {
 		return factflow.NewBranchRefinement(refinement.TargetPath(), value, true, factflow.ValueRefinement{}, false), true
 	}
 	return factflow.NewBranchRefinement(refinement.TargetPath(), factflow.ValueRefinement{}, false, value, true), true

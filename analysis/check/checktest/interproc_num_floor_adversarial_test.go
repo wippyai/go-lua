@@ -30,6 +30,44 @@ end
 	}
 }
 
+func TestInterprocIndexGuardOrHelperProvesCallerArrayRead(t *testing.T) {
+	result := Check(`
+local function require_index(xs: {number}, i: number): ()
+    if i < 1 or i > #xs then
+        error("index outside array range")
+    end
+end
+
+local function read(xs: {number}, i: number): number
+    require_index(xs, i)
+    local n: number = xs[i]
+    return n
+end
+`)
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want none: false edge of OR guard should prove i >= 1 and i <= #xs", result.Diagnostics)
+	}
+}
+
+func TestInterprocIndexGuardNegatedConjunctionHelperProvesCallerArrayRead(t *testing.T) {
+	result := Check(`
+local function require_index(xs: {number}, i: number): ()
+    if not (i >= 1 and i <= #xs) then
+        error("index outside array range")
+    end
+end
+
+local function read(xs: {number}, i: number): number
+    require_index(xs, i)
+    local n: number = xs[i]
+    return n
+end
+`)
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want none: false edge of negated conjunction should prove i >= 1 and i <= #xs", result.Diagnostics)
+	}
+}
+
 func TestInterprocIndexGuardDoesNotProjectReassignedParameterFloor(t *testing.T) {
 	src := strings.TrimLeft(`
 local function require_index(xs: {number}, i: number): ()

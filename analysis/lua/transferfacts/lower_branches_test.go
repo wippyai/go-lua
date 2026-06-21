@@ -146,6 +146,110 @@ end
 	assertRootRefinementsBeforeDescendants(t, facts.BranchRefinements(point))
 }
 
+func TestLowerNegatedConjunctionIndexGuardPublishesFalseEdgeProofs(t *testing.T) {
+	fn, bindings, built, result := parseSemanticFunction(t, `
+function f(xs: {number}, i: number)
+	if not (i >= 1 and i <= #xs) then
+	end
+end
+`)
+	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings})
+	xs := bindings.ParamSlots(fn)[0].Symbol
+	i := bindings.ParamSlots(fn)[1].Symbol
+	xsPath := path.NewPath(xs, "xs")
+	iPath := path.NewPath(i, "i")
+	ifStmt := fn.Stmts[0].(*ast.IfStmt)
+	point := requireStmtPoints(t, built, ifStmt, 1)[0]
+	branchFact, _ := result.BranchCondition(point)
+
+	foundFloor := false
+	for _, floor := range facts.BranchNumFloorRefinements(point) {
+		if floor.TargetPath().Equal(iPath) && floor.Floor() == 1 && !floor.Cond() {
+			foundFloor = true
+			break
+		}
+	}
+	if !foundFloor {
+		t.Fatalf("missing false-edge i >= 1 floor; got %#v; branch check=%#v condition=%T %#v",
+			facts.BranchNumFloorRefinements(point), branchFact.Check, branchFact.Condition, branchFact.Condition)
+	}
+
+	foundRange := false
+	for _, proof := range facts.BranchPathEvidence(point) {
+		other, hasOther := proof.OtherPath()
+		if proof.Kind() == factflow.BranchPathEvidenceIndexInRange &&
+			proof.Path().Equal(iPath) &&
+			hasOther && other.Equal(xsPath) &&
+			proof.ActiveOnEdge(false) {
+			foundRange = true
+			break
+		}
+	}
+	if !foundRange {
+		t.Fatalf("missing false-edge i <= #xs evidence; got %#v", facts.BranchPathEvidence(point))
+	}
+}
+
+func TestLowerNegatedConjunctionNilChecksPublishFalseEdgeRefinements(t *testing.T) {
+	fn, bindings, built, result := parseSemanticFunction(t, `
+function f(x: string?, y: string?)
+	if not (x == nil and y == nil) then
+	end
+end
+`)
+	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings})
+	xPath := path.NewPath(bindings.ParamSlots(fn)[0].Symbol, "x")
+	yPath := path.NewPath(bindings.ParamSlots(fn)[1].Symbol, "y")
+	ifStmt := fn.Stmts[0].(*ast.IfStmt)
+	point := requireStmtPoints(t, built, ifStmt, 1)[0]
+
+	for _, want := range []path.Path{xPath, yPath} {
+		refinement, ok := branchRefinementAt(facts.BranchRefinements(point), want)
+		if !ok {
+			t.Fatalf("missing branch refinement for %s; got %#v", want, facts.BranchRefinements(point))
+		}
+		falseValue, ok := refinement.FalseValue()
+		if !ok || !falseValue.HasPresence(presence.Absent()) {
+			t.Fatalf("false-edge refinement for %s = %#v/%v, want absent", want, falseValue, ok)
+		}
+	}
+}
+
+func TestLowerNegatedConjunctionExpressionConditionKeepsLeafPolarity(t *testing.T) {
+	fn, bindings, built, result := parseSemanticFunction(t, `
+function f(x: string?, y: string?)
+	local ok = not (x == nil and y == nil)
+end
+`)
+	facts := Lower(result, built.Graph, Config{Registry: standard.Registry(), Bindings: bindings})
+	xPath := path.NewPath(bindings.ParamSlots(fn)[0].Symbol, "x")
+	yPath := path.NewPath(bindings.ParamSlots(fn)[1].Symbol, "y")
+	local := mustLocalStmt(t, fn.Stmts, 0)
+	source := mustLocalSource(t, facts, requireStmtPoints(t, built, local, 1)[0])
+	condition, ok := facts.ExpressionCondition(source.ExprRef)
+	if !ok {
+		t.Fatalf("missing expression condition for local source ref %d", source.ExprRef)
+	}
+
+	falseRefinements := condition.RefinementsForValue(false)
+	for _, want := range []path.Path{xPath, yPath} {
+		found := false
+		for _, refinement := range falseRefinements {
+			if !refinement.TargetPath().Equal(want) {
+				continue
+			}
+			if !refinement.Value().HasPresence(presence.Absent()) {
+				t.Fatalf("false-value expression refinement for %s = %#v, want absent", want, refinement.Value())
+			}
+			found = true
+			break
+		}
+		if !found {
+			t.Fatalf("missing false-value expression refinement for %s; got %#v", want, falseRefinements)
+		}
+	}
+}
+
 func TestLowerTypedOptionalMemberBranchPublishesStaticRuntimeKind(t *testing.T) {
 	fn, bindings, built, result := parseSemanticFunction(t, `
 function f(page: { data_func: string? }?)

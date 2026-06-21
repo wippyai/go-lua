@@ -91,3 +91,29 @@ func (l *lowerer) truthyBooleanRootRefinementOnEdge(check branchcond.Check, cond
 	}
 	return nil
 }
+
+func (l *lowerer) truthyBooleanRootRefinementForImplication(check branchcond.Check, polarity bool, edge bool) []factflow.BranchRefinement {
+	switch check.Kind {
+	case branchcond.CheckTruthy:
+		if polarity {
+			if root, ok := l.rootLiteralRefinement(check.Path, typ.LiteralBool(true), edge); ok {
+				return []factflow.BranchRefinement{root}
+			}
+		} else {
+			if root, ok := l.rootLiteralRefinement(check.Path, typ.LiteralBool(false), edge); ok {
+				return []factflow.BranchRefinement{root}
+			}
+		}
+	case branchcond.CheckFalsy:
+		if polarity {
+			if root, ok := l.rootLiteralRefinement(check.Path, typ.LiteralBool(false), edge); ok {
+				return []factflow.BranchRefinement{root}
+			}
+		} else {
+			if root, ok := l.rootLiteralRefinement(check.Path, typ.LiteralBool(true), edge); ok {
+				return []factflow.BranchRefinement{root}
+			}
+		}
+	}
+	return nil
+}

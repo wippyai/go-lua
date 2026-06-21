@@ -11,7 +11,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/lua/branchcond"
 	"github.com/wippyai/go-lua/analysis/lua/pathexpr"
-	"github.com/wippyai/go-lua/analysis/lua/semantics"
 	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
 	"github.com/wippyai/go-lua/analysis/lua/typeoperator"
 	"github.com/wippyai/go-lua/analysis/lua/typeresolve"
@@ -41,15 +40,10 @@ func (l *lowerer) addExpressionCondition(ref factflow.ExprRef, expr ast.Expr) {
 	}
 	var trueRefinements []factflow.PostconditionRefinement
 	var falseRefinements []factflow.PostconditionRefinement
-	for _, check := range branchcond.TruthyChecks(expr, l.bindings) {
-		refinement, ok := l.branchRefinement(semantics.BranchConditionFact{Check: check})
-		if !ok {
-			continue
-		}
-		if value, ok := refinement.TrueValue(); ok {
-			trueRefinements = append(trueRefinements, factflow.NewPostconditionRefinement(refinement.TargetPath(), value))
-		}
-	}
+	var trueRelations []factflow.PostconditionPathRelation
+	var falseRelations []factflow.PostconditionPathRelation
+	l.addExpressionConditionImplications(&trueRefinements, &trueRelations, branchcond.ImpliedChecksOnEdge(expr, l.bindings, true))
+	l.addExpressionConditionImplications(&falseRefinements, &falseRelations, branchcond.ImpliedChecksOnEdge(expr, l.bindings, false))
 	if refinement, returnValue, ok := l.typeIsExpressionConditionRefinement(expr); ok {
 		if returnValue {
 			trueRefinements = append(trueRefinements, refinement)
@@ -57,43 +51,31 @@ func (l *lowerer) addExpressionCondition(ref factflow.ExprRef, expr ast.Expr) {
 			falseRefinements = append(falseRefinements, refinement)
 		}
 	}
-	check := branchcond.Normalize(expr, l.bindings)
-	if check.Kind != branchcond.CheckNone {
-		if refinement, ok := l.branchRefinement(semantics.BranchConditionFact{Check: check}); ok {
-			if value, ok := refinement.FalseValue(); ok {
-				falseRefinements = append(falseRefinements, factflow.NewPostconditionRefinement(refinement.TargetPath(), value))
-			}
-		}
-	}
-	var trueRelations []factflow.PostconditionPathRelation
-	var falseRelations []factflow.PostconditionPathRelation
-	for _, check := range branchcond.TruthyChecks(expr, l.bindings) {
-		relations, ok := l.branchPathRelations(semantics.BranchConditionFact{Check: check})
-		if !ok {
-			continue
-		}
-		for _, relation := range relations.Relations() {
-			if relation.Kind() != factflow.BranchPathRelationEqual || !relation.ActiveOnEdge(true) {
-				continue
-			}
-			trueRelations = append(trueRelations, factflow.NewPostconditionPathEquality(relation.LeftPath(), relation.RightPath()))
-		}
-	}
-	if check.Kind != branchcond.CheckNone {
-		if relations, ok := l.branchPathRelations(semantics.BranchConditionFact{Check: check}); ok {
-			for _, relation := range relations.Relations() {
-				if relation.Kind() != factflow.BranchPathRelationEqual || !relation.ActiveOnEdge(false) {
-					continue
-				}
-				falseRelations = append(falseRelations, factflow.NewPostconditionPathEquality(relation.LeftPath(), relation.RightPath()))
-			}
-		}
-	}
 	condition := factflow.NewExpressionCondition(trueRefinements, falseRefinements, trueRelations, falseRelations)
 	if condition.IsEmpty() {
 		return
 	}
 	l.expressionConditions[ref] = condition
+}
+
+func (l *lowerer) addExpressionConditionImplications(
+	refinements *[]factflow.PostconditionRefinement,
+	relations *[]factflow.PostconditionPathRelation,
+	impliedChecks []branchcond.ImpliedCheck,
+) {
+	for _, implied := range impliedChecks {
+		if refinement, ok := l.branchImplicationRefinement(implied); ok {
+			if value, ok := refinement.ValueForEdge(implied.Edge); ok {
+				*refinements = append(*refinements, factflow.NewPostconditionRefinement(refinement.TargetPath(), value))
+			}
+		}
+		for _, relation := range checkPathRelationsForImplication(implied) {
+			if relation.Kind() != factflow.BranchPathRelationEqual || !relation.ActiveOnEdge(implied.Edge) {
+				continue
+			}
+			*relations = append(*relations, factflow.NewPostconditionPathEquality(relation.LeftPath(), relation.RightPath()))
+		}
+	}
 }
 
 func (l *lowerer) addExpressionValue(ref factflow.ExprRef, expr ast.Expr) {

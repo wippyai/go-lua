@@ -17,11 +17,11 @@ func (l *lowerer) branchPathEvidence(fact semantics.BranchConditionFact) []factf
 		out = append(out, l.branchPathEvidenceForCheck(fact.Check)...)
 		return out
 	}
-	for _, check := range branchcond.TruthyChecks(fact.Condition, l.bindings) {
-		out = append(out, l.branchPathEvidenceForCheckOnEdge(check, true)...)
+	for _, implied := range branchcond.ImpliedChecksOnEdge(fact.Condition, l.bindings, true) {
+		out = append(out, l.branchPathEvidenceForImplication(implied)...)
 	}
-	for _, check := range branchcond.FalsyChecks(fact.Condition, l.bindings) {
-		out = append(out, l.branchPathEvidenceForCheckOnEdge(check, false)...)
+	for _, implied := range branchcond.ImpliedChecksOnEdge(fact.Condition, l.bindings, false) {
+		out = append(out, l.branchPathEvidenceForImplication(implied)...)
 	}
 	return out
 }
@@ -33,73 +33,81 @@ func (l *lowerer) branchPathEvidenceForCheck(check branchcond.Check) []factflow.
 }
 
 func (l *lowerer) branchPathEvidenceForCheckOnEdge(check branchcond.Check, cond bool) []factflow.BranchPathEvidence {
+	return l.branchPathEvidenceForCheckPolarityOnEdge(check, cond, cond)
+}
+
+func (l *lowerer) branchPathEvidenceForImplication(implied branchcond.ImpliedCheck) []factflow.BranchPathEvidence {
+	return l.branchPathEvidenceForCheckPolarityOnEdge(implied.Check, implied.Polarity, implied.Edge)
+}
+
+func (l *lowerer) branchPathEvidenceForCheckPolarityOnEdge(check branchcond.Check, polarity bool, edge bool) []factflow.BranchPathEvidence {
 	target := check.Path
 	if target.IsEmpty() {
 		return nil
 	}
 	switch check.Kind {
 	case branchcond.CheckNil:
-		if cond {
-			return []factflow.BranchPathEvidence{factflow.NewBranchPathPresenceEvidenceOnEdge(target, presence.Absent(), cond)}
+		if polarity {
+			return []factflow.BranchPathEvidence{factflow.NewBranchPathPresenceEvidenceOnEdge(target, presence.Absent(), edge)}
 		}
-		return []factflow.BranchPathEvidence{factflow.NewBranchPathPresenceEvidenceOnEdge(target, presence.Present(), cond)}
+		return []factflow.BranchPathEvidence{factflow.NewBranchPathPresenceEvidenceOnEdge(target, presence.Present(), edge)}
 	case branchcond.CheckNotNil:
-		if cond {
-			return []factflow.BranchPathEvidence{factflow.NewBranchPathPresenceEvidenceOnEdge(target, presence.Present(), cond)}
+		if polarity {
+			return []factflow.BranchPathEvidence{factflow.NewBranchPathPresenceEvidenceOnEdge(target, presence.Present(), edge)}
 		}
-		return []factflow.BranchPathEvidence{factflow.NewBranchPathPresenceEvidenceOnEdge(target, presence.Absent(), cond)}
+		return []factflow.BranchPathEvidence{factflow.NewBranchPathPresenceEvidenceOnEdge(target, presence.Absent(), edge)}
 	case branchcond.CheckTruthy:
-		if cond {
+		if polarity {
 			return []factflow.BranchPathEvidence{
-				factflow.NewBranchPathPresenceEvidenceOnEdge(target, presence.Present(), cond),
-				factflow.NewBranchPathTruthyEvidenceOnEdge(target, cond),
+				factflow.NewBranchPathPresenceEvidenceOnEdge(target, presence.Present(), edge),
+				factflow.NewBranchPathTruthyEvidenceOnEdge(target, edge),
 			}
 		}
 	case branchcond.CheckFalsy:
-		if !cond {
+		if !polarity {
 			return []factflow.BranchPathEvidence{
-				factflow.NewBranchPathPresenceEvidenceOnEdge(target, presence.Present(), cond),
-				factflow.NewBranchPathTruthyEvidenceOnEdge(target, cond),
+				factflow.NewBranchPathPresenceEvidenceOnEdge(target, presence.Present(), edge),
+				factflow.NewBranchPathTruthyEvidenceOnEdge(target, edge),
 			}
 		}
 	case branchcond.CheckTypeEqual:
-		return branchTypePresenceEvidenceOnEdge(target, check.TypeName, cond, cond)
+		return branchTypePresenceEvidenceOnEdge(target, check.TypeName, polarity, edge)
 	case branchcond.CheckTypeNot:
-		return branchTypePresenceEvidenceOnEdge(target, check.TypeName, !cond, cond)
+		return branchTypePresenceEvidenceOnEdge(target, check.TypeName, !polarity, edge)
 	case branchcond.CheckLiteralEqual:
-		if cond {
-			return []factflow.BranchPathEvidence{factflow.NewBranchPathPresenceEvidenceOnEdge(target, presence.Present(), cond)}
+		if polarity {
+			return []factflow.BranchPathEvidence{factflow.NewBranchPathPresenceEvidenceOnEdge(target, presence.Present(), edge)}
 		}
 	case branchcond.CheckLiteralNot:
-		if !cond {
-			return []factflow.BranchPathEvidence{factflow.NewBranchPathPresenceEvidenceOnEdge(target, presence.Present(), cond)}
+		if !polarity {
+			return []factflow.BranchPathEvidence{factflow.NewBranchPathPresenceEvidenceOnEdge(target, presence.Present(), edge)}
 		}
 	case branchcond.CheckPathEqual:
 		other := check.OtherPath
 		if other.IsEmpty() {
 			return nil
 		}
-		if cond {
-			return []factflow.BranchPathEvidence{factflow.NewBranchPathEqualityEvidenceOnEdge(target, other, cond)}
+		if polarity {
+			return []factflow.BranchPathEvidence{factflow.NewBranchPathEqualityEvidenceOnEdge(target, other, edge)}
 		}
-		return []factflow.BranchPathEvidence{factflow.NewBranchPathInequalityEvidenceOnEdge(target, other, cond)}
+		return []factflow.BranchPathEvidence{factflow.NewBranchPathInequalityEvidenceOnEdge(target, other, edge)}
 	case branchcond.CheckPathNot:
 		other := check.OtherPath
 		if other.IsEmpty() {
 			return nil
 		}
-		if cond {
-			return []factflow.BranchPathEvidence{factflow.NewBranchPathInequalityEvidenceOnEdge(target, other, cond)}
+		if polarity {
+			return []factflow.BranchPathEvidence{factflow.NewBranchPathInequalityEvidenceOnEdge(target, other, edge)}
 		}
-		return []factflow.BranchPathEvidence{factflow.NewBranchPathEqualityEvidenceOnEdge(target, other, cond)}
+		return []factflow.BranchPathEvidence{factflow.NewBranchPathEqualityEvidenceOnEdge(target, other, edge)}
 	case branchcond.CheckIndexInRange:
 		other := check.OtherPath
 		// The in-range bound holds on the true edge for `i <= #xs` and on the false
 		// edge for the negated `i > #xs` guard form; establish only on that edge.
-		if other.IsEmpty() || cond == check.Negated {
+		if other.IsEmpty() || polarity == check.Negated {
 			return nil
 		}
-		return []factflow.BranchPathEvidence{factflow.NewBranchIndexInRangeEvidenceOnEdge(target, other, cond)}
+		return []factflow.BranchPathEvidence{factflow.NewBranchIndexInRangeEvidenceOnEdge(target, other, edge)}
 	}
 	return nil
 }

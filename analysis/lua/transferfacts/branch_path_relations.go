@@ -16,15 +16,15 @@ func (l *lowerer) branchPathRelations(fact semantics.BranchConditionFact) (factf
 		}
 		return factflow.NewBranchPathRelationSet(relations...), true
 	}
-	// A compound condition (and / or / not) is decomposed: each conjunct holds on
-	// the true edge, each disjunct's negation on the false edge. The opposite
-	// edge is ambiguous, so a decomposed check narrows on its own edge only.
+	// A compound condition (and / or / not) is decomposed into leaf checks whose
+	// polarity is known on one outer branch edge. The opposite edge is ambiguous,
+	// so a decomposed check narrows only on the edge that implies it.
 	var relations []factflow.BranchPathRelation
-	for _, check := range branchcond.TruthyChecks(fact.Condition, l.bindings) {
-		relations = append(relations, checkPathRelations(check, true, false)...)
+	for _, implied := range branchcond.ImpliedChecksOnEdge(fact.Condition, l.bindings, true) {
+		relations = append(relations, checkPathRelationsForImplication(implied)...)
 	}
-	for _, check := range branchcond.FalsyChecks(fact.Condition, l.bindings) {
-		relations = append(relations, checkPathRelations(check, false, true)...)
+	for _, implied := range branchcond.ImpliedChecksOnEdge(fact.Condition, l.bindings, false) {
+		relations = append(relations, checkPathRelationsForImplication(implied)...)
 	}
 	if len(relations) == 0 {
 		return factflow.BranchPathRelationSet{}, false
@@ -63,6 +63,40 @@ func checkPathRelations(check branchcond.Check, activeOnTrue, activeOnFalse bool
 			factflow.NewBranchPathTypeUnmatch(left, right, activeOnTrue, false),
 			factflow.NewBranchPathTypeMatch(left, right, false, activeOnFalse),
 		}
+	default:
+		return nil
+	}
+}
+
+func checkPathRelationsForImplication(implied branchcond.ImpliedCheck) []factflow.BranchPathRelation {
+	left := implied.Check.Path
+	right := implied.Check.OtherPath
+	if left.IsEmpty() || right.IsEmpty() {
+		return nil
+	}
+	activeOnTrue := implied.Edge
+	activeOnFalse := !implied.Edge
+	switch implied.Check.Kind {
+	case branchcond.CheckPathEqual:
+		if implied.Polarity {
+			return []factflow.BranchPathRelation{factflow.NewBranchPathEquality(left, right, activeOnTrue, activeOnFalse)}
+		}
+		return []factflow.BranchPathRelation{factflow.NewBranchPathInequality(left, right, activeOnTrue, activeOnFalse)}
+	case branchcond.CheckPathNot:
+		if implied.Polarity {
+			return []factflow.BranchPathRelation{factflow.NewBranchPathInequality(left, right, activeOnTrue, activeOnFalse)}
+		}
+		return []factflow.BranchPathRelation{factflow.NewBranchPathEquality(left, right, activeOnTrue, activeOnFalse)}
+	case branchcond.CheckTypeEqual:
+		if implied.Polarity {
+			return []factflow.BranchPathRelation{factflow.NewBranchPathTypeMatch(left, right, activeOnTrue, activeOnFalse)}
+		}
+		return []factflow.BranchPathRelation{factflow.NewBranchPathTypeUnmatch(left, right, activeOnTrue, activeOnFalse)}
+	case branchcond.CheckTypeNot:
+		if implied.Polarity {
+			return []factflow.BranchPathRelation{factflow.NewBranchPathTypeUnmatch(left, right, activeOnTrue, activeOnFalse)}
+		}
+		return []factflow.BranchPathRelation{factflow.NewBranchPathTypeMatch(left, right, activeOnTrue, activeOnFalse)}
 	default:
 		return nil
 	}

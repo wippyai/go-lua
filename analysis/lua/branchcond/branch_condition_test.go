@@ -343,6 +343,63 @@ func TestTruthyChecksExtractSupportedConjuncts(t *testing.T) {
 	}
 }
 
+func TestFalsyChecksExtractNegatedConjunctBounds(t *testing.T) {
+	i := ident("i")
+	xs := ident("xs")
+	expr := &ast.UnaryNotOpExpr{
+		Expr: &ast.LogicalOpExpr{
+			Operator: "and",
+			Lhs:      &ast.RelationalOpExpr{Operator: ">=", Lhs: i, Rhs: number("1")},
+			Rhs:      &ast.RelationalOpExpr{Operator: "<=", Lhs: i, Rhs: lenOf(xs)},
+		},
+	}
+	bindings := bindReturn(expr)
+	iPath := path.NewPath(mustIdentSymbol(t, bindings, i), "i")
+	xsPath := path.NewPath(mustIdentSymbol(t, bindings, xs), "xs")
+
+	got := FalsyChecks(expr, bindings)
+
+	if len(got) != 2 {
+		t.Fatalf("FalsyChecks returned %d checks, want numeric floor and index range: %#v", len(got), got)
+	}
+	if got[0].Kind != CheckNumGe || !got[0].Path.Equal(iPath) || got[0].NumFloor != 1 {
+		t.Fatalf("first check = %#v, want i >= 1", got[0])
+	}
+	if got[1].Kind != CheckIndexInRange || !got[1].Path.Equal(iPath) || !got[1].OtherPath.Equal(xsPath) {
+		t.Fatalf("second check = %#v, want i <= #xs", got[1])
+	}
+}
+
+func TestImpliedChecksOnEdgePreservesOuterEdgeAndLeafPolarity(t *testing.T) {
+	i := ident("i")
+	xs := ident("xs")
+	expr := &ast.UnaryNotOpExpr{
+		Expr: &ast.LogicalOpExpr{
+			Operator: "and",
+			Lhs:      &ast.RelationalOpExpr{Operator: ">=", Lhs: i, Rhs: number("1")},
+			Rhs:      &ast.RelationalOpExpr{Operator: "<=", Lhs: i, Rhs: lenOf(xs)},
+		},
+	}
+	bindings := bindReturn(expr)
+
+	got := ImpliedChecksOnEdge(expr, bindings, false)
+
+	if len(got) != 2 {
+		t.Fatalf("ImpliedChecksOnEdge returned %d checks, want 2: %#v", len(got), got)
+	}
+	for idx, implied := range got {
+		if implied.Edge {
+			t.Fatalf("implied check %d edge = true, want false outer edge", idx)
+		}
+		if !implied.Polarity {
+			t.Fatalf("implied check %d polarity = false, want true leaf condition", idx)
+		}
+	}
+	if got[0].Check.Kind != CheckNumGe || got[1].Check.Kind != CheckIndexInRange {
+		t.Fatalf("implied checks = %#v, want floor then range", got)
+	}
+}
+
 func TestFalsyChecksExtractSupportedDisjuncts(t *testing.T) {
 	pageRoot := ident("page")
 	fieldRoot := ident("page")

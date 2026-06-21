@@ -47,6 +47,18 @@ type Check struct {
 	Negated bool
 }
 
+// ImpliedCheck is a normalized leaf check proven by taking a particular branch
+// edge of a possibly-compound condition. Edge is the outer branch edge carrying
+// the proof; Polarity is the truth value of the leaf check on that edge.
+//
+// They differ for shapes like `not (i >= 1 and i <= #xs)`: on the outer false
+// edge, each inner comparison is true.
+type ImpliedCheck struct {
+	Check    Check
+	Edge     bool
+	Polarity bool
+}
+
 func (c Check) LiteralValue() (typ.Type, bool) {
 	if c.Literal != nil {
 		return c.Literal, true
@@ -146,6 +158,14 @@ func FalsyChecks(expr ast.Expr, bindings *bind.Result) []Check {
 	return polarityChecks(expr, bindings, false)
 }
 
+// ImpliedChecksOnEdge returns normalized leaf checks whose value is known on the
+// requested outer branch edge. It preserves both the outer edge and the leaf
+// polarity so downstream evidence can select the right leaf consequence while
+// publishing it on the right CFG edge.
+func ImpliedChecksOnEdge(expr ast.Expr, bindings *bind.Result, edge bool) []ImpliedCheck {
+	return impliedChecks(expr, bindings, edge, edge)
+}
+
 // polarityChecks collects the narrowing checks implied when expr holds the given
 // truth polarity. A truthy `and` (or falsy `or`) proves both operands; `not`
 // flips polarity; any other shape proves nothing individually.
@@ -174,6 +194,36 @@ func polarityChecks(expr ast.Expr, bindings *bind.Result, truthy bool) []Check {
 		return left
 	}
 	out := make([]Check, 0, len(left)+len(right))
+	out = append(out, left...)
+	out = append(out, right...)
+	return out
+}
+
+func impliedChecks(expr ast.Expr, bindings *bind.Result, polarity bool, edge bool) []ImpliedCheck {
+	check := Normalize(expr, bindings)
+	if check.Kind != CheckNone {
+		return []ImpliedCheck{{Check: check, Edge: edge, Polarity: polarity}}
+	}
+	if unary, ok := expr.(*ast.UnaryNotOpExpr); ok {
+		return impliedChecks(unary.Expr, bindings, !polarity, edge)
+	}
+	splitOp := "and"
+	if !polarity {
+		splitOp = "or"
+	}
+	logical, ok := expr.(*ast.LogicalOpExpr)
+	if !ok || logical.Operator != splitOp {
+		return nil
+	}
+	left := impliedChecks(logical.Lhs, bindings, polarity, edge)
+	right := impliedChecks(logical.Rhs, bindings, polarity, edge)
+	if len(left) == 0 {
+		return right
+	}
+	if len(right) == 0 {
+		return left
+	}
+	out := make([]ImpliedCheck, 0, len(left)+len(right))
 	out = append(out, left...)
 	out = append(out, right...)
 	return out

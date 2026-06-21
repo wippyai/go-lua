@@ -71,13 +71,13 @@ func (l *lowerer) branchLenRefinements(fact semantics.BranchConditionFact) []fac
 		return nil
 	}
 	var out []factflow.BranchLenRefinement
-	for _, check := range branchcond.TruthyChecks(fact.Condition, l.bindings) {
-		if lowered, ok := l.branchLenRefinementOnEdge(check, true); ok {
+	for _, implied := range branchcond.ImpliedChecksOnEdge(fact.Condition, l.bindings, true) {
+		if lowered, ok := l.branchLenRefinementForImplication(implied); ok {
 			out = append(out, lowered)
 		}
 	}
-	for _, check := range branchcond.FalsyChecks(fact.Condition, l.bindings) {
-		if lowered, ok := l.branchLenRefinementOnEdge(check, false); ok {
+	for _, implied := range branchcond.ImpliedChecksOnEdge(fact.Condition, l.bindings, false) {
+		if lowered, ok := l.branchLenRefinementForImplication(implied); ok {
 			out = append(out, lowered)
 		}
 	}
@@ -96,6 +96,17 @@ func (l *lowerer) branchLenRefinementOnEdge(check branchcond.Check, edge bool) (
 	return factflow.NewBranchLenRefinementOnEdge(check.Path, check.LenFloor, edge), true
 }
 
+func (l *lowerer) branchLenRefinementForImplication(implied branchcond.ImpliedCheck) (factflow.BranchLenRefinement, bool) {
+	check := implied.Check
+	if check.Kind != branchcond.CheckLenGe || check.Path.IsEmpty() || check.LenFloor <= 0 {
+		return factflow.BranchLenRefinement{}, false
+	}
+	if implied.Polarity != !check.Negated {
+		return factflow.BranchLenRefinement{}, false
+	}
+	return factflow.NewBranchLenRefinementOnEdge(check.Path, check.LenFloor, implied.Edge), true
+}
+
 // branchNumFloorRefinements lowers a numeric lower-bound guard such as `i >= 1`
 // (true edge) or the negated `i < 1` (false edge) into a numeric-floor fact, the
 // positive-index half of an array-read in-range proof, on the edge it holds.
@@ -110,13 +121,13 @@ func (l *lowerer) branchNumFloorRefinements(fact semantics.BranchConditionFact) 
 		return nil
 	}
 	var out []factflow.BranchNumFloorRefinement
-	for _, check := range branchcond.TruthyChecks(fact.Condition, l.bindings) {
-		if lowered, ok := l.branchNumFloorRefinementOnEdge(check, true); ok {
+	for _, implied := range branchcond.ImpliedChecksOnEdge(fact.Condition, l.bindings, true) {
+		if lowered, ok := l.branchNumFloorRefinementForImplication(implied); ok {
 			out = append(out, lowered)
 		}
 	}
-	for _, check := range branchcond.FalsyChecks(fact.Condition, l.bindings) {
-		if lowered, ok := l.branchNumFloorRefinementOnEdge(check, false); ok {
+	for _, implied := range branchcond.ImpliedChecksOnEdge(fact.Condition, l.bindings, false) {
+		if lowered, ok := l.branchNumFloorRefinementForImplication(implied); ok {
 			out = append(out, lowered)
 		}
 	}
@@ -135,6 +146,17 @@ func (l *lowerer) branchNumFloorRefinementOnEdge(check branchcond.Check, edge bo
 	return factflow.NewBranchNumFloorRefinementOnEdge(check.Path, check.NumFloor, edge), true
 }
 
+func (l *lowerer) branchNumFloorRefinementForImplication(implied branchcond.ImpliedCheck) (factflow.BranchNumFloorRefinement, bool) {
+	check := implied.Check
+	if check.Kind != branchcond.CheckNumGe || check.Path.IsEmpty() || check.NumFloor < 0 {
+		return factflow.BranchNumFloorRefinement{}, false
+	}
+	if implied.Polarity != !check.Negated {
+		return factflow.BranchNumFloorRefinement{}, false
+	}
+	return factflow.NewBranchNumFloorRefinementOnEdge(check.Path, check.NumFloor, implied.Edge), true
+}
+
 func (l *lowerer) branchRefinements(fact semantics.BranchConditionFact) []factflow.BranchRefinement {
 	if fact.Check.Kind != branchcond.CheckNone {
 		if lowered := l.branchRefinementsForCheck(fact.Check); len(lowered) != 0 {
@@ -143,11 +165,11 @@ func (l *lowerer) branchRefinements(fact semantics.BranchConditionFact) []factfl
 		return nil
 	}
 	var out []factflow.BranchRefinement
-	for _, check := range branchcond.TruthyChecks(fact.Condition, l.bindings) {
-		out = append(out, l.branchEdgeRefinements(check, true)...)
+	for _, implied := range branchcond.ImpliedChecksOnEdge(fact.Condition, l.bindings, true) {
+		out = append(out, l.branchImplicationRefinements(implied)...)
 	}
-	for _, check := range branchcond.FalsyChecks(fact.Condition, l.bindings) {
-		out = append(out, l.branchEdgeRefinements(check, false)...)
+	for _, implied := range branchcond.ImpliedChecksOnEdge(fact.Condition, l.bindings, false) {
+		out = append(out, l.branchImplicationRefinements(implied)...)
 	}
 	return orderRootRefinementsBeforeDescendants(out)
 }
