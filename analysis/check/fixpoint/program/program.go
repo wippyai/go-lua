@@ -64,7 +64,7 @@ type Result struct {
 	rootKey      summary.SummaryKey
 	functionKeys map[symbol.ID]summary.SummaryKey
 	targetKeys   map[symbol.ID]summary.SummaryKey
-	pathKeys     map[path.PathKey]summary.SummaryKey
+	pathKeys     map[factflow.CalleePathKey]summary.SummaryKey
 	rootResult   *body.Result
 }
 
@@ -222,7 +222,11 @@ func (r Result) TargetKey(id symbol.ID) (summary.SummaryKey, bool) {
 
 // PathKey returns the summary key for an exact callable path.
 func (r Result) PathKey(pathKey path.PathKey) (summary.SummaryKey, bool) {
-	key, ok := r.pathKeys[pathKey]
+	calleeKey, ok := factflow.CalleePathKeyFromPathKey(pathKey)
+	if !ok {
+		return summary.SummaryKey{}, false
+	}
+	key, ok := r.pathKeys[calleeKey]
 	return key, ok
 }
 
@@ -334,8 +338,8 @@ type programKeys struct {
 	functionKeys           map[symbol.ID]summary.SummaryKey
 	functionIDs            map[identity.ID]summary.SummaryKey
 	targetKeys             map[symbol.ID]summary.SummaryKey
-	pathKeys               map[path.PathKey]summary.SummaryKey
-	pathMultiKeys          map[path.PathKey][]summary.SummaryKey
+	pathKeys               map[factflow.CalleePathKey]summary.SummaryKey
+	pathMultiKeys          map[factflow.CalleePathKey][]summary.SummaryKey
 	functionTypes          map[summary.SummaryKey]*typ.Function
 	nextContextID          summary.Digest
 
@@ -455,8 +459,8 @@ func collectKeys(bindings *bind.Result, root summary.SummaryKey, reg *axis.Regis
 		functionKeys:  make(map[symbol.ID]summary.SummaryKey),
 		functionIDs:   make(map[identity.ID]summary.SummaryKey),
 		targetKeys:    make(map[symbol.ID]summary.SummaryKey),
-		pathKeys:      make(map[path.PathKey]summary.SummaryKey),
-		pathMultiKeys: make(map[path.PathKey][]summary.SummaryKey),
+		pathKeys:      make(map[factflow.CalleePathKey]summary.SummaryKey),
+		pathMultiKeys: make(map[factflow.CalleePathKey][]summary.SummaryKey),
 		functionTypes: make(map[summary.SummaryKey]*typ.Function),
 		nextContextID: 1,
 		bindings:      bindings,
@@ -465,7 +469,7 @@ func collectKeys(bindings *bind.Result, root summary.SummaryKey, reg *axis.Regis
 		return out
 	}
 	pathTargets := collectFunctionPathTargets(bindings, stmts...)
-	ambiguousPathKeys := make(map[path.PathKey]struct{})
+	ambiguousPathKeys := make(map[factflow.CalleePathKey]struct{})
 	for _, origin := range bindings.FunctionOrigins() {
 		if origin.Symbol == 0 || origin.Func == nil {
 			continue
@@ -482,7 +486,10 @@ func collectKeys(bindings *bind.Result, root summary.SummaryKey, reg *axis.Regis
 			out.targetKeys[origin.TargetSymbol] = key
 		}
 		if targetPath, ok := pathTargets[origin.Func]; ok {
-			pathKey := targetPath.Key()
+			pathKey, ok := factflow.CalleePathKeyFromPath(targetPath)
+			if !ok {
+				continue
+			}
 			if existing, seen := out.pathKeys[pathKey]; seen && existing != key {
 				ambiguousPathKeys[pathKey] = struct{}{}
 				out.pathMultiKeys[pathKey] = appendSummaryKeyUnique(out.pathMultiKeys[pathKey], existing)
@@ -1013,8 +1020,8 @@ func chunkFunction(
 	functionKeys map[symbol.ID]summary.SummaryKey,
 	functionExpressionKeys map[factflow.ExprRef]summary.SummaryKey,
 	functionIDs map[identity.ID]summary.SummaryKey,
-	pathKeys map[path.PathKey]summary.SummaryKey,
-	pathMultiKeys map[path.PathKey][]summary.SummaryKey,
+	pathKeys map[factflow.CalleePathKey]summary.SummaryKey,
+	pathMultiKeys map[factflow.CalleePathKey][]summary.SummaryKey,
 	functionTypes map[summary.SummaryKey]*typ.Function,
 ) query.Function {
 	captured := cloneCheckConfig(config)
@@ -1040,8 +1047,8 @@ func boundFunction(
 	functionKeys map[symbol.ID]summary.SummaryKey,
 	functionExpressionKeys map[factflow.ExprRef]summary.SummaryKey,
 	functionIDs map[identity.ID]summary.SummaryKey,
-	pathKeys map[path.PathKey]summary.SummaryKey,
-	pathMultiKeys map[path.PathKey][]summary.SummaryKey,
+	pathKeys map[factflow.CalleePathKey]summary.SummaryKey,
+	pathMultiKeys map[factflow.CalleePathKey][]summary.SummaryKey,
 	functionTypes map[summary.SummaryKey]*typ.Function,
 ) query.Function {
 	captured := cloneCheckConfig(config)
@@ -1069,7 +1076,7 @@ func keyFunc(keys programKeys, owner *ast.FunctionExpr) callresult.KeyFunc {
 				return key, true
 			}
 		}
-		if calleePath := site.CalleePathRef(); !calleePath.IsEmpty() && len(keys.pathMultiKeys[calleePath.Key()]) > 1 {
+		if calleeKey := site.CalleePathKey(); calleeKey.Valid() && len(keys.pathMultiKeys[calleeKey]) > 1 {
 			return summary.SummaryKey{}, false
 		}
 		return direct(ctx, site)
@@ -1083,8 +1090,8 @@ func checkConfigWithSummaries(
 	functionKeys map[symbol.ID]summary.SummaryKey,
 	functionExpressionKeys map[factflow.ExprRef]summary.SummaryKey,
 	functionIDs map[identity.ID]summary.SummaryKey,
-	pathKeys map[path.PathKey]summary.SummaryKey,
-	pathMultiKeys map[path.PathKey][]summary.SummaryKey,
+	pathKeys map[factflow.CalleePathKey]summary.SummaryKey,
+	pathMultiKeys map[factflow.CalleePathKey][]summary.SummaryKey,
 	functionTypes map[summary.SummaryKey]*typ.Function,
 ) body.Config {
 	out := cloneCheckConfig(config)
@@ -1361,7 +1368,7 @@ func functionValueTypesFromSummaries(reg *axis.Registry, summaries summary.Reade
 			continue
 		}
 		if out.ByPath == nil {
-			out.ByPath = make(map[path.PathKey]*typ.Function)
+			out.ByPath = make(map[factflow.CalleePathKey]*typ.Function)
 		}
 		out.ByPath[pathKey] = fn
 	}

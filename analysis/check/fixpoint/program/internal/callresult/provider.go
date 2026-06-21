@@ -57,8 +57,8 @@ type ProviderConfig struct {
 	FunctionKeys            map[symbol.ID]summary.SummaryKey
 	FunctionExpressionKeys  map[factflow.ExprRef]summary.SummaryKey
 	FunctionIDs             map[identity.ID]summary.SummaryKey
-	PathKeys                map[pathdom.PathKey]summary.SummaryKey
-	PathMultiKeys           map[pathdom.PathKey][]summary.SummaryKey
+	PathKeys                map[factflow.CalleePathKey]summary.SummaryKey
+	PathMultiKeys           map[factflow.CalleePathKey][]summary.SummaryKey
 	FunctionTypes           map[summary.SummaryKey]*typ.Function
 	Sources                 sourcevalue.SourceValues
 	ReturnPresenceRelations ReturnPresenceRelationsForPathFunc
@@ -162,7 +162,7 @@ func joinedSummaryForDefinitionPath(
 	read func(cfg.Point) state.State,
 	calleeValue CalleeValueFunc,
 	summaries summary.Reader,
-	pathMultiKeys map[pathdom.PathKey][]summary.SummaryKey,
+	pathMultiKeys map[factflow.CalleePathKey][]summary.SummaryKey,
 	functionTypes map[summary.SummaryKey]*typ.Function,
 	facts factflow.Facts,
 	functionKeys map[symbol.ID]summary.SummaryKey,
@@ -725,7 +725,7 @@ func summaryKeyForCall(
 	keyFor KeyFunc,
 	calleeValue CalleeValueFunc,
 	functionIDs map[identity.ID]summary.SummaryKey,
-	pathKeys map[pathdom.PathKey]summary.SummaryKey,
+	pathKeys map[factflow.CalleePathKey]summary.SummaryKey,
 ) (summary.SummaryKey, bool) {
 	if id, hasID := currentCalleeIdentity(ctx, site, in, read, calleeValue); hasID {
 		key, ok := functionIDs[id]
@@ -751,7 +751,7 @@ func summaryKeyForDefinitionPath(
 	in state.State,
 	read func(cfg.Point) state.State,
 	calleeValue CalleeValueFunc,
-	pathKeys map[pathdom.PathKey]summary.SummaryKey,
+	pathKeys map[factflow.CalleePathKey]summary.SummaryKey,
 ) (summary.SummaryKey, bool) {
 	if len(pathKeys) == 0 {
 		return summary.SummaryKey{}, false
@@ -1175,11 +1175,11 @@ func valueContainsFreeTypeParam(reg *axis.Registry, value product.Value) bool {
 	return ok && refinement.ContainsFreeTypeParam(t)
 }
 
-func clonePathMultiKeys(in map[pathdom.PathKey][]summary.SummaryKey) map[pathdom.PathKey][]summary.SummaryKey {
+func clonePathMultiKeys(in map[factflow.CalleePathKey][]summary.SummaryKey) map[factflow.CalleePathKey][]summary.SummaryKey {
 	if len(in) == 0 {
 		return nil
 	}
-	out := make(map[pathdom.PathKey][]summary.SummaryKey, len(in))
+	out := make(map[factflow.CalleePathKey][]summary.SummaryKey, len(in))
 	for pathKey, keys := range in {
 		if len(keys) == 0 {
 			continue

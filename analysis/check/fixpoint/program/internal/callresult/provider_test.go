@@ -621,8 +621,8 @@ func TestOutcomeProviderJoinMaterializesTableEntryShapeFromNilableFactRecord(t *
 				Summary: summary.Summary{NormalReturnFacts: facts},
 			},
 		),
-		PathMultiKeys: map[path.PathKey][]summary.SummaryKey{
-			calleePath.Key(): {leftKey, rightKey},
+		PathMultiKeys: map[factflow.CalleePathKey][]summary.SummaryKey{
+			mustCalleePathKey(t, calleePath): {leftKey, rightKey},
 		},
 	})
 
@@ -701,8 +701,8 @@ func TestOutcomeProviderJoinDropsDescendantEscapeEventsBelowMaybeAbsentReturn(t 
 				},
 			},
 		),
-		PathMultiKeys: map[path.PathKey][]summary.SummaryKey{
-			calleePath.Key(): {leftKey, rightKey},
+		PathMultiKeys: map[factflow.CalleePathKey][]summary.SummaryKey{
+			mustCalleePathKey(t, calleePath): {leftKey, rightKey},
 		},
 	})
 
@@ -1294,8 +1294,8 @@ func TestOutcomeProviderRejectsStalePathSummaryForCurrentNonFunctionCallee(t *te
 			Key:     staleKey,
 			Summary: summary.Summary{Returns: []product.Value{staleRet}},
 		}),
-		PathKeys: map[path.PathKey]summary.SummaryKey{
-			calleePath.Key(): staleKey,
+		PathKeys: map[factflow.CalleePathKey]summary.SummaryKey{
+			mustCalleePathKey(t, calleePath): staleKey,
 		},
 		CalleeValue: func(ctx transfer.NodeContext, site factflow.CallSiteView, in state.State, read func(cfg.Point) state.State) (product.Value, bool) {
 			if site.CalleePath().IsEmpty() {
@@ -1485,6 +1485,15 @@ func providerExpressionSource(t *testing.T, ref factflow.ExprRef, index int) fac
 		t.Fatalf("expression source for ref %d invalid", ref)
 	}
 	return source
+}
+
+func mustCalleePathKey(t *testing.T, p path.Path) factflow.CalleePathKey {
+	t.Helper()
+	key, ok := factflow.CalleePathKeyFromPath(p)
+	if !ok {
+		t.Fatalf("CalleePathKeyFromPath(%s) failed", p.String())
+	}
+	return key
 }
 
 func assertCallOutcomeResultType(t *testing.T, reg *axis.Registry, got []callpayload.CallResult, want typ.Type) {

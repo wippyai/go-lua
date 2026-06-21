@@ -50,6 +50,38 @@ type CallSiteConfig struct {
 	OpenTail bool
 }
 
+// CalleePathKey is the structural key spelling of a resolvable callsite callee
+// path. It is intentionally tied to path.Path.Key(), not stable address keys:
+// definition-path summary lookup must match the callee path spelling carried by
+// callsite evidence.
+type CalleePathKey path.PathKey
+
+// PathKey returns the underlying structural path key for compatibility with
+// existing map and test APIs.
+func (k CalleePathKey) PathKey() path.PathKey { return path.PathKey(k) }
+
+func (k CalleePathKey) String() string { return string(k) }
+
+// Valid reports whether k is a non-empty callee path key.
+func (k CalleePathKey) Valid() bool { return k != "" }
+
+// CalleePathKeyFromPath formats a non-empty callee path as a typed key.
+func CalleePathKeyFromPath(p path.Path) (CalleePathKey, bool) {
+	if p.IsEmpty() {
+		return "", false
+	}
+	return CalleePathKey(p.Key()), true
+}
+
+// CalleePathKeyFromPathKey narrows an existing structural path key for
+// compatibility boundaries.
+func CalleePathKeyFromPathKey(key path.PathKey) (CalleePathKey, bool) {
+	if key == "" {
+		return "", false
+	}
+	return CalleePathKey(key), true
+}
+
 // CallSite describes a semantic call occurrence used as canonical evidence.
 type CallSite struct {
 	context CallSiteContext
@@ -224,8 +256,11 @@ func (v CallSiteView) CalleePath() path.Path { return v.site.calleePath.Clone() 
 // shares the fact's segment storage and must never be mutated in place.
 func (v CallSiteView) CalleePathRef() path.Path { return v.site.calleePath }
 
-// CalleePathKey returns the callee path's structural key.
-func (v CallSiteView) CalleePathKey() path.PathKey { return v.site.calleePath.Key() }
+// CalleePathKey returns the callee path's typed structural key.
+func (v CallSiteView) CalleePathKey() CalleePathKey {
+	key, _ := CalleePathKeyFromPath(v.site.calleePath)
+	return key
+}
 
 // CalleePathEqual reports whether p matches the callee path.
 func (v CallSiteView) CalleePathEqual(p path.Path) bool { return v.site.calleePath.Equal(p) }

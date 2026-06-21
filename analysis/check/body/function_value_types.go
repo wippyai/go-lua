@@ -1,12 +1,12 @@
 package body
 
 import (
-	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/engine/dynamicindex"
+	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/state/heapidentity"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
@@ -19,7 +19,7 @@ import (
 // results use this only for post-solve reads such as diagnostics.
 type FunctionValueTypes struct {
 	ByIdentity         map[identity.ID]*typ.Function
-	ByPath             map[pathdom.PathKey]*typ.Function
+	ByPath             map[factflow.CalleePathKey]*typ.Function
 	ContextsByIdentity map[identity.ID][]FunctionValueContext
 }
 
@@ -61,8 +61,10 @@ func (r *Result) FunctionValueTypeAtBoundary(point cfg.Point, expr ast.Expr) (*t
 		}
 		return nil, false
 	}
-	if fn, ok := r.funcTypes.ByPath[p.Key()]; ok && fn != nil {
-		return fn, true
+	if pathKey, ok := factflow.CalleePathKeyFromPath(p); ok {
+		if fn, ok := r.funcTypes.ByPath[pathKey]; ok && fn != nil {
+			return fn, true
+		}
 	}
 	return nil, false
 }
@@ -181,7 +183,7 @@ func cloneFunctionValueTypes(in FunctionValueTypes) FunctionValueTypes {
 		}
 	}
 	if len(in.ByPath) != 0 {
-		out.ByPath = make(map[pathdom.PathKey]*typ.Function, len(in.ByPath))
+		out.ByPath = make(map[factflow.CalleePathKey]*typ.Function, len(in.ByPath))
 		for key, fn := range in.ByPath {
 			out.ByPath[key] = fn
 		}
