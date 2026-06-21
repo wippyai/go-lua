@@ -16,10 +16,6 @@ func UnwrapTransparentWrappers(t Type) Type {
 	}
 }
 
-func unwrapTransparentWrappers(t Type) Type {
-	return UnwrapTransparentWrappers(t)
-}
-
 func unwrapAnnotatedOrNil(t Type) Type {
 	if t == nil {
 		return nil

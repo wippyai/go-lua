@@ -58,8 +58,8 @@ func typeEqualsGuard(a, b Type, guard recursion.Guard, seen map[typePair]bool) b
 
 	next := guard
 
-	a = unwrapTransparentWrappers(a)
-	b = unwrapTransparentWrappers(b)
+	a = UnwrapTransparentWrappers(a)
+	b = UnwrapTransparentWrappers(b)
 
 	switch va := a.(type) {
 	case *Optional:

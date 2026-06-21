@@ -15,7 +15,7 @@ func WalkChildren(t Type, visit func(Type) bool) bool {
 	visitType := func(child Type) bool {
 		return child != nil && visit(child)
 	}
-	t = unwrapTransparentWrappers(t)
+	t = UnwrapTransparentWrappers(t)
 	if t == nil {
 		return false
 	}

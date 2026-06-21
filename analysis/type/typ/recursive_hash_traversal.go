@@ -46,7 +46,7 @@ func hashBodyWithVisitedMemo(t Type, scratch *recursiveHashScratch) uint64 {
 	if t == nil {
 		return 0
 	}
-	t = unwrapTransparentWrappers(t)
+	t = UnwrapTransparentWrappers(t)
 	if alias, ok := t.(*Alias); ok {
 		return hashBodyWithVisitedMemo(alias.UnaliasedTarget(), scratch)
 	}
