@@ -1,7 +1,6 @@
 package summary
 
 import (
-	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
@@ -39,7 +38,7 @@ type ParamMemberReturnSlot struct {
 type ReturnParamPathAlias struct {
 	ReturnIndex int
 	Member      pathaddr.SuffixKey
-	Source      pathdom.PathKey
+	Source      pathaddr.PlaceholderKey
 }
 
 // ParamSinkExposure records that the callee stores one parameter (Source, a bare
@@ -52,6 +51,6 @@ type ReturnParamPathAlias struct {
 // argument). Call-boundary adaptation rebases Source onto the concrete argument
 // and eager-widens it toward Contract.
 type ParamSinkExposure struct {
-	Source   pathdom.PathKey
+	Source   pathaddr.RootPlaceholderKey
 	Contract product.Value
 }

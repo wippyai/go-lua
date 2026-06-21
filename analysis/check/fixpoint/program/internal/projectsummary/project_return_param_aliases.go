@@ -87,10 +87,14 @@ func projectReturnSourceParamAliases(
 		if entrySource.Kind == factflow.ValueSourceExpression && entrySource.HasExpr {
 			if sourcePath, ok := pathReader.ExpressionPathRef(entrySource.ExprRef); ok {
 				if placeholder, ok := returnAliasPlaceholderPath(sourcePath, params, result); ok {
+					sourceKey, ok := pathaddr.PlaceholderKeyFromPath(placeholder)
+					if !ok {
+						continue
+					}
 					out = append(out, summary.ReturnParamPathAlias{
 						ReturnIndex: returnIndex,
 						Member:      memberKey,
-						Source:      placeholder.Key(),
+						Source:      sourceKey,
 					})
 				}
 			}
@@ -134,10 +138,14 @@ func directReturnParamAlias(
 	if !ok || len(placeholder.Segments) != 0 {
 		return summary.ReturnParamPathAlias{}, false
 	}
+	sourceKey, ok := pathaddr.PlaceholderKeyFromPath(placeholder)
+	if !ok {
+		return summary.ReturnParamPathAlias{}, false
+	}
 	return summary.ReturnParamPathAlias{
 		ReturnIndex: returnIndex,
 		Member:      "",
-		Source:      placeholder.Key(),
+		Source:      sourceKey,
 	}, true
 }
 

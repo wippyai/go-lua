@@ -6,6 +6,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/ref"
 	"github.com/wippyai/go-lua/analysis/domain/path"
+	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
@@ -456,15 +457,17 @@ func TestParamMemberSummaryFactsAcceptExactBracketMembers(t *testing.T) {
 
 func TestReturnParamPathAliasesAreMustFacts(t *testing.T) {
 	reg := standard.Registry()
+	apiSource := mustPlaceholderKey(t, path.PathKey("$0.registry"))
+	backupSource := mustPlaceholderKey(t, path.PathKey("$0.registry.backup"))
 	apiAlias := ReturnParamPathAlias{
 		ReturnIndex: 0,
 		Member:      ".api",
-		Source:      path.PathKey("$0.registry"),
+		Source:      apiSource,
 	}
 	backupAlias := ReturnParamPathAlias{
 		ReturnIndex: 0,
 		Member:      ".api.backup",
-		Source:      path.PathKey("$0.registry.backup"),
+		Source:      backupSource,
 	}
 	left := Summary{
 		Returns:                []product.Value{product.Top()},
@@ -479,7 +482,7 @@ func TestReturnParamPathAliasesAreMustFacts(t *testing.T) {
 	normalized := Normalize(reg, Summary{
 		Returns: []product.Value{product.Top()},
 		ReturnParamPathAliases: []ReturnParamPathAlias{
-			{ReturnIndex: -1, Member: ".ignored", Source: path.PathKey("$0")},
+			{ReturnIndex: -1, Member: ".ignored", Source: mustPlaceholderKey(t, path.PathKey("$0"))},
 			apiAlias,
 			apiAlias,
 			backupAlias,
@@ -511,6 +514,54 @@ func TestReturnParamPathAliasesAreMustFacts(t *testing.T) {
 	}
 	if !LessOrEq(reg, left, withoutAliases) || LessOrEq(reg, withoutAliases, left) {
 		t.Fatalf("ReturnParamPathAliases must use reverse-inclusion order")
+	}
+}
+
+func mustPlaceholderKey(t *testing.T, key path.PathKey) pathaddr.PlaceholderKey {
+	t.Helper()
+	got, ok := pathaddr.PlaceholderKeyFromPathKey(key)
+	if !ok {
+		t.Fatalf("PlaceholderKeyFromPathKey(%q) failed", key)
+	}
+	return got
+}
+
+func TestParamSinkExposuresAreRootPlaceholderMayFacts(t *testing.T) {
+	reg := standard.Registry()
+	source0, ok := pathaddr.RootPlaceholderKeyForIndex(0)
+	if !ok {
+		t.Fatal("RootPlaceholderKeyForIndex(0) failed")
+	}
+	source1, ok := pathaddr.RootPlaceholderKeyForIndex(1)
+	if !ok {
+		t.Fatal("RootPlaceholderKeyForIndex(1) failed")
+	}
+	present := product.NewWithPresence(reg, product.ShapeTop, presence.Present())
+	absent := product.Absent(reg)
+	wantContract := product.Join(reg, present, absent)
+
+	normalized := Normalize(reg, Summary{
+		ParamSinkExposures: []ParamSinkExposure{
+			{Source: pathaddr.RootPlaceholderKey(path.PathKey("$2.member")), Contract: present},
+			{Source: source1, Contract: product.Top()},
+			{Source: source1, Contract: product.Bottom(reg)},
+			{Source: source0, Contract: present},
+			{Source: source0, Contract: absent},
+		},
+	})
+
+	if got := normalized.ParamSinkExposures; len(got) != 1 ||
+		got[0].Source != source0 ||
+		!product.Equal(reg, got[0].Contract, wantContract) {
+		t.Fatalf("Normalize ParamSinkExposures = %#v, want one source0 exposure with joined contract", got)
+	}
+
+	joined := Join(reg,
+		Summary{ParamSinkExposures: []ParamSinkExposure{{Source: source0, Contract: present}}},
+		Summary{ParamSinkExposures: []ParamSinkExposure{{Source: source1, Contract: absent}}},
+	)
+	if got := joined.ParamSinkExposures; len(got) != 2 || got[0].Source != source0 || got[1].Source != source1 {
+		t.Fatalf("Join ParamSinkExposures = %#v, want both may exposures sorted by source", got)
 	}
 }
 

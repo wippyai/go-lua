@@ -8,6 +8,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/ref"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/summary"
 	"github.com/wippyai/go-lua/analysis/domain/path"
+	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
@@ -523,6 +524,10 @@ func TestOutcomeProviderMaterializesReturnParamPathAliases(t *testing.T) {
 	if !ok {
 		t.Fatal("backup suffix key failed")
 	}
+	aliasSource, ok := pathaddr.PlaceholderKeyFromPathKey(path.PathKey("$0.backup"))
+	if !ok {
+		t.Fatal("alias source key failed")
+	}
 	provider := OutcomeProvider(ProviderConfig{
 		Summaries: summary.NewSnapshot(reg, summary.EntrySummary{
 			Key: key,
@@ -539,7 +544,7 @@ func TestOutcomeProviderMaterializesReturnParamPathAliases(t *testing.T) {
 					}),
 				},
 				ReturnParamPathAliases: []summary.ReturnParamPathAlias{
-					{ReturnIndex: 0, Member: ".api.backup", Source: path.PathKey("$0.backup")},
+					{ReturnIndex: 0, Member: ".api.backup", Source: aliasSource},
 				},
 			},
 		}),

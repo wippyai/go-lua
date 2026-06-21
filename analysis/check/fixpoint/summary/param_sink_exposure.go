@@ -2,7 +2,7 @@ package summary
 
 import (
 	"github.com/wippyai/go-lua/analysis/domain/lattice/factmap"
-	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 )
@@ -12,9 +12,9 @@ import (
 // parameter into a persistent sink exposes the argument), so exposures survive a
 // join when present on either path, and two exposures of the same source widen to
 // the join of their carried sink-slot contracts.
-func paramSinkExposureMap(reg *axis.Registry) factmap.Map[pathdom.PathKey, ParamSinkExposure, product.Value] {
-	return factmap.Map[pathdom.PathKey, ParamSinkExposure, product.Value]{
-		Key:   func(e ParamSinkExposure) pathdom.PathKey { return e.Source },
+func paramSinkExposureMap(reg *axis.Registry) factmap.Map[pathaddr.RootPlaceholderKey, ParamSinkExposure, product.Value] {
+	return factmap.Map[pathaddr.RootPlaceholderKey, ParamSinkExposure, product.Value]{
+		Key:   func(e ParamSinkExposure) pathaddr.RootPlaceholderKey { return e.Source },
 		Value: func(e ParamSinkExposure) product.Value { return e.Contract },
 		WithValue: func(e ParamSinkExposure, v product.Value) ParamSinkExposure {
 			e.Contract = v
@@ -22,7 +22,7 @@ func paramSinkExposureMap(reg *axis.Registry) factmap.Map[pathdom.PathKey, Param
 		},
 		Less: func(a, b ParamSinkExposure) bool { return a.Source < b.Source },
 		Valid: func(e ParamSinkExposure) bool {
-			return e.Source != "" && !product.Equal(reg, e.Contract, product.Bottom(reg)) && !product.Equal(reg, e.Contract, product.Top())
+			return e.Source.Valid() && !product.Equal(reg, e.Contract, product.Bottom(reg)) && !product.Equal(reg, e.Contract, product.Top())
 		},
 		Domain:  product.Domain(reg),
 		Collide: func(a, b product.Value) product.Value { return product.Join(reg, a, b) },

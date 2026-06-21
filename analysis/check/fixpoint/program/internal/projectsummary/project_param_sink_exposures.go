@@ -3,6 +3,7 @@ package projectsummary
 import (
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/summary"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
@@ -94,8 +95,12 @@ func projectParamSinkExposures(reg *axis.Registry, result ResultReader, exit sta
 		if !ok {
 			continue
 		}
+		sourceKey, ok := pathaddr.RootPlaceholderKeyFromPath(source)
+		if !ok {
+			continue
+		}
 		out = append(out, summary.ParamSinkExposure{
-			Source:   source.Key(),
+			Source:   sourceKey,
 			Contract: contract,
 		})
 	}

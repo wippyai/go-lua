@@ -346,12 +346,12 @@ func returnParamAliasSourceValue(
 	ctx transfer.NodeContext,
 	ks *keyspace.KeySpace,
 	site factflow.CallSiteView,
-	sourceKey pathdom.PathKey,
+	sourceKey pathaddr.PlaceholderKey,
 	sources sourcevalue.SourceValues,
 	in state.State,
 	read func(cfg.Point) state.State,
 ) (product.Value, bool) {
-	sourcePath, ok := pathaddr.PlaceholderPathFromKey(sourceKey)
+	sourcePath, ok := sourceKey.Path()
 	if !ok {
 		return product.Value{}, false
 	}
@@ -1470,7 +1470,7 @@ func paramReturnExposures(reg *axis.Registry, argCount int, got summary.Summary,
 	returns := callResultReturnTypes(got, fn.Returns)
 	var out []callpayload.CallParamExposure
 	for _, alias := range got.ReturnParamPathAliases {
-		paramIndex, ok := rootPlaceholderIndex(alias.Source)
+		paramIndex, ok := alias.Source.RootPlaceholderIndex()
 		if !ok || paramIndex < 0 || paramIndex >= argCount {
 			continue
 		}
@@ -1564,7 +1564,7 @@ func paramSinkExposures(reg *axis.Registry, argCount int, got summary.Summary) [
 	}
 	var out []callpayload.CallParamExposure
 	for _, sink := range got.ParamSinkExposures {
-		paramIndex, ok := rootPlaceholderIndex(sink.Source)
+		paramIndex, ok := sink.Source.PlaceholderIndex()
 		if !ok || paramIndex < 0 || paramIndex >= argCount {
 			continue
 		}
@@ -1625,21 +1625,6 @@ func unaliasType(t typ.Type) typ.Type {
 		}
 		t = alias.UnaliasedTarget()
 	}
-}
-
-// rootPlaceholderIndex returns the parameter index of a root placeholder source
-// key ($i with no member segments). Sources with member segments name a sub-path
-// of a parameter, which this exposure lane does not handle.
-func rootPlaceholderIndex(source pathdom.PathKey) (int, bool) {
-	p, ok := pathaddr.PlaceholderPathFromKey(source)
-	if !ok || len(p.Segments) != 0 {
-		return 0, false
-	}
-	index := p.PlaceholderIndex()
-	if index < 0 {
-		return 0, false
-	}
-	return index, true
 }
 
 func functionTypeParamObligations(reg *axis.Registry, argCount int, fn *typ.Function) []callpayload.CallParamObligation {
