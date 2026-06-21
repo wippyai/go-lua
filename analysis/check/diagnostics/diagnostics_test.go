@@ -3973,6 +3973,66 @@ func TestAssignmentDoesNotUseAliasBroadDynamicKeyAsStaticMemberProof(t *testing.
 	}
 }
 
+func TestAssignmentRejectsNilThroughPossiblyPresentDynamicIndexKey(t *testing.T) {
+	diags := runDiagnostics(t, `
+		type Key = "name" | "missing"
+		type Bag = {name: string}
+
+		local function f(bag: Bag, key: Key): ()
+			bag[key] = nil
+		end
+	`)
+	if len(diags) != 1 {
+		t.Fatalf("diagnostics = %#v, want one dynamic-index write mismatch", diags)
+	}
+	d := diags[0]
+	if d.Code != CodeAssignmentType || !strings.Contains(d.Message, "cannot assign nil") || !strings.Contains(d.Message, "string") {
+		t.Fatalf("diagnostic = %#v, want nil rejected against possible name:string slot", d)
+	}
+}
+
+func TestAssignmentMeetsDynamicIndexWriteContractsAcrossPossibleFields(t *testing.T) {
+	diags := runDiagnostics(t, `
+		type Key = "name" | "count"
+		type Bag = {name: string, count: number}
+
+		local function f(bag: Bag, key: Key): ()
+			bag[key] = "bad"
+		end
+	`)
+	if len(diags) != 1 {
+		t.Fatalf("diagnostics = %#v, want one dynamic-index write mismatch", diags)
+	}
+	d := diags[0]
+	if d.Code != CodeAssignmentType || !strings.Contains(d.Message, "cannot assign") || !strings.Contains(d.Message, "number") {
+		t.Fatalf("diagnostic = %#v, want string rejected because key may select count:number", d)
+	}
+}
+
+func TestAssignmentAllowsNilThroughDynamicIndexWhenOnlyOptionalSlotCanMatch(t *testing.T) {
+	diags := runDiagnostics(t, `
+		type Key = "value" | "missing"
+		type Box = {value: string?}
+
+		local function f(box: Box, key: Key): ()
+			box[key] = nil
+		end
+	`)
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v, want nil accepted when every possible declared slot is optional", diags)
+	}
+}
+
+func TestAssignmentAllowsNilDynamicIndexDeletionForArraySlots(t *testing.T) {
+	diags := runDiagnostics(t, `
+		local xs: {number} = {1, 2}
+		xs[#xs] = nil
+	`)
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v, want nil dynamic-index write accepted as array slot deletion", diags)
+	}
+}
+
 func TestAssignmentUsesStaticBracketStringKeyAsStaticMemberProof(t *testing.T) {
 	diags := runDiagnostics(t, `
 		type Box = {
