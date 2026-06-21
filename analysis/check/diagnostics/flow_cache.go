@@ -41,7 +41,7 @@ func newDiagnosticFlowCache(result *body.Result) *diagnosticFlowCache {
 }
 
 func (c *diagnosticFlowCache) canReach(from, to cfg.Point) bool {
-	if c == nil || c.graph == nil || from == 0 || to == 0 {
+	if c == nil || c.graph == nil {
 		return false
 	}
 	if from == to {

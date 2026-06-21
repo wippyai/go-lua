@@ -224,6 +224,28 @@ func TestAddEdge(t *testing.T) {
 	})
 }
 
+func TestPointCanReachTreatsEntryAsValidPoint(t *testing.T) {
+	c := New()
+	first := c.AddNode(NodeAssign)
+	second := c.AddNode(NodeReturn)
+	c.AddEdge(c.Entry(), first, false)
+	c.AddEdge(first, second, false)
+	c.AddEdge(second, c.Exit(), false)
+
+	if !PointCanReach(c, c.Entry(), second) {
+		t.Fatalf("entry should reach downstream point %d", second)
+	}
+	if !PointCanReach(c, c.Entry(), c.Entry()) {
+		t.Fatalf("entry should reach itself")
+	}
+	if !PointCanReach(c, c.Exit(), c.Exit()) {
+		t.Fatalf("exit should reach itself")
+	}
+	if PointCanReach(c, second, c.Entry()) {
+		t.Fatalf("later point should not reach entry")
+	}
+}
+
 func TestPredecessors(t *testing.T) {
 	t.Run("no predecessors", func(t *testing.T) {
 		c := New()

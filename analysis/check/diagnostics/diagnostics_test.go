@@ -5594,6 +5594,21 @@ func TestDiagnosticFlowCacheCachesImmediateDominators(t *testing.T) {
 	delete(second, sentinel)
 }
 
+func TestDiagnosticFlowCacheTreatsEntryAsReachablePoint(t *testing.T) {
+	result := runDiagnosticsResult(t, `
+		local seed = 1
+		local next = seed + 1
+	`)
+	graph := result.Graph()
+	flow := newDiagnosticFlowCache(result)
+	if !flow.canReach(graph.Entry(), graph.Exit()) {
+		t.Fatalf("entry should reach exit through diagnostic flow cache")
+	}
+	if !flow.canReach(graph.Entry(), graph.Entry()) {
+		t.Fatalf("entry should reach itself through diagnostic flow cache")
+	}
+}
+
 func TestTruthyDominatingBranchProofsRecognizeTrueArmPresence(t *testing.T) {
 	result := runDiagnosticsResult(t, `
 		local owner: string? = value

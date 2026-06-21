@@ -28,6 +28,21 @@ import (
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
 )
 
+func TestCFGReachabilityCacheTreatsEntryAsReachablePoint(t *testing.T) {
+	graph := cfg.New()
+	body := graph.AddNode(cfg.NodeAssign)
+	graph.AddEdge(graph.Entry(), body, false)
+	graph.AddEdge(body, graph.Exit(), false)
+
+	reach := newCFGReachabilityCache(graph)
+	if !reach.canReach(graph.Entry(), graph.Exit()) {
+		t.Fatalf("entry should reach exit through project-summary reachability cache")
+	}
+	if !reach.canReach(graph.Entry(), graph.Entry()) {
+		t.Fatalf("entry should reach itself through project-summary reachability cache")
+	}
+}
+
 func TestFromResultProjectsNormalReturnFactsFromExitSnapshots(t *testing.T) {
 	reg := standard.Registry()
 	ks := keyspace.New()

@@ -282,10 +282,10 @@ func (c *CFG) SuccessorsReadOnly(p Point) []Point {
 }
 
 // PointCanReach reports whether control can flow from point from to point to by
-// following successor edges of graph. A point reaches itself. Zero points and a
-// nil graph never reach.
+// following successor edges of graph. A point reaches itself. The entry point is
+// a valid CFG point even though it is normally numbered 0.
 func PointCanReach(graph Graph, from, to Point) bool {
-	if graph == nil || from == 0 || to == 0 {
+	if graph == nil {
 		return false
 	}
 	if from == to {
