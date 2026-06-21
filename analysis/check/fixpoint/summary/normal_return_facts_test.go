@@ -170,6 +170,10 @@ func TestNormalReturnFactsCloneIsolatesPayload(t *testing.T) {
 	reg := mustRegistry(t)
 	original := Summary{NormalReturnFacts: callboundary.NormalReturnFacts{
 		PathRefinements: []callboundary.PathValueFact{{Path: pathdom.NewPlaceholder(0).Field("value"), Value: presentProduct(reg)}},
+		PathStaticMembers: []callboundary.PathStaticMemberFact{{
+			Path:  pathdom.NewPlaceholder(0).Field("member"),
+			Value: presentProduct(reg),
+		}},
 		PathInvalidations: []callboundary.PathInvalidationFact{{
 			Path: pathdom.NewPlaceholder(0).Field("invalidate"),
 		}},
@@ -188,8 +192,24 @@ func TestNormalReturnFactsCloneIsolatesPayload(t *testing.T) {
 			Path:     pathdom.NewPlaceholder(0).Field("ok"),
 			Presence: presence.Present(),
 		}},
+		ChannelSelects: []callboundary.ChannelSelectFact{{
+			Select: channelselectfact.ID("select.clone"),
+			Kind:   channelselectfact.FactReceive,
+			Result: pathdom.NewPlaceholder(0).Field("received"),
+			Index:  1,
+		}},
 		FrozenTables: []callboundary.FrozenTableFact{{
 			Target: pathdom.NewPlaceholder(0).Field("frozen"),
+		}},
+		EffectDeltas: []callboundary.EffectDelta{{
+			Target: pathdom.NewPlaceholder(0).Field("effect"),
+			Site:   "caller.effect.clone",
+			Kind:   effectdelta.Mutation,
+			Value: effectdelta.Value{
+				Before: presentProduct(reg),
+				After:  presentProduct(reg),
+				Change: effectdelta.ChangeChanged,
+			},
 		}},
 		EscapeEvents: []callboundary.EscapeEventFact{{
 			Target:    pathdom.NewPlaceholder(0).Field("escape"),
@@ -215,17 +235,23 @@ func TestNormalReturnFactsCloneIsolatesPayload(t *testing.T) {
 
 	cloned := original.Clone()
 	cloned.NormalReturnFacts.PathRefinements[0].Path = pathdom.NewPlaceholder(1)
+	cloned.NormalReturnFacts.PathStaticMembers[0].Path = pathdom.NewPlaceholder(1)
 	cloned.NormalReturnFacts.PathInvalidations[0].Path = pathdom.NewPlaceholder(1)
 	cloned.NormalReturnFacts.DynamicIndexFacts[0].Site = "caller.dynamic.changed"
 	cloned.NormalReturnFacts.BranchProofs[0].Presence = presence.Absent()
+	cloned.NormalReturnFacts.ChannelSelects[0].Select = channelselectfact.ID("select.changed")
 	cloned.NormalReturnFacts.StoreRelations[0].Source = pathdom.NewPlaceholder(2)
 	cloned.NormalReturnFacts.FrozenTables[0].Target = pathdom.NewPlaceholder(1)
+	cloned.NormalReturnFacts.EffectDeltas[0].Site = "caller.effect.changed"
 	cloned.NormalReturnFacts.EscapeEvents[0].Target = pathdom.NewPlaceholder(1)
 	cloned.NormalReturnFacts.LifecycleFacts[0].Target = pathdom.NewPlaceholder(1)
 	cloned.NormalReturnFacts.NumFloors[0].Path = pathdom.NewPlaceholder(1)
 
 	if !original.NormalReturnFacts.PathRefinements[0].Path.Equal(pathdom.NewPlaceholder(0).Field("value")) {
 		t.Fatalf("mutating cloned path refinement changed original")
+	}
+	if !original.NormalReturnFacts.PathStaticMembers[0].Path.Equal(pathdom.NewPlaceholder(0).Field("member")) {
+		t.Fatalf("mutating cloned path static member changed original")
 	}
 	if !original.NormalReturnFacts.PathInvalidations[0].Path.Equal(pathdom.NewPlaceholder(0).Field("invalidate")) {
 		t.Fatalf("mutating cloned path invalidation changed original")
@@ -236,8 +262,14 @@ func TestNormalReturnFactsCloneIsolatesPayload(t *testing.T) {
 	if !presence.Equal(original.NormalReturnFacts.BranchProofs[0].Presence, presence.Present()) {
 		t.Fatalf("mutating cloned branch proof changed original")
 	}
+	if original.NormalReturnFacts.ChannelSelects[0].Select != channelselectfact.ID("select.clone") {
+		t.Fatalf("mutating cloned channel select changed original")
+	}
 	if !original.NormalReturnFacts.FrozenTables[0].Target.Equal(pathdom.NewPlaceholder(0).Field("frozen")) {
 		t.Fatalf("mutating cloned frozen table fact changed original")
+	}
+	if original.NormalReturnFacts.EffectDeltas[0].Site != "caller.effect.clone" {
+		t.Fatalf("mutating cloned effect delta changed original")
 	}
 	if !original.NormalReturnFacts.EscapeEvents[0].Target.Equal(pathdom.NewPlaceholder(0).Field("escape")) {
 		t.Fatalf("mutating cloned escape event changed original")

@@ -2659,6 +2659,17 @@ func TestImportedStaticIntMemberCallReportsNonCallableWithEvidence(t *testing.T)
 	requireMemberCallDiagnosticWithEvidence(t, result, diagnostics.CodeNotCallable, "non-callable imported static int member")
 }
 
+func TestImportedStaticIntMemberCallReportsMissingMemberWithEvidence(t *testing.T) {
+	m := manifest.New("pkg")
+	m.SetExport(typetable.NewRecord().StaticIntIndex(1, typ.Func().Build()).Build())
+
+	result := Check(`
+		local pkg = require("pkg")
+		pkg[2]()
+	`, WithStdlib(), WithManifest("pkg", m))
+	requireMemberCallDiagnosticWithEvidence(t, result, diagnostics.CodeMissingMember, "missing imported static int member")
+}
+
 func TestRequireManifestExportTypesImportedValueAndMemberCall(t *testing.T) {
 	m := providerManifest("provider")
 
