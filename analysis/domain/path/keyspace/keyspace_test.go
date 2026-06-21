@@ -209,6 +209,49 @@ func TestFormatMatchesOldSpelling(t *testing.T) {
 	t.Logf("Format equivalence verified over %d corpus keys", len(corpus))
 }
 
+func TestCanonicalNamedRootsMatchAddressEncoding(t *testing.T) {
+	ks := New()
+	roots := []string{
+		"a.b",
+		"a[0]",
+		"$x",
+		"$0x",
+		"ret[]",
+		"ret[x]",
+		"ret[1",
+		"s42",
+		"s00042",
+		"sym7",
+		"sym00042",
+		"sym42@003",
+		"n04:sym7",
+	}
+	segments := [][]segment.Segment{
+		nil,
+		{field("value")},
+		{indexStr("k")},
+		{field("a"), indexInt(2)},
+	}
+	for _, root := range roots {
+		for _, segs := range segments {
+			p := pathdom.Path{Root: root, Segments: segs}
+			stable, ok := pathaddr.StableOfPath(p)
+			if !ok {
+				t.Fatalf("StableOfPath(%q) failed", p.Key())
+			}
+			key := ks.FromPath(p)
+			key.Canon = key.isStableNamed()
+			got := ks.Format(key)
+			if got != stable.Key() {
+				t.Fatalf("canonical Format(%q) = %q, want address stable key %q", p.Key(), got, stable.Key())
+			}
+			if got == p.Key() {
+				t.Fatalf("canonical Format(%q) was not encoded", p.Key())
+			}
+		}
+	}
+}
+
 func TestHasPrefixMatchesAddress(t *testing.T) {
 	ks := New()
 	corpus := buildCorpus(t, ks)
