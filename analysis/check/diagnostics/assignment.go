@@ -450,7 +450,7 @@ func directCallContractWouldReport(result *body.Result, context producerContext,
 		return false
 	}
 	producer := directCallContract(context)
-	if directCallSiteUsesMemberAccess(result, site, fact) {
+	if directCallSiteUsesMemberAccess(site, fact) {
 		if !hasTypedCallSignature(result, site) {
 			if _, ok := memberCall(context).call(result, source.CallPoint, fact, env); ok {
 				return true

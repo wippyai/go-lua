@@ -12,8 +12,10 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/effect/mutation"
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/typestate"
+	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/branchcond"
+	"github.com/wippyai/go-lua/analysis/lua/semantics"
 	"github.com/wippyai/go-lua/analysis/module/manifest"
 	"github.com/wippyai/go-lua/analysis/module/signature"
 	"github.com/wippyai/go-lua/analysis/module/signaturelookup"
@@ -2619,6 +2621,40 @@ func TestChannelSelectCaseIndexPreservesDuplicateAndReversedMatches(t *testing.T
 	})
 	if !ok || selectIndex != 0 || len(cases) != 1 || cases[0] != 2 {
 		t.Fatalf("direct timers match = select %d cases %v ok %v, want select 0 case [2]", selectIndex, cases, ok)
+	}
+}
+
+func TestDirectCallSiteUsesMemberAccessStructurally(t *testing.T) {
+	directSite := factflow.NewCallSite(factflow.CallSiteConfig{
+		CalleeSymbol: 1,
+		CalleePath:   path.Path{Root: "math.max"},
+	})
+	directFact := semantics.CallFact{
+		Call: &ast.FuncCallExpr{Func: &ast.IdentExpr{Value: "math_max"}},
+	}
+	if directCallSiteUsesMemberAccess(directSite, directFact) {
+		t.Fatalf("punctuated direct callee root was classified as member access")
+	}
+
+	memberPathSite := factflow.NewCallSite(factflow.CallSiteConfig{
+		CalleeSymbol: 2,
+		CalleePath:   path.Path{Root: "api"}.Field("make"),
+	})
+	if !directCallSiteUsesMemberAccess(memberPathSite, directFact) {
+		t.Fatalf("callee path with a field segment was not classified as member access")
+	}
+
+	attrFact := semantics.CallFact{
+		Call: &ast.FuncCallExpr{
+			Func: &ast.AttrGetExpr{
+				Object:    &ast.IdentExpr{Value: "api"},
+				Key:       &ast.IdentExpr{Value: "make"},
+				KeySyntax: ast.AttrKeyDot,
+			},
+		},
+	}
+	if !directCallSiteUsesMemberAccess(directSite, attrFact) {
+		t.Fatalf("attribute callee expression was not classified as member access")
 	}
 }
 

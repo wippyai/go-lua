@@ -2,7 +2,6 @@ package diagnostics
 
 import (
 	"fmt"
-	"strings"
 
 	"github.com/wippyai/go-lua/analysis/check/body"
 	"github.com/wippyai/go-lua/analysis/check/internal/readmodel"
@@ -59,7 +58,7 @@ func produceDirectCallContract(result *body.Result, context producerContext, inh
 		if !ok || site.CalleeSymbol() == 0 {
 			continue
 		}
-		if directCallSiteUsesMemberAccess(result, site, fact) {
+		if directCallSiteUsesMemberAccess(site, fact) {
 			if access, ok := callMemberAccessInfo(fact); ok {
 				switch memberCallInvalidationByPriorCall(result, context.flow, point, access.receiver, access.member) {
 				case memberCallInvalidationStale:
@@ -99,9 +98,9 @@ func produceDirectCallContract(result *body.Result, context producerContext, inh
 	return out
 }
 
-func directCallSiteUsesMemberAccess(result *body.Result, site factflow.CallSite, fact semantics.CallFact) bool {
+func directCallSiteUsesMemberAccess(site factflow.CallSite, fact semantics.CallFact) bool {
 	_, _, _, member := callMemberAccess(fact)
-	return member || callSiteCalleePathMemberAccess(site) || callExprCalleeMemberAccess(fact) || callSiteSymbolNameMemberAccess(result, site)
+	return member || callSiteCalleePathMemberAccess(site) || callExprCalleeMemberAccess(fact)
 }
 
 func callSiteCalleePathMemberAccess(site factflow.CallSite) bool {
@@ -115,14 +114,6 @@ func callExprCalleeMemberAccess(fact semantics.CallFact) bool {
 	}
 	_, ok := fact.Call.Func.(*ast.AttrGetExpr)
 	return ok
-}
-
-func callSiteSymbolNameMemberAccess(result *body.Result, site factflow.CallSite) bool {
-	if result == nil || site.CalleeSymbol() == 0 {
-		return false
-	}
-	name := result.SymbolName(site.CalleeSymbol())
-	return strings.Contains(name, ".") || strings.Contains(name, "[")
 }
 
 func (p directCallContract) call(
