@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/state/pathevidence"
@@ -105,6 +106,33 @@ func TestPathStateAdapterInvalidateSubtreeDropsEquivalentStaticMemberFacts(t *te
 		Other: mustStateKey(t, ks, originalKey),
 	}) {
 		t.Fatalf("equivalent branch proof survived alias invalidation")
+	}
+}
+
+func TestPathKeyWithEquivalentAliasesIncludesPrimaryOnce(t *testing.T) {
+	ks := keyspace.New()
+	primary := path.PathKey("sym51@1.child")
+	alias := path.PathKey("sym52@1.child")
+	in := state.State{}.
+		AddBranchProof(pathevidence.BranchProof{
+			Kind:  pathevidence.BranchProofPathEqual,
+			Path:  mustStateKey(t, ks, primary),
+			Other: mustStateKey(t, ks, alias),
+		})
+
+	got := pathKeyWithEquivalentAliases(ks, in, primary)
+	want := []path.PathKey{primary, alias}
+	if len(got) != len(want) {
+		t.Fatalf("pathKeyWithEquivalentAliases len = %d (%#v), want %d (%#v)", len(got), got, len(want), want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("pathKeyWithEquivalentAliases[%d] = %s, want %s (all %#v)", i, got[i], want[i], got)
+		}
+	}
+
+	if got := pathKeyWithEquivalentAliases(ks, in, ""); len(got) != 0 {
+		t.Fatalf("empty pathKeyWithEquivalentAliases = %#v, want empty", got)
 	}
 }
 

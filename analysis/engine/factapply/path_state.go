@@ -27,10 +27,9 @@ func writePathAt(
 		return s, false
 	}
 	ks := resolver.KeySpace()
-	equivalent := s.EquivalentPathKeys(ks, pathKey)
-	out := writePathKeyWithStaticStringAlias(reg, ks, s, pathKey, value)
-	for _, alias := range equivalent {
-		out = writePathKeyWithStaticStringAlias(reg, ks, out, alias, value)
+	out := s
+	for _, target := range pathKeyWithEquivalentAliases(ks, s, pathKey) {
+		out = writePathKeyWithStaticStringAlias(reg, ks, out, target, value)
 	}
 	return out, true
 }
@@ -97,15 +96,11 @@ func invalidatePathAt(
 		return s, false
 	}
 	ks := resolver.KeySpace()
-	equivalent := s.EquivalentPathKeys(ks, pathKey)
-	out, ok := invalidate(s, ks, pathKey)
-	if !ok {
-		return s, false
-	}
-	for _, alias := range equivalent {
-		var aliasOK bool
-		out, aliasOK = invalidate(out, ks, alias)
-		if !aliasOK {
+	out := s
+	for _, target := range pathKeyWithEquivalentAliases(ks, s, pathKey) {
+		var ok bool
+		out, ok = invalidate(out, ks, target)
+		if !ok {
 			return s, false
 		}
 	}
@@ -232,7 +227,7 @@ func invalidateHeapStaticMembersAt(
 }
 
 func pathMutationRootKeys(ks *keyspace.KeySpace, s state.State, pathKey pathdom.PathKey, includeDescendantAliases bool) []pathdom.PathKey {
-	keys := append([]pathdom.PathKey{pathKey}, s.EquivalentPathKeys(ks, pathKey)...)
+	keys := pathKeyWithEquivalentAliases(ks, s, pathKey)
 	if !includeDescendantAliases {
 		return dedupePathKeys(keys)
 	}
@@ -251,8 +246,9 @@ type pathStaticMemberInvalidationTarget struct {
 }
 
 func pathStaticMemberInvalidationTargets(ks *keyspace.KeySpace, s state.State, pathKey pathdom.PathKey, descendantsOnly bool) []pathStaticMemberInvalidationTarget {
-	targets := []pathStaticMemberInvalidationTarget{{key: pathKey, descendantsOnly: descendantsOnly}}
-	for _, equivalent := range s.EquivalentPathKeys(ks, pathKey) {
+	targetKeys := pathKeyWithEquivalentAliases(ks, s, pathKey)
+	targets := make([]pathStaticMemberInvalidationTarget, 0, len(targetKeys))
+	for _, equivalent := range targetKeys {
 		targets = append(targets, pathStaticMemberInvalidationTarget{
 			key:             equivalent,
 			descendantsOnly: descendantsOnly,
@@ -278,6 +274,14 @@ func pathStaticMemberInvalidationTargets(ks *keyspace.KeySpace, s state.State, p
 		})
 	}
 	return dedupePathStaticMemberInvalidationTargets(targets)
+}
+
+func pathKeyWithEquivalentAliases(ks *keyspace.KeySpace, s state.State, pathKey pathdom.PathKey) []pathdom.PathKey {
+	if pathKey == "" {
+		return nil
+	}
+	keys := append([]pathdom.PathKey{pathKey}, s.EquivalentPathKeys(ks, pathKey)...)
+	return dedupePathKeys(keys)
 }
 
 func dedupePathKeys(in []pathdom.PathKey) []pathdom.PathKey {
