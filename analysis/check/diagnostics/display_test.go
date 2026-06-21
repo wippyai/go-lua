@@ -323,6 +323,78 @@ func TestDeclaredTypeEvidenceFormatsFunctionAnnotationReturns(t *testing.T) {
 	}
 }
 
+func TestDeclaredTypeEvidenceFormatsTypeLevelQueryAnnotations(t *testing.T) {
+	tests := []struct {
+		name       string
+		annotation ast.TypeExpr
+		want       string
+	}{
+		{
+			name: "typeof",
+			annotation: &ast.TypeOfExpr{
+				Expr: &ast.IdentExpr{Value: "defaults"},
+			},
+			want: "value is declared as typeof(defaults)",
+		},
+		{
+			name: "keyof",
+			annotation: &ast.KeyOfExpr{
+				Inner: &ast.TypeRefExpr{Path: []string{"User"}},
+			},
+			want: "value is declared as keyof User",
+		},
+		{
+			name: "index access",
+			annotation: &ast.IndexAccessExpr{
+				Object: &ast.TypeRefExpr{Path: []string{"User"}},
+				Index:  &ast.LiteralTypeExpr{Value: "id"},
+			},
+			want: "value is declared as User[\"id\"]",
+		},
+		{
+			name: "conditional optional",
+			annotation: &ast.OptionalTypeExpr{Inner: &ast.ConditionalTypeExpr{
+				Check:   &ast.TypeRefExpr{Path: []string{"T"}},
+				Extends: &ast.PrimitiveTypeExpr{Name: "string"},
+				Then:    &ast.LiteralTypeExpr{Value: true},
+				Else:    &ast.LiteralTypeExpr{Value: false},
+			}},
+			want: "value is declared as (T extends string ? true : false)?",
+		},
+		{
+			name: "generic function params",
+			annotation: &ast.FunctionTypeExpr{
+				TypeParams: []ast.TypeParamExpr{{Name: "T", Constraint: &ast.TypeRefExpr{Path: []string{"User"}}}},
+				Params:     []ast.FunctionParamExpr{{Name: "input", Type: &ast.TypeRefExpr{Path: []string{"T"}}}},
+				Returns:    []ast.TypeExpr{&ast.TypeRefExpr{Path: []string{"T"}}},
+			},
+			want: "value is declared as fun<T: User>(input: T) -> T",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := declaredTypeEvidence("value", tc.annotation, typ.String); got != tc.want {
+				t.Fatalf("declaredTypeEvidence = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestFormatTypeAnnotationTruncatesDeepAnnotations(t *testing.T) {
+	var annotation ast.TypeExpr = &ast.PrimitiveTypeExpr{Name: "string"}
+	for i := 0; i < typ.DefaultRecursionDepth+8; i++ {
+		annotation = &ast.OptionalTypeExpr{Inner: annotation}
+	}
+	got, ok := formatTypeAnnotation(annotation)
+	if !ok || !strings.Contains(got, "...") {
+		t.Fatalf("formatTypeAnnotation = %q, %v; want bounded rendering with ellipsis", got, ok)
+	}
+	if fallback := declaredTypeEvidence("value", annotation, typ.String); !strings.Contains(fallback, "...") {
+		t.Fatalf("declaredTypeEvidence = %q, want bounded annotation instead of fallback type", fallback)
+	}
+}
+
 func TestArgumentTypeMismatchMessageUsesNilabilityCause(t *testing.T) {
 	got := argumentTypeMismatchMessage("argument 1", &ast.IdentExpr{Value: "last_seen"}, typ.MaterializeOptional(typ.String), typ.String)
 	if !strings.Contains(got, "cannot pass last_seen as argument 1") || !strings.Contains(got, "may be nil") {
