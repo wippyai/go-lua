@@ -599,6 +599,75 @@ func TestRenderDiagnosticSeparatesNestedSameLineLabelRows(t *testing.T) {
 	}
 }
 
+func TestRenderDiagnosticDenseSameLineLabelsDoNotOverlap(t *testing.T) {
+	rendered := Render(Diagnostic{
+		Position: Position{File: "main.lua", Line: 1, Column: 15},
+		Span:     Span{StartLine: 1, StartCol: 15, EndLine: 1, EndCol: 18},
+		Code:     Code("type.assignment"),
+		Message:  "cannot assign dense expression",
+		Severity: SeverityError,
+		Labels: []Label{
+			{Span: Span{StartLine: 1, StartCol: 15, EndLine: 1, EndCol: 18}, Message: "first value", Placement: LabelPlacementBelow},
+			{Span: Span{StartLine: 1, StartCol: 18, EndLine: 1, EndCol: 21}, Message: "second value", Placement: LabelPlacementBelow},
+			{Span: Span{StartLine: 1, StartCol: 21, EndLine: 1, EndCol: 24}, Message: "third value", Placement: LabelPlacementBelow},
+		},
+	}, RenderOptions{
+		Sources:             SourceMap{"main.lua": "local result = one + two + three"},
+		ShowSourceLabelRows: true,
+	})
+
+	containsAll(t, rendered,
+		"1 | local result = one + two + three",
+		"↑ first value",
+		"↑ second value",
+		"↑ third value",
+	)
+	if strings.Contains(rendered, "\nwhere:\n") {
+		t.Fatalf("dense same-line labels should attach to the source frame:\n%s", rendered)
+	}
+	for _, label := range []string{"first value", "second value", "third value"} {
+		if got := strings.Count(rendered, label); got != 1 {
+			t.Fatalf("label %q rendered %d times, want once:\n%s", label, got, rendered)
+		}
+	}
+	for _, line := range strings.Split(rendered, "\n") {
+		if strings.Contains(line, "↑") && strings.Count(line, "↑") != 1 {
+			t.Fatalf("dense annotation row has overlapping arrows:\n%s\n\nfull render:\n%s", line, rendered)
+		}
+	}
+	if arrowRows := strings.Count(rendered, "↑ first value") +
+		strings.Count(rendered, "↑ second value") +
+		strings.Count(rendered, "↑ third value"); arrowRows != 3 {
+		t.Fatalf("dense labels should each get a visible arrow row, got %d:\n%s", arrowRows, rendered)
+	}
+}
+
+func TestRenderDiagnosticUTF8SourceKeepsLabelRowsAligned(t *testing.T) {
+	source := "local caf\u00e9: string = raw"
+	rendered := Render(Diagnostic{
+		Position: Position{File: "main.lua", Line: 1, Column: 22},
+		Span:     Span{StartLine: 1, StartCol: 22, EndLine: 1, EndCol: 25},
+		Code:     Code("type.assignment"),
+		Message:  "cannot assign raw",
+		Severity: SeverityError,
+		Labels: []Label{
+			{Span: Span{StartLine: 1, StartCol: 13, EndLine: 1, EndCol: 19}, Message: "declared type", Placement: LabelPlacementAbove},
+			{Span: Span{StartLine: 1, StartCol: 22, EndLine: 1, EndCol: 25}, Message: "assigned value", Placement: LabelPlacementBelow},
+		},
+	}, RenderOptions{
+		Sources:             SourceMap{"main.lua": source},
+		ShowSourceLabelRows: true,
+	})
+
+	want := `error[type.assignment]: cannot assign raw
+ --> main.lua:1:22
+  |
+  |             ↓ declared type
+1 | local café: string = raw
+  |                      ↑ assigned value`
+	assertRenderedEqual(t, rendered, want)
+}
+
 func TestRenderDiagnosticOmitsUnlabeledPrimaryWhenSameLineLabelsExist(t *testing.T) {
 	rendered := Render(Diagnostic{
 		Position: Position{File: "main.lua", Line: 1, Column: 17},
