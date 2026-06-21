@@ -14,7 +14,7 @@ func (r *Result) boundaryStateAt(point cfg.Point) (state.State, bool) {
 	if r == nil {
 		return state.State{}, false
 	}
-	if r.hasNodeLocalBoundaryEffects(point) {
+	if r.needsBoundaryNodeOutput(point) {
 		if out, ok := r.nodeOutputAt(point); ok {
 			return out, true
 		}
@@ -68,7 +68,10 @@ func (r *Result) stateRead(point cfg.Point) state.State {
 	return state.State{}
 }
 
-func (r *Result) hasNodeLocalBoundaryEffects(point cfg.Point) bool {
+func (r *Result) needsBoundaryNodeOutput(point cfg.Point) bool {
+	if r == nil {
+		return false
+	}
 	if _, ok := r.facts.RootAssignment(point); ok {
 		return true
 	}
@@ -81,6 +84,12 @@ func (r *Result) hasNodeLocalBoundaryEffects(point cfg.Point) bool {
 	if _, ok := r.facts.DynamicIndexWrite(point); ok {
 		return true
 	}
+	if _, ok := r.facts.PathStaticMemberWrite(point); ok {
+		return true
+	}
+	if _, ok := r.facts.Return(point); ok {
+		return true
+	}
 	if callproducer.Has(r.facts, point) {
 		return true
 	}
@@ -90,6 +99,15 @@ func (r *Result) hasNodeLocalBoundaryEffects(point cfg.Point) bool {
 		}
 	}
 	if r.facts.NoNormalReturn(point) {
+		return true
+	}
+	if len(r.facts.CallResultValues(point)) != 0 {
+		return true
+	}
+	if len(r.facts.ChannelSelects(point)) != 0 {
+		return true
+	}
+	if len(r.facts.CovariantExposures(point)) != 0 {
 		return true
 	}
 	return len(r.facts.PostconditionRefinements(point)) != 0 ||
