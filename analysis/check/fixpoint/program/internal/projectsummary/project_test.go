@@ -362,6 +362,43 @@ end`), body.Config{Registry: reg})
 	projectAssertReturnParamPathAlias(t, got, 0, pathdom.PathKey(".registry.backup"), pathdom.PathKey("$0"))
 }
 
+func TestFromResultProjectsSharedNestedReturnParamPathAliasesUnderEachParent(t *testing.T) {
+	reg := standard.Registry()
+	result := projectCheckFunction(t, projectParseFunction(t, `
+function f(client)
+	local entry = {
+		primary = client,
+	}
+	return {
+		left = entry,
+		right = entry,
+	}
+end`), body.Config{Registry: reg})
+
+	got := summaryprojection.FromResult(result)
+
+	projectAssertReturnParamPathAlias(t, got, 0, pathdom.PathKey(".left.primary"), pathdom.PathKey("$0"))
+	projectAssertReturnParamPathAlias(t, got, 0, pathdom.PathKey(".right.primary"), pathdom.PathKey("$0"))
+}
+
+func TestFromResultDoesNotProjectSharedLocalReturnAliasAfterFieldMutation(t *testing.T) {
+	reg := standard.Registry()
+	result := projectCheckFunction(t, projectParseFunction(t, `
+function f(client, fallback)
+	local entry = {
+		primary = client,
+	}
+	entry.primary = fallback
+	return {
+		left = entry,
+	}
+end`), body.Config{Registry: reg})
+
+	got := summaryprojection.FromResult(result)
+
+	projectAssertNoReturnParamPathAlias(t, got, 0, pathdom.PathKey(".left.primary"), pathdom.PathKey("$0"))
+}
+
 func TestFromResultProjectsReturnedMemberParamPathAlias(t *testing.T) {
 	reg := standard.Registry()
 	result := projectCheckFunction(t, projectParseFunction(t, `
@@ -792,4 +829,25 @@ func projectAssertReturnParamPathAlias(
 		member,
 		source,
 	)
+}
+
+func projectAssertNoReturnParamPathAlias(
+	t *testing.T,
+	got summary.Summary,
+	returnIndex int,
+	member pathdom.PathKey,
+	source pathdom.PathKey,
+) {
+	t.Helper()
+	for _, alias := range got.ReturnParamPathAliases {
+		if alias.ReturnIndex == returnIndex && alias.Member.PathKey() == member && alias.Source.PathKey() == source {
+			t.Fatalf(
+				"return param path aliases = %#v, did not want return %d %s -> %s",
+				got.ReturnParamPathAliases,
+				returnIndex,
+				member,
+				source,
+			)
+		}
+	}
 }

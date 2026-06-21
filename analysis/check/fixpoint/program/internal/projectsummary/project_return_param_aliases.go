@@ -7,6 +7,8 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
+	"github.com/wippyai/go-lua/analysis/ir/cfg"
+	"github.com/wippyai/go-lua/analysis/symbol"
 )
 
 type objectLiteralExprReader interface {
@@ -17,6 +19,10 @@ type expressionPathRefReader interface {
 	ExpressionPathRef(factflow.ExprRef) (pathdom.Path, bool)
 }
 
+type loweredLocalAssignmentReader interface {
+	LoweredLocalAssignment(cfg.Point) (factflow.RootAssignment, bool)
+}
+
 func projectReturnParamPathAliases(result ResultReader) []summary.ReturnParamPathAlias {
 	params := parameterValuePaths(result)
 	sourceReader, hasSources := result.(returnValueSourceReader)
@@ -25,6 +31,7 @@ func projectReturnParamPathAliases(result ResultReader) []summary.ReturnParamPat
 	if len(params) == 0 || !hasSources || !hasObjects || !hasPaths {
 		return nil
 	}
+	localObjects := returnAliasLocalObjectSources(result, objectReader)
 	var out []summary.ReturnParamPathAlias
 	for _, returnPoint := range result.ReturnPoints() {
 		sources, ok := sourceReader.ReturnValueSources(returnPoint)
@@ -43,6 +50,7 @@ func projectReturnParamPathAliases(result ResultReader) []summary.ReturnParamPat
 				result,
 				objectReader,
 				pathReader,
+				localObjects,
 				nil,
 			)...)
 		}
@@ -58,6 +66,7 @@ func projectReturnSourceParamAliases(
 	result ResultReader,
 	objectReader objectLiteralExprReader,
 	pathReader expressionPathRefReader,
+	localObjects map[symbol.ID]factflow.ValueSource,
 	active map[factflow.ExprRef]bool,
 ) []summary.ReturnParamPathAlias {
 	if returnIndex < 0 || source.Kind != factflow.ValueSourceExpression || !source.HasExpr {
@@ -65,6 +74,19 @@ func projectReturnSourceParamAliases(
 	}
 	lit, ok := objectReader.ObjectLiteralExpr(source.ExprRef)
 	if !ok {
+		if localSource, ok := returnAliasLocalObjectSource(source, pathReader, localObjects); ok {
+			return projectReturnSourceParamAliases(
+				returnIndex,
+				prefix,
+				localSource,
+				params,
+				result,
+				objectReader,
+				pathReader,
+				localObjects,
+				active,
+			)
+		}
 		return nil
 	}
 	if active[source.ExprRef] {
@@ -106,11 +128,93 @@ func projectReturnSourceParamAliases(
 				result,
 				objectReader,
 				pathReader,
+				localObjects,
 				active,
 			)...)
 		}
 	}
 	return out
+}
+
+func returnAliasLocalObjectSources(result ResultReader, objectReader objectLiteralExprReader) map[symbol.ID]factflow.ValueSource {
+	graph := result.Graph()
+	localReader, hasLocalAssignments := result.(loweredLocalAssignmentReader)
+	if graph == nil || !hasLocalAssignments {
+		return nil
+	}
+	reassigned := returnAliasReassignedLocalSymbols(result, graph)
+	var out map[symbol.ID]factflow.ValueSource
+	for _, point := range graph.RPO() {
+		fact, ok := localReader.LoweredLocalAssignment(point)
+		if !ok {
+			continue
+		}
+		sym := fact.TargetSymbol()
+		target := fact.TargetPath()
+		if sym == 0 || target.Symbol != sym || len(target.Segments) != 0 {
+			continue
+		}
+		if _, ok := reassigned[sym]; ok {
+			continue
+		}
+		source := fact.Source()
+		if source.Kind != factflow.ValueSourceExpression || !source.HasExpr {
+			continue
+		}
+		if _, ok := objectReader.ObjectLiteralExpr(source.ExprRef); !ok {
+			continue
+		}
+		if out == nil {
+			out = make(map[symbol.ID]factflow.ValueSource)
+		}
+		out[sym] = source
+	}
+	return out
+}
+
+func returnAliasReassignedLocalSymbols(result ResultReader, graph cfg.Graph) map[symbol.ID]struct{} {
+	ordinaryReader, ok := result.(ordinaryAssignmentReader)
+	if !ok || graph == nil {
+		return nil
+	}
+	var out map[symbol.ID]struct{}
+	for _, point := range graph.RPO() {
+		fact, ok := ordinaryReader.OrdinaryAssignment(point)
+		if !ok {
+			continue
+		}
+		out = markReturnAliasAssignedLocalSymbol(out, fact.Symbol, fact.HasSymbol)
+		out = markReturnAliasAssignedLocalSymbol(out, fact.Path.Symbol, fact.HasPath)
+		out = markReturnAliasAssignedLocalSymbol(out, fact.ContainerPath.Symbol, fact.HasContainerPath)
+	}
+	return out
+}
+
+func markReturnAliasAssignedLocalSymbol(out map[symbol.ID]struct{}, sym symbol.ID, ok bool) map[symbol.ID]struct{} {
+	if !ok || sym == 0 {
+		return out
+	}
+	if out == nil {
+		out = make(map[symbol.ID]struct{})
+	}
+	out[sym] = struct{}{}
+	return out
+}
+
+func returnAliasLocalObjectSource(
+	source factflow.ValueSource,
+	pathReader expressionPathRefReader,
+	localObjects map[symbol.ID]factflow.ValueSource,
+) (factflow.ValueSource, bool) {
+	if len(localObjects) == 0 || source.Kind != factflow.ValueSourceExpression || !source.HasExpr {
+		return factflow.ValueSource{}, false
+	}
+	sourcePath, ok := pathReader.ExpressionPathRef(source.ExprRef)
+	if !ok || sourcePath.Symbol == 0 || len(sourcePath.Segments) != 0 {
+		return factflow.ValueSource{}, false
+	}
+	localSource, ok := localObjects[sourcePath.Symbol]
+	return localSource, ok
 }
 
 // directReturnParamAlias records a return slot that returns a parameter object

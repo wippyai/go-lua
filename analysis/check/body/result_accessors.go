@@ -100,6 +100,13 @@ func (r *Result) LocalAssignment(point cfg.Point) (semantics.LocalAssignmentFact
 	return r.semantics.LocalAssignment(point)
 }
 
+func (r *Result) LoweredLocalAssignment(point cfg.Point) (factflow.RootAssignment, bool) {
+	if r == nil {
+		return factflow.RootAssignment{}, false
+	}
+	return r.facts.LocalAssignment(point)
+}
+
 // RequireAliasModulePath resolves a local require-binding alias to the module
 // path it imports. A statement such as local store_mod = require("store") binds
 // the alias store_mod to module path store, so a qualified type reference
