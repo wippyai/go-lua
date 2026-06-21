@@ -2,72 +2,46 @@ package key
 
 import (
 	"os/exec"
-	"strconv"
 	"strings"
 	"testing"
 
 	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
 )
 
-func TestValueConstructorsAreStableAndTyped(t *testing.T) {
-	if got := SymbolValue(42); got != Value("s42") {
-		t.Fatalf("SymbolValue(42) = %q, want s42", got)
+func TestValueConstructorsRoundTrip(t *testing.T) {
+	if sym, ok := ParseSymbolValue(SymbolValue(42)); !ok || sym != 42 {
+		t.Fatalf("SymbolValue/ParseSymbolValue round-trip = %d/%v, want 42/true", sym, ok)
 	}
-	if got := ReturnSlot(3); got != Value("r3") {
-		t.Fatalf("ReturnSlot(3) = %q, want r3", got)
+	if idx, ok := ParseReturnSlot(ReturnSlot(3)); !ok || idx != 3 {
+		t.Fatalf("ReturnSlot/ParseReturnSlot round-trip = %d/%v, want 3/true", idx, ok)
 	}
-	if got := ReturnSlot(-1); got != "" {
-		t.Fatalf("ReturnSlot(-1) = %q, want empty", got)
+	if SymbolValue(0) != 0 {
+		t.Fatalf("SymbolValue(0) = %d, want the zero/empty cell", uint64(SymbolValue(0)))
+	}
+	if ReturnSlot(-1) != 0 {
+		t.Fatalf("ReturnSlot(-1) = %d, want the zero/empty cell", uint64(ReturnSlot(-1)))
+	}
+	if ReturnSlot(0) == 0 {
+		t.Fatal("ReturnSlot(0) must be a distinct non-empty cell, not the zero sentinel")
 	}
 }
 
-func TestParseValueKeysRejectInvalidShapes(t *testing.T) {
+func TestValueKindsAreDisjoint(t *testing.T) {
+	// A symbol cell and a return-slot cell with the same number must never alias.
+	if SymbolValue(5) == ReturnSlot(5) {
+		t.Fatal("symbol and return-slot cells with the same number collided")
+	}
 	if sym, ok := ParseSymbolValue(ReturnSlot(0)); ok || sym != 0 {
-		t.Fatalf("ParseSymbolValue(return) = %d/%v, want false", sym, ok)
-	}
-	if sym, ok := ParseSymbolValue(Value("s00042")); ok || sym != 0 {
-		t.Fatalf("ParseSymbolValue(leading zeros) = %d/%v, want false", sym, ok)
-	}
-	if sym, ok := ParseSymbolValue(Value("s42.field")); ok || sym != 0 {
-		t.Fatalf("ParseSymbolValue(s42.field) = %d/%v, want false", sym, ok)
+		t.Fatalf("ParseSymbolValue(return slot) = %d/%v, want 0/false", sym, ok)
 	}
 	if idx, ok := ParseReturnSlot(SymbolValue(1)); ok || idx != 0 {
-		t.Fatalf("ParseReturnSlot(symbol) = %d/%v, want false", idx, ok)
+		t.Fatalf("ParseReturnSlot(symbol value) = %d/%v, want 0/false", idx, ok)
 	}
-	if idx, ok := ParseReturnSlot(Value("r00")); ok || idx != 0 {
-		t.Fatalf("ParseReturnSlot(leading zeros) = %d/%v, want false", idx, ok)
+	if sym, ok := ParseSymbolValue(0); ok || sym != 0 {
+		t.Fatalf("ParseSymbolValue(empty) = %d/%v, want 0/false", sym, ok)
 	}
-	if idx, ok := ParseReturnSlot(Value("r1.field")); ok || idx != 0 {
-		t.Fatalf("ParseReturnSlot(bad) = %d/%v, want false", idx, ok)
-	}
-}
-
-func TestParseReturnSlotRejectsOverflow(t *testing.T) {
-	maxInt := int(^uint(0) >> 1)
-	overflow := "r" + strconv.FormatInt(int64(maxInt), 10) + "0"
-	if idx, ok := ParseReturnSlot(Value(overflow)); ok || idx != 0 {
-		t.Fatalf("ParseReturnSlot(%q) = %d/%v, want false", overflow, idx, ok)
-	}
-}
-
-func TestStateKeyAndPathKeySpellingsStayDisjoint(t *testing.T) {
-	if got := SymbolValue(12); got == Value("sym12") {
-		t.Fatalf("SymbolValue(12) collided with path-key spelling: %q", got)
-	}
-	if got := ReturnSlot(0); got == Value("$0") {
-		t.Fatalf("ReturnSlot(0) collided with placeholder spelling: %q", got)
-	}
-	if _, ok := ParseSymbolValue(Value("sym12")); ok {
-		t.Fatal("ParseSymbolValue accepted path-key spelling sym12")
-	}
-	if _, ok := ParseSymbolValue(Value("sym12@3.field")); ok {
-		t.Fatal("ParseSymbolValue accepted versioned path-key spelling sym12@3.field")
-	}
-	if _, ok := ParseReturnSlot(Value("ret[0]")); ok {
-		t.Fatal("ParseReturnSlot accepted return-path spelling ret[0]")
-	}
-	if _, ok := ParseReturnSlot(Value("$0")); ok {
-		t.Fatal("ParseReturnSlot accepted placeholder spelling $0")
+	if idx, ok := ParseReturnSlot(0); ok || idx != 0 {
+		t.Fatalf("ParseReturnSlot(empty) = %d/%v, want 0/false", idx, ok)
 	}
 }
 

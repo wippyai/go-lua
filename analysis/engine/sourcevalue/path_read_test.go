@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/evidence"
@@ -25,7 +26,7 @@ func TestExactPathValueReadsStaticMember(t *testing.T) {
 	resolver := testResolver(point, symbol.ID(10), "obj")
 	readPath := pathdom.NewPath(symbol.ID(10), "obj").Field("name")
 	want := product.Set(reg, product.NewWithPresence(reg, product.ShapeTop, presence.Present()), runtimekind.Key, runtimekind.Singleton(runtimekind.String))
-	in := state.State{}.WritePathKey(reg, resolver.KeyAt(point, readPath), want)
+	in := state.State{}.WritePathKey(reg, resolver.KeySpace(), resolver.KeyAt(point, readPath), want)
 
 	got, ok := ExactPathValue(reg, resolver, point, readPath, in)
 	if !ok {
@@ -40,14 +41,13 @@ func TestHeapMemberFromValueReadsStaticMemberAndPreservesOwnerPresence(t *testin
 	id := identity.LuaTableLiteral(7002, 211)
 	rootValue := product.Set(reg, product.NewWithPresence(reg, product.ShapeTop, presence.Present()), identity.Key, identity.Singleton(id))
 	memberValue := product.Set(reg, product.NewWithPresence(reg, product.ShapeTop, presence.Present()), runtimekind.Key, runtimekind.Singleton(runtimekind.String))
+	ks := keyspace.New()
 	in := state.State{}.WriteHeapTableObject(reg, id, heapidentity.NewTableObject(heapidentity.TableObjectConfig{
-		Root: rootValue,
-		StaticMembers: map[pathdom.PathKey]product.Value{
-			pathdom.PathKey(".id"): memberValue,
-		},
+		Root:          rootValue,
+		StaticMembers: idStaticMembers(ks, memberValue),
 	}))
 
-	got, ok := HeapMemberFromValue(reg, in, rootValue, []segment.Segment{{Kind: segment.SegmentField, Name: "id"}})
+	got, ok := HeapMemberFromValue(reg, ks, in, rootValue, []segment.Segment{{Kind: segment.SegmentField, Name: "id"}})
 	if !ok {
 		t.Fatal("HeapMemberFromValue returned false")
 	}
@@ -61,14 +61,13 @@ func TestHeapMemberFromValueAuthorizesByIdentityWhenRootValueIsRicher(t *testing
 	objectRoot := product.Set(reg, product.NewWithPresence(reg, product.ShapeTop, presence.Present()), identity.Key, identity.Singleton(id))
 	readRoot := product.Set(reg, objectRoot, runtimekind.Key, runtimekind.Singleton(runtimekind.Table))
 	memberValue := product.Set(reg, product.NewWithPresence(reg, product.ShapeTop, presence.Present()), runtimekind.Key, runtimekind.Singleton(runtimekind.String))
+	ks := keyspace.New()
 	in := state.State{}.WriteHeapTableObject(reg, id, heapidentity.NewTableObject(heapidentity.TableObjectConfig{
-		Root: objectRoot,
-		StaticMembers: map[pathdom.PathKey]product.Value{
-			pathdom.PathKey(".id"): memberValue,
-		},
+		Root:          objectRoot,
+		StaticMembers: idStaticMembers(ks, memberValue),
 	}))
 
-	got, ok := HeapMemberFromValue(reg, in, readRoot, []segment.Segment{{Kind: segment.SegmentField, Name: "id"}})
+	got, ok := HeapMemberFromValue(reg, ks, in, readRoot, []segment.Segment{{Kind: segment.SegmentField, Name: "id"}})
 	if !ok {
 		t.Fatal("HeapMemberFromValue returned false")
 	}
@@ -84,14 +83,13 @@ func TestHeapMemberFromValueRejectsSameIdentityWithIncompatibleRootValue(t *test
 	readRoot := product.Set(reg, product.NewWithPresence(reg, product.ShapeTop, presence.Present()), identity.Key, identity.Singleton(id))
 	readRoot = product.Set(reg, readRoot, runtimekind.Key, runtimekind.Singleton(runtimekind.String))
 	memberValue := product.Set(reg, product.NewWithPresence(reg, product.ShapeTop, presence.Present()), runtimekind.Key, runtimekind.Singleton(runtimekind.String))
+	ks := keyspace.New()
 	in := state.State{}.WriteHeapTableObject(reg, id, heapidentity.NewTableObject(heapidentity.TableObjectConfig{
-		Root: objectRoot,
-		StaticMembers: map[pathdom.PathKey]product.Value{
-			pathdom.PathKey(".id"): memberValue,
-		},
+		Root:          objectRoot,
+		StaticMembers: idStaticMembers(ks, memberValue),
 	}))
 
-	if got, ok := HeapMemberFromValue(reg, in, readRoot, []segment.Segment{{Kind: segment.SegmentField, Name: "id"}}); ok {
+	if got, ok := HeapMemberFromValue(reg, ks, in, readRoot, []segment.Segment{{Kind: segment.SegmentField, Name: "id"}}); ok {
 		t.Fatalf("HeapMemberFromValue = %v/true, want false for incompatible root", got)
 	}
 }
@@ -125,4 +123,12 @@ func assertRuntimeKind(t *testing.T, reg *axis.Registry, got product.Value, want
 	if gotKind := product.Get(reg, got, runtimekind.Key); !runtimekind.Equal(gotKind, want) {
 		t.Fatalf("runtimekind = %s, want %s", gotKind, want)
 	}
+}
+
+func idStaticMembers(ks *keyspace.KeySpace, value product.Value) map[keyspace.Key]product.Value {
+	key, ok := ks.FromRootlessSuffix([]segment.Segment{{Kind: segment.SegmentField, Name: "id"}})
+	if !ok {
+		panic("idStaticMembers: failed to build key")
+	}
+	return map[keyspace.Key]product.Value{key: value}
 }

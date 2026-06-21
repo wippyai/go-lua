@@ -50,11 +50,11 @@ func (r *signatureIdentityResolver) indexCallSites(facts factflow.Facts) {
 }
 
 func (r *signatureIdentityResolver) nameForCall(ctx transfer.NodeContext, call factflow.CallProducer) (string, bool) {
-	return r.nameForCallee(ctx, call.CalleeSymbol(), call.CalleePath())
+	return r.nameForCallee(ctx, call.CalleeSymbol(), call.CalleePathRef())
 }
 
 func (r *signatureIdentityResolver) nameForCallSiteView(ctx transfer.NodeContext, site factflow.CallSiteView) (string, bool) {
-	return r.nameForCallee(ctx, site.CalleeSymbol(), site.CalleePath())
+	return r.nameForCallee(ctx, site.CalleeSymbol(), site.CalleePathRef())
 }
 
 func (r *signatureIdentityResolver) nameForCallee(ctx transfer.NodeContext, callee symbol.ID, calleePath path.Path) (string, bool) {

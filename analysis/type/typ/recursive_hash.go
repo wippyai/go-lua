@@ -10,8 +10,10 @@ func EqualityHash(t Type) uint64 {
 		return 0
 	}
 	if equalityHashNeedsRefresh(t) {
-		var scratch recursiveHashScratch
-		return hashBodyWithVisitedMemo(t, &scratch)
+		scratch := getRecursiveHashScratch()
+		h := hashBodyWithVisitedMemo(t, scratch)
+		putRecursiveHashScratch(scratch)
+		return h
 	}
 	return t.Hash()
 }
@@ -20,30 +22,7 @@ func equalityHashNeedsRefresh(t Type) bool {
 	if knownContainsRecursive(t) || knownContainsOpenRecursive(t) || knownContainsInstantiated(t) {
 		return true
 	}
-	return containsGenericNode(t, nil)
-}
-
-func containsGenericNode(t Type, seen map[uintptr]bool) bool {
-	t = unwrapAnnotatedOrNil(t)
-	if t == nil {
-		return false
-	}
-	if _, ok := t.(*Generic); ok {
-		return true
-	}
-	ptr := typePointer(t)
-	if ptr != 0 {
-		if seen == nil {
-			seen = make(map[uintptr]bool)
-		}
-		if seen[ptr] {
-			return false
-		}
-		seen[ptr] = true
-	}
-	return walkChildren(t, func(child Type) bool {
-		return containsGenericNode(child, seen)
-	})
+	return knownContainsGeneric(t)
 }
 
 func (r *Recursive) Hash() uint64 {
@@ -53,8 +32,9 @@ func (r *Recursive) Hash() uint64 {
 	// Compute hash on demand with cycle detection. Recursive types are mutable
 	// only until SetBody completes, then share the same cached-hash contract as
 	// other type nodes.
-	var scratch recursiveHashScratch
-	h := hashWithVisitedMemo(r, &scratch)
+	scratch := getRecursiveHashScratch()
+	h := hashWithVisitedMemo(r, scratch)
+	putRecursiveHashScratch(scratch)
 	if deps, ok := recursiveHashDeps(r); ok {
 		r.hash = h
 		r.hashDeps = deps

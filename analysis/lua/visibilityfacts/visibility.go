@@ -114,7 +114,7 @@ func pathSymbols(graph cfg.Graph, facts factflow.Facts) map[symbol.ID]struct{} {
 			addPath(fact.ContainerPath())
 		}
 		if site, ok := facts.CallSite(point); ok {
-			addPath(site.CalleePath())
+			addPath(site.CalleePathRef())
 			if receiver, ok := site.ReceiverPath(); ok {
 				addProofPath(receiver)
 			}

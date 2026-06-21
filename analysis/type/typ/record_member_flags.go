@@ -36,6 +36,15 @@ func knownInstantiatedStaticMembers(members []StaticMember) bool {
 	return false
 }
 
+func knownGenericStaticMembers(members []StaticMember) bool {
+	for _, m := range members {
+		if knownGeneric(m.Type) {
+			return true
+		}
+	}
+	return false
+}
+
 func knownRecursiveStaticMembers(members []StaticMember) bool {
 	for _, m := range members {
 		if knownRecursive(m.Type) {

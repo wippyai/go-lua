@@ -228,7 +228,7 @@ func (r *Result) LengthFloorAtBoundary(point cfg.Point, p pathdom.Path) (int64, 
 	if pathKey == "" {
 		return 0, false
 	}
-	return in.ReadLenFloor(pathKey)
+	return in.ReadLenFloor(r.visibility.KeySpace(), pathKey)
 }
 
 // IndexInRangeAtBoundary reports whether the current boundary state proves
@@ -293,7 +293,7 @@ func (r *Result) DiffProvesIndexLELength(point cfg.Point, indexPath pathdom.Path
 	// A value operand's proven numeric floor strengthens the system: a sum bound
 	// i + j <= #xs only proves i <= #xs once j >= 0 is known.
 	for k := range floorKeys {
-		if lo, ok := in.ReadNumFloor(k); ok {
+		if lo, ok := in.ReadNumFloor(r.visibility.KeySpace(), k); ok {
 			asserted = append(asserted, numeric.GeConst{X: k, C: lo})
 		}
 	}
@@ -317,7 +317,7 @@ func (r *Result) NumericFloorAtBoundary(point cfg.Point, p pathdom.Path) (int64,
 	if pathKey == "" {
 		return 0, false
 	}
-	return in.ReadNumFloor(pathKey)
+	return in.ReadNumFloor(r.visibility.KeySpace(), pathKey)
 }
 
 // SymbolValueAtBoundary reads a root symbol value at the diagnostic read

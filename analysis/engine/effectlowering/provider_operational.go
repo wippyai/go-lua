@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/placement"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
@@ -31,6 +32,7 @@ type operationalEffectContext struct {
 	expressionRefinements map[factflow.ExprRef]factflow.ExpressionRefinement
 	in                    state.State
 	read                  func(cfg.Point) state.State
+	keySpace              *keyspace.KeySpace
 }
 
 func applyOperationalEffects(ctx transfer.NodeContext, out callpayload.CallOutcome, op operationalEffectContext) callpayload.CallOutcome {
@@ -47,7 +49,7 @@ func applyOperationalEffects(ctx transfer.NodeContext, out callpayload.CallOutco
 	out.NormalReturnFacts.EscapeEvents = operationalEscapeEvents(*effects)
 	out.NormalReturnFacts.StoreRelations = operationalStoreRelations(*effects)
 	out.NormalReturnFacts.LifecycleFacts = operationalLifecycleFacts(*effects)
-	out.HeapTableObjects = operationalHeapTableObjects(ctx, *effects)
+	out.HeapTableObjects = operationalHeapTableObjects(ctx, op.keySpace, *effects)
 	out.Placements = operationalAllocationPlacements(*effects)
 	return out
 }
@@ -326,8 +328,8 @@ func operationalReturnAllocationValue(reg *axis.Registry, effects *signature.Ope
 	return value
 }
 
-func operationalHeapTableObjects(ctx transfer.NodeContext, e signature.OperationalEffects) map[identity.ID]heapidentity.TableObject {
-	if ctx.Registry == nil || len(e.ReturnAllocationTemplates) == 0 {
+func operationalHeapTableObjects(ctx transfer.NodeContext, ks *keyspace.KeySpace, e signature.OperationalEffects) map[identity.ID]heapidentity.TableObject {
+	if ctx.Registry == nil || ks == nil || len(e.ReturnAllocationTemplates) == 0 {
 		return nil
 	}
 	out := make(map[identity.ID]heapidentity.TableObject)
@@ -339,12 +341,12 @@ func operationalHeapTableObjects(ctx transfer.NodeContext, e signature.Operation
 			}
 			id := allocationTemplateIdentity(object.ID)
 			root := allocationTemplateValue(ctx.Registry, object.ID, object.Type)
-			staticMembers := make(map[pathdom.PathKey]product.Value, len(object.StaticMembers))
+			staticMembers := make(map[keyspace.Key]product.Value, len(object.StaticMembers))
 			for _, member := range object.StaticMembers {
 				if member.Value == "" {
 					continue
 				}
-				key, ok := heapidentity.StaticMemberSuffixKey(member.Suffix)
+				key, ok := heapidentity.StaticMemberSuffixKey(ks, member.Suffix)
 				if !ok {
 					continue
 				}

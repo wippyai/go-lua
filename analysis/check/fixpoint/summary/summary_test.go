@@ -6,6 +6,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/ref"
 	"github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
@@ -179,12 +180,17 @@ func TestSummaryCloneIsolatesNormalReturnParams(t *testing.T) {
 func TestSummaryCloneIsolatesHeapTableObjects(t *testing.T) {
 	reg := mustRegistry(t)
 	id := identity.ID{Kind: "table", Site: "summary-clone", Index: 1}
-	member := path.PathKey(".name")
+	ks := keyspace.New()
+	member, ok := ks.FromRootlessSuffix([]segment.Segment{{Kind: segment.SegmentField, Name: "name"}})
+	if !ok {
+		t.Fatal("member suffix key failed")
+	}
 	original := Summary{
+		HeapKeySpace: ks,
 		HeapTableObjects: map[identity.ID]heapidentity.TableObject{
 			id: heapidentity.NewTableObject(heapidentity.TableObjectConfig{
 				Root:          product.Top(),
-				StaticMembers: map[path.PathKey]product.Value{member: product.Absent(reg)},
+				StaticMembers: map[keyspace.Key]product.Value{member: product.Absent(reg)},
 			}),
 		},
 	}

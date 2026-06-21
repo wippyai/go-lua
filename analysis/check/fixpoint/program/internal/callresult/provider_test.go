@@ -8,6 +8,8 @@ import (
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/ref"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/summary"
 	"github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
+	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/typestate"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
@@ -381,21 +383,27 @@ func TestOutcomeProviderCopiesSummaryHeapTableObjects(t *testing.T) {
 	callee := symbol.ID(41)
 	key := summary.DefaultSummaryKey(ref.FuncRef{Kind: ref.KindSymbol, ID: 42})
 	tableID := identity.ID{Kind: "table", Site: "provider", Index: 1}
-	memberKey := path.PathKey(".field")
+	ks := keyspace.New()
+	memberKey, ok := ks.FromRootlessSuffix([]segment.Segment{{Kind: segment.SegmentField, Name: "field"}})
+	if !ok {
+		t.Fatal("member suffix key failed")
+	}
 	object := heapidentity.NewTableObject(heapidentity.TableObjectConfig{
 		Root:          product.Absent(reg),
-		StaticMembers: map[path.PathKey]product.Value{memberKey: product.Top()},
+		StaticMembers: map[keyspace.Key]product.Value{memberKey: product.Top()},
 	})
 	provider := OutcomeProvider(ProviderConfig{
 		Summaries: summary.NewSnapshot(reg, summary.EntrySummary{
 			Key: key,
 			Summary: summary.Summary{
+				HeapKeySpace: ks,
 				HeapTableObjects: map[identity.ID]heapidentity.TableObject{
 					tableID: object,
 				},
 			},
 		}),
-		KeyFor: ByCalleeIdentity(map[symbol.ID]summary.SummaryKey{callee: key}),
+		KeyFor:   ByCalleeIdentity(map[symbol.ID]summary.SummaryKey{callee: key}),
+		KeySpace: ks,
 	})
 
 	first := provider(transfer.NodeContext{Registry: reg}, factflow.NewCallSite(factflow.CallSiteConfig{
@@ -433,15 +441,21 @@ func TestOutcomeProviderPreservesReturnedNestedHeapIdentityClosure(t *testing.T)
 	childID := identity.ID{Kind: "table", Site: "provider-closure", Index: 2}
 	rootValue := product.Set(reg, product.NewWithPresence(reg, product.ShapeTop, presence.Present()), identity.Key, identity.Singleton(rootID))
 	childValue := product.Set(reg, product.NewWithPresence(reg, product.ShapeTop, presence.Present()), identity.Key, identity.Singleton(childID))
+	ks := keyspace.New()
+	childKey, ok := ks.FromRootlessSuffix([]segment.Segment{{Kind: segment.SegmentField, Name: "child"}})
+	if !ok {
+		t.Fatal("child suffix key failed")
+	}
 	provider := OutcomeProvider(ProviderConfig{
 		Summaries: summary.NewSnapshot(reg, summary.EntrySummary{
 			Key: key,
 			Summary: summary.Summary{
-				Returns: []product.Value{rootValue},
+				Returns:      []product.Value{rootValue},
+				HeapKeySpace: ks,
 				HeapTableObjects: map[identity.ID]heapidentity.TableObject{
 					rootID: heapidentity.NewTableObject(heapidentity.TableObjectConfig{
 						Root:          rootValue,
-						StaticMembers: map[path.PathKey]product.Value{path.PathKey(".child"): childValue},
+						StaticMembers: map[keyspace.Key]product.Value{childKey: childValue},
 					}),
 					childID: heapidentity.NewTableObject(heapidentity.TableObjectConfig{
 						Root: childValue,
@@ -449,7 +463,8 @@ func TestOutcomeProviderPreservesReturnedNestedHeapIdentityClosure(t *testing.T)
 				},
 			},
 		}),
-		KeyFor: ByCalleeIdentity(map[symbol.ID]summary.SummaryKey{callee: key}),
+		KeyFor:   ByCalleeIdentity(map[symbol.ID]summary.SummaryKey{callee: key}),
+		KeySpace: ks,
 	})
 
 	got := provider(transfer.NodeContext{Registry: reg}, factflow.NewCallSite(factflow.CallSiteConfig{
@@ -461,7 +476,7 @@ func TestOutcomeProviderPreservesReturnedNestedHeapIdentityClosure(t *testing.T)
 	if !ok {
 		t.Fatalf("HeapTableObjects = %#v, want root object %v", got.HeapTableObjects, rootID)
 	}
-	if member, ok := rootObject.StaticMember(path.PathKey(".child")); !ok || !product.Equal(reg, member, childValue) {
+	if member, ok := rootObject.StaticMember(childKey); !ok || !product.Equal(reg, member, childValue) {
 		t.Fatalf("root child member = %#v/%v, want %#v", member, ok, childValue)
 	}
 	childObject, ok := got.HeapTableObjects[childID]
@@ -484,15 +499,32 @@ func TestOutcomeProviderMaterializesReturnParamPathAliases(t *testing.T) {
 	registryValue := product.Set(reg, product.NewWithPresence(reg, product.ShapeTop, presence.Present()), identity.Key, identity.Singleton(registryID))
 	clientValue := product.Set(reg, product.NewWithPresence(reg, product.ShapeTop, presence.Present()), identity.Key, identity.Singleton(clientID))
 	source := providerExpressionSource(t, factflow.ExprRef(45), 0)
+	ks := keyspace.New()
+	apiKey, ok := ks.FromRootlessSuffix([]segment.Segment{{Kind: segment.SegmentField, Name: "api"}})
+	if !ok {
+		t.Fatal("api suffix key failed")
+	}
+	apiBackupKey, ok := ks.FromRootlessSuffix([]segment.Segment{
+		{Kind: segment.SegmentField, Name: "api"},
+		{Kind: segment.SegmentField, Name: "backup"},
+	})
+	if !ok {
+		t.Fatal("api.backup suffix key failed")
+	}
+	backupKey, ok := ks.FromRootlessSuffix([]segment.Segment{{Kind: segment.SegmentField, Name: "backup"}})
+	if !ok {
+		t.Fatal("backup suffix key failed")
+	}
 	provider := OutcomeProvider(ProviderConfig{
 		Summaries: summary.NewSnapshot(reg, summary.EntrySummary{
 			Key: key,
 			Summary: summary.Summary{
-				Returns: []product.Value{rootValue},
+				Returns:      []product.Value{rootValue},
+				HeapKeySpace: ks,
 				HeapTableObjects: map[identity.ID]heapidentity.TableObject{
 					rootID: heapidentity.NewTableObject(heapidentity.TableObjectConfig{
 						Root:          rootValue,
-						StaticMembers: map[path.PathKey]product.Value{path.PathKey(".api"): registryValue},
+						StaticMembers: map[keyspace.Key]product.Value{apiKey: registryValue},
 					}),
 					registryID: heapidentity.NewTableObject(heapidentity.TableObjectConfig{
 						Root: registryValue,
@@ -510,10 +542,11 @@ func TestOutcomeProviderMaterializesReturnParamPathAliases(t *testing.T) {
 				source.ExprRef: registryValue,
 			},
 		}),
+		KeySpace: ks,
 	})
 	in := state.State{}.WriteHeapTableObject(reg, registryID, heapidentity.NewTableObject(heapidentity.TableObjectConfig{
 		Root:          registryValue,
-		StaticMembers: map[path.PathKey]product.Value{path.PathKey(".backup"): clientValue},
+		StaticMembers: map[keyspace.Key]product.Value{backupKey: clientValue},
 	}))
 
 	got := provider(transfer.NodeContext{Registry: reg}, factflow.NewCallSite(factflow.CallSiteConfig{
@@ -525,14 +558,14 @@ func TestOutcomeProviderMaterializesReturnParamPathAliases(t *testing.T) {
 	if !ok {
 		t.Fatalf("HeapTableObjects = %#v, want root object %v", got.HeapTableObjects, rootID)
 	}
-	if member, ok := rootObject.StaticMember(path.PathKey(".api.backup")); !ok || !product.Equal(reg, member, clientValue) {
+	if member, ok := rootObject.StaticMember(apiBackupKey); !ok || !product.Equal(reg, member, clientValue) {
 		t.Fatalf("root api.backup member = %#v/%v, want %#v", member, ok, clientValue)
 	}
 	registryObject, ok := got.HeapTableObjects[registryID]
 	if !ok {
 		t.Fatalf("HeapTableObjects = %#v, want registry object %v", got.HeapTableObjects, registryID)
 	}
-	if member, ok := registryObject.StaticMember(path.PathKey(".backup")); !ok || !product.Equal(reg, member, clientValue) {
+	if member, ok := registryObject.StaticMember(backupKey); !ok || !product.Equal(reg, member, clientValue) {
 		t.Fatalf("registry backup member = %#v/%v, want %#v", member, ok, clientValue)
 	}
 
@@ -544,7 +577,7 @@ func TestOutcomeProviderMaterializesReturnParamPathAliases(t *testing.T) {
 	if !ok {
 		t.Fatalf("second HeapTableObjects = %#v, want root object %v", again.HeapTableObjects, rootID)
 	}
-	if member, ok := againRoot.StaticMember(path.PathKey(".api.backup")); ok {
+	if member, ok := againRoot.StaticMember(apiBackupKey); ok {
 		t.Fatalf("provider materialization mutated summary snapshot: api.backup = %#v", member)
 	}
 }
@@ -1171,6 +1204,7 @@ func TestByCalleeIdentitySymbolKeyMapsAreCloned(t *testing.T) {
 
 func TestOutcomeProviderUsesCurrentCalleeValueIdentityForPathSummary(t *testing.T) {
 	reg := standard.Registry()
+	ks := keyspace.New()
 	symbolKey := summary.DefaultSummaryKey(ref.FuncRef{Kind: ref.KindSymbol, ID: 31})
 	identityKey := summary.DefaultSummaryKey(ref.FuncRef{Kind: ref.KindSymbol, ID: 32})
 	calleeSymbol := symbol.ID(33)
@@ -1189,7 +1223,7 @@ func TestOutcomeProviderUsesCurrentCalleeValueIdentityForPathSummary(t *testing.
 			if site.CalleePath().IsEmpty() {
 				return product.Value{}, false
 			}
-			return in.ReadPathKey(ctx.Registry, calleeSlot), true
+			return in.ReadPathKey(ctx.Registry, ks, calleeSlot), true
 		},
 	})
 
@@ -1208,7 +1242,7 @@ func TestOutcomeProviderUsesCurrentCalleeValueIdentityForPathSummary(t *testing.
 		CalleePath: calleePath,
 	}).View(),
 
-		state.State{}.WritePathKey(reg, calleeSlot, identityValue), nil)
+		state.State{}.WritePathKey(reg, ks, calleeSlot, identityValue), nil)
 
 	assertCallOutcomeResults(t, reg, got.Results, []product.Value{ret})
 
@@ -1218,7 +1252,7 @@ func TestOutcomeProviderUsesCurrentCalleeValueIdentityForPathSummary(t *testing.
 		CalleePath: calleePath,
 	}).View(),
 
-		state.State{}.WritePathKey(reg, calleeSlot, otherValue), nil)
+		state.State{}.WritePathKey(reg, ks, calleeSlot, otherValue), nil)
 
 	if len(got.Results) != 0 {
 		t.Fatalf("different path identity results = %#v, want none", got.Results)
@@ -1335,6 +1369,7 @@ func TestProductionImportsAreBounded(t *testing.T) {
 		"github.com/wippyai/go-lua/analysis/check/fixpoint/summary":                       true,
 		"github.com/wippyai/go-lua/analysis/domain/path":                                  true,
 		"github.com/wippyai/go-lua/analysis/domain/path/address":                          true,
+		"github.com/wippyai/go-lua/analysis/domain/path/keyspace":                         true,
 		"github.com/wippyai/go-lua/analysis/domain/path/segment":                          true,
 		"github.com/wippyai/go-lua/analysis/domain/value/axis":                            true,
 		"github.com/wippyai/go-lua/analysis/domain/value/axis/evidence":                   true,

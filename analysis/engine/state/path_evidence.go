@@ -2,7 +2,7 @@ package state
 
 import (
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
-	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
+	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/engine/state/pathevidence"
@@ -11,14 +11,14 @@ import (
 // PathRefinementsSnapshot returns finite must path refinements. Bottom is
 // explicit; Top means the reachable must lane contains no finite refinements
 // and callers must not manufacture finite facts from it.
-func (s State) PathRefinementsSnapshot() pathevidence.PathRefinementsSnapshot {
-	return s.pathEvidence.PathRefinementsSnapshot()
+func (s State) PathRefinementsSnapshot(ks *keyspace.KeySpace) pathevidence.PathRefinementsSnapshot {
+	return s.pathEvidence.PathRefinementsSnapshot(ks)
 }
 
 // PathStaticMembersSnapshot returns finite must-static-member facts. Bottom is
 // explicit; Top means the reachable must lane contains no finite facts.
-func (s State) PathStaticMembersSnapshot() pathevidence.PathStaticMembersSnapshot {
-	return s.pathEvidence.PathStaticMembersSnapshot()
+func (s State) PathStaticMembersSnapshot(ks *keyspace.KeySpace) pathevidence.PathStaticMembersSnapshot {
+	return s.pathEvidence.PathStaticMembersSnapshot(ks)
 }
 
 // BranchProofsSnapshot returns finite must branch proofs in stable order.
@@ -36,8 +36,8 @@ func (s State) PathPresenceImplicationsSnapshot() pathevidence.PathPresenceImpli
 
 // ReadPathKey reads a point-local path refinement key. Missing keys read as
 // product.Bottom(reg).
-func (s State) ReadPathKey(reg *axis.Registry, pathKey pathdom.PathKey) product.Value {
-	localKey, ok := pathaddr.LocalKeyFromPathKey(pathKey)
+func (s State) ReadPathKey(reg *axis.Registry, ks *keyspace.KeySpace, pathKey pathdom.PathKey) product.Value {
+	localKey, ok := ks.FromPathKey(pathKey)
 	if !ok {
 		return product.Bottom(reg)
 	}
@@ -46,8 +46,8 @@ func (s State) ReadPathKey(reg *axis.Registry, pathKey pathdom.PathKey) product.
 
 // WritePathKey returns a state with pathKey updated. Writing
 // product.Bottom(reg) removes the finite entry.
-func (s State) WritePathKey(reg *axis.Registry, pathKey pathdom.PathKey, value product.Value) State {
-	localKey, ok := pathaddr.LocalKeyFromPathKey(pathKey)
+func (s State) WritePathKey(reg *axis.Registry, ks *keyspace.KeySpace, pathKey pathdom.PathKey, value product.Value) State {
+	localKey, ok := ks.FromPathKey(pathKey)
 	if !ok {
 		return s
 	}
@@ -62,8 +62,8 @@ func (s State) WritePathKey(reg *axis.Registry, pathKey pathdom.PathKey, value p
 
 // UpdatePathKey reads pathKey, applies fn, and writes the transformed value.
 // Transforming a finite entry to product.Bottom(reg) removes it.
-func (s State) UpdatePathKey(reg *axis.Registry, pathKey pathdom.PathKey, fn func(product.Value) product.Value) State {
-	localKey, ok := pathaddr.LocalKeyFromPathKey(pathKey)
+func (s State) UpdatePathKey(reg *axis.Registry, ks *keyspace.KeySpace, pathKey pathdom.PathKey, fn func(product.Value) product.Value) State {
+	localKey, ok := ks.FromPathKey(pathKey)
 	if !ok {
 		return s
 	}
@@ -79,13 +79,13 @@ func (s State) UpdatePathKey(reg *axis.Registry, pathKey pathdom.PathKey, fn fun
 // InvalidatePathKeySubtree removes finite path refinements at pathKey and any
 // descendant key. It returns false when pathKey is not a recognized structural
 // path-key spelling.
-func (s State) InvalidatePathKeySubtree(pathKey pathdom.PathKey) (State, bool) {
-	pathEvidence, ok := s.pathEvidence.InvalidatePathKeySubtree(pathKey)
+func (s State) InvalidatePathKeySubtree(ks *keyspace.KeySpace, pathKey pathdom.PathKey) (State, bool) {
+	pathEvidence, ok := s.pathEvidence.InvalidatePathKeySubtree(ks, pathKey)
 	if !ok {
 		return s, false
 	}
 	prefixes, _ := s.pathEvidence.PathKeySubtreeInvalidationPrefixes(pathKey)
-	lenFloors, lenFloorChanged := s.lenFloors.clearPathKeySubtrees(prefixes)
+	lenFloors, lenFloorChanged := s.lenFloors.clearPathKeySubtrees(ks, prefixes)
 	out := s
 	out.pathEvidence = pathEvidence
 	if lenFloorChanged {
@@ -97,13 +97,13 @@ func (s State) InvalidatePathKeySubtree(pathKey pathdom.PathKey) (State, bool) {
 // InvalidatePathKeyDescendants removes finite path refinements below pathKey
 // while preserving the exact pathKey refinement. It returns false when pathKey
 // is not a recognized structural path-key spelling.
-func (s State) InvalidatePathKeyDescendants(pathKey pathdom.PathKey) (State, bool) {
-	pathEvidence, ok := s.pathEvidence.InvalidatePathKeyDescendants(pathKey)
+func (s State) InvalidatePathKeyDescendants(ks *keyspace.KeySpace, pathKey pathdom.PathKey) (State, bool) {
+	pathEvidence, ok := s.pathEvidence.InvalidatePathKeyDescendants(ks, pathKey)
 	if !ok {
 		return s, false
 	}
 	prefixes, _ := s.pathEvidence.PathKeyDescendantInvalidationPrefixes(pathKey)
-	lenFloors, lenFloorChanged := s.lenFloors.clearPathKeyDescendantMutation(prefixes)
+	lenFloors, lenFloorChanged := s.lenFloors.clearPathKeyDescendantMutation(ks, prefixes)
 	out := s
 	out.pathEvidence = pathEvidence
 	if lenFloorChanged {
@@ -116,16 +116,16 @@ func (s State) PathKeyDescendantInvalidationPrefixes(pathKey pathdom.PathKey) (p
 	return s.pathEvidence.PathKeyDescendantInvalidationPrefixes(pathKey)
 }
 
-func (s State) ReadPathStaticMember(pathKey pathdom.PathKey) (product.Value, bool) {
-	localKey, ok := pathaddr.LocalKeyFromPathKey(pathKey)
+func (s State) ReadPathStaticMember(ks *keyspace.KeySpace, pathKey pathdom.PathKey) (product.Value, bool) {
+	localKey, ok := ks.FromPathKey(pathKey)
 	if !ok {
 		return product.Value{}, false
 	}
 	return s.pathEvidence.ReadPathStaticMember(localKey)
 }
 
-func (s State) WritePathStaticMember(pathKey pathdom.PathKey, value product.Value) State {
-	localKey, ok := pathaddr.LocalKeyFromPathKey(pathKey)
+func (s State) WritePathStaticMember(ks *keyspace.KeySpace, pathKey pathdom.PathKey, value product.Value) State {
+	localKey, ok := ks.FromPathKey(pathKey)
 	if !ok {
 		return s
 	}
@@ -185,4 +185,17 @@ func (s State) HasPathPresenceImplication(implication pathevidence.PathPresenceI
 
 func (s State) EquivalentPathKeys(pathKey pathdom.PathKey) []pathdom.PathKey {
 	return s.pathEvidence.EquivalentPathKeys(pathKey)
+}
+
+// RekeyPathEvidence re-interns the path-evidence value lane keys from one
+// keyspace into another so a state built under one analysis's keyspace can be
+// consumed as an entry state under another's. It is a no-op when from == to.
+func (s State) RekeyPathEvidence(from, to *keyspace.KeySpace) State {
+	rekeyed := s.pathEvidence.RekeyValueLanes(from, to)
+	out := s
+	out.pathEvidence = rekeyed
+	out.numFloors = s.numFloors.rekey(from, to)
+	out.lenFloors = s.lenFloors.rekey(from, to)
+	out.heapTableIdentity = s.heapTableIdentity.rekey(from, to)
+	return out
 }

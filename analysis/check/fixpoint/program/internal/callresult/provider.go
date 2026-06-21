@@ -6,6 +6,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/summary"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
+	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/evidence"
@@ -61,6 +62,10 @@ type ProviderConfig struct {
 	FunctionTypes           map[summary.SummaryKey]*typ.Function
 	Sources                 sourcevalue.SourceValues
 	ReturnPresenceRelations ReturnPresenceRelationsForPathFunc
+	// KeySpace is the consuming (caller) analysis keyspace. Summaries read at a
+	// call site carry heap objects interned under the callee's keyspace; they are
+	// rebased into this keyspace before any heap member is read or written.
+	KeySpace *keyspace.KeySpace
 }
 
 // OutcomeProvider returns a generic call-boundary outcome provider backed by
@@ -78,6 +83,7 @@ func OutcomeProvider(config ProviderConfig) callpayload.CallOutcomeProvider {
 	functionTypes := mapedit.Clone(config.FunctionTypes)
 	sources := config.Sources
 	returnPresenceRelations := config.ReturnPresenceRelations
+	callerKeySpace := config.KeySpace
 	return func(ctx transfer.NodeContext, site factflow.CallSiteView, in state.State, read func(cfg.Point) state.State) callpayload.CallOutcome {
 		if summaries == nil {
 			return callpayload.CallOutcome{}
@@ -91,13 +97,14 @@ func OutcomeProvider(config ProviderConfig) callpayload.CallOutcomeProvider {
 			if !readOK {
 				return callpayload.CallOutcome{}
 			}
+			got = got.RekeyHeapTableObjects(callerKeySpace)
 			fn = functionTypes[key]
 			got = applyDeclaredSummaryReturns(ctx.Registry, got, fn)
 			if summaryNeedsGenericInstantiation(ctx, fn, sources) {
 				got = specializeGenericSummary(ctx, site, got, fn, summaries, facts, functionKeys, functionExpressionKeys, functionTypes, sources, in, read)
 			}
 			got = materializeReturnRootTypesFromFacts(ctx.Registry, got)
-		} else if joined, joinedOK := joinedSummaryForDefinitionPath(ctx, site, in, read, calleeValue, summaries, pathMultiKeys, functionTypes, facts, functionKeys, functionExpressionKeys, sources); joinedOK {
+		} else if joined, joinedOK := joinedSummaryForDefinitionPath(ctx, site, in, read, calleeValue, summaries, pathMultiKeys, functionTypes, facts, functionKeys, functionExpressionKeys, sources, callerKeySpace); joinedOK {
 			got = joined
 		} else {
 			if out, ok := unresolvedFunctionCallOutcome(ctx, site, in, read, calleeValue); ok {
@@ -106,7 +113,7 @@ func OutcomeProvider(config ProviderConfig) callpayload.CallOutcomeProvider {
 			return callpayload.CallOutcome{}
 		}
 		if len(got.ReturnParamPathAliases) != 0 {
-			got = materializeReturnParamPathAliases(ctx, site, got, sources, in, read)
+			got = materializeReturnParamPathAliases(ctx, callerKeySpace, site, got, sources, in, read)
 		}
 		out := outcomeFromSummary(got, func(index int) bool {
 			if index < 0 || index >= len(got.ParamObligations) {
@@ -124,6 +131,15 @@ func OutcomeProvider(config ProviderConfig) callpayload.CallOutcomeProvider {
 				out.ReturnPresenceRelations,
 				paramMemberReturnPresenceRelations(ctx, site, got, facts, returnPresenceRelations)...,
 			)
+		}
+		if fn != nil && len(got.ReturnParamPathAliases) != 0 {
+			out.ParamExposures = append(out.ParamExposures, paramReturnExposures(ctx.Registry, site.ArgumentSourceCount(), got, fn)...)
+		}
+		if fn != nil && len(got.NormalReturnFacts.StoreRelations) != 0 {
+			out.ParamExposures = append(out.ParamExposures, paramStoreRelationExposures(ctx.Registry, site.ArgumentSourceCount(), got, fn)...)
+		}
+		if len(got.ParamSinkExposures) != 0 {
+			out.ParamExposures = append(out.ParamExposures, paramSinkExposures(ctx.Registry, site.ArgumentSourceCount(), got)...)
 		}
 		if fn != nil {
 			out.Results = padMissingResultsToNil(ctx.Registry, site, out.Results, len(fn.Returns))
@@ -152,6 +168,7 @@ func joinedSummaryForDefinitionPath(
 	functionKeys map[symbol.ID]summary.SummaryKey,
 	functionExpressionKeys map[factflow.ExprRef]summary.SummaryKey,
 	sources sourcevalue.SourceValues,
+	callerKeySpace *keyspace.KeySpace,
 ) (summary.Summary, bool) {
 	if ctx.Registry == nil || summaries == nil || len(pathMultiKeys) == 0 {
 		return summary.Summary{}, false
@@ -179,6 +196,7 @@ func joinedSummaryForDefinitionPath(
 		if summaryNeedsGenericInstantiation(ctx, fn, sources) {
 			got = specializeGenericSummary(ctx, site, got, fn, summaries, facts, functionKeys, functionExpressionKeys, functionTypes, sources, in, read)
 		}
+		got = got.RekeyHeapTableObjects(callerKeySpace)
 		if !seen {
 			out = got
 			seen = true
@@ -293,6 +311,7 @@ func returnRecordTypeFromFacts(reg *axis.Registry, facts callboundary.NormalRetu
 
 func materializeReturnParamPathAliases(
 	ctx transfer.NodeContext,
+	ks *keyspace.KeySpace,
 	site factflow.CallSiteView,
 	got summary.Summary,
 	sources sourcevalue.SourceValues,
@@ -308,11 +327,11 @@ func materializeReturnParamPathAliases(
 	}
 	changed := false
 	for _, alias := range got.ReturnParamPathAliases {
-		value, ok := returnParamAliasSourceValue(ctx, site, alias.Source, sources, in, read)
+		value, ok := returnParamAliasSourceValue(ctx, ks, site, alias.Source, sources, in, read)
 		if !ok {
 			continue
 		}
-		if writeReturnParamAliasMember(ctx.Registry, objects, got.Returns, alias.ReturnIndex, alias.Member, value) {
+		if writeReturnParamAliasMember(ctx.Registry, ks, objects, got.Returns, alias.ReturnIndex, alias.Member, value) {
 			changed = true
 		}
 	}
@@ -325,6 +344,7 @@ func materializeReturnParamPathAliases(
 
 func returnParamAliasSourceValue(
 	ctx transfer.NodeContext,
+	ks *keyspace.KeySpace,
 	site factflow.CallSiteView,
 	sourceKey pathdom.PathKey,
 	sources sourcevalue.SourceValues,
@@ -347,11 +367,12 @@ func returnParamAliasSourceValue(
 	if len(sourcePath.Segments) == 0 {
 		return value, true
 	}
-	return sourcevalue.HeapMemberFromValue(ctx.Registry, in, value, sourcePath.Segments)
+	return sourcevalue.HeapMemberFromValue(ctx.Registry, ks, in, value, sourcePath.Segments)
 }
 
 func writeReturnParamAliasMember(
 	reg *axis.Registry,
+	ks *keyspace.KeySpace,
 	objects map[identity.ID]heapidentity.TableObject,
 	returns []product.Value,
 	returnIndex int,
@@ -366,8 +387,12 @@ func writeReturnParamAliasMember(
 	if !ok || len(segments) == 0 {
 		return false
 	}
-	changed := writeHeapObjectStaticMember(reg, objects, rootID, returns[returnIndex], memberKey, value)
-	if writeNestedHeapObjectStaticMember(reg, objects, rootID, returns[returnIndex], segments, value) {
+	key, ok := ks.FromRootlessSuffix(segments)
+	if !ok {
+		return false
+	}
+	changed := writeHeapObjectStaticMember(reg, objects, rootID, returns[returnIndex], key, value)
+	if writeNestedHeapObjectStaticMember(reg, ks, objects, rootID, returns[returnIndex], segments, value) {
 		changed = true
 	}
 	return changed
@@ -375,6 +400,7 @@ func writeReturnParamAliasMember(
 
 func writeNestedHeapObjectStaticMember(
 	reg *axis.Registry,
+	ks *keyspace.KeySpace,
 	objects map[identity.ID]heapidentity.TableObject,
 	rootID identity.ID,
 	rootValue product.Value,
@@ -387,7 +413,7 @@ func writeNestedHeapObjectStaticMember(
 	currentID := rootID
 	currentValue := rootValue
 	for len(segments) > 1 {
-		key, ok := heapidentity.StaticMemberSuffixKey(segments[:1])
+		key, ok := ks.FromRootlessSuffix(segments[:1])
 		if !ok {
 			return false
 		}
@@ -407,7 +433,7 @@ func writeNestedHeapObjectStaticMember(
 		currentValue = nextValue
 		segments = segments[1:]
 	}
-	key, ok := heapidentity.StaticMemberSuffixKey(segments)
+	key, ok := ks.FromRootlessSuffix(segments)
 	if !ok {
 		return false
 	}
@@ -419,16 +445,16 @@ func writeHeapObjectStaticMember(
 	objects map[identity.ID]heapidentity.TableObject,
 	id identity.ID,
 	root product.Value,
-	key pathdom.PathKey,
+	key keyspace.Key,
 	value product.Value,
 ) bool {
-	if id == (identity.ID{}) || key == "" {
+	if id == (identity.ID{}) || key.Kind == keyspace.KindInvalid {
 		return false
 	}
 	object := objects[id]
 	staticMembers := object.StaticMembers()
 	if staticMembers == nil {
-		staticMembers = make(map[pathdom.PathKey]product.Value, 1)
+		staticMembers = make(map[keyspace.Key]product.Value, 1)
 	}
 	if existing, ok := staticMembers[key]; ok && product.Equal(reg, existing, value) {
 		return false
@@ -1109,25 +1135,25 @@ func joinInstantiatedReturnValue(reg *axis.Registry, value product.Value, declar
 	if product.Equal(reg, value, product.Bottom(reg)) {
 		return declared
 	}
-	joined := value
-	joined = product.WithPresence(reg, joined, presence.Join(product.PresenceOf(joined), product.PresenceOf(declared)))
+	ed := product.Edit(reg, value)
+	ed.SetPresence(presence.Join(product.PresenceOf(value), product.PresenceOf(declared)))
 	declaredKind := product.Get(reg, declared, runtimekind.Key)
 	if !declaredKind.IsTop() {
-		joined = product.Set(reg, joined, runtimekind.Key, runtimekind.Join(product.Get(reg, joined, runtimekind.Key), declaredKind))
+		product.EditSet(&ed, runtimekind.Key, runtimekind.Join(product.Get(reg, value, runtimekind.Key), declaredKind))
 	}
 	declaredEvidence := product.Get(reg, declared, evidence.Key)
 	if !evidence.Equal(declaredEvidence, evidence.Top()) {
-		joined = product.Set(reg, joined, evidence.Key, evidence.Join(product.Get(reg, joined, evidence.Key), declaredEvidence))
+		product.EditSet(&ed, evidence.Key, evidence.Join(product.Get(reg, value, evidence.Key), declaredEvidence))
 	}
 	declaredWitness := product.Get(reg, declared, typewitness.Key)
 	if !declaredWitness.IsBottom() && !declaredWitness.IsTop() {
-		joined = product.Set(reg, joined, typewitness.Key, declaredWitness)
+		product.EditSet(&ed, typewitness.Key, declaredWitness)
 	}
 	declaredOrigin := product.Get(reg, declared, variantorigin.Key)
-	if declaredOrigin.IsBottom() || declaredOrigin.IsTop() {
-		return joined
+	if !declaredOrigin.IsBottom() && !declaredOrigin.IsTop() {
+		product.EditSet(&ed, variantorigin.Key, declaredOrigin)
 	}
-	return product.Set(reg, joined, variantorigin.Key, declaredOrigin)
+	return ed.Done()
 }
 
 func valueContainsFreeTypeParam(reg *axis.Registry, value product.Value) bool {
@@ -1411,6 +1437,193 @@ func projectMemberObligationReceiver(receiver typ.Type, receiverPath pathdom.Pat
 		return nil, false
 	}
 	return luatypeprojection.ApplySegments(receiver, segments)
+}
+
+// paramReturnExposures lowers return-param aliasing into covariant call-boundary
+// exposures. For each ReturnParamPathAlias the callee records (a parameter stored
+// into a returned container slot), it emits an exposure whose contract is the
+// callee's declared return type projected at the aliased return slot member. That
+// projected member type, not the parameter's own declared type, is the sound
+// contract: a callee that covariantly stores a narrow parameter into a wider
+// return field exposes the argument object at the wider field type, so a write
+// through the caller's returned view can launder a wider value back into the
+// argument. The caller eager-widens the argument's source object toward this
+// contract, mirroring the in-body covariant mutable-view exposure.
+func paramReturnExposures(reg *axis.Registry, argCount int, got summary.Summary, fn *typ.Function) []callpayload.CallParamExposure {
+	if reg == nil || fn == nil || len(got.ReturnParamPathAliases) == 0 {
+		return nil
+	}
+	returns := callResultReturnTypes(got, fn.Returns)
+	var out []callpayload.CallParamExposure
+	for _, alias := range got.ReturnParamPathAliases {
+		paramIndex, ok := rootPlaceholderIndex(alias.Source)
+		if !ok || paramIndex < 0 || paramIndex >= argCount {
+			continue
+		}
+		if alias.ReturnIndex < 0 || alias.ReturnIndex >= len(returns) {
+			continue
+		}
+		returnType := returns[alias.ReturnIndex]
+		if returnType == nil {
+			continue
+		}
+		contract := returnType
+		if alias.Member != "" {
+			memberSegments, ok := pathaddr.RelativeStaticMemberSuffixSegments(alias.Member)
+			if !ok || len(memberSegments) == 0 {
+				continue
+			}
+			contract, ok = luatypeprojection.ApplySegments(returnType, memberSegments)
+			if !ok {
+				continue
+			}
+		}
+		exposure, ok := newParamExposure(reg, pathdom.NewPlaceholder(paramIndex), contract)
+		if !ok {
+			continue
+		}
+		out = append(out, exposure)
+	}
+	return out
+}
+
+// paramStoreRelationExposures lowers param-to-param store relations into covariant
+// call-boundary exposures (Route 1). Each StoreRelationFact records that the
+// callee stores one parameter (Source, a bare placeholder) into a member slot of
+// another parameter (Into, a placeholder with member segments). The destination
+// slot type, not the source parameter's own declared type, is the sound contract:
+// a callee that covariantly stores a narrow parameter into a wider destination
+// slot exposes the argument object at the wider slot type, so a write through the
+// caller's destination view can launder a wider value back into the source
+// argument. The contract is the destination parameter's declared type projected at
+// the store member, and the caller eager-widens the source argument toward it.
+func paramStoreRelationExposures(reg *axis.Registry, argCount int, got summary.Summary, fn *typ.Function) []callpayload.CallParamExposure {
+	if reg == nil || fn == nil || len(got.NormalReturnFacts.StoreRelations) == 0 {
+		return nil
+	}
+	var out []callpayload.CallParamExposure
+	for _, relation := range got.NormalReturnFacts.StoreRelations {
+		if !relation.Source.IsPlaceholder() || len(relation.Source.Segments) != 0 {
+			continue
+		}
+		sourceIndex := relation.Source.PlaceholderIndex()
+		if sourceIndex < 0 || sourceIndex >= argCount {
+			continue
+		}
+		if !relation.Into.IsPlaceholder() || len(relation.Into.Segments) == 0 {
+			continue
+		}
+		intoIndex := relation.Into.PlaceholderIndex()
+		if intoIndex < 0 || intoIndex >= len(fn.Params) {
+			continue
+		}
+		destType := fn.Params[intoIndex].Type
+		if destType == nil {
+			continue
+		}
+		contract, ok := luatypeprojection.ApplySegments(destType, relation.Into.Segments)
+		if !ok {
+			continue
+		}
+		exposure, ok := newParamExposure(reg, pathdom.NewPlaceholder(sourceIndex), contract)
+		if !ok {
+			continue
+		}
+		out = append(out, exposure)
+	}
+	return out
+}
+
+// paramSinkExposures lowers param-to-sink store exposures into covariant
+// call-boundary exposures (Route 2). Each ParamSinkExposure records that the
+// callee stores one parameter (Source, a bare placeholder) into a member slot of a
+// persistent sink (a captured upvalue or a global) the caller cannot track writes
+// back through. The carried Contract is the sink's slot type, computed in-body
+// where the sink's container type is available: it is the real exposure type,
+// since a covariant store of a narrow parameter into a wider sink slot is
+// well-typed and a later write through the sink launders a wider value back into
+// the argument. The caller eager-widens the source argument toward the carried
+// slot type.
+func paramSinkExposures(reg *axis.Registry, argCount int, got summary.Summary) []callpayload.CallParamExposure {
+	if reg == nil || len(got.ParamSinkExposures) == 0 {
+		return nil
+	}
+	var out []callpayload.CallParamExposure
+	for _, sink := range got.ParamSinkExposures {
+		paramIndex, ok := rootPlaceholderIndex(sink.Source)
+		if !ok || paramIndex < 0 || paramIndex >= argCount {
+			continue
+		}
+		contract, ok := typevalue.TypeOf(reg, sink.Contract)
+		if !ok {
+			continue
+		}
+		exposure, ok := newParamExposure(reg, pathdom.NewPlaceholder(paramIndex), contract)
+		if !ok {
+			continue
+		}
+		out = append(out, exposure)
+	}
+	return out
+}
+
+// newParamExposure builds a unified call-boundary exposure for a callee-relative
+// source placeholder toward a destination-slot contract type. It gates on a
+// mutable record/array contract and carries the contract's witness-bearing value.
+func newParamExposure(reg *axis.Registry, source pathdom.Path, contract typ.Type) (callpayload.CallParamExposure, bool) {
+	if contract == nil || typ.IsAny(contract) || typ.IsUnknown(contract) || refinement.ContainsFreeTypeParam(contract) {
+		return callpayload.CallParamExposure{}, false
+	}
+	kind, ok := covariantExposureKind(contract)
+	if !ok {
+		return callpayload.CallParamExposure{}, false
+	}
+	value := typevalue.WithWitness(reg, typevalue.FromType(reg, contract), contract)
+	return callpayload.CallParamExposure{
+		Source:   source,
+		Contract: value,
+		Kind:     kind,
+	}, true
+}
+
+// rootPlaceholderIndex returns the parameter index of a root placeholder source
+// key ($i with no member segments). Sources with member segments name a sub-path
+// of a parameter, which this exposure lane does not handle.
+func rootPlaceholderIndex(source pathdom.PathKey) (int, bool) {
+	p, ok := pathaddr.PlaceholderPathFromKey(source)
+	if !ok || len(p.Segments) != 0 {
+		return 0, false
+	}
+	index := p.PlaceholderIndex()
+	if index < 0 {
+		return 0, false
+	}
+	return index, true
+}
+
+// covariantExposureKind selects the widening kind for a mutable container
+// contract: an opaque-array element widen for an array, a record field rebuild
+// for a record. Any other shape is not a mutable container view and emits no
+// exposure.
+func covariantExposureKind(contract typ.Type) (factflow.CovariantExposureKind, bool) {
+	switch unaliasType(contract).(type) {
+	case *typ.Array:
+		return factflow.CovariantExposureArray, true
+	case *typ.Record:
+		return factflow.CovariantExposureRecord, true
+	default:
+		return 0, false
+	}
+}
+
+func unaliasType(t typ.Type) typ.Type {
+	for {
+		alias, ok := t.(*typ.Alias)
+		if !ok || alias == nil {
+			return t
+		}
+		t = alias.UnaliasedTarget()
+	}
 }
 
 func functionTypeParamObligations(reg *axis.Registry, argCount int, fn *typ.Function) []callpayload.CallParamObligation {

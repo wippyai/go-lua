@@ -142,7 +142,7 @@ func (r Reader) VariantOriginType(value product.Value) (typ.Type, bool) {
 	if origin.IsBottom() || origin.IsTop() {
 		return nil, false
 	}
-	return variant.TypeFromOrigin(origin.Family(), origin.Cases())
+	return variant.TypeFromOrigin(origin.Family(), origin.CasesRef())
 }
 
 // FullVariantOriginType returns the complete structural union of the value's
@@ -186,9 +186,9 @@ func (r Reader) RefineDeclaredType(declared typ.Type, value product.Value) (typ.
 			out = witnessTypeForPresence(t, p)
 		}
 		if !origin.IsBottom() && !origin.IsTop() {
-			if refined, ok := variant.NarrowByOrigin(out, origin.Family(), origin.Cases()); ok {
+			if refined, ok := variant.NarrowByOrigin(out, origin.Family(), origin.CasesRef()); ok {
 				out = refined
-			} else if refined, ok := variant.TypeFromOrigin(origin.Family(), origin.Cases()); ok {
+			} else if refined, ok := variant.TypeFromOrigin(origin.Family(), origin.CasesRef()); ok {
 				out = witnessTypeForPresence(refined, p)
 			}
 		}
@@ -226,9 +226,9 @@ func (r Reader) NarrowDeclaredByOrigin(declared typ.Type, value product.Value) (
 		reg := r.result.Registry()
 		origin := product.Get(reg, value, variantorigin.Key)
 		if !origin.IsBottom() && !origin.IsTop() {
-			if refined, ok := variant.NarrowByOrigin(out, origin.Family(), origin.Cases()); ok {
+			if refined, ok := variant.NarrowByOrigin(out, origin.Family(), origin.CasesRef()); ok {
 				out = refined
-			} else if refined, ok := variant.TypeFromOrigin(origin.Family(), origin.Cases()); ok {
+			} else if refined, ok := variant.TypeFromOrigin(origin.Family(), origin.CasesRef()); ok {
 				out = witnessTypeForPresence(refined, p)
 			}
 		}
@@ -366,10 +366,10 @@ func concreteBoundaryType(reg *axis.Registry, value product.Value) (typ.Type, bo
 		if t, ok := witness.Type(); ok {
 			t = witnessTypeForPresence(t, valuePresence)
 			if !origin.IsBottom() && !origin.IsTop() {
-				if narrowed, ok := variant.NarrowByOrigin(t, origin.Family(), origin.Cases()); ok {
+				if narrowed, ok := variant.NarrowByOrigin(t, origin.Family(), origin.CasesRef()); ok {
 					return narrowed, true
 				}
-				if narrowed, ok := variant.TypeFromOrigin(origin.Family(), origin.Cases()); ok {
+				if narrowed, ok := variant.TypeFromOrigin(origin.Family(), origin.CasesRef()); ok {
 					return witnessTypeForPresence(narrowed, valuePresence), true
 				}
 			}
@@ -381,7 +381,7 @@ func concreteBoundaryType(reg *axis.Registry, value product.Value) (typ.Type, bo
 		return typ.Any, true
 	}
 	if !origin.IsBottom() && !origin.IsTop() {
-		if t, ok := variant.TypeFromOrigin(origin.Family(), origin.Cases()); ok {
+		if t, ok := variant.TypeFromOrigin(origin.Family(), origin.CasesRef()); ok {
 			return t, true
 		}
 	}

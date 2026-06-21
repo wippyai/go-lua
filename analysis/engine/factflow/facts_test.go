@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
@@ -897,8 +898,10 @@ func TestFactsCarrierCopiesAndReturnsFalseForMissingFacts(t *testing.T) {
 		if entry.Source() != source {
 			t.Fatalf("object literal view source = %#v, want %#v", entry.Source(), source)
 		}
-		if key, ok := entry.StaticMemberSuffixKey(); !ok || key != ".field" {
-			t.Fatalf("object literal view suffix key = %q/%v, want .field/true", key, ok)
+		ks := keyspace.New()
+		key, ok := ks.FromRootlessSuffix(entry.SuffixSegments())
+		if !ok || ks.Format(key) != ".field" {
+			t.Fatalf("object literal view suffix key = %q/%v, want .field/true", ks.Format(key), ok)
 		}
 		if got := entry.SuffixSegmentCount(); got != 1 {
 			t.Fatalf("object literal view suffix segment count = %d, want 1", got)

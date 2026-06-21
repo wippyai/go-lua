@@ -19,7 +19,7 @@ func valueLaneFromMap(
 }
 
 func (l valueLane) read(reg *axis.Registry, slot key.Value) product.Value {
-	if slot == "" {
+	if slot == 0 {
 		return product.Bottom(reg)
 	}
 	if l.isTop() {

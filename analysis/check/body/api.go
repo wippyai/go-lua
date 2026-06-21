@@ -4,6 +4,7 @@ import (
 	"errors"
 
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
@@ -103,6 +104,15 @@ func (s *Static) HasCallSites() bool {
 	return s != nil && s.facts.HasCallSites()
 }
 
+// KeySpace returns the structural key interner this prepared body solves under.
+// Cross-summary entry states are rekeyed into it before the solve.
+func (s *Static) KeySpace() *keyspace.KeySpace {
+	if s == nil {
+		return nil
+	}
+	return s.visibility.KeySpace()
+}
+
 // SolveConfig holds per-solve inputs for a prepared body. These fields may
 // close over caller summary readers or hold mutable caches, so they are never
 // retained by Static preparation.
@@ -150,6 +160,7 @@ type CallOutcomeContext struct {
 	Sources                     sourcevalue.SourceValues
 	CalleeValue                 CalleeValueFunc
 	ReturnPresenceRelationsPath ReturnPresenceRelationsForPathFunc
+	KeySpace                    *keyspace.KeySpace
 }
 
 type CallOutcomeFactory func(CallOutcomeContext) callpayload.CallOutcomeProvider

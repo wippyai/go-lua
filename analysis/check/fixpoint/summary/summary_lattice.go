@@ -1,6 +1,7 @@
 package summary
 
 import (
+	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
@@ -31,6 +32,7 @@ func NormalizeOwned(reg *axis.Registry, out Summary) Summary {
 	out.ParamMemberCallObligations = paramMemberCallObligationLane.Normalize(out.ParamMemberCallObligations)
 	out.ParamMemberReturnSlots = paramMemberReturnSlotLane.Normalize(out.ParamMemberReturnSlots)
 	out.ReturnParamPathAliases = returnParamPathAliasLane.Normalize(out.ReturnParamPathAliases)
+	out.ParamSinkExposures = normalizeParamSinkExposures(reg, out.ParamSinkExposures)
 	for len(out.NormalReturnParams) > 0 &&
 		product.Equal(reg, out.NormalReturnParams[len(out.NormalReturnParams)-1], bottom) {
 		out.NormalReturnParams = out.NormalReturnParams[:len(out.NormalReturnParams)-1]
@@ -52,6 +54,7 @@ func NormalizeOwned(reg *axis.Registry, out Summary) Summary {
 		len(out.ParamMemberCallObligations) == 0 &&
 		len(out.ParamMemberReturnSlots) == 0 &&
 		len(out.ReturnParamPathAliases) == 0 &&
+		len(out.ParamSinkExposures) == 0 &&
 		len(out.NormalReturnParams) == 0 &&
 		len(out.NormalReturnParamConditions) == 0 &&
 		len(out.NormalReturnParamEqualities) == 0 &&
@@ -96,6 +99,7 @@ func Equal(reg *axis.Registry, a, b Summary) bool {
 		paramMemberCallObligationLane.Equal(a.ParamMemberCallObligations, b.ParamMemberCallObligations) &&
 		paramMemberReturnSlotLane.Equal(a.ParamMemberReturnSlots, b.ParamMemberReturnSlots) &&
 		returnParamPathAliasLane.Equal(a.ReturnParamPathAliases, b.ReturnParamPathAliases) &&
+		paramSinkExposuresEqual(reg, a.ParamSinkExposures, b.ParamSinkExposures) &&
 		normalReturnFactsEqual(reg, a.NormalReturnFacts, b.NormalReturnFacts) &&
 		heapTableObjectsEqual(reg, a.HeapTableObjects, b.HeapTableObjects) &&
 		returnConditionParamRefinementsEqual(reg, a.ReturnConditionParamRefinements, b.ReturnConditionParamRefinements) &&
@@ -140,6 +144,7 @@ func LessOrEq(reg *axis.Registry, a, b Summary) bool {
 		paramMemberCallObligationLane.LessOrEq(a.ParamMemberCallObligations, b.ParamMemberCallObligations) &&
 		paramMemberReturnSlotLane.LessOrEq(a.ParamMemberReturnSlots, b.ParamMemberReturnSlots) &&
 		returnParamPathAliasLane.LessOrEq(a.ReturnParamPathAliases, b.ReturnParamPathAliases) &&
+		paramSinkExposuresLessOrEq(reg, a.ParamSinkExposures, b.ParamSinkExposures) &&
 		normalReturnFactsLessOrEq(reg, a.NormalReturnFacts, b.NormalReturnFacts) &&
 		heapTableObjectsLessOrEq(reg, a.HeapTableObjects, b.HeapTableObjects) &&
 		returnConditionParamRefinementsLessOrEq(reg, a.ReturnConditionParamRefinements, b.ReturnConditionParamRefinements) &&
@@ -164,6 +169,7 @@ func Join(reg *axis.Registry, a, b Summary) Summary {
 		len(a.ParamMemberCallObligations) == 0 && len(b.ParamMemberCallObligations) == 0 &&
 		len(a.ParamMemberReturnSlots) == 0 && len(b.ParamMemberReturnSlots) == 0 &&
 		len(a.ReturnParamPathAliases) == 0 && len(b.ReturnParamPathAliases) == 0 &&
+		len(a.ParamSinkExposures) == 0 && len(b.ParamSinkExposures) == 0 &&
 		len(a.NormalReturnParamEqualities) == 0 && len(b.NormalReturnParamEqualities) == 0 &&
 		normalReturnFactsEmpty(a.NormalReturnFacts) && normalReturnFactsEmpty(b.NormalReturnFacts) &&
 		len(a.HeapTableObjects) == 0 && len(b.HeapTableObjects) == 0 &&
@@ -211,9 +217,11 @@ func Join(reg *axis.Registry, a, b Summary) Summary {
 		a.ReturnParamPathAliases,
 		b.ReturnParamPathAliases,
 	)
+	out.ParamSinkExposures = joinParamSinkExposures(reg, a.ParamSinkExposures, b.ParamSinkExposures)
 	out.NormalReturnParamEqualities = joinParamEqualities(reg, a, b)
 	out.NormalReturnFacts = joinNormalReturnFacts(reg, a.NormalReturnFacts, b.NormalReturnFacts)
 	out.HeapTableObjects = joinHeapTableObjects(reg, a.HeapTableObjects, b.HeapTableObjects)
+	out.HeapKeySpace = preferHeapKeySpace(a, b)
 	out.ReturnConditionParamRefinements = joinReturnConditionParamRefinements(
 		reg,
 		a.ReturnConditionParamRefinements,
@@ -274,6 +282,7 @@ func Widen(reg *axis.Registry, prev, next Summary) Summary {
 		len(prev.ParamMemberCallObligations) == 0 && len(next.ParamMemberCallObligations) == 0 &&
 		len(prev.ParamMemberReturnSlots) == 0 && len(next.ParamMemberReturnSlots) == 0 &&
 		len(prev.ReturnParamPathAliases) == 0 && len(next.ReturnParamPathAliases) == 0 &&
+		len(prev.ParamSinkExposures) == 0 && len(next.ParamSinkExposures) == 0 &&
 		len(prev.NormalReturnParamEqualities) == 0 && len(next.NormalReturnParamEqualities) == 0 &&
 		normalReturnFactsEmpty(prev.NormalReturnFacts) && normalReturnFactsEmpty(next.NormalReturnFacts) &&
 		len(prev.HeapTableObjects) == 0 && len(next.HeapTableObjects) == 0 &&
@@ -329,9 +338,11 @@ func Widen(reg *axis.Registry, prev, next Summary) Summary {
 		prev.ReturnParamPathAliases,
 		next.ReturnParamPathAliases,
 	)
+	out.ParamSinkExposures = joinParamSinkExposures(reg, prev.ParamSinkExposures, next.ParamSinkExposures)
 	out.NormalReturnParamEqualities = joinParamEqualities(reg, prev, next)
 	out.NormalReturnFacts = widenNormalReturnFacts(reg, prev.NormalReturnFacts, next.NormalReturnFacts)
 	out.HeapTableObjects = widenHeapTableObjects(reg, prev.HeapTableObjects, next.HeapTableObjects)
+	out.HeapKeySpace = preferHeapKeySpace(prev, next)
 	out.ReturnConditionParamRefinements = joinReturnConditionParamRefinements(
 		reg,
 		prev.ReturnConditionParamRefinements,
@@ -341,12 +352,24 @@ func Widen(reg *axis.Registry, prev, next Summary) Summary {
 	return NormalizeOwned(reg, out)
 }
 
+// preferHeapKeySpace selects the keyspace carried by whichever summary
+// contributes heap objects. Within a single function's fixpoint both operands
+// share one keyspace, so the choice is unambiguous; it is nil only when neither
+// operand carries heap objects.
+func preferHeapKeySpace(a, b Summary) *keyspace.KeySpace {
+	if a.HeapKeySpace != nil {
+		return a.HeapKeySpace
+	}
+	return b.HeapKeySpace
+}
+
 func summaryBottom(s Summary) bool {
 	return len(s.Returns) == 0 &&
 		len(s.ParamObligations) == 0 &&
 		len(s.ParamMemberCallObligations) == 0 &&
 		len(s.ParamMemberReturnSlots) == 0 &&
 		len(s.ReturnParamPathAliases) == 0 &&
+		len(s.ParamSinkExposures) == 0 &&
 		len(s.NormalReturnParams) == 0 &&
 		len(s.NormalReturnParamConditions) == 0 &&
 		len(s.NormalReturnParamEqualities) == 0 &&

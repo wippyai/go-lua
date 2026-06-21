@@ -230,7 +230,7 @@ end
 	if boundary, ok := result.boundaryStateAt(point); ok {
 		for _, p := range []path.Path{stalePath.Parent().Parent(), stalePath.Parent(), stalePath} {
 			if key := result.visibility.KeyAt(point, p); key != "" {
-				if exact := boundary.ReadPathKey(reg, key); !product.Equal(reg, exact, product.Bottom(reg)) {
+				if exact := boundary.ReadPathKey(reg, result.KeySpace(), key); !product.Equal(reg, exact, product.Bottom(reg)) {
 					t.Fatalf("stale dynamic path ancestor key %s survived invalidation as %v", key, exact)
 				}
 			}
@@ -486,7 +486,7 @@ end`)
 		t.Fatalf("branch %d lowered no branch path evidence", branchPoint)
 	}
 	branchState, _ := result.StateAt(branchPoint)
-	if branchFloors := branchState.NumFloorsSnapshot().Floors; len(branchFloors) == 0 {
+	if branchFloors := branchState.NumFloorsSnapshot(result.KeySpace()).Floors; len(branchFloors) == 0 {
 		t.Fatalf("branch %d has no numeric floors before body", branchPoint)
 	}
 	if indexKey := result.visibility.KeyAt(branchPoint, evidence[0].Path()); indexKey == "" {
@@ -534,7 +534,7 @@ end`)
 	if !ok || floor < 1 {
 		st, _ := result.StateAt(point)
 		t.Fatalf("index numeric floor = %d/%v, want >=1 at point %d; floors=%#v",
-			floor, ok, point, st.NumFloorsSnapshot().Floors)
+			floor, ok, point, st.NumFloorsSnapshot(result.KeySpace()).Floors)
 	}
 }
 
@@ -586,7 +586,7 @@ end`)
 	if !ok || floor < 1 {
 		st, _ := result.StateAt(point)
 		t.Fatalf("index numeric floor = %d/%v, want >=1 at point %d; floors=%#v",
-			floor, ok, point, st.NumFloorsSnapshot().Floors)
+			floor, ok, point, st.NumFloorsSnapshot(result.KeySpace()).Floors)
 	}
 }
 
@@ -638,7 +638,7 @@ end`)
 	if !ok || floor < 1 {
 		st, _ := result.StateAt(point)
 		t.Fatalf("index numeric floor = %d/%v, want >=1 at point %d; floors=%#v",
-			floor, ok, point, st.NumFloorsSnapshot().Floors)
+			floor, ok, point, st.NumFloorsSnapshot(result.KeySpace()).Floors)
 	}
 }
 
@@ -769,7 +769,7 @@ func TestCheckFunctionSeedsDeclaredParameterEntryState(t *testing.T) {
 	got := entry.ReadValue(reg, key.SymbolValue(slot.Symbol))
 	assertPresence(t, reg, got, presence.Maybe())
 	assertRuntimeKind(t, reg, got, runtimekind.Singleton(runtimekind.String))
-	if pathValue := entry.ReadPathKey(reg, pathaddr.LocalKey(pathaddr.VersionedRootString(slot.Symbol, 1)).PathKey()); !product.Equal(reg, pathValue, product.Bottom(reg)) {
+	if pathValue := entry.ReadPathKey(reg, result.KeySpace(), pathaddr.LocalKey(pathaddr.VersionedRootString(slot.Symbol, 1)).PathKey()); !product.Equal(reg, pathValue, product.Bottom(reg)) {
 		t.Fatalf("entry path lane for parameter root = %v, want bottom", pathValue)
 	}
 }
@@ -814,16 +814,18 @@ func TestCheckFunctionParameterEntryStateKeepsExplicitEntryValueAndPath(t *testi
 	explicitValue := product.NewWithPresence(reg, product.ShapeTop, presence.Present())
 	pathKey := pathaddr.LocalKey(pathaddr.VersionedRootString(slot.Symbol, 1)).PathKey()
 	explicitPath := product.NewWithPresence(reg, product.ShapeTop, presence.Absent())
+	prepared, err := PrepareBoundFunction(fn, bindings, Config{Registry: reg})
+	if err != nil {
+		t.Fatalf("PrepareBoundFunction: %v", err)
+	}
+	ks := prepared.KeySpace()
 	entryState := state.State{}.
 		WriteValue(reg, key.SymbolValue(slot.Symbol), explicitValue).
-		WritePathKey(reg, pathKey, explicitPath)
+		WritePathKey(reg, ks, pathKey, explicitPath)
 
-	result, err := CheckBoundFunction(fn, bindings, Config{
-		Registry:   reg,
-		EntryState: entryState,
-	})
+	result, err := SolvePrepared(prepared, SolveConfig{EntryState: entryState})
 	if err != nil {
-		t.Fatalf("CheckBoundFunction: %v", err)
+		t.Fatalf("SolvePrepared: %v", err)
 	}
 
 	entry, ok := result.StateAt(result.Graph().Entry())
@@ -831,7 +833,7 @@ func TestCheckFunctionParameterEntryStateKeepsExplicitEntryValueAndPath(t *testi
 		t.Fatalf("missing entry state")
 	}
 	assertProductEqual(t, reg, entry.ReadValue(reg, key.SymbolValue(slot.Symbol)), explicitValue)
-	assertProductEqual(t, reg, entry.ReadPathKey(reg, pathKey), explicitPath)
+	assertProductEqual(t, reg, entry.ReadPathKey(reg, ks, pathKey), explicitPath)
 }
 
 func TestCheckFunctionParameterEntryStateMergesExplicitInitial(t *testing.T) {
@@ -1022,7 +1024,7 @@ func TestCheckChunkDefaultExpressionValueUsesExactPathPresenceProof(t *testing.T
 		runtimekind.Key,
 		runtimekind.Singleton(runtimekind.String),
 	)
-	entry := state.State{}.WritePathKey(reg, resolver.KeyAt(assignPoint, readPath), childValue)
+	entry := state.State{}.WritePathKey(reg, resolver.KeySpace(), resolver.KeyAt(assignPoint, readPath), childValue)
 
 	result, err := CheckBoundChunk(stmts, bindings, Config{
 		Registry:   reg,
@@ -1094,17 +1096,21 @@ end
 		runtimekind.Key,
 		runtimekind.Singleton(runtimekind.String),
 	)
-	entry := state.State{}.
-		WritePathKey(reg, path.PathKey(pathaddr.VersionedRootString(tSym, 1)+".left"), stringValue).
-		WritePathKey(reg, path.PathKey(pathaddr.VersionedRootString(tSym, 1)+".right"), product.Top())
-
-	result, err := CheckBoundChunk(stmts, bindings, Config{
-		Registry:   reg,
-		Globals:    []string{"t"},
-		EntryState: entry,
+	prepared, err := PrepareBoundChunk(stmts, bindings, Config{
+		Registry: reg,
+		Globals:  []string{"t"},
 	})
 	if err != nil {
-		t.Fatalf("CheckBoundChunk: %v", err)
+		t.Fatalf("PrepareBoundChunk: %v", err)
+	}
+	ks := prepared.KeySpace()
+	entry := state.State{}.
+		WritePathKey(reg, ks, path.PathKey(pathaddr.VersionedRootString(tSym, 1)+".left"), stringValue).
+		WritePathKey(reg, ks, path.PathKey(pathaddr.VersionedRootString(tSym, 1)+".right"), product.Top())
+
+	result, err := SolvePrepared(prepared, SolveConfig{EntryState: entry})
+	if err != nil {
+		t.Fatalf("SolvePrepared: %v", err)
 	}
 
 	out := mustLocalAt(t, result, local, 0)

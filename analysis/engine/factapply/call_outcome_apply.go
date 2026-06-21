@@ -25,12 +25,14 @@ func applyCallOutcomeFacts(
 	facts factflow.Facts,
 	resolver *visibility.Resolver,
 	projectPath PathTypeProjector,
+	widen CovariantWiden,
 	out state.State,
 	site factflow.CallSiteView,
 	outcome callpayload.CallOutcome,
 ) state.State {
 	bindings := callPlaceholderBindings(facts, site)
 	paramBindings := callArgumentPlaceholderBindings(facts, site)
+	out = applyCallParamExposures(ctx, resolver, widen, out, paramBindings, outcome.ParamExposures)
 	normalReturnFacts := outcome.NormalReturnFacts
 	lengthFloors := resolveCallParamLengthFloors(resolver, ctx.Point, out, paramBindings, outcome.ParamLengthFloors)
 	for id, object := range outcome.HeapTableObjects {
@@ -84,7 +86,7 @@ func applyCallOutcomeFacts(
 		if !ok {
 			continue
 		}
-		out = out.WritePathStaticMember(targetKey, fact.Value)
+		out = out.WritePathStaticMember(resolver.KeySpace(), targetKey, fact.Value)
 	}
 	for _, fact := range normalReturnFacts.DynamicIndexFacts {
 		tableKey, ok := callOutcomePathKeyAt(resolver, ctx.Point, bindings, fact.Table)
@@ -189,6 +191,38 @@ func applyCallOutcomeFacts(
 	return out
 }
 
+// applyCallParamExposures eager-widens each argument object the callee exposes
+// through a wider mutable view. Each exposure declares that the callee aliases the
+// argument (or a member sub-path of it), at the wider mutable contract carried by
+// Contract, into a slot the callee returns, stores into another argument, or
+// retains in a captured sink; a write through that wider view can launder a wider
+// value back into the argument object, so a later narrow read of the argument is
+// no longer trustworthy. It reuses the single covariant widening routine
+// (applyCovariantExposure) by rebasing the exposure's callee-relative Source
+// placeholder onto the concrete argument path, so the widen and per-field fact
+// invalidation match every other mutable-exposure site. The widen no-ops when the
+// argument's current type is not strictly narrower than the contract.
+func applyCallParamExposures(
+	ctx transfer.NodeContext,
+	resolver *visibility.Resolver,
+	widen CovariantWiden,
+	out state.State,
+	paramBindings []pathdom.Path,
+	exposures []callpayload.CallParamExposure,
+) state.State {
+	if widen == nil || len(exposures) == 0 {
+		return out
+	}
+	for _, exposure := range exposures {
+		argPath, ok := exposure.Source.Substitute(paramBindings)
+		if !ok || argPath.Symbol == 0 {
+			continue
+		}
+		out = applyCovariantExposure(ctx, resolver, widen, out, factflow.NewCovariantExposure(argPath, exposure.Contract, exposure.Kind))
+	}
+	return out
+}
+
 type resolvedCallParamLengthFloor struct {
 	Path  pathdom.Path
 	Floor int64
@@ -236,7 +270,7 @@ func readCallParamLengthFloor(
 	if pathKey == "" {
 		return 0, false
 	}
-	return in.ReadLenFloor(pathKey)
+	return in.ReadLenFloor(resolver.KeySpace(), pathKey)
 }
 
 func applyCallParamLengthFloor(
@@ -253,7 +287,7 @@ func applyCallParamLengthFloor(
 	if pathKey == "" {
 		return out
 	}
-	return out.WriteLenFloor(pathKey, floor)
+	return out.WriteLenFloor(resolver.KeySpace(), pathKey, floor)
 }
 
 func applyFrozenTableFact(

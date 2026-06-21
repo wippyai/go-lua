@@ -20,6 +20,7 @@ type Intersection struct {
 	containsNever         bool
 	containsTypeParam     bool
 	containsInstantiated  bool
+	containsGeneric       bool
 	containsRecursive     bool
 	containsOpenRecursive bool
 	strCache              stringCache
@@ -66,6 +67,7 @@ func newCanonicalIntersection(members []Type, memberHashes []uint64) Type {
 	containsNever := false
 	containsTypeParam := false
 	containsInstantiated := false
+	containsGeneric := false
 	containsRecursive := false
 	containsOpenRecursive := false
 	for i, m := range membersCopy {
@@ -82,6 +84,9 @@ func newCanonicalIntersection(members []Type, memberHashes []uint64) Type {
 		if !containsInstantiated && knownContainsInstantiated(m) {
 			containsInstantiated = true
 		}
+		if !containsGeneric && knownContainsGeneric(m) {
+			containsGeneric = true
+		}
 		if !containsRecursive && knownContainsRecursive(m) {
 			containsRecursive = true
 		}
@@ -97,6 +102,7 @@ func newCanonicalIntersection(members []Type, memberHashes []uint64) Type {
 		containsNever:         containsNever,
 		containsTypeParam:     containsTypeParam,
 		containsInstantiated:  containsInstantiated,
+		containsGeneric:       containsGeneric,
 		containsRecursive:     containsRecursive,
 		containsOpenRecursive: containsOpenRecursive,
 	}

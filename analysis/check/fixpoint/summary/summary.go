@@ -2,6 +2,7 @@
 package summary
 
 import (
+	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/engine/callboundary"
@@ -15,6 +16,7 @@ type Summary struct {
 	ParamMemberCallObligations      []ParamMemberCallObligation
 	ParamMemberReturnSlots          []ParamMemberReturnSlot
 	ReturnParamPathAliases          []ReturnParamPathAlias
+	ParamSinkExposures              []ParamSinkExposure
 	NormalReturnParams              []product.Value
 	NormalReturnParamConditions     []ParamCondition
 	NormalReturnParamEqualities     []ParamEquality
@@ -22,6 +24,32 @@ type Summary struct {
 	HeapTableObjects                map[identity.ID]heapidentity.TableObject
 	ReturnConditionParamRefinements []ReturnConditionParamRefinement
 	ReturnPresenceRelations         []ReturnPresenceRelation
+
+	// HeapKeySpace is the keyspace under which HeapTableObjects' rootless
+	// static-member keys were interned. It is metadata only: it never affects
+	// summary equality, ordering, or lattice joins (which always operate within a
+	// single producing analysis), and exists so a consumer reading this summary at
+	// a call site can rebase the heap keys into its own keyspace. It is nil when
+	// the summary carries no heap objects.
+	HeapKeySpace *keyspace.KeySpace
+}
+
+// RekeyHeapTableObjects re-interns the rootless static-member keys of every
+// heap table object from this summary's producing keyspace into to, so a
+// consumer reading the summary at a call site can operate on the objects in its
+// own keyspace. It is a no-op when the summary carries no heap objects, has no
+// producing keyspace, or to equals the producing keyspace.
+func (s Summary) RekeyHeapTableObjects(to *keyspace.KeySpace) Summary {
+	if len(s.HeapTableObjects) == 0 || s.HeapKeySpace == nil || to == nil || s.HeapKeySpace == to {
+		return s
+	}
+	rekeyed := make(map[identity.ID]heapidentity.TableObject, len(s.HeapTableObjects))
+	for id, object := range s.HeapTableObjects {
+		rekeyed[id] = object.Rekey(s.HeapKeySpace, to)
+	}
+	s.HeapTableObjects = rekeyed
+	s.HeapKeySpace = to
+	return s
 }
 
 // Clone returns an independent copy of s.
@@ -50,6 +78,10 @@ func (s Summary) Clone() Summary {
 		out.ReturnParamPathAliases = make([]ReturnParamPathAlias, len(s.ReturnParamPathAliases))
 		copy(out.ReturnParamPathAliases, s.ReturnParamPathAliases)
 	}
+	if len(s.ParamSinkExposures) > 0 {
+		out.ParamSinkExposures = make([]ParamSinkExposure, len(s.ParamSinkExposures))
+		copy(out.ParamSinkExposures, s.ParamSinkExposures)
+	}
 	if len(s.NormalReturnParams) > 0 {
 		out.NormalReturnParams = make([]product.Value, len(s.NormalReturnParams))
 		copy(out.NormalReturnParams, s.NormalReturnParams)
@@ -64,6 +96,7 @@ func (s Summary) Clone() Summary {
 	}
 	out.NormalReturnFacts = cloneNormalReturnFacts(s.NormalReturnFacts)
 	out.HeapTableObjects = cloneHeapTableObjects(s.HeapTableObjects)
+	out.HeapKeySpace = s.HeapKeySpace
 	out.ReturnConditionParamRefinements = cloneReturnConditionParamRefinements(s.ReturnConditionParamRefinements)
 	out.ReturnPresenceRelations = returnPresenceRelationLane.Clone(s.ReturnPresenceRelations)
 	return out

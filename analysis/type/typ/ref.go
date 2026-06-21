@@ -66,6 +66,7 @@ type Alias struct {
 	containsNever         bool
 	containsTypeParam     bool
 	containsInstantiated  bool
+	containsGeneric       bool
 	containsRecursive     bool
 	containsOpenRecursive bool
 }
@@ -83,6 +84,7 @@ func NewAlias(name string, target Type) *Alias {
 		containsNever:         knownContainsNever(target),
 		containsTypeParam:     knownContainsTypeParam(target),
 		containsInstantiated:  knownContainsInstantiated(target),
+		containsGeneric:       knownContainsGeneric(target),
 		containsRecursive:     knownContainsRecursive(target),
 		containsOpenRecursive: knownContainsOpenRecursive(target),
 	}
@@ -142,6 +144,7 @@ type Meta struct {
 	containsNever         bool
 	containsTypeParam     bool
 	containsInstantiated  bool
+	containsGeneric       bool
 	containsRecursive     bool
 	containsOpenRecursive bool
 	strCache              stringCache
@@ -157,6 +160,7 @@ func NewMeta(of Type) *Meta {
 		containsNever:         knownContainsNever(of),
 		containsTypeParam:     knownContainsTypeParam(of),
 		containsInstantiated:  knownContainsInstantiated(of),
+		containsGeneric:       knownContainsGeneric(of),
 		containsRecursive:     knownContainsRecursive(of),
 		containsOpenRecursive: knownContainsOpenRecursive(of),
 	}

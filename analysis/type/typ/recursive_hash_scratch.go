@@ -1,10 +1,62 @@
 package typ
 
+import "sync"
+
 const (
 	recursiveHashSmallVisitedCap = 8
 	recursiveHashSmallMemoCap    = 16
 	recursiveHashSmallActiveCap  = 16
+	// recursiveHashPooledMapCap bounds the overflow map size a pooled scratch
+	// retains between uses; a larger map is dropped so a single pathological type
+	// does not pin its memory in the pool indefinitely.
+	recursiveHashPooledMapCap = 1024
 )
+
+var recursiveHashScratchPool = sync.Pool{New: func() any { return &recursiveHashScratch{} }}
+
+// getRecursiveHashScratch returns a clean scratch. putRecursiveHashScratch must
+// be called when the traversal completes so the scratch (and any overflow maps)
+// is reused instead of reallocated on the next structural hash.
+func getRecursiveHashScratch() *recursiveHashScratch {
+	return recursiveHashScratchPool.Get().(*recursiveHashScratch)
+}
+
+func putRecursiveHashScratch(s *recursiveHashScratch) {
+	s.reset()
+	recursiveHashScratchPool.Put(s)
+}
+
+// reset returns the scratch to a pristine state, niling pointer-bearing slots so
+// the pool retains no type references, and retaining bounded overflow maps
+// (cleared) for reuse while dropping oversized ones.
+func (s *recursiveHashScratch) reset() {
+	for i := 0; i < s.visitedLen; i++ {
+		s.visited[i] = nil
+	}
+	s.visitedLen = 0
+	for i := 0; i < s.activeLen; i++ {
+		s.active[i] = nil
+	}
+	s.activeLen = 0
+	for i := 0; i < s.memoLen; i++ {
+		s.memo[i] = recursiveHashMemoEntry{}
+	}
+	s.memoLen = 0
+	s.visitedMap = clearOrDropHashScratchMap(s.visitedMap)
+	s.activeMap = clearOrDropHashScratchMap(s.activeMap)
+	s.memoMap = clearOrDropHashScratchMap(s.memoMap)
+}
+
+func clearOrDropHashScratchMap[K comparable, V any](m map[K]V) map[K]V {
+	if m == nil {
+		return nil
+	}
+	if len(m) > recursiveHashPooledMapCap {
+		return nil
+	}
+	clear(m)
+	return m
+}
 
 type recursiveHashMemoEntry struct {
 	t Type

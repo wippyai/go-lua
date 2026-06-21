@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/placement"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
@@ -18,12 +19,17 @@ import (
 
 func TestSnapshotsCloneFiniteLanes(t *testing.T) {
 	reg := standard.Registry()
+	ks := keyspace.New()
 	valueDomain := product.Domain(reg)
 	present := presentValue(reg)
 	absent := absentValue(reg)
 
 	pathKey := pathdom.PathKey("sym130@1.path")
 	memberKey := pathdom.PathKey("sym130@1.member")
+	heapMemberKey, ok := ks.FromStateKey(memberKey)
+	if !ok {
+		t.Fatalf("FromStateKey(%q) failed", memberKey)
+	}
 	dynamicKey := dynamicindex.Key{Table: pathdom.PathKey("sym130@1.table"), Site: "dyn"}
 	effectKey := effectdelta.Key{Target: pathdom.PathKey("sym130@1.table"), Site: "effect", Kind: effectdelta.Mutation}
 	proof := pathevidence.BranchProof{Kind: pathevidence.BranchProofPathPresence, Path: pathKey, Presence: presence.Present()}
@@ -64,12 +70,12 @@ func TestSnapshotsCloneFiniteLanes(t *testing.T) {
 	otherEffectDelta := effectdelta.Value{Before: absent, After: absent, Change: effectdelta.ChangeNone}
 
 	s := State{}.
-		WritePathKey(reg, pathKey, present).
-		WritePathStaticMember(memberKey, present).
+		WritePathKey(reg, ks, pathKey, present).
+		WritePathStaticMember(ks, memberKey, present).
 		WriteDynamicIndexFact(reg, dynamicKey, dynamicFact).
 		WriteHeapTableObject(reg, heapID, heapidentity.NewTableObject(heapidentity.TableObjectConfig{
 			Root:          present,
-			StaticMembers: map[pathdom.PathKey]product.Value{memberKey: present},
+			StaticMembers: map[keyspace.Key]product.Value{heapMemberKey: present},
 		})).
 		WritePlacement(placementID, placement.Stack).
 		AddBranchProof(proof).
@@ -79,27 +85,27 @@ func TestSnapshotsCloneFiniteLanes(t *testing.T) {
 		FreezeTable(frozenID).
 		WriteEffectDelta(effectKey, effectDelta)
 
-	pathSnapshot := s.PathRefinementsSnapshot()
+	pathSnapshot := s.PathRefinementsSnapshot(ks)
 	if pathSnapshot.Top || len(pathSnapshot.Refinements) != 1 {
 		t.Fatalf("path snapshot = %#v, want one finite refinement", pathSnapshot)
 	}
 	pathSnapshot.Refinements[pathKey] = absent
-	if got := s.ReadPathKey(reg, pathKey); !valueDomain.Equal(got, present) {
+	if got := s.ReadPathKey(reg, ks, pathKey); !valueDomain.Equal(got, present) {
 		t.Fatalf("path snapshot mutation changed state to %s", formatValue(reg, got))
 	}
-	if got := s.PathRefinementsSnapshot().Refinements[pathKey]; !valueDomain.Equal(got, present) {
+	if got := s.PathRefinementsSnapshot(ks).Refinements[pathKey]; !valueDomain.Equal(got, present) {
 		t.Fatalf("fresh path snapshot = %s, want present", formatValue(reg, got))
 	}
 
-	memberSnapshot := s.PathStaticMembersSnapshot()
+	memberSnapshot := s.PathStaticMembersSnapshot(ks)
 	if memberSnapshot.Bottom || memberSnapshot.Top || len(memberSnapshot.Members) != 1 {
 		t.Fatalf("static-member snapshot = %#v, want one finite member", memberSnapshot)
 	}
 	memberSnapshot.Members[memberKey] = absent
-	if got, ok := s.ReadPathStaticMember(memberKey); !ok || !valueDomain.Equal(got, present) {
+	if got, ok := s.ReadPathStaticMember(ks, memberKey); !ok || !valueDomain.Equal(got, present) {
 		t.Fatalf("static-member snapshot mutation changed state to %s ok=%v", formatValue(reg, got), ok)
 	}
-	if got := s.PathStaticMembersSnapshot().Members[memberKey]; !valueDomain.Equal(got, present) {
+	if got := s.PathStaticMembersSnapshot(ks).Members[memberKey]; !valueDomain.Equal(got, present) {
 		t.Fatalf("fresh static-member snapshot = %s, want present", formatValue(reg, got))
 	}
 
@@ -121,7 +127,7 @@ func TestSnapshotsCloneFiniteLanes(t *testing.T) {
 	}
 	heapObject := heapSnapshot.Objects[heapID]
 	heapMembers := heapObject.StaticMembers()
-	heapMembers[memberKey] = absent
+	heapMembers[heapMemberKey] = absent
 	heapSnapshot.Objects[heapID] = heapidentity.NewTableObject(heapidentity.TableObjectConfig{
 		Root:          absent,
 		StaticMembers: heapMembers,
@@ -220,11 +226,12 @@ func TestSnapshotsCloneFiniteLanes(t *testing.T) {
 
 func TestSnapshotTopBottomAndEmptyLanes(t *testing.T) {
 	reg := standard.Registry()
+	ks := keyspace.New()
 	top := Domain(reg).Top()
 	bottom := Domain(reg).Bottom()
 	empty := State{}
 
-	topPaths := top.PathRefinementsSnapshot()
+	topPaths := top.PathRefinementsSnapshot(ks)
 	if topPaths.Bottom || !topPaths.Top || len(topPaths.Refinements) != 0 {
 		t.Fatalf("top path snapshot = %#v, want top with no finite facts", topPaths)
 	}
@@ -244,7 +251,7 @@ func TestSnapshotTopBottomAndEmptyLanes(t *testing.T) {
 	if !topEffects.Top || len(topEffects.Deltas) != 0 {
 		t.Fatalf("top effect-delta snapshot = %#v, want top with no finite facts", topEffects)
 	}
-	topMembers := top.PathStaticMembersSnapshot()
+	topMembers := top.PathStaticMembersSnapshot(ks)
 	if topMembers.Bottom || !topMembers.Top || len(topMembers.Members) != 0 {
 		t.Fatalf("top static-member snapshot = %#v, want top with no finite facts", topMembers)
 	}
@@ -269,7 +276,7 @@ func TestSnapshotTopBottomAndEmptyLanes(t *testing.T) {
 		t.Fatalf("top frozen-table snapshot = %#v, want top with no finite facts", topFrozen)
 	}
 
-	bottomPaths := bottom.PathRefinementsSnapshot()
+	bottomPaths := bottom.PathRefinementsSnapshot(ks)
 	if !bottomPaths.Bottom || bottomPaths.Top || len(bottomPaths.Refinements) != 0 {
 		t.Fatalf("bottom path snapshot = %#v, want explicit bottom", bottomPaths)
 	}
@@ -289,7 +296,7 @@ func TestSnapshotTopBottomAndEmptyLanes(t *testing.T) {
 	if bottomEffects.Top || len(bottomEffects.Deltas) != 0 {
 		t.Fatalf("bottom effect-delta snapshot = %#v, want finite empty pointwise lane", bottomEffects)
 	}
-	bottomMembers := bottom.PathStaticMembersSnapshot()
+	bottomMembers := bottom.PathStaticMembersSnapshot(ks)
 	if !bottomMembers.Bottom || bottomMembers.Top || len(bottomMembers.Members) != 0 {
 		t.Fatalf("bottom static-member snapshot = %#v, want explicit bottom", bottomMembers)
 	}
@@ -314,7 +321,7 @@ func TestSnapshotTopBottomAndEmptyLanes(t *testing.T) {
 		t.Fatalf("bottom frozen-table snapshot = %#v, want explicit bottom", bottomFrozen)
 	}
 
-	emptyPaths := empty.PathRefinementsSnapshot()
+	emptyPaths := empty.PathRefinementsSnapshot(ks)
 	if emptyPaths.Bottom || !emptyPaths.Top || len(emptyPaths.Refinements) != 0 {
 		t.Fatalf("empty path snapshot = %#v, want reachable top/empty", emptyPaths)
 	}
@@ -334,7 +341,7 @@ func TestSnapshotTopBottomAndEmptyLanes(t *testing.T) {
 	if emptyEffects.Top || len(emptyEffects.Deltas) != 0 {
 		t.Fatalf("empty effect-delta snapshot = %#v, want finite empty pointwise lane", emptyEffects)
 	}
-	emptyMembers := empty.PathStaticMembersSnapshot()
+	emptyMembers := empty.PathStaticMembersSnapshot(ks)
 	if emptyMembers.Bottom || !emptyMembers.Top || len(emptyMembers.Members) != 0 {
 		t.Fatalf("empty static-member snapshot = %#v, want reachable top/empty", emptyMembers)
 	}

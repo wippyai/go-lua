@@ -142,6 +142,8 @@ func TestFactsNodeTransferRootAssignmentPropagatesNumericFloorThroughIncrement(t
 	oneValue := typevalue.WithWitness(reg, typevalue.FromType(reg, oneType), oneType)
 	visibilityBuilder := visibility.NewBuilder()
 	visibilityBuilder.Define(point, target, "i")
+	resolver := visibility.NewResolver(visibilityBuilder.Build())
+	ks := resolver.KeySpace()
 	sources := &recordingSourceValues{
 		values: map[factflow.ValueSource]product.Value{inc: typevalue.FromType(reg, typ.Integer)},
 	}
@@ -162,13 +164,13 @@ func TestFactsNodeTransferRootAssignmentPropagatesNumericFloorThroughIncrement(t
 			},
 		}),
 		Sources:    sources,
-		Visibility: visibility.NewResolver(visibilityBuilder.Build()),
+		Visibility: resolver,
 	})(transfer.NodeContext{
 		Registry: reg,
 		Point:    point,
-	}, state.State{}.WriteNumFloor(targetKey, 1))
+	}, state.State{}.WriteNumFloor(ks, targetKey, 1))
 
-	floor, ok := got.ReadNumFloor(targetKey)
+	floor, ok := got.ReadNumFloor(ks, targetKey)
 	if !ok || floor != 2 {
 		t.Fatalf("numeric floor for i = %d/%v, want 2/true", floor, ok)
 	}
@@ -184,6 +186,8 @@ func TestFactsNodeTransferRootAssignmentClearsNumericFloorWhenSourceIsUnresolved
 	declared := presentValue(reg)
 	visibilityBuilder := visibility.NewBuilder()
 	visibilityBuilder.Define(point, target, "i")
+	resolver := visibility.NewResolver(visibilityBuilder.Build())
+	ks := resolver.KeySpace()
 	sources := &recordingSourceValues{}
 
 	got := NewFactsNodeTransfer(FactsNodeTransferConfig{
@@ -193,13 +197,13 @@ func TestFactsNodeTransferRootAssignmentClearsNumericFloorWhenSourceIsUnresolved
 			},
 		}),
 		Sources:    sources,
-		Visibility: visibility.NewResolver(visibilityBuilder.Build()),
+		Visibility: resolver,
 	})(transfer.NodeContext{
 		Registry: reg,
 		Point:    point,
-	}, state.State{}.WriteNumFloor(targetKey, 9))
+	}, state.State{}.WriteNumFloor(ks, targetKey, 9))
 
-	if floor, ok := got.ReadNumFloor(targetKey); ok || floor != 0 {
+	if floor, ok := got.ReadNumFloor(ks, targetKey); ok || floor != 0 {
 		t.Fatalf("numeric floor for i = %d/%v, want 0/false", floor, ok)
 	}
 	assertValue(t, reg, got, key.SymbolValue(target), declared)
@@ -312,27 +316,29 @@ func TestFactsNodeTransferRootAssignmentInvalidatesVisiblePathSubtree(t *testing
 			}
 			visibilityBuilder := visibility.NewBuilder()
 			visibilityBuilder.Define(point, target, "obj")
+			resolver := visibility.NewResolver(visibilityBuilder.Build())
+			ks := resolver.KeySpace()
 
 			got := NewFactsNodeTransfer(FactsNodeTransferConfig{
 				Facts:      factflow.NewFacts(tc.fact(point, target, source)),
 				Sources:    sources,
-				Visibility: visibility.NewResolver(visibilityBuilder.Build()),
+				Visibility: resolver,
 			})(transfer.NodeContext{
 				Registry: reg,
 				Point:    point,
 			}, state.State{}.
-				WritePathKey(reg, rootKey, stale).
-				WritePathKey(reg, childKey, stale).
-				WritePathKey(reg, deepKey, stale).
-				WritePathKey(reg, otherVersionKey, stale).
-				WritePathKey(reg, otherSymbolKey, stale))
+				WritePathKey(reg, ks, rootKey, stale).
+				WritePathKey(reg, ks, childKey, stale).
+				WritePathKey(reg, ks, deepKey, stale).
+				WritePathKey(reg, ks, otherVersionKey, stale).
+				WritePathKey(reg, ks, otherSymbolKey, stale))
 
 			assertValue(t, reg, got, key.SymbolValue(target), assigned)
-			assertPathValue(t, reg, got, rootKey, product.Bottom(reg))
-			assertPathValue(t, reg, got, childKey, product.Bottom(reg))
-			assertPathValue(t, reg, got, deepKey, product.Bottom(reg))
-			assertPathValue(t, reg, got, otherVersionKey, stale)
-			assertPathValue(t, reg, got, otherSymbolKey, stale)
+			assertPathValue(t, reg, ks, got, rootKey, product.Bottom(reg))
+			assertPathValue(t, reg, ks, got, childKey, product.Bottom(reg))
+			assertPathValue(t, reg, ks, got, deepKey, product.Bottom(reg))
+			assertPathValue(t, reg, ks, got, otherVersionKey, stale)
+			assertPathValue(t, reg, ks, got, otherSymbolKey, stale)
 			assertResolverCall(t, sources, point, source)
 		})
 	}

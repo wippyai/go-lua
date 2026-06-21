@@ -3,6 +3,7 @@ package typ
 import (
 	"fmt"
 	"strconv"
+	"sync"
 
 	"github.com/wippyai/go-lua/analysis/internal/hash"
 	"github.com/wippyai/go-lua/analysis/type/kind"
@@ -58,12 +59,25 @@ func LiteralNumber(v float64) *Literal {
 	return &Literal{Base: kind.Number, Value: v, hash: h, str: strconv.FormatFloat(v, 'g', -1, 64)}
 }
 
-// LiteralString creates a string literal type.
+// stringLiteralCache interns string literal nodes by their value. The value
+// fully determines every field (Base, Value, hash, str), so a cached node is
+// indistinguishable from a freshly constructed one. Nodes are immutable after
+// construction, making sharing safe across concurrent checker runs.
+var stringLiteralCache sync.Map // string -> *Literal
+
+// LiteralString returns the canonical string literal type for v.
 func LiteralString(v string) *Literal {
+	if cached, ok := stringLiteralCache.Load(v); ok {
+		return cached.(*Literal)
+	}
+
 	h := hash.MixHash(uint64(kind.Literal), uint64(kind.String))
 	h = hash.MixHash(h, hash.FnvString(v))
 
-	return &Literal{Base: kind.String, Value: v, hash: h, str: strconv.Quote(v)}
+	lit := &Literal{Base: kind.String, Value: v, hash: h, str: strconv.Quote(v)}
+	actual, _ := stringLiteralCache.LoadOrStore(v, lit)
+
+	return actual.(*Literal)
 }
 
 func (l *Literal) Kind() kind.Kind { return kind.Literal }

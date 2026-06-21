@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
@@ -71,7 +72,7 @@ func assertResolverCall(t *testing.T, resolver *recordingSourceValues, point cfg
 func assertValue(t *testing.T, reg *axis.Registry, gotState state.State, slot key.Value, want product.Value) {
 	t.Helper()
 	if got := gotState.ReadValue(reg, slot); !product.Equal(reg, got, want) {
-		t.Fatalf("slot %s = %s, want %s", slot, formatValue(reg, got), formatValue(reg, want))
+		t.Fatalf("slot %v = %s, want %s", slot, formatValue(reg, got), formatValue(reg, want))
 	}
 }
 
@@ -82,16 +83,16 @@ func assertStateEqual(t *testing.T, reg *axis.Registry, got state.State, want st
 	}
 }
 
-func assertPathValue(t *testing.T, reg *axis.Registry, gotState state.State, pathKey path.PathKey, want product.Value) {
+func assertPathValue(t *testing.T, reg *axis.Registry, ks *keyspace.KeySpace, gotState state.State, pathKey path.PathKey, want product.Value) {
 	t.Helper()
-	if got := gotState.ReadPathKey(reg, pathKey); !product.Equal(reg, got, want) {
+	if got := gotState.ReadPathKey(reg, ks, pathKey); !product.Equal(reg, got, want) {
 		t.Fatalf("path %s = %s, want %s", pathKey, formatValue(reg, got), formatValue(reg, want))
 	}
 }
 
-func assertPathPresence(t *testing.T, reg *axis.Registry, gotState state.State, pathKey path.PathKey, want presence.Value) {
+func assertPathPresence(t *testing.T, reg *axis.Registry, ks *keyspace.KeySpace, gotState state.State, pathKey path.PathKey, want presence.Value) {
 	t.Helper()
-	got := gotState.ReadPathKey(reg, pathKey)
+	got := gotState.ReadPathKey(reg, ks, pathKey)
 	if product.Equal(reg, got, product.Bottom(reg)) {
 		t.Fatalf("path %s = bottom, want presence %s", pathKey, want)
 	}
@@ -373,4 +374,13 @@ func branchWithRuntimeKind(
 
 func fieldSuffix(name string) path.Path {
 	return path.Path{Segments: []segment.Segment{{Kind: segment.SegmentField, Name: name}}}
+}
+
+func fieldStaticKey(t *testing.T, ks *keyspace.KeySpace, name string) keyspace.Key {
+	t.Helper()
+	k, ok := ks.FromRootlessSuffix(fieldSuffix(name).Segments)
+	if !ok {
+		t.Fatalf("FromRootlessSuffix(%q) failed", name)
+	}
+	return k
 }

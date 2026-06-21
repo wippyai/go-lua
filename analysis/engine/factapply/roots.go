@@ -7,7 +7,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	sourcevalue "github.com/wippyai/go-lua/analysis/engine/sourcevalue"
 	"github.com/wippyai/go-lua/analysis/engine/state"
-	"github.com/wippyai/go-lua/analysis/engine/state/pathevidence"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/engine/visibility"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
@@ -27,10 +26,16 @@ func applyRootAssignmentFact(
 	declared, hasDeclared := fact.DeclaredValue()
 	out, targetPath, applied := applyRootAssignment(ctx, resolver, sources, read, in, out, fact.TargetSymbol(), fact.TargetPath(), fact.Source(), declared, hasDeclared, fact.DeclaredValueContracts())
 	if applied {
-		out = applyRootAssignmentPathProof(ctx, resolver, facts, out, targetPath, fact.Source())
+		// The source path-equality proof is suppressed inside the shared helper for a
+		// covariant record exposure of this source: the alias is typed wider than its
+		// source, so the equality would couple them through reference-equality member
+		// congruence and let a write through the wide alias reset the narrow source to
+		// Top. The eager source widen (the covariant exposure applied at the end of the
+		// node transfer) establishes the sound widened source field type instead. An
+		// array exposure keeps the equality for its read-back diagnostics.
+		out = addPathEqualityProofFromSource(resolver, facts, ctx.Point, out, targetPath, fact.Source())
 		out = applyRootAssignmentNumFloor(ctx, resolver, facts, in, out, targetPath, fact.Source())
 		out = applyObjectLiteralEntries(ctx, resolver, facts, sources, read, in, out, targetPath, fact.Source())
-		out = applyCovariantArrayAliasWiden(ctx, facts, out, fact)
 	}
 	return out, applied
 }
@@ -82,7 +87,7 @@ func rootAssignmentTarget(target symbol.ID, targetPath pathdom.Path) (symbol.ID,
 }
 
 func rootAssignmentPath(target symbol.ID, targetPath pathdom.Path) pathdom.Path {
-	out := targetPath.Clone()
+	out := targetPath
 	if out.Symbol == 0 {
 		out.Symbol = target
 	}
@@ -99,33 +104,6 @@ func writeRootSymbol(ctx transfer.NodeContext, resolver *visibility.Resolver, ou
 		}
 	}
 	return out.WriteValue(ctx.Registry, key.SymbolValue(target), value)
-}
-
-func applyRootAssignmentPathProof(
-	ctx transfer.NodeContext,
-	resolver *visibility.Resolver,
-	facts factflow.Facts,
-	out state.State,
-	targetPath pathdom.Path,
-	source factflow.ValueSource,
-) state.State {
-	if resolver == nil || !source.HasExpr || targetPath.Symbol == 0 {
-		return out
-	}
-	sourcePath, ok := facts.ExpressionPath(source.ExprRef)
-	if !ok || sourcePath.IsEmpty() || sourcePath.Symbol == 0 {
-		return out
-	}
-	targetKey := resolver.KeyAt(ctx.Point, targetPath)
-	sourceKey := resolver.KeyAt(ctx.Point, sourcePath)
-	if targetKey == "" || sourceKey == "" || targetKey == sourceKey {
-		return out
-	}
-	return out.AddBranchProof(pathevidence.BranchProof{
-		Kind:  pathevidence.BranchProofPathEqual,
-		Path:  targetKey,
-		Other: sourceKey,
-	})
 }
 
 func applyRootAssignmentNumFloor(
@@ -148,7 +126,7 @@ func applyRootAssignmentNumFloor(
 	// value (and, if it is an array, its old length).
 	out = out.ClearDiffConstraintsFor(targetKey)
 	if floor, ok := sourcevalue.NumFloorForSource(ctx.Registry, resolver, ctx.Point, facts, in, source); ok {
-		return out.WriteNumFloor(targetKey, floor)
+		return out.WriteNumFloor(resolver.KeySpace(), targetKey, floor)
 	}
-	return out.ClearNumFloor(targetKey)
+	return out.ClearNumFloor(resolver.KeySpace(), targetKey)
 }

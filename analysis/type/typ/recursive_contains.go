@@ -20,6 +20,7 @@ func (r *Recursive) refreshContainsFlags() {
 		r.containsNever = false
 		r.containsTypeParam = false
 		r.containsInstantiated = false
+		r.containsGeneric = false
 		r.containsFlagsDirty = false
 		return
 	}
@@ -36,6 +37,8 @@ func (r *Recursive) refreshContainsFlags() {
 	r.containsTypeParam = containsTypeParamDynamic(r.Body, seen, 1)
 	seen = map[Type]bool{r: true}
 	r.containsInstantiated = containsInstantiatedDynamic(r.Body, seen, 1)
+	seen = map[Type]bool{r: true}
+	r.containsGeneric = containsGenericDynamic(r.Body, seen, 1)
 }
 
 func (r *Recursive) refreshContainsClosedFlag() {

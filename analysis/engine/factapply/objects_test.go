@@ -1,9 +1,11 @@
 package factapply
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/placement"
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
@@ -81,19 +83,21 @@ func TestFactsNodeTransferObjectLiteralRootAssignmentsWriteStaticEntries(t *test
 			}
 			visibilityBuilder := visibility.NewBuilder()
 			visibilityBuilder.Define(point, target, "obj")
+			resolver := visibility.NewResolver(visibilityBuilder.Build())
+			ks := resolver.KeySpace()
 
 			got := NewFactsNodeTransfer(FactsNodeTransferConfig{
 				Facts:      factflow.NewFacts(input),
 				Sources:    sources,
-				Visibility: visibility.NewResolver(visibilityBuilder.Build()),
+				Visibility: resolver,
 			})(transfer.NodeContext{
 				Registry: reg,
 				Point:    point,
 			}, state.State{})
 
 			assertValue(t, reg, got, key.SymbolValue(target), rootValue)
-			assertPathValue(t, reg, got, path.PathKey("sym121@1.leaf"), entryValue)
-			assertHeapStaticMember(t, reg, got, objectSource.ExprRef, ".leaf", entryValue)
+			assertPathValue(t, reg, ks, got, path.PathKey("sym121@1.leaf"), entryValue)
+			assertHeapStaticMember(t, reg, ks, got, objectSource.ExprRef, ".leaf", entryValue)
 			assertPlacement(t, got, testTableLiteralID(objectSource.ExprRef), placement.Stack)
 			if len(sources.calls) != 4 {
 				t.Fatalf("resolver calls = %d, want assignment root plus heap/path entry reads", len(sources.calls))
@@ -129,6 +133,8 @@ func TestFactsNodeTransferObjectLiteralEntriesUsePreWriteInputState(t *testing.T
 	})
 	visibilityBuilder := visibility.NewBuilder()
 	visibilityBuilder.Define(point, target, "obj")
+	resolver := visibility.NewResolver(visibilityBuilder.Build())
+	ks := resolver.KeySpace()
 
 	got := NewFactsNodeTransfer(FactsNodeTransferConfig{
 		Facts: factflow.NewFacts(factflow.FactsInput{
@@ -142,15 +148,15 @@ func TestFactsNodeTransferObjectLiteralEntriesUsePreWriteInputState(t *testing.T
 			},
 		}),
 		Sources:    sources,
-		Visibility: visibility.NewResolver(visibilityBuilder.Build()),
+		Visibility: resolver,
 	})(transfer.NodeContext{
 		Registry: reg,
 		Point:    point,
 	}, state.State{}.WriteValue(reg, key.SymbolValue(target), oldRootValue))
 
 	assertValue(t, reg, got, key.SymbolValue(target), newRootValue)
-	assertPathValue(t, reg, got, path.PathKey("sym122@1.old"), oldRootValue)
-	assertHeapStaticMember(t, reg, got, objectSource.ExprRef, ".old", oldRootValue)
+	assertPathValue(t, reg, ks, got, path.PathKey("sym122@1.old"), oldRootValue)
+	assertHeapStaticMember(t, reg, ks, got, objectSource.ExprRef, ".old", oldRootValue)
 }
 
 func TestFactsNodeTransferObjectLiteralMissingVisibilitySkipsEntriesKeepsRoot(t *testing.T) {
@@ -167,6 +173,8 @@ func TestFactsNodeTransferObjectLiteralMissingVisibilitySkipsEntriesKeepsRoot(t 
 			entrySource:  entryValue,
 		},
 	}
+	resolver := visibility.NewResolver(visibility.NewTable(nil))
+	ks := resolver.KeySpace()
 
 	got := NewFactsNodeTransfer(FactsNodeTransferConfig{
 		Facts: factflow.NewFacts(factflow.FactsInput{
@@ -180,15 +188,15 @@ func TestFactsNodeTransferObjectLiteralMissingVisibilitySkipsEntriesKeepsRoot(t 
 			},
 		}),
 		Sources:    sources,
-		Visibility: visibility.NewResolver(visibility.NewTable(nil)),
+		Visibility: resolver,
 	})(transfer.NodeContext{
 		Registry: reg,
 		Point:    point,
 	}, state.State{})
 
 	assertValue(t, reg, got, key.SymbolValue(target), rootValue)
-	assertPathValue(t, reg, got, path.PathKey("sym123@1.leaf"), product.Bottom(reg))
-	assertHeapStaticMember(t, reg, got, objectSource.ExprRef, ".leaf", entryValue)
+	assertPathValue(t, reg, ks, got, path.PathKey("sym123@1.leaf"), product.Bottom(reg))
+	assertHeapStaticMember(t, reg, ks, got, objectSource.ExprRef, ".leaf", entryValue)
 	if len(sources.calls) != 3 {
 		t.Fatalf("resolver calls = %d, want assignment root plus heap reads", len(sources.calls))
 	}
@@ -214,6 +222,8 @@ func TestFactsNodeTransferObjectLiteralPathAssignmentWritesStaticEntries(t *test
 	}
 	visibilityBuilder := visibility.NewBuilder()
 	visibilityBuilder.Define(point, target, "t")
+	resolver := visibility.NewResolver(visibilityBuilder.Build())
+	ks := resolver.KeySpace()
 
 	got := NewFactsNodeTransfer(FactsNodeTransferConfig{
 		Facts: factflow.NewFacts(factflow.FactsInput{
@@ -227,15 +237,15 @@ func TestFactsNodeTransferObjectLiteralPathAssignmentWritesStaticEntries(t *test
 			},
 		}),
 		Sources:    sources,
-		Visibility: visibility.NewResolver(visibilityBuilder.Build()),
+		Visibility: resolver,
 	})(transfer.NodeContext{
 		Registry: reg,
 		Point:    point,
 	}, state.State{})
 
-	assertPathValue(t, reg, got, path.PathKey("sym124@1.child"), rootValue)
-	assertPathValue(t, reg, got, path.PathKey("sym124@1.child.leaf"), entryValue)
-	assertHeapStaticMember(t, reg, got, objectSource.ExprRef, ".leaf", entryValue)
+	assertPathValue(t, reg, ks, got, path.PathKey("sym124@1.child"), rootValue)
+	assertPathValue(t, reg, ks, got, path.PathKey("sym124@1.child.leaf"), entryValue)
+	assertHeapStaticMember(t, reg, ks, got, objectSource.ExprRef, ".leaf", entryValue)
 	if len(sources.calls) != 4 {
 		t.Fatalf("resolver calls = %d, want assignment root plus heap/path entry reads", len(sources.calls))
 	}
@@ -266,6 +276,8 @@ func TestFactsNodeTransferObjectLiteralEntryExpectedContractPreservesIdentity(t 
 	}
 	visibilityBuilder := visibility.NewBuilder()
 	visibilityBuilder.Define(point, target, "actor")
+	resolver := visibility.NewResolver(visibilityBuilder.Build())
+	ks := resolver.KeySpace()
 
 	got := NewFactsNodeTransfer(FactsNodeTransferConfig{
 		Facts: factflow.NewFacts(factflow.FactsInput{
@@ -277,13 +289,13 @@ func TestFactsNodeTransferObjectLiteralEntryExpectedContractPreservesIdentity(t 
 			},
 		}),
 		Sources:    sources,
-		Visibility: visibility.NewResolver(visibilityBuilder.Build()),
+		Visibility: resolver,
 	})(transfer.NodeContext{
 		Registry: reg,
 		Point:    point,
 	}, state.State{})
 
-	pathValue := got.ReadPathKey(reg, path.PathKey("sym128@1.processed"))
+	pathValue := got.ReadPathKey(reg, ks, path.PathKey("sym128@1.processed"))
 	if gotID, ok := product.Get(reg, pathValue, identity.Key).ID(); !ok || gotID != entryID {
 		t.Fatalf("path entry identity = %v/%v, want %v in %s", gotID, ok, entryID, formatValue(reg, pathValue))
 	}
@@ -291,7 +303,7 @@ func TestFactsNodeTransferObjectLiteralEntryExpectedContractPreservesIdentity(t 
 		t.Fatalf("path entry type = %v/%v, want %v", gotType, ok, entryType)
 	}
 	object := got.ReadHeapTableObject(reg, rootID)
-	heapValue, ok := object.StaticMember(path.PathKey(".processed"))
+	heapValue, ok := object.StaticMember(staticSuffixKey(t, ks, ".processed"))
 	if !ok {
 		t.Fatalf("heap processed member missing")
 	}
@@ -322,6 +334,8 @@ func TestFactsNodeTransferObjectLiteralWritesNestedHeapObjects(t *testing.T) {
 	}
 	visibilityBuilder := visibility.NewBuilder()
 	visibilityBuilder.Define(point, target, "t")
+	resolver := visibility.NewResolver(visibilityBuilder.Build())
+	ks := resolver.KeySpace()
 
 	got := NewFactsNodeTransfer(FactsNodeTransferConfig{
 		Facts: factflow.NewFacts(factflow.FactsInput{
@@ -344,15 +358,15 @@ func TestFactsNodeTransferObjectLiteralWritesNestedHeapObjects(t *testing.T) {
 			},
 		}),
 		Sources:    sources,
-		Visibility: visibility.NewResolver(visibilityBuilder.Build()),
+		Visibility: resolver,
 	})(transfer.NodeContext{
 		Registry: reg,
 		Point:    point,
 	}, state.State{})
 
-	assertHeapStaticMember(t, reg, got, objectSource.ExprRef, ".child", nestedValue)
-	assertHeapStaticMember(t, reg, got, objectSource.ExprRef, ".child.id", leafValue)
-	assertHeapStaticMember(t, reg, got, nestedSource.ExprRef, ".id", leafValue)
+	assertHeapStaticMember(t, reg, ks, got, objectSource.ExprRef, ".child", nestedValue)
+	assertHeapStaticMember(t, reg, ks, got, objectSource.ExprRef, ".child.id", leafValue)
+	assertHeapStaticMember(t, reg, ks, got, nestedSource.ExprRef, ".id", leafValue)
 	assertPlacement(t, got, testTableLiteralID(objectSource.ExprRef), placement.Stack)
 	assertPlacement(t, got, testTableLiteralID(nestedSource.ExprRef), placement.Stack)
 }
@@ -372,6 +386,10 @@ func TestFactsNodeTransferObjectLiteralPlacementDoesNotDemotePromotedIdentity(t 
 			entrySource:  entryValue,
 		},
 	}
+	visibilityBuilder := visibility.NewBuilder()
+	visibilityBuilder.Define(point, target, "obj")
+	resolver := visibility.NewResolver(visibilityBuilder.Build())
+	ks := resolver.KeySpace()
 
 	got := NewFactsNodeTransfer(FactsNodeTransferConfig{
 		Facts: factflow.NewFacts(factflow.FactsInput{
@@ -384,13 +402,14 @@ func TestFactsNodeTransferObjectLiteralPlacementDoesNotDemotePromotedIdentity(t 
 				}),
 			},
 		}),
-		Sources: sources,
+		Sources:    sources,
+		Visibility: resolver,
 	})(transfer.NodeContext{
 		Registry: reg,
 		Point:    point,
 	}, state.State{}.WritePlacement(id, placement.SharedHeap))
 
-	assertHeapStaticMember(t, reg, got, objectSource.ExprRef, ".leaf", entryValue)
+	assertHeapStaticMember(t, reg, ks, got, objectSource.ExprRef, ".leaf", entryValue)
 	assertPlacement(t, got, id, placement.SharedHeap)
 }
 
@@ -407,6 +426,8 @@ func TestFactsNodeTransferReturnObjectLiteralWritesHeapObject(t *testing.T) {
 			entrySource:  entryValue,
 		},
 	}
+	resolver := visibility.NewResolver(visibility.NewTable(nil))
+	ks := resolver.KeySpace()
 
 	got := NewFactsNodeTransfer(FactsNodeTransferConfig{
 		Facts: factflow.NewFacts(factflow.FactsInput{
@@ -419,14 +440,15 @@ func TestFactsNodeTransferReturnObjectLiteralWritesHeapObject(t *testing.T) {
 				}),
 			},
 		}),
-		Sources: sources,
+		Sources:    sources,
+		Visibility: resolver,
 	})(transfer.NodeContext{
 		Registry: reg,
 		Point:    point,
 	}, state.State{})
 
 	assertValue(t, reg, got, key.ReturnSlot(0), rootValue)
-	assertHeapStaticMember(t, reg, got, objectSource.ExprRef, ".leaf", entryValue)
+	assertHeapStaticMember(t, reg, ks, got, objectSource.ExprRef, ".leaf", entryValue)
 }
 
 func TestFactsNodeTransferCallArgumentObjectLiteralWritesHeapObject(t *testing.T) {
@@ -442,6 +464,8 @@ func TestFactsNodeTransferCallArgumentObjectLiteralWritesHeapObject(t *testing.T
 			entrySource:  entryValue,
 		},
 	}
+	resolver := visibility.NewResolver(visibility.NewTable(nil))
+	ks := resolver.KeySpace()
 
 	got := NewFactsNodeTransfer(FactsNodeTransferConfig{
 		Facts: factflow.NewFacts(factflow.FactsInput{
@@ -457,13 +481,14 @@ func TestFactsNodeTransferCallArgumentObjectLiteralWritesHeapObject(t *testing.T
 				}),
 			},
 		}),
-		Sources: sources,
+		Sources:    sources,
+		Visibility: resolver,
 	})(transfer.NodeContext{
 		Registry: reg,
 		Point:    point,
 	}, state.State{})
 
-	assertHeapStaticMember(t, reg, got, objectSource.ExprRef, ".leaf", entryValue)
+	assertHeapStaticMember(t, reg, ks, got, objectSource.ExprRef, ".leaf", entryValue)
 }
 
 func TestFactsNodeTransferObjectLiteralEntriesInvalidateSubtreeBeforeWrite(t *testing.T) {
@@ -486,6 +511,8 @@ func TestFactsNodeTransferObjectLiteralEntriesInvalidateSubtreeBeforeWrite(t *te
 	}
 	visibilityBuilder := visibility.NewBuilder()
 	visibilityBuilder.Define(point, target, "t")
+	resolver := visibility.NewResolver(visibilityBuilder.Build())
+	ks := resolver.KeySpace()
 
 	got := NewFactsNodeTransfer(FactsNodeTransferConfig{
 		Facts: factflow.NewFacts(factflow.FactsInput{
@@ -499,25 +526,47 @@ func TestFactsNodeTransferObjectLiteralEntriesInvalidateSubtreeBeforeWrite(t *te
 			},
 		}),
 		Sources:    sources,
-		Visibility: visibility.NewResolver(visibilityBuilder.Build()),
+		Visibility: resolver,
 	})(transfer.NodeContext{
 		Registry: reg,
 		Point:    point,
 	}, state.State{}.
-		WritePathKey(reg, staleChildKey, staleValue).
-		WritePathKey(reg, siblingKey, siblingValue))
+		WritePathKey(reg, ks, staleChildKey, staleValue).
+		WritePathKey(reg, ks, siblingKey, siblingValue))
 
 	assertValue(t, reg, got, key.SymbolValue(target), rootValue)
-	assertPathValue(t, reg, got, path.PathKey("sym125@1.a"), entryValue)
-	assertPathValue(t, reg, got, staleChildKey, product.Bottom(reg))
-	assertPathValue(t, reg, got, siblingKey, product.Bottom(reg))
+	assertPathValue(t, reg, ks, got, path.PathKey("sym125@1.a"), entryValue)
+	assertPathValue(t, reg, ks, got, staleChildKey, product.Bottom(reg))
+	assertPathValue(t, reg, ks, got, siblingKey, product.Bottom(reg))
 }
 
-func assertHeapStaticMember(t *testing.T, reg *axis.Registry, gotState state.State, expr factflow.ExprRef, suffix path.PathKey, want product.Value) {
+func dottedSuffixSegments(suffix string) []segment.Segment {
+	trimmed := strings.TrimPrefix(suffix, ".")
+	if trimmed == "" {
+		return nil
+	}
+	parts := strings.Split(trimmed, ".")
+	segments := make([]segment.Segment, 0, len(parts))
+	for _, part := range parts {
+		segments = append(segments, segment.Segment{Kind: segment.SegmentField, Name: part})
+	}
+	return segments
+}
+
+func staticSuffixKey(t *testing.T, ks *keyspace.KeySpace, suffix string) keyspace.Key {
+	t.Helper()
+	k, ok := heapidentity.StaticMemberSuffixKey(ks, dottedSuffixSegments(suffix))
+	if !ok {
+		t.Fatalf("StaticMemberSuffixKey(%q) failed", suffix)
+	}
+	return k
+}
+
+func assertHeapStaticMember(t *testing.T, reg *axis.Registry, ks *keyspace.KeySpace, gotState state.State, expr factflow.ExprRef, suffix string, want product.Value) {
 	t.Helper()
 	id := testTableLiteralID(expr)
 	object := gotState.ReadHeapTableObject(reg, id)
-	got, ok := object.StaticMember(path.PathKey(suffix))
+	got, ok := object.StaticMember(staticSuffixKey(t, ks, suffix))
 	if !ok || !product.Equal(reg, got, want) {
 		t.Fatalf("heap object %v static %s = %s/%v, want %s", id, suffix, formatValue(reg, got), ok, formatValue(reg, want))
 	}

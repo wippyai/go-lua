@@ -49,6 +49,29 @@ type CallOutcome struct {
 	ParamPathRelations         []CallParamPathRelation
 	ReturnConditionRefinements []CallReturnConditionRefinement
 	ReturnPresenceRelations    []CallReturnPresenceRelation
+	ParamExposures             []CallParamExposure
+}
+
+// CallParamExposure records that the callee exposes one explicit argument (or a
+// member sub-path of one) through a wider mutable view the caller cannot track
+// writes back through: the parameter is aliased, at a wider mutable contract
+// type, into a slot the callee returns, stores into another parameter's member,
+// or retains in a captured sink. A write through that wider view can launder a
+// wide value back into the argument object, so the caller must eager-widen the
+// argument's source object toward Contract at the call to keep a later narrow
+// read of the argument sound. Source is the callee-relative placeholder path of
+// the exposed argument ($i, or a member sub-path $i.child); the caller rebases it
+// onto the concrete argument path. Contract is a witness-bearing value whose type
+// is the destination slot type (a returned member, a destination parameter's slot
+// type, or a sink's slot type), not the parameter's own declared type, which
+// would under-widen a covariant narrow-source/wider-destination store. Kind
+// selects the widening routine (record field rebuild vs opaque array element
+// witness). This is the single unified call-boundary exposure lane for every
+// interprocedural covariant-exposure route.
+type CallParamExposure struct {
+	Source   pathdom.Path
+	Contract product.Value
+	Kind     factflow.CovariantExposureKind
 }
 
 // CallParamObligation records a pre-call value constraint for one explicit

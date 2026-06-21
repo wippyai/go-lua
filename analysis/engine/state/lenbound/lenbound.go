@@ -7,7 +7,7 @@ package lenbound
 import (
 	"github.com/wippyai/go-lua/analysis/domain/lattice"
 	"github.com/wippyai/go-lua/analysis/domain/lattice/lift"
-	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/engine/state/internal/floor"
 )
 
@@ -24,8 +24,8 @@ type Floor struct {
 // MapDomain builds the per-path must-map lattice for length floors. The lane
 // keeps only keys present on all edges (must semantics) and merges per-key
 // floors with the Floor element lattice.
-func MapDomain() lattice.Lattice[lift.MustMapLane[pathdom.PathKey, Floor]] {
-	return lift.MustMap[pathdom.PathKey, Floor](elemDomain())
+func MapDomain() lattice.Lattice[lift.MustMapLane[keyspace.Key, Floor]] {
+	return lift.MustMap[keyspace.Key, Floor](elemDomain())
 }
 
 // elemDomain builds the Floor element lattice.

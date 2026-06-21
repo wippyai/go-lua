@@ -3,6 +3,7 @@ package factapply
 import (
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
+	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
@@ -37,9 +38,10 @@ func applyPathStaticMemberWrite(
 	if !ok {
 		return out
 	}
-	out = out.WritePathStaticMember(targetKey, value)
-	if canonical, ok := pathaddr.FieldCanonicalPathKey(targetKey); ok {
-		out = out.WritePathStaticMember(canonical, value)
+	ks := resolver.KeySpace()
+	out = out.WritePathStaticMember(ks, targetKey, value)
+	if canonical, ok := fieldCanonicalPathKey(ks, targetKey); ok {
+		out = out.WritePathStaticMember(ks, canonical, value)
 	}
 	return addPathEqualityProofFromSource(resolver, facts, ctx.Point, out, fact.TargetPath(), source)
 }
@@ -162,7 +164,7 @@ func applyBranchPathEvidence(
 	}
 	out = out.AddBranchProof(stateProof)
 	if stateProof.Kind == pathevidence.BranchProofPathEqual {
-		out = closeCongruenceAcrossEquality(ctx.Registry, out, stateProof.Path, stateProof.Other)
+		out = closeCongruenceAcrossEquality(ctx.Registry, resolver.KeySpace(), out, stateProof.Path, stateProof.Other)
 	}
 	return out
 }
@@ -173,11 +175,11 @@ func applyBranchPathEvidence(
 // the equality and the refinement were applied. It runs once per proven
 // equality, off the hot read path, and is idempotent (it meets into existing
 // facts).
-func closeCongruenceAcrossEquality(reg *axis.Registry, out state.State, aKey, bKey pathdom.PathKey) state.State {
+func closeCongruenceAcrossEquality(reg *axis.Registry, ks *keyspace.KeySpace, out state.State, aKey, bKey pathdom.PathKey) state.State {
 	if aKey == "" || bKey == "" || aKey == bKey {
 		return out
 	}
-	snap := out.PathRefinementsSnapshot()
+	snap := out.PathRefinementsSnapshot(ks)
 	if snap.Bottom || len(snap.Refinements) == 0 {
 		return out
 	}
@@ -186,15 +188,15 @@ func closeCongruenceAcrossEquality(reg *axis.Registry, out state.State, aKey, bK
 	// engine does not model __eq, so a proven table equality is reference-safe, and
 	// non-table values have no members to make congruent. If __eq is ever modeled,
 	// exclude types that declare it here.
-	memberSafe := pathValueMayBeTable(reg, out, aKey) && pathValueMayBeTable(reg, out, bKey)
+	memberSafe := pathValueMayBeTable(reg, ks, out, aKey) && pathValueMayBeTable(reg, ks, out, bKey)
 	for key, value := range snap.Refinements {
-		out = propagateRefinementAcrossEquality(reg, out, key, value, aKey, bKey, memberSafe)
-		out = propagateRefinementAcrossEquality(reg, out, key, value, bKey, aKey, memberSafe)
+		out = propagateRefinementAcrossEquality(reg, ks, out, key, value, aKey, bKey, memberSafe)
+		out = propagateRefinementAcrossEquality(reg, ks, out, key, value, bKey, aKey, memberSafe)
 	}
 	return out
 }
 
-func propagateRefinementAcrossEquality(reg *axis.Registry, out state.State, key pathdom.PathKey, value product.Value, fromKey, toKey pathdom.PathKey, memberSafe bool) state.State {
+func propagateRefinementAcrossEquality(reg *axis.Registry, ks *keyspace.KeySpace, out state.State, key pathdom.PathKey, value product.Value, fromKey, toKey pathdom.PathKey, memberSafe bool) state.State {
 	rebased, ok := pathaddr.RebasePathKey(key, fromKey, toKey)
 	if !ok || rebased == "" || rebased == key {
 		return out
@@ -204,7 +206,7 @@ func propagateRefinementAcrossEquality(reg *axis.Registry, out state.State, key 
 	if key != fromKey && !memberSafe {
 		return out
 	}
-	current := out.ReadPathKey(reg, rebased)
+	current := out.ReadPathKey(reg, ks, rebased)
 	merged := value
 	if !product.Equal(reg, current, product.Bottom(reg)) {
 		merged = product.Meet(reg, current, value)
@@ -212,11 +214,11 @@ func propagateRefinementAcrossEquality(reg *axis.Registry, out state.State, key 
 			return out
 		}
 	}
-	return out.WritePathKey(reg, rebased, merged)
+	return out.WritePathKey(reg, ks, rebased, merged)
 }
 
-func pathValueMayBeTable(reg *axis.Registry, in state.State, key pathdom.PathKey) bool {
-	value := in.ReadPathKey(reg, key)
+func pathValueMayBeTable(reg *axis.Registry, ks *keyspace.KeySpace, in state.State, key pathdom.PathKey) bool {
+	value := in.ReadPathKey(reg, ks, key)
 	hasValue := !product.Equal(reg, value, product.Bottom(reg))
 	return sourcevalue.RuntimeMayBeTable(reg, value, hasValue)
 }
@@ -312,6 +314,14 @@ func addPathEqualityProofFromSource(
 	}
 	sourcePath, ok := facts.ExpressionPath(source.ExprRef)
 	if !ok || sourcePath.IsEmpty() || sourcePath.Symbol == 0 {
+		return out
+	}
+	// A covariant record exposure of this source (the object exposed through a wider
+	// mutable view at the same point) must not leave a target == source equality:
+	// the narrow per-field facts would meet back onto the widened source through
+	// reference-equality member congruence, undoing the exposure widen. The eager
+	// source widen carries the sound widened type instead.
+	if covariantExposureSuppressesPathProof(facts, point, source) {
 		return out
 	}
 	targetKey := factPathKeyAt(resolver, point, targetPath)

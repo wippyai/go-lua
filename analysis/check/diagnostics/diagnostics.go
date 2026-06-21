@@ -24,6 +24,7 @@ const (
 	CodeDirectCallResultAssignment diagnostic.Code = "type.call.direct.result_assignment"
 	CodeOptionalAssignmentTarget   diagnostic.Code = "type.assignment.optional_target"
 	CodeConcatOperand              diagnostic.Code = "type.operator.concat_operand"
+	CodeNonNilAssertAlwaysNil      diagnostic.Code = "type.assert.nonnil_always_nil"
 	CodeNumericForOperand          diagnostic.Code = "type.for.numeric_operand"
 	CodeChannelSelectExhaustive    diagnostic.Code = "channel.select.exhaustiveness"
 	CodeUnresolvedTypeReference    diagnostic.Code = "type.reference.unresolved"
@@ -121,6 +122,13 @@ func diagnosticProducers(context producerContext) []diagnosticProducer {
 			defaultEnabled: true,
 			produce: func(result *body.Result, _ producerContext, _ map[symbol.ID]*ast.FunctionExpr) []diagnostic.Diagnostic {
 				return numericForOperands(context).Produce(result)
+			},
+		},
+		{
+			codes:          []diagnostic.Code{CodeNonNilAssertAlwaysNil},
+			defaultEnabled: true,
+			produce: func(result *body.Result, _ producerContext, _ map[symbol.ID]*ast.FunctionExpr) []diagnostic.Diagnostic {
+				return nonNilAssertions(context).Produce(result)
 			},
 		},
 		{

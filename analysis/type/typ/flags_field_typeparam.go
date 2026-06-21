@@ -54,6 +54,15 @@ func knownOpenRecursiveFields(fields []Field) bool {
 	return false
 }
 
+func knownGenericFields(fields []Field) bool {
+	for _, f := range fields {
+		if knownContainsGeneric(f.Type) {
+			return true
+		}
+	}
+	return false
+}
+
 func knownAnyTypeParams(params []*TypeParam) bool {
 	for _, p := range params {
 		if p != nil && knownContainsAny(p.Constraint) {
@@ -79,6 +88,15 @@ func knownTypeParamTypeParams(params []*TypeParam) bool {
 func knownInstantiatedTypeParams(params []*TypeParam) bool {
 	for _, p := range params {
 		if p != nil && knownContainsInstantiated(p.Constraint) {
+			return true
+		}
+	}
+	return false
+}
+
+func knownGenericTypeParams(params []*TypeParam) bool {
+	for _, p := range params {
+		if p != nil && knownContainsGeneric(p.Constraint) {
 			return true
 		}
 	}

@@ -2,7 +2,7 @@ package pathevidence
 
 import (
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
-	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
+	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 )
 
@@ -14,11 +14,11 @@ type PathRefinementsSnapshot struct {
 
 // PathRefinementsSnapshot returns finite must path refinements. Bottom is
 // explicit; Top means the reachable must lane contains no finite refinements.
-func (l Lane) PathRefinementsSnapshot() PathRefinementsSnapshot {
+func (l Lane) PathRefinementsSnapshot(ks *keyspace.KeySpace) PathRefinementsSnapshot {
 	if l.refinementsBottom {
 		return PathRefinementsSnapshot{Bottom: true}
 	}
-	refinements := snapshotLocalValueMap(l.refinements)
+	refinements := snapshotLocalValueMap(ks, l.refinements)
 	return PathRefinementsSnapshot{
 		Top:         len(refinements) == 0,
 		Refinements: refinements,
@@ -32,24 +32,24 @@ type PathStaticMembersSnapshot struct {
 }
 
 // PathStaticMembersSnapshot returns finite must-static-member facts.
-func (l Lane) PathStaticMembersSnapshot() PathStaticMembersSnapshot {
+func (l Lane) PathStaticMembersSnapshot(ks *keyspace.KeySpace) PathStaticMembersSnapshot {
 	if l.staticMembersBottom {
 		return PathStaticMembersSnapshot{Bottom: true}
 	}
-	members := snapshotLocalValueMap(l.staticMembers)
+	members := snapshotLocalValueMap(ks, l.staticMembers)
 	return PathStaticMembersSnapshot{
 		Top:     len(members) == 0,
 		Members: members,
 	}
 }
 
-func snapshotLocalValueMap(in map[pathaddr.LocalKey]product.Value) map[pathdom.PathKey]product.Value {
+func snapshotLocalValueMap(ks *keyspace.KeySpace, in map[keyspace.Key]product.Value) map[pathdom.PathKey]product.Value {
 	if len(in) == 0 {
 		return nil
 	}
 	out := make(map[pathdom.PathKey]product.Value, len(in))
 	for k, v := range in {
-		out[k.PathKey()] = v
+		out[ks.Format(k)] = v
 	}
 	return out
 }

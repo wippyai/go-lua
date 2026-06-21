@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
@@ -375,9 +376,10 @@ func TestFactsNodeTransferCallResultTargetsDoNotDirectlyWriteTargets(t *testing.
 	symbolValue := presentValue(reg)
 	pathValue := presentValue(reg)
 	resultValue := absentValue(reg)
+	ks := keyspace.New()
 	in := state.State{}.
 		WriteValue(reg, key.SymbolValue(target), symbolValue).
-		WritePathKey(reg, pathKey, pathValue)
+		WritePathKey(reg, ks, pathKey, pathValue)
 
 	got := NewFactsNodeTransfer(FactsNodeTransferConfig{
 		Facts: factflow.NewFacts(factflow.FactsInput{
@@ -401,7 +403,7 @@ func TestFactsNodeTransferCallResultTargetsDoNotDirectlyWriteTargets(t *testing.
 
 	assertValue(t, reg, got, key.ReturnSlot(0), resultValue)
 	assertValue(t, reg, got, key.SymbolValue(target), symbolValue)
-	assertPathValue(t, reg, got, pathKey, pathValue)
+	assertPathValue(t, reg, ks, got, pathKey, pathValue)
 }
 
 func TestFactsNodeTransferCallProducerClearsStaleReturnSlotsWithoutOutcome(t *testing.T) {

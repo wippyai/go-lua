@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	path "github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
@@ -527,7 +528,7 @@ func TestNumFloorForSourceDerivesExactIntegerPathAndBinaryFloors(t *testing.T) {
 	oneValue := typevalue.WithWitness(reg, typevalue.FromType(reg, oneType), oneType)
 	exactType := typ.LiteralInt(7)
 	exactValue := typevalue.WithWitness(reg, typevalue.FromType(reg, exactType), exactType)
-	resolver := fixedPathKeyResolver{key: pathKey}
+	resolver := fixedPathKeyResolver{key: pathKey, ks: keyspace.New()}
 	sumOp, ok := NewBinaryExpressionOperation("+", pathSource, ValueSource{Kind: ValueSourceExpression, ExprRef: oneExpr, HasExpr: true})
 	if !ok {
 		t.Fatal("NewBinaryExpressionOperation returned false")
@@ -544,7 +545,7 @@ func TestNumFloorForSourceDerivesExactIntegerPathAndBinaryFloors(t *testing.T) {
 			sumExpr: sumOp,
 		},
 	})
-	in := state.State{}.WriteNumFloor(pathKey, 3)
+	in := state.State{}.WriteNumFloor(resolver.ks, pathKey, 3)
 
 	tests := []struct {
 		name   string
@@ -573,10 +574,15 @@ func TestNumFloorForSourceDerivesExactIntegerPathAndBinaryFloors(t *testing.T) {
 
 type fixedPathKeyResolver struct {
 	key path.PathKey
+	ks  *keyspace.KeySpace
 }
 
 func (r fixedPathKeyResolver) KeyAt(point cfg.Point, p path.Path) path.PathKey {
 	return r.key
+}
+
+func (r fixedPathKeyResolver) KeySpace() *keyspace.KeySpace {
+	return r.ks
 }
 
 func runtimeKindRefinement(reg *axis.Registry, value runtimekind.Value) product.Value {

@@ -54,6 +54,15 @@ func knownOpenRecursive(types ...Type) bool {
 	return false
 }
 
+func knownGeneric(types ...Type) bool {
+	for _, t := range types {
+		if knownContainsGeneric(t) {
+			return true
+		}
+	}
+	return false
+}
+
 func knownAnyParams(params []Param) bool {
 	for _, p := range params {
 		if knownContainsAny(p.Type) {
@@ -84,6 +93,15 @@ func knownTypeParamParams(params []Param) bool {
 func knownInstantiatedParams(params []Param) bool {
 	for _, p := range params {
 		if knownContainsInstantiated(p.Type) {
+			return true
+		}
+	}
+	return false
+}
+
+func knownGenericParams(params []Param) bool {
+	for _, p := range params {
+		if knownContainsGeneric(p.Type) {
 			return true
 		}
 	}

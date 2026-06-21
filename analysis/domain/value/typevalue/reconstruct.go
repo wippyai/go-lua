@@ -26,7 +26,7 @@ func TypeOf(reg *axis.Registry, value product.Value) (typ.Type, bool) {
 	}
 	origin := product.Get(reg, value, variantorigin.Key)
 	if !origin.IsBottom() && !origin.IsTop() {
-		if t, ok := variant.TypeFromOrigin(origin.Family(), origin.Cases()); ok {
+		if t, ok := variant.TypeFromOrigin(origin.Family(), origin.CasesRef()); ok {
 			return typeWithPresence(t, p), true
 		}
 	}

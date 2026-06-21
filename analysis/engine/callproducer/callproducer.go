@@ -12,7 +12,7 @@ import (
 func FromSite(site factflow.CallSite) factflow.CallProducer {
 	return factflow.NewCallProducer(factflow.CallProducerConfig{
 		CalleeSymbol:  site.CalleeSymbol(),
-		CalleePath:    site.CalleePath(),
+		CalleePath:    site.CalleePathRef(),
 		ResultTargets: site.ResultTargets(),
 	})
 }
@@ -26,7 +26,7 @@ func FromFacts(facts factflow.Facts, point cfg.Point) (factflow.CallProducer, bo
 	}
 	return factflow.NewCallProducer(factflow.CallProducerConfig{
 		CalleeSymbol:  site.CalleeSymbol(),
-		CalleePath:    site.CalleePath(),
+		CalleePath:    site.CalleePathRef(),
 		ResultTargets: strictResultTargetsView(site),
 	}), true
 }

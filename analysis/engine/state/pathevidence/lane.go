@@ -1,15 +1,18 @@
 package pathevidence
 
 import (
-	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
+	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 )
 
 // Lane owns point-local path evidence whose invalidation semantics are coupled:
-// path refinements, path static-member must facts, and branch proofs.
+// path refinements, path static-member must facts, and branch proofs. The
+// refinement and static-member value sublanes key on the structural keyspace.Key
+// (point-local resolver-symbol identities); the branch-proof and presence
+// implication sublanes still carry path-key string spellings.
 type Lane struct {
-	refinements                    map[pathaddr.LocalKey]product.Value
-	staticMembers                  map[pathaddr.LocalKey]product.Value
+	refinements                    map[keyspace.Key]product.Value
+	staticMembers                  map[keyspace.Key]product.Value
 	proofs                         map[BranchProof]struct{}
 	pathPresenceImplications       map[PathPresenceImplication]struct{}
 	refinementsBottom              bool
@@ -62,11 +65,11 @@ func (l Lane) PathPresenceImplicationsBottom() bool {
 	return l.pathPresenceImplicationsBottom
 }
 
-func cloneLocalValueMap(in map[pathaddr.LocalKey]product.Value) map[pathaddr.LocalKey]product.Value {
+func cloneLocalValueMap(in map[keyspace.Key]product.Value) map[keyspace.Key]product.Value {
 	if len(in) == 0 {
 		return nil
 	}
-	out := make(map[pathaddr.LocalKey]product.Value, len(in))
+	out := make(map[keyspace.Key]product.Value, len(in))
 	for k, v := range in {
 		out[k] = v
 	}

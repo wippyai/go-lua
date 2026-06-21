@@ -335,7 +335,7 @@ func implicitSelfParamSeed(reg *axis.Registry, bindings *bind.Result, fn *ast.Fu
 			continue
 		}
 		valueSlot := statekey.SymbolValue(slot.Symbol)
-		if valueSlot == "" {
+		if valueSlot == 0 {
 			return paramSeed{}, false
 		}
 		return paramSeed{

@@ -3,6 +3,7 @@ package projectsummary
 import (
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
+	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/evidence"
@@ -17,6 +18,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/state/pathevidence"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
+	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
 )
 
 func projectNormalReturnFacts(reg *axis.Registry, result ResultReader, exit state.State) callboundary.NormalReturnFacts {
@@ -28,8 +30,10 @@ func projectNormalReturnFacts(reg *axis.Registry, result ResultReader, exit stat
 	out.PathInvalidations = append(out.PathInvalidations, projectAssignmentPathInvalidations(result, params)...)
 	out.DynamicIndexFacts = append(out.DynamicIndexFacts, projectAssignmentDynamicIndexFacts(reg, result, params)...)
 	out.LifecycleFacts = append(out.LifecycleFacts, projectCallOutcomeLifecycleFacts(result, params)...)
+	out.StoreRelations = append(out.StoreRelations, projectAssignmentStoreRelations(result, params)...)
 
-	if snapshot := exit.PathRefinementsSnapshot(); !snapshot.Top {
+	ks := result.KeySpace()
+	if snapshot := exit.PathRefinementsSnapshot(ks); !snapshot.Top {
 		bottom := product.Bottom(reg)
 		top := product.Top()
 		for pathKey, value := range snapshot.Refinements {
@@ -47,7 +51,7 @@ func projectNormalReturnFacts(reg *axis.Registry, result ResultReader, exit stat
 		}
 	}
 
-	if snapshot := exit.PathStaticMembersSnapshot(); !snapshot.Bottom && !snapshot.Top {
+	if snapshot := exit.PathStaticMembersSnapshot(ks); !snapshot.Bottom && !snapshot.Top {
 		bottom := product.Bottom(reg)
 		for pathKey, value := range snapshot.Members {
 			if product.Equal(reg, value, bottom) {
@@ -163,7 +167,7 @@ func projectNormalReturnFacts(reg *axis.Registry, result ResultReader, exit stat
 	}
 
 	if snapshot := exit.FrozenTablesSnapshot(); !snapshot.Bottom && !snapshot.Top {
-		frozenPaths := frozenTablePlaceholderPaths(reg, exit, params)
+		frozenPaths := frozenTablePlaceholderPaths(reg, ks, exit, params)
 		for _, id := range snapshot.Tables {
 			for _, target := range frozenPaths[id] {
 				out.FrozenTables = append(out.FrozenTables, callboundary.FrozenTableFact{
@@ -378,6 +382,73 @@ func projectAssignmentPathInvalidations(result ResultReader, params []path.Path)
 	return out
 }
 
+// projectAssignmentStoreRelations lowers each normal-return-reachable
+// param-to-param member store (dst.member = src, where dst is a parameter and src
+// resolves to another parameter) into a StoreRelationFact over placeholder paths.
+// The callee aliases the source parameter object into the destination parameter's
+// member slot, so the caller must eager-widen the source argument toward the
+// destination slot's type to keep a later narrow read of the source sound. The
+// Source placeholder is the bare source parameter; the Into placeholder carries
+// the destination parameter's member segments so the call-boundary lowering can
+// project the destination slot type.
+func projectAssignmentStoreRelations(result ResultReader, params []path.Path) []callboundary.StoreRelationFact {
+	reader, ok := result.(ordinaryAssignmentReader)
+	if !ok {
+		return nil
+	}
+	pathReader, ok := result.(expressionPathReader)
+	if !ok {
+		return nil
+	}
+	graph := result.Graph()
+	if graph == nil {
+		return nil
+	}
+	noNormal, _ := result.(noNormalReturnReader)
+	var out []callboundary.StoreRelationFact
+	for _, point := range graph.RPO() {
+		if noNormal != nil && noNormal.NoNormalReturn(point) {
+			continue
+		}
+		fact, ok := reader.OrdinaryAssignment(point)
+		if !ok || !fact.HasPath || fact.Path.Symbol == 0 || len(fact.Path.Segments) == 0 {
+			continue
+		}
+		into, ok := parameterPlaceholderPath(fact.Path, params)
+		if !ok || len(into.Segments) == 0 {
+			continue
+		}
+		source, ok := assignmentSourceParameterPlaceholder(fact, pathReader, params)
+		if !ok {
+			continue
+		}
+		out = append(out, callboundary.StoreRelationFact{Source: source, Into: into})
+	}
+	return out
+}
+
+// assignmentSourceParameterPlaceholder resolves an ordinary assignment's source
+// expression to a bare parameter placeholder ($i with no member segments). A
+// member-path source is not a whole-object alias and is not lowered.
+func assignmentSourceParameterPlaceholder(
+	fact semantics.OrdinaryAssignmentFact,
+	pathReader expressionPathReader,
+	params []path.Path,
+) (path.Path, bool) {
+	if fact.Source.Kind != sourceprovenance.SourceExpression || fact.Source.Expr == nil {
+		return path.Path{}, false
+	}
+	sourcePath, ok := pathReader.ExpressionPath(fact.Source.Expr)
+	if !ok || sourcePath.Symbol == 0 || len(sourcePath.Segments) != 0 {
+		return path.Path{}, false
+	}
+	placeholder, ok := parameterPlaceholderPath(sourcePath, params)
+	if !ok || len(placeholder.Segments) != 0 {
+		return path.Path{}, false
+	}
+	return placeholder, true
+}
+
 func projectCallOutcomeLifecycleFacts(result ResultReader, params []path.Path) []callboundary.LifecycleFact {
 	callResult, ok := result.(callReader)
 	if !ok {
@@ -514,7 +585,7 @@ func parameterPlaceholderPath(target path.Path, params []path.Path) (path.Path, 
 	return path.Path{}, false
 }
 
-func frozenTablePlaceholderPaths(reg *axis.Registry, exit state.State, params []path.Path) map[identity.ID][]path.Path {
+func frozenTablePlaceholderPaths(reg *axis.Registry, ks *keyspace.KeySpace, exit state.State, params []path.Path) map[identity.ID][]path.Path {
 	out := make(map[identity.ID][]path.Path)
 	var queue []frozenTablePathCandidate
 	for i, param := range params {
@@ -530,7 +601,7 @@ func frozenTablePlaceholderPaths(reg *axis.Registry, exit state.State, params []
 			queue = append(queue, newFrozenTablePathCandidate(id, path.NewPlaceholder(i), nil))
 		}
 	}
-	if snapshot := exit.PathRefinementsSnapshot(); !snapshot.Top {
+	if snapshot := exit.PathRefinementsSnapshot(ks); !snapshot.Top {
 		for pathKey, value := range snapshot.Refinements {
 			id, ok := productIdentityID(reg, value)
 			if !ok {
@@ -545,7 +616,7 @@ func frozenTablePlaceholderPaths(reg *axis.Registry, exit state.State, params []
 			}
 		}
 	}
-	if snapshot := exit.PathStaticMembersSnapshot(); !snapshot.Bottom && !snapshot.Top {
+	if snapshot := exit.PathStaticMembersSnapshot(ks); !snapshot.Bottom && !snapshot.Top {
 		for pathKey, value := range snapshot.Members {
 			id, ok := productIdentityID(reg, value)
 			if !ok {
@@ -576,7 +647,7 @@ func frozenTablePlaceholderPaths(reg *axis.Registry, exit state.State, params []
 			if !ok || candidate.hasSeen(childID) {
 				continue
 			}
-			segments, ok := pathaddr.RelativeStaticMemberSuffixSegments(suffix)
+			segments, ok := ks.SuffixSegments(suffix)
 			if !ok {
 				continue
 			}

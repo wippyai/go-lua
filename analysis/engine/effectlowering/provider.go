@@ -3,6 +3,7 @@
 package effectlowering
 
 import (
+	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/engine/calloutcome"
 	"github.com/wippyai/go-lua/analysis/engine/callpayload"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
@@ -41,6 +42,9 @@ type SignatureOutcomeProviderConfig struct {
 	Facts         factflow.Facts
 	Sources       sourcevalue.SourceValues
 	ArgumentType  SignatureArgumentTypeFunc
+	// KeySpace is the consuming (caller) analysis keyspace into which rehydrated
+	// heap allocation templates intern their rootless static-member keys.
+	KeySpace *keyspace.KeySpace
 }
 
 // SignatureOutcomeProvider materializes declared signature return types into
@@ -53,6 +57,7 @@ func SignatureOutcomeProvider(config SignatureOutcomeProviderConfig) callpayload
 	facts := config.Facts
 	sources := config.Sources
 	argumentType := config.ArgumentType
+	providerKeySpace := config.KeySpace
 	expressionRefinements := facts.ExpressionRefinements()
 	return func(ctx transfer.NodeContext, site factflow.CallSiteView, in state.State, read func(cfg.Point) state.State) callpayload.CallOutcome {
 		if signatures == nil || (nameFor == nil && nameForSite == nil) {
@@ -77,6 +82,7 @@ func SignatureOutcomeProvider(config SignatureOutcomeProviderConfig) callpayload
 				expressionRefinements: expressionRefinements,
 				in:                    in,
 				read:                  read,
+				keySpace:              providerKeySpace,
 			})
 		} else {
 			invalidations := signatureParamPathInvalidationsForReader(sig, argSources)

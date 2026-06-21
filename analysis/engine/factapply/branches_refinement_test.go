@@ -205,11 +205,13 @@ func TestFactsEdgeTransferRootRefinementInvalidatesDescendantPathFacts(t *testin
 	rootPath := pathdom.NewPath(target, "r")
 	childKey := pathdom.PathKey("sym329@1.value")
 	staleChild := product.Set(reg, product.Top(), runtimekind.Key, runtimekind.Singleton(runtimekind.String))
-	initial := state.State{}.
-		WriteValue(reg, key.SymbolValue(target), product.Top()).
-		WritePathKey(reg, childKey, staleChild)
 	visibilityBuilder := visibility.NewBuilder()
 	visibilityBuilder.Define(branch, target, "r")
+	resolver := visibility.NewResolver(visibilityBuilder.Build())
+	ks := resolver.KeySpace()
+	initial := state.State{}.
+		WriteValue(reg, key.SymbolValue(target), product.Top()).
+		WritePathKey(reg, ks, childKey, staleChild)
 
 	got := transfer.Run(transfer.Config{
 		Graph:      graph,
@@ -223,13 +225,13 @@ func TestFactsEdgeTransferRootRefinementInvalidatesDescendantPathFacts(t *testin
 					),
 				},
 			}),
-			Visibility: visibility.NewResolver(visibilityBuilder.Build()),
+			Visibility: resolver,
 		}),
 	})
 
 	assertRuntimeKind(t, reg, got[thenPoint].ReadValue(reg, key.SymbolValue(target)), runtimekind.Singleton(runtimekind.Table))
-	assertPathValue(t, reg, got[thenPoint], childKey, product.Bottom(reg))
-	assertPathValue(t, reg, got[elsePoint], childKey, staleChild)
+	assertPathValue(t, reg, ks, got[thenPoint], childKey, product.Bottom(reg))
+	assertPathValue(t, reg, ks, got[elsePoint], childKey, staleChild)
 }
 
 func TestFactsEdgeTransferRootRefinementAllowsLaterChildRepublish(t *testing.T) {
@@ -249,11 +251,13 @@ func TestFactsEdgeTransferRootRefinementAllowsLaterChildRepublish(t *testing.T) 
 	childPath := rootPath.Field("value")
 	childKey := pathdom.PathKey("sym330@1.value")
 	staleChild := product.Set(reg, product.Top(), runtimekind.Key, runtimekind.Singleton(runtimekind.String))
-	initial := state.State{}.
-		WriteValue(reg, key.SymbolValue(target), product.Top()).
-		WritePathKey(reg, childKey, staleChild)
 	visibilityBuilder := visibility.NewBuilder()
 	visibilityBuilder.Define(branch, target, "r")
+	resolver := visibility.NewResolver(visibilityBuilder.Build())
+	ks := resolver.KeySpace()
+	initial := state.State{}.
+		WriteValue(reg, key.SymbolValue(target), product.Top()).
+		WritePathKey(reg, ks, childKey, staleChild)
 
 	got := transfer.Run(transfer.Config{
 		Graph:      graph,
@@ -268,13 +272,13 @@ func TestFactsEdgeTransferRootRefinementAllowsLaterChildRepublish(t *testing.T) 
 					),
 				},
 			}),
-			Visibility: visibility.NewResolver(visibilityBuilder.Build()),
+			Visibility: resolver,
 		}),
 	})
 
 	assertRuntimeKind(t, reg, got[thenPoint].ReadValue(reg, key.SymbolValue(target)), runtimekind.Singleton(runtimekind.Table))
-	assertRuntimeKind(t, reg, got[thenPoint].ReadPathKey(reg, childKey), runtimekind.Singleton(runtimekind.Number))
-	assertPathValue(t, reg, got[elsePoint], childKey, staleChild)
+	assertRuntimeKind(t, reg, got[thenPoint].ReadPathKey(reg, ks, childKey), runtimekind.Singleton(runtimekind.Number))
+	assertPathValue(t, reg, ks, got[elsePoint], childKey, staleChild)
 }
 
 func TestFactsEdgeTransferDescendantTruthyNarrowsRootOriginFromFlowType(t *testing.T) {
@@ -320,6 +324,7 @@ func TestFactsEdgeTransferDescendantTruthyNarrowsRootOriginFromFlowType(t *testi
 			visibilityBuilder.SetVisible(thenPoint, target, version)
 			visibilityBuilder.SetVisible(elsePoint, target, version)
 			resolver := visibility.NewResolver(visibilityBuilder.Build())
+			ks := resolver.KeySpace()
 			okKey := resolver.KeyForVersion(target, version.ID, okPath.Segments)
 			valueKey := resolver.KeyForVersion(target, version.ID, valuePath.Segments)
 			staleValue := typevalue.FromType(reg, typeexpr.Optional(profile))
@@ -332,7 +337,7 @@ func TestFactsEdgeTransferDescendantTruthyNarrowsRootOriginFromFlowType(t *testi
 			})
 			initial := state.State{}.
 				WriteValue(reg, key.SymbolValue(target), tc.rootValue).
-				WritePathKey(reg, valueKey, staleValue)
+				WritePathKey(reg, ks, valueKey, staleValue)
 
 			got := transfer.Run(transfer.Config{
 				Graph:      graph,
@@ -347,9 +352,9 @@ func TestFactsEdgeTransferDescendantTruthyNarrowsRootOriginFromFlowType(t *testi
 
 			thenState := got[thenPoint]
 			assertVariantOriginType(t, reg, thenState, target, resultType, valueCase)
-			assertPathValue(t, reg, thenState, valueKey, product.Bottom(reg))
-			assertPathPresence(t, reg, thenState, okKey, presence.Present())
-			assertPathValue(t, reg, got[elsePoint], valueKey, staleValue)
+			assertPathValue(t, reg, ks, thenState, valueKey, product.Bottom(reg))
+			assertPathPresence(t, reg, ks, thenState, okKey, presence.Present())
+			assertPathValue(t, reg, ks, got[elsePoint], valueKey, staleValue)
 		})
 	}
 }
@@ -381,6 +386,7 @@ func TestFactsEdgeTransferDescendantFalsyNarrowsRootOriginFromFlowType(t *testin
 	visibilityBuilder.SetVisible(thenPoint, target, version)
 	visibilityBuilder.SetVisible(elsePoint, target, version)
 	resolver := visibility.NewResolver(visibilityBuilder.Build())
+	ks := resolver.KeySpace()
 	errorKey := resolver.KeyForVersion(target, version.ID, errorPath.Segments)
 	staleError := typevalue.FromType(reg, typeexpr.Optional(typ.String))
 	falseLiteral := typ.LiteralBool(false)
@@ -394,7 +400,7 @@ func TestFactsEdgeTransferDescendantFalsyNarrowsRootOriginFromFlowType(t *testin
 	})
 	initial := state.State{}.
 		WriteValue(reg, key.SymbolValue(target), typevalue.WithWitness(reg, typevalue.FromType(reg, resultType), resultType)).
-		WritePathKey(reg, errorKey, staleError)
+		WritePathKey(reg, ks, errorKey, staleError)
 
 	got := transfer.Run(transfer.Config{
 		Graph:      graph,
@@ -408,8 +414,8 @@ func TestFactsEdgeTransferDescendantFalsyNarrowsRootOriginFromFlowType(t *testin
 
 	thenState := got[thenPoint]
 	assertVariantOriginType(t, reg, thenState, target, resultType, errorCase)
-	assertPathValue(t, reg, thenState, errorKey, product.Bottom(reg))
-	assertPathValue(t, reg, got[elsePoint], errorKey, staleError)
+	assertPathValue(t, reg, ks, thenState, errorKey, product.Bottom(reg))
+	assertPathValue(t, reg, ks, got[elsePoint], errorKey, staleError)
 }
 
 func TestFactsEdgeTransferDescendantTruthyFalseEdgeNarrowsRootOriginFromFlowType(t *testing.T) {
@@ -439,6 +445,7 @@ func TestFactsEdgeTransferDescendantTruthyFalseEdgeNarrowsRootOriginFromFlowType
 	visibilityBuilder.SetVisible(thenPoint, target, version)
 	visibilityBuilder.SetVisible(elsePoint, target, version)
 	resolver := visibility.NewResolver(visibilityBuilder.Build())
+	ks := resolver.KeySpace()
 	errorKey := resolver.KeyForVersion(target, version.ID, errorPath.Segments)
 	staleError := typevalue.FromType(reg, typeexpr.Optional(typ.String))
 	facts := factflow.NewFacts(factflow.FactsInput{
@@ -455,7 +462,7 @@ func TestFactsEdgeTransferDescendantTruthyFalseEdgeNarrowsRootOriginFromFlowType
 	})
 	initial := state.State{}.
 		WriteValue(reg, key.SymbolValue(target), typevalue.WithWitness(reg, typevalue.FromType(reg, resultType), resultType)).
-		WritePathKey(reg, errorKey, staleError)
+		WritePathKey(reg, ks, errorKey, staleError)
 
 	got := transfer.Run(transfer.Config{
 		Graph:      graph,
@@ -468,8 +475,8 @@ func TestFactsEdgeTransferDescendantTruthyFalseEdgeNarrowsRootOriginFromFlowType
 	})
 
 	assertVariantOriginType(t, reg, got[elsePoint], target, resultType, errorCase)
-	assertPathValue(t, reg, got[elsePoint], errorKey, product.Bottom(reg))
-	assertPathValue(t, reg, got[thenPoint], errorKey, product.Bottom(reg))
+	assertPathValue(t, reg, ks, got[elsePoint], errorKey, product.Bottom(reg))
+	assertPathValue(t, reg, ks, got[thenPoint], errorKey, product.Bottom(reg))
 }
 
 func TestFactsEdgeTransferDescendantLiteralRefinesExactPathWithoutVariantOrigin(t *testing.T) {
@@ -492,6 +499,7 @@ func TestFactsEdgeTransferDescendantLiteralRefinesExactPathWithoutVariantOrigin(
 	visibilityBuilder.SetVisible(thenPoint, target, version)
 	visibilityBuilder.SetVisible(elsePoint, target, version)
 	resolver := visibility.NewResolver(visibilityBuilder.Build())
+	ks := resolver.KeySpace()
 	kindKey := resolver.KeyForVersion(target, version.ID, kindPath.Segments)
 	lit := typ.LiteralString("ready")
 	refinement := factflow.NewValueConstraint(typeValue(reg, lit))
@@ -515,8 +523,8 @@ func TestFactsEdgeTransferDescendantLiteralRefinesExactPathWithoutVariantOrigin(
 		}),
 	})
 
-	assertPathValue(t, reg, got[thenPoint], kindKey, typeValue(reg, lit))
-	assertPathValue(t, reg, got[elsePoint], kindKey, product.Bottom(reg))
+	assertPathValue(t, reg, ks, got[thenPoint], kindKey, typeValue(reg, lit))
+	assertPathValue(t, reg, ks, got[elsePoint], kindKey, product.Bottom(reg))
 }
 
 func TestFactsEdgeTransferPresentAliasLiteralRefinesOptionalUnionDescendant(t *testing.T) {
@@ -620,6 +628,7 @@ func TestFactsEdgeTransferDescendantLiteralNarrowsRootOriginFromFlowType(t *test
 	visibilityBuilder.SetVisible(thenPoint, target, version)
 	visibilityBuilder.SetVisible(elsePoint, target, version)
 	resolver := visibility.NewResolver(visibilityBuilder.Build())
+	ks := resolver.KeySpace()
 	lit := typ.LiteralString("box")
 	refinement := factflow.NewValueConstraint(typeValue(reg, lit))
 	initial := state.State{}.
@@ -642,7 +651,7 @@ func TestFactsEdgeTransferDescendantLiteralNarrowsRootOriginFromFlowType(t *test
 	})
 
 	assertVariantOriginType(t, reg, got[thenPoint], target, rootType, box)
-	assertPathValue(t, reg, got[thenPoint], resolver.KeyForVersion(target, version.ID, rootPath.Field("node").Field("left").Segments), product.Bottom(reg))
+	assertPathValue(t, reg, ks, got[thenPoint], resolver.KeyForVersion(target, version.ID, rootPath.Field("node").Field("left").Segments), product.Bottom(reg))
 }
 
 func TestFactsEdgeTransferRuntimeKindContradictionGoesBottom(t *testing.T) {

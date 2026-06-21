@@ -68,17 +68,35 @@ func projectUnionWithoutNil(u *typ.Union, mode nilProjectionMode) (typ.Type, boo
 	if u == nil {
 		return typ.Never, false
 	}
-	members := make([]typ.Type, 0, len(u.Members))
 	nilable := false
+	keptCount := 0
+	for _, member := range u.Members {
+		normalized := unwrap.NormalizeNil(member)
+		if normalized == nil {
+			continue
+		}
+		nonNil, memberNilable := withoutNil(normalized, mode)
+		if memberNilable {
+			nilable = true
+		}
+		if nonNil == nil {
+			nonNil = normalized
+		}
+		if nonNil.Kind().IsNever() {
+			continue
+		}
+		keptCount++
+	}
+	if !nilable {
+		return u, false
+	}
+	members := make([]typ.Type, 0, keptCount)
 	for _, member := range u.Members {
 		member = unwrap.NormalizeNil(member)
 		if member == nil {
 			continue
 		}
-		nonNil, memberNilable := withoutNil(member, mode)
-		if memberNilable {
-			nilable = true
-		}
+		nonNil, _ := withoutNil(member, mode)
 		if nonNil == nil {
 			nonNil = member
 		}
@@ -86,9 +104,6 @@ func projectUnionWithoutNil(u *typ.Union, mode nilProjectionMode) (typ.Type, boo
 			continue
 		}
 		members = append(members, nonNil)
-	}
-	if !nilable {
-		return u, false
 	}
 	if len(members) == 0 {
 		return typ.Never, true

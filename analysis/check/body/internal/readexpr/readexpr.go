@@ -257,7 +257,7 @@ func overlayRootStaticMemberWitness(config Config, point cfg.Point, root pathdom
 	if !ok || len(rootLocal.Segments) != 0 {
 		return value
 	}
-	snapshot := in.PathStaticMembersSnapshot()
+	snapshot := in.PathStaticMembersSnapshot(config.Visibility.KeySpace())
 	if snapshot.Bottom || len(snapshot.Members) == 0 {
 		return value
 	}
@@ -582,7 +582,7 @@ func dropInBoundsIndexNil(config Config, point cfg.Point, p pathdom.Path, in sta
 	if arrayKey == "" {
 		return value
 	}
-	floor, ok := in.ReadLenFloor(arrayKey)
+	floor, ok := in.ReadLenFloor(config.Visibility.KeySpace(), arrayKey)
 	if !ok || floor < int64(last.Index) {
 		return value
 	}
@@ -653,7 +653,7 @@ func projectFromHeapIdentity(config Config, point cfg.Point, p pathdom.Path, in 
 	rootProjected := product.Value{}
 	hasRootProjected := false
 	if rootValue, ok := sourcevalue.ReadPathValue(reg, config.Visibility, point, root, in); ok {
-		if projected, ok := sourcevalue.HeapMemberFromValue(reg, in, rootValue, p.Segments); ok {
+		if projected, ok := sourcevalue.HeapMemberFromValue(reg, config.Visibility.KeySpace(), in, rootValue, p.Segments); ok {
 			rootProjected = projected
 			hasRootProjected = true
 		}
@@ -661,7 +661,7 @@ func projectFromHeapIdentity(config Config, point cfg.Point, p pathdom.Path, in 
 
 	parent := p.Parent()
 	parentValue, _ := project(config, point, parent, in, false)
-	if projected, ok := sourcevalue.HeapMemberFromValue(reg, in, parentValue, p.Segments[len(p.Segments)-1:]); ok {
+	if projected, ok := sourcevalue.HeapMemberFromValue(reg, config.Visibility.KeySpace(), in, parentValue, p.Segments[len(p.Segments)-1:]); ok {
 		if hasRootProjected {
 			if merged := product.Meet(reg, rootProjected, projected); !product.Equal(reg, merged, product.Bottom(reg)) {
 				return merged, true

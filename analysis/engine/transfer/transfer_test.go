@@ -294,7 +294,7 @@ func TestTransferPackageDoesNotImportLuaCompilerOldASTOrAssertionPackages(t *tes
 func assertValue(t *testing.T, reg *axis.Registry, gotState state.State, slot key.Value, want product.Value) {
 	t.Helper()
 	if got := gotState.ReadValue(reg, slot); !product.Equal(reg, got, want) {
-		t.Fatalf("slot %s = %s, want %s", slot, formatValue(reg, got), formatValue(reg, want))
+		t.Fatalf("slot %v = %s, want %s", slot, formatValue(reg, got), formatValue(reg, want))
 	}
 }
 

@@ -59,6 +59,7 @@ func newCanonicalUnion(members []Type, memberHashes []uint64) Type {
 	containsNever := false
 	containsTypeParam := false
 	containsInstantiated := false
+	containsGeneric := false
 	containsRecursive := false
 	containsOpenRecursive := false
 	for i, m := range membersCopy {
@@ -74,6 +75,9 @@ func newCanonicalUnion(members []Type, memberHashes []uint64) Type {
 		}
 		if !containsInstantiated && knownContainsInstantiated(m) {
 			containsInstantiated = true
+		}
+		if !containsGeneric && knownContainsGeneric(m) {
+			containsGeneric = true
 		}
 		if !containsRecursive && knownContainsRecursive(m) {
 			containsRecursive = true
@@ -91,6 +95,7 @@ func newCanonicalUnion(members []Type, memberHashes []uint64) Type {
 		containsNever:         containsNever,
 		containsTypeParam:     containsTypeParam,
 		containsInstantiated:  containsInstantiated,
+		containsGeneric:       containsGeneric,
 		containsRecursive:     containsRecursive,
 		containsOpenRecursive: containsOpenRecursive,
 	}

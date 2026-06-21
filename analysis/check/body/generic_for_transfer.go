@@ -3,6 +3,7 @@ package body
 import (
 	"github.com/wippyai/go-lua/analysis/domain/effect"
 	"github.com/wippyai/go-lua/analysis/domain/effect/iteration"
+	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
@@ -33,6 +34,7 @@ func genericForNodeTransfer(
 	typeResolver *typeresolve.Resolver,
 	typeValues *typevalue.Cache,
 	callOutcome callpayload.CallOutcomeProvider,
+	ks *keyspace.KeySpace,
 ) transfer.NodeTransfer {
 	expressionRefinements := facts.ExpressionRefinements()
 	return func(ctx transfer.NodeContext, in state.State) state.State {
@@ -48,7 +50,7 @@ func genericForNodeTransfer(
 			fact.VariableIndex < 0 || fact.VariableIndex >= len(fact.Symbols) {
 			return out
 		}
-		value, ok := genericForVariableValue(ctx, typeValues, fact, facts, expressionRefinements, sources, signatures, signatureID, typeResolver, callOutcome, in)
+		value, ok := genericForVariableValue(ctx, typeValues, fact, facts, expressionRefinements, sources, signatures, signatureID, typeResolver, callOutcome, ks, in)
 		if !ok {
 			return out
 		}
@@ -71,6 +73,7 @@ func genericForVariableValue(
 	signatureID *signatureIdentityResolver,
 	typeResolver *typeresolve.Resolver,
 	callOutcome callpayload.CallOutcomeProvider,
+	ks *keyspace.KeySpace,
 	in state.State,
 ) (product.Value, bool) {
 	if len(generic.Sources) == 0 {
@@ -106,7 +109,7 @@ func genericForVariableValue(
 	if !ok {
 		return product.Value{}, false
 	}
-	if value, ok := genericForLiteralContainerVariableValue(ctx, iter, generic.VariableIndex, facts, refinedSources, sourceValue, argSource, in); ok {
+	if value, ok := genericForLiteralContainerVariableValue(ctx, iter, generic.VariableIndex, facts, refinedSources, sourceValue, argSource, ks, in); ok {
 		return value, true
 	}
 	return luasourcevalue.IteratorVariableValue(ctx.Registry, typeValues, iter, generic.VariableIndex, sourceValue, assertedSourceType, hasAssertedSourceType)
@@ -197,12 +200,13 @@ func genericForLiteralContainerVariableValue(
 	sources sourcevalue.SourceValues,
 	sourceValue product.Value,
 	source factflow.ValueSource,
+	ks *keyspace.KeySpace,
 	in state.State,
 ) (product.Value, bool) {
 	if variableIndex != 1 || iter.Kind != iteration.IterateIndexed || !source.HasExpr {
 		return product.Value{}, false
 	}
-	if value, ok := genericForHeapContainerVariableValue(ctx, iter, sourceValue, in); ok {
+	if value, ok := genericForHeapContainerVariableValue(ctx, iter, ks, sourceValue, in); ok {
 		return value, true
 	}
 	literal, ok := facts.ObjectLiteral(source.ExprRef)
@@ -229,7 +233,7 @@ func genericForLiteralContainerVariableValue(
 	return out, seen
 }
 
-func genericForHeapContainerVariableValue(ctx transfer.NodeContext, iter iteration.Iterator, sourceValue product.Value, in state.State) (product.Value, bool) {
+func genericForHeapContainerVariableValue(ctx transfer.NodeContext, iter iteration.Iterator, ks *keyspace.KeySpace, sourceValue product.Value, in state.State) (product.Value, bool) {
 	id, ok := product.Get(ctx.Registry, sourceValue, identity.Key).ID()
 	if !ok {
 		return product.Value{}, false
@@ -241,7 +245,7 @@ func genericForHeapContainerVariableValue(ctx transfer.NodeContext, iter iterati
 	var out product.Value
 	seen := false
 	for key, value := range object.StaticMembers() {
-		segs, ok := segment.ParseFormattedSegments(string(key))
+		segs, ok := ks.SuffixSegments(key)
 		if !ok || len(segs) != 1 || !genericForDirectContainerSegment(iter, segs[0]) {
 			continue
 		}

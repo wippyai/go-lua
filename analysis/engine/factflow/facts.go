@@ -14,6 +14,7 @@ type FactsInput struct {
 	PathStaticMemberWrites      map[cfg.Point]PathStaticMemberWrite
 	DynamicIndexWrites          map[cfg.Point]DynamicIndexWrite
 	PathDescendantInvalidations map[cfg.Point]PathDescendantInvalidation
+	CovariantExposures          map[cfg.Point][]CovariantExposure
 	NoNormalReturns             map[cfg.Point]struct{}
 	BranchRefinements           map[cfg.Point]BranchRefinementSet
 	BranchPresenceRelations     map[cfg.Point]BranchPresenceRelationSet
@@ -42,6 +43,7 @@ type Facts struct {
 	pathStaticMemberWrites      map[cfg.Point]PathStaticMemberWrite
 	dynamicIndexWrites          map[cfg.Point]DynamicIndexWrite
 	pathDescendantInvalidations map[cfg.Point]PathDescendantInvalidation
+	covariantExposures          map[cfg.Point][]CovariantExposure
 	noNormalReturns             map[cfg.Point]struct{}
 	branchRefinements           map[cfg.Point]BranchRefinementSet
 	branchPresenceRelations     map[cfg.Point]BranchPresenceRelationSet
@@ -71,6 +73,7 @@ func NewFacts(input FactsInput) Facts {
 		pathStaticMemberWrites:      copyPathStaticMemberWriteMap(input.PathStaticMemberWrites),
 		dynamicIndexWrites:          copyDynamicIndexWriteMap(input.DynamicIndexWrites),
 		pathDescendantInvalidations: copyPathDescendantInvalidationMap(input.PathDescendantInvalidations),
+		covariantExposures:          copyCovariantExposureMap(input.CovariantExposures),
 		noNormalReturns:             copyNoNormalReturnMap(input.NoNormalReturns),
 		branchRefinements:           copyBranchRefinementSetMap(input.BranchRefinements),
 		branchPresenceRelations:     copyBranchPresenceRelationMap(input.BranchPresenceRelations),
@@ -217,6 +220,19 @@ func (f Facts) PathDescendantInvalidation(point cfg.Point) (PathDescendantInvali
 		return PathDescendantInvalidation{}, false
 	}
 	return fact.copy(), true
+}
+
+// CovariantExposures returns the covariant mutable-view exposures at point.
+func (f Facts) CovariantExposures(point cfg.Point) []CovariantExposure {
+	exposures := f.covariantExposures[point]
+	if len(exposures) == 0 {
+		return nil
+	}
+	out := make([]CovariantExposure, len(exposures))
+	for i := range exposures {
+		out[i] = exposures[i].copy()
+	}
+	return out
 }
 
 // NoNormalReturn reports whether point cannot complete normally.

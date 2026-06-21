@@ -4,7 +4,7 @@ package numbound
 import (
 	"github.com/wippyai/go-lua/analysis/domain/lattice"
 	"github.com/wippyai/go-lua/analysis/domain/lattice/lift"
-	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/engine/state/internal/floor"
 )
 
@@ -17,8 +17,8 @@ type Floor struct {
 	Lo int64
 }
 
-func MapDomain() lattice.Lattice[lift.MustMapLane[pathdom.PathKey, Floor]] {
-	return lift.MustMap[pathdom.PathKey, Floor](elemDomain())
+func MapDomain() lattice.Lattice[lift.MustMapLane[keyspace.Key, Floor]] {
+	return lift.MustMap[keyspace.Key, Floor](elemDomain())
 }
 
 func elemDomain() lattice.Lattice[Floor] {

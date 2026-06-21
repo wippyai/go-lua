@@ -22,6 +22,7 @@ type Union struct {
 	containsNever         bool
 	containsTypeParam     bool
 	containsInstantiated  bool
+	containsGeneric       bool
 	containsRecursive     bool
 	containsOpenRecursive bool
 	strCache              stringCache

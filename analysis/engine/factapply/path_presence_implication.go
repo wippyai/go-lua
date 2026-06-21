@@ -209,10 +209,11 @@ func applyPathPresenceImplicationTarget(
 	if !presenceIsConcrete(implication.TargetPresence) || !pathKeyCurrentlyVisible(resolver, point, implication.Target) {
 		return out
 	}
+	ks := resolver.KeySpace()
 	constraint := product.NewWithPresence(reg, product.ShapeTop, implication.TargetPresence)
 	if sym, ok := rootSymbolForResolverPathKey(implication.Target); ok {
 		if presenceImplicationTargetInvalidatesDescendants(implication.TargetPresence) {
-			if invalidated, valid := out.InvalidatePathKeyDescendants(implication.Target); valid {
+			if invalidated, valid := out.InvalidatePathKeyDescendants(ks, implication.Target); valid {
 				out = invalidated
 			}
 		}
@@ -221,11 +222,11 @@ func applyPathPresenceImplicationTarget(
 			return product.Meet(reg, value, constraint)
 		})
 	}
-	current := out.ReadPathKey(reg, implication.Target)
+	current := out.ReadPathKey(reg, ks, implication.Target)
 	if product.Equal(reg, current, product.Bottom(reg)) {
-		return out.WritePathKey(reg, implication.Target, constraint)
+		return out.WritePathKey(reg, ks, implication.Target, constraint)
 	}
-	return out.WritePathKey(reg, implication.Target, product.Meet(reg, current, constraint))
+	return out.WritePathKey(reg, ks, implication.Target, product.Meet(reg, current, constraint))
 }
 
 func presenceImplicationTargetInvalidatesDescendants(target presence.Value) bool {
@@ -245,7 +246,7 @@ func readPathKeyPresence(
 	if sym, ok := rootSymbolForResolverPathKey(pathKey); ok {
 		return product.PresenceOf(out.ReadValue(reg, key.SymbolValue(sym))), true
 	}
-	return product.PresenceOf(out.ReadPathKey(reg, pathKey)), true
+	return product.PresenceOf(out.ReadPathKey(reg, resolver.KeySpace(), pathKey)), true
 }
 
 func pathKeyCurrentlyVisible(resolver *visibility.Resolver, point cfg.Point, pathKey pathdom.PathKey) bool {

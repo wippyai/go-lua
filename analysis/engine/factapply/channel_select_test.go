@@ -232,9 +232,10 @@ func TestFactsEdgeTransferChannelSelectEqualityNarrowsPayload(t *testing.T) {
 	visibilityBuilder.Define(branch, events, "events_ch")
 	visibilityBuilder.Define(branch, stop, "stop_ch")
 	resolver := visibility.NewResolver(visibilityBuilder.Build())
+	ks := resolver.KeySpace()
 	initial := state.State{}.
 		WriteValue(reg, key.SymbolValue(result), resultValue).
-		WritePathKey(reg, pathdom.PathKey("sym724@1.value"), typeValue(reg, stopPayload)).
+		WritePathKey(reg, ks, pathdom.PathKey("sym724@1.value"), typeValue(reg, stopPayload)).
 		AddChannelSelectFact(channelselectfact.Fact{
 			Select: channelselectfact.ID(selectID),
 			Kind:   channelselectfact.FactReceive,
@@ -268,7 +269,7 @@ func TestFactsEdgeTransferChannelSelectEqualityNarrowsPayload(t *testing.T) {
 
 	thenValue := got[thenPoint].ReadValue(reg, key.SymbolValue(result))
 	assertChannelSelectCasePayload(t, reg, thenValue, channelselectfact.ID(selectID), 0, eventPayload)
-	if got := got[thenPoint].ReadPathKey(reg, pathdom.PathKey("sym724@1.value")); !product.Equal(reg, got, product.Bottom(reg)) {
+	if got := got[thenPoint].ReadPathKey(reg, ks, pathdom.PathKey("sym724@1.value")); !product.Equal(reg, got, product.Bottom(reg)) {
 		t.Fatalf("stale result.value path = %s, want bottom", formatValue(reg, got))
 	}
 }
@@ -383,9 +384,10 @@ func TestFactsEdgeTransferChannelSelectInequalityRemovesCase(t *testing.T) {
 	visibilityBuilder.Define(branch, events, "events_ch")
 	visibilityBuilder.Define(branch, stop, "stop_ch")
 	resolver := visibility.NewResolver(visibilityBuilder.Build())
+	ks := resolver.KeySpace()
 	initial := state.State{}.
 		WriteValue(reg, key.SymbolValue(result), resultValue).
-		WritePathKey(reg, pathdom.PathKey("sym824@1.value"), typeValue(reg, eventPayload)).
+		WritePathKey(reg, ks, pathdom.PathKey("sym824@1.value"), typeValue(reg, eventPayload)).
 		AddChannelSelectFact(channelselectfact.Fact{
 			Select: channelselectfact.ID(selectID),
 			Kind:   channelselectfact.FactReceive,
@@ -420,7 +422,7 @@ func TestFactsEdgeTransferChannelSelectInequalityRemovesCase(t *testing.T) {
 	elseValue := got[elsePoint].ReadValue(reg, key.SymbolValue(result))
 	assertNoChannelSelectCasePayload(t, reg, elseValue, channelselectfact.ID(selectID), 0)
 	assertChannelSelectCasePayload(t, reg, elseValue, channelselectfact.ID(selectID), 1, stopPayload)
-	if got := got[elsePoint].ReadPathKey(reg, pathdom.PathKey("sym824@1.value")); !product.Equal(reg, got, product.Bottom(reg)) {
+	if got := got[elsePoint].ReadPathKey(reg, ks, pathdom.PathKey("sym824@1.value")); !product.Equal(reg, got, product.Bottom(reg)) {
 		t.Fatalf("stale result.value path = %s, want bottom", formatValue(reg, got))
 	}
 }
@@ -458,9 +460,10 @@ func TestFactsEdgeTransferChannelSelectInequalityRemovesDuplicateCasePathIndexes
 	visibilityBuilder.Define(branch, events, "events_ch")
 	visibilityBuilder.Define(branch, stop, "stop_ch")
 	resolver := visibility.NewResolver(visibilityBuilder.Build())
+	ks := resolver.KeySpace()
 	initial := state.State{}.
 		WriteValue(reg, key.SymbolValue(result), resultValue).
-		WritePathKey(reg, pathdom.PathKey("sym844@1.value"), typeValue(reg, eventPayload)).
+		WritePathKey(reg, ks, pathdom.PathKey("sym844@1.value"), typeValue(reg, eventPayload)).
 		AddChannelSelectFact(channelselectfact.Fact{
 			Select: channelselectfact.ID(selectID),
 			Kind:   channelselectfact.FactReceive,
@@ -503,7 +506,7 @@ func TestFactsEdgeTransferChannelSelectInequalityRemovesDuplicateCasePathIndexes
 	assertNoChannelSelectCasePayload(t, reg, elseValue, channelselectfact.ID(selectID), 0)
 	assertNoChannelSelectCasePayload(t, reg, elseValue, channelselectfact.ID(selectID), 1)
 	assertChannelSelectCasePayload(t, reg, elseValue, channelselectfact.ID(selectID), 2, stopPayload)
-	if got := got[elsePoint].ReadPathKey(reg, pathdom.PathKey("sym844@1.value")); !product.Equal(reg, got, product.Bottom(reg)) {
+	if got := got[elsePoint].ReadPathKey(reg, ks, pathdom.PathKey("sym844@1.value")); !product.Equal(reg, got, product.Bottom(reg)) {
 		t.Fatalf("stale result.value path = %s, want bottom", formatValue(reg, got))
 	}
 }
@@ -546,9 +549,10 @@ func TestFactsEdgeTransferChannelSelectInequalityPreservesDefaultCase(t *testing
 	visibilityBuilder.Define(branch, result, "result")
 	visibilityBuilder.Define(branch, events, "events_ch")
 	resolver := visibility.NewResolver(visibilityBuilder.Build())
+	ks := resolver.KeySpace()
 	initial := state.State{}.
 		WriteValue(reg, key.SymbolValue(result), resultValue).
-		WritePathKey(reg, pathdom.PathKey("sym834@1.value"), typeValue(reg, eventPayload)).
+		WritePathKey(reg, ks, pathdom.PathKey("sym834@1.value"), typeValue(reg, eventPayload)).
 		AddChannelSelectFact(channelselectfact.Fact{
 			Select:     channelselectfact.ID(selectID),
 			Kind:       channelselectfact.FactSelect,
@@ -583,7 +587,7 @@ func TestFactsEdgeTransferChannelSelectInequalityPreservesDefaultCase(t *testing
 	elseValue := got[elsePoint].ReadValue(reg, key.SymbolValue(result))
 	assertNoChannelSelectCasePayload(t, reg, elseValue, channelselectfact.ID(selectID), 0)
 	assertChannelSelectCasePayload(t, reg, elseValue, channelselectfact.ID(selectID), channelselect.DefaultCaseIndex, typ.Nil)
-	if got := got[elsePoint].ReadPathKey(reg, pathdom.PathKey("sym834@1.value")); !product.Equal(reg, got, product.Bottom(reg)) {
+	if got := got[elsePoint].ReadPathKey(reg, ks, pathdom.PathKey("sym834@1.value")); !product.Equal(reg, got, product.Bottom(reg)) {
 		t.Fatalf("stale result.value path = %s, want bottom", formatValue(reg, got))
 	}
 }
@@ -622,12 +626,13 @@ func TestFactsEdgeTransferChannelSelectEqualityMatchesDriftingVersions(t *testin
 	visibilityBuilder.SetVisible(branch, events, ssa.Version{Root: "events_ch", Symbol: events, ID: 2})
 	visibilityBuilder.SetVisible(branch, stop, ssa.Version{Root: "stop_ch", Symbol: stop, ID: 2})
 	resolver := visibility.NewResolver(visibilityBuilder.Build())
+	ks := resolver.KeySpace()
 	got := transfer.Run(transfer.Config{
 		Graph:    graph,
 		Registry: reg,
 		EntryState: state.State{}.
 			WriteValue(reg, key.SymbolValue(result), resultValue).
-			WritePathKey(reg, pathdom.PathKey("sym724@2.value"), typeValue(reg, stopPayload)).
+			WritePathKey(reg, ks, pathdom.PathKey("sym724@2.value"), typeValue(reg, stopPayload)).
 			AddChannelSelectFact(channelselectfact.Fact{
 				Select: channelselectfact.ID(selectID),
 				Kind:   channelselectfact.FactReceive,
@@ -656,7 +661,7 @@ func TestFactsEdgeTransferChannelSelectEqualityMatchesDriftingVersions(t *testin
 
 	thenValue := got[thenPoint].ReadValue(reg, key.SymbolValue(result))
 	assertChannelSelectCasePayload(t, reg, thenValue, channelselectfact.ID(selectID), 0, eventPayload)
-	if got := got[thenPoint].ReadPathKey(reg, pathdom.PathKey("sym724@2.value")); !product.Equal(reg, got, product.Bottom(reg)) {
+	if got := got[thenPoint].ReadPathKey(reg, ks, pathdom.PathKey("sym724@2.value")); !product.Equal(reg, got, product.Bottom(reg)) {
 		t.Fatalf("stale result.value path = %s, want bottom", formatValue(reg, got))
 	}
 }

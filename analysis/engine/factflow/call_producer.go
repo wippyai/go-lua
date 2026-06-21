@@ -53,6 +53,11 @@ func (c CallProducer) CalleeSymbol() symbol.ID { return c.calleeSymbol }
 // CalleePath returns the callee's path identity.
 func (c CallProducer) CalleePath() path.Path { return c.calleePath.Clone() }
 
+// CalleePathRef returns the callee path without a defensive copy for read-only
+// use. The returned path shares the fact's segment storage and must never be
+// mutated in place.
+func (c CallProducer) CalleePathRef() path.Path { return c.calleePath }
+
 // ResultTargets returns the targets that consume this call's results.
 func (c CallProducer) ResultTargets() []CallResultTarget {
 	return copyCallResultTargets(c.resultTargets)

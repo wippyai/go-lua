@@ -3,10 +3,10 @@ package projectsummary
 import (
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/summary"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
-	"github.com/wippyai/go-lua/analysis/engine/state/heapidentity"
 )
 
 type objectLiteralExprReader interface {
@@ -32,6 +32,9 @@ func projectReturnParamPathAliases(result ResultReader) []summary.ReturnParamPat
 			continue
 		}
 		for returnIndex, source := range sources {
+			if alias, ok := directReturnParamAlias(returnIndex, source, params, result, pathReader); ok {
+				out = append(out, alias)
+			}
 			out = append(out, projectReturnSourceParamAliases(
 				returnIndex,
 				nil,
@@ -77,7 +80,7 @@ func projectReturnSourceParamAliases(
 	for _, entry := range lit.Entries() {
 		entrySource := entry.Source()
 		memberSegments := appendSegments(prefix, entry.Suffix().Segments)
-		memberKey, ok := heapidentity.StaticMemberSuffixKey(memberSegments)
+		memberKey, ok := pathaddr.RelativeStaticMemberSuffixKey(memberSegments)
 		if !ok {
 			continue
 		}
@@ -104,6 +107,38 @@ func projectReturnSourceParamAliases(
 		}
 	}
 	return out
+}
+
+// directReturnParamAlias records a return slot that returns a parameter object
+// directly (return o), with an empty Member. The returned reference and the
+// parameter name the same runtime object, so the caller binds the result at the
+// declared return type while the argument keeps its narrower declared type; a
+// write through the wider returned reference can launder a wider value back into
+// the argument. The empty Member marks the whole return slot as the aliased view
+// so the call boundary widens the argument toward the full declared return type.
+func directReturnParamAlias(
+	returnIndex int,
+	source factflow.ValueSource,
+	params []pathdom.Path,
+	result ResultReader,
+	pathReader expressionPathRefReader,
+) (summary.ReturnParamPathAlias, bool) {
+	if returnIndex < 0 || source.Kind != factflow.ValueSourceExpression || !source.HasExpr {
+		return summary.ReturnParamPathAlias{}, false
+	}
+	sourcePath, ok := pathReader.ExpressionPathRef(source.ExprRef)
+	if !ok || sourcePath.Symbol == 0 || len(sourcePath.Segments) != 0 {
+		return summary.ReturnParamPathAlias{}, false
+	}
+	placeholder, ok := returnAliasPlaceholderPath(sourcePath, params, result)
+	if !ok || len(placeholder.Segments) != 0 {
+		return summary.ReturnParamPathAlias{}, false
+	}
+	return summary.ReturnParamPathAlias{
+		ReturnIndex: returnIndex,
+		Member:      "",
+		Source:      placeholder.Key(),
+	}, true
 }
 
 func returnAliasPlaceholderPath(
@@ -138,7 +173,7 @@ func returnAliasParamReassigned(index int, params []pathdom.Path, result ResultR
 		return true
 	}
 	slot := key.SymbolValue(params[index].Symbol)
-	if slot == "" {
+	if slot == 0 {
 		return true
 	}
 	reassignedReader, ok := result.(reassignedParameterValueSlotReader)

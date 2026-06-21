@@ -21,10 +21,10 @@ func StructuralTypeOf(reg *axis.Registry, cache *Cache, value product.Value, opt
 		if t, ok := witness.Type(); ok {
 			t = structuralTypeWithPresence(t, valuePresence, opts)
 			if !origin.IsBottom() && !origin.IsTop() {
-				if narrowed, ok := cache.NarrowVariantByOrigin(t, origin.Family(), origin.Cases()); ok {
+				if narrowed, ok := cache.NarrowVariantByOrigin(t, origin.Family(), origin.CasesRef()); ok {
 					return narrowed, true
 				}
-				if narrowed, ok := cache.TypeFromVariantOrigin(origin.Family(), origin.Cases()); ok {
+				if narrowed, ok := cache.TypeFromVariantOrigin(origin.Family(), origin.CasesRef()); ok {
 					return structuralTypeWithPresence(narrowed, valuePresence, opts), true
 				}
 			}
@@ -32,7 +32,7 @@ func StructuralTypeOf(reg *axis.Registry, cache *Cache, value product.Value, opt
 		}
 	}
 	if !origin.IsBottom() && !origin.IsTop() {
-		if t, ok := cache.TypeFromVariantOrigin(origin.Family(), origin.Cases()); ok {
+		if t, ok := cache.TypeFromVariantOrigin(origin.Family(), origin.CasesRef()); ok {
 			return structuralTypeWithPresence(t, valuePresence, opts), true
 		}
 	}

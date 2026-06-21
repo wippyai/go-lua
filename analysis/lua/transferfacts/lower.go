@@ -10,6 +10,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
+	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
 	"github.com/wippyai/go-lua/analysis/lua/typeresolve"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/type/typ"
@@ -83,6 +84,13 @@ func Lower(result *semantics.Result, graph cfg.Graph, config Config) factflow.Fa
 				l.addAssertionRefinementsForSource(&input, fact.Source)
 				l.addObjectLiteral(&input, result, fact.Source)
 				l.addObjectLiteralExpectedType(&input, fact)
+				l.addLocalAliasExposure(&input, point, fact)
+				if fact.Source.Kind == sourceprovenance.SourceExpression {
+					l.addCastExposure(&input, point, fact.Source.Expr)
+				}
+				if declared, ok := l.resolveType(fact.Type); ok {
+					l.addObjectLiteralFieldExposures(&input, result, point, fact.Source, declared)
+				}
 			}
 		}
 		if fact, ok := result.OrdinaryAssignment(point); ok {
@@ -93,11 +101,16 @@ func Lower(result *semantics.Result, graph cfg.Graph, config Config) factflow.Fa
 				}
 				l.addAssertionRefinementsForSource(&input, fact.Source)
 				l.addObjectLiteral(&input, result, fact.Source)
+				l.addStoreExposure(&input, point, fact)
 			} else if lowered, ok := l.ordinaryAssignment(fact); ok {
 				input.RootAssignments[point] = lowered
 				l.addAssertionRefinementsForSource(&input, fact.Source)
 				l.addObjectLiteral(&input, result, fact.Source)
 				l.addOrdinaryObjectLiteralExpectedType(&input, fact)
+				l.addReassignExposure(&input, point, fact)
+				if declared, ok := l.symbolTypes[fact.Symbol]; ok {
+					l.addObjectLiteralFieldExposures(&input, result, point, fact.Source, declared)
+				}
 			}
 			if lowered, ok := l.dynamicIndexWrite(fact); ok {
 				input.DynamicIndexWrites[point] = lowered

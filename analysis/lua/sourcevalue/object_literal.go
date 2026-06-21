@@ -126,16 +126,6 @@ func adoptExpectedEntryFieldType(rec *typ.Record, entry factflow.ObjectEntryView
 	return luatypeprojection.AdoptExpectedSegmentType(rec, seg, inferred)
 }
 
-func objectLiteralDotFieldType(
-	reg *axis.Registry,
-	typeValues *typevalue.Cache,
-	lit factflow.ObjectLiteral,
-	resolve func(factflow.ValueSource) (product.Value, bool),
-	name string,
-) (typ.Type, bool) {
-	return objectLiteralDotFieldTypeView(reg, typeValues, lit.View(), resolve, name)
-}
-
 func objectLiteralDotFieldTypeView(
 	reg *axis.Registry,
 	typeValues *typevalue.Cache,
@@ -173,7 +163,7 @@ func ObjectLiteralEntryType(reg *axis.Registry, typeValues *typevalue.Cache, val
 		}
 		origin := product.Get(reg, value, variantoriginpkg.Key)
 		if !origin.IsBottom() && !origin.IsTop() {
-			if narrowed, ok := typeValues.NarrowVariantByOrigin(t, origin.Family(), origin.Cases()); ok {
+			if narrowed, ok := typeValues.NarrowVariantByOrigin(t, origin.Family(), origin.CasesRef()); ok {
 				return narrowed, true
 			}
 		}

@@ -2,7 +2,7 @@ package sourcevalue
 
 import (
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
-	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
+	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
@@ -56,10 +56,11 @@ func ExactPathValue(
 	if pathKey == "" {
 		return product.Value{}, false
 	}
-	value := in.ReadPathKey(reg, pathKey)
+	ks := resolver.KeySpace()
+	value := in.ReadPathKey(reg, ks, pathKey)
 	if product.Equal(reg, value, product.Bottom(reg)) {
-		if canonical, ok := pathaddr.FieldCanonicalPathKey(pathKey); ok {
-			value = in.ReadPathKey(reg, canonical)
+		if canonical, ok := fieldCanonicalPathKey(ks, pathKey); ok {
+			value = in.ReadPathKey(reg, ks, canonical)
 		}
 		if product.Equal(reg, value, product.Bottom(reg)) {
 			return product.Value{}, false
@@ -70,13 +71,13 @@ func ExactPathValue(
 
 // HeapMemberFromValue reads a static heap-table member from a table identity
 // value.
-func HeapMemberFromValue(reg *axis.Registry, in state.State, value product.Value, suffix []segment.Segment) (product.Value, bool) {
+func HeapMemberFromValue(reg *axis.Registry, ks *keyspace.KeySpace, in state.State, value product.Value, suffix []segment.Segment) (product.Value, bool) {
 	ownerPresence := product.PresenceOf(value)
 	id, ok := product.Get(reg, value, identity.Key).ID()
 	if !ok {
 		return product.Value{}, false
 	}
-	key, ok := heapidentity.StaticMemberSuffixKey(suffix)
+	key, ok := heapidentity.StaticMemberSuffixKey(ks, suffix)
 	if !ok {
 		return product.Value{}, false
 	}
@@ -91,7 +92,7 @@ func HeapMemberFromValue(reg *axis.Registry, in state.State, value product.Value
 	}
 	member, ok := object.StaticMember(key)
 	if !ok {
-		if canonical, canonicalOK := pathaddr.FieldCanonicalRelativeStaticMemberSuffixKey(suffix); canonicalOK {
+		if canonical, canonicalOK := heapidentity.FieldCanonicalStaticMemberSuffixKey(ks, suffix); canonicalOK {
 			member, ok = object.StaticMember(canonical)
 		}
 	}
@@ -102,6 +103,21 @@ func HeapMemberFromValue(reg *axis.Registry, in state.State, value product.Value
 		member = product.WithPresence(reg, member, presence.Join(product.PresenceOf(member), ownerPresence))
 	}
 	return member, true
+}
+
+// fieldCanonicalPathKey interns pathKey, applies the field-canonical rewrite, and
+// re-emits the canonical state-key spelling. It returns false when pathKey is not
+// a recognized state key or the canonical spelling equals the original.
+func fieldCanonicalPathKey(ks *keyspace.KeySpace, pathKey pathdom.PathKey) (pathdom.PathKey, bool) {
+	key, ok := ks.FromStateKey(pathKey)
+	if !ok {
+		return "", false
+	}
+	canonical, ok := ks.FieldCanonical(key)
+	if !ok {
+		return "", false
+	}
+	return ks.Format(canonical), true
 }
 
 // RuntimeMayBeTable reports whether value could still be a table-like value.

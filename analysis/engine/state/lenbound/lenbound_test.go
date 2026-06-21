@@ -5,17 +5,19 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/domain/lattice/lift"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 )
 
-func keyOf(name string) pathdom.PathKey {
-	return pathdom.PathKey(name)
+func keyOf(ks *keyspace.KeySpace, t *testing.T, name string) keyspace.Key {
+	t.Helper()
+	k, ok := ks.FromStateKey(pathdom.PathKey(name))
+	if !ok {
+		t.Fatalf("FromStateKey(%q) failed", name)
+	}
+	return k
 }
 
-func floors(entries map[pathdom.PathKey]Floor) map[pathdom.PathKey]Floor {
-	return entries
-}
-
-func lift_mustValues(entries map[pathdom.PathKey]Floor) lift.MustMapLane[pathdom.PathKey, Floor] {
+func lift_mustValues(entries map[keyspace.Key]Floor) lift.MustMapLane[keyspace.Key, Floor] {
 	return lift.MustMapValues(entries)
 }
 
@@ -77,13 +79,16 @@ func TestElemWidenAscendingChainTerminates(t *testing.T) {
 
 func TestMapMustSemantics(t *testing.T) {
 	d := MapDomain()
-	a := lift_mustValues(floors(map[pathdom.PathKey]Floor{
-		keyOf("xs"): {Lo: 1},
-		keyOf("ys"): {Lo: 2},
-	}))
-	b := lift_mustValues(floors(map[pathdom.PathKey]Floor{
-		keyOf("xs"): {Lo: 3},
-	}))
+	ks := keyspace.New()
+	xs := keyOf(ks, t, "xs")
+	ys := keyOf(ks, t, "ys")
+	a := lift_mustValues(map[keyspace.Key]Floor{
+		xs: {Lo: 1},
+		ys: {Lo: 2},
+	})
+	b := lift_mustValues(map[keyspace.Key]Floor{
+		xs: {Lo: 3},
+	})
 
 	joined := d.Join(a, b)
 	vals := joined.Values()
@@ -91,19 +96,21 @@ func TestMapMustSemantics(t *testing.T) {
 	if len(vals) != 1 {
 		t.Fatalf("join must keep only common keys; got %d", len(vals))
 	}
-	if f, ok := vals[keyOf("xs")]; !ok || f.Lo != 1 {
+	if f, ok := vals[xs]; !ok || f.Lo != 1 {
 		t.Fatalf("common key floor must be min(1,3)=1; got %v ok=%v", f, ok)
 	}
-	if _, ok := vals[keyOf("ys")]; ok {
+	if _, ok := vals[ys]; ok {
 		t.Fatalf("non-common key must be dropped at the merge")
 	}
 }
 
 func TestMapWidenTerminates(t *testing.T) {
 	d := MapDomain()
-	acc := lift_mustValues(map[pathdom.PathKey]Floor{keyOf("xs"): {Lo: 1}})
+	ks := keyspace.New()
+	xs := keyOf(ks, t, "xs")
+	acc := lift_mustValues(map[keyspace.Key]Floor{xs: {Lo: 1}})
 	for i := int64(2); i < 1000; i++ {
-		next := lift_mustValues(map[pathdom.PathKey]Floor{keyOf("xs"): {Lo: i}})
+		next := lift_mustValues(map[keyspace.Key]Floor{xs: {Lo: i}})
 		widened := d.Widen(acc, next)
 		if d.Equal(widened, acc) {
 			return

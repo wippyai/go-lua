@@ -43,7 +43,7 @@ func numFloorForSource(
 	if p, ok := facts.ExpressionPath(source.ExprRef); ok {
 		pathKey := visibility.RootOrVisibleKeyAt(resolver, point, p)
 		if pathKey != "" {
-			if floor, ok := in.ReadNumFloor(pathKey); ok {
+			if floor, ok := in.ReadNumFloor(resolver.KeySpace(), pathKey); ok {
 				return floor, true
 			}
 		}

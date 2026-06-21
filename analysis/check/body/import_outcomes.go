@@ -27,7 +27,7 @@ func calleeValueProvider(
 	typeValues *typevalue.Cache,
 ) CalleeValueFunc {
 	return func(ctx transfer.NodeContext, site factflow.CallSiteView, in state.State, read func(cfg.Point) state.State) (product.Value, bool) {
-		p := site.CalleePath()
+		p := site.CalleePathRef()
 		if p.IsEmpty() {
 			return methodCalleeValue(reg, typeValues, sources, ctx, site, in, read)
 		}

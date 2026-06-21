@@ -2,7 +2,6 @@ package factflow
 
 import (
 	"github.com/wippyai/go-lua/analysis/domain/path"
-	"github.com/wippyai/go-lua/analysis/domain/path/address"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
@@ -69,17 +68,13 @@ func (v ObjectEntryView) AppendSuffixTo(root path.Path) (path.Path, bool) {
 	return root.AppendSegments(v.entry.suffix.Segments), true
 }
 
-// StaticMemberSuffixKey returns the canonical static-member key for this
-// relative suffix.
-func (v ObjectEntryView) StaticMemberSuffixKey() (path.PathKey, bool) {
-	return address.RelativeStaticMemberSuffixKey(v.entry.suffix.Segments)
-}
-
-// FieldCanonicalStaticMemberSuffixKey returns an equivalent suffix key with
-// static string indexes rewritten to field spelling, if that rewrite changes
-// the suffix.
-func (v ObjectEntryView) FieldCanonicalStaticMemberSuffixKey() (path.PathKey, bool) {
-	return address.FieldCanonicalRelativeStaticMemberSuffixKey(v.entry.suffix.Segments)
+// SuffixSegments returns a defensive copy of the relative static suffix
+// segments used to build the rootless static-member heap key.
+func (v ObjectEntryView) SuffixSegments() []segment.Segment {
+	if len(v.entry.suffix.Segments) == 0 {
+		return nil
+	}
+	return append([]segment.Segment(nil), v.entry.suffix.Segments...)
 }
 
 // WithExpected returns a copy carrying the contextual value contract for this

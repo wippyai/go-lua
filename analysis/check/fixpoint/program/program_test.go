@@ -921,7 +921,7 @@ func TestRunChunkUsesExactConfiguredRootKey(t *testing.T) {
 
 func contextEntryHasFunctionIdentity(reg *axis.Registry, contexts []keyedFunction) bool {
 	for _, context := range contexts {
-		snapshot := context.entryState.PathRefinementsSnapshot()
+		snapshot := context.entryState.PathRefinementsSnapshot(context.entryKeys)
 		if snapshot.Top {
 			continue
 		}

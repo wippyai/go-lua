@@ -4,8 +4,8 @@ package heapidentity
 import (
 	"github.com/wippyai/go-lua/analysis/domain/lattice"
 	"github.com/wippyai/go-lua/analysis/domain/lattice/lift"
-	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/address"
+	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
@@ -18,7 +18,7 @@ type TableObject struct {
 	bottom bool
 
 	root                 product.Value
-	staticMembers        map[pathdom.PathKey]product.Value
+	staticMembers        map[keyspace.Key]product.Value
 	dynamicIndexFacts    map[dynamicindex.Key]dynamicindex.Fact
 	dynamicIndexFactsTop bool
 }
@@ -26,7 +26,7 @@ type TableObject struct {
 // TableObjectConfig carries finite heap table object facts.
 type TableObjectConfig struct {
 	Root              product.Value
-	StaticMembers     map[pathdom.PathKey]product.Value
+	StaticMembers     map[keyspace.Key]product.Value
 	DynamicIndexFacts map[dynamicindex.Key]dynamicindex.Fact
 }
 
@@ -46,7 +46,7 @@ func NewTableObject(config TableObjectConfig) TableObject {
 // NewOwnedStaticTableObject creates a finite heap table object and takes
 // ownership of staticMembers. Callers must not mutate staticMembers after this
 // call. Use NewTableObject unless the map was freshly built for this object.
-func NewOwnedStaticTableObject(root product.Value, staticMembers map[pathdom.PathKey]product.Value) TableObject {
+func NewOwnedStaticTableObject(root product.Value, staticMembers map[keyspace.Key]product.Value) TableObject {
 	if len(staticMembers) == 0 {
 		staticMembers = nil
 	}
@@ -60,26 +60,26 @@ func NewOwnedStaticTableObject(root product.Value, staticMembers map[pathdom.Pat
 func (o TableObject) Root() product.Value { return o.root }
 
 // StaticMember reads a proven static member fact.
-func (o TableObject) StaticMember(key pathdom.PathKey) (product.Value, bool) {
+func (o TableObject) StaticMember(key keyspace.Key) (product.Value, bool) {
 	value, ok := o.staticMembers[key]
 	return value, ok
 }
 
 // StaticMembers returns a defensive copy of finite static member facts.
-func (o TableObject) StaticMembers() map[pathdom.PathKey]product.Value {
+func (o TableObject) StaticMembers() map[keyspace.Key]product.Value {
 	return clonePathMap(o.staticMembers)
 }
 
 // WithoutStaticMemberSubtree returns an object with any static-member fact at
 // prefix or below removed.
-func (o TableObject) WithoutStaticMemberSubtree(prefix []segment.Segment) (TableObject, bool) {
-	return o.withoutStaticMembersMatching(prefix, false)
+func (o TableObject) WithoutStaticMemberSubtree(ks *keyspace.KeySpace, prefix []segment.Segment) (TableObject, bool) {
+	return o.withoutStaticMembersMatching(ks, prefix, false)
 }
 
 // WithoutStaticMemberDescendants returns an object with static-member facts
 // strictly below prefix removed while preserving a fact exactly at prefix.
-func (o TableObject) WithoutStaticMemberDescendants(prefix []segment.Segment) (TableObject, bool) {
-	return o.withoutStaticMembersMatching(prefix, true)
+func (o TableObject) WithoutStaticMemberDescendants(ks *keyspace.KeySpace, prefix []segment.Segment) (TableObject, bool) {
+	return o.withoutStaticMembersMatching(ks, prefix, true)
 }
 
 // DynamicIndexFact reads a finite dynamic-index fact.
@@ -96,18 +96,29 @@ func (o TableObject) DynamicIndexFacts() map[dynamicindex.Key]dynamicindex.Fact 
 // StaticMemberSuffixKey returns the canonical heap static-member key for a
 // relative suffix. It intentionally encodes only the suffix segments so
 // rootless member facts do not collapse to an empty path key.
-func StaticMemberSuffixKey(segments []segment.Segment) (pathdom.PathKey, bool) {
-	return address.RelativeStaticMemberSuffixKey(segments)
+func StaticMemberSuffixKey(ks *keyspace.KeySpace, segments []segment.Segment) (keyspace.Key, bool) {
+	return ks.FromRootlessSuffix(segments)
 }
 
-func (o TableObject) withoutStaticMembersMatching(prefix []segment.Segment, descendantsOnly bool) (TableObject, bool) {
+// FieldCanonicalStaticMemberSuffixKey returns the equivalent rootless suffix key
+// with static string indexes rewritten to field spelling. It returns false when
+// no string-index segment is present.
+func FieldCanonicalStaticMemberSuffixKey(ks *keyspace.KeySpace, segments []segment.Segment) (keyspace.Key, bool) {
+	canonical, changed := address.FieldCanonicalSegments(segments)
+	if !changed {
+		return keyspace.Key{}, false
+	}
+	return ks.FromRootlessSuffix(canonical)
+}
+
+func (o TableObject) withoutStaticMembersMatching(ks *keyspace.KeySpace, prefix []segment.Segment, descendantsOnly bool) (TableObject, bool) {
 	if o.bottom || len(o.staticMembers) == 0 {
 		return o, false
 	}
 	out := CloneObject(o)
 	changed := false
 	for key := range out.staticMembers {
-		segments, ok := address.RelativeStaticMemberSuffixSegments(key)
+		segments, ok := ks.SuffixSegments(key)
 		if !ok {
 			continue
 		}
@@ -129,10 +140,43 @@ func (o TableObject) withoutStaticMembersMatching(prefix []segment.Segment, desc
 	return out, true
 }
 
+// Rekey re-interns the rootless static-member keys and dynamic-index table keys
+// from one keyspace into another so an object built under one analysis's keyspace
+// can be consumed under another's. It is a no-op when from == to or either
+// keyspace is nil.
+func (o TableObject) Rekey(from, to *keyspace.KeySpace) TableObject {
+	if from == nil || to == nil || from == to || o.bottom {
+		return o
+	}
+	if len(o.staticMembers) == 0 && len(o.dynamicIndexFacts) == 0 {
+		return o
+	}
+	out := CloneObject(o)
+	if len(o.staticMembers) != 0 {
+		rekeyed := make(map[keyspace.Key]product.Value, len(o.staticMembers))
+		for key, value := range o.staticMembers {
+			segments, ok := from.SuffixSegments(key)
+			if !ok {
+				continue
+			}
+			next, ok := to.FromRootlessSuffix(segments)
+			if !ok {
+				continue
+			}
+			rekeyed[next] = value
+		}
+		if len(rekeyed) == 0 {
+			rekeyed = nil
+		}
+		out.staticMembers = rekeyed
+	}
+	return out
+}
+
 func ObjectDomain(reg *axis.Registry) lattice.Lattice[TableObject] {
 	return objectDomainCache.Get(reg, func() lattice.Lattice[TableObject] {
 		valueDomain := product.Domain(reg)
-		staticDomain := lift.MustMap[pathdom.PathKey, product.Value](valueDomain)
+		staticDomain := lift.MustMap[keyspace.Key, product.Value](valueDomain)
 		dynamicDomain := dynamicindex.MapDomain(reg)
 		return lattice.Lattice[TableObject]{
 			Bottom: func() TableObject { return BottomObject(reg) },
@@ -250,7 +294,7 @@ func DeleteEntry(
 	return out, true
 }
 
-func staticLane(object TableObject) lift.MustMapLane[pathdom.PathKey, product.Value] {
+func staticLane(object TableObject) lift.MustMapLane[keyspace.Key, product.Value] {
 	return lift.MustMapValues(object.staticMembers)
 }
 
@@ -266,7 +310,7 @@ func dynamicLane(
 
 func objectFromLanes(
 	root product.Value,
-	static lift.MustMapLane[pathdom.PathKey, product.Value],
+	static lift.MustMapLane[keyspace.Key, product.Value],
 	dynamic map[dynamicindex.Key]dynamicindex.Fact,
 	dynamicDomain lattice.Lattice[map[dynamicindex.Key]dynamicindex.Fact],
 ) TableObject {
@@ -282,11 +326,11 @@ func objectFromLanes(
 	return object
 }
 
-func clonePathMap(in map[pathdom.PathKey]product.Value) map[pathdom.PathKey]product.Value {
+func clonePathMap(in map[keyspace.Key]product.Value) map[keyspace.Key]product.Value {
 	if len(in) == 0 {
 		return nil
 	}
-	out := make(map[pathdom.PathKey]product.Value, len(in))
+	out := make(map[keyspace.Key]product.Value, len(in))
 	for k, v := range in {
 		out[k] = v
 	}

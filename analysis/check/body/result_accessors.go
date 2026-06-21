@@ -2,6 +2,7 @@ package body
 
 import (
 	"github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	statekey "github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
@@ -39,6 +40,15 @@ func (r *Result) Graph() cfg.Graph {
 		return nil
 	}
 	return r.cfg.Graph
+}
+
+// KeySpace returns the per-analysis structural key interner used by the
+// path-evidence value lane. Snapshot and value-lane accessors thread it.
+func (r *Result) KeySpace() *keyspace.KeySpace {
+	if r == nil {
+		return nil
+	}
+	return r.visibility.KeySpace()
 }
 
 func (r *Result) StateAt(point cfg.Point) (state.State, bool) {
@@ -148,6 +158,13 @@ func (r *Result) ExpressionPathRef(expr factflow.ExprRef) (path.Path, bool) {
 		return path.Path{}, false
 	}
 	return r.facts.ExpressionPath(expr)
+}
+
+func (r *Result) CovariantExposures(point cfg.Point) []factflow.CovariantExposure {
+	if r == nil {
+		return nil
+	}
+	return r.facts.CovariantExposures(point)
 }
 
 func (r *Result) NoNormalReturn(point cfg.Point) bool {

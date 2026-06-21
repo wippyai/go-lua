@@ -673,7 +673,7 @@ func (p paramObligationProjector) invalidationPathReachesMemberPath(invalidated,
 	if len(invalidated.Segments) > len(memberPath.Segments) {
 		return false
 	}
-	invalidatedRoot := invalidated.Clone()
+	invalidatedRoot := invalidated
 	invalidatedRoot.Segments = nil
 	if !p.pathRootReadable(invalidatedRoot) && segmentsHavePrefix(memberPath.Segments, invalidated.Segments) {
 		return true
@@ -685,8 +685,8 @@ func (p paramObligationProjector) invalidationPathReachesMemberPath(invalidated,
 		if !segmentsHavePrefix(memberPath.Segments[prefixLen:], invalidated.Segments) {
 			continue
 		}
-		memberPrefix := memberPath.Clone()
-		memberPrefix.Segments = append(memberPrefix.Segments[:0:0], memberPath.Segments[:prefixLen]...)
+		memberPrefix := memberPath
+		memberPrefix.Segments = append(memberPath.Segments[:0:0], memberPath.Segments[:prefixLen]...)
 		if p.pathsShareExactIdentity(invalidatedRoot, memberPrefix) {
 			return true
 		}
@@ -893,7 +893,7 @@ func (p paramObligationProjector) paramUseUnconditional(index int) bool {
 		return false
 	}
 	slot := key.SymbolValue(p.params[index].Symbol)
-	if slot == "" {
+	if slot == 0 {
 		return false
 	}
 	if reassignedReader, ok := p.result.(reassignedParameterValueSlotReader); ok {
@@ -975,7 +975,7 @@ func memberCallReceiverForSite(fact semantics.CallFact, site factflow.CallSite) 
 	if receiver, member, ok := memberCallReceiver(fact); ok {
 		return receiver, member, true
 	}
-	callee := site.CalleePath()
+	callee := site.CalleePathRef()
 	if callee.IsEmpty() || len(callee.Segments) == 0 {
 		return pathdom.Path{}, segment.Segment{}, false
 	}
@@ -1042,7 +1042,7 @@ func paramObligationTypeFromValue(reg *axis.Registry, value product.Value) (typ.
 	if witness := product.Get(reg, value, typewitness.Key); !witness.IsTop() {
 		if t, ok := witness.Type(); ok {
 			if !origin.IsBottom() && !origin.IsTop() {
-				if narrowed, ok := variant.NarrowByOrigin(t, origin.Family(), origin.Cases()); ok {
+				if narrowed, ok := variant.NarrowByOrigin(t, origin.Family(), origin.CasesRef()); ok {
 					return narrowed, true
 				}
 			}
@@ -1050,7 +1050,7 @@ func paramObligationTypeFromValue(reg *axis.Registry, value product.Value) (typ.
 		}
 	}
 	if !origin.IsBottom() && !origin.IsTop() {
-		return variant.TypeFromOrigin(origin.Family(), origin.Cases())
+		return variant.TypeFromOrigin(origin.Family(), origin.CasesRef())
 	}
 	return nil, false
 }

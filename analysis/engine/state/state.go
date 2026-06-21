@@ -63,7 +63,7 @@ func (s State) ReadSymbolValue(reg *axis.Registry, sym symbol.ID) product.Value 
 // WriteValue returns a state with slot updated. Writing product.Bottom(reg)
 // removes the finite entry so absence remains the canonical bottom spelling.
 func (s State) WriteValue(reg *axis.Registry, slot key.Value, value product.Value) State {
-	if slot == "" {
+	if slot == 0 {
 		return s
 	}
 	if s.values.top {
@@ -81,7 +81,7 @@ func (s State) WriteValue(reg *axis.Registry, slot key.Value, value product.Valu
 // UpdateValue reads slot, applies fn, and writes the transformed value.
 // Transforming a finite entry to product.Bottom(reg) removes it.
 func (s State) UpdateValue(reg *axis.Registry, slot key.Value, fn func(product.Value) product.Value) State {
-	if slot == "" {
+	if slot == 0 {
 		return s
 	}
 	return s.WriteValue(reg, slot, fn(s.ReadValue(reg, slot)))

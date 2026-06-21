@@ -17,6 +17,7 @@ type Array struct {
 	containsNever         bool
 	containsTypeParam     bool
 	containsInstantiated  bool
+	containsGeneric       bool
 	containsRecursive     bool
 	containsOpenRecursive bool
 	strCache              stringCache
@@ -35,6 +36,7 @@ func NewArray(elem Type) *Array {
 		containsNever:         knownContainsNever(elem),
 		containsTypeParam:     knownContainsTypeParam(elem),
 		containsInstantiated:  knownContainsInstantiated(elem),
+		containsGeneric:       knownContainsGeneric(elem),
 		containsRecursive:     knownContainsRecursive(elem),
 		containsOpenRecursive: knownContainsOpenRecursive(elem),
 	}
@@ -66,6 +68,7 @@ type Map struct {
 	containsNever         bool
 	containsTypeParam     bool
 	containsInstantiated  bool
+	containsGeneric       bool
 	containsRecursive     bool
 	containsOpenRecursive bool
 	strCache              stringCache
@@ -95,6 +98,7 @@ func RebuildMap(key, value Type) *Map {
 		containsNever:         knownNever(key, value),
 		containsTypeParam:     knownTypeParam(key, value),
 		containsInstantiated:  knownInstantiated(key, value),
+		containsGeneric:       knownGeneric(key, value),
 		containsRecursive:     knownRecursive(key, value),
 		containsOpenRecursive: knownOpenRecursive(key, value),
 	}
@@ -138,6 +142,7 @@ type ReadonlyMap struct {
 	containsNever         bool
 	containsTypeParam     bool
 	containsInstantiated  bool
+	containsGeneric       bool
 	containsRecursive     bool
 	containsOpenRecursive bool
 	strCache              stringCache
@@ -167,6 +172,7 @@ func RebuildReadonlyMap(key, value Type) *ReadonlyMap {
 		containsNever:         knownNever(key, value),
 		containsTypeParam:     knownTypeParam(key, value),
 		containsInstantiated:  knownInstantiated(key, value),
+		containsGeneric:       knownGeneric(key, value),
 		containsRecursive:     knownRecursive(key, value),
 		containsOpenRecursive: knownOpenRecursive(key, value),
 	}
@@ -193,6 +199,7 @@ type Tuple struct {
 	containsNever         bool
 	containsTypeParam     bool
 	containsInstantiated  bool
+	containsGeneric       bool
 	containsRecursive     bool
 	containsOpenRecursive bool
 	strCache              stringCache
@@ -206,6 +213,7 @@ func NewTuple(elems ...Type) *Tuple {
 	containsNever := false
 	containsTypeParam := false
 	containsInstantiated := false
+	containsGeneric := false
 	containsRecursive := false
 	containsOpenRecursive := false
 	for i, e := range elems {
@@ -226,6 +234,9 @@ func NewTuple(elems ...Type) *Tuple {
 		if !containsInstantiated && knownContainsInstantiated(e) {
 			containsInstantiated = true
 		}
+		if !containsGeneric && knownContainsGeneric(e) {
+			containsGeneric = true
+		}
 		if !containsRecursive && knownContainsRecursive(e) {
 			containsRecursive = true
 		}
@@ -241,6 +252,7 @@ func NewTuple(elems ...Type) *Tuple {
 		containsNever:         containsNever,
 		containsTypeParam:     containsTypeParam,
 		containsInstantiated:  containsInstantiated,
+		containsGeneric:       containsGeneric,
 		containsRecursive:     containsRecursive,
 		containsOpenRecursive: containsOpenRecursive,
 	}

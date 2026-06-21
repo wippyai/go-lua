@@ -6,7 +6,8 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/check/body"
-	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
+	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/placement"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
@@ -188,9 +189,14 @@ func testObject() heapidentity.TableObject {
 }
 
 func testObjectWithStaticChildren(reg *axis.Registry, ids ...identity.ID) heapidentity.TableObject {
-	members := make(map[pathdom.PathKey]product.Value, len(ids))
+	ks := keyspace.New()
+	members := make(map[keyspace.Key]product.Value, len(ids))
 	for i, id := range ids {
-		members[pathdom.PathKey(".child"+strconv.Itoa(i))] = valueWithIdentity(reg, id)
+		key, ok := ks.FromRootlessSuffix([]segment.Segment{{Kind: segment.SegmentField, Name: "child" + strconv.Itoa(i)}})
+		if !ok {
+			panic("placementplan test: child suffix key failed")
+		}
+		members[key] = valueWithIdentity(reg, id)
 	}
 	return heapidentity.NewTableObject(heapidentity.TableObjectConfig{
 		Root:          product.Top(),

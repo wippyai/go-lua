@@ -65,6 +65,7 @@ func withSupplementalResultSlots(reg *axis.Registry, out callpayload.CallOutcome
 
 func withSupplementalFacts(reg *axis.Registry, out, second callpayload.CallOutcome) callpayload.CallOutcome {
 	out.ParamObligations = append(out.ParamObligations, second.ParamObligations...)
+	out.ParamExposures = append(out.ParamExposures, second.ParamExposures...)
 	if out.PostReturnAuthority {
 		return out
 	}

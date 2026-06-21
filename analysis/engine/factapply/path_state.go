@@ -3,6 +3,7 @@ package factapply
 import (
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
+	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	statekey "github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
@@ -26,25 +27,42 @@ func writePathAt(
 	if pathKey == "" {
 		return s, false
 	}
+	ks := resolver.KeySpace()
 	equivalent := s.EquivalentPathKeys(pathKey)
-	out := writePathKeyWithStaticStringAlias(reg, s, pathKey, value)
+	out := writePathKeyWithStaticStringAlias(reg, ks, s, pathKey, value)
 	for _, alias := range equivalent {
-		out = writePathKeyWithStaticStringAlias(reg, out, alias, value)
+		out = writePathKeyWithStaticStringAlias(reg, ks, out, alias, value)
 	}
 	return out, true
 }
 
 func writePathKeyWithStaticStringAlias(
 	reg *axis.Registry,
+	ks *keyspace.KeySpace,
 	s state.State,
 	pathKey pathdom.PathKey,
 	value product.Value,
 ) state.State {
-	out := s.WritePathKey(reg, pathKey, value)
-	if canonical, ok := pathaddr.FieldCanonicalPathKey(pathKey); ok {
-		out = out.WritePathKey(reg, canonical, value)
+	out := s.WritePathKey(reg, ks, pathKey, value)
+	if canonical, ok := fieldCanonicalPathKey(ks, pathKey); ok {
+		out = out.WritePathKey(reg, ks, canonical, value)
 	}
 	return out
+}
+
+// fieldCanonicalPathKey interns pathKey, applies the field-canonical rewrite, and
+// re-emits the canonical state-key spelling. It returns false when pathKey is not
+// a recognized state key or the canonical spelling equals the original.
+func fieldCanonicalPathKey(ks *keyspace.KeySpace, pathKey pathdom.PathKey) (pathdom.PathKey, bool) {
+	key, ok := ks.FromStateKey(pathKey)
+	if !ok {
+		return "", false
+	}
+	canonical, ok := ks.FieldCanonical(key)
+	if !ok {
+		return "", false
+	}
+	return ks.Format(canonical), true
 }
 
 func invalidatePathSubtreeAt(
@@ -73,20 +91,21 @@ func invalidatePathAt(
 	resolver *visibility.Resolver,
 	point cfg.Point,
 	path pathdom.Path,
-	invalidate func(state.State, pathdom.PathKey) (state.State, bool),
+	invalidate func(state.State, *keyspace.KeySpace, pathdom.PathKey) (state.State, bool),
 ) (state.State, bool) {
 	pathKey := resolver.KeyAt(point, path)
 	if pathKey == "" {
 		return s, false
 	}
+	ks := resolver.KeySpace()
 	equivalent := s.EquivalentPathKeys(pathKey)
-	out, ok := invalidate(s, pathKey)
+	out, ok := invalidate(s, ks, pathKey)
 	if !ok {
 		return s, false
 	}
 	for _, alias := range equivalent {
 		var aliasOK bool
-		out, aliasOK = invalidate(out, alias)
+		out, aliasOK = invalidate(out, ks, alias)
 		if !aliasOK {
 			return s, false
 		}
@@ -198,9 +217,9 @@ func invalidateHeapStaticMembersAt(
 		object := out.ReadHeapTableObject(reg, id)
 		var changed bool
 		if target.descendantsOnly {
-			object, changed = object.WithoutStaticMemberDescendants(localPath.Segments)
+			object, changed = object.WithoutStaticMemberDescendants(resolver.KeySpace(), localPath.Segments)
 		} else {
-			object, changed = object.WithoutStaticMemberSubtree(localPath.Segments)
+			object, changed = object.WithoutStaticMemberSubtree(resolver.KeySpace(), localPath.Segments)
 		}
 		if changed {
 			out = out.WriteHeapTableObject(reg, id, object)

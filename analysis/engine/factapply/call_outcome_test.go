@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/placement"
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/typestate"
@@ -261,6 +262,7 @@ func TestFactsNodeTransferCallOutcomeLengthFloorSurvivesInvalidations(t *testing
 	visibilityBuilder := visibility.NewBuilder()
 	visibilityBuilder.Define(point, items, "items")
 	resolver := visibility.NewResolver(visibilityBuilder.Build())
+	ks := resolver.KeySpace()
 	itemsKey := resolver.KeyAt(point, itemsPath)
 	childKey := resolver.KeyAt(point, itemsPath.IndexInt(1))
 
@@ -298,13 +300,13 @@ func TestFactsNodeTransferCallOutcomeLengthFloorSurvivesInvalidations(t *testing
 		Registry: reg,
 		Point:    point,
 	}, state.State{}.
-		WriteLenFloor(itemsKey, 9).
-		WritePathKey(reg, childKey, presentValue(reg)))
+		WriteLenFloor(ks, itemsKey, 9).
+		WritePathKey(reg, ks, childKey, presentValue(reg)))
 
-	if floor, ok := got.ReadLenFloor(itemsKey); !ok || floor != 10 {
+	if floor, ok := got.ReadLenFloor(ks, itemsKey); !ok || floor != 10 {
 		t.Fatalf("post-call length floor = %d/%v, want prior floor plus delta after invalidations", floor, ok)
 	}
-	if child := got.ReadPathKey(reg, childKey); !product.Equal(reg, child, product.Bottom(reg)) {
+	if child := got.ReadPathKey(reg, ks, childKey); !product.Equal(reg, child, product.Bottom(reg)) {
 		t.Fatalf("child path after invalidation = %s, want bottom", formatValue(reg, child))
 	}
 }
@@ -538,6 +540,7 @@ func TestFactsNodeTransferCallOutcomeFrozenTableFactIsShallow(t *testing.T) {
 	builder := visibility.NewBuilder()
 	builder.Define(point, target, "obj")
 	resolver := visibility.NewResolver(builder.Build())
+	ks := resolver.KeySpace()
 
 	got := NewFactsNodeTransfer(FactsNodeTransferConfig{
 		Facts: facts,
@@ -546,7 +549,7 @@ func TestFactsNodeTransferCallOutcomeFrozenTableFactIsShallow(t *testing.T) {
 				HeapTableObjects: map[identity.ID]heapidentity.TableObject{
 					rootID: heapidentity.NewTableObject(heapidentity.TableObjectConfig{
 						Root:          rootValue,
-						StaticMembers: map[pathdom.PathKey]product.Value{pathdom.PathKey(".child"): childValue},
+						StaticMembers: map[keyspace.Key]product.Value{fieldStaticKey(t, ks, "child"): childValue},
 					}),
 					childID: heapidentity.NewTableObject(heapidentity.TableObjectConfig{Root: childValue}),
 				},
@@ -563,7 +566,7 @@ func TestFactsNodeTransferCallOutcomeFrozenTableFactIsShallow(t *testing.T) {
 		Point:    point,
 	}, state.State{}.
 		WriteValue(reg, key.SymbolValue(target), rootValue).
-		WritePathKey(reg, resolver.KeyAt(point, childPath), childValue))
+		WritePathKey(reg, ks, resolver.KeyAt(point, childPath), childValue))
 
 	if !got.IsTableFrozen(rootID) {
 		t.Fatalf("root table %v was not frozen", rootID)
@@ -600,6 +603,7 @@ func TestFactsNodeTransferCallOutcomeFrozenTableFactsFreezeRootAndNestedChild(t 
 	builder := visibility.NewBuilder()
 	builder.Define(point, target, "obj")
 	resolver := visibility.NewResolver(builder.Build())
+	ks := resolver.KeySpace()
 
 	got := NewFactsNodeTransfer(FactsNodeTransferConfig{
 		Facts: facts,
@@ -608,7 +612,7 @@ func TestFactsNodeTransferCallOutcomeFrozenTableFactsFreezeRootAndNestedChild(t 
 				HeapTableObjects: map[identity.ID]heapidentity.TableObject{
 					rootID: heapidentity.NewTableObject(heapidentity.TableObjectConfig{
 						Root:          rootValue,
-						StaticMembers: map[pathdom.PathKey]product.Value{pathdom.PathKey(".child"): childValue},
+						StaticMembers: map[keyspace.Key]product.Value{fieldStaticKey(t, ks, "child"): childValue},
 					}),
 					childID: heapidentity.NewTableObject(heapidentity.TableObjectConfig{Root: childValue}),
 				},
@@ -626,7 +630,7 @@ func TestFactsNodeTransferCallOutcomeFrozenTableFactsFreezeRootAndNestedChild(t 
 		Point:    point,
 	}, state.State{}.
 		WriteValue(reg, key.SymbolValue(target), rootValue).
-		WritePathKey(reg, resolver.KeyAt(point, childPath), childValue))
+		WritePathKey(reg, ks, resolver.KeyAt(point, childPath), childValue))
 
 	if !got.IsTableFrozen(rootID) {
 		t.Fatalf("root table %v was not frozen", rootID)
@@ -662,7 +666,8 @@ func TestFactsNodeTransferCallOutcomeRecursiveEscapeSendMarksStaticMemberIdentit
 	builder := visibility.NewBuilder()
 	builder.Define(point, target, "obj")
 	resolver := visibility.NewResolver(builder.Build())
-	memberKey := pathdom.PathKey(".child")
+	ks := resolver.KeySpace()
+	memberKey := fieldStaticKey(t, ks, "child")
 
 	got := NewFactsNodeTransfer(FactsNodeTransferConfig{
 		Facts: facts,
@@ -683,7 +688,7 @@ func TestFactsNodeTransferCallOutcomeRecursiveEscapeSendMarksStaticMemberIdentit
 		WriteValue(reg, key.SymbolValue(target), rootValue).
 		WriteHeapTableObject(reg, rootID, heapidentity.NewTableObject(heapidentity.TableObjectConfig{
 			Root:          rootValue,
-			StaticMembers: map[pathdom.PathKey]product.Value{memberKey: childValue},
+			StaticMembers: map[keyspace.Key]product.Value{memberKey: childValue},
 		})).
 		WriteHeapTableObject(reg, childID, heapidentity.NewTableObject(heapidentity.TableObjectConfig{
 			Root: childValue,
@@ -723,6 +728,7 @@ func TestFactsNodeTransferCallOutcomeRecursiveEscapeStoreMarksStaticMemberIdenti
 	builder := visibility.NewBuilder()
 	builder.Define(point, target, "obj")
 	resolver := visibility.NewResolver(builder.Build())
+	ks := resolver.KeySpace()
 
 	got := NewFactsNodeTransfer(FactsNodeTransferConfig{
 		Facts: facts,
@@ -743,7 +749,7 @@ func TestFactsNodeTransferCallOutcomeRecursiveEscapeStoreMarksStaticMemberIdenti
 		WriteValue(reg, key.SymbolValue(target), rootValue).
 		WriteHeapTableObject(reg, rootID, heapidentity.NewTableObject(heapidentity.TableObjectConfig{
 			Root:          rootValue,
-			StaticMembers: map[pathdom.PathKey]product.Value{pathdom.PathKey(".child"): childValue},
+			StaticMembers: map[keyspace.Key]product.Value{fieldStaticKey(t, ks, "child"): childValue},
 		})).
 		WriteHeapTableObject(reg, childID, heapidentity.NewTableObject(heapidentity.TableObjectConfig{
 			Root: childValue,
@@ -850,17 +856,18 @@ func TestFactsNodeTransferCallOutcomeEscapeRecoversDynamicEntryIdentityWhenPathV
 	childValue := product.Set(reg, presentValue(reg), identity.Key, identity.Singleton(childID))
 	routeKeyType := typ.LiteralString("route-1")
 	routeKeyValue := typevalue.WithWitness(reg, typevalue.FromType(reg, routeKeyType), routeKeyType)
-	itemsKey, ok := heapidentity.StaticMemberSuffixKey(fieldSuffix("items").Segments)
-	if !ok {
-		t.Fatal("missing items suffix key")
-	}
-	childKey, ok := heapidentity.StaticMemberSuffixKey(fieldSuffix("child").Segments)
-	if !ok {
-		t.Fatal("missing child suffix key")
-	}
 	builder := visibility.NewBuilder()
 	builder.Define(point, batch, "batch")
 	resolver := visibility.NewResolver(builder.Build())
+	ks := resolver.KeySpace()
+	itemsKey, ok := heapidentity.StaticMemberSuffixKey(ks, fieldSuffix("items").Segments)
+	if !ok {
+		t.Fatal("missing items suffix key")
+	}
+	childKey, ok := heapidentity.StaticMemberSuffixKey(ks, fieldSuffix("child").Segments)
+	if !ok {
+		t.Fatal("missing child suffix key")
+	}
 	itemPathKey := resolver.KeyAt(point, itemPath)
 	if itemPathKey == "" {
 		t.Fatal("missing item path key")
@@ -871,11 +878,11 @@ func TestFactsNodeTransferCallOutcomeEscapeRecoversDynamicEntryIdentityWhenPathV
 	}
 	in := state.State{}.
 		WriteValue(reg, key.SymbolValue(batch), batchValue).
-		WritePathKey(reg, itemsPathKey, presentValue(reg)).
-		WritePathKey(reg, itemPathKey, presentValue(reg)).
+		WritePathKey(reg, ks, itemsPathKey, presentValue(reg)).
+		WritePathKey(reg, ks, itemPathKey, presentValue(reg)).
 		WriteHeapTableObject(reg, batchID, heapidentity.NewTableObject(heapidentity.TableObjectConfig{
 			Root:          batchValue,
-			StaticMembers: map[pathdom.PathKey]product.Value{itemsKey: itemsValue},
+			StaticMembers: map[keyspace.Key]product.Value{itemsKey: itemsValue},
 		})).
 		WriteHeapTableObject(reg, itemsID, heapidentity.NewTableObject(heapidentity.TableObjectConfig{
 			Root: itemsValue,
@@ -890,7 +897,7 @@ func TestFactsNodeTransferCallOutcomeEscapeRecoversDynamicEntryIdentityWhenPathV
 		})).
 		WriteHeapTableObject(reg, itemID, heapidentity.NewTableObject(heapidentity.TableObjectConfig{
 			Root:          itemValue,
-			StaticMembers: map[pathdom.PathKey]product.Value{childKey: childValue},
+			StaticMembers: map[keyspace.Key]product.Value{childKey: childValue},
 		})).
 		WriteHeapTableObject(reg, childID, heapidentity.NewTableObject(heapidentity.TableObjectConfig{
 			Root: childValue,
@@ -973,6 +980,7 @@ func TestFactsNodeTransferCallOutcomeRecursiveEscapeTerminatesOnCyclicHeapPlacem
 			builder := visibility.NewBuilder()
 			builder.Define(point, target, "obj")
 			resolver := visibility.NewResolver(builder.Build())
+			ks := resolver.KeySpace()
 
 			got := NewFactsNodeTransfer(FactsNodeTransferConfig{
 				Facts: facts,
@@ -993,11 +1001,11 @@ func TestFactsNodeTransferCallOutcomeRecursiveEscapeTerminatesOnCyclicHeapPlacem
 				WriteValue(reg, key.SymbolValue(target), rootValue).
 				WriteHeapTableObject(reg, rootID, heapidentity.NewTableObject(heapidentity.TableObjectConfig{
 					Root:          rootValue,
-					StaticMembers: map[pathdom.PathKey]product.Value{pathdom.PathKey(".child"): childValue},
+					StaticMembers: map[keyspace.Key]product.Value{fieldStaticKey(t, ks, "child"): childValue},
 				})).
 				WriteHeapTableObject(reg, childID, heapidentity.NewTableObject(heapidentity.TableObjectConfig{
 					Root:          childValue,
-					StaticMembers: map[pathdom.PathKey]product.Value{pathdom.PathKey(".parent"): rootValue},
+					StaticMembers: map[keyspace.Key]product.Value{fieldStaticKey(t, ks, "parent"): rootValue},
 				})))
 
 			if gotPlacement := got.ReadPlacement(rootID); gotPlacement != tc.want {
@@ -1182,9 +1190,10 @@ func TestFactsNodeTransferCallOutcomeEscapeStoreRetainDoesNotWeakenSharedHeap(t 
 
 func TestFactsNodeTransferCallOutcomeAppliesHeapTableObjects(t *testing.T) {
 	reg := standard.Registry()
+	ks := keyspace.New()
 	point := cfg.Point(619)
 	tableID := identity.ID{Kind: "table", Site: "call-outcome", Index: 1}
-	memberKey := pathdom.PathKey(".field")
+	memberKey := fieldStaticKey(t, ks, "field")
 	value := presentValue(reg)
 
 	got := NewFactsNodeTransfer(FactsNodeTransferConfig{
@@ -1198,7 +1207,7 @@ func TestFactsNodeTransferCallOutcomeAppliesHeapTableObjects(t *testing.T) {
 				HeapTableObjects: map[identity.ID]heapidentity.TableObject{
 					tableID: heapidentity.NewTableObject(heapidentity.TableObjectConfig{
 						Root:          value,
-						StaticMembers: map[pathdom.PathKey]product.Value{memberKey: value},
+						StaticMembers: map[keyspace.Key]product.Value{memberKey: value},
 					}),
 				},
 			}

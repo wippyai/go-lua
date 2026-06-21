@@ -2,6 +2,7 @@ package factapply
 
 import (
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/placement"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/evidence"
@@ -37,7 +38,7 @@ func applyObjectLiteralEntries(
 	if !ok {
 		return out
 	}
-	out = materializeObjectLiteralHeap(ctx, facts, sources, read, in, out, valueSource)
+	out = materializeObjectLiteralHeap(ctx, resolver, facts, sources, read, in, out, valueSource)
 	if resolver == nil {
 		return out
 	}
@@ -71,6 +72,7 @@ func applyObjectLiteralEntries(
 
 func materializeObjectLiteralHeap(
 	ctx transfer.NodeContext,
+	resolver *visibility.Resolver,
 	facts factflow.Facts,
 	sources sourcevalue.SourceValues,
 	read func(cfg.Point) state.State,
@@ -78,7 +80,7 @@ func materializeObjectLiteralHeap(
 	out state.State,
 	source factflow.ValueSource,
 ) state.State {
-	if sources == nil {
+	if sources == nil || resolver == nil {
 		return out
 	}
 	if !source.HasExpr {
@@ -88,11 +90,12 @@ func materializeObjectLiteralHeap(
 	if !ok {
 		return out
 	}
-	return writeObjectLiteralHeap(ctx, facts, sources, read, in, out, source, literal, nil)
+	return writeObjectLiteralHeap(ctx, resolver, facts, sources, read, in, out, source, literal, nil)
 }
 
 func writeObjectLiteralHeap(
 	ctx transfer.NodeContext,
+	resolver *visibility.Resolver,
 	facts factflow.Facts,
 	sources sourcevalue.SourceValues,
 	read func(cfg.Point) state.State,
@@ -120,9 +123,11 @@ func writeObjectLiteralHeap(
 		active = make(map[factflow.ExprRef]bool, 1)
 	}
 	active[source.ExprRef] = true
-	staticMembers := make(map[pathdom.PathKey]product.Value, literal.EntryCount())
+	ks := resolver.KeySpace()
+	staticMembers := make(map[keyspace.Key]product.Value, literal.EntryCount())
 	literal.ForEachEntry(func(entry factflow.ObjectEntryView) bool {
-		key, ok := entry.StaticMemberSuffixKey()
+		segments := entry.SuffixSegments()
+		key, ok := ks.FromRootlessSuffix(segments)
 		if !ok {
 			return true
 		}
@@ -133,12 +138,12 @@ func writeObjectLiteralHeap(
 		}
 		value = objectEntryValue(ctx.Registry, entry, value)
 		staticMembers[key] = value
-		if canonical, ok := entry.FieldCanonicalStaticMemberSuffixKey(); ok {
+		if canonical, ok := heapidentity.FieldCanonicalStaticMemberSuffixKey(ks, segments); ok {
 			staticMembers[canonical] = value
 		}
 		if entrySource.HasExpr {
 			if nested, ok := facts.ObjectLiteralView(entrySource.ExprRef); ok {
-				out = writeObjectLiteralHeap(ctx, facts, sources, read, in, out, entrySource, nested, active)
+				out = writeObjectLiteralHeap(ctx, resolver, facts, sources, read, in, out, entrySource, nested, active)
 			}
 		}
 		return true
@@ -157,21 +162,22 @@ func objectEntryValue(reg *axis.Registry, entry factflow.ObjectEntryView, value 
 }
 
 func overlayExpectedObjectEntryValue(reg *axis.Registry, value, expected product.Value) product.Value {
+	ed := product.Edit(reg, value)
 	kind := product.Get(reg, expected, runtimekind.Key)
 	if !kind.IsTop() && !kind.IsBottom() {
-		value = product.Set(reg, value, runtimekind.Key, kind)
+		product.EditSet(&ed, runtimekind.Key, kind)
 	}
 	witness := product.Get(reg, expected, typewitness.Key)
 	if !witness.IsTop() && !witness.IsBottom() {
-		value = product.Set(reg, value, typewitness.Key, witness)
+		product.EditSet(&ed, typewitness.Key, witness)
 	}
 	origin := product.Get(reg, expected, variantorigin.Key)
 	if !origin.IsTop() && !origin.IsBottom() {
-		value = product.Set(reg, value, variantorigin.Key, origin)
+		product.EditSet(&ed, variantorigin.Key, origin)
 	}
 	proof := product.Get(reg, expected, evidence.Key)
 	if !evidence.Equal(proof, evidence.Top()) && !evidence.Equal(proof, evidence.Bottom()) {
-		value = product.Set(reg, value, evidence.Key, proof)
+		product.EditSet(&ed, evidence.Key, proof)
 	}
-	return value
+	return ed.Done()
 }

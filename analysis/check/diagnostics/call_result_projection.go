@@ -218,7 +218,7 @@ func directFunctionCurrentReturnPathType(result *body.Result, resolver typeannot
 	}
 	fn := defs[site.CalleeSymbol()]
 	if fn == nil {
-		fn = dominatingFunctionDefinitionForPath(result, source.CallPoint, site.CalleePath())
+		fn = dominatingFunctionDefinitionForPath(result, source.CallPoint, site.CalleePathRef())
 	}
 	if fn == nil {
 		return nil, false
@@ -355,7 +355,7 @@ func wrapperProviderReplacementDominatesCall(result *body.Result, source sourcep
 	defs := directCallDefinitions(result, nil)
 	fn := defs[site.CalleeSymbol()]
 	if fn == nil {
-		fn = dominatingFunctionDefinitionForPath(result, source.CallPoint, site.CalleePath())
+		fn = dominatingFunctionDefinitionForPath(result, source.CallPoint, site.CalleePathRef())
 	}
 	retExpr, ok := singleReturnExpr(fn, source.ResultIndex)
 	if !ok {

@@ -2,6 +2,7 @@ package state
 
 import (
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 )
 
 type NumFloorsSnapshot struct {
@@ -9,20 +10,28 @@ type NumFloorsSnapshot struct {
 	Floors map[pathdom.PathKey]int64
 }
 
-func (s State) NumFloorsSnapshot() NumFloorsSnapshot {
-	return s.numFloors.snapshot()
+func (s State) NumFloorsSnapshot(ks *keyspace.KeySpace) NumFloorsSnapshot {
+	return s.numFloors.snapshot(ks)
 }
 
 // ReadNumFloor reads the proven lower bound for a numeric path key: a returned
 // (lo, true) asserts value(pathKey) >= lo at this point.
-func (s State) ReadNumFloor(pathKey pathdom.PathKey) (int64, bool) {
-	return s.numFloors.read(pathKey)
+func (s State) ReadNumFloor(ks *keyspace.KeySpace, pathKey pathdom.PathKey) (int64, bool) {
+	key, ok := ks.FromStateKey(pathKey)
+	if !ok {
+		return 0, false
+	}
+	return s.numFloors.read(key)
 }
 
 // WriteNumFloor records that value(pathKey) >= lo holds at this point.
-func (s State) WriteNumFloor(pathKey pathdom.PathKey, lo int64) State {
+func (s State) WriteNumFloor(ks *keyspace.KeySpace, pathKey pathdom.PathKey, lo int64) State {
+	key, ok := ks.FromStateKey(pathKey)
+	if !ok {
+		return s
+	}
 	out := s.reachable()
-	floors, changed := out.numFloors.write(pathKey, lo)
+	floors, changed := out.numFloors.write(key, lo)
 	if !changed {
 		return s
 	}
@@ -32,8 +41,12 @@ func (s State) WriteNumFloor(pathKey pathdom.PathKey, lo int64) State {
 
 // ClearNumFloor removes any finite lower-bound proof for pathKey. It is used
 // when a write gives no numeric lower-bound evidence for the new value.
-func (s State) ClearNumFloor(pathKey pathdom.PathKey) State {
-	floors, changed := s.numFloors.clear(pathKey)
+func (s State) ClearNumFloor(ks *keyspace.KeySpace, pathKey pathdom.PathKey) State {
+	key, ok := ks.FromStateKey(pathKey)
+	if !ok {
+		return s
+	}
+	floors, changed := s.numFloors.clear(key)
 	if !changed {
 		return s
 	}

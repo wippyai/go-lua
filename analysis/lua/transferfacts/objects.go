@@ -3,6 +3,7 @@ package transferfacts
 import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
+	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
 	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
 	luatypeprojection "github.com/wippyai/go-lua/analysis/lua/typeprojection"
@@ -119,6 +120,32 @@ func (l *lowerer) addReturnObjectLiteralExpectedTypes(input *factflow.FactsInput
 			continue
 		}
 		input.ObjectLiterals[exprRef] = l.objectLiteralWithExpectedType(lit, declaredType)
+	}
+}
+
+// addObjectLiteralFieldExposures records covariant exposures for object-literal
+// entries that store an aliased narrow object into a declared container slot
+// (holder = {ref = narrow}, sink = {narrow}) whose declared slot type strictly
+// widens the stored object. The container retains the stored object at the slot,
+// so a write through the wider slot view can launder a wide value back into the
+// source object; the source object is widened to the slot's declared contract.
+func (l *lowerer) addObjectLiteralFieldExposures(input *factflow.FactsInput, result *semantics.Result, point cfg.Point, source sourceprovenance.ASTSource, declared typ.Type) {
+	if source.Kind != sourceprovenance.SourceExpression || declared == nil {
+		return
+	}
+	if typ.IsAny(declared) || typ.IsUnknown(declared) {
+		return
+	}
+	fact, ok := result.ObjectLiteral(source.Expr)
+	if !ok {
+		return
+	}
+	for _, entry := range fact.Entries {
+		slotType, ok := luatypeprojection.ApplySegments(declared, entry.Suffix.Segments)
+		if !ok || slotType == nil {
+			continue
+		}
+		l.addAliasExposureToContractType(input, point, entry.Source, slotType)
 	}
 }
 

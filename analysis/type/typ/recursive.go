@@ -28,6 +28,7 @@ type Recursive struct {
 	containsNever           bool
 	containsTypeParam       bool
 	containsInstantiated    bool
+	containsGeneric         bool
 	containsFlagsClosed     bool
 	containsFlagsDirty      bool
 	containsClosedDirty     bool

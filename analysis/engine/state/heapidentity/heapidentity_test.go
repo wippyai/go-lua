@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
@@ -48,9 +49,10 @@ func TestObjectJoinWidenRootStaticAndDynamic(t *testing.T) {
 	valueDomain := product.Domain(reg)
 	objectDomain := ObjectDomain(reg)
 	dynamicDomain := dynamicindex.MapDomain(reg)
-	staticCommon := pathdom.PathKey("sym90@1.table.name")
-	staticLeft := pathdom.PathKey("sym90@1.table.left")
-	staticRight := pathdom.PathKey("sym90@1.table.right")
+	ks := keyspace.New()
+	staticCommon := stateKey(t, ks, "sym90@1.table.name")
+	staticLeft := stateKey(t, ks, "sym90@1.table.left")
+	staticRight := stateKey(t, ks, "sym90@1.table.right")
 	dynCommon := dynamicindex.Key{Table: pathdom.PathKey("sym90@1.table"), Site: "dyn"}
 	dynLeft := dynamicindex.Key{Table: pathdom.PathKey("sym90@1.table"), Site: "left"}
 	present := presentValue(reg)
@@ -70,7 +72,7 @@ func TestObjectJoinWidenRootStaticAndDynamic(t *testing.T) {
 
 	left := NewTableObject(TableObjectConfig{
 		Root: present,
-		StaticMembers: map[pathdom.PathKey]product.Value{
+		StaticMembers: map[keyspace.Key]product.Value{
 			staticCommon: present,
 			staticLeft:   present,
 		},
@@ -81,7 +83,7 @@ func TestObjectJoinWidenRootStaticAndDynamic(t *testing.T) {
 	})
 	right := NewTableObject(TableObjectConfig{
 		Root: absent,
-		StaticMembers: map[pathdom.PathKey]product.Value{
+		StaticMembers: map[keyspace.Key]product.Value{
 			staticCommon: absent,
 			staticRight:  absent,
 		},
@@ -169,7 +171,8 @@ func TestMapDomainTopStableAcrossRepeatedConstruction(t *testing.T) {
 
 func TestNewTableObjectDefensivelyCopiesInputMaps(t *testing.T) {
 	reg := standard.Registry()
-	staticKey := pathdom.PathKey(".name")
+	ks := keyspace.New()
+	staticKey := fieldSuffixKey(t, ks, "name")
 	dynKey := dynamicindex.Key{Table: pathdom.PathKey("sym91@1.table"), Site: "dyn"}
 	present := presentValue(reg)
 	absent := absentValue(reg)
@@ -185,7 +188,7 @@ func TestNewTableObjectDefensivelyCopiesInputMaps(t *testing.T) {
 		Value:       absent,
 		Admission:   dynamicindex.AdmissionRejected,
 	}
-	staticMembers := map[pathdom.PathKey]product.Value{staticKey: present}
+	staticMembers := map[keyspace.Key]product.Value{staticKey: present}
 	dynamicFacts := map[dynamicindex.Key]dynamicindex.Fact{dynKey: presentFact}
 
 	object := NewTableObject(TableObjectConfig{
@@ -206,25 +209,27 @@ func TestNewTableObjectDefensivelyCopiesInputMaps(t *testing.T) {
 
 func TestNewOwnedStaticTableObjectKeepsAccessorsDefensive(t *testing.T) {
 	reg := standard.Registry()
-	staticKey := pathdom.PathKey(".name")
+	ks := keyspace.New()
+	staticKey := fieldSuffixKey(t, ks, "name")
 	present := presentValue(reg)
 	absent := absentValue(reg)
-	object := NewOwnedStaticTableObject(present, map[pathdom.PathKey]product.Value{staticKey: present})
+	object := NewOwnedStaticTableObject(present, map[keyspace.Key]product.Value{staticKey: present})
 
 	members := object.StaticMembers()
 	members[staticKey] = absent
 	if got, _ := object.StaticMember(staticKey); !product.Domain(reg).Equal(got, present) {
 		t.Fatalf("owned static table object exposed mutable static members")
 	}
-	if len(NewOwnedStaticTableObject(present, map[pathdom.PathKey]product.Value{}).staticMembers) != 0 {
+	if len(NewOwnedStaticTableObject(present, map[keyspace.Key]product.Value{}).staticMembers) != 0 {
 		t.Fatalf("owned static table object should normalize empty static maps")
 	}
 }
 
 func TestCloneObjectAndMapIndependence(t *testing.T) {
 	reg := standard.Registry()
+	ks := keyspace.New()
 	id := identity.ID{Kind: "table", Site: "clone", Index: 1}
-	staticKey := pathdom.PathKey(".name")
+	staticKey := fieldSuffixKey(t, ks, "name")
 	dynKey := dynamicindex.Key{Table: pathdom.PathKey("sym91@1.table"), Site: "dyn"}
 	present := presentValue(reg)
 	absent := absentValue(reg)
@@ -242,7 +247,7 @@ func TestCloneObjectAndMapIndependence(t *testing.T) {
 	}
 	object := NewTableObject(TableObjectConfig{
 		Root:          present,
-		StaticMembers: map[pathdom.PathKey]product.Value{staticKey: present},
+		StaticMembers: map[keyspace.Key]product.Value{staticKey: present},
 		DynamicIndexFacts: map[dynamicindex.Key]dynamicindex.Fact{
 			dynKey: presentFact,
 		},
@@ -273,7 +278,7 @@ func TestCloneObjectAndMapIndependence(t *testing.T) {
 		t.Fatalf("map clone mutation changed dynamic fact")
 	}
 
-	withoutStatic, changed := mapClone[id].WithoutStaticMemberSubtree([]segment.Segment{
+	withoutStatic, changed := mapClone[id].WithoutStaticMemberSubtree(ks, []segment.Segment{
 		{Kind: segment.SegmentField, Name: "name"},
 	})
 	if !changed {
@@ -287,13 +292,14 @@ func TestCloneObjectAndMapIndependence(t *testing.T) {
 
 func TestDeleteEntrySemantics(t *testing.T) {
 	reg := standard.Registry()
+	ks := keyspace.New()
 	id := identity.ID{Kind: "table", Site: "delete", Index: 1}
 	otherID := identity.ID{Kind: "table", Site: "delete", Index: 2}
-	staticKey := pathdom.PathKey("sym92@1.table.name")
+	staticKey := stateKey(t, ks, "sym92@1.table.name")
 	present := presentValue(reg)
 	object := NewTableObject(TableObjectConfig{
 		Root:          present,
-		StaticMembers: map[pathdom.PathKey]product.Value{staticKey: present},
+		StaticMembers: map[keyspace.Key]product.Value{staticKey: present},
 	})
 
 	out, removed := DeleteEntry(map[identity.ID]TableObject{id: object, otherID: object}, id)
@@ -317,18 +323,37 @@ func TestDeleteEntrySemantics(t *testing.T) {
 }
 
 func TestStaticMemberSuffixKeyUsesCanonicalRelativeSegments(t *testing.T) {
-	got, ok := StaticMemberSuffixKey([]segment.Segment{
+	ks := keyspace.New()
+	got, ok := StaticMemberSuffixKey(ks, []segment.Segment{
 		{Kind: segment.SegmentField, Name: "id"},
 		{Kind: segment.SegmentIndexString, Name: "name"},
 		{Kind: segment.SegmentIndexInt, Index: 1},
 	})
-	if !ok || got != pathdom.PathKey(".id[\"name\"][1]") {
-		t.Fatalf("StaticMemberSuffixKey = %q/%v, want .id[\"name\"][1]/true", got, ok)
+	if !ok || ks.Format(got) != pathdom.PathKey(".id[\"name\"][1]") {
+		t.Fatalf("StaticMemberSuffixKey = %q/%v, want .id[\"name\"][1]/true", ks.Format(got), ok)
 	}
 
-	if got, ok := StaticMemberSuffixKey(nil); ok || got != "" {
-		t.Fatalf("StaticMemberSuffixKey(nil) = %q/%v, want empty/false", got, ok)
+	if got, ok := StaticMemberSuffixKey(ks, nil); ok || (got != keyspace.Key{}) {
+		t.Fatalf("StaticMemberSuffixKey(nil) = %q/%v, want empty/false", ks.Format(got), ok)
 	}
+}
+
+func stateKey(t *testing.T, ks *keyspace.KeySpace, name string) keyspace.Key {
+	t.Helper()
+	k, ok := ks.FromStateKey(pathdom.PathKey(name))
+	if !ok {
+		t.Fatalf("FromStateKey(%q) failed", name)
+	}
+	return k
+}
+
+func fieldSuffixKey(t *testing.T, ks *keyspace.KeySpace, name string) keyspace.Key {
+	t.Helper()
+	k, ok := ks.FromRootlessSuffix([]segment.Segment{{Kind: segment.SegmentField, Name: name}})
+	if !ok {
+		t.Fatalf("FromRootlessSuffix(%q) failed", name)
+	}
+	return k
 }
 
 func presentValue(reg *axis.Registry) product.Value {

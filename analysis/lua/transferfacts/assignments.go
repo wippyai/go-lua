@@ -5,10 +5,12 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/engine/dynamicindex"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
+	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/pathexpr"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
 	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
 	"github.com/wippyai/go-lua/analysis/lua/typecall"
+	luatypeprojection "github.com/wippyai/go-lua/analysis/lua/typeprojection"
 	"github.com/wippyai/go-lua/analysis/lua/valueexpr"
 	"github.com/wippyai/go-lua/analysis/type/subtype"
 	"github.com/wippyai/go-lua/analysis/type/typ"
@@ -27,61 +29,170 @@ func (l *lowerer) localAssignment(fact semantics.LocalAssignmentFact) (factflow.
 			return factflow.NewRootAssignmentWithDeclaredContractValue(factflow.RootAssignmentLocalDeclaration, fact.Symbol, target, source, declared), true
 		}
 	}
-	assignment := factflow.NewRootAssignment(factflow.RootAssignmentLocalDeclaration, fact.Symbol, target, source)
-	if widen, ok := l.covariantArrayAliasWidenValue(fact); ok {
-		assignment = assignment.WithAliasWidenValue(widen)
-	}
-	return assignment, true
+	return factflow.NewRootAssignment(factflow.RootAssignmentLocalDeclaration, fact.Symbol, target, source), true
 }
 
-// covariantArrayAliasWidenValue returns the declared array contract value for a
-// local declaration that aliases an existing array variable with a strictly
-// wider element type. The target and source name the same runtime container, so
-// a mutable alias declared with a wider element type lets writes through the
-// alias store wider values; the source's element type widens to this contract to
-// keep covariant aliasing sound. The engine gates the actual write-back on the
-// source being heap-untracked, leaving heap-tracked covariance precise.
-func (l *lowerer) covariantArrayAliasWidenValue(fact semantics.LocalAssignmentFact) (product.Value, bool) {
+// addLocalAliasExposure records a covariant exposure for a local declaration that
+// aliases an existing array/record variable (or a sub-object of one) with a
+// strictly wider element/field type. The alias and its source name the same
+// runtime object, so a mutable alias declared with a wider type lets writes
+// through the alias store wider values; the source object's element/field type
+// is widened to this contract at the exposure point to keep aliasing sound.
+func (l *lowerer) addLocalAliasExposure(input *factflow.FactsInput, point cfg.Point, fact semantics.LocalAssignmentFact) {
 	if fact.Type == nil || fact.Source.Kind != sourceprovenance.SourceExpression {
-		return product.Value{}, false
+		return
 	}
-	sourceElement, ok := l.aliasSourceArrayElement(fact.Expr)
+	sourcePath, sourceType, ok := l.aliasSource(fact.Expr)
 	if !ok {
-		return product.Value{}, false
+		return
 	}
 	targetType, ok := l.resolveType(fact.Type)
 	if !ok || typ.IsAny(targetType) || typ.IsUnknown(targetType) {
-		return product.Value{}, false
+		return
 	}
-	targetElement, ok := arrayElementType(targetType)
-	if !ok {
-		return product.Value{}, false
+	if !aliasStrictlyWidens(sourceType, targetType) {
+		return
 	}
-	if !subtype.IsSubtype(sourceElement, targetElement) || subtype.IsSubtype(targetElement, sourceElement) {
-		return product.Value{}, false
-	}
-	return l.declaredValue(fact.Type)
+	l.addCovariantExposure(input, point, sourcePath, fact.Type)
 }
 
-// aliasSourceArrayElement resolves the declared array element type of a bare
-// identifier alias source.
-func (l *lowerer) aliasSourceArrayElement(expr ast.Expr) (typ.Type, bool) {
+// addCovariantExposure appends a covariant-exposure fact for sourcePath toward
+// the annotated contract type, carrying the contract's witness-bearing value.
+func (l *lowerer) addCovariantExposure(input *factflow.FactsInput, point cfg.Point, sourcePath path.Path, contract ast.TypeExpr) {
+	resolved, ok := l.resolveType(contract)
+	if !ok {
+		return
+	}
+	l.addCovariantExposureType(input, point, sourcePath, resolved)
+}
+
+// addCovariantExposureType appends a covariant-exposure fact for sourcePath
+// toward a resolved contract type. The widening kind is the array element witness
+// for an array contract and the record field rebuild otherwise.
+func (l *lowerer) addCovariantExposureType(input *factflow.FactsInput, point cfg.Point, sourcePath path.Path, contract typ.Type) {
+	if contract == nil || typ.IsAny(contract) || typ.IsUnknown(contract) {
+		return
+	}
+	wide := l.valueFromTypeWithWitness(contract)
+	kind := factflow.CovariantExposureRecord
+	if _, ok := arrayElementType(contract); ok {
+		kind = factflow.CovariantExposureArray
+	}
+	if input.CovariantExposures == nil {
+		input.CovariantExposures = make(map[cfg.Point][]factflow.CovariantExposure)
+	}
+	input.CovariantExposures[point] = append(input.CovariantExposures[point], factflow.NewCovariantExposure(sourcePath, wide, kind))
+}
+
+// aliasStrictlyWidens reports whether the target array element or record field(s)
+// strictly supertype the source's, which is the covariant alias that needs an
+// eager source widen.
+func aliasStrictlyWidens(sourceType, targetType typ.Type) bool {
+	if sourceElement, ok := arrayElementType(sourceType); ok {
+		if targetElement, ok := arrayElementType(targetType); ok {
+			return strictlyWidens(sourceElement, targetElement)
+		}
+		return false
+	}
+	sourceRecord, ok := unwrap.Alias(sourceType).(*typ.Record)
+	if !ok || sourceRecord == nil {
+		return false
+	}
+	targetRecord, ok := unwrap.Alias(targetType).(*typ.Record)
+	if !ok || targetRecord == nil {
+		return false
+	}
+	return recordHasStrictlyWiderField(sourceRecord, targetRecord, make(map[[2]typ.Type]bool))
+}
+
+// recordHasStrictlyWiderField reports whether any shared field of target
+// strictly widens the same-named source field, recursing into nested records.
+func recordHasStrictlyWiderField(source, target *typ.Record, visited map[[2]typ.Type]bool) bool {
+	key := [2]typ.Type{source, target}
+	if visited[key] {
+		return false
+	}
+	visited[key] = true
+	for i := range target.Fields {
+		tf := target.Fields[i]
+		sf, ok := recordField(source, tf.Name)
+		if !ok {
+			continue
+		}
+		if sf.Type == nil || tf.Type == nil {
+			continue
+		}
+		if typ.IsAny(sf.Type) || typ.IsUnknown(sf.Type) || typ.IsAny(tf.Type) || typ.IsUnknown(tf.Type) {
+			continue
+		}
+		if strictlyWidens(sf.Type, tf.Type) {
+			return true
+		}
+		if sr, ok := unwrap.Alias(sf.Type).(*typ.Record); ok && sr != nil {
+			if tr, ok := unwrap.Alias(tf.Type).(*typ.Record); ok && tr != nil {
+				if recordHasStrictlyWiderField(sr, tr, visited) {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+func recordField(r *typ.Record, name string) (typ.Field, bool) {
+	for i := range r.Fields {
+		if r.Fields[i].Name == name {
+			return r.Fields[i], true
+		}
+	}
+	return typ.Field{}, false
+}
+
+func strictlyWidens(narrow, wide typ.Type) bool {
+	return subtype.IsSubtype(narrow, wide) && !subtype.IsSubtype(wide, narrow)
+}
+
+// exposureContractElement strips a container-slot contract's outer optionality
+// (array element / optional-field presence) to the element record when the
+// stored object cannot itself be nil. The widen rebuilds the stored object's
+// record structure, so the element record is the contract to widen toward.
+func exposureContractElement(sourceType, contract typ.Type) typ.Type {
+	if _, ok := unwrap.Alias(sourceType).(*typ.Record); !ok {
+		return contract
+	}
+	inner := unwrap.Optional(contract)
+	if inner == nil {
+		return contract
+	}
+	if _, ok := unwrap.Alias(inner).(*typ.Record); ok {
+		return inner
+	}
+	return contract
+}
+
+// aliasSource resolves the source path and declared type of an alias source: a
+// bare identifier (narrow) or a member access of one (narrow.inner). A sub-path
+// source carries the symbol's structural field type projected through the
+// segments, so the exposure can repair the ancestor symbol's witness.
+func (l *lowerer) aliasSource(expr ast.Expr) (path.Path, typ.Type, bool) {
 	inner, ok := sourceprovenance.ProofInner(expr)
 	if !ok {
-		return nil, false
+		return path.Path{}, nil, false
 	}
-	if _, ok := inner.(*ast.IdentExpr); !ok {
-		return nil, false
+	switch inner.(type) {
+	case *ast.IdentExpr, *ast.AttrGetExpr:
+	default:
+		return path.Path{}, nil, false
 	}
 	sourcePath, ok := pathexpr.Resolve(inner, l.bindings)
-	if !ok || sourcePath.Symbol == 0 || len(sourcePath.Segments) != 0 {
-		return nil, false
+	if !ok || sourcePath.Symbol == 0 {
+		return path.Path{}, nil, false
 	}
-	sourceType, ok := l.symbolTypes[sourcePath.Symbol]
+	sourceType, ok := l.aliasPathType(sourcePath)
 	if !ok {
-		return nil, false
+		return path.Path{}, nil, false
 	}
-	return arrayElementType(sourceType)
+	return sourcePath, sourceType, true
 }
 
 func arrayElementType(t typ.Type) (typ.Type, bool) {
@@ -211,6 +322,69 @@ func (l *lowerer) ordinaryAssignment(fact semantics.OrdinaryAssignmentFact) (fac
 		return factflow.RootAssignment{}, false
 	}
 	return factflow.NewRootAssignment(factflow.RootAssignmentOrdinaryRootWrite, fact.Symbol, target, l.valueSource(fact.Source)), true
+}
+
+// addReassignExposure records a covariant exposure for an ordinary root
+// reassignment (wide = narrow) where the target's declared type strictly widens
+// the source object. The two name the same runtime object after the write, so a
+// later write through the wider target view can launder a wide value back; the
+// source object is widened to the target's declared contract.
+func (l *lowerer) addReassignExposure(input *factflow.FactsInput, point cfg.Point, fact semantics.OrdinaryAssignmentFact) {
+	if !fact.HasSymbol || fact.Symbol == 0 || (fact.HasPath && len(fact.Path.Segments) != 0) {
+		return
+	}
+	targetType, ok := l.symbolTypes[fact.Symbol]
+	if !ok {
+		return
+	}
+	l.addAliasExposureToContractType(input, point, fact.Source, targetType)
+}
+
+// addStoreExposure records a covariant exposure for a field or index store into a
+// declared container slot (holder.ref = narrow, sink[1] = narrow) whose declared
+// slot type strictly widens the stored object. The container retains the object
+// at the slot, so a later write through the wider slot view can launder a wide
+// value back into the source object; the source object is widened to the slot's
+// declared contract.
+func (l *lowerer) addStoreExposure(input *factflow.FactsInput, point cfg.Point, fact semantics.OrdinaryAssignmentFact) {
+	if !fact.HasPath || fact.Path.Symbol == 0 || len(fact.Path.Segments) == 0 {
+		return
+	}
+	containerType, ok := l.symbolTypes[fact.Path.Symbol]
+	if !ok {
+		return
+	}
+	slotType, ok := luatypeprojection.ApplySegments(containerType, fact.Path.Segments)
+	if !ok || slotType == nil {
+		return
+	}
+	l.addAliasExposureToContractType(input, point, fact.Source, slotType)
+}
+
+// addAliasExposureToContractType emits a covariant exposure for an alias source
+// (a bare identifier or member access) whose declared object type is strictly
+// widened by the contract type. It is the shared body of the reassignment and
+// container-store exposure sites.
+func (l *lowerer) addAliasExposureToContractType(input *factflow.FactsInput, point cfg.Point, source sourceprovenance.ASTSource, contract typ.Type) {
+	if source.Kind != sourceprovenance.SourceExpression {
+		return
+	}
+	sourcePath, sourceType, ok := l.aliasSource(source.Expr)
+	if !ok {
+		return
+	}
+	if contract == nil || typ.IsAny(contract) || typ.IsUnknown(contract) {
+		return
+	}
+	// A container-slot contract (array element, optional field) may wrap the element
+	// record in an Optional reflecting slot presence, not element covariance. The
+	// exposure widens the stored object's structure, so the element record is the
+	// contract; strip the slot's outer optionality before comparing and widening.
+	contract = exposureContractElement(sourceType, contract)
+	if !aliasStrictlyWidens(sourceType, contract) {
+		return
+	}
+	l.addCovariantExposureType(input, point, sourcePath, contract)
 }
 
 func (l *lowerer) pathAssignment(fact semantics.OrdinaryAssignmentFact) (factflow.PathAssignment, bool) {

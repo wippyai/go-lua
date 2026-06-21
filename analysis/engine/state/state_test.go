@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/placement"
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/typestate"
@@ -26,13 +27,14 @@ import (
 
 func TestBottomReadsProductBottom(t *testing.T) {
 	reg := standard.Registry()
+	ks := keyspace.New()
 	valueDomain := product.Domain(reg)
 	var s State
 
 	if got := s.ReadValue(reg, key.SymbolValue(1)); !valueDomain.Equal(got, valueDomain.Bottom()) {
 		t.Fatalf("absent value slot = %s, want product bottom", formatValue(reg, got))
 	}
-	if got := s.ReadPathKey(reg, pathdom.PathKey("sym1@1.field")); !valueDomain.Equal(got, valueDomain.Bottom()) {
+	if got := s.ReadPathKey(reg, ks, pathdom.PathKey("sym1@1.field")); !valueDomain.Equal(got, valueDomain.Bottom()) {
 		t.Fatalf("absent path key = %s, want product bottom", formatValue(reg, got))
 	}
 }
@@ -79,34 +81,35 @@ func TestWriteReadValueSlots(t *testing.T) {
 
 func TestLenFloorStateSemantics(t *testing.T) {
 	reg := standard.Registry()
+	ks := keyspace.New()
 	stateDomain := Domain(reg)
 	pathKey := pathdom.PathKey("sym12@1.items")
 
-	if floor, ok := (State{}).ReadLenFloor(pathKey); ok || floor != 0 {
+	if floor, ok := (State{}).ReadLenFloor(ks, pathKey); ok || floor != 0 {
 		t.Fatalf("missing len floor = %d/%v, want absent", floor, ok)
 	}
-	if got := (State{}).WriteLenFloor("", 2); !stateDomain.Equal(got, State{}) {
-		t.Fatalf("empty len-floor path changed state: %s", formatState(reg, got))
+	if got := (State{}).WriteLenFloor(ks, "", 2); !stateDomain.Equal(got, State{}) {
+		t.Fatalf("empty len-floor path changed state: %s", formatState(reg, ks, got))
 	}
-	if got := (State{}).WriteLenFloor(pathKey, 0); !stateDomain.Equal(got, State{}) {
-		t.Fatalf("non-positive len floor changed state: %s", formatState(reg, got))
+	if got := (State{}).WriteLenFloor(ks, pathKey, 0); !stateDomain.Equal(got, State{}) {
+		t.Fatalf("non-positive len floor changed state: %s", formatState(reg, ks, got))
 	}
 
-	withFloor := State{}.WriteLenFloor(pathKey, 2)
-	if floor, ok := withFloor.ReadLenFloor(pathKey); !ok || floor != 2 {
+	withFloor := State{}.WriteLenFloor(ks, pathKey, 2)
+	if floor, ok := withFloor.ReadLenFloor(ks, pathKey); !ok || floor != 2 {
 		t.Fatalf("len floor = %d/%v, want 2/present", floor, ok)
 	}
-	weaker := withFloor.WriteLenFloor(pathKey, 1)
+	weaker := withFloor.WriteLenFloor(ks, pathKey, 1)
 	if !stateDomain.Equal(weaker, withFloor) {
-		t.Fatalf("weaker len floor changed state: %s", formatState(reg, weaker))
+		t.Fatalf("weaker len floor changed state: %s", formatState(reg, ks, weaker))
 	}
-	stronger := withFloor.WriteLenFloor(pathKey, 4)
-	if floor, ok := stronger.ReadLenFloor(pathKey); !ok || floor != 4 {
+	stronger := withFloor.WriteLenFloor(ks, pathKey, 4)
+	if floor, ok := stronger.ReadLenFloor(ks, pathKey); !ok || floor != 4 {
 		t.Fatalf("stronger len floor = %d/%v, want 4/present", floor, ok)
 	}
 
-	fromBottom := stateDomain.Bottom().WriteLenFloor(pathKey, 3)
-	if floor, ok := fromBottom.ReadLenFloor(pathKey); !ok || floor != 3 {
+	fromBottom := stateDomain.Bottom().WriteLenFloor(ks, pathKey, 3)
+	if floor, ok := fromBottom.ReadLenFloor(ks, pathKey); !ok || floor != 3 {
 		t.Fatalf("bottom write len floor = %d/%v, want 3/present", floor, ok)
 	}
 	if stateDomain.Equal(fromBottom, stateDomain.Bottom()) {
@@ -115,6 +118,7 @@ func TestLenFloorStateSemantics(t *testing.T) {
 }
 
 func TestLenFloorInvalidationFollowsPathMutationPrefixes(t *testing.T) {
+	ks := keyspace.New()
 	root := pathdom.PathKey("sym12@1.items")
 	child := pathdom.PathKey("sym12@1.items.child")
 	sibling := pathdom.PathKey("sym12@1.itemized")
@@ -123,39 +127,39 @@ func TestLenFloorInvalidationFollowsPathMutationPrefixes(t *testing.T) {
 	proof := pathevidence.BranchProof{Kind: pathevidence.BranchProofPathEqual, Path: root, Other: aliasRoot}
 
 	s := State{}.
-		WriteLenFloor(root, 2).
-		WriteLenFloor(child, 5).
-		WriteLenFloor(sibling, 7).
-		WriteLenFloor(aliasRoot, 3).
-		WriteLenFloor(aliasChild, 4).
+		WriteLenFloor(ks, root, 2).
+		WriteLenFloor(ks, child, 5).
+		WriteLenFloor(ks, sibling, 7).
+		WriteLenFloor(ks, aliasRoot, 3).
+		WriteLenFloor(ks, aliasChild, 4).
 		AddBranchProof(proof)
 
-	out, ok := s.InvalidatePathKeyDescendants(root)
+	out, ok := s.InvalidatePathKeyDescendants(ks, root)
 	if !ok {
 		t.Fatal("InvalidatePathKeyDescendants rejected root")
 	}
 	for _, removed := range []pathdom.PathKey{root, child, aliasRoot, aliasChild} {
-		if floor, ok := out.ReadLenFloor(removed); ok || floor != 0 {
+		if floor, ok := out.ReadLenFloor(ks, removed); ok || floor != 0 {
 			t.Fatalf("%s length floor = %d/%v, want cleared", removed, floor, ok)
 		}
 	}
-	if floor, ok := out.ReadLenFloor(sibling); !ok || floor != 7 {
+	if floor, ok := out.ReadLenFloor(ks, sibling); !ok || floor != 7 {
 		t.Fatalf("%s length floor = %d/%v, want 7/present", sibling, floor, ok)
 	}
-	if floor, ok := s.ReadLenFloor(root); !ok || floor != 2 {
+	if floor, ok := s.ReadLenFloor(ks, root); !ok || floor != 2 {
 		t.Fatalf("original root length floor = %d/%v, want unchanged 2/present", floor, ok)
 	}
 
-	out, ok = s.InvalidatePathKeySubtree(root)
+	out, ok = s.InvalidatePathKeySubtree(ks, root)
 	if !ok {
 		t.Fatal("InvalidatePathKeySubtree rejected root")
 	}
 	for _, removed := range []pathdom.PathKey{root, child, aliasRoot, aliasChild} {
-		if floor, ok := out.ReadLenFloor(removed); ok || floor != 0 {
+		if floor, ok := out.ReadLenFloor(ks, removed); ok || floor != 0 {
 			t.Fatalf("%s subtree length floor = %d/%v, want cleared", removed, floor, ok)
 		}
 	}
-	if floor, ok := out.ReadLenFloor(sibling); !ok || floor != 7 {
+	if floor, ok := out.ReadLenFloor(ks, sibling); !ok || floor != 7 {
 		t.Fatalf("%s subtree length floor = %d/%v, want 7/present", sibling, floor, ok)
 	}
 }
@@ -214,47 +218,48 @@ func TestTypestateResourceKeyFollowsProvenPathEquality(t *testing.T) {
 
 func TestNumFloorStateSemantics(t *testing.T) {
 	reg := standard.Registry()
+	ks := keyspace.New()
 	stateDomain := Domain(reg)
 	pathKey := pathdom.PathKey("sym13@1.index")
 
-	if floor, ok := (State{}).ReadNumFloor(pathKey); ok || floor != 0 {
+	if floor, ok := (State{}).ReadNumFloor(ks, pathKey); ok || floor != 0 {
 		t.Fatalf("missing num floor = %d/%v, want absent", floor, ok)
 	}
-	if got := (State{}).WriteNumFloor("", 2); !stateDomain.Equal(got, State{}) {
-		t.Fatalf("empty num-floor path changed state: %s", formatState(reg, got))
+	if got := (State{}).WriteNumFloor(ks, "", 2); !stateDomain.Equal(got, State{}) {
+		t.Fatalf("empty num-floor path changed state: %s", formatState(reg, ks, got))
 	}
-	if snapshot := stateDomain.Bottom().NumFloorsSnapshot(); !snapshot.Bottom || len(snapshot.Floors) != 0 {
+	if snapshot := stateDomain.Bottom().NumFloorsSnapshot(ks); !snapshot.Bottom || len(snapshot.Floors) != 0 {
 		t.Fatalf("bottom num-floor snapshot = %#v, want bottom without floors", snapshot)
 	}
 
-	withFloor := State{}.WriteNumFloor(pathKey, -5)
-	if floor, ok := withFloor.ReadNumFloor(pathKey); !ok || floor != -5 {
+	withFloor := State{}.WriteNumFloor(ks, pathKey, -5)
+	if floor, ok := withFloor.ReadNumFloor(ks, pathKey); !ok || floor != -5 {
 		t.Fatalf("num floor = %d/%v, want -5/present", floor, ok)
 	}
-	weaker := withFloor.WriteNumFloor(pathKey, -10)
+	weaker := withFloor.WriteNumFloor(ks, pathKey, -10)
 	if !stateDomain.Equal(weaker, withFloor) {
-		t.Fatalf("weaker num floor changed state: %s", formatState(reg, weaker))
+		t.Fatalf("weaker num floor changed state: %s", formatState(reg, ks, weaker))
 	}
-	stronger := withFloor.WriteNumFloor(pathKey, 1)
-	if floor, ok := stronger.ReadNumFloor(pathKey); !ok || floor != 1 {
+	stronger := withFloor.WriteNumFloor(ks, pathKey, 1)
+	if floor, ok := stronger.ReadNumFloor(ks, pathKey); !ok || floor != 1 {
 		t.Fatalf("stronger num floor = %d/%v, want 1/present", floor, ok)
 	}
 
-	snapshot := stronger.NumFloorsSnapshot()
+	snapshot := stronger.NumFloorsSnapshot(ks)
 	if snapshot.Bottom || snapshot.Floors[pathKey] != 1 {
 		t.Fatalf("num-floor snapshot = %#v, want path floor 1", snapshot)
 	}
 	snapshot.Floors[pathKey] = 99
-	if floor, _ := stronger.ReadNumFloor(pathKey); floor != 1 {
+	if floor, _ := stronger.ReadNumFloor(ks, pathKey); floor != 1 {
 		t.Fatalf("mutating num-floor snapshot changed state floor to %d", floor)
 	}
 
-	cleared := stronger.ClearNumFloor(pathKey)
-	if floor, ok := cleared.ReadNumFloor(pathKey); ok || floor != 0 {
+	cleared := stronger.ClearNumFloor(ks, pathKey)
+	if floor, ok := cleared.ReadNumFloor(ks, pathKey); ok || floor != 0 {
 		t.Fatalf("cleared num floor = %d/%v, want absent", floor, ok)
 	}
-	if again := cleared.ClearNumFloor(pathKey); !stateDomain.Equal(again, cleared) {
-		t.Fatalf("clearing absent num floor changed state: %s", formatState(reg, again))
+	if again := cleared.ClearNumFloor(ks, pathKey); !stateDomain.Equal(again, cleared) {
+		t.Fatalf("clearing absent num floor changed state: %s", formatState(reg, ks, again))
 	}
 }
 
@@ -300,6 +305,7 @@ func TestStoreRelationStateMustSemantics(t *testing.T) {
 
 func TestWritesAreImmutable(t *testing.T) {
 	reg := standard.Registry()
+	ks := keyspace.New()
 	valueDomain := product.Domain(reg)
 	slot := key.SymbolValue(symbol.ID(11))
 	pathKey := pathdom.PathKey("sym11@1.field")
@@ -308,27 +314,28 @@ func TestWritesAreImmutable(t *testing.T) {
 
 	s1 := State{}.
 		WriteValue(reg, slot, present).
-		WritePathKey(reg, pathKey, present)
+		WritePathKey(reg, ks, pathKey, present)
 	s2 := s1.
 		WriteValue(reg, slot, absent).
-		WritePathKey(reg, pathKey, absent)
+		WritePathKey(reg, ks, pathKey, absent)
 
 	if got := s1.ReadValue(reg, slot); !valueDomain.Equal(got, present) {
 		t.Fatalf("original value slot changed to %s", formatValue(reg, got))
 	}
-	if got := s1.ReadPathKey(reg, pathKey); !valueDomain.Equal(got, present) {
+	if got := s1.ReadPathKey(reg, ks, pathKey); !valueDomain.Equal(got, present) {
 		t.Fatalf("original path key changed to %s", formatValue(reg, got))
 	}
 	if got := s2.ReadValue(reg, slot); !valueDomain.Equal(got, absent) {
 		t.Fatalf("updated value slot = %s, want absent value", formatValue(reg, got))
 	}
-	if got := s2.ReadPathKey(reg, pathKey); !valueDomain.Equal(got, absent) {
+	if got := s2.ReadPathKey(reg, ks, pathKey); !valueDomain.Equal(got, absent) {
 		t.Fatalf("updated path key = %s, want absent value", formatValue(reg, got))
 	}
 }
 
 func TestUpdateHelpersReadCurrentAndCanonicalizeBottom(t *testing.T) {
 	reg := standard.Registry()
+	ks := keyspace.New()
 	valueDomain := product.Domain(reg)
 	stateDomain := Domain(reg)
 	slot := key.SymbolValue(symbol.ID(12))
@@ -341,7 +348,7 @@ func TestUpdateHelpersReadCurrentAndCanonicalizeBottom(t *testing.T) {
 	s1 := State{}.
 		WriteValue(reg, slot, present).
 		WriteReturnSlot(reg, retSlot, present).
-		WritePathKey(reg, pathKey, present)
+		WritePathKey(reg, ks, pathKey, present)
 	s2 := s1.
 		UpdateValue(reg, slot, func(got product.Value) product.Value {
 			if !valueDomain.Equal(got, present) {
@@ -355,7 +362,7 @@ func TestUpdateHelpersReadCurrentAndCanonicalizeBottom(t *testing.T) {
 			}
 			return absent
 		}).
-		UpdatePathKey(reg, pathKey, func(got product.Value) product.Value {
+		UpdatePathKey(reg, ks, pathKey, func(got product.Value) product.Value {
 			if !valueDomain.Equal(got, present) {
 				t.Fatalf("UpdatePathKey read %s, want present", formatValue(reg, got))
 			}
@@ -368,7 +375,7 @@ func TestUpdateHelpersReadCurrentAndCanonicalizeBottom(t *testing.T) {
 	if got := s1.ReadReturnSlot(reg, retSlot); !valueDomain.Equal(got, present) {
 		t.Fatalf("original return slot changed to %s", formatValue(reg, got))
 	}
-	if got := s1.ReadPathKey(reg, pathKey); !valueDomain.Equal(got, present) {
+	if got := s1.ReadPathKey(reg, ks, pathKey); !valueDomain.Equal(got, present) {
 		t.Fatalf("original path key changed to %s", formatValue(reg, got))
 	}
 	if got := s2.ReadValue(reg, slot); !valueDomain.Equal(got, bottom) {
@@ -377,13 +384,13 @@ func TestUpdateHelpersReadCurrentAndCanonicalizeBottom(t *testing.T) {
 	if got := s2.ReadReturnSlot(reg, retSlot); !valueDomain.Equal(got, absent) {
 		t.Fatalf("updated return slot = %s, want absent", formatValue(reg, got))
 	}
-	if got := s2.ReadPathKey(reg, pathKey); !valueDomain.Equal(got, bottom) {
+	if got := s2.ReadPathKey(reg, ks, pathKey); !valueDomain.Equal(got, bottom) {
 		t.Fatalf("updated path key = %s, want bottom", formatValue(reg, got))
 	}
 	if s2.values.hasFinite(slot) {
 		t.Fatalf("UpdateValue to bottom kept finite value entry")
 	}
-	if _, ok := s2.PathRefinementsSnapshot().Refinements[pathKey]; ok {
+	if _, ok := s2.PathRefinementsSnapshot(ks).Refinements[pathKey]; ok {
 		t.Fatalf("UpdatePathKey to bottom kept finite path entry")
 	}
 	if !stateDomain.Equal(State{}.WriteReturnSlot(reg, retSlot, absent), State{}.WriteValue(reg, key.ReturnSlot(retSlot), absent)) {
@@ -393,6 +400,7 @@ func TestUpdateHelpersReadCurrentAndCanonicalizeBottom(t *testing.T) {
 
 func TestDomainPointwiseOperations(t *testing.T) {
 	reg := standard.Registry()
+	ks := keyspace.New()
 	valueDomain := product.Domain(reg)
 	stateDomain := Domain(reg)
 	present := presentValue(reg)
@@ -404,12 +412,12 @@ func TestDomainPointwiseOperations(t *testing.T) {
 
 	a := State{}.
 		WriteValue(reg, valueSlot, present).
-		WritePathKey(reg, pathKey, present)
+		WritePathKey(reg, ks, pathKey, present)
 	b := State{}.
 		WriteValue(reg, valueSlot, absent).
 		WriteValue(reg, retSlot, present).
-		WritePathKey(reg, pathKey, absent).
-		WritePathKey(reg, otherPathKey, present)
+		WritePathKey(reg, ks, pathKey, absent).
+		WritePathKey(reg, ks, otherPathKey, present)
 
 	joined := stateDomain.Join(a, b)
 	if got := joined.ReadValue(reg, valueSlot); !valueDomain.Equal(got, product.Top()) {
@@ -418,19 +426,19 @@ func TestDomainPointwiseOperations(t *testing.T) {
 	if got := joined.ReadValue(reg, retSlot); !valueDomain.Equal(got, present) {
 		t.Fatalf("joined disjoint value slot = %s, want present", formatValue(reg, got))
 	}
-	if got := joined.ReadPathKey(reg, pathKey); !valueDomain.Equal(got, product.Top()) {
+	if got := joined.ReadPathKey(reg, ks, pathKey); !valueDomain.Equal(got, product.Top()) {
 		t.Fatalf("joined shared path key = %s, want top", formatValue(reg, got))
 	}
-	if got := joined.ReadPathKey(reg, otherPathKey); !valueDomain.Equal(got, product.Bottom(reg)) {
+	if got := joined.ReadPathKey(reg, ks, otherPathKey); !valueDomain.Equal(got, product.Bottom(reg)) {
 		t.Fatalf("joined disjoint path key = %s, want bottom (dropped by must join)", formatValue(reg, got))
 	}
 
 	if widened := stateDomain.Widen(a, b); !stateDomain.Equal(widened, joined) {
-		t.Fatalf("Widen differs from Join: got %s, want %s", formatState(reg, widened), formatState(reg, joined))
+		t.Fatalf("Widen differs from Join: got %s, want %s", formatState(reg, ks, widened), formatState(reg, ks, joined))
 	}
 	if !stateDomain.LessOrEq(a, joined) || !stateDomain.LessOrEq(b, joined) {
 		t.Fatalf("Join is not an upper bound: a=%s b=%s joined=%s",
-			formatState(reg, a), formatState(reg, b), formatState(reg, joined))
+			formatState(reg, ks, a), formatState(reg, ks, b), formatState(reg, ks, joined))
 	}
 	if stateDomain.LessOrEq(joined, a) {
 		t.Fatalf("joined state unexpectedly <= left operand")
@@ -445,20 +453,22 @@ func TestDomainPointwiseOperations(t *testing.T) {
 
 func TestStateLatticeLaws(t *testing.T) {
 	reg := standard.Registry()
+	ks := keyspace.New()
 	d := Domain(reg)
 	suite := latticelaws.LawSuite[State]{
 		Name:   "state.State",
 		Domain: d,
-		Sample: stateLawSample(reg),
-		Format: stateLawFormat(reg),
+		Sample: stateLawSample(reg, ks),
+		Format: stateLawFormat(reg, ks),
 	}
 	suite.Run(t)
 }
 
 func TestStateOrderConsistencyAndJoinMonotonicity(t *testing.T) {
 	reg := standard.Registry()
+	ks := keyspace.New()
 	d := Domain(reg)
-	sample := stateLawSample(reg)
+	sample := stateLawSample(reg, ks)
 
 	for _, a := range sample {
 		for _, b := range sample {
@@ -467,7 +477,7 @@ func TestStateOrderConsistencyAndJoinMonotonicity(t *testing.T) {
 			ge := d.LessOrEq(b, a)
 			if eq != (le && ge) {
 				t.Fatalf("equality/order mismatch: a=%s b=%s equal=%v less-or-eq=%v reverse=%v",
-					stateLawFormat(reg)(a), stateLawFormat(reg)(b), eq, le, ge)
+					stateLawFormat(reg, ks)(a), stateLawFormat(reg, ks)(b), eq, le, ge)
 			}
 		}
 	}
@@ -482,17 +492,17 @@ func TestStateOrderConsistencyAndJoinMonotonicity(t *testing.T) {
 				right := d.Join(b, c)
 				if !d.LessOrEq(left, right) {
 					t.Fatalf("join monotonicity failed: %s ⊑ %s but Join(%s,%s)=%s ⊑ Join(%s,%s)=%s does not hold",
-						stateLawFormat(reg)(a), stateLawFormat(reg)(b),
-						stateLawFormat(reg)(a), stateLawFormat(reg)(c), stateLawFormat(reg)(left),
-						stateLawFormat(reg)(b), stateLawFormat(reg)(c), stateLawFormat(reg)(right))
+						stateLawFormat(reg, ks)(a), stateLawFormat(reg, ks)(b),
+						stateLawFormat(reg, ks)(a), stateLawFormat(reg, ks)(c), stateLawFormat(reg, ks)(left),
+						stateLawFormat(reg, ks)(b), stateLawFormat(reg, ks)(c), stateLawFormat(reg, ks)(right))
 				}
 				left = d.Join(c, a)
 				right = d.Join(c, b)
 				if !d.LessOrEq(left, right) {
 					t.Fatalf("join monotonicity failed on left argument: %s ⊑ %s but Join(%s,%s)=%s ⊑ Join(%s,%s)=%s does not hold",
-						stateLawFormat(reg)(a), stateLawFormat(reg)(b),
-						stateLawFormat(reg)(c), stateLawFormat(reg)(a), stateLawFormat(reg)(left),
-						stateLawFormat(reg)(c), stateLawFormat(reg)(b), stateLawFormat(reg)(right))
+						stateLawFormat(reg, ks)(a), stateLawFormat(reg, ks)(b),
+						stateLawFormat(reg, ks)(c), stateLawFormat(reg, ks)(a), stateLawFormat(reg, ks)(left),
+						stateLawFormat(reg, ks)(c), stateLawFormat(reg, ks)(b), stateLawFormat(reg, ks)(right))
 				}
 			}
 		}
@@ -501,17 +511,18 @@ func TestStateOrderConsistencyAndJoinMonotonicity(t *testing.T) {
 
 func TestStateCloneIndependenceAcrossLanes(t *testing.T) {
 	reg := standard.Registry()
-	fx := stateLawFixtureFor(reg)
+	ks := keyspace.New()
+	fx := stateLawFixtureFor(reg, ks)
 
 	original := State{}.
 		WriteValue(reg, fx.valueSlot, fx.present).
-		WritePathKey(reg, fx.pathKey, fx.present).
-		WritePathStaticMember(fx.staticKey, fx.present).
+		WritePathKey(reg, ks, fx.pathKey, fx.present).
+		WritePathStaticMember(ks, fx.staticKey, fx.present).
 		WriteDynamicIndexFact(reg, fx.dynamicKey, fx.dynamicFact).
 		WriteHeapTableObject(reg, fx.heapID, heapidentity.NewTableObject(heapidentity.TableObjectConfig{
 			Root: fx.present,
-			StaticMembers: map[pathdom.PathKey]product.Value{
-				fx.staticKey: fx.present,
+			StaticMembers: map[keyspace.Key]product.Value{
+				fx.staticHeapKey: fx.present,
 			},
 		})).
 		WriteEffectDelta(fx.effectKey, fx.effectDelta).
@@ -528,8 +539,8 @@ func TestStateCloneIndependenceAcrossLanes(t *testing.T) {
 	cloneOnlyFrozenID := identity.ID{Kind: "table", Site: "clone-only-freeze", Index: 1}
 	clone := original.Snapshot()
 	clone = clone.WriteValue(reg, fx.valueSlot, fx.absent)
-	clone = clone.WritePathKey(reg, fx.pathKey, fx.absent)
-	clone = clone.WritePathStaticMember(fx.staticKey, fx.absent)
+	clone = clone.WritePathKey(reg, ks, fx.pathKey, fx.absent)
+	clone = clone.WritePathStaticMember(ks, fx.staticKey, fx.absent)
 	clone = clone.AddBranchProof(cloneOnlyProof)
 	clone = clone.WriteDynamicIndexFact(reg, fx.dynamicKey, dynamicindex.Bottom(reg))
 	clone = clone.WriteHeapTableObject(reg, fx.heapID, heapidentity.BottomObject(reg))
@@ -546,17 +557,17 @@ func TestStateCloneIndependenceAcrossLanes(t *testing.T) {
 	if got := original.ReadValue(reg, fx.valueSlot); !product.Equal(reg, got, fx.present) {
 		t.Fatalf("original value slot mutated through clone: %s", formatValue(reg, got))
 	}
-	if got := original.ReadPathKey(reg, fx.pathKey); !product.Equal(reg, got, fx.present) {
+	if got := original.ReadPathKey(reg, ks, fx.pathKey); !product.Equal(reg, got, fx.present) {
 		t.Fatalf("original path key mutated through clone: %s", formatValue(reg, got))
 	}
-	if got, ok := original.ReadPathStaticMember(fx.staticKey); !ok || !product.Equal(reg, got, fx.present) {
+	if got, ok := original.ReadPathStaticMember(ks, fx.staticKey); !ok || !product.Equal(reg, got, fx.present) {
 		t.Fatalf("original static member mutated through clone: %s ok=%v", formatValue(reg, got), ok)
 	}
 	if got := original.ReadDynamicIndexFact(reg, fx.dynamicKey); !dynamicindex.Domain(reg).Equal(got, fx.dynamicFact) {
 		t.Fatalf("original dynamic index mutated through clone: %#v", got)
 	}
 	if got := original.ReadHeapTableObject(reg, fx.heapID); !product.Equal(reg, got.Root(), fx.present) ||
-		!staticMemberEqual(reg, got, fx.staticKey, fx.present) {
+		!staticMemberEqual(reg, got, fx.staticHeapKey, fx.present) {
 		t.Fatalf("original heap object mutated through clone: %#v", got)
 	}
 	if got := original.ReadEffectDelta(fx.effectKey); !effectdelta.Domain(reg).Equal(got, fx.effectDelta) {
@@ -578,10 +589,10 @@ func TestStateCloneIndependenceAcrossLanes(t *testing.T) {
 	if got := clone.ReadValue(reg, fx.valueSlot); !product.Equal(reg, got, fx.absent) {
 		t.Fatalf("clone value slot = %s, want absent", formatValue(reg, got))
 	}
-	if got := clone.ReadPathKey(reg, fx.pathKey); !product.Equal(reg, got, fx.absent) {
+	if got := clone.ReadPathKey(reg, ks, fx.pathKey); !product.Equal(reg, got, fx.absent) {
 		t.Fatalf("clone path key = %s, want absent", formatValue(reg, got))
 	}
-	if got, ok := clone.ReadPathStaticMember(fx.staticKey); !ok || !product.Equal(reg, got, fx.absent) {
+	if got, ok := clone.ReadPathStaticMember(ks, fx.staticKey); !ok || !product.Equal(reg, got, fx.absent) {
 		t.Fatalf("clone static member = %s ok=%v, want absent", formatValue(reg, got), ok)
 	}
 	if got := clone.ReadDynamicIndexFact(reg, fx.dynamicKey); dynamicindex.Domain(reg).Equal(got, fx.dynamicFact) {
@@ -614,24 +625,25 @@ func TestStateCloneIndependenceAcrossLanes(t *testing.T) {
 
 func TestStateBottomWritesRemoveExplicitBottomEntries(t *testing.T) {
 	reg := standard.Registry()
+	ks := keyspace.New()
 	valueDomain := product.Domain(reg)
-	fx := stateLawFixtureFor(reg)
+	fx := stateLawFixtureFor(reg, ks)
 
 	state := State{}.
 		WriteValue(reg, fx.valueSlot, fx.present).
-		WritePathKey(reg, fx.pathKey, fx.present).
+		WritePathKey(reg, ks, fx.pathKey, fx.present).
 		WriteDynamicIndexFact(reg, fx.dynamicKey, fx.dynamicFact).
 		WriteHeapTableObject(reg, fx.heapID, heapidentity.NewTableObject(heapidentity.TableObjectConfig{
 			Root: fx.present,
-			StaticMembers: map[pathdom.PathKey]product.Value{
-				fx.staticKey: fx.present,
+			StaticMembers: map[keyspace.Key]product.Value{
+				fx.staticHeapKey: fx.present,
 			},
 		})).
 		WriteEffectDelta(fx.effectKey, fx.effectDelta).
 		WritePlacement(fx.escapeID, placement.Stack)
 
 	state = state.WriteValue(reg, fx.valueSlot, valueDomain.Bottom())
-	state = state.WritePathKey(reg, fx.pathKey, valueDomain.Bottom())
+	state = state.WritePathKey(reg, ks, fx.pathKey, valueDomain.Bottom())
 	state = state.WriteDynamicIndexFact(reg, fx.dynamicKey, dynamicindex.Bottom(reg))
 	state = state.WriteHeapTableObject(reg, fx.heapID, heapidentity.BottomObject(reg))
 	state = state.WriteEffectDelta(fx.effectKey, effectdelta.Bottom(reg))
@@ -640,7 +652,7 @@ func TestStateBottomWritesRemoveExplicitBottomEntries(t *testing.T) {
 	if state.values.hasFinite(fx.valueSlot) {
 		t.Fatalf("value slot kept explicit bottom entry")
 	}
-	if _, ok := state.PathRefinementsSnapshot().Refinements[fx.pathKey]; ok {
+	if _, ok := state.PathRefinementsSnapshot(ks).Refinements[fx.pathKey]; ok {
 		t.Fatalf("path refinement kept explicit bottom entry")
 	}
 	if state.dynamicIndex.hasFinite(fx.dynamicKey) {
@@ -659,6 +671,7 @@ func TestStateBottomWritesRemoveExplicitBottomEntries(t *testing.T) {
 
 func TestExplicitBottomEntriesCanonicalizeToAbsence(t *testing.T) {
 	reg := standard.Registry()
+	ks := keyspace.New()
 	valueDomain := product.Domain(reg)
 	stateDomain := Domain(reg)
 	bottom := valueDomain.Bottom()
@@ -673,7 +686,7 @@ func TestExplicitBottomEntriesCanonicalizeToAbsence(t *testing.T) {
 	}
 	joined := stateDomain.Join(explicit, State{})
 	if !stateDomain.Equal(joined, State{}) {
-		t.Fatalf("Join should canonicalize bottom entries away, got %s", formatState(reg, joined))
+		t.Fatalf("Join should canonicalize bottom entries away, got %s", formatState(reg, ks, joined))
 	}
 	if joined.values.hasFinite(key.ReturnSlot(0)) {
 		t.Fatalf("Join kept bottom entry")
@@ -682,12 +695,13 @@ func TestExplicitBottomEntriesCanonicalizeToAbsence(t *testing.T) {
 	withValue := State{}.WriteValue(reg, key.ReturnSlot(0), presentValue(reg))
 	withoutValue := withValue.WriteValue(reg, key.ReturnSlot(0), bottom)
 	if !stateDomain.Equal(withoutValue, State{}) {
-		t.Fatalf("writing bottom should delete the value entry, got %s", formatState(reg, withoutValue))
+		t.Fatalf("writing bottom should delete the value entry, got %s", formatState(reg, ks, withoutValue))
 	}
 }
 
 func TestWritesFromStateBottomProduceReachableState(t *testing.T) {
 	reg := standard.Registry()
+	ks := keyspace.New()
 	stateDomain := Domain(reg)
 	bottom := stateDomain.Bottom()
 	empty := State{}
@@ -725,8 +739,8 @@ func TestWritesFromStateBottomProduceReachableState(t *testing.T) {
 		state State
 	}{
 		{"value", bottom.WriteValue(reg, slot, present)},
-		{"path", bottom.WritePathKey(reg, pathKey, present)},
-		{"static-member", bottom.WritePathStaticMember(pathKey, present)},
+		{"path", bottom.WritePathKey(reg, ks, pathKey, present)},
+		{"static-member", bottom.WritePathStaticMember(ks, pathKey, present)},
 		{"dynamic-index", bottom.WriteDynamicIndexFact(reg, dynamicKey, dynamicFact)},
 		{"heap-table", bottom.WriteHeapTableObject(reg, heapID, heapidentity.NewTableObject(heapidentity.TableObjectConfig{Root: present}))},
 		{"branch-proof", bottom.AddBranchProof(proof)},
@@ -752,6 +766,7 @@ func TestWritesFromStateBottomProduceReachableState(t *testing.T) {
 
 func TestPathPresenceImplicationsUseMustJoinAndInvalidate(t *testing.T) {
 	reg := standard.Registry()
+	ks := keyspace.New()
 	stateDomain := Domain(reg)
 	common := pathevidence.PathPresenceImplication{
 		Trigger:         pathdom.PathKey("sym101@1.err"),
@@ -795,7 +810,7 @@ func TestPathPresenceImplicationsUseMustJoinAndInvalidate(t *testing.T) {
 		t.Fatalf("path-presence implication clone write mutated original or missed clone")
 	}
 
-	out, ok := left.InvalidatePathKeySubtree(pathdom.PathKey("sym101@1.err"))
+	out, ok := left.InvalidatePathKeySubtree(ks, pathdom.PathKey("sym101@1.err"))
 	if !ok {
 		t.Fatal("InvalidatePathKeySubtree rejected trigger path")
 	}
@@ -803,7 +818,7 @@ func TestPathPresenceImplicationsUseMustJoinAndInvalidate(t *testing.T) {
 		t.Fatalf("trigger path-presence implication survived trigger invalidation")
 	}
 
-	out, ok = left.InvalidatePathKeySubtree(pathdom.PathKey("sym101@1.value"))
+	out, ok = left.InvalidatePathKeySubtree(ks, pathdom.PathKey("sym101@1.value"))
 	if !ok {
 		t.Fatal("InvalidatePathKeySubtree rejected target path")
 	}
@@ -814,6 +829,7 @@ func TestPathPresenceImplicationsUseMustJoinAndInvalidate(t *testing.T) {
 
 func TestPathStaticMembersAndRefinementsUseMustJoin(t *testing.T) {
 	reg := standard.Registry()
+	ks := keyspace.New()
 	valueDomain := product.Domain(reg)
 	stateDomain := Domain(reg)
 	common := pathdom.PathKey("sym70@1.shared")
@@ -823,28 +839,28 @@ func TestPathStaticMembersAndRefinementsUseMustJoin(t *testing.T) {
 	absent := absentValue(reg)
 
 	left := State{}.
-		WritePathKey(reg, leftOnly, present).
-		WritePathStaticMember(common, present).
-		WritePathStaticMember(leftOnly, present)
+		WritePathKey(reg, ks, leftOnly, present).
+		WritePathStaticMember(ks, common, present).
+		WritePathStaticMember(ks, leftOnly, present)
 	right := State{}.
-		WritePathKey(reg, rightOnly, present).
-		WritePathStaticMember(common, absent).
-		WritePathStaticMember(rightOnly, present)
+		WritePathKey(reg, ks, rightOnly, present).
+		WritePathStaticMember(ks, common, absent).
+		WritePathStaticMember(ks, rightOnly, present)
 
 	joined := stateDomain.Join(left, right)
-	if got := joined.ReadPathKey(reg, leftOnly); !valueDomain.Equal(got, product.Bottom(reg)) {
+	if got := joined.ReadPathKey(reg, ks, leftOnly); !valueDomain.Equal(got, product.Bottom(reg)) {
 		t.Fatalf("left-only refinement survived must join: %s", formatValue(reg, got))
 	}
-	if got := joined.ReadPathKey(reg, rightOnly); !valueDomain.Equal(got, product.Bottom(reg)) {
+	if got := joined.ReadPathKey(reg, ks, rightOnly); !valueDomain.Equal(got, product.Bottom(reg)) {
 		t.Fatalf("right-only refinement survived must join: %s", formatValue(reg, got))
 	}
-	if got, ok := joined.ReadPathStaticMember(common); !ok || !valueDomain.Equal(got, product.Top()) {
+	if got, ok := joined.ReadPathStaticMember(ks, common); !ok || !valueDomain.Equal(got, product.Top()) {
 		t.Fatalf("joined static member = %s ok=%v, want top common fact", formatValue(reg, got), ok)
 	}
-	if _, ok := joined.ReadPathStaticMember(leftOnly); ok {
+	if _, ok := joined.ReadPathStaticMember(ks, leftOnly); ok {
 		t.Fatalf("left-only static member survived must join")
 	}
-	if _, ok := joined.ReadPathStaticMember(rightOnly); ok {
+	if _, ok := joined.ReadPathStaticMember(ks, rightOnly); ok {
 		t.Fatalf("right-only static member survived must join")
 	}
 	if widened := stateDomain.Widen(left, right); !stateDomain.Equal(widened, joined) {
@@ -857,11 +873,11 @@ func TestPathStaticMembersAndRefinementsUseMustJoin(t *testing.T) {
 		t.Fatalf("state bottom should be join identity for static members")
 	}
 
-	clone := left.Snapshot().WritePathStaticMember(common, absent)
-	if got, _ := left.ReadPathStaticMember(common); !valueDomain.Equal(got, present) {
+	clone := left.Snapshot().WritePathStaticMember(ks, common, absent)
+	if got, _ := left.ReadPathStaticMember(ks, common); !valueDomain.Equal(got, present) {
 		t.Fatalf("static member clone write mutated original: %s", formatValue(reg, got))
 	}
-	if got, _ := clone.ReadPathStaticMember(common); !valueDomain.Equal(got, absent) {
+	if got, _ := clone.ReadPathStaticMember(ks, common); !valueDomain.Equal(got, absent) {
 		t.Fatalf("static member clone write = %s, want absent", formatValue(reg, got))
 	}
 }
@@ -930,17 +946,18 @@ func TestDynamicIndexKeysPointwiseFacts(t *testing.T) {
 
 func TestHeapTableIdentityFacadeReadWriteAndCopy(t *testing.T) {
 	reg := standard.Registry()
+	ks := keyspace.New()
 	valueDomain := product.Domain(reg)
 	stateDomain := Domain(reg)
 	id := identity.ID{Kind: "table", Site: "alloc", Index: 1}
-	staticCommon := pathdom.PathKey("sym90@1.table.name")
+	staticCommon := heapStaticKey(t, ks, "sym90@1.table.name")
 	dynCommon := dynamicindex.Key{Table: pathdom.PathKey("sym90@1.table"), Site: "dyn"}
 	present := presentValue(reg)
 	absent := absentValue(reg)
 
 	object := heapidentity.NewTableObject(heapidentity.TableObjectConfig{
 		Root: present,
-		StaticMembers: map[pathdom.PathKey]product.Value{
+		StaticMembers: map[keyspace.Key]product.Value{
 			staticCommon: present,
 		},
 		DynamicIndexFacts: map[dynamicindex.Key]dynamicindex.Fact{
@@ -1238,6 +1255,7 @@ func TestPlacementCanBeReadThroughValueIdentity(t *testing.T) {
 
 func TestInvalidatePathKeySubtreeRemovesStructuredDescendants(t *testing.T) {
 	reg := standard.Registry()
+	ks := keyspace.New()
 	valueDomain := product.Domain(reg)
 	present := presentValue(reg)
 	bottom := valueDomain.Bottom()
@@ -1256,25 +1274,25 @@ func TestInvalidatePathKeySubtreeRemovesStructuredDescendants(t *testing.T) {
 	otherProof := pathevidence.BranchProof{Kind: pathevidence.BranchProofPathNotEqual, Path: otherSymbol, Other: otherVersion}
 
 	s := State{}.
-		WritePathKey(reg, root, present).
-		WritePathKey(reg, prefix, present).
-		WritePathKey(reg, child, present).
-		WritePathKey(reg, siblingPrefixCollision, present).
-		WritePathKey(reg, localVersionless, present).
-		WritePathKey(reg, otherVersion, present).
-		WritePathKey(reg, otherSymbol, present).
-		WritePathKey(reg, placeholderPrefix, present).
-		WritePathKey(reg, placeholderChild, present).
-		WritePathKey(reg, placeholderSibling, present).
-		WritePathStaticMember(prefix, present).
-		WritePathStaticMember(child, present).
-		WritePathStaticMember(siblingPrefixCollision, present).
-		WritePathStaticMember(otherVersion, present).
+		WritePathKey(reg, ks, root, present).
+		WritePathKey(reg, ks, prefix, present).
+		WritePathKey(reg, ks, child, present).
+		WritePathKey(reg, ks, siblingPrefixCollision, present).
+		WritePathKey(reg, ks, localVersionless, present).
+		WritePathKey(reg, ks, otherVersion, present).
+		WritePathKey(reg, ks, otherSymbol, present).
+		WritePathKey(reg, ks, placeholderPrefix, present).
+		WritePathKey(reg, ks, placeholderChild, present).
+		WritePathKey(reg, ks, placeholderSibling, present).
+		WritePathStaticMember(ks, prefix, present).
+		WritePathStaticMember(ks, child, present).
+		WritePathStaticMember(ks, siblingPrefixCollision, present).
+		WritePathStaticMember(ks, otherVersion, present).
 		AddBranchProof(prefixProof).
 		AddBranchProof(childProof).
 		AddBranchProof(otherProof)
 
-	invalidPrefix, ok := s.InvalidatePathKeySubtree(pathdom.PathKey(".field"))
+	invalidPrefix, ok := s.InvalidatePathKeySubtree(ks, pathdom.PathKey(".field"))
 	if ok {
 		t.Fatal("InvalidatePathKeySubtree accepted invalid path key")
 	}
@@ -1282,35 +1300,35 @@ func TestInvalidatePathKeySubtreeRemovesStructuredDescendants(t *testing.T) {
 		t.Fatal("invalid path-key prefix changed state")
 	}
 
-	out, ok := s.InvalidatePathKeySubtree(prefix)
+	out, ok := s.InvalidatePathKeySubtree(ks, prefix)
 	if !ok {
 		t.Fatal("InvalidatePathKeySubtree rejected versioned prefix")
 	}
 	for _, removed := range []pathdom.PathKey{prefix, child} {
-		if got := out.ReadPathKey(reg, removed); !valueDomain.Equal(got, bottom) {
+		if got := out.ReadPathKey(reg, ks, removed); !valueDomain.Equal(got, bottom) {
 			t.Fatalf("%s = %s, want bottom", removed, formatValue(reg, got))
 		}
 	}
 	for _, kept := range []pathdom.PathKey{root, siblingPrefixCollision, otherVersion} {
-		if got := out.ReadPathKey(reg, kept); !valueDomain.Equal(got, present) {
+		if got := out.ReadPathKey(reg, ks, kept); !valueDomain.Equal(got, present) {
 			t.Fatalf("%s = %s, want present", kept, formatValue(reg, got))
 		}
 	}
-	if got := out.ReadPathKey(reg, otherSymbol); !valueDomain.Equal(got, bottom) {
+	if got := out.ReadPathKey(reg, ks, otherSymbol); !valueDomain.Equal(got, bottom) {
 		t.Fatalf("%s = %s, want bottom through alias proof", otherSymbol, formatValue(reg, got))
 	}
 	for _, notStored := range []pathdom.PathKey{localVersionless, placeholderPrefix, placeholderChild, placeholderSibling} {
-		if got := out.ReadPathKey(reg, notStored); !valueDomain.Equal(got, bottom) {
+		if got := out.ReadPathKey(reg, ks, notStored); !valueDomain.Equal(got, bottom) {
 			t.Fatalf("%s = %s, want bottom because path evidence stores only point-local keys", notStored, formatValue(reg, got))
 		}
 	}
 	for _, removed := range []pathdom.PathKey{prefix, child} {
-		if got, ok := out.ReadPathStaticMember(removed); ok {
+		if got, ok := out.ReadPathStaticMember(ks, removed); ok {
 			t.Fatalf("static member %s = %s, want removed", removed, formatValue(reg, got))
 		}
 	}
 	for _, kept := range []pathdom.PathKey{siblingPrefixCollision, otherVersion} {
-		if got, ok := out.ReadPathStaticMember(kept); !ok || !valueDomain.Equal(got, present) {
+		if got, ok := out.ReadPathStaticMember(ks, kept); !ok || !valueDomain.Equal(got, present) {
 			t.Fatalf("static member %s = %s ok=%v, want present", kept, formatValue(reg, got), ok)
 		}
 	}
@@ -1320,10 +1338,10 @@ func TestInvalidatePathKeySubtreeRemovesStructuredDescendants(t *testing.T) {
 	if out.HasBranchProof(otherProof) {
 		t.Fatalf("branch proof attached to invalidated alias survived")
 	}
-	if got := s.ReadPathKey(reg, child); !valueDomain.Equal(got, present) {
+	if got := s.ReadPathKey(reg, ks, child); !valueDomain.Equal(got, present) {
 		t.Fatalf("original child changed to %s", formatValue(reg, got))
 	}
-	if got, ok := s.ReadPathStaticMember(child); !ok || !valueDomain.Equal(got, present) {
+	if got, ok := s.ReadPathStaticMember(ks, child); !ok || !valueDomain.Equal(got, present) {
 		t.Fatalf("original static member changed to %s ok=%v", formatValue(reg, got), ok)
 	}
 	if !s.HasBranchProof(childProof) {
@@ -1331,7 +1349,7 @@ func TestInvalidatePathKeySubtreeRemovesStructuredDescendants(t *testing.T) {
 	}
 
 	beforePlaceholderInvalidation := out
-	out, ok = out.InvalidatePathKeySubtree(placeholderPrefix)
+	out, ok = out.InvalidatePathKeySubtree(ks, placeholderPrefix)
 	if !ok {
 		t.Fatal("InvalidatePathKeySubtree rejected placeholder prefix")
 	}
@@ -1351,6 +1369,7 @@ func placementOfValue(reg *axis.Registry, state State, value product.Value) plac
 
 func TestInvalidatePathKeySubtreeRemovesBranchProofsWithOtherUnderSubtree(t *testing.T) {
 	reg := standard.Registry()
+	ks := keyspace.New()
 	valueDomain := product.Domain(reg)
 	present := presentValue(reg)
 	bottom := valueDomain.Bottom()
@@ -1360,26 +1379,26 @@ func TestInvalidatePathKeySubtreeRemovesBranchProofsWithOtherUnderSubtree(t *tes
 	proof := pathevidence.BranchProof{Kind: pathevidence.BranchProofPathEqual, Path: outside, Other: otherInside}
 
 	s := State{}.
-		WritePathKey(reg, prefix, present).
-		WritePathKey(reg, otherInside, present).
-		WritePathKey(reg, outside, present).
-		WritePathStaticMember(otherInside, present).
+		WritePathKey(reg, ks, prefix, present).
+		WritePathKey(reg, ks, otherInside, present).
+		WritePathKey(reg, ks, outside, present).
+		WritePathStaticMember(ks, otherInside, present).
 		AddBranchProof(proof)
 
-	out, ok := s.InvalidatePathKeySubtree(prefix)
+	out, ok := s.InvalidatePathKeySubtree(ks, prefix)
 	if !ok {
 		t.Fatal("InvalidatePathKeySubtree rejected versioned prefix")
 	}
-	if got := out.ReadPathKey(reg, prefix); !valueDomain.Equal(got, bottom) {
+	if got := out.ReadPathKey(reg, ks, prefix); !valueDomain.Equal(got, bottom) {
 		t.Fatalf("%s = %s, want bottom", prefix, formatValue(reg, got))
 	}
-	if got := out.ReadPathKey(reg, otherInside); !valueDomain.Equal(got, bottom) {
+	if got := out.ReadPathKey(reg, ks, otherInside); !valueDomain.Equal(got, bottom) {
 		t.Fatalf("%s = %s, want bottom", otherInside, formatValue(reg, got))
 	}
-	if got := out.ReadPathKey(reg, outside); !valueDomain.Equal(got, bottom) {
+	if got := out.ReadPathKey(reg, ks, outside); !valueDomain.Equal(got, bottom) {
 		t.Fatalf("%s = %s, want bottom through alias proof", outside, formatValue(reg, got))
 	}
-	if got, ok := out.ReadPathStaticMember(otherInside); ok {
+	if got, ok := out.ReadPathStaticMember(ks, otherInside); ok {
 		t.Fatalf("static member %s = %s, want removed", otherInside, formatValue(reg, got))
 	}
 	if out.HasBranchProof(proof) {
@@ -1389,6 +1408,7 @@ func TestInvalidatePathKeySubtreeRemovesBranchProofsWithOtherUnderSubtree(t *tes
 
 func TestInvalidatePathKeyDescendantsKeepsContainerAndUnrelatedPaths(t *testing.T) {
 	reg := standard.Registry()
+	ks := keyspace.New()
 	valueDomain := product.Domain(reg)
 	present := presentValue(reg)
 	bottom := valueDomain.Bottom()
@@ -1405,23 +1425,23 @@ func TestInvalidatePathKeyDescendantsKeepsContainerAndUnrelatedPaths(t *testing.
 	childProof := pathevidence.BranchProof{Kind: pathevidence.BranchProofPathEqual, Path: child, Other: otherSymbol}
 
 	s := State{}.
-		WritePathKey(reg, container, present).
-		WritePathKey(reg, child, present).
-		WritePathKey(reg, deepChild, present).
-		WritePathKey(reg, siblingPrefixCollision, present).
-		WritePathKey(reg, root, present).
-		WritePathKey(reg, otherVersion, present).
-		WritePathKey(reg, otherSymbol, present).
-		WritePathKey(reg, placeholderContainer, present).
-		WritePathKey(reg, placeholderChild, present).
-		WritePathStaticMember(container, present).
-		WritePathStaticMember(child, present).
-		WritePathStaticMember(deepChild, present).
-		WritePathStaticMember(otherVersion, present).
+		WritePathKey(reg, ks, container, present).
+		WritePathKey(reg, ks, child, present).
+		WritePathKey(reg, ks, deepChild, present).
+		WritePathKey(reg, ks, siblingPrefixCollision, present).
+		WritePathKey(reg, ks, root, present).
+		WritePathKey(reg, ks, otherVersion, present).
+		WritePathKey(reg, ks, otherSymbol, present).
+		WritePathKey(reg, ks, placeholderContainer, present).
+		WritePathKey(reg, ks, placeholderChild, present).
+		WritePathStaticMember(ks, container, present).
+		WritePathStaticMember(ks, child, present).
+		WritePathStaticMember(ks, deepChild, present).
+		WritePathStaticMember(ks, otherVersion, present).
 		AddBranchProof(containerProof).
 		AddBranchProof(childProof)
 
-	invalidPrefix, ok := s.InvalidatePathKeyDescendants(pathdom.PathKey(".item"))
+	invalidPrefix, ok := s.InvalidatePathKeyDescendants(ks, pathdom.PathKey(".item"))
 	if ok {
 		t.Fatal("InvalidatePathKeyDescendants accepted invalid path key")
 	}
@@ -1429,35 +1449,35 @@ func TestInvalidatePathKeyDescendantsKeepsContainerAndUnrelatedPaths(t *testing.
 		t.Fatal("invalid path-key prefix changed state")
 	}
 
-	out, ok := s.InvalidatePathKeyDescendants(container)
+	out, ok := s.InvalidatePathKeyDescendants(ks, container)
 	if !ok {
 		t.Fatal("InvalidatePathKeyDescendants rejected versioned prefix")
 	}
 	for _, removed := range []pathdom.PathKey{child, deepChild} {
-		if got := out.ReadPathKey(reg, removed); !valueDomain.Equal(got, bottom) {
+		if got := out.ReadPathKey(reg, ks, removed); !valueDomain.Equal(got, bottom) {
 			t.Fatalf("%s = %s, want bottom", removed, formatValue(reg, got))
 		}
 	}
 	for _, kept := range []pathdom.PathKey{container, siblingPrefixCollision, root, otherVersion} {
-		if got := out.ReadPathKey(reg, kept); !valueDomain.Equal(got, present) {
+		if got := out.ReadPathKey(reg, ks, kept); !valueDomain.Equal(got, present) {
 			t.Fatalf("%s = %s, want present", kept, formatValue(reg, got))
 		}
 	}
-	if got := out.ReadPathKey(reg, otherSymbol); !valueDomain.Equal(got, bottom) {
+	if got := out.ReadPathKey(reg, ks, otherSymbol); !valueDomain.Equal(got, bottom) {
 		t.Fatalf("%s = %s, want bottom through descendant alias proof", otherSymbol, formatValue(reg, got))
 	}
 	for _, notStored := range []pathdom.PathKey{placeholderContainer, placeholderChild} {
-		if got := out.ReadPathKey(reg, notStored); !valueDomain.Equal(got, bottom) {
+		if got := out.ReadPathKey(reg, ks, notStored); !valueDomain.Equal(got, bottom) {
 			t.Fatalf("%s = %s, want bottom because path evidence stores only point-local keys", notStored, formatValue(reg, got))
 		}
 	}
 	for _, removed := range []pathdom.PathKey{child, deepChild} {
-		if got, ok := out.ReadPathStaticMember(removed); ok {
+		if got, ok := out.ReadPathStaticMember(ks, removed); ok {
 			t.Fatalf("static member %s = %s, want removed", removed, formatValue(reg, got))
 		}
 	}
 	for _, kept := range []pathdom.PathKey{container, otherVersion} {
-		if got, ok := out.ReadPathStaticMember(kept); !ok || !valueDomain.Equal(got, present) {
+		if got, ok := out.ReadPathStaticMember(ks, kept); !ok || !valueDomain.Equal(got, present) {
 			t.Fatalf("static member %s = %s ok=%v, want present", kept, formatValue(reg, got), ok)
 		}
 	}
@@ -1467,12 +1487,12 @@ func TestInvalidatePathKeyDescendantsKeepsContainerAndUnrelatedPaths(t *testing.
 	if out.HasBranchProof(childProof) {
 		t.Fatalf("descendant branch proof survived descendant invalidation")
 	}
-	if got := s.ReadPathKey(reg, child); !valueDomain.Equal(got, present) {
+	if got := s.ReadPathKey(reg, ks, child); !valueDomain.Equal(got, present) {
 		t.Fatalf("original child changed to %s", formatValue(reg, got))
 	}
 
 	beforePlaceholderInvalidation := out
-	out, ok = out.InvalidatePathKeyDescendants(placeholderContainer)
+	out, ok = out.InvalidatePathKeyDescendants(ks, placeholderContainer)
 	if !ok {
 		t.Fatal("InvalidatePathKeyDescendants rejected placeholder prefix")
 	}
@@ -1483,6 +1503,7 @@ func TestInvalidatePathKeyDescendantsKeepsContainerAndUnrelatedPaths(t *testing.
 
 func TestInvalidatePathKeyDescendantsFromRootRemovesStaticMembersAndBranchProofs(t *testing.T) {
 	reg := standard.Registry()
+	ks := keyspace.New()
 	valueDomain := product.Domain(reg)
 	present := presentValue(reg)
 	bottom := valueDomain.Bottom()
@@ -1493,30 +1514,30 @@ func TestInvalidatePathKeyDescendantsFromRootRemovesStaticMembersAndBranchProofs
 	proof := pathevidence.BranchProof{Kind: pathevidence.BranchProofPathNotEqual, Path: outside, Other: descendant}
 
 	s := State{}.
-		WritePathKey(reg, root, present).
-		WritePathKey(reg, child, present).
-		WritePathKey(reg, descendant, present).
-		WritePathKey(reg, outside, present).
-		WritePathStaticMember(child, present).
-		WritePathStaticMember(descendant, present).
+		WritePathKey(reg, ks, root, present).
+		WritePathKey(reg, ks, child, present).
+		WritePathKey(reg, ks, descendant, present).
+		WritePathKey(reg, ks, outside, present).
+		WritePathStaticMember(ks, child, present).
+		WritePathStaticMember(ks, descendant, present).
 		AddBranchProof(proof)
 
-	out, ok := s.InvalidatePathKeyDescendants(root)
+	out, ok := s.InvalidatePathKeyDescendants(ks, root)
 	if !ok {
 		t.Fatal("InvalidatePathKeyDescendants rejected versioned root")
 	}
-	if got := out.ReadPathKey(reg, root); !valueDomain.Equal(got, present) {
+	if got := out.ReadPathKey(reg, ks, root); !valueDomain.Equal(got, present) {
 		t.Fatalf("%s = %s, want present", root, formatValue(reg, got))
 	}
 	for _, removed := range []pathdom.PathKey{child, descendant} {
-		if got := out.ReadPathKey(reg, removed); !valueDomain.Equal(got, bottom) {
+		if got := out.ReadPathKey(reg, ks, removed); !valueDomain.Equal(got, bottom) {
 			t.Fatalf("%s = %s, want bottom", removed, formatValue(reg, got))
 		}
-		if got, ok := out.ReadPathStaticMember(removed); ok {
+		if got, ok := out.ReadPathStaticMember(ks, removed); ok {
 			t.Fatalf("static member %s = %s, want removed", removed, formatValue(reg, got))
 		}
 	}
-	if got := out.ReadPathKey(reg, outside); !valueDomain.Equal(got, present) {
+	if got := out.ReadPathKey(reg, ks, outside); !valueDomain.Equal(got, present) {
 		t.Fatalf("%s = %s, want present", outside, formatValue(reg, got))
 	}
 	if out.HasBranchProof(proof) {
@@ -1526,6 +1547,7 @@ func TestInvalidatePathKeyDescendantsFromRootRemovesStaticMembersAndBranchProofs
 
 func TestTopLanesReadTopAndRejectFiniteUpdates(t *testing.T) {
 	reg := standard.Registry()
+	ks := keyspace.New()
 	valueDomain := product.Domain(reg)
 	top := Domain(reg).Top()
 	slot := key.SymbolValue(symbol.ID(50))
@@ -1549,7 +1571,7 @@ func TestTopLanesReadTopAndRejectFiniteUpdates(t *testing.T) {
 	if got := top.ReadReturnSlot(reg, 0); !valueDomain.Equal(got, product.Top()) {
 		t.Fatalf("top return read = %s, want top", formatValue(reg, got))
 	}
-	if got := top.ReadPathKey(reg, pathKey); !valueDomain.Equal(got, product.Bottom(reg)) {
+	if got := top.ReadPathKey(reg, ks, pathKey); !valueDomain.Equal(got, product.Bottom(reg)) {
 		t.Fatalf("top path read = %s, want bottom absence", formatValue(reg, got))
 	}
 	if got := top.ReadDynamicIndexFact(reg, dynamicKey); !dynamicindex.Domain(reg).Equal(got, dynamicindex.Top()) {
@@ -1567,7 +1589,7 @@ func TestTopLanesReadTopAndRejectFiniteUpdates(t *testing.T) {
 	if top.IsTableFrozen(heapID) {
 		t.Fatalf("top frozen-table read = true, want conservative false")
 	}
-	if _, ok := top.ReadPathStaticMember(pathKey); ok {
+	if _, ok := top.ReadPathStaticMember(ks, pathKey); ok {
 		t.Fatalf("top static-member lane should read as unknown absence")
 	}
 
@@ -1632,11 +1654,12 @@ func TestStatePackageDoesNotImportLuaPackages(t *testing.T) {
 }
 
 type stateLawFixture struct {
-	valueSlot   key.Value
-	returnSlot  int
-	pathKey     pathdom.PathKey
-	staticKey   pathdom.PathKey
-	dynamicKey  dynamicindex.Key
+	valueSlot     key.Value
+	returnSlot    int
+	pathKey       pathdom.PathKey
+	staticKey     pathdom.PathKey
+	staticHeapKey keyspace.Key
+	dynamicKey    dynamicindex.Key
 	heapID      identity.ID
 	effectKey   effectdelta.Key
 	escapeID    identity.ID
@@ -1649,11 +1672,15 @@ type stateLawFixture struct {
 	effectDelta effectdelta.Value
 }
 
-func stateLawFixtureFor(reg *axis.Registry) stateLawFixture {
+func stateLawFixtureFor(reg *axis.Registry, ks *keyspace.KeySpace) stateLawFixture {
 	present := presentValue(reg)
 	absent := absentValue(reg)
 	pathKey := pathdom.PathKey("sym201@1.field")
 	staticKey := pathdom.PathKey("sym201@1.shared")
+	staticHeapKey, ok := ks.FromStateKey(staticKey)
+	if !ok {
+		panic("stateLawFixtureFor: FromStateKey failed for static heap key")
+	}
 	tableKey := pathdom.PathKey("sym201@1.table")
 	valueSlot := key.SymbolValue(symbol.ID(201))
 	returnSlot := 3
@@ -1673,11 +1700,12 @@ func stateLawFixtureFor(reg *axis.Registry) stateLawFixture {
 	effectDelta := effectdelta.Value{Before: present, After: present, Change: effectdelta.ChangeChanged}
 
 	return stateLawFixture{
-		valueSlot:   valueSlot,
-		returnSlot:  returnSlot,
-		pathKey:     pathKey,
-		staticKey:   staticKey,
-		dynamicKey:  dynamicKey,
+		valueSlot:     valueSlot,
+		returnSlot:    returnSlot,
+		pathKey:       pathKey,
+		staticKey:     staticKey,
+		staticHeapKey: staticHeapKey,
+		dynamicKey:    dynamicKey,
 		heapID:      heapID,
 		effectKey:   effectKey,
 		escapeID:    escapeID,
@@ -1691,8 +1719,8 @@ func stateLawFixtureFor(reg *axis.Registry) stateLawFixture {
 	}
 }
 
-func stateLawSample(reg *axis.Registry) []State {
-	fx := stateLawFixtureFor(reg)
+func stateLawSample(reg *axis.Registry, ks *keyspace.KeySpace) []State {
+	fx := stateLawFixtureFor(reg, ks)
 	bottom := Domain(reg).Bottom()
 	top := Domain(reg).Top()
 
@@ -1700,14 +1728,14 @@ func stateLawSample(reg *axis.Registry) []State {
 		WriteValue(reg, fx.valueSlot, fx.present).
 		WriteReturnSlot(reg, fx.returnSlot, fx.absent)
 	pathState := State{}.
-		WritePathKey(reg, fx.pathKey, fx.present).
-		WritePathStaticMember(fx.staticKey, fx.present).
+		WritePathKey(reg, ks, fx.pathKey, fx.present).
+		WritePathStaticMember(ks, fx.staticKey, fx.present).
 		AddBranchProof(fx.proof)
 	dynamicState := State{}.WriteDynamicIndexFact(reg, fx.dynamicKey, fx.dynamicFact)
 	heapState := State{}.WriteHeapTableObject(reg, fx.heapID, heapidentity.NewTableObject(heapidentity.TableObjectConfig{
 		Root: fx.present,
-		StaticMembers: map[pathdom.PathKey]product.Value{
-			fx.staticKey: fx.present,
+		StaticMembers: map[keyspace.Key]product.Value{
+			fx.staticHeapKey: fx.present,
 		},
 	}))
 	effectState := State{}.
@@ -1716,13 +1744,13 @@ func stateLawSample(reg *axis.Registry) []State {
 	channelState := State{}.AddChannelSelectFact(fx.channelFact)
 	frozenState := State{}.FreezeTable(fx.freezeID)
 	fullState := valueState.
-		WritePathKey(reg, fx.pathKey, fx.present).
-		WritePathStaticMember(fx.staticKey, fx.present).
+		WritePathKey(reg, ks, fx.pathKey, fx.present).
+		WritePathStaticMember(ks, fx.staticKey, fx.present).
 		WriteDynamicIndexFact(reg, fx.dynamicKey, fx.dynamicFact).
 		WriteHeapTableObject(reg, fx.heapID, heapidentity.NewTableObject(heapidentity.TableObjectConfig{
 			Root: fx.present,
-			StaticMembers: map[pathdom.PathKey]product.Value{
-				fx.staticKey: fx.present,
+			StaticMembers: map[keyspace.Key]product.Value{
+				fx.staticHeapKey: fx.present,
 			},
 		})).
 		WriteEffectDelta(fx.effectKey, fx.effectDelta).
@@ -1734,18 +1762,18 @@ func stateLawSample(reg *axis.Registry) []State {
 	return []State{bottom, top, valueState, pathState, dynamicState, heapState, effectState, channelState, frozenState, fullState}
 }
 
-func stateLawFormat(reg *axis.Registry) func(State) string {
-	fx := stateLawFixtureFor(reg)
+func stateLawFormat(reg *axis.Registry, ks *keyspace.KeySpace) func(State) string {
+	fx := stateLawFixtureFor(reg, ks)
 	return func(s State) string {
 		static := "absent"
-		if got, ok := s.ReadPathStaticMember(fx.staticKey); ok {
+		if got, ok := s.ReadPathStaticMember(ks, fx.staticKey); ok {
 			static = formatValue(reg, got)
 		}
 		return fmt.Sprintf(
 			"v=%s ret=%s path=%s static=%s dyn=%#v heap-root=%s effect=%#v placement=%v frozen=%v chan=%v proof=%v",
 			formatValue(reg, s.ReadValue(reg, fx.valueSlot)),
 			formatValue(reg, s.ReadReturnSlot(reg, fx.returnSlot)),
-			formatValue(reg, s.ReadPathKey(reg, fx.pathKey)),
+			formatValue(reg, s.ReadPathKey(reg, ks, fx.pathKey)),
 			static,
 			s.ReadDynamicIndexFact(reg, fx.dynamicKey),
 			formatValue(reg, s.ReadHeapTableObject(reg, fx.heapID).Root()),
@@ -1793,7 +1821,16 @@ func absentValue(reg *axis.Registry) product.Value {
 	return product.NewWithPresence(reg, product.ShapeTop, presence.Absent())
 }
 
-func staticMemberEqual(reg *axis.Registry, object heapidentity.TableObject, key pathdom.PathKey, want product.Value) bool {
+func heapStaticKey(t *testing.T, ks *keyspace.KeySpace, name string) keyspace.Key {
+	t.Helper()
+	k, ok := ks.FromStateKey(pathdom.PathKey(name))
+	if !ok {
+		t.Fatalf("FromStateKey(%q) failed", name)
+	}
+	return k
+}
+
+func staticMemberEqual(reg *axis.Registry, object heapidentity.TableObject, key keyspace.Key, want product.Value) bool {
 	got, ok := object.StaticMember(key)
 	return ok && product.Equal(reg, got, want)
 }
@@ -1813,9 +1850,9 @@ func formatValue(reg *axis.Registry, v product.Value) string {
 	}
 }
 
-func formatState(reg *axis.Registry, s State) string {
+func formatState(reg *axis.Registry, ks *keyspace.KeySpace, s State) string {
 	return "value-slot=" + formatValue(reg, s.ReadValue(reg, key.SymbolValue(21))) +
 		" return-slot=" + formatValue(reg, s.ReadValue(reg, key.ReturnSlot(0))) +
-		" path=" + formatValue(reg, s.ReadPathKey(reg, pathdom.PathKey("sym21@2.field"))) +
-		" other-path=" + formatValue(reg, s.ReadPathKey(reg, pathdom.PathKey("$0.item")))
+		" path=" + formatValue(reg, s.ReadPathKey(reg, ks, pathdom.PathKey("sym21@2.field"))) +
+		" other-path=" + formatValue(reg, s.ReadPathKey(reg, ks, pathdom.PathKey("$0.item")))
 }

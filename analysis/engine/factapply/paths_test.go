@@ -4,6 +4,8 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
+	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/typewitness"
@@ -39,6 +41,7 @@ func TestFactsNodeTransferAppliesPathAssignmentThroughVisibility(t *testing.T) {
 	visibilityBuilder := visibility.NewBuilder()
 	visibilityBuilder.Define(assign, target, "table")
 	resolver := visibility.NewResolver(visibilityBuilder.Build())
+	ks := resolver.KeySpace()
 
 	got := transfer.Run(transfer.Config{
 		Graph:    graph,
@@ -54,8 +57,8 @@ func TestFactsNodeTransferAppliesPathAssignmentThroughVisibility(t *testing.T) {
 		}),
 	})
 
-	assertPathValue(t, reg, got[assign], path.PathKey("sym106@1.field"), product.Bottom(reg))
-	assertPathValue(t, reg, got[graph.Exit()], path.PathKey("sym106@1.field"), assigned)
+	assertPathValue(t, reg, ks, got[assign], path.PathKey("sym106@1.field"), product.Bottom(reg))
+	assertPathValue(t, reg, ks, got[graph.Exit()], path.PathKey("sym106@1.field"), assigned)
 	assertResolverCall(t, sources, assign, source)
 }
 
@@ -69,15 +72,16 @@ func TestFactsNodeTransferPathAssignmentInvalidatesSubtreeBeforeWriting(t *testi
 	siblingKey := path.PathKey("sym107@1.other")
 	assigned := absentValue(reg)
 	present := presentValue(reg)
-	in := state.State{}.
-		WritePathKey(reg, childKey, present).
-		WritePathKey(reg, siblingKey, present)
-	sources := &recordingSourceValues{
-		values: map[factflow.ValueSource]product.Value{source: assigned},
-	}
 	visibilityBuilder := visibility.NewBuilder()
 	visibilityBuilder.Define(point, target, "table")
 	resolver := visibility.NewResolver(visibilityBuilder.Build())
+	ks := resolver.KeySpace()
+	in := state.State{}.
+		WritePathKey(reg, ks, childKey, present).
+		WritePathKey(reg, ks, siblingKey, present)
+	sources := &recordingSourceValues{
+		values: map[factflow.ValueSource]product.Value{source: assigned},
+	}
 
 	got := NewFactsNodeTransfer(FactsNodeTransferConfig{
 		Facts: factflow.NewFacts(factflow.FactsInput{
@@ -92,9 +96,9 @@ func TestFactsNodeTransferPathAssignmentInvalidatesSubtreeBeforeWriting(t *testi
 		Point:    point,
 	}, in)
 
-	assertPathValue(t, reg, got, path.PathKey("sym107@1.field"), assigned)
-	assertPathValue(t, reg, got, childKey, product.Bottom(reg))
-	assertPathValue(t, reg, got, siblingKey, present)
+	assertPathValue(t, reg, ks, got, path.PathKey("sym107@1.field"), assigned)
+	assertPathValue(t, reg, ks, got, childKey, product.Bottom(reg))
+	assertPathValue(t, reg, ks, got, siblingKey, present)
 }
 
 func TestFactsNodeTransferPathAssignmentInvalidatesEquivalentPathProofs(t *testing.T) {
@@ -110,11 +114,16 @@ func TestFactsNodeTransferPathAssignmentInvalidatesEquivalentPathProofs(t *testi
 	siblingKey := path.PathKey("sym109@1.other")
 	assigned := absentValue(reg)
 	present := presentValue(reg)
+	visibilityBuilder := visibility.NewBuilder()
+	visibilityBuilder.Define(point, alias, "alias")
+	visibilityBuilder.Define(point, original, "original")
+	resolver := visibility.NewResolver(visibilityBuilder.Build())
+	ks := resolver.KeySpace()
 	in := state.State{}.
-		WritePathKey(reg, aliasKey, present).
-		WritePathKey(reg, originalKey, present).
-		WritePathKey(reg, originalChildKey, present).
-		WritePathKey(reg, siblingKey, present).
+		WritePathKey(reg, ks, aliasKey, present).
+		WritePathKey(reg, ks, originalKey, present).
+		WritePathKey(reg, ks, originalChildKey, present).
+		WritePathKey(reg, ks, siblingKey, present).
 		AddBranchProof(pathevidence.BranchProof{
 			Kind:  pathevidence.BranchProofPathEqual,
 			Path:  path.PathKey("sym108@1"),
@@ -123,9 +132,6 @@ func TestFactsNodeTransferPathAssignmentInvalidatesEquivalentPathProofs(t *testi
 	sources := &recordingSourceValues{
 		values: map[factflow.ValueSource]product.Value{source: assigned},
 	}
-	visibilityBuilder := visibility.NewBuilder()
-	visibilityBuilder.Define(point, alias, "alias")
-	visibilityBuilder.Define(point, original, "original")
 
 	got := NewFactsNodeTransfer(FactsNodeTransferConfig{
 		Facts: factflow.NewFacts(factflow.FactsInput{
@@ -134,16 +140,16 @@ func TestFactsNodeTransferPathAssignmentInvalidatesEquivalentPathProofs(t *testi
 			},
 		}),
 		Sources:    sources,
-		Visibility: visibility.NewResolver(visibilityBuilder.Build()),
+		Visibility: resolver,
 	})(transfer.NodeContext{
 		Registry: reg,
 		Point:    point,
 	}, in)
 
-	assertPathValue(t, reg, got, aliasKey, assigned)
-	assertPathValue(t, reg, got, originalKey, assigned)
-	assertPathValue(t, reg, got, originalChildKey, product.Bottom(reg))
-	assertPathValue(t, reg, got, siblingKey, present)
+	assertPathValue(t, reg, ks, got, aliasKey, assigned)
+	assertPathValue(t, reg, ks, got, originalKey, assigned)
+	assertPathValue(t, reg, ks, got, originalChildKey, product.Bottom(reg))
+	assertPathValue(t, reg, ks, got, siblingKey, present)
 }
 
 func TestFactsNodeTransferPathAssignmentSharesDotAndBracketStringKeys(t *testing.T) {
@@ -157,14 +163,16 @@ func TestFactsNodeTransferPathAssignmentSharesDotAndBracketStringKeys(t *testing
 	dotChildKey := path.PathKey("sym110@1.active.value.path")
 	assigned := absentValue(reg)
 	present := presentValue(reg)
+	visibilityBuilder := visibility.NewBuilder()
+	visibilityBuilder.Define(point, slots, "slots")
+	resolver := visibility.NewResolver(visibilityBuilder.Build())
+	ks := resolver.KeySpace()
 	in := state.State{}.
-		WritePathKey(reg, dotKey, present).
-		WritePathKey(reg, dotChildKey, present)
+		WritePathKey(reg, ks, dotKey, present).
+		WritePathKey(reg, ks, dotChildKey, present)
 	sources := &recordingSourceValues{
 		values: map[factflow.ValueSource]product.Value{source: assigned},
 	}
-	visibilityBuilder := visibility.NewBuilder()
-	visibilityBuilder.Define(point, slots, "slots")
 
 	got := NewFactsNodeTransfer(FactsNodeTransferConfig{
 		Facts: factflow.NewFacts(factflow.FactsInput{
@@ -173,15 +181,15 @@ func TestFactsNodeTransferPathAssignmentSharesDotAndBracketStringKeys(t *testing
 			},
 		}),
 		Sources:    sources,
-		Visibility: visibility.NewResolver(visibilityBuilder.Build()),
+		Visibility: resolver,
 	})(transfer.NodeContext{
 		Registry: reg,
 		Point:    point,
 	}, in)
 
-	assertPathValue(t, reg, got, bracketKey, assigned)
-	assertPathValue(t, reg, got, dotKey, assigned)
-	assertPathValue(t, reg, got, dotChildKey, product.Bottom(reg))
+	assertPathValue(t, reg, ks, got, bracketKey, assigned)
+	assertPathValue(t, reg, ks, got, dotKey, assigned)
+	assertPathValue(t, reg, ks, got, dotChildKey, product.Bottom(reg))
 }
 
 func TestFactsNodeTransferPathAssignmentInvalidatesEquivalentOriginsAndHeapMembers(t *testing.T) {
@@ -193,9 +201,24 @@ func TestFactsNodeTransferPathAssignmentInvalidatesEquivalentOriginsAndHeapMembe
 	aliasPath := path.NewPath(alias, "alias").Field("value")
 	aliasKey := path.PathKey("sym113@1.value")
 	slotsKey := path.PathKey("sym114@1.active.value")
-	staleAliasMember := path.PathKey(".value.path")
-	staleSlotsMember := path.PathKey(".active.value.path")
-	siblingSlotsMember := path.PathKey(".active.other")
+	visibilityBuilder := visibility.NewBuilder()
+	visibilityBuilder.Define(point, alias, "alias")
+	visibilityBuilder.Define(point, slots, "slots")
+	resolver := visibility.NewResolver(visibilityBuilder.Build())
+	ks := resolver.KeySpace()
+	staleAliasMember := suffixStaticKey(t, ks, []segment.Segment{
+		{Kind: segment.SegmentField, Name: "value"},
+		{Kind: segment.SegmentField, Name: "path"},
+	})
+	staleSlotsMember := suffixStaticKey(t, ks, []segment.Segment{
+		{Kind: segment.SegmentField, Name: "active"},
+		{Kind: segment.SegmentField, Name: "value"},
+		{Kind: segment.SegmentField, Name: "path"},
+	})
+	siblingSlotsMember := suffixStaticKey(t, ks, []segment.Segment{
+		{Kind: segment.SegmentField, Name: "active"},
+		{Kind: segment.SegmentField, Name: "other"},
+	})
 	aliasID := identity.ID{Kind: "test.table", Site: "alias", Index: 1}
 	slotsID := identity.ID{Kind: "test.table", Site: "slots", Index: 2}
 	assigned := absentValue(reg)
@@ -209,11 +232,11 @@ func TestFactsNodeTransferPathAssignmentInvalidatesEquivalentOriginsAndHeapMembe
 		WriteValue(reg, key.SymbolValue(slots), slotsRoot).
 		WriteHeapTableObject(reg, aliasID, heapidentity.NewTableObject(heapidentity.TableObjectConfig{
 			Root:          aliasRoot,
-			StaticMembers: map[path.PathKey]product.Value{staleAliasMember: present},
+			StaticMembers: map[keyspace.Key]product.Value{staleAliasMember: present},
 		})).
 		WriteHeapTableObject(reg, slotsID, heapidentity.NewTableObject(heapidentity.TableObjectConfig{
 			Root: slotsRoot,
-			StaticMembers: map[path.PathKey]product.Value{
+			StaticMembers: map[keyspace.Key]product.Value{
 				staleSlotsMember:   present,
 				siblingSlotsMember: present,
 			},
@@ -226,9 +249,6 @@ func TestFactsNodeTransferPathAssignmentInvalidatesEquivalentOriginsAndHeapMembe
 	sources := &recordingSourceValues{
 		values: map[factflow.ValueSource]product.Value{source: assigned},
 	}
-	visibilityBuilder := visibility.NewBuilder()
-	visibilityBuilder.Define(point, alias, "alias")
-	visibilityBuilder.Define(point, slots, "slots")
 
 	got := NewFactsNodeTransfer(FactsNodeTransferConfig{
 		Facts: factflow.NewFacts(factflow.FactsInput{
@@ -237,22 +257,22 @@ func TestFactsNodeTransferPathAssignmentInvalidatesEquivalentOriginsAndHeapMembe
 			},
 		}),
 		Sources:    sources,
-		Visibility: visibility.NewResolver(visibilityBuilder.Build()),
+		Visibility: resolver,
 	})(transfer.NodeContext{
 		Registry: reg,
 		Point:    point,
 	}, in)
 
-	assertPathValue(t, reg, got, aliasKey, assigned)
-	assertPathValue(t, reg, got, slotsKey, assigned)
+	assertPathValue(t, reg, ks, got, aliasKey, assigned)
+	assertPathValue(t, reg, ks, got, slotsKey, assigned)
 	assertRootVariantOriginTop(t, reg, got, alias)
 	assertRootVariantOriginTop(t, reg, got, slots)
 	if _, ok := got.ReadHeapTableObject(reg, aliasID).StaticMember(staleAliasMember); ok {
-		t.Fatalf("alias heap static member %s survived path assignment", staleAliasMember)
+		t.Fatalf("alias heap static member %s survived path assignment", ks.Format(staleAliasMember))
 	}
 	slotsObject := got.ReadHeapTableObject(reg, slotsID)
 	if _, ok := slotsObject.StaticMember(staleSlotsMember); ok {
-		t.Fatalf("slots heap static member %s survived alias path assignment", staleSlotsMember)
+		t.Fatalf("slots heap static member %s survived alias path assignment", ks.Format(staleSlotsMember))
 	}
 	if gotMember, ok := slotsObject.StaticMember(siblingSlotsMember); !ok || !product.Equal(reg, gotMember, present) {
 		t.Fatalf("slots sibling heap member = %s/%v, want present/true", formatValue(reg, gotMember), ok)
@@ -269,13 +289,15 @@ func TestFactsNodeTransferPathDescendantInvalidationKeepsContainer(t *testing.T)
 	nameKey := path.PathKey("sym111@1.name")
 	unrelatedKey := path.PathKey("sym112@1.count")
 	present := presentValue(reg)
-	in := state.State{}.
-		WritePathKey(reg, containerKey, present).
-		WritePathKey(reg, countKey, present).
-		WritePathKey(reg, nameKey, present).
-		WritePathKey(reg, unrelatedKey, present)
 	visibilityBuilder := visibility.NewBuilder()
 	visibilityBuilder.Define(point, target, "item")
+	resolver := visibility.NewResolver(visibilityBuilder.Build())
+	ks := resolver.KeySpace()
+	in := state.State{}.
+		WritePathKey(reg, ks, containerKey, present).
+		WritePathKey(reg, ks, countKey, present).
+		WritePathKey(reg, ks, nameKey, present).
+		WritePathKey(reg, ks, unrelatedKey, present)
 
 	got := NewFactsNodeTransfer(FactsNodeTransferConfig{
 		Facts: factflow.NewFacts(factflow.FactsInput{
@@ -283,16 +305,16 @@ func TestFactsNodeTransferPathDescendantInvalidationKeepsContainer(t *testing.T)
 				point: factflow.NewPathDescendantInvalidation(containerPath),
 			},
 		}),
-		Visibility: visibility.NewResolver(visibilityBuilder.Build()),
+		Visibility: resolver,
 	})(transfer.NodeContext{
 		Registry: reg,
 		Point:    point,
 	}, in)
 
-	assertPathValue(t, reg, got, containerKey, present)
-	assertPathValue(t, reg, got, countKey, product.Bottom(reg))
-	assertPathValue(t, reg, got, nameKey, product.Bottom(reg))
-	assertPathValue(t, reg, got, unrelatedKey, present)
+	assertPathValue(t, reg, ks, got, containerKey, present)
+	assertPathValue(t, reg, ks, got, countKey, product.Bottom(reg))
+	assertPathValue(t, reg, ks, got, nameKey, product.Bottom(reg))
+	assertPathValue(t, reg, ks, got, unrelatedKey, present)
 }
 
 func TestFactsNodeTransferPathDescendantInvalidationClearsRootStructuralWitness(t *testing.T) {
@@ -383,7 +405,8 @@ func TestFactsNodeTransferPathAssignmentRequiresVisibility(t *testing.T) {
 	target := symbol.ID(108)
 	targetPath := path.NewPath(target, "table").Field("field")
 	pathKey := path.PathKey("sym108@1.field")
-	in := state.State{}.WritePathKey(reg, pathKey, presentValue(reg))
+	ks := keyspace.New()
+	in := state.State{}.WritePathKey(reg, ks, pathKey, presentValue(reg))
 	sources := &recordingSourceValues{
 		values: map[factflow.ValueSource]product.Value{source: absentValue(reg)},
 	}
@@ -412,7 +435,9 @@ func TestFactsNodeTransferPathAssignmentWithUnresolvedVersionIsNoop(t *testing.T
 	source := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: factflow.ExprRef(18), HasExpr: true}
 	target := symbol.ID(109)
 	targetPath := path.NewPath(target, "table").Field("field")
-	in := state.State{}.WritePathKey(reg, path.PathKey("sym109@1.field"), presentValue(reg))
+	resolver := visibility.NewResolver(visibility.NewTable(nil))
+	ks := resolver.KeySpace()
+	in := state.State{}.WritePathKey(reg, ks, path.PathKey("sym109@1.field"), presentValue(reg))
 	sources := &recordingSourceValues{
 		values: map[factflow.ValueSource]product.Value{source: absentValue(reg)},
 	}
@@ -424,7 +449,7 @@ func TestFactsNodeTransferPathAssignmentWithUnresolvedVersionIsNoop(t *testing.T
 			},
 		}),
 		Sources:    sources,
-		Visibility: visibility.NewResolver(visibility.NewTable(nil)),
+		Visibility: resolver,
 	})(transfer.NodeContext{
 		Registry: reg,
 		Point:    point,
@@ -461,4 +486,13 @@ func TestFactsNodeTransferIgnoresRootPathAssignment(t *testing.T) {
 	if len(sources.calls) != 0 {
 		t.Fatalf("root path assignment resolved source %d times, want zero", len(sources.calls))
 	}
+}
+
+func suffixStaticKey(t *testing.T, ks *keyspace.KeySpace, segments []segment.Segment) keyspace.Key {
+	t.Helper()
+	k, ok := heapidentity.StaticMemberSuffixKey(ks, segments)
+	if !ok {
+		t.Fatalf("StaticMemberSuffixKey(%v) failed", segments)
+	}
+	return k
 }

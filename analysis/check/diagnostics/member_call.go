@@ -472,7 +472,7 @@ func invalidationPathReachesPath(result *body.Result, point cfg.Point, invalidat
 	if len(invalidated.Segments) > len(target.Segments) {
 		return memberCallInvalidationNone
 	}
-	invalidatedRoot := invalidated.Clone()
+	invalidatedRoot := invalidated
 	invalidatedRoot.Segments = nil
 	if !pathRootReadable(result, point, invalidatedRoot) && memberSegmentsHavePrefix(target.Segments, invalidated.Segments) {
 		return memberCallInvalidationStale
@@ -484,8 +484,8 @@ func invalidationPathReachesPath(result *body.Result, point cfg.Point, invalidat
 		if !memberSegmentsHavePrefix(target.Segments[prefixLen:], invalidated.Segments) {
 			continue
 		}
-		targetPrefix := target.Clone()
-		targetPrefix.Segments = append(targetPrefix.Segments[:0:0], target.Segments[:prefixLen]...)
+		targetPrefix := target
+		targetPrefix.Segments = append(target.Segments[:0:0], target.Segments[:prefixLen]...)
 		if pathsShareExactIdentity(result, point, invalidatedRoot, targetPrefix) {
 			return memberCallInvalidationResolved
 		}
@@ -556,7 +556,7 @@ func implicitSelfEntryType(result *body.Result, fn *ast.FunctionExpr) (typ.Type,
 			return nil, false
 		}
 		key := statekey.SymbolValue(slot.Symbol)
-		if key == "" {
+		if key == 0 {
 			return nil, false
 		}
 		value := entry.ReadValue(reg, key)
@@ -870,8 +870,8 @@ func suffixFromEquivalentReceiver(result *body.Result, point cfg.Point, receiver
 		return nil, false
 	}
 	for prefixLen := len(target.Segments); prefixLen >= 0; prefixLen-- {
-		prefix := target.Clone()
-		prefix.Segments = append(prefix.Segments[:0:0], target.Segments[:prefixLen]...)
+		prefix := target
+		prefix.Segments = append(target.Segments[:0:0], target.Segments[:prefixLen]...)
 		if prefix.Equal(target) || prefix.Equal(receiver) {
 			continue
 		}

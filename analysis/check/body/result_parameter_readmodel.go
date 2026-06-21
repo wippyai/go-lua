@@ -13,7 +13,7 @@ func (r *Result) ParameterValueSlots() []statekey.Value {
 	out := make([]statekey.Value, 0, len(slots))
 	for _, slot := range slots {
 		valueSlot := statekey.SymbolValue(slot.Symbol)
-		if valueSlot == "" {
+		if valueSlot == 0 {
 			continue
 		}
 		out = append(out, valueSlot)

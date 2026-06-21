@@ -20,6 +20,7 @@ func callResultReader(
 	outcomeProvider callpayload.CallOutcomeProvider,
 	resolver *visibility.Resolver,
 	projectPath PathTypeProjector,
+	widen CovariantWiden,
 	typeValues *typevalue.Cache,
 ) (func(cfg.Point) state.State, func(cfg.Point, state.State) state.State) {
 	rawRead := ctx.Read
@@ -38,7 +39,7 @@ func callResultReader(
 			return activeBase
 		}
 		active.store(point, base)
-		out := materializeCallOutcome(callContextAt(ctx, point, read), facts, sources, outcomeProvider, resolver, projectPath, typeValues, read, base, base)
+		out := materializeCallOutcome(callContextAt(ctx, point, read), facts, sources, outcomeProvider, resolver, projectPath, widen, typeValues, read, base, base)
 		active.remove(point)
 		cache.store(point, out)
 		return out
@@ -116,6 +117,7 @@ func materializeCallOutcome(
 	outcomeProvider callpayload.CallOutcomeProvider,
 	resolver *visibility.Resolver,
 	projectPath PathTypeProjector,
+	widen CovariantWiden,
 	typeValues *typevalue.Cache,
 	read func(cfg.Point) state.State,
 	in state.State,
@@ -126,7 +128,7 @@ func materializeCallOutcome(
 		return applyChannelSelectResult(ctx, typeValues, resolver, projectPath, out, facts.ChannelSelects(ctx.Point))
 	}
 	siteView.ForEachArgumentSource(func(_ int, source factflow.ValueSource) bool {
-		out = materializeObjectLiteralHeap(ctx, facts, sources, read, in, out, source)
+		out = materializeObjectLiteralHeap(ctx, resolver, facts, sources, read, in, out, source)
 		return true
 	})
 	hasProducer := callproducer.Has(facts, ctx.Point)
@@ -143,7 +145,7 @@ func materializeCallOutcome(
 				out = out.WriteReturnSlot(ctx.Registry, result.Index, result.Value)
 			}
 		}
-		out = applyCallOutcomeFacts(ctx, facts, resolver, projectPath, out, siteView, outcome)
+		out = applyCallOutcomeFacts(ctx, facts, resolver, projectPath, widen, out, siteView, outcome)
 	}
 	out = applyChannelSelectResult(ctx, typeValues, resolver, projectPath, out, facts.ChannelSelects(ctx.Point))
 	if hasProducer {
@@ -196,7 +198,7 @@ func applyReturn(
 			continue
 		}
 		out = out.WriteReturnSlot(ctx.Registry, i, value)
-		out = materializeObjectLiteralHeap(ctx, facts, sources, read, in, out, source)
+		out = materializeObjectLiteralHeap(ctx, resolver, facts, sources, read, in, out, source)
 	}
 	return out
 }

@@ -20,6 +20,7 @@ type TypeParam struct {
 	containsNever         bool
 	containsTypeParam     bool
 	containsInstantiated  bool
+	containsGeneric       bool
 	containsRecursive     bool
 	containsOpenRecursive bool
 }
@@ -39,6 +40,7 @@ func NewTypeParam(name string, constraint Type) *TypeParam {
 		containsNever:         knownContainsNever(constraint),
 		containsTypeParam:     true,
 		containsInstantiated:  knownContainsInstantiated(constraint),
+		containsGeneric:       knownContainsGeneric(constraint),
 		containsRecursive:     knownContainsRecursive(constraint),
 		containsOpenRecursive: knownContainsOpenRecursive(constraint),
 	}

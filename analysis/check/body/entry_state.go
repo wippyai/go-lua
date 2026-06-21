@@ -68,7 +68,7 @@ func functionParamEntrySeeds(reg *axis.Registry, typeValues *typevalue.Cache, bi
 			continue
 		}
 		valueSlot := key.SymbolValue(slot.Symbol)
-		if valueSlot == "" {
+		if valueSlot == 0 {
 			continue
 		}
 		if slot.Type == nil {
@@ -122,7 +122,7 @@ func ambientModuleGlobalEntrySeeds(reg *axis.Registry, typeValues *typevalue.Cac
 			continue
 		}
 		valueSlot := key.SymbolValue(id)
-		if valueSlot == "" {
+		if valueSlot == 0 {
 			continue
 		}
 		exportValue := typeValues.FromTypeWithWitness(reg, m.Export)
@@ -138,7 +138,7 @@ func seedEntryStateValues(reg *axis.Registry, entry state.State, seeds []paramEn
 	bottom := product.Bottom(reg)
 	out := entry
 	for _, seed := range seeds {
-		if seed.slot == "" {
+		if seed.slot == 0 {
 			continue
 		}
 		if !product.Equal(reg, out.ReadValue(reg, seed.slot), bottom) {

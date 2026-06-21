@@ -2,6 +2,7 @@ package state
 
 import (
 	"github.com/wippyai/go-lua/analysis/domain/lattice"
+	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/engine/state/heapidentity"
@@ -57,6 +58,18 @@ func (l heapTableIdentityLane) without(id identity.ID) (heapTableIdentityLane, b
 	}
 	l.values = values
 	return l, true
+}
+
+func (l heapTableIdentityLane) rekey(from, to *keyspace.KeySpace) heapTableIdentityLane {
+	if from == nil || to == nil || from == to || l.top || len(l.values) == 0 {
+		return l
+	}
+	values := make(map[identity.ID]heapidentity.TableObject, len(l.values))
+	for id, object := range l.values {
+		values[id] = object.Rekey(from, to)
+	}
+	l.values = values
+	return l
 }
 
 func (l heapTableIdentityLane) with(id identity.ID, object heapidentity.TableObject) heapTableIdentityLane {

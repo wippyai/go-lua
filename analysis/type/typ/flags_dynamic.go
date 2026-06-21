@@ -16,6 +16,10 @@ func containsInstantiatedDynamic(t Type, seen map[Type]bool, depth int) bool {
 	return containsDynamicFlag(t, seen, depth, DefaultRecursionDepth, knownContainsInstantiated)
 }
 
+func containsGenericDynamic(t Type, seen map[Type]bool, depth int) bool {
+	return containsDynamicFlag(t, seen, depth, DefaultRecursionDepth, knownContainsGeneric)
+}
+
 func containsDynamicFlag(
 	t Type,
 	seen map[Type]bool,

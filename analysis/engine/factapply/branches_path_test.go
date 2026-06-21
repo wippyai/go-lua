@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
@@ -134,12 +135,14 @@ func TestFactsEdgeTransferPathComparisonNarrowsParentVariantOrigin(t *testing.T)
 	ch1Path := pathdom.NewPath(ch1, "ch1")
 	staleValueKey := pathdom.PathKey("sym325@1.value")
 	staleValue := product.Set(reg, product.Top(), runtimekind.Key, runtimekind.Singleton(runtimekind.Number))
+	visibilityBuilder := visibility.NewBuilder()
+	visibilityBuilder.Define(branch, result, "result")
+	resolver := visibility.NewResolver(visibilityBuilder.Build())
+	ks := resolver.KeySpace()
 	initial := state.State{}.
 		WriteValue(reg, key.SymbolValue(result), typevalue.FromType(reg, union)).
 		WriteValue(reg, key.SymbolValue(ch1), typevalue.FromType(reg, chanInt)).
-		WritePathKey(reg, staleValueKey, staleValue)
-	visibilityBuilder := visibility.NewBuilder()
-	visibilityBuilder.Define(branch, result, "result")
+		WritePathKey(reg, ks, staleValueKey, staleValue)
 
 	got := transfer.Run(transfer.Config{
 		Graph:      graph,
@@ -154,14 +157,14 @@ func TestFactsEdgeTransferPathComparisonNarrowsParentVariantOrigin(t *testing.T)
 					),
 				},
 			}),
-			Visibility: visibility.NewResolver(visibilityBuilder.Build()),
+			Visibility: resolver,
 		}),
 	})
 
 	assertVariantOriginType(t, reg, got[thenPoint], result, union, intCase)
 	assertVariantOriginType(t, reg, got[elsePoint], result, union, strCase)
-	assertPathValue(t, reg, got[thenPoint], staleValueKey, product.Bottom(reg))
-	assertPathValue(t, reg, got[elsePoint], staleValueKey, product.Bottom(reg))
+	assertPathValue(t, reg, ks, got[thenPoint], staleValueKey, product.Bottom(reg))
+	assertPathValue(t, reg, ks, got[elsePoint], staleValueKey, product.Bottom(reg))
 }
 
 func TestFactsEdgeTransferAppliesPathEqualityRelationRootMember(t *testing.T) {
@@ -181,11 +184,13 @@ func TestFactsEdgeTransferAppliesPathEqualityRelationRootMember(t *testing.T) {
 	memberPath := pathdom.NewPath(table, "table").Field("field")
 	memberKey := pathdom.PathKey("sym324@1.field")
 	stringValue := product.Set(reg, product.Top(), runtimekind.Key, runtimekind.Singleton(runtimekind.String))
-	initial := state.State{}.
-		WriteValue(reg, key.SymbolValue(root), stringValue).
-		WritePathKey(reg, memberKey, product.Top())
 	visibilityBuilder := visibility.NewBuilder()
 	visibilityBuilder.Define(branch, table, "table")
+	resolver := visibility.NewResolver(visibilityBuilder.Build())
+	ks := resolver.KeySpace()
+	initial := state.State{}.
+		WriteValue(reg, key.SymbolValue(root), stringValue).
+		WritePathKey(reg, ks, memberKey, product.Top())
 
 	got := transfer.Run(transfer.Config{
 		Graph:      graph,
@@ -199,14 +204,14 @@ func TestFactsEdgeTransferAppliesPathEqualityRelationRootMember(t *testing.T) {
 					),
 				},
 			}),
-			Visibility: visibility.NewResolver(visibilityBuilder.Build()),
+			Visibility: resolver,
 		}),
 	})
 
 	assertRuntimeKind(t, reg, got[thenPoint].ReadValue(reg, key.SymbolValue(root)), runtimekind.Singleton(runtimekind.String))
-	assertRuntimeKind(t, reg, got[thenPoint].ReadPathKey(reg, memberKey), runtimekind.Singleton(runtimekind.String))
+	assertRuntimeKind(t, reg, got[thenPoint].ReadPathKey(reg, ks, memberKey), runtimekind.Singleton(runtimekind.String))
 	assertRuntimeKind(t, reg, got[elsePoint].ReadValue(reg, key.SymbolValue(root)), runtimekind.Singleton(runtimekind.String))
-	assertRuntimeKind(t, reg, got[elsePoint].ReadPathKey(reg, memberKey), runtimekind.Top())
+	assertRuntimeKind(t, reg, got[elsePoint].ReadPathKey(reg, ks, memberKey), runtimekind.Top())
 }
 
 func TestFactsEdgeTransferAppliesPathEqualityRelationMemberMember(t *testing.T) {
@@ -228,12 +233,14 @@ func TestFactsEdgeTransferAppliesPathEqualityRelationMemberMember(t *testing.T) 
 	leftKey := pathdom.PathKey("sym325@1.value")
 	rightKey := pathdom.PathKey("sym326@1.value")
 	numberValue := product.Set(reg, product.Top(), runtimekind.Key, runtimekind.Singleton(runtimekind.Number))
-	initial := state.State{}.
-		WritePathKey(reg, leftKey, numberValue).
-		WritePathKey(reg, rightKey, product.Top())
 	visibilityBuilder := visibility.NewBuilder()
 	visibilityBuilder.Define(branch, leftRoot, "left")
 	visibilityBuilder.Define(branch, rightRoot, "right")
+	resolver := visibility.NewResolver(visibilityBuilder.Build())
+	ks := resolver.KeySpace()
+	initial := state.State{}.
+		WritePathKey(reg, ks, leftKey, numberValue).
+		WritePathKey(reg, ks, rightKey, product.Top())
 
 	got := transfer.Run(transfer.Config{
 		Graph:      graph,
@@ -247,14 +254,14 @@ func TestFactsEdgeTransferAppliesPathEqualityRelationMemberMember(t *testing.T) 
 					),
 				},
 			}),
-			Visibility: visibility.NewResolver(visibilityBuilder.Build()),
+			Visibility: resolver,
 		}),
 	})
 
-	assertRuntimeKind(t, reg, got[thenPoint].ReadPathKey(reg, leftKey), runtimekind.Singleton(runtimekind.Number))
-	assertRuntimeKind(t, reg, got[thenPoint].ReadPathKey(reg, rightKey), runtimekind.Singleton(runtimekind.Number))
-	assertRuntimeKind(t, reg, got[elsePoint].ReadPathKey(reg, leftKey), runtimekind.Singleton(runtimekind.Number))
-	assertRuntimeKind(t, reg, got[elsePoint].ReadPathKey(reg, rightKey), runtimekind.Top())
+	assertRuntimeKind(t, reg, got[thenPoint].ReadPathKey(reg, ks, leftKey), runtimekind.Singleton(runtimekind.Number))
+	assertRuntimeKind(t, reg, got[thenPoint].ReadPathKey(reg, ks, rightKey), runtimekind.Singleton(runtimekind.Number))
+	assertRuntimeKind(t, reg, got[elsePoint].ReadPathKey(reg, ks, leftKey), runtimekind.Singleton(runtimekind.Number))
+	assertRuntimeKind(t, reg, got[elsePoint].ReadPathKey(reg, ks, rightKey), runtimekind.Top())
 }
 
 func TestFactsEdgeTransferPathEqualityMissingVisibilityNoops(t *testing.T) {
@@ -274,9 +281,10 @@ func TestFactsEdgeTransferPathEqualityMissingVisibilityNoops(t *testing.T) {
 	memberPath := pathdom.NewPath(table, "table").Field("field")
 	memberKey := pathdom.PathKey("sym328@1.field")
 	numberValue := product.Set(reg, product.Top(), runtimekind.Key, runtimekind.Singleton(runtimekind.Number))
+	ks := keyspace.New()
 	initial := state.State{}.
 		WriteValue(reg, key.SymbolValue(root), numberValue).
-		WritePathKey(reg, memberKey, product.Top())
+		WritePathKey(reg, ks, memberKey, product.Top())
 
 	got := transfer.Run(transfer.Config{
 		Graph:      graph,
@@ -294,7 +302,7 @@ func TestFactsEdgeTransferPathEqualityMissingVisibilityNoops(t *testing.T) {
 	})
 
 	assertRuntimeKind(t, reg, got[thenPoint].ReadValue(reg, key.SymbolValue(root)), runtimekind.Singleton(runtimekind.Number))
-	assertRuntimeKind(t, reg, got[thenPoint].ReadPathKey(reg, memberKey), runtimekind.Top())
+	assertRuntimeKind(t, reg, got[thenPoint].ReadPathKey(reg, ks, memberKey), runtimekind.Top())
 	assertRuntimeKind(t, reg, got[elsePoint].ReadValue(reg, key.SymbolValue(root)), runtimekind.Singleton(runtimekind.Number))
-	assertRuntimeKind(t, reg, got[elsePoint].ReadPathKey(reg, memberKey), runtimekind.Top())
+	assertRuntimeKind(t, reg, got[elsePoint].ReadPathKey(reg, ks, memberKey), runtimekind.Top())
 }

@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
@@ -40,7 +41,7 @@ func TestProjectExactPresentDropsNil(t *testing.T) {
 		runtimekind.Key,
 		runtimekind.Join(runtimekind.Singleton(runtimekind.String), runtimekind.Singleton(runtimekind.Nil)),
 	)
-	in := state.State{}.WritePathKey(reg, childKey, childValue)
+	in := state.State{}.WritePathKey(reg, resolver.KeySpace(), childKey, childValue)
 
 	got, ok := Project(Config{Registry: reg, Visibility: resolver}, point, readPath, in)
 	if !ok {
@@ -65,7 +66,7 @@ func TestProjectExactPresentMergesOptionalFieldTypeFromRoot(t *testing.T) {
 	rootValue := typevalue.WithWitness(reg, product.Top(), profileType)
 	in := state.State{}.
 		WriteValue(reg, key.SymbolValue(profileSym), rootValue).
-		WritePathKey(reg, childKey, product.NewWithPresence(reg, product.ShapeTop, presence.Present()))
+		WritePathKey(reg, resolver.KeySpace(), childKey, product.NewWithPresence(reg, product.ShapeTop, presence.Present()))
 
 	got, ok := Project(Config{Registry: reg, Visibility: resolver}, point, readPath, in)
 	if !ok {
@@ -86,7 +87,7 @@ func TestProjectExactPresentChildInheritsExplicitTopEvidenceFromRoot(t *testing.
 	rootValue := typevalue.FromType(reg, typ.Any)
 	in := state.State{}.
 		WriteValue(reg, key.SymbolValue(rawSym), rootValue).
-		WritePathKey(reg, childKey, product.NewWithPresence(reg, product.ShapeTop, presence.Present()))
+		WritePathKey(reg, resolver.KeySpace(), childKey, product.NewWithPresence(reg, product.ShapeTop, presence.Present()))
 
 	got, ok := Project(Config{Registry: reg, Visibility: resolver}, point, readPath, in)
 	if !ok {
@@ -104,7 +105,7 @@ func TestProjectExactAbsentReturnsNil(t *testing.T) {
 	resolver := testResolver(point, symbol.ID(11), "t")
 	readPath := path.NewPath(symbol.ID(11), "t").IndexStr("missing")
 	childKey := resolver.KeyAt(point, readPath)
-	in := state.State{}.WritePathKey(reg, childKey, product.Absent(reg))
+	in := state.State{}.WritePathKey(reg, resolver.KeySpace(), childKey, product.Absent(reg))
 
 	got, ok := Project(Config{Registry: reg, Visibility: resolver}, point, readPath, in)
 	if !ok {
@@ -128,13 +129,12 @@ func TestProjectUsesHeapIdentityMemberForAliasedRoot(t *testing.T) {
 		runtimekind.Key,
 		runtimekind.Singleton(runtimekind.String),
 	)
+	ks := resolver.KeySpace()
 	in := state.State{}.
 		WriteValue(reg, key.SymbolValue(sym), rootValue).
 		WriteHeapTableObject(reg, id, heapidentity.NewTableObject(heapidentity.TableObjectConfig{
-			Root: rootValue,
-			StaticMembers: map[path.PathKey]product.Value{
-				path.PathKey(".id"): memberValue,
-			},
+			Root:          rootValue,
+			StaticMembers: heapStaticMembers(ks, segment.Segment{Kind: segment.SegmentField, Name: "id"}, memberValue),
 		}))
 
 	got, ok := Project(Config{Registry: reg, Visibility: resolver}, point, readPath, in)
@@ -155,14 +155,15 @@ func TestProjectHeapIdentitySuffixDistinguishesFieldAndStringIndex(t *testing.T)
 	rootValue := product.Set(reg, product.NewWithPresence(reg, product.ShapeTop, presence.Present()), identity.Key, identity.Singleton(id))
 	fieldValue := product.Set(reg, product.NewWithPresence(reg, product.ShapeTop, presence.Present()), runtimekind.Key, runtimekind.Singleton(runtimekind.String))
 	indexValue := product.Set(reg, product.NewWithPresence(reg, product.ShapeTop, presence.Present()), runtimekind.Key, runtimekind.Singleton(runtimekind.Number))
+	ks := resolver.KeySpace()
 	in := state.State{}.
 		WriteValue(reg, key.SymbolValue(sym), rootValue).
 		WriteHeapTableObject(reg, id, heapidentity.NewTableObject(heapidentity.TableObjectConfig{
 			Root: rootValue,
-			StaticMembers: map[path.PathKey]product.Value{
-				path.PathKey(".id"):      fieldValue,
-				path.PathKey("[\"id\"]"): indexValue,
-			},
+			StaticMembers: mergeHeapStaticMembers(
+				heapStaticMembers(ks, segment.Segment{Kind: segment.SegmentField, Name: "id"}, fieldValue),
+				heapStaticMembers(ks, segment.Segment{Kind: segment.SegmentIndexString, Name: "id"}, indexValue),
+			),
 		}))
 
 	fieldRead, ok := Project(Config{Registry: reg, Visibility: resolver}, point, rootPath.Field("id"), in)
@@ -203,7 +204,7 @@ func TestProjectInRangeStructuralArrayIndexDropsNil(t *testing.T) {
 	parentKey := resolver.KeyAt(point, parentPath)
 	in := state.State{}.
 		WriteValue(reg, key.SymbolValue(sym), rootValue).
-		WriteLenFloor(parentKey, 2)
+		WriteLenFloor(resolver.KeySpace(), parentKey, 2)
 
 	got, ok := Project(Config{Registry: reg, Visibility: resolver}, point, readPath, in)
 	if !ok {
@@ -224,7 +225,7 @@ func TestProjectLenFloorDoesNotDropNilForIntegerMapIndex(t *testing.T) {
 	parentKey := resolver.KeyAt(point, parentPath)
 	in := state.State{}.
 		WriteValue(reg, key.SymbolValue(sym), rootValue).
-		WriteLenFloor(parentKey, 2)
+		WriteLenFloor(resolver.KeySpace(), parentKey, 2)
 
 	got, ok := Project(Config{Registry: reg, Visibility: resolver}, point, readPath, in)
 	if !ok {
@@ -245,7 +246,7 @@ func TestProjectLenFloorKeepsNilForOutOfRangeArrayIndex(t *testing.T) {
 	parentKey := resolver.KeyAt(point, parentPath)
 	in := state.State{}.
 		WriteValue(reg, key.SymbolValue(sym), rootValue).
-		WriteLenFloor(parentKey, 2)
+		WriteLenFloor(resolver.KeySpace(), parentKey, 2)
 
 	got, ok := Project(Config{Registry: reg, Visibility: resolver}, point, readPath, in)
 	if !ok {
@@ -266,7 +267,7 @@ func TestProjectLenFloorKeepsNilForZeroArrayIndex(t *testing.T) {
 	parentKey := resolver.KeyAt(point, parentPath)
 	in := state.State{}.
 		WriteValue(reg, key.SymbolValue(sym), rootValue).
-		WriteLenFloor(parentKey, 2)
+		WriteLenFloor(resolver.KeySpace(), parentKey, 2)
 
 	got, ok := Project(Config{Registry: reg, Visibility: resolver}, point, readPath, in)
 	if !ok {
@@ -495,7 +496,7 @@ func TestProjectChildProofDoesNotProveParentAggregate(t *testing.T) {
 	parentValue := product.Set(reg, product.Top(), runtimekind.Key, runtimekind.Singleton(runtimekind.String))
 	in := state.State{}.
 		WriteValue(reg, parentKey, parentValue).
-		WritePathKey(reg, childKey, product.NewWithPresence(reg, product.ShapeTop, presence.Present()))
+		WritePathKey(reg, resolver.KeySpace(), childKey, product.NewWithPresence(reg, product.ShapeTop, presence.Present()))
 
 	got, ok := Project(Config{Registry: reg, Visibility: resolver}, point, childPath, in)
 	if !ok {
@@ -523,7 +524,7 @@ func TestProjectRootOverlaysCurrentStaticMemberWitness(t *testing.T) {
 	rootValue := typevalue.WithWitness(reg, typevalue.FromType(reg, typetable.NewRecord().Build()), typetable.NewRecord().Build())
 	in := state.State{}.
 		WriteValue(reg, key.SymbolValue(provider), rootValue).
-		WritePathStaticMember(memberKey, memberValue)
+		WritePathStaticMember(resolver.KeySpace(), memberKey, memberValue)
 
 	got, ok := Project(Config{Registry: reg, Visibility: resolver}, point, rootPath, in)
 	if !ok {
@@ -560,7 +561,7 @@ func TestProjectRootStaticMemberWitnessRecursivelyOverlaysDeclaredRecord(t *test
 	memberValue := typevalue.WithWitness(reg, typevalue.FromType(reg, typ.String), typ.String)
 	in := state.State{}.
 		WriteValue(reg, key.SymbolValue(actor), rootValue).
-		WritePathStaticMember(lastIDKey, memberValue)
+		WritePathStaticMember(resolver.KeySpace(), lastIDKey, memberValue)
 
 	got, ok := Project(Config{Registry: reg, Visibility: resolver}, point, rootPath, in)
 	if !ok {
@@ -602,7 +603,7 @@ func TestProjectRootStaticMemberWitnessRequiresCurrentVisibleVersion(t *testing.
 	rootValue := typevalue.WithWitness(reg, typevalue.FromType(reg, typetable.NewRecord().Build()), typetable.NewRecord().Build())
 	in := state.State{}.
 		WriteValue(reg, key.SymbolValue(provider), rootValue).
-		WritePathStaticMember(staleMemberKey, memberValue)
+		WritePathStaticMember(resolver.KeySpace(), staleMemberKey, memberValue)
 
 	got, ok := Project(Config{Registry: reg, Visibility: resolver}, currentPoint, rootPath, in)
 	if !ok {
@@ -676,4 +677,22 @@ func assertRuntimeKind(t *testing.T, reg *axis.Registry, got product.Value, want
 	if gotKind := product.Get(reg, got, runtimekind.Key); !runtimekind.Equal(gotKind, want) {
 		t.Fatalf("runtimekind = %s, want %s", gotKind, want)
 	}
+}
+
+func heapStaticMembers(ks *keyspace.KeySpace, suffix segment.Segment, value product.Value) map[keyspace.Key]product.Value {
+	key, ok := ks.FromRootlessSuffix([]segment.Segment{suffix})
+	if !ok {
+		panic("heapStaticMembers: failed to build key")
+	}
+	return map[keyspace.Key]product.Value{key: value}
+}
+
+func mergeHeapStaticMembers(maps ...map[keyspace.Key]product.Value) map[keyspace.Key]product.Value {
+	out := make(map[keyspace.Key]product.Value)
+	for _, m := range maps {
+		for k, v := range m {
+			out[k] = v
+		}
+	}
+	return out
 }

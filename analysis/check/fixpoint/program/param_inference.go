@@ -159,7 +159,7 @@ func (p *paramInference) paramSeeds(bindings *bind.Result, fn *ast.FunctionExpr,
 			continue
 		}
 		valueSlot := statekey.SymbolValue(slot.Symbol)
-		if valueSlot == "" {
+		if valueSlot == 0 {
 			continue
 		}
 		out = append(out, paramSeed{slot: valueSlot, value: value})
@@ -179,7 +179,7 @@ func applyParamSeeds(reg *axis.Registry, base, source state.State, seeds []param
 	bottom := product.Bottom(reg)
 	out := base.Snapshot()
 	for _, seed := range seeds {
-		if seed.slot == "" {
+		if seed.slot == 0 {
 			continue
 		}
 		if !product.Equal(reg, out.ReadValue(reg, seed.slot), bottom) {

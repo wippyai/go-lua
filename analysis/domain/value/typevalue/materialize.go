@@ -17,20 +17,20 @@ func FromType(reg *axis.Registry, t typ.Type) product.Value {
 
 // fromType materializes sound point-local value evidence from a type.
 func fromType(reg *axis.Registry, t typ.Type, cache *Cache) product.Value {
-	value := product.Top()
+	ed := product.Edit(reg, product.Top())
 	if typ.IsAny(t) || typ.IsUnknown(t) {
-		value = product.Set(reg, value, evidence.Key, evidence.ExplicitTop())
+		product.EditSet(&ed, evidence.Key, evidence.ExplicitTop())
 	}
 	if p, ok := presenceFromType(t); ok {
-		value = product.WithPresence(reg, value, p)
+		ed.SetPresence(p)
 	}
 	if kindValue, ok := RuntimeKindFromType(t); ok {
-		value = product.Set(reg, value, runtimekind.Key, kindValue)
+		product.EditSet(&ed, runtimekind.Key, kindValue)
 	}
 	if family, cases, ok := cache.originOfType(t); ok {
-		value = product.Set(reg, value, variantorigin.Key, variantorigin.Of(family, cases))
+		product.EditSet(&ed, variantorigin.Key, variantorigin.Of(family, cases))
 	}
-	return value
+	return ed.Done()
 }
 
 // Nil materializes the canonical nil value: presence-absent carrying the

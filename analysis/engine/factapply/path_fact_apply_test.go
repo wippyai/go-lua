@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
@@ -45,6 +46,7 @@ func TestFactsNodeTransferKeepsStaticMemberWritesDistinctFromPathAssignments(t *
 	visibilityBuilder := visibility.NewBuilder()
 	visibilityBuilder.Define(point, target, "table")
 	resolver := visibility.NewResolver(visibilityBuilder.Build())
+	ks := resolver.KeySpace()
 
 	assignedState := NewFactsNodeTransfer(FactsNodeTransferConfig{
 		Facts: factflow.NewFacts(factflow.FactsInput{
@@ -59,8 +61,8 @@ func TestFactsNodeTransferKeepsStaticMemberWritesDistinctFromPathAssignments(t *
 		Point:    point,
 	}, state.State{})
 
-	assertPathValue(t, reg, assignedState, targetKey, assigned)
-	if got, ok := assignedState.ReadPathStaticMember(targetKey); ok {
+	assertPathValue(t, reg, ks, assignedState, targetKey, assigned)
+	if got, ok := assignedState.ReadPathStaticMember(ks, targetKey); ok {
 		t.Fatalf("path assignment wrote static-member proof %s, want none", formatValue(reg, got))
 	}
 
@@ -77,8 +79,8 @@ func TestFactsNodeTransferKeepsStaticMemberWritesDistinctFromPathAssignments(t *
 		Point:    point,
 	}, state.State{})
 
-	assertPathValue(t, reg, staticState, targetKey, product.Bottom(reg))
-	gotProof, ok := staticState.ReadPathStaticMember(targetKey)
+	assertPathValue(t, reg, ks, staticState, targetKey, product.Bottom(reg))
+	gotProof, ok := staticState.ReadPathStaticMember(ks, targetKey)
 	if !ok || !product.Equal(reg, gotProof, proofValue) {
 		t.Fatalf("static-member proof = %s/%v, want %s/true", formatValue(reg, gotProof), ok, formatValue(reg, proofValue))
 	}
@@ -98,6 +100,7 @@ func TestFactsNodeTransferKeepsSamePointStaticMemberWriteWithPathAssignment(t *t
 	visibilityBuilder := visibility.NewBuilder()
 	visibilityBuilder.Define(point, target, "provider")
 	resolver := visibility.NewResolver(visibilityBuilder.Build())
+	ks := resolver.KeySpace()
 
 	got := NewFactsNodeTransfer(FactsNodeTransferConfig{
 		Facts: factflow.NewFacts(factflow.FactsInput{
@@ -115,8 +118,8 @@ func TestFactsNodeTransferKeepsSamePointStaticMemberWriteWithPathAssignment(t *t
 		Point:    point,
 	}, state.State{})
 
-	assertPathValue(t, reg, got, targetKey, value)
-	gotProof, ok := got.ReadPathStaticMember(targetKey)
+	assertPathValue(t, reg, ks, got, targetKey, value)
+	gotProof, ok := got.ReadPathStaticMember(ks, targetKey)
 	if !ok || !product.Equal(reg, gotProof, value) {
 		t.Fatalf("same-point static-member proof = %s/%v, want %s/true", formatValue(reg, gotProof), ok, formatValue(reg, value))
 	}
@@ -243,13 +246,14 @@ func TestResolvePathValueReadsHeapDynamicFactAcrossPathKeyContexts(t *testing.T)
 	itemValue := product.Set(reg, presentValue(reg), identity.Key, identity.Singleton(itemID))
 	routeKeyType := typ.LiteralString("route-1")
 	routeKeyValue := typevalue.WithWitness(reg, typevalue.FromType(reg, routeKeyType), routeKeyType)
-	itemsKey, ok := heapidentity.StaticMemberSuffixKey(fieldSuffix("items").Segments)
-	if !ok {
-		t.Fatal("missing items suffix key")
-	}
 	visibilityBuilder := visibility.NewBuilder()
 	visibilityBuilder.Define(point, root, "batch")
 	resolver := visibility.NewResolver(visibilityBuilder.Build())
+	ks := resolver.KeySpace()
+	itemsKey, ok := heapidentity.StaticMemberSuffixKey(ks, fieldSuffix("items").Segments)
+	if !ok {
+		t.Fatal("missing items suffix key")
+	}
 	oldDynamicKey := dynamicindex.Key{
 		Table: pathdom.PathKey("callee.items"),
 		Site:  dynamicindex.Site("callee.write"),
@@ -258,7 +262,7 @@ func TestResolvePathValueReadsHeapDynamicFactAcrossPathKeyContexts(t *testing.T)
 		WriteValue(reg, key.SymbolValue(root), rootValue).
 		WriteHeapTableObject(reg, rootID, heapidentity.NewTableObject(heapidentity.TableObjectConfig{
 			Root:          rootValue,
-			StaticMembers: map[pathdom.PathKey]product.Value{itemsKey: itemsValue},
+			StaticMembers: map[keyspace.Key]product.Value{itemsKey: itemsValue},
 		})).
 		WriteHeapTableObject(reg, itemsID, heapidentity.NewTableObject(heapidentity.TableObjectConfig{
 			Root: itemsValue,
@@ -507,6 +511,8 @@ func TestFactsNodeTransferCallOutcomeRebasesPathRefinement(t *testing.T) {
 	refinement := presentValue(reg)
 	visibilityBuilder := visibility.NewBuilder()
 	visibilityBuilder.Define(point, arg, "arg")
+	resolver := visibility.NewResolver(visibilityBuilder.Build())
+	ks := resolver.KeySpace()
 
 	got := NewFactsNodeTransfer(FactsNodeTransferConfig{
 		Facts: factflow.NewFacts(factflow.FactsInput{
@@ -531,14 +537,14 @@ func TestFactsNodeTransferCallOutcomeRebasesPathRefinement(t *testing.T) {
 				},
 			}
 		},
-		Visibility: visibility.NewResolver(visibilityBuilder.Build()),
+		Visibility: resolver,
 	})(transfer.NodeContext{
 		Registry: reg,
 		Point:    point,
-	}, state.State{}.WritePathKey(reg, argFieldKey, product.Top()))
+	}, state.State{}.WritePathKey(reg, ks, argFieldKey, product.Top()))
 
-	assertPathValue(t, reg, got, argFieldKey, refinement)
-	assertPathValue(t, reg, got, placeholderKey, product.Bottom(reg))
+	assertPathValue(t, reg, ks, got, argFieldKey, refinement)
+	assertPathValue(t, reg, ks, got, placeholderKey, product.Bottom(reg))
 }
 
 func TestFactsNodeTransferStatementCallOutcomeDoesNotWriteReturnSlots(t *testing.T) {
@@ -552,6 +558,8 @@ func TestFactsNodeTransferStatementCallOutcomeDoesNotWriteReturnSlots(t *testing
 	sideValue := presentValue(reg)
 	visibilityBuilder := visibility.NewBuilder()
 	visibilityBuilder.Define(point, arg, "arg")
+	resolver := visibility.NewResolver(visibilityBuilder.Build())
+	ks := resolver.KeySpace()
 
 	got := NewFactsNodeTransfer(FactsNodeTransferConfig{
 		Facts: factflow.NewFacts(factflow.FactsInput{
@@ -577,7 +585,7 @@ func TestFactsNodeTransferStatementCallOutcomeDoesNotWriteReturnSlots(t *testing
 				},
 			}
 		},
-		Visibility: visibility.NewResolver(visibilityBuilder.Build()),
+		Visibility: resolver,
 	})(transfer.NodeContext{
 		Registry: reg,
 		Point:    point,
@@ -586,7 +594,7 @@ func TestFactsNodeTransferStatementCallOutcomeDoesNotWriteReturnSlots(t *testing
 	if gotValue := got.ReadReturnSlot(reg, 0); !product.Equal(reg, gotValue, product.Bottom(reg)) {
 		t.Fatalf("return slot 0 = %s, want bottom for statement call", formatValue(reg, gotValue))
 	}
-	if gotValue, ok := got.ReadPathStaticMember(argKey); !ok || !product.Equal(reg, gotValue, sideValue) {
+	if gotValue, ok := got.ReadPathStaticMember(ks, argKey); !ok || !product.Equal(reg, gotValue, sideValue) {
 		t.Fatalf("statement side fact = %s/%v, want %s/true", formatValue(reg, gotValue), ok, formatValue(reg, sideValue))
 	}
 }
@@ -606,6 +614,8 @@ func TestFactsNodeTransferCallOutcomeBindsReceiverBeforeExplicitArgs(t *testing.
 	visibilityBuilder := visibility.NewBuilder()
 	visibilityBuilder.Define(point, receiver, "receiver")
 	visibilityBuilder.Define(point, arg, "arg")
+	resolver := visibility.NewResolver(visibilityBuilder.Build())
+	ks := resolver.KeySpace()
 
 	got := NewFactsNodeTransfer(FactsNodeTransferConfig{
 		Facts: factflow.NewFacts(factflow.FactsInput{
@@ -633,16 +643,16 @@ func TestFactsNodeTransferCallOutcomeBindsReceiverBeforeExplicitArgs(t *testing.
 				},
 			}
 		},
-		Visibility: visibility.NewResolver(visibilityBuilder.Build()),
+		Visibility: resolver,
 	})(transfer.NodeContext{
 		Registry: reg,
 		Point:    point,
 	}, state.State{})
 
-	if gotValue, ok := got.ReadPathStaticMember(receiverKey); !ok || !product.Equal(reg, gotValue, receiverValue) {
+	if gotValue, ok := got.ReadPathStaticMember(ks, receiverKey); !ok || !product.Equal(reg, gotValue, receiverValue) {
 		t.Fatalf("receiver static member = %s/%v, want %s/true", formatValue(reg, gotValue), ok, formatValue(reg, receiverValue))
 	}
-	if gotValue, ok := got.ReadPathStaticMember(argKey); !ok || !product.Equal(reg, gotValue, argValue) {
+	if gotValue, ok := got.ReadPathStaticMember(ks, argKey); !ok || !product.Equal(reg, gotValue, argValue) {
 		t.Fatalf("arg static member = %s/%v, want %s/true", formatValue(reg, gotValue), ok, formatValue(reg, argValue))
 	}
 }

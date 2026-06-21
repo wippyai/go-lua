@@ -2,6 +2,7 @@ package projectsummary
 
 import (
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/summary"
+	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
@@ -16,6 +17,7 @@ type ResultReader interface {
 	Graph() cfg.Graph
 	ExitState() (state.State, bool)
 	ReturnPoints() []cfg.Point
+	KeySpace() *keyspace.KeySpace
 }
 
 type entryStateReader interface {
@@ -78,17 +80,23 @@ func FromResult(result ResultReader) summary.Summary {
 	if heapTables.Top {
 		heapTableObjects = nil
 	}
+	var heapKeySpace *keyspace.KeySpace
+	if len(heapTableObjects) != 0 {
+		heapKeySpace = result.KeySpace()
+	}
 
 	out := summary.Summary{
 		ParamObligations:                projectParamObligations(reg, result),
 		ParamMemberCallObligations:      projectParamMemberCallObligations(reg, result),
 		ParamMemberReturnSlots:          projectParamMemberReturnSlots(reg, result),
 		ReturnParamPathAliases:          projectReturnParamPathAliases(result),
+		ParamSinkExposures:              projectParamSinkExposures(reg, result, exit),
 		NormalReturnParams:              projectNormalReturnParams(reg, result, exit),
 		NormalReturnParamConditions:     projectNormalReturnParamConditions(reg, result),
 		NormalReturnParamEqualities:     projectNormalReturnParamEqualities(reg, result),
 		NormalReturnFacts:               projectNormalReturnFacts(reg, result, exit),
 		HeapTableObjects:                heapTableObjects,
+		HeapKeySpace:                    heapKeySpace,
 		ReturnConditionParamRefinements: projectReturnConditionParamRefinements(result),
 		ReturnPresenceRelations:         projectReturnPresenceRelations(reg, result),
 	}

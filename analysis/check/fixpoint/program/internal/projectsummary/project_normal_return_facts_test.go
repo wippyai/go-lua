@@ -5,6 +5,8 @@ import (
 
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
+	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
+	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/typestate"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
@@ -28,6 +30,7 @@ import (
 
 func TestFromResultProjectsNormalReturnFactsFromExitSnapshots(t *testing.T) {
 	reg := standard.Registry()
+	ks := keyspace.New()
 	param0 := symbol.ID(901)
 	param1 := symbol.ID(902)
 	value0 := presentProduct(reg)
@@ -60,17 +63,25 @@ func TestFromResultProjectsNormalReturnFactsFromExitSnapshots(t *testing.T) {
 	staticFrozenValue := product.Set(reg, value0, identity.Key, identity.Singleton(staticFrozenID))
 	heapFrozenID := identity.ID{Kind: "lua.table", Site: "project-freeze-heap", Index: 1}
 	heapFrozenValue := product.Set(reg, value0, identity.Key, identity.Singleton(heapFrozenID))
+	heapChildKey, ok := ks.FromRootlessSuffix([]segment.Segment{{Kind: segment.SegmentField, Name: "heapChild"}})
+	if !ok {
+		t.Fatal("heapChild suffix key failed")
+	}
+	selfKey, ok := ks.FromRootlessSuffix([]segment.Segment{{Kind: segment.SegmentField, Name: "self"}})
+	if !ok {
+		t.Fatal("self suffix key failed")
+	}
 
 	exit := state.State{}.
 		WriteValue(reg, key.SymbolValue(param0), frozenValue).
-		WritePathKey(reg, refineKey, value0).
-		WritePathStaticMember(staticKey, product.Top()).
-		WritePathStaticMember(staticFrozenKey, staticFrozenValue).
+		WritePathKey(reg, ks, refineKey, value0).
+		WritePathStaticMember(ks, staticKey, product.Top()).
+		WritePathStaticMember(ks, staticFrozenKey, staticFrozenValue).
 		WriteHeapTableObject(reg, frozenID, heapidentity.NewTableObject(heapidentity.TableObjectConfig{
 			Root: frozenValue,
-			StaticMembers: map[pathdom.PathKey]product.Value{
-				pathdom.PathKey(".heapChild"): heapFrozenValue,
-				pathdom.PathKey(".self"):      frozenValue,
+			StaticMembers: map[keyspace.Key]product.Value{
+				heapChildKey: heapFrozenValue,
+				selfKey:      frozenValue,
 			},
 		})).
 		WriteDynamicIndexFact(reg, dynamicindex.Key{Table: dynAdmittedKey, Site: "dyn-admitted"}, dynamicindex.Fact{
@@ -172,7 +183,7 @@ func TestFromResultProjectsNormalReturnFactsFromExitSnapshots(t *testing.T) {
 		FreezeTable(staticFrozenID).
 		FreezeTable(heapFrozenID)
 
-	got := FromResult(normalReturnFactProjectTestResult(reg, exit, param0, param1)).NormalReturnFacts
+	got := FromResult(normalReturnFactProjectTestResult(reg, ks, exit, param0, param1)).NormalReturnFacts
 
 	if len(got.PathRefinements) != 1 ||
 		!got.PathRefinements[0].Path.Equal(pathdom.NewPlaceholder(0).Field("refined")) ||
@@ -211,6 +222,7 @@ func TestFromResultProjectsNormalReturnFactsFromExitSnapshots(t *testing.T) {
 
 func TestFromResultDropsNonParameterNormalReturnFactPaths(t *testing.T) {
 	reg := standard.Registry()
+	ks := keyspace.New()
 	param := symbol.ID(911)
 	value := presentProduct(reg)
 	validParamKey := normalReturnFactProjectTestKey(param, ".kept")
@@ -225,9 +237,9 @@ func TestFromResultDropsNonParameterNormalReturnFactPaths(t *testing.T) {
 	}
 
 	exit := state.State{}.
-		WritePathKey(reg, validParamKey, value)
+		WritePathKey(reg, ks, validParamKey, value)
 	for _, pathKey := range invalidKeys {
-		exit = exit.WritePathKey(reg, pathKey, value)
+		exit = exit.WritePathKey(reg, ks, pathKey, value)
 	}
 	exit = exit.
 		AddBranchProof(pathevidence.BranchProof{
@@ -247,7 +259,7 @@ func TestFromResultDropsNonParameterNormalReturnFactPaths(t *testing.T) {
 			Index:  0,
 		})
 
-	got := FromResult(normalReturnFactProjectTestResult(reg, exit, param)).NormalReturnFacts
+	got := FromResult(normalReturnFactProjectTestResult(reg, ks, exit, param)).NormalReturnFacts
 
 	if len(got.PathRefinements) != 1 {
 		t.Fatalf("PathRefinements = %#v, want only valid parameter paths", got.PathRefinements)
@@ -265,9 +277,10 @@ func TestFromResultDropsNonParameterNormalReturnFactPaths(t *testing.T) {
 
 func TestFromResultSkipsTopSnapshotsAndTopNormalReturnFacts(t *testing.T) {
 	reg := standard.Registry()
+	ks := keyspace.New()
 	param := symbol.ID(921)
 	topFacts := FromResult(
-		normalReturnFactProjectTestResult(reg, state.Domain(reg).Top(), param),
+		normalReturnFactProjectTestResult(reg, ks, state.Domain(reg).Top(), param),
 	).NormalReturnFacts
 	if !normalReturnFactsEmpty(topFacts) {
 		t.Fatalf("NormalReturnFacts from top state = %#v, want empty", topFacts)
@@ -281,8 +294,8 @@ func TestFromResultSkipsTopSnapshotsAndTopNormalReturnFacts(t *testing.T) {
 		Change: effectdelta.ChangeUnknown,
 	}
 	exit := state.State{}.
-		WritePathKey(reg, paramKey, product.Top()).
-		WritePathStaticMember(normalReturnFactProjectTestKey(param, ".member"), product.Bottom(reg)).
+		WritePathKey(reg, ks, paramKey, product.Top()).
+		WritePathStaticMember(ks, normalReturnFactProjectTestKey(param, ".member"), product.Bottom(reg)).
 		WriteDynamicIndexFact(reg, dynamicindex.Key{
 			Table: normalReturnFactProjectTestKey(param, ".table"),
 			Site:  "dynamic-top",
@@ -304,7 +317,7 @@ func TestFromResultSkipsTopSnapshotsAndTopNormalReturnFacts(t *testing.T) {
 			Kind:   effectdelta.Mutation,
 		}, topEffect)
 
-	got := FromResult(normalReturnFactProjectTestResult(reg, exit, param)).NormalReturnFacts
+	got := FromResult(normalReturnFactProjectTestResult(reg, ks, exit, param)).NormalReturnFacts
 	assertPathInvalidation(t, got.PathInvalidations, pathdom.NewPlaceholder(0).Field("table"))
 	got.PathInvalidations = nil
 	if !normalReturnFactsEmpty(got) {
@@ -342,14 +355,18 @@ func TestFromResultProjectsHeapTableObjectsFromExitSnapshots(t *testing.T) {
 	reg := standard.Registry()
 	param := symbol.ID(931)
 	tableID := identity.ID{Kind: "table", Site: "summary-project", Index: 1}
-	memberKey := pathdom.PathKey(".child")
+	ks := keyspace.New()
+	memberKey, ok := ks.FromRootlessSuffix([]segment.Segment{{Kind: segment.SegmentField, Name: "child"}})
+	if !ok {
+		t.Fatal("child suffix key failed")
+	}
 	value := presentProduct(reg)
 	exit := state.State{}.WriteHeapTableObject(reg, tableID, heapidentity.NewTableObject(heapidentity.TableObjectConfig{
 		Root:          value,
-		StaticMembers: map[pathdom.PathKey]product.Value{memberKey: value},
+		StaticMembers: map[keyspace.Key]product.Value{memberKey: value},
 	}))
 
-	got := FromResult(normalReturnFactProjectTestResult(reg, exit, param)).HeapTableObjects
+	got := FromResult(normalReturnFactProjectTestResult(reg, ks, exit, param)).HeapTableObjects
 	object, ok := got[tableID]
 	if !ok {
 		t.Fatalf("HeapTableObjects = %#v, want projected object for %v", got, tableID)
@@ -369,11 +386,16 @@ func TestFromResultProjectsFrozenRootAndNestedChildPaths(t *testing.T) {
 	childID := identity.ID{Kind: "table", Site: "summary-freeze", Index: 2}
 	rootValue := product.Set(reg, presentProduct(reg), identity.Key, identity.Singleton(rootID))
 	childValue := product.Set(reg, presentProduct(reg), identity.Key, identity.Singleton(childID))
+	ks := keyspace.New()
+	childKey, ok := ks.FromRootlessSuffix([]segment.Segment{{Kind: segment.SegmentField, Name: "child"}})
+	if !ok {
+		t.Fatal("child suffix key failed")
+	}
 	exit := state.State{}.
 		WriteValue(reg, key.SymbolValue(param), rootValue).
 		WriteHeapTableObject(reg, rootID, heapidentity.NewTableObject(heapidentity.TableObjectConfig{
 			Root:          rootValue,
-			StaticMembers: map[pathdom.PathKey]product.Value{pathdom.PathKey(".child"): childValue},
+			StaticMembers: map[keyspace.Key]product.Value{childKey: childValue},
 		})).
 		WriteHeapTableObject(reg, childID, heapidentity.NewTableObject(heapidentity.TableObjectConfig{
 			Root: childValue,
@@ -381,7 +403,7 @@ func TestFromResultProjectsFrozenRootAndNestedChildPaths(t *testing.T) {
 		FreezeTable(rootID).
 		FreezeTable(childID)
 
-	got := FromResult(normalReturnFactProjectTestResult(reg, exit, param)).NormalReturnFacts
+	got := FromResult(normalReturnFactProjectTestResult(reg, ks, exit, param)).NormalReturnFacts
 
 	assertFrozenTable(t, got.FrozenTables, pathdom.NewPlaceholder(0))
 	assertFrozenTable(t, got.FrozenTables, pathdom.NewPlaceholder(0).Field("child"))
@@ -572,6 +594,7 @@ type normalReturnFactProjectResultStub struct {
 	graph cfg.Graph
 	exit  state.State
 	slots []key.Value
+	keys  *keyspace.KeySpace
 }
 
 type normalReturnFactProjectAssignmentStub struct {
@@ -621,6 +644,7 @@ func (r normalReturnFactProjectAssignmentStub) OrdinaryAssignment(point cfg.Poin
 
 func normalReturnFactProjectTestResult(
 	reg *axis.Registry,
+	ks *keyspace.KeySpace,
 	exit state.State,
 	params ...symbol.ID,
 ) normalReturnFactProjectResultStub {
@@ -633,10 +657,18 @@ func normalReturnFactProjectTestResult(
 		graph: cfg.New(),
 		exit:  exit,
 		slots: slots,
+		keys:  ks,
 	}
 }
 
 func (r normalReturnFactProjectResultStub) Registry() *axis.Registry { return r.reg }
+
+func (r normalReturnFactProjectResultStub) KeySpace() *keyspace.KeySpace {
+	if r.keys == nil {
+		return keyspace.New()
+	}
+	return r.keys
+}
 
 func (r normalReturnFactProjectResultStub) Graph() cfg.Graph { return r.graph }
 

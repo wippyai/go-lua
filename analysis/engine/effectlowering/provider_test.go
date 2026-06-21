@@ -14,6 +14,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/effect/postcondition"
 	"github.com/wippyai/go-lua/analysis/domain/effect/returns"
 	"github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/placement"
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
@@ -742,22 +743,24 @@ func TestSignatureOutcomeProviderLowersTableMutatorToParamPathInvalidationAndApp
 	}
 	visibilityBuilder := visibility.NewBuilder()
 	visibilityBuilder.Define(call, argSymbol, "items")
+	resolver := visibility.NewResolver(visibilityBuilder.Build())
+	ks := resolver.KeySpace()
 	flow := transfer.Run(transfer.Config{
 		Graph:    graph,
 		Registry: reg,
 		EntryState: state.State{}.
-			WritePathKey(reg, containerKey, present).
-			WritePathKey(reg, childKey, present).
-			WritePathKey(reg, unrelatedKey, present),
+			WritePathKey(reg, ks, containerKey, present).
+			WritePathKey(reg, ks, childKey, present).
+			WritePathKey(reg, ks, unrelatedKey, present),
 		NodeTransfer: factapply.NewFactsNodeTransfer(factapply.FactsNodeTransferConfig{
 			Facts:       facts,
 			CallOutcome: provider,
-			Visibility:  visibility.NewResolver(visibilityBuilder.Build()),
+			Visibility:  resolver,
 		}),
 	})
-	assertPathValue(t, reg, flow[graph.Exit()], containerKey, present)
-	assertPathValue(t, reg, flow[graph.Exit()], childKey, product.Bottom(reg))
-	assertPathValue(t, reg, flow[graph.Exit()], unrelatedKey, present)
+	assertPathValue(t, reg, ks, flow[graph.Exit()], containerKey, present)
+	assertPathValue(t, reg, ks, flow[graph.Exit()], childKey, product.Bottom(reg))
+	assertPathValue(t, reg, ks, flow[graph.Exit()], unrelatedKey, present)
 }
 
 func TestSignatureOutcomeProviderLowersMutateToParamPathInvalidationAndApplies(t *testing.T) {
@@ -815,20 +818,22 @@ func TestSignatureOutcomeProviderLowersMutateToParamPathInvalidationAndApplies(t
 	}
 	visibilityBuilder := visibility.NewBuilder()
 	visibilityBuilder.Define(call, argSymbol, "items")
+	resolver := visibility.NewResolver(visibilityBuilder.Build())
+	ks := resolver.KeySpace()
 	flow := transfer.Run(transfer.Config{
 		Graph:    graph,
 		Registry: reg,
 		EntryState: state.State{}.
-			WritePathKey(reg, containerKey, present).
-			WritePathKey(reg, childKey, present),
+			WritePathKey(reg, ks, containerKey, present).
+			WritePathKey(reg, ks, childKey, present),
 		NodeTransfer: factapply.NewFactsNodeTransfer(factapply.FactsNodeTransferConfig{
 			Facts:       facts,
 			CallOutcome: provider,
-			Visibility:  visibility.NewResolver(visibilityBuilder.Build()),
+			Visibility:  resolver,
 		}),
 	})
-	assertPathValue(t, reg, flow[graph.Exit()], containerKey, present)
-	assertPathValue(t, reg, flow[graph.Exit()], childKey, product.Bottom(reg))
+	assertPathValue(t, reg, ks, flow[graph.Exit()], containerKey, present)
+	assertPathValue(t, reg, ks, flow[graph.Exit()], childKey, product.Bottom(reg))
 }
 
 func TestSignatureParamPathInvalidationTreatsMutationPayloadsAsMetadata(t *testing.T) {
@@ -1246,6 +1251,7 @@ func TestSignatureOutcomeProviderLowersOperationalAllocationTemplates(t *testing
 			},
 		}},
 	}
+	ks := keyspace.New()
 	provider := SignatureOutcomeProvider(SignatureOutcomeProviderConfig{
 		Signatures: signatureMap{
 			"builder.build": {
@@ -1253,7 +1259,8 @@ func TestSignatureOutcomeProviderLowersOperationalAllocationTemplates(t *testing
 				OperationalEffects: operational,
 			},
 		},
-		NameFor: staticName("builder.build"),
+		NameFor:  staticName("builder.build"),
+		KeySpace: ks,
 	})
 
 	got := provider(transfer.NodeContext{Registry: reg}, factflow.NewCallSite(factflow.CallSiteConfig{}).View(), state.State{}, nil)
@@ -1282,7 +1289,7 @@ func TestSignatureOutcomeProviderLowersOperationalAllocationTemplates(t *testing
 	if !ok {
 		t.Fatalf("heap objects missing root %v: %#v", rootID, got.HeapTableObjects)
 	}
-	childKey, ok := heapidentity.StaticMemberSuffixKey([]segment.Segment{{Kind: segment.SegmentField, Name: "child"}})
+	childKey, ok := heapidentity.StaticMemberSuffixKey(ks, []segment.Segment{{Kind: segment.SegmentField, Name: "child"}})
 	if !ok {
 		t.Fatal("child suffix key failed")
 	}
@@ -1825,17 +1832,19 @@ func TestSignatureOutcomeProviderParamPathInvalidationDoesNotApplyWithoutExpress
 	}
 	visibilityBuilder := visibility.NewBuilder()
 	visibilityBuilder.Define(call, argSymbol, "items")
+	resolver := visibility.NewResolver(visibilityBuilder.Build())
+	ks := resolver.KeySpace()
 	flow := transfer.Run(transfer.Config{
 		Graph:      graph,
 		Registry:   reg,
-		EntryState: state.State{}.WritePathKey(reg, childKey, present),
+		EntryState: state.State{}.WritePathKey(reg, ks, childKey, present),
 		NodeTransfer: factapply.NewFactsNodeTransfer(factapply.FactsNodeTransferConfig{
 			Facts:       facts,
 			CallOutcome: provider,
-			Visibility:  visibility.NewResolver(visibilityBuilder.Build()),
+			Visibility:  resolver,
 		}),
 	})
-	assertPathValue(t, reg, flow[graph.Exit()], childKey, present)
+	assertPathValue(t, reg, ks, flow[graph.Exit()], childKey, present)
 }
 
 func TestWithSignatureNoNormalReturnsMarksNeverReturnCallAndApplies(t *testing.T) {
@@ -2804,20 +2813,20 @@ func signatureOutcomeProviderFacts(point cfg.Point, args []factflow.ValueSource)
 func assertValue(t *testing.T, reg *axis.Registry, st state.State, slot key.Value, want product.Value) {
 	t.Helper()
 	if got := st.ReadValue(reg, slot); !product.Equal(reg, got, want) {
-		t.Fatalf("state[%s] = %v, want %v", slot, got, want)
+		t.Fatalf("state[%v] = %v, want %v", slot, got, want)
 	}
 }
 
 func assertStatePresence(t *testing.T, reg *axis.Registry, st state.State, slot key.Value, want presence.Value) {
 	t.Helper()
 	if got := product.PresenceOf(st.ReadValue(reg, slot)); !presence.Equal(got, want) {
-		t.Fatalf("state[%s] presence = %s, want %s", slot, got, want)
+		t.Fatalf("state[%v] presence = %s, want %s", slot, got, want)
 	}
 }
 
-func assertPathValue(t *testing.T, reg *axis.Registry, st state.State, pathKey path.PathKey, want product.Value) {
+func assertPathValue(t *testing.T, reg *axis.Registry, ks *keyspace.KeySpace, st state.State, pathKey path.PathKey, want product.Value) {
 	t.Helper()
-	if got := st.ReadPathKey(reg, pathKey); !product.Equal(reg, got, want) {
+	if got := st.ReadPathKey(reg, ks, pathKey); !product.Equal(reg, got, want) {
 		t.Fatalf("state path[%s] = %v, want %v", pathKey, got, want)
 	}
 }

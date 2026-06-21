@@ -132,6 +132,6 @@ func (c *Cache) cachedProductActive(reg *axis.Registry, value product.Value) boo
 	if origin.IsBottom() || origin.IsTop() {
 		return true
 	}
-	_, ok := c.TypeFromVariantOrigin(origin.Family(), origin.Cases())
+	_, ok := c.TypeFromVariantOrigin(origin.Family(), origin.CasesRef())
 	return ok
 }

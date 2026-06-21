@@ -5,6 +5,7 @@ import (
 
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
+	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
@@ -12,6 +13,7 @@ import (
 
 func TestInvalidateSubtreeOwnsCoupledEvidence(t *testing.T) {
 	reg := standard.Registry()
+	ks := keyspace.New()
 	valueDomain := product.Domain(reg)
 	present := product.Top()
 	root := pathdom.PathKey("sym1@1.table")
@@ -19,9 +21,9 @@ func TestInvalidateSubtreeOwnsCoupledEvidence(t *testing.T) {
 	other := pathdom.PathKey("sym2@1.value")
 	proof := BranchProof{Kind: BranchProofPathEqual, Path: other, Other: child}
 
-	rootKey := mustLocalKey(t, root)
-	childKey := mustLocalKey(t, child)
-	otherKey := mustLocalKey(t, other)
+	rootKey := mustStructKey(t, ks, root)
+	childKey := mustStructKey(t, ks, child)
+	otherKey := mustStructKey(t, ks, other)
 
 	l, _ := (Lane{}).WritePathKey(reg, rootKey, present)
 	l, _ = l.WritePathKey(reg, childKey, present)
@@ -29,7 +31,7 @@ func TestInvalidateSubtreeOwnsCoupledEvidence(t *testing.T) {
 	l, _ = l.WritePathStaticMember(childKey, present)
 	l, _ = l.AddBranchProof(proof)
 
-	out, ok := l.InvalidatePathKeySubtree(root)
+	out, ok := l.InvalidatePathKeySubtree(ks, root)
 	if !ok {
 		t.Fatal("InvalidatePathKeySubtree rejected structural path key")
 	}
@@ -50,13 +52,13 @@ func TestInvalidateSubtreeOwnsCoupledEvidence(t *testing.T) {
 	}
 }
 
-func mustLocalKey(t *testing.T, key pathdom.PathKey) pathaddr.LocalKey {
+func mustStructKey(t *testing.T, ks *keyspace.KeySpace, key pathdom.PathKey) keyspace.Key {
 	t.Helper()
-	local, ok := pathaddr.LocalKeyFromPathKey(key)
+	structKey, ok := ks.FromPathKey(key)
 	if !ok {
-		t.Fatalf("LocalKeyFromPathKey(%q) failed", key)
+		t.Fatalf("FromPathKey(%q) failed", key)
 	}
-	return local
+	return structKey
 }
 
 func TestEquivalentPathKeysRebaseThroughBranchProofs(t *testing.T) {
@@ -154,11 +156,12 @@ func TestRebaseEquivalentPathKeyStaysUnderTargetPrefix(t *testing.T) {
 
 func TestRefinementMustJoinDropsOneSidedEntry(t *testing.T) {
 	reg := standard.Registry()
+	ks := keyspace.New()
 	domain := Domain(reg)
 	present := product.Top()
 	oneSided := Lane{
-		refinements: map[pathaddr.LocalKey]product.Value{
-			mustLocalKey(t, pathdom.PathKey("sym1@1.field")): present,
+		refinements: map[keyspace.Key]product.Value{
+			mustStructKey(t, ks, pathdom.PathKey("sym1@1.field")): present,
 		},
 	}
 

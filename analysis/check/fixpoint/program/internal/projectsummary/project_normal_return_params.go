@@ -34,7 +34,7 @@ func projectNormalReturnParams(reg *axis.Registry, result ResultReader, exit sta
 		out[i] = product.Top()
 	}
 	for i, slot := range slots {
-		if slot == "" {
+		if slot == 0 {
 			continue
 		}
 		if _, ok := reassigned[slot]; ok {

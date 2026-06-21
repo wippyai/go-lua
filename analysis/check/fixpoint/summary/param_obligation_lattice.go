@@ -91,8 +91,12 @@ var returnParamPathAliasLane = factset.Set[ReturnParamPathAlias, ReturnParamPath
 		}
 		return a.Source < b.Source
 	},
+	// An empty Member is the return-root alias (return o): the whole return slot,
+	// not a member below it, aliases the parameter. The heap-member rehydration
+	// consumer no-ops on it; the call-boundary exposure lane widens the argument
+	// toward the full declared return type.
 	Valid: func(a ReturnParamPathAlias) bool {
-		return a.ReturnIndex >= 0 && a.Member != "" && a.Source != ""
+		return a.ReturnIndex >= 0 && a.Source != ""
 	},
 	Intersect: true,
 }

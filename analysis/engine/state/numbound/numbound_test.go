@@ -5,17 +5,19 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/domain/lattice/lift"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 )
 
-func keyOf(name string) pathdom.PathKey {
-	return pathdom.PathKey(name)
+func keyOf(ks *keyspace.KeySpace, t *testing.T, name string) keyspace.Key {
+	t.Helper()
+	k, ok := ks.FromStateKey(pathdom.PathKey(name))
+	if !ok {
+		t.Fatalf("FromStateKey(%q) failed", name)
+	}
+	return k
 }
 
-func floors(entries map[pathdom.PathKey]Floor) map[pathdom.PathKey]Floor {
-	return entries
-}
-
-func lift_mustValues(entries map[pathdom.PathKey]Floor) lift.MustMapLane[pathdom.PathKey, Floor] {
+func lift_mustValues(entries map[keyspace.Key]Floor) lift.MustMapLane[keyspace.Key, Floor] {
 	return lift.MustMapValues(entries)
 }
 
@@ -87,35 +89,40 @@ func TestElemWidenAscendingChainTerminates(t *testing.T) {
 
 func TestMapMustSemantics(t *testing.T) {
 	d := MapDomain()
-	a := lift_mustValues(floors(map[pathdom.PathKey]Floor{
-		keyOf("x"): {Lo: -4},
-		keyOf("y"): {Lo: 2},
-	}))
-	b := lift_mustValues(floors(map[pathdom.PathKey]Floor{
-		keyOf("x"): {Lo: 7},
-	}))
+	ks := keyspace.New()
+	x := keyOf(ks, t, "x")
+	y := keyOf(ks, t, "y")
+	a := lift_mustValues(map[keyspace.Key]Floor{
+		x: {Lo: -4},
+		y: {Lo: 2},
+	})
+	b := lift_mustValues(map[keyspace.Key]Floor{
+		x: {Lo: 7},
+	})
 
 	joined := d.Join(a, b)
 	vals := joined.Values()
 	if len(vals) != 1 {
 		t.Fatalf("join must keep only common keys; got %d", len(vals))
 	}
-	if f, ok := vals[keyOf("x")]; !ok || f.Lo != -4 {
+	if f, ok := vals[x]; !ok || f.Lo != -4 {
 		t.Fatalf("common key floor must be min(-4,7)=-4; got %v ok=%v", f, ok)
 	}
-	if _, ok := vals[keyOf("y")]; ok {
+	if _, ok := vals[y]; ok {
 		t.Fatalf("non-common key must be dropped at the merge")
 	}
 }
 
 func TestMapWidenTerminates(t *testing.T) {
 	d := MapDomain()
-	acc := lift_mustValues(map[pathdom.PathKey]Floor{keyOf("x"): {Lo: -10}})
+	ks := keyspace.New()
+	x := keyOf(ks, t, "x")
+	acc := lift_mustValues(map[keyspace.Key]Floor{x: {Lo: -10}})
 	for i := int64(-9); i < 1000; i++ {
-		next := lift_mustValues(map[pathdom.PathKey]Floor{keyOf("x"): {Lo: i}})
+		next := lift_mustValues(map[keyspace.Key]Floor{x: {Lo: i}})
 		widened := d.Widen(acc, next)
 		if d.Equal(widened, acc) {
-			floor, ok := widened.Values()[keyOf("x")]
+			floor, ok := widened.Values()[x]
 			if !ok || floor.Lo != minFloor {
 				t.Fatalf("map Widen chain must stabilize at Top floor; got %v ok=%v", floor, ok)
 			}

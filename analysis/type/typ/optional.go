@@ -19,6 +19,7 @@ type Optional struct {
 	containsNever         bool
 	containsTypeParam     bool
 	containsInstantiated  bool
+	containsGeneric       bool
 	containsRecursive     bool
 	containsOpenRecursive bool
 	strCache              stringCache
@@ -54,6 +55,7 @@ func newRawOptionalNode(inner Type) Type {
 		containsNever:         knownContainsNever(inner),
 		containsTypeParam:     knownContainsTypeParam(inner),
 		containsInstantiated:  knownContainsInstantiated(inner),
+		containsGeneric:       knownContainsGeneric(inner),
 		containsRecursive:     knownContainsRecursive(inner),
 		containsOpenRecursive: knownContainsOpenRecursive(inner),
 	}

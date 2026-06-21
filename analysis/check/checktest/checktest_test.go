@@ -13,6 +13,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/effect/ownership"
 	"github.com/wippyai/go-lua/analysis/domain/effect/postcondition"
 	"github.com/wippyai/go-lua/analysis/domain/effect/returns"
+	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/placement"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
@@ -3070,13 +3071,13 @@ end
 	shared, stack := placementCounts(exit)
 	debug := callOutcomeDebug(root)
 	if shared == 0 {
-		t.Fatalf("shared placements = 0, want sent payload placement: %s\ncalls: %s\nreturns: %s", placementSummary(root.Registry(), exit), debug, functionReturnDebug(root))
+		t.Fatalf("shared placements = 0, want sent payload placement: %s\ncalls: %s\nreturns: %s", placementSummary(root.Registry(), root.KeySpace(), exit), debug, functionReturnDebug(root))
 	}
 	if stack == 0 {
-		t.Fatalf("stack placements = 0, want non-sent construction scaffolding to remain local: %s\ncalls: %s", placementSummary(root.Registry(), exit), debug)
+		t.Fatalf("stack placements = 0, want non-sent construction scaffolding to remain local: %s\ncalls: %s", placementSummary(root.Registry(), root.KeySpace(), exit), debug)
 	}
 	if depth := maxSharedPlacementDepth(root.Registry(), exit); depth < 3 {
-		t.Fatalf("max shared placement depth = %d, want at least item -> child -> meta: %s\ncalls: %s", depth, placementSummary(root.Registry(), exit), debug)
+		t.Fatalf("max shared placement depth = %d, want at least item -> child -> meta: %s\ncalls: %s", depth, placementSummary(root.Registry(), root.KeySpace(), exit), debug)
 	}
 }
 
@@ -3170,7 +3171,7 @@ end
 		t.Fatal("missing exit state")
 	}
 	if depth := maxSharedPlacementDepth(root.Registry(), exit); depth < 3 {
-		t.Fatalf("max shared placement depth = %d, want at least item -> child -> meta: %s\ncalls: %s", depth, placementSummary(root.Registry(), exit), callOutcomeDebug(root))
+		t.Fatalf("max shared placement depth = %d, want at least item -> child -> meta: %s\ncalls: %s", depth, placementSummary(root.Registry(), root.KeySpace(), exit), callOutcomeDebug(root))
 	}
 }
 
@@ -3202,13 +3203,13 @@ end
 	}
 	shared, stack := placementCounts(exit)
 	if shared == 0 {
-		t.Fatalf("shared placements = 0, want channel-sent job placement: %s\ncalls: %s", placementSummary(fn.Registry(), exit), callOutcomeDebug(fn))
+		t.Fatalf("shared placements = 0, want channel-sent job placement: %s\ncalls: %s", placementSummary(fn.Registry(), fn.KeySpace(), exit), callOutcomeDebug(fn))
 	}
 	if stack == 0 {
-		t.Fatalf("stack placements = 0, want channel receiver/local scaffolding not all promoted: %s\ncalls: %s", placementSummary(fn.Registry(), exit), callOutcomeDebug(fn))
+		t.Fatalf("stack placements = 0, want channel receiver/local scaffolding not all promoted: %s\ncalls: %s", placementSummary(fn.Registry(), fn.KeySpace(), exit), callOutcomeDebug(fn))
 	}
 	if depth := maxSharedPlacementDepth(fn.Registry(), exit); depth < 2 {
-		t.Fatalf("max shared placement depth = %d, want job -> meta: %s\ncalls: %s", depth, placementSummary(fn.Registry(), exit), callOutcomeDebug(fn))
+		t.Fatalf("max shared placement depth = %d, want job -> meta: %s\ncalls: %s", depth, placementSummary(fn.Registry(), fn.KeySpace(), exit), callOutcomeDebug(fn))
 	}
 	foundSendEscape := false
 	for _, point := range fn.Graph().RPO() {
@@ -3440,7 +3441,7 @@ func valueIdentity(reg *axis.Registry, value product.Value) (identity.ID, bool) 
 	return id, true
 }
 
-func placementSummary(reg *axis.Registry, st state.State) string {
+func placementSummary(reg *axis.Registry, ks *keyspace.KeySpace, st state.State) string {
 	heap := st.HeapTableObjectsSnapshot()
 	out := ""
 	for id, object := range heap.Objects {
@@ -3453,7 +3454,7 @@ func placementSummary(reg *axis.Registry, st state.State) string {
 			if members != "" {
 				members += ","
 			}
-			members += fmt.Sprintf("%s:", member)
+			members += fmt.Sprintf("%s:", ks.Format(member))
 			if child, ok := valueIdentity(reg, value); ok {
 				members += child.String()
 			} else {

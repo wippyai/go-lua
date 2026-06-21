@@ -106,7 +106,7 @@ func directCallSiteUsesMemberAccess(result *body.Result, site factflow.CallSite,
 }
 
 func callSiteCalleePathMemberAccess(site factflow.CallSite) bool {
-	p := site.CalleePath()
+	p := site.CalleePathRef()
 	return !p.IsEmpty() && len(p.Segments) > 0
 }
 
@@ -191,7 +191,7 @@ func directCallDisplayName(result *body.Result, site factflow.CallSite) string {
 		if signatureName, ok := result.CallSignatureName(site); ok && signatureName != "" {
 			return signatureName
 		}
-		if callPath := site.CalleePath(); !callPath.IsEmpty() {
+		if callPath := site.CalleePathRef(); !callPath.IsEmpty() {
 			return displayPath(result, callPath)
 		}
 		if name := result.SymbolName(site.CalleeSymbol()); name != "" {

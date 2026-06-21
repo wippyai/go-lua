@@ -34,6 +34,7 @@ const (
 	labelObjectLiteral        = "object literal"
 	labelPossiblyNilContainer = "possibly nil container"
 	labelValueMayBeNil        = "value may be nil"
+	labelValueAlwaysNil       = "value is always nil"
 	labelUnusedLocal          = "unused local"
 	labelDeadAssignment       = "dead assignment"
 	labelOverwrite            = "overwriting assignment"
@@ -70,6 +71,7 @@ func sourceLabelPlacement(message string) diagnostic.LabelPlacement {
 		labelObjectLiteral,
 		labelPossiblyNilContainer,
 		labelValueMayBeNil,
+		labelValueAlwaysNil,
 		labelUnusedLocal,
 		labelDeadAssignment,
 		labelConditionCheck,
@@ -555,6 +557,18 @@ func concatOperandTypeEvidence(side, name string, got typ.Type) string {
 
 func concatOperandHelp(name string) string {
 	return display.ConcatOperandHelp(name)
+}
+
+func nonNilAssertAlwaysNilMessage(name string) string {
+	return display.NonNilAssertAlwaysNilMessage(name)
+}
+
+func nonNilAssertAlwaysNilEvidence(name string) string {
+	return display.NonNilAssertAlwaysNilEvidence(name)
+}
+
+func nonNilAssertAlwaysNilHelp(name string) string {
+	return display.NonNilAssertAlwaysNilHelp(name)
 }
 
 func unresolvedTypeMessage(name string) string {
@@ -1267,6 +1281,29 @@ func displayTypeWithoutNil(displayType string) string {
 		return strings.TrimSpace(strings.TrimSuffix(displayType, "?"))
 	}
 	return displayType
+}
+
+func (diagnosticDisplay) NonNilAssertAlwaysNilMessage(name string) string {
+	if name != "" && name != unknownSourceName {
+		return fmt.Sprintf("%s is asserted non-nil but is always nil", codeName(name))
+	}
+	return "value is asserted non-nil but is always nil"
+}
+
+func (d diagnosticDisplay) NonNilAssertAlwaysNilEvidence(name string) string {
+	subject := "the asserted value"
+	if name != "" && name != unknownSourceName {
+		subject = codeName(name)
+	}
+	return fmt.Sprintf("%s is nil on every path here, so the `!` assertion always fails at runtime", subject)
+}
+
+func (diagnosticDisplay) NonNilAssertAlwaysNilHelp(name string) string {
+	name = strings.TrimSpace(name)
+	if name != "" && name != unknownSourceName {
+		return fmt.Sprintf("Remove the `!` assertion on `%s` or assign a non-nil value before this point.", name)
+	}
+	return "Remove the `!` assertion or assign a non-nil value before this point."
 }
 
 func (diagnosticDisplay) ConcatOperandHelp(name string) string {

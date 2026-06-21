@@ -13,6 +13,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/effect/postcondition"
 	"github.com/wippyai/go-lua/analysis/domain/effect/returns"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
@@ -308,7 +309,7 @@ func functionSummaryOperationalEffectsForArity(reg *axis.Registry, s summary.Sum
 }
 
 func operationalReturnAllocationTemplates(reg *axis.Registry, s summary.Summary, signatureName string) []signature.ReturnAllocationTemplate {
-	if reg == nil || signatureName == "" || len(s.Returns) == 0 || len(s.HeapTableObjects) == 0 {
+	if reg == nil || signatureName == "" || len(s.Returns) == 0 || len(s.HeapTableObjects) == 0 || s.HeapKeySpace == nil {
 		return nil
 	}
 	var out []signature.ReturnAllocationTemplate
@@ -317,7 +318,7 @@ func operationalReturnAllocationTemplates(reg *axis.Registry, s summary.Summary,
 		if !ok {
 			continue
 		}
-		template, ok := allocationTemplateForReturn(reg, s.HeapTableObjects, signatureName, i, id)
+		template, ok := allocationTemplateForReturn(reg, s.HeapKeySpace, s.HeapTableObjects, signatureName, i, id)
 		if ok {
 			out = append(out, template)
 		}
@@ -327,6 +328,7 @@ func operationalReturnAllocationTemplates(reg *axis.Registry, s summary.Summary,
 
 func allocationTemplateForReturn(
 	reg *axis.Registry,
+	ks *keyspace.KeySpace,
 	objects map[identity.ID]heapidentity.TableObject,
 	signatureName string,
 	returnIndex int,
@@ -337,6 +339,7 @@ func allocationTemplateForReturn(
 	}
 	projector := allocationTemplateProjector{
 		reg:           reg,
+		ks:            ks,
 		objects:       objects,
 		signatureName: signatureName,
 		returnIndex:   returnIndex,
@@ -361,6 +364,7 @@ func allocationTemplateForReturn(
 
 type allocationTemplateProjector struct {
 	reg           *axis.Registry
+	ks            *keyspace.KeySpace
 	objects       map[identity.ID]heapidentity.TableObject
 	signatureName string
 	returnIndex   int
@@ -401,7 +405,7 @@ func (p *allocationTemplateProjector) visit(raw identity.ID, templateID signatur
 	if t, ok := valueType(p.reg, object.Root()); ok {
 		projected.Type = t
 	}
-	for _, member := range sortedHeapStaticMembers(object.StaticMembers()) {
+	for _, member := range sortedHeapStaticMembers(p.ks, object.StaticMembers()) {
 		memberID, ok := product.Get(p.reg, member.value, identity.Key).ID()
 		if !ok {
 			continue
@@ -416,7 +420,7 @@ func (p *allocationTemplateProjector) visit(raw identity.ID, templateID signatur
 			Value:  childTemplate,
 		})
 	}
-	for _, entry := range sortedHeapDynamicEntries(object.DynamicIndexFacts()) {
+	for _, entry := range sortedHeapDynamicEntries(p.ks, object.DynamicIndexFacts()) {
 		var projectedEntry signature.AllocationDynamicEntryTemplate
 		if keyID, ok := product.Get(p.reg, entry.fact.KeyValue, identity.Key).ID(); ok {
 			keyPath := fmt.Sprintf("%s:dynamic:%d:key", path, entry.index)
@@ -468,10 +472,10 @@ type heapStaticMember struct {
 	value  product.Value
 }
 
-func sortedHeapStaticMembers(in map[pathdom.PathKey]product.Value) []heapStaticMember {
+func sortedHeapStaticMembers(ks *keyspace.KeySpace, in map[keyspace.Key]product.Value) []heapStaticMember {
 	out := make([]heapStaticMember, 0, len(in))
 	for key, value := range in {
-		suffix, ok := segment.ParseFormattedSegments(string(key))
+		suffix, ok := ks.SuffixSegments(key)
 		if !ok {
 			continue
 		}
@@ -489,7 +493,7 @@ type heapDynamicEntry struct {
 	fact  dynamicindex.Fact
 }
 
-func sortedHeapDynamicEntries(in map[dynamicindex.Key]dynamicindex.Fact) []heapDynamicEntry {
+func sortedHeapDynamicEntries(ks *keyspace.KeySpace, in map[dynamicindex.Key]dynamicindex.Fact) []heapDynamicEntry {
 	out := make([]heapDynamicEntry, 0, len(in))
 	for key, fact := range in {
 		if fact.Admission == dynamicindex.AdmissionRejected {

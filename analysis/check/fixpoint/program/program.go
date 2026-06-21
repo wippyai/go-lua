@@ -12,6 +12,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/ref"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/summary"
 	"github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	statekey "github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
@@ -229,6 +230,7 @@ type keyedFunction struct {
 	funcExpr      *ast.FunctionExpr
 	key           summary.SummaryKey
 	entryState    state.State
+	entryKeys     *keyspace.KeySpace
 	hasEntryState bool
 }
 
@@ -687,7 +689,8 @@ func collectCallContextKeysFromResult(keys *programKeys, owner *ast.FunctionExpr
 		if _, seen := keys.callContextKeys[callRef]; seen {
 			continue
 		}
-		entry, ok := callerPathEntryState(config.Registry, in)
+		entryKeys := prepass.KeySpace()
+		entry, ok := callerPathEntryState(config.Registry, entryKeys, in)
 		if !ok {
 			continue
 		}
@@ -698,6 +701,7 @@ func collectCallContextKeysFromResult(keys *programKeys, owner *ast.FunctionExpr
 			funcExpr:      fn,
 			key:           contextKey,
 			entryState:    entry,
+			entryKeys:     entryKeys,
 			hasEntryState: true,
 		})
 		if keys.callContextKeys == nil {
@@ -757,9 +761,10 @@ func collectSignatureCallbackContextKeys(
 			return true
 		}
 		entry := state.State{}
+		entryKeys := prepass.KeySpace()
 		callerEntry, hasCallerEntry := prepass.StateAt(point)
 		if hasCallerEntry {
-			if pathEntry, ok := callerPathEntryState(config.Registry, callerEntry); ok {
+			if pathEntry, ok := callerPathEntryState(config.Registry, entryKeys, callerEntry); ok {
 				entry = pathEntry
 			}
 		}
@@ -775,6 +780,7 @@ func collectSignatureCallbackContextKeys(
 			funcExpr:      callbackFn,
 			key:           contextKey,
 			entryState:    entry,
+			entryKeys:     entryKeys,
 			hasEntryState: true,
 		})
 		if keys.functionExpressionKeys == nil {
@@ -854,7 +860,7 @@ func contextualCallbackParamSeeds(reg *axis.Registry, bindings *bind.Result, fn 
 			continue
 		}
 		valueSlot := statekey.SymbolValue(slot.Symbol)
-		if valueSlot == "" {
+		if valueSlot == 0 {
 			continue
 		}
 		out = append(out, paramSeed{
@@ -898,7 +904,7 @@ func prepassCallSummaryKey(
 			return key, true
 		}
 	}
-	calleePath := site.CalleePath()
+	calleePath := site.CalleePathRef()
 	if calleePath.IsEmpty() {
 		return summary.SummaryKey{}, false
 	}
@@ -914,7 +920,7 @@ func prepassCallSummaryKey(
 	return key, ok
 }
 
-func callerPathEntryState(reg *axis.Registry, in state.State) (state.State, bool) {
+func callerPathEntryState(reg *axis.Registry, ks *keyspace.KeySpace, in state.State) (state.State, bool) {
 	if reg == nil {
 		return state.State{}, false
 	}
@@ -922,21 +928,21 @@ func callerPathEntryState(reg *axis.Registry, in state.State) (state.State, bool
 	seen := false
 	bottom := product.Bottom(reg)
 
-	if snapshot := in.PathRefinementsSnapshot(); !snapshot.Top {
+	if snapshot := in.PathRefinementsSnapshot(ks); !snapshot.Top {
 		for pathKey, value := range snapshot.Refinements {
 			if pathKey == "" || product.Equal(reg, value, bottom) {
 				continue
 			}
-			out = out.WritePathKey(reg, pathKey, value)
+			out = out.WritePathKey(reg, ks, pathKey, value)
 			seen = true
 		}
 	}
-	if snapshot := in.PathStaticMembersSnapshot(); !snapshot.Bottom && !snapshot.Top {
+	if snapshot := in.PathStaticMembersSnapshot(ks); !snapshot.Bottom && !snapshot.Top {
 		for pathKey, value := range snapshot.Members {
 			if pathKey == "" || product.Equal(reg, value, bottom) {
 				continue
 			}
-			out = out.WritePathStaticMember(pathKey, value)
+			out = out.WritePathStaticMember(ks, pathKey, value)
 			seen = true
 		}
 	}
@@ -1044,7 +1050,7 @@ func boundFunction(
 		Body: func(ctx query.Context) (summary.Summary, error) {
 			config := checkConfigWithSummaries(captured, ctx.Summaries, keyFor, functionKeys, functionExpressionKeys, functionIDs, pathKeys, pathMultiKeys, functionTypes)
 			if origin.hasEntryState {
-				config.EntryState = origin.entryState.Snapshot()
+				config.EntryState = origin.entryState.Snapshot().RekeyPathEvidence(origin.entryKeys, prepared.KeySpace())
 			}
 			result, err := solvePreparedCounted(prepared, config, summaryCounter(stats))
 			if err != nil {
@@ -1063,7 +1069,7 @@ func keyFunc(keys programKeys, owner *ast.FunctionExpr) callresult.KeyFunc {
 				return key, true
 			}
 		}
-		if calleePath := site.CalleePath(); !calleePath.IsEmpty() && len(keys.pathMultiKeys[calleePath.Key()]) > 1 {
+		if calleePath := site.CalleePathRef(); !calleePath.IsEmpty() && len(keys.pathMultiKeys[calleePath.Key()]) > 1 {
 			return summary.SummaryKey{}, false
 		}
 		return direct(ctx, site)
@@ -1099,6 +1105,7 @@ func checkConfigWithSummaries(
 			FunctionTypes:           functionTypes,
 			Sources:                 ctx.Sources,
 			ReturnPresenceRelations: callresult.ReturnPresenceRelationsForPathFunc(ctx.ReturnPresenceRelationsPath),
+			KeySpace:                ctx.KeySpace,
 		}
 		primary := callresult.OutcomeProvider(callresult.ProviderConfig{
 			Summaries:               providerConfig.Summaries,
@@ -1113,6 +1120,7 @@ func checkConfigWithSummaries(
 			FunctionTypes:           providerConfig.FunctionTypes,
 			Sources:                 providerConfig.Sources,
 			ReturnPresenceRelations: providerConfig.ReturnPresenceRelations,
+			KeySpace:                providerConfig.KeySpace,
 		})
 		if baseFactory == nil {
 			return primary
@@ -1253,7 +1261,7 @@ func obligationParamSeeds(reg *axis.Registry, keys programKeys, summaries summar
 			continue
 		}
 		valueSlot := statekey.SymbolValue(slot.Symbol)
-		if valueSlot == "" {
+		if valueSlot == 0 {
 			continue
 		}
 		out = append(out, paramSeed{slot: valueSlot, value: value})
@@ -1286,7 +1294,7 @@ func materializeFunctionTree(
 			baseResults[origin.funcExpr] = root
 			continue
 		}
-		result, err := solvePreparedCounted(prepared.function(origin.funcExpr), keyedFunctionMaterializeConfig(config, keys, summaries, origin), materializeCounter(stats))
+		result, err := solvePreparedCounted(prepared.function(origin.funcExpr), keyedFunctionMaterializeConfig(prepared.function(origin.funcExpr), config, keys, summaries, origin), materializeCounter(stats))
 		if err != nil {
 			return nil, err
 		}
@@ -1297,7 +1305,7 @@ func materializeFunctionTree(
 		if context.funcExpr == nil {
 			continue
 		}
-		result, err := solvePreparedCounted(prepared.function(context.funcExpr), keyedFunctionMaterializeConfig(config, keys, summaries, context), materializeCounter(stats))
+		result, err := solvePreparedCounted(prepared.function(context.funcExpr), keyedFunctionMaterializeConfig(prepared.function(context.funcExpr), config, keys, summaries, context), materializeCounter(stats))
 		if err != nil {
 			return nil, err
 		}
@@ -1378,8 +1386,9 @@ func functionValueTypesFromSummaries(reg *axis.Registry, summaries summary.Reade
 			out.ContextsByIdentity = make(map[identity.ID][]body.FunctionValueContext)
 		}
 		out.ContextsByIdentity[id] = append(out.ContextsByIdentity[id], body.FunctionValueContext{
-			Entry: context.entryState.Snapshot(),
-			Type:  fn,
+			Entry:     context.entryState.Snapshot(),
+			EntryKeys: context.entryKeys,
+			Type:      fn,
 		})
 	}
 	return out
@@ -1432,9 +1441,9 @@ func returnTypesFromSummary(reg *axis.Registry, sum summary.Summary) ([]typ.Type
 	return out, len(out) != 0
 }
 
-func keyedFunctionMaterializeConfig(config body.Config, keys programKeys, summaries summary.Reader, fn keyedFunction) body.Config {
+func keyedFunctionMaterializeConfig(prepared *body.Static, config body.Config, keys programKeys, summaries summary.Reader, fn keyedFunction) body.Config {
 	if fn.hasEntryState {
-		config.EntryState = fn.entryState
+		config.EntryState = fn.entryState.RekeyPathEvidence(fn.entryKeys, prepared.KeySpace())
 	}
 	return functionMaterializeConfig(config, keys, summaries, fn.funcExpr)
 }

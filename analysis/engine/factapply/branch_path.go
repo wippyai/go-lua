@@ -2,6 +2,7 @@ package factapply
 
 import (
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
@@ -13,10 +14,10 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/variant"
 	"github.com/wippyai/go-lua/analysis/engine/dynamicindex"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
-	"github.com/wippyai/go-lua/analysis/engine/typenarrow"
 	sourcevalue "github.com/wippyai/go-lua/analysis/engine/sourcevalue"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
+	"github.com/wippyai/go-lua/analysis/engine/typenarrow"
 	"github.com/wippyai/go-lua/analysis/engine/visibility"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/type/kind"
@@ -194,7 +195,8 @@ func resolvePathValueAtCached(
 	if pathKey == "" {
 		return pathValue{}, false
 	}
-	value := out.ReadPathKey(reg, pathKey)
+	ks := resolver.KeySpace()
+	value := out.ReadPathKey(reg, ks, pathKey)
 	if product.Equal(reg, value, product.Bottom(reg)) {
 		projected, ok := projectPathDynamicIndexValue(reg, resolver, point, out, targetPath)
 		if ok {
@@ -212,7 +214,7 @@ func resolvePathValueAtCached(
 	return pathValue{
 		value: value,
 		write: func(s state.State, value product.Value) state.State {
-			return s.WritePathKey(reg, pathKey, value)
+			return s.WritePathKey(reg, ks, pathKey, value)
 		},
 	}, true
 }
@@ -232,7 +234,7 @@ func projectPathHeapStaticMemberValue(
 	rootProjected := product.Value{}
 	hasRootProjected := false
 	if rootValue, ok := resolvePathValueAtCached(nil, reg, resolver, point, out, root, nil); ok {
-		if projected, ok := sourcevalue.HeapMemberFromValue(reg, out, rootValue.value, targetPath.Segments); ok {
+		if projected, ok := sourcevalue.HeapMemberFromValue(reg, resolver.KeySpace(), out, rootValue.value, targetPath.Segments); ok {
 			rootProjected = projected
 			hasRootProjected = true
 		}
@@ -240,7 +242,7 @@ func projectPathHeapStaticMemberValue(
 
 	parent := targetPath.Parent()
 	parentValue, _ := resolvePathValueAtCached(nil, reg, resolver, point, out, parent, nil)
-	if projected, ok := sourcevalue.HeapMemberFromValue(reg, out, parentValue.value, targetPath.Segments[len(targetPath.Segments)-1:]); ok {
+	if projected, ok := sourcevalue.HeapMemberFromValue(reg, resolver.KeySpace(), out, parentValue.value, targetPath.Segments[len(targetPath.Segments)-1:]); ok {
 		if hasRootProjected {
 			if merged := product.Meet(reg, rootProjected, projected); !product.Equal(reg, merged, product.Bottom(reg)) {
 				return merged, true
@@ -273,7 +275,7 @@ func projectPathDynamicIndexValue(
 		return product.Value{}, false
 	}
 	targetKey := resolver.KeyAt(point, targetPath)
-	mayMatchAllowed := pathKeyHasPresentProof(reg, out, targetKey)
+	mayMatchAllowed := pathKeyHasPresentProof(reg, resolver.KeySpace(), out, targetKey)
 	last := targetPath.Segments[len(targetPath.Segments)-1]
 	snapshot := out.DynamicIndexFactsSnapshot()
 	if snapshot.Top || len(snapshot.Facts) == 0 {
@@ -386,11 +388,11 @@ func joinMatchingHeapDynamicIndexValues(
 	return joined, true
 }
 
-func pathKeyHasPresentProof(reg *axis.Registry, out state.State, pathKey pathdom.PathKey) bool {
+func pathKeyHasPresentProof(reg *axis.Registry, ks *keyspace.KeySpace, out state.State, pathKey pathdom.PathKey) bool {
 	if pathKey == "" {
 		return false
 	}
-	value := out.ReadPathKey(reg, pathKey)
+	value := out.ReadPathKey(reg, ks, pathKey)
 	if product.Equal(reg, value, product.Bottom(reg)) {
 		return false
 	}
@@ -562,7 +564,7 @@ func projectPathOriginValue(reg *axis.Registry, out state.State, targetPath path
 	if origin.IsBottom() || origin.IsTop() {
 		return product.Value{}, false
 	}
-	family, cases, ok := variant.ProjectOrigin(origin.Family(), origin.Cases(), targetPath.Segments)
+	family, cases, ok := variant.ProjectOrigin(origin.Family(), origin.CasesRef(), targetPath.Segments)
 	if !ok {
 		return product.Value{}, false
 	}
@@ -601,10 +603,10 @@ func applyPathOriginRelation(
 	}
 	cases, ok := variant.NarrowOriginByPath(
 		rootOrigin.Family(),
-		rootOrigin.Cases(),
+		rootOrigin.CasesRef(),
 		parentPath.Segments,
 		constraintOrigin.Family(),
-		constraintOrigin.Cases(),
+		constraintOrigin.CasesRef(),
 		equal,
 	)
 	if !ok {

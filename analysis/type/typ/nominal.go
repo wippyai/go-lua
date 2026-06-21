@@ -29,6 +29,7 @@ type Interface struct {
 	containsNever         bool
 	containsTypeParam     bool
 	containsInstantiated  bool
+	containsGeneric       bool
 	containsRecursive     bool
 	containsOpenRecursive bool
 	strCache              stringCache
@@ -41,6 +42,7 @@ func NewInterface(name string, methods []Method) *Interface {
 	containsNever := false
 	containsTypeParam := false
 	containsInstantiated := false
+	containsGeneric := false
 	containsRecursive := false
 	containsOpenRecursive := false
 	for _, m := range methods {
@@ -57,6 +59,9 @@ func NewInterface(name string, methods []Method) *Interface {
 		}
 		if !containsInstantiated && knownContainsInstantiated(m.Type) {
 			containsInstantiated = true
+		}
+		if !containsGeneric && knownContainsGeneric(m.Type) {
+			containsGeneric = true
 		}
 		if !containsRecursive && knownContainsRecursive(m.Type) {
 			containsRecursive = true
@@ -77,6 +82,7 @@ func NewInterface(name string, methods []Method) *Interface {
 		containsNever:         containsNever,
 		containsTypeParam:     containsTypeParam,
 		containsInstantiated:  containsInstantiated,
+		containsGeneric:       containsGeneric,
 		containsRecursive:     containsRecursive,
 		containsOpenRecursive: containsOpenRecursive,
 	}

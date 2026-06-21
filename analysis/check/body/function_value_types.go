@@ -2,6 +2,7 @@ package body
 
 import (
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
@@ -24,7 +25,12 @@ type FunctionValueTypes struct {
 
 type FunctionValueContext struct {
 	Entry state.State
-	Type  *typ.Function
+	// EntryKeys is the structural key interner that produced Entry's path
+	// evidence. Entry's value-lane keys are meaningful only within it, so the
+	// holds-check formats Entry through EntryKeys, then re-interns each spelling
+	// into the consuming analysis's keyspace to read the current state.
+	EntryKeys *keyspace.KeySpace
+	Type      *typ.Function
 }
 
 // WithFunctionValueTypes returns result after installing an immutable copy of
@@ -71,7 +77,7 @@ func (r *Result) functionTypeForValue(current state.State, hasCurrent bool, valu
 	}
 	if hasCurrent {
 		for _, ctx := range r.funcTypes.ContextsByIdentity[id] {
-			if ctx.Type != nil && functionContextEntryHolds(r.registry, ctx.Entry, current, id) {
+			if ctx.Type != nil && functionContextEntryHolds(r.registry, ctx.EntryKeys, r.KeySpace(), ctx.Entry, current, id) {
 				return ctx.Type, true
 			}
 		}
@@ -80,32 +86,32 @@ func (r *Result) functionTypeForValue(current state.State, hasCurrent bool, valu
 	return fn, ok && fn != nil
 }
 
-func functionContextEntryHolds(reg *axis.Registry, entry, current state.State, sourceID identity.ID) bool {
+func functionContextEntryHolds(reg *axis.Registry, entryKeys, currentKeys *keyspace.KeySpace, entry, current state.State, sourceID identity.ID) bool {
 	if reg == nil {
 		return false
 	}
-	refs := entry.PathRefinementsSnapshot()
+	refs := entry.PathRefinementsSnapshot(entryKeys)
 	if refs.Bottom {
 		return false
 	}
 	for pathKey, want := range refs.Refinements {
-		got := current.ReadPathKey(reg, pathKey)
+		got := current.ReadPathKey(reg, currentKeys, pathKey)
 		if !contextPathValueSatisfies(reg, got, want, sourceID) {
 			return false
 		}
 	}
-	members := entry.PathStaticMembersSnapshot()
+	members := entry.PathStaticMembersSnapshot(entryKeys)
 	if members.Bottom {
 		return false
 	}
 	for pathKey, want := range members.Members {
-		got, ok := current.ReadPathStaticMember(pathKey)
+		got, ok := current.ReadPathStaticMember(currentKeys, pathKey)
 		if !ok || !contextValueSatisfies(reg, got, want) {
 			return false
 		}
 	}
 	requiredHeap := entry.HeapTableObjectsSnapshot()
-	return heapTableContextHolds(reg, requiredHeap, current.HeapTableObjectsSnapshot())
+	return heapTableContextHolds(reg, entryKeys, currentKeys, requiredHeap, current.HeapTableObjectsSnapshot())
 }
 
 func contextPathValueSatisfies(reg *axis.Registry, got, want product.Value, sourceID identity.ID) bool {
@@ -122,7 +128,7 @@ func contextValueSatisfies(reg *axis.Registry, got, want product.Value) bool {
 	return product.LessOrEq(reg, got, want)
 }
 
-func heapTableContextHolds(reg *axis.Registry, requiredHeap, currentHeap state.HeapTableObjectsSnapshot) bool {
+func heapTableContextHolds(reg *axis.Registry, entryKeys, currentKeys *keyspace.KeySpace, requiredHeap, currentHeap state.HeapTableObjectsSnapshot) bool {
 	if requiredHeap.Top {
 		return false
 	}
@@ -134,14 +140,14 @@ func heapTableContextHolds(reg *axis.Registry, requiredHeap, currentHeap state.H
 	}
 	for id, want := range requiredHeap.Objects {
 		got, ok := currentHeap.Objects[id]
-		if !ok || !heapTableObjectContextHolds(reg, got, want) {
+		if !ok || !heapTableObjectContextHolds(reg, want.Rekey(entryKeys, currentKeys), got) {
 			return false
 		}
 	}
 	return true
 }
 
-func heapTableObjectContextHolds(reg *axis.Registry, got, want heapidentity.TableObject) bool {
+func heapTableObjectContextHolds(reg *axis.Registry, want, got heapidentity.TableObject) bool {
 	if !contextValueSatisfies(reg, got.Root(), want.Root()) {
 		return false
 	}
@@ -186,8 +192,9 @@ func cloneFunctionValueTypes(in FunctionValueTypes) FunctionValueTypes {
 			copied := make([]FunctionValueContext, len(contexts))
 			for i, ctx := range contexts {
 				copied[i] = FunctionValueContext{
-					Entry: ctx.Entry.Snapshot(),
-					Type:  ctx.Type,
+					Entry:     ctx.Entry.Snapshot(),
+					EntryKeys: ctx.EntryKeys,
+					Type:      ctx.Type,
 				}
 			}
 			out.ContextsByIdentity[id] = copied

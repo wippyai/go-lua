@@ -63,6 +63,17 @@ func (v Value) IsTop() bool    { return v.state == top }
 func (v Value) Family() uint64 { return v.family }
 func (v Value) Cases() []int   { return append([]int(nil), v.cases...) }
 
+// CasesLen reports the number of variant cases without allocating.
+func (v Value) CasesLen() int { return len(v.cases) }
+
+// CaseAt returns the i-th variant case without allocating.
+func (v Value) CaseAt(i int) int { return v.cases[i] }
+
+// CasesRef exposes the internal case slice for read-only consumption on hot
+// paths. Callers MUST NOT mutate or retain the returned slice; use Cases for a
+// defensive copy. The cases are sorted and deduplicated.
+func (v Value) CasesRef() []int { return v.cases }
+
 func Join(a, b Value) Value {
 	if a.state == bottom {
 		return b

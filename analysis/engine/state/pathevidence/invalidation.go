@@ -5,6 +5,7 @@ import (
 
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
+	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 )
 
@@ -16,7 +17,7 @@ type PathKeyDescendantInvalidationPrefixes struct {
 // InvalidatePathKeySubtree removes finite path evidence at pathKey and any
 // descendant key. It returns false when pathKey is not a recognized structural
 // path-key spelling.
-func (l Lane) InvalidatePathKeySubtree(pathKey pathdom.PathKey) (Lane, bool) {
+func (l Lane) InvalidatePathKeySubtree(ks *keyspace.KeySpace, pathKey pathdom.PathKey) (Lane, bool) {
 	prefixes, ok := l.PathKeySubtreeInvalidationPrefixes(pathKey)
 	if !ok {
 		return l, false
@@ -24,9 +25,10 @@ func (l Lane) InvalidatePathKeySubtree(pathKey pathdom.PathKey) (Lane, bool) {
 	match := func(candidate pathdom.PathKey) bool {
 		return pathKeyInAnySubtree(candidate, prefixes)
 	}
+	prefixKeys := structuralPrefixKeys(ks, prefixes)
 	return l.invalidatePathKeyEvidence(
-		func(m map[pathaddr.LocalKey]product.Value) (map[pathaddr.LocalKey]product.Value, bool) {
-			return deletePathKeySubtrees(m, prefixes)
+		func(m map[keyspace.Key]product.Value) (map[keyspace.Key]product.Value, bool) {
+			return deletePathKeySubtrees(ks, m, prefixKeys)
 		},
 		match,
 		func(proof BranchProof) bool { return branchProofMatchesPath(proof, match) },
@@ -39,7 +41,7 @@ func (l Lane) InvalidatePathKeySubtree(pathKey pathdom.PathKey) (Lane, bool) {
 // decides branch-proof removal separately so a length fact such as an
 // index-in-range proof can clear with different scope than value-identity proofs.
 func (l Lane) invalidatePathKeyEvidence(
-	deleteFromMap func(map[pathaddr.LocalKey]product.Value) (map[pathaddr.LocalKey]product.Value, bool),
+	deleteFromMap func(map[keyspace.Key]product.Value) (map[keyspace.Key]product.Value, bool),
 	match func(candidate pathdom.PathKey) bool,
 	proofMatch func(proof BranchProof) bool,
 ) (Lane, bool) {
@@ -61,7 +63,7 @@ func (l Lane) invalidatePathKeyEvidence(
 // InvalidatePathKeyDescendants removes finite path evidence below pathKey while
 // preserving exact pathKey evidence. It returns false when pathKey is not a
 // recognized structural path-key spelling.
-func (l Lane) InvalidatePathKeyDescendants(pathKey pathdom.PathKey) (Lane, bool) {
+func (l Lane) InvalidatePathKeyDescendants(ks *keyspace.KeySpace, pathKey pathdom.PathKey) (Lane, bool) {
 	prefixes, ok := l.PathKeyDescendantInvalidationPrefixes(pathKey)
 	if !ok {
 		return l, false
@@ -69,9 +71,11 @@ func (l Lane) InvalidatePathKeyDescendants(pathKey pathdom.PathKey) (Lane, bool)
 	match := func(candidate pathdom.PathKey) bool {
 		return pathKeyInAnyDescendantInvalidation(candidate, prefixes)
 	}
+	descendantKeys := structuralPrefixKeys(ks, prefixes.Descendants)
+	subtreeKeys := structuralPrefixKeys(ks, prefixes.Subtrees)
 	return l.invalidatePathKeyEvidence(
-		func(m map[pathaddr.LocalKey]product.Value) (map[pathaddr.LocalKey]product.Value, bool) {
-			return deletePathKeyDescendantPrefixes(m, prefixes)
+		func(m map[keyspace.Key]product.Value) (map[keyspace.Key]product.Value, bool) {
+			return deletePathKeyDescendantPrefixes(ks, m, descendantKeys, subtreeKeys)
 		},
 		match,
 		func(proof BranchProof) bool {
@@ -290,56 +294,69 @@ func pathKeyInAnyDescendantInvalidation(candidate pathdom.PathKey, prefixes Path
 	return false
 }
 
+// structuralPrefixKeys interns the recognized structural path-key spellings in
+// prefixes into comparable keyspace keys, dropping spellings that are not
+// point-local value-lane keys.
+func structuralPrefixKeys(ks *keyspace.KeySpace, prefixes []pathdom.PathKey) []keyspace.Key {
+	if len(prefixes) == 0 {
+		return nil
+	}
+	out := make([]keyspace.Key, 0, len(prefixes))
+	for _, prefix := range prefixes {
+		if key, ok := ks.FromPathKey(prefix); ok {
+			out = append(out, key)
+		}
+	}
+	return out
+}
+
 func deletePathKeySubtrees(
-	in map[pathaddr.LocalKey]product.Value,
-	prefixes []pathdom.PathKey,
-) (map[pathaddr.LocalKey]product.Value, bool) {
-	out, changed := deleteMatchingPathKeys(in, func(candidate pathaddr.StructuralKey) bool {
-		for _, prefix := range prefixes {
-			parsedPrefix, ok := pathaddr.StructuralKeyFromPathKey(prefix)
-			if ok && candidate.HasPrefix(parsedPrefix) {
+	ks *keyspace.KeySpace,
+	in map[keyspace.Key]product.Value,
+	prefixKeys []keyspace.Key,
+) (map[keyspace.Key]product.Value, bool) {
+	return deleteMatchingPathKeys(in, func(candidate keyspace.Key) bool {
+		for _, prefix := range prefixKeys {
+			if ks.HasPrefix(candidate, prefix) {
 				return true
 			}
 		}
 		return false
 	})
-	return out, changed
 }
 
 func deletePathKeyDescendantPrefixes(
-	in map[pathaddr.LocalKey]product.Value,
-	prefixes PathKeyDescendantInvalidationPrefixes,
-) (map[pathaddr.LocalKey]product.Value, bool) {
-	out, changed := deleteMatchingPathKeys(in, func(candidate pathaddr.StructuralKey) bool {
-		for _, prefix := range prefixes.Descendants {
-			parsedPrefix, ok := pathaddr.StructuralKeyFromPathKey(prefix)
-			if ok && candidate.HasStrictPrefix(parsedPrefix) {
+	ks *keyspace.KeySpace,
+	in map[keyspace.Key]product.Value,
+	descendantKeys []keyspace.Key,
+	subtreeKeys []keyspace.Key,
+) (map[keyspace.Key]product.Value, bool) {
+	return deleteMatchingPathKeys(in, func(candidate keyspace.Key) bool {
+		for _, prefix := range descendantKeys {
+			if ks.HasStrictPrefix(candidate, prefix) {
 				return true
 			}
 		}
-		for _, prefix := range prefixes.Subtrees {
-			parsedPrefix, ok := pathaddr.StructuralKeyFromPathKey(prefix)
-			if ok && candidate.HasPrefix(parsedPrefix) {
+		for _, prefix := range subtreeKeys {
+			if ks.HasPrefix(candidate, prefix) {
 				return true
 			}
 		}
 		return false
 	})
-	return out, changed
 }
 
 func deleteMatchingPathKeys(
-	in map[pathaddr.LocalKey]product.Value,
-	match func(pathaddr.StructuralKey) bool,
-) (map[pathaddr.LocalKey]product.Value, bool) {
+	in map[keyspace.Key]product.Value,
+	match func(keyspace.Key) bool,
+) (map[keyspace.Key]product.Value, bool) {
 	if len(in) == 0 {
 		return in, false
 	}
-	out := make(map[pathaddr.LocalKey]product.Value, len(in))
+	out := make(map[keyspace.Key]product.Value, len(in))
 	changed := false
 	for pathKey, value := range in {
-		parsed, ok := pathaddr.StructuralKeyFromPathKey(pathKey.PathKey())
-		if ok && match(parsed) {
+		if match(pathKey) {
 			changed = true
 			continue
 		}

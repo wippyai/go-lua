@@ -188,14 +188,15 @@ func (s *Static) Solve(config SolveConfig) *Result {
 		config.Initial,
 	)
 	nodeTransfer := factapply.NewFactsNodeTransfer(factapply.FactsNodeTransferConfig{
-		Facts:       s.facts,
-		Sources:     s.sources,
-		CallOutcome: callOutcome,
-		Visibility:  s.visibility,
-		ProjectPath: luaPathTypeProjector,
-		TypeValues:  typeValues,
+		Facts:          s.facts,
+		Sources:        s.sources,
+		CallOutcome:    callOutcome,
+		Visibility:     s.visibility,
+		ProjectPath:    luaPathTypeProjector,
+		CovariantWiden: luaCovariantWiden,
+		TypeValues:     typeValues,
 	})
-	nodeTransfer = genericForNodeTransfer(nodeTransfer, s.semantics, s.facts, s.sources, s.signatures, s.signatureID, s.typeNS, typeValues, callOutcome)
+	nodeTransfer = genericForNodeTransfer(nodeTransfer, s.semantics, s.facts, s.sources, s.signatures, s.signatureID, s.typeNS, typeValues, callOutcome, s.visibility.KeySpace())
 	flow := transfer.Run(transfer.Config{
 		Graph:        s.cfg.Graph,
 		Registry:     s.registry,
@@ -278,6 +279,7 @@ func (s *Static) callOutcomeProvider(config SolveConfig) callpayload.CallOutcome
 			Facts:         s.facts,
 			Sources:       s.sources,
 			ArgumentType:  effectlowering.SignatureArgumentTypeFunc(signatureArgumentType),
+			KeySpace:      s.visibility.KeySpace(),
 		}), callOutcome)
 	}
 	return callOutcome
@@ -292,6 +294,7 @@ func (s *Static) callOutcomeContext() CallOutcomeContext {
 		Sources:                     s.sources,
 		CalleeValue:                 s.calleeValue,
 		ReturnPresenceRelationsPath: s.returnPresenceRelationsForPath,
+		KeySpace:                    s.visibility.KeySpace(),
 	}
 }
 

@@ -128,6 +128,11 @@ func (c CallSite) CalleeSymbol() symbol.ID { return c.calleeSymbol }
 // CalleePath returns the callee's path identity.
 func (c CallSite) CalleePath() path.Path { return c.calleePath.Clone() }
 
+// CalleePathRef returns the callee path without a defensive copy for read-only
+// use or for handing to a constructor that clones on store. The returned path
+// shares the fact's segment storage and must never be mutated in place.
+func (c CallSite) CalleePathRef() path.Path { return c.calleePath }
+
 // ReceiverPath returns the receiver path identity, if one was resolved.
 func (c CallSite) ReceiverPath() (path.Path, bool) {
 	return c.receiverPath.Clone(), c.hasReceiverPath
@@ -213,6 +218,11 @@ func (v CallSiteView) CalleeSymbol() symbol.ID { return v.site.calleeSymbol }
 
 // CalleePath returns a defensive copy of the callee's path identity.
 func (v CallSiteView) CalleePath() path.Path { return v.site.calleePath.Clone() }
+
+// CalleePathRef returns the callee path without a defensive copy for read-only
+// use or for handing to a constructor that clones on store. The returned path
+// shares the fact's segment storage and must never be mutated in place.
+func (v CallSiteView) CalleePathRef() path.Path { return v.site.calleePath }
 
 // CalleePathKey returns the callee path's structural key.
 func (v CallSiteView) CalleePathKey() path.PathKey { return v.site.calleePath.Key() }

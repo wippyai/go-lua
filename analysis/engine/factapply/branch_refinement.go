@@ -62,7 +62,7 @@ func applyBranchLenRefinement(
 	if pathKey == "" {
 		return out
 	}
-	return out.WriteLenFloor(pathKey, fact.Floor())
+	return out.WriteLenFloor(resolver.KeySpace(), pathKey, fact.Floor())
 }
 
 // applyBranchNumFloorRefinement records a true-edge lower bound for a numeric
@@ -84,7 +84,7 @@ func applyBranchNumFloorRefinement(
 	if pathKey == "" {
 		return out
 	}
-	return out.WriteNumFloor(pathKey, fact.Floor())
+	return out.WriteNumFloor(resolver.KeySpace(), pathKey, fact.Floor())
 }
 
 // applyBranchDiffConstraint records a true-edge difference-logic fact between two
@@ -366,7 +366,7 @@ func narrowNestedUnionDescendant(
 			if pathKey == "" {
 				return out, false
 			}
-			return out.WritePathKey(reg, pathKey, constraint), true
+			return out.WritePathKey(reg, resolver.KeySpace(), pathKey, constraint), true
 		}
 		return anchor.write(out, product.Meet(reg, anchor.value, constraint)), true
 	}

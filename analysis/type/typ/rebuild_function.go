@@ -79,6 +79,10 @@ func newCanonicalFunction(
 		knownInstantiatedParams(paramsCopy) ||
 		knownContainsInstantiated(variadic) ||
 		knownInstantiated(returnsCopy...)
+	containsGeneric := knownGenericTypeParams(typeParamsCopy) ||
+		knownGenericParams(paramsCopy) ||
+		knownContainsGeneric(variadic) ||
+		knownGeneric(returnsCopy...)
 	containsRecursive := knownRecursiveTypeParams(typeParamsCopy) ||
 		knownRecursiveParams(paramsCopy) ||
 		knownContainsRecursive(variadic) ||
@@ -98,6 +102,7 @@ func newCanonicalFunction(
 		containsNever:         containsNever,
 		containsTypeParam:     containsTypeParam,
 		containsInstantiated:  containsInstantiated,
+		containsGeneric:       containsGeneric,
 		containsRecursive:     containsRecursive,
 		containsOpenRecursive: containsOpenRecursive,
 	}

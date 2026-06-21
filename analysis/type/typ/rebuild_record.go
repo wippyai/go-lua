@@ -118,6 +118,7 @@ func newCanonicalRecord(fields []Field, staticMembers []StaticMember, metatable,
 	containsNever := knownNeverFields(sorted) || knownNeverStaticMembers(members) || knownNever(metatable, mapKey, mapValue)
 	containsTypeParam := knownTypeParamFields(sorted) || knownTypeParamStaticMembers(members) || knownTypeParam(metatable, mapKey, mapValue)
 	containsInstantiated := knownInstantiatedFields(sorted) || knownInstantiatedStaticMembers(members) || knownInstantiated(metatable, mapKey, mapValue)
+	containsGeneric := knownGenericFields(sorted) || knownGenericStaticMembers(members) || knownGeneric(metatable, mapKey, mapValue)
 	containsRecursive := knownRecursiveFields(sorted) || knownRecursiveStaticMembers(members) || knownRecursive(metatable, mapKey, mapValue)
 	containsOpenRecursive := knownOpenRecursiveFields(sorted) || knownOpenRecursiveStaticMembers(members) || knownOpenRecursive(metatable, mapKey, mapValue)
 
@@ -134,6 +135,7 @@ func newCanonicalRecord(fields []Field, staticMembers []StaticMember, metatable,
 		containsNever:         containsNever,
 		containsTypeParam:     containsTypeParam,
 		containsInstantiated:  containsInstantiated,
+		containsGeneric:       containsGeneric,
 		containsRecursive:     containsRecursive,
 		containsOpenRecursive: containsOpenRecursive,
 	}

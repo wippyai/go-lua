@@ -3,6 +3,7 @@ package visibility
 import (
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
+	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/ir/ssa"
@@ -17,6 +18,7 @@ type VersionSource interface {
 // PathKeyResolver resolves a source path to the point-visible state key.
 type PathKeyResolver interface {
 	KeyAt(cfg.Point, pathdom.Path) pathdom.PathKey
+	KeySpace() *keyspace.KeySpace
 }
 
 type versionedRoot struct {
@@ -35,6 +37,7 @@ type Resolver struct {
 	source VersionSource
 	root   map[versionedRoot]pathdom.PathKey
 	single map[singleSegment]pathdom.PathKey
+	keys   *keyspace.KeySpace
 }
 
 // NewResolver creates a resolver bound to a visibility source.
@@ -43,7 +46,31 @@ func NewResolver(source VersionSource) *Resolver {
 		source: source,
 		root:   make(map[versionedRoot]pathdom.PathKey),
 		single: make(map[singleSegment]pathdom.PathKey),
+		keys:   keyspace.New(),
 	}
+}
+
+// KeySpace returns the per-analysis structural key interner. Callers thread it
+// into the path-evidence value lane alongside the value registry.
+func (r *Resolver) KeySpace() *keyspace.KeySpace {
+	if r == nil {
+		return nil
+	}
+	return r.keys
+}
+
+// StructKeyAt returns the interned structural state key for path at point. Its
+// Format() equals KeyAt(point, path); a non-point-local or unresolved path
+// yields the invalid zero key (Format == "").
+func (r *Resolver) StructKeyAt(point cfg.Point, path pathdom.Path) keyspace.Key {
+	if r == nil || r.keys == nil {
+		return keyspace.Key{}
+	}
+	key, ok := r.keys.FromPathKey(r.KeyAt(point, path))
+	if !ok {
+		return keyspace.Key{}
+	}
+	return key
 }
 
 // KeyAt returns the point-visible state key for path at point. Symbol-rooted

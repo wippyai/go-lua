@@ -17,6 +17,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/effect/postcondition"
 	"github.com/wippyai/go-lua/analysis/domain/effect/returns"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
@@ -332,6 +333,11 @@ func TestFunctionSummaryOperationalEffectsLaneMatrixManifestRoundTrip(t *testing
 	dynamicValueType := typ.Func().Param("v", typ.String).Build()
 	dynamicValue := typevalue.WithWitness(reg, typevalue.FromType(reg, dynamicValueType), dynamicValueType)
 	heapID := identity.ID{Kind: "test", Site: "lane-matrix", Index: 1}
+	ks := keyspace.New()
+	heapStaticKey, ok := ks.FromRootlessSuffix([]segment.Segment{{Kind: segment.SegmentField, Name: "static"}})
+	if !ok {
+		t.Fatal("heap static suffix key failed")
+	}
 	fn := typ.Func().
 		Param("source", typ.Any).
 		Param("target", typ.Any).
@@ -370,11 +376,12 @@ func TestFunctionSummaryOperationalEffectsLaneMatrixManifestRoundTrip(t *testing
 			TargetIndex:     0,
 			TargetPresence:  presence.Absent(),
 		}},
+		HeapKeySpace: ks,
 		HeapTableObjects: map[identity.ID]heapidentity.TableObject{
 			heapID: heapidentity.NewTableObject(heapidentity.TableObjectConfig{
 				Root: present,
-				StaticMembers: map[pathdom.PathKey]product.Value{
-					pathdom.PathKey("heap-only.static"): rawProduct,
+				StaticMembers: map[keyspace.Key]product.Value{
+					heapStaticKey: rawProduct,
 				},
 				DynamicIndexFacts: map[dynamicindex.Key]dynamicindex.Fact{
 					{Table: pathdom.PathKey("heap-only.dynamic"), Site: "heap.dynamic"}: {
@@ -590,16 +597,18 @@ func TestFunctionSummaryOperationalEffectsExportsReturnAllocationTemplate(t *tes
 	childValue := product.Set(reg, typevalue.WithWitness(reg, typevalue.FromType(reg, childType), childType), identity.Key, identity.Singleton(childID))
 	entryValue := product.Set(reg, typevalue.WithWitness(reg, typevalue.FromType(reg, entryType), entryType), identity.Key, identity.Singleton(entryID))
 	unrelatedValue := product.Set(reg, present, identity.Key, identity.Singleton(unrelatedID))
-	childKey, ok := heapidentity.StaticMemberSuffixKey([]segment.Segment{{Kind: segment.SegmentField, Name: "child"}})
+	ks := keyspace.New()
+	childKey, ok := heapidentity.StaticMemberSuffixKey(ks, []segment.Segment{{Kind: segment.SegmentField, Name: "child"}})
 	if !ok {
 		t.Fatal("child suffix key failed")
 	}
 	got := functionSummaryOperationalEffects(reg, summary.Summary{
-		Returns: []product.Value{rootValue},
+		Returns:      []product.Value{rootValue},
+		HeapKeySpace: ks,
 		HeapTableObjects: map[identity.ID]heapidentity.TableObject{
 			rootID: heapidentity.NewTableObject(heapidentity.TableObjectConfig{
 				Root: rootValue,
-				StaticMembers: map[pathdom.PathKey]product.Value{
+				StaticMembers: map[keyspace.Key]product.Value{
 					childKey: childValue,
 				},
 				DynamicIndexFacts: map[dynamicindex.Key]dynamicindex.Fact{
@@ -673,17 +682,19 @@ func TestFunctionSummaryOperationalEffectsSkipsDanglingReturnAllocationRefs(t *t
 	missingChildValue := product.Set(reg, present, identity.Key, identity.Singleton(missingChildID))
 	missingKeyValue := product.Set(reg, typevalue.WithWitness(reg, typevalue.FromType(reg, typ.String), typ.String), identity.Key, identity.Singleton(missingKeyID))
 	missingValue := product.Set(reg, present, identity.Key, identity.Singleton(missingValueID))
-	childKey, ok := heapidentity.StaticMemberSuffixKey([]segment.Segment{{Kind: segment.SegmentField, Name: "child"}})
+	ks := keyspace.New()
+	childKey, ok := heapidentity.StaticMemberSuffixKey(ks, []segment.Segment{{Kind: segment.SegmentField, Name: "child"}})
 	if !ok {
 		t.Fatal("child suffix key failed")
 	}
 	fn := typ.Func().Returns(typ.Any).Build()
 	got := functionSummaryOperationalEffects(reg, summary.Summary{
-		Returns: []product.Value{rootValue},
+		Returns:      []product.Value{rootValue},
+		HeapKeySpace: ks,
 		HeapTableObjects: map[identity.ID]heapidentity.TableObject{
 			rootID: heapidentity.NewTableObject(heapidentity.TableObjectConfig{
 				Root: rootValue,
-				StaticMembers: map[pathdom.PathKey]product.Value{
+				StaticMembers: map[keyspace.Key]product.Value{
 					childKey: missingChildValue,
 				},
 				DynamicIndexFacts: map[dynamicindex.Key]dynamicindex.Fact{

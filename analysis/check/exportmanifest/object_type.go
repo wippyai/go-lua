@@ -225,7 +225,7 @@ func addStateStaticMembers(
 	if !ok {
 		return
 	}
-	snapshot := st.PathStaticMembersSnapshot()
+	snapshot := st.PathStaticMembersSnapshot(result.KeySpace())
 	if snapshot.Bottom || snapshot.Top {
 		return
 	}

@@ -2,6 +2,7 @@ package factapply
 
 import (
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine/callpayload"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
@@ -16,14 +17,25 @@ import (
 // packages receive this from the language/check layer so they stay syntax-free.
 type PathTypeProjector func(root typ.Type, path pathdom.Path) (typ.Type, bool)
 
+// CovariantWiden rebuilds a covariantly-exposed object's witness type. Given the
+// object's current witness type, the exposure contract type, and the source path
+// segments locating the exposed sub-object under its ancestor symbol, it returns
+// the ancestor witness type with every strictly-wider field widened to the
+// contract and the deduplicated top segment of every widened leaf (so the engine
+// can drop the precise per-field facts beneath it). It returns ok=false when no
+// field widens. Engine packages receive this from the check layer to keep the
+// subtype/unwrap reasoning out of the engine.
+type CovariantWiden func(sourceWitness, contract typ.Type, segments []segment.Segment) (widened typ.Type, topWidenedSegments [][]segment.Segment, ok bool)
+
 // FactsNodeTransferConfig configures the generic fact applicator.
 type FactsNodeTransferConfig struct {
-	Facts       factflow.Facts
-	Sources     sourcevalue.SourceValues
-	CallOutcome callpayload.CallOutcomeProvider
-	Visibility  *visibility.Resolver
-	ProjectPath PathTypeProjector
-	TypeValues  *typevalue.Cache
+	Facts          factflow.Facts
+	Sources        sourcevalue.SourceValues
+	CallOutcome    callpayload.CallOutcomeProvider
+	Visibility     *visibility.Resolver
+	ProjectPath    PathTypeProjector
+	CovariantWiden CovariantWiden
+	TypeValues     *typevalue.Cache
 }
 
 // FactsEdgeTransferConfig configures the generic edge fact applicator.
@@ -46,7 +58,7 @@ func NewFactsNodeTransfer(config FactsNodeTransferConfig) transfer.NodeTransfer 
 		facts := config.Facts
 		sources := config.Sources
 		callOutcome := config.CallOutcome
-		read, materialize := callResultReader(ctx, facts, sources, callOutcome, config.Visibility, config.ProjectPath, config.TypeValues)
+		read, materialize := callResultReader(ctx, facts, sources, callOutcome, config.Visibility, config.ProjectPath, config.CovariantWiden, config.TypeValues)
 
 		out := materialize(ctx.Point, in)
 		if facts.NoNormalReturn(ctx.Point) {
@@ -93,6 +105,7 @@ func NewFactsNodeTransfer(config FactsNodeTransferConfig) transfer.NodeTransfer 
 		if fact, ok := facts.Return(ctx.Point); ok {
 			out = applyReturn(ctx, facts, sources, read, in, out, fact, config.Visibility, config.ProjectPath, config.TypeValues)
 		}
+		out = applyCovariantExposures(ctx, config.Visibility, config.CovariantWiden, facts, out)
 		return out
 	}
 }

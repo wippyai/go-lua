@@ -9,6 +9,7 @@ import (
 
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
+	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/ir/ssa"
 	"github.com/wippyai/go-lua/analysis/symbol"
@@ -118,6 +119,43 @@ func TestResolverKeyAtUsesVisibleVersion(t *testing.T) {
 	}
 }
 
+func TestResolverStructKeyAtFormatsToKeyAt(t *testing.T) {
+	point := cfg.Point(1)
+	sym := symbol.ID(100)
+	resolver := NewResolver(NewTable(map[cfg.Point]map[symbol.ID]ssa.Version{
+		point: {
+			sym: {Root: "x", Symbol: sym, ID: 3},
+		},
+	}))
+	ks := resolver.KeySpace()
+
+	paths := []pathdom.Path{
+		pathdom.NewPath(sym, "x"),
+		pathdom.NewPath(sym, "x").Field("field"),
+		pathdom.NewPath(sym, "x").Field("a").Field("b"),
+		pathdom.NewPath(sym, "x").IndexStr("k"),
+		pathdom.NewPath(sym, "x").IndexInt(2),
+	}
+	for _, p := range paths {
+		want := resolver.KeyAt(point, p)
+		if want == "" {
+			t.Fatalf("KeyAt(%v) empty, want resolvable", p)
+		}
+		got := resolver.StructKeyAt(point, p)
+		if formatted := ks.Format(got); formatted != want {
+			t.Fatalf("Format(StructKeyAt(%v)) = %q, want KeyAt %q", p, formatted, want)
+		}
+	}
+
+	// Unresolved and non-point-local paths yield the invalid key (Format "").
+	if got := resolver.StructKeyAt(point, pathdom.Path{}); ks.Format(got) != "" {
+		t.Fatalf("StructKeyAt(empty) Format = %q, want empty", ks.Format(got))
+	}
+	if got := resolver.StructKeyAt(point, pathdom.NewPlaceholder(0).Field("item")); ks.Format(got) != "" {
+		t.Fatalf("StructKeyAt(placeholder) Format = %q, want empty (not a point-local value-lane key)", ks.Format(got))
+	}
+}
+
 func TestResolverRejectsMissingVersionAndUnresolvedRoot(t *testing.T) {
 	resolver := NewResolver(NewTable(nil))
 	if got := resolver.KeyAt(1, pathdom.NewPath(100, "x")); got != "" {
@@ -217,6 +255,10 @@ func (r recordingPathKeyResolver) KeyAt(point cfg.Point, p pathdom.Path) pathdom
 		r.onKeyAt(point, p)
 	}
 	return r.key
+}
+
+func (r recordingPathKeyResolver) KeySpace() *keyspace.KeySpace {
+	return keyspace.New()
 }
 
 func TestResolverKeepsSameSymbolDifferentVersionsDistinctWhileStableIdentityIgnoresVersion(t *testing.T) {

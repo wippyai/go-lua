@@ -83,7 +83,6 @@ func ShapeOf(v Value) Shape {
 	return v.n.shape
 }
 
-
 func PresenceOf(v Value) presence.Value {
 	if v.n == nil {
 		return presence.Top()
@@ -183,6 +182,16 @@ func lookupSlot(v Value, key string) (any, bool) {
 		}
 	}
 	return nil, false
+}
+
+// slotsView returns the interned node's slot slice for read-only scanning. The
+// returned slice must never be mutated; the batch editor copies before its first
+// write.
+func (v Value) slotsView() []slot {
+	if v.n == nil {
+		return nil
+	}
+	return v.n.slots
 }
 
 func copySlots(v Value) []slot {

@@ -22,6 +22,7 @@ type Annotated struct {
 	containsNever         bool
 	containsTypeParam     bool
 	containsInstantiated  bool
+	containsGeneric       bool
 	containsRecursive     bool
 	containsOpenRecursive bool
 	strCache              stringCache
@@ -48,6 +49,7 @@ func NewAnnotated(inner Type, annotations []annotation.Annotation) Type {
 		containsNever:         knownContainsNever(inner),
 		containsTypeParam:     knownContainsTypeParam(inner),
 		containsInstantiated:  knownContainsInstantiated(inner),
+		containsGeneric:       knownContainsGeneric(inner),
 		containsRecursive:     knownContainsRecursive(inner),
 		containsOpenRecursive: knownContainsOpenRecursive(inner),
 	}

@@ -488,7 +488,7 @@ func directCallResultContract(result *body.Result, context producerContext, poin
 		if calleeType, ok := directCallCalleeType(result, context.resolver, point, fact.Call.Func); ok {
 			if callable, ok := typecall.Callable(calleeType); ok && callable != nil {
 				contract := lowerDirectFunctionType(callable)
-				if callPath := site.CalleePath(); !callPath.IsEmpty() {
+				if callPath := site.CalleePathRef(); !callPath.IsEmpty() {
 					name = displayPath(result, callPath)
 				}
 				contract.name = name

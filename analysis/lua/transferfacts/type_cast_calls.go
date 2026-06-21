@@ -3,9 +3,11 @@ package transferfacts
 import (
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
+	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/branchcond"
 	"github.com/wippyai/go-lua/analysis/lua/pathexpr"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
+	luatypeprojection "github.com/wippyai/go-lua/analysis/lua/typeprojection"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
@@ -16,6 +18,61 @@ func (l *lowerer) typeCastPostconditionRefinement(fact semantics.CallFact) (fact
 		return factflow.PostconditionRefinement{}, false
 	}
 	return factflow.NewPostconditionRefinement(argPath, factflow.NewValueConstraint(l.typeWitnessValue(t))), true
+}
+
+// addCastExposure records a covariant exposure for a cast (narrow as W) whose
+// target type strictly widens the operand object. The cast value conforms at the
+// VM at cast time, so the cast itself is not rejected; the unsoundness is that
+// the cast result aliases the operand object, so a later write through the wider
+// cast view can launder a wide value back. The operand object's witness is
+// widened to the cast contract at the cast point. A read-only or width-only cast
+// (no strictly-wider shared member) records no exposure and stays permissive.
+func (l *lowerer) addCastExposure(input *factflow.FactsInput, point cfg.Point, expr ast.Expr) {
+	cast, ok := castExpr(expr)
+	if !ok {
+		return
+	}
+	operandPath, ok := pathexpr.Resolve(cast.Expr, l.bindings)
+	if !ok || operandPath.Symbol == 0 {
+		return
+	}
+	target, ok := l.resolveType(cast.Type)
+	if !ok || target == nil || typ.IsAny(target) || typ.IsUnknown(target) {
+		return
+	}
+	sourceType, ok := l.aliasPathType(operandPath)
+	if !ok {
+		return
+	}
+	if !aliasStrictlyWidens(sourceType, target) {
+		return
+	}
+	l.addCovariantExposureType(input, point, operandPath, target)
+}
+
+// castExpr matches a direct as/:: cast expression. A cast is itself a source
+// provenance proof, so it is matched before unwrapping; ProofInner would unwrap
+// it to its operand.
+func castExpr(expr ast.Expr) (*ast.CastExpr, bool) {
+	cast, ok := expr.(*ast.CastExpr)
+	return cast, ok
+}
+
+// aliasPathType resolves the declared object type at a source path: the symbol's
+// declared type for a bare path, or its structural projection for a sub-path.
+func (l *lowerer) aliasPathType(p path.Path) (typ.Type, bool) {
+	rootType, ok := l.symbolTypes[p.Symbol]
+	if !ok {
+		return nil, false
+	}
+	if len(p.Segments) == 0 {
+		return rootType, true
+	}
+	projected, ok := luatypeprojection.ApplySegments(rootType, p.Segments)
+	if !ok || projected == nil {
+		return nil, false
+	}
+	return projected, true
 }
 
 func (l *lowerer) typeCastCallResultValue(fact semantics.CallFact) (factflow.CallResultValue, bool) {

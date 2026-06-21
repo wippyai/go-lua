@@ -61,7 +61,7 @@ var soundnessProbes = []soundnessProbe{
 	},
 	{
 		name:  "nonnil-assert-on-always-nil",
-		fixed: false,
+		fixed: true,
 		src: `local function f(): string
 			local x: nil = nil
 			return x!
@@ -166,6 +166,136 @@ var soundnessProbes = []soundnessProbe{
 		local function f(): number
 			local a: number, b: number = one()
 			return b
+		end return f`,
+	},
+	{
+		// A covariant alias mutated through a CLOSURE capture must not launder the
+		// write-through: leak() writes wide.x (an alias of narrow), so narrow.x is a
+		// string at runtime. Closure captured-variable writes are not in the call
+		// outcome's parameter bindings, so the mutation is not propagated.
+		name:  "closure-capture-covariance",
+		fixed: true,
+		src: `local function f(): number
+			local narrow: { x: number } = { x = 1 }
+			local wide: { x: number | string } = narrow
+			local function leak() wide.x = "boom" end
+			leak()
+			local n: number = narrow.x
+			return n
+		end return f`,
+	},
+	{
+		// Same laundering class via a CAST-created wider view. The cast is
+		// runtime-validated (narrow conforms to the wider type at cast time), but it
+		// still aliases narrow through a wider mutable view, so the later write
+		// corrupts narrow.x. The operand must widen at the cast point.
+		name:  "mutable-cast-widen",
+		fixed: true,
+		src: `local function f(): number
+			local narrow: { x: number } = { x = 1 }
+			local wide = narrow as { x: number | string }
+			wide.x = "boom"
+			local n: number = narrow.x
+			return n
+		end return f`,
+	},
+	{
+		// Covariant alias via ordinary (non-declaration) assignment, mutated through a
+		// closure: same exposure, different binding site.
+		name:  "covariant-reassign-closure",
+		fixed: true,
+		src: `local function f(): number
+			local narrow: { x: number } = { x = 1 }
+			local wide: { x: number | string } = { x = 2 }
+			wide = narrow
+			local function leak() wide.x = "boom" end
+			leak()
+			local n: number = narrow.x
+			return n
+		end return f`,
+	},
+	{
+		// narrow stored into a wider record-field slot, mutated through a closure via
+		// the container. The store exposes narrow through holder.ref of the wider type.
+		name:  "covariant-field-store-closure",
+		fixed: true,
+		src: `local function f(): number
+			local narrow: { x: number } = { x = 1 }
+			local holder: { ref: { x: number | string } } = { ref = narrow }
+			local function leak() holder.ref.x = "boom" end
+			leak()
+			local n: number = narrow.x
+			return n
+		end return f`,
+	},
+	{
+		// narrow stored into a wider array element, mutated through a closure.
+		name:  "covariant-index-store-closure",
+		fixed: true,
+		src: `local function f(): number
+			local narrow: { x: number } = { x = 1 }
+			local sink: { { x: number | string } } = { narrow }
+			local function leak() sink[1].x = "boom" end
+			leak()
+			local n: number = narrow.x
+			return n
+		end return f`,
+	},
+	{
+		// A sub-object aliased to a wider local view, mutated through a closure.
+		name:  "covariant-subobject-alias-closure",
+		fixed: true,
+		src: `local function f(): number
+			local narrow: { inner: { x: number } } = { inner = { x = 1 } }
+			local wideinner: { x: number | string } = narrow.inner
+			local function leak() wideinner.x = "boom" end
+			leak()
+			local n: number = narrow.inner.x
+			return n
+		end return f`,
+	},
+	{
+		// A callee that stores its argument into a wider sink it returns aliases
+		// narrow into a wider mutable view across the call boundary.
+		name:  "covariant-interproc-store",
+		fixed: true,
+		src: `local function box(o: { x: number | string }): { ref: { x: number | string } } return { ref = o } end
+		local function f(): number
+			local narrow: { x: number } = { x = 1 }
+			local h = box(narrow)
+			h.ref.x = "boom"
+			local n: number = narrow.x
+			return n
+		end return f`,
+	},
+	{
+		// Same class via a sink other than the return: the callee stores the argument
+		// into another parameter's wider field, aliasing narrow through holder.ref.
+		name:  "covariant-interproc-param-to-param",
+		fixed: true,
+		src: `local function link(dst: { ref: { x: number | string } }, o: { x: number | string }) dst.ref = o end
+		local function f(): number
+			local narrow: { x: number } = { x = 1 }
+			local holder: { ref: { x: number | string } } = { ref = { x = 0 } }
+			link(holder, narrow)
+			holder.ref.x = "boom"
+			local n: number = narrow.x
+			return n
+		end return f`,
+	},
+	{
+		// Same class via a captured-upvalue sink: the callee stores the argument into
+		// an outer container it captures, aliasing narrow through sink.ref.
+		name:  "covariant-interproc-sink-store",
+		fixed: true,
+		src: `local sink: { ref: { x: number | string } } = { ref = { x = 0 } }
+		local function stash(o: { x: number | string }) sink.ref = o end
+		local function f(): number
+			local narrow: { x: number } = { x = 1 }
+			stash(narrow)
+			sink.ref.x = "boom"
+			local n: number = narrow.x
+			return n
 		end return f`,
 	},
 	{
