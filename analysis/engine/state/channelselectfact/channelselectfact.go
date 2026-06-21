@@ -6,7 +6,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/domain/lattice"
 	"github.com/wippyai/go-lua/analysis/domain/lattice/lift"
-	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 )
 
@@ -23,8 +23,8 @@ const (
 type Fact struct {
 	Select     ID
 	Kind       Kind
-	Result     pathdom.PathKey
-	Case       pathdom.PathKey
+	Result     pathaddr.StateKey
+	Case       pathaddr.StateKey
 	Index      int
 	HasDefault bool
 	Payload    product.Value

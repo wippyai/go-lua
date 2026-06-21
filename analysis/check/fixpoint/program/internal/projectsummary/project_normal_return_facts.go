@@ -166,14 +166,14 @@ func projectNormalReturnFacts(reg *axis.Registry, result ResultReader, exit stat
 				HasDefault: stateFact.HasDefault,
 			}
 			if stateFact.Result != "" {
-				resultPath, ok := projectPath(stateFact.Result)
+				resultPath, ok := projectPath(stateFact.Result.PathKey())
 				if !ok {
 					continue
 				}
 				fact.Result = resultPath
 			}
 			if stateFact.Case != "" {
-				casePath, ok := projectPath(stateFact.Case)
+				casePath, ok := projectPath(stateFact.Case.PathKey())
 				if !ok {
 					continue
 				}

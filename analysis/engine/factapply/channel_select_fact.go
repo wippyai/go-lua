@@ -38,16 +38,18 @@ func channelSelectFactAt(
 		HasDefault: event.HasDefault(),
 	}
 	if resultPath, ok := event.ResultPath(); ok {
-		fact.Result = factPathKeyAt(resolver, point, resultPath)
-		if fact.Result == "" {
+		resultKey, ok := resolver.StateKeyAt(point, resultPath)
+		if !ok {
 			return channelselectfact.Fact{}, false
 		}
+		fact.Result = resultKey
 	}
 	if casePath, ok := event.CasePath(); ok {
-		fact.Case = factPathKeyAt(resolver, point, casePath)
-		if fact.Case == "" {
+		caseKey, ok := resolver.StateKeyAt(point, casePath)
+		if !ok {
 			return channelselectfact.Fact{}, false
 		}
+		fact.Case = caseKey
 	}
 	if payload, ok := event.PayloadValue(); ok {
 		fact.Payload = payload

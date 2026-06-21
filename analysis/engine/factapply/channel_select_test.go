@@ -239,15 +239,15 @@ func TestFactsEdgeTransferChannelSelectEqualityNarrowsPayload(t *testing.T) {
 		AddChannelSelectFact(channelselectfact.Fact{
 			Select: channelselectfact.ID(selectID),
 			Kind:   channelselectfact.FactReceive,
-			Result: pathdom.PathKey("sym724@1"),
-			Case:   pathdom.PathKey("sym725@1"),
+			Result: testStateKey(t, pathdom.PathKey("sym724@1")),
+			Case:   testStateKey(t, pathdom.PathKey("sym725@1")),
 			Index:  0,
 		}).
 		AddChannelSelectFact(channelselectfact.Fact{
 			Select: channelselectfact.ID(selectID),
 			Kind:   channelselectfact.FactReceive,
-			Result: pathdom.PathKey("sym724@1"),
-			Case:   pathdom.PathKey("sym726@1"),
+			Result: testStateKey(t, pathdom.PathKey("sym724@1")),
+			Case:   testStateKey(t, pathdom.PathKey("sym726@1")),
 			Index:  1,
 		})
 
@@ -312,22 +312,22 @@ func TestFactsEdgeTransferChannelSelectEqualityKeepsDuplicateCasePathIndexes(t *
 		AddChannelSelectFact(channelselectfact.Fact{
 			Select: channelselectfact.ID(selectID),
 			Kind:   channelselectfact.FactReceive,
-			Result: pathdom.PathKey("sym744@1"),
-			Case:   pathdom.PathKey("sym745@1"),
+			Result: testStateKey(t, pathdom.PathKey("sym744@1")),
+			Case:   testStateKey(t, pathdom.PathKey("sym745@1")),
 			Index:  0,
 		}).
 		AddChannelSelectFact(channelselectfact.Fact{
 			Select: channelselectfact.ID(selectID),
 			Kind:   channelselectfact.FactReceive,
-			Result: pathdom.PathKey("sym744@1"),
-			Case:   pathdom.PathKey("sym745@1"),
+			Result: testStateKey(t, pathdom.PathKey("sym744@1")),
+			Case:   testStateKey(t, pathdom.PathKey("sym745@1")),
 			Index:  1,
 		}).
 		AddChannelSelectFact(channelselectfact.Fact{
 			Select: channelselectfact.ID(selectID),
 			Kind:   channelselectfact.FactReceive,
-			Result: pathdom.PathKey("sym744@1"),
-			Case:   pathdom.PathKey("sym746@1"),
+			Result: testStateKey(t, pathdom.PathKey("sym744@1")),
+			Case:   testStateKey(t, pathdom.PathKey("sym746@1")),
 			Index:  2,
 		})
 
@@ -391,15 +391,15 @@ func TestFactsEdgeTransferChannelSelectInequalityRemovesCase(t *testing.T) {
 		AddChannelSelectFact(channelselectfact.Fact{
 			Select: channelselectfact.ID(selectID),
 			Kind:   channelselectfact.FactReceive,
-			Result: pathdom.PathKey("sym824@1"),
-			Case:   pathdom.PathKey("sym825@1"),
+			Result: testStateKey(t, pathdom.PathKey("sym824@1")),
+			Case:   testStateKey(t, pathdom.PathKey("sym825@1")),
 			Index:  0,
 		}).
 		AddChannelSelectFact(channelselectfact.Fact{
 			Select: channelselectfact.ID(selectID),
 			Kind:   channelselectfact.FactReceive,
-			Result: pathdom.PathKey("sym824@1"),
-			Case:   pathdom.PathKey("sym826@1"),
+			Result: testStateKey(t, pathdom.PathKey("sym824@1")),
+			Case:   testStateKey(t, pathdom.PathKey("sym826@1")),
 			Index:  1,
 		})
 
@@ -467,22 +467,22 @@ func TestFactsEdgeTransferChannelSelectInequalityRemovesDuplicateCasePathIndexes
 		AddChannelSelectFact(channelselectfact.Fact{
 			Select: channelselectfact.ID(selectID),
 			Kind:   channelselectfact.FactReceive,
-			Result: pathdom.PathKey("sym844@1"),
-			Case:   pathdom.PathKey("sym845@1"),
+			Result: testStateKey(t, pathdom.PathKey("sym844@1")),
+			Case:   testStateKey(t, pathdom.PathKey("sym845@1")),
 			Index:  0,
 		}).
 		AddChannelSelectFact(channelselectfact.Fact{
 			Select: channelselectfact.ID(selectID),
 			Kind:   channelselectfact.FactReceive,
-			Result: pathdom.PathKey("sym844@1"),
-			Case:   pathdom.PathKey("sym845@1"),
+			Result: testStateKey(t, pathdom.PathKey("sym844@1")),
+			Case:   testStateKey(t, pathdom.PathKey("sym845@1")),
 			Index:  1,
 		}).
 		AddChannelSelectFact(channelselectfact.Fact{
 			Select: channelselectfact.ID(selectID),
 			Kind:   channelselectfact.FactReceive,
-			Result: pathdom.PathKey("sym844@1"),
-			Case:   pathdom.PathKey("sym846@1"),
+			Result: testStateKey(t, pathdom.PathKey("sym844@1")),
+			Case:   testStateKey(t, pathdom.PathKey("sym846@1")),
 			Index:  2,
 		})
 
@@ -556,15 +556,15 @@ func TestFactsEdgeTransferChannelSelectInequalityPreservesDefaultCase(t *testing
 		AddChannelSelectFact(channelselectfact.Fact{
 			Select:     channelselectfact.ID(selectID),
 			Kind:       channelselectfact.FactSelect,
-			Result:     pathdom.PathKey("sym834@1"),
+			Result:     testStateKey(t, pathdom.PathKey("sym834@1")),
 			Index:      0,
 			HasDefault: true,
 		}).
 		AddChannelSelectFact(channelselectfact.Fact{
 			Select: channelselectfact.ID(selectID),
 			Kind:   channelselectfact.FactReceive,
-			Result: pathdom.PathKey("sym834@1"),
-			Case:   pathdom.PathKey("sym835@1"),
+			Result: testStateKey(t, pathdom.PathKey("sym834@1")),
+			Case:   testStateKey(t, pathdom.PathKey("sym835@1")),
 			Index:  0,
 		})
 
@@ -636,15 +636,15 @@ func TestFactsEdgeTransferChannelSelectEqualityMatchesDriftingVersions(t *testin
 			AddChannelSelectFact(channelselectfact.Fact{
 				Select: channelselectfact.ID(selectID),
 				Kind:   channelselectfact.FactReceive,
-				Result: pathdom.PathKey("sym724@1"),
-				Case:   pathdom.PathKey("sym725@1"),
+				Result: testStateKey(t, pathdom.PathKey("sym724@1")),
+				Case:   testStateKey(t, pathdom.PathKey("sym725@1")),
 				Index:  0,
 			}).
 			AddChannelSelectFact(channelselectfact.Fact{
 				Select: channelselectfact.ID(selectID),
 				Kind:   channelselectfact.FactReceive,
-				Result: pathdom.PathKey("sym724@1"),
-				Case:   pathdom.PathKey("sym726@1"),
+				Result: testStateKey(t, pathdom.PathKey("sym724@1")),
+				Case:   testStateKey(t, pathdom.PathKey("sym726@1")),
 				Index:  1,
 			}),
 		EdgeTransfer: NewFactsEdgeTransfer(FactsEdgeTransferConfig{
@@ -705,15 +705,15 @@ func TestFactsEdgeTransferChannelSelectEqualityMatchesNestedCasePath(t *testing.
 			AddChannelSelectFact(channelselectfact.Fact{
 				Select: channelselectfact.ID(selectID),
 				Kind:   channelselectfact.FactReceive,
-				Result: pathdom.PathKey("sym924@1"),
-				Case:   pathdom.PathKey("sym925@1.primary"),
+				Result: testStateKey(t, pathdom.PathKey("sym924@1")),
+				Case:   testStateKey(t, pathdom.PathKey("sym925@1.primary")),
 				Index:  0,
 			}).
 			AddChannelSelectFact(channelselectfact.Fact{
 				Select: channelselectfact.ID(selectID),
 				Kind:   channelselectfact.FactReceive,
-				Result: pathdom.PathKey("sym924@1"),
-				Case:   pathdom.PathKey("sym925@1.timers"),
+				Result: testStateKey(t, pathdom.PathKey("sym924@1")),
+				Case:   testStateKey(t, pathdom.PathKey("sym925@1.timers")),
 				Index:  1,
 			}),
 		EdgeTransfer: NewFactsEdgeTransfer(FactsEdgeTransferConfig{

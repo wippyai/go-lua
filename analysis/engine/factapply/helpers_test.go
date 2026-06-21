@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/domain/path"
+	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
@@ -392,4 +393,13 @@ func mustStateKey(t *testing.T, ks *keyspace.KeySpace, key path.PathKey) keyspac
 		t.Fatalf("FromStateKey(%q) failed", key)
 	}
 	return k
+}
+
+func testStateKey(t *testing.T, key path.PathKey) pathaddr.StateKey {
+	t.Helper()
+	got, ok := pathaddr.StateKeyFromPathKey(key)
+	if !ok {
+		t.Fatalf("StateKeyFromPathKey(%q) failed", key)
+	}
+	return got
 }

@@ -722,18 +722,31 @@ func callChannelSelectFactAt(
 		HasDefault: event.HasDefault,
 	}
 	if !event.Result.IsEmpty() {
-		resultKey, ok := callOutcomePathKeyAt(resolver, point, bindings, event.Result)
+		resultStateKey, ok := callOutcomeStateKeyAt(resolver, point, bindings, event.Result)
 		if !ok {
 			return channelselectfact.Fact{}, false
 		}
-		fact.Result = resultKey
+		fact.Result = resultStateKey
 	}
 	if !event.Case.IsEmpty() {
-		caseKey, ok := callOutcomePathKeyAt(resolver, point, bindings, event.Case)
+		caseStateKey, ok := callOutcomeStateKeyAt(resolver, point, bindings, event.Case)
 		if !ok {
 			return channelselectfact.Fact{}, false
 		}
-		fact.Case = caseKey
+		fact.Case = caseStateKey
 	}
 	return fact, true
+}
+
+func callOutcomeStateKeyAt(
+	resolver *visibility.Resolver,
+	point cfg.Point,
+	bindings []pathdom.Path,
+	path pathdom.Path,
+) (pathaddr.StateKey, bool) {
+	key, ok := callOutcomePathKeyAt(resolver, point, bindings, path)
+	if !ok {
+		return "", false
+	}
+	return pathaddr.StateKeyFromPathKey(key)
 }

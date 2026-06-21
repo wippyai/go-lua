@@ -456,14 +456,14 @@ func TestFactsNodeTransferAppliesChannelSelectFactsWithPathKeys(t *testing.T) {
 	want := channelselectfact.Fact{
 		Select: channelselectfact.ID("select-1"),
 		Kind:   channelselectfact.FactReceive,
-		Result: pathdom.PathKey("sym406@1.result"),
-		Case:   pathdom.PathKey("sym407@1.case"),
+		Result: testStateKey(t, pathdom.PathKey("sym406@1.result")),
+		Case:   testStateKey(t, pathdom.PathKey("sym407@1.case")),
 		Index:  2,
 	}
 	wantSelect := channelselectfact.Fact{
 		Select:     channelselectfact.ID("select-1"),
 		Kind:       channelselectfact.FactSelect,
-		Result:     pathdom.PathKey("sym406@1.result"),
+		Result:     testStateKey(t, pathdom.PathKey("sym406@1.result")),
 		Index:      0,
 		HasDefault: true,
 	}
@@ -776,8 +776,8 @@ func TestFactsNodeTransferCallOutcomeRebasesBoundaryFacts(t *testing.T) {
 	selectFact := channelselectfact.Fact{
 		Select: channelselectfact.ID("callee.select"),
 		Kind:   channelselectfact.FactReceive,
-		Result: pathdom.PathKey("sym505@1.result"),
-		Case:   pathdom.PathKey("sym506@1.case"),
+		Result: testStateKey(t, pathdom.PathKey("sym505@1.result")),
+		Case:   testStateKey(t, pathdom.PathKey("sym506@1.case")),
 		Index:  3,
 	}
 	if !got.HasChannelSelectFact(selectFact) {

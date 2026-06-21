@@ -576,7 +576,7 @@ func TestStateCloneIndependenceAcrossLanes(t *testing.T) {
 	clone = clone.AddChannelSelectFact(channelselectfact.Fact{
 		Select: "clone-only",
 		Kind:   channelselectfact.FactCase,
-		Case:   fx.pathKey,
+		Case:   testStateKey(t, fx.pathKey),
 		Index:  7,
 	})
 
@@ -676,7 +676,7 @@ func TestStateCloneIndependenceAcrossLanes(t *testing.T) {
 	if !clone.HasChannelSelectFact(fx.channelFact) || !clone.HasChannelSelectFact(channelselectfact.Fact{
 		Select: "clone-only",
 		Kind:   channelselectfact.FactCase,
-		Case:   fx.pathKey,
+		Case:   testStateKey(t, fx.pathKey),
 		Index:  7,
 	}) {
 		t.Fatalf("clone channel-select update did not stick")
@@ -784,7 +784,7 @@ func TestWritesFromStateBottomProduceReachableState(t *testing.T) {
 		TargetPresence:  presence.Present(),
 	}
 	effectKey := effectdelta.Key{Target: mustStateKey(t, ks, pathdom.PathKey("sym65@1.table")), Site: "effect", Kind: effectdelta.Mutation}
-	channel := channelselectfact.Fact{Select: "select-bottom", Kind: channelselectfact.FactSelect, Result: pathKey}
+	channel := channelselectfact.Fact{Select: "select-bottom", Kind: channelselectfact.FactSelect, Result: testStateKey(t, pathKey)}
 	escapeID := identity.ID{Kind: "table", Site: "escape-bottom", Index: 1}
 	freezeID := identity.ID{Kind: "table", Site: "freeze-bottom", Index: 1}
 	present := presentValue(reg)
@@ -1180,9 +1180,9 @@ func TestEffectDeltasPointwiseJoin(t *testing.T) {
 
 func TestChannelSelectFactsUseMustJoin(t *testing.T) {
 	stateDomain := Domain(standard.Registry())
-	common := channelselectfact.Fact{Select: "select-1", Kind: channelselectfact.FactSelect, Result: pathdom.PathKey("sym120@1.result")}
-	leftOnly := channelselectfact.Fact{Select: "select-1", Kind: channelselectfact.FactReceive, Case: pathdom.PathKey("sym120@1.left"), Index: 0}
-	rightOnly := channelselectfact.Fact{Select: "select-1", Kind: channelselectfact.FactCase, Case: pathdom.PathKey("sym120@1.right"), Index: 1}
+	common := channelselectfact.Fact{Select: "select-1", Kind: channelselectfact.FactSelect, Result: testStateKey(t, pathdom.PathKey("sym120@1.result"))}
+	leftOnly := channelselectfact.Fact{Select: "select-1", Kind: channelselectfact.FactReceive, Case: testStateKey(t, pathdom.PathKey("sym120@1.left")), Index: 0}
+	rightOnly := channelselectfact.Fact{Select: "select-1", Kind: channelselectfact.FactCase, Case: testStateKey(t, pathdom.PathKey("sym120@1.right")), Index: 1}
 	left := State{}.AddChannelSelectFact(common).AddChannelSelectFact(leftOnly)
 	right := State{}.AddChannelSelectFact(common).AddChannelSelectFact(rightOnly)
 
@@ -1763,7 +1763,7 @@ func stateLawFixtureFor(reg *axis.Registry, ks *keyspace.KeySpace) stateLawFixtu
 	effectKey := effectdelta.Key{Target: tableHeapKey, Site: "effect", Kind: effectdelta.Mutation}
 	escapeID := identity.ID{Kind: "table", Site: "escape-law", Index: 1}
 	freezeID := identity.ID{Kind: "table", Site: "freeze-law", Index: 1}
-	channelFact := channelselectfact.Fact{Select: "select-law", Kind: channelselectfact.FactSelect, Result: pathKey}
+	channelFact := channelselectfact.Fact{Select: "select-law", Kind: channelselectfact.FactSelect, Result: mustTestStateKey(pathKey)}
 	proofPathKey, ok := ks.FromStateKey(pathKey)
 	if !ok {
 		panic("stateLawFixtureFor: FromStateKey failed for proof path key")
@@ -1924,6 +1924,14 @@ func testStateKey(t *testing.T, key pathdom.PathKey) pathaddr.StateKey {
 	got, ok := pathaddr.StateKeyFromPathKey(key)
 	if !ok {
 		t.Fatalf("StateKeyFromPathKey(%q) failed", key)
+	}
+	return got
+}
+
+func mustTestStateKey(key pathdom.PathKey) pathaddr.StateKey {
+	got, ok := pathaddr.StateKeyFromPathKey(key)
+	if !ok {
+		panic("invalid test state key: " + string(key))
 	}
 	return got
 }

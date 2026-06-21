@@ -61,9 +61,9 @@ func applyChannelSelectCasePathEquality(
 	if !ok || resolver == nil {
 		return out, false
 	}
-	resultKey := resolver.KeyAt(point, resultPath)
-	caseKey := resolver.KeyAt(point, casePath)
-	if resultKey == "" || caseKey == "" {
+	resultKey, resultKeyOK := resolver.StateKeyAt(point, resultPath)
+	caseKey, caseKeyOK := resolver.StateKeyAt(point, casePath)
+	if !resultKeyOK || !caseKeyOK {
 		return out, false
 	}
 	selectFacts := channelSelectReceiveFacts(out, resultKey, caseKey)
@@ -184,9 +184,9 @@ func applyChannelSelectCasePathInequality(
 	if !ok || resolver == nil {
 		return out, false
 	}
-	resultKey := resolver.KeyAt(point, resultPath)
-	caseKey := resolver.KeyAt(point, casePath)
-	if resultKey == "" || caseKey == "" {
+	resultKey, resultKeyOK := resolver.StateKeyAt(point, resultPath)
+	caseKey, caseKeyOK := resolver.StateKeyAt(point, casePath)
+	if !resultKeyOK || !caseKeyOK {
 		return out, false
 	}
 	selectFacts := channelSelectReceiveFacts(out, resultKey, caseKey)
@@ -226,8 +226,8 @@ func applyChannelSelectCasePathInequality(
 
 func channelSelectReceiveFacts(
 	out state.State,
-	resultKey pathdom.PathKey,
-	caseKey pathdom.PathKey,
+	resultKey pathaddr.StateKey,
+	caseKey pathaddr.StateKey,
 ) []channelselectfact.Fact {
 	snapshot := out.ChannelSelectFactsSnapshot()
 	if snapshot.Bottom {
@@ -242,12 +242,12 @@ func channelSelectReceiveFacts(
 		if fact.Kind != channelselectfact.FactReceive || fact.Result == "" || fact.Case == "" {
 			continue
 		}
-		rebasedResult, ok := pathaddr.RebaseLocalPathKeyToContext(fact.Result, resultKey)
-		if !ok || rebasedResult != resultKey {
+		rebasedResult, ok := pathaddr.RebaseLocalPathKeyToContext(fact.Result.PathKey(), resultKey.PathKey())
+		if !ok || rebasedResult != resultKey.PathKey() {
 			continue
 		}
-		rebasedCase, ok := pathaddr.RebaseLocalPathKeyToContext(fact.Case, caseKey)
-		if !ok || rebasedCase != caseKey {
+		rebasedCase, ok := pathaddr.RebaseLocalPathKeyToContext(fact.Case.PathKey(), caseKey.PathKey())
+		if !ok || rebasedCase != caseKey.PathKey() {
 			continue
 		}
 		outFacts = append(outFacts, fact)

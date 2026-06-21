@@ -139,21 +139,21 @@ func TestFromResultProjectsNormalReturnFactsFromExitSnapshots(t *testing.T) {
 		AddChannelSelectFact(channelselectfact.Fact{
 			Select:     "select-kind",
 			Kind:       channelselectfact.FactSelect,
-			Result:     selectResultKey,
+			Result:     testStateKey(t, selectResultKey),
 			Index:      0,
 			HasDefault: true,
 		}).
 		AddChannelSelectFact(channelselectfact.Fact{
 			Select: "receive-kind",
 			Kind:   channelselectfact.FactReceive,
-			Result: receiveResultKey,
-			Case:   receiveCaseKey,
+			Result: testStateKey(t, receiveResultKey),
+			Case:   testStateKey(t, receiveCaseKey),
 			Index:  1,
 		}).
 		AddChannelSelectFact(channelselectfact.Fact{
 			Select: "case-kind",
 			Kind:   channelselectfact.FactCase,
-			Case:   casePathKey,
+			Case:   testStateKey(t, casePathKey),
 			Index:  2,
 		}).
 		WriteEffectDelta(effectdelta.Key{
@@ -280,7 +280,7 @@ func TestFromResultDropsNonParameterNormalReturnFactPaths(t *testing.T) {
 		AddChannelSelectFact(channelselectfact.Fact{
 			Select: "invalid-result",
 			Kind:   channelselectfact.FactReceive,
-			Result: invalidKeys[1],
+			Result: testStateKey(t, invalidKeys[1]),
 			Index:  0,
 		})
 
@@ -357,7 +357,7 @@ func TestFromResultSkipsTopSnapshotsAndTopNormalReturnFacts(t *testing.T) {
 		AddChannelSelectFact(channelselectfact.Fact{
 			Select: "invalid-kind",
 			Kind:   0,
-			Result: normalReturnFactProjectTestKey(param, ".result"),
+			Result: testStateKey(t, normalReturnFactProjectTestKey(param, ".result")),
 			Index:  0,
 		}).
 		WriteEffectDelta(effectdelta.Key{
