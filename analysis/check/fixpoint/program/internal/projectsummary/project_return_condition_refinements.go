@@ -35,8 +35,8 @@ func projectReturnConditionParamRefinements(
 			if !ok {
 				continue
 			}
-			out = appendReturnConditionParamRefinements(out, returnIndex, true, condition.RefinementsForValue(true), params)
-			out = appendReturnConditionParamRefinements(out, returnIndex, false, condition.RefinementsForValue(false), params)
+			out = appendReturnConditionParamRefinements(out, returnIndex, true, condition.FactsForValue(true).Refinements(), params)
+			out = appendReturnConditionParamRefinements(out, returnIndex, false, condition.FactsForValue(false).Refinements(), params)
 		}
 	}
 	return out

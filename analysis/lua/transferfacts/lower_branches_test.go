@@ -231,7 +231,8 @@ end
 		t.Fatalf("missing expression condition for local source ref %d", source.ExprRef)
 	}
 
-	falseRefinements := condition.RefinementsForValue(false)
+	falseFacts := condition.FactsForValue(false)
+	falseRefinements := falseFacts.Refinements()
 	for _, want := range []path.Path{xPath, yPath} {
 		found := false
 		for _, refinement := range falseRefinements {

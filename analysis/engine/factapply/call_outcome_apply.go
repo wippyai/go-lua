@@ -583,10 +583,11 @@ func applyCallParamCondition(
 	if !ok {
 		return out
 	}
-	for _, refinement := range expressionCondition.RefinementsForValue(condition.Value) {
+	selectedFacts := expressionCondition.FactsForValue(condition.Value)
+	for _, refinement := range selectedFacts.Refinements() {
 		out = applyValueRefinementAt(ctx.Registry, resolver, projectPath, ctx.Point, out, refinement.TargetPath(), refinement.Value())
 	}
-	for _, relation := range expressionCondition.PathRelationsForValue(condition.Value) {
+	for _, relation := range selectedFacts.PathRelations() {
 		out = applyPostconditionPathRelation(ctx, resolver, projectPath, out, relation)
 	}
 	return out

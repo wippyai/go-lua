@@ -3,11 +3,15 @@ package factflow
 // ExpressionCondition describes path facts selected by the boolean value of an
 // expression.
 type ExpressionCondition struct {
-	trueRefinements  []PostconditionRefinement
-	falseRefinements []PostconditionRefinement
+	trueFacts  ExpressionConditionFacts
+	falseFacts ExpressionConditionFacts
+}
 
-	truePathRelations  []PostconditionPathRelation
-	falsePathRelations []PostconditionPathRelation
+// ExpressionConditionFacts is the atomic fact bundle selected by one boolean
+// result of an expression condition.
+type ExpressionConditionFacts struct {
+	refinements   []PostconditionRefinement
+	pathRelations []PostconditionPathRelation
 }
 
 // NewExpressionCondition creates an expression condition fact.
@@ -18,44 +22,60 @@ func NewExpressionCondition(
 	falsePathRelations []PostconditionPathRelation,
 ) ExpressionCondition {
 	return ExpressionCondition{
-		trueRefinements:    copyPostconditionRefinementSlice(trueRefinements),
-		falseRefinements:   copyPostconditionRefinementSlice(falseRefinements),
-		truePathRelations:  copyPostconditionPathRelationSlice(truePathRelations),
-		falsePathRelations: copyPostconditionPathRelationSlice(falsePathRelations),
+		trueFacts:  NewExpressionConditionFacts(trueRefinements, truePathRelations),
+		falseFacts: NewExpressionConditionFacts(falseRefinements, falsePathRelations),
+	}
+}
+
+// NewExpressionConditionFacts creates the selected fact bundle for one boolean
+// result of an expression condition.
+func NewExpressionConditionFacts(
+	refinements []PostconditionRefinement,
+	pathRelations []PostconditionPathRelation,
+) ExpressionConditionFacts {
+	return ExpressionConditionFacts{
+		refinements:   copyPostconditionRefinementSlice(refinements),
+		pathRelations: copyPostconditionPathRelationSlice(pathRelations),
 	}
 }
 
 // IsEmpty reports whether c carries no selectable facts.
 func (c ExpressionCondition) IsEmpty() bool {
-	return len(c.trueRefinements) == 0 &&
-		len(c.falseRefinements) == 0 &&
-		len(c.truePathRelations) == 0 &&
-		len(c.falsePathRelations) == 0
+	return c.trueFacts.IsEmpty() && c.falseFacts.IsEmpty()
 }
 
-// RefinementsForValue returns value refinements selected by expression value.
-func (c ExpressionCondition) RefinementsForValue(value bool) []PostconditionRefinement {
+// FactsForValue returns the atomic facts selected by expression value.
+func (c ExpressionCondition) FactsForValue(value bool) ExpressionConditionFacts {
 	if value {
-		return copyPostconditionRefinementSlice(c.trueRefinements)
+		return c.trueFacts
 	}
-	return copyPostconditionRefinementSlice(c.falseRefinements)
+	return c.falseFacts
 }
 
-// PathRelationsForValue returns path relations selected by expression value.
-func (c ExpressionCondition) PathRelationsForValue(value bool) []PostconditionPathRelation {
-	if value {
-		return copyPostconditionPathRelationSlice(c.truePathRelations)
-	}
-	return copyPostconditionPathRelationSlice(c.falsePathRelations)
+// IsEmpty reports whether f carries no selected facts.
+func (f ExpressionConditionFacts) IsEmpty() bool {
+	return len(f.refinements) == 0 && len(f.pathRelations) == 0
+}
+
+// Refinements returns value refinements selected with this fact bundle.
+func (f ExpressionConditionFacts) Refinements() []PostconditionRefinement {
+	return copyPostconditionRefinementSlice(f.refinements)
+}
+
+// PathRelations returns path relations selected with this fact bundle.
+func (f ExpressionConditionFacts) PathRelations() []PostconditionPathRelation {
+	return copyPostconditionPathRelationSlice(f.pathRelations)
 }
 
 func (c ExpressionCondition) copy() ExpressionCondition {
-	return NewExpressionCondition(
-		c.trueRefinements,
-		c.falseRefinements,
-		c.truePathRelations,
-		c.falsePathRelations,
-	)
+	return ExpressionCondition{
+		trueFacts:  c.trueFacts.copy(),
+		falseFacts: c.falseFacts.copy(),
+	}
+}
+
+func (f ExpressionConditionFacts) copy() ExpressionConditionFacts {
+	return NewExpressionConditionFacts(f.refinements, f.pathRelations)
 }
 
 func copyExpressionConditionMap(in map[ExprRef]ExpressionCondition) map[ExprRef]ExpressionCondition {
