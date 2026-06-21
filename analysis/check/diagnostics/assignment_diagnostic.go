@@ -272,39 +272,53 @@ func exprEvidenceName(expr ast.Expr) string {
 }
 
 func exprEvidenceNameOK(expr ast.Expr) string {
+	return exprEvidenceNameOKDepth(expr, 0)
+}
+
+func exprEvidenceNameOKDepth(expr ast.Expr, depth int) string {
+	if depth > typ.DefaultRecursionDepth {
+		return ""
+	}
 	switch e := expr.(type) {
 	case *ast.IdentExpr:
 		return e.Value
 	case *ast.AttrGetExpr:
-		object := exprEvidenceNameOK(e.Object)
+		object := exprEvidenceNameOKDepth(e.Object, depth+1)
 		key := attrKeyEvidenceName(e)
 		if object == "" || key == "" {
 			return object
 		}
 		return object + key
 	case *ast.FuncCallExpr:
-		return callEvidenceNameOK(e)
+		return callEvidenceNameOKDepth(e, depth+1)
 	case *ast.CastExpr:
-		return exprEvidenceNameOK(e.Expr)
+		return exprEvidenceNameOKDepth(e.Expr, depth+1)
 	case *ast.NonNilAssertExpr:
-		return exprEvidenceNameOK(e.Expr)
+		return exprEvidenceNameOKDepth(e.Expr, depth+1)
 	default:
 		return ""
 	}
 }
 
 func callEvidenceNameOK(expr *ast.FuncCallExpr) string {
+	return callEvidenceNameOKDepth(expr, 0)
+}
+
+func callEvidenceNameOKDepth(expr *ast.FuncCallExpr, depth int) string {
+	if depth > typ.DefaultRecursionDepth {
+		return ""
+	}
 	if expr == nil {
 		return ""
 	}
 	if expr.Receiver != nil && expr.Method != "" {
-		receiver := exprEvidenceNameOK(expr.Receiver)
+		receiver := exprEvidenceNameOKDepth(expr.Receiver, depth+1)
 		if receiver == "" {
 			return ""
 		}
 		return receiver + ":" + expr.Method + "(...)"
 	}
-	name := exprEvidenceNameOK(expr.Func)
+	name := exprEvidenceNameOKDepth(expr.Func, depth+1)
 	if name == "" {
 		return ""
 	}

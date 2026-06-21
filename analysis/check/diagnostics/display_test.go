@@ -189,6 +189,33 @@ func TestSpanWithEvidenceNameOnlyExtendsSimpleIdentifiers(t *testing.T) {
 	}
 }
 
+func TestExprEvidenceNamePreservesReadablePaths(t *testing.T) {
+	expr := &ast.FuncCallExpr{
+		Receiver: &ast.AttrGetExpr{
+			Object:    &ast.IdentExpr{Value: "client"},
+			Key:       &ast.IdentExpr{Value: "session"},
+			KeySyntax: ast.AttrKeyDot,
+		},
+		Method: "refresh",
+	}
+	if got := exprEvidenceNameOK(expr); got != "client.session:refresh(...)" {
+		t.Fatalf("exprEvidenceNameOK = %q, want readable receiver call path", got)
+	}
+}
+
+func TestExprEvidenceNameFallsBackAtAdversarialDepth(t *testing.T) {
+	var expr ast.Expr = &ast.IdentExpr{Value: "value"}
+	for i := 0; i < typ.DefaultRecursionDepth+8; i++ {
+		expr = &ast.NonNilAssertExpr{Expr: expr}
+	}
+	if got := exprEvidenceNameOK(expr); got != "" {
+		t.Fatalf("exprEvidenceNameOK = %q, want bounded empty result", got)
+	}
+	if got := exprEvidenceName(expr); got != unknownSourceName {
+		t.Fatalf("exprEvidenceName = %q, want safe fallback %q", got, unknownSourceName)
+	}
+}
+
 func findRawDiagnosticMessageLiterals(fset *token.FileSet, file *goast.File, violations *[]string) {
 	goast.Inspect(file, func(n goast.Node) bool {
 		lit, ok := n.(*goast.CompositeLit)
