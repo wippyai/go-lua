@@ -85,46 +85,26 @@ func DescriptorFor(label effect.Label) (capability.Descriptor, bool) {
 
 // IDForReturnTransform returns the audited capability ID for a return transform.
 func IDForReturnTransform(transform returns.ReturnType) (string, bool) {
-	switch transform.(type) {
-	case returns.SameAs:
+	switch returns.KindOfReturnType(transform) {
+	case returns.ReturnTypeSameAs:
 		return capability.ReturnsReturnSameAs, true
-	case *returns.SameAs:
-		return capability.ReturnsReturnSameAs, true
-	case returns.ElementOf:
+	case returns.ReturnTypeElementOf:
 		return capability.ReturnsReturnElementOf, true
-	case *returns.ElementOf:
-		return capability.ReturnsReturnElementOf, true
-	case returns.OptionalElementOf:
+	case returns.ReturnTypeOptionalElementOf:
 		return capability.ReturnsReturnOptionalElementOf, true
-	case *returns.OptionalElementOf:
-		return capability.ReturnsReturnOptionalElementOf, true
-	case returns.CallbackReturn:
+	case returns.ReturnTypeCallbackReturn:
 		return capability.ReturnsReturnCallbackReturn, true
-	case *returns.CallbackReturn:
-		return capability.ReturnsReturnCallbackReturn, true
-	case returns.ArrayOfCallbackReturn:
+	case returns.ReturnTypeArrayOfCallbackReturn:
 		return capability.ReturnsReturnArrayOfCallbackReturn, true
-	case *returns.ArrayOfCallbackReturn:
-		return capability.ReturnsReturnArrayOfCallbackReturn, true
-	case returns.TypeProjection:
+	case returns.ReturnTypeTypeProjection:
 		return capability.ReturnsReturnTypeProjection, true
-	case *returns.TypeProjection:
-		return capability.ReturnsReturnTypeProjection, true
-	case returns.DeepElementOf:
+	case returns.ReturnTypeDeepElementOf:
 		return capability.ReturnsReturnDeepElementOf, true
-	case *returns.DeepElementOf:
-		return capability.ReturnsReturnDeepElementOf, true
-	case returns.StringUnpackValue:
+	case returns.ReturnTypeStringUnpackValue:
 		return capability.ReturnsReturnStringUnpackValue, true
-	case *returns.StringUnpackValue:
-		return capability.ReturnsReturnStringUnpackValue, true
-	case returns.SelectCaseOfParam:
+	case returns.ReturnTypeSelectCaseOfParam:
 		return capability.ReturnsReturnSelectCaseOfParam, true
-	case *returns.SelectCaseOfParam:
-		return capability.ReturnsReturnSelectCaseOfParam, true
-	case returns.SelectResultOfCases:
-		return capability.ReturnsReturnSelectResultOfCases, true
-	case *returns.SelectResultOfCases:
+	case returns.ReturnTypeSelectResultOfCases:
 		return capability.ReturnsReturnSelectResultOfCases, true
 	default:
 		return "", false

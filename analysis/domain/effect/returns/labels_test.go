@@ -91,6 +91,10 @@ func TestReturnTypeConcreteNormalizers(t *testing.T) {
 		Source:     effect.ParamRef{Index: 6},
 		Projection: projection.Projection{Steps: []projection.Step{projection.Field("payload")}},
 	}
+	deepElement := DeepElementOf{}
+	stringUnpack := StringUnpackValue{}
+	selectCase := SelectCaseOfParam{}
+	selectResult := SelectResultOfCases{}
 
 	var nilSame *SameAs
 	var nilElement *ElementOf
@@ -98,6 +102,10 @@ func TestReturnTypeConcreteNormalizers(t *testing.T) {
 	var nilCallback *CallbackReturn
 	var nilArrayCallback *ArrayOfCallbackReturn
 	var nilProjected *TypeProjection
+	var nilDeepElement *DeepElementOf
+	var nilStringUnpack *StringUnpackValue
+	var nilSelectCase *SelectCaseOfParam
+	var nilSelectResult *SelectResultOfCases
 
 	tests := []struct {
 		name     string
@@ -166,6 +174,46 @@ func TestReturnTypeConcreteNormalizers(t *testing.T) {
 				return ok &&
 					got.Source.Index == projected.Source.Index &&
 					projection.Equal(got.Projection, projected.Projection)
+			},
+		},
+		{
+			name:     "deep element",
+			value:    deepElement,
+			pointer:  &deepElement,
+			nilValue: nilDeepElement,
+			match: func(t ReturnType) bool {
+				_, ok := AsDeepElementOf(t)
+				return ok
+			},
+		},
+		{
+			name:     "string unpack",
+			value:    stringUnpack,
+			pointer:  &stringUnpack,
+			nilValue: nilStringUnpack,
+			match: func(t ReturnType) bool {
+				_, ok := AsStringUnpackValue(t)
+				return ok
+			},
+		},
+		{
+			name:     "select case",
+			value:    selectCase,
+			pointer:  &selectCase,
+			nilValue: nilSelectCase,
+			match: func(t ReturnType) bool {
+				_, ok := AsSelectCaseOfParam(t)
+				return ok
+			},
+		},
+		{
+			name:     "select result",
+			value:    selectResult,
+			pointer:  &selectResult,
+			nilValue: nilSelectResult,
+			match: func(t ReturnType) bool {
+				_, ok := AsSelectResultOfCases(t)
+				return ok
 			},
 		},
 	}

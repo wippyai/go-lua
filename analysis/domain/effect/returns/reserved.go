@@ -136,6 +136,30 @@ func selectResultOfCasesEquals(a SelectResultOfCases, b ReturnType) bool {
 	return ok && a.Cases.Index == bb.Cases.Index && a.Default.Index == bb.Default.Index
 }
 
+// AsDeepElementOf returns the concrete DeepElementOf transform for value and
+// non-nil pointer spellings. Typed nil pointers are treated as absent.
+func AsDeepElementOf(r ReturnType) (DeepElementOf, bool) {
+	return normalizeDeepElementOf(r)
+}
+
+// AsStringUnpackValue returns the concrete StringUnpackValue transform for
+// value and non-nil pointer spellings. Typed nil pointers are treated as absent.
+func AsStringUnpackValue(r ReturnType) (StringUnpackValue, bool) {
+	return normalizeStringUnpackValue(r)
+}
+
+// AsSelectCaseOfParam returns the concrete SelectCaseOfParam transform for
+// value and non-nil pointer spellings. Typed nil pointers are treated as absent.
+func AsSelectCaseOfParam(r ReturnType) (SelectCaseOfParam, bool) {
+	return normalizeSelectCaseOfParam(r)
+}
+
+// AsSelectResultOfCases returns the concrete SelectResultOfCases transform for
+// value and non-nil pointer spellings. Typed nil pointers are treated as absent.
+func AsSelectResultOfCases(r ReturnType) (SelectResultOfCases, bool) {
+	return normalizeSelectResultOfCases(r)
+}
+
 func normalizeDeepElementOf(r ReturnType) (DeepElementOf, bool) {
 	switch rr := r.(type) {
 	case DeepElementOf:

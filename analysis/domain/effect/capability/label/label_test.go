@@ -80,9 +80,30 @@ func TestIDForNormalizesPointerLabelsAndReturnTransforms(t *testing.T) {
 	if !ok || got != capability.ReturnsReturnElementOf {
 		t.Fatalf("IDFor(pointer return) = %q/%v, want %q/true", got, ok, capability.ReturnsReturnElementOf)
 	}
-	got, ok = caplabel.IDForReturnTransform(&returns.StringUnpackValue{})
-	if !ok || got != capability.ReturnsReturnStringUnpackValue {
-		t.Fatalf("IDForReturnTransform(pointer) = %q/%v, want %q/true", got, ok, capability.ReturnsReturnStringUnpackValue)
+
+	tests := []struct {
+		name      string
+		transform returns.ReturnType
+		want      string
+	}{
+		{"same as", &returns.SameAs{}, capability.ReturnsReturnSameAs},
+		{"element of", &returns.ElementOf{}, capability.ReturnsReturnElementOf},
+		{"optional element of", &returns.OptionalElementOf{}, capability.ReturnsReturnOptionalElementOf},
+		{"callback", &returns.CallbackReturn{}, capability.ReturnsReturnCallbackReturn},
+		{"array callback", &returns.ArrayOfCallbackReturn{}, capability.ReturnsReturnArrayOfCallbackReturn},
+		{"type projection", &returns.TypeProjection{}, capability.ReturnsReturnTypeProjection},
+		{"deep element", &returns.DeepElementOf{}, capability.ReturnsReturnDeepElementOf},
+		{"string unpack", &returns.StringUnpackValue{}, capability.ReturnsReturnStringUnpackValue},
+		{"select case", &returns.SelectCaseOfParam{}, capability.ReturnsReturnSelectCaseOfParam},
+		{"select result", &returns.SelectResultOfCases{}, capability.ReturnsReturnSelectResultOfCases},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, ok := caplabel.IDForReturnTransform(tt.transform)
+			if !ok || got != tt.want {
+				t.Fatalf("IDForReturnTransform(%T) = %q/%v, want %q/true", tt.transform, got, ok, tt.want)
+			}
+		})
 	}
 }
 
