@@ -571,22 +571,33 @@ func encodeLifecycleEffect(effect signature.LifecycleEffect) (lifecycleEffectWir
 	if err != nil {
 		return lifecycleEffectWire{}, err
 	}
-	if effect.Protocol == "" {
-		return lifecycleEffectWire{}, fmt.Errorf("missing protocol")
+	protocol, err := encodeLifecycleProtocol(effect.Protocol, "missing protocol")
+	if err != nil {
+		return lifecycleEffectWire{}, err
 	}
-	if effect.Kind == signature.LifecycleAcquire && effect.To == "" {
-		return lifecycleEffectWire{}, fmt.Errorf("acquire missing state")
+	var to string
+	if effect.Kind == signature.LifecycleAcquire {
+		to, err = encodeRequiredLifecycleState(effect.To, "acquire missing state")
+		if err != nil {
+			return lifecycleEffectWire{}, err
+		}
 	}
-	if effect.Kind == signature.LifecycleTransition && effect.To == "" {
-		return lifecycleEffectWire{}, fmt.Errorf("transition missing target state")
+	if effect.Kind == signature.LifecycleTransition {
+		to, err = encodeRequiredLifecycleState(effect.To, "transition missing target state")
+		if err != nil {
+			return lifecycleEffectWire{}, err
+		}
+	}
+	if to == "" {
+		to = encodeOptionalLifecycleState(effect.To)
 	}
 	return lifecycleEffectWire{
 		Target:   target,
 		Kind:     kind,
-		Protocol: string(effect.Protocol),
-		From:     string(effect.From),
-		To:       string(effect.To),
-		Final:    string(effect.Obligation.Final),
+		Protocol: protocol,
+		From:     encodeOptionalLifecycleState(effect.From),
+		To:       to,
+		Final:    encodeOptionalLifecycleState(effect.Obligation.Final),
 	}, nil
 }
 
@@ -599,23 +610,34 @@ func decodeLifecycleEffect(w lifecycleEffectWire) (signature.LifecycleEffect, er
 	if err != nil {
 		return signature.LifecycleEffect{}, err
 	}
-	if w.Protocol == "" {
-		return signature.LifecycleEffect{}, fmt.Errorf("missing protocol")
+	protocol, err := decodeLifecycleProtocol(w.Protocol, "missing protocol")
+	if err != nil {
+		return signature.LifecycleEffect{}, err
 	}
-	if kind == signature.LifecycleAcquire && w.To == "" {
-		return signature.LifecycleEffect{}, fmt.Errorf("acquire missing state")
+	var to typestate.State
+	if kind == signature.LifecycleAcquire {
+		to, err = decodeRequiredLifecycleState(w.To, "acquire missing state")
+		if err != nil {
+			return signature.LifecycleEffect{}, err
+		}
 	}
-	if kind == signature.LifecycleTransition && w.To == "" {
-		return signature.LifecycleEffect{}, fmt.Errorf("transition missing target state")
+	if kind == signature.LifecycleTransition {
+		to, err = decodeRequiredLifecycleState(w.To, "transition missing target state")
+		if err != nil {
+			return signature.LifecycleEffect{}, err
+		}
+	}
+	if to == "" {
+		to = decodeOptionalLifecycleState(w.To)
 	}
 	return signature.LifecycleEffect{
 		Target:   target,
 		Kind:     kind,
-		Protocol: typestate.Protocol(w.Protocol),
-		From:     typestate.State(w.From),
-		To:       typestate.State(w.To),
+		Protocol: protocol,
+		From:     decodeOptionalLifecycleState(w.From),
+		To:       to,
 		Obligation: typestate.Obligation{
-			Final: typestate.State(w.Final),
+			Final: decodeOptionalLifecycleState(w.Final),
 		},
 	}, nil
 }

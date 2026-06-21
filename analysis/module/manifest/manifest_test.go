@@ -343,6 +343,29 @@ func TestManifestRejectsInvalidLifecycleOperationalEffects(t *testing.T) {
 			}
 		})
 	}
+
+	decodeTests := []struct {
+		name string
+		wire lifecycleEffectWire
+		want string
+	}{
+		{"acquire missing protocol", lifecycleEffectWire{Target: &placeholderPathWire{Param: 0}, Kind: "acquire", To: "active"}, "missing protocol"},
+		{"acquire missing state", lifecycleEffectWire{Target: &placeholderPathWire{Param: 0}, Kind: "acquire", Protocol: "resource"}, "acquire missing state"},
+		{"transition missing protocol", lifecycleEffectWire{Target: &placeholderPathWire{Param: 0}, Kind: "transition", To: "closed"}, "missing protocol"},
+		{"transition missing target state", lifecycleEffectWire{Target: &placeholderPathWire{Param: 0}, Kind: "transition", Protocol: "resource", From: "open"}, "transition missing target state"},
+		{"escape missing protocol", lifecycleEffectWire{Target: &placeholderPathWire{Param: 0}, Kind: "escape"}, "missing protocol"},
+	}
+	for _, tt := range decodeTests {
+		t.Run("decode "+tt.name, func(t *testing.T) {
+			_, err := decodeOperationalEffects(&operationalEffectsWire{LifecycleEffects: []lifecycleEffectWire{tt.wire}})
+			if err == nil {
+				t.Fatal("decodeOperationalEffects succeeded, want lifecycle validation error")
+			}
+			if !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("error = %v, want %q", err, tt.want)
+			}
+		})
+	}
 }
 
 func TestManifestEmptyOperationalEffectsAreAbsent(t *testing.T) {
