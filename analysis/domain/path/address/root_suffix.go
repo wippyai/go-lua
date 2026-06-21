@@ -16,7 +16,7 @@ type parsedRootSuffix struct {
 
 func parseStableSymbolRootSuffix(key pathdom.PathKey) (uint64, parsedRootSuffix, bool) {
 	s := string(key)
-	n, end, ok := parseDecimalRootEnd(s, "s")
+	n, end, ok := keycodec.ParsePrefixedNonZeroDecimal(s, "s")
 	if !ok {
 		return 0, parsedRootSuffix{}, false
 	}
@@ -29,7 +29,7 @@ func parseStableSymbolRootSuffix(key pathdom.PathKey) (uint64, parsedRootSuffix,
 
 func parseResolverRootSuffix(key pathdom.PathKey) (uint64, int, parsedRootSuffix, bool) {
 	s := string(key)
-	n, suffixStart, ok := parseDecimalRootEnd(s, "sym")
+	n, suffixStart, ok := keycodec.ParsePrefixedNonZeroDecimal(s, "sym")
 	if !ok {
 		return 0, 0, parsedRootSuffix{}, false
 	}
@@ -47,25 +47,6 @@ func parseResolverRootSuffix(key pathdom.PathKey) (uint64, int, parsedRootSuffix
 		return 0, 0, parsedRootSuffix{}, false
 	}
 	return n, version, parsed, true
-}
-
-func parseDecimalRootEnd(s, prefix string) (uint64, int, bool) {
-	if len(s) <= len(prefix) || !strings.HasPrefix(s, prefix) {
-		return 0, 0, false
-	}
-	i := len(prefix)
-	for i < len(s) {
-		ch := s[i]
-		if ch < '0' || ch > '9' {
-			break
-		}
-		i++
-	}
-	n, parsed := keycodec.ParseUnsignedDecimal(s[len(prefix):i])
-	if !parsed || n == 0 {
-		return 0, 0, false
-	}
-	return n, i, true
 }
 
 func parseEncodedNamedRootSuffix(key string) (parsedRootSuffix, bool) {

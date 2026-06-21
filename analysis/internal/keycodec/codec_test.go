@@ -40,6 +40,29 @@ func TestParseUnsignedDecimal(t *testing.T) {
 	}
 }
 
+func TestParsePrefixedNonZeroDecimal(t *testing.T) {
+	if got, end, ok := ParsePrefixedNonZeroDecimal("sym42@3.field", "sym"); !ok || got != 42 || end != len("sym42") {
+		t.Fatalf("ParsePrefixedNonZeroDecimal = %d/%d/%v, want 42/%d/true", got, end, ok, len("sym42"))
+	}
+	if got, end, ok := ParsePrefixedNonZeroDecimal("s7.field", "s"); !ok || got != 7 || end != len("s7") {
+		t.Fatalf("ParsePrefixedNonZeroDecimal stable = %d/%d/%v, want 7/%d/true", got, end, ok, len("s7"))
+	}
+	for _, input := range []string{
+		"sym",
+		"sym0",
+		"sym00",
+		"sym042",
+		"symx",
+		"s",
+		"x42",
+		"sym18446744073709551616",
+	} {
+		if got, end, ok := ParsePrefixedNonZeroDecimal(input, "sym"); ok || got != 0 || end != 0 {
+			t.Fatalf("ParsePrefixedNonZeroDecimal(%q) = %d/%d/%v, want zero/false", input, got, end, ok)
+		}
+	}
+}
+
 func TestParsePositiveIntAfterAt(t *testing.T) {
 	if got, next, ok := ParsePositiveIntAfterAt("sym42@3.field", len("sym42@")); !ok || got != 3 || next != len("sym42@3") {
 		t.Fatalf("ParsePositiveIntAfterAt = %d/%d/%v, want 3/7/true", got, next, ok)

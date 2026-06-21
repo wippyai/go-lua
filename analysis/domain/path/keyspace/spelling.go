@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
+	"github.com/wippyai/go-lua/analysis/internal/keycodec"
 )
 
 // This file ports the spelling-space disambiguation predicates from the address
@@ -54,7 +55,7 @@ func looksResolverRootSuffix(s string) bool {
 
 // symbolPathKeyParses reports whether raw is a valid stable symbol key s<id><suffix>.
 func symbolPathKeyParses(raw string) bool {
-	n, end, ok := parseDecimalRootEnd(raw, "s")
+	n, end, ok := keycodec.ParsePrefixedNonZeroDecimal(raw, "s")
 	if !ok || n == 0 {
 		return false
 	}
@@ -65,12 +66,12 @@ func symbolPathKeyParses(raw string) bool {
 // resolverPathKeyParses reports whether raw is a valid resolver key
 // sym<id>[@<ver>]<suffix>.
 func resolverPathKeyParses(raw string) bool {
-	n, suffixStart, ok := parseDecimalRootEnd(raw, "sym")
+	n, suffixStart, ok := keycodec.ParsePrefixedNonZeroDecimal(raw, "sym")
 	if !ok || n == 0 {
 		return false
 	}
 	if suffixStart < len(raw) && raw[suffixStart] == '@' {
-		ver, next, vok := parsePositiveIntAfterAt(raw, suffixStart+1)
+		ver, next, vok := keycodec.ParsePositiveIntAfterAt(raw, suffixStart+1)
 		if !vok || ver == 0 {
 			return false
 		}
@@ -123,62 +124,4 @@ func parsePlainRootSuffix(s string, rootEnd int) (string, []segment.Segment, boo
 		return "", nil, false
 	}
 	return s[:rootEnd], segments, true
-}
-
-// parseDecimalRootEnd mirrors address.parseDecimalRootEnd: it parses a canonical
-// unsigned decimal immediately after prefix and returns the value and the index
-// just past the digits. A nonzero, non-zero-padded value is required.
-func parseDecimalRootEnd(s, prefix string) (uint64, int, bool) {
-	if len(s) <= len(prefix) || !strings.HasPrefix(s, prefix) {
-		return 0, 0, false
-	}
-	i := len(prefix)
-	for i < len(s) && isDecimalDigit(s[i]) {
-		i++
-	}
-	n, ok := parseUnsignedDecimal(s[len(prefix):i])
-	if !ok || n == 0 {
-		return 0, 0, false
-	}
-	return n, i, true
-}
-
-// parseUnsignedDecimal mirrors keycodec.ParseUnsignedDecimal: canonical base-10,
-// no leading zero on multi-digit values, overflow-checked.
-func parseUnsignedDecimal(s string) (uint64, bool) {
-	if s == "" {
-		return 0, false
-	}
-	if len(s) > 1 && s[0] == '0' {
-		return 0, false
-	}
-	var n uint64
-	for i := 0; i < len(s); i++ {
-		ch := s[i]
-		if !isDecimalDigit(ch) {
-			return 0, false
-		}
-		digit := uint64(ch - '0')
-		if n > (^uint64(0)-digit)/10 {
-			return 0, false
-		}
-		n = n*10 + digit
-	}
-	return n, true
-}
-
-// parsePositiveIntAfterAt mirrors keycodec.ParsePositiveIntAfterAt.
-func parsePositiveIntAfterAt(s string, i int) (int, int, bool) {
-	if i < 0 || i >= len(s) {
-		return 0, 0, false
-	}
-	start := i
-	for i < len(s) && isDecimalDigit(s[i]) {
-		i++
-	}
-	n, ok := parseUnsignedDecimal(s[start:i])
-	if i == start || !ok || n == 0 || n > uint64(int(^uint(0)>>1)) {
-		return 0, 0, false
-	}
-	return int(n), i, true
 }

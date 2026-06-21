@@ -1,6 +1,8 @@
 // Package keycodec owns small, shared string codecs for compact map keys.
 package keycodec
 
+import "strings"
+
 // PrefixedDecimalKey returns prefix followed by value in base 10 and suffix.
 func PrefixedDecimalKey(prefix byte, value uint64, suffix string) string {
 	var buf [21]byte
@@ -45,6 +47,27 @@ func ParseUnsignedDecimal(s string) (uint64, bool) {
 		n = n*10 + digit
 	}
 	return n, true
+}
+
+// ParsePrefixedNonZeroDecimal parses prefix followed by a canonical nonzero
+// unsigned decimal and returns the value plus the index just past the digits.
+func ParsePrefixedNonZeroDecimal(s, prefix string) (uint64, int, bool) {
+	if len(s) <= len(prefix) || !strings.HasPrefix(s, prefix) {
+		return 0, 0, false
+	}
+	i := len(prefix)
+	for i < len(s) {
+		ch := s[i]
+		if ch < '0' || ch > '9' {
+			break
+		}
+		i++
+	}
+	n, parsed := ParseUnsignedDecimal(s[len(prefix):i])
+	if !parsed || n == 0 {
+		return 0, 0, false
+	}
+	return n, i, true
 }
 
 // ParsePositiveIntAfterAt parses a positive int that starts at i in s.
