@@ -36,6 +36,23 @@ func TestExactPathValueReadsStaticMember(t *testing.T) {
 	assertRuntimeKind(t, reg, got, runtimekind.Singleton(runtimekind.String))
 }
 
+func TestExactPathValueFallsBackFromStringIndexToFieldCanonicalPath(t *testing.T) {
+	reg := standard.Registry()
+	point := cfg.Point(1)
+	resolver := testResolver(point, symbol.ID(10), "obj")
+	readPath := pathdom.NewPath(symbol.ID(10), "obj").IndexStr("name")
+	storedPath := pathdom.NewPath(symbol.ID(10), "obj").Field("name")
+	want := product.Set(reg, product.NewWithPresence(reg, product.ShapeTop, presence.Present()), runtimekind.Key, runtimekind.Singleton(runtimekind.String))
+	in := state.State{}.WritePathKey(reg, resolver.KeySpace(), resolver.KeyAt(point, storedPath), want)
+
+	got, ok := ExactPathValue(reg, resolver, point, readPath, in)
+	if !ok {
+		t.Fatal("ExactPathValue returned false")
+	}
+	assertPresence(t, reg, got, presence.Present())
+	assertRuntimeKind(t, reg, got, runtimekind.Singleton(runtimekind.String))
+}
+
 func TestHeapMemberFromValueReadsStaticMemberAndPreservesOwnerPresence(t *testing.T) {
 	reg := standard.Registry()
 	id := identity.LuaTableLiteral(7002, 211)
@@ -48,6 +65,27 @@ func TestHeapMemberFromValueReadsStaticMemberAndPreservesOwnerPresence(t *testin
 	}))
 
 	got, ok := HeapMemberFromValue(reg, ks, in, rootValue, []segment.Segment{{Kind: segment.SegmentField, Name: "id"}})
+	if !ok {
+		t.Fatal("HeapMemberFromValue returned false")
+	}
+	assertPresence(t, reg, got, presence.Present())
+	assertRuntimeKind(t, reg, got, runtimekind.Singleton(runtimekind.String))
+}
+
+func TestHeapMemberFromValueFallsBackFromStringIndexToFieldCanonicalStaticMember(t *testing.T) {
+	reg := standard.Registry()
+	id := identity.LuaTableLiteral(7002, 214)
+	rootValue := product.Set(reg, product.NewWithPresence(reg, product.ShapeTop, presence.Present()), identity.Key, identity.Singleton(id))
+	memberValue := product.Set(reg, product.NewWithPresence(reg, product.ShapeTop, presence.Present()), runtimekind.Key, runtimekind.Singleton(runtimekind.String))
+	ks := keyspace.New()
+	in := state.State{}.WriteHeapTableObject(reg, id, heapidentity.NewTableObject(heapidentity.TableObjectConfig{
+		Root: rootValue,
+		StaticMembers: staticMembersForSuffix(ks, []segment.Segment{
+			{Kind: segment.SegmentField, Name: "id"},
+		}, memberValue),
+	}))
+
+	got, ok := HeapMemberFromValue(reg, ks, in, rootValue, []segment.Segment{{Kind: segment.SegmentIndexString, Name: "id"}})
 	if !ok {
 		t.Fatal("HeapMemberFromValue returned false")
 	}
@@ -126,9 +164,13 @@ func assertRuntimeKind(t *testing.T, reg *axis.Registry, got product.Value, want
 }
 
 func idStaticMembers(ks *keyspace.KeySpace, value product.Value) map[keyspace.Key]product.Value {
-	key, ok := ks.FromRootlessSuffix([]segment.Segment{{Kind: segment.SegmentField, Name: "id"}})
+	return staticMembersForSuffix(ks, []segment.Segment{{Kind: segment.SegmentField, Name: "id"}}, value)
+}
+
+func staticMembersForSuffix(ks *keyspace.KeySpace, suffix []segment.Segment, value product.Value) map[keyspace.Key]product.Value {
+	key, ok := ks.FromRootlessSuffix(suffix)
 	if !ok {
-		panic("idStaticMembers: failed to build key")
+		panic("staticMembersForSuffix: failed to build key")
 	}
 	return map[keyspace.Key]product.Value{key: value}
 }

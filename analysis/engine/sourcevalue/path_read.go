@@ -57,14 +57,9 @@ func ExactPathValue(
 		return product.Value{}, false
 	}
 	ks := resolver.KeySpace()
-	value := in.ReadPathKey(reg, ks, pathKey)
-	if product.Equal(reg, value, product.Bottom(reg)) {
-		if canonical, ok := fieldCanonicalPathKey(ks, pathKey); ok {
-			value = in.ReadPathKey(reg, ks, canonical)
-		}
-		if product.Equal(reg, value, product.Bottom(reg)) {
-			return product.Value{}, false
-		}
+	value, ok := readPathKeyWithFieldCanonicalFallback(reg, ks, in, pathKey)
+	if !ok {
+		return product.Value{}, false
 	}
 	return value, true
 }
@@ -90,12 +85,7 @@ func HeapMemberFromValue(reg *axis.Registry, ks *keyspace.KeySpace, in state.Sta
 	if product.Equal(reg, product.Meet(reg, root, value), product.Bottom(reg)) {
 		return product.Value{}, false
 	}
-	member, ok := object.StaticMember(key)
-	if !ok {
-		if canonical, canonicalOK := heapidentity.FieldCanonicalStaticMemberSuffixKey(ks, suffix); canonicalOK {
-			member, ok = object.StaticMember(canonical)
-		}
-	}
+	member, ok := readStaticMemberWithFieldCanonicalFallback(ks, object, key, suffix)
 	if !ok || product.Equal(reg, member, product.Bottom(reg)) {
 		return product.Value{}, false
 	}
@@ -103,6 +93,33 @@ func HeapMemberFromValue(reg *axis.Registry, ks *keyspace.KeySpace, in state.Sta
 		member = product.WithPresence(reg, member, presence.Join(product.PresenceOf(member), ownerPresence))
 	}
 	return member, true
+}
+
+func readPathKeyWithFieldCanonicalFallback(reg *axis.Registry, ks *keyspace.KeySpace, in state.State, pathKey pathdom.PathKey) (product.Value, bool) {
+	value := in.ReadPathKey(reg, ks, pathKey)
+	if !product.Equal(reg, value, product.Bottom(reg)) {
+		return value, true
+	}
+	canonical, ok := fieldCanonicalPathKey(ks, pathKey)
+	if !ok {
+		return product.Value{}, false
+	}
+	value = in.ReadPathKey(reg, ks, canonical)
+	if product.Equal(reg, value, product.Bottom(reg)) {
+		return product.Value{}, false
+	}
+	return value, true
+}
+
+func readStaticMemberWithFieldCanonicalFallback(ks *keyspace.KeySpace, object heapidentity.TableObject, key keyspace.Key, suffix []segment.Segment) (product.Value, bool) {
+	if member, ok := object.StaticMember(key); ok {
+		return member, true
+	}
+	canonical, ok := heapidentity.FieldCanonicalStaticMemberSuffixKey(ks, suffix)
+	if !ok {
+		return product.Value{}, false
+	}
+	return object.StaticMember(canonical)
 }
 
 // fieldCanonicalPathKey interns pathKey, applies the field-canonical rewrite, and
