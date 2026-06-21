@@ -400,7 +400,7 @@ func observeCallArguments(
 	args := make([]product.Value, argCount)
 	present := make([]bool, argCount)
 	site.ForEachArgumentSource(func(i int, source factflow.ValueSource) bool {
-		value, ok := prepass.SourceValueWithRootDeclarationRecoveryAtBoundary(point, source)
+		value, ok := prepass.SourceValueForExplanationAtBoundary(point, source)
 		if !ok {
 			return true
 		}
@@ -830,7 +830,7 @@ func contextualCallArgumentTypes(reg *axis.Registry, prepass *body.Result, point
 				return true
 			}
 		}
-		value, ok := prepass.SourceValueWithRootDeclarationRecoveryAtBoundary(point, source)
+		value, ok := prepass.SourceValueForExplanationAtBoundary(point, source)
 		if !ok {
 			return true
 		}

@@ -48,7 +48,7 @@ func sourceType(result *body.Result, point cfg.Point, source sourceprovenance.AS
 	if !ok {
 		return nil, false
 	}
-	value, ok := result.SourceValueWithRootDeclarationRecoveryAtBoundary(point, valueSource)
+	value, ok := result.SourceValueForExplanationAtBoundary(point, valueSource)
 	if !ok {
 		return nil, false
 	}

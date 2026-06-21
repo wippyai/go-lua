@@ -28,8 +28,8 @@ import (
 // SourceValueAtBoundary resolves a lowered value source at the solved boundary
 // for point. Node-local solved effects, such as call-result facts,
 // postconditions, and assignments, are visible at that boundary. This is a
-// projection of solved state only; read models that need declaration recovery
-// must opt into SourceValueWithRootDeclarationRecoveryAtBoundary.
+// projection of solved state only; read models that explain diagnostics may
+// opt into SourceValueForExplanationAtBoundary.
 func (r *Result) SourceValueAtBoundary(point cfg.Point, source factflow.ValueSource) (product.Value, bool) {
 	if r == nil || r.registry == nil {
 		return product.Value{}, false
@@ -88,13 +88,12 @@ func (r *Result) localAssignmentBoundaryValue(
 	return resolve(point, lowered.Source())
 }
 
-// SourceValueWithRootDeclarationRecoveryAtBoundary resolves a lowered value
-// source for read models that explain or contextualize code at a point. It
-// first reads the solved boundary source. If that source is only weak
-// top/unknown evidence, it may recover a stronger value from a dominating root
-// declaration. Final solved-state projections should call SourceValueAtBoundary
-// instead.
-func (r *Result) SourceValueWithRootDeclarationRecoveryAtBoundary(point cfg.Point, source factflow.ValueSource) (product.Value, bool) {
+// SourceValueForExplanationAtBoundary resolves a lowered value source for read
+// models that explain or contextualize code at a point. It first reads the
+// solved boundary source. If that source is only weak top/unknown evidence, it
+// may recover a stronger value from a dominating root declaration. Final
+// solved-state projections should call SourceValueAtBoundary instead.
+func (r *Result) SourceValueForExplanationAtBoundary(point cfg.Point, source factflow.ValueSource) (product.Value, bool) {
 	if r == nil || r.registry == nil {
 		return product.Value{}, false
 	}
@@ -116,10 +115,10 @@ func (r *Result) SourceValueWithRootDeclarationRecoveryAtBoundary(point cfg.Poin
 	return product.Value{}, false
 }
 
-// LocalAssignmentSourceValueWithRootDeclarationRecoveryAtBoundary is the
-// declaration-recovering counterpart to LocalAssignmentSourceValueAtBoundary.
-func (r *Result) LocalAssignmentSourceValueWithRootDeclarationRecoveryAtBoundary(point cfg.Point, source sourceprovenance.ASTSource) (product.Value, bool) {
-	return r.localAssignmentBoundaryValue(point, source, r.SourceValueWithRootDeclarationRecoveryAtBoundary)
+// LocalAssignmentSourceValueForExplanationAtBoundary is the explanatory
+// counterpart to LocalAssignmentSourceValueAtBoundary.
+func (r *Result) LocalAssignmentSourceValueForExplanationAtBoundary(point cfg.Point, source sourceprovenance.ASTSource) (product.Value, bool) {
+	return r.localAssignmentBoundaryValue(point, source, r.SourceValueForExplanationAtBoundary)
 }
 
 // ExpressionValueAtBoundary projects a Lua expression's product value at the

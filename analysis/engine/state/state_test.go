@@ -528,6 +528,15 @@ func TestStateCloneIndependenceAcrossLanes(t *testing.T) {
 		})).
 		WriteEffectDelta(fx.effectKey, fx.effectDelta).
 		WritePlacement(fx.escapeID, placement.Stack).
+		WriteLenFloor(ks, fx.pathKey, 2).
+		WriteNumFloor(ks, fx.pathKey, 3).
+		WriteDiffConstraint(pathdom.PathKey("clone-i"), pathdom.PathKey("clone-j"), -1).
+		AcquireTypestate(
+			TypestateResource(pathdom.PathKey("clone-tx"), typestate.Protocol("transaction")),
+			typestate.State("open"),
+			typestate.Obligation{Final: typestate.State("closed")},
+		).
+		AddStoreRelation(StoreRelation{Source: pathdom.PathKey("clone-src"), Into: pathdom.PathKey("clone-dst")}).
 		FreezeTable(fx.freezeID).
 		AddChannelSelectFact(fx.channelFact).
 		AddBranchProof(fx.proof)
@@ -538,6 +547,8 @@ func TestStateCloneIndependenceAcrossLanes(t *testing.T) {
 		Other: mustStateKey(t, ks, pathdom.PathKey("sym201@1.other")),
 	}
 	cloneOnlyFrozenID := identity.ID{Kind: "table", Site: "clone-only-freeze", Index: 1}
+	cloneOnlyStoreRelation := StoreRelation{Source: pathdom.PathKey("clone-only-src"), Into: pathdom.PathKey("clone-dst")}
+	typestateResource := TypestateResource(pathdom.PathKey("clone-tx"), typestate.Protocol("transaction"))
 	clone := original.Snapshot()
 	clone = clone.WriteValue(reg, fx.valueSlot, fx.absent)
 	clone = clone.WritePathKey(reg, ks, fx.pathKey, fx.absent)
@@ -547,6 +558,11 @@ func TestStateCloneIndependenceAcrossLanes(t *testing.T) {
 	clone = clone.WriteHeapTableObject(reg, fx.heapID, heapidentity.BottomObject(reg))
 	clone = clone.WriteEffectDelta(fx.effectKey, effectdelta.Bottom(reg))
 	clone = clone.WritePlacement(fx.escapeID, placement.Unknown)
+	clone = clone.WriteLenFloor(ks, fx.pathKey, 5)
+	clone = clone.WriteNumFloor(ks, fx.pathKey, 7)
+	clone = clone.WriteDiffConstraint(pathdom.PathKey("clone-extra"), pathdom.PathKey("clone-j"), 0)
+	clone = clone.TransitionTypestate(typestateResource, typestate.State("open"), typestate.State("closed"))
+	clone = clone.AddStoreRelation(cloneOnlyStoreRelation)
 	clone = clone.FreezeTable(cloneOnlyFrozenID)
 	clone = clone.AddChannelSelectFact(channelselectfact.Fact{
 		Select: "clone-only",
@@ -576,6 +592,27 @@ func TestStateCloneIndependenceAcrossLanes(t *testing.T) {
 	}
 	if got := original.ReadPlacement(fx.escapeID); got != placement.Stack {
 		t.Fatalf("original placement mutated through clone: %v", got)
+	}
+	if got, ok := original.ReadLenFloor(ks, fx.pathKey); !ok || got != 2 {
+		t.Fatalf("original len floor mutated through clone: %d/%v", got, ok)
+	}
+	if got, ok := original.ReadNumFloor(ks, fx.pathKey); !ok || got != 3 {
+		t.Fatalf("original num floor mutated through clone: %d/%v", got, ok)
+	}
+	if constraints := original.RelConstraints().Constraints; len(constraints) != 1 ||
+		constraints[0].A != pathdom.PathKey("clone-i") ||
+		constraints[0].C != pathdom.PathKey("clone-j") ||
+		constraints[0].K != -1 {
+		t.Fatalf("original relational constraints mutated through clone: %#v", constraints)
+	}
+	if obligations := original.OpenTypestateObligations(); len(obligations) != 1 ||
+		obligations[0].Resource != typestateResource ||
+		obligations[0].Current != typestate.State("open") {
+		t.Fatalf("original typestate mutated through clone: %#v", obligations)
+	}
+	if !original.HasStoreRelation(StoreRelation{Source: pathdom.PathKey("clone-src"), Into: pathdom.PathKey("clone-dst")}) ||
+		original.HasStoreRelation(cloneOnlyStoreRelation) {
+		t.Fatalf("original store-relation lane mutated through clone")
 	}
 	if !original.IsTableFrozen(fx.freezeID) || original.IsTableFrozen(cloneOnlyFrozenID) {
 		t.Fatalf("original frozen-table lane mutated through clone")
@@ -607,6 +644,22 @@ func TestStateCloneIndependenceAcrossLanes(t *testing.T) {
 	}
 	if got := clone.ReadPlacement(fx.escapeID); got != placement.Unknown {
 		t.Fatalf("clone placement = %v, want unknown", got)
+	}
+	if got, ok := clone.ReadLenFloor(ks, fx.pathKey); !ok || got != 5 {
+		t.Fatalf("clone len floor = %d/%v, want 5", got, ok)
+	}
+	if got, ok := clone.ReadNumFloor(ks, fx.pathKey); !ok || got != 7 {
+		t.Fatalf("clone num floor = %d/%v, want 7", got, ok)
+	}
+	if constraints := clone.RelConstraints().Constraints; len(constraints) != 2 {
+		t.Fatalf("clone relational constraints = %#v, want original plus clone-only", constraints)
+	}
+	if obligations := clone.OpenTypestateObligations(); len(obligations) != 0 {
+		t.Fatalf("clone typestate obligations = %#v, want closed", obligations)
+	}
+	if !clone.HasStoreRelation(StoreRelation{Source: pathdom.PathKey("clone-src"), Into: pathdom.PathKey("clone-dst")}) ||
+		!clone.HasStoreRelation(cloneOnlyStoreRelation) {
+		t.Fatalf("clone store-relation updates did not stick")
 	}
 	if !clone.IsTableFrozen(fx.freezeID) || !clone.IsTableFrozen(cloneOnlyFrozenID) {
 		t.Fatalf("clone frozen-table update did not stick")
@@ -1668,16 +1721,16 @@ type stateLawFixture struct {
 	staticKey     pathdom.PathKey
 	staticHeapKey keyspace.Key
 	dynamicKey    dynamicindex.Key
-	heapID      identity.ID
-	effectKey   effectdelta.Key
-	escapeID    identity.ID
-	freezeID    identity.ID
-	channelFact channelselectfact.Fact
-	proof       pathevidence.BranchProof
-	present     product.Value
-	absent      product.Value
-	dynamicFact dynamicindex.Fact
-	effectDelta effectdelta.Value
+	heapID        identity.ID
+	effectKey     effectdelta.Key
+	escapeID      identity.ID
+	freezeID      identity.ID
+	channelFact   channelselectfact.Fact
+	proof         pathevidence.BranchProof
+	present       product.Value
+	absent        product.Value
+	dynamicFact   dynamicindex.Fact
+	effectDelta   effectdelta.Value
 }
 
 func stateLawFixtureFor(reg *axis.Registry, ks *keyspace.KeySpace) stateLawFixture {
@@ -1722,16 +1775,16 @@ func stateLawFixtureFor(reg *axis.Registry, ks *keyspace.KeySpace) stateLawFixtu
 		staticKey:     staticKey,
 		staticHeapKey: staticHeapKey,
 		dynamicKey:    dynamicKey,
-		heapID:      heapID,
-		effectKey:   effectKey,
-		escapeID:    escapeID,
-		freezeID:    freezeID,
-		channelFact: channelFact,
-		proof:       proof,
-		present:     present,
-		absent:      absent,
-		dynamicFact: dynamicFact,
-		effectDelta: effectDelta,
+		heapID:        heapID,
+		effectKey:     effectKey,
+		escapeID:      escapeID,
+		freezeID:      freezeID,
+		channelFact:   channelFact,
+		proof:         proof,
+		present:       present,
+		absent:        absent,
+		dynamicFact:   dynamicFact,
+		effectDelta:   effectDelta,
 	}
 }
 

@@ -22,7 +22,7 @@ func (f sourceValueFunc) ValueOfSource(point cfg.Point, source factflow.ValueSou
 	return f(point, source, in, read)
 }
 
-func TestSourceValueAtBoundaryDoesNotUseRootDeclarationRecovery(t *testing.T) {
+func TestSourceValueAtBoundaryDoesNotUseExplanationRecovery(t *testing.T) {
 	reg := standard.Registry()
 	graph := cfg.New()
 	decl := graph.AddNode(cfg.NodeAssign)
@@ -77,9 +77,9 @@ func TestSourceValueAtBoundaryDoesNotUseRootDeclarationRecovery(t *testing.T) {
 		t.Fatalf("SourceValueAtBoundary = %v, want weak solved source %v", got, weakUse)
 	}
 
-	recovered, ok := result.SourceValueWithRootDeclarationRecoveryAtBoundary(use, useSource)
+	recovered, ok := result.SourceValueForExplanationAtBoundary(use, useSource)
 	if !ok {
-		t.Fatal("SourceValueWithRootDeclarationRecoveryAtBoundary returned !ok")
+		t.Fatal("SourceValueForExplanationAtBoundary returned !ok")
 	}
 	if !product.Equal(reg, recovered, concreteDeclaration) {
 		t.Fatalf("declaration recovery = %v, want declaration value %v", recovered, concreteDeclaration)

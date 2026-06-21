@@ -127,7 +127,7 @@ func ordinaryAssignmentRHSValue(result *body.Result, point cfg.Point, fact seman
 	if !ok {
 		return product.Value{}, false
 	}
-	return result.SourceValueWithRootDeclarationRecoveryAtBoundary(point, valueSource)
+	return result.SourceValueForExplanationAtBoundary(point, valueSource)
 }
 
 func ordinaryAssignmentRHSExpr(fact semantics.OrdinaryAssignmentFact) ast.Expr {

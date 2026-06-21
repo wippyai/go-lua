@@ -436,7 +436,7 @@ func boundaryCallResultReader(callPoint cfg.Point, resultIndex int) boundaryValu
 		if !ok {
 			return product.Value{}, false
 		}
-		return result.SourceValueWithRootDeclarationRecoveryAtBoundary(point, source)
+		return result.SourceValueForExplanationAtBoundary(point, source)
 	}
 }
 
@@ -709,7 +709,7 @@ func boundaryCallArgumentValueSourceType(result *body.Result, point cfg.Point, s
 	if !ok {
 		return nil, false
 	}
-	value, ok := result.SourceValueWithRootDeclarationRecoveryAtBoundary(point, source)
+	value, ok := result.SourceValueForExplanationAtBoundary(point, source)
 	if !ok {
 		return nil, false
 	}
