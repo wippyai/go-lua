@@ -321,6 +321,26 @@ var soundnessProbes = []soundnessProbe{
 		end return f`,
 	},
 	{
+		// A concrete-valued map (here a parameter, whose value type is the declared
+		// number, not the empty-literal Never) is value-invariant under aliasing: it
+		// cannot widen its value type covariantly, since a write through the wider
+		// alias would store a value the narrow map forbids. canWidenMapTo now requires
+		// invariance for a concrete value type, allowing covariant widening only for a
+		// fresh empty map (value Never).
+		name:  "covariant-map-value-concrete",
+		fixed: true,
+		src: `local function f(narrow: { [string]: number }): number
+			local wide: { [string]: number | string } = narrow
+			wide["k"] = "boom"
+			local v = narrow["k"]
+			if v then
+				local n: number = v
+				return n
+			end
+			return 0
+		end return f`,
+	},
+	{
 		// A fresh literal passed to a callee that mutates it covariantly must not
 		// launder the write-through: narrow.x becomes a string at runtime.
 		name:  "fresh-literal-interproc-covariance",

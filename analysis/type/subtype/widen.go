@@ -149,8 +149,17 @@ func (c *checker) canWidenMapTo(narrow, wide *typ.Map, depth int) bool {
 	if !c.check(narrow.Key, wide.Key, depth+1) || !c.check(wide.Key, narrow.Key, depth+1) {
 		return false
 	}
-	return c.check(narrow.Value, wide.Value, depth+1) ||
-		c.canWidenTo(narrow.Value, wide.Value, depth+1)
+	// A map is mutable, so widening its value type lets a write through the wider
+	// alias store a value the narrow map's type forbids (unsound covariance). A
+	// covariant value widen is therefore sound only for a fresh map with no concrete
+	// values yet (value Never); a map carrying a concrete value type must match it
+	// invariantly, exactly as checkMap requires.
+	if typ.IsNever(narrow.Value) {
+		return c.check(narrow.Value, wide.Value, depth+1) ||
+			c.canWidenTo(narrow.Value, wide.Value, depth+1)
+	}
+	return c.check(narrow.Value, wide.Value, depth+1) &&
+		c.check(wide.Value, narrow.Value, depth+1)
 }
 
 // canWidenRecordToMap reports whether a fresh record literal widens to a map
