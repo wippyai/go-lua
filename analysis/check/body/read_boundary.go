@@ -8,6 +8,7 @@ import (
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
+	"github.com/wippyai/go-lua/analysis/domain/typestate"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/evidence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
@@ -185,6 +186,17 @@ func (r *Result) TypestateResourceKeyAtBoundary(point cfg.Point, p pathdom.Path)
 		return stateKey, true
 	}
 	return in.CanonicalTypestateResourceKey(r.visibility.KeySpace(), stateKey), true
+}
+
+// TypestateResourceAtBoundary returns the canonical typestate resource for a
+// protocol target at point. This keeps the conversion from state keys to
+// typestate resource IDs inside the analysis boundary instead of diagnostics.
+func (r *Result) TypestateResourceAtBoundary(point cfg.Point, p pathdom.Path, protocol typestate.Protocol) (typestate.Resource, bool) {
+	key, ok := r.TypestateResourceKeyAtBoundary(point, p)
+	if !ok {
+		return typestate.Resource{}, false
+	}
+	return state.TypestateResource(key, protocol), true
 }
 
 // PathsEquivalentAtBoundary reports whether the solved boundary state proves

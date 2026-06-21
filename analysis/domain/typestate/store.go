@@ -13,10 +13,19 @@ type Protocol string
 // State identifies one protocol state.
 type State string
 
+// ResourceID is the opaque identity for one tracked resource. Engine layers may
+// derive it from canonical state keys, heap identities, or future resource
+// identities; the typestate lattice only requires stable comparability.
+type ResourceID string
+
+func (id ResourceID) String() string {
+	return string(id)
+}
+
 // Resource identifies one tracked abstract resource. The analyzer should build
 // this from canonical identity/path facts, not from source spelling.
 type Resource struct {
-	ID       string
+	ID       ResourceID
 	Protocol Protocol
 }
 

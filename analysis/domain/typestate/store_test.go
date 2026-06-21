@@ -13,6 +13,19 @@ func TestAcquireTransitionCloseClearsObligationForAnyProtocol(t *testing.T) {
 	}
 }
 
+func TestResourceIDIsOpaqueToTypestateStore(t *testing.T) {
+	resource := Resource{ID: "not a path key and not parsed", Protocol: "handle"}
+	got := Empty().Acquire(resource, "open", Obligation{Final: "closed"})
+
+	obligations := got.OpenObligations()
+	if len(obligations) != 1 {
+		t.Fatalf("open obligations = %#v, want one opaque resource obligation", obligations)
+	}
+	if obligations[0].Resource.ID.String() != "not a path key and not parsed" {
+		t.Fatalf("resource id = %q, want original opaque spelling", obligations[0].Resource.ID)
+	}
+}
+
 func TestJoinKeepsObligationWhenAnyBranchMayReturnOpen(t *testing.T) {
 	tx := Resource{ID: "root.tx", Protocol: "transaction"}
 	open := Empty().Acquire(tx, "active", Obligation{Final: "finished"})

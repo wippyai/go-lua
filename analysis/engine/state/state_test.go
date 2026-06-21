@@ -200,7 +200,7 @@ func TestTypestateStateLaneTracksOpenClosedAndEscapedResources(t *testing.T) {
 func TestTypestateResourceUsesValidatedStateKeyIdentity(t *testing.T) {
 	target := testStateKey(t, pathdom.PathKey("sym12@1.tx"))
 	resource := TypestateResource(target, typestate.Protocol("transaction"))
-	if resource.ID != target.String() || resource.Protocol != typestate.Protocol("transaction") {
+	if resource.ID != typestate.ResourceID(target.String()) || resource.Protocol != typestate.Protocol("transaction") {
 		t.Fatalf("resource = %#v, want state key %q and protocol transaction", resource, target)
 	}
 }

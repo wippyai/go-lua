@@ -10,7 +10,7 @@ import (
 // protocol. Callers are responsible for deriving ID from analysis facts rather
 // than source spelling.
 func TypestateResource(target pathaddr.StateKey, protocol typestate.Protocol) typestate.Resource {
-	return typestate.Resource{ID: target.String(), Protocol: protocol}
+	return typestate.Resource{ID: typestate.ResourceID(target.String()), Protocol: protocol}
 }
 
 // CanonicalTypestateResource returns the deterministic resource identity for a
