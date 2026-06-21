@@ -52,7 +52,7 @@ func dominantRuntimeTypeGuard(result *body.Result, point cfg.Point, p path.Path,
 			if !ok || cond != rejectCond {
 				continue
 			}
-			if !reachable(graph, succ, point) {
+			if !cfg.PointCanReach(graph, succ, point) {
 				return true
 			}
 		}
@@ -69,31 +69,4 @@ func runtimeTypeGuardRejectCond(kind branchcond.CheckKind) (bool, bool) {
 	default:
 		return false, false
 	}
-}
-
-func reachable(graph cfg.Graph, from, to cfg.Point) bool {
-	if graph == nil {
-		return false
-	}
-	if from == to {
-		return true
-	}
-	seen := map[cfg.Point]struct{}{from: {}}
-	stack := []cfg.Point{from}
-	for len(stack) != 0 {
-		last := len(stack) - 1
-		point := stack[last]
-		stack = stack[:last]
-		for _, succ := range graph.Successors(point) {
-			if succ == to {
-				return true
-			}
-			if _, ok := seen[succ]; ok {
-				continue
-			}
-			seen[succ] = struct{}{}
-			stack = append(stack, succ)
-		}
-	}
-	return false
 }
