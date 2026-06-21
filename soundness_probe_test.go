@@ -299,6 +299,28 @@ var soundnessProbes = []soundnessProbe{
 		end return f`,
 	},
 	{
+		// A covariant MAP-value alias (the one container shape the covariant-exposure
+		// machinery does not widen): {[K]:number} widens to {[K]:number|string} via
+		// canWidenMapTo on the fresh map, but the source map's value witness is not
+		// widened, so a write through the wide alias stores a string and a nil-guarded
+		// read of the narrow map still trusts number. Found by the semantics-leak sweep
+		// (covariant-exposure Kind selector handles array/record, drops map).
+		name:  "covariant-map-value-alias",
+		fixed: false,
+		src: `local function f(): number
+			local narrow: { [string]: number } = {}
+			narrow["k"] = 1
+			local wide: { [string]: number | string } = narrow
+			wide["k"] = "boom"
+			local v = narrow["k"]
+			if v then
+				local n: number = v
+				return n
+			end
+			return 0
+		end return f`,
+	},
+	{
 		// A fresh literal passed to a callee that mutates it covariantly must not
 		// launder the write-through: narrow.x becomes a string at runtime.
 		name:  "fresh-literal-interproc-covariance",
