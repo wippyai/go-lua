@@ -325,6 +325,24 @@ func (r *Result) DiffProvesIndexLELength(point cfg.Point, indexPath pathdom.Path
 	return solver.DefaultPortfolio().Entails(asserted, goal) == decision.Valid
 }
 
+// IndexReadSafeAtBoundary reports whether the diagnostic boundary proves a Lua
+// array index expression is both positive and within array bounds:
+// indexCoeff*value(indexPath)+indexOffset >= 1 and <= len(arrayPath).
+func (r *Result) IndexReadSafeAtBoundary(point cfg.Point, indexPath pathdom.Path, indexCoeff int64, indexOffset int64, arrayPath pathdom.Path) bool {
+	if indexCoeff <= 0 {
+		return false
+	}
+	inRange := r.DiffProvesIndexLELength(point, indexPath, indexCoeff, indexOffset, arrayPath)
+	if !inRange && indexCoeff == 1 && indexOffset == 0 {
+		inRange = r.IndexInRangeAtBoundary(point, indexPath, arrayPath)
+	}
+	if !inRange {
+		return false
+	}
+	floor, ok := r.NumericFloorAtBoundary(point, indexPath)
+	return ok && indexCoeff*floor+indexOffset >= 1
+}
+
 // NumericFloorAtBoundary returns the proven numeric lower bound for p at point:
 // a returned (lo, true) asserts value(p) >= lo at that boundary.
 func (r *Result) NumericFloorAtBoundary(point cfg.Point, p pathdom.Path) (int64, bool) {

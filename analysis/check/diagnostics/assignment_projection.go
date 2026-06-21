@@ -505,19 +505,7 @@ func symbolicIndexReadProvenInRange(result *body.Result, point cfg.Point, index 
 	if !ok || basePath.IsEmpty() {
 		return false
 	}
-	// Upper bound: coeff*base + offset <= len(container). The difference-logic
-	// solver proves transitive, cross-variable, and scaled bounds; the simple
-	// index-in-range proof is the fast path for a bare index.
-	inRange := result.DiffProvesIndexLELength(point, basePath, coeff, offset, containerPath)
-	if !inRange && coeff == 1 && offset == 0 {
-		inRange = result.IndexInRangeAtBoundary(point, basePath, containerPath)
-	}
-	if !inRange {
-		return false
-	}
-	// Positivity: coeff*base + offset >= 1.
-	floor, ok := result.NumericFloorAtBoundary(point, basePath)
-	return ok && coeff > 0 && coeff*floor+offset >= 1
+	return result.IndexReadSafeAtBoundary(point, basePath, coeff, offset, containerPath)
 }
 
 // indexLinearTerm parses an index expression into a base path with a positive

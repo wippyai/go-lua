@@ -536,6 +536,48 @@ end`)
 		t.Fatalf("index numeric floor = %d/%v, want >=1 at point %d; floors=%#v",
 			floor, ok, point, st.NumFloorsSnapshot(result.KeySpace()).Floors)
 	}
+	if !result.IndexReadSafeAtBoundary(point, indexPath, 1, 0, arrayPath) {
+		t.Fatalf("index read %s[%s] not marked safe at point %d despite range and positive proofs", arrayPath, indexPath, point)
+	}
+}
+
+func TestCheckFunctionUpperBoundWithoutPositiveFloorDoesNotMarkIndexReadSafe(t *testing.T) {
+	reg := standard.Registry()
+	fn := parseFunction(t, `
+function read(xs: {number}, i: number): ()
+	if i <= #xs then
+		local v: number? = xs[i]
+	end
+end`)
+
+	result, err := CheckFunction(fn, Config{Registry: reg})
+	if err != nil {
+		t.Fatalf("CheckFunction: %v", err)
+	}
+	point, expr := requireLocalAssignmentExprByName(t, result, "v")
+	attr, ok := expr.(*ast.AttrGetExpr)
+	if !ok {
+		t.Fatalf("v source = %T, want indexed attr", expr)
+	}
+	arrayPath, ok := result.ExpressionPath(attr.Object)
+	if !ok {
+		t.Fatal("array expression path not found")
+	}
+	indexPath, ok := result.ExpressionPath(attr.Key)
+	if !ok {
+		t.Fatal("index expression path not found")
+	}
+	if !result.IndexInRangeAtBoundary(point, indexPath, arrayPath) {
+		st, _ := result.StateAt(point)
+		t.Fatalf("missing upper-bound proof for %s <= len(%s) at point %d; proofs=%#v",
+			indexPath, arrayPath, point, st.BranchProofsSnapshot(result.KeySpace()).Proofs)
+	}
+	if floor, ok := result.NumericFloorAtBoundary(point, indexPath); ok && floor >= 1 {
+		t.Fatalf("unexpected positive floor for %s at point %d: %d", indexPath, point, floor)
+	}
+	if result.IndexReadSafeAtBoundary(point, indexPath, 1, 0, arrayPath) {
+		t.Fatalf("index read %s[%s] marked safe with upper-bound proof but no positive floor", arrayPath, indexPath)
+	}
 }
 
 func TestCheckFunctionNumericForLengthLimitCarriesRangeAndPositiveProofs(t *testing.T) {
@@ -588,6 +630,9 @@ end`)
 		t.Fatalf("index numeric floor = %d/%v, want >=1 at point %d; floors=%#v",
 			floor, ok, point, st.NumFloorsSnapshot(result.KeySpace()).Floors)
 	}
+	if !result.IndexReadSafeAtBoundary(point, indexPath, 1, 0, arrayPath) {
+		t.Fatalf("index read %s[%s] not marked safe at point %d despite range and positive proofs", arrayPath, indexPath, point)
+	}
 }
 
 func TestCheckFunctionReverseNumericForLengthInitCarriesRangeAndPositiveProofs(t *testing.T) {
@@ -639,6 +684,9 @@ end`)
 		st, _ := result.StateAt(point)
 		t.Fatalf("index numeric floor = %d/%v, want >=1 at point %d; floors=%#v",
 			floor, ok, point, st.NumFloorsSnapshot(result.KeySpace()).Floors)
+	}
+	if !result.IndexReadSafeAtBoundary(point, indexPath, 1, 0, arrayPath) {
+		t.Fatalf("index read %s[%s] not marked safe at point %d despite range and positive proofs", arrayPath, indexPath, point)
 	}
 }
 
