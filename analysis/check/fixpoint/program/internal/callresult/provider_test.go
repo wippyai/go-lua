@@ -1550,15 +1550,7 @@ func assertCallOutcomeResults(t *testing.T, reg *axis.Registry, got []callpayloa
 
 func assertEmptyOutcome(t *testing.T, got callpayload.CallOutcome) {
 	t.Helper()
-	if len(got.Results) != 0 ||
-		!got.NormalReturnFacts.Empty() ||
-		len(got.HeapTableObjects) != 0 ||
-		len(got.ParamObligations) != 0 ||
-		len(got.ParamPathRefinements) != 0 ||
-		len(got.ParamConditions) != 0 ||
-		len(got.ParamPathRelations) != 0 ||
-		len(got.ReturnConditionRefinements) != 0 ||
-		len(got.ReturnPresenceRelations) != 0 {
+	if !got.Empty() {
 		t.Fatalf("provider returned non-empty outcome: %#v", got)
 	}
 }

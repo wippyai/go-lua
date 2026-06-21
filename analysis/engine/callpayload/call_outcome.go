@@ -53,6 +53,32 @@ type CallOutcome struct {
 	ParamExposures             []CallParamExposure
 }
 
+// Empty reports whether the outcome carries no result, authority, diagnostic,
+// exposure, or post-return evidence.
+func (o CallOutcome) Empty() bool {
+	return len(o.Results) == 0 &&
+		!o.PostReturnAuthority &&
+		!o.HasPostReturnEvidence() &&
+		len(o.ParamObligations) == 0 &&
+		len(o.ParamExposures) == 0
+}
+
+// HasPostReturnEvidence reports whether the outcome carries caller-visible
+// facts that hold after a normal return. Result slots are intentionally
+// separate because weak top/any/unknown results do not establish authority.
+func (o CallOutcome) HasPostReturnEvidence() bool {
+	return !o.NormalReturnFacts.Empty() ||
+		len(o.HeapTableObjects) != 0 ||
+		len(o.Placements) != 0 ||
+		len(o.ParamPathRefinements) != 0 ||
+		len(o.ParamLengthFloors) != 0 ||
+		len(o.ParamPathInvalidations) != 0 ||
+		len(o.ParamConditions) != 0 ||
+		len(o.ParamPathRelations) != 0 ||
+		len(o.ReturnConditionRefinements) != 0 ||
+		len(o.ReturnPresenceRelations) != 0
+}
+
 // CallParamExposure records that the callee exposes one explicit argument (or a
 // member sub-path of one) through a wider mutable view the caller cannot track
 // writes back through: the parameter is aliased, at a wider mutable contract
