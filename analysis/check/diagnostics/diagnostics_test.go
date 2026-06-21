@@ -13,11 +13,13 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/typestate"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
+	"github.com/wippyai/go-lua/analysis/lua/branchcond"
 	"github.com/wippyai/go-lua/analysis/module/manifest"
 	"github.com/wippyai/go-lua/analysis/module/signature"
 	"github.com/wippyai/go-lua/analysis/module/signaturelookup"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
 	"github.com/wippyai/go-lua/analysis/type/access"
+	"github.com/wippyai/go-lua/analysis/type/channelselect"
 	typeformat "github.com/wippyai/go-lua/analysis/type/format"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
@@ -2575,6 +2577,48 @@ end
 	if !containsDiagnosticMessage(messages, "cannot assign event.id because it is string, not number") ||
 		!containsDiagnosticMessage(messages, "cannot assign timer.elapsed because it is number, not string") {
 		t.Fatalf("diagnostics = %#v, want string->number and number->string channel payload mismatches", messages)
+	}
+}
+
+func TestChannelSelectCaseIndexPreservesDuplicateAndReversedMatches(t *testing.T) {
+	selected := path.Path{Root: "selected"}
+	result := selected.Field("result")
+	resultChannel := result.Field(channelselect.ResultChannelField)
+	primary := path.Path{Root: "primary"}
+	timers := path.Path{Root: "timers"}
+	otherResult := path.Path{Root: "other"}.Field("result")
+
+	index := newChannelSelectCaseIndex([]selectInfo{
+		{
+			result: result,
+			cases: []selectCase{
+				{path: primary, name: "primary receive"},
+				{path: primary, name: "primary send"},
+				{path: timers, name: "timers"},
+			},
+		},
+		{
+			result: otherResult,
+			cases:  []selectCase{{path: primary, name: "later primary"}},
+		},
+	})
+
+	selectIndex, cases, ok := index.casesForCheck(branchcond.Check{
+		Kind:      branchcond.CheckPathEqual,
+		Path:      primary,
+		OtherPath: resultChannel,
+	})
+	if !ok || selectIndex != 0 || len(cases) != 2 || cases[0] != 0 || cases[1] != 1 {
+		t.Fatalf("reversed primary match = select %d cases %v ok %v, want first select duplicate cases [0 1]", selectIndex, cases, ok)
+	}
+
+	selectIndex, cases, ok = index.casesForCheck(branchcond.Check{
+		Kind:      branchcond.CheckPathEqual,
+		Path:      resultChannel,
+		OtherPath: timers,
+	})
+	if !ok || selectIndex != 0 || len(cases) != 1 || cases[0] != 2 {
+		t.Fatalf("direct timers match = select %d cases %v ok %v, want select 0 case [2]", selectIndex, cases, ok)
 	}
 }
 

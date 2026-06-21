@@ -33,6 +33,18 @@ type exhaustivenessEvidence struct {
 	hasDefault    bool
 }
 
+type channelSelectCaseIndex map[channelSelectCaseKey][]channelSelectCaseMatch
+
+type channelSelectCaseKey struct {
+	resultChannel pathdom.PathKey
+	channel       pathdom.PathKey
+}
+
+type channelSelectCaseMatch struct {
+	selectIndex int
+	caseIndex   int
+}
+
 func (p channelSelectExhaustiveness) Produce(result *body.Result) []diagnostic.Diagnostic {
 	graph := result.Graph()
 	if graph == nil {
@@ -46,6 +58,7 @@ func (p channelSelectExhaustiveness) Produce(result *body.Result) []diagnostic.D
 	if len(branches) == 0 {
 		return nil
 	}
+	cases := newChannelSelectCaseIndex(selects)
 	nested := nestedElseIfStatements(branches)
 	byIf := make(map[*ast.IfStmt]semantics.BranchConditionFact, len(branches))
 	for _, branch := range branches {
@@ -58,7 +71,7 @@ func (p channelSelectExhaustiveness) Produce(result *body.Result) []diagnostic.D
 		if branch.If == nil || nested[branch.If] || !hasElseIf(branch.If) {
 			continue
 		}
-		if diag, ok := channelSelectChainDiagnostic(result, branch.If, byIf, selects); ok {
+		if diag, ok := channelSelectChainDiagnostic(result, branch.If, byIf, selects, cases); ok {
 			out = append(out, diag)
 		}
 	}
@@ -147,6 +160,7 @@ func channelSelectChainDiagnostic(
 	head *ast.IfStmt,
 	byIf map[*ast.IfStmt]semantics.BranchConditionFact,
 	selects []selectInfo,
+	cases channelSelectCaseIndex,
 ) (diagnostic.Diagnostic, bool) {
 	chain := ifElseIfChain(head)
 	selected := -1
@@ -156,7 +170,7 @@ func channelSelectChainDiagnostic(
 		if !ok || branch.Check.Kind != branchcond.CheckPathEqual {
 			continue
 		}
-		selectIndex, caseIndexes, ok := channelSelectCasesForCheck(branch.Check, selects)
+		selectIndex, caseIndexes, ok := cases.casesForCheck(branch.Check)
 		if !ok {
 			continue
 		}
@@ -215,23 +229,46 @@ func ifElseIfChain(head *ast.IfStmt) []*ast.IfStmt {
 	return chain
 }
 
-func channelSelectCasesForCheck(
-	check branchcond.Check,
-	selects []selectInfo,
-) (int, []int, bool) {
+func newChannelSelectCaseIndex(selects []selectInfo) channelSelectCaseIndex {
+	out := make(channelSelectCaseIndex)
 	for selectIndex, info := range selects {
 		resultChannel := info.result.Field(channelselect.ResultChannelField)
-		var caseIndexes []int
-		for caseIndex, c := range info.cases {
-			if pathsMatchPair(check.Path, check.OtherPath, resultChannel, c.path) {
-				caseIndexes = append(caseIndexes, caseIndex)
-			}
+		resultKey := resultChannel.Key()
+		if resultKey == "" {
+			continue
 		}
-		if len(caseIndexes) > 0 {
-			return selectIndex, caseIndexes, true
+		for caseIndex, c := range info.cases {
+			channelKey := c.path.Key()
+			if channelKey == "" {
+				continue
+			}
+			key := channelSelectCaseKey{resultChannel: resultKey, channel: channelKey}
+			out[key] = append(out[key], channelSelectCaseMatch{
+				selectIndex: selectIndex,
+				caseIndex:   caseIndex,
+			})
 		}
 	}
-	return -1, nil, false
+	return out
+}
+
+func (idx channelSelectCaseIndex) casesForCheck(check branchcond.Check) (int, []int, bool) {
+	matches := idx[channelSelectCaseKey{resultChannel: check.Path.Key(), channel: check.OtherPath.Key()}]
+	if len(matches) == 0 {
+		matches = idx[channelSelectCaseKey{resultChannel: check.OtherPath.Key(), channel: check.Path.Key()}]
+	}
+	if len(matches) == 0 {
+		return -1, nil, false
+	}
+	selected := matches[0].selectIndex
+	caseIndexes := make([]int, 0, len(matches))
+	for _, match := range matches {
+		if match.selectIndex != selected {
+			break
+		}
+		caseIndexes = append(caseIndexes, match.caseIndex)
+	}
+	return selected, caseIndexes, len(caseIndexes) > 0
 }
 
 func appendUniqueString(values []string, value string) []string {
@@ -241,11 +278,6 @@ func appendUniqueString(values []string, value string) []string {
 		}
 	}
 	return append(values, value)
-}
-
-func pathsMatchPair(left, right, wantLeft, wantRight pathdom.Path) bool {
-	return (left.Equal(wantLeft) && right.Equal(wantRight)) ||
-		(left.Equal(wantRight) && right.Equal(wantLeft))
 }
 
 func newExhaustivenessDiagnostic(head *ast.IfStmt, evidence exhaustivenessEvidence) diagnostic.Diagnostic {
