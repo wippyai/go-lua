@@ -6,6 +6,7 @@ import (
 
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
+	"github.com/wippyai/go-lua/analysis/internal/keycodec"
 )
 
 // Format reproduces the exact old PathKey string for a key. It is the shadow
@@ -71,7 +72,7 @@ func encodeNamedRoot(root string) string {
 // (root, segments) in the plain-named space.
 func (ks *KeySpace) namedRootNeedsEncoding(root string, segs SegmentsID) bool {
 	raw := root + ks.suffix(segs)
-	if looksEncodedNamedRootKey(raw) || looksStableSymbolRootSuffix(raw) || looksResolverRootSuffix(raw) {
+	if keycodec.LooksEncodedNamedRootKey(raw) || keycodec.LooksStableSymbolRootSuffix(raw) || keycodec.LooksResolverRootSuffix(raw) {
 		return true
 	}
 	if symbolPathKeyParses(raw) {

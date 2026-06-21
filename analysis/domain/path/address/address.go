@@ -3,6 +3,7 @@ package address
 import (
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
+	"github.com/wippyai/go-lua/analysis/internal/keycodec"
 	"github.com/wippyai/go-lua/analysis/symbol"
 )
 
@@ -59,7 +60,7 @@ func StableFromKey(key pathdom.PathKey) (Stable, bool) {
 		return stableOfRootOwnedSegments(root, segments)
 	}
 	s := string(key)
-	if looksEncodedNamedRootKey(s) || looksStableSymbolRootSuffix(s) || looksResolverRootSuffix(s) {
+	if keycodec.LooksEncodedNamedRootKey(s) || keycodec.LooksStableSymbolRootSuffix(s) || keycodec.LooksResolverRootSuffix(s) {
 		return Stable{}, false
 	}
 	parsed, ok := parsePlainNamedRootSuffix(key)

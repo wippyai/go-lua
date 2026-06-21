@@ -60,7 +60,7 @@ func parseEncodedNamedRootSuffix(key string) (parsedRootSuffix, bool) {
 	length := 0
 	for i < len(key) {
 		ch := key[i]
-		if ch < '0' || ch > '9' {
+		if !keycodec.IsDecimalDigit(ch) {
 			break
 		}
 		digit := int(ch - '0')
@@ -88,7 +88,7 @@ func parsePlainNamedRootSuffix(key pathdom.PathKey) (parsedRootSuffix, bool) {
 	}
 	if s[0] == '$' {
 		end := 1
-		for end < len(s) && s[end] >= '0' && s[end] <= '9' {
+		for end < len(s) && keycodec.IsDecimalDigit(s[end]) {
 			end++
 		}
 		if end == 1 {
@@ -98,7 +98,7 @@ func parsePlainNamedRootSuffix(key pathdom.PathKey) (parsedRootSuffix, bool) {
 	}
 	if strings.HasPrefix(s, "ret[") {
 		end := 4
-		for end < len(s) && s[end] >= '0' && s[end] <= '9' {
+		for end < len(s) && keycodec.IsDecimalDigit(s[end]) {
 			end++
 		}
 		if end == 4 || end >= len(s) || s[end] != ']' {

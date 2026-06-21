@@ -2,7 +2,6 @@ package address
 
 import (
 	"strconv"
-	"strings"
 
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
@@ -60,7 +59,7 @@ func namedRootKey(root string, segments []segment.Segment) pathdom.PathKey {
 
 func namedRootNeedsEncoding(root string, segments []segment.Segment, key pathdom.PathKey) bool {
 	s := string(key)
-	if looksEncodedNamedRootKey(s) || looksStableSymbolRootSuffix(s) || looksResolverRootSuffix(s) {
+	if keycodec.LooksEncodedNamedRootKey(s) || keycodec.LooksStableSymbolRootSuffix(s) || keycodec.LooksResolverRootSuffix(s) {
 		return true
 	}
 	if _, _, ok := ParseSymbolPathKey(key); ok {
@@ -83,43 +82,6 @@ func parseEncodedNamedRootKey(key string) (string, []segment.Segment, bool) {
 		return "", nil, false
 	}
 	return parsed.root, parsed.segments, true
-}
-
-func looksEncodedNamedRootKey(s string) bool {
-	if len(s) < 3 || s[0] != 'n' || !isDecimalDigit(s[1]) {
-		return false
-	}
-	i := 2
-	for i < len(s) && isDecimalDigit(s[i]) {
-		i++
-	}
-	return i < len(s) && s[i] == ':'
-}
-
-func looksStableSymbolRootSuffix(s string) bool {
-	if len(s) < 2 || s[0] != 's' || !isDecimalDigit(s[1]) {
-		return false
-	}
-	i := 2
-	for i < len(s) && isDecimalDigit(s[i]) {
-		i++
-	}
-	return i == len(s) || s[i] == '.' || s[i] == '['
-}
-
-func looksResolverRootSuffix(s string) bool {
-	if !strings.HasPrefix(s, "sym") || len(s) < 4 || !isDecimalDigit(s[3]) {
-		return false
-	}
-	i := 4
-	for i < len(s) && isDecimalDigit(s[i]) {
-		i++
-	}
-	return i == len(s) || s[i] == '@' || s[i] == '.' || s[i] == '['
-}
-
-func isDecimalDigit(ch byte) bool {
-	return ch >= '0' && ch <= '9'
 }
 
 func sameSegments(a, b []segment.Segment) bool {

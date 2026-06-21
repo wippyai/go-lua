@@ -83,3 +83,36 @@ func TestParsePositiveIntAfterAt(t *testing.T) {
 		}
 	}
 }
+
+func TestRootSpellingPredicates(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   string
+		encoded bool
+		stable  bool
+		resolve bool
+	}{
+		{name: "encoded named", input: "n3:foo.bar", encoded: true},
+		{name: "encoded prefix only", input: "n3:", encoded: true},
+		{name: "bad encoded no length", input: "n:foo"},
+		{name: "stable bare", input: "s42", stable: true},
+		{name: "stable field", input: "s42.field", stable: true},
+		{name: "stable index", input: "s42[1]", stable: true},
+		{name: "stable bad suffix", input: "s42@1"},
+		{name: "resolver bare", input: "sym42", resolve: true},
+		{name: "resolver version", input: "sym42@3.field", resolve: true},
+		{name: "resolver field", input: "sym42.field", resolve: true},
+		{name: "resolver bad prefix", input: "sy42.field"},
+	}
+	for _, tt := range tests {
+		if got := LooksEncodedNamedRootKey(tt.input); got != tt.encoded {
+			t.Fatalf("%s: LooksEncodedNamedRootKey(%q) = %v, want %v", tt.name, tt.input, got, tt.encoded)
+		}
+		if got := LooksStableSymbolRootSuffix(tt.input); got != tt.stable {
+			t.Fatalf("%s: LooksStableSymbolRootSuffix(%q) = %v, want %v", tt.name, tt.input, got, tt.stable)
+		}
+		if got := LooksResolverRootSuffix(tt.input); got != tt.resolve {
+			t.Fatalf("%s: LooksResolverRootSuffix(%q) = %v, want %v", tt.name, tt.input, got, tt.resolve)
+		}
+	}
+}

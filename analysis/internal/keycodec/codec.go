@@ -3,6 +3,11 @@ package keycodec
 
 import "strings"
 
+// IsDecimalDigit reports whether ch is an ASCII protocol digit.
+func IsDecimalDigit(ch byte) bool {
+	return ch >= '0' && ch <= '9'
+}
+
 // PrefixedDecimalKey returns prefix followed by value in base 10 and suffix.
 func PrefixedDecimalKey(prefix byte, value uint64, suffix string) string {
 	var buf [21]byte
@@ -37,7 +42,7 @@ func ParseUnsignedDecimal(s string) (uint64, bool) {
 	var n uint64
 	for i := 0; i < len(s); i++ {
 		ch := s[i]
-		if ch < '0' || ch > '9' {
+		if !IsDecimalDigit(ch) {
 			return 0, false
 		}
 		digit := uint64(ch - '0')
@@ -58,7 +63,7 @@ func ParsePrefixedNonZeroDecimal(s, prefix string) (uint64, int, bool) {
 	i := len(prefix)
 	for i < len(s) {
 		ch := s[i]
-		if ch < '0' || ch > '9' {
+		if !IsDecimalDigit(ch) {
 			break
 		}
 		i++
@@ -78,7 +83,7 @@ func ParsePositiveIntAfterAt(s string, i int) (int, int, bool) {
 	start := i
 	for i < len(s) {
 		ch := s[i]
-		if ch < '0' || ch > '9' {
+		if !IsDecimalDigit(ch) {
 			break
 		}
 		i++
@@ -88,4 +93,43 @@ func ParsePositiveIntAfterAt(s string, i int) (int, int, bool) {
 		return 0, 0, false
 	}
 	return int(n), i, true
+}
+
+// LooksEncodedNamedRootKey reports whether s syntactically starts in the
+// encoded named-root spelling space n<len>:<root>.
+func LooksEncodedNamedRootKey(s string) bool {
+	if len(s) < 3 || s[0] != 'n' || !IsDecimalDigit(s[1]) {
+		return false
+	}
+	i := 2
+	for i < len(s) && IsDecimalDigit(s[i]) {
+		i++
+	}
+	return i < len(s) && s[i] == ':'
+}
+
+// LooksStableSymbolRootSuffix reports whether s syntactically starts in the
+// stable symbol spelling space s<id><suffix>.
+func LooksStableSymbolRootSuffix(s string) bool {
+	if len(s) < 2 || s[0] != 's' || !IsDecimalDigit(s[1]) {
+		return false
+	}
+	i := 2
+	for i < len(s) && IsDecimalDigit(s[i]) {
+		i++
+	}
+	return i == len(s) || s[i] == '.' || s[i] == '['
+}
+
+// LooksResolverRootSuffix reports whether s syntactically starts in the
+// resolver symbol spelling space sym<id>[@<version>]<suffix>.
+func LooksResolverRootSuffix(s string) bool {
+	if !strings.HasPrefix(s, "sym") || len(s) < 4 || !IsDecimalDigit(s[3]) {
+		return false
+	}
+	i := 4
+	for i < len(s) && IsDecimalDigit(s[i]) {
+		i++
+	}
+	return i == len(s) || s[i] == '@' || s[i] == '.' || s[i] == '['
 }
