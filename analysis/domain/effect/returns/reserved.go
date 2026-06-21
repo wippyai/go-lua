@@ -93,49 +93,6 @@ func (c CorrelatedReturn) Equals(other effect.Label) bool {
 	return true
 }
 
-func reservedReturnTypeEquals(a, b ReturnType) bool {
-	switch av := a.(type) {
-	case DeepElementOf:
-		return deepElementOfEquals(av, b)
-	case *DeepElementOf:
-		return av != nil && deepElementOfEquals(*av, b)
-	case StringUnpackValue:
-		return stringUnpackValueEquals(av, b)
-	case *StringUnpackValue:
-		return av != nil && stringUnpackValueEquals(*av, b)
-	case SelectCaseOfParam:
-		return selectCaseOfParamEquals(av, b)
-	case *SelectCaseOfParam:
-		return av != nil && selectCaseOfParamEquals(*av, b)
-	case SelectResultOfCases:
-		return selectResultOfCasesEquals(av, b)
-	case *SelectResultOfCases:
-		return av != nil && selectResultOfCasesEquals(*av, b)
-	default:
-		return false
-	}
-}
-
-func deepElementOfEquals(a DeepElementOf, b ReturnType) bool {
-	bb, ok := normalizeDeepElementOf(b)
-	return ok && a.Source.Index == bb.Source.Index
-}
-
-func stringUnpackValueEquals(a StringUnpackValue, b ReturnType) bool {
-	bb, ok := normalizeStringUnpackValue(b)
-	return ok && a.Format.Index == bb.Format.Index
-}
-
-func selectCaseOfParamEquals(a SelectCaseOfParam, b ReturnType) bool {
-	bb, ok := normalizeSelectCaseOfParam(b)
-	return ok && a.Source.Index == bb.Source.Index
-}
-
-func selectResultOfCasesEquals(a SelectResultOfCases, b ReturnType) bool {
-	bb, ok := normalizeSelectResultOfCases(b)
-	return ok && a.Cases.Index == bb.Cases.Index && a.Default.Index == bb.Default.Index
-}
-
 // AsDeepElementOf returns the concrete DeepElementOf transform for value and
 // non-nil pointer spellings. Typed nil pointers are treated as absent.
 func AsDeepElementOf(r ReturnType) (DeepElementOf, bool) {

@@ -120,67 +120,54 @@ func returnTypeEquals(a, b ReturnType) bool {
 	if aNil || bNil {
 		return aNil && bNil
 	}
-	switch av := a.(type) {
-	case ElementOf:
-		return elementOfEquals(av, b)
-	case *ElementOf:
-		return elementOfEquals(*av, b)
-	case OptionalElementOf:
-		return optionalElementOfEquals(av, b)
-	case *OptionalElementOf:
-		return optionalElementOfEquals(*av, b)
-	case CallbackReturn:
-		return callbackReturnEquals(av, b)
-	case *CallbackReturn:
-		return callbackReturnEquals(*av, b)
-	case ArrayOfCallbackReturn:
-		return arrayOfCallbackReturnEquals(av, b)
-	case *ArrayOfCallbackReturn:
-		return arrayOfCallbackReturnEquals(*av, b)
-	case SameAs:
-		return sameAsEquals(av, b)
-	case *SameAs:
-		return sameAsEquals(*av, b)
-	case TypeProjection:
-		return typeProjectionEquals(av, b)
-	case *TypeProjection:
-		return typeProjectionEquals(*av, b)
-	default:
-		return reservedReturnTypeEquals(a, b)
-	}
-}
-
-func elementOfEquals(a ElementOf, b ReturnType) bool {
-	bb, ok := AsElementOf(b)
-	return ok && a.Source.Index == bb.Source.Index
-}
-
-func optionalElementOfEquals(a OptionalElementOf, b ReturnType) bool {
-	bb, ok := AsOptionalElementOf(b)
-	return ok && a.Source.Index == bb.Source.Index
-}
-
-func callbackReturnEquals(a CallbackReturn, b ReturnType) bool {
-	bb, ok := AsCallbackReturn(b)
-	return ok && a.CallbackParam.Index == bb.CallbackParam.Index
-}
-
-func arrayOfCallbackReturnEquals(a ArrayOfCallbackReturn, b ReturnType) bool {
-	bb, ok := AsArrayOfCallbackReturn(b)
-	return ok && a.CallbackParam.Index == bb.CallbackParam.Index
-}
-
-func sameAsEquals(a SameAs, b ReturnType) bool {
-	bb, ok := AsSameAs(b)
-	return ok && a.Source.Index == bb.Source.Index
-}
-
-func typeProjectionEquals(a TypeProjection, b ReturnType) bool {
-	bb, ok := AsTypeProjection(b)
-	if !ok || a.Source.Index != bb.Source.Index {
+	kind := KindOfReturnType(a)
+	if kind == ReturnTypeUnknown || kind != KindOfReturnType(b) {
 		return false
 	}
-	return projection.Equal(a.Projection, bb.Projection)
+	switch kind {
+	case ReturnTypeSameAs:
+		aa, aok := AsSameAs(a)
+		bb, bok := AsSameAs(b)
+		return aok && bok && aa.Source.Index == bb.Source.Index
+	case ReturnTypeElementOf:
+		aa, aok := AsElementOf(a)
+		bb, bok := AsElementOf(b)
+		return aok && bok && aa.Source.Index == bb.Source.Index
+	case ReturnTypeOptionalElementOf:
+		aa, aok := AsOptionalElementOf(a)
+		bb, bok := AsOptionalElementOf(b)
+		return aok && bok && aa.Source.Index == bb.Source.Index
+	case ReturnTypeCallbackReturn:
+		aa, aok := AsCallbackReturn(a)
+		bb, bok := AsCallbackReturn(b)
+		return aok && bok && aa.CallbackParam.Index == bb.CallbackParam.Index
+	case ReturnTypeArrayOfCallbackReturn:
+		aa, aok := AsArrayOfCallbackReturn(a)
+		bb, bok := AsArrayOfCallbackReturn(b)
+		return aok && bok && aa.CallbackParam.Index == bb.CallbackParam.Index
+	case ReturnTypeTypeProjection:
+		aa, aok := AsTypeProjection(a)
+		bb, bok := AsTypeProjection(b)
+		return aok && bok && aa.Source.Index == bb.Source.Index && projection.Equal(aa.Projection, bb.Projection)
+	case ReturnTypeDeepElementOf:
+		aa, aok := AsDeepElementOf(a)
+		bb, bok := AsDeepElementOf(b)
+		return aok && bok && aa.Source.Index == bb.Source.Index
+	case ReturnTypeStringUnpackValue:
+		aa, aok := AsStringUnpackValue(a)
+		bb, bok := AsStringUnpackValue(b)
+		return aok && bok && aa.Format.Index == bb.Format.Index
+	case ReturnTypeSelectCaseOfParam:
+		aa, aok := AsSelectCaseOfParam(a)
+		bb, bok := AsSelectCaseOfParam(b)
+		return aok && bok && aa.Source.Index == bb.Source.Index
+	case ReturnTypeSelectResultOfCases:
+		aa, aok := AsSelectResultOfCases(a)
+		bb, bok := AsSelectResultOfCases(b)
+		return aok && bok && aa.Cases.Index == bb.Cases.Index && aa.Default.Index == bb.Default.Index
+	default:
+		return false
+	}
 }
 
 // AsElementOf returns the concrete ElementOf transform for value and non-nil

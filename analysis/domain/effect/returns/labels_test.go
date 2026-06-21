@@ -60,6 +60,112 @@ func TestReturnTypeEqualsNormalizesPointers(t *testing.T) {
 	}
 }
 
+func TestReturnTypeEqualsUsesKindVocabularyForEveryTransform(t *testing.T) {
+	tests := []struct {
+		name      string
+		value     ReturnType
+		pointer   ReturnType
+		different ReturnType
+	}{
+		{
+			name:      "same as",
+			value:     SameAs{Source: effect.ParamRef{Index: 1}},
+			pointer:   &SameAs{Source: effect.ParamRef{Index: 1}},
+			different: SameAs{Source: effect.ParamRef{Index: 2}},
+		},
+		{
+			name:      "element of",
+			value:     ElementOf{Source: effect.ParamRef{Index: 2}},
+			pointer:   &ElementOf{Source: effect.ParamRef{Index: 2}},
+			different: ElementOf{Source: effect.ParamRef{Index: 3}},
+		},
+		{
+			name:      "optional element of",
+			value:     OptionalElementOf{Source: effect.ParamRef{Index: 3}},
+			pointer:   &OptionalElementOf{Source: effect.ParamRef{Index: 3}},
+			different: OptionalElementOf{Source: effect.ParamRef{Index: 4}},
+		},
+		{
+			name:      "callback return",
+			value:     CallbackReturn{CallbackParam: effect.ParamRef{Index: 4}},
+			pointer:   &CallbackReturn{CallbackParam: effect.ParamRef{Index: 4}},
+			different: CallbackReturn{CallbackParam: effect.ParamRef{Index: 5}},
+		},
+		{
+			name:      "array callback return",
+			value:     ArrayOfCallbackReturn{CallbackParam: effect.ParamRef{Index: 5}},
+			pointer:   &ArrayOfCallbackReturn{CallbackParam: effect.ParamRef{Index: 5}},
+			different: ArrayOfCallbackReturn{CallbackParam: effect.ParamRef{Index: 6}},
+		},
+		{
+			name: "type projection",
+			value: TypeProjection{
+				Source:     effect.ParamRef{Index: 6},
+				Projection: projection.Projection{Steps: []projection.Step{projection.Field("payload")}},
+			},
+			pointer: &TypeProjection{
+				Source:     effect.ParamRef{Index: 6},
+				Projection: projection.Projection{Steps: []projection.Step{projection.Field("payload")}},
+			},
+			different: TypeProjection{
+				Source:     effect.ParamRef{Index: 6},
+				Projection: projection.Projection{Steps: []projection.Step{projection.Field("other")}},
+			},
+		},
+		{
+			name:      "deep element",
+			value:     DeepElementOf{Source: effect.ParamRef{Index: 7}},
+			pointer:   &DeepElementOf{Source: effect.ParamRef{Index: 7}},
+			different: DeepElementOf{Source: effect.ParamRef{Index: 8}},
+		},
+		{
+			name:      "string unpack",
+			value:     StringUnpackValue{Format: effect.ParamRef{Index: 8}},
+			pointer:   &StringUnpackValue{Format: effect.ParamRef{Index: 8}},
+			different: StringUnpackValue{Format: effect.ParamRef{Index: 9}},
+		},
+		{
+			name:      "select case",
+			value:     SelectCaseOfParam{Source: effect.ParamRef{Index: 9}},
+			pointer:   &SelectCaseOfParam{Source: effect.ParamRef{Index: 9}},
+			different: SelectCaseOfParam{Source: effect.ParamRef{Index: 10}},
+		},
+		{
+			name: "select result",
+			value: SelectResultOfCases{
+				Cases:   effect.ParamRef{Index: 10},
+				Default: effect.ParamRef{Index: 11},
+			},
+			pointer: &SelectResultOfCases{
+				Cases:   effect.ParamRef{Index: 10},
+				Default: effect.ParamRef{Index: 11},
+			},
+			different: SelectResultOfCases{
+				Cases:   effect.ParamRef{Index: 10},
+				Default: effect.ParamRef{Index: 12},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if !returnTypeEquals(tt.value, tt.pointer) {
+				t.Fatalf("value form should equal pointer form")
+			}
+			if !returnTypeEquals(tt.pointer, tt.value) {
+				t.Fatalf("pointer form should equal value form")
+			}
+			if returnTypeEquals(tt.value, tt.different) {
+				t.Fatalf("different payload should not compare equal")
+			}
+		})
+	}
+
+	if returnTypeEquals(ElementOf{Source: effect.ParamRef{Index: 0}}, SameAs{Source: effect.ParamRef{Index: 0}}) {
+		t.Fatal("different return-transform kinds should not compare equal")
+	}
+}
+
 func TestReturnTypeEqualsHandlesTypedNilPointers(t *testing.T) {
 	var nilElement *ElementOf
 	var nilStringUnpack *StringUnpackValue
