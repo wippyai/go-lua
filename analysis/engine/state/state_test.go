@@ -343,6 +343,42 @@ func TestWritesAreImmutable(t *testing.T) {
 	}
 }
 
+func TestLocalPathKeyAccessorsUseInternedKeyDirectly(t *testing.T) {
+	reg := standard.Registry()
+	ks := keyspace.New()
+	valueDomain := product.Domain(reg)
+	pathKey := pathdom.PathKey("sym12@1.field")
+	localKey, ok := ks.FromPathKey(pathKey)
+	if !ok {
+		t.Fatalf("FromPathKey(%q) failed", pathKey)
+	}
+	present := presentValue(reg)
+	absent := absentValue(reg)
+
+	s := State{}.WriteLocalPathKey(reg, localKey, present)
+	if got := s.ReadLocalPathKey(reg, localKey); !valueDomain.Equal(got, present) {
+		t.Fatalf("local path key = %s, want present", formatValue(reg, got))
+	}
+	if got := s.ReadPathKey(reg, ks, pathKey); !valueDomain.Equal(got, present) {
+		t.Fatalf("string path compatibility read = %s, want present", formatValue(reg, got))
+	}
+
+	updated := s.UpdateLocalPathKey(reg, localKey, func(got product.Value) product.Value {
+		if !valueDomain.Equal(got, present) {
+			t.Fatalf("UpdateLocalPathKey read %s, want present", formatValue(reg, got))
+		}
+		return absent
+	})
+	if got := updated.ReadLocalPathKey(reg, localKey); !valueDomain.Equal(got, absent) {
+		t.Fatalf("updated local path key = %s, want absent", formatValue(reg, got))
+	}
+
+	unchanged := updated.WriteLocalPathKey(reg, keyspace.Key{}, present)
+	if !Domain(reg).Equal(unchanged, updated) {
+		t.Fatalf("invalid local path key changed state: %s", formatState(reg, ks, unchanged))
+	}
+}
+
 func TestUpdateHelpersReadCurrentAndCanonicalizeBottom(t *testing.T) {
 	reg := standard.Registry()
 	ks := keyspace.New()

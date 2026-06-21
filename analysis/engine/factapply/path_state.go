@@ -27,8 +27,13 @@ func writePathAt(
 		return s, false
 	}
 	ks := resolver.KeySpace()
+	localKey, ok := ks.FromPathKey(pathKey)
+	if !ok {
+		return s, false
+	}
 	out := s
-	for _, target := range pathKeyWithEquivalentAliases(ks, s, pathKey) {
+	out = writeLocalPathKeyWithStaticStringAlias(reg, ks, out, localKey, pathKey, value)
+	for _, target := range s.EquivalentPathKeys(ks, pathKey) {
 		out = writePathKeyWithStaticStringAlias(reg, ks, out, target, value)
 	}
 	return out, true
@@ -41,7 +46,22 @@ func writePathKeyWithStaticStringAlias(
 	pathKey pathdom.PathKey,
 	value product.Value,
 ) state.State {
-	out := s.WritePathKey(reg, ks, pathKey, value)
+	localKey, ok := ks.FromPathKey(pathKey)
+	if !ok {
+		return s
+	}
+	return writeLocalPathKeyWithStaticStringAlias(reg, ks, s, localKey, pathKey, value)
+}
+
+func writeLocalPathKeyWithStaticStringAlias(
+	reg *axis.Registry,
+	ks *keyspace.KeySpace,
+	s state.State,
+	localKey keyspace.Key,
+	pathKey pathdom.PathKey,
+	value product.Value,
+) state.State {
+	out := s.WriteLocalPathKey(reg, localKey, value)
 	if canonical, ok := fieldCanonicalPathKey(ks, pathKey); ok {
 		out = out.WritePathKey(reg, ks, canonical, value)
 	}

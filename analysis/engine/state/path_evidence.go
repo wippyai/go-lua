@@ -41,7 +41,13 @@ func (s State) ReadPathKey(reg *axis.Registry, ks *keyspace.KeySpace, pathKey pa
 	if !ok {
 		return product.Bottom(reg)
 	}
-	return s.pathEvidence.ReadPathKey(reg, localKey)
+	return s.ReadLocalPathKey(reg, localKey)
+}
+
+// ReadLocalPathKey reads an already-interned point-local path refinement key.
+// Missing keys read as product.Bottom(reg).
+func (s State) ReadLocalPathKey(reg *axis.Registry, pathKey keyspace.Key) product.Value {
+	return s.pathEvidence.ReadPathKey(reg, pathKey)
 }
 
 // WritePathKey returns a state with pathKey updated. Writing
@@ -51,7 +57,13 @@ func (s State) WritePathKey(reg *axis.Registry, ks *keyspace.KeySpace, pathKey p
 	if !ok {
 		return s
 	}
-	pathEvidence, reachable := s.pathEvidence.WritePathKey(reg, localKey, value)
+	return s.WriteLocalPathKey(reg, localKey, value)
+}
+
+// WriteLocalPathKey returns a state with an already-interned point-local path
+// refinement updated. Writing product.Bottom(reg) removes the finite entry.
+func (s State) WriteLocalPathKey(reg *axis.Registry, pathKey keyspace.Key, value product.Value) State {
+	pathEvidence, reachable := s.pathEvidence.WritePathKey(reg, pathKey, value)
 	if !reachable {
 		return s
 	}
@@ -67,7 +79,13 @@ func (s State) UpdatePathKey(reg *axis.Registry, ks *keyspace.KeySpace, pathKey 
 	if !ok {
 		return s
 	}
-	pathEvidence, reachable := s.pathEvidence.UpdatePathKey(reg, localKey, fn)
+	return s.UpdateLocalPathKey(reg, localKey, fn)
+}
+
+// UpdateLocalPathKey reads an already-interned point-local path refinement key,
+// applies fn, and writes the transformed value.
+func (s State) UpdateLocalPathKey(reg *axis.Registry, pathKey keyspace.Key, fn func(product.Value) product.Value) State {
+	pathEvidence, reachable := s.pathEvidence.UpdatePathKey(reg, pathKey, fn)
 	if !reachable {
 		return s
 	}

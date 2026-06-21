@@ -331,7 +331,7 @@ func TestFromResultSkipsTopSnapshotsAndTopNormalReturnFacts(t *testing.T) {
 	topFacts := FromResult(
 		normalReturnFactProjectTestResult(reg, ks, state.Domain(reg).Top(), param),
 	).NormalReturnFacts
-	if !normalReturnFactsEmpty(topFacts) {
+	if !topFacts.Empty() {
 		t.Fatalf("NormalReturnFacts from top state = %#v, want empty", topFacts)
 	}
 
@@ -369,7 +369,7 @@ func TestFromResultSkipsTopSnapshotsAndTopNormalReturnFacts(t *testing.T) {
 	got := FromResult(normalReturnFactProjectTestResult(reg, ks, exit, param)).NormalReturnFacts
 	assertPathInvalidation(t, got.PathInvalidations, pathdom.NewPlaceholder(0).Field("table"))
 	got.PathInvalidations = nil
-	if !normalReturnFactsEmpty(got) {
+	if !got.Empty() {
 		t.Fatalf("NormalReturnFacts = %#v, want only dynamic top path invalidation and other top/no-op facts skipped", got)
 	}
 }
@@ -901,21 +901,6 @@ func assertPathInvalidation(t *testing.T, facts []callboundary.PathInvalidationF
 		}
 	}
 	t.Fatalf("PathInvalidations = %#v, want %s", facts, target)
-}
-
-func normalReturnFactsEmpty(facts callboundary.NormalReturnFacts) bool {
-	return len(facts.PathRefinements) == 0 &&
-		len(facts.PathStaticMembers) == 0 &&
-		len(facts.PathInvalidations) == 0 &&
-		len(facts.DynamicIndexFacts) == 0 &&
-		len(facts.BranchProofs) == 0 &&
-		len(facts.ChannelSelects) == 0 &&
-		len(facts.FrozenTables) == 0 &&
-		len(facts.EffectDeltas) == 0 &&
-		len(facts.EscapeEvents) == 0 &&
-		len(facts.StoreRelations) == 0 &&
-		len(facts.LifecycleFacts) == 0 &&
-		len(facts.NumFloors) == 0
 }
 
 func findPathRefinement(facts []callboundary.PathValueFact, path pathdom.Path) *callboundary.PathValueFact {

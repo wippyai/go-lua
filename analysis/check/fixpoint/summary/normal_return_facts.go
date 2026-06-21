@@ -20,14 +20,14 @@ func normalizeNormalReturnFacts(reg *axis.Registry, in callboundary.NormalReturn
 		LifecycleFacts:    lifecycleLane.Normalize(in.LifecycleFacts),
 		NumFloors:         normalizeNumFloorFacts(in.NumFloors),
 	}
-	if normalReturnFactsEmpty(out) {
+	if out.Empty() {
 		return callboundary.NormalReturnFacts{}
 	}
 	return out
 }
 
 func cloneNormalReturnFacts(in callboundary.NormalReturnFacts) callboundary.NormalReturnFacts {
-	if normalReturnFactsEmpty(in) {
+	if in.Empty() {
 		return callboundary.NormalReturnFacts{}
 	}
 	return callboundary.NormalReturnFacts{
@@ -117,8 +117,4 @@ func widenNormalReturnFacts(reg *axis.Registry, prev, next callboundary.NormalRe
 		LifecycleFacts:    lifecycleLane.Widen(prev.LifecycleFacts, next.LifecycleFacts),
 		NumFloors:         joinNumFloorFacts(prev.NumFloors, next.NumFloors),
 	})
-}
-
-func normalReturnFactsEmpty(facts callboundary.NormalReturnFacts) bool {
-	return facts.Empty()
 }

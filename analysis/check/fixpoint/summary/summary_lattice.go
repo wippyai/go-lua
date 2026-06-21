@@ -58,7 +58,7 @@ func NormalizeOwned(reg *axis.Registry, out Summary) Summary {
 		len(out.NormalReturnParams) == 0 &&
 		len(out.NormalReturnParamConditions) == 0 &&
 		len(out.NormalReturnParamEqualities) == 0 &&
-		normalReturnFactsEmpty(out.NormalReturnFacts) &&
+		out.NormalReturnFacts.Empty() &&
 		len(out.HeapTableObjects) == 0 &&
 		len(out.ReturnConditionParamRefinements) == 0 &&
 		len(out.ReturnPresenceRelations) == 0 {
@@ -171,7 +171,7 @@ func Join(reg *axis.Registry, a, b Summary) Summary {
 		len(a.ReturnParamPathAliases) == 0 && len(b.ReturnParamPathAliases) == 0 &&
 		len(a.ParamSinkExposures) == 0 && len(b.ParamSinkExposures) == 0 &&
 		len(a.NormalReturnParamEqualities) == 0 && len(b.NormalReturnParamEqualities) == 0 &&
-		normalReturnFactsEmpty(a.NormalReturnFacts) && normalReturnFactsEmpty(b.NormalReturnFacts) &&
+		a.NormalReturnFacts.Empty() && b.NormalReturnFacts.Empty() &&
 		len(a.HeapTableObjects) == 0 && len(b.HeapTableObjects) == 0 &&
 		len(a.ReturnConditionParamRefinements) == 0 && len(b.ReturnConditionParamRefinements) == 0 &&
 		len(a.ReturnPresenceRelations) == 0 && len(b.ReturnPresenceRelations) == 0 {
@@ -284,7 +284,7 @@ func Widen(reg *axis.Registry, prev, next Summary) Summary {
 		len(prev.ReturnParamPathAliases) == 0 && len(next.ReturnParamPathAliases) == 0 &&
 		len(prev.ParamSinkExposures) == 0 && len(next.ParamSinkExposures) == 0 &&
 		len(prev.NormalReturnParamEqualities) == 0 && len(next.NormalReturnParamEqualities) == 0 &&
-		normalReturnFactsEmpty(prev.NormalReturnFacts) && normalReturnFactsEmpty(next.NormalReturnFacts) &&
+		prev.NormalReturnFacts.Empty() && next.NormalReturnFacts.Empty() &&
 		len(prev.HeapTableObjects) == 0 && len(next.HeapTableObjects) == 0 &&
 		len(prev.ReturnConditionParamRefinements) == 0 && len(next.ReturnConditionParamRefinements) == 0 &&
 		len(prev.ReturnPresenceRelations) == 0 && len(next.ReturnPresenceRelations) == 0 {
@@ -373,7 +373,7 @@ func summaryBottom(s Summary) bool {
 		len(s.NormalReturnParams) == 0 &&
 		len(s.NormalReturnParamConditions) == 0 &&
 		len(s.NormalReturnParamEqualities) == 0 &&
-		normalReturnFactsEmpty(s.NormalReturnFacts) &&
+		s.NormalReturnFacts.Empty() &&
 		len(s.HeapTableObjects) == 0 &&
 		len(s.ReturnConditionParamRefinements) == 0 &&
 		len(s.ReturnPresenceRelations) == 0
