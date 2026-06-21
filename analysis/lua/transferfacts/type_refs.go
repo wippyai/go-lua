@@ -9,9 +9,11 @@ func (l *lowerer) typeRefs(types []ast.TypeExpr) []factflow.TypeRef {
 	if len(types) == 0 {
 		return nil
 	}
-	out := make([]factflow.TypeRef, len(types))
+	out := make([]factflow.TypeRef, 0, len(types))
 	for i := range types {
-		out[i], _ = l.typeRef(types[i])
+		if ref, ok := l.typeRef(types[i]); ok {
+			out = append(out, ref)
+		}
 	}
 	return out
 }
