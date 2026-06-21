@@ -781,7 +781,7 @@ func projectAssertReturnParamPathAlias(
 ) {
 	t.Helper()
 	for _, alias := range got.ReturnParamPathAliases {
-		if alias.ReturnIndex == returnIndex && alias.Member == member && alias.Source == source {
+		if alias.ReturnIndex == returnIndex && alias.Member.PathKey() == member && alias.Source == source {
 			return
 		}
 	}

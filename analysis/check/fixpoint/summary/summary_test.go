@@ -458,12 +458,12 @@ func TestReturnParamPathAliasesAreMustFacts(t *testing.T) {
 	reg := standard.Registry()
 	apiAlias := ReturnParamPathAlias{
 		ReturnIndex: 0,
-		Member:      path.PathKey(".api"),
+		Member:      ".api",
 		Source:      path.PathKey("$0.registry"),
 	}
 	backupAlias := ReturnParamPathAlias{
 		ReturnIndex: 0,
-		Member:      path.PathKey(".api.backup"),
+		Member:      ".api.backup",
 		Source:      path.PathKey("$0.registry.backup"),
 	}
 	left := Summary{
@@ -479,7 +479,7 @@ func TestReturnParamPathAliasesAreMustFacts(t *testing.T) {
 	normalized := Normalize(reg, Summary{
 		Returns: []product.Value{product.Top()},
 		ReturnParamPathAliases: []ReturnParamPathAlias{
-			{ReturnIndex: -1, Member: path.PathKey(".ignored"), Source: path.PathKey("$0")},
+			{ReturnIndex: -1, Member: ".ignored", Source: path.PathKey("$0")},
 			apiAlias,
 			apiAlias,
 			backupAlias,

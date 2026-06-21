@@ -120,7 +120,7 @@ func buildCorpus(t *testing.T, ks *KeySpace) []corpusEntry {
 			if !ook {
 				t.Fatalf("RelativeStaticMemberSuffixKey failed for %v", segs)
 			}
-			add(rk, oracle)
+			add(rk, oracle.PathKey())
 		}
 	}
 	return out
@@ -163,7 +163,7 @@ func buildPrefixLegs(t *testing.T, ks *KeySpace) []corpusEntry {
 		}
 		if rk, ok := ks.FromRootlessSuffix(segs); ok {
 			oracle, _ := pathaddr.RelativeStaticMemberSuffixKey(segs)
-			add(rk, oracle)
+			add(rk, oracle.PathKey())
 		}
 	}
 	return out
@@ -276,7 +276,9 @@ func TestSuffixSegmentsMatchesAddress(t *testing.T) {
 	ks := New()
 	corpus := buildCorpus(t, ks)
 	for _, k := range corpus {
-		wantSegs, wantOK := pathaddr.RelativeStaticMemberSuffixSegments(k.oracle)
+		suffixKey, suffixOK := pathaddr.SuffixKeyFromPathKey(k.oracle)
+		wantSegs, wantOK := pathaddr.RelativeStaticMemberSuffixSegments(suffixKey)
+		wantOK = suffixOK && wantOK
 		gotSegs, gotOK := ks.SuffixSegments(k.key)
 		if gotOK != wantOK {
 			t.Fatalf("SuffixSegments(%q) ok = %v, want %v", k.oracle, gotOK, wantOK)

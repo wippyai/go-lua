@@ -376,7 +376,7 @@ func writeReturnParamAliasMember(
 	objects map[identity.ID]heapidentity.TableObject,
 	returns []product.Value,
 	returnIndex int,
-	memberKey pathdom.PathKey,
+	memberKey pathaddr.SuffixKey,
 	value product.Value,
 ) bool {
 	rootID := returnIdentityAt(reg, returns, returnIndex)

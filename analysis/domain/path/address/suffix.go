@@ -5,6 +5,23 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 )
 
+// SuffixKey is the typed string carrier for rootless static-member suffix
+// facts. It is deliberately not a full path key: it contains only the member
+// suffix spelling (for example ".field" or "[\"name\"]") and has no root.
+// Hot state maps should still use the interned keyspace.Key representation.
+type SuffixKey pathdom.PathKey
+
+// PathKey returns the legacy string carrier for compatibility boundaries.
+func (k SuffixKey) PathKey() pathdom.PathKey { return pathdom.PathKey(k) }
+
+func (k SuffixKey) String() string { return string(k) }
+
+// Valid reports whether k is a non-empty rootless static-member suffix.
+func (k SuffixKey) Valid() bool {
+	_, ok := SuffixKeyFromPathKey(k.PathKey())
+	return ok
+}
+
 // Suffix is the structured member/index suffix of an address.
 type Suffix struct {
 	segments []segment.Segment
@@ -85,16 +102,16 @@ func (s Suffix) KeySuffix() string {
 // RelativeStaticMemberSuffixKey returns the canonical static-member key for a
 // relative suffix. It intentionally encodes only suffix segments so rootless
 // member facts do not collapse to an empty path key.
-func RelativeStaticMemberSuffixKey(segments []segment.Segment) (pathdom.PathKey, bool) {
+func RelativeStaticMemberSuffixKey(segments []segment.Segment) (SuffixKey, bool) {
 	if len(segments) == 0 {
 		return "", false
 	}
-	return pathdom.PathKey(segment.FormatSegments(segments)), true
+	return SuffixKey(segment.FormatSegments(segments)), true
 }
 
 // FieldCanonicalRelativeStaticMemberSuffixKey returns the equivalent rootless
 // suffix key with static string indexes rewritten to field spelling.
-func FieldCanonicalRelativeStaticMemberSuffixKey(segments []segment.Segment) (pathdom.PathKey, bool) {
+func FieldCanonicalRelativeStaticMemberSuffixKey(segments []segment.Segment) (SuffixKey, bool) {
 	canonical, changed := FieldCanonicalSegments(segments)
 	if !changed {
 		return "", false
@@ -102,8 +119,20 @@ func FieldCanonicalRelativeStaticMemberSuffixKey(segments []segment.Segment) (pa
 	return RelativeStaticMemberSuffixKey(canonical)
 }
 
+// SuffixKeyFromPathKey validates and narrows key to the rootless static-member
+// suffix grammar.
+func SuffixKeyFromPathKey(key pathdom.PathKey) (SuffixKey, bool) {
+	if key == "" {
+		return "", false
+	}
+	if !segment.ValidFormattedSegments(string(key)) {
+		return "", false
+	}
+	return SuffixKey(key), true
+}
+
 // RelativeStaticMemberSuffixSegments parses a rootless static-member suffix key.
-func RelativeStaticMemberSuffixSegments(key pathdom.PathKey) ([]segment.Segment, bool) {
+func RelativeStaticMemberSuffixSegments(key SuffixKey) ([]segment.Segment, bool) {
 	if key == "" {
 		return nil, false
 	}

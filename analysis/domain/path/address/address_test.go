@@ -673,8 +673,8 @@ func TestRelativeStaticMemberSuffixKeyUsesCanonicalRelativeSegments(t *testing.T
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			got, ok := RelativeStaticMemberSuffixKey(tc.segments)
-			if ok != tc.ok || got != tc.want {
-				t.Fatalf("RelativeStaticMemberSuffixKey(%#v) = %q/%v, want %q/%v", tc.segments, got, ok, tc.want, tc.ok)
+			if ok != tc.ok || got.PathKey() != tc.want {
+				t.Fatalf("RelativeStaticMemberSuffixKey(%#v) = %q/%v, want %q/%v", tc.segments, got.PathKey(), ok, tc.want, tc.ok)
 			}
 		})
 	}
@@ -899,18 +899,22 @@ func TestPlaceholderPathFromKeyParsesPlaceholderOnly(t *testing.T) {
 }
 
 func TestRelativeStaticMemberSuffixSegmentsParsesRootlessSuffix(t *testing.T) {
-	got, ok := RelativeStaticMemberSuffixSegments(pathdom.PathKey(`.child["name"]`))
+	suffixKey, suffixOK := SuffixKeyFromPathKey(pathdom.PathKey(`.child["name"]`))
+	if !suffixOK {
+		t.Fatal("SuffixKeyFromPathKey rejected valid suffix")
+	}
+	got, ok := RelativeStaticMemberSuffixSegments(suffixKey)
 	if !ok || segment.FormatSegments(got) != `.child["name"]` {
 		t.Fatalf("RelativeStaticMemberSuffixSegments = %#v/%v, want .child[\"name\"]", got, ok)
 	}
 	got[0].Name = "mutated"
-	again, _ := RelativeStaticMemberSuffixSegments(pathdom.PathKey(`.child["name"]`))
+	again, _ := RelativeStaticMemberSuffixSegments(suffixKey)
 	if segment.FormatSegments(again) != `.child["name"]` {
 		t.Fatalf("RelativeStaticMemberSuffixSegments returned aliased segments: %#v", again)
 	}
 	for _, key := range []pathdom.PathKey{"", "child", "."} {
-		if got, ok := RelativeStaticMemberSuffixSegments(key); ok || got != nil {
-			t.Fatalf("RelativeStaticMemberSuffixSegments(%q) = %#v/%v, want rejected", key, got, ok)
+		if suffixKey, ok := SuffixKeyFromPathKey(key); ok || suffixKey.PathKey() != "" {
+			t.Fatalf("SuffixKeyFromPathKey(%q) = %q/%v, want rejected", key, suffixKey.PathKey(), ok)
 		}
 	}
 }

@@ -2,6 +2,7 @@ package summary
 
 import (
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 )
@@ -37,7 +38,7 @@ type ParamMemberReturnSlot struct {
 // aliases the parameter.
 type ReturnParamPathAlias struct {
 	ReturnIndex int
-	Member      pathdom.PathKey
+	Member      pathaddr.SuffixKey
 	Source      pathdom.PathKey
 }
 

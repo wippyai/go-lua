@@ -96,7 +96,7 @@ var returnParamPathAliasLane = factset.Set[ReturnParamPathAlias, ReturnParamPath
 	// consumer no-ops on it; the call-boundary exposure lane widens the argument
 	// toward the full declared return type.
 	Valid: func(a ReturnParamPathAlias) bool {
-		return a.ReturnIndex >= 0 && a.Source != ""
+		return a.ReturnIndex >= 0 && (a.Member == "" || a.Member.Valid()) && a.Source != ""
 	},
 	Intersect: true,
 }

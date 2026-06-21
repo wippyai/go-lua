@@ -539,7 +539,7 @@ func TestOutcomeProviderMaterializesReturnParamPathAliases(t *testing.T) {
 					}),
 				},
 				ReturnParamPathAliases: []summary.ReturnParamPathAlias{
-					{ReturnIndex: 0, Member: path.PathKey(".api.backup"), Source: path.PathKey("$0.backup")},
+					{ReturnIndex: 0, Member: ".api.backup", Source: path.PathKey("$0.backup")},
 				},
 			},
 		}),
