@@ -67,7 +67,7 @@ func reassignedCallResultFieldBoundaryType(result *body.Result, resolver typeann
 	if !ok || accessPath.Symbol == 0 || len(accessPath.Segments) == 0 || !allFieldSegments(accessPath.Segments) {
 		return nil, false
 	}
-	source, assignPoint, ok := dominatingCallSourceForRootUnchecked(result, point, accessPath.Symbol)
+	source, assignPoint, ok := dominatingCallSourceForRootUnchecked(result, flow, point, accessPath.Symbol)
 	if !ok || !callResultRootReassignedBeforeUse(result, flow, assignPoint, point, accessPath.Symbol) {
 		return nil, false
 	}
@@ -145,7 +145,7 @@ func reassignedCallResultFieldEvidence(result *body.Result, resolver typeannotat
 	if !ok || accessPath.Symbol == 0 || len(accessPath.Segments) == 0 || !allFieldSegments(accessPath.Segments) {
 		return nil
 	}
-	_, assignPoint, ok := dominatingCallSourceForRootUnchecked(result, point, accessPath.Symbol)
+	_, assignPoint, ok := dominatingCallSourceForRootUnchecked(result, flow, point, accessPath.Symbol)
 	if !ok {
 		return nil
 	}
@@ -277,19 +277,24 @@ func dominatingCallSourceForRoot(result *body.Result, flow *diagnosticFlowCache,
 	if graph == nil || target == 0 {
 		return sourceprovenance.ASTSource{}, false
 	}
-	source, assignPoint, ok := dominatingCallSourceForRootUnchecked(result, point, target)
+	source, assignPoint, ok := dominatingCallSourceForRootUnchecked(result, flow, point, target)
 	if !ok || callResultRootReassignedBeforeUse(result, flow, assignPoint, point, target) {
 		return sourceprovenance.ASTSource{}, false
 	}
 	return source, true
 }
 
-func dominatingCallSourceForRootUnchecked(result *body.Result, point cfg.Point, target symbol.ID) (sourceprovenance.ASTSource, cfg.Point, bool) {
+func dominatingCallSourceForRootUnchecked(result *body.Result, flow *diagnosticFlowCache, point cfg.Point, target symbol.ID) (sourceprovenance.ASTSource, cfg.Point, bool) {
 	graph := result.Graph()
 	if graph == nil || target == 0 {
 		return sourceprovenance.ASTSource{}, 0, false
 	}
-	idom := dominance.ComputeImmediateDominatorInfo(graph).Map()
+	var idom map[cfg.Point]cfg.Point
+	if flow != nil && flow.graph == graph {
+		idom = flow.immediateDominators()
+	} else {
+		idom = dominance.ComputeImmediateDominatorInfo(graph).Map()
+	}
 	visited := make(map[cfg.Point]struct{}, graph.Size())
 	for cursor := point; ; {
 		if _, ok := visited[cursor]; ok {

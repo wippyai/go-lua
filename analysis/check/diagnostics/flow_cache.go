@@ -3,6 +3,7 @@ package diagnostics
 import (
 	"github.com/wippyai/go-lua/analysis/check/body"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
+	"github.com/wippyai/go-lua/analysis/ir/dominance"
 	"github.com/wippyai/go-lua/analysis/symbol"
 )
 
@@ -17,6 +18,7 @@ type diagnosticFlowCache struct {
 	rpo    []cfg.Point
 
 	reachableFrom map[cfg.Point]map[cfg.Point]struct{}
+	idom          map[cfg.Point]cfg.Point
 	functionDefs  map[symbol.ID][]cfg.Point
 	rootAssigns   map[symbol.ID][]cfg.Point
 	indexed       bool
@@ -67,6 +69,16 @@ func (c *diagnosticFlowCache) reachableSet(from cfg.Point) map[cfg.Point]struct{
 	}
 	c.reachableFrom[from] = reachable
 	return reachable
+}
+
+func (c *diagnosticFlowCache) immediateDominators() map[cfg.Point]cfg.Point {
+	if c == nil || c.graph == nil {
+		return nil
+	}
+	if c.idom == nil {
+		c.idom = dominance.ComputeImmediateDominatorInfo(c.graph).Map()
+	}
+	return c.idom
 }
 
 func diagnosticCanReach(flow *diagnosticFlowCache, graph cfg.Graph, from, to cfg.Point) bool {

@@ -5574,6 +5574,26 @@ func TestDominatingRootLocalAssignmentStopsAtDominatingRootWrite(t *testing.T) {
 	}
 }
 
+func TestDiagnosticFlowCacheCachesImmediateDominators(t *testing.T) {
+	result := runDiagnosticsResult(t, `
+		local seed = 1
+		local next = seed + 1
+		local final = next + 1
+	`)
+	flow := newDiagnosticFlowCache(result)
+	first := flow.immediateDominators()
+	if len(first) == 0 {
+		t.Fatalf("immediate dominators = empty")
+	}
+	sentinel := cfg.Point(999999)
+	first[sentinel] = result.Graph().Entry()
+	second := flow.immediateDominators()
+	if got, ok := second[sentinel]; !ok || got != result.Graph().Entry() {
+		t.Fatalf("immediate dominators were recomputed instead of cached: got (%d, %v)", got, ok)
+	}
+	delete(second, sentinel)
+}
+
 func TestTruthyDominatingBranchProofsRecognizeTrueArmPresence(t *testing.T) {
 	result := runDiagnosticsResult(t, `
 		local owner: string? = value
