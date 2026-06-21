@@ -38,6 +38,7 @@ func (p concatOperands) Produce(result *body.Result) []diagnostic.Diagnostic {
 		}
 		check := concatOperandCheck{
 			result: result,
+			flow:   p.flow,
 			typer:  newStructuralFlowExpressionTyper(result, p.resolver, point, envs[point]),
 			envs:   envs,
 			truthy: truthyBranches,
@@ -135,6 +136,7 @@ func (p concatOperands) walk(expr ast.Expr, check concatOperandCheck, seen map[c
 
 type concatOperandCheck struct {
 	result *body.Result
+	flow   *diagnosticFlowCache
 	typer  expressionTyper
 	envs   map[cfg.Point]guardEnv
 	truthy truthyDominatingBranchProofs
@@ -314,7 +316,7 @@ func (c concatOperandCheck) dominatingLocalDeclarationType(operand ast.Expr) (ty
 	if !ok || accessPath.Symbol == 0 || len(accessPath.Segments) != 0 {
 		return nil, false
 	}
-	fact, declarationPoint, ok := dominatingRootLocalAssignment(c.result, c.point, accessPath.Symbol)
+	fact, declarationPoint, ok := dominatingRootLocalAssignment(c.result, c.flow, c.point, accessPath.Symbol)
 	if !ok {
 		return nil, false
 	}

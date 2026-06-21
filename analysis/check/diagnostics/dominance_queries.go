@@ -12,7 +12,7 @@ import (
 // that declared target's root value. A later root write on the dominator chain
 // blocks the declaration because the declaration no longer explains the value
 // read at point.
-func dominatingRootLocalAssignment(result *body.Result, point cfg.Point, target symbol.ID) (semantics.LocalAssignmentFact, cfg.Point, bool) {
+func dominatingRootLocalAssignment(result *body.Result, flow *diagnosticFlowCache, point cfg.Point, target symbol.ID) (semantics.LocalAssignmentFact, cfg.Point, bool) {
 	if result == nil {
 		return semantics.LocalAssignmentFact{}, 0, false
 	}
@@ -20,7 +20,12 @@ func dominatingRootLocalAssignment(result *body.Result, point cfg.Point, target 
 	if graph == nil || target == 0 {
 		return semantics.LocalAssignmentFact{}, 0, false
 	}
-	idom := dominance.ComputeImmediateDominatorInfo(graph).Map()
+	var idom map[cfg.Point]cfg.Point
+	if flow != nil && flow.graph == graph {
+		idom = flow.immediateDominators()
+	} else {
+		idom = dominance.ComputeImmediateDominatorInfo(graph).Map()
+	}
 	visited := make(map[cfg.Point]struct{}, graph.Size())
 	for cursor := point; ; {
 		if _, ok := visited[cursor]; ok {

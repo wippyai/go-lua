@@ -3861,7 +3861,7 @@ func TestAssignmentReportsNestedDynamicVariantWriteInvalidatedAliasWithEvidence(
 		point, expr := requireLocalAssignmentExprByName(t, result, "stale_path")
 		rootType := "<unavailable>"
 		if path, ok := result.ExpressionPath(expr); ok {
-			if root, ok := dominatingRootDeclarationType(result, newResultResolver(result, nil), point, path.Symbol); ok {
+			if root, ok := dominatingRootDeclarationType(result, newResultResolver(result, nil), nil, point, path.Symbol); ok {
 				rootType = formatType(root)
 			}
 		}
@@ -5609,7 +5609,7 @@ func TestDominatingRootLocalAssignmentFindsDominatingDeclaration(t *testing.T) {
 	if !ok || p.Symbol == 0 {
 		t.Fatalf("sink expression path = %v, %v; want source symbol", p, ok)
 	}
-	fact, declarationPoint, ok := dominatingRootLocalAssignment(result, point, p.Symbol)
+	fact, declarationPoint, ok := dominatingRootLocalAssignment(result, nil, point, p.Symbol)
 	if !ok {
 		t.Fatalf("dominatingRootLocalAssignment = false, want source declaration")
 	}
@@ -5629,8 +5629,28 @@ func TestDominatingRootLocalAssignmentStopsAtDominatingRootWrite(t *testing.T) {
 	if !ok || p.Symbol == 0 {
 		t.Fatalf("sink expression path = %v, %v; want source symbol", p, ok)
 	}
-	if fact, declarationPoint, ok := dominatingRootLocalAssignment(result, point, p.Symbol); ok {
+	if fact, declarationPoint, ok := dominatingRootLocalAssignment(result, nil, point, p.Symbol); ok {
 		t.Fatalf("dominating declaration = (%#v, %d), want blocked by root write", fact, declarationPoint)
+	}
+}
+
+func TestDominatingRootLocalAssignmentUsesDiagnosticFlowCache(t *testing.T) {
+	result := runDiagnosticsResult(t, `
+		local source: string = "ok"
+		local sink: string = source
+	`)
+	point, expr := requireLocalAssignmentExprByName(t, result, "sink")
+	p, ok := result.ExpressionPath(expr)
+	if !ok || p.Symbol == 0 {
+		t.Fatalf("sink expression path = %v, %v; want source symbol", p, ok)
+	}
+	flow := newDiagnosticFlowCache(result)
+	idom := flow.immediateDominators()
+	for child := range idom {
+		idom[child] = child
+	}
+	if fact, declarationPoint, ok := dominatingRootLocalAssignment(result, flow, point, p.Symbol); ok {
+		t.Fatalf("dominating declaration = (%#v, %d), want cached dominators to block lookup", fact, declarationPoint)
 	}
 }
 

@@ -682,7 +682,7 @@ func dominatingDeclarationProjectionType(result *body.Result, resolver typeannot
 	if _, annotated := result.SymbolTypeAnnotation(accessPath.Symbol); annotated {
 		return nil, false
 	}
-	root, ok := dominatingRootDeclarationType(result, resolver, point, accessPath.Symbol)
+	root, ok := dominatingRootDeclarationType(result, resolver, nil, point, accessPath.Symbol)
 	if !ok {
 		return nil, false
 	}
@@ -701,8 +701,8 @@ func boundaryValueHasReadableType(result *body.Result, value product.Value) bool
 	return ok
 }
 
-func dominatingRootDeclarationType(result *body.Result, resolver typeannotation.Resolver, point cfg.Point, target symbol.ID) (typ.Type, bool) {
-	fact, declarationPoint, ok := dominatingRootLocalAssignment(result, point, target)
+func dominatingRootDeclarationType(result *body.Result, resolver typeannotation.Resolver, flow *diagnosticFlowCache, point cfg.Point, target symbol.ID) (typ.Type, bool) {
+	fact, declarationPoint, ok := dominatingRootLocalAssignment(result, flow, point, target)
 	if !ok {
 		return nil, false
 	}

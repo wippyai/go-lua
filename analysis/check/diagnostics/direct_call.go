@@ -518,7 +518,7 @@ func (p directCallContract) directFunctionCall(
 			extra := boundaryDiagnosticEvidenceForSubject(result, point, ast.SpanOf(mismatch.expr), exprEvidenceName(mismatch.expr), mismatch.want, boundaryValueFromExpr(mismatch.expr))
 			return objectLiteralArgTypeDiagnostic(call, contract.name, i, arg, mismatch, contract.paramDeclSpan(i), extra...), true
 		}
-		gotDisplay, _ := directCallArgumentDisplayType(result, p.resolver, point, arg)
+		gotDisplay, _ := directCallArgumentDisplayType(result, p.flow, point, arg)
 		readBoundary := boundaryCallArgumentReader(fact, i, arg)
 		untrustedTopLike := false
 		got, ok := concreteCastObligationType(result, p.resolver, point, env, arg)
@@ -600,7 +600,7 @@ func declaredArgumentExprType(result *body.Result, resolver typeannotation.Resol
 	}
 }
 
-func directCallArgumentDisplayType(result *body.Result, resolver typeannotation.Resolver, point cfg.Point, expr ast.Expr) (string, bool) {
+func directCallArgumentDisplayType(result *body.Result, flow *diagnosticFlowCache, point cfg.Point, expr ast.Expr) (string, bool) {
 	if result == nil || expr == nil {
 		return "", false
 	}
@@ -611,7 +611,7 @@ func directCallArgumentDisplayType(result *body.Result, resolver typeannotation.
 	if !ok || accessPath.Symbol == 0 || len(accessPath.Segments) != 0 {
 		return "", false
 	}
-	fact, _, ok := dominatingRootLocalAssignment(result, point, accessPath.Symbol)
+	fact, _, ok := dominatingRootLocalAssignment(result, flow, point, accessPath.Symbol)
 	if !ok || fact.Type == nil {
 		return "", false
 	}
