@@ -42,7 +42,7 @@ func admitBranchProof(proof callboundary.BranchProof) (callboundary.BranchProof,
 			return proof, false
 		}
 		proof.Other = pathdom.Path{}
-	case pathevidence.BranchProofPathEqual, pathevidence.BranchProofPathNotEqual:
+	case pathevidence.BranchProofPathEqual, pathevidence.BranchProofPathNotEqual, pathevidence.BranchProofIndexInRange:
 		if !proof.Other.IsPlaceholder() {
 			return proof, false
 		}

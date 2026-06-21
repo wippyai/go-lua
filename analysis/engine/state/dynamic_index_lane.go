@@ -2,6 +2,7 @@ package state
 
 import (
 	"github.com/wippyai/go-lua/analysis/domain/lattice"
+	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/engine/dynamicindex"
 )
@@ -18,7 +19,7 @@ func dynamicIndexLaneFromMap(
 }
 
 func (l dynamicIndexLane) read(reg *axis.Registry, key dynamicindex.Key) dynamicindex.Fact {
-	if key.Table == "" {
+	if key.Table.Kind == keyspace.KindInvalid {
 		return dynamicindex.Bottom(reg)
 	}
 	if l.isTop() {

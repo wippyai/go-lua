@@ -528,7 +528,7 @@ end`)
 	if !result.IndexInRangeAtBoundary(point, indexPath, arrayPath) {
 		st, _ := result.StateAt(point)
 		t.Fatalf("missing %s <= len(%s) proof at point %d from branch %d; proofs=%#v",
-			indexPath, arrayPath, point, branchPoint, st.BranchProofsSnapshot().Proofs)
+			indexPath, arrayPath, point, branchPoint, st.BranchProofsSnapshot(result.KeySpace()).Proofs)
 	}
 	floor, ok := result.NumericFloorAtBoundary(point, indexPath)
 	if !ok || floor < 1 {
@@ -580,7 +580,7 @@ end`)
 	if !result.IndexInRangeAtBoundary(point, indexPath, arrayPath) {
 		st, _ := result.StateAt(point)
 		t.Fatalf("missing %s <= len(%s) proof at point %d; proofs=%#v",
-			indexPath, arrayPath, point, st.BranchProofsSnapshot().Proofs)
+			indexPath, arrayPath, point, st.BranchProofsSnapshot(result.KeySpace()).Proofs)
 	}
 	floor, ok := result.NumericFloorAtBoundary(point, indexPath)
 	if !ok || floor < 1 {
@@ -632,7 +632,7 @@ end`)
 	if !result.IndexInRangeAtBoundary(point, indexPath, arrayPath) {
 		st, _ := result.StateAt(point)
 		t.Fatalf("missing %s <= len(%s) proof at point %d; proofs=%#v",
-			indexPath, arrayPath, point, st.BranchProofsSnapshot().Proofs)
+			indexPath, arrayPath, point, st.BranchProofsSnapshot(result.KeySpace()).Proofs)
 	}
 	floor, ok := result.NumericFloorAtBoundary(point, indexPath)
 	if !ok || floor < 1 {

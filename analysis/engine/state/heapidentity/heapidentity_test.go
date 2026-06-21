@@ -53,8 +53,9 @@ func TestObjectJoinWidenRootStaticAndDynamic(t *testing.T) {
 	staticCommon := stateKey(t, ks, "sym90@1.table.name")
 	staticLeft := stateKey(t, ks, "sym90@1.table.left")
 	staticRight := stateKey(t, ks, "sym90@1.table.right")
-	dynCommon := dynamicindex.Key{Table: pathdom.PathKey("sym90@1.table"), Site: "dyn"}
-	dynLeft := dynamicindex.Key{Table: pathdom.PathKey("sym90@1.table"), Site: "left"}
+	dynTable := stateKey(t, ks, "sym90@1.table")
+	dynCommon := dynamicindex.Key{Table: dynTable, Site: "dyn"}
+	dynLeft := dynamicindex.Key{Table: dynTable, Site: "left"}
 	present := presentValue(reg)
 	absent := absentValue(reg)
 	presentFact := dynamicindex.Fact{
@@ -173,7 +174,7 @@ func TestNewTableObjectDefensivelyCopiesInputMaps(t *testing.T) {
 	reg := standard.Registry()
 	ks := keyspace.New()
 	staticKey := fieldSuffixKey(t, ks, "name")
-	dynKey := dynamicindex.Key{Table: pathdom.PathKey("sym91@1.table"), Site: "dyn"}
+	dynKey := dynamicindex.Key{Table: stateKey(t, ks, "sym91@1.table"), Site: "dyn"}
 	present := presentValue(reg)
 	absent := absentValue(reg)
 	presentFact := dynamicindex.Fact{
@@ -230,7 +231,7 @@ func TestCloneObjectAndMapIndependence(t *testing.T) {
 	ks := keyspace.New()
 	id := identity.ID{Kind: "table", Site: "clone", Index: 1}
 	staticKey := fieldSuffixKey(t, ks, "name")
-	dynKey := dynamicindex.Key{Table: pathdom.PathKey("sym91@1.table"), Site: "dyn"}
+	dynKey := dynamicindex.Key{Table: stateKey(t, ks, "sym91@1.table"), Site: "dyn"}
 	present := presentValue(reg)
 	absent := absentValue(reg)
 	presentFact := dynamicindex.Fact{

@@ -70,6 +70,10 @@ func TestNormalReturnFactsNormalizeKeepsConcreteCapturedPathBoundaryFacts(t *tes
 			{Target: concrete, Kind: callboundary.LifecycleAcquire, Protocol: typestate.Protocol("transaction"), To: typestate.State("open")},
 			{Target: placeholder, Kind: callboundary.LifecycleAcquire, Protocol: typestate.Protocol("transaction"), To: typestate.State("open")},
 		},
+		NumFloors: []callboundary.NumFloorFact{
+			{Path: concrete, Floor: 1},
+			{Path: placeholder, Floor: 1},
+		},
 	}})
 
 	facts := got.NormalReturnFacts
@@ -111,6 +115,9 @@ func TestNormalReturnFactsNormalizeKeepsConcreteCapturedPathBoundaryFacts(t *tes
 		findLifecycleFact(facts.LifecycleFacts, concrete) == nil ||
 		findLifecycleFact(facts.LifecycleFacts, placeholder) == nil {
 		t.Fatalf("LifecycleFacts = %#v, want placeholder and concrete captured-path facts", facts.LifecycleFacts)
+	}
+	if len(facts.NumFloors) != 1 || !facts.NumFloors[0].Path.Equal(placeholder) || facts.NumFloors[0].Floor != 1 {
+		t.Fatalf("NumFloors = %#v, want only placeholder floor fact", facts.NumFloors)
 	}
 }
 
@@ -200,6 +207,10 @@ func TestNormalReturnFactsCloneIsolatesPayload(t *testing.T) {
 			From:     typestate.State("open"),
 			To:       typestate.State("closed"),
 		}},
+		NumFloors: []callboundary.NumFloorFact{{
+			Path:  pathdom.NewPlaceholder(0).Field("index"),
+			Floor: 1,
+		}},
 	}}
 
 	cloned := original.Clone()
@@ -211,6 +222,7 @@ func TestNormalReturnFactsCloneIsolatesPayload(t *testing.T) {
 	cloned.NormalReturnFacts.FrozenTables[0].Target = pathdom.NewPlaceholder(1)
 	cloned.NormalReturnFacts.EscapeEvents[0].Target = pathdom.NewPlaceholder(1)
 	cloned.NormalReturnFacts.LifecycleFacts[0].Target = pathdom.NewPlaceholder(1)
+	cloned.NormalReturnFacts.NumFloors[0].Path = pathdom.NewPlaceholder(1)
 
 	if !original.NormalReturnFacts.PathRefinements[0].Path.Equal(pathdom.NewPlaceholder(0).Field("value")) {
 		t.Fatalf("mutating cloned path refinement changed original")
@@ -235,6 +247,9 @@ func TestNormalReturnFactsCloneIsolatesPayload(t *testing.T) {
 	}
 	if !original.NormalReturnFacts.LifecycleFacts[0].Target.Equal(pathdom.NewPlaceholder(0).Field("resource")) {
 		t.Fatalf("mutating cloned lifecycle fact changed original")
+	}
+	if !original.NormalReturnFacts.NumFloors[0].Path.Equal(pathdom.NewPlaceholder(0).Field("index")) {
+		t.Fatalf("mutating cloned num-floor fact changed original")
 	}
 }
 
@@ -288,6 +303,10 @@ func TestNormalReturnFactsJoinUsesStateLaneSemantics(t *testing.T) {
 			{Target: commonPath, Kind: callboundary.LifecycleTransition, Protocol: typestate.Protocol("transaction"), From: typestate.State("open"), To: typestate.State("closed")},
 			{Target: leftOnly, Kind: callboundary.LifecycleAcquire, Protocol: typestate.Protocol("transaction"), To: typestate.State("open")},
 		},
+		NumFloors: []callboundary.NumFloorFact{
+			{Path: commonPath, Floor: 2},
+			{Path: leftOnly, Floor: 1},
+		},
 	}}
 	right := Summary{NormalReturnFacts: callboundary.NormalReturnFacts{
 		PathRefinements:   []callboundary.PathValueFact{{Path: commonPath, Value: rightValue}},
@@ -331,6 +350,10 @@ func TestNormalReturnFactsJoinUsesStateLaneSemantics(t *testing.T) {
 		LifecycleFacts: []callboundary.LifecycleFact{
 			{Target: commonPath, Kind: callboundary.LifecycleTransition, Protocol: typestate.Protocol("transaction"), From: typestate.State("open"), To: typestate.State("closed")},
 			{Target: p0.Field("right"), Kind: callboundary.LifecycleAcquire, Protocol: typestate.Protocol("transaction"), To: typestate.State("open")},
+		},
+		NumFloors: []callboundary.NumFloorFact{
+			{Path: commonPath, Floor: 4},
+			{Path: p0.Field("right"), Floor: 9},
 		},
 	}}
 
@@ -400,6 +423,9 @@ func TestNormalReturnFactsJoinUsesStateLaneSemantics(t *testing.T) {
 		got.LifecycleFacts[0].Kind != callboundary.LifecycleTransition {
 		t.Fatalf("LifecycleFacts = %#v, want only common must lifecycle transition", got.LifecycleFacts)
 	}
+	if len(got.NumFloors) != 1 || !got.NumFloors[0].Path.Equal(commonPath) || got.NumFloors[0].Floor != 2 {
+		t.Fatalf("NumFloors = %#v, want common floor with weaker lower bound 2", got.NumFloors)
+	}
 
 	widened := Widen(reg, left, right).NormalReturnFacts
 	if leftOnlyFact := findDynamicIndexFact(widened.DynamicIndexFacts, "caller.dynamic.left"); leftOnlyFact == nil ||
@@ -422,6 +448,9 @@ func TestNormalReturnFactsJoinUsesStateLaneSemantics(t *testing.T) {
 		!widened.StoreRelations[0].Into.Equal(storeInto) {
 		t.Fatalf("widen StoreRelations = %#v, want only common must relation", widened.StoreRelations)
 	}
+	if len(widened.NumFloors) != 1 || !widened.NumFloors[0].Path.Equal(commonPath) || widened.NumFloors[0].Floor != 2 {
+		t.Fatalf("widen NumFloors = %#v, want common floor with weaker lower bound 2", widened.NumFloors)
+	}
 }
 
 func TestNormalReturnFactsEqualAndLessOrEqAccountForLane(t *testing.T) {
@@ -432,10 +461,12 @@ func TestNormalReturnFactsEqualAndLessOrEqAccountForLane(t *testing.T) {
 		BranchProofs:    []callboundary.BranchProof{{Kind: pathevidence.BranchProofPathPresence, Path: p0, Presence: presence.Present()}},
 		EscapeEvents:    []callboundary.EscapeEventFact{{Target: p0, Kind: callboundary.EscapeEventBorrow}},
 		StoreRelations:  []callboundary.StoreRelationFact{{Source: p0, Into: pathdom.NewPlaceholder(1)}},
+		NumFloors:       []callboundary.NumFloorFact{{Path: p0, Floor: 2}},
 	}}
 	right := Summary{NormalReturnFacts: callboundary.NormalReturnFacts{
 		PathRefinements: []callboundary.PathValueFact{{Path: p0, Value: product.Top()}},
 		EscapeEvents:    []callboundary.EscapeEventFact{{Target: p0, Kind: callboundary.EscapeEventSend}},
+		NumFloors:       []callboundary.NumFloorFact{{Path: p0, Floor: 1}},
 	}}
 
 	if Equal(reg, left, right) {
@@ -467,6 +498,20 @@ func TestNormalReturnFactsEqualAndLessOrEqAccountForLane(t *testing.T) {
 	}
 	if LessOrEq(reg, withoutFrozen, withFrozen) {
 		t.Fatalf("empty proof set should not be <= frozen table proof")
+	}
+
+	withFloor := Summary{
+		Returns: []product.Value{presentProduct(reg)},
+		NormalReturnFacts: callboundary.NormalReturnFacts{
+			NumFloors: []callboundary.NumFloorFact{{Path: p0, Floor: 1}},
+		},
+	}
+	withoutFloor := Summary{Returns: []product.Value{presentProduct(reg)}}
+	if !LessOrEq(reg, withFloor, withoutFloor) {
+		t.Fatalf("numeric floor proof should be <= empty proof set")
+	}
+	if LessOrEq(reg, withoutFloor, withFloor) {
+		t.Fatalf("empty proof set should not be <= numeric floor proof")
 	}
 }
 

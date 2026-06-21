@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
@@ -99,8 +100,13 @@ func TestAdmissionOrderAndJoin(t *testing.T) {
 func TestMapDomainCloneAndCanonicalization(t *testing.T) {
 	reg := standard.Registry()
 	domain := MapDomain(reg)
-	key := Key{Table: pathdom.PathKey("sym1@1.table"), Site: "site"}
-	other := Key{Table: pathdom.PathKey("sym1@1.table"), Site: "other"}
+	ks := keyspace.New()
+	tableKey, ok := ks.FromStateKey(pathdom.PathKey("sym1@1.table"))
+	if !ok {
+		t.Fatal("FromStateKey failed")
+	}
+	key := Key{Table: tableKey, Site: "site"}
+	other := Key{Table: tableKey, Site: "other"}
 	fact := Fact{
 		KeyPresence: presence.Present(),
 		KeyValue:    product.NewWithPresence(reg, product.ShapeTop, presence.Present()),

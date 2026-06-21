@@ -61,11 +61,11 @@ type BranchProofsSnapshot struct {
 }
 
 // BranchProofsSnapshot returns finite must branch proofs in stable order.
-func (l Lane) BranchProofsSnapshot() BranchProofsSnapshot {
+func (l Lane) BranchProofsSnapshot(ks *keyspace.KeySpace) BranchProofsSnapshot {
 	if l.proofsBottom {
 		return BranchProofsSnapshot{Bottom: true}
 	}
-	proofs := branchProofsFromSet(l.proofs)
+	proofs := branchProofsFromSet(ks, l.proofs)
 	return BranchProofsSnapshot{
 		Top:    len(proofs) == 0,
 		Proofs: proofs,
@@ -80,11 +80,11 @@ type PathPresenceImplicationsSnapshot struct {
 
 // PathPresenceImplicationsSnapshot returns finite must path-presence
 // implications in stable order.
-func (l Lane) PathPresenceImplicationsSnapshot() PathPresenceImplicationsSnapshot {
+func (l Lane) PathPresenceImplicationsSnapshot(ks *keyspace.KeySpace) PathPresenceImplicationsSnapshot {
 	if l.pathPresenceImplicationsBottom {
 		return PathPresenceImplicationsSnapshot{Bottom: true}
 	}
-	implications := pathPresenceImplicationsFromSet(l.pathPresenceImplications)
+	implications := pathPresenceImplicationsFromSet(ks, l.pathPresenceImplications)
 	return PathPresenceImplicationsSnapshot{
 		Top:          len(implications) == 0,
 		Implications: implications,

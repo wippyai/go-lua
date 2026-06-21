@@ -3,7 +3,7 @@ package effectdelta
 import (
 	"github.com/wippyai/go-lua/analysis/domain/lattice"
 	"github.com/wippyai/go-lua/analysis/domain/lattice/lift"
-	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/internal/registrycache"
@@ -30,7 +30,7 @@ const (
 )
 
 type Key struct {
-	Target pathdom.PathKey
+	Target keyspace.Key
 	Site   Site
 	Kind   Kind
 }

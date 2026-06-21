@@ -270,8 +270,12 @@ func projectPathDynamicIndexValue(
 	if parent.IsEmpty() {
 		return product.Value{}, false
 	}
-	tableKey := resolver.KeyAt(point, parent)
-	if tableKey == "" {
+	tableStateKey := resolver.KeyAt(point, parent)
+	if tableStateKey == "" {
+		return product.Value{}, false
+	}
+	tableKey, ok := resolver.KeySpace().FromStateKey(tableStateKey)
+	if !ok {
 		return product.Value{}, false
 	}
 	targetKey := resolver.KeyAt(point, targetPath)
@@ -326,7 +330,7 @@ func projectPathHeapDynamicIndexValue(
 func joinMatchingDynamicIndexValues(
 	reg *axis.Registry,
 	facts map[dynamicindex.Key]dynamicindex.Fact,
-	tableKey pathdom.PathKey,
+	tableKey keyspace.Key,
 	last segment.Segment,
 	mayMatchAllowed bool,
 ) (product.Value, bool) {

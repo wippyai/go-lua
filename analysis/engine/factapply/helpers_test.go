@@ -384,3 +384,12 @@ func fieldStaticKey(t *testing.T, ks *keyspace.KeySpace, name string) keyspace.K
 	}
 	return k
 }
+
+func mustStateKey(t *testing.T, ks *keyspace.KeySpace, key path.PathKey) keyspace.Key {
+	t.Helper()
+	k, ok := ks.FromStateKey(key)
+	if !ok {
+		t.Fatalf("FromStateKey(%q) failed", key)
+	}
+	return k
+}

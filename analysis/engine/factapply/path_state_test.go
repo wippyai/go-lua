@@ -88,8 +88,8 @@ func TestPathStateAdapterInvalidateSubtreeDropsEquivalentStaticMemberFacts(t *te
 		WritePathStaticMember(ks, originalKey, present).
 		AddBranchProof(pathevidence.BranchProof{
 			Kind:  pathevidence.BranchProofPathEqual,
-			Path:  aliasKey,
-			Other: originalKey,
+			Path:  mustStateKey(t, ks, aliasKey),
+			Other: mustStateKey(t, ks, originalKey),
 		})
 
 	out, ok := invalidatePathSubtreeAt(in, resolver, point, aliasPath)
@@ -101,8 +101,8 @@ func TestPathStateAdapterInvalidateSubtreeDropsEquivalentStaticMemberFacts(t *te
 	}
 	if out.HasBranchProof(pathevidence.BranchProof{
 		Kind:  pathevidence.BranchProofPathEqual,
-		Path:  aliasKey,
-		Other: originalKey,
+		Path:  mustStateKey(t, ks, aliasKey),
+		Other: mustStateKey(t, ks, originalKey),
 	}) {
 		t.Fatalf("equivalent branch proof survived alias invalidation")
 	}

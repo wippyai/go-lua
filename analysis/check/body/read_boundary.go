@@ -180,7 +180,7 @@ func (r *Result) TypestateResourceKeyAtBoundary(point cfg.Point, p pathdom.Path)
 	if !ok {
 		return key, true
 	}
-	return in.CanonicalTypestateResourceKey(key), true
+	return in.CanonicalTypestateResourceKey(r.visibility.KeySpace(), key), true
 }
 
 // PathsEquivalentAtBoundary reports whether the solved boundary state proves
@@ -201,12 +201,12 @@ func (r *Result) PathsEquivalentAtBoundary(point cfg.Point, left, right pathdom.
 	if !ok {
 		return false
 	}
-	for _, equivalent := range in.EquivalentPathKeys(leftKey) {
+	for _, equivalent := range in.EquivalentPathKeys(r.visibility.KeySpace(), leftKey) {
 		if equivalent == rightKey {
 			return true
 		}
 	}
-	for _, equivalent := range in.EquivalentPathKeys(rightKey) {
+	for _, equivalent := range in.EquivalentPathKeys(r.visibility.KeySpace(), rightKey) {
 		if equivalent == leftKey {
 			return true
 		}
@@ -247,7 +247,7 @@ func (r *Result) IndexInRangeAtBoundary(point cfg.Point, indexPath, arrayPath pa
 	if indexKey == "" || arrayKey == "" {
 		return false
 	}
-	return in.HasIndexInRangeProof(indexKey, arrayKey)
+	return in.HasIndexInRangeProof(r.visibility.KeySpace(), indexKey, arrayKey)
 }
 
 // DiffProvesIndexLELength reports whether the difference-logic constraints proven

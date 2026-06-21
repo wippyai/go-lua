@@ -348,7 +348,7 @@ func dynamicIndexSnapshotDebug(result Result) []string {
 		for key, fact := range snapshot.Facts {
 			keyType, keyOK := typevalue.TypeOf(root.Registry(), fact.KeyValue)
 			valueType, valueOK := typevalue.TypeOf(root.Registry(), fact.Value)
-			out = append(out, fmt.Sprintf("%d:%s key=%v/%v value=%v/%v admission=%v", point, key, keyType, keyOK, valueType, valueOK, fact.Admission))
+			out = append(out, fmt.Sprintf("%d:%s/%s key=%v/%v value=%v/%v admission=%v", point, root.KeySpace().Format(key.Table), key.Site, keyType, keyOK, valueType, valueOK, fact.Admission))
 		}
 	}
 	return out

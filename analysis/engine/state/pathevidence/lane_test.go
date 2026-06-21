@@ -4,7 +4,6 @@ import (
 	"testing"
 
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
-	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
@@ -19,11 +18,11 @@ func TestInvalidateSubtreeOwnsCoupledEvidence(t *testing.T) {
 	root := pathdom.PathKey("sym1@1.table")
 	child := pathdom.PathKey("sym1@1.table.field")
 	other := pathdom.PathKey("sym2@1.value")
-	proof := BranchProof{Kind: BranchProofPathEqual, Path: other, Other: child}
 
 	rootKey := mustStructKey(t, ks, root)
 	childKey := mustStructKey(t, ks, child)
 	otherKey := mustStructKey(t, ks, other)
+	proof := BranchProof{Kind: BranchProofPathEqual, Path: otherKey, Other: childKey}
 
 	l, _ := (Lane{}).WritePathKey(reg, rootKey, present)
 	l, _ = l.WritePathKey(reg, childKey, present)
@@ -61,24 +60,34 @@ func mustStructKey(t *testing.T, ks *keyspace.KeySpace, key pathdom.PathKey) key
 	return structKey
 }
 
+func mustStateKey(t *testing.T, ks *keyspace.KeySpace, key pathdom.PathKey) keyspace.Key {
+	t.Helper()
+	structKey, ok := ks.FromStateKey(key)
+	if !ok {
+		t.Fatalf("FromStateKey(%q) failed", key)
+	}
+	return structKey
+}
+
 func TestEquivalentPathKeysRebaseThroughBranchProofs(t *testing.T) {
+	ks := keyspace.New()
 	l, _ := (Lane{}).AddBranchProof(BranchProof{
 		Kind:  BranchProofPathEqual,
-		Path:  pathdom.PathKey("sym10@1"),
-		Other: pathdom.PathKey("sym20@1"),
+		Path:  mustStateKey(t, ks, "sym10@1"),
+		Other: mustStateKey(t, ks, "sym20@1"),
 	})
 	l, _ = l.AddBranchProof(BranchProof{
 		Kind:  BranchProofPathEqual,
-		Path:  pathdom.PathKey("sym20@1.child"),
-		Other: pathdom.PathKey("sym30@1.leaf"),
+		Path:  mustStateKey(t, ks, "sym20@1.child"),
+		Other: mustStateKey(t, ks, "sym30@1.leaf"),
 	})
 	l, _ = l.AddBranchProof(BranchProof{
 		Kind:     BranchProofPathPresence,
-		Path:     pathdom.PathKey("sym10@1.child"),
+		Path:     mustStateKey(t, ks, "sym10@1.child"),
 		Presence: presence.Present(),
 	})
 
-	got := l.EquivalentPathKeys(pathdom.PathKey("sym10@1.child.name"))
+	got := l.EquivalentPathKeys(ks, pathdom.PathKey("sym10@1.child.name"))
 	want := []pathdom.PathKey{
 		pathdom.PathKey("sym20@1.child.name"),
 		pathdom.PathKey("sym30@1.leaf.name"),
@@ -94,13 +103,14 @@ func TestEquivalentPathKeysRebaseThroughBranchProofs(t *testing.T) {
 }
 
 func TestEquivalentPathKeysStopsCyclicDescendantAliasExpansion(t *testing.T) {
+	ks := keyspace.New()
 	l, _ := (Lane{}).AddBranchProof(BranchProof{
 		Kind:  BranchProofPathEqual,
-		Path:  pathdom.PathKey("sym10@1.__index"),
-		Other: pathdom.PathKey("sym10@1"),
+		Path:  mustStateKey(t, ks, "sym10@1.__index"),
+		Other: mustStateKey(t, ks, "sym10@1"),
 	})
 
-	got := l.EquivalentPathKeys(pathdom.PathKey("sym10@1.label"))
+	got := l.EquivalentPathKeys(ks, pathdom.PathKey("sym10@1.label"))
 	want := []pathdom.PathKey{
 		pathdom.PathKey("sym10@1.__index.label"),
 	}
@@ -115,13 +125,14 @@ func TestEquivalentPathKeysStopsCyclicDescendantAliasExpansion(t *testing.T) {
 }
 
 func TestInvalidationPrefixesStopCyclicDescendantAliasExpansion(t *testing.T) {
+	ks := keyspace.New()
 	l, _ := (Lane{}).AddBranchProof(BranchProof{
 		Kind:  BranchProofPathEqual,
-		Path:  pathdom.PathKey("sym10@1.__index"),
-		Other: pathdom.PathKey("sym10@1"),
+		Path:  mustStateKey(t, ks, "sym10@1.__index"),
+		Other: mustStateKey(t, ks, "sym10@1"),
 	})
 
-	prefixes, ok := l.PathKeyDescendantInvalidationPrefixes(pathdom.PathKey("sym10@1"))
+	prefixes, ok := l.PathKeyDescendantInvalidationPrefixes(ks, pathdom.PathKey("sym10@1"))
 	if !ok {
 		t.Fatal("PathKeyDescendantInvalidationPrefixes failed")
 	}
@@ -136,21 +147,26 @@ func TestInvalidationPrefixesStopCyclicDescendantAliasExpansion(t *testing.T) {
 }
 
 func TestRebaseEquivalentPathKeyStaysUnderTargetPrefix(t *testing.T) {
-	from := pathdom.PathKey("sym10@1.child")
-	to := pathdom.PathKey("sym20@1.leaf")
+	ks := keyspace.New()
+	from := mustStateKey(t, ks, "sym10@1.child")
+	to := mustStateKey(t, ks, "sym20@1.leaf")
 
-	got, ok := rebaseEquivalentPathKey(pathdom.PathKey("sym10@1.child.name"), from, to)
-	if !ok || got != pathdom.PathKey("sym20@1.leaf.name") {
-		t.Fatalf("rebaseEquivalentPathKey = %s/%v, want sym20@1.leaf.name/true", got, ok)
+	got, ok := rebaseEquivalentPathKey(ks, mustStateKey(t, ks, "sym10@1.child.name"), from, to)
+	if !ok || ks.Format(got) != pathdom.PathKey("sym20@1.leaf.name") {
+		t.Fatalf("rebaseEquivalentPathKey = %s/%v, want sym20@1.leaf.name/true", ks.Format(got), ok)
 	}
-	if !pathaddr.PathKeyHasPrefix(got, to) {
-		t.Fatalf("rebased key %s escaped target prefix %s", got, to)
+	if !ks.HasPrefix(got, to) {
+		t.Fatalf("rebased key %s escaped target prefix %s", ks.Format(got), ks.Format(to))
 	}
-	if got, ok := rebaseEquivalentPathKey(pathdom.PathKey("sym10@1.childish.name"), from, to); ok || got != "" {
-		t.Fatalf("boundary-colliding rebase = %s/%v, want rejected", got, ok)
+	if got, ok := rebaseEquivalentPathKey(ks, mustStateKey(t, ks, "sym10@1.childish.name"), from, to); ok || got != (keyspace.Key{}) {
+		t.Fatalf("boundary-colliding rebase = %s/%v, want rejected", ks.Format(got), ok)
 	}
-	if got, ok := rebaseEquivalentPathKey(pathdom.PathKey("sym10@1.child.name"), from, pathdom.PathKey("s20.leaf")); ok || got != "" {
-		t.Fatalf("mixed local/stable rebase = %s/%v, want rejected", got, ok)
+	stableTo, stableOK := ks.FromStableSymbol(20, nil)
+	if !stableOK {
+		t.Fatal("FromStableSymbol failed")
+	}
+	if got, ok := rebaseEquivalentPathKey(ks, mustStateKey(t, ks, "sym10@1.child.name"), from, stableTo); ok || got != (keyspace.Key{}) {
+		t.Fatalf("mixed local/stable rebase = %s/%v, want rejected", ks.Format(got), ok)
 	}
 }
 

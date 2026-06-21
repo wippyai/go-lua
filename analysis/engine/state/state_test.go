@@ -124,7 +124,7 @@ func TestLenFloorInvalidationFollowsPathMutationPrefixes(t *testing.T) {
 	sibling := pathdom.PathKey("sym12@1.itemized")
 	aliasRoot := pathdom.PathKey("sym13@1.alias")
 	aliasChild := pathdom.PathKey("sym13@1.alias.child")
-	proof := pathevidence.BranchProof{Kind: pathevidence.BranchProofPathEqual, Path: root, Other: aliasRoot}
+	proof := pathevidence.BranchProof{Kind: pathevidence.BranchProofPathEqual, Path: mustStateKey(t, ks, root), Other: mustStateKey(t, ks, aliasRoot)}
 
 	s := State{}.
 		WriteLenFloor(ks, root, 2).
@@ -197,17 +197,18 @@ func TestTypestateStateLaneTracksOpenClosedAndEscapedResources(t *testing.T) {
 }
 
 func TestTypestateResourceKeyFollowsProvenPathEquality(t *testing.T) {
+	ks := keyspace.New()
 	tx := pathdom.PathKey("sym10@1.tx")
 	alias := pathdom.PathKey("sym11@1.alias")
 	proof := pathevidence.BranchProof{
 		Kind:  pathevidence.BranchProofPathEqual,
-		Path:  tx,
-		Other: alias,
+		Path:  mustStateKey(t, ks, tx),
+		Other: mustStateKey(t, ks, alias),
 	}
 	state := State{}.AddBranchProof(proof)
 
-	gotFromTX := state.CanonicalTypestateResourceKey(tx)
-	gotFromAlias := state.CanonicalTypestateResourceKey(alias)
+	gotFromTX := state.CanonicalTypestateResourceKey(ks, tx)
+	gotFromAlias := state.CanonicalTypestateResourceKey(ks, alias)
 	if gotFromTX == "" || gotFromTX != gotFromAlias {
 		t.Fatalf("canonical typestate keys = %q/%q, want same non-empty key", gotFromTX, gotFromAlias)
 	}
@@ -533,8 +534,8 @@ func TestStateCloneIndependenceAcrossLanes(t *testing.T) {
 
 	cloneOnlyProof := pathevidence.BranchProof{
 		Kind:  pathevidence.BranchProofPathNotEqual,
-		Path:  fx.pathKey,
-		Other: pathdom.PathKey("sym201@1.other"),
+		Path:  mustStateKey(t, ks, fx.pathKey),
+		Other: mustStateKey(t, ks, pathdom.PathKey("sym201@1.other")),
 	}
 	cloneOnlyFrozenID := identity.ID{Kind: "table", Site: "clone-only-freeze", Index: 1}
 	clone := original.Snapshot()
@@ -711,16 +712,16 @@ func TestWritesFromStateBottomProduceReachableState(t *testing.T) {
 
 	slot := key.SymbolValue(symbol.ID(65))
 	pathKey := pathdom.PathKey("sym65@1.member")
-	dynamicKey := dynamicindex.Key{Table: pathdom.PathKey("sym65@1.table"), Site: "dyn"}
+	dynamicKey := dynamicindex.Key{Table: mustStateKey(t, ks, pathdom.PathKey("sym65@1.table")), Site: "dyn"}
 	heapID := identity.ID{Kind: "table", Site: "bottom-write", Index: 1}
-	proof := pathevidence.BranchProof{Kind: pathevidence.BranchProofPathPresence, Path: pathKey, Presence: presence.Present()}
+	proof := pathevidence.BranchProof{Kind: pathevidence.BranchProofPathPresence, Path: mustStateKey(t, ks, pathKey), Presence: presence.Present()}
 	implication := pathevidence.PathPresenceImplication{
-		Trigger:         pathKey,
+		Trigger:         mustStateKey(t, ks, pathKey),
 		TriggerPresence: presence.Absent(),
-		Target:          pathdom.PathKey("sym65@1.value"),
+		Target:          mustStateKey(t, ks, pathdom.PathKey("sym65@1.value")),
 		TargetPresence:  presence.Present(),
 	}
-	effectKey := effectdelta.Key{Target: pathdom.PathKey("sym65@1.table"), Site: "effect", Kind: effectdelta.Mutation}
+	effectKey := effectdelta.Key{Target: mustStateKey(t, ks, pathdom.PathKey("sym65@1.table")), Site: "effect", Kind: effectdelta.Mutation}
 	channel := channelselectfact.Fact{Select: "select-bottom", Kind: channelselectfact.FactSelect, Result: pathKey}
 	escapeID := identity.ID{Kind: "table", Site: "escape-bottom", Index: 1}
 	freezeID := identity.ID{Kind: "table", Site: "freeze-bottom", Index: 1}
@@ -768,22 +769,24 @@ func TestPathPresenceImplicationsUseMustJoinAndInvalidate(t *testing.T) {
 	reg := standard.Registry()
 	ks := keyspace.New()
 	stateDomain := Domain(reg)
+	errKey := mustStateKey(t, ks, pathdom.PathKey("sym101@1.err"))
+	valueKey := mustStateKey(t, ks, pathdom.PathKey("sym101@1.value"))
 	common := pathevidence.PathPresenceImplication{
-		Trigger:         pathdom.PathKey("sym101@1.err"),
+		Trigger:         errKey,
 		TriggerPresence: presence.Absent(),
-		Target:          pathdom.PathKey("sym101@1.value"),
+		Target:          valueKey,
 		TargetPresence:  presence.Present(),
 	}
 	leftOnly := pathevidence.PathPresenceImplication{
-		Trigger:         pathdom.PathKey("sym101@1.err"),
+		Trigger:         errKey,
 		TriggerPresence: presence.Present(),
-		Target:          pathdom.PathKey("sym101@1.value"),
+		Target:          valueKey,
 		TargetPresence:  presence.Absent(),
 	}
 	rightOnly := pathevidence.PathPresenceImplication{
-		Trigger:         pathdom.PathKey("sym101@1.value"),
+		Trigger:         valueKey,
 		TriggerPresence: presence.Absent(),
-		Target:          pathdom.PathKey("sym101@1.err"),
+		Target:          errKey,
 		TargetPresence:  presence.Present(),
 	}
 	left := State{}.AddPathPresenceImplication(common).AddPathPresenceImplication(leftOnly)
@@ -886,8 +889,10 @@ func TestDynamicIndexKeysPointwiseFacts(t *testing.T) {
 	reg := standard.Registry()
 	valueDomain := product.Domain(reg)
 	stateDomain := Domain(reg)
-	common := dynamicindex.Key{Table: pathdom.PathKey("sym80@1.table"), Site: "common"}
-	leftOnly := dynamicindex.Key{Table: pathdom.PathKey("sym80@1.table"), Site: "left"}
+	ks := keyspace.New()
+	tableKey := mustStateKey(t, ks, pathdom.PathKey("sym80@1.table"))
+	common := dynamicindex.Key{Table: tableKey, Site: "common"}
+	leftOnly := dynamicindex.Key{Table: tableKey, Site: "left"}
 	presentFact := dynamicindex.Fact{
 		KeyPresence: presence.Present(),
 		KeyValue:    presentValue(reg),
@@ -951,7 +956,7 @@ func TestHeapTableIdentityFacadeReadWriteAndCopy(t *testing.T) {
 	stateDomain := Domain(reg)
 	id := identity.ID{Kind: "table", Site: "alloc", Index: 1}
 	staticCommon := heapStaticKey(t, ks, "sym90@1.table.name")
-	dynCommon := dynamicindex.Key{Table: pathdom.PathKey("sym90@1.table"), Site: "dyn"}
+	dynCommon := dynamicindex.Key{Table: mustStateKey(t, ks, pathdom.PathKey("sym90@1.table")), Site: "dyn"}
 	present := presentValue(reg)
 	absent := absentValue(reg)
 
@@ -996,10 +1001,11 @@ func TestHeapTableIdentityFacadeReadWriteAndCopy(t *testing.T) {
 }
 
 func TestBranchProofsUseMustJoin(t *testing.T) {
+	ks := keyspace.New()
 	stateDomain := Domain(standard.Registry())
-	common := pathevidence.BranchProof{Kind: pathevidence.BranchProofPathPresence, Path: pathdom.PathKey("sym100@1.err"), Presence: presence.Present()}
-	leftOnly := pathevidence.BranchProof{Kind: pathevidence.BranchProofPathEqual, Path: pathdom.PathKey("sym100@1.a"), Other: pathdom.PathKey("sym100@1.b")}
-	rightOnly := pathevidence.BranchProof{Kind: pathevidence.BranchProofPathNotEqual, Path: pathdom.PathKey("sym100@1.a"), Other: pathdom.PathKey("sym100@1.c")}
+	common := pathevidence.BranchProof{Kind: pathevidence.BranchProofPathPresence, Path: mustStateKey(t, ks, pathdom.PathKey("sym100@1.err")), Presence: presence.Present()}
+	leftOnly := pathevidence.BranchProof{Kind: pathevidence.BranchProofPathEqual, Path: mustStateKey(t, ks, pathdom.PathKey("sym100@1.a")), Other: mustStateKey(t, ks, pathdom.PathKey("sym100@1.b"))}
+	rightOnly := pathevidence.BranchProof{Kind: pathevidence.BranchProofPathNotEqual, Path: mustStateKey(t, ks, pathdom.PathKey("sym100@1.a")), Other: mustStateKey(t, ks, pathdom.PathKey("sym100@1.c"))}
 	left := State{}.AddBranchProof(common).AddBranchProof(leftOnly)
 	right := State{}.AddBranchProof(common).AddBranchProof(rightOnly)
 
@@ -1029,24 +1035,25 @@ func TestBranchProofsUseMustJoin(t *testing.T) {
 }
 
 func TestEquivalentPathKeysFollowEqualityProofs(t *testing.T) {
+	ks := keyspace.New()
 	s := State{}.
 		AddBranchProof(pathevidence.BranchProof{
 			Kind:  pathevidence.BranchProofPathEqual,
-			Path:  pathdom.PathKey("sym10@1"),
-			Other: pathdom.PathKey("sym20@1"),
+			Path:  mustStateKey(t, ks, pathdom.PathKey("sym10@1")),
+			Other: mustStateKey(t, ks, pathdom.PathKey("sym20@1")),
 		}).
 		AddBranchProof(pathevidence.BranchProof{
 			Kind:  pathevidence.BranchProofPathEqual,
-			Path:  pathdom.PathKey("sym20@1.child"),
-			Other: pathdom.PathKey("sym30@1.leaf"),
+			Path:  mustStateKey(t, ks, pathdom.PathKey("sym20@1.child")),
+			Other: mustStateKey(t, ks, pathdom.PathKey("sym30@1.leaf")),
 		}).
 		AddBranchProof(pathevidence.BranchProof{
 			Kind:  pathevidence.BranchProofPathNotEqual,
-			Path:  pathdom.PathKey("sym10@1"),
-			Other: pathdom.PathKey("sym40@1"),
+			Path:  mustStateKey(t, ks, pathdom.PathKey("sym10@1")),
+			Other: mustStateKey(t, ks, pathdom.PathKey("sym40@1")),
 		})
 
-	got := s.EquivalentPathKeys(pathdom.PathKey("sym10@1.child.name"))
+	got := s.EquivalentPathKeys(ks, pathdom.PathKey("sym10@1.child.name"))
 	want := []pathdom.PathKey{
 		pathdom.PathKey("sym20@1.child.name"),
 		pathdom.PathKey("sym30@1.leaf.name"),
@@ -1060,7 +1067,7 @@ func TestEquivalentPathKeysFollowEqualityProofs(t *testing.T) {
 		}
 	}
 
-	if got := s.EquivalentPathKeys(pathdom.PathKey("sym99@1.child")); len(got) != 0 {
+	if got := s.EquivalentPathKeys(ks, pathdom.PathKey("sym99@1.child")); len(got) != 0 {
 		t.Fatalf("unrelated EquivalentPathKeys = %#v, want empty", got)
 	}
 }
@@ -1068,8 +1075,9 @@ func TestEquivalentPathKeysFollowEqualityProofs(t *testing.T) {
 func TestEffectDeltasPointwiseJoin(t *testing.T) {
 	reg := standard.Registry()
 	stateDomain := Domain(reg)
-	common := effectdelta.Key{Target: pathdom.PathKey("sym110@1.table"), Site: "call", Kind: effectdelta.Mutation}
-	leftOnly := effectdelta.Key{Target: pathdom.PathKey("sym110@1.left"), Site: "call", Kind: effectdelta.Mutation}
+	ks := keyspace.New()
+	common := effectdelta.Key{Target: mustStateKey(t, ks, pathdom.PathKey("sym110@1.table")), Site: "call", Kind: effectdelta.Mutation}
+	leftOnly := effectdelta.Key{Target: mustStateKey(t, ks, pathdom.PathKey("sym110@1.left")), Site: "call", Kind: effectdelta.Mutation}
 	presentDelta := effectdelta.Value{Before: presentValue(reg), After: presentValue(reg), Change: effectdelta.ChangeChanged}
 	absentDelta := effectdelta.Value{Before: absentValue(reg), After: absentValue(reg), Change: effectdelta.ChangeNone}
 
@@ -1269,9 +1277,9 @@ func TestInvalidatePathKeySubtreeRemovesStructuredDescendants(t *testing.T) {
 	placeholderPrefix := pathdom.PathKey("$0.field")
 	placeholderChild := pathdom.PathKey("$0.field.deep")
 	placeholderSibling := pathdom.PathKey("$0.fieldish")
-	prefixProof := pathevidence.BranchProof{Kind: pathevidence.BranchProofPathPresence, Path: prefix, Presence: presence.Present()}
-	childProof := pathevidence.BranchProof{Kind: pathevidence.BranchProofPathEqual, Path: child, Other: otherSymbol}
-	otherProof := pathevidence.BranchProof{Kind: pathevidence.BranchProofPathNotEqual, Path: otherSymbol, Other: otherVersion}
+	prefixProof := pathevidence.BranchProof{Kind: pathevidence.BranchProofPathPresence, Path: mustStateKey(t, ks, prefix), Presence: presence.Present()}
+	childProof := pathevidence.BranchProof{Kind: pathevidence.BranchProofPathEqual, Path: mustStateKey(t, ks, child), Other: mustStateKey(t, ks, otherSymbol)}
+	otherProof := pathevidence.BranchProof{Kind: pathevidence.BranchProofPathNotEqual, Path: mustStateKey(t, ks, otherSymbol), Other: mustStateKey(t, ks, otherVersion)}
 
 	s := State{}.
 		WritePathKey(reg, ks, root, present).
@@ -1376,7 +1384,7 @@ func TestInvalidatePathKeySubtreeRemovesBranchProofsWithOtherUnderSubtree(t *tes
 	prefix := pathdom.PathKey("sym70@2.field")
 	otherInside := pathdom.PathKey("sym70@2.field.deep")
 	outside := pathdom.PathKey("sym72@2.field")
-	proof := pathevidence.BranchProof{Kind: pathevidence.BranchProofPathEqual, Path: outside, Other: otherInside}
+	proof := pathevidence.BranchProof{Kind: pathevidence.BranchProofPathEqual, Path: mustStateKey(t, ks, outside), Other: mustStateKey(t, ks, otherInside)}
 
 	s := State{}.
 		WritePathKey(reg, ks, prefix, present).
@@ -1421,8 +1429,8 @@ func TestInvalidatePathKeyDescendantsKeepsContainerAndUnrelatedPaths(t *testing.
 	otherSymbol := pathdom.PathKey("sym61@2.item.count")
 	placeholderContainer := pathdom.PathKey("$0.item")
 	placeholderChild := pathdom.PathKey("$0.item.count")
-	containerProof := pathevidence.BranchProof{Kind: pathevidence.BranchProofPathPresence, Path: container, Presence: presence.Present()}
-	childProof := pathevidence.BranchProof{Kind: pathevidence.BranchProofPathEqual, Path: child, Other: otherSymbol}
+	containerProof := pathevidence.BranchProof{Kind: pathevidence.BranchProofPathPresence, Path: mustStateKey(t, ks, container), Presence: presence.Present()}
+	childProof := pathevidence.BranchProof{Kind: pathevidence.BranchProofPathEqual, Path: mustStateKey(t, ks, child), Other: mustStateKey(t, ks, otherSymbol)}
 
 	s := State{}.
 		WritePathKey(reg, ks, container, present).
@@ -1511,7 +1519,7 @@ func TestInvalidatePathKeyDescendantsFromRootRemovesStaticMembersAndBranchProofs
 	child := pathdom.PathKey("sym80@1.field")
 	descendant := pathdom.PathKey("sym80@1.field.deep")
 	outside := pathdom.PathKey("sym81@1.field")
-	proof := pathevidence.BranchProof{Kind: pathevidence.BranchProofPathNotEqual, Path: outside, Other: descendant}
+	proof := pathevidence.BranchProof{Kind: pathevidence.BranchProofPathNotEqual, Path: mustStateKey(t, ks, outside), Other: mustStateKey(t, ks, descendant)}
 
 	s := State{}.
 		WritePathKey(reg, ks, root, present).
@@ -1552,9 +1560,9 @@ func TestTopLanesReadTopAndRejectFiniteUpdates(t *testing.T) {
 	top := Domain(reg).Top()
 	slot := key.SymbolValue(symbol.ID(50))
 	pathKey := pathdom.PathKey("sym50@1.field")
-	dynamicKey := dynamicindex.Key{Table: pathdom.PathKey("sym50@1.table"), Site: "dyn"}
+	dynamicKey := dynamicindex.Key{Table: mustStateKey(t, ks, pathdom.PathKey("sym50@1.table")), Site: "dyn"}
 	heapID := identity.ID{Kind: "table", Site: "top", Index: 1}
-	effectKey := effectdelta.Key{Target: pathdom.PathKey("sym50@1.table"), Site: "effect", Kind: effectdelta.Mutation}
+	effectKey := effectdelta.Key{Target: mustStateKey(t, ks, pathdom.PathKey("sym50@1.table")), Site: "effect", Kind: effectdelta.Mutation}
 	escapeID := identity.ID{Kind: "table", Site: "escape-top", Index: 1}
 	present := presentValue(reg)
 	dynamicFact := dynamicindex.Fact{
@@ -1682,15 +1690,23 @@ func stateLawFixtureFor(reg *axis.Registry, ks *keyspace.KeySpace) stateLawFixtu
 		panic("stateLawFixtureFor: FromStateKey failed for static heap key")
 	}
 	tableKey := pathdom.PathKey("sym201@1.table")
+	tableHeapKey, ok := ks.FromStateKey(tableKey)
+	if !ok {
+		panic("stateLawFixtureFor: FromStateKey failed for table heap key")
+	}
 	valueSlot := key.SymbolValue(symbol.ID(201))
 	returnSlot := 3
-	dynamicKey := dynamicindex.Key{Table: tableKey, Site: "dyn"}
+	dynamicKey := dynamicindex.Key{Table: tableHeapKey, Site: "dyn"}
 	heapID := identity.ID{Kind: "table", Site: "state-law", Index: 1}
-	effectKey := effectdelta.Key{Target: tableKey, Site: "effect", Kind: effectdelta.Mutation}
+	effectKey := effectdelta.Key{Target: tableHeapKey, Site: "effect", Kind: effectdelta.Mutation}
 	escapeID := identity.ID{Kind: "table", Site: "escape-law", Index: 1}
 	freezeID := identity.ID{Kind: "table", Site: "freeze-law", Index: 1}
 	channelFact := channelselectfact.Fact{Select: "select-law", Kind: channelselectfact.FactSelect, Result: pathKey}
-	proof := pathevidence.BranchProof{Kind: pathevidence.BranchProofPathPresence, Path: pathKey, Presence: presence.Present()}
+	proofPathKey, ok := ks.FromStateKey(pathKey)
+	if !ok {
+		panic("stateLawFixtureFor: FromStateKey failed for proof path key")
+	}
+	proof := pathevidence.BranchProof{Kind: pathevidence.BranchProofPathPresence, Path: proofPathKey, Presence: presence.Present()}
 	dynamicFact := dynamicindex.Fact{
 		KeyPresence: presence.Present(),
 		KeyValue:    present,
@@ -1788,8 +1804,10 @@ func stateLawFormat(reg *axis.Registry, ks *keyspace.KeySpace) func(State) strin
 
 func TestFiniteLaneSettersRejectBottomValues(t *testing.T) {
 	reg := standard.Registry()
-	dynamicKey := dynamicindex.Key{Table: pathdom.PathKey("sym1@1.table"), Site: "site"}
-	effectKey := effectdelta.Key{Target: pathdom.PathKey("sym1@1.table"), Site: "site", Kind: effectdelta.Mutation}
+	ks := keyspace.New()
+	tableKey := mustStateKey(t, ks, pathdom.PathKey("sym1@1.table"))
+	dynamicKey := dynamicindex.Key{Table: tableKey, Site: "site"}
+	effectKey := effectdelta.Key{Target: tableKey, Site: "site", Kind: effectdelta.Mutation}
 	id := identity.ID{Kind: "table", Site: "lane-bottom", Index: 1}
 
 	requirePanic(t, func() {
@@ -1826,6 +1844,15 @@ func heapStaticKey(t *testing.T, ks *keyspace.KeySpace, name string) keyspace.Ke
 	k, ok := ks.FromStateKey(pathdom.PathKey(name))
 	if !ok {
 		t.Fatalf("FromStateKey(%q) failed", name)
+	}
+	return k
+}
+
+func mustStateKey(t *testing.T, ks *keyspace.KeySpace, key pathdom.PathKey) keyspace.Key {
+	t.Helper()
+	k, ok := ks.FromStateKey(key)
+	if !ok {
+		t.Fatalf("FromStateKey(%q) failed", key)
 	}
 	return k
 }

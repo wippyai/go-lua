@@ -311,6 +311,58 @@ func TestFactsNodeTransferCallOutcomeLengthFloorSurvivesInvalidations(t *testing
 	}
 }
 
+func TestFactsNodeTransferCallOutcomeAppliesNormalReturnNumFloors(t *testing.T) {
+	reg := standard.Registry()
+	point := cfg.Point(632)
+	index := symbol.ID(632)
+	indexExpr := factflow.ExprRef(632)
+	indexPath := pathdom.NewPath(index, "i")
+	memberPath := indexPath.Field("next")
+	visibilityBuilder := visibility.NewBuilder()
+	visibilityBuilder.Define(point, index, "i")
+	resolver := visibility.NewResolver(visibilityBuilder.Build())
+	ks := resolver.KeySpace()
+
+	got := NewFactsNodeTransfer(FactsNodeTransferConfig{
+		Facts: factflow.NewFacts(factflow.FactsInput{
+			CallSites: map[cfg.Point]factflow.CallSite{
+				point: factflow.NewCallSite(factflow.CallSiteConfig{
+					Context: factflow.CallSiteContextStatement,
+					ArgumentSources: []factflow.ValueSource{
+						{Kind: factflow.ValueSourceExpression, ExprRef: indexExpr, HasExpr: true},
+					},
+				}),
+			},
+			ExpressionPaths: map[factflow.ExprRef]pathdom.Path{
+				indexExpr: indexPath,
+			},
+		}),
+		CallOutcome: func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) callpayload.CallOutcome {
+			return callpayload.CallOutcome{
+				NormalReturnFacts: callboundary.NormalReturnFacts{
+					NumFloors: []callboundary.NumFloorFact{
+						{Path: pathdom.NewPlaceholder(0), Floor: 1},
+						{Path: pathdom.NewPlaceholder(0).Field("next"), Floor: 2},
+					},
+				},
+			}
+		},
+		Visibility: resolver,
+	})(transfer.NodeContext{
+		Registry: reg,
+		Point:    point,
+	}, state.State{})
+
+	rootKey := visibility.RootOrVisibleKeyAt(resolver, point, indexPath)
+	memberKey := visibility.RootOrVisibleKeyAt(resolver, point, memberPath)
+	if floor, ok := got.ReadNumFloor(ks, rootKey); !ok || floor != 1 {
+		t.Fatalf("root num floor = %d/%v, want 1 at %s", floor, ok, rootKey)
+	}
+	if floor, ok := got.ReadNumFloor(ks, memberKey); !ok || floor != 2 {
+		t.Fatalf("member num floor = %d/%v, want 2 at %s", floor, ok, memberKey)
+	}
+}
+
 func TestFactsNodeTransferCallOutcomeParamPathRefinementUsesArgumentNotReceiver(t *testing.T) {
 	reg := standard.Registry()
 	point := cfg.Point(616)
@@ -405,7 +457,7 @@ func TestFactsNodeTransferCallOutcomeRebasesNestedEscapeEventToConsumerChildPath
 		t.Fatalf("no visible key for %s", childPath)
 	}
 	gotDelta := got.ReadEffectDelta(effectdelta.Key{
-		Target: targetKey,
+		Target: mustStateKey(t, resolver.KeySpace(), targetKey),
 		Site:   callboundary.EscapeEventEffectSite(callboundary.EscapeEventStore, true),
 		Kind:   effectdelta.Escape,
 	})
@@ -460,7 +512,7 @@ func TestFactsNodeTransferCallOutcomeEscapeSendMarksIdentityPlacementAndEffectDe
 		t.Fatalf("placement[%v] = %s, want %s", tableID, gotPlacement, placement.SharedHeap)
 	}
 	targetKey := resolver.KeyAt(point, targetPath)
-	assertEscapeEffectDelta(t, reg, got, targetKey, callboundary.EscapeEventSend, false)
+	assertEscapeEffectDelta(t, reg, got, mustStateKey(t, resolver.KeySpace(), targetKey), callboundary.EscapeEventSend, false)
 }
 
 func TestFactsNodeTransferCallOutcomeFrozenTableFactFreezesSingletonIdentity(t *testing.T) {
@@ -791,6 +843,7 @@ func TestFactsNodeTransferCallOutcomeRecursiveEscapeSendMarksDynamicIndexKeyAndV
 	builder := visibility.NewBuilder()
 	builder.Define(point, target, "obj")
 	resolver := visibility.NewResolver(builder.Build())
+	ks := resolver.KeySpace()
 
 	got := NewFactsNodeTransfer(FactsNodeTransferConfig{
 		Facts: facts,
@@ -812,7 +865,7 @@ func TestFactsNodeTransferCallOutcomeRecursiveEscapeSendMarksDynamicIndexKeyAndV
 		WriteHeapTableObject(reg, rootID, heapidentity.NewTableObject(heapidentity.TableObjectConfig{
 			Root: rootValue,
 			DynamicIndexFacts: map[dynamicindex.Key]dynamicindex.Fact{
-				{Table: pathdom.PathKey(".dynamic"), Site: "dynamic-identity"}: {
+				{Table: suffixStaticKey(t, ks, fieldSuffix("dynamic").Segments), Site: "dynamic-identity"}: {
 					KeyPresence: presence.Present(),
 					KeyValue:    keyValue,
 					Value:       dynamicValue,
@@ -887,7 +940,7 @@ func TestFactsNodeTransferCallOutcomeEscapeRecoversDynamicEntryIdentityWhenPathV
 		WriteHeapTableObject(reg, itemsID, heapidentity.NewTableObject(heapidentity.TableObjectConfig{
 			Root: itemsValue,
 			DynamicIndexFacts: map[dynamicindex.Key]dynamicindex.Fact{
-				{Table: pathdom.PathKey("callee.items"), Site: "callee.write"}: {
+				{Table: mustStateKey(t, ks, pathdom.PathKey("callee.items")), Site: "callee.write"}: {
 					KeyPresence: presence.Present(),
 					KeyValue:    routeKeyValue,
 					Value:       itemValue,
@@ -1258,7 +1311,7 @@ func assertEscapeEffectDelta(
 	t *testing.T,
 	reg *axis.Registry,
 	got state.State,
-	target pathdom.PathKey,
+	target keyspace.Key,
 	kind callboundary.EscapeEventKind,
 	recursive bool,
 ) {
@@ -1269,7 +1322,7 @@ func assertEscapeEffectDelta(
 		Kind:   effectdelta.Escape,
 	})
 	if !effectdelta.Domain(reg).Equal(gotDelta, effectdelta.Top()) {
-		t.Fatalf("escape delta = %#v, want kind %d recursive=%v on %s", gotDelta, kind, recursive, target)
+		t.Fatalf("escape delta = %#v, want kind %d recursive=%v on %v", gotDelta, kind, recursive, target)
 	}
 }
 

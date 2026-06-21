@@ -2,6 +2,7 @@ package state
 
 import (
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/typestate"
 )
 
@@ -16,18 +17,18 @@ func TypestateResource(target pathdom.PathKey, protocol typestate.Protocol) type
 // protocol target. Proven path-equality facts are folded into the same resource
 // key so typestate transitions through aliases discharge the original
 // obligation.
-func (s State) CanonicalTypestateResource(target pathdom.PathKey, protocol typestate.Protocol) typestate.Resource {
-	return TypestateResource(s.CanonicalTypestateResourceKey(target), protocol)
+func (s State) CanonicalTypestateResource(ks *keyspace.KeySpace, target pathdom.PathKey, protocol typestate.Protocol) typestate.Resource {
+	return TypestateResource(s.CanonicalTypestateResourceKey(ks, target), protocol)
 }
 
 // CanonicalTypestateResourceKey returns the stable representative for a path key
 // under proven path equality.
-func (s State) CanonicalTypestateResourceKey(target pathdom.PathKey) pathdom.PathKey {
+func (s State) CanonicalTypestateResourceKey(ks *keyspace.KeySpace, target pathdom.PathKey) pathdom.PathKey {
 	if target == "" {
 		return ""
 	}
 	canonical := target
-	for _, equivalent := range s.EquivalentPathKeys(target) {
+	for _, equivalent := range s.EquivalentPathKeys(ks, target) {
 		if equivalent != "" && equivalent < canonical {
 			canonical = equivalent
 		}

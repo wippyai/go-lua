@@ -143,6 +143,7 @@ func TestFactsNodeTransferAppliesDynamicIndexWriteKeyValueAdmission(t *testing.T
 	}
 	visibilityBuilder := visibility.NewBuilder()
 	visibilityBuilder.Define(point, table, "table")
+	resolver := visibility.NewResolver(visibilityBuilder.Build())
 
 	got := NewFactsNodeTransfer(FactsNodeTransferConfig{
 		Facts: factflow.NewFacts(factflow.FactsInput{
@@ -157,13 +158,13 @@ func TestFactsNodeTransferAppliesDynamicIndexWriteKeyValueAdmission(t *testing.T
 			},
 		}),
 		Sources:    sources,
-		Visibility: visibility.NewResolver(visibilityBuilder.Build()),
+		Visibility: resolver,
 	})(transfer.NodeContext{
 		Registry: reg,
 		Point:    point,
 	}, state.State{})
 
-	gotFact := got.ReadDynamicIndexFact(reg, dynamicindex.Key{Table: tableKey, Site: dynamicindex.SiteForPoint(int(point))})
+	gotFact := got.ReadDynamicIndexFact(reg, dynamicindex.Key{Table: mustStateKey(t, resolver.KeySpace(), tableKey), Site: dynamicindex.SiteForPoint(int(point))})
 	if !presence.Equal(gotFact.KeyPresence, presence.Present()) ||
 		!product.Equal(reg, gotFact.KeyValue, keyValue) ||
 		!product.Equal(reg, gotFact.Value, writeValue) ||
@@ -195,6 +196,7 @@ func TestFactsNodeTransferDynamicIndexWritePublishesFirstHeapDynamicFact(t *test
 	}
 	visibilityBuilder := visibility.NewBuilder()
 	visibilityBuilder.Define(point, table, "table")
+	resolver := visibility.NewResolver(visibilityBuilder.Build())
 
 	got := NewFactsNodeTransfer(FactsNodeTransferConfig{
 		Facts: factflow.NewFacts(factflow.FactsInput{
@@ -209,7 +211,7 @@ func TestFactsNodeTransferDynamicIndexWritePublishesFirstHeapDynamicFact(t *test
 			},
 		}),
 		Sources:    sources,
-		Visibility: visibility.NewResolver(visibilityBuilder.Build()),
+		Visibility: resolver,
 	})(transfer.NodeContext{
 		Registry: reg,
 		Point:    point,
@@ -217,11 +219,11 @@ func TestFactsNodeTransferDynamicIndexWritePublishesFirstHeapDynamicFact(t *test
 		WriteValue(reg, key.SymbolValue(table), tableValue).
 		WriteHeapTableObject(reg, tableID, heapidentity.NewTableObject(heapidentity.TableObjectConfig{Root: tableValue})))
 
-	dynamicKey := dynamicindex.Key{Table: tableKey, Site: dynamicindex.SiteForPoint(int(point))}
+	dynamicKey := dynamicindex.Key{Table: mustStateKey(t, resolver.KeySpace(), tableKey), Site: dynamicindex.SiteForPoint(int(point))}
 	object := got.ReadHeapTableObject(reg, tableID)
 	heapFact, ok := object.DynamicIndexFact(dynamicKey)
 	if !ok {
-		t.Fatalf("heap dynamic fact missing for %s", dynamicKey)
+		t.Fatalf("heap dynamic fact missing for %v", dynamicKey)
 	}
 	if !presence.Equal(heapFact.KeyPresence, presence.Present()) ||
 		!product.Equal(reg, heapFact.KeyValue, keyValue) ||
@@ -255,7 +257,7 @@ func TestResolvePathValueReadsHeapDynamicFactAcrossPathKeyContexts(t *testing.T)
 		t.Fatal("missing items suffix key")
 	}
 	oldDynamicKey := dynamicindex.Key{
-		Table: pathdom.PathKey("callee.items"),
+		Table: mustStateKey(t, ks, pathdom.PathKey("callee.items")),
 		Site:  dynamicindex.Site("callee.write"),
 	}
 	st := state.State{}.
@@ -334,15 +336,17 @@ func TestFactsEdgeTransferAddsPointLevelBranchPathEvidenceOnBothBranchOutputs(t 
 	visibilityBuilder.Define(branch, err, "err")
 	visibilityBuilder.Define(branch, left, "left")
 	visibilityBuilder.Define(branch, right, "right")
+	resolver := visibility.NewResolver(visibilityBuilder.Build())
+	ks := resolver.KeySpace()
 	wantPresence := pathevidence.BranchProof{
 		Kind:     pathevidence.BranchProofPathPresence,
-		Path:     pathdom.PathKey("sym403@1"),
+		Path:     mustStateKey(t, ks, pathdom.PathKey("sym403@1")),
 		Presence: presence.Present(),
 	}
 	wantEquality := pathevidence.BranchProof{
 		Kind:  pathevidence.BranchProofPathEqual,
-		Path:  pathdom.PathKey("sym404@1.value"),
-		Other: pathdom.PathKey("sym405@1.value"),
+		Path:  mustStateKey(t, ks, pathdom.PathKey("sym404@1.value")),
+		Other: mustStateKey(t, ks, pathdom.PathKey("sym405@1.value")),
 	}
 
 	got := transfer.Run(transfer.Config{
@@ -357,7 +361,7 @@ func TestFactsEdgeTransferAddsPointLevelBranchPathEvidenceOnBothBranchOutputs(t 
 					),
 				},
 			}),
-			Visibility: visibility.NewResolver(visibilityBuilder.Build()),
+			Visibility: resolver,
 		}),
 	})
 
@@ -393,15 +397,17 @@ func TestFactsEdgeTransferBranchPathEvidenceRespectEdgesAndJoinByIntersection(t 
 	visibilityBuilder.Define(branch, err, "err")
 	visibilityBuilder.Define(branch, left, "left")
 	visibilityBuilder.Define(branch, right, "right")
+	resolver := visibility.NewResolver(visibilityBuilder.Build())
+	ks := resolver.KeySpace()
 	oneSided := pathevidence.BranchProof{
 		Kind:     pathevidence.BranchProofPathPresence,
-		Path:     pathdom.PathKey("sym430@1"),
+		Path:     mustStateKey(t, ks, pathdom.PathKey("sym430@1")),
 		Presence: presence.Present(),
 	}
 	twoSided := pathevidence.BranchProof{
 		Kind:  pathevidence.BranchProofPathEqual,
-		Path:  pathdom.PathKey("sym431@1.value"),
-		Other: pathdom.PathKey("sym432@1.value"),
+		Path:  mustStateKey(t, ks, pathdom.PathKey("sym431@1.value")),
+		Other: mustStateKey(t, ks, pathdom.PathKey("sym432@1.value")),
 	}
 
 	got := transfer.Run(transfer.Config{
@@ -416,7 +422,7 @@ func TestFactsEdgeTransferBranchPathEvidenceRespectEdgesAndJoinByIntersection(t 
 					),
 				},
 			}),
-			Visibility: visibility.NewResolver(visibilityBuilder.Build()),
+			Visibility: resolver,
 		}),
 	})
 
@@ -671,6 +677,8 @@ func TestFactsNodeTransferCallOutcomeRebasesBoundaryFacts(t *testing.T) {
 	visibilityBuilder := visibility.NewBuilder()
 	visibilityBuilder.Define(point, first, "first")
 	visibilityBuilder.Define(point, second, "second")
+	resolver := visibility.NewResolver(visibilityBuilder.Build())
+	ks := resolver.KeySpace()
 
 	got := NewFactsNodeTransfer(FactsNodeTransferConfig{
 		Facts: factflow.NewFacts(factflow.FactsInput{
@@ -741,13 +749,13 @@ func TestFactsNodeTransferCallOutcomeRebasesBoundaryFacts(t *testing.T) {
 				},
 			}
 		},
-		Visibility: visibility.NewResolver(visibilityBuilder.Build()),
+		Visibility: resolver,
 	})(transfer.NodeContext{
 		Registry: reg,
 		Point:    point,
 	}, state.State{})
 
-	dynamicKey := dynamicindex.Key{Table: pathdom.PathKey("sym505@1.items"), Site: dynamicindex.Site("callee.dynamic")}
+	dynamicKey := dynamicindex.Key{Table: mustStateKey(t, ks, pathdom.PathKey("sym505@1.items")), Site: dynamicindex.Site("callee.dynamic")}
 	gotDynamic := got.ReadDynamicIndexFact(reg, dynamicKey)
 	if !presence.Equal(gotDynamic.KeyPresence, presence.Present()) ||
 		!product.Equal(reg, gotDynamic.KeyValue, present) ||
@@ -758,8 +766,8 @@ func TestFactsNodeTransferCallOutcomeRebasesBoundaryFacts(t *testing.T) {
 
 	proof := pathevidence.BranchProof{
 		Kind:  pathevidence.BranchProofPathEqual,
-		Path:  pathdom.PathKey("sym505@1.left"),
-		Other: pathdom.PathKey("sym506@1.right"),
+		Path:  mustStateKey(t, ks, pathdom.PathKey("sym505@1.left")),
+		Other: mustStateKey(t, ks, pathdom.PathKey("sym506@1.right")),
 	}
 	if !got.HasBranchProof(proof) {
 		t.Fatalf("branch proof missing: %#v", proof)
@@ -777,7 +785,7 @@ func TestFactsNodeTransferCallOutcomeRebasesBoundaryFacts(t *testing.T) {
 	}
 
 	effectKey := effectdelta.Key{
-		Target: pathdom.PathKey("sym505@1.items"),
+		Target: mustStateKey(t, ks, pathdom.PathKey("sym505@1.items")),
 		Site:   "callee.effect",
 		Kind:   effectdelta.Mutation,
 	}
@@ -789,7 +797,7 @@ func TestFactsNodeTransferCallOutcomeRebasesBoundaryFacts(t *testing.T) {
 	}
 
 	escapeKey := effectdelta.Key{
-		Target: pathdom.PathKey("sym505@1.sent"),
+		Target: mustStateKey(t, ks, pathdom.PathKey("sym505@1.sent")),
 		Site:   callboundary.EscapeEventEffectSite(callboundary.EscapeEventSend, true),
 		Kind:   effectdelta.Escape,
 	}

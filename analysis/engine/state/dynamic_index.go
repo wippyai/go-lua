@@ -1,6 +1,7 @@
 package state
 
 import (
+	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/engine/dynamicindex"
 )
@@ -10,7 +11,7 @@ func (s State) ReadDynamicIndexFact(reg *axis.Registry, key dynamicindex.Key) dy
 }
 
 func (s State) WriteDynamicIndexFact(reg *axis.Registry, key dynamicindex.Key, fact dynamicindex.Fact) State {
-	if key.Table == "" {
+	if key.Table.Kind == keyspace.KindInvalid {
 		return s
 	}
 	if s.dynamicIndex.top {

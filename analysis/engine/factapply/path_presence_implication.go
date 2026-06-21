@@ -2,7 +2,7 @@ package factapply
 
 import (
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
-	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
+	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
@@ -136,10 +136,18 @@ func publishCallReturnPresenceImplication(
 	if triggerKey == "" || targetKey == "" {
 		return out
 	}
+	trigger, ok := resolver.KeySpace().FromStateKey(triggerKey)
+	if !ok {
+		return out
+	}
+	targetK, ok := resolver.KeySpace().FromStateKey(targetKey)
+	if !ok {
+		return out
+	}
 	out = out.AddPathPresenceImplication(pathevidence.PathPresenceImplication{
-		Trigger:         triggerKey,
+		Trigger:         trigger,
 		TriggerPresence: relation.TriggerPresence,
-		Target:          targetKey,
+		Target:          targetK,
 		TargetPresence:  relation.TargetPresence,
 	})
 	return activatePathPresenceImplications(ctx.Registry, resolver, ctx.Point, out)
@@ -168,7 +176,7 @@ func activatePathPresenceImplications(
 	stateDomain := state.Domain(reg)
 	for {
 		next := out
-		snapshot := next.PathPresenceImplicationsSnapshot()
+		snapshot := next.PathPresenceImplicationsSnapshot(resolver.KeySpace())
 		if snapshot.Bottom || len(snapshot.Implications) == 0 {
 			return next
 		}
@@ -195,7 +203,7 @@ func pathPresenceImplicationTriggered(
 	if !presenceIsConcrete(implication.TriggerPresence) {
 		return false
 	}
-	current, ok := readPathKeyPresence(reg, resolver, point, out, implication.Trigger)
+	current, ok := readPathKeyPresence(reg, resolver, point, out, resolver.KeySpace().Format(implication.Trigger))
 	return ok && presence.Equal(current, implication.TriggerPresence)
 }
 
@@ -206,14 +214,15 @@ func applyPathPresenceImplicationTarget(
 	out state.State,
 	implication pathevidence.PathPresenceImplication,
 ) state.State {
-	if !presenceIsConcrete(implication.TargetPresence) || !pathKeyCurrentlyVisible(resolver, point, implication.Target) {
+	ks := resolver.KeySpace()
+	targetKey := ks.Format(implication.Target)
+	if !presenceIsConcrete(implication.TargetPresence) || !pathKeyCurrentlyVisible(resolver, point, targetKey) {
 		return out
 	}
-	ks := resolver.KeySpace()
 	constraint := product.NewWithPresence(reg, product.ShapeTop, implication.TargetPresence)
-	if sym, ok := rootSymbolForResolverPathKey(implication.Target); ok {
+	if sym, ok := rootSymbolForResolverPathKey(ks, targetKey); ok {
 		if presenceImplicationTargetInvalidatesDescendants(implication.TargetPresence) {
-			if invalidated, valid := out.InvalidatePathKeyDescendants(ks, implication.Target); valid {
+			if invalidated, valid := out.InvalidatePathKeyDescendants(ks, targetKey); valid {
 				out = invalidated
 			}
 		}
@@ -222,11 +231,11 @@ func applyPathPresenceImplicationTarget(
 			return product.Meet(reg, value, constraint)
 		})
 	}
-	current := out.ReadPathKey(reg, ks, implication.Target)
+	current := out.ReadPathKey(reg, ks, targetKey)
 	if product.Equal(reg, current, product.Bottom(reg)) {
-		return out.WritePathKey(reg, ks, implication.Target, constraint)
+		return out.WritePathKey(reg, ks, targetKey, constraint)
 	}
-	return out.WritePathKey(reg, ks, implication.Target, product.Meet(reg, current, constraint))
+	return out.WritePathKey(reg, ks, targetKey, product.Meet(reg, current, constraint))
 }
 
 func presenceImplicationTargetInvalidatesDescendants(target presence.Value) bool {
@@ -243,30 +252,30 @@ func readPathKeyPresence(
 	if !pathKeyCurrentlyVisible(resolver, point, pathKey) {
 		return presence.Bottom(), false
 	}
-	if sym, ok := rootSymbolForResolverPathKey(pathKey); ok {
+	if sym, ok := rootSymbolForResolverPathKey(resolver.KeySpace(), pathKey); ok {
 		return product.PresenceOf(out.ReadValue(reg, key.SymbolValue(sym))), true
 	}
 	return product.PresenceOf(out.ReadPathKey(reg, resolver.KeySpace(), pathKey)), true
 }
 
 func pathKeyCurrentlyVisible(resolver *visibility.Resolver, point cfg.Point, pathKey pathdom.PathKey) bool {
-	path, ok := pathaddr.LocalPathFromKey(pathKey)
-	if !ok {
-		return true
-	}
 	if resolver == nil {
 		return false
 	}
-	current := resolver.KeyAt(point, pathdom.Path{Symbol: path.Symbol, Segments: path.Segments})
+	k, ok := resolver.KeySpace().FromStateKey(pathKey)
+	if !ok {
+		return true
+	}
+	current := resolver.KeyAt(point, pathdom.Path{Symbol: k.Sym, Segments: resolver.KeySpace().Segments(k)})
 	return current == pathKey
 }
 
-func rootSymbolForResolverPathKey(pathKey pathdom.PathKey) (symbol.ID, bool) {
-	path, ok := pathaddr.LocalPathFromKey(pathKey)
-	if !ok || len(path.Segments) != 0 {
+func rootSymbolForResolverPathKey(ks *keyspace.KeySpace, pathKey pathdom.PathKey) (symbol.ID, bool) {
+	k, ok := ks.FromStateKey(pathKey)
+	if !ok || k.Segs != 0 {
 		return 0, false
 	}
-	return path.Symbol, path.Symbol != 0
+	return k.Sym, k.Sym != 0
 }
 
 func presenceIsConcrete(value presence.Value) bool {

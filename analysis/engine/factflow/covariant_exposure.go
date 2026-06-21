@@ -19,6 +19,7 @@ import (
 // narrow.inner or a store of a sibling object into a container slot). A sub-path
 // exposure requires ancestor repair: the object's witness is rebuilt so its
 // ancestor cannot re-project the narrow field type.
+
 // CovariantExposureKind distinguishes how the exposed object's witness widens.
 type CovariantExposureKind uint8
 

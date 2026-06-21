@@ -18,6 +18,7 @@ func normalizeNormalReturnFacts(reg *axis.Registry, in callboundary.NormalReturn
 		EscapeEvents:      escapeEventLane.Normalize(in.EscapeEvents),
 		StoreRelations:    storeRelationLane.Normalize(in.StoreRelations),
 		LifecycleFacts:    lifecycleLane.Normalize(in.LifecycleFacts),
+		NumFloors:         normalizeNumFloorFacts(in.NumFloors),
 	}
 	if normalReturnFactsEmpty(out) {
 		return callboundary.NormalReturnFacts{}
@@ -41,6 +42,7 @@ func cloneNormalReturnFacts(in callboundary.NormalReturnFacts) callboundary.Norm
 		EscapeEvents:      escapeEventLane.Clone(in.EscapeEvents),
 		StoreRelations:    storeRelationLane.Clone(in.StoreRelations),
 		LifecycleFacts:    lifecycleLane.Clone(in.LifecycleFacts),
+		NumFloors:         cloneNumFloorFacts(in.NumFloors),
 	}
 }
 
@@ -62,7 +64,8 @@ func normalReturnFactsEqual(reg *axis.Registry, a, b callboundary.NormalReturnFa
 		effectDeltasEqual(reg, a.EffectDeltas, b.EffectDeltas) &&
 		escapeEventLane.Equal(a.EscapeEvents, b.EscapeEvents) &&
 		storeRelationLane.Equal(a.StoreRelations, b.StoreRelations) &&
-		lifecycleLane.Equal(a.LifecycleFacts, b.LifecycleFacts)
+		lifecycleLane.Equal(a.LifecycleFacts, b.LifecycleFacts) &&
+		numFloorFactsEqual(a.NumFloors, b.NumFloors)
 }
 
 func normalReturnFactsLessOrEq(reg *axis.Registry, a, b callboundary.NormalReturnFacts) bool {
@@ -78,7 +81,8 @@ func normalReturnFactsLessOrEq(reg *axis.Registry, a, b callboundary.NormalRetur
 		effectDeltasLessOrEq(reg, a.EffectDeltas, b.EffectDeltas) &&
 		escapeEventLane.LessOrEq(a.EscapeEvents, b.EscapeEvents) &&
 		storeRelationLane.LessOrEq(a.StoreRelations, b.StoreRelations) &&
-		lifecycleLane.LessOrEq(a.LifecycleFacts, b.LifecycleFacts)
+		lifecycleLane.LessOrEq(a.LifecycleFacts, b.LifecycleFacts) &&
+		numFloorFactsLessOrEq(a.NumFloors, b.NumFloors)
 }
 
 func joinNormalReturnFacts(reg *axis.Registry, a, b callboundary.NormalReturnFacts) callboundary.NormalReturnFacts {
@@ -94,6 +98,7 @@ func joinNormalReturnFacts(reg *axis.Registry, a, b callboundary.NormalReturnFac
 		EscapeEvents:      escapeEventLane.Join(a.EscapeEvents, b.EscapeEvents),
 		StoreRelations:    storeRelationLane.Join(a.StoreRelations, b.StoreRelations),
 		LifecycleFacts:    lifecycleLane.Join(a.LifecycleFacts, b.LifecycleFacts),
+		NumFloors:         joinNumFloorFacts(a.NumFloors, b.NumFloors),
 	})
 }
 
@@ -110,6 +115,7 @@ func widenNormalReturnFacts(reg *axis.Registry, prev, next callboundary.NormalRe
 		EscapeEvents:      escapeEventLane.Widen(prev.EscapeEvents, next.EscapeEvents),
 		StoreRelations:    storeRelationLane.Widen(prev.StoreRelations, next.StoreRelations),
 		LifecycleFacts:    lifecycleLane.Widen(prev.LifecycleFacts, next.LifecycleFacts),
+		NumFloors:         joinNumFloorFacts(prev.NumFloors, next.NumFloors),
 	})
 }
 

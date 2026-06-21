@@ -3465,7 +3465,7 @@ func placementSummary(reg *axis.Registry, ks *keyspace.KeySpace, st state.State)
 			if members != "" {
 				members += ","
 			}
-			members += fmt.Sprintf("dyn(%s/%s):", key.Table, key.Site)
+			members += fmt.Sprintf("dyn(%s/%s):", ks.Format(key.Table), key.Site)
 			if child, ok := valueIdentity(reg, fact.Value); ok {
 				members += child.String()
 			} else {
@@ -3476,7 +3476,7 @@ func placementSummary(reg *axis.Registry, ks *keyspace.KeySpace, st state.State)
 			out += "[" + members + "]"
 		}
 	}
-	if dynamic := dynamicSummary(reg, st); dynamic != "" {
+	if dynamic := dynamicSummary(reg, ks, st); dynamic != "" {
 		out += " dynamic={" + dynamic + "}"
 	}
 	if out == "" {
@@ -3485,14 +3485,14 @@ func placementSummary(reg *axis.Registry, ks *keyspace.KeySpace, st state.State)
 	return out
 }
 
-func dynamicSummary(reg *axis.Registry, st state.State) string {
+func dynamicSummary(reg *axis.Registry, ks *keyspace.KeySpace, st state.State) string {
 	snapshot := st.DynamicIndexFactsSnapshot()
 	out := ""
 	for key, fact := range snapshot.Facts {
 		if out != "" {
 			out += ", "
 		}
-		out += fmt.Sprintf("%s/%s:value-id=", key.Table, key.Site)
+		out += fmt.Sprintf("%s/%s:value-id=", ks.Format(key.Table), key.Site)
 		if id, ok := valueIdentity(reg, fact.Value); ok {
 			out += id.String()
 		} else {

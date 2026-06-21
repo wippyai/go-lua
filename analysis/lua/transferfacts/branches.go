@@ -57,11 +57,12 @@ func (l *lowerer) branchRefinement(fact semantics.BranchConditionFact) (factflow
 }
 
 // branchLenRefinements lowers non-empty / lower-bound length guards into
-// true-edge length-floor facts. A guard such as #xs > 0 raises len(xs) >= 1 on
-// the true edge only; the false edge and merges never carry it.
+// length-floor facts on the edge each holds: #xs > 0 raises len(xs) >= 1 on the
+// true edge, while the negated #xs < lo raises it on the false edge. Merges never
+// carry it.
 func (l *lowerer) branchLenRefinements(fact semantics.BranchConditionFact) []factflow.BranchLenRefinement {
 	if fact.Check.Kind == branchcond.CheckLenGe {
-		if lowered, ok := l.branchLenRefinement(fact.Check); ok {
+		if lowered, ok := l.branchLenRefinementOnEdge(fact.Check, !fact.Check.Negated); ok {
 			return []factflow.BranchLenRefinement{lowered}
 		}
 		return nil
@@ -71,26 +72,36 @@ func (l *lowerer) branchLenRefinements(fact semantics.BranchConditionFact) []fac
 	}
 	var out []factflow.BranchLenRefinement
 	for _, check := range branchcond.TruthyChecks(fact.Condition, l.bindings) {
-		if lowered, ok := l.branchLenRefinement(check); ok {
+		if lowered, ok := l.branchLenRefinementOnEdge(check, true); ok {
+			out = append(out, lowered)
+		}
+	}
+	for _, check := range branchcond.FalsyChecks(fact.Condition, l.bindings) {
+		if lowered, ok := l.branchLenRefinementOnEdge(check, false); ok {
 			out = append(out, lowered)
 		}
 	}
 	return out
 }
 
-func (l *lowerer) branchLenRefinement(check branchcond.Check) (factflow.BranchLenRefinement, bool) {
+func (l *lowerer) branchLenRefinementOnEdge(check branchcond.Check, edge bool) (factflow.BranchLenRefinement, bool) {
 	if check.Kind != branchcond.CheckLenGe || check.Path.IsEmpty() || check.LenFloor <= 0 {
 		return factflow.BranchLenRefinement{}, false
 	}
-	return factflow.NewBranchLenRefinement(check.Path, check.LenFloor), true
+	// The length floor holds on the !Negated edge (true for `#xs > 0`, false for
+	// the negated `#xs < lo` guard); emit only when this edge matches.
+	if edge != !check.Negated {
+		return factflow.BranchLenRefinement{}, false
+	}
+	return factflow.NewBranchLenRefinementOnEdge(check.Path, check.LenFloor, edge), true
 }
 
-// branchNumFloorRefinements lowers a true-edge numeric lower-bound guard such as
-// `i >= 1` into a numeric-floor fact, the positive-index half of an array-read
-// in-range proof. As with the length floor, it holds on the true edge only.
+// branchNumFloorRefinements lowers a numeric lower-bound guard such as `i >= 1`
+// (true edge) or the negated `i < 1` (false edge) into a numeric-floor fact, the
+// positive-index half of an array-read in-range proof, on the edge it holds.
 func (l *lowerer) branchNumFloorRefinements(fact semantics.BranchConditionFact) []factflow.BranchNumFloorRefinement {
 	if fact.Check.Kind == branchcond.CheckNumGe {
-		if lowered, ok := l.branchNumFloorRefinement(fact.Check); ok {
+		if lowered, ok := l.branchNumFloorRefinementOnEdge(fact.Check, !fact.Check.Negated); ok {
 			return []factflow.BranchNumFloorRefinement{lowered}
 		}
 		return nil
@@ -100,18 +111,28 @@ func (l *lowerer) branchNumFloorRefinements(fact semantics.BranchConditionFact) 
 	}
 	var out []factflow.BranchNumFloorRefinement
 	for _, check := range branchcond.TruthyChecks(fact.Condition, l.bindings) {
-		if lowered, ok := l.branchNumFloorRefinement(check); ok {
+		if lowered, ok := l.branchNumFloorRefinementOnEdge(check, true); ok {
+			out = append(out, lowered)
+		}
+	}
+	for _, check := range branchcond.FalsyChecks(fact.Condition, l.bindings) {
+		if lowered, ok := l.branchNumFloorRefinementOnEdge(check, false); ok {
 			out = append(out, lowered)
 		}
 	}
 	return out
 }
 
-func (l *lowerer) branchNumFloorRefinement(check branchcond.Check) (factflow.BranchNumFloorRefinement, bool) {
+func (l *lowerer) branchNumFloorRefinementOnEdge(check branchcond.Check, edge bool) (factflow.BranchNumFloorRefinement, bool) {
 	if check.Kind != branchcond.CheckNumGe || check.Path.IsEmpty() || check.NumFloor < 0 {
 		return factflow.BranchNumFloorRefinement{}, false
 	}
-	return factflow.NewBranchNumFloorRefinement(check.Path, check.NumFloor), true
+	// The numeric floor holds on the !Negated edge (true for `i >= 1`, false for
+	// the negated `i < 1` guard); emit only when this edge matches.
+	if edge != !check.Negated {
+		return factflow.BranchNumFloorRefinement{}, false
+	}
+	return factflow.NewBranchNumFloorRefinementOnEdge(check.Path, check.NumFloor, edge), true
 }
 
 func (l *lowerer) branchRefinements(fact semantics.BranchConditionFact) []factflow.BranchRefinement {

@@ -622,13 +622,32 @@ func TestNormalizeLengthFloorGuards(t *testing.T) {
 }
 
 func TestNormalizeLengthFloorRejectsNonGuards(t *testing.T) {
-	// len <= c and len < c do not establish a positive lower bound.
-	for _, op := range []string{"<", "<=", "=="} {
+	// `len == c` establishes no length floor on either edge.
+	for _, op := range []string{"=="} {
 		arr := ident("xs")
 		expr := &ast.RelationalOpExpr{Operator: op, Lhs: lenOf(arr), Rhs: number("5")}
 		bindings := bindReturn(expr)
 		if check := Normalize(expr, bindings); check.Kind == CheckLenGe {
 			t.Fatalf("operator %q must not produce a length floor", op)
+		}
+	}
+}
+
+func TestNormalizeLengthFloorNegatedFalseEdge(t *testing.T) {
+	// `#xs < c` / `#xs <= c` establish a length floor on the FALSE edge (the
+	// `if #xs < lo then error end` guard form): not(#xs<5) is #xs>=5, and
+	// not(#xs<=5) is #xs>=6.
+	for _, tc := range []struct {
+		op    string
+		floor int64
+	}{{"<", 5}, {"<=", 6}} {
+		arr := ident("xs")
+		expr := &ast.RelationalOpExpr{Operator: tc.op, Lhs: lenOf(arr), Rhs: number("5")}
+		bindings := bindReturn(expr)
+		check := Normalize(expr, bindings)
+		if check.Kind != CheckLenGe || !check.Negated || check.LenFloor != tc.floor {
+			t.Fatalf("operator %q: got kind=%v negated=%v floor=%d, want CheckLenGe negated floor=%d",
+				tc.op, check.Kind, check.Negated, check.LenFloor, tc.floor)
 		}
 	}
 }

@@ -2,7 +2,6 @@ package factapply
 
 import (
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
-	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	statekey "github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
@@ -28,7 +27,7 @@ func writePathAt(
 		return s, false
 	}
 	ks := resolver.KeySpace()
-	equivalent := s.EquivalentPathKeys(pathKey)
+	equivalent := s.EquivalentPathKeys(ks, pathKey)
 	out := writePathKeyWithStaticStringAlias(reg, ks, s, pathKey, value)
 	for _, alias := range equivalent {
 		out = writePathKeyWithStaticStringAlias(reg, ks, out, alias, value)
@@ -98,7 +97,7 @@ func invalidatePathAt(
 		return s, false
 	}
 	ks := resolver.KeySpace()
-	equivalent := s.EquivalentPathKeys(pathKey)
+	equivalent := s.EquivalentPathKeys(ks, pathKey)
 	out, ok := invalidate(s, ks, pathKey)
 	if !ok {
 		return s, false
@@ -125,14 +124,15 @@ func invalidateRootOriginsForPathMutationAt(
 	if pathKey == "" {
 		return s, false
 	}
-	keys := pathMutationRootKeys(s, pathKey, includeDescendantAliases)
+	ks := resolver.KeySpace()
+	keys := pathMutationRootKeys(ks, s, pathKey, includeDescendantAliases)
 	out := s
 	for _, key := range keys {
-		localPath, ok := pathaddr.LocalPathFromKey(key)
-		if !ok || localPath.Symbol == 0 {
+		k, ok := ks.FromStateKey(key)
+		if !ok || k.Sym == 0 {
 			continue
 		}
-		out = out.UpdateValue(reg, statekey.SymbolValue(localPath.Symbol), func(value product.Value) product.Value {
+		out = out.UpdateValue(reg, statekey.SymbolValue(k.Sym), func(value product.Value) product.Value {
 			if product.Equal(reg, value, product.Bottom(reg)) {
 				return value
 			}
@@ -153,14 +153,15 @@ func invalidateRootStructuralWitnessForPathMutationAt(
 	if pathKey == "" {
 		return s, false
 	}
-	keys := pathMutationRootKeys(s, pathKey, true)
+	ks := resolver.KeySpace()
+	keys := pathMutationRootKeys(ks, s, pathKey, true)
 	out := s
 	for _, key := range keys {
-		localPath, ok := pathaddr.LocalPathFromKey(key)
-		if !ok || localPath.Symbol == 0 {
+		k, ok := ks.FromStateKey(key)
+		if !ok || k.Sym == 0 {
 			continue
 		}
-		out = out.UpdateValue(reg, statekey.SymbolValue(localPath.Symbol), func(value product.Value) product.Value {
+		out = out.UpdateValue(reg, statekey.SymbolValue(k.Sym), func(value product.Value) product.Value {
 			if product.Equal(reg, value, product.Bottom(reg)) {
 				return value
 			}
@@ -202,24 +203,26 @@ func invalidateHeapStaticMembersAt(
 	if pathKey == "" {
 		return s, false
 	}
-	targets := pathStaticMemberInvalidationTargets(s, pathKey, descendantsOnly)
+	ks := resolver.KeySpace()
+	targets := pathStaticMemberInvalidationTargets(ks, s, pathKey, descendantsOnly)
 	out := s
 	for _, target := range targets {
-		localPath, ok := pathaddr.LocalPathFromKey(target.key)
-		if !ok || localPath.Symbol == 0 {
+		k, ok := ks.FromStateKey(target.key)
+		if !ok || k.Sym == 0 {
 			continue
 		}
-		root := out.ReadValue(reg, statekey.SymbolValue(localPath.Symbol))
+		root := out.ReadValue(reg, statekey.SymbolValue(k.Sym))
 		id, ok := product.Get(reg, root, identity.Key).ID()
 		if !ok {
 			continue
 		}
+		segs := ks.Segments(k)
 		object := out.ReadHeapTableObject(reg, id)
 		var changed bool
 		if target.descendantsOnly {
-			object, changed = object.WithoutStaticMemberDescendants(resolver.KeySpace(), localPath.Segments)
+			object, changed = object.WithoutStaticMemberDescendants(ks, segs)
 		} else {
-			object, changed = object.WithoutStaticMemberSubtree(resolver.KeySpace(), localPath.Segments)
+			object, changed = object.WithoutStaticMemberSubtree(ks, segs)
 		}
 		if changed {
 			out = out.WriteHeapTableObject(reg, id, object)
@@ -228,12 +231,12 @@ func invalidateHeapStaticMembersAt(
 	return out, true
 }
 
-func pathMutationRootKeys(s state.State, pathKey pathdom.PathKey, includeDescendantAliases bool) []pathdom.PathKey {
-	keys := append([]pathdom.PathKey{pathKey}, s.EquivalentPathKeys(pathKey)...)
+func pathMutationRootKeys(ks *keyspace.KeySpace, s state.State, pathKey pathdom.PathKey, includeDescendantAliases bool) []pathdom.PathKey {
+	keys := append([]pathdom.PathKey{pathKey}, s.EquivalentPathKeys(ks, pathKey)...)
 	if !includeDescendantAliases {
 		return dedupePathKeys(keys)
 	}
-	prefixes, ok := s.PathKeyDescendantInvalidationPrefixes(pathKey)
+	prefixes, ok := s.PathKeyDescendantInvalidationPrefixes(ks, pathKey)
 	if !ok {
 		return dedupePathKeys(keys)
 	}
@@ -247,9 +250,9 @@ type pathStaticMemberInvalidationTarget struct {
 	descendantsOnly bool
 }
 
-func pathStaticMemberInvalidationTargets(s state.State, pathKey pathdom.PathKey, descendantsOnly bool) []pathStaticMemberInvalidationTarget {
+func pathStaticMemberInvalidationTargets(ks *keyspace.KeySpace, s state.State, pathKey pathdom.PathKey, descendantsOnly bool) []pathStaticMemberInvalidationTarget {
 	targets := []pathStaticMemberInvalidationTarget{{key: pathKey, descendantsOnly: descendantsOnly}}
-	for _, equivalent := range s.EquivalentPathKeys(pathKey) {
+	for _, equivalent := range s.EquivalentPathKeys(ks, pathKey) {
 		targets = append(targets, pathStaticMemberInvalidationTarget{
 			key:             equivalent,
 			descendantsOnly: descendantsOnly,
@@ -258,7 +261,7 @@ func pathStaticMemberInvalidationTargets(s state.State, pathKey pathdom.PathKey,
 	if !descendantsOnly {
 		return dedupePathStaticMemberInvalidationTargets(targets)
 	}
-	prefixes, ok := s.PathKeyDescendantInvalidationPrefixes(pathKey)
+	prefixes, ok := s.PathKeyDescendantInvalidationPrefixes(ks, pathKey)
 	if !ok {
 		return dedupePathStaticMemberInvalidationTargets(targets)
 	}

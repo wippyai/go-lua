@@ -352,13 +352,17 @@ func operationalHeapTableObjects(ctx transfer.NodeContext, ks *keyspace.KeySpace
 				}
 				staticMembers[key] = allocationTemplateValue(ctx.Registry, member.Value, objectTypes[member.Value])
 			}
+			tableKey, tableKeyOK := ks.FromStateKey(pathdom.PathKey(object.ID))
 			dynamicEntries := make(map[dynamicindex.Key]dynamicindex.Fact, len(object.DynamicEntries))
 			for i, entry := range object.DynamicEntries {
 				if entry.Key == "" && entry.KeyType == nil && entry.Value == "" {
 					continue
 				}
+				if !tableKeyOK {
+					continue
+				}
 				dynamicEntries[dynamicindex.Key{
-					Table: pathdom.PathKey(object.ID),
+					Table: tableKey,
 					Site:  dynamicindex.Site(fmt.Sprintf("manifest:%d", i)),
 				}] = dynamicindex.Fact{
 					KeyPresence: presence.Present(),

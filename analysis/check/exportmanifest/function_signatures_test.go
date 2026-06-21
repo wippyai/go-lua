@@ -338,6 +338,10 @@ func TestFunctionSummaryOperationalEffectsLaneMatrixManifestRoundTrip(t *testing
 	if !ok {
 		t.Fatal("heap static suffix key failed")
 	}
+	heapDynamicTableKey, ok := ks.FromStateKey(pathdom.PathKey("heap-only.dynamic"))
+	if !ok {
+		t.Fatal("heap dynamic table key failed")
+	}
 	fn := typ.Func().
 		Param("source", typ.Any).
 		Param("target", typ.Any).
@@ -384,7 +388,7 @@ func TestFunctionSummaryOperationalEffectsLaneMatrixManifestRoundTrip(t *testing
 					heapStaticKey: rawProduct,
 				},
 				DynamicIndexFacts: map[dynamicindex.Key]dynamicindex.Fact{
-					{Table: pathdom.PathKey("heap-only.dynamic"), Site: "heap.dynamic"}: {
+					{Table: heapDynamicTableKey, Site: "heap.dynamic"}: {
 						KeyPresence: presence.Present(),
 						KeyValue:    present,
 						Value:       absent,
@@ -602,6 +606,10 @@ func TestFunctionSummaryOperationalEffectsExportsReturnAllocationTemplate(t *tes
 	if !ok {
 		t.Fatal("child suffix key failed")
 	}
+	rootItemsKey, ok := ks.FromStateKey(pathdom.PathKey("root.items"))
+	if !ok {
+		t.Fatal("root items table key failed")
+	}
 	got := functionSummaryOperationalEffects(reg, summary.Summary{
 		Returns:      []product.Value{rootValue},
 		HeapKeySpace: ks,
@@ -612,7 +620,7 @@ func TestFunctionSummaryOperationalEffectsExportsReturnAllocationTemplate(t *tes
 					childKey: childValue,
 				},
 				DynamicIndexFacts: map[dynamicindex.Key]dynamicindex.Fact{
-					{Table: pathdom.PathKey("root.items"), Site: "write"}: {
+					{Table: rootItemsKey, Site: "write"}: {
 						KeyPresence: presence.Present(),
 						KeyValue:    typevalue.WithWitness(reg, typevalue.FromType(reg, typ.String), typ.String),
 						Value:       entryValue,
@@ -688,6 +696,10 @@ func TestFunctionSummaryOperationalEffectsSkipsDanglingReturnAllocationRefs(t *t
 		t.Fatal("child suffix key failed")
 	}
 	fn := typ.Func().Returns(typ.Any).Build()
+	rootItemsKey, ok := ks.FromStateKey(pathdom.PathKey("root.items"))
+	if !ok {
+		t.Fatal("root items table key failed")
+	}
 	got := functionSummaryOperationalEffects(reg, summary.Summary{
 		Returns:      []product.Value{rootValue},
 		HeapKeySpace: ks,
@@ -698,7 +710,7 @@ func TestFunctionSummaryOperationalEffectsSkipsDanglingReturnAllocationRefs(t *t
 					childKey: missingChildValue,
 				},
 				DynamicIndexFacts: map[dynamicindex.Key]dynamicindex.Fact{
-					{Table: pathdom.PathKey("root.items"), Site: "write"}: {
+					{Table: rootItemsKey, Site: "write"}: {
 						KeyPresence: presence.Present(),
 						KeyValue:    missingKeyValue,
 						Value:       missingValue,

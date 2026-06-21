@@ -76,10 +76,12 @@ func TestBranchProofLaneAdmitCanonicalizesPerKind(t *testing.T) {
 		{Kind: pathevidence.BranchProofPathPresence, Path: ph, Presence: presence.Present(), Other: other}, // Other cleared
 		{Kind: pathevidence.BranchProofPathPresence, Path: concrete, Presence: presence.Present()},         // dropped: non-placeholder
 		{Kind: pathevidence.BranchProofPathEqual, Path: ph, Other: other, Presence: presence.Present()},    // Presence cleared
+		{Kind: pathevidence.BranchProofIndexInRange, Path: ph, Other: other, Presence: presence.Present()}, // Presence cleared
+		{Kind: pathevidence.BranchProofIndexInRange, Path: ph, Other: concrete},                            // dropped: non-placeholder Other
 	}
 	got := branchProofLane.Normalize(in)
-	if len(got) != 2 {
-		t.Fatalf("expected 2 admitted proofs, got %d: %+v", len(got), got)
+	if len(got) != 3 {
+		t.Fatalf("expected 3 admitted proofs, got %d: %+v", len(got), got)
 	}
 	for _, p := range got {
 		switch p.Kind {
@@ -87,11 +89,47 @@ func TestBranchProofLaneAdmitCanonicalizesPerKind(t *testing.T) {
 			if !p.Other.IsEmpty() {
 				t.Fatalf("presence proof must clear Other, got %+v", p)
 			}
-		case pathevidence.BranchProofPathEqual:
+		case pathevidence.BranchProofPathEqual, pathevidence.BranchProofIndexInRange:
 			if !p.Presence.IsBottom() {
-				t.Fatalf("equality proof must clear Presence, got %+v", p)
+				t.Fatalf("relational proof must clear Presence, got %+v", p)
+			}
+			if !p.Other.IsPlaceholder() {
+				t.Fatalf("relational proof must keep a placeholder Other, got %+v", p)
 			}
 		}
+	}
+}
+
+func TestNumFloorFactsUseMustFloorSemantics(t *testing.T) {
+	p0 := pathdom.NewPlaceholder(0)
+	p1 := pathdom.NewPlaceholder(1)
+	concrete := pathdom.NewPath(symbol.ID(7), "arg")
+
+	normalized := normalizeNumFloorFacts([]callboundary.NumFloorFact{
+		{Path: concrete, Floor: 9}, // dropped: not a placeholder boundary path
+		{Path: p0, Floor: 1},
+		{Path: p0, Floor: 4}, // same path: stronger local duplicate wins
+	})
+	if len(normalized) != 1 || !normalized[0].Path.Equal(p0) || normalized[0].Floor != 4 {
+		t.Fatalf("normalize num floors = %#v, want $0 >= 4", normalized)
+	}
+
+	left := []callboundary.NumFloorFact{
+		{Path: p0, Floor: 4},
+		{Path: p1, Floor: 1},
+	}
+	right := []callboundary.NumFloorFact{
+		{Path: p0, Floor: 2},
+	}
+	joined := joinNumFloorFacts(left, right)
+	if len(joined) != 1 || !joined[0].Path.Equal(p0) || joined[0].Floor != 2 {
+		t.Fatalf("join num floors = %#v, want common path with weaker floor 2", joined)
+	}
+	if !numFloorFactsLessOrEq(left, right) {
+		t.Fatalf("stronger floor must be <= weaker common floor")
+	}
+	if numFloorFactsLessOrEq(right, left) {
+		t.Fatalf("weaker/missing floors must not be <= stronger floor set")
 	}
 }
 

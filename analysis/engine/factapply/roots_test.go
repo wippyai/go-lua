@@ -95,6 +95,8 @@ func TestFactsNodeTransferRootAssignmentAddsPathEqualityProofForPathSource(t *te
 	visibilityBuilder := visibility.NewBuilder()
 	visibilityBuilder.Define(point, target, "alias")
 	visibilityBuilder.Define(point, sourceSymbol, "box")
+	resolver := visibility.NewResolver(visibilityBuilder.Build())
+	ks := resolver.KeySpace()
 
 	got := NewFactsNodeTransfer(FactsNodeTransferConfig{
 		Facts: factflow.NewFacts(factflow.FactsInput{
@@ -106,7 +108,7 @@ func TestFactsNodeTransferRootAssignmentAddsPathEqualityProofForPathSource(t *te
 			},
 		}),
 		Sources:    sources,
-		Visibility: visibility.NewResolver(visibilityBuilder.Build()),
+		Visibility: resolver,
 	})(transfer.NodeContext{
 		Registry: reg,
 		Point:    point,
@@ -114,8 +116,8 @@ func TestFactsNodeTransferRootAssignmentAddsPathEqualityProofForPathSource(t *te
 
 	proof := pathevidence.BranchProof{
 		Kind:  pathevidence.BranchProofPathEqual,
-		Path:  path.PathKey("sym112@1"),
-		Other: path.PathKey("sym113@1"),
+		Path:  mustStateKey(t, ks, path.PathKey("sym112@1")),
+		Other: mustStateKey(t, ks, path.PathKey("sym113@1")),
 	}
 	if !got.HasBranchProof(proof) {
 		t.Fatalf("missing path equality proof %#v", proof)

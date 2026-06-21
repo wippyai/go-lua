@@ -4,7 +4,6 @@ import (
 	"sort"
 
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
-	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 )
@@ -18,14 +17,14 @@ type PathKeyDescendantInvalidationPrefixes struct {
 // descendant key. It returns false when pathKey is not a recognized structural
 // path-key spelling.
 func (l Lane) InvalidatePathKeySubtree(ks *keyspace.KeySpace, pathKey pathdom.PathKey) (Lane, bool) {
-	prefixes, ok := l.PathKeySubtreeInvalidationPrefixes(pathKey)
+	prefixes, ok := l.PathKeySubtreeInvalidationPrefixes(ks, pathKey)
 	if !ok {
 		return l, false
 	}
-	match := func(candidate pathdom.PathKey) bool {
-		return pathKeyInAnySubtree(candidate, prefixes)
-	}
 	prefixKeys := structuralPrefixKeys(ks, prefixes)
+	match := func(candidate keyspace.Key) bool {
+		return pathKeyInAnyPrefix(ks, candidate, prefixKeys)
+	}
 	return l.invalidatePathKeyEvidence(
 		func(m map[keyspace.Key]product.Value) (map[keyspace.Key]product.Value, bool) {
 			return deletePathKeySubtrees(ks, m, prefixKeys)
@@ -42,7 +41,7 @@ func (l Lane) InvalidatePathKeySubtree(ks *keyspace.KeySpace, pathKey pathdom.Pa
 // index-in-range proof can clear with different scope than value-identity proofs.
 func (l Lane) invalidatePathKeyEvidence(
 	deleteFromMap func(map[keyspace.Key]product.Value) (map[keyspace.Key]product.Value, bool),
-	match func(candidate pathdom.PathKey) bool,
+	match func(candidate keyspace.Key) bool,
 	proofMatch func(proof BranchProof) bool,
 ) (Lane, bool) {
 	refinements, changed := deleteFromMap(l.refinements)
@@ -64,15 +63,16 @@ func (l Lane) invalidatePathKeyEvidence(
 // preserving exact pathKey evidence. It returns false when pathKey is not a
 // recognized structural path-key spelling.
 func (l Lane) InvalidatePathKeyDescendants(ks *keyspace.KeySpace, pathKey pathdom.PathKey) (Lane, bool) {
-	prefixes, ok := l.PathKeyDescendantInvalidationPrefixes(pathKey)
+	prefixes, ok := l.PathKeyDescendantInvalidationPrefixes(ks, pathKey)
 	if !ok {
 		return l, false
 	}
-	match := func(candidate pathdom.PathKey) bool {
-		return pathKeyInAnyDescendantInvalidation(candidate, prefixes)
-	}
 	descendantKeys := structuralPrefixKeys(ks, prefixes.Descendants)
 	subtreeKeys := structuralPrefixKeys(ks, prefixes.Subtrees)
+	match := func(candidate keyspace.Key) bool {
+		return pathKeyInAnyStrictPrefix(ks, candidate, descendantKeys) ||
+			pathKeyInAnyPrefix(ks, candidate, subtreeKeys)
+	}
 	return l.invalidatePathKeyEvidence(
 		func(m map[keyspace.Key]product.Value) (map[keyspace.Key]product.Value, bool) {
 			return deletePathKeyDescendantPrefixes(ks, m, descendantKeys, subtreeKeys)
@@ -88,8 +88,8 @@ func (l Lane) InvalidatePathKeyDescendants(ks *keyspace.KeySpace, pathKey pathdo
 			// index) is the invalidation root, not only a strict descendant, matching
 			// the non-strict length-floor invalidation.
 			if proof.Kind == BranchProofIndexInRange {
-				return pathKeyInDescendantInvalidationOrRoot(proof.Path, prefixes) ||
-					pathKeyInDescendantInvalidationOrRoot(proof.Other, prefixes)
+				return pathKeyInDescendantInvalidationOrRoot(ks, proof.Path, descendantKeys, subtreeKeys) ||
+					pathKeyInDescendantInvalidationOrRoot(ks, proof.Other, descendantKeys, subtreeKeys)
 			}
 			return false
 		},
@@ -99,35 +99,26 @@ func (l Lane) InvalidatePathKeyDescendants(ks *keyspace.KeySpace, pathKey pathdo
 // pathKeyInDescendantInvalidationOrRoot reports whether candidate is the
 // invalidation root or any descendant of it, the non-strict scope a
 // length-dependent fact must clear under.
-func pathKeyInDescendantInvalidationOrRoot(candidate pathdom.PathKey, prefixes PathKeyDescendantInvalidationPrefixes) bool {
-	for _, prefix := range prefixes.Descendants {
-		if pathaddr.PathKeyHasPrefix(candidate, prefix) {
-			return true
-		}
-	}
-	for _, prefix := range prefixes.Subtrees {
-		if pathaddr.PathKeyHasPrefix(candidate, prefix) {
-			return true
-		}
-	}
-	return false
+func pathKeyInDescendantInvalidationOrRoot(ks *keyspace.KeySpace, candidate keyspace.Key, descendantKeys, subtreeKeys []keyspace.Key) bool {
+	return pathKeyInAnyPrefix(ks, candidate, descendantKeys) ||
+		pathKeyInAnyPrefix(ks, candidate, subtreeKeys)
 }
 
-func (l Lane) PathKeySubtreeInvalidationPrefixes(pathKey pathdom.PathKey) ([]pathdom.PathKey, bool) {
-	if _, ok := pathaddr.StructuralKeyFromPathKey(pathKey); !ok {
+func (l Lane) PathKeySubtreeInvalidationPrefixes(ks *keyspace.KeySpace, pathKey pathdom.PathKey) ([]pathdom.PathKey, bool) {
+	if _, ok := ks.FromStateKey(pathKey); !ok {
 		return nil, false
 	}
-	return expandSubtreeInvalidationPrefixes([]pathdom.PathKey{pathKey}, l.proofs), true
+	return expandSubtreeInvalidationPrefixes(ks, []pathdom.PathKey{pathKey}, l.proofs), true
 }
 
-func (l Lane) PathKeyDescendantInvalidationPrefixes(pathKey pathdom.PathKey) (PathKeyDescendantInvalidationPrefixes, bool) {
-	if _, ok := pathaddr.StructuralKeyFromPathKey(pathKey); !ok {
+func (l Lane) PathKeyDescendantInvalidationPrefixes(ks *keyspace.KeySpace, pathKey pathdom.PathKey) (PathKeyDescendantInvalidationPrefixes, bool) {
+	if _, ok := ks.FromStateKey(pathKey); !ok {
 		return PathKeyDescendantInvalidationPrefixes{}, false
 	}
-	return expandDescendantInvalidationPrefixes(pathKey, l.proofs), true
+	return expandDescendantInvalidationPrefixes(ks, pathKey, l.proofs), true
 }
 
-func expandSubtreeInvalidationPrefixes(seeds []pathdom.PathKey, proofs map[BranchProof]struct{}) []pathdom.PathKey {
+func expandSubtreeInvalidationPrefixes(ks *keyspace.KeySpace, seeds []pathdom.PathKey, proofs map[BranchProof]struct{}) []pathdom.PathKey {
 	seen := make(map[pathdom.PathKey]struct{}, len(seeds))
 	queue := make([]pathdom.PathKey, 0, len(seeds))
 	for _, seed := range seeds {
@@ -147,14 +138,14 @@ func expandSubtreeInvalidationPrefixes(seeds []pathdom.PathKey, proofs map[Branc
 			if proof.Kind != BranchProofPathEqual {
 				continue
 			}
-			addSubtreeAliases(prefix, proof.Path, proof.Other, seen, &queue)
-			addSubtreeAliases(prefix, proof.Other, proof.Path, seen, &queue)
+			addSubtreeAliases(ks, prefix, proof.Path, proof.Other, seen, &queue)
+			addSubtreeAliases(ks, prefix, proof.Other, proof.Path, seen, &queue)
 		}
 	}
 	return sortedPathKeySet(seen)
 }
 
-func expandDescendantInvalidationPrefixes(pathKey pathdom.PathKey, proofs map[BranchProof]struct{}) PathKeyDescendantInvalidationPrefixes {
+func expandDescendantInvalidationPrefixes(ks *keyspace.KeySpace, pathKey pathdom.PathKey, proofs map[BranchProof]struct{}) PathKeyDescendantInvalidationPrefixes {
 	descSeen := map[pathdom.PathKey]struct{}{pathKey: {}}
 	descQueue := []pathdom.PathKey{pathKey}
 	subtreeSeen := map[pathdom.PathKey]struct{}{}
@@ -189,8 +180,8 @@ func expandDescendantInvalidationPrefixes(pathKey pathdom.PathKey, proofs map[Br
 				if proof.Kind != BranchProofPathEqual {
 					continue
 				}
-				addDescendantAliases(prefix, proof.Path, proof.Other, addDesc, addSubtree)
-				addDescendantAliases(prefix, proof.Other, proof.Path, addDesc, addSubtree)
+				addDescendantAliases(ks, prefix, proof.Path, proof.Other, addDesc, addSubtree)
+				addDescendantAliases(ks, prefix, proof.Other, proof.Path, addDesc, addSubtree)
 			}
 		}
 		for len(subtreeQueue) != 0 {
@@ -200,8 +191,8 @@ func expandDescendantInvalidationPrefixes(pathKey pathdom.PathKey, proofs map[Br
 				if proof.Kind != BranchProofPathEqual {
 					continue
 				}
-				addSubtreeAliases(prefix, proof.Path, proof.Other, subtreeSeen, &subtreeQueue)
-				addSubtreeAliases(prefix, proof.Other, proof.Path, subtreeSeen, &subtreeQueue)
+				addSubtreeAliases(ks, prefix, proof.Path, proof.Other, subtreeSeen, &subtreeQueue)
+				addSubtreeAliases(ks, prefix, proof.Other, proof.Path, subtreeSeen, &subtreeQueue)
 			}
 		}
 	}
@@ -212,40 +203,50 @@ func expandDescendantInvalidationPrefixes(pathKey pathdom.PathKey, proofs map[Br
 }
 
 func addSubtreeAliases(
+	ks *keyspace.KeySpace,
 	prefix pathdom.PathKey,
-	from pathdom.PathKey,
-	to pathdom.PathKey,
+	from keyspace.Key,
+	to keyspace.Key,
 	seen map[pathdom.PathKey]struct{},
 	queue *[]pathdom.PathKey,
 ) {
-	if rebased, ok := rebaseAcyclicAliasPathKey(prefix, from, to); ok {
-		addPathKeyToQueue(rebased, seen, queue)
+	prefixKey, ok := ks.FromStateKey(prefix)
+	if !ok {
+		return
 	}
-	if pathaddr.PathKeyHasPrefix(from, prefix) {
-		addPathKeyToQueue(to, seen, queue)
+	if rebased, ok := rebaseAcyclicAliasPathKey(ks, prefixKey, from, to); ok {
+		addPathKeyToQueue(ks.Format(rebased), seen, queue)
+	}
+	if ks.HasPrefix(from, prefixKey) {
+		addPathKeyToQueue(ks.Format(to), seen, queue)
 	}
 }
 
 func addDescendantAliases(
+	ks *keyspace.KeySpace,
 	prefix pathdom.PathKey,
-	from pathdom.PathKey,
-	to pathdom.PathKey,
+	from keyspace.Key,
+	to keyspace.Key,
 	addDesc func(pathdom.PathKey),
 	addSubtree func(pathdom.PathKey),
 ) {
-	if rebased, ok := rebaseAcyclicAliasPathKey(prefix, from, to); ok {
-		addDesc(rebased)
+	prefixKey, ok := ks.FromStateKey(prefix)
+	if !ok {
+		return
 	}
-	if pathaddr.PathKeyHasStrictPrefix(from, prefix) {
-		addSubtree(to)
+	if rebased, ok := rebaseAcyclicAliasPathKey(ks, prefixKey, from, to); ok {
+		addDesc(ks.Format(rebased))
+	}
+	if ks.HasStrictPrefix(from, prefixKey) {
+		addSubtree(ks.Format(to))
 	}
 }
 
-func rebaseAcyclicAliasPathKey(pathKey, from, to pathdom.PathKey) (pathdom.PathKey, bool) {
-	if cyclicDescendantExpansion(pathKey, from, to) {
-		return "", false
+func rebaseAcyclicAliasPathKey(ks *keyspace.KeySpace, pathKey, from, to keyspace.Key) (keyspace.Key, bool) {
+	if cyclicDescendantExpansion(ks, pathKey, from, to) {
+		return keyspace.Key{}, false
 	}
-	return pathaddr.RebasePathKey(pathKey, from, to)
+	return ks.Rebase(pathKey, from, to)
 }
 
 func addPathKeyToQueue(pathKey pathdom.PathKey, seen map[pathdom.PathKey]struct{}, queue *[]pathdom.PathKey) {
@@ -271,23 +272,18 @@ func sortedPathKeySet(in map[pathdom.PathKey]struct{}) []pathdom.PathKey {
 	return out
 }
 
-func pathKeyInAnySubtree(candidate pathdom.PathKey, prefixes []pathdom.PathKey) bool {
+func pathKeyInAnyPrefix(ks *keyspace.KeySpace, candidate keyspace.Key, prefixes []keyspace.Key) bool {
 	for _, prefix := range prefixes {
-		if pathaddr.PathKeyHasPrefix(candidate, prefix) {
+		if ks.HasPrefix(candidate, prefix) {
 			return true
 		}
 	}
 	return false
 }
 
-func pathKeyInAnyDescendantInvalidation(candidate pathdom.PathKey, prefixes PathKeyDescendantInvalidationPrefixes) bool {
-	for _, prefix := range prefixes.Descendants {
-		if pathaddr.PathKeyHasStrictPrefix(candidate, prefix) {
-			return true
-		}
-	}
-	for _, prefix := range prefixes.Subtrees {
-		if pathaddr.PathKeyHasPrefix(candidate, prefix) {
+func pathKeyInAnyStrictPrefix(ks *keyspace.KeySpace, candidate keyspace.Key, prefixes []keyspace.Key) bool {
+	for _, prefix := range prefixes {
+		if ks.HasStrictPrefix(candidate, prefix) {
 			return true
 		}
 	}

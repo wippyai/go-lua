@@ -3,16 +3,16 @@ package pathevidence
 import (
 	"sort"
 
-	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 )
 
 // PathPresenceImplication records a must implication between two path
 // presences: when Trigger has TriggerPresence, Target has TargetPresence.
 type PathPresenceImplication struct {
-	Trigger         pathdom.PathKey
+	Trigger         keyspace.Key
 	TriggerPresence presence.Value
-	Target          pathdom.PathKey
+	Target          keyspace.Key
 	TargetPresence  presence.Value
 }
 
@@ -45,7 +45,7 @@ func (l Lane) HasPathPresenceImplication(implication PathPresenceImplication) bo
 }
 
 func validPathPresenceImplication(implication PathPresenceImplication) bool {
-	if implication.Trigger == "" || implication.Target == "" {
+	if implication.Trigger == (keyspace.Key{}) || implication.Target == (keyspace.Key{}) {
 		return false
 	}
 	if !pathPresenceImplicationPresenceValid(implication.TriggerPresence) {
@@ -73,7 +73,7 @@ func clonePathPresenceImplicationSet(
 
 func deletePathPresenceImplicationsMatching(
 	in map[PathPresenceImplication]struct{},
-	matches func(pathdom.PathKey) bool,
+	matches func(keyspace.Key) bool,
 ) (map[PathPresenceImplication]struct{}, bool) {
 	if len(in) == 0 {
 		return in, false
@@ -98,7 +98,7 @@ func deletePathPresenceImplicationsMatching(
 
 func pathPresenceImplicationMatchesPath(
 	implication PathPresenceImplication,
-	matches func(pathdom.PathKey) bool,
+	matches func(keyspace.Key) bool,
 ) bool {
 	if matches == nil {
 		return false
@@ -107,6 +107,7 @@ func pathPresenceImplicationMatchesPath(
 }
 
 func pathPresenceImplicationsFromSet(
+	ks *keyspace.KeySpace,
 	in map[PathPresenceImplication]struct{},
 ) []PathPresenceImplication {
 	if len(in) == 0 {
@@ -117,17 +118,17 @@ func pathPresenceImplicationsFromSet(
 		out = append(out, implication)
 	}
 	sort.Slice(out, func(i, j int) bool {
-		return pathPresenceImplicationLess(out[i], out[j])
+		return pathPresenceImplicationLess(ks, out[i], out[j])
 	})
 	return out
 }
 
-func pathPresenceImplicationLess(a, b PathPresenceImplication) bool {
+func pathPresenceImplicationLess(ks *keyspace.KeySpace, a, b PathPresenceImplication) bool {
 	if a.Trigger != b.Trigger {
-		return a.Trigger < b.Trigger
+		return ks.Less(a.Trigger, b.Trigger)
 	}
 	if a.Target != b.Target {
-		return a.Target < b.Target
+		return ks.Less(a.Target, b.Target)
 	}
 	if a.TriggerPresence.String() != b.TriggerPresence.String() {
 		return a.TriggerPresence.String() < b.TriggerPresence.String()

@@ -242,6 +242,30 @@ func typeEqualsGuard(a, b Type, guard recursion.Guard, seen map[typePair]bool) b
 			return false
 		}
 		return typeEqualsGuard(va.Body, vb.Body, next, seen)
+	case *Interface:
+		// Compare structurally while threading seen so a recursion that cycles
+		// through a method signature is caught by the coinductive pair guard.
+		// Falling to Interface.Equals would restart equality with a fresh seen-set
+		// at each method's Function.Equals, dropping the guard and recursing
+		// forever on a recursive-through-interface type.
+		vb, ok := b.(*Interface)
+		if !ok || va.Name != vb.Name || len(va.Methods) != len(vb.Methods) {
+			return false
+		}
+		for i, m := range va.Methods {
+			om := vb.Methods[i]
+			if m.Name != om.Name {
+				return false
+			}
+			if !typeEqualsGuard(m.Type, om.Type, next, seen) {
+				return false
+			}
+		}
+		return true
+	case *Meta:
+		// Thread seen through the wrapped type for the same coinductive reason.
+		vb, ok := b.(*Meta)
+		return ok && typeEqualsGuard(va.Of, vb.Of, next, seen)
 	default:
 		return a.Equals(b)
 	}

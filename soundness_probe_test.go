@@ -299,14 +299,15 @@ var soundnessProbes = []soundnessProbe{
 		end return f`,
 	},
 	{
-		// A covariant MAP-value alias (the one container shape the covariant-exposure
-		// machinery does not widen): {[K]:number} widens to {[K]:number|string} via
-		// canWidenMapTo on the fresh map, but the source map's value witness is not
-		// widened, so a write through the wide alias stores a string and a nil-guarded
-		// read of the narrow map still trusts number. Found by the semantics-leak sweep
-		// (covariant-exposure Kind selector handles array/record, drops map).
+		// A covariant MAP-value alias: {[K]:number} aliased to {[K]:number|string}. The
+		// hole was that a key write degraded the source map's root witness to a per-key
+		// record overlay ({[any]:unknown} on read), which then admitted covariantly to
+		// the wider map. The root witness now stays the declared map across a conforming
+		// key write (per-key reads stay precise via static-member facts), so the alias
+		// is rejected at the assignment by invariant map subtyping, matching the
+		// concrete-map case.
 		name:  "covariant-map-value-alias",
-		fixed: false,
+		fixed: true,
 		src: `local function f(): number
 			local narrow: { [string]: number } = {}
 			narrow["k"] = 1

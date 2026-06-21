@@ -214,6 +214,9 @@ func (c *checker) functionParamsEquivalent(a, b *typ.Function, depth int) bool {
 }
 
 func (c *checker) canWidenRecordTo(narrow, wide *typ.Record, depth int) bool {
+	if narrow == nil || wide == nil {
+		return false
+	}
 	for _, wf := range wide.Fields {
 		nf := narrow.GetField(wf.Name)
 		if nf == nil {

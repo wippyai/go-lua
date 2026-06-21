@@ -89,7 +89,11 @@ func applyCallOutcomeFacts(
 		out = out.WritePathStaticMember(resolver.KeySpace(), targetKey, fact.Value)
 	}
 	for _, fact := range normalReturnFacts.DynamicIndexFacts {
-		tableKey, ok := callOutcomePathKeyAt(resolver, ctx.Point, bindings, fact.Table)
+		tableStateKey, ok := callOutcomePathKeyAt(resolver, ctx.Point, bindings, fact.Table)
+		if !ok {
+			continue
+		}
+		tableKey, ok := resolver.KeySpace().FromStateKey(tableStateKey)
 		if !ok {
 			continue
 		}
@@ -111,6 +115,9 @@ func applyCallOutcomeFacts(
 		}
 		out = out.AddBranchProof(stateProof)
 	}
+	for _, fact := range normalReturnFacts.NumFloors {
+		out = applyNormalReturnNumFloor(resolver, ctx.Point, bindings, out, fact)
+	}
 	for _, event := range normalReturnFacts.ChannelSelects {
 		fact, ok := callChannelSelectFactAt(resolver, ctx.Point, bindings, event)
 		if !ok {
@@ -123,17 +130,23 @@ func applyCallOutcomeFacts(
 		if !ok {
 			continue
 		}
-		if targetKey := factPathKeyAt(resolver, ctx.Point, targetPath); targetKey != "" {
-			out = out.WriteEffectDelta(effectdelta.Key{
-				Target: targetKey,
-				Site:   callboundary.FrozenTableEffectSite(),
-				Kind:   effectdelta.Freeze,
-			}, effectdelta.Top())
+		if targetStateKey := factPathKeyAt(resolver, ctx.Point, targetPath); targetStateKey != "" {
+			if targetKey, ok := resolver.KeySpace().FromStateKey(targetStateKey); ok {
+				out = out.WriteEffectDelta(effectdelta.Key{
+					Target: targetKey,
+					Site:   callboundary.FrozenTableEffectSite(),
+					Kind:   effectdelta.Freeze,
+				}, effectdelta.Top())
+			}
 		}
 		out = applyFrozenTableFact(ctx.Registry, resolver, projectPath, ctx.Point, out, targetPath)
 	}
 	for _, delta := range normalReturnFacts.EffectDeltas {
-		targetKey, ok := callOutcomePathKeyAt(resolver, ctx.Point, bindings, delta.Target)
+		targetStateKey, ok := callOutcomePathKeyAt(resolver, ctx.Point, bindings, delta.Target)
+		if !ok {
+			continue
+		}
+		targetKey, ok := resolver.KeySpace().FromStateKey(targetStateKey)
 		if !ok {
 			continue
 		}
@@ -162,7 +175,7 @@ func applyCallOutcomeFacts(
 		if !ok || fact.Protocol == "" {
 			continue
 		}
-		resource := out.CanonicalTypestateResource(targetKey, fact.Protocol)
+		resource := out.CanonicalTypestateResource(resolver.KeySpace(), targetKey, fact.Protocol)
 		switch fact.Kind {
 		case callboundary.LifecycleAcquire:
 			out = out.AcquireTypestate(resource, fact.To, fact.Obligation)
@@ -177,8 +190,12 @@ func applyCallOutcomeFacts(
 		if !ok {
 			continue
 		}
-		targetKey := factPathKeyAt(resolver, ctx.Point, targetPath)
-		if targetKey == "" {
+		targetStateKey := factPathKeyAt(resolver, ctx.Point, targetPath)
+		if targetStateKey == "" {
+			continue
+		}
+		targetKey, ok := resolver.KeySpace().FromStateKey(targetStateKey)
+		if !ok {
 			continue
 		}
 		out = out.WriteEffectDelta(effectdelta.Key{
@@ -189,6 +206,24 @@ func applyCallOutcomeFacts(
 		out = applyEscapeEventPlacement(ctx.Registry, resolver, projectPath, ctx.Point, out, targetPath, event)
 	}
 	return out
+}
+
+func applyNormalReturnNumFloor(
+	resolver *visibility.Resolver,
+	point cfg.Point,
+	bindings []pathdom.Path,
+	out state.State,
+	fact callboundary.NumFloorFact,
+) state.State {
+	targetPath, ok := fact.Path.Substitute(bindings)
+	if !ok || targetPath.Symbol == 0 {
+		return out
+	}
+	pathKey := visibility.RootOrVisibleKeyAt(resolver, point, targetPath)
+	if pathKey == "" {
+		return out
+	}
+	return out.WriteNumFloor(resolver.KeySpace(), pathKey, fact.Floor)
 }
 
 // applyCallParamExposures eager-widens each argument object the callee exposes
@@ -343,12 +378,14 @@ func writePathInvalidationMarker(
 	out state.State,
 	targetPath pathdom.Path,
 ) state.State {
-	if targetKey := factPathKeyAt(resolver, point, targetPath); targetKey != "" {
-		return out.WriteEffectDelta(effectdelta.Key{
-			Target: targetKey,
-			Site:   callboundary.PathInvalidationEffectSite(),
-			Kind:   effectdelta.Mutation,
-		}, effectdelta.Top())
+	if targetStateKey := factPathKeyAt(resolver, point, targetPath); targetStateKey != "" {
+		if targetKey, ok := resolver.KeySpace().FromStateKey(targetStateKey); ok {
+			return out.WriteEffectDelta(effectdelta.Key{
+				Target: targetKey,
+				Site:   callboundary.PathInvalidationEffectSite(),
+				Kind:   effectdelta.Mutation,
+			}, effectdelta.Top())
+		}
 	}
 	return out
 }
@@ -624,22 +661,30 @@ func callBranchProofAt(
 	if !ok {
 		return pathevidence.BranchProof{}, false
 	}
+	path, ok := resolver.KeySpace().FromStateKey(pathKey)
+	if !ok {
+		return pathevidence.BranchProof{}, false
+	}
 	switch proof.Kind {
 	case pathevidence.BranchProofPathPresence:
 		return pathevidence.BranchProof{
 			Kind:     pathevidence.BranchProofPathPresence,
-			Path:     pathKey,
+			Path:     path,
 			Presence: proof.Presence,
 		}, true
-	case pathevidence.BranchProofPathEqual, pathevidence.BranchProofPathNotEqual:
+	case pathevidence.BranchProofPathEqual, pathevidence.BranchProofPathNotEqual, pathevidence.BranchProofIndexInRange:
 		otherKey, ok := callOutcomePathKeyAt(resolver, point, bindings, proof.Other)
+		if !ok {
+			return pathevidence.BranchProof{}, false
+		}
+		other, ok := resolver.KeySpace().FromStateKey(otherKey)
 		if !ok {
 			return pathevidence.BranchProof{}, false
 		}
 		return pathevidence.BranchProof{
 			Kind:  proof.Kind,
-			Path:  pathKey,
-			Other: otherKey,
+			Path:  path,
+			Other: other,
 		}, true
 	default:
 		return pathevidence.BranchProof{}, false

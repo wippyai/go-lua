@@ -4,7 +4,7 @@ import (
 	"sort"
 
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
-	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
+	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 )
 
@@ -19,9 +19,9 @@ const (
 
 type BranchProof struct {
 	Kind     BranchProofKind
-	Path     pathdom.PathKey
+	Path     keyspace.Key
 	Presence presence.Value
-	Other    pathdom.PathKey
+	Other    keyspace.Key
 }
 
 // AddBranchProof records a must fact that survived onto this control-flow edge.
@@ -52,12 +52,16 @@ func (l Lane) HasBranchProof(proof BranchProof) bool {
 	return ok
 }
 
-func (l Lane) EquivalentPathKeys(pathKey pathdom.PathKey) []pathdom.PathKey {
+func (l Lane) EquivalentPathKeys(ks *keyspace.KeySpace, pathKey pathdom.PathKey) []pathdom.PathKey {
 	if pathKey == "" || l.proofsBottom || len(l.proofs) == 0 {
 		return nil
 	}
+	start, ok := ks.FromStateKey(pathKey)
+	if !ok {
+		return nil
+	}
 	seen := map[pathdom.PathKey]struct{}{pathKey: {}}
-	queue := []pathdom.PathKey{pathKey}
+	queue := []keyspace.Key{start}
 	var out []pathdom.PathKey
 	for len(queue) != 0 {
 		current := queue[0]
@@ -66,12 +70,13 @@ func (l Lane) EquivalentPathKeys(pathKey pathdom.PathKey) []pathdom.PathKey {
 			if proof.Kind != BranchProofPathEqual {
 				continue
 			}
-			for _, next := range equivalentPathKeysForProof(current, proof) {
-				if _, ok := seen[next]; ok {
+			for _, next := range equivalentPathKeysForProof(ks, current, proof) {
+				spelling := ks.Format(next)
+				if _, ok := seen[spelling]; ok {
 					continue
 				}
-				seen[next] = struct{}{}
-				out = append(out, next)
+				seen[spelling] = struct{}{}
+				out = append(out, spelling)
 				queue = append(queue, next)
 			}
 		}
@@ -80,30 +85,30 @@ func (l Lane) EquivalentPathKeys(pathKey pathdom.PathKey) []pathdom.PathKey {
 	return out
 }
 
-func equivalentPathKeysForProof(pathKey pathdom.PathKey, proof BranchProof) []pathdom.PathKey {
-	var out []pathdom.PathKey
-	if rebased, ok := rebaseEquivalentPathKey(pathKey, proof.Path, proof.Other); ok {
+func equivalentPathKeysForProof(ks *keyspace.KeySpace, pathKey keyspace.Key, proof BranchProof) []keyspace.Key {
+	var out []keyspace.Key
+	if rebased, ok := rebaseEquivalentPathKey(ks, pathKey, proof.Path, proof.Other); ok {
 		out = append(out, rebased)
 	}
-	if rebased, ok := rebaseEquivalentPathKey(pathKey, proof.Other, proof.Path); ok {
+	if rebased, ok := rebaseEquivalentPathKey(ks, pathKey, proof.Other, proof.Path); ok {
 		out = append(out, rebased)
 	}
 	return out
 }
 
-func rebaseEquivalentPathKey(pathKey, from, to pathdom.PathKey) (pathdom.PathKey, bool) {
-	if cyclicDescendantExpansion(pathKey, from, to) {
-		return "", false
+func rebaseEquivalentPathKey(ks *keyspace.KeySpace, pathKey, from, to keyspace.Key) (keyspace.Key, bool) {
+	if cyclicDescendantExpansion(ks, pathKey, from, to) {
+		return keyspace.Key{}, false
 	}
-	rebased, ok := pathaddr.RebasePathKey(pathKey, from, to)
-	if !ok || !pathaddr.PathKeyHasPrefix(rebased, to) {
-		return "", false
+	rebased, ok := ks.Rebase(pathKey, from, to)
+	if !ok || !ks.HasPrefix(rebased, to) {
+		return keyspace.Key{}, false
 	}
 	return rebased, true
 }
 
-func cyclicDescendantExpansion(pathKey, from, to pathdom.PathKey) bool {
-	return pathaddr.PathKeyHasStrictPrefix(to, from) && pathaddr.PathKeyHasPrefix(pathKey, to)
+func cyclicDescendantExpansion(ks *keyspace.KeySpace, pathKey, from, to keyspace.Key) bool {
+	return ks.HasStrictPrefix(to, from) && ks.HasPrefix(pathKey, to)
 }
 
 func cloneBranchProofSet(in map[BranchProof]struct{}) map[BranchProof]struct{} {
@@ -142,7 +147,7 @@ func deleteBranchProofsWhere(
 	return out, true
 }
 
-func branchProofMatchesPath(proof BranchProof, matches func(pathdom.PathKey) bool) bool {
+func branchProofMatchesPath(proof BranchProof, matches func(keyspace.Key) bool) bool {
 	if matches == nil {
 		return false
 	}
@@ -157,7 +162,7 @@ func branchProofMatchesPath(proof BranchProof, matches func(pathdom.PathKey) boo
 	}
 }
 
-func branchProofsFromSet(in map[BranchProof]struct{}) []BranchProof {
+func branchProofsFromSet(ks *keyspace.KeySpace, in map[BranchProof]struct{}) []BranchProof {
 	if len(in) == 0 {
 		return nil
 	}
@@ -166,20 +171,20 @@ func branchProofsFromSet(in map[BranchProof]struct{}) []BranchProof {
 		out = append(out, proof)
 	}
 	sort.Slice(out, func(i, j int) bool {
-		return branchProofLess(out[i], out[j])
+		return branchProofLess(ks, out[i], out[j])
 	})
 	return out
 }
 
-func branchProofLess(a, b BranchProof) bool {
+func branchProofLess(ks *keyspace.KeySpace, a, b BranchProof) bool {
 	if a.Kind != b.Kind {
 		return a.Kind < b.Kind
 	}
 	if a.Path != b.Path {
-		return a.Path < b.Path
+		return ks.Less(a.Path, b.Path)
 	}
 	if a.Other != b.Other {
-		return a.Other < b.Other
+		return ks.Less(a.Other, b.Other)
 	}
 	return a.Presence.String() < b.Presence.String()
 }

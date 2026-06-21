@@ -108,32 +108,47 @@ type BranchRefinement struct {
 }
 
 // BranchLenRefinement records a proven length floor for an array path that
-// holds on a branch's true edge: a non-empty/in-range guard such as #xs > 0
-// raises len(xs) >= Lo. It is a must-fact applied only on the true edge; the
-// false edge and merges do not carry it.
+// holds on the branch edge given by cond: a non-empty/in-range guard such as
+// #xs > 0 raises len(xs) >= Lo on the true edge, while the negated `#xs < lo`
+// guard form raises it on the false edge. It is a must-fact applied only on its
+// edge; merges do not carry it.
 type BranchLenRefinement struct {
 	arrayPath path.Path
 	lo        int64
+	cond      bool
 }
 
 // BranchNumFloorRefinement records a proven numeric floor for a path that holds
-// on a branch's true edge. It is separate from length floors because callers
-// often need both facts in an evidence chain, for example i <= #xs and i >= 1
-// before treating xs[i] as definitely present.
+// on the branch edge given by cond. It is separate from length floors because
+// callers often need both facts in an evidence chain, for example i <= #xs and
+// i >= 1 before treating xs[i] as definitely present.
 type BranchNumFloorRefinement struct {
 	targetPath path.Path
 	lo         int64
+	cond       bool
 }
 
 // NewBranchLenRefinement creates a true-edge length-floor fact for arrayPath.
 func NewBranchLenRefinement(arrayPath path.Path, lo int64) BranchLenRefinement {
-	return BranchLenRefinement{arrayPath: arrayPath.Clone(), lo: lo}
+	return NewBranchLenRefinementOnEdge(arrayPath, lo, true)
+}
+
+// NewBranchLenRefinementOnEdge creates a length-floor fact for arrayPath that
+// holds on the given branch edge.
+func NewBranchLenRefinementOnEdge(arrayPath path.Path, lo int64, cond bool) BranchLenRefinement {
+	return BranchLenRefinement{arrayPath: arrayPath.Clone(), lo: lo, cond: cond}
 }
 
 // NewBranchNumFloorRefinement creates a true-edge numeric floor fact for
 // targetPath.
 func NewBranchNumFloorRefinement(targetPath path.Path, lo int64) BranchNumFloorRefinement {
-	return BranchNumFloorRefinement{targetPath: targetPath.Clone(), lo: lo}
+	return NewBranchNumFloorRefinementOnEdge(targetPath, lo, true)
+}
+
+// NewBranchNumFloorRefinementOnEdge creates a numeric floor fact for targetPath
+// that holds on the given branch edge.
+func NewBranchNumFloorRefinementOnEdge(targetPath path.Path, lo int64, cond bool) BranchNumFloorRefinement {
+	return BranchNumFloorRefinement{targetPath: targetPath.Clone(), lo: lo, cond: cond}
 }
 
 // ArrayPath returns the array path whose length floor this fact raises.
@@ -141,6 +156,9 @@ func (r BranchLenRefinement) ArrayPath() path.Path { return r.arrayPath.Clone() 
 
 // Floor returns the proven lower bound on the array length.
 func (r BranchLenRefinement) Floor() int64 { return r.lo }
+
+// Cond returns the branch edge this length floor holds on.
+func (r BranchLenRefinement) Cond() bool { return r.cond }
 
 func (r BranchLenRefinement) copy() BranchLenRefinement {
 	r.arrayPath = r.arrayPath.Clone()
@@ -152,6 +170,9 @@ func (r BranchNumFloorRefinement) TargetPath() path.Path { return r.targetPath.C
 
 // Floor returns the proven lower bound on the numeric path.
 func (r BranchNumFloorRefinement) Floor() int64 { return r.lo }
+
+// Cond returns the branch edge this numeric floor holds on.
+func (r BranchNumFloorRefinement) Cond() bool { return r.cond }
 
 func (r BranchNumFloorRefinement) copy() BranchNumFloorRefinement {
 	r.targetPath = r.targetPath.Clone()

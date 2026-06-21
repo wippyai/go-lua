@@ -72,8 +72,15 @@ func FromResult(result ResultReader) summary.Summary {
 	reg := result.Registry()
 	graph := result.Graph()
 	exit, ok := result.ExitState()
-	if reg == nil || graph == nil || !ok {
+	if reg == nil || graph == nil {
 		return summary.Summary{}
+	}
+	if !ok {
+		// A body that never returns normally (e.g. a stub `function f(): T
+		// error("nyi") end`) has an unreachable exit and so no normal-return facts,
+		// but its declared signature is still the contract callers see. Emit the
+		// exit-independent projections and the declared return slots.
+		return noNormalExitSummary(reg, result)
 	}
 	heapTables := exit.HeapTableObjectsSnapshot()
 	heapTableObjects := heapTables.Objects
@@ -114,6 +121,29 @@ func FromResult(result ResultReader) summary.Summary {
 	}
 	if arity > 0 {
 		out.Returns = projectReturnSlots(reg, result, exit, arity, declared)
+	}
+	return summary.NormalizeOwned(reg, out)
+}
+
+// noNormalExitSummary builds the summary for a function whose body never returns
+// normally (an unreachable exit). The exit-dependent facts (normal-return facts,
+// param-sink exposures, heap objects at return) are correctly empty, but the
+// exit-independent param obligations and the declared return signature still hold
+// and are the contract callers rely on.
+func noNormalExitSummary(reg *axis.Registry, result ResultReader) summary.Summary {
+	out := summary.Summary{
+		ParamObligations:                projectParamObligations(reg, result),
+		ParamMemberCallObligations:      projectParamMemberCallObligations(reg, result),
+		ParamMemberReturnSlots:          projectParamMemberReturnSlots(reg, result),
+		ReturnParamPathAliases:          projectReturnParamPathAliases(result),
+		NormalReturnParamConditions:     projectNormalReturnParamConditions(reg, result),
+		NormalReturnParamEqualities:     projectNormalReturnParamEqualities(reg, result),
+		ReturnConditionParamRefinements: projectReturnConditionParamRefinements(result),
+	}
+	if reader, ok := result.(returnTypeValueReader); ok {
+		if declared := reader.ReturnTypeValues(); len(declared) != 0 {
+			out.Returns = append([]product.Value(nil), declared...)
+		}
 	}
 	return summary.NormalizeOwned(reg, out)
 }

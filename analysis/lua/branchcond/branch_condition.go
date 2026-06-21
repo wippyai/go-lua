@@ -40,6 +40,11 @@ type Check struct {
 	LiteralString string
 	LenFloor      int64
 	NumFloor      int64
+	// Negated is true when the bound holds on the FALSE edge of the comparison
+	// rather than the true edge: e.g. `i > #xs` proves the in-range bound i <= #xs
+	// on its false edge, the standard `if oob then error end` guard form. Only the
+	// bound checks (CheckIndexInRange, CheckNumGe, CheckLenGe) use it.
+	Negated bool
 }
 
 func (c Check) LiteralValue() (typ.Type, bool) {
@@ -354,8 +359,8 @@ func isEqualityRelop(op string) bool {
 // canonical CheckLenGe{Path: xs, LenFloor: k} that holds on the true edge.
 func normalizeLengthFloorComparison(expr *ast.RelationalOpExpr, bindings *bind.Result) (Check, bool) {
 	return normalizeFlippedComparison(expr, bindings, lengthFloorOperands,
-		func(arrayPath path.Path, floor int64) Check {
-			return Check{Kind: CheckLenGe, Path: arrayPath, LenFloor: floor}
+		func(arrayPath path.Path, floor int64, negated bool) Check {
+			return Check{Kind: CheckLenGe, Path: arrayPath, LenFloor: floor, Negated: negated}
 		})
 }
 
@@ -364,14 +369,14 @@ func normalizeLengthFloorComparison(expr *ast.RelationalOpExpr, bindings *bind.R
 func normalizeFlippedComparison[A, B any](
 	expr *ast.RelationalOpExpr,
 	bindings *bind.Result,
-	operands func(ast.Expr, string, ast.Expr, *bind.Result) (A, B, bool),
-	build func(A, B) Check,
+	operands func(ast.Expr, string, ast.Expr, *bind.Result) (A, B, bool, bool),
+	build func(A, B, bool) Check,
 ) (Check, bool) {
-	if a, b, ok := operands(expr.Lhs, expr.Operator, expr.Rhs, bindings); ok {
-		return build(a, b), true
+	if a, b, negated, ok := operands(expr.Lhs, expr.Operator, expr.Rhs, bindings); ok {
+		return build(a, b, negated), true
 	}
-	if a, b, ok := operands(expr.Rhs, flipRelop(expr.Operator), expr.Lhs, bindings); ok {
-		return build(a, b), true
+	if a, b, negated, ok := operands(expr.Rhs, flipRelop(expr.Operator), expr.Lhs, bindings); ok {
+		return build(a, b, negated), true
 	}
 	return Check{}, false
 }
@@ -381,8 +386,8 @@ func normalizeFlippedComparison[A, B any](
 // in-range when paired with a positive index fact.
 func normalizeIndexInRangeComparison(expr *ast.RelationalOpExpr, bindings *bind.Result) (Check, bool) {
 	return normalizeFlippedComparison(expr, bindings, indexLenBoundOperands,
-		func(indexPath, arrayPath path.Path) Check {
-			return Check{Kind: CheckIndexInRange, Path: indexPath, OtherPath: arrayPath}
+		func(indexPath, arrayPath path.Path, negated bool) Check {
+			return Check{Kind: CheckIndexInRange, Path: indexPath, OtherPath: arrayPath, Negated: negated}
 		})
 }
 
@@ -392,108 +397,128 @@ func normalizeIndexInRangeComparison(expr *ast.RelationalOpExpr, bindings *bind.
 // index-in-range guard to remove the optional nil from an array read.
 func normalizeNumericFloorComparison(expr *ast.RelationalOpExpr, bindings *bind.Result) (Check, bool) {
 	return normalizeFlippedComparison(expr, bindings, numericFloorOperands,
-		func(numPath path.Path, floor int64) Check {
-			return Check{Kind: CheckNumGe, Path: numPath, NumFloor: floor}
+		func(numPath path.Path, floor int64, negated bool) Check {
+			return Check{Kind: CheckNumGe, Path: numPath, NumFloor: floor, Negated: negated}
 		})
 }
 
 // numericFloorOperands matches `path <op> const` and returns the numeric path and
 // the proven lower bound on its value when op establishes a non-negative floor. A
 // floor of 0 (`j >= 0`) feeds relational sum proofs such as i + j <= #xs.
-func numericFloorOperands(numExpr ast.Expr, op string, constExpr ast.Expr, bindings *bind.Result) (path.Path, int64, bool) {
+func numericFloorOperands(numExpr ast.Expr, op string, constExpr ast.Expr, bindings *bind.Result) (path.Path, int64, bool, bool) {
 	numPath, ok := pathexpr.Resolve(numExpr, bindings)
 	if !ok || numPath.IsEmpty() {
-		return path.Path{}, 0, false
+		return path.Path{}, 0, false, false
 	}
 	c, ok := constExpr.(*ast.NumberExpr)
 	if !ok {
-		return path.Path{}, 0, false
+		return path.Path{}, 0, false, false
 	}
 	value, ok := numparse.ParseIntegerLiteral(c.Value)
 	if !ok {
-		return path.Path{}, 0, false
+		return path.Path{}, 0, false, false
 	}
-	floor, ok := numericFloorForRelop(op, value)
+	floor, negated, ok := numericFloorForRelop(op, value)
 	if !ok || floor < 0 {
-		return path.Path{}, 0, false
+		return path.Path{}, 0, false, false
 	}
-	return numPath, floor, true
+	return numPath, floor, negated, true
 }
 
-// numericFloorForRelop computes the proven value lower bound from `path <op> c`.
-func numericFloorForRelop(op string, c int64) (int64, bool) {
+// numericFloorForRelop computes the proven value lower bound from `path <op> c`
+// and the edge it holds on. `>`/`>=` prove the floor on the true edge; `<`/`<=`
+// prove it on the false edge (not(i < c) is i >= c; not(i <= c) is i >= c+1) for
+// the `if i < lo then error end` guard form.
+func numericFloorForRelop(op string, c int64) (int64, bool, bool) {
 	switch op {
 	case ">":
-		return c + 1, true
+		return c + 1, false, true
 	case ">=":
-		return c, true
+		return c, false, true
+	case "<":
+		return c, true, true
+	case "<=":
+		return c + 1, true, true
 	default:
-		return 0, false
+		return 0, false, false
 	}
 }
 
-func indexLenBoundOperands(indexExpr ast.Expr, op string, lenExpr ast.Expr, bindings *bind.Result) (path.Path, path.Path, bool) {
-	// `i <= #xs` proves i <= len; the strict `i < #xs` proves i <= len-1, which is
-	// also in range. Both establish the index-in-range upper bound.
-	if op != "<=" && op != "<" {
-		return path.Path{}, path.Path{}, false
+func indexLenBoundOperands(indexExpr ast.Expr, op string, lenExpr ast.Expr, bindings *bind.Result) (path.Path, path.Path, bool, bool) {
+	// `i <= #xs` / `i < #xs` prove the in-range bound i <= len on the TRUE edge.
+	// `i > #xs` / `i >= #xs` prove it on the FALSE edge (the `if oob then error`
+	// guard form): not(i > #xs) is i <= #xs, and not(i >= #xs) is i < #xs <= len.
+	var negated bool
+	switch op {
+	case "<=", "<":
+		negated = false
+	case ">", ">=":
+		negated = true
+	default:
+		return path.Path{}, path.Path{}, false, false
 	}
 	indexPath, ok := pathexpr.Resolve(indexExpr, bindings)
 	if !ok || indexPath.IsEmpty() {
-		return path.Path{}, path.Path{}, false
+		return path.Path{}, path.Path{}, false, false
 	}
 	lenOp, ok := lenExpr.(*ast.UnaryLenOpExpr)
 	if !ok {
-		return path.Path{}, path.Path{}, false
+		return path.Path{}, path.Path{}, false, false
 	}
 	arrayPath, ok := pathexpr.Resolve(lenOp.Expr, bindings)
 	if !ok || arrayPath.IsEmpty() {
-		return path.Path{}, path.Path{}, false
+		return path.Path{}, path.Path{}, false, false
 	}
-	return indexPath, arrayPath, true
+	return indexPath, arrayPath, negated, true
 }
 
 // lengthFloorOperands matches `#array <op> const` and returns the array path and
 // the proven floor on its length when op establishes a positive lower bound.
-func lengthFloorOperands(lenExpr ast.Expr, op string, constExpr ast.Expr, bindings *bind.Result) (path.Path, int64, bool) {
+func lengthFloorOperands(lenExpr ast.Expr, op string, constExpr ast.Expr, bindings *bind.Result) (path.Path, int64, bool, bool) {
 	lenOp, ok := lenExpr.(*ast.UnaryLenOpExpr)
 	if !ok {
-		return path.Path{}, 0, false
+		return path.Path{}, 0, false, false
 	}
 	arrayPath, ok := pathexpr.Resolve(lenOp.Expr, bindings)
 	if !ok || arrayPath.IsEmpty() {
-		return path.Path{}, 0, false
+		return path.Path{}, 0, false, false
 	}
 	c, ok := constExpr.(*ast.NumberExpr)
 	if !ok {
-		return path.Path{}, 0, false
+		return path.Path{}, 0, false, false
 	}
 	value, ok := numparse.ParseIntegerLiteral(c.Value)
 	if !ok {
-		return path.Path{}, 0, false
+		return path.Path{}, 0, false, false
 	}
-	floor, ok := lengthFloorForRelop(op, value)
+	floor, negated, ok := lengthFloorForRelop(op, value)
 	if !ok || floor <= 0 {
-		return path.Path{}, 0, false
+		return path.Path{}, 0, false, false
 	}
-	return arrayPath, floor, true
+	return arrayPath, floor, negated, true
 }
 
-// lengthFloorForRelop computes the proven length lower bound from `len <op> c`.
-func lengthFloorForRelop(op string, c int64) (int64, bool) {
+// lengthFloorForRelop computes the proven length lower bound from `len <op> c`
+// and the edge it holds on. `>`/`>=`/`~=0` prove the floor on the true edge;
+// `<`/`<=` prove it on the false edge for the `if #xs < lo then error end` form.
+func lengthFloorForRelop(op string, c int64) (int64, bool, bool) {
 	switch op {
 	case ">":
-		return c + 1, true
+		return c + 1, false, true
 	case ">=":
-		return c, true
+		return c, false, true
 	case "~=":
 		// len ~= 0 proves len >= 1 since length is non-negative.
 		if c == 0 {
-			return 1, true
+			return 1, false, true
 		}
-		return 0, false
+		return 0, false, false
+	case "<":
+		return c, true, true
+	case "<=":
+		return c + 1, true, true
 	default:
-		return 0, false
+		return 0, false, false
 	}
 }
 

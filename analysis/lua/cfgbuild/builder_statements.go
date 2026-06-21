@@ -32,7 +32,15 @@ func (b *builder) buildStmt(state flowState, stmt ast.Stmt) flowState {
 	case *ast.LocalAssignStmt:
 		return b.buildLocalAssign(state, stmt)
 	case *ast.FuncCallStmt:
-		return b.appendExprCalls(state, stmt, stmt.Expr)
+		state = b.appendExprCalls(state, stmt, stmt.Expr)
+		if state.live && b.isNoReturnCallStmt(stmt.Expr) {
+			// error(...) raises and never returns normally, so the rest of the block
+			// is unreachable; mark the flow non-live (no edge to Exit -- this is a
+			// raise, not a return) so an `if oob then error() end` guard leaves only
+			// the false edge feeding the continuation.
+			state.live = false
+		}
+		return state
 	case *ast.ReturnStmt:
 		state = b.appendValueListCalls(state, stmt, stmt.Exprs)
 		state = b.appendNodeForStmt(state, cfg.NodeReturn, stmt)
@@ -65,6 +73,18 @@ func (b *builder) buildStmt(state flowState, stmt ast.Stmt) flowState {
 		// the control-flow graph rather than a reason to abandon the function.
 		return b.appendNodeForStmt(state, cfg.NodeNoop, stmt)
 	}
+}
+
+// isNoReturnCallStmt reports whether a call statement targets the global `error`,
+// which raises and never returns normally. assert is NOT no-return (it returns
+// when its condition holds; its surviving-path narrowing is handled separately).
+func (b *builder) isNoReturnCallStmt(expr ast.Expr) bool {
+	call, ok := expr.(*ast.FuncCallExpr)
+	if !ok || call.Receiver != nil || call.Method != "" {
+		return false
+	}
+	fn, ok := call.Func.(*ast.IdentExpr)
+	return ok && b.bindings.ResolvesToGlobal(fn, "error")
 }
 
 func (b *builder) buildAssign(state flowState, stmt *ast.AssignStmt) flowState {

@@ -23,8 +23,12 @@ import (
 
 func projectNormalReturnFacts(reg *axis.Registry, result ResultReader, exit state.State) callboundary.NormalReturnFacts {
 	params := parameterValuePaths(result)
+	exitFactParams := exitFactParameterValuePaths(result, params)
 	projectPath := func(pathKey path.PathKey) (path.Path, bool) {
-		return normalReturnFactPlaceholderPath(pathKey, params)
+		return normalReturnFactPlaceholderPath(pathKey, exitFactParams)
+	}
+	projectStatePath := func(pathKey path.PathKey) (path.Path, bool) {
+		return normalReturnFactStatePlaceholderPath(result.KeySpace(), pathKey, exitFactParams)
 	}
 	out := callboundary.NormalReturnFacts{}
 	out.PathInvalidations = append(out.PathInvalidations, projectAssignmentPathInvalidations(result, params)...)
@@ -70,7 +74,7 @@ func projectNormalReturnFacts(reg *axis.Registry, result ResultReader, exit stat
 
 	if snapshot := exit.DynamicIndexFactsSnapshot(); !snapshot.Top {
 		for stateKey, stateFact := range snapshot.Facts {
-			table, ok := projectPath(stateKey.Table)
+			table, ok := projectPath(ks.Format(stateKey.Table))
 			if !ok {
 				continue
 			}
@@ -103,9 +107,9 @@ func projectNormalReturnFacts(reg *axis.Registry, result ResultReader, exit stat
 		}
 	}
 
-	if snapshot := exit.BranchProofsSnapshot(); !snapshot.Bottom && !snapshot.Top {
+	if snapshot := exit.BranchProofsSnapshot(ks); !snapshot.Bottom && !snapshot.Top {
 		for _, stateProof := range snapshot.Proofs {
-			target, ok := projectPath(stateProof.Path)
+			target, ok := projectPath(ks.Format(stateProof.Path))
 			if !ok {
 				continue
 			}
@@ -123,8 +127,8 @@ func projectNormalReturnFacts(reg *axis.Registry, result ResultReader, exit stat
 					continue
 				}
 				proof.Presence = stateProof.Presence
-			case pathevidence.BranchProofPathEqual, pathevidence.BranchProofPathNotEqual:
-				other, ok := projectPath(stateProof.Other)
+			case pathevidence.BranchProofPathEqual, pathevidence.BranchProofPathNotEqual, pathevidence.BranchProofIndexInRange:
+				other, ok := projectPath(ks.Format(stateProof.Other))
 				if !ok {
 					continue
 				}
@@ -133,6 +137,19 @@ func projectNormalReturnFacts(reg *axis.Registry, result ResultReader, exit stat
 				continue
 			}
 			out.BranchProofs = append(out.BranchProofs, proof)
+		}
+	}
+
+	if snapshot := exit.NumFloorsSnapshot(ks); !snapshot.Bottom {
+		for pathKey, floor := range snapshot.Floors {
+			target, ok := projectStatePath(pathKey)
+			if !ok {
+				continue
+			}
+			out.NumFloors = append(out.NumFloors, callboundary.NumFloorFact{
+				Path:  target,
+				Floor: floor,
+			})
 		}
 	}
 
@@ -167,7 +184,7 @@ func projectNormalReturnFacts(reg *axis.Registry, result ResultReader, exit stat
 	}
 
 	if snapshot := exit.FrozenTablesSnapshot(); !snapshot.Bottom && !snapshot.Top {
-		frozenPaths := frozenTablePlaceholderPaths(reg, ks, exit, params)
+		frozenPaths := frozenTablePlaceholderPaths(reg, ks, exit, exitFactParams)
 		for _, id := range snapshot.Tables {
 			for _, target := range frozenPaths[id] {
 				out.FrozenTables = append(out.FrozenTables, callboundary.FrozenTableFact{
@@ -179,7 +196,7 @@ func projectNormalReturnFacts(reg *axis.Registry, result ResultReader, exit stat
 
 	if snapshot := exit.EffectDeltasSnapshot(); !snapshot.Top {
 		for stateKey, stateDelta := range snapshot.Deltas {
-			target, ok := projectPath(stateKey.Target)
+			target, ok := projectPath(ks.Format(stateKey.Target))
 			if !ok {
 				continue
 			}
@@ -585,6 +602,33 @@ func parameterPlaceholderPath(target path.Path, params []path.Path) (path.Path, 
 	return path.Path{}, false
 }
 
+func exitFactParameterValuePaths(result ResultReader, params []path.Path) []path.Path {
+	if len(params) == 0 {
+		return nil
+	}
+	reassignedReader, ok := result.(reassignedParameterValueSlotReader)
+	if !ok {
+		return params
+	}
+	reassigned := reassignedReader.ReassignedParameterValueSlots()
+	if len(reassigned) == 0 {
+		return params
+	}
+	out := make([]path.Path, len(params))
+	copy(out, params)
+	for i, param := range out {
+		slot := key.SymbolValue(param.Symbol)
+		if slot == 0 {
+			out[i] = path.Path{}
+			continue
+		}
+		if _, ok := reassigned[slot]; ok {
+			out[i] = path.Path{}
+		}
+	}
+	return out
+}
+
 func frozenTablePlaceholderPaths(reg *axis.Registry, ks *keyspace.KeySpace, exit state.State, params []path.Path) map[identity.ID][]path.Path {
 	out := make(map[identity.ID][]path.Path)
 	var queue []frozenTablePathCandidate
@@ -730,6 +774,49 @@ func normalReturnFactPlaceholderPath(pathKey path.PathKey, params []path.Path) (
 	return path.Path{}, false
 }
 
+func normalReturnFactStatePlaceholderPath(ks *keyspace.KeySpace, pathKey path.PathKey, params []path.Path) (path.Path, bool) {
+	if pathKey == "" || ks == nil || len(params) == 0 {
+		return path.Path{}, false
+	}
+	if placeholder, ok := pathaddr.PlaceholderPathFromKey(pathKey); ok {
+		index := placeholder.PlaceholderIndex()
+		if index < 0 || index >= len(params) || params[index].IsEmpty() {
+			return path.Path{}, false
+		}
+		return placeholder, true
+	}
+	k, ok := ks.FromStateKey(pathKey)
+	if !ok {
+		return path.Path{}, false
+	}
+	switch k.Kind {
+	case keyspace.KindUnversionedSym:
+		if k.Segs != 0 {
+			return path.Path{}, false
+		}
+		for i, param := range params {
+			if param.Symbol == 0 || param.Symbol != k.Sym {
+				continue
+			}
+			return path.NewPlaceholder(i), true
+		}
+	case keyspace.KindResolverSym:
+		for i, param := range params {
+			if param.Symbol == 0 || param.Symbol != k.Sym {
+				continue
+			}
+			return path.NewPlaceholder(i).AppendSegments(ks.Segments(k)), true
+		}
+	case keyspace.KindPlaceholder:
+		index := int(k.Root)
+		if index < 0 || index >= len(params) || params[index].IsEmpty() {
+			return path.Path{}, false
+		}
+		return path.NewPlaceholder(index).AppendSegments(ks.Segments(k)), true
+	}
+	return path.Path{}, false
+}
+
 func projectBranchProofKind(kind pathevidence.BranchProofKind) (pathevidence.BranchProofKind, bool) {
 	switch kind {
 	case pathevidence.BranchProofPathPresence:
@@ -738,6 +825,8 @@ func projectBranchProofKind(kind pathevidence.BranchProofKind) (pathevidence.Bra
 		return pathevidence.BranchProofPathEqual, true
 	case pathevidence.BranchProofPathNotEqual:
 		return pathevidence.BranchProofPathNotEqual, true
+	case pathevidence.BranchProofIndexInRange:
+		return pathevidence.BranchProofIndexInRange, true
 	default:
 		return 0, false
 	}

@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/check/body"
+	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/placement"
@@ -205,9 +206,14 @@ func testObjectWithStaticChildren(reg *axis.Registry, ids ...identity.ID) heapid
 }
 
 func testObjectWithDynamicChildren(reg *axis.Registry, ids ...identity.ID) heapidentity.TableObject {
+	ks := keyspace.New()
+	tableKey, ok := ks.FromStateKey(pathdom.PathKey("test"))
+	if !ok {
+		panic("placementplan test: table state key failed")
+	}
 	facts := make(map[dynamicindex.Key]dynamicindex.Fact, len(ids))
 	for i, id := range ids {
-		facts[dynamicindex.Key{Table: "test", Site: dynamicindex.Site(fmt.Sprintf("site%d", i))}] = dynamicindex.Fact{
+		facts[dynamicindex.Key{Table: tableKey, Site: dynamicindex.Site(fmt.Sprintf("site%d", i))}] = dynamicindex.Fact{
 			Value: valueWithIdentity(reg, id),
 		}
 	}

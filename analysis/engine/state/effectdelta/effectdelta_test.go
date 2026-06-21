@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
@@ -55,8 +56,17 @@ func TestDomainBottomTopAndOrder(t *testing.T) {
 func TestMapDomainCanonicalization(t *testing.T) {
 	reg := standard.Registry()
 	domain := MapDomain(reg)
-	key := Key{Target: pathdom.PathKey("sym1@1.field"), Site: "effect", Kind: Mutation}
-	otherKey := Key{Target: pathdom.PathKey("sym2@1.field"), Site: "effect", Kind: Escape}
+	ks := keyspace.New()
+	target1, ok := ks.FromStateKey(pathdom.PathKey("sym1@1.field"))
+	if !ok {
+		t.Fatal("FromStateKey failed")
+	}
+	target2, ok := ks.FromStateKey(pathdom.PathKey("sym2@1.field"))
+	if !ok {
+		t.Fatal("FromStateKey failed")
+	}
+	key := Key{Target: target1, Site: "effect", Kind: Mutation}
+	otherKey := Key{Target: target2, Site: "effect", Kind: Escape}
 	present := presentValue(reg)
 	absent := absentValue(reg)
 	delta := Value{Before: present, After: absent, Change: ChangeChanged}

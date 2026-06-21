@@ -183,4 +183,3 @@ func (b *builder) expressionCoveredRelationalCall(expr *ast.RelationalOpExpr) bo
 	}
 	return false
 }
-

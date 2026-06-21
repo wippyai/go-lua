@@ -500,7 +500,7 @@ func sortedHeapDynamicEntries(ks *keyspace.KeySpace, in map[dynamicindex.Key]dyn
 			continue
 		}
 		out = append(out, heapDynamicEntry{
-			key:  string(key.Table) + "|" + string(key.Site),
+			key:  string(ks.Format(key.Table)) + "|" + string(key.Site),
 			fact: fact,
 		})
 	}

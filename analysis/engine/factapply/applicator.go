@@ -128,13 +128,19 @@ func NewFactsEdgeTransfer(config FactsEdgeTransferConfig) transfer.EdgeTransfer 
 			}
 			out = applyBranchRefinementCached(config.TypeValues, ctx, config.Visibility, config.ProjectPath, out, fact.TargetPath(), refinement)
 		}
+		for _, fact := range config.Facts.BranchLenRefinements(ctx.Edge.From) {
+			if fact.Cond() != ctx.Edge.Cond {
+				continue
+			}
+			out = applyBranchLenRefinement(ctx, config.Visibility, out, fact)
+		}
+		for _, fact := range config.Facts.BranchNumFloorRefinements(ctx.Edge.From) {
+			if fact.Cond() != ctx.Edge.Cond {
+				continue
+			}
+			out = applyBranchNumFloorRefinement(ctx, config.Visibility, out, fact)
+		}
 		if ctx.Edge.Cond {
-			for _, fact := range config.Facts.BranchLenRefinements(ctx.Edge.From) {
-				out = applyBranchLenRefinement(ctx, config.Visibility, out, fact)
-			}
-			for _, fact := range config.Facts.BranchNumFloorRefinements(ctx.Edge.From) {
-				out = applyBranchNumFloorRefinement(ctx, config.Visibility, out, fact)
-			}
 			for _, fact := range config.Facts.BranchDiffConstraints(ctx.Edge.From) {
 				out = applyBranchDiffConstraint(ctx, config.Visibility, out, fact)
 			}

@@ -126,8 +126,8 @@ func TestFactsNodeTransferPathAssignmentInvalidatesEquivalentPathProofs(t *testi
 		WritePathKey(reg, ks, siblingKey, present).
 		AddBranchProof(pathevidence.BranchProof{
 			Kind:  pathevidence.BranchProofPathEqual,
-			Path:  path.PathKey("sym108@1"),
-			Other: path.PathKey("sym109@1"),
+			Path:  mustStateKey(t, ks, path.PathKey("sym108@1")),
+			Other: mustStateKey(t, ks, path.PathKey("sym109@1")),
 		})
 	sources := &recordingSourceValues{
 		values: map[factflow.ValueSource]product.Value{source: assigned},
@@ -243,8 +243,8 @@ func TestFactsNodeTransferPathAssignmentInvalidatesEquivalentOriginsAndHeapMembe
 		})).
 		AddBranchProof(pathevidence.BranchProof{
 			Kind:  pathevidence.BranchProofPathEqual,
-			Path:  path.PathKey("sym113@1"),
-			Other: path.PathKey("sym114@1.active"),
+			Path:  mustStateKey(t, ks, path.PathKey("sym113@1")),
+			Other: mustStateKey(t, ks, path.PathKey("sym114@1.active")),
 		})
 	sources := &recordingSourceValues{
 		values: map[factflow.ValueSource]product.Value{source: assigned},

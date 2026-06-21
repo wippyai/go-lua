@@ -2,6 +2,7 @@ package state
 
 import (
 	"github.com/wippyai/go-lua/analysis/domain/lattice"
+	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	effectdelta "github.com/wippyai/go-lua/analysis/engine/state/effectdelta"
 )
 
@@ -17,7 +18,7 @@ func effectDeltaLaneFromMap(
 }
 
 func (l effectDeltaLane) read(key effectdelta.Key) effectdelta.Value {
-	if key.Target == "" {
+	if key.Target.Kind == keyspace.KindInvalid {
 		return effectdelta.Value{}
 	}
 	if l.isTop() {

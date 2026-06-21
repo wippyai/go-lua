@@ -7,7 +7,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/domain/lattice"
 	"github.com/wippyai/go-lua/analysis/domain/lattice/lift"
-	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
@@ -36,7 +36,7 @@ func PointFromSite(site Site) (int, bool) {
 }
 
 type Key struct {
-	Table pathdom.PathKey
+	Table keyspace.Key
 	Site  Site
 }
 

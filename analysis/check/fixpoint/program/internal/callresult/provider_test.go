@@ -245,6 +245,9 @@ func TestOutcomeProviderMapsSummaryReturnsAndNormalReturnFacts(t *testing.T) {
 							To:       typestate.State("finished"),
 						},
 					},
+					NumFloors: []callboundary.NumFloorFact{
+						{Path: path.NewPlaceholder(0).Field("index"), Floor: 1},
+					},
 				},
 			},
 		}),
@@ -319,6 +322,11 @@ func TestOutcomeProviderMapsSummaryReturnsAndNormalReturnFacts(t *testing.T) {
 		got.NormalReturnFacts.LifecycleFacts[0].Kind != callboundary.LifecycleTransition ||
 		got.NormalReturnFacts.LifecycleFacts[0].Protocol != typestate.Protocol("transaction") {
 		t.Fatalf("lifecycle facts = %#v, want mapped summary lifecycle fact", got.NormalReturnFacts.LifecycleFacts)
+	}
+	if len(got.NormalReturnFacts.NumFloors) != 1 ||
+		!got.NormalReturnFacts.NumFloors[0].Path.Equal(path.NewPlaceholder(0).Field("index")) ||
+		got.NormalReturnFacts.NumFloors[0].Floor != 1 {
+		t.Fatalf("num floors = %#v, want mapped summary numeric floor", got.NormalReturnFacts.NumFloors)
 	}
 }
 

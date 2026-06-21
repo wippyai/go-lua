@@ -141,8 +141,12 @@ func projectFromDynamicIndexFacts(config Config, point cfg.Point, p pathdom.Path
 		return product.Value{}, false
 	}
 	parent := p.Parent()
-	tableKey := config.Visibility.KeyAt(point, parent)
-	if tableKey == "" {
+	tableStateKey := config.Visibility.KeyAt(point, parent)
+	if tableStateKey == "" {
+		return product.Value{}, false
+	}
+	tableKey, ok := config.Visibility.KeySpace().FromStateKey(tableStateKey)
+	if !ok {
 		return product.Value{}, false
 	}
 	snapshot := in.DynamicIndexFactsSnapshot()
@@ -284,6 +288,15 @@ func overlayRootStaticMemberWitness(config Config, point cfg.Point, root pathdom
 		return value
 	}
 	if existing, ok := typevalue.TypeOf(reg, value); ok && existing != nil && !typ.IsAny(existing) && !typ.IsUnknown(existing) && !typ.IsNever(existing) {
+		if _, isMap := unwrap.Alias(existing).(*typ.Map); isMap {
+			// A map's declared type is invariant under a conforming key write (a
+			// non-conforming write is a separate assignment error), so the root
+			// witness stays the declared map rather than intersecting with the
+			// per-key static-member record. Individual key reads remain precise
+			// through the static-member facts; preserving the map witness keeps a
+			// covariant mutable-map alias from being admitted unsoundly.
+			return value
+		}
 		if merged, ok := mergeStaticMemberWitness(existing, staticType); ok {
 			staticType = merged
 		} else {

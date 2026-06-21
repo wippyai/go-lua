@@ -67,21 +67,39 @@ func (l *lowerer) addCovariantExposure(input *factflow.FactsInput, point cfg.Poi
 }
 
 // addCovariantExposureType appends a covariant-exposure fact for sourcePath
-// toward a resolved contract type. The widening kind is the array element witness
-// for an array contract and the record field rebuild otherwise.
+// toward a resolved contract type, when the contract is a mutable container view
+// (array or record). A non-container contract is not a covariant exposure and is
+// skipped.
 func (l *lowerer) addCovariantExposureType(input *factflow.FactsInput, point cfg.Point, sourcePath path.Path, contract typ.Type) {
 	if contract == nil || typ.IsAny(contract) || typ.IsUnknown(contract) {
 		return
 	}
-	wide := l.valueFromTypeWithWitness(contract)
-	kind := factflow.CovariantExposureRecord
-	if _, ok := arrayElementType(contract); ok {
-		kind = factflow.CovariantExposureArray
+	kind, ok := covariantExposureKind(contract)
+	if !ok {
+		return
 	}
+	wide := l.valueFromTypeWithWitness(contract)
 	if input.CovariantExposures == nil {
 		input.CovariantExposures = make(map[cfg.Point][]factflow.CovariantExposure)
 	}
 	input.CovariantExposures[point] = append(input.CovariantExposures[point], factflow.NewCovariantExposure(sourcePath, wide, kind))
+}
+
+// covariantExposureKind selects the widening kind for a mutable container
+// contract: an opaque-array element widen for an array, a record field rebuild
+// for a record. Any other shape is not a mutable container view and emits no
+// exposure. The call-boundary twin callresult.covariantExposureKind must
+// classify identically; the layered architecture keeps factflow type-independent,
+// so the two cannot share one helper.
+func covariantExposureKind(contract typ.Type) (factflow.CovariantExposureKind, bool) {
+	switch unwrap.Alias(contract).(type) {
+	case *typ.Array:
+		return factflow.CovariantExposureArray, true
+	case *typ.Record:
+		return factflow.CovariantExposureRecord, true
+	default:
+		return 0, false
+	}
 }
 
 // aliasStrictlyWidens reports whether the target array element or record field(s)

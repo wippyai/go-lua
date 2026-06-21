@@ -30,6 +30,7 @@ type NormalReturnFacts struct {
 	EscapeEvents      []EscapeEventFact
 	StoreRelations    []StoreRelationFact
 	LifecycleFacts    []LifecycleFact
+	NumFloors         []NumFloorFact
 }
 
 // Empty reports whether no normal-return fact lane carries evidence.
@@ -44,7 +45,8 @@ func (f NormalReturnFacts) Empty() bool {
 		len(f.EffectDeltas) == 0 &&
 		len(f.EscapeEvents) == 0 &&
 		len(f.StoreRelations) == 0 &&
-		len(f.LifecycleFacts) == 0
+		len(f.LifecycleFacts) == 0 &&
+		len(f.NumFloors) == 0
 }
 
 // Append returns f with every normal-return fact lane from other appended.
@@ -60,6 +62,7 @@ func (f NormalReturnFacts) Append(other NormalReturnFacts) NormalReturnFacts {
 	f.EscapeEvents = append(f.EscapeEvents, other.EscapeEvents...)
 	f.StoreRelations = append(f.StoreRelations, other.StoreRelations...)
 	f.LifecycleFacts = append(f.LifecycleFacts, other.LifecycleFacts...)
+	f.NumFloors = append(f.NumFloors, other.NumFloors...)
 	return f
 }
 
@@ -192,6 +195,13 @@ type LifecycleFact struct {
 	From       typestate.State
 	To         typestate.State
 	Obligation typestate.Obligation
+}
+
+// NumFloorFact records a proven lower bound for a numeric placeholder path on
+// normal return: value(Path) >= Floor.
+type NumFloorFact struct {
+	Path  pathdom.Path
+	Floor int64
 }
 
 const escapeEventEffectSitePrefix = "escape-event."

@@ -1078,14 +1078,22 @@ func typeFromValue(reg *axis.Registry, value product.Value) (typ.Type, bool) {
 }
 
 func specializeSummaryReturns(reg *axis.Registry, got summary.Summary, originalReturns []typ.Type, returns []typ.Type) summary.Summary {
-	if reg == nil || len(got.Returns) == 0 || len(returns) == 0 {
+	if reg == nil || len(returns) == 0 {
 		return got
 	}
 	originalReturns = callResultReturnTypes(got, originalReturns)
 	returns = callResultReturnTypes(got, returns)
-	nextReturns := make([]product.Value, len(got.Returns))
+	// A function whose body never returns normally (e.g. a stub `function f(): T
+	// error("nyi") end`) has no summary return values, but its declared signature
+	// is still the contract callers see. Size the slots to the declared returns and
+	// adopt the declared type for any slot the body left empty.
+	width := len(got.Returns)
+	if len(returns) > width {
+		width = len(returns)
+	}
+	nextReturns := make([]product.Value, width)
 	copy(nextReturns, got.Returns)
-	changed := false
+	changed := width != len(got.Returns)
 	for i := range nextReturns {
 		if i >= len(returns) {
 			break
@@ -1095,6 +1103,12 @@ func specializeSummaryReturns(reg *axis.Registry, got summary.Summary, originalR
 			continue
 		}
 		declared := typevalue.WithWitness(reg, typevalue.FromType(reg, ret), ret)
+		if i >= len(got.Returns) {
+			// No body return for this slot: adopt the declared return directly.
+			nextReturns[i] = declared
+			changed = true
+			continue
+		}
 		next := joinInstantiatedReturnValue(reg, nextReturns[i], declared, originalReturnTypeAt(originalReturns, i))
 		if product.Equal(reg, nextReturns[i], next) {
 			continue
@@ -1586,25 +1600,12 @@ func newParamExposure(reg *axis.Registry, source pathdom.Path, contract typ.Type
 	}, true
 }
 
-// rootPlaceholderIndex returns the parameter index of a root placeholder source
-// key ($i with no member segments). Sources with member segments name a sub-path
-// of a parameter, which this exposure lane does not handle.
-func rootPlaceholderIndex(source pathdom.PathKey) (int, bool) {
-	p, ok := pathaddr.PlaceholderPathFromKey(source)
-	if !ok || len(p.Segments) != 0 {
-		return 0, false
-	}
-	index := p.PlaceholderIndex()
-	if index < 0 {
-		return 0, false
-	}
-	return index, true
-}
-
 // covariantExposureKind selects the widening kind for a mutable container
 // contract: an opaque-array element widen for an array, a record field rebuild
 // for a record. Any other shape is not a mutable container view and emits no
-// exposure.
+// exposure. The lowering twin transferfacts.covariantExposureKind must classify
+// identically; the layered architecture keeps factflow type-independent and this
+// package's imports bounded, so the two cannot share one helper.
 func covariantExposureKind(contract typ.Type) (factflow.CovariantExposureKind, bool) {
 	switch unaliasType(contract).(type) {
 	case *typ.Array:
@@ -1624,6 +1625,21 @@ func unaliasType(t typ.Type) typ.Type {
 		}
 		t = alias.UnaliasedTarget()
 	}
+}
+
+// rootPlaceholderIndex returns the parameter index of a root placeholder source
+// key ($i with no member segments). Sources with member segments name a sub-path
+// of a parameter, which this exposure lane does not handle.
+func rootPlaceholderIndex(source pathdom.PathKey) (int, bool) {
+	p, ok := pathaddr.PlaceholderPathFromKey(source)
+	if !ok || len(p.Segments) != 0 {
+		return 0, false
+	}
+	index := p.PlaceholderIndex()
+	if index < 0 {
+		return 0, false
+	}
+	return index, true
 }
 
 func functionTypeParamObligations(reg *axis.Registry, argCount int, fn *typ.Function) []callpayload.CallParamObligation {

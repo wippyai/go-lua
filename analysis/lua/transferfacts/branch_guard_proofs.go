@@ -94,7 +94,9 @@ func (l *lowerer) branchPathEvidenceForCheckOnEdge(check branchcond.Check, cond 
 		return []factflow.BranchPathEvidence{factflow.NewBranchPathEqualityEvidenceOnEdge(target, other, cond)}
 	case branchcond.CheckIndexInRange:
 		other := check.OtherPath
-		if !cond || other.IsEmpty() {
+		// The in-range bound holds on the true edge for `i <= #xs` and on the false
+		// edge for the negated `i > #xs` guard form; establish only on that edge.
+		if other.IsEmpty() || cond == check.Negated {
 			return nil
 		}
 		return []factflow.BranchPathEvidence{factflow.NewBranchIndexInRangeEvidenceOnEdge(target, other, cond)}

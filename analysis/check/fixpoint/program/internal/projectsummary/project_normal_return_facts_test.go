@@ -46,6 +46,8 @@ func TestFromResultProjectsNormalReturnFactsFromExitSnapshots(t *testing.T) {
 	branchEqualRightKey := normalReturnFactProjectTestKey(param1, ".right")
 	branchNotEqualLeftKey := normalReturnFactProjectTestKey(param0, ".a")
 	branchNotEqualRightKey := normalReturnFactProjectTestKey(param1, ".b")
+	numFloorRootKey := pathdom.NewPath(param0, "param0").Key()
+	numFloorMemberKey := normalReturnFactProjectTestKey(param1, ".index")
 	selectResultKey := normalReturnFactProjectTestKey(param0, ".selectResult")
 	receiveResultKey := normalReturnFactProjectTestKey(param0, ".receiveResult")
 	receiveCaseKey := normalReturnFactProjectTestKey(param1, ".receiveCase")
@@ -84,19 +86,19 @@ func TestFromResultProjectsNormalReturnFactsFromExitSnapshots(t *testing.T) {
 				selfKey:      frozenValue,
 			},
 		})).
-		WriteDynamicIndexFact(reg, dynamicindex.Key{Table: dynAdmittedKey, Site: "dyn-admitted"}, dynamicindex.Fact{
+		WriteDynamicIndexFact(reg, dynamicindex.Key{Table: mustStateKey(t, ks, dynAdmittedKey), Site: "dyn-admitted"}, dynamicindex.Fact{
 			KeyPresence: presence.Present(),
 			KeyValue:    value0,
 			Value:       value1,
 			Admission:   dynamicindex.AdmissionAdmitted,
 		}).
-		WriteDynamicIndexFact(reg, dynamicindex.Key{Table: dynRejectedKey, Site: "dyn-rejected"}, dynamicindex.Fact{
+		WriteDynamicIndexFact(reg, dynamicindex.Key{Table: mustStateKey(t, ks, dynRejectedKey), Site: "dyn-rejected"}, dynamicindex.Fact{
 			KeyPresence: presence.Absent(),
 			KeyValue:    value1,
 			Value:       value0,
 			Admission:   dynamicindex.AdmissionRejected,
 		}).
-		WriteDynamicIndexFact(reg, dynamicindex.Key{Table: dynUnknownKey, Site: "dyn-unknown"}, dynamicindex.Fact{
+		WriteDynamicIndexFact(reg, dynamicindex.Key{Table: mustStateKey(t, ks, dynUnknownKey), Site: "dyn-unknown"}, dynamicindex.Fact{
 			KeyPresence: presence.Maybe(),
 			KeyValue:    value0,
 			Value:       value1,
@@ -104,19 +106,21 @@ func TestFromResultProjectsNormalReturnFactsFromExitSnapshots(t *testing.T) {
 		}).
 		AddBranchProof(pathevidence.BranchProof{
 			Kind:     pathevidence.BranchProofPathPresence,
-			Path:     branchPresenceKey,
+			Path:     mustStateKey(t, ks, branchPresenceKey),
 			Presence: presence.Present(),
 		}).
 		AddBranchProof(pathevidence.BranchProof{
 			Kind:  pathevidence.BranchProofPathEqual,
-			Path:  branchEqualLeftKey,
-			Other: branchEqualRightKey,
+			Path:  mustStateKey(t, ks, branchEqualLeftKey),
+			Other: mustStateKey(t, ks, branchEqualRightKey),
 		}).
 		AddBranchProof(pathevidence.BranchProof{
 			Kind:  pathevidence.BranchProofPathNotEqual,
-			Path:  branchNotEqualLeftKey,
-			Other: branchNotEqualRightKey,
+			Path:  mustStateKey(t, ks, branchNotEqualLeftKey),
+			Other: mustStateKey(t, ks, branchNotEqualRightKey),
 		}).
+		WriteNumFloor(ks, numFloorRootKey, 1).
+		WriteNumFloor(ks, numFloorMemberKey, 2).
 		AddChannelSelectFact(channelselectfact.Fact{
 			Select:     "select-kind",
 			Kind:       channelselectfact.FactSelect,
@@ -138,7 +142,7 @@ func TestFromResultProjectsNormalReturnFactsFromExitSnapshots(t *testing.T) {
 			Index:  2,
 		}).
 		WriteEffectDelta(effectdelta.Key{
-			Target: mutationKey,
+			Target: mustStateKey(t, ks, mutationKey),
 			Site:   "effect-mutation",
 			Kind:   effectdelta.Mutation,
 		}, effectdelta.Value{
@@ -147,12 +151,12 @@ func TestFromResultProjectsNormalReturnFactsFromExitSnapshots(t *testing.T) {
 			Change: effectdelta.ChangeChanged,
 		}).
 		WriteEffectDelta(effectdelta.Key{
-			Target: invalidationKey,
+			Target: mustStateKey(t, ks, invalidationKey),
 			Site:   callboundary.PathInvalidationEffectSite(),
 			Kind:   effectdelta.Mutation,
 		}, effectdelta.Top()).
 		WriteEffectDelta(effectdelta.Key{
-			Target: escapeKey,
+			Target: mustStateKey(t, ks, escapeKey),
 			Site:   "effect-escape",
 			Kind:   effectdelta.Escape,
 		}, effectdelta.Value{
@@ -161,17 +165,17 @@ func TestFromResultProjectsNormalReturnFactsFromExitSnapshots(t *testing.T) {
 			Change: effectdelta.ChangeNone,
 		}).
 		WriteEffectDelta(effectdelta.Key{
-			Target: sendEventKey,
+			Target: mustStateKey(t, ks, sendEventKey),
 			Site:   callboundary.EscapeEventEffectSite(callboundary.EscapeEventSend, true),
 			Kind:   effectdelta.Escape,
 		}, effectdelta.Top()).
 		WriteEffectDelta(effectdelta.Key{
-			Target: freezeEventKey,
+			Target: mustStateKey(t, ks, freezeEventKey),
 			Site:   callboundary.FrozenTableEffectSite(),
 			Kind:   effectdelta.Freeze,
 		}, effectdelta.Top()).
 		WriteEffectDelta(effectdelta.Key{
-			Target: callKey,
+			Target: mustStateKey(t, ks, callKey),
 			Site:   "effect-call",
 			Kind:   effectdelta.Call,
 		}, effectdelta.Value{
@@ -200,6 +204,8 @@ func TestFromResultProjectsNormalReturnFactsFromExitSnapshots(t *testing.T) {
 	assertBranchProof(t, got.BranchProofs, pathevidence.BranchProofPathPresence, pathdom.NewPlaceholder(0).Field("ready"), pathdom.Path{}, presence.Present())
 	assertBranchProof(t, got.BranchProofs, pathevidence.BranchProofPathEqual, pathdom.NewPlaceholder(0).Field("left"), pathdom.NewPlaceholder(1).Field("right"), presence.Bottom())
 	assertBranchProof(t, got.BranchProofs, pathevidence.BranchProofPathNotEqual, pathdom.NewPlaceholder(0).Field("a"), pathdom.NewPlaceholder(1).Field("b"), presence.Bottom())
+	assertNumFloor(t, got.NumFloors, pathdom.NewPlaceholder(0), 1)
+	assertNumFloor(t, got.NumFloors, pathdom.NewPlaceholder(1).Field("index"), 2)
 
 	selectFact := assertChannelSelect(t, got.ChannelSelects, "select-kind", channelselectfact.FactSelect, pathdom.NewPlaceholder(0).Field("selectResult"), pathdom.Path{})
 	if !selectFact.HasDefault {
@@ -240,17 +246,19 @@ func TestFromResultDropsNonParameterNormalReturnFactPaths(t *testing.T) {
 		WritePathKey(reg, ks, validParamKey, value)
 	for _, pathKey := range invalidKeys {
 		exit = exit.WritePathKey(reg, ks, pathKey, value)
+		exit = exit.WriteNumFloor(ks, pathKey, 1)
 	}
+	exit = exit.WriteNumFloor(ks, pathdom.NewPath(param, "param").Key(), 1)
 	exit = exit.
 		AddBranchProof(pathevidence.BranchProof{
 			Kind:  pathevidence.BranchProofPathEqual,
-			Path:  validParamKey,
-			Other: invalidKeys[0],
+			Path:  mustStateKey(t, ks, validParamKey),
+			Other: mustStateKey(t, ks, invalidKeys[0]),
 		}).
 		AddBranchProof(pathevidence.BranchProof{
 			Kind:  pathevidence.BranchProofPathNotEqual,
-			Path:  invalidKeys[1],
-			Other: validParamKey,
+			Path:  mustStateKey(t, ks, invalidKeys[1]),
+			Other: mustStateKey(t, ks, validParamKey),
 		}).
 		AddChannelSelectFact(channelselectfact.Fact{
 			Select: "invalid-result",
@@ -272,6 +280,30 @@ func TestFromResultDropsNonParameterNormalReturnFactPaths(t *testing.T) {
 	}
 	if len(got.ChannelSelects) != 0 {
 		t.Fatalf("ChannelSelects = %#v, want fact with non-parameter result path dropped", got.ChannelSelects)
+	}
+	if len(got.NumFloors) != 1 || !got.NumFloors[0].Path.Equal(pathdom.NewPlaceholder(0)) || got.NumFloors[0].Floor != 1 {
+		t.Fatalf("NumFloors = %#v, want only valid root parameter floor", got.NumFloors)
+	}
+}
+
+func TestFromResultDoesNotProjectExitNumFloorForReassignedParameter(t *testing.T) {
+	reg := standard.Registry()
+	ks := keyspace.New()
+	param := symbol.ID(913)
+	paramKey := pathdom.NewPath(param, "param").Key()
+	exit := state.State{}.WriteNumFloor(ks, paramKey, 2)
+
+	got := FromResult(normalReturnFactProjectResultStub{
+		reg:        reg,
+		graph:      cfg.New(),
+		exit:       exit,
+		slots:      []key.Value{key.SymbolValue(param)},
+		keys:       ks,
+		reassigned: map[key.Value]struct{}{key.SymbolValue(param): {}},
+	}).NormalReturnFacts
+
+	if len(got.NumFloors) != 0 {
+		t.Fatalf("NumFloors = %#v, want no caller floor evidence for reassigned callee parameter", got.NumFloors)
 	}
 }
 
@@ -297,12 +329,12 @@ func TestFromResultSkipsTopSnapshotsAndTopNormalReturnFacts(t *testing.T) {
 		WritePathKey(reg, ks, paramKey, product.Top()).
 		WritePathStaticMember(ks, normalReturnFactProjectTestKey(param, ".member"), product.Bottom(reg)).
 		WriteDynamicIndexFact(reg, dynamicindex.Key{
-			Table: normalReturnFactProjectTestKey(param, ".table"),
+			Table: mustStateKey(t, ks, normalReturnFactProjectTestKey(param, ".table")),
 			Site:  "dynamic-top",
 		}, topDynamic).
 		AddBranchProof(pathevidence.BranchProof{
 			Kind:     pathevidence.BranchProofPathPresence,
-			Path:     normalReturnFactProjectTestKey(param, ".proof"),
+			Path:     mustStateKey(t, ks, normalReturnFactProjectTestKey(param, ".proof")),
 			Presence: presence.Top(),
 		}).
 		AddChannelSelectFact(channelselectfact.Fact{
@@ -312,7 +344,7 @@ func TestFromResultSkipsTopSnapshotsAndTopNormalReturnFacts(t *testing.T) {
 			Index:  0,
 		}).
 		WriteEffectDelta(effectdelta.Key{
-			Target: normalReturnFactProjectTestKey(param, ".effect"),
+			Target: mustStateKey(t, ks, normalReturnFactProjectTestKey(param, ".effect")),
 			Site:   "effect-top",
 			Kind:   effectdelta.Mutation,
 		}, topEffect)
@@ -590,11 +622,12 @@ func TestFromResultProjectsMandatoryCallOutcomeLifecycleFactsForCapturedPath(t *
 }
 
 type normalReturnFactProjectResultStub struct {
-	reg   *axis.Registry
-	graph cfg.Graph
-	exit  state.State
-	slots []key.Value
-	keys  *keyspace.KeySpace
+	reg        *axis.Registry
+	graph      cfg.Graph
+	exit       state.State
+	slots      []key.Value
+	keys       *keyspace.KeySpace
+	reassigned map[key.Value]struct{}
 }
 
 type normalReturnFactProjectAssignmentStub struct {
@@ -685,8 +718,21 @@ func (r normalReturnFactProjectResultStub) ParameterValueSlots() []key.Value {
 	return out
 }
 
+func (r normalReturnFactProjectResultStub) ReassignedParameterValueSlots() map[key.Value]struct{} {
+	return r.reassigned
+}
+
 func normalReturnFactProjectTestKey(sym symbol.ID, suffix string) pathdom.PathKey {
 	return pathdom.PathKey(pathaddr.VersionedRootString(sym, 1) + suffix)
+}
+
+func mustStateKey(t *testing.T, ks *keyspace.KeySpace, key pathdom.PathKey) keyspace.Key {
+	t.Helper()
+	k, ok := ks.FromStateKey(key)
+	if !ok {
+		t.Fatalf("FromStateKey(%q) failed", key)
+	}
+	return k
 }
 
 func assertDynamicAdmission(
@@ -842,7 +888,8 @@ func normalReturnFactsEmpty(facts callboundary.NormalReturnFacts) bool {
 		len(facts.EffectDeltas) == 0 &&
 		len(facts.EscapeEvents) == 0 &&
 		len(facts.StoreRelations) == 0 &&
-		len(facts.LifecycleFacts) == 0
+		len(facts.LifecycleFacts) == 0 &&
+		len(facts.NumFloors) == 0
 }
 
 func findPathRefinement(facts []callboundary.PathValueFact, path pathdom.Path) *callboundary.PathValueFact {
@@ -872,10 +919,41 @@ func findEffectDelta(deltas []callboundary.EffectDelta, site string) *callbounda
 	return nil
 }
 
+func assertNumFloor(t *testing.T, facts []callboundary.NumFloorFact, target pathdom.Path, floor int64) {
+	t.Helper()
+	for _, fact := range facts {
+		if fact.Path.Equal(target) && fact.Floor == floor {
+			return
+		}
+	}
+	t.Fatalf("NumFloors = %#v, want %s >= %d", facts, target, floor)
+}
+
 func presentProduct(reg *axis.Registry) product.Value {
 	return product.NewWithPresence(reg, product.ShapeTop, presence.Present())
 }
 
 func absentProduct(reg *axis.Registry) product.Value {
 	return product.NewWithPresence(reg, product.ShapeTop, presence.Absent())
+}
+
+// TestProjectBranchProofKindPreservesAllKinds pins that every in-state branch
+// proof kind survives projection into the call-boundary summary. IndexInRange was
+// previously dropped by the default arm, silently losing the interproc
+// index-in-range relation; all four relational kinds must round-trip.
+func TestProjectBranchProofKindPreservesAllKinds(t *testing.T) {
+	for _, kind := range []pathevidence.BranchProofKind{
+		pathevidence.BranchProofPathPresence,
+		pathevidence.BranchProofPathEqual,
+		pathevidence.BranchProofPathNotEqual,
+		pathevidence.BranchProofIndexInRange,
+	} {
+		got, ok := projectBranchProofKind(kind)
+		if !ok || got != kind {
+			t.Fatalf("projectBranchProofKind(%v) = (%v, %v), want (%v, true)", kind, got, ok, kind)
+		}
+	}
+	if _, ok := projectBranchProofKind(pathevidence.BranchProofKind(0)); ok {
+		t.Fatalf("the zero (unset) branch proof kind must not project")
+	}
 }

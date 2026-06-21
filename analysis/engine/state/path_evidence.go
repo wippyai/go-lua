@@ -23,15 +23,15 @@ func (s State) PathStaticMembersSnapshot(ks *keyspace.KeySpace) pathevidence.Pat
 
 // BranchProofsSnapshot returns finite must branch proofs in stable order.
 // Bottom is explicit; Top means the reachable must lane contains no proofs.
-func (s State) BranchProofsSnapshot() pathevidence.BranchProofsSnapshot {
-	return s.pathEvidence.BranchProofsSnapshot()
+func (s State) BranchProofsSnapshot(ks *keyspace.KeySpace) pathevidence.BranchProofsSnapshot {
+	return s.pathEvidence.BranchProofsSnapshot(ks)
 }
 
 // PathPresenceImplicationsSnapshot returns finite must path-presence
 // implications in stable order. Bottom is explicit; Top means the reachable
 // must lane contains no implications.
-func (s State) PathPresenceImplicationsSnapshot() pathevidence.PathPresenceImplicationsSnapshot {
-	return s.pathEvidence.PathPresenceImplicationsSnapshot()
+func (s State) PathPresenceImplicationsSnapshot(ks *keyspace.KeySpace) pathevidence.PathPresenceImplicationsSnapshot {
+	return s.pathEvidence.PathPresenceImplicationsSnapshot(ks)
 }
 
 // ReadPathKey reads a point-local path refinement key. Missing keys read as
@@ -84,7 +84,7 @@ func (s State) InvalidatePathKeySubtree(ks *keyspace.KeySpace, pathKey pathdom.P
 	if !ok {
 		return s, false
 	}
-	prefixes, _ := s.pathEvidence.PathKeySubtreeInvalidationPrefixes(pathKey)
+	prefixes, _ := s.pathEvidence.PathKeySubtreeInvalidationPrefixes(ks, pathKey)
 	lenFloors, lenFloorChanged := s.lenFloors.clearPathKeySubtrees(ks, prefixes)
 	out := s
 	out.pathEvidence = pathEvidence
@@ -102,7 +102,7 @@ func (s State) InvalidatePathKeyDescendants(ks *keyspace.KeySpace, pathKey pathd
 	if !ok {
 		return s, false
 	}
-	prefixes, _ := s.pathEvidence.PathKeyDescendantInvalidationPrefixes(pathKey)
+	prefixes, _ := s.pathEvidence.PathKeyDescendantInvalidationPrefixes(ks, pathKey)
 	lenFloors, lenFloorChanged := s.lenFloors.clearPathKeyDescendantMutation(ks, prefixes)
 	out := s
 	out.pathEvidence = pathEvidence
@@ -112,8 +112,8 @@ func (s State) InvalidatePathKeyDescendants(ks *keyspace.KeySpace, pathKey pathd
 	return out, true
 }
 
-func (s State) PathKeyDescendantInvalidationPrefixes(pathKey pathdom.PathKey) (pathevidence.PathKeyDescendantInvalidationPrefixes, bool) {
-	return s.pathEvidence.PathKeyDescendantInvalidationPrefixes(pathKey)
+func (s State) PathKeyDescendantInvalidationPrefixes(ks *keyspace.KeySpace, pathKey pathdom.PathKey) (pathevidence.PathKeyDescendantInvalidationPrefixes, bool) {
+	return s.pathEvidence.PathKeyDescendantInvalidationPrefixes(ks, pathKey)
 }
 
 func (s State) ReadPathStaticMember(ks *keyspace.KeySpace, pathKey pathdom.PathKey) (product.Value, bool) {
@@ -156,14 +156,19 @@ func (s State) HasBranchProof(proof pathevidence.BranchProof) bool {
 	return s.pathEvidence.HasBranchProof(proof)
 }
 
-func (s State) HasIndexInRangeProof(indexKey, arrayKey pathdom.PathKey) bool {
-	if indexKey == "" || arrayKey == "" {
+func (s State) HasIndexInRangeProof(ks *keyspace.KeySpace, indexKey, arrayKey pathdom.PathKey) bool {
+	index, ok := ks.FromStateKey(indexKey)
+	if !ok {
+		return false
+	}
+	array, ok := ks.FromStateKey(arrayKey)
+	if !ok {
 		return false
 	}
 	return s.HasBranchProof(pathevidence.BranchProof{
 		Kind:  pathevidence.BranchProofIndexInRange,
-		Path:  indexKey,
-		Other: arrayKey,
+		Path:  index,
+		Other: array,
 	})
 }
 
@@ -183,8 +188,8 @@ func (s State) HasPathPresenceImplication(implication pathevidence.PathPresenceI
 	return s.pathEvidence.HasPathPresenceImplication(implication)
 }
 
-func (s State) EquivalentPathKeys(pathKey pathdom.PathKey) []pathdom.PathKey {
-	return s.pathEvidence.EquivalentPathKeys(pathKey)
+func (s State) EquivalentPathKeys(ks *keyspace.KeySpace, pathKey pathdom.PathKey) []pathdom.PathKey {
+	return s.pathEvidence.EquivalentPathKeys(ks, pathKey)
 }
 
 // RekeyPathEvidence re-interns the path-evidence value lane keys from one

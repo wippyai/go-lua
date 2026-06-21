@@ -190,6 +190,19 @@ func (ks *KeySpace) segments(id SegmentsID) []segment.Segment {
 	return ks.seg(id).segments
 }
 
+// Segments returns a fresh copy of a key's segment list, the structural
+// equivalent of reading address.LocalPathFromKey(...).Segments. The copy is
+// owned by the caller and safe to retain or mutate.
+func (ks *KeySpace) Segments(k Key) []segment.Segment {
+	interned := ks.segments(k.Segs)
+	if len(interned) == 0 {
+		return nil
+	}
+	out := make([]segment.Segment, len(interned))
+	copy(out, interned)
+	return out
+}
+
 // suffix returns the canonical FormatSegments spelling for a segment id.
 func (ks *KeySpace) suffix(id SegmentsID) string {
 	if id == 0 {

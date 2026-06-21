@@ -55,8 +55,12 @@ func applyDynamicIndexWrite(
 	out state.State,
 	fact factflow.DynamicIndexWrite,
 ) state.State {
-	tableKey := factPathKeyAt(resolver, ctx.Point, fact.TablePath())
-	if tableKey == "" {
+	tableStateKey := factPathKeyAt(resolver, ctx.Point, fact.TablePath())
+	if tableStateKey == "" {
+		return out
+	}
+	tableKey, ok := resolver.KeySpace().FromStateKey(tableStateKey)
+	if !ok {
 		return out
 	}
 	key := dynamicindex.Key{
@@ -164,7 +168,8 @@ func applyBranchPathEvidence(
 	}
 	out = out.AddBranchProof(stateProof)
 	if stateProof.Kind == pathevidence.BranchProofPathEqual {
-		out = closeCongruenceAcrossEquality(ctx.Registry, resolver.KeySpace(), out, stateProof.Path, stateProof.Other)
+		ks := resolver.KeySpace()
+		out = closeCongruenceAcrossEquality(ctx.Registry, ks, out, ks.Format(stateProof.Path), ks.Format(stateProof.Other))
 	}
 	return out
 }
@@ -232,6 +237,10 @@ func branchPathEvidenceAt(
 	if pathKey == "" {
 		return pathevidence.BranchProof{}, false
 	}
+	path, ok := resolver.KeySpace().FromStateKey(pathKey)
+	if !ok {
+		return pathevidence.BranchProof{}, false
+	}
 	switch proof.Kind() {
 	case factflow.BranchPathEvidencePresence:
 		value, ok := proof.Presence()
@@ -240,42 +249,54 @@ func branchPathEvidenceAt(
 		}
 		return pathevidence.BranchProof{
 			Kind:     pathevidence.BranchProofPathPresence,
-			Path:     pathKey,
+			Path:     path,
 			Presence: value,
 		}, true
 	case factflow.BranchPathEvidenceEqual:
-		other, ok := branchPathEvidenceOtherPathKeyAt(resolver, point, proof)
+		other, ok := branchPathEvidenceOtherKeyAt(resolver, point, proof)
 		if !ok {
 			return pathevidence.BranchProof{}, false
 		}
 		return pathevidence.BranchProof{
 			Kind:  pathevidence.BranchProofPathEqual,
-			Path:  pathKey,
+			Path:  path,
 			Other: other,
 		}, true
 	case factflow.BranchPathEvidenceNotEqual:
-		other, ok := branchPathEvidenceOtherPathKeyAt(resolver, point, proof)
+		other, ok := branchPathEvidenceOtherKeyAt(resolver, point, proof)
 		if !ok {
 			return pathevidence.BranchProof{}, false
 		}
 		return pathevidence.BranchProof{
 			Kind:  pathevidence.BranchProofPathNotEqual,
-			Path:  pathKey,
+			Path:  path,
 			Other: other,
 		}, true
 	case factflow.BranchPathEvidenceIndexInRange:
-		other, ok := branchPathEvidenceOtherPathKeyAt(resolver, point, proof)
+		other, ok := branchPathEvidenceOtherKeyAt(resolver, point, proof)
 		if !ok {
 			return pathevidence.BranchProof{}, false
 		}
 		return pathevidence.BranchProof{
 			Kind:  pathevidence.BranchProofIndexInRange,
-			Path:  pathKey,
+			Path:  path,
 			Other: other,
 		}, true
 	default:
 		return pathevidence.BranchProof{}, false
 	}
+}
+
+func branchPathEvidenceOtherKeyAt(
+	resolver *visibility.Resolver,
+	point cfg.Point,
+	proof factflow.BranchPathEvidence,
+) (keyspace.Key, bool) {
+	otherKey, ok := branchPathEvidenceOtherPathKeyAt(resolver, point, proof)
+	if !ok {
+		return keyspace.Key{}, false
+	}
+	return resolver.KeySpace().FromStateKey(otherKey)
 }
 
 func branchPathEvidenceOtherPathKeyAt(
@@ -329,9 +350,17 @@ func addPathEqualityProofFromSource(
 	if targetKey == "" || sourceKey == "" || targetKey == sourceKey {
 		return out
 	}
+	targetKeyStruct, ok := resolver.KeySpace().FromStateKey(targetKey)
+	if !ok {
+		return out
+	}
+	sourceKeyStruct, ok := resolver.KeySpace().FromStateKey(sourceKey)
+	if !ok {
+		return out
+	}
 	return out.AddBranchProof(pathevidence.BranchProof{
 		Kind:  pathevidence.BranchProofPathEqual,
-		Path:  targetKey,
-		Other: sourceKey,
+		Path:  targetKeyStruct,
+		Other: sourceKeyStruct,
 	})
 }
