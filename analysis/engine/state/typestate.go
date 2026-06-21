@@ -1,39 +1,43 @@
 package state
 
 import (
-	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/typestate"
 )
 
-// TypestateResource identifies one resource in state by canonical path key and
+// TypestateResource identifies one resource in state by canonical state key and
 // protocol. Callers are responsible for deriving ID from analysis facts rather
 // than source spelling.
-func TypestateResource(target pathdom.PathKey, protocol typestate.Protocol) typestate.Resource {
-	return typestate.Resource{ID: string(target), Protocol: protocol}
+func TypestateResource(target pathaddr.StateKey, protocol typestate.Protocol) typestate.Resource {
+	return typestate.Resource{ID: target.String(), Protocol: protocol}
 }
 
 // CanonicalTypestateResource returns the deterministic resource identity for a
 // protocol target. Proven path-equality facts are folded into the same resource
 // key so typestate transitions through aliases discharge the original
 // obligation.
-func (s State) CanonicalTypestateResource(ks *keyspace.KeySpace, target pathdom.PathKey, protocol typestate.Protocol) typestate.Resource {
+func (s State) CanonicalTypestateResource(ks *keyspace.KeySpace, target pathaddr.StateKey, protocol typestate.Protocol) typestate.Resource {
 	return TypestateResource(s.CanonicalTypestateResourceKey(ks, target), protocol)
 }
 
-// CanonicalTypestateResourceKey returns the stable representative for a path key
-// under proven path equality.
-func (s State) CanonicalTypestateResourceKey(ks *keyspace.KeySpace, target pathdom.PathKey) pathdom.PathKey {
+// CanonicalTypestateResourceKey returns the stable representative for a state
+// key under proven path equality.
+func (s State) CanonicalTypestateResourceKey(ks *keyspace.KeySpace, target pathaddr.StateKey) pathaddr.StateKey {
 	if target == "" {
 		return ""
 	}
-	canonical := target
-	for _, equivalent := range s.EquivalentPathKeys(ks, target) {
+	canonical := target.PathKey()
+	for _, equivalent := range s.EquivalentPathKeys(ks, target.PathKey()) {
 		if equivalent != "" && equivalent < canonical {
 			canonical = equivalent
 		}
 	}
-	return canonical
+	out, ok := pathaddr.StateKeyFromPathKey(canonical)
+	if !ok {
+		return ""
+	}
+	return out
 }
 
 // TypestateSnapshot returns a copy of the current typestate lane.

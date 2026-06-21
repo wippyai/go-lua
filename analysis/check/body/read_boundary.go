@@ -171,16 +171,20 @@ func (r *Result) PathKeyAtBoundary(point cfg.Point, p pathdom.Path) (pathdom.Pat
 // TypestateResourceKeyAtBoundary returns the canonical resource key used by the
 // typestate lane at point. It folds proven path equality, matching the
 // call-boundary application semantics.
-func (r *Result) TypestateResourceKeyAtBoundary(point cfg.Point, p pathdom.Path) (pathdom.PathKey, bool) {
+func (r *Result) TypestateResourceKeyAtBoundary(point cfg.Point, p pathdom.Path) (pathaddr.StateKey, bool) {
 	key, ok := r.PathKeyAtBoundary(point, p)
+	if !ok {
+		return "", false
+	}
+	stateKey, ok := pathaddr.StateKeyFromPathKey(key)
 	if !ok {
 		return "", false
 	}
 	in, ok := r.boundaryStateAt(point)
 	if !ok {
-		return key, true
+		return stateKey, true
 	}
-	return in.CanonicalTypestateResourceKey(r.visibility.KeySpace(), key), true
+	return in.CanonicalTypestateResourceKey(r.visibility.KeySpace(), stateKey), true
 }
 
 // PathsEquivalentAtBoundary reports whether the solved boundary state proves

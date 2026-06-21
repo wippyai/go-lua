@@ -4,6 +4,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/check/body"
 	"github.com/wippyai/go-lua/analysis/diagnostic"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
 	"github.com/wippyai/go-lua/analysis/domain/typestate"
 	"github.com/wippyai/go-lua/analysis/engine/callboundary"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
@@ -36,6 +37,9 @@ func (p lifecycleObligations) Produce(result *body.Result) []diagnostic.Diagnost
 		if obligation.Resource.ID == "" || obligation.Resource.Protocol == "" || obligation.Obligation.Final == "" {
 			continue
 		}
+		if _, ok := pathaddr.StateKeyFromPathKey(pathdom.PathKey(obligation.Resource.ID)); !ok {
+			continue
+		}
 		out = append(out, newLifecycleObligationDiagnostic(obligation, sites, graph, p.flow))
 	}
 	return out
@@ -45,7 +49,7 @@ type lifecycleFactSite struct {
 	point     cfg.Point
 	kind      callboundary.LifecycleKind
 	target    pathdom.Path
-	targetKey pathdom.PathKey
+	targetKey pathaddr.StateKey
 	protocol  typestate.Protocol
 	from      typestate.State
 	to        typestate.State
@@ -102,7 +106,7 @@ func lifecycleFactSites(result *body.Result, graph cfg.Graph, envs map[cfg.Point
 }
 
 func newLifecycleObligationDiagnostic(obligation typestate.OpenObligation, sites []lifecycleFactSite, graph cfg.Graph, flow *diagnosticFlowCache) diagnostic.Diagnostic {
-	resourceID := pathdom.PathKey(obligation.Resource.ID)
+	resourceID, _ := pathaddr.StateKeyFromPathKey(pathdom.PathKey(obligation.Resource.ID))
 	acquires := lifecycleAcquireSites(resourceID, obligation.Resource.Protocol, sites, graph, flow)
 	resourceName := obligation.Resource.ID
 	if len(acquires) != 0 && !acquires[0].target.IsEmpty() {
@@ -181,7 +185,7 @@ func lifecycleSiteResourceName(fallback string, site lifecycleFactSite) string {
 	return fallback
 }
 
-func lifecycleAcquireSites(resourceID pathdom.PathKey, protocol typestate.Protocol, sites []lifecycleFactSite, graph cfg.Graph, flow *diagnosticFlowCache) []lifecycleFactSite {
+func lifecycleAcquireSites(resourceID pathaddr.StateKey, protocol typestate.Protocol, sites []lifecycleFactSite, graph cfg.Graph, flow *diagnosticFlowCache) []lifecycleFactSite {
 	var out []lifecycleFactSite
 	for _, site := range sites {
 		if site.kind != callboundary.LifecycleAcquire || site.targetKey != resourceID || site.protocol != protocol {
@@ -192,7 +196,7 @@ func lifecycleAcquireSites(resourceID pathdom.PathKey, protocol typestate.Protoc
 	return lifecycleLatestSites(out, graph, flow)
 }
 
-func lifecycleEscapeSites(resourceID pathdom.PathKey, protocol typestate.Protocol, sites []lifecycleFactSite, graph cfg.Graph, flow *diagnosticFlowCache) []lifecycleFactSite {
+func lifecycleEscapeSites(resourceID pathaddr.StateKey, protocol typestate.Protocol, sites []lifecycleFactSite, graph cfg.Graph, flow *diagnosticFlowCache) []lifecycleFactSite {
 	var out []lifecycleFactSite
 	for _, site := range sites {
 		if site.kind != callboundary.LifecycleEscape || site.targetKey != resourceID || site.protocol != protocol {
@@ -203,7 +207,7 @@ func lifecycleEscapeSites(resourceID pathdom.PathKey, protocol typestate.Protoco
 	return lifecycleLatestSites(out, graph, flow)
 }
 
-func lifecycleFinalTransitionSites(resourceID pathdom.PathKey, protocol typestate.Protocol, final typestate.State, sites []lifecycleFactSite, graph cfg.Graph, flow *diagnosticFlowCache) []lifecycleFactSite {
+func lifecycleFinalTransitionSites(resourceID pathaddr.StateKey, protocol typestate.Protocol, final typestate.State, sites []lifecycleFactSite, graph cfg.Graph, flow *diagnosticFlowCache) []lifecycleFactSite {
 	var out []lifecycleFactSite
 	for _, site := range sites {
 		if site.kind != callboundary.LifecycleTransition || site.targetKey != resourceID || site.protocol != protocol || site.to != final {

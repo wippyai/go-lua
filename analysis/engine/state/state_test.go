@@ -168,7 +168,7 @@ func TestLenFloorInvalidationFollowsPathMutationPrefixes(t *testing.T) {
 func TestTypestateStateLaneTracksOpenClosedAndEscapedResources(t *testing.T) {
 	reg := standard.Registry()
 	domain := Domain(reg)
-	resource := TypestateResource(pathdom.PathKey("tx@1"), typestate.Protocol("transaction"))
+	resource := TypestateResource(testStateKey(t, pathdom.PathKey("tx@1")), typestate.Protocol("transaction"))
 	obligation := typestate.Obligation{Final: typestate.State("closed")}
 
 	open := State{}.AcquireTypestate(resource, typestate.State("open"), obligation)
@@ -197,6 +197,14 @@ func TestTypestateStateLaneTracksOpenClosedAndEscapedResources(t *testing.T) {
 	}
 }
 
+func TestTypestateResourceUsesValidatedStateKeyIdentity(t *testing.T) {
+	target := testStateKey(t, pathdom.PathKey("sym12@1.tx"))
+	resource := TypestateResource(target, typestate.Protocol("transaction"))
+	if resource.ID != target.String() || resource.Protocol != typestate.Protocol("transaction") {
+		t.Fatalf("resource = %#v, want state key %q and protocol transaction", resource, target)
+	}
+}
+
 func TestTypestateResourceKeyFollowsProvenPathEquality(t *testing.T) {
 	ks := keyspace.New()
 	tx := pathdom.PathKey("sym10@1.tx")
@@ -208,12 +216,12 @@ func TestTypestateResourceKeyFollowsProvenPathEquality(t *testing.T) {
 	}
 	state := State{}.AddBranchProof(proof)
 
-	gotFromTX := state.CanonicalTypestateResourceKey(ks, tx)
-	gotFromAlias := state.CanonicalTypestateResourceKey(ks, alias)
+	gotFromTX := state.CanonicalTypestateResourceKey(ks, testStateKey(t, tx))
+	gotFromAlias := state.CanonicalTypestateResourceKey(ks, testStateKey(t, alias))
 	if gotFromTX == "" || gotFromTX != gotFromAlias {
 		t.Fatalf("canonical typestate keys = %q/%q, want same non-empty key", gotFromTX, gotFromAlias)
 	}
-	if gotFromTX != tx {
+	if gotFromTX.PathKey() != tx {
 		t.Fatalf("canonical typestate key = %q, want stable lowest equivalent key %q", gotFromTX, tx)
 	}
 }
@@ -533,7 +541,7 @@ func TestStateCloneIndependenceAcrossLanes(t *testing.T) {
 		WriteNumFloor(ks, testStateKey(t, fx.pathKey), 3).
 		WriteDiffConstraint(pathdom.PathKey("clone-i"), pathdom.PathKey("clone-j"), -1).
 		AcquireTypestate(
-			TypestateResource(pathdom.PathKey("clone-tx"), typestate.Protocol("transaction")),
+			TypestateResource(testStateKey(t, pathdom.PathKey("clone-tx")), typestate.Protocol("transaction")),
 			typestate.State("open"),
 			typestate.Obligation{Final: typestate.State("closed")},
 		).
@@ -549,7 +557,7 @@ func TestStateCloneIndependenceAcrossLanes(t *testing.T) {
 	}
 	cloneOnlyFrozenID := identity.ID{Kind: "table", Site: "clone-only-freeze", Index: 1}
 	cloneOnlyStoreRelation := StoreRelation{Source: pathdom.PathKey("clone-only-src"), Into: pathdom.PathKey("clone-dst")}
-	typestateResource := TypestateResource(pathdom.PathKey("clone-tx"), typestate.Protocol("transaction"))
+	typestateResource := TypestateResource(testStateKey(t, pathdom.PathKey("clone-tx")), typestate.Protocol("transaction"))
 	clone := original.Snapshot()
 	clone = clone.WriteValue(reg, fx.valueSlot, fx.absent)
 	clone = clone.WritePathKey(reg, ks, fx.pathKey, fx.absent)

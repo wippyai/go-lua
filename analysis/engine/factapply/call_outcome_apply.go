@@ -2,6 +2,7 @@ package factapply
 
 import (
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
 	"github.com/wippyai/go-lua/analysis/domain/placement"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
@@ -175,7 +176,11 @@ func applyCallOutcomeFacts(
 		if !ok || fact.Protocol == "" {
 			continue
 		}
-		resource := out.CanonicalTypestateResource(resolver.KeySpace(), targetKey, fact.Protocol)
+		targetStateKey, ok := pathaddr.StateKeyFromPathKey(targetKey)
+		if !ok {
+			continue
+		}
+		resource := out.CanonicalTypestateResource(resolver.KeySpace(), targetStateKey, fact.Protocol)
 		switch fact.Kind {
 		case callboundary.LifecycleAcquire:
 			out = out.AcquireTypestate(resource, fact.To, fact.Obligation)
