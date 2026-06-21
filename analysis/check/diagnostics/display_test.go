@@ -216,6 +216,26 @@ func TestExprEvidenceNameFallsBackAtAdversarialDepth(t *testing.T) {
 	}
 }
 
+func TestRequiredFieldPathUsesLuaSyntax(t *testing.T) {
+	tests := []struct {
+		target string
+		field  string
+		want   string
+	}{
+		{target: "p", field: "id", want: "p.id"},
+		{target: "p", field: "_id2", want: "p._id2"},
+		{target: "p", field: "display-name", want: `p["display-name"]`},
+		{target: "p", field: "1st", want: `p["1st"]`},
+		{target: unknownSourceName, field: "display-name", want: `["display-name"]`},
+		{target: "p", field: "", want: "p"},
+	}
+	for _, tc := range tests {
+		if got := requiredFieldPath(tc.target, tc.field); got != tc.want {
+			t.Fatalf("requiredFieldPath(%q, %q) = %q, want %q", tc.target, tc.field, got, tc.want)
+		}
+	}
+}
+
 func findRawDiagnosticMessageLiterals(fset *token.FileSet, file *goast.File, violations *[]string) {
 	goast.Inspect(file, func(n goast.Node) bool {
 		lit, ok := n.(*goast.CompositeLit)

@@ -184,10 +184,37 @@ func requiredFieldPath(targetName, fieldName string) string {
 	if fieldName == "" {
 		return targetName
 	}
+	field := requiredFieldPathSegment(fieldName)
 	if targetName == "" || targetName == unknownSourceName {
+		return field
+	}
+	if field[0] == '[' {
+		return targetName + field
+	}
+	return targetName + "." + field
+}
+
+func requiredFieldPathSegment(fieldName string) string {
+	if luaDotFieldName(fieldName) {
 		return fieldName
 	}
-	return targetName + "." + fieldName
+	return "[" + strconv.Quote(fieldName) + "]"
+}
+
+func luaDotFieldName(name string) bool {
+	if name == "" {
+		return false
+	}
+	for i, r := range name {
+		if r == '_' || r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' {
+			continue
+		}
+		if i > 0 && r >= '0' && r <= '9' {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 func appendMissingNilGuardEvidence(items []diagnostic.Evidence, sourceName string, got typ.Type, sourceSpan diagnostic.Span) []diagnostic.Evidence {
