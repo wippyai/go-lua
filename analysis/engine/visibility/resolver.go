@@ -97,20 +97,40 @@ func (r *Resolver) KeyAt(point cfg.Point, path pathdom.Path) pathdom.PathKey {
 	return r.KeyForVersion(path.Symbol, version.ID, path.Segments)
 }
 
+// StateKeyAt returns the typed state-key carrier for KeyAt(point, path).
+func (r *Resolver) StateKeyAt(point cfg.Point, path pathdom.Path) (pathaddr.StateKey, bool) {
+	key := r.KeyAt(point, path)
+	if key == "" {
+		return "", false
+	}
+	return pathaddr.StateKeyFromPathKey(key)
+}
+
 // RootOrVisibleKeyAt returns the state key for facts that store root-symbol
 // paths under their structural key but require visibility normalization for
 // member paths.
 func RootOrVisibleKeyAt(resolver PathKeyResolver, point cfg.Point, path pathdom.Path) pathdom.PathKey {
-	if path.IsEmpty() || path.Symbol == 0 {
+	key, ok := RootOrVisibleStateKeyAt(resolver, point, path)
+	if !ok {
 		return ""
+	}
+	return key.PathKey()
+}
+
+// RootOrVisibleStateKeyAt returns the typed state key for facts that store
+// root-symbol paths under their structural key but require visibility
+// normalization for member paths.
+func RootOrVisibleStateKeyAt(resolver PathKeyResolver, point cfg.Point, path pathdom.Path) (pathaddr.StateKey, bool) {
+	if path.IsEmpty() || path.Symbol == 0 {
+		return "", false
 	}
 	if len(path.Segments) == 0 {
-		return path.Key()
+		return pathaddr.StateKeyFromPathKey(path.Key())
 	}
 	if resolver == nil {
-		return ""
+		return "", false
 	}
-	return resolver.KeyAt(point, path)
+	return pathaddr.StateKeyFromPathKey(resolver.KeyAt(point, path))
 }
 
 // KeyForVersion returns a point-local state key for an explicit nonzero SSA version.

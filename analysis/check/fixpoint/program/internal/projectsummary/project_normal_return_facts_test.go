@@ -134,8 +134,8 @@ func TestFromResultProjectsNormalReturnFactsFromExitSnapshots(t *testing.T) {
 			Path:  mustStateKey(t, ks, branchNotEqualLeftKey),
 			Other: mustStateKey(t, ks, branchNotEqualRightKey),
 		}).
-		WriteNumFloor(ks, numFloorRootKey, 1).
-		WriteNumFloor(ks, numFloorMemberKey, 2).
+		WriteNumFloor(ks, testStateKey(t, numFloorRootKey), 1).
+		WriteNumFloor(ks, testStateKey(t, numFloorMemberKey), 2).
 		AddChannelSelectFact(channelselectfact.Fact{
 			Select:     "select-kind",
 			Kind:       channelselectfact.FactSelect,
@@ -261,9 +261,11 @@ func TestFromResultDropsNonParameterNormalReturnFactPaths(t *testing.T) {
 		WritePathKey(reg, ks, validParamKey, value)
 	for _, pathKey := range invalidKeys {
 		exit = exit.WritePathKey(reg, ks, pathKey, value)
-		exit = exit.WriteNumFloor(ks, pathKey, 1)
+		if stateKey, ok := pathaddr.StateKeyFromPathKey(pathKey); ok {
+			exit = exit.WriteNumFloor(ks, stateKey, 1)
+		}
 	}
-	exit = exit.WriteNumFloor(ks, pathdom.NewPath(param, "param").Key(), 1)
+	exit = exit.WriteNumFloor(ks, testStateKey(t, pathdom.NewPath(param, "param").Key()), 1)
 	exit = exit.
 		AddBranchProof(pathevidence.BranchProof{
 			Kind:  pathevidence.BranchProofPathEqual,
@@ -306,7 +308,7 @@ func TestFromResultDoesNotProjectExitNumFloorForReassignedParameter(t *testing.T
 	ks := keyspace.New()
 	param := symbol.ID(913)
 	paramKey := pathdom.NewPath(param, "param").Key()
-	exit := state.State{}.WriteNumFloor(ks, paramKey, 2)
+	exit := state.State{}.WriteNumFloor(ks, testStateKey(t, paramKey), 2)
 
 	got := FromResult(normalReturnFactProjectResultStub{
 		reg:        reg,
@@ -748,6 +750,15 @@ func mustStateKey(t *testing.T, ks *keyspace.KeySpace, key pathdom.PathKey) keys
 		t.Fatalf("FromStateKey(%q) failed", key)
 	}
 	return k
+}
+
+func testStateKey(t *testing.T, key pathdom.PathKey) pathaddr.StateKey {
+	t.Helper()
+	got, ok := pathaddr.StateKeyFromPathKey(key)
+	if !ok {
+		t.Fatalf("StateKeyFromPathKey(%q) failed", key)
+	}
+	return got
 }
 
 func assertDynamicAdmission(

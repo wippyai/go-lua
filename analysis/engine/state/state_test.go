@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/placement"
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
@@ -85,31 +86,31 @@ func TestLenFloorStateSemantics(t *testing.T) {
 	stateDomain := Domain(reg)
 	pathKey := pathdom.PathKey("sym12@1.items")
 
-	if floor, ok := (State{}).ReadLenFloor(ks, pathKey); ok || floor != 0 {
+	if floor, ok := (State{}).ReadLenFloor(ks, testStateKey(t, pathKey)); ok || floor != 0 {
 		t.Fatalf("missing len floor = %d/%v, want absent", floor, ok)
 	}
-	if got := (State{}).WriteLenFloor(ks, "", 2); !stateDomain.Equal(got, State{}) {
+	if got := (State{}).WriteLenFloor(ks, pathaddr.StateKey(""), 2); !stateDomain.Equal(got, State{}) {
 		t.Fatalf("empty len-floor path changed state: %s", formatState(reg, ks, got))
 	}
-	if got := (State{}).WriteLenFloor(ks, pathKey, 0); !stateDomain.Equal(got, State{}) {
+	if got := (State{}).WriteLenFloor(ks, testStateKey(t, pathKey), 0); !stateDomain.Equal(got, State{}) {
 		t.Fatalf("non-positive len floor changed state: %s", formatState(reg, ks, got))
 	}
 
-	withFloor := State{}.WriteLenFloor(ks, pathKey, 2)
-	if floor, ok := withFloor.ReadLenFloor(ks, pathKey); !ok || floor != 2 {
+	withFloor := State{}.WriteLenFloor(ks, testStateKey(t, pathKey), 2)
+	if floor, ok := withFloor.ReadLenFloor(ks, testStateKey(t, pathKey)); !ok || floor != 2 {
 		t.Fatalf("len floor = %d/%v, want 2/present", floor, ok)
 	}
-	weaker := withFloor.WriteLenFloor(ks, pathKey, 1)
+	weaker := withFloor.WriteLenFloor(ks, testStateKey(t, pathKey), 1)
 	if !stateDomain.Equal(weaker, withFloor) {
 		t.Fatalf("weaker len floor changed state: %s", formatState(reg, ks, weaker))
 	}
-	stronger := withFloor.WriteLenFloor(ks, pathKey, 4)
-	if floor, ok := stronger.ReadLenFloor(ks, pathKey); !ok || floor != 4 {
+	stronger := withFloor.WriteLenFloor(ks, testStateKey(t, pathKey), 4)
+	if floor, ok := stronger.ReadLenFloor(ks, testStateKey(t, pathKey)); !ok || floor != 4 {
 		t.Fatalf("stronger len floor = %d/%v, want 4/present", floor, ok)
 	}
 
-	fromBottom := stateDomain.Bottom().WriteLenFloor(ks, pathKey, 3)
-	if floor, ok := fromBottom.ReadLenFloor(ks, pathKey); !ok || floor != 3 {
+	fromBottom := stateDomain.Bottom().WriteLenFloor(ks, testStateKey(t, pathKey), 3)
+	if floor, ok := fromBottom.ReadLenFloor(ks, testStateKey(t, pathKey)); !ok || floor != 3 {
 		t.Fatalf("bottom write len floor = %d/%v, want 3/present", floor, ok)
 	}
 	if stateDomain.Equal(fromBottom, stateDomain.Bottom()) {
@@ -127,11 +128,11 @@ func TestLenFloorInvalidationFollowsPathMutationPrefixes(t *testing.T) {
 	proof := pathevidence.BranchProof{Kind: pathevidence.BranchProofPathEqual, Path: mustStateKey(t, ks, root), Other: mustStateKey(t, ks, aliasRoot)}
 
 	s := State{}.
-		WriteLenFloor(ks, root, 2).
-		WriteLenFloor(ks, child, 5).
-		WriteLenFloor(ks, sibling, 7).
-		WriteLenFloor(ks, aliasRoot, 3).
-		WriteLenFloor(ks, aliasChild, 4).
+		WriteLenFloor(ks, testStateKey(t, root), 2).
+		WriteLenFloor(ks, testStateKey(t, child), 5).
+		WriteLenFloor(ks, testStateKey(t, sibling), 7).
+		WriteLenFloor(ks, testStateKey(t, aliasRoot), 3).
+		WriteLenFloor(ks, testStateKey(t, aliasChild), 4).
 		AddBranchProof(proof)
 
 	out, ok := s.InvalidatePathKeyDescendants(ks, root)
@@ -139,14 +140,14 @@ func TestLenFloorInvalidationFollowsPathMutationPrefixes(t *testing.T) {
 		t.Fatal("InvalidatePathKeyDescendants rejected root")
 	}
 	for _, removed := range []pathdom.PathKey{root, child, aliasRoot, aliasChild} {
-		if floor, ok := out.ReadLenFloor(ks, removed); ok || floor != 0 {
+		if floor, ok := out.ReadLenFloor(ks, testStateKey(t, removed)); ok || floor != 0 {
 			t.Fatalf("%s length floor = %d/%v, want cleared", removed, floor, ok)
 		}
 	}
-	if floor, ok := out.ReadLenFloor(ks, sibling); !ok || floor != 7 {
+	if floor, ok := out.ReadLenFloor(ks, testStateKey(t, sibling)); !ok || floor != 7 {
 		t.Fatalf("%s length floor = %d/%v, want 7/present", sibling, floor, ok)
 	}
-	if floor, ok := s.ReadLenFloor(ks, root); !ok || floor != 2 {
+	if floor, ok := s.ReadLenFloor(ks, testStateKey(t, root)); !ok || floor != 2 {
 		t.Fatalf("original root length floor = %d/%v, want unchanged 2/present", floor, ok)
 	}
 
@@ -155,11 +156,11 @@ func TestLenFloorInvalidationFollowsPathMutationPrefixes(t *testing.T) {
 		t.Fatal("InvalidatePathKeySubtree rejected root")
 	}
 	for _, removed := range []pathdom.PathKey{root, child, aliasRoot, aliasChild} {
-		if floor, ok := out.ReadLenFloor(ks, removed); ok || floor != 0 {
+		if floor, ok := out.ReadLenFloor(ks, testStateKey(t, removed)); ok || floor != 0 {
 			t.Fatalf("%s subtree length floor = %d/%v, want cleared", removed, floor, ok)
 		}
 	}
-	if floor, ok := out.ReadLenFloor(ks, sibling); !ok || floor != 7 {
+	if floor, ok := out.ReadLenFloor(ks, testStateKey(t, sibling)); !ok || floor != 7 {
 		t.Fatalf("%s subtree length floor = %d/%v, want 7/present", sibling, floor, ok)
 	}
 }
@@ -223,26 +224,26 @@ func TestNumFloorStateSemantics(t *testing.T) {
 	stateDomain := Domain(reg)
 	pathKey := pathdom.PathKey("sym13@1.index")
 
-	if floor, ok := (State{}).ReadNumFloor(ks, pathKey); ok || floor != 0 {
+	if floor, ok := (State{}).ReadNumFloor(ks, testStateKey(t, pathKey)); ok || floor != 0 {
 		t.Fatalf("missing num floor = %d/%v, want absent", floor, ok)
 	}
-	if got := (State{}).WriteNumFloor(ks, "", 2); !stateDomain.Equal(got, State{}) {
+	if got := (State{}).WriteNumFloor(ks, pathaddr.StateKey(""), 2); !stateDomain.Equal(got, State{}) {
 		t.Fatalf("empty num-floor path changed state: %s", formatState(reg, ks, got))
 	}
 	if snapshot := stateDomain.Bottom().NumFloorsSnapshot(ks); !snapshot.Bottom || len(snapshot.Floors) != 0 {
 		t.Fatalf("bottom num-floor snapshot = %#v, want bottom without floors", snapshot)
 	}
 
-	withFloor := State{}.WriteNumFloor(ks, pathKey, -5)
-	if floor, ok := withFloor.ReadNumFloor(ks, pathKey); !ok || floor != -5 {
+	withFloor := State{}.WriteNumFloor(ks, testStateKey(t, pathKey), -5)
+	if floor, ok := withFloor.ReadNumFloor(ks, testStateKey(t, pathKey)); !ok || floor != -5 {
 		t.Fatalf("num floor = %d/%v, want -5/present", floor, ok)
 	}
-	weaker := withFloor.WriteNumFloor(ks, pathKey, -10)
+	weaker := withFloor.WriteNumFloor(ks, testStateKey(t, pathKey), -10)
 	if !stateDomain.Equal(weaker, withFloor) {
 		t.Fatalf("weaker num floor changed state: %s", formatState(reg, ks, weaker))
 	}
-	stronger := withFloor.WriteNumFloor(ks, pathKey, 1)
-	if floor, ok := stronger.ReadNumFloor(ks, pathKey); !ok || floor != 1 {
+	stronger := withFloor.WriteNumFloor(ks, testStateKey(t, pathKey), 1)
+	if floor, ok := stronger.ReadNumFloor(ks, testStateKey(t, pathKey)); !ok || floor != 1 {
 		t.Fatalf("stronger num floor = %d/%v, want 1/present", floor, ok)
 	}
 
@@ -251,15 +252,15 @@ func TestNumFloorStateSemantics(t *testing.T) {
 		t.Fatalf("num-floor snapshot = %#v, want path floor 1", snapshot)
 	}
 	snapshot.Floors[pathKey] = 99
-	if floor, _ := stronger.ReadNumFloor(ks, pathKey); floor != 1 {
+	if floor, _ := stronger.ReadNumFloor(ks, testStateKey(t, pathKey)); floor != 1 {
 		t.Fatalf("mutating num-floor snapshot changed state floor to %d", floor)
 	}
 
-	cleared := stronger.ClearNumFloor(ks, pathKey)
-	if floor, ok := cleared.ReadNumFloor(ks, pathKey); ok || floor != 0 {
+	cleared := stronger.ClearNumFloor(ks, testStateKey(t, pathKey))
+	if floor, ok := cleared.ReadNumFloor(ks, testStateKey(t, pathKey)); ok || floor != 0 {
 		t.Fatalf("cleared num floor = %d/%v, want absent", floor, ok)
 	}
-	if again := cleared.ClearNumFloor(ks, pathKey); !stateDomain.Equal(again, cleared) {
+	if again := cleared.ClearNumFloor(ks, testStateKey(t, pathKey)); !stateDomain.Equal(again, cleared) {
 		t.Fatalf("clearing absent num floor changed state: %s", formatState(reg, ks, again))
 	}
 }
@@ -528,8 +529,8 @@ func TestStateCloneIndependenceAcrossLanes(t *testing.T) {
 		})).
 		WriteEffectDelta(fx.effectKey, fx.effectDelta).
 		WritePlacement(fx.escapeID, placement.Stack).
-		WriteLenFloor(ks, fx.pathKey, 2).
-		WriteNumFloor(ks, fx.pathKey, 3).
+		WriteLenFloor(ks, testStateKey(t, fx.pathKey), 2).
+		WriteNumFloor(ks, testStateKey(t, fx.pathKey), 3).
 		WriteDiffConstraint(pathdom.PathKey("clone-i"), pathdom.PathKey("clone-j"), -1).
 		AcquireTypestate(
 			TypestateResource(pathdom.PathKey("clone-tx"), typestate.Protocol("transaction")),
@@ -558,8 +559,8 @@ func TestStateCloneIndependenceAcrossLanes(t *testing.T) {
 	clone = clone.WriteHeapTableObject(reg, fx.heapID, heapidentity.BottomObject(reg))
 	clone = clone.WriteEffectDelta(fx.effectKey, effectdelta.Bottom(reg))
 	clone = clone.WritePlacement(fx.escapeID, placement.Unknown)
-	clone = clone.WriteLenFloor(ks, fx.pathKey, 5)
-	clone = clone.WriteNumFloor(ks, fx.pathKey, 7)
+	clone = clone.WriteLenFloor(ks, testStateKey(t, fx.pathKey), 5)
+	clone = clone.WriteNumFloor(ks, testStateKey(t, fx.pathKey), 7)
 	clone = clone.WriteDiffConstraint(pathdom.PathKey("clone-extra"), pathdom.PathKey("clone-j"), 0)
 	clone = clone.TransitionTypestate(typestateResource, typestate.State("open"), typestate.State("closed"))
 	clone = clone.AddStoreRelation(cloneOnlyStoreRelation)
@@ -593,10 +594,10 @@ func TestStateCloneIndependenceAcrossLanes(t *testing.T) {
 	if got := original.ReadPlacement(fx.escapeID); got != placement.Stack {
 		t.Fatalf("original placement mutated through clone: %v", got)
 	}
-	if got, ok := original.ReadLenFloor(ks, fx.pathKey); !ok || got != 2 {
+	if got, ok := original.ReadLenFloor(ks, testStateKey(t, fx.pathKey)); !ok || got != 2 {
 		t.Fatalf("original len floor mutated through clone: %d/%v", got, ok)
 	}
-	if got, ok := original.ReadNumFloor(ks, fx.pathKey); !ok || got != 3 {
+	if got, ok := original.ReadNumFloor(ks, testStateKey(t, fx.pathKey)); !ok || got != 3 {
 		t.Fatalf("original num floor mutated through clone: %d/%v", got, ok)
 	}
 	if constraints := original.RelConstraints().Constraints; len(constraints) != 1 ||
@@ -645,10 +646,10 @@ func TestStateCloneIndependenceAcrossLanes(t *testing.T) {
 	if got := clone.ReadPlacement(fx.escapeID); got != placement.Unknown {
 		t.Fatalf("clone placement = %v, want unknown", got)
 	}
-	if got, ok := clone.ReadLenFloor(ks, fx.pathKey); !ok || got != 5 {
+	if got, ok := clone.ReadLenFloor(ks, testStateKey(t, fx.pathKey)); !ok || got != 5 {
 		t.Fatalf("clone len floor = %d/%v, want 5", got, ok)
 	}
-	if got, ok := clone.ReadNumFloor(ks, fx.pathKey); !ok || got != 7 {
+	if got, ok := clone.ReadNumFloor(ks, testStateKey(t, fx.pathKey)); !ok || got != 7 {
 		t.Fatalf("clone num floor = %d/%v, want 7", got, ok)
 	}
 	if constraints := clone.RelConstraints().Constraints; len(constraints) != 2 {
@@ -1908,6 +1909,15 @@ func mustStateKey(t *testing.T, ks *keyspace.KeySpace, key pathdom.PathKey) keys
 		t.Fatalf("FromStateKey(%q) failed", key)
 	}
 	return k
+}
+
+func testStateKey(t *testing.T, key pathdom.PathKey) pathaddr.StateKey {
+	t.Helper()
+	got, ok := pathaddr.StateKeyFromPathKey(key)
+	if !ok {
+		t.Fatalf("StateKeyFromPathKey(%q) failed", key)
+	}
+	return got
 }
 
 func staticMemberEqual(reg *axis.Registry, object heapidentity.TableObject, key keyspace.Key, want product.Value) bool {

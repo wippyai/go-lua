@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	path "github.com/wippyai/go-lua/analysis/domain/path"
+	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
@@ -545,7 +546,11 @@ func TestNumFloorForSourceDerivesExactIntegerPathAndBinaryFloors(t *testing.T) {
 			sumExpr: sumOp,
 		},
 	})
-	in := state.State{}.WriteNumFloor(resolver.ks, pathKey, 3)
+	stateKey, stateKeyOK := pathaddr.StateKeyFromPathKey(pathKey)
+	if !stateKeyOK {
+		t.Fatal("StateKeyFromPathKey(pathKey) failed")
+	}
+	in := state.State{}.WriteNumFloor(resolver.ks, stateKey, 3)
 
 	tests := []struct {
 		name   string

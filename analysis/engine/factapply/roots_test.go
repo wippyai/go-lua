@@ -129,7 +129,6 @@ func TestFactsNodeTransferRootAssignmentPropagatesNumericFloorThroughIncrement(t
 	point := cfg.Point(13)
 	target := symbol.ID(113)
 	targetPath := path.NewPath(target, "i")
-	targetKey := targetPath.Key()
 	leftRef := factflow.ExprRef(131)
 	oneRef := factflow.ExprRef(132)
 	incRef := factflow.ExprRef(133)
@@ -146,6 +145,10 @@ func TestFactsNodeTransferRootAssignmentPropagatesNumericFloorThroughIncrement(t
 	visibilityBuilder.Define(point, target, "i")
 	resolver := visibility.NewResolver(visibilityBuilder.Build())
 	ks := resolver.KeySpace()
+	targetKey, targetKeyOK := visibility.RootOrVisibleStateKeyAt(resolver, point, targetPath)
+	if !targetKeyOK {
+		t.Fatal("RootOrVisibleStateKeyAt(target) failed")
+	}
 	sources := &recordingSourceValues{
 		values: map[factflow.ValueSource]product.Value{inc: typevalue.FromType(reg, typ.Integer)},
 	}
@@ -183,13 +186,16 @@ func TestFactsNodeTransferRootAssignmentClearsNumericFloorWhenSourceIsUnresolved
 	point := cfg.Point(14)
 	target := symbol.ID(114)
 	targetPath := path.NewPath(target, "i")
-	targetKey := targetPath.Key()
 	source := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: factflow.ExprRef(141), HasExpr: true}
 	declared := presentValue(reg)
 	visibilityBuilder := visibility.NewBuilder()
 	visibilityBuilder.Define(point, target, "i")
 	resolver := visibility.NewResolver(visibilityBuilder.Build())
 	ks := resolver.KeySpace()
+	targetKey, targetKeyOK := visibility.RootOrVisibleStateKeyAt(resolver, point, targetPath)
+	if !targetKeyOK {
+		t.Fatal("RootOrVisibleStateKeyAt(target) failed")
+	}
 	sources := &recordingSourceValues{}
 
 	got := NewFactsNodeTransfer(FactsNodeTransferConfig{

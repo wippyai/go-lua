@@ -58,8 +58,8 @@ func applyBranchLenRefinement(
 	if arrayPath.Symbol == 0 {
 		return out
 	}
-	pathKey := resolver.KeyAt(ctx.Edge.From, arrayPath)
-	if pathKey == "" {
+	pathKey, ok := resolver.StateKeyAt(ctx.Edge.From, arrayPath)
+	if !ok {
 		return out
 	}
 	return out.WriteLenFloor(resolver.KeySpace(), pathKey, fact.Floor())
@@ -80,8 +80,8 @@ func applyBranchNumFloorRefinement(
 	if targetPath.Symbol == 0 {
 		return out
 	}
-	pathKey := visibility.RootOrVisibleKeyAt(resolver, ctx.Edge.From, targetPath)
-	if pathKey == "" {
+	pathKey, ok := visibility.RootOrVisibleStateKeyAt(resolver, ctx.Edge.From, targetPath)
+	if !ok {
 		return out
 	}
 	return out.WriteNumFloor(resolver.KeySpace(), pathKey, fact.Floor())

@@ -219,8 +219,8 @@ func applyNormalReturnNumFloor(
 	if !ok || targetPath.Symbol == 0 {
 		return out
 	}
-	pathKey := visibility.RootOrVisibleKeyAt(resolver, point, targetPath)
-	if pathKey == "" {
+	pathKey, ok := visibility.RootOrVisibleStateKeyAt(resolver, point, targetPath)
+	if !ok {
 		return out
 	}
 	return out.WriteNumFloor(resolver.KeySpace(), pathKey, fact.Floor)
@@ -301,8 +301,8 @@ func readCallParamLengthFloor(
 	if resolver == nil || targetPath.Symbol == 0 {
 		return 0, false
 	}
-	pathKey := resolver.KeyAt(point, targetPath)
-	if pathKey == "" {
+	pathKey, ok := resolver.StateKeyAt(point, targetPath)
+	if !ok {
 		return 0, false
 	}
 	return in.ReadLenFloor(resolver.KeySpace(), pathKey)
@@ -318,8 +318,8 @@ func applyCallParamLengthFloor(
 	if resolver == nil || targetPath.Symbol == 0 || floor <= 0 {
 		return out
 	}
-	pathKey := resolver.KeyAt(point, targetPath)
-	if pathKey == "" {
+	pathKey, ok := resolver.StateKeyAt(point, targetPath)
+	if !ok {
 		return out
 	}
 	return out.WriteLenFloor(resolver.KeySpace(), pathKey, floor)

@@ -591,8 +591,8 @@ func dropInBoundsIndexNil(config Config, point cfg.Point, p pathdom.Path, in sta
 	if last.Kind != segment.SegmentIndexInt || last.Index < 1 {
 		return value
 	}
-	arrayKey := config.Visibility.KeyAt(point, p.Parent())
-	if arrayKey == "" {
+	arrayKey, keyOK := config.Visibility.StateKeyAt(point, p.Parent())
+	if !keyOK {
 		return value
 	}
 	floor, ok := in.ReadLenFloor(config.Visibility.KeySpace(), arrayKey)

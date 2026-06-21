@@ -118,13 +118,13 @@ func applyRootAssignmentNumFloor(
 	if resolver == nil || targetPath.Symbol == 0 || len(targetPath.Segments) != 0 {
 		return out
 	}
-	targetKey := visibility.RootOrVisibleKeyAt(resolver, ctx.Point, targetPath)
-	if targetKey == "" {
+	targetKey, ok := visibility.RootOrVisibleStateKeyAt(resolver, ctx.Point, targetPath)
+	if !ok {
 		return out
 	}
 	// Reassigning the root invalidates every difference relation over its old
 	// value (and, if it is an array, its old length).
-	out = out.ClearDiffConstraintsFor(targetKey)
+	out = out.ClearDiffConstraintsFor(targetKey.PathKey())
 	if floor, ok := sourcevalue.NumFloorForSource(ctx.Registry, resolver, ctx.Point, facts, in, source); ok {
 		return out.WriteNumFloor(resolver.KeySpace(), targetKey, floor)
 	}

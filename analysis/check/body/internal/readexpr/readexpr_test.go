@@ -201,7 +201,10 @@ func TestProjectInRangeStructuralArrayIndexDropsNil(t *testing.T) {
 	parentPath := path.NewPath(sym, "arr")
 	readPath := parentPath.IndexInt(2)
 	rootValue := typevalue.WithWitness(reg, product.Top(), typ.NewArray(typ.String))
-	parentKey := resolver.KeyAt(point, parentPath)
+	parentKey, parentKeyOK := resolver.StateKeyAt(point, parentPath)
+	if !parentKeyOK {
+		t.Fatal("StateKeyAt(parent) failed")
+	}
 	in := state.State{}.
 		WriteValue(reg, key.SymbolValue(sym), rootValue).
 		WriteLenFloor(resolver.KeySpace(), parentKey, 2)
@@ -222,7 +225,10 @@ func TestProjectLenFloorDoesNotDropNilForIntegerMapIndex(t *testing.T) {
 	parentPath := path.NewPath(sym, "lookup")
 	readPath := parentPath.IndexInt(2)
 	rootValue := typevalue.WithWitness(reg, product.Top(), typetable.NewMap(typ.Integer, typ.String))
-	parentKey := resolver.KeyAt(point, parentPath)
+	parentKey, parentKeyOK := resolver.StateKeyAt(point, parentPath)
+	if !parentKeyOK {
+		t.Fatal("StateKeyAt(parent) failed")
+	}
 	in := state.State{}.
 		WriteValue(reg, key.SymbolValue(sym), rootValue).
 		WriteLenFloor(resolver.KeySpace(), parentKey, 2)
@@ -243,7 +249,10 @@ func TestProjectLenFloorKeepsNilForOutOfRangeArrayIndex(t *testing.T) {
 	parentPath := path.NewPath(sym, "arr")
 	readPath := parentPath.IndexInt(3)
 	rootValue := typevalue.WithWitness(reg, product.Top(), typ.NewArray(typ.String))
-	parentKey := resolver.KeyAt(point, parentPath)
+	parentKey, parentKeyOK := resolver.StateKeyAt(point, parentPath)
+	if !parentKeyOK {
+		t.Fatal("StateKeyAt(parent) failed")
+	}
 	in := state.State{}.
 		WriteValue(reg, key.SymbolValue(sym), rootValue).
 		WriteLenFloor(resolver.KeySpace(), parentKey, 2)
@@ -264,7 +273,10 @@ func TestProjectLenFloorKeepsNilForZeroArrayIndex(t *testing.T) {
 	parentPath := path.NewPath(sym, "arr")
 	readPath := parentPath.IndexInt(0)
 	rootValue := typevalue.WithWitness(reg, product.Top(), typ.NewArray(typ.String))
-	parentKey := resolver.KeyAt(point, parentPath)
+	parentKey, parentKeyOK := resolver.StateKeyAt(point, parentPath)
+	if !parentKeyOK {
+		t.Fatal("StateKeyAt(parent) failed")
+	}
 	in := state.State{}.
 		WriteValue(reg, key.SymbolValue(sym), rootValue).
 		WriteLenFloor(resolver.KeySpace(), parentKey, 2)

@@ -540,6 +540,33 @@ func TestPathKeyParsersRejectNonCanonicalDecimalSpellings(t *testing.T) {
 	}
 }
 
+func TestStateKeyFromPathKeyDocumentsStateGrammar(t *testing.T) {
+	for _, key := range []pathdom.PathKey{
+		pathdom.PathKey("sym1"),
+		pathdom.PathKey("sym1@2.field"),
+		pathdom.PathKey("$0.item"),
+		pathdom.PathKey("ret[1].value"),
+		pathdom.PathKey("global.value"),
+		pathdom.PathKey("s911.stable"),
+	} {
+		got, ok := StateKeyFromPathKey(key)
+		if !ok || got.PathKey() != key {
+			t.Fatalf("StateKeyFromPathKey(%q) = %q/%v, want same/true", key, got.PathKey(), ok)
+		}
+	}
+
+	for _, key := range []pathdom.PathKey{
+		pathdom.PathKey(""),
+		pathdom.PathKey(".unresolved"),
+		pathdom.PathKey("ret[1"),
+		pathdom.PathKey("sym1@1[bad]"),
+	} {
+		if got, ok := StateKeyFromPathKey(key); ok || got.PathKey() != "" {
+			t.Fatalf("StateKeyFromPathKey(%q) = %q/%v, want rejected", key, got.PathKey(), ok)
+		}
+	}
+}
+
 func mustStableOfPath(t *testing.T, path pathdom.Path) Stable {
 	t.Helper()
 	got, ok := StableOfPath(path)

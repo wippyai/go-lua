@@ -6,6 +6,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/constraint/numeric"
 	"github.com/wippyai/go-lua/analysis/domain/constraint/solver"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/evidence"
@@ -223,8 +224,8 @@ func (r *Result) LengthFloorAtBoundary(point cfg.Point, p pathdom.Path) (int64, 
 	if !ok {
 		return 0, false
 	}
-	pathKey := r.visibility.KeyAt(point, p)
-	if pathKey == "" {
+	pathKey, keyOK := r.visibility.StateKeyAt(point, p)
+	if !keyOK {
 		return 0, false
 	}
 	return in.ReadLenFloor(r.visibility.KeySpace(), pathKey)
@@ -263,11 +264,13 @@ func (r *Result) DiffProvesIndexLELength(point cfg.Point, indexPath pathdom.Path
 	if !ok {
 		return false
 	}
-	indexKey := visibility.RootOrVisibleKeyAt(r.visibility, point, indexPath)
-	arrayKey := visibility.RootOrVisibleKeyAt(r.visibility, point, arrayPath)
-	if indexKey == "" || arrayKey == "" {
+	indexStateKey, indexOK := visibility.RootOrVisibleStateKeyAt(r.visibility, point, indexPath)
+	arrayStateKey, arrayOK := visibility.RootOrVisibleStateKeyAt(r.visibility, point, arrayPath)
+	if !indexOK || !arrayOK {
 		return false
 	}
+	indexKey := indexStateKey.PathKey()
+	arrayKey := arrayStateKey.PathKey()
 	snap := in.RelConstraints()
 	if snap.Bottom || len(snap.Constraints) == 0 {
 		return false
@@ -292,7 +295,11 @@ func (r *Result) DiffProvesIndexLELength(point cfg.Point, indexPath pathdom.Path
 	// A value operand's proven numeric floor strengthens the system: a sum bound
 	// i + j <= #xs only proves i <= #xs once j >= 0 is known.
 	for k := range floorKeys {
-		if lo, ok := in.ReadNumFloor(r.visibility.KeySpace(), k); ok {
+		stateKey, keyOK := pathaddr.StateKeyFromPathKey(k)
+		if !keyOK {
+			continue
+		}
+		if lo, ok := in.ReadNumFloor(r.visibility.KeySpace(), stateKey); ok {
 			asserted = append(asserted, numeric.GeConst{X: k, C: lo})
 		}
 	}
@@ -312,8 +319,8 @@ func (r *Result) NumericFloorAtBoundary(point cfg.Point, p pathdom.Path) (int64,
 	if !ok {
 		return 0, false
 	}
-	pathKey := visibility.RootOrVisibleKeyAt(r.visibility, point, p)
-	if pathKey == "" {
+	pathKey, keyOK := visibility.RootOrVisibleStateKeyAt(r.visibility, point, p)
+	if !keyOK {
 		return 0, false
 	}
 	return in.ReadNumFloor(r.visibility.KeySpace(), pathKey)

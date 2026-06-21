@@ -263,7 +263,10 @@ func TestFactsNodeTransferCallOutcomeLengthFloorSurvivesInvalidations(t *testing
 	visibilityBuilder.Define(point, items, "items")
 	resolver := visibility.NewResolver(visibilityBuilder.Build())
 	ks := resolver.KeySpace()
-	itemsKey := resolver.KeyAt(point, itemsPath)
+	itemsKey, itemsKeyOK := resolver.StateKeyAt(point, itemsPath)
+	if !itemsKeyOK {
+		t.Fatal("StateKeyAt(items) failed")
+	}
 	childKey := resolver.KeyAt(point, itemsPath.IndexInt(1))
 
 	got := NewFactsNodeTransfer(FactsNodeTransferConfig{
@@ -353,8 +356,11 @@ func TestFactsNodeTransferCallOutcomeAppliesNormalReturnNumFloors(t *testing.T) 
 		Point:    point,
 	}, state.State{})
 
-	rootKey := visibility.RootOrVisibleKeyAt(resolver, point, indexPath)
-	memberKey := visibility.RootOrVisibleKeyAt(resolver, point, memberPath)
+	rootKey, rootKeyOK := visibility.RootOrVisibleStateKeyAt(resolver, point, indexPath)
+	memberKey, memberKeyOK := visibility.RootOrVisibleStateKeyAt(resolver, point, memberPath)
+	if !rootKeyOK || !memberKeyOK {
+		t.Fatal("RootOrVisibleStateKeyAt failed")
+	}
 	if floor, ok := got.ReadNumFloor(ks, rootKey); !ok || floor != 1 {
 		t.Fatalf("root num floor = %d/%v, want 1 at %s", floor, ok, rootKey)
 	}
