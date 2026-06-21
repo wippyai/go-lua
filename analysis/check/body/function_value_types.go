@@ -4,6 +4,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/engine/dynamicindex"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
@@ -118,7 +119,8 @@ func functionContextEntryHolds(reg *axis.Registry, entryKeys, currentKeys *keysp
 
 func contextPathValueSatisfies(reg *axis.Registry, got, want product.Value, sourceID identity.ID) bool {
 	if product.Equal(reg, got, product.Bottom(reg)) {
-		return valueHasIdentity(reg, want, sourceID)
+		return valueHasIdentity(reg, want, sourceID) &&
+			product.LessOrEq(reg, sourceIdentityValue(reg, sourceID), want)
 	}
 	return product.LessOrEq(reg, got, want)
 }
@@ -172,6 +174,11 @@ func heapTableObjectContextHolds(reg *axis.Registry, want, got heapidentity.Tabl
 func valueHasIdentity(reg *axis.Registry, value product.Value, id identity.ID) bool {
 	got, ok := product.Get(reg, value, identity.Key).ID()
 	return ok && got == id
+}
+
+func sourceIdentityValue(reg *axis.Registry, id identity.ID) product.Value {
+	value := product.NewWithPresence(reg, product.ShapeTop, presence.Present())
+	return product.Set(reg, value, identity.Key, identity.Singleton(id))
 }
 
 func cloneFunctionValueTypes(in FunctionValueTypes) FunctionValueTypes {

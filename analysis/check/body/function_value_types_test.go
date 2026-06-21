@@ -85,6 +85,18 @@ func TestFunctionContextEntryHoldsAllowsMissingSelfIdentityRefinement(t *testing
 	}
 }
 
+func TestFunctionContextEntryHoldsRejectsMissingSelfIdentityWithExtraRequirement(t *testing.T) {
+	reg := standard.Registry()
+	ks := keyspace.New()
+	sourceID := identity.LuaFunction(71)
+	required := product.Set(reg, identityValue(reg, sourceID), runtimekind.Key, runtimekind.Singleton(runtimekind.String))
+	entry := state.State{}.WritePathKey(reg, ks, path.PathKey("sym71@1"), required)
+
+	if functionContextEntryHolds(reg, ks, ks, entry, state.State{}, sourceID) {
+		t.Fatalf("functionContextEntryHolds accepted missing self path with extra required runtime kind")
+	}
+}
+
 func TestFunctionContextEntryHoldsRejectsMissingNonSelfIdentityRefinement(t *testing.T) {
 	reg := standard.Registry()
 	ks := keyspace.New()
