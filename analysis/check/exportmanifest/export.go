@@ -6,6 +6,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/program"
 	"github.com/wippyai/go-lua/analysis/module/manifest"
 	"github.com/wippyai/go-lua/analysis/type/normalize"
+	"github.com/wippyai/go-lua/analysis/type/subtype"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/unwrap"
@@ -113,13 +114,25 @@ func mergeFields(summary, source []typ.Field) []typ.Field {
 		byName[field.Name] = field
 	}
 	for _, field := range source {
-		byName[field.Name] = field
+		byName[field.Name] = mergeField(byName[field.Name], field)
 	}
 	out := make([]typ.Field, 0, len(byName))
 	for _, field := range byName {
 		out = append(out, field)
 	}
 	return out
+}
+
+func mergeField(existing, next typ.Field) typ.Field {
+	if existing.Name == "" {
+		return next
+	}
+	return typ.Field{
+		Name:     existing.Name,
+		Type:     mergeManifestMemberType(existing.Type, next.Type),
+		Optional: existing.Optional || next.Optional,
+		Readonly: existing.Readonly && next.Readonly,
+	}
 }
 
 func mergeStaticMembers(summary, source []typ.StaticMember) []typ.StaticMember {
@@ -131,13 +144,44 @@ func mergeStaticMembers(summary, source []typ.StaticMember) []typ.StaticMember {
 		byKey[keyForStaticMember(member)] = member
 	}
 	for _, member := range source {
-		byKey[keyForStaticMember(member)] = member
+		key := keyForStaticMember(member)
+		byKey[key] = mergeStaticMember(byKey[key], member)
 	}
 	out := make([]typ.StaticMember, 0, len(byKey))
 	for _, member := range byKey {
 		out = append(out, member)
 	}
 	return out
+}
+
+func mergeStaticMember(existing, next typ.StaticMember) typ.StaticMember {
+	if existing.Kind == 0 {
+		return next
+	}
+	return typ.StaticMember{
+		Kind:     existing.Kind,
+		Name:     existing.Name,
+		Index:    existing.Index,
+		Type:     mergeManifestMemberType(existing.Type, next.Type),
+		Optional: existing.Optional || next.Optional,
+		Readonly: existing.Readonly && next.Readonly,
+	}
+}
+
+func mergeManifestMemberType(existing, next typ.Type) typ.Type {
+	if existing == nil {
+		return next
+	}
+	if next == nil || typ.TypeEquals(existing, next) {
+		return existing
+	}
+	if subtype.IsSubtype(next, existing) {
+		return next
+	}
+	if subtype.IsSubtype(existing, next) {
+		return existing
+	}
+	return normalize.UnionForEvidence(existing, next)
 }
 
 type staticMemberKey struct {
