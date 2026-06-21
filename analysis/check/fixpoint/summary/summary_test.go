@@ -387,12 +387,12 @@ func TestParamMemberSummaryFactsAcceptExactBracketMembers(t *testing.T) {
 	stringIndex := segment.Segment{Kind: segment.SegmentIndexString, Name: "send"}
 	intIndex := segment.Segment{Kind: segment.SegmentIndexInt, Index: 1}
 	invalidEmptyStringIndex := segment.Segment{Kind: segment.SegmentIndexString}
-	invalidReceiverPath := path.PathKey("client")
+	const invalidReceiverPath = "client"
 
 	callField := ParamMemberCallObligation{ReceiverParam: 0, Member: field, ArgParam: 1, MemberParamIndex: 2}
 	callString := ParamMemberCallObligation{ReceiverParam: 0, Member: stringIndex, ArgParam: 1, MemberParamIndex: 2}
 	callInt := ParamMemberCallObligation{ReceiverParam: 0, Member: intIndex, ArgParam: 1, MemberParamIndex: 2}
-	callNested := ParamMemberCallObligation{ReceiverParam: 0, ReceiverPath: path.PathKey(".client"), Member: field, ArgParam: 1, MemberParamIndex: 2}
+	callNested := ParamMemberCallObligation{ReceiverParam: 0, ReceiverPath: ".client", Member: field, ArgParam: 1, MemberParamIndex: 2}
 	normalizedCalls := Normalize(reg, Summary{
 		ParamMemberCallObligations: []ParamMemberCallObligation{
 			{ReceiverParam: -1, Member: field, ArgParam: 1, MemberParamIndex: 2},

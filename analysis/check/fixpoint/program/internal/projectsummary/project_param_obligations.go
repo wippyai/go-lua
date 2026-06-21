@@ -4,6 +4,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/program/internal/memberaccess"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/summary"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
@@ -427,7 +428,13 @@ func (p paramObligationProjector) memberCallObligations(fact semantics.CallFact,
 	if !ok {
 		return nil
 	}
-	receiverPath := pathdom.PathKey(segment.FormatSegments(receiverSuffix))
+	var receiverPath pathaddr.SuffixKey
+	if len(receiverSuffix) != 0 {
+		receiverPath, ok = pathaddr.RelativeStaticMemberSuffixKey(receiverSuffix)
+		if !ok {
+			return nil
+		}
+	}
 	memberOffset := 0
 	if fact.Receiver != nil && fact.Method != "" {
 		memberOffset = 1

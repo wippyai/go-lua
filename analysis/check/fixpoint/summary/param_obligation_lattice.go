@@ -29,7 +29,7 @@ var paramMemberCallObligationLane = factset.Set[ParamMemberCallObligation, Param
 		if o.ReceiverParam < 0 || o.ArgParam < 0 || o.MemberParamIndex < 0 || !memberSegmentValid(o.Member) {
 			return false
 		}
-		return segment.ValidFormattedSegments(string(o.ReceiverPath))
+		return o.ReceiverPath == "" || o.ReceiverPath.Valid()
 	},
 }
 

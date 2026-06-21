@@ -13,7 +13,7 @@ import (
 // ArgParam.
 type ParamMemberCallObligation struct {
 	ReceiverParam    int
-	ReceiverPath     pathdom.PathKey
+	ReceiverPath     pathaddr.SuffixKey
 	Member           segment.Segment
 	ArgParam         int
 	MemberParamIndex int

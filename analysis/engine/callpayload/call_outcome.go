@@ -3,6 +3,7 @@ package callpayload
 
 import (
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/placement"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
@@ -90,7 +91,7 @@ type CallParamObligation struct {
 type CallParamObligationOrigin struct {
 	HasOrigin        bool
 	ReceiverParam    int
-	ReceiverPath     pathdom.PathKey
+	ReceiverPath     pathaddr.SuffixKey
 	Member           segment.Segment
 	ArgParam         int
 	MemberParamIndex int

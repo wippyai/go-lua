@@ -6,6 +6,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/check/body"
 	"github.com/wippyai/go-lua/analysis/check/internal/readmodel"
 	"github.com/wippyai/go-lua/analysis/diagnostic"
+	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/engine/callpayload"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
@@ -232,9 +233,13 @@ func callParamObligationEvidenceMessage(name string, subject string, obligation 
 }
 
 func memberCallObligationProviderDisplay(origin callpayload.CallParamObligationOrigin) string {
-	segs, ok := segment.ParseFormattedSegments(string(origin.ReceiverPath))
-	if !ok {
-		return argumentMemberDisplay(origin.ReceiverParam+1, nil, origin.Member)
+	var segs []segment.Segment
+	if origin.ReceiverPath != "" {
+		var ok bool
+		segs, ok = pathaddr.RelativeStaticMemberSuffixSegments(origin.ReceiverPath)
+		if !ok {
+			return argumentMemberDisplay(origin.ReceiverParam+1, nil, origin.Member)
+		}
 	}
 	segs = append(segs, origin.Member)
 	return argumentMemberDisplay(origin.ReceiverParam+1, segs, origin.Member)

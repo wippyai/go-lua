@@ -1439,14 +1439,14 @@ func memberCallParamObligations(
 	return out
 }
 
-func projectMemberObligationReceiver(receiver typ.Type, receiverPath pathdom.PathKey) (typ.Type, bool) {
+func projectMemberObligationReceiver(receiver typ.Type, receiverPath pathaddr.SuffixKey) (typ.Type, bool) {
 	if receiver == nil {
 		return nil, false
 	}
 	if receiverPath == "" {
 		return receiver, true
 	}
-	segments, ok := segment.ParseFormattedSegments(string(receiverPath))
+	segments, ok := pathaddr.RelativeStaticMemberSuffixSegments(receiverPath)
 	if !ok {
 		return nil, false
 	}
