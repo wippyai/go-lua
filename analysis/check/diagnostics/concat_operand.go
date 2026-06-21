@@ -4,6 +4,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/check/body"
 	"github.com/wippyai/go-lua/analysis/check/internal/readmodel"
 	"github.com/wippyai/go-lua/analysis/diagnostic"
+	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/ir/dominance"
 	"github.com/wippyai/go-lua/analysis/lua/branchcond"
@@ -28,6 +29,7 @@ func (p concatOperands) Produce(result *body.Result) []diagnostic.Diagnostic {
 		return nil
 	}
 	envs := cachedGuardEnvironments(result)
+	truthyBranches := newTruthyDominatingBranchProofs(result)
 	var out []diagnostic.Diagnostic
 	seen := make(map[concatSeenKey]struct{})
 	for _, point := range graph.RPO() {
@@ -38,6 +40,7 @@ func (p concatOperands) Produce(result *body.Result) []diagnostic.Diagnostic {
 			result: result,
 			typer:  newStructuralFlowExpressionTyper(result, p.resolver, point, envs[point]),
 			envs:   envs,
+			truthy: truthyBranches,
 			point:  point,
 		}
 		emit := func(expr ast.Expr) {
@@ -134,6 +137,7 @@ type concatOperandCheck struct {
 	result *body.Result
 	typer  expressionTyper
 	envs   map[cfg.Point]guardEnv
+	truthy truthyDominatingBranchProofs
 	point  cfg.Point
 }
 
@@ -208,27 +212,65 @@ func (c concatOperandCheck) truthyDominatingBranchOperandType(operand ast.Expr, 
 	if !ok || accessPath.IsEmpty() {
 		return nil, false
 	}
-	graph := c.result.Graph()
-	if graph == nil {
+	if !c.truthy.provesPresent(c.point, accessPath) {
 		return nil, false
 	}
-	dom := dominance.ComputeImmediateDominatorInfo(graph)
+	withoutNil := projectionWithoutNil(t)
+	if withoutNil == nil || typ.IsNever(withoutNil) {
+		return nil, false
+	}
+	return withoutNil, true
+}
+
+type truthyDominatingBranchProofs struct {
+	dom      *dominance.ImmediateDominators
+	branches []truthyDominatingBranch
+}
+
+type truthyDominatingBranch struct {
+	path          pathdom.Path
+	trueSuccessor cfg.Point
+}
+
+func newTruthyDominatingBranchProofs(result *body.Result) truthyDominatingBranchProofs {
+	if result == nil {
+		return truthyDominatingBranchProofs{}
+	}
+	graph := result.Graph()
+	if graph == nil {
+		return truthyDominatingBranchProofs{}
+	}
+	proofs := truthyDominatingBranchProofs{
+		dom: dominance.ComputeImmediateDominatorInfo(graph),
+	}
 	for _, branch := range graph.RPO() {
-		fact, ok := c.result.BranchCondition(branch)
-		if !ok || fact.Check.Kind != branchcond.CheckTruthy || !fact.Check.Path.Equal(accessPath) {
+		fact, ok := result.BranchCondition(branch)
+		if !ok || fact.Check.Kind != branchcond.CheckTruthy || fact.Check.Path.IsEmpty() {
 			continue
 		}
 		for _, succ := range graph.Successors(branch) {
 			cond, ok := graph.EdgeCond(branch, succ)
-			if ok && cond && dom.Dominates(succ, c.point) {
-				withoutNil := projectionWithoutNil(t)
-				if withoutNil != nil && !typ.IsNever(withoutNil) {
-					return withoutNil, true
-				}
+			if ok && cond {
+				proofs.branches = append(proofs.branches, truthyDominatingBranch{
+					path:          fact.Check.Path.Clone(),
+					trueSuccessor: succ,
+				})
 			}
 		}
 	}
-	return nil, false
+	return proofs
+}
+
+func (p truthyDominatingBranchProofs) provesPresent(point cfg.Point, accessPath pathdom.Path) bool {
+	if p.dom == nil || point == 0 || accessPath.IsEmpty() {
+		return false
+	}
+	for _, branch := range p.branches {
+		if branch.path.Equal(accessPath) && p.dom.Dominates(branch.trueSuccessor, point) {
+			return true
+		}
+	}
+	return false
 }
 
 func (c concatOperandCheck) rootIdentifierBoundaryType(operand ast.Expr) (typ.Type, bool) {

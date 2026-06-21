@@ -5494,6 +5494,49 @@ func TestDominatingRootLocalAssignmentStopsAtDominatingRootWrite(t *testing.T) {
 	}
 }
 
+func TestTruthyDominatingBranchProofsRecognizeTrueArmPresence(t *testing.T) {
+	result := runDiagnosticsResult(t, `
+		local owner: string? = value
+		if owner then
+			local out = ":" .. owner
+		end
+	`)
+	point, expr := requireLocalAssignmentExprByName(t, result, "out")
+	concat, ok := expr.(*ast.StringConcatOpExpr)
+	if !ok {
+		t.Fatalf("out expression = %T, want string concat", expr)
+	}
+	ownerPath, ok := result.ExpressionPath(concat.Rhs)
+	if !ok || ownerPath.IsEmpty() {
+		t.Fatalf("owner expression path = %v, %v; want resolved path", ownerPath, ok)
+	}
+	if !newTruthyDominatingBranchProofs(result).provesPresent(point, ownerPath) {
+		t.Fatalf("truthy guard did not prove %s present at concat point", ownerPath.String())
+	}
+}
+
+func TestTruthyDominatingBranchProofsDoNotLeakPastJoin(t *testing.T) {
+	result := runDiagnosticsResult(t, `
+		local owner: string? = value
+		if owner then
+			local inside = owner
+		end
+		local out = ":" .. owner
+	`)
+	point, expr := requireLocalAssignmentExprByName(t, result, "out")
+	concat, ok := expr.(*ast.StringConcatOpExpr)
+	if !ok {
+		t.Fatalf("out expression = %T, want string concat", expr)
+	}
+	ownerPath, ok := result.ExpressionPath(concat.Rhs)
+	if !ok || ownerPath.IsEmpty() {
+		t.Fatalf("owner expression path = %v, %v; want resolved path", ownerPath, ok)
+	}
+	if newTruthyDominatingBranchProofs(result).provesPresent(point, ownerPath) {
+		t.Fatalf("truthy guard incorrectly proved %s present after the if join", ownerPath.String())
+	}
+}
+
 func diagnosticMessages(diags []diagnostic.Diagnostic) []string {
 	out := make([]string, len(diags))
 	for i, diag := range diags {
