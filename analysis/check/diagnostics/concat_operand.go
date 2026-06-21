@@ -272,29 +272,11 @@ func (c concatOperandCheck) dominatingLocalDeclarationType(operand ast.Expr) (ty
 	if !ok || accessPath.Symbol == 0 || len(accessPath.Segments) != 0 {
 		return nil, false
 	}
-	graph := c.result.Graph()
-	if graph == nil {
+	fact, declarationPoint, ok := dominatingRootLocalAssignment(c.result, c.point, accessPath.Symbol)
+	if !ok {
 		return nil, false
 	}
-	idom := dominance.ComputeImmediateDominatorInfo(graph).Map()
-	visited := make(map[cfg.Point]struct{}, graph.Size())
-	for cursor := c.point; ; {
-		if _, ok := visited[cursor]; ok {
-			return nil, false
-		}
-		visited[cursor] = struct{}{}
-		if fact, ok := c.result.OrdinaryAssignment(cursor); ok && fact.HasSymbol && fact.Symbol == accessPath.Symbol && (!fact.HasPath || len(fact.Path.Segments) == 0) {
-			return nil, false
-		}
-		if fact, ok := c.result.LocalAssignment(cursor); ok && fact.HasSymbol && fact.Symbol == accessPath.Symbol {
-			return c.localDeclarationType(cursor, fact)
-		}
-		parent, ok := idom[cursor]
-		if !ok || parent == cursor {
-			return nil, false
-		}
-		cursor = parent
-	}
+	return c.localDeclarationType(declarationPoint, fact)
 }
 
 func (c concatOperandCheck) localDeclarationType(point cfg.Point, fact semantics.LocalAssignmentFact) (typ.Type, bool) {

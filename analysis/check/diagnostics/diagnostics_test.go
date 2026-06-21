@@ -5457,6 +5457,43 @@ func requireLocalAssignmentExprByName(t *testing.T, result *body.Result, name st
 	return 0, nil
 }
 
+func TestDominatingRootLocalAssignmentFindsDominatingDeclaration(t *testing.T) {
+	result := runDiagnosticsResult(t, `
+		local source: string = "ok"
+		if test then
+			local sink: string = source
+		end
+	`)
+	point, expr := requireLocalAssignmentExprByName(t, result, "sink")
+	p, ok := result.ExpressionPath(expr)
+	if !ok || p.Symbol == 0 {
+		t.Fatalf("sink expression path = %v, %v; want source symbol", p, ok)
+	}
+	fact, declarationPoint, ok := dominatingRootLocalAssignment(result, point, p.Symbol)
+	if !ok {
+		t.Fatalf("dominatingRootLocalAssignment = false, want source declaration")
+	}
+	if declarationPoint == 0 || fact.Name != "source" || fact.Type == nil {
+		t.Fatalf("dominating declaration = (%#v, %d), want typed source declaration", fact, declarationPoint)
+	}
+}
+
+func TestDominatingRootLocalAssignmentStopsAtDominatingRootWrite(t *testing.T) {
+	result := runDiagnosticsResult(t, `
+		local source: string = "ok"
+		source = "mutated"
+		local sink: string = source
+	`)
+	point, expr := requireLocalAssignmentExprByName(t, result, "sink")
+	p, ok := result.ExpressionPath(expr)
+	if !ok || p.Symbol == 0 {
+		t.Fatalf("sink expression path = %v, %v; want source symbol", p, ok)
+	}
+	if fact, declarationPoint, ok := dominatingRootLocalAssignment(result, point, p.Symbol); ok {
+		t.Fatalf("dominating declaration = (%#v, %d), want blocked by root write", fact, declarationPoint)
+	}
+}
+
 func diagnosticMessages(diags []diagnostic.Diagnostic) []string {
 	out := make([]string, len(diags))
 	for i, diag := range diags {

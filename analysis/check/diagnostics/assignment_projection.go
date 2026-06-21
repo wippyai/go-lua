@@ -48,7 +48,7 @@ func assignmentValueType(result *body.Result, resolver typeannotation.Resolver, 
 	if got, ok := explicitTopLikeCallFactSourceType(result, resolver, source); ok {
 		return got, true
 	}
-	return boundaryExprType(result, resolver, expr)
+	return staticExpressionType(result, resolver, expr)
 }
 
 func sourceExpressionTypeWithPresence(result *body.Result, point cfg.Point, source sourceprovenance.ASTSource) (typ.Type, bool) {
@@ -79,7 +79,7 @@ func callInvalidatedBoundaryExprType(result *body.Result, resolver typeannotatio
 	if !ok || exprPath.IsEmpty() || !expressionPathInvalidatedByDominatingCall(result, point, exprPath) {
 		return nil, false
 	}
-	return boundaryExprType(result, resolver, expr)
+	return staticExpressionType(result, resolver, expr)
 }
 
 type dominatingCallInvalidation struct {
@@ -702,29 +702,11 @@ func boundaryValueHasReadableType(result *body.Result, value product.Value) bool
 }
 
 func dominatingRootDeclarationType(result *body.Result, resolver typeannotation.Resolver, point cfg.Point, target symbol.ID) (typ.Type, bool) {
-	graph := result.Graph()
-	if graph == nil || target == 0 {
+	fact, declarationPoint, ok := dominatingRootLocalAssignment(result, point, target)
+	if !ok {
 		return nil, false
 	}
-	idom := dominance.ComputeImmediateDominatorInfo(graph).Map()
-	visited := make(map[cfg.Point]struct{}, graph.Size())
-	for cursor := point; ; {
-		if _, ok := visited[cursor]; ok {
-			return nil, false
-		}
-		visited[cursor] = struct{}{}
-		if fact, ok := result.OrdinaryAssignment(cursor); ok && fact.HasSymbol && fact.Symbol == target && (!fact.HasPath || len(fact.Path.Segments) == 0) {
-			return nil, false
-		}
-		if fact, ok := result.LocalAssignment(cursor); ok && fact.HasSymbol && fact.Symbol == target {
-			return localDeclarationType(result, resolver, cursor, fact)
-		}
-		parent, ok := idom[cursor]
-		if !ok || parent == cursor {
-			return nil, false
-		}
-		cursor = parent
-	}
+	return localDeclarationType(result, resolver, declarationPoint, fact)
 }
 
 func localDeclarationType(result *body.Result, resolver typeannotation.Resolver, point cfg.Point, fact semantics.LocalAssignmentFact) (typ.Type, bool) {

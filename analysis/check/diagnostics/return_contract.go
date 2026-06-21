@@ -544,7 +544,7 @@ func directCallCalleeType(result *body.Result, resolver typeannotation.Resolver,
 			return got, true
 		}
 	}
-	return boundaryExprType(result, resolver, expr)
+	return staticExpressionType(result, resolver, expr)
 }
 
 func explicitAnnotatedCalleeType(result *body.Result, resolver typeannotation.Resolver, expr ast.Expr) (typ.Type, bool) {
@@ -618,7 +618,7 @@ func directCallArgsCompatible(result *body.Result, point cfg.Point, fact semanti
 			got, ok = directCallArgumentContractSourceType(result, context, fact, i, defs)
 		}
 		if !ok {
-			got, ok = boundaryExprType(result, context.resolver, arg)
+			got, ok = staticExpressionType(result, context.resolver, arg)
 		}
 		if !ok {
 			got, ok = boundaryCallArgumentSourceType(result, point, fact, i)
@@ -689,7 +689,7 @@ func directCallArgumentTypes(result *body.Result, context producerContext, point
 			got, ok = directCallArgumentContractSourceType(result, context, fact, i, defs)
 		}
 		if !ok {
-			got, ok = boundaryExprType(result, context.resolver, arg)
+			got, ok = staticExpressionType(result, context.resolver, arg)
 		}
 		if !ok {
 			got, ok = boundaryCallArgumentSourceType(result, point, fact, i)
@@ -765,7 +765,7 @@ func directObjectLiteralFieldKey(field *ast.Field) (string, ast.AttrKeySyntax, b
 }
 
 func directObjectLiteralFieldType(result *body.Result, resolver typeannotation.Resolver, point cfg.Point, expr ast.Expr, defs map[symbol.ID]*ast.FunctionExpr) (typ.Type, bool) {
-	if t, ok := boundaryExprType(result, resolver, expr); ok {
+	if t, ok := staticExpressionType(result, resolver, expr); ok {
 		return t, true
 	}
 	if t, ok := directFunctionValueType(result, resolver, expr, defs); ok {

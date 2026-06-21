@@ -117,10 +117,10 @@ func (p callParamObligations) call(
 			got, ok = boundaryCallArgumentSourceType(result, point, fact, argIndex)
 		}
 		if !ok {
-			got, ok = boundaryExprType(result, p.resolver, args[argIndex])
+			got, ok = staticExpressionType(result, p.resolver, args[argIndex])
 		}
 		if !ok {
-			got, ok = boundaryExpressionType(result, point, args[argIndex])
+			got, ok = boundaryExpressionValueType(result, point, args[argIndex])
 		}
 		if !ok {
 			got = typ.Unknown
@@ -179,7 +179,7 @@ func directMemberCallContractWouldReport(result *body.Result, point cfg.Point, f
 	return ok
 }
 
-func boundaryExpressionType(result *body.Result, point cfg.Point, expr ast.Expr) (typ.Type, bool) {
+func boundaryExpressionValueType(result *body.Result, point cfg.Point, expr ast.Expr) (typ.Type, bool) {
 	if result == nil || expr == nil {
 		return nil, false
 	}

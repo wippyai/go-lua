@@ -13,7 +13,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
-	"github.com/wippyai/go-lua/analysis/ir/dominance"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
 	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
@@ -568,7 +567,7 @@ func (p directCallContract) directFunctionCall(
 			}
 		}
 		if !ok {
-			got, ok = boundaryExprType(result, p.resolver, arg)
+			got, ok = staticExpressionType(result, p.resolver, arg)
 		}
 		if !ok || refinement.ContainsFreeTypeParam(got) {
 			continue
@@ -604,7 +603,7 @@ func (p directCallContract) directFunctionCall(
 func declaredArgumentExprType(result *body.Result, resolver typeannotation.Resolver, expr ast.Expr) (typ.Type, bool) {
 	switch expr.(type) {
 	case *ast.IdentExpr, *ast.CastExpr, *ast.NonNilAssertExpr:
-		return boundaryExprType(result, resolver, expr)
+		return staticExpressionType(result, resolver, expr)
 	default:
 		return nil, false
 	}
@@ -621,31 +620,14 @@ func directCallArgumentDisplayType(result *body.Result, resolver typeannotation.
 	if !ok || accessPath.Symbol == 0 || len(accessPath.Segments) != 0 {
 		return "", false
 	}
-	graph := result.Graph()
-	if graph == nil {
+	fact, _, ok := dominatingRootLocalAssignment(result, point, accessPath.Symbol)
+	if !ok || fact.Type == nil {
 		return "", false
 	}
-	idom := dominance.ComputeImmediateDominatorInfo(graph).Map()
-	visited := make(map[cfg.Point]struct{}, graph.Size())
-	for cursor := point; ; {
-		if _, ok := visited[cursor]; ok {
-			return "", false
-		}
-		visited[cursor] = struct{}{}
-		if fact, ok := result.OrdinaryAssignment(cursor); ok && fact.HasSymbol && fact.Symbol == accessPath.Symbol && (!fact.HasPath || len(fact.Path.Segments) == 0) {
-			return "", false
-		}
-		if fact, ok := result.LocalAssignment(cursor); ok && fact.HasSymbol && fact.Symbol == accessPath.Symbol && fact.Type != nil {
-			if rendered := display.AnnotationOrType(fact.Type, nil); rendered != "" {
-				return rendered, true
-			}
-		}
-		parent, ok := idom[cursor]
-		if !ok || parent == cursor {
-			return "", false
-		}
-		cursor = parent
+	if rendered := display.AnnotationOrType(fact.Type, nil); rendered != "" {
+		return rendered, true
 	}
+	return "", false
 }
 
 func directCallArgumentContractSourceType(

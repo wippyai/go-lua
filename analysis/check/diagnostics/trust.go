@@ -74,7 +74,7 @@ func boundaryProofTypeMismatch(result *body.Result, point cfg.Point, got, want t
 	return true
 }
 
-func boundaryExprType(result *body.Result, resolver typeannotation.Resolver, expr ast.Expr) (typ.Type, bool) {
+func staticExpressionType(result *body.Result, resolver typeannotation.Resolver, expr ast.Expr) (typ.Type, bool) {
 	if t, ok := valueexpr.LiteralType(expr); ok {
 		return t, true
 	}
@@ -100,7 +100,7 @@ func concreteCastObligationType(result *body.Result, resolver typeannotation.Res
 	if t, ok := newStructuralFlowExpressionTyper(result, resolver, point, env).typeOf(inner); ok {
 		return t, true
 	}
-	if t, ok := boundaryExprType(result, resolver, inner); ok {
+	if t, ok := staticExpressionType(result, resolver, inner); ok {
 		return t, true
 	}
 	return typ.Any, true
