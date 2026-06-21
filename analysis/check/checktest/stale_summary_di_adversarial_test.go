@@ -50,6 +50,18 @@ local s: string = f()
 			"returns number",
 			"assignment target s requires string",
 		},
+		EvidenceChain: []diagnosticEvidenceExpectation{
+			{
+				Kind:            diagnostic.EvidenceAbstractFact,
+				Trust:           diagnostic.TrustProven,
+				MessageContains: []string{"f", "returns number"},
+			},
+			{
+				Kind:            diagnostic.EvidenceUserAssertion,
+				Trust:           diagnostic.TrustClaimed,
+				MessageContains: []string{"assignment target s", "string"},
+			},
+		},
 		LabelMin: 2,
 		LabelContains: []string{
 			"declared type",

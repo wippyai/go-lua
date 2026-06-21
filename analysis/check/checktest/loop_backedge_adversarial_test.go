@@ -59,6 +59,18 @@ end
 			"acc has type string | 0",
 			"n is declared as number",
 		},
+		EvidenceChain: []diagnosticEvidenceExpectation{
+			{
+				Kind:            diagnostic.EvidenceAbstractFact,
+				Trust:           diagnostic.TrustProven,
+				MessageContains: []string{"acc", "string | 0"},
+			},
+			{
+				Kind:            diagnostic.EvidenceUserAssertion,
+				Trust:           diagnostic.TrustClaimed,
+				MessageContains: []string{"n", "number"},
+			},
+		},
 		LabelMin: 2,
 		LabelContains: []string{
 			"assigned value",

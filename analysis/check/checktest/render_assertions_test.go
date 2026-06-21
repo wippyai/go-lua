@@ -66,6 +66,7 @@ type diagnosticExpectation struct {
 	EvidenceMin      int
 	EvidenceContains []string
 	EvidenceOrdered  []string
+	EvidenceChain    []diagnosticEvidenceExpectation
 	LabelMin         int
 	LabelContains    []string
 	HelpContains     []string
@@ -75,6 +76,15 @@ type diagnosticExpectation struct {
 	RenderContains        []string
 	RenderOrderedContains []string
 	RenderNotContains     []string
+}
+
+type diagnosticEvidenceExpectation struct {
+	Kind   diagnostic.EvidenceKind
+	Trust  diagnostic.TrustKind
+	Reason diagnostic.EvidenceReason
+	Span   diagnostic.Span
+
+	MessageContains []string
 }
 
 func TestRequireDiagnosticSelectsFullExpectationMatch(t *testing.T) {
@@ -129,12 +139,73 @@ func TestRequireDiagnosticSelectsFullExpectationMatch(t *testing.T) {
 		EvidenceContains: []string{
 			"payload has type number",
 		},
+		EvidenceChain: []diagnosticEvidenceExpectation{{
+			Kind:            diagnostic.EvidenceAbstractFact,
+			Trust:           diagnostic.TrustProven,
+			Span:            diagnostic.Span{},
+			MessageContains: []string{"payload", "number"},
+		}},
 		LabelMin:      1,
 		LabelContains: []string{"assigned value"},
 		HelpContains:  []string{"string payload"},
 	})
 	if got.Message != "cannot assign payload because it is number, not string" {
 		t.Fatalf("selected diagnostic = %q, want full expectation match", got.Message)
+	}
+}
+
+func TestDiagnosticExpectationEvidenceChainChecksStructure(t *testing.T) {
+	diag := diagnostic.Diagnostic{
+		Code:     diagnostic.Code("type.assignment"),
+		Severity: diagnostic.SeverityError,
+		Message:  "cannot assign",
+		Explanation: diagnostic.NewExplanation(
+			diagnostic.Evidence{
+				Kind:    diagnostic.EvidenceAbstractFact,
+				Trust:   diagnostic.TrustProven,
+				Message: "actual value has type number",
+			},
+			diagnostic.Evidence{
+				Kind:    diagnostic.EvidenceMissingProof,
+				Trust:   diagnostic.TrustUnknown,
+				Reason:  diagnostic.EvidenceReasonBoundaryValidationMissing,
+				Message: "no validation proof reaches the call",
+			},
+		),
+	}
+
+	mismatch := diagnosticExpectationMismatches(diag, diagnosticExpectation{
+		AnySeverity: true,
+		EvidenceChain: []diagnosticEvidenceExpectation{
+			{
+				Kind:            diagnostic.EvidenceAbstractFact,
+				Trust:           diagnostic.TrustProven,
+				MessageContains: []string{"actual value", "number"},
+			},
+			{
+				Kind:            diagnostic.EvidencePrecisionBoundary,
+				Trust:           diagnostic.TrustProven,
+				Reason:          diagnostic.EvidenceReasonExplicitBoundaryValidation,
+				MessageContains: []string{"validation proof"},
+			},
+		},
+	})
+
+	for _, want := range []string{
+		"evidence[1] kind missing proof != unvalidated value",
+		"evidence[1] trust unknown != proven",
+		"evidence[1] reason boundary validation missing != explicit boundary validation",
+	} {
+		found := false
+		for _, got := range mismatch {
+			if strings.Contains(got, want) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("missing mismatch %q in %#v", want, mismatch)
+		}
 	}
 }
 
@@ -195,6 +266,7 @@ func diagnosticExpectationMismatches(diag diagnostic.Diagnostic, exp diagnosticE
 	evidenceMessages := diagnosticEvidenceMessages(evidence)
 	out = append(out, missingStringSliceFragments("evidence", evidenceMessages, exp.EvidenceContains)...)
 	out = append(out, missingStringSliceFragmentsInOrder("evidence", evidenceMessages, exp.EvidenceOrdered)...)
+	out = append(out, diagnosticEvidenceChainMismatches(evidence, exp.EvidenceChain)...)
 	if exp.LabelMin > 0 && len(diag.Labels) < exp.LabelMin {
 		out = append(out, fmt.Sprintf("label count %d < %d", len(diag.Labels), exp.LabelMin))
 	}
@@ -213,6 +285,38 @@ func diagnosticExpectationMismatches(diag diagnostic.Diagnostic, exp diagnosticE
 				out = append(out, fmt.Sprintf("render contains forbidden fragment %q", forbidden))
 			}
 		}
+	}
+	return out
+}
+
+func diagnosticEvidenceChainMismatches(got []diagnostic.Evidence, wants []diagnosticEvidenceExpectation) []string {
+	if len(wants) == 0 {
+		return nil
+	}
+	var out []string
+	if len(got) < len(wants) {
+		out = append(out, fmt.Sprintf("evidence count %d < chain length %d", len(got), len(wants)))
+	}
+	n := len(wants)
+	if len(got) < n {
+		n = len(got)
+	}
+	for i := 0; i < n; i++ {
+		item := got[i]
+		want := wants[i]
+		if item.Kind != want.Kind {
+			out = append(out, fmt.Sprintf("evidence[%d] kind %s != %s", i, item.Kind, want.Kind))
+		}
+		if item.Trust != want.Trust {
+			out = append(out, fmt.Sprintf("evidence[%d] trust %s != %s", i, item.Trust, want.Trust))
+		}
+		if want.Reason != diagnostic.EvidenceReasonUnspecified && item.Reason != want.Reason {
+			out = append(out, fmt.Sprintf("evidence[%d] reason %s != %s", i, item.Reason, want.Reason))
+		}
+		if want.Span.Valid() && !sameDiagnosticSpan(item.Span, want.Span) {
+			out = append(out, fmt.Sprintf("evidence[%d] span %s != %s", i, formatSpan(item.Span), formatSpan(want.Span)))
+		}
+		out = append(out, missingStringFragments(fmt.Sprintf("evidence[%d]", i), item.Message, want.MessageContains)...)
 	}
 	return out
 }

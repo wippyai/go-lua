@@ -48,6 +48,28 @@ end
 			"clear(...) may change box, so the read of box.value needs a fresh check",
 			"no guard on this path proves box.value is non-nil",
 		},
+		EvidenceChain: []diagnosticEvidenceExpectation{
+			{
+				Kind:            diagnostic.EvidenceAbstractFact,
+				Trust:           diagnostic.TrustProven,
+				MessageContains: []string{"box.value", "string or nil"},
+			},
+			{
+				Kind:            diagnostic.EvidenceUserAssertion,
+				Trust:           diagnostic.TrustClaimed,
+				MessageContains: []string{"after", "string"},
+			},
+			{
+				Kind:            diagnostic.EvidenceAbstractFact,
+				Trust:           diagnostic.TrustProven,
+				MessageContains: []string{"clear(...)", "fresh check"},
+			},
+			{
+				Kind:            diagnostic.EvidenceMissingProof,
+				Trust:           diagnostic.TrustUnknown,
+				MessageContains: []string{"no guard", "non-nil"},
+			},
+		},
 		LabelMin: 2,
 		LabelContains: []string{
 			"assigned value",
