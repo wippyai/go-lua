@@ -278,6 +278,34 @@ end
 	}
 }
 
+func TestChannelSelectExhaustivenessUsesLatestReassignedResultPath(t *testing.T) {
+	result := Check(`
+type Event = { id: string }
+type Timer = { elapsed: number }
+type Stop = { reason: string }
+function consume(primary: Channel<Event>, timers: Channel<Timer>, stops: Channel<Stop>)
+	local selected = channel.select {
+		primary:case_receive(),
+		timers:case_receive(),
+	}
+	selected = channel.select {
+		primary:case_receive(),
+		stops:case_receive(),
+	}
+	if selected.channel == primary then
+		return selected.value.id
+	elseif selected.channel == stops then
+		return selected.value.reason
+	end
+	return ""
+end
+`, WithStdlib(), WithManifest("channel", ChannelManifest()), WithGlobals("channel"))
+
+	if hasChannelSelectExhaustivenessWarning(result.Diagnostics) {
+		t.Fatalf("diagnostics = %#v, want no channel select exhaustiveness warning for reassigned select result", result.Diagnostics)
+	}
+}
+
 func TestChannelSelectExhaustivenessAcceptsDuplicateSameChannelReceiveCase(t *testing.T) {
 	result := Check(`
 type Event = { id: string }

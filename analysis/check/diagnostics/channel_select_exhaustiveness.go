@@ -16,6 +16,7 @@ import (
 type channelSelectExhaustiveness producerContext
 
 type selectInfo struct {
+	point      cfg.Point
 	result     pathdom.Path
 	cases      []selectCase
 	hasDefault bool
@@ -45,6 +46,11 @@ type channelSelectCaseMatch struct {
 	caseIndex   int
 }
 
+type channelSelectBranch struct {
+	point cfg.Point
+	fact  semantics.BranchConditionFact
+}
+
 func (p channelSelectExhaustiveness) Produce(result *body.Result) []diagnostic.Diagnostic {
 	graph := result.Graph()
 	if graph == nil {
@@ -60,18 +66,18 @@ func (p channelSelectExhaustiveness) Produce(result *body.Result) []diagnostic.D
 	}
 	cases := newChannelSelectCaseIndex(selects)
 	nested := nestedElseIfStatements(branches)
-	byIf := make(map[*ast.IfStmt]semantics.BranchConditionFact, len(branches))
+	byIf := make(map[*ast.IfStmt]channelSelectBranch, len(branches))
 	for _, branch := range branches {
-		if branch.If != nil {
-			byIf[branch.If] = branch
+		if branch.fact.If != nil {
+			byIf[branch.fact.If] = branch
 		}
 	}
 	var out []diagnostic.Diagnostic
 	for _, branch := range branches {
-		if branch.If == nil || nested[branch.If] || !hasElseIf(branch.If) {
+		if branch.fact.If == nil || nested[branch.fact.If] || !hasElseIf(branch.fact.If) {
 			continue
 		}
-		if diag, ok := channelSelectChainDiagnostic(result, branch.If, byIf, selects, cases); ok {
+		if diag, ok := channelSelectChainDiagnostic(result, graph, p.flow, branch.fact.If, byIf, selects, cases); ok {
 			out = append(out, diag)
 		}
 	}
@@ -97,7 +103,7 @@ func collectSelectInfos(result *body.Result) []selectInfo {
 		if selectFact.ResultTarget.Path.IsEmpty() || len(selectFact.Cases) == 0 {
 			continue
 		}
-		info := selectInfo{result: selectFact.ResultTarget.Path, hasDefault: selectFact.HasDefault}
+		info := selectInfo{point: point, result: selectFact.ResultTarget.Path, hasDefault: selectFact.HasDefault}
 		for _, c := range selectFact.Cases {
 			if !c.HasChannelPath || c.ChannelPath.IsEmpty() {
 				continue
@@ -118,9 +124,9 @@ func collectSelectInfos(result *body.Result) []selectInfo {
 	return out
 }
 
-func channelSelectBranchConditions(result *body.Result, graph cfg.Graph) []semantics.BranchConditionFact {
+func channelSelectBranchConditions(result *body.Result, graph cfg.Graph) []channelSelectBranch {
 	envs := cachedGuardEnvironments(result)
-	var out []semantics.BranchConditionFact
+	var out []channelSelectBranch
 	for _, point := range graph.RPO() {
 		if !guardEnvReachableAt(envs, point) {
 			continue
@@ -129,18 +135,18 @@ func channelSelectBranchConditions(result *body.Result, graph cfg.Graph) []seman
 		if !ok || branch.If == nil {
 			continue
 		}
-		out = append(out, branch)
+		out = append(out, channelSelectBranch{point: point, fact: branch})
 	}
 	return out
 }
 
-func nestedElseIfStatements(branches []semantics.BranchConditionFact) map[*ast.IfStmt]bool {
+func nestedElseIfStatements(branches []channelSelectBranch) map[*ast.IfStmt]bool {
 	out := make(map[*ast.IfStmt]bool)
 	for _, branch := range branches {
-		if branch.If == nil || len(branch.If.Else) == 0 {
+		if branch.fact.If == nil || len(branch.fact.If.Else) == 0 {
 			continue
 		}
-		if nested, ok := branch.If.Else[0].(*ast.IfStmt); ok && nested != nil {
+		if nested, ok := branch.fact.If.Else[0].(*ast.IfStmt); ok && nested != nil {
 			out[nested] = true
 		}
 	}
@@ -157,33 +163,41 @@ func hasElseIf(stmt *ast.IfStmt) bool {
 
 func channelSelectChainDiagnostic(
 	result *body.Result,
+	graph cfg.Graph,
+	flow *diagnosticFlowCache,
 	head *ast.IfStmt,
-	byIf map[*ast.IfStmt]semantics.BranchConditionFact,
+	byIf map[*ast.IfStmt]channelSelectBranch,
 	selects []selectInfo,
 	cases channelSelectCaseIndex,
 ) (diagnostic.Diagnostic, bool) {
 	chain := ifElseIfChain(head)
-	selected := -1
-	handled := make(map[int]bool)
+	headBranch, ok := byIf[head]
+	if !ok {
+		return diagnostic.Diagnostic{}, false
+	}
+	handledBySelect := make(map[int]map[int]bool)
 	for _, stmt := range chain {
 		branch, ok := byIf[stmt]
-		if !ok || branch.Check.Kind != branchcond.CheckPathEqual {
+		if !ok || branch.fact.Check.Kind != branchcond.CheckPathEqual {
 			continue
 		}
-		selectIndex, caseIndexes, ok := cases.casesForCheck(branch.Check)
-		if !ok {
-			continue
-		}
-		if selected == -1 {
-			selected = selectIndex
-		}
-		if selected == selectIndex {
-			for _, caseIndex := range caseIndexes {
-				handled[caseIndex] = true
+		for _, match := range cases.matchesForCheck(branch.fact.Check) {
+			if match.selectIndex < 0 || match.selectIndex >= len(selects) {
+				continue
 			}
+			if !selectCanReachBranch(selects[match.selectIndex], headBranch.point, graph, flow) {
+				continue
+			}
+			handled := handledBySelect[match.selectIndex]
+			if handled == nil {
+				handled = make(map[int]bool)
+				handledBySelect[match.selectIndex] = handled
+			}
+			handled[match.caseIndex] = true
 		}
 	}
-	if selected == -1 || len(handled) == 0 {
+	selected, handled, ok := bestChannelSelectCandidate(handledBySelect)
+	if !ok {
 		return diagnostic.Diagnostic{}, false
 	}
 	info := selects[selected]
@@ -211,6 +225,31 @@ func channelSelectChainDiagnostic(
 		missing:       missing,
 		hasDefault:    info.hasDefault,
 	}), true
+}
+
+func selectCanReachBranch(info selectInfo, branchPoint cfg.Point, graph cfg.Graph, flow *diagnosticFlowCache) bool {
+	if graph == nil {
+		return true
+	}
+	if info.point == branchPoint {
+		return true
+	}
+	return diagnosticCanReach(flow, graph, info.point, branchPoint)
+}
+
+func bestChannelSelectCandidate(handledBySelect map[int]map[int]bool) (int, map[int]bool, bool) {
+	selected := -1
+	var selectedHandled map[int]bool
+	for selectIndex, handled := range handledBySelect {
+		if len(handled) == 0 {
+			continue
+		}
+		if selected == -1 || len(handled) > len(selectedHandled) || len(handled) == len(selectedHandled) && selectIndex > selected {
+			selected = selectIndex
+			selectedHandled = handled
+		}
+	}
+	return selected, selectedHandled, selected != -1
 }
 
 func ifElseIfChain(head *ast.IfStmt) []*ast.IfStmt {
@@ -252,23 +291,15 @@ func newChannelSelectCaseIndex(selects []selectInfo) channelSelectCaseIndex {
 	return out
 }
 
-func (idx channelSelectCaseIndex) casesForCheck(check branchcond.Check) (int, []int, bool) {
+func (idx channelSelectCaseIndex) matchesForCheck(check branchcond.Check) []channelSelectCaseMatch {
 	matches := idx[channelSelectCaseKey{resultChannel: check.Path.Key(), channel: check.OtherPath.Key()}]
 	if len(matches) == 0 {
 		matches = idx[channelSelectCaseKey{resultChannel: check.OtherPath.Key(), channel: check.Path.Key()}]
 	}
 	if len(matches) == 0 {
-		return -1, nil, false
+		return nil
 	}
-	selected := matches[0].selectIndex
-	caseIndexes := make([]int, 0, len(matches))
-	for _, match := range matches {
-		if match.selectIndex != selected {
-			break
-		}
-		caseIndexes = append(caseIndexes, match.caseIndex)
-	}
-	return selected, caseIndexes, len(caseIndexes) > 0
+	return matches
 }
 
 func appendUniqueString(values []string, value string) []string {

@@ -2605,22 +2605,24 @@ func TestChannelSelectCaseIndexPreservesDuplicateAndReversedMatches(t *testing.T
 		},
 	})
 
-	selectIndex, cases, ok := index.casesForCheck(branchcond.Check{
+	matches := index.matchesForCheck(branchcond.Check{
 		Kind:      branchcond.CheckPathEqual,
 		Path:      primary,
 		OtherPath: resultChannel,
 	})
-	if !ok || selectIndex != 0 || len(cases) != 2 || cases[0] != 0 || cases[1] != 1 {
-		t.Fatalf("reversed primary match = select %d cases %v ok %v, want first select duplicate cases [0 1]", selectIndex, cases, ok)
+	if len(matches) != 2 ||
+		matches[0].selectIndex != 0 || matches[0].caseIndex != 0 ||
+		matches[1].selectIndex != 0 || matches[1].caseIndex != 1 {
+		t.Fatalf("reversed primary matches = %#v, want first select duplicate cases [0 1]", matches)
 	}
 
-	selectIndex, cases, ok = index.casesForCheck(branchcond.Check{
+	matches = index.matchesForCheck(branchcond.Check{
 		Kind:      branchcond.CheckPathEqual,
 		Path:      resultChannel,
 		OtherPath: timers,
 	})
-	if !ok || selectIndex != 0 || len(cases) != 1 || cases[0] != 2 {
-		t.Fatalf("direct timers match = select %d cases %v ok %v, want select 0 case [2]", selectIndex, cases, ok)
+	if len(matches) != 1 || matches[0].selectIndex != 0 || matches[0].caseIndex != 2 {
+		t.Fatalf("direct timers matches = %#v, want select 0 case [2]", matches)
 	}
 }
 
