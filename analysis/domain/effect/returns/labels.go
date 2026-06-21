@@ -151,39 +151,41 @@ func returnTypeEquals(a, b ReturnType) bool {
 }
 
 func elementOfEquals(a ElementOf, b ReturnType) bool {
-	bb, ok := normalizeElementOf(b)
+	bb, ok := AsElementOf(b)
 	return ok && a.Source.Index == bb.Source.Index
 }
 
 func optionalElementOfEquals(a OptionalElementOf, b ReturnType) bool {
-	bb, ok := normalizeOptionalElementOf(b)
+	bb, ok := AsOptionalElementOf(b)
 	return ok && a.Source.Index == bb.Source.Index
 }
 
 func callbackReturnEquals(a CallbackReturn, b ReturnType) bool {
-	bb, ok := normalizeCallbackReturn(b)
+	bb, ok := AsCallbackReturn(b)
 	return ok && a.CallbackParam.Index == bb.CallbackParam.Index
 }
 
 func arrayOfCallbackReturnEquals(a ArrayOfCallbackReturn, b ReturnType) bool {
-	bb, ok := normalizeArrayOfCallbackReturn(b)
+	bb, ok := AsArrayOfCallbackReturn(b)
 	return ok && a.CallbackParam.Index == bb.CallbackParam.Index
 }
 
 func sameAsEquals(a SameAs, b ReturnType) bool {
-	bb, ok := normalizeSameAs(b)
+	bb, ok := AsSameAs(b)
 	return ok && a.Source.Index == bb.Source.Index
 }
 
 func typeProjectionEquals(a TypeProjection, b ReturnType) bool {
-	bb, ok := normalizeTypeProjection(b)
+	bb, ok := AsTypeProjection(b)
 	if !ok || a.Source.Index != bb.Source.Index {
 		return false
 	}
 	return projection.Equal(a.Projection, bb.Projection)
 }
 
-func normalizeElementOf(r ReturnType) (ElementOf, bool) {
+// AsElementOf returns the concrete ElementOf transform for value and non-nil
+// pointer spellings. Typed nil pointers are treated as absent.
+func AsElementOf(r ReturnType) (ElementOf, bool) {
 	switch rr := r.(type) {
 	case ElementOf:
 		return rr, true
@@ -195,7 +197,9 @@ func normalizeElementOf(r ReturnType) (ElementOf, bool) {
 	return ElementOf{}, false
 }
 
-func normalizeOptionalElementOf(r ReturnType) (OptionalElementOf, bool) {
+// AsOptionalElementOf returns the concrete OptionalElementOf transform for
+// value and non-nil pointer spellings. Typed nil pointers are treated as absent.
+func AsOptionalElementOf(r ReturnType) (OptionalElementOf, bool) {
 	switch rr := r.(type) {
 	case OptionalElementOf:
 		return rr, true
@@ -207,7 +211,9 @@ func normalizeOptionalElementOf(r ReturnType) (OptionalElementOf, bool) {
 	return OptionalElementOf{}, false
 }
 
-func normalizeCallbackReturn(r ReturnType) (CallbackReturn, bool) {
+// AsCallbackReturn returns the concrete CallbackReturn transform for value and
+// non-nil pointer spellings. Typed nil pointers are treated as absent.
+func AsCallbackReturn(r ReturnType) (CallbackReturn, bool) {
 	switch rr := r.(type) {
 	case CallbackReturn:
 		return rr, true
@@ -219,7 +225,10 @@ func normalizeCallbackReturn(r ReturnType) (CallbackReturn, bool) {
 	return CallbackReturn{}, false
 }
 
-func normalizeArrayOfCallbackReturn(r ReturnType) (ArrayOfCallbackReturn, bool) {
+// AsArrayOfCallbackReturn returns the concrete ArrayOfCallbackReturn transform
+// for value and non-nil pointer spellings. Typed nil pointers are treated as
+// absent.
+func AsArrayOfCallbackReturn(r ReturnType) (ArrayOfCallbackReturn, bool) {
 	switch rr := r.(type) {
 	case ArrayOfCallbackReturn:
 		return rr, true
@@ -231,7 +240,9 @@ func normalizeArrayOfCallbackReturn(r ReturnType) (ArrayOfCallbackReturn, bool) 
 	return ArrayOfCallbackReturn{}, false
 }
 
-func normalizeSameAs(r ReturnType) (SameAs, bool) {
+// AsSameAs returns the concrete SameAs transform for value and non-nil pointer
+// spellings. Typed nil pointers are treated as absent.
+func AsSameAs(r ReturnType) (SameAs, bool) {
 	switch rr := r.(type) {
 	case SameAs:
 		return rr, true
@@ -243,7 +254,9 @@ func normalizeSameAs(r ReturnType) (SameAs, bool) {
 	return SameAs{}, false
 }
 
-func normalizeTypeProjection(r ReturnType) (TypeProjection, bool) {
+// AsTypeProjection returns the concrete TypeProjection transform for value and
+// non-nil pointer spellings. Typed nil pointers are treated as absent.
+func AsTypeProjection(r ReturnType) (TypeProjection, bool) {
 	switch rr := r.(type) {
 	case TypeProjection:
 		return rr, true

@@ -43,52 +43,25 @@ func signatureReturnValue(
 	if !ok {
 		return product.Value{}, false
 	}
-	switch transform := transform.(type) {
-	case returns.SameAs:
+	if transform, ok := returns.AsSameAs(transform); ok {
 		return sameAsReturnValue(ctx, sources, expressionRefinements, transform.Source, argSources, in, read)
-	case *returns.SameAs:
-		if transform == nil {
-			return product.Value{}, false
-		}
-		return sameAsReturnValue(ctx, sources, expressionRefinements, transform.Source, argSources, in, read)
-	case returns.ElementOf:
-		return elementOfReturnValue(ctx, sig, transform.Source, argSources, returnTypeOps)
-	case *returns.ElementOf:
-		if transform == nil {
-			return product.Value{}, false
-		}
-		return elementOfReturnValue(ctx, sig, transform.Source, argSources, returnTypeOps)
-	case returns.OptionalElementOf:
-		return optionalElementOfReturnValue(ctx, sig, transform.Source, argSources, returnTypeOps)
-	case *returns.OptionalElementOf:
-		if transform == nil {
-			return product.Value{}, false
-		}
-		return optionalElementOfReturnValue(ctx, sig, transform.Source, argSources, returnTypeOps)
-	case returns.CallbackReturn:
-		return callbackReturnValue(ctx, sig, transform.CallbackParam, argSources, false, returnTypeOps)
-	case *returns.CallbackReturn:
-		if transform == nil {
-			return product.Value{}, false
-		}
-		return callbackReturnValue(ctx, sig, transform.CallbackParam, argSources, false, returnTypeOps)
-	case returns.ArrayOfCallbackReturn:
-		return callbackReturnValue(ctx, sig, transform.CallbackParam, argSources, true, returnTypeOps)
-	case *returns.ArrayOfCallbackReturn:
-		if transform == nil {
-			return product.Value{}, false
-		}
-		return callbackReturnValue(ctx, sig, transform.CallbackParam, argSources, true, returnTypeOps)
-	case returns.TypeProjection:
-		return typeProjectionReturnValue(ctx, sig, transform, argSources, returnTypeOps)
-	case *returns.TypeProjection:
-		if transform == nil {
-			return product.Value{}, false
-		}
-		return typeProjectionReturnValue(ctx, sig, *transform, argSources, returnTypeOps)
-	default:
-		return product.Value{}, false
 	}
+	if transform, ok := returns.AsElementOf(transform); ok {
+		return elementOfReturnValue(ctx, sig, transform.Source, argSources, returnTypeOps)
+	}
+	if transform, ok := returns.AsOptionalElementOf(transform); ok {
+		return optionalElementOfReturnValue(ctx, sig, transform.Source, argSources, returnTypeOps)
+	}
+	if transform, ok := returns.AsCallbackReturn(transform); ok {
+		return callbackReturnValue(ctx, sig, transform.CallbackParam, argSources, false, returnTypeOps)
+	}
+	if transform, ok := returns.AsArrayOfCallbackReturn(transform); ok {
+		return callbackReturnValue(ctx, sig, transform.CallbackParam, argSources, true, returnTypeOps)
+	}
+	if transform, ok := returns.AsTypeProjection(transform); ok {
+		return typeProjectionReturnValue(ctx, sig, transform, argSources, returnTypeOps)
+	}
+	return product.Value{}, false
 }
 
 func sameAsReturnValue(

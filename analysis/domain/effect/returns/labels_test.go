@@ -81,6 +81,110 @@ func TestReturnTypeEqualsHandlesTypedNilPointers(t *testing.T) {
 	}
 }
 
+func TestReturnTypeConcreteNormalizers(t *testing.T) {
+	same := SameAs{Source: effect.ParamRef{Index: 1}}
+	element := ElementOf{Source: effect.ParamRef{Index: 2}}
+	optional := OptionalElementOf{Source: effect.ParamRef{Index: 3}}
+	callback := CallbackReturn{CallbackParam: effect.ParamRef{Index: 4}}
+	arrayCallback := ArrayOfCallbackReturn{CallbackParam: effect.ParamRef{Index: 5}}
+	projected := TypeProjection{
+		Source:     effect.ParamRef{Index: 6},
+		Projection: projection.Projection{Steps: []projection.Step{projection.Field("payload")}},
+	}
+
+	var nilSame *SameAs
+	var nilElement *ElementOf
+	var nilOptional *OptionalElementOf
+	var nilCallback *CallbackReturn
+	var nilArrayCallback *ArrayOfCallbackReturn
+	var nilProjected *TypeProjection
+
+	tests := []struct {
+		name     string
+		value    ReturnType
+		pointer  ReturnType
+		nilValue ReturnType
+		match    func(ReturnType) bool
+	}{
+		{
+			name:     "same as",
+			value:    same,
+			pointer:  &same,
+			nilValue: nilSame,
+			match: func(t ReturnType) bool {
+				got, ok := AsSameAs(t)
+				return ok && got.Source.Index == same.Source.Index
+			},
+		},
+		{
+			name:     "element of",
+			value:    element,
+			pointer:  &element,
+			nilValue: nilElement,
+			match: func(t ReturnType) bool {
+				got, ok := AsElementOf(t)
+				return ok && got.Source.Index == element.Source.Index
+			},
+		},
+		{
+			name:     "optional element of",
+			value:    optional,
+			pointer:  &optional,
+			nilValue: nilOptional,
+			match: func(t ReturnType) bool {
+				got, ok := AsOptionalElementOf(t)
+				return ok && got.Source.Index == optional.Source.Index
+			},
+		},
+		{
+			name:     "callback return",
+			value:    callback,
+			pointer:  &callback,
+			nilValue: nilCallback,
+			match: func(t ReturnType) bool {
+				got, ok := AsCallbackReturn(t)
+				return ok && got.CallbackParam.Index == callback.CallbackParam.Index
+			},
+		},
+		{
+			name:     "array callback return",
+			value:    arrayCallback,
+			pointer:  &arrayCallback,
+			nilValue: nilArrayCallback,
+			match: func(t ReturnType) bool {
+				got, ok := AsArrayOfCallbackReturn(t)
+				return ok && got.CallbackParam.Index == arrayCallback.CallbackParam.Index
+			},
+		},
+		{
+			name:     "type projection",
+			value:    projected,
+			pointer:  &projected,
+			nilValue: nilProjected,
+			match: func(t ReturnType) bool {
+				got, ok := AsTypeProjection(t)
+				return ok &&
+					got.Source.Index == projected.Source.Index &&
+					projection.Equal(got.Projection, projected.Projection)
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if !tc.match(tc.value) {
+				t.Fatalf("normalizer rejected value form %#v", tc.value)
+			}
+			if !tc.match(tc.pointer) {
+				t.Fatalf("normalizer rejected pointer form %#v", tc.pointer)
+			}
+			if tc.match(tc.nilValue) {
+				t.Fatalf("normalizer accepted typed nil pointer %#v", tc.nilValue)
+			}
+		})
+	}
+}
+
 func TestErrorReturn_String(t *testing.T) {
 	er := ErrorReturn{ValueIndex: 0, ErrorIndex: 1}
 	if got := er.String(); got != "errret(val[0], err[1])" {
