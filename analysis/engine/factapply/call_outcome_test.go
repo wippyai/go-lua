@@ -177,13 +177,12 @@ func TestFactsNodeTransferCallOutcomeAppliesStoreRelationEvidence(t *testing.T) 
 		Point:    point,
 	}, state.State{})
 
-	relation := state.StoreRelation{
-		Source: resolver.KeyAt(point, sourcePath),
-		Into:   resolver.KeyAt(point, intoPath),
+	sourceKey, sourceKeyOK := resolver.StateKeyAt(point, sourcePath)
+	intoKey, intoKeyOK := resolver.StateKeyAt(point, intoPath)
+	if !sourceKeyOK || !intoKeyOK {
+		t.Fatalf("visibility failed for store relation paths: %q/%v -> %q/%v", sourceKey, sourceKeyOK, intoKey, intoKeyOK)
 	}
-	if relation.Source == "" || relation.Into == "" {
-		t.Fatalf("visibility failed for store relation paths: %q -> %q", relation.Source, relation.Into)
-	}
+	relation := state.StoreRelation{Source: sourceKey, Into: intoKey}
 	if !got.HasStoreRelation(relation) {
 		t.Fatalf("store relations = %#v, want rebased source/into relation", got.StoreRelationsSnapshot())
 	}

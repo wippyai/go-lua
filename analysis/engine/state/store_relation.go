@@ -3,15 +3,15 @@ package state
 import (
 	"github.com/wippyai/go-lua/analysis/domain/lattice"
 	"github.com/wippyai/go-lua/analysis/domain/lattice/lift"
-	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
 )
 
 // StoreRelation records exact evidence that Source is stored into Into on all
 // paths reaching this state. Behavior stays modeled by escape and mutation
 // facts; this lane preserves ownership relation evidence for summaries.
 type StoreRelation struct {
-	Source pathdom.PathKey
-	Into   pathdom.PathKey
+	Source pathaddr.StateKey
+	Into   pathaddr.StateKey
 }
 
 type storeRelationLane struct {

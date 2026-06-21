@@ -166,9 +166,17 @@ func applyCallOutcomeFacts(
 		if !ok {
 			continue
 		}
+		sourceStateKey, ok := pathaddr.StateKeyFromPathKey(sourceKey)
+		if !ok {
+			continue
+		}
+		intoStateKey, ok := pathaddr.StateKeyFromPathKey(intoKey)
+		if !ok {
+			continue
+		}
 		out = out.AddStoreRelation(state.StoreRelation{
-			Source: sourceKey,
-			Into:   intoKey,
+			Source: sourceStateKey,
+			Into:   intoStateKey,
 		})
 	}
 	for _, fact := range normalReturnFacts.LifecycleFacts {

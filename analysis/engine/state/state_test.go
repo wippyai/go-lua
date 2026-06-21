@@ -277,16 +277,16 @@ func TestStoreRelationStateMustSemantics(t *testing.T) {
 	reg := standard.Registry()
 	stateDomain := Domain(reg)
 	common := StoreRelation{
-		Source: pathdom.PathKey("sym20@1.value"),
-		Into:   pathdom.PathKey("sym21@1.container"),
+		Source: testStateKey(t, pathdom.PathKey("sym20@1.value")),
+		Into:   testStateKey(t, pathdom.PathKey("sym21@1.container")),
 	}
 	leftOnly := StoreRelation{
-		Source: pathdom.PathKey("sym22@1.value"),
-		Into:   pathdom.PathKey("sym21@1.container"),
+		Source: testStateKey(t, pathdom.PathKey("sym22@1.value")),
+		Into:   testStateKey(t, pathdom.PathKey("sym21@1.container")),
 	}
 	rightOnly := StoreRelation{
-		Source: pathdom.PathKey("sym23@1.value"),
-		Into:   pathdom.PathKey("sym21@1.container"),
+		Source: testStateKey(t, pathdom.PathKey("sym23@1.value")),
+		Into:   testStateKey(t, pathdom.PathKey("sym21@1.container")),
 	}
 
 	left := State{}.
@@ -545,7 +545,7 @@ func TestStateCloneIndependenceAcrossLanes(t *testing.T) {
 			typestate.State("open"),
 			typestate.Obligation{Final: typestate.State("closed")},
 		).
-		AddStoreRelation(StoreRelation{Source: pathdom.PathKey("clone-src"), Into: pathdom.PathKey("clone-dst")}).
+		AddStoreRelation(StoreRelation{Source: testStateKey(t, pathdom.PathKey("clone-src")), Into: testStateKey(t, pathdom.PathKey("clone-dst"))}).
 		FreezeTable(fx.freezeID).
 		AddChannelSelectFact(fx.channelFact).
 		AddBranchProof(fx.proof)
@@ -556,7 +556,7 @@ func TestStateCloneIndependenceAcrossLanes(t *testing.T) {
 		Other: mustStateKey(t, ks, pathdom.PathKey("sym201@1.other")),
 	}
 	cloneOnlyFrozenID := identity.ID{Kind: "table", Site: "clone-only-freeze", Index: 1}
-	cloneOnlyStoreRelation := StoreRelation{Source: pathdom.PathKey("clone-only-src"), Into: pathdom.PathKey("clone-dst")}
+	cloneOnlyStoreRelation := StoreRelation{Source: testStateKey(t, pathdom.PathKey("clone-only-src")), Into: testStateKey(t, pathdom.PathKey("clone-dst"))}
 	typestateResource := TypestateResource(testStateKey(t, pathdom.PathKey("clone-tx")), typestate.Protocol("transaction"))
 	clone := original.Snapshot()
 	clone = clone.WriteValue(reg, fx.valueSlot, fx.absent)
@@ -619,7 +619,7 @@ func TestStateCloneIndependenceAcrossLanes(t *testing.T) {
 		obligations[0].Current != typestate.State("open") {
 		t.Fatalf("original typestate mutated through clone: %#v", obligations)
 	}
-	if !original.HasStoreRelation(StoreRelation{Source: pathdom.PathKey("clone-src"), Into: pathdom.PathKey("clone-dst")}) ||
+	if !original.HasStoreRelation(StoreRelation{Source: testStateKey(t, pathdom.PathKey("clone-src")), Into: testStateKey(t, pathdom.PathKey("clone-dst"))}) ||
 		original.HasStoreRelation(cloneOnlyStoreRelation) {
 		t.Fatalf("original store-relation lane mutated through clone")
 	}
@@ -666,7 +666,7 @@ func TestStateCloneIndependenceAcrossLanes(t *testing.T) {
 	if obligations := clone.OpenTypestateObligations(); len(obligations) != 0 {
 		t.Fatalf("clone typestate obligations = %#v, want closed", obligations)
 	}
-	if !clone.HasStoreRelation(StoreRelation{Source: pathdom.PathKey("clone-src"), Into: pathdom.PathKey("clone-dst")}) ||
+	if !clone.HasStoreRelation(StoreRelation{Source: testStateKey(t, pathdom.PathKey("clone-src")), Into: testStateKey(t, pathdom.PathKey("clone-dst"))}) ||
 		!clone.HasStoreRelation(cloneOnlyStoreRelation) {
 		t.Fatalf("clone store-relation updates did not stick")
 	}

@@ -469,8 +469,8 @@ func TestFromResultProjectsExitStoreRelations(t *testing.T) {
 		reg:   reg,
 		graph: cfg.New(),
 		exit: state.State{}.AddStoreRelation(state.StoreRelation{
-			Source: source.Key(),
-			Into:   into.Key(),
+			Source: testStateKey(t, source.Key()),
+			Into:   testStateKey(t, into.Key()),
 		}),
 		slots: []key.Value{key.SymbolValue(param0), key.SymbolValue(param1)},
 	}
@@ -491,8 +491,8 @@ func TestFromResultDoesNotProjectBranchLocalStoreRelations(t *testing.T) {
 	source := pathdom.Path{Symbol: param0, Version: 1}.Field("stored")
 	into := pathdom.Path{Symbol: param1, Version: 1}.Field("container")
 	leftBranch := state.State{}.AddStoreRelation(state.StoreRelation{
-		Source: source.Key(),
-		Into:   into.Key(),
+		Source: testStateKey(t, source.Key()),
+		Into:   testStateKey(t, into.Key()),
 	})
 	exit := stateDomain.Join(leftBranch, state.State{})
 

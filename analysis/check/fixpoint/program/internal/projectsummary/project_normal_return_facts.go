@@ -238,11 +238,11 @@ func projectNormalReturnFacts(reg *axis.Registry, result ResultReader, exit stat
 
 	if snapshot := exit.StoreRelationsSnapshot(); !snapshot.Bottom && !snapshot.Top {
 		for _, relation := range snapshot.Relations {
-			source, ok := projectPath(relation.Source)
+			source, ok := projectPath(relation.Source.PathKey())
 			if !ok {
 				continue
 			}
-			into, ok := projectPath(relation.Into)
+			into, ok := projectPath(relation.Into.PathKey())
 			if !ok {
 				continue
 			}

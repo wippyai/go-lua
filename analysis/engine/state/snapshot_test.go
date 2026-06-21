@@ -50,8 +50,8 @@ func TestSnapshotsCloneFiniteLanes(t *testing.T) {
 	}
 	selectFact := channelselectfact.Fact{Select: "select-snapshot", Kind: channelselectfact.FactSelect, Result: pathKey}
 	otherSelectFact := channelselectfact.Fact{Select: "select-snapshot", Kind: channelselectfact.FactCase, Case: memberKey, Index: 1}
-	storeRelation := StoreRelation{Source: pathdom.PathKey("sym130@1.source"), Into: pathdom.PathKey("sym130@1.into")}
-	otherStoreRelation := StoreRelation{Source: pathdom.PathKey("sym130@1.otherSource"), Into: pathdom.PathKey("sym130@1.into")}
+	storeRelation := StoreRelation{Source: testStateKey(t, pathdom.PathKey("sym130@1.source")), Into: testStateKey(t, pathdom.PathKey("sym130@1.into"))}
+	otherStoreRelation := StoreRelation{Source: testStateKey(t, pathdom.PathKey("sym130@1.otherSource")), Into: testStateKey(t, pathdom.PathKey("sym130@1.into"))}
 	dynamicFact := dynamicindex.Fact{
 		KeyPresence: presence.Present(),
 		KeyValue:    present,
