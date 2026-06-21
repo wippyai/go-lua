@@ -197,7 +197,7 @@ end
 		t.Fatalf("diagnostic = %#v, want lifecycle warning", diag)
 	}
 	requireEvidenceMessage(t, diag, "this call acquires `tx` as transaction:`active` and requires `finished` before local ownership ends")
-	requireEvidenceMessage(t, diag, "this call transitions `tx` in protocol transaction from `active` to `finished` on a reachable path")
+	requireEvidenceMessage(t, diag, "this call transitions `alias` in protocol transaction from `active` to `finished` on a reachable path")
 	requireEvidenceMessage(t, diag, "exit state still has `tx` in protocol transaction at a non-final state; no proof reaches `finished` or escapes ownership on every path")
 	if !containsLifecycleLabel(diag, "lifecycle transition") {
 		t.Fatalf("labels = %#v, want lifecycle transition label", diag.Labels)
@@ -244,7 +244,7 @@ end
 		t.Fatalf("diagnostic = %#v, want lifecycle warning", diag)
 	}
 	requireEvidenceMessage(t, diag, "this call acquires `tx` as transaction:`active` and requires `finished` before local ownership ends")
-	requireEvidenceMessage(t, diag, "this call escapes local ownership of `tx` in protocol transaction on a reachable path")
+	requireEvidenceMessage(t, diag, "this call escapes local ownership of `alias` in protocol transaction on a reachable path")
 	requireEvidenceMessage(t, diag, "exit state still has `tx` in protocol transaction at `active`; no proof reaches `finished` or escapes ownership on every path")
 	if !containsLifecycleLabel(diag, "ownership escaped") {
 		t.Fatalf("labels = %#v, want ownership escaped label", diag.Labels)
@@ -265,6 +265,81 @@ end
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("rendered diagnostic missing %q:\n%s", want, rendered)
 		}
+	}
+}
+
+func TestLifecycleResourceBranchAcquireKeepsBothAliasEvidence(t *testing.T) {
+	src := `
+local tx = {}
+local alias = tx
+if flag then
+    begin(tx)
+else
+    begin(alias)
+end
+`
+	result := Check(src, lifecycleManifestOptions("begin", "flag")...)
+	if len(result.Diagnostics) != 1 {
+		t.Fatalf("diagnostics = %#v, want one lifecycle warning for branch acquire", result.Diagnostics)
+	}
+	diag := result.Diagnostics[0]
+	if diag.Code != diagnostics.CodeResourceUnreleased {
+		t.Fatalf("diagnostic = %#v, want lifecycle warning", diag)
+	}
+	requireEvidenceMessage(t, diag, "this call acquires `tx` as transaction:`active` and requires `finished` before local ownership ends")
+	requireEvidenceMessage(t, diag, "this call acquires `alias` as transaction:`active` and requires `finished` before local ownership ends")
+	if got := countEvidenceMessages(diag, "this call acquires"); got != 2 {
+		t.Fatalf("acquire evidence count = %d, want both branch acquire sites: %#v", got, diag.Explanation.Evidence())
+	}
+	rendered := diagnostic.Render(diag, diagnostic.RenderOptions{
+		Sources:             diagnostic.SourceMap{"test.lua": src},
+		ShowSourceLabelRows: true,
+	})
+	for _, want := range []string{
+		"5 |     begin(tx)",
+		"↑ resource acquired",
+		"7 |     begin(alias)",
+		"missing proof: exit state still has",
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("rendered diagnostic missing %q:\n%s", want, rendered)
+		}
+	}
+}
+
+func TestLifecycleResourceSequentialReacquireDropsStaleAcquireEvidence(t *testing.T) {
+	src := `
+local tx = {}
+begin(tx)
+finish(tx)
+begin(tx)
+`
+	result := Check(src, lifecycleManifestOptions("begin", "finish")...)
+	if len(result.Diagnostics) != 1 {
+		t.Fatalf("diagnostics = %#v, want one lifecycle warning for second acquire", result.Diagnostics)
+	}
+	diag := result.Diagnostics[0]
+	if diag.Code != diagnostics.CodeResourceUnreleased {
+		t.Fatalf("diagnostic = %#v, want lifecycle warning", diag)
+	}
+	if got := countEvidenceMessages(diag, "this call acquires"); got != 1 {
+		t.Fatalf("acquire evidence count = %d, want only latest open acquire: %#v", got, diag.Explanation.Evidence())
+	}
+	rendered := diagnostic.Render(diag, diagnostic.RenderOptions{
+		Sources:             diagnostic.SourceMap{"test.lua": src},
+		ShowSourceLabelRows: true,
+	})
+	for _, want := range []string{
+		"5 | begin(tx)",
+		"↑ resource acquired",
+		"missing proof: exit state still has `tx` in protocol transaction at `active`",
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("rendered diagnostic missing %q:\n%s", want, rendered)
+		}
+	}
+	if strings.Contains(rendered, "3 | begin(tx)") {
+		t.Fatalf("rendered diagnostic included stale first acquire:\n%s", rendered)
 	}
 }
 
@@ -443,4 +518,14 @@ func hasEvidenceMessage(diag diagnostic.Diagnostic, want string) bool {
 		}
 	}
 	return false
+}
+
+func countEvidenceMessages(diag diagnostic.Diagnostic, want string) int {
+	count := 0
+	for _, evidence := range diag.Explanation.Evidence() {
+		if strings.Contains(evidence.Message, want) {
+			count++
+		}
+	}
+	return count
 }
