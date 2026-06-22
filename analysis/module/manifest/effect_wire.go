@@ -8,12 +8,12 @@ type effectRowWire struct {
 type effectLabelWire struct {
 	Kind string `json:"kind"`
 
-	ReturnIndex int   `json:"returnIndex,omitempty"`
-	ValueIndex  int   `json:"valueIndex,omitempty"`
-	ErrorIndex  int   `json:"errorIndex,omitempty"`
+	ReturnIndex *int  `json:"returnIndex,omitempty"`
+	ValueIndex  *int  `json:"valueIndex,omitempty"`
+	ErrorIndex  *int  `json:"errorIndex,omitempty"`
 	Indices     []int `json:"indices,omitempty"`
 	FromParam   *int  `json:"fromParam,omitempty"`
-	Delta       int   `json:"delta,omitempty"`
+	Delta       *int  `json:"delta,omitempty"`
 
 	Target *paramRefWire `json:"target,omitempty"`
 	Source *paramRefWire `json:"source,omitempty"`
@@ -56,14 +56,14 @@ type effectReturnWire struct {
 }
 
 type paramRefWire struct {
-	Index int `json:"index"`
+	Index *int `json:"index"`
 }
 
 type exprWire struct {
 	Kind  string    `json:"kind"`
 	Name  string    `json:"name,omitempty"`
 	Value int64     `json:"value,omitempty"`
-	Index int       `json:"index,omitempty"`
+	Index *int      `json:"index,omitempty"`
 	Op    string    `json:"op,omitempty"`
 	Left  *exprWire `json:"left,omitempty"`
 	Right *exprWire `json:"right,omitempty"`
@@ -72,6 +72,6 @@ type exprWire struct {
 type projectionStepWire struct {
 	Kind  string    `json:"kind"`
 	Field string    `json:"field,omitempty"`
-	Index int       `json:"index,omitempty"`
+	Index *int      `json:"index,omitempty"`
 	Type  *typeWire `json:"type,omitempty"`
 }

@@ -18,7 +18,7 @@ func encodeProjectionSteps(steps []projection.Step) ([]projectionStepWire, error
 			encoded.Kind = "callableReturn"
 		case projection.StepGenericArg:
 			encoded.Kind = "genericArg"
-			encoded.Index = step.Index
+			encoded.Index = encodeInt(step.Index)
 		case projection.StepInstantiateGeneric:
 			encoded.Kind = "instantiateGeneric"
 			t, err := encodeType(step.Type)
@@ -43,7 +43,11 @@ func decodeProjectionSteps(w []projectionStepWire) ([]projection.Step, error) {
 		case "callableReturn":
 			steps = append(steps, projection.CallableReturn())
 		case "genericArg":
-			steps = append(steps, projection.GenericArg(step.Index))
+			index, err := decodeRequiredInt(step.Index, "projection genericArg index missing")
+			if err != nil {
+				return nil, err
+			}
+			steps = append(steps, projection.GenericArg(index))
 		case "instantiateGeneric":
 			t, err := decodeType(step.Type)
 			if err != nil {

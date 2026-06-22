@@ -86,7 +86,7 @@ type lifecycleEffectWire struct {
 }
 
 type returnAllocationTemplateWire struct {
-	ReturnIndex int                    `json:"returnIndex"`
+	ReturnIndex *int                   `json:"returnIndex"`
 	Root        string                 `json:"root"`
 	Objects     []allocationObjectWire `json:"objects,omitempty"`
 }
@@ -110,7 +110,7 @@ type allocationDynamicEntryWire struct {
 }
 
 type placeholderPathWire struct {
-	Param  int    `json:"param"`
+	Param  *int   `json:"param"`
 	Suffix string `json:"suffix,omitempty"`
 }
 
@@ -428,8 +428,8 @@ func canonicalizeOperationalEffectsWire(w *operationalEffectsWire) {
 	}
 	sort.Slice(w.ReturnAllocationTemplates, func(i, j int) bool {
 		left, right := w.ReturnAllocationTemplates[i], w.ReturnAllocationTemplates[j]
-		if left.ReturnIndex != right.ReturnIndex {
-			return left.ReturnIndex < right.ReturnIndex
+		if c := compareOptionalInt(left.ReturnIndex, right.ReturnIndex); c != 0 {
+			return c < 0
 		}
 		return left.Root < right.Root
 	})
@@ -681,7 +681,7 @@ func encodeReturnAllocationTemplate(template signature.ReturnAllocationTemplate)
 		return returnAllocationTemplateWire{}, err
 	}
 	out := returnAllocationTemplateWire{
-		ReturnIndex: template.ReturnIndex,
+		ReturnIndex: encodeInt(template.ReturnIndex),
 		Root:        string(template.Root),
 	}
 	for _, object := range template.Objects {
@@ -737,14 +737,18 @@ func encodeAllocationObjectTemplate(object signature.AllocationObjectTemplate) (
 }
 
 func decodeReturnAllocationTemplate(w returnAllocationTemplateWire) (signature.ReturnAllocationTemplate, error) {
-	if w.ReturnIndex < 0 {
-		return signature.ReturnAllocationTemplate{}, fmt.Errorf("negative return index %d", w.ReturnIndex)
+	returnIndex, err := decodeRequiredInt(w.ReturnIndex, "return allocation template return index missing")
+	if err != nil {
+		return signature.ReturnAllocationTemplate{}, err
+	}
+	if returnIndex < 0 {
+		return signature.ReturnAllocationTemplate{}, fmt.Errorf("negative return index %d", returnIndex)
 	}
 	if w.Root == "" {
 		return signature.ReturnAllocationTemplate{}, fmt.Errorf("missing root")
 	}
 	out := signature.ReturnAllocationTemplate{
-		ReturnIndex: w.ReturnIndex,
+		ReturnIndex: returnIndex,
 		Root:        signature.AllocationTemplateID(w.Root),
 	}
 	for _, object := range w.Objects {
@@ -910,11 +914,12 @@ func comparePlaceholderPathWire(a, b *placeholderPathWire) int {
 		return -1
 	case b == nil:
 		return 1
-	case a.Param != b.Param:
-		if a.Param < b.Param {
-			return -1
+	default:
+		if c := compareOptionalInt(a.Param, b.Param); c != 0 {
+			return c
 		}
-		return 1
+	}
+	switch {
 	case a.Suffix < b.Suffix:
 		return -1
 	case a.Suffix > b.Suffix:
@@ -929,7 +934,7 @@ func encodePlaceholderPath(p pathdom.Path) (*placeholderPathWire, error) {
 		return nil, fmt.Errorf("path %q is not a placeholder path", p.String())
 	}
 	return &placeholderPathWire{
-		Param:  p.PlaceholderIndex(),
+		Param:  encodeInt(p.PlaceholderIndex()),
 		Suffix: segment.FormatSegments(p.Segments),
 	}, nil
 }
@@ -938,14 +943,18 @@ func decodePlaceholderPath(w *placeholderPathWire) (pathdom.Path, error) {
 	if w == nil {
 		return pathdom.Path{}, fmt.Errorf("missing placeholder path")
 	}
-	if w.Param < 0 {
-		return pathdom.Path{}, fmt.Errorf("negative placeholder index %d", w.Param)
+	param, err := decodeRequiredInt(w.Param, "placeholder path param missing")
+	if err != nil {
+		return pathdom.Path{}, err
+	}
+	if param < 0 {
+		return pathdom.Path{}, fmt.Errorf("negative placeholder index %d", param)
 	}
 	segs, ok := segment.ParseFormattedSegments(w.Suffix)
 	if !ok {
 		return pathdom.Path{}, fmt.Errorf("invalid placeholder path suffix %q", w.Suffix)
 	}
-	p := pathdom.NewPlaceholder(w.Param)
+	p := pathdom.NewPlaceholder(param)
 	p.Segments = segs
 	return p, nil
 }

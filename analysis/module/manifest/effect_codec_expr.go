@@ -34,13 +34,13 @@ func encodeExpr(e expr.Expr) (*exprWire, error) {
 	case expr.Len:
 		return &exprWire{Kind: "len", Name: ex.Of}, nil
 	case expr.Param:
-		return &exprWire{Kind: "param", Index: ex.Index}, nil
+		return &exprWire{Kind: "param", Index: encodeInt(ex.Index)}, nil
 	case expr.Ret:
-		return &exprWire{Kind: "ret", Index: ex.Index}, nil
+		return &exprWire{Kind: "ret", Index: encodeInt(ex.Index)}, nil
 	case expr.ParamLen:
-		return &exprWire{Kind: "paramLen", Index: ex.Index}, nil
+		return &exprWire{Kind: "paramLen", Index: encodeInt(ex.Index)}, nil
 	case expr.RetLen:
-		return &exprWire{Kind: "retLen", Index: ex.Index}, nil
+		return &exprWire{Kind: "retLen", Index: encodeInt(ex.Index)}, nil
 	case expr.Min:
 		left, right, err := encodeRequiredExprPair("min", ex.Left, ex.Right)
 		if err != nil {
@@ -124,13 +124,29 @@ func decodeExpr(w *exprWire) (expr.Expr, error) {
 	case "len":
 		return expr.Len{Of: w.Name}, nil
 	case "param":
-		return expr.Param{Index: w.Index}, nil
+		index, err := decodeRequiredInt(w.Index, "param index missing")
+		if err != nil {
+			return nil, err
+		}
+		return expr.Param{Index: index}, nil
 	case "ret":
-		return expr.Ret{Index: w.Index}, nil
+		index, err := decodeRequiredInt(w.Index, "ret index missing")
+		if err != nil {
+			return nil, err
+		}
+		return expr.Ret{Index: index}, nil
 	case "paramLen":
-		return expr.ParamLen{Index: w.Index}, nil
+		index, err := decodeRequiredInt(w.Index, "paramLen index missing")
+		if err != nil {
+			return nil, err
+		}
+		return expr.ParamLen{Index: index}, nil
 	case "retLen":
-		return expr.RetLen{Index: w.Index}, nil
+		index, err := decodeRequiredInt(w.Index, "retLen index missing")
+		if err != nil {
+			return nil, err
+		}
+		return expr.RetLen{Index: index}, nil
 	case "min":
 		left, err := decodeRequiredExpr("min", "left", w.Left)
 		if err != nil {

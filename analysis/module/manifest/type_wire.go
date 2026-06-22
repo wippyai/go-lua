@@ -50,7 +50,7 @@ type fieldWire struct {
 type staticMemberWire struct {
 	Kind     string    `json:"kind"`
 	Name     string    `json:"name,omitempty"`
-	Index    int64     `json:"index,omitempty"`
+	Index    *int64    `json:"index,omitempty"`
 	Type     *typeWire `json:"type,omitempty"`
 	Optional bool      `json:"optional,omitempty"`
 	Readonly bool      `json:"readonly,omitempty"`

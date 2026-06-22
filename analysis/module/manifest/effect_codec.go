@@ -133,7 +133,7 @@ func encodeEffectLabel(label effect.Label) (effectLabelWire, error) {
 		return effectLabelWire{
 			Kind:   "mutation.lengthChange",
 			Target: encodeParamRef(l.Target),
-			Delta:  l.Delta,
+			Delta:  encodeInt(l.Delta),
 		}, nil
 	case mutation.TableMutator:
 		return effectLabelWire{
@@ -221,9 +221,9 @@ func encodeEffectLabel(label effect.Label) (effectLabelWire, error) {
 		if err != nil {
 			return effectLabelWire{}, err
 		}
-		return effectLabelWire{Kind: "returns.return", ReturnIndex: l.ReturnIndex, ReturnType: transform}, nil
+		return effectLabelWire{Kind: "returns.return", ReturnIndex: encodeInt(l.ReturnIndex), ReturnType: transform}, nil
 	case returns.ErrorReturn:
-		return effectLabelWire{Kind: "returns.errorReturn", ValueIndex: l.ValueIndex, ErrorIndex: l.ErrorIndex}, nil
+		return effectLabelWire{Kind: "returns.errorReturn", ValueIndex: encodeInt(l.ValueIndex), ErrorIndex: encodeInt(l.ErrorIndex)}, nil
 	default:
 		return effectLabelWire{}, fmt.Errorf("manifest: unsupported effect label %T", label)
 	}
@@ -270,7 +270,11 @@ func decodeEffectLabel(w effectLabelWire) (effect.Label, error) {
 		if err != nil {
 			return nil, err
 		}
-		return mutation.LengthChange{Target: target, Delta: w.Delta}, nil
+		delta, err := decodeRequiredInt(w.Delta, "length change delta missing")
+		if err != nil {
+			return nil, err
+		}
+		return mutation.LengthChange{Target: target, Delta: delta}, nil
 	case "mutation.tableMutator":
 		target, err := decodeRequiredParamRef(w.Target, "table mutator target missing param ref")
 		if err != nil {
@@ -406,9 +410,21 @@ func decodeEffectLabel(w effectLabelWire) (effect.Label, error) {
 		if err != nil {
 			return nil, err
 		}
-		return returns.Return{ReturnIndex: w.ReturnIndex, Transform: transform}, nil
+		returnIndex, err := decodeRequiredInt(w.ReturnIndex, "return index missing")
+		if err != nil {
+			return nil, err
+		}
+		return returns.Return{ReturnIndex: returnIndex, Transform: transform}, nil
 	case "returns.errorReturn":
-		return returns.ErrorReturn{ValueIndex: w.ValueIndex, ErrorIndex: w.ErrorIndex}, nil
+		valueIndex, err := decodeRequiredInt(w.ValueIndex, "error return value index missing")
+		if err != nil {
+			return nil, err
+		}
+		errorIndex, err := decodeRequiredInt(w.ErrorIndex, "error return error index missing")
+		if err != nil {
+			return nil, err
+		}
+		return returns.ErrorReturn{ValueIndex: valueIndex, ErrorIndex: errorIndex}, nil
 	case "returns.returnLength":
 		return nil, inactiveManifestEffectLabel(returns.ReturnLength{})
 	case "returns.correlatedReturn":

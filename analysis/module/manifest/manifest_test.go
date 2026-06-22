@@ -416,12 +416,13 @@ func TestManifestRejectsInvalidLifecycleOperationalEffects(t *testing.T) {
 		wire lifecycleEffectWire
 		want string
 	}{
-		{"acquire missing protocol", lifecycleEffectWire{Target: &placeholderPathWire{Param: 0}, Kind: "acquire", To: "active"}, "missing protocol"},
-		{"acquire missing state", lifecycleEffectWire{Target: &placeholderPathWire{Param: 0}, Kind: "acquire", Protocol: "resource"}, "acquire missing state"},
-		{"transition missing protocol", lifecycleEffectWire{Target: &placeholderPathWire{Param: 0}, Kind: "transition", To: "closed"}, "missing protocol"},
-		{"transition missing target state", lifecycleEffectWire{Target: &placeholderPathWire{Param: 0}, Kind: "transition", Protocol: "resource", From: "open"}, "transition missing target state"},
-		{"transition missing source state", lifecycleEffectWire{Target: &placeholderPathWire{Param: 0}, Kind: "transition", Protocol: "resource", To: "closed"}, "transition missing source state"},
-		{"escape missing protocol", lifecycleEffectWire{Target: &placeholderPathWire{Param: 0}, Kind: "escape"}, "missing protocol"},
+		{"acquire target missing param", lifecycleEffectWire{Target: &placeholderPathWire{}, Kind: "acquire", Protocol: "resource", To: "active"}, "placeholder path param missing"},
+		{"acquire missing protocol", lifecycleEffectWire{Target: &placeholderPathWire{Param: encodeInt(0)}, Kind: "acquire", To: "active"}, "missing protocol"},
+		{"acquire missing state", lifecycleEffectWire{Target: &placeholderPathWire{Param: encodeInt(0)}, Kind: "acquire", Protocol: "resource"}, "acquire missing state"},
+		{"transition missing protocol", lifecycleEffectWire{Target: &placeholderPathWire{Param: encodeInt(0)}, Kind: "transition", To: "closed"}, "missing protocol"},
+		{"transition missing target state", lifecycleEffectWire{Target: &placeholderPathWire{Param: encodeInt(0)}, Kind: "transition", Protocol: "resource", From: "open"}, "transition missing target state"},
+		{"transition missing source state", lifecycleEffectWire{Target: &placeholderPathWire{Param: encodeInt(0)}, Kind: "transition", Protocol: "resource", To: "closed"}, "transition missing source state"},
+		{"escape missing protocol", lifecycleEffectWire{Target: &placeholderPathWire{Param: encodeInt(0)}, Kind: "escape"}, "missing protocol"},
 	}
 	for _, tt := range decodeTests {
 		t.Run("decode "+tt.name, func(t *testing.T) {
@@ -619,7 +620,7 @@ func TestManifestOperationalPathStaticMemberRequiresType(t *testing.T) {
 		Type: encodedType,
 		OperationalEffects: &operationalEffectsWire{
 			PathStaticMembers: []pathStaticMemberWire{{
-				Path: &placeholderPathWire{Param: 0, Suffix: ".field"},
+				Path: &placeholderPathWire{Param: encodeInt(0), Suffix: ".field"},
 			}},
 		},
 	})
@@ -635,7 +636,7 @@ func TestManifestOperationalAllocationTemplateRequiresRootObject(t *testing.T) {
 		Type: testEncodedFunctionType(t, fn),
 		OperationalEffects: &operationalEffectsWire{
 			ReturnAllocationTemplates: []returnAllocationTemplateWire{{
-				ReturnIndex: 0,
+				ReturnIndex: encodeInt(0),
 				Root:        "missing",
 				Objects: []allocationObjectWire{{
 					ID: "other",
@@ -656,9 +657,17 @@ func TestManifestOperationalAllocationTemplateRejectsInvalidGraph(t *testing.T) 
 		want string
 	}{
 		{
+			name: "return index missing",
+			wire: returnAllocationTemplateWire{
+				Root:    "root",
+				Objects: []allocationObjectWire{{ID: "root"}},
+			},
+			want: "return allocation template return index missing",
+		},
+		{
 			name: "return index out of bounds",
 			wire: returnAllocationTemplateWire{
-				ReturnIndex: 1,
+				ReturnIndex: encodeInt(1),
 				Root:        "root",
 				Objects:     []allocationObjectWire{{ID: "root"}},
 			},
@@ -667,7 +676,7 @@ func TestManifestOperationalAllocationTemplateRejectsInvalidGraph(t *testing.T) 
 		{
 			name: "dangling static member value",
 			wire: returnAllocationTemplateWire{
-				ReturnIndex: 0,
+				ReturnIndex: encodeInt(0),
 				Root:        "root",
 				Objects: []allocationObjectWire{{
 					ID: "root",
@@ -682,7 +691,7 @@ func TestManifestOperationalAllocationTemplateRejectsInvalidGraph(t *testing.T) 
 		{
 			name: "dangling dynamic key",
 			wire: returnAllocationTemplateWire{
-				ReturnIndex: 0,
+				ReturnIndex: encodeInt(0),
 				Root:        "root",
 				Objects: []allocationObjectWire{{
 					ID: "root",
@@ -699,7 +708,7 @@ func TestManifestOperationalAllocationTemplateRejectsInvalidGraph(t *testing.T) 
 		{
 			name: "dangling dynamic value",
 			wire: returnAllocationTemplateWire{
-				ReturnIndex: 0,
+				ReturnIndex: encodeInt(0),
 				Root:        "root",
 				Objects: []allocationObjectWire{{
 					ID: "root",
@@ -713,7 +722,7 @@ func TestManifestOperationalAllocationTemplateRejectsInvalidGraph(t *testing.T) 
 		{
 			name: "empty dynamic entry",
 			wire: returnAllocationTemplateWire{
-				ReturnIndex: 0,
+				ReturnIndex: encodeInt(0),
 				Root:        "root",
 				Objects: []allocationObjectWire{{
 					ID:             "root",
@@ -797,11 +806,11 @@ func TestManifestOperationalAllocationTemplateRejectsDuplicateReturnIndex(t *tes
 		Type: testEncodedFunctionType(t, fn),
 		OperationalEffects: &operationalEffectsWire{
 			ReturnAllocationTemplates: []returnAllocationTemplateWire{{
-				ReturnIndex: 0,
+				ReturnIndex: encodeInt(0),
 				Root:        "left",
 				Objects:     []allocationObjectWire{{ID: "left"}},
 			}, {
-				ReturnIndex: 0,
+				ReturnIndex: encodeInt(0),
 				Root:        "right",
 				Objects:     []allocationObjectWire{{ID: "right"}},
 			}},
@@ -1268,12 +1277,59 @@ func TestManifestRejectsEffectLabelsMissingParamRefs(t *testing.T) {
 			want: "send fromParam missing",
 		},
 		{
+			name: "param ref index",
+			wire: effectLabelWire{Kind: "ownership.borrow", Param: &paramRefWire{}},
+			want: "param ref index missing",
+		},
+		{
 			name: "return transform source",
 			wire: effectLabelWire{
 				Kind:       "returns.return",
 				ReturnType: &effectReturnWire{Kind: "returns.elementOf"},
 			},
 			want: "returns.elementOf source missing param ref",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := decodeEffectRow(&effectRowWire{Labels: []effectLabelWire{tt.wire}})
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("decodeEffectRow error = %v, want %q", err, tt.want)
+			}
+		})
+	}
+}
+
+func TestManifestRejectsEffectLabelsMissingScalarFields(t *testing.T) {
+	p0 := effect.ParamRef{Index: 0}
+	tests := []struct {
+		name string
+		wire effectLabelWire
+		want string
+	}{
+		{
+			name: "length change delta",
+			wire: effectLabelWire{Kind: "mutation.lengthChange", Target: encodeParamRef(p0)},
+			want: "length change delta missing",
+		},
+		{
+			name: "return index",
+			wire: effectLabelWire{
+				Kind:       "returns.return",
+				ReturnType: &effectReturnWire{Kind: "returns.elementOf", Source: encodeParamRef(p0)},
+			},
+			want: "return index missing",
+		},
+		{
+			name: "error return value index",
+			wire: effectLabelWire{Kind: "returns.errorReturn", ErrorIndex: encodeInt(1)},
+			want: "error return value index missing",
+		},
+		{
+			name: "error return error index",
+			wire: effectLabelWire{Kind: "returns.errorReturn", ValueIndex: encodeInt(0)},
+			want: "error return error index missing",
 		},
 	}
 
@@ -1294,6 +1350,117 @@ func TestManifestEffectLabelSendEncodesZeroFromParamExplicitly(t *testing.T) {
 	}
 	if wire == nil || len(wire.Labels) != 1 || wire.Labels[0].FromParam == nil || *wire.Labels[0].FromParam != 0 {
 		t.Fatalf("send label wire = %#v, want explicit fromParam 0", wire)
+	}
+}
+
+func TestManifestParamRefEncodesZeroIndexExplicitly(t *testing.T) {
+	wire := encodeParamRef(effect.ParamRef{Index: 0})
+	if wire == nil || wire.Index == nil || *wire.Index != 0 {
+		t.Fatalf("param ref wire = %#v, want explicit index 0", wire)
+	}
+}
+
+func TestManifestPlaceholderPathEncodesZeroParamExplicitly(t *testing.T) {
+	wire, err := encodePlaceholderPath(pathdom.NewPlaceholder(0).Field("items"))
+	if err != nil {
+		t.Fatalf("encodePlaceholderPath: %v", err)
+	}
+	if wire == nil || wire.Param == nil || *wire.Param != 0 {
+		t.Fatalf("placeholder path wire = %#v, want explicit param 0", wire)
+	}
+}
+
+func TestManifestReturnAllocationTemplateEncodesZeroReturnIndexExplicitly(t *testing.T) {
+	wire, err := encodeReturnAllocationTemplate(signature.ReturnAllocationTemplate{
+		ReturnIndex: 0,
+		Root:        "root",
+		Objects:     []signature.AllocationObjectTemplate{{ID: "root"}},
+	})
+	if err != nil {
+		t.Fatalf("encodeReturnAllocationTemplate: %v", err)
+	}
+	if wire.ReturnIndex == nil || *wire.ReturnIndex != 0 {
+		t.Fatalf("return allocation wire = %#v, want explicit returnIndex 0", wire)
+	}
+}
+
+func TestManifestRecordStaticIntMemberRequiresExplicitIndex(t *testing.T) {
+	stringType, err := encodeType(typ.String)
+	if err != nil {
+		t.Fatalf("encodeType: %v", err)
+	}
+	_, err = decodeType(&typeWire{
+		Kind: "record",
+		StaticMembers: []staticMemberWire{{
+			Kind: "int",
+			Type: stringType,
+		}},
+	})
+	if err == nil || !strings.Contains(err.Error(), "static member int index missing") {
+		t.Fatalf("decodeType error = %v, want missing static member int index", err)
+	}
+}
+
+func TestManifestRecordStaticIntMemberEncodesZeroIndexExplicitly(t *testing.T) {
+	wire, err := encodeType(typetable.NewRecord().StaticIntIndex(0, typ.String).Build())
+	if err != nil {
+		t.Fatalf("encodeType: %v", err)
+	}
+	if wire == nil || len(wire.StaticMembers) != 1 || wire.StaticMembers[0].Index == nil || *wire.StaticMembers[0].Index != 0 {
+		t.Fatalf("record wire = %#v, want explicit static int index 0", wire)
+	}
+}
+
+func TestManifestEffectLabelsEncodeZeroScalarFieldsExplicitly(t *testing.T) {
+	p0 := effect.ParamRef{Index: 0}
+	tests := []struct {
+		name  string
+		label effect.Label
+		check func(t *testing.T, wire effectLabelWire)
+	}{
+		{
+			name:  "length change delta",
+			label: mutation.LengthChange{Target: p0, Delta: 0},
+			check: func(t *testing.T, wire effectLabelWire) {
+				t.Helper()
+				if wire.Delta == nil || *wire.Delta != 0 {
+					t.Fatalf("length change wire = %#v, want explicit delta 0", wire)
+				}
+			},
+		},
+		{
+			name:  "return index",
+			label: returns.Return{ReturnIndex: 0, Transform: returns.ElementOf{Source: p0}},
+			check: func(t *testing.T, wire effectLabelWire) {
+				t.Helper()
+				if wire.ReturnIndex == nil || *wire.ReturnIndex != 0 {
+					t.Fatalf("return wire = %#v, want explicit returnIndex 0", wire)
+				}
+			},
+		},
+		{
+			name:  "error return indices",
+			label: returns.ErrorReturn{ValueIndex: 0, ErrorIndex: 0},
+			check: func(t *testing.T, wire effectLabelWire) {
+				t.Helper()
+				if wire.ValueIndex == nil || *wire.ValueIndex != 0 || wire.ErrorIndex == nil || *wire.ErrorIndex != 0 {
+					t.Fatalf("error return wire = %#v, want explicit valueIndex/errorIndex 0", wire)
+				}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			wire, err := encodeEffectRow(effect.Empty.With(tt.label))
+			if err != nil {
+				t.Fatalf("encodeEffectRow: %v", err)
+			}
+			if wire == nil || len(wire.Labels) != 1 {
+				t.Fatalf("effect row wire = %#v, want one label", wire)
+			}
+			tt.check(t, wire.Labels[0])
+		})
 	}
 }
 
@@ -1406,6 +1573,71 @@ func TestManifestExprRejectsMissingCompoundOperands(t *testing.T) {
 	}
 }
 
+func TestManifestExprRejectsMissingScalarIndex(t *testing.T) {
+	tests := []struct {
+		name string
+		wire *exprWire
+		want string
+	}{
+		{name: "param", wire: &exprWire{Kind: "param"}, want: "param index missing"},
+		{name: "ret", wire: &exprWire{Kind: "ret"}, want: "ret index missing"},
+		{name: "paramLen", wire: &exprWire{Kind: "paramLen"}, want: "paramLen index missing"},
+		{name: "retLen", wire: &exprWire{Kind: "retLen"}, want: "retLen index missing"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if _, err := decodeExpr(tt.wire); err == nil {
+				t.Fatal("decodeExpr succeeded, want missing index error")
+			} else if !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("decodeExpr error = %v, want %q", err, tt.want)
+			}
+		})
+	}
+}
+
+func TestManifestExprEncodesZeroIndexExplicitly(t *testing.T) {
+	tests := []struct {
+		name string
+		expr expr.Expr
+	}{
+		{name: "param", expr: expr.P(0)},
+		{name: "ret", expr: expr.R(0)},
+		{name: "paramLen", expr: expr.PL(0)},
+		{name: "retLen", expr: expr.RL(0)},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			wire, err := encodeExpr(tt.expr)
+			if err != nil {
+				t.Fatalf("encodeExpr: %v", err)
+			}
+			if wire == nil || wire.Index == nil || *wire.Index != 0 {
+				t.Fatalf("expr wire = %#v, want explicit index 0", wire)
+			}
+		})
+	}
+}
+
+func TestManifestProjectionGenericArgRequiresExplicitIndex(t *testing.T) {
+	if _, err := decodeProjectionSteps([]projectionStepWire{{Kind: "genericArg"}}); err == nil {
+		t.Fatal("decodeProjectionSteps succeeded, want missing index error")
+	} else if !strings.Contains(err.Error(), "projection genericArg index missing") {
+		t.Fatalf("decodeProjectionSteps error = %v, want missing genericArg index", err)
+	}
+}
+
+func TestManifestProjectionGenericArgEncodesZeroIndexExplicitly(t *testing.T) {
+	wire, err := encodeProjectionSteps([]projection.Step{projection.GenericArg(0)})
+	if err != nil {
+		t.Fatalf("encodeProjectionSteps: %v", err)
+	}
+	if len(wire) != 1 || wire[0].Index == nil || *wire[0].Index != 0 {
+		t.Fatalf("projection wire = %#v, want explicit index 0", wire)
+	}
+}
+
 func TestManifestExprRejectsInvalidEncodeOp(t *testing.T) {
 	_, err := encodeExpr(expr.BinOp{Op: expr.Op(99), Left: expr.C(1), Right: expr.C(2)})
 	if err == nil {
@@ -1466,7 +1698,7 @@ func TestManifestDecodeIteratorRequiresExplicitKind(t *testing.T) {
 func TestManifestDecodePostconditionRefinementRequiresKnownKind(t *testing.T) {
 	_, err := decodeEffectLabel(effectLabelWire{
 		Kind:       postcondition.NormalReturnRefinementKind,
-		Target:     &paramRefWire{Index: 0},
+		Target:     &paramRefWire{Index: encodeInt(0)},
 		Refinement: &effectRefinementWire{Kind: "future"},
 	})
 	if err == nil || !strings.Contains(err.Error(), `unknown effect refinement kind "future"`) {
@@ -1477,7 +1709,7 @@ func TestManifestDecodePostconditionRefinementRequiresKnownKind(t *testing.T) {
 func TestManifestDecodePostconditionRefinementRequiresRefinement(t *testing.T) {
 	_, err := decodeEffectLabel(effectLabelWire{
 		Kind:   postcondition.NormalReturnRefinementKind,
-		Target: &paramRefWire{Index: 0},
+		Target: &paramRefWire{Index: encodeInt(0)},
 	})
 	if err == nil || !strings.Contains(err.Error(), "missing effect refinement") {
 		t.Fatalf("decodeEffectLabel error = %v, want missing effect refinement", err)

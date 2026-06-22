@@ -173,14 +173,19 @@ func encodeRecord(r *typ.Record) (*typeWire, error) {
 		if err != nil {
 			return nil, err
 		}
-		out.StaticMembers = append(out.StaticMembers, staticMemberWire{
+		memberWire := staticMemberWire{
 			Kind:     encodeStaticMemberKind(member.Kind),
-			Name:     member.Name,
-			Index:    member.Index,
 			Type:     encoded,
 			Optional: member.Optional,
 			Readonly: member.Readonly,
-		})
+		}
+		switch member.Kind {
+		case typ.StaticMemberStringIndex:
+			memberWire.Name = member.Name
+		case typ.StaticMemberIntIndex:
+			memberWire.Index = encodeInt64(member.Index)
+		}
+		out.StaticMembers = append(out.StaticMembers, memberWire)
 	}
 
 	var err error
@@ -226,10 +231,18 @@ func decodeRecord(w *typeWire) (typ.Type, error) {
 		if err != nil {
 			return nil, err
 		}
+		var index int64
+		switch kind {
+		case typ.StaticMemberIntIndex:
+			index, err = decodeRequiredInt64(member.Index, "static member int index missing")
+			if err != nil {
+				return nil, err
+			}
+		}
 		b.AddStaticMember(typ.StaticMember{
 			Kind:     kind,
 			Name:     member.Name,
-			Index:    member.Index,
+			Index:    index,
 			Type:     t,
 			Optional: member.Optional,
 			Readonly: member.Readonly,
