@@ -6,6 +6,12 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
+// OriginCase describes one finite case in a variant-origin family.
+type OriginCase struct {
+	Index int
+	Type  typ.Type
+}
+
 // OriginOfType returns finite variant-origin evidence for structural record
 // unions and literal-tagged records.
 func OriginOfType(t typ.Type) (uint64, []int, bool) {
@@ -22,6 +28,40 @@ func originFamilyCases(family originFamily) []int {
 		cases = append(cases, c.index)
 	}
 	return compactInts(cases)
+}
+
+// OriginCasesOfType returns the full finite case set for t's variant-origin
+// family. It is read-only diagnostic/query metadata; narrowing still flows
+// through OriginOfType and NarrowByOrigin.
+func OriginCasesOfType(t typ.Type) (uint64, []OriginCase, bool) {
+	family, ok := originFamilyOf(t)
+	if !ok {
+		return 0, nil, false
+	}
+	return family.id, publicOriginCases(family.cases), true
+}
+
+// OriginCases returns the full finite case set for a registered family.
+func OriginCases(familyID uint64) ([]OriginCase, bool) {
+	if familyID == 0 {
+		return nil, false
+	}
+	family, ok := loadOriginFamily(familyID)
+	if !ok || len(family.cases) == 0 {
+		return nil, false
+	}
+	return publicOriginCases(family.cases), true
+}
+
+func publicOriginCases(cases []originCase) []OriginCase {
+	if len(cases) == 0 {
+		return nil
+	}
+	out := make([]OriginCase, 0, len(cases))
+	for _, c := range cases {
+		out = append(out, OriginCase{Index: c.index, Type: c.typ})
+	}
+	return out
 }
 
 // NarrowByOrigin narrows t to the cases represented by origin evidence.

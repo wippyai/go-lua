@@ -12,28 +12,29 @@ import (
 )
 
 const (
-	CodeAssignmentType             diagnostic.Code = "type.assignment"
-	CodeMissingMember              diagnostic.Code = "type.member.missing"
-	CodeOptionalMethodCall         diagnostic.Code = "type.call.optional_receiver"
-	CodeNotCallable                diagnostic.Code = "type.call.not_callable"
-	CodeDirectCallNotCallable      diagnostic.Code = "type.call.direct.not_callable"
-	CodeDirectCallTooFewArgs       diagnostic.Code = "type.call.direct.too_few_args"
-	CodeDirectCallTooManyArgs      diagnostic.Code = "type.call.direct.too_many_args"
-	CodeDirectCallArgType          diagnostic.Code = "type.call.direct.argument_type"
-	CodeReturnContractType         diagnostic.Code = "type.return.contract"
-	CodeDirectCallResultAssignment diagnostic.Code = "type.call.direct.result_assignment"
-	CodeOptionalAssignmentTarget   diagnostic.Code = "type.assignment.optional_target"
-	CodeConcatOperand              diagnostic.Code = "type.operator.concat_operand"
-	CodeNonNilAssertAlwaysNil      diagnostic.Code = "type.assert.nonnil_always_nil"
-	CodeNumericForOperand          diagnostic.Code = "type.for.numeric_operand"
-	CodeChannelSelectExhaustive    diagnostic.Code = "channel.select.exhaustiveness"
-	CodeUnresolvedTypeReference    diagnostic.Code = "type.reference.unresolved"
-	CodeUnresolvedValueReference   diagnostic.Code = "value.reference.unresolved"
-	CodeUnusedLocal                diagnostic.Code = "lint.unused.local"
-	CodeDeadAssignment             diagnostic.Code = "lint.dead.assignment"
-	CodeRedundantCondition         diagnostic.Code = "lint.condition.redundant"
-	CodeFrozenTableMutation        diagnostic.Code = "effect.freeze.mutation"
-	CodeResourceUnreleased         diagnostic.Code = "effect.lifecycle.unreleased"
+	CodeAssignmentType               diagnostic.Code = "type.assignment"
+	CodeMissingMember                diagnostic.Code = "type.member.missing"
+	CodeOptionalMethodCall           diagnostic.Code = "type.call.optional_receiver"
+	CodeNotCallable                  diagnostic.Code = "type.call.not_callable"
+	CodeDirectCallNotCallable        diagnostic.Code = "type.call.direct.not_callable"
+	CodeDirectCallTooFewArgs         diagnostic.Code = "type.call.direct.too_few_args"
+	CodeDirectCallTooManyArgs        diagnostic.Code = "type.call.direct.too_many_args"
+	CodeDirectCallArgType            diagnostic.Code = "type.call.direct.argument_type"
+	CodeReturnContractType           diagnostic.Code = "type.return.contract"
+	CodeDirectCallResultAssignment   diagnostic.Code = "type.call.direct.result_assignment"
+	CodeOptionalAssignmentTarget     diagnostic.Code = "type.assignment.optional_target"
+	CodeConcatOperand                diagnostic.Code = "type.operator.concat_operand"
+	CodeNonNilAssertAlwaysNil        diagnostic.Code = "type.assert.nonnil_always_nil"
+	CodeNumericForOperand            diagnostic.Code = "type.for.numeric_operand"
+	CodeChannelSelectExhaustive      diagnostic.Code = "channel.select.exhaustiveness"
+	CodeUnresolvedTypeReference      diagnostic.Code = "type.reference.unresolved"
+	CodeUnresolvedValueReference     diagnostic.Code = "value.reference.unresolved"
+	CodeUnusedLocal                  diagnostic.Code = "lint.unused.local"
+	CodeDeadAssignment               diagnostic.Code = "lint.dead.assignment"
+	CodeRedundantCondition           diagnostic.Code = "lint.condition.redundant"
+	CodeDiscriminatedUnionExhaustive diagnostic.Code = "lint.union.exhaustiveness"
+	CodeFrozenTableMutation          diagnostic.Code = "effect.freeze.mutation"
+	CodeResourceUnreleased           diagnostic.Code = "effect.lifecycle.unreleased"
 )
 
 type producerContext struct {
@@ -171,6 +172,13 @@ func diagnosticProducers(context producerContext) []diagnosticProducer {
 			defaultEnabled: false,
 			produce: func(result *body.Result, _ producerContext, _ map[symbol.ID]*ast.FunctionExpr) []diagnostic.Diagnostic {
 				return redundantConditions(context).Produce(result)
+			},
+		},
+		{
+			codes:          []diagnostic.Code{CodeDiscriminatedUnionExhaustive},
+			defaultEnabled: false,
+			produce: func(result *body.Result, _ producerContext, _ map[symbol.ID]*ast.FunctionExpr) []diagnostic.Diagnostic {
+				return discriminatedUnionExhaustiveness(context).Produce(result)
 			},
 		},
 		{

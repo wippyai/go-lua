@@ -113,11 +113,12 @@ func TestProduceWithConfigAppliesDiagnosticPolicy(t *testing.T) {
 
 func TestDiagnosticProducerRegistryDeclaresPolicyDefaults(t *testing.T) {
 	optInCodes := map[diagnostic.Code]struct{}{
-		CodeUnusedLocal:         {},
-		CodeDeadAssignment:      {},
-		CodeRedundantCondition:  {},
-		CodeFrozenTableMutation: {},
-		CodeResourceUnreleased:  {},
+		CodeUnusedLocal:                  {},
+		CodeDeadAssignment:               {},
+		CodeRedundantCondition:           {},
+		CodeDiscriminatedUnionExhaustive: {},
+		CodeFrozenTableMutation:          {},
+		CodeResourceUnreleased:           {},
 	}
 	allCodes := []diagnostic.Code{
 		CodeAssignmentType,
@@ -139,6 +140,7 @@ func TestDiagnosticProducerRegistryDeclaresPolicyDefaults(t *testing.T) {
 		CodeUnusedLocal,
 		CodeDeadAssignment,
 		CodeRedundantCondition,
+		CodeDiscriminatedUnionExhaustive,
 		CodeFrozenTableMutation,
 		CodeResourceUnreleased,
 	}

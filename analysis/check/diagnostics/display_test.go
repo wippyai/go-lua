@@ -143,6 +143,18 @@ func TestDiagnosticProducerMessagesUseCentralDisplay(t *testing.T) {
 	if got := channelSelectExhaustivenessHelp(); got != "Add an elseif branch for each missing case, or add a default branch when a fallback is valid." {
 		t.Fatalf("channelSelectExhaustivenessHelp = %q", got)
 	}
+	if got := discriminatedUnionExhaustivenessMessage("case", "`action.kind == \"cancel\"`"); got != "discriminated union handling is not exhaustive; missing case: `action.kind == \"cancel\"`" {
+		t.Fatalf("discriminatedUnionExhaustivenessMessage = %q", got)
+	}
+	if got := discriminatedUnionExhaustivenessHelp(); got != "Handle each missing case, or add an else branch when a fallback is valid." {
+		t.Fatalf("discriminatedUnionExhaustivenessHelp = %q", got)
+	}
+	if got := dispatchTableExhaustivenessMessage("key", "`handlers.cancel`"); got != "dispatch table is not exhaustive; missing key: `handlers.cancel`" {
+		t.Fatalf("dispatchTableExhaustivenessMessage = %q", got)
+	}
+	if got := dispatchTableExhaustivenessHelp(); got != "Add each missing dispatch key, or route through an explicit fallback when missing keys are intentional." {
+		t.Fatalf("dispatchTableExhaustivenessHelp = %q", got)
+	}
 
 	if got := frozenTableMutationMessage("session"); got != `cannot mutate frozen table "session"` {
 		t.Fatalf("frozenTableMutationMessage = %q", got)

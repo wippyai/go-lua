@@ -44,6 +44,9 @@ const (
 	labelUnknownType          = "unknown type"
 	labelUnknownValue         = "unknown value"
 	labelChannelCaseTest      = "channel case check"
+	labelUnionCaseTest        = "union case check"
+	labelDispatchLookup       = "dispatch lookup"
+	labelDispatchTable        = "dispatch table"
 	labelFrozenTableMutation  = "mutation of frozen table"
 	labelFrozenTableCall      = "mutating call on frozen table"
 	labelFreezeProof          = "freeze proof"
@@ -78,6 +81,8 @@ func sourceLabelPlacement(message string) diagnostic.LabelPlacement {
 		labelUnknownType,
 		labelUnknownValue,
 		labelChannelCaseTest,
+		labelUnionCaseTest,
+		labelDispatchLookup,
 		labelFrozenTableMutation,
 		labelFrozenTableCall,
 		labelLifecycleAcquire,
@@ -91,6 +96,7 @@ func sourceLabelPlacement(message string) diagnostic.LabelPlacement {
 		labelOverwrite,
 		labelExitBeforeRead,
 		labelProvingGuard,
+		labelDispatchTable,
 		labelFreezeProof:
 		return diagnostic.LabelPlacementAbove
 	default:
@@ -160,6 +166,54 @@ func channelSelectExhaustivenessMessage(caseWord, cases string) string {
 
 func channelSelectExhaustivenessHelp() string {
 	return display.ChannelSelectExhaustivenessHelp()
+}
+
+func discriminatedUnionExhaustivenessMessage(caseWord, cases string) string {
+	return display.DiscriminatedUnionExhaustivenessMessage(caseWord, cases)
+}
+
+func discriminatedUnionExhaustivenessHelp() string {
+	return display.DiscriminatedUnionExhaustivenessHelp()
+}
+
+func dispatchTableExhaustivenessMessage(keyWord, keys string) string {
+	return display.DispatchTableExhaustivenessMessage(keyWord, keys)
+}
+
+func dispatchTableExhaustivenessHelp() string {
+	return display.DispatchTableExhaustivenessHelp()
+}
+
+func selectedDiscriminantPathEvidence(path string) string {
+	return "branch chain checks discriminant " + codeName(path)
+}
+
+func possibleDiscriminantCasesEvidence(cases string) string {
+	return "possible cases: " + cases
+}
+
+func handledDiscriminantCasesEvidence(cases string) string {
+	return "handled cases: " + cases
+}
+
+func missingDiscriminantCasesEvidence(cases string) string {
+	return "missing cases: " + cases
+}
+
+func missingDiscriminantDefaultEvidence() string {
+	return "no default branch handles the remaining union cases"
+}
+
+func dispatchLookupEvidence(table, discriminant string) string {
+	return codeName(table) + " is indexed by discriminant " + codeName(discriminant)
+}
+
+func dispatchTableKeysEvidence(keys string) string {
+	return "dispatch table provides keys: " + keys
+}
+
+func missingDispatchKeysEvidence(keys string) string {
+	return "missing dispatch keys: " + keys
 }
 
 func frozenAssignmentEvidence(containerName string) string {
@@ -710,6 +764,22 @@ func (diagnosticDisplay) ChannelSelectExhaustivenessMessage(caseWord, cases stri
 
 func (diagnosticDisplay) ChannelSelectExhaustivenessHelp() string {
 	return "Add an elseif branch for each missing case, or add a default branch when a fallback is valid."
+}
+
+func (diagnosticDisplay) DiscriminatedUnionExhaustivenessMessage(caseWord, cases string) string {
+	return fmt.Sprintf("discriminated union handling is not exhaustive; missing %s: %s", caseWord, cases)
+}
+
+func (diagnosticDisplay) DiscriminatedUnionExhaustivenessHelp() string {
+	return "Handle each missing case, or add an else branch when a fallback is valid."
+}
+
+func (diagnosticDisplay) DispatchTableExhaustivenessMessage(keyWord, keys string) string {
+	return fmt.Sprintf("dispatch table is not exhaustive; missing %s: %s", keyWord, keys)
+}
+
+func (diagnosticDisplay) DispatchTableExhaustivenessHelp() string {
+	return "Add each missing dispatch key, or route through an explicit fallback when missing keys are intentional."
 }
 
 func (diagnosticDisplay) FrozenTableMutationMessage(containerName string) string {

@@ -55,6 +55,44 @@ func TestCacheDoesNotRetainNegativeOriginFamilyEntries(t *testing.T) {
 	}
 }
 
+func TestOriginCasesExposeReadOnlyFiniteFamilyCases(t *testing.T) {
+	left := typetable.NewRecord().
+		Field("kind", typ.LiteralString("left")).
+		Build()
+	right := typetable.NewRecord().
+		Field("kind", typ.LiteralString("right")).
+		Build()
+	union := typeexpr.Union(left, right)
+
+	family, originCases, ok := OriginOfType(union)
+	if !ok {
+		t.Fatal("OriginOfType returned !ok")
+	}
+	caseFamily, cases, ok := OriginCasesOfType(union)
+	if !ok {
+		t.Fatal("OriginCasesOfType returned !ok")
+	}
+	if caseFamily != family {
+		t.Fatalf("OriginCasesOfType family = %d, want %d", caseFamily, family)
+	}
+	if len(cases) != 2 || len(originCases) != 2 {
+		t.Fatalf("cases = %#v origin=%v, want two cases", cases, originCases)
+	}
+	if cases[0].Index != originCases[0] || cases[1].Index != originCases[1] {
+		t.Fatalf("case indices = %d,%d want %v", cases[0].Index, cases[1].Index, originCases)
+	}
+	if !typ.TypeEquals(cases[0].Type, left) || !typ.TypeEquals(cases[1].Type, right) {
+		t.Fatalf("case types = %s / %s, want %s / %s", cases[0].Type, cases[1].Type, left, right)
+	}
+	loaded, ok := OriginCases(family)
+	if !ok {
+		t.Fatal("OriginCases returned !ok")
+	}
+	if len(loaded) != len(cases) || loaded[0].Index != cases[0].Index || loaded[1].Index != cases[1].Index {
+		t.Fatalf("OriginCases = %#v, want %#v", loaded, cases)
+	}
+}
+
 func TestNarrowByPathLiteralNarrowsNilBearingUnion(t *testing.T) {
 	// A flattened optional discriminated union (nil | A | B) — as produced when a
 	// guarded optional surfaces with nil as a union member rather than an

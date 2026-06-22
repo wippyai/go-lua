@@ -65,7 +65,13 @@ func (p channelSelectExhaustiveness) Produce(result *body.Result) []diagnostic.D
 		return nil
 	}
 	cases := newChannelSelectCaseIndex(selects)
-	nested := nestedElseIfStatements(branches)
+	ifs := make([]*ast.IfStmt, 0, len(branches))
+	for _, branch := range branches {
+		if branch.fact.If != nil {
+			ifs = append(ifs, branch.fact.If)
+		}
+	}
+	nested := nestedElseIfStatements(ifs)
 	byIf := make(map[*ast.IfStmt]channelSelectBranch, len(branches))
 	for _, branch := range branches {
 		if branch.fact.If != nil {
@@ -138,27 +144,6 @@ func channelSelectBranchConditions(result *body.Result, graph cfg.Graph) []chann
 		out = append(out, channelSelectBranch{point: point, fact: branch})
 	}
 	return out
-}
-
-func nestedElseIfStatements(branches []channelSelectBranch) map[*ast.IfStmt]bool {
-	out := make(map[*ast.IfStmt]bool)
-	for _, branch := range branches {
-		if branch.fact.If == nil || len(branch.fact.If.Else) == 0 {
-			continue
-		}
-		if nested, ok := branch.fact.If.Else[0].(*ast.IfStmt); ok && nested != nil {
-			out[nested] = true
-		}
-	}
-	return out
-}
-
-func hasElseIf(stmt *ast.IfStmt) bool {
-	if stmt == nil || len(stmt.Else) == 0 {
-		return false
-	}
-	_, ok := stmt.Else[0].(*ast.IfStmt)
-	return ok
 }
 
 func channelSelectChainDiagnostic(
@@ -250,22 +235,6 @@ func bestChannelSelectCandidate(handledBySelect map[int]map[int]bool) (int, map[
 		}
 	}
 	return selected, selectedHandled, selected != -1
-}
-
-func ifElseIfChain(head *ast.IfStmt) []*ast.IfStmt {
-	var chain []*ast.IfStmt
-	for stmt := head; stmt != nil; {
-		chain = append(chain, stmt)
-		if len(stmt.Else) == 0 {
-			break
-		}
-		next, ok := stmt.Else[0].(*ast.IfStmt)
-		if !ok {
-			break
-		}
-		stmt = next
-	}
-	return chain
 }
 
 func newChannelSelectCaseIndex(selects []selectInfo) channelSelectCaseIndex {
