@@ -191,7 +191,7 @@ func resolvePathValueAtCached(
 	if resolver == nil {
 		return pathValue{}, false
 	}
-	pathKey := resolver.KeyAt(point, targetPath)
+	pathKey := factPathKeyAt(resolver, point, targetPath)
 	if pathKey == "" {
 		return pathValue{}, false
 	}
@@ -269,15 +269,15 @@ func projectPathDynamicIndexValue(
 	if parent.IsEmpty() {
 		return product.Value{}, false
 	}
-	tableStateKey := resolver.KeyAt(point, parent)
-	if tableStateKey == "" {
-		return product.Value{}, false
-	}
-	tableKey, ok := resolver.KeySpace().FromStateKey(tableStateKey)
+	tableStateKey, ok := factStateKeyAt(resolver, point, parent)
 	if !ok {
 		return product.Value{}, false
 	}
-	targetKey := resolver.KeyAt(point, targetPath)
+	tableKey, ok := resolver.KeySpace().FromStateKey(tableStateKey.PathKey())
+	if !ok {
+		return product.Value{}, false
+	}
+	targetKey := factPathKeyAt(resolver, point, targetPath)
 	mayMatchAllowed := pathKeyHasPresentProof(reg, resolver.KeySpace(), out, targetKey)
 	last := targetPath.Segments[len(targetPath.Segments)-1]
 	snapshot := out.DynamicIndexFactsSnapshot()

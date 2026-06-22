@@ -192,11 +192,11 @@ func projectFromDynamicIndexFacts(config Config, point cfg.Point, p pathdom.Path
 		return product.Value{}, false
 	}
 	parent := p.Parent()
-	tableStateKey := config.Visibility.KeyAt(point, parent)
-	if tableStateKey == "" {
+	tableStateKey, ok := config.Visibility.StateKeyAt(point, parent)
+	if !ok {
 		return product.Value{}, false
 	}
-	tableKey, ok := config.Visibility.KeySpace().FromStateKey(tableStateKey)
+	tableKey, ok := config.Visibility.KeySpace().FromStateKey(tableStateKey.PathKey())
 	if !ok {
 		return product.Value{}, false
 	}
@@ -304,11 +304,11 @@ func overlayRootStaticMemberWitness(config Config, point cfg.Point, root pathdom
 	if config.Visibility == nil || !sourcevalue.RuntimeMayBeTable(reg, value, true) {
 		return value
 	}
-	rootKey := config.Visibility.KeyAt(point, root)
-	if rootKey == "" {
+	rootKey, ok := config.Visibility.StateKeyAt(point, root)
+	if !ok {
 		return value
 	}
-	rootLocal, ok := pathaddr.LocalPathFromKey(rootKey)
+	rootLocal, ok := pathaddr.LocalPathFromKey(rootKey.PathKey())
 	if !ok || len(rootLocal.Segments) != 0 {
 		return value
 	}

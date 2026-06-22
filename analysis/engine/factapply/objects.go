@@ -48,7 +48,7 @@ func applyObjectLiteralEntries(
 		if !ok {
 			return true
 		}
-		if resolver.KeyAt(ctx.Point, entryPath) == "" {
+		if factPathKeyAt(resolver, ctx.Point, entryPath) == "" {
 			return true
 		}
 		source := entry.Source()

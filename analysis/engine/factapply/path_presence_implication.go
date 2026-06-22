@@ -266,7 +266,7 @@ func pathKeyCurrentlyVisible(resolver *visibility.Resolver, point cfg.Point, pat
 	if !ok {
 		return true
 	}
-	current := resolver.KeyAt(point, pathdom.Path{Symbol: k.Sym, Segments: resolver.KeySpace().Segments(k)})
+	current := factPathKeyAt(resolver, point, pathdom.Path{Symbol: k.Sym, Segments: resolver.KeySpace().Segments(k)})
 	return current == pathKey
 }
 

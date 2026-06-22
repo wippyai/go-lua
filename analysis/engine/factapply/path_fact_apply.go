@@ -333,10 +333,18 @@ func branchPathEvidenceOtherPathKeyAt(
 }
 
 func factPathKeyAt(resolver *visibility.Resolver, point cfg.Point, path pathdom.Path) pathdom.PathKey {
-	if resolver == nil {
+	key, ok := factStateKeyAt(resolver, point, path)
+	if !ok {
 		return ""
 	}
-	return resolver.KeyAt(point, path)
+	return key.PathKey()
+}
+
+func factStateKeyAt(resolver *visibility.Resolver, point cfg.Point, path pathdom.Path) (pathaddr.StateKey, bool) {
+	if resolver == nil {
+		return "", false
+	}
+	return resolver.StateKeyAt(point, path)
 }
 
 func addPathEqualityProofFromSource(

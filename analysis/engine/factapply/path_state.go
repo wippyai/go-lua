@@ -22,7 +22,7 @@ func writePathAt(
 	path pathdom.Path,
 	value product.Value,
 ) (state.State, bool) {
-	pathKey := resolver.KeyAt(point, path)
+	pathKey := factPathKeyAt(resolver, point, path)
 	if pathKey == "" {
 		return s, false
 	}
@@ -111,7 +111,7 @@ func invalidatePathAt(
 	path pathdom.Path,
 	invalidate func(state.State, *keyspace.KeySpace, pathdom.PathKey) (state.State, bool),
 ) (state.State, bool) {
-	pathKey := resolver.KeyAt(point, path)
+	pathKey := factPathKeyAt(resolver, point, path)
 	if pathKey == "" {
 		return s, false
 	}
@@ -135,7 +135,7 @@ func invalidateRootOriginsForPathMutationAt(
 	path pathdom.Path,
 	includeDescendantAliases bool,
 ) (state.State, bool) {
-	pathKey := resolver.KeyAt(point, path)
+	pathKey := factPathKeyAt(resolver, point, path)
 	if pathKey == "" {
 		return s, false
 	}
@@ -164,7 +164,7 @@ func invalidateRootStructuralWitnessForPathMutationAt(
 	point cfg.Point,
 	path pathdom.Path,
 ) (state.State, bool) {
-	pathKey := resolver.KeyAt(point, path)
+	pathKey := factPathKeyAt(resolver, point, path)
 	if pathKey == "" {
 		return s, false
 	}
@@ -214,7 +214,7 @@ func invalidateHeapStaticMembersAt(
 	path pathdom.Path,
 	descendantsOnly bool,
 ) (state.State, bool) {
-	pathKey := resolver.KeyAt(point, path)
+	pathKey := factPathKeyAt(resolver, point, path)
 	if pathKey == "" {
 		return s, false
 	}

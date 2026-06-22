@@ -9,6 +9,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
+	"github.com/wippyai/go-lua/analysis/engine/visibility"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/cfgbuild"
 	"github.com/wippyai/go-lua/analysis/symbol"
@@ -83,5 +84,41 @@ func TestSourceValueAtBoundaryDoesNotUseExplanationRecovery(t *testing.T) {
 	}
 	if !product.Equal(reg, recovered, concreteDeclaration) {
 		t.Fatalf("declaration recovery = %v, want declaration value %v", recovered, concreteDeclaration)
+	}
+}
+
+func TestBoundaryStateKeyIsCanonicalTypedPathVocabulary(t *testing.T) {
+	point := cfg.Point(9)
+	target := symbol.ID(42)
+	p := pathdom.NewPath(target, "resource").Field("tx")
+
+	builder := visibility.NewBuilder()
+	builder.Define(point, target, "resource")
+	resolver := visibility.NewResolver(builder.Build())
+	result := &Result{visibility: resolver}
+
+	stateKey, ok := result.StateKeyAtBoundary(point, p)
+	if !ok {
+		t.Fatal("StateKeyAtBoundary returned !ok")
+	}
+
+	pathKey, ok := result.PathKeyAtBoundary(point, p)
+	if !ok {
+		t.Fatal("PathKeyAtBoundary returned !ok")
+	}
+	if pathKey != stateKey.PathKey() {
+		t.Fatalf("PathKeyAtBoundary = %q, want typed state key %q", pathKey, stateKey.PathKey())
+	}
+
+	resourceKey, ok := result.TypestateResourceKeyAtBoundary(point, p)
+	if !ok {
+		t.Fatal("TypestateResourceKeyAtBoundary returned !ok")
+	}
+	if resourceKey != stateKey {
+		t.Fatalf("TypestateResourceKeyAtBoundary = %q, want %q without solved aliases", resourceKey, stateKey)
+	}
+
+	if _, ok := result.StateKeyAtBoundary(point, pathdom.Path{}); ok {
+		t.Fatal("StateKeyAtBoundary accepted an empty path")
 	}
 }

@@ -155,18 +155,26 @@ func (r *Result) PathValueAtBoundary(point cfg.Point, p pathdom.Path) (product.V
 	return value, true
 }
 
+// StateKeyAtBoundary returns the typed point-visible state key for p at point.
+// It is the canonical boundary vocabulary for state lanes that use visible
+// source paths; PathKeyAtBoundary exists only for compatibility with lanes that
+// still expose the legacy string carrier.
+func (r *Result) StateKeyAtBoundary(point cfg.Point, p pathdom.Path) (pathaddr.StateKey, bool) {
+	if r == nil || r.visibility == nil || p.IsEmpty() {
+		return "", false
+	}
+	return r.visibility.StateKeyAt(point, p)
+}
+
 // PathKeyAtBoundary returns the canonical path key used by fact application at
 // point. It is exposed for diagnostics that need to match solved state lanes
 // back to call-boundary facts without re-deriving visibility policy.
 func (r *Result) PathKeyAtBoundary(point cfg.Point, p pathdom.Path) (pathdom.PathKey, bool) {
-	if r == nil || r.visibility == nil || p.IsEmpty() {
+	key, ok := r.StateKeyAtBoundary(point, p)
+	if !ok {
 		return "", false
 	}
-	key := r.visibility.KeyAt(point, p)
-	if key == "" {
-		return "", false
-	}
-	return key, true
+	return key.PathKey(), true
 }
 
 func (r *Result) rootOrVisibleStateKeyAtBoundary(point cfg.Point, p pathdom.Path) (pathaddr.StateKey, bool) {
@@ -191,11 +199,7 @@ func (r *Result) relationGraphKeyAtBoundary(point cfg.Point, p pathdom.Path, len
 // typestate lane at point. It folds proven path equality, matching the
 // call-boundary application semantics.
 func (r *Result) TypestateResourceKeyAtBoundary(point cfg.Point, p pathdom.Path) (pathaddr.StateKey, bool) {
-	key, ok := r.PathKeyAtBoundary(point, p)
-	if !ok {
-		return "", false
-	}
-	stateKey, ok := pathaddr.StateKeyFromPathKey(key)
+	stateKey, ok := r.StateKeyAtBoundary(point, p)
 	if !ok {
 		return "", false
 	}
@@ -258,7 +262,7 @@ func (r *Result) LengthFloorAtBoundary(point cfg.Point, p pathdom.Path) (int64, 
 	if !ok {
 		return 0, false
 	}
-	pathKey, keyOK := r.visibility.StateKeyAt(point, p)
+	pathKey, keyOK := r.StateKeyAtBoundary(point, p)
 	if !keyOK {
 		return 0, false
 	}

@@ -146,11 +146,11 @@ func applyCallOutcomeFacts(
 		out = applyFrozenTableFact(ctx.Registry, resolver, projectPath, ctx.Point, out, targetPath)
 	}
 	for _, delta := range normalReturnFacts.EffectDeltas {
-		targetStateKey, ok := callOutcomePathKeyAt(resolver, ctx.Point, bindings, delta.Target)
+		targetStateKey, ok := callOutcomeStateKeyAt(resolver, ctx.Point, bindings, delta.Target)
 		if !ok {
 			continue
 		}
-		targetKey, ok := resolver.KeySpace().FromStateKey(targetStateKey)
+		targetKey, ok := resolver.KeySpace().FromStateKey(targetStateKey.PathKey())
 		if !ok {
 			continue
 		}
@@ -161,19 +161,11 @@ func applyCallOutcomeFacts(
 		}, delta.Value)
 	}
 	for _, relation := range normalReturnFacts.StoreRelations {
-		sourceKey, ok := callOutcomePathKeyAt(resolver, ctx.Point, bindings, relation.Source)
+		sourceStateKey, ok := callOutcomeStateKeyAt(resolver, ctx.Point, bindings, relation.Source)
 		if !ok {
 			continue
 		}
-		intoKey, ok := callOutcomePathKeyAt(resolver, ctx.Point, bindings, relation.Into)
-		if !ok {
-			continue
-		}
-		sourceStateKey, ok := pathaddr.StateKeyFromPathKey(sourceKey)
-		if !ok {
-			continue
-		}
-		intoStateKey, ok := pathaddr.StateKeyFromPathKey(intoKey)
+		intoStateKey, ok := callOutcomeStateKeyAt(resolver, ctx.Point, bindings, relation.Into)
 		if !ok {
 			continue
 		}
@@ -183,12 +175,8 @@ func applyCallOutcomeFacts(
 		})
 	}
 	for _, fact := range normalReturnFacts.LifecycleFacts {
-		targetKey, ok := callOutcomePathKeyAt(resolver, ctx.Point, bindings, fact.Target)
+		targetStateKey, ok := callOutcomeStateKeyAt(resolver, ctx.Point, bindings, fact.Target)
 		if !ok || fact.Protocol == "" {
-			continue
-		}
-		targetStateKey, ok := pathaddr.StateKeyFromPathKey(targetKey)
-		if !ok {
 			continue
 		}
 		resource := out.CanonicalTypestateResource(resolver.KeySpace(), targetStateKey, fact.Protocol)
@@ -206,16 +194,12 @@ func applyCallOutcomeFacts(
 		if !ok {
 			continue
 		}
-		targetStateKey := factPathKeyAt(resolver, ctx.Point, targetPath)
-		if targetStateKey == "" {
-			continue
-		}
-		targetAddress, ok := pathaddr.StateKeyFromPathKey(targetStateKey)
+		targetStateKey, ok := factStateKeyAt(resolver, ctx.Point, targetPath)
 		if !ok {
 			continue
 		}
 		out = out.AddEscapeEvent(state.EscapeEvent{
-			Target:    targetAddress,
+			Target:    targetStateKey,
 			Kind:      event.Kind,
 			Recursive: event.Recursive,
 		})
@@ -789,9 +773,9 @@ func callOutcomeStateKeyAt(
 	bindings []pathdom.Path,
 	path pathdom.Path,
 ) (pathaddr.StateKey, bool) {
-	key, ok := callOutcomePathKeyAt(resolver, point, bindings, path)
+	targetPath, ok := path.Substitute(bindings)
 	if !ok {
 		return "", false
 	}
-	return pathaddr.StateKeyFromPathKey(key)
+	return factStateKeyAt(resolver, point, targetPath)
 }

@@ -348,7 +348,7 @@ func narrowNestedUnionDescendant(
 		constraint = product.Set(reg, constraint, variantorigin.Key, variantorigin.Of(family, cases))
 		anchor, ok := resolvePathValueAtCached(typeValues, reg, resolver, point, out, anchorPath, projectPath)
 		if !ok {
-			pathKey := resolver.KeyAt(point, anchorPath)
+			pathKey := factPathKeyAt(resolver, point, anchorPath)
 			if pathKey == "" {
 				return out, false
 			}
