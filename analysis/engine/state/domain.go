@@ -22,12 +22,28 @@ func Domain(reg *axis.Registry) lattice.Lattice[State] {
 // enabled lanes. Disabled lanes are ignored by Equal/LessOrEq and dropped by
 // Join/Widen.
 func DomainWithLaneSet(reg *axis.Registry, lanes LaneSet) lattice.Lattice[State] {
-	return defaultDomainLaneCatalog.DomainWithLaneSet(reg, lanes)
+	domain, err := TryDomainWithLaneSet(reg, lanes)
+	if err != nil {
+		panic(err)
+	}
+	return domain
+}
+
+// TryDomainWithLaneSet builds a State lattice from an exact ordered lane
+// selection, returning configuration errors instead of panicking. This is the
+// caller-facing constructor for tools that expose lane enable/disable controls.
+func TryDomainWithLaneSet(reg *axis.Registry, lanes LaneSet) (lattice.Lattice[State], error) {
+	return defaultDomainLaneCatalog.TryDomainWithLaneSet(reg, lanes)
 }
 
 // DomainWithLanes is the compatibility form of DomainWithLaneSet.
 func DomainWithLanes(reg *axis.Registry, lanes []LaneID) lattice.Lattice[State] {
 	return DomainWithLaneSet(reg, LaneSet(lanes))
+}
+
+// TryDomainWithLanes is the compatibility form of TryDomainWithLaneSet.
+func TryDomainWithLanes(reg *axis.Registry, lanes []LaneID) (lattice.Lattice[State], error) {
+	return TryDomainWithLaneSet(reg, LaneSet(lanes))
 }
 
 type stateLaneFactory struct {

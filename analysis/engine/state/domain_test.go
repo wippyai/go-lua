@@ -1,6 +1,7 @@
 package state
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
@@ -87,6 +88,25 @@ func TestDomainLaneSetValidatesAndCopiesSelection(t *testing.T) {
 	withFrozen := withoutFrozen.With(LaneFrozenTables)
 	if !withFrozen.Has(LaneFrozenTables) {
 		t.Fatal("With did not add frozen-table lane")
+	}
+
+	if err := catalog.ValidateLaneSet(LaneSet{LaneValues, LaneFrozenTables}); err != nil {
+		t.Fatalf("ValidateLaneSet(valid) error = %v", err)
+	}
+	if _, err := catalog.TryDomainWithLaneSet(reg, LaneSet{LaneValues}); err != nil {
+		t.Fatalf("TryDomainWithLaneSet(valid) error = %v", err)
+	}
+	if _, err := TryDomainWithLanes(reg, []LaneID{LaneValues}); err != nil {
+		t.Fatalf("TryDomainWithLanes(valid) error = %v", err)
+	}
+	if err := catalog.ValidateLaneSet(LaneSet{LaneID("not-a-lane")}); err == nil || !strings.Contains(err.Error(), `unknown domain lane "not-a-lane"`) {
+		t.Fatalf("ValidateLaneSet(unknown) error = %v, want unknown lane", err)
+	}
+	if _, err := catalog.TryDomainWithLaneSet(reg, LaneSet{LaneID("not-a-lane")}); err == nil || !strings.Contains(err.Error(), `unknown domain lane "not-a-lane"`) {
+		t.Fatalf("TryDomainWithLaneSet(unknown) error = %v, want unknown lane", err)
+	}
+	if _, err := TryDomainWithLanes(reg, []LaneID{LaneValues, LaneValues}); err == nil || !strings.Contains(err.Error(), `duplicate domain lane "values"`) {
+		t.Fatalf("TryDomainWithLanes(duplicate) error = %v, want duplicate lane", err)
 	}
 
 	requirePanic(t, func() {
