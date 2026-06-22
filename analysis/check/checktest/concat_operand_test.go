@@ -611,6 +611,22 @@ end
 	}
 }
 
+func TestCheckConcatReportsTruthyGuardInvalidatedByReassignment(t *testing.T) {
+	result := Check(`
+local function label(owner: string?): string
+    if owner then
+        owner = nil
+        return "owner:" .. owner
+    end
+    return "missing"
+end
+`)
+	diag := requireDiagnosticCodeWithEvidence(t, result, diagnostics.CodeConcatOperand, "right operand `owner` has type nil")
+	if diag.Severity != diagnostic.SeverityWarning {
+		t.Fatalf("severity = %s, want warning by default", diag.Severity)
+	}
+}
+
 func requireDiagnosticCode(t *testing.T, result Result, code diagnostic.Code) diagnostic.Diagnostic {
 	t.Helper()
 	for _, diag := range result.Diagnostics {
