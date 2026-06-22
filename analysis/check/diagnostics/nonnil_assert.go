@@ -68,9 +68,11 @@ func (p nonNilAssertions) walk(expr ast.Expr, check nonNilAssertCheck, seen map[
 	if expr == nil || depth > typ.DefaultRecursionDepth {
 		return
 	}
-	switch e := expr.(type) {
-	case *ast.NonNilAssertExpr:
-		p.walk(e.Expr, check, seen, out, depth+1)
+	walkChild := func(child ast.Expr) {
+		p.walk(child, check, seen, out, depth+1)
+	}
+	if e, ok := expr.(*ast.NonNilAssertExpr); ok {
+		walkExprChildren(expr, walkChild)
 		key := nonNilAssertSeenKey{expr: e, point: check.point}
 		if _, done := seen[key]; done {
 			return
@@ -79,50 +81,9 @@ func (p nonNilAssertions) walk(expr ast.Expr, check nonNilAssertCheck, seen map[
 		if d, ok := check.diagnostic(e); ok {
 			*out = append(*out, d)
 		}
-	case *ast.CastExpr:
-		p.walk(e.Expr, check, seen, out, depth+1)
-	case *ast.AttrGetExpr:
-		p.walk(e.Object, check, seen, out, depth+1)
-		if e.KeySyntax == ast.AttrKeyIndex {
-			p.walk(e.Key, check, seen, out, depth+1)
-		}
-	case *ast.FuncCallExpr:
-		p.walk(e.Func, check, seen, out, depth+1)
-		p.walk(e.Receiver, check, seen, out, depth+1)
-		for _, arg := range e.Args {
-			p.walk(arg, check, seen, out, depth+1)
-		}
-	case *ast.TableExpr:
-		for _, field := range e.Fields {
-			if field == nil {
-				continue
-			}
-			if field.KeySyntax == ast.AttrKeyIndex {
-				p.walk(field.Key, check, seen, out, depth+1)
-			}
-			p.walk(field.Value, check, seen, out, depth+1)
-		}
-	case *ast.LogicalOpExpr:
-		p.walk(e.Lhs, check, seen, out, depth+1)
-		p.walk(e.Rhs, check, seen, out, depth+1)
-	case *ast.RelationalOpExpr:
-		p.walk(e.Lhs, check, seen, out, depth+1)
-		p.walk(e.Rhs, check, seen, out, depth+1)
-	case *ast.StringConcatOpExpr:
-		p.walk(e.Lhs, check, seen, out, depth+1)
-		p.walk(e.Rhs, check, seen, out, depth+1)
-	case *ast.ArithmeticOpExpr:
-		p.walk(e.Lhs, check, seen, out, depth+1)
-		p.walk(e.Rhs, check, seen, out, depth+1)
-	case *ast.UnaryMinusOpExpr:
-		p.walk(e.Expr, check, seen, out, depth+1)
-	case *ast.UnaryNotOpExpr:
-		p.walk(e.Expr, check, seen, out, depth+1)
-	case *ast.UnaryLenOpExpr:
-		p.walk(e.Expr, check, seen, out, depth+1)
-	case *ast.UnaryBNotOpExpr:
-		p.walk(e.Expr, check, seen, out, depth+1)
+		return
 	}
+	walkExprChildren(expr, walkChild)
 }
 
 type nonNilAssertCheck struct {
