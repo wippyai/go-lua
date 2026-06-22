@@ -1854,6 +1854,62 @@ local out = dispatch(router, action)
 	})
 }
 
+func TestDiscriminatedUnionExhaustivenessKeepsRegistrationsAfterKnownNonCaseDynamicKey(t *testing.T) {
+	result := Check(`
+type Begin = { kind: "begin", id: string }
+type Commit = { kind: "commit", payment_id: string }
+type Cancel = { kind: "cancel", reason: string }
+type Action = Begin | Commit | Cancel
+
+local key = "audit"
+local router: any = {}
+router:on("begin", function(action: Action): string return action.kind end)
+router:on("commit", function(action: Action): string return action.kind end)
+router:on(key, function(action: Action): string return action.kind end)
+
+local action: Action = { kind = "begin", id = "evt-1" }
+local out = router:dispatch(action)
+`, WithDiagnosticRule(
+		diagnostics.CodeDiscriminatedUnionExhaustive,
+		diagnostic.Enable(),
+	))
+	requireDiagnostic(t, result, diagnosticExpectation{
+		Code:            diagnostics.CodeDiscriminatedUnionExhaustive,
+		Severity:        diagnostic.SeverityWarning,
+		DiagnosticCount: 1,
+		MessageContains: []string{"registered callbacks are not exhaustive", "router.cancel"},
+		EvidenceOrdered: []string{
+			"`router` is dispatched with discriminant `action.kind`",
+			"registered cases: `router.begin`, `router.commit`",
+			"missing registrations: `router.cancel` for `action.kind == \"cancel\"`",
+		},
+	})
+}
+
+func TestDiscriminatedUnionExhaustivenessAcceptsKnownCaseDynamicRegistration(t *testing.T) {
+	result := Check(`
+type Begin = { kind: "begin", id: string }
+type Commit = { kind: "commit", payment_id: string }
+type Cancel = { kind: "cancel", reason: string }
+type Action = Begin | Commit | Cancel
+
+local key = "cancel"
+local router: any = {}
+router:on("begin", function(action: Action): string return action.kind end)
+router:on("commit", function(action: Action): string return action.kind end)
+router:on(key, function(action: Action): string return action.kind end)
+
+local action: Action = { kind = "begin", id = "evt-1" }
+local out = router:dispatch(action)
+`, WithDiagnosticRule(
+		diagnostics.CodeDiscriminatedUnionExhaustive,
+		diagnostic.Enable(),
+	))
+	if hasDiagnosticCode(result.Diagnostics, diagnostics.CodeDiscriminatedUnionExhaustive) {
+		t.Fatalf("diagnostics = %#v, want no exhaustive-union warning after known dynamic registration", result.Diagnostics)
+	}
+}
+
 func TestDiscriminatedUnionExhaustivenessAcceptsDominatingStaticDispatchFill(t *testing.T) {
 	result := Check(`
 type Begin = { kind: "begin", id: string }
@@ -2209,6 +2265,64 @@ local handler = registry.handlers[action.kind]
 	))
 	if hasDiagnosticCode(result.Diagnostics, diagnostics.CodeDiscriminatedUnionExhaustive) {
 		t.Fatalf("diagnostics = %#v, want no exhaustive-union warning after nested dynamic dispatch mutation", result.Diagnostics)
+	}
+}
+
+func TestDiscriminatedUnionExhaustivenessKeepsDispatchTableAfterKnownNonCaseDynamicMutation(t *testing.T) {
+	result := Check(`
+type Begin = { kind: "begin", id: string }
+type Commit = { kind: "commit", payment_id: string }
+type Cancel = { kind: "cancel", reason: string }
+type Action = Begin | Commit | Cancel
+
+local key = "audit"
+local handlers = {
+    begin = function(action: Action): string return action.kind end,
+    commit = function(action: Action): string return action.kind end,
+}
+handlers[key] = function(action: Action): string return action.kind end
+
+local action: Action = { kind = "begin", id = "evt-1" }
+local handler = handlers[action.kind]
+`, WithDiagnosticRule(
+		diagnostics.CodeDiscriminatedUnionExhaustive,
+		diagnostic.Enable(),
+	))
+	requireDiagnostic(t, result, diagnosticExpectation{
+		Code:            diagnostics.CodeDiscriminatedUnionExhaustive,
+		Severity:        diagnostic.SeverityWarning,
+		DiagnosticCount: 1,
+		MessageContains: []string{"dispatch table is not exhaustive", "handlers.cancel"},
+		EvidenceOrdered: []string{
+			"`handlers` is indexed by discriminant `action.kind`",
+			"dispatch table provides keys: `handlers.begin`, `handlers.commit`",
+			"missing dispatch keys: `handlers.cancel` for `action.kind == \"cancel\"`",
+		},
+	})
+}
+
+func TestDiscriminatedUnionExhaustivenessAcceptsKnownCaseDynamicDispatchFill(t *testing.T) {
+	result := Check(`
+type Begin = { kind: "begin", id: string }
+type Commit = { kind: "commit", payment_id: string }
+type Cancel = { kind: "cancel", reason: string }
+type Action = Begin | Commit | Cancel
+
+local key = "cancel"
+local handlers = {
+    begin = function(action: Action): string return action.kind end,
+    commit = function(action: Action): string return action.kind end,
+}
+handlers[key] = function(action: Action): string return action.kind end
+
+local action: Action = { kind = "begin", id = "evt-1" }
+local handler = handlers[action.kind]
+`, WithDiagnosticRule(
+		diagnostics.CodeDiscriminatedUnionExhaustive,
+		diagnostic.Enable(),
+	))
+	if hasDiagnosticCode(result.Diagnostics, diagnostics.CodeDiscriminatedUnionExhaustive) {
+		t.Fatalf("diagnostics = %#v, want no exhaustive-union warning after known dynamic dispatch fill", result.Diagnostics)
 	}
 }
 

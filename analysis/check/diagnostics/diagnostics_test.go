@@ -5703,6 +5703,18 @@ func TestOptionalPathEquivalenceUsesDominatingAliasDeclaration(t *testing.T) {
 	}
 }
 
+func TestStaticStringExprValueAtUsesBoundaryLiteralType(t *testing.T) {
+	result := runDiagnosticsResult(t, `
+		local key = "audit"
+		local sink = key
+	`)
+	point, expr := requireLocalAssignmentExprByName(t, result, "sink")
+	got, ok := staticStringExprValueAt(result, point, expr)
+	if !ok || got != "audit" {
+		t.Fatalf("staticStringExprValueAt = (%q, %v), want audit literal", got, ok)
+	}
+}
+
 func TestDiagnosticFlowCacheCachesImmediateDominators(t *testing.T) {
 	result := runDiagnosticsResult(t, `
 		local seed = 1

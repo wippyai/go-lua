@@ -116,7 +116,7 @@ func collectDispatchTableSummaries(result *body.Result, flow *diagnosticFlowCach
 			}
 		}
 		if fact, ok := result.OrdinaryAssignment(point); ok {
-			updateDispatchTableSummariesForAssignment(out, fact)
+			updateDispatchTableSummariesForAssignment(result, out, point, fact)
 		}
 		if _, ok := result.Call(point); ok {
 			updateDispatchTableSummariesForCall(result, out, point)
@@ -176,34 +176,24 @@ func cloneDispatchKeySet(in map[string]bool) map[string]bool {
 	return out
 }
 
-func updateDispatchTableSummariesForAssignment(summaries map[pathdom.PathKey]dispatchTableSummary, fact semantics.OrdinaryAssignmentFact) {
+func updateDispatchTableSummariesForAssignment(result *body.Result, summaries map[pathdom.PathKey]dispatchTableSummary, point cfg.Point, fact semantics.OrdinaryAssignmentFact) {
 	if len(summaries) == 0 {
 		return
 	}
 	for summaryKey, summary := range summaries {
-		if fact.HasPath {
-			key, staticKey, touches := dispatchTableAssignmentKeyForPath(fact, summary.path)
-			if !touches {
-				continue
-			}
-			if !staticKey {
-				delete(summaries, summaryKey)
-				continue
-			}
-			if summary.keys == nil {
-				summary.keys = make(map[string]bool, 1)
-			}
-			summary.keys[key] = true
-			summaries[summaryKey] = summary
+		key, staticKey, touches := dispatchTableAssignmentKeyForPath(result, point, fact, summary.path)
+		if !touches {
 			continue
 		}
-		if fact.HasSymbol && fact.Symbol == summary.path.Symbol {
+		if !staticKey {
 			delete(summaries, summaryKey)
 			continue
 		}
-		if fact.HasContainerPath && pathsOverlapForInvalidation(summary.path, fact.ContainerPath) {
-			delete(summaries, summaryKey)
+		if summary.keys == nil {
+			summary.keys = make(map[string]bool, 1)
 		}
+		summary.keys[key] = true
+		summaries[summaryKey] = summary
 	}
 }
 
@@ -1546,7 +1536,7 @@ func registrationCallFromFact(result *body.Result, fact semantics.CallFact, poin
 	if !ok || keyIndex < 0 || keyIndex >= len(fact.Args)-1 {
 		return registrationCall{}, false
 	}
-	key, ok := stringLiteralExprValue(fact.Args[keyIndex])
+	key, ok := staticStringExprValueAt(result, point, fact.Args[keyIndex])
 	if !ok || !registrationCallbackExpr(result, point, fact.Args[keyIndex+1]) {
 		return registrationCall{}, false
 	}
@@ -1577,7 +1567,7 @@ func registrationRegistryAndKeyIndex(result *body.Result, fact semantics.CallFac
 func openRegistrationMutationFromFact(result *body.Result, point cfg.Point, fact semantics.CallFact) (openRegistrationMutation, bool) {
 	registry, keyIndex, ok := registrationRegistryAndKeyIndex(result, fact)
 	if ok && keyIndex >= 0 && keyIndex < len(fact.Args)-1 {
-		if _, ok := stringLiteralExprValue(fact.Args[keyIndex]); ok && registrationCallbackExpr(result, point, fact.Args[keyIndex+1]) {
+		if _, ok := staticStringExprValueAt(result, point, fact.Args[keyIndex]); ok && registrationCallbackExpr(result, point, fact.Args[keyIndex+1]) {
 			return openRegistrationMutation{}, false
 		}
 		if registrationCallbackExpr(result, point, fact.Args[keyIndex+1]) {
@@ -2079,7 +2069,7 @@ func (p discriminatedUnionExhaustiveness) dispatchTableBaseKeysAt(result *body.R
 			if keys, span, ok := dispatchTableReplacementKeys(result, fact, table); ok {
 				return keys, span, cursor, true
 			}
-			_, staticKey, touches := dispatchTableAssignmentKeyForPath(fact, table)
+			_, staticKey, touches := dispatchTableAssignmentKeyForPath(result, cursor, fact, table)
 			if touches && !staticKey {
 				return nil, diagnostic.Span{}, 0, false
 			}
@@ -2223,7 +2213,7 @@ func (p discriminatedUnionExhaustiveness) applyReachableDispatchTableAssignments
 		if !ok {
 			continue
 		}
-		key, staticKey, touches := dispatchTableAssignmentKeyForPath(fact, table)
+		key, staticKey, touches := dispatchTableAssignmentKeyForPath(result, candidate, fact, table)
 		if !touches ||
 			!diagnosticCanReach(p.flow, graph, from, candidate) ||
 			!diagnosticCanReach(p.flow, graph, candidate, point) {
@@ -2300,7 +2290,7 @@ func intersectDispatchKeySet(target map[string]bool, other map[string]bool) {
 	}
 }
 
-func dispatchTableAssignmentKeyForPath(fact semantics.OrdinaryAssignmentFact, table pathdom.Path) (key string, staticKey bool, touches bool) {
+func dispatchTableAssignmentKeyForPath(result *body.Result, point cfg.Point, fact semantics.OrdinaryAssignmentFact, table pathdom.Path) (key string, staticKey bool, touches bool) {
 	if table.Symbol == 0 {
 		return "", false, false
 	}
@@ -2310,8 +2300,13 @@ func dispatchTableAssignmentKeyForPath(fact semantics.OrdinaryAssignmentFact, ta
 			if len(suffix) != 1 {
 				return "", false, true
 			}
-			key, ok := segmentStringKey(suffix[0])
-			return key, ok, true
+			if key, ok := segmentStringKey(suffix[0]); ok {
+				return key, true, true
+			}
+			if key, ok := dispatchTableDynamicAssignmentKey(result, point, fact, table); ok {
+				return key, true, true
+			}
+			return "", false, true
 		}
 		if pathHasPrefix(table, fact.Path) {
 			return "", false, true
@@ -2321,9 +2316,48 @@ func dispatchTableAssignmentKeyForPath(fact semantics.OrdinaryAssignmentFact, ta
 		return "", false, true
 	}
 	if fact.HasContainerPath && pathsOverlapForInvalidation(table, fact.ContainerPath) {
+		if key, ok := dispatchTableDynamicAssignmentKey(result, point, fact, table); ok {
+			return key, true, true
+		}
 		return "", false, true
 	}
 	return "", false, false
+}
+
+func dispatchTableDynamicAssignmentKey(result *body.Result, point cfg.Point, fact semantics.OrdinaryAssignmentFact, table pathdom.Path) (string, bool) {
+	if result == nil || fact.Target == nil || table.IsEmpty() {
+		return "", false
+	}
+	attr, ok := fact.Target.(*ast.AttrGetExpr)
+	if !ok || attr.KeySyntax != ast.AttrKeyIndex {
+		return "", false
+	}
+	container, ok := result.ExpressionPath(attr.Object)
+	if !ok || container.IsEmpty() {
+		return "", false
+	}
+	if !container.Equal(table) && !result.PathsEquivalentAtBoundary(point, container, table) {
+		return "", false
+	}
+	return staticStringExprValueAt(result, point, attr.Key)
+}
+
+func staticStringExprValueAt(result *body.Result, point cfg.Point, expr ast.Expr) (string, bool) {
+	if key, ok := stringLiteralExprValue(expr); ok {
+		return key, true
+	}
+	if result == nil || expr == nil {
+		return "", false
+	}
+	value, ok := result.ExpressionValueAtBoundary(point, expr)
+	if !ok {
+		return "", false
+	}
+	t, ok := readmodel.New(result).ValueTypeWithPresence(value)
+	if !ok {
+		return "", false
+	}
+	return literalStringKey(unwrap.Annotated(t))
 }
 
 func segmentStringKey(seg segment.Segment) (string, bool) {
