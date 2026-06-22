@@ -46,7 +46,7 @@ const (
 	labelChannelCaseTest      = "channel case check"
 	labelUnionCaseTest        = "union case check"
 	labelOptionalCaseCheck    = "optional case check"
-	labelResultFieldRead      = "result field read"
+	labelResultFieldRead      = "case-specific field read"
 	labelDispatchLookup       = "dispatch lookup"
 	labelDispatchTable        = "dispatch table"
 	labelRegistrationCall     = "registration call"
@@ -237,7 +237,7 @@ func missingDiscriminantDefaultEvidence() string {
 }
 
 func resultShapeUnionEvidence(receiver, discriminant string) string {
-	return codeName(receiver) + " is result-shaped and discriminated by " + codeName(discriminant)
+	return codeName(receiver) + " is a union discriminated by " + codeName(discriminant)
 }
 
 func resultShapeFieldCaseEvidence(readPath, requiredCase string) string {
@@ -867,11 +867,11 @@ func (diagnosticDisplay) RegistrationExhaustivenessHelp() string {
 }
 
 func (diagnosticDisplay) ResultShapeExhaustivenessMessage(readPath, requiredCase string) string {
-	return fmt.Sprintf("result field read is not exhaustive; %s requires %s", codeName(readPath), codeName(requiredCase))
+	return fmt.Sprintf("case-specific field read is not exhaustive; %s requires %s", codeName(readPath), codeName(requiredCase))
 }
 
 func (diagnosticDisplay) ResultShapeExhaustivenessHelp() string {
-	return "Check the result case before reading this field, or return from the opposite case before continuing."
+	return "Check the union case before reading this field, or return from the opposite case before continuing."
 }
 
 func (diagnosticDisplay) OptionalExhaustivenessMessage(caseWord, cases string) string {

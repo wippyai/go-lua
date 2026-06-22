@@ -814,13 +814,14 @@ func sameDiscriminantCandidate(a, b discriminantCandidate) bool {
 }
 
 type resultShapeRead struct {
-	point        cfg.Point
-	expr         *ast.AttrGetExpr
-	receiverExpr ast.Expr
-	receiver     pathdom.Path
-	readPath     pathdom.Path
-	discriminant pathdom.Path
-	required     discriminantCase
+	point              cfg.Point
+	expr               *ast.AttrGetExpr
+	receiverExpr       ast.Expr
+	receiver           pathdom.Path
+	readPath           pathdom.Path
+	discriminant       pathdom.Path
+	discriminantSuffix []segment.Segment
+	required           discriminantCase
 }
 
 func (p discriminatedUnionExhaustiveness) resultShapeConsumptionDiagnostics(result *body.Result, graph cfg.Graph) []diagnostic.Diagnostic {
@@ -836,7 +837,7 @@ func (p discriminatedUnionExhaustiveness) resultShapeConsumptionDiagnostics(resu
 				if resultShapeRequiredCaseProven(result, point, envs[point], read.discriminant, read.required) {
 					continue
 				}
-				if p.resultShapeCurrentTypeProvesRequired(result, point, envs[point], read.receiverExpr, read.required) {
+				if p.resultShapeCurrentTypeProvesRequired(result, point, envs[point], read.receiverExpr, read.discriminantSuffix, read.required) {
 					continue
 				}
 				if resultShapeOtherCaseProven(result, point, envs[point], read.discriminant, read.required) {
@@ -956,48 +957,56 @@ func (p discriminatedUnionExhaustiveness) resultShapeRead(result *body.Result, p
 	if !ok {
 		return resultShapeRead{}, false
 	}
-	discriminant, required, ok := resultShapeRequiredCaseForMember(receiverPath, receiverType, member)
+	discriminant, suffix, required, ok := resultShapeRequiredCaseForMember(receiverPath, receiverType, member)
 	if !ok {
 		return resultShapeRead{}, false
 	}
 	return resultShapeRead{
-		point:        point,
-		expr:         expr,
-		receiverExpr: expr.Object,
-		receiver:     receiverPath,
-		readPath:     readPath,
-		discriminant: discriminant,
-		required:     required,
+		point:              point,
+		expr:               expr,
+		receiverExpr:       expr.Object,
+		receiver:           receiverPath,
+		readPath:           readPath,
+		discriminant:       discriminant,
+		discriminantSuffix: suffix,
+		required:           required,
 	}, true
 }
 
-func resultShapeRequiredCaseForMember(receiver pathdom.Path, receiverType typ.Type, member string) (pathdom.Path, discriminantCase, bool) {
+func resultShapeRequiredCaseForMember(receiver pathdom.Path, receiverType typ.Type, member string) (pathdom.Path, []segment.Segment, discriminantCase, bool) {
 	_, cases, ok := variant.OriginCasesOfType(receiverType)
-	if !ok || len(cases) != 2 {
-		return pathdom.Path{}, discriminantCase{}, false
+	if !ok || len(cases) < 2 {
+		return pathdom.Path{}, nil, discriminantCase{}, false
 	}
-	okSuffix := []segment.Segment{{Kind: segment.SegmentField, Name: "ok"}}
-	discriminant := receiver
-	discriminant.Segments = append(append([]segment.Segment(nil), receiver.Segments...), okSuffix...)
-	domainCases, ok := booleanDiscriminantCasesFor(discriminant, okSuffix, cases)
-	if !ok || len(domainCases) != 2 {
-		return pathdom.Path{}, discriminantCase{}, false
+	requiredIndex, ok := singleOriginCaseWithField(cases, member)
+	if !ok {
+		return pathdom.Path{}, nil, discriminantCase{}, false
 	}
-	var required []discriminantCase
-	for _, c := range domainCases {
-		if caseType, ok := originCaseTypeByIndex(cases, c.index); ok {
-			if _, ok := access.Field(caseType, member); ok {
-				required = append(required, c)
+	for _, domain := range literalDiscriminantDomainsForCases(receiver, cases) {
+		for _, c := range domain.cases {
+			if c.index == requiredIndex {
+				return domain.target, append([]segment.Segment(nil), domain.suffix...), c, true
 			}
 		}
 	}
-	if len(required) != 1 {
-		return pathdom.Path{}, discriminantCase{}, false
-	}
-	return discriminant, required[0], true
+	return pathdom.Path{}, nil, discriminantCase{}, false
 }
 
-func (p discriminatedUnionExhaustiveness) resultShapeCurrentTypeProvesRequired(result *body.Result, point cfg.Point, env guardEnv, expr ast.Expr, required discriminantCase) bool {
+func singleOriginCaseWithField(cases []variant.OriginCase, member string) (int, bool) {
+	required := -1
+	for _, c := range cases {
+		if _, ok := access.Field(c.Type, member); !ok {
+			continue
+		}
+		if required >= 0 {
+			return 0, false
+		}
+		required = c.Index
+	}
+	return required, required >= 0
+}
+
+func (p discriminatedUnionExhaustiveness) resultShapeCurrentTypeProvesRequired(result *body.Result, point cfg.Point, env guardEnv, expr ast.Expr, discriminantSuffix []segment.Segment, required discriminantCase) bool {
 	if required.literal == nil {
 		return false
 	}
@@ -1005,37 +1014,102 @@ func (p discriminatedUnionExhaustiveness) resultShapeCurrentTypeProvesRequired(r
 	if !ok || current == nil {
 		return false
 	}
-	field, ok := variant.FieldAtPath(current, []segment.Segment{{Kind: segment.SegmentField, Name: "ok"}})
+	field, ok := variant.FieldAtPath(current, discriminantSuffix)
 	return ok && typ.TypeEquals(field, required.literal)
 }
 
-func booleanDiscriminantCasesFor(target pathdom.Path, suffix []segment.Segment, cases []variant.OriginCase) ([]discriminantCase, bool) {
+type literalDiscriminantDomain struct {
+	target pathdom.Path
+	suffix []segment.Segment
+	cases  []discriminantCase
+}
+
+func literalDiscriminantDomainsForCases(receiver pathdom.Path, cases []variant.OriginCase) []literalDiscriminantDomain {
+	if len(cases) == 0 {
+		return nil
+	}
+	var out []literalDiscriminantDomain
+	for _, suffix := range literalDiscriminantSuffixes(cases[0].Type, nil, 0) {
+		target := receiver.AppendSegments(suffix)
+		domainCases, ok := literalDiscriminantCasesFor(target, suffix, cases)
+		if !ok {
+			continue
+		}
+		out = append(out, literalDiscriminantDomain{
+			target: target,
+			suffix: append([]segment.Segment(nil), suffix...),
+			cases:  domainCases,
+		})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].target.String() < out[j].target.String()
+	})
+	return out
+}
+
+func literalDiscriminantSuffixes(t typ.Type, prefix []segment.Segment, depth int) [][]segment.Segment {
+	if t == nil || depth > 2 {
+		return nil
+	}
+	switch v := unwrap.Annotated(t).(type) {
+	case *typ.Literal:
+		if resultShapeLiteralSupported(v) && len(prefix) > 0 {
+			return [][]segment.Segment{append([]segment.Segment(nil), prefix...)}
+		}
+		return nil
+	case *typ.Alias:
+		return literalDiscriminantSuffixes(v.UnaliasedTarget(), prefix, depth+1)
+	case *typ.Optional:
+		return literalDiscriminantSuffixes(v.Inner, prefix, depth+1)
+	case *typ.Recursive:
+		if v.Body == nil || v.Body == t {
+			return nil
+		}
+		return literalDiscriminantSuffixes(v.Body, prefix, depth+1)
+	case *typ.Instantiated:
+		expanded, ok := subst.ExpandInstantiatedChanged(v)
+		if !ok {
+			return nil
+		}
+		return literalDiscriminantSuffixes(expanded, prefix, depth+1)
+	case *typ.Record:
+		var out [][]segment.Segment
+		for _, field := range v.Fields {
+			next := append(append([]segment.Segment(nil), prefix...), segment.Segment{Kind: segment.SegmentField, Name: field.Name})
+			out = append(out, literalDiscriminantSuffixes(field.Type, next, depth+1)...)
+		}
+		for _, member := range v.StaticMembers {
+			if member.Kind != typ.StaticMemberStringIndex {
+				continue
+			}
+			next := append(append([]segment.Segment(nil), prefix...), segment.Segment{Kind: segment.SegmentIndexString, Name: member.Name})
+			out = append(out, literalDiscriminantSuffixes(member.Type, next, depth+1)...)
+		}
+		return out
+	default:
+		return nil
+	}
+}
+
+func literalDiscriminantCasesFor(target pathdom.Path, suffix []segment.Segment, cases []variant.OriginCase) ([]discriminantCase, bool) {
 	out := make([]discriminantCase, 0, len(cases))
-	seen := make(map[bool]struct{}, len(cases))
+	var seen []typ.Type
 	for _, c := range cases {
 		lit, ok := discriminantCaseLiteral(c.Type, suffix)
-		if !ok {
+		if !ok || !resultShapeLiteralSupported(lit) {
 			return nil, false
 		}
-		value, ok := lit.Value.(bool)
-		if !ok {
-			return nil, false
+		for _, previous := range seen {
+			if typ.TypeEquals(previous, lit) {
+				return nil, false
+			}
 		}
-		if _, duplicate := seen[value]; duplicate {
-			return nil, false
-		}
-		seen[value] = struct{}{}
+		seen = append(seen, lit)
 		out = append(out, discriminantCase{
 			index:   c.Index,
 			name:    discriminantCaseName(target, suffix, c.Type),
 			literal: lit,
 		})
-	}
-	if _, ok := seen[true]; !ok {
-		return nil, false
-	}
-	if _, ok := seen[false]; !ok {
-		return nil, false
 	}
 	sort.Slice(out, func(i, j int) bool {
 		if out[i].name != out[j].name {
@@ -1046,13 +1120,16 @@ func booleanDiscriminantCasesFor(target pathdom.Path, suffix []segment.Segment, 
 	return out, true
 }
 
-func originCaseTypeByIndex(cases []variant.OriginCase, index int) (typ.Type, bool) {
-	for _, c := range cases {
-		if c.Index == index {
-			return c.Type, true
-		}
+func resultShapeLiteralSupported(lit *typ.Literal) bool {
+	if lit == nil {
+		return false
 	}
-	return nil, false
+	switch lit.Value.(type) {
+	case bool, string:
+		return true
+	default:
+		return false
+	}
 }
 
 func discriminantCaseLiteralType(caseType typ.Type, suffix []segment.Segment) typ.Type {
@@ -1080,14 +1157,15 @@ func resultShapeOtherCaseProven(result *body.Result, point cfg.Point, env guardE
 	if required.literal == nil {
 		return false
 	}
-	switch required.literal {
-	case typ.True:
-		return guardEnvProvesLiteral(result, point, env, discriminant, typ.False)
-	case typ.False:
-		return guardEnvProvesLiteral(result, point, env, discriminant, typ.True)
-	default:
-		return false
+	for _, proof := range literalGuardTargets(env) {
+		if typ.TypeEquals(proof.literal, required.literal) {
+			continue
+		}
+		if proof.target.Equal(discriminant) || resultShapeDiscriminantsEquivalent(result, point, proof.target, discriminant) {
+			return true
+		}
 	}
+	return false
 }
 
 func guardEnvProvesLiteral(result *body.Result, point cfg.Point, env guardEnv, target pathdom.Path, lit typ.Type) bool {
@@ -1122,25 +1200,40 @@ func guardEnvProvesLiteral(result *body.Result, point cfg.Point, env guardEnv, t
 	return false
 }
 
-func equivalentLiteralGuardTargets(env guardEnv, lit typ.Type) []pathdom.Path {
-	var out []pathdom.Path
-	if typ.TypeEquals(lit, typ.True) {
-		out = append(out, copyPaths(env.truthy)...)
+type literalGuardTarget struct {
+	target  pathdom.Path
+	literal typ.Type
+}
+
+func literalGuardTargets(env guardEnv) []literalGuardTarget {
+	var out []literalGuardTarget
+	for _, p := range env.truthy {
+		out = append(out, literalGuardTarget{target: p.Clone(), literal: typ.True})
 	}
-	if typ.TypeEquals(lit, typ.False) {
-		out = append(out, copyPaths(env.falsy)...)
+	for _, p := range env.falsy {
+		out = append(out, literalGuardTarget{target: p.Clone(), literal: typ.False})
 	}
 	for _, c := range env.constraints {
-		if !c.negated && typ.TypeEquals(c.value, lit) {
-			out = append(out, c.target.Clone())
+		if !c.negated {
+			out = append(out, literalGuardTarget{target: c.target.Clone(), literal: c.value})
 			continue
 		}
-		if c.negated && typ.TypeEquals(lit, typ.True) && typ.TypeEquals(c.value, typ.False) {
-			out = append(out, c.target.Clone())
+		if typ.TypeEquals(c.value, typ.True) {
+			out = append(out, literalGuardTarget{target: c.target.Clone(), literal: typ.False})
 			continue
 		}
-		if c.negated && typ.TypeEquals(lit, typ.False) && typ.TypeEquals(c.value, typ.True) {
-			out = append(out, c.target.Clone())
+		if typ.TypeEquals(c.value, typ.False) {
+			out = append(out, literalGuardTarget{target: c.target.Clone(), literal: typ.True})
+		}
+	}
+	return out
+}
+
+func equivalentLiteralGuardTargets(env guardEnv, lit typ.Type) []pathdom.Path {
+	var out []pathdom.Path
+	for _, proof := range literalGuardTargets(env) {
+		if typ.TypeEquals(proof.literal, lit) {
+			out = append(out, proof.target)
 		}
 	}
 	return out
@@ -1601,7 +1694,7 @@ func stringDiscriminantDomainsForType(root pathdom.Path, prefix []segment.Segmen
 
 func stringDiscriminantDomainsForCases(root pathdom.Path, prefix []segment.Segment, cases []variant.OriginCase) []stringDiscriminantDomain {
 	var out []stringDiscriminantDomain
-	for _, suffix := range stringLiteralSuffixes(cases[0].Type, nil, 0) {
+	for _, suffix := range literalDiscriminantSuffixes(cases[0].Type, nil, 0) {
 		target := root.AppendSegments(prefix).AppendSegments(suffix)
 		domainCases, ok := stringDiscriminantCasesFor(target, suffix, cases)
 		if !ok {
@@ -1665,39 +1758,6 @@ func appendSegment(prefix []segment.Segment, seg segment.Segment) []segment.Segm
 	next = append(next, prefix...)
 	next = append(next, seg)
 	return next
-}
-
-func stringLiteralSuffixes(t typ.Type, prefix []segment.Segment, depth int) [][]segment.Segment {
-	if t == nil || depth > 2 {
-		return nil
-	}
-	switch v := t.(type) {
-	case *typ.Literal:
-		if _, ok := v.Value.(string); ok && len(prefix) > 0 {
-			return [][]segment.Segment{append([]segment.Segment(nil), prefix...)}
-		}
-		return nil
-	case *typ.Alias:
-		return stringLiteralSuffixes(v.UnaliasedTarget(), prefix, depth+1)
-	case *typ.Optional:
-		return stringLiteralSuffixes(v.Inner, prefix, depth+1)
-	case *typ.Record:
-		var out [][]segment.Segment
-		for _, field := range v.Fields {
-			next := append(append([]segment.Segment(nil), prefix...), segment.Segment{Kind: segment.SegmentField, Name: field.Name})
-			out = append(out, stringLiteralSuffixes(field.Type, next, depth+1)...)
-		}
-		for _, member := range v.StaticMembers {
-			if member.Kind != typ.StaticMemberStringIndex {
-				continue
-			}
-			next := append(append([]segment.Segment(nil), prefix...), segment.Segment{Kind: segment.SegmentIndexString, Name: member.Name})
-			out = append(out, stringLiteralSuffixes(member.Type, next, depth+1)...)
-		}
-		return out
-	default:
-		return nil
-	}
 }
 
 func stringLiteralExprValue(expr ast.Expr) (string, bool) {

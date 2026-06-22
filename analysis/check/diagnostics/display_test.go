@@ -161,10 +161,10 @@ func TestDiagnosticProducerMessagesUseCentralDisplay(t *testing.T) {
 	if got := registrationExhaustivenessHelp(); got != "Register each missing case, or dispatch through an explicit fallback when missing registrations are intentional." {
 		t.Fatalf("registrationExhaustivenessHelp = %q", got)
 	}
-	if got := resultShapeExhaustivenessMessage("result.value", "result.ok == true"); got != "result field read is not exhaustive; `result.value` requires `result.ok == true`" {
+	if got := resultShapeExhaustivenessMessage("result.value", "result.ok == true"); got != "case-specific field read is not exhaustive; `result.value` requires `result.ok == true`" {
 		t.Fatalf("resultShapeExhaustivenessMessage = %q", got)
 	}
-	if got := resultShapeExhaustivenessHelp(); got != "Check the result case before reading this field, or return from the opposite case before continuing." {
+	if got := resultShapeExhaustivenessHelp(); got != "Check the union case before reading this field, or return from the opposite case before continuing." {
 		t.Fatalf("resultShapeExhaustivenessHelp = %q", got)
 	}
 	if got := optionalExhaustivenessMessage("case", "`maybe == nil`"); got != "optional handling is not exhaustive; missing case: `maybe == nil`" {
