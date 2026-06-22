@@ -45,6 +45,44 @@ func TestObjectLiteralTypeSeparatesDotFieldAndBracketStringMember(t *testing.T) 
 	}
 }
 
+func TestObjectLiteralTypeDoesNotAdoptExpectedInterfaceWithRequiredMethodsWhenEmpty(t *testing.T) {
+	reg := standard.Registry()
+	reader := typ.NewInterface("Reader", []typ.Method{{
+		Name: "read",
+		Type: typ.Func().Param("self", typ.Self).Returns(typ.String).Build(),
+	}})
+	lit := factflow.NewObjectLiteral(nil).
+		WithExpected(typevalue.WithWitness(reg, typevalue.FromType(reg, reader), reader))
+
+	got, ok := ObjectLiteralType(reg, lit, func(factflow.ValueSource) (product.Value, bool) {
+		return product.Value{}, false
+	})
+	if !ok {
+		t.Fatal("objectLiteralType returned false")
+	}
+	want := typetable.NewRecord().Build()
+	if !typ.TypeEquals(got, want) {
+		t.Fatalf("object literal type = %v, want empty record instead of adopting unsatisfied interface", got)
+	}
+}
+
+func TestObjectLiteralTypeStillAdoptsExpectedMapWhenEmpty(t *testing.T) {
+	reg := standard.Registry()
+	expected := typ.NewMap(typ.String, typ.Number)
+	lit := factflow.NewObjectLiteral(nil).
+		WithExpected(typevalue.WithWitness(reg, typevalue.FromType(reg, expected), expected))
+
+	got, ok := ObjectLiteralType(reg, lit, func(factflow.ValueSource) (product.Value, bool) {
+		return product.Value{}, false
+	})
+	if !ok {
+		t.Fatal("objectLiteralType returned false")
+	}
+	if !typ.TypeEquals(got, expected) {
+		t.Fatalf("object literal type = %v, want expected map", got)
+	}
+}
+
 func TestObjectLiteralTypeBracketStringDiscriminantDoesNotSelectDotFieldUnionArm(t *testing.T) {
 	reg := standard.Registry()
 	kindSource := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: factflow.ExprRef(1301), HasExpr: true}

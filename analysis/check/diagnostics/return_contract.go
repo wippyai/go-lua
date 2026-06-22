@@ -64,9 +64,9 @@ func produceReturnContract(result *body.Result, context producerContext, inherit
 			if annotation == nil {
 				continue
 			}
-			if mismatch, ok := objectLiteralMemberMismatch(result, point, expr, want, envs[point]); ok {
+			if mismatch, ok := objectLiteralMemberMismatch(result, producer.resolver, point, expr, want, envs[point]); ok {
 				extra := boundaryDiagnosticEvidenceForSubject(result, point, ast.SpanOf(mismatch.expr), exprEvidenceName(mismatch.expr), mismatch.want, boundaryValueFromExpr(mismatch.expr))
-				extra = append(extra, mismatch.missingFieldEvidence()...)
+				extra = append(extra, mismatch.missingMemberEvidence()...)
 				extra = append(extra, mismatch.unionArmEvidence...)
 				out = append(out, returnContractDiagnostic(mismatch.expr, annotation, mismatch.got, mismatch.want, i, extra...))
 				continue
@@ -637,7 +637,7 @@ func directCallArgsCompatible(result *body.Result, point cfg.Point, fact semanti
 		if !resolution.OK || refinement.ContainsFreeTypeParam(want) || refinement.ContainsFreeTypeParam(resolution.Type) {
 			continue
 		}
-		if _, ok := objectLiteralMemberMismatch(result, point, arg, want, env); ok {
+		if _, ok := objectLiteralMemberMismatch(result, context.resolver, point, arg, want, env); ok {
 			return false
 		}
 		got := resolution.Type

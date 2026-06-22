@@ -18,6 +18,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/engine/visibility"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
+	luasourcevalue "github.com/wippyai/go-lua/analysis/lua/sourcevalue"
 )
 
 func applyObjectLiteralEntries(
@@ -162,6 +163,9 @@ func objectEntryValue(reg *axis.Registry, entry factflow.ObjectEntryView, value 
 }
 
 func overlayExpectedObjectEntryValue(reg *axis.Registry, value, expected product.Value) product.Value {
+	if !luasourcevalue.ExpectedEntryAdmissible(reg, value, expected) {
+		return value
+	}
 	ed := product.Edit(reg, value)
 	kind := product.Get(reg, expected, runtimekind.Key)
 	if !kind.IsTop() && !kind.IsBottom() {

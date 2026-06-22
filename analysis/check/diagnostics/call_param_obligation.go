@@ -104,9 +104,9 @@ func (p callParamObligations) call(
 			continue
 		}
 		seen[argIndex] = struct{}{}
-		if mismatch, ok := objectLiteralMemberMismatch(result, point, args[argIndex], want, env); ok {
+		if mismatch, ok := objectLiteralMemberMismatch(result, p.resolver, point, args[argIndex], want, env); ok {
 			extra := boundaryDiagnosticEvidenceForSubject(result, point, ast.SpanOf(mismatch.expr), exprEvidenceName(mismatch.expr), mismatch.want, boundaryValueFromExpr(mismatch.expr))
-			extra = append(extra, mismatch.missingFieldEvidence()...)
+			extra = append(extra, mismatch.missingMemberEvidence()...)
 			extra = append(extra, mismatch.unionArmEvidence...)
 			return callParamObligationDiagnostic(fact.Call, callObligationName(result, fact), argIndex, obligation, mismatch.got, mismatch.want, mismatch.expr, extra...), true
 		}

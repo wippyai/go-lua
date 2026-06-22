@@ -379,6 +379,10 @@ func assignmentMessage(sourceName string, got, want typ.Type) string {
 	return display.AssignmentMessage(sourceName, got, want)
 }
 
+func memberAssignmentMessage(memberName string, sourceName string, got, want typ.Type) string {
+	return display.MemberAssignmentMessage(memberName, sourceName, got, want)
+}
+
 func assignmentHelp(sourceName string, got typ.Type) string {
 	return display.AssignmentHelp(sourceName, got)
 }
@@ -419,12 +423,28 @@ func missingRequiredFieldPathEvidence(path string, t typ.Type) string {
 	return display.MissingRequiredFieldPathEvidence(path, t)
 }
 
+func missingRequiredMethodMessage(contract typ.Type, method string) string {
+	return display.MissingRequiredMethodMessage(contract, method)
+}
+
+func missingRequiredMethodEvidence(contract typ.Type, method string) string {
+	return display.MissingRequiredMethodEvidence(contract, method)
+}
+
+func missingRequiredMethodTypeEvidence(contract typ.Type, method typ.Method) string {
+	return display.MissingRequiredMethodTypeEvidence(contract, method)
+}
+
 func objectLiteralShapeEvidence(t typ.Type) string {
 	return display.ObjectLiteralShapeEvidence(t)
 }
 
 func missingRequiredFieldHelp(field string) string {
 	return display.MissingRequiredFieldHelp(field)
+}
+
+func missingRequiredMethodHelp(method string) string {
+	return display.MissingRequiredMethodHelp(method)
 }
 
 func missingNonNilGuardHereMessage(sourceName string) string {
@@ -980,6 +1000,19 @@ func (d diagnosticDisplay) AssignmentMessage(sourceName string, got, want typ.Ty
 	return fmt.Sprintf("cannot assign %s to %s", d.Type(got), d.Type(want))
 }
 
+func (d diagnosticDisplay) MemberAssignmentMessage(memberName string, sourceName string, got, want typ.Type) string {
+	if sourceName == "" || sourceName == unknownSourceName {
+		if nilSafetyMismatch(got, want) {
+			return fmt.Sprintf("cannot assign %s because assigned value may be nil", memberName)
+		}
+		return fmt.Sprintf("cannot assign %s because assigned value is %s, not %s", memberName, d.Type(got), d.Type(want))
+	}
+	if nilSafetyMismatch(got, want) {
+		return fmt.Sprintf("cannot assign %s to %s because %s may be nil", sourceName, memberName, sourceName)
+	}
+	return fmt.Sprintf("cannot assign %s to %s because %s is %s, not %s", sourceName, memberName, sourceName, d.Type(got), d.Type(want))
+}
+
 func (diagnosticDisplay) AssignmentHelp(sourceName string, got typ.Type) string {
 	if sourceName != "" && sourceName != unknownSourceName && valueMayBeNil(got) {
 		return fmt.Sprintf("Guard `%s` with a nil check, provide a default value, or change the target type to accept nil.", sourceName)
@@ -1033,6 +1066,27 @@ func (d diagnosticDisplay) MissingRequiredFieldPathEvidence(path string, t typ.T
 	return fmt.Sprintf("required field %s has type %s, but the object literal does not provide it", path, d.Type(t))
 }
 
+func (d diagnosticDisplay) MissingRequiredMethodMessage(contract typ.Type, method string) string {
+	if contract == nil {
+		return fmt.Sprintf("object literal is missing required method %q", method)
+	}
+	return fmt.Sprintf("object literal does not implement %s: missing method %q", d.Type(contract), method)
+}
+
+func (d diagnosticDisplay) MissingRequiredMethodEvidence(contract typ.Type, method string) string {
+	if contract == nil {
+		return fmt.Sprintf("object literal does not provide method %q", method)
+	}
+	return fmt.Sprintf("object literal does not provide method %q required by %s", method, d.Type(contract))
+}
+
+func (d diagnosticDisplay) MissingRequiredMethodTypeEvidence(contract typ.Type, method typ.Method) string {
+	if method.Name == "" || method.Type == nil {
+		return d.MissingRequiredMethodEvidence(contract, method.Name)
+	}
+	return fmt.Sprintf("required method %s has type %s, but the object literal does not provide it", method.Name, d.Type(method.Type))
+}
+
 func (d diagnosticDisplay) ObjectLiteralShapeEvidence(t typ.Type) string {
 	return fmt.Sprintf("object literal has type %s", d.AssignmentType(t))
 }
@@ -1042,6 +1096,13 @@ func (diagnosticDisplay) MissingRequiredFieldHelp(field string) string {
 		return fmt.Sprintf("Add field `%s`, or make it optional in the declared type if it may be absent.", field)
 	}
 	return "Add the missing field, or make it optional in the declared type if it may be absent."
+}
+
+func (diagnosticDisplay) MissingRequiredMethodHelp(method string) string {
+	if method != "" {
+		return fmt.Sprintf("Add method `%s`, or change the target interface if this value should not implement it.", method)
+	}
+	return "Add the missing method, or change the target interface if this value should not implement it."
 }
 
 func (diagnosticDisplay) MissingNonNilGuardHereMessage(sourceName string) string {

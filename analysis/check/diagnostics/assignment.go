@@ -280,9 +280,9 @@ func (p annotationAssignability) pathAssignment(result *body.Result, point cfg.P
 	if !ok || topLikeType(want) || refinement.ContainsFreeTypeParam(want) {
 		return diagnostic.Diagnostic{}, false
 	}
-	if mismatch, ok := objectLiteralMemberMismatch(result, point, fact.Value, want, env); ok {
+	if mismatch, ok := objectLiteralMemberMismatch(result, p.resolver, point, fact.Value, want, env); ok {
 		extra := boundaryDiagnosticEvidenceForSubject(result, point, ast.SpanOf(mismatch.expr), exprEvidenceName(mismatch.expr), mismatch.want, boundaryValueFromExpr(mismatch.expr))
-		extra = append(extra, mismatch.missingFieldEvidence()...)
+		extra = append(extra, mismatch.missingMemberEvidence()...)
 		extra = append(extra, mismatch.unionArmEvidence...)
 		return pathAssignmentDiagnostic(fact.Target, mismatch.expr, mismatch.got, mismatch.want, extra...), true
 	}
@@ -568,10 +568,10 @@ func (p annotationAssignability) objectLiteralAssignment(result *body.Result, po
 		return diagnostic.Diagnostic{}, false
 	}
 	if arms, ok := closedRecordUnionArms(want); ok {
-		if objectLiteralAdmissibleToAnyArm(result, point, arms, fact, env) {
+		if objectLiteralAdmissibleToAnyArm(result, p.resolver, point, arms, fact, env) {
 			return diagnostic.Diagnostic{}, false
 		}
-		extra := objectLiteralUnionArmEvidence(result, point, fact, arms, env)
+		extra := objectLiteralUnionArmEvidence(result, p.resolver, point, fact, arms, env)
 		return assignmentDiagnostic(name, want, objectLiteralType(want, fact), expr, annotation, extra...), true
 	}
 	for _, entry := range fact.Entries {
@@ -579,15 +579,19 @@ func (p annotationAssignability) objectLiteralAssignment(result *body.Result, po
 		if !ok {
 			continue
 		}
-		got, ok := objectLiteralEntryMismatchType(result, point, entry, expected, env)
+		got, ok := objectLiteralEntryMismatchType(result, p.resolver, point, entry, expected, env)
 		if !ok {
 			continue
 		}
+		memberName := name + segment.FormatSegments(entry.Suffix.Segments)
 		extra := boundaryDiagnosticEvidenceForSubject(result, point, ast.SpanOf(entry.Value), exprEvidenceName(entry.Value), expected, boundaryValueFromExpr(entry.Value))
-		return assignmentDiagnostic(name+segment.FormatSegments(entry.Suffix.Segments), expected, got, entry.Value, annotation, extra...), true
+		return objectMemberAssignmentDiagnostic(memberName, expected, got, entry.Value, annotation, extra...), true
 	}
 	if field, ok := missingRequiredRecordField(want, fact); ok {
 		return missingFieldAssignmentDiagnostic(name, want, objectLiteralType(want, fact), field, expr, annotation), true
+	}
+	if method, ok := missingRequiredInterfaceMethod(want, fact); ok {
+		return missingMethodAssignmentDiagnostic(name, want, objectLiteralType(want, fact), method, expr, annotation), true
 	}
 	return diagnostic.Diagnostic{}, false
 }

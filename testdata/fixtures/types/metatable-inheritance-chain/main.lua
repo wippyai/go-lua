@@ -10,7 +10,7 @@ Dog.__index = Dog
 function Dog.fetch(self: Dog): string return self.name .. " fetches" end
 
 local function new_dog(name: string): Dog
-    local self: Dog = { name = name, speak = Animal.speak, fetch = Dog.fetch }
+    local self: Dog = { name = name, speak = Animal.speak :: (self: Dog) -> string, fetch = Dog.fetch }
     return setmetatable(self, Dog)
 end
 

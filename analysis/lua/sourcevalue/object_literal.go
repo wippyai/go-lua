@@ -9,6 +9,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	luatypeprojection "github.com/wippyai/go-lua/analysis/lua/typeprojection"
+	"github.com/wippyai/go-lua/analysis/type/subtype"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
@@ -89,13 +90,14 @@ func ObjectLiteralTypeViewCached(reg *axis.Registry, typeValues *typevalue.Cache
 		return nil, false
 	}
 	if !seen {
+		empty := typetable.NewRecord().Build()
 		if seenUntrustedTop {
-			return typetable.NewRecord().Build(), true
+			return empty, true
 		}
-		if expectedType != nil {
+		if expectedType != nil && subtype.IsFreshAssignable(empty, expectedType) {
 			return expectedType, true
 		}
-		return typetable.NewRecord().Build(), true
+		return empty, true
 	}
 	return builder.Build()
 }
@@ -175,4 +177,16 @@ func ObjectLiteralEntryType(reg *axis.Registry, typeValues *typevalue.Cache, val
 func ObjectLiteralEntryHasUntrustedTopOrigin(reg *axis.Registry, value product.Value) bool {
 	ev := product.Get(reg, value, evidence.Key)
 	return ev.IsGradualTop() || ev.IsExplicitTop()
+}
+
+func ExpectedEntryAdmissible(reg *axis.Registry, value, expected product.Value) bool {
+	expectedType, hasExpected := typevalue.TypeOf(reg, expected)
+	if !hasExpected || expectedType == nil {
+		return true
+	}
+	actualType, hasActual := typevalue.TypeOf(reg, value)
+	if !hasActual || actualType == nil {
+		return true
+	}
+	return subtype.IsFreshAssignable(actualType, expectedType)
 }

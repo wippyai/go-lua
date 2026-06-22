@@ -105,6 +105,20 @@ func TestFunctionParameterReturnAndArity(t *testing.T) {
 	}
 }
 
+func TestFreshMethodReceiverCanWidenToBaseReceiver(t *testing.T) {
+	animal := typetable.NewRecord().Field("name", typ.String).Build()
+	dog := typetable.NewRecord().Field("name", typ.String).Field("fetch", typ.Func().Param("self", typ.Any).Returns(typ.String).Build()).Build()
+	animalSpeak := typ.Func().Param("self", animal).Returns(typ.String).Build()
+	dogSpeak := typ.Func().Param("self", dog).Returns(typ.String).Build()
+
+	if !IsFreshAssignable(dog, animal) {
+		t.Fatal("fresh Dog receiver should satisfy Animal receiver")
+	}
+	if !IsFreshAssignable(animalSpeak, dogSpeak) {
+		t.Fatal("Animal.speak should be assignable to Dog.speak")
+	}
+}
+
 func TestRecordWidthDepthReadonlyAndMutable(t *testing.T) {
 	named := typetable.NewRecord().Field("name", typ.String).Build()
 	namedAge := typetable.NewRecord().Field("name", typ.String).Field("age", typ.Number).Build()

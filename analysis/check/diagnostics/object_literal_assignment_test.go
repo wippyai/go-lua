@@ -113,7 +113,7 @@ func TestAnnotationAssignabilityRejectsObjectLiteralExplicitAnyMember(t *testing
 	src := "type Point = {id: string}\nlocal raw: any = nil\nlocal p: Point = {id = raw}\n"
 	requireDiagnosticShape(t, src, runDiagnostics(t, src), diagnosticShapeWant{
 		code:    CodeAssignmentType,
-		message: "cannot assign raw because it is any, not string",
+		message: "cannot assign raw to p.id because raw is any, not string",
 		span:    diagnostic.Span{StartLine: 3, StartCol: 24, EndLine: 3, EndCol: 26},
 		labels: []diagnosticLabelWant{
 			{message: labelAssignedValue, span: diagnostic.Span{StartLine: 3, StartCol: 24, EndLine: 3, EndCol: 26}},
@@ -127,7 +127,7 @@ func TestAnnotationAssignabilityRejectsObjectLiteralExplicitAnyMember(t *testing
 		},
 		help: "Use a value compatible with the expected type, or change the target type if `raw` is valid.",
 		renderContains: []string{
-			"error[type.assignment]: cannot assign raw because it is any, not string",
+			"error[type.assignment]: cannot assign raw to p.id because raw is any, not string",
 			" --> main.lua:3:24",
 			"  |          ↓ declared type",
 			"  |                        ↑ assigned value",

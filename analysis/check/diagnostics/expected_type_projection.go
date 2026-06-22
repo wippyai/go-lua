@@ -61,6 +61,8 @@ func expectedSegmentType(t typ.Type, seg segment.Segment) (typ.Type, bool) {
 		return elem, elem != nil
 	case *typ.Record:
 		return expectedRecordSegmentType(tt, seg)
+	case *typ.Interface:
+		return expectedInterfaceSegmentType(tt, seg)
 	case *typ.Map:
 		if key, ok := luatypeprojection.SegmentKeyType(seg); ok && subtype.IsSubtype(key, tt.Key) {
 			return tt.Value, tt.Value != nil
@@ -69,6 +71,19 @@ func expectedSegmentType(t typ.Type, seg segment.Segment) (typ.Type, bool) {
 		if key, ok := luatypeprojection.SegmentKeyType(seg); ok && subtype.IsSubtype(key, tt.Key) {
 			return tt.Value, tt.Value != nil
 		}
+	}
+	return nil, false
+}
+
+func expectedInterfaceSegmentType(iface *typ.Interface, seg segment.Segment) (typ.Type, bool) {
+	if iface == nil || seg.Kind != segment.SegmentField {
+		return nil, false
+	}
+	for _, method := range iface.Methods {
+		if method.Name != seg.Name || method.Type == nil {
+			continue
+		}
+		return subst.Self(method.Type, iface), true
 	}
 	return nil, false
 }

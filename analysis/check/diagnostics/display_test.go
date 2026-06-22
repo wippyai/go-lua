@@ -572,6 +572,12 @@ func TestNilabilityProofMessagesUseCentralDisplay(t *testing.T) {
 	if got := assignmentMessage("", typ.Number, typ.String); got != "cannot assign number to string" {
 		t.Fatalf("assignmentMessage mismatch = %q", got)
 	}
+	if got := memberAssignmentMessage("p.id", "raw", typ.Any, typ.String); got != "cannot assign raw to p.id because raw is any, not string" {
+		t.Fatalf("memberAssignmentMessage mismatch = %q", got)
+	}
+	if got := memberAssignmentMessage("impl.read", unknownSourceName, typ.Number, typ.String); got != "cannot assign impl.read because assigned value is number, not string" {
+		t.Fatalf("memberAssignmentMessage fallback = %q", got)
+	}
 	if got := assignmentHelp("cache.value", typ.MaterializeOptional(typ.String)); got != "Guard `cache.value` with a nil check, provide a default value, or change the target type to accept nil." {
 		t.Fatalf("assignmentHelp optional = %q", got)
 	}

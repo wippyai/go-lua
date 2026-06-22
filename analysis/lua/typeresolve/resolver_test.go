@@ -6,6 +6,8 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/type/refinement"
+	"github.com/wippyai/go-lua/analysis/type/subtype"
+	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/unwrap"
 	"github.com/wippyai/go-lua/compiler/ast"
@@ -164,6 +166,170 @@ type Node = {
 	}
 	if refinement.ContainsFreeTypeParam(got) {
 		t.Fatalf("recursive alias contains free/open references: %v", got)
+	}
+}
+
+func TestResolverDeclBuildsInterfaceMethodSetWithBinderBindings(t *testing.T) {
+	stmts, err := parse.ParseString(`
+interface Reader
+	function read(self: self): string
+end
+`, "test")
+	if err != nil {
+		t.Fatalf("ParseString error: %v", err)
+	}
+	ifaceStmt, ok := stmts[0].(*ast.InterfaceDefStmt)
+	if !ok {
+		t.Fatalf("stmt = %T, want *ast.InterfaceDefStmt", stmts[0])
+	}
+	bindings := bind.BindChunk(stmts, bind.Options{})
+	decl, ok := bindings.InterfaceDef(ifaceStmt)
+	if !ok {
+		t.Fatal("InterfaceDef binding missing")
+	}
+
+	got, ok := New(bindings).Decl(decl)
+	if !ok {
+		t.Fatal("Decl returned ok=false")
+	}
+	iface, ok := got.(*typ.Interface)
+	if !ok {
+		t.Fatalf("Decl = %T/%v, want *typ.Interface", got, got)
+	}
+	if iface.Name != "Reader" || len(iface.Methods) != 1 || iface.Methods[0].Name != "read" {
+		t.Fatalf("interface = %#v, want Reader with read method", iface)
+	}
+	method := iface.Methods[0].Type
+	if len(method.Params) != 1 || method.Params[0].Type != typ.Self || len(method.Returns) != 1 || method.Returns[0] != typ.String {
+		t.Fatalf("read method = %#v, want (self) -> string", method)
+	}
+	record := typetable.NewRecord().
+		Field("read", typ.Func().Param("self", typ.Any).Returns(typ.String).Build()).
+		Build()
+	if !subtype.IsSubtype(record, iface) {
+		t.Fatalf("record with read(self)->string should satisfy %v", iface)
+	}
+}
+
+func TestResolverDeclBuildsInterfaceWithInheritedMethodSet(t *testing.T) {
+	stmts, err := parse.ParseString(`
+interface Reader
+	function read(): string
+end
+interface Closer
+	function close(): boolean
+end
+interface ReadCloser: Reader, Closer
+	function reset(): boolean
+end
+`, "test")
+	if err != nil {
+		t.Fatalf("ParseString error: %v", err)
+	}
+	child, ok := stmts[2].(*ast.InterfaceDefStmt)
+	if !ok {
+		t.Fatalf("stmt = %T, want child interface", stmts[2])
+	}
+	bindings := bind.BindChunk(stmts, bind.Options{})
+	decl, ok := bindings.InterfaceDef(child)
+	if !ok {
+		t.Fatal("InterfaceDef binding missing")
+	}
+
+	got, ok := New(bindings).Decl(decl)
+	if !ok {
+		t.Fatal("Decl returned ok=false")
+	}
+	iface, ok := got.(*typ.Interface)
+	if !ok {
+		t.Fatalf("Decl = %T/%v, want *typ.Interface", got, got)
+	}
+	wantMethods := map[string]typ.Type{
+		"read":  typ.Func().Returns(typ.String).Build(),
+		"close": typ.Func().Returns(typ.Boolean).Build(),
+		"reset": typ.Func().Returns(typ.Boolean).Build(),
+	}
+	if len(iface.Methods) != len(wantMethods) {
+		t.Fatalf("methods = %#v, want inherited read/close plus reset", iface.Methods)
+	}
+	for _, method := range iface.Methods {
+		want, ok := wantMethods[method.Name]
+		if !ok {
+			t.Fatalf("unexpected method %q in %#v", method.Name, iface.Methods)
+		}
+		if !typ.TypeEquals(method.Type, want) {
+			t.Fatalf("%s type = %v, want %v", method.Name, method.Type, want)
+		}
+		delete(wantMethods, method.Name)
+	}
+	if len(wantMethods) != 0 {
+		t.Fatalf("missing inherited methods: %#v", wantMethods)
+	}
+}
+
+func TestResolverDeclRejectsConflictingInheritedInterfaceMethods(t *testing.T) {
+	stmts, err := parse.ParseString(`
+interface StringReader
+	function read(): string
+end
+interface NumberReader
+	function read(): number
+end
+interface Broken: StringReader, NumberReader
+end
+`, "test")
+	if err != nil {
+		t.Fatalf("ParseString error: %v", err)
+	}
+	bindings := bind.BindChunk(stmts, bind.Options{})
+	decl, ok := bindings.InterfaceDef(stmts[2].(*ast.InterfaceDefStmt))
+	if !ok {
+		t.Fatal("InterfaceDef binding missing")
+	}
+	if got, ok := New(bindings).Decl(decl); ok {
+		t.Fatalf("Decl = %T/%v, true; want conflict to fail closed", got, got)
+	}
+}
+
+func TestResolverDeclRejectsInterfaceFields(t *testing.T) {
+	stmt := &ast.InterfaceDefStmt{
+		Name: "HasID",
+		Fields: []ast.RecordFieldExpr{{
+			Name: "id",
+			Type: &ast.PrimitiveTypeExpr{Name: "string"},
+		}},
+	}
+	decl := bind.TypeDecl{ID: 100, Kind: bind.TypeDeclInterface, Name: "HasID", Interface: stmt}
+	if got, ok := New(fakeBindings{}).Decl(decl); ok {
+		t.Fatalf("Decl = %T/%v, true; want interface fields to fail closed", got, got)
+	}
+}
+
+func TestResolverDeclBuildsRecursiveInterfaceMethodSet(t *testing.T) {
+	stmts, err := parse.ParseString(`
+interface Node
+	function next(): Node?
+end
+`, "test")
+	if err != nil {
+		t.Fatalf("ParseString error: %v", err)
+	}
+	bindings := bind.BindChunk(stmts, bind.Options{})
+	decl, ok := bindings.InterfaceDef(stmts[0].(*ast.InterfaceDefStmt))
+	if !ok {
+		t.Fatal("InterfaceDef binding missing")
+	}
+	got, ok := New(bindings).Decl(decl)
+	if !ok {
+		t.Fatal("Decl returned ok=false")
+	}
+	rec, ok := got.(*typ.Recursive)
+	if !ok {
+		t.Fatalf("Decl = %T/%v, want recursive interface", got, got)
+	}
+	body, ok := rec.Body.(*typ.Interface)
+	if !ok || body.Name != "Node" || len(body.Methods) != 1 {
+		t.Fatalf("recursive body = %T/%v, want Node interface body", rec.Body, rec.Body)
 	}
 }
 

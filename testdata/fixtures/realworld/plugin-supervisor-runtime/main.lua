@@ -48,7 +48,8 @@ local index_handler = handler_builder.new()
     :remember_flag("did_index")
     :decorate(function(label: string, envelope: protocol.PayloadEnvelope, _state: protocol.StoreState): string
         if envelope.payload.kind == "index" then
-            return label .. ":" .. envelope.payload.document_id
+            local payload = envelope.payload :: protocol.IndexPayload
+            return label .. ":" .. payload.document_id
         end
         return label
     end)
@@ -61,7 +62,8 @@ local audit_handler = handler_builder.new()
     :fail_on_tag("retry", "busy")
     :decorate(function(label: string, envelope: protocol.PayloadEnvelope, _state: protocol.StoreState): string
         if envelope.payload.kind == "audit" then
-            return label .. ":" .. envelope.payload.actor_id
+            local payload = envelope.payload :: protocol.AuditPayload
+            return label .. ":" .. payload.actor_id
         end
         return label
     end)
@@ -166,7 +168,7 @@ local tick_request: protocol.TickRequest = {
 local requests: {protocol.Request} = {
     render_request,
     repeat_render_request,
-    index_request,
+    index_request :: protocol.Request,
     audit_request,
     tick_request,
 }

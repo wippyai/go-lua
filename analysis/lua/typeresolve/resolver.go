@@ -86,8 +86,13 @@ func (r *Resolver) resolveDecl(decl bind.TypeDecl) (typ.Type, bool) {
 	if decl.ID == 0 {
 		return nil, false
 	}
-	if r.active[decl.ID] && decl.Kind == bind.TypeDeclAlias {
-		return r.activeAliasRef(decl)
+	if r.active[decl.ID] {
+		switch decl.Kind {
+		case bind.TypeDeclAlias:
+			return r.activeAliasRef(decl)
+		case bind.TypeDeclInterface:
+			return r.activeInterfaceRef(decl)
+		}
 	}
 	switch decl.Kind {
 	case bind.TypeDeclParam:
@@ -98,7 +103,7 @@ func (r *Resolver) resolveDecl(decl bind.TypeDecl) (typ.Type, bool) {
 		}
 	case bind.TypeDeclInterface:
 		if decl.Interface != nil {
-			return typ.NewRef("", decl.Name), true
+			return r.resolveInterface(decl, decl.Interface)
 		}
 	}
 	return nil, false
@@ -107,6 +112,18 @@ func (r *Resolver) resolveDecl(decl bind.TypeDecl) (typ.Type, bool) {
 func (r *Resolver) activeAliasRef(decl bind.TypeDecl) (typ.Type, bool) {
 	if decl.Type == nil || r.bindings == nil || len(r.bindings.TypeDefParams(decl.Type)) != 0 {
 		return typ.NewRef("", decl.Name), true
+	}
+	if rec := r.activeRec[decl.ID]; rec != nil {
+		return rec, true
+	}
+	rec := typ.NewRecursivePlaceholder(decl.Name)
+	r.activeRec[decl.ID] = rec
+	return rec, true
+}
+
+func (r *Resolver) activeInterfaceRef(decl bind.TypeDecl) (typ.Type, bool) {
+	if decl.Interface == nil {
+		return nil, false
 	}
 	if rec := r.activeRec[decl.ID]; rec != nil {
 		return rec, true
@@ -163,6 +180,96 @@ func (r *Resolver) resolveAlias(decl bind.TypeDecl, stmt *ast.TypeDefStmt) (typ.
 	}
 	r.cache[decl.ID] = t
 	return t, true
+}
+
+func (r *Resolver) resolveInterface(decl bind.TypeDecl, stmt *ast.InterfaceDefStmt) (typ.Type, bool) {
+	if stmt == nil {
+		return nil, false
+	}
+	if t, ok := r.cache[decl.ID]; ok {
+		return t, true
+	}
+	if r.active[decl.ID] {
+		return r.activeInterfaceRef(decl)
+	}
+	if len(stmt.Fields) != 0 {
+		return nil, false
+	}
+
+	r.active[decl.ID] = true
+	methods := make([]typ.Method, 0, len(stmt.Methods))
+	seen := make(map[string]*typ.Function, len(stmt.Methods))
+	merge := func(method typ.Method) bool {
+		if method.Name == "" || method.Type == nil {
+			return false
+		}
+		if existing, ok := seen[method.Name]; ok {
+			return typ.TypeEquals(existing, method.Type)
+		}
+		seen[method.Name] = method.Type
+		methods = append(methods, method)
+		return true
+	}
+
+	ok := true
+	for _, ref := range stmt.Extends {
+		parentType, parentOK := r.Type(ref)
+		parent, ifaceOK := interfaceBody(parentType)
+		if !parentOK || !ifaceOK {
+			ok = false
+			break
+		}
+		for _, method := range parent.Methods {
+			if !merge(method) {
+				ok = false
+				break
+			}
+		}
+		if !ok {
+			break
+		}
+	}
+	if ok {
+		for _, method := range stmt.Methods {
+			if method.Type == nil {
+				ok = false
+				break
+			}
+			t, methodOK := r.Type(method.Type)
+			fn, fnOK := t.(*typ.Function)
+			if !methodOK || !fnOK || !merge(typ.Method{Name: method.Name, Type: fn}) {
+				ok = false
+				break
+			}
+		}
+	}
+
+	rec := r.activeRec[decl.ID]
+	delete(r.active, decl.ID)
+	delete(r.activeRec, decl.ID)
+	if !ok {
+		return nil, false
+	}
+
+	var t typ.Type = typ.NewInterface(stmt.Name, methods)
+	if rec != nil {
+		rec.SetBody(t)
+		t = rec
+	}
+	r.cache[decl.ID] = t
+	return t, true
+}
+
+func interfaceBody(t typ.Type) (*typ.Interface, bool) {
+	switch v := t.(type) {
+	case *typ.Interface:
+		return v, true
+	case *typ.Recursive:
+		if body, ok := v.Body.(*typ.Interface); ok {
+			return body, true
+		}
+	}
+	return nil, false
 }
 
 func (r *Resolver) resolveTypeParam(decl bind.TypeDecl) (*typ.TypeParam, bool) {

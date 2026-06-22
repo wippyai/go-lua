@@ -9,6 +9,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
+	"github.com/wippyai/go-lua/analysis/lua/typeannotation"
 	"github.com/wippyai/go-lua/analysis/lua/valueexpr"
 	"github.com/wippyai/go-lua/analysis/type/refinement"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
@@ -40,9 +41,9 @@ func closedRecordUnionArms(want typ.Type) ([]*typ.Record, bool) {
 	return arms, true
 }
 
-func objectLiteralAdmissibleToAnyArm(result *body.Result, point cfg.Point, arms []*typ.Record, fact semantics.ObjectLiteralFact, env guardEnv) bool {
+func objectLiteralAdmissibleToAnyArm(result *body.Result, resolver typeannotation.Resolver, point cfg.Point, arms []*typ.Record, fact semantics.ObjectLiteralFact, env guardEnv) bool {
 	for _, arm := range arms {
-		if objectLiteralAdmissibleToRecord(result, point, arm, fact, env) {
+		if objectLiteralAdmissibleToRecord(result, resolver, point, arm, fact, env) {
 			return true
 		}
 	}
@@ -53,13 +54,13 @@ func objectLiteralAdmissibleToAnyArm(result *body.Result, point cfg.Point, arms 
 // closed record arm: every present entry matches the arm's expected type and no
 // required field is missing. It mirrors the per-arm decisions the single-record
 // path makes, so a literal that clears every arm check stays accepted.
-func objectLiteralAdmissibleToRecord(result *body.Result, point cfg.Point, record *typ.Record, fact semantics.ObjectLiteralFact, env guardEnv) bool {
+func objectLiteralAdmissibleToRecord(result *body.Result, resolver typeannotation.Resolver, point cfg.Point, record *typ.Record, fact semantics.ObjectLiteralFact, env guardEnv) bool {
 	for _, entry := range fact.Entries {
 		expected, ok := expectedTypeAtSegments(record, entry.Suffix.Segments)
 		if !ok {
 			return false
 		}
-		if _, mismatch := objectLiteralEntryMismatchType(result, point, entry, expected, env); mismatch {
+		if _, mismatch := objectLiteralEntryMismatchType(result, resolver, point, entry, expected, env); mismatch {
 			return false
 		}
 	}
@@ -111,25 +112,35 @@ type objectLiteralTypeMismatch struct {
 	suffix           string
 	segments         []segment.Segment
 	missingField     string
+	missingMethod    typ.Method
 	unionArmEvidence []diagnostic.Evidence
 }
 
-// missingFieldEvidence returns the missing-required-field evidence for a
-// mismatch that was raised because the literal omits a required field, or nil
-// when the mismatch is an ordinary member type mismatch.
-func (m objectLiteralTypeMismatch) missingFieldEvidence() []diagnostic.Evidence {
-	if m.missingField == "" {
+// missingMemberEvidence returns the missing-required-member evidence for a
+// mismatch raised because the literal omits a required field or interface
+// method, or nil when the mismatch is an ordinary member type mismatch.
+func (m objectLiteralTypeMismatch) missingMemberEvidence() []diagnostic.Evidence {
+	switch {
+	case m.missingField != "":
+		return []diagnostic.Evidence{{
+			Kind:    diagnostic.EvidenceMissingProof,
+			Trust:   diagnostic.TrustUnknown,
+			Span:    ast.SpanOf(m.expr),
+			Message: missingRequiredFieldEvidence(m.missingField),
+		}}
+	case m.missingMethod.Name != "":
+		return []diagnostic.Evidence{{
+			Kind:    diagnostic.EvidenceMissingProof,
+			Trust:   diagnostic.TrustUnknown,
+			Span:    ast.SpanOf(m.expr),
+			Message: missingRequiredMethodTypeEvidence(m.want, m.missingMethod),
+		}}
+	default:
 		return nil
 	}
-	return []diagnostic.Evidence{{
-		Kind:    diagnostic.EvidenceMissingProof,
-		Trust:   diagnostic.TrustUnknown,
-		Span:    ast.SpanOf(m.expr),
-		Message: missingRequiredFieldEvidence(m.missingField),
-	}}
 }
 
-func objectLiteralMemberMismatch(result *body.Result, point cfg.Point, expr ast.Expr, want typ.Type, env guardEnv) (objectLiteralTypeMismatch, bool) {
+func objectLiteralMemberMismatch(result *body.Result, resolver typeannotation.Resolver, point cfg.Point, expr ast.Expr, want typ.Type, env guardEnv) (objectLiteralTypeMismatch, bool) {
 	if result == nil || expr == nil || want == nil {
 		return objectLiteralTypeMismatch{}, false
 	}
@@ -138,26 +149,26 @@ func objectLiteralMemberMismatch(result *body.Result, point cfg.Point, expr ast.
 		return objectLiteralTypeMismatch{}, false
 	}
 	if arms, ok := closedRecordUnionArms(want); ok {
-		if objectLiteralAdmissibleToAnyArm(result, point, arms, fact, env) {
+		if objectLiteralAdmissibleToAnyArm(result, resolver, point, arms, fact, env) {
 			return objectLiteralTypeMismatch{}, false
 		}
 		for _, arm := range arms {
-			if mismatch, ok := objectLiteralMemberMismatchInFact(result, point, fact, arm, env); ok {
+			if mismatch, ok := objectLiteralMemberMismatchInFact(result, resolver, point, fact, arm, env); ok {
 				return mismatch, true
 			}
 		}
-		return objectLiteralTypeMismatch{expr: expr, got: objectLiteralType(want, fact), want: want, unionArmEvidence: objectLiteralUnionArmEvidence(result, point, fact, arms, env)}, true
+		return objectLiteralTypeMismatch{expr: expr, got: objectLiteralType(want, fact), want: want, unionArmEvidence: objectLiteralUnionArmEvidence(result, resolver, point, fact, arms, env)}, true
 	}
-	return objectLiteralMemberMismatchInFact(result, point, fact, want, env)
+	return objectLiteralMemberMismatchInFact(result, resolver, point, fact, want, env)
 }
 
-func objectLiteralUnionArmEvidence(result *body.Result, point cfg.Point, fact semantics.ObjectLiteralFact, arms []*typ.Record, env guardEnv) []diagnostic.Evidence {
+func objectLiteralUnionArmEvidence(result *body.Result, resolver typeannotation.Resolver, point cfg.Point, fact semantics.ObjectLiteralFact, arms []*typ.Record, env guardEnv) []diagnostic.Evidence {
 	if len(arms) == 0 {
 		return nil
 	}
 	out := make([]diagnostic.Evidence, 0, len(arms))
 	for i, arm := range arms {
-		message, span, ok := objectLiteralUnionArmRejection(result, point, fact, arm, env)
+		message, span, ok := objectLiteralUnionArmRejection(result, resolver, point, fact, arm, env)
 		if !ok {
 			continue
 		}
@@ -174,7 +185,7 @@ func objectLiteralUnionArmEvidence(result *body.Result, point cfg.Point, fact se
 	return out
 }
 
-func objectLiteralUnionArmRejection(result *body.Result, point cfg.Point, fact semantics.ObjectLiteralFact, arm *typ.Record, env guardEnv) (string, ast.Span, bool) {
+func objectLiteralUnionArmRejection(result *body.Result, resolver typeannotation.Resolver, point cfg.Point, fact semantics.ObjectLiteralFact, arm *typ.Record, env guardEnv) (string, ast.Span, bool) {
 	if field, ok := missingRequiredRecordField(arm, fact); ok {
 		fieldPath := segment.FormatSegments([]segment.Segment{{Kind: segment.SegmentField, Name: field.Name}})
 		if alias, aliasSpan, aliasOK := objectLiteralStaticStringIndexForField(fact, field.Name); aliasOK {
@@ -187,7 +198,7 @@ func objectLiteralUnionArmRejection(result *body.Result, point cfg.Point, fact s
 		if !ok {
 			continue
 		}
-		got, ok := objectLiteralEntryMismatchType(result, point, entry, expected, env)
+		got, ok := objectLiteralEntryMismatchType(result, resolver, point, entry, expected, env)
 		if !ok {
 			continue
 		}
@@ -210,13 +221,13 @@ func objectLiteralStaticStringIndexForField(fact semantics.ObjectLiteralFact, na
 	return "", ast.Span{}, false
 }
 
-func objectLiteralMemberMismatchInFact(result *body.Result, point cfg.Point, fact semantics.ObjectLiteralFact, want typ.Type, env guardEnv) (objectLiteralTypeMismatch, bool) {
+func objectLiteralMemberMismatchInFact(result *body.Result, resolver typeannotation.Resolver, point cfg.Point, fact semantics.ObjectLiteralFact, want typ.Type, env guardEnv) (objectLiteralTypeMismatch, bool) {
 	for _, entry := range fact.Entries {
 		expected, ok := expectedTypeAtSegments(want, entry.Suffix.Segments)
 		if !ok {
 			continue
 		}
-		got, ok := objectLiteralEntryMismatchType(result, point, entry, expected, env)
+		got, ok := objectLiteralEntryMismatchType(result, resolver, point, entry, expected, env)
 		if !ok {
 			continue
 		}
@@ -225,15 +236,50 @@ func objectLiteralMemberMismatchInFact(result *body.Result, point cfg.Point, fac
 	if field, ok := missingRequiredRecordField(want, fact); ok {
 		return objectLiteralTypeMismatch{expr: fact.Expr, got: objectLiteralType(want, fact), want: want, missingField: field.Name}, true
 	}
+	if method, ok := missingRequiredInterfaceMethod(want, fact); ok {
+		return objectLiteralTypeMismatch{expr: fact.Expr, got: objectLiteralType(want, fact), want: want, missingMethod: method}, true
+	}
 	return objectLiteralTypeMismatch{}, false
 }
 
-func objectLiteralEntryMismatchType(result *body.Result, point cfg.Point, entry semantics.ObjectEntryFact, expected typ.Type, env guardEnv) (typ.Type, bool) {
+func missingRequiredInterfaceMethod(want typ.Type, fact semantics.ObjectLiteralFact) (typ.Method, bool) {
+	iface, ok := transparentExpectedType(want).(*typ.Interface)
+	if !ok || iface == nil || len(iface.Methods) == 0 {
+		return typ.Method{}, false
+	}
+	present := make(map[string]struct{}, len(fact.Entries))
+	for _, entry := range fact.Entries {
+		if len(entry.Suffix.Segments) != 1 {
+			continue
+		}
+		seg := entry.Suffix.Segments[0]
+		if seg.Kind == segment.SegmentField && seg.Name != "" {
+			present[seg.Name] = struct{}{}
+		}
+	}
+	for _, method := range iface.Methods {
+		if _, ok := present[method.Name]; ok {
+			continue
+		}
+		return method, true
+	}
+	return typ.Method{}, false
+}
+
+func objectLiteralEntryMismatchType(result *body.Result, resolver typeannotation.Resolver, point cfg.Point, entry semantics.ObjectEntryFact, expected typ.Type, env guardEnv) (typ.Type, bool) {
 	if expected == nil || typ.IsAny(expected) || typ.IsUnknown(expected) || refinement.ContainsFreeTypeParam(expected) {
 		return nil, false
 	}
 	if got, ok := valueexpr.LiteralType(entry.Value); ok && clearMismatch(result, got, expected) {
 		return got, true
+	}
+	if got, ok := result.FunctionValueTypeAtBoundary(point, entry.Value); ok && clearMismatch(result, got, expected) {
+		return got, true
+	}
+	if fn, ok := entry.Value.(*ast.FunctionExpr); ok {
+		if got, ok := lowerFunctionExprType(fn, resolver); ok && clearMismatch(result, got, expected) {
+			return got, true
+		}
 	}
 	if env.provesRuntimeType(result, point, entry.Value, expected) {
 		return nil, false
@@ -242,6 +288,9 @@ func objectLiteralEntryMismatchType(result *body.Result, point cfg.Point, entry 
 	value, ok := reader.SourceValue(point, entry.Source)
 	if !ok {
 		return nil, false
+	}
+	if got, ok := reader.ValueType(value); ok && clearMismatch(result, got, expected) {
+		return got, true
 	}
 	if reader.ValueHasUntrustedTopOrigin(value) {
 		if reader.ValueProofAdmissible(value, expected) {

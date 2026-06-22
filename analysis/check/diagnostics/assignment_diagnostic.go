@@ -43,6 +43,45 @@ func assignmentDiagnostic(name string, want, got typ.Type, expr ast.Expr, annota
 	})
 }
 
+func objectMemberAssignmentDiagnostic(memberName string, want, got typ.Type, expr ast.Expr, annotation ast.TypeExpr, extraEvidence ...diagnostic.Evidence) diagnostic.Diagnostic {
+	sourceName := exprEvidenceName(expr)
+	exprSpan := spanWithEvidenceName(ast.SpanOf(expr), sourceName)
+	typeSpan := ast.SpanOf(annotation)
+	extraEvidence = clarifyTypeMismatchEvidence(extraEvidence, sourceName, got, exprSpan, "declared type")
+	extraEvidence = appendMissingNilGuardEvidence(extraEvidence, sourceName, got, exprSpan)
+	evidence := []diagnostic.Evidence{
+		{
+			Kind:    diagnostic.EvidenceAbstractFact,
+			Trust:   diagnostic.TrustProven,
+			Span:    exprSpan,
+			Message: assignmentSourceTypeEvidence(sourceName, got),
+		},
+		{
+			Kind:    diagnostic.EvidenceUserAssertion,
+			Trust:   diagnostic.TrustClaimed,
+			Span:    typeSpan,
+			Message: declaredTypeEvidence(memberName, annotation, want),
+		},
+	}
+	evidence = append(evidence, extraEvidence...)
+	helpName := sourceName
+	if helpName == "" || helpName == unknownSourceName {
+		helpName = memberName
+	}
+	return diagnostic.New(diagnostic.DiagnosticSpec{
+		Span:        exprSpan,
+		Code:        CodeAssignmentType,
+		Severity:    diagnostic.SeverityError,
+		Message:     memberAssignmentMessage(memberName, sourceName, got, want),
+		Explanation: diagnostic.NewExplanation(evidence...),
+		Help:        assignmentHelp(helpName, got),
+		Labels: []diagnostic.Label{
+			sourceLabel(exprSpan, labelAssignedValue),
+			sourceLabel(typeSpan, labelDeclaredType),
+		},
+	})
+}
+
 // underSuppliedTargetDiagnostic reports a destructuring target that an
 // initialized multi-assignment leaves nil because fewer values are supplied than
 // there are targets. The target has no source expression, so the report is
@@ -171,6 +210,42 @@ func missingFieldAssignmentDiagnostic(name string, want typ.Type, got typ.Type, 
 				Trust:   diagnostic.TrustProven,
 				Span:    exprSpan,
 				Message: missingRequiredFieldPathEvidence(fieldPath, field.Type),
+			},
+		),
+		Labels: []diagnostic.Label{
+			sourceLabel(exprSpan, labelObjectLiteral),
+			sourceLabel(typeSpan, labelDeclaredType),
+		},
+	})
+}
+
+func missingMethodAssignmentDiagnostic(name string, want typ.Type, got typ.Type, method typ.Method, expr ast.Expr, annotation ast.TypeExpr) diagnostic.Diagnostic {
+	exprSpan := ast.SpanOf(expr)
+	typeSpan := ast.SpanOf(annotation)
+	return diagnostic.New(diagnostic.DiagnosticSpec{
+		Span:     exprSpan,
+		Code:     CodeAssignmentType,
+		Severity: diagnostic.SeverityError,
+		Message:  missingRequiredMethodMessage(want, method.Name),
+		Help:     missingRequiredMethodHelp(method.Name),
+		Explanation: diagnostic.NewExplanation(
+			diagnostic.Evidence{
+				Kind:    diagnostic.EvidenceAbstractFact,
+				Trust:   diagnostic.TrustProven,
+				Span:    exprSpan,
+				Message: objectLiteralShapeEvidence(got),
+			},
+			diagnostic.Evidence{
+				Kind:    diagnostic.EvidenceUserAssertion,
+				Trust:   diagnostic.TrustClaimed,
+				Span:    typeSpan,
+				Message: declaredTypeEvidence(name, annotation, want),
+			},
+			diagnostic.Evidence{
+				Kind:    diagnostic.EvidenceMissingProof,
+				Trust:   diagnostic.TrustUnknown,
+				Span:    exprSpan,
+				Message: missingRequiredMethodTypeEvidence(want, method),
 			},
 		),
 		Labels: []diagnostic.Label{

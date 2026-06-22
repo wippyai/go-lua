@@ -486,7 +486,7 @@ func (p directCallContract) directFunctionCall(
 				extra = append(extra, boundaryDiagnosticEvidenceForSubject(result, point, ast.SpanOf(mismatch.expr), exprEvidenceName(mismatch.expr), mismatch.want, boundaryValueFromExpr(mismatch.expr))...)
 				return objectLiteralArgTypeDiagnostic(call, contract.name, violation.Index, arg, mismatch, contract.paramDeclSpan(violation.Index), extra...), true
 			}
-			if mismatch, ok := objectLiteralMemberMismatch(result, point, arg, violation.Constraint, env); ok {
+			if mismatch, ok := objectLiteralMemberMismatch(result, p.resolver, point, arg, violation.Constraint, env); ok {
 				extra := boundaryDiagnosticEvidenceForSubject(result, point, ast.SpanOf(mismatch.expr), exprEvidenceName(mismatch.expr), mismatch.want, boundaryValueFromExpr(mismatch.expr))
 				return objectLiteralArgTypeDiagnostic(call, contract.name, violation.Index, arg, mismatch, contract.paramDeclSpan(violation.Index), extra...), true
 			}
@@ -519,7 +519,7 @@ func (p directCallContract) directFunctionCall(
 		} else if contract.hasVararg {
 			paramDisplay = contract.variadic.display
 		}
-		if mismatch, ok := objectLiteralMemberMismatch(result, point, arg, want, env); ok {
+		if mismatch, ok := objectLiteralMemberMismatch(result, p.resolver, point, arg, want, env); ok {
 			extra := boundaryDiagnosticEvidenceForSubject(result, point, ast.SpanOf(mismatch.expr), exprEvidenceName(mismatch.expr), mismatch.want, boundaryValueFromExpr(mismatch.expr))
 			return objectLiteralArgTypeDiagnostic(call, contract.name, i, arg, mismatch, contract.paramDeclSpan(i), extra...), true
 		}
@@ -1127,10 +1127,14 @@ func objectLiteralArgTypeDiagnostic(call *ast.FuncCallExpr, name string, index i
 		Message: callParameterTypeEvidence(name, index+1, mismatch.suffix, mismatch.want),
 	}}
 	evidence = append(evidence, extraEvidence...)
-	evidence = append(evidence, mismatch.missingFieldEvidence()...)
+	evidence = append(evidence, mismatch.missingMemberEvidence()...)
 	evidence = append(evidence, mismatch.unionArmEvidence...)
+	message := fmt.Sprintf("%s is %s, not %s", subject, formatType(mismatch.got), formatType(mismatch.want))
+	if mismatch.missingMethod.Name != "" {
+		message = fmt.Sprintf("%s does not implement %s: missing method %q", subject, formatType(mismatch.want), mismatch.missingMethod.Name)
+	}
 	return argTypeDiagnosticEnvelopeWithSubject(call, frameExpr, index, mismatch.got, "", subject,
-		fmt.Sprintf("%s is %s, not %s", subject, formatType(mismatch.got), formatType(mismatch.want)),
+		message,
 		evidence[0], evidence[1:]...)
 }
 
@@ -1172,15 +1176,24 @@ func genericObjectLiteralMissingFieldEvidence(result *body.Result, arg ast.Expr,
 		return nil
 	}
 	field, ok := missingRequiredRecordField(formal, fact)
-	if !ok {
-		return nil
+	if ok {
+		return []diagnostic.Evidence{{
+			Kind:    diagnostic.EvidenceMissingProof,
+			Trust:   diagnostic.TrustUnknown,
+			Span:    ast.SpanOf(arg),
+			Message: missingRequiredFieldEvidence(field.Name),
+		}}
 	}
-	return []diagnostic.Evidence{{
-		Kind:    diagnostic.EvidenceMissingProof,
-		Trust:   diagnostic.TrustUnknown,
-		Span:    ast.SpanOf(arg),
-		Message: missingRequiredFieldEvidence(field.Name),
-	}}
+	method, ok := missingRequiredInterfaceMethod(formal, fact)
+	if ok {
+		return []diagnostic.Evidence{{
+			Kind:    diagnostic.EvidenceMissingProof,
+			Trust:   diagnostic.TrustUnknown,
+			Span:    ast.SpanOf(arg),
+			Message: missingRequiredMethodTypeEvidence(formal, method),
+		}}
+	}
+	return nil
 }
 
 // argTypeDiagnosticEnvelope builds the shared argument-type diagnostic shell: the

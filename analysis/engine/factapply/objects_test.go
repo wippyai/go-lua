@@ -315,6 +315,61 @@ func TestFactsNodeTransferObjectLiteralEntryExpectedContractPreservesIdentity(t 
 	}
 }
 
+func TestFactsNodeTransferObjectLiteralEntryExpectedContractDoesNotEraseIncompatibleWitness(t *testing.T) {
+	reg := standard.Registry()
+	point := cfg.Point(71)
+	target := symbol.ID(129)
+	objectSource := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: factflow.ExprRef(82), HasExpr: true}
+	entrySource := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: factflow.ExprRef(83), HasExpr: true}
+	rootID := testTableLiteralID(objectSource.ExprRef)
+	entryID := testTableLiteralID(entrySource.ExprRef)
+	rootValue := product.Set(reg, presentValue(reg), identity.Key, identity.Singleton(rootID))
+	actualType := typ.Func().Param("self", typ.Any).Returns(typ.Number).Build()
+	expectedType := typ.Func().Param("self", typ.Any).Returns(typ.String).Build()
+	entryValue := product.Set(reg, typevalue.WithWitness(reg, typevalue.FromType(reg, actualType), actualType), identity.Key, identity.Singleton(entryID))
+	entryExpected := typevalue.WithWitness(reg, typevalue.FromType(reg, expectedType), expectedType)
+	entry := factflow.NewObjectEntry(fieldSuffix("read"), entrySource).WithExpected(entryExpected)
+	sources := &recordingSourceValues{
+		values: map[factflow.ValueSource]product.Value{
+			objectSource: rootValue,
+			entrySource:  entryValue,
+		},
+	}
+	visibilityBuilder := visibility.NewBuilder()
+	visibilityBuilder.Define(point, target, "impl")
+	resolver := visibility.NewResolver(visibilityBuilder.Build())
+	ks := resolver.KeySpace()
+
+	got := NewFactsNodeTransfer(FactsNodeTransferConfig{
+		Facts: factflow.NewFacts(factflow.FactsInput{
+			RootAssignments: map[cfg.Point]factflow.RootAssignment{
+				point: factflow.NewRootAssignment(factflow.RootAssignmentLocalDeclaration, target, path.NewPath(target, "impl"), objectSource),
+			},
+			ObjectLiterals: map[factflow.ExprRef]factflow.ObjectLiteral{
+				objectSource.ExprRef: factflow.NewObjectLiteral([]factflow.ObjectEntry{entry}),
+			},
+		}),
+		Sources:    sources,
+		Visibility: resolver,
+	})(transfer.NodeContext{
+		Registry: reg,
+		Point:    point,
+	}, state.State{})
+
+	pathValue := got.ReadPathKey(reg, ks, path.PathKey("sym129@1.read"))
+	if gotType, ok := typevalue.TypeOf(reg, pathValue); !ok || !typ.TypeEquals(gotType, actualType) {
+		t.Fatalf("path entry type = %v/%v, want actual incompatible type %v", gotType, ok, actualType)
+	}
+	object := got.ReadHeapTableObject(reg, rootID)
+	heapValue, ok := object.StaticMember(staticSuffixKey(t, ks, ".read"))
+	if !ok {
+		t.Fatalf("heap read member missing")
+	}
+	if gotType, ok := typevalue.TypeOf(reg, heapValue); !ok || !typ.TypeEquals(gotType, actualType) {
+		t.Fatalf("heap entry type = %v/%v, want actual incompatible type %v", gotType, ok, actualType)
+	}
+}
+
 func TestFactsNodeTransferObjectLiteralWritesNestedHeapObjects(t *testing.T) {
 	reg := standard.Registry()
 	point := cfg.Point(66)
