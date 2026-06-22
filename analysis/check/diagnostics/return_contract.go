@@ -632,38 +632,19 @@ func directCallArgsCompatible(result *body.Result, point cfg.Point, fact semanti
 		} else {
 			break
 		}
-		got, ok := declaredArgumentExprType(result, context.resolver, arg)
-		if ok && topLikeType(got) {
-			ok = false
-		}
-		untrustedTopLike := false
-		if !ok {
-			got, ok = untrustedTopLikeExpressionTypeAt(result, context.resolver, point, arg)
-			untrustedTopLike = ok
-		}
-		if !ok {
-			got, ok = projectedStructuralFlowSourceType(result, context.resolver, point, guardEnv{}, arg)
-		}
-		if !ok {
-			got, ok = directCallArgumentContractSourceType(result, context, fact, i, defs)
-		}
-		if !ok {
-			got, ok = staticExpressionType(result, context.resolver, arg)
-		}
-		if !ok {
-			got, ok = boundaryCallArgumentSourceType(result, point, fact, i)
-		}
-		if !ok || refinement.ContainsFreeTypeParam(want) || refinement.ContainsFreeTypeParam(got) {
+		resolution := resolveDirectCallCompatibleArgumentType(result, point, fact, i, arg, context, defs)
+		if !resolution.OK || refinement.ContainsFreeTypeParam(want) || refinement.ContainsFreeTypeParam(resolution.Type) {
 			continue
 		}
 		if _, ok := objectLiteralMemberMismatch(result, point, arg, want, env); ok {
 			return false
 		}
+		got := resolution.Type
 		readBoundary := boundaryCallArgumentReader(fact, i, arg)
 		if topLikeType(got) {
 			readBoundary = untrustedAnyBoundaryReader(readBoundary)
 		}
-		if untrustedTopLike {
+		if resolution.UntrustedTopLike {
 			if boundaryProofTypeMismatch(result, point, got, want, readBoundary) {
 				return false
 			}
@@ -674,6 +655,61 @@ func directCallArgsCompatible(result *body.Result, point cfg.Point, fact semanti
 		}
 	}
 	return true
+}
+
+func resolveDirectCallCompatibleArgumentType(
+	result *body.Result,
+	point cfg.Point,
+	fact semantics.CallFact,
+	index int,
+	arg ast.Expr,
+	context producerContext,
+	defs map[symbol.ID]*ast.FunctionExpr,
+) diagnosticTypeResolution {
+	return firstDiagnosticTypeResolution(
+		diagnosticTypeResolution{},
+		diagnosticTypeResolutionAttempt{
+			Source: "declared-argument-expression",
+			Resolve: func() (typ.Type, bool) {
+				got, ok := declaredArgumentExprType(result, context.resolver, arg)
+				if ok && topLikeType(got) {
+					return nil, false
+				}
+				return got, ok
+			},
+		},
+		diagnosticTypeResolutionAttempt{
+			Source:           "untrusted-top-like-expression",
+			UntrustedTopLike: true,
+			Resolve: func() (typ.Type, bool) {
+				return untrustedTopLikeExpressionTypeAt(result, context.resolver, point, arg)
+			},
+		},
+		diagnosticTypeResolutionAttempt{
+			Source: "projected-structural-flow-source",
+			Resolve: func() (typ.Type, bool) {
+				return projectedStructuralFlowSourceType(result, context.resolver, point, guardEnv{}, arg)
+			},
+		},
+		diagnosticTypeResolutionAttempt{
+			Source: "direct-call-argument-contract-source",
+			Resolve: func() (typ.Type, bool) {
+				return directCallArgumentContractSourceType(result, context, fact, index, defs)
+			},
+		},
+		diagnosticTypeResolutionAttempt{
+			Source: "static-expression",
+			Resolve: func() (typ.Type, bool) {
+				return staticExpressionType(result, context.resolver, arg)
+			},
+		},
+		diagnosticTypeResolutionAttempt{
+			Source: "boundary-call-argument-source",
+			Resolve: func() (typ.Type, bool) {
+				return boundaryCallArgumentSourceType(result, point, fact, index)
+			},
+		},
+	)
 }
 
 func instantiateDirectFunctionContract(
