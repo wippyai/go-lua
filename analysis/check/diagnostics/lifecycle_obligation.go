@@ -1,6 +1,8 @@
 package diagnostics
 
 import (
+	"strings"
+
 	"github.com/wippyai/go-lua/analysis/check/body"
 	"github.com/wippyai/go-lua/analysis/diagnostic"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
@@ -33,7 +35,7 @@ func (p lifecycleObligations) Produce(result *body.Result) []diagnostic.Diagnost
 	sites := lifecycleFactSites(result, graph, envs)
 	var out []diagnostic.Diagnostic
 	for _, obligation := range obligations {
-		if obligation.Resource.ID == "" || obligation.Resource.Protocol == "" || obligation.Obligation.Final == "" {
+		if obligation.Resource.ID == "" || obligation.Resource.Protocol == "" || obligation.Obligation.Empty() {
 			continue
 		}
 		out = append(out, newLifecycleObligationDiagnostic(obligation, sites, graph, p.flow))
@@ -108,7 +110,7 @@ func newLifecycleObligationDiagnostic(obligation typestate.OpenObligation, sites
 	}
 	protocol := string(resource.Protocol)
 	current := string(obligation.Current)
-	final := string(obligation.Obligation.Final)
+	final := lifecycleObligationFinalName(obligation.Obligation)
 	span := diagnostic.Span{}
 	for _, acquire := range acquires {
 		if acquire.span.Valid() {
@@ -116,7 +118,7 @@ func newLifecycleObligationDiagnostic(obligation typestate.OpenObligation, sites
 			break
 		}
 	}
-	transitions := lifecycleFinalTransitionSites(resource, obligation.Obligation.Final, sites, graph, flow)
+	transitions := lifecycleFinalTransitionSites(resource, obligation.Obligation, sites, graph, flow)
 	escapes := lifecycleEscapeSites(resource, sites, graph, flow)
 	evidence := make([]diagnostic.Evidence, 0, len(acquires)+len(transitions)+len(escapes)+1)
 	labels := make([]diagnostic.Label, 0, len(acquires)+len(transitions)+len(escapes))
@@ -201,15 +203,27 @@ func lifecycleEscapeSites(resource typestate.Resource, sites []lifecycleFactSite
 	return lifecycleLatestSites(out, graph, flow)
 }
 
-func lifecycleFinalTransitionSites(resource typestate.Resource, final typestate.State, sites []lifecycleFactSite, graph cfg.Graph, flow *diagnosticFlowCache) []lifecycleFactSite {
+func lifecycleFinalTransitionSites(resource typestate.Resource, obligation typestate.Obligation, sites []lifecycleFactSite, graph cfg.Graph, flow *diagnosticFlowCache) []lifecycleFactSite {
 	var out []lifecycleFactSite
 	for _, site := range sites {
-		if site.kind != callboundary.LifecycleTransition || site.resource != resource || site.to != final {
+		if site.kind != callboundary.LifecycleTransition || site.resource != resource || !obligation.SatisfiedBy(site.to) {
 			continue
 		}
 		out = append(out, site)
 	}
 	return lifecycleLatestSites(out, graph, flow)
+}
+
+func lifecycleObligationFinalName(obligation typestate.Obligation) string {
+	states := obligation.FinalStateList()
+	if len(states) == 0 {
+		return ""
+	}
+	names := make([]string, 0, len(states))
+	for _, state := range states {
+		names = append(names, codeName(state.String()))
+	}
+	return strings.Join(names, " or ")
 }
 
 func lifecycleLatestSites(sites []lifecycleFactSite, graph cfg.Graph, flow *diagnosticFlowCache) []lifecycleFactSite {

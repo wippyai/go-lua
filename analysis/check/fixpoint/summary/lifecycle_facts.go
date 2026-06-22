@@ -14,6 +14,7 @@ type lifecycleFactKey struct {
 	from     typestate.State
 	to       typestate.State
 	final    typestate.State
+	finals   typestate.FinalStates
 }
 
 // lifecycleLane is a must-fact lane for cross-boundary typestate effects.
@@ -42,6 +43,7 @@ func lifecycleKeyOf(f callboundary.LifecycleFact) lifecycleFactKey {
 		from:     f.From,
 		to:       f.To,
 		final:    f.Obligation.Final,
+		finals:   f.Obligation.Finals,
 	}
 }
 
@@ -61,5 +63,8 @@ func lifecycleFactLess(a, b callboundary.LifecycleFact) bool {
 	if a.To != b.To {
 		return a.To < b.To
 	}
-	return a.Obligation.Final < b.Obligation.Final
+	if a.Obligation.Final != b.Obligation.Final {
+		return a.Obligation.Final < b.Obligation.Final
+	}
+	return a.Obligation.Finals < b.Obligation.Finals
 }

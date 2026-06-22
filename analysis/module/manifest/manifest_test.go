@@ -458,6 +458,58 @@ func TestManifestRejectsLifecycleEffectsWithoutDeclaredFSM(t *testing.T) {
 	}
 }
 
+func TestManifestRoundTripsLifecycleAcquireFinalStateSet(t *testing.T) {
+	fn := typ.Func().Param("tx", typ.Any).Build()
+	m := New("example/lifecycle-final-set")
+	if err := m.DefineTypestateProtocol(typestate.Definition{
+		Protocol:    "transaction",
+		States:      []typestate.State{"active", "committed", "rolled_back"},
+		FinalStates: []typestate.State{"committed", "rolled_back"},
+		Transitions: []typestate.TransitionDecl{
+			{From: "active", To: "committed"},
+			{From: "active", To: "rolled_back"},
+		},
+	}); err != nil {
+		t.Fatalf("DefineTypestateProtocol: %v", err)
+	}
+	obligation := typestate.Obligation{Finals: typestate.NewFinalStates("rolled_back", "committed")}
+	m.DefineFunctionSignature("begin", signature.Function{
+		Type: fn,
+		Effect: effect.Empty.With(lifecycle.Acquire{
+			Target:     effect.ParamRef{Index: 0},
+			Protocol:   "transaction",
+			State:      "active",
+			Obligation: obligation,
+		}),
+	})
+
+	data, err := Encode(m)
+	if err != nil {
+		t.Fatalf("Encode: %v", err)
+	}
+	if !bytes.Contains(data, []byte(`"finals"`)) ||
+		!bytes.Contains(data, []byte(`"committed"`)) ||
+		!bytes.Contains(data, []byte(`"rolled_back"`)) {
+		t.Fatalf("encoded manifest missing canonical finals set:\n%s", data)
+	}
+	got, err := Decode(data)
+	if err != nil {
+		t.Fatalf("Decode: %v", err)
+	}
+	sig, ok := got.FunctionSignatures["begin"]
+	if !ok {
+		t.Fatalf("decoded signatures = %#v, want begin", got.FunctionSignatures)
+	}
+	if !rowHasLabel(sig.Effect, lifecycle.Acquire{
+		Target:     effect.ParamRef{Index: 0},
+		Protocol:   "transaction",
+		State:      "active",
+		Obligation: obligation,
+	}) {
+		t.Fatalf("decoded effect = %v, want lifecycle acquire with finals set %q", sig.Effect, obligation.Finals)
+	}
+}
+
 func TestManifestRejectsLifecycleEffectsOutsideDeclaredFSM(t *testing.T) {
 	tests := []struct {
 		name string

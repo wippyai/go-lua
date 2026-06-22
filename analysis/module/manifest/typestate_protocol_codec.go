@@ -133,7 +133,7 @@ func validateEffectRowTypestateUsage(defs map[typestate.Protocol]typestate.Defin
 	for _, label := range row.Labels {
 		switch l := effect.NormalizeLabel(label).(type) {
 		case lifecycle.Acquire:
-			if err := validateLifecycleAcquire(defs, l.Protocol, l.State, l.Obligation.Final); err != nil {
+			if err := validateLifecycleAcquire(defs, l.Protocol, l.State, l.Obligation); err != nil {
 				return err
 			}
 		case lifecycle.Transition:
@@ -153,7 +153,7 @@ func validateOperationalTypestateUsage(defs map[typestate.Protocol]typestate.Def
 	for _, fact := range effects.LifecycleEffects {
 		switch fact.Kind {
 		case signature.LifecycleAcquire:
-			if err := validateLifecycleAcquire(defs, fact.Protocol, fact.To, fact.Obligation.Final); err != nil {
+			if err := validateLifecycleAcquire(defs, fact.Protocol, fact.To, fact.Obligation); err != nil {
 				return err
 			}
 		case signature.LifecycleTransition:
@@ -171,7 +171,7 @@ func validateOperationalTypestateUsage(defs map[typestate.Protocol]typestate.Def
 	return nil
 }
 
-func validateLifecycleAcquire(defs map[typestate.Protocol]typestate.Definition, protocol typestate.Protocol, state, final typestate.State) error {
+func validateLifecycleAcquire(defs map[typestate.Protocol]typestate.Definition, protocol typestate.Protocol, state typestate.State, obligation typestate.Obligation) error {
 	if state == "" {
 		return fmt.Errorf("lifecycle acquire missing state")
 	}
@@ -182,8 +182,10 @@ func validateLifecycleAcquire(defs map[typestate.Protocol]typestate.Definition, 
 	if !def.HasState(state) {
 		return fmt.Errorf("protocol %q does not declare acquire state %q", protocol, state)
 	}
-	if final != "" && !def.IsFinal(final) {
-		return fmt.Errorf("protocol %q does not declare obligation final state %q", protocol, final)
+	for _, final := range obligation.FinalStateList() {
+		if !def.IsFinal(final) {
+			return fmt.Errorf("protocol %q does not declare obligation final state %q", protocol, final)
+		}
 	}
 	return nil
 }

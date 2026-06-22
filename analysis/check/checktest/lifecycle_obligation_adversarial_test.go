@@ -402,6 +402,61 @@ close(tx)
 	}
 }
 
+func TestLifecycleResourceEarlyReturnKeepsOpenObligation(t *testing.T) {
+	src := `
+local tx = {}
+begin(tx)
+if flag then
+    return
+end
+finish(tx)
+`
+	result := Check(src, lifecycleManifestOptions("begin", "finish", "flag")...)
+	if len(result.Diagnostics) != 1 {
+		t.Fatalf("diagnostics = %#v, want one lifecycle warning for early return before close", result.Diagnostics)
+	}
+	diag := result.Diagnostics[0]
+	if diag.Code != diagnostics.CodeResourceUnreleased {
+		t.Fatalf("diagnostic = %#v, want lifecycle warning", diag)
+	}
+	requireEvidenceMessage(t, diag, "this call acquires `tx` as transaction:`active` and requires `finished` before local ownership ends")
+	requireEvidenceMessage(t, diag, "this call transitions `tx` in protocol transaction from `active` to `finished` on a reachable path")
+	requireEvidenceMessage(t, diag, "exit state still has `tx` in protocol transaction at a non-final state; no proof reaches `finished` or escapes ownership on every path")
+}
+
+func TestLifecycleResourceAcceptsAnyDeclaredObligationFinalState(t *testing.T) {
+	bothFinals := Check(`
+local tx = {}
+begin(tx)
+if flag then
+    commit(tx)
+else
+    rollback(tx)
+end
+`, lifecycleMultiFinalManifestOptions("begin", "commit", "rollback", "flag")...)
+	if len(bothFinals.Diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want no lifecycle warning when every path reaches a declared final state", bothFinals.Diagnostics)
+	}
+
+	partial := Check(`
+local tx = {}
+begin(tx)
+if flag then
+    commit(tx)
+end
+`, lifecycleMultiFinalManifestOptions("begin", "commit", "flag")...)
+	if len(partial.Diagnostics) != 1 {
+		t.Fatalf("diagnostics = %#v, want one lifecycle warning for missing rollback/default final path", partial.Diagnostics)
+	}
+	diag := partial.Diagnostics[0]
+	if diag.Code != diagnostics.CodeResourceUnreleased {
+		t.Fatalf("diagnostic = %#v, want lifecycle warning", diag)
+	}
+	requireEvidenceMessage(t, diag, "this call acquires `tx` as transaction:`active` and requires `committed` or `rolled_back` before local ownership ends")
+	requireEvidenceMessage(t, diag, "this call transitions `tx` in protocol transaction from `active` to `committed` on a reachable path")
+	requireEvidenceMessage(t, diag, "exit state still has `tx` in protocol transaction at a non-final state; no proof reaches `committed` or `rolled_back` or escapes ownership on every path")
+}
+
 func TestLifecycleResourceFieldReassignmentDoesNotCloseOriginal(t *testing.T) {
 	result := Check(`
 local tx = {}
@@ -508,6 +563,68 @@ func lifecycleAdversarialManifest() *manifest.Manifest {
 		Effect: effect.Empty.With(lifecyclefx.Escape{
 			Target:   effect.ParamRef{Index: 0},
 			Protocol: typestate.Protocol("transaction"),
+		}),
+	})
+	return m
+}
+
+func lifecycleMultiFinalManifestOptions(globals ...string) []Option {
+	opts := []Option{
+		WithManifest("lifecycle", lifecycleMultiFinalManifest()),
+		WithDiagnosticRule(diagnostics.CodeResourceUnreleased, diagnostic.Enable()),
+	}
+	if len(globals) > 0 {
+		opts = append(opts, WithGlobals(globals...))
+	}
+	return opts
+}
+
+func lifecycleMultiFinalManifest() *manifest.Manifest {
+	m := manifest.New("lifecycle")
+	if err := m.DefineTypestateProtocol(typestate.Definition{
+		Protocol:    typestate.Protocol("transaction"),
+		States:      []typestate.State{typestate.State("active"), typestate.State("committed"), typestate.State("rolled_back")},
+		FinalStates: []typestate.State{typestate.State("committed"), typestate.State("rolled_back")},
+		Transitions: []typestate.TransitionDecl{
+			{From: typestate.State("active"), To: typestate.State("committed")},
+			{From: typestate.State("active"), To: typestate.State("rolled_back")},
+		},
+	}); err != nil {
+		panic(err)
+	}
+	m.DefineFunctionSignature("begin", signature.Function{
+		Type: typ.Func().
+			Param("tx", typ.Any).
+			Build(),
+		Effect: effect.Empty.With(lifecyclefx.Acquire{
+			Target:   effect.ParamRef{Index: 0},
+			Protocol: typestate.Protocol("transaction"),
+			State:    typestate.State("active"),
+			Obligation: typestate.Obligation{
+				Finals: typestate.NewFinalStates(typestate.State("committed"), typestate.State("rolled_back")),
+			},
+		}),
+	})
+	m.DefineFunctionSignature("commit", signature.Function{
+		Type: typ.Func().
+			Param("tx", typ.Any).
+			Build(),
+		Effect: effect.Empty.With(lifecyclefx.Transition{
+			Target:   effect.ParamRef{Index: 0},
+			Protocol: typestate.Protocol("transaction"),
+			From:     typestate.State("active"),
+			To:       typestate.State("committed"),
+		}),
+	})
+	m.DefineFunctionSignature("rollback", signature.Function{
+		Type: typ.Func().
+			Param("tx", typ.Any).
+			Build(),
+		Effect: effect.Empty.With(lifecyclefx.Transition{
+			Target:   effect.ParamRef{Index: 0},
+			Protocol: typestate.Protocol("transaction"),
+			From:     typestate.State("active"),
+			To:       typestate.State("rolled_back"),
 		}),
 	})
 	return m

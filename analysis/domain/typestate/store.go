@@ -4,6 +4,8 @@ package typestate
 
 import (
 	"sort"
+	"strconv"
+	"strings"
 )
 
 // Protocol identifies one state-machine namespace. It is intentionally a plain
@@ -29,10 +31,98 @@ type Resource struct {
 	Protocol Protocol
 }
 
-// Obligation describes the state a resource must reach before local ownership
-// ends.
+// FinalStates is a canonical, comparable set of states that satisfy an
+// obligation. It is string-backed so Obligation remains comparable inside
+// typestate map values and summary equality checks.
+type FinalStates string
+
+// NewFinalStates returns a deterministic set of non-empty final states.
+func NewFinalStates(states ...State) FinalStates {
+	if len(states) == 0 {
+		return ""
+	}
+	unique := uniqueStates(states)
+	if len(unique) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	for _, state := range unique {
+		raw := state.String()
+		b.WriteString(strconv.Itoa(len(raw)))
+		b.WriteByte(':')
+		b.WriteString(raw)
+	}
+	return FinalStates(b.String())
+}
+
+// States decodes the final states in deterministic order.
+func (s FinalStates) States() []State {
+	if s == "" {
+		return nil
+	}
+	raw := string(s)
+	out := make([]State, 0, 2)
+	for len(raw) > 0 {
+		colon := strings.IndexByte(raw, ':')
+		if colon <= 0 {
+			return nil
+		}
+		n, err := strconv.Atoi(raw[:colon])
+		if err != nil || n <= 0 || colon+1+n > len(raw) {
+			return nil
+		}
+		out = append(out, State(raw[colon+1:colon+1+n]))
+		raw = raw[colon+1+n:]
+	}
+	return out
+}
+
+// Contains reports whether state is one of the satisfying states.
+func (s FinalStates) Contains(state State) bool {
+	if state == "" || s == "" {
+		return false
+	}
+	for _, candidate := range s.States() {
+		if candidate == state {
+			return true
+		}
+	}
+	return false
+}
+
+// Obligation describes the states a resource must reach before local ownership
+// ends. Final is the legacy single-state form; Finals carries the generalized
+// finite set. When Finals is non-empty it is authoritative.
 type Obligation struct {
-	Final State
+	Final  State
+	Finals FinalStates
+}
+
+// SatisfiedBy reports whether state discharges this obligation.
+func (o Obligation) SatisfiedBy(state State) bool {
+	if state == "" {
+		return false
+	}
+	if o.Finals != "" {
+		return o.Finals.Contains(state)
+	}
+	return o.Final != "" && o.Final == state
+}
+
+// Empty reports whether the obligation has no known final state.
+func (o Obligation) Empty() bool {
+	return o.Final == "" && o.Finals == ""
+}
+
+// FinalStateList returns every state that can discharge this obligation.
+func (o Obligation) FinalStateList() []State {
+	if o.Finals != "" {
+		return o.Finals.States()
+	}
+	if o.Final == "" {
+		return nil
+	}
+	return []State{o.Final}
 }
 
 // Locality describes whether an obligation may still be locally owned.
@@ -99,7 +189,7 @@ func (s Store) Transition(resource Resource, from State, to State) Store {
 		return next
 	}
 	slot.Current = to
-	if slot.Obligation.Final != "" && to == slot.Obligation.Final {
+	if slot.Obligation.SatisfiedBy(to) {
 		slot.Locality = LocalityClosed
 	}
 	next.set(resource, slot)

@@ -156,6 +156,7 @@ func encodeEffectLabel(label effect.Label) (effectLabelWire, error) {
 			Protocol: protocol,
 			To:       to,
 			Final:    encodeOptionalLifecycleState(l.Obligation.Final),
+			Finals:   encodeOptionalLifecycleFinalStates(l.Obligation.Finals),
 		}, nil
 	case lifecycle.Transition:
 		protocol, err := encodeLifecycleProtocol(l.Protocol, "manifest: lifecycle transition missing protocol")
@@ -298,12 +299,17 @@ func decodeEffectLabel(w effectLabelWire) (effect.Label, error) {
 		if err != nil {
 			return nil, err
 		}
+		finals, err := decodeOptionalLifecycleFinalStates(w.Finals)
+		if err != nil {
+			return nil, err
+		}
 		return lifecycle.Acquire{
 			Target:   target,
 			Protocol: protocol,
 			State:    to,
 			Obligation: typestate.Obligation{
-				Final: decodeOptionalLifecycleState(w.Final),
+				Final:  decodeOptionalLifecycleState(w.Final),
+				Finals: finals,
 			},
 		}, nil
 	case "lifecycle.transition":

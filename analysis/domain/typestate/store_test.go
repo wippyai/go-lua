@@ -13,6 +13,43 @@ func TestAcquireTransitionCloseClearsObligationForAnyProtocol(t *testing.T) {
 	}
 }
 
+func TestAcquireTransitionClosesOnAnyObligationFinalState(t *testing.T) {
+	tx := Resource{ID: "db.tx", Protocol: "transaction"}
+	obligation := Obligation{Finals: NewFinalStates("committed", "rolled_back")}
+
+	for _, final := range []State{"committed", "rolled_back"} {
+		got := Empty().
+			Acquire(tx, "active", obligation).
+			Transition(tx, "active", final)
+		if obligations := got.OpenObligations(); len(obligations) != 0 {
+			t.Fatalf("final %s open obligations = %#v, want none", final, obligations)
+		}
+	}
+
+	got := Empty().
+		Acquire(tx, "active", obligation).
+		Transition(tx, "active", "prepared")
+	obligations := got.OpenObligations()
+	if len(obligations) != 1 {
+		t.Fatalf("prepared obligations = %#v, want still open", obligations)
+	}
+}
+
+func TestFinalStatesAreCanonicalComparableSets(t *testing.T) {
+	left := NewFinalStates("rolled_back", "committed", "committed")
+	right := NewFinalStates("committed", "rolled_back")
+	if left != right {
+		t.Fatalf("final states = %q/%q, want canonical equality", left, right)
+	}
+	got := left.States()
+	if len(got) != 2 || got[0] != "committed" || got[1] != "rolled_back" {
+		t.Fatalf("states = %#v, want sorted unique finals", got)
+	}
+	if !left.Contains("committed") || !left.Contains("rolled_back") || left.Contains("active") {
+		t.Fatalf("contains checks failed for %q", left)
+	}
+}
+
 func TestResourceIDIsOpaqueToTypestateStore(t *testing.T) {
 	resource := Resource{ID: "not a path key and not parsed", Protocol: "handle"}
 	got := Empty().Acquire(resource, "open", Obligation{Final: "closed"})

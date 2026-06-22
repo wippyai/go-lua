@@ -22,8 +22,8 @@ type Acquire struct {
 
 func (Acquire) EffectLabel() {}
 func (a Acquire) String() string {
-	if a.Obligation.Final != "" {
-		return fmt.Sprintf("lifecycle.acquire(%s, %s:%s -> %s)", a.Target, a.Protocol, a.State, a.Obligation.Final)
+	if final := obligationString(a.Obligation); final != "" {
+		return fmt.Sprintf("lifecycle.acquire(%s, %s:%s -> %s)", a.Target, a.Protocol, a.State, final)
 	}
 	return fmt.Sprintf("lifecycle.acquire(%s, %s:%s)", a.Target, a.Protocol, a.State)
 }
@@ -75,4 +75,19 @@ func (e Escape) Equals(other effect.Label) bool {
 		return e.Target.Index == o.Target.Index && e.Protocol == o.Protocol
 	}
 	return false
+}
+
+func obligationString(obligation typestate.Obligation) string {
+	states := obligation.FinalStateList()
+	if len(states) == 0 {
+		return ""
+	}
+	if len(states) == 1 {
+		return states[0].String()
+	}
+	out := states[0].String()
+	for _, state := range states[1:] {
+		out += "|" + state.String()
+	}
+	return out
 }

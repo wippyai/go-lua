@@ -60,6 +60,17 @@ func TestLifecycleLabelsExposeStableStrings(t *testing.T) {
 			want: "lifecycle.acquire(param[0], transaction:active -> finished)",
 		},
 		{
+			label: Acquire{
+				Target:   p0,
+				Protocol: typestate.Protocol("transaction"),
+				State:    typestate.State("active"),
+				Obligation: typestate.Obligation{
+					Finals: typestate.NewFinalStates(typestate.State("rolled_back"), typestate.State("committed")),
+				},
+			},
+			want: "lifecycle.acquire(param[0], transaction:active -> committed|rolled_back)",
+		},
+		{
 			label: Transition{Target: p0, Protocol: typestate.Protocol("socket"), From: typestate.State("open"), To: typestate.State("closed")},
 			want:  "lifecycle.transition(param[0], socket:open -> closed)",
 		},

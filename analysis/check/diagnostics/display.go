@@ -929,6 +929,9 @@ func lifecycleStateName(state string) string {
 	if strings.TrimSpace(state) == "" {
 		return "a non-final state"
 	}
+	if strings.Contains(state, "`") {
+		return state
+	}
 	return codeName(state)
 }
 

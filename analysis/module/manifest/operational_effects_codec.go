@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"strings"
 
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
@@ -83,6 +84,7 @@ type lifecycleEffectWire struct {
 	From     string               `json:"from,omitempty"`
 	To       string               `json:"to,omitempty"`
 	Final    string               `json:"final,omitempty"`
+	Finals   []string             `json:"finals,omitempty"`
 }
 
 type returnAllocationTemplateWire struct {
@@ -609,6 +611,7 @@ func encodeLifecycleEffect(effect signature.LifecycleEffect) (lifecycleEffectWir
 		From:     encodeOptionalLifecycleState(effect.From),
 		To:       to,
 		Final:    encodeOptionalLifecycleState(effect.Obligation.Final),
+		Finals:   encodeOptionalLifecycleFinalStates(effect.Obligation.Finals),
 	}, nil
 }
 
@@ -644,6 +647,10 @@ func decodeLifecycleEffect(w lifecycleEffectWire) (signature.LifecycleEffect, er
 	if to == "" {
 		to = decodeOptionalLifecycleState(w.To)
 	}
+	finals, err := decodeOptionalLifecycleFinalStates(w.Finals)
+	if err != nil {
+		return signature.LifecycleEffect{}, err
+	}
 	return signature.LifecycleEffect{
 		Target:   target,
 		Kind:     kind,
@@ -651,7 +658,8 @@ func decodeLifecycleEffect(w lifecycleEffectWire) (signature.LifecycleEffect, er
 		From:     decodeOptionalLifecycleState(w.From),
 		To:       to,
 		Obligation: typestate.Obligation{
-			Final: decodeOptionalLifecycleState(w.Final),
+			Final:  decodeOptionalLifecycleState(w.Final),
+			Finals: finals,
 		},
 	}, nil
 }
@@ -666,6 +674,7 @@ func compareLifecycleEffectWire(a, b lifecycleEffectWire) int {
 		{a.From, b.From},
 		{a.To, b.To},
 		{a.Final, b.Final},
+		{strings.Join(a.Finals, "\x00"), strings.Join(b.Finals, "\x00")},
 	}
 	for _, pair := range pairs {
 		switch {

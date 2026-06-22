@@ -137,6 +137,38 @@ func TestNormalReturnFactsNormalizeKeepsConcreteCapturedPathBoundaryFacts(t *tes
 	}
 }
 
+func TestNormalReturnFactsLifecycleKeyDistinguishesFinalStateSets(t *testing.T) {
+	reg := mustRegistry(t)
+	target := pathdom.NewPlaceholder(0)
+	left := Summary{NormalReturnFacts: callboundary.NormalReturnFacts{
+		LifecycleFacts: []callboundary.LifecycleFact{{
+			Target:   target,
+			Kind:     callboundary.LifecycleAcquire,
+			Protocol: typestate.Protocol("transaction"),
+			To:       typestate.State("active"),
+			Obligation: typestate.Obligation{
+				Finals: typestate.NewFinalStates(typestate.State("committed"), typestate.State("rolled_back")),
+			},
+		}},
+	}}
+	right := Summary{NormalReturnFacts: callboundary.NormalReturnFacts{
+		LifecycleFacts: []callboundary.LifecycleFact{{
+			Target:   target,
+			Kind:     callboundary.LifecycleAcquire,
+			Protocol: typestate.Protocol("transaction"),
+			To:       typestate.State("active"),
+			Obligation: typestate.Obligation{
+				Finals: typestate.NewFinalStates(typestate.State("committed")),
+			},
+		}},
+	}}
+
+	joined := Join(reg, left, right).NormalReturnFacts
+	if len(joined.LifecycleFacts) != 0 {
+		t.Fatalf("LifecycleFacts = %#v, want no must-fact when final sets differ", joined.LifecycleFacts)
+	}
+}
+
 func TestNormalReturnFactsNormalizeDropsBottomDynamicAndEffectFacts(t *testing.T) {
 	reg := mustRegistry(t)
 	placeholder := pathdom.NewPlaceholder(0).Field("items")

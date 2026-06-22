@@ -24,6 +24,10 @@ func encodeOptionalLifecycleState(state typestate.State) string {
 	return state.String()
 }
 
+func encodeOptionalLifecycleFinalStates(states typestate.FinalStates) []string {
+	return encodeTypestateStates(states.States())
+}
+
 func decodeLifecycleProtocol(raw string, missing string) (typestate.Protocol, error) {
 	protocol, ok := typestate.ProtocolFromString(raw)
 	if !ok {
@@ -42,4 +46,12 @@ func decodeRequiredLifecycleState(raw string, missing string) (typestate.State, 
 
 func decodeOptionalLifecycleState(raw string) typestate.State {
 	return typestate.OptionalStateFromString(raw)
+}
+
+func decodeOptionalLifecycleFinalStates(raw []string) (typestate.FinalStates, error) {
+	states, err := decodeTypestateStates(raw, "final state")
+	if err != nil {
+		return "", err
+	}
+	return typestate.NewFinalStates(states...), nil
 }
