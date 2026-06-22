@@ -6,21 +6,10 @@ import (
 	"github.com/wippyai/go-lua/analysis/internal/registrycache"
 )
 
-// LaneID names one State product-lattice axis. DomainWithLanes is the single
-// constructor surface for selecting which axes participate in lattice
-// operations; State read/write methods remain lane-specific.
+// LaneID names one State product-lattice axis.
 type LaneID string
 
 var domainCache registrycache.Cache[lattice.Lattice[State]]
-
-// DefaultDomainLanes returns the ordered lane set used by Domain.
-func DefaultDomainLanes() []LaneID {
-	out := make([]LaneID, 0, len(defaultDomainLaneFactories))
-	for _, factory := range defaultDomainLaneFactories {
-		out = append(out, factory.id)
-	}
-	return out
-}
 
 // Domain builds the default State lattice with every state axis enabled.
 func Domain(reg *axis.Registry) lattice.Lattice[State] {
@@ -29,10 +18,16 @@ func Domain(reg *axis.Registry) lattice.Lattice[State] {
 	})
 }
 
-// DomainWithLanes builds a State lattice from the exact ordered set of enabled
-// lanes. Disabled lanes are ignored by Equal/LessOrEq and dropped by Join/Widen.
-func DomainWithLanes(reg *axis.Registry, lanes []LaneID) lattice.Lattice[State] {
+// DomainWithLaneSet builds a State lattice from the exact ordered set of
+// enabled lanes. Disabled lanes are ignored by Equal/LessOrEq and dropped by
+// Join/Widen.
+func DomainWithLaneSet(reg *axis.Registry, lanes LaneSet) lattice.Lattice[State] {
 	return domainFromLaneFactories(reg, selectDomainLaneFactories(lanes))
+}
+
+// DomainWithLanes is the compatibility form of DomainWithLaneSet.
+func DomainWithLanes(reg *axis.Registry, lanes []LaneID) lattice.Lattice[State] {
+	return DomainWithLaneSet(reg, LaneSet(lanes))
 }
 
 type stateLaneFactory struct {
@@ -133,7 +128,7 @@ func domainFromLaneFactories(reg *axis.Registry, factories []stateLaneFactory) l
 	}
 }
 
-func selectDomainLaneFactories(lanes []LaneID) []stateLaneFactory {
+func selectDomainLaneFactories(lanes LaneSet) []stateLaneFactory {
 	byID := make(map[LaneID]stateLaneFactory, len(defaultDomainLaneFactories))
 	for _, factory := range defaultDomainLaneFactories {
 		byID[factory.id] = factory
