@@ -1,0 +1,18 @@
+package state
+
+import (
+	"github.com/wippyai/go-lua/analysis/domain/typestate"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis"
+)
+
+const LaneTypestates LaneID = "typestates"
+
+var typestatesDomainLane = stateLaneFactory{
+	id: LaneTypestates,
+	build: func(reg *axis.Registry) stateLaneOps {
+		return stateLane(typestate.Domain,
+			func(s State) typestate.Store { return s.typestates },
+			func(out *State, store typestate.Store) { out.typestates = store },
+		)
+	},
+}

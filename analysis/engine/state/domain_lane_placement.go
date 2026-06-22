@@ -1,0 +1,30 @@
+package state
+
+import (
+	"github.com/wippyai/go-lua/analysis/domain/lattice"
+	"github.com/wippyai/go-lua/analysis/domain/lattice/lift"
+	"github.com/wippyai/go-lua/analysis/domain/placement"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
+)
+
+const LanePlacement LaneID = "placement"
+
+var placementDomainLane = stateLaneFactory{
+	id: LanePlacement,
+	build: func(reg *axis.Registry) stateLaneOps {
+		domain := placementMapDomain()
+		return stateLane(domain,
+			func(s State) map[identity.ID]placement.Value {
+				return s.placement.asMap(domain)
+			},
+			func(out *State, placements map[identity.ID]placement.Value) {
+				out.placement = placementLaneFromMap(domain, placements)
+			},
+		)
+	},
+}
+
+func placementMapDomain() lattice.Lattice[map[identity.ID]placement.Value] {
+	return lift.Map[identity.ID, placement.Value](placement.Lattice())
+}

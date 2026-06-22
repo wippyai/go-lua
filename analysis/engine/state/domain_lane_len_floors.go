@@ -1,0 +1,15 @@
+package state
+
+import "github.com/wippyai/go-lua/analysis/domain/value/axis"
+
+const LaneLenFloors LaneID = "len-floors"
+
+var lenFloorsDomainLane = stateLaneFactory{
+	id: LaneLenFloors,
+	build: func(reg *axis.Registry) stateLaneOps {
+		return stateLane(lenFloorMapDomain(),
+			func(s State) lenFloorLane { return s.lenFloors },
+			func(out *State, lane lenFloorLane) { out.lenFloors = lane },
+		)
+	},
+}
