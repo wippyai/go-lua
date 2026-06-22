@@ -285,34 +285,21 @@ func (p annotationAssignability) pathAssignment(result *body.Result, point cfg.P
 		extra = append(extra, mismatch.missingFieldEvidence()...)
 		return pathAssignmentDiagnostic(fact.Target, mismatch.expr, mismatch.got, mismatch.want, extra...), true
 	}
-	if castGot, castOK := concreteCastObligationType(result, p.resolver, point, env, fact.Value); castOK {
-		readBoundary := boundaryValueFromASTSource(fact.Source)
-		if inner, innerOK := concreteCastInner(fact.Value); innerOK {
-			readBoundary = boundaryValueFromExpr(inner)
-		}
-		if !boundaryProofTypeMismatch(result, point, castGot, want, readBoundary) {
-			return diagnostic.Diagnostic{}, false
-		}
-		extra := boundaryDiagnosticEvidenceForSubject(result, point, ast.SpanOf(fact.Value), exprEvidenceName(fact.Value), want, readBoundary)
-		return pathAssignmentDiagnostic(fact.Target, fact.Value, castGot, want, extra...), true
+	sourceResolution := resolvePathAssignmentSourceType(result, p.resolver, point, fact, env)
+	if !sourceResolution.OK {
+		return diagnostic.Diagnostic{}, false
 	}
-	got, ok := assignmentValueType(result, p.resolver, point, fact.Value, fact.Source)
-	if !ok {
-		got, ok = untrustedTopLikeExpressionTypeAt(result, p.resolver, point, fact.Value)
-		if !ok {
-			return diagnostic.Diagnostic{}, false
-		}
-	}
+	got := sourceResolution.Type
 	readBoundary := boundaryValueFromASTSource(fact.Source)
-	if _, untrusted := untrustedTopLikeExpressionTypeAt(result, p.resolver, point, fact.Value); untrusted {
-		if !boundaryProofTypeMismatch(result, point, got, want, readBoundary) {
-			return diagnostic.Diagnostic{}, false
-		}
+	if sourceResolution.CastInnerExpr != nil {
+		readBoundary = boundaryValueFromExpr(sourceResolution.CastInnerExpr)
+	}
+	if !sourceResolution.TypeMismatch(result, point, want, readBoundary) {
+		return diagnostic.Diagnostic{}, false
+	}
+	if sourceResolution.UntrustedTopLike {
 		extra := boundaryDiagnosticEvidenceForSubject(result, point, ast.SpanOf(fact.Value), exprEvidenceName(fact.Value), want, readBoundary)
 		return pathAssignmentDiagnostic(fact.Target, fact.Value, got, want, extra...), true
-	}
-	if !boundaryTypeMismatch(result, point, got, want, readBoundary) {
-		return diagnostic.Diagnostic{}, false
 	}
 	if expressionHasMissingMemberRead(result, p.resolver, point, env, fact.Value) {
 		return diagnostic.Diagnostic{}, false
@@ -321,6 +308,45 @@ func (p annotationAssignability) pathAssignment(result *body.Result, point cfg.P
 	extra = append(extra, boundaryDiagnosticEvidenceForSubject(result, point, ast.SpanOf(fact.Value), exprEvidenceName(fact.Value), want, readBoundary)...)
 	extra = append(optionalReceiverCauseEvidence(result, p.resolver, point, env, fact.Value), extra...)
 	return pathAssignmentDiagnostic(fact.Target, fact.Value, got, want, extra...), true
+}
+
+type pathAssignmentSourceTypeResolution struct {
+	Type             typ.Type
+	CastInnerExpr    ast.Expr
+	OK               bool
+	UntrustedTopLike bool
+}
+
+func (r pathAssignmentSourceTypeResolution) TypeMismatch(result *body.Result, point cfg.Point, want typ.Type, readBoundary boundaryValueReader) bool {
+	if r.UntrustedTopLike {
+		return boundaryProofTypeMismatch(result, point, r.Type, want, readBoundary)
+	}
+	return boundaryTypeMismatch(result, point, r.Type, want, readBoundary)
+}
+
+func resolvePathAssignmentSourceType(
+	result *body.Result,
+	resolver typeannotation.Resolver,
+	point cfg.Point,
+	fact semantics.OrdinaryAssignmentFact,
+	env guardEnv,
+) pathAssignmentSourceTypeResolution {
+	if got, ok := concreteCastObligationType(result, resolver, point, env, fact.Value); ok {
+		out := pathAssignmentSourceTypeResolution{Type: got, OK: true, UntrustedTopLike: true}
+		if inner, innerOK := concreteCastInner(fact.Value); innerOK {
+			out.CastInnerExpr = inner
+		}
+		return out
+	}
+	got, ok := assignmentValueType(result, resolver, point, fact.Value, fact.Source)
+	if !ok {
+		if untrustedGot, untrustedOK := untrustedTopLikeExpressionTypeAt(result, resolver, point, fact.Value); untrustedOK {
+			return pathAssignmentSourceTypeResolution{Type: untrustedGot, OK: true, UntrustedTopLike: true}
+		}
+		return pathAssignmentSourceTypeResolution{}
+	}
+	_, untrustedTopLike := untrustedTopLikeExpressionTypeAt(result, resolver, point, fact.Value)
+	return pathAssignmentSourceTypeResolution{Type: got, OK: true, UntrustedTopLike: untrustedTopLike}
 }
 
 func (p annotationAssignability) optionalAssignmentTarget(result *body.Result, point cfg.Point, target ast.Expr, env guardEnv) (diagnostic.Diagnostic, bool) {

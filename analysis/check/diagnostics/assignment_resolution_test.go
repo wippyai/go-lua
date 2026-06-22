@@ -6,6 +6,8 @@ import (
 	"github.com/wippyai/go-lua/analysis/check/body"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
+	"github.com/wippyai/go-lua/analysis/lua/semantics"
+	"github.com/wippyai/go-lua/analysis/type/subtype"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
@@ -51,5 +53,42 @@ func TestLocalAssignmentSourceTypeResolutionMismatchBoundary(t *testing.T) {
 	}
 	if got := (localAssignmentSourceTypeResolution{OptionalIndexProjection: true}).MismatchBoundary(reader); got != nil {
 		t.Fatalf("optional-index projection mismatch boundary = %#v, want nil", got)
+	}
+}
+
+func TestPathAssignmentSourceTypeResolutionLiteral(t *testing.T) {
+	resolution := resolvePathAssignmentSourceType(nil, nil, 0, semantics.OrdinaryAssignmentFact{
+		Value: &ast.StringExpr{Value: "ready"},
+	}, guardEnv{})
+	if !resolution.OK || !subtype.IsSubtype(resolution.Type, typ.String) {
+		t.Fatalf("resolution = %#v, want string-compatible literal source", resolution)
+	}
+	if resolution.UntrustedTopLike || resolution.CastInnerExpr != nil {
+		t.Fatalf("literal resolution = %#v, want ordinary non-cast source", resolution)
+	}
+	if resolution.TypeMismatch(nil, 0, typ.String, nil) {
+		t.Fatalf("string literal assigned to string should not mismatch")
+	}
+}
+
+func TestPathAssignmentSourceTypeResolutionConcreteCastUsesProofSource(t *testing.T) {
+	inner := &ast.IdentExpr{Value: "payload"}
+	resolution := resolvePathAssignmentSourceType(nil, nil, 0, semantics.OrdinaryAssignmentFact{
+		Value: &ast.CastExpr{
+			Expr: inner,
+			Type: &ast.PrimitiveTypeExpr{Name: "string"},
+		},
+	}, guardEnv{})
+	if !resolution.OK {
+		t.Fatalf("resolution = %#v, want concrete cast source", resolution)
+	}
+	if !resolution.UntrustedTopLike {
+		t.Fatalf("resolution = %#v, want proof mismatch path for concrete cast", resolution)
+	}
+	if resolution.CastInnerExpr != inner {
+		t.Fatalf("cast inner = %#v, want payload identifier", resolution.CastInnerExpr)
+	}
+	if !resolution.TypeMismatch(nil, 0, typ.String, nil) {
+		t.Fatalf("cast obligation should still require proof against string")
 	}
 }
