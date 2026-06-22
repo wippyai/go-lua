@@ -11,6 +11,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/value/variant"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
+	"github.com/wippyai/go-lua/analysis/ir/dominance"
 	"github.com/wippyai/go-lua/analysis/lua/branchcond"
 	"github.com/wippyai/go-lua/analysis/lua/pathexpr"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
@@ -41,6 +42,12 @@ type discriminantCandidate struct {
 	handled []int
 }
 
+type discriminantAnchor struct {
+	anchor     pathdom.Path
+	anchorType typ.Type
+	suffix     []segment.Segment
+}
+
 type discriminatedUnionEvidence struct {
 	target   string
 	possible []string
@@ -57,6 +64,96 @@ type dispatchTableEvidence struct {
 	missingFor []string
 	tableSpan  diagnostic.Span
 	lookupSpan diagnostic.Span
+}
+
+type dispatchTableSummary struct {
+	table string
+	keys  map[string]bool
+	span  diagnostic.Span
+}
+
+func collectDispatchTableSummaries(result *body.Result, flow *diagnosticFlowCache, inherited map[symbol.ID]dispatchTableSummary) map[symbol.ID]dispatchTableSummary {
+	out := cloneDispatchTableSummaries(inherited)
+	graph := result.Graph()
+	if graph == nil {
+		return out
+	}
+	for _, point := range graph.RPO() {
+		if fact, ok := result.LocalAssignment(point); ok && fact.HasSymbol && fact.Expr != nil {
+			literal, literalOK := result.ObjectLiteral(fact.Expr)
+			keys, keysOK := objectLiteralDispatchKeys(literal)
+			if literalOK && keysOK {
+				if out == nil {
+					out = make(map[symbol.ID]dispatchTableSummary, 1)
+				}
+				out[fact.Symbol] = dispatchTableSummary{
+					table: result.SymbolName(fact.Symbol),
+					keys:  keys,
+					span:  ast.SpanOf(literal.Table),
+				}
+			}
+		}
+		if fact, ok := result.OrdinaryAssignment(point); ok {
+			updateDispatchTableSummariesForAssignment(out, fact)
+		}
+	}
+	return out
+}
+
+func cloneDispatchTableSummaries(in map[symbol.ID]dispatchTableSummary) map[symbol.ID]dispatchTableSummary {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[symbol.ID]dispatchTableSummary, len(in))
+	for sym, summary := range in {
+		summary.keys = cloneDispatchKeySet(summary.keys)
+		out[sym] = summary
+	}
+	return out
+}
+
+func cloneDispatchKeySet(in map[string]bool) map[string]bool {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[string]bool, len(in))
+	for key, present := range in {
+		out[key] = present
+	}
+	return out
+}
+
+func updateDispatchTableSummariesForAssignment(summaries map[symbol.ID]dispatchTableSummary, fact semantics.OrdinaryAssignmentFact) {
+	if len(summaries) == 0 {
+		return
+	}
+	if fact.HasPath {
+		summary, ok := summaries[fact.Path.Symbol]
+		if !ok {
+			return
+		}
+		if len(fact.Path.Segments) != 1 {
+			delete(summaries, fact.Path.Symbol)
+			return
+		}
+		key, ok := segmentStringKey(fact.Path.Segments[0])
+		if !ok {
+			delete(summaries, fact.Path.Symbol)
+			return
+		}
+		if summary.keys == nil {
+			summary.keys = make(map[string]bool, 1)
+		}
+		summary.keys[key] = true
+		summaries[fact.Path.Symbol] = summary
+		return
+	}
+	if fact.HasSymbol {
+		delete(summaries, fact.Symbol)
+	}
+	if fact.HasContainerPath {
+		delete(summaries, fact.ContainerPath.Symbol)
+	}
 }
 
 func (p discriminatedUnionExhaustiveness) Produce(result *body.Result) []diagnostic.Diagnostic {
@@ -159,19 +256,44 @@ func (p discriminatedUnionExhaustiveness) chainDiagnostic(result *body.Result, h
 
 func (p discriminatedUnionExhaustiveness) candidateForCheck(result *body.Result, point cfg.Point, check branchcond.Check) (discriminantCandidate, bool) {
 	lit, negate, ok := discriminantCheckLiteral(check)
-	if !ok || check.Path.Symbol == 0 || len(check.Path.Segments) == 0 {
-		return discriminantCandidate{}, false
-	}
-	root := check.Path
-	root.Segments = nil
-	rootType, ok := discriminantRootType(result, p.resolver, point, root)
 	if !ok {
 		return discriminantCandidate{}, false
 	}
-	segments := check.Path.Segments
+	for _, anchor := range p.discriminantAnchors(result, point, check.Path) {
+		family, handled, ok := discriminantOriginByCheck(anchor.anchorType, anchor.suffix, lit, negate)
+		if !ok {
+			continue
+		}
+		caseFamily, cases, ok := variant.OriginCasesOfType(anchor.anchorType)
+		if !ok || caseFamily != family || len(cases) < 2 {
+			continue
+		}
+		return discriminantCandidate{
+			target:  check.Path,
+			anchor:  anchor.anchor,
+			family:  family,
+			cases:   discriminantCasesFor(check.Path, anchor.suffix, cases),
+			handled: handled,
+		}, true
+	}
+	return discriminantCandidate{}, false
+}
+
+func (p discriminatedUnionExhaustiveness) discriminantAnchors(result *body.Result, point cfg.Point, target pathdom.Path) []discriminantAnchor {
+	if target.Symbol == 0 || len(target.Segments) == 0 {
+		return nil
+	}
+	root := target
+	root.Segments = nil
+	rootType, ok := discriminantRootType(result, p.resolver, point, root)
+	if !ok {
+		return nil
+	}
+	segments := target.Segments
+	out := make([]discriminantAnchor, 0, len(segments))
 	for prefixLen := 0; prefixLen < len(segments); prefixLen++ {
 		prefix := segments[:prefixLen]
-		rest := segments[prefixLen:]
+		suffix := segments[prefixLen:]
 		anchorType := rootType
 		if len(prefix) > 0 {
 			var fieldOK bool
@@ -180,25 +302,15 @@ func (p discriminatedUnionExhaustiveness) candidateForCheck(result *body.Result,
 				continue
 			}
 		}
-		family, handled, ok := discriminantOriginByCheck(anchorType, rest, lit, negate)
-		if !ok {
-			continue
-		}
-		caseFamily, cases, ok := variant.OriginCasesOfType(anchorType)
-		if !ok || caseFamily != family || len(cases) < 2 {
-			continue
-		}
-		anchor := root
-		anchor.Segments = append([]segment.Segment(nil), prefix...)
-		return discriminantCandidate{
-			target:  check.Path,
-			anchor:  anchor,
-			family:  family,
-			cases:   discriminantCasesFor(check.Path, rest, cases),
-			handled: handled,
-		}, true
+		anchorPath := root
+		anchorPath.Segments = append([]segment.Segment(nil), prefix...)
+		out = append(out, discriminantAnchor{
+			anchor:     anchorPath,
+			anchorType: anchorType,
+			suffix:     append([]segment.Segment(nil), suffix...),
+		})
 	}
-	return discriminantCandidate{}, false
+	return out
 }
 
 func discriminantCheckLiteral(check branchcond.Check) (typ.Type, bool, bool) {
@@ -399,32 +511,12 @@ func (p discriminatedUnionExhaustiveness) tableDispatchDiagnostic(result *body.R
 }
 
 func (p discriminatedUnionExhaustiveness) stringDiscriminantCases(result *body.Result, point cfg.Point, target pathdom.Path) ([]discriminantCase, bool) {
-	if target.Symbol == 0 || len(target.Segments) == 0 {
-		return nil, false
-	}
-	root := target
-	root.Segments = nil
-	rootType, ok := discriminantRootType(result, p.resolver, point, root)
-	if !ok {
-		return nil, false
-	}
-	segments := target.Segments
-	for prefixLen := 0; prefixLen < len(segments); prefixLen++ {
-		prefix := segments[:prefixLen]
-		rest := segments[prefixLen:]
-		anchorType := rootType
-		if len(prefix) > 0 {
-			var fieldOK bool
-			anchorType, fieldOK = variant.FieldAtPath(rootType, prefix)
-			if !fieldOK {
-				continue
-			}
-		}
-		_, cases, ok := variant.OriginCasesOfType(anchorType)
+	for _, anchor := range p.discriminantAnchors(result, point, target) {
+		_, cases, ok := variant.OriginCasesOfType(anchor.anchorType)
 		if !ok || len(cases) < 2 {
 			continue
 		}
-		domainCases, ok := stringDiscriminantCasesFor(target, rest, cases)
+		domainCases, ok := stringDiscriminantCasesFor(target, anchor.suffix, cases)
 		if !ok {
 			continue
 		}
@@ -478,21 +570,33 @@ func (p discriminatedUnionExhaustiveness) dispatchTableKeysAt(result *body.Resul
 		return nil, diagnostic.Span{}, false
 	}
 	decl, declPoint, ok := dominatingRootLocalAssignment(result, p.flow, point, table.Symbol)
-	if !ok || decl.Expr == nil {
+	if ok && decl.Expr != nil {
+		fact, ok := result.ObjectLiteral(decl.Expr)
+		if !ok {
+			return nil, diagnostic.Span{}, false
+		}
+		keys, ok := objectLiteralDispatchKeys(fact)
+		if !ok {
+			return nil, diagnostic.Span{}, false
+		}
+		if !p.addDominatingStaticDispatchWrites(result, declPoint, point, table.Symbol, keys) {
+			return nil, diagnostic.Span{}, false
+		}
+		return keys, ast.SpanOf(fact.Table), true
+	}
+	return p.inheritedDispatchTableKeysAt(result, point, table)
+}
+
+func (p discriminatedUnionExhaustiveness) inheritedDispatchTableKeysAt(result *body.Result, point cfg.Point, table pathdom.Path) (map[string]bool, diagnostic.Span, bool) {
+	summary, ok := p.dispatchTables[table.Symbol]
+	if !ok || len(summary.keys) == 0 {
 		return nil, diagnostic.Span{}, false
 	}
-	fact, ok := result.ObjectLiteral(decl.Expr)
-	if !ok {
+	keys := cloneDispatchKeySet(summary.keys)
+	if !p.applyCurrentBodyDispatchWrites(result, point, table.Symbol, keys) {
 		return nil, diagnostic.Span{}, false
 	}
-	keys, ok := objectLiteralDispatchKeys(fact)
-	if !ok {
-		return nil, diagnostic.Span{}, false
-	}
-	if !p.addDominatingStaticDispatchWrites(result, declPoint, point, table.Symbol, keys) {
-		return nil, diagnostic.Span{}, false
-	}
-	return keys, ast.SpanOf(fact.Table), true
+	return keys, summary.span, true
 }
 
 func objectLiteralDispatchKeys(fact semantics.ObjectLiteralFact) (map[string]bool, bool) {
@@ -546,6 +650,49 @@ func (p discriminatedUnionExhaustiveness) addDominatingStaticDispatchWrites(resu
 		cursor = parent
 	}
 	return true
+}
+
+func (p discriminatedUnionExhaustiveness) applyCurrentBodyDispatchWrites(result *body.Result, point cfg.Point, rootSymbol symbol.ID, keys map[string]bool) bool {
+	graph := result.Graph()
+	if graph == nil || p.flow == nil {
+		return false
+	}
+	idom := p.flow.immediateDominators()
+	if len(idom) == 0 {
+		return false
+	}
+	for _, candidate := range graph.RPO() {
+		fact, ok := result.OrdinaryAssignment(candidate)
+		if !ok {
+			continue
+		}
+		key, staticKey, touches := dispatchTableAssignmentKey(fact, rootSymbol)
+		if !touches || !diagnosticCanReach(p.flow, graph, candidate, point) {
+			continue
+		}
+		if !dominance.Dominates(idom, candidate, point) || !staticKey {
+			return false
+		}
+		keys[key] = true
+	}
+	return true
+}
+
+func dispatchTableAssignmentKey(fact semantics.OrdinaryAssignmentFact, rootSymbol symbol.ID) (key string, staticKey bool, touches bool) {
+	if fact.HasPath && fact.Path.Symbol == rootSymbol {
+		if len(fact.Path.Segments) != 1 {
+			return "", false, true
+		}
+		key, ok := segmentStringKey(fact.Path.Segments[0])
+		return key, ok, true
+	}
+	if fact.HasSymbol && fact.Symbol == rootSymbol {
+		return "", false, true
+	}
+	if fact.HasContainerPath && fact.ContainerPath.Symbol == rootSymbol {
+		return "", false, true
+	}
+	return "", false, false
 }
 
 func segmentStringKey(seg segment.Segment) (string, bool) {

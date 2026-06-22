@@ -38,8 +38,9 @@ const (
 )
 
 type producerContext struct {
-	resolver typeannotation.Resolver
-	flow     *diagnosticFlowCache
+	resolver       typeannotation.Resolver
+	flow           *diagnosticFlowCache
+	dispatchTables map[symbol.ID]dispatchTableSummary
 }
 
 type diagnosticProducer struct {
@@ -208,15 +209,27 @@ func Produce(result *body.Result) []diagnostic.Diagnostic {
 }
 
 func ProduceWithConfig(result *body.Result, config Config) []diagnostic.Diagnostic {
-	out := config.Policy.Apply(produceWithResolver(result, nil, nil, config))
+	out := config.Policy.Apply(produceWithResolver(result, nil, nil, nil, config))
 	diagnostic.Sort(out)
 	return out
 }
 
-func produceWithResolver(result *body.Result, parent typeannotation.Resolver, inheritedDefs map[symbol.ID]*ast.FunctionExpr, config Config) []diagnostic.Diagnostic {
+func produceWithResolver(
+	result *body.Result,
+	parent typeannotation.Resolver,
+	inheritedDefs map[symbol.ID]*ast.FunctionExpr,
+	inheritedDispatchTables map[symbol.ID]dispatchTableSummary,
+	config Config,
+) []diagnostic.Diagnostic {
 	resolver := newResultResolver(result, parent)
 	defer releaseGuardEnvironments(result)
-	context := producerContext{resolver: resolver, flow: newDiagnosticFlowCache(result)}
+	flow := newDiagnosticFlowCache(result)
+	childDispatchTables := collectDispatchTableSummaries(result, flow, inheritedDispatchTables)
+	context := producerContext{
+		resolver:       resolver,
+		flow:           flow,
+		dispatchTables: cloneDispatchTableSummaries(inheritedDispatchTables),
+	}
 	defs := directCallDefinitions(result, inheritedDefs)
 	var out []diagnostic.Diagnostic
 	for _, producer := range diagnosticProducers(context) {
@@ -226,7 +239,7 @@ func produceWithResolver(result *body.Result, parent typeannotation.Resolver, in
 		out = append(out, producer.produce(result, context, defs)...)
 	}
 	for _, fn := range result.FunctionResults() {
-		out = append(out, produceWithResolver(fn, resolver, defs, config)...)
+		out = append(out, produceWithResolver(fn, resolver, defs, childDispatchTables, config)...)
 	}
 	return out
 }
