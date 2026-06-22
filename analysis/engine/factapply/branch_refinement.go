@@ -443,8 +443,7 @@ func narrowRootByPathLiteralMatch(
 	}
 	constraint := typeValues.FromType(reg, narrowedType)
 	constraint = product.Set(reg, constraint, variantorigin.Key, variantorigin.Of(family, cases))
-	rootPath := targetPath
-	rootPath.Segments = nil
+	rootPath := targetPath.RootOnly()
 	out = invalidateRootDescendantsAt(resolver, point, out, rootPath)
 	return out.WriteValue(reg, key.SymbolValue(targetPath.Symbol), refineProductValue(reg, rootValue, factflow.NewValueConstraint(constraint))), true
 }

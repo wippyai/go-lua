@@ -2,7 +2,6 @@ package diagnostics
 
 import (
 	"fmt"
-	"sort"
 
 	"github.com/wippyai/go-lua/analysis/check/body"
 	"github.com/wippyai/go-lua/analysis/diagnostic"
@@ -44,15 +43,7 @@ func (redundantConditions) Produce(result *body.Result) []diagnostic.Diagnostic 
 		}
 		out = append(out, redundantConditionDiagnostic(fact, proof))
 	}
-	sort.Slice(out, func(i, j int) bool {
-		if out[i].Span.StartLine != out[j].Span.StartLine {
-			return out[i].Span.StartLine < out[j].Span.StartLine
-		}
-		if out[i].Span.StartCol != out[j].Span.StartCol {
-			return out[i].Span.StartCol < out[j].Span.StartCol
-		}
-		return out[i].Message < out[j].Message
-	})
+	diagnostic.Sort(out)
 	return out
 }
 

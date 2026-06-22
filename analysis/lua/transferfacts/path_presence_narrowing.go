@@ -23,8 +23,7 @@ func (l *lowerer) rootPresenceRefinement(target path.Path, cond bool) (factflow.
 	if !ok || typ.SameNodeOrAcyclicEqual(rootType, narrowed) {
 		return factflow.BranchRefinement{}, false
 	}
-	root := target
-	root.Segments = nil
+	root := target.RootOnly()
 	value := factflow.NewValueConstraint(l.valueFromType(narrowed))
 	if cond {
 		return factflow.NewBranchRefinement(root, value, true, factflow.ValueRefinement{}, false), true

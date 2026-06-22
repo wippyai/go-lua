@@ -255,7 +255,7 @@ func callMayInvalidateTrackedPath(result *body.Result, point cfg.Point, target p
 		return true
 	}
 	for _, invalidation := range invalidated {
-		if pathsOverlapForInvalidation(target, invalidation) {
+		if target.Overlaps(invalidation) {
 			return true
 		}
 	}
@@ -263,12 +263,12 @@ func callMayInvalidateTrackedPath(result *body.Result, point cfg.Point, target p
 }
 
 func callFactReferencesTrackedPath(result *body.Result, fact semantics.CallFact, target path.Path) bool {
-	if fact.HasReceiverPath && pathsOverlapForInvalidation(target, fact.ReceiverPath) {
+	if fact.HasReceiverPath && target.Overlaps(fact.ReceiverPath) {
 		return true
 	}
 	for _, arg := range fact.Args {
 		argPath, ok := result.ExpressionPath(arg)
-		if ok && pathsOverlapForInvalidation(target, argPath) {
+		if ok && target.Overlaps(argPath) {
 			return true
 		}
 	}
@@ -618,7 +618,7 @@ func (e guardEnv) withoutDescendantFactsOf(target path.Path) guardEnv {
 		return e
 	}
 	return e.filterFacts(func(candidate path.Path) bool {
-		return !pathHasStrictPrefix(candidate, target)
+		return !candidate.HasStrictPrefix(target)
 	})
 }
 
@@ -644,10 +644,10 @@ func (e guardEnv) withoutFactsForPathAssignment(target path.Path) guardEnv {
 		if len(candidate.Segments) == 0 {
 			return true
 		}
-		if !samePathRoot(candidate, target) {
+		if !candidate.SameRoot(target) {
 			return false
 		}
-		return !pathHasPrefix(candidate, target)
+		return !candidate.HasPrefix(target)
 	})
 }
 
@@ -659,7 +659,7 @@ func (e guardEnv) withoutFactsForPath(target path.Path) guardEnv {
 		return e
 	}
 	return e.filterFacts(func(candidate path.Path) bool {
-		return !pathHasPrefix(candidate, target)
+		return !candidate.HasPrefix(target)
 	})
 }
 
@@ -1016,40 +1016,6 @@ func spanEqual(left, right diagnostic.Span) bool {
 		left.StartCol == right.StartCol &&
 		left.EndLine == right.EndLine &&
 		left.EndCol == right.EndCol
-}
-
-func pathHasStrictPrefix(candidate, prefix path.Path) bool {
-	return len(prefix.Segments) < len(candidate.Segments) && pathHasPrefix(candidate, prefix)
-}
-
-func pathsOverlapForInvalidation(a, b path.Path) bool {
-	return pathHasPrefix(a, b) || pathHasPrefix(b, a)
-}
-
-func samePathRoot(a, b path.Path) bool {
-	if a.Symbol != 0 || b.Symbol != 0 {
-		return a.Symbol == b.Symbol && a.Version == b.Version
-	}
-	return a.Root == b.Root && a.Version == b.Version
-}
-
-func pathHasPrefix(candidate, prefix path.Path) bool {
-	if candidate.Symbol != 0 || prefix.Symbol != 0 {
-		if candidate.Symbol != prefix.Symbol || candidate.Version != prefix.Version {
-			return false
-		}
-	} else if candidate.Root != prefix.Root {
-		return false
-	}
-	if len(prefix.Segments) > len(candidate.Segments) {
-		return false
-	}
-	for i := range prefix.Segments {
-		if candidate.Segments[i] != prefix.Segments[i] {
-			return false
-		}
-	}
-	return true
 }
 
 func copyPaths(in []path.Path) []path.Path {

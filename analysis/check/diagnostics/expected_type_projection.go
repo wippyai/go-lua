@@ -64,15 +64,19 @@ func expectedSegmentType(t typ.Type, seg segment.Segment) (typ.Type, bool) {
 	case *typ.Interface:
 		return expectedInterfaceSegmentType(tt, seg)
 	case *typ.Map:
-		if key, ok := luatypeprojection.SegmentKeyType(seg); ok && subtype.IsSubtype(key, tt.Key) {
-			return tt.Value, tt.Value != nil
-		}
+		return expectedMapSegmentType(tt.Key, tt.Value, seg)
 	case *typ.ReadonlyMap:
-		if key, ok := luatypeprojection.SegmentKeyType(seg); ok && subtype.IsSubtype(key, tt.Key) {
-			return tt.Value, tt.Value != nil
-		}
+		return expectedMapSegmentType(tt.Key, tt.Value, seg)
 	}
 	return nil, false
+}
+
+func expectedMapSegmentType(keyType, valueType typ.Type, seg segment.Segment) (typ.Type, bool) {
+	key, ok := luatypeprojection.SegmentKeyType(seg)
+	if !ok || !subtype.IsSubtype(key, keyType) {
+		return nil, false
+	}
+	return valueType, valueType != nil
 }
 
 func expectedInterfaceSegmentType(iface *typ.Interface, seg segment.Segment) (typ.Type, bool) {

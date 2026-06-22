@@ -182,7 +182,10 @@ func sourceIdentityValue(reg *axis.Registry, id identity.ID) product.Value {
 }
 
 func cloneFunctionValueTypes(in FunctionValueTypes) FunctionValueTypes {
-	out := FunctionValueTypes{}
+	out := in
+	out.ByIdentity = nil
+	out.ByPath = nil
+	out.ContextsByIdentity = nil
 	if len(in.ByIdentity) != 0 {
 		out.ByIdentity = make(map[identity.ID]*typ.Function, len(in.ByIdentity))
 		for id, fn := range in.ByIdentity {

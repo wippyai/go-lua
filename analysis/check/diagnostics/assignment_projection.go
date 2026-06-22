@@ -119,7 +119,7 @@ func dominatingCallInvalidationCause(result *body.Result, point cfg.Point, exprP
 			return dominatingCallInvalidation{callSpan: callInvalidationSpan(result, candidate), callName: callInvalidationName(result, candidate)}, true
 		}
 		for _, target := range invalidated {
-			if pathHasPrefix(exprPath, target) {
+			if exprPath.HasPrefix(target) {
 				return dominatingCallInvalidation{
 					target:   target,
 					callSpan: callInvalidationSpan(result, candidate),

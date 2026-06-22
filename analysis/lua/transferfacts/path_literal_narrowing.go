@@ -24,8 +24,7 @@ func (l *lowerer) rootLiteralRefinement(target path.Path, lit typ.Type, cond boo
 	if !ok || typ.SameNodeOrAcyclicEqual(rootType, narrowed) {
 		return factflow.BranchRefinement{}, false
 	}
-	root := target
-	root.Segments = nil
+	root := target.RootOnly()
 	value := l.rootLiteralValueConstraint(rootType, narrowed, target.Segments, lit, false)
 	if cond {
 		return factflow.NewBranchRefinement(root, value, true, factflow.ValueRefinement{}, false), true

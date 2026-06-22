@@ -55,6 +55,14 @@ func (p Path) Clone() Path {
 	return out
 }
 
+// RootOnly returns p's root identity without any field/index suffix.
+func (p Path) RootOnly() Path {
+	if len(p.Segments) == 0 {
+		return p
+	}
+	return Path{Root: p.Root, Symbol: p.Symbol, Version: p.Version}
+}
+
 // Parent returns the path without its last segment.
 // Returns an empty path if there are no segments.
 //

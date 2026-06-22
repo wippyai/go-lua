@@ -291,8 +291,7 @@ end
 				}
 			}
 		}
-		root := stalePath
-		root.Segments = nil
+		root := stalePath.RootOnly()
 		rootValue := boundary.ReadValue(reg, key.SymbolValue(root.Symbol))
 		if id, ok := product.Get(reg, rootValue, identity.Key).ID(); ok {
 			if members := boundary.ReadHeapTableObject(reg, id).StaticMembers(); len(members) != 0 {

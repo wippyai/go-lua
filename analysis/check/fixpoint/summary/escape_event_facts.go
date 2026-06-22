@@ -36,25 +36,9 @@ func escapeEventDominates(parent, child callboundary.EscapeEventFact) bool {
 		return false
 	}
 	if parent.Recursive {
-		return pathHasPrefix(child.Target, parent.Target)
+		return child.Target.HasPrefix(parent.Target)
 	}
 	return !child.Recursive && parent.Target.Equal(child.Target)
-}
-
-func pathHasPrefix(candidate, prefix pathdom.Path) bool {
-	if candidate.Symbol != prefix.Symbol || candidate.Root != prefix.Root || candidate.Version != prefix.Version {
-		return false
-	}
-	if len(prefix.Segments) > len(candidate.Segments) {
-		return false
-	}
-	for i, seg := range prefix.Segments {
-		other := candidate.Segments[i]
-		if seg.Kind != other.Kind || seg.Name != other.Name || seg.Index != other.Index {
-			return false
-		}
-	}
-	return true
 }
 
 func escapeEventKeyOf(fact callboundary.EscapeEventFact) escapeEventFactKey {

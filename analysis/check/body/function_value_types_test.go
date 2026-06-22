@@ -11,9 +11,11 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/state/heapidentity"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
+	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
 func TestFunctionContextEntryHoldsAllowsExtraCurrentHeapFacts(t *testing.T) {
@@ -204,6 +206,43 @@ func TestFunctionContextEntryHoldsRejectsTopCurrentHeapWhenHeapFactsRequired(t *
 
 	if functionContextEntryHolds(reg, ks, ks, entry, current, identity.LuaFunction(1)) {
 		t.Fatalf("functionContextEntryHolds returned true, want top current heap rejected when entry requires finite heap facts")
+	}
+}
+
+func TestCloneFunctionValueTypesDecouplesMutableIndexes(t *testing.T) {
+	id := identity.LuaFunction(710)
+	key, ok := factflow.CalleePathKeyFromPath(path.NewPath(71, "handler"))
+	if !ok {
+		t.Fatal("CalleePathKeyFromPath failed")
+	}
+	originalFn := typ.Func().Returns(typ.String).Build()
+	mutatedFn := typ.Func().Returns(typ.Number).Build()
+	types := FunctionValueTypes{
+		ByIdentity: map[identity.ID]*typ.Function{
+			id: originalFn,
+		},
+		ByPath: map[factflow.CalleePathKey]*typ.Function{
+			key: originalFn,
+		},
+		ContextsByIdentity: map[identity.ID][]FunctionValueContext{
+			id: {{EntryKeys: keyspace.New(), Type: originalFn}},
+		},
+	}
+
+	clone := cloneFunctionValueTypes(types)
+	types.ByIdentity[id] = mutatedFn
+	types.ByPath[key] = mutatedFn
+	types.ContextsByIdentity[id][0].Type = mutatedFn
+	types.ContextsByIdentity[id] = append(types.ContextsByIdentity[id], FunctionValueContext{Type: mutatedFn})
+
+	if clone.ByIdentity[id] != originalFn {
+		t.Fatalf("clone ByIdentity changed after source map mutation")
+	}
+	if clone.ByPath[key] != originalFn {
+		t.Fatalf("clone ByPath changed after source map mutation")
+	}
+	if got := clone.ContextsByIdentity[id]; len(got) != 1 || got[0].Type != originalFn {
+		t.Fatalf("clone contexts = %#v, want one original context", got)
 	}
 }
 

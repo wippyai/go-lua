@@ -183,6 +183,20 @@ func TestPathClonePreservesRootOnlyPath(t *testing.T) {
 	}
 }
 
+func TestPathRootOnlyDropsSuffixWithoutAliasing(t *testing.T) {
+	p := NewPath(1, "x").Field("a").IndexStr("b")
+	p.Version = 3
+
+	root := p.RootOnly()
+	if root.Root != "x" || root.Symbol != 1 || root.Version != 3 || len(root.Segments) != 0 {
+		t.Fatalf("RootOnly() = %#v, want root identity without suffix", root)
+	}
+	root.Segments = append(root.Segments, segment.Segment{Kind: segment.SegmentField, Name: "mutated"})
+	if got := p.Key(); got != `sym1@3.a["b"]` {
+		t.Fatalf("RootOnly returned aliased suffix storage, original key now %q", got)
+	}
+}
+
 func TestPathAppendSegmentsCopiesOnceAndDoesNotAliasInputs(t *testing.T) {
 	base := NewPath(1, "x").Field("a")
 	suffix := []segment.Segment{
@@ -212,6 +226,48 @@ func TestPathAppendSegmentsPreservesRootOnlyCloneSemantics(t *testing.T) {
 	got.Segments[0].Name = "mutated"
 	if base.Segments[0].Name != "a" {
 		t.Fatalf("AppendSegments(nil) shares storage with base: %#v", base.Segments)
+	}
+}
+
+func TestPathPrefixPredicatesUseCanonicalRootIdentity(t *testing.T) {
+	root := NewPath(symbol.ID(10), "old").Field("items")
+	sameSymbolDifferentDisplay := NewPath(symbol.ID(10), "new").Field("items").Field("name")
+	differentVersion := sameSymbolDifferentDisplay
+	differentVersion.Version = 2
+	rootVersion := root
+	rootVersion.Version = 2
+
+	if !sameSymbolDifferentDisplay.HasPrefix(root) {
+		t.Fatalf("HasPrefix rejected same symbol/version with different display roots")
+	}
+	if sameSymbolDifferentDisplay.HasPrefix(rootVersion) {
+		t.Fatalf("HasPrefix accepted same symbol with different version")
+	}
+	if !sameSymbolDifferentDisplay.HasStrictPrefix(root) {
+		t.Fatalf("HasStrictPrefix rejected proper ancestor")
+	}
+	if !sameSymbolDifferentDisplay.Overlaps(root) || !root.Overlaps(sameSymbolDifferentDisplay) {
+		t.Fatalf("Overlaps should be symmetric for ancestor/descendant paths")
+	}
+	if !differentVersion.SameRoot(rootVersion) {
+		t.Fatalf("SameRoot rejected matching symbol/version")
+	}
+}
+
+func TestPathSuffixAfterCopiesRemainder(t *testing.T) {
+	base := NewPath(symbol.ID(11), "root").Field("a")
+	candidate := base.Field("b").IndexStr("c")
+
+	suffix, ok := candidate.SuffixAfter(base)
+	if !ok {
+		t.Fatal("SuffixAfter rejected valid prefix")
+	}
+	if got := segment.FormatSegments(suffix); got != `.b["c"]` {
+		t.Fatalf("SuffixAfter = %q, want .b[\"c\"]", got)
+	}
+	suffix[0].Name = "mutated"
+	if got := candidate.Key(); got != `sym11.a.b["c"]` {
+		t.Fatalf("SuffixAfter returned aliased suffix, candidate now %q", got)
 	}
 }
 

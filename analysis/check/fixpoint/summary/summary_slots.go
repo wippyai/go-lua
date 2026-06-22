@@ -29,15 +29,16 @@ func paramObligationAt(reg *axis.Registry, s Summary, i int) product.Value {
 // UsefulParamObligation reports whether a parameter obligation carries
 // caller-checkable pre-call information.
 func UsefulParamObligation(reg *axis.Registry, value product.Value) bool {
-	if reg == nil {
-		return false
-	}
-	return !product.Equal(reg, value, product.Bottom(reg)) && !product.Equal(reg, value, product.Top())
+	return usefulNonExtremalValue(reg, value)
 }
 
 // UsefulNormalReturnParam reports whether a normal-return parameter lane carries
 // caller-applicable information.
 func UsefulNormalReturnParam(reg *axis.Registry, value product.Value) bool {
+	return usefulNonExtremalValue(reg, value)
+}
+
+func usefulNonExtremalValue(reg *axis.Registry, value product.Value) bool {
 	if reg == nil {
 		return false
 	}

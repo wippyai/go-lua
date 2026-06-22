@@ -272,6 +272,12 @@ func (r *resultResolver) resolveAlias(decl bind.TypeDecl, stmt *ast.TypeDefStmt)
 		return typ.NewRef("", decl.Name), true
 	}
 	r.active[key] = true
+	cleanupAliasResolution := func() {
+		delete(r.active, key)
+		delete(r.activeRec, decl.ID)
+		delete(r.generic, decl.ID)
+	}
+	defer cleanupAliasResolution()
 	var t typ.Type
 	var ok bool
 	if params := r.result.TypeDefParams(stmt); len(params) > 0 {
@@ -281,8 +287,6 @@ func (r *resultResolver) resolveAlias(decl bind.TypeDecl, stmt *ast.TypeDefStmt)
 		for _, param := range params {
 			tp, ok := r.resolveTypeParam(param)
 			if !ok {
-				delete(r.active, key)
-				delete(r.generic, decl.ID)
 				return nil, false
 			}
 			typeParams = append(typeParams, tp)
@@ -300,10 +304,8 @@ func (r *resultResolver) resolveAlias(decl bind.TypeDecl, stmt *ast.TypeDefStmt)
 		t, ok = r.Type(stmt.Type)
 	}
 	rec := r.activeRec[decl.ID]
-	delete(r.active, key)
-	delete(r.activeRec, decl.ID)
-	delete(r.generic, decl.ID)
 	if !ok {
+		cleanupAliasResolution()
 		return resolveInParentScope([]string{decl.Name}, r.parent)
 	}
 	if rec != nil {

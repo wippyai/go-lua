@@ -164,8 +164,7 @@ func reassignedCallResultFieldEvidence(result *body.Result, resolver typeannotat
 		if !diagnosticCanReach(flow, graph, assignPoint, candidate) || !diagnosticCanReach(flow, graph, candidate, point) {
 			continue
 		}
-		root := accessPath
-		root.Segments = nil
+		root := accessPath.RootOnly()
 		span := ast.SpanOf(fact.Value)
 		if !span.Valid() {
 			span = ast.SpanOf(fact.Target)

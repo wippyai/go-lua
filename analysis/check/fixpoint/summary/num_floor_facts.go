@@ -78,18 +78,14 @@ func (lane numFloorFactLane) Equal(a, b []callboundary.NumFloorFact) bool {
 }
 
 func (lane numFloorFactLane) LessOrEq(a, b []callboundary.NumFloorFact) bool {
-	a = lane.Normalize(a)
-	b = lane.Normalize(b)
-	if len(b) == 0 {
+	leftFloors := numFloorMaxFloorByPath(a)
+	rightFloors := numFloorMaxFloorByPath(b)
+	if len(rightFloors) == 0 {
 		return true
 	}
-	floors := make(map[numFloorFactKey]int64, len(a))
-	for _, fact := range a {
-		floors[numFloorKeyOf(fact)] = fact.Floor
-	}
-	for _, right := range b {
-		left, ok := floors[numFloorKeyOf(right)]
-		if !ok || left < right.Floor {
+	for key, rightFloor := range rightFloors {
+		leftFloor, ok := leftFloors[key]
+		if !ok || leftFloor < rightFloor {
 			return false
 		}
 	}
@@ -129,4 +125,21 @@ func (lane numFloorFactLane) Widen(prev, next []callboundary.NumFloorFact) []cal
 
 func numFloorKeyOf(fact callboundary.NumFloorFact) numFloorFactKey {
 	return numFloorFactKey(fact.Path.Key())
+}
+
+func numFloorMaxFloorByPath(in []callboundary.NumFloorFact) map[numFloorFactKey]int64 {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[numFloorFactKey]int64, len(in))
+	for _, fact := range in {
+		if !fact.Path.IsPlaceholder() {
+			continue
+		}
+		key := numFloorKeyOf(fact)
+		if kept, ok := out[key]; !ok || kept < fact.Floor {
+			out[key] = fact.Floor
+		}
+	}
+	return out
 }

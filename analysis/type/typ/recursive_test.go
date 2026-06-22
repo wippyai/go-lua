@@ -628,6 +628,14 @@ func TestRecursiveContentFlagsDoNotForceGraphClosure(t *testing.T) {
 	}
 }
 
+func TestNilRecursiveFlagRefreshIsNoop(t *testing.T) {
+	var rec *Recursive
+	rec.ensureContainsFlags()
+	rec.ensureContainsClosedFlag()
+	rec.refreshContainsFlags()
+	rec.refreshContainsClosedFlag()
+}
+
 func TestOpenRecursiveWrapperHashRefreshesForEquality(t *testing.T) {
 	rec := NewRecursivePlaceholder("Node")
 	staleWrapper := newRecord().OptField("next", rec).Build()

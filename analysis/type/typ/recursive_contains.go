@@ -15,7 +15,10 @@ func (r *Recursive) ensureContainsClosedFlag() {
 }
 
 func (r *Recursive) refreshContainsFlags() {
-	if r == nil || r.Body == nil {
+	if r == nil {
+		return
+	}
+	if r.Body == nil {
 		r.containsAny = false
 		r.containsNever = false
 		r.containsTypeParam = false
@@ -42,7 +45,10 @@ func (r *Recursive) refreshContainsFlags() {
 }
 
 func (r *Recursive) refreshContainsClosedFlag() {
-	if r == nil || r.Body == nil {
+	if r == nil {
+		return
+	}
+	if r.Body == nil {
 		r.containsFlagsClosed = false
 		r.containsClosedDirty = false
 		return

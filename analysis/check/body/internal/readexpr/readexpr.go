@@ -712,8 +712,7 @@ func unknownIndexReadValue(config Config, seg segment.Segment) (product.Value, b
 
 func projectFromHeapIdentity(config Config, point cfg.Point, p pathdom.Path, in state.State) (product.Value, bool) {
 	reg := config.Registry
-	root := p
-	root.Segments = nil
+	root := p.RootOnly()
 	rootProjected := product.Value{}
 	hasRootProjected := false
 	if rootValue, ok := sourcevalue.ReadPathValue(reg, config.Visibility, point, root, in); ok {
@@ -741,8 +740,7 @@ func projectFromHeapIdentity(config Config, point cfg.Point, p pathdom.Path, in 
 
 func projectFromStructuralEvidence(config Config, point cfg.Point, p pathdom.Path, in state.State) (product.Value, bool, bool) {
 	reg := config.Registry
-	root := p
-	root.Segments = nil
+	root := p.RootOnly()
 	rootProjected := product.Value{}
 	hasRootProjected := false
 	if rootValue, ok := sourcevalue.ReadPathValue(reg, config.Visibility, point, root, in); ok {

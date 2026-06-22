@@ -402,8 +402,7 @@ func optionalDirectPathType(result *body.Result, resolver typeannotation.Resolve
 	if target.Symbol == 0 {
 		return nil, false
 	}
-	root := target
-	root.Segments = nil
+	root := target.RootOnly()
 	t, ok := discriminantRootType(result, resolver, point, root)
 	if !ok || t == nil {
 		return nil, false
@@ -638,7 +637,7 @@ func optionalAssignedPathInvalidatesTarget(result *body.Result, flow *diagnostic
 	if assigned.IsEmpty() || target.IsEmpty() {
 		return false
 	}
-	if pathHasPrefix(target, assigned) {
+	if target.HasPrefix(assigned) {
 		return true
 	}
 	prefix, ok := pathPrefixWithSegmentLen(target, len(assigned.Segments))
@@ -710,7 +709,7 @@ func optionalPathConsumesTarget(result *body.Result, flow *diagnosticFlowCache, 
 	if used.IsEmpty() || target.IsEmpty() {
 		return false
 	}
-	if pathHasPrefix(used, target) {
+	if used.HasPrefix(target) {
 		return true
 	}
 	prefix, ok := pathPrefixWithSegmentLen(used, len(target.Segments))
@@ -784,8 +783,7 @@ func (p discriminatedUnionExhaustiveness) discriminantAnchors(result *body.Resul
 	if target.Symbol == 0 || len(target.Segments) == 0 {
 		return nil
 	}
-	root := target
-	root.Segments = nil
+	root := target.RootOnly()
 	rootType, ok := discriminantRootType(result, p.resolver, point, root)
 	if !ok {
 		return nil
@@ -1301,10 +1299,8 @@ func resultShapeDiscriminantsEquivalent(result *body.Result, point cfg.Point, le
 	if len(left.Segments) == 0 {
 		return false
 	}
-	leftRoot := left
-	leftRoot.Segments = nil
-	rightRoot := right
-	rightRoot.Segments = nil
+	leftRoot := left.RootOnly()
+	rightRoot := right.RootOnly()
 	return sameSegments(left.Segments, right.Segments) &&
 		pathsShareExactIdentity(result, point, leftRoot, rightRoot)
 }
@@ -1473,7 +1469,7 @@ func (p discriminatedUnionExhaustiveness) openRegistrationCanReach(result *body.
 			continue
 		}
 		if mutation.opensAll {
-			if pathsOverlapForInvalidation(mutation.path, dispatch.registry) {
+			if mutation.path.Overlaps(dispatch.registry) {
 				return true
 			}
 			if mutation.aliasSensitive && registrationRegistryMatchesAt(result, mutation.point, mutation.path, dispatch.registry) {
@@ -1481,7 +1477,7 @@ func (p discriminatedUnionExhaustiveness) openRegistrationCanReach(result *body.
 			}
 			continue
 		}
-		if pathHasPrefix(dispatch.registry, mutation.path) {
+		if dispatch.registry.HasPrefix(mutation.path) {
 			return true
 		}
 		if mutation.hasKey &&
@@ -1687,7 +1683,7 @@ func registrationCallbackPathExpr(result *body.Result, point cfg.Point, target p
 			if fact.HasPath && fact.Path.Equal(target) {
 				return registrationCallbackSourceExpr(result, cursor, fact.Value, seen)
 			}
-			if fact.HasPath && pathHasPrefix(target, fact.Path) {
+			if fact.HasPath && target.HasPrefix(fact.Path) {
 				return false
 			}
 		}
@@ -2320,7 +2316,7 @@ func dispatchTableReplacementSuffix(fact semantics.OrdinaryAssignmentFact, table
 	if fact.Path.Equal(table) {
 		return nil, true
 	}
-	if pathHasPrefix(table, fact.Path) {
+	if table.HasPrefix(fact.Path) {
 		suffix := table.Segments[len(fact.Path.Segments):]
 		return append([]segment.Segment(nil), suffix...), true
 	}
@@ -2349,7 +2345,7 @@ func dispatchTableAssignmentKeyForPath(result *body.Result, point cfg.Point, fac
 		return "", false, false
 	}
 	if fact.HasPath {
-		if pathHasPrefix(fact.Path, table) {
+		if fact.Path.HasPrefix(table) {
 			suffix := fact.Path.Segments[len(table.Segments):]
 			if len(suffix) != 1 {
 				return "", false, true
@@ -2362,14 +2358,14 @@ func dispatchTableAssignmentKeyForPath(result *body.Result, point cfg.Point, fac
 			}
 			return "", false, true
 		}
-		if pathHasPrefix(table, fact.Path) {
+		if table.HasPrefix(fact.Path) {
 			return "", false, true
 		}
 	}
 	if fact.HasSymbol && fact.Symbol == table.Symbol {
 		return "", false, true
 	}
-	if fact.HasContainerPath && pathsOverlapForInvalidation(table, fact.ContainerPath) {
+	if fact.HasContainerPath && table.Overlaps(fact.ContainerPath) {
 		if key, ok := dispatchTableDynamicAssignmentKey(result, point, fact, table); ok {
 			return key, true, true
 		}

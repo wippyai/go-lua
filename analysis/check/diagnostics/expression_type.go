@@ -271,8 +271,7 @@ func (p expressionTyper) flowRootType(t typ.Type, accessPath pathdom.Path) typ.T
 }
 
 func rootPath(p pathdom.Path) pathdom.Path {
-	p.Segments = nil
-	return p
+	return p.RootOnly()
 }
 
 func expressionSegmentType(t typ.Type, seg segment.Segment) (typ.Type, bool) {

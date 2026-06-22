@@ -229,8 +229,7 @@ func projectPathHeapStaticMemberValue(
 	if len(targetPath.Segments) == 0 {
 		return product.Value{}, false
 	}
-	root := targetPath
-	root.Segments = nil
+	root := targetPath.RootOnly()
 	rootProjected := product.Value{}
 	hasRootProjected := false
 	if rootValue, ok := resolvePathValueAtCached(nil, reg, resolver, point, out, root, nil); ok {
@@ -622,8 +621,7 @@ func applyPathOriginRelation(
 	} else {
 		narrowed = variantorigin.Of(rootOrigin.Family(), cases)
 	}
-	rootPath := parentPath
-	rootPath.Segments = nil
+	rootPath := parentPath.RootOnly()
 	out = invalidateRootDescendantsAt(resolver, point, out, rootPath)
 	return out.WriteValue(reg, slot, product.Set(reg, root, variantorigin.Key, narrowed))
 }

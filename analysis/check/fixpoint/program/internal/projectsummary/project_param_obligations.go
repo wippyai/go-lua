@@ -679,8 +679,7 @@ func (p paramObligationProjector) invalidationPathReachesMemberPath(invalidated,
 	if len(invalidated.Segments) > len(memberPath.Segments) {
 		return false
 	}
-	invalidatedRoot := invalidated
-	invalidatedRoot.Segments = nil
+	invalidatedRoot := invalidated.RootOnly()
 	if !p.pathRootReadable(invalidatedRoot) && segmentsHavePrefix(memberPath.Segments, invalidated.Segments) {
 		return true
 	}

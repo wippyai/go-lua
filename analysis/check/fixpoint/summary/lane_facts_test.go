@@ -131,6 +131,12 @@ func TestNumFloorFactsUseMustFloorSemantics(t *testing.T) {
 	if numFloorLane.LessOrEq(right, left) {
 		t.Fatalf("weaker/missing floors must not be <= stronger floor set")
 	}
+	if !numFloorLane.LessOrEq(
+		[]callboundary.NumFloorFact{{Path: p0, Floor: 1}, {Path: p0, Floor: 4}},
+		[]callboundary.NumFloorFact{{Path: p0, Floor: 3}},
+	) {
+		t.Fatalf("LessOrEq must compare strongest duplicate floor without requiring normalized inputs")
+	}
 }
 
 func TestPathInvalidationLaneAncestorSubsumesDescendant(t *testing.T) {

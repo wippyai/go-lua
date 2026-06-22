@@ -364,7 +364,7 @@ func memberPathReassignedAfterDefinition(result *body.Result, flow *diagnosticFl
 
 func ordinaryAssignmentInvalidatesMemberPath(fact semantics.OrdinaryAssignmentFact, target path.Path) bool {
 	if fact.HasPath {
-		return pathHasPrefix(target, fact.Path)
+		return target.HasPrefix(fact.Path)
 	}
 	return fact.HasSymbol && target.Symbol != 0 && fact.Symbol == target.Symbol
 }
@@ -465,14 +465,13 @@ func invalidationPathReachesPath(result *body.Result, point cfg.Point, invalidat
 	if invalidated.IsEmpty() || target.IsEmpty() {
 		return memberCallInvalidationNone
 	}
-	if pathHasPrefix(target, invalidated) {
+	if target.HasPrefix(invalidated) {
 		return memberCallInvalidationResolved
 	}
 	if len(invalidated.Segments) > len(target.Segments) {
 		return memberCallInvalidationNone
 	}
-	invalidatedRoot := invalidated
-	invalidatedRoot.Segments = nil
+	invalidatedRoot := invalidated.RootOnly()
 	if !pathRootReadable(result, point, invalidatedRoot) && memberSegmentsHavePrefix(target.Segments, invalidated.Segments) {
 		return memberCallInvalidationStale
 	}

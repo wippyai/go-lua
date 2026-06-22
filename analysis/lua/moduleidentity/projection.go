@@ -286,7 +286,7 @@ func (p Projection) activeAliasFor(point cfg.Point, calleePath path.Path) (modul
 	bestPrefixLen := -1
 	bestOrder := -1
 	for _, alias := range p.aliases {
-		remaining, ok := pathRemainder(calleePath, alias.target)
+		remaining, ok := calleePath.SuffixAfter(alias.target)
 		if !ok || len(remaining) == 0 {
 			continue
 		}
@@ -317,7 +317,7 @@ func (p Projection) activeSignatureAliasFor(point cfg.Point, calleePath path.Pat
 	bestPrefixLen := -1
 	bestOrder := -1
 	for _, alias := range p.signatures {
-		remaining, ok := pathRemainder(calleePath, alias.target)
+		remaining, ok := calleePath.SuffixAfter(alias.target)
 		if !ok || len(remaining) != 0 {
 			continue
 		}
@@ -389,12 +389,12 @@ func (p Projection) hasInvalidatingPathWrite(startOrder, callOrder int, identity
 			continue
 		}
 		if write.dynamic {
-			if pathHasPrefix(identityPath, write.target) || pathHasPrefix(calleePath, write.target) {
+			if identityPath.HasPrefix(write.target) || calleePath.HasPrefix(write.target) {
 				return true
 			}
 			continue
 		}
-		if pathHasPrefix(calleePath, write.target) {
+		if calleePath.HasPrefix(write.target) {
 			return true
 		}
 	}
@@ -554,7 +554,7 @@ func (p Projection) moduleIdentityForPath(resolved path.Path) (string, bool) {
 		return root.modulePath, true
 	}
 	for _, alias := range p.aliases {
-		remaining, ok := pathRemainder(resolved, alias.target)
+		remaining, ok := resolved.SuffixAfter(alias.target)
 		if ok && len(remaining) == 0 {
 			return alias.modulePath, true
 		}
@@ -600,39 +600,6 @@ func staticPathSegments(segments []segment.Segment) bool {
 			}
 		case segment.SegmentIndexInt:
 		default:
-			return false
-		}
-	}
-	return true
-}
-
-func pathRemainder(candidate path.Path, prefix path.Path) ([]segment.Segment, bool) {
-	if !pathHasPrefix(candidate, prefix) {
-		return nil, false
-	}
-	remaining := candidate.Segments[len(prefix.Segments):]
-	if len(remaining) == 0 {
-		return nil, true
-	}
-	out := make([]segment.Segment, len(remaining))
-	copy(out, remaining)
-	return out, true
-}
-
-func pathHasPrefix(candidate path.Path, prefix path.Path) bool {
-	if candidate.Symbol != 0 || prefix.Symbol != 0 {
-		if candidate.Symbol != prefix.Symbol {
-			return false
-		}
-	} else if candidate.Root != prefix.Root {
-		return false
-	}
-	if len(prefix.Segments) > len(candidate.Segments) {
-		return false
-	}
-	for i, seg := range prefix.Segments {
-		other := candidate.Segments[i]
-		if seg.Kind != other.Kind || seg.Name != other.Name || seg.Index != other.Index {
 			return false
 		}
 	}

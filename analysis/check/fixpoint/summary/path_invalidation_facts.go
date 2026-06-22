@@ -23,7 +23,7 @@ var pathInvalidationLane = factset.Set[pathInvalidationFactKey, callboundary.Pat
 		return f
 	},
 	Prefer:    func(kept, incoming callboundary.PathInvalidationFact) bool { return true },
-	Dominates: func(super, sub callboundary.PathInvalidationFact) bool { return pathHasPrefix(sub.Path, super.Path) },
+	Dominates: func(super, sub callboundary.PathInvalidationFact) bool { return sub.Path.HasPrefix(super.Path) },
 }
 
 func pathInvalidationKeyOf(f callboundary.PathInvalidationFact) pathInvalidationFactKey {

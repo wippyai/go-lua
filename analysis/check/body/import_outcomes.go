@@ -44,8 +44,7 @@ func calleeValueProvider(
 		if len(p.Segments) == 0 {
 			return product.Value{}, false
 		}
-		root := p
-		root.Segments = nil
+		root := p.RootOnly()
 		rootValue, ok := readexpr.Project(config, ctx.Point, root, in)
 		if !ok {
 			return product.Value{}, false
