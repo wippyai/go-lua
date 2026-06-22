@@ -167,6 +167,12 @@ func TestDiagnosticProducerMessagesUseCentralDisplay(t *testing.T) {
 	if got := resultShapeExhaustivenessHelp(); got != "Check the result case before reading this field, or return from the opposite case before continuing." {
 		t.Fatalf("resultShapeExhaustivenessHelp = %q", got)
 	}
+	if got := optionalExhaustivenessMessage("case", "`maybe == nil`"); got != "optional handling is not exhaustive; missing case: `maybe == nil`" {
+		t.Fatalf("optionalExhaustivenessMessage = %q", got)
+	}
+	if got := optionalExhaustivenessHelp(); got != "Handle the nil case with an else branch, or return before continuing when nil is intentionally ignored." {
+		t.Fatalf("optionalExhaustivenessHelp = %q", got)
+	}
 
 	if got := frozenTableMutationMessage("session"); got != `cannot mutate frozen table "session"` {
 		t.Fatalf("frozenTableMutationMessage = %q", got)

@@ -45,6 +45,7 @@ const (
 	labelUnknownValue         = "unknown value"
 	labelChannelCaseTest      = "channel case check"
 	labelUnionCaseTest        = "union case check"
+	labelOptionalCaseCheck    = "optional case check"
 	labelResultFieldRead      = "result field read"
 	labelDispatchLookup       = "dispatch lookup"
 	labelDispatchTable        = "dispatch table"
@@ -85,6 +86,7 @@ func sourceLabelPlacement(message string) diagnostic.LabelPlacement {
 		labelUnknownValue,
 		labelChannelCaseTest,
 		labelUnionCaseTest,
+		labelOptionalCaseCheck,
 		labelResultFieldRead,
 		labelDispatchLookup,
 		labelRegistrationCall,
@@ -206,6 +208,14 @@ func resultShapeExhaustivenessHelp() string {
 	return display.ResultShapeExhaustivenessHelp()
 }
 
+func optionalExhaustivenessMessage(caseWord, cases string) string {
+	return display.OptionalExhaustivenessMessage(caseWord, cases)
+}
+
+func optionalExhaustivenessHelp() string {
+	return display.OptionalExhaustivenessHelp()
+}
+
 func selectedDiscriminantPathEvidence(path string) string {
 	return "branch chain checks discriminant " + codeName(path)
 }
@@ -236,6 +246,26 @@ func resultShapeFieldCaseEvidence(readPath, requiredCase string) string {
 
 func resultShapeMissingProofEvidence(requiredCase string) string {
 	return "no stable guard proves " + codeName(requiredCase) + " before this read"
+}
+
+func selectedOptionalPathEvidence(path string) string {
+	return "branch checks optional " + codeName(path)
+}
+
+func optionalPossibleCasesEvidence(path string) string {
+	return "possible cases: " + codeName(path+" ~= nil") + ", " + codeName(path+" == nil")
+}
+
+func optionalConsumedCaseEvidence(path string) string {
+	return "consumed case: " + codeName(path+" ~= nil")
+}
+
+func optionalMissingCasesEvidence(cases string) string {
+	return "missing cases: " + cases
+}
+
+func optionalMissingDefaultEvidence() string {
+	return "no else branch handles the remaining optional case"
 }
 
 func dispatchLookupEvidence(table, discriminant string) string {
@@ -842,6 +872,14 @@ func (diagnosticDisplay) ResultShapeExhaustivenessMessage(readPath, requiredCase
 
 func (diagnosticDisplay) ResultShapeExhaustivenessHelp() string {
 	return "Check the result case before reading this field, or return from the opposite case before continuing."
+}
+
+func (diagnosticDisplay) OptionalExhaustivenessMessage(caseWord, cases string) string {
+	return fmt.Sprintf("optional handling is not exhaustive; missing %s: %s", caseWord, cases)
+}
+
+func (diagnosticDisplay) OptionalExhaustivenessHelp() string {
+	return "Handle the nil case with an else branch, or return before continuing when nil is intentionally ignored."
 }
 
 func (diagnosticDisplay) FrozenTableMutationMessage(containerName string) string {

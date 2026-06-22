@@ -888,6 +888,160 @@ local handler = handlers[action.kind] or fallback
 	}
 }
 
+func TestOptionalExhaustivenessReportsConsumedValueWithoutNilCase(t *testing.T) {
+	src := strings.TrimLeft(`
+type Sink = { seen: string }
+
+local function remember(maybe: string?, sink: Sink): string
+    if maybe ~= nil then
+        sink.seen = maybe
+    end
+    return sink.seen
+end
+`, "\n")
+	result := Check(src, WithDiagnosticRule(
+		diagnostics.CodeDiscriminatedUnionExhaustive,
+		diagnostic.Enable(),
+	))
+	diag := requireDiagnostic(t, result, diagnosticExpectation{
+		Code:            diagnostics.CodeDiscriminatedUnionExhaustive,
+		Severity:        diagnostic.SeverityWarning,
+		DiagnosticCount: 1,
+		Line:            4,
+		Column:          8,
+		MessageContains: []string{
+			"optional handling is not exhaustive",
+			"maybe == nil",
+		},
+		EvidenceOrdered: []string{
+			"branch checks optional `maybe`",
+			"possible cases: `maybe ~= nil`, `maybe == nil`",
+			"consumed case: `maybe ~= nil`",
+			"missing cases: `maybe == nil`",
+			"no else branch handles the remaining optional case",
+		},
+		LabelContains: []string{"optional case check"},
+		HelpContains:  []string{"Handle the nil case"},
+	})
+	rendered := diagnostic.Render(diag, diagnostic.RenderOptions{
+		Sources:             diagnostic.SourceMap{"test.lua": src},
+		ShowSourceLabelRows: true,
+	})
+	want := `warning[lint.union.exhaustiveness]: optional handling is not exhaustive; missing case: ` + "`maybe == nil`" + `
+ --> test.lua:4:8
+  |
+4 |     if maybe ~= nil then
+  |        ↑ optional case check
+
+because:
+  1. proven: branch checks optional ` + "`maybe`" + `
+  2. proven: possible cases: ` + "`maybe ~= nil`, `maybe == nil`" + `
+  3. proven: consumed case: ` + "`maybe ~= nil`" + `
+  4. missing proof: missing cases: ` + "`maybe == nil`" + `
+  5. missing proof: no else branch handles the remaining optional case
+
+help: Handle the nil case with an else branch, or return before continuing when nil is intentionally ignored.`
+	assertRenderedEqual(t, rendered, want)
+}
+
+func TestOptionalExhaustivenessAcceptsExplicitNilHandlingAndGuardReturn(t *testing.T) {
+	withElse := Check(`
+type Sink = { seen: string }
+
+local function remember(maybe: string?, sink: Sink): string
+    if maybe ~= nil then
+        sink.seen = maybe
+    else
+        sink.seen = "missing"
+    end
+    return sink.seen
+end
+`, WithDiagnosticRule(
+		diagnostics.CodeDiscriminatedUnionExhaustive,
+		diagnostic.Enable(),
+	))
+	if hasDiagnosticCode(withElse.Diagnostics, diagnostics.CodeDiscriminatedUnionExhaustive) {
+		t.Fatalf("diagnostics = %#v, want no optional exhaustiveness warning with else fallback", withElse.Diagnostics)
+	}
+
+	guardReturn := Check(`
+local function value_or_default(maybe: string?): string
+    if maybe ~= nil then
+        return maybe
+    end
+    return "fallback"
+end
+`, WithDiagnosticRule(
+		diagnostics.CodeDiscriminatedUnionExhaustive,
+		diagnostic.Enable(),
+	))
+	if hasDiagnosticCode(guardReturn.Diagnostics, diagnostics.CodeDiscriminatedUnionExhaustive) {
+		t.Fatalf("diagnostics = %#v, want no optional exhaustiveness warning for guard-return fallback", guardReturn.Diagnostics)
+	}
+
+	nilGuard := Check(`
+local function value_or_default(maybe: string?): string
+    if maybe == nil then
+        return "fallback"
+    end
+    return maybe
+end
+`, WithDiagnosticRule(
+		diagnostics.CodeDiscriminatedUnionExhaustive,
+		diagnostic.Enable(),
+	))
+	if hasDiagnosticCode(nilGuard.Diagnostics, diagnostics.CodeDiscriminatedUnionExhaustive) {
+		t.Fatalf("diagnostics = %#v, want no optional exhaustiveness warning after nil guard", nilGuard.Diagnostics)
+	}
+}
+
+func TestOptionalExhaustivenessHandlesTruthyOptionalWithoutBooleanFalsePositive(t *testing.T) {
+	stringOptional := Check(`
+type Sink = { seen: string }
+
+local function remember(maybe: string?, sink: Sink): string
+    if maybe then
+        sink.seen = maybe
+    end
+    return sink.seen
+end
+`, WithDiagnosticRule(
+		diagnostics.CodeDiscriminatedUnionExhaustive,
+		diagnostic.Enable(),
+	))
+	requireDiagnostic(t, stringOptional, diagnosticExpectation{
+		Code:            diagnostics.CodeDiscriminatedUnionExhaustive,
+		Severity:        diagnostic.SeverityWarning,
+		DiagnosticCount: 1,
+		MessageContains: []string{
+			"optional handling is not exhaustive",
+			"maybe == nil",
+		},
+		EvidenceOrdered: []string{
+			"branch checks optional `maybe`",
+			"consumed case: `maybe ~= nil`",
+			"missing cases: `maybe == nil`",
+		},
+	})
+
+	booleanOptional := Check(`
+type Sink = { seen: string }
+
+local function remember(flag: boolean?, sink: Sink): string
+    if flag then
+        sink.seen = "true"
+    end
+    return sink.seen
+end
+`, WithDiagnosticRule(
+		diagnostics.CodeDiscriminatedUnionExhaustive,
+		diagnostic.Enable(),
+	))
+	if hasDiagnosticCode(booleanOptional.Diagnostics, diagnostics.CodeDiscriminatedUnionExhaustive) {
+		t.Fatalf("diagnostics = %#v, want no optional exhaustiveness warning when false is a non-nil value", booleanOptional.Diagnostics)
+	}
+}
+
 func hasDiagnosticCode(diags []diagnostic.Diagnostic, code diagnostic.Code) bool {
 	for _, diag := range diags {
 		if diag.Code == code {

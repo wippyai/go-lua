@@ -57,6 +57,12 @@ type discriminatedUnionEvidence struct {
 	missing  []string
 }
 
+type optionalEvidence struct {
+	target  string
+	missing []string
+	span    diagnostic.Span
+}
+
 type dispatchTableEvidence struct {
 	table      string
 	target     string
@@ -201,6 +207,9 @@ func (p discriminatedUnionExhaustiveness) Produce(result *body.Result) []diagnos
 		if diag, ok := p.chainDiagnostic(result, branch.fact.If, byIf); ok {
 			out = append(out, diag)
 		}
+		if diag, ok := p.optionalChainDiagnostic(result, branch.fact.If, byIf); ok {
+			out = append(out, diag)
+		}
 	}
 	out = append(out, p.tableDispatchDiagnostics(result, graph)...)
 	out = append(out, p.registrationDiagnostics(result, graph)...)
@@ -275,6 +284,255 @@ func (p discriminatedUnionExhaustiveness) chainDiagnostic(result *body.Result, h
 		handled:  handledNames,
 		missing:  missing,
 	}), true
+}
+
+type optionalBranchCandidate struct {
+	target       pathdom.Path
+	handlesNil   bool
+	handlesValue bool
+}
+
+func (p discriminatedUnionExhaustiveness) optionalChainDiagnostic(result *body.Result, head *ast.IfStmt, byIf map[*ast.IfStmt]discriminantBranch) (diagnostic.Diagnostic, bool) {
+	if hasDefaultElse(head) {
+		return diagnostic.Diagnostic{}, false
+	}
+	chain := ifElseIfChain(head)
+	var selected pathdom.Path
+	selectedSet := false
+	handlesNil := false
+	handlesValue := false
+	consumesValue := false
+	for _, stmt := range chain {
+		branch, ok := byIf[stmt]
+		if !ok {
+			return diagnostic.Diagnostic{}, false
+		}
+		candidate, ok := p.optionalCandidateForCheck(result, branch.point, branch.fact.Check)
+		if !ok {
+			return diagnostic.Diagnostic{}, false
+		}
+		if !selectedSet {
+			selected = candidate.target
+			selectedSet = true
+		} else if !selected.Equal(candidate.target) {
+			return diagnostic.Diagnostic{}, false
+		}
+		handlesNil = handlesNil || candidate.handlesNil
+		handlesValue = handlesValue || candidate.handlesValue
+		if candidate.handlesValue &&
+			optionalBranchConsumesPath(result, stmt.Then, candidate.target) &&
+			!optionalStatementsDefinitelyReturn(stmt.Then) {
+			consumesValue = true
+		}
+	}
+	if !selectedSet || !handlesValue || !consumesValue || handlesNil {
+		return diagnostic.Diagnostic{}, false
+	}
+	span := ast.SpanOf(head.Condition)
+	missing := []string{selected.String() + " == nil"}
+	return newOptionalExhaustivenessDiagnostic(optionalEvidence{
+		target:  selected.String(),
+		missing: missing,
+		span:    span,
+	}), true
+}
+
+func (p discriminatedUnionExhaustiveness) optionalCandidateForCheck(result *body.Result, point cfg.Point, check branchcond.Check) (optionalBranchCandidate, bool) {
+	if check.Path.IsEmpty() {
+		return optionalBranchCandidate{}, false
+	}
+	t, ok := optionalPathType(result, p.resolver, point, check.Path)
+	if !ok || !optionalTypeHasValue(t) {
+		return optionalBranchCandidate{}, false
+	}
+	switch check.Kind {
+	case branchcond.CheckNil:
+		return optionalBranchCandidate{target: check.Path, handlesNil: true}, true
+	case branchcond.CheckNotNil:
+		return optionalBranchCandidate{target: check.Path, handlesValue: true}, true
+	case branchcond.CheckTruthy:
+		if optionalTruthyPartitionsNilValue(t) {
+			return optionalBranchCandidate{target: check.Path, handlesValue: true}, true
+		}
+	case branchcond.CheckFalsy:
+		if optionalTruthyPartitionsNilValue(t) {
+			return optionalBranchCandidate{target: check.Path, handlesNil: true}, true
+		}
+	}
+	return optionalBranchCandidate{}, false
+}
+
+func optionalPathType(result *body.Result, resolver typeannotation.Resolver, point cfg.Point, target pathdom.Path) (typ.Type, bool) {
+	if target.Symbol == 0 {
+		return nil, false
+	}
+	root := target
+	root.Segments = nil
+	t, ok := discriminantRootType(result, resolver, point, root)
+	if !ok || t == nil {
+		return nil, false
+	}
+	for _, seg := range target.Segments {
+		next, ok := expressionSegmentType(t, seg)
+		if !ok {
+			return nil, false
+		}
+		t = next
+	}
+	return t, true
+}
+
+func optionalTypeHasValue(t typ.Type) bool {
+	if t == nil || typ.IsAny(t) || typ.IsUnknown(t) || typ.IsNever(t) || !projectionHasNil(t) {
+		return false
+	}
+	value := projectionWithoutNil(t)
+	return value != nil && !typ.IsNever(value)
+}
+
+func optionalTruthyPartitionsNilValue(t typ.Type) bool {
+	value := projectionWithoutNil(t)
+	return value != nil && !typ.IsNever(value) && !typeAdmitsFalse(value)
+}
+
+func typeAdmitsFalse(t typ.Type) bool {
+	switch v := t.(type) {
+	case nil:
+		return false
+	case *typ.Alias:
+		return typeAdmitsFalse(v.UnaliasedTarget())
+	case *typ.Union:
+		for _, member := range v.Members {
+			if typeAdmitsFalse(member) {
+				return true
+			}
+		}
+		return false
+	default:
+		return typ.TypeEquals(t, typ.Boolean) || typ.TypeEquals(t, typ.False)
+	}
+}
+
+func optionalBranchConsumesPath(result *body.Result, stmts []ast.Stmt, target pathdom.Path) bool {
+	for _, stmt := range stmts {
+		if optionalStmtConsumesPath(result, stmt, target) {
+			return true
+		}
+	}
+	return false
+}
+
+func optionalStatementsDefinitelyReturn(stmts []ast.Stmt) bool {
+	for _, stmt := range stmts {
+		if optionalStmtDefinitelyReturns(stmt) {
+			return true
+		}
+	}
+	return false
+}
+
+func optionalStmtDefinitelyReturns(stmt ast.Stmt) bool {
+	switch s := stmt.(type) {
+	case *ast.ReturnStmt:
+		return true
+	case *ast.DoBlockStmt:
+		return optionalStatementsDefinitelyReturn(s.Stmts)
+	case *ast.IfStmt:
+		return len(s.Else) != 0 &&
+			optionalStatementsDefinitelyReturn(s.Then) &&
+			optionalStatementsDefinitelyReturn(s.Else)
+	default:
+		return false
+	}
+}
+
+func optionalStmtConsumesPath(result *body.Result, stmt ast.Stmt, target pathdom.Path) bool {
+	switch s := stmt.(type) {
+	case *ast.LocalAssignStmt:
+		return optionalExprsConsumePath(result, s.Exprs, target)
+	case *ast.AssignStmt:
+		if optionalExprsConsumePath(result, s.Rhs, target) {
+			return true
+		}
+		for _, lhs := range s.Lhs {
+			if optionalLValueConsumesPath(result, lhs, target) {
+				return true
+			}
+		}
+	case *ast.FuncCallStmt:
+		return optionalExprConsumesPath(result, s.Expr, target)
+	case *ast.ReturnStmt:
+		return optionalExprsConsumePath(result, s.Exprs, target)
+	case *ast.DoBlockStmt:
+		return optionalBranchConsumesPath(result, s.Stmts, target)
+	case *ast.IfStmt:
+		return optionalBranchConsumesPath(result, s.Then, target) || optionalBranchConsumesPath(result, s.Else, target)
+	case *ast.WhileStmt:
+		return optionalBranchConsumesPath(result, s.Stmts, target)
+	case *ast.RepeatStmt:
+		return optionalBranchConsumesPath(result, s.Stmts, target)
+	case *ast.NumberForStmt:
+		return optionalExprConsumesPath(result, s.Init, target) ||
+			optionalExprConsumesPath(result, s.Limit, target) ||
+			optionalExprConsumesPath(result, s.Step, target) ||
+			optionalBranchConsumesPath(result, s.Stmts, target)
+	case *ast.GenericForStmt:
+		return optionalExprsConsumePath(result, s.Exprs, target) ||
+			optionalBranchConsumesPath(result, s.Stmts, target)
+	case *ast.FuncDefStmt:
+		if s.Name == nil {
+			return false
+		}
+		return optionalLValueConsumesPath(result, s.Name.Func, target) ||
+			optionalExprConsumesPath(result, s.Name.Receiver, target)
+	}
+	return false
+}
+
+func optionalExprsConsumePath(result *body.Result, exprs []ast.Expr, target pathdom.Path) bool {
+	for _, expr := range exprs {
+		if optionalExprConsumesPath(result, expr, target) {
+			return true
+		}
+	}
+	return false
+}
+
+func optionalLValueConsumesPath(result *body.Result, expr ast.Expr, target pathdom.Path) bool {
+	switch e := expr.(type) {
+	case nil:
+		return false
+	case *ast.IdentExpr:
+		return false
+	case *ast.AttrGetExpr:
+		return optionalExprConsumesPath(result, e.Object, target) ||
+			(e.KeySyntax == ast.AttrKeyIndex && optionalExprConsumesPath(result, e.Key, target))
+	case *ast.CastExpr:
+		return optionalLValueConsumesPath(result, e.Expr, target)
+	case *ast.NonNilAssertExpr:
+		return optionalLValueConsumesPath(result, e.Expr, target)
+	default:
+		return optionalExprConsumesPath(result, expr, target)
+	}
+}
+
+func optionalExprConsumesPath(result *body.Result, expr ast.Expr, target pathdom.Path) bool {
+	if expr == nil || target.IsEmpty() {
+		return false
+	}
+	if p, ok := result.ExpressionPath(expr); ok && pathHasPrefix(p, target) {
+		return true
+	}
+	consumes := false
+	walkExprChildren(expr, func(child ast.Expr) {
+		if consumes {
+			return
+		}
+		if optionalExprConsumesPath(result, child, target) {
+			consumes = true
+		}
+	})
+	return consumes
 }
 
 func (p discriminatedUnionExhaustiveness) candidateForCheck(result *body.Result, point cfg.Point, check branchcond.Check) (discriminantCandidate, bool) {
@@ -1422,6 +1680,20 @@ func newDiscriminatedUnionExhaustivenessDiagnostic(span diagnostic.Span, evidenc
 	})
 }
 
+func newOptionalExhaustivenessDiagnostic(evidence optionalEvidence) diagnostic.Diagnostic {
+	caseWord := pluralize(len(evidence.missing), "case", "cases")
+	missing := discriminantCaseList(evidence.missing)
+	return diagnostic.New(diagnostic.DiagnosticSpec{
+		Span:        evidence.span,
+		Code:        CodeDiscriminatedUnionExhaustive,
+		Severity:    diagnostic.SeverityWarning,
+		Message:     optionalExhaustivenessMessage(caseWord, missing),
+		Explanation: optionalExhaustivenessExplanation(evidence),
+		Help:        optionalExhaustivenessHelp(),
+		Labels:      []diagnostic.Label{sourceLabel(evidence.span, labelOptionalCaseCheck)},
+	})
+}
+
 func newDispatchTableExhaustivenessDiagnostic(evidence dispatchTableEvidence) diagnostic.Diagnostic {
 	keyWord := pluralize(len(evidence.missing), "key", "keys")
 	missing := dispatchKeyList(evidence.missing)
@@ -1506,6 +1778,41 @@ func discriminatedUnionExhaustivenessExplanation(span diagnostic.Span, evidence 
 		},
 	)
 	return diagnostic.NewExplanation(items...)
+}
+
+func optionalExhaustivenessExplanation(evidence optionalEvidence) diagnostic.Explanation {
+	return diagnostic.NewExplanation(
+		diagnostic.Evidence{
+			Kind:    diagnostic.EvidenceAbstractFact,
+			Trust:   diagnostic.TrustProven,
+			Span:    evidence.span,
+			Message: selectedOptionalPathEvidence(evidence.target),
+		},
+		diagnostic.Evidence{
+			Kind:    diagnostic.EvidenceAbstractFact,
+			Trust:   diagnostic.TrustProven,
+			Span:    evidence.span,
+			Message: optionalPossibleCasesEvidence(evidence.target),
+		},
+		diagnostic.Evidence{
+			Kind:    diagnostic.EvidenceAbstractFact,
+			Trust:   diagnostic.TrustProven,
+			Span:    evidence.span,
+			Message: optionalConsumedCaseEvidence(evidence.target),
+		},
+		diagnostic.Evidence{
+			Kind:    diagnostic.EvidenceMissingProof,
+			Trust:   diagnostic.TrustUnknown,
+			Span:    evidence.span,
+			Message: optionalMissingCasesEvidence(discriminantCaseList(evidence.missing)),
+		},
+		diagnostic.Evidence{
+			Kind:    diagnostic.EvidenceMissingProof,
+			Trust:   diagnostic.TrustUnknown,
+			Span:    evidence.span,
+			Message: optionalMissingDefaultEvidence(),
+		},
+	)
 }
 
 func dispatchTableExhaustivenessExplanation(evidence dispatchTableEvidence) diagnostic.Explanation {
