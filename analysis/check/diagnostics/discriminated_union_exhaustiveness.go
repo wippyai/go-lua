@@ -1273,8 +1273,78 @@ func registrationCallbackExpr(result *body.Result, point cfg.Point, expr ast.Exp
 	if _, ok := directFunctionExprFromExpr(expr); ok {
 		return true
 	}
-	_, ok := result.FunctionValueTypeAtBoundary(point, expr)
-	return ok
+	if _, ok := result.FunctionValueTypeAtBoundary(point, expr); ok {
+		return true
+	}
+	path, ok := result.ExpressionPath(expr)
+	if !ok || path.IsEmpty() {
+		return false
+	}
+	return registrationCallbackPathExpr(result, point, path, nil)
+}
+
+func registrationCallbackPathExpr(result *body.Result, point cfg.Point, target pathdom.Path, seen map[pathdom.PathKey]struct{}) bool {
+	graph := result.Graph()
+	if graph == nil || target.IsEmpty() {
+		return false
+	}
+	key := target.Key()
+	if _, ok := seen[key]; ok {
+		return false
+	}
+	if seen == nil {
+		seen = make(map[pathdom.PathKey]struct{}, 1)
+	}
+	seen[key] = struct{}{}
+	if dominatingFunctionDefinitionForPath(result, point, target) != nil {
+		return true
+	}
+	idom := dominance.ComputeImmediateDominatorInfo(graph).Map()
+	visited := make(map[cfg.Point]struct{}, graph.Size())
+	for cursor := point; ; {
+		if _, ok := visited[cursor]; ok {
+			return false
+		}
+		visited[cursor] = struct{}{}
+		if fact, ok := result.LocalAssignment(cursor); ok &&
+			len(target.Segments) == 0 &&
+			fact.HasSymbol &&
+			fact.Symbol == target.Symbol {
+			return registrationCallbackSourceExpr(result, cursor, fact.Expr, seen)
+		}
+		if fact, ok := result.OrdinaryAssignment(cursor); ok {
+			if len(target.Segments) == 0 &&
+				fact.HasSymbol &&
+				fact.Symbol == target.Symbol {
+				return registrationCallbackSourceExpr(result, cursor, fact.Value, seen)
+			}
+			if fact.HasPath && fact.Path.Equal(target) {
+				return registrationCallbackSourceExpr(result, cursor, fact.Value, seen)
+			}
+			if fact.HasPath && pathHasPrefix(target, fact.Path) {
+				return false
+			}
+		}
+		parent, ok := idom[cursor]
+		if !ok || parent == cursor {
+			return false
+		}
+		cursor = parent
+	}
+}
+
+func registrationCallbackSourceExpr(result *body.Result, point cfg.Point, expr ast.Expr, seen map[pathdom.PathKey]struct{}) bool {
+	if _, ok := directFunctionExprFromExpr(expr); ok {
+		return true
+	}
+	if _, ok := result.FunctionValueTypeAtBoundary(point, expr); ok {
+		return true
+	}
+	path, ok := result.ExpressionPath(expr)
+	if !ok || path.IsEmpty() {
+		return false
+	}
+	return registrationCallbackPathExpr(result, point, path, seen)
 }
 
 func (p discriminatedUnionExhaustiveness) dispatchCalls(result *body.Result, graph cfg.Graph) []dispatchCall {
