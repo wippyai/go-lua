@@ -62,11 +62,15 @@ func TestDomainWithLaneSetSelectsIndependentAxes(t *testing.T) {
 func TestDomainLaneSetValidatesAndCopiesSelection(t *testing.T) {
 	reg := standard.Registry()
 
-	lanes := DefaultDomainLaneSet()
+	catalog := DefaultLaneCatalog()
+	lanes := catalog.LaneSet()
 	if len(lanes) == 0 || lanes[0] != LaneValues {
 		t.Fatalf("default lanes = %#v, want values first", lanes)
 	}
 	lanes[0] = LaneID("mutated")
+	if got := catalog.LaneSet()[0]; got != LaneValues {
+		t.Fatalf("LaneCatalog.LaneSet returned shared storage; first lane = %s", got)
+	}
 	if got := DefaultDomainLaneSet()[0]; got != LaneValues {
 		t.Fatalf("DefaultDomainLaneSet returned shared storage; first lane = %s", got)
 	}
@@ -86,9 +90,22 @@ func TestDomainLaneSetValidatesAndCopiesSelection(t *testing.T) {
 	}
 
 	requirePanic(t, func() {
-		_ = DomainWithLaneSet(reg, LaneSet{LaneID("not-a-lane")})
+		_ = catalog.DomainWithLaneSet(reg, LaneSet{LaneID("not-a-lane")})
 	})
 	requirePanic(t, func() {
 		_ = DomainWithLanes(reg, []LaneID{LaneValues, LaneValues})
 	})
+}
+
+func TestLaneCatalogDomainMatchesPackageDomain(t *testing.T) {
+	reg := standard.Registry()
+	catalogDomain := DefaultLaneCatalog().Domain(reg)
+	packageDomain := Domain(reg)
+
+	if !packageDomain.Equal(catalogDomain.Bottom(), packageDomain.Bottom()) {
+		t.Fatal("default lane catalog bottom differs from package Domain bottom")
+	}
+	if !packageDomain.Equal(catalogDomain.Top(), packageDomain.Top()) {
+		t.Fatal("default lane catalog top differs from package Domain top")
+	}
 }

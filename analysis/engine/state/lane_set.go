@@ -7,11 +7,7 @@ type LaneSet []LaneID
 
 // DefaultDomainLaneSet returns the ordered lane set used by Domain.
 func DefaultDomainLaneSet() LaneSet {
-	out := make(LaneSet, 0, len(defaultDomainLaneFactories))
-	for _, factory := range defaultDomainLaneFactories {
-		out = append(out, factory.id)
-	}
-	return out
+	return defaultDomainLaneCatalog.LaneSet()
 }
 
 // DefaultDomainLanes is the compatibility form of DefaultDomainLaneSet.

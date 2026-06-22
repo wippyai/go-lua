@@ -14,7 +14,7 @@ var domainCache registrycache.Cache[lattice.Lattice[State]]
 // Domain builds the default State lattice with every state axis enabled.
 func Domain(reg *axis.Registry) lattice.Lattice[State] {
 	return domainCache.Get(reg, func() lattice.Lattice[State] {
-		return domainFromLaneFactories(reg, defaultDomainLaneFactories)
+		return defaultDomainLaneCatalog.Domain(reg)
 	})
 }
 
@@ -22,7 +22,7 @@ func Domain(reg *axis.Registry) lattice.Lattice[State] {
 // enabled lanes. Disabled lanes are ignored by Equal/LessOrEq and dropped by
 // Join/Widen.
 func DomainWithLaneSet(reg *axis.Registry, lanes LaneSet) lattice.Lattice[State] {
-	return domainFromLaneFactories(reg, selectDomainLaneFactories(lanes))
+	return defaultDomainLaneCatalog.DomainWithLaneSet(reg, lanes)
 }
 
 // DomainWithLanes is the compatibility form of DomainWithLaneSet.
@@ -126,25 +126,4 @@ func domainFromLaneFactories(reg *axis.Registry, factories []stateLaneFactory) l
 			return out
 		},
 	}
-}
-
-func selectDomainLaneFactories(lanes LaneSet) []stateLaneFactory {
-	byID := make(map[LaneID]stateLaneFactory, len(defaultDomainLaneFactories))
-	for _, factory := range defaultDomainLaneFactories {
-		byID[factory.id] = factory
-	}
-	seen := make(map[LaneID]struct{}, len(lanes))
-	out := make([]stateLaneFactory, 0, len(lanes))
-	for _, id := range lanes {
-		factory, ok := byID[id]
-		if !ok {
-			panic("state: unknown domain lane " + string(id))
-		}
-		if _, ok := seen[id]; ok {
-			panic("state: duplicate domain lane " + string(id))
-		}
-		seen[id] = struct{}{}
-		out = append(out, factory)
-	}
-	return out
 }
