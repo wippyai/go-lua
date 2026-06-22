@@ -1399,7 +1399,7 @@ func (p discriminatedUnionExhaustiveness) dispatchLookupFromAttr(result *body.Re
 		return dispatchLookup{}, false
 	}
 	tablePath, ok := result.ExpressionPath(attr.Object)
-	if !ok || tablePath.Symbol == 0 || len(tablePath.Segments) != 0 {
+	if !ok || tablePath.Symbol == 0 {
 		return dispatchLookup{}, false
 	}
 	discriminantPath, ok := result.ExpressionPath(attr.Key)
@@ -1510,7 +1510,7 @@ func discriminantCaseStringKey(caseType typ.Type, suffix []segment.Segment) (str
 }
 
 func (p discriminatedUnionExhaustiveness) dispatchTableKeysAt(result *body.Result, point cfg.Point, table pathdom.Path) (map[string]bool, diagnostic.Span, bool) {
-	if table.Symbol == 0 || len(table.Segments) != 0 {
+	if table.Symbol == 0 {
 		return nil, diagnostic.Span{}, false
 	}
 	decl, declPoint, ok := dominatingRootLocalAssignment(result, p.flow, point, table.Symbol)
@@ -1519,22 +1519,25 @@ func (p discriminatedUnionExhaustiveness) dispatchTableKeysAt(result *body.Resul
 		if !ok {
 			return nil, diagnostic.Span{}, false
 		}
-		keys, ok := objectLiteralDispatchKeys(fact)
+		keys, tableSpan, ok := objectLiteralDispatchKeysAtPath(result, fact, table.Segments)
 		if !ok {
 			return nil, diagnostic.Span{}, false
 		}
-		if !p.addDominatingStaticDispatchWrites(result, declPoint, point, table.Symbol, keys) {
+		if !p.addDominatingStaticDispatchWrites(result, declPoint, point, table, keys) {
 			return nil, diagnostic.Span{}, false
 		}
 		if p.trackedPathMayBeInvalidatedBetween(result, result.Graph(), declPoint, point, table) {
 			return nil, diagnostic.Span{}, false
 		}
-		return keys, ast.SpanOf(fact.Table), true
+		return keys, tableSpan, true
 	}
 	return p.inheritedDispatchTableKeysAt(result, point, table)
 }
 
 func (p discriminatedUnionExhaustiveness) inheritedDispatchTableKeysAt(result *body.Result, point cfg.Point, table pathdom.Path) (map[string]bool, diagnostic.Span, bool) {
+	if len(table.Segments) != 0 {
+		return nil, diagnostic.Span{}, false
+	}
 	summary, ok := p.dispatchTables[table.Symbol]
 	if !ok || len(summary.keys) == 0 {
 		return nil, diagnostic.Span{}, false
@@ -1593,24 +1596,58 @@ func objectLiteralDispatchKeys(fact semantics.ObjectLiteralFact) (map[string]boo
 	return keys, true
 }
 
-func (p discriminatedUnionExhaustiveness) addDominatingStaticDispatchWrites(result *body.Result, declPoint, point cfg.Point, rootSymbol symbol.ID, keys map[string]bool) bool {
+func objectLiteralDispatchKeysAtPath(result *body.Result, fact semantics.ObjectLiteralFact, suffix []segment.Segment) (map[string]bool, diagnostic.Span, bool) {
+	if len(suffix) == 0 {
+		keys, ok := objectLiteralDispatchKeys(fact)
+		return keys, ast.SpanOf(fact.Table), ok
+	}
+	nested, ok := nestedObjectLiteralFact(result, fact, suffix)
+	if !ok {
+		return nil, diagnostic.Span{}, false
+	}
+	keys, ok := objectLiteralDispatchKeys(nested)
+	return keys, ast.SpanOf(nested.Table), ok
+}
+
+func nestedObjectLiteralFact(result *body.Result, fact semantics.ObjectLiteralFact, suffix []segment.Segment) (semantics.ObjectLiteralFact, bool) {
+	if result == nil || len(suffix) == 0 {
+		return semantics.ObjectLiteralFact{}, false
+	}
+	for _, entry := range fact.Entries {
+		if !sameSegments(entry.Suffix.Segments, suffix) {
+			continue
+		}
+		nested, ok := result.ObjectLiteral(entry.Value)
+		return nested, ok
+	}
+	return semantics.ObjectLiteralFact{}, false
+}
+
+func sameSegments(a, b []segment.Segment) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func (p discriminatedUnionExhaustiveness) addDominatingStaticDispatchWrites(result *body.Result, declPoint, point cfg.Point, table pathdom.Path, keys map[string]bool) bool {
 	if result.Graph() == nil || p.flow == nil {
 		return true
 	}
 	idom := p.flow.immediateDominators()
 	for cursor := point; cursor != declPoint; {
 		if fact, ok := result.OrdinaryAssignment(cursor); ok {
-			if fact.HasPath && fact.Path.Symbol == rootSymbol {
-				if len(fact.Path.Segments) != 1 {
-					return false
-				}
-				key, ok := segmentStringKey(fact.Path.Segments[0])
-				if !ok {
+			key, staticKey, touches := dispatchTableAssignmentKeyForPath(fact, table)
+			if touches {
+				if !staticKey {
 					return false
 				}
 				keys[key] = true
-			} else if fact.HasContainerPath && fact.ContainerPath.Symbol == rootSymbol {
-				return false
 			}
 		}
 		parent, ok := idom[cursor]
@@ -1649,17 +1686,30 @@ func (p discriminatedUnionExhaustiveness) applyCurrentBodyDispatchWrites(result 
 }
 
 func dispatchTableAssignmentKey(fact semantics.OrdinaryAssignmentFact, rootSymbol symbol.ID) (key string, staticKey bool, touches bool) {
-	if fact.HasPath && fact.Path.Symbol == rootSymbol {
-		if len(fact.Path.Segments) != 1 {
+	return dispatchTableAssignmentKeyForPath(fact, pathdom.Path{Symbol: rootSymbol})
+}
+
+func dispatchTableAssignmentKeyForPath(fact semantics.OrdinaryAssignmentFact, table pathdom.Path) (key string, staticKey bool, touches bool) {
+	if table.Symbol == 0 {
+		return "", false, false
+	}
+	if fact.HasPath {
+		if pathHasPrefix(fact.Path, table) {
+			suffix := fact.Path.Segments[len(table.Segments):]
+			if len(suffix) != 1 {
+				return "", false, true
+			}
+			key, ok := segmentStringKey(suffix[0])
+			return key, ok, true
+		}
+		if pathHasPrefix(table, fact.Path) {
 			return "", false, true
 		}
-		key, ok := segmentStringKey(fact.Path.Segments[0])
-		return key, ok, true
 	}
-	if fact.HasSymbol && fact.Symbol == rootSymbol {
+	if fact.HasSymbol && fact.Symbol == table.Symbol {
 		return "", false, true
 	}
-	if fact.HasContainerPath && fact.ContainerPath.Symbol == rootSymbol {
+	if fact.HasContainerPath && pathsOverlapForInvalidation(table, fact.ContainerPath) {
 		return "", false, true
 	}
 	return "", false, false
