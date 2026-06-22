@@ -117,106 +117,21 @@ func (p annotationAssignability) localAssignment(result *body.Result, point cfg.
 			return p.objectLiteralAssignment(result, point, fact.Name, want, fact.Expr, fact.Type, env)
 		}
 	}
-	got, ok := valueexpr.LiteralType(fact.Expr)
-	optionalIndexProjection := false
-	if !ok {
-		got, ok = projectedOptionalIndexType(result, p.resolver, point, fact.Expr)
-		optionalIndexProjection = ok
-	}
-	presenceAwareSourceProjection := false
-	untrustedTopLike := false
-	declarationProjection := false
-	reassignedCallResultProjection := false
-	var castInnerExpr ast.Expr
-	if !ok {
-		if castGot, castOK := concreteCastObligationType(result, p.resolver, point, env, fact.Expr); castOK {
-			got, ok = castGot, true
-			untrustedTopLike = true
-			if inner, innerOK := concreteCastInner(fact.Expr); innerOK {
-				castInnerExpr = inner
-			}
-		}
-	}
-	if !ok {
-		got, ok = untrustedTopLikeExpressionTypeAt(result, p.resolver, point, fact.Expr)
-		untrustedTopLike = ok
-	}
-	if !ok {
-		got, ok = untrustedAnnotatedIdentifierType(result, p.resolver, fact.Expr)
-		untrustedTopLike = ok
-	}
-	if !ok {
-		got, ok = result.FunctionValueTypeAtBoundary(point, fact.Expr)
-	}
-	if !ok {
-		got, ok = projectedFlowSourceType(result, p.resolver, point, env, fact.Expr)
-	}
-	if !ok {
-		got, ok = freshRecordAbsentFieldSourceType(result, p.resolver, point, env, fact.Expr)
-	}
-	if !ok {
-		got, ok = dominatingCallResultPathType(result, p.resolver, p.flow, point, fact.Expr, directDefs)
-	}
-	if !ok {
-		got, ok = dominatingCallResultFieldSourceType(result, p.flow, point, fact.Expr, fact.Source)
-	}
-	if !ok {
-		got, ok = reassignedCallResultFieldBoundaryType(result, p.resolver, p.flow, point, fact.Expr, directDefs)
-		presenceAwareSourceProjection = ok
-		reassignedCallResultProjection = ok
-	}
-	if !ok {
-		got, ok = sourceExpressionTypeWithPresence(result, point, fact.Source)
-		presenceAwareSourceProjection = ok
-	}
-	if !ok {
-		got, ok = readmodel.New(result).SourceType(point, fact.Source)
-	}
-	if !ok {
-		got, ok = dominatingDeclarationProjectionType(result, p.resolver, point, fact.Expr)
-		declarationProjection = ok
-	}
-	if !ok {
-		got, ok = localScalarOperatorSourceType(result, p.resolver, fact.Expr)
-	}
-	if !ok {
-		got, ok = annotatedIdentifierType(result, p.resolver, point, fact.Expr)
-	}
-	if !ok {
-		got, ok = explicitTopLikeExpressionType(result, p.resolver, fact.Expr)
-	}
-	if !ok {
-		got, ok = explicitTopLikeCallFactSourceType(result, p.resolver, fact.Source)
-	}
-	if !ok {
-		got, ok = optionalMemberReadType(result, p.resolver, point, env, fact.Expr)
-	}
-	if !ok {
-		got, ok = callInvalidatedBoundaryExprType(result, p.resolver, point, fact.Expr)
-	}
-	if !ok {
+	sourceResolution := resolveLocalAssignmentSourceType(result, p.resolver, p.flow, point, fact, env, directDefs)
+	if !sourceResolution.OK {
 		return p.objectLiteralAssignment(result, point, fact.Name, want, fact.Expr, fact.Type, env)
 	}
-	refineExpr := fact.Expr
-	if castInnerExpr != nil {
-		refineExpr = castInnerExpr
-	}
-	if !optionalIndexProjection && !presenceAwareSourceProjection && !typ.IsAny(got) && !typ.IsUnknown(got) {
-		got = refineAssignmentSourceType(result, point, refineExpr, got)
+	got := sourceResolution.Type
+	if sourceResolution.AllowsFlowRefinement(got) {
+		got = refineAssignmentSourceType(result, point, sourceResolution.RefineExpr(fact.Expr), got)
 	}
 	readBoundary := boundaryValueFromASTSource(fact.Source)
-	if castInnerExpr != nil {
-		readBoundary = boundaryValueFromExpr(castInnerExpr)
+	if sourceResolution.CastInnerExpr != nil {
+		readBoundary = boundaryValueFromExpr(sourceResolution.CastInnerExpr)
 	}
-	mismatchBoundary := readBoundary
-	if declarationProjection {
-		mismatchBoundary = nil
-	}
-	if optionalIndexProjection {
-		mismatchBoundary = nil
-	}
+	mismatchBoundary := sourceResolution.MismatchBoundary(readBoundary)
 	mismatch := boundaryTypeMismatch(result, point, got, want, mismatchBoundary)
-	if untrustedTopLike {
+	if sourceResolution.UntrustedTopLike {
 		mismatch = boundaryProofTypeMismatch(result, point, got, want, mismatchBoundary)
 	}
 	if mismatch {
@@ -227,18 +142,131 @@ func (p annotationAssignability) localAssignment(result *body.Result, point cfg.
 			return diagnostic.Diagnostic{}, false
 		}
 		var extra []diagnostic.Evidence
-		if reassignedCallResultProjection {
+		if sourceResolution.ReassignedCallResultProjection {
 			extra = append(extra, reassignedCallResultFieldEvidence(result, p.resolver, p.flow, point, fact.Expr)...)
 		}
 		extra = append(extra, optionalReceiverCauseEvidence(result, p.resolver, point, env, fact.Expr)...)
 		extra = append(extra, callInvalidatedPathEvidence(result, point, fact.Expr)...)
 		extra = append(extra, boundaryDiagnosticEvidenceForSubject(result, point, ast.SpanOf(fact.Expr), exprEvidenceName(fact.Expr), want, readBoundary)...)
-		if optionalIndexProjection && !hasMissingBoundaryProofEvidence(extra) {
+		if sourceResolution.OptionalIndexProjection && !hasMissingBoundaryProofEvidence(extra) {
 			extra = append(extra, missingIndexReadProofEvidence(ast.SpanOf(fact.Expr), want))
 		}
 		return assignmentDiagnostic(fact.Name, want, got, fact.Expr, fact.Type, extra...), true
 	}
 	return p.objectLiteralAssignment(result, point, fact.Name, want, fact.Expr, fact.Type, env)
+}
+
+type localAssignmentSourceTypeResolution struct {
+	Type                           typ.Type
+	CastInnerExpr                  ast.Expr
+	OK                             bool
+	OptionalIndexProjection        bool
+	PresenceAwareSourceProjection  bool
+	UntrustedTopLike               bool
+	DeclarationProjection          bool
+	ReassignedCallResultProjection bool
+}
+
+func (r localAssignmentSourceTypeResolution) RefineExpr(fallback ast.Expr) ast.Expr {
+	if r.CastInnerExpr != nil {
+		return r.CastInnerExpr
+	}
+	return fallback
+}
+
+func (r localAssignmentSourceTypeResolution) AllowsFlowRefinement(t typ.Type) bool {
+	return !r.OptionalIndexProjection &&
+		!r.PresenceAwareSourceProjection &&
+		!typ.IsAny(t) &&
+		!typ.IsUnknown(t)
+}
+
+func (r localAssignmentSourceTypeResolution) MismatchBoundary(readBoundary boundaryValueReader) boundaryValueReader {
+	if r.DeclarationProjection || r.OptionalIndexProjection {
+		return nil
+	}
+	return readBoundary
+}
+
+func resolveLocalAssignmentSourceType(
+	result *body.Result,
+	resolver typeannotation.Resolver,
+	flow *diagnosticFlowCache,
+	point cfg.Point,
+	fact semantics.LocalAssignmentFact,
+	env guardEnv,
+	directDefs map[symbol.ID]*ast.FunctionExpr,
+) localAssignmentSourceTypeResolution {
+	if got, ok := valueexpr.LiteralType(fact.Expr); ok {
+		return localAssignmentSourceTypeResolution{Type: got, OK: true}
+	}
+	if got, ok := projectedOptionalIndexType(result, resolver, point, fact.Expr); ok {
+		return localAssignmentSourceTypeResolution{Type: got, OK: true, OptionalIndexProjection: true}
+	}
+	if got, ok := concreteCastObligationType(result, resolver, point, env, fact.Expr); ok {
+		out := localAssignmentSourceTypeResolution{Type: got, OK: true, UntrustedTopLike: true}
+		if inner, innerOK := concreteCastInner(fact.Expr); innerOK {
+			out.CastInnerExpr = inner
+		}
+		return out
+	}
+	if got, ok := untrustedTopLikeExpressionTypeAt(result, resolver, point, fact.Expr); ok {
+		return localAssignmentSourceTypeResolution{Type: got, OK: true, UntrustedTopLike: true}
+	}
+	if got, ok := untrustedAnnotatedIdentifierType(result, resolver, fact.Expr); ok {
+		return localAssignmentSourceTypeResolution{Type: got, OK: true, UntrustedTopLike: true}
+	}
+	if got, ok := result.FunctionValueTypeAtBoundary(point, fact.Expr); ok {
+		return localAssignmentSourceTypeResolution{Type: got, OK: true}
+	}
+	if got, ok := projectedFlowSourceType(result, resolver, point, env, fact.Expr); ok {
+		return localAssignmentSourceTypeResolution{Type: got, OK: true}
+	}
+	if got, ok := freshRecordAbsentFieldSourceType(result, resolver, point, env, fact.Expr); ok {
+		return localAssignmentSourceTypeResolution{Type: got, OK: true}
+	}
+	if got, ok := dominatingCallResultPathType(result, resolver, flow, point, fact.Expr, directDefs); ok {
+		return localAssignmentSourceTypeResolution{Type: got, OK: true}
+	}
+	if got, ok := dominatingCallResultFieldSourceType(result, flow, point, fact.Expr, fact.Source); ok {
+		return localAssignmentSourceTypeResolution{Type: got, OK: true}
+	}
+	if got, ok := reassignedCallResultFieldBoundaryType(result, resolver, flow, point, fact.Expr, directDefs); ok {
+		return localAssignmentSourceTypeResolution{
+			Type:                           got,
+			OK:                             true,
+			PresenceAwareSourceProjection:  true,
+			ReassignedCallResultProjection: true,
+		}
+	}
+	if got, ok := sourceExpressionTypeWithPresence(result, point, fact.Source); ok {
+		return localAssignmentSourceTypeResolution{Type: got, OK: true, PresenceAwareSourceProjection: true}
+	}
+	if got, ok := readmodel.New(result).SourceType(point, fact.Source); ok {
+		return localAssignmentSourceTypeResolution{Type: got, OK: true}
+	}
+	if got, ok := dominatingDeclarationProjectionType(result, resolver, point, fact.Expr); ok {
+		return localAssignmentSourceTypeResolution{Type: got, OK: true, DeclarationProjection: true}
+	}
+	if got, ok := localScalarOperatorSourceType(result, resolver, fact.Expr); ok {
+		return localAssignmentSourceTypeResolution{Type: got, OK: true}
+	}
+	if got, ok := annotatedIdentifierType(result, resolver, point, fact.Expr); ok {
+		return localAssignmentSourceTypeResolution{Type: got, OK: true}
+	}
+	if got, ok := explicitTopLikeExpressionType(result, resolver, fact.Expr); ok {
+		return localAssignmentSourceTypeResolution{Type: got, OK: true}
+	}
+	if got, ok := explicitTopLikeCallFactSourceType(result, resolver, fact.Source); ok {
+		return localAssignmentSourceTypeResolution{Type: got, OK: true}
+	}
+	if got, ok := optionalMemberReadType(result, resolver, point, env, fact.Expr); ok {
+		return localAssignmentSourceTypeResolution{Type: got, OK: true}
+	}
+	if got, ok := callInvalidatedBoundaryExprType(result, resolver, point, fact.Expr); ok {
+		return localAssignmentSourceTypeResolution{Type: got, OK: true}
+	}
+	return localAssignmentSourceTypeResolution{}
 }
 
 func (p annotationAssignability) pathAssignment(result *body.Result, point cfg.Point, fact semantics.OrdinaryAssignmentFact, env guardEnv) (diagnostic.Diagnostic, bool) {
