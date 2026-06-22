@@ -165,16 +165,7 @@ func Join(reg *axis.Registry, a, b Summary) Summary {
 	if summaryBottom(b) {
 		return Normalize(reg, a)
 	}
-	if returns == 0 && obligations == 0 && params == 0 && conditions == 0 &&
-		len(a.ParamMemberCallObligations) == 0 && len(b.ParamMemberCallObligations) == 0 &&
-		len(a.ParamMemberReturnSlots) == 0 && len(b.ParamMemberReturnSlots) == 0 &&
-		len(a.ReturnParamPathAliases) == 0 && len(b.ReturnParamPathAliases) == 0 &&
-		len(a.ParamSinkExposures) == 0 && len(b.ParamSinkExposures) == 0 &&
-		len(a.NormalReturnParamEqualities) == 0 && len(b.NormalReturnParamEqualities) == 0 &&
-		a.NormalReturnFacts.Empty() && b.NormalReturnFacts.Empty() &&
-		len(a.HeapTableObjects) == 0 && len(b.HeapTableObjects) == 0 &&
-		len(a.ReturnConditionParamRefinements) == 0 && len(b.ReturnConditionParamRefinements) == 0 &&
-		len(a.ReturnPresenceRelations) == 0 && len(b.ReturnPresenceRelations) == 0 {
+	if returns == 0 && obligations == 0 && params == 0 && conditions == 0 && summaryPairNonSlotLanesEmpty(a, b) {
 		return Summary{}
 	}
 	out := Summary{}
@@ -278,16 +269,7 @@ func Widen(reg *axis.Registry, prev, next Summary) Summary {
 	if summaryBottom(next) {
 		return Normalize(reg, prev)
 	}
-	if returns == 0 && obligations == 0 && params == 0 && conditions == 0 &&
-		len(prev.ParamMemberCallObligations) == 0 && len(next.ParamMemberCallObligations) == 0 &&
-		len(prev.ParamMemberReturnSlots) == 0 && len(next.ParamMemberReturnSlots) == 0 &&
-		len(prev.ReturnParamPathAliases) == 0 && len(next.ReturnParamPathAliases) == 0 &&
-		len(prev.ParamSinkExposures) == 0 && len(next.ParamSinkExposures) == 0 &&
-		len(prev.NormalReturnParamEqualities) == 0 && len(next.NormalReturnParamEqualities) == 0 &&
-		prev.NormalReturnFacts.Empty() && next.NormalReturnFacts.Empty() &&
-		len(prev.HeapTableObjects) == 0 && len(next.HeapTableObjects) == 0 &&
-		len(prev.ReturnConditionParamRefinements) == 0 && len(next.ReturnConditionParamRefinements) == 0 &&
-		len(prev.ReturnPresenceRelations) == 0 && len(next.ReturnPresenceRelations) == 0 {
+	if returns == 0 && obligations == 0 && params == 0 && conditions == 0 && summaryPairNonSlotLanesEmpty(prev, next) {
 		return Summary{}
 	}
 	out := Summary{}
@@ -377,4 +359,16 @@ func summaryBottom(s Summary) bool {
 		len(s.HeapTableObjects) == 0 &&
 		len(s.ReturnConditionParamRefinements) == 0 &&
 		len(s.ReturnPresenceRelations) == 0
+}
+
+func summaryPairNonSlotLanesEmpty(a, b Summary) bool {
+	return len(a.ParamMemberCallObligations) == 0 && len(b.ParamMemberCallObligations) == 0 &&
+		len(a.ParamMemberReturnSlots) == 0 && len(b.ParamMemberReturnSlots) == 0 &&
+		len(a.ReturnParamPathAliases) == 0 && len(b.ReturnParamPathAliases) == 0 &&
+		len(a.ParamSinkExposures) == 0 && len(b.ParamSinkExposures) == 0 &&
+		len(a.NormalReturnParamEqualities) == 0 && len(b.NormalReturnParamEqualities) == 0 &&
+		a.NormalReturnFacts.Empty() && b.NormalReturnFacts.Empty() &&
+		len(a.HeapTableObjects) == 0 && len(b.HeapTableObjects) == 0 &&
+		len(a.ReturnConditionParamRefinements) == 0 && len(b.ReturnConditionParamRefinements) == 0 &&
+		len(a.ReturnPresenceRelations) == 0 && len(b.ReturnPresenceRelations) == 0
 }
