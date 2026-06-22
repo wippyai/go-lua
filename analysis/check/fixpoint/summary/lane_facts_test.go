@@ -136,6 +136,7 @@ func TestNumFloorFactsUseMustFloorSemantics(t *testing.T) {
 func TestPathInvalidationLaneAncestorSubsumesDescendant(t *testing.T) {
 	pa := pathdom.NewPlaceholder(0).Field("a")
 	pab := pa.Field("b")
+	captured := pathdom.NewPath(symbol.ID(31), "captured").Field("value")
 	ancestor := []callboundary.PathInvalidationFact{{Path: pa}}
 	descendant := []callboundary.PathInvalidationFact{{Path: pab}}
 
@@ -145,8 +146,27 @@ func TestPathInvalidationLaneAncestorSubsumesDescendant(t *testing.T) {
 	if !pathInvalidationLane.LessOrEq(descendant, ancestor) {
 		t.Fatalf("descendant invalidation must be below the ancestor invalidation")
 	}
-	// A non-placeholder path is dropped by Valid.
-	if got := pathInvalidationLane.Normalize(descendant); len(got) != 1 {
-		t.Fatalf("placeholder descendant should survive normalize alone, got %+v", got)
+	normalized := pathInvalidationLane.Normalize([]callboundary.PathInvalidationFact{
+		{Path: pathdom.Path{}}, // empty identity is invalid
+		{Path: pab},            // placeholder boundary invalidation
+		{Path: captured},       // captured concrete invalidation
+	})
+	if len(normalized) != 2 {
+		t.Fatalf("normalize invalidations = %+v, want placeholder and captured concrete paths", normalized)
 	}
+	if !hasPathInvalidation(normalized, pab) {
+		t.Fatalf("normalize invalidations = %+v, want placeholder descendant", normalized)
+	}
+	if !hasPathInvalidation(normalized, captured) {
+		t.Fatalf("normalize invalidations = %+v, want captured concrete path", normalized)
+	}
+}
+
+func hasPathInvalidation(facts []callboundary.PathInvalidationFact, target pathdom.Path) bool {
+	for _, fact := range facts {
+		if fact.Path.Equal(target) {
+			return true
+		}
+	}
+	return false
 }

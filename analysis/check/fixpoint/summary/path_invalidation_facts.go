@@ -12,16 +12,20 @@ type pathInvalidationFactKey pathdom.PathKey
 // invalidations: one fact per path, with an ancestor path subsuming its
 // descendants.
 var pathInvalidationLane = factset.Set[pathInvalidationFactKey, callboundary.PathInvalidationFact]{
-	Key: func(f callboundary.PathInvalidationFact) pathInvalidationFactKey {
-		return pathInvalidationFactKey(f.Path.Key())
+	Key: pathInvalidationKeyOf,
+	EqualFact: func(a, b callboundary.PathInvalidationFact) bool {
+		return pathInvalidationKeyOf(a) == pathInvalidationKeyOf(b)
 	},
-	EqualFact: func(a, b callboundary.PathInvalidationFact) bool { return a.Path.Key() == b.Path.Key() },
-	Less:      func(a, b callboundary.PathInvalidationFact) bool { return a.Path.Less(b.Path) },
-	Valid:     func(f callboundary.PathInvalidationFact) bool { return !f.Path.IsEmpty() },
+	Less:  func(a, b callboundary.PathInvalidationFact) bool { return a.Path.Less(b.Path) },
+	Valid: func(f callboundary.PathInvalidationFact) bool { return !f.Path.IsEmpty() },
 	CloneFact: func(f callboundary.PathInvalidationFact) callboundary.PathInvalidationFact {
 		f.Path = f.Path.Clone()
 		return f
 	},
 	Prefer:    func(kept, incoming callboundary.PathInvalidationFact) bool { return true },
 	Dominates: func(super, sub callboundary.PathInvalidationFact) bool { return pathHasPrefix(sub.Path, super.Path) },
+}
+
+func pathInvalidationKeyOf(f callboundary.PathInvalidationFact) pathInvalidationFactKey {
+	return pathInvalidationFactKey(f.Path.Key())
 }
