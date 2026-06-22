@@ -12,13 +12,7 @@ func clearMismatch(result *body.Result, got, want typ.Type) bool {
 	if got == nil || want == nil || typ.IsAny(got) || typ.IsUnknown(got) || typ.IsAny(want) || typ.IsUnknown(want) {
 		return false
 	}
-	if typ.TypeEquals(got, want) {
-		return false
-	}
-	if recursiveUnfoldingEquivalent(got, want) {
-		return false
-	}
-	if subtype.IsSubtype(got, want) {
+	if typePairClearlyCompatible(got, want) {
 		return false
 	}
 	if sameNominalGenericInstantiation(got, want) {
@@ -26,13 +20,7 @@ func clearMismatch(result *body.Result, got, want typ.Type) bool {
 	}
 	got = transparentComparableType(result, got)
 	want = transparentComparableType(result, want)
-	if typ.TypeEquals(got, want) {
-		return false
-	}
-	if recursiveUnfoldingEquivalent(got, want) {
-		return false
-	}
-	if subtype.IsSubtype(got, want) {
+	if typePairClearlyCompatible(got, want) {
 		return false
 	}
 	if explicitNilFieldFreshAssignable(got, want) {
@@ -46,6 +34,12 @@ func clearMismatch(result *body.Result, got, want typ.Type) bool {
 		}
 	}
 	return true
+}
+
+func typePairClearlyCompatible(got, want typ.Type) bool {
+	return typ.TypeEquals(got, want) ||
+		recursiveUnfoldingEquivalent(got, want) ||
+		subtype.IsSubtype(got, want)
 }
 
 func recursiveUnfoldingEquivalent(left, right typ.Type) bool {
