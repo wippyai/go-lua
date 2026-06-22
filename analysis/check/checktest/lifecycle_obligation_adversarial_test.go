@@ -457,6 +457,111 @@ end
 	requireEvidenceMessage(t, diag, "exit state still has `tx` in protocol transaction at a non-final state; no proof reaches `committed` or `rolled_back` or escapes ownership on every path")
 }
 
+func TestLifecycleResourceNoReturnBranchDoesNotNeedFinalState(t *testing.T) {
+	clean := Check(`
+local tx = {}
+begin(tx)
+if flag then
+    commit(tx)
+else
+    error("abort")
+end
+`, lifecycleMultiFinalManifestOptions("begin", "commit", "flag", "error")...)
+	if len(clean.Diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want no lifecycle warning when every normal-return path reaches a final state", clean.Diagnostics)
+	}
+
+	shadowed := Check(`
+local error = function(msg) end
+local tx = {}
+begin(tx)
+if flag then
+    commit(tx)
+else
+    error("abort")
+end
+`, lifecycleMultiFinalManifestOptions("begin", "commit", "flag")...)
+	if len(shadowed.Diagnostics) != 1 {
+		t.Fatalf("diagnostics = %#v, want warning when shadowed error returns normally", shadowed.Diagnostics)
+	}
+	diag := shadowed.Diagnostics[0]
+	if diag.Code != diagnostics.CodeResourceUnreleased {
+		t.Fatalf("diagnostic = %#v, want lifecycle warning", diag)
+	}
+	requireEvidenceMessage(t, diag, "this call transitions `tx` in protocol transaction from `active` to `committed` on a reachable path")
+	requireEvidenceMessage(t, diag, "exit state still has `tx` in protocol transaction at a non-final state; no proof reaches `committed` or `rolled_back` or escapes ownership on every path")
+}
+
+func TestLifecycleResourceIntermediateStateEvidenceShowsWhyFinalIsMissing(t *testing.T) {
+	src := `
+local tx = {}
+begin(tx)
+prepare(tx)
+`
+	result := Check(src, lifecycleMultiFinalManifestOptions("begin", "prepare")...)
+	if len(result.Diagnostics) != 1 {
+		t.Fatalf("diagnostics = %#v, want one lifecycle warning for non-final intermediate state", result.Diagnostics)
+	}
+	diag := result.Diagnostics[0]
+	if diag.Code != diagnostics.CodeResourceUnreleased {
+		t.Fatalf("diagnostic = %#v, want lifecycle warning", diag)
+	}
+	requireEvidenceMessage(t, diag, "this call acquires `tx` as transaction:`active` and requires `committed` or `rolled_back` before local ownership ends")
+	requireEvidenceMessage(t, diag, "this call transitions `tx` in protocol transaction from `active` to `prepared` on a reachable path")
+	requireEvidenceMessage(t, diag, "exit state still has `tx` in protocol transaction at `prepared`; no proof reaches `committed` or `rolled_back` or escapes ownership on every path")
+	rendered := diagnostic.Render(diag, diagnostic.RenderOptions{
+		Sources:             diagnostic.SourceMap{"test.lua": src},
+		ShowSourceLabelRows: true,
+	})
+	for _, want := range []string{
+		"3 | begin(tx)",
+		"↑ resource acquired",
+		"4 | prepare(tx)",
+		"↑ lifecycle transition",
+		"missing proof: exit state still has `tx` in protocol transaction at `prepared`",
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("rendered diagnostic missing %q:\n%s", want, rendered)
+		}
+	}
+}
+
+func TestLifecycleResourceLoopAcquireKeepsSingleEvidenceChain(t *testing.T) {
+	src := `
+local tx = {}
+while flag do
+    begin(tx)
+    break
+end
+`
+	result := Check(src, lifecycleManifestOptions("begin", "flag")...)
+	if len(result.Diagnostics) != 1 {
+		t.Fatalf("diagnostics = %#v, want one bounded lifecycle warning for loop acquire", result.Diagnostics)
+	}
+	diag := result.Diagnostics[0]
+	if diag.Code != diagnostics.CodeResourceUnreleased {
+		t.Fatalf("diagnostic = %#v, want lifecycle warning", diag)
+	}
+	if got := countEvidenceMessages(diag, "this call acquires"); got != 1 {
+		t.Fatalf("acquire evidence count = %d, want one loop acquire site: %#v", got, diag.Explanation.Evidence())
+	}
+	requireEvidenceMessage(t, diag, "exit state still has `tx` in protocol transaction at `active`; no proof reaches `finished` or escapes ownership on every path")
+}
+
+func TestLifecycleResourceLoopAcquireAndCloseDoesNotWarn(t *testing.T) {
+	result := Check(`
+local tx = {}
+while flag do
+    begin(tx)
+    finish(tx)
+    break
+end
+`, lifecycleManifestOptions("begin", "finish", "flag")...)
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want no lifecycle warning when loop body closes acquired resource", result.Diagnostics)
+	}
+}
+
 func TestLifecycleResourceFieldReassignmentDoesNotCloseOriginal(t *testing.T) {
 	result := Check(`
 local tx = {}
@@ -583,9 +688,10 @@ func lifecycleMultiFinalManifest() *manifest.Manifest {
 	m := manifest.New("lifecycle")
 	if err := m.DefineTypestateProtocol(typestate.Definition{
 		Protocol:    typestate.Protocol("transaction"),
-		States:      []typestate.State{typestate.State("active"), typestate.State("committed"), typestate.State("rolled_back")},
+		States:      []typestate.State{typestate.State("active"), typestate.State("prepared"), typestate.State("committed"), typestate.State("rolled_back")},
 		FinalStates: []typestate.State{typestate.State("committed"), typestate.State("rolled_back")},
 		Transitions: []typestate.TransitionDecl{
+			{From: typestate.State("active"), To: typestate.State("prepared")},
 			{From: typestate.State("active"), To: typestate.State("committed")},
 			{From: typestate.State("active"), To: typestate.State("rolled_back")},
 		},
@@ -614,6 +720,17 @@ func lifecycleMultiFinalManifest() *manifest.Manifest {
 			Protocol: typestate.Protocol("transaction"),
 			From:     typestate.State("active"),
 			To:       typestate.State("committed"),
+		}),
+	})
+	m.DefineFunctionSignature("prepare", signature.Function{
+		Type: typ.Func().
+			Param("tx", typ.Any).
+			Build(),
+		Effect: effect.Empty.With(lifecyclefx.Transition{
+			Target:   effect.ParamRef{Index: 0},
+			Protocol: typestate.Protocol("transaction"),
+			From:     typestate.State("active"),
+			To:       typestate.State("prepared"),
 		}),
 	})
 	m.DefineFunctionSignature("rollback", signature.Function{

@@ -118,7 +118,7 @@ func newLifecycleObligationDiagnostic(obligation typestate.OpenObligation, sites
 			break
 		}
 	}
-	transitions := lifecycleFinalTransitionSites(resource, obligation.Obligation, sites, graph, flow)
+	transitions := lifecycleTransitionSites(resource, sites, graph, flow)
 	escapes := lifecycleEscapeSites(resource, sites, graph, flow)
 	evidence := make([]diagnostic.Evidence, 0, len(acquires)+len(transitions)+len(escapes)+1)
 	labels := make([]diagnostic.Label, 0, len(acquires)+len(transitions)+len(escapes))
@@ -203,10 +203,10 @@ func lifecycleEscapeSites(resource typestate.Resource, sites []lifecycleFactSite
 	return lifecycleLatestSites(out, graph, flow)
 }
 
-func lifecycleFinalTransitionSites(resource typestate.Resource, obligation typestate.Obligation, sites []lifecycleFactSite, graph cfg.Graph, flow *diagnosticFlowCache) []lifecycleFactSite {
+func lifecycleTransitionSites(resource typestate.Resource, sites []lifecycleFactSite, graph cfg.Graph, flow *diagnosticFlowCache) []lifecycleFactSite {
 	var out []lifecycleFactSite
 	for _, site := range sites {
-		if site.kind != callboundary.LifecycleTransition || site.resource != resource || !obligation.SatisfiedBy(site.to) {
+		if site.kind != callboundary.LifecycleTransition || site.resource != resource {
 			continue
 		}
 		out = append(out, site)
