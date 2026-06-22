@@ -114,10 +114,12 @@ local output = handlers[action.kind](action)
 		diagnostics.CodeDiscriminatedUnionExhaustive,
 		diagnostic.Enable(),
 	))
-	requireDiagnostic(t, result, diagnosticExpectation{
+	diag := requireDiagnostic(t, result, diagnosticExpectation{
 		Code:            diagnostics.CodeDiscriminatedUnionExhaustive,
 		Severity:        diagnostic.SeverityWarning,
 		DiagnosticCount: 1,
+		Line:            12,
+		Column:          16,
 		MessageContains: []string{"dispatch table is not exhaustive", "handlers.cancel"},
 		EvidenceOrdered: []string{
 			"`handlers` is indexed by discriminant `action.kind`",
@@ -125,22 +127,53 @@ local output = handlers[action.kind](action)
 			"dispatch table provides keys: `handlers.begin`, `handlers.commit`",
 			"missing dispatch keys: `handlers.cancel` for `action.kind == \"cancel\"`",
 		},
+		EvidenceChain: []diagnosticEvidenceExpectation{
+			{
+				Kind:            diagnostic.EvidenceAbstractFact,
+				Trust:           diagnostic.TrustProven,
+				MessageContains: []string{"`handlers` is indexed by discriminant `action.kind`"},
+			},
+			{
+				Kind:            diagnostic.EvidenceAbstractFact,
+				Trust:           diagnostic.TrustProven,
+				MessageContains: []string{"possible cases: `action.kind == \"begin\"`, `action.kind == \"cancel\"`, `action.kind == \"commit\"`"},
+			},
+			{
+				Kind:            diagnostic.EvidenceAbstractFact,
+				Trust:           diagnostic.TrustProven,
+				MessageContains: []string{"dispatch table provides keys: `handlers.begin`, `handlers.commit`"},
+			},
+			{
+				Kind:            diagnostic.EvidenceMissingProof,
+				Trust:           diagnostic.TrustUnknown,
+				MessageContains: []string{"missing dispatch keys: `handlers.cancel` for `action.kind == \"cancel\"`"},
+			},
+		},
 		LabelContains: []string{"dispatch table", "dispatch lookup"},
 		HelpContains:  []string{"Add each missing dispatch key"},
-		Sources:       diagnostic.SourceMap{"test.lua": src},
-		RenderOrderedContains: []string{
-			"warning[lint.union.exhaustiveness]: dispatch table is not exhaustive",
-			"test.lua:12:",
-			"local output = handlers[action.kind](action)",
-			"dispatch lookup",
-			"because:",
-			"`handlers` is indexed by discriminant `action.kind`",
-			"dispatch table provides keys: `handlers.begin`, `handlers.commit`",
-			"missing dispatch keys: `handlers.cancel` for `action.kind == \"cancel\"`",
-			"help:",
-			"Add each missing dispatch key",
-		},
 	})
+	rendered := diagnostic.Render(diag, diagnostic.RenderOptions{
+		Sources:             diagnostic.SourceMap{"test.lua": src},
+		ShowSourceLabelRows: true,
+	})
+	want := `warning[lint.union.exhaustiveness]: dispatch table is not exhaustive; missing key: ` + "`handlers.cancel`" + `
+ --> test.lua:12:16
+   |
+12 | local output = handlers[action.kind](action)
+   |                ↑ dispatch lookup
+
+because:
+  1. proven: ` + "`handlers`" + ` is indexed by discriminant ` + "`action.kind`" + `
+  2. proven: possible cases: ` + "`action.kind == \"begin\"`, `action.kind == \"cancel\"`, `action.kind == \"commit\"`" + `
+  3. proven: dispatch table provides keys: ` + "`handlers.begin`, `handlers.commit`" + `
+ --> test.lua:6:18
+  |
+  |                  ↓ dispatch table
+6 | local handlers = {
+  4. missing proof: missing dispatch keys: ` + "`handlers.cancel`" + ` for ` + "`action.kind == \"cancel\"`" + `
+
+help: Add each missing dispatch key, or route through an explicit fallback when missing keys are intentional.`
+	assertRenderedEqual(t, rendered, want)
 }
 
 func TestDiscriminatedUnionExhaustivenessReportsCapturedDispatchTableKey(t *testing.T) {
