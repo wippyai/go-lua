@@ -209,13 +209,7 @@ func applyCallGuardInvalidation(result *body.Result, point cfg.Point, env guardE
 	if !hasOutcome {
 		return guardEnv{}
 	}
-	sig, hasSignature := result.CallSignature(site)
-	hasOperationalEffects := hasSignature &&
-		sig.OperationalEffects != nil &&
-		!sig.OperationalEffects.IsEmpty()
-	// A known return value can make PostReturnAuthority true; it is not proof that side effects are complete.
-	hasExactSignatureEffects := callOutcomeHasExplicitGuardInvalidation(outcome) || hasOperationalEffects || (hasSignature && sig.Effect.IsClosed())
-	if !hasExactSignatureEffects {
+	if !callOutcomeHasExactGuardInvalidationSummary(result, site, outcome) {
 		return guardEnv{}
 	}
 	if callOutcomeHasGlobalGuardInvalidation(outcome) {
@@ -232,6 +226,64 @@ func applyCallGuardInvalidation(result *body.Result, point cfg.Point, env guardE
 		env = env.withoutFactsForCallInvalidation(target)
 	}
 	return env
+}
+
+func callMayInvalidateTrackedPath(result *body.Result, point cfg.Point, target path.Path) bool {
+	if result == nil || target.IsEmpty() {
+		return false
+	}
+	fact, ok := result.Call(point)
+	if !ok || !callFactReferencesTrackedPath(result, fact, target) {
+		return false
+	}
+	site, hasSite := result.CallSite(point)
+	if !hasSite {
+		return true
+	}
+	outcome, hasOutcome := result.CallOutcomeAt(point)
+	if !hasOutcome {
+		return true
+	}
+	if !callOutcomeHasExactGuardInvalidationSummary(result, site, outcome) {
+		return true
+	}
+	if callOutcomeHasGlobalGuardInvalidation(outcome) {
+		return true
+	}
+	invalidated, ok := callOutcomeGuardInvalidationPaths(result, site, outcome)
+	if !ok {
+		return true
+	}
+	for _, invalidation := range invalidated {
+		if pathsOverlapForInvalidation(target, invalidation) {
+			return true
+		}
+	}
+	return false
+}
+
+func callFactReferencesTrackedPath(result *body.Result, fact semantics.CallFact, target path.Path) bool {
+	if fact.HasReceiverPath && pathsOverlapForInvalidation(target, fact.ReceiverPath) {
+		return true
+	}
+	for _, arg := range fact.Args {
+		argPath, ok := result.ExpressionPath(arg)
+		if ok && pathsOverlapForInvalidation(target, argPath) {
+			return true
+		}
+	}
+	return false
+}
+
+func callOutcomeHasExactGuardInvalidationSummary(result *body.Result, site factflow.CallSite, outcome callpayload.CallOutcome) bool {
+	sig, hasSignature := result.CallSignature(site)
+	hasOperationalEffects := hasSignature &&
+		sig.OperationalEffects != nil &&
+		!sig.OperationalEffects.IsEmpty()
+	// A known return value can make PostReturnAuthority true; it is not proof that side effects are complete.
+	return callOutcomeHasExplicitGuardInvalidation(outcome) ||
+		hasOperationalEffects ||
+		(hasSignature && sig.Effect.IsClosed())
 }
 
 func callOutcomeHasExplicitGuardInvalidation(outcome callpayload.CallOutcome) bool {
@@ -962,6 +1014,10 @@ func spanEqual(left, right diagnostic.Span) bool {
 
 func pathHasStrictPrefix(candidate, prefix path.Path) bool {
 	return len(prefix.Segments) < len(candidate.Segments) && pathHasPrefix(candidate, prefix)
+}
+
+func pathsOverlapForInvalidation(a, b path.Path) bool {
+	return pathHasPrefix(a, b) || pathHasPrefix(b, a)
 }
 
 func samePathRoot(a, b path.Path) bool {

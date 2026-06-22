@@ -1082,7 +1082,7 @@ func (p discriminatedUnionExhaustiveness) registrationCalls(result *body.Result,
 			registrations = append(registrations, reg)
 			continue
 		}
-		if registry, ok := openRegistrationMutationFromFact(result, call); ok {
+		if registry, ok := openRegistrationMutationFromFact(result, point, call); ok {
 			open = append(open, openRegistrationMutation{point: point, registry: registry})
 		}
 	}
@@ -1091,7 +1091,7 @@ func (p discriminatedUnionExhaustiveness) registrationCalls(result *body.Result,
 
 func (p discriminatedUnionExhaustiveness) openRegistrationCanReach(result *body.Result, graph cfg.Graph, open []openRegistrationMutation, dispatch dispatchCall) bool {
 	for _, mutation := range open {
-		if mutation.registry.Equal(dispatch.registry) && diagnosticCanReach(p.flow, graph, mutation.point, dispatch.point) {
+		if mutation.point != dispatch.point && mutation.registry.Equal(dispatch.registry) && diagnosticCanReach(p.flow, graph, mutation.point, dispatch.point) {
 			return true
 		}
 	}
@@ -1148,16 +1148,24 @@ func registrationRegistryAndKeyIndex(result *body.Result, fact semantics.CallFac
 	return pathdom.Path{}, 0, false
 }
 
-func openRegistrationMutationFromFact(result *body.Result, fact semantics.CallFact) (pathdom.Path, bool) {
+func openRegistrationMutationFromFact(result *body.Result, point cfg.Point, fact semantics.CallFact) (pathdom.Path, bool) {
 	registry, keyIndex, ok := registrationRegistryAndKeyIndex(result, fact)
-	if !ok || keyIndex < 0 || keyIndex >= len(fact.Args)-1 {
-		return pathdom.Path{}, false
+	if ok && keyIndex >= 0 && keyIndex < len(fact.Args)-1 {
+		if _, ok := stringLiteralExprValue(fact.Args[keyIndex]); ok && registrationCallbackExpr(fact.Args[keyIndex+1]) {
+			return pathdom.Path{}, false
+		}
+		if registrationCallbackExpr(fact.Args[keyIndex+1]) {
+			return registry, true
+		}
 	}
-	if _, ok := stringLiteralExprValue(fact.Args[keyIndex]); ok && registrationCallbackExpr(fact.Args[keyIndex+1]) {
-		return pathdom.Path{}, false
+	if fact.HasReceiverPath && callMayInvalidateTrackedPath(result, point, fact.ReceiverPath) {
+		return fact.ReceiverPath, true
 	}
-	if registrationCallbackExpr(fact.Args[keyIndex+1]) {
-		return registry, true
+	for _, arg := range fact.Args {
+		argPath, ok := result.ExpressionPath(arg)
+		if ok && callMayInvalidateTrackedPath(result, point, argPath) {
+			return argPath, true
+		}
 	}
 	return pathdom.Path{}, false
 }
@@ -1207,7 +1215,7 @@ func isRegistrationLikeCall(result *body.Result, fact semantics.CallFact) bool {
 	if _, ok := registrationCallFromFact(result, fact, 0); ok {
 		return true
 	}
-	if _, ok := openRegistrationMutationFromFact(result, fact); ok {
+	if _, ok := openRegistrationMutationFromFact(result, 0, fact); ok {
 		return true
 	}
 	return false
@@ -1517,6 +1525,9 @@ func (p discriminatedUnionExhaustiveness) dispatchTableKeysAt(result *body.Resul
 		if !p.addDominatingStaticDispatchWrites(result, declPoint, point, table.Symbol, keys) {
 			return nil, diagnostic.Span{}, false
 		}
+		if p.trackedPathMayBeInvalidatedBetween(result, result.Graph(), declPoint, point, table) {
+			return nil, diagnostic.Span{}, false
+		}
 		return keys, ast.SpanOf(fact.Table), true
 	}
 	return p.inheritedDispatchTableKeysAt(result, point, table)
@@ -1531,7 +1542,28 @@ func (p discriminatedUnionExhaustiveness) inheritedDispatchTableKeysAt(result *b
 	if !p.applyCurrentBodyDispatchWrites(result, point, table.Symbol, keys) {
 		return nil, diagnostic.Span{}, false
 	}
+	if p.trackedPathMayBeInvalidatedBetween(result, result.Graph(), result.Graph().Entry(), point, table) {
+		return nil, diagnostic.Span{}, false
+	}
 	return keys, summary.span, true
+}
+
+func (p discriminatedUnionExhaustiveness) trackedPathMayBeInvalidatedBetween(result *body.Result, graph cfg.Graph, from, to cfg.Point, target pathdom.Path) bool {
+	if result == nil || graph == nil || target.IsEmpty() {
+		return false
+	}
+	for _, candidate := range graph.RPO() {
+		if candidate == to {
+			continue
+		}
+		if !diagnosticCanReach(p.flow, graph, from, candidate) || !diagnosticCanReach(p.flow, graph, candidate, to) {
+			continue
+		}
+		if callMayInvalidateTrackedPath(result, candidate, target) {
+			return true
+		}
+	}
+	return false
 }
 
 func objectLiteralDispatchKeys(fact semantics.ObjectLiteralFact) (map[string]bool, bool) {
