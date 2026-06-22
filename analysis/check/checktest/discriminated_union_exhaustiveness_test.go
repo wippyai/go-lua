@@ -682,6 +682,32 @@ end
 	}
 }
 
+func TestDiscriminatedUnionExhaustivenessSkipsCapturedDispatchTableAfterParentUnknownCallMutation(t *testing.T) {
+	result := Check(`
+type Begin = { kind: "begin", id: string }
+type Commit = { kind: "commit", payment_id: string }
+type Cancel = { kind: "cancel", reason: string }
+type Action = Begin | Commit | Cancel
+
+local handlers = {
+    begin = function(action: Action): string return action.kind end,
+    commit = function(action: Action): string return action.kind end,
+}
+patch_handlers(handlers)
+
+local function route(action: Action): string
+    local handler = handlers[action.kind]
+    return ""
+end
+`, WithGlobals("patch_handlers"), WithDiagnosticRule(
+		diagnostics.CodeDiscriminatedUnionExhaustive,
+		diagnostic.Enable(),
+	))
+	if hasDiagnosticCode(result.Diagnostics, diagnostics.CodeDiscriminatedUnionExhaustive) {
+		t.Fatalf("diagnostics = %#v, want no exhaustive-union warning after parent unknown call can mutate captured dispatch table", result.Diagnostics)
+	}
+}
+
 func TestDiscriminatedUnionExhaustivenessSkipsDispatchTableAfterUnknownCallMutation(t *testing.T) {
 	result := Check(`
 type Begin = { kind: "begin", id: string }
@@ -1314,6 +1340,192 @@ local handler = registry.handlers[action.kind]
 	if hasDiagnosticCode(result.Diagnostics, diagnostics.CodeDiscriminatedUnionExhaustive) {
 		t.Fatalf("diagnostics = %#v, want no exhaustive-union warning after nested dynamic dispatch mutation", result.Diagnostics)
 	}
+}
+
+func TestDiscriminatedUnionExhaustivenessReportsCapturedNestedDispatchTableKey(t *testing.T) {
+	result := Check(`
+type Begin = { kind: "begin", id: string }
+type Commit = { kind: "commit", payment_id: string }
+type Cancel = { kind: "cancel", reason: string }
+type Action = Begin | Commit | Cancel
+
+local registry = {
+    handlers = {
+        begin = function(action: Action): string return action.kind end,
+        commit = function(action: Action): string return action.kind end,
+    },
+}
+
+local function route(action: Action): string
+    local handler = registry.handlers[action.kind]
+    return ""
+end
+`, WithDiagnosticRule(
+		diagnostics.CodeDiscriminatedUnionExhaustive,
+		diagnostic.Enable(),
+	))
+	requireDiagnostic(t, result, diagnosticExpectation{
+		Code:            diagnostics.CodeDiscriminatedUnionExhaustive,
+		Severity:        diagnostic.SeverityWarning,
+		DiagnosticCount: 1,
+		MessageContains: []string{"dispatch table is not exhaustive", "registry.handlers.cancel"},
+		EvidenceOrdered: []string{
+			"`registry.handlers` is indexed by discriminant `action.kind`",
+			"dispatch table provides keys: `registry.handlers.begin`, `registry.handlers.commit`",
+			"missing dispatch keys: `registry.handlers.cancel` for `action.kind == \"cancel\"`",
+		},
+	})
+}
+
+func TestDiscriminatedUnionExhaustivenessAcceptsCapturedNestedDispatchTableWithParentStaticFill(t *testing.T) {
+	result := Check(`
+type Begin = { kind: "begin", id: string }
+type Commit = { kind: "commit", payment_id: string }
+type Cancel = { kind: "cancel", reason: string }
+type Action = Begin | Commit | Cancel
+
+local registry = {
+    handlers = {
+        begin = function(action: Action): string return action.kind end,
+        commit = function(action: Action): string return action.kind end,
+    },
+}
+registry.handlers.cancel = function(action: Action): string return action.kind end
+
+local function route(action: Action): string
+    local handler = registry.handlers[action.kind]
+    return ""
+end
+`, WithDiagnosticRule(
+		diagnostics.CodeDiscriminatedUnionExhaustive,
+		diagnostic.Enable(),
+	))
+	if hasDiagnosticCode(result.Diagnostics, diagnostics.CodeDiscriminatedUnionExhaustive) {
+		t.Fatalf("diagnostics = %#v, want no exhaustive-union warning after captured nested parent static fill", result.Diagnostics)
+	}
+}
+
+func TestDiscriminatedUnionExhaustivenessAcceptsCapturedNestedDispatchTableWithChildStaticFill(t *testing.T) {
+	result := Check(`
+type Begin = { kind: "begin", id: string }
+type Commit = { kind: "commit", payment_id: string }
+type Cancel = { kind: "cancel", reason: string }
+type Action = Begin | Commit | Cancel
+
+local registry = {
+    handlers = {
+        begin = function(action: Action): string return action.kind end,
+        commit = function(action: Action): string return action.kind end,
+    },
+}
+
+local function route(action: Action): string
+    registry.handlers.cancel = function(item: Action): string return item.kind end
+    local handler = registry.handlers[action.kind]
+    return ""
+end
+`, WithDiagnosticRule(
+		diagnostics.CodeDiscriminatedUnionExhaustive,
+		diagnostic.Enable(),
+	))
+	if hasDiagnosticCode(result.Diagnostics, diagnostics.CodeDiscriminatedUnionExhaustive) {
+		t.Fatalf("diagnostics = %#v, want no exhaustive-union warning after captured nested child static fill", result.Diagnostics)
+	}
+}
+
+func TestDiscriminatedUnionExhaustivenessSkipsCapturedNestedDispatchTableAfterChildDynamicMutation(t *testing.T) {
+	result := Check(`
+type Begin = { kind: "begin", id: string }
+type Commit = { kind: "commit", payment_id: string }
+type Cancel = { kind: "cancel", reason: string }
+type Action = Begin | Commit | Cancel
+
+local registry = {
+    handlers = {
+        begin = function(action: Action): string return action.kind end,
+        commit = function(action: Action): string return action.kind end,
+    },
+}
+
+local function route(action: Action, key: string): string
+    registry.handlers[key] = function(item: Action): string return item.kind end
+    local handler = registry.handlers[action.kind]
+    return ""
+end
+`, WithDiagnosticRule(
+		diagnostics.CodeDiscriminatedUnionExhaustive,
+		diagnostic.Enable(),
+	))
+	if hasDiagnosticCode(result.Diagnostics, diagnostics.CodeDiscriminatedUnionExhaustive) {
+		t.Fatalf("diagnostics = %#v, want no exhaustive-union warning after captured nested dynamic mutation", result.Diagnostics)
+	}
+}
+
+func TestDiscriminatedUnionExhaustivenessSkipsCapturedNestedDispatchTableAfterParentUnknownCallMutation(t *testing.T) {
+	result := Check(`
+type Begin = { kind: "begin", id: string }
+type Commit = { kind: "commit", payment_id: string }
+type Cancel = { kind: "cancel", reason: string }
+type Action = Begin | Commit | Cancel
+
+local registry = {
+    handlers = {
+        begin = function(action: Action): string return action.kind end,
+        commit = function(action: Action): string return action.kind end,
+    },
+}
+patch_handlers(registry.handlers)
+
+local function route(action: Action): string
+    local handler = registry.handlers[action.kind]
+    return ""
+end
+`, WithGlobals("patch_handlers"), WithDiagnosticRule(
+		diagnostics.CodeDiscriminatedUnionExhaustive,
+		diagnostic.Enable(),
+	))
+	if hasDiagnosticCode(result.Diagnostics, diagnostics.CodeDiscriminatedUnionExhaustive) {
+		t.Fatalf("diagnostics = %#v, want no exhaustive-union warning after parent unknown call can mutate captured nested dispatch table", result.Diagnostics)
+	}
+}
+
+func TestDiscriminatedUnionExhaustivenessKeepsCapturedNestedDispatchTableAfterParentReadOnlyCall(t *testing.T) {
+	result := Check(`
+type Begin = { kind: "begin", id: string }
+type Commit = { kind: "commit", payment_id: string }
+type Cancel = { kind: "cancel", reason: string }
+type Action = Begin | Commit | Cancel
+
+local function inspect_handlers(handlers): ()
+end
+
+local registry = {
+    handlers = {
+        begin = function(action: Action): string return action.kind end,
+        commit = function(action: Action): string return action.kind end,
+    },
+}
+inspect_handlers(registry.handlers)
+
+local function route(action: Action): string
+    local handler = registry.handlers[action.kind]
+    return ""
+end
+`, WithDiagnosticRule(
+		diagnostics.CodeDiscriminatedUnionExhaustive,
+		diagnostic.Enable(),
+	))
+	requireDiagnostic(t, result, diagnosticExpectation{
+		Code:            diagnostics.CodeDiscriminatedUnionExhaustive,
+		Severity:        diagnostic.SeverityWarning,
+		DiagnosticCount: 1,
+		MessageContains: []string{"dispatch table is not exhaustive", "registry.handlers.cancel"},
+		EvidenceOrdered: []string{
+			"`registry.handlers` is indexed by discriminant `action.kind`",
+			"dispatch table provides keys: `registry.handlers.begin`, `registry.handlers.commit`",
+			"missing dispatch keys: `registry.handlers.cancel` for `action.kind == \"cancel\"`",
+		},
+	})
 }
 
 func TestOptionalExhaustivenessReportsConsumedValueWithoutNilCase(t *testing.T) {

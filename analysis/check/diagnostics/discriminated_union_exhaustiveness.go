@@ -16,7 +16,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/pathexpr"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
 	"github.com/wippyai/go-lua/analysis/lua/typeannotation"
-	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/type/access"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/compiler/ast"
@@ -95,11 +94,12 @@ type resultShapeEvidence struct {
 
 type dispatchTableSummary struct {
 	table string
+	path  pathdom.Path
 	keys  map[string]bool
 	span  diagnostic.Span
 }
 
-func collectDispatchTableSummaries(result *body.Result, flow *diagnosticFlowCache, inherited map[symbol.ID]dispatchTableSummary) map[symbol.ID]dispatchTableSummary {
+func collectDispatchTableSummaries(result *body.Result, flow *diagnosticFlowCache, inherited map[pathdom.PathKey]dispatchTableSummary) map[pathdom.PathKey]dispatchTableSummary {
 	out := cloneDispatchTableSummaries(inherited)
 	graph := result.Graph()
 	if graph == nil {
@@ -108,33 +108,57 @@ func collectDispatchTableSummaries(result *body.Result, flow *diagnosticFlowCach
 	for _, point := range graph.RPO() {
 		if fact, ok := result.LocalAssignment(point); ok && fact.HasSymbol && fact.Expr != nil {
 			literal, literalOK := result.ObjectLiteral(fact.Expr)
-			keys, keysOK := objectLiteralDispatchKeys(literal)
-			if literalOK && keysOK {
-				if out == nil {
-					out = make(map[symbol.ID]dispatchTableSummary, 1)
-				}
-				out[fact.Symbol] = dispatchTableSummary{
-					table: result.SymbolName(fact.Symbol),
-					keys:  keys,
-					span:  ast.SpanOf(literal.Table),
-				}
+			if literalOK {
+				base := pathdom.NewPath(fact.Symbol, result.SymbolName(fact.Symbol))
+				collectObjectLiteralDispatchTableSummaries(result, &out, base, literal)
 			}
 		}
 		if fact, ok := result.OrdinaryAssignment(point); ok {
 			updateDispatchTableSummariesForAssignment(out, fact)
 		}
+		if _, ok := result.Call(point); ok {
+			updateDispatchTableSummariesForCall(result, out, point)
+		}
 	}
 	return out
 }
 
-func cloneDispatchTableSummaries(in map[symbol.ID]dispatchTableSummary) map[symbol.ID]dispatchTableSummary {
+func collectObjectLiteralDispatchTableSummaries(result *body.Result, out *map[pathdom.PathKey]dispatchTableSummary, table pathdom.Path, fact semantics.ObjectLiteralFact) {
+	if result == nil || out == nil || table.IsEmpty() {
+		return
+	}
+	if keys, ok := objectLiteralDispatchKeys(fact); ok {
+		if *out == nil {
+			*out = make(map[pathdom.PathKey]dispatchTableSummary, 1)
+		}
+		(*out)[table.Key()] = dispatchTableSummary{
+			table: table.String(),
+			path:  table.Clone(),
+			keys:  keys,
+			span:  ast.SpanOf(fact.Table),
+		}
+	}
+	for _, entry := range fact.Entries {
+		if len(entry.Suffix.Segments) == 0 {
+			continue
+		}
+		nested, ok := result.ObjectLiteral(entry.Value)
+		if !ok {
+			continue
+		}
+		collectObjectLiteralDispatchTableSummaries(result, out, table.AppendSegments(entry.Suffix.Segments), nested)
+	}
+}
+
+func cloneDispatchTableSummaries(in map[pathdom.PathKey]dispatchTableSummary) map[pathdom.PathKey]dispatchTableSummary {
 	if len(in) == 0 {
 		return nil
 	}
-	out := make(map[symbol.ID]dispatchTableSummary, len(in))
-	for sym, summary := range in {
+	out := make(map[pathdom.PathKey]dispatchTableSummary, len(in))
+	for key, summary := range in {
+		summary.path = summary.path.Clone()
 		summary.keys = cloneDispatchKeySet(summary.keys)
-		out[sym] = summary
+		out[key] = summary
 	}
 	return out
 }
@@ -150,36 +174,45 @@ func cloneDispatchKeySet(in map[string]bool) map[string]bool {
 	return out
 }
 
-func updateDispatchTableSummariesForAssignment(summaries map[symbol.ID]dispatchTableSummary, fact semantics.OrdinaryAssignmentFact) {
+func updateDispatchTableSummariesForAssignment(summaries map[pathdom.PathKey]dispatchTableSummary, fact semantics.OrdinaryAssignmentFact) {
 	if len(summaries) == 0 {
 		return
 	}
-	if fact.HasPath {
-		summary, ok := summaries[fact.Path.Symbol]
-		if !ok {
-			return
+	for summaryKey, summary := range summaries {
+		if fact.HasPath {
+			key, staticKey, touches := dispatchTableAssignmentKeyForPath(fact, summary.path)
+			if !touches {
+				continue
+			}
+			if !staticKey {
+				delete(summaries, summaryKey)
+				continue
+			}
+			if summary.keys == nil {
+				summary.keys = make(map[string]bool, 1)
+			}
+			summary.keys[key] = true
+			summaries[summaryKey] = summary
+			continue
 		}
-		if len(fact.Path.Segments) != 1 {
-			delete(summaries, fact.Path.Symbol)
-			return
+		if fact.HasSymbol && fact.Symbol == summary.path.Symbol {
+			delete(summaries, summaryKey)
+			continue
 		}
-		key, ok := segmentStringKey(fact.Path.Segments[0])
-		if !ok {
-			delete(summaries, fact.Path.Symbol)
-			return
+		if fact.HasContainerPath && pathsOverlapForInvalidation(summary.path, fact.ContainerPath) {
+			delete(summaries, summaryKey)
 		}
-		if summary.keys == nil {
-			summary.keys = make(map[string]bool, 1)
-		}
-		summary.keys[key] = true
-		summaries[fact.Path.Symbol] = summary
+	}
+}
+
+func updateDispatchTableSummariesForCall(result *body.Result, summaries map[pathdom.PathKey]dispatchTableSummary, point cfg.Point) {
+	if len(summaries) == 0 {
 		return
 	}
-	if fact.HasSymbol {
-		delete(summaries, fact.Symbol)
-	}
-	if fact.HasContainerPath {
-		delete(summaries, fact.ContainerPath.Symbol)
+	for summaryKey, summary := range summaries {
+		if callMayInvalidateTrackedPath(result, point, summary.path) {
+			delete(summaries, summaryKey)
+		}
 	}
 }
 
@@ -1535,15 +1568,12 @@ func (p discriminatedUnionExhaustiveness) dispatchTableKeysAt(result *body.Resul
 }
 
 func (p discriminatedUnionExhaustiveness) inheritedDispatchTableKeysAt(result *body.Result, point cfg.Point, table pathdom.Path) (map[string]bool, diagnostic.Span, bool) {
-	if len(table.Segments) != 0 {
-		return nil, diagnostic.Span{}, false
-	}
-	summary, ok := p.dispatchTables[table.Symbol]
+	summary, ok := p.dispatchTables[table.Key()]
 	if !ok || len(summary.keys) == 0 {
 		return nil, diagnostic.Span{}, false
 	}
 	keys := cloneDispatchKeySet(summary.keys)
-	if !p.applyCurrentBodyDispatchWrites(result, point, table.Symbol, keys) {
+	if !p.applyCurrentBodyDispatchWrites(result, point, table, keys) {
 		return nil, diagnostic.Span{}, false
 	}
 	if p.trackedPathMayBeInvalidatedBetween(result, result.Graph(), result.Graph().Entry(), point, table) {
@@ -1659,7 +1689,7 @@ func (p discriminatedUnionExhaustiveness) addDominatingStaticDispatchWrites(resu
 	return true
 }
 
-func (p discriminatedUnionExhaustiveness) applyCurrentBodyDispatchWrites(result *body.Result, point cfg.Point, rootSymbol symbol.ID, keys map[string]bool) bool {
+func (p discriminatedUnionExhaustiveness) applyCurrentBodyDispatchWrites(result *body.Result, point cfg.Point, table pathdom.Path, keys map[string]bool) bool {
 	graph := result.Graph()
 	if graph == nil || p.flow == nil {
 		return false
@@ -1673,7 +1703,7 @@ func (p discriminatedUnionExhaustiveness) applyCurrentBodyDispatchWrites(result 
 		if !ok {
 			continue
 		}
-		key, staticKey, touches := dispatchTableAssignmentKey(fact, rootSymbol)
+		key, staticKey, touches := dispatchTableAssignmentKeyForPath(fact, table)
 		if !touches || !diagnosticCanReach(p.flow, graph, candidate, point) {
 			continue
 		}
@@ -1683,10 +1713,6 @@ func (p discriminatedUnionExhaustiveness) applyCurrentBodyDispatchWrites(result 
 		keys[key] = true
 	}
 	return true
-}
-
-func dispatchTableAssignmentKey(fact semantics.OrdinaryAssignmentFact, rootSymbol symbol.ID) (key string, staticKey bool, touches bool) {
-	return dispatchTableAssignmentKeyForPath(fact, pathdom.Path{Symbol: rootSymbol})
 }
 
 func dispatchTableAssignmentKeyForPath(fact semantics.OrdinaryAssignmentFact, table pathdom.Path) (key string, staticKey bool, touches bool) {

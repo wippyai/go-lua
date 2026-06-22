@@ -6,6 +6,7 @@ package diagnostics
 import (
 	"github.com/wippyai/go-lua/analysis/check/body"
 	"github.com/wippyai/go-lua/analysis/diagnostic"
+	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/lua/typeannotation"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/compiler/ast"
@@ -40,7 +41,7 @@ const (
 type producerContext struct {
 	resolver       typeannotation.Resolver
 	flow           *diagnosticFlowCache
-	dispatchTables map[symbol.ID]dispatchTableSummary
+	dispatchTables map[pathdom.PathKey]dispatchTableSummary
 }
 
 type diagnosticProducer struct {
@@ -218,7 +219,7 @@ func produceWithResolver(
 	result *body.Result,
 	parent typeannotation.Resolver,
 	inheritedDefs map[symbol.ID]*ast.FunctionExpr,
-	inheritedDispatchTables map[symbol.ID]dispatchTableSummary,
+	inheritedDispatchTables map[pathdom.PathKey]dispatchTableSummary,
 	config Config,
 ) []diagnostic.Diagnostic {
 	resolver := newResultResolver(result, parent)
