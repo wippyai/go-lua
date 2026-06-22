@@ -1682,25 +1682,61 @@ func (p discriminatedUnionExhaustiveness) dispatchTableKeysAt(result *body.Resul
 	if table.Symbol == 0 {
 		return nil, diagnostic.Span{}, false
 	}
-	decl, declPoint, ok := dominatingRootLocalAssignment(result, p.flow, point, table.Symbol)
-	if ok && decl.Expr != nil {
-		fact, ok := result.ObjectLiteral(decl.Expr)
-		if !ok {
+	if keys, tableSpan, basePoint, ok := p.dispatchTableBaseKeysAt(result, point, table); ok {
+		if !p.applyReachableDispatchTableAssignments(result, basePoint, point, table, keys) {
 			return nil, diagnostic.Span{}, false
 		}
-		keys, tableSpan, ok := objectLiteralDispatchKeysAtPath(result, fact, table.Segments)
-		if !ok {
-			return nil, diagnostic.Span{}, false
-		}
-		if !p.addDominatingStaticDispatchWrites(result, declPoint, point, table, keys) {
-			return nil, diagnostic.Span{}, false
-		}
-		if p.trackedPathMayBeInvalidatedBetween(result, result.Graph(), declPoint, point, table) {
+		if p.trackedPathMayBeInvalidatedBetween(result, result.Graph(), basePoint, point, table) {
 			return nil, diagnostic.Span{}, false
 		}
 		return keys, tableSpan, true
 	}
 	return p.inheritedDispatchTableKeysAt(result, point, table)
+}
+
+func (p discriminatedUnionExhaustiveness) dispatchTableBaseKeysAt(result *body.Result, point cfg.Point, table pathdom.Path) (map[string]bool, diagnostic.Span, cfg.Point, bool) {
+	graph := result.Graph()
+	if graph == nil || table.Symbol == 0 {
+		return nil, diagnostic.Span{}, 0, false
+	}
+	var idom map[cfg.Point]cfg.Point
+	if p.flow != nil && p.flow.graph == graph {
+		idom = p.flow.immediateDominators()
+	} else {
+		idom = dominance.ComputeImmediateDominatorInfo(graph).Map()
+	}
+	visited := make(map[cfg.Point]struct{}, graph.Size())
+	for cursor := point; ; {
+		if _, ok := visited[cursor]; ok {
+			return nil, diagnostic.Span{}, 0, false
+		}
+		visited[cursor] = struct{}{}
+		if fact, ok := result.OrdinaryAssignment(cursor); ok {
+			if keys, span, ok := dispatchTableReplacementKeys(result, fact, table); ok {
+				return keys, span, cursor, true
+			}
+			_, staticKey, touches := dispatchTableAssignmentKeyForPath(fact, table)
+			if touches && !staticKey {
+				return nil, diagnostic.Span{}, 0, false
+			}
+		}
+		if fact, ok := result.LocalAssignment(cursor); ok && fact.HasSymbol && fact.Symbol == table.Symbol && fact.Expr != nil {
+			literal, ok := result.ObjectLiteral(fact.Expr)
+			if !ok {
+				return nil, diagnostic.Span{}, 0, false
+			}
+			keys, span, ok := objectLiteralDispatchKeysAtPath(result, literal, table.Segments)
+			if !ok {
+				return nil, diagnostic.Span{}, 0, false
+			}
+			return keys, span, cursor, true
+		}
+		parent, ok := idom[cursor]
+		if !ok || parent == cursor {
+			return nil, diagnostic.Span{}, 0, false
+		}
+		cursor = parent
+	}
 }
 
 func (p discriminatedUnionExhaustiveness) inheritedDispatchTableKeysAt(result *body.Result, point cfg.Point, table pathdom.Path) (map[string]bool, diagnostic.Span, bool) {
@@ -1709,7 +1745,7 @@ func (p discriminatedUnionExhaustiveness) inheritedDispatchTableKeysAt(result *b
 		return nil, diagnostic.Span{}, false
 	}
 	keys := cloneDispatchKeySet(summary.keys)
-	if !p.applyCurrentBodyDispatchWrites(result, point, table, keys) {
+	if !p.applyReachableDispatchTableAssignments(result, result.Graph().Entry(), point, table, keys) {
 		return nil, diagnostic.Span{}, false
 	}
 	if p.trackedPathMayBeInvalidatedBetween(result, result.Graph(), result.Graph().Entry(), point, table) {
@@ -1801,54 +1837,103 @@ func sameSegments(a, b []segment.Segment) bool {
 	return true
 }
 
-func (p discriminatedUnionExhaustiveness) addDominatingStaticDispatchWrites(result *body.Result, declPoint, point cfg.Point, table pathdom.Path, keys map[string]bool) bool {
-	if result.Graph() == nil || p.flow == nil {
-		return true
-	}
-	idom := p.flow.immediateDominators()
-	for cursor := point; cursor != declPoint; {
-		if fact, ok := result.OrdinaryAssignment(cursor); ok {
-			key, staticKey, touches := dispatchTableAssignmentKeyForPath(fact, table)
-			if touches {
-				if !staticKey {
-					return false
-				}
-				keys[key] = true
-			}
-		}
-		parent, ok := idom[cursor]
-		if !ok || parent == cursor {
-			return false
-		}
-		cursor = parent
-	}
-	return true
-}
-
-func (p discriminatedUnionExhaustiveness) applyCurrentBodyDispatchWrites(result *body.Result, point cfg.Point, table pathdom.Path, keys map[string]bool) bool {
+func (p discriminatedUnionExhaustiveness) applyReachableDispatchTableAssignments(result *body.Result, from, point cfg.Point, table pathdom.Path, keys map[string]bool) bool {
 	graph := result.Graph()
-	if graph == nil || p.flow == nil {
+	if graph == nil {
 		return false
 	}
-	idom := p.flow.immediateDominators()
+	var idom map[cfg.Point]cfg.Point
+	if p.flow != nil && p.flow.graph == graph {
+		idom = p.flow.immediateDominators()
+	} else {
+		idom = dominance.ComputeImmediateDominatorInfo(graph).Map()
+	}
 	if len(idom) == 0 {
 		return false
 	}
 	for _, candidate := range graph.RPO() {
+		if candidate == from || candidate == point {
+			continue
+		}
 		fact, ok := result.OrdinaryAssignment(candidate)
 		if !ok {
 			continue
 		}
 		key, staticKey, touches := dispatchTableAssignmentKeyForPath(fact, table)
-		if !touches || !diagnosticCanReach(p.flow, graph, candidate, point) {
+		if !touches ||
+			!diagnosticCanReach(p.flow, graph, from, candidate) ||
+			!diagnosticCanReach(p.flow, graph, candidate, point) {
 			continue
 		}
-		if !dominance.Dominates(idom, candidate, point) || !staticKey {
+		if dominance.Dominates(idom, candidate, point) {
+			if replacement, _, ok := dispatchTableReplacementKeys(result, fact, table); ok {
+				replaceDispatchKeySet(keys, replacement)
+				continue
+			}
+			if !staticKey {
+				return false
+			}
+			keys[key] = true
+			continue
+		}
+		if replacement, _, ok := dispatchTableReplacementKeys(result, fact, table); ok {
+			intersectDispatchKeySet(keys, replacement)
+			continue
+		}
+		if !staticKey {
 			return false
 		}
-		keys[key] = true
 	}
 	return true
+}
+
+func dispatchTableReplacementKeys(result *body.Result, fact semantics.OrdinaryAssignmentFact, table pathdom.Path) (map[string]bool, diagnostic.Span, bool) {
+	suffix, ok := dispatchTableReplacementSuffix(fact, table)
+	if !ok || fact.Value == nil {
+		return nil, diagnostic.Span{}, false
+	}
+	literal, ok := result.ObjectLiteral(fact.Value)
+	if !ok {
+		return nil, diagnostic.Span{}, false
+	}
+	return objectLiteralDispatchKeysAtPath(result, literal, suffix)
+}
+
+func dispatchTableReplacementSuffix(fact semantics.OrdinaryAssignmentFact, table pathdom.Path) ([]segment.Segment, bool) {
+	if table.Symbol == 0 {
+		return nil, false
+	}
+	if fact.HasSymbol && fact.Symbol == table.Symbol {
+		return append([]segment.Segment(nil), table.Segments...), true
+	}
+	if !fact.HasPath {
+		return nil, false
+	}
+	if fact.Path.Equal(table) {
+		return nil, true
+	}
+	if pathHasPrefix(table, fact.Path) {
+		suffix := table.Segments[len(fact.Path.Segments):]
+		return append([]segment.Segment(nil), suffix...), true
+	}
+	return nil, false
+}
+
+func replaceDispatchKeySet(target map[string]bool, replacement map[string]bool) {
+	for key := range target {
+		delete(target, key)
+	}
+	for key, present := range replacement {
+		target[key] = present
+	}
+}
+
+func intersectDispatchKeySet(target map[string]bool, other map[string]bool) {
+	for key := range target {
+		if !other[key] {
+			delete(target, key)
+		}
+	}
 }
 
 func dispatchTableAssignmentKeyForPath(fact semantics.OrdinaryAssignmentFact, table pathdom.Path) (key string, staticKey bool, touches bool) {
