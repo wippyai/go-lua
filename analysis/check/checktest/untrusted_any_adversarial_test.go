@@ -9,20 +9,89 @@ import (
 )
 
 func TestGenericIdentityDoesNotLaunderExplicitAnyIntoRecordAssignment(t *testing.T) {
-	result := Check(`
+	src := strings.TrimLeft(`
 local function id<T>(x: T): T
     return x
 end
 
 local raw = ({ id = "ok" } :: any)
 local req: { id: string } = id(raw)
-`)
-	diag := requireDiagnosticCode(t, result, diagnostics.CodeDirectCallResultAssignment)
-	if got := diag.Explanation.String(); !strings.Contains(got, "user asserted any") ||
-		!strings.Contains(got, "call result 1 comes from any/unknown") ||
-		!strings.Contains(got, "no proof on this path shows call result 1 is {id: string}") {
-		t.Fatalf("explanation = %q, want explicit-any claim and missing-proof evidence", got)
-	}
+`, "\n")
+	result := Check(src)
+	diag := requireDiagnostic(t, result, diagnosticExpectation{
+		Code:            diagnostics.CodeDirectCallResultAssignment,
+		Severity:        diagnostic.SeverityError,
+		DiagnosticCount: 1,
+		Line:            6,
+		Column:          29,
+		MessageContains: []string{
+			"call result 1",
+			"any",
+			"not {id: string}",
+		},
+		EvidenceChain: []diagnosticEvidenceExpectation{
+			{
+				Kind:            diagnostic.EvidenceAbstractFact,
+				Trust:           diagnostic.TrustProven,
+				MessageContains: []string{"id returns any"},
+			},
+			{
+				Kind:            diagnostic.EvidenceUserAssertion,
+				Trust:           diagnostic.TrustClaimed,
+				MessageContains: []string{"assignment target req requires {id: string}"},
+			},
+			{
+				Kind:            diagnostic.EvidenceUserAssertion,
+				Trust:           diagnostic.TrustClaimed,
+				MessageContains: []string{"user asserted any", "not abstract-interpreter proof"},
+			},
+			{
+				Kind:            diagnostic.EvidencePrecisionBoundary,
+				Trust:           diagnostic.TrustUnknown,
+				MessageContains: []string{"call result 1 comes from any/unknown"},
+			},
+			{
+				Kind:            diagnostic.EvidenceMissingProof,
+				Trust:           diagnostic.TrustUnknown,
+				MessageContains: []string{"no proof on this path", "call result 1", "{id: string}"},
+			},
+		},
+		LabelContains: []string{"declared type", "call result"},
+		HelpContains:  []string{"Assign the call result", "compatible target type", "change the callee return type"},
+		Sources:       diagnostic.SourceMap{"test.lua": src},
+		RenderOrderedContains: []string{
+			`error[type.call.direct.result_assignment]: call result 1 is any, not {id: string}`,
+			`  |            ↓ declared type`,
+			`6 | local req: { id: string } = id(raw)`,
+			`  |                             ↑ call result`,
+			`1. proven: id returns any`,
+			`2. claimed: assignment target req requires {id: string}`,
+			`3. claimed: user asserted any; not abstract-interpreter proof`,
+			`4. unvalidated value: call result 1 comes from any/unknown`,
+			`5. missing proof: no proof on this path shows call result 1 is {id: string}`,
+			`help: Assign the call result to a compatible target type, or change the callee return type if this result is valid.`,
+		},
+	})
+	rendered := diagnostic.Render(diag, diagnostic.RenderOptions{
+		Sources:             diagnostic.SourceMap{"test.lua": src},
+		ShowSourceLabelRows: true,
+	})
+	want := `error[type.call.direct.result_assignment]: call result 1 is any, not {id: string}
+ --> test.lua:6:29
+  |
+  |            ↓ declared type
+6 | local req: { id: string } = id(raw)
+  |                             ↑ call result
+
+because:
+  1. proven: id returns any
+  2. claimed: assignment target req requires {id: string}
+  3. claimed: user asserted any; not abstract-interpreter proof
+  4. unvalidated value: call result 1 comes from any/unknown
+  5. missing proof: no proof on this path shows call result 1 is {id: string}
+
+help: Assign the call result to a compatible target type, or change the callee return type if this result is valid.`
+	assertRenderedEqual(t, rendered, want)
 }
 
 func TestGenericIdentityDoesNotLaunderExplicitAnyIntoRecordCall(t *testing.T) {
