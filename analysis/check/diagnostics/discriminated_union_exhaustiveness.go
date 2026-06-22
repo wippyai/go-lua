@@ -17,7 +17,9 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
 	"github.com/wippyai/go-lua/analysis/lua/typeannotation"
 	"github.com/wippyai/go-lua/analysis/type/access"
+	"github.com/wippyai/go-lua/analysis/type/subst"
 	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/analysis/type/unwrap"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
 
@@ -1342,24 +1344,94 @@ func (p discriminatedUnionExhaustiveness) stringDiscriminantDomainsForRoot(resul
 	if !ok {
 		return nil
 	}
-	_, cases, ok := variant.OriginCasesOfType(rootType)
-	if !ok || len(cases) < 2 {
+	out := stringDiscriminantDomainsForType(root, nil, rootType, 0)
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].target.String() < out[j].target.String()
+	})
+	return out
+}
+
+func stringDiscriminantDomainsForType(root pathdom.Path, prefix []segment.Segment, t typ.Type, depth int) []stringDiscriminantDomain {
+	if t == nil || depth > typ.DefaultRecursionDepth {
 		return nil
 	}
+	if _, cases, ok := variant.OriginCasesOfType(t); ok && len(cases) >= 2 {
+		return stringDiscriminantDomainsForCases(root, prefix, cases)
+	}
+	var out []stringDiscriminantDomain
+	for _, child := range staticDiscriminantChildren(t, depth) {
+		nextPrefix := appendSegment(prefix, child.segment)
+		out = append(out, stringDiscriminantDomainsForType(root, nextPrefix, child.typ, depth+1)...)
+	}
+	return out
+}
+
+func stringDiscriminantDomainsForCases(root pathdom.Path, prefix []segment.Segment, cases []variant.OriginCase) []stringDiscriminantDomain {
 	var out []stringDiscriminantDomain
 	for _, suffix := range stringLiteralSuffixes(cases[0].Type, nil, 0) {
-		target := root
-		target.Segments = append([]segment.Segment(nil), suffix...)
+		target := root.AppendSegments(prefix).AppendSegments(suffix)
 		domainCases, ok := stringDiscriminantCasesFor(target, suffix, cases)
 		if !ok {
 			continue
 		}
 		out = append(out, stringDiscriminantDomain{target: target, cases: domainCases})
 	}
-	sort.Slice(out, func(i, j int) bool {
-		return out[i].target.String() < out[j].target.String()
-	})
 	return out
+}
+
+type staticDiscriminantChild struct {
+	segment segment.Segment
+	typ     typ.Type
+}
+
+func staticDiscriminantChildren(t typ.Type, depth int) []staticDiscriminantChild {
+	if t == nil || depth > typ.DefaultRecursionDepth {
+		return nil
+	}
+	switch v := unwrap.Annotated(t).(type) {
+	case *typ.Alias:
+		return staticDiscriminantChildren(v.UnaliasedTarget(), depth+1)
+	case *typ.Optional:
+		return staticDiscriminantChildren(v.Inner, depth+1)
+	case *typ.Recursive:
+		if v.Body == nil || v.Body == t {
+			return nil
+		}
+		return staticDiscriminantChildren(v.Body, depth+1)
+	case *typ.Instantiated:
+		expanded, ok := subst.ExpandInstantiatedChanged(v)
+		if !ok {
+			return nil
+		}
+		return staticDiscriminantChildren(expanded, depth+1)
+	case *typ.Record:
+		out := make([]staticDiscriminantChild, 0, len(v.Fields)+len(v.StaticMembers))
+		for _, field := range v.Fields {
+			out = append(out, staticDiscriminantChild{
+				segment: segment.Segment{Kind: segment.SegmentField, Name: field.Name},
+				typ:     field.Type,
+			})
+		}
+		for _, member := range v.StaticMembers {
+			if member.Kind != typ.StaticMemberStringIndex {
+				continue
+			}
+			out = append(out, staticDiscriminantChild{
+				segment: segment.Segment{Kind: segment.SegmentIndexString, Name: member.Name},
+				typ:     member.Type,
+			})
+		}
+		return out
+	default:
+		return nil
+	}
+}
+
+func appendSegment(prefix []segment.Segment, seg segment.Segment) []segment.Segment {
+	next := make([]segment.Segment, 0, len(prefix)+1)
+	next = append(next, prefix...)
+	next = append(next, seg)
+	return next
 }
 
 func stringLiteralSuffixes(t typ.Type, prefix []segment.Segment, depth int) [][]segment.Segment {
