@@ -87,8 +87,8 @@ func applyBranchNumFloorRefinement(
 	return out.WriteNumFloor(resolver.KeySpace(), pathKey, fact.Floor())
 }
 
-// applyBranchDiffConstraint records a true-edge difference-logic fact between two
-// linear path terms. A length operand keys through state.LengthRelKey so it
+// applyBranchDiffConstraint records an edge-specific difference-logic fact
+// between two linear path terms. A length operand keys through state.LengthRelKey so it
 // stays distinct from the array's value path in the constraint graph.
 func applyBranchDiffConstraint(
 	ctx transfer.EdgeContext,
@@ -99,18 +99,18 @@ func applyBranchDiffConstraint(
 	if resolver == nil {
 		return out
 	}
-	hiKey, ok := diffOperandKey(resolver, ctx.Edge.From, fact.HiPath(), fact.HiIsLength())
+	hiKey, ok := relationGraphKeyAt(resolver, ctx.Edge.From, fact.HiPath(), fact.HiIsLength())
 	if !ok {
 		return out
 	}
-	loKey, ok := diffOperandKey(resolver, ctx.Edge.From, fact.LoPath(), fact.LoIsLength())
+	loKey, ok := relationGraphKeyAt(resolver, ctx.Edge.From, fact.LoPath(), fact.LoIsLength())
 	if !ok {
 		return out
 	}
 	var hi2Key pathdom.PathKey
 	coHi2 := fact.CoHi2()
 	if fact.HasHi2() {
-		hi2Key, ok = diffOperandKey(resolver, ctx.Edge.From, fact.Hi2Path(), fact.Hi2IsLength())
+		hi2Key, ok = relationGraphKeyAt(resolver, ctx.Edge.From, fact.Hi2Path(), fact.Hi2IsLength())
 		if !ok {
 			return out
 		}
@@ -118,20 +118,6 @@ func applyBranchDiffConstraint(
 		coHi2 = 0
 	}
 	return out.WriteScaledConstraint(fact.CoHi(), hiKey, coHi2, hi2Key, loKey, fact.C())
-}
-
-func diffOperandKey(resolver *visibility.Resolver, point cfg.Point, p pathdom.Path, isLength bool) (pathdom.PathKey, bool) {
-	if p.Symbol == 0 {
-		return "", false
-	}
-	pathKey := visibility.RootOrVisibleKeyAt(resolver, point, p)
-	if pathKey == "" {
-		return "", false
-	}
-	if isLength {
-		return state.LengthRelKey(pathKey), true
-	}
-	return pathKey, true
 }
 
 func applyValueRefinementAt(

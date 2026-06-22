@@ -281,14 +281,14 @@ type BranchRefinementSet struct {
 	diffConstraints []BranchDiffConstraint
 }
 
-// WithDiffConstraints returns s extended with true-edge difference-logic facts.
+// WithDiffConstraints returns s extended with edge-specific difference-logic facts.
 func (s BranchRefinementSet) WithDiffConstraints(diffs ...BranchDiffConstraint) BranchRefinementSet {
 	out := s.copy()
 	out.diffConstraints = append(out.diffConstraints, copyBranchDiffConstraintSlice(diffs)...)
 	return out
 }
 
-// DiffConstraints returns the true-edge difference-logic facts.
+// DiffConstraints returns the edge-specific difference-logic facts.
 func (s BranchRefinementSet) DiffConstraints() []BranchDiffConstraint {
 	return copyBranchDiffConstraintSlice(s.diffConstraints)
 }
@@ -315,27 +315,27 @@ func NewBranchRefinementSet(refinements ...BranchRefinement) BranchRefinementSet
 	return BranchRefinementSet{refinements: copyBranchRefinementSlice(refinements)}
 }
 
-// WithLenRefinements returns s extended with true-edge length-floor facts.
+// WithLenRefinements returns s extended with edge-specific length-floor facts.
 func (s BranchRefinementSet) WithLenRefinements(lenFloors ...BranchLenRefinement) BranchRefinementSet {
 	out := s.copy()
 	out.lenFloors = append(out.lenFloors, copyBranchLenRefinementSlice(lenFloors)...)
 	return out
 }
 
-// WithNumFloorRefinements returns s extended with true-edge numeric-floor facts.
+// WithNumFloorRefinements returns s extended with edge-specific numeric-floor facts.
 func (s BranchRefinementSet) WithNumFloorRefinements(numFloors ...BranchNumFloorRefinement) BranchRefinementSet {
 	out := s.copy()
 	out.numFloors = append(out.numFloors, copyBranchNumFloorRefinementSlice(numFloors)...)
 	return out
 }
 
-// LenRefinements returns the true-edge length-floor facts in deterministic
+// LenRefinements returns the length-floor branch facts in deterministic
 // order.
 func (s BranchRefinementSet) LenRefinements() []BranchLenRefinement {
 	return copyBranchLenRefinementSlice(s.lenFloors)
 }
 
-// NumFloorRefinements returns the true-edge numeric-floor facts in deterministic
+// NumFloorRefinements returns the numeric-floor branch facts in deterministic
 // order.
 func (s BranchRefinementSet) NumFloorRefinements() []BranchNumFloorRefinement {
 	return copyBranchNumFloorRefinementSlice(s.numFloors)

@@ -249,7 +249,7 @@ func (f Facts) BranchRefinements(point cfg.Point) []BranchRefinement {
 	return nil
 }
 
-// BranchLenRefinements returns the true-edge length-floor facts at point.
+// BranchLenRefinements returns the length-floor branch facts at point.
 func (f Facts) BranchLenRefinements(point cfg.Point) []BranchLenRefinement {
 	if set, ok := f.branchRefinements[point]; ok {
 		return set.LenRefinements()
@@ -257,7 +257,7 @@ func (f Facts) BranchLenRefinements(point cfg.Point) []BranchLenRefinement {
 	return nil
 }
 
-// BranchNumFloorRefinements returns the true-edge numeric-floor facts at point.
+// BranchNumFloorRefinements returns the numeric-floor branch facts at point.
 func (f Facts) BranchNumFloorRefinements(point cfg.Point) []BranchNumFloorRefinement {
 	if set, ok := f.branchRefinements[point]; ok {
 		return set.NumFloorRefinements()
@@ -265,7 +265,7 @@ func (f Facts) BranchNumFloorRefinements(point cfg.Point) []BranchNumFloorRefine
 	return nil
 }
 
-// BranchDiffConstraints returns the true-edge difference-logic facts at point.
+// BranchDiffConstraints returns the difference-logic branch facts at point.
 func (f Facts) BranchDiffConstraints(point cfg.Point) []BranchDiffConstraint {
 	if set, ok := f.branchRefinements[point]; ok {
 		return set.DiffConstraints()

@@ -249,18 +249,18 @@ func applyNormalReturnRelConstraint(
 	out state.State,
 	fact callboundary.RelConstraintFact,
 ) state.State {
-	aKey, ok := callRelOperandKeyAt(resolver, point, bindings, fact.A)
+	aKey, ok := callRelationGraphKeyAt(resolver, point, bindings, fact.A)
 	if !ok {
 		return out
 	}
-	cKey, ok := callRelOperandKeyAt(resolver, point, bindings, fact.C)
+	cKey, ok := callRelationGraphKeyAt(resolver, point, bindings, fact.C)
 	if !ok {
 		return out
 	}
 	var bKey pathdom.PathKey
 	coB := fact.CoB
 	if coB != 0 && !fact.B.Path.IsEmpty() {
-		bKey, ok = callRelOperandKeyAt(resolver, point, bindings, fact.B)
+		bKey, ok = callRelationGraphKeyAt(resolver, point, bindings, fact.B)
 		if !ok {
 			return out
 		}
@@ -270,7 +270,7 @@ func applyNormalReturnRelConstraint(
 	return out.WriteScaledConstraint(fact.CoA, aKey, coB, bKey, cKey, fact.K)
 }
 
-func callRelOperandKeyAt(
+func callRelationGraphKeyAt(
 	resolver *visibility.Resolver,
 	point cfg.Point,
 	bindings []pathdom.Path,
@@ -280,14 +280,7 @@ func callRelOperandKeyAt(
 	if !ok || targetPath.Symbol == 0 {
 		return "", false
 	}
-	pathKey := visibility.RootOrVisibleKeyAt(resolver, point, targetPath)
-	if pathKey == "" {
-		return "", false
-	}
-	if operand.IsLength {
-		return state.LengthRelKey(pathKey), true
-	}
-	return pathKey, true
+	return relationGraphKeyAt(resolver, point, targetPath, operand.IsLength)
 }
 
 // applyCallParamExposures eager-widens each argument object the callee exposes

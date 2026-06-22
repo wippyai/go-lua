@@ -234,6 +234,64 @@ func TestFactsEdgeTransferRootRefinementInvalidatesDescendantPathFacts(t *testin
 	assertPathValue(t, reg, ks, got[elsePoint], childKey, staleChild)
 }
 
+func TestFactsEdgeTransferAppliesBranchDiffConstraintRelationGraphKeys(t *testing.T) {
+	reg := standard.Registry()
+	graph := cfg.New()
+	branch := graph.AddNode(cfg.NodeBranch)
+	thenPoint := graph.AddNode(cfg.NodeNoop)
+	elsePoint := graph.AddNode(cfg.NodeNoop)
+	xs := symbol.ID(331)
+	i := symbol.ID(332)
+	j := symbol.ID(333)
+	xsPath := pathdom.NewPath(xs, "xs")
+	iPath := pathdom.NewPath(i, "i")
+	jPath := pathdom.NewPath(j, "j")
+	visibilityBuilder := visibility.NewBuilder()
+	visibilityBuilder.Define(branch, xs, "xs")
+	visibilityBuilder.Define(branch, i, "i")
+	visibilityBuilder.Define(branch, j, "j")
+	resolver := visibility.NewResolver(visibilityBuilder.Build())
+	diff := factflow.NewBranchScaledConstraintOnEdge(1, iPath, false, 1, jPath, false, xsPath, true, 0, true)
+	edgeTransfer := NewFactsEdgeTransfer(FactsEdgeTransferConfig{
+		Facts: factflow.NewFacts(factflow.FactsInput{
+			BranchRefinements: map[cfg.Point]factflow.BranchRefinementSet{
+				branch: factflow.NewBranchRefinementSet().WithDiffConstraints(diff),
+			},
+		}),
+		Visibility: resolver,
+	})
+
+	trueOut := edgeTransfer(transfer.EdgeContext{
+		Graph:    graph,
+		Registry: reg,
+		Edge:     cfg.Edge{From: branch, To: thenPoint, Cond: true},
+		HasCond:  true,
+	}, state.State{})
+	falseOut := edgeTransfer(transfer.EdgeContext{
+		Graph:    graph,
+		Registry: reg,
+		Edge:     cfg.Edge{From: branch, To: elsePoint, Cond: false},
+		HasCond:  true,
+	}, state.State{})
+
+	xsKey := visibility.RootOrVisibleKeyAt(resolver, branch, xsPath)
+	iKey := visibility.RootOrVisibleKeyAt(resolver, branch, iPath)
+	jKey := visibility.RootOrVisibleKeyAt(resolver, branch, jPath)
+	constraints := trueOut.RelConstraints().Constraints
+	if len(constraints) != 1 {
+		t.Fatalf("true-edge relational constraints = %#v, want one relation", constraints)
+	}
+	constraint := constraints[0]
+	if constraint.CoA != 1 || constraint.CoB != 1 || constraint.K != 0 ||
+		!((constraint.A == iKey && constraint.B == jKey) || (constraint.A == jKey && constraint.B == iKey)) ||
+		constraint.C != state.LengthRelKey(xsKey) {
+		t.Fatalf("true-edge relation = %#v, want i+j-len(xs)<=0 under relation graph keys", constraint)
+	}
+	if constraints := falseOut.RelConstraints().Constraints; len(constraints) != 0 {
+		t.Fatalf("false-edge relational constraints = %#v, want no true-edge relation leak", constraints)
+	}
+}
+
 func TestFactsEdgeTransferRootRefinementAllowsLaterChildRepublish(t *testing.T) {
 	reg := standard.Registry()
 	graph := cfg.New()
