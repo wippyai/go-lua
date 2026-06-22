@@ -1121,7 +1121,7 @@ func registrationCallFromFact(result *body.Result, fact semantics.CallFact, poin
 		return registrationCall{}, false
 	}
 	key, ok := stringLiteralExprValue(fact.Args[keyIndex])
-	if !ok || !registrationCallbackExpr(fact.Args[keyIndex+1]) {
+	if !ok || !registrationCallbackExpr(result, point, fact.Args[keyIndex+1]) {
 		return registrationCall{}, false
 	}
 	return registrationCall{
@@ -1151,10 +1151,10 @@ func registrationRegistryAndKeyIndex(result *body.Result, fact semantics.CallFac
 func openRegistrationMutationFromFact(result *body.Result, point cfg.Point, fact semantics.CallFact) (pathdom.Path, bool) {
 	registry, keyIndex, ok := registrationRegistryAndKeyIndex(result, fact)
 	if ok && keyIndex >= 0 && keyIndex < len(fact.Args)-1 {
-		if _, ok := stringLiteralExprValue(fact.Args[keyIndex]); ok && registrationCallbackExpr(fact.Args[keyIndex+1]) {
+		if _, ok := stringLiteralExprValue(fact.Args[keyIndex]); ok && registrationCallbackExpr(result, point, fact.Args[keyIndex+1]) {
 			return pathdom.Path{}, false
 		}
-		if registrationCallbackExpr(fact.Args[keyIndex+1]) {
+		if registrationCallbackExpr(result, point, fact.Args[keyIndex+1]) {
 			return registry, true
 		}
 	}
@@ -1170,11 +1170,12 @@ func openRegistrationMutationFromFact(result *body.Result, point cfg.Point, fact
 	return pathdom.Path{}, false
 }
 
-func registrationCallbackExpr(expr ast.Expr) bool {
+func registrationCallbackExpr(result *body.Result, point cfg.Point, expr ast.Expr) bool {
 	if _, ok := directFunctionExprFromExpr(expr); ok {
 		return true
 	}
-	return false
+	_, ok := result.FunctionValueTypeAtBoundary(point, expr)
+	return ok
 }
 
 func (p discriminatedUnionExhaustiveness) dispatchCalls(result *body.Result, graph cfg.Graph) []dispatchCall {
