@@ -5669,6 +5669,40 @@ func TestDominatingRootLocalAssignmentUsesDiagnosticFlowCache(t *testing.T) {
 	}
 }
 
+func TestOptionalPathEquivalenceUsesDominatingAliasDeclaration(t *testing.T) {
+	root := runDiagnosticsResult(t, `
+		local function remember(maybe: string?, sink: { seen: string }): string
+			local alias = maybe
+			if alias ~= nil then
+				sink.seen = maybe
+			end
+			return sink.seen
+		end
+	`)
+	if len(root.FunctionResults()) != 1 {
+		t.Fatalf("nested function results = %d, want 1", len(root.FunctionResults()))
+	}
+	result := root.FunctionResults()[0]
+	flow := newDiagnosticFlowCache(result)
+	resolver := newResultResolver(result, newResultResolver(root, nil))
+	branchPoint, aliasPath := requireBranchCheckPath(t, result, branchcond.CheckNotNil, "alias")
+	_, aliasExpr := requireLocalAssignmentExprByName(t, result, "alias")
+	maybePath, ok := result.ExpressionPath(aliasExpr)
+	if !ok || maybePath.IsEmpty() {
+		t.Fatalf("alias source path = %v, %v; want maybe path", maybePath, ok)
+	}
+	if !optionalPathsEquivalentAt(result, flow, branchPoint, maybePath, aliasPath) {
+		t.Fatalf("optionalPathsEquivalentAt(%s, %s) = false, want dominating alias equivalence", maybePath, aliasPath)
+	}
+	if !optionalPathConsumesTarget(result, flow, branchPoint, maybePath, aliasPath) {
+		t.Fatalf("optionalPathConsumesTarget(%s, %s) = false, want alias-guarded source consumption", maybePath, aliasPath)
+	}
+	aliasType, ok := optionalPathType(result, resolver, flow, branchPoint, aliasPath)
+	if !ok || !optionalTypeHasValue(aliasType) {
+		t.Fatalf("optionalPathType(%s) = (%v, %v), want optional source type", aliasPath, aliasType, ok)
+	}
+}
+
 func TestDiagnosticFlowCacheCachesImmediateDominators(t *testing.T) {
 	result := runDiagnosticsResult(t, `
 		local seed = 1
@@ -5702,6 +5736,23 @@ func TestDiagnosticFlowCacheTreatsEntryAsReachablePoint(t *testing.T) {
 	if !flow.canReach(graph.Entry(), graph.Entry()) {
 		t.Fatalf("entry should reach itself through diagnostic flow cache")
 	}
+}
+
+func requireBranchCheckPath(t *testing.T, result *body.Result, kind branchcond.CheckKind, pathText string) (cfg.Point, path.Path) {
+	t.Helper()
+	var available []string
+	for _, point := range result.Graph().RPO() {
+		fact, ok := result.BranchCondition(point)
+		if ok {
+			available = append(available, fact.Check.Path.String())
+		}
+		if !ok || fact.Check.Kind != kind || fact.Check.Path.String() != pathText {
+			continue
+		}
+		return point, fact.Check.Path
+	}
+	t.Fatalf("branch check %v for %q not found; available branch paths: %v", kind, pathText, available)
+	return 0, path.Path{}
 }
 
 func TestTruthyDominatingBranchProofsRecognizeTrueArmPresence(t *testing.T) {

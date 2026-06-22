@@ -2503,6 +2503,81 @@ end
 	})
 }
 
+func TestOptionalExhaustivenessReportsOriginalConsumedThroughAliasGuard(t *testing.T) {
+	result := Check(`
+type Sink = { seen: string }
+
+local function remember(maybe: string?, sink: Sink): string
+    local alias = maybe
+    if alias ~= nil then
+        sink.seen = maybe
+    end
+    return sink.seen
+end
+`, WithDiagnosticRule(
+		diagnostics.CodeDiscriminatedUnionExhaustive,
+		diagnostic.Enable(),
+	))
+	requireDiagnostic(t, result, diagnosticExpectation{
+		Code:            diagnostics.CodeDiscriminatedUnionExhaustive,
+		Severity:        diagnostic.SeverityWarning,
+		MessageContains: []string{"optional handling is not exhaustive", "alias == nil"},
+		EvidenceOrdered: []string{
+			"branch checks optional `alias`",
+			"consumed case: `alias ~= nil`",
+			"missing cases: `alias == nil`",
+		},
+	})
+}
+
+func TestOptionalExhaustivenessReportsAliasConsumedThroughOriginalGuard(t *testing.T) {
+	result := Check(`
+type Sink = { seen: string }
+
+local function remember(maybe: string?, sink: Sink): string
+    local alias = maybe
+    if maybe ~= nil then
+        sink.seen = alias
+    end
+    return sink.seen
+end
+`, WithDiagnosticRule(
+		diagnostics.CodeDiscriminatedUnionExhaustive,
+		diagnostic.Enable(),
+	))
+	requireDiagnostic(t, result, diagnosticExpectation{
+		Code:            diagnostics.CodeDiscriminatedUnionExhaustive,
+		Severity:        diagnostic.SeverityWarning,
+		MessageContains: []string{"optional handling is not exhaustive", "maybe == nil"},
+		EvidenceOrdered: []string{
+			"branch checks optional `maybe`",
+			"consumed case: `maybe ~= nil`",
+			"missing cases: `maybe == nil`",
+		},
+	})
+}
+
+func TestOptionalExhaustivenessDoesNotUseReassignedAliasGuardForOriginal(t *testing.T) {
+	result := Check(`
+type Sink = { seen: string }
+
+local function remember(maybe: string?, replacement: string?, sink: Sink): string
+    local alias = maybe
+    alias = replacement
+    if alias ~= nil then
+        sink.seen = maybe
+    end
+    return sink.seen
+end
+`, WithDiagnosticRule(
+		diagnostics.CodeDiscriminatedUnionExhaustive,
+		diagnostic.Enable(),
+	))
+	if hasDiagnosticCode(result.Diagnostics, diagnostics.CodeDiscriminatedUnionExhaustive) {
+		t.Fatalf("diagnostics = %#v, want no optional exhaustiveness warning after alias reassignment breaks equivalence", result.Diagnostics)
+	}
+}
+
 func TestOptionalExhaustivenessDoesNotUseInvalidatedFieldProof(t *testing.T) {
 	result := Check(`
 type Box = { value: string? }

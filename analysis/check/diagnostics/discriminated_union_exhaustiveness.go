@@ -355,7 +355,7 @@ func (p discriminatedUnionExhaustiveness) optionalChainDiagnostic(result *body.R
 		handlesNil = handlesNil || candidate.handlesNil
 		handlesValue = handlesValue || candidate.handlesValue
 		if candidate.handlesValue &&
-			optionalBranchConsumesPath(result, stmt.Then, candidate.target) &&
+			optionalBranchConsumesPath(result, p.flow, branch.point, stmt.Then, candidate.target) &&
 			!optionalStatementsTerminate(result, stmt.Then) {
 			consumesValue = true
 		}
@@ -376,7 +376,7 @@ func (p discriminatedUnionExhaustiveness) optionalCandidateForCheck(result *body
 	if check.Path.IsEmpty() {
 		return optionalBranchCandidate{}, false
 	}
-	t, ok := optionalPathType(result, p.resolver, point, check.Path)
+	t, ok := optionalPathType(result, p.resolver, p.flow, point, check.Path)
 	if !ok || !optionalTypeHasValue(t) {
 		return optionalBranchCandidate{}, false
 	}
@@ -397,7 +397,18 @@ func (p discriminatedUnionExhaustiveness) optionalCandidateForCheck(result *body
 	return optionalBranchCandidate{}, false
 }
 
-func optionalPathType(result *body.Result, resolver typeannotation.Resolver, point cfg.Point, target pathdom.Path) (typ.Type, bool) {
+func optionalPathType(result *body.Result, resolver typeannotation.Resolver, flow *diagnosticFlowCache, point cfg.Point, target pathdom.Path) (typ.Type, bool) {
+	direct, directOK := optionalDirectPathType(result, resolver, point, target)
+	if directOK && optionalTypeHasValue(direct) {
+		return direct, true
+	}
+	if t, ok := optionalDominatingAliasSourceType(result, resolver, flow, point, target); ok {
+		return t, true
+	}
+	return direct, directOK
+}
+
+func optionalDirectPathType(result *body.Result, resolver typeannotation.Resolver, point cfg.Point, target pathdom.Path) (typ.Type, bool) {
 	if target.Symbol == 0 {
 		return nil, false
 	}
@@ -415,6 +426,21 @@ func optionalPathType(result *body.Result, resolver typeannotation.Resolver, poi
 		t = next
 	}
 	return t, true
+}
+
+func optionalDominatingAliasSourceType(result *body.Result, resolver typeannotation.Resolver, flow *diagnosticFlowCache, point cfg.Point, target pathdom.Path) (typ.Type, bool) {
+	if result == nil || target.Symbol == 0 {
+		return nil, false
+	}
+	fact, _, ok := dominatingRootLocalAssignment(result, flow, point, target.Symbol)
+	if !ok || fact.Expr == nil || fact.Type != nil {
+		return nil, false
+	}
+	source, ok := result.ExpressionPath(fact.Expr)
+	if !ok || source.IsEmpty() {
+		return nil, false
+	}
+	return optionalDirectPathType(result, resolver, point, source.AppendSegments(target.Segments))
 }
 
 func optionalTypeHasValue(t typ.Type) bool {
@@ -448,14 +474,14 @@ func typeAdmitsFalse(t typ.Type) bool {
 	}
 }
 
-func optionalBranchConsumesPath(result *body.Result, stmts []ast.Stmt, target pathdom.Path) bool {
-	consumed, _ := optionalStatementsConsumePath(result, stmts, target)
+func optionalBranchConsumesPath(result *body.Result, flow *diagnosticFlowCache, proofPoint cfg.Point, stmts []ast.Stmt, target pathdom.Path) bool {
+	consumed, _ := optionalStatementsConsumePath(result, flow, proofPoint, stmts, target)
 	return consumed
 }
 
-func optionalStatementsConsumePath(result *body.Result, stmts []ast.Stmt, target pathdom.Path) (consumed bool, invalidated bool) {
+func optionalStatementsConsumePath(result *body.Result, flow *diagnosticFlowCache, proofPoint cfg.Point, stmts []ast.Stmt, target pathdom.Path) (consumed bool, invalidated bool) {
 	for _, stmt := range stmts {
-		stmtConsumed, stmtInvalidated := optionalStmtConsumesPath(result, stmt, target)
+		stmtConsumed, stmtInvalidated := optionalStmtConsumesPath(result, flow, proofPoint, stmt, target)
 		if stmtConsumed {
 			return true, false
 		}
@@ -501,113 +527,113 @@ func optionalNoReturnCall(result *body.Result, expr ast.Expr) bool {
 	return ok && result.IdentResolvesToGlobal(fn, "error")
 }
 
-func optionalStmtConsumesPath(result *body.Result, stmt ast.Stmt, target pathdom.Path) (consumed bool, invalidated bool) {
+func optionalStmtConsumesPath(result *body.Result, flow *diagnosticFlowCache, proofPoint cfg.Point, stmt ast.Stmt, target pathdom.Path) (consumed bool, invalidated bool) {
 	switch s := stmt.(type) {
 	case *ast.LocalAssignStmt:
-		if optionalExprsConsumePath(result, s.Exprs, target) {
+		if optionalExprsConsumePath(result, flow, proofPoint, s.Exprs, target) {
 			return true, false
 		}
-		return false, optionalExprsInvalidatePath(result, s.Exprs, target)
+		return false, optionalExprsInvalidatePath(result, flow, proofPoint, s.Exprs, target)
 	case *ast.AssignStmt:
-		if optionalExprsConsumePath(result, s.Rhs, target) {
+		if optionalExprsConsumePath(result, flow, proofPoint, s.Rhs, target) {
 			return true, false
 		}
-		if optionalExprsInvalidatePath(result, s.Rhs, target) {
+		if optionalExprsInvalidatePath(result, flow, proofPoint, s.Rhs, target) {
 			return false, true
 		}
 		invalidated := false
 		for _, lhs := range s.Lhs {
-			if optionalLValueConsumesPath(result, lhs, target) {
+			if optionalLValueConsumesPath(result, flow, proofPoint, lhs, target) {
 				return true, false
 			}
-			if optionalLValueInvalidatesPath(result, lhs, target) {
+			if optionalLValueInvalidatesPath(result, flow, proofPoint, lhs, target) {
 				invalidated = true
 			}
 		}
 		return false, invalidated
 	case *ast.FuncCallStmt:
-		if optionalExprConsumesPath(result, s.Expr, target) {
+		if optionalExprConsumesPath(result, flow, proofPoint, s.Expr, target) {
 			return true, false
 		}
 		call, _ := s.Expr.(*ast.FuncCallExpr)
-		return false, optionalCallInvalidatesPath(result, call, target)
+		return false, optionalCallInvalidatesPath(result, flow, proofPoint, call, target)
 	case *ast.ReturnStmt:
-		return optionalExprsConsumePath(result, s.Exprs, target), false
+		return optionalExprsConsumePath(result, flow, proofPoint, s.Exprs, target), false
 	case *ast.DoBlockStmt:
-		return optionalStatementsConsumePath(result, s.Stmts, target)
+		return optionalStatementsConsumePath(result, flow, proofPoint, s.Stmts, target)
 	case *ast.IfStmt:
-		thenConsumed, thenInvalidated := optionalStatementsConsumePath(result, s.Then, target)
+		thenConsumed, thenInvalidated := optionalStatementsConsumePath(result, flow, proofPoint, s.Then, target)
 		if thenConsumed {
 			return true, false
 		}
-		elseConsumed, elseInvalidated := optionalStatementsConsumePath(result, s.Else, target)
+		elseConsumed, elseInvalidated := optionalStatementsConsumePath(result, flow, proofPoint, s.Else, target)
 		if elseConsumed {
 			return true, false
 		}
 		return false, len(s.Else) != 0 && thenInvalidated && elseInvalidated
 	case *ast.WhileStmt:
-		return optionalBranchConsumesPath(result, s.Stmts, target), false
+		return optionalBranchConsumesPath(result, flow, proofPoint, s.Stmts, target), false
 	case *ast.RepeatStmt:
-		return optionalStatementsConsumePath(result, s.Stmts, target)
+		return optionalStatementsConsumePath(result, flow, proofPoint, s.Stmts, target)
 	case *ast.NumberForStmt:
-		return optionalExprConsumesPath(result, s.Init, target) ||
-			optionalExprConsumesPath(result, s.Limit, target) ||
-			optionalExprConsumesPath(result, s.Step, target) ||
-			optionalBranchConsumesPath(result, s.Stmts, target), false
+		return optionalExprConsumesPath(result, flow, proofPoint, s.Init, target) ||
+			optionalExprConsumesPath(result, flow, proofPoint, s.Limit, target) ||
+			optionalExprConsumesPath(result, flow, proofPoint, s.Step, target) ||
+			optionalBranchConsumesPath(result, flow, proofPoint, s.Stmts, target), false
 	case *ast.GenericForStmt:
-		return optionalExprsConsumePath(result, s.Exprs, target) ||
-			optionalBranchConsumesPath(result, s.Stmts, target), false
+		return optionalExprsConsumePath(result, flow, proofPoint, s.Exprs, target) ||
+			optionalBranchConsumesPath(result, flow, proofPoint, s.Stmts, target), false
 	case *ast.FuncDefStmt:
 		if s.Name == nil {
 			return false, false
 		}
-		return optionalLValueConsumesPath(result, s.Name.Func, target) ||
-			optionalExprConsumesPath(result, s.Name.Receiver, target), false
+		return optionalLValueConsumesPath(result, flow, proofPoint, s.Name.Func, target) ||
+			optionalExprConsumesPath(result, flow, proofPoint, s.Name.Receiver, target), false
 	}
 	return false, false
 }
 
-func optionalExprsConsumePath(result *body.Result, exprs []ast.Expr, target pathdom.Path) bool {
+func optionalExprsConsumePath(result *body.Result, flow *diagnosticFlowCache, proofPoint cfg.Point, exprs []ast.Expr, target pathdom.Path) bool {
 	for _, expr := range exprs {
-		if optionalExprConsumesPath(result, expr, target) {
+		if optionalExprConsumesPath(result, flow, proofPoint, expr, target) {
 			return true
 		}
 	}
 	return false
 }
 
-func optionalExprsInvalidatePath(result *body.Result, exprs []ast.Expr, target pathdom.Path) bool {
+func optionalExprsInvalidatePath(result *body.Result, flow *diagnosticFlowCache, proofPoint cfg.Point, exprs []ast.Expr, target pathdom.Path) bool {
 	for _, expr := range exprs {
-		if optionalExprInvalidatesPath(result, expr, target) {
+		if optionalExprInvalidatesPath(result, flow, proofPoint, expr, target) {
 			return true
 		}
 	}
 	return false
 }
 
-func optionalLValueConsumesPath(result *body.Result, expr ast.Expr, target pathdom.Path) bool {
+func optionalLValueConsumesPath(result *body.Result, flow *diagnosticFlowCache, proofPoint cfg.Point, expr ast.Expr, target pathdom.Path) bool {
 	switch e := expr.(type) {
 	case nil:
 		return false
 	case *ast.IdentExpr:
 		return false
 	case *ast.AttrGetExpr:
-		return optionalExprConsumesPath(result, e.Object, target) ||
-			(e.KeySyntax == ast.AttrKeyIndex && optionalExprConsumesPath(result, e.Key, target))
+		return optionalExprConsumesPath(result, flow, proofPoint, e.Object, target) ||
+			(e.KeySyntax == ast.AttrKeyIndex && optionalExprConsumesPath(result, flow, proofPoint, e.Key, target))
 	case *ast.CastExpr:
-		return optionalLValueConsumesPath(result, e.Expr, target)
+		return optionalLValueConsumesPath(result, flow, proofPoint, e.Expr, target)
 	case *ast.NonNilAssertExpr:
-		return optionalLValueConsumesPath(result, e.Expr, target)
+		return optionalLValueConsumesPath(result, flow, proofPoint, e.Expr, target)
 	default:
-		return optionalExprConsumesPath(result, expr, target)
+		return optionalExprConsumesPath(result, flow, proofPoint, expr, target)
 	}
 }
 
-func optionalLValueInvalidatesPath(result *body.Result, expr ast.Expr, target pathdom.Path) bool {
+func optionalLValueInvalidatesPath(result *body.Result, flow *diagnosticFlowCache, proofPoint cfg.Point, expr ast.Expr, target pathdom.Path) bool {
 	if expr == nil || target.IsEmpty() {
 		return false
 	}
-	if p, ok := result.ExpressionPath(expr); ok && optionalAssignedPathInvalidatesTarget(p, target) {
+	if p, ok := result.ExpressionPath(expr); ok && optionalAssignedPathInvalidatesTarget(result, flow, proofPoint, p, target) {
 		return true
 	}
 	attr, ok := expr.(*ast.AttrGetExpr)
@@ -615,18 +641,25 @@ func optionalLValueInvalidatesPath(result *body.Result, expr ast.Expr, target pa
 		return false
 	}
 	container, ok := result.ExpressionPath(attr.Object)
-	return ok && optionalAssignedPathInvalidatesTarget(container, target)
+	return ok && optionalAssignedPathInvalidatesTarget(result, flow, proofPoint, container, target)
 }
 
-func optionalAssignedPathInvalidatesTarget(assigned, target pathdom.Path) bool {
-	return !assigned.IsEmpty() && pathHasPrefix(target, assigned)
+func optionalAssignedPathInvalidatesTarget(result *body.Result, flow *diagnosticFlowCache, proofPoint cfg.Point, assigned, target pathdom.Path) bool {
+	if assigned.IsEmpty() || target.IsEmpty() {
+		return false
+	}
+	if pathHasPrefix(target, assigned) {
+		return true
+	}
+	prefix, ok := pathPrefixWithSegmentLen(target, len(assigned.Segments))
+	return ok && optionalPathsEquivalentAt(result, flow, proofPoint, assigned, prefix)
 }
 
-func optionalExprInvalidatesPath(result *body.Result, expr ast.Expr, target pathdom.Path) bool {
+func optionalExprInvalidatesPath(result *body.Result, flow *diagnosticFlowCache, proofPoint cfg.Point, expr ast.Expr, target pathdom.Path) bool {
 	if expr == nil || target.IsEmpty() {
 		return false
 	}
-	if call, ok := expr.(*ast.FuncCallExpr); ok && optionalCallInvalidatesPath(result, call, target) {
+	if call, ok := expr.(*ast.FuncCallExpr); ok && optionalCallInvalidatesPath(result, flow, proofPoint, call, target) {
 		return true
 	}
 	invalidates := false
@@ -634,14 +667,14 @@ func optionalExprInvalidatesPath(result *body.Result, expr ast.Expr, target path
 		if invalidates {
 			return
 		}
-		if optionalExprInvalidatesPath(result, child, target) {
+		if optionalExprInvalidatesPath(result, flow, proofPoint, child, target) {
 			invalidates = true
 		}
 	})
 	return invalidates
 }
 
-func optionalCallInvalidatesPath(result *body.Result, call *ast.FuncCallExpr, target pathdom.Path) bool {
+func optionalCallInvalidatesPath(result *body.Result, flow *diagnosticFlowCache, proofPoint cfg.Point, call *ast.FuncCallExpr, target pathdom.Path) bool {
 	if result == nil || call == nil || target.IsEmpty() {
 		return false
 	}
@@ -657,18 +690,18 @@ func optionalCallInvalidatesPath(result *body.Result, call *ast.FuncCallExpr, ta
 		return true
 	}
 	for _, candidate := range invalidated {
-		if optionalAssignedPathInvalidatesTarget(candidate, target) {
+		if optionalAssignedPathInvalidatesTarget(result, flow, proofPoint, candidate, target) {
 			return true
 		}
 	}
 	return false
 }
 
-func optionalExprConsumesPath(result *body.Result, expr ast.Expr, target pathdom.Path) bool {
+func optionalExprConsumesPath(result *body.Result, flow *diagnosticFlowCache, proofPoint cfg.Point, expr ast.Expr, target pathdom.Path) bool {
 	if expr == nil || target.IsEmpty() {
 		return false
 	}
-	if p, ok := result.ExpressionPath(expr); ok && pathHasPrefix(p, target) {
+	if p, ok := result.ExpressionPath(expr); ok && optionalPathConsumesTarget(result, flow, proofPoint, p, target) {
 		return true
 	}
 	consumes := false
@@ -676,11 +709,60 @@ func optionalExprConsumesPath(result *body.Result, expr ast.Expr, target pathdom
 		if consumes {
 			return
 		}
-		if optionalExprConsumesPath(result, child, target) {
+		if optionalExprConsumesPath(result, flow, proofPoint, child, target) {
 			consumes = true
 		}
 	})
 	return consumes
+}
+
+func optionalPathConsumesTarget(result *body.Result, flow *diagnosticFlowCache, proofPoint cfg.Point, used, target pathdom.Path) bool {
+	if used.IsEmpty() || target.IsEmpty() {
+		return false
+	}
+	if pathHasPrefix(used, target) {
+		return true
+	}
+	prefix, ok := pathPrefixWithSegmentLen(used, len(target.Segments))
+	return ok && optionalPathsEquivalentAt(result, flow, proofPoint, prefix, target)
+}
+
+func optionalPathsEquivalentAt(result *body.Result, flow *diagnosticFlowCache, proofPoint cfg.Point, left, right pathdom.Path) bool {
+	if result == nil || left.IsEmpty() || right.IsEmpty() {
+		return false
+	}
+	return left.Equal(right) ||
+		result.PathsEquivalentAtBoundary(proofPoint, left, right) ||
+		pathsShareExactIdentity(result, proofPoint, left, right) ||
+		optionalDominatingAliasEquivalent(result, flow, proofPoint, left, right) ||
+		optionalDominatingAliasEquivalent(result, flow, proofPoint, right, left)
+}
+
+func optionalDominatingAliasEquivalent(result *body.Result, flow *diagnosticFlowCache, proofPoint cfg.Point, alias, target pathdom.Path) bool {
+	if result == nil || alias.Symbol == 0 || target.Symbol == 0 {
+		return false
+	}
+	fact, _, ok := dominatingRootLocalAssignment(result, flow, proofPoint, alias.Symbol)
+	if !ok || fact.Expr == nil {
+		return false
+	}
+	source, ok := result.ExpressionPath(fact.Expr)
+	if !ok || source.IsEmpty() {
+		return false
+	}
+	source = source.AppendSegments(alias.Segments)
+	return source.Equal(target) ||
+		result.PathsEquivalentAtBoundary(proofPoint, source, target) ||
+		pathsShareExactIdentity(result, proofPoint, source, target)
+}
+
+func pathPrefixWithSegmentLen(p pathdom.Path, segmentLen int) (pathdom.Path, bool) {
+	if segmentLen < 0 || len(p.Segments) < segmentLen {
+		return pathdom.Path{}, false
+	}
+	out := p
+	out.Segments = append([]segment.Segment(nil), p.Segments[:segmentLen]...)
+	return out, true
 }
 
 func (p discriminatedUnionExhaustiveness) candidateForCheck(result *body.Result, point cfg.Point, check branchcond.Check) (discriminantCandidate, bool) {
