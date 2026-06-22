@@ -1143,6 +1143,166 @@ local out = dispatch(app.router, action)
 	})
 }
 
+func TestDiscriminatedUnionExhaustivenessMatchesRegistrationAliasAtRegistrationPoint(t *testing.T) {
+	result := Check(`
+type Begin = { kind: "begin", id: string }
+type Commit = { kind: "commit", payment_id: string }
+type Cancel = { kind: "cancel", reason: string }
+type Action = Begin | Commit | Cancel
+
+local app: any = { router = {} }
+local router = app.router
+router:on("begin", function(action: Action): string return action.kind end)
+router:on("commit", function(action: Action): string return action.kind end)
+
+local action: Action = { kind = "begin", id = "evt-1" }
+local out = app.router:dispatch(action)
+`, WithDiagnosticRule(
+		diagnostics.CodeDiscriminatedUnionExhaustive,
+		diagnostic.Enable(),
+	))
+	requireDiagnostic(t, result, diagnosticExpectation{
+		Code:            diagnostics.CodeDiscriminatedUnionExhaustive,
+		Severity:        diagnostic.SeverityWarning,
+		DiagnosticCount: 1,
+		MessageContains: []string{"registered callbacks are not exhaustive", "app.router.cancel"},
+		EvidenceOrdered: []string{
+			"`app.router` is dispatched with discriminant `action.kind`",
+			"registered cases: `app.router.begin`, `app.router.commit`",
+			"missing registrations: `app.router.cancel` for `action.kind == \"cancel\"`",
+		},
+	})
+}
+
+func TestDiscriminatedUnionExhaustivenessAcceptsCompleteRegistrationAlias(t *testing.T) {
+	result := Check(`
+type Begin = { kind: "begin", id: string }
+type Commit = { kind: "commit", payment_id: string }
+type Cancel = { kind: "cancel", reason: string }
+type Action = Begin | Commit | Cancel
+
+local app: any = { router = {} }
+local router = app.router
+router:on("begin", function(action: Action): string return action.kind end)
+router:on("commit", function(action: Action): string return action.kind end)
+router:on("cancel", function(action: Action): string return action.kind end)
+
+local action: Action = { kind = "begin", id = "evt-1" }
+local out = app.router:dispatch(action)
+`, WithDiagnosticRule(
+		diagnostics.CodeDiscriminatedUnionExhaustive,
+		diagnostic.Enable(),
+	))
+	if hasDiagnosticCode(result.Diagnostics, diagnostics.CodeDiscriminatedUnionExhaustive) {
+		t.Fatalf("diagnostics = %#v, want no exhaustive-union warning for complete alias registration", result.Diagnostics)
+	}
+}
+
+func TestDiscriminatedUnionExhaustivenessKeepsAliasRegistrationsAfterAliasReassignment(t *testing.T) {
+	result := Check(`
+type Begin = { kind: "begin", id: string }
+type Commit = { kind: "commit", payment_id: string }
+type Cancel = { kind: "cancel", reason: string }
+type Action = Begin | Commit | Cancel
+
+local app: any = { router = {} }
+local router = app.router
+router:on("begin", function(action: Action): string return action.kind end)
+router:on("commit", function(action: Action): string return action.kind end)
+router = {}
+
+local action: Action = { kind = "begin", id = "evt-1" }
+local out = app.router:dispatch(action)
+`, WithDiagnosticRule(
+		diagnostics.CodeDiscriminatedUnionExhaustive,
+		diagnostic.Enable(),
+	))
+	requireDiagnostic(t, result, diagnosticExpectation{
+		Code:            diagnostics.CodeDiscriminatedUnionExhaustive,
+		Severity:        diagnostic.SeverityWarning,
+		DiagnosticCount: 1,
+		MessageContains: []string{"registered callbacks are not exhaustive", "app.router.cancel"},
+		EvidenceOrdered: []string{
+			"`app.router` is dispatched with discriminant `action.kind`",
+			"registered cases: `app.router.begin`, `app.router.commit`",
+			"missing registrations: `app.router.cancel` for `action.kind == \"cancel\"`",
+		},
+	})
+}
+
+func TestDiscriminatedUnionExhaustivenessDoesNotCountRegistrationBeforeAliasPointsAtRegistry(t *testing.T) {
+	result := Check(`
+type Begin = { kind: "begin", id: string }
+type Commit = { kind: "commit", payment_id: string }
+type Cancel = { kind: "cancel", reason: string }
+type Action = Begin | Commit | Cancel
+
+local app: any = { router = {} }
+local router: any = {}
+router:on("begin", function(action: Action): string return action.kind end)
+router:on("commit", function(action: Action): string return action.kind end)
+router = app.router
+
+local action: Action = { kind = "begin", id = "evt-1" }
+local out = app.router:dispatch(action)
+`, WithDiagnosticRule(
+		diagnostics.CodeDiscriminatedUnionExhaustive,
+		diagnostic.Enable(),
+	))
+	if hasDiagnosticCode(result.Diagnostics, diagnostics.CodeDiscriminatedUnionExhaustive) {
+		t.Fatalf("diagnostics = %#v, want no exhaustive-union warning when registrations were on a previous alias target", result.Diagnostics)
+	}
+}
+
+func TestDiscriminatedUnionExhaustivenessSkipsRegistrationAliasStaticCaseFill(t *testing.T) {
+	result := Check(`
+type Begin = { kind: "begin", id: string }
+type Commit = { kind: "commit", payment_id: string }
+type Cancel = { kind: "cancel", reason: string }
+type Action = Begin | Commit | Cancel
+
+local app: any = { router = {} }
+local router = app.router
+app.router:on("begin", function(action: Action): string return action.kind end)
+app.router:on("commit", function(action: Action): string return action.kind end)
+router.cancel = function(action: Action): string return action.kind end
+
+local action: Action = { kind = "begin", id = "evt-1" }
+local out = app.router:dispatch(action)
+`, WithDiagnosticRule(
+		diagnostics.CodeDiscriminatedUnionExhaustive,
+		diagnostic.Enable(),
+	))
+	if hasDiagnosticCode(result.Diagnostics, diagnostics.CodeDiscriminatedUnionExhaustive) {
+		t.Fatalf("diagnostics = %#v, want no exhaustive-union warning after alias writes missing case registration", result.Diagnostics)
+	}
+}
+
+func TestDiscriminatedUnionExhaustivenessSkipsRegistrationAliasDynamicMutation(t *testing.T) {
+	result := Check(`
+type Begin = { kind: "begin", id: string }
+type Commit = { kind: "commit", payment_id: string }
+type Cancel = { kind: "cancel", reason: string }
+type Action = Begin | Commit | Cancel
+
+local app: any = { router = {} }
+local router = app.router
+local key = "cancel"
+app.router:on("begin", function(action: Action): string return action.kind end)
+app.router:on("commit", function(action: Action): string return action.kind end)
+router[key] = function(action: Action): string return action.kind end
+
+local action: Action = { kind = "begin", id = "evt-1" }
+local out = app.router:dispatch(action)
+`, WithDiagnosticRule(
+		diagnostics.CodeDiscriminatedUnionExhaustive,
+		diagnostic.Enable(),
+	))
+	if hasDiagnosticCode(result.Diagnostics, diagnostics.CodeDiscriminatedUnionExhaustive) {
+		t.Fatalf("diagnostics = %#v, want no exhaustive-union warning after alias dynamic registration mutation", result.Diagnostics)
+	}
+}
+
 func TestDiscriminatedUnionExhaustivenessSkipsNestedFreeFunctionRegistrationsAfterDynamicKey(t *testing.T) {
 	result := Check(`
 type Begin = { kind: "begin", id: string }

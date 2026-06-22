@@ -1008,12 +1008,13 @@ type registrationCall struct {
 }
 
 type openRegistrationMutation struct {
-	point    cfg.Point
-	path     pathdom.Path
-	registry pathdom.Path
-	key      string
-	hasKey   bool
-	opensAll bool
+	point          cfg.Point
+	path           pathdom.Path
+	registry       pathdom.Path
+	key            string
+	hasKey         bool
+	opensAll       bool
+	aliasSensitive bool
 }
 
 type dispatchCall struct {
@@ -1037,7 +1038,8 @@ func (p discriminatedUnionExhaustiveness) registrationDiagnostics(result *body.R
 		}
 		seen := make(map[string]registrationCall)
 		for _, reg := range registrations {
-			if !reg.registry.Equal(dispatch.registry) || !diagnosticCanReach(p.flow, graph, reg.point, dispatch.point) {
+			if !registrationRegistryMatchesAt(result, reg.point, reg.registry, dispatch.registry) ||
+				!diagnosticCanReach(p.flow, graph, reg.point, dispatch.point) {
 				continue
 			}
 			if existing, ok := seen[reg.key]; ok && existing.point > reg.point {
@@ -1137,16 +1139,28 @@ func (p discriminatedUnionExhaustiveness) openRegistrationCanReach(result *body.
 			if pathsOverlapForInvalidation(mutation.path, dispatch.registry) {
 				return true
 			}
+			if mutation.aliasSensitive && registrationRegistryMatchesAt(result, mutation.point, mutation.path, dispatch.registry) {
+				return true
+			}
 			continue
 		}
 		if pathHasPrefix(dispatch.registry, mutation.path) {
 			return true
 		}
-		if mutation.hasKey && mutation.registry.Equal(dispatch.registry) && registrationMutationKeyMatchesCase(mutation.key, dispatch.cases) {
+		if mutation.hasKey &&
+			registrationRegistryMatchesAt(result, mutation.point, mutation.registry, dispatch.registry) &&
+			registrationMutationKeyMatchesCase(mutation.key, dispatch.cases) {
 			return true
 		}
 	}
 	return false
+}
+
+func registrationRegistryMatchesAt(result *body.Result, point cfg.Point, left, right pathdom.Path) bool {
+	if left.Equal(right) {
+		return true
+	}
+	return result != nil && result.PathsEquivalentAtBoundary(point, left, right)
 }
 
 func registrationMutationKeyMatchesCase(key string, cases []discriminantCase) bool {
@@ -1160,7 +1174,7 @@ func registrationMutationKeyMatchesCase(key string, cases []discriminantCase) bo
 
 func openRegistrationAssignment(fact semantics.OrdinaryAssignmentFact) (openRegistrationMutation, bool) {
 	if fact.HasPath && fact.Path.Symbol != 0 {
-		mutation := openRegistrationMutation{path: fact.Path}
+		mutation := openRegistrationMutation{path: fact.Path, aliasSensitive: true}
 		if key, ok := fact.Path.DirectFieldName(); ok {
 			mutation.registry = pathdom.Path{Root: fact.Path.Root, Symbol: fact.Path.Symbol, Version: fact.Path.Version}
 			mutation.key = key
@@ -1179,7 +1193,7 @@ func openRegistrationAssignment(fact semantics.OrdinaryAssignmentFact) (openRegi
 		return mutation, true
 	}
 	if fact.HasContainerPath && fact.ContainerPath.Symbol != 0 {
-		return openRegistrationMutation{path: fact.ContainerPath, opensAll: true}, true
+		return openRegistrationMutation{path: fact.ContainerPath, opensAll: true, aliasSensitive: true}, true
 	}
 	if fact.HasSymbol && fact.Symbol != 0 {
 		return openRegistrationMutation{path: pathdom.Path{Symbol: fact.Symbol}, opensAll: true}, true
@@ -1227,16 +1241,16 @@ func openRegistrationMutationFromFact(result *body.Result, point cfg.Point, fact
 			return openRegistrationMutation{}, false
 		}
 		if registrationCallbackExpr(result, point, fact.Args[keyIndex+1]) {
-			return openRegistrationMutation{path: registry, opensAll: true}, true
+			return openRegistrationMutation{path: registry, opensAll: true, aliasSensitive: true}, true
 		}
 	}
 	if fact.HasReceiverPath && callMayInvalidateTrackedPath(result, point, fact.ReceiverPath) {
-		return openRegistrationMutation{path: fact.ReceiverPath, opensAll: true}, true
+		return openRegistrationMutation{path: fact.ReceiverPath, opensAll: true, aliasSensitive: true}, true
 	}
 	for _, arg := range fact.Args {
 		argPath, ok := result.ExpressionPath(arg)
 		if ok && callMayInvalidateTrackedPath(result, point, argPath) {
-			return openRegistrationMutation{path: argPath, opensAll: true}, true
+			return openRegistrationMutation{path: argPath, opensAll: true, aliasSensitive: true}, true
 		}
 	}
 	return openRegistrationMutation{}, false
