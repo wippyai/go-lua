@@ -92,14 +92,75 @@ help: Validate or narrow ` + "`y`" + ` before passing it; any/unknown values do 
 }
 
 func TestCastDoesNotLaunderDisjointValueIntoParameter(t *testing.T) {
-	result := Check(`
+	src := strings.TrimLeft(`
 local function need(x: {name: string}): number return 1 end
 local function f(y: number): number return need(y as {name: string}) end return f
-`)
-	diag := requireDiagnosticCode(t, result, diagnostics.CodeDirectCallArgType)
-	if got := diag.Message; got != "argument 1 (y) is number, not {name: string}" {
-		t.Fatalf("message = %q, want number-not-record argument mismatch", got)
-	}
+`, "\n")
+	result := Check(src)
+	diag := requireDiagnostic(t, result, diagnosticExpectation{
+		Code:            diagnostics.CodeDirectCallArgType,
+		Severity:        diagnostic.SeverityError,
+		DiagnosticCount: 1,
+		Line:            2,
+		Column:          49,
+		MessageContains: []string{
+			"argument 1 (y)",
+			"number",
+			"not {name: string}",
+		},
+		EvidenceChain: []diagnosticEvidenceExpectation{
+			{
+				Kind:            diagnostic.EvidenceAbstractFact,
+				Trust:           diagnostic.TrustProven,
+				MessageContains: []string{"argument 1 (y)", "has type number"},
+			},
+			{
+				Kind:            diagnostic.EvidenceUserAssertion,
+				Trust:           diagnostic.TrustClaimed,
+				MessageContains: []string{"need parameter 1 expects {name: string}"},
+			},
+			{
+				Kind:            diagnostic.EvidenceMissingProof,
+				Trust:           diagnostic.TrustUnknown,
+				Reason:          diagnostic.EvidenceReasonBoundaryValidationMissing,
+				MessageContains: []string{"no proof on this path", "y", "parameter type"},
+			},
+		},
+		LabelContains: []string{"argument value"},
+		HelpContains:  []string{"Pass `y`", "compatible with the parameter type", "change the callee signature"},
+		Sources:       diagnostic.SourceMap{"test.lua": src},
+		RenderOrderedContains: []string{
+			`error[type.call.direct.argument_type]: argument 1 (y) is number, not {name: string}`,
+			`2 | local function f(y: number): number return need(y as {name: string}) end return f`,
+			`  |                                                 ↑ argument value`,
+			`1. proven: argument 1 (y) has type number`,
+			`2. claimed: need parameter 1 expects {name: string}`,
+			`1 | local function need(x: {name: string}): number return 1 end`,
+			`3. missing proof: no proof on this path shows y satisfies the parameter type`,
+			"help: Pass `y` as a value compatible with the parameter type, or change the callee signature if that argument is valid.",
+		},
+	})
+	rendered := diagnostic.Render(diag, diagnostic.RenderOptions{
+		Sources:             diagnostic.SourceMap{"test.lua": src},
+		ShowSourceLabelRows: true,
+	})
+	want := `error[type.call.direct.argument_type]: argument 1 (y) is number, not {name: string}
+ --> test.lua:2:49
+  |
+2 | local function f(y: number): number return need(y as {name: string}) end return f
+  |                                                 ↑ argument value
+
+because:
+  1. proven: argument 1 (y) has type number
+  2. claimed: need parameter 1 expects {name: string}
+ --> test.lua:1:24
+  |
+1 | local function need(x: {name: string}): number return 1 end
+  |                        ^
+  3. missing proof: no proof on this path shows y satisfies the parameter type
+
+help: Pass ` + "`y`" + ` as a value compatible with the parameter type, or change the callee signature if that argument is valid.`
+	assertRenderedEqual(t, rendered, want)
 }
 
 func TestCastDoesNotLaunderAnyIntoAnnotatedAssignment(t *testing.T) {
