@@ -119,6 +119,9 @@ func applyCallOutcomeFacts(
 	for _, fact := range normalReturnFacts.NumFloors {
 		out = applyNormalReturnNumFloor(resolver, ctx.Point, bindings, out, fact)
 	}
+	for _, fact := range normalReturnFacts.RelConstraints {
+		out = applyNormalReturnRelConstraint(resolver, ctx.Point, bindings, out, fact)
+	}
 	for _, event := range normalReturnFacts.ChannelSelects {
 		fact, ok := callChannelSelectFactAt(resolver, ctx.Point, bindings, event)
 		if !ok {
@@ -237,6 +240,54 @@ func applyNormalReturnNumFloor(
 		return out
 	}
 	return out.WriteNumFloor(resolver.KeySpace(), pathKey, fact.Floor)
+}
+
+func applyNormalReturnRelConstraint(
+	resolver *visibility.Resolver,
+	point cfg.Point,
+	bindings []pathdom.Path,
+	out state.State,
+	fact callboundary.RelConstraintFact,
+) state.State {
+	aKey, ok := callRelOperandKeyAt(resolver, point, bindings, fact.A)
+	if !ok {
+		return out
+	}
+	cKey, ok := callRelOperandKeyAt(resolver, point, bindings, fact.C)
+	if !ok {
+		return out
+	}
+	var bKey pathdom.PathKey
+	coB := fact.CoB
+	if coB != 0 && !fact.B.Path.IsEmpty() {
+		bKey, ok = callRelOperandKeyAt(resolver, point, bindings, fact.B)
+		if !ok {
+			return out
+		}
+	} else {
+		coB = 0
+	}
+	return out.WriteScaledConstraint(fact.CoA, aKey, coB, bKey, cKey, fact.K)
+}
+
+func callRelOperandKeyAt(
+	resolver *visibility.Resolver,
+	point cfg.Point,
+	bindings []pathdom.Path,
+	operand callboundary.RelOperand,
+) (pathdom.PathKey, bool) {
+	targetPath, ok := operand.Path.Substitute(bindings)
+	if !ok || targetPath.Symbol == 0 {
+		return "", false
+	}
+	pathKey := visibility.RootOrVisibleKeyAt(resolver, point, targetPath)
+	if pathKey == "" {
+		return "", false
+	}
+	if operand.IsLength {
+		return state.LengthRelKey(pathKey), true
+	}
+	return pathKey, true
 }
 
 // applyCallParamExposures eager-widens each argument object the callee exposes

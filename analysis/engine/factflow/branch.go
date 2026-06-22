@@ -179,7 +179,7 @@ func (r BranchNumFloorRefinement) copy() BranchNumFloorRefinement {
 	return r
 }
 
-// BranchDiffConstraint records a relational fact proven on a branch's true edge:
+// BranchDiffConstraint records a relational fact proven on a branch edge:
 // CoHi*term(Hi) - term(Lo) <= C, where each term is a value path or, when the
 // IsLength flag is set, the length of that array path. When HasHi2 is set it
 // carries a second positive term and reads CoHi*term(Hi) + CoHi2*term(Hi2) -
@@ -197,11 +197,18 @@ type BranchDiffConstraint struct {
 	loPath      path.Path
 	loIsLength  bool
 	c           int64
+	cond        bool
 }
 
 // NewBranchDiffConstraint creates a true-edge two-term difference-logic fact.
 func NewBranchDiffConstraint(hiPath path.Path, hiIsLength bool, loPath path.Path, loIsLength bool, c int64) BranchDiffConstraint {
-	return BranchDiffConstraint{coHi: 1, hiPath: hiPath.Clone(), hiIsLength: hiIsLength, loPath: loPath.Clone(), loIsLength: loIsLength, c: c}
+	return NewBranchDiffConstraintOnEdge(hiPath, hiIsLength, loPath, loIsLength, c, true)
+}
+
+// NewBranchDiffConstraintOnEdge creates a two-term difference-logic fact for a
+// specific branch edge.
+func NewBranchDiffConstraintOnEdge(hiPath path.Path, hiIsLength bool, loPath path.Path, loIsLength bool, c int64, cond bool) BranchDiffConstraint {
+	return BranchDiffConstraint{coHi: 1, hiPath: hiPath.Clone(), hiIsLength: hiIsLength, loPath: loPath.Clone(), loIsLength: loIsLength, c: c, cond: cond}
 }
 
 // NewBranchSumConstraint creates a true-edge bounded three-term fact:
@@ -214,6 +221,12 @@ func NewBranchSumConstraint(hiPath path.Path, hiIsLength bool, hi2Path path.Path
 // coHi*term(hi) + coHi2*term(hi2) - term(lo) <= c. An empty hi2Path drops the
 // second positive term, giving coHi*term(hi) - term(lo) <= c.
 func NewBranchScaledConstraint(coHi int64, hiPath path.Path, hiIsLength bool, coHi2 int64, hi2Path path.Path, hi2IsLength bool, loPath path.Path, loIsLength bool, c int64) BranchDiffConstraint {
+	return NewBranchScaledConstraintOnEdge(coHi, hiPath, hiIsLength, coHi2, hi2Path, hi2IsLength, loPath, loIsLength, c, true)
+}
+
+// NewBranchScaledConstraintOnEdge creates a bounded affine fact for a specific
+// branch edge.
+func NewBranchScaledConstraintOnEdge(coHi int64, hiPath path.Path, hiIsLength bool, coHi2 int64, hi2Path path.Path, hi2IsLength bool, loPath path.Path, loIsLength bool, c int64, cond bool) BranchDiffConstraint {
 	return BranchDiffConstraint{
 		coHi:        coHi,
 		hiPath:      hiPath.Clone(),
@@ -225,6 +238,7 @@ func NewBranchScaledConstraint(coHi int64, hiPath path.Path, hiIsLength bool, co
 		loPath:      loPath.Clone(),
 		loIsLength:  loIsLength,
 		c:           c,
+		cond:        cond,
 	}
 }
 
@@ -238,6 +252,7 @@ func (r BranchDiffConstraint) HasHi2() bool       { return r.hasHi2 }
 func (r BranchDiffConstraint) LoPath() path.Path  { return r.loPath.Clone() }
 func (r BranchDiffConstraint) LoIsLength() bool   { return r.loIsLength }
 func (r BranchDiffConstraint) C() int64           { return r.c }
+func (r BranchDiffConstraint) Cond() bool         { return r.cond }
 
 func (r BranchDiffConstraint) copy() BranchDiffConstraint {
 	r.hiPath = r.hiPath.Clone()

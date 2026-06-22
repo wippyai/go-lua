@@ -74,6 +74,18 @@ func TestNormalReturnFactsNormalizeKeepsConcreteCapturedPathBoundaryFacts(t *tes
 			{Path: concrete, Floor: 1},
 			{Path: placeholder, Floor: 1},
 		},
+		RelConstraints: []callboundary.RelConstraintFact{
+			{
+				CoA: 1,
+				A:   callboundary.RelOperand{Path: concrete},
+				C:   callboundary.RelOperand{Path: placeholder, IsLength: true},
+			},
+			{
+				CoA: 1,
+				A:   callboundary.RelOperand{Path: placeholder},
+				C:   callboundary.RelOperand{Path: placeholder, IsLength: true},
+			},
+		},
 	}})
 
 	facts := got.NormalReturnFacts
@@ -118,6 +130,10 @@ func TestNormalReturnFactsNormalizeKeepsConcreteCapturedPathBoundaryFacts(t *tes
 	}
 	if len(facts.NumFloors) != 1 || !facts.NumFloors[0].Path.Equal(placeholder) || facts.NumFloors[0].Floor != 1 {
 		t.Fatalf("NumFloors = %#v, want only placeholder floor fact", facts.NumFloors)
+	}
+	if len(facts.RelConstraints) != 1 || !facts.RelConstraints[0].A.Path.Equal(placeholder) ||
+		!facts.RelConstraints[0].C.Path.Equal(placeholder) || !facts.RelConstraints[0].C.IsLength {
+		t.Fatalf("RelConstraints = %#v, want only placeholder relation fact", facts.RelConstraints)
 	}
 }
 
@@ -231,6 +247,13 @@ func TestNormalReturnFactsCloneIsolatesPayload(t *testing.T) {
 			Path:  pathdom.NewPlaceholder(0).Field("index"),
 			Floor: 1,
 		}},
+		RelConstraints: []callboundary.RelConstraintFact{{
+			CoA: 1,
+			A:   callboundary.RelOperand{Path: pathdom.NewPlaceholder(0).Field("i")},
+			CoB: 1,
+			B:   callboundary.RelOperand{Path: pathdom.NewPlaceholder(1)},
+			C:   callboundary.RelOperand{Path: pathdom.NewPlaceholder(0), IsLength: true},
+		}},
 	}}
 
 	cloned := original.Clone()
@@ -246,6 +269,7 @@ func TestNormalReturnFactsCloneIsolatesPayload(t *testing.T) {
 	cloned.NormalReturnFacts.EscapeEvents[0].Target = pathdom.NewPlaceholder(1)
 	cloned.NormalReturnFacts.LifecycleFacts[0].Target = pathdom.NewPlaceholder(1)
 	cloned.NormalReturnFacts.NumFloors[0].Path = pathdom.NewPlaceholder(1)
+	cloned.NormalReturnFacts.RelConstraints[0].A.Path = pathdom.NewPlaceholder(2)
 
 	if !original.NormalReturnFacts.PathRefinements[0].Path.Equal(pathdom.NewPlaceholder(0).Field("value")) {
 		t.Fatalf("mutating cloned path refinement changed original")
@@ -282,6 +306,9 @@ func TestNormalReturnFactsCloneIsolatesPayload(t *testing.T) {
 	}
 	if !original.NormalReturnFacts.NumFloors[0].Path.Equal(pathdom.NewPlaceholder(0).Field("index")) {
 		t.Fatalf("mutating cloned num-floor fact changed original")
+	}
+	if !original.NormalReturnFacts.RelConstraints[0].A.Path.Equal(pathdom.NewPlaceholder(0).Field("i")) {
+		t.Fatalf("mutating cloned relational constraint fact changed original")
 	}
 }
 
@@ -339,6 +366,20 @@ func TestNormalReturnFactsJoinUsesStateLaneSemantics(t *testing.T) {
 			{Path: commonPath, Floor: 2},
 			{Path: leftOnly, Floor: 1},
 		},
+		RelConstraints: []callboundary.RelConstraintFact{
+			{
+				CoA: 1,
+				A:   callboundary.RelOperand{Path: commonPath},
+				CoB: 1,
+				B:   callboundary.RelOperand{Path: p0.Field("shared")},
+				C:   callboundary.RelOperand{Path: p0, IsLength: true},
+			},
+			{
+				CoA: 1,
+				A:   callboundary.RelOperand{Path: leftOnly},
+				C:   callboundary.RelOperand{Path: p0, IsLength: true},
+			},
+		},
 	}}
 	right := Summary{NormalReturnFacts: callboundary.NormalReturnFacts{
 		PathRefinements:   []callboundary.PathValueFact{{Path: commonPath, Value: rightValue}},
@@ -386,6 +427,20 @@ func TestNormalReturnFactsJoinUsesStateLaneSemantics(t *testing.T) {
 		NumFloors: []callboundary.NumFloorFact{
 			{Path: commonPath, Floor: 4},
 			{Path: p0.Field("right"), Floor: 9},
+		},
+		RelConstraints: []callboundary.RelConstraintFact{
+			{
+				CoA: 1,
+				A:   callboundary.RelOperand{Path: p0.Field("shared")},
+				CoB: 1,
+				B:   callboundary.RelOperand{Path: commonPath},
+				C:   callboundary.RelOperand{Path: p0, IsLength: true},
+			},
+			{
+				CoA: 1,
+				A:   callboundary.RelOperand{Path: p0.Field("right")},
+				C:   callboundary.RelOperand{Path: p0, IsLength: true},
+			},
 		},
 	}}
 
@@ -458,6 +513,13 @@ func TestNormalReturnFactsJoinUsesStateLaneSemantics(t *testing.T) {
 	if len(got.NumFloors) != 1 || !got.NumFloors[0].Path.Equal(commonPath) || got.NumFloors[0].Floor != 2 {
 		t.Fatalf("NumFloors = %#v, want common floor with weaker lower bound 2", got.NumFloors)
 	}
+	if len(got.RelConstraints) != 1 ||
+		!got.RelConstraints[0].A.Path.Equal(commonPath) ||
+		!got.RelConstraints[0].B.Path.Equal(p0.Field("shared")) ||
+		!got.RelConstraints[0].C.Path.Equal(p0) ||
+		!got.RelConstraints[0].C.IsLength {
+		t.Fatalf("RelConstraints = %#v, want only common must relation", got.RelConstraints)
+	}
 
 	widened := Widen(reg, left, right).NormalReturnFacts
 	if leftOnlyFact := findDynamicIndexFact(widened.DynamicIndexFacts, "caller.dynamic.left"); leftOnlyFact == nil ||
@@ -483,6 +545,13 @@ func TestNormalReturnFactsJoinUsesStateLaneSemantics(t *testing.T) {
 	if len(widened.NumFloors) != 1 || !widened.NumFloors[0].Path.Equal(commonPath) || widened.NumFloors[0].Floor != 2 {
 		t.Fatalf("widen NumFloors = %#v, want common floor with weaker lower bound 2", widened.NumFloors)
 	}
+	if len(widened.RelConstraints) != 1 ||
+		!widened.RelConstraints[0].A.Path.Equal(commonPath) ||
+		!widened.RelConstraints[0].B.Path.Equal(p0.Field("shared")) ||
+		!widened.RelConstraints[0].C.Path.Equal(p0) ||
+		!widened.RelConstraints[0].C.IsLength {
+		t.Fatalf("widen RelConstraints = %#v, want only common must relation", widened.RelConstraints)
+	}
 }
 
 func TestNormalReturnFactsEqualAndLessOrEqAccountForLane(t *testing.T) {
@@ -494,6 +563,7 @@ func TestNormalReturnFactsEqualAndLessOrEqAccountForLane(t *testing.T) {
 		EscapeEvents:    []callboundary.EscapeEventFact{{Target: p0, Kind: callboundary.EscapeEventBorrow}},
 		StoreRelations:  []callboundary.StoreRelationFact{{Source: p0, Into: pathdom.NewPlaceholder(1)}},
 		NumFloors:       []callboundary.NumFloorFact{{Path: p0, Floor: 2}},
+		RelConstraints:  []callboundary.RelConstraintFact{{CoA: 1, A: callboundary.RelOperand{Path: p0}, C: callboundary.RelOperand{Path: p0, IsLength: true}}},
 	}}
 	right := Summary{NormalReturnFacts: callboundary.NormalReturnFacts{
 		PathRefinements: []callboundary.PathValueFact{{Path: p0, Value: product.Top()}},
@@ -544,6 +614,20 @@ func TestNormalReturnFactsEqualAndLessOrEqAccountForLane(t *testing.T) {
 	}
 	if LessOrEq(reg, withoutFloor, withFloor) {
 		t.Fatalf("empty proof set should not be <= numeric floor proof")
+	}
+
+	withRelation := Summary{
+		Returns: []product.Value{presentProduct(reg)},
+		NormalReturnFacts: callboundary.NormalReturnFacts{
+			RelConstraints: []callboundary.RelConstraintFact{{CoA: 1, A: callboundary.RelOperand{Path: p0}, C: callboundary.RelOperand{Path: p0, IsLength: true}}},
+		},
+	}
+	withoutRelation := Summary{Returns: []product.Value{presentProduct(reg)}}
+	if !LessOrEq(reg, withRelation, withoutRelation) {
+		t.Fatalf("relational proof should be <= empty proof set")
+	}
+	if LessOrEq(reg, withoutRelation, withRelation) {
+		t.Fatalf("empty proof set should not be <= relational proof")
 	}
 }
 

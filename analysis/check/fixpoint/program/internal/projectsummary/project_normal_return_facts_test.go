@@ -63,6 +63,9 @@ func TestFromResultProjectsNormalReturnFactsFromExitSnapshots(t *testing.T) {
 	branchNotEqualRightKey := normalReturnFactProjectTestKey(param1, ".b")
 	numFloorRootKey := pathdom.NewPath(param0, "param0").Key()
 	numFloorMemberKey := normalReturnFactProjectTestKey(param1, ".index")
+	relIKey := normalReturnFactProjectTestKey(param0, ".i")
+	relJKey := normalReturnFactProjectTestKey(param1, ".j")
+	relArrayKey := pathdom.NewPath(param0, "param0").Key()
 	selectResultKey := normalReturnFactProjectTestKey(param0, ".selectResult")
 	receiveResultKey := normalReturnFactProjectTestKey(param0, ".receiveResult")
 	receiveCaseKey := normalReturnFactProjectTestKey(param1, ".receiveCase")
@@ -136,6 +139,7 @@ func TestFromResultProjectsNormalReturnFactsFromExitSnapshots(t *testing.T) {
 		}).
 		WriteNumFloor(ks, testStateKey(t, numFloorRootKey), 1).
 		WriteNumFloor(ks, testStateKey(t, numFloorMemberKey), 2).
+		WriteScaledConstraint(1, relIKey, 1, relJKey, state.LengthRelKey(relArrayKey), 0).
 		AddChannelSelectFact(channelselectfact.Fact{
 			Select:     "select-kind",
 			Kind:       channelselectfact.FactSelect,
@@ -221,6 +225,7 @@ func TestFromResultProjectsNormalReturnFactsFromExitSnapshots(t *testing.T) {
 	assertBranchProof(t, got.BranchProofs, pathevidence.BranchProofPathNotEqual, pathdom.NewPlaceholder(0).Field("a"), pathdom.NewPlaceholder(1).Field("b"), presence.Bottom())
 	assertNumFloor(t, got.NumFloors, pathdom.NewPlaceholder(0), 1)
 	assertNumFloor(t, got.NumFloors, pathdom.NewPlaceholder(1).Field("index"), 2)
+	assertRelConstraint(t, got.RelConstraints, pathdom.NewPlaceholder(0).Field("i"), pathdom.NewPlaceholder(1).Field("j"), pathdom.NewPlaceholder(0), true, 0)
 
 	selectFact := assertChannelSelect(t, got.ChannelSelects, "select-kind", channelselectfact.FactSelect, pathdom.NewPlaceholder(0).Field("selectResult"), pathdom.Path{})
 	if !selectFact.HasDefault {
@@ -938,6 +943,26 @@ func assertNumFloor(t *testing.T, facts []callboundary.NumFloorFact, target path
 		}
 	}
 	t.Fatalf("NumFloors = %#v, want %s >= %d", facts, target, floor)
+}
+
+func assertRelConstraint(
+	t *testing.T,
+	facts []callboundary.RelConstraintFact,
+	a pathdom.Path,
+	b pathdom.Path,
+	c pathdom.Path,
+	cIsLength bool,
+	k int64,
+) {
+	t.Helper()
+	for _, fact := range facts {
+		if fact.CoA == 1 && fact.CoB == 1 && fact.K == k &&
+			fact.C.Path.Equal(c) && fact.C.IsLength == cIsLength &&
+			((fact.A.Path.Equal(a) && fact.B.Path.Equal(b)) || (fact.A.Path.Equal(b) && fact.B.Path.Equal(a))) {
+			return
+		}
+	}
+	t.Fatalf("RelConstraints = %#v, want %s + %s - %s <= %d", facts, a, b, c, k)
 }
 
 func presentProduct(reg *axis.Registry) product.Value {

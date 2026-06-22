@@ -140,10 +140,11 @@ func NewFactsEdgeTransfer(config FactsEdgeTransferConfig) transfer.EdgeTransfer 
 			}
 			out = applyBranchNumFloorRefinement(ctx, config.Visibility, out, fact)
 		}
-		if ctx.Edge.Cond {
-			for _, fact := range config.Facts.BranchDiffConstraints(ctx.Edge.From) {
-				out = applyBranchDiffConstraint(ctx, config.Visibility, out, fact)
+		for _, fact := range config.Facts.BranchDiffConstraints(ctx.Edge.From) {
+			if fact.Cond() != ctx.Edge.Cond {
+				continue
 			}
+			out = applyBranchDiffConstraint(ctx, config.Visibility, out, fact)
 		}
 		for _, relation := range config.Facts.BranchPresenceRelations(ctx.Edge.From) {
 			refinement, ok := branchPresenceRelationRefinement(config.TypeValues, ctx, config.Visibility, config.ProjectPath, out, branchRefinements, relation)

@@ -10,29 +10,44 @@ import (
 	"github.com/wippyai/go-lua/compiler/parse/numparse"
 )
 
-// branchDiffConstraints extracts difference-logic facts from the true-edge
-// conjuncts of a branch condition: relational comparisons between linear path
-// terms, e.g. i < j, i + 1 <= #xs, and #a == #b. Pure path-vs-constant bounds
-// (i >= 1, #xs > 0) are left to the numeric- and length-floor lanes.
+// branchDiffConstraints extracts difference-logic facts from comparisons proven
+// on each branch edge: relational comparisons between linear path terms, e.g.
+// i < j, i + 1 <= #xs, and #a == #b. Pure path-vs-constant bounds (i >= 1,
+// #xs > 0) are left to the numeric- and length-floor lanes.
 func (l *lowerer) branchDiffConstraints(fact semantics.BranchConditionFact) []factflow.BranchDiffConstraint {
 	var out []factflow.BranchDiffConstraint
-	for _, cmp := range conjunctComparisons(fact.Condition) {
-		out = append(out, l.diffConstraintsFromComparison(cmp)...)
+	for _, implied := range impliedRelationalComparisons(fact.Condition, true) {
+		out = append(out, l.diffConstraintsFromComparisonOnEdge(implied.cmp, true, implied.polarity)...)
+	}
+	for _, implied := range impliedRelationalComparisons(fact.Condition, false) {
+		out = append(out, l.diffConstraintsFromComparisonOnEdge(implied.cmp, false, implied.polarity)...)
 	}
 	return out
 }
 
-// conjunctComparisons collects the comparisons that all hold when expr is true:
-// it descends `and` nodes (true proves both sides) and stops at `or`.
-func conjunctComparisons(expr ast.Expr) []*ast.RelationalOpExpr {
+type impliedRelationalComparison struct {
+	cmp      *ast.RelationalOpExpr
+	polarity bool
+}
+
+// impliedRelationalComparisons collects leaf comparisons whose polarity is known
+// for the requested condition polarity. A truthy `and` or falsy `or` proves both
+// operands; `not` flips polarity; other compound shapes prove no leaf relation.
+func impliedRelationalComparisons(expr ast.Expr, polarity bool) []impliedRelationalComparison {
 	switch e := expr.(type) {
 	case *ast.RelationalOpExpr:
-		return []*ast.RelationalOpExpr{e}
+		return []impliedRelationalComparison{{cmp: e, polarity: polarity}}
+	case *ast.UnaryNotOpExpr:
+		return impliedRelationalComparisons(e.Expr, !polarity)
 	case *ast.LogicalOpExpr:
-		if e.Operator != "and" {
+		splitOp := "and"
+		if !polarity {
+			splitOp = "or"
+		}
+		if e.Operator != splitOp {
 			return nil
 		}
-		return append(conjunctComparisons(e.Lhs), conjunctComparisons(e.Rhs)...)
+		return append(impliedRelationalComparisons(e.Lhs, polarity), impliedRelationalComparisons(e.Rhs, polarity)...)
 	}
 	return nil
 }
@@ -172,12 +187,41 @@ func (l *lowerer) parseSumTerm(expr ast.Expr) (sumTerm, bool) {
 // both sides are single linear path terms it produces a two-term difference. When
 // exactly one side is a two-path sum (i + j) and the other is a single path term,
 // it produces a bounded three-term sum constraint t1 + t2 - lo <= k.
-func (l *lowerer) diffConstraintsFromComparison(cmp *ast.RelationalOpExpr) []factflow.BranchDiffConstraint {
-	if out, ok := l.sumConstraintsFromComparison(cmp); ok {
+func (l *lowerer) diffConstraintsFromComparisonOnEdge(cmp *ast.RelationalOpExpr, edge bool, polarity bool) []factflow.BranchDiffConstraint {
+	op := cmp.Operator
+	if !polarity {
+		var ok bool
+		op, ok = negatedDiffRelop(op)
+		if !ok {
+			return nil
+		}
+	}
+	return l.diffConstraintsFromRelop(cmp.Lhs, op, cmp.Rhs, edge)
+}
+
+func negatedDiffRelop(op string) (string, bool) {
+	switch op {
+	case "<":
+		return ">=", true
+	case "<=":
+		return ">", true
+	case ">":
+		return "<=", true
+	case ">=":
+		return "<", true
+	case "~=":
+		return "==", true
+	default:
+		return "", false
+	}
+}
+
+func (l *lowerer) diffConstraintsFromRelop(lhs ast.Expr, op string, rhs ast.Expr, edge bool) []factflow.BranchDiffConstraint {
+	if out, ok := l.sumConstraintsFromComparison(lhs, op, rhs, edge); ok {
 		return out
 	}
-	a, aOK := l.parseLinearTerm(cmp.Lhs)
-	b, bOK := l.parseLinearTerm(cmp.Rhs)
+	a, aOK := l.parseLinearTerm(lhs)
+	b, bOK := l.parseLinearTerm(rhs)
 	if !aOK || !bOK || !a.hasPath || !b.hasPath {
 		return nil
 	}
@@ -191,7 +235,7 @@ func (l *lowerer) diffConstraintsFromComparison(cmp *ast.RelationalOpExpr) []fac
 		if strict {
 			c--
 		}
-		return factflow.NewBranchScaledConstraint(hi.coeff, hi.path, hi.isLength, 0, path.Path{}, false, lo.path, lo.isLength, c), true
+		return factflow.NewBranchScaledConstraintOnEdge(hi.coeff, hi.path, hi.isLength, 0, path.Path{}, false, lo.path, lo.isLength, c, edge), true
 	}
 	emit := func(hi, lo linearTerm, strict bool) []factflow.BranchDiffConstraint {
 		fact, ok := le(hi, lo, strict)
@@ -200,7 +244,7 @@ func (l *lowerer) diffConstraintsFromComparison(cmp *ast.RelationalOpExpr) []fac
 		}
 		return []factflow.BranchDiffConstraint{fact}
 	}
-	switch cmp.Operator {
+	switch op {
 	case "<=":
 		return emit(a, b, false)
 	case "<":
@@ -226,16 +270,16 @@ func (l *lowerer) diffConstraintsFromComparison(cmp *ast.RelationalOpExpr) []fac
 // two-path sum, producing sum branch facts t1 + t2 - lo <= k. The sum must be on
 // the upper side of the inequality (sum <= lo), since only that orientation gives
 // an upper bound on the two positive operands.
-func (l *lowerer) sumConstraintsFromComparison(cmp *ast.RelationalOpExpr) ([]factflow.BranchDiffConstraint, bool) {
-	leftSum, leftIsSum := l.parseSumTerm(cmp.Lhs)
-	rightSum, rightIsSum := l.parseSumTerm(cmp.Rhs)
+func (l *lowerer) sumConstraintsFromComparison(lhs ast.Expr, op string, rhs ast.Expr, edge bool) ([]factflow.BranchDiffConstraint, bool) {
+	leftSum, leftIsSum := l.parseSumTerm(lhs)
+	rightSum, rightIsSum := l.parseSumTerm(rhs)
 	if leftIsSum == rightIsSum {
 		return nil, false
 	}
-	otherExpr, sumOnLeft := cmp.Rhs, true
+	otherExpr, sumOnLeft := rhs, true
 	sum := leftSum
 	if rightIsSum {
-		otherExpr, sumOnLeft = cmp.Lhs, false
+		otherExpr, sumOnLeft = lhs, false
 		sum = rightSum
 	}
 	other, otherOK := l.parseLinearTerm(otherExpr)
@@ -254,7 +298,7 @@ func (l *lowerer) sumConstraintsFromComparison(cmp *ast.RelationalOpExpr) ([]fac
 		if strict {
 			k--
 		}
-		return factflow.NewBranchScaledConstraint(sum.t1.coeff, sum.t1.path, sum.t1.isLength, sum.t2.coeff, sum.t2.path, sum.t2.isLength, other.path, other.isLength, k)
+		return factflow.NewBranchScaledConstraintOnEdge(sum.t1.coeff, sum.t1.path, sum.t1.isLength, sum.t2.coeff, sum.t2.path, sum.t2.isLength, other.path, other.isLength, k, edge)
 	}
 	upper := func(op string) bool {
 		switch op {
@@ -269,13 +313,13 @@ func (l *lowerer) sumConstraintsFromComparison(cmp *ast.RelationalOpExpr) ([]fac
 		}
 		return false
 	}
-	switch cmp.Operator {
+	switch op {
 	case "<=", ">=":
-		if upper(cmp.Operator) {
+		if upper(op) {
 			return []factflow.BranchDiffConstraint{sumLe(false)}, true
 		}
 	case "<", ">":
-		if upper(cmp.Operator) {
+		if upper(op) {
 			return []factflow.BranchDiffConstraint{sumLe(true)}, true
 		}
 	case "==":

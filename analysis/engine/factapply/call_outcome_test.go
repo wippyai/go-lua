@@ -368,6 +368,79 @@ func TestFactsNodeTransferCallOutcomeAppliesNormalReturnNumFloors(t *testing.T) 
 	}
 }
 
+func TestFactsNodeTransferCallOutcomeAppliesNormalReturnRelConstraints(t *testing.T) {
+	reg := standard.Registry()
+	point := cfg.Point(633)
+	xs := symbol.ID(633)
+	i := symbol.ID(634)
+	j := symbol.ID(635)
+	xsExpr := factflow.ExprRef(633)
+	iExpr := factflow.ExprRef(634)
+	jExpr := factflow.ExprRef(635)
+	xsPath := pathdom.NewPath(xs, "xs")
+	iPath := pathdom.NewPath(i, "i")
+	jPath := pathdom.NewPath(j, "j")
+	visibilityBuilder := visibility.NewBuilder()
+	visibilityBuilder.Define(point, xs, "xs")
+	visibilityBuilder.Define(point, i, "i")
+	visibilityBuilder.Define(point, j, "j")
+	resolver := visibility.NewResolver(visibilityBuilder.Build())
+
+	got := NewFactsNodeTransfer(FactsNodeTransferConfig{
+		Facts: factflow.NewFacts(factflow.FactsInput{
+			CallSites: map[cfg.Point]factflow.CallSite{
+				point: factflow.NewCallSite(factflow.CallSiteConfig{
+					Context: factflow.CallSiteContextStatement,
+					ArgumentSources: []factflow.ValueSource{
+						{Kind: factflow.ValueSourceExpression, ExprRef: xsExpr, HasExpr: true},
+						{Kind: factflow.ValueSourceExpression, ExprRef: iExpr, HasExpr: true},
+						{Kind: factflow.ValueSourceExpression, ExprRef: jExpr, HasExpr: true},
+					},
+				}),
+			},
+			ExpressionPaths: map[factflow.ExprRef]pathdom.Path{
+				xsExpr: xsPath,
+				iExpr:  iPath,
+				jExpr:  jPath,
+			},
+		}),
+		CallOutcome: func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) callpayload.CallOutcome {
+			return callpayload.CallOutcome{
+				NormalReturnFacts: callboundary.NormalReturnFacts{
+					RelConstraints: []callboundary.RelConstraintFact{{
+						CoA: 1,
+						A:   callboundary.RelOperand{Path: pathdom.NewPlaceholder(1)},
+						CoB: 1,
+						B:   callboundary.RelOperand{Path: pathdom.NewPlaceholder(2)},
+						C:   callboundary.RelOperand{Path: pathdom.NewPlaceholder(0), IsLength: true},
+					}},
+				},
+			}
+		},
+		Visibility: resolver,
+	})(transfer.NodeContext{
+		Registry: reg,
+		Point:    point,
+	}, state.State{})
+
+	xsKey := visibility.RootOrVisibleKeyAt(resolver, point, xsPath)
+	iKey := visibility.RootOrVisibleKeyAt(resolver, point, iPath)
+	jKey := visibility.RootOrVisibleKeyAt(resolver, point, jPath)
+	if xsKey == "" || iKey == "" || jKey == "" {
+		t.Fatalf("RootOrVisibleKeyAt failed for xs=%q i=%q j=%q", xsKey, iKey, jKey)
+	}
+	constraints := got.RelConstraints().Constraints
+	if len(constraints) != 1 {
+		t.Fatalf("relational constraints = %#v, want one rebased relation", constraints)
+	}
+	constraint := constraints[0]
+	if constraint.CoA != 1 || constraint.CoB != 1 || constraint.K != 0 ||
+		!((constraint.A == iKey && constraint.B == jKey) || (constraint.A == jKey && constraint.B == iKey)) ||
+		constraint.C != state.LengthRelKey(xsKey) {
+		t.Fatalf("relational constraint = %#v, want i+j-len(xs)<=0 after rebasing", constraint)
+	}
+}
+
 func TestFactsNodeTransferCallOutcomeParamPathRefinementUsesArgumentNotReceiver(t *testing.T) {
 	reg := standard.Registry()
 	point := cfg.Point(616)

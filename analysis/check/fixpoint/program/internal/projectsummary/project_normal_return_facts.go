@@ -153,6 +153,16 @@ func projectNormalReturnFacts(reg *axis.Registry, result ResultReader, exit stat
 		}
 	}
 
+	if snapshot := exit.RelConstraints(); !snapshot.Bottom && !snapshot.Top {
+		for _, constraint := range snapshot.Constraints {
+			projected, ok := projectRelConstraintFact(projectStatePath, constraint)
+			if !ok {
+				continue
+			}
+			out.RelConstraints = append(out.RelConstraints, projected)
+		}
+	}
+
 	if snapshot := exit.ChannelSelectFactsSnapshot(); !snapshot.Bottom && !snapshot.Top {
 		for _, stateFact := range snapshot.Facts {
 			kind, ok := projectChannelSelectKind(stateFact.Kind)
@@ -772,6 +782,47 @@ func normalReturnFactPlaceholderPath(pathKey path.PathKey, params []path.Path) (
 		return path.NewPlaceholder(i).AppendSegments(localPath.Segments), true
 	}
 	return path.Path{}, false
+}
+
+func projectRelConstraintFact(
+	projectStatePath func(path.PathKey) (path.Path, bool),
+	constraint state.RelConstraint,
+) (callboundary.RelConstraintFact, bool) {
+	a, ok := projectRelConstraintOperand(projectStatePath, constraint.A)
+	if !ok {
+		return callboundary.RelConstraintFact{}, false
+	}
+	c, ok := projectRelConstraintOperand(projectStatePath, constraint.C)
+	if !ok {
+		return callboundary.RelConstraintFact{}, false
+	}
+	out := callboundary.RelConstraintFact{
+		CoA: constraint.CoA,
+		A:   a,
+		C:   c,
+		K:   constraint.K,
+	}
+	if constraint.B != "" && constraint.CoB != 0 {
+		b, ok := projectRelConstraintOperand(projectStatePath, constraint.B)
+		if !ok {
+			return callboundary.RelConstraintFact{}, false
+		}
+		out.CoB = constraint.CoB
+		out.B = b
+	}
+	return out, true
+}
+
+func projectRelConstraintOperand(
+	projectStatePath func(path.PathKey) (path.Path, bool),
+	key path.PathKey,
+) (callboundary.RelOperand, bool) {
+	if arrayKey, ok := state.ArrayKeyOfLengthRel(key); ok {
+		target, targetOK := projectStatePath(arrayKey)
+		return callboundary.RelOperand{Path: target, IsLength: true}, targetOK
+	}
+	target, ok := projectStatePath(key)
+	return callboundary.RelOperand{Path: target}, ok
 }
 
 func normalReturnFactStatePlaceholderPath(ks *keyspace.KeySpace, pathKey path.PathKey, params []path.Path) (path.Path, bool) {

@@ -31,6 +31,7 @@ type NormalReturnFacts struct {
 	StoreRelations    []StoreRelationFact
 	LifecycleFacts    []LifecycleFact
 	NumFloors         []NumFloorFact
+	RelConstraints    []RelConstraintFact
 }
 
 // Empty reports whether no normal-return fact lane carries evidence.
@@ -46,7 +47,8 @@ func (f NormalReturnFacts) Empty() bool {
 		len(f.EscapeEvents) == 0 &&
 		len(f.StoreRelations) == 0 &&
 		len(f.LifecycleFacts) == 0 &&
-		len(f.NumFloors) == 0
+		len(f.NumFloors) == 0 &&
+		len(f.RelConstraints) == 0
 }
 
 // Append returns f with every normal-return fact lane from other appended.
@@ -63,6 +65,7 @@ func (f NormalReturnFacts) Append(other NormalReturnFacts) NormalReturnFacts {
 	f.StoreRelations = append(f.StoreRelations, other.StoreRelations...)
 	f.LifecycleFacts = append(f.LifecycleFacts, other.LifecycleFacts...)
 	f.NumFloors = append(f.NumFloors, other.NumFloors...)
+	f.RelConstraints = append(f.RelConstraints, other.RelConstraints...)
 	return f
 }
 
@@ -202,6 +205,24 @@ type LifecycleFact struct {
 type NumFloorFact struct {
 	Path  pathdom.Path
 	Floor int64
+}
+
+// RelOperand is a placeholder operand in a normal-return relational constraint.
+// Length operands stand for len(Path); value operands stand for value(Path).
+type RelOperand struct {
+	Path     pathdom.Path
+	IsLength bool
+}
+
+// RelConstraintFact records CoA*A + CoB*B - C <= K on normal return. B is
+// optional when CoB is zero or B.Path is empty.
+type RelConstraintFact struct {
+	CoA int64
+	A   RelOperand
+	CoB int64
+	B   RelOperand
+	C   RelOperand
+	K   int64
 }
 
 const escapeEventEffectSitePrefix = "escape-event."
