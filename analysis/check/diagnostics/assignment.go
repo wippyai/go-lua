@@ -283,6 +283,7 @@ func (p annotationAssignability) pathAssignment(result *body.Result, point cfg.P
 	if mismatch, ok := objectLiteralMemberMismatch(result, point, fact.Value, want, env); ok {
 		extra := boundaryDiagnosticEvidenceForSubject(result, point, ast.SpanOf(mismatch.expr), exprEvidenceName(mismatch.expr), mismatch.want, boundaryValueFromExpr(mismatch.expr))
 		extra = append(extra, mismatch.missingFieldEvidence()...)
+		extra = append(extra, mismatch.unionArmEvidence...)
 		return pathAssignmentDiagnostic(fact.Target, mismatch.expr, mismatch.got, mismatch.want, extra...), true
 	}
 	sourceResolution := resolvePathAssignmentSourceType(result, p.resolver, point, fact, env)
@@ -570,7 +571,8 @@ func (p annotationAssignability) objectLiteralAssignment(result *body.Result, po
 		if objectLiteralAdmissibleToAnyArm(result, point, arms, fact, env) {
 			return diagnostic.Diagnostic{}, false
 		}
-		return assignmentDiagnostic(name, want, objectLiteralType(want, fact), expr, annotation), true
+		extra := objectLiteralUnionArmEvidence(result, point, fact, arms, env)
+		return assignmentDiagnostic(name, want, objectLiteralType(want, fact), expr, annotation, extra...), true
 	}
 	for _, entry := range fact.Entries {
 		expected, ok := expectedTypeAtSegments(want, entry.Suffix.Segments)

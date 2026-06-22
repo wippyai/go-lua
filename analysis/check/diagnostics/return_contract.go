@@ -67,6 +67,7 @@ func produceReturnContract(result *body.Result, context producerContext, inherit
 			if mismatch, ok := objectLiteralMemberMismatch(result, point, expr, want, envs[point]); ok {
 				extra := boundaryDiagnosticEvidenceForSubject(result, point, ast.SpanOf(mismatch.expr), exprEvidenceName(mismatch.expr), mismatch.want, boundaryValueFromExpr(mismatch.expr))
 				extra = append(extra, mismatch.missingFieldEvidence()...)
+				extra = append(extra, mismatch.unionArmEvidence...)
 				out = append(out, returnContractDiagnostic(mismatch.expr, annotation, mismatch.got, mismatch.want, i, extra...))
 				continue
 			}

@@ -40,10 +40,12 @@ local event: Event = {["kind"] = "stop", code = 1}
 			`not`,
 			`{kind: "start", payload: string} | {code: number, kind: "stop"}`,
 		},
-		EvidenceMin: 2,
+		EvidenceMin: 4,
 		EvidenceOrdered: []string{
 			`assigned value has type {code: 1, ["kind"]: "stop"}`,
 			`event is declared as Event`,
+			`union arm 1 ({kind: "start", payload: string}) rejected: requires .kind; literal provides ["kind"] instead`,
+			`union arm 2 ({code: number, kind: "stop"}) rejected: requires .kind; literal provides ["kind"] instead`,
 		},
 		LabelMin:      2,
 		LabelContains: []string{"declared type", "assigned value"},
@@ -61,6 +63,8 @@ local event: Event = {["kind"] = "stop", code = 1}
 			"because:",
 			`1. proven: assigned value has type {code: 1, ["kind"]: "stop"}`,
 			"2. claimed: event is declared as Event",
+			`3. refuted: union arm 1 ({kind: "start", payload: string}) rejected: requires .kind; literal provides ["kind"] instead`,
+			`4. refuted: union arm 2 ({code: number, kind: "stop"}) rejected: requires .kind; literal provides ["kind"] instead`,
 			"help: Use a value compatible with the expected type",
 		},
 		RenderNotContains: []string{

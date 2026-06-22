@@ -1128,6 +1128,7 @@ func objectLiteralArgTypeDiagnostic(call *ast.FuncCallExpr, name string, index i
 	}}
 	evidence = append(evidence, extraEvidence...)
 	evidence = append(evidence, mismatch.missingFieldEvidence()...)
+	evidence = append(evidence, mismatch.unionArmEvidence...)
 	return argTypeDiagnosticEnvelopeWithSubject(call, frameExpr, index, mismatch.got, "", subject,
 		fmt.Sprintf("%s is %s, not %s", subject, formatType(mismatch.got), formatType(mismatch.want)),
 		evidence[0], evidence[1:]...)

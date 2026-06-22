@@ -1,6 +1,8 @@
 package diagnostics
 
 import (
+	"fmt"
+
 	"github.com/wippyai/go-lua/analysis/check/body"
 	"github.com/wippyai/go-lua/analysis/check/internal/readmodel"
 	"github.com/wippyai/go-lua/analysis/diagnostic"
@@ -103,12 +105,13 @@ func closedRecord(t typ.Type) (*typ.Record, bool) {
 }
 
 type objectLiteralTypeMismatch struct {
-	expr         ast.Expr
-	got          typ.Type
-	want         typ.Type
-	suffix       string
-	segments     []segment.Segment
-	missingField string
+	expr             ast.Expr
+	got              typ.Type
+	want             typ.Type
+	suffix           string
+	segments         []segment.Segment
+	missingField     string
+	unionArmEvidence []diagnostic.Evidence
 }
 
 // missingFieldEvidence returns the missing-required-field evidence for a
@@ -143,9 +146,68 @@ func objectLiteralMemberMismatch(result *body.Result, point cfg.Point, expr ast.
 				return mismatch, true
 			}
 		}
-		return objectLiteralTypeMismatch{expr: expr, got: objectLiteralType(want, fact), want: want}, true
+		return objectLiteralTypeMismatch{expr: expr, got: objectLiteralType(want, fact), want: want, unionArmEvidence: objectLiteralUnionArmEvidence(result, point, fact, arms, env)}, true
 	}
 	return objectLiteralMemberMismatchInFact(result, point, fact, want, env)
+}
+
+func objectLiteralUnionArmEvidence(result *body.Result, point cfg.Point, fact semantics.ObjectLiteralFact, arms []*typ.Record, env guardEnv) []diagnostic.Evidence {
+	if len(arms) == 0 {
+		return nil
+	}
+	out := make([]diagnostic.Evidence, 0, len(arms))
+	for i, arm := range arms {
+		message, span, ok := objectLiteralUnionArmRejection(result, point, fact, arm, env)
+		if !ok {
+			continue
+		}
+		out = append(out, diagnostic.Evidence{
+			Kind:    diagnostic.EvidenceAbstractFact,
+			Trust:   diagnostic.TrustRefuted,
+			Span:    span,
+			Message: fmt.Sprintf("union arm %d (%s) rejected: %s", i+1, formatType(arm), message),
+		})
+		if len(out) >= 4 {
+			break
+		}
+	}
+	return out
+}
+
+func objectLiteralUnionArmRejection(result *body.Result, point cfg.Point, fact semantics.ObjectLiteralFact, arm *typ.Record, env guardEnv) (string, ast.Span, bool) {
+	if field, ok := missingRequiredRecordField(arm, fact); ok {
+		fieldPath := segment.FormatSegments([]segment.Segment{{Kind: segment.SegmentField, Name: field.Name}})
+		if alias, aliasSpan, aliasOK := objectLiteralStaticStringIndexForField(fact, field.Name); aliasOK {
+			return fmt.Sprintf("requires %s; literal provides %s instead", fieldPath, alias), aliasSpan, true
+		}
+		return fmt.Sprintf("missing required field %s", fieldPath), ast.SpanOf(fact.Expr), true
+	}
+	for _, entry := range fact.Entries {
+		expected, ok := expectedTypeAtSegments(arm, entry.Suffix.Segments)
+		if !ok {
+			continue
+		}
+		got, ok := objectLiteralEntryMismatchType(result, point, entry, expected, env)
+		if !ok {
+			continue
+		}
+		return fmt.Sprintf("%s is %s, not %s", segment.FormatSegments(entry.Suffix.Segments), formatType(got), formatType(expected)), ast.SpanOf(entry.Value), true
+	}
+	return "", ast.SpanOf(fact.Expr), false
+}
+
+func objectLiteralStaticStringIndexForField(fact semantics.ObjectLiteralFact, name string) (string, ast.Span, bool) {
+	for _, entry := range fact.Entries {
+		if len(entry.Suffix.Segments) != 1 {
+			continue
+		}
+		seg := entry.Suffix.Segments[0]
+		if seg.Kind != segment.SegmentIndexString || seg.Name != name {
+			continue
+		}
+		return segment.FormatSegments(entry.Suffix.Segments), ast.SpanOf(entry.Value), true
+	}
+	return "", ast.Span{}, false
 }
 
 func objectLiteralMemberMismatchInFact(result *body.Result, point cfg.Point, fact semantics.ObjectLiteralFact, want typ.Type, env guardEnv) (objectLiteralTypeMismatch, bool) {
