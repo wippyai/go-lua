@@ -405,7 +405,7 @@ func (p *allocationTemplateProjector) visit(raw identity.ID, templateID signatur
 	}
 	p.visiting[templateID] = struct{}{}
 	projected := signature.AllocationObjectTemplate{ID: templateID}
-	if t, ok := valueType(p.reg, object.Root()); ok {
+	if t, ok := typevalue.TypeOf(p.reg, object.Root()); ok {
 		projected.Type = t
 	}
 	for _, member := range sortedHeapStaticMembers(p.ks, object.StaticMembers()) {
@@ -637,7 +637,7 @@ func operationalDynamicIndexOperand(reg *axis.Registry, p pathdom.Path, value pr
 	if !p.IsEmpty() && placeholderPathInArity(p, arity) {
 		out.Path = p
 	}
-	if t, ok := valueType(reg, value); ok && portableDynamicIndexType(t) {
+	if t, ok := typevalue.TypeOf(reg, value); ok && portableDynamicIndexType(t) {
 		out.Type = t
 	}
 	return out, !out.Path.IsEmpty() || out.Type != nil

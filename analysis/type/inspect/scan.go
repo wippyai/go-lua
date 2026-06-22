@@ -48,7 +48,7 @@ func contains(t typ.Type, pred func(typ.Type) bool, scan *Scanner) bool {
 		return true
 	}
 
-	return WalkChildren(t, func(child typ.Type) bool {
+	return typ.WalkChildren(t, func(child typ.Type) bool {
 		return contains(child, pred, scan)
 	})
 }

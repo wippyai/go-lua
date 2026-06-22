@@ -9,8 +9,8 @@ import (
 )
 
 func (b *builder) appendValueListCalls(state flowState, stmt ast.Stmt, exprs []ast.Expr) flowState {
-	calls, _ := b.valueListCalls(exprs)
-	if len(calls) == 0 {
+	calls, ok := b.valueListCalls(exprs)
+	if !ok || len(calls) == 0 {
 		return state
 	}
 	for _, expr := range exprs {
@@ -20,15 +20,18 @@ func (b *builder) appendValueListCalls(state flowState, stmt ast.Stmt, exprs []a
 }
 
 func (b *builder) appendExprCalls(state flowState, stmt ast.Stmt, expr ast.Expr) flowState {
-	calls, _ := b.exprCalls(expr)
-	if len(calls) == 0 {
+	calls, ok := b.exprCalls(expr)
+	if !ok || len(calls) == 0 {
 		return state
 	}
 	return b.appendValueExprCalls(state, stmt, expr)
 }
 
 func (b *builder) appendConditionCall(state flowState, stmt ast.Stmt, expr ast.Expr) (flowState, cfg.Point, bool) {
-	calls, _ := b.conditionExprCalls(expr)
+	calls, ok := b.conditionExprCalls(expr)
+	if !ok {
+		return state, 0, false
+	}
 	first := cfg.Point(0)
 	for range calls {
 		state = b.appendCall(state, stmt)
@@ -147,8 +150,8 @@ func (b *builder) appendShortCircuitValueCalls(state flowState, stmt ast.Stmt, e
 	if !state.live {
 		return state
 	}
-	rhsCalls, _ := callorder.Expr(expr.Rhs, b.callOrderOptions())
-	if len(rhsCalls) == 0 {
+	rhsCalls, ok := callorder.Expr(expr.Rhs, b.callOrderOptions())
+	if !ok || len(rhsCalls) == 0 {
 		return state
 	}
 	rhsCond := shortCircuitRHSCond(expr.Operator)

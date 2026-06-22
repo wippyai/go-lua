@@ -44,13 +44,3 @@ func (s *Scanner) Enter(t typ.Type) bool {
 	s.enters++
 	return true
 }
-
-// WalkChildren visits the canonical child type slots of t in stable order.
-// It returns true when visit reports a match and traversal should stop.
-func WalkChildren(t typ.Type, visit func(typ.Type) bool) bool {
-	return typ.WalkChildren(t, visit)
-}
-
-func unwrapTransparent(t typ.Type) typ.Type {
-	return typ.UnwrapTransparentWrappers(t)
-}

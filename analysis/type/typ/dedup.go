@@ -114,7 +114,7 @@ func collectRecursiveIdentities(t Type, ids map[uint64]bool, seen map[uintptr]bo
 	if rec, ok := t.(*Recursive); ok {
 		ids[rec.ID] = true
 	}
-	walkChildren(t, func(child Type) bool {
+	WalkChildren(t, func(child Type) bool {
 		collectRecursiveIdentities(child, ids, seen)
 		return false
 	})

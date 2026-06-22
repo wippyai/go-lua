@@ -55,5 +55,5 @@ func containsDynamicFlag(
 		return containsDynamicFlag(child, seen, depth+1, maxDepth, known)
 	}
 
-	return walkChildren(t, next)
+	return WalkChildren(t, next)
 }

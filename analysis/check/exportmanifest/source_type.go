@@ -6,6 +6,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
 	"github.com/wippyai/go-lua/analysis/lua/typeresolve"
@@ -42,7 +43,7 @@ func sourceType(result *body.Result, point cfg.Point, source sourceprovenance.AS
 		if !ok {
 			return nil, false
 		}
-		return valueType(result.Registry(), value)
+		return typevalue.TypeOf(result.Registry(), value)
 	}
 	valueSource, ok := sourcebridge.ValueSourceFromASTSource(source)
 	if !ok {
@@ -52,7 +53,7 @@ func sourceType(result *body.Result, point cfg.Point, source sourceprovenance.AS
 	if !ok {
 		return nil, false
 	}
-	return valueType(result.Registry(), value)
+	return typevalue.TypeOf(result.Registry(), value)
 }
 
 func exprType(result *body.Result, point cfg.Point, expr ast.Expr) (typ.Type, bool) {
@@ -71,14 +72,14 @@ func exprType(result *body.Result, point cfg.Point, expr ast.Expr) (typ.Type, bo
 		}
 	}
 	if value, ok := result.ExpressionValueAtBoundary(point, expr); ok {
-		if t, ok := valueType(result.Registry(), value); ok {
+		if t, ok := typevalue.TypeOf(result.Registry(), value); ok {
 			return t, true
 		}
 	}
 	if kinds, ok := valueexpr.RuntimeKind(expr); ok {
 		value := product.NewWithPresence(result.Registry(), product.ShapeTop, presence.Present())
 		value = product.Set(result.Registry(), value, runtimekind.Key, kinds)
-		return valueType(result.Registry(), value)
+		return typevalue.TypeOf(result.Registry(), value)
 	}
 	return nil, false
 }

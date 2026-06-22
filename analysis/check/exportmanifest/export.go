@@ -4,6 +4,7 @@ package exportmanifest
 import (
 	"github.com/wippyai/go-lua/analysis/check/body"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/program"
+	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/module/manifest"
 	"github.com/wippyai/go-lua/analysis/type/normalize"
 	"github.com/wippyai/go-lua/analysis/type/subtype"
@@ -60,7 +61,7 @@ func summaryReturnType(result program.Result, root *body.Result) (typ.Type, bool
 	if len(summary.Returns) == 0 {
 		return nil, false
 	}
-	t, ok := valueType(root.Registry(), summary.Returns[0])
+	t, ok := typevalue.TypeOf(root.Registry(), summary.Returns[0])
 	if !ok || typ.IsUnknown(t) {
 		return nil, false
 	}

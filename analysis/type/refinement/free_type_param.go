@@ -1,7 +1,6 @@
 package refinement
 
 import (
-	"github.com/wippyai/go-lua/analysis/type/inspect"
 	"github.com/wippyai/go-lua/analysis/type/internal/nodeid"
 	"github.com/wippyai/go-lua/analysis/type/kind"
 	"github.com/wippyai/go-lua/analysis/type/typ"
@@ -113,7 +112,7 @@ func (s *freeTypeParamSeen) containsRecursiveScan(t typ.Type) bool {
 	if !s.recursiveSeen.enter(t) {
 		return false
 	}
-	return inspect.WalkChildren(t, func(child typ.Type) bool {
+	return typ.WalkChildren(t, func(child typ.Type) bool {
 		return s.containsRecursiveScan(child)
 	})
 }
@@ -276,7 +275,7 @@ func containsFreeTypeParam(t typ.Type, seen *freeTypeParamSeen, owned map[*typ.T
 		return false
 	}
 
-	return inspect.WalkChildren(t, func(child typ.Type) bool {
+	return typ.WalkChildren(t, func(child typ.Type) bool {
 		return containsFreeTypeParam(child, seen, owned)
 	})
 }

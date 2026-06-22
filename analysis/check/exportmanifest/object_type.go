@@ -9,6 +9,7 @@ import (
 	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/ir/dominance"
 	"github.com/wippyai/go-lua/analysis/lua/pathexpr"
@@ -101,7 +102,7 @@ func ordinaryAssignmentRHSMemberType(result *body.Result, point cfg.Point, root 
 	resolved := false
 	if value, ok := ordinaryAssignmentRHSValue(result, point, fact); ok {
 		resolved = true
-		if t, ok := valueType(result.Registry(), value); ok {
+		if t, ok := typevalue.TypeOf(result.Registry(), value); ok {
 			return t, true, true
 		}
 	}
@@ -153,7 +154,7 @@ func ordinaryAssignmentDestinationMemberType(result *body.Result, point cfg.Poin
 	if !ok {
 		return nil, false
 	}
-	t, ok := valueType(result.Registry(), value)
+	t, ok := typevalue.TypeOf(result.Registry(), value)
 	if !ok || typ.IsAny(t) || typ.IsUnknown(t) {
 		return nil, false
 	}
@@ -241,7 +242,7 @@ func addStateStaticMembers(
 		if members.has(member) {
 			continue
 		}
-		t, ok := valueType(result.Registry(), value)
+		t, ok := typevalue.TypeOf(result.Registry(), value)
 		if !ok {
 			t = typ.Unknown
 		}
