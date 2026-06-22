@@ -401,6 +401,60 @@ help: Check the union case before reading this field, or return from the opposit
 	assertRenderedEqual(t, rendered, want)
 }
 
+func TestDiscriminatedUnionExhaustivenessReportsDeepResultShapeEnvelope(t *testing.T) {
+	result := Check(`
+type Ok = { envelope: { payload: { ok: true } }, value: string }
+type Err = { envelope: { payload: { ok: false } }, error: string }
+type Result = Ok | Err
+
+local function use(result: Result): string
+    return result.value
+end
+`, WithDiagnosticRule(
+		diagnostics.CodeDiscriminatedUnionExhaustive,
+		diagnostic.Enable(),
+	))
+	requireDiagnostic(t, result, diagnosticExpectation{
+		Code:            diagnostics.CodeDiscriminatedUnionExhaustive,
+		Severity:        diagnostic.SeverityWarning,
+		DiagnosticCount: 1,
+		MessageContains: []string{
+			"case-specific field read is not exhaustive",
+			"result.value",
+			"result.envelope.payload.ok == true",
+		},
+		EvidenceOrdered: []string{
+			"`result` is a union discriminated by `result.envelope.payload.ok`",
+			"`result.value` exists only for `result.envelope.payload.ok == true`",
+			"no stable guard proves `result.envelope.payload.ok == true` before this read",
+		},
+		LabelContains: []string{"case-specific field read"},
+		HelpContains:  []string{"Check the union case before reading this field"},
+	})
+}
+
+func TestDiscriminatedUnionExhaustivenessAcceptsGuardedDeepResultShapeEnvelope(t *testing.T) {
+	result := Check(`
+type Ok = { envelope: { payload: { ok: true } }, value: string }
+type Err = { envelope: { payload: { ok: false } }, error: string }
+type Result = Ok | Err
+
+local function use(result: Result): string
+    if result.envelope.payload.ok then
+        return result.value
+    else
+        return ""
+    end
+end
+`, WithDiagnosticRule(
+		diagnostics.CodeDiscriminatedUnionExhaustive,
+		diagnostic.Enable(),
+	))
+	if hasDiagnosticCode(result.Diagnostics, diagnostics.CodeDiscriminatedUnionExhaustive) {
+		t.Fatalf("diagnostics = %#v, want no result-shape exhaustiveness warning after deep discriminant guard", result.Diagnostics)
+	}
+}
+
 func TestDiscriminatedUnionExhaustivenessReportsUnguardedResultErrorRead(t *testing.T) {
 	result := Check(`
 type Result<T> = { ok: true, value: T } | { ok: false, error: string }

@@ -1120,7 +1120,7 @@ func literalDiscriminantDomainsForCases(receiver pathdom.Path, cases []variant.O
 }
 
 func literalDiscriminantSuffixes(t typ.Type, prefix []segment.Segment, depth int) [][]segment.Segment {
-	if t == nil || depth > 2 {
+	if t == nil || depth > typ.DefaultRecursionDepth {
 		return nil
 	}
 	switch v := unwrap.Annotated(t).(type) {
