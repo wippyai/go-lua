@@ -41,10 +41,61 @@ func Provider(config Config) sourcevalue.ExpressionValueProvider {
 	}
 	return func(point cfg.Point, expr factflow.ExprRef, _ factflow.ValueSource, in state.State) (product.Value, bool) {
 		p, ok := config.Facts.ExpressionPath(expr)
+		if ok {
+			return Project(config, point, p, in)
+		}
+		dyn, ok := config.Facts.DynamicIndexExpression(expr)
+		if !ok {
+			return product.Value{}, false
+		}
+		p, ok = dynamicIndexExpressionPath(config, point, dyn, in)
 		if !ok {
 			return product.Value{}, false
 		}
 		return Project(config, point, p, in)
+	}
+}
+
+func dynamicIndexExpressionPath(config Config, point cfg.Point, dyn factflow.DynamicIndexExpression, in state.State) (pathdom.Path, bool) {
+	keyValue, ok := dynamicIndexExpressionKeyValue(config, point, dyn.KeySource(), in)
+	if !ok {
+		return pathdom.Path{}, false
+	}
+	name, ok := staticStringKey(config.Registry, keyValue)
+	if !ok {
+		return pathdom.Path{}, false
+	}
+	return dyn.TablePath().IndexStr(name), true
+}
+
+func staticStringKey(reg *axis.Registry, value product.Value) (string, bool) {
+	t, ok := typevalue.TypeOf(reg, value)
+	if !ok {
+		return "", false
+	}
+	lit, ok := unwrap.Alias(t).(*typ.Literal)
+	if !ok || lit.Base != kind.String {
+		return "", false
+	}
+	name, ok := lit.Value.(string)
+	return name, ok
+}
+
+func dynamicIndexExpressionKeyValue(config Config, point cfg.Point, source factflow.ValueSource, in state.State) (product.Value, bool) {
+	switch source.Kind {
+	case factflow.ValueSourceExpression:
+		if !source.HasExpr {
+			return product.Value{}, false
+		}
+		if p, ok := config.Facts.ExpressionPath(source.ExprRef); ok {
+			return Project(config, point, p, in)
+		}
+		value, ok := config.Facts.ExpressionValue(source.ExprRef)
+		return value, ok
+	case factflow.ValueSourceNil:
+		return typevalue.Nil(config.Registry), true
+	default:
+		return product.Value{}, false
 	}
 }
 

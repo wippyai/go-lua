@@ -66,6 +66,19 @@ func exprRefSet(paths map[factflow.ExprRef]pathdom.Path) map[factflow.ExprRef]st
 	return out
 }
 
+func addDynamicIndexExprRefs(set map[factflow.ExprRef]struct{}, dynamic map[factflow.ExprRef]factflow.DynamicIndexExpression) map[factflow.ExprRef]struct{} {
+	if len(dynamic) == 0 {
+		return set
+	}
+	if set == nil {
+		set = make(map[factflow.ExprRef]struct{}, len(dynamic))
+	}
+	for ref := range dynamic {
+		set[ref] = struct{}{}
+	}
+	return set
+}
+
 func configGlobals(config Config) []string {
 	globals := append([]string(nil), config.Globals...)
 	if config.Signatures.IncludeStdlib {

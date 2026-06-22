@@ -176,6 +176,125 @@ func TestFactsNodeTransferAppliesDynamicIndexWriteKeyValueAdmission(t *testing.T
 	}
 }
 
+func TestFactsNodeTransferKnownDynamicIndexWriteAddsPathEqualityProof(t *testing.T) {
+	reg := standard.Registry()
+	point := cfg.Point(4021)
+	table := symbol.ID(4021)
+	sourceSymbol := symbol.ID(4022)
+	tablePath := pathdom.NewPath(table, "holder")
+	sourcePath := pathdom.NewPath(sourceSymbol, "tx")
+	keySource := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: factflow.ExprRef(4021), HasExpr: true}
+	valueSource := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: factflow.ExprRef(4022), HasExpr: true}
+	keyType := typ.LiteralString("tx")
+	keyValue := typevalue.WithWitness(reg, typevalue.FromType(reg, keyType), keyType)
+	writeValue := presentValue(reg)
+	sources := &recordingSourceValues{
+		values: map[factflow.ValueSource]product.Value{
+			keySource:   keyValue,
+			valueSource: writeValue,
+		},
+	}
+	visibilityBuilder := visibility.NewBuilder()
+	visibilityBuilder.Define(point, table, "holder")
+	visibilityBuilder.Define(point, sourceSymbol, "tx")
+	resolver := visibility.NewResolver(visibilityBuilder.Build())
+	ks := resolver.KeySpace()
+
+	got := NewFactsNodeTransfer(FactsNodeTransferConfig{
+		Facts: factflow.NewFacts(factflow.FactsInput{
+			DynamicIndexWrites: map[cfg.Point]factflow.DynamicIndexWrite{
+				point: factflow.NewDynamicIndexWrite(
+					tablePath,
+					keySource,
+					valueSource,
+					dynamicindex.AdmissionAdmitted,
+					factflow.DynamicIndexReadbackKeyAndValue,
+				),
+			},
+			ExpressionPaths: map[factflow.ExprRef]pathdom.Path{
+				valueSource.ExprRef: sourcePath,
+			},
+		}),
+		Sources:    sources,
+		Visibility: resolver,
+	})(transfer.NodeContext{
+		Registry: reg,
+		Point:    point,
+	}, state.State{})
+
+	proof := pathevidence.BranchProof{
+		Kind:  pathevidence.BranchProofPathEqual,
+		Path:  mustStateKey(t, ks, pathdom.PathKey(`sym4021@1["tx"]`)),
+		Other: mustStateKey(t, ks, pathdom.PathKey("sym4022@1")),
+	}
+	if !got.HasBranchProof(proof) {
+		t.Fatalf("known dynamic-index write did not publish path equality proof")
+	}
+	equivalent := got.EquivalentPathKeys(ks, pathdom.PathKey("sym4021@1.tx"))
+	if !pathKeysContain(equivalent, pathdom.PathKey("sym4022@1")) {
+		t.Fatalf("field equivalent keys = %#v, want source path", equivalent)
+	}
+}
+
+func TestFactsNodeTransferBroadDynamicIndexWriteDoesNotAddPathEqualityProof(t *testing.T) {
+	reg := standard.Registry()
+	point := cfg.Point(4022)
+	table := symbol.ID(4023)
+	sourceSymbol := symbol.ID(4024)
+	tablePath := pathdom.NewPath(table, "holder")
+	sourcePath := pathdom.NewPath(sourceSymbol, "tx")
+	keySource := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: factflow.ExprRef(4023), HasExpr: true}
+	valueSource := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: factflow.ExprRef(4024), HasExpr: true}
+	keyValue := typevalue.WithWitness(reg, typevalue.FromType(reg, typ.String), typ.String)
+	writeValue := presentValue(reg)
+	sources := &recordingSourceValues{
+		values: map[factflow.ValueSource]product.Value{
+			keySource:   keyValue,
+			valueSource: writeValue,
+		},
+	}
+	visibilityBuilder := visibility.NewBuilder()
+	visibilityBuilder.Define(point, table, "holder")
+	visibilityBuilder.Define(point, sourceSymbol, "tx")
+	resolver := visibility.NewResolver(visibilityBuilder.Build())
+	ks := resolver.KeySpace()
+
+	got := NewFactsNodeTransfer(FactsNodeTransferConfig{
+		Facts: factflow.NewFacts(factflow.FactsInput{
+			DynamicIndexWrites: map[cfg.Point]factflow.DynamicIndexWrite{
+				point: factflow.NewDynamicIndexWrite(
+					tablePath,
+					keySource,
+					valueSource,
+					dynamicindex.AdmissionAdmitted,
+					factflow.DynamicIndexReadbackKeyAndValue,
+				),
+			},
+			ExpressionPaths: map[factflow.ExprRef]pathdom.Path{
+				valueSource.ExprRef: sourcePath,
+			},
+		}),
+		Sources:    sources,
+		Visibility: resolver,
+	})(transfer.NodeContext{
+		Registry: reg,
+		Point:    point,
+	}, state.State{})
+
+	if equivalent := got.EquivalentPathKeys(ks, pathdom.PathKey("sym4023@1.tx")); len(equivalent) != 0 {
+		t.Fatalf("broad dynamic-index key published equality: %#v", equivalent)
+	}
+}
+
+func pathKeysContain(keys []pathdom.PathKey, want pathdom.PathKey) bool {
+	for _, key := range keys {
+		if key == want {
+			return true
+		}
+	}
+	return false
+}
+
 func TestFactsNodeTransferDynamicIndexWritePublishesFirstHeapDynamicFact(t *testing.T) {
 	reg := standard.Registry()
 	point := cfg.Point(403)

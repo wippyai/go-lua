@@ -7,6 +7,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine/dynamicindex"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	sourcevalue "github.com/wippyai/go-lua/analysis/engine/sourcevalue"
@@ -16,6 +17,8 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/engine/visibility"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
+	"github.com/wippyai/go-lua/analysis/type/kind"
+	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
 func applyPathStaticMemberWrite(
@@ -42,12 +45,14 @@ func applyPathStaticMemberWrite(
 	if canonical, ok := fieldCanonicalPathKey(ks, targetKey); ok {
 		out = out.WritePathStaticMember(ks, canonical, value)
 	}
-	return addPathEqualityProofFromSource(resolver, facts, ctx.Point, out, fact.TargetPath(), source)
+	out = addPathEqualityProofFromSource(resolver, facts, ctx.Point, out, fact.TargetPath(), source)
+	return addPathEqualityProofFromDynamicIndexSource(ctx, resolver, facts, sources, read, in, out, fact.TargetPath(), source)
 }
 
 func applyDynamicIndexWrite(
 	ctx transfer.NodeContext,
 	resolver *visibility.Resolver,
+	facts factflow.Facts,
 	sources sourcevalue.SourceValues,
 	read func(cfg.Point) state.State,
 	in state.State,
@@ -68,7 +73,23 @@ func applyDynamicIndexWrite(
 	}
 	value := dynamicIndexFact(ctx, sources, read, in, out, fact)
 	out = out.WriteDynamicIndexFact(ctx.Registry, key, value)
+	out = addKnownDynamicIndexWriteEquality(ctx, resolver, facts, out, fact, value)
 	return writeHeapTableDynamicIndexFact(ctx, resolver, out, fact.TablePath(), key, value)
+}
+
+func addKnownDynamicIndexWriteEquality(
+	ctx transfer.NodeContext,
+	resolver *visibility.Resolver,
+	facts factflow.Facts,
+	out state.State,
+	fact factflow.DynamicIndexWrite,
+	value dynamicindex.Fact,
+) state.State {
+	name, ok := staticStringKey(ctx.Registry, value.KeyValue)
+	if !ok {
+		return out
+	}
+	return addPathEqualityProofFromSource(resolver, facts, ctx.Point, out, fact.TablePath().IndexStr(name), fact.Source())
 }
 
 func writeHeapTableDynamicIndexFact(
@@ -165,6 +186,7 @@ func applyBranchPathEvidence(
 	if stateProof.Kind == pathevidence.BranchProofPathEqual {
 		ks := resolver.KeySpace()
 		out = closeCongruenceAcrossEquality(ctx.Registry, ks, out, ks.Format(stateProof.Path), ks.Format(stateProof.Other))
+		out = out.CanonicalizeTypestateResources(ks)
 	}
 	return out
 }
@@ -340,6 +362,58 @@ func addPathEqualityProofFromSource(
 	if covariantExposureSuppressesPathProof(facts, point, source) {
 		return out
 	}
+	return addPathEqualityProofAt(resolver, point, out, targetPath, sourcePath)
+}
+
+func addPathEqualityProofFromDynamicIndexSource(
+	ctx transfer.NodeContext,
+	resolver *visibility.Resolver,
+	facts factflow.Facts,
+	sources sourcevalue.SourceValues,
+	read func(cfg.Point) state.State,
+	in state.State,
+	out state.State,
+	targetPath pathdom.Path,
+	source factflow.ValueSource,
+) state.State {
+	if source.Kind != factflow.ValueSourceExpression || !source.HasExpr {
+		return out
+	}
+	dyn, ok := facts.DynamicIndexExpression(source.ExprRef)
+	if !ok {
+		return out
+	}
+	keyValue, ok := sources.ValueOfSource(ctx.Point, dyn.KeySource(), in, readWithSamePointCallSource(ctx.Point, dyn.KeySource(), read, out))
+	if !ok {
+		return out
+	}
+	name, ok := staticStringKey(ctx.Registry, keyValue)
+	if !ok {
+		return out
+	}
+	return addPathEqualityProofAt(resolver, ctx.Point, out, targetPath, dyn.TablePath().IndexStr(name))
+}
+
+func staticStringKey(reg *axis.Registry, value product.Value) (string, bool) {
+	t, ok := typevalue.TypeOf(reg, value)
+	if !ok {
+		return "", false
+	}
+	lit, ok := t.(*typ.Literal)
+	if !ok || lit.Base != kind.String {
+		return "", false
+	}
+	name, ok := lit.Value.(string)
+	return name, ok
+}
+
+func addPathEqualityProofAt(
+	resolver *visibility.Resolver,
+	point cfg.Point,
+	out state.State,
+	targetPath pathdom.Path,
+	sourcePath pathdom.Path,
+) state.State {
 	targetKey := factPathKeyAt(resolver, point, targetPath)
 	sourceKey := factPathKeyAt(resolver, point, sourcePath)
 	if targetKey == "" || sourceKey == "" || targetKey == sourceKey {
@@ -353,9 +427,10 @@ func addPathEqualityProofFromSource(
 	if !ok {
 		return out
 	}
-	return out.AddBranchProof(pathevidence.BranchProof{
+	out = out.AddBranchProof(pathevidence.BranchProof{
 		Kind:  pathevidence.BranchProofPathEqual,
 		Path:  targetKeyStruct,
 		Other: sourceKeyStruct,
 	})
+	return out.CanonicalizeTypestateResources(resolver.KeySpace())
 }

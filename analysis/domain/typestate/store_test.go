@@ -63,6 +63,28 @@ func TestResourceIDIsOpaqueToTypestateStore(t *testing.T) {
 	}
 }
 
+func TestMapResourcesJoinsCollidingAliases(t *testing.T) {
+	left := Resource{ID: "left", Protocol: "transaction"}
+	right := Resource{ID: "right", Protocol: "transaction"}
+	canonical := Resource{ID: "canonical", Protocol: "transaction"}
+	got := Empty().
+		Acquire(left, "active", Obligation{Final: "finished"}).
+		Acquire(right, "active", Obligation{Final: "finished"}).
+		MapResources(func(Resource) Resource {
+			return canonical
+		})
+
+	obligations := got.OpenObligations()
+	if len(obligations) != 1 {
+		t.Fatalf("open obligations = %#v, want one joined obligation", obligations)
+	}
+	if obligations[0].Resource != canonical ||
+		obligations[0].Current != "active" ||
+		!obligations[0].Obligation.SatisfiedBy("finished") {
+		t.Fatalf("joined obligation = %#v, want canonical active transaction", obligations[0])
+	}
+}
+
 func TestJoinKeepsObligationWhenAnyBranchMayReturnOpen(t *testing.T) {
 	tx := Resource{ID: "root.tx", Protocol: "transaction"}
 	open := Empty().Acquire(tx, "active", Obligation{Final: "finished"})

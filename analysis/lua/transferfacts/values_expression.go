@@ -26,12 +26,47 @@ func (l *lowerer) addExpressionPath(ref factflow.ExprRef, expr ast.Expr) {
 	}
 	p, ok := pathexpr.Resolve(expr, l.bindings)
 	if !ok || p.IsEmpty() {
+		l.addDynamicIndexExpression(ref, expr)
 		return
 	}
 	if l.expressionPaths == nil {
 		l.expressionPaths = make(map[factflow.ExprRef]pathdom.Path)
 	}
 	l.expressionPaths[ref] = p
+}
+
+func (l *lowerer) addDynamicIndexExpression(ref factflow.ExprRef, expr ast.Expr) {
+	if ref == 0 || expr == nil || l.bindings == nil {
+		return
+	}
+	dyn, ok := l.dynamicIndexExpression(expr)
+	if !ok {
+		return
+	}
+	if l.dynamicIndexExpressions == nil {
+		l.dynamicIndexExpressions = make(map[factflow.ExprRef]factflow.DynamicIndexExpression)
+	}
+	l.dynamicIndexExpressions[ref] = dyn
+}
+
+func (l *lowerer) dynamicIndexExpression(expr ast.Expr) (factflow.DynamicIndexExpression, bool) {
+	inner, ok := sourceprovenance.ProofInner(expr)
+	if !ok {
+		return factflow.DynamicIndexExpression{}, false
+	}
+	attr, ok := inner.(*ast.AttrGetExpr)
+	if !ok || attr.Key == nil || attr.KeySyntax != ast.AttrKeyIndex {
+		return factflow.DynamicIndexExpression{}, false
+	}
+	tablePath, ok := pathexpr.Resolve(attr.Object, l.bindings)
+	if !ok || tablePath.IsEmpty() {
+		return factflow.DynamicIndexExpression{}, false
+	}
+	keySource, ok := l.dynamicIndexKeySource(attr)
+	if !ok {
+		return factflow.DynamicIndexExpression{}, false
+	}
+	return factflow.NewDynamicIndexExpression(tablePath, keySource)
 }
 
 func (l *lowerer) addExpressionCondition(ref factflow.ExprRef, expr ast.Expr) {

@@ -1,6 +1,7 @@
 package state
 
 import (
+	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/typestate"
@@ -28,8 +29,9 @@ func (s State) CanonicalTypestateResourceKey(ks *keyspace.KeySpace, target patha
 	if target == "" {
 		return ""
 	}
-	canonical := target.PathKey()
+	canonical := fieldCanonicalTypestatePathKey(ks, target.PathKey())
 	for _, equivalent := range s.EquivalentPathKeys(ks, target.PathKey()) {
+		equivalent = fieldCanonicalTypestatePathKey(ks, equivalent)
 		if equivalent != "" && equivalent < canonical {
 			canonical = equivalent
 		}
@@ -38,6 +40,48 @@ func (s State) CanonicalTypestateResourceKey(ks *keyspace.KeySpace, target patha
 	if !ok {
 		return ""
 	}
+	return out
+}
+
+func fieldCanonicalTypestatePathKey(ks *keyspace.KeySpace, key pathdom.PathKey) pathdom.PathKey {
+	if ks == nil || key == "" {
+		return key
+	}
+	keyStruct, ok := ks.FromStateKey(key)
+	if !ok {
+		return key
+	}
+	canonical, ok := ks.FieldCanonical(keyStruct)
+	if !ok {
+		return key
+	}
+	formatted := ks.Format(canonical)
+	if formatted == "" {
+		return key
+	}
+	return formatted
+}
+
+// CanonicalizeTypestateResources folds already-tracked resources through the
+// current path-equality evidence. Use this immediately after adding new
+// equality evidence so resources acquired before the proof are stored under the
+// same canonical identity as later transitions through the alias.
+func (s State) CanonicalizeTypestateResources(ks *keyspace.KeySpace) State {
+	if ks == nil {
+		return s
+	}
+	next := s.typestates.MapResources(func(resource typestate.Resource) typestate.Resource {
+		target, ok := pathaddr.StateKeyFromPathKey(pathdom.PathKey(resource.ID.String()))
+		if !ok {
+			return resource
+		}
+		return TypestateResourceFromCanonicalKey(s.CanonicalTypestateResourceKey(ks, target), resource.Protocol)
+	})
+	if typestate.Equal(next, s.typestates) {
+		return s
+	}
+	out := s.reachable()
+	out.typestates = next
 	return out
 }
 

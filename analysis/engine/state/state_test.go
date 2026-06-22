@@ -226,6 +226,36 @@ func TestTypestateResourceKeyFollowsProvenPathEquality(t *testing.T) {
 	}
 }
 
+func TestCanonicalizeTypestateResourcesAfterLatePathEquality(t *testing.T) {
+	ks := keyspace.New()
+	field := pathdom.PathKey("sym10@1.tx")
+	index := pathdom.PathKey(`sym10@1["tx"]`)
+	alias := pathdom.PathKey("sym11@1")
+	protocol := typestate.Protocol("transaction")
+	proof := pathevidence.BranchProof{
+		Kind:  pathevidence.BranchProofPathEqual,
+		Path:  mustStateKey(t, ks, index),
+		Other: mustStateKey(t, ks, alias),
+	}
+	open := State{}.
+		AcquireTypestate(
+			TypestateResourceFromCanonicalKey(testStateKey(t, field), protocol),
+			typestate.State("active"),
+			typestate.Obligation{Final: "finished"},
+		).
+		AddBranchProof(proof).
+		CanonicalizeTypestateResources(ks)
+
+	closed := open.TransitionTypestate(
+		open.CanonicalTypestateResource(ks, testStateKey(t, alias), protocol),
+		typestate.State("active"),
+		typestate.State("finished"),
+	)
+	if obligations := closed.OpenTypestateObligations(); len(obligations) != 0 {
+		t.Fatalf("open obligations = %#v, want late alias transition to close resource", obligations)
+	}
+}
+
 func TestNumFloorStateSemantics(t *testing.T) {
 	reg := standard.Registry()
 	ks := keyspace.New()

@@ -82,7 +82,7 @@ func NewFactsNodeTransfer(config FactsNodeTransferConfig) transfer.NodeTransfer 
 		}
 		sources = sourcevalue.WithExpressionRefinements(ctx.Registry, sources, expressionRefinements)
 		if fact, ok := facts.DynamicIndexWrite(ctx.Point); ok {
-			out = applyDynamicIndexWrite(ctx, config.Visibility, sources, read, in, out, fact)
+			out = applyDynamicIndexWrite(ctx, config.Visibility, facts, sources, read, in, out, fact)
 		}
 		if fact, ok := facts.RootAssignment(ctx.Point); ok {
 			var applied bool

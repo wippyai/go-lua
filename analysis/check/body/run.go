@@ -125,6 +125,7 @@ func (c *checker) prepare(bindings *bind.Result, built *cfgbuild.Result, sem *se
 	if userExpressionValue == nil {
 		expressionValues = mergeExpressionValues(facts.ExpressionValues(), config.ExpressionValues)
 		expressionPaths = exprRefSet(facts.ExpressionPaths())
+		expressionPaths = addDynamicIndexExprRefs(expressionPaths, facts.DynamicIndexExpressions())
 	}
 	sources := sourcevalue.NewSourceValues(sourcevalue.SourceValuesConfig{
 		Registry:              config.Registry,

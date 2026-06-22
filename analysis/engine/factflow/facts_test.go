@@ -513,6 +513,9 @@ func TestFactsCarrierCopiesAndReturnsFalseForMissingFacts(t *testing.T) {
 		ExpressionPaths: map[ExprRef]path.Path{
 			ExprRef(6): path.NewPath(symbol.ID(54), "read").Field("leaf"),
 		},
+		DynamicIndexExpressions: map[ExprRef]DynamicIndexExpression{
+			ExprRef(7): mustDynamicIndexExpression(t, path.NewPath(symbol.ID(55), "dynamic"), source),
+		},
 	}
 
 	facts := NewFacts(input)
@@ -562,6 +565,7 @@ func TestFactsCarrierCopiesAndReturnsFalseForMissingFacts(t *testing.T) {
 	input.ExpressionValues[ExprRef(3)] = product.Set(standard.Registry(), product.Top(), runtimekind.Key, runtimekind.Singleton(runtimekind.Number))
 	input.ExpressionRefinements[ExprRef(4)] = NewExpressionRefinement(callSource, runtimeKindConstraint(runtimekind.Singleton(runtimekind.Function)))
 	input.ExpressionPaths[ExprRef(6)] = path.NewPath(symbol.ID(55), "changed").Field("leaf")
+	input.DynamicIndexExpressions[ExprRef(7)] = mustDynamicIndexExpression(t, path.NewPath(symbol.ID(57), "changed"), source)
 
 	if _, ok := facts.LocalAssignment(missing); ok {
 		t.Fatal("missing local assignment returned ok")
@@ -973,6 +977,25 @@ func TestFactsCarrierCopiesAndReturnsFalseForMissingFacts(t *testing.T) {
 	allExpressionPaths[ExprRef(6)] = path.NewPath(symbol.ID(56), "mutated").Field("other")
 	allExpressionPathsAgain := facts.ExpressionPaths()
 	assertDirectField(t, allExpressionPathsAgain[ExprRef(6)], "leaf")
+
+	dynExpr, ok := facts.DynamicIndexExpression(ExprRef(7))
+	if !ok {
+		t.Fatal("dynamic index expression missing")
+	}
+	assertPathEqual(t, dynExpr.TablePath(), path.NewPath(symbol.ID(55), "dynamic"))
+	if dynExpr.KeySource() != source {
+		t.Fatalf("dynamic index key source = %#v, want %#v", dynExpr.KeySource(), source)
+	}
+	dynTable := dynExpr.TablePath()
+	dynTable.Root = "mutated"
+	dynExprAgain, _ := facts.DynamicIndexExpression(ExprRef(7))
+	if dynExprAgain.TablePath().Root != "dynamic" {
+		t.Fatalf("dynamic index expression exposed mutable table path: %v", dynExprAgain.TablePath())
+	}
+	allDynamicExprs := facts.DynamicIndexExpressions()
+	allDynamicExprs[ExprRef(7)] = mustDynamicIndexExpression(t, path.NewPath(symbol.ID(56), "mutated"), source)
+	allDynamicExprsAgain := facts.DynamicIndexExpressions()
+	assertPathEqual(t, allDynamicExprsAgain[ExprRef(7)].TablePath(), path.NewPath(symbol.ID(55), "dynamic"))
 }
 
 func TestWithPathDescendantInvalidationsKeepsExistingPathOnCollision(t *testing.T) {
@@ -1020,6 +1043,15 @@ func assertPathEqual(t *testing.T, got path.Path, want path.Path) {
 	if !got.Equal(want) {
 		t.Fatalf("path = %q, want %q", got.String(), want.String())
 	}
+}
+
+func mustDynamicIndexExpression(t *testing.T, table path.Path, key ValueSource) DynamicIndexExpression {
+	t.Helper()
+	expr, ok := NewDynamicIndexExpression(table, key)
+	if !ok {
+		t.Fatalf("NewDynamicIndexExpression(%v, %#v) returned false", table, key)
+	}
+	return expr
 }
 
 func valueRefinementWithPresence(value presence.Value) ValueRefinement {

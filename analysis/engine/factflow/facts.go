@@ -33,6 +33,7 @@ type FactsInput struct {
 	ExpressionFunctions         map[ExprRef]symbol.ID
 	ExpressionRefinements       map[ExprRef]ExpressionRefinement
 	ExpressionPaths             map[ExprRef]pathdom.Path
+	DynamicIndexExpressions     map[ExprRef]DynamicIndexExpression
 	ExpressionConditions        map[ExprRef]ExpressionCondition
 }
 
@@ -62,6 +63,7 @@ type Facts struct {
 	expressionFunctions         map[ExprRef]symbol.ID
 	expressionRefinements       map[ExprRef]ExpressionRefinement
 	expressionPaths             map[ExprRef]pathdom.Path
+	dynamicIndexExpressions     map[ExprRef]DynamicIndexExpression
 	expressionConditions        map[ExprRef]ExpressionCondition
 }
 
@@ -92,6 +94,7 @@ func NewFacts(input FactsInput) Facts {
 		expressionFunctions:         copyExpressionFunctionMap(input.ExpressionFunctions),
 		expressionRefinements:       copyExpressionRefinementMap(input.ExpressionRefinements),
 		expressionPaths:             copyExpressionPathMap(input.ExpressionPaths),
+		dynamicIndexExpressions:     copyDynamicIndexExpressionMap(input.DynamicIndexExpressions),
 		expressionConditions:        copyExpressionConditionMap(input.ExpressionConditions),
 	}
 }
@@ -463,6 +466,22 @@ func (f Facts) ExpressionPath(expr ExprRef) (pathdom.Path, bool) {
 // ExpressionPaths returns the static expression access paths keyed by expression.
 func (f Facts) ExpressionPaths() map[ExprRef]pathdom.Path {
 	return copyExpressionPathMap(f.expressionPaths)
+}
+
+// DynamicIndexExpression returns the point-sensitive dynamic-index access path
+// descriptor for expr, if present.
+func (f Facts) DynamicIndexExpression(expr ExprRef) (DynamicIndexExpression, bool) {
+	dyn, ok := f.dynamicIndexExpressions[expr]
+	if !ok {
+		return DynamicIndexExpression{}, false
+	}
+	return dyn.copy(), true
+}
+
+// DynamicIndexExpressions returns point-sensitive dynamic-index access path
+// descriptors keyed by expression.
+func (f Facts) DynamicIndexExpressions() map[ExprRef]DynamicIndexExpression {
+	return copyDynamicIndexExpressionMap(f.dynamicIndexExpressions)
 }
 
 // ExpressionCondition returns the normalized path facts selected by expression

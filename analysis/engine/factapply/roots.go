@@ -34,6 +34,7 @@ func applyRootAssignmentFact(
 		// node transfer) establishes the sound widened source field type instead. An
 		// array exposure keeps the equality for its read-back diagnostics.
 		out = addPathEqualityProofFromSource(resolver, facts, ctx.Point, out, targetPath, fact.Source())
+		out = addPathEqualityProofFromDynamicIndexSource(ctx, resolver, facts, sources, read, in, out, targetPath, fact.Source())
 		out = applyRootAssignmentNumFloor(ctx, resolver, facts, in, out, targetPath, fact.Source())
 		out = applyObjectLiteralEntries(ctx, resolver, facts, sources, read, in, out, targetPath, fact.Source())
 	}

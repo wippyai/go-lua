@@ -254,6 +254,31 @@ func (s Store) Clone() Store {
 	return out
 }
 
+// MapResources rewrites resource identities while preserving slots. Collisions
+// are joined, matching control-flow joins that prove two resource paths are the
+// same abstract resource.
+func (s Store) MapResources(mapper func(Resource) Resource) Store {
+	if s.top {
+		return Store{top: true}
+	}
+	if len(s.slots) == 0 || mapper == nil {
+		return s.Clone()
+	}
+	out := Store{slots: make(map[Resource]Slot, len(s.slots))}
+	for resource, slot := range s.slots {
+		nextResource := mapper(resource)
+		if nextResource.ID == "" || nextResource.Protocol == "" {
+			nextResource = resource
+		}
+		if existing, ok := out.slots[nextResource]; ok {
+			out.set(nextResource, joinSlot(existing, slot))
+			continue
+		}
+		out.set(nextResource, slot)
+	}
+	return out
+}
+
 func (s *Store) set(resource Resource, slot Slot) {
 	if s.top {
 		return

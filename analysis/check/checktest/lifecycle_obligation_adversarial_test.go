@@ -387,6 +387,45 @@ transfer(tx)
 	}
 }
 
+func TestLifecycleResourceClosedThroughKnownDynamicFieldAliasDoesNotWarn(t *testing.T) {
+	for _, src := range []string{
+		`
+local tx = {}
+local holder = {}
+local key = "tx"
+begin(tx)
+holder[key] = tx
+finish(holder.tx)
+`,
+		`
+local holder = { tx = {} }
+local key = "tx"
+begin(holder.tx)
+local tx = holder[key]
+finish(tx)
+`,
+	} {
+		result := Check(src, lifecycleManifestOptions("begin", "finish")...)
+		if len(result.Diagnostics) != 0 {
+			t.Fatalf("diagnostics = %#v, want no lifecycle warning when known dynamic field aliases the same resource", result.Diagnostics)
+		}
+	}
+}
+
+func TestLifecycleResourceKnownDynamicFieldAliasRespectsKeyReassignment(t *testing.T) {
+	result := Check(`
+local holder = { tx = {} }
+local key = "tx"
+begin(holder.tx)
+key = "other"
+local tx = holder[key]
+finish(tx)
+`, lifecycleManifestOptions("begin", "finish")...)
+	if !hasDiagnosticCode(result.Diagnostics, diagnostics.CodeResourceUnreleased) {
+		t.Fatalf("diagnostics = %#v, want lifecycle warning when dynamic key no longer names holder.tx", result.Diagnostics)
+	}
+}
+
 func TestLifecycleResourceClosedThroughDirectHelperParamDoesNotWarn(t *testing.T) {
 	result := Check(`
 local function close(resource)

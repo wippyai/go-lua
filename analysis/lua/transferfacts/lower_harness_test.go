@@ -329,6 +329,7 @@ local d = t[k]
 	}
 
 	tSym := mustLocalAt(t, bindings, stmts[0].(*ast.LocalAssignStmt), 0)
+	kSym := mustLocalAt(t, bindings, stmts[4].(*ast.LocalAssignStmt), 0)
 	nameSource := mustLocalSource(t, facts, requireStmtPoints(t, built, stmts[1], 1)[0])
 	rawSource := mustLocalSource(t, facts, requireStmtPoints(t, built, stmts[2], 1)[0])
 	intSource := mustLocalSource(t, facts, requireStmtPoints(t, built, stmts[3], 1)[0])
@@ -339,6 +340,18 @@ local d = t[k]
 	if _, ok := facts.ExpressionPath(dynamicSource.ExprRef); ok {
 		t.Fatalf("dynamic index source ref %d unexpectedly has a static expression path", dynamicSource.ExprRef)
 	}
+	dynamicExpr, ok := facts.DynamicIndexExpression(dynamicSource.ExprRef)
+	if !ok {
+		t.Fatalf("missing dynamic index expression for ref %d", dynamicSource.ExprRef)
+	}
+	if !dynamicExpr.TablePath().Equal(path.NewPath(tSym, "t")) {
+		t.Fatalf("dynamic index table path = %v, want t", dynamicExpr.TablePath())
+	}
+	keySource := dynamicExpr.KeySource()
+	if keySource.Kind != factflow.ValueSourceExpression || !keySource.HasExpr {
+		t.Fatalf("dynamic index key source = %#v, want expression", keySource)
+	}
+	assertExprPath(keySource, path.NewPath(kSym, "k"))
 }
 
 func TestLowerOrdinaryAssignmentsSplitsRootAndStaticPathWrites(t *testing.T) {

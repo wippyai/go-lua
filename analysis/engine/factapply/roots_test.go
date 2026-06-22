@@ -124,6 +124,60 @@ func TestFactsNodeTransferRootAssignmentAddsPathEqualityProofForPathSource(t *te
 	}
 }
 
+func TestFactsNodeTransferRootAssignmentAddsPathEqualityProofForKnownDynamicIndexSource(t *testing.T) {
+	reg := standard.Registry()
+	point := cfg.Point(121)
+	target := symbol.ID(121)
+	table := symbol.ID(122)
+	keyExpr := factflow.ExprRef(121)
+	sourceExpr := factflow.ExprRef(122)
+	keySource := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: keyExpr, HasExpr: true}
+	source := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: sourceExpr, HasExpr: true}
+	keyType := typ.LiteralString("tx")
+	keyValue := typevalue.WithWitness(reg, typevalue.FromType(reg, keyType), keyType)
+	assigned := presentValue(reg)
+	sources := &recordingSourceValues{
+		values: map[factflow.ValueSource]product.Value{
+			keySource: keyValue,
+			source:    assigned,
+		},
+	}
+	visibilityBuilder := visibility.NewBuilder()
+	visibilityBuilder.Define(point, target, "alias")
+	visibilityBuilder.Define(point, table, "holder")
+	resolver := visibility.NewResolver(visibilityBuilder.Build())
+	ks := resolver.KeySpace()
+	dyn, ok := factflow.NewDynamicIndexExpression(path.NewPath(table, "holder"), keySource)
+	if !ok {
+		t.Fatal("NewDynamicIndexExpression returned false")
+	}
+
+	got := NewFactsNodeTransfer(FactsNodeTransferConfig{
+		Facts: factflow.NewFacts(factflow.FactsInput{
+			RootAssignments: map[cfg.Point]factflow.RootAssignment{
+				point: factflow.NewRootAssignment(factflow.RootAssignmentLocalDeclaration, target, path.NewPath(target, "alias"), source),
+			},
+			DynamicIndexExpressions: map[factflow.ExprRef]factflow.DynamicIndexExpression{
+				sourceExpr: dyn,
+			},
+		}),
+		Sources:    sources,
+		Visibility: resolver,
+	})(transfer.NodeContext{
+		Registry: reg,
+		Point:    point,
+	}, state.State{})
+
+	proof := pathevidence.BranchProof{
+		Kind:  pathevidence.BranchProofPathEqual,
+		Path:  mustStateKey(t, ks, path.PathKey("sym121@1")),
+		Other: mustStateKey(t, ks, path.PathKey(`sym122@1["tx"]`)),
+	}
+	if !got.HasBranchProof(proof) {
+		t.Fatalf("missing dynamic-index source path equality proof %#v", proof)
+	}
+}
+
 func TestFactsNodeTransferRootAssignmentPropagatesNumericFloorThroughIncrement(t *testing.T) {
 	reg := standard.Registry()
 	point := cfg.Point(13)

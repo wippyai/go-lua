@@ -40,20 +40,21 @@ func Lower(result *semantics.Result, graph cfg.Graph, config Config) factflow.Fa
 		typeResolver = typeresolve.New(config.Bindings)
 	}
 	l := lowerer{
-		registry:             config.Registry,
-		bindings:             config.Bindings,
-		graphID:              graph.ID(),
-		typeResolver:         typeResolver,
-		typeValues:           config.TypeValues,
-		callPoints:           callPointsByExpr(builtCallFacts(graph, result)),
-		symbolTypes:          lowerSymbolTypes(config.Bindings, graph, result, typeResolver),
-		exprs:                make(map[any]factflow.ExprRef),
-		types:                make(map[any]factflow.TypeRef),
-		expressionValues:     make(map[factflow.ExprRef]product.Value),
-		expressionOperations: make(map[factflow.ExprRef]factflow.ExpressionOperation),
-		expressionFunctions:  make(map[factflow.ExprRef]symbol.ID),
-		expressionPaths:      make(map[factflow.ExprRef]pathdom.Path),
-		expressionConditions: make(map[factflow.ExprRef]factflow.ExpressionCondition),
+		registry:                config.Registry,
+		bindings:                config.Bindings,
+		graphID:                 graph.ID(),
+		typeResolver:            typeResolver,
+		typeValues:              config.TypeValues,
+		callPoints:              callPointsByExpr(builtCallFacts(graph, result)),
+		symbolTypes:             lowerSymbolTypes(config.Bindings, graph, result, typeResolver),
+		exprs:                   make(map[any]factflow.ExprRef),
+		types:                   make(map[any]factflow.TypeRef),
+		expressionValues:        make(map[factflow.ExprRef]product.Value),
+		expressionOperations:    make(map[factflow.ExprRef]factflow.ExpressionOperation),
+		expressionFunctions:     make(map[factflow.ExprRef]symbol.ID),
+		expressionPaths:         make(map[factflow.ExprRef]pathdom.Path),
+		dynamicIndexExpressions: make(map[factflow.ExprRef]factflow.DynamicIndexExpression),
+		expressionConditions:    make(map[factflow.ExprRef]factflow.ExpressionCondition),
 	}
 	input := factflow.FactsInput{
 		RootAssignments:             make(map[cfg.Point]factflow.RootAssignment),
@@ -76,6 +77,7 @@ func Lower(result *semantics.Result, graph cfg.Graph, config Config) factflow.Fa
 		ExpressionOperations:        make(map[factflow.ExprRef]factflow.ExpressionOperation),
 		ExpressionFunctions:         make(map[factflow.ExprRef]symbol.ID),
 		ExpressionRefinements:       make(map[factflow.ExprRef]factflow.ExpressionRefinement),
+		DynamicIndexExpressions:     make(map[factflow.ExprRef]factflow.DynamicIndexExpression),
 	}
 	for _, point := range graph.RPO() {
 		if fact, ok := result.LocalAssignment(point); ok {
@@ -188,25 +190,27 @@ func Lower(result *semantics.Result, graph cfg.Graph, config Config) factflow.Fa
 	input.ExpressionOperations = l.expressionOperations
 	input.ExpressionFunctions = l.expressionFunctions
 	input.ExpressionPaths = l.expressionPaths
+	input.DynamicIndexExpressions = l.dynamicIndexExpressions
 	input.ExpressionConditions = l.expressionConditions
 	return factflow.NewFacts(input)
 }
 
 type lowerer struct {
-	registry             *axis.Registry
-	bindings             *bind.Result
-	graphID              uint64
-	typeResolver         *typeresolve.Resolver
-	typeValues           *typevalue.Cache
-	callPoints           map[*ast.FuncCallExpr]cfg.Point
-	symbolTypes          map[symbol.ID]typ.Type
-	exprs                map[any]factflow.ExprRef
-	types                map[any]factflow.TypeRef
-	expressionValues     map[factflow.ExprRef]product.Value
-	expressionOperations map[factflow.ExprRef]factflow.ExpressionOperation
-	expressionFunctions  map[factflow.ExprRef]symbol.ID
-	expressionPaths      map[factflow.ExprRef]pathdom.Path
-	expressionConditions map[factflow.ExprRef]factflow.ExpressionCondition
+	registry                *axis.Registry
+	bindings                *bind.Result
+	graphID                 uint64
+	typeResolver            *typeresolve.Resolver
+	typeValues              *typevalue.Cache
+	callPoints              map[*ast.FuncCallExpr]cfg.Point
+	symbolTypes             map[symbol.ID]typ.Type
+	exprs                   map[any]factflow.ExprRef
+	types                   map[any]factflow.TypeRef
+	expressionValues        map[factflow.ExprRef]product.Value
+	expressionOperations    map[factflow.ExprRef]factflow.ExpressionOperation
+	expressionFunctions     map[factflow.ExprRef]symbol.ID
+	expressionPaths         map[factflow.ExprRef]pathdom.Path
+	dynamicIndexExpressions map[factflow.ExprRef]factflow.DynamicIndexExpression
+	expressionConditions    map[factflow.ExprRef]factflow.ExpressionCondition
 }
 
 func (l *lowerer) valueFromType(t typ.Type) product.Value {
