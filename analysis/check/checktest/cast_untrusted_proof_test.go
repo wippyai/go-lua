@@ -181,10 +181,77 @@ help: Use a value compatible with the expected type, or change the target type i
 }
 
 func TestCastDoesNotLaunderAnyIntoReturnContract(t *testing.T) {
-	result := Check(`
+	src := strings.TrimLeft(`
 local function f(y: any): {name: string} return y as {name: string} end return f
-`)
-	requireDiagnosticCode(t, result, diagnostics.CodeReturnContractType)
+`, "\n")
+	result := Check(src)
+	diag := requireDiagnostic(t, result, diagnosticExpectation{
+		Code:            diagnostics.CodeReturnContractType,
+		Severity:        diagnostic.SeverityError,
+		DiagnosticCount: 1,
+		Line:            1,
+		Column:          49,
+		MessageContains: []string{
+			"returned value 1 (y)",
+			"any",
+			"not {name: string}",
+		},
+		EvidenceChain: []diagnosticEvidenceExpectation{
+			{
+				Kind:            diagnostic.EvidenceAbstractFact,
+				Trust:           diagnostic.TrustProven,
+				MessageContains: []string{"returned value 1 (y)", "has type any"},
+			},
+			{
+				Kind:            diagnostic.EvidenceUserAssertion,
+				Trust:           diagnostic.TrustClaimed,
+				MessageContains: []string{"returned value 1 must satisfy declared return type {name: string}"},
+			},
+			{
+				Kind:            diagnostic.EvidencePrecisionBoundary,
+				Trust:           diagnostic.TrustUnknown,
+				MessageContains: []string{"returned value 1 (y) comes from any/unknown"},
+			},
+			{
+				Kind:            diagnostic.EvidenceMissingProof,
+				Trust:           diagnostic.TrustUnknown,
+				MessageContains: []string{"no proof on this path", "returned value 1 (y)", "declared return type"},
+			},
+		},
+		LabelContains: []string{"declared return type", "returned value"},
+		HelpContains:  []string{"Return a value compatible", "change the return annotation", "returned value is valid"},
+		Sources:       diagnostic.SourceMap{"test.lua": src},
+		RenderOrderedContains: []string{
+			`error[type.return.contract]: returned value 1 (y) is any, not {name: string}`,
+			`  |                           ↓ declared return type`,
+			`1 | local function f(y: any): {name: string} return y as {name: string} end return f`,
+			`  |                                                 ↑ returned value`,
+			`1. proven: returned value 1 (y) has type any`,
+			`2. claimed: returned value 1 must satisfy declared return type {name: string}`,
+			`3. unvalidated value: returned value 1 (y) comes from any/unknown`,
+			`4. missing proof: no proof on this path shows returned value 1 (y) satisfies the declared return type`,
+			`help: Return a value compatible with the declared return type, or change the return annotation if the returned value is valid.`,
+		},
+	})
+	rendered := diagnostic.Render(diag, diagnostic.RenderOptions{
+		Sources:             diagnostic.SourceMap{"test.lua": src},
+		ShowSourceLabelRows: true,
+	})
+	want := `error[type.return.contract]: returned value 1 (y) is any, not {name: string}
+ --> test.lua:1:49
+  |
+  |                           ↓ declared return type
+1 | local function f(y: any): {name: string} return y as {name: string} end return f
+  |                                                 ↑ returned value
+
+because:
+  1. proven: returned value 1 (y) has type any
+  2. claimed: returned value 1 must satisfy declared return type {name: string}
+  3. unvalidated value: returned value 1 (y) comes from any/unknown
+  4. missing proof: no proof on this path shows returned value 1 (y) satisfies the declared return type
+
+help: Return a value compatible with the declared return type, or change the return annotation if the returned value is valid.`
+	assertRenderedEqual(t, rendered, want)
 }
 
 func TestCastDoesNotLaunderAnyIntoFieldAssignment(t *testing.T) {
