@@ -255,14 +255,83 @@ help: Return a value compatible with the declared return type, or change the ret
 }
 
 func TestCastDoesNotLaunderAnyIntoFieldAssignment(t *testing.T) {
-	result := Check(`
+	src := strings.TrimLeft(`
 local function f(y: any, o: {name: string}): number
 	o.name = y as string
 	return 1
 end
 return f
-`)
-	requireDiagnosticCode(t, result, diagnostics.CodeAssignmentType)
+`, "\n")
+	result := Check(src)
+	diag := requireDiagnostic(t, result, diagnosticExpectation{
+		Code:            diagnostics.CodeAssignmentType,
+		Severity:        diagnostic.SeverityError,
+		DiagnosticCount: 1,
+		Line:            2,
+		Column:          11,
+		MessageContains: []string{
+			"cannot assign y",
+			"any",
+			"not string",
+		},
+		EvidenceChain: []diagnosticEvidenceExpectation{
+			{
+				Kind:            diagnostic.EvidenceAbstractFact,
+				Trust:           diagnostic.TrustProven,
+				MessageContains: []string{"y has type any"},
+			},
+			{
+				Kind:            diagnostic.EvidenceAbstractFact,
+				Trust:           diagnostic.TrustProven,
+				MessageContains: []string{"assignment target o.name requires string"},
+			},
+			{
+				Kind:            diagnostic.EvidencePrecisionBoundary,
+				Trust:           diagnostic.TrustUnknown,
+				Reason:          diagnostic.EvidenceReasonExplicitBoundaryValidation,
+				MessageContains: []string{"y comes from any/unknown"},
+			},
+			{
+				Kind:            diagnostic.EvidenceMissingProof,
+				Trust:           diagnostic.TrustUnknown,
+				Reason:          diagnostic.EvidenceReasonBoundaryValidationMissing,
+				MessageContains: []string{"no proof on this path", "y", "declared type"},
+			},
+		},
+		LabelContains: []string{"assignment target", "assigned value"},
+		HelpContains:  []string{"Use a value compatible", "change the target type", "`y` is valid"},
+		Sources:       diagnostic.SourceMap{"test.lua": src},
+		RenderOrderedContains: []string{
+			`error[type.assignment]: cannot assign y because it is any, not string`,
+			`  |     ↓ assignment target`,
+			`2 |     o.name = y as string`,
+			`  |              ↑ assigned value`,
+			`1. proven: y has type any`,
+			`2. proven: assignment target o.name requires string`,
+			`3. unvalidated value: y comes from any/unknown`,
+			`4. missing proof: no proof on this path shows y satisfies the declared type`,
+			"help: Use a value compatible with the expected type, or change the target type if `y` is valid.",
+		},
+	})
+	rendered := diagnostic.Render(diag, diagnostic.RenderOptions{
+		Sources:             diagnostic.SourceMap{"test.lua": src},
+		ShowSourceLabelRows: true,
+	})
+	want := `error[type.assignment]: cannot assign y because it is any, not string
+ --> test.lua:2:11
+  |
+  |     ↓ assignment target
+2 |     o.name = y as string
+  |              ↑ assigned value
+
+because:
+  1. proven: y has type any
+  2. proven: assignment target o.name requires string
+  3. unvalidated value: y comes from any/unknown
+  4. missing proof: no proof on this path shows y satisfies the declared type
+
+help: Use a value compatible with the expected type, or change the target type if ` + "`y`" + ` is valid.`
+	assertRenderedEqual(t, rendered, want)
 }
 
 func TestCastAdoptsTypeForLocalInference(t *testing.T) {
