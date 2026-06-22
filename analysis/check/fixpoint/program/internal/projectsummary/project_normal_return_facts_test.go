@@ -183,11 +183,11 @@ func TestFromResultProjectsNormalReturnFactsFromExitSnapshots(t *testing.T) {
 			After:  value0,
 			Change: effectdelta.ChangeNone,
 		}).
-		WriteEffectDelta(effectdelta.Key{
-			Target: mustStateKey(t, ks, sendEventKey),
-			Site:   callboundary.EscapeEventEffectSite(callboundary.EscapeEventSend, true),
-			Kind:   effectdelta.Escape,
-		}, effectdelta.Top()).
+		AddEscapeEvent(state.EscapeEvent{
+			Target:    testStateKey(t, sendEventKey),
+			Kind:      callboundary.EscapeEventSend,
+			Recursive: true,
+		}).
 		WriteEffectDelta(effectdelta.Key{
 			Target: mustStateKey(t, ks, freezeEventKey),
 			Site:   callboundary.FrozenTableEffectSite(),

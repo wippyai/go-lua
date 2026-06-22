@@ -210,15 +210,15 @@ func applyCallOutcomeFacts(
 		if targetStateKey == "" {
 			continue
 		}
-		targetKey, ok := resolver.KeySpace().FromStateKey(targetStateKey)
+		targetAddress, ok := pathaddr.StateKeyFromPathKey(targetStateKey)
 		if !ok {
 			continue
 		}
-		out = out.WriteEffectDelta(effectdelta.Key{
-			Target: targetKey,
-			Site:   callboundary.EscapeEventEffectSite(event.Kind, event.Recursive),
-			Kind:   effectdelta.Escape,
-		}, effectdelta.Top())
+		out = out.AddEscapeEvent(state.EscapeEvent{
+			Target:    targetAddress,
+			Kind:      event.Kind,
+			Recursive: event.Recursive,
+		})
 		out = applyEscapeEventPlacement(ctx.Registry, resolver, projectPath, ctx.Point, out, targetPath, event)
 	}
 	return out

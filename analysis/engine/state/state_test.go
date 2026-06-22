@@ -19,6 +19,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/dynamicindex"
 	"github.com/wippyai/go-lua/analysis/engine/state/channelselectfact"
 	effectdelta "github.com/wippyai/go-lua/analysis/engine/state/effectdelta"
+	"github.com/wippyai/go-lua/analysis/engine/state/escapeevent"
 	"github.com/wippyai/go-lua/analysis/engine/state/heapidentity"
 	"github.com/wippyai/go-lua/analysis/engine/state/pathevidence"
 	"github.com/wippyai/go-lua/analysis/symbol"
@@ -602,6 +603,7 @@ func TestStateCloneIndependenceAcrossLanes(t *testing.T) {
 			},
 		})).
 		WriteEffectDelta(fx.effectKey, fx.effectDelta).
+		AddEscapeEvent(fx.escapeEvent).
 		WritePlacement(fx.escapeID, placement.Stack).
 		WriteLenFloor(ks, testStateKey(t, fx.pathKey), 2).
 		WriteNumFloor(ks, testStateKey(t, fx.pathKey), 3).
@@ -622,6 +624,7 @@ func TestStateCloneIndependenceAcrossLanes(t *testing.T) {
 		Other: mustStateKey(t, ks, pathdom.PathKey("sym201@1.other")),
 	}
 	cloneOnlyFrozenID := identity.ID{Kind: "table", Site: "clone-only-freeze", Index: 1}
+	cloneOnlyEscapeEvent := EscapeEvent{Target: testStateKey(t, pathdom.PathKey("clone-only-escape")), Kind: escapeevent.KindStore}
 	cloneOnlyStoreRelation := StoreRelation{Source: testStateKey(t, pathdom.PathKey("clone-only-src")), Into: testStateKey(t, pathdom.PathKey("clone-dst"))}
 	typestateResource := TypestateResourceFromCanonicalKey(testStateKey(t, pathdom.PathKey("clone-tx")), typestate.Protocol("transaction"))
 	clone := original.Snapshot()
@@ -632,6 +635,7 @@ func TestStateCloneIndependenceAcrossLanes(t *testing.T) {
 	clone = clone.WriteDynamicIndexFact(reg, fx.dynamicKey, dynamicindex.Bottom(reg))
 	clone = clone.WriteHeapTableObject(reg, fx.heapID, heapidentity.BottomObject(reg))
 	clone = clone.WriteEffectDelta(fx.effectKey, effectdelta.Bottom(reg))
+	clone = clone.AddEscapeEvent(cloneOnlyEscapeEvent)
 	clone = clone.WritePlacement(fx.escapeID, placement.Unknown)
 	clone = clone.WriteLenFloor(ks, testStateKey(t, fx.pathKey), 5)
 	clone = clone.WriteNumFloor(ks, testStateKey(t, fx.pathKey), 7)
@@ -664,6 +668,9 @@ func TestStateCloneIndependenceAcrossLanes(t *testing.T) {
 	}
 	if got := original.ReadEffectDelta(fx.effectKey); !effectdelta.Domain(reg).Equal(got, fx.effectDelta) {
 		t.Fatalf("original effect delta mutated through clone: %#v", got)
+	}
+	if !original.HasEscapeEvent(fx.escapeEvent) || original.HasEscapeEvent(cloneOnlyEscapeEvent) {
+		t.Fatalf("original escape-event lane mutated through clone")
 	}
 	if got := original.ReadPlacement(fx.escapeID); got != placement.Stack {
 		t.Fatalf("original placement mutated through clone: %v", got)
@@ -1244,6 +1251,40 @@ func TestEffectDeltasPointwiseJoin(t *testing.T) {
 	}
 }
 
+func TestEscapeEventsUseMustJoin(t *testing.T) {
+	stateDomain := Domain(standard.Registry())
+	common := EscapeEvent{Target: testStateKey(t, pathdom.PathKey("sym115@1.sent")), Kind: escapeevent.KindSend}
+	leftOnly := EscapeEvent{Target: testStateKey(t, pathdom.PathKey("sym115@1.left")), Kind: escapeevent.KindStore}
+	rightOnly := EscapeEvent{Target: testStateKey(t, pathdom.PathKey("sym115@1.right")), Kind: escapeevent.KindOpaque, Recursive: true}
+
+	if !(State{}).AddEscapeEvent(common).HasEscapeEvent(common) ||
+		!stateDomain.Equal((State{}).AddEscapeEvent(common), (State{}).AddEscapeEvent(common)) {
+		t.Fatalf("escape event empty/equality behavior failed")
+	}
+	left := (State{}).AddEscapeEvent(common).AddEscapeEvent(leftOnly)
+	right := (State{}).AddEscapeEvent(common).AddEscapeEvent(rightOnly)
+	if !stateDomain.Equal(stateDomain.Join(stateDomain.Bottom(), left), left) {
+		t.Fatalf("state bottom should be join identity for escape events")
+	}
+	joined := stateDomain.Join(left, right)
+	if !joined.HasEscapeEvent(common) {
+		t.Fatalf("joined escape events missing common fact")
+	}
+	if joined.HasEscapeEvent(leftOnly) || joined.HasEscapeEvent(rightOnly) {
+		t.Fatalf("branch-local escape events survived must join: %#v", joined.EscapeEventsSnapshot())
+	}
+	if widened := stateDomain.Widen(left, right); !stateDomain.Equal(widened, joined) {
+		t.Fatalf("escape event widen differs from join")
+	}
+	if !stateDomain.LessOrEq(left, joined) || stateDomain.LessOrEq(joined, left) {
+		t.Fatalf("escape event order should be must-set order")
+	}
+	snapshot := left.EscapeEventsSnapshot()
+	if snapshot.Bottom || snapshot.Top || len(snapshot.Facts) != 2 {
+		t.Fatalf("escape event snapshot = %#v, want two finite facts", snapshot)
+	}
+}
+
 func TestChannelSelectFactsUseMustJoin(t *testing.T) {
 	stateDomain := Domain(standard.Registry())
 	common := channelselectfact.Fact{Select: "select-1", Kind: channelselectfact.FactSelect, Result: testStateKey(t, pathdom.PathKey("sym120@1.result"))}
@@ -1798,6 +1839,7 @@ type stateLawFixture struct {
 	dynamicKey    dynamicindex.Key
 	heapID        identity.ID
 	effectKey     effectdelta.Key
+	escapeEvent   EscapeEvent
 	escapeID      identity.ID
 	freezeID      identity.ID
 	channelFact   channelselectfact.Fact
@@ -1827,6 +1869,7 @@ func stateLawFixtureFor(reg *axis.Registry, ks *keyspace.KeySpace) stateLawFixtu
 	dynamicKey := dynamicindex.Key{Table: tableHeapKey, Site: "dyn"}
 	heapID := identity.ID{Kind: "table", Site: "state-law", Index: 1}
 	effectKey := effectdelta.Key{Target: tableHeapKey, Site: "effect", Kind: effectdelta.Mutation}
+	escapeEvent := EscapeEvent{Target: mustTestStateKey(tableKey), Kind: escapeevent.KindSend, Recursive: true}
 	escapeID := identity.ID{Kind: "table", Site: "escape-law", Index: 1}
 	freezeID := identity.ID{Kind: "table", Site: "freeze-law", Index: 1}
 	channelFact := channelselectfact.Fact{Select: "select-law", Kind: channelselectfact.FactSelect, Result: mustTestStateKey(pathKey)}
@@ -1852,6 +1895,7 @@ func stateLawFixtureFor(reg *axis.Registry, ks *keyspace.KeySpace) stateLawFixtu
 		dynamicKey:    dynamicKey,
 		heapID:        heapID,
 		effectKey:     effectKey,
+		escapeEvent:   escapeEvent,
 		escapeID:      escapeID,
 		freezeID:      freezeID,
 		channelFact:   channelFact,
@@ -1884,6 +1928,7 @@ func stateLawSample(reg *axis.Registry, ks *keyspace.KeySpace) []State {
 	}))
 	effectState := State{}.
 		WriteEffectDelta(fx.effectKey, fx.effectDelta).
+		AddEscapeEvent(fx.escapeEvent).
 		WritePlacement(fx.escapeID, placement.Stack)
 	channelState := State{}.AddChannelSelectFact(fx.channelFact)
 	frozenState := State{}.FreezeTable(fx.freezeID)
@@ -1898,6 +1943,7 @@ func stateLawSample(reg *axis.Registry, ks *keyspace.KeySpace) []State {
 			},
 		})).
 		WriteEffectDelta(fx.effectKey, fx.effectDelta).
+		AddEscapeEvent(fx.escapeEvent).
 		WritePlacement(fx.escapeID, placement.Stack).
 		FreezeTable(fx.freezeID).
 		AddChannelSelectFact(fx.channelFact).
@@ -1914,7 +1960,7 @@ func stateLawFormat(reg *axis.Registry, ks *keyspace.KeySpace) func(State) strin
 			static = formatValue(reg, got)
 		}
 		return fmt.Sprintf(
-			"v=%s ret=%s path=%s static=%s dyn=%#v heap-root=%s effect=%#v placement=%v frozen=%v chan=%v proof=%v",
+			"v=%s ret=%s path=%s static=%s dyn=%#v heap-root=%s effect=%#v escape=%v placement=%v frozen=%v chan=%v proof=%v",
 			formatValue(reg, s.ReadValue(reg, fx.valueSlot)),
 			formatValue(reg, s.ReadReturnSlot(reg, fx.returnSlot)),
 			formatValue(reg, s.ReadPathKey(reg, ks, fx.pathKey)),
@@ -1922,6 +1968,7 @@ func stateLawFormat(reg *axis.Registry, ks *keyspace.KeySpace) func(State) strin
 			s.ReadDynamicIndexFact(reg, fx.dynamicKey),
 			formatValue(reg, s.ReadHeapTableObject(reg, fx.heapID).Root()),
 			s.ReadEffectDelta(fx.effectKey),
+			s.HasEscapeEvent(fx.escapeEvent),
 			s.ReadPlacement(fx.escapeID),
 			s.IsTableFrozen(fx.freezeID),
 			s.HasChannelSelectFact(fx.channelFact),

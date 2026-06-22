@@ -915,13 +915,12 @@ func TestFactsNodeTransferCallOutcomeRebasesBoundaryFacts(t *testing.T) {
 		t.Fatalf("effect delta = %#v, want rebased delta", gotEffect)
 	}
 
-	escapeKey := effectdelta.Key{
-		Target: mustStateKey(t, ks, pathdom.PathKey("sym505@1.sent")),
-		Site:   callboundary.EscapeEventEffectSite(callboundary.EscapeEventSend, true),
-		Kind:   effectdelta.Escape,
+	escapeEvent := state.EscapeEvent{
+		Target:    testStateKey(t, pathdom.PathKey("sym505@1.sent")),
+		Kind:      callboundary.EscapeEventSend,
+		Recursive: true,
 	}
-	gotEscape := got.ReadEffectDelta(escapeKey)
-	if gotEscape.Change != effectdelta.ChangeUnknown {
-		t.Fatalf("escape event delta = %#v, want rebased escape event", gotEscape)
+	if !got.HasEscapeEvent(escapeEvent) {
+		t.Fatalf("escape event missing: %#v", escapeEvent)
 	}
 }

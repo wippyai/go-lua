@@ -431,6 +431,7 @@ func TestEngineStateCompositionImportBoundaries(t *testing.T) {
 		modulePath+"/analysis/engine/dynamicindex",
 		modulePath+"/analysis/engine/state/channelselectfact",
 		modulePath+"/analysis/engine/state/effectdelta",
+		modulePath+"/analysis/engine/state/escapeevent",
 		modulePath+"/analysis/engine/state/heapidentity",
 		modulePath+"/analysis/engine/state/lenbound",
 		modulePath+"/analysis/engine/state/numbound",
@@ -449,6 +450,7 @@ func TestEngineStateLeafDirectImportBoundaries(t *testing.T) {
 	leafAllowed := map[string]map[string]struct{}{
 		modulePath + "/analysis/engine/state/channelselectfact": {},
 		modulePath + "/analysis/engine/state/effectdelta":       {},
+		modulePath + "/analysis/engine/state/escapeevent":       {},
 		modulePath + "/analysis/engine/state/heapidentity": copyAllowSet(nil,
 			modulePath+"/analysis/engine/dynamicindex",
 		),

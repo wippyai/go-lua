@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/placement"
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
@@ -534,13 +535,13 @@ func TestFactsNodeTransferCallOutcomeRebasesNestedEscapeEventToConsumerChildPath
 	if targetKey == "" {
 		t.Fatalf("no visible key for %s", childPath)
 	}
-	gotDelta := got.ReadEffectDelta(effectdelta.Key{
-		Target: mustStateKey(t, resolver.KeySpace(), targetKey),
-		Site:   callboundary.EscapeEventEffectSite(callboundary.EscapeEventStore, true),
-		Kind:   effectdelta.Escape,
-	})
-	if !effectdelta.Domain(reg).Equal(gotDelta, effectdelta.Top()) {
-		t.Fatalf("escape delta = %#v, want rebased store on %s", gotDelta, childPath)
+	gotEvent := state.EscapeEvent{
+		Target:    testStateKey(t, targetKey),
+		Kind:      callboundary.EscapeEventStore,
+		Recursive: true,
+	}
+	if !got.HasEscapeEvent(gotEvent) {
+		t.Fatalf("escape event missing: %#v, want rebased store on %s", gotEvent, childPath)
 	}
 }
 
@@ -590,7 +591,7 @@ func TestFactsNodeTransferCallOutcomeEscapeSendMarksIdentityPlacementAndEffectDe
 		t.Fatalf("placement[%v] = %s, want %s", tableID, gotPlacement, placement.SharedHeap)
 	}
 	targetKey := resolver.KeyAt(point, targetPath)
-	assertEscapeEffectDelta(t, reg, got, mustStateKey(t, resolver.KeySpace(), targetKey), callboundary.EscapeEventSend, false)
+	assertEscapeEvent(t, got, testStateKey(t, targetKey), callboundary.EscapeEventSend, false)
 }
 
 func TestFactsNodeTransferCallOutcomeFrozenTableFactFreezesSingletonIdentity(t *testing.T) {
@@ -1385,22 +1386,17 @@ func TestFactsNodeTransferCallOutcomeAppliesPlacementFacts(t *testing.T) {
 	}
 }
 
-func assertEscapeEffectDelta(
+func assertEscapeEvent(
 	t *testing.T,
-	reg *axis.Registry,
 	got state.State,
-	target keyspace.Key,
+	target pathaddr.StateKey,
 	kind callboundary.EscapeEventKind,
 	recursive bool,
 ) {
 	t.Helper()
-	gotDelta := got.ReadEffectDelta(effectdelta.Key{
-		Target: target,
-		Site:   callboundary.EscapeEventEffectSite(kind, recursive),
-		Kind:   effectdelta.Escape,
-	})
-	if !effectdelta.Domain(reg).Equal(gotDelta, effectdelta.Top()) {
-		t.Fatalf("escape delta = %#v, want kind %d recursive=%v on %v", gotDelta, kind, recursive, target)
+	event := state.EscapeEvent{Target: target, Kind: kind, Recursive: recursive}
+	if !got.HasEscapeEvent(event) {
+		t.Fatalf("escape event missing: %#v", event)
 	}
 }
 

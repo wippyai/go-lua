@@ -222,16 +222,6 @@ func projectNormalReturnFacts(reg *axis.Registry, result ResultReader, exit stat
 				})
 				continue
 			}
-			if stateKey.Kind == effectdelta.Escape {
-				if kind, recursive, ok := callboundary.EscapeEventFromEffectSite(stateKey.Site); ok {
-					out.EscapeEvents = append(out.EscapeEvents, callboundary.EscapeEventFact{
-						Target:    target,
-						Kind:      kind,
-						Recursive: recursive,
-					})
-					continue
-				}
-			}
 			delta := callboundary.EffectDelta{
 				Target: target,
 				Site:   stateKey.Site,
@@ -243,6 +233,20 @@ func projectNormalReturnFacts(reg *axis.Registry, result ResultReader, exit stat
 				continue
 			}
 			out.EffectDeltas = append(out.EffectDeltas, delta)
+		}
+	}
+
+	if snapshot := exit.EscapeEventsSnapshot(); !snapshot.Bottom && !snapshot.Top {
+		for _, event := range snapshot.Facts {
+			target, ok := projectPath(event.Target.PathKey())
+			if !ok {
+				continue
+			}
+			out.EscapeEvents = append(out.EscapeEvents, callboundary.EscapeEventFact{
+				Target:    target,
+				Kind:      event.Kind,
+				Recursive: event.Recursive,
+			})
 		}
 	}
 

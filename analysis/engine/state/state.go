@@ -12,6 +12,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/dynamicindex"
 	"github.com/wippyai/go-lua/analysis/engine/state/channelselectfact"
 	effectdelta "github.com/wippyai/go-lua/analysis/engine/state/effectdelta"
+	"github.com/wippyai/go-lua/analysis/engine/state/escapeevent"
 	"github.com/wippyai/go-lua/analysis/engine/state/heapidentity"
 	"github.com/wippyai/go-lua/analysis/engine/state/pathevidence"
 	"github.com/wippyai/go-lua/analysis/internal/registrycache"
@@ -29,6 +30,7 @@ type State struct {
 	heapTableIdentity heapTableIdentityLane
 	frozenTables      frozenTableLane
 	effectDeltas      effectDeltaLane
+	escapeEvents      escapeevent.Lane
 	channelSelect     channelselectfact.Lane
 	storeRelations    storeRelationLane
 	typestates        typestate.Store
@@ -116,6 +118,7 @@ func Domain(reg *axis.Registry) lattice.Lattice[State] {
 			heapTableIdentity: heapidentity.MapDomain(reg),
 			frozenTables:      frozenTableDomain(),
 			effectDeltas:      effectdelta.MapDomain(reg),
+			escapeEvents:      escapeevent.Domain(),
 			channelSelect:     channelselectfact.Domain(),
 			storeRelations:    storeRelationDomain(),
 			typestates:        typestate.Domain,
@@ -129,6 +132,7 @@ func Domain(reg *axis.Registry) lattice.Lattice[State] {
 				return State{
 					pathEvidence:   ops.pathEvidence.Bottom(),
 					frozenTables:   ops.frozenTables.Bottom(),
+					escapeEvents:   ops.escapeEvents.Bottom(),
 					channelSelect:  ops.channelSelect.Bottom(),
 					storeRelations: ops.storeRelations.Bottom(),
 					typestates:     ops.typestates.Bottom(),
@@ -145,6 +149,7 @@ func Domain(reg *axis.Registry) lattice.Lattice[State] {
 					heapTableIdentity: heapTableIdentityLane{top: true},
 					frozenTables:      ops.frozenTables.Top(),
 					effectDeltas:      effectDeltaLane{mapLane[effectdelta.Key, effectdelta.Value]{top: true}},
+					escapeEvents:      ops.escapeEvents.Top(),
 					placement:         placementLane{mapLane[identity.ID, placement.Value]{top: true}},
 					storeRelations:    ops.storeRelations.Top(),
 					typestates:        ops.typestates.Top(),
@@ -160,6 +165,7 @@ func Domain(reg *axis.Registry) lattice.Lattice[State] {
 					ops.heapTableIdentity.Equal(ops.heapTableIdentityLane(a), ops.heapTableIdentityLane(b)) &&
 					ops.frozenTables.Equal(a.frozenTables, b.frozenTables) &&
 					ops.effectDeltas.Equal(ops.effectDeltaLane(a), ops.effectDeltaLane(b)) &&
+					ops.escapeEvents.Equal(a.escapeEvents, b.escapeEvents) &&
 					ops.channelSelect.Equal(a.channelSelect, b.channelSelect) &&
 					ops.storeRelations.Equal(a.storeRelations, b.storeRelations) &&
 					ops.typestates.Equal(a.typestates, b.typestates) &&
@@ -175,6 +181,7 @@ func Domain(reg *axis.Registry) lattice.Lattice[State] {
 					ops.heapTableIdentity.LessOrEq(ops.heapTableIdentityLane(a), ops.heapTableIdentityLane(b)) &&
 					ops.frozenTables.LessOrEq(a.frozenTables, b.frozenTables) &&
 					ops.effectDeltas.LessOrEq(ops.effectDeltaLane(a), ops.effectDeltaLane(b)) &&
+					ops.escapeEvents.LessOrEq(a.escapeEvents, b.escapeEvents) &&
 					ops.channelSelect.LessOrEq(a.channelSelect, b.channelSelect) &&
 					ops.storeRelations.LessOrEq(a.storeRelations, b.storeRelations) &&
 					ops.typestates.LessOrEq(a.typestates, b.typestates) &&
@@ -191,6 +198,7 @@ func Domain(reg *axis.Registry) lattice.Lattice[State] {
 					ops.heapTableIdentity.Join(ops.heapTableIdentityLane(a), ops.heapTableIdentityLane(b)),
 					ops.frozenTables.Join(a.frozenTables, b.frozenTables),
 					ops.effectDeltas.Join(ops.effectDeltaLane(a), ops.effectDeltaLane(b)),
+					ops.escapeEvents.Join(a.escapeEvents, b.escapeEvents),
 					ops.channelSelect.Join(a.channelSelect, b.channelSelect),
 					ops.storeRelations.Join(a.storeRelations, b.storeRelations),
 					ops.typestates.Join(a.typestates, b.typestates),
@@ -208,6 +216,7 @@ func Domain(reg *axis.Registry) lattice.Lattice[State] {
 					ops.heapTableIdentity.Widen(ops.heapTableIdentityLane(prev), ops.heapTableIdentityLane(next)),
 					ops.frozenTables.Widen(prev.frozenTables, next.frozenTables),
 					ops.effectDeltas.Widen(ops.effectDeltaLane(prev), ops.effectDeltaLane(next)),
+					ops.escapeEvents.Widen(prev.escapeEvents, next.escapeEvents),
 					ops.channelSelect.Widen(prev.channelSelect, next.channelSelect),
 					ops.storeRelations.Widen(prev.storeRelations, next.storeRelations),
 					ops.typestates.Widen(prev.typestates, next.typestates),
@@ -228,6 +237,7 @@ type domainOps struct {
 	heapTableIdentity lattice.Lattice[map[identity.ID]heapidentity.TableObject]
 	frozenTables      lattice.Lattice[frozenTableLane]
 	effectDeltas      lattice.Lattice[map[effectdelta.Key]effectdelta.Value]
+	escapeEvents      lattice.Lattice[escapeevent.Lane]
 	channelSelect     lattice.Lattice[channelselectfact.Lane]
 	storeRelations    lattice.Lattice[storeRelationLane]
 	typestates        lattice.Lattice[typestate.Store]
@@ -264,6 +274,7 @@ func (o domainOps) fromLanes(
 	heapTableIdentity map[identity.ID]heapidentity.TableObject,
 	frozenTables frozenTableLane,
 	effectDeltas map[effectdelta.Key]effectdelta.Value,
+	escapeEvents escapeevent.Lane,
 	channelSelect channelselectfact.Lane,
 	storeRelations storeRelationLane,
 	typestates typestate.Store,
@@ -279,6 +290,7 @@ func (o domainOps) fromLanes(
 	out.heapTableIdentity = heapTableIdentityLaneFromMap(o.heapTableIdentity, heapTableIdentity)
 	out.frozenTables = frozenTables
 	out.effectDeltas = effectDeltaLaneFromMap(o.effectDeltas, effectDeltas)
+	out.escapeEvents = escapeEvents
 	out.channelSelect = channelSelect
 	out.storeRelations = storeRelations
 	out.typestates = typestates
@@ -292,6 +304,7 @@ func (o domainOps) fromLanes(
 func (s State) reachable() State {
 	s.pathEvidence = s.pathEvidence.Reachable()
 	s.frozenTables = s.frozenTables.reachable()
+	s.escapeEvents = s.escapeEvents.Reachable()
 	s.channelSelect = s.channelSelect.Reachable()
 	s.storeRelations = s.storeRelations.reachable()
 	s.lenFloors = s.lenFloors.reachable()
