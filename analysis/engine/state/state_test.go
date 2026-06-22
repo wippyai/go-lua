@@ -1152,6 +1152,30 @@ func TestBranchProofsUseMustJoin(t *testing.T) {
 	}
 }
 
+func TestIndexInRangeProofAcceptsTypedStateKeys(t *testing.T) {
+	ks := keyspace.New()
+	indexKey := testStateKey(t, pathdom.PathKey("sym101@1.i"))
+	arrayKey := testStateKey(t, pathdom.PathKey("sym102@1.items"))
+	s := State{}.AddBranchProof(pathevidence.BranchProof{
+		Kind:  pathevidence.BranchProofIndexInRange,
+		Path:  mustStateKey(t, ks, indexKey.PathKey()),
+		Other: mustStateKey(t, ks, arrayKey.PathKey()),
+	})
+
+	if !s.HasIndexInRangeProofForStateKeys(ks, indexKey, arrayKey) {
+		t.Fatal("typed state-key in-range proof query missed existing proof")
+	}
+	if !s.HasIndexInRangeProof(ks, indexKey.PathKey(), arrayKey.PathKey()) {
+		t.Fatal("legacy path-key in-range proof query stopped matching typed proof")
+	}
+	if s.HasIndexInRangeProofForStateKeys(ks, "", arrayKey) {
+		t.Fatal("typed in-range proof query accepted empty index key")
+	}
+	if s.HasIndexInRangeProofForStateKeys(ks, arrayKey, indexKey) {
+		t.Fatal("typed in-range proof query matched reversed operands")
+	}
+}
+
 func TestEquivalentPathKeysFollowEqualityProofs(t *testing.T) {
 	ks := keyspace.New()
 	s := State{}.

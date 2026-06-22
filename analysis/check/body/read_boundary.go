@@ -280,12 +280,12 @@ func (r *Result) IndexInRangeAtBoundary(point cfg.Point, indexPath, arrayPath pa
 	if !ok {
 		return false
 	}
-	indexKey, indexOK := r.PathKeyAtBoundary(point, indexPath)
-	arrayKey, arrayOK := r.PathKeyAtBoundary(point, arrayPath)
+	indexKey, indexOK := r.StateKeyAtBoundary(point, indexPath)
+	arrayKey, arrayOK := r.StateKeyAtBoundary(point, arrayPath)
 	if !indexOK || !arrayOK {
 		return false
 	}
-	return in.HasIndexInRangeProof(r.visibility.KeySpace(), indexKey, arrayKey)
+	return in.HasIndexInRangeProofForStateKeys(r.visibility.KeySpace(), indexKey, arrayKey)
 }
 
 // DiffProvesIndexLELength reports whether the difference-logic constraints proven

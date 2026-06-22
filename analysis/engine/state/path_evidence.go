@@ -2,6 +2,7 @@ package state
 
 import (
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
@@ -174,12 +175,33 @@ func (s State) HasBranchProof(proof pathevidence.BranchProof) bool {
 	return s.pathEvidence.HasBranchProof(proof)
 }
 
+// HasIndexInRangeProof is the legacy path-key adapter for in-range branch
+// proofs. New boundary code that already resolved visibility should call
+// HasIndexInRangeProofForStateKeys.
 func (s State) HasIndexInRangeProof(ks *keyspace.KeySpace, indexKey, arrayKey pathdom.PathKey) bool {
-	index, ok := ks.FromStateKey(indexKey)
+	indexStateKey, ok := pathaddr.StateKeyFromPathKey(indexKey)
 	if !ok {
 		return false
 	}
-	array, ok := ks.FromStateKey(arrayKey)
+	arrayStateKey, ok := pathaddr.StateKeyFromPathKey(arrayKey)
+	if !ok {
+		return false
+	}
+	return s.HasIndexInRangeProofForStateKeys(ks, indexStateKey, arrayStateKey)
+}
+
+// HasIndexInRangeProofForStateKeys reports whether the state carries a
+// must-proof that value(indexKey) is within len(arrayKey). Prefer this at
+// module boundaries that already resolved paths to typed state keys.
+func (s State) HasIndexInRangeProofForStateKeys(ks *keyspace.KeySpace, indexKey, arrayKey pathaddr.StateKey) bool {
+	if indexKey == "" || arrayKey == "" {
+		return false
+	}
+	index, ok := ks.FromStateKey(indexKey.PathKey())
+	if !ok {
+		return false
+	}
+	array, ok := ks.FromStateKey(arrayKey.PathKey())
 	if !ok {
 		return false
 	}
