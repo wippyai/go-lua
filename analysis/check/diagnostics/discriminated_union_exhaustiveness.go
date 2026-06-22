@@ -66,6 +66,17 @@ type dispatchTableEvidence struct {
 	lookupSpan diagnostic.Span
 }
 
+type registrationEvidence struct {
+	registry         string
+	target           string
+	possible         []string
+	registered       []string
+	missing          []string
+	missingFor       []string
+	registrationSpan diagnostic.Span
+	dispatchSpan     diagnostic.Span
+}
+
 type dispatchTableSummary struct {
 	table string
 	keys  map[string]bool
@@ -182,6 +193,7 @@ func (p discriminatedUnionExhaustiveness) Produce(result *body.Result) []diagnos
 		}
 	}
 	out = append(out, p.tableDispatchDiagnostics(result, graph)...)
+	out = append(out, p.registrationDiagnostics(result, graph)...)
 	return out
 }
 
@@ -381,6 +393,357 @@ func discriminantCaseName(target pathdom.Path, suffix []segment.Segment, caseTyp
 
 func sameDiscriminantCandidate(a, b discriminantCandidate) bool {
 	return a.family == b.family && a.target.Equal(b.target) && a.anchor.Equal(b.anchor)
+}
+
+type registrationCall struct {
+	point    cfg.Point
+	call     *ast.FuncCallExpr
+	registry pathdom.Path
+	key      string
+	span     diagnostic.Span
+}
+
+type openRegistrationMutation struct {
+	point    cfg.Point
+	registry pathdom.Path
+}
+
+type dispatchCall struct {
+	point        cfg.Point
+	call         *ast.FuncCallExpr
+	registry     pathdom.Path
+	discriminant pathdom.Path
+	cases        []discriminantCase
+	span         diagnostic.Span
+}
+
+func (p discriminatedUnionExhaustiveness) registrationDiagnostics(result *body.Result, graph cfg.Graph) []diagnostic.Diagnostic {
+	registrations, openRegistries := p.registrationCalls(result, graph)
+	if len(registrations) == 0 {
+		return nil
+	}
+	var out []diagnostic.Diagnostic
+	for _, dispatch := range p.dispatchCalls(result, graph) {
+		if p.openRegistrationCanReach(result, graph, openRegistries, dispatch) {
+			continue
+		}
+		seen := make(map[string]registrationCall)
+		for _, reg := range registrations {
+			if !reg.registry.Equal(dispatch.registry) || !diagnosticCanReach(p.flow, graph, reg.point, dispatch.point) {
+				continue
+			}
+			if existing, ok := seen[reg.key]; ok && existing.point > reg.point {
+				continue
+			}
+			seen[reg.key] = reg
+		}
+		if len(seen) == 0 {
+			continue
+		}
+		if diag, ok := registrationExhaustivenessDiagnosticFor(dispatch, seen); ok {
+			out = append(out, diag)
+		}
+	}
+	return out
+}
+
+func registrationExhaustivenessDiagnosticFor(dispatch dispatchCall, registrations map[string]registrationCall) (diagnostic.Diagnostic, bool) {
+	var possible []string
+	var registered []string
+	var missing []string
+	var missingFor []string
+	matched := false
+	for _, c := range dispatch.cases {
+		possible = append(possible, c.name)
+		if _, ok := registrations[c.key]; ok {
+			matched = true
+			registered = append(registered, registrationCaseName(dispatch.registry.String(), c.key))
+			continue
+		}
+		missing = append(missing, registrationCaseName(dispatch.registry.String(), c.key))
+		missingFor = append(missingFor, c.name)
+	}
+	if !matched || len(missing) == 0 {
+		return diagnostic.Diagnostic{}, false
+	}
+	sort.Strings(registered)
+	regSpan := firstRegistrationSpan(registrations)
+	return newRegistrationExhaustivenessDiagnostic(registrationEvidence{
+		registry:         dispatch.registry.String(),
+		target:           dispatch.discriminant.String(),
+		possible:         possible,
+		registered:       registered,
+		missing:          missing,
+		missingFor:       missingFor,
+		registrationSpan: regSpan,
+		dispatchSpan:     dispatch.span,
+	}), true
+}
+
+func firstRegistrationSpan(registrations map[string]registrationCall) diagnostic.Span {
+	var span diagnostic.Span
+	var point cfg.Point
+	first := true
+	for _, reg := range registrations {
+		if first || reg.point < point {
+			span = reg.span
+			point = reg.point
+			first = false
+		}
+	}
+	return span
+}
+
+func (p discriminatedUnionExhaustiveness) registrationCalls(result *body.Result, graph cfg.Graph) ([]registrationCall, []openRegistrationMutation) {
+	var registrations []registrationCall
+	var open []openRegistrationMutation
+	for _, point := range graph.RPO() {
+		call, ok := result.Call(point)
+		if !ok || call.Call == nil {
+			if assignment, ok := result.OrdinaryAssignment(point); ok {
+				if registry, ok := openRegistrationAssignment(assignment); ok {
+					open = append(open, openRegistrationMutation{point: point, registry: registry})
+				}
+			}
+			continue
+		}
+		if reg, ok := registrationCallFromFact(result, call, point); ok {
+			registrations = append(registrations, reg)
+			continue
+		}
+		if registry, ok := openRegistrationMutationFromFact(result, call); ok {
+			open = append(open, openRegistrationMutation{point: point, registry: registry})
+		}
+	}
+	return registrations, open
+}
+
+func (p discriminatedUnionExhaustiveness) openRegistrationCanReach(result *body.Result, graph cfg.Graph, open []openRegistrationMutation, dispatch dispatchCall) bool {
+	for _, mutation := range open {
+		if mutation.registry.Equal(dispatch.registry) && diagnosticCanReach(p.flow, graph, mutation.point, dispatch.point) {
+			return true
+		}
+	}
+	return false
+}
+
+func openRegistrationAssignment(fact semantics.OrdinaryAssignmentFact) (pathdom.Path, bool) {
+	if fact.HasPath && fact.Path.Symbol != 0 {
+		root := fact.Path
+		root.Segments = nil
+		return root, true
+	}
+	if fact.HasContainerPath && fact.ContainerPath.Symbol != 0 {
+		root := fact.ContainerPath
+		root.Segments = nil
+		return root, true
+	}
+	if fact.HasSymbol && fact.Symbol != 0 {
+		return pathdom.Path{Symbol: fact.Symbol}, true
+	}
+	return pathdom.Path{}, false
+}
+
+func registrationCallFromFact(result *body.Result, fact semantics.CallFact, point cfg.Point) (registrationCall, bool) {
+	registry, keyIndex, ok := registrationRegistryAndKeyIndex(result, fact)
+	if !ok || keyIndex < 0 || keyIndex >= len(fact.Args)-1 {
+		return registrationCall{}, false
+	}
+	key, ok := stringLiteralExprValue(fact.Args[keyIndex])
+	if !ok || !registrationCallbackExpr(fact.Args[keyIndex+1]) {
+		return registrationCall{}, false
+	}
+	return registrationCall{
+		point:    point,
+		call:     fact.Call,
+		registry: registry,
+		key:      key,
+		span:     ast.SpanOf(fact.Call),
+	}, true
+}
+
+func registrationRegistryAndKeyIndex(result *body.Result, fact semantics.CallFact) (pathdom.Path, int, bool) {
+	if fact.Call == nil {
+		return pathdom.Path{}, 0, false
+	}
+	if fact.HasReceiverPath && fact.Method != "" && len(fact.Args) >= 2 {
+		return fact.ReceiverPath, 0, true
+	}
+	if len(fact.Args) >= 3 {
+		if registry, ok := result.ExpressionPath(fact.Args[0]); ok && registry.Symbol != 0 && len(registry.Segments) == 0 {
+			return registry, 1, true
+		}
+	}
+	return pathdom.Path{}, 0, false
+}
+
+func openRegistrationMutationFromFact(result *body.Result, fact semantics.CallFact) (pathdom.Path, bool) {
+	registry, keyIndex, ok := registrationRegistryAndKeyIndex(result, fact)
+	if !ok || keyIndex < 0 || keyIndex >= len(fact.Args)-1 {
+		return pathdom.Path{}, false
+	}
+	if _, ok := stringLiteralExprValue(fact.Args[keyIndex]); ok && registrationCallbackExpr(fact.Args[keyIndex+1]) {
+		return pathdom.Path{}, false
+	}
+	if registrationCallbackExpr(fact.Args[keyIndex+1]) {
+		return registry, true
+	}
+	return pathdom.Path{}, false
+}
+
+func registrationCallbackExpr(expr ast.Expr) bool {
+	if _, ok := directFunctionExprFromExpr(expr); ok {
+		return true
+	}
+	return false
+}
+
+func (p discriminatedUnionExhaustiveness) dispatchCalls(result *body.Result, graph cfg.Graph) []dispatchCall {
+	var out []dispatchCall
+	for _, point := range graph.RPO() {
+		fact, ok := result.Call(point)
+		if !ok || fact.Call == nil || isRegistrationLikeCall(result, fact) {
+			continue
+		}
+		registry, args, ok := dispatchRegistryAndArgs(result, fact)
+		if !ok {
+			continue
+		}
+		for _, arg := range args {
+			argPath, ok := result.ExpressionPath(arg)
+			if !ok || argPath.Symbol == 0 {
+				continue
+			}
+			discriminant, cases, ok := p.stringDiscriminantCasesForArgument(result, point, argPath)
+			if !ok {
+				continue
+			}
+			out = append(out, dispatchCall{
+				point:        point,
+				call:         fact.Call,
+				registry:     registry,
+				discriminant: discriminant,
+				cases:        cases,
+				span:         ast.SpanOf(fact.Call),
+			})
+			break
+		}
+	}
+	return out
+}
+
+func isRegistrationLikeCall(result *body.Result, fact semantics.CallFact) bool {
+	if _, ok := registrationCallFromFact(result, fact, 0); ok {
+		return true
+	}
+	if _, ok := openRegistrationMutationFromFact(result, fact); ok {
+		return true
+	}
+	return false
+}
+
+func dispatchRegistryAndArgs(result *body.Result, fact semantics.CallFact) (pathdom.Path, []ast.Expr, bool) {
+	if fact.HasReceiverPath && fact.Method != "" && len(fact.Args) > 0 {
+		return fact.ReceiverPath, fact.Args, true
+	}
+	if len(fact.Args) >= 2 {
+		registry, ok := result.ExpressionPath(fact.Args[0])
+		if ok && registry.Symbol != 0 && len(registry.Segments) == 0 {
+			return registry, fact.Args[1:], true
+		}
+	}
+	return pathdom.Path{}, nil, false
+}
+
+func (p discriminatedUnionExhaustiveness) stringDiscriminantCasesForArgument(result *body.Result, point cfg.Point, argPath pathdom.Path) (pathdom.Path, []discriminantCase, bool) {
+	if len(argPath.Segments) > 0 {
+		cases, ok := p.stringDiscriminantCases(result, point, argPath)
+		return argPath, cases, ok
+	}
+	for _, domain := range p.stringDiscriminantDomainsForRoot(result, point, argPath) {
+		return domain.target, domain.cases, true
+	}
+	return pathdom.Path{}, nil, false
+}
+
+type stringDiscriminantDomain struct {
+	target pathdom.Path
+	cases  []discriminantCase
+}
+
+func (p discriminatedUnionExhaustiveness) stringDiscriminantDomainsForRoot(result *body.Result, point cfg.Point, root pathdom.Path) []stringDiscriminantDomain {
+	rootType, ok := discriminantRootType(result, p.resolver, point, root)
+	if !ok {
+		return nil
+	}
+	_, cases, ok := variant.OriginCasesOfType(rootType)
+	if !ok || len(cases) < 2 {
+		return nil
+	}
+	var out []stringDiscriminantDomain
+	for _, suffix := range stringLiteralSuffixes(cases[0].Type, nil, 0) {
+		target := root
+		target.Segments = append([]segment.Segment(nil), suffix...)
+		domainCases, ok := stringDiscriminantCasesFor(target, suffix, cases)
+		if !ok {
+			continue
+		}
+		out = append(out, stringDiscriminantDomain{target: target, cases: domainCases})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].target.String() < out[j].target.String()
+	})
+	return out
+}
+
+func stringLiteralSuffixes(t typ.Type, prefix []segment.Segment, depth int) [][]segment.Segment {
+	if t == nil || depth > 2 {
+		return nil
+	}
+	switch v := t.(type) {
+	case *typ.Literal:
+		if _, ok := v.Value.(string); ok && len(prefix) > 0 {
+			return [][]segment.Segment{append([]segment.Segment(nil), prefix...)}
+		}
+		return nil
+	case *typ.Alias:
+		return stringLiteralSuffixes(v.UnaliasedTarget(), prefix, depth+1)
+	case *typ.Optional:
+		return stringLiteralSuffixes(v.Inner, prefix, depth+1)
+	case *typ.Record:
+		var out [][]segment.Segment
+		for _, field := range v.Fields {
+			next := append(append([]segment.Segment(nil), prefix...), segment.Segment{Kind: segment.SegmentField, Name: field.Name})
+			out = append(out, stringLiteralSuffixes(field.Type, next, depth+1)...)
+		}
+		for _, member := range v.StaticMembers {
+			if member.Kind != typ.StaticMemberStringIndex {
+				continue
+			}
+			next := append(append([]segment.Segment(nil), prefix...), segment.Segment{Kind: segment.SegmentIndexString, Name: member.Name})
+			out = append(out, stringLiteralSuffixes(member.Type, next, depth+1)...)
+		}
+		return out
+	default:
+		return nil
+	}
+}
+
+func stringLiteralExprValue(expr ast.Expr) (string, bool) {
+	lit, ok := expr.(*ast.StringExpr)
+	if !ok {
+		return "", false
+	}
+	return lit.Value, true
+}
+
+func pathSetContains(paths []pathdom.Path, target pathdom.Path) bool {
+	for _, p := range paths {
+		if p.Equal(target) {
+			return true
+		}
+	}
+	return false
 }
 
 type dispatchLookup struct {
@@ -711,6 +1074,10 @@ func dispatchKeyName(table, key string) string {
 	return table + "[" + formatType(typ.LiteralString(key)) + "]"
 }
 
+func registrationCaseName(registry, key string) string {
+	return dispatchKeyName(registry, key)
+}
+
 func identifierName(s string) bool {
 	if s == "" {
 		return false
@@ -754,6 +1121,23 @@ func newDispatchTableExhaustivenessDiagnostic(evidence dispatchTableEvidence) di
 		Labels: []diagnostic.Label{
 			sourceLabel(evidence.tableSpan, labelDispatchTable),
 			sourceLabel(evidence.lookupSpan, labelDispatchLookup),
+		},
+	})
+}
+
+func newRegistrationExhaustivenessDiagnostic(evidence registrationEvidence) diagnostic.Diagnostic {
+	registrationWord := pluralize(len(evidence.missing), "registration", "registrations")
+	missing := dispatchKeyList(evidence.missing)
+	return diagnostic.New(diagnostic.DiagnosticSpec{
+		Span:        evidence.dispatchSpan,
+		Code:        CodeDiscriminatedUnionExhaustive,
+		Severity:    diagnostic.SeverityWarning,
+		Message:     registrationExhaustivenessMessage(registrationWord, missing),
+		Explanation: registrationExhaustivenessExplanation(evidence),
+		Help:        registrationExhaustivenessHelp(),
+		Labels: []diagnostic.Label{
+			sourceLabel(evidence.registrationSpan, labelRegistrationCall),
+			sourceLabel(evidence.dispatchSpan, labelDispatchCall),
 		},
 	})
 }
@@ -823,6 +1207,35 @@ func dispatchTableExhaustivenessExplanation(evidence dispatchTableEvidence) diag
 			Trust:   diagnostic.TrustUnknown,
 			Span:    evidence.lookupSpan,
 			Message: missingDispatchKeysEvidence(dispatchMissingKeyCases(evidence.missing, evidence.missingFor)),
+		},
+	)
+}
+
+func registrationExhaustivenessExplanation(evidence registrationEvidence) diagnostic.Explanation {
+	return diagnostic.NewExplanation(
+		diagnostic.Evidence{
+			Kind:    diagnostic.EvidenceAbstractFact,
+			Trust:   diagnostic.TrustProven,
+			Span:    evidence.dispatchSpan,
+			Message: registrationDispatchEvidence(evidence.registry, evidence.target),
+		},
+		diagnostic.Evidence{
+			Kind:    diagnostic.EvidenceAbstractFact,
+			Trust:   diagnostic.TrustProven,
+			Span:    evidence.dispatchSpan,
+			Message: possibleDiscriminantCasesEvidence(discriminantCaseList(evidence.possible)),
+		},
+		diagnostic.Evidence{
+			Kind:    diagnostic.EvidenceAbstractFact,
+			Trust:   diagnostic.TrustProven,
+			Span:    evidence.registrationSpan,
+			Message: registeredCasesEvidence(dispatchKeyList(evidence.registered)),
+		},
+		diagnostic.Evidence{
+			Kind:    diagnostic.EvidenceMissingProof,
+			Trust:   diagnostic.TrustUnknown,
+			Span:    evidence.dispatchSpan,
+			Message: missingRegistrationsEvidence(dispatchMissingKeyCases(evidence.missing, evidence.missingFor)),
 		},
 	)
 }

@@ -155,6 +155,12 @@ func TestDiagnosticProducerMessagesUseCentralDisplay(t *testing.T) {
 	if got := dispatchTableExhaustivenessHelp(); got != "Add each missing dispatch key, or route through an explicit fallback when missing keys are intentional." {
 		t.Fatalf("dispatchTableExhaustivenessHelp = %q", got)
 	}
+	if got := registrationExhaustivenessMessage("registration", "`router.cancel`"); got != "registered callbacks are not exhaustive; missing registration: `router.cancel`" {
+		t.Fatalf("registrationExhaustivenessMessage = %q", got)
+	}
+	if got := registrationExhaustivenessHelp(); got != "Register each missing case, or dispatch through an explicit fallback when missing registrations are intentional." {
+		t.Fatalf("registrationExhaustivenessHelp = %q", got)
+	}
 
 	if got := frozenTableMutationMessage("session"); got != `cannot mutate frozen table "session"` {
 		t.Fatalf("frozenTableMutationMessage = %q", got)

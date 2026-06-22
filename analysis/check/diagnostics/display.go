@@ -47,6 +47,8 @@ const (
 	labelUnionCaseTest        = "union case check"
 	labelDispatchLookup       = "dispatch lookup"
 	labelDispatchTable        = "dispatch table"
+	labelRegistrationCall     = "registration call"
+	labelDispatchCall         = "dispatch call"
 	labelFrozenTableMutation  = "mutation of frozen table"
 	labelFrozenTableCall      = "mutating call on frozen table"
 	labelFreezeProof          = "freeze proof"
@@ -83,6 +85,8 @@ func sourceLabelPlacement(message string) diagnostic.LabelPlacement {
 		labelChannelCaseTest,
 		labelUnionCaseTest,
 		labelDispatchLookup,
+		labelRegistrationCall,
+		labelDispatchCall,
 		labelFrozenTableMutation,
 		labelFrozenTableCall,
 		labelLifecycleAcquire,
@@ -184,6 +188,14 @@ func dispatchTableExhaustivenessHelp() string {
 	return display.DispatchTableExhaustivenessHelp()
 }
 
+func registrationExhaustivenessMessage(registrationWord, registrations string) string {
+	return display.RegistrationExhaustivenessMessage(registrationWord, registrations)
+}
+
+func registrationExhaustivenessHelp() string {
+	return display.RegistrationExhaustivenessHelp()
+}
+
 func selectedDiscriminantPathEvidence(path string) string {
 	return "branch chain checks discriminant " + codeName(path)
 }
@@ -214,6 +226,18 @@ func dispatchTableKeysEvidence(keys string) string {
 
 func missingDispatchKeysEvidence(keys string) string {
 	return "missing dispatch keys: " + keys
+}
+
+func registrationDispatchEvidence(registry, discriminant string) string {
+	return codeName(registry) + " is dispatched with discriminant " + codeName(discriminant)
+}
+
+func registeredCasesEvidence(cases string) string {
+	return "registered cases: " + cases
+}
+
+func missingRegistrationsEvidence(registrations string) string {
+	return "missing registrations: " + registrations
 }
 
 func frozenAssignmentEvidence(containerName string) string {
@@ -780,6 +804,14 @@ func (diagnosticDisplay) DispatchTableExhaustivenessMessage(keyWord, keys string
 
 func (diagnosticDisplay) DispatchTableExhaustivenessHelp() string {
 	return "Add each missing dispatch key, or route through an explicit fallback when missing keys are intentional."
+}
+
+func (diagnosticDisplay) RegistrationExhaustivenessMessage(registrationWord, registrations string) string {
+	return fmt.Sprintf("registered callbacks are not exhaustive; missing %s: %s", registrationWord, registrations)
+}
+
+func (diagnosticDisplay) RegistrationExhaustivenessHelp() string {
+	return "Register each missing case, or dispatch through an explicit fallback when missing registrations are intentional."
 }
 
 func (diagnosticDisplay) FrozenTableMutationMessage(containerName string) string {
