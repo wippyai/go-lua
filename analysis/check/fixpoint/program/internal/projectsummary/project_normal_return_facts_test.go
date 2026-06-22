@@ -139,7 +139,12 @@ func TestFromResultProjectsNormalReturnFactsFromExitSnapshots(t *testing.T) {
 		}).
 		WriteNumFloor(ks, testStateKey(t, numFloorRootKey), 1).
 		WriteNumFloor(ks, testStateKey(t, numFloorMemberKey), 2).
-		WriteScaledConstraint(1, relIKey, 1, relJKey, state.LengthRelKey(relArrayKey), 0).
+		WriteScaledConstraint(
+			1, state.RelValueOperand(testStateKey(t, relIKey)),
+			1, state.RelValueOperand(testStateKey(t, relJKey)),
+			state.RelLengthOperand(testStateKey(t, relArrayKey)),
+			0,
+		).
 		AddChannelSelectFact(channelselectfact.Fact{
 			Select:     "select-kind",
 			Kind:       channelselectfact.FactSelect,

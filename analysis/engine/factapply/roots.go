@@ -125,7 +125,7 @@ func applyRootAssignmentNumFloor(
 	}
 	// Reassigning the root invalidates every difference relation over its old
 	// value (and, if it is an array, its old length).
-	out = out.ClearDiffConstraintsFor(targetKey.PathKey())
+	out = out.ClearDiffConstraintsFor(targetKey)
 	if floor, ok := sourcevalue.NumFloorForSource(ctx.Registry, resolver, ctx.Point, facts, in, source); ok {
 		return out.WriteNumFloor(resolver.KeySpace(), targetKey, floor)
 	}

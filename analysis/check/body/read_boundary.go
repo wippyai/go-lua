@@ -176,16 +176,15 @@ func (r *Result) rootOrVisibleStateKeyAtBoundary(point cfg.Point, p pathdom.Path
 	return visibility.RootOrVisibleStateKeyAt(r.visibility, point, p)
 }
 
-func (r *Result) relationGraphKeyAtBoundary(point cfg.Point, p pathdom.Path, length bool) (pathdom.PathKey, bool) {
+func (r *Result) relationGraphKeyAtBoundary(point cfg.Point, p pathdom.Path, length bool) (state.RelOperand, bool) {
 	stateKey, ok := r.rootOrVisibleStateKeyAtBoundary(point, p)
 	if !ok {
-		return "", false
+		return state.RelOperand{}, false
 	}
-	key := stateKey.PathKey()
 	if length {
-		return state.LengthRelKey(key), true
+		return state.RelLengthOperand(stateKey), true
 	}
-	return key, true
+	return state.RelValueOperand(stateKey), true
 }
 
 // TypestateResourceKeyAtBoundary returns the canonical resource key used by the
@@ -309,36 +308,25 @@ func (r *Result) DiffProvesIndexLELength(point cfg.Point, indexPath pathdom.Path
 		return false
 	}
 	asserted := make([]numeric.NumericConstraint, 0, len(snap.Constraints))
-	floorKeys := make(map[pathdom.PathKey]struct{})
-	noteKey := func(k pathdom.PathKey) {
-		if k == "" {
-			return
-		}
-		if _, isLength := state.ArrayKeyOfLengthRel(k); isLength {
-			return
-		}
-		floorKeys[k] = struct{}{}
-	}
+	floorKeys := make(map[pathaddr.StateKey]struct{})
+	valueKeys := make([]pathaddr.StateKey, 0, 3)
 	for _, c := range snap.Constraints {
-		asserted = append(asserted, numeric.NewScaledLe(c.CoA, c.A, c.CoB, c.B, c.C, c.K))
-		noteKey(c.A)
-		noteKey(c.B)
-		noteKey(c.C)
+		asserted = append(asserted, c.NumericConstraint())
+		valueKeys = c.AppendValueStateKeys(valueKeys[:0])
+		for _, key := range valueKeys {
+			floorKeys[key] = struct{}{}
+		}
 	}
 	// A value operand's proven numeric floor strengthens the system: a sum bound
 	// i + j <= #xs only proves i <= #xs once j >= 0 is known.
 	for k := range floorKeys {
-		stateKey, keyOK := pathaddr.StateKeyFromPathKey(k)
-		if !keyOK {
-			continue
-		}
-		if lo, ok := in.ReadNumFloor(r.visibility.KeySpace(), stateKey); ok {
-			asserted = append(asserted, numeric.GeConst{X: k, C: lo})
+		if lo, ok := in.ReadNumFloor(r.visibility.KeySpace(), k); ok {
+			asserted = append(asserted, numeric.GeConst{X: k.PathKey(), C: lo})
 		}
 	}
 	// indexCoeff*index + offset <= len is proven when indexCoeff*index - len <=
 	// -offset, the scaled goal entailed by the lane constraints.
-	goal := numeric.NewScaledLe(indexCoeff, indexKey, 0, "", arrayLenKey, -indexOffset)
+	goal := numeric.NewScaledLe(indexCoeff, indexKey.NumericKey(), 0, "", arrayLenKey.NumericKey(), -indexOffset)
 	return solver.DefaultPortfolio().Entails(asserted, goal) == decision.Valid
 }
 

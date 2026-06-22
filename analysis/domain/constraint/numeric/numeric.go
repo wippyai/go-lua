@@ -12,10 +12,11 @@ import (
 // independent of any single engine or pass.
 // Unlike type constraints, numeric constraints operate on values rather than types.
 //
-// Variables are pathdom.PathKey, the stable key the engine has already resolved
-// at the factapply boundary. The IR is key-based, not Path-based: a solver treats
-// every variable as an opaque key. A length operand is just a PathKey that happens
-// to be a state.LengthRelKey sentinel; constraints carry no special length kind.
+// Variables are pathdom.PathKey, the stable key the caller has already resolved
+// at the solver boundary. The IR is key-based, not Path-based: a solver treats
+// every variable as an opaque key. Higher layers must preserve any semantic
+// distinction, such as value(path) versus len(path), before flattening terms into
+// solver variables.
 //
 // # Supported Constraints
 //

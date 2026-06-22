@@ -274,17 +274,21 @@ func TestFactsEdgeTransferAppliesBranchDiffConstraintRelationGraphKeys(t *testin
 		HasCond:  true,
 	}, state.State{})
 
-	xsKey := visibility.RootOrVisibleKeyAt(resolver, branch, xsPath)
-	iKey := visibility.RootOrVisibleKeyAt(resolver, branch, iPath)
-	jKey := visibility.RootOrVisibleKeyAt(resolver, branch, jPath)
+	xsKey, xsOK := visibility.RootOrVisibleStateKeyAt(resolver, branch, xsPath)
+	iKey, iOK := visibility.RootOrVisibleStateKeyAt(resolver, branch, iPath)
+	jKey, jOK := visibility.RootOrVisibleStateKeyAt(resolver, branch, jPath)
+	if !xsOK || !iOK || !jOK {
+		t.Fatalf("RootOrVisibleStateKeyAt failed for xs=%v i=%v j=%v", xsOK, iOK, jOK)
+	}
 	constraints := trueOut.RelConstraints().Constraints
 	if len(constraints) != 1 {
 		t.Fatalf("true-edge relational constraints = %#v, want one relation", constraints)
 	}
 	constraint := constraints[0]
 	if constraint.CoA != 1 || constraint.CoB != 1 || constraint.K != 0 ||
-		!((constraint.A == iKey && constraint.B == jKey) || (constraint.A == jKey && constraint.B == iKey)) ||
-		constraint.C != state.LengthRelKey(xsKey) {
+		!((constraint.A == state.RelValueOperand(iKey) && constraint.B == state.RelValueOperand(jKey)) ||
+			(constraint.A == state.RelValueOperand(jKey) && constraint.B == state.RelValueOperand(iKey))) ||
+		constraint.C != state.RelLengthOperand(xsKey) {
 		t.Fatalf("true-edge relation = %#v, want i+j-len(xs)<=0 under relation graph keys", constraint)
 	}
 	if constraints := falseOut.RelConstraints().Constraints; len(constraints) != 0 {

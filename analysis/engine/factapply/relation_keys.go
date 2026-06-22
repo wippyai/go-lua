@@ -9,16 +9,16 @@ import (
 
 // relationGraphKeyAt converts a value or len(value) path operand into the key
 // form used by State's relational-constraint graph.
-func relationGraphKeyAt(resolver *visibility.Resolver, point cfg.Point, path pathdom.Path, isLength bool) (pathdom.PathKey, bool) {
+func relationGraphKeyAt(resolver *visibility.Resolver, point cfg.Point, path pathdom.Path, isLength bool) (state.RelOperand, bool) {
 	if path.Symbol == 0 {
-		return "", false
+		return state.RelOperand{}, false
 	}
-	key := visibility.RootOrVisibleKeyAt(resolver, point, path)
-	if key == "" {
-		return "", false
+	key, ok := visibility.RootOrVisibleStateKeyAt(resolver, point, path)
+	if !ok {
+		return state.RelOperand{}, false
 	}
 	if isLength {
-		return state.LengthRelKey(key), true
+		return state.RelLengthOperand(key), true
 	}
-	return key, true
+	return state.RelValueOperand(key), true
 }

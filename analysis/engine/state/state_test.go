@@ -607,7 +607,7 @@ func TestStateCloneIndependenceAcrossLanes(t *testing.T) {
 		WritePlacement(fx.escapeID, placement.Stack).
 		WriteLenFloor(ks, testStateKey(t, fx.pathKey), 2).
 		WriteNumFloor(ks, testStateKey(t, fx.pathKey), 3).
-		WriteDiffConstraint(pathdom.PathKey("clone-i"), pathdom.PathKey("clone-j"), -1).
+		WriteDiffConstraint(RelValueOperand(testStateKey(t, pathdom.PathKey("clone-i"))), RelValueOperand(testStateKey(t, pathdom.PathKey("clone-j"))), -1).
 		AcquireTypestate(
 			TypestateResourceFromCanonicalKey(testStateKey(t, pathdom.PathKey("clone-tx")), typestate.Protocol("transaction")),
 			typestate.State("open"),
@@ -639,7 +639,7 @@ func TestStateCloneIndependenceAcrossLanes(t *testing.T) {
 	clone = clone.WritePlacement(fx.escapeID, placement.Unknown)
 	clone = clone.WriteLenFloor(ks, testStateKey(t, fx.pathKey), 5)
 	clone = clone.WriteNumFloor(ks, testStateKey(t, fx.pathKey), 7)
-	clone = clone.WriteDiffConstraint(pathdom.PathKey("clone-extra"), pathdom.PathKey("clone-j"), 0)
+	clone = clone.WriteDiffConstraint(RelValueOperand(testStateKey(t, pathdom.PathKey("clone-extra"))), RelValueOperand(testStateKey(t, pathdom.PathKey("clone-j"))), 0)
 	clone = clone.TransitionTypestate(typestateResource, typestate.State("open"), typestate.State("closed"))
 	clone = clone.AddStoreRelation(cloneOnlyStoreRelation)
 	clone = clone.FreezeTable(cloneOnlyFrozenID)
@@ -682,8 +682,8 @@ func TestStateCloneIndependenceAcrossLanes(t *testing.T) {
 		t.Fatalf("original num floor mutated through clone: %d/%v", got, ok)
 	}
 	if constraints := original.RelConstraints().Constraints; len(constraints) != 1 ||
-		constraints[0].A != pathdom.PathKey("clone-i") ||
-		constraints[0].C != pathdom.PathKey("clone-j") ||
+		constraints[0].A != RelValueOperand(testStateKey(t, pathdom.PathKey("clone-i"))) ||
+		constraints[0].C != RelValueOperand(testStateKey(t, pathdom.PathKey("clone-j"))) ||
 		constraints[0].K != -1 {
 		t.Fatalf("original relational constraints mutated through clone: %#v", constraints)
 	}

@@ -424,11 +424,11 @@ func TestFactsNodeTransferCallOutcomeAppliesNormalReturnRelConstraints(t *testin
 		Point:    point,
 	}, state.State{})
 
-	xsKey := visibility.RootOrVisibleKeyAt(resolver, point, xsPath)
-	iKey := visibility.RootOrVisibleKeyAt(resolver, point, iPath)
-	jKey := visibility.RootOrVisibleKeyAt(resolver, point, jPath)
-	if xsKey == "" || iKey == "" || jKey == "" {
-		t.Fatalf("RootOrVisibleKeyAt failed for xs=%q i=%q j=%q", xsKey, iKey, jKey)
+	xsKey, xsOK := visibility.RootOrVisibleStateKeyAt(resolver, point, xsPath)
+	iKey, iOK := visibility.RootOrVisibleStateKeyAt(resolver, point, iPath)
+	jKey, jOK := visibility.RootOrVisibleStateKeyAt(resolver, point, jPath)
+	if !xsOK || !iOK || !jOK {
+		t.Fatalf("RootOrVisibleStateKeyAt failed for xs=%v i=%v j=%v", xsOK, iOK, jOK)
 	}
 	constraints := got.RelConstraints().Constraints
 	if len(constraints) != 1 {
@@ -436,8 +436,9 @@ func TestFactsNodeTransferCallOutcomeAppliesNormalReturnRelConstraints(t *testin
 	}
 	constraint := constraints[0]
 	if constraint.CoA != 1 || constraint.CoB != 1 || constraint.K != 0 ||
-		!((constraint.A == iKey && constraint.B == jKey) || (constraint.A == jKey && constraint.B == iKey)) ||
-		constraint.C != state.LengthRelKey(xsKey) {
+		!((constraint.A == state.RelValueOperand(iKey) && constraint.B == state.RelValueOperand(jKey)) ||
+			(constraint.A == state.RelValueOperand(jKey) && constraint.B == state.RelValueOperand(iKey))) ||
+		constraint.C != state.RelLengthOperand(xsKey) {
 		t.Fatalf("relational constraint = %#v, want i+j-len(xs)<=0 after rebasing", constraint)
 	}
 }

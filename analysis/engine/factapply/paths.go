@@ -80,7 +80,7 @@ func applyPathDescendantInvalidation(
 	// A write into the container can change its length, so drop difference
 	// relations over that length (and the container value) regardless of whether
 	// the container carried any tracked descendant refinements.
-	if containerKey := visibility.RootOrVisibleKeyAt(resolver, ctx.Point, containerPath); containerKey != "" {
+	if containerKey, ok := visibility.RootOrVisibleStateKeyAt(resolver, ctx.Point, containerPath); ok {
 		invalidated = invalidated.ClearDiffConstraintsFor(containerKey)
 	}
 	return invalidated

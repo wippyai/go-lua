@@ -800,7 +800,7 @@ func projectRelConstraintFact(
 		C:   c,
 		K:   constraint.K,
 	}
-	if constraint.B != "" && constraint.CoB != 0 {
+	if constraint.B.IsValid() && constraint.CoB != 0 {
 		b, ok := projectRelConstraintOperand(projectStatePath, constraint.B)
 		if !ok {
 			return callboundary.RelConstraintFact{}, false
@@ -813,14 +813,13 @@ func projectRelConstraintFact(
 
 func projectRelConstraintOperand(
 	projectStatePath func(path.PathKey) (path.Path, bool),
-	key path.PathKey,
+	operand state.RelOperand,
 ) (callboundary.RelOperand, bool) {
-	if arrayKey, ok := state.ArrayKeyOfLengthRel(key); ok {
-		target, targetOK := projectStatePath(arrayKey)
-		return callboundary.RelOperand{Path: target, IsLength: true}, targetOK
+	target, ok := projectStatePath(operand.StateKey().PathKey())
+	if !ok {
+		return callboundary.RelOperand{}, false
 	}
-	target, ok := projectStatePath(key)
-	return callboundary.RelOperand{Path: target}, ok
+	return callboundary.RelOperand{Path: target, IsLength: operand.IsLength()}, true
 }
 
 func normalReturnFactStatePlaceholderPath(ks *keyspace.KeySpace, pathKey path.PathKey, params []path.Path) (path.Path, bool) {

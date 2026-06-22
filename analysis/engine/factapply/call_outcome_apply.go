@@ -257,7 +257,7 @@ func applyNormalReturnRelConstraint(
 	if !ok {
 		return out
 	}
-	var bKey pathdom.PathKey
+	var bKey state.RelOperand
 	coB := fact.CoB
 	if coB != 0 && !fact.B.Path.IsEmpty() {
 		bKey, ok = callRelationGraphKeyAt(resolver, point, bindings, fact.B)
@@ -275,10 +275,10 @@ func callRelationGraphKeyAt(
 	point cfg.Point,
 	bindings []pathdom.Path,
 	operand callboundary.RelOperand,
-) (pathdom.PathKey, bool) {
+) (state.RelOperand, bool) {
 	targetPath, ok := operand.Path.Substitute(bindings)
 	if !ok || targetPath.Symbol == 0 {
-		return "", false
+		return state.RelOperand{}, false
 	}
 	return relationGraphKeyAt(resolver, point, targetPath, operand.IsLength)
 }

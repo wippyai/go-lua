@@ -88,8 +88,8 @@ func applyBranchNumFloorRefinement(
 }
 
 // applyBranchDiffConstraint records an edge-specific difference-logic fact
-// between two linear path terms. A length operand keys through state.LengthRelKey so it
-// stays distinct from the array's value path in the constraint graph.
+// between two linear path terms. Length operands stay typed in the relation
+// graph so len(path) cannot be confused with value(path).
 func applyBranchDiffConstraint(
 	ctx transfer.EdgeContext,
 	resolver *visibility.Resolver,
@@ -107,7 +107,7 @@ func applyBranchDiffConstraint(
 	if !ok {
 		return out
 	}
-	var hi2Key pathdom.PathKey
+	var hi2Key state.RelOperand
 	coHi2 := fact.CoHi2()
 	if fact.HasHi2() {
 		hi2Key, ok = relationGraphKeyAt(resolver, ctx.Edge.From, fact.Hi2Path(), fact.Hi2IsLength())
