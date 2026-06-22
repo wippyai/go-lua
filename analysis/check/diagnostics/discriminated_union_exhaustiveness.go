@@ -1584,6 +1584,8 @@ func objectLiteralDispatchKeys(fact semantics.ObjectLiteralFact) (map[string]boo
 				return nil, false
 			}
 			keys[suffix.Segment.Name] = true
+		case pathexpr.TableFieldSuffixImplicitIndex, pathexpr.TableFieldSuffixIntIndex:
+			continue
 		default:
 			return nil, false
 		}

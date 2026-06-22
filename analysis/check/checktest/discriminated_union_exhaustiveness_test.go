@@ -1171,6 +1171,38 @@ local handler = handlers[action.kind] or fallback
 	}
 }
 
+func TestDiscriminatedUnionExhaustivenessIgnoresNonStringDispatchTableEntries(t *testing.T) {
+	result := Check(`
+type Begin = { kind: "begin", id: string }
+type Commit = { kind: "commit", payment_id: string }
+type Cancel = { kind: "cancel", reason: string }
+type Action = Begin | Commit | Cancel
+
+local handlers = {
+    function(action: Action): string return action.kind end,
+    begin = function(action: Action): string return action.kind end,
+    [2] = function(action: Action): string return action.kind end,
+    commit = function(action: Action): string return action.kind end,
+}
+
+local action: Action = { kind = "begin", id = "evt-1" }
+local handler = handlers[action.kind]
+`, WithDiagnosticRule(
+		diagnostics.CodeDiscriminatedUnionExhaustive,
+		diagnostic.Enable(),
+	))
+	requireDiagnostic(t, result, diagnosticExpectation{
+		Code:            diagnostics.CodeDiscriminatedUnionExhaustive,
+		Severity:        diagnostic.SeverityWarning,
+		DiagnosticCount: 1,
+		MessageContains: []string{"dispatch table is not exhaustive", "handlers.cancel"},
+		EvidenceOrdered: []string{
+			"dispatch table provides keys: `handlers.begin`, `handlers.commit`",
+			"missing dispatch keys: `handlers.cancel` for `action.kind == \"cancel\"`",
+		},
+	})
+}
+
 func TestOptionalExhaustivenessReportsConsumedValueWithoutNilCase(t *testing.T) {
 	src := strings.TrimLeft(`
 type Sink = { seen: string }
