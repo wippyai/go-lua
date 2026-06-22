@@ -45,6 +45,7 @@ const (
 	labelUnknownValue         = "unknown value"
 	labelChannelCaseTest      = "channel case check"
 	labelUnionCaseTest        = "union case check"
+	labelResultFieldRead      = "result field read"
 	labelDispatchLookup       = "dispatch lookup"
 	labelDispatchTable        = "dispatch table"
 	labelRegistrationCall     = "registration call"
@@ -84,6 +85,7 @@ func sourceLabelPlacement(message string) diagnostic.LabelPlacement {
 		labelUnknownValue,
 		labelChannelCaseTest,
 		labelUnionCaseTest,
+		labelResultFieldRead,
 		labelDispatchLookup,
 		labelRegistrationCall,
 		labelDispatchCall,
@@ -196,6 +198,14 @@ func registrationExhaustivenessHelp() string {
 	return display.RegistrationExhaustivenessHelp()
 }
 
+func resultShapeExhaustivenessMessage(readPath, requiredCase string) string {
+	return display.ResultShapeExhaustivenessMessage(readPath, requiredCase)
+}
+
+func resultShapeExhaustivenessHelp() string {
+	return display.ResultShapeExhaustivenessHelp()
+}
+
 func selectedDiscriminantPathEvidence(path string) string {
 	return "branch chain checks discriminant " + codeName(path)
 }
@@ -214,6 +224,18 @@ func missingDiscriminantCasesEvidence(cases string) string {
 
 func missingDiscriminantDefaultEvidence() string {
 	return "no default branch handles the remaining union cases"
+}
+
+func resultShapeUnionEvidence(receiver, discriminant string) string {
+	return codeName(receiver) + " is result-shaped and discriminated by " + codeName(discriminant)
+}
+
+func resultShapeFieldCaseEvidence(readPath, requiredCase string) string {
+	return codeName(readPath) + " exists only for " + codeName(requiredCase)
+}
+
+func resultShapeMissingProofEvidence(requiredCase string) string {
+	return "no stable guard proves " + codeName(requiredCase) + " before this read"
 }
 
 func dispatchLookupEvidence(table, discriminant string) string {
@@ -812,6 +834,14 @@ func (diagnosticDisplay) RegistrationExhaustivenessMessage(registrationWord, reg
 
 func (diagnosticDisplay) RegistrationExhaustivenessHelp() string {
 	return "Register each missing case, or dispatch through an explicit fallback when missing registrations are intentional."
+}
+
+func (diagnosticDisplay) ResultShapeExhaustivenessMessage(readPath, requiredCase string) string {
+	return fmt.Sprintf("result field read is not exhaustive; %s requires %s", codeName(readPath), codeName(requiredCase))
+}
+
+func (diagnosticDisplay) ResultShapeExhaustivenessHelp() string {
+	return "Check the result case before reading this field, or return from the opposite case before continuing."
 }
 
 func (diagnosticDisplay) FrozenTableMutationMessage(containerName string) string {

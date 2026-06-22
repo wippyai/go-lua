@@ -231,6 +231,177 @@ end
 	})
 }
 
+func TestDiscriminatedUnionExhaustivenessReportsUnguardedResultValueRead(t *testing.T) {
+	src := strings.TrimLeft(`
+type Result<T> = { ok: true, value: T } | { ok: false, error: string }
+
+local function use(result: Result<string>): string
+    return result.value
+end
+`, "\n")
+	result := Check(src, WithDiagnosticRule(
+		diagnostics.CodeDiscriminatedUnionExhaustive,
+		diagnostic.Enable(),
+	))
+	diag := requireDiagnostic(t, result, diagnosticExpectation{
+		Code:            diagnostics.CodeDiscriminatedUnionExhaustive,
+		Severity:        diagnostic.SeverityWarning,
+		DiagnosticCount: 1,
+		Line:            4,
+		Column:          12,
+		MessageContains: []string{
+			"result field read is not exhaustive",
+			"result.value",
+			"result.ok == true",
+		},
+		EvidenceOrdered: []string{
+			"`result` is result-shaped and discriminated by `result.ok`",
+			"`result.value` exists only for `result.ok == true`",
+			"no stable guard proves `result.ok == true` before this read",
+		},
+		LabelContains: []string{"result field read"},
+		HelpContains:  []string{"Check the result case before reading this field"},
+	})
+	rendered := diagnostic.Render(diag, diagnostic.RenderOptions{
+		Sources:             diagnostic.SourceMap{"test.lua": src},
+		ShowSourceLabelRows: true,
+	})
+	want := `warning[lint.union.exhaustiveness]: result field read is not exhaustive; ` + "`result.value`" + ` requires ` + "`result.ok == true`" + `
+ --> test.lua:4:12
+  |
+4 |     return result.value
+  |            ↑ result field read
+
+because:
+  1. proven: ` + "`result`" + ` is result-shaped and discriminated by ` + "`result.ok`" + `
+  2. proven: ` + "`result.value`" + ` exists only for ` + "`result.ok == true`" + `
+  3. missing proof: no stable guard proves ` + "`result.ok == true`" + ` before this read
+
+help: Check the result case before reading this field, or return from the opposite case before continuing.`
+	assertRenderedEqual(t, rendered, want)
+}
+
+func TestDiscriminatedUnionExhaustivenessReportsUnguardedResultErrorRead(t *testing.T) {
+	result := Check(`
+type Result<T> = { ok: true, value: T } | { ok: false, error: string }
+
+local function use(result: Result<string>): string
+    return result.error
+end
+`, WithDiagnosticRule(
+		diagnostics.CodeDiscriminatedUnionExhaustive,
+		diagnostic.Enable(),
+	))
+	requireDiagnostic(t, result, diagnosticExpectation{
+		Code:            diagnostics.CodeDiscriminatedUnionExhaustive,
+		Severity:        diagnostic.SeverityWarning,
+		DiagnosticCount: 1,
+		MessageContains: []string{
+			"result.error",
+			"result.ok == false",
+		},
+		EvidenceOrdered: []string{
+			"`result.error` exists only for `result.ok == false`",
+			"no stable guard proves `result.ok == false` before this read",
+		},
+	})
+}
+
+func TestDiscriminatedUnionExhaustivenessAcceptsGuardedResultReads(t *testing.T) {
+	result := Check(`
+type Result<T> = { ok: true, value: T } | { ok: false, error: string }
+
+local function use(result: Result<string>): string
+    if result.ok then
+        return result.value
+    else
+        return result.error
+    end
+end
+`, WithDiagnosticRule(
+		diagnostics.CodeDiscriminatedUnionExhaustive,
+		diagnostic.Enable(),
+	))
+	if hasDiagnosticCode(result.Diagnostics, diagnostics.CodeDiscriminatedUnionExhaustive) {
+		t.Fatalf("diagnostics = %#v, want no result-shape exhaustiveness warning for guarded reads", result.Diagnostics)
+	}
+}
+
+func TestDiscriminatedUnionExhaustivenessAcceptsConcreteResultCaseRead(t *testing.T) {
+	result := Check(`
+type Result<T> = { ok: true, value: T } | { ok: false, error: string }
+
+local function use(result: Result<string>): string
+    result = { ok = true, value = "fresh" }
+    return result.value
+end
+`, WithDiagnosticRule(
+		diagnostics.CodeDiscriminatedUnionExhaustive,
+		diagnostic.Enable(),
+	))
+	if hasDiagnosticCode(result.Diagnostics, diagnostics.CodeDiscriminatedUnionExhaustive) {
+		t.Fatalf("diagnostics = %#v, want no result-shape exhaustiveness warning for concrete success case", result.Diagnostics)
+	}
+}
+
+func TestDiscriminatedUnionExhaustivenessReportsResultGuardInvalidatedBeforeRead(t *testing.T) {
+	result := Check(`
+type Result<T> = { ok: true, value: T } | { ok: false, error: string }
+
+local function use(result: Result<string>, replacement: Result<string>): string
+    if result.ok then
+        result = replacement
+        return result.value
+    else
+        return ""
+    end
+end
+`, WithDiagnosticRule(
+		diagnostics.CodeDiscriminatedUnionExhaustive,
+		diagnostic.Enable(),
+	))
+	requireDiagnostic(t, result, diagnosticExpectation{
+		Code:            diagnostics.CodeDiscriminatedUnionExhaustive,
+		Severity:        diagnostic.SeverityWarning,
+		DiagnosticCount: 1,
+		MessageContains: []string{
+			"result.value",
+			"result.ok == true",
+		},
+		EvidenceOrdered: []string{
+			"`result.value` exists only for `result.ok == true`",
+			"no stable guard proves `result.ok == true` before this read",
+		},
+	})
+}
+
+func TestDiscriminatedUnionExhaustivenessReportsStructuralOkEnvelopeRead(t *testing.T) {
+	result := Check(`
+type Decode<T> = { ok: true, payload: T } | { ok: false, reason: string }
+
+local function use(decoded: Decode<string>): string
+    return decoded.payload
+end
+`, WithDiagnosticRule(
+		diagnostics.CodeDiscriminatedUnionExhaustive,
+		diagnostic.Enable(),
+	))
+	requireDiagnostic(t, result, diagnosticExpectation{
+		Code:            diagnostics.CodeDiscriminatedUnionExhaustive,
+		Severity:        diagnostic.SeverityWarning,
+		DiagnosticCount: 1,
+		MessageContains: []string{
+			"decoded.payload",
+			"decoded.ok == true",
+		},
+		EvidenceOrdered: []string{
+			"`decoded` is result-shaped and discriminated by `decoded.ok`",
+			"`decoded.payload` exists only for `decoded.ok == true`",
+			"no stable guard proves `decoded.ok == true` before this read",
+		},
+	})
+}
+
 func TestDiscriminatedUnionExhaustivenessReportsMissingDispatchTableKey(t *testing.T) {
 	src := strings.TrimLeft(`
 type Begin = { kind: "begin", id: string }

@@ -17,6 +17,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
 	"github.com/wippyai/go-lua/analysis/lua/typeannotation"
 	"github.com/wippyai/go-lua/analysis/symbol"
+	"github.com/wippyai/go-lua/analysis/type/access"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
@@ -29,9 +30,10 @@ type discriminantBranch struct {
 }
 
 type discriminantCase struct {
-	index int
-	name  string
-	key   string
+	index   int
+	name    string
+	key     string
+	literal typ.Type
 }
 
 type discriminantCandidate struct {
@@ -75,6 +77,14 @@ type registrationEvidence struct {
 	missingFor       []string
 	registrationSpan diagnostic.Span
 	dispatchSpan     diagnostic.Span
+}
+
+type resultShapeEvidence struct {
+	receiver     string
+	readPath     string
+	discriminant string
+	requiredCase string
+	readSpan     diagnostic.Span
 }
 
 type dispatchTableSummary struct {
@@ -194,6 +204,7 @@ func (p discriminatedUnionExhaustiveness) Produce(result *body.Result) []diagnos
 	}
 	out = append(out, p.tableDispatchDiagnostics(result, graph)...)
 	out = append(out, p.registrationDiagnostics(result, graph)...)
+	out = append(out, p.resultShapeConsumptionDiagnostics(result, graph)...)
 	return out
 }
 
@@ -371,8 +382,9 @@ func discriminantCasesFor(target pathdom.Path, suffix []segment.Segment, cases [
 	out := make([]discriminantCase, 0, len(cases))
 	for _, c := range cases {
 		out = append(out, discriminantCase{
-			index: c.Index,
-			name:  discriminantCaseName(target, suffix, c.Type),
+			index:   c.Index,
+			name:    discriminantCaseName(target, suffix, c.Type),
+			literal: discriminantCaseLiteralType(c.Type, suffix),
 		})
 	}
 	sort.Slice(out, func(i, j int) bool {
@@ -393,6 +405,307 @@ func discriminantCaseName(target pathdom.Path, suffix []segment.Segment, caseTyp
 
 func sameDiscriminantCandidate(a, b discriminantCandidate) bool {
 	return a.family == b.family && a.target.Equal(b.target) && a.anchor.Equal(b.anchor)
+}
+
+type resultShapeRead struct {
+	point        cfg.Point
+	expr         *ast.AttrGetExpr
+	receiverExpr ast.Expr
+	receiver     pathdom.Path
+	readPath     pathdom.Path
+	discriminant pathdom.Path
+	required     discriminantCase
+}
+
+func (p discriminatedUnionExhaustiveness) resultShapeConsumptionDiagnostics(result *body.Result, graph cfg.Graph) []diagnostic.Diagnostic {
+	envs := cachedGuardEnvironments(result)
+	var out []diagnostic.Diagnostic
+	seen := make(map[*ast.AttrGetExpr]struct{})
+	for _, point := range graph.RPO() {
+		if !guardEnvReachableAt(envs, point) {
+			continue
+		}
+		emit := func(expr ast.Expr) {
+			for _, read := range p.resultShapeReadsInExpr(result, point, expr, seen) {
+				if resultShapeRequiredCaseProven(envs[point], read.discriminant, read.required) {
+					continue
+				}
+				if p.resultShapeCurrentTypeProvesRequired(result, point, envs[point], read.receiverExpr, read.required) {
+					continue
+				}
+				if resultShapeOtherCaseProven(envs[point], read.discriminant, read.required) {
+					continue
+				}
+				out = append(out, newResultShapeExhaustivenessDiagnostic(resultShapeEvidence{
+					receiver:     read.receiver.String(),
+					readPath:     read.readPath.String(),
+					discriminant: read.discriminant.String(),
+					requiredCase: read.required.name,
+					readSpan:     ast.SpanOf(read.expr),
+				}))
+			}
+		}
+		if fact, ok := result.LocalAssignment(point); ok {
+			emit(fact.Expr)
+		}
+		if fact, ok := result.OrdinaryAssignment(point); ok {
+			emitAssignmentTargetReads(fact.Target, emit)
+			emit(fact.Value)
+		}
+		if fact, ok := result.Call(point); ok {
+			emit(fact.Call)
+		}
+		if fact, ok := result.ReturnFact(point); ok {
+			for _, expr := range fact.Exprs {
+				emit(expr)
+			}
+		}
+		if fact, ok := result.BranchCondition(point); ok {
+			emit(fact.Condition)
+		}
+	}
+	return out
+}
+
+func (p discriminatedUnionExhaustiveness) resultShapeReadsInExpr(result *body.Result, point cfg.Point, expr ast.Expr, seen map[*ast.AttrGetExpr]struct{}) []resultShapeRead {
+	var out []resultShapeRead
+	p.walkResultShapeReads(result, point, expr, seen, &out, 0)
+	return out
+}
+
+func (p discriminatedUnionExhaustiveness) walkResultShapeReads(result *body.Result, point cfg.Point, expr ast.Expr, seen map[*ast.AttrGetExpr]struct{}, out *[]resultShapeRead, depth int) {
+	if expr == nil || depth > typ.DefaultRecursionDepth {
+		return
+	}
+	switch e := expr.(type) {
+	case *ast.AttrGetExpr:
+		p.walkResultShapeReads(result, point, e.Object, seen, out, depth+1)
+		if e.KeySyntax == ast.AttrKeyIndex {
+			p.walkResultShapeReads(result, point, e.Key, seen, out, depth+1)
+		}
+		if _, done := seen[e]; done {
+			return
+		}
+		seen[e] = struct{}{}
+		if read, ok := p.resultShapeRead(result, point, e); ok {
+			*out = append(*out, read)
+		}
+	case *ast.FuncCallExpr:
+		p.walkResultShapeReads(result, point, e.Func, seen, out, depth+1)
+		p.walkResultShapeReads(result, point, e.Receiver, seen, out, depth+1)
+		for _, arg := range e.Args {
+			p.walkResultShapeReads(result, point, arg, seen, out, depth+1)
+		}
+	case *ast.TableExpr:
+		for _, field := range e.Fields {
+			if field == nil {
+				continue
+			}
+			if field.KeySyntax == ast.AttrKeyIndex {
+				p.walkResultShapeReads(result, point, field.Key, seen, out, depth+1)
+			}
+			p.walkResultShapeReads(result, point, field.Value, seen, out, depth+1)
+		}
+	case *ast.LogicalOpExpr:
+		p.walkResultShapeReads(result, point, e.Lhs, seen, out, depth+1)
+		p.walkResultShapeReads(result, point, e.Rhs, seen, out, depth+1)
+	case *ast.RelationalOpExpr:
+		p.walkResultShapeReads(result, point, e.Lhs, seen, out, depth+1)
+		p.walkResultShapeReads(result, point, e.Rhs, seen, out, depth+1)
+	case *ast.StringConcatOpExpr:
+		p.walkResultShapeReads(result, point, e.Lhs, seen, out, depth+1)
+		p.walkResultShapeReads(result, point, e.Rhs, seen, out, depth+1)
+	case *ast.ArithmeticOpExpr:
+		p.walkResultShapeReads(result, point, e.Lhs, seen, out, depth+1)
+		p.walkResultShapeReads(result, point, e.Rhs, seen, out, depth+1)
+	case *ast.UnaryMinusOpExpr:
+		p.walkResultShapeReads(result, point, e.Expr, seen, out, depth+1)
+	case *ast.UnaryNotOpExpr:
+		p.walkResultShapeReads(result, point, e.Expr, seen, out, depth+1)
+	case *ast.UnaryLenOpExpr:
+		p.walkResultShapeReads(result, point, e.Expr, seen, out, depth+1)
+	case *ast.UnaryBNotOpExpr:
+		p.walkResultShapeReads(result, point, e.Expr, seen, out, depth+1)
+	case *ast.CastExpr:
+		p.walkResultShapeReads(result, point, e.Expr, seen, out, depth+1)
+	case *ast.NonNilAssertExpr:
+		p.walkResultShapeReads(result, point, e.Expr, seen, out, depth+1)
+	}
+}
+
+func (p discriminatedUnionExhaustiveness) resultShapeRead(result *body.Result, point cfg.Point, expr *ast.AttrGetExpr) (resultShapeRead, bool) {
+	member, ok := staticMemberReadName(expr)
+	if !ok || member == "ok" {
+		return resultShapeRead{}, false
+	}
+	receiverPath, ok := result.ExpressionPath(expr.Object)
+	if !ok || receiverPath.Symbol == 0 {
+		return resultShapeRead{}, false
+	}
+	readPath, ok := result.ExpressionPath(expr)
+	if !ok || readPath.Symbol == 0 {
+		return resultShapeRead{}, false
+	}
+	receiverType, ok := newStructuralFlowExpressionTyper(result, p.resolver, point, guardEnv{}).broadType(expr.Object)
+	if !ok {
+		return resultShapeRead{}, false
+	}
+	discriminant, required, ok := resultShapeRequiredCaseForMember(receiverPath, receiverType, member)
+	if !ok {
+		return resultShapeRead{}, false
+	}
+	return resultShapeRead{
+		point:        point,
+		expr:         expr,
+		receiverExpr: expr.Object,
+		receiver:     receiverPath,
+		readPath:     readPath,
+		discriminant: discriminant,
+		required:     required,
+	}, true
+}
+
+func resultShapeRequiredCaseForMember(receiver pathdom.Path, receiverType typ.Type, member string) (pathdom.Path, discriminantCase, bool) {
+	_, cases, ok := variant.OriginCasesOfType(receiverType)
+	if !ok || len(cases) != 2 {
+		return pathdom.Path{}, discriminantCase{}, false
+	}
+	okSuffix := []segment.Segment{{Kind: segment.SegmentField, Name: "ok"}}
+	discriminant := receiver
+	discriminant.Segments = append(append([]segment.Segment(nil), receiver.Segments...), okSuffix...)
+	domainCases, ok := booleanDiscriminantCasesFor(discriminant, okSuffix, cases)
+	if !ok || len(domainCases) != 2 {
+		return pathdom.Path{}, discriminantCase{}, false
+	}
+	var required []discriminantCase
+	for _, c := range domainCases {
+		if caseType, ok := originCaseTypeByIndex(cases, c.index); ok {
+			if _, ok := access.Field(caseType, member); ok {
+				required = append(required, c)
+			}
+		}
+	}
+	if len(required) != 1 {
+		return pathdom.Path{}, discriminantCase{}, false
+	}
+	return discriminant, required[0], true
+}
+
+func (p discriminatedUnionExhaustiveness) resultShapeCurrentTypeProvesRequired(result *body.Result, point cfg.Point, env guardEnv, expr ast.Expr, required discriminantCase) bool {
+	if required.literal == nil {
+		return false
+	}
+	current, ok := newStructuralFlowExpressionTyper(result, p.resolver, point, env).typeOf(expr)
+	if !ok || current == nil {
+		return false
+	}
+	field, ok := variant.FieldAtPath(current, []segment.Segment{{Kind: segment.SegmentField, Name: "ok"}})
+	return ok && typ.TypeEquals(field, required.literal)
+}
+
+func booleanDiscriminantCasesFor(target pathdom.Path, suffix []segment.Segment, cases []variant.OriginCase) ([]discriminantCase, bool) {
+	out := make([]discriminantCase, 0, len(cases))
+	seen := make(map[bool]struct{}, len(cases))
+	for _, c := range cases {
+		lit, ok := discriminantCaseLiteral(c.Type, suffix)
+		if !ok {
+			return nil, false
+		}
+		value, ok := lit.Value.(bool)
+		if !ok {
+			return nil, false
+		}
+		if _, duplicate := seen[value]; duplicate {
+			return nil, false
+		}
+		seen[value] = struct{}{}
+		out = append(out, discriminantCase{
+			index:   c.Index,
+			name:    discriminantCaseName(target, suffix, c.Type),
+			literal: lit,
+		})
+	}
+	if _, ok := seen[true]; !ok {
+		return nil, false
+	}
+	if _, ok := seen[false]; !ok {
+		return nil, false
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].name != out[j].name {
+			return out[i].name < out[j].name
+		}
+		return out[i].index < out[j].index
+	})
+	return out, true
+}
+
+func originCaseTypeByIndex(cases []variant.OriginCase, index int) (typ.Type, bool) {
+	for _, c := range cases {
+		if c.Index == index {
+			return c.Type, true
+		}
+	}
+	return nil, false
+}
+
+func discriminantCaseLiteralType(caseType typ.Type, suffix []segment.Segment) typ.Type {
+	lit, _ := discriminantCaseLiteral(caseType, suffix)
+	return lit
+}
+
+func discriminantCaseLiteral(caseType typ.Type, suffix []segment.Segment) (*typ.Literal, bool) {
+	field, ok := variant.FieldAtPath(caseType, suffix)
+	if !ok {
+		return nil, false
+	}
+	lit, ok := field.(*typ.Literal)
+	return lit, ok
+}
+
+func resultShapeRequiredCaseProven(env guardEnv, discriminant pathdom.Path, required discriminantCase) bool {
+	if required.literal == nil {
+		return false
+	}
+	return guardEnvProvesLiteral(env, discriminant, required.literal)
+}
+
+func resultShapeOtherCaseProven(env guardEnv, discriminant pathdom.Path, required discriminantCase) bool {
+	if required.literal == nil {
+		return false
+	}
+	switch required.literal {
+	case typ.True:
+		return guardEnvProvesLiteral(env, discriminant, typ.False)
+	case typ.False:
+		return guardEnvProvesLiteral(env, discriminant, typ.True)
+	default:
+		return false
+	}
+}
+
+func guardEnvProvesLiteral(env guardEnv, target pathdom.Path, lit typ.Type) bool {
+	if typ.TypeEquals(lit, typ.True) && env.hasTruthy(target) {
+		return true
+	}
+	if typ.TypeEquals(lit, typ.False) && env.hasFalsy(target) {
+		return true
+	}
+	for _, c := range env.constraints {
+		if !c.target.Equal(target) {
+			continue
+		}
+		if !c.negated && typ.TypeEquals(c.value, lit) {
+			return true
+		}
+		if c.negated && typ.TypeEquals(lit, typ.True) && typ.TypeEquals(c.value, typ.False) {
+			return true
+		}
+		if c.negated && typ.TypeEquals(lit, typ.False) && typ.TypeEquals(c.value, typ.True) {
+			return true
+		}
+	}
+	return false
 }
 
 type registrationCall struct {
@@ -901,9 +1214,10 @@ func stringDiscriminantCasesFor(target pathdom.Path, suffix []segment.Segment, c
 		}
 		seen[key] = struct{}{}
 		out = append(out, discriminantCase{
-			index: c.Index,
-			name:  discriminantCaseName(target, suffix, c.Type),
-			key:   key,
+			index:   c.Index,
+			name:    discriminantCaseName(target, suffix, c.Type),
+			key:     key,
+			literal: discriminantCaseLiteralType(c.Type, suffix),
 		})
 	}
 	sort.Slice(out, func(i, j int) bool {
@@ -1142,6 +1456,18 @@ func newRegistrationExhaustivenessDiagnostic(evidence registrationEvidence) diag
 	})
 }
 
+func newResultShapeExhaustivenessDiagnostic(evidence resultShapeEvidence) diagnostic.Diagnostic {
+	return diagnostic.New(diagnostic.DiagnosticSpec{
+		Span:        evidence.readSpan,
+		Code:        CodeDiscriminatedUnionExhaustive,
+		Severity:    diagnostic.SeverityWarning,
+		Message:     resultShapeExhaustivenessMessage(evidence.readPath, evidence.requiredCase),
+		Explanation: resultShapeExhaustivenessExplanation(evidence),
+		Help:        resultShapeExhaustivenessHelp(),
+		Labels:      []diagnostic.Label{sourceLabel(evidence.readSpan, labelResultFieldRead)},
+	})
+}
+
 func discriminatedUnionExhaustivenessExplanation(span diagnostic.Span, evidence discriminatedUnionEvidence) diagnostic.Explanation {
 	items := []diagnostic.Evidence{
 		{
@@ -1207,6 +1533,29 @@ func dispatchTableExhaustivenessExplanation(evidence dispatchTableEvidence) diag
 			Trust:   diagnostic.TrustUnknown,
 			Span:    evidence.lookupSpan,
 			Message: missingDispatchKeysEvidence(dispatchMissingKeyCases(evidence.missing, evidence.missingFor)),
+		},
+	)
+}
+
+func resultShapeExhaustivenessExplanation(evidence resultShapeEvidence) diagnostic.Explanation {
+	return diagnostic.NewExplanation(
+		diagnostic.Evidence{
+			Kind:    diagnostic.EvidenceAbstractFact,
+			Trust:   diagnostic.TrustProven,
+			Span:    evidence.readSpan,
+			Message: resultShapeUnionEvidence(evidence.receiver, evidence.discriminant),
+		},
+		diagnostic.Evidence{
+			Kind:    diagnostic.EvidenceAbstractFact,
+			Trust:   diagnostic.TrustProven,
+			Span:    evidence.readSpan,
+			Message: resultShapeFieldCaseEvidence(evidence.readPath, evidence.requiredCase),
+		},
+		diagnostic.Evidence{
+			Kind:    diagnostic.EvidenceMissingProof,
+			Trust:   diagnostic.TrustUnknown,
+			Span:    evidence.readSpan,
+			Message: resultShapeMissingProofEvidence(evidence.requiredCase),
 		},
 	)
 }
