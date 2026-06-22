@@ -2077,6 +2077,49 @@ end
 	}
 }
 
+func TestOptionalExhaustivenessAcceptsErrorTerminatedValueBranch(t *testing.T) {
+	result := Check(`
+local function value_or_default(maybe: string?): string
+    if maybe ~= nil then
+        error(maybe)
+    end
+    return "fallback"
+end
+`, WithDiagnosticRule(
+		diagnostics.CodeDiscriminatedUnionExhaustive,
+		diagnostic.Enable(),
+	))
+	if hasDiagnosticCode(result.Diagnostics, diagnostics.CodeDiscriminatedUnionExhaustive) {
+		t.Fatalf("diagnostics = %#v, want no optional exhaustiveness warning when value branch raises", result.Diagnostics)
+	}
+}
+
+func TestOptionalExhaustivenessDoesNotTreatShadowedErrorAsTerminating(t *testing.T) {
+	result := Check(`
+local function value_or_default(maybe: string?): string
+    local function error(message: string): () end
+    if maybe ~= nil then
+        error(maybe)
+    end
+    return "fallback"
+end
+`, WithDiagnosticRule(
+		diagnostics.CodeDiscriminatedUnionExhaustive,
+		diagnostic.Enable(),
+	))
+	requireDiagnostic(t, result, diagnosticExpectation{
+		Code:            diagnostics.CodeDiscriminatedUnionExhaustive,
+		Severity:        diagnostic.SeverityWarning,
+		DiagnosticCount: 1,
+		MessageContains: []string{"optional handling is not exhaustive", "maybe == nil"},
+		EvidenceOrdered: []string{
+			"branch checks optional `maybe`",
+			"consumed case: `maybe ~= nil`",
+			"missing cases: `maybe == nil`",
+		},
+	})
+}
+
 func TestOptionalExhaustivenessHandlesTruthyOptionalWithoutBooleanFalsePositive(t *testing.T) {
 	stringOptional := Check(`
 type Sink = { seen: string }

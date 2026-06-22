@@ -304,6 +304,13 @@ func (r *Result) SymbolOfIdent(ident *ast.IdentExpr) (symbol.ID, bool) {
 	return r.bindings.SymbolOf(ident)
 }
 
+func (r *Result) IdentResolvesToGlobal(ident *ast.IdentExpr, name string) bool {
+	if r == nil || r.bindings == nil {
+		return false
+	}
+	return r.bindings.ResolvesToGlobal(ident, name)
+}
+
 func (r *Result) SymbolTypeAnnotation(id symbol.ID) (ast.TypeExpr, bool) {
 	if r == nil || r.bindings == nil || id == 0 {
 		return nil, false

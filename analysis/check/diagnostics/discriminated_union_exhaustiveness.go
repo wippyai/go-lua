@@ -356,7 +356,7 @@ func (p discriminatedUnionExhaustiveness) optionalChainDiagnostic(result *body.R
 		handlesValue = handlesValue || candidate.handlesValue
 		if candidate.handlesValue &&
 			optionalBranchConsumesPath(result, stmt.Then, candidate.target) &&
-			!optionalStatementsDefinitelyReturn(stmt.Then) {
+			!optionalStatementsTerminate(result, stmt.Then) {
 			consumesValue = true
 		}
 	}
@@ -457,28 +457,39 @@ func optionalBranchConsumesPath(result *body.Result, stmts []ast.Stmt, target pa
 	return false
 }
 
-func optionalStatementsDefinitelyReturn(stmts []ast.Stmt) bool {
+func optionalStatementsTerminate(result *body.Result, stmts []ast.Stmt) bool {
 	for _, stmt := range stmts {
-		if optionalStmtDefinitelyReturns(stmt) {
+		if optionalStmtTerminates(result, stmt) {
 			return true
 		}
 	}
 	return false
 }
 
-func optionalStmtDefinitelyReturns(stmt ast.Stmt) bool {
+func optionalStmtTerminates(result *body.Result, stmt ast.Stmt) bool {
 	switch s := stmt.(type) {
 	case *ast.ReturnStmt:
 		return true
+	case *ast.FuncCallStmt:
+		return optionalNoReturnCall(result, s.Expr)
 	case *ast.DoBlockStmt:
-		return optionalStatementsDefinitelyReturn(s.Stmts)
+		return optionalStatementsTerminate(result, s.Stmts)
 	case *ast.IfStmt:
 		return len(s.Else) != 0 &&
-			optionalStatementsDefinitelyReturn(s.Then) &&
-			optionalStatementsDefinitelyReturn(s.Else)
+			optionalStatementsTerminate(result, s.Then) &&
+			optionalStatementsTerminate(result, s.Else)
 	default:
 		return false
 	}
+}
+
+func optionalNoReturnCall(result *body.Result, expr ast.Expr) bool {
+	call, ok := expr.(*ast.FuncCallExpr)
+	if !ok || call.Receiver != nil || call.Method != "" {
+		return false
+	}
+	fn, ok := call.Func.(*ast.IdentExpr)
+	return ok && result.IdentResolvesToGlobal(fn, "error")
 }
 
 func optionalStmtConsumesPath(result *body.Result, stmt ast.Stmt, target pathdom.Path) bool {
