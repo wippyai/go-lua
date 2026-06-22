@@ -1118,7 +1118,7 @@ func TestOutcomeProviderSpecializesGenericReturnFromCallbackResultReturn(t *test
 	assertCallOutcomeResultType(t, reg, got.Results, typ.Instantiate(result, typ.Number))
 }
 
-func TestOutcomeProviderMissingAndEmptySummaryYieldsZeroOutcome(t *testing.T) {
+func TestOutcomeProviderMissingSummaryYieldsZeroOutcomeAndEmptySummaryHasAuthority(t *testing.T) {
 	reg := standard.Registry()
 	callee := symbol.ID(17)
 	key := summary.DefaultSummaryKey(ref.FuncRef{Kind: ref.KindSymbol, ID: 18})
@@ -1150,13 +1150,6 @@ func TestOutcomeProviderMissingAndEmptySummaryYieldsZeroOutcome(t *testing.T) {
 			name:     "missing summary",
 			provider: OutcomeProvider(ProviderConfig{Summaries: snap, KeyFor: ByCalleeIdentity(map[symbol.ID]summary.SummaryKey{callee: missingKey})}),
 		},
-		{
-			name: "empty returns",
-			provider: OutcomeProvider(ProviderConfig{
-				Summaries: summary.NewSnapshot(reg, summary.EntrySummary{Key: key, Summary: summary.Summary{Returns: nil}}),
-				KeyFor:    ByCalleeIdentity(map[symbol.ID]summary.SummaryKey{callee: key}),
-			}),
-		},
 	}
 
 	for _, tc := range tests {
@@ -1169,8 +1162,8 @@ func TestOutcomeProviderMissingAndEmptySummaryYieldsZeroOutcome(t *testing.T) {
 		Summaries: summary.NewSnapshot(reg, summary.EntrySummary{Key: key, Summary: summary.Summary{Returns: nil}}),
 		KeyFor:    ByCalleeIdentity(map[symbol.ID]summary.SummaryKey{callee: key}),
 	})
-	if got := emptySummaryProvider(ctx, site.View(), state.State{}, nil); got.PostReturnAuthority {
-		t.Fatalf("empty matched summary PostReturnAuthority = true, want false")
+	if got := emptySummaryProvider(ctx, site.View(), state.State{}, nil); !got.PostReturnAuthority || len(got.Results) != 0 || got.HasPostReturnEvidence() {
+		t.Fatalf("empty matched summary outcome = %#v, want only post-return authority", got)
 	}
 }
 

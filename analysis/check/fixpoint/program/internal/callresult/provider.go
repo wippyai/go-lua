@@ -91,12 +91,14 @@ func OutcomeProvider(config ProviderConfig) callpayload.CallOutcomeProvider {
 		key, ok := summaryKeyForCall(ctx, site, in, read, keyFor, calleeValue, functionIDs, pathKeys)
 		var got summary.Summary
 		var fn *typ.Function
+		summaryMatched := false
 		if ok {
 			var readOK bool
 			got, readOK = summaries.Read(key)
 			if !readOK {
 				return callpayload.CallOutcome{}
 			}
+			summaryMatched = true
 			got = got.RekeyHeapTableObjects(callerKeySpace)
 			fn = functionTypes[key]
 			got = applyDeclaredSummaryReturns(ctx.Registry, got, fn)
@@ -106,6 +108,7 @@ func OutcomeProvider(config ProviderConfig) callpayload.CallOutcomeProvider {
 			got = materializeReturnRootTypesFromFacts(ctx.Registry, got)
 		} else if joined, joinedOK := joinedSummaryForDefinitionPath(ctx, site, in, read, calleeValue, summaries, pathMultiKeys, functionTypes, facts, functionKeys, functionExpressionKeys, sources, callerKeySpace); joinedOK {
 			got = joined
+			summaryMatched = true
 		} else {
 			if out, ok := unresolvedFunctionCallOutcome(ctx, site, in, read, calleeValue); ok {
 				return out
@@ -144,7 +147,7 @@ func OutcomeProvider(config ProviderConfig) callpayload.CallOutcomeProvider {
 		if fn != nil {
 			out.Results = padMissingResultsToNil(ctx.Registry, site, out.Results, len(fn.Returns))
 		}
-		out.PostReturnAuthority = calloutcome.HasAuthoritativePostReturnEvidence(ctx.Registry, out)
+		out.PostReturnAuthority = summaryMatched || calloutcome.HasAuthoritativePostReturnEvidence(ctx.Registry, out)
 		if fn != nil && len(fn.Params) != 0 {
 			out.ParamObligations = append(out.ParamObligations, functionTypeParamObligations(ctx.Registry, site.ArgumentSourceCount(), fn)...)
 		}

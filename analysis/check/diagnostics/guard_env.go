@@ -209,7 +209,7 @@ func applyCallGuardInvalidation(result *body.Result, point cfg.Point, env guardE
 	if !hasOutcome {
 		return guardEnv{}
 	}
-	if !callOutcomeHasExactGuardInvalidationSummary(result, site, outcome) {
+	if !callOutcomeHasExactGuardInvalidationSummary(result, site, outcome, false) {
 		return guardEnv{}
 	}
 	if callOutcomeHasGlobalGuardInvalidation(outcome) {
@@ -244,7 +244,7 @@ func callMayInvalidateTrackedPath(result *body.Result, point cfg.Point, target p
 	if !hasOutcome {
 		return true
 	}
-	if !callOutcomeHasExactGuardInvalidationSummary(result, site, outcome) {
+	if !callOutcomeHasExactGuardInvalidationSummary(result, site, outcome, true) {
 		return true
 	}
 	if callOutcomeHasGlobalGuardInvalidation(outcome) {
@@ -275,12 +275,18 @@ func callFactReferencesTrackedPath(result *body.Result, fact semantics.CallFact,
 	return false
 }
 
-func callOutcomeHasExactGuardInvalidationSummary(result *body.Result, site factflow.CallSite, outcome callpayload.CallOutcome) bool {
+func callOutcomeHasExactGuardInvalidationSummary(result *body.Result, site factflow.CallSite, outcome callpayload.CallOutcome, trustResolvedSummaryAuthority bool) bool {
 	sig, hasSignature := result.CallSignature(site)
 	hasOperationalEffects := hasSignature &&
 		sig.OperationalEffects != nil &&
 		!sig.OperationalEffects.IsEmpty()
-	// A known return value can make PostReturnAuthority true; it is not proof that side effects are complete.
+	// A known return value can make PostReturnAuthority true; it is not proof
+	// that side effects are complete. Exact empty summary authority is only a
+	// no-mutation proof for a tracked argument/receiver path the call actually
+	// received, not for captured locals or globals outside the call boundary.
+	if trustResolvedSummaryAuthority && !hasSignature && outcome.PostReturnAuthority {
+		return true
+	}
 	return callOutcomeHasExplicitGuardInvalidation(outcome) ||
 		hasOperationalEffects ||
 		(hasSignature && sig.Effect.IsClosed())
