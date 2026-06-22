@@ -169,6 +169,25 @@ func (r *Result) PathKeyAtBoundary(point cfg.Point, p pathdom.Path) (pathdom.Pat
 	return key, true
 }
 
+func (r *Result) rootOrVisibleStateKeyAtBoundary(point cfg.Point, p pathdom.Path) (pathaddr.StateKey, bool) {
+	if r == nil || r.visibility == nil || p.IsEmpty() {
+		return "", false
+	}
+	return visibility.RootOrVisibleStateKeyAt(r.visibility, point, p)
+}
+
+func (r *Result) relationGraphKeyAtBoundary(point cfg.Point, p pathdom.Path, length bool) (pathdom.PathKey, bool) {
+	stateKey, ok := r.rootOrVisibleStateKeyAtBoundary(point, p)
+	if !ok {
+		return "", false
+	}
+	key := stateKey.PathKey()
+	if length {
+		return state.LengthRelKey(key), true
+	}
+	return key, true
+}
+
 // TypestateResourceKeyAtBoundary returns the canonical resource key used by the
 // typestate lane at point. It folds proven path equality, matching the
 // call-boundary application semantics.
@@ -205,9 +224,9 @@ func (r *Result) PathsEquivalentAtBoundary(point cfg.Point, left, right pathdom.
 	if r == nil || r.visibility == nil || left.IsEmpty() || right.IsEmpty() {
 		return false
 	}
-	leftKey := r.visibility.KeyAt(point, left)
-	rightKey := r.visibility.KeyAt(point, right)
-	if leftKey == "" || rightKey == "" {
+	leftKey, leftOK := r.PathKeyAtBoundary(point, left)
+	rightKey, rightOK := r.PathKeyAtBoundary(point, right)
+	if !leftOK || !rightOK {
 		return false
 	}
 	if leftKey == rightKey {
@@ -258,9 +277,9 @@ func (r *Result) IndexInRangeAtBoundary(point cfg.Point, indexPath, arrayPath pa
 	if !ok {
 		return false
 	}
-	indexKey := r.visibility.KeyAt(point, indexPath)
-	arrayKey := r.visibility.KeyAt(point, arrayPath)
-	if indexKey == "" || arrayKey == "" {
+	indexKey, indexOK := r.PathKeyAtBoundary(point, indexPath)
+	arrayKey, arrayOK := r.PathKeyAtBoundary(point, arrayPath)
+	if !indexOK || !arrayOK {
 		return false
 	}
 	return in.HasIndexInRangeProof(r.visibility.KeySpace(), indexKey, arrayKey)
@@ -280,13 +299,11 @@ func (r *Result) DiffProvesIndexLELength(point cfg.Point, indexPath pathdom.Path
 	if !ok {
 		return false
 	}
-	indexStateKey, indexOK := visibility.RootOrVisibleStateKeyAt(r.visibility, point, indexPath)
-	arrayStateKey, arrayOK := visibility.RootOrVisibleStateKeyAt(r.visibility, point, arrayPath)
+	indexKey, indexOK := r.relationGraphKeyAtBoundary(point, indexPath, false)
+	arrayLenKey, arrayOK := r.relationGraphKeyAtBoundary(point, arrayPath, true)
 	if !indexOK || !arrayOK {
 		return false
 	}
-	indexKey := indexStateKey.PathKey()
-	arrayKey := arrayStateKey.PathKey()
 	snap := in.RelConstraints()
 	if snap.Bottom || len(snap.Constraints) == 0 {
 		return false
@@ -321,7 +338,7 @@ func (r *Result) DiffProvesIndexLELength(point cfg.Point, indexPath pathdom.Path
 	}
 	// indexCoeff*index + offset <= len is proven when indexCoeff*index - len <=
 	// -offset, the scaled goal entailed by the lane constraints.
-	goal := numeric.NewScaledLe(indexCoeff, indexKey, 0, "", state.LengthRelKey(arrayKey), -indexOffset)
+	goal := numeric.NewScaledLe(indexCoeff, indexKey, 0, "", arrayLenKey, -indexOffset)
 	return solver.DefaultPortfolio().Entails(asserted, goal) == decision.Valid
 }
 
@@ -353,7 +370,7 @@ func (r *Result) NumericFloorAtBoundary(point cfg.Point, p pathdom.Path) (int64,
 	if !ok {
 		return 0, false
 	}
-	pathKey, keyOK := visibility.RootOrVisibleStateKeyAt(r.visibility, point, p)
+	pathKey, keyOK := r.rootOrVisibleStateKeyAtBoundary(point, p)
 	if !keyOK {
 		return 0, false
 	}
