@@ -103,14 +103,81 @@ local function f(y: number): number return need(y as {name: string}) end return 
 }
 
 func TestCastDoesNotLaunderAnyIntoAnnotatedAssignment(t *testing.T) {
-	result := Check(`
+	src := strings.TrimLeft(`
 local function f(y: any): number
 	local x: {name: string} = y as {name: string}
 	return 1
 end
 return f
-`)
-	requireDiagnosticCode(t, result, diagnostics.CodeAssignmentType)
+`, "\n")
+	result := Check(src)
+	diag := requireDiagnostic(t, result, diagnosticExpectation{
+		Code:            diagnostics.CodeAssignmentType,
+		Severity:        diagnostic.SeverityError,
+		DiagnosticCount: 1,
+		Line:            2,
+		Column:          28,
+		MessageContains: []string{
+			"cannot assign y",
+			"any",
+			"not {name: string}",
+		},
+		EvidenceChain: []diagnosticEvidenceExpectation{
+			{
+				Kind:            diagnostic.EvidenceAbstractFact,
+				Trust:           diagnostic.TrustProven,
+				MessageContains: []string{"y has type any"},
+			},
+			{
+				Kind:            diagnostic.EvidenceUserAssertion,
+				Trust:           diagnostic.TrustClaimed,
+				MessageContains: []string{"x is declared as {name: string}"},
+			},
+			{
+				Kind:            diagnostic.EvidencePrecisionBoundary,
+				Trust:           diagnostic.TrustUnknown,
+				MessageContains: []string{"y comes from any/unknown"},
+			},
+			{
+				Kind:            diagnostic.EvidenceMissingProof,
+				Trust:           diagnostic.TrustUnknown,
+				MessageContains: []string{"no proof on this path", "y", "declared type"},
+			},
+		},
+		LabelContains: []string{"declared type", "assigned value"},
+		HelpContains:  []string{"Use a value compatible", "change the target type", "`y` is valid"},
+		Sources:       diagnostic.SourceMap{"test.lua": src},
+		RenderOrderedContains: []string{
+			`error[type.assignment]: cannot assign y because it is any, not {name: string}`,
+			`  |              ↓ declared type`,
+			`2 |     local x: {name: string} = y as {name: string}`,
+			`  |                               ↑ assigned value`,
+			`1. proven: y has type any`,
+			`2. claimed: x is declared as {name: string}`,
+			`3. unvalidated value: y comes from any/unknown`,
+			`4. missing proof: no proof on this path shows y satisfies the declared type`,
+			"help: Use a value compatible with the expected type, or change the target type if `y` is valid.",
+		},
+	})
+	rendered := diagnostic.Render(diag, diagnostic.RenderOptions{
+		Sources:             diagnostic.SourceMap{"test.lua": src},
+		ShowSourceLabelRows: true,
+	})
+	want := `error[type.assignment]: cannot assign y because it is any, not {name: string}
+ --> test.lua:2:28
+  |
+  |              ↓ declared type
+2 |     local x: {name: string} = y as {name: string}
+  |                               ↑ assigned value
+
+because:
+  1. proven: y has type any
+  2. claimed: x is declared as {name: string}
+  3. unvalidated value: y comes from any/unknown
+  4. missing proof: no proof on this path shows y satisfies the declared type
+
+help: Use a value compatible with the expected type, or change the target type if ` + "`y`" + ` is valid.`
+	assertRenderedEqual(t, rendered, want)
 }
 
 func TestCastDoesNotLaunderAnyIntoReturnContract(t *testing.T) {
