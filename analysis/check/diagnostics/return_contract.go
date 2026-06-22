@@ -104,34 +104,64 @@ func produceReturnContract(result *body.Result, context producerContext, inherit
 }
 
 func returnValueType(result *body.Result, resolver typeannotation.Resolver, point cfg.Point, expr ast.Expr, source sourceprovenance.ASTSource, inherited map[symbol.ID]*ast.FunctionExpr) (typ.Type, bool) {
-	if got, ok := valueexpr.LiteralType(expr); ok {
-		return got, true
-	}
-	if got, ok := localScalarOperatorSourceType(result, resolver, expr); ok {
-		return got, true
-	}
-	if got, ok := explicitTopLikeCastType(resolver, expr); ok {
-		return got, true
-	}
-	if got, ok := directCallReturnSourceType(result, resolver, source, inherited); ok {
-		return got, true
-	}
-	if got, ok := projectedOptionalIndexType(result, resolver, point, expr); ok {
-		return got, true
-	}
-	if got, ok := explicitTopLikeExpressionType(result, resolver, expr); ok {
-		return got, true
-	}
-	if got, ok := explicitTopLikeCallFactSourceType(result, resolver, source); ok {
-		return got, true
-	}
-	if got, ok := declaredReturnExprType(result, resolver, expr); ok {
-		return got, true
-	}
-	if got, ok := solvedReturnSourceType(result, point, source); ok {
-		return got, true
-	}
-	return nil, false
+	resolution := firstDiagnosticTypeResolution(
+		diagnosticTypeResolution{},
+		diagnosticTypeResolutionAttempt{
+			Source: "literal",
+			Resolve: func() (typ.Type, bool) {
+				return valueexpr.LiteralType(expr)
+			},
+		},
+		diagnosticTypeResolutionAttempt{
+			Source: "local-scalar-operator-source",
+			Resolve: func() (typ.Type, bool) {
+				return localScalarOperatorSourceType(result, resolver, expr)
+			},
+		},
+		diagnosticTypeResolutionAttempt{
+			Source: "explicit-top-like-cast",
+			Resolve: func() (typ.Type, bool) {
+				return explicitTopLikeCastType(resolver, expr)
+			},
+		},
+		diagnosticTypeResolutionAttempt{
+			Source: "direct-call-return-source",
+			Resolve: func() (typ.Type, bool) {
+				return directCallReturnSourceType(result, resolver, source, inherited)
+			},
+		},
+		diagnosticTypeResolutionAttempt{
+			Source: "projected-optional-index",
+			Resolve: func() (typ.Type, bool) {
+				return projectedOptionalIndexType(result, resolver, point, expr)
+			},
+		},
+		diagnosticTypeResolutionAttempt{
+			Source: "explicit-top-like-expression",
+			Resolve: func() (typ.Type, bool) {
+				return explicitTopLikeExpressionType(result, resolver, expr)
+			},
+		},
+		diagnosticTypeResolutionAttempt{
+			Source: "explicit-top-like-call-fact-source",
+			Resolve: func() (typ.Type, bool) {
+				return explicitTopLikeCallFactSourceType(result, resolver, source)
+			},
+		},
+		diagnosticTypeResolutionAttempt{
+			Source: "declared-return-expression",
+			Resolve: func() (typ.Type, bool) {
+				return declaredReturnExprType(result, resolver, expr)
+			},
+		},
+		diagnosticTypeResolutionAttempt{
+			Source: "solved-return-source",
+			Resolve: func() (typ.Type, bool) {
+				return solvedReturnSourceType(result, point, source)
+			},
+		},
+	)
+	return resolution.Type, resolution.OK
 }
 
 func solvedReturnSourceType(result *body.Result, point cfg.Point, source sourceprovenance.ASTSource) (typ.Type, bool) {

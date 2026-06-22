@@ -109,23 +109,9 @@ func (p callParamObligations) call(
 			extra = append(extra, mismatch.missingFieldEvidence()...)
 			return callParamObligationDiagnostic(fact.Call, callObligationName(result, fact), argIndex, obligation, mismatch.got, mismatch.want, mismatch.expr, extra...), true
 		}
-		got, ok := untrustedTopLikeExpressionTypeAt(result, p.resolver, point, args[argIndex])
-		untrustedTopLike := ok
-		if !ok {
-			got, ok = projectedStructuralFlowSourceType(result, p.resolver, point, guardEnv{}, args[argIndex])
-		}
-		if !ok {
-			got, ok = boundaryCallArgumentSourceType(result, point, fact, argIndex)
-		}
-		if !ok {
-			got, ok = staticExpressionType(result, p.resolver, args[argIndex])
-		}
-		if !ok {
-			got, ok = boundaryExpressionValueType(result, point, args[argIndex])
-		}
-		if !ok {
-			got = typ.Unknown
-		}
+		resolution := resolveCallParamObligationArgumentType(result, p.resolver, point, fact, argIndex, args[argIndex])
+		got := resolution.Type
+		untrustedTopLike := resolution.UntrustedTopLike
 		readBoundary := boundaryCallArgumentReader(fact, argIndex, args[argIndex])
 		if untrustedTopLike {
 			if !boundaryProofTypeMismatch(result, point, got, want, readBoundary) {
@@ -144,6 +130,54 @@ func (p callParamObligations) call(
 		return callParamObligationDiagnostic(fact.Call, callObligationName(result, fact), argIndex, obligation, got, want, args[argIndex], extra...), true
 	}
 	return diagnostic.Diagnostic{}, false
+}
+
+func resolveCallParamObligationArgumentType(
+	result *body.Result,
+	resolver typeannotation.Resolver,
+	point cfg.Point,
+	fact semantics.CallFact,
+	argIndex int,
+	arg ast.Expr,
+) diagnosticTypeResolution {
+	return firstDiagnosticTypeResolution(
+		diagnosticTypeResolution{
+			Type:   typ.Unknown,
+			Source: "unknown",
+			OK:     true,
+		},
+		diagnosticTypeResolutionAttempt{
+			Source:           "untrusted-top-like-expression",
+			UntrustedTopLike: true,
+			Resolve: func() (typ.Type, bool) {
+				return untrustedTopLikeExpressionTypeAt(result, resolver, point, arg)
+			},
+		},
+		diagnosticTypeResolutionAttempt{
+			Source: "projected-structural-flow-source",
+			Resolve: func() (typ.Type, bool) {
+				return projectedStructuralFlowSourceType(result, resolver, point, guardEnv{}, arg)
+			},
+		},
+		diagnosticTypeResolutionAttempt{
+			Source: "boundary-call-argument-source",
+			Resolve: func() (typ.Type, bool) {
+				return boundaryCallArgumentSourceType(result, point, fact, argIndex)
+			},
+		},
+		diagnosticTypeResolutionAttempt{
+			Source: "static-expression",
+			Resolve: func() (typ.Type, bool) {
+				return staticExpressionType(result, resolver, arg)
+			},
+		},
+		diagnosticTypeResolutionAttempt{
+			Source: "boundary-expression-value",
+			Resolve: func() (typ.Type, bool) {
+				return boundaryExpressionValueType(result, point, arg)
+			},
+		},
+	)
 }
 
 func originObligationForParam(result *body.Result, obligations []callpayload.CallParamObligation, param int, want typ.Type) (callpayload.CallParamObligation, bool) {
