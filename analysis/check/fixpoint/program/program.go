@@ -776,28 +776,49 @@ func collectSignatureCallbackContextKeys(
 			}
 		}
 		entry = applyParamSeeds(config.Registry, entry, callerEntry, seeds)
-		baseKey, ok := keys.functionKeys[callbackSymbol]
-		if !ok {
-			return true
-		}
-		contextKey := baseKey
-		contextKey.Entry.Facts = keys.nextContextID
-		keys.nextContextID++
-		keys.contexts = append(keys.contexts, keyedFunction{
-			funcExpr:      callbackFn,
-			key:           contextKey,
-			entryState:    entry,
-			entryKeys:     entryKeys,
-			hasEntryState: true,
-		})
-		if keys.functionExpressionKeys == nil {
-			keys.functionExpressionKeys = make(map[factflow.ExprRef]summary.SummaryKey)
-		}
-		keys.functionExpressionKeys[source.ExprRef] = contextKey
-		keys.functionByKey[contextKey] = callbackFn
-		keys.functionTypes[contextKey] = callbackType
+		addFunctionExpressionContextKey(keys, source.ExprRef, callbackSymbol, callbackFn, entry, entryKeys, callbackType)
 		return true
 	})
+}
+
+func addFunctionExpressionContextKey(
+	keys *programKeys,
+	expr factflow.ExprRef,
+	callbackSymbol symbol.ID,
+	callbackFn *ast.FunctionExpr,
+	entry state.State,
+	entryKeys *keyspace.KeySpace,
+	fnType *typ.Function,
+) bool {
+	if keys == nil || expr == 0 || callbackSymbol == 0 || callbackFn == nil {
+		return false
+	}
+	if _, seen := keys.functionExpressionKeys[expr]; seen {
+		return false
+	}
+	baseKey, ok := keys.functionKeys[callbackSymbol]
+	if !ok {
+		return false
+	}
+	contextKey := baseKey
+	contextKey.Entry.Facts = keys.nextContextID
+	keys.nextContextID++
+	keys.contexts = append(keys.contexts, keyedFunction{
+		funcExpr:      callbackFn,
+		key:           contextKey,
+		entryState:    entry,
+		entryKeys:     entryKeys,
+		hasEntryState: true,
+	})
+	if keys.functionExpressionKeys == nil {
+		keys.functionExpressionKeys = make(map[factflow.ExprRef]summary.SummaryKey)
+	}
+	keys.functionExpressionKeys[expr] = contextKey
+	keys.functionByKey[contextKey] = callbackFn
+	if fnType != nil {
+		keys.functionTypes[contextKey] = fnType
+	}
+	return true
 }
 
 func instantiateSignatureTypeForContext(

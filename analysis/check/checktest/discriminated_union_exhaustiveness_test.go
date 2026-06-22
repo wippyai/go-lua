@@ -1634,6 +1634,33 @@ local out = dispatch(app.router, action)
 	})
 }
 
+func TestDiscriminatedUnionExhaustivenessDoesNotTypeNarrowCallbackFromRegistrationShape(t *testing.T) {
+	result := Check(`
+type Begin = { kind: "begin", id: string }
+type Commit = { kind: "commit", payment_id: string }
+type Cancel = { kind: "cancel", reason: string }
+type Action = Begin | Commit | Cancel
+
+local tracker: any = {}
+tracker:on("begin", function(action: Action): string return action.id end)
+
+local action: Action = { kind = "begin", id = "evt-1" }
+local out = tracker:remember(action)
+`, WithDiagnosticRule(
+		diagnostics.CodeDiscriminatedUnionExhaustive,
+		diagnostic.Enable(),
+	))
+	requireDiagnostic(t, result, diagnosticExpectation{
+		Code:     diagnostics.CodeDiscriminatedUnionExhaustive,
+		Severity: diagnostic.SeverityWarning,
+		MessageContains: []string{
+			"case-specific field read is not exhaustive",
+			"action.id",
+			"action.kind == \"begin\"",
+		},
+	})
+}
+
 func TestDiscriminatedUnionExhaustivenessMatchesRegistrationAliasAtRegistrationPoint(t *testing.T) {
 	result := Check(`
 type Begin = { kind: "begin", id: string }

@@ -912,6 +912,9 @@ func (p discriminatedUnionExhaustiveness) resultShapeConsumptionDiagnostics(resu
 				if p.resultShapeCurrentTypeProvesRequired(result, point, envs[point], read.receiverExpr, read.discriminantSuffix, read.required) {
 					continue
 				}
+				if p.resultShapeCurrentTypeProvesOther(result, point, envs[point], read.receiverExpr, read.discriminantSuffix, read.required) {
+					continue
+				}
 				if resultShapeOtherCaseProven(result, point, envs[point], read.discriminant, read.required) {
 					continue
 				}
@@ -1090,6 +1093,22 @@ func (p discriminatedUnionExhaustiveness) resultShapeCurrentTypeProvesRequired(r
 	return ok && typ.TypeEquals(field, required.literal)
 }
 
+func (p discriminatedUnionExhaustiveness) resultShapeCurrentTypeProvesOther(result *body.Result, point cfg.Point, env guardEnv, expr ast.Expr, discriminantSuffix []segment.Segment, required discriminantCase) bool {
+	if required.literal == nil {
+		return false
+	}
+	current, ok := newStructuralFlowExpressionTyper(result, p.resolver, point, env).typeOf(expr)
+	if !ok || current == nil {
+		return false
+	}
+	field, ok := variant.FieldAtPath(current, discriminantSuffix)
+	if !ok {
+		return false
+	}
+	lit, ok := unwrap.Annotated(field).(*typ.Literal)
+	return ok && !typ.TypeEquals(lit, required.literal)
+}
+
 type literalDiscriminantDomain struct {
 	target pathdom.Path
 	suffix []segment.Segment
@@ -1101,7 +1120,12 @@ func literalDiscriminantDomainsForCases(receiver pathdom.Path, cases []variant.O
 		return nil
 	}
 	var out []literalDiscriminantDomain
-	for _, suffix := range literalDiscriminantSuffixes(cases[0].Type, nil, 0) {
+	domains, ok := variant.LiteralDiscriminantDomainsForCases(cases)
+	if !ok {
+		return nil
+	}
+	for _, domain := range domains {
+		suffix := domain.Suffix
 		target := receiver.AppendSegments(suffix)
 		domainCases, ok := literalDiscriminantCasesFor(target, suffix, cases)
 		if !ok {
@@ -1117,50 +1141,6 @@ func literalDiscriminantDomainsForCases(receiver pathdom.Path, cases []variant.O
 		return out[i].target.String() < out[j].target.String()
 	})
 	return out
-}
-
-func literalDiscriminantSuffixes(t typ.Type, prefix []segment.Segment, depth int) [][]segment.Segment {
-	if t == nil || depth > typ.DefaultRecursionDepth {
-		return nil
-	}
-	switch v := unwrap.Annotated(t).(type) {
-	case *typ.Literal:
-		if resultShapeLiteralSupported(v) && len(prefix) > 0 {
-			return [][]segment.Segment{append([]segment.Segment(nil), prefix...)}
-		}
-		return nil
-	case *typ.Alias:
-		return literalDiscriminantSuffixes(v.UnaliasedTarget(), prefix, depth+1)
-	case *typ.Optional:
-		return literalDiscriminantSuffixes(v.Inner, prefix, depth+1)
-	case *typ.Recursive:
-		if v.Body == nil || v.Body == t {
-			return nil
-		}
-		return literalDiscriminantSuffixes(v.Body, prefix, depth+1)
-	case *typ.Instantiated:
-		expanded, ok := subst.ExpandInstantiatedChanged(v)
-		if !ok {
-			return nil
-		}
-		return literalDiscriminantSuffixes(expanded, prefix, depth+1)
-	case *typ.Record:
-		var out [][]segment.Segment
-		for _, field := range v.Fields {
-			next := append(append([]segment.Segment(nil), prefix...), segment.Segment{Kind: segment.SegmentField, Name: field.Name})
-			out = append(out, literalDiscriminantSuffixes(field.Type, next, depth+1)...)
-		}
-		for _, member := range v.StaticMembers {
-			if member.Kind != typ.StaticMemberStringIndex {
-				continue
-			}
-			next := append(append([]segment.Segment(nil), prefix...), segment.Segment{Kind: segment.SegmentIndexString, Name: member.Name})
-			out = append(out, literalDiscriminantSuffixes(member.Type, next, depth+1)...)
-		}
-		return out
-	default:
-		return nil
-	}
 }
 
 func literalDiscriminantCasesFor(target pathdom.Path, suffix []segment.Segment, cases []variant.OriginCase) ([]discriminantCase, bool) {
@@ -1835,7 +1815,12 @@ func stringDiscriminantDomainsForType(root pathdom.Path, prefix []segment.Segmen
 
 func stringDiscriminantDomainsForCases(root pathdom.Path, prefix []segment.Segment, cases []variant.OriginCase) []stringDiscriminantDomain {
 	var out []stringDiscriminantDomain
-	for _, suffix := range literalDiscriminantSuffixes(cases[0].Type, nil, 0) {
+	domains, ok := variant.LiteralDiscriminantDomainsForCases(cases)
+	if !ok {
+		return nil
+	}
+	for _, domain := range domains {
+		suffix := domain.Suffix
 		target := root.AppendSegments(prefix).AppendSegments(suffix)
 		domainCases, ok := stringDiscriminantCasesFor(target, suffix, cases)
 		if !ok {
