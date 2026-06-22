@@ -447,6 +447,99 @@ end
 	}
 }
 
+func TestDiscriminatedUnionExhaustivenessAcceptsResultReadThroughEquivalentAliasGuard(t *testing.T) {
+	result := Check(`
+type Result<T> = { ok: true, value: T } | { ok: false, error: string }
+
+local function use(result: Result<string>): string
+    local alias = result
+    if alias.ok then
+        return result.value
+    else
+        return ""
+    end
+end
+`, WithDiagnosticRule(
+		diagnostics.CodeDiscriminatedUnionExhaustive,
+		diagnostic.Enable(),
+	))
+	if hasDiagnosticCode(result.Diagnostics, diagnostics.CodeDiscriminatedUnionExhaustive) {
+		t.Fatalf("diagnostics = %#v, want alias guard to prove equivalent result read", result.Diagnostics)
+	}
+}
+
+func TestDiscriminatedUnionExhaustivenessAcceptsAliasResultReadThroughOriginalGuard(t *testing.T) {
+	result := Check(`
+type Result<T> = { ok: true, value: T } | { ok: false, error: string }
+
+local function use(result: Result<string>): string
+    local alias = result
+    if result.ok then
+        return alias.value
+    else
+        return ""
+    end
+end
+`, WithDiagnosticRule(
+		diagnostics.CodeDiscriminatedUnionExhaustive,
+		diagnostic.Enable(),
+	))
+	if hasDiagnosticCode(result.Diagnostics, diagnostics.CodeDiscriminatedUnionExhaustive) {
+		t.Fatalf("diagnostics = %#v, want original guard to prove equivalent alias read", result.Diagnostics)
+	}
+}
+
+func TestDiscriminatedUnionExhaustivenessDoesNotUseReassignedAliasGuardForOriginalResult(t *testing.T) {
+	result := Check(`
+type Result<T> = { ok: true, value: T } | { ok: false, error: string }
+
+local function use(result: Result<string>, replacement: Result<string>): string
+    local alias = result
+    alias = replacement
+    if alias.ok then
+        return result.value
+    else
+        return ""
+    end
+end
+`, WithDiagnosticRule(
+		diagnostics.CodeDiscriminatedUnionExhaustive,
+		diagnostic.Enable(),
+	))
+	requireDiagnostic(t, result, diagnosticExpectation{
+		Code:            diagnostics.CodeDiscriminatedUnionExhaustive,
+		Severity:        diagnostic.SeverityWarning,
+		DiagnosticCount: 1,
+		MessageContains: []string{"result field read is not exhaustive", "result.value", "result.ok == true"},
+		EvidenceOrdered: []string{
+			"`result.value` exists only for `result.ok == true`",
+			"no stable guard proves `result.ok == true` before this read",
+		},
+	})
+}
+
+func TestDiscriminatedUnionExhaustivenessKeepsAliasGuardAfterOriginalReassigned(t *testing.T) {
+	result := Check(`
+type Result<T> = { ok: true, value: T } | { ok: false, error: string }
+
+local function use(result: Result<string>, replacement: Result<string>): string
+    local alias = result
+    if alias.ok then
+        result = replacement
+        return alias.value
+    else
+        return ""
+    end
+end
+`, WithDiagnosticRule(
+		diagnostics.CodeDiscriminatedUnionExhaustive,
+		diagnostic.Enable(),
+	))
+	if hasDiagnosticCode(result.Diagnostics, diagnostics.CodeDiscriminatedUnionExhaustive) {
+		t.Fatalf("diagnostics = %#v, want original reassignment not to invalidate guarded alias read", result.Diagnostics)
+	}
+}
+
 func TestDiscriminatedUnionExhaustivenessAcceptsConcreteResultCaseRead(t *testing.T) {
 	result := Check(`
 type Result<T> = { ok: true, value: T } | { ok: false, error: string }
@@ -502,6 +595,38 @@ type Result<T> = { ok: true, value: T } | { ok: false, error: string }
 local function use(result: Result<string>): string
     if result.ok then
         result.ok = false
+        return result.value
+    else
+        return ""
+    end
+end
+`, WithDiagnosticRule(
+		diagnostics.CodeDiscriminatedUnionExhaustive,
+		diagnostic.Enable(),
+	))
+	requireDiagnostic(t, result, diagnosticExpectation{
+		Code:     diagnostics.CodeDiscriminatedUnionExhaustive,
+		Severity: diagnostic.SeverityWarning,
+		MessageContains: []string{
+			"result field read is not exhaustive",
+			"result.value",
+			"result.ok == true",
+		},
+		EvidenceOrdered: []string{
+			"`result.value` exists only for `result.ok == true`",
+			"no stable guard proves `result.ok == true` before this read",
+		},
+	})
+}
+
+func TestDiscriminatedUnionExhaustivenessReportsResultAliasDiscriminantMutationBeforeRead(t *testing.T) {
+	result := Check(`
+type Result<T> = { ok: true, value: T } | { ok: false, error: string }
+
+local function use(result: Result<string>): string
+    local alias = result
+    if result.ok then
+        alias.ok = false
         return result.value
     else
         return ""

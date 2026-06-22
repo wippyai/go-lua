@@ -833,13 +833,13 @@ func (p discriminatedUnionExhaustiveness) resultShapeConsumptionDiagnostics(resu
 		}
 		emit := func(expr ast.Expr) {
 			for _, read := range p.resultShapeReadsInExpr(result, point, expr, seen) {
-				if resultShapeRequiredCaseProven(envs[point], read.discriminant, read.required) {
+				if resultShapeRequiredCaseProven(result, point, envs[point], read.discriminant, read.required) {
 					continue
 				}
 				if p.resultShapeCurrentTypeProvesRequired(result, point, envs[point], read.receiverExpr, read.required) {
 					continue
 				}
-				if resultShapeOtherCaseProven(envs[point], read.discriminant, read.required) {
+				if resultShapeOtherCaseProven(result, point, envs[point], read.discriminant, read.required) {
 					continue
 				}
 				out = append(out, newResultShapeExhaustivenessDiagnostic(resultShapeEvidence{
@@ -1069,28 +1069,28 @@ func discriminantCaseLiteral(caseType typ.Type, suffix []segment.Segment) (*typ.
 	return lit, ok
 }
 
-func resultShapeRequiredCaseProven(env guardEnv, discriminant pathdom.Path, required discriminantCase) bool {
+func resultShapeRequiredCaseProven(result *body.Result, point cfg.Point, env guardEnv, discriminant pathdom.Path, required discriminantCase) bool {
 	if required.literal == nil {
 		return false
 	}
-	return guardEnvProvesLiteral(env, discriminant, required.literal)
+	return guardEnvProvesLiteral(result, point, env, discriminant, required.literal)
 }
 
-func resultShapeOtherCaseProven(env guardEnv, discriminant pathdom.Path, required discriminantCase) bool {
+func resultShapeOtherCaseProven(result *body.Result, point cfg.Point, env guardEnv, discriminant pathdom.Path, required discriminantCase) bool {
 	if required.literal == nil {
 		return false
 	}
 	switch required.literal {
 	case typ.True:
-		return guardEnvProvesLiteral(env, discriminant, typ.False)
+		return guardEnvProvesLiteral(result, point, env, discriminant, typ.False)
 	case typ.False:
-		return guardEnvProvesLiteral(env, discriminant, typ.True)
+		return guardEnvProvesLiteral(result, point, env, discriminant, typ.True)
 	default:
 		return false
 	}
 }
 
-func guardEnvProvesLiteral(env guardEnv, target pathdom.Path, lit typ.Type) bool {
+func guardEnvProvesLiteral(result *body.Result, point cfg.Point, env guardEnv, target pathdom.Path, lit typ.Type) bool {
 	if typ.TypeEquals(lit, typ.True) && env.hasTruthy(target) {
 		return true
 	}
@@ -1111,7 +1111,57 @@ func guardEnvProvesLiteral(env guardEnv, target pathdom.Path, lit typ.Type) bool
 			return true
 		}
 	}
+	for _, candidate := range equivalentLiteralGuardTargets(env, lit) {
+		if candidate.Equal(target) {
+			continue
+		}
+		if resultShapeDiscriminantsEquivalent(result, point, candidate, target) {
+			return true
+		}
+	}
 	return false
+}
+
+func equivalentLiteralGuardTargets(env guardEnv, lit typ.Type) []pathdom.Path {
+	var out []pathdom.Path
+	if typ.TypeEquals(lit, typ.True) {
+		out = append(out, copyPaths(env.truthy)...)
+	}
+	if typ.TypeEquals(lit, typ.False) {
+		out = append(out, copyPaths(env.falsy)...)
+	}
+	for _, c := range env.constraints {
+		if !c.negated && typ.TypeEquals(c.value, lit) {
+			out = append(out, c.target.Clone())
+			continue
+		}
+		if c.negated && typ.TypeEquals(lit, typ.True) && typ.TypeEquals(c.value, typ.False) {
+			out = append(out, c.target.Clone())
+			continue
+		}
+		if c.negated && typ.TypeEquals(lit, typ.False) && typ.TypeEquals(c.value, typ.True) {
+			out = append(out, c.target.Clone())
+		}
+	}
+	return out
+}
+
+func resultShapeDiscriminantsEquivalent(result *body.Result, point cfg.Point, left, right pathdom.Path) bool {
+	if result == nil || left.IsEmpty() || right.IsEmpty() || len(left.Segments) != len(right.Segments) {
+		return false
+	}
+	if result.PathsEquivalentAtBoundary(point, left, right) {
+		return true
+	}
+	if len(left.Segments) == 0 {
+		return false
+	}
+	leftRoot := left
+	leftRoot.Segments = nil
+	rightRoot := right
+	rightRoot.Segments = nil
+	return sameSegments(left.Segments, right.Segments) &&
+		pathsShareExactIdentity(result, point, leftRoot, rightRoot)
 }
 
 type registrationCall struct {
