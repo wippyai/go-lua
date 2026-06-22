@@ -225,45 +225,6 @@ func cloneDetails(m map[string]any) map[string]any {
 	return out
 }
 
-// WrapErrorWithLua wraps an error, captures Lua stack trace, and sets the error metatable.
-func WrapErrorWithLua(l *LState, err error, context string) *Error {
-	e := wrapError(err, context, currentErrorMetadataExtractor())
-	if e != nil && l != nil {
-		e.LuaStack = captureStackTrace(l)
-		SetErrorMetatable(l, e)
-	}
-	return e
-}
-
-// captureStackTrace captures a Lua stack trace from an LState.
-func captureStackTrace(l *LState) *StackTrace {
-	trace := &StackTrace{
-		ThreadID: fmt.Sprintf("%p", l),
-	}
-
-	for level := 0; ; level++ {
-		ar, ok := l.GetStack(level)
-		if !ok {
-			break
-		}
-
-		if _, err := l.GetInfo("nSluf", ar, nil); err != nil {
-			break
-		}
-
-		frame := StackFrame{
-			Level:       level,
-			Source:      ar.Source,
-			CurrentLine: ar.CurrentLine,
-			Name:        ar.Name,
-			FuncType:    ar.What,
-		}
-		trace.Frames = append(trace.Frames, frame)
-	}
-
-	return trace
-}
-
 func (e *Error) captureGoStack() {
 	const maxDepth = 32
 	e.goStack = make([]uintptr, maxDepth)
@@ -276,16 +237,6 @@ func (e *Error) Error() string {
 	if e.Context != "" {
 		return e.Context + ": " + e.Message
 	}
-	return e.Message
-}
-
-// Type implements LValue - returns LTUserData.
-func (e *Error) Type() LValueType {
-	return LTUserData
-}
-
-// String implements LValue - returns the message for tostring() and concat.
-func (e *Error) String() string {
 	return e.Message
 }
 
@@ -414,12 +365,4 @@ func GetErrorKind(err error) Kind {
 		return e.Kind()
 	}
 	return Unknown
-}
-
-// AsError extracts an Error from an LValue if possible.
-func AsError(v LValue) (*Error, bool) {
-	if e, ok := v.(*Error); ok {
-		return e, true
-	}
-	return nil, false
 }
