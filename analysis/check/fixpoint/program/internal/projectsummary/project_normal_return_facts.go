@@ -775,13 +775,7 @@ func normalReturnFactPlaceholderPath(pathKey path.PathKey, params []path.Path) (
 	if !ok {
 		return path.Path{}, false
 	}
-	for i, param := range params {
-		if param.Symbol == 0 || param.Symbol != localPath.Symbol {
-			continue
-		}
-		return path.NewPlaceholder(i).AppendSegments(localPath.Segments), true
-	}
-	return path.Path{}, false
+	return placeholderForParameterPath(params, localPath)
 }
 
 func projectRelConstraintFact(
@@ -845,25 +839,28 @@ func normalReturnFactStatePlaceholderPath(ks *keyspace.KeySpace, pathKey path.Pa
 		if k.Segs != 0 {
 			return path.Path{}, false
 		}
-		for i, param := range params {
-			if param.Symbol == 0 || param.Symbol != k.Sym {
-				continue
-			}
-			return path.NewPlaceholder(i), true
-		}
+		return placeholderForParameterPath(params, path.NewPath(k.Sym, ""))
 	case keyspace.KindResolverSym:
-		for i, param := range params {
-			if param.Symbol == 0 || param.Symbol != k.Sym {
-				continue
-			}
-			return path.NewPlaceholder(i).AppendSegments(ks.Segments(k)), true
-		}
+		return placeholderForParameterPath(params, path.NewPath(k.Sym, "").AppendSegments(ks.Segments(k)))
 	case keyspace.KindPlaceholder:
 		index := int(k.Root)
 		if index < 0 || index >= len(params) || params[index].IsEmpty() {
 			return path.Path{}, false
 		}
 		return path.NewPlaceholder(index).AppendSegments(ks.Segments(k)), true
+	}
+	return path.Path{}, false
+}
+
+func placeholderForParameterPath(params []path.Path, localPath path.Path) (path.Path, bool) {
+	if localPath.Symbol == 0 {
+		return path.Path{}, false
+	}
+	for i, param := range params {
+		if param.Symbol == 0 || param.Symbol != localPath.Symbol {
+			continue
+		}
+		return path.NewPlaceholder(i).AppendSegments(localPath.Segments), true
 	}
 	return path.Path{}, false
 }

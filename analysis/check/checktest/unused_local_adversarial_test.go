@@ -1,6 +1,7 @@
 package checktest
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/check/diagnostics"
@@ -100,7 +101,7 @@ end
 }
 
 func TestUnusedLocalWarningIgnoresReadInUnreachableBranch(t *testing.T) {
-	result := Check(`
+	src := strings.TrimLeft(`
 local value = "unused"
 local item = { kind = "ready" }
 if item.kind == "ready" then
@@ -108,18 +109,43 @@ if item.kind == "ready" then
         return value
     end
 end
-`, WithDiagnosticRule(
+`, "\n")
+	result := Check(src, WithDiagnosticRule(
 		diagnostics.CodeUnusedLocal,
 		diagnostic.Enable().WithSeverity(diagnostic.SeverityHint),
 	))
-	if len(result.Diagnostics) != 1 {
-		t.Fatalf("diagnostics = %#v, want one unused-local diagnostic", result.Diagnostics)
-	}
-	diag := result.Diagnostics[0]
-	if diag.Code != diagnostics.CodeUnusedLocal || diag.Position.Line != 2 {
-		t.Fatalf("diagnostic = %#v, want unused-local diagnostic for line 2", diag)
-	}
-	requireEvidenceMessage(t, diag, `no read of local "value" was found in this scope`)
+	requireDiagnostic(t, result, diagnosticExpectation{
+		Code:            diagnostics.CodeUnusedLocal,
+		Severity:        diagnostic.SeverityHint,
+		DiagnosticCount: 1,
+		Line:            1,
+		Column:          7,
+		Span:            diagnostic.Span{StartLine: 1, StartCol: 7, EndLine: 1, EndCol: 11},
+		MessageContains: []string{`local "value" is never read`},
+		EvidenceMin:     1,
+		EvidenceOrdered: []string{
+			`no read of local "value" was found in this scope`,
+		},
+		LabelMin:      1,
+		LabelContains: []string{"unused local"},
+		HelpContains:  []string{"Remove it", "rename it with a leading _"},
+		Sources:       diagnostic.SourceMap{"test.lua": src},
+		RenderOrderedContains: []string{
+			`hint[lint.unused.local]: local "value" is never read`,
+			"test.lua:1:7",
+			"1 | local value = \"unused\"",
+			"unused local",
+			"because:",
+			`proven: no read of local "value" was found in this scope`,
+			"help:",
+			"Remove it, use it, or rename it with a leading _",
+		},
+		RenderNotContains: []string{
+			"return value",
+			"kind == \"other\"",
+			"^~",
+		},
+	})
 }
 
 func TestUnusedLocalWarningIgnoresUnreachableClosureCapture(t *testing.T) {
