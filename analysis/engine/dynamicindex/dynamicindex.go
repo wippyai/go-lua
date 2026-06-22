@@ -56,6 +56,27 @@ type Fact struct {
 	Admission   Admission
 }
 
+type FactConfig struct {
+	KeyValue    product.Value
+	HasKeyValue bool
+	Value       product.Value
+	HasValue    bool
+	Admission   Admission
+}
+
+func NewFact(reg *axis.Registry, config FactConfig) Fact {
+	out := Bottom(reg)
+	out.Admission = config.Admission
+	if config.HasKeyValue {
+		out.KeyValue = config.KeyValue
+		out.KeyPresence = product.PresenceOf(config.KeyValue)
+	}
+	if config.HasValue {
+		out.Value = config.Value
+	}
+	return out
+}
+
 var factDomainCache registrycache.Cache[lattice.Lattice[Fact]]
 var mapDomainCache registrycache.Cache[lattice.Lattice[map[Key]Fact]]
 

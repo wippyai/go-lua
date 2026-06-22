@@ -6,7 +6,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
-	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/engine/dynamicindex"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
@@ -116,27 +115,23 @@ func dynamicIndexFact(
 	current state.State,
 	fact factflow.DynamicIndexWrite,
 ) dynamicindex.Fact {
-	out := dynamicindex.Fact{
-		KeyPresence: presence.Bottom(),
-		KeyValue:    product.Bottom(ctx.Registry),
-		Value:       product.Bottom(ctx.Registry),
-		Admission:   fact.Admission(),
-	}
+	config := dynamicindex.FactConfig{Admission: fact.Admission()}
 	readKey, readValue := dynamicIndexReadback(fact.ReadbackIntent())
 	if readKey {
 		keySource := fact.KeySource()
 		if keyValue, ok := sources.ValueOfSource(ctx.Point, keySource, in, readWithSamePointCallSource(ctx.Point, keySource, read, current)); ok {
-			out.KeyValue = keyValue
-			out.KeyPresence = product.PresenceOf(keyValue)
+			config.KeyValue = keyValue
+			config.HasKeyValue = true
 		}
 	}
 	if readValue {
 		source := fact.Source()
 		if value, ok := sources.ValueOfSource(ctx.Point, source, in, readWithSamePointCallSource(ctx.Point, source, read, current)); ok {
-			out.Value = value
+			config.Value = value
+			config.HasValue = true
 		}
 	}
-	return out
+	return dynamicindex.NewFact(ctx.Registry, config)
 }
 
 func dynamicIndexReadback(intent factflow.DynamicIndexReadbackIntent) (readKey bool, readValue bool) {

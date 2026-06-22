@@ -29,6 +29,39 @@ func TestBottomAndTopFacts(t *testing.T) {
 	}
 }
 
+func TestNewFactDefaultsUnobservedReadbackToBottom(t *testing.T) {
+	reg := standard.Registry()
+	got := NewFact(reg, FactConfig{Admission: AdmissionRejected})
+
+	if !presence.Equal(got.KeyPresence, presence.Bottom()) ||
+		!product.Equal(reg, got.KeyValue, product.Bottom(reg)) ||
+		!product.Equal(reg, got.Value, product.Bottom(reg)) ||
+		got.Admission != AdmissionRejected {
+		t.Fatalf("NewFact without observations = %#v, want bottom key/value with configured admission", got)
+	}
+}
+
+func TestNewFactDerivesKeyPresenceFromObservedKeyValue(t *testing.T) {
+	reg := standard.Registry()
+	keyValue := product.NewWithPresence(reg, product.ShapeTop, presence.Absent())
+	value := product.NewWithPresence(reg, product.ShapeTop, presence.Present())
+
+	got := NewFact(reg, FactConfig{
+		KeyValue:    keyValue,
+		HasKeyValue: true,
+		Value:       value,
+		HasValue:    true,
+		Admission:   AdmissionAdmitted,
+	})
+
+	if !presence.Equal(got.KeyPresence, presence.Absent()) ||
+		!product.Equal(reg, got.KeyValue, keyValue) ||
+		!product.Equal(reg, got.Value, value) ||
+		got.Admission != AdmissionAdmitted {
+		t.Fatalf("NewFact with observations = %#v, want observed key presence/value/admission", got)
+	}
+}
+
 func TestDomainElementLatticeJoinsPointwise(t *testing.T) {
 	reg := standard.Registry()
 	domain := Domain(reg)
