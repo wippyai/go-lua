@@ -12,7 +12,7 @@ type effectLabelWire struct {
 	ValueIndex  int   `json:"valueIndex,omitempty"`
 	ErrorIndex  int   `json:"errorIndex,omitempty"`
 	Indices     []int `json:"indices,omitempty"`
-	FromParam   int   `json:"fromParam,omitempty"`
+	FromParam   *int  `json:"fromParam,omitempty"`
 	Delta       int   `json:"delta,omitempty"`
 
 	Target *paramRefWire `json:"target,omitempty"`

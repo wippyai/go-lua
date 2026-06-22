@@ -196,7 +196,8 @@ func encodeEffectLabel(label effect.Label) (effectLabelWire, error) {
 	case ownership.BorrowAll:
 		return effectLabelWire{Kind: "ownership.borrowAll"}, nil
 	case ownership.Send:
-		return effectLabelWire{Kind: "ownership.send", FromParam: l.FromParam}, nil
+		fromParam := l.FromParam
+		return effectLabelWire{Kind: "ownership.send", FromParam: &fromParam}, nil
 	case ownership.SendParam:
 		return effectLabelWire{Kind: "ownership.sendParam", Param: encodeParamRef(l.Param)}, nil
 	case ownership.Export:
@@ -362,7 +363,10 @@ func decodeEffectLabel(w effectLabelWire) (effect.Label, error) {
 	case "ownership.borrowAll":
 		return ownership.BorrowAll{}, nil
 	case "ownership.send":
-		return ownership.Send{FromParam: w.FromParam}, nil
+		if w.FromParam == nil {
+			return nil, fmt.Errorf("manifest: send fromParam missing")
+		}
+		return ownership.Send{FromParam: *w.FromParam}, nil
 	case "ownership.sendParam":
 		param, err := decodeRequiredParamRef(w.Param, "send param missing param ref")
 		if err != nil {

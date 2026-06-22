@@ -1263,6 +1263,11 @@ func TestManifestRejectsEffectLabelsMissingParamRefs(t *testing.T) {
 			want: "store target missing param ref",
 		},
 		{
+			name: "ownership send fromParam",
+			wire: effectLabelWire{Kind: "ownership.send"},
+			want: "send fromParam missing",
+		},
+		{
 			name: "return transform source",
 			wire: effectLabelWire{
 				Kind:       "returns.return",
@@ -1279,6 +1284,16 @@ func TestManifestRejectsEffectLabelsMissingParamRefs(t *testing.T) {
 				t.Fatalf("decodeEffectRow error = %v, want %q", err, tt.want)
 			}
 		})
+	}
+}
+
+func TestManifestEffectLabelSendEncodesZeroFromParamExplicitly(t *testing.T) {
+	wire, err := encodeEffectRow(effect.Empty.With(ownership.Send{FromParam: 0}))
+	if err != nil {
+		t.Fatalf("encodeEffectRow: %v", err)
+	}
+	if wire == nil || len(wire.Labels) != 1 || wire.Labels[0].FromParam == nil || *wire.Labels[0].FromParam != 0 {
+		t.Fatalf("send label wire = %#v, want explicit fromParam 0", wire)
 	}
 }
 
