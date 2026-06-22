@@ -26,7 +26,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/module/signature"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/type/refinement"
-	"github.com/wippyai/go-lua/analysis/type/subtype"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
@@ -360,7 +359,7 @@ func (p paramObligationProjector) callParamTypes(fact semantics.CallFact, site f
 		if ok {
 			fn, status, ok := memberaccess.Callable(receiverType, member)
 			if status == typecall.MemberCallOK && ok {
-				consumeReceiver := fact.Receiver != nil && fact.Method != "" && memberCallConsumesReceiver(fn, receiverType)
+				consumeReceiver := fact.Receiver != nil && fact.Method != "" && typecall.CallableConsumesReceiver(fn, receiverType)
 				return functionParamTypes(fn, consumeReceiver)
 			}
 		}
@@ -1007,17 +1006,6 @@ func functionParamTypes(fn *typ.Function, skipFirst bool) []typ.Type {
 		params = append(params, fn.Params[i].Type)
 	}
 	return params
-}
-
-func memberCallConsumesReceiver(fn *typ.Function, receiverType typ.Type) bool {
-	if fn == nil || len(fn.Params) == 0 || receiverType == nil {
-		return false
-	}
-	if fn.Params[0].Name == "self" {
-		return true
-	}
-	self := fn.Params[0].Type
-	return self != nil && !typ.IsAny(self) && !typ.IsUnknown(self) && subtype.IsSubtype(receiverType, self)
 }
 
 func obligationValueFromType(reg *axis.Registry, t typ.Type) (product.Value, bool) {

@@ -15,7 +15,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/typecall"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/type/subst"
-	"github.com/wippyai/go-lua/analysis/type/subtype"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/unwrap"
 	"github.com/wippyai/go-lua/compiler/ast"
@@ -601,14 +600,14 @@ func colonMemberCallConsumesReceiver(contract directFunctionContract, receiverTy
 	if contract.params[0].implicitSelf {
 		return true
 	}
-	if contract.source != nil && len(contract.source.Params) > 0 && contract.source.Params[0].Name == "self" {
+	if contract.source != nil && typecall.CallableConsumesReceiver(contract.source, receiverType) {
 		return true
 	}
 	self := contract.params[0]
 	if !self.explicit || self.typ == nil || typ.IsAny(self.typ) || typ.IsUnknown(self.typ) {
 		return false
 	}
-	return subtype.IsSubtype(receiverType, self.typ)
+	return typecall.ParamConsumesReceiver("", self.typ, receiverType)
 }
 
 func memberContractWithoutReceiver(contract directFunctionContract) directFunctionContract {

@@ -1661,6 +1661,91 @@ local out = tracker:remember(action)
 	})
 }
 
+func TestDiscriminatedUnionExhaustivenessTypedCallbackSignatureNarrowsGenericEnvelope(t *testing.T) {
+	result := Check(`
+type Begin = { kind: "begin", id: string }
+type Commit = { kind: "commit", payment_id: string }
+type Cancel = { kind: "cancel", reason: string }
+type Action = Begin | Commit | Cancel
+type Envelope<T> = { payload: T }
+
+local function visit_begin(cb: fun(env: Envelope<Begin>): string): string
+	return cb({ payload = { kind = "begin", id = "evt-1" } })
+end
+
+local out = visit_begin(function(env)
+	return env.payload.id
+end)
+`, WithDiagnosticRule(
+		diagnostics.CodeDiscriminatedUnionExhaustive,
+		diagnostic.Enable(),
+	))
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want typed callback signature to seed Envelope<Begin>", result.Diagnostics)
+	}
+}
+
+func TestDiscriminatedUnionExhaustivenessBroadTypedRegistrationDoesNotNarrowCallbackCase(t *testing.T) {
+	result := Check(`
+type Begin = { kind: "begin", id: string }
+type Commit = { kind: "commit", payment_id: string }
+type Cancel = { kind: "cancel", reason: string }
+type Action = Begin | Commit | Cancel
+type Router = {
+	on: fun(self: Router, key: string, cb: fun(action: Action): string): (),
+	dispatch: fun(self: Router, action: Action): (),
+}
+
+local function make_router(): Router
+	error("stub")
+end
+
+local router: Router = make_router()
+router:on("begin", function(action)
+	return action.id
+end)
+
+local action: Action = { kind = "begin", id = "evt-1" }
+router:dispatch(action)
+`, WithDiagnosticRule(
+		diagnostics.CodeDiscriminatedUnionExhaustive,
+		diagnostic.Enable(),
+	))
+	requireDiagnostic(t, result, diagnosticExpectation{
+		Code:     diagnostics.CodeDiscriminatedUnionExhaustive,
+		Severity: diagnostic.SeverityWarning,
+		MessageContains: []string{
+			"case-specific field read is not exhaustive",
+			"action.id",
+			"action.kind == \"begin\"",
+		},
+	})
+}
+
+func TestDiscriminatedUnionExhaustivenessSkipsRedundantCaseFieldWarningWhenOtherCaseProven(t *testing.T) {
+	result := Check(`
+type Begin = { kind: "begin", id: string }
+type Commit = { kind: "commit", payment_id: string }
+type Action = Begin | Commit
+
+local action: Action = { kind = "commit", payment_id = "pay-1" }
+if action.kind == "commit" then
+	local id = action.id
+else
+	local id = action.id
+end
+`, WithDiagnosticRule(
+		diagnostics.CodeDiscriminatedUnionExhaustive,
+		diagnostic.Enable(),
+	))
+	requireDiagnostic(t, result, diagnosticExpectation{
+		Code:            diagnostics.CodeMissingMember,
+		Severity:        diagnostic.SeverityError,
+		DiagnosticCount: 1,
+		MessageContains: []string{"id"},
+	})
+}
+
 func TestDiscriminatedUnionExhaustivenessMatchesRegistrationAliasAtRegistrationPoint(t *testing.T) {
 	result := Check(`
 type Begin = { kind: "begin", id: string }

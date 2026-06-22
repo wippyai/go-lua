@@ -404,7 +404,7 @@ func observeCallArguments(
 	args := make([]product.Value, argCount)
 	present := make([]bool, argCount)
 	site.ForEachArgumentSource(func(i int, source factflow.ValueSource) bool {
-		value, ok := prepass.SourceValueForExplanationAtBoundary(point, source)
+		value, ok := prepass.SourceValueAtBoundary(point, source)
 		if !ok {
 			return true
 		}
@@ -732,12 +732,8 @@ func collectSignatureCallbackContextKeys(
 	if keys == nil || prepass == nil || config.Registry == nil {
 		return
 	}
-	sig, ok := prepass.CallSignature(site)
-	if !ok || sig.Type == nil {
-		return
-	}
-	fnType := instantiateSignatureTypeForContext(config.Registry, prepass, point, site, sig.Type)
-	if fnType == nil {
+	callable := callbackContextCallableType(config.Registry, prepass, point, site)
+	if callable.fn == nil {
 		return
 	}
 	site.ForEachArgumentSource(func(i int, source factflow.ValueSource) bool {
@@ -747,7 +743,8 @@ func collectSignatureCallbackContextKeys(
 		if _, seen := keys.functionExpressionKeys[source.ExprRef]; seen {
 			return true
 		}
-		formal, ok := callParamType(fnType, i)
+		formalIndex := signatureCallbackFormalIndex(site, callable, i)
+		formal, ok := callParamType(callable.fn, formalIndex)
 		if !ok {
 			return true
 		}
@@ -779,6 +776,58 @@ func collectSignatureCallbackContextKeys(
 		addFunctionExpressionContextKey(keys, source.ExprRef, callbackSymbol, callbackFn, entry, entryKeys, callbackType)
 		return true
 	})
+}
+
+type callbackContextCallable struct {
+	fn           *typ.Function
+	receiverType typ.Type
+}
+
+func callbackContextCallableType(reg *axis.Registry, prepass *body.Result, point cfg.Point, site factflow.CallSite) callbackContextCallable {
+	if reg == nil || prepass == nil {
+		return callbackContextCallable{}
+	}
+	if sig, ok := prepass.CallSignature(site); ok && sig.Type != nil {
+		return callbackContextCallable{
+			fn: instantiateSignatureTypeForContext(reg, prepass, point, site, sig.Type),
+		}
+	}
+	return receiverMemberCallableType(reg, prepass, point, site)
+}
+
+func receiverMemberCallableType(reg *axis.Registry, prepass *body.Result, point cfg.Point, site factflow.CallSite) callbackContextCallable {
+	if reg == nil || prepass == nil || site.MethodName() == "" {
+		return callbackContextCallable{}
+	}
+	var receiverValue product.Value
+	var ok bool
+	if source, hasSource := site.ReceiverSource(); hasSource {
+		receiverValue, ok = prepass.SourceValueAtBoundary(point, source)
+	} else if receiverPath, hasPath := site.ReceiverPath(); hasPath {
+		receiverValue, ok = prepass.PathValueAtBoundary(point, receiverPath)
+	}
+	if !ok {
+		return callbackContextCallable{}
+	}
+	receiverType, ok := typevalue.TypeOf(reg, receiverValue)
+	if !ok || receiverType == nil || typ.IsAny(receiverType) || typ.IsUnknown(receiverType) || typ.IsNever(receiverType) {
+		return callbackContextCallable{}
+	}
+	fn, _, ok := typecall.MemberCallable(receiverType, site.MethodName())
+	if !ok {
+		return callbackContextCallable{}
+	}
+	return callbackContextCallable{fn: fn, receiverType: receiverType}
+}
+
+func signatureCallbackFormalIndex(site factflow.CallSite, callable callbackContextCallable, argIndex int) int {
+	if argIndex < 0 {
+		return argIndex
+	}
+	if site.MethodName() != "" && typecall.CallableConsumesReceiver(callable.fn, callable.receiverType) {
+		return argIndex + 1
+	}
+	return argIndex
 }
 
 func addFunctionExpressionContextKey(
@@ -858,7 +907,7 @@ func contextualCallArgumentTypes(reg *axis.Registry, prepass *body.Result, point
 				return true
 			}
 		}
-		value, ok := prepass.SourceValueForExplanationAtBoundary(point, source)
+		value, ok := prepass.SourceValueAtBoundary(point, source)
 		if !ok {
 			return true
 		}

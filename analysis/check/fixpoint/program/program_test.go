@@ -464,6 +464,35 @@ return answer
 	}
 }
 
+func TestRunChunkSeedsColonMethodCallbackParamFromTypedSignature(t *testing.T) {
+	reg := standard.Registry()
+	stmts := parseChunk(t, `
+type Begin = { kind: "begin", id: string }
+type Commit = { kind: "commit", payment_id: string }
+type Cancel = { kind: "cancel", reason: string }
+type Action = Begin | Commit | Cancel
+type Router = {
+	on: fun(self: Router, key: string, cb: fun(action: Action): string): (),
+}
+
+local function make_router(): Router
+	error("stub")
+end
+
+local router: Router = make_router()
+router:on("begin", function(action)
+	local seen = action
+	return action.kind
+end)
+`)
+	result, err := RunChunk(stmts, Config{Check: body.Config{Registry: reg}})
+	if err != nil {
+		t.Fatalf("RunChunk: %v", err)
+	}
+	child, point, seen := findNestedLocalByName(t, result.RootResult(), "seen")
+	assertBoundarySymbolConcreteType(t, reg, child, point, seen, "typed colon callback param")
+}
+
 func TestRunChunkNonDominatingFieldDefinedWrapperReturnStaysMaybeNil(t *testing.T) {
 	reg := standard.Registry()
 	stmts := parseChunk(t, `

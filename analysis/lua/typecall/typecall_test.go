@@ -205,6 +205,33 @@ func TestCallableAnyUnknownNeverStrict(t *testing.T) {
 	}
 }
 
+func TestCallableConsumesReceiver(t *testing.T) {
+	receiver := typetable.NewRecord().Field("id", typ.String).Build()
+
+	namedSelf := typ.Func().
+		Param("self", typ.Any).
+		Param("payload", typ.String).
+		Build()
+	if !CallableConsumesReceiver(namedSelf, nil) {
+		t.Fatal("named self formal should consume the receiver even without receiver type")
+	}
+
+	structuralSelf := typ.Func().
+		Param("client", typetable.NewRecord().Field("id", typ.String).Build()).
+		Param("payload", typ.String).
+		Build()
+	if !CallableConsumesReceiver(structuralSelf, receiver) {
+		t.Fatal("receiver subtype should prove the first formal consumes the receiver")
+	}
+
+	plain := typ.Func().
+		Param("payload", typ.String).
+		Build()
+	if CallableConsumesReceiver(plain, receiver) {
+		t.Fatal("unrelated first formal should not consume the receiver")
+	}
+}
+
 func TestGetMetamethodUnionFailsWhenOneBranchLacksMetamethod(t *testing.T) {
 	withCall := recordWithMetamethod("__call", typ.Func().Returns(typ.String).Build())
 	withoutCall := typetable.NewRecord().Field("name", typ.String).Build()

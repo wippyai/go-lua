@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"encoding/json"
 	"io"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -293,6 +295,29 @@ func TestRequiredSemanticSurfacesExist(t *testing.T) {
 		if got := productionPackages(t, pkg); len(got) != 1 {
 			t.Fatalf("required package %s resolved to %d packages", pkg, len(got))
 		}
+	}
+}
+
+func TestFixpointProgramUsesSemanticBoundaryReads(t *testing.T) {
+	root := filepath.Join("..", "check", "fixpoint", "program")
+	banned := []byte("SourceValueForExplanationAtBoundary")
+	if err := filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+			return nil
+		}
+		content, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		if bytes.Contains(content, banned) {
+			t.Fatalf("%s uses SourceValueForExplanationAtBoundary; semantic fixed-point code must use SourceValueAtBoundary", path)
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
 	}
 }
 
