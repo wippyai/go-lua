@@ -2261,6 +2261,177 @@ help: Handle the nil case with an else branch, or return before continuing when 
 	assertRenderedEqual(t, rendered, want)
 }
 
+func TestOptionalExhaustivenessDoesNotUseInvalidatedValueProof(t *testing.T) {
+	result := Check(`
+type Sink = { seen: string }
+
+local function remember(maybe: string?, sink: Sink): string
+    if maybe ~= nil then
+        maybe = nil
+        sink.seen = maybe
+    end
+    return sink.seen
+end
+`, WithDiagnosticRule(
+		diagnostics.CodeDiscriminatedUnionExhaustive,
+		diagnostic.Enable(),
+	))
+	if hasDiagnosticCode(result.Diagnostics, diagnostics.CodeDiscriminatedUnionExhaustive) {
+		t.Fatalf("diagnostics = %#v, want no optional exhaustiveness warning after reassignment invalidates value proof", result.Diagnostics)
+	}
+}
+
+func TestOptionalExhaustivenessReportsAliasConsumedBeforeOriginalInvalidated(t *testing.T) {
+	result := Check(`
+type Sink = { seen: string }
+
+local function remember(maybe: string?, sink: Sink): string
+    if maybe ~= nil then
+        local alias = maybe
+        maybe = nil
+        sink.seen = alias
+    end
+    return sink.seen
+end
+`, WithDiagnosticRule(
+		diagnostics.CodeDiscriminatedUnionExhaustive,
+		diagnostic.Enable(),
+	))
+	requireDiagnostic(t, result, diagnosticExpectation{
+		Code:            diagnostics.CodeDiscriminatedUnionExhaustive,
+		Severity:        diagnostic.SeverityWarning,
+		DiagnosticCount: 1,
+		MessageContains: []string{"optional handling is not exhaustive", "maybe == nil"},
+		EvidenceOrdered: []string{
+			"branch checks optional `maybe`",
+			"consumed case: `maybe ~= nil`",
+			"missing cases: `maybe == nil`",
+		},
+	})
+}
+
+func TestOptionalExhaustivenessDoesNotUseInvalidatedFieldProof(t *testing.T) {
+	result := Check(`
+type Box = { value: string? }
+type Sink = { seen: string }
+
+local function remember(box: Box, sink: Sink): string
+    if box.value ~= nil then
+        box.value = nil
+        sink.seen = box.value
+    end
+    return sink.seen
+end
+`, WithDiagnosticRule(
+		diagnostics.CodeDiscriminatedUnionExhaustive,
+		diagnostic.Enable(),
+	))
+	if hasDiagnosticCode(result.Diagnostics, diagnostics.CodeDiscriminatedUnionExhaustive) {
+		t.Fatalf("diagnostics = %#v, want no optional exhaustiveness warning after field reassignment invalidates value proof", result.Diagnostics)
+	}
+}
+
+func TestOptionalExhaustivenessDoesNotUseDynamicIndexInvalidatedFieldProof(t *testing.T) {
+	result := Check(`
+type Box = { value: string? }
+type Sink = { seen: string }
+
+local function remember(box: Box, key: string, sink: Sink): string
+    if box.value ~= nil then
+        box[key] = nil
+        sink.seen = box.value
+    end
+    return sink.seen
+end
+`, WithDiagnosticRule(
+		diagnostics.CodeDiscriminatedUnionExhaustive,
+		diagnostic.Enable(),
+	))
+	if hasDiagnosticCode(result.Diagnostics, diagnostics.CodeDiscriminatedUnionExhaustive) {
+		t.Fatalf("diagnostics = %#v, want no optional exhaustiveness warning after dynamic index write invalidates field proof", result.Diagnostics)
+	}
+}
+
+func TestOptionalExhaustivenessDoesNotUseCallInvalidatedFieldProof(t *testing.T) {
+	result := Check(`
+type Box = { value: string? }
+type Sink = { seen: string }
+
+local function clear(box: Box, key: string): ()
+    box[key] = nil
+end
+
+local function remember(box: Box, sink: Sink): string
+    if box.value ~= nil then
+        clear(box, "value")
+        sink.seen = box.value
+    end
+    return sink.seen
+end
+`, WithDiagnosticRule(
+		diagnostics.CodeDiscriminatedUnionExhaustive,
+		diagnostic.Enable(),
+	))
+	if hasDiagnosticCode(result.Diagnostics, diagnostics.CodeDiscriminatedUnionExhaustive) {
+		t.Fatalf("diagnostics = %#v, want no optional exhaustiveness warning after call invalidates field proof", result.Diagnostics)
+	}
+}
+
+func TestOptionalExhaustivenessDoesNotUseAllBranchesInvalidatedValueProof(t *testing.T) {
+	result := Check(`
+type Sink = { seen: string }
+
+local function remember(maybe: string?, flag: boolean, sink: Sink): string
+    if maybe ~= nil then
+        if flag then
+            maybe = nil
+        else
+            maybe = nil
+        end
+        sink.seen = maybe
+    end
+    return sink.seen
+end
+`, WithDiagnosticRule(
+		diagnostics.CodeDiscriminatedUnionExhaustive,
+		diagnostic.Enable(),
+	))
+	if hasDiagnosticCode(result.Diagnostics, diagnostics.CodeDiscriminatedUnionExhaustive) {
+		t.Fatalf("diagnostics = %#v, want no optional exhaustiveness warning after every branch invalidates value proof", result.Diagnostics)
+	}
+}
+
+func TestOptionalExhaustivenessReportsReachableBranchConsumptionBeforeInvalidation(t *testing.T) {
+	result := Check(`
+type Sink = { seen: string }
+
+local function remember(maybe: string?, flag: boolean, sink: Sink): string
+    if maybe ~= nil then
+        if flag then
+            sink.seen = maybe
+        else
+            maybe = nil
+        end
+    end
+    return sink.seen
+end
+`, WithDiagnosticRule(
+		diagnostics.CodeDiscriminatedUnionExhaustive,
+		diagnostic.Enable(),
+	))
+	requireDiagnostic(t, result, diagnosticExpectation{
+		Code:            diagnostics.CodeDiscriminatedUnionExhaustive,
+		Severity:        diagnostic.SeverityWarning,
+		DiagnosticCount: 1,
+		MessageContains: []string{"optional handling is not exhaustive", "maybe == nil"},
+		EvidenceOrdered: []string{
+			"branch checks optional `maybe`",
+			"consumed case: `maybe ~= nil`",
+			"missing cases: `maybe == nil`",
+		},
+	})
+}
+
 func TestOptionalExhaustivenessAcceptsExplicitNilHandlingAndGuardReturn(t *testing.T) {
 	withElse := Check(`
 type Sink = { seen: string }

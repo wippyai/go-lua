@@ -449,12 +449,21 @@ func typeAdmitsFalse(t typ.Type) bool {
 }
 
 func optionalBranchConsumesPath(result *body.Result, stmts []ast.Stmt, target pathdom.Path) bool {
+	consumed, _ := optionalStatementsConsumePath(result, stmts, target)
+	return consumed
+}
+
+func optionalStatementsConsumePath(result *body.Result, stmts []ast.Stmt, target pathdom.Path) (consumed bool, invalidated bool) {
 	for _, stmt := range stmts {
-		if optionalStmtConsumesPath(result, stmt, target) {
-			return true
+		stmtConsumed, stmtInvalidated := optionalStmtConsumesPath(result, stmt, target)
+		if stmtConsumed {
+			return true, false
+		}
+		if stmtInvalidated {
+			return false, true
 		}
 	}
-	return false
+	return false, false
 }
 
 func optionalStatementsTerminate(result *body.Result, stmts []ast.Stmt) bool {
@@ -492,52 +501,84 @@ func optionalNoReturnCall(result *body.Result, expr ast.Expr) bool {
 	return ok && result.IdentResolvesToGlobal(fn, "error")
 }
 
-func optionalStmtConsumesPath(result *body.Result, stmt ast.Stmt, target pathdom.Path) bool {
+func optionalStmtConsumesPath(result *body.Result, stmt ast.Stmt, target pathdom.Path) (consumed bool, invalidated bool) {
 	switch s := stmt.(type) {
 	case *ast.LocalAssignStmt:
-		return optionalExprsConsumePath(result, s.Exprs, target)
+		if optionalExprsConsumePath(result, s.Exprs, target) {
+			return true, false
+		}
+		return false, optionalExprsInvalidatePath(result, s.Exprs, target)
 	case *ast.AssignStmt:
 		if optionalExprsConsumePath(result, s.Rhs, target) {
-			return true
+			return true, false
 		}
+		if optionalExprsInvalidatePath(result, s.Rhs, target) {
+			return false, true
+		}
+		invalidated := false
 		for _, lhs := range s.Lhs {
 			if optionalLValueConsumesPath(result, lhs, target) {
-				return true
+				return true, false
+			}
+			if optionalLValueInvalidatesPath(result, lhs, target) {
+				invalidated = true
 			}
 		}
+		return false, invalidated
 	case *ast.FuncCallStmt:
-		return optionalExprConsumesPath(result, s.Expr, target)
+		if optionalExprConsumesPath(result, s.Expr, target) {
+			return true, false
+		}
+		call, _ := s.Expr.(*ast.FuncCallExpr)
+		return false, optionalCallInvalidatesPath(result, call, target)
 	case *ast.ReturnStmt:
-		return optionalExprsConsumePath(result, s.Exprs, target)
+		return optionalExprsConsumePath(result, s.Exprs, target), false
 	case *ast.DoBlockStmt:
-		return optionalBranchConsumesPath(result, s.Stmts, target)
+		return optionalStatementsConsumePath(result, s.Stmts, target)
 	case *ast.IfStmt:
-		return optionalBranchConsumesPath(result, s.Then, target) || optionalBranchConsumesPath(result, s.Else, target)
+		thenConsumed, thenInvalidated := optionalStatementsConsumePath(result, s.Then, target)
+		if thenConsumed {
+			return true, false
+		}
+		elseConsumed, elseInvalidated := optionalStatementsConsumePath(result, s.Else, target)
+		if elseConsumed {
+			return true, false
+		}
+		return false, len(s.Else) != 0 && thenInvalidated && elseInvalidated
 	case *ast.WhileStmt:
-		return optionalBranchConsumesPath(result, s.Stmts, target)
+		return optionalBranchConsumesPath(result, s.Stmts, target), false
 	case *ast.RepeatStmt:
-		return optionalBranchConsumesPath(result, s.Stmts, target)
+		return optionalStatementsConsumePath(result, s.Stmts, target)
 	case *ast.NumberForStmt:
 		return optionalExprConsumesPath(result, s.Init, target) ||
 			optionalExprConsumesPath(result, s.Limit, target) ||
 			optionalExprConsumesPath(result, s.Step, target) ||
-			optionalBranchConsumesPath(result, s.Stmts, target)
+			optionalBranchConsumesPath(result, s.Stmts, target), false
 	case *ast.GenericForStmt:
 		return optionalExprsConsumePath(result, s.Exprs, target) ||
-			optionalBranchConsumesPath(result, s.Stmts, target)
+			optionalBranchConsumesPath(result, s.Stmts, target), false
 	case *ast.FuncDefStmt:
 		if s.Name == nil {
-			return false
+			return false, false
 		}
 		return optionalLValueConsumesPath(result, s.Name.Func, target) ||
-			optionalExprConsumesPath(result, s.Name.Receiver, target)
+			optionalExprConsumesPath(result, s.Name.Receiver, target), false
 	}
-	return false
+	return false, false
 }
 
 func optionalExprsConsumePath(result *body.Result, exprs []ast.Expr, target pathdom.Path) bool {
 	for _, expr := range exprs {
 		if optionalExprConsumesPath(result, expr, target) {
+			return true
+		}
+	}
+	return false
+}
+
+func optionalExprsInvalidatePath(result *body.Result, exprs []ast.Expr, target pathdom.Path) bool {
+	for _, expr := range exprs {
+		if optionalExprInvalidatesPath(result, expr, target) {
 			return true
 		}
 	}
@@ -560,6 +601,67 @@ func optionalLValueConsumesPath(result *body.Result, expr ast.Expr, target pathd
 	default:
 		return optionalExprConsumesPath(result, expr, target)
 	}
+}
+
+func optionalLValueInvalidatesPath(result *body.Result, expr ast.Expr, target pathdom.Path) bool {
+	if expr == nil || target.IsEmpty() {
+		return false
+	}
+	if p, ok := result.ExpressionPath(expr); ok && optionalAssignedPathInvalidatesTarget(p, target) {
+		return true
+	}
+	attr, ok := expr.(*ast.AttrGetExpr)
+	if !ok || attr.KeySyntax != ast.AttrKeyIndex {
+		return false
+	}
+	container, ok := result.ExpressionPath(attr.Object)
+	return ok && optionalAssignedPathInvalidatesTarget(container, target)
+}
+
+func optionalAssignedPathInvalidatesTarget(assigned, target pathdom.Path) bool {
+	return !assigned.IsEmpty() && pathHasPrefix(target, assigned)
+}
+
+func optionalExprInvalidatesPath(result *body.Result, expr ast.Expr, target pathdom.Path) bool {
+	if expr == nil || target.IsEmpty() {
+		return false
+	}
+	if call, ok := expr.(*ast.FuncCallExpr); ok && optionalCallInvalidatesPath(result, call, target) {
+		return true
+	}
+	invalidates := false
+	walkExprChildren(expr, func(child ast.Expr) {
+		if invalidates {
+			return
+		}
+		if optionalExprInvalidatesPath(result, child, target) {
+			invalidates = true
+		}
+	})
+	return invalidates
+}
+
+func optionalCallInvalidatesPath(result *body.Result, call *ast.FuncCallExpr, target pathdom.Path) bool {
+	if result == nil || call == nil || target.IsEmpty() {
+		return false
+	}
+	site, outcome, ok := result.CallOutcomeForExpr(call)
+	if !ok || !callOutcomeHasExplicitGuardInvalidation(outcome) {
+		return false
+	}
+	if callOutcomeHasGlobalGuardInvalidation(outcome) {
+		return true
+	}
+	invalidated, ok := callOutcomeGuardInvalidationPaths(result, site, outcome)
+	if !ok {
+		return true
+	}
+	for _, candidate := range invalidated {
+		if optionalAssignedPathInvalidatesTarget(candidate, target) {
+			return true
+		}
+	}
+	return false
 }
 
 func optionalExprConsumesPath(result *body.Result, expr ast.Expr, target pathdom.Path) bool {
