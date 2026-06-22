@@ -722,6 +722,49 @@ func TestInstantiateGenericCallRejectsConflictingInstantiatedOptionsObject(t *te
 	assertType(t, violations[0].Got, actual)
 }
 
+func TestInstantiateGenericCallTraceExplainsConflictingOptionsObject(t *testing.T) {
+	input := typ.NewTypeParam("T", nil)
+	optionsBody := typetable.NewRecord().
+		Field("channel", typ.Instantiate(ambient.ChannelGeneric(), input)).
+		Field("decode", typ.Func().Param("raw", typ.Any).Returns(input).Build()).
+		Build()
+	options := typ.NewGeneric("ListenOptions", []*typ.TypeParam{input}, optionsBody)
+	event := typetable.NewRecord().Field("id", typ.String).Build()
+	timer := typetable.NewRecord().Field("elapsed", typ.Number).Build()
+	actual := typetable.NewRecord().
+		Field("channel", typ.Instantiate(ambient.ChannelGeneric(), event)).
+		Field("decode", typ.Func().Param("raw", typ.Any).Returns(timer).Build()).
+		Build()
+	fn := typ.Func().
+		TypeParamRef(input).
+		Param("topic", typ.String).
+		Param("options", typ.Instantiate(options, input)).
+		Returns(typ.Instantiate(ambient.ChannelGeneric(), input)).
+		Build()
+
+	_, violations, trace := InstantiateGenericCallWithTrace(fn, []typ.Type{typ.String, actual})
+	if len(violations) != 1 {
+		t.Fatalf("violations = %#v, want one conflicting options violation", violations)
+	}
+	if len(trace.Contributions) != 2 {
+		t.Fatalf("trace contributions = %#v, want channel and decode contributions", trace.Contributions)
+	}
+	channel := trace.Contributions[0]
+	if channel.Index != 1 || channel.Param == nil || channel.Param.Name != "T" || len(channel.Path) != 2 ||
+		channel.Path[0].Kind != InferencePathField || channel.Path[0].Name != "channel" ||
+		channel.Path[1].Kind != InferencePathTypeArgument || channel.Path[1].Index != 1 {
+		t.Fatalf("channel contribution = %#v, want argument 2.channel type argument", channel)
+	}
+	assertType(t, channel.Type, event)
+	decode := trace.Contributions[1]
+	if decode.Index != 1 || decode.Param == nil || decode.Param.Name != "T" || len(decode.Path) != 2 ||
+		decode.Path[0].Kind != InferencePathField || decode.Path[0].Name != "decode" ||
+		decode.Path[1].Kind != InferencePathFunctionReturn || decode.Path[1].Index != 1 {
+		t.Fatalf("decode contribution = %#v, want argument 2.decode return 1", decode)
+	}
+	assertType(t, decode.Type, timer)
+}
+
 func TestInstantiateGenericCallInfersRecursiveWitnessType(t *testing.T) {
 	input := typ.NewTypeParam("T", nil)
 	witness := typ.NewGeneric("Type", []*typ.TypeParam{input},

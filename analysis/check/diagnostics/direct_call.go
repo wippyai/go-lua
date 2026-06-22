@@ -399,13 +399,14 @@ func directCalleeDiagnostic(call *ast.FuncCallExpr, code diagnostic.Code, messag
 }
 
 type directFunctionContract struct {
-	name      string
-	declSpan  ast.Span
-	source    *typ.Function
-	params    []directCallParam
-	returns   []directCallResult
-	variadic  directCallParam
-	hasVararg bool
+	name         string
+	declSpan     ast.Span
+	source       *typ.Function
+	genericTrace typecall.GenericCallTrace
+	params       []directCallParam
+	returns      []directCallResult
+	variadic     directCallParam
+	hasVararg    bool
 }
 
 type directCallParam struct {
@@ -478,7 +479,11 @@ func (p directCallContract) directFunctionCall(
 		if violation.Index >= 0 && violation.Index < len(args) {
 			arg := args[violation.Index]
 			if mismatch, ok := genericObjectLiteralArgTypeMismatch(result, arg, violation.Got, violation.Constraint); ok {
-				extra := boundaryDiagnosticEvidenceForSubject(result, point, ast.SpanOf(mismatch.expr), exprEvidenceName(mismatch.expr), mismatch.want, boundaryValueFromExpr(mismatch.expr))
+				if d, ok := genericObjectLiteralInferenceConflictDiagnostic(result, call, contract.name, violation.Index, arg, mismatch, contract.paramDeclSpan(violation.Index), contract.genericTrace); ok {
+					return d, true
+				}
+				extra := genericInferenceEvidenceForObjectLiteralMismatch(result, contract.name, violation.Index, arg, mismatch, contract.genericTrace)
+				extra = append(extra, boundaryDiagnosticEvidenceForSubject(result, point, ast.SpanOf(mismatch.expr), exprEvidenceName(mismatch.expr), mismatch.want, boundaryValueFromExpr(mismatch.expr))...)
 				return objectLiteralArgTypeDiagnostic(call, contract.name, violation.Index, arg, mismatch, contract.paramDeclSpan(violation.Index), extra...), true
 			}
 			if mismatch, ok := objectLiteralMemberMismatch(result, point, arg, violation.Constraint, env); ok {
@@ -1147,10 +1152,11 @@ func genericObjectLiteralArgTypeMismatch(result *body.Result, arg ast.Expr, actu
 			continue
 		}
 		return objectLiteralTypeMismatch{
-			expr:   entry.Value,
-			got:    got,
-			want:   want,
-			suffix: segment.FormatSegments(entry.Suffix.Segments),
+			expr:     entry.Value,
+			got:      got,
+			want:     want,
+			suffix:   segment.FormatSegments(entry.Suffix.Segments),
+			segments: entry.Suffix.Segments,
 		}, true
 	}
 	return objectLiteralTypeMismatch{}, false

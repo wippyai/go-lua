@@ -17,12 +17,59 @@ type ArgumentConstraintViolation struct {
 	Constraint typ.Type
 }
 
+// InferencePathKind identifies one step from a call argument to the nested type
+// position that contributed to a generic type-parameter binding.
+type InferencePathKind int
+
+const (
+	InferencePathField InferencePathKind = iota + 1
+	InferencePathStaticString
+	InferencePathStaticInt
+	InferencePathTypeArgument
+	InferencePathFunctionParam
+	InferencePathFunctionReturn
+)
+
+// InferencePathStep records one readable segment in a generic inference path.
+type InferencePathStep struct {
+	Kind  InferencePathKind
+	Name  string
+	Index int
+}
+
+// InferenceContribution records one concrete type that helped infer a generic
+// type parameter from a call argument.
+type InferenceContribution struct {
+	Param *typ.TypeParam
+	Index int
+	Type  typ.Type
+	Path  []InferencePathStep
+}
+
+// GenericCallTrace carries diagnostic-only generic inference provenance.
+type GenericCallTrace struct {
+	Contributions []InferenceContribution
+}
+
 // InstantiateGenericCall infers type arguments for a generic function call from
 // concrete argument types, validates type-parameter constraints, and returns the
 // callable signature with inferred type parameters substituted.
 func InstantiateGenericCall(fn *typ.Function, args []typ.Type) (*typ.Function, []ArgumentConstraintViolation) {
+	instantiated, violations, _ := instantiateGenericCall(fn, args, false)
+	return instantiated, violations
+}
+
+// InstantiateGenericCallWithTrace is the diagnostics-facing variant of
+// InstantiateGenericCall. It returns the same instantiated signature and
+// violations, plus the concrete argument locations that contributed to each
+// inferred type parameter.
+func InstantiateGenericCallWithTrace(fn *typ.Function, args []typ.Type) (*typ.Function, []ArgumentConstraintViolation, GenericCallTrace) {
+	return instantiateGenericCall(fn, args, true)
+}
+
+func instantiateGenericCall(fn *typ.Function, args []typ.Type, trace bool) (*typ.Function, []ArgumentConstraintViolation, GenericCallTrace) {
 	if fn == nil || len(fn.TypeParams) == 0 {
-		return fn, nil
+		return fn, nil, GenericCallTrace{}
 	}
 	bindings := make(map[*typ.TypeParam]inferredArg, len(fn.TypeParams))
 	for i, arg := range args {
@@ -33,7 +80,7 @@ func InstantiateGenericCall(fn *typ.Function, args []typ.Type) (*typ.Function, [
 		if !ok || formal == nil {
 			continue
 		}
-		inferTypeParamBindings(formal, arg, i, bindings, 0)
+		inferTypeParamBindings(formal, arg, i, bindings, nil, trace, 0)
 	}
 
 	params := make([]*typ.TypeParam, 0, len(fn.TypeParams))
@@ -68,15 +115,16 @@ func InstantiateGenericCall(fn *typ.Function, args []typ.Type) (*typ.Function, [
 
 	instantiated, ok := subst.Params(fn, params, argsToSubstitute).(*typ.Function)
 	if !ok {
-		return fn, violations
+		return fn, violations, genericCallTraceFromBindings(fn.TypeParams, bindings)
 	}
 	violations = append(violations, validateInstantiatedArguments(instantiated, args)...)
-	return instantiated, violations
+	return instantiated, violations, genericCallTraceFromBindings(fn.TypeParams, bindings)
 }
 
 type inferredArg struct {
-	typ   typ.Type
-	index int
+	typ           typ.Type
+	index         int
+	contributions []InferenceContribution
 }
 
 func callParamType(fn *typ.Function, index int) (typ.Type, bool) {
@@ -351,7 +399,7 @@ func providedRecordFieldsAssignable(actual *typ.Record, formal *typ.Record, dept
 	return true
 }
 
-func inferTypeParamBindings(formal typ.Type, actual typ.Type, index int, bindings map[*typ.TypeParam]inferredArg, depth int) {
+func inferTypeParamBindings(formal typ.Type, actual typ.Type, index int, bindings map[*typ.TypeParam]inferredArg, path []InferencePathStep, trace bool, depth int) {
 	if formal == nil || actual == nil || depth > typ.DefaultRecursionDepth {
 		return
 	}
@@ -360,41 +408,41 @@ func inferTypeParamBindings(formal typ.Type, actual typ.Type, index int, binding
 	actual = unwrap.Annotated(actual)
 
 	if param, ok := formal.(*typ.TypeParam); ok {
-		bindTypeParam(param, actual, index, bindings)
+		bindTypeParam(param, actual, index, bindings, path, trace)
 		return
 	}
 
 	switch f := formal.(type) {
 	case *typ.Alias:
-		inferTypeParamBindings(f.UnaliasedTarget(), actual, index, bindings, depth+1)
+		inferTypeParamBindings(f.UnaliasedTarget(), actual, index, bindings, path, trace, depth+1)
 	case *typ.Optional:
 		if a, ok := actual.(*typ.Optional); ok {
-			inferTypeParamBindings(f.Inner, a.Inner, index, bindings, depth+1)
+			inferTypeParamBindings(f.Inner, a.Inner, index, bindings, path, trace, depth+1)
 			return
 		}
-		inferTypeParamBindings(f.Inner, actual, index, bindings, depth+1)
+		inferTypeParamBindings(f.Inner, actual, index, bindings, path, trace, depth+1)
 	case *typ.Array:
 		switch a := actual.(type) {
 		case *typ.Array:
-			inferTypeParamBindings(f.Element, a.Element, index, bindings, depth+1)
+			inferTypeParamBindings(f.Element, a.Element, index, bindings, path, trace, depth+1)
 		case *typ.Tuple:
 			for _, elem := range a.Elements {
-				inferTypeParamBindings(f.Element, elem, index, bindings, depth+1)
+				inferTypeParamBindings(f.Element, elem, index, bindings, path, trace, depth+1)
 			}
 		}
 	case *typ.Map:
 		if a, ok := actual.(*typ.Map); ok {
-			inferTypeParamBindings(f.Key, a.Key, index, bindings, depth+1)
-			inferTypeParamBindings(f.Value, a.Value, index, bindings, depth+1)
+			inferTypeParamBindings(f.Key, a.Key, index, bindings, appendInferencePath(path, InferencePathStep{Kind: InferencePathStaticString, Name: "key"}), trace, depth+1)
+			inferTypeParamBindings(f.Value, a.Value, index, bindings, appendInferencePath(path, InferencePathStep{Kind: InferencePathStaticString, Name: "value"}), trace, depth+1)
 		}
 	case *typ.ReadonlyMap:
 		switch a := actual.(type) {
 		case *typ.ReadonlyMap:
-			inferTypeParamBindings(f.Key, a.Key, index, bindings, depth+1)
-			inferTypeParamBindings(f.Value, a.Value, index, bindings, depth+1)
+			inferTypeParamBindings(f.Key, a.Key, index, bindings, appendInferencePath(path, InferencePathStep{Kind: InferencePathStaticString, Name: "key"}), trace, depth+1)
+			inferTypeParamBindings(f.Value, a.Value, index, bindings, appendInferencePath(path, InferencePathStep{Kind: InferencePathStaticString, Name: "value"}), trace, depth+1)
 		case *typ.Map:
-			inferTypeParamBindings(f.Key, a.Key, index, bindings, depth+1)
-			inferTypeParamBindings(f.Value, a.Value, index, bindings, depth+1)
+			inferTypeParamBindings(f.Key, a.Key, index, bindings, appendInferencePath(path, InferencePathStep{Kind: InferencePathStaticString, Name: "key"}), trace, depth+1)
+			inferTypeParamBindings(f.Value, a.Value, index, bindings, appendInferencePath(path, InferencePathStep{Kind: InferencePathStaticString, Name: "value"}), trace, depth+1)
 		}
 	case *typ.Tuple:
 		if a, ok := actual.(*typ.Tuple); ok {
@@ -402,34 +450,34 @@ func inferTypeParamBindings(formal typ.Type, actual typ.Type, index int, binding
 				if i >= len(a.Elements) {
 					break
 				}
-				inferTypeParamBindings(elem, a.Elements[i], index, bindings, depth+1)
+				inferTypeParamBindings(elem, a.Elements[i], index, bindings, appendInferencePath(path, InferencePathStep{Kind: InferencePathStaticInt, Index: i + 1}), trace, depth+1)
 			}
 		}
 	case *typ.Function:
-		inferFunctionBindings(f, actual, index, bindings, depth+1)
+		inferFunctionBindings(f, actual, index, bindings, path, trace, depth+1)
 	case *typ.Record:
-		inferRecordBindings(f, actual, index, bindings, depth+1)
+		inferRecordBindings(f, actual, index, bindings, path, trace, depth+1)
 	case *typ.Instantiated:
 		if a, ok := actual.(*typ.Instantiated); ok && sameGeneric(f.Generic, a.Generic) {
 			for i, arg := range f.TypeArgs {
 				if i >= len(a.TypeArgs) {
 					break
 				}
-				inferTypeParamBindings(arg, a.TypeArgs[i], index, bindings, depth+1)
+				inferTypeParamBindings(arg, a.TypeArgs[i], index, bindings, appendInferencePath(path, InferencePathStep{Kind: InferencePathTypeArgument, Index: i + 1}), trace, depth+1)
 			}
 			return
 		}
 		expanded := expandFormalInstantiatedForInference(f)
 		if expanded != nil && expanded != formal {
-			inferTypeParamBindings(expanded, actual, index, bindings, depth+1)
+			inferTypeParamBindings(expanded, actual, index, bindings, path, trace, depth+1)
 		}
 	case *typ.Union:
 		for _, member := range f.Members {
-			inferTypeParamBindings(member, actual, index, bindings, depth+1)
+			inferTypeParamBindings(member, actual, index, bindings, path, trace, depth+1)
 		}
 	case *typ.Intersection:
 		for _, member := range f.Members {
-			inferTypeParamBindings(member, actual, index, bindings, depth+1)
+			inferTypeParamBindings(member, actual, index, bindings, path, trace, depth+1)
 		}
 	}
 }
@@ -444,7 +492,7 @@ func expandFormalInstantiatedForInference(inst *typ.Instantiated) typ.Type {
 	return subst.Self(body, inst)
 }
 
-func inferFunctionBindings(formal *typ.Function, actual typ.Type, index int, bindings map[*typ.TypeParam]inferredArg, depth int) {
+func inferFunctionBindings(formal *typ.Function, actual typ.Type, index int, bindings map[*typ.TypeParam]inferredArg, path []InferencePathStep, trace bool, depth int) {
 	if formal == nil || depth > typ.DefaultRecursionDepth {
 		return
 	}
@@ -466,14 +514,14 @@ func inferFunctionBindings(formal *typ.Function, actual typ.Type, index int, bin
 		if i >= len(actualFn.Params) {
 			break
 		}
-		inferTypeParamBindings(param.Type, actualFn.Params[i].Type, index, bindings, depth+1)
+		inferTypeParamBindings(param.Type, actualFn.Params[i].Type, index, bindings, appendInferencePath(path, InferencePathStep{Kind: InferencePathFunctionParam, Name: param.Name, Index: i + 1}), trace, depth+1)
 	}
 	if formal.Variadic != nil {
 		if actualFn.Variadic != nil {
-			inferTypeParamBindings(formal.Variadic, actualFn.Variadic, index, bindings, depth+1)
+			inferTypeParamBindings(formal.Variadic, actualFn.Variadic, index, bindings, appendInferencePath(path, InferencePathStep{Kind: InferencePathFunctionParam, Index: len(formal.Params) + 1}), trace, depth+1)
 		} else {
 			for i := len(formal.Params); i < len(actualFn.Params); i++ {
-				inferTypeParamBindings(formal.Variadic, actualFn.Params[i].Type, index, bindings, depth+1)
+				inferTypeParamBindings(formal.Variadic, actualFn.Params[i].Type, index, bindings, appendInferencePath(path, InferencePathStep{Kind: InferencePathFunctionParam, Index: i + 1}), trace, depth+1)
 			}
 		}
 	}
@@ -481,11 +529,11 @@ func inferFunctionBindings(formal *typ.Function, actual typ.Type, index int, bin
 		if i >= len(actualFn.Returns) {
 			break
 		}
-		inferTypeParamBindings(ret, actualFn.Returns[i], index, bindings, depth+1)
+		inferTypeParamBindings(ret, actualFn.Returns[i], index, bindings, appendInferencePath(path, InferencePathStep{Kind: InferencePathFunctionReturn, Index: i + 1}), trace, depth+1)
 	}
 }
 
-func inferRecordBindings(formal *typ.Record, actual typ.Type, index int, bindings map[*typ.TypeParam]inferredArg, depth int) {
+func inferRecordBindings(formal *typ.Record, actual typ.Type, index int, bindings map[*typ.TypeParam]inferredArg, path []InferencePathStep, trace bool, depth int) {
 	if formal == nil {
 		return
 	}
@@ -501,7 +549,7 @@ func inferRecordBindings(formal *typ.Record, actual typ.Type, index int, binding
 	}
 	if union, ok := actual.(*typ.Union); ok {
 		for _, member := range union.Members {
-			inferRecordBindings(formal, member, index, bindings, depth+1)
+			inferRecordBindings(formal, member, index, bindings, path, trace, depth+1)
 		}
 		return
 	}
@@ -514,22 +562,25 @@ func inferRecordBindings(formal *typ.Record, actual typ.Type, index int, binding
 		if actualField == nil {
 			continue
 		}
-		inferTypeParamBindings(field.Type, actualField.Type, index, bindings, depth+1)
+		inferTypeParamBindings(field.Type, actualField.Type, index, bindings, appendInferencePath(path, InferencePathStep{Kind: InferencePathField, Name: field.Name}), trace, depth+1)
 	}
 	if formal.HasMapComponent() && record.HasMapComponent() {
-		inferTypeParamBindings(formal.MapKey, record.MapKey, index, bindings, depth+1)
-		inferTypeParamBindings(formal.MapValue, record.MapValue, index, bindings, depth+1)
+		inferTypeParamBindings(formal.MapKey, record.MapKey, index, bindings, appendInferencePath(path, InferencePathStep{Kind: InferencePathStaticString, Name: "key"}), trace, depth+1)
+		inferTypeParamBindings(formal.MapValue, record.MapValue, index, bindings, appendInferencePath(path, InferencePathStep{Kind: InferencePathStaticString, Name: "value"}), trace, depth+1)
 	}
 	for _, member := range formal.StaticMembers {
 		var actualMember *typ.StaticMember
+		var step InferencePathStep
 		switch member.Kind {
 		case typ.StaticMemberStringIndex:
 			actualMember = record.GetStaticStringIndex(member.Name)
+			step = InferencePathStep{Kind: InferencePathStaticString, Name: member.Name}
 		case typ.StaticMemberIntIndex:
 			actualMember = record.GetStaticIntIndex(member.Index)
+			step = InferencePathStep{Kind: InferencePathStaticInt, Index: int(member.Index)}
 		}
 		if actualMember != nil {
-			inferTypeParamBindings(member.Type, actualMember.Type, index, bindings, depth+1)
+			inferTypeParamBindings(member.Type, actualMember.Type, index, bindings, appendInferencePath(path, step), trace, depth+1)
 		}
 	}
 }
@@ -541,21 +592,88 @@ func sameGeneric(left *typ.Generic, right *typ.Generic) bool {
 	return left == right || typ.SameNodeOrAcyclicEqual(left, right)
 }
 
-func bindTypeParam(param *typ.TypeParam, actual typ.Type, index int, bindings map[*typ.TypeParam]inferredArg) {
+func bindTypeParam(param *typ.TypeParam, actual typ.Type, index int, bindings map[*typ.TypeParam]inferredArg, path []InferencePathStep, trace bool) {
 	if param == nil || actual == nil {
 		return
 	}
+	contribution := inferenceContribution(param, actual, index, path, trace)
 	if existing, ok := bindings[param]; ok {
-		bindings[param] = inferredArg{typ: mergeInferredTypes(existing.typ, actual), index: existing.index}
+		bindings[param] = inferredArg{typ: mergeInferredTypes(existing.typ, actual), index: existing.index, contributions: appendInferenceContribution(existing.contributions, contribution)}
 		return
 	}
 	for known, existing := range bindings {
 		if known != nil && known.Equals(param) {
-			bindings[known] = inferredArg{typ: mergeInferredTypes(existing.typ, actual), index: existing.index}
+			contribution.Param = known
+			bindings[known] = inferredArg{typ: mergeInferredTypes(existing.typ, actual), index: existing.index, contributions: appendInferenceContribution(existing.contributions, contribution)}
 			return
 		}
 	}
-	bindings[param] = inferredArg{typ: actual, index: index}
+	bindings[param] = inferredArg{typ: actual, index: index, contributions: appendInferenceContribution(nil, contribution)}
+}
+
+func inferenceContribution(param *typ.TypeParam, actual typ.Type, index int, path []InferencePathStep, trace bool) InferenceContribution {
+	if !trace {
+		return InferenceContribution{}
+	}
+	return InferenceContribution{
+		Param: param,
+		Index: index,
+		Type:  actual,
+		Path:  cloneInferencePath(path),
+	}
+}
+
+func appendInferenceContribution(existing []InferenceContribution, contribution InferenceContribution) []InferenceContribution {
+	if contribution.Param == nil || contribution.Type == nil {
+		return existing
+	}
+	if len(existing) >= 8 {
+		return existing
+	}
+	return append(existing, contribution)
+}
+
+func appendInferencePath(path []InferencePathStep, step InferencePathStep) []InferencePathStep {
+	out := make([]InferencePathStep, 0, len(path)+1)
+	out = append(out, path...)
+	out = append(out, step)
+	return out
+}
+
+func cloneInferencePath(path []InferencePathStep) []InferencePathStep {
+	if len(path) == 0 {
+		return nil
+	}
+	out := make([]InferencePathStep, len(path))
+	copy(out, path)
+	return out
+}
+
+func genericCallTraceFromBindings(params []*typ.TypeParam, bindings map[*typ.TypeParam]inferredArg) GenericCallTrace {
+	if len(bindings) == 0 {
+		return GenericCallTrace{}
+	}
+	var out GenericCallTrace
+	for _, param := range params {
+		binding, ok := inferredBindingForParam(bindings, param)
+		if !ok {
+			continue
+		}
+		out.Contributions = append(out.Contributions, binding.contributions...)
+	}
+	return out
+}
+
+func inferredBindingForParam(bindings map[*typ.TypeParam]inferredArg, param *typ.TypeParam) (inferredArg, bool) {
+	if binding, ok := bindings[param]; ok {
+		return binding, true
+	}
+	for known, binding := range bindings {
+		if known != nil && param != nil && known.Equals(param) {
+			return binding, true
+		}
+	}
+	return inferredArg{}, false
 }
 
 func mergeInferredTypes(left typ.Type, right typ.Type) typ.Type {

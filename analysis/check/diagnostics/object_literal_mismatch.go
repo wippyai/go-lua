@@ -107,6 +107,7 @@ type objectLiteralTypeMismatch struct {
 	got          typ.Type
 	want         typ.Type
 	suffix       string
+	segments     []segment.Segment
 	missingField string
 }
 
@@ -157,7 +158,7 @@ func objectLiteralMemberMismatchInFact(result *body.Result, point cfg.Point, fac
 		if !ok {
 			continue
 		}
-		return objectLiteralTypeMismatch{expr: entry.Value, got: got, want: expected, suffix: segment.FormatSegments(entry.Suffix.Segments)}, true
+		return objectLiteralTypeMismatch{expr: entry.Value, got: got, want: expected, suffix: segment.FormatSegments(entry.Suffix.Segments), segments: entry.Suffix.Segments}, true
 	}
 	if field, ok := missingRequiredRecordField(want, fact); ok {
 		return objectLiteralTypeMismatch{expr: fact.Expr, got: objectLiteralType(want, fact), want: want, missingField: field.Name}, true

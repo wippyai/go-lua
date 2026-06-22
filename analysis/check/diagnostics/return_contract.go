@@ -724,13 +724,14 @@ func instantiateDirectFunctionContract(
 		return contract, nil
 	}
 	args := directCallArgumentTypes(result, context, point, fact, defs)
-	fn, violations := typecall.InstantiateGenericCall(contract.source, args)
+	fn, violations, trace := typecall.InstantiateGenericCallWithTrace(contract.source, args)
 	if fn == nil || fn == contract.source {
 		return contract, violations
 	}
 	instantiated := lowerDirectFunctionType(fn)
 	instantiated.name = contract.name
 	instantiated.declSpan = contract.declSpan
+	instantiated.genericTrace = trace
 	return instantiated, violations
 }
 

@@ -100,7 +100,7 @@ end
 		Sources:             diagnostic.SourceMap{"test.lua": src},
 		ShowSourceLabelRows: true,
 	})
-	want := `error[type.call.direct.argument_type]: argument 2.channel is Channel<{id: string, kind: "event"}>, not Channel<{id: string, kind: "event"} | {elapsed: number, kind: "timer"}>
+	want := `error[type.call.direct.argument_type]: listen cannot infer one T for argument 2: argument 2.channel implies {id: string, kind: "event"}, but argument 2.decode return 1 implies {elapsed: number, kind: "timer"}
  --> test.lua:19:12
    |
 19 |     channel = source.primary,
@@ -108,10 +108,15 @@ end
 
 because:
   1. proven: argument 2.channel (source.primary) has type Channel<{id: string, kind: "event"}>
-  2. claimed: listen parameter 2.channel expects Channel<{id: string, kind: "event"} | {elapsed: number, kind: "timer"}>
-  3. missing proof: no proof on this path shows source.primary satisfies the parameter type
+  2. claimed: listen parameter 2 requires one consistent T across this argument
+  3. proven: listen inferred T includes {id: string, kind: "event"} from argument 2.channel
+  4. proven: listen inferred T includes {elapsed: number, kind: "timer"} from argument 2.decode return 1
+ --> test.lua:20:11
+   |
+20 |     decode = decode_timer,
+   |              ^
 
-help: Pass ` + "`source.primary`" + ` as a value compatible with the parameter type, or change the callee signature if that argument is valid.`
+help: Make each use of ` + "`T`" + ` in this argument agree on the same type, or split the callee signature into separate type parameters if those values are intentionally different.`
 	assertRenderedEqual(t, rendered, want)
 }
 
