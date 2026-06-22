@@ -7,17 +7,27 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/callboundary"
 )
 
-func normalizeNumFloorFacts(in []callboundary.NumFloorFact) []callboundary.NumFloorFact {
+type numFloorFactKey pathdom.PathKey
+
+type numFloorFactLane struct{}
+
+// numFloorLane is a must-fact lane for lower bounds proven on normal return.
+// It cannot use the generic factset.Set directly: same-key collisions keep the
+// strongest local duplicate during normalization, while must-joins keep only
+// shared keys and weaken the surviving floor to min(left, right).
+var numFloorLane numFloorFactLane
+
+func (numFloorFactLane) Normalize(in []callboundary.NumFloorFact) []callboundary.NumFloorFact {
 	if len(in) == 0 {
 		return nil
 	}
-	byPath := make(map[pathdom.PathKey]callboundary.NumFloorFact, len(in))
+	byPath := make(map[numFloorFactKey]callboundary.NumFloorFact, len(in))
 	for _, fact := range in {
 		if !fact.Path.IsPlaceholder() {
 			continue
 		}
 		fact.Path = fact.Path.Clone()
-		key := fact.Path.Key()
+		key := numFloorKeyOf(fact)
 		if kept, ok := byPath[key]; ok && kept.Floor >= fact.Floor {
 			continue
 		}
@@ -39,7 +49,7 @@ func normalizeNumFloorFacts(in []callboundary.NumFloorFact) []callboundary.NumFl
 	return out
 }
 
-func cloneNumFloorFacts(in []callboundary.NumFloorFact) []callboundary.NumFloorFact {
+func (numFloorFactLane) Clone(in []callboundary.NumFloorFact) []callboundary.NumFloorFact {
 	if len(in) == 0 {
 		return nil
 	}
@@ -53,32 +63,32 @@ func cloneNumFloorFacts(in []callboundary.NumFloorFact) []callboundary.NumFloorF
 	return out
 }
 
-func numFloorFactsEqual(a, b []callboundary.NumFloorFact) bool {
-	a = normalizeNumFloorFacts(a)
-	b = normalizeNumFloorFacts(b)
+func (lane numFloorFactLane) Equal(a, b []callboundary.NumFloorFact) bool {
+	a = lane.Normalize(a)
+	b = lane.Normalize(b)
 	if len(a) != len(b) {
 		return false
 	}
 	for i := range a {
-		if !a[i].Path.Equal(b[i].Path) || a[i].Floor != b[i].Floor {
+		if numFloorKeyOf(a[i]) != numFloorKeyOf(b[i]) || a[i].Floor != b[i].Floor {
 			return false
 		}
 	}
 	return true
 }
 
-func numFloorFactsLessOrEq(a, b []callboundary.NumFloorFact) bool {
-	a = normalizeNumFloorFacts(a)
-	b = normalizeNumFloorFacts(b)
+func (lane numFloorFactLane) LessOrEq(a, b []callboundary.NumFloorFact) bool {
+	a = lane.Normalize(a)
+	b = lane.Normalize(b)
 	if len(b) == 0 {
 		return true
 	}
-	floors := make(map[pathdom.PathKey]int64, len(a))
+	floors := make(map[numFloorFactKey]int64, len(a))
 	for _, fact := range a {
-		floors[fact.Path.Key()] = fact.Floor
+		floors[numFloorKeyOf(fact)] = fact.Floor
 	}
 	for _, right := range b {
-		left, ok := floors[right.Path.Key()]
+		left, ok := floors[numFloorKeyOf(right)]
 		if !ok || left < right.Floor {
 			return false
 		}
@@ -86,19 +96,19 @@ func numFloorFactsLessOrEq(a, b []callboundary.NumFloorFact) bool {
 	return true
 }
 
-func joinNumFloorFacts(a, b []callboundary.NumFloorFact) []callboundary.NumFloorFact {
-	a = normalizeNumFloorFacts(a)
-	b = normalizeNumFloorFacts(b)
+func (lane numFloorFactLane) Join(a, b []callboundary.NumFloorFact) []callboundary.NumFloorFact {
+	a = lane.Normalize(a)
+	b = lane.Normalize(b)
 	if len(a) == 0 || len(b) == 0 {
 		return nil
 	}
-	right := make(map[pathdom.PathKey]int64, len(b))
+	right := make(map[numFloorFactKey]int64, len(b))
 	for _, fact := range b {
-		right[fact.Path.Key()] = fact.Floor
+		right[numFloorKeyOf(fact)] = fact.Floor
 	}
 	out := make([]callboundary.NumFloorFact, 0, len(a))
 	for _, left := range a {
-		floor, ok := right[left.Path.Key()]
+		floor, ok := right[numFloorKeyOf(left)]
 		if !ok {
 			continue
 		}
@@ -110,5 +120,13 @@ func joinNumFloorFacts(a, b []callboundary.NumFloorFact) []callboundary.NumFloor
 			Floor: floor,
 		})
 	}
-	return normalizeNumFloorFacts(out)
+	return lane.Normalize(out)
+}
+
+func (lane numFloorFactLane) Widen(prev, next []callboundary.NumFloorFact) []callboundary.NumFloorFact {
+	return lane.Join(prev, next)
+}
+
+func numFloorKeyOf(fact callboundary.NumFloorFact) numFloorFactKey {
+	return numFloorFactKey(fact.Path.Key())
 }

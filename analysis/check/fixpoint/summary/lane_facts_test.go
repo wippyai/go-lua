@@ -105,7 +105,7 @@ func TestNumFloorFactsUseMustFloorSemantics(t *testing.T) {
 	p1 := pathdom.NewPlaceholder(1)
 	concrete := pathdom.NewPath(symbol.ID(7), "arg")
 
-	normalized := normalizeNumFloorFacts([]callboundary.NumFloorFact{
+	normalized := numFloorLane.Normalize([]callboundary.NumFloorFact{
 		{Path: concrete, Floor: 9}, // dropped: not a placeholder boundary path
 		{Path: p0, Floor: 1},
 		{Path: p0, Floor: 4}, // same path: stronger local duplicate wins
@@ -121,14 +121,14 @@ func TestNumFloorFactsUseMustFloorSemantics(t *testing.T) {
 	right := []callboundary.NumFloorFact{
 		{Path: p0, Floor: 2},
 	}
-	joined := joinNumFloorFacts(left, right)
+	joined := numFloorLane.Join(left, right)
 	if len(joined) != 1 || !joined[0].Path.Equal(p0) || joined[0].Floor != 2 {
 		t.Fatalf("join num floors = %#v, want common path with weaker floor 2", joined)
 	}
-	if !numFloorFactsLessOrEq(left, right) {
+	if !numFloorLane.LessOrEq(left, right) {
 		t.Fatalf("stronger floor must be <= weaker common floor")
 	}
-	if numFloorFactsLessOrEq(right, left) {
+	if numFloorLane.LessOrEq(right, left) {
 		t.Fatalf("weaker/missing floors must not be <= stronger floor set")
 	}
 }
