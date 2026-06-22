@@ -132,6 +132,57 @@ func TestManifestRoundTripNormalizesMapKeysOnDecode(t *testing.T) {
 	}
 }
 
+func TestManifestRejectsMalformedTypeWireMissingRequiredParts(t *testing.T) {
+	tests := []struct {
+		name string
+		wire *typeWire
+		want string
+	}{
+		{
+			name: "map missing key",
+			wire: &typeWire{Kind: "map", Value: &typeWire{Kind: "number"}},
+			want: "map key missing type",
+		},
+		{
+			name: "readonly map missing value",
+			wire: &typeWire{Kind: "readonlyMap", Key: &typeWire{Kind: "string"}},
+			want: "readonly map value missing type",
+		},
+		{
+			name: "record map missing value",
+			wire: &typeWire{Kind: "record", MapKey: &typeWire{Kind: "string"}},
+			want: "record map value missing type",
+		},
+		{
+			name: "annotation missing name",
+			wire: &typeWire{
+				Kind:        "annotated",
+				Element:     &typeWire{Kind: "string"},
+				Annotations: []annotationWire{{Kind: "nil"}},
+			},
+			want: "annotation missing name",
+		},
+		{
+			name: "annotation missing kind",
+			wire: &typeWire{
+				Kind:        "annotated",
+				Element:     &typeWire{Kind: "string"},
+				Annotations: []annotationWire{{Name: "tag"}},
+			},
+			want: `annotation "tag" missing arg kind`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := decodeType(tt.wire)
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("decodeType error = %v, want %q", err, tt.want)
+			}
+		})
+	}
+}
+
 func TestManifestRoundTripNamedFunctionSignatureEffects(t *testing.T) {
 	row := effect.Open("rho",
 		ownership.Store{Param: effect.ParamRef{Index: 0}, Into: effect.ParamRef{Index: 1}},
@@ -215,6 +266,7 @@ func TestManifestRoundTripNamedFunctionSignatureEffects(t *testing.T) {
 	}
 	m := New("example/effects")
 	m.SetExport(export)
+	defineTestTypestateProtocol(t, m, "transaction", []typestate.State{"active", "finished"}, []typestate.State{"finished"}, []typestate.TransitionDecl{{From: "active", To: "finished"}})
 	m.DefineFunctionSignature("transform", signature.Function{Type: export, Effect: row, OperationalEffects: operational})
 
 	data, err := Encode(m)
@@ -224,6 +276,7 @@ func TestManifestRoundTripNamedFunctionSignatureEffects(t *testing.T) {
 	if !strings.Contains(string(data), `"functionSignatures"`) ||
 		!strings.Contains(string(data), `"effect"`) ||
 		!strings.Contains(string(data), `"operationalEffects"`) ||
+		!strings.Contains(string(data), `"typestateProtocols"`) ||
 		!strings.Contains(string(data), `"pathStaticMembers"`) ||
 		!strings.Contains(string(data), `"lifecycleEffects"`) ||
 		!strings.Contains(string(data), `"returnAllocationTemplates"`) ||
@@ -256,6 +309,10 @@ func TestManifestRoundTripNamedFunctionSignatureEffects(t *testing.T) {
 	}
 	if !(signature.Function{Type: export, Effect: row, OperationalEffects: operational}).Equals(gotSig) {
 		t.Fatalf("signature = %v, want %v", gotSig, signature.Function{Type: export, Effect: row, OperationalEffects: operational})
+	}
+	gotProtocol, ok := got.TypestateProtocol("transaction")
+	if !ok || !gotProtocol.IsFinal("finished") || !gotProtocol.AllowsTransition("active", "finished") {
+		t.Fatalf("typestate protocol = %#v, want transaction FSM", gotProtocol)
 	}
 }
 
@@ -330,6 +387,16 @@ func TestManifestRejectsInvalidLifecycleOperationalEffects(t *testing.T) {
 			}}},
 			wantErr: "transition missing target state",
 		},
+		{
+			name: "transition missing source state",
+			effects: signature.OperationalEffects{LifecycleEffects: []signature.LifecycleEffect{{
+				Target:   pathdom.NewPlaceholder(0),
+				Kind:     signature.LifecycleTransition,
+				Protocol: typestate.Protocol("resource"),
+				To:       typestate.State("closed"),
+			}}},
+			wantErr: "transition missing source state",
+		},
 	}
 
 	for _, tt := range tests {
@@ -353,6 +420,7 @@ func TestManifestRejectsInvalidLifecycleOperationalEffects(t *testing.T) {
 		{"acquire missing state", lifecycleEffectWire{Target: &placeholderPathWire{Param: 0}, Kind: "acquire", Protocol: "resource"}, "acquire missing state"},
 		{"transition missing protocol", lifecycleEffectWire{Target: &placeholderPathWire{Param: 0}, Kind: "transition", To: "closed"}, "missing protocol"},
 		{"transition missing target state", lifecycleEffectWire{Target: &placeholderPathWire{Param: 0}, Kind: "transition", Protocol: "resource", From: "open"}, "transition missing target state"},
+		{"transition missing source state", lifecycleEffectWire{Target: &placeholderPathWire{Param: 0}, Kind: "transition", Protocol: "resource", To: "closed"}, "transition missing source state"},
 		{"escape missing protocol", lifecycleEffectWire{Target: &placeholderPathWire{Param: 0}, Kind: "escape"}, "missing protocol"},
 	}
 	for _, tt := range decodeTests {
@@ -365,6 +433,124 @@ func TestManifestRejectsInvalidLifecycleOperationalEffects(t *testing.T) {
 				t.Fatalf("error = %v, want %q", err, tt.want)
 			}
 		})
+	}
+}
+
+func TestManifestRejectsLifecycleEffectsWithoutDeclaredFSM(t *testing.T) {
+	fn := typ.Func().Param("tx", typ.Any).Build()
+	m := New("example/lifecycle-missing-fsm")
+	m.DefineFunctionSignature("begin", signature.Function{
+		Type: fn,
+		Effect: effect.Empty.With(lifecycle.Acquire{
+			Target:   effect.ParamRef{Index: 0},
+			Protocol: "transaction",
+			State:    "active",
+			Obligation: typestate.Obligation{
+				Final: "finished",
+			},
+		}),
+	})
+
+	_, err := Encode(m)
+	if err == nil || !strings.Contains(err.Error(), `lifecycle protocol "transaction" is not declared as a typestate FSM`) {
+		t.Fatalf("Encode error = %v, want undeclared typestate FSM", err)
+	}
+}
+
+func TestManifestRejectsLifecycleEffectsOutsideDeclaredFSM(t *testing.T) {
+	tests := []struct {
+		name string
+		sig  signature.Function
+		want string
+	}{
+		{
+			name: "acquire state not declared",
+			sig: signature.Function{Type: typ.Func().Param("tx", typ.Any).Build(), Effect: effect.Empty.With(lifecycle.Acquire{
+				Target:   effect.ParamRef{Index: 0},
+				Protocol: "transaction",
+				State:    "pending",
+			})},
+			want: `does not declare acquire state "pending"`,
+		},
+		{
+			name: "obligation final not final",
+			sig: signature.Function{Type: typ.Func().Param("tx", typ.Any).Build(), Effect: effect.Empty.With(lifecycle.Acquire{
+				Target:   effect.ParamRef{Index: 0},
+				Protocol: "transaction",
+				State:    "active",
+				Obligation: typestate.Obligation{
+					Final: "active",
+				},
+			})},
+			want: `does not declare obligation final state "active"`,
+		},
+		{
+			name: "transition edge not declared",
+			sig: signature.Function{Type: typ.Func().Param("tx", typ.Any).Build(), Effect: effect.Empty.With(lifecycle.Transition{
+				Target:   effect.ParamRef{Index: 0},
+				Protocol: "transaction",
+				From:     "finished",
+				To:       "active",
+			})},
+			want: `does not declare transition "finished" -> "active"`,
+		},
+		{
+			name: "operational transition edge not declared",
+			sig: signature.Function{Type: typ.Func().Param("tx", typ.Any).Build(), OperationalEffects: &signature.OperationalEffects{
+				LifecycleEffects: []signature.LifecycleEffect{{
+					Target:   pathdom.NewPlaceholder(0),
+					Kind:     signature.LifecycleTransition,
+					Protocol: "transaction",
+					From:     "finished",
+					To:       "active",
+				}},
+			}},
+			want: `does not declare transition "finished" -> "active"`,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := New("example/lifecycle-invalid-fsm")
+			defineTestTypestateProtocol(t, m, "transaction", []typestate.State{"active", "finished"}, []typestate.State{"finished"}, []typestate.TransitionDecl{{From: "active", To: "finished"}})
+			m.DefineFunctionSignature("f", tt.sig)
+			_, err := Encode(m)
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("Encode error = %v, want %q", err, tt.want)
+			}
+		})
+	}
+}
+
+func TestManifestRejectsMalformedTypestateProtocolDeclarations(t *testing.T) {
+	m := New("example/bad-fsm")
+	err := m.DefineTypestateProtocol(typestate.Definition{
+		Protocol:    "cursor",
+		States:      []typestate.State{"open"},
+		FinalStates: []typestate.State{"closed"},
+	})
+	if err == nil || !strings.Contains(err.Error(), `final state "closed" is not declared`) {
+		t.Fatalf("DefineTypestateProtocol error = %v, want unknown final state", err)
+	}
+	err = m.DefineTypestateProtocol(typestate.Definition{
+		Protocol: "cursor",
+		States:   []typestate.State{"open", "open"},
+	})
+	if err == nil || !strings.Contains(err.Error(), `duplicates state "open"`) {
+		t.Fatalf("DefineTypestateProtocol duplicate error = %v, want duplicate state", err)
+	}
+
+	_, err = Decode([]byte(`{
+  "path": "example/bad-fsm",
+  "typestateProtocols": [
+    {
+      "name": "cursor",
+      "states": ["open"],
+      "transitions": [{ "from": "open", "to": "closed" }]
+    }
+  ]
+}`))
+	if err == nil || !strings.Contains(err.Error(), `transition target "closed" is not declared`) {
+		t.Fatalf("Decode error = %v, want unknown transition target", err)
 	}
 }
 
@@ -524,6 +710,18 @@ func TestManifestOperationalAllocationTemplateRejectsInvalidGraph(t *testing.T) 
 			},
 			want: `dynamic entry references missing value object "missing-value"`,
 		},
+		{
+			name: "empty dynamic entry",
+			wire: returnAllocationTemplateWire{
+				ReturnIndex: 0,
+				Root:        "root",
+				Objects: []allocationObjectWire{{
+					ID:             "root",
+					DynamicEntries: []allocationDynamicEntryWire{{}},
+				}},
+			},
+			want: `dynamic entry missing key, key type, or value`,
+		},
 	}
 
 	for _, tt := range tests {
@@ -537,6 +735,56 @@ func TestManifestOperationalAllocationTemplateRejectsInvalidGraph(t *testing.T) 
 			})
 			if err == nil || !strings.Contains(err.Error(), tt.want) {
 				t.Fatalf("decodeFunctionSignature error = %v, want %q", err, tt.want)
+			}
+		})
+	}
+}
+
+func TestManifestOperationalAllocationTemplateRejectsInvalidDirectGraph(t *testing.T) {
+	fn := typ.Func().Returns(typ.Any).Build()
+	tests := []struct {
+		name     string
+		template signature.ReturnAllocationTemplate
+		want     string
+	}{
+		{
+			name: "root object missing",
+			template: signature.ReturnAllocationTemplate{
+				ReturnIndex: 0,
+				Root:        "missing",
+				Objects:     []signature.AllocationObjectTemplate{{ID: "other"}},
+			},
+			want: `root "missing" has no object template`,
+		},
+		{
+			name: "empty dynamic entry",
+			template: signature.ReturnAllocationTemplate{
+				ReturnIndex: 0,
+				Root:        "root",
+				Objects: []signature.AllocationObjectTemplate{{
+					ID:             "root",
+					DynamicEntries: []signature.AllocationDynamicEntryTemplate{{}},
+				}},
+			},
+			want: `dynamic entry missing key, key type, or value`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := New("allocation-template")
+			m.DefineFunctionSignature("make", signature.Function{
+				Type: fn,
+				OperationalEffects: &signature.OperationalEffects{
+					ReturnAllocationTemplates: []signature.ReturnAllocationTemplate{tt.template},
+				},
+			})
+
+			if err := m.Validate(); err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("Validate error = %v, want %q", err, tt.want)
+			}
+			if _, err := Encode(m); err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("Encode error = %v, want %q", err, tt.want)
 			}
 		})
 	}
@@ -573,6 +821,24 @@ func testEncodedFunctionType(t *testing.T, fn *typ.Function) *typeWire {
 	return encodedType
 }
 
+func defineTestTypestateProtocol(t *testing.T, m *Manifest, protocol typestate.Protocol, states, finals []typestate.State, transitions []typestate.TransitionDecl) {
+	t.Helper()
+	if err := m.DefineTypestateProtocol(typestate.Definition{
+		Protocol:    protocol,
+		States:      states,
+		FinalStates: finals,
+		Transitions: transitions,
+	}); err != nil {
+		t.Fatalf("DefineTypestateProtocol(%s): %v", protocol, err)
+	}
+}
+
+func defineOperationalOrderTypestateProtocols(t *testing.T, m *Manifest) {
+	t.Helper()
+	defineTestTypestateProtocol(t, m, "transaction", []typestate.State{"active", "finished"}, []typestate.State{"finished"}, []typestate.TransitionDecl{{From: "active", To: "finished"}})
+	defineTestTypestateProtocol(t, m, "socket", []typestate.State{"open", "closed"}, []typestate.State{"closed"}, []typestate.TransitionDecl{{From: "open", To: "closed"}})
+}
+
 func TestManifestOperationalEffectsEncodeDeterministically(t *testing.T) {
 	fn := typ.Func().
 		Param("left", typ.Any).
@@ -580,11 +846,13 @@ func TestManifestOperationalEffectsEncodeDeterministically(t *testing.T) {
 		Returns(typeexpr.Optional(typ.Number), typeexpr.Optional(typ.String)).
 		Build()
 	left := New("example/deterministic-operational")
+	defineOperationalOrderTypestateProtocols(t, left)
 	left.DefineFunctionSignature("f", signature.Function{
 		Type:               fn,
 		OperationalEffects: operationalEffectsOrderA(),
 	})
 	right := New("example/deterministic-operational")
+	defineOperationalOrderTypestateProtocols(t, right)
 	right.DefineFunctionSignature("f", signature.Function{
 		Type:               fn,
 		OperationalEffects: operationalEffectsOrderB(),
@@ -918,6 +1186,7 @@ func TestManifestRejectsMalformedLifecycleEffectLabels(t *testing.T) {
 		{"acquire missing state", lifecycle.Acquire{Target: p0, Protocol: typestate.Protocol("transaction")}, "missing state"},
 		{"transition missing protocol", lifecycle.Transition{Target: p0, To: typestate.State("finished")}, "missing protocol"},
 		{"transition missing target", lifecycle.Transition{Target: p0, Protocol: typestate.Protocol("transaction")}, "missing target state"},
+		{"transition missing source", lifecycle.Transition{Target: p0, Protocol: typestate.Protocol("transaction"), To: typestate.State("finished")}, "missing source state"},
 		{"escape missing protocol", lifecycle.Escape{Target: p0}, "missing protocol"},
 	}
 	for _, tt := range encodeTests {
@@ -938,10 +1207,73 @@ func TestManifestRejectsMalformedLifecycleEffectLabels(t *testing.T) {
 		{"acquire missing state", effectLabelWire{Kind: "lifecycle.acquire", Target: encodeParamRef(p0), Protocol: "transaction"}, "missing state"},
 		{"transition missing protocol", effectLabelWire{Kind: "lifecycle.transition", Target: encodeParamRef(p0), To: "finished"}, "missing protocol"},
 		{"transition missing target", effectLabelWire{Kind: "lifecycle.transition", Target: encodeParamRef(p0), Protocol: "transaction"}, "missing target state"},
+		{"transition missing source", effectLabelWire{Kind: "lifecycle.transition", Target: encodeParamRef(p0), Protocol: "transaction", To: "finished"}, "missing source state"},
 		{"escape missing protocol", effectLabelWire{Kind: "lifecycle.escape", Target: encodeParamRef(p0)}, "missing protocol"},
 	}
 	for _, tt := range decodeTests {
 		t.Run("decode "+tt.name, func(t *testing.T) {
+			_, err := decodeEffectRow(&effectRowWire{Labels: []effectLabelWire{tt.wire}})
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("decodeEffectRow error = %v, want %q", err, tt.want)
+			}
+		})
+	}
+}
+
+func TestManifestRejectsEffectLabelsMissingParamRefs(t *testing.T) {
+	p0 := effect.ParamRef{Index: 0}
+	tests := []struct {
+		name string
+		wire effectLabelWire
+		want string
+	}{
+		{
+			name: "iterator source",
+			wire: effectLabelWire{Kind: "iteration.iterator", IteratorKind: "indexed"},
+			want: "iterator source missing param ref",
+		},
+		{
+			name: "mutation target",
+			wire: effectLabelWire{Kind: "mutation.lengthChange"},
+			want: "length change target missing param ref",
+		},
+		{
+			name: "table mutator value",
+			wire: effectLabelWire{Kind: "mutation.tableMutator", Target: encodeParamRef(p0)},
+			want: "table mutator value missing param ref",
+		},
+		{
+			name: "mutation transform source",
+			wire: effectLabelWire{
+				Kind:      "mutation.mutate",
+				Target:    encodeParamRef(p0),
+				Transform: &effectTransformWire{Kind: "mutation.elementUnion"},
+				Length:    encodeExprForTest(t, expr.C(0)),
+			},
+			want: "mutation.elementUnion source missing param ref",
+		},
+		{
+			name: "lifecycle target",
+			wire: effectLabelWire{Kind: "lifecycle.acquire", Protocol: "transaction", To: "active"},
+			want: "lifecycle acquire target missing param ref",
+		},
+		{
+			name: "ownership store target",
+			wire: effectLabelWire{Kind: "ownership.store", Param: encodeParamRef(p0)},
+			want: "store target missing param ref",
+		},
+		{
+			name: "return transform source",
+			wire: effectLabelWire{
+				Kind:       "returns.return",
+				ReturnType: &effectReturnWire{Kind: "returns.elementOf"},
+			},
+			want: "returns.elementOf source missing param ref",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
 			_, err := decodeEffectRow(&effectRowWire{Labels: []effectLabelWire{tt.wire}})
 			if err == nil || !strings.Contains(err.Error(), tt.want) {
 				t.Fatalf("decodeEffectRow error = %v, want %q", err, tt.want)

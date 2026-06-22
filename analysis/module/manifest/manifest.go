@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"sort"
 
+	"github.com/wippyai/go-lua/analysis/domain/typestate"
 	"github.com/wippyai/go-lua/analysis/module/signature"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
@@ -20,6 +21,7 @@ type Manifest struct {
 	Version            string
 	Export             typ.Type
 	Types              map[string]typ.Type
+	TypestateProtocols map[typestate.Protocol]typestate.Definition
 	FunctionSignatures map[string]signature.Function
 }
 
@@ -28,6 +30,7 @@ func New(path string) *Manifest {
 	return &Manifest{
 		Path:               path,
 		Types:              make(map[string]typ.Type),
+		TypestateProtocols: make(map[typestate.Protocol]typestate.Definition),
 		FunctionSignatures: make(map[string]signature.Function),
 	}
 }
@@ -41,6 +44,44 @@ func (m *Manifest) DefineType(name string, t typ.Type) {
 		m.Types = make(map[string]typ.Type)
 	}
 	m.Types[name] = t
+}
+
+// DefineTypestateProtocol records the finite state machine that lifecycle
+// effects in this manifest may reference.
+func (m *Manifest) DefineTypestateProtocol(def typestate.Definition) error {
+	if m == nil {
+		return nil
+	}
+	if err := def.Validate(); err != nil {
+		return err
+	}
+	normalized := def.Normalized()
+	if m.TypestateProtocols == nil {
+		m.TypestateProtocols = make(map[typestate.Protocol]typestate.Definition)
+	}
+	m.TypestateProtocols[normalized.Protocol] = normalized
+	return nil
+}
+
+// TypestateProtocol returns a cloned protocol declaration.
+func (m *Manifest) TypestateProtocol(protocol typestate.Protocol) (typestate.Definition, bool) {
+	if m == nil || m.TypestateProtocols == nil {
+		return typestate.Definition{}, false
+	}
+	def, ok := m.TypestateProtocols[protocol]
+	if !ok {
+		return typestate.Definition{}, false
+	}
+	return def.Clone(), true
+}
+
+// Validate checks manifest-level cross references that cannot be validated by
+// individual type/effect codecs alone.
+func (m *Manifest) Validate() error {
+	if err := validateManifestFunctionSignatures(m); err != nil {
+		return err
+	}
+	return validateManifestTypestateUsage(m)
 }
 
 // DefineFunctionSignature records effect-bearing metadata for a named function.
@@ -70,6 +111,9 @@ func Encode(m *Manifest) ([]byte, error) {
 	if m == nil {
 		return nil, errors.New("manifest: encode nil manifest")
 	}
+	if err := m.Validate(); err != nil {
+		return nil, err
+	}
 
 	wm := manifestWire{
 		Path:    m.Path,
@@ -97,6 +141,24 @@ func Encode(m *Manifest) ([]byte, error) {
 				return nil, fmt.Errorf("manifest: encode type %q: %w", name, err)
 			}
 			wm.Types = append(wm.Types, namedTypeWire{Name: name, Type: encoded})
+		}
+	}
+
+	if len(m.TypestateProtocols) > 0 {
+		names := make([]string, 0, len(m.TypestateProtocols))
+		for protocol := range m.TypestateProtocols {
+			names = append(names, protocol.String())
+		}
+		sort.Strings(names)
+
+		wm.TypestateProtocols = make([]typestateProtocolWire, 0, len(names))
+		for _, name := range names {
+			protocol := typestate.Protocol(name)
+			encoded, err := encodeTypestateProtocol(m.TypestateProtocols[protocol])
+			if err != nil {
+				return nil, fmt.Errorf("manifest: encode typestate protocol %q: %w", name, err)
+			}
+			wm.TypestateProtocols = append(wm.TypestateProtocols, encoded)
 		}
 	}
 
@@ -154,12 +216,26 @@ func Decode(data []byte) (*Manifest, error) {
 		m.DefineType(named.Name, t)
 	}
 
+	for _, protocol := range wm.TypestateProtocols {
+		def, err := decodeTypestateProtocol(protocol)
+		if err != nil {
+			return nil, fmt.Errorf("manifest: decode typestate protocol %q: %w", protocol.Name, err)
+		}
+		if err := m.DefineTypestateProtocol(def); err != nil {
+			return nil, fmt.Errorf("manifest: decode typestate protocol %q: %w", protocol.Name, err)
+		}
+	}
+
 	for _, named := range wm.FunctionSignatures {
 		sig, err := decodeFunctionSignature(named)
 		if err != nil {
 			return nil, fmt.Errorf("manifest: decode function signature %q: %w", named.Name, err)
 		}
 		m.DefineFunctionSignature(named.Name, sig)
+	}
+
+	if err := m.Validate(); err != nil {
+		return nil, err
 	}
 
 	return m, nil
@@ -170,6 +246,7 @@ type manifestWire struct {
 	Version            string                  `json:"version,omitempty"`
 	Export             *typeWire               `json:"export,omitempty"`
 	Types              []namedTypeWire         `json:"types,omitempty"`
+	TypestateProtocols []typestateProtocolWire `json:"typestateProtocols,omitempty"`
 	FunctionSignatures []functionSignatureWire `json:"functionSignatures,omitempty"`
 }
 
@@ -265,6 +342,25 @@ func validateFunctionOperationalEffects(fn *typ.Function, effects signature.Oper
 			return fmt.Errorf("duplicate return allocation template for return index %d", template.ReturnIndex)
 		}
 		seenReturnAllocations[template.ReturnIndex] = struct{}{}
+		if err := validateReturnAllocationTemplate(template); err != nil {
+			return fmt.Errorf("return allocation template: %w", err)
+		}
+	}
+	return nil
+}
+
+func validateManifestFunctionSignatures(m *Manifest) error {
+	if m == nil {
+		return nil
+	}
+	for name, sig := range m.FunctionSignatures {
+		var effects signature.OperationalEffects
+		if sig.OperationalEffects != nil {
+			effects = *sig.OperationalEffects
+		}
+		if err := validateFunctionOperationalEffects(sig.Type, effects); err != nil {
+			return fmt.Errorf("function signature %q: %w", name, err)
+		}
 	}
 	return nil
 }

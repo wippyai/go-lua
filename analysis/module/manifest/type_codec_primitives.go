@@ -243,6 +243,12 @@ func decodeRecord(w *typeWire) (typ.Type, error) {
 		b.Metatable(mt)
 	}
 	if w.MapKey != nil || w.MapValue != nil {
+		if w.MapKey == nil {
+			return nil, fmt.Errorf("record map key missing type")
+		}
+		if w.MapValue == nil {
+			return nil, fmt.Errorf("record map value missing type")
+		}
 		key, err := decodeType(w.MapKey)
 		if err != nil {
 			return nil, err

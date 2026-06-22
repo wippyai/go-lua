@@ -56,15 +56,35 @@ func decodeEffectReturn(w *effectReturnWire) (returns.ReturnType, error) {
 	case "returns.selectResultOfCases":
 		return nil, inactiveReturnTransform(returns.SelectResultOfCases{})
 	case "returns.elementOf":
-		return returns.ElementOf{Source: decodeParamRef(w.Source)}, nil
+		source, err := decodeRequiredParamRef(w.Source, "returns.elementOf source missing param ref")
+		if err != nil {
+			return nil, err
+		}
+		return returns.ElementOf{Source: source}, nil
 	case "returns.optionalElementOf":
-		return returns.OptionalElementOf{Source: decodeParamRef(w.Source)}, nil
+		source, err := decodeRequiredParamRef(w.Source, "returns.optionalElementOf source missing param ref")
+		if err != nil {
+			return nil, err
+		}
+		return returns.OptionalElementOf{Source: source}, nil
 	case "returns.callbackReturn":
-		return returns.CallbackReturn{CallbackParam: decodeParamRef(w.CallbackParam)}, nil
+		callback, err := decodeRequiredParamRef(w.CallbackParam, "returns.callbackReturn callback param missing param ref")
+		if err != nil {
+			return nil, err
+		}
+		return returns.CallbackReturn{CallbackParam: callback}, nil
 	case "returns.arrayOfCallbackReturn":
-		return returns.ArrayOfCallbackReturn{CallbackParam: decodeParamRef(w.CallbackParam)}, nil
+		callback, err := decodeRequiredParamRef(w.CallbackParam, "returns.arrayOfCallbackReturn callback param missing param ref")
+		if err != nil {
+			return nil, err
+		}
+		return returns.ArrayOfCallbackReturn{CallbackParam: callback}, nil
 	case "returns.sameAs":
-		return returns.SameAs{Source: decodeParamRef(w.Source)}, nil
+		source, err := decodeRequiredParamRef(w.Source, "returns.sameAs source missing param ref")
+		if err != nil {
+			return nil, err
+		}
+		return returns.SameAs{Source: source}, nil
 	case "returns.deepElementOf":
 		return nil, inactiveReturnTransform(returns.DeepElementOf{})
 	case "returns.stringUnpackValue":
@@ -74,7 +94,11 @@ func decodeEffectReturn(w *effectReturnWire) (returns.ReturnType, error) {
 		if err != nil {
 			return nil, err
 		}
-		return returns.TypeProjection{Source: decodeParamRef(w.Source), Projection: projection.Projection{Steps: steps}}, nil
+		source, err := decodeRequiredParamRef(w.Source, "returns.typeProjection source missing param ref")
+		if err != nil {
+			return nil, err
+		}
+		return returns.TypeProjection{Source: source, Projection: projection.Projection{Steps: steps}}, nil
 	default:
 		return nil, fmt.Errorf("manifest: unknown return effect transform kind %q", w.Kind)
 	}

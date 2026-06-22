@@ -186,6 +186,12 @@ func decodeType(w *typeWire) (typ.Type, error) {
 		}
 		return typ.NewArray(elem), nil
 	case "map":
+		if w.Key == nil {
+			return nil, fmt.Errorf("map key missing type")
+		}
+		if w.Value == nil {
+			return nil, fmt.Errorf("map value missing type")
+		}
 		key, err := decodeType(w.Key)
 		if err != nil {
 			return nil, err
@@ -196,6 +202,12 @@ func decodeType(w *typeWire) (typ.Type, error) {
 		}
 		return typetable.NewMap(key, value), nil
 	case "readonlyMap":
+		if w.Key == nil {
+			return nil, fmt.Errorf("readonly map key missing type")
+		}
+		if w.Value == nil {
+			return nil, fmt.Errorf("readonly map value missing type")
+		}
 		key, err := decodeType(w.Key)
 		if err != nil {
 			return nil, err

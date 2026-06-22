@@ -466,6 +466,17 @@ func lifecycleManifestOptions(globals ...string) []Option {
 
 func lifecycleAdversarialManifest() *manifest.Manifest {
 	m := manifest.New("lifecycle")
+	if err := m.DefineTypestateProtocol(typestate.Definition{
+		Protocol:    typestate.Protocol("transaction"),
+		States:      []typestate.State{typestate.State("active"), typestate.State("finished")},
+		FinalStates: []typestate.State{typestate.State("finished")},
+		Transitions: []typestate.TransitionDecl{{
+			From: typestate.State("active"),
+			To:   typestate.State("finished"),
+		}},
+	}); err != nil {
+		panic(err)
+	}
 	m.DefineFunctionSignature("begin", signature.Function{
 		Type: typ.Func().
 			Param("tx", typ.Any).

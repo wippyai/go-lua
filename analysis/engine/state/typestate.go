@@ -6,10 +6,11 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/typestate"
 )
 
-// TypestateResource identifies one resource in state by canonical state key and
-// protocol. Callers are responsible for deriving ID from analysis facts rather
-// than source spelling.
-func TypestateResource(target pathaddr.StateKey, protocol typestate.Protocol) typestate.Resource {
+// TypestateResourceFromCanonicalKey identifies one resource in state by an
+// already-canonical state key and protocol. Callers that have an arbitrary path
+// key should use CanonicalTypestateResource or CanonicalTypestateResourceKey so
+// proven aliases fold into the same lifecycle resource.
+func TypestateResourceFromCanonicalKey(target pathaddr.StateKey, protocol typestate.Protocol) typestate.Resource {
 	return typestate.Resource{ID: typestate.ResourceID(target.String()), Protocol: protocol}
 }
 
@@ -18,7 +19,7 @@ func TypestateResource(target pathaddr.StateKey, protocol typestate.Protocol) ty
 // key so typestate transitions through aliases discharge the original
 // obligation.
 func (s State) CanonicalTypestateResource(ks *keyspace.KeySpace, target pathaddr.StateKey, protocol typestate.Protocol) typestate.Resource {
-	return TypestateResource(s.CanonicalTypestateResourceKey(ks, target), protocol)
+	return TypestateResourceFromCanonicalKey(s.CanonicalTypestateResourceKey(ks, target), protocol)
 }
 
 // CanonicalTypestateResourceKey returns the stable representative for a state

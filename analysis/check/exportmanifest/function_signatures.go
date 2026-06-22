@@ -300,7 +300,7 @@ func functionSummaryOperationalEffectsForArity(reg *axis.Registry, s summary.Sum
 		FrozenTables:                    operationalFrozenTables(s.NormalReturnFacts, paramArity),
 		EscapeEvents:                    operationalEscapeEvents(s.NormalReturnFacts, paramArity),
 		StoreRelations:                  operationalStoreRelations(s.NormalReturnFacts, paramArity),
-		ReturnAllocationTemplates:       operationalReturnAllocationTemplates(reg, s, signatureName),
+		ReturnAllocationTemplates:       operationalReturnAllocationTemplates(reg, s, signatureName, returnArity),
 	}
 	if out.IsEmpty() {
 		return nil
@@ -308,12 +308,15 @@ func functionSummaryOperationalEffectsForArity(reg *axis.Registry, s summary.Sum
 	return &out
 }
 
-func operationalReturnAllocationTemplates(reg *axis.Registry, s summary.Summary, signatureName string) []signature.ReturnAllocationTemplate {
-	if reg == nil || signatureName == "" || len(s.Returns) == 0 || len(s.HeapTableObjects) == 0 || s.HeapKeySpace == nil {
+func operationalReturnAllocationTemplates(reg *axis.Registry, s summary.Summary, signatureName string, returnArity int) []signature.ReturnAllocationTemplate {
+	if reg == nil || signatureName == "" || returnArity <= 0 || len(s.Returns) == 0 || len(s.HeapTableObjects) == 0 || s.HeapKeySpace == nil {
 		return nil
 	}
 	var out []signature.ReturnAllocationTemplate
 	for i, value := range s.Returns {
+		if i >= returnArity {
+			break
+		}
 		id, ok := product.Get(reg, value, identity.Key).ID()
 		if !ok {
 			continue

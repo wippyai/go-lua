@@ -6,10 +6,12 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/domain/effect"
+	"github.com/wippyai/go-lua/analysis/domain/effect/lifecycle"
 	"github.com/wippyai/go-lua/analysis/domain/effect/returns"
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
+	"github.com/wippyai/go-lua/analysis/domain/typestate"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
@@ -46,6 +48,60 @@ func TestCheckChunkRequiresRegistry(t *testing.T) {
 	_, err := CheckChunk(nil, Config{})
 	if !errors.Is(err, ErrRegistryRequired) {
 		t.Fatalf("CheckChunk error = %v, want ErrRegistryRequired", err)
+	}
+}
+
+func TestCheckChunkRejectsInvalidLifecycleManifest(t *testing.T) {
+	reg := standard.Registry()
+	m := manifest.New("lifecycle")
+	m.DefineFunctionSignature("begin", signature.Function{
+		Type: typ.Func().Param("tx", typ.Any).Build(),
+		Effect: effect.Empty.With(lifecycle.Acquire{
+			Target:   effect.ParamRef{Index: 0},
+			Protocol: "transaction",
+			State:    "active",
+		}),
+	})
+	_, err := CheckChunk(parseChunk(t, "begin({})"), Config{
+		Registry: reg,
+		Globals:  []string{"begin"},
+		Signatures: signaturelookup.Source{
+			Manifests: []*manifest.Manifest{m},
+		},
+	})
+	if err == nil || !strings.Contains(err.Error(), `lifecycle protocol "transaction" is not declared as a typestate FSM`) {
+		t.Fatalf("CheckChunk error = %v, want invalid lifecycle manifest", err)
+	}
+}
+
+func TestCheckChunkAcceptsDeclaredLifecycleManifest(t *testing.T) {
+	reg := standard.Registry()
+	m := manifest.New("lifecycle")
+	if err := m.DefineTypestateProtocol(typestate.Definition{
+		Protocol:    "transaction",
+		States:      []typestate.State{"active", "finished"},
+		FinalStates: []typestate.State{"finished"},
+		Transitions: []typestate.TransitionDecl{{From: "active", To: "finished"}},
+	}); err != nil {
+		t.Fatalf("DefineTypestateProtocol: %v", err)
+	}
+	m.DefineFunctionSignature("finish", signature.Function{
+		Type: typ.Func().Param("tx", typ.Any).Build(),
+		Effect: effect.Empty.With(lifecycle.Transition{
+			Target:   effect.ParamRef{Index: 0},
+			Protocol: "transaction",
+			From:     "active",
+			To:       "finished",
+		}),
+	})
+	if _, err := CheckChunk(parseChunk(t, "finish({})"), Config{
+		Registry: reg,
+		Globals:  []string{"finish"},
+		Signatures: signaturelookup.Source{
+			Manifests: []*manifest.Manifest{m},
+		},
+	}); err != nil {
+		t.Fatalf("CheckChunk: %v", err)
 	}
 }
 

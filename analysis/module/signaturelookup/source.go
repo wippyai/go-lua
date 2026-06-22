@@ -3,8 +3,10 @@
 package signaturelookup
 
 import (
-	"github.com/wippyai/go-lua/analysis/module/signature"
+	"fmt"
+
 	"github.com/wippyai/go-lua/analysis/module/manifest"
+	"github.com/wippyai/go-lua/analysis/module/signature"
 	"github.com/wippyai/go-lua/analysis/module/signaturelookup/internal/stdlib"
 )
 
@@ -15,6 +17,22 @@ import (
 type Source struct {
 	Manifests     []*manifest.Manifest
 	IncludeStdlib bool
+}
+
+// Validate checks in-memory manifest metadata before analysis consumes it.
+func (s Source) Validate() error {
+	for i, m := range s.Manifests {
+		if m == nil {
+			continue
+		}
+		if err := m.Validate(); err != nil {
+			if m.Path != "" {
+				return fmt.Errorf("signature manifest %q: %w", m.Path, err)
+			}
+			return fmt.Errorf("signature manifest %d: %w", i, err)
+		}
+	}
+	return nil
 }
 
 // Lookup returns a cloned signature for name.

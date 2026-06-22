@@ -679,6 +679,24 @@ func TestFunctionSummaryOperationalEffectsExportsReturnAllocationTemplate(t *tes
 	}
 }
 
+func TestFunctionSummaryOperationalEffectsSkipsReturnAllocationBeyondDeclaredReturns(t *testing.T) {
+	reg := standard.Registry()
+	rootID := identity.ID{Kind: "lua.table", Site: "summary-template", Index: 1}
+	rootValue := product.Set(reg, product.NewWithPresence(reg, product.ShapeTop, presence.Present()), identity.Key, identity.Singleton(rootID))
+	ks := keyspace.New()
+
+	got := functionSummaryOperationalEffects(reg, summary.Summary{
+		Returns:      []product.Value{rootValue},
+		HeapKeySpace: ks,
+		HeapTableObjects: map[identity.ID]heapidentity.TableObject{
+			rootID: heapidentity.NewTableObject(heapidentity.TableObjectConfig{Root: rootValue}),
+		},
+	}, typ.Func().Build(), "builder.no_return")
+	if got != nil {
+		t.Fatalf("operational effects = %#v, want nil when return allocation is beyond declared returns", got)
+	}
+}
+
 func TestFunctionSummaryOperationalEffectsSkipsDanglingReturnAllocationRefs(t *testing.T) {
 	reg := standard.Registry()
 	rootID := identity.ID{Kind: "lua.table", Site: "dangling-template", Index: 1}

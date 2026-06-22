@@ -215,7 +215,7 @@ func (r *Result) TypestateResourceAtBoundary(point cfg.Point, p pathdom.Path, pr
 	if !ok {
 		return typestate.Resource{}, false
 	}
-	return state.TypestateResource(key, protocol), true
+	return state.TypestateResourceFromCanonicalKey(key, protocol), true
 }
 
 // PathsEquivalentAtBoundary reports whether the solved boundary state proves

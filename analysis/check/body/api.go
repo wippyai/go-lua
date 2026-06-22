@@ -177,6 +177,9 @@ func newChecker(config Config) (*checker, error) {
 	if config.Registry == nil {
 		return nil, ErrRegistryRequired
 	}
+	if err := config.Signatures.Validate(); err != nil {
+		return nil, err
+	}
 	if config.TypeValues == nil {
 		config.TypeValues = typevalue.NewCache()
 	}

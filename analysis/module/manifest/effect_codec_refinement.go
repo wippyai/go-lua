@@ -83,11 +83,27 @@ func decodeEffectTransform(w *effectTransformWire) (mutation.TypeTransform, erro
 	case "mutation.unchanged":
 		return mutation.Unchanged{}, nil
 	case "mutation.elementUnion":
-		return mutation.ElementUnion{Source: decodeParamRef(w.Source)}, nil
+		source, err := decodeRequiredParamRef(w.Source, "mutation.elementUnion source missing param ref")
+		if err != nil {
+			return nil, err
+		}
+		return mutation.ElementUnion{Source: source}, nil
 	case "mutation.containerElementUnion":
-		return mutation.ContainerElementUnion{Container: decodeParamRef(w.Container), Value: decodeParamRef(w.Value)}, nil
+		container, err := decodeRequiredParamRef(w.Container, "mutation.containerElementUnion container missing param ref")
+		if err != nil {
+			return nil, err
+		}
+		value, err := decodeRequiredParamRef(w.Value, "mutation.containerElementUnion value missing param ref")
+		if err != nil {
+			return nil, err
+		}
+		return mutation.ContainerElementUnion{Container: container, Value: value}, nil
 	case "mutation.toArray":
-		return mutation.ToArray{Element: decodeParamRef(w.Element)}, nil
+		element, err := decodeRequiredParamRef(w.Element, "mutation.toArray element missing param ref")
+		if err != nil {
+			return nil, err
+		}
+		return mutation.ToArray{Element: element}, nil
 	default:
 		return nil, fmt.Errorf("manifest: unknown effect transform kind %q", w.Kind)
 	}

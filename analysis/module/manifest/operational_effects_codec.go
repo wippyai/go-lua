@@ -583,6 +583,9 @@ func encodeLifecycleEffect(effect signature.LifecycleEffect) (lifecycleEffectWir
 		}
 	}
 	if effect.Kind == signature.LifecycleTransition {
+		if _, err := encodeRequiredLifecycleState(effect.From, "transition missing source state"); err != nil {
+			return lifecycleEffectWire{}, err
+		}
 		to, err = encodeRequiredLifecycleState(effect.To, "transition missing target state")
 		if err != nil {
 			return lifecycleEffectWire{}, err
@@ -622,6 +625,9 @@ func decodeLifecycleEffect(w lifecycleEffectWire) (signature.LifecycleEffect, er
 		}
 	}
 	if kind == signature.LifecycleTransition {
+		if _, err = decodeRequiredLifecycleState(w.From, "transition missing source state"); err != nil {
+			return signature.LifecycleEffect{}, err
+		}
 		to, err = decodeRequiredLifecycleState(w.To, "transition missing target state")
 		if err != nil {
 			return signature.LifecycleEffect{}, err
@@ -671,6 +677,9 @@ func encodeReturnAllocationTemplate(template signature.ReturnAllocationTemplate)
 	if template.Root == "" {
 		return returnAllocationTemplateWire{}, fmt.Errorf("missing root")
 	}
+	if err := validateReturnAllocationTemplate(template); err != nil {
+		return returnAllocationTemplateWire{}, err
+	}
 	out := returnAllocationTemplateWire{
 		ReturnIndex: template.ReturnIndex,
 		Root:        string(template.Root),
@@ -708,7 +717,7 @@ func encodeAllocationObjectTemplate(object signature.AllocationObjectTemplate) (
 	}
 	for _, entry := range object.DynamicEntries {
 		if entry.Key == "" && entry.KeyType == nil && entry.Value == "" {
-			continue
+			return allocationObjectWire{}, fmt.Errorf("object %q dynamic entry missing key, key type, or value", object.ID)
 		}
 		var keyType *typeWire
 		if entry.KeyType != nil {
@@ -738,39 +747,54 @@ func decodeReturnAllocationTemplate(w returnAllocationTemplateWire) (signature.R
 		ReturnIndex: w.ReturnIndex,
 		Root:        signature.AllocationTemplateID(w.Root),
 	}
-	seen := make(map[signature.AllocationTemplateID]struct{}, len(w.Objects))
 	for _, object := range w.Objects {
 		decoded, err := decodeAllocationObjectTemplate(object)
 		if err != nil {
 			return signature.ReturnAllocationTemplate{}, err
 		}
-		if _, ok := seen[decoded.ID]; ok {
-			return signature.ReturnAllocationTemplate{}, fmt.Errorf("duplicate object id %q", decoded.ID)
-		}
-		seen[decoded.ID] = struct{}{}
 		out.Objects = append(out.Objects, decoded)
 	}
-	if _, ok := seen[out.Root]; !ok {
-		return signature.ReturnAllocationTemplate{}, fmt.Errorf("root %q has no object template", out.Root)
-	}
-	if err := validateReturnAllocationTemplateRefs(out, seen); err != nil {
+	if err := validateReturnAllocationTemplate(out); err != nil {
 		return signature.ReturnAllocationTemplate{}, err
 	}
 	return out, nil
 }
 
-func validateReturnAllocationTemplateRefs(
-	template signature.ReturnAllocationTemplate,
-	objects map[signature.AllocationTemplateID]struct{},
-) error {
+func validateReturnAllocationTemplate(template signature.ReturnAllocationTemplate) error {
+	if template.ReturnIndex < 0 {
+		return fmt.Errorf("negative return index %d", template.ReturnIndex)
+	}
+	if template.Root == "" {
+		return fmt.Errorf("missing root")
+	}
+	objects := make(map[signature.AllocationTemplateID]struct{}, len(template.Objects))
+	for _, object := range template.Objects {
+		if object.ID == "" {
+			return fmt.Errorf("missing object id")
+		}
+		if _, ok := objects[object.ID]; ok {
+			return fmt.Errorf("duplicate object id %q", object.ID)
+		}
+		objects[object.ID] = struct{}{}
+	}
+	if _, ok := objects[template.Root]; !ok {
+		return fmt.Errorf("root %q has no object template", template.Root)
+	}
 	for _, object := range template.Objects {
 		for _, member := range object.StaticMembers {
+			if member.Value == "" {
+				return fmt.Errorf("object %q static member %s missing value",
+					object.ID, segment.FormatSegments(member.Suffix))
+			}
 			if _, ok := objects[member.Value]; !ok {
 				return fmt.Errorf("object %q static member %s references missing object %q",
 					object.ID, segment.FormatSegments(member.Suffix), member.Value)
 			}
 		}
 		for _, entry := range object.DynamicEntries {
+			if entry.Key == "" && entry.KeyType == nil && entry.Value == "" {
+				return fmt.Errorf("object %q dynamic entry missing key, key type, or value", object.ID)
+			}
 			if entry.Key != "" {
 				if _, ok := objects[entry.Key]; !ok {
 					return fmt.Errorf("object %q dynamic entry references missing key object %q", object.ID, entry.Key)
@@ -821,7 +845,7 @@ func decodeAllocationObjectTemplate(w allocationObjectWire) (signature.Allocatio
 			keyType = t
 		}
 		if entry.Key == "" && keyType == nil && entry.Value == "" {
-			continue
+			return signature.AllocationObjectTemplate{}, fmt.Errorf("object %q dynamic entry missing key, key type, or value", w.ID)
 		}
 		out.DynamicEntries = append(out.DynamicEntries, signature.AllocationDynamicEntryTemplate{
 			Key:     signature.AllocationTemplateID(entry.Key),

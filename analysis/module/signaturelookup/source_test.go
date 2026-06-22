@@ -10,7 +10,9 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/domain/effect"
 	"github.com/wippyai/go-lua/analysis/domain/effect/dispatch"
+	"github.com/wippyai/go-lua/analysis/domain/effect/lifecycle"
 	"github.com/wippyai/go-lua/analysis/domain/effect/returns"
+	"github.com/wippyai/go-lua/analysis/domain/typestate"
 	"github.com/wippyai/go-lua/analysis/module/manifest"
 	"github.com/wippyai/go-lua/analysis/module/signature"
 	"github.com/wippyai/go-lua/analysis/module/signaturelookup/internal/stdlib"
@@ -64,6 +66,47 @@ func TestLookupMissing(t *testing.T) {
 
 	if got, ok := src.Lookup("not.a.function"); ok {
 		t.Fatalf("Lookup(not.a.function) = %v, want missing", got)
+	}
+}
+
+func TestSourceValidateRejectsLifecycleManifestWithoutFSM(t *testing.T) {
+	m := manifest.New("example/lifecycle")
+	m.DefineFunctionSignature("begin", signature.Function{
+		Type: typ.Func().Param("tx", typ.Any).Build(),
+		Effect: effect.Empty.With(lifecycle.Acquire{
+			Target:   effect.ParamRef{Index: 0},
+			Protocol: "transaction",
+			State:    "active",
+		}),
+	})
+	err := (Source{Manifests: []*manifest.Manifest{m}}).Validate()
+	if err == nil || !strings.Contains(err.Error(), `signature manifest "example/lifecycle"`) ||
+		!strings.Contains(err.Error(), `lifecycle protocol "transaction" is not declared as a typestate FSM`) {
+		t.Fatalf("Validate error = %v, want undeclared FSM", err)
+	}
+}
+
+func TestSourceValidateAcceptsDeclaredLifecycleFSM(t *testing.T) {
+	m := manifest.New("example/lifecycle")
+	if err := m.DefineTypestateProtocol(typestate.Definition{
+		Protocol:    "transaction",
+		States:      []typestate.State{"active", "finished"},
+		FinalStates: []typestate.State{"finished"},
+		Transitions: []typestate.TransitionDecl{{From: "active", To: "finished"}},
+	}); err != nil {
+		t.Fatalf("DefineTypestateProtocol: %v", err)
+	}
+	m.DefineFunctionSignature("finish", signature.Function{
+		Type: typ.Func().Param("tx", typ.Any).Build(),
+		Effect: effect.Empty.With(lifecycle.Transition{
+			Target:   effect.ParamRef{Index: 0},
+			Protocol: "transaction",
+			From:     "active",
+			To:       "finished",
+		}),
+	})
+	if err := (Source{Manifests: []*manifest.Manifest{m}}).Validate(); err != nil {
+		t.Fatalf("Validate: %v", err)
 	}
 }
 

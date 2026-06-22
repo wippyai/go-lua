@@ -176,6 +176,9 @@ func encodeAnnotations(annotations []annotation.Annotation) ([]annotationWire, e
 	}
 	out := make([]annotationWire, 0, len(annotations))
 	for _, ann := range annotations {
+		if ann.Name == "" {
+			return nil, fmt.Errorf("annotation missing name")
+		}
 		encoded := annotationWire{Name: ann.Name}
 		if ann.Arg.IsNone() {
 			encoded.Kind = "nil"
@@ -208,10 +211,15 @@ func decodeAnnotations(nodes []annotationWire) ([]annotation.Annotation, error) 
 	}
 	out := make([]annotation.Annotation, 0, len(nodes))
 	for _, node := range nodes {
+		if node.Name == "" {
+			return nil, fmt.Errorf("annotation missing name")
+		}
 		var payload annotation.Payload
 		switch node.Kind {
-		case "", "nil":
+		case "nil":
 			payload = annotation.Payload{}
+		case "":
+			return nil, fmt.Errorf("annotation %q missing arg kind", node.Name)
 		case "string":
 			if node.String == nil {
 				return nil, fmt.Errorf("annotation %q missing string arg", node.Name)

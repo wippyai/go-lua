@@ -168,7 +168,7 @@ func TestLenFloorInvalidationFollowsPathMutationPrefixes(t *testing.T) {
 func TestTypestateStateLaneTracksOpenClosedAndEscapedResources(t *testing.T) {
 	reg := standard.Registry()
 	domain := Domain(reg)
-	resource := TypestateResource(testStateKey(t, pathdom.PathKey("tx@1")), typestate.Protocol("transaction"))
+	resource := TypestateResourceFromCanonicalKey(testStateKey(t, pathdom.PathKey("tx@1")), typestate.Protocol("transaction"))
 	obligation := typestate.Obligation{Final: typestate.State("closed")}
 
 	open := State{}.AcquireTypestate(resource, typestate.State("open"), obligation)
@@ -199,7 +199,7 @@ func TestTypestateStateLaneTracksOpenClosedAndEscapedResources(t *testing.T) {
 
 func TestTypestateResourceUsesValidatedStateKeyIdentity(t *testing.T) {
 	target := testStateKey(t, pathdom.PathKey("sym12@1.tx"))
-	resource := TypestateResource(target, typestate.Protocol("transaction"))
+	resource := TypestateResourceFromCanonicalKey(target, typestate.Protocol("transaction"))
 	if resource.ID != typestate.ResourceID(target.String()) || resource.Protocol != typestate.Protocol("transaction") {
 		t.Fatalf("resource = %#v, want state key %q and protocol transaction", resource, target)
 	}
@@ -577,7 +577,7 @@ func TestStateCloneIndependenceAcrossLanes(t *testing.T) {
 		WriteNumFloor(ks, testStateKey(t, fx.pathKey), 3).
 		WriteDiffConstraint(pathdom.PathKey("clone-i"), pathdom.PathKey("clone-j"), -1).
 		AcquireTypestate(
-			TypestateResource(testStateKey(t, pathdom.PathKey("clone-tx")), typestate.Protocol("transaction")),
+			TypestateResourceFromCanonicalKey(testStateKey(t, pathdom.PathKey("clone-tx")), typestate.Protocol("transaction")),
 			typestate.State("open"),
 			typestate.Obligation{Final: typestate.State("closed")},
 		).
@@ -593,7 +593,7 @@ func TestStateCloneIndependenceAcrossLanes(t *testing.T) {
 	}
 	cloneOnlyFrozenID := identity.ID{Kind: "table", Site: "clone-only-freeze", Index: 1}
 	cloneOnlyStoreRelation := StoreRelation{Source: testStateKey(t, pathdom.PathKey("clone-only-src")), Into: testStateKey(t, pathdom.PathKey("clone-dst"))}
-	typestateResource := TypestateResource(testStateKey(t, pathdom.PathKey("clone-tx")), typestate.Protocol("transaction"))
+	typestateResource := TypestateResourceFromCanonicalKey(testStateKey(t, pathdom.PathKey("clone-tx")), typestate.Protocol("transaction"))
 	clone := original.Snapshot()
 	clone = clone.WriteValue(reg, fx.valueSlot, fx.absent)
 	clone = clone.WritePathKey(reg, ks, fx.pathKey, fx.absent)

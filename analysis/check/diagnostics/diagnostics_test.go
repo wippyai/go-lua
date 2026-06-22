@@ -307,6 +307,17 @@ func lifecycleDiagnosticsConfig() Config {
 
 func lifecycleSignatureSource() signaturelookup.Source {
 	m := manifest.New("lifecycle")
+	if err := m.DefineTypestateProtocol(typestate.Definition{
+		Protocol:    typestate.Protocol("transaction"),
+		States:      []typestate.State{typestate.State("active"), typestate.State("finished")},
+		FinalStates: []typestate.State{typestate.State("finished")},
+		Transitions: []typestate.TransitionDecl{{
+			From: typestate.State("active"),
+			To:   typestate.State("finished"),
+		}},
+	}); err != nil {
+		panic(err)
+	}
 	acquire := lifecyclefx.Acquire{
 		Target:   effect.ParamRef{Index: 0},
 		Protocol: typestate.Protocol("transaction"),

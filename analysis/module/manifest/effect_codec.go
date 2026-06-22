@@ -166,11 +166,15 @@ func encodeEffectLabel(label effect.Label) (effectLabelWire, error) {
 		if err != nil {
 			return effectLabelWire{}, err
 		}
+		from, err := encodeRequiredLifecycleState(l.From, "manifest: lifecycle transition missing source state")
+		if err != nil {
+			return effectLabelWire{}, err
+		}
 		return effectLabelWire{
 			Kind:     "lifecycle.transition",
 			Target:   encodeParamRef(l.Target),
 			Protocol: protocol,
-			From:     encodeOptionalLifecycleState(l.From),
+			From:     from,
 			To:       to,
 		}, nil
 	case lifecycle.Escape:
@@ -241,7 +245,11 @@ func decodeEffectLabel(w effectLabelWire) (effect.Label, error) {
 		if err != nil {
 			return nil, err
 		}
-		return iteration.Iterator{Source: decodeParamRef(w.Source), Kind: kind}, nil
+		source, err := decodeRequiredParamRef(w.Source, "iterator source missing param ref")
+		if err != nil {
+			return nil, err
+		}
+		return iteration.Iterator{Source: source, Kind: kind}, nil
 	case "mutation.mutate":
 		transform, err := decodeEffectTransform(w.Transform)
 		if err != nil {
@@ -251,11 +259,27 @@ func decodeEffectLabel(w effectLabelWire) (effect.Label, error) {
 		if err != nil {
 			return nil, err
 		}
-		return mutation.Mutate{Target: decodeParamRef(w.Target), Transform: transform, LengthDelta: length}, nil
+		target, err := decodeRequiredParamRef(w.Target, "mutation target missing param ref")
+		if err != nil {
+			return nil, err
+		}
+		return mutation.Mutate{Target: target, Transform: transform, LengthDelta: length}, nil
 	case "mutation.lengthChange":
-		return mutation.LengthChange{Target: decodeParamRef(w.Target), Delta: w.Delta}, nil
+		target, err := decodeRequiredParamRef(w.Target, "length change target missing param ref")
+		if err != nil {
+			return nil, err
+		}
+		return mutation.LengthChange{Target: target, Delta: w.Delta}, nil
 	case "mutation.tableMutator":
-		return mutation.TableMutator{Target: decodeParamRef(w.Target), Value: decodeParamRef(w.Value)}, nil
+		target, err := decodeRequiredParamRef(w.Target, "table mutator target missing param ref")
+		if err != nil {
+			return nil, err
+		}
+		value, err := decodeRequiredParamRef(w.Value, "table mutator value missing param ref")
+		if err != nil {
+			return nil, err
+		}
+		return mutation.TableMutator{Target: target, Value: value}, nil
 	case "lifecycle.acquire":
 		protocol, err := decodeLifecycleProtocol(w.Protocol, "manifest: lifecycle acquire missing protocol")
 		if err != nil {
@@ -265,8 +289,12 @@ func decodeEffectLabel(w effectLabelWire) (effect.Label, error) {
 		if err != nil {
 			return nil, err
 		}
+		target, err := decodeRequiredParamRef(w.Target, "lifecycle acquire target missing param ref")
+		if err != nil {
+			return nil, err
+		}
 		return lifecycle.Acquire{
-			Target:   decodeParamRef(w.Target),
+			Target:   target,
 			Protocol: protocol,
 			State:    to,
 			Obligation: typestate.Obligation{
@@ -282,10 +310,18 @@ func decodeEffectLabel(w effectLabelWire) (effect.Label, error) {
 		if err != nil {
 			return nil, err
 		}
+		from, err := decodeRequiredLifecycleState(w.From, "manifest: lifecycle transition missing source state")
+		if err != nil {
+			return nil, err
+		}
+		target, err := decodeRequiredParamRef(w.Target, "lifecycle transition target missing param ref")
+		if err != nil {
+			return nil, err
+		}
 		return lifecycle.Transition{
-			Target:   decodeParamRef(w.Target),
+			Target:   target,
 			Protocol: protocol,
-			From:     decodeOptionalLifecycleState(w.From),
+			From:     from,
 			To:       to,
 		}, nil
 	case "lifecycle.escape":
@@ -293,34 +329,74 @@ func decodeEffectLabel(w effectLabelWire) (effect.Label, error) {
 		if err != nil {
 			return nil, err
 		}
+		target, err := decodeRequiredParamRef(w.Target, "lifecycle escape target missing param ref")
+		if err != nil {
+			return nil, err
+		}
 		return lifecycle.Escape{
-			Target:   decodeParamRef(w.Target),
+			Target:   target,
 			Protocol: protocol,
 		}, nil
 	case "ownership.borrow":
-		return ownership.Borrow{Param: decodeParamRef(w.Param)}, nil
+		param, err := decodeRequiredParamRef(w.Param, "borrow param missing param ref")
+		if err != nil {
+			return nil, err
+		}
+		return ownership.Borrow{Param: param}, nil
 	case "ownership.retain":
-		return ownership.Retain{Param: decodeParamRef(w.Param)}, nil
+		param, err := decodeRequiredParamRef(w.Param, "retain param missing param ref")
+		if err != nil {
+			return nil, err
+		}
+		return ownership.Retain{Param: param}, nil
 	case "ownership.store":
-		return ownership.Store{Param: decodeParamRef(w.Param), Into: decodeParamRef(w.Into)}, nil
+		param, err := decodeRequiredParamRef(w.Param, "store param missing param ref")
+		if err != nil {
+			return nil, err
+		}
+		into, err := decodeRequiredParamRef(w.Into, "store target missing param ref")
+		if err != nil {
+			return nil, err
+		}
+		return ownership.Store{Param: param, Into: into}, nil
 	case "ownership.borrowAll":
 		return ownership.BorrowAll{}, nil
 	case "ownership.send":
 		return ownership.Send{FromParam: w.FromParam}, nil
 	case "ownership.sendParam":
-		return ownership.SendParam{Param: decodeParamRef(w.Param)}, nil
+		param, err := decodeRequiredParamRef(w.Param, "send param missing param ref")
+		if err != nil {
+			return nil, err
+		}
+		return ownership.SendParam{Param: param}, nil
 	case "ownership.export":
-		return ownership.Export{Param: decodeParamRef(w.Param)}, nil
+		param, err := decodeRequiredParamRef(w.Param, "export param missing param ref")
+		if err != nil {
+			return nil, err
+		}
+		return ownership.Export{Param: param}, nil
 	case "ownership.opaque":
-		return ownership.Opaque{Param: decodeParamRef(w.Param)}, nil
+		param, err := decodeRequiredParamRef(w.Param, "opaque param missing param ref")
+		if err != nil {
+			return nil, err
+		}
+		return ownership.Opaque{Param: param}, nil
 	case "ownership.freeze":
-		return ownership.Freeze{Param: decodeParamRef(w.Param)}, nil
+		param, err := decodeRequiredParamRef(w.Param, "freeze param missing param ref")
+		if err != nil {
+			return nil, err
+		}
+		return ownership.Freeze{Param: param}, nil
 	case postcondition.NormalReturnRefinementKind:
 		refinement, err := decodeEffectRefinement(w.Refinement)
 		if err != nil {
 			return nil, err
 		}
-		return postcondition.NormalReturnRefinement{Target: decodeParamRef(w.Target), Refinement: refinement}, nil
+		target, err := decodeRequiredParamRef(w.Target, "normal return refinement target missing param ref")
+		if err != nil {
+			return nil, err
+		}
+		return postcondition.NormalReturnRefinement{Target: target, Refinement: refinement}, nil
 	case "returns.return":
 		transform, err := decodeEffectReturn(w.ReturnType)
 		if err != nil {

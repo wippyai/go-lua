@@ -12,11 +12,11 @@ func encodeParamRef(ref effect.ParamRef) *paramRefWire {
 	return &paramRefWire{Index: ref.Index}
 }
 
-func decodeParamRef(w *paramRefWire) effect.ParamRef {
+func decodeRequiredParamRef(w *paramRefWire, missing string) (effect.ParamRef, error) {
 	if w == nil {
-		return effect.ParamRef{}
+		return effect.ParamRef{}, fmt.Errorf("manifest: %s", missing)
 	}
-	return effect.ParamRef{Index: w.Index}
+	return effect.ParamRef{Index: w.Index}, nil
 }
 
 func encodeIteratorKind(kind iteration.IteratorKind) (string, error) {
