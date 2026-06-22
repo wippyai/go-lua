@@ -1372,6 +1372,9 @@ func (p discriminatedUnionExhaustiveness) registrationDiagnostics(result *body.R
 				!diagnosticCanReach(p.flow, graph, reg.point, dispatch.point) {
 				continue
 			}
+			if p.registrationInvalidatedBeforeDispatch(result, graph, openRegistries, reg, dispatch) {
+				continue
+			}
 			if existing, ok := seen[reg.key]; ok && existing.point > reg.point {
 				continue
 			}
@@ -1441,7 +1444,11 @@ func (p discriminatedUnionExhaustiveness) registrationCalls(result *body.Result,
 		call, ok := result.Call(point)
 		if !ok || call.Call == nil {
 			if assignment, ok := result.OrdinaryAssignment(point); ok {
-				if mutation, ok := openRegistrationAssignment(assignment); ok {
+				if reg, ok := registrationAssignmentFromFact(result, assignment, point); ok {
+					registrations = append(registrations, reg)
+					continue
+				}
+				if mutation, ok := openRegistrationAssignment(result, point, assignment); ok {
 					mutation.point = point
 					open = append(open, mutation)
 				}
@@ -1460,9 +1467,29 @@ func (p discriminatedUnionExhaustiveness) registrationCalls(result *body.Result,
 	return registrations, open
 }
 
+func (p discriminatedUnionExhaustiveness) registrationInvalidatedBeforeDispatch(result *body.Result, graph cfg.Graph, open []openRegistrationMutation, reg registrationCall, dispatch dispatchCall) bool {
+	for _, mutation := range open {
+		if !mutation.hasKey || mutation.key != reg.key {
+			continue
+		}
+		if mutation.point == reg.point || mutation.point == dispatch.point ||
+			!diagnosticCanReach(p.flow, graph, reg.point, mutation.point) ||
+			!diagnosticCanReach(p.flow, graph, mutation.point, dispatch.point) {
+			continue
+		}
+		if registrationRegistryMatchesAt(result, mutation.point, mutation.registry, reg.registry) {
+			return true
+		}
+	}
+	return false
+}
+
 func (p discriminatedUnionExhaustiveness) openRegistrationCanReach(result *body.Result, graph cfg.Graph, open []openRegistrationMutation, dispatch dispatchCall) bool {
 	for _, mutation := range open {
 		if mutation.point == dispatch.point || !diagnosticCanReach(p.flow, graph, mutation.point, dispatch.point) {
+			continue
+		}
+		if mutation.hasKey {
 			continue
 		}
 		if mutation.opensAll {
@@ -1502,7 +1529,29 @@ func registrationMutationKeyMatchesCase(key string, cases []discriminantCase) bo
 	return false
 }
 
-func openRegistrationAssignment(fact semantics.OrdinaryAssignmentFact) (openRegistrationMutation, bool) {
+func registrationAssignmentFromFact(result *body.Result, fact semantics.OrdinaryAssignmentFact, point cfg.Point) (registrationCall, bool) {
+	registry, key, ok := registrationAssignmentTarget(result, point, fact)
+	if !ok || !registrationCallbackExpr(result, point, fact.Value) {
+		return registrationCall{}, false
+	}
+	return registrationCall{
+		point:    point,
+		registry: registry,
+		key:      key,
+		span:     ast.SpanOf(fact.Target),
+	}, true
+}
+
+func openRegistrationAssignment(result *body.Result, point cfg.Point, fact semantics.OrdinaryAssignmentFact) (openRegistrationMutation, bool) {
+	if registry, key, ok := registrationAssignmentTarget(result, point, fact); ok {
+		return openRegistrationMutation{
+			path:           registry,
+			registry:       registry,
+			key:            key,
+			hasKey:         true,
+			aliasSensitive: true,
+		}, true
+	}
 	if fact.HasPath && fact.Path.Symbol != 0 {
 		mutation := openRegistrationMutation{path: fact.Path, aliasSensitive: true}
 		if key, ok := fact.Path.DirectFieldName(); ok {
@@ -1529,6 +1578,26 @@ func openRegistrationAssignment(fact semantics.OrdinaryAssignmentFact) (openRegi
 		return openRegistrationMutation{path: pathdom.Path{Symbol: fact.Symbol}, opensAll: true}, true
 	}
 	return openRegistrationMutation{}, false
+}
+
+func registrationAssignmentTarget(result *body.Result, point cfg.Point, fact semantics.OrdinaryAssignmentFact) (pathdom.Path, string, bool) {
+	if fact.HasPath && fact.Path.Symbol != 0 {
+		if seg, ok := fact.Path.LastSegment(); ok {
+			if key, keyOK := segmentStringKey(seg); keyOK {
+				return fact.Path.Parent(), key, true
+			}
+		}
+	}
+	attr, ok := fact.Target.(*ast.AttrGetExpr)
+	if !ok || attr.KeySyntax != ast.AttrKeyIndex {
+		return pathdom.Path{}, "", false
+	}
+	registry, ok := result.ExpressionPath(attr.Object)
+	if !ok || registry.Symbol == 0 {
+		return pathdom.Path{}, "", false
+	}
+	key, ok := staticStringExprValueAt(result, point, attr.Key)
+	return registry, key, ok
 }
 
 func registrationCallFromFact(result *body.Result, fact semantics.CallFact, point cfg.Point) (registrationCall, bool) {
