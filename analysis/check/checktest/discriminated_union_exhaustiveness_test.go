@@ -1722,6 +1722,35 @@ router:dispatch(action)
 	})
 }
 
+func TestDiscriminatedUnionExhaustivenessBroadDirectTypedCallbackWarnsInsideCallback(t *testing.T) {
+	result := Check(`
+type Begin = { kind: "begin", id: string }
+type Commit = { kind: "commit", payment_id: string }
+type Cancel = { kind: "cancel", reason: string }
+type Action = Begin | Commit | Cancel
+
+local visit: fun(cb: fun(action: Action): string): string = function(cb)
+	return cb({ kind = "begin", id = "evt-1" })
+end
+
+local out = visit(function(action)
+	return action.id
+end)
+`, WithDiagnosticRule(
+		diagnostics.CodeDiscriminatedUnionExhaustive,
+		diagnostic.Enable(),
+	))
+	requireDiagnostic(t, result, diagnosticExpectation{
+		Code:     diagnostics.CodeDiscriminatedUnionExhaustive,
+		Severity: diagnostic.SeverityWarning,
+		MessageContains: []string{
+			"case-specific field read is not exhaustive",
+			"action.id",
+			"action.kind == \"begin\"",
+		},
+	})
+}
+
 func TestDiscriminatedUnionExhaustivenessSkipsRedundantCaseFieldWarningWhenOtherCaseProven(t *testing.T) {
 	result := Check(`
 type Begin = { kind: "begin", id: string }

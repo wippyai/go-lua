@@ -792,7 +792,35 @@ func callbackContextCallableType(reg *axis.Registry, prepass *body.Result, point
 			fn: instantiateSignatureTypeForContext(reg, prepass, point, site, sig.Type),
 		}
 	}
+	if callable := directCalleeCallableType(reg, prepass, point, site); callable.fn != nil {
+		return callable
+	}
 	return receiverMemberCallableType(reg, prepass, point, site)
+}
+
+func directCalleeCallableType(reg *axis.Registry, prepass *body.Result, point cfg.Point, site factflow.CallSite) callbackContextCallable {
+	if reg == nil || prepass == nil {
+		return callbackContextCallable{}
+	}
+	sym := site.CalleeSymbol()
+	if sym == 0 {
+		return callbackContextCallable{}
+	}
+	expr, ok := prepass.SymbolTypeAnnotation(sym)
+	if !ok {
+		return callbackContextCallable{}
+	}
+	base, ok := typeresolve.NewWithExternal(prepass, prepass.ModuleTypes()).Type(expr)
+	if !ok || base == nil || typ.IsAny(base) || typ.IsUnknown(base) || typ.IsNever(base) {
+		return callbackContextCallable{}
+	}
+	fn, ok := typecall.Callable(base)
+	if !ok || fn == nil {
+		return callbackContextCallable{}
+	}
+	return callbackContextCallable{
+		fn: instantiateSignatureTypeForContext(reg, prepass, point, site, fn),
+	}
 }
 
 func receiverMemberCallableType(reg *axis.Registry, prepass *body.Result, point cfg.Point, site factflow.CallSite) callbackContextCallable {

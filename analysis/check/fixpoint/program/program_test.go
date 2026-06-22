@@ -493,6 +493,34 @@ end)
 	assertBoundarySymbolConcreteType(t, reg, child, point, seen, "typed colon callback param")
 }
 
+func TestRunChunkSeedsDirectTypedCallbackParamFromCalleeAnnotation(t *testing.T) {
+	reg := standard.Registry()
+	stmts := parseChunk(t, `
+type Begin = { kind: "begin", id: string }
+type Commit = { kind: "commit", payment_id: string }
+type Action = Begin | Commit
+
+local visit_begin: fun(cb: fun(action: Begin): string): string = function(cb)
+	return cb({ kind = "begin", id = "evt-1" })
+end
+
+visit_begin(function(action)
+	local seen = action
+	return action.id
+end)
+`)
+	result, err := RunChunk(stmts, Config{Check: body.Config{Registry: reg}})
+	if err != nil {
+		t.Fatalf("RunChunk: %v", err)
+	}
+	child, point, seen := findNestedLocalByName(t, result.RootResult(), "seen")
+	want := typetable.NewRecord().
+		Field("id", typ.String).
+		Field("kind", typ.LiteralString("begin")).
+		Build()
+	assertBoundarySymbolType(t, reg, child, point, seen, want, "direct typed callback param")
+}
+
 func TestRunChunkNonDominatingFieldDefinedWrapperReturnStaysMaybeNil(t *testing.T) {
 	reg := standard.Registry()
 	stmts := parseChunk(t, `
