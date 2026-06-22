@@ -1005,6 +1005,168 @@ local out = router:dispatch(action)
 	})
 }
 
+func TestDiscriminatedUnionExhaustivenessKeepsRegistrationsAfterStaticNonCaseAssignment(t *testing.T) {
+	result := Check(`
+type Begin = { kind: "begin", id: string }
+type Commit = { kind: "commit", payment_id: string }
+type Cancel = { kind: "cancel", reason: string }
+type Action = Begin | Commit | Cancel
+
+local router: any = {}
+router:on("begin", function(action: Action): string return action.kind end)
+router:on("commit", function(action: Action): string return action.kind end)
+router.metadata = "ready"
+
+local action: Action = { kind = "begin", id = "evt-1" }
+local out = router:dispatch(action)
+`, WithDiagnosticRule(
+		diagnostics.CodeDiscriminatedUnionExhaustive,
+		diagnostic.Enable(),
+	))
+	requireDiagnostic(t, result, diagnosticExpectation{
+		Code:            diagnostics.CodeDiscriminatedUnionExhaustive,
+		Severity:        diagnostic.SeverityWarning,
+		DiagnosticCount: 1,
+		MessageContains: []string{"registered callbacks are not exhaustive", "router.cancel"},
+		EvidenceOrdered: []string{
+			"`router` is dispatched with discriminant `action.kind`",
+			"registered cases: `router.begin`, `router.commit`",
+			"missing registrations: `router.cancel` for `action.kind == \"cancel\"`",
+		},
+	})
+}
+
+func TestDiscriminatedUnionExhaustivenessReportsNestedRegistrationCase(t *testing.T) {
+	result := Check(`
+type Begin = { kind: "begin", id: string }
+type Commit = { kind: "commit", payment_id: string }
+type Cancel = { kind: "cancel", reason: string }
+type Action = Begin | Commit | Cancel
+
+local app: any = { router = {} }
+app.router:on("begin", function(action: Action): string return action.kind end)
+app.router:on("commit", function(action: Action): string return action.kind end)
+
+local action: Action = { kind = "begin", id = "evt-1" }
+local out = app.router:dispatch(action)
+`, WithDiagnosticRule(
+		diagnostics.CodeDiscriminatedUnionExhaustive,
+		diagnostic.Enable(),
+	))
+	requireDiagnostic(t, result, diagnosticExpectation{
+		Code:            diagnostics.CodeDiscriminatedUnionExhaustive,
+		Severity:        diagnostic.SeverityWarning,
+		DiagnosticCount: 1,
+		MessageContains: []string{"registered callbacks are not exhaustive", "app.router.cancel"},
+		EvidenceOrdered: []string{
+			"`app.router` is dispatched with discriminant `action.kind`",
+			"registered cases: `app.router.begin`, `app.router.commit`",
+			"missing registrations: `app.router.cancel` for `action.kind == \"cancel\"`",
+		},
+	})
+}
+
+func TestDiscriminatedUnionExhaustivenessSkipsNestedRegistrationsAfterDynamicAssignment(t *testing.T) {
+	result := Check(`
+type Begin = { kind: "begin", id: string }
+type Commit = { kind: "commit", payment_id: string }
+type Cancel = { kind: "cancel", reason: string }
+type Action = Begin | Commit | Cancel
+
+local key = "cancel"
+local app: any = { router = {} }
+app.router:on("begin", function(action: Action): string return action.kind end)
+app.router:on("commit", function(action: Action): string return action.kind end)
+app.router[key] = function(action: Action): string return action.kind end
+
+local action: Action = { kind = "begin", id = "evt-1" }
+local out = app.router:dispatch(action)
+`, WithDiagnosticRule(
+		diagnostics.CodeDiscriminatedUnionExhaustive,
+		diagnostic.Enable(),
+	))
+	if hasDiagnosticCode(result.Diagnostics, diagnostics.CodeDiscriminatedUnionExhaustive) {
+		t.Fatalf("diagnostics = %#v, want no exhaustive-union warning after nested dynamic registration assignment", result.Diagnostics)
+	}
+}
+
+func TestDiscriminatedUnionExhaustivenessSkipsNestedRegistrationsAfterStaticAssignment(t *testing.T) {
+	result := Check(`
+type Begin = { kind: "begin", id: string }
+type Commit = { kind: "commit", payment_id: string }
+type Cancel = { kind: "cancel", reason: string }
+type Action = Begin | Commit | Cancel
+
+local app: any = { router = {} }
+app.router:on("begin", function(action: Action): string return action.kind end)
+app.router:on("commit", function(action: Action): string return action.kind end)
+app.router.cancel = function(action: Action): string return action.kind end
+
+local action: Action = { kind = "begin", id = "evt-1" }
+local out = app.router:dispatch(action)
+`, WithDiagnosticRule(
+		diagnostics.CodeDiscriminatedUnionExhaustive,
+		diagnostic.Enable(),
+	))
+	if hasDiagnosticCode(result.Diagnostics, diagnostics.CodeDiscriminatedUnionExhaustive) {
+		t.Fatalf("diagnostics = %#v, want no exhaustive-union warning after nested static registration assignment", result.Diagnostics)
+	}
+}
+
+func TestDiscriminatedUnionExhaustivenessHandlesNestedFreeFunctionRegistrations(t *testing.T) {
+	result := Check(`
+type Begin = { kind: "begin", id: string }
+type Commit = { kind: "commit", payment_id: string }
+type Cancel = { kind: "cancel", reason: string }
+type Action = Begin | Commit | Cancel
+
+local app: any = { router = {} }
+register(app.router, "begin", function(action: Action): string return action.kind end)
+register(app.router, "commit", function(action: Action): string return action.kind end)
+
+local action: Action = { kind = "begin", id = "evt-1" }
+local out = dispatch(app.router, action)
+`, WithGlobals("register", "dispatch"), WithDiagnosticRule(
+		diagnostics.CodeDiscriminatedUnionExhaustive,
+		diagnostic.Enable(),
+	))
+	requireDiagnostic(t, result, diagnosticExpectation{
+		Code:            diagnostics.CodeDiscriminatedUnionExhaustive,
+		Severity:        diagnostic.SeverityWarning,
+		DiagnosticCount: 1,
+		MessageContains: []string{"registered callbacks are not exhaustive", "app.router.cancel"},
+		EvidenceOrdered: []string{
+			"`app.router` is dispatched with discriminant `action.kind`",
+			"registered cases: `app.router.begin`, `app.router.commit`",
+			"missing registrations: `app.router.cancel` for `action.kind == \"cancel\"`",
+		},
+	})
+}
+
+func TestDiscriminatedUnionExhaustivenessSkipsNestedFreeFunctionRegistrationsAfterDynamicKey(t *testing.T) {
+	result := Check(`
+type Begin = { kind: "begin", id: string }
+type Commit = { kind: "commit", payment_id: string }
+type Cancel = { kind: "cancel", reason: string }
+type Action = Begin | Commit | Cancel
+
+local key = "cancel"
+local app: any = { router = {} }
+register(app.router, "begin", function(action: Action): string return action.kind end)
+register(app.router, "commit", function(action: Action): string return action.kind end)
+register(app.router, key, function(action: Action): string return action.kind end)
+
+local action: Action = { kind = "begin", id = "evt-1" }
+local out = dispatch(app.router, action)
+`, WithGlobals("register", "dispatch"), WithDiagnosticRule(
+		diagnostics.CodeDiscriminatedUnionExhaustive,
+		diagnostic.Enable(),
+	))
+	if hasDiagnosticCode(result.Diagnostics, diagnostics.CodeDiscriminatedUnionExhaustive) {
+		t.Fatalf("diagnostics = %#v, want no exhaustive-union warning after nested dynamic-key free registration", result.Diagnostics)
+	}
+}
+
 func TestDiscriminatedUnionExhaustivenessCountsNamedLocalCallbacks(t *testing.T) {
 	result := Check(`
 type Begin = { kind: "begin", id: string }

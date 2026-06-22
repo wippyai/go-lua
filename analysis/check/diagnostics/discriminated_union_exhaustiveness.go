@@ -1009,7 +1009,11 @@ type registrationCall struct {
 
 type openRegistrationMutation struct {
 	point    cfg.Point
+	path     pathdom.Path
 	registry pathdom.Path
+	key      string
+	hasKey   bool
+	opensAll bool
 }
 
 type dispatchCall struct {
@@ -1105,8 +1109,9 @@ func (p discriminatedUnionExhaustiveness) registrationCalls(result *body.Result,
 		call, ok := result.Call(point)
 		if !ok || call.Call == nil {
 			if assignment, ok := result.OrdinaryAssignment(point); ok {
-				if registry, ok := openRegistrationAssignment(assignment); ok {
-					open = append(open, openRegistrationMutation{point: point, registry: registry})
+				if mutation, ok := openRegistrationAssignment(assignment); ok {
+					mutation.point = point
+					open = append(open, mutation)
 				}
 			}
 			continue
@@ -1115,8 +1120,9 @@ func (p discriminatedUnionExhaustiveness) registrationCalls(result *body.Result,
 			registrations = append(registrations, reg)
 			continue
 		}
-		if registry, ok := openRegistrationMutationFromFact(result, point, call); ok {
-			open = append(open, openRegistrationMutation{point: point, registry: registry})
+		if mutation, ok := openRegistrationMutationFromFact(result, point, call); ok {
+			mutation.point = point
+			open = append(open, mutation)
 		}
 	}
 	return registrations, open
@@ -1124,28 +1130,61 @@ func (p discriminatedUnionExhaustiveness) registrationCalls(result *body.Result,
 
 func (p discriminatedUnionExhaustiveness) openRegistrationCanReach(result *body.Result, graph cfg.Graph, open []openRegistrationMutation, dispatch dispatchCall) bool {
 	for _, mutation := range open {
-		if mutation.point != dispatch.point && mutation.registry.Equal(dispatch.registry) && diagnosticCanReach(p.flow, graph, mutation.point, dispatch.point) {
+		if mutation.point == dispatch.point || !diagnosticCanReach(p.flow, graph, mutation.point, dispatch.point) {
+			continue
+		}
+		if mutation.opensAll {
+			if pathsOverlapForInvalidation(mutation.path, dispatch.registry) {
+				return true
+			}
+			continue
+		}
+		if pathHasPrefix(dispatch.registry, mutation.path) {
+			return true
+		}
+		if mutation.hasKey && mutation.registry.Equal(dispatch.registry) && registrationMutationKeyMatchesCase(mutation.key, dispatch.cases) {
 			return true
 		}
 	}
 	return false
 }
 
-func openRegistrationAssignment(fact semantics.OrdinaryAssignmentFact) (pathdom.Path, bool) {
+func registrationMutationKeyMatchesCase(key string, cases []discriminantCase) bool {
+	for _, c := range cases {
+		if c.key == key {
+			return true
+		}
+	}
+	return false
+}
+
+func openRegistrationAssignment(fact semantics.OrdinaryAssignmentFact) (openRegistrationMutation, bool) {
 	if fact.HasPath && fact.Path.Symbol != 0 {
-		root := fact.Path
-		root.Segments = nil
-		return root, true
+		mutation := openRegistrationMutation{path: fact.Path}
+		if key, ok := fact.Path.DirectFieldName(); ok {
+			mutation.registry = pathdom.Path{Root: fact.Path.Root, Symbol: fact.Path.Symbol, Version: fact.Path.Version}
+			mutation.key = key
+			mutation.hasKey = true
+			return mutation, true
+		}
+		if seg, ok := fact.Path.LastSegment(); ok {
+			if key, keyOK := segmentStringKey(seg); keyOK {
+				mutation.registry = fact.Path.Parent()
+				mutation.key = key
+				mutation.hasKey = true
+				return mutation, true
+			}
+		}
+		mutation.opensAll = true
+		return mutation, true
 	}
 	if fact.HasContainerPath && fact.ContainerPath.Symbol != 0 {
-		root := fact.ContainerPath
-		root.Segments = nil
-		return root, true
+		return openRegistrationMutation{path: fact.ContainerPath, opensAll: true}, true
 	}
 	if fact.HasSymbol && fact.Symbol != 0 {
-		return pathdom.Path{Symbol: fact.Symbol}, true
+		return openRegistrationMutation{path: pathdom.Path{Symbol: fact.Symbol}, opensAll: true}, true
 	}
-	return pathdom.Path{}, false
+	return openRegistrationMutation{}, false
 }
 
 func registrationCallFromFact(result *body.Result, fact semantics.CallFact, point cfg.Point) (registrationCall, bool) {
@@ -1174,33 +1213,33 @@ func registrationRegistryAndKeyIndex(result *body.Result, fact semantics.CallFac
 		return fact.ReceiverPath, 0, true
 	}
 	if len(fact.Args) >= 3 {
-		if registry, ok := result.ExpressionPath(fact.Args[0]); ok && registry.Symbol != 0 && len(registry.Segments) == 0 {
+		if registry, ok := result.ExpressionPath(fact.Args[0]); ok && registry.Symbol != 0 {
 			return registry, 1, true
 		}
 	}
 	return pathdom.Path{}, 0, false
 }
 
-func openRegistrationMutationFromFact(result *body.Result, point cfg.Point, fact semantics.CallFact) (pathdom.Path, bool) {
+func openRegistrationMutationFromFact(result *body.Result, point cfg.Point, fact semantics.CallFact) (openRegistrationMutation, bool) {
 	registry, keyIndex, ok := registrationRegistryAndKeyIndex(result, fact)
 	if ok && keyIndex >= 0 && keyIndex < len(fact.Args)-1 {
 		if _, ok := stringLiteralExprValue(fact.Args[keyIndex]); ok && registrationCallbackExpr(result, point, fact.Args[keyIndex+1]) {
-			return pathdom.Path{}, false
+			return openRegistrationMutation{}, false
 		}
 		if registrationCallbackExpr(result, point, fact.Args[keyIndex+1]) {
-			return registry, true
+			return openRegistrationMutation{path: registry, opensAll: true}, true
 		}
 	}
 	if fact.HasReceiverPath && callMayInvalidateTrackedPath(result, point, fact.ReceiverPath) {
-		return fact.ReceiverPath, true
+		return openRegistrationMutation{path: fact.ReceiverPath, opensAll: true}, true
 	}
 	for _, arg := range fact.Args {
 		argPath, ok := result.ExpressionPath(arg)
 		if ok && callMayInvalidateTrackedPath(result, point, argPath) {
-			return argPath, true
+			return openRegistrationMutation{path: argPath, opensAll: true}, true
 		}
 	}
-	return pathdom.Path{}, false
+	return openRegistrationMutation{}, false
 }
 
 func registrationCallbackExpr(result *body.Result, point cfg.Point, expr ast.Expr) bool {
@@ -1261,7 +1300,7 @@ func dispatchRegistryAndArgs(result *body.Result, fact semantics.CallFact) (path
 	}
 	if len(fact.Args) >= 2 {
 		registry, ok := result.ExpressionPath(fact.Args[0])
-		if ok && registry.Symbol != 0 && len(registry.Segments) == 0 {
+		if ok && registry.Symbol != 0 {
 			return registry, fact.Args[1:], true
 		}
 	}
