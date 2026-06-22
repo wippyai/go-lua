@@ -629,6 +629,70 @@ func TestManifestOperationalPathStaticMemberRequiresType(t *testing.T) {
 	}
 }
 
+func TestManifestOperationalReturnPresenceRelationRequiresExplicitIndices(t *testing.T) {
+	fn := typ.Func().Returns(typ.Any, typ.Any).Build()
+	tests := []struct {
+		name string
+		wire returnPresenceRelationWire
+		want string
+	}{
+		{
+			name: "trigger index",
+			wire: returnPresenceRelationWire{
+				TriggerPresence: "present",
+				TargetIndex:     encodeInt(1),
+				TargetPresence:  "absent",
+			},
+			want: "return relation trigger index missing",
+		},
+		{
+			name: "target index",
+			wire: returnPresenceRelationWire{
+				TriggerIndex:    encodeInt(0),
+				TriggerPresence: "present",
+				TargetPresence:  "absent",
+			},
+			want: "return relation target index missing",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := decodeFunctionSignature(functionSignatureWire{
+				Name: "presence-relation",
+				Type: testEncodedFunctionType(t, fn),
+				OperationalEffects: &operationalEffectsWire{
+					ReturnPresenceRelations: []returnPresenceRelationWire{tt.wire},
+				},
+			})
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("decodeFunctionSignature error = %v, want %q", err, tt.want)
+			}
+		})
+	}
+}
+
+func TestManifestOperationalReturnPresenceRelationEncodesZeroIndicesExplicitly(t *testing.T) {
+	wire, err := encodeOperationalEffects(&signature.OperationalEffects{
+		ReturnPresenceRelations: []signature.ReturnPresenceRelation{{
+			TriggerIndex:    0,
+			TriggerPresence: presence.Present(),
+			TargetIndex:     0,
+			TargetPresence:  presence.Absent(),
+		}},
+	})
+	if err != nil {
+		t.Fatalf("encodeOperationalEffects: %v", err)
+	}
+	if wire == nil || len(wire.ReturnPresenceRelations) != 1 {
+		t.Fatalf("operational wire = %#v, want one presence relation", wire)
+	}
+	relation := wire.ReturnPresenceRelations[0]
+	if relation.TriggerIndex == nil || *relation.TriggerIndex != 0 || relation.TargetIndex == nil || *relation.TargetIndex != 0 {
+		t.Fatalf("presence relation wire = %#v, want explicit triggerIndex/targetIndex 0", relation)
+	}
+}
+
 func TestManifestOperationalAllocationTemplateRequiresRootObject(t *testing.T) {
 	fn := typ.Func().Returns(typ.Any).Build()
 	_, err := decodeFunctionSignature(functionSignatureWire{

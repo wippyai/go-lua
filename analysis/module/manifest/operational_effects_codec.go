@@ -27,9 +27,9 @@ type operationalEffectsWire struct {
 }
 
 type returnPresenceRelationWire struct {
-	TriggerIndex    int    `json:"triggerIndex"`
+	TriggerIndex    *int   `json:"triggerIndex"`
 	TriggerPresence string `json:"triggerPresence"`
-	TargetIndex     int    `json:"targetIndex"`
+	TargetIndex     *int   `json:"targetIndex"`
 	TargetPresence  string `json:"targetPresence"`
 }
 
@@ -129,9 +129,9 @@ func encodeOperationalEffects(e *signature.OperationalEffects) (*operationalEffe
 			return nil, fmt.Errorf("return relation target presence: %w", err)
 		}
 		out.ReturnPresenceRelations = append(out.ReturnPresenceRelations, returnPresenceRelationWire{
-			TriggerIndex:    relation.TriggerIndex,
+			TriggerIndex:    encodeInt(relation.TriggerIndex),
 			TriggerPresence: trigger,
-			TargetIndex:     relation.TargetIndex,
+			TargetIndex:     encodeInt(relation.TargetIndex),
 			TargetPresence:  target,
 		})
 	}
@@ -245,10 +245,18 @@ func decodeOperationalEffects(w *operationalEffectsWire) (signature.OperationalE
 		if err != nil {
 			return signature.OperationalEffects{}, fmt.Errorf("return relation target presence: %w", err)
 		}
+		triggerIndex, err := decodeRequiredInt(relation.TriggerIndex, "return relation trigger index missing")
+		if err != nil {
+			return signature.OperationalEffects{}, err
+		}
+		targetIndex, err := decodeRequiredInt(relation.TargetIndex, "return relation target index missing")
+		if err != nil {
+			return signature.OperationalEffects{}, err
+		}
 		out.ReturnPresenceRelations = append(out.ReturnPresenceRelations, signature.ReturnPresenceRelation{
-			TriggerIndex:    relation.TriggerIndex,
+			TriggerIndex:    triggerIndex,
 			TriggerPresence: trigger,
-			TargetIndex:     relation.TargetIndex,
+			TargetIndex:     targetIndex,
 			TargetPresence:  target,
 		})
 	}
@@ -353,14 +361,14 @@ func canonicalizeOperationalEffectsWire(w *operationalEffectsWire) {
 	}
 	sort.Slice(w.ReturnPresenceRelations, func(i, j int) bool {
 		left, right := w.ReturnPresenceRelations[i], w.ReturnPresenceRelations[j]
-		if left.TriggerIndex != right.TriggerIndex {
-			return left.TriggerIndex < right.TriggerIndex
+		if c := compareOptionalInt(left.TriggerIndex, right.TriggerIndex); c != 0 {
+			return c < 0
 		}
 		if left.TriggerPresence != right.TriggerPresence {
 			return left.TriggerPresence < right.TriggerPresence
 		}
-		if left.TargetIndex != right.TargetIndex {
-			return left.TargetIndex < right.TargetIndex
+		if c := compareOptionalInt(left.TargetIndex, right.TargetIndex); c != 0 {
+			return c < 0
 		}
 		return left.TargetPresence < right.TargetPresence
 	})
