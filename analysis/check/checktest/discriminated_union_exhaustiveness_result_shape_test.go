@@ -706,31 +706,65 @@ end
 }
 
 func TestDiscriminatedUnionExhaustivenessReportsGenericEnvelopePayloadRead(t *testing.T) {
-	result := Check(`
+	src := strings.TrimLeft(`
 type Envelope<T> = { kind: "data", payload: T } | { kind: "empty", reason: string }
 
 local function use(env: Envelope<string>): string
     return env.payload
 end
-`, WithDiagnosticRule(
+`, "\n")
+	result := Check(src, WithDiagnosticRule(
 		diagnostics.CodeDiscriminatedUnionExhaustive,
 		diagnostic.Enable(),
 	))
-	requireDiagnostic(t, result, diagnosticExpectation{
+	diag := requireDiagnostic(t, result, diagnosticExpectation{
 		Code:            diagnostics.CodeDiscriminatedUnionExhaustive,
 		Severity:        diagnostic.SeverityWarning,
 		DiagnosticCount: 1,
+		Line:            4,
+		Column:          12,
 		MessageContains: []string{
 			"case-specific field read is not exhaustive",
 			"env.payload",
 			"env.kind == \"data\"",
 		},
-		EvidenceOrdered: []string{
-			"`env` is a union discriminated by `env.kind`",
-			"`env.payload` exists only for `env.kind == \"data\"`",
-			"no stable guard proves `env.kind == \"data\"` before this read",
+		EvidenceChain: []diagnosticEvidenceExpectation{
+			{
+				Kind:            diagnostic.EvidenceAbstractFact,
+				Trust:           diagnostic.TrustProven,
+				MessageContains: []string{"`env` is a union discriminated by `env.kind`"},
+			},
+			{
+				Kind:            diagnostic.EvidenceAbstractFact,
+				Trust:           diagnostic.TrustProven,
+				MessageContains: []string{"`env.payload` exists only for `env.kind == \"data\"`"},
+			},
+			{
+				Kind:            diagnostic.EvidenceMissingProof,
+				Trust:           diagnostic.TrustUnknown,
+				MessageContains: []string{"no stable guard proves `env.kind == \"data\"` before this read"},
+			},
 		},
+		LabelContains: []string{"case-specific field read"},
+		HelpContains:  []string{"Check the union case before reading this field"},
 	})
+	rendered := diagnostic.Render(diag, diagnostic.RenderOptions{
+		Sources:             diagnostic.SourceMap{"test.lua": src},
+		ShowSourceLabelRows: true,
+	})
+	want := `warning[lint.union.exhaustiveness]: case-specific field read is not exhaustive; ` + "`env.payload`" + ` requires ` + "`env.kind == \"data\"`" + `
+ --> test.lua:4:12
+  |
+4 |     return env.payload
+  |            ↑ case-specific field read
+
+because:
+  1. proven: ` + "`env`" + ` is a union discriminated by ` + "`env.kind`" + `
+  2. proven: ` + "`env.payload`" + ` exists only for ` + "`env.kind == \"data\"`" + `
+  3. missing proof: no stable guard proves ` + "`env.kind == \"data\"`" + ` before this read
+
+help: Check the union case before reading this field, or return from the opposite case before continuing.`
+	assertRenderedEqual(t, rendered, want)
 }
 
 func TestDiscriminatedUnionExhaustivenessAcceptsGenericEnvelopePayloadAfterKindGuard(t *testing.T) {
