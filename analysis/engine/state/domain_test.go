@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
@@ -137,6 +138,38 @@ func TestDefaultDomainLanesExposeEveryStateAxis(t *testing.T) {
 				t.Fatalf("TryDomainWithLaneSet(without %q) error = %v", lane, err)
 			}
 		})
+	}
+}
+
+func TestReachableTransitionCoversRegisteredMustFactLanes(t *testing.T) {
+	reg := standard.Registry()
+	ks := keyspace.New()
+	slot := key.SymbolValue(symbol.ID(12))
+
+	state := Domain(reg).Bottom().WriteValue(reg, slot, presentValue(reg))
+	if state.PathRefinementsSnapshot(ks).Bottom {
+		t.Fatal("reachable state kept path-evidence lane at bottom")
+	}
+	if state.FrozenTablesSnapshot().Bottom {
+		t.Fatal("reachable state kept frozen-table lane at bottom")
+	}
+	if state.EscapeEventsSnapshot().Bottom {
+		t.Fatal("reachable state kept escape-event lane at bottom")
+	}
+	if state.ChannelSelectFactsSnapshot().Bottom {
+		t.Fatal("reachable state kept channel-select lane at bottom")
+	}
+	if state.StoreRelationsSnapshot().Bottom {
+		t.Fatal("reachable state kept store-relation lane at bottom")
+	}
+	if state.lenFloors.lane.Bottom() {
+		t.Fatal("reachable state kept length-floor lane at bottom")
+	}
+	if state.NumFloorsSnapshot(ks).Bottom {
+		t.Fatal("reachable state kept numeric-floor lane at bottom")
+	}
+	if state.RelConstraints().Bottom {
+		t.Fatal("reachable state kept diff-relation lane at bottom")
 	}
 }
 

@@ -6,6 +6,10 @@ const LaneDiffRelations LaneID = "diff-relations"
 
 var diffRelationsDomainLane = stateLaneFactory{
 	id: LaneDiffRelations,
+	markReachable: func(s State) State {
+		s.diffRelations = s.diffRelations.reachable()
+		return s
+	},
 	build: func(reg *axis.Registry) stateLaneOps {
 		return stateLane(diffRelationDomain(),
 			func(s State) diffRelationLane { return s.diffRelations },

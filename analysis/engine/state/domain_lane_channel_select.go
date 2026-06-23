@@ -9,6 +9,10 @@ const LaneChannelSelect LaneID = "channel-select"
 
 var channelSelectDomainLane = stateLaneFactory{
 	id: LaneChannelSelect,
+	markReachable: func(s State) State {
+		s.channelSelect = s.channelSelect.Reachable()
+		return s
+	},
 	build: func(reg *axis.Registry) stateLaneOps {
 		return stateLane(channelselectfact.Domain(),
 			func(s State) channelselectfact.Lane { return s.channelSelect },

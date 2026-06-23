@@ -9,6 +9,10 @@ const LanePathEvidence LaneID = "path-evidence"
 
 var pathEvidenceDomainLane = stateLaneFactory{
 	id: LanePathEvidence,
+	markReachable: func(s State) State {
+		s.pathEvidence = s.pathEvidence.Reachable()
+		return s
+	},
 	build: func(reg *axis.Registry) stateLaneOps {
 		return stateLane(pathevidence.Domain(reg),
 			func(s State) pathevidence.Lane { return s.pathEvidence },

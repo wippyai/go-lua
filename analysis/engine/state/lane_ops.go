@@ -6,8 +6,9 @@ import (
 )
 
 type stateLaneFactory struct {
-	id    LaneID
-	build func(*axis.Registry) stateLaneOps
+	id            LaneID
+	build         func(*axis.Registry) stateLaneOps
+	markReachable func(State) State
 }
 
 type stateLaneOps struct {

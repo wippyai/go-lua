@@ -6,6 +6,10 @@ const LaneLenFloors LaneID = "len-floors"
 
 var lenFloorsDomainLane = stateLaneFactory{
 	id: LaneLenFloors,
+	markReachable: func(s State) State {
+		s.lenFloors = s.lenFloors.reachable()
+		return s
+	},
 	build: func(reg *axis.Registry) stateLaneOps {
 		return stateLane(lenFloorMapDomain(),
 			func(s State) lenFloorLane { return s.lenFloors },

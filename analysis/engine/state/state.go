@@ -11,6 +11,8 @@ import (
 	"github.com/wippyai/go-lua/analysis/symbol"
 )
 
+var defaultReachableStateOps = defaultDomainLaneCatalog.reachableOps()
+
 // State carries point-local abstract values and facts. Missing entries in
 // finite value-like lanes denote bottom for the caller's domain; must-fact
 // lanes record bottom explicitly with their corresponding flags.
@@ -96,12 +98,8 @@ func (s State) UpdateReturnSlot(reg *axis.Registry, index int, fn func(product.V
 }
 
 func (s State) reachable() State {
-	s.pathEvidence = s.pathEvidence.Reachable()
-	s.frozenTables = s.frozenTables.reachable()
-	s.escapeEvents = s.escapeEvents.Reachable()
-	s.channelSelect = s.channelSelect.Reachable()
-	s.storeRelations = s.storeRelations.reachable()
-	s.lenFloors = s.lenFloors.reachable()
-	s.numFloors = s.numFloors.reachable()
+	for _, markReachable := range defaultReachableStateOps {
+		s = markReachable(s)
+	}
 	return s
 }

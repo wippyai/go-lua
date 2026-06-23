@@ -8,8 +8,8 @@ import (
 )
 
 // LaneCatalog is the registration boundary for State product-lattice axes.
-// The State lattice container folds built lane operations; it does not know
-// which semantic lanes exist or which subset a caller selected.
+// The State container folds registered lane operations and reachability
+// transitions; it does not need a second hand-maintained list of semantic lanes.
 type LaneCatalog struct {
 	factories []stateLaneFactory
 }
@@ -59,6 +59,16 @@ func (c LaneCatalog) TryDomainWithLaneSet(reg *axis.Registry, lanes LaneSet) (la
 func (c LaneCatalog) ValidateLaneSet(lanes LaneSet) error {
 	_, err := c.selectFactories(lanes)
 	return err
+}
+
+func (c LaneCatalog) reachableOps() []func(State) State {
+	out := make([]func(State) State, 0, len(c.factories))
+	for _, factory := range c.factories {
+		if factory.markReachable != nil {
+			out = append(out, factory.markReachable)
+		}
+	}
+	return out
 }
 
 func (c LaneCatalog) selectFactories(lanes LaneSet) ([]stateLaneFactory, error) {

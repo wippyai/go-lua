@@ -80,6 +80,10 @@ func diffRelationLaneFromMustSet(l lift.MustSetLane[RelConstraint]) diffRelation
 	return diffRelationLane{mustSetLaneFromLift(l)}
 }
 
+func (l diffRelationLane) reachable() diffRelationLane {
+	return diffRelationLane{l.mustSetLane.reachable()}
+}
+
 func (l diffRelationLane) add(c RelConstraint) (diffRelationLane, bool) {
 	if !c.A.valid() || !c.C.valid() || c.A == c.C {
 		return l, false
