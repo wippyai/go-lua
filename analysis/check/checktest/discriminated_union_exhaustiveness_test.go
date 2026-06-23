@@ -143,7 +143,7 @@ end
 }
 
 func TestDiscriminatedUnionExhaustivenessHandlesNegatedLiteralCase(t *testing.T) {
-	result := Check(`
+	src := strings.TrimLeft(`
 type Begin = { kind: "begin", id: string }
 type Commit = { kind: "commit", payment_id: string }
 type Cancel = { kind: "cancel", reason: string }
@@ -155,7 +155,8 @@ local function route(action: Action): string
     end
     return ""
 end
-`, WithDiagnosticRule(
+`, "\n")
+	result := Check(src, WithDiagnosticRule(
 		diagnostics.CodeDiscriminatedUnionExhaustive,
 		diagnostic.Enable(),
 	))
@@ -163,10 +164,63 @@ end
 		Code:            diagnostics.CodeDiscriminatedUnionExhaustive,
 		Severity:        diagnostic.SeverityWarning,
 		DiagnosticCount: 1,
+		Line:            7,
+		Column:          8,
 		MessageContains: []string{"action.kind == \"cancel\""},
+		EvidenceMin:     5,
 		EvidenceOrdered: []string{
+			"branch chain checks discriminant `action.kind`",
+			"possible cases: `action.kind == \"begin\"`, `action.kind == \"cancel\"`, `action.kind == \"commit\"`",
 			"handled cases: `action.kind == \"begin\"`, `action.kind == \"commit\"`",
 			"missing cases: `action.kind == \"cancel\"`",
+			"no default branch handles the remaining union cases",
+		},
+		EvidenceChain: []diagnosticEvidenceExpectation{
+			{
+				Kind:            diagnostic.EvidenceAbstractFact,
+				Trust:           diagnostic.TrustProven,
+				MessageContains: []string{"branch chain checks discriminant `action.kind`"},
+			},
+			{
+				Kind:            diagnostic.EvidenceAbstractFact,
+				Trust:           diagnostic.TrustProven,
+				MessageContains: []string{"possible cases", "`action.kind == \"begin\"`", "`action.kind == \"cancel\"`", "`action.kind == \"commit\"`"},
+			},
+			{
+				Kind:            diagnostic.EvidenceAbstractFact,
+				Trust:           diagnostic.TrustProven,
+				MessageContains: []string{"handled cases", "`action.kind == \"begin\"`, `action.kind == \"commit\"`"},
+			},
+			{
+				Kind:            diagnostic.EvidenceMissingProof,
+				Trust:           diagnostic.TrustUnknown,
+				MessageContains: []string{"missing cases", "`action.kind == \"cancel\"`"},
+			},
+			{
+				Kind:            diagnostic.EvidenceMissingProof,
+				Trust:           diagnostic.TrustUnknown,
+				MessageContains: []string{"no default branch handles the remaining union cases"},
+			},
+		},
+		LabelContains: []string{"union case check"},
+		HelpContains:  []string{"Handle each missing case", "else branch"},
+		Sources:       diagnostic.SourceMap{"test.lua": src},
+		RenderOrderedContains: []string{
+			"warning[lint.union.exhaustiveness]: discriminated union handling is not exhaustive; missing case: `action.kind == \"cancel\"`",
+			"test.lua:7:8",
+			"7 |     if action.kind ~= \"cancel\" then",
+			"↑ union case check",
+			"because:",
+			"proven: branch chain checks discriminant `action.kind`",
+			"proven: possible cases: `action.kind == \"begin\"`, `action.kind == \"cancel\"`, `action.kind == \"commit\"`",
+			"proven: handled cases: `action.kind == \"begin\"`, `action.kind == \"commit\"`",
+			"missing proof: missing cases: `action.kind == \"cancel\"`",
+			"missing proof: no default branch handles the remaining union cases",
+			"help: Handle each missing case",
+		},
+		RenderNotContains: []string{
+			"want string",
+			"^~",
 		},
 	})
 }
