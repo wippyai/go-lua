@@ -134,16 +134,55 @@ end
 			EndCol:    28,
 		},
 		MessageContains: []string{"cannot assign xs[i]", "may be nil"},
+		EvidenceMin:     3,
 		EvidenceContains: []string{
 			"xs[i] can be number or nil here",
 			"n is declared as number",
 			"xs[i] is an indexed read that can miss or read nil",
 			"no proof shows the selected slot satisfies the declared type here",
 		},
+		EvidenceOrdered: []string{
+			"xs[i] can be number or nil here",
+			"n is declared as number",
+			"xs[i] is an indexed read that can miss or read nil; no proof shows the selected slot satisfies the declared type here",
+		},
+		EvidenceChain: []diagnosticEvidenceExpectation{
+			{
+				Kind:            diagnostic.EvidenceAbstractFact,
+				Trust:           diagnostic.TrustProven,
+				MessageContains: []string{"xs[i]", "number or nil"},
+			},
+			{
+				Kind:            diagnostic.EvidenceUserAssertion,
+				Trust:           diagnostic.TrustClaimed,
+				MessageContains: []string{"n", "number"},
+			},
+			{
+				Kind:            diagnostic.EvidenceMissingProof,
+				Trust:           diagnostic.TrustUnknown,
+				MessageContains: []string{"indexed read", "miss", "nil", "selected slot", "declared type"},
+			},
+		},
+		LabelMin:      2,
+		LabelContains: []string{"assigned value", "declared type"},
+		HelpContains:  []string{"Guard `xs[i]`", "provide a default value", "change the target type"},
+		Sources:       diagnostic.SourceMap{"test.lua": src},
+		RenderOrderedContains: []string{
+			"error[type.assignment]: cannot assign xs[i] because it may be nil",
+			"test.lua:10:23",
+			"declared type",
+			"10 |     local n: number = xs[i]",
+			"assigned value",
+			"because:",
+			"proven: xs[i] can be number or nil here",
+			"claimed: n is declared as number",
+			"missing proof: xs[i] is an indexed read that can miss or read nil; no proof shows the selected slot satisfies the declared type here",
+			"help: Guard `xs[i]` with a nil check",
+		},
 		RenderNotContains: []string{
+			"want string",
 			"^~",
 		},
-		Sources: diagnostic.SourceMap{"test.lua": src},
 	})
 }
 
@@ -174,15 +213,54 @@ end
 			EndCol:    28,
 		},
 		MessageContains: []string{"cannot assign xs[i]", "may be nil"},
+		EvidenceMin:     3,
 		EvidenceContains: []string{
 			"xs[i] can be number or nil here",
 			"n is declared as number",
 			"xs[i] is an indexed read that can miss or read nil",
 			"no proof shows the selected slot satisfies the declared type here",
 		},
+		EvidenceOrdered: []string{
+			"xs[i] can be number or nil here",
+			"n is declared as number",
+			"xs[i] is an indexed read that can miss or read nil; no proof shows the selected slot satisfies the declared type here",
+		},
+		EvidenceChain: []diagnosticEvidenceExpectation{
+			{
+				Kind:            diagnostic.EvidenceAbstractFact,
+				Trust:           diagnostic.TrustProven,
+				MessageContains: []string{"xs[i]", "number or nil"},
+			},
+			{
+				Kind:            diagnostic.EvidenceUserAssertion,
+				Trust:           diagnostic.TrustClaimed,
+				MessageContains: []string{"n", "number"},
+			},
+			{
+				Kind:            diagnostic.EvidenceMissingProof,
+				Trust:           diagnostic.TrustUnknown,
+				MessageContains: []string{"indexed read", "miss", "nil", "selected slot", "declared type"},
+			},
+		},
+		LabelMin:      2,
+		LabelContains: []string{"assigned value", "declared type"},
+		HelpContains:  []string{"Guard `xs[i]`", "provide a default value", "change the target type"},
+		Sources:       diagnostic.SourceMap{"test.lua": src},
+		RenderOrderedContains: []string{
+			"error[type.assignment]: cannot assign xs[i] because it may be nil",
+			"test.lua:9:23",
+			"declared type",
+			"9 |     local n: number = xs[i]",
+			"assigned value",
+			"because:",
+			"proven: xs[i] can be number or nil here",
+			"claimed: n is declared as number",
+			"missing proof: xs[i] is an indexed read that can miss or read nil; no proof shows the selected slot satisfies the declared type here",
+			"help: Guard `xs[i]` with a nil check",
+		},
 		RenderNotContains: []string{
+			"want string",
 			"^~",
 		},
-		Sources: diagnostic.SourceMap{"test.lua": src},
 	})
 }
