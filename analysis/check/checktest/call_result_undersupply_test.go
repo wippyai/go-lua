@@ -1,10 +1,10 @@
 package checktest
 
 import (
-	"strings"
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/check/diagnostics"
+	"github.com/wippyai/go-lua/analysis/diagnostic"
 )
 
 // A call that supplies fewer values than there are destructuring targets leaves
@@ -13,30 +13,83 @@ import (
 // rejected. This mirrors the literal under-supply path (`local a, b = 1`), which
 // already nil-pads the surplus slot.
 func TestCheckCallUnderSupplySurplusTargetIsNil(t *testing.T) {
-	result := Check(`
+	src := `
 local function one(): number return 1 end
 local a: number, b: number = one()
-local c: number = b
-return c
-`, WithStdlib())
-	diag := requireDiagnosticCode(t, result, diagnostics.CodeAssignmentType)
-	if !strings.Contains(diag.Message, "b") || !strings.Contains(diag.Message, "nil") || !strings.Contains(diag.Message, "number") {
-		t.Fatalf("message = %q, want nil-vs-number assignment diagnostic for `b`", diag.Message)
-	}
+return a
+`
+	requireDiagnostic(t, Check(src, WithStdlib()), diagnosticExpectation{
+		DiagnosticCount: 1,
+		Code:            diagnostics.CodeAssignmentType,
+		Line:            3,
+		MessageContains: []string{"cannot assign b", "nil", "number"},
+		EvidenceChain: []diagnosticEvidenceExpectation{
+			{
+				Kind:            diagnostic.EvidenceAbstractFact,
+				Trust:           diagnostic.TrustProven,
+				MessageContains: []string{"b has type nil"},
+			},
+			{
+				Kind:            diagnostic.EvidenceUserAssertion,
+				Trust:           diagnostic.TrustClaimed,
+				MessageContains: []string{"b is declared as number"},
+			},
+			{
+				Kind:            diagnostic.EvidenceAbstractFact,
+				Trust:           diagnostic.TrustProven,
+				MessageContains: []string{"b receives result 2 from `one(...)`", "no value was produced"},
+			},
+		},
+		LabelContains: []string{"declared type"},
+		HelpContains:  []string{"Provide a value for `b`", "change the target type to accept nil"},
+		Sources: diagnostic.SourceMap{
+			"test.lua": src,
+		},
+		RenderOrderedContains: []string{
+			"cannot assign b because it is nil, not number",
+			"declared type",
+			"local a: number, b: number = one()",
+			"b has type nil",
+			"b is declared as number",
+			"b receives result 2 from `one(...)`",
+			"help: Provide a value for `b`",
+		},
+		RenderNotContains: []string{"assigned value"},
+	})
 }
 
 // A third target supplied by a two-value call is nil for the same reason.
 func TestCheckCallUnderSupplyThirdTargetIsNil(t *testing.T) {
-	result := Check(`
+	src := `
 local function two(): number, number return 1, 2 end
 local a: number, b: number, c: number = two()
-local d: number = c
-return d
-`, WithStdlib())
-	diag := requireDiagnosticCode(t, result, diagnostics.CodeAssignmentType)
-	if !strings.Contains(diag.Message, "c") || !strings.Contains(diag.Message, "nil") {
-		t.Fatalf("message = %q, want nil assignment diagnostic for surplus target `c`", diag.Message)
-	}
+return a
+`
+	requireDiagnostic(t, Check(src, WithStdlib()), diagnosticExpectation{
+		DiagnosticCount: 1,
+		Code:            diagnostics.CodeAssignmentType,
+		Line:            3,
+		MessageContains: []string{"cannot assign c", "nil", "number"},
+		EvidenceChain: []diagnosticEvidenceExpectation{
+			{
+				Kind:            diagnostic.EvidenceAbstractFact,
+				Trust:           diagnostic.TrustProven,
+				MessageContains: []string{"c has type nil"},
+			},
+			{
+				Kind:            diagnostic.EvidenceUserAssertion,
+				Trust:           diagnostic.TrustClaimed,
+				MessageContains: []string{"c is declared as number"},
+			},
+			{
+				Kind:            diagnostic.EvidenceAbstractFact,
+				Trust:           diagnostic.TrustProven,
+				MessageContains: []string{"c receives result 3 from `two(...)`", "no value was produced"},
+			},
+		},
+		LabelContains: []string{"declared type"},
+		HelpContains:  []string{"Provide a value for `c`", "change the target type to accept nil"},
+	})
 }
 
 // A callee whose return arity is statically unknown (a function-typed parameter

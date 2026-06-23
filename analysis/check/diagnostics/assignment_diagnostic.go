@@ -4,6 +4,7 @@ import (
 	"strconv"
 
 	"github.com/wippyai/go-lua/analysis/diagnostic"
+	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
@@ -86,14 +87,14 @@ func objectMemberAssignmentDiagnostic(memberName string, want, got typ.Type, exp
 // initialized multi-assignment leaves nil because fewer values are supplied than
 // there are targets. The target has no source expression, so the report is
 // anchored at its declared-type annotation.
-func underSuppliedTargetDiagnostic(name string, want, got typ.Type, annotation ast.TypeExpr) diagnostic.Diagnostic {
+func underSuppliedTargetDiagnostic(name string, want, got typ.Type, annotation ast.TypeExpr, source sourceprovenance.ASTSource) diagnostic.Diagnostic {
 	typeSpan := ast.SpanOf(annotation)
 	return diagnostic.New(diagnostic.DiagnosticSpec{
 		Span:     typeSpan,
 		Code:     CodeAssignmentType,
 		Severity: diagnostic.SeverityError,
 		Message:  assignmentMessage(name, got, want),
-		Help:     assignmentHelp(name, got),
+		Help:     underSuppliedTargetHelp(name),
 		Explanation: diagnostic.NewExplanation(
 			diagnostic.Evidence{
 				Kind:    diagnostic.EvidenceAbstractFact,
@@ -107,11 +108,26 @@ func underSuppliedTargetDiagnostic(name string, want, got typ.Type, annotation a
 				Span:    typeSpan,
 				Message: declaredTypeEvidence(name, annotation, want),
 			},
+			diagnostic.Evidence{
+				Kind:    diagnostic.EvidenceAbstractFact,
+				Trust:   diagnostic.TrustProven,
+				Span:    typeSpan,
+				Message: underSuppliedTargetEvidence(name, underSuppliedSourceName(source), source.ResultIndex),
+			},
 		),
 		Labels: []diagnostic.Label{
 			sourceLabel(typeSpan, labelDeclaredType),
 		},
 	})
+}
+
+func underSuppliedSourceName(source sourceprovenance.ASTSource) string {
+	switch source.Kind {
+	case sourceprovenance.SourceCall, sourceprovenance.SourceVararg, sourceprovenance.SourceExpression:
+		return exprEvidenceNameOK(source.Expr)
+	default:
+		return ""
+	}
 }
 
 func pathAssignmentDiagnostic(target ast.Expr, value ast.Expr, got, want typ.Type, extraEvidence ...diagnostic.Evidence) diagnostic.Diagnostic {

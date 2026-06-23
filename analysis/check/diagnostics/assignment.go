@@ -82,7 +82,7 @@ func (p annotationAssignability) underSuppliedTargetAssignment(result *body.Resu
 	if !typ.Nil.Equals(got) {
 		return diagnostic.Diagnostic{}, false
 	}
-	return underSuppliedTargetDiagnostic(fact.Name, want, got, fact.Type), true
+	return underSuppliedTargetDiagnostic(fact.Name, want, got, fact.Type, fact.Source), true
 }
 
 func (p annotationAssignability) localAssignment(result *body.Result, point cfg.Point, fact semantics.LocalAssignmentFact, env guardEnv, directDefs map[symbol.ID]*ast.FunctionExpr) (diagnostic.Diagnostic, bool) {

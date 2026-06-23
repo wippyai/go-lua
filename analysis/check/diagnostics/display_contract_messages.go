@@ -219,6 +219,17 @@ func (diagnosticDisplay) AssignmentHelp(sourceName string, got typ.Type) string 
 	return "Use a value compatible with the expected type, or change the target type if the assigned value is valid."
 }
 
+func (diagnosticDisplay) UnderSuppliedTargetEvidence(name, sourceName string, resultIndex int) string {
+	if sourceName != "" && sourceName != unknownSourceName && resultIndex >= 0 {
+		return fmt.Sprintf("%s receives result %d from `%s`, but no value was produced for that result slot", name, resultIndex+1, sourceName)
+	}
+	return fmt.Sprintf("%s has no supplied value in this assignment, so Lua fills it with nil", name)
+}
+
+func (diagnosticDisplay) UnderSuppliedTargetHelp(name string) string {
+	return fmt.Sprintf("Provide a value for `%s`, remove the extra target, or change the target type to accept nil.", name)
+}
+
 func (diagnosticDisplay) OptionalAssignmentTargetMessage(containerName string) string {
 	if containerName != "" && containerName != unknownSourceName {
 		return fmt.Sprintf("cannot assign through optional %s without nil check", containerName)

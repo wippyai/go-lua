@@ -419,6 +419,14 @@ func assignmentHelp(sourceName string, got typ.Type) string {
 	return display.AssignmentHelp(sourceName, got)
 }
 
+func underSuppliedTargetEvidence(name, sourceName string, resultIndex int) string {
+	return display.UnderSuppliedTargetEvidence(name, sourceName, resultIndex)
+}
+
+func underSuppliedTargetHelp(name string) string {
+	return display.UnderSuppliedTargetHelp(name)
+}
+
 func assignmentTargetTypeEvidence(targetName string, want typ.Type) string {
 	return display.AssignmentTargetTypeEvidence(targetName, want)
 }

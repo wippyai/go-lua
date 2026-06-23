@@ -620,6 +620,15 @@ func TestNilabilityProofMessagesUseCentralDisplay(t *testing.T) {
 	if got := assignmentTargetTypeEvidence("", typ.Number); got != "assignment target requires number" {
 		t.Fatalf("assignmentTargetTypeEvidence fallback = %q", got)
 	}
+	if got := underSuppliedTargetEvidence("b", "one(...)", 1); got != "b receives result 2 from `one(...)`, but no value was produced for that result slot" {
+		t.Fatalf("underSuppliedTargetEvidence call = %q", got)
+	}
+	if got := underSuppliedTargetEvidence("b", "", -1); got != "b has no supplied value in this assignment, so Lua fills it with nil" {
+		t.Fatalf("underSuppliedTargetEvidence nil-fill = %q", got)
+	}
+	if got := underSuppliedTargetHelp("b"); got != "Provide a value for `b`, remove the extra target, or change the target type to accept nil." {
+		t.Fatalf("underSuppliedTargetHelp = %q", got)
+	}
 	if got := assignmentSourceTypeEvidence("argument 1", typ.LiteralInt(42)); got != "argument 1 has literal value 42" {
 		t.Fatalf("assignmentSourceTypeEvidence literal = %q", got)
 	}
