@@ -9,7 +9,7 @@ import (
 )
 
 func TestDiscriminatedUnionExhaustivenessHandlesResultShape(t *testing.T) {
-	result := Check(`
+	src := strings.TrimLeft(`
 type Result<T> = { ok: true, value: T } | { ok: false, error: string }
 
 local function use(result: Result<string>): string
@@ -18,21 +18,70 @@ local function use(result: Result<string>): string
     end
     return ""
 end
-`, WithDiagnosticRule(
+`, "\n")
+	result := Check(src, WithDiagnosticRule(
 		diagnostics.CodeDiscriminatedUnionExhaustive,
 		diagnostic.Enable(),
 	))
-	requireDiagnostic(t, result, diagnosticExpectation{
+	diag := requireDiagnostic(t, result, diagnosticExpectation{
 		Code:            diagnostics.CodeDiscriminatedUnionExhaustive,
 		Severity:        diagnostic.SeverityWarning,
 		DiagnosticCount: 1,
-		MessageContains: []string{"result.ok == false"},
-		EvidenceOrdered: []string{
-			"branch chain checks discriminant `result.ok`",
-			"handled cases: `result.ok == true`",
-			"missing cases: `result.ok == false`",
+		Line:            4,
+		Column:          8,
+		MessageContains: []string{
+			"discriminated union handling is not exhaustive",
+			"result.ok == false",
 		},
+		EvidenceChain: []diagnosticEvidenceExpectation{
+			{
+				Kind:            diagnostic.EvidenceAbstractFact,
+				Trust:           diagnostic.TrustProven,
+				MessageContains: []string{"branch chain checks discriminant `result.ok`"},
+			},
+			{
+				Kind:            diagnostic.EvidenceAbstractFact,
+				Trust:           diagnostic.TrustProven,
+				MessageContains: []string{"possible cases: `result.ok == false`, `result.ok == true`"},
+			},
+			{
+				Kind:            diagnostic.EvidenceAbstractFact,
+				Trust:           diagnostic.TrustProven,
+				MessageContains: []string{"handled cases: `result.ok == true`"},
+			},
+			{
+				Kind:            diagnostic.EvidenceMissingProof,
+				Trust:           diagnostic.TrustUnknown,
+				MessageContains: []string{"missing cases: `result.ok == false`"},
+			},
+			{
+				Kind:            diagnostic.EvidenceMissingProof,
+				Trust:           diagnostic.TrustUnknown,
+				MessageContains: []string{"no default branch handles the remaining union cases"},
+			},
+		},
+		LabelContains: []string{"union case check"},
+		HelpContains:  []string{"Handle each missing case", "else branch"},
 	})
+	rendered := diagnostic.Render(diag, diagnostic.RenderOptions{
+		Sources:             diagnostic.SourceMap{"test.lua": src},
+		ShowSourceLabelRows: true,
+	})
+	want := `warning[lint.union.exhaustiveness]: discriminated union handling is not exhaustive; missing case: ` + "`result.ok == false`" + `
+ --> test.lua:4:8
+  |
+4 |     if result.ok then
+  |        ↑ union case check
+
+because:
+  1. proven: branch chain checks discriminant ` + "`result.ok`" + `
+  2. proven: possible cases: ` + "`result.ok == false`, `result.ok == true`" + `
+  3. proven: handled cases: ` + "`result.ok == true`" + `
+  4. missing proof: missing cases: ` + "`result.ok == false`" + `
+  5. missing proof: no default branch handles the remaining union cases
+
+help: Handle each missing case, or add an else branch when a fallback is valid.`
+	assertRenderedEqual(t, rendered, want)
 }
 
 func TestDiscriminatedUnionExhaustivenessReportsUnguardedResultValueRead(t *testing.T) {
