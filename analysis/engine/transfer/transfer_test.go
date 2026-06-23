@@ -7,6 +7,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/engine/state"
@@ -193,6 +194,118 @@ func TestRun_JoinPointJoinsPredecessorStatesViaStateDomain(t *testing.T) {
 
 	assertValue(t, reg, got[join], slot, product.Top())
 	assertValue(t, reg, got[graph.Exit()], slot, product.Top())
+}
+
+func TestRun_StateLanesSelectExactStateAxes(t *testing.T) {
+	reg := standard.Registry()
+	graph := cfg.New()
+	branch := graph.AddNode(cfg.NodeBranch)
+	left := graph.AddNode(cfg.NodeNoop)
+	right := graph.AddNode(cfg.NodeNoop)
+	join := graph.AddNode(cfg.NodeJoin)
+	graph.AddEdge(graph.Entry(), branch, false)
+	graph.AddEdge(branch, left, true)
+	graph.AddEdge(branch, right, false)
+	graph.AddEdge(left, join, false)
+	graph.AddEdge(right, join, false)
+	graph.AddEdge(join, graph.Exit(), false)
+
+	slot := key.ReturnSlot(7)
+	tableID := identity.ID{Kind: "table", Site: "transfer-lanes", Index: 1}
+	run := func(lanes []state.LaneID) Result {
+		return Run(Config{
+			Graph:      graph,
+			Registry:   reg,
+			StateLanes: lanes,
+			NodeTransfer: func(ctx NodeContext, in state.State) state.State {
+				switch ctx.Point {
+				case left:
+					return in.WriteValue(reg, slot, presentValue(reg)).FreezeTable(tableID)
+				case right:
+					return in.FreezeTable(tableID)
+				default:
+					return in
+				}
+			},
+		})
+	}
+
+	defaultFlow := run(nil)
+	assertValue(t, reg, defaultFlow[join], slot, presentValue(reg))
+	if !defaultFlow[join].IsTableFrozen(tableID) {
+		t.Fatal("default state lanes dropped frozen-table fact")
+	}
+
+	valueOnly := run([]state.LaneID{state.LaneValues})
+	assertValue(t, reg, valueOnly[join], slot, presentValue(reg))
+	if valueOnly[join].IsTableFrozen(tableID) {
+		t.Fatal("values-only state lane selection preserved disabled frozen-table fact")
+	}
+}
+
+func TestRun_StateLanesNormalizeStraightLineOutputs(t *testing.T) {
+	reg := standard.Registry()
+	graph := cfg.New()
+	mid := graph.AddNode(cfg.NodeNoop)
+	graph.AddEdge(graph.Entry(), mid, false)
+	graph.AddEdge(mid, graph.Exit(), false)
+
+	slot := key.ReturnSlot(8)
+	tableID := identity.ID{Kind: "table", Site: "transfer-lanes-linear", Index: 1}
+	got := Run(Config{
+		Graph:      graph,
+		Registry:   reg,
+		StateLanes: []state.LaneID{state.LaneValues},
+		NodeTransfer: func(ctx NodeContext, in state.State) state.State {
+			if ctx.Point == graph.Entry() {
+				return in.WriteValue(reg, slot, presentValue(reg)).FreezeTable(tableID)
+			}
+			return in
+		},
+		EdgeTransfer: func(_ EdgeContext, out state.State) state.State {
+			if out.IsTableFrozen(tableID) {
+				t.Fatal("edge transfer observed disabled frozen-table lane")
+			}
+			return out
+		},
+	})
+
+	assertValue(t, reg, got[mid], slot, presentValue(reg))
+	if got[mid].IsTableFrozen(tableID) {
+		t.Fatal("straight-line transfer preserved disabled frozen-table fact")
+	}
+	assertValue(t, reg, got[graph.Exit()], slot, presentValue(reg))
+	if got[graph.Exit()].IsTableFrozen(tableID) {
+		t.Fatal("straight-line exit state preserved disabled frozen-table fact")
+	}
+}
+
+func TestRun_StateLanesEmptySelectionDropsEveryAxis(t *testing.T) {
+	reg := standard.Registry()
+	graph := cfg.New()
+	mid := graph.AddNode(cfg.NodeNoop)
+	graph.AddEdge(graph.Entry(), mid, false)
+	graph.AddEdge(mid, graph.Exit(), false)
+
+	slot := key.ReturnSlot(9)
+	tableID := identity.ID{Kind: "table", Site: "transfer-lanes-empty", Index: 1}
+	entryState := state.State{}.WriteValue(reg, slot, presentValue(reg)).FreezeTable(tableID)
+	got := Run(Config{
+		Graph:      graph,
+		Registry:   reg,
+		StateLanes: []state.LaneID{},
+		EntryState: entryState,
+		NodeTransfer: func(_ NodeContext, in state.State) state.State {
+			return in.WriteValue(reg, slot, absentValue(reg)).FreezeTable(tableID)
+		},
+	})
+
+	for _, point := range []cfg.Point{graph.Entry(), mid, graph.Exit()} {
+		assertValue(t, reg, got[point], slot, product.Bottom(reg))
+		if got[point].IsTableFrozen(tableID) {
+			t.Fatalf("empty lane selection preserved frozen-table fact at point %d", point)
+		}
+	}
 }
 
 func TestRun_ForwardsWidenAtAndWidenDelayToSolver(t *testing.T) {

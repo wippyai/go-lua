@@ -307,6 +307,7 @@ func solvePrepared(prepared *body.Static, config body.Config) (*body.Result, err
 		EntryState:                   config.EntryState,
 		Initial:                      config.Initial,
 		CallOutcome:                  config.CallOutcome,
+		StateLanes:                   cloneStateLanes(config.StateLanes),
 		CallOutcomeFactory:           config.CallOutcomeFactory,
 		SignatureArgumentType:        config.SignatureArgumentType,
 		SignatureArgumentTypeFactory: config.SignatureArgumentTypeFactory,
@@ -1266,10 +1267,18 @@ func checkConfigWithSummaries(
 func cloneCheckConfig(config body.Config) body.Config {
 	config.Globals = slices.Clone(config.Globals)
 	config.ExpressionValues = maps.Clone(config.ExpressionValues)
+	config.StateLanes = cloneStateLanes(config.StateLanes)
 	config.Signatures.Manifests = slices.Clone(config.Signatures.Manifests)
 	config.ModuleExports.Manifests = slices.Clone(config.ModuleExports.Manifests)
 	config.ModuleTypes.Manifests = slices.Clone(config.ModuleTypes.Manifests)
 	return config
+}
+
+func cloneStateLanes(lanes []state.LaneID) []state.LaneID {
+	if lanes == nil {
+		return nil
+	}
+	return append([]state.LaneID{}, lanes...)
 }
 
 func materializeChunk(

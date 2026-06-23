@@ -1868,6 +1868,46 @@ func TestCheckAndExportPublishesLocalAliasOfImportedFunctionEffect(t *testing.T)
 	assertExportedStoreExact(t, providerMod.Manifest, "provider.store", 0, 1)
 }
 
+func TestCheckStateLanesDisableSingleAnalysisAxis(t *testing.T) {
+	src := `
+type Job = { id: string }
+local job: Job = { id = "route-1" }
+process.send("worker-1", "route.ready", job)
+`
+	opts := []Option{WithStdlib(), WithManifest("process", ProcessManifest()), WithGlobals("process")}
+	defaultResult := Check(src, opts...)
+	if len(defaultResult.Diagnostics) != 0 {
+		t.Fatalf("default diagnostics = %#v, want none", defaultResult.Diagnostics)
+	}
+	if defaultResult.checked == nil || defaultResult.checked.RootResult() == nil {
+		t.Fatal("missing default checked root result")
+	}
+	defaultExit, ok := defaultResult.checked.RootResult().ExitState()
+	if !ok {
+		t.Fatal("missing default exit state")
+	}
+	if shared, stack := placementCounts(defaultExit); shared == 0 && stack == 0 {
+		t.Fatalf("default placement counts shared=%d stack=%d, want placement lane populated", shared, stack)
+	}
+
+	withoutPlacement := state.DefaultDomainLaneSet().Without(state.LanePlacement).IDs()
+	disabledOpts := append(append([]Option{}, opts...), WithStateLanes(withoutPlacement...))
+	disabledResult := Check(src, disabledOpts...)
+	if len(disabledResult.Diagnostics) != 0 {
+		t.Fatalf("disabled placement diagnostics = %#v, want none", disabledResult.Diagnostics)
+	}
+	if disabledResult.checked == nil || disabledResult.checked.RootResult() == nil {
+		t.Fatal("missing disabled checked root result")
+	}
+	disabledExit, ok := disabledResult.checked.RootResult().ExitState()
+	if !ok {
+		t.Fatal("missing disabled exit state")
+	}
+	if shared, stack := placementCounts(disabledExit); shared != 0 || stack != 0 {
+		t.Fatalf("disabled placement counts shared=%d stack=%d, want placement lane ignored by constructor slice", shared, stack)
+	}
+}
+
 func TestCheckProcessSendPromotesDeepCallbackBuiltMapEntryPlacement(t *testing.T) {
 	result := Check(`
 type Meta = {

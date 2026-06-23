@@ -201,6 +201,7 @@ func (s *Static) Solve(config SolveConfig) *Result {
 	flow := transfer.Run(transfer.Config{
 		Graph:        s.cfg.Graph,
 		Registry:     s.registry,
+		StateLanes:   config.StateLanes,
 		EntryState:   entryState,
 		Initial:      initial,
 		NodeTransfer: nodeTransfer,

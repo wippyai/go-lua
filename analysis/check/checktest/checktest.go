@@ -16,6 +16,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/diagnostic"
 	"github.com/wippyai/go-lua/analysis/domain/effect"
 	"github.com/wippyai/go-lua/analysis/domain/effect/ownership"
+	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/module/importlookup"
 	"github.com/wippyai/go-lua/analysis/module/manifest"
 	"github.com/wippyai/go-lua/analysis/module/signature"
@@ -34,6 +35,7 @@ type config struct {
 	manifests        map[string]*manifest.Manifest
 	modules          map[string]*ModuleResult
 	diagnosticPolicy diagnostic.Policy
+	stateLanes       []state.LaneID
 }
 
 type Result struct {
@@ -96,6 +98,12 @@ func WithDiagnosticRule(code diagnostic.Code, rule diagnostic.Rule) Option {
 			c.diagnosticPolicy.Rules = make(map[diagnostic.Code]diagnostic.Rule, 1)
 		}
 		c.diagnosticPolicy.Rules[code] = rule
+	}
+}
+
+func WithStateLanes(lanes ...state.LaneID) Option {
+	return func(c *config) {
+		c.stateLanes = append([]state.LaneID{}, lanes...)
 	}
 }
 
@@ -169,6 +177,7 @@ func checkSource(src, filename string, opts ...Option) Result {
 		Check: body.Config{
 			Registry:      reg,
 			Globals:       cfg.globals,
+			StateLanes:    cfg.stateLanes,
 			Signatures:    signatures,
 			ModuleExports: moduleExports,
 			ModuleTypes:   moduleTypes,

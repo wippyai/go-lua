@@ -18,6 +18,13 @@ func Domain(reg *axis.Registry) lattice.Lattice[State] {
 	})
 }
 
+// NormalizeForDomain returns st in the canonical shape owned by domain. For a
+// lane-selected domain, disabled lanes are dropped and enabled lanes are
+// canonicalized as though st had just been joined from bottom.
+func NormalizeForDomain(domain lattice.Lattice[State], st State) State {
+	return domain.Join(domain.Bottom(), st)
+}
+
 // DomainWithLaneSet builds a State lattice from a sealed ordered lane
 // selection. Use DomainWithLanes when the caller already has a plain slice from
 // configuration or UI controls.

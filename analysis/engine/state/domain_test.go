@@ -62,6 +62,31 @@ func TestDomainWithLaneSetSelectsIndependentAxes(t *testing.T) {
 	}
 }
 
+func TestNormalizeForDomainDropsDisabledLanes(t *testing.T) {
+	reg := standard.Registry()
+	slot := key.SymbolValue(symbol.ID(13))
+	value := presentValue(reg)
+	tableID := identity.ID{Kind: "table", Site: "domain-normalize-lanes", Index: 1}
+
+	valueOnly := DomainWithLanes(reg, []LaneID{LaneValues})
+	got := NormalizeForDomain(valueOnly, State{}.WriteValue(reg, slot, value).FreezeTable(tableID))
+	if read := got.ReadValue(reg, slot); !product.Domain(reg).Equal(read, value) {
+		t.Fatalf("NormalizeForDomain value = %s, want %s", formatValue(reg, read), formatValue(reg, value))
+	}
+	if got.IsTableFrozen(tableID) {
+		t.Fatal("NormalizeForDomain preserved disabled frozen-table lane")
+	}
+
+	empty := DomainWithLanes(reg, []LaneID{})
+	got = NormalizeForDomain(empty, State{}.WriteValue(reg, slot, value).FreezeTable(tableID))
+	if read := got.ReadValue(reg, slot); !product.Domain(reg).Equal(read, product.Bottom(reg)) {
+		t.Fatalf("NormalizeForDomain empty-domain value = %s, want bottom", formatValue(reg, read))
+	}
+	if got.IsTableFrozen(tableID) {
+		t.Fatal("NormalizeForDomain empty-domain preserved frozen-table lane")
+	}
+}
+
 func TestDomainWithLanesCopiesCallerSlice(t *testing.T) {
 	reg := standard.Registry()
 	slot := key.SymbolValue(symbol.ID(11))

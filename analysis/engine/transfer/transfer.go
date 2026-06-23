@@ -47,6 +47,10 @@ type Config struct {
 	Graph    cfg.Graph
 	Registry *axis.Registry
 
+	// StateLanes selects the State product-lattice lanes used by this solve.
+	// Nil uses the default lane set; a non-nil slice is the exact enabled set.
+	StateLanes []state.LaneID
+
 	// Entry is the point seeded with EntryState. Nil uses Graph.Entry().
 	Entry      *cfg.Point
 	EntryState state.State
@@ -77,6 +81,13 @@ func Run(config Config) Result {
 	graph := config.Graph
 	registry := config.Registry
 	domain := state.Domain(registry)
+	normalize := func(st state.State) state.State { return st }
+	if config.StateLanes != nil {
+		domain = state.DomainWithLanes(registry, config.StateLanes)
+		normalize = func(st state.State) state.State {
+			return state.NormalizeForDomain(domain, st)
+		}
+	}
 	cells := graph.RPO()
 	if len(cells) != 0 {
 		cells = append([]cfg.Point(nil), cells...)
@@ -106,33 +117,33 @@ func Run(config Config) Result {
 		Initial: func(point cfg.Point) state.State {
 			if config.Initial != nil {
 				if initial, ok := config.Initial(point); ok {
-					return initial
+					return normalize(initial)
 				}
 			}
 			if point == entry {
-				return config.EntryState
+				return normalize(config.EntryState)
 			}
 			return domain.Bottom()
 		},
 		Transfer: func(point cfg.Point, read func(cfg.Point) state.State, emit func(cfg.Point, state.State)) {
-			in := read(point)
-			out := nodeTransfer(NodeContext{
+			in := normalize(read(point))
+			out := normalize(nodeTransfer(NodeContext{
 				Graph:    graph,
 				Registry: registry,
 				Point:    point,
 				Node:     graph.Node(point),
 				Read:     read,
-			}, in)
+			}, in))
 
 			for _, succ := range graph.Successors(point) {
 				cond, hasCond := graph.EdgeCond(point, succ)
 				hasCond = hasCond && graph.IsBranch(point)
-				edgeOut := edgeTransfer(EdgeContext{
+				edgeOut := normalize(edgeTransfer(EdgeContext{
 					Graph:    graph,
 					Registry: registry,
 					Edge:     cfg.Edge{From: point, To: succ, Cond: cond},
 					HasCond:  hasCond,
-				}, out)
+				}, out))
 				emit(succ, edgeOut)
 			}
 		},

@@ -52,6 +52,10 @@ type Config struct {
 
 	Visibility *visibility.Resolver
 
+	// StateLanes selects the State product-lattice lanes for each solve.
+	// Nil uses the default lane set; a non-nil slice is the exact enabled set.
+	StateLanes []state.LaneID
+
 	EntryState state.State
 	Initial    transfer.InitialState
 
@@ -120,6 +124,10 @@ type SolveConfig struct {
 	EntryState state.State
 	Initial    transfer.InitialState
 	TypeValues *typevalue.Cache
+
+	// StateLanes selects the State product-lattice lanes for this solve.
+	// Nil uses the default lane set; a non-nil slice is the exact enabled set.
+	StateLanes []state.LaneID
 
 	CallOutcome                  callpayload.CallOutcomeProvider
 	CallOutcomeFactory           CallOutcomeFactory
