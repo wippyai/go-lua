@@ -271,7 +271,9 @@ func (p discriminatedUnionExhaustiveness) dispatchTableKeysAt(result *body.Resul
 		return nil, diagnostic.Span{}, false
 	}
 	if keys, tableSpan, basePoint, ok := p.dispatchTableBaseKeysAt(result, point, table); ok {
-		if !p.applyReachableDispatchTableAssignments(result, basePoint, point, table, keys) {
+		var ok bool
+		tableSpan, ok = p.applyReachableDispatchTableAssignments(result, basePoint, point, table, keys, tableSpan)
+		if !ok {
 			return nil, diagnostic.Span{}, false
 		}
 		if p.trackedPathMayBeInvalidatedBetween(result, result.Graph(), basePoint, point, table) {
@@ -333,13 +335,14 @@ func (p discriminatedUnionExhaustiveness) inheritedDispatchTableKeysAt(result *b
 		return nil, diagnostic.Span{}, false
 	}
 	keys := cloneDispatchKeySet(summary.keys)
-	if !p.applyReachableDispatchTableAssignments(result, result.Graph().Entry(), point, table, keys) {
+	tableSpan, ok := p.applyReachableDispatchTableAssignments(result, result.Graph().Entry(), point, table, keys, summary.span)
+	if !ok {
 		return nil, diagnostic.Span{}, false
 	}
 	if p.trackedPathMayBeInvalidatedBetween(result, result.Graph(), result.Graph().Entry(), point, table) {
 		return nil, diagnostic.Span{}, false
 	}
-	return keys, summary.span, true
+	return keys, tableSpan, true
 }
 
 func (p discriminatedUnionExhaustiveness) trackedPathMayBeInvalidatedBetween(result *body.Result, graph cfg.Graph, from, to cfg.Point, target pathdom.Path) bool {
@@ -413,10 +416,16 @@ func nestedObjectLiteralFact(result *body.Result, fact semantics.ObjectLiteralFa
 	return semantics.ObjectLiteralFact{}, false
 }
 
-func (p discriminatedUnionExhaustiveness) applyReachableDispatchTableAssignments(result *body.Result, from, point cfg.Point, table pathdom.Path, keys map[string]bool) bool {
+func (p discriminatedUnionExhaustiveness) applyReachableDispatchTableAssignments(
+	result *body.Result,
+	from, point cfg.Point,
+	table pathdom.Path,
+	keys map[string]bool,
+	tableSpan diagnostic.Span,
+) (diagnostic.Span, bool) {
 	graph := result.Graph()
 	if graph == nil {
-		return false
+		return diagnostic.Span{}, false
 	}
 	var idom map[cfg.Point]cfg.Point
 	if p.flow != nil && p.flow.graph == graph {
@@ -425,7 +434,7 @@ func (p discriminatedUnionExhaustiveness) applyReachableDispatchTableAssignments
 		idom = dominance.ComputeImmediateDominatorInfo(graph).Map()
 	}
 	if len(idom) == 0 {
-		return false
+		return diagnostic.Span{}, false
 	}
 	for _, candidate := range graph.RPO() {
 		if candidate == from || candidate == point {
@@ -442,25 +451,28 @@ func (p discriminatedUnionExhaustiveness) applyReachableDispatchTableAssignments
 			continue
 		}
 		if dominance.Dominates(idom, candidate, point) {
-			if replacement, _, ok := dispatchTableReplacementKeys(result, fact, table); ok {
+			if replacement, replacementSpan, ok := dispatchTableReplacementKeys(result, fact, table); ok {
 				replaceDispatchKeySet(keys, replacement)
+				tableSpan = replacementSpan
 				continue
 			}
 			if !staticKey {
-				return false
+				return diagnostic.Span{}, false
 			}
 			keys[key] = true
 			continue
 		}
-		if replacement, _, ok := dispatchTableReplacementKeys(result, fact, table); ok {
-			intersectDispatchKeySet(keys, replacement)
+		if replacement, replacementSpan, ok := dispatchTableReplacementKeys(result, fact, table); ok {
+			if intersectDispatchKeySet(keys, replacement) {
+				tableSpan = replacementSpan
+			}
 			continue
 		}
 		if !staticKey {
-			return false
+			return diagnostic.Span{}, false
 		}
 	}
-	return true
+	return tableSpan, true
 }
 
 func dispatchTableReplacementKeys(result *body.Result, fact semantics.OrdinaryAssignmentFact, table pathdom.Path) (map[string]bool, diagnostic.Span, bool) {
@@ -504,12 +516,15 @@ func replaceDispatchKeySet(target map[string]bool, replacement map[string]bool) 
 	}
 }
 
-func intersectDispatchKeySet(target map[string]bool, other map[string]bool) {
+func intersectDispatchKeySet(target map[string]bool, other map[string]bool) bool {
+	changed := false
 	for key := range target {
 		if !other[key] {
 			delete(target, key)
+			changed = true
 		}
 	}
+	return changed
 }
 
 func dispatchTableAssignmentKeyForPath(result *body.Result, point cfg.Point, fact semantics.OrdinaryAssignmentFact, table pathdom.Path) (key string, staticKey bool, touches bool) {
