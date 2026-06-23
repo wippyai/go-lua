@@ -196,7 +196,7 @@ func projectFromDynamicIndexFacts(config Config, point cfg.Point, p pathdom.Path
 	if !ok {
 		return product.Value{}, false
 	}
-	tableKey, ok := config.Visibility.KeySpace().FromStateKey(tableStateKey.PathKey())
+	tableKey, ok := config.Visibility.KeySpace().InternStateKey(tableStateKey)
 	if !ok {
 		return product.Value{}, false
 	}

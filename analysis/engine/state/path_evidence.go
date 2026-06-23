@@ -197,11 +197,11 @@ func (s State) HasIndexInRangeProofForStateKeys(ks *keyspace.KeySpace, indexKey,
 	if indexKey == "" || arrayKey == "" {
 		return false
 	}
-	index, ok := ks.FromStateKey(indexKey.PathKey())
+	index, ok := ks.InternStateKey(indexKey)
 	if !ok {
 		return false
 	}
-	array, ok := ks.FromStateKey(arrayKey.PathKey())
+	array, ok := ks.InternStateKey(arrayKey)
 	if !ok {
 		return false
 	}

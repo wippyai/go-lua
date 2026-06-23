@@ -339,7 +339,7 @@ func keyspaceKeyFromStateKey(resolver *visibility.Resolver, stateKey pathaddr.St
 	if ks == nil {
 		return keyspace.Key{}, false
 	}
-	return ks.FromStateKey(stateKey.PathKey())
+	return ks.InternStateKey(stateKey)
 }
 
 func addPathEqualityProofFromSource(

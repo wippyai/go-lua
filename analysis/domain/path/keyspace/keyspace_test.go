@@ -252,6 +252,43 @@ func TestCanonicalNamedRootsMatchAddressEncoding(t *testing.T) {
 	}
 }
 
+func TestInternStateKeyMatchesRawStateKeyParsing(t *testing.T) {
+	ks := New()
+	valid := []pathdom.PathKey{
+		"sym42",
+		"sym42@3",
+		"sym42@3.field",
+		`$0["item"]`,
+		"ret[2].value",
+		"global.value",
+	}
+	for _, raw := range valid {
+		stateKey, ok := pathaddr.StateKeyFromPathKey(raw)
+		if !ok {
+			t.Fatalf("StateKeyFromPathKey(%q) failed", raw)
+		}
+		got, gotOK := ks.InternStateKey(stateKey)
+		want, wantOK := ks.FromStateKey(raw)
+		if gotOK != wantOK {
+			t.Fatalf("InternStateKey(%q) ok = %v, want %v", raw, gotOK, wantOK)
+		}
+		if gotOK && got != want {
+			t.Fatalf("InternStateKey(%q) = %+v (%q), want %+v (%q)", raw, got, ks.Format(got), want, ks.Format(want))
+		}
+	}
+
+	named, ok := ks.InternStateKey(pathaddr.StateKey("s42.field"))
+	if !ok || ks.Format(named) != "s42.field" {
+		t.Fatalf("InternStateKey(named root s42.field) = %+v/%v format %q, want named root round-trip", named, ok, ks.Format(named))
+	}
+	if got, ok := ks.InternStateKey(pathaddr.StateKey(".field")); ok || got != (Key{}) {
+		t.Fatalf("InternStateKey(invalid syntax) = %+v/%v, want rejected", got, ok)
+	}
+	if got, ok := ks.InternStateKey(""); ok || got != (Key{}) {
+		t.Fatalf("InternStateKey(empty) = %+v/%v, want rejected", got, ok)
+	}
+}
+
 func TestHasPrefixMatchesAddress(t *testing.T) {
 	ks := New()
 	corpus := buildCorpus(t, ks)

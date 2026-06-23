@@ -82,7 +82,9 @@ func (ks *KeySpace) FromPathKey(key pathdom.PathKey) (Key, bool) {
 // when Version == 0), or an arbitrary named/placeholder/return-slot root spelled
 // verbatim. Unlike FromPathKey it does not require a version, so it covers the
 // numeric and length floor lanes whose root keys are unversioned. Compact stable
-// (s<id>) and rootless suffix spellings are not state keys and yield false.
+// symbol spellings are not interpreted as stable symbol keys here; when accepted
+// by the plain named-root grammar they remain ordinary named roots. Rootless
+// suffix spellings are not state keys and yield false.
 func (ks *KeySpace) FromStateKey(key pathdom.PathKey) (Key, bool) {
 	if key == "" {
 		return Key{}, false
@@ -103,6 +105,16 @@ func (ks *KeySpace) FromStateKey(key pathdom.PathKey) (Key, bool) {
 		return Key{}, false
 	}
 	return ks.namedRootKey(root, ks.internSegments(segments)), true
+}
+
+// InternStateKey interns an already-validated state-key carrier into the hot
+// structural key representation used by state lanes. Prefer this at boundaries
+// that already narrowed a raw PathKey to address.StateKey.
+func (ks *KeySpace) InternStateKey(key pathaddr.StateKey) (Key, bool) {
+	if key == "" {
+		return Key{}, false
+	}
+	return ks.FromStateKey(key.PathKey())
 }
 
 // FromStableSymbol produces the compact stable symbol key (s<id><segs>), the

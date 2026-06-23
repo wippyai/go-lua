@@ -9,7 +9,7 @@ import (
 // asserts len(pathKey) >= lo at this point. A missing key or a bottom lane
 // reads as no floor.
 func (s State) ReadLenFloor(ks *keyspace.KeySpace, pathKey pathaddr.StateKey) (int64, bool) {
-	key, ok := ks.FromStateKey(pathKey.PathKey())
+	key, ok := ks.InternStateKey(pathKey)
 	if !ok {
 		return 0, false
 	}
@@ -20,7 +20,7 @@ func (s State) ReadLenFloor(ks *keyspace.KeySpace, pathKey pathaddr.StateKey) (i
 // existing floor by keeping the stronger (larger) bound. Writing a non-positive
 // floor is a no-op.
 func (s State) WriteLenFloor(ks *keyspace.KeySpace, pathKey pathaddr.StateKey, lo int64) State {
-	key, ok := ks.FromStateKey(pathKey.PathKey())
+	key, ok := ks.InternStateKey(pathKey)
 	if !ok {
 		return s
 	}
