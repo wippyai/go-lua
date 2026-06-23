@@ -1908,6 +1908,27 @@ process.send("worker-1", "route.ready", job)
 	}
 }
 
+func TestCheckStateLanesDisableDiagnosticAnalysisAxis(t *testing.T) {
+	src := `
+local tx = {}
+begin(tx)
+`
+	defaultResult := Check(src, lifecycleManifestOptions("begin", "finish")...)
+	if len(defaultResult.Diagnostics) != 1 {
+		t.Fatalf("default diagnostics = %#v, want one unreleased-resource warning", defaultResult.Diagnostics)
+	}
+	if defaultResult.Diagnostics[0].Code != diagnostics.CodeResourceUnreleased {
+		t.Fatalf("default diagnostic code = %s, want %s", defaultResult.Diagnostics[0].Code, diagnostics.CodeResourceUnreleased)
+	}
+
+	withoutTypestates := state.DefaultLaneSet().Without(state.LaneTypestates).IDs()
+	disabledOpts := append(lifecycleManifestOptions("begin", "finish"), WithStateLanes(withoutTypestates...))
+	disabledResult := Check(src, disabledOpts...)
+	if len(disabledResult.Diagnostics) != 0 {
+		t.Fatalf("disabled typestate diagnostics = %#v, want typestate axis ignored by constructor slice", disabledResult.Diagnostics)
+	}
+}
+
 func TestCheckProcessSendPromotesDeepCallbackBuiltMapEntryPlacement(t *testing.T) {
 	result := Check(`
 type Meta = {
