@@ -57,8 +57,9 @@ func WithStdlib() Option {
 }
 
 func WithGlobals(names ...string) Option {
+	selected := append([]string{}, names...)
 	return func(c *config) {
-		c.globals = append(c.globals, names...)
+		c.globals = append(c.globals, selected...)
 	}
 }
 
@@ -87,8 +88,9 @@ func WithModule(name string, mod *ModuleResult) Option {
 }
 
 func WithDiagnosticPolicy(policy diagnostic.Policy) Option {
+	selected := cloneDiagnosticPolicy(policy)
 	return func(c *config) {
-		c.diagnosticPolicy = cloneDiagnosticPolicy(policy)
+		c.diagnosticPolicy = cloneDiagnosticPolicy(selected)
 	}
 }
 
@@ -102,8 +104,9 @@ func WithDiagnosticRule(code diagnostic.Code, rule diagnostic.Rule) Option {
 }
 
 func WithStateLanes(lanes ...state.LaneID) Option {
+	selected := append([]state.LaneID{}, lanes...)
 	return func(c *config) {
-		c.stateLanes = append([]state.LaneID{}, lanes...)
+		c.stateLanes = append([]state.LaneID{}, selected...)
 	}
 }
 

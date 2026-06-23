@@ -1908,6 +1908,58 @@ process.send("worker-1", "route.ready", job)
 	}
 }
 
+func TestOptionsCopyCallerOwnedStorageAtConstruction(t *testing.T) {
+	globals := []string{"alpha"}
+	globalsOpt := WithGlobals(globals...)
+	globals[0] = "beta"
+
+	cfg := applyOptions([]Option{globalsOpt})
+	if len(cfg.globals) != 1 || cfg.globals[0] != "alpha" {
+		t.Fatalf("WithGlobals captured mutated caller slice: got %#v, want [alpha]", cfg.globals)
+	}
+	cfg.globals[0] = "gamma"
+	cfg = applyOptions([]Option{globalsOpt})
+	if len(cfg.globals) != 1 || cfg.globals[0] != "alpha" {
+		t.Fatalf("WithGlobals reused applied config storage: got %#v, want [alpha]", cfg.globals)
+	}
+
+	policy := diagnostic.Policy{Rules: map[diagnostic.Code]diagnostic.Rule{
+		diagnostics.CodeAssignmentType: diagnostic.Disable(),
+	}}
+	policyOpt := WithDiagnosticPolicy(policy)
+	policy.Rules[diagnostics.CodeAssignmentType] = diagnostic.Enable()
+
+	cfg = applyOptions([]Option{policyOpt})
+	if !cfg.diagnosticPolicy.Rules[diagnostics.CodeAssignmentType].Disabled {
+		t.Fatalf("WithDiagnosticPolicy captured mutated caller map: got %#v, want disabled assignment diagnostic", cfg.diagnosticPolicy.Rules)
+	}
+	cfg.diagnosticPolicy.Rules[diagnostics.CodeAssignmentType] = diagnostic.Enable()
+	cfg = applyOptions([]Option{policyOpt})
+	if !cfg.diagnosticPolicy.Rules[diagnostics.CodeAssignmentType].Disabled {
+		t.Fatalf("WithDiagnosticPolicy reused applied config map: got %#v, want disabled assignment diagnostic", cfg.diagnosticPolicy.Rules)
+	}
+
+	lanes := []state.LaneID{state.LaneValues}
+	opt := WithStateLanes(lanes...)
+	lanes[0] = state.LaneFrozenTables
+
+	cfg = applyOptions([]Option{opt})
+	if len(cfg.stateLanes) != 1 || cfg.stateLanes[0] != state.LaneValues {
+		t.Fatalf("WithStateLanes captured mutated caller slice: got %#v, want [%s]", cfg.stateLanes, state.LaneValues)
+	}
+
+	cfg.stateLanes[0] = state.LaneFrozenTables
+	cfg = applyOptions([]Option{opt})
+	if len(cfg.stateLanes) != 1 || cfg.stateLanes[0] != state.LaneValues {
+		t.Fatalf("WithStateLanes reused applied config storage: got %#v, want [%s]", cfg.stateLanes, state.LaneValues)
+	}
+
+	empty := applyOptions([]Option{WithStateLanes()})
+	if empty.stateLanes == nil || len(empty.stateLanes) != 0 {
+		t.Fatalf("WithStateLanes() = %#v, want non-nil empty slice to disable every axis", empty.stateLanes)
+	}
+}
+
 func TestCheckStateLanesDisableDiagnosticAnalysisAxis(t *testing.T) {
 	src := `
 local tx = {}
