@@ -2,6 +2,7 @@ package factapply
 
 import (
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	statekey "github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
@@ -27,26 +28,30 @@ func writePathAt(
 		return s, false
 	}
 	ks := resolver.KeySpace()
-	localKey, ok := ks.FromPathKey(pathKey)
+	stateKey, ok := pathaddr.StateKeyFromPathKey(pathKey)
+	if !ok {
+		return s, false
+	}
+	localKey, ok := ks.FromPathKey(stateKey.PathKey())
 	if !ok {
 		return s, false
 	}
 	out := s
 	out = writeLocalPathKeyWithStaticStringAlias(reg, ks, out, localKey, value)
-	for _, target := range s.EquivalentPathKeys(ks, pathKey) {
-		out = writePathKeyWithStaticStringAlias(reg, ks, out, target, value)
+	for _, target := range s.EquivalentStateKeys(ks, stateKey) {
+		out = writeStateKeyWithStaticStringAlias(reg, ks, out, target, value)
 	}
 	return out, true
 }
 
-func writePathKeyWithStaticStringAlias(
+func writeStateKeyWithStaticStringAlias(
 	reg *axis.Registry,
 	ks *keyspace.KeySpace,
 	s state.State,
-	pathKey pathdom.PathKey,
+	stateKey pathaddr.StateKey,
 	value product.Value,
 ) state.State {
-	localKey, ok := ks.FromPathKey(pathKey)
+	localKey, ok := ks.FromPathKey(stateKey.PathKey())
 	if !ok {
 		return s
 	}
@@ -73,7 +78,7 @@ func invalidatePathSubtreeAt(
 	point cfg.Point,
 	path pathdom.Path,
 ) (state.State, bool) {
-	return invalidatePathAt(s, resolver, point, path, state.State.InvalidatePathKeySubtree)
+	return invalidatePathAt(s, resolver, point, path, invalidateStateKeySubtree)
 }
 
 func invalidatePathDescendantsAt(
@@ -82,7 +87,15 @@ func invalidatePathDescendantsAt(
 	point cfg.Point,
 	path pathdom.Path,
 ) (state.State, bool) {
-	return invalidatePathAt(s, resolver, point, path, state.State.InvalidatePathKeyDescendants)
+	return invalidatePathAt(s, resolver, point, path, invalidateStateKeyDescendants)
+}
+
+func invalidateStateKeySubtree(s state.State, ks *keyspace.KeySpace, stateKey pathaddr.StateKey) (state.State, bool) {
+	return s.InvalidatePathKeySubtree(ks, stateKey.PathKey())
+}
+
+func invalidateStateKeyDescendants(s state.State, ks *keyspace.KeySpace, stateKey pathaddr.StateKey) (state.State, bool) {
+	return s.InvalidatePathKeyDescendants(ks, stateKey.PathKey())
 }
 
 // invalidatePathAt resolves path to a key at point and applies invalidate to
@@ -93,15 +106,19 @@ func invalidatePathAt(
 	resolver *visibility.Resolver,
 	point cfg.Point,
 	path pathdom.Path,
-	invalidate func(state.State, *keyspace.KeySpace, pathdom.PathKey) (state.State, bool),
+	invalidate func(state.State, *keyspace.KeySpace, pathaddr.StateKey) (state.State, bool),
 ) (state.State, bool) {
 	pathKey := factPathKeyAt(resolver, point, path)
 	if pathKey == "" {
 		return s, false
 	}
 	ks := resolver.KeySpace()
+	stateKey, ok := pathaddr.StateKeyFromPathKey(pathKey)
+	if !ok {
+		return s, false
+	}
 	out := s
-	for _, target := range pathKeyWithEquivalentAliases(ks, s, pathKey) {
+	for _, target := range stateKeysWithEquivalentAliases(ks, s, stateKey) {
 		var ok bool
 		out, ok = invalidate(out, ks, target)
 		if !ok {
@@ -124,10 +141,14 @@ func invalidateRootOriginsForPathMutationAt(
 		return s, false
 	}
 	ks := resolver.KeySpace()
-	keys := pathMutationRootKeys(ks, s, pathKey, includeDescendantAliases)
+	stateKey, ok := pathaddr.StateKeyFromPathKey(pathKey)
+	if !ok {
+		return s, false
+	}
+	keys := pathMutationStateKeys(ks, s, stateKey, includeDescendantAliases)
 	out := s
 	for _, key := range keys {
-		k, ok := ks.FromStateKey(key)
+		k, ok := ks.InternStateKey(key)
 		if !ok || k.Sym == 0 {
 			continue
 		}
@@ -153,10 +174,14 @@ func invalidateRootStructuralWitnessForPathMutationAt(
 		return s, false
 	}
 	ks := resolver.KeySpace()
-	keys := pathMutationRootKeys(ks, s, pathKey, true)
+	stateKey, ok := pathaddr.StateKeyFromPathKey(pathKey)
+	if !ok {
+		return s, false
+	}
+	keys := pathMutationStateKeys(ks, s, stateKey, true)
 	out := s
 	for _, key := range keys {
-		k, ok := ks.FromStateKey(key)
+		k, ok := ks.InternStateKey(key)
 		if !ok || k.Sym == 0 {
 			continue
 		}
@@ -203,10 +228,14 @@ func invalidateHeapStaticMembersAt(
 		return s, false
 	}
 	ks := resolver.KeySpace()
-	targets := pathStaticMemberInvalidationTargets(ks, s, pathKey, descendantsOnly)
+	stateKey, ok := pathaddr.StateKeyFromPathKey(pathKey)
+	if !ok {
+		return s, false
+	}
+	targets := pathStaticMemberInvalidationTargets(ks, s, stateKey, descendantsOnly)
 	out := s
 	for _, target := range targets {
-		k, ok := ks.FromStateKey(target.key)
+		k, ok := ks.InternStateKey(target.key)
 		if !ok || k.Sym == 0 {
 			continue
 		}
@@ -230,27 +259,27 @@ func invalidateHeapStaticMembersAt(
 	return out, true
 }
 
-func pathMutationRootKeys(ks *keyspace.KeySpace, s state.State, pathKey pathdom.PathKey, includeDescendantAliases bool) []pathdom.PathKey {
-	keys := pathKeyWithEquivalentAliases(ks, s, pathKey)
+func pathMutationStateKeys(ks *keyspace.KeySpace, s state.State, stateKey pathaddr.StateKey, includeDescendantAliases bool) []pathaddr.StateKey {
+	keys := stateKeysWithEquivalentAliases(ks, s, stateKey)
 	if !includeDescendantAliases {
-		return dedupePathKeys(keys)
+		return dedupeStateKeys(keys)
 	}
-	prefixes, ok := s.PathKeyDescendantInvalidationPrefixes(ks, pathKey)
+	prefixes, ok := s.PathKeyDescendantInvalidationPrefixes(ks, stateKey.PathKey())
 	if !ok {
-		return dedupePathKeys(keys)
+		return dedupeStateKeys(keys)
 	}
-	keys = append(keys, prefixes.Descendants...)
-	keys = append(keys, prefixes.Subtrees...)
-	return dedupePathKeys(keys)
+	keys = append(keys, stateKeysFromPathKeys(prefixes.Descendants)...)
+	keys = append(keys, stateKeysFromPathKeys(prefixes.Subtrees)...)
+	return dedupeStateKeys(keys)
 }
 
 type pathStaticMemberInvalidationTarget struct {
-	key             pathdom.PathKey
+	key             pathaddr.StateKey
 	descendantsOnly bool
 }
 
-func pathStaticMemberInvalidationTargets(ks *keyspace.KeySpace, s state.State, pathKey pathdom.PathKey, descendantsOnly bool) []pathStaticMemberInvalidationTarget {
-	targetKeys := pathKeyWithEquivalentAliases(ks, s, pathKey)
+func pathStaticMemberInvalidationTargets(ks *keyspace.KeySpace, s state.State, stateKey pathaddr.StateKey, descendantsOnly bool) []pathStaticMemberInvalidationTarget {
+	targetKeys := stateKeysWithEquivalentAliases(ks, s, stateKey)
 	targets := make([]pathStaticMemberInvalidationTarget, 0, len(targetKeys))
 	for _, equivalent := range targetKeys {
 		targets = append(targets, pathStaticMemberInvalidationTarget{
@@ -261,17 +290,17 @@ func pathStaticMemberInvalidationTargets(ks *keyspace.KeySpace, s state.State, p
 	if !descendantsOnly {
 		return dedupePathStaticMemberInvalidationTargets(targets)
 	}
-	prefixes, ok := s.PathKeyDescendantInvalidationPrefixes(ks, pathKey)
+	prefixes, ok := s.PathKeyDescendantInvalidationPrefixes(ks, stateKey.PathKey())
 	if !ok {
 		return dedupePathStaticMemberInvalidationTargets(targets)
 	}
-	for _, prefix := range prefixes.Descendants {
+	for _, prefix := range stateKeysFromPathKeys(prefixes.Descendants) {
 		targets = append(targets, pathStaticMemberInvalidationTarget{
 			key:             prefix,
 			descendantsOnly: true,
 		})
 	}
-	for _, prefix := range prefixes.Subtrees {
+	for _, prefix := range stateKeysFromPathKeys(prefixes.Subtrees) {
 		targets = append(targets, pathStaticMemberInvalidationTarget{
 			key:             prefix,
 			descendantsOnly: false,
@@ -280,19 +309,34 @@ func pathStaticMemberInvalidationTargets(ks *keyspace.KeySpace, s state.State, p
 	return dedupePathStaticMemberInvalidationTargets(targets)
 }
 
-func pathKeyWithEquivalentAliases(ks *keyspace.KeySpace, s state.State, pathKey pathdom.PathKey) []pathdom.PathKey {
-	if pathKey == "" {
+func stateKeysWithEquivalentAliases(ks *keyspace.KeySpace, s state.State, stateKey pathaddr.StateKey) []pathaddr.StateKey {
+	if stateKey == "" {
 		return nil
 	}
-	keys := append([]pathdom.PathKey{pathKey}, s.EquivalentPathKeys(ks, pathKey)...)
-	return dedupePathKeys(keys)
+	keys := append([]pathaddr.StateKey{stateKey}, s.EquivalentStateKeys(ks, stateKey)...)
+	return dedupeStateKeys(keys)
 }
 
-func dedupePathKeys(in []pathdom.PathKey) []pathdom.PathKey {
+func stateKeysFromPathKeys(in []pathdom.PathKey) []pathaddr.StateKey {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]pathaddr.StateKey, 0, len(in))
+	for _, key := range in {
+		stateKey, ok := pathaddr.StateKeyFromPathKey(key)
+		if !ok {
+			continue
+		}
+		out = append(out, stateKey)
+	}
+	return out
+}
+
+func dedupeStateKeys(in []pathaddr.StateKey) []pathaddr.StateKey {
 	if len(in) < 2 {
 		return in
 	}
-	seen := make(map[pathdom.PathKey]struct{}, len(in))
+	seen := make(map[pathaddr.StateKey]struct{}, len(in))
 	out := in[:0]
 	for _, key := range in {
 		if key == "" {

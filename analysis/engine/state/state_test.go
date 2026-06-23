@@ -1215,6 +1215,39 @@ func TestEquivalentPathKeysFollowEqualityProofs(t *testing.T) {
 	}
 }
 
+func TestEquivalentStateKeysReturnsTypedAliases(t *testing.T) {
+	ks := keyspace.New()
+	start := testStateKey(t, pathdom.PathKey("sym10@1.child.name"))
+	first := testStateKey(t, pathdom.PathKey("sym20@1.child.name"))
+	second := testStateKey(t, pathdom.PathKey("sym30@1.leaf.name"))
+	s := State{}.
+		AddBranchProof(pathevidence.BranchProof{
+			Kind:  pathevidence.BranchProofPathEqual,
+			Path:  mustStateKey(t, ks, pathdom.PathKey("sym10@1")),
+			Other: mustStateKey(t, ks, pathdom.PathKey("sym20@1")),
+		}).
+		AddBranchProof(pathevidence.BranchProof{
+			Kind:  pathevidence.BranchProofPathEqual,
+			Path:  mustStateKey(t, ks, pathdom.PathKey("sym20@1.child")),
+			Other: mustStateKey(t, ks, pathdom.PathKey("sym30@1.leaf")),
+		})
+
+	got := s.EquivalentStateKeys(ks, start)
+	want := []pathaddr.StateKey{first, second}
+	if len(got) != len(want) {
+		t.Fatalf("EquivalentStateKeys len = %d (%#v), want %d (%#v)", len(got), got, len(want), want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("EquivalentStateKeys[%d] = %s, want %s (all %#v)", i, got[i], want[i], got)
+		}
+	}
+
+	if got := s.EquivalentStateKeys(ks, ""); len(got) != 0 {
+		t.Fatalf("empty EquivalentStateKeys = %#v, want empty", got)
+	}
+}
+
 func TestEffectDeltasPointwiseJoin(t *testing.T) {
 	reg := standard.Registry()
 	stateDomain := Domain(reg)

@@ -307,6 +307,28 @@ func (s State) EquivalentPathKeys(ks *keyspace.KeySpace, pathKey pathdom.PathKey
 	return s.pathEvidence.EquivalentPathKeys(ks, pathKey)
 }
 
+// EquivalentStateKeys returns validated state-key aliases proven equivalent to
+// stateKey. Prefer this over EquivalentPathKeys at semantic boundaries that
+// already require the root-or-visible state-key grammar.
+func (s State) EquivalentStateKeys(ks *keyspace.KeySpace, stateKey pathaddr.StateKey) []pathaddr.StateKey {
+	if !s.laneEnabled(lanePathEvidenceBit) || stateKey == "" {
+		return nil
+	}
+	pathKeys := s.pathEvidence.EquivalentPathKeys(ks, stateKey.PathKey())
+	if len(pathKeys) == 0 {
+		return nil
+	}
+	out := make([]pathaddr.StateKey, 0, len(pathKeys))
+	for _, pathKey := range pathKeys {
+		equivalent, ok := pathaddr.StateKeyFromPathKey(pathKey)
+		if !ok {
+			continue
+		}
+		out = append(out, equivalent)
+	}
+	return out
+}
+
 // RekeyPathEvidence re-interns the path-evidence value lane keys from one
 // keyspace into another so a state built under one analysis's keyspace can be
 // consumed as an entry state under another's. It is a no-op when from == to.

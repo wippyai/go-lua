@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/domain/path"
+	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/engine/state"
@@ -109,10 +110,12 @@ func TestPathStateAdapterInvalidateSubtreeDropsEquivalentStaticMemberFacts(t *te
 	}
 }
 
-func TestPathKeyWithEquivalentAliasesIncludesPrimaryOnce(t *testing.T) {
+func TestStateKeysWithEquivalentAliasesIncludesPrimaryOnce(t *testing.T) {
 	ks := keyspace.New()
 	primary := path.PathKey("sym51@1.child")
 	alias := path.PathKey("sym52@1.child")
+	primaryStateKey := testStateKey(t, primary)
+	aliasStateKey := testStateKey(t, alias)
 	in := state.State{}.
 		AddBranchProof(pathevidence.BranchProof{
 			Kind:  pathevidence.BranchProofPathEqual,
@@ -120,19 +123,19 @@ func TestPathKeyWithEquivalentAliasesIncludesPrimaryOnce(t *testing.T) {
 			Other: mustStateKey(t, ks, alias),
 		})
 
-	got := pathKeyWithEquivalentAliases(ks, in, primary)
-	want := []path.PathKey{primary, alias}
+	got := stateKeysWithEquivalentAliases(ks, in, primaryStateKey)
+	want := []pathaddr.StateKey{primaryStateKey, aliasStateKey}
 	if len(got) != len(want) {
-		t.Fatalf("pathKeyWithEquivalentAliases len = %d (%#v), want %d (%#v)", len(got), got, len(want), want)
+		t.Fatalf("stateKeysWithEquivalentAliases len = %d (%#v), want %d (%#v)", len(got), got, len(want), want)
 	}
 	for i := range want {
 		if got[i] != want[i] {
-			t.Fatalf("pathKeyWithEquivalentAliases[%d] = %s, want %s (all %#v)", i, got[i], want[i], got)
+			t.Fatalf("stateKeysWithEquivalentAliases[%d] = %s, want %s (all %#v)", i, got[i], want[i], got)
 		}
 	}
 
-	if got := pathKeyWithEquivalentAliases(ks, in, ""); len(got) != 0 {
-		t.Fatalf("empty pathKeyWithEquivalentAliases = %#v, want empty", got)
+	if got := stateKeysWithEquivalentAliases(ks, in, ""); len(got) != 0 {
+		t.Fatalf("empty stateKeysWithEquivalentAliases = %#v, want empty", got)
 	}
 }
 
