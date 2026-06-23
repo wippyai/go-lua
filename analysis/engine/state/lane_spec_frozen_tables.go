@@ -4,13 +4,13 @@ import "github.com/wippyai/go-lua/analysis/domain/value/axis"
 
 const LaneFrozenTables LaneID = "frozen-tables"
 
-var frozenTablesDomainLane = stateLaneSpec{
+var frozenTablesLaneSpec = laneSpec{
 	id: LaneFrozenTables,
 	markReachable: func(s State) State {
 		s.frozenTables = s.frozenTables.reachable()
 		return s
 	},
-	build: func(reg *axis.Registry) stateLaneOps {
+	build: func(reg *axis.Registry) laneOps {
 		return stateLane(frozenTableDomain(),
 			func(s State) frozenTableLane { return s.frozenTables },
 			func(out *State, lane frozenTableLane) { out.frozenTables = lane },

@@ -11,7 +11,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/symbol"
 )
 
-var defaultReachableStateOps = defaultDomainLaneCatalog.reachableOps()
+var defaultReachableStateOps = defaultLaneCatalog.reachableOps()
 
 // State carries point-local abstract values and facts. Missing entries in
 // finite value-like lanes denote bottom for the caller's domain; must-fact

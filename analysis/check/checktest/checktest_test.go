@@ -1890,7 +1890,7 @@ process.send("worker-1", "route.ready", job)
 		t.Fatalf("default placement counts shared=%d stack=%d, want placement lane populated", shared, stack)
 	}
 
-	withoutPlacement := state.DefaultDomainLaneSet().Without(state.LanePlacement).IDs()
+	withoutPlacement := state.DefaultLaneSet().Without(state.LanePlacement).IDs()
 	disabledOpts := append(append([]Option{}, opts...), WithStateLanes(withoutPlacement...))
 	disabledResult := Check(src, disabledOpts...)
 	if len(disabledResult.Diagnostics) != 0 {

@@ -175,8 +175,8 @@ func (s State) HasBranchProof(proof pathevidence.BranchProof) bool {
 	return s.pathEvidence.HasBranchProof(proof)
 }
 
-// HasIndexInRangeProof is the legacy path-key adapter for in-range branch
-// proofs. New boundary code that already resolved visibility should call
+// HasIndexInRangeProof is the path-key compatibility adapter for in-range
+// branch proofs. Boundary code that already resolved visibility should call
 // HasIndexInRangeProofForStateKeys.
 func (s State) HasIndexInRangeProof(ks *keyspace.KeySpace, indexKey, arrayKey pathdom.PathKey) bool {
 	indexStateKey, ok := pathaddr.StateKeyFromPathKey(indexKey)

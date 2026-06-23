@@ -7,13 +7,13 @@ import (
 
 const LaneChannelSelect LaneID = "channel-select"
 
-var channelSelectDomainLane = stateLaneSpec{
+var channelSelectLaneSpec = laneSpec{
 	id: LaneChannelSelect,
 	markReachable: func(s State) State {
 		s.channelSelect = s.channelSelect.Reachable()
 		return s
 	},
-	build: func(reg *axis.Registry) stateLaneOps {
+	build: func(reg *axis.Registry) laneOps {
 		return stateLane(channelselectfact.Domain(),
 			func(s State) channelselectfact.Lane { return s.channelSelect },
 			func(out *State, lane channelselectfact.Lane) { out.channelSelect = lane },

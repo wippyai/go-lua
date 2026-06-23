@@ -1,6 +1,6 @@
 package state
 
-// LaneSet is the ordered state-domain lane selection used by DomainWithLaneSet.
+// LaneSet is the ordered State lane selection used by DomainWithLaneSet.
 // It is a value-level configuration surface; the product-lattice container
 // still receives only built lane operations.
 type LaneSet struct {
@@ -14,15 +14,15 @@ func NewLaneSet(ids ...LaneID) LaneSet {
 	return LaneSet{ids: out}
 }
 
-// DefaultDomainLaneSet returns the ordered lane set used by Domain.
-func DefaultDomainLaneSet() LaneSet {
-	return defaultDomainLaneCatalog.LaneSet()
+// DefaultLaneSet returns the ordered lane set used by Domain.
+func DefaultLaneSet() LaneSet {
+	return defaultLaneCatalog.LaneSet()
 }
 
-// DefaultDomainLanes returns the ordered lane IDs used by Domain as a
-// caller-owned slice suitable for DomainWithLanes.
-func DefaultDomainLanes() []LaneID {
-	return DefaultDomainLaneSet().IDs()
+// DefaultLanes returns the ordered lane IDs used by Domain as a caller-owned
+// slice suitable for DomainWithLanes.
+func DefaultLanes() []LaneID {
+	return DefaultLaneSet().IDs()
 }
 
 // IDs returns a caller-owned copy of the lane IDs.

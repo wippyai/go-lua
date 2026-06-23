@@ -14,7 +14,7 @@ var domainCache registrycache.Cache[lattice.Lattice[State]]
 // Domain builds the default State lattice with every state axis enabled.
 func Domain(reg *axis.Registry) lattice.Lattice[State] {
 	return domainCache.Get(reg, func() lattice.Lattice[State] {
-		return defaultDomainLaneCatalog.Domain(reg)
+		return defaultLaneCatalog.Domain(reg)
 	})
 }
 
@@ -39,7 +39,7 @@ func DomainWithLaneSet(reg *axis.Registry, lanes LaneSet) lattice.Lattice[State]
 // TryDomainWithLaneSet builds a State lattice from a sealed ordered lane
 // selection, returning configuration errors instead of panicking.
 func TryDomainWithLaneSet(reg *axis.Registry, lanes LaneSet) (lattice.Lattice[State], error) {
-	return defaultDomainLaneCatalog.TryDomainWithLaneSet(reg, lanes)
+	return defaultLaneCatalog.TryDomainWithLaneSet(reg, lanes)
 }
 
 // DomainWithLanes builds a State lattice from the exact ordered slice of enabled

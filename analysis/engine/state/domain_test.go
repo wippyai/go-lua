@@ -113,7 +113,7 @@ func TestDomainWithLanesCopiesCallerSlice(t *testing.T) {
 	}
 }
 
-func TestDefaultDomainLanesExposeEveryStateAxis(t *testing.T) {
+func TestDefaultLanesExposeEveryStateAxis(t *testing.T) {
 	reg := standard.Registry()
 	expected := []LaneID{
 		LaneValues,
@@ -132,8 +132,8 @@ func TestDefaultDomainLanesExposeEveryStateAxis(t *testing.T) {
 		LaneDiffRelations,
 	}
 
-	if got := DefaultDomainLanes(); !reflect.DeepEqual(got, expected) {
-		t.Fatalf("DefaultDomainLanes() = %#v, want every exported state axis in registry order %#v", got, expected)
+	if got := DefaultLanes(); !reflect.DeepEqual(got, expected) {
+		t.Fatalf("DefaultLanes() = %#v, want every exported state axis in registry order %#v", got, expected)
 	}
 	if got := DefaultLaneCatalog().LaneSet().IDs(); !reflect.DeepEqual(got, expected) {
 		t.Fatalf("DefaultLaneCatalog().LaneSet() = %#v, want %#v", got, expected)
@@ -198,7 +198,7 @@ func TestReachableTransitionCoversRegisteredMustFactLanes(t *testing.T) {
 	}
 }
 
-func TestDomainLaneSetValidatesAndCopiesSelection(t *testing.T) {
+func TestLaneSetValidatesAndCopiesSelection(t *testing.T) {
 	reg := standard.Registry()
 
 	catalog := DefaultLaneCatalog()
@@ -214,13 +214,13 @@ func TestDomainLaneSetValidatesAndCopiesSelection(t *testing.T) {
 	if got := catalog.LaneSet().At(0); got != LaneValues {
 		t.Fatalf("LaneCatalog.LaneSet returned shared storage; first lane = %s", got)
 	}
-	if got := DefaultDomainLaneSet().At(0); got != LaneValues {
-		t.Fatalf("DefaultDomainLaneSet returned shared storage; first lane = %s", got)
+	if got := DefaultLaneSet().At(0); got != LaneValues {
+		t.Fatalf("DefaultLaneSet returned shared storage; first lane = %s", got)
 	}
-	ids := DefaultDomainLaneSet().IDs()
+	ids := DefaultLaneSet().IDs()
 	ids[0] = LaneID("mutated")
-	if got := DefaultDomainLanes()[0]; got != LaneValues {
-		t.Fatalf("DefaultDomainLanes returned shared storage; first lane = %s", got)
+	if got := DefaultLanes()[0]; got != LaneValues {
+		t.Fatalf("DefaultLanes returned shared storage; first lane = %s", got)
 	}
 	source := []LaneID{LaneValues}
 	copied := NewLaneSet(source...)
@@ -229,7 +229,7 @@ func TestDomainLaneSetValidatesAndCopiesSelection(t *testing.T) {
 		t.Fatalf("NewLaneSet kept caller storage; first lane = %s", got)
 	}
 
-	withoutFrozen := DefaultDomainLaneSet().Without(LaneFrozenTables)
+	withoutFrozen := DefaultLaneSet().Without(LaneFrozenTables)
 	if withoutFrozen.Has(LaneFrozenTables) {
 		t.Fatal("Without kept disabled frozen-table lane")
 	}
@@ -247,13 +247,13 @@ func TestDomainLaneSetValidatesAndCopiesSelection(t *testing.T) {
 	if _, err := TryDomainWithLanes(reg, []LaneID{LaneValues}); err != nil {
 		t.Fatalf("TryDomainWithLanes(valid) error = %v", err)
 	}
-	if err := catalog.ValidateLaneSet(NewLaneSet(LaneID("not-a-lane"))); err == nil || !strings.Contains(err.Error(), `unknown domain lane "not-a-lane"`) {
+	if err := catalog.ValidateLaneSet(NewLaneSet(LaneID("not-a-lane"))); err == nil || !strings.Contains(err.Error(), `unknown lane "not-a-lane"`) {
 		t.Fatalf("ValidateLaneSet(unknown) error = %v, want unknown lane", err)
 	}
-	if _, err := catalog.TryDomainWithLaneSet(reg, NewLaneSet(LaneID("not-a-lane"))); err == nil || !strings.Contains(err.Error(), `unknown domain lane "not-a-lane"`) {
+	if _, err := catalog.TryDomainWithLaneSet(reg, NewLaneSet(LaneID("not-a-lane"))); err == nil || !strings.Contains(err.Error(), `unknown lane "not-a-lane"`) {
 		t.Fatalf("TryDomainWithLaneSet(unknown) error = %v, want unknown lane", err)
 	}
-	if _, err := TryDomainWithLanes(reg, []LaneID{LaneValues, LaneValues}); err == nil || !strings.Contains(err.Error(), `duplicate domain lane "values"`) {
+	if _, err := TryDomainWithLanes(reg, []LaneID{LaneValues, LaneValues}); err == nil || !strings.Contains(err.Error(), `duplicate lane "values"`) {
 		t.Fatalf("TryDomainWithLanes(duplicate) error = %v, want duplicate lane", err)
 	}
 

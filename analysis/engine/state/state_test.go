@@ -1167,7 +1167,7 @@ func TestIndexInRangeProofAcceptsTypedStateKeys(t *testing.T) {
 		t.Fatal("typed state-key in-range proof query missed existing proof")
 	}
 	if !s.HasIndexInRangeProof(ks, indexKey.PathKey(), arrayKey.PathKey()) {
-		t.Fatal("legacy path-key in-range proof query stopped matching typed proof")
+		t.Fatal("path-key compatibility in-range proof query stopped matching typed proof")
 	}
 	if s.HasIndexInRangeProofForStateKeys(ks, "", arrayKey) {
 		t.Fatal("typed in-range proof query accepted empty index key")

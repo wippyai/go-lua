@@ -99,7 +99,7 @@ func TestTryRun_ReturnsConfigErrors(t *testing.T) {
 		{
 			name: "unknown lane",
 			cfg:  Config{Graph: graph, Registry: reg, StateLanes: []state.LaneID{state.LaneID("missing")}},
-			want: `state: unknown domain lane "missing"`,
+			want: `state: unknown lane "missing"`,
 		},
 	}
 

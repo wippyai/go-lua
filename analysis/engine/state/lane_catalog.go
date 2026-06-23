@@ -11,12 +11,12 @@ import (
 // The State container folds registered lane operations and reachability
 // transitions; it does not need a second hand-maintained list of semantic lanes.
 type LaneCatalog struct {
-	specs []stateLaneSpec
+	specs []laneSpec
 }
 
 // DefaultLaneCatalog returns the standard set of State lanes.
 func DefaultLaneCatalog() LaneCatalog {
-	return defaultDomainLaneCatalog
+	return defaultLaneCatalog
 }
 
 // LaneSet returns the ordered lane IDs in this catalog.
@@ -71,20 +71,20 @@ func (c LaneCatalog) reachableOps() []func(State) State {
 	return out
 }
 
-func (c LaneCatalog) selectSpecs(lanes LaneSet) ([]stateLaneSpec, error) {
-	byID := make(map[LaneID]stateLaneSpec, len(c.specs))
+func (c LaneCatalog) selectSpecs(lanes LaneSet) ([]laneSpec, error) {
+	byID := make(map[LaneID]laneSpec, len(c.specs))
 	for _, spec := range c.specs {
 		byID[spec.id] = spec
 	}
 	seen := make(map[LaneID]struct{}, lanes.Len())
-	out := make([]stateLaneSpec, 0, lanes.Len())
+	out := make([]laneSpec, 0, lanes.Len())
 	for _, id := range lanes.ids {
 		spec, ok := byID[id]
 		if !ok {
-			return nil, fmt.Errorf("state: unknown domain lane %q", id)
+			return nil, fmt.Errorf("state: unknown lane %q", id)
 		}
 		if _, ok := seen[id]; ok {
-			return nil, fmt.Errorf("state: duplicate domain lane %q", id)
+			return nil, fmt.Errorf("state: duplicate lane %q", id)
 		}
 		seen[id] = struct{}{}
 		out = append(out, spec)

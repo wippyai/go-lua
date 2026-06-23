@@ -9,9 +9,9 @@ import (
 
 const LaneValues LaneID = "values"
 
-var valuesDomainLane = stateLaneSpec{
+var valuesLaneSpec = laneSpec{
 	id: LaneValues,
-	build: func(reg *axis.Registry) stateLaneOps {
+	build: func(reg *axis.Registry) laneOps {
 		domain := lift.Map[key.Value, product.Value](product.Domain(reg))
 		return stateLane(domain,
 			func(s State) map[key.Value]product.Value {

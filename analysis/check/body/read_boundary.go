@@ -158,7 +158,7 @@ func (r *Result) PathValueAtBoundary(point cfg.Point, p pathdom.Path) (product.V
 // StateKeyAtBoundary returns the typed point-visible state key for p at point.
 // It is the canonical boundary vocabulary for state lanes that use visible
 // source paths; PathKeyAtBoundary exists only for compatibility with lanes that
-// still expose the legacy string carrier.
+// still expose a path-key string carrier.
 func (r *Result) StateKeyAtBoundary(point cfg.Point, p pathdom.Path) (pathaddr.StateKey, bool) {
 	if r == nil || r.visibility == nil || p.IsEmpty() {
 		return "", false

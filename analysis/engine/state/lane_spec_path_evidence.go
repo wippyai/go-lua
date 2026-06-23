@@ -7,13 +7,13 @@ import (
 
 const LanePathEvidence LaneID = "path-evidence"
 
-var pathEvidenceDomainLane = stateLaneSpec{
+var pathEvidenceLaneSpec = laneSpec{
 	id: LanePathEvidence,
 	markReachable: func(s State) State {
 		s.pathEvidence = s.pathEvidence.Reachable()
 		return s
 	},
-	build: func(reg *axis.Registry) stateLaneOps {
+	build: func(reg *axis.Registry) laneOps {
 		return stateLane(pathevidence.Domain(reg),
 			func(s State) pathevidence.Lane { return s.pathEvidence },
 			func(out *State, lane pathevidence.Lane) { out.pathEvidence = lane },

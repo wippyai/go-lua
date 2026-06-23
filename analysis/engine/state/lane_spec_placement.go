@@ -10,9 +10,9 @@ import (
 
 const LanePlacement LaneID = "placement"
 
-var placementDomainLane = stateLaneSpec{
+var placementLaneSpec = laneSpec{
 	id: LanePlacement,
-	build: func(reg *axis.Registry) stateLaneOps {
+	build: func(reg *axis.Registry) laneOps {
 		domain := placementMapDomain()
 		return stateLane(domain,
 			func(s State) map[identity.ID]placement.Value {
