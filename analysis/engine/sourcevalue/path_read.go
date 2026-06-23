@@ -52,12 +52,12 @@ func ExactPathValue(
 	if resolver == nil {
 		return product.Value{}, false
 	}
-	pathKey := resolver.KeyAt(point, p)
-	if pathKey == "" {
+	pathKey := resolver.StructKeyAt(point, p)
+	if pathKey.Kind == keyspace.KindInvalid {
 		return product.Value{}, false
 	}
 	ks := resolver.KeySpace()
-	value, ok := readPathKeyWithFieldCanonicalFallback(reg, ks, in, pathKey)
+	value, ok := readLocalPathKeyWithFieldCanonicalAlias(reg, ks, in, pathKey)
 	if !ok {
 		return product.Value{}, false
 	}
@@ -85,7 +85,7 @@ func HeapMemberFromValue(reg *axis.Registry, ks *keyspace.KeySpace, in state.Sta
 	if product.Equal(reg, product.Meet(reg, root, value), product.Bottom(reg)) {
 		return product.Value{}, false
 	}
-	member, ok := readStaticMemberWithFieldCanonicalFallback(ks, object, key, suffix)
+	member, ok := readStaticMemberWithFieldCanonicalAlias(ks, object, key, suffix)
 	if !ok || product.Equal(reg, member, product.Bottom(reg)) {
 		return product.Value{}, false
 	}
@@ -95,23 +95,23 @@ func HeapMemberFromValue(reg *axis.Registry, ks *keyspace.KeySpace, in state.Sta
 	return member, true
 }
 
-func readPathKeyWithFieldCanonicalFallback(reg *axis.Registry, ks *keyspace.KeySpace, in state.State, pathKey pathdom.PathKey) (product.Value, bool) {
-	value := in.ReadPathKey(reg, ks, pathKey)
+func readLocalPathKeyWithFieldCanonicalAlias(reg *axis.Registry, ks *keyspace.KeySpace, in state.State, pathKey keyspace.Key) (product.Value, bool) {
+	value := in.ReadLocalPathKey(reg, pathKey)
 	if !product.Equal(reg, value, product.Bottom(reg)) {
 		return value, true
 	}
-	canonical, ok := fieldCanonicalPathKey(ks, pathKey)
+	canonical, ok := ks.FieldCanonical(pathKey)
 	if !ok {
 		return product.Value{}, false
 	}
-	value = in.ReadPathKey(reg, ks, canonical)
+	value = in.ReadLocalPathKey(reg, canonical)
 	if product.Equal(reg, value, product.Bottom(reg)) {
 		return product.Value{}, false
 	}
 	return value, true
 }
 
-func readStaticMemberWithFieldCanonicalFallback(ks *keyspace.KeySpace, object heapidentity.TableObject, key keyspace.Key, suffix []segment.Segment) (product.Value, bool) {
+func readStaticMemberWithFieldCanonicalAlias(ks *keyspace.KeySpace, object heapidentity.TableObject, key keyspace.Key, suffix []segment.Segment) (product.Value, bool) {
 	if member, ok := object.StaticMember(key); ok {
 		return member, true
 	}
@@ -120,21 +120,6 @@ func readStaticMemberWithFieldCanonicalFallback(ks *keyspace.KeySpace, object he
 		return product.Value{}, false
 	}
 	return object.StaticMember(canonical)
-}
-
-// fieldCanonicalPathKey interns pathKey, applies the field-canonical rewrite, and
-// re-emits the canonical state-key spelling. It returns false when pathKey is not
-// a recognized state key or the canonical spelling equals the original.
-func fieldCanonicalPathKey(ks *keyspace.KeySpace, pathKey pathdom.PathKey) (pathdom.PathKey, bool) {
-	key, ok := ks.FromStateKey(pathKey)
-	if !ok {
-		return "", false
-	}
-	canonical, ok := ks.FieldCanonical(key)
-	if !ok {
-		return "", false
-	}
-	return ks.Format(canonical), true
 }
 
 // RuntimeMayBeTable reports whether value could still be a table-like value.

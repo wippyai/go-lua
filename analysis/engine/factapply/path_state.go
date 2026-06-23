@@ -32,7 +32,7 @@ func writePathAt(
 		return s, false
 	}
 	out := s
-	out = writeLocalPathKeyWithStaticStringAlias(reg, ks, out, localKey, pathKey, value)
+	out = writeLocalPathKeyWithStaticStringAlias(reg, ks, out, localKey, value)
 	for _, target := range s.EquivalentPathKeys(ks, pathKey) {
 		out = writePathKeyWithStaticStringAlias(reg, ks, out, target, value)
 	}
@@ -50,7 +50,7 @@ func writePathKeyWithStaticStringAlias(
 	if !ok {
 		return s
 	}
-	return writeLocalPathKeyWithStaticStringAlias(reg, ks, s, localKey, pathKey, value)
+	return writeLocalPathKeyWithStaticStringAlias(reg, ks, s, localKey, value)
 }
 
 func writeLocalPathKeyWithStaticStringAlias(
@@ -58,29 +58,13 @@ func writeLocalPathKeyWithStaticStringAlias(
 	ks *keyspace.KeySpace,
 	s state.State,
 	localKey keyspace.Key,
-	pathKey pathdom.PathKey,
 	value product.Value,
 ) state.State {
 	out := s.WriteLocalPathKey(reg, localKey, value)
-	if canonical, ok := fieldCanonicalPathKey(ks, pathKey); ok {
-		out = out.WritePathKey(reg, ks, canonical, value)
+	if canonical, ok := ks.FieldCanonical(localKey); ok {
+		out = out.WriteLocalPathKey(reg, canonical, value)
 	}
 	return out
-}
-
-// fieldCanonicalPathKey interns pathKey, applies the field-canonical rewrite, and
-// re-emits the canonical state-key spelling. It returns false when pathKey is not
-// a recognized state key or the canonical spelling equals the original.
-func fieldCanonicalPathKey(ks *keyspace.KeySpace, pathKey pathdom.PathKey) (pathdom.PathKey, bool) {
-	key, ok := ks.FromStateKey(pathKey)
-	if !ok {
-		return "", false
-	}
-	canonical, ok := ks.FieldCanonical(key)
-	if !ok {
-		return "", false
-	}
-	return ks.Format(canonical), true
 }
 
 func invalidatePathSubtreeAt(

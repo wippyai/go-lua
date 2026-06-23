@@ -41,9 +41,13 @@ func applyPathStaticMemberWrite(
 		return out
 	}
 	ks := resolver.KeySpace()
-	out = out.WritePathStaticMember(ks, targetKey, value)
-	if canonical, ok := fieldCanonicalPathKey(ks, targetKey); ok {
-		out = out.WritePathStaticMember(ks, canonical, value)
+	localKey, ok := ks.FromPathKey(targetKey)
+	if !ok {
+		return out
+	}
+	out = out.WriteLocalPathStaticMember(localKey, value)
+	if canonical, ok := ks.FieldCanonical(localKey); ok {
+		out = out.WriteLocalPathStaticMember(canonical, value)
 	}
 	out = addPathEqualityProofFromSource(resolver, facts, ctx.Point, out, fact.TargetPath(), source)
 	return addPathEqualityProofFromDynamicIndexSource(ctx, resolver, facts, sources, read, in, out, fact.TargetPath(), source)

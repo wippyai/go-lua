@@ -173,7 +173,16 @@ func (s State) ReadPathStaticMember(ks *keyspace.KeySpace, pathKey pathdom.PathK
 	if !ok {
 		return product.Value{}, false
 	}
-	return s.pathEvidence.ReadPathStaticMember(localKey)
+	return s.ReadLocalPathStaticMember(localKey)
+}
+
+// ReadLocalPathStaticMember reads an already-interned static-member evidence
+// key. Prefer this at boundaries that already resolved the path structurally.
+func (s State) ReadLocalPathStaticMember(pathKey keyspace.Key) (product.Value, bool) {
+	if !s.laneEnabled(lanePathEvidenceBit) {
+		return product.Value{}, false
+	}
+	return s.pathEvidence.ReadPathStaticMember(pathKey)
 }
 
 func (s State) WritePathStaticMember(ks *keyspace.KeySpace, pathKey pathdom.PathKey, value product.Value) State {
@@ -184,7 +193,16 @@ func (s State) WritePathStaticMember(ks *keyspace.KeySpace, pathKey pathdom.Path
 	if !ok {
 		return s
 	}
-	pathEvidence, reachable := s.pathEvidence.WritePathStaticMember(localKey, value)
+	return s.WriteLocalPathStaticMember(localKey, value)
+}
+
+// WriteLocalPathStaticMember writes an already-interned static-member evidence
+// key. Prefer this at boundaries that already resolved the path structurally.
+func (s State) WriteLocalPathStaticMember(pathKey keyspace.Key, value product.Value) State {
+	if !s.laneEnabled(lanePathEvidenceBit) {
+		return s
+	}
+	pathEvidence, reachable := s.pathEvidence.WritePathStaticMember(pathKey, value)
 	if !reachable {
 		return s
 	}

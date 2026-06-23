@@ -36,7 +36,7 @@ func TestExactPathValueReadsStaticMember(t *testing.T) {
 	assertRuntimeKind(t, reg, got, runtimekind.Singleton(runtimekind.String))
 }
 
-func TestExactPathValueFallsBackFromStringIndexToFieldCanonicalPath(t *testing.T) {
+func TestExactPathValueReadsStringIndexThroughFieldCanonicalAlias(t *testing.T) {
 	reg := standard.Registry()
 	point := cfg.Point(1)
 	resolver := testResolver(point, symbol.ID(10), "obj")
@@ -72,7 +72,7 @@ func TestHeapMemberFromValueReadsStaticMemberAndPreservesOwnerPresence(t *testin
 	assertRuntimeKind(t, reg, got, runtimekind.Singleton(runtimekind.String))
 }
 
-func TestHeapMemberFromValueFallsBackFromStringIndexToFieldCanonicalStaticMember(t *testing.T) {
+func TestHeapMemberFromValueReadsStringIndexThroughFieldCanonicalAlias(t *testing.T) {
 	reg := standard.Registry()
 	id := identity.LuaTableLiteral(7002, 214)
 	rootValue := product.Set(reg, product.NewWithPresence(reg, product.ShapeTop, presence.Present()), identity.Key, identity.Singleton(id))
