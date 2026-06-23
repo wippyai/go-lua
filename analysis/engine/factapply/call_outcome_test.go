@@ -595,6 +595,67 @@ func TestFactsNodeTransferCallOutcomeEscapeSendMarksIdentityPlacementAndEffectDe
 	assertEscapeEvent(t, got, testStateKey(t, targetKey), callboundary.EscapeEventSend, false)
 }
 
+func TestFactsNodeTransferCallOutcomeShallowEscapeSendDoesNotPromoteStaticMemberIdentity(t *testing.T) {
+	reg := standard.Registry()
+	point := cfg.Point(711)
+	target := symbol.ID(711)
+	argExpr := factflow.ExprRef(711)
+	targetPath := pathdom.NewPath(target, "obj")
+	rootID := identity.ID{Kind: "lua.table", Site: "escape-placement", Index: 24}
+	childID := identity.ID{Kind: "lua.table", Site: "escape-placement", Index: 25}
+	rootValue := product.Set(reg, presentValue(reg), identity.Key, identity.Singleton(rootID))
+	childValue := product.Set(reg, presentValue(reg), identity.Key, identity.Singleton(childID))
+	facts := factflow.NewFacts(factflow.FactsInput{
+		CallSites: map[cfg.Point]factflow.CallSite{
+			point: factflow.NewCallSite(factflow.CallSiteConfig{
+				Context: factflow.CallSiteContextStatement,
+				ArgumentSources: []factflow.ValueSource{
+					{Kind: factflow.ValueSourceExpression, ExprRef: argExpr, HasExpr: true},
+				},
+			}),
+		},
+		ExpressionPaths: map[factflow.ExprRef]pathdom.Path{
+			argExpr: targetPath,
+		},
+	})
+	builder := visibility.NewBuilder()
+	builder.Define(point, target, "obj")
+	resolver := visibility.NewResolver(builder.Build())
+	ks := resolver.KeySpace()
+
+	got := NewFactsNodeTransfer(FactsNodeTransferConfig{
+		Facts: facts,
+		CallOutcome: func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) callpayload.CallOutcome {
+			return callpayload.CallOutcome{
+				NormalReturnFacts: callboundary.NormalReturnFacts{
+					EscapeEvents: []callboundary.EscapeEventFact{
+						{Target: pathdom.NewPlaceholder(0), Kind: callboundary.EscapeEventSend},
+					},
+				},
+			}
+		},
+		Visibility: resolver,
+	})(transfer.NodeContext{
+		Registry: reg,
+		Point:    point,
+	}, state.State{}.
+		WriteValue(reg, key.SymbolValue(target), rootValue).
+		WriteHeapTableObject(reg, rootID, heapidentity.NewTableObject(heapidentity.TableObjectConfig{
+			Root:          rootValue,
+			StaticMembers: map[keyspace.Key]product.Value{fieldStaticKey(t, ks, "child"): childValue},
+		})).
+		WriteHeapTableObject(reg, childID, heapidentity.NewTableObject(heapidentity.TableObjectConfig{
+			Root: childValue,
+		})))
+
+	if gotPlacement := got.ReadPlacement(rootID); gotPlacement != placement.SharedHeap {
+		t.Fatalf("placement[%v] = %s, want %s", rootID, gotPlacement, placement.SharedHeap)
+	}
+	if gotPlacement := got.ReadPlacement(childID); gotPlacement != placement.Bottom {
+		t.Fatalf("placement[%v] = %s, want %s for non-recursive escape", childID, gotPlacement, placement.Bottom)
+	}
+}
+
 func TestFactsNodeTransferCallOutcomeFrozenTableFactFreezesSingletonIdentity(t *testing.T) {
 	reg := standard.Registry()
 	point := cfg.Point(704)
