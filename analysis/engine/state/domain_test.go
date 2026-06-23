@@ -1,6 +1,7 @@
 package state
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 
@@ -83,6 +84,59 @@ func TestDomainWithLanesCopiesCallerSlice(t *testing.T) {
 	}
 	if joined.IsTableFrozen(tableID) {
 		t.Fatal("DomainWithLanes copied domain preserved lane added by caller slice mutation")
+	}
+}
+
+func TestDefaultDomainLanesExposeEveryStateAxis(t *testing.T) {
+	reg := standard.Registry()
+	expected := []LaneID{
+		LaneValues,
+		LanePathEvidence,
+		LaneDynamicIndex,
+		LaneHeapTableIdentity,
+		LaneFrozenTables,
+		LaneEffectDeltas,
+		LaneEscapeEvents,
+		LaneChannelSelect,
+		LaneStoreRelations,
+		LaneTypestates,
+		LanePlacement,
+		LaneLenFloors,
+		LaneNumFloors,
+		LaneDiffRelations,
+	}
+
+	if got := DefaultDomainLanes(); !reflect.DeepEqual(got, expected) {
+		t.Fatalf("DefaultDomainLanes() = %#v, want every exported state axis in registry order %#v", got, expected)
+	}
+	if got := DefaultLaneCatalog().LaneSet().IDs(); !reflect.DeepEqual(got, expected) {
+		t.Fatalf("DefaultLaneCatalog().LaneSet() = %#v, want %#v", got, expected)
+	}
+
+	if _, err := TryDomainWithLanes(reg, expected); err != nil {
+		t.Fatalf("TryDomainWithLanes(all axes) error = %v", err)
+	}
+	for _, lane := range expected {
+		t.Run(string(lane), func(t *testing.T) {
+			single, err := TryDomainWithLanes(reg, []LaneID{lane})
+			if err != nil {
+				t.Fatalf("TryDomainWithLanes(single %q) error = %v", lane, err)
+			}
+			if !single.Equal(single.Bottom(), single.Bottom()) {
+				t.Fatalf("single-lane domain %q does not recognize its own bottom", lane)
+			}
+			if !single.Equal(single.Top(), single.Top()) {
+				t.Fatalf("single-lane domain %q does not recognize its own top", lane)
+			}
+
+			without := NewLaneSet(expected...).Without(lane)
+			if without.Has(lane) {
+				t.Fatalf("Without(%q) kept disabled lane in %#v", lane, without.IDs())
+			}
+			if _, err := TryDomainWithLaneSet(reg, without); err != nil {
+				t.Fatalf("TryDomainWithLaneSet(without %q) error = %v", lane, err)
+			}
+		})
 	}
 }
 
