@@ -391,7 +391,7 @@ local handler = handlers[action.kind]
 }
 
 func TestDiscriminatedUnionExhaustivenessKeepsDispatchTableAfterUnrelatedUnknownCall(t *testing.T) {
-	result := Check(`
+	src := strings.TrimLeft(`
 type Begin = { kind: "begin", id: string }
 type Commit = { kind: "commit", payment_id: string }
 type Cancel = { kind: "cancel", reason: string }
@@ -406,16 +406,65 @@ observe_unrelated("ready")
 
 local action: Action = { kind = "begin", id = "evt-1" }
 local handler = handlers[action.kind]
-`, WithGlobals("observe_unrelated"), WithDiagnosticRule(
+`, "\n")
+	result := Check(src, WithGlobals("observe_unrelated"), WithDiagnosticRule(
 		diagnostics.CodeDiscriminatedUnionExhaustive,
 		diagnostic.Enable(),
 	))
-	requireDiagnostic(t, result, diagnosticExpectation{
+	diag := requireDiagnostic(t, result, diagnosticExpectation{
 		Code:            diagnostics.CodeDiscriminatedUnionExhaustive,
 		Severity:        diagnostic.SeverityWarning,
 		DiagnosticCount: 1,
+		Line:            14,
+		Column:          17,
 		MessageContains: []string{"dispatch table is not exhaustive", "handlers.cancel"},
+		EvidenceChain: []diagnosticEvidenceExpectation{
+			{
+				Kind:            diagnostic.EvidenceAbstractFact,
+				Trust:           diagnostic.TrustProven,
+				MessageContains: []string{"`handlers` is indexed by discriminant `action.kind`"},
+			},
+			{
+				Kind:            diagnostic.EvidenceAbstractFact,
+				Trust:           diagnostic.TrustProven,
+				MessageContains: []string{"possible cases: `action.kind == \"begin\"`, `action.kind == \"cancel\"`, `action.kind == \"commit\"`"},
+			},
+			{
+				Kind:            diagnostic.EvidenceAbstractFact,
+				Trust:           diagnostic.TrustProven,
+				MessageContains: []string{"dispatch table provides keys: `handlers.begin`, `handlers.commit`"},
+			},
+			{
+				Kind:            diagnostic.EvidenceMissingProof,
+				Trust:           diagnostic.TrustUnknown,
+				MessageContains: []string{"missing dispatch keys: `handlers.cancel` for `action.kind == \"cancel\"`"},
+			},
+		},
+		LabelContains: []string{"dispatch table", "dispatch lookup"},
+		HelpContains:  []string{"Add each missing dispatch key", "explicit fallback"},
 	})
+	rendered := diagnostic.Render(diag, diagnostic.RenderOptions{
+		Sources:             diagnostic.SourceMap{"test.lua": src},
+		ShowSourceLabelRows: true,
+	})
+	want := `warning[lint.union.exhaustiveness]: dispatch table is not exhaustive; missing key: ` + "`handlers.cancel`" + `
+ --> test.lua:14:17
+   |
+14 | local handler = handlers[action.kind]
+   |                 ↑ dispatch lookup
+
+because:
+  1. proven: ` + "`handlers`" + ` is indexed by discriminant ` + "`action.kind`" + `
+  2. proven: possible cases: ` + "`action.kind == \"begin\"`, `action.kind == \"cancel\"`, `action.kind == \"commit\"`" + `
+  3. proven: dispatch table provides keys: ` + "`handlers.begin`, `handlers.commit`" + `
+ --> test.lua:6:18
+  |
+  |                  ↓ dispatch table
+6 | local handlers = {
+  4. missing proof: missing dispatch keys: ` + "`handlers.cancel`" + ` for ` + "`action.kind == \"cancel\"`" + `
+
+help: Add each missing dispatch key, or route through an explicit fallback when missing keys are intentional.`
+	assertRenderedEqual(t, rendered, want)
 }
 
 func TestDiscriminatedUnionExhaustivenessKeepsDispatchTableAfterLocalReadOnlyCall(t *testing.T) {
