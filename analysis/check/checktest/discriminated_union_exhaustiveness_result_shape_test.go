@@ -306,7 +306,7 @@ end
 }
 
 func TestDiscriminatedUnionExhaustivenessDoesNotUseReassignedAliasGuardForOriginalResult(t *testing.T) {
-	result := Check(`
+	src := strings.TrimLeft(`
 type Result<T> = { ok: true, value: T } | { ok: false, error: string }
 
 local function use(result: Result<string>, replacement: Result<string>): string
@@ -318,7 +318,8 @@ local function use(result: Result<string>, replacement: Result<string>): string
         return ""
     end
 end
-`, WithDiagnosticRule(
+`, "\n")
+	result := Check(src, WithDiagnosticRule(
 		diagnostics.CodeDiscriminatedUnionExhaustive,
 		diagnostic.Enable(),
 	))
@@ -326,10 +327,49 @@ end
 		Code:            diagnostics.CodeDiscriminatedUnionExhaustive,
 		Severity:        diagnostic.SeverityWarning,
 		DiagnosticCount: 1,
+		Line:            7,
+		Column:          16,
 		MessageContains: []string{"case-specific field read is not exhaustive", "result.value", "result.ok == true"},
+		EvidenceMin:     3,
 		EvidenceOrdered: []string{
+			"`result` is a union discriminated by `result.ok`",
 			"`result.value` exists only for `result.ok == true`",
 			"no stable guard proves `result.ok == true` before this read",
+		},
+		EvidenceChain: []diagnosticEvidenceExpectation{
+			{
+				Kind:            diagnostic.EvidenceAbstractFact,
+				Trust:           diagnostic.TrustProven,
+				MessageContains: []string{"`result` is a union discriminated by `result.ok`"},
+			},
+			{
+				Kind:            diagnostic.EvidenceAbstractFact,
+				Trust:           diagnostic.TrustProven,
+				MessageContains: []string{"`result.value` exists only for `result.ok == true`"},
+			},
+			{
+				Kind:            diagnostic.EvidenceMissingProof,
+				Trust:           diagnostic.TrustUnknown,
+				MessageContains: []string{"no stable guard proves `result.ok == true` before this read"},
+			},
+		},
+		LabelContains: []string{"case-specific field read"},
+		HelpContains:  []string{"Check the union case before reading this field"},
+		Sources:       diagnostic.SourceMap{"test.lua": src},
+		RenderOrderedContains: []string{
+			"warning[lint.union.exhaustiveness]: case-specific field read is not exhaustive; `result.value` requires `result.ok == true`",
+			"--> test.lua:7:16",
+			"7 |         return result.value",
+			"↑ case-specific field read",
+			"because:",
+			"1. proven: `result` is a union discriminated by `result.ok`",
+			"2. proven: `result.value` exists only for `result.ok == true`",
+			"3. missing proof: no stable guard proves `result.ok == true` before this read",
+			"help: Check the union case before reading this field",
+		},
+		RenderNotContains: []string{
+			"alias.ok == true",
+			"want string",
 		},
 	})
 }
@@ -374,7 +414,7 @@ end
 }
 
 func TestDiscriminatedUnionExhaustivenessReportsResultGuardInvalidatedBeforeRead(t *testing.T) {
-	result := Check(`
+	src := strings.TrimLeft(`
 type Result<T> = { ok: true, value: T } | { ok: false, error: string }
 
 local function use(result: Result<string>, replacement: Result<string>): string
@@ -385,7 +425,8 @@ local function use(result: Result<string>, replacement: Result<string>): string
         return ""
     end
 end
-`, WithDiagnosticRule(
+`, "\n")
+	result := Check(src, WithDiagnosticRule(
 		diagnostics.CodeDiscriminatedUnionExhaustive,
 		diagnostic.Enable(),
 	))
@@ -393,19 +434,59 @@ end
 		Code:            diagnostics.CodeDiscriminatedUnionExhaustive,
 		Severity:        diagnostic.SeverityWarning,
 		DiagnosticCount: 1,
+		Line:            6,
+		Column:          16,
 		MessageContains: []string{
+			"case-specific field read is not exhaustive",
 			"result.value",
 			"result.ok == true",
 		},
+		EvidenceMin: 3,
 		EvidenceOrdered: []string{
+			"`result` is a union discriminated by `result.ok`",
 			"`result.value` exists only for `result.ok == true`",
 			"no stable guard proves `result.ok == true` before this read",
+		},
+		EvidenceChain: []diagnosticEvidenceExpectation{
+			{
+				Kind:            diagnostic.EvidenceAbstractFact,
+				Trust:           diagnostic.TrustProven,
+				MessageContains: []string{"`result` is a union discriminated by `result.ok`"},
+			},
+			{
+				Kind:            diagnostic.EvidenceAbstractFact,
+				Trust:           diagnostic.TrustProven,
+				MessageContains: []string{"`result.value` exists only for `result.ok == true`"},
+			},
+			{
+				Kind:            diagnostic.EvidenceMissingProof,
+				Trust:           diagnostic.TrustUnknown,
+				MessageContains: []string{"no stable guard proves `result.ok == true` before this read"},
+			},
+		},
+		LabelContains: []string{"case-specific field read"},
+		HelpContains:  []string{"Check the union case before reading this field"},
+		Sources:       diagnostic.SourceMap{"test.lua": src},
+		RenderOrderedContains: []string{
+			"warning[lint.union.exhaustiveness]: case-specific field read is not exhaustive; `result.value` requires `result.ok == true`",
+			"--> test.lua:6:16",
+			"6 |         return result.value",
+			"↑ case-specific field read",
+			"because:",
+			"1. proven: `result` is a union discriminated by `result.ok`",
+			"2. proven: `result.value` exists only for `result.ok == true`",
+			"3. missing proof: no stable guard proves `result.ok == true` before this read",
+			"help: Check the union case before reading this field",
+		},
+		RenderNotContains: []string{
+			"replacement.value",
+			"want string",
 		},
 	})
 }
 
 func TestDiscriminatedUnionExhaustivenessReportsResultDiscriminantMutationBeforeRead(t *testing.T) {
-	result := Check(`
+	src := strings.TrimLeft(`
 type Result<T> = { ok: true, value: T } | { ok: false, error: string }
 
 local function use(result: Result<string>): string
@@ -416,27 +497,67 @@ local function use(result: Result<string>): string
         return ""
     end
 end
-`, WithDiagnosticRule(
+`, "\n")
+	result := Check(src, WithDiagnosticRule(
 		diagnostics.CodeDiscriminatedUnionExhaustive,
 		diagnostic.Enable(),
 	))
 	requireDiagnostic(t, result, diagnosticExpectation{
-		Code:     diagnostics.CodeDiscriminatedUnionExhaustive,
-		Severity: diagnostic.SeverityWarning,
+		Code:            diagnostics.CodeDiscriminatedUnionExhaustive,
+		Severity:        diagnostic.SeverityWarning,
+		DiagnosticCount: 1,
+		Line:            6,
+		Column:          16,
 		MessageContains: []string{
 			"case-specific field read is not exhaustive",
 			"result.value",
 			"result.ok == true",
 		},
+		EvidenceMin: 3,
 		EvidenceOrdered: []string{
+			"`result` is a union discriminated by `result.ok`",
 			"`result.value` exists only for `result.ok == true`",
 			"no stable guard proves `result.ok == true` before this read",
+		},
+		EvidenceChain: []diagnosticEvidenceExpectation{
+			{
+				Kind:            diagnostic.EvidenceAbstractFact,
+				Trust:           diagnostic.TrustProven,
+				MessageContains: []string{"`result` is a union discriminated by `result.ok`"},
+			},
+			{
+				Kind:            diagnostic.EvidenceAbstractFact,
+				Trust:           diagnostic.TrustProven,
+				MessageContains: []string{"`result.value` exists only for `result.ok == true`"},
+			},
+			{
+				Kind:            diagnostic.EvidenceMissingProof,
+				Trust:           diagnostic.TrustUnknown,
+				MessageContains: []string{"no stable guard proves `result.ok == true` before this read"},
+			},
+		},
+		LabelContains: []string{"case-specific field read"},
+		HelpContains:  []string{"Check the union case before reading this field"},
+		Sources:       diagnostic.SourceMap{"test.lua": src},
+		RenderOrderedContains: []string{
+			"warning[lint.union.exhaustiveness]: case-specific field read is not exhaustive; `result.value` requires `result.ok == true`",
+			"--> test.lua:6:16",
+			"6 |         return result.value",
+			"↑ case-specific field read",
+			"because:",
+			"1. proven: `result` is a union discriminated by `result.ok`",
+			"2. proven: `result.value` exists only for `result.ok == true`",
+			"3. missing proof: no stable guard proves `result.ok == true` before this read",
+			"help: Check the union case before reading this field",
+		},
+		RenderNotContains: []string{
+			"want string",
 		},
 	})
 }
 
 func TestDiscriminatedUnionExhaustivenessReportsResultAliasDiscriminantMutationBeforeRead(t *testing.T) {
-	result := Check(`
+	src := strings.TrimLeft(`
 type Result<T> = { ok: true, value: T } | { ok: false, error: string }
 
 local function use(result: Result<string>): string
@@ -448,21 +569,62 @@ local function use(result: Result<string>): string
         return ""
     end
 end
-`, WithDiagnosticRule(
+`, "\n")
+	result := Check(src, WithDiagnosticRule(
 		diagnostics.CodeDiscriminatedUnionExhaustive,
 		diagnostic.Enable(),
 	))
 	requireDiagnostic(t, result, diagnosticExpectation{
-		Code:     diagnostics.CodeDiscriminatedUnionExhaustive,
-		Severity: diagnostic.SeverityWarning,
+		Code:            diagnostics.CodeDiscriminatedUnionExhaustive,
+		Severity:        diagnostic.SeverityWarning,
+		DiagnosticCount: 1,
+		Line:            7,
+		Column:          16,
 		MessageContains: []string{
 			"case-specific field read is not exhaustive",
 			"result.value",
 			"result.ok == true",
 		},
+		EvidenceMin: 3,
 		EvidenceOrdered: []string{
+			"`result` is a union discriminated by `result.ok`",
 			"`result.value` exists only for `result.ok == true`",
 			"no stable guard proves `result.ok == true` before this read",
+		},
+		EvidenceChain: []diagnosticEvidenceExpectation{
+			{
+				Kind:            diagnostic.EvidenceAbstractFact,
+				Trust:           diagnostic.TrustProven,
+				MessageContains: []string{"`result` is a union discriminated by `result.ok`"},
+			},
+			{
+				Kind:            diagnostic.EvidenceAbstractFact,
+				Trust:           diagnostic.TrustProven,
+				MessageContains: []string{"`result.value` exists only for `result.ok == true`"},
+			},
+			{
+				Kind:            diagnostic.EvidenceMissingProof,
+				Trust:           diagnostic.TrustUnknown,
+				MessageContains: []string{"no stable guard proves `result.ok == true` before this read"},
+			},
+		},
+		LabelContains: []string{"case-specific field read"},
+		HelpContains:  []string{"Check the union case before reading this field"},
+		Sources:       diagnostic.SourceMap{"test.lua": src},
+		RenderOrderedContains: []string{
+			"warning[lint.union.exhaustiveness]: case-specific field read is not exhaustive; `result.value` requires `result.ok == true`",
+			"--> test.lua:7:16",
+			"7 |         return result.value",
+			"↑ case-specific field read",
+			"because:",
+			"1. proven: `result` is a union discriminated by `result.ok`",
+			"2. proven: `result.value` exists only for `result.ok == true`",
+			"3. missing proof: no stable guard proves `result.ok == true` before this read",
+			"help: Check the union case before reading this field",
+		},
+		RenderNotContains: []string{
+			"alias.ok == true",
+			"want string",
 		},
 	})
 }
