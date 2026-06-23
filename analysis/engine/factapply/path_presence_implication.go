@@ -131,16 +131,11 @@ func publishCallReturnPresenceImplication(
 	if ctx.Point != callOutcomeLaterPoint(cache, ctx.Graph, targetAssign, triggerAssign) {
 		return out
 	}
-	triggerKey := factPathKeyAt(resolver, ctx.Point, triggerTarget.TargetPath())
-	targetKey := factPathKeyAt(resolver, ctx.Point, target.TargetPath())
-	if triggerKey == "" || targetKey == "" {
-		return out
-	}
-	trigger, ok := resolver.KeySpace().FromStateKey(triggerKey)
+	trigger, ok := factKeyspaceKeyAt(resolver, ctx.Point, triggerTarget.TargetPath())
 	if !ok {
 		return out
 	}
-	targetK, ok := resolver.KeySpace().FromStateKey(targetKey)
+	targetK, ok := factKeyspaceKeyAt(resolver, ctx.Point, target.TargetPath())
 	if !ok {
 		return out
 	}

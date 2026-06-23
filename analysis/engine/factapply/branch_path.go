@@ -269,11 +269,7 @@ func projectPathDynamicIndexValue(
 	if parent.IsEmpty() {
 		return product.Value{}, false
 	}
-	tableStateKey, ok := factStateKeyAt(resolver, point, parent)
-	if !ok {
-		return product.Value{}, false
-	}
-	tableKey, ok := resolver.KeySpace().FromStateKey(tableStateKey.PathKey())
+	tableKey, ok := factKeyspaceKeyAt(resolver, point, parent)
 	if !ok {
 		return product.Value{}, false
 	}

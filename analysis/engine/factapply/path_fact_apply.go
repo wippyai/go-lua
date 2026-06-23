@@ -59,11 +59,7 @@ func applyDynamicIndexWrite(
 	out state.State,
 	fact factflow.DynamicIndexWrite,
 ) state.State {
-	tableStateKey := factPathKeyAt(resolver, ctx.Point, fact.TablePath())
-	if tableStateKey == "" {
-		return out
-	}
-	tableKey, ok := resolver.KeySpace().FromStateKey(tableStateKey)
+	tableKey, ok := factKeyspaceKeyAt(resolver, ctx.Point, fact.TablePath())
 	if !ok {
 		return out
 	}
@@ -250,11 +246,7 @@ func branchPathEvidenceAt(
 	point cfg.Point,
 	proof factflow.BranchPathEvidence,
 ) (pathevidence.BranchProof, bool) {
-	pathKey := factPathKeyAt(resolver, point, proof.Path())
-	if pathKey == "" {
-		return pathevidence.BranchProof{}, false
-	}
-	path, ok := resolver.KeySpace().FromStateKey(pathKey)
+	path, ok := factKeyspaceKeyAt(resolver, point, proof.Path())
 	if !ok {
 		return pathevidence.BranchProof{}, false
 	}
@@ -309,27 +301,11 @@ func branchPathEvidenceOtherKeyAt(
 	point cfg.Point,
 	proof factflow.BranchPathEvidence,
 ) (keyspace.Key, bool) {
-	otherKey, ok := branchPathEvidenceOtherPathKeyAt(resolver, point, proof)
+	otherPath, ok := proof.OtherPath()
 	if !ok {
 		return keyspace.Key{}, false
 	}
-	return resolver.KeySpace().FromStateKey(otherKey)
-}
-
-func branchPathEvidenceOtherPathKeyAt(
-	resolver *visibility.Resolver,
-	point cfg.Point,
-	proof factflow.BranchPathEvidence,
-) (pathdom.PathKey, bool) {
-	otherPath, ok := proof.OtherPath()
-	if !ok {
-		return "", false
-	}
-	otherKey := factPathKeyAt(resolver, point, otherPath)
-	if otherKey == "" {
-		return "", false
-	}
-	return otherKey, true
+	return factKeyspaceKeyAt(resolver, point, otherPath)
 }
 
 func factPathKeyAt(resolver *visibility.Resolver, point cfg.Point, path pathdom.Path) pathdom.PathKey {
@@ -345,6 +321,25 @@ func factStateKeyAt(resolver *visibility.Resolver, point cfg.Point, path pathdom
 		return "", false
 	}
 	return resolver.StateKeyAt(point, path)
+}
+
+func factKeyspaceKeyAt(resolver *visibility.Resolver, point cfg.Point, path pathdom.Path) (keyspace.Key, bool) {
+	stateKey, ok := factStateKeyAt(resolver, point, path)
+	if !ok {
+		return keyspace.Key{}, false
+	}
+	return keyspaceKeyFromStateKey(resolver, stateKey)
+}
+
+func keyspaceKeyFromStateKey(resolver *visibility.Resolver, stateKey pathaddr.StateKey) (keyspace.Key, bool) {
+	if resolver == nil || stateKey == "" {
+		return keyspace.Key{}, false
+	}
+	ks := resolver.KeySpace()
+	if ks == nil {
+		return keyspace.Key{}, false
+	}
+	return ks.FromStateKey(stateKey.PathKey())
 }
 
 func addPathEqualityProofFromSource(
@@ -422,23 +417,23 @@ func addPathEqualityProofAt(
 	targetPath pathdom.Path,
 	sourcePath pathdom.Path,
 ) state.State {
-	targetKey := factPathKeyAt(resolver, point, targetPath)
-	sourceKey := factPathKeyAt(resolver, point, sourcePath)
-	if targetKey == "" || sourceKey == "" || targetKey == sourceKey {
+	targetStateKey, targetStateOK := factStateKeyAt(resolver, point, targetPath)
+	sourceStateKey, sourceStateOK := factStateKeyAt(resolver, point, sourcePath)
+	if !targetStateOK || !sourceStateOK || targetStateKey == sourceStateKey {
 		return out
 	}
-	targetKeyStruct, ok := resolver.KeySpace().FromStateKey(targetKey)
+	targetKey, ok := keyspaceKeyFromStateKey(resolver, targetStateKey)
 	if !ok {
 		return out
 	}
-	sourceKeyStruct, ok := resolver.KeySpace().FromStateKey(sourceKey)
+	sourceKey, ok := keyspaceKeyFromStateKey(resolver, sourceStateKey)
 	if !ok {
 		return out
 	}
 	out = out.AddBranchProof(pathevidence.BranchProof{
 		Kind:  pathevidence.BranchProofPathEqual,
-		Path:  targetKeyStruct,
-		Other: sourceKeyStruct,
+		Path:  targetKey,
+		Other: sourceKey,
 	})
 	return out.CanonicalizeTypestateResources(resolver.KeySpace())
 }
