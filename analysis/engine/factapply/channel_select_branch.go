@@ -81,6 +81,9 @@ func applyChannelSelectCasePathEquality(
 		for _, selectFact := range selectFacts {
 			caseType, ok := channelselect.ResultCaseTypeFromValue(resultType, string(selectFact.Select), selectFact.Index)
 			if ok {
+				if payloadType, payloadOK := channelSelectExactPayloadType(reg, selectFact); payloadOK {
+					caseType = channelselect.ResultCaseType(string(selectFact.Select), selectFact.Index, payloadType)
+				}
 				caseTypes = append(caseTypes, caseType)
 				continue
 			}
@@ -96,10 +99,7 @@ func applyChannelSelectCasePathEquality(
 		}
 	} else {
 		for _, selectFact := range selectFacts {
-			caseType, ok := channelSelectPayloadCaseType(reg, selectFact)
-			if ok {
-				caseTypes = append(caseTypes, caseType)
-			}
+			caseTypes = append(caseTypes, channelSelectPayloadCaseType(reg, selectFact))
 		}
 		if len(caseTypes) == 0 {
 			return out, false
@@ -110,15 +110,18 @@ func applyChannelSelectCasePathEquality(
 	return result.write(out, value), true
 }
 
-func channelSelectPayloadCaseType(reg *axis.Registry, fact channelselectfact.Fact) (typ.Type, bool) {
-	payloadType, ok := channelSelectPayloadType(reg, fact)
-	if !ok {
-		return nil, false
-	}
-	return channelselect.ResultCaseType(string(fact.Select), fact.Index, payloadType), true
+func channelSelectPayloadCaseType(reg *axis.Registry, fact channelselectfact.Fact) typ.Type {
+	return channelselect.ResultCaseType(string(fact.Select), fact.Index, channelSelectPayloadType(reg, fact))
 }
 
-func channelSelectPayloadType(reg *axis.Registry, fact channelselectfact.Fact) (typ.Type, bool) {
+func channelSelectPayloadType(reg *axis.Registry, fact channelselectfact.Fact) typ.Type {
+	if payloadType, ok := channelSelectExactPayloadType(reg, fact); ok {
+		return payloadType
+	}
+	return typ.Unknown
+}
+
+func channelSelectExactPayloadType(reg *axis.Registry, fact channelselectfact.Fact) (typ.Type, bool) {
 	if !fact.HasPayload {
 		return nil, false
 	}
@@ -140,13 +143,9 @@ func channelSelectRemainingTypeFromFacts(reg *axis.Registry, out state.State, se
 		if fact.Kind != channelselectfact.FactReceive || fact.Select != selectID || skipIndexes[fact.Index] {
 			continue
 		}
-		payloadType, ok := channelSelectPayloadType(reg, fact)
-		if !ok {
-			continue
-		}
 		cases = append(cases, channelselect.ResultCase{
 			Index:   fact.Index,
-			Payload: payloadType,
+			Payload: channelSelectPayloadType(reg, fact),
 		})
 	}
 	if len(cases) == 0 && !hasDefault {

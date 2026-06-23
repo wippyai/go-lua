@@ -98,7 +98,7 @@ func channelSelectResultValue(
 	for _, event := range cases {
 		payloadType, ok := channelSelectEventPayloadType(ctx, typeValues, resolver, projectPath, out, event)
 		if !ok {
-			continue
+			payloadType = typ.Unknown
 		}
 		resultCases = append(resultCases, channelselect.ResultCase{
 			Index:   event.Index(),

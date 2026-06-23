@@ -66,6 +66,87 @@ func TestFactsNodeTransferMaterializesChannelSelectResultCases(t *testing.T) {
 	assertChannelSelectCasePayload(t, reg, resultValue, channelselectfact.ID(selectID), 1, stopPayload)
 }
 
+func TestChannelSelectResultValueUsesPayloadEvidenceBeforeCasePathProjection(t *testing.T) {
+	reg := standard.Registry()
+	result := symbol.ID(717)
+	events := symbol.ID(718)
+	resultPath := pathdom.NewPath(result, "result")
+	eventsPath := pathdom.NewPath(events, "events_ch")
+	selectID := factflow.ChannelSelectID("select-payload-evidence")
+	eventPayload := typetable.NewRecord().Field("kind", typ.String).Build()
+
+	resultValue, ok := testChannelSelectResultValue(reg, selectID, factflow.NewChannelSelectSet(
+		factflow.NewChannelSelect(factflow.ChannelSelectConfig{
+			SelectID:      selectID,
+			Kind:          factflow.ChannelSelectSelect,
+			ResultPath:    resultPath,
+			HasResultPath: true,
+			Index:         0,
+		}),
+		factflow.NewChannelSelect(factflow.ChannelSelectConfig{
+			SelectID:        selectID,
+			Kind:            factflow.ChannelSelectReceive,
+			ResultPath:      resultPath,
+			HasResultPath:   true,
+			CasePath:        eventsPath,
+			HasCasePath:     true,
+			PayloadValue:    typeValue(reg, eventPayload),
+			HasPayloadValue: true,
+			Index:           0,
+		}),
+	).Events())
+	if !ok {
+		t.Fatal("failed to build channel select result value")
+	}
+	assertChannelSelectCasePayload(t, reg, resultValue, channelselectfact.ID(selectID), 0, eventPayload)
+}
+
+func TestFactsNodeTransferMaterializesUnresolvedChannelSelectCaseAsUnknown(t *testing.T) {
+	reg := standard.Registry()
+	point := cfg.Point(722)
+	result := symbol.ID(727)
+	events := symbol.ID(728)
+	unknown := symbol.ID(729)
+	resultPath := pathdom.NewPath(result, "result")
+	eventsPath := pathdom.NewPath(events, "events_ch")
+	unknownPath := pathdom.NewPath(unknown, "unknown_ch")
+	selectID := factflow.ChannelSelectID("select-unresolved")
+	eventPayload := typetable.NewRecord().Field("kind", typ.String).Build()
+
+	got := NewFactsNodeTransfer(FactsNodeTransferConfig{
+		Facts: factflow.NewFacts(factflow.FactsInput{
+			ChannelSelects: map[cfg.Point]factflow.ChannelSelectSet{
+				point: factflow.NewChannelSelectSet(
+					factflow.NewChannelSelect(factflow.ChannelSelectConfig{
+						SelectID:      selectID,
+						Kind:          factflow.ChannelSelectSelect,
+						ResultPath:    resultPath,
+						HasResultPath: true,
+						Index:         0,
+					}),
+					channelSelectReceive(reg, selectID, resultPath, eventsPath, 0, eventPayload),
+					factflow.NewChannelSelect(factflow.ChannelSelectConfig{
+						SelectID:      selectID,
+						Kind:          factflow.ChannelSelectReceive,
+						ResultPath:    resultPath,
+						HasResultPath: true,
+						CasePath:      unknownPath,
+						HasCasePath:   true,
+						Index:         1,
+					}),
+				),
+			},
+		}),
+	})(transfer.NodeContext{
+		Registry: reg,
+		Point:    point,
+	}, state.State{})
+
+	resultValue := got.ReadReturnSlot(reg, 0)
+	assertChannelSelectCasePayload(t, reg, resultValue, channelselectfact.ID(selectID), 0, eventPayload)
+	assertChannelSelectCasePayload(t, reg, resultValue, channelselectfact.ID(selectID), 1, typ.Unknown)
+}
+
 func TestFactsNodeTransferMaterializesChannelSelectDefaultResultCase(t *testing.T) {
 	reg := standard.Registry()
 	point := cfg.Point(721)
@@ -237,18 +318,22 @@ func TestFactsEdgeTransferChannelSelectEqualityNarrowsPayload(t *testing.T) {
 		WriteValue(reg, key.SymbolValue(result), resultValue).
 		WritePathKey(reg, ks, pathdom.PathKey("sym724@1.value"), typeValue(reg, stopPayload)).
 		AddChannelSelectFact(channelselectfact.Fact{
-			Select: channelselectfact.ID(selectID),
-			Kind:   channelselectfact.FactReceive,
-			Result: testStateKey(t, pathdom.PathKey("sym724@1")),
-			Case:   testStateKey(t, pathdom.PathKey("sym725@1")),
-			Index:  0,
+			Select:     channelselectfact.ID(selectID),
+			Kind:       channelselectfact.FactReceive,
+			Result:     testStateKey(t, pathdom.PathKey("sym724@1")),
+			Case:       testStateKey(t, pathdom.PathKey("sym725@1")),
+			Index:      0,
+			Payload:    typeValue(reg, eventPayload),
+			HasPayload: true,
 		}).
 		AddChannelSelectFact(channelselectfact.Fact{
-			Select: channelselectfact.ID(selectID),
-			Kind:   channelselectfact.FactReceive,
-			Result: testStateKey(t, pathdom.PathKey("sym724@1")),
-			Case:   testStateKey(t, pathdom.PathKey("sym726@1")),
-			Index:  1,
+			Select:     channelselectfact.ID(selectID),
+			Kind:       channelselectfact.FactReceive,
+			Result:     testStateKey(t, pathdom.PathKey("sym724@1")),
+			Case:       testStateKey(t, pathdom.PathKey("sym726@1")),
+			Index:      1,
+			Payload:    typeValue(reg, stopPayload),
+			HasPayload: true,
 		})
 
 	got := transfer.Run(transfer.Config{
@@ -634,18 +719,22 @@ func TestFactsEdgeTransferChannelSelectEqualityMatchesDriftingVersions(t *testin
 			WriteValue(reg, key.SymbolValue(result), resultValue).
 			WritePathKey(reg, ks, pathdom.PathKey("sym724@2.value"), typeValue(reg, stopPayload)).
 			AddChannelSelectFact(channelselectfact.Fact{
-				Select: channelselectfact.ID(selectID),
-				Kind:   channelselectfact.FactReceive,
-				Result: testStateKey(t, pathdom.PathKey("sym724@1")),
-				Case:   testStateKey(t, pathdom.PathKey("sym725@1")),
-				Index:  0,
+				Select:     channelselectfact.ID(selectID),
+				Kind:       channelselectfact.FactReceive,
+				Result:     testStateKey(t, pathdom.PathKey("sym724@1")),
+				Case:       testStateKey(t, pathdom.PathKey("sym725@1")),
+				Index:      0,
+				Payload:    typeValue(reg, eventPayload),
+				HasPayload: true,
 			}).
 			AddChannelSelectFact(channelselectfact.Fact{
-				Select: channelselectfact.ID(selectID),
-				Kind:   channelselectfact.FactReceive,
-				Result: testStateKey(t, pathdom.PathKey("sym724@1")),
-				Case:   testStateKey(t, pathdom.PathKey("sym726@1")),
-				Index:  1,
+				Select:     channelselectfact.ID(selectID),
+				Kind:       channelselectfact.FactReceive,
+				Result:     testStateKey(t, pathdom.PathKey("sym724@1")),
+				Case:       testStateKey(t, pathdom.PathKey("sym726@1")),
+				Index:      1,
+				Payload:    typeValue(reg, stopPayload),
+				HasPayload: true,
 			}),
 		EdgeTransfer: NewFactsEdgeTransfer(FactsEdgeTransferConfig{
 			Facts: factflow.NewFacts(factflow.FactsInput{
@@ -703,18 +792,22 @@ func TestFactsEdgeTransferChannelSelectEqualityMatchesNestedCasePath(t *testing.
 		EntryState: state.State{}.
 			WriteValue(reg, key.SymbolValue(result), resultValue).
 			AddChannelSelectFact(channelselectfact.Fact{
-				Select: channelselectfact.ID(selectID),
-				Kind:   channelselectfact.FactReceive,
-				Result: testStateKey(t, pathdom.PathKey("sym924@1")),
-				Case:   testStateKey(t, pathdom.PathKey("sym925@1.primary")),
-				Index:  0,
+				Select:     channelselectfact.ID(selectID),
+				Kind:       channelselectfact.FactReceive,
+				Result:     testStateKey(t, pathdom.PathKey("sym924@1")),
+				Case:       testStateKey(t, pathdom.PathKey("sym925@1.primary")),
+				Index:      0,
+				Payload:    typeValue(reg, eventPayload),
+				HasPayload: true,
 			}).
 			AddChannelSelectFact(channelselectfact.Fact{
-				Select: channelselectfact.ID(selectID),
-				Kind:   channelselectfact.FactReceive,
-				Result: testStateKey(t, pathdom.PathKey("sym924@1")),
-				Case:   testStateKey(t, pathdom.PathKey("sym925@1.timers")),
-				Index:  1,
+				Select:     channelselectfact.ID(selectID),
+				Kind:       channelselectfact.FactReceive,
+				Result:     testStateKey(t, pathdom.PathKey("sym924@1")),
+				Case:       testStateKey(t, pathdom.PathKey("sym925@1.timers")),
+				Index:      1,
+				Payload:    typeValue(reg, timerPayload),
+				HasPayload: true,
 			}),
 		EdgeTransfer: NewFactsEdgeTransfer(FactsEdgeTransferConfig{
 			Facts: factflow.NewFacts(factflow.FactsInput{
