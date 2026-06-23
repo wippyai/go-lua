@@ -7,7 +7,7 @@ import (
 
 const LaneEffectDeltas LaneID = "effect-deltas"
 
-var effectDeltasDomainLane = stateLaneFactory{
+var effectDeltasDomainLane = stateLaneSpec{
 	id: LaneEffectDeltas,
 	build: func(reg *axis.Registry) stateLaneOps {
 		domain := effectdelta.MapDomain(reg)

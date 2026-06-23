@@ -7,7 +7,7 @@ import (
 
 const LaneChannelSelect LaneID = "channel-select"
 
-var channelSelectDomainLane = stateLaneFactory{
+var channelSelectDomainLane = stateLaneSpec{
 	id: LaneChannelSelect,
 	markReachable: func(s State) State {
 		s.channelSelect = s.channelSelect.Reachable()

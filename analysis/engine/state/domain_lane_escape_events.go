@@ -7,7 +7,7 @@ import (
 
 const LaneEscapeEvents LaneID = "escape-events"
 
-var escapeEventsDomainLane = stateLaneFactory{
+var escapeEventsDomainLane = stateLaneSpec{
 	id: LaneEscapeEvents,
 	markReachable: func(s State) State {
 		s.escapeEvents = s.escapeEvents.Reachable()

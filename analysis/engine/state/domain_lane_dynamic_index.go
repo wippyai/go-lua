@@ -7,7 +7,7 @@ import (
 
 const LaneDynamicIndex LaneID = "dynamic-index"
 
-var dynamicIndexDomainLane = stateLaneFactory{
+var dynamicIndexDomainLane = stateLaneSpec{
 	id: LaneDynamicIndex,
 	build: func(reg *axis.Registry) stateLaneOps {
 		domain := dynamicindex.MapDomain(reg)

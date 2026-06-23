@@ -7,7 +7,7 @@ import (
 
 const LaneTypestates LaneID = "typestates"
 
-var typestatesDomainLane = stateLaneFactory{
+var typestatesDomainLane = stateLaneSpec{
 	id: LaneTypestates,
 	build: func(reg *axis.Registry) stateLaneOps {
 		return stateLane(typestate.Domain,

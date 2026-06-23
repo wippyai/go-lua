@@ -7,7 +7,7 @@ import (
 
 const LanePathEvidence LaneID = "path-evidence"
 
-var pathEvidenceDomainLane = stateLaneFactory{
+var pathEvidenceDomainLane = stateLaneSpec{
 	id: LanePathEvidence,
 	markReachable: func(s State) State {
 		s.pathEvidence = s.pathEvidence.Reachable()

@@ -8,7 +8,7 @@ import (
 
 const LaneHeapTableIdentity LaneID = "heap-table-identity"
 
-var heapTableIdentityDomainLane = stateLaneFactory{
+var heapTableIdentityDomainLane = stateLaneSpec{
 	id: LaneHeapTableIdentity,
 	build: func(reg *axis.Registry) stateLaneOps {
 		domain := heapidentity.MapDomain(reg)

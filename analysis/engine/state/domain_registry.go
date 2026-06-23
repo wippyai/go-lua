@@ -1,7 +1,7 @@
 package state
 
 var defaultDomainLaneCatalog = LaneCatalog{
-	factories: []stateLaneFactory{
+	specs: []stateLaneSpec{
 		valuesDomainLane,
 		pathEvidenceDomainLane,
 		dynamicIndexDomainLane,

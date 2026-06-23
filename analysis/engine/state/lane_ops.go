@@ -5,7 +5,10 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 )
 
-type stateLaneFactory struct {
+// stateLaneSpec is the registration unit for one State product-lattice axis.
+// It names the axis, builds its lattice operations, and optionally marks the
+// lane reachable when a write leaves lattice bottom.
+type stateLaneSpec struct {
 	id            LaneID
 	build         func(*axis.Registry) stateLaneOps
 	markReachable func(State) State
@@ -51,10 +54,10 @@ func stateLane[T any](
 	}
 }
 
-func domainFromLaneFactories(reg *axis.Registry, factories []stateLaneFactory) lattice.Lattice[State] {
-	lanes := make([]stateLaneOps, 0, len(factories))
-	for _, factory := range factories {
-		lanes = append(lanes, factory.build(reg))
+func domainFromLaneSpecs(reg *axis.Registry, specs []stateLaneSpec) lattice.Lattice[State] {
+	lanes := make([]stateLaneOps, 0, len(specs))
+	for _, spec := range specs {
+		lanes = append(lanes, spec.build(reg))
 	}
 	return lattice.Lattice[State]{
 		Bottom: func() State {

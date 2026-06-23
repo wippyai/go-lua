@@ -4,7 +4,7 @@ import "github.com/wippyai/go-lua/analysis/domain/value/axis"
 
 const LaneStoreRelations LaneID = "store-relations"
 
-var storeRelationsDomainLane = stateLaneFactory{
+var storeRelationsDomainLane = stateLaneSpec{
 	id: LaneStoreRelations,
 	markReachable: func(s State) State {
 		s.storeRelations = s.storeRelations.reachable()

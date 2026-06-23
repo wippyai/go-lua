@@ -11,7 +11,7 @@ import (
 // The State container folds registered lane operations and reachability
 // transitions; it does not need a second hand-maintained list of semantic lanes.
 type LaneCatalog struct {
-	factories []stateLaneFactory
+	specs []stateLaneSpec
 }
 
 // DefaultLaneCatalog returns the standard set of State lanes.
@@ -21,16 +21,16 @@ func DefaultLaneCatalog() LaneCatalog {
 
 // LaneSet returns the ordered lane IDs in this catalog.
 func (c LaneCatalog) LaneSet() LaneSet {
-	out := make([]LaneID, 0, len(c.factories))
-	for _, factory := range c.factories {
-		out = append(out, factory.id)
+	out := make([]LaneID, 0, len(c.specs))
+	for _, spec := range c.specs {
+		out = append(out, spec.id)
 	}
 	return LaneSet{ids: out}
 }
 
 // Domain builds a State lattice with every lane in this catalog enabled.
 func (c LaneCatalog) Domain(reg *axis.Registry) lattice.Lattice[State] {
-	return domainFromLaneFactories(reg, c.factories)
+	return domainFromLaneSpecs(reg, c.specs)
 }
 
 // DomainWithLaneSet builds a State lattice from an exact ordered lane
@@ -47,39 +47,39 @@ func (c LaneCatalog) DomainWithLaneSet(reg *axis.Registry, lanes LaneSet) lattic
 // selection against this catalog, returning configuration errors instead of
 // panicking.
 func (c LaneCatalog) TryDomainWithLaneSet(reg *axis.Registry, lanes LaneSet) (lattice.Lattice[State], error) {
-	factories, err := c.selectFactories(lanes)
+	specs, err := c.selectSpecs(lanes)
 	if err != nil {
 		return lattice.Lattice[State]{}, err
 	}
-	return domainFromLaneFactories(reg, factories), nil
+	return domainFromLaneSpecs(reg, specs), nil
 }
 
 // ValidateLaneSet checks that every selected lane exists in this catalog and
 // that no lane is selected more than once.
 func (c LaneCatalog) ValidateLaneSet(lanes LaneSet) error {
-	_, err := c.selectFactories(lanes)
+	_, err := c.selectSpecs(lanes)
 	return err
 }
 
 func (c LaneCatalog) reachableOps() []func(State) State {
-	out := make([]func(State) State, 0, len(c.factories))
-	for _, factory := range c.factories {
-		if factory.markReachable != nil {
-			out = append(out, factory.markReachable)
+	out := make([]func(State) State, 0, len(c.specs))
+	for _, spec := range c.specs {
+		if spec.markReachable != nil {
+			out = append(out, spec.markReachable)
 		}
 	}
 	return out
 }
 
-func (c LaneCatalog) selectFactories(lanes LaneSet) ([]stateLaneFactory, error) {
-	byID := make(map[LaneID]stateLaneFactory, len(c.factories))
-	for _, factory := range c.factories {
-		byID[factory.id] = factory
+func (c LaneCatalog) selectSpecs(lanes LaneSet) ([]stateLaneSpec, error) {
+	byID := make(map[LaneID]stateLaneSpec, len(c.specs))
+	for _, spec := range c.specs {
+		byID[spec.id] = spec
 	}
 	seen := make(map[LaneID]struct{}, lanes.Len())
-	out := make([]stateLaneFactory, 0, lanes.Len())
+	out := make([]stateLaneSpec, 0, lanes.Len())
 	for _, id := range lanes.ids {
-		factory, ok := byID[id]
+		spec, ok := byID[id]
 		if !ok {
 			return nil, fmt.Errorf("state: unknown domain lane %q", id)
 		}
@@ -87,7 +87,7 @@ func (c LaneCatalog) selectFactories(lanes LaneSet) ([]stateLaneFactory, error) 
 			return nil, fmt.Errorf("state: duplicate domain lane %q", id)
 		}
 		seen[id] = struct{}{}
-		out = append(out, factory)
+		out = append(out, spec)
 	}
 	return out, nil
 }
