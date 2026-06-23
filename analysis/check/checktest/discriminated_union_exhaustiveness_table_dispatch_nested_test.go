@@ -8,7 +8,7 @@ import (
 )
 
 func TestDiscriminatedUnionExhaustivenessReportsNestedDispatchTableKey(t *testing.T) {
-	result := Check(`
+	src := `
 type Begin = { kind: "begin", id: string }
 type Commit = { kind: "commit", payment_id: string }
 type Cancel = { kind: "cancel", reason: string }
@@ -23,7 +23,8 @@ local registry = {
 
 local action: Action = { kind = "begin", id = "evt-1" }
 local handler = registry.handlers[action.kind]
-`, WithDiagnosticRule(
+`
+	result := Check(src, WithDiagnosticRule(
 		diagnostics.CodeDiscriminatedUnionExhaustive,
 		diagnostic.Enable(),
 	))
@@ -31,11 +32,70 @@ local handler = registry.handlers[action.kind]
 		Code:            diagnostics.CodeDiscriminatedUnionExhaustive,
 		Severity:        diagnostic.SeverityWarning,
 		DiagnosticCount: 1,
+		Line:            15,
+		Column:          17,
+		Span: diagnostic.Span{
+			StartLine: 15,
+			StartCol:  17,
+			EndLine:   15,
+			EndCol:    47,
+		},
 		MessageContains: []string{"dispatch table is not exhaustive", "registry.handlers.cancel"},
+		EvidenceMin:     4,
 		EvidenceOrdered: []string{
 			"`registry.handlers` is indexed by discriminant `action.kind`",
+			"possible cases: `action.kind == \"begin\"`, `action.kind == \"cancel\"`, `action.kind == \"commit\"`",
 			"dispatch table provides keys: `registry.handlers.begin`, `registry.handlers.commit`",
 			"missing dispatch keys: `registry.handlers.cancel` for `action.kind == \"cancel\"`",
+		},
+		EvidenceChain: []diagnosticEvidenceExpectation{
+			{
+				Kind:            diagnostic.EvidenceAbstractFact,
+				Trust:           diagnostic.TrustProven,
+				Span:            diagnostic.Span{StartLine: 15, StartCol: 17, EndLine: 15, EndCol: 47},
+				MessageContains: []string{"`registry.handlers`", "`action.kind`"},
+			},
+			{
+				Kind:            diagnostic.EvidenceAbstractFact,
+				Trust:           diagnostic.TrustProven,
+				Span:            diagnostic.Span{StartLine: 15, StartCol: 17, EndLine: 15, EndCol: 47},
+				MessageContains: []string{"possible cases", "begin", "cancel", "commit"},
+			},
+			{
+				Kind:            diagnostic.EvidenceAbstractFact,
+				Trust:           diagnostic.TrustProven,
+				Span:            diagnostic.Span{StartLine: 8, StartCol: 16, EndLine: 11, EndCol: 5},
+				MessageContains: []string{"dispatch table provides keys", "`registry.handlers.begin`", "`registry.handlers.commit`"},
+			},
+			{
+				Kind:            diagnostic.EvidenceMissingProof,
+				Trust:           diagnostic.TrustUnknown,
+				Span:            diagnostic.Span{StartLine: 15, StartCol: 17, EndLine: 15, EndCol: 47},
+				MessageContains: []string{"missing dispatch keys", "`registry.handlers.cancel`", "`action.kind == \"cancel\"`"},
+			},
+		},
+		LabelMin:      2,
+		LabelContains: []string{"dispatch table", "dispatch lookup"},
+		HelpContains:  []string{"Add each missing dispatch key", "explicit fallback"},
+		Sources:       diagnostic.SourceMap{"test.lua": src},
+		RenderOrderedContains: []string{
+			"warning[lint.union.exhaustiveness]: dispatch table is not exhaustive; missing key: `registry.handlers.cancel`",
+			"test.lua:15:17",
+			"15 | local handler = registry.handlers[action.kind]",
+			"↑ dispatch lookup",
+			"because:",
+			"proven: `registry.handlers` is indexed by discriminant `action.kind`",
+			"proven: possible cases: `action.kind == \"begin\"`, `action.kind == \"cancel\"`, `action.kind == \"commit\"`",
+			"proven: dispatch table provides keys: `registry.handlers.begin`, `registry.handlers.commit`",
+			"test.lua:8:16",
+			"↓ dispatch table",
+			"8 |     handlers = {",
+			"missing proof: missing dispatch keys: `registry.handlers.cancel` for `action.kind == \"cancel\"`",
+			"help: Add each missing dispatch key",
+		},
+		RenderNotContains: []string{
+			"want string",
+			"^~",
 		},
 	})
 }
