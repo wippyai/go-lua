@@ -146,7 +146,7 @@ func TestDiagnosticProducerRegistryDeclaresPolicyDefaults(t *testing.T) {
 	}
 
 	declared := make(map[diagnostic.Code]struct{})
-	for i, producer := range diagnosticProducers(producerContext{}) {
+	for i, producer := range diagnosticProducers() {
 		if producer.produce == nil {
 			t.Fatalf("producer %d has nil produce function", i)
 		}

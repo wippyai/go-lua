@@ -63,96 +63,96 @@ func (p diagnosticProducer) shouldRun(policy diagnostic.Policy) bool {
 	return false
 }
 
-func diagnosticProducers(context producerContext) []diagnosticProducer {
+func diagnosticProducers() []diagnosticProducer {
 	return []diagnosticProducer{
 		{
 			codes:          []diagnostic.Code{CodeUnresolvedTypeReference},
 			defaultEnabled: true,
-			produce: func(result *body.Result, _ producerContext, _ map[symbol.ID]*ast.FunctionExpr) []diagnostic.Diagnostic {
+			produce: func(result *body.Result, context producerContext, _ map[symbol.ID]*ast.FunctionExpr) []diagnostic.Diagnostic {
 				return unresolvedTypeReferences(context).Produce(result)
 			},
 		},
 		{
 			codes:          []diagnostic.Code{CodeUnresolvedValueReference},
 			defaultEnabled: true,
-			produce: func(result *body.Result, _ producerContext, _ map[symbol.ID]*ast.FunctionExpr) []diagnostic.Diagnostic {
+			produce: func(result *body.Result, context producerContext, _ map[symbol.ID]*ast.FunctionExpr) []diagnostic.Diagnostic {
 				return unresolvedValueReferences(context).Produce(result)
 			},
 		},
 		{
 			codes:          []diagnostic.Code{CodeAssignmentType, CodeOptionalAssignmentTarget},
 			defaultEnabled: true,
-			produce: func(result *body.Result, _ producerContext, defs map[symbol.ID]*ast.FunctionExpr) []diagnostic.Diagnostic {
+			produce: func(result *body.Result, context producerContext, defs map[symbol.ID]*ast.FunctionExpr) []diagnostic.Diagnostic {
 				return annotationAssignability(context).Produce(result, defs)
 			},
 		},
 		{
 			codes:          []diagnostic.Code{CodeReturnContractType},
 			defaultEnabled: true,
-			produce: func(result *body.Result, _ producerContext, defs map[symbol.ID]*ast.FunctionExpr) []diagnostic.Diagnostic {
+			produce: func(result *body.Result, context producerContext, defs map[symbol.ID]*ast.FunctionExpr) []diagnostic.Diagnostic {
 				return produceReturnContract(result, context, defs)
 			},
 		},
 		{
 			codes:          []diagnostic.Code{CodeDirectCallNotCallable, CodeDirectCallTooFewArgs, CodeDirectCallTooManyArgs, CodeDirectCallArgType},
 			defaultEnabled: true,
-			produce: func(result *body.Result, _ producerContext, defs map[symbol.ID]*ast.FunctionExpr) []diagnostic.Diagnostic {
+			produce: func(result *body.Result, context producerContext, defs map[symbol.ID]*ast.FunctionExpr) []diagnostic.Diagnostic {
 				return produceDirectCallContract(result, context, defs)
 			},
 		},
 		{
 			codes:          []diagnostic.Code{CodeDirectCallArgType},
 			defaultEnabled: true,
-			produce: func(result *body.Result, _ producerContext, defs map[symbol.ID]*ast.FunctionExpr) []diagnostic.Diagnostic {
+			produce: func(result *body.Result, context producerContext, defs map[symbol.ID]*ast.FunctionExpr) []diagnostic.Diagnostic {
 				return produceCallParamObligations(result, context, defs)
 			},
 		},
 		{
 			codes:          []diagnostic.Code{CodeDirectCallResultAssignment},
 			defaultEnabled: true,
-			produce: func(result *body.Result, _ producerContext, defs map[symbol.ID]*ast.FunctionExpr) []diagnostic.Diagnostic {
+			produce: func(result *body.Result, context producerContext, defs map[symbol.ID]*ast.FunctionExpr) []diagnostic.Diagnostic {
 				return produceDirectCallResultAssignment(result, context, defs)
 			},
 		},
 		{
 			codes:          []diagnostic.Code{CodeConcatOperand},
 			defaultEnabled: true,
-			produce: func(result *body.Result, _ producerContext, _ map[symbol.ID]*ast.FunctionExpr) []diagnostic.Diagnostic {
+			produce: func(result *body.Result, context producerContext, _ map[symbol.ID]*ast.FunctionExpr) []diagnostic.Diagnostic {
 				return concatOperands(context).Produce(result)
 			},
 		},
 		{
 			codes:          []diagnostic.Code{CodeNumericForOperand},
 			defaultEnabled: true,
-			produce: func(result *body.Result, _ producerContext, _ map[symbol.ID]*ast.FunctionExpr) []diagnostic.Diagnostic {
+			produce: func(result *body.Result, context producerContext, _ map[symbol.ID]*ast.FunctionExpr) []diagnostic.Diagnostic {
 				return numericForOperands(context).Produce(result)
 			},
 		},
 		{
 			codes:          []diagnostic.Code{CodeNonNilAssertAlwaysNil},
 			defaultEnabled: true,
-			produce: func(result *body.Result, _ producerContext, _ map[symbol.ID]*ast.FunctionExpr) []diagnostic.Diagnostic {
+			produce: func(result *body.Result, context producerContext, _ map[symbol.ID]*ast.FunctionExpr) []diagnostic.Diagnostic {
 				return nonNilAssertions(context).Produce(result)
 			},
 		},
 		{
 			codes:          []diagnostic.Code{CodeOptionalMethodCall, CodeMissingMember, CodeNotCallable},
 			defaultEnabled: true,
-			produce: func(result *body.Result, _ producerContext, _ map[symbol.ID]*ast.FunctionExpr) []diagnostic.Diagnostic {
+			produce: func(result *body.Result, context producerContext, _ map[symbol.ID]*ast.FunctionExpr) []diagnostic.Diagnostic {
 				return memberCall(context).Produce(result)
 			},
 		},
 		{
 			codes:          []diagnostic.Code{CodeMissingMember},
 			defaultEnabled: true,
-			produce: func(result *body.Result, _ producerContext, _ map[symbol.ID]*ast.FunctionExpr) []diagnostic.Diagnostic {
+			produce: func(result *body.Result, context producerContext, _ map[symbol.ID]*ast.FunctionExpr) []diagnostic.Diagnostic {
 				return memberRead(context).Produce(result)
 			},
 		},
 		{
 			codes:          []diagnostic.Code{CodeChannelSelectExhaustive},
 			defaultEnabled: true,
-			produce: func(result *body.Result, _ producerContext, _ map[symbol.ID]*ast.FunctionExpr) []diagnostic.Diagnostic {
+			produce: func(result *body.Result, context producerContext, _ map[symbol.ID]*ast.FunctionExpr) []diagnostic.Diagnostic {
 				return channelSelectExhaustiveness(context).Produce(result)
 			},
 		},
@@ -173,28 +173,28 @@ func diagnosticProducers(context producerContext) []diagnosticProducer {
 		{
 			codes:          []diagnostic.Code{CodeRedundantCondition},
 			defaultEnabled: false,
-			produce: func(result *body.Result, _ producerContext, _ map[symbol.ID]*ast.FunctionExpr) []diagnostic.Diagnostic {
+			produce: func(result *body.Result, context producerContext, _ map[symbol.ID]*ast.FunctionExpr) []diagnostic.Diagnostic {
 				return redundantConditions(context).Produce(result)
 			},
 		},
 		{
 			codes:          []diagnostic.Code{CodeDiscriminatedUnionExhaustive},
 			defaultEnabled: false,
-			produce: func(result *body.Result, _ producerContext, _ map[symbol.ID]*ast.FunctionExpr) []diagnostic.Diagnostic {
+			produce: func(result *body.Result, context producerContext, _ map[symbol.ID]*ast.FunctionExpr) []diagnostic.Diagnostic {
 				return discriminatedUnionExhaustiveness(context).Produce(result)
 			},
 		},
 		{
 			codes:          []diagnostic.Code{CodeFrozenTableMutation},
 			defaultEnabled: false,
-			produce: func(result *body.Result, _ producerContext, _ map[symbol.ID]*ast.FunctionExpr) []diagnostic.Diagnostic {
+			produce: func(result *body.Result, context producerContext, _ map[symbol.ID]*ast.FunctionExpr) []diagnostic.Diagnostic {
 				return frozenTableMutations(context).Produce(result)
 			},
 		},
 		{
 			codes:          []diagnostic.Code{CodeResourceUnreleased},
 			defaultEnabled: false,
-			produce: func(result *body.Result, _ producerContext, _ map[symbol.ID]*ast.FunctionExpr) []diagnostic.Diagnostic {
+			produce: func(result *body.Result, context producerContext, _ map[symbol.ID]*ast.FunctionExpr) []diagnostic.Diagnostic {
 				return lifecycleObligations(context).Produce(result)
 			},
 		},
@@ -235,7 +235,7 @@ func produceWithResolver(
 	}
 	defs := directCallDefinitions(result, inheritedDefs)
 	var out []diagnostic.Diagnostic
-	for _, producer := range diagnosticProducers(context) {
+	for _, producer := range diagnosticProducers() {
 		if !producer.shouldRun(config.Policy) {
 			continue
 		}
