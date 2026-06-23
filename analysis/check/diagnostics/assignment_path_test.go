@@ -44,9 +44,12 @@ func TestAssignmentReportsNestedDynamicVariantWriteInvalidatedGuardWithEvidence(
 	if !strings.Contains(d.Message, "cannot assign slots.active.value.path") || !strings.Contains(d.Message, "may be nil") {
 		t.Fatalf("message = %q, want string assignment mismatch", d.Message)
 	}
-	if got := d.Explanation.Evidence(); len(got) < 2 {
-		t.Fatalf("explanation evidence = %#v, want source and annotation evidence", got)
-	}
+	assertAssignmentPathEvidence(t, d,
+		"slots.active.value.path can be unknown or nil here",
+		"stale_path is declared as string",
+		"no guard on this path proves slots.active.value.path is non-nil",
+		"Guard `slots.active.value.path` with a nil check",
+	)
 	if len(d.Labels) < 2 || d.Labels[0].Message != "assigned value" || d.Labels[1].Message != "declared type" {
 		t.Fatalf("labels = %#v, want assigned value and declared type", d.Labels)
 	}
@@ -101,9 +104,12 @@ func TestAssignmentReportsNestedDynamicVariantWriteInvalidatedAliasWithEvidence(
 	if !strings.Contains(d.Message, "cannot assign active.value.path") || !strings.Contains(d.Message, "may be nil") {
 		t.Fatalf("message = %q, want string assignment mismatch", d.Message)
 	}
-	if got := d.Explanation.Evidence(); len(got) < 2 {
-		t.Fatalf("explanation evidence = %#v, want source and annotation evidence", got)
-	}
+	assertAssignmentPathEvidence(t, d,
+		"active.value.path can be string or nil here",
+		"stale_path is declared as string",
+		"no guard on this path proves active.value.path is non-nil",
+		"Guard `active.value.path` with a nil check",
+	)
 	if len(d.Labels) < 2 || d.Labels[0].Message != "assigned value" || d.Labels[1].Message != "declared type" {
 		t.Fatalf("labels = %#v, want assigned value and declared type", d.Labels)
 	}
@@ -134,9 +140,12 @@ func TestAssignmentReportsDynamicIndexWriteInvalidatedGuardWithEvidence(t *testi
 	if !strings.Contains(d.Message, "cannot assign box.value") || !strings.Contains(d.Message, "may be nil") {
 		t.Fatalf("message = %q, want string assignment mismatch", d.Message)
 	}
-	if got := d.Explanation.Evidence(); len(got) < 2 {
-		t.Fatalf("explanation evidence = %#v, want source and annotation evidence", got)
-	}
+	assertAssignmentPathEvidence(t, d,
+		"box.value can be string or nil here",
+		"after is declared as string",
+		"no guard on this path proves box.value is non-nil",
+		"Guard `box.value` with a nil check",
+	)
 	if len(d.Labels) < 2 || d.Labels[0].Message != "assigned value" || d.Labels[1].Message != "declared type" {
 		t.Fatalf("labels = %#v, want assigned value and declared type", d.Labels)
 	}
@@ -401,5 +410,18 @@ func TestAssignmentAcceptsGuardedOptionalDynamicIndexTarget(t *testing.T) {
 	`)
 	if len(diags) != 0 {
 		t.Fatalf("diagnostics = %#v, want none after nil check", diags)
+	}
+}
+
+func assertAssignmentPathEvidence(t *testing.T, d diagnostic.Diagnostic, source, target, missingProof, help string) {
+	t.Helper()
+	evidence := d.Explanation.Evidence()
+	if !diagnosticEvidenceContains(evidence, source) ||
+		!diagnosticEvidenceContains(evidence, target) ||
+		!diagnosticEvidenceContains(evidence, missingProof) {
+		t.Fatalf("evidence = %#v, want source %q, target %q, and missing-proof %q", evidence, source, target, missingProof)
+	}
+	if !strings.Contains(d.Help, help) {
+		t.Fatalf("help = %q, want %q", d.Help, help)
 	}
 }
