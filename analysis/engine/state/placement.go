@@ -6,11 +6,14 @@ import (
 )
 
 func (s State) ReadPlacement(id identity.ID) placement.Value {
+	if !s.laneEnabled(lanePlacementBit) {
+		return placement.Bottom
+	}
 	return s.placement.read(id)
 }
 
 func (s State) WritePlacement(id identity.ID, value placement.Value) State {
-	if id == (identity.ID{}) {
+	if id == (identity.ID{}) || !s.laneEnabled(lanePlacementBit) {
 		return s
 	}
 	if s.placement.isTop() {

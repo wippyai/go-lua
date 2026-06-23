@@ -7,11 +7,14 @@ import (
 )
 
 func (s State) ReadHeapTableObject(reg *axis.Registry, id identity.ID) heapidentity.TableObject {
+	if !s.laneEnabled(laneHeapTableIdentityBit) {
+		return heapidentity.ObjectDomain(reg).Bottom()
+	}
 	return s.heapTableIdentity.read(reg, id)
 }
 
 func (s State) WriteHeapTableObject(reg *axis.Registry, id identity.ID, object heapidentity.TableObject) State {
-	if id == (identity.ID{}) {
+	if id == (identity.ID{}) || !s.laneEnabled(laneHeapTableIdentityBit) {
 		return s
 	}
 	if s.heapTableIdentity.top {

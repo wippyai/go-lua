@@ -7,11 +7,14 @@ import (
 )
 
 func (s State) ReadDynamicIndexFact(reg *axis.Registry, key dynamicindex.Key) dynamicindex.Fact {
+	if !s.laneEnabled(laneDynamicIndexBit) {
+		return dynamicindex.Domain(reg).Bottom()
+	}
 	return s.dynamicIndex.read(reg, key)
 }
 
 func (s State) WriteDynamicIndexFact(reg *axis.Registry, key dynamicindex.Key, fact dynamicindex.Fact) State {
-	if key.Table.Kind == keyspace.KindInvalid {
+	if key.Table.Kind == keyspace.KindInvalid || !s.laneEnabled(laneDynamicIndexBit) {
 		return s
 	}
 	if s.dynamicIndex.top {

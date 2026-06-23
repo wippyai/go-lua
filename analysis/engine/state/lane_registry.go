@@ -16,3 +16,20 @@ var defaultLaneCatalog = newLaneCatalog([]laneSpec{
 	numFloorsLaneSpec,
 	diffRelationsLaneSpec,
 })
+
+var (
+	laneValuesBit            = defaultLaneCatalog.mustLaneBit(LaneValues)
+	lanePathEvidenceBit      = defaultLaneCatalog.mustLaneBit(LanePathEvidence)
+	laneDynamicIndexBit      = defaultLaneCatalog.mustLaneBit(LaneDynamicIndex)
+	laneHeapTableIdentityBit = defaultLaneCatalog.mustLaneBit(LaneHeapTableIdentity)
+	laneFrozenTablesBit      = defaultLaneCatalog.mustLaneBit(LaneFrozenTables)
+	laneEffectDeltasBit      = defaultLaneCatalog.mustLaneBit(LaneEffectDeltas)
+	laneEscapeEventsBit      = defaultLaneCatalog.mustLaneBit(LaneEscapeEvents)
+	laneChannelSelectBit     = defaultLaneCatalog.mustLaneBit(LaneChannelSelect)
+	laneStoreRelationsBit    = defaultLaneCatalog.mustLaneBit(LaneStoreRelations)
+	laneTypestatesBit        = defaultLaneCatalog.mustLaneBit(LaneTypestates)
+	lanePlacementBit         = defaultLaneCatalog.mustLaneBit(LanePlacement)
+	laneLenFloorsBit         = defaultLaneCatalog.mustLaneBit(LaneLenFloors)
+	laneNumFloorsBit         = defaultLaneCatalog.mustLaneBit(LaneNumFloors)
+	laneDiffRelationsBit     = defaultLaneCatalog.mustLaneBit(LaneDiffRelations)
+)

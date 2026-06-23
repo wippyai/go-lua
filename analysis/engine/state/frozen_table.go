@@ -47,6 +47,9 @@ type FrozenTablesSnapshot struct {
 // order. Bottom is explicit; Top means the reachable must lane contains no
 // frozen-table proofs.
 func (s State) FrozenTablesSnapshot() FrozenTablesSnapshot {
+	if !s.laneEnabled(laneFrozenTablesBit) {
+		return FrozenTablesSnapshot{Bottom: true}
+	}
 	bottom, top, tables := s.frozenTables.snapshot(identityIDLess)
 	return FrozenTablesSnapshot{Bottom: bottom, Top: top, Tables: tables}
 }
@@ -54,11 +57,17 @@ func (s State) FrozenTablesSnapshot() FrozenTablesSnapshot {
 // IsTableFrozen reports whether every incoming path proves this table identity
 // frozen at this point.
 func (s State) IsTableFrozen(id identity.ID) bool {
+	if !s.laneEnabled(laneFrozenTablesBit) {
+		return false
+	}
 	return s.frozenTables.isFrozen(id)
 }
 
 // FreezeTable records a shallow, identity-keyed frozen-table proof.
 func (s State) FreezeTable(id identity.ID) State {
+	if !s.laneEnabled(laneFrozenTablesBit) {
+		return s
+	}
 	frozenTables, changed := s.frozenTables.freeze(id)
 	if !changed {
 		return s

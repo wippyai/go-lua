@@ -43,8 +43,15 @@ func (s State) Snapshot() State {
 	return s
 }
 
+func (s State) laneEnabled(bit laneMask) bool {
+	return s.laneMask.allows(bit)
+}
+
 // ReadValue reads a value slot. Missing slots read as product.Bottom(reg).
 func (s State) ReadValue(reg *axis.Registry, slot key.Value) product.Value {
+	if !s.laneEnabled(laneValuesBit) {
+		return product.Bottom(reg)
+	}
 	return s.values.read(reg, slot)
 }
 
@@ -59,7 +66,7 @@ func (s State) ReadSymbolValue(reg *axis.Registry, sym symbol.ID) product.Value 
 // WriteValue returns a state with slot updated. Writing product.Bottom(reg)
 // removes the finite entry so absence remains the canonical bottom spelling.
 func (s State) WriteValue(reg *axis.Registry, slot key.Value, value product.Value) State {
-	if slot == 0 {
+	if slot == 0 || !s.laneEnabled(laneValuesBit) {
 		return s
 	}
 	if s.values.top {

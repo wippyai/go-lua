@@ -67,7 +67,7 @@ func fieldCanonicalTypestatePathKey(ks *keyspace.KeySpace, key pathdom.PathKey) 
 // equality evidence so resources acquired before the proof are stored under the
 // same canonical identity as later transitions through the alias.
 func (s State) CanonicalizeTypestateResources(ks *keyspace.KeySpace) State {
-	if ks == nil {
+	if ks == nil || !s.laneEnabled(laneTypestatesBit) {
 		return s
 	}
 	next := s.typestates.MapResources(func(resource typestate.Resource) typestate.Resource {
@@ -87,17 +87,26 @@ func (s State) CanonicalizeTypestateResources(ks *keyspace.KeySpace) State {
 
 // TypestateSnapshot returns a copy of the current typestate lane.
 func (s State) TypestateSnapshot() typestate.Store {
+	if !s.laneEnabled(laneTypestatesBit) {
+		return typestate.Store{}
+	}
 	return s.typestates.Clone()
 }
 
 // OpenTypestateObligations returns locally owned lifecycle obligations that
 // are not proven closed or escaped.
 func (s State) OpenTypestateObligations() []typestate.OpenObligation {
+	if !s.laneEnabled(laneTypestatesBit) {
+		return nil
+	}
 	return s.typestates.OpenObligations()
 }
 
 // AcquireTypestate records ownership of a protocol resource.
 func (s State) AcquireTypestate(resource typestate.Resource, current typestate.State, obligation typestate.Obligation) State {
+	if !s.laneEnabled(laneTypestatesBit) {
+		return s
+	}
 	next := s.typestates.Acquire(resource, current, obligation)
 	if typestate.Equal(next, s.typestates) {
 		return s
@@ -109,6 +118,9 @@ func (s State) AcquireTypestate(resource typestate.Resource, current typestate.S
 
 // TransitionTypestate records a protocol state transition.
 func (s State) TransitionTypestate(resource typestate.Resource, from, to typestate.State) State {
+	if !s.laneEnabled(laneTypestatesBit) {
+		return s
+	}
 	next := s.typestates.Transition(resource, from, to)
 	if typestate.Equal(next, s.typestates) {
 		return s
@@ -120,6 +132,9 @@ func (s State) TransitionTypestate(resource typestate.Resource, from, to typesta
 
 // EscapeTypestate records that local lifecycle ownership was transferred away.
 func (s State) EscapeTypestate(resource typestate.Resource) State {
+	if !s.laneEnabled(laneTypestatesBit) {
+		return s
+	}
 	next := s.typestates.Escape(resource)
 	if typestate.Equal(next, s.typestates) {
 		return s

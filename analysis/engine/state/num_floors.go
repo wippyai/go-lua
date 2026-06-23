@@ -11,12 +11,18 @@ type NumFloorsSnapshot struct {
 }
 
 func (s State) NumFloorsSnapshot(ks *keyspace.KeySpace) NumFloorsSnapshot {
+	if !s.laneEnabled(laneNumFloorsBit) {
+		return NumFloorsSnapshot{Bottom: true}
+	}
 	return s.numFloors.snapshot(ks)
 }
 
 // ReadNumFloor reads the proven lower bound for a numeric state key: a returned
 // (lo, true) asserts value(stateKey) >= lo at this point.
 func (s State) ReadNumFloor(ks *keyspace.KeySpace, stateKey pathaddr.StateKey) (int64, bool) {
+	if !s.laneEnabled(laneNumFloorsBit) {
+		return 0, false
+	}
 	key, ok := ks.InternStateKey(stateKey)
 	if !ok {
 		return 0, false
@@ -26,6 +32,9 @@ func (s State) ReadNumFloor(ks *keyspace.KeySpace, stateKey pathaddr.StateKey) (
 
 // WriteNumFloor records that value(stateKey) >= lo holds at this point.
 func (s State) WriteNumFloor(ks *keyspace.KeySpace, stateKey pathaddr.StateKey, lo int64) State {
+	if !s.laneEnabled(laneNumFloorsBit) {
+		return s
+	}
 	key, ok := ks.InternStateKey(stateKey)
 	if !ok {
 		return s
@@ -42,6 +51,9 @@ func (s State) WriteNumFloor(ks *keyspace.KeySpace, stateKey pathaddr.StateKey, 
 // ClearNumFloor removes any finite lower-bound proof for stateKey. It is used
 // when a write gives no numeric lower-bound evidence for the new value.
 func (s State) ClearNumFloor(ks *keyspace.KeySpace, stateKey pathaddr.StateKey) State {
+	if !s.laneEnabled(laneNumFloorsBit) {
+		return s
+	}
 	key, ok := ks.InternStateKey(stateKey)
 	if !ok {
 		return s

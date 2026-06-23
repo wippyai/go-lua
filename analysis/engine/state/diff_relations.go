@@ -27,6 +27,9 @@ func (s State) WriteScaledConstraint(coA int64, a RelOperand, coB int64, b RelOp
 }
 
 func (s State) writeRelConstraint(c RelConstraint) State {
+	if !s.laneEnabled(laneDiffRelationsBit) {
+		return s
+	}
 	lane, changed := s.diffRelations.add(c)
 	if !changed {
 		return s
@@ -45,6 +48,9 @@ type RelConstraintsSnapshot struct {
 
 // RelConstraints returns the relational constraints proven at this state.
 func (s State) RelConstraints() RelConstraintsSnapshot {
+	if !s.laneEnabled(laneDiffRelationsBit) {
+		return RelConstraintsSnapshot{Bottom: true}
+	}
 	bottom, top, items := s.diffRelations.snapshot(relConstraintLess)
 	return RelConstraintsSnapshot{Bottom: bottom, Top: top, Constraints: items}
 }
@@ -53,7 +59,7 @@ func (s State) RelConstraints() RelConstraintsSnapshot {
 // value operand or as the array behind a length operand. It is used when a root
 // symbol is reassigned, since all prior relations over its old value are stale.
 func (s State) ClearDiffConstraintsFor(key pathaddr.StateKey) State {
-	if key == "" {
+	if key == "" || !s.laneEnabled(laneDiffRelationsBit) {
 		return s
 	}
 	lane, changed := s.diffRelations.clearMatching(func(k pathaddr.StateKey) bool {

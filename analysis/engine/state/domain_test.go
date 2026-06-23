@@ -5,10 +5,20 @@ import (
 	"strings"
 	"testing"
 
+	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
+	"github.com/wippyai/go-lua/analysis/domain/placement"
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
+	"github.com/wippyai/go-lua/analysis/domain/typestate"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/engine/dynamicindex"
+	"github.com/wippyai/go-lua/analysis/engine/state/channelselectfact"
+	effectdelta "github.com/wippyai/go-lua/analysis/engine/state/effectdelta"
+	"github.com/wippyai/go-lua/analysis/engine/state/escapeevent"
+	"github.com/wippyai/go-lua/analysis/engine/state/heapidentity"
+	"github.com/wippyai/go-lua/analysis/engine/state/pathevidence"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
 )
@@ -229,6 +239,107 @@ func TestSelectedDomainReachabilityDoesNotReviveDisabledMustFactLanes(t *testing
 	}
 	if !state.RelConstraints().Bottom {
 		t.Fatal("values-only domain write revived disabled diff-relation lane")
+	}
+}
+
+func TestDisabledLaneAPIsReadAsBottomAndIgnoreDirectWrites(t *testing.T) {
+	reg := standard.Registry()
+	ks := keyspace.New()
+	valueDomain := product.Domain(reg)
+	pathKey := pathdom.PathKey("sym15@1.field")
+	stateKey, ok := pathaddr.StateKeyFromPathKey(pathKey)
+	if !ok {
+		t.Fatalf("StateKeyFromPathKey(%q) failed", pathKey)
+	}
+	localKey, ok := ks.FromPathKey(pathKey)
+	if !ok {
+		t.Fatalf("FromPathKey(%q) failed", pathKey)
+	}
+	slot := key.SymbolValue(symbol.ID(15))
+	tableID := identity.ID{Kind: "table", Site: "disabled-lanes", Index: 1}
+	heapID := identity.ID{Kind: "table", Site: "disabled-lanes", Index: 2}
+	dynamicKey := dynamicindex.Key{Table: localKey, Site: dynamicindex.Site("disabled-lanes")}
+	dynamicFact := dynamicindex.NewFact(reg, dynamicindex.FactConfig{
+		Value:     presentValue(reg),
+		HasValue:  true,
+		Admission: dynamicindex.AdmissionAdmitted,
+	})
+	effectKey := effectdelta.Key{Target: localKey, Site: effectdelta.Site("disabled-lanes"), Kind: effectdelta.Mutation}
+	effectValue := effectdelta.Value{
+		Before: product.Bottom(reg),
+		After:  presentValue(reg),
+		Change: effectdelta.ChangeChanged,
+	}
+	escapeFact := escapeevent.Fact{Target: stateKey, Kind: escapeevent.KindSend}
+	channelFact := channelselectfact.Fact{Select: channelselectfact.ID("select-1"), Kind: channelselectfact.FactSelect, Result: stateKey}
+	storeRelation := StoreRelation{Source: stateKey, Into: stateKey}
+	proof := pathevidence.BranchProof{
+		Kind: pathevidence.BranchProofPathPresence,
+		Path: localKey,
+	}
+	resource := TypestateResourceFromCanonicalKey(stateKey, typestate.Protocol("transaction"))
+
+	state := DomainWithLanes(reg, []LaneID{}).Bottom().
+		WriteValue(reg, slot, presentValue(reg)).
+		WritePathKey(reg, ks, pathKey, presentValue(reg)).
+		WriteDynamicIndexFact(reg, dynamicKey, dynamicFact).
+		WriteHeapTableObject(reg, heapID, heapidentity.NewTableObject(heapidentity.TableObjectConfig{Root: presentValue(reg)})).
+		FreezeTable(tableID).
+		WriteEffectDelta(effectKey, effectValue).
+		AddEscapeEvent(escapeFact).
+		AddChannelSelectFact(channelFact).
+		AddStoreRelation(storeRelation).
+		WritePlacement(heapID, placement.SharedHeap).
+		WriteLenFloor(ks, stateKey, 3).
+		WriteNumFloor(ks, stateKey, 1).
+		AddBranchProof(proof).
+		WriteDiffConstraint(RelValueOperand(stateKey), RelLengthOperand(stateKey), 0).
+		AcquireTypestate(resource, typestate.State("active"), typestate.Obligation{Final: typestate.State("finished")})
+
+	if got := state.ReadValue(reg, slot); !valueDomain.Equal(got, valueDomain.Bottom()) {
+		t.Fatalf("disabled value lane read = %s, want bottom", formatValue(reg, got))
+	}
+	if got := state.ReadPathKey(reg, ks, pathKey); !valueDomain.Equal(got, valueDomain.Bottom()) {
+		t.Fatalf("disabled path-evidence lane read = %s, want bottom", formatValue(reg, got))
+	}
+	if got := state.ReadDynamicIndexFact(reg, dynamicKey); !dynamicindex.Domain(reg).Equal(got, dynamicindex.Domain(reg).Bottom()) {
+		t.Fatal("disabled dynamic-index lane retained direct write")
+	}
+	if got := state.ReadHeapTableObject(reg, heapID); !heapidentity.ObjectDomain(reg).Equal(got, heapidentity.ObjectDomain(reg).Bottom()) {
+		t.Fatal("disabled heap-identity lane retained direct write")
+	}
+	if state.IsTableFrozen(tableID) {
+		t.Fatal("disabled frozen-table lane retained direct write")
+	}
+	if got := state.ReadEffectDelta(effectKey); !effectdelta.Domain(reg).Equal(got, effectdelta.Domain(reg).Bottom()) {
+		t.Fatal("disabled effect-delta lane retained direct write")
+	}
+	if state.HasEscapeEvent(escapeFact) {
+		t.Fatal("disabled escape-event lane retained direct write")
+	}
+	if state.HasChannelSelectFact(channelFact) {
+		t.Fatal("disabled channel-select lane retained direct write")
+	}
+	if state.HasStoreRelation(storeRelation) {
+		t.Fatal("disabled store-relation lane retained direct write")
+	}
+	if got := state.ReadPlacement(heapID); got != placement.Bottom {
+		t.Fatalf("disabled placement lane read = %s, want bottom", got)
+	}
+	if _, ok := state.ReadLenFloor(ks, stateKey); ok {
+		t.Fatal("disabled length-floor lane retained direct write")
+	}
+	if _, ok := state.ReadNumFloor(ks, stateKey); ok {
+		t.Fatal("disabled numeric-floor lane retained direct write")
+	}
+	if state.HasBranchProof(proof) {
+		t.Fatal("disabled branch-proof lane retained direct write")
+	}
+	if got := state.RelConstraints(); !got.Bottom {
+		t.Fatalf("disabled diff-relation lane snapshot = %#v, want bottom", got)
+	}
+	if open := state.OpenTypestateObligations(); len(open) != 0 {
+		t.Fatalf("disabled typestate lane open obligations = %#v, want none", open)
 	}
 }
 

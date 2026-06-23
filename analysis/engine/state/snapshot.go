@@ -17,6 +17,9 @@ type DynamicIndexFactsSnapshot struct {
 // DynamicIndexFactsSnapshot returns finite dynamic-index facts unless the lane
 // is top. When Top is true, Facts is empty.
 func (s State) DynamicIndexFactsSnapshot() DynamicIndexFactsSnapshot {
+	if !s.laneEnabled(laneDynamicIndexBit) {
+		return DynamicIndexFactsSnapshot{}
+	}
 	if s.dynamicIndex.top {
 		return DynamicIndexFactsSnapshot{Top: true}
 	}
@@ -33,6 +36,9 @@ type ChannelSelectFactsSnapshot struct {
 // order. Bottom is explicit; Top means the reachable must lane contains no
 // facts.
 func (s State) ChannelSelectFactsSnapshot() ChannelSelectFactsSnapshot {
+	if !s.laneEnabled(laneChannelSelectBit) {
+		return ChannelSelectFactsSnapshot{Bottom: true}
+	}
 	snapshot := s.channelSelect.Snapshot()
 	return ChannelSelectFactsSnapshot{
 		Bottom: snapshot.Bottom,
@@ -49,6 +55,9 @@ type EffectDeltasSnapshot struct {
 // EffectDeltasSnapshot returns finite effect deltas unless the lane is top.
 // When Top is true, Deltas is empty.
 func (s State) EffectDeltasSnapshot() EffectDeltasSnapshot {
+	if !s.laneEnabled(laneEffectDeltasBit) {
+		return EffectDeltasSnapshot{}
+	}
 	if s.effectDeltas.top {
 		return EffectDeltasSnapshot{Top: true}
 	}
@@ -63,6 +72,9 @@ type HeapTableObjectsSnapshot struct {
 // HeapTableObjectsSnapshot returns finite identity-keyed heap table objects
 // unless the lane is top. When Top is true, Objects is empty.
 func (s State) HeapTableObjectsSnapshot() HeapTableObjectsSnapshot {
+	if !s.laneEnabled(laneHeapTableIdentityBit) {
+		return HeapTableObjectsSnapshot{}
+	}
 	if s.heapTableIdentity.top {
 		return HeapTableObjectsSnapshot{Top: true}
 	}
@@ -78,6 +90,9 @@ type PlacementsSnapshot struct {
 // the lane is top. Missing entries are not stack-safe proofs; they mean no
 // finite placement fact is available for that identity.
 func (s State) PlacementsSnapshot() PlacementsSnapshot {
+	if !s.laneEnabled(lanePlacementBit) {
+		return PlacementsSnapshot{}
+	}
 	if s.placement.top {
 		return PlacementsSnapshot{Top: true}
 	}

@@ -3,7 +3,7 @@ package state
 import "github.com/wippyai/go-lua/analysis/engine/state/channelselectfact"
 
 func (s State) AddChannelSelectFact(fact channelselectfact.Fact) State {
-	if fact.Select == "" {
+	if fact.Select == "" || !s.laneEnabled(laneChannelSelectBit) {
 		return s
 	}
 	out := s.reachable()
@@ -12,5 +12,8 @@ func (s State) AddChannelSelectFact(fact channelselectfact.Fact) State {
 }
 
 func (s State) HasChannelSelectFact(fact channelselectfact.Fact) bool {
+	if !s.laneEnabled(laneChannelSelectBit) {
+		return false
+	}
 	return s.channelSelect.Has(fact)
 }

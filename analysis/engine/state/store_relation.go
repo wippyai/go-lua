@@ -55,15 +55,24 @@ type StoreRelationsSnapshot struct {
 }
 
 func (s State) StoreRelationsSnapshot() StoreRelationsSnapshot {
+	if !s.laneEnabled(laneStoreRelationsBit) {
+		return StoreRelationsSnapshot{Bottom: true}
+	}
 	bottom, top, relations := s.storeRelations.snapshot(storeRelationLess)
 	return StoreRelationsSnapshot{Bottom: bottom, Top: top, Relations: relations}
 }
 
 func (s State) HasStoreRelation(relation StoreRelation) bool {
+	if !s.laneEnabled(laneStoreRelationsBit) {
+		return false
+	}
 	return s.storeRelations.has(relation)
 }
 
 func (s State) AddStoreRelation(relation StoreRelation) State {
+	if !s.laneEnabled(laneStoreRelationsBit) {
+		return s
+	}
 	storeRelations, changed := s.storeRelations.add(relation)
 	if !changed {
 		return s

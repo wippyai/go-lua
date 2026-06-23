@@ -6,11 +6,14 @@ import (
 )
 
 func (s State) ReadEffectDelta(key effectdelta.Key) effectdelta.Value {
+	if !s.laneEnabled(laneEffectDeltasBit) {
+		return effectdelta.Value{}
+	}
 	return s.effectDeltas.read(key)
 }
 
 func (s State) WriteEffectDelta(key effectdelta.Key, delta effectdelta.Value) State {
-	if key.Target.Kind == keyspace.KindInvalid {
+	if key.Target.Kind == keyspace.KindInvalid || !s.laneEnabled(laneEffectDeltasBit) {
 		return s
 	}
 	if s.effectDeltas.top {

@@ -13,18 +13,27 @@ import (
 // explicit; Top means the reachable must lane contains no finite refinements
 // and callers must not manufacture finite facts from it.
 func (s State) PathRefinementsSnapshot(ks *keyspace.KeySpace) pathevidence.PathRefinementsSnapshot {
+	if !s.laneEnabled(lanePathEvidenceBit) {
+		return pathevidence.PathRefinementsSnapshot{Bottom: true}
+	}
 	return s.pathEvidence.PathRefinementsSnapshot(ks)
 }
 
 // PathStaticMembersSnapshot returns finite must-static-member facts. Bottom is
 // explicit; Top means the reachable must lane contains no finite facts.
 func (s State) PathStaticMembersSnapshot(ks *keyspace.KeySpace) pathevidence.PathStaticMembersSnapshot {
+	if !s.laneEnabled(lanePathEvidenceBit) {
+		return pathevidence.PathStaticMembersSnapshot{Bottom: true}
+	}
 	return s.pathEvidence.PathStaticMembersSnapshot(ks)
 }
 
 // BranchProofsSnapshot returns finite must branch proofs in stable order.
 // Bottom is explicit; Top means the reachable must lane contains no proofs.
 func (s State) BranchProofsSnapshot(ks *keyspace.KeySpace) pathevidence.BranchProofsSnapshot {
+	if !s.laneEnabled(lanePathEvidenceBit) {
+		return pathevidence.BranchProofsSnapshot{Bottom: true}
+	}
 	return s.pathEvidence.BranchProofsSnapshot(ks)
 }
 
@@ -32,12 +41,18 @@ func (s State) BranchProofsSnapshot(ks *keyspace.KeySpace) pathevidence.BranchPr
 // implications in stable order. Bottom is explicit; Top means the reachable
 // must lane contains no implications.
 func (s State) PathPresenceImplicationsSnapshot(ks *keyspace.KeySpace) pathevidence.PathPresenceImplicationsSnapshot {
+	if !s.laneEnabled(lanePathEvidenceBit) {
+		return pathevidence.PathPresenceImplicationsSnapshot{Bottom: true}
+	}
 	return s.pathEvidence.PathPresenceImplicationsSnapshot(ks)
 }
 
 // ReadPathKey reads a point-local path refinement key. Missing keys read as
 // product.Bottom(reg).
 func (s State) ReadPathKey(reg *axis.Registry, ks *keyspace.KeySpace, pathKey pathdom.PathKey) product.Value {
+	if !s.laneEnabled(lanePathEvidenceBit) {
+		return product.Bottom(reg)
+	}
 	localKey, ok := ks.FromPathKey(pathKey)
 	if !ok {
 		return product.Bottom(reg)
@@ -48,12 +63,18 @@ func (s State) ReadPathKey(reg *axis.Registry, ks *keyspace.KeySpace, pathKey pa
 // ReadLocalPathKey reads an already-interned point-local path refinement key.
 // Missing keys read as product.Bottom(reg).
 func (s State) ReadLocalPathKey(reg *axis.Registry, pathKey keyspace.Key) product.Value {
+	if !s.laneEnabled(lanePathEvidenceBit) {
+		return product.Bottom(reg)
+	}
 	return s.pathEvidence.ReadPathKey(reg, pathKey)
 }
 
 // WritePathKey returns a state with pathKey updated. Writing
 // product.Bottom(reg) removes the finite entry.
 func (s State) WritePathKey(reg *axis.Registry, ks *keyspace.KeySpace, pathKey pathdom.PathKey, value product.Value) State {
+	if !s.laneEnabled(lanePathEvidenceBit) {
+		return s
+	}
 	localKey, ok := ks.FromPathKey(pathKey)
 	if !ok {
 		return s
@@ -64,6 +85,9 @@ func (s State) WritePathKey(reg *axis.Registry, ks *keyspace.KeySpace, pathKey p
 // WriteLocalPathKey returns a state with an already-interned point-local path
 // refinement updated. Writing product.Bottom(reg) removes the finite entry.
 func (s State) WriteLocalPathKey(reg *axis.Registry, pathKey keyspace.Key, value product.Value) State {
+	if !s.laneEnabled(lanePathEvidenceBit) {
+		return s
+	}
 	pathEvidence, reachable := s.pathEvidence.WritePathKey(reg, pathKey, value)
 	if !reachable {
 		return s
@@ -76,6 +100,9 @@ func (s State) WriteLocalPathKey(reg *axis.Registry, pathKey keyspace.Key, value
 // UpdatePathKey reads pathKey, applies fn, and writes the transformed value.
 // Transforming a finite entry to product.Bottom(reg) removes it.
 func (s State) UpdatePathKey(reg *axis.Registry, ks *keyspace.KeySpace, pathKey pathdom.PathKey, fn func(product.Value) product.Value) State {
+	if !s.laneEnabled(lanePathEvidenceBit) {
+		return s
+	}
 	localKey, ok := ks.FromPathKey(pathKey)
 	if !ok {
 		return s
@@ -86,6 +113,9 @@ func (s State) UpdatePathKey(reg *axis.Registry, ks *keyspace.KeySpace, pathKey 
 // UpdateLocalPathKey reads an already-interned point-local path refinement key,
 // applies fn, and writes the transformed value.
 func (s State) UpdateLocalPathKey(reg *axis.Registry, pathKey keyspace.Key, fn func(product.Value) product.Value) State {
+	if !s.laneEnabled(lanePathEvidenceBit) {
+		return s
+	}
 	pathEvidence, reachable := s.pathEvidence.UpdatePathKey(reg, pathKey, fn)
 	if !reachable {
 		return s
@@ -136,6 +166,9 @@ func (s State) PathKeyDescendantInvalidationPrefixes(ks *keyspace.KeySpace, path
 }
 
 func (s State) ReadPathStaticMember(ks *keyspace.KeySpace, pathKey pathdom.PathKey) (product.Value, bool) {
+	if !s.laneEnabled(lanePathEvidenceBit) {
+		return product.Value{}, false
+	}
 	localKey, ok := ks.FromPathKey(pathKey)
 	if !ok {
 		return product.Value{}, false
@@ -144,6 +177,9 @@ func (s State) ReadPathStaticMember(ks *keyspace.KeySpace, pathKey pathdom.PathK
 }
 
 func (s State) WritePathStaticMember(ks *keyspace.KeySpace, pathKey pathdom.PathKey, value product.Value) State {
+	if !s.laneEnabled(lanePathEvidenceBit) {
+		return s
+	}
 	localKey, ok := ks.FromPathKey(pathKey)
 	if !ok {
 		return s
@@ -162,6 +198,9 @@ func (s State) WritePathStaticMember(ks *keyspace.KeySpace, pathKey pathdom.Path
 // these facts may be used for later aliasing/readback until path invalidation
 // removes them.
 func (s State) AddBranchProof(proof pathevidence.BranchProof) State {
+	if !s.laneEnabled(lanePathEvidenceBit) {
+		return s
+	}
 	pathEvidence, reachable := s.pathEvidence.AddBranchProof(proof)
 	if !reachable {
 		return s
@@ -172,6 +211,9 @@ func (s State) AddBranchProof(proof pathevidence.BranchProof) State {
 }
 
 func (s State) HasBranchProof(proof pathevidence.BranchProof) bool {
+	if !s.laneEnabled(lanePathEvidenceBit) {
+		return false
+	}
 	return s.pathEvidence.HasBranchProof(proof)
 }
 
@@ -179,6 +221,9 @@ func (s State) HasBranchProof(proof pathevidence.BranchProof) bool {
 // branch proofs. Boundary code that already resolved visibility should call
 // HasIndexInRangeProofForStateKeys.
 func (s State) HasIndexInRangeProof(ks *keyspace.KeySpace, indexKey, arrayKey pathdom.PathKey) bool {
+	if !s.laneEnabled(lanePathEvidenceBit) {
+		return false
+	}
 	indexStateKey, ok := pathaddr.StateKeyFromPathKey(indexKey)
 	if !ok {
 		return false
@@ -194,6 +239,9 @@ func (s State) HasIndexInRangeProof(ks *keyspace.KeySpace, indexKey, arrayKey pa
 // must-proof that value(indexKey) is within len(arrayKey). Prefer this at
 // module boundaries that already resolved paths to typed state keys.
 func (s State) HasIndexInRangeProofForStateKeys(ks *keyspace.KeySpace, indexKey, arrayKey pathaddr.StateKey) bool {
+	if !s.laneEnabled(lanePathEvidenceBit) {
+		return false
+	}
 	if indexKey == "" || arrayKey == "" {
 		return false
 	}
@@ -215,6 +263,9 @@ func (s State) HasIndexInRangeProofForStateKeys(ks *keyspace.KeySpace, indexKey,
 // AddPathPresenceImplication records a must path-presence implication that
 // remains valid until path invalidation removes either participating path.
 func (s State) AddPathPresenceImplication(implication pathevidence.PathPresenceImplication) State {
+	if !s.laneEnabled(lanePathEvidenceBit) {
+		return s
+	}
 	pathEvidence, reachable := s.pathEvidence.AddPathPresenceImplication(implication)
 	if !reachable {
 		return s
@@ -225,10 +276,16 @@ func (s State) AddPathPresenceImplication(implication pathevidence.PathPresenceI
 }
 
 func (s State) HasPathPresenceImplication(implication pathevidence.PathPresenceImplication) bool {
+	if !s.laneEnabled(lanePathEvidenceBit) {
+		return false
+	}
 	return s.pathEvidence.HasPathPresenceImplication(implication)
 }
 
 func (s State) EquivalentPathKeys(ks *keyspace.KeySpace, pathKey pathdom.PathKey) []pathdom.PathKey {
+	if !s.laneEnabled(lanePathEvidenceBit) {
+		return nil
+	}
 	return s.pathEvidence.EquivalentPathKeys(ks, pathKey)
 }
 
@@ -236,11 +293,18 @@ func (s State) EquivalentPathKeys(ks *keyspace.KeySpace, pathKey pathdom.PathKey
 // keyspace into another so a state built under one analysis's keyspace can be
 // consumed as an entry state under another's. It is a no-op when from == to.
 func (s State) RekeyPathEvidence(from, to *keyspace.KeySpace) State {
-	rekeyed := s.pathEvidence.RekeyValueLanes(from, to)
 	out := s
-	out.pathEvidence = rekeyed
-	out.numFloors = s.numFloors.rekey(from, to)
-	out.lenFloors = s.lenFloors.rekey(from, to)
-	out.heapTableIdentity = s.heapTableIdentity.rekey(from, to)
+	if s.laneEnabled(lanePathEvidenceBit) {
+		out.pathEvidence = s.pathEvidence.RekeyValueLanes(from, to)
+	}
+	if s.laneEnabled(laneNumFloorsBit) {
+		out.numFloors = s.numFloors.rekey(from, to)
+	}
+	if s.laneEnabled(laneLenFloorsBit) {
+		out.lenFloors = s.lenFloors.rekey(from, to)
+	}
+	if s.laneEnabled(laneHeapTableIdentityBit) {
+		out.heapTableIdentity = s.heapTableIdentity.rekey(from, to)
+	}
 	return out
 }

@@ -73,6 +73,15 @@ func (c LaneCatalog) ValidateLaneSet(lanes LaneSet) error {
 	return err
 }
 
+func (c LaneCatalog) mustLaneBit(id LaneID) laneMask {
+	for _, spec := range c.specs {
+		if spec.id == id {
+			return spec.bit
+		}
+	}
+	panic(fmt.Sprintf("state: unknown lane %q", id))
+}
+
 type reachableLaneOp struct {
 	bit           laneMask
 	markReachable func(State) State
