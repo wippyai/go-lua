@@ -226,7 +226,7 @@ func produceWithResolver(
 	resolver := newResultResolver(result, parent)
 	defer releaseGuardEnvironments(result)
 	flow := newDiagnosticFlowCache(result)
-	childDispatchTables := collectDispatchTableSummaries(result, flow, inheritedDispatchTables)
+	childDispatchTables := collectDispatchTableSummaries(result, inheritedDispatchTables)
 	context := producerContext{
 		resolver:          resolver,
 		flow:              flow,
