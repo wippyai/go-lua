@@ -172,7 +172,7 @@ end
 }
 
 func TestDiscriminatedUnionExhaustivenessHandlesGenericEnvelope(t *testing.T) {
-	result := Check(`
+	src := strings.TrimLeft(`
 type Created = { kind: "created", id: string }
 type Deleted = { kind: "deleted", id: string }
 type Tick = { kind: "tick", elapsed: number }
@@ -187,7 +187,8 @@ local function route(env: Envelope<Payload>): string
     end
     return ""
 end
-`, WithDiagnosticRule(
+`, "\n")
+	result := Check(src, WithDiagnosticRule(
 		diagnostics.CodeDiscriminatedUnionExhaustive,
 		diagnostic.Enable(),
 	))
@@ -195,11 +196,63 @@ end
 		Code:            diagnostics.CodeDiscriminatedUnionExhaustive,
 		Severity:        diagnostic.SeverityWarning,
 		DiagnosticCount: 1,
+		Line:            8,
+		Column:          8,
 		MessageContains: []string{"env.payload.kind == \"tick\""},
+		EvidenceMin:     5,
 		EvidenceOrdered: []string{
 			"branch chain checks discriminant `env.payload.kind`",
+			"possible cases: `env.payload.kind == \"created\"`, `env.payload.kind == \"deleted\"`, `env.payload.kind == \"tick\"`",
 			"handled cases: `env.payload.kind == \"created\"`, `env.payload.kind == \"deleted\"`",
 			"missing cases: `env.payload.kind == \"tick\"`",
+			"no default branch handles the remaining union cases",
+		},
+		EvidenceChain: []diagnosticEvidenceExpectation{
+			{
+				Kind:            diagnostic.EvidenceAbstractFact,
+				Trust:           diagnostic.TrustProven,
+				MessageContains: []string{"branch chain checks discriminant `env.payload.kind`"},
+			},
+			{
+				Kind:            diagnostic.EvidenceAbstractFact,
+				Trust:           diagnostic.TrustProven,
+				MessageContains: []string{"possible cases", "`env.payload.kind == \"created\"`", "`env.payload.kind == \"deleted\"`", "`env.payload.kind == \"tick\"`"},
+			},
+			{
+				Kind:            diagnostic.EvidenceAbstractFact,
+				Trust:           diagnostic.TrustProven,
+				MessageContains: []string{"handled cases", "`env.payload.kind == \"created\"`, `env.payload.kind == \"deleted\"`"},
+			},
+			{
+				Kind:            diagnostic.EvidenceMissingProof,
+				Trust:           diagnostic.TrustUnknown,
+				MessageContains: []string{"missing cases", "`env.payload.kind == \"tick\"`"},
+			},
+			{
+				Kind:            diagnostic.EvidenceMissingProof,
+				Trust:           diagnostic.TrustUnknown,
+				MessageContains: []string{"no default branch handles the remaining union cases"},
+			},
+		},
+		LabelContains: []string{"union case check"},
+		HelpContains:  []string{"Handle each missing case", "else branch"},
+		Sources:       diagnostic.SourceMap{"test.lua": src},
+		RenderOrderedContains: []string{
+			"warning[lint.union.exhaustiveness]: discriminated union handling is not exhaustive; missing case: `env.payload.kind == \"tick\"`",
+			"test.lua:8:8",
+			"8 |     if env.payload.kind == \"created\" then",
+			"↑ union case check",
+			"because:",
+			"proven: branch chain checks discriminant `env.payload.kind`",
+			"proven: possible cases: `env.payload.kind == \"created\"`, `env.payload.kind == \"deleted\"`, `env.payload.kind == \"tick\"`",
+			"proven: handled cases: `env.payload.kind == \"created\"`, `env.payload.kind == \"deleted\"`",
+			"missing proof: missing cases: `env.payload.kind == \"tick\"`",
+			"missing proof: no default branch handles the remaining union cases",
+			"help: Handle each missing case",
+		},
+		RenderNotContains: []string{
+			"want string",
+			"^~",
 		},
 	})
 }
