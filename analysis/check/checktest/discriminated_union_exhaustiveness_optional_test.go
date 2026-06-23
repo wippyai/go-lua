@@ -280,7 +280,7 @@ end
 }
 
 func TestOptionalExhaustivenessReportsReachableBranchConsumptionBeforeInvalidation(t *testing.T) {
-	result := Check(`
+	src := strings.TrimLeft(`
 type Sink = { seen: string }
 
 local function remember(maybe: string?, flag: boolean, sink: Sink): string
@@ -293,7 +293,8 @@ local function remember(maybe: string?, flag: boolean, sink: Sink): string
     end
     return sink.seen
 end
-`, WithDiagnosticRule(
+`, "\n")
+	result := Check(src, WithDiagnosticRule(
 		diagnostics.CodeDiscriminatedUnionExhaustive,
 		diagnostic.Enable(),
 	))
@@ -301,11 +302,62 @@ end
 		Code:            diagnostics.CodeDiscriminatedUnionExhaustive,
 		Severity:        diagnostic.SeverityWarning,
 		DiagnosticCount: 1,
+		Line:            4,
+		Column:          8,
 		MessageContains: []string{"optional handling is not exhaustive", "maybe == nil"},
+		EvidenceMin:     5,
 		EvidenceOrdered: []string{
 			"branch checks optional `maybe`",
+			"possible cases: `maybe ~= nil`, `maybe == nil`",
 			"consumed case: `maybe ~= nil`",
 			"missing cases: `maybe == nil`",
+			"no else branch handles the remaining optional case",
+		},
+		EvidenceChain: []diagnosticEvidenceExpectation{
+			{
+				Kind:            diagnostic.EvidenceAbstractFact,
+				Trust:           diagnostic.TrustProven,
+				MessageContains: []string{"branch checks optional `maybe`"},
+			},
+			{
+				Kind:            diagnostic.EvidenceAbstractFact,
+				Trust:           diagnostic.TrustProven,
+				MessageContains: []string{"possible cases", "`maybe ~= nil`", "`maybe == nil`"},
+			},
+			{
+				Kind:            diagnostic.EvidenceAbstractFact,
+				Trust:           diagnostic.TrustProven,
+				MessageContains: []string{"consumed case", "`maybe ~= nil`"},
+			},
+			{
+				Kind:            diagnostic.EvidenceMissingProof,
+				Trust:           diagnostic.TrustUnknown,
+				MessageContains: []string{"missing cases", "`maybe == nil`"},
+			},
+			{
+				Kind:            diagnostic.EvidenceMissingProof,
+				Trust:           diagnostic.TrustUnknown,
+				MessageContains: []string{"no else branch handles"},
+			},
+		},
+		LabelContains: []string{"optional case check"},
+		HelpContains:  []string{"Handle the nil case"},
+		Sources:       diagnostic.SourceMap{"test.lua": src},
+		RenderOrderedContains: []string{
+			"warning[lint.union.exhaustiveness]: optional handling is not exhaustive",
+			"--> test.lua:4:8",
+			"4 |     if maybe ~= nil then",
+			"↑ optional case check",
+			"because:",
+			"1. proven: branch checks optional `maybe`",
+			"2. proven: possible cases: `maybe ~= nil`, `maybe == nil`",
+			"3. proven: consumed case: `maybe ~= nil`",
+			"4. missing proof: missing cases: `maybe == nil`",
+			"5. missing proof: no else branch handles the remaining optional case",
+			"help: Handle the nil case",
+		},
+		RenderNotContains: []string{
+			"maybe == false",
 		},
 	})
 }
@@ -379,7 +431,7 @@ end
 }
 
 func TestOptionalExhaustivenessDoesNotTreatShadowedErrorAsTerminating(t *testing.T) {
-	result := Check(`
+	src := strings.TrimLeft(`
 local function value_or_default(maybe: string?): string
     local function error(message: string): () end
     if maybe ~= nil then
@@ -387,7 +439,8 @@ local function value_or_default(maybe: string?): string
     end
     return "fallback"
 end
-`, WithDiagnosticRule(
+`, "\n")
+	result := Check(src, WithDiagnosticRule(
 		diagnostics.CodeDiscriminatedUnionExhaustive,
 		diagnostic.Enable(),
 	))
@@ -395,11 +448,62 @@ end
 		Code:            diagnostics.CodeDiscriminatedUnionExhaustive,
 		Severity:        diagnostic.SeverityWarning,
 		DiagnosticCount: 1,
+		Line:            3,
+		Column:          8,
 		MessageContains: []string{"optional handling is not exhaustive", "maybe == nil"},
+		EvidenceMin:     5,
 		EvidenceOrdered: []string{
 			"branch checks optional `maybe`",
+			"possible cases: `maybe ~= nil`, `maybe == nil`",
 			"consumed case: `maybe ~= nil`",
 			"missing cases: `maybe == nil`",
+			"no else branch handles the remaining optional case",
+		},
+		EvidenceChain: []diagnosticEvidenceExpectation{
+			{
+				Kind:            diagnostic.EvidenceAbstractFact,
+				Trust:           diagnostic.TrustProven,
+				MessageContains: []string{"branch checks optional `maybe`"},
+			},
+			{
+				Kind:            diagnostic.EvidenceAbstractFact,
+				Trust:           diagnostic.TrustProven,
+				MessageContains: []string{"possible cases", "`maybe ~= nil`", "`maybe == nil`"},
+			},
+			{
+				Kind:            diagnostic.EvidenceAbstractFact,
+				Trust:           diagnostic.TrustProven,
+				MessageContains: []string{"consumed case", "`maybe ~= nil`"},
+			},
+			{
+				Kind:            diagnostic.EvidenceMissingProof,
+				Trust:           diagnostic.TrustUnknown,
+				MessageContains: []string{"missing cases", "`maybe == nil`"},
+			},
+			{
+				Kind:            diagnostic.EvidenceMissingProof,
+				Trust:           diagnostic.TrustUnknown,
+				MessageContains: []string{"no else branch handles"},
+			},
+		},
+		LabelContains: []string{"optional case check"},
+		HelpContains:  []string{"Handle the nil case"},
+		Sources:       diagnostic.SourceMap{"test.lua": src},
+		RenderOrderedContains: []string{
+			"warning[lint.union.exhaustiveness]: optional handling is not exhaustive",
+			"--> test.lua:3:8",
+			"3 |     if maybe ~= nil then",
+			"↑ optional case check",
+			"because:",
+			"1. proven: branch checks optional `maybe`",
+			"2. proven: possible cases: `maybe ~= nil`, `maybe == nil`",
+			"3. proven: consumed case: `maybe ~= nil`",
+			"4. missing proof: missing cases: `maybe == nil`",
+			"5. missing proof: no else branch handles the remaining optional case",
+			"help: Handle the nil case",
+		},
+		RenderNotContains: []string{
+			"global error",
 		},
 	})
 }
