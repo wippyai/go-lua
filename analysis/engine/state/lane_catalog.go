@@ -14,6 +14,18 @@ type LaneCatalog struct {
 	specs []laneSpec
 }
 
+func newLaneCatalog(specs []laneSpec) LaneCatalog {
+	out := make([]laneSpec, len(specs))
+	copy(out, specs)
+	for i := range out {
+		if i >= 63 {
+			panic("state: lane catalog supports at most 63 lanes")
+		}
+		out[i].bit = laneMask(1) << i
+	}
+	return LaneCatalog{specs: out}
+}
+
 // DefaultLaneCatalog returns the standard set of State lanes.
 func DefaultLaneCatalog() LaneCatalog {
 	return defaultLaneCatalog
@@ -30,7 +42,7 @@ func (c LaneCatalog) LaneSet() LaneSet {
 
 // Domain builds a State lattice with every lane in this catalog enabled.
 func (c LaneCatalog) Domain(reg *axis.Registry) lattice.Lattice[State] {
-	return domainFromLaneSpecs(reg, c.specs)
+	return domainFromLaneSpecs(reg, c.specs, c.specs)
 }
 
 // DomainWithLaneSet builds a State lattice from an exact ordered lane
@@ -51,7 +63,7 @@ func (c LaneCatalog) TryDomainWithLaneSet(reg *axis.Registry, lanes LaneSet) (la
 	if err != nil {
 		return lattice.Lattice[State]{}, err
 	}
-	return domainFromLaneSpecs(reg, specs), nil
+	return domainFromLaneSpecs(reg, specs, c.specs), nil
 }
 
 // ValidateLaneSet checks that every selected lane exists in this catalog and
@@ -61,11 +73,19 @@ func (c LaneCatalog) ValidateLaneSet(lanes LaneSet) error {
 	return err
 }
 
-func (c LaneCatalog) reachableOps() []func(State) State {
-	out := make([]func(State) State, 0, len(c.specs))
+type reachableLaneOp struct {
+	bit           laneMask
+	markReachable func(State) State
+}
+
+func (c LaneCatalog) reachableOps() []reachableLaneOp {
+	out := make([]reachableLaneOp, 0, len(c.specs))
 	for _, spec := range c.specs {
 		if spec.markReachable != nil {
-			out = append(out, spec.markReachable)
+			out = append(out, reachableLaneOp{
+				bit:           spec.bit,
+				markReachable: spec.markReachable,
+			})
 		}
 	}
 	return out

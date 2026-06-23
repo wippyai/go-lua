@@ -10,8 +10,24 @@ import (
 // lane reachable when a write leaves lattice bottom.
 type laneSpec struct {
 	id            LaneID
+	bit           laneMask
 	build         func(*axis.Registry) laneOps
 	markReachable func(State) State
+}
+
+type laneMask uint64
+
+const laneMaskScoped laneMask = 1 << 63
+
+func scopedLaneMask(bits laneMask) laneMask {
+	return laneMaskScoped | bits
+}
+
+func (m laneMask) allows(bit laneMask) bool {
+	if m&laneMaskScoped == 0 {
+		return true
+	}
+	return m&bit != 0
 }
 
 type laneOps struct {
@@ -54,21 +70,33 @@ func stateLane[T any](
 	}
 }
 
-func domainFromLaneSpecs(reg *axis.Registry, specs []laneSpec) lattice.Lattice[State] {
+func domainFromLaneSpecs(reg *axis.Registry, specs []laneSpec, universe []laneSpec) lattice.Lattice[State] {
 	lanes := make([]laneOps, 0, len(specs))
+	var bits laneMask
 	for _, spec := range specs {
 		lanes = append(lanes, spec.build(reg))
+		bits |= spec.bit
 	}
+	bottomLanes := make([]laneOps, 0, len(universe))
+	if sameLaneSpecs(specs, universe) {
+		bottomLanes = lanes
+	} else {
+		for _, spec := range universe {
+			bottomLanes = append(bottomLanes, spec.build(reg))
+		}
+	}
+	scope := scopedLaneMask(bits)
+	bottom := State{}
+	for _, lane := range bottomLanes {
+		bottom = lane.bottom(bottom)
+	}
+	bottom.laneMask = scope
 	return lattice.Lattice[State]{
 		Bottom: func() State {
-			var out State
-			for _, lane := range lanes {
-				out = lane.bottom(out)
-			}
-			return out
+			return bottom
 		},
 		Top: func() State {
-			var out State
+			out := bottom
 			for _, lane := range lanes {
 				out = lane.top(out)
 			}
@@ -91,18 +119,30 @@ func domainFromLaneSpecs(reg *axis.Registry, specs []laneSpec) lattice.Lattice[S
 			return true
 		},
 		Join: func(a, b State) State {
-			var out State
+			out := bottom
 			for _, lane := range lanes {
 				out = lane.join(out, a, b)
 			}
 			return out
 		},
 		Widen: func(prev, next State) State {
-			var out State
+			out := bottom
 			for _, lane := range lanes {
 				out = lane.widen(out, prev, next)
 			}
 			return out
 		},
 	}
+}
+
+func sameLaneSpecs(a, b []laneSpec) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i].id != b[i].id || a[i].bit != b[i].bit {
+			return false
+		}
+	}
+	return true
 }

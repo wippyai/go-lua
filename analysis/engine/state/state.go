@@ -17,6 +17,8 @@ var defaultReachableStateOps = defaultLaneCatalog.reachableOps()
 // finite value-like lanes denote bottom for the caller's domain; must-fact
 // lanes record bottom explicitly with their corresponding flags.
 type State struct {
+	laneMask laneMask
+
 	values       valueLane
 	pathEvidence pathevidence.Lane
 
@@ -98,8 +100,10 @@ func (s State) UpdateReturnSlot(reg *axis.Registry, index int, fn func(product.V
 }
 
 func (s State) reachable() State {
-	for _, markReachable := range defaultReachableStateOps {
-		s = markReachable(s)
+	for _, op := range defaultReachableStateOps {
+		if s.laneMask.allows(op.bit) {
+			s = op.markReachable(s)
+		}
 	}
 	return s
 }

@@ -198,6 +198,40 @@ func TestReachableTransitionCoversRegisteredMustFactLanes(t *testing.T) {
 	}
 }
 
+func TestSelectedDomainReachabilityDoesNotReviveDisabledMustFactLanes(t *testing.T) {
+	reg := standard.Registry()
+	ks := keyspace.New()
+	slot := key.SymbolValue(symbol.ID(14))
+
+	valueOnly := DomainWithLanes(reg, []LaneID{LaneValues})
+	state := valueOnly.Bottom().WriteValue(reg, slot, presentValue(reg))
+
+	if !state.PathRefinementsSnapshot(ks).Bottom {
+		t.Fatal("values-only domain write revived disabled path-evidence lane")
+	}
+	if !state.FrozenTablesSnapshot().Bottom {
+		t.Fatal("values-only domain write revived disabled frozen-table lane")
+	}
+	if !state.EscapeEventsSnapshot().Bottom {
+		t.Fatal("values-only domain write revived disabled escape-event lane")
+	}
+	if !state.ChannelSelectFactsSnapshot().Bottom {
+		t.Fatal("values-only domain write revived disabled channel-select lane")
+	}
+	if !state.StoreRelationsSnapshot().Bottom {
+		t.Fatal("values-only domain write revived disabled store-relation lane")
+	}
+	if !state.lenFloors.lane.Bottom() {
+		t.Fatal("values-only domain write revived disabled length-floor lane")
+	}
+	if !state.NumFloorsSnapshot(ks).Bottom {
+		t.Fatal("values-only domain write revived disabled numeric-floor lane")
+	}
+	if !state.RelConstraints().Bottom {
+		t.Fatal("values-only domain write revived disabled diff-relation lane")
+	}
+}
+
 func TestLaneSetValidatesAndCopiesSelection(t *testing.T) {
 	reg := standard.Registry()
 
