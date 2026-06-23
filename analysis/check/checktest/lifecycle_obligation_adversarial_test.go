@@ -15,22 +15,44 @@ import (
 )
 
 func TestLifecycleResourceUnreleasedWarningUsesManifestEffects(t *testing.T) {
-	result := Check(`
+	src := `
 local tx = {}
 begin(tx)
-`, lifecycleManifestOptions("begin")...)
-	if len(result.Diagnostics) != 1 {
-		t.Fatalf("diagnostics = %#v, want one lifecycle warning", result.Diagnostics)
-	}
-	diag := result.Diagnostics[0]
-	if diag.Code != diagnostics.CodeResourceUnreleased || diag.Severity != diagnostic.SeverityWarning {
-		t.Fatalf("diagnostic = %#v, want lifecycle warning", diag)
-	}
-	requireEvidenceMessage(t, diag, "this call acquires `tx` as transaction:`active` and requires `finished` before local ownership ends")
-	requireEvidenceMessage(t, diag, "exit state still has `tx` in protocol transaction at `active`; no proof reaches `finished` or escapes ownership on every path")
-	if !containsLifecycleLabel(diag, "resource acquired") {
-		t.Fatalf("labels = %#v, want resource acquired label", diag.Labels)
-	}
+`
+	result := Check(src, lifecycleManifestOptions("begin")...)
+	requireDiagnostic(t, result, diagnosticExpectation{
+		Code:            diagnostics.CodeResourceUnreleased,
+		Severity:        diagnostic.SeverityWarning,
+		DiagnosticCount: 1,
+		Line:            3,
+		Column:          1,
+		MessageContains: []string{"resource", "`tx`", "transaction", "`active`", "expected", "`finished`"},
+		EvidenceMin:     2,
+		EvidenceChain: []diagnosticEvidenceExpectation{
+			{
+				Kind:            diagnostic.EvidenceAbstractFact,
+				Trust:           diagnostic.TrustProven,
+				MessageContains: []string{"this call acquires", "`tx`", "transaction:`active`", "requires `finished`"},
+			},
+			{
+				Kind:            diagnostic.EvidenceMissingProof,
+				Trust:           diagnostic.TrustRefuted,
+				MessageContains: []string{"exit state still has", "`tx`", "transaction", "`active`", "no proof reaches `finished`"},
+			},
+		},
+		LabelMin:      1,
+		LabelContains: []string{"resource acquired"},
+		HelpContains:  []string{"Transition `tx` to `finished`", "every return path"},
+		Sources:       diagnostic.SourceMap{"test.lua": src},
+		RenderOrderedContains: []string{
+			"warning[effect.lifecycle.unreleased]",
+			"3 | begin(tx)",
+			"↑ resource acquired",
+			"missing proof: exit state still has `tx` in protocol transaction at `active`",
+			"help: Transition `tx` to `finished` or escape ownership on every return path.",
+		},
+		RenderNotContains: []string{"^~", "\nwhere:\n"},
+	})
 }
 
 func TestLifecycleResourceClosedOrEscapedThroughManifestEffectsDoesNotWarn(t *testing.T) {
