@@ -36,9 +36,61 @@ func ReadPathValue(
 		if product.Equal(reg, value, product.Bottom(reg)) {
 			return product.Value{}, false
 		}
-		return value, true
+		return refineRootValueThroughEquivalentPaths(reg, resolver, point, p, in, value), true
 	}
 	return ExactPathValue(reg, resolver, point, p, in)
+}
+
+func refineRootValueThroughEquivalentPaths(
+	reg *axis.Registry,
+	resolver *visibility.Resolver,
+	point cfg.Point,
+	p pathdom.Path,
+	in state.State,
+	value product.Value,
+) product.Value {
+	if resolver == nil || p.Symbol == 0 {
+		return value
+	}
+	stateKey, ok := resolver.StateKeyAt(point, p)
+	if !ok {
+		return value
+	}
+	ks := resolver.KeySpace()
+	domain := product.Domain(reg)
+	for _, equivalent := range in.EquivalentPathKeys(ks, stateKey.PathKey()) {
+		equivalentKey, ok := ks.FromStateKey(equivalent)
+		if !ok || equivalentKey.Segs != 0 {
+			continue
+		}
+		if equivalentValue, ok := equivalentRootSymbolValue(reg, resolver, point, equivalentKey, in); ok {
+			if meet := domain.Meet(value, equivalentValue); !domain.Equal(meet, domain.Bottom()) {
+				value = meet
+			}
+		}
+	}
+	return value
+}
+
+func equivalentRootSymbolValue(
+	reg *axis.Registry,
+	resolver *visibility.Resolver,
+	point cfg.Point,
+	root keyspace.Key,
+	in state.State,
+) (product.Value, bool) {
+	if root.Kind != keyspace.KindResolverSym || root.Sym == 0 || root.Segs != 0 {
+		return product.Value{}, false
+	}
+	currentKey, ok := resolver.StateKeyAt(point, pathdom.Path{Symbol: root.Sym})
+	if !ok || currentKey.PathKey() != resolver.KeySpace().Format(root) {
+		return product.Value{}, false
+	}
+	value := in.ReadValue(reg, key.SymbolValue(root.Sym))
+	if product.Equal(reg, value, product.Bottom(reg)) {
+		return product.Value{}, false
+	}
+	return value, true
 }
 
 // ExactPathValue reads the exact visibility-scoped path value for p.

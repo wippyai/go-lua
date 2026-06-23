@@ -206,10 +206,10 @@ end
 
 func TestCheckLoopLocalConcatMissingBranchReportsOptionalAssignment(t *testing.T) {
 	result := Check(`
-local function labels(arr: {string})
+local function labels(arr: {string}, flag: boolean)
     for i = 1, #arr do
-        local note: string
-        if i > 0 then
+        local note: string? = nil
+        if flag then
             note = "item:" .. arr[i]
         end
         local label: string = note

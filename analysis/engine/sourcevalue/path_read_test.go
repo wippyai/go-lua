@@ -6,6 +6,7 @@ import (
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
+	"github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/evidence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
@@ -14,6 +15,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/state/heapidentity"
+	"github.com/wippyai/go-lua/analysis/engine/state/pathevidence"
 	"github.com/wippyai/go-lua/analysis/engine/visibility"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/symbol"
@@ -50,6 +52,90 @@ func TestExactPathValueReadsStringIndexThroughFieldCanonicalAlias(t *testing.T) 
 		t.Fatal("ExactPathValue returned false")
 	}
 	assertPresence(t, reg, got, presence.Present())
+	assertRuntimeKind(t, reg, got, runtimekind.Singleton(runtimekind.String))
+}
+
+func TestReadPathValueNarrowsEquivalentRootAlias(t *testing.T) {
+	reg := standard.Registry()
+	point := cfg.Point(1)
+	alias := symbol.ID(10)
+	original := symbol.ID(11)
+	aliasPath := pathdom.NewPath(alias, "alias")
+	originalPath := pathdom.NewPath(original, "maybe")
+	builder := visibility.NewBuilder()
+	builder.Define(point, alias, "alias")
+	builder.Define(point, original, "maybe")
+	resolver := visibility.NewResolver(builder.Build())
+	ks := resolver.KeySpace()
+
+	optionalString := product.Set(reg, product.NewWithPresence(reg, product.ShapeTop, presence.Maybe()), runtimekind.Key, runtimekind.Singleton(runtimekind.String))
+	presentString := product.WithPresence(reg, optionalString, presence.Present())
+	aliasKey, aliasOK := resolver.StateKeyAt(point, aliasPath)
+	originalKey, originalOK := resolver.StateKeyAt(point, originalPath)
+	if !aliasOK || !originalOK {
+		t.Fatal("resolver failed to build root state keys")
+	}
+	aliasLocalKey, aliasLocalOK := ks.InternStateKey(aliasKey)
+	originalLocalKey, originalLocalOK := ks.InternStateKey(originalKey)
+	if !aliasLocalOK || !originalLocalOK {
+		t.Fatal("keyspace failed to intern root state keys")
+	}
+	in := state.State{}.
+		WriteValue(reg, key.SymbolValue(alias), optionalString).
+		WriteValue(reg, key.SymbolValue(original), presentString).
+		AddBranchProof(pathevidence.BranchProof{
+			Kind:  pathevidence.BranchProofPathEqual,
+			Path:  aliasLocalKey,
+			Other: originalLocalKey,
+		})
+
+	got, ok := ReadPathValue(reg, resolver, point, aliasPath, in)
+	if !ok {
+		t.Fatal("ReadPathValue returned false")
+	}
+	assertPresence(t, reg, got, presence.Present())
+	assertRuntimeKind(t, reg, got, runtimekind.Singleton(runtimekind.String))
+}
+
+func TestReadPathValueIgnoresStaleEquivalentRootVersion(t *testing.T) {
+	reg := standard.Registry()
+	oldPoint := cfg.Point(1)
+	point := cfg.Point(2)
+	alias := symbol.ID(20)
+	original := symbol.ID(21)
+	originalPath := pathdom.NewPath(original, "maybe")
+	builder := visibility.NewBuilder()
+	builder.Define(oldPoint, alias, "alias")
+	builder.Define(point, original, "maybe")
+	builder.Define(point, alias, "alias")
+	resolver := visibility.NewResolver(builder.Build())
+	ks := resolver.KeySpace()
+
+	optionalString := product.Set(reg, product.NewWithPresence(reg, product.ShapeTop, presence.Maybe()), runtimekind.Key, runtimekind.Singleton(runtimekind.String))
+	presentString := product.WithPresence(reg, optionalString, presence.Present())
+	oldAliasKey, oldAliasOK := ks.FromPathKey(resolver.KeyForVersion(alias, 1, nil))
+	originalKey, originalOK := resolver.StateKeyAt(point, originalPath)
+	if !oldAliasOK || !originalOK {
+		t.Fatal("resolver failed to build stale/current root keys")
+	}
+	originalLocalKey, originalLocalOK := ks.InternStateKey(originalKey)
+	if !originalLocalOK {
+		t.Fatal("keyspace failed to intern original root state key")
+	}
+	in := state.State{}.
+		WriteValue(reg, key.SymbolValue(original), optionalString).
+		WriteValue(reg, key.SymbolValue(alias), presentString).
+		AddBranchProof(pathevidence.BranchProof{
+			Kind:  pathevidence.BranchProofPathEqual,
+			Path:  oldAliasKey,
+			Other: originalLocalKey,
+		})
+
+	got, ok := ReadPathValue(reg, resolver, point, originalPath, in)
+	if !ok {
+		t.Fatal("ReadPathValue returned false")
+	}
+	assertPresence(t, reg, got, presence.Maybe())
 	assertRuntimeKind(t, reg, got, runtimekind.Singleton(runtimekind.String))
 }
 
