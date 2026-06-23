@@ -38,12 +38,12 @@ func TryDomainWithLaneSet(reg *axis.Registry, lanes LaneSet) (lattice.Lattice[St
 
 // DomainWithLanes is the compatibility form of DomainWithLaneSet.
 func DomainWithLanes(reg *axis.Registry, lanes []LaneID) lattice.Lattice[State] {
-	return DomainWithLaneSet(reg, LaneSet(lanes))
+	return DomainWithLaneSet(reg, NewLaneSet(lanes...))
 }
 
 // TryDomainWithLanes is the compatibility form of TryDomainWithLaneSet.
 func TryDomainWithLanes(reg *axis.Registry, lanes []LaneID) (lattice.Lattice[State], error) {
-	return TryDomainWithLaneSet(reg, LaneSet(lanes))
+	return TryDomainWithLaneSet(reg, NewLaneSet(lanes...))
 }
 
 type stateLaneFactory struct {

@@ -38,7 +38,7 @@ func TestDomainWithLaneSetSelectsIndependentAxes(t *testing.T) {
 	frozenState := State{}.FreezeTable(tableID)
 	both := valueState.FreezeTable(tableID)
 
-	valueOnly := DomainWithLaneSet(reg, LaneSet{LaneValues})
+	valueOnly := DomainWithLaneSet(reg, NewLaneSet(LaneValues))
 	if !valueOnly.Equal(valueState, both) {
 		t.Fatal("value-only domain considered disabled frozen-table lane")
 	}
@@ -50,7 +50,7 @@ func TestDomainWithLaneSetSelectsIndependentAxes(t *testing.T) {
 		t.Fatal("value-only join preserved disabled frozen-table lane")
 	}
 
-	valueAndFrozen := DomainWithLaneSet(reg, LaneSet{LaneValues}.With(LaneFrozenTables))
+	valueAndFrozen := DomainWithLaneSet(reg, NewLaneSet(LaneValues).With(LaneFrozenTables))
 	if valueAndFrozen.Equal(valueState, both) {
 		t.Fatal("value+frozen domain ignored enabled frozen-table lane")
 	}
@@ -65,20 +65,27 @@ func TestDomainLaneSetValidatesAndCopiesSelection(t *testing.T) {
 
 	catalog := DefaultLaneCatalog()
 	lanes := catalog.LaneSet()
-	if len(lanes) == 0 || lanes[0] != LaneValues {
-		t.Fatalf("default lanes = %#v, want values first", lanes)
+	if lanes.Len() == 0 || lanes.At(0) != LaneValues {
+		t.Fatalf("default lanes = %#v, want values first", lanes.IDs())
 	}
-	lanes[0] = LaneID("mutated")
-	if got := catalog.LaneSet()[0]; got != LaneValues {
+	mutatedIDs := lanes.IDs()
+	mutatedIDs[0] = LaneID("mutated")
+	if got := catalog.LaneSet().At(0); got != LaneValues {
 		t.Fatalf("LaneCatalog.LaneSet returned shared storage; first lane = %s", got)
 	}
-	if got := DefaultDomainLaneSet()[0]; got != LaneValues {
+	if got := DefaultDomainLaneSet().At(0); got != LaneValues {
 		t.Fatalf("DefaultDomainLaneSet returned shared storage; first lane = %s", got)
 	}
 	ids := DefaultDomainLaneSet().IDs()
 	ids[0] = LaneID("mutated")
 	if got := DefaultDomainLanes()[0]; got != LaneValues {
 		t.Fatalf("DefaultDomainLanes returned shared storage; first lane = %s", got)
+	}
+	source := []LaneID{LaneValues}
+	copied := NewLaneSet(source...)
+	source[0] = LaneID("mutated")
+	if got := copied.At(0); got != LaneValues {
+		t.Fatalf("NewLaneSet kept caller storage; first lane = %s", got)
 	}
 
 	withoutFrozen := DefaultDomainLaneSet().Without(LaneFrozenTables)
@@ -90,19 +97,19 @@ func TestDomainLaneSetValidatesAndCopiesSelection(t *testing.T) {
 		t.Fatal("With did not add frozen-table lane")
 	}
 
-	if err := catalog.ValidateLaneSet(LaneSet{LaneValues, LaneFrozenTables}); err != nil {
+	if err := catalog.ValidateLaneSet(NewLaneSet(LaneValues, LaneFrozenTables)); err != nil {
 		t.Fatalf("ValidateLaneSet(valid) error = %v", err)
 	}
-	if _, err := catalog.TryDomainWithLaneSet(reg, LaneSet{LaneValues}); err != nil {
+	if _, err := catalog.TryDomainWithLaneSet(reg, NewLaneSet(LaneValues)); err != nil {
 		t.Fatalf("TryDomainWithLaneSet(valid) error = %v", err)
 	}
 	if _, err := TryDomainWithLanes(reg, []LaneID{LaneValues}); err != nil {
 		t.Fatalf("TryDomainWithLanes(valid) error = %v", err)
 	}
-	if err := catalog.ValidateLaneSet(LaneSet{LaneID("not-a-lane")}); err == nil || !strings.Contains(err.Error(), `unknown domain lane "not-a-lane"`) {
+	if err := catalog.ValidateLaneSet(NewLaneSet(LaneID("not-a-lane"))); err == nil || !strings.Contains(err.Error(), `unknown domain lane "not-a-lane"`) {
 		t.Fatalf("ValidateLaneSet(unknown) error = %v, want unknown lane", err)
 	}
-	if _, err := catalog.TryDomainWithLaneSet(reg, LaneSet{LaneID("not-a-lane")}); err == nil || !strings.Contains(err.Error(), `unknown domain lane "not-a-lane"`) {
+	if _, err := catalog.TryDomainWithLaneSet(reg, NewLaneSet(LaneID("not-a-lane"))); err == nil || !strings.Contains(err.Error(), `unknown domain lane "not-a-lane"`) {
 		t.Fatalf("TryDomainWithLaneSet(unknown) error = %v, want unknown lane", err)
 	}
 	if _, err := TryDomainWithLanes(reg, []LaneID{LaneValues, LaneValues}); err == nil || !strings.Contains(err.Error(), `duplicate domain lane "values"`) {
@@ -110,7 +117,7 @@ func TestDomainLaneSetValidatesAndCopiesSelection(t *testing.T) {
 	}
 
 	requirePanic(t, func() {
-		_ = catalog.DomainWithLaneSet(reg, LaneSet{LaneID("not-a-lane")})
+		_ = catalog.DomainWithLaneSet(reg, NewLaneSet(LaneID("not-a-lane")))
 	})
 	requirePanic(t, func() {
 		_ = DomainWithLanes(reg, []LaneID{LaneValues, LaneValues})

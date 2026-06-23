@@ -21,11 +21,11 @@ func DefaultLaneCatalog() LaneCatalog {
 
 // LaneSet returns the ordered lane IDs in this catalog.
 func (c LaneCatalog) LaneSet() LaneSet {
-	out := make(LaneSet, 0, len(c.factories))
+	out := make([]LaneID, 0, len(c.factories))
 	for _, factory := range c.factories {
 		out = append(out, factory.id)
 	}
-	return out
+	return LaneSet{ids: out}
 }
 
 // Domain builds a State lattice with every lane in this catalog enabled.
@@ -66,9 +66,9 @@ func (c LaneCatalog) selectFactories(lanes LaneSet) ([]stateLaneFactory, error) 
 	for _, factory := range c.factories {
 		byID[factory.id] = factory
 	}
-	seen := make(map[LaneID]struct{}, len(lanes))
-	out := make([]stateLaneFactory, 0, len(lanes))
-	for _, id := range lanes {
+	seen := make(map[LaneID]struct{}, lanes.Len())
+	out := make([]stateLaneFactory, 0, lanes.Len())
+	for _, id := range lanes.ids {
 		factory, ok := byID[id]
 		if !ok {
 			return nil, fmt.Errorf("state: unknown domain lane %q", id)
