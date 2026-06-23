@@ -369,6 +369,70 @@ func TestFactsNodeTransferCallOutcomeAppliesNormalReturnNumFloors(t *testing.T) 
 	}
 }
 
+func TestFactsNodeTransferCallOutcomeSeparatesRootShapeFactsFromVisibleValueFacts(t *testing.T) {
+	reg := standard.Registry()
+	point := cfg.Point(634)
+	target := symbol.ID(634)
+	targetExpr := factflow.ExprRef(634)
+	targetPath := pathdom.NewPath(target, "item")
+	visibilityBuilder := visibility.NewBuilder()
+	visibilityBuilder.Define(point, target, "item")
+	resolver := visibility.NewResolver(visibilityBuilder.Build())
+	ks := resolver.KeySpace()
+	present := presentValue(reg)
+
+	got := NewFactsNodeTransfer(FactsNodeTransferConfig{
+		Facts: factflow.NewFacts(factflow.FactsInput{
+			CallSites: map[cfg.Point]factflow.CallSite{
+				point: factflow.NewCallSite(factflow.CallSiteConfig{
+					Context: factflow.CallSiteContextStatement,
+					ArgumentSources: []factflow.ValueSource{
+						{Kind: factflow.ValueSourceExpression, ExprRef: targetExpr, HasExpr: true},
+					},
+				}),
+			},
+			ExpressionPaths: map[factflow.ExprRef]pathdom.Path{
+				targetExpr: targetPath,
+			},
+		}),
+		CallOutcome: func(transfer.NodeContext, factflow.CallSiteView, state.State, func(cfg.Point) state.State) callpayload.CallOutcome {
+			return callpayload.CallOutcome{
+				NormalReturnFacts: callboundary.NormalReturnFacts{
+					NumFloors: []callboundary.NumFloorFact{
+						{Path: pathdom.NewPlaceholder(0), Floor: 3},
+					},
+					PathStaticMembers: []callboundary.PathStaticMemberFact{
+						{Path: pathdom.NewPlaceholder(0), Value: present},
+					},
+				},
+			}
+		},
+		Visibility: resolver,
+	})(transfer.NodeContext{
+		Registry: reg,
+		Point:    point,
+	}, state.State{})
+
+	structuralRootKey := testStateKey(t, targetPath.Key())
+	visibleRootPathKey := resolver.KeyAt(point, targetPath)
+	if visibleRootPathKey == "" || visibleRootPathKey == targetPath.Key() {
+		t.Fatalf("visible root key = %q, want distinct versioned key from structural %q", visibleRootPathKey, targetPath.Key())
+	}
+	visibleRootKey := testStateKey(t, visibleRootPathKey)
+	if floor, ok := got.ReadNumFloor(ks, structuralRootKey); !ok || floor != 3 {
+		t.Fatalf("structural root num floor = %d/%v, want 3/true at %s", floor, ok, structuralRootKey)
+	}
+	if floor, ok := got.ReadNumFloor(ks, visibleRootKey); ok || floor != 0 {
+		t.Fatalf("visible root num floor = %d/%v, want absent because root shape floors use structural keys", floor, ok)
+	}
+	if value, ok := got.ReadPathStaticMember(ks, visibleRootPathKey); !ok || !product.Equal(reg, value, present) {
+		t.Fatalf("visible root static member = %s/%v, want precise visible value fact", formatValue(reg, value), ok)
+	}
+	if value, ok := got.ReadPathStaticMember(ks, targetPath.Key()); ok {
+		t.Fatalf("structural root static member = %s/%v, want absent because value facts use visible keys", formatValue(reg, value), ok)
+	}
+}
+
 func TestFactsNodeTransferCallOutcomeAppliesNormalReturnRelConstraints(t *testing.T) {
 	reg := standard.Registry()
 	point := cfg.Point(633)
