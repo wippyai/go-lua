@@ -177,13 +177,14 @@ end
 }
 
 func TestDiscriminatedUnionExhaustivenessReportsUnguardedResultErrorRead(t *testing.T) {
-	result := Check(`
+	src := strings.TrimLeft(`
 type Result<T> = { ok: true, value: T } | { ok: false, error: string }
 
 local function use(result: Result<string>): string
     return result.error
 end
-`, WithDiagnosticRule(
+`, "\n")
+	result := Check(src, WithDiagnosticRule(
 		diagnostics.CodeDiscriminatedUnionExhaustive,
 		diagnostic.Enable(),
 	))
@@ -191,13 +192,53 @@ end
 		Code:            diagnostics.CodeDiscriminatedUnionExhaustive,
 		Severity:        diagnostic.SeverityWarning,
 		DiagnosticCount: 1,
+		Line:            4,
+		Column:          12,
 		MessageContains: []string{
+			"case-specific field read is not exhaustive",
 			"result.error",
 			"result.ok == false",
 		},
+		EvidenceMin: 3,
 		EvidenceOrdered: []string{
+			"`result` is a union discriminated by `result.ok`",
 			"`result.error` exists only for `result.ok == false`",
 			"no stable guard proves `result.ok == false` before this read",
+		},
+		EvidenceChain: []diagnosticEvidenceExpectation{
+			{
+				Kind:            diagnostic.EvidenceAbstractFact,
+				Trust:           diagnostic.TrustProven,
+				MessageContains: []string{"`result` is a union discriminated by `result.ok`"},
+			},
+			{
+				Kind:            diagnostic.EvidenceAbstractFact,
+				Trust:           diagnostic.TrustProven,
+				MessageContains: []string{"`result.error` exists only for `result.ok == false`"},
+			},
+			{
+				Kind:            diagnostic.EvidenceMissingProof,
+				Trust:           diagnostic.TrustUnknown,
+				MessageContains: []string{"no stable guard proves `result.ok == false` before this read"},
+			},
+		},
+		LabelContains: []string{"case-specific field read"},
+		HelpContains:  []string{"Check the union case before reading this field"},
+		Sources:       diagnostic.SourceMap{"test.lua": src},
+		RenderOrderedContains: []string{
+			"warning[lint.union.exhaustiveness]: case-specific field read is not exhaustive; `result.error` requires `result.ok == false`",
+			"test.lua:4:12",
+			"4 |     return result.error",
+			"↑ case-specific field read",
+			"because:",
+			"proven: `result` is a union discriminated by `result.ok`",
+			"proven: `result.error` exists only for `result.ok == false`",
+			"missing proof: no stable guard proves `result.ok == false` before this read",
+			"help: Check the union case before reading this field",
+		},
+		RenderNotContains: []string{
+			"want string",
+			"^~",
 		},
 	})
 }
