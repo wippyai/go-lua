@@ -227,8 +227,8 @@ func (r *Result) PathsEquivalentAtBoundary(point cfg.Point, left, right pathdom.
 	if r == nil || r.visibility == nil || left.IsEmpty() || right.IsEmpty() {
 		return false
 	}
-	leftKey, leftOK := r.PathKeyAtBoundary(point, left)
-	rightKey, rightOK := r.PathKeyAtBoundary(point, right)
+	leftKey, leftOK := r.StateKeyAtBoundary(point, left)
+	rightKey, rightOK := r.StateKeyAtBoundary(point, right)
 	if !leftOK || !rightOK {
 		return false
 	}
@@ -239,13 +239,15 @@ func (r *Result) PathsEquivalentAtBoundary(point cfg.Point, left, right pathdom.
 	if !ok {
 		return false
 	}
-	for _, equivalent := range in.EquivalentPathKeys(r.visibility.KeySpace(), leftKey) {
-		if equivalent == rightKey {
+	leftPathKey := leftKey.PathKey()
+	rightPathKey := rightKey.PathKey()
+	for _, equivalent := range in.EquivalentPathKeys(r.visibility.KeySpace(), leftPathKey) {
+		if equivalent == rightPathKey {
 			return true
 		}
 	}
-	for _, equivalent := range in.EquivalentPathKeys(r.visibility.KeySpace(), rightKey) {
-		if equivalent == leftKey {
+	for _, equivalent := range in.EquivalentPathKeys(r.visibility.KeySpace(), rightPathKey) {
+		if equivalent == leftPathKey {
 			return true
 		}
 	}
@@ -262,11 +264,11 @@ func (r *Result) LengthFloorAtBoundary(point cfg.Point, p pathdom.Path) (int64, 
 	if !ok {
 		return 0, false
 	}
-	pathKey, keyOK := r.StateKeyAtBoundary(point, p)
+	stateKey, keyOK := r.StateKeyAtBoundary(point, p)
 	if !keyOK {
 		return 0, false
 	}
-	return in.ReadLenFloor(r.visibility.KeySpace(), pathKey)
+	return in.ReadLenFloor(r.visibility.KeySpace(), stateKey)
 }
 
 // IndexInRangeAtBoundary reports whether the current boundary state proves
@@ -362,11 +364,11 @@ func (r *Result) NumericFloorAtBoundary(point cfg.Point, p pathdom.Path) (int64,
 	if !ok {
 		return 0, false
 	}
-	pathKey, keyOK := r.rootOrVisibleStateKeyAtBoundary(point, p)
+	stateKey, keyOK := r.rootOrVisibleStateKeyAtBoundary(point, p)
 	if !keyOK {
 		return 0, false
 	}
-	return in.ReadNumFloor(r.visibility.KeySpace(), pathKey)
+	return in.ReadNumFloor(r.visibility.KeySpace(), stateKey)
 }
 
 // SymbolValueAtBoundary reads a root symbol value at the diagnostic read

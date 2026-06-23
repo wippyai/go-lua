@@ -245,8 +245,9 @@ func TestNumFloorStateSemantics(t *testing.T) {
 	ks := keyspace.New()
 	stateDomain := Domain(reg)
 	pathKey := pathdom.PathKey("sym13@1.index")
+	stateKey := testStateKey(t, pathKey)
 
-	if floor, ok := (State{}).ReadNumFloor(ks, testStateKey(t, pathKey)); ok || floor != 0 {
+	if floor, ok := (State{}).ReadNumFloor(ks, stateKey); ok || floor != 0 {
 		t.Fatalf("missing num floor = %d/%v, want absent", floor, ok)
 	}
 	if got := (State{}).WriteNumFloor(ks, pathaddr.StateKey(""), 2); !stateDomain.Equal(got, State{}) {
@@ -256,33 +257,33 @@ func TestNumFloorStateSemantics(t *testing.T) {
 		t.Fatalf("bottom num-floor snapshot = %#v, want bottom without floors", snapshot)
 	}
 
-	withFloor := State{}.WriteNumFloor(ks, testStateKey(t, pathKey), -5)
-	if floor, ok := withFloor.ReadNumFloor(ks, testStateKey(t, pathKey)); !ok || floor != -5 {
+	withFloor := State{}.WriteNumFloor(ks, stateKey, -5)
+	if floor, ok := withFloor.ReadNumFloor(ks, stateKey); !ok || floor != -5 {
 		t.Fatalf("num floor = %d/%v, want -5/present", floor, ok)
 	}
-	weaker := withFloor.WriteNumFloor(ks, testStateKey(t, pathKey), -10)
+	weaker := withFloor.WriteNumFloor(ks, stateKey, -10)
 	if !stateDomain.Equal(weaker, withFloor) {
 		t.Fatalf("weaker num floor changed state: %s", formatState(reg, ks, weaker))
 	}
-	stronger := withFloor.WriteNumFloor(ks, testStateKey(t, pathKey), 1)
-	if floor, ok := stronger.ReadNumFloor(ks, testStateKey(t, pathKey)); !ok || floor != 1 {
+	stronger := withFloor.WriteNumFloor(ks, stateKey, 1)
+	if floor, ok := stronger.ReadNumFloor(ks, stateKey); !ok || floor != 1 {
 		t.Fatalf("stronger num floor = %d/%v, want 1/present", floor, ok)
 	}
 
 	snapshot := stronger.NumFloorsSnapshot(ks)
-	if snapshot.Bottom || snapshot.Floors[pathKey] != 1 {
-		t.Fatalf("num-floor snapshot = %#v, want path floor 1", snapshot)
+	if snapshot.Bottom || snapshot.Floors[stateKey] != 1 {
+		t.Fatalf("num-floor snapshot = %#v, want state-key floor 1", snapshot)
 	}
-	snapshot.Floors[pathKey] = 99
-	if floor, _ := stronger.ReadNumFloor(ks, testStateKey(t, pathKey)); floor != 1 {
+	snapshot.Floors[stateKey] = 99
+	if floor, _ := stronger.ReadNumFloor(ks, stateKey); floor != 1 {
 		t.Fatalf("mutating num-floor snapshot changed state floor to %d", floor)
 	}
 
-	cleared := stronger.ClearNumFloor(ks, testStateKey(t, pathKey))
-	if floor, ok := cleared.ReadNumFloor(ks, testStateKey(t, pathKey)); ok || floor != 0 {
+	cleared := stronger.ClearNumFloor(ks, stateKey)
+	if floor, ok := cleared.ReadNumFloor(ks, stateKey); ok || floor != 0 {
 		t.Fatalf("cleared num floor = %d/%v, want absent", floor, ok)
 	}
-	if again := cleared.ClearNumFloor(ks, testStateKey(t, pathKey)); !stateDomain.Equal(again, cleared) {
+	if again := cleared.ClearNumFloor(ks, stateKey); !stateDomain.Equal(again, cleared) {
 		t.Fatalf("clearing absent num floor changed state: %s", formatState(reg, ks, again))
 	}
 }

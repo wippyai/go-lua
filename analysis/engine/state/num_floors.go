@@ -1,33 +1,32 @@
 package state
 
 import (
-	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 )
 
 type NumFloorsSnapshot struct {
 	Bottom bool
-	Floors map[pathdom.PathKey]int64
+	Floors map[pathaddr.StateKey]int64
 }
 
 func (s State) NumFloorsSnapshot(ks *keyspace.KeySpace) NumFloorsSnapshot {
 	return s.numFloors.snapshot(ks)
 }
 
-// ReadNumFloor reads the proven lower bound for a numeric path key: a returned
-// (lo, true) asserts value(pathKey) >= lo at this point.
-func (s State) ReadNumFloor(ks *keyspace.KeySpace, pathKey pathaddr.StateKey) (int64, bool) {
-	key, ok := ks.InternStateKey(pathKey)
+// ReadNumFloor reads the proven lower bound for a numeric state key: a returned
+// (lo, true) asserts value(stateKey) >= lo at this point.
+func (s State) ReadNumFloor(ks *keyspace.KeySpace, stateKey pathaddr.StateKey) (int64, bool) {
+	key, ok := ks.InternStateKey(stateKey)
 	if !ok {
 		return 0, false
 	}
 	return s.numFloors.read(key)
 }
 
-// WriteNumFloor records that value(pathKey) >= lo holds at this point.
-func (s State) WriteNumFloor(ks *keyspace.KeySpace, pathKey pathaddr.StateKey, lo int64) State {
-	key, ok := ks.InternStateKey(pathKey)
+// WriteNumFloor records that value(stateKey) >= lo holds at this point.
+func (s State) WriteNumFloor(ks *keyspace.KeySpace, stateKey pathaddr.StateKey, lo int64) State {
+	key, ok := ks.InternStateKey(stateKey)
 	if !ok {
 		return s
 	}
@@ -40,10 +39,10 @@ func (s State) WriteNumFloor(ks *keyspace.KeySpace, pathKey pathaddr.StateKey, l
 	return out
 }
 
-// ClearNumFloor removes any finite lower-bound proof for pathKey. It is used
+// ClearNumFloor removes any finite lower-bound proof for stateKey. It is used
 // when a write gives no numeric lower-bound evidence for the new value.
-func (s State) ClearNumFloor(ks *keyspace.KeySpace, pathKey pathaddr.StateKey) State {
-	key, ok := ks.InternStateKey(pathKey)
+func (s State) ClearNumFloor(ks *keyspace.KeySpace, stateKey pathaddr.StateKey) State {
+	key, ok := ks.InternStateKey(stateKey)
 	if !ok {
 		return s
 	}

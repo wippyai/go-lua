@@ -5,22 +5,22 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 )
 
-// ReadLenFloor reads the proven length floor for pathKey: a returned (lo, true)
-// asserts len(pathKey) >= lo at this point. A missing key or a bottom lane
+// ReadLenFloor reads the proven length floor for stateKey: a returned (lo, true)
+// asserts len(stateKey) >= lo at this point. A missing key or a bottom lane
 // reads as no floor.
-func (s State) ReadLenFloor(ks *keyspace.KeySpace, pathKey pathaddr.StateKey) (int64, bool) {
-	key, ok := ks.InternStateKey(pathKey)
+func (s State) ReadLenFloor(ks *keyspace.KeySpace, stateKey pathaddr.StateKey) (int64, bool) {
+	key, ok := ks.InternStateKey(stateKey)
 	if !ok {
 		return 0, false
 	}
 	return s.lenFloors.read(key)
 }
 
-// WriteLenFloor records that len(pathKey) >= lo holds at this point, meeting any
-// existing floor by keeping the stronger (larger) bound. Writing a non-positive
-// floor is a no-op.
-func (s State) WriteLenFloor(ks *keyspace.KeySpace, pathKey pathaddr.StateKey, lo int64) State {
-	key, ok := ks.InternStateKey(pathKey)
+// WriteLenFloor records that len(stateKey) >= lo holds at this point, meeting
+// any existing floor by keeping the stronger (larger) bound. Writing a
+// non-positive floor is a no-op.
+func (s State) WriteLenFloor(ks *keyspace.KeySpace, stateKey pathaddr.StateKey, lo int64) State {
+	key, ok := ks.InternStateKey(stateKey)
 	if !ok {
 		return s
 	}

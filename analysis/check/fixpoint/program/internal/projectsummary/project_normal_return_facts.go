@@ -27,8 +27,8 @@ func projectNormalReturnFacts(reg *axis.Registry, result ResultReader, exit stat
 	projectPath := func(pathKey path.PathKey) (path.Path, bool) {
 		return normalReturnFactPlaceholderPath(pathKey, exitFactParams)
 	}
-	projectStatePath := func(pathKey path.PathKey) (path.Path, bool) {
-		return normalReturnFactStatePlaceholderPath(result.KeySpace(), pathKey, exitFactParams)
+	projectStatePath := func(stateKey pathaddr.StateKey) (path.Path, bool) {
+		return normalReturnFactStatePlaceholderPath(result.KeySpace(), stateKey, exitFactParams)
 	}
 	out := callboundary.NormalReturnFacts{}
 	out.PathInvalidations = append(out.PathInvalidations, projectAssignmentPathInvalidations(result, params)...)
@@ -141,8 +141,8 @@ func projectNormalReturnFacts(reg *axis.Registry, result ResultReader, exit stat
 	}
 
 	if snapshot := exit.NumFloorsSnapshot(ks); !snapshot.Bottom {
-		for pathKey, floor := range snapshot.Floors {
-			target, ok := projectStatePath(pathKey)
+		for stateKey, floor := range snapshot.Floors {
+			target, ok := projectStatePath(stateKey)
 			if !ok {
 				continue
 			}
@@ -783,7 +783,7 @@ func normalReturnFactPlaceholderPath(pathKey path.PathKey, params []path.Path) (
 }
 
 func projectRelConstraintFact(
-	projectStatePath func(path.PathKey) (path.Path, bool),
+	projectStatePath func(pathaddr.StateKey) (path.Path, bool),
 	constraint state.RelConstraint,
 ) (callboundary.RelConstraintFact, bool) {
 	a, ok := projectRelConstraintOperand(projectStatePath, constraint.A)
@@ -812,20 +812,21 @@ func projectRelConstraintFact(
 }
 
 func projectRelConstraintOperand(
-	projectStatePath func(path.PathKey) (path.Path, bool),
+	projectStatePath func(pathaddr.StateKey) (path.Path, bool),
 	operand state.RelOperand,
 ) (callboundary.RelOperand, bool) {
-	target, ok := projectStatePath(operand.StateKey().PathKey())
+	target, ok := projectStatePath(operand.StateKey())
 	if !ok {
 		return callboundary.RelOperand{}, false
 	}
 	return callboundary.RelOperand{Path: target, IsLength: operand.IsLength()}, true
 }
 
-func normalReturnFactStatePlaceholderPath(ks *keyspace.KeySpace, pathKey path.PathKey, params []path.Path) (path.Path, bool) {
-	if pathKey == "" || ks == nil || len(params) == 0 {
+func normalReturnFactStatePlaceholderPath(ks *keyspace.KeySpace, stateKey pathaddr.StateKey, params []path.Path) (path.Path, bool) {
+	if stateKey == "" || ks == nil || len(params) == 0 {
 		return path.Path{}, false
 	}
+	pathKey := stateKey.PathKey()
 	if placeholder, ok := pathaddr.PlaceholderPathFromKey(pathKey); ok {
 		index := placeholder.PlaceholderIndex()
 		if index < 0 || index >= len(params) || params[index].IsEmpty() {

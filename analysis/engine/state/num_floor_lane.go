@@ -3,7 +3,7 @@ package state
 import (
 	"github.com/wippyai/go-lua/analysis/domain/lattice"
 	"github.com/wippyai/go-lua/analysis/domain/lattice/lift"
-	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/engine/state/numbound"
 	"github.com/wippyai/go-lua/analysis/internal/mapedit"
@@ -37,9 +37,13 @@ func (l numFloorLane) snapshot(ks *keyspace.KeySpace) NumFloorsSnapshot {
 	if len(values) == 0 {
 		return out
 	}
-	out.Floors = make(map[pathdom.PathKey]int64, len(values))
+	out.Floors = make(map[pathaddr.StateKey]int64, len(values))
 	for key, floor := range values {
-		out.Floors[ks.Format(key)] = floor.Lo
+		stateKey, ok := pathaddr.StateKeyFromPathKey(ks.Format(key))
+		if !ok {
+			continue
+		}
+		out.Floors[stateKey] = floor.Lo
 	}
 	return out
 }
