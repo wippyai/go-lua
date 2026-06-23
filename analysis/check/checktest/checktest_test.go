@@ -1981,6 +1981,38 @@ begin(tx)
 	}
 }
 
+func TestCheckStateLanesConstructorAcceptsEveryExportedAxis(t *testing.T) {
+	src := `local value = 1
+value = value + 1
+`
+	lanes := state.DefaultLanes()
+	if len(lanes) == 0 {
+		t.Fatal("DefaultLanes() is empty")
+	}
+	for _, lane := range lanes {
+		lane := lane
+		t.Run("only/"+string(lane), func(t *testing.T) {
+			result := Check(src, WithStateLanes(lane))
+			if len(result.Diagnostics) != 0 {
+				t.Fatalf("WithStateLanes(%s) diagnostics = %#v, want none", lane, result.Diagnostics)
+			}
+		})
+		t.Run("without/"+string(lane), func(t *testing.T) {
+			selected := state.DefaultLaneSet().Without(lane).IDs()
+			result := Check(src, WithStateLanes(selected...))
+			if len(result.Diagnostics) != 0 {
+				t.Fatalf("WithStateLanes(default without %s) diagnostics = %#v, want none", lane, result.Diagnostics)
+			}
+		})
+	}
+	t.Run("empty", func(t *testing.T) {
+		result := Check(src, WithStateLanes())
+		if len(result.Diagnostics) != 0 {
+			t.Fatalf("WithStateLanes(empty) diagnostics = %#v, want none", result.Diagnostics)
+		}
+	})
+}
+
 func TestCheckProcessSendPromotesDeepCallbackBuiltMapEntryPlacement(t *testing.T) {
 	result := Check(`
 type Meta = {
