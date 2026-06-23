@@ -208,6 +208,28 @@ end
 			"dispatch table provides keys: `handlers.begin`, `handlers.commit`",
 			"missing dispatch keys: `handlers.cancel` for `action.kind == \"cancel\"`",
 		},
+		EvidenceChain: []diagnosticEvidenceExpectation{
+			{
+				Kind:            diagnostic.EvidenceAbstractFact,
+				Trust:           diagnostic.TrustProven,
+				MessageContains: []string{"`handlers` is indexed by discriminant `action.kind`"},
+			},
+			{
+				Kind:            diagnostic.EvidenceAbstractFact,
+				Trust:           diagnostic.TrustProven,
+				MessageContains: []string{"possible cases", "`action.kind == \"begin\"`", "`action.kind == \"cancel\"`", "`action.kind == \"commit\"`"},
+			},
+			{
+				Kind:            diagnostic.EvidenceAbstractFact,
+				Trust:           diagnostic.TrustProven,
+				MessageContains: []string{"dispatch table provides keys: `handlers.begin`, `handlers.commit`"},
+			},
+			{
+				Kind:            diagnostic.EvidenceMissingProof,
+				Trust:           diagnostic.TrustUnknown,
+				MessageContains: []string{"missing dispatch keys: `handlers.cancel` for `action.kind == \"cancel\"`"},
+			},
+		},
 		LabelContains: []string{"dispatch table", "dispatch lookup"},
 	})
 	rendered := diagnostic.Render(diag, diagnostic.RenderOptions{
