@@ -53,7 +53,10 @@
         ],
         "render_not_contains": [
           "^~",
-          "where:"
+          "where:",
+          "internal",
+          "summary",
+          "want "
         ],
         "help_contains": [
           "Pass a value for argument 1 that satisfies the parameter type",
@@ -125,7 +128,10 @@
         ],
         "render_not_contains": [
           "^~",
-          "where:"
+          "where:",
+          "internal",
+          "summary",
+          "want "
         ],
         "help_contains": [
           "Pass the missing required arguments",
@@ -188,7 +194,10 @@
         ],
         "render_not_contains": [
           "^~",
-          "where:"
+          "where:",
+          "internal",
+          "summary",
+          "want "
         ],
         "help_contains": [
           "replace `target` with a callable expression"
