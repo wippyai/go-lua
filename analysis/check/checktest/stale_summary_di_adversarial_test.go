@@ -646,10 +646,11 @@ invoke(p, "bad")
 `, "\n")
 	result := Check(src)
 	diag := requireDiagnostic(t, result, diagnosticExpectation{
-		Code:     diagnostics.CodeDirectCallArgType,
-		Severity: diagnostic.SeverityError,
-		Line:     9,
-		Column:   11,
+		Code:            diagnostics.CodeDirectCallArgType,
+		Severity:        diagnostic.SeverityError,
+		DiagnosticCount: 1,
+		Line:            9,
+		Column:          11,
 		Span: diagnostic.Span{
 			StartLine: 9,
 			StartCol:  11,

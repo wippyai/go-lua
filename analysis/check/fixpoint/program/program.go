@@ -1414,6 +1414,7 @@ func materializeFunctionTree(
 		if err != nil {
 			return nil, err
 		}
+		body.WithCallContextResult(result)
 		body.WithFunctionValueTypes(result, funcTypes)
 		contextResults[context.funcExpr] = append(contextResults[context.funcExpr], result)
 	}

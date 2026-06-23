@@ -39,9 +39,10 @@ const (
 )
 
 type producerContext struct {
-	resolver       typeannotation.Resolver
-	flow           *diagnosticFlowCache
-	dispatchTables map[pathdom.PathKey]dispatchTableSummary
+	resolver          typeannotation.Resolver
+	flow              *diagnosticFlowCache
+	dispatchTables    map[pathdom.PathKey]dispatchTableSummary
+	callContextResult bool
 }
 
 type diagnosticProducer struct {
@@ -227,9 +228,10 @@ func produceWithResolver(
 	flow := newDiagnosticFlowCache(result)
 	childDispatchTables := collectDispatchTableSummaries(result, flow, inheritedDispatchTables)
 	context := producerContext{
-		resolver:       resolver,
-		flow:           flow,
-		dispatchTables: cloneDispatchTableSummaries(inheritedDispatchTables),
+		resolver:          resolver,
+		flow:              flow,
+		dispatchTables:    cloneDispatchTableSummaries(inheritedDispatchTables),
+		callContextResult: result.IsCallContextResult(),
 	}
 	defs := directCallDefinitions(result, inheritedDefs)
 	var out []diagnostic.Diagnostic

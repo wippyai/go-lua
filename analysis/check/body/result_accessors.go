@@ -265,6 +265,12 @@ func (r *Result) FunctionResults() []*Result {
 	return append([]*Result(nil), r.functions...)
 }
 
+// IsCallContextResult reports whether this result was solved for one concrete
+// call context rather than the function's context-independent summary body.
+func (r *Result) IsCallContextResult() bool {
+	return r != nil && r.callContext
+}
+
 func (r *Result) DirectCaptures(fn *ast.FunctionExpr) []bind.Capture {
 	if r == nil || r.bindings == nil || fn == nil {
 		return nil
@@ -280,6 +286,17 @@ func WithFunctionResults(result *Result, functions []*Result) *Result {
 		return nil
 	}
 	result.functions = append([]*Result(nil), functions...)
+	return result
+}
+
+// WithCallContextResult marks result as the materialization for one caller's
+// argument/effect context. Diagnostics use this to keep cross-boundary reports
+// owned by the call site instead of also reporting inside the specialized body.
+func WithCallContextResult(result *Result) *Result {
+	if result == nil {
+		return nil
+	}
+	result.callContext = true
 	return result
 }
 

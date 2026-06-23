@@ -151,6 +151,7 @@ type Result struct {
 	callOutcome     callpayload.CallOutcomeProvider
 	typeValues      *typevalue.Cache
 	functions       []*Result
+	callContext     bool
 	funcTypes       FunctionValueTypes
 	callExprPts     map[*ast.FuncCallExpr]cfg.Point
 }

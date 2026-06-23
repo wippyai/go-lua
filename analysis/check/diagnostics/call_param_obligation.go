@@ -121,6 +121,9 @@ func (p callParamObligations) call(
 		} else if !callParamObligationTypeMismatch(result, point, got, want, readBoundary, args[argIndex]) {
 			continue
 		}
+		if contextualParameterArgumentOwnedByCallSite(result, producerContext(p), args[argIndex]) {
+			continue
+		}
 		extra := boundaryDiagnosticEvidenceForSubject(result, point, ast.SpanOf(args[argIndex]), callArgumentSubject(argIndex, exprEvidenceNameOK(args[argIndex])), want, readBoundary)
 		if len(extra) == 0 {
 			extra = explicitTopLikeCastEvidence(ast.SpanOf(args[argIndex]), want, args[argIndex])
