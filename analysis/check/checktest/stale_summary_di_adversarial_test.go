@@ -633,7 +633,7 @@ root.api.send(1)
 }
 
 func TestMemberCallObligationReportsStableProviderMemberMismatch(t *testing.T) {
-	result := Check(`
+	src := strings.TrimLeft(`
 local function invoke(provider, payload)
     provider.send(payload)
 end
@@ -643,10 +643,71 @@ local p: { send: (number) -> () } = {
 }
 
 invoke(p, "bad")
-`)
-	diag := requireDiagnosticCodeWithEvidence(t, result, diagnostics.CodeDirectCallArgType, "inside invoke, argument 2 is passed to argument 1.send parameter 1, which requires number")
-	requireEvidenceMessage(t, diag, "argument")
-	requireEvidenceMessage(t, diag, "inside invoke, argument 2 is passed to argument 1.send parameter 1, which requires number")
+`, "\n")
+	result := Check(src)
+	diag := requireDiagnostic(t, result, diagnosticExpectation{
+		Code:     diagnostics.CodeDirectCallArgType,
+		Severity: diagnostic.SeverityError,
+		Line:     9,
+		Column:   11,
+		Span: diagnostic.Span{
+			StartLine: 9,
+			StartCol:  11,
+			EndLine:   9,
+			EndCol:    15,
+		},
+		MessageContains: []string{
+			"argument 2",
+			`"bad"`,
+			"not number",
+		},
+		EvidenceChain: []diagnosticEvidenceExpectation{
+			{
+				Kind:            diagnostic.EvidenceAbstractFact,
+				Trust:           diagnostic.TrustProven,
+				Span:            diagnostic.Span{StartLine: 9, StartCol: 11, EndLine: 9, EndCol: 15},
+				MessageContains: []string{"argument 2", `literal value "bad"`},
+			},
+			{
+				Kind:            diagnostic.EvidenceAbstractFact,
+				Trust:           diagnostic.TrustProven,
+				Span:            diagnostic.Span{StartLine: 9, StartCol: 11, EndLine: 9, EndCol: 15},
+				MessageContains: []string{"inside invoke", "argument 1.send parameter 1", "requires number"},
+			},
+		},
+		LabelContains: []string{"argument value"},
+		HelpContains:  []string{"Pass a value for argument 2", "change the callee signature"},
+		Sources:       diagnostic.SourceMap{"test.lua": src},
+		RenderOrderedContains: []string{
+			`error[type.call.direct.argument_type]: argument 2 is "bad", not number`,
+			`9 | invoke(p, "bad")`,
+			`  |           ↑ argument value`,
+			`1. proven: argument 2 has literal value "bad"`,
+			`2. proven: inside invoke, argument 2 is passed to argument 1.send parameter 1, which requires number`,
+			`help: Pass a value for argument 2 that satisfies the parameter type, or change the callee signature if that argument is valid.`,
+		},
+		RenderNotContains: []string{
+			"want number",
+			"expects number",
+			"^~",
+		},
+	})
+	rendered := diagnostic.Render(diag, diagnostic.RenderOptions{
+		Sources:             diagnostic.SourceMap{"test.lua": src},
+		ShowSourceLabelRows: true,
+	})
+	want := `error[type.call.direct.argument_type]: argument 2 is "bad", not number
+ --> test.lua:9:11
+  |
+9 | invoke(p, "bad")
+  |           ↑ argument value
+
+because:
+  1. proven: argument 2 has literal value "bad"
+  2. proven: inside invoke, argument 2 is passed to argument 1.send parameter 1, which requires number
+
+help: Pass a value for argument 2 that satisfies the parameter type, or change the callee signature if that argument is valid.`
+	assertRenderedEqual(t, rendered, want)
 }
 
 func requireOperationInvalidatesParam(t *testing.T, sig signature.Function, name string, paramIndex int) {
