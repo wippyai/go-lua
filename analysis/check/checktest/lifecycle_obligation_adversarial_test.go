@@ -211,41 +211,54 @@ if flag then
 end
 `
 	result := Check(src, lifecycleManifestOptions("begin", "finish", "flag")...)
-	if len(result.Diagnostics) != 1 {
-		t.Fatalf("diagnostics = %#v, want one lifecycle warning for partial alias close", result.Diagnostics)
-	}
-	diag := result.Diagnostics[0]
-	if diag.Code != diagnostics.CodeResourceUnreleased {
-		t.Fatalf("diagnostic = %#v, want lifecycle warning", diag)
-	}
-	requireEvidenceMessage(t, diag, "this call acquires `tx` as transaction:`active` and requires `finished` before local ownership ends")
-	requireEvidenceMessage(t, diag, "this call transitions `alias` in protocol transaction from `active` to `finished` on a reachable path")
-	requireEvidenceMessage(t, diag, "exit state still has `tx` in protocol transaction at a non-final state; no proof reaches `finished` or escapes ownership on every path")
-	if !containsLifecycleLabel(diag, "lifecycle transition") {
-		t.Fatalf("labels = %#v, want lifecycle transition label", diag.Labels)
-	}
+	diag := requireDiagnostic(t, result, diagnosticExpectation{
+		Code:            diagnostics.CodeResourceUnreleased,
+		Severity:        diagnostic.SeverityWarning,
+		DiagnosticCount: 1,
+		Line:            4,
+		Column:          1,
+		MessageContains: []string{"resource", "`tx`", "non-final transaction state", "expected", "`finished`"},
+		EvidenceChain: []diagnosticEvidenceExpectation{
+			{
+				Kind:            diagnostic.EvidenceAbstractFact,
+				Trust:           diagnostic.TrustProven,
+				MessageContains: []string{"this call acquires", "`tx`", "transaction:`active`", "requires `finished`"},
+			},
+			{
+				Kind:            diagnostic.EvidenceAbstractFact,
+				Trust:           diagnostic.TrustProven,
+				MessageContains: []string{"this call transitions", "`alias`", "protocol transaction", "`active`", "`finished`", "reachable path"},
+			},
+			{
+				Kind:            diagnostic.EvidenceMissingProof,
+				Trust:           diagnostic.TrustRefuted,
+				MessageContains: []string{"exit state still has", "`tx`", "protocol transaction", "non-final state", "no proof reaches `finished`"},
+			},
+		},
+		LabelContains: []string{"resource acquired", "lifecycle transition"},
+		HelpContains:  []string{"Transition `tx` to `finished`", "escape ownership", "every return path"},
+	})
 	rendered := diagnostic.Render(diag, diagnostic.RenderOptions{
 		Sources:             diagnostic.SourceMap{"test.lua": src},
 		ShowSourceLabelRows: true,
 	})
-	for _, want := range []string{
-		"warning[effect.lifecycle.unreleased]",
-		"4 | begin(tx)",
-		"↑ resource acquired",
-		"6 |     finish(alias)",
-		"↑ lifecycle transition",
-		"missing proof: exit state still has `tx` in protocol transaction at a non-final state",
-		"help: Transition `tx` to `finished` or escape ownership on every return path.",
-	} {
-		if !strings.Contains(rendered, want) {
-			t.Fatalf("rendered diagnostic missing %q:\n%s", want, rendered)
-		}
-	}
-	for _, forbidden := range []string{"^~", "\nwhere:\n"} {
-		if strings.Contains(rendered, forbidden) {
-			t.Fatalf("rendered diagnostic contains forbidden noise %q:\n%s", forbidden, rendered)
-		}
-	}
+	want := "warning[effect.lifecycle.unreleased]: resource `tx` remains in a non-final transaction state at function exit; expected `finished`\n" +
+		" --> test.lua:4:1\n" +
+		"  |\n" +
+		"4 | begin(tx)\n" +
+		"  | ↑ resource acquired\n" +
+		"\n" +
+		"because:\n" +
+		"  1. proven: this call acquires `tx` as transaction:`active` and requires `finished` before local ownership ends\n" +
+		"  2. proven: this call transitions `alias` in protocol transaction from `active` to `finished` on a reachable path\n" +
+		" --> test.lua:6:5\n" +
+		"  |\n" +
+		"6 |     finish(alias)\n" +
+		"  |     ↑ lifecycle transition\n" +
+		"  3. missing proof: exit state still has `tx` in protocol transaction at a non-final state; no proof reaches `finished` or escapes ownership on every path\n" +
+		"\n" +
+		"help: Transition `tx` to `finished` or escape ownership on every return path."
+	assertRenderedEqual(t, rendered, want)
 }
 
 func TestLifecycleResourcePartialAliasEscapeKeepsObligationAndEvidence(t *testing.T) {
@@ -518,7 +531,7 @@ end
 		Column:          1,
 		Span:            diagnostic.Span{StartLine: 3, StartCol: 1, EndLine: 3, EndCol: 8},
 		MessageContains: []string{
-			"resource `tx` remains in transaction state",
+			"resource `tx` remains in a non-final transaction state",
 			"expected `committed` or `rolled_back`",
 		},
 		EvidenceChain: []diagnosticEvidenceExpectation{
@@ -596,7 +609,7 @@ end
 		Column:          1,
 		Span:            diagnostic.Span{StartLine: 4, StartCol: 1, EndLine: 4, EndCol: 8},
 		MessageContains: []string{
-			"resource `tx` remains in transaction state",
+			"resource `tx` remains in a non-final transaction state",
 			"expected `committed` or `rolled_back`",
 		},
 		EvidenceChain: []diagnosticEvidenceExpectation{

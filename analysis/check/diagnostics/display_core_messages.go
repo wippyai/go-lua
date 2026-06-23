@@ -150,6 +150,9 @@ func (diagnosticDisplay) FrozenTableCallHelp() string {
 }
 
 func (diagnosticDisplay) ResourceUnreleasedMessage(resourceName, protocol, current, final string) string {
+	if strings.TrimSpace(current) == "" {
+		return fmt.Sprintf("resource %s remains in a non-final %s state at function exit; expected %s", codeName(resourceName), protocol, lifecycleStateName(final))
+	}
 	return fmt.Sprintf("resource %s remains in %s state %s at function exit; expected %s", codeName(resourceName), protocol, lifecycleStateName(current), lifecycleStateName(final))
 }
 
