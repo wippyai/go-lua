@@ -94,6 +94,9 @@ func TestDomainLaneSetValidatesAndCopiesSelection(t *testing.T) {
 	if lanes.Len() == 0 || lanes.At(0) != LaneValues {
 		t.Fatalf("default lanes = %#v, want values first", lanes.IDs())
 	}
+	if err := catalog.ValidateLaneSet(lanes); err != nil {
+		t.Fatalf("default lane catalog is invalid: %v", err)
+	}
 	mutatedIDs := lanes.IDs()
 	mutatedIDs[0] = LaneID("mutated")
 	if got := catalog.LaneSet().At(0); got != LaneValues {
