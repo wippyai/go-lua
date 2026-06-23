@@ -176,14 +176,14 @@ func projectNormalReturnFacts(reg *axis.Registry, result ResultReader, exit stat
 				HasDefault: stateFact.HasDefault,
 			}
 			if stateFact.Result != "" {
-				resultPath, ok := projectPath(stateFact.Result.PathKey())
+				resultPath, ok := projectStatePath(stateFact.Result)
 				if !ok {
 					continue
 				}
 				fact.Result = resultPath
 			}
 			if stateFact.Case != "" {
-				casePath, ok := projectPath(stateFact.Case.PathKey())
+				casePath, ok := projectStatePath(stateFact.Case)
 				if !ok {
 					continue
 				}
@@ -238,7 +238,7 @@ func projectNormalReturnFacts(reg *axis.Registry, result ResultReader, exit stat
 
 	if snapshot := exit.EscapeEventsSnapshot(); !snapshot.Bottom && !snapshot.Top {
 		for _, event := range snapshot.Facts {
-			target, ok := projectPath(event.Target.PathKey())
+			target, ok := projectStatePath(event.Target)
 			if !ok {
 				continue
 			}
@@ -252,11 +252,11 @@ func projectNormalReturnFacts(reg *axis.Registry, result ResultReader, exit stat
 
 	if snapshot := exit.StoreRelationsSnapshot(); !snapshot.Bottom && !snapshot.Top {
 		for _, relation := range snapshot.Relations {
-			source, ok := projectPath(relation.Source.PathKey())
+			source, ok := projectStatePath(relation.Source)
 			if !ok {
 				continue
 			}
-			into, ok := projectPath(relation.Into.PathKey())
+			into, ok := projectStatePath(relation.Into)
 			if !ok {
 				continue
 			}

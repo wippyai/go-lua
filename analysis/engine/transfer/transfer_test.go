@@ -71,6 +71,47 @@ func TestRun_RejectsCustomEntryNotInRPO(t *testing.T) {
 	})
 }
 
+func TestTryRun_ReturnsConfigErrors(t *testing.T) {
+	reg := standard.Registry()
+	graph := cfg.New()
+	dead := graph.AddNode(cfg.NodeNoop)
+
+	cases := []struct {
+		name string
+		cfg  Config
+		want string
+	}{
+		{
+			name: "nil graph",
+			cfg:  Config{Registry: reg},
+			want: "transfer: Config.Graph is nil",
+		},
+		{
+			name: "nil registry",
+			cfg:  Config{Graph: graph},
+			want: "transfer: Config.Registry is nil",
+		},
+		{
+			name: "entry not in RPO",
+			cfg:  Config{Graph: graph, Registry: reg, Entry: &dead},
+			want: "transfer: Config.Entry is not in graph.RPO()",
+		},
+		{
+			name: "unknown lane",
+			cfg:  Config{Graph: graph, Registry: reg, StateLanes: []state.LaneID{state.LaneID("missing")}},
+			want: `state: unknown domain lane "missing"`,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := TryRun(tc.cfg); err == nil || err.Error() != tc.want {
+				t.Fatalf("TryRun error = %v, want %q", err, tc.want)
+			}
+		})
+	}
+}
+
 func TestRun_NodeTransferWritesAssignmentOutputForSuccessor(t *testing.T) {
 	reg := standard.Registry()
 	graph := cfg.New()

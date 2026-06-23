@@ -2,6 +2,8 @@
 package transfer
 
 import (
+	"errors"
+
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/engine/solve"
 	"github.com/wippyai/go-lua/analysis/engine/state"
@@ -76,14 +78,29 @@ type Result map[cfg.Point]state.State
 
 // Run executes a one-off forward transfer run.
 func Run(config Config) Result {
-	validateConfig(config)
+	result, err := TryRun(config)
+	if err != nil {
+		panic(err.Error())
+	}
+	return result
+}
 
+// TryRun executes a one-off forward transfer run, returning configuration
+// errors instead of panicking.
+func TryRun(config Config) (Result, error) {
+	if err := validateConfig(config); err != nil {
+		return nil, err
+	}
 	graph := config.Graph
 	registry := config.Registry
 	domain := state.Domain(registry)
 	normalize := func(st state.State) state.State { return st }
 	if config.StateLanes != nil {
-		domain = state.DomainWithLanes(registry, config.StateLanes)
+		var err error
+		domain, err = state.TryDomainWithLanes(registry, config.StateLanes)
+		if err != nil {
+			return nil, err
+		}
 		normalize = func(st state.State) state.State {
 			return state.NormalizeForDomain(domain, st)
 		}
@@ -152,7 +169,7 @@ func Run(config Config) Result {
 		Stats:      solverStats(config.Stats),
 	}
 
-	return Result(solve.Solve(sys))
+	return Result(solve.Solve(sys)), nil
 }
 
 func solverStats(stats *Stats) *solve.Stats {
@@ -162,19 +179,20 @@ func solverStats(stats *Stats) *solve.Stats {
 	return &stats.Solver
 }
 
-func validateConfig(config Config) {
+func validateConfig(config Config) error {
 	if config.Graph == nil {
-		panic("transfer: Config.Graph is nil")
+		return errors.New("transfer: Config.Graph is nil")
 	}
 	if config.Registry == nil {
-		panic("transfer: Config.Registry is nil")
+		return errors.New("transfer: Config.Registry is nil")
 	}
 	if config.Entry != nil {
 		for _, point := range config.Graph.RPO() {
 			if point == *config.Entry {
-				return
+				return nil
 			}
 		}
-		panic("transfer: Config.Entry is not in graph.RPO()")
+		return errors.New("transfer: Config.Entry is not in graph.RPO()")
 	}
+	return nil
 }
