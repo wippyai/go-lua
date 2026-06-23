@@ -455,13 +455,23 @@ func TestPresenceIsCoreLane(t *testing.T) {
 }
 
 func TestProductMeetCorePresenceRefinement(t *testing.T) {
-	reg := mustRegistry(t)
+	reg := mustRegistry(t, syntheticSpec().Erase())
 	top := Top()
 
 	present := WithPresence(reg, top, presence.Present())
 	absent := WithPresence(reg, top, presence.Absent())
 	if got := Meet(reg, present, absent); !Equal(reg, got, Bottom(reg)) {
 		t.Fatalf("present meet absent = %s, want product bottom", formatValue(got))
+	}
+
+	shaped := Set(reg, WithPresence(reg, top, presence.Maybe()), syntheticKey, syntheticLow)
+	constraint := NewWithPresence(reg, ShapeTop, presence.Present())
+	refined := Meet(reg, shaped, constraint)
+	if got := PresenceOf(refined); !presence.Equal(got, presence.Present()) {
+		t.Fatalf("presence-only meet presence = %s, want present", got)
+	}
+	if got := Get(reg, refined, syntheticKey); got != syntheticLow {
+		t.Fatalf("presence-only meet erased sparse axis = %v, want %v", got, syntheticLow)
 	}
 }
 
