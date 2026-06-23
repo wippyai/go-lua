@@ -104,9 +104,9 @@ func WithDiagnosticRule(code diagnostic.Code, rule diagnostic.Rule) Option {
 }
 
 func WithStateLanes(lanes ...state.LaneID) Option {
-	selected := append([]state.LaneID{}, lanes...)
+	selected := state.NewLaneSet(lanes...).IDs()
 	return func(c *config) {
-		c.stateLanes = append([]state.LaneID{}, selected...)
+		c.stateLanes = state.NewLaneSet(selected...).IDs()
 	}
 }
 

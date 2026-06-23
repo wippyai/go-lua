@@ -42,6 +42,26 @@ func TryDomainWithLaneSet(reg *axis.Registry, lanes LaneSet) (lattice.Lattice[St
 	return defaultLaneCatalog.TryDomainWithLaneSet(reg, lanes)
 }
 
+// DomainWithOptionalLanes builds a State lattice from config-style lane IDs.
+// Nil uses the default lane set; a non-nil slice is the exact enabled set, so
+// an empty non-nil slice disables every State axis.
+func DomainWithOptionalLanes(reg *axis.Registry, lanes []LaneID) lattice.Lattice[State] {
+	domain, err := TryDomainWithOptionalLanes(reg, lanes)
+	if err != nil {
+		panic(err)
+	}
+	return domain
+}
+
+// TryDomainWithOptionalLanes is the non-panicking form of
+// DomainWithOptionalLanes.
+func TryDomainWithOptionalLanes(reg *axis.Registry, lanes []LaneID) (lattice.Lattice[State], error) {
+	if lanes == nil {
+		return Domain(reg), nil
+	}
+	return TryDomainWithLanes(reg, lanes)
+}
+
 // DomainWithLanes builds a State lattice from a slice of enabled lanes.
 // Disabled lanes are ignored by Equal/LessOrEq and dropped by Join/Widen. The
 // input slice is copied before validation, so callers can pass config/UI

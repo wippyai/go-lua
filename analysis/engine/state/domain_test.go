@@ -149,6 +149,43 @@ func TestDomainWithLanesCanonicalizesCallerOrder(t *testing.T) {
 	}
 }
 
+func TestDomainWithOptionalLanesPreservesConfigSemantics(t *testing.T) {
+	reg := standard.Registry()
+	slot := key.SymbolValue(symbol.ID(18))
+	value := presentValue(reg)
+	tableID := identity.ID{Kind: "table", Site: "optional-domain-lanes", Index: 1}
+	stateWithFacts := State{}.WriteValue(reg, slot, value).FreezeTable(tableID)
+
+	defaultDomain := Domain(reg)
+	nilDomain, err := TryDomainWithOptionalLanes(reg, nil)
+	if err != nil {
+		t.Fatalf("TryDomainWithOptionalLanes(nil) error = %v", err)
+	}
+	if !defaultDomain.Equal(nilDomain.Join(nilDomain.Bottom(), stateWithFacts), defaultDomain.Join(defaultDomain.Bottom(), stateWithFacts)) {
+		t.Fatal("nil optional lane selection did not use the default State domain")
+	}
+	nilDefaultDomain := DomainWithOptionalLanes(reg, nil)
+	if got := nilDefaultDomain.Join(nilDefaultDomain.Bottom(), stateWithFacts); !got.IsTableFrozen(tableID) {
+		t.Fatal("nil optional lane selection dropped default frozen-table lane")
+	}
+
+	emptyDomain, err := TryDomainWithOptionalLanes(reg, []LaneID{})
+	if err != nil {
+		t.Fatalf("TryDomainWithOptionalLanes(empty) error = %v", err)
+	}
+	emptyJoin := emptyDomain.Join(emptyDomain.Bottom(), stateWithFacts)
+	if got := emptyJoin.ReadValue(reg, slot); !product.Domain(reg).Equal(got, product.Bottom(reg)) {
+		t.Fatalf("empty optional lane selection value = %s, want bottom", formatValue(reg, got))
+	}
+	if emptyJoin.IsTableFrozen(tableID) {
+		t.Fatal("empty optional lane selection preserved disabled frozen-table lane")
+	}
+
+	if _, err := TryDomainWithOptionalLanes(reg, []LaneID{LaneID("missing")}); err == nil || !strings.Contains(err.Error(), `unknown lane "missing"`) {
+		t.Fatalf("TryDomainWithOptionalLanes(unknown) error = %v, want unknown lane", err)
+	}
+}
+
 func TestDefaultLanesExposeEveryStateAxis(t *testing.T) {
 	reg := standard.Registry()
 	expected := []LaneID{
@@ -398,6 +435,18 @@ func TestLaneSetValidatesAndCopiesSelection(t *testing.T) {
 	source[0] = LaneID("mutated")
 	if got := copied.At(0); got != LaneValues {
 		t.Fatalf("NewLaneSet kept caller storage; first lane = %s", got)
+	}
+	if got := CloneLanes(nil); got != nil {
+		t.Fatalf("CloneLanes(nil) = %#v, want nil", got)
+	}
+	emptySource := []LaneID{}
+	emptyCopy := CloneLanes(emptySource)
+	if emptyCopy == nil || len(emptyCopy) != 0 {
+		t.Fatalf("CloneLanes(empty) = %#v, want non-nil empty slice", emptyCopy)
+	}
+	emptySource = append(emptySource, LaneFrozenTables)
+	if len(emptyCopy) != 0 {
+		t.Fatalf("CloneLanes(empty) kept caller storage: %#v", emptyCopy)
 	}
 
 	withoutFrozen := DefaultLaneSet().Without(LaneFrozenTables)

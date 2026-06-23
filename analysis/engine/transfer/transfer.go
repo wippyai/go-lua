@@ -93,14 +93,12 @@ func TryRun(config Config) (Result, error) {
 	}
 	graph := config.Graph
 	registry := config.Registry
-	domain := state.Domain(registry)
+	domain, err := state.TryDomainWithOptionalLanes(registry, config.StateLanes)
+	if err != nil {
+		return nil, err
+	}
 	normalize := func(st state.State) state.State { return st }
 	if config.StateLanes != nil {
-		var err error
-		domain, err = state.TryDomainWithLanes(registry, config.StateLanes)
-		if err != nil {
-			return nil, err
-		}
 		normalize = func(st state.State) state.State {
 			return state.NormalizeForDomain(domain, st)
 		}

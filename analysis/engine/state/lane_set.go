@@ -14,6 +14,18 @@ func NewLaneSet(ids ...LaneID) LaneSet {
 	return LaneSet{ids: out}
 }
 
+// CloneLanes returns a caller-owned copy of ids while preserving nil. It is the
+// shared helper for config surfaces where nil means "use the default lanes" and
+// a non-nil empty slice means "disable every lane".
+func CloneLanes(ids []LaneID) []LaneID {
+	if ids == nil {
+		return nil
+	}
+	out := make([]LaneID, len(ids))
+	copy(out, ids)
+	return out
+}
+
 // DefaultLaneSet returns the ordered lane set used by Domain.
 func DefaultLaneSet() LaneSet {
 	return defaultLaneCatalog.LaneSet()
