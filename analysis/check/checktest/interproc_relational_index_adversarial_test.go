@@ -1,6 +1,7 @@
 package checktest
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -77,9 +78,12 @@ end
 
 func TestInterprocRelationalIndexHelperStillRequiresSupportingFloors(t *testing.T) {
 	cases := map[string]struct {
-		src    string
-		line   int
-		column int
+		src      string
+		line     int
+		column   int
+		endCol   int
+		readExpr string
+		subject  string
 	}{
 		"sum-missing-second-nonnegative-floor": {
 			src: strings.TrimLeft(`
@@ -95,8 +99,11 @@ local function read(xs: {number}, i: number, j: number): number
     return n
 end
 `, "\n"),
-			line:   9,
-			column: 23,
+			line:     9,
+			column:   23,
+			endCol:   28,
+			readExpr: "xs[i]",
+			subject:  "xs[i]",
 		},
 		"scaled-missing-positive-floor": {
 			src: strings.TrimLeft(`
@@ -112,8 +119,11 @@ local function read(xs: {number}, i: number): number
     return n
 end
 `, "\n"),
-			line:   9,
-			column: 23,
+			line:     9,
+			column:   23,
+			endCol:   32,
+			readExpr: "xs[2 * i]",
+			subject:  "xs",
 		},
 	}
 	for name, tc := range cases {
@@ -124,16 +134,62 @@ end
 				DiagnosticCount: 1,
 				Line:            tc.line,
 				Column:          tc.column,
-				MessageContains: []string{"cannot assign", "may be nil"},
+				Span: diagnostic.Span{
+					StartLine: tc.line,
+					StartCol:  tc.column,
+					EndLine:   tc.line,
+					EndCol:    tc.endCol,
+				},
+				MessageContains: []string{"cannot assign " + tc.subject, "may be nil"},
+				EvidenceMin:     3,
 				EvidenceContains: []string{
+					tc.subject + " can be number or nil here",
 					"n is declared as number",
 					"indexed read that can miss or read nil",
 					"no proof shows the selected slot satisfies the declared type here",
 				},
+				EvidenceOrdered: []string{
+					tc.subject + " can be number or nil here",
+					"n is declared as number",
+					tc.subject + " is an indexed read that can miss or read nil; no proof shows the selected slot satisfies the declared type here",
+				},
+				EvidenceChain: []diagnosticEvidenceExpectation{
+					{
+						Kind:            diagnostic.EvidenceAbstractFact,
+						Trust:           diagnostic.TrustProven,
+						MessageContains: []string{tc.subject, "number or nil"},
+					},
+					{
+						Kind:            diagnostic.EvidenceUserAssertion,
+						Trust:           diagnostic.TrustClaimed,
+						MessageContains: []string{"n", "number"},
+					},
+					{
+						Kind:            diagnostic.EvidenceMissingProof,
+						Trust:           diagnostic.TrustUnknown,
+						MessageContains: []string{"indexed read", "miss", "nil", "selected slot", "declared type"},
+					},
+				},
+				LabelMin:      2,
+				LabelContains: []string{"assigned value", "declared type"},
+				HelpContains:  []string{"Guard `" + tc.subject + "`", "provide a default value", "change the target type"},
+				Sources:       diagnostic.SourceMap{"test.lua": tc.src},
+				RenderOrderedContains: []string{
+					"error[type.assignment]: cannot assign " + tc.subject + " because it may be nil",
+					fmt.Sprintf("test.lua:%d:%d", tc.line, tc.column),
+					"declared type",
+					fmt.Sprintf("%d |     local n: number = %s", tc.line, tc.readExpr),
+					"assigned value",
+					"because:",
+					"proven: " + tc.subject + " can be number or nil here",
+					"claimed: n is declared as number",
+					"missing proof: " + tc.subject + " is an indexed read that can miss or read nil; no proof shows the selected slot satisfies the declared type here",
+					"help: Guard `" + tc.subject + "` with a nil check",
+				},
 				RenderNotContains: []string{
+					"want string",
 					"^~",
 				},
-				Sources: diagnostic.SourceMap{"test.lua": tc.src},
 			})
 		})
 	}
