@@ -562,7 +562,7 @@ local out = router:dispatch(action)
 }
 
 func TestDiscriminatedUnionExhaustivenessReportsNestedRegistrationCase(t *testing.T) {
-	result := Check(`
+	src := strings.TrimLeft(`
 type Begin = { kind: "begin", id: string }
 type Commit = { kind: "commit", payment_id: string }
 type Cancel = { kind: "cancel", reason: string }
@@ -574,19 +574,68 @@ app.router:on("commit", function(action: Action): string return action.kind end)
 
 local action: Action = { kind = "begin", id = "evt-1" }
 local out = app.router:dispatch(action)
-`, WithDiagnosticRule(
+`, "\n")
+	requireDiagnostic(t, Check(src, WithDiagnosticRule(
 		diagnostics.CodeDiscriminatedUnionExhaustive,
 		diagnostic.Enable(),
-	))
-	requireDiagnostic(t, result, diagnosticExpectation{
+	)), diagnosticExpectation{
 		Code:            diagnostics.CodeDiscriminatedUnionExhaustive,
 		Severity:        diagnostic.SeverityWarning,
 		DiagnosticCount: 1,
+		Line:            11,
+		Column:          13,
+		Span:            diagnostic.Span{StartLine: 11, StartCol: 13, EndLine: 11, EndCol: 38},
 		MessageContains: []string{"registered callbacks are not exhaustive", "app.router.cancel"},
+		EvidenceMin:     4,
 		EvidenceOrdered: []string{
 			"`app.router` is dispatched with discriminant `action.kind`",
+			"possible cases: `action.kind == \"begin\"`, `action.kind == \"cancel\"`, `action.kind == \"commit\"`",
 			"registered cases: `app.router.begin`, `app.router.commit`",
 			"missing registrations: `app.router.cancel` for `action.kind == \"cancel\"`",
+		},
+		EvidenceChain: []diagnosticEvidenceExpectation{
+			{
+				Kind:            diagnostic.EvidenceAbstractFact,
+				Trust:           diagnostic.TrustProven,
+				MessageContains: []string{"`app.router` is dispatched with discriminant `action.kind`"},
+			},
+			{
+				Kind:            diagnostic.EvidenceAbstractFact,
+				Trust:           diagnostic.TrustProven,
+				MessageContains: []string{"possible cases", "`action.kind == \"begin\"`", "`action.kind == \"cancel\"`", "`action.kind == \"commit\"`"},
+			},
+			{
+				Kind:            diagnostic.EvidenceAbstractFact,
+				Trust:           diagnostic.TrustProven,
+				MessageContains: []string{"registered cases", "`app.router.begin`", "`app.router.commit`"},
+			},
+			{
+				Kind:            diagnostic.EvidenceMissingProof,
+				Trust:           diagnostic.TrustUnknown,
+				MessageContains: []string{"missing registrations", "`app.router.cancel`", "`action.kind == \"cancel\"`"},
+			},
+		},
+		LabelContains: []string{"registration call", "dispatch call"},
+		HelpContains:  []string{"Register each missing case", "explicit fallback"},
+		Sources:       diagnostic.SourceMap{"test.lua": src},
+		RenderOrderedContains: []string{
+			"warning[lint.union.exhaustiveness]: registered callbacks are not exhaustive; missing registration: `app.router.cancel`",
+			"--> test.lua:11:13",
+			"11 | local out = app.router:dispatch(action)",
+			"↑ dispatch call",
+			"because:",
+			"1. proven: `app.router` is dispatched with discriminant `action.kind`",
+			"2. proven: possible cases: `action.kind == \"begin\"`, `action.kind == \"cancel\"`, `action.kind == \"commit\"`",
+			"3. proven: registered cases: `app.router.begin`, `app.router.commit`",
+			"--> test.lua:7:1",
+			"7 | app.router:on(\"begin\", function(action: Action): string return action.kind end)",
+			"↑ registration call",
+			"4. missing proof: missing registrations: `app.router.cancel` for `action.kind == \"cancel\"`",
+			"help: Register each missing case",
+		},
+		RenderNotContains: []string{
+			"`router.cancel`",
+			"want string",
 		},
 	})
 }
