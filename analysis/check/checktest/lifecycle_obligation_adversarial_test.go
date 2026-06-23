@@ -477,20 +477,62 @@ end
 		t.Fatalf("diagnostics = %#v, want no lifecycle warning when every path reaches a declared final state", bothFinals.Diagnostics)
 	}
 
-	partial := Check(`
+	partialSrc := `
 local tx = {}
 begin(tx)
 if flag then
     commit(tx)
 end
-`, lifecycleMultiFinalManifestOptions("begin", "commit", "flag")...)
+`
+	partial := Check(partialSrc, lifecycleMultiFinalManifestOptions("begin", "commit", "flag")...)
 	if len(partial.Diagnostics) != 1 {
 		t.Fatalf("diagnostics = %#v, want one lifecycle warning for missing rollback/default final path", partial.Diagnostics)
 	}
-	diag := partial.Diagnostics[0]
-	if diag.Code != diagnostics.CodeResourceUnreleased {
-		t.Fatalf("diagnostic = %#v, want lifecycle warning", diag)
-	}
+	diag := requireDiagnostic(t, partial, diagnosticExpectation{
+		Code:            diagnostics.CodeResourceUnreleased,
+		Severity:        diagnostic.SeverityWarning,
+		DiagnosticCount: 1,
+		Line:            3,
+		Column:          1,
+		Span:            diagnostic.Span{StartLine: 3, StartCol: 1, EndLine: 3, EndCol: 8},
+		MessageContains: []string{
+			"resource `tx` remains in transaction state",
+			"expected `committed` or `rolled_back`",
+		},
+		EvidenceChain: []diagnosticEvidenceExpectation{
+			{
+				Kind:            diagnostic.EvidenceAbstractFact,
+				Trust:           diagnostic.TrustProven,
+				Span:            diagnostic.Span{StartLine: 3, StartCol: 1, EndLine: 3, EndCol: 8},
+				MessageContains: []string{"acquires `tx`", "transaction:`active`", "`committed` or `rolled_back`"},
+			},
+			{
+				Kind:            diagnostic.EvidenceAbstractFact,
+				Trust:           diagnostic.TrustProven,
+				Span:            diagnostic.Span{StartLine: 5, StartCol: 5, EndLine: 5, EndCol: 13},
+				MessageContains: []string{"transitions `tx`", "from `active` to `committed`"},
+			},
+			{
+				Kind:            diagnostic.EvidenceMissingProof,
+				Trust:           diagnostic.TrustRefuted,
+				MessageContains: []string{"exit state still has `tx`", "no proof reaches `committed` or `rolled_back`"},
+			},
+		},
+		LabelMin:      2,
+		LabelContains: []string{"resource acquired", "lifecycle transition"},
+		HelpContains:  []string{"Transition `tx`", "`committed` or `rolled_back`", "every return path"},
+		Sources:       diagnostic.SourceMap{"test.lua": partialSrc},
+		RenderOrderedContains: []string{
+			"warning[effect.lifecycle.unreleased]",
+			"3 | begin(tx)",
+			"↑ resource acquired",
+			"5 |     commit(tx)",
+			"↑ lifecycle transition",
+			"missing proof: exit state still has `tx` in protocol transaction at a non-final state",
+			"help: Transition `tx` to `committed` or `rolled_back` or escape ownership on every return path.",
+		},
+		RenderNotContains: []string{"^~", "\nwhere:\n"},
+	})
 	requireEvidenceMessage(t, diag, "this call acquires `tx` as transaction:`active` and requires `committed` or `rolled_back` before local ownership ends")
 	requireEvidenceMessage(t, diag, "this call transitions `tx` in protocol transaction from `active` to `committed` on a reachable path")
 	requireEvidenceMessage(t, diag, "exit state still has `tx` in protocol transaction at a non-final state; no proof reaches `committed` or `rolled_back` or escapes ownership on every path")
@@ -510,7 +552,7 @@ end
 		t.Fatalf("diagnostics = %#v, want no lifecycle warning when every normal-return path reaches a final state", clean.Diagnostics)
 	}
 
-	shadowed := Check(`
+	shadowedSrc := `
 local error = function(msg) end
 local tx = {}
 begin(tx)
@@ -519,14 +561,56 @@ if flag then
 else
     error("abort")
 end
-`, lifecycleMultiFinalManifestOptions("begin", "commit", "flag")...)
+`
+	shadowed := Check(shadowedSrc, lifecycleMultiFinalManifestOptions("begin", "commit", "flag")...)
 	if len(shadowed.Diagnostics) != 1 {
 		t.Fatalf("diagnostics = %#v, want warning when shadowed error returns normally", shadowed.Diagnostics)
 	}
-	diag := shadowed.Diagnostics[0]
-	if diag.Code != diagnostics.CodeResourceUnreleased {
-		t.Fatalf("diagnostic = %#v, want lifecycle warning", diag)
-	}
+	diag := requireDiagnostic(t, shadowed, diagnosticExpectation{
+		Code:            diagnostics.CodeResourceUnreleased,
+		Severity:        diagnostic.SeverityWarning,
+		DiagnosticCount: 1,
+		Line:            4,
+		Column:          1,
+		Span:            diagnostic.Span{StartLine: 4, StartCol: 1, EndLine: 4, EndCol: 8},
+		MessageContains: []string{
+			"resource `tx` remains in transaction state",
+			"expected `committed` or `rolled_back`",
+		},
+		EvidenceChain: []diagnosticEvidenceExpectation{
+			{
+				Kind:            diagnostic.EvidenceAbstractFact,
+				Trust:           diagnostic.TrustProven,
+				Span:            diagnostic.Span{StartLine: 4, StartCol: 1, EndLine: 4, EndCol: 8},
+				MessageContains: []string{"acquires `tx`", "transaction:`active`", "`committed` or `rolled_back`"},
+			},
+			{
+				Kind:            diagnostic.EvidenceAbstractFact,
+				Trust:           diagnostic.TrustProven,
+				Span:            diagnostic.Span{StartLine: 6, StartCol: 5, EndLine: 6, EndCol: 13},
+				MessageContains: []string{"transitions `tx`", "from `active` to `committed`"},
+			},
+			{
+				Kind:            diagnostic.EvidenceMissingProof,
+				Trust:           diagnostic.TrustRefuted,
+				MessageContains: []string{"exit state still has `tx`", "no proof reaches `committed` or `rolled_back`"},
+			},
+		},
+		LabelMin:      2,
+		LabelContains: []string{"resource acquired", "lifecycle transition"},
+		HelpContains:  []string{"Transition `tx`", "`committed` or `rolled_back`", "every return path"},
+		Sources:       diagnostic.SourceMap{"test.lua": shadowedSrc},
+		RenderOrderedContains: []string{
+			"warning[effect.lifecycle.unreleased]",
+			"4 | begin(tx)",
+			"↑ resource acquired",
+			"6 |     commit(tx)",
+			"↑ lifecycle transition",
+			"missing proof: exit state still has `tx` in protocol transaction at a non-final state",
+			"help: Transition `tx` to `committed` or `rolled_back` or escape ownership on every return path.",
+		},
+		RenderNotContains: []string{"^~", "\nwhere:\n", "no-return"},
+	})
 	requireEvidenceMessage(t, diag, "this call transitions `tx` in protocol transaction from `active` to `committed` on a reachable path")
 	requireEvidenceMessage(t, diag, "exit state still has `tx` in protocol transaction at a non-final state; no proof reaches `committed` or `rolled_back` or escapes ownership on every path")
 }
