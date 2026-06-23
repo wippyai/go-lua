@@ -33,12 +33,40 @@ end
 			"optional handling is not exhaustive",
 			"maybe == nil",
 		},
+		EvidenceMin: 5,
 		EvidenceOrdered: []string{
 			"branch checks optional `maybe`",
 			"possible cases: `maybe ~= nil`, `maybe == nil`",
 			"consumed case: `maybe ~= nil`",
 			"missing cases: `maybe == nil`",
 			"no else branch handles the remaining optional case",
+		},
+		EvidenceChain: []diagnosticEvidenceExpectation{
+			{
+				Kind:            diagnostic.EvidenceAbstractFact,
+				Trust:           diagnostic.TrustProven,
+				MessageContains: []string{"branch checks optional `maybe`"},
+			},
+			{
+				Kind:            diagnostic.EvidenceAbstractFact,
+				Trust:           diagnostic.TrustProven,
+				MessageContains: []string{"possible cases", "`maybe ~= nil`", "`maybe == nil`"},
+			},
+			{
+				Kind:            diagnostic.EvidenceAbstractFact,
+				Trust:           diagnostic.TrustProven,
+				MessageContains: []string{"consumed case", "`maybe ~= nil`"},
+			},
+			{
+				Kind:            diagnostic.EvidenceMissingProof,
+				Trust:           diagnostic.TrustUnknown,
+				MessageContains: []string{"missing cases", "`maybe == nil`"},
+			},
+			{
+				Kind:            diagnostic.EvidenceMissingProof,
+				Trust:           diagnostic.TrustUnknown,
+				MessageContains: []string{"no else branch handles the remaining optional case"},
+			},
 		},
 		LabelContains: []string{"optional case check"},
 		HelpContains:  []string{"Handle the nil case"},
