@@ -90,11 +90,7 @@ func applyCallOutcomeFacts(
 		out = out.WritePathStaticMember(resolver.KeySpace(), targetPathKey, fact.Value)
 	}
 	for _, fact := range normalReturnFacts.DynamicIndexFacts {
-		tableStateKey, ok := callOutcomeStateKeyAt(resolver, ctx.Point, bindings, fact.Table)
-		if !ok {
-			continue
-		}
-		tableKey, ok := keyspaceKeyFromStateKey(resolver, tableStateKey)
+		tableKey, ok := callOutcomeKeyspaceKeyAt(resolver, ctx.Point, bindings, fact.Table)
 		if !ok {
 			continue
 		}
@@ -144,11 +140,7 @@ func applyCallOutcomeFacts(
 		out = applyFrozenTableFact(ctx.Registry, resolver, projectPath, ctx.Point, out, targetPath)
 	}
 	for _, delta := range normalReturnFacts.EffectDeltas {
-		targetStateKey, ok := callOutcomeStateKeyAt(resolver, ctx.Point, bindings, delta.Target)
-		if !ok {
-			continue
-		}
-		targetKey, ok := keyspaceKeyFromStateKey(resolver, targetStateKey)
+		targetKey, ok := callOutcomeKeyspaceKeyAt(resolver, ctx.Point, bindings, delta.Target)
 		if !ok {
 			continue
 		}
@@ -695,11 +687,7 @@ func callBranchProofAt(
 	bindings []pathdom.Path,
 	proof callboundary.BranchProof,
 ) (pathevidence.BranchProof, bool) {
-	stateKey, ok := callOutcomeStateKeyAt(resolver, point, bindings, proof.Path)
-	if !ok {
-		return pathevidence.BranchProof{}, false
-	}
-	path, ok := keyspaceKeyFromStateKey(resolver, stateKey)
+	path, ok := callOutcomeKeyspaceKeyAt(resolver, point, bindings, proof.Path)
 	if !ok {
 		return pathevidence.BranchProof{}, false
 	}
@@ -711,11 +699,7 @@ func callBranchProofAt(
 			Presence: proof.Presence,
 		}, true
 	case pathevidence.BranchProofPathEqual, pathevidence.BranchProofPathNotEqual, pathevidence.BranchProofIndexInRange:
-		otherStateKey, ok := callOutcomeStateKeyAt(resolver, point, bindings, proof.Other)
-		if !ok {
-			return pathevidence.BranchProof{}, false
-		}
-		other, ok := keyspaceKeyFromStateKey(resolver, otherStateKey)
+		other, ok := callOutcomeKeyspaceKeyAt(resolver, point, bindings, proof.Other)
 		if !ok {
 			return pathevidence.BranchProof{}, false
 		}

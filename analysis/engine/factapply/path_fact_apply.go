@@ -331,6 +331,19 @@ func factKeyspaceKeyAt(resolver *visibility.Resolver, point cfg.Point, path path
 	return keyspaceKeyFromStateKey(resolver, stateKey)
 }
 
+func callOutcomeKeyspaceKeyAt(
+	resolver *visibility.Resolver,
+	point cfg.Point,
+	bindings []pathdom.Path,
+	path pathdom.Path,
+) (keyspace.Key, bool) {
+	targetPath, ok := path.Substitute(bindings)
+	if !ok {
+		return keyspace.Key{}, false
+	}
+	return factKeyspaceKeyAt(resolver, point, targetPath)
+}
+
 func keyspaceKeyFromStateKey(resolver *visibility.Resolver, stateKey pathaddr.StateKey) (keyspace.Key, bool) {
 	if resolver == nil || stateKey == "" {
 		return keyspace.Key{}, false
