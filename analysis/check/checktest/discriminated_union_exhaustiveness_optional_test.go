@@ -160,7 +160,7 @@ help: Handle the nil case with an else branch, or return before continuing when 
 }
 
 func TestOptionalExhaustivenessReportsOriginalConsumedThroughAliasGuard(t *testing.T) {
-	result := Check(`
+	src := strings.TrimLeft(`
 type Sink = { seen: string }
 
 local function remember(maybe: string?, sink: Sink): string
@@ -170,20 +170,66 @@ local function remember(maybe: string?, sink: Sink): string
     end
     return sink.seen
 end
-`, WithDiagnosticRule(
+`, "\n")
+	result := Check(src, WithDiagnosticRule(
 		diagnostics.CodeDiscriminatedUnionExhaustive,
 		diagnostic.Enable(),
 	))
-	requireDiagnostic(t, result, diagnosticExpectation{
+	diag := requireDiagnostic(t, result, diagnosticExpectation{
 		Code:            diagnostics.CodeDiscriminatedUnionExhaustive,
 		Severity:        diagnostic.SeverityWarning,
+		Line:            5,
+		Column:          8,
 		MessageContains: []string{"optional handling is not exhaustive", "alias == nil"},
-		EvidenceOrdered: []string{
-			"branch checks optional `alias`",
-			"consumed case: `alias ~= nil`",
-			"missing cases: `alias == nil`",
+		EvidenceChain: []diagnosticEvidenceExpectation{
+			{
+				Kind:            diagnostic.EvidenceAbstractFact,
+				Trust:           diagnostic.TrustProven,
+				MessageContains: []string{"branch checks optional `alias`"},
+			},
+			{
+				Kind:            diagnostic.EvidenceAbstractFact,
+				Trust:           diagnostic.TrustProven,
+				MessageContains: []string{"possible cases: `alias ~= nil`, `alias == nil`"},
+			},
+			{
+				Kind:            diagnostic.EvidenceAbstractFact,
+				Trust:           diagnostic.TrustProven,
+				MessageContains: []string{"consumed case: `alias ~= nil`"},
+			},
+			{
+				Kind:            diagnostic.EvidenceMissingProof,
+				Trust:           diagnostic.TrustUnknown,
+				MessageContains: []string{"missing cases: `alias == nil`"},
+			},
+			{
+				Kind:            diagnostic.EvidenceMissingProof,
+				Trust:           diagnostic.TrustUnknown,
+				MessageContains: []string{"no else branch handles the remaining optional case"},
+			},
 		},
+		LabelContains: []string{"optional case check"},
+		HelpContains:  []string{"Handle the nil case", "return before continuing"},
 	})
+	rendered := diagnostic.Render(diag, diagnostic.RenderOptions{
+		Sources:             diagnostic.SourceMap{"test.lua": src},
+		ShowSourceLabelRows: true,
+	})
+	want := `warning[lint.union.exhaustiveness]: optional handling is not exhaustive; missing case: ` + "`alias == nil`" + `
+ --> test.lua:5:8
+  |
+5 |     if alias ~= nil then
+  |        ↑ optional case check
+
+because:
+  1. proven: branch checks optional ` + "`alias`" + `
+  2. proven: possible cases: ` + "`alias ~= nil`, `alias == nil`" + `
+  3. proven: consumed case: ` + "`alias ~= nil`" + `
+  4. missing proof: missing cases: ` + "`alias == nil`" + `
+  5. missing proof: no else branch handles the remaining optional case
+
+help: Handle the nil case with an else branch, or return before continuing when nil is intentionally ignored.`
+	assertRenderedEqual(t, rendered, want)
 }
 
 func TestOptionalExhaustivenessReportsAliasConsumedThroughOriginalGuard(t *testing.T) {
