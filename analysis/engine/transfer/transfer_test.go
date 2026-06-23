@@ -282,6 +282,12 @@ func TestRun_StateLanesSelectExactStateAxes(t *testing.T) {
 	if valueOnly[join].IsTableFrozen(tableID) {
 		t.Fatal("values-only state lane selection preserved disabled frozen-table fact")
 	}
+
+	reversed := run([]state.LaneID{state.LaneFrozenTables, state.LaneValues})
+	assertValue(t, reg, reversed[join], slot, presentValue(reg))
+	if !reversed[join].IsTableFrozen(tableID) {
+		t.Fatal("reversed state lane selection dropped enabled frozen-table fact")
+	}
 }
 
 func TestRun_StateLanesNormalizeStraightLineOutputs(t *testing.T) {

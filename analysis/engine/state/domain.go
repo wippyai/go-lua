@@ -25,9 +25,9 @@ func NormalizeForDomain(domain lattice.Lattice[State], st State) State {
 	return domain.Join(domain.Bottom(), st)
 }
 
-// DomainWithLaneSet builds a State lattice from a sealed ordered lane
-// selection. Use DomainWithLanes when the caller already has a plain slice from
-// configuration or UI controls.
+// DomainWithLaneSet builds a State lattice from a sealed lane selection. The
+// catalog canonicalizes selected lanes to registry order, so callers only
+// choose membership.
 func DomainWithLaneSet(reg *axis.Registry, lanes LaneSet) lattice.Lattice[State] {
 	domain, err := TryDomainWithLaneSet(reg, lanes)
 	if err != nil {
@@ -36,16 +36,16 @@ func DomainWithLaneSet(reg *axis.Registry, lanes LaneSet) lattice.Lattice[State]
 	return domain
 }
 
-// TryDomainWithLaneSet builds a State lattice from a sealed ordered lane
-// selection, returning configuration errors instead of panicking.
+// TryDomainWithLaneSet builds a State lattice from a sealed lane selection,
+// returning configuration errors instead of panicking.
 func TryDomainWithLaneSet(reg *axis.Registry, lanes LaneSet) (lattice.Lattice[State], error) {
 	return defaultLaneCatalog.TryDomainWithLaneSet(reg, lanes)
 }
 
-// DomainWithLanes builds a State lattice from the exact ordered slice of enabled
-// lanes. Disabled lanes are ignored by Equal/LessOrEq and dropped by Join/Widen.
-// The input slice is copied before validation, so callers can pass config/UI
-// storage directly.
+// DomainWithLanes builds a State lattice from a slice of enabled lanes.
+// Disabled lanes are ignored by Equal/LessOrEq and dropped by Join/Widen. The
+// input slice is copied before validation, so callers can pass config/UI
+// storage directly; lane order is canonicalized by the catalog.
 func DomainWithLanes(reg *axis.Registry, lanes []LaneID) lattice.Lattice[State] {
 	return DomainWithLaneSet(reg, NewLaneSet(lanes...))
 }

@@ -123,6 +123,32 @@ func TestDomainWithLanesCopiesCallerSlice(t *testing.T) {
 	}
 }
 
+func TestDomainWithLanesCanonicalizesCallerOrder(t *testing.T) {
+	reg := standard.Registry()
+	slot := key.SymbolValue(symbol.ID(17))
+	value := presentValue(reg)
+	tableID := identity.ID{Kind: "table", Site: "domain-lanes-order", Index: 1}
+
+	catalogOrder := DomainWithLanes(reg, []LaneID{LaneValues, LaneFrozenTables})
+	reversedOrder := DomainWithLanes(reg, []LaneID{LaneFrozenTables, LaneValues})
+	a := State{}.WriteValue(reg, slot, value).FreezeTable(tableID)
+	b := State{}.FreezeTable(tableID)
+
+	catalogJoin := catalogOrder.Join(a, b)
+	reversedJoin := reversedOrder.Join(a, b)
+	if !catalogOrder.Equal(catalogJoin, reversedJoin) || !reversedOrder.Equal(catalogJoin, reversedJoin) {
+		t.Fatalf("DomainWithLanes depended on caller order: catalog=%s frozen=%v reversed=%s frozen=%v",
+			formatValue(reg, catalogJoin.ReadValue(reg, slot)), catalogJoin.IsTableFrozen(tableID),
+			formatValue(reg, reversedJoin.ReadValue(reg, slot)), reversedJoin.IsTableFrozen(tableID))
+	}
+	if got := reversedJoin.ReadValue(reg, slot); !product.Domain(reg).Equal(got, value) {
+		t.Fatalf("reversed lane selection value = %s, want %s", formatValue(reg, got), formatValue(reg, value))
+	}
+	if !reversedJoin.IsTableFrozen(tableID) {
+		t.Fatal("reversed lane selection dropped enabled frozen-table lane")
+	}
+}
+
 func TestDefaultLanesExposeEveryStateAxis(t *testing.T) {
 	reg := standard.Registry()
 	expected := []LaneID{

@@ -101,22 +101,25 @@ func (c LaneCatalog) reachableOps() []reachableLaneOp {
 }
 
 func (c LaneCatalog) selectSpecs(lanes LaneSet) ([]laneSpec, error) {
-	byID := make(map[LaneID]laneSpec, len(c.specs))
+	known := make(map[LaneID]struct{}, len(c.specs))
 	for _, spec := range c.specs {
-		byID[spec.id] = spec
+		known[spec.id] = struct{}{}
 	}
 	seen := make(map[LaneID]struct{}, lanes.Len())
-	out := make([]laneSpec, 0, lanes.Len())
 	for _, id := range lanes.ids {
-		spec, ok := byID[id]
-		if !ok {
+		if _, ok := known[id]; !ok {
 			return nil, fmt.Errorf("state: unknown lane %q", id)
 		}
 		if _, ok := seen[id]; ok {
 			return nil, fmt.Errorf("state: duplicate lane %q", id)
 		}
 		seen[id] = struct{}{}
-		out = append(out, spec)
+	}
+	out := make([]laneSpec, 0, lanes.Len())
+	for _, spec := range c.specs {
+		if _, ok := seen[spec.id]; ok {
+			out = append(out, spec)
+		}
 	}
 	return out, nil
 }
