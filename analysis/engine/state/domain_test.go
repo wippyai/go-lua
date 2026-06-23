@@ -60,6 +60,32 @@ func TestDomainWithLaneSetSelectsIndependentAxes(t *testing.T) {
 	}
 }
 
+func TestDomainWithLanesCopiesCallerSlice(t *testing.T) {
+	reg := standard.Registry()
+	slot := key.SymbolValue(symbol.ID(11))
+	value := presentValue(reg)
+	tableID := identity.ID{Kind: "table", Site: "domain-lanes-copy", Index: 1}
+
+	lanes := []LaneID{LaneValues}
+	valueOnly := DomainWithLanes(reg, lanes)
+	lanes[0] = LaneFrozenTables
+
+	valueState := State{}.WriteValue(reg, slot, value)
+	frozenState := State{}.FreezeTable(tableID)
+	both := valueState.FreezeTable(tableID)
+
+	if !valueOnly.Equal(valueState, both) {
+		t.Fatal("DomainWithLanes kept caller storage and changed enabled lanes after construction")
+	}
+	joined := valueOnly.Join(valueState, frozenState)
+	if got := joined.ReadValue(reg, slot); !product.Domain(reg).Equal(got, value) {
+		t.Fatalf("DomainWithLanes copied domain lost enabled value lane: got %s want %s", formatValue(reg, got), formatValue(reg, value))
+	}
+	if joined.IsTableFrozen(tableID) {
+		t.Fatal("DomainWithLanes copied domain preserved lane added by caller slice mutation")
+	}
+}
+
 func TestDomainLaneSetValidatesAndCopiesSelection(t *testing.T) {
 	reg := standard.Registry()
 

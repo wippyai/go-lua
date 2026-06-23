@@ -18,9 +18,9 @@ func Domain(reg *axis.Registry) lattice.Lattice[State] {
 	})
 }
 
-// DomainWithLaneSet builds a State lattice from the exact ordered set of
-// enabled lanes. Disabled lanes are ignored by Equal/LessOrEq and dropped by
-// Join/Widen.
+// DomainWithLaneSet builds a State lattice from a sealed ordered lane
+// selection. Use DomainWithLanes when the caller already has a plain slice from
+// configuration or UI controls.
 func DomainWithLaneSet(reg *axis.Registry, lanes LaneSet) lattice.Lattice[State] {
 	domain, err := TryDomainWithLaneSet(reg, lanes)
 	if err != nil {
@@ -29,19 +29,21 @@ func DomainWithLaneSet(reg *axis.Registry, lanes LaneSet) lattice.Lattice[State]
 	return domain
 }
 
-// TryDomainWithLaneSet builds a State lattice from an exact ordered lane
-// selection, returning configuration errors instead of panicking. This is the
-// caller-facing constructor for tools that expose lane enable/disable controls.
+// TryDomainWithLaneSet builds a State lattice from a sealed ordered lane
+// selection, returning configuration errors instead of panicking.
 func TryDomainWithLaneSet(reg *axis.Registry, lanes LaneSet) (lattice.Lattice[State], error) {
 	return defaultDomainLaneCatalog.TryDomainWithLaneSet(reg, lanes)
 }
 
-// DomainWithLanes is the compatibility form of DomainWithLaneSet.
+// DomainWithLanes builds a State lattice from the exact ordered slice of enabled
+// lanes. Disabled lanes are ignored by Equal/LessOrEq and dropped by Join/Widen.
+// The input slice is copied before validation, so callers can pass config/UI
+// storage directly.
 func DomainWithLanes(reg *axis.Registry, lanes []LaneID) lattice.Lattice[State] {
 	return DomainWithLaneSet(reg, NewLaneSet(lanes...))
 }
 
-// TryDomainWithLanes is the compatibility form of TryDomainWithLaneSet.
+// TryDomainWithLanes is the non-panicking form of DomainWithLanes.
 func TryDomainWithLanes(reg *axis.Registry, lanes []LaneID) (lattice.Lattice[State], error) {
 	return TryDomainWithLaneSet(reg, NewLaneSet(lanes...))
 }

@@ -19,7 +19,8 @@ func DefaultDomainLaneSet() LaneSet {
 	return defaultDomainLaneCatalog.LaneSet()
 }
 
-// DefaultDomainLanes is the compatibility form of DefaultDomainLaneSet.
+// DefaultDomainLanes returns the ordered lane IDs used by Domain as a
+// caller-owned slice suitable for DomainWithLanes.
 func DefaultDomainLanes() []LaneID {
 	return DefaultDomainLaneSet().IDs()
 }
