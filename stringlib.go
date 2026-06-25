@@ -419,7 +419,9 @@ func strSub(L *LState) int {
 	if start >= l || end < start {
 		L.Push(emptyLString)
 	} else {
-		L.Push(LString(str[start:end]))
+		// Clone so the result owns its bytes; a raw slice would keep the
+		// entire source string's backing array alive for the substring's lifetime.
+		L.Push(LString(strings.Clone(str[start:end])))
 	}
 	return 1
 }
