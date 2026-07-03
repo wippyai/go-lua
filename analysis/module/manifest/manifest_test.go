@@ -251,6 +251,14 @@ func TestManifestRoundTripNamedFunctionSignatureEffects(t *testing.T) {
 			Type:      typ.String,
 			Assertion: assertion.Runtime(),
 		}},
+		PathPresenceImplications: []signature.PathPresenceImplication{{
+			Trigger:         pathdom.NewPlaceholder(0).Field("status"),
+			TriggerPresence: presence.Present(),
+			TriggerType:     typ.String,
+			HasTriggerType:  true,
+			Target:          pathdom.Path{Root: "ret[0]"}.Field("value"),
+			TargetPresence:  presence.Present(),
+		}},
 		PathStaticMembers: []signature.PathStaticMemberFact{{
 			Path: pathdom.NewPlaceholder(1).Field("kind"),
 			Type: typ.String,
@@ -348,6 +356,7 @@ func TestManifestRoundTripNamedFunctionSignatureEffects(t *testing.T) {
 		!strings.Contains(string(data), `"operationalEffects"`) ||
 		!strings.Contains(string(data), `"typestateProtocols"`) ||
 		!strings.Contains(string(data), `"normalReturnTypeRefinements"`) ||
+		!strings.Contains(string(data), `"pathPresenceImplications"`) ||
 		!strings.Contains(string(data), `"pathStaticMembers"`) ||
 		!strings.Contains(string(data), `"dynamicIndexFacts"`) ||
 		!strings.Contains(string(data), `"keyMemberships"`) ||
@@ -1129,6 +1138,22 @@ func operationalEffectsOrderA() *signature.OperationalEffects {
 			{Path: pathdom.NewPlaceholder(1), Type: typ.String},
 			{Path: pathdom.NewPlaceholder(0), Type: typeexpr.Optional(typ.Number)},
 		},
+		PathPresenceImplications: []signature.PathPresenceImplication{
+			{
+				Trigger:         pathdom.NewPlaceholder(1).Field("status"),
+				TriggerPresence: presence.Present(),
+				TriggerType:     typ.String,
+				HasTriggerType:  true,
+				Target:          pathdom.Path{Root: "ret[1]"}.Field("value"),
+				TargetPresence:  presence.Present(),
+			},
+			{
+				Trigger:         pathdom.NewPlaceholder(0).Field("missing"),
+				TriggerPresence: presence.Absent(),
+				Target:          pathdom.NewPlaceholder(0).Field("fallback"),
+				TargetPresence:  presence.Present(),
+			},
+		},
 		PathStaticMembers: []signature.PathStaticMemberFact{
 			{Path: pathdom.NewPlaceholder(1).Field("kind"), Type: typ.String},
 			{Path: pathdom.NewPlaceholder(0).Field("kind"), Type: typeexpr.Optional(typ.Number)},
@@ -1209,6 +1234,22 @@ func operationalEffectsOrderB() *signature.OperationalEffects {
 		NormalReturnTypeRefinements: []signature.PathTypeRefinement{
 			{Path: pathdom.NewPlaceholder(0), Type: typeexpr.Optional(typ.Number)},
 			{Path: pathdom.NewPlaceholder(1), Type: typ.String},
+		},
+		PathPresenceImplications: []signature.PathPresenceImplication{
+			{
+				Trigger:         pathdom.NewPlaceholder(0).Field("missing"),
+				TriggerPresence: presence.Absent(),
+				Target:          pathdom.NewPlaceholder(0).Field("fallback"),
+				TargetPresence:  presence.Present(),
+			},
+			{
+				Trigger:         pathdom.NewPlaceholder(1).Field("status"),
+				TriggerPresence: presence.Present(),
+				TriggerType:     typ.String,
+				HasTriggerType:  true,
+				Target:          pathdom.Path{Root: "ret[1]"}.Field("value"),
+				TargetPresence:  presence.Present(),
+			},
 		},
 		PathStaticMembers: []signature.PathStaticMemberFact{
 			{Path: pathdom.NewPlaceholder(0).Field("kind"), Type: typeexpr.Optional(typ.Number)},

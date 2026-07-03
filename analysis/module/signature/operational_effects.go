@@ -187,59 +187,120 @@ type AllocationDynamicEntryTemplate struct {
 }
 
 func (e OperationalEffects) IsEmpty() bool {
-	return len(e.ReturnPresenceRelations) == 0 &&
-		len(e.NormalReturnPresenceRefinements) == 0 &&
-		len(e.NormalReturnTypeRefinements) == 0 &&
-		len(e.PathPresenceImplications) == 0 &&
-		len(e.PathStaticMembers) == 0 &&
-		len(e.PathInvalidations) == 0 &&
-		len(e.BranchProofs) == 0 &&
-		len(e.DynamicIndexFacts) == 0 &&
-		len(e.KeyMemberships) == 0 &&
-		len(e.DynamicValueKeys) == 0 &&
-		len(e.FrozenTables) == 0 &&
-		len(e.EscapeEvents) == 0 &&
-		len(e.StoreRelations) == 0 &&
-		len(e.LifecycleEffects) == 0 &&
-		len(e.ReturnAllocationTemplates) == 0
+	for _, lane := range operationalEffectLanes {
+		if !lane.empty(e) {
+			return false
+		}
+	}
+	return true
 }
 
 func (e OperationalEffects) Clone() OperationalEffects {
-	return OperationalEffects{
-		ReturnPresenceRelations:         cloneReturnPresenceRelations(e.ReturnPresenceRelations),
-		NormalReturnPresenceRefinements: clonePathPresenceRefinements(e.NormalReturnPresenceRefinements),
-		NormalReturnTypeRefinements:     clonePathTypeRefinements(e.NormalReturnTypeRefinements),
-		PathPresenceImplications:        clonePathPresenceImplications(e.PathPresenceImplications),
-		PathStaticMembers:               clonePathStaticMemberFacts(e.PathStaticMembers),
-		PathInvalidations:               clonePathInvalidations(e.PathInvalidations),
-		BranchProofs:                    cloneBranchProofs(e.BranchProofs),
-		DynamicIndexFacts:               cloneDynamicIndexFacts(e.DynamicIndexFacts),
-		KeyMemberships:                  cloneKeyMemberships(e.KeyMemberships),
-		DynamicValueKeys:                cloneDynamicValueKeyMemberships(e.DynamicValueKeys),
-		FrozenTables:                    cloneFrozenTables(e.FrozenTables),
-		EscapeEvents:                    cloneEscapeEvents(e.EscapeEvents),
-		StoreRelations:                  cloneStoreRelations(e.StoreRelations),
-		LifecycleEffects:                cloneLifecycleEffects(e.LifecycleEffects),
-		ReturnAllocationTemplates:       cloneReturnAllocationTemplates(e.ReturnAllocationTemplates),
+	var out OperationalEffects
+	for _, lane := range operationalEffectLanes {
+		lane.clone(e, &out)
 	}
+	return out
 }
 
 func (e OperationalEffects) Equals(other OperationalEffects) bool {
-	return equalReturnPresenceRelations(e.ReturnPresenceRelations, other.ReturnPresenceRelations) &&
-		equalPathPresenceRefinements(e.NormalReturnPresenceRefinements, other.NormalReturnPresenceRefinements) &&
-		equalPathTypeRefinements(e.NormalReturnTypeRefinements, other.NormalReturnTypeRefinements) &&
-		equalPathPresenceImplications(e.PathPresenceImplications, other.PathPresenceImplications) &&
-		equalPathStaticMemberFacts(e.PathStaticMembers, other.PathStaticMembers) &&
-		equalPathInvalidations(e.PathInvalidations, other.PathInvalidations) &&
-		equalBranchProofs(e.BranchProofs, other.BranchProofs) &&
-		equalDynamicIndexFacts(e.DynamicIndexFacts, other.DynamicIndexFacts) &&
-		equalKeyMemberships(e.KeyMemberships, other.KeyMemberships) &&
-		equalDynamicValueKeyMemberships(e.DynamicValueKeys, other.DynamicValueKeys) &&
-		equalFrozenTables(e.FrozenTables, other.FrozenTables) &&
-		equalEscapeEvents(e.EscapeEvents, other.EscapeEvents) &&
-		equalStoreRelations(e.StoreRelations, other.StoreRelations) &&
-		equalLifecycleEffects(e.LifecycleEffects, other.LifecycleEffects) &&
-		equalReturnAllocationTemplates(e.ReturnAllocationTemplates, other.ReturnAllocationTemplates)
+	for _, lane := range operationalEffectLanes {
+		if !lane.equal(e, other) {
+			return false
+		}
+	}
+	return true
+}
+
+type operationalEffectLane struct {
+	fieldName string
+	empty     func(OperationalEffects) bool
+	clone     func(OperationalEffects, *OperationalEffects)
+	equal     func(OperationalEffects, OperationalEffects) bool
+}
+
+func operationalEffectSliceLane[T any](
+	fieldName string,
+	get func(OperationalEffects) []T,
+	set func(*OperationalEffects, []T),
+	clone func([]T) []T,
+	equal func([]T, []T) bool,
+) operationalEffectLane {
+	return operationalEffectLane{
+		fieldName: fieldName,
+		empty: func(e OperationalEffects) bool {
+			return len(get(e)) == 0
+		},
+		clone: func(e OperationalEffects, out *OperationalEffects) {
+			set(out, clone(get(e)))
+		},
+		equal: func(a, b OperationalEffects) bool {
+			return equal(get(a), get(b))
+		},
+	}
+}
+
+var operationalEffectLanes = []operationalEffectLane{
+	operationalEffectSliceLane("ReturnPresenceRelations",
+		func(e OperationalEffects) []ReturnPresenceRelation { return e.ReturnPresenceRelations },
+		func(e *OperationalEffects, facts []ReturnPresenceRelation) { e.ReturnPresenceRelations = facts },
+		cloneReturnPresenceRelations, equalReturnPresenceRelations),
+	operationalEffectSliceLane("NormalReturnPresenceRefinements",
+		func(e OperationalEffects) []PathPresenceRefinement { return e.NormalReturnPresenceRefinements },
+		func(e *OperationalEffects, facts []PathPresenceRefinement) { e.NormalReturnPresenceRefinements = facts },
+		clonePathPresenceRefinements, equalPathPresenceRefinements),
+	operationalEffectSliceLane("NormalReturnTypeRefinements",
+		func(e OperationalEffects) []PathTypeRefinement { return e.NormalReturnTypeRefinements },
+		func(e *OperationalEffects, facts []PathTypeRefinement) { e.NormalReturnTypeRefinements = facts },
+		clonePathTypeRefinements, equalPathTypeRefinements),
+	operationalEffectSliceLane("PathPresenceImplications",
+		func(e OperationalEffects) []PathPresenceImplication { return e.PathPresenceImplications },
+		func(e *OperationalEffects, facts []PathPresenceImplication) { e.PathPresenceImplications = facts },
+		clonePathPresenceImplications, equalPathPresenceImplications),
+	operationalEffectSliceLane("PathStaticMembers",
+		func(e OperationalEffects) []PathStaticMemberFact { return e.PathStaticMembers },
+		func(e *OperationalEffects, facts []PathStaticMemberFact) { e.PathStaticMembers = facts },
+		clonePathStaticMemberFacts, equalPathStaticMemberFacts),
+	operationalEffectSliceLane("PathInvalidations",
+		func(e OperationalEffects) []PathInvalidation { return e.PathInvalidations },
+		func(e *OperationalEffects, facts []PathInvalidation) { e.PathInvalidations = facts },
+		clonePathInvalidations, equalPathInvalidations),
+	operationalEffectSliceLane("BranchProofs",
+		func(e OperationalEffects) []BranchProof { return e.BranchProofs },
+		func(e *OperationalEffects, facts []BranchProof) { e.BranchProofs = facts },
+		cloneBranchProofs, equalBranchProofs),
+	operationalEffectSliceLane("DynamicIndexFacts",
+		func(e OperationalEffects) []DynamicIndexFact { return e.DynamicIndexFacts },
+		func(e *OperationalEffects, facts []DynamicIndexFact) { e.DynamicIndexFacts = facts },
+		cloneDynamicIndexFacts, equalDynamicIndexFacts),
+	operationalEffectSliceLane("KeyMemberships",
+		func(e OperationalEffects) []KeyMembership { return e.KeyMemberships },
+		func(e *OperationalEffects, facts []KeyMembership) { e.KeyMemberships = facts },
+		cloneKeyMemberships, equalKeyMemberships),
+	operationalEffectSliceLane("DynamicValueKeys",
+		func(e OperationalEffects) []DynamicValueKeyMembership { return e.DynamicValueKeys },
+		func(e *OperationalEffects, facts []DynamicValueKeyMembership) { e.DynamicValueKeys = facts },
+		cloneDynamicValueKeyMemberships, equalDynamicValueKeyMemberships),
+	operationalEffectSliceLane("FrozenTables",
+		func(e OperationalEffects) []FrozenTable { return e.FrozenTables },
+		func(e *OperationalEffects, facts []FrozenTable) { e.FrozenTables = facts },
+		cloneFrozenTables, equalFrozenTables),
+	operationalEffectSliceLane("EscapeEvents",
+		func(e OperationalEffects) []EscapeEvent { return e.EscapeEvents },
+		func(e *OperationalEffects, facts []EscapeEvent) { e.EscapeEvents = facts },
+		cloneEscapeEvents, equalEscapeEvents),
+	operationalEffectSliceLane("StoreRelations",
+		func(e OperationalEffects) []StoreRelation { return e.StoreRelations },
+		func(e *OperationalEffects, facts []StoreRelation) { e.StoreRelations = facts },
+		cloneStoreRelations, equalStoreRelations),
+	operationalEffectSliceLane("LifecycleEffects",
+		func(e OperationalEffects) []LifecycleEffect { return e.LifecycleEffects },
+		func(e *OperationalEffects, facts []LifecycleEffect) { e.LifecycleEffects = facts },
+		cloneLifecycleEffects, equalLifecycleEffects),
+	operationalEffectSliceLane("ReturnAllocationTemplates",
+		func(e OperationalEffects) []ReturnAllocationTemplate { return e.ReturnAllocationTemplates },
+		func(e *OperationalEffects, facts []ReturnAllocationTemplate) { e.ReturnAllocationTemplates = facts },
+		cloneReturnAllocationTemplates, equalReturnAllocationTemplates),
 }
 
 func cloneReturnPresenceRelations(in []ReturnPresenceRelation) []ReturnPresenceRelation {

@@ -20,6 +20,7 @@ type operationalEffectsWire struct {
 	ReturnPresenceRelations         []returnPresenceRelationWire    `json:"returnPresenceRelations,omitempty"`
 	NormalReturnPresenceRefinements []pathPresenceRefinementWire    `json:"normalReturnPresenceRefinements,omitempty"`
 	NormalReturnTypeRefinements     []pathTypeRefinementWire        `json:"normalReturnTypeRefinements,omitempty"`
+	PathPresenceImplications        []pathPresenceImplicationWire   `json:"pathPresenceImplications,omitempty"`
 	PathStaticMembers               []pathStaticMemberWire          `json:"pathStaticMembers,omitempty"`
 	PathInvalidations               []pathInvalidationWire          `json:"pathInvalidations,omitempty"`
 	BranchProofs                    []branchProofWire               `json:"branchProofs,omitempty"`
@@ -49,6 +50,14 @@ type pathTypeRefinementWire struct {
 	Path       *placeholderPathWire `json:"path,omitempty"`
 	Type       *typeWire            `json:"type,omitempty"`
 	Assertions []string             `json:"assertions,omitempty"`
+}
+
+type pathPresenceImplicationWire struct {
+	Trigger         *boundaryPathWire `json:"trigger,omitempty"`
+	TriggerPresence string            `json:"triggerPresence"`
+	TriggerType     *typeWire         `json:"triggerType,omitempty"`
+	Target          *boundaryPathWire `json:"target,omitempty"`
+	TargetPresence  string            `json:"targetPresence"`
 }
 
 type pathStaticMemberWire struct {
@@ -204,6 +213,13 @@ func encodeOperationalEffects(e *signature.OperationalEffects) (*operationalEffe
 			Type:       t,
 			Assertions: encodeAssertion(refinement.Assertion),
 		})
+	}
+	for _, implication := range e.PathPresenceImplications {
+		encoded, err := encodePathPresenceImplication(implication)
+		if err != nil {
+			return nil, fmt.Errorf("path presence implication: %w", err)
+		}
+		out.PathPresenceImplications = append(out.PathPresenceImplications, encoded)
 	}
 	for _, member := range e.PathStaticMembers {
 		p, err := encodePlaceholderPath(member.Path)
@@ -373,6 +389,13 @@ func decodeOperationalEffects(w *operationalEffectsWire) (signature.OperationalE
 			Assertion: assertionClaim,
 		})
 	}
+	for _, implication := range w.PathPresenceImplications {
+		decoded, err := decodePathPresenceImplication(implication)
+		if err != nil {
+			return signature.OperationalEffects{}, fmt.Errorf("path presence implication: %w", err)
+		}
+		out.PathPresenceImplications = append(out.PathPresenceImplications, decoded)
+	}
 	for _, member := range w.PathStaticMembers {
 		p, err := decodePlaceholderPath(member.Path)
 		if err != nil {
@@ -509,6 +532,9 @@ func canonicalizeOperationalEffectsWire(w *operationalEffectsWire) {
 		}
 		return strings.Join(left.Assertions, ",") < strings.Join(right.Assertions, ",")
 	})
+	sort.Slice(w.PathPresenceImplications, func(i, j int) bool {
+		return comparePathPresenceImplicationWire(w.PathPresenceImplications[i], w.PathPresenceImplications[j]) < 0
+	})
 	sort.Slice(w.PathStaticMembers, func(i, j int) bool {
 		left, right := w.PathStaticMembers[i], w.PathStaticMembers[j]
 		if c := comparePlaceholderPathWire(left.Path, right.Path); c != 0 {
@@ -591,6 +617,95 @@ func canonicalizeOperationalEffectsWire(w *operationalEffectsWire) {
 		}
 		return left.Root < right.Root
 	})
+}
+
+func encodePathPresenceImplication(fact signature.PathPresenceImplication) (pathPresenceImplicationWire, error) {
+	trigger, err := encodeBoundaryPath(fact.Trigger)
+	if err != nil {
+		return pathPresenceImplicationWire{}, fmt.Errorf("trigger: %w", err)
+	}
+	triggerPresence, err := encodePresence(fact.TriggerPresence)
+	if err != nil {
+		return pathPresenceImplicationWire{}, fmt.Errorf("trigger presence: %w", err)
+	}
+	target, err := encodeBoundaryPath(fact.Target)
+	if err != nil {
+		return pathPresenceImplicationWire{}, fmt.Errorf("target: %w", err)
+	}
+	targetPresence, err := encodePresence(fact.TargetPresence)
+	if err != nil {
+		return pathPresenceImplicationWire{}, fmt.Errorf("target presence: %w", err)
+	}
+	out := pathPresenceImplicationWire{
+		Trigger:         trigger,
+		TriggerPresence: triggerPresence,
+		Target:          target,
+		TargetPresence:  targetPresence,
+	}
+	if fact.HasTriggerType {
+		if fact.TriggerType == nil {
+			return pathPresenceImplicationWire{}, fmt.Errorf("trigger type: missing")
+		}
+		triggerType, err := encodeType(fact.TriggerType)
+		if err != nil {
+			return pathPresenceImplicationWire{}, fmt.Errorf("trigger type: %w", err)
+		}
+		out.TriggerType = triggerType
+	}
+	return out, nil
+}
+
+func decodePathPresenceImplication(w pathPresenceImplicationWire) (signature.PathPresenceImplication, error) {
+	trigger, err := decodeBoundaryPath(w.Trigger)
+	if err != nil {
+		return signature.PathPresenceImplication{}, fmt.Errorf("trigger: %w", err)
+	}
+	triggerPresence, err := decodePresence(w.TriggerPresence)
+	if err != nil {
+		return signature.PathPresenceImplication{}, fmt.Errorf("trigger presence: %w", err)
+	}
+	target, err := decodeBoundaryPath(w.Target)
+	if err != nil {
+		return signature.PathPresenceImplication{}, fmt.Errorf("target: %w", err)
+	}
+	targetPresence, err := decodePresence(w.TargetPresence)
+	if err != nil {
+		return signature.PathPresenceImplication{}, fmt.Errorf("target presence: %w", err)
+	}
+	out := signature.PathPresenceImplication{
+		Trigger:         trigger,
+		TriggerPresence: triggerPresence,
+		Target:          target,
+		TargetPresence:  targetPresence,
+	}
+	if w.TriggerType != nil {
+		triggerType, err := decodeType(w.TriggerType)
+		if err != nil {
+			return signature.PathPresenceImplication{}, fmt.Errorf("trigger type: %w", err)
+		}
+		if triggerType == nil {
+			return signature.PathPresenceImplication{}, fmt.Errorf("trigger type: missing")
+		}
+		out.TriggerType = triggerType
+		out.HasTriggerType = true
+	}
+	return out, nil
+}
+
+func comparePathPresenceImplicationWire(a, b pathPresenceImplicationWire) int {
+	if c := compareBoundaryPathWire(a.Trigger, b.Trigger); c != 0 {
+		return c
+	}
+	if a.TriggerPresence != b.TriggerPresence {
+		return strings.Compare(a.TriggerPresence, b.TriggerPresence)
+	}
+	if leftKey, rightKey := typeWireKey(a.TriggerType), typeWireKey(b.TriggerType); leftKey != rightKey {
+		return strings.Compare(leftKey, rightKey)
+	}
+	if c := compareBoundaryPathWire(a.Target, b.Target); c != 0 {
+		return c
+	}
+	return strings.Compare(a.TargetPresence, b.TargetPresence)
 }
 
 func encodeBranchProof(proof signature.BranchProof) (branchProofWire, error) {
